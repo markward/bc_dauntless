@@ -13,9 +13,13 @@ do. A test, tool or mod that replaces one must still be obeyed:
     patch made between ticks is seen at the next one;
   - on the INSTANCE: an instance attribute shadowing one of the cheap
     subset tests, tools and SWIG patch (native_combat._K0_*_PATCHES: a
-    weapon's UpdateCharge / UpdateReload / ReloadTorpedo -> that weapon; a
-    system's IsOn / GetNormalPowerPercentage / GetPowerLevel or a ship's
-    group getters -> the whole ship).
+    weapon's UpdateCharge / UpdateReload / ReloadTorpedo / StopFiring /
+    _broadcast_reload -> that weapon; a system's IsOn /
+    GetNormalPowerPercentage / GetPowerLevel or a ship's group getters ->
+    the whole ship);
+  - the WATCHER: FloatRangeWatcher._update, which K0 stands in for on a
+    pulse cannon's owned watcher -> every pulse cannon (combat fire events
+    Task 4).
 A torpedo tube's reload gate reads its siblings' GetNumReady and the
 magazine's GetAvailable, so one overridden tube or magazine hands every tube
 of that system back.
@@ -153,11 +157,12 @@ def test_stock_class_patch_between_ticks_is_seen(monkeypatch):
     assert _override(counts) > 0, counts
 
 
-def test_class_patched_stop_firing_is_called_by_deplete_stop(monkeypatch):
-    """A class patch of PhaserBank.StopFiring is NOT a reason to hand the
-    ship back: K0's DEPLETE_STOP record calls `bank.StopFiring()` in
-    Python, so the patch is called -- on the same tick, for the same bank,
-    as without K0 -- while the walk stays native (no override)."""
+def test_class_patched_stop_firing_hands_the_bank_back(monkeypatch):
+    """K0 logs a drained bank's StopFiring itself since combat fire events
+    Task 4 (no DEPLETE_STOP record calls it), so a class patch of
+    PhaserBank.StopFiring hands every phaser bank to Python (override): the
+    patch is called -- on the same tick, for the same bank -- exactly as
+    without K0."""
     calls = {}
 
     def setup(w):
@@ -173,17 +178,18 @@ def test_class_patched_stop_firing_is_called_by_deplete_stop(monkeypatch):
             real(self)
         w.mp.setattr(ws.PhaserBank, "StopFiring", patched)
 
-    _ref, _nat, counts = run_both(monkeypatch.context, lambda w, t: None, 6,
-                                  setup=setup, passive=False)
+    _ref, nat, counts = run_both(monkeypatch.context, lambda w, t: None, 6,
+                                 setup=setup, passive=False)
     assert calls[False] and calls[True] == calls[False], calls
-    assert counts["k0_records"]["DEPLETE_STOP"] == 1, counts
-    assert _override(counts) == 0, counts
+    banks = sum(len(nat.weapons(s, PHASER)) for s in nat.ships)
+    assert _override(counts) == 6 * banks, counts
+    assert counts["k0_logged"]["deplete_stop"] == 0, counts
 
 
-def test_class_patched_broadcast_reload_is_called_by_reloaded(monkeypatch):
-    """Likewise TorpedoTube._broadcast_reload: K0's RELOADED record calls it
-    in Python, so a class patch is called exactly as without K0 and the
-    tubes stay native."""
+def test_class_patched_broadcast_reload_hands_the_tubes_back(monkeypatch):
+    """Likewise TorpedoTube._broadcast_reload: K0 queues the reload's
+    TORPEDO_RELOAD itself, so a class patch hands every tube to Python and
+    is called exactly as without K0."""
     calls = {}
 
     def setup(w):
@@ -201,8 +207,75 @@ def test_class_patched_broadcast_reload_is_called_by_reloaded(monkeypatch):
     _ref, _nat, counts = run_both(monkeypatch.context, lambda w, t: None, 60,
                                   setup=setup, passive=False)
     assert calls[False] and calls[True] == calls[False], calls
-    assert counts["k0_records"]["RELOADED"] == len(calls[True]), counts
-    assert _override(counts) == 0, counts
+    assert counts["k0_logged"]["reload"] == 0, counts
+    assert _override(counts) > 0, counts
+
+
+@pytest.mark.parametrize("name", ["StopFiring", "_broadcast_reload"])
+def test_instance_patch_of_a_stood_in_method_hands_the_weapon_back(
+        monkeypatch, name):
+    """An instance attribute shadowing StopFiring (a drained bank) or
+    _broadcast_reload (a reloaded tube): that weapon -- every tube of its
+    system, for a tube -- runs in Python and the patch is called, ON ==
+    OFF."""
+    calls = {}
+
+    def setup(w):
+        log = calls[w.native] = []
+        if name == "StopFiring":
+            weapon = w.weapons("Galaxy", PHASER)[0]
+            weapon._firing = True
+            weapon._beam_on_countdown = 0.0
+            weapon._charge_level = 0.01
+        else:
+            for tube in w.weapons("Galaxy", TORPEDO):
+                tube._reload_delay = 0.4
+                tube.SetNumReady(0)
+            weapon = w.weapons("Galaxy", TORPEDO)[0]
+        real = getattr(weapon, name)
+
+        def patched():
+            log.append(w.n)
+            real()
+        setattr(weapon, name, patched)
+
+    _ref, _nat, counts = run_both(monkeypatch.context, lambda w, t: None, 40,
+                                  setup=setup, passive=False)
+    assert calls[False] and calls[True] == calls[False], calls
+    assert _override(counts) > 0, counts
+
+
+def test_watcher_update_class_patch_hands_the_cannons_back(monkeypatch):
+    """A class patch of FloatRangeWatcher._update -- the pulse cannon's
+    watcher line, which K0 stands in for -- made between ticks: from the
+    next session on every pulse cannon runs in Python and the patch is
+    called exactly as without K0; undone, they are native again."""
+    calls = {}
+
+    def setup(w):
+        w.ships["Vorcha"].GetPulseWeaponSystem().TurnOn()
+
+    def script(w, t):
+        from engine.appc.float_range_watcher import FloatRangeWatcher
+        if t == 3:
+            log = calls[w.native] = []
+            real = FloatRangeWatcher._update
+
+            def patched(self, value):
+                log.append((w.n, w.label(self._owner)))
+                real(self, value)
+            w.mp.setattr(FloatRangeWatcher, "_update", patched)
+        elif t == 6:
+            w.mp.undo()
+
+    ticks = 9
+    _ref, nat, counts = run_both(monkeypatch.context, script, ticks,
+                                 setup=setup, passive=False)
+    cannons = len(nat.weapons("Vorcha", PULSE))
+    assert cannons and calls[False] and calls[True] == calls[False]
+    assert len(calls[True]) == 3 * cannons, calls[True]
+    assert _override(counts) == 3 * cannons, counts
+    assert nc._k0_flag(ws.PulseWeapon) == 0
 
 
 class _AlwaysOnPhasers(ws.PhaserSystem):
@@ -319,9 +392,10 @@ def test_stock_classes_are_not_flagged():
 
 
 def test_method_list_covers_wsm_a6():
-    """Every method WSM §7(a) A6 lists is in the guard's class list, but
-    the ones K0's records call in Python (_K0_CALLED_IN_PYTHON), which are
-    not in it."""
+    """Every method WSM §7(a) A6 lists is in the guard's class lists --
+    StopFiring and _broadcast_reload too since K0 stands in for them
+    (combat fire events Task 4), on the leaves it stands in for them on
+    (_K0_LEAF_METHODS); the instance list has both as well."""
     text = WSM.read_text()
     row = next(line for line in text.splitlines() if line.startswith("| A6 "))
     cell = row.split("|")[2]
@@ -333,11 +407,13 @@ def test_method_list_covers_wsm_a6():
         else:
             names.add(tok)
     assert names, row
-    exempt = set(nc._K0_CALLED_IN_PYTHON)
-    assert exempt == {"StopFiring", "_broadcast_reload"} and exempt <= names
-    assert not exempt & set(nc._K0_METHODS)
-    assert names - exempt <= set(nc._K0_METHODS), \
-        names - exempt - set(nc._K0_METHODS)
+    assert {"StopFiring", "_broadcast_reload"} <= names
+    leaf = {n for ns in nc._K0_LEAF_METHODS.values() for n in ns}
+    assert leaf == {"StopFiring", "_broadcast_reload"}
+    guarded = set(nc._K0_METHODS) | leaf
+    assert names <= guarded, names - guarded
+    assert {"StopFiring", "_broadcast_reload"} <= set(nc._K0_WEAPON_PATCHES)
+    assert not hasattr(nc, "_K0_CALLED_IN_PYTHON")
 
 
 # ── Between two sessions (ruling W6: the binding caches the verdicts) ────────
@@ -563,3 +639,25 @@ def test_object_cache_is_gated_to_verified_pythons(monkeypatch):
             assert (_override(nc.counts()), len(calls)) == (2, 2)
         finally:
             w.close()
+
+
+def test_stop_names_are_guarded_only_on_the_leaves_k0_stands_in_for():
+    """Review minor 1: K0 stands in for StopFiring only on a drained phaser
+    bank or pulse cannon (and a tube's, Weapon.StopFiring, is in the shared
+    encoding), and for _broadcast_reload only on a tube. A weapon SYSTEM or
+    a tractor overriding StopFiring is not a reason to hand anything back
+    (K0 never calls theirs)."""
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
+
+    def sub(base, name):
+        return type("_Sub" + base.__name__, (base,),
+                    {name: lambda self, *a: None})
+
+    for base in (ws.PhaserBank, ws.PulseWeapon, ws.TorpedoTube):
+        assert nc._k0_flag(sub(base, "StopFiring")) == 1, base
+    assert nc._k0_flag(sub(ws.TorpedoTube, "_broadcast_reload")) == 1
+    for base in (ws.PhaserSystem, ws.PulseWeaponSystem, ws.TractorBeamSystem,
+                 ws.TorpedoSystem, ws.TractorBeam):
+        assert nc._k0_flag(sub(base, "StopFiring")) == 0, base
+    for base in (ws.PhaserBank, ws.PulseWeapon, ws.TorpedoSystem):
+        assert nc._k0_flag(sub(base, "_broadcast_reload")) == 0, base

@@ -4,11 +4,14 @@ docs/superpowers/specs/2026-11-02-native-weapon-state-design.md §4.3, plan
 docs/superpowers/plans/2026-11-02-native-weapon-state.md Review Focus 2-3).
 
 `host_loop._advance_weapons` asks `native_combat.k0_weapons(ships, dt)`; K0
-steps every weapon from the mirror (the per-tick model) and stops at each
-thing only Python may do -- a depleted bank's StopFiring, a reloaded tube's
-ET_TORPEDO_RELOAD, a pulse watcher with checks, a hand-back -- with the
-writes before it already applied. Every scenario is run with native off and
-on and compared tick by tick by float.hex() (tests/helpers/k0_fight.py).
+steps every weapon from the mirror (the per-tick model) and stops only at a
+hand-back (RUN_PYTHON), with the writes before it already applied. A
+depleted bank's stop, a reload and a pulse watcher's line are logged writes
+plus combat effect queue entries -- LOOP_STOP, TORPEDO_RELOAD, WATCH --
+delivered at the scope's end (combat fire events Task 4, spec
+2026-11-02-combat-fire-events §4.3). Every scenario is run with native off
+and on and compared tick by tick by float.hex() (tests/helpers/k0_fight.py,
+which opens the effect scope in both arms).
 """
 import pytest
 
@@ -48,6 +51,20 @@ def _switch():
 
 def _records(counts):
     return counts["k0_records"]
+
+
+def _logged(counts):
+    """The records K0 no longer returns, logged with their entries."""
+    return counts["k0_logged"]
+
+
+def _entries(counts):
+    return counts["k0_entries"]
+
+
+def _no_converted_records(counts):
+    rec = _records(counts)
+    assert rec["DEPLETE_STOP"] == rec["RELOADED"] == rec["WATCH"] == 0, rec
 
 
 def _reasons(counts):
@@ -124,9 +141,13 @@ def test_k0_matches_python_per_tick(monkeypatch, passive):
     kinds = {e[0] for e in ref.events}
     assert {"reload", "charge_toggle", "fired", "torpedo_fired"} <= kinds, kinds
     assert counts["k0_steps"] > 0, counts
-    rec = _records(counts)
-    assert rec["DEPLETE_STOP"] > 0 and rec["RELOADED"] > 0 \
-        and rec["WATCH"] > 0, counts
+    logged = _logged(counts)
+    assert logged["deplete_stop"] > 0 and logged["reload"] > 0 \
+        and logged["watch"] > 0, counts
+    entries = _entries(counts)
+    assert entries["LOOP_STOP"] > 0 and entries["WATCH"] > 0, entries
+    assert entries["TORPEDO_RELOAD"] == logged["reload"], counts
+    _no_converted_records(counts)
     assert counts["k0_logged_writes"] > 0, counts
     # The magazine ran dry with a slot due: the reload gate denied it.
     vorcha_tubes = nat.weapons("Vorcha", TORPEDO)
@@ -138,9 +159,10 @@ def test_k0_matches_python_per_tick(monkeypatch, passive):
 
 
 def test_deplete_stop_plays_loop_stop(monkeypatch):
-    """A firing bank drained to 0 by K0: Python's StopFiring runs at the
-    record, so the looped fire sound is stopped (and dropped) exactly once,
-    in both arms, with `_depleted` latched before it."""
+    """A firing bank drained to 0 by K0: its StopFiring is logged writes
+    plus a LOOP_STOP entry, so the looped fire sound is stopped (and
+    dropped) exactly once, at the scope's end, in both arms, with
+    `_depleted` latched before it and no record returned."""
     stops = {}
 
     class Handle:
@@ -163,7 +185,9 @@ def test_deplete_stop_plays_loop_stop(monkeypatch):
                                 setup=setup)
     assert stops[False] == stops[True] == [(1, True)], stops
     assert nat.weapons("Galaxy", PHASER)[0]._loop_handle is None
-    assert _records(counts)["DEPLETE_STOP"] == 1, counts
+    assert _logged(counts)["deplete_stop"] == 1, counts
+    assert _entries(counts)["LOOP_STOP"] == 1, counts
+    _no_converted_records(counts)
 
 
 def _galaxy_tubes_reload_together(w):
@@ -173,12 +197,14 @@ def _galaxy_tubes_reload_together(w):
 
 
 def test_reloaded_handler_starts_firing_same_ship(monkeypatch):
-    """Review Focus 2. Each ET_TORPEDO_RELOAD of a Galaxy tube runs a handler
-    that StartFirings the same ship's torpedoes and phasers (nested K1
-    system sessions inside the K0 walk). The handler, and K1, must see the
-    weapons already stepped this tick post-step and the later ones pre-step:
-    the tubes reloading on the same tick fire one by one, between the
-    reloads, exactly as the Python walk."""
+    """Review Focus 2, re-aimed (ruling F4: the reload is a queued
+    TORPEDO_RELOAD since combat fire events Task 4, so its handler runs at
+    the scope's end, not mid-walk, in both arms). Each ET_TORPEDO_RELOAD of
+    a Galaxy tube runs a handler that StartFirings the same ship's
+    torpedoes and phasers (K1 system sessions inside the delivery, each
+    delivering its own entries at its end). The tubes reloading on the same
+    tick fire one by one, between the reloads, exactly as the Python
+    reference with the same scope."""
     seen = {}
 
     def setup(w):
@@ -207,15 +233,17 @@ def test_reloaded_handler_starts_firing_same_ship(monkeypatch):
                and c == ("reload", n)
                for (a, b, c), n in ((ev[i:i + 3], ev[i][1])
                                     for i in range(len(ev) - 2))), ev
-    assert _records(counts)["RELOADED"] >= 2, counts
+    assert _logged(counts)["reload"] >= 2, counts
+    _no_converted_records(counts)
     assert counts["k1_records"] > 0, counts
 
 
 def test_handler_sets_later_weapon_charge(monkeypatch):
-    """Review Focus 3. A Galaxy reload's handler sets a Vor'cha phaser bank
-    (a later ship: not yet stepped this tick) to a quarter charge with the
-    SDK's SetChargeLevel. That bank must be stepped THIS tick from the new
-    value (the wake and the mirror push), as the Python walk does."""
+    """Review Focus 3, re-aimed (ruling F4). A Galaxy reload's handler,
+    delivered at the scope's end, sets a Vor'cha phaser bank to a quarter
+    charge with the SDK's SetChargeLevel. That bank must be stepped NEXT
+    tick from the new value (the wake and the mirror push), as the Python
+    reference with the same scope does."""
     set_at = {}
 
     def setup(w):
@@ -240,8 +268,12 @@ def test_handler_sets_later_weapon_charge(monkeypatch):
     i = nat.leaves.index(bank)
     quarter = ("float", (bank.GetMaxCharge() * 0.25).hex())
     for n in set_at[True]:
-        assert nat.log[n - 1][i][1] != quarter, (n, nat.log[n - 1][i])
-    assert _records(counts)["RELOADED"] > 0, counts
+        # Set after this tick's step (the tick ends with it), stepped from
+        # it the next.
+        assert nat.log[n - 1][i][1] == quarter, (n, nat.log[n - 1][i])
+        if n < len(nat.log):
+            assert nat.log[n][i][1] != quarter, (n, nat.log[n][i])
+    assert _logged(counts)["reload"] > 0, counts
 
 
 def _hold(w, ship_name):
@@ -377,9 +409,11 @@ class _LoudWatcher(FloatRangeWatcher):
 ], ids=["fresh_watcher", "subclass_watcher"])
 def test_replaced_watcher_keeps_k0_exact(monkeypatch, make):
     """A pulse cannon's `_charge_watcher` replaced after construction: K0
-    must not keep the old watcher's check count. A plain unowned
-    FloatRangeWatcher is adopted (its checks push `_watch_checks`); any
-    other watcher always runs `_update` in Python (WATCH)."""
+    must not keep the old watcher's check count or value. A plain unowned
+    FloatRangeWatcher is adopted (its checks push `_watch_checks`, its
+    value `_watch_value`) and K0 commits it, queueing WATCH; any other
+    watcher runs its own `_update`: the cannon is Python's (reason
+    `watcher`)."""
     calls = {}
 
     def setup(w):
@@ -404,7 +438,13 @@ def test_replaced_watcher_keeps_k0_exact(monkeypatch, make):
                                  passive=False)
     assert any(e[0] == "charge_toggle" for e in ref.events), ref.events
     assert calls[True] == calls[False]
-    assert _records(counts)["WATCH"] > 0, counts
+    _no_converted_records(counts)
+    if calls[True]:                         # the subclass: Python's
+        assert _reasons(counts).get("watcher", 0) > 0, counts
+        assert _logged(counts)["watch"] == 0, counts
+    else:
+        assert _logged(counts)["watch"] > 0, counts
+        assert _entries(counts)["WATCH"] == _logged(counts)["watch"]
 
 
 def test_replacing_a_watcher_detaches_the_old_one():
@@ -498,36 +538,50 @@ def test_switch_off_never_enters_k0(monkeypatch):
 
 
 def test_nested_k0_runs_python(monkeypatch):
-    """A record's handler re-entering the weapons step: no nested K0 session
-    (reason `nested`); the caller runs Python."""
-    answers = []
+    """A record's Python re-entering the weapons step (a RUN_PYTHON weapon's
+    patched UpdateCharge): no nested K0 session (reason `nested`); the
+    caller runs Python. A queued reload's handler, delivered after the
+    session ended, starts a session of its own."""
+    answers, delivered = [], []
     with monkeypatch.context() as mp:
         w = World(mp, True, "k0_nested")
         try:
             _galaxy_tubes_reload_together(w)
+            bank = w.weapons("Galaxy", PHASER)[0]
+            real = bank.UpdateCharge
+
+            def patched(dt):
+                answers.append(nc.k0_weapons([], DT))
+                real(dt)
+            bank.UpdateCharge = patched     # RUN_PYTHON override
 
             def hook(evt):
                 if evt.GetEventType() == App.ET_TORPEDO_RELOAD:
-                    answers.append(nc.k0_weapons([], DT))
+                    delivered.append(nc.k0_weapons([], DT))
             w.hooks.append(hook)
             for _ in range(40):
                 w.tick()
         finally:
             w.close()
-    assert answers and not any(answers)
+    assert len(answers) == 40 and not any(answers)
+    assert delivered and all(delivered)
     assert nc.counts()["k0_python_step_reasons"]["nested"] == len(answers)
 
 
 def test_exception_in_a_record_abandons_the_session(monkeypatch):
-    """A record's Python raises (a depleted bank's loop sound, here): the
-    session is abandoned and the exception propagates; the mirror still
-    equals the Python and the next tick runs."""
+    """A record's Python raises (a RUN_PYTHON weapon's patched
+    UpdateCharge): the session is abandoned and the exception propagates;
+    the entries queued before it (a depleted bank's LOOP_STOP) are still
+    delivered (ruling F5), the mirror still equals the Python and the next
+    tick runs."""
     class Boom(Exception):
         pass
 
+    stops = []
+
     class Handle:
         def Stop(self):
-            raise Boom()
+            stops.append(w.n)
 
     with monkeypatch.context() as mp:
         w = World(mp, True, "k0_boom")
@@ -537,14 +591,54 @@ def test_exception_in_a_record_abandons_the_session(monkeypatch):
             bank._beam_on_countdown = 0.0
             bank._charge_level = 0.01
             bank._loop_handle = Handle()
+            later = w.weapons("Vorcha", PHASER)[0]
+
+            def boom(dt):
+                raise Boom()
+            later.UpdateCharge = boom
             with pytest.raises(Boom):
                 w.tick()
             assert not _h.combat_k0_open()
-            assert bank._depleted is True       # applied before the record
+            assert bank._depleted is True and bank._firing is False
+            assert stops == [1] and bank._loop_handle is None
             nc.audit_mirror()
             assert nc.audit_failures() == []
+            del later.UpdateCharge
             w.tick()                                # the next tick runs
             assert nc.counts()["k0_records"]["DONE"] == 1
+        finally:
+            w.close()
+
+
+def test_a_raising_delivery_is_raised_after_the_session(monkeypatch):
+    """A queued effect's delivery raises (the depleted bank's loop sound):
+    the K0 session already ended normally (nothing abandoned), the scope's
+    flush delivers the rest and raises it (decision 13 under tests), and
+    the next tick runs."""
+    class Boom(Exception):
+        pass
+
+    class Handle:
+        def Stop(self):
+            raise Boom()
+
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_boom_delivery")
+        try:
+            bank = w.weapons("Galaxy", PHASER)[0]
+            bank._firing = True
+            bank._beam_on_countdown = 0.0
+            bank._charge_level = 0.01
+            bank._loop_handle = Handle()
+            with pytest.raises(Boom):
+                w.tick()
+            assert not _h.combat_k0_open()
+            assert nc.counts()["k0_records"]["DONE"] == 1  # it ended
+            assert bank._depleted is True and bank._firing is False
+            nc.audit_mirror()
+            assert nc.audit_failures() == []
+            w.tick()
+            assert nc.counts()["k0_records"]["DONE"] == 2
         finally:
             w.close()
 
@@ -619,7 +713,10 @@ def test_python_kind_k0_writes_call_the_setter_once(monkeypatch):
     assert len(calls) == counts["k0_logged_writes"], (len(calls), counts)
     assert ("_charge_level", "float") in calls, calls[:10]
     assert ("_depleted", "bool") in calls, calls
-    assert _records(counts)["DEPLETE_STOP"] == 1, counts
+    # The stop's writes (combat fire events Task 4), Python's types.
+    assert ("_firing", "bool") in calls, calls
+    assert ("_beam_on_countdown", "float") in calls, calls
+    assert _logged(counts)["deplete_stop"] == 1, counts
 
 
 def test_reentrant_next_during_delivery_fails_loudly(monkeypatch):
@@ -635,9 +732,10 @@ def test_reentrant_next_during_delivery_fails_loudly(monkeypatch):
         try:
             bank = w.weapons("Galaxy", PHASER)[0]
             bank.SetChargeLevel(0.0)        # recharging: K0 logs its charge
-            # A later record (a Vor'cha cannon's WATCH) delivers it, so the
-            # walk is not done: a re-entrant next() would step on.
-            _watch(w, w.weapons("Vorcha", PULSE)[0])
+            # A later record (a Vor'cha tractor holding: RUN_PYTHON)
+            # delivers it, so the walk is not done: a re-entrant next()
+            # would step on.
+            _hold(w, "Vorcha")
             wake = passive_state.wake
 
             def hook(obj):
@@ -683,7 +781,9 @@ def test_counts_keys_and_reset(monkeypatch):
     assert set(c["k0_python_reasons"]) == {
         "tractor", "no_row", "not_weapon_system", "stale_row", "slot_heal",
         "override", "audit", "power_level", "parent", "unrepresentable",
-        "unknown_kind"}
+        "unknown_kind", "watcher"}
+    assert set(c["k0_logged"]) == {"deplete_stop", "reload", "watch"}
+    assert set(c["k0_entries"]) == {"LOOP_STOP", "TORPEDO_RELOAD", "WATCH"}
     assert set(c["k0_python_step_reasons"]) == {"off", "nested", "audit"}
     assert c["k0_steps"] > 0 and c["k0_records"]["DONE"] == 1
     assert isinstance(c["k0_logged_writes"], int)
@@ -691,6 +791,8 @@ def test_counts_keys_and_reset(monkeypatch):
     c = nc.counts()
     assert c["k0_steps"] == 0 and c["k0_records"]["DONE"] == 0
     assert not any(c["k0_python_step_reasons"].values())
+    assert not any(c["k0_logged"].values())
+    assert not any(c["k0_entries"].values())
 
 
 # ── Mirror: an INDEX push the row cannot hold (Task 3 review, Minor 1) ──────
@@ -702,3 +804,146 @@ def test_index_beyond_int64_drops_the_row():
     system._power_level = 2 ** 64          # no exception: the row is dropped
     assert "_nslot" not in system.__dict__
     assert system._power_level == 2 ** 64
+
+
+def test_reload_and_watcher_crossing_delivered_at_the_boundary(monkeypatch):
+    """Combat fire events, Task 2: inside the tick's scope (native on) a
+    tube's ET_TORPEDO_RELOAD and a pulse cannon's watcher crossing are
+    queued and delivered when the scope closes, not mid-walk; a crossing's
+    handler reads the watcher's new value, committed at production (E3)."""
+    from engine.appc import effect_queue as eq
+    toggle = charge_toggle_type()
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_eq")
+        try:
+            _galaxy_tubes_reload_together(w)
+            cannon = w.weapons("Vorcha", PULSE)[0]
+            _watch(w, cannon)
+            cannon.SetChargeLevel(cannon.GetMaxCharge() * 0.5)
+            watcher = cannon.GetChargeWatcher()
+            seen = []
+            w.hooks.append(lambda evt: seen.append((
+                evt.GetEventType(), eq.deferring(), eq._draining,
+                watcher.GetWatchedVariable())))
+            for _ in range(120):
+                with host_loop._combat_effect_scope():
+                    w.tick()
+            kinds = {k for k, *_ in seen}
+            assert {App.ET_TORPEDO_RELOAD, toggle} <= kinds, kinds
+            # Every one delivered by the flush, never inside the walk.
+            assert all(not d and drain for _k, d, drain, _v in seen), seen
+            # The upward crossing of 0.6: its handler sees the new value.
+            ups = [v for k, _d, _dr, v in seen if k == toggle]
+            assert ups and all(v >= 0.6 for v in ups), ups
+            c = nc.counts()
+            assert c["k0_logged"]["watch"] > 0 and c["k0_logged"]["reload"] > 0
+            _no_converted_records(c)
+        finally:
+            w.close()
+
+
+# ── Combat fire events, Task 4: the watcher's value, a dropped row ──────────
+
+def test_watcher_value_is_mirrored_for_the_kernels_old_value(monkeypatch):
+    """K0's WATCH carries old = the mirrored `_watch_value`, so every commit
+    Python makes of an owned watcher's `_value` (a test or tool calling
+    `_update`, a cannon run in Python) is pushed: a crossing from a value
+    Python committed fires natively exactly as in the reference."""
+    def setup(w):
+        w.ships["Vorcha"].GetPulseWeaponSystem().TurnOn()
+        _watch(w, w.weapons("Vorcha", PULSE)[0])    # full: 1.0 > 0.6
+
+    def script(w, t):
+        cannon = w.weapons("Vorcha", PULSE)[0]
+        if t in (5, 20):
+            # Below the check, by hand (outside any step): the next
+            # tick's line, back at 1.0, crosses upward from it.
+            cannon.GetChargeWatcher()._update(0.3)
+            if w.native:
+                h = cannon.__dict__["_nslot"]
+                assert _h.combat_dump(h)["_watch_value"] == 0.3
+
+    ref, nat, counts = run_both(monkeypatch.context, script, 30,
+                                setup=setup, passive=False)
+    toggles = [e[3] for e in ref.events if e[0] == "charge_toggle"]
+    # Up at 1 (the watcher starts at 0.0), then down (by hand) and up again
+    # (the line, from the value Python committed) at 6 and at 21.
+    assert toggles == [1, 6, 6, 21, 21], ref.events
+    assert _logged(counts)["watch"] > 0, counts
+
+
+def test_watcher_adoption_pushes_its_value():
+    """A plain watcher assigned to a cannon is adopted with its value."""
+    nc.configure(ON)
+    cannon = ws.PulseWeapon("c")
+    fresh = FloatRangeWatcher(0.625)
+    cannon._charge_watcher = fresh
+    assert _h.combat_dump(cannon.__dict__["_nslot"])["_watch_value"] == 0.625
+    nc.audit_mirror()
+    assert nc.audit_failures() == []
+    fresh._value = 0.125                    # behind the watcher's back
+    nc.audit_mirror()
+    assert ("PulseWeapon", "_watch_value") in nc.audit_failures()
+
+
+def test_a_dropped_tubes_queued_reload_is_still_delivered(monkeypatch):
+    """Task 3 review, Minor 3: K0 queues a tube's TORPEDO_RELOAD by handle;
+    the tube's row is dropped (a value the mirror cannot hold) before the
+    scope ends. The entry names the live object instead (native_combat
+    ._drop rebinds it), so ET_TORPEDO_RELOAD is still posted, as the
+    Python reference posts it."""
+    from engine.appc import effect_queue as eq
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_drop")
+        try:
+            _galaxy_tubes_reload_together(w)
+            tubes = w.weapons("Galaxy", TORPEDO)
+            reloads = []
+            w.hooks.append(lambda evt: reloads.append(evt.GetDestination())
+                           if evt.GetEventType() == App.ET_TORPEDO_RELOAD
+                           else None)
+            for _ in range(120):
+                w.n += 1
+                w.clock[0] += DT
+                with eq.scope():
+                    host_loop._advance_weapons(list(w.order), DT)
+                    queued = _h.combat_effect_size()
+                    if queued and not reloads:
+                        dropped = [t for t in tubes if "_nslot" in t.__dict__]
+                        for t in dropped:
+                            nc._drop(t)
+                if reloads:
+                    break
+            assert reloads, "no reload in 120 ticks"
+            assert set(map(id, reloads)) <= set(map(id, tubes))
+            assert eq.counts()["skipped_gone"] == 0, eq.counts()
+            assert nc.counts()["k0_logged"]["reload"] == len(reloads)
+        finally:
+            w.close()
+
+
+def test_a_k0_session_outside_the_scope_delivers_at_its_end(monkeypatch):
+    """Ruling F3 for K0: `_advance_weapons` run with no scope open (a tool,
+    a test) opens the session's own deferral: its reloads, Python's and the
+    kernel's alike, are delivered when the K0 session ends -- in order,
+    nothing left queued for a later tick."""
+    from engine.appc import effect_queue as eq
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_outside")
+        try:
+            _galaxy_tubes_reload_together(w)
+            seen = []
+            w.hooks.append(lambda evt: seen.append(
+                (w.n, eq.deferring(), _h.combat_k0_open()))
+                if evt.GetEventType() == App.ET_TORPEDO_RELOAD else None)
+            for _ in range(120):
+                w.n += 1
+                w.clock[0] += DT
+                host_loop._advance_weapons(list(w.order), DT)
+                assert _h.combat_effect_size() == 0
+                if seen:
+                    break
+            assert seen and all(not d and not k for _n, d, k in seen), seen
+            assert nc.counts()["k0_logged"]["reload"] == len(seen)
+        finally:
+            w.close()

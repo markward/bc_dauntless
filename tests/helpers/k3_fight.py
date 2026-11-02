@@ -19,7 +19,10 @@ shield faces, ``damage_eligibility._current`` (see eligibility_view: ids
 differ between the arms, so ties are named by rank) together with whether it
 equals select_eligible on the same objects, and every ship pair's can_detect
 lock-break latch; and the whole ordered event log with each weapon hit's
-payload.
+payload -- less the queued kinds (weapon events, bank sounds), which go to a
+per-tick ordered list of their own (``Recorder.queued``,
+tests/helpers/effect_split.py): with native on, the tick's effect scope
+delivers them at the boundary.
 
 In the native arm a ``K3Tally`` wraps ``combat_k3_next``: every record the
 kernel returns is classified BEFORE Python acts on it (the Python attributes
@@ -53,10 +56,12 @@ from engine.appc import native_combat as nc
 from engine.appc import projectiles
 from engine.appc import sensor_detection as sd
 from engine.appc import torpedo_scan
+from engine.appc import weapon_subsystems as ws
 from engine.appc.events import WeaponHitEvent
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.projectiles import Torpedo
 from engine.systems import frames
+from tests.helpers import effect_split
 
 _ZERO = (0.0, 0.0, 0.0)
 
@@ -397,6 +402,7 @@ class Recorder:
         self.ship_instances = ship_instances
         self.labels = {id(s): s.GetName() for s in self.ships}
         self.held = []
+        self.named = []          # weapons labelled by name (held alive)
         self.torps = []          # every torpedo seen, first-sight order
         self.torp_ids = set()
         self.live = set()        # id()s in flight after the last record
@@ -411,6 +417,7 @@ class Recorder:
         # Every True can_detect lock-break latch recorded (pair x tick): the
         # "latched" row compares something only while this grows.
         self.latched = 0
+        self.queued = effect_split.Queued(mp, self.label, lambda: self.tick)
         self._spy(mp)
 
     # ── Labels ───────────────────────────────────────────────────────────────
@@ -419,6 +426,16 @@ class Recorder:
         if obj is None:
             return None
         name = self.labels.get(id(obj))
+        if name is None and isinstance(obj, (ws.Weapon, ws.WeaponSystem)):
+            # A recorded ship's weapon or weapon system, by name: its first
+            # sight is often a weapon event, which native delivers at the
+            # tick boundary, after objects the rest of the step numbers.
+            # Held apart from the numbered objects, so it never shifts a
+            # number.
+            ship = self.labels.get(id(obj._climb_to_ship()))
+            if ship is not None:
+                name = self.labels[id(obj)] = "%s/%s" % (ship, obj.GetName())
+                self.named.append(obj)
         if name is None:
             name = self.labels[id(obj)] = "%s#%d" % (type(obj).__name__,
                                                      len(self.held))
@@ -465,6 +482,17 @@ class Recorder:
 
         mp.setattr(combat, "apply_hit", hit_spy)
         mp.setattr(projectiles, "update_all", update_spy)
+
+        register = projectiles.register
+
+        def register_spy(torpedo, _orig=register):
+            # Numbered at launch: with native on, its ET_TORPEDO_FIRED (its
+            # first sight before) is delivered at the tick boundary, after
+            # objects the rest of the step labels.
+            _orig(torpedo)
+            self.label(torpedo)
+
+        mp.setattr(projectiles, "register", register_spy)
         # The presentation calls, in the same log as the apply_hits: their
         # order among the hits is compared (a K2 resting contact's, batched
         # since round trips Task 3, included).
@@ -516,7 +544,10 @@ class Recorder:
                    self.payload(evt))
             if isinstance(src, Torpedo):
                 by_objid[src.GetObjID()] = self.label(src)
-            self.events.append(row)
+            if self.queued.takes(evt):
+                self.queued.rows.append(row)
+            else:
+                self.events.append(row)
             return _orig(evt)
 
         mp.setattr(App.g_kEventManager, "AddEvent", add_event)
@@ -741,6 +772,7 @@ def compare(ref, nat):
     for i, (x, y) in enumerate(zip(ref.events, nat.events)):
         assert x == y, "event %d differs:\n python %r\n native %r" % (i, x, y)
     assert len(ref.events) == len(nat.events)
+    effect_split.compare(ref.queued, nat.queued)
 
 
 #: Every reason the kernel can give for an ASK guide (k3_projectiles.cc

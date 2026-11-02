@@ -18,6 +18,7 @@
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/stop_firing.h"
 
 namespace dauntless::combat {
 
@@ -36,6 +37,7 @@ bool is_system_kind(int64_t k) { return k >= 1 && k <= 4; }
 void hand_back(K0Step& s, K0Reason r) {
     s.writes.clear();
     s.record = K0Kind::DONE;
+    s.loop_stop = false;
     s.handback = r;
 }
 
@@ -43,6 +45,8 @@ void hand_back(K0Step& s, K0Reason r) {
 void reset(K0Step& s) {
     s.handback.reset();
     s.record = K0Kind::DONE;
+    s.loop_stop = false;
+    s.watch_old = s.watch_new = 0.0;
     s.writes.clear();
 }
 
@@ -52,6 +56,44 @@ void push_float(K0Step& s, Field f, double v) {
     w.field = f;
     w.d = v;
     s.writes.push_back(w);
+}
+
+void push_flag(K0Step& s, Field f, bool v) {
+    K0FieldWrite w;
+    w.type = K0FieldWrite::Type::Flag;
+    w.field = f;
+    w.i = v ? 1 : 0;
+    s.writes.push_back(w);
+}
+
+// `self.StopFiring()` on `w` (stop_firing.h): its class's writes, in its
+// order. False: not a leaf whose stop K0 writes (nothing pushed).
+bool push_stop(K0Step& s, const SubsystemRow& w) {
+    const std::optional<StopFiring> stop = stop_firing_of(w.weapon_kind);
+    if (!stop) return false;
+    for (size_t i = 0; i < stop->n; ++i) {
+        K0FieldWrite x;
+        switch (stop->writes[i]) {
+            case StopWrite::FiringFalse:
+                push_flag(s, Field::_firing, false);
+                continue;
+            case StopWrite::BeamOnCountdownZero:
+                push_float(s, Field::_beam_on_countdown, 0.0);
+                continue;
+            case StopWrite::TargetNone:
+                x.type = K0FieldWrite::Type::Ref;
+                x.field = Field::_target;
+                x.i = -1;
+                break;
+            case StopWrite::TargetOffsetNone:
+                x.type = K0FieldWrite::Type::Null;
+                x.field = Field::_target_offset;
+                break;
+        }
+        s.writes.push_back(x);
+    }
+    s.loop_stop = stop->loop_stop;
+    return true;
 }
 
 void push_slot(K0Step& s, Field f, int64_t index, double v) {
@@ -182,7 +224,18 @@ const char* k0_reason_name(K0Reason r) {
         case K0Reason::Parent: return "parent";
         case K0Reason::Unrepresentable: return "unrepresentable";
         case K0Reason::UnknownKind: return "unknown_kind";
+        case K0Reason::Watcher: return "watcher";
         case K0Reason::kCount: break;
+    }
+    return "?";
+}
+
+const char* k0_effect_name(K0Effect e) {
+    switch (e) {
+        case K0Effect::LOOP_STOP: return "LOOP_STOP";
+        case K0Effect::TORPEDO_RELOAD: return "TORPEDO_RELOAD";
+        case K0Effect::WATCH: return "WATCH";
+        case K0Effect::kCount: break;
     }
     return "?";
 }
@@ -221,12 +274,12 @@ void energy_into(const Mirror& m, int64_t weapon, double dt, K0Step& s) {
         const double charge = py_max(0.0, w->_charge_level - rate * dt);
         push_float(s, Field::_charge_level, charge);
         if (charge <= 0.0) {
-            // self._depleted = True; self.StopFiring() (Python's: the record)
-            K0FieldWrite d;
-            d.type = K0FieldWrite::Type::Flag;
-            d.field = Field::_depleted;
-            d.i = 1;
-            s.writes.push_back(d);
+            // self._depleted = True; self.StopFiring(): the stop's writes,
+            // then (a phaser bank) its loop sound's LOOP_STOP, which the
+            // session queues (THE EFFECT QUEUE). A firing tractor never gets
+            // here (handed back above): a kind with no stop is Python's.
+            push_flag(s, Field::_depleted, true);
+            if (!push_stop(s, *w)) return hand_back(s, K0Reason::UnknownKind);
             s.record = K0Kind::DEPLETE_STOP;
         }
         return;
@@ -259,6 +312,9 @@ void energy_into(const Mirror& m, int64_t weapon, double dt, K0Step& s) {
 void pulse_into(const Mirror& m, int64_t weapon, double dt, K0Step& s) {
     const SubsystemRow* w = weapon < 0 ? nullptr : m.subsystem(weapon);
     if (w == nullptr) return hand_back(s, K0Reason::StaleRow);
+    // A watcher the weapon does not own (WATCH_ALWAYS) runs its own
+    // `_update` at the step's last line: the whole step is Python's.
+    if (w->_watch_checks < 0) return hand_back(s, K0Reason::Watcher);
     if (w->_cooldown_remaining > 0.0)
         push_float(s, Field::_cooldown_remaining,
                    py_max(0.0, w->_cooldown_remaining - dt));
@@ -267,20 +323,27 @@ void pulse_into(const Mirror& m, int64_t weapon, double dt, K0Step& s) {
     energy_into(m, weapon, dt, s);
 }
 
-// self._charge_watcher._update(self.GetChargePercentage()) (WS:2980).
+// self._charge_watcher._update(self.GetChargePercentage()) (WS:3020), the
+// owned FloatRangeWatcher's (float_range_watcher.py) inside the effect
+// queue's deferral: `self._value = float(new_value)`, and with checks
+// WATCH(self, old, new) for delivery to fire the crossings.
 void watch_into(const Mirror& m, int64_t weapon, K0Step& s) {
     const SubsystemRow* w = weapon < 0 ? nullptr : m.subsystem(weapon);
-    // FloatRangeWatcher._update: with checks, the crossings (Python's).
-    if (w == nullptr || w->_watch_checks != 0) {
-        s.record = K0Kind::WATCH;
-        return;
-    }
-    // PulseWeapon.GetChargePercentage (WS:2841); _update: self._value =
-    // float(new_value).
+    if (w == nullptr) return hand_back(s, K0Reason::StaleRow);
+    if (w->_watch_checks < 0) return hand_back(s, K0Reason::Watcher);
+    // PulseWeapon.GetChargePercentage (WS:2841).
+    const double value =
+        (w->_max_charge <= 0.0) ? 0.0 : w->_charge_level / w->_max_charge;
     K0FieldWrite x;
     x.type = K0FieldWrite::Type::Watcher;
-    x.d = (w->_max_charge <= 0.0) ? 0.0 : w->_charge_level / w->_max_charge;
+    x.field = Field::_watch_value;  // the mirror's copy of `_value`
+    x.d = value;
     s.writes.push_back(x);
+    if (w->_watch_checks > 0) {
+        s.record = K0Kind::WATCH;
+        s.watch_old = w->_watch_value;
+        s.watch_new = value;
+    }
 }
 
 // TorpedoTube.UpdateReload (WS:3589) + ReloadTorpedo (WS:3652). `timers`
@@ -397,12 +460,14 @@ struct ShipPlan {
 // before its step's first element write, `floats[from, from + n)` of the
 // log's undo_floats.
 struct K0Undo {
-    enum class Type : int32_t { F, I, Floats } type = Type::F;
+    enum class Type : int32_t { F, I, Floats, Ref, Offset } type = Type::F;
     int64_t h = -1;
     Field f = Field::kCount;
     double d = 0.0;
     int64_t i = 0;
     size_t from = 0, n = 0;
+    Vec3 v{0, 0, 0};   // Offset
+    bool set = false;  // Offset
 };
 
 ShipPlan plan_ship(const Mirror& m, int64_t ship,
@@ -450,9 +515,6 @@ struct K0Session::State {
     std::shared_ptr<const std::vector<ShipPlan>> plan;
     double dt = 0.0, now = 0.0;
     size_t ship_pos = 0, weapon_pos = 0;
-    // The pulse cannon at the cursor returned DEPLETE_STOP: its watcher line
-    // runs at the next next().
-    bool pending_watch = false;
     bool done = false;
 };
 
@@ -462,6 +524,9 @@ struct K0Session::State {
 // never freed, so its storage is reused across calls and sessions.
 struct K0Session::Log {
     std::vector<K0Write> writes;
+    // The queue entries since the last record (THE EFFECT QUEUE), dropped
+    // with the writes on a throw.
+    std::vector<K0Entry> entries;
     std::vector<K0Undo> undo;
     std::vector<double> undo_floats;
     // The steps' scratch: a weapon's step, a pulse cannon's watcher line,
@@ -470,6 +535,7 @@ struct K0Session::Log {
     std::vector<double> timers, advanced;
     void clear() {
         writes.clear();
+        entries.clear();
         undo.clear();
         undo_floats.clear();
     }
@@ -561,10 +627,57 @@ private:
                     break;
                 }
                 case K0FieldWrite::Type::Watcher:
-                    break;  // not mirrored: nothing to undo
+                    // The watcher is not mirrored; its value is, on the
+                    // weapon's row (`_watch_value`, WATCH's old value).
+                    u.type = K0Undo::Type::F;
+                    u.f = Field::_watch_value;
+                    u.d = m_.get_f(h, Field::_watch_value);
+                    m_.set_f(h, Field::_watch_value, w.d);
+                    log_.undo.push_back(u);
+                    break;
+                case K0FieldWrite::Type::Ref:
+                    u.type = K0Undo::Type::Ref;
+                    u.i = m_.get_ref(h, w.field);
+                    m_.set_ref(h, w.field, w.i);
+                    log_.undo.push_back(u);
+                    break;
+                case K0FieldWrite::Type::Null: {  // `_target_offset = None`
+                    const SubsystemRow* r = m_.subsystem(h);
+                    if (r == nullptr) lost("a stop's row is gone");
+                    u.type = K0Undo::Type::Offset;
+                    u.set = r->target_offset_set;
+                    u.v = r->_target_offset;
+                    m_.set_fv(h, w.field, {});
+                    log_.undo.push_back(u);
+                    break;
+                }
             }
             log_.writes.push_back(K0Write{h, w});
         }
+        // The effect the step ends with, after its writes (THE EFFECT QUEUE).
+        switch (st.record) {
+            case K0Kind::DEPLETE_STOP:
+                ++c_.logged_deplete_stop;
+                if (st.loop_stop) enqueue(K0Effect::LOOP_STOP, h);
+                break;
+            case K0Kind::RELOADED:
+                ++c_.logged_reload;
+                enqueue(K0Effect::TORPEDO_RELOAD, h);
+                break;
+            case K0Kind::WATCH:
+                ++c_.logged_watch;
+                enqueue(K0Effect::WATCH, h, st.watch_old, st.watch_new);
+                break;
+            default:
+                break;
+        }
+    }
+
+    void enqueue(K0Effect kind, int64_t a, double old_value = 0.0,
+                 double new_value = 0.0) {
+        log_.entries.push_back(
+            K0Entry{kind, a, old_value, new_value, log_.writes.size()});
+        ++c_.entries[static_cast<size_t>(kind)];
     }
 
     K0Record emit(K0Kind kind, int64_t a, int64_t ship_pos, int32_t group,
@@ -579,6 +692,8 @@ private:
         c_.logged_writes += static_cast<int64_t>(log_.writes.size());
         r.writes = std::span<const K0Write>(log_.writes.data(),
                                             log_.writes.size());
+        r.entries = std::span<const K0Entry>(log_.entries.data(),
+                                             log_.entries.size());
         log_.undo.clear();  // delivered: Python applies them
         log_.undo_floats.clear();
         c_.records[static_cast<size_t>(kind)] += 1;
@@ -610,17 +725,6 @@ K0Record Walker::run() {
                 ++s_.weapon_pos;
                 return emit(K0Kind::RUN_PYTHON, h, pos, e.group, e.index, why);
             };
-            if (s_.pending_watch) {  // the depleted pulse cannon's last line
-                s_.pending_watch = false;
-                ++s_.weapon_pos;
-                K0Step& w = log_.watch;
-                reset(w);
-                watch_into(m_, h, w);
-                apply(h, w);
-                if (w.record == K0Kind::WATCH)
-                    return emit(K0Kind::WATCH, h, pos, e.group, e.index);
-                continue;
-            }
             if (h == kRefUnrepresentable) return python(K0Reason::Unrepresentable);
             const SubsystemRow* row = h < 0 ? nullptr : m_.subsystem(h);
             if (row == nullptr) return python(K0Reason::StaleRow);
@@ -648,24 +752,17 @@ K0Record Walker::run() {
                 energy_into(m_, h, s_.dt, st);
             if (st.handback) return python(*st.handback);
             ++c_.steps;
-            apply(h, st);
+            apply(h, st);  // its writes, then its entry (a stop, a reload)
             if (kind == kPulseWeapon) {
-                if (st.record == K0Kind::DEPLETE_STOP) {
-                    s_.pending_watch = true;  // the cursor stays on it
-                    return emit(K0Kind::DEPLETE_STOP, h, pos, e.group, e.index);
-                }
+                // The watcher line, on the mirror the step just wrote (no
+                // Python ran since: it cannot hand back now).
                 K0Step& w = log_.watch;
                 reset(w);
                 watch_into(m_, h, w);
+                if (w.handback) lost("a stepped pulse cannon's watcher line");
                 apply(h, w);
-                ++s_.weapon_pos;
-                if (w.record == K0Kind::WATCH)
-                    return emit(K0Kind::WATCH, h, pos, e.group, e.index);
-                continue;
             }
             ++s_.weapon_pos;
-            if (st.record != K0Kind::DONE)
-                return emit(st.record, h, pos, e.group, e.index);
         }
         ++s_.ship_pos;
         s_.weapon_pos = 0;
@@ -681,6 +778,13 @@ void roll_back(Mirror& m, K0Session::Log& log) {
         switch (u.type) {
             case K0Undo::Type::F: m.set_f(u.h, u.f, u.d); break;
             case K0Undo::Type::I: m.set_i(u.h, u.f, u.i); break;
+            case K0Undo::Type::Ref: m.set_ref(u.h, u.f, u.i); break;
+            case K0Undo::Type::Offset:
+                if (u.set)
+                    m.set_fv(u.h, u.f, {u.v[0], u.v[1], u.v[2]});
+                else
+                    m.set_fv(u.h, u.f, {});
+                break;
             case K0Undo::Type::Floats: {
                 const auto first = log.undo_floats.begin() +
                                    static_cast<std::ptrdiff_t>(u.from);

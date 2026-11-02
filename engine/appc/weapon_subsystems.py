@@ -16,7 +16,7 @@ bottom of subsystems.py guarantees the normal load order).
 import math as _math
 
 from engine.core import ids
-from engine.appc import native_combat, passive_weapons
+from engine.appc import effect_queue, native_combat, passive_weapons
 from engine.appc.native_combat import (
     NativeField, NativeFloatList, NativeRefField, NativeRefList,
     NativeSlotMap, NativeThawParentWakeField, NativeWakeField)
@@ -696,20 +696,29 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
     return torp
 
 
-def _post_weapon_fired(weapon) -> None:
-    """Post ET_WEAPON_FIRED: Source = the firing weapon, Destination = the
-    owning ship (resolved via ``_climb_to_ship``).  Shared by TorpedoTube.Fire
-    (posted AFTER ET_TORPEDO_FIRED — see TorpedoTube._broadcast_weapon_fired)
-    and PhaserBank.Fire (posted on the was-not-firing edge, Task 10, audited
-    §1.6/§6 — the SDK surface for the event bounds it to (weapon, owner ship)
-    regardless of weapon type)."""
+def _post_weapon_fired(weapon, target) -> None:
+    """Post ET_WEAPON_FIRED, a TGObjPtrEvent: Source = the firing weapon,
+    Destination = the owning ship (resolved via ``_climb_to_ship``), object
+    pointer = the target the shot went at (None for a dumbfire) -- the SDK's
+    WeaponFired handlers (E1M2, E2M1) ShipClass_Cast it and return when it
+    is None.
+    Shared by TorpedoTube.Fire (posted AFTER ET_TORPEDO_FIRED -- see
+    TorpedoTube._broadcast_weapon_fired), PhaserBank.Fire (posted on the
+    was-not-firing edge, Task 10, audited §1.6/§6) and PulseWeapon's shot
+    (one per bolt) -- the SDK surface for the event bounds it to (weapon,
+    owner ship) regardless of weapon type. Inside the effect queue's scope
+    it is queued (WEAPON_FIRED) and posted at the tick boundary."""
+    if effect_queue.deferring():
+        effect_queue.post(effect_queue.WEAPON_FIRED, weapon, target)
+        return
     import App
     from engine import dev_mode
     try:
-        evt = App.TGEvent_Create()
+        evt = App.TGObjPtrEvent_Create()
         evt.SetEventType(App.ET_WEAPON_FIRED)
         evt.SetSource(weapon)
         evt.SetDestination(weapon._climb_to_ship())
+        evt.SetObjPtr(target)
         App.g_kEventManager.AddEvent(evt)
     except Exception as _e:
         dev_mode.log_swallowed("ET_WEAPON_FIRED broadcast", _e)
@@ -874,8 +883,10 @@ class _EnergyWeaponFireMixin:
 
         Split in two (native combat phase 1b): `_fire_decide` is the
         decision, which the native K1 kernel also computes, and
-        `_fire_effect` the one copy of what follows it, which K1 calls with
-        its own decision (native_combat.run_k1)."""
+        `_fire_effect` what follows it. For a beam K1 no longer calls it:
+        it logs the same writes and queues the same FIRE_SOUND and
+        WEAPON_FIRED itself (k1_fire_control.h, THE EFFECT QUEUE) -- a
+        change to either effect below changes K1's twin too."""
         d = self._fire_decide(target, offset)
         return False if d is None else self._fire_effect(target, offset, d)
 
@@ -901,14 +912,32 @@ class _EnergyWeaponFireMixin:
         if not was_firing:
             self._beam_on_countdown = BEAM_ON_DELAY_S
             self._dwell = 0.0
-            self._play_fire_sfx()
+            if effect_queue.deferring():
+                effect_queue.post(effect_queue.FIRE_SOUND, self)
+            else:
+                self._play_fire_sfx()
         return True
 
     def StopFiring(self) -> None:
+        # K0 (a bank drained dry), K1 (a bank its walk stops) and K2 (a
+        # phaser step's stop) log these writes and queue the LOOP_STOP
+        # themselves, from one encoding (native/src/combat/include/
+        # dauntless/combat/stop_firing.h): change both together.
         was_firing = self._firing
         self._firing = False
         self._beam_on_countdown = 0.0
-        if was_firing and self._loop_handle is not None:
+        if not was_firing:
+            return
+        if effect_queue.deferring():
+            # Queued whether or not a loop plays yet: a FIRE_SOUND queued
+            # this tick sets the handle at delivery, before this stops it.
+            effect_queue.post(effect_queue.LOOP_STOP, self)
+        else:
+            self._stop_loop_sound()
+
+    def _stop_loop_sound(self) -> None:
+        """Stop and drop the bank's looped fire sound, if one plays."""
+        if self._loop_handle is not None:
             self._loop_handle.Stop()
             self._loop_handle = None
 
@@ -1192,6 +1221,8 @@ class Weapon(ShipSubsystem):
         return 0
 
     def StopFiring(self) -> None:
+        # K1 logs this write itself for a tube its walk stops (bank_stop,
+        # k1_fire_control.cc, from stop_firing.h): change both together.
         self._firing = False
 
     def IsFiring(self) -> int:
@@ -1540,6 +1571,10 @@ class WeaponSystem(PoweredSubsystem):
             self.update_weapons(0.0)
 
     def StopFiring(self, *args) -> None:
+        # K1 (the pump's system_stop) and K2 (an offline phaser system's
+        # stop) log these writes, then each child's stop (stop_firing.h,
+        # a firing child's LOOP_STOP queued), themselves
+        # (k1_fire_control.cc, k2_beams.cc): change all three together.
         self._fire_held = False
         self._held_target = None
         self._held_offset = None
@@ -1912,6 +1947,11 @@ class TorpedoSystem(WeaponSystem):
         that events.py:AddEvent gives for leaving destination dispatch
         unguarded in general. Revisit once these handlers are live-verified.
         """
+        # ET_CANT_FIRE IS ET_WEAPON_FIRE_FAILED, a queued kind -- but this is
+        # reached only from StartFiring, never while the effect queue
+        # defers, so it posts at once (an in-scope post would split the
+        # kind; under tests and --developer it raises instead).
+        effect_queue.check_acting_directly("ET_CANT_FIRE")
         import App
         evt = App.TGEvent_Create()
         evt.SetEventType(App.ET_CANT_FIRE)
@@ -2677,12 +2717,11 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
     def _fire_effect(self, target, offset, decision) -> bool:
         """The shared beam-fire effect, then ET_WEAPON_FIRED on the
         was-not-firing edge — the same edge the mixin already uses for the
-        SFX one-shot (Task 10, audited §1.6/§6; spec §7). TractorBeam and
-        PulseWeapon do not post this event yet — out of scope for the
-        "phaser safe group"."""
+        SFX one-shot (Task 10, audited §1.6/§6; spec §7). TractorBeam does
+        not post it; PulseWeapon posts its own, once per shot."""
         _EnergyWeaponFireMixin._fire_effect(self, target, offset, decision)
         if not decision[0]:
-            _post_weapon_fired(self)
+            _post_weapon_fired(self, target)
         return True
 
     def GetMaxCharge(self) -> float:                return self._max_charge
@@ -2968,6 +3007,11 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         # where BC waits ~2 s.  No held beam.
         self._charge_level = max(0.0, self._charge_level - self._shot_cost())
         self._cooldown_remaining = self.GetCooldownTime()
+        # One ET_WEAPON_FIRED per shot, once the bolt exists (no bolt, no
+        # shot to report); decision[1] is the target the shot used (the
+        # weapon's, else the ship's).
+        if torp is not None:
+            _post_weapon_fired(self, decision[1])
         return True
 
     def UpdateCharge(self, dt: float) -> None:
@@ -2979,11 +3023,15 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         _EnergyWeaponFireMixin.UpdateCharge(self, dt)
         # Drive the charge watcher with the charge FRACTION so
         # Conditions/ConditionPulseReady.py fires its ET_CHARGE_TOGGLE
-        # crossing event (guard divide-by-zero → 0.0).
+        # crossing event (guard divide-by-zero → 0.0). K0 stands in for
+        # this line on an owned watcher (k0_charging.h, THE EFFECT QUEUE:
+        # the value committed, WATCH queued): change both together.
         self._charge_watcher._update(self.GetChargePercentage())
 
     def StopFiring(self) -> None:
         # Discrete weapon — no _loop_handle to silence; just clear target refs.
+        # K1 (a cannon its walk stops) and K0 (one drained dry) log these
+        # writes themselves, from stop_firing.h: change both together.
         self._firing = False
         self._target = None
         self._target_offset = None
@@ -3429,8 +3477,8 @@ class TorpedoTube(Weapon):
     def _fire_decide(self, target, offset):
         """CanFire, then (targeted) the aim point from the tube's STORED
         offset and the cone; either failure posts ET_WEAPON_FIRE_FAILED here.
-        None: no launch. Else (target_used,). K1 posts the failure itself (a
-        FIRE_FAILED record) and calls only _fire_effect."""
+        None: no launch. Else (target_used,). K1 queues the failure itself (a
+        WEAPON_FIRE_FAILED entry) and calls only _fire_effect."""
         if not self.CanFire():
             return None
         if target is not None:
@@ -3468,20 +3516,20 @@ class TorpedoTube(Weapon):
         # BC's order (audited): ET_TORPEDO_FIRED (posted inside _spawn_torpedo,
         # once the projectile exists) THEN ET_WEAPON_FIRED, then the
         # player-only ET_TORPEDO_AMMO_CONSUMED.
-        self._broadcast_weapon_fired()
+        self._broadcast_weapon_fired(target)
         self._broadcast_ammo_consumed_if_player()
 
         # Discrete-shot — auto-stop after launch.
         self._firing = False
         return True
 
-    def _broadcast_weapon_fired(self) -> None:
+    def _broadcast_weapon_fired(self, target) -> None:
         """Post ET_WEAPON_FIRED: Source = the TUBE, Destination = the owning
         ship.  Posted AFTER ET_TORPEDO_FIRED on every successful launch
         (weapon-firing-mechanics.md §1.5/§2.4, audited).  Delegates to the
         module-level ``_post_weapon_fired`` shared with PhaserBank.Fire
         (Task 10)."""
-        _post_weapon_fired(self)
+        _post_weapon_fired(self, target)
 
     def _broadcast_weapon_fire_failed(self) -> None:
         """Post ET_WEAPON_FIRE_FAILED: Destination = the TUBE.  Posted when a
@@ -3503,7 +3551,12 @@ class TorpedoTube(Weapon):
         emitters (which all pair Source = the emitting object with Destination
         = whatever the handler casts or filters on) is why this one is inert.
         If this event ever needs a real consumer, give it a Source and decide
-        its destination deliberately rather than inheriting this shape."""
+        its destination deliberately rather than inheriting this shape.
+
+        Inside the effect queue's scope it is queued (WEAPON_FIRE_FAILED)."""
+        if effect_queue.deferring():
+            effect_queue.post(effect_queue.WEAPON_FIRE_FAILED, self)
+            return
         import App
         from engine import dev_mode
         try:
@@ -3517,7 +3570,12 @@ class TorpedoTube(Weapon):
     def _broadcast_ammo_consumed_if_player(self) -> None:
         """Post ET_TORPEDO_AMMO_CONSUMED, but ONLY when the firing ship is
         the player ship (BC locality gate — audited).  Source = the TUBE,
-        Destination = the ship, mirroring ET_WEAPON_FIRED."""
+        Destination = the ship, mirroring ET_WEAPON_FIRED.  Inside the
+        effect queue's scope it is queued (AMMO_CONSUMED), the gate read at
+        delivery."""
+        if effect_queue.deferring():
+            effect_queue.post(effect_queue.AMMO_CONSUMED, self)
+            return
         ship = self._climb_to_ship()
         import App
         try:
@@ -3692,6 +3750,8 @@ class TorpedoTube(Weapon):
         if native_combat._enabled:
             native_combat.push_field(self, "_reload_timers")
         self._num_ready += 1
+        # K0 logs this reload's writes and queues TORPEDO_RELOAD itself
+        # (k0_charging.h, THE EFFECT QUEUE): change both together.
         self._broadcast_reload()
 
     def _broadcast_reload(self) -> None:
@@ -3708,7 +3768,12 @@ class TorpedoTube(Weapon):
         We previously set Source to the parent TorpedoSystem and labelled it "a
         CHOICE, not a finding". The probe says BC posts NO source. Corrected —
         do not re-add one.
+
+        Inside the effect queue's scope it is queued (TORPEDO_RELOAD).
         """
+        if effect_queue.deferring():
+            effect_queue.post(effect_queue.TORPEDO_RELOAD, self)
+            return
         import App
         from engine import dev_mode
         try:
@@ -3741,8 +3806,14 @@ class TorpedoTube(Weapon):
 
         Only torpedo tubes post this. _spawn_projectile is shared with pulse
         cannons, hence the call site is here in TorpedoTube, not in that helper.
+
+        Inside the effect queue's scope it is queued (TORPEDO_FIRED), ahead
+        of the launch's WEAPON_FIRED and AMMO_CONSUMED (BC's order, EI R3).
         """
         if torp is None:
+            return
+        if effect_queue.deferring():
+            effect_queue.post(effect_queue.TORPEDO_FIRED, self, torp)
             return
         import App
         from engine import dev_mode

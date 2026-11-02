@@ -13,7 +13,11 @@ ET_CHARGE_TOGGLE, ET_WEAPON_FIRED, ET_TORPEDO_FIRED).
 One tick is the host's order: the weapons' own update (`_advance_weapons`,
 K0 on the native arm), then the held-weapon pump in a combat step block (K1
 on the native arm), so banks fire, drain, deplete and recharge and tubes
-fire and reload.
+fire and reload. Both run inside the combat effect queue's scope, opened in
+BOTH arms (as the script before them, in its own): the queued weapon events
+and sounds (spec 2026-11-02-combat-fire-events §4.2) are delivered at the
+scope's end in both, so their handlers run at the same point and the one
+event log compares (ruling F4; host_loop opens it with native combat on).
 """
 import importlib
 import math
@@ -22,6 +26,7 @@ import sys
 import App
 
 from engine import host_loop
+from engine.appc import effect_queue
 from engine.appc import native_combat as nc
 from engine.appc import weapon_subsystems as ws
 from engine.appc.math import TGMatrix3
@@ -157,10 +162,12 @@ class World:
         self.n += 1
         self.clock[0] += DT
         if before is not None:
-            before(self)
-        host_loop._advance_weapons(list(self.order), DT)
-        with step_memo.combat_step():
-            host_loop._pump_held_weapons(list(self.order), DT)
+            with effect_queue.scope():
+                before(self)
+        with effect_queue.scope():
+            host_loop._advance_weapons(list(self.order), DT)
+            with step_memo.combat_step():
+                host_loop._pump_held_weapons(list(self.order), DT)
         self.record()
 
 

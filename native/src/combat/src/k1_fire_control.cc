@@ -27,6 +27,7 @@
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/stop_firing.h"
 #include "dauntless/combat/weapon_geometry.h"
 
 namespace dauntless::combat {
@@ -87,6 +88,14 @@ const char* k1_kind_name(K1Kind k) {
         "FIRE",      "FIRE_FAILED", "FIRE_DUMB",   "ASK"};
     static_assert(std::size(kNames) == static_cast<size_t>(K1Kind::kCount));
     const auto i = static_cast<size_t>(k);
+    return i < std::size(kNames) ? kNames[i] : "?";
+}
+
+const char* k1_effect_name(K1Effect e) {
+    static constexpr const char* kNames[] = {
+        "FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED"};
+    static_assert(std::size(kNames) == static_cast<size_t>(K1Effect::kCount));
+    const auto i = static_cast<size_t>(e);
     return i < std::size(kNames) ? kNames[i] : "?";
 }
 
@@ -204,6 +213,11 @@ struct K1Kernel::Session {
     // writes reach Python).
     std::vector<K1Write> writes;
     std::vector<K1Undo> undo;
+    // The queue entries since the last record (THE EFFECT QUEUE), each
+    // placed after the writes logged before it. A throw drops them with the
+    // session restore (next()); a decision's own rollback (k1_roll_back)
+    // never meets one: no decision produces an entry.
+    std::vector<K1Entry> entries;
     bool awaiting_offset = false;
     bool awaiting_answer = false, has_answer = false;
     // The walk tag (THE WALK START): the session's walk number (1, 2, ...),
@@ -362,30 +376,85 @@ private:
         }
     }
 
-    // `weapon.StopFiring()` on a bank that is NOT firing is pure writes:
-    // logged in its class's order (round trips §4.3) and true. A firing bank
-    // (the loop sound) or a row gone: false, the caller emits BANK_STOP.
-    bool idle_stop(int64_t h) {
+    // `sys_.StopFiring()`'s `_held_target = None` and `_held_offset = None`
+    // (the walked system's row is checked by the caller).
+    void write_held_target_none(int64_t h) {
+        K1Undo u = undo_of(K1Undo::Type::Ref, h, Field::_held_target);
+        u.i = m_.get_ref(h, Field::_held_target);
+        m_.set_ref(h, Field::_held_target, -1);
+        s_.undo.push_back(std::move(u));
+        log(h, "_held_target", int64_t{-1});
+    }
+    void write_held_offset_none(int64_t h) {
+        K1Undo u = undo_of(K1Undo::Type::Offset, h, Field::_held_offset);
+        const SubsystemRow& r = *subrow(h);
+        u.set = r.held_offset_set;
+        u.v = r._held_offset;
+        m_.set_fv(h, Field::_held_offset, {});
+        s_.undo.push_back(std::move(u));
+        log(h, "_held_offset", std::monostate{});
+    }
+
+    // ── The effect queue: entries in walk order, after the writes before ──
+    void enqueue(K1Effect kind, int64_t a, int64_t b = -1) {
+        s_.entries.push_back(K1Entry{kind, a, b, s_.writes.size()});
+        ++c_.entries[static_cast<size_t>(kind)];
+    }
+
+    // `weapon.StopFiring()` is its class's writes, logged in its order
+    // (round trips §4.3; the one encoding, stop_firing.h), and for a FIRING
+    // energy bank the loop sound's LOOP_STOP(bank) after them (spec
+    // 2026-11-02-combat-fire-events §4.3; `was_firing = self._firing` is
+    // read first). True; a row gone (or not a K1 leaf): false, nothing
+    // written, the caller emits BANK_STOP.
+    bool bank_stop(int64_t h) {
         const SubsystemRow* r = subrow(h);
-        if (!r || r->_firing) return false;
-        switch (r->weapon_kind) {
-            case kPhaserBank:  // _EnergyWeaponFireMixin.StopFiring (WS:905)
-                write_flag(h, Field::_firing, "_firing", false);
-                write_float(h, Field::_beam_on_countdown, "_beam_on_countdown",
-                            0.0);
-                break;
-            case kTorpedoTube:  // Weapon.StopFiring (WS:1192)
-                write_flag(h, Field::_firing, "_firing", false);
-                break;
-            case kPulseWeapon:  // PulseWeapon.StopFiring (WS:2971)
-                write_flag(h, Field::_firing, "_firing", false);
-                write_target(h, -1);
-                write_target_offset(h, false);
-                break;
-            default:
-                return false;
+        if (!r) return false;
+        const std::optional<StopFiring> stop = stop_firing_of(r->weapon_kind);
+        if (!stop) return false;
+        const bool firing = r->_firing != 0;
+        for (size_t i = 0; i < stop->n; ++i) {
+            switch (stop->writes[i]) {
+                case StopWrite::FiringFalse:
+                    write_flag(h, Field::_firing, "_firing", false);
+                    break;
+                case StopWrite::BeamOnCountdownZero:
+                    write_float(h, Field::_beam_on_countdown,
+                                "_beam_on_countdown", 0.0);
+                    break;
+                case StopWrite::TargetNone:
+                    write_target(h, -1);
+                    break;
+                case StopWrite::TargetOffsetNone:
+                    write_target_offset(h, false);
+                    break;
+            }
         }
-        ++c_.logged_idle_bank_stop;
+        if (firing && stop->loop_stop) enqueue(K1Effect::LOOP_STOP, h);
+        ++(firing ? c_.logged_firing_bank_stop : c_.logged_idle_bank_stop);
+        return true;
+    }
+
+    // The pump's `sys_.StopFiring()`: WeaponSystem.StopFiring (WS:1564) --
+    // `_fire_held = False; _held_target = None; _held_offset = None;
+    // _target_list = []; _last_group_fired = -1`, then `w.StopFiring()` for
+    // each child in order (bank_stop). The pre-scan ran in this same call
+    // (every child a live, unoverridden leaf). The stop runs before any
+    // walk, so the walk check is asked here first -- its names include a
+    // StopFiring patched on the system's instance or a child's -- and true
+    // leaves the STOP_SYSTEM record (false, nothing written).
+    bool system_stop(int64_t sys) {
+        if (check_ && check_(sys, climb_to_ship_of(m_, sys))) return false;
+        const std::vector<int64_t> kids = subrow(sys)->_children;
+        write_flag(sys, Field::_fire_held, "_fire_held", false);
+        write_held_target_none(sys);
+        write_held_offset_none(sys);
+        write_target_list(sys, {});
+        write_int(sys, Field::_last_group_fired, "_last_group_fired", -1);
+        // for i in range(self.GetNumWeapons()): self.GetWeapon(i).StopFiring()
+        for (const int64_t k : kids)
+            if (!bank_stop(k)) lost("a stopped system's child is not a leaf");
+        ++c_.logged_system_stop;
         return true;
     }
 
@@ -399,6 +468,8 @@ private:
         r.c = c;
         r.writes = std::move(s_.writes);
         s_.writes.clear();
+        r.entries = std::move(s_.entries);
+        s_.entries.clear();
         s_.undo.clear();  // delivered: Python applies them
         s_.st = next;
         // The walk's first record: the driver materialises the walk on it.
@@ -821,7 +892,14 @@ K1Record Walker::run() {
                 return run_python(K1Why::Gate, St::PUMP_CONTINUE, sys, pos,
                                   s_.getter);
             }
-            if (stop) return emit(K1Kind::STOP_SYSTEM, St::PUMP_CONTINUE, sys);
+            if (stop) {
+                // sys_.StopFiring(); continue
+                if (system_stop(sys)) {
+                    s_.st = St::PUMP_CONTINUE;
+                    break;
+                }
+                return emit(K1Kind::STOP_SYSTEM, St::PUMP_CONTINUE, sys);
+            }
             // sys_.update_weapons(dt)
             s_.sys = sys;
             s_.st = St::UW_DEAD_PRUNE;
@@ -1092,7 +1170,7 @@ K1Record Walker::run() {
                 write_flag(w, Field::_depleted, "_depleted", false);
             if (!cf.ok) {
                 // weapon.StopFiring(); return False
-                if (idle_stop(w)) {
+                if (bank_stop(w)) {
                     try_returns(false);
                     break;
                 }
@@ -1104,7 +1182,7 @@ K1Record Walker::run() {
         }
         case St::TF_CANFIRE_ANSWER:
             if (!take_answer()) {
-                if (idle_stop(s_.tf_weapon)) {
+                if (bank_stop(s_.tf_weapon)) {
                     try_returns(false);
                     break;
                 }
@@ -1145,6 +1223,23 @@ K1Record Walker::run() {
                         s_.st = St::TF_FIRED;
                         break;
                     }
+                    if (o.d.shape == K1Decision::Shape::Beam) {
+                        // The was-not-firing edge (WS:898-916, then
+                        // PhaserBank._fire_effect): the mixin's writes, its
+                        // FIRE_SOUND, then ET_WEAPON_FIRED at the target.
+                        write_flag(w, Field::_firing, "_firing", true);
+                        write_target(w, s_.fire_target);
+                        write_target_offset(w, true);
+                        write_float(w, Field::_beam_on_countdown,
+                                    "_beam_on_countdown",
+                                    m_.globals().BEAM_ON_DELAY_S);
+                        write_float(w, Field::_dwell, "_dwell", 0.0);
+                        enqueue(K1Effect::FIRE_SOUND, w);
+                        enqueue(K1Effect::WEAPON_FIRED, w, s_.fire_target);
+                        ++c_.logged_beam_edge;
+                        s_.st = St::TF_FIRED;
+                        break;
+                    }
                     K1Record r =
                         emit(K1Kind::FIRE, St::TF_FIRED, w, s_.fire_target);
                     r.decision = o.d;
@@ -1152,7 +1247,10 @@ K1Record Walker::run() {
                 }
                 case Outcome::What::FailedEvent:
                     // self._broadcast_weapon_fire_failed(); return False
-                    return emit(K1Kind::FIRE_FAILED, St::TF_FIRE_FALSE, w);
+                    enqueue(K1Effect::WEAPON_FIRE_FAILED, w);
+                    ++c_.logged_fire_failed;
+                    s_.st = St::TF_FIRE_FALSE;
+                    break;
                 case Outcome::What::Fail:
                     s_.st = St::TF_NOT_FIRED;
                     break;

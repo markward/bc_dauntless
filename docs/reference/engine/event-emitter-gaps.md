@@ -639,6 +639,32 @@ must be: `AsteroidHitStation` leaves the name in `g_dAsteroidInfo`, and
 
 ---
 
+## 14. `ET_WEAPON_FIRED` target and pulse weapons — ✅ DONE (found 2026-11-02)
+
+Two bugs in one emitter. (1) The event carried source (the weapon) and
+destination (the owning ship) but no object pointer, while the SDK's
+`WeaponFired` handlers read the target with `ShipClass_Cast(pEvent.GetObjPtr())`
+and return when it is `None` — so E1M2's `WeaponFired` (`E1M2.py:1384`, the
+"fired ten times" Picard beat) and E2M1's (`E2M1.py:963`, the Warbird attacking
+the Karoon) never got past that line. (2) `PulseWeapon` never posted the event
+at all.
+
+**Fix:** `weapon_subsystems._post_weapon_fired(weapon, target)` posts the
+event as a `TGObjPtrEvent` (`App.TGObjPtrEvent_Create()`, the object-pointer
+event class the handlers read) and sets the target as its object pointer; a
+plain `TGEvent` keeps no object pointer. Phaser (was-not-firing edge), tube (after `ET_TORPEDO_FIRED`, before
+`ET_TORPEDO_AMMO_CONSUMED`) and pulse (`PulseWeapon._fire_effect`, once per
+shot after the bolt is spawned -- none when no bolt spawned -- with the target
+the shot used) all pass their
+target; tractors still post nothing. It lives in `_fire_effect`, so it holds
+with native combat on and off. Pinned by `tests/unit/test_weapon_fired_event.py`
+and `tests/integration/test_weapon_fired_mission_handlers.py`.
+
+
+**Newly live with the fix (not verified in play):** E2M2's and E6M4's broadcast `WeaponFired` handlers also get past their early return now. E6M4 plays a Kessok combat line; E2M2 turns Cardassian ships hostile when they are fired on, as its script intends.
+
+---
+
 ## Summary table
 
 | Event | SDK handler (file:line) | Engine emitter |
@@ -656,3 +682,4 @@ must be: `AsteroidHitStation` leaves the name in `g_dAsteroidInfo`, and
 | `ET_IN_SYSTEM_WARP` | `ScienceMenuHandlers.py:95/515` | ✅ **DONE** — `ships.py` engage + `_end_in_system_warp()` shared by all 4 disengage sites |
 | `ET_SET_WARP_SEQUENCE` | `ConditionWarpingToSet.py:33/69` | ✅ **DONE** — `subsystems.py` `WarpEngineSubsystem.SetWarpSequence`, unguarded ping |
 | `ET_PLANET_COLLISION` | `E1M2.py:1135/1308` | ✅ **DONE** (#13, found after the 12) — `collisions.py` `_emit_planet_collision()`, impact path, source planet / destination body, posted before impact damage |
+| `ET_WEAPON_FIRED` (target + pulse) | `E1M2.py:1139/1384`, `E2M1.py:704/963` | ✅ **DONE** (#14, found 2026-11-02) — `weapon_subsystems.py` `_post_weapon_fired(weapon, target)` sets the object pointer; `PulseWeapon._fire_effect` now posts it |

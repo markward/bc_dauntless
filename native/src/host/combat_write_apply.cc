@@ -791,13 +791,18 @@ ApplyValue k0_value(const cb::K0FieldWrite& w) {
             return ApplySlot{w.index, ApplyScalar{w.d}};
         case cb::K0FieldWrite::Type::Watcher:
             return ApplyWatcher{ApplyScalar{w.d}};
+        case cb::K0FieldWrite::Type::Ref:   // a handle, -1 None (REF kind)
+            return static_cast<std::int64_t>(w.i);
+        case cb::K0FieldWrite::Type::Null:
+            return std::monostate{};
     }
     return std::monostate{};
 }
 
 // One K0 write: the same as apply_one on k0_value(w), without building the
-// variant for the kinds a K0 write meets (a PLAIN or WAKE field, a slot, the
-// watcher); any other kind (a test's Python setter) takes the general path.
+// variant for the kinds a K0 write meets (a PLAIN or WAKE scalar field, a
+// slot, the watcher); any other kind (a test's Python setter), and a stop's
+// Ref / Null write, takes the general path.
 bool apply_k0(const Ctx& c, const cb::K0Write& kw, KeyCache& kc) {
     const cb::K0FieldWrite& w = kw.w;
     if (names() == nullptr) return false;
@@ -818,7 +823,9 @@ bool apply_k0(const Ctx& c, const cb::K0Write& kw, KeyCache& kc) {
             ok = kind_of(c, reinterpret_cast<PyObject*>(Py_TYPE(obj)), field,
                          &k);
             if (!ok) break;
-            if (k.kind != kPlain && k.kind != kWake) {
+            if ((k.kind != kPlain && k.kind != kWake) ||
+                w.type == cb::K0FieldWrite::Type::Ref ||
+                w.type == cb::K0FieldWrite::Type::Null) {
                 // The general path with the kind already asked (once, as
                 // _apply_write asks _quiet_setter once).
                 ok = apply_value_as(c, obj, field, k0_value(w), k);

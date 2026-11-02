@@ -48,6 +48,7 @@ struct World {
         if (legacy) k.set_walk_check([](int64_t, int64_t) { return true; });
         m.set_global_f(Global::FIRE_TIMER_THRESHOLD, 0.33);
         m.set_global_f(Global::PHASER_MAX_RANGE_GU, 700.0);
+        m.set_global_f(Global::BEAM_ON_DELAY_S, 2 * 0.33);
         m.set_global_f(Global::TORPEDO_CONE_HALF_ANGLE, 0.5235984);
         m.set_global_f(Global::PULSE_RANGE_GATE_SECONDS, 30.0);
         m.set_global_f(Global::PULSE_COST_SCALE_0, 0.5);
@@ -198,6 +199,18 @@ struct World {
         }
         return out;
     }
+    // The record's queue entries as "KIND a[@b]^at" (at: the writes
+    // logged before it).
+    std::vector<std::string> entries(const K1Record& r) const {
+        std::vector<std::string> out;
+        for (const K1Entry& e : r.entries) {
+            std::string s = std::string(k1_effect_name(e.kind)) + " " + name(e.a);
+            if (e.kind == K1Effect::WEAPON_FIRED)
+                s += "@" + (e.b == -1 ? std::string("None") : name(e.b));
+            out.push_back(s + "^" + std::to_string(e.at));
+        }
+        return out;
+    }
     // "KIND a" for a quick sequence check.
     std::string brief(const K1Record& r) const {
         std::string s = k1_kind_name(r.kind);
@@ -230,6 +243,39 @@ struct World {
         return out;
     }
 };
+
+// The record's queue entries as "KIND a[@b]" (World::entries without the
+// position).
+std::vector<std::string> fx(const World& w, const K1Record& r) {
+    std::vector<std::string> out;
+    for (const std::string& e : w.entries(r)) out.push_back(e.substr(0, e.find('^')));
+    return out;
+}
+
+// A posed ShipClass target whose one mount is not where `bank`'s stored
+// offset points: a tube's Fire at it is Python's (ASK fire, no_mount) --
+// the Python point the walk tests below pause at, now that a beam's edge
+// and a FIRE_FAILED are no longer records.
+PartPose shift_pose();
+int64_t posed_target(World& w, const std::string& name, double x, double y,
+                     double z, int64_t bank) {
+    const int64_t t = w.ship(name, x, y, z);
+    w.m.set_i(t, Field::is_ship_class, 1);
+    const int64_t mnt = w.m.register_row(Kind::Subsystem);
+    w.m.set_ref(mnt, Field::_parent_ship, t);
+    w.m.set_fv(mnt, Field::_position, {0.5, 0.0, 0.0});
+    w.m.set_mount_order(t, {mnt});
+    w.m.set_i(t, Field::has_posed_parts, 1);
+    w.m.set_part_poses(t, {shift_pose()});
+    w.m.set_part_slot(mnt, 0, w.m.part_gen());
+    w.m.set_fv(bank, Field::_target_offset, {0.0, 0.0, 0.75});
+    return t;
+}
+
+bool has_write(const World& w, const K1Record& r, const std::string& s) {
+    const std::vector<std::string> ws = w.writes(r);
+    return std::find(ws.begin(), ws.end(), s) != ws.end();
+}
 
 // The writes of `r` on `who`, in order, as w.writes() spells them.
 std::vector<std::string> writes_on(const World& w, const K1Record& r,
@@ -305,11 +351,12 @@ TEST(K1, TimerGateAndForceUpdate) {
                       "b0._target=None", "sys._force_update=False"}));
         EXPECT_EQ(w.m.get_f(b0, Field::_fire_timer), 0.0 + kDt);
     }
-    {   // Crossing the threshold: attempt, and the timer resets to 0.0.
+    {   // Crossing the threshold: attempt, and the timer resets to 0.0 (a
+        // tube: its FIRE is a record; a beam's edge is logged writes).
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-        const int64_t sys = w.system("sys", ship, 1, {t});
+        const int64_t sys = w.system("sys", ship, 4, {t});
         const int64_t b0 = w.bank("b0", sys);
         w.m.set_f(b0, Field::_fire_timer, 0.30);
         w.k.begin_pump({ship}, 0.05, 10.0, false, 0.0);
@@ -320,15 +367,15 @@ TEST(K1, TimerGateAndForceUpdate) {
                                    "sys._group_fire_mode=0",
                                    "b0._fire_timer=0.34999999999999998",
                                    "b0._fire_timer=0"}));
-        EXPECT_EQ(f.decision.shape, K1Decision::Shape::Beam);
-        EXPECT_FALSE(f.decision.was_firing);
+        EXPECT_EQ(f.decision.shape, K1Decision::Shape::Tube);
+        EXPECT_EQ(f.decision.target_used, t);
         EXPECT_EQ(w.m.get_f(b0, Field::_fire_timer), 0.0);
     }
     {   // _force_update bypasses the threshold (timer := 0.33), even at dt 0.
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-        const int64_t sys = w.system("sys", ship, 1, {t});
+        const int64_t sys = w.system("sys", ship, 4, {t});
         w.bank("b0", sys);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_system(sys, 0.0, 10.0, false, 0.0);
@@ -397,10 +444,10 @@ TEST(K1, DepletedClearIsLoggedEvenWhenRefused) {
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     w.step();
-    // b0's stop is logged (idle, round trips Task 2): its writes ride b1's
-    // FIRE, the clear before the stop.
+    // b0's stop is logged (idle, round trips Task 2), the clear before the
+    // stop; b1's edge is logged too, so everything rides DONE.
     const K1Record s = w.step();
-    EXPECT_EQ(w.brief(s), "FIRE b1@t");
+    EXPECT_EQ(w.brief(s), "DONE");
     const auto b0w = writes_on(w, s, "b0");
     const auto at = std::find(b0w.begin(), b0w.end(), "b0._depleted=False");
     ASSERT_NE(at, b0w.end());
@@ -410,10 +457,11 @@ TEST(K1, DepletedClearIsLoggedEvenWhenRefused) {
 }
 
 TEST(K1, RoundRobinFromLastIdx) {
+    // Tubes: each FIRE is a record, so the rotation shows record by record.
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t sys = w.system("sys", ship, 4, {t});
     w.bank("b0", sys);
     w.bank("b1", sys);
     w.bank("b2", sys);
@@ -440,7 +488,7 @@ TEST(K1, SingleFireReseedsTimers) {
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t sys = w.system("sys", ship, 4, {t});  // tubes: FIRE records
     const int64_t b0 = w.bank("b0", sys);
     const int64_t b1 = w.bank("b1", sys);
     const int64_t b2 = w.bank("b2", sys);
@@ -490,7 +538,7 @@ TEST(K1, GroupWalkAdvancesOnDryGroup) {
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t sys = w.system("sys", ship, 4, {t});  // tubes: FIRE records
     const int64_t b0 = w.bank("b0", sys);
     const int64_t b1 = w.bank("b1", sys);
     const int64_t sp = w.m.register_row(Kind::Property);
@@ -531,30 +579,46 @@ TEST(K1, GroupWalkAdvancesOnDryGroup) {
 
 TEST(K1, TubeRetryPostsFailedPerAttempt) {
     // Both targets are behind the tube: Fire(list[0]) fails, then the retry
-    // re-tries list[0] and the other entry: 1 + 2 FIRE_FAILED.
+    // re-tries list[0] and the other entry: 1 + 2 WEAPON_FIRE_FAILED
+    // entries, no record between them.
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t1 = w.object("t1", 0.0, -50.0, 0.0);
     const int64_t t2 = w.object("t2", 10.0, -50.0, 0.0);
     const int64_t sys = w.system("tsys", ship, 4, {t1, t2});
-    w.bank("tube", sys);
+    const int64_t tube = w.bank("tube", sys);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.run_to_done(),
-              (std::vector<std::string>{"WALK_START tsys", "FIRE_FAILED tube",
-                                        "FIRE_FAILED tube", "FIRE_FAILED tube",
-                                        "DONE"}));
+    EXPECT_EQ(w.brief(w.step()), "WALK_START tsys");
+    const K1Record done = w.step();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_EQ(fx(w, done), (std::vector<std::string>(
+                               3, "WEAPON_FIRE_FAILED tube")));
     w.k.end();
 
-    // The retry reads the list LIVE after the first failure: a handler that
-    // kills t2 there leaves one retry (t1 again).
-    w.m.set_i(sys, Field::_force_update, 1);
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    w.step();
-    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");
-    w.m.set_i(t2, Field::_dead, 1);
-    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");
-    EXPECT_EQ(w.brief(w.step()), "DONE");
+    // The retry reads the list LIVE after the first failure (an ASK fire's
+    // Python, the one point a change can come from now): a t2 killed there
+    // leaves one retry (posed t1 again, ASKed again).
+    World v;
+    const int64_t vship = v.ship("ship");
+    const int64_t vtube_sys = v.system("tsys", vship, 4, {});
+    const int64_t vtube = v.bank("tube", vtube_sys);
+    const int64_t p1 = posed_target(v, "t1", 0.0, 50.0, 0.0, vtube);
+    const int64_t v2 = v.object("t2", 10.0, -50.0, 0.0);
+    v.m.set_ids(vtube_sys, Field::_target_list, {p1, v2});
+    v.m.set_ref(vtube_sys, Field::_held_target, v2);
+    v.m.set_i(vtube_sys, Field::_force_update, 1);
+    v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
+    v.step();
+    EXPECT_EQ(v.brief(v.step()), "ASK fire");
+    v.m.set_i(v2, Field::_dead, 1);
+    v.k.answer(0);
+    EXPECT_EQ(v.brief(v.step()), "ASK fire");  // the retry: t1 only
+    v.k.answer(0);
+    const K1Record vdone = v.step();
+    EXPECT_EQ(v.brief(vdone), "DONE");
+    EXPECT_TRUE(vdone.entries.empty());
+    (void)tube;
 }
 
 TEST(K1, HeldTargetVsListHead) {
@@ -570,7 +634,11 @@ TEST(K1, HeldTargetVsListHead) {
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     w.step();
-    EXPECT_EQ(w.brief(w.step()), "FIRE b0@t1");
+    // The beam's edge: logged, its ET_WEAPON_FIRED aimed at t1.
+    const K1Record done = w.step();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_EQ(fx(w, done), (std::vector<std::string>{"FIRE_SOUND b0",
+                                                     "WEAPON_FIRED b0@t1"}));
 }
 
 TEST(K1, DumbFireOnlyWithNoTargets) {
@@ -609,9 +677,11 @@ TEST(K1, DumbFireOnlyWithNoTargets) {
         w.bank("tube", sys);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        EXPECT_EQ(w.run_to_done(),
-                  (std::vector<std::string>{"WALK_START tsys", "FIRE_FAILED tube",
-                                            "FIRE_FAILED tube", "DONE"}));
+        EXPECT_EQ(w.brief(w.step()), "WALK_START tsys");
+        const K1Record done = w.step();
+        EXPECT_EQ(w.brief(done), "DONE");
+        EXPECT_EQ(fx(w, done), (std::vector<std::string>(
+                                   2, "WEAPON_FIRE_FAILED tube")));
     }
     {   // A phaser bank is not dumb-fire capable.
         World w;
@@ -753,15 +823,16 @@ TEST(K1, PythonFallbackBeforeAnyWrite) {
 }
 
 TEST(K1, ReentrantSessionStack) {
+    // Tubes: their FIREs are records, Python points a handler can act at.
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t sys = w.system("sys", ship, 4, {t});
     w.bank("b0", sys);
     w.bank("b1", sys);
     w.m.set_i(sys, Field::_force_update, 1);
     const int64_t other = w.ship("other", 0.0, -100.0, 0.0);
-    const int64_t osys = w.system("osys", other, 1, {t});
+    const int64_t osys = w.system("osys", other, 4, {t});
     w.bank("ob", osys);
     w.m.set_i(osys, Field::_fire_held, 0);
 
@@ -791,34 +862,36 @@ TEST(K1, ResumeReadsLiveMirror) {
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t sys = w.system("sys", ship, 4, {t});
     w.bank("b0", sys);
     const int64_t b1 = w.bank("b1", sys);
-    // Firing, so its stop below stays a BANK_STOP record (round trips
-    // Task 2 logs an idle bank's).
     w.m.set_i(b1, Field::_firing, 1);
-    const int64_t psys = w.system("psys", ship, 2, {t});
+    const int64_t ship2 = w.ship("ship2", 5.0, 0.0, 0.0);  // pumped after
+    const int64_t psys = w.system("psys", ship2, 2, {t});
     w.bank("cannon", psys);
     w.m.set_i(sys, Field::_force_update, 1);
     w.m.set_i(psys, Field::_force_update, 1);
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    w.k.begin_pump({ship, ship2}, kDt, 10.0, false, 0.0);
     w.step();
     EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
-    // A handler drains b1 and releases both triggers. The running walk keeps
-    // its locals (Python does not re-check _fire_held mid-walk) but reads
-    // b1's charge live; the pump then skips the released pulse system.
-    w.m.set_f(b1, Field::_charge_level, 0.0);
+    // A handler empties b1 and releases both triggers. The running walk
+    // keeps its locals (Python does not re-check _fire_held mid-walk) but
+    // reads b1 live: its stop (logged writes, no record); the pump then
+    // skips the released pulse system.
+    w.m.set_i(b1, Field::_num_ready, 0);
     w.m.set_i(sys, Field::_fire_held, 0);
     w.m.set_i(psys, Field::_fire_held, 0);
-    EXPECT_EQ(w.brief(w.step()), "BANK_STOP b1");
-    EXPECT_EQ(w.brief(w.step()), "DONE");
+    const K1Record done = w.step();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_TRUE(has_write(w, done, "b1._firing=False"))
+        << ::testing::PrintToString(w.writes(done));
 }
 
 TEST(K1, MidWalkThrowBecomesAsk) {
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t sys = w.system("sys", ship, 4, {t});  // tubes: FIRE records
     w.bank("b0", sys);
     const int64_t b1 = w.bank("b1", sys);
     w.m.set_i(sys, Field::_force_update, 1);
@@ -845,17 +918,22 @@ TEST(K1, MidWalkThrowBecomesAsk) {
     w.k.end();
 
     // An entry the mirror cannot name in the retry list: the whole retry
-    // loop is asked.
+    // loop is asked. The list changes at the Python point before the
+    // failure (an ASK fire on a posed target), the failed aim itself being
+    // an entry now.
     World v;
     const int64_t vship = v.ship("ship");
-    const int64_t vt = v.object("t", 0.0, -50.0, 0.0);
-    const int64_t vsys = v.system("tsys", vship, 4, {vt});
+    const int64_t vsys = v.system("tsys", vship, 4, {});
     const int64_t tube = v.bank("tube", vsys);
+    const int64_t vt = posed_target(v, "t", 0.0, 50.0, 0.0, tube);
+    v.m.set_ids(vsys, Field::_target_list, {vt});
+    v.m.set_ref(vsys, Field::_held_target, vt);
     v.m.set_i(vsys, Field::_force_update, 1);
     v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
     v.step();
-    EXPECT_EQ(v.brief(v.step()), "FIRE_FAILED tube");
+    EXPECT_EQ(v.brief(v.step()), "ASK fire");
     v.m.set_ids(vsys, Field::_target_list, {vt, kRefUnrepresentable});
+    v.k.answer(0);
     const K1Record r = v.step();
     EXPECT_EQ(v.brief(r), "ASK retry");
     EXPECT_EQ(r.args, (std::vector<int64_t>{vsys, tube}));
@@ -874,11 +952,11 @@ TEST(K1, CountsAndKinds) {
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t sys = w.system("sys", ship, 4, {t});
     w.bank("b0", sys);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.run_to_done().size(), 3u);
+    EXPECT_EQ(w.run_to_done().size(), 3u);  // WALK_START, FIRE, DONE
     EXPECT_EQ(w.k.counts().records, 3);
     w.k.end();
     // A system with no row: Python runs its update_weapons.
@@ -893,7 +971,7 @@ TEST(K1, EveryAskQuery) {
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-        const int64_t sys = w.system("sys", ship, 1, {t});
+        const int64_t sys = w.system("sys", ship, 4, {t});  // tubes
         const int64_t b0 = w.bank("b0", sys);
         const int64_t b1 = w.bank("b1", sys);
         const int64_t sp = w.m.register_row(Kind::Property);
@@ -910,15 +988,15 @@ TEST(K1, EveryAskQuery) {
         EXPECT_EQ(w.brief(a), "ASK is_member");
         EXPECT_EQ(a.args, (std::vector<int64_t>{b1, 1}));
         w.k.answer(1);
-        // The unnamed property also holds b1's MaxCondition (CanFire's
-        // condition product): that is asked too.
-        EXPECT_EQ(w.brief(w.step()), "ASK can_fire");
+        // A tube's CanFire has no condition product (the unnamed property's
+        // MaxCondition): answered natively.
+        EXPECT_EQ(w.brief(w.step()), "FIRE b1@t");
     }
     for (int64_t answer : {1, 2}) {  // group_step: an unnamed child
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-        const int64_t sys = w.system("sys", ship, 1, {t});
+        const int64_t sys = w.system("sys", ship, 4, {t});  // tubes
         const int64_t b0 = w.bank("b0", sys);
         w.bank("b1", sys);
         w.m.set_i(sys, Field::_force_update, 1);
@@ -941,7 +1019,7 @@ TEST(K1, EveryAskQuery) {
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-        const int64_t sys = w.system("sys", ship, 1, {t});
+        const int64_t sys = w.system("sys", ship, 4, {t});  // tubes
         const int64_t b0 = w.bank("b0", sys);
         w.m.set_i(sys, Field::_single_fire, 1);
         w.m.set_i(sys, Field::_force_update, 1);
@@ -960,19 +1038,25 @@ TEST(K1, EveryAskQuery) {
         EXPECT_EQ(w.writes(done),
                   (std::vector<std::string>{"sys._force_update=False"}));
     }
-    {   // is_dead, then fire: a retry entry lost its real IsDead mid-loop.
+    {   // is_dead, then fire: a retry entry lost its real IsDead mid-loop
+        // (at the retry's ASK fire of the posed t1, the one Python point
+        // inside the loop).
         World w;
         const int64_t ship = w.ship("ship");
-        const int64_t t1 = w.object("t1", 0.0, -50.0, 0.0);
-        const int64_t t2 = w.object("t2", 10.0, -50.0, 0.0);
-        const int64_t sys = w.system("tsys", ship, 4, {t1, t2});
+        const int64_t sys = w.system("tsys", ship, 4, {});
         const int64_t tube = w.bank("tube", sys);
+        const int64_t t1 = posed_target(w, "t1", 0.0, 50.0, 0.0, tube);
+        const int64_t t2 = w.object("t2", 10.0, -50.0, 0.0);
+        w.m.set_ids(sys, Field::_target_list, {t1, t2});
+        w.m.set_ref(sys, Field::_held_target, t2);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
         w.step();
-        EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");
-        EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");  // retry t1
+        EXPECT_EQ(w.brief(w.step()), "ASK fire");  // Fire(t1)
+        w.k.answer(0);
+        EXPECT_EQ(w.brief(w.step()), "ASK fire");  // retry t1
         w.m.set_i(t2, Field::has_real_is_dead, 0);
+        w.k.answer(0);
         const K1Record d = w.step();
         EXPECT_EQ(w.brief(d), "ASK is_dead");
         EXPECT_EQ(d.args, (std::vector<int64_t>{t2}));
@@ -982,7 +1066,7 @@ TEST(K1, EveryAskQuery) {
         EXPECT_EQ(f.args, (std::vector<int64_t>{sys, tube, t2}));
         w.k.answer(0);
         EXPECT_EQ(w.brief(w.step()), "DONE");
-        EXPECT_EQ(w.k.counts().asks, 2);
+        EXPECT_EQ(w.k.counts().asks, 4);
     }
 }
 
@@ -1024,18 +1108,19 @@ TEST(K1, UnwindLeavesMirrorEqualToPython) {
     // Python, so they are undone, and the session is as it was.
     World w;
     const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t sys = w.system("sys", ship, 4, {});
     const int64_t b0 = w.bank("b0", sys);
+    const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, b0);
+    w.m.set_ids(sys, Field::_target_list, {t});
+    w.m.set_ref(sys, Field::_held_target, t);
     w.m.set_ref(b0, Field::_target, t);
-    w.m.set_f(b0, Field::_charge_level, 0.0);
-    w.m.set_i(b0, Field::_firing, 1);  // a firing bank's stop is a record
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     w.step();
-    EXPECT_EQ(w.brief(w.step()), "BANK_STOP b0");
-    // The effect's handler leaves the walked system's row gone.
+    EXPECT_EQ(w.brief(w.step()), "ASK fire");
+    // The Fire's Python leaves the walked system's row gone.
     w.m.unregister_row(sys);
+    w.k.answer(0);
     // Resuming writes b0._target = None, then cannot read the system.
     EXPECT_THROW(w.k.next(), std::logic_error);
     EXPECT_EQ(w.m.get_ref(b0, Field::_target), t);  // undone
@@ -1049,7 +1134,7 @@ TEST(K1, ThrowKeepsThePendingAnswer) {
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t sys = w.system("sys", ship, 4, {t});  // tubes: FIRE records
     const int64_t b0 = w.bank("b0", sys);
     const int64_t b1 = w.bank("b1", sys);
     const int64_t sp = w.m.register_row(Kind::Property);
@@ -1072,29 +1157,33 @@ TEST(K1, ThrowKeepsThePendingAnswer) {
 }
 
 TEST(K1, GroupReReadsWeaponCount) {
-    // n = self.GetNumWeapons() is re-read for each group: a handler that
-    // drops a child during group 1 changes group 2's rotation.
+    // n = self.GetNumWeapons() is re-read for each group: Python that drops
+    // a child during group 1 (b2's Fire, asked: its stored offset names no
+    // mount on the posed target) changes group 2's rotation.
     World w;
     const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t sys = w.system("sys", ship, 4, {});
     const int64_t b0 = w.bank("b0", sys);
     const int64_t b1 = w.bank("b1", sys);
     const int64_t b2 = w.bank("b2", sys);
+    const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, b2);
+    w.m.set_ids(sys, Field::_target_list, {t});
+    w.m.set_ref(sys, Field::_held_target, t);
     const int64_t sp = w.m.register_row(Kind::Property);
     w.m.set_id_lists(sp, Field::_firing_chains, {{1, 2}});
     w.m.set_ref(sys, Field::_property, sp);
     w.m.set_ref(b0, Field::_property, w.prop(2));
     w.m.set_ref(b1, Field::_property, w.prop(2));
     w.m.set_ref(b2, Field::_property, w.prop(1));
-    w.m.set_f(b2, Field::_charge_level, 0.0);  // group 1 runs dry
-    w.m.set_i(b2, Field::_firing, 1);  // a firing bank's stop is a record
     w.m.set_i(sys, Field::_last_weapon_idx, 2);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     w.step();
-    EXPECT_EQ(w.brief(w.step()), "BANK_STOP b2");
-    w.m.set_ids(sys, Field::_children, {b0, b1});  // the handler drops b2
+    EXPECT_EQ(w.brief(w.step()), "ASK fire");
+    w.m.set_ids(sys, Field::_children, {b0, b1});  // the Python drops b2
+    w.k.answer(0);
+    EXPECT_EQ(w.brief(w.step()), "ASK fire");  // b2's retry: group 1 dry
+    w.k.answer(0);
     // n = 2, base_idx 2: idx 1 then 0. (n kept at 3 would give 0, 1, None.)
     EXPECT_EQ(w.brief(w.step()), "FIRE b1@t");
     EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
@@ -1103,21 +1192,28 @@ TEST(K1, GroupReReadsWeaponCount) {
 
 TEST(K1, RetryWalksItsSnapshot) {
     // for entry in list(self._target_list): the list is copied when the
-    // retry starts; a handler's later change does not alter the loop.
+    // retry starts; a later change (at the retry's ASK fire, its one Python
+    // point) does not alter the loop.
     World w;
     const int64_t ship = w.ship("ship");
-    const int64_t t1 = w.object("t1", 0.0, -50.0, 0.0);
+    const int64_t sys = w.system("tsys", ship, 4, {});
+    const int64_t tube = w.bank("tube", sys);
+    const int64_t t1 = posed_target(w, "t1", 0.0, 50.0, 0.0, tube);
     const int64_t t2 = w.object("t2", 10.0, -50.0, 0.0);
-    const int64_t sys = w.system("tsys", ship, 4, {t1, t2});
-    w.bank("tube", sys);
+    w.m.set_ids(sys, Field::_target_list, {t1, t2});
+    w.m.set_ref(sys, Field::_held_target, t2);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     w.step();
-    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");  // Fire(t1)
-    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");  // retry t1
-    w.m.set_ids(sys, Field::_target_list, {t1});       // the handler drops t2
-    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");  // retry t2 (snapshot)
-    EXPECT_EQ(w.brief(w.step()), "DONE");
+    EXPECT_EQ(w.brief(w.step()), "ASK fire");  // Fire(t1)
+    w.k.answer(0);
+    EXPECT_EQ(w.brief(w.step()), "ASK fire");  // retry t1
+    w.m.set_ids(sys, Field::_target_list, {t1});  // the Python drops t2
+    w.k.answer(0);
+    const K1Record done = w.step();             // retry t2 (snapshot)
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_EQ(fx(w, done),
+              (std::vector<std::string>{"WEAPON_FIRE_FAILED tube"}));
 }
 
 // ── Fallback reasons (Task 5 fix round: every RUN_PYTHON is counted by why,
@@ -1135,28 +1231,25 @@ int64_t why_total(const K1Kernel::Counts& c) {
 }
 }  // namespace
 
-namespace {
-bool has_write(const World& w, const K1Record& r, const std::string& s) {
-    const std::vector<std::string> ws = w.writes(r);
-    return std::find(ws.begin(), ws.end(), s) != ws.end();
-}
-}  // namespace
 
-TEST(K1, BankRowGoneAfterFireFailedAsksPython) {
-    // A FIRE_FAILED handler drops the tube's row (a value it cannot encode).
-    // Python carries on with the object: `weapon._target = None` is logged
-    // for Python with no mirror write (the row is gone), and the retry's
-    // Fire is ASKed.
+TEST(K1, BankRowGoneAfterAFireAskAsksPython) {
+    // The Python of an asked Fire drops the tube's row (a value it cannot
+    // encode) and the Fire fails. Python carries on with the object:
+    // `weapon._target = None` is logged for Python with no mirror write
+    // (the row is gone), and the retry's Fire is ASKed.
     World w;
     const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, -50.0, 0.0);  // behind: the cone
-    const int64_t sys = w.system("sys", ship, 4, {t});
+    const int64_t sys = w.system("sys", ship, 4, {});
     const int64_t b0 = w.bank("b0", sys);
+    const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, b0);
+    w.m.set_ids(sys, Field::_target_list, {t});
+    w.m.set_ref(sys, Field::_held_target, t);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
-    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED b0");
+    EXPECT_EQ(w.brief(w.step()), "ASK fire");
     w.m.unregister_row(b0);
+    w.k.answer(0);
     K1Record r = w.step();
     EXPECT_EQ(w.brief(r), "ASK fire");
     EXPECT_TRUE(has_write(w, r, "b0._target=None"))
@@ -1170,62 +1263,54 @@ TEST(K1, BankRowGoneAfterFireFailedAsksPython) {
 }
 
 TEST(K1, BankRowGoneBeforeTheDumbCheckAsksPython) {
-    // StopFiring (BANK_STOP) drops the tube's row; the list is empty, so
-    // update_weapons asks weapon.IsDumbFire() -- of Python, the row being
-    // gone -- and dumb-fires on its answer.
-    World w;
-    const int64_t ship = w.ship("ship");
-    const int64_t sys = w.system("sys", ship, 4, {});
-    const int64_t b0 = w.bank("b0", sys);
-    w.m.set_i(b0, Field::_num_ready, 0);  // CanFire refuses
-    w.m.set_i(b0, Field::_firing, 1);  // a firing bank's stop is a record
-    w.m.set_i(sys, Field::_force_update, 1);
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
-    EXPECT_EQ(w.brief(w.step()), "BANK_STOP b0");
-    w.m.unregister_row(b0);
-    K1Record r = w.step();
-    EXPECT_EQ(w.brief(r), "ASK is_dumb");
-    EXPECT_EQ(r.args, (std::vector<int64_t>{b0}));
-    EXPECT_TRUE(has_write(w, r, "b0._target=None"))
-        << ::testing::PrintToString(w.writes(r));
-    w.k.answer(1);
-    EXPECT_EQ(w.brief(w.step()), "FIRE_DUMB b0");
-    EXPECT_EQ(w.brief(w.step()), "DONE");
-    w.k.end();
-
-    // Answered 0 (not dumb-capable): no FireDumb.
-    World v;
-    const int64_t ship2 = v.ship("ship");
-    const int64_t sys2 = v.system("sys", ship2, 4, {});
-    const int64_t c0 = v.bank("b0", sys2);
-    v.m.set_i(c0, Field::_num_ready, 0);
-    v.m.set_i(c0, Field::_firing, 1);
-    v.m.set_i(sys2, Field::_force_update, 1);
-    v.k.begin_pump({ship2}, kDt, 10.0, false, 0.0);
-    v.step();
-    v.step();
-    v.m.unregister_row(c0);
-    EXPECT_EQ(v.brief(v.step()), "ASK is_dumb");
-    v.k.answer(0);
-    EXPECT_EQ(v.brief(v.step()), "DONE");
-    v.k.end();
+    // An asked Fire's Python drops the tube's row and empties the list; the
+    // Fire fails, so update_weapons asks weapon.IsDumbFire() -- of Python,
+    // the row being gone -- and dumb-fires on its answer.
+    for (const int64_t answer : {1, 0}) {
+        World w;
+        const int64_t ship = w.ship("ship");
+        const int64_t sys = w.system("sys", ship, 4, {});
+        const int64_t b0 = w.bank("b0", sys);
+        const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, b0);
+        w.m.set_ids(sys, Field::_target_list, {t});
+        w.m.set_ref(sys, Field::_held_target, t);
+        w.m.set_i(sys, Field::_force_update, 1);
+        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+        EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
+        EXPECT_EQ(w.brief(w.step()), "ASK fire");
+        w.m.unregister_row(b0);
+        w.m.set_ids(sys, Field::_target_list, {});
+        w.k.answer(0);
+        K1Record r = w.step();
+        EXPECT_EQ(w.brief(r), "ASK is_dumb");
+        EXPECT_EQ(r.args, (std::vector<int64_t>{b0}));
+        EXPECT_TRUE(has_write(w, r, "b0._target=None"))
+            << ::testing::PrintToString(w.writes(r));
+        w.k.answer(answer);
+        // Not dumb-capable (0): no FireDumb.
+        if (answer) EXPECT_EQ(w.brief(w.step()), "FIRE_DUMB b0");
+        EXPECT_EQ(w.brief(w.step()), "DONE");
+        w.k.end();
+    }
 }
 
 TEST(K1, WalkedSystemRowGoneMidWalkThrows) {
     // The protocol invariant (k1_fire_control.h): the walked SYSTEM's row
-    // must outlive its walk. Gone after an effect, next() throws and leaves
-    // the session as it was, for run_k1 to abandon.
+    // must outlive its walk. Gone after Python ran (an asked Fire), next()
+    // throws and leaves the session as it was, for run_k1 to abandon.
     World w;
     const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, -50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 4, {t});
-    w.bank("b0", sys);
+    const int64_t sys = w.system("sys", ship, 4, {});
+    const int64_t b0 = w.bank("b0", sys);
+    const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, b0);
+    w.m.set_ids(sys, Field::_target_list, {t});
+    w.m.set_ref(sys, Field::_held_target, t);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
-    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED b0");
+    EXPECT_EQ(w.brief(w.step()), "ASK fire");
     w.m.unregister_row(sys);
+    w.k.answer(0);
     EXPECT_ANY_THROW(w.k.next());
     EXPECT_EQ(w.k.depth(), 1u);
     w.k.abandon();
@@ -1380,7 +1465,8 @@ TEST(K1, PosedShipWalksNatively) {
     w.m.set_i(sys, Field::_force_update, 1);  // past the fire timer
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     std::vector<std::string> recs = w.run_to_done();
-    EXPECT_NE(std::find(recs.begin(), recs.end(), "FIRE b0@t"), recs.end())
+    // The beam lit (its edge: logged writes and entries, no record).
+    EXPECT_EQ(w.k.counts().logged_beam_edge, 1)
         << ::testing::PrintToString(recs);
     w.k.end();
     EXPECT_EQ(w.k.counts().python_systems, 0);
@@ -1665,23 +1751,140 @@ TEST(K1Native, BeamSustainIsLoggedWrites) {
     }
 }
 
-TEST(K1Native, BeamEdgeStillRecords) {
-    // was_firing False: the sound and ET_WEAPON_FIRED are Python's, so the
-    // edge keeps its FIRE record and logs nothing of the effect's own.
+TEST(K1Native, BeamEdgeIsLoggedWritesAndEntries) {
+    // was_firing False (spec 2026-11-02-combat-fire-events §4.3): the
+    // mixin's _fire_effect writes -- `_firing = True; _target = target;
+    // _target_offset = offset; _beam_on_countdown = BEAM_ON_DELAY_S; _dwell
+    // = 0.0` -- logged in that order, then FIRE_SOUND(bank) and
+    // PhaserBank's WEAPON_FIRED(bank, target), both after those writes. No
+    // FIRE record: the walk's writes and entries ride DONE.
     World w(false);
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t sys = w.system("sys", ship, 1, {t});
     const int64_t b0 = w.bank("b0", sys);
     w.m.set_i(sys, Field::_force_update, 1);
+    w.m.set_f(b0, Field::_dwell, 0.25);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    char delay[64];
+    std::snprintf(delay, sizeof delay, "%.17g", 2 * 0.33);
+    EXPECT_EQ(writes_on(w, done, "b0"),
+              (std::vector<std::string>{
+                  "b0._fire_timer=0.33000000000000002", "b0._fire_timer=0",
+                  "b0._firing=True", "b0._target=t",
+                  "b0._target_offset=walk_offset",
+                  std::string("b0._beam_on_countdown=") + delay,
+                  "b0._dwell=0"}));
+    // Both entries follow the edge's last write (`_dwell`).
+    const size_t after = static_cast<size_t>(
+        std::find_if(done.writes.begin(), done.writes.end(),
+                     [&](const K1Write& x) {
+                         return x.handle == b0 && x.field == "_dwell";
+                     }) -
+        done.writes.begin()) + 1;
+    EXPECT_EQ(w.entries(done),
+              (std::vector<std::string>{
+                  "FIRE_SOUND b0^" + std::to_string(after),
+                  "WEAPON_FIRED b0@t^" + std::to_string(after)}));
+    EXPECT_EQ(w.m.get_i(b0, Field::_firing), 1);
+    EXPECT_EQ(w.m.get_ref(b0, Field::_target), t);
+    EXPECT_EQ(w.m.get_f(b0, Field::_beam_on_countdown), 2 * 0.33);
+    EXPECT_EQ(w.m.get_f(b0, Field::_dwell), 0.0);
+    EXPECT_EQ(w.k.counts().logged_beam_edge, 1);
+    EXPECT_EQ(w.k.counts().logged_beam_sustain, 0);
+    EXPECT_EQ(w.k.counts().records, 1);
+    EXPECT_EQ(w.k.counts().entries[static_cast<size_t>(K1Effect::FIRE_SOUND)], 1);
+    EXPECT_EQ(w.k.counts().entries[static_cast<size_t>(K1Effect::WEAPON_FIRED)], 1);
+}
+
+TEST(K1Native, EntriesRideTheNextRecordInWalkOrder) {
+    // The remaining records are unchanged: a tube's FIRE is still a record,
+    // and it carries the entries the phaser walk before it produced; the
+    // tube's own Python (its launch events) follows them.
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t psys = w.system("psys", ship, 1, {t});
+    w.bank("b0", psys);
+    const int64_t tsys = w.system("tsys", ship, 4, {t});
+    w.bank("tube", tsys);
+    w.m.set_i(psys, Field::_force_update, 1);
+    w.m.set_i(tsys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     const K1Record f = w.k.next();
-    EXPECT_EQ(w.brief(f), "FIRE b0@t");
-    EXPECT_FALSE(f.decision.was_firing);
-    EXPECT_TRUE(f.walk_first);
-    EXPECT_FALSE(has_write(w, f, "b0._firing=True"));
-    EXPECT_EQ(w.m.get_i(b0, Field::_firing), 0);
-    EXPECT_EQ(w.k.counts().logged_beam_sustain, 0);
+    EXPECT_EQ(w.brief(f), "FIRE tube@t");
+    EXPECT_EQ(f.decision.shape, K1Decision::Shape::Tube);
+    std::vector<std::string> e = w.entries(f);
+    ASSERT_EQ(e.size(), 2u);
+    EXPECT_EQ(e[0].substr(0, e[0].find('^')), "FIRE_SOUND b0");
+    EXPECT_EQ(e[1].substr(0, e[1].find('^')), "WEAPON_FIRED b0@t");
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_TRUE(done.entries.empty());
+}
+
+TEST(K1Native, FireFailedIsAnEntry) {
+    // A tube's failed aim (the cone): `self._broadcast_weapon_fire_failed();
+    // return False` is the entry WEAPON_FIRE_FAILED(tube), no record; the
+    // retry over the list fails again, a second entry. Both ride DONE, each
+    // after the writes made before it.
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, -50.0, 0.0);  // behind: no cone
+    const int64_t sys = w.system("tsys", ship, 4, {t});
+    w.bank("tube", sys);
+    w.m.set_i(sys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    std::vector<std::string> ws = w.writes(done);
+    // Fire(t) fails after `_fire_timer = 0.0`; the retry after
+    // `tube._target = None`.
+    const size_t first = static_cast<size_t>(
+        std::find(ws.begin(), ws.end(), "tube._fire_timer=0") - ws.begin()) + 1;
+    const size_t second = static_cast<size_t>(
+        std::find(ws.begin(), ws.end(), "tube._target=None") - ws.begin()) + 1;
+    EXPECT_EQ(w.entries(done),
+              (std::vector<std::string>{
+                  "WEAPON_FIRE_FAILED tube^" + std::to_string(first),
+                  "WEAPON_FIRE_FAILED tube^" + std::to_string(second)}));
+    EXPECT_EQ(w.k.counts().logged_fire_failed, 2);
+    EXPECT_EQ(w.k.counts().records, 1);
+    EXPECT_EQ(
+        w.k.counts().entries[static_cast<size_t>(K1Effect::WEAPON_FIRE_FAILED)],
+        2);
+}
+
+TEST(K1Native, AThrowDropsTheEntriesItsCallProduced) {
+    // Entries are session state like the write log: a call that throws
+    // after producing some leaves none behind, and the retried call
+    // produces them once.
+    World w(false);
+    const int64_t a = w.ship("a");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", a, 1, {t});
+    const int64_t b0 = w.bank("b0", sys);
+    w.m.set_i(sys, Field::_force_update, 1);
+    const int64_t b = w.ship("b", 0.0, 10.0, 0.0);
+    const int64_t sys2 = w.system("sys2", b, 1, {t});
+    w.bank("c0", sys2);
+    bool boom = true;
+    w.k.set_walk_check([&](int64_t s, int64_t) {
+        if (s == sys2 && boom) throw std::runtime_error("walk check");
+        return false;
+    });
+    w.k.begin_pump({a, b}, kDt, 10.0, false, 0.0);
+    EXPECT_THROW(w.k.next(), std::runtime_error);
+    EXPECT_EQ(w.m.get_i(b0, Field::_firing), 0);  // undone
+    boom = false;
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    std::vector<std::string> e = w.entries(done);
+    ASSERT_EQ(e.size(), 2u);
+    EXPECT_EQ(e[0].substr(0, e[0].find('^')), "FIRE_SOUND b0");
+    EXPECT_EQ(e[1].substr(0, e[1].find('^')), "WEAPON_FIRED b0@t");
 }
 
 TEST(K1Native, IdleStopIsLoggedPerBankClass) {
@@ -1749,21 +1952,137 @@ TEST(K1Native, IdleStopIsLoggedPerBankClass) {
     }
 }
 
-TEST(K1Native, FiringBankStopStillRecords) {
-    // A firing bank's StopFiring stops its loop sound: Python's, so the
-    // BANK_STOP record stays (and nothing of the stop is logged).
+TEST(K1Native, FiringBankStopIsLoggedPerBankClass) {
+    // A FIRING bank that cannot fire: its class's StopFiring writes, logged
+    // as for an idle one, plus LOOP_STOP(bank) for the energy bank's loop
+    // sound (after its writes); a tube and a pulse cannon have no loop. No
+    // BANK_STOP record.
+    struct Case {
+        int64_t kind;
+        std::vector<std::string> stop;
+        bool loop;
+    };
+    const Case cases[] = {
+        {1, {"b0._firing=False", "b0._beam_on_countdown=0"}, true},
+        {4, {"b0._firing=False"}, false},
+        {2, {"b0._firing=False", "b0._target=None", "b0._target_offset=None"},
+         false},
+    };
+    for (const Case& c : cases) {
+        World w(false);
+        const int64_t ship = w.ship("ship");
+        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+        const int64_t sys = w.system("sys", ship, c.kind, {t});
+        const int64_t b0 = w.bank("b0", sys);
+        w.bank("b1", sys);
+        w.m.set_i(b0, Field::_firing, 1);
+        if (c.kind == 1) {
+            w.m.set_f(b0, Field::_charge_level, 0.0);
+            w.m.set_f(b0, Field::_beam_on_countdown, 0.25);
+        } else if (c.kind == 2) {
+            w.m.set_f(b0, Field::_cooldown_remaining, 1.0);
+            w.m.set_ref(b0, Field::_target, t);
+            w.m.set_fv(b0, Field::_target_offset, {1.0, 2.0, 3.0});
+        } else {
+            w.m.set_i(b0, Field::_num_ready, 0);
+        }
+        w.m.set_i(sys, Field::_single_fire, 0);
+        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+        std::vector<K1Record> recs;
+        for (int guard = 0; guard < 10; ++guard) {
+            recs.push_back(w.k.next());
+            if (recs.back().kind == K1Kind::DONE) break;
+        }
+        std::vector<std::string> b0w, loops;
+        for (const K1Record& r : recs) {
+            EXPECT_NE(w.brief(r), "BANK_STOP b0") << c.kind;
+            for (const std::string& s : writes_on(w, r, "b0")) b0w.push_back(s);
+            for (const std::string& s : w.entries(r)) loops.push_back(s);
+        }
+        const auto at = std::find(b0w.begin(), b0w.end(), "b0._fire_timer=0");
+        ASSERT_NE(at, b0w.end()) << c.kind;
+        std::vector<std::string> stop(at + 1, at + 1 + std::min<ptrdiff_t>(
+                                                  c.stop.size(),
+                                                  b0w.end() - at - 1));
+        EXPECT_EQ(stop, c.stop) << c.kind;
+        if (c.loop) {
+            ASSERT_EQ(recs.size(), 1u);
+            const std::vector<std::string> ws = w.writes(recs[0]);
+            const size_t after = static_cast<size_t>(
+                std::find(ws.begin(), ws.end(), "b0._beam_on_countdown=0") -
+                ws.begin()) + 1;
+            EXPECT_EQ(loops, (std::vector<std::string>{
+                                 "LOOP_STOP b0^" + std::to_string(after)}));
+        } else {
+            EXPECT_TRUE(loops.empty()) << c.kind;
+        }
+        EXPECT_EQ(w.m.get_i(b0, Field::_firing), 0) << c.kind;
+        EXPECT_EQ(w.k.counts().logged_firing_bank_stop, 1) << c.kind;
+        EXPECT_EQ(w.k.counts().logged_idle_bank_stop, 0) << c.kind;
+    }
+}
+
+TEST(K1Native, SystemStopIsLoggedWrites) {
+    // The pump's `sys_.StopFiring()` (a gate stopped the system):
+    // WeaponSystem.StopFiring's writes -- `_fire_held = False; _held_target
+    // = None; _held_offset = None; _target_list = []; _last_group_fired =
+    // -1` -- then each child's StopFiring in order, a firing energy bank's
+    // LOOP_STOP after its writes. No STOP_SYSTEM record.
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    w.bank("b0", sys);
+    const int64_t b1 = w.bank("b1", sys);
+    w.m.set_i(b1, Field::_firing, 1);
+    w.m.set_fv(sys, Field::_held_offset, {1.0, 2.0, 3.0});
+    w.m.set_i(sys, Field::_last_group_fired, 2);
+    w.m.set_i(sys, Field::_is_on, 0);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_EQ(w.writes(done),
+              (std::vector<std::string>{
+                  "sys._fire_held=False", "sys._held_target=-1",
+                  "sys._held_offset=None", "sys._target_list=[]",
+                  "sys._last_group_fired=-1", "b0._firing=False",
+                  "b0._beam_on_countdown=0", "b1._firing=False",
+                  "b1._beam_on_countdown=0"}));
+    EXPECT_EQ(w.entries(done), (std::vector<std::string>{"LOOP_STOP b1^9"}));
+    EXPECT_EQ(w.m.get_i(sys, Field::_fire_held), 0);
+    EXPECT_EQ(w.m.get_ref(sys, Field::_held_target), -1);
+    EXPECT_EQ(w.m.get_fv(sys, Field::_held_offset), std::vector<double>{});
+    EXPECT_TRUE(w.m.get_ids(sys, Field::_target_list).empty());
+    EXPECT_EQ(w.m.get_i(sys, Field::_last_group_fired), -1);
+    EXPECT_EQ(w.m.get_i(b1, Field::_firing), 0);
+    EXPECT_EQ(w.k.counts().logged_system_stop, 1);
+    EXPECT_EQ(w.k.counts().records, 1);
+}
+
+TEST(K1Native, SystemStopTheWalkCheckRefusesStaysARecord) {
+    // The stop runs before any walk, so the walk check is asked first: when
+    // it hands the system back, the STOP_SYSTEM record stays and nothing of
+    // the stop is logged. (Which patches it answers for is the bindings':
+    // tests/unit/test_native_k1_dispatch.py
+    // test_system_instance_stop_patch_runs_python.)
     World w(false);
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t sys = w.system("sys", ship, 1, {t});
     const int64_t b0 = w.bank("b0", sys);
-    w.bank("b1", sys);
     w.m.set_i(b0, Field::_firing, 1);
-    w.m.set_f(b0, Field::_charge_level, 0.0);
+    w.m.set_i(sys, Field::_is_on, 0);
+    int64_t asked = -1;
+    w.k.set_walk_check([&](int64_t s, int64_t) {
+        asked = s;
+        return true;
+    });
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    const K1Record s = w.k.next();
-    EXPECT_EQ(w.brief(s), "BANK_STOP b0");
-    EXPECT_FALSE(has_write(w, s, "b0._firing=False"));
+    const K1Record r = w.k.next();
+    EXPECT_EQ(w.brief(r), "STOP_SYSTEM sys");
+    EXPECT_TRUE(r.writes.empty());
+    EXPECT_TRUE(r.entries.empty());
+    EXPECT_EQ(asked, sys);
     EXPECT_EQ(w.m.get_i(b0, Field::_firing), 1);
-    EXPECT_EQ(w.k.counts().logged_idle_bank_stop, 0);
+    EXPECT_EQ(w.k.counts().logged_system_stop, 0);
 }

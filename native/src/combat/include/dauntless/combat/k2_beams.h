@@ -25,8 +25,9 @@
 // sensor_detect, the Python-exact ports of phases 1a, 1b and Tasks 2-3.
 //
 // ONE RECORD PER CALL (ruling P1). next() runs the walk until the first thing
-// only Python may do -- an effect (a StopFiring, a beam contact), a whole ship
-// Python must run, or a question the mirror cannot answer -- and returns it.
+// only Python may do -- an effect (a damage pulse; a StopFiring the kernel
+// cannot log), a whole ship Python must run, or a question the mirror cannot
+// answer -- and returns it.
 // The next next() resumes from the cursor and reads the LIVE mirror again, so
 // no decision outlives a Python effect. There is no epoch check.
 //
@@ -41,18 +42,33 @@
 // driver (native_combat.apply_writes, its quiet setters).
 //
 // THE OFFLINE STOP (round trips, spec 2026-11-01 §4.5). `sys_.StopFiring()`
-// on an offline or off system whose banks are all idle stock PhaserBanks
-// (each row's `_firing` 0, not k1_overridden) is pure field writes, so it is
-// logged, with no SYSTEM_STOP record, in WeaponSystem.StopFiring's order
-// (WS:1540-1549): the system's `_fire_held = False`, `_held_target = None`,
-// `_held_offset = None`, `_target_list = []` (a NEW list each time: Python's
-// StopFiring builds one, and AddTarget appends in place), `_last_group_fired
-// = -1`; then, in GetWeapon order, each bank's
-// _EnergyWeaponFireMixin.StopFiring (WS:905-911): `_firing = False`,
-// `_beam_on_countdown = 0.0`. Never elided when equal: `_firing` is a
-// WakeField (the driver's quiet setter wakes a sleeping bank) and the list
-// is replaced. A firing bank (its loop sound), a child that is not such a
-// bank, or a row gone keeps the SYSTEM_STOP record.
+// on an offline or off system whose banks are all stock PhaserBanks (live
+// rows, not k1_overridden) is logged, with no SYSTEM_STOP record, in
+// WeaponSystem.StopFiring's order (WS:1572): the system's `_fire_held =
+// False`, `_held_target = None`, `_held_offset = None`, `_target_list = []`
+// (a NEW list each time: Python's StopFiring builds one, and AddTarget
+// appends in place), `_last_group_fired = -1`; then, in GetWeapon order,
+// each bank's _EnergyWeaponFireMixin.StopFiring (WS:920, stop_firing.h):
+// `_firing = False`, `_beam_on_countdown = 0.0`, and, for a bank that was
+// FIRING, its loop sound's LOOP_STOP entry right after its own writes (THE
+// EFFECT QUEUE; a firing bank kept the record before combat fire events).
+// Never elided when equal: `_firing` is a WakeField (the driver's quiet
+// setter wakes a sleeping bank) and the list is replaced. A child that is
+// not such a bank, or a row gone, keeps the SYSTEM_STOP record.
+//
+// THE EFFECT QUEUE (spec 2026-11-02-combat-fire-events §4.1-4.3). The
+// walk's `bank.StopFiring()` on its FIRING bank -- a target None or dead,
+// undetectable, in another set, or the arc fail's (after its take_dwell) --
+// is logged the same way (stop_firing.h's writes) with its LOOP_STOP(bank)
+// entry after them, and the walk goes on (to the next bank; after the arc
+// fail, to the partial pulse's trace). The entries are K1Entry (K1's type,
+// `at` = the writes logged before it) riding the next record
+// (K2Record::entries); the binding appends them to the combat effect queue
+// (combat_effect_queue.h, which this library does not link) once that
+// record's writes are applied, delivered by Python at the tick boundary or
+// the session's end. They roll back with their writes: a throw, a ship
+// handed to Python whole (run_python) or a bank handed back (bank_step)
+// drops the ones its undone writes made.
 //
 // RESTING CONTACTS (spec 2026-11-02 §4.3). A contact whose Python is
 // presentation only -- `flush_dwell <= 0.0`, _phaser_contact's beam_contact
@@ -93,7 +109,11 @@
 //        (shields_block None: unknown, beam_contact evaluates its own;
 //        view_offset None: no shift, or no entry for the set).
 //   1 SYSTEM_STOP (SYSTEM_STOP, system, writes) -> sys_.StopFiring()
+//        only for a stop THE OFFLINE STOP cannot log (a child that is not
+//        a live stock phaser bank).
 //   2 BANK_STOP   (BANK_STOP, bank, writes)   -> bank.StopFiring()
+//        only for a firing bank's stop the kernel cannot log (its row gone:
+//        a fallback the pre-scan makes unreachable; THE EFFECT QUEUE).
 //   3 CONTACT     (CONTACT, bank, target, ship, system, emitter_xyz,
 //                  target_pos_xyz, dist, aim_unit_xyz | None, impact_xyz,
 //                  normal_xyz | None, tier, bubble_xyz | None,
@@ -183,11 +203,12 @@
 //            delivered for bank i (its undelivered writes are rolled back).
 //      An int64 handle is -1 for None.
 //
-// PROTOCOL INVARIANT. Once a record for a BANK has been delivered (an ASK or
-// the arc-fail BANK_STOP), the bank cannot be handed to Python (part of its
-// body has run). The only Python run between that record and the bank's
-// CONTACT is an ASK answer or StopFiring, neither of which drops a mirror
-// row, and the pre-scan made every remaining read nameable; if one still
+// PROTOCOL INVARIANT. Once a record for a BANK has been delivered (an ASK),
+// the bank cannot be handed to Python (part of its body has run). The only
+// Python run between that record and the bank's CONTACT is an ASK answer,
+// which drops no mirror row, and the pre-scan made every remaining read
+// nameable (a logged stop is not a record: a bank whose stop was logged
+// can still be handed back, the stop rolled back with it); if one still
 // fails, next() throws std::logic_error (the session is restored, see below)
 // and run_k2 must abandon and re-raise naming this invariant. The part slots
 // the bank's GEOMETRY reads were checked current at its start, and the only
@@ -207,14 +228,15 @@
 // effects, a whole ship's step) the record that triggers it names -- and the
 // driver resolves and pins (_K2Walk.obj, pin_bank) -- the objects Python's
 // locals would hold at that point:
-//   - SYSTEM_STOP: the system, before its StopFiring;
+//   - SYSTEM_STOP (a fallback): the system, before its StopFiring;
 //   - a drained resting contact: the bank, the target, the ship and the
 //     system, when the driver presents it -- by handle through the pin set
 //     and the weak registry (_K2Walk.live): an entry naming an object freed
 //     or unregistered between its queueing and the drain is skipped (its
 //     presentation would have run before then);
-//   - BANK_STOP: the bank, its `_target` and its system (pin_bank), before
-//     the bank's StopFiring;
+//   - BANK_STOP (a fallback): the bank, its `_target` and its system
+//     (pin_bank), before the bank's StopFiring (a logged stop runs no
+//     Python: nothing to pin);
 //   - CONTACT: the bank, the target, the ship and the system, before the
 //     contact's effects;
 //   - the bank_step ASK: the ship and the system, before _phaser_step_bank;
@@ -313,8 +335,8 @@
 //   a bank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
 //     _strip_emit_position, _emitter_world_position, GetLength, StopFiring.
 // (GetPowerLevel: a resting contact carries the system's mirrored
-// `_power_level`, RESTING CONTACTS. StopFiring: THE OFFLINE STOP stands in
-// for it. A class overriding it --
+// `_power_level`, RESTING CONTACTS. StopFiring: THE OFFLINE STOP and the
+// walk's logged bank stops stand in for it. A class overriding it --
 // the phaser system's or a bank's -- is k1_overridden, K1's guard: the
 // system's sends its ship to Python, a bank's keeps the SYSTEM_STOP
 // record. K2 relies on K1's _k1_recheck_overrides, run at K1's entry -- the
@@ -411,6 +433,9 @@ struct K2Record {
     K2Query query = K2Query::kCount;  // ASK
     std::vector<K2Arg> args;     // ASK
     std::vector<K2Write> writes;
+    // The queue entries produced since the previous record, in walk order
+    // (THE EFFECT QUEUE): K1's entry type, LOOP_STOP only.
+    std::vector<K1Entry> entries;
 };
 
 // A resting contact queued for the drain (RESTING CONTACTS), with what its
@@ -516,6 +541,12 @@ public:
         // for the drain (no record of their own) and offline stops logged
         // (no SYSTEM_STOP record).
         int64_t batched_contacts = 0, logged_system_stop = 0;
+        // Combat fire events (THE EFFECT QUEUE): of the logged system
+        // stops, those that stopped a firing bank, and firing banks'
+        // StopFirings logged instead of a BANK_STOP record; the queue
+        // entries produced, by K1Effect (LOOP_STOP only).
+        int64_t logged_firing_system_stop = 0, logged_bank_stop = 0;
+        std::array<int64_t, static_cast<size_t>(K1Effect::kCount)> entries{};
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

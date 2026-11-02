@@ -26,44 +26,70 @@
 // Python's argument order, NaN and -0.0 as Python).
 //
 // THE PURE STEPS. step_energy / step_pulse / step_tube read the mirror and
-// return the step's writes, in Python's order, and its record -- or a
-// hand-back reason, decided BEFORE anything is written (the whole step is
-// computed first, so a question the mirror cannot answer half-way through
-// discards the step). pulse_watch is the pulse cannon's last line
+// return the step's writes, in Python's order, and the effect it ends with
+// (K0Step::record: DEPLETE_STOP, RELOADED, WATCH or DONE) -- or a hand-back
+// reason, decided BEFORE anything is written (the whole step is computed
+// first, so a question the mirror cannot answer half-way through discards
+// the step). pulse_watch is the pulse cannon's last line
 // (`_charge_watcher._update(GetChargePercentage())`), run on the mirror
 // AFTER the step's writes landed.
 //
 // THE SESSION. begin(ships, dt, now, ...) snapshots each ship's weapon
 // handles (the four group refs on the ship's Object row, then each group's
 // `_children`, raw: an index keeps its place); next() runs the walk to the
-// first thing only Python may do and returns it:
-//   DEPLETE_STOP  a firing bank ran dry: `_charge_level` and `_depleted =
-//                 True` are logged before it; Python runs `bank.StopFiring()`
-//                 (the kernel writes no `_firing` / `_beam_on_countdown` for
-//                 that stop). A pulse cannon's watcher line still follows on
-//                 the next next().
-//   RELOADED      a tube loaded a round: every slot write, then
-//                 `_reload_timers[oldest] = -1.0`, then `_num_ready`, logged
-//                 before it; Python runs `tube._broadcast_reload()`.
-//   WATCH         a pulse cannon whose watcher has checks (`_watch_checks >
-//                 0`), after its step's writes: Python runs
-//                 `weapon._charge_watcher._update(weapon.GetChargePercentage())`.
-//                 With no checks the kernel logs the watcher's `_value`
-//                 instead (a WatcherWrite) and goes on.
+// first thing only Python may do and returns it. Since combat fire events
+// (spec 2026-11-02-combat-fire-events §4.3) that is only:
 //   RUN_PYTHON    a ship or one weapon K0 does not stand in for (K0Reason):
 //                 Python steps it (`step_every_weapon(ship, dt)` for a ship;
 //                 `UpdateCharge(dt)` / `UpdateReload(dt)` for a weapon).
 //   DONE          the walk is over (its writes ride it); end() closes.
 // The walk stops AT a record, so no later weapon is stepped before Python has
 // run (plan ruling P1); the next next() reads the LIVE mirror again (a
-// handler's writes push to it).
+// handler's writes push to it). DEPLETE_STOP, RELOADED and WATCH are never
+// returned (their numbers are kept): what Python ran for them is logged
+// writes plus effect-queue entries (THE EFFECT QUEUE, below).
+//
+// THE EFFECT QUEUE (spec 2026-11-02-combat-fire-events §4.1-4.3). The three
+// effects that only report or present are field writes plus a K0Entry, in
+// walk order, delivered by Python (engine/appc/effect_queue.py) at the tick
+// boundary or the session's end, never mid-walk:
+//   a firing bank ran dry   `_charge_level`, `_depleted = True`, then
+//       `self.StopFiring()`'s writes (stop_firing.h: a phaser bank's
+//       `_firing = False; _beam_on_countdown = 0.0`, a pulse cannon's
+//       `_firing = False; _target = None; _target_offset = None`), then, for
+//       a phaser bank, LOOP_STOP(bank) (the mixin's loop sound; a pulse
+//       cannon has none). A pulse cannon's watcher line follows at once.
+//   a tube loaded a round   every slot write, `_reload_timers[oldest] =
+//       -1.0`, `_num_ready`, then TORPEDO_RELOAD(tube) (`_broadcast_reload`)
+//   a watcher line          the watcher's `_value = GetChargePercentage()`
+//       committed as a logged write (Watcher; the mirror's `_watch_value`
+//       follows it), then, when the watcher has checks (`_watch_checks >
+//       0`), WATCH(weapon, old, new) with old the mirrored `_watch_value`:
+//       delivery fires the checks crossed between them (ruling E3: the
+//       handler reads the committed value). A watcher the weapon does not
+//       own (`_watch_checks` -1, WATCH_ALWAYS) runs its own `_update`: the
+//       cannon is handed back whole (reason `watcher`) before any write.
+//       A native WATCH names the WEAPON: delivery finds its watcher then
+//       (`weapon._charge_watcher`), where Python's WATCH names the watcher
+//       object it was produced by -- the two differ only if a handler
+//       replaces the cannon's watcher between production and delivery.
+// Each entry rides the next record with the writes (K0Record::entries, a
+// view of the session's log like `writes`; its `at` places it after the
+// writes logged before it); the binding appends them to the combat effect
+// queue (combat_effect_queue.h, which this library does not link) once the
+// record's writes are applied. A throw drops the call's entries with its
+// writes. Python's own producers (a RUN_PYTHON weapon's StopFiring,
+// ReloadTorpedo, `_update`) append the same kinds inside the session's
+// deferral (native_combat.run_k0), so one emission order holds.
 //
 // THE WRITE LOG. Every write is made in the mirror and logged (K0Write: the
 // step's K0FieldWrite on its handle): `_charge_level`, `_beam_on_countdown`,
-// `_cooldown_remaining` (Float), `_depleted` (Flag, a bool), `_num_ready`
-// (Int), slot elements (Slot on `_reload_timers` / `_reload_advanced_at`,
-// in place) and the watcher value (Watcher: `_charge_watcher._value`,
-// logged only: the watcher is not mirrored). Plain data: no string, no
+// `_cooldown_remaining` (Float), `_depleted`, `_firing` (Flag, a bool),
+// `_num_ready` (Int), a stop's `_target = None` (Ref) and `_target_offset =
+// None` (Null), slot elements (Slot on `_reload_timers` /
+// `_reload_advanced_at`, in place) and the watcher value (Watcher:
+// `_charge_watcher._value`; the watcher is not mirrored, its value is, as
+// the weapon row's `_watch_value`). Plain data: no string, no
 // variant (the host's applier maps the Field to its interned name). Each
 // record carries the writes made since the previous record, as a VIEW of
 // the session's log: valid until the next next(), whose first act is to
@@ -100,9 +126,15 @@
 //     unrepresentable    anything else the mirror cannot answer (an
 //                        unnamed child, a property or ammo row it cannot
 //                        name)
+//     watcher            a pulse cannon whose charge watcher it does not own
+//                        (`_watch_checks` WATCH_ALWAYS: a subclass with its
+//                        own `_update`, another weapon's watcher)
 
 namespace dauntless::combat {
 
+// Record kinds, in combat_k0_kinds() order. Only DONE and RUN_PYTHON are
+// returned (THE EFFECT QUEUE); DEPLETE_STOP, RELOADED and WATCH name a pure
+// step's effect (K0Step::record) and keep their numbers.
 enum class K0Kind : int32_t {
     DONE = 0,
     DEPLETE_STOP,
@@ -112,6 +144,26 @@ enum class K0Kind : int32_t {
     kCount
 };
 const char* k0_kind_name(K0Kind k);
+
+// The effect-queue entries K0 appends (THE EFFECT QUEUE): the kinds of the
+// same names in native/src/host/combat_effect_queue.h, which the combat
+// library does not link; the binding maps them.
+enum class K0Effect : int32_t {
+    LOOP_STOP = 0,   // (bank)
+    TORPEDO_RELOAD,  // (tube)
+    WATCH,           // (weapon, old, new): the weapon's charge watcher
+    kCount
+};
+const char* k0_effect_name(K0Effect e);
+
+// One entry, in walk order. `at`: how many of the carrying record's writes
+// were logged before it.
+struct K0Entry {
+    K0Effect kind = K0Effect::LOOP_STOP;
+    int64_t a = -1;
+    double old_value = 0.0, new_value = 0.0;  // WATCH
+    size_t at = 0;
+};
 
 enum class K0Reason : int32_t {
     Tractor = 0,
@@ -125,29 +177,38 @@ enum class K0Reason : int32_t {
     Parent,
     Unrepresentable,
     UnknownKind,
+    Watcher,
     kCount
 };
 // The Python counter key: "tractor", "no_row", "not_weapon_system",
 // "stale_row", "slot_heal", "override", "audit", "power_level", "parent",
-// "unrepresentable", "unknown_kind".
+// "unrepresentable", "unknown_kind", "watcher".
 const char* k0_reason_name(K0Reason r);
 
-// One write a pure step makes, before the session logs it.
+// One write a pure step makes, before the session logs it. Ref: a handle
+// (-1 None; a StopFiring's `_target = None`), applied through the field's
+// kind as K1's ref writes are. Null: a plain None (`_target_offset = None`).
+// Watcher: the charge watcher's `_value`; in the mirror, `_watch_value`.
 struct K0FieldWrite {
-    enum class Type : int32_t { Float, Flag, Int, Slot, Watcher };
+    enum class Type : int32_t { Float, Flag, Int, Slot, Watcher, Ref, Null };
     Type type = Type::Float;
-    Field field = Field::kCount;  // Slot: the list field; Watcher: unused
+    Field field = Field::kCount;  // Slot: the list field; Watcher:
+                                  // _watch_value (the mirror's copy)
     int64_t index = -1;           // Slot
     double d = 0.0;               // Float, Slot, Watcher
-    int64_t i = 0;                // Flag (0/1), Int
+    int64_t i = 0;                // Flag (0/1), Int, Ref (the handle)
 };
 
 struct K0Step {
     // Set: Python steps this weapon; `writes` is empty and `record` DONE.
     std::optional<K0Reason> handback;
-    // DONE: no record (the walk goes on); else DEPLETE_STOP / RELOADED /
-    // WATCH.
+    // DONE: no effect but the writes; else the effect the step ends with,
+    // which the session queues (THE EFFECT QUEUE): DEPLETE_STOP (the stop's
+    // writes are in `writes`; `loop_stop`: a LOOP_STOP follows them),
+    // RELOADED (TORPEDO_RELOAD), WATCH (WATCH, watch_old -> watch_new).
     K0Kind record = K0Kind::DONE;
+    bool loop_stop = false;
+    double watch_old = 0.0, watch_new = 0.0;
     std::vector<K0FieldWrite> writes;
 };
 
@@ -163,10 +224,11 @@ K0Step step_energy(const Mirror& m, int64_t weapon, double dt);
 // line: the cooldown, then the mixin. `weapon`: a live kind-6 row.
 K0Step step_pulse(const Mirror& m, int64_t weapon, double dt);
 
-// The watcher line on the mirror as it is now: WATCH when the watcher has
-// checks (or the row is gone: Python then computes the value itself), else
-// the WatcherWrite of GetChargePercentage() (WS:2841: 0.0 if `_max_charge
-// <= 0.0` else `_charge_level / _max_charge`).
+// The watcher line on the mirror as it is now: the WatcherWrite of
+// GetChargePercentage() (WS:2841: 0.0 if `_max_charge <= 0.0` else
+// `_charge_level / _max_charge`), and WATCH (from the mirrored
+// `_watch_value` to it) when the watcher has checks. A row gone or a
+// watcher not owned (`_watch_checks` < 0) hands back (stale_row, watcher).
 K0Step pulse_watch(const Mirror& m, int64_t weapon);
 
 // TorpedoTube.UpdateReload (WS:3589) and the ReloadTorpedo it calls
@@ -186,9 +248,9 @@ struct K0Write {
 };
 
 struct K0Record {
-    K0Kind kind = K0Kind::DONE;
-    // DEPLETE_STOP / RELOADED / WATCH: the weapon. RUN_PYTHON: the weapon
-    // (-2: the mirror cannot name it), or the ship for a whole-ship one.
+    K0Kind kind = K0Kind::DONE;  // RUN_PYTHON or DONE (THE EFFECT QUEUE)
+    // RUN_PYTHON: the weapon (-2: the mirror cannot name it), or the ship
+    // for a whole-ship one.
     int64_t a = -1;
     // Where in the walk: the position in begin's ship list, the group (0
     // phaser, 1 pulse, 2 tractor, 3 torpedo) and GetWeapon(index) in it as
@@ -201,6 +263,9 @@ struct K0Record {
     // The writes since the previous record, in order: a view of the
     // session's log, valid until its next next() (THE WRITE LOG).
     std::span<const K0Write> writes;
+    // The queue entries since the previous record, in walk order, viewed
+    // the same way (THE EFFECT QUEUE).
+    std::span<const K0Entry> entries;
 };
 
 class K0Session {
@@ -246,6 +311,13 @@ public:
         std::array<int64_t, static_cast<size_t>(K0Reason::kCount)>
             python_reasons{};
         int64_t logged_writes = 0;  // writes returned in records
+        // Records not returned because their Python is field writes plus
+        // queue entries (THE EFFECT QUEUE): a firing bank drained dry
+        // (k0_logged.deplete_stop), a reload (k0_logged.reload), a watcher
+        // line with checks (k0_logged.watch).
+        int64_t logged_deplete_stop = 0, logged_reload = 0, logged_watch = 0;
+        // The queue entries produced, by K0Effect (k0_entries).
+        std::array<int64_t, static_cast<size_t>(K0Effect::kCount)> entries{};
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

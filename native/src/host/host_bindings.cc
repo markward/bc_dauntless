@@ -10,6 +10,7 @@
 // through the remaining bindings.
 
 #include "host_bindings.h"
+#include "combat_effect_queue.h"
 #include "combat_write_apply.h"
 
 #include <algorithm>
@@ -4039,6 +4040,59 @@ bool& k1_apply_raised() {
     return raised;
 }
 
+// A K1 record's queue entries (k1_fire_control.h, THE EFFECT QUEUE) into
+// the combat effect queue, in walk order: K1Effect names the kinds of the
+// same names (the combat library does not link the host layer).
+void k1_append_entries(const std::vector<dauntless::combat::K1Entry>& entries) {
+    namespace cb = dauntless::combat;
+    namespace hq = dauntless::host;
+    for (const cb::K1Entry& e : entries) {
+        switch (e.kind) {
+            case cb::K1Effect::FIRE_SOUND:
+                hq::effect_queue().append_native(hq::EffectKind::FIRE_SOUND, e.a);
+                break;
+            case cb::K1Effect::LOOP_STOP:
+                hq::effect_queue().append_native(hq::EffectKind::LOOP_STOP, e.a);
+                break;
+            case cb::K1Effect::WEAPON_FIRED:
+                hq::effect_queue().append_native(hq::EffectKind::WEAPON_FIRED,
+                                                 e.a, e.b);
+                break;
+            case cb::K1Effect::WEAPON_FIRE_FAILED:
+                hq::effect_queue().append_native(
+                    hq::EffectKind::WEAPON_FIRE_FAILED, e.a);
+                break;
+            case cb::K1Effect::kCount:
+                throw std::logic_error("combat K1: unknown queue entry");
+        }
+    }
+}
+
+// A K0 record's queue entries (k0_charging.h, THE EFFECT QUEUE) into the
+// combat effect queue, in walk order: K0Effect names the kinds of the same
+// names. A WATCH names the WEAPON (delivery fires its charge watcher).
+void k0_append_entries(std::span<const dauntless::combat::K0Entry> entries) {
+    namespace cb = dauntless::combat;
+    namespace hq = dauntless::host;
+    for (const cb::K0Entry& e : entries) {
+        switch (e.kind) {
+            case cb::K0Effect::LOOP_STOP:
+                hq::effect_queue().append_native(hq::EffectKind::LOOP_STOP, e.a);
+                break;
+            case cb::K0Effect::TORPEDO_RELOAD:
+                hq::effect_queue().append_native(
+                    hq::EffectKind::TORPEDO_RELOAD, e.a);
+                break;
+            case cb::K0Effect::WATCH:
+                hq::effect_queue().append_native(hq::EffectKind::WATCH, e.a,
+                                                 e.old_value, e.new_value);
+                break;
+            case cb::K0Effect::kCount:
+                throw std::logic_error("combat K0: unknown queue entry");
+        }
+    }
+}
+
 // ── The one-call scalar push (combat_push_scalar; spec 2026-11-02 §4.2) ───
 // NativeField._encode's scalar branches, in C++: float(value), int(value),
 // truthiness, `is True`, None -> -1. The codes are combat_push_codes().
@@ -4849,8 +4903,9 @@ bool k0_scan(PyObject* ships, const K0Guard* g, K0Scan& s) {
 #endif
 
 // A K0 write -> (handle, field, value) in the Python encoding
-// (combat_write_apply.h): a float, bool or int; a slot write
-// ("slot", index, value), a watcher write ("watcher", value).
+// (combat_write_apply.h): a float, bool or int (a Ref: the handle, -1
+// None), None; a slot write ("slot", index, value), a watcher write
+// ("watcher", value).
 py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
     namespace cb = dauntless::combat;
     using T = cb::K0FieldWrite::Type;
@@ -4869,6 +4924,11 @@ py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
         case T::Watcher:
             return py::make_tuple(kw.handle, "_charge_watcher",
                                   py::make_tuple("watcher", w.d));
+        case T::Ref:
+            return py::make_tuple(kw.handle, cb::field_name(w.field), w.i);
+        case T::Null:
+            return py::make_tuple(kw.handle, cb::field_name(w.field),
+                                  py::none());
     }
     throw std::logic_error("combat K0: a write of no type");
 }
@@ -11542,12 +11602,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
         //   (STOP_SYSTEM, system, tag, writes)
         //   (RUN_PYTHON, system, ship_pos, getter_idx, tag, writes)
         //   (BANK_STOP, bank, tag, writes)
-        //   (FIRE, bank, target, decision, tag, writes)
-        //       decision: beam (was_firing,), pulse ((x, y, z), target_used),
-        //       tube (target_used,); handles -1 = None
-        //   (FIRE_FAILED, tube, tag, writes)
+        //   (FIRE, bank, target, decision, tag, writes)  a tube or a cannon
+        //       decision: pulse ((x, y, z), target_used), tube
+        //       (target_used,); handles -1 = None. (A beam's (was_firing,)
+        //       is no longer returned: its edge is logged.)
         //   (FIRE_DUMB, tube, tag, writes)
         //   (ASK, query, *args, tag, writes)    -> reply combat_k1_answer
+        // FIRE_FAILED (its kind number kept) is no longer returned: an entry
+        // (spec 2026-11-02-combat-fire-events §4.3). A record's queue
+        // entries go into the combat effect queue (k1_append_entries) once
+        // its writes are applied, before it is returned; a raising apply
+        // drops them (the Python walk would have raised before them).
         m.def("combat_k1_kinds", [] {
             py::dict d;
             for (int i = 0; i < static_cast<int>(cb::K1Kind::kCount); ++i)
@@ -11616,6 +11681,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     w.value);
                 writes.append(py::make_tuple(w.handle, w.field, v));
             }
+            k1_append_entries(r.entries);
             const py::object tag =
                 r.walk_first ? py::object(py::make_tuple(r.walk, r.walk_system))
                              : py::object(py::none());
@@ -11771,7 +11837,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
             logged["walk_start"] = c.logged_walk_start;
             logged["beam_sustain"] = c.logged_beam_sustain;
             logged["idle_bank_stop"] = c.logged_idle_bank_stop;
+            // ... and, as writes plus queue entries (spec 2026-11-02-combat-
+            // fire-events §4.3): beam edges, FIRE_FAILEDs, firing banks'
+            // stops and the pump's system stops.
+            logged["beam_edge"] = c.logged_beam_edge;
+            logged["fire_failed"] = c.logged_fire_failed;
+            logged["firing_bank_stop"] = c.logged_firing_bank_stop;
+            logged["system_stop"] = c.logged_system_stop;
             d["k1_logged"] = logged;
+            // The queue entries K1 produced, by kind.
+            py::dict entries;
+            for (size_t i = 0; i < c.entries.size(); ++i)
+                entries[cb::k1_effect_name(static_cast<cb::K1Effect>(i))] =
+                    c.entries[i];
+            d["k1_entries"] = entries;
             return d;
         });
         m.def("combat_k1_reset_counts",
@@ -11781,6 +11860,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // One resumable session over the mirror: host_loop._advance_weapons
         // in the per-tick model. Records are tuples
         //   (kind, a, ship_pos, group, index, reason, writes)
+        // of kind RUN_PYTHON or DONE only (DEPLETE_STOP, RELOADED and WATCH
+        // are writes plus queue entries since combat fire events: each
+        // record's entries go into the combat effect queue as it is
+        // returned, k0_append_entries).
         // kind a combat_k0_kinds() int; a the weapon (or the ship for a
         // whole-ship RUN_PYTHON, -2 for a weapon the mirror cannot name);
         // ship_pos / group / index where in the begin snapshot (group 0
@@ -11885,6 +11968,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 for (const cb::K0Write& w : r.writes)
                     writes.append(k0_write_tuple(w));
             }
+            // Its queue entries, once its writes are applied (a raising
+            // apply drops them, as K1's): THE EFFECT QUEUE, k0_charging.h.
+            k0_append_entries(r.entries);
             // The reason names, made once and never freed (no decref
             // after the interpreter is gone).
             static PyObject** const reasons = [] {
@@ -11921,6 +12007,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k0_records"] = rec;
             d["k0_python_reasons"] = why;
             d["k0_logged_writes"] = c.logged_writes;
+            // Records K0 no longer returns (combat fire events §4.3): a firing
+            // bank drained dry, a reload, a watcher line with checks -- and
+            // the queue entries they produced, by kind.
+            py::dict logged, entries;
+            logged["deplete_stop"] = c.logged_deplete_stop;
+            logged["reload"] = c.logged_reload;
+            logged["watch"] = c.logged_watch;
+            d["k0_logged"] = logged;
+            for (size_t i = 0; i < c.entries.size(); ++i)
+                entries[cb::k0_effect_name(static_cast<cb::K0Effect>(i))] =
+                    c.entries[i];
+            d["k0_entries"] = entries;
             return d;
         });
         m.def("combat_k0_reset_counts",
@@ -11945,7 +12043,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // list of (handle, field, value). After DONE, combat_k2_drain
         // presents the resting contacts queued for the drain that it can
         // (the shield splash, k2_present_rest) and hands over the rest
-        // (k2_beams.h, RESTING CONTACTS).
+        // (k2_beams.h, RESTING CONTACTS). A record's queue entries (a
+        // firing bank's LOOP_STOP) go into the combat effect queue as it is
+        // returned; SYSTEM_STOP / BANK_STOP come back only for a stop the
+        // kernel cannot log (k2_beams.h, THE EFFECT QUEUE).
         // Layouts
         // (handles -1 = None, xyz = a 3-tuple):
         //   (DONE, writes)
@@ -12092,6 +12193,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     w.value);
                 log.append(py::make_tuple(w.handle, w.field, v));
             }
+            // Its queue entries (a firing bank's LOOP_STOP: k2_beams.h, THE
+            // EFFECT QUEUE), once its writes are applied, as K1's.
+            k1_append_entries(r.entries);
             const int kind = static_cast<int>(r.kind);
             switch (r.kind) {
                 case cb::K2Kind::DONE:
@@ -12271,6 +12375,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // queued for the drain, offline stops logged as writes.
             d["k2_batched_contacts"] = c.batched_contacts;
             d["k2_logged_system_stop"] = c.logged_system_stop;
+            // ... and (combat fire events §4.3) the logged system stops that
+            // stopped a firing bank, firing banks' stops logged instead of a
+            // BANK_STOP record, and the queue entries they produced.
+            d["k2_logged_firing_system_stop"] = c.logged_firing_system_stop;
+            d["k2_logged_bank_stop"] = c.logged_bank_stop;
+            py::dict entries;
+            for (size_t i = 0; i < c.entries.size(); ++i)
+                entries[cb::k1_effect_name(static_cast<cb::K1Effect>(i))] =
+                    c.entries[i];
+            d["k2_entries"] = entries;
             // Drained rests the drain presented itself (the shield splash).
             d["k2_present_native"] = k2_present().presented;
             return d;
@@ -12341,6 +12455,123 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_apply_reset_counts",
               [] { dauntless::host::write_applier().reset_counts(); });
+
+        // ── The combat effect queue (combat_effect_queue.h) ──────────────
+        // Entries come out as (kind, native, operands): a kernel's operands
+        // are handles (int) and numbers (float), Python's the objects it
+        // posted. engine/appc/effect_queue.py delivers them.
+        {
+            namespace hq = dauntless::host;
+            hq::effect_queue().set_release(
+                [](void* p) { Py_DECREF(static_cast<PyObject*>(p)); });
+            auto kind_of = [](long k) {
+                if (k < 0 || k >= static_cast<long>(hq::EffectKind::kCount))
+                    throw py::value_error("combat effect: unknown kind");
+                return static_cast<hq::EffectKind>(k);
+            };
+            m.def("combat_effect_kinds", [] {
+                py::dict d;
+                for (int i = 0;
+                     i < static_cast<int>(hq::EffectKind::kCount); ++i)
+                    d[hq::effect_kind_name(static_cast<hq::EffectKind>(i))] =
+                        i;
+                return d;
+            });
+            m.def("combat_effect_post",
+                  [kind_of](long kind, py::args objs) {
+                      const hq::EffectKind k = kind_of(kind);
+                      if (objs.size() > hq::EffectEntry::kMaxOperands)
+                          throw py::value_error(
+                              "combat effect: too many operands");
+                      void* ptrs[hq::EffectEntry::kMaxOperands];
+                      size_t n = 0;
+                      for (py::handle o : objs)
+                          ptrs[n++] = Py_NewRef(o.ptr());
+                      hq::effect_queue().append_objects(
+                          k, std::span<void* const>(ptrs, n));
+                  },
+                  py::arg("kind"),
+                  "Append Python's entry: `kind` and its operand objects "
+                  "(the queue holds a reference to each until delivery).");
+            m.def("combat_effect_post_native",
+                  [kind_of](long kind, py::args ops) {
+                      const hq::EffectKind k = kind_of(kind);
+                      if (ops.size() > hq::EffectEntry::kMaxOperands)
+                          throw py::value_error(
+                              "combat effect: too many operands");
+                      hq::NativeOperand v[hq::EffectEntry::kMaxOperands];
+                      size_t n = 0;
+                      for (py::handle o : ops) {
+                          if (PyFloat_Check(o.ptr()))
+                              v[n++] = o.cast<double>();
+                          else
+                              v[n++] = o.cast<std::int64_t>();
+                      }
+                      auto& q = hq::effect_queue();
+                      switch (n) {
+                      case 0: q.append_native_list(k, {}); break;
+                      case 1: q.append_native_list(k, {v[0]}); break;
+                      case 2: q.append_native_list(k, {v[0], v[1]}); break;
+                      default:
+                          q.append_native_list(k, {v[0], v[1], v[2]});
+                      }
+                  },
+                  py::arg("kind"),
+                  "Test entry: append a KERNEL's entry -- ints are mirror "
+                  "handles (-1 None), floats numbers -- as append_native "
+                  "does.");
+            m.def("combat_effect_take", [] {
+                std::vector<hq::EffectEntry> taken = hq::effect_queue().take();
+                // Every object reference moves into the result, even if
+                // building it fails part-way (steal each exactly once).
+                std::vector<py::object> owned;
+                for (const hq::EffectEntry& e : taken)
+                    for (int i = 0; i < e.count; ++i)
+                        if (e.ops[i].type == hq::EffectOperand::Type::Object)
+                            owned.push_back(py::reinterpret_steal<py::object>(
+                                static_cast<PyObject*>(e.ops[i].object)));
+                py::list out;
+                size_t next = 0;
+                for (const hq::EffectEntry& e : taken) {
+                    py::tuple ops(e.count);
+                    for (int i = 0; i < e.count; ++i) {
+                        const hq::EffectOperand& o = e.ops[i];
+                        switch (o.type) {
+                        case hq::EffectOperand::Type::Handle:
+                            ops[i] = py::int_(o.handle);
+                            break;
+                        case hq::EffectOperand::Type::Number:
+                            ops[i] = py::float_(o.number);
+                            break;
+                        case hq::EffectOperand::Type::Object:
+                            ops[i] = owned[next++];
+                            break;
+                        }
+                    }
+                    out.append(py::make_tuple(static_cast<int>(e.kind),
+                                              e.native, ops));
+                }
+                return out;
+            }, "Every queued entry, in emission order, as (kind, native, "
+               "operands); the queue is empty after.");
+            m.def("combat_effect_rebind",
+                  [](std::int64_t handle, py::handle obj) {
+                      return hq::effect_queue().rebind(
+                          handle, obj.ptr(), [](void* p) -> void* {
+                              return Py_NewRef(static_cast<PyObject*>(p));
+                          });
+                  },
+                  py::arg("handle"), py::arg("obj"),
+                  "native_combat._drop, before it unregisters `handle`: "
+                  "every pending kernel operand naming it becomes `obj` "
+                  "(the queue holds a reference each), so its entries are "
+                  "still delivered. Returns how many were replaced.");
+            m.def("combat_effect_clear",
+                  [] { hq::effect_queue().clear(); },
+                  "Drop every entry (native_combat.reset).");
+            m.def("combat_effect_size",
+                  [] { return hq::effect_queue().size(); });
+        }
 
         // ── The K3 torpedo kernel (k3_projectiles.h) ─────────────────────
         // One resumable session over the torpedo table and the step scan:

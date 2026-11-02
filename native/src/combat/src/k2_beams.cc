@@ -27,6 +27,7 @@
 #include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/stop_firing.h"
 #include "dauntless/combat/weapon_geometry.h"
 #include "geometry_internal.h"
 
@@ -163,11 +164,13 @@ struct K2Kernel::Session {
     bool ship_active = false;    // a ship is being walked
     bool ship_recorded = false;  // a record was returned for it
     size_t ship_mark = 0;        // writes.size() when it began
+    size_t ship_entry_mark = 0;  // entries.size() when it began
 
     // The bank's locals.
     bool in_bank = false;
     bool bank_recorded = false;
     size_t bank_mark = 0;
+    size_t bank_entry_mark = 0;
     int64_t bank = -1, target = -1;
     double dwell = 0.0;                 // the idle branch's take_dwell
     std::optional<double> flush_dwell;  // None on the IsFiring branch
@@ -185,6 +188,10 @@ struct K2Kernel::Session {
     // write replaced (rolled back if the writes never reach Python).
     std::vector<K2Write> writes;
     std::vector<K2Undo> undo;
+    // The queue entries since the last record (THE EFFECT QUEUE, k2_beams.h:
+    // a firing bank's LOOP_STOP), each placed after the writes before it;
+    // rolled back with them.
+    std::vector<K1Entry> entries;
     // The resting contacts queued for the drain (RESTING CONTACTS,
     // k2_beams.h), in walk order.
     std::vector<K2Rest> rests;
@@ -194,8 +201,11 @@ struct K2Kernel::Session {
 };
 
 // Undo the session's logged writes from `mark` on, newest first, and drop
-// them from the log: they never reached Python.
-static void k2_roll_back(Mirror& m, K2Kernel::Session& s, size_t mark) {
+// them from the log, with the queue entries from `entry_mark` on: they never
+// reached Python.
+static void k2_roll_back(Mirror& m, K2Kernel::Session& s, size_t mark,
+                         size_t entry_mark) {
+    s.entries.resize(entry_mark);
     while (s.undo.size() > mark) {
         const K2Undo& u = s.undo.back();
         switch (u.type) {
@@ -276,19 +286,85 @@ private:
         s_.undo.push_back(std::move(u));
         s_.writes.push_back(K2Write{h, name, std::move(lv)});
     }
-    // `sys_.StopFiring()` with every bank idle: the logged writes (THE
-    // OFFLINE STOP, k2_beams.h) and true. A firing bank, a child that is
-    // not a live, unoverridden phaser bank: false, and nothing written (the
-    // caller emits SYSTEM_STOP).
+    // ── The effect queue: entries in walk order, after the writes before ──
+    void enqueue(K1Effect kind, int64_t a) {
+        s_.entries.push_back(K1Entry{kind, a, -1, s_.writes.size()});
+        ++c_.entries[static_cast<size_t>(kind)];
+    }
+
+    // `bank.StopFiring()` on a live phaser bank: its class's writes in its
+    // order (stop_firing.h, the one encoding K1 and K0 write too), then, if
+    // it was firing, its loop sound's LOOP_STOP (THE EFFECT QUEUE). False
+    // (nothing written) for a row gone or a kind with no stop.
+    bool write_stop(int64_t h) {
+        const SubsystemRow* r = subrow(h);
+        if (!r) return false;
+        const std::optional<StopFiring> stop = stop_firing_of(r->weapon_kind);
+        if (!stop) return false;
+        const bool firing = r->_firing != 0;  // `was_firing = self._firing`
+        for (size_t i = 0; i < stop->n; ++i) {
+            switch (stop->writes[i]) {
+                case StopWrite::FiringFalse:
+                    write_i(h, Field::_firing, "_firing", 0, false);
+                    break;
+                case StopWrite::BeamOnCountdownZero:
+                    write_f(h, Field::_beam_on_countdown, "_beam_on_countdown",
+                            0.0);
+                    break;
+                case StopWrite::TargetNone: {
+                    K2Undo u;
+                    u.type = K2Undo::Type::Ref;
+                    u.h = h;
+                    u.f = Field::_target;
+                    u.i = m_.get_ref(h, Field::_target);
+                    m_.set_ref(h, Field::_target, -1);
+                    s_.undo.push_back(std::move(u));
+                    s_.writes.push_back(K2Write{h, "_target", int64_t{-1}});
+                    break;
+                }
+                case StopWrite::TargetOffsetNone: {
+                    const SubsystemRow* b = subrow(h);
+                    K2Undo u;
+                    u.type = K2Undo::Type::Offset;
+                    u.h = h;
+                    u.f = Field::_target_offset;
+                    u.set = b->target_offset_set;
+                    u.v = b->_target_offset;
+                    m_.set_fv(h, Field::_target_offset, {});
+                    s_.undo.push_back(std::move(u));
+                    s_.writes.push_back(
+                        K2Write{h, "_target_offset", std::monostate{}});
+                    break;
+                }
+            }
+        }
+        if (firing && stop->loop_stop) enqueue(K1Effect::LOOP_STOP, h);
+        return true;
+    }
+
+    // The walk's `bank.StopFiring()` on its FIRING bank (combat fire events
+    // §4.3): logged (write_stop) and true; false keeps the BANK_STOP record
+    // (a row gone: the documented fallback, k2_beams.h RECORDS).
+    bool bank_stop(int64_t bank) {
+        if (!write_stop(bank)) return false;
+        ++c_.logged_bank_stop;
+        return true;
+    }
+
+    // `sys_.StopFiring()` (THE OFFLINE STOP, k2_beams.h): the logged writes
+    // and true -- a firing bank's LOOP_STOP after its own writes. A child
+    // that is not a live, unoverridden phaser bank: false, and nothing
+    // written (the caller emits SYSTEM_STOP).
     bool offline_stop(int64_t sys) {
         // for i in range(self.GetNumWeapons()): w = self.GetWeapon(i) --
         // the children cannot change: no Python runs in between.
         const std::vector<int64_t> kids = subrow(sys)->_children;
+        bool any_firing = false;
         for (const int64_t k : kids) {
             const SubsystemRow* b = subrow(k);
-            if (!b || b->weapon_kind != kPhaserBank || b->k1_overridden ||
-                b->_firing)
+            if (!b || b->weapon_kind != kPhaserBank || b->k1_overridden)
                 return false;
+            any_firing = any_firing || b->_firing != 0;
         }
         // WeaponSystem.StopFiring (WS:1540-1549)
         write_i(sys, Field::_fire_held, "_fire_held", 0, false);
@@ -327,13 +403,12 @@ private:
         }
         write_i(sys, Field::_last_group_fired, "_last_group_fired", -1,
                 int64_t{-1});
-        // w.StopFiring(): _EnergyWeaponFireMixin.StopFiring (WS:905-911),
-        // not firing, so no loop sound.
-        for (const int64_t k : kids) {
-            write_i(k, Field::_firing, "_firing", 0, false);
-            write_f(k, Field::_beam_on_countdown, "_beam_on_countdown", 0.0);
-        }
+        // w.StopFiring(): _EnergyWeaponFireMixin.StopFiring (WS:920), a
+        // firing bank's loop sound stopped after its writes.
+        for (const int64_t k : kids)
+            if (!write_stop(k)) lost("an offline stop's bank row is gone");
         ++c_.logged_system_stop;
+        if (any_firing) ++c_.logged_firing_system_stop;
         return true;
     }
 
@@ -345,6 +420,8 @@ private:
         r.b = b;
         r.writes = std::move(s_.writes);
         s_.writes.clear();
+        r.entries = std::move(s_.entries);
+        s_.entries.clear();
         s_.undo.clear();  // delivered: Python applies them
         s_.st = next;
         s_.ship_recorded = true;
@@ -355,7 +432,7 @@ private:
     // The ship handed to Python whole, before any record for it: its own
     // undelivered writes are undone (Python makes them itself).
     K2Record run_python(K2Why why) {
-        k2_roll_back(m_, s_, s_.ship_mark);
+        k2_roll_back(m_, s_, s_.ship_mark, s_.ship_entry_mark);
         ++c_.python_ships;
         ++c_.why[static_cast<size_t>(why)];
         return emit(K2Kind::RUN_PYTHON, St::SHIP_NEXT, s_.ship,
@@ -382,7 +459,7 @@ private:
     // first record, else the one bank (nothing delivered for it yet).
     K2Record bank_fallback(K2Why why) {
         if (!s_.ship_recorded) return run_python(why);
-        k2_roll_back(m_, s_, s_.bank_mark);
+        k2_roll_back(m_, s_, s_.bank_mark, s_.bank_entry_mark);
         return ask(K2Query::bank_step,
                    {s_.ship, s_.sys, static_cast<int64_t>(s_.i)},
                    St::BANK_STEP_ANSWER);
@@ -583,6 +660,7 @@ K2Record Walker::run() {
                 s_.ship_active = true;
                 s_.ship_recorded = false;
                 s_.ship_mark = s_.writes.size();
+                s_.ship_entry_mark = s_.entries.size();
                 s_.in_bank = false;
                 const ObjectRow* so = objrow(s_.ship);
                 if (!so) return run_python(K2Why::UnslottedShip);
@@ -635,6 +713,7 @@ K2Record Walker::run() {
                 s_.in_bank = true;
                 s_.bank_recorded = false;
                 s_.bank_mark = s_.writes.size();
+                s_.bank_entry_mark = s_.entries.size();
                 if (std::optional<K2Why> why = ship_why())
                     return bank_fallback(*why);
                 // bank = sys_.GetWeapon(i): the LIVE children; None past
@@ -682,8 +761,13 @@ K2Record Walker::run() {
                 }
                 // else: if target is None or target.IsDead():
                 //     bank.StopFiring(); continue
-                if (s_.target == -1)
+                if (s_.target == -1) {
+                    if (bank_stop(bank)) {
+                        s_.st = St::BANK_NEXT;
+                        break;
+                    }
                     return emit(K2Kind::BANK_STOP, St::BANK_NEXT, bank);
+                }
                 bool dead;
                 try {
                     dead = ship_dead(m_, s_.target);
@@ -691,7 +775,13 @@ K2Record Walker::run() {
                     return ask(K2Query::is_dead, {s_.target},
                                St::FIRING_DEAD_ANSWER);
                 }
-                if (dead) return emit(K2Kind::BANK_STOP, St::BANK_NEXT, bank);
+                if (dead) {
+                    if (bank_stop(bank)) {
+                        s_.st = St::BANK_NEXT;
+                        break;
+                    }
+                    return emit(K2Kind::BANK_STOP, St::BANK_NEXT, bank);
+                }
                 s_.st = St::DETECT;  // flush_dwell = None
                 break;
             }
@@ -704,8 +794,13 @@ K2Record Walker::run() {
                 s_.st = St::SAME_SET;
                 break;
             case St::FIRING_DEAD_ANSWER:
-                if (take_answer().flag)
+                if (take_answer().flag) {
+                    if (bank_stop(s_.bank)) {
+                        s_.st = St::BANK_NEXT;
+                        break;
+                    }
                     return emit(K2Kind::BANK_STOP, St::BANK_NEXT, s_.bank);
+                }
                 s_.st = St::DETECT;
                 break;
 
@@ -723,13 +818,24 @@ K2Record Walker::run() {
                     return ask(K2Query::can_detect, {s_.ship, s_.target},
                                St::DETECT_ANSWER);
                 }
-                if (!ok) return emit(K2Kind::BANK_STOP, St::BANK_NEXT, s_.bank);
+                if (!ok) {
+                    if (bank_stop(s_.bank)) {
+                        s_.st = St::BANK_NEXT;
+                        break;
+                    }
+                    return emit(K2Kind::BANK_STOP, St::BANK_NEXT, s_.bank);
+                }
                 s_.st = St::SAME_SET;
                 break;
             }
             case St::DETECT_ANSWER:
-                if (!take_answer().flag)
+                if (!take_answer().flag) {
+                    if (bank_stop(s_.bank)) {
+                        s_.st = St::BANK_NEXT;
+                        break;
+                    }
                     return emit(K2Kind::BANK_STOP, St::BANK_NEXT, s_.bank);
+                }
                 s_.st = St::SAME_SET;
                 break;
 
@@ -741,7 +847,7 @@ K2Record Walker::run() {
                 const bool same =
                     set_a != -1 && set_a == containing_set(s_.target);
                 if (!same) {
-                    if (!s_.flush_dwell)
+                    if (!s_.flush_dwell && !bank_stop(s_.bank))
                         return emit(K2Kind::BANK_STOP, St::BANK_NEXT, s_.bank);
                     s_.st = St::BANK_NEXT;
                     break;
@@ -812,7 +918,11 @@ K2Record Walker::run() {
                         const DwellResult d = take_dwell(m_, s_.bank);
                         write_dwell(s_.bank, d.new_dwell, /*idle=*/false);
                         s_.flush_dwell = d.flushed;
-                        return emit(K2Kind::BANK_STOP, St::ARC_STOPPED, s_.bank);
+                        if (!bank_stop(s_.bank))
+                            return emit(K2Kind::BANK_STOP, St::ARC_STOPPED,
+                                        s_.bank);
+                        s_.st = St::TRACE;  // the partial pulse, this tick
+                        break;
                     }
                     // else: flush_dwell = bank.accumulate_dwell(dt)
                     const DwellResult d = accumulate_dwell(m_, s_.bank, s_.dt);
@@ -1007,7 +1117,7 @@ K2Record K2Kernel::next() {
         Walker w(m_, s, ctx_, counts_);
         return w.run();
     } catch (...) {
-        k2_roll_back(m_, s, 0);
+        k2_roll_back(m_, s, 0, 0);
         rests = std::move(s.rests);
         rests.resize(rest_mark);
         s = std::move(before);

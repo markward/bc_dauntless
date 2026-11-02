@@ -90,6 +90,7 @@ class World:
     hardpoint leaf, so a posed ship's part slots can be resolved."""
 
     def __init__(self, mp, native, ships, tag, player=None):
+        self.mp = mp        # the arm's patches (undone when the arm ends)
         nc.reset()
         if native:
             nc.configure(ON)
@@ -411,57 +412,71 @@ def test_unregistered_ship_runs_python_in_order(monkeypatch):
     assert counts["k1_python_systems"] >= 4 * ticks, counts
 
 
+def _launch_hook(mp, act):
+    """Run `act(tube)` inside every torpedo or bolt spawn (the launch
+    Python of a tube's or cannon's FIRE record: the Python that still runs
+    mid-walk, now that a beam's edge and a failed aim are queue entries
+    delivered at the session's end), before the spawn itself."""
+    spawn = ws._spawn_projectile
+
+    def hooked(emitter, *a, **kw):
+        act(emitter)
+        return spawn(emitter, *a, **kw)
+    mp.setattr(ws, "_spawn_projectile", hooked)
+
+
 def test_ask_answers_match_python(monkeypatch):
-    """A handler on the first ET_WEAPON_FIRED of a multi-fire walk drops the
-    target's mirror row: the rest of that walk cannot read it, so the kernel
-    ASKs Python to run each remaining bank's whole Fire, and the walk goes on
-    with the Python answers. Later walks see an unnameable list entry and
-    run whole in Python."""
+    """The first torpedo launch of a multi-fire walk drops the target's
+    mirror row (its launch Python, mid-walk): the rest of that walk cannot
+    read it, so the kernel ASKs Python to run each remaining tube's whole
+    Fire, and the walk goes on with the Python answers. Later walks see an
+    unnameable list entry and run whole in Python."""
     ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
              ("Vorcha", "vorcha", (0.0, 240.0, 30.0), math.pi))
-
-    def drop_target(w):
-        def hook(evt):
-            if evt.GetEventType() != App.ET_WEAPON_FIRED or not w.hooks:
-                return
-            w.hooks.clear()
-            nc._drop(w.ships["Vorcha"])     # both arms: harmless when off
-        return hook
+    dropped = []
 
     def script(w, t):
         if t == 3:
-            phasers = w.ships["Galaxy"].GetPhaserSystem()
-            phasers.SetSingleFire(0)
-            w.hooks.append(drop_target(w))
+            torps = w.ships["Galaxy"].GetTorpedoSystem()
+            torps.SetSingleFire(0)
+            torps.SetFiringChainMode(2)     # Quad: four tubes in one walk
+            del dropped[:]
+
+            def drop_target(_tube, _w=w):
+                if not dropped:
+                    dropped.append(True)
+                    nc._drop(_w.ships["Vorcha"])    # both arms: harmless off
+            _launch_hook(w.mp, drop_target)
             # With an aim offset: each asked Fire stamps the walk's object.
-            phasers.StartFiring(w.ships["Vorcha"], TGPoint3(1.0, -2.0, 0.5))
-            w.record()      # before the pump re-stamps the lit banks
+            torps.StartFiring(w.ships["Vorcha"], TGPoint3(1.0, -2.0, 0.5))
 
     ref, _nat, counts = _both(monkeypatch, ships, script, 60)
-    assert sum(1 for e in ref.events if e[0] == "fired") >= 2, ref.events
+    assert sum(1 for e in ref.events if e[0] == "torpedo_fired") >= 2, \
+        ref.events
     assert counts["k1_asks"] > 0, counts
 
 
 def test_exception_in_an_effect_abandons_the_session(monkeypatch):
-    """An effect raises (the beam's fire sound, here): run_k1 abandons the
-    kernel session and re-raises, and the mirror still equals the Python."""
+    """An effect raises (a tube's launch, here: the Python a FIRE record
+    runs mid-walk): run_k1 abandons the kernel session and re-raises, and
+    the mirror still equals the Python."""
     ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
              ("Vorcha", "vorcha", (0.0, 240.0, 0.0), math.pi))
 
     class Boom(Exception):
         pass
 
-    def boom(self):
+    def boom(*a, **kw):
         raise Boom()
 
     w = World(monkeypatch, True, ships, "k1_boom")
     try:
         for _ in range(3):
-            w.tick()        # the banks charge
-        monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", boom)
+            w.tick()
+        monkeypatch.setattr(ws, "_spawn_projectile", boom)
         before = nc.counts()["k1_records"]
         with pytest.raises(Boom):
-            w.ships["Galaxy"].GetPhaserSystem().StartFiring(
+            w.ships["Galaxy"].GetTorpedoSystem().StartFiring(
                 w.ships["Vorcha"])
         assert nc.counts()["k1_records"] > before
         assert _h.combat_k1_depth() == 0
@@ -797,123 +812,125 @@ def test_unloaded_pulse_module_reimports_like_python(monkeypatch):
     assert counts["k1_python_systems"] == 0, counts
 
 
+def _drop_a_failing_tube(mp, w, dropped, clear_list=False):
+    """The Galaxy's tubes held on a Bird of Prey BEHIND it, in cruise, each
+    tube's stored aim offset on its wing where no authored mount is: each
+    tube's Fire is ASKed (no_mount), so Python runs it mid-walk; a forward
+    tube's fails
+    the cone, and its failure Python -- the arm's first
+    TorpedoTube._broadcast_weapon_fire_failed -- drops the failing tube's
+    row (and, `clear_list`, empties the system's list). Both arms: _drop is
+    harmless with native off."""
+    real = ws.TorpedoTube._broadcast_weapon_fire_failed
+
+    def failing(tube):
+        if "tube" not in dropped:
+            dropped["tube"] = w.label(tube)
+            if clear_list:
+                tube.GetParentSubsystem()._target_list = []
+            nc._drop(tube)
+        return real(tube)
+    mp.setattr(ws.TorpedoTube, "_broadcast_weapon_fire_failed", failing)
+    bop = w.ships["BoP"]
+    articulation.force_pose(bop, "cruise")
+    torps = w.ships["Galaxy"].GetTorpedoSystem()
+    pick = _wing_pick(bop)
+    # A tube aims at its STORED offset (the previous shot's): the pick.
+    for i in range(torps.GetNumWeapons()):
+        torps.GetWeapon(i)._target_offset = TGPoint3(*pick)
+    torps.StartFiring(bop, TGPoint3(*pick))
+
+
+_BEHIND_BOP = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+               ("BoP", "birdofprey", (-12.0, -200.0, 4.0), 0.0,
+                "ships.BirdOfPrey"))
+
+
 def test_handler_drops_the_failing_tube_row_mid_walk(monkeypatch):
-    """A handler on ET_WEAPON_FIRE_FAILED makes the failing tube's row
-    unencodable (its mirror row dropped) in the middle of the walk. Python
+    """The failing tube's row is made unencodable (its mirror row dropped)
+    in the middle of the walk, by the Python of its own asked Fire. Python
     carries on with the tube object; so must K1: the tube's `_target = None`
-    goes to Python as a logged write (no row to write), its retry Fire is
-    ASKed, and the dumb-fire question too. ON identical to OFF; later walks
-    see a stale child and run whole in Python."""
-    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
-             ("Behind", "vorcha", (-12.0, -230.0, 4.0), 0.0))
+    goes to Python as a logged write (no row to write), and its retry Fire
+    is ASKed. ON identical to OFF; later walks see a stale child and run
+    whole in Python."""
     dropped = {}
 
-    def drop_failing_tube(w):
-        def hook(evt):
-            if evt.GetEventType() != App.ET_WEAPON_FIRE_FAILED or not w.hooks:
-                return
-            w.hooks.clear()
-            tube = evt.GetDestination()
-            dropped[w.native] = w.label(tube)
-            nc._drop(tube)          # both arms: harmless when off
-        return hook
-
     def script(w, t):
-        torps = w.ships["Galaxy"].GetTorpedoSystem()
         if t == 2:
-            w.hooks.append(drop_failing_tube(w))
-            torps.StartFiring(w.ships["Behind"])
+            dropped[w.native] = d = {}
+            _drop_a_failing_tube(w.mp, w, d)
 
-    ref, _nat, counts = _both(monkeypatch, ships, script, 60)
-    assert dropped[False] and dropped[True] == dropped[False]
+    ref, _nat, counts = _both(monkeypatch, _BEHIND_BOP, script, 60)
+    assert dropped[False].get("tube"), dropped
+    assert dropped[True] == dropped[False]
+    assert dropped[False]["tube"].startswith("Galaxy/Forward"), dropped
     assert "fire_failed" in _kinds(ref)
-    assert counts["k1_asks"] > 0, counts
+    assert counts["k1_fire_ask_reasons"]["no_mount"] > 0, counts
 
 
 def test_handler_drops_the_dumb_tube_row_mid_walk(monkeypatch):
-    """The dumb-fire branch with the tube's row gone: a FIRING tube that
-    cannot fire is stopped by a BANK_STOP record (an idle one's stop is
-    logged writes, round trips Task 2, and StopFiring itself is guarded, so
-    it cannot be the hook). That record is the walk's first, so run_k1
-    materialises the walk on it, and the row is dropped there, inside
-    `_K1Walk.materialise`'s pin, BEFORE the record's StopFiring runs (seen
-    by a stack probe); the walk's `GetNumTargets() == 0 and
-    weapon.IsDumbFire()` must still ask Python, and FireDumb follows. Per
-    tick equal to Python."""
-    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),)
-    the_tube, pending, asks = [], [], []
+    """The dumb-fire branch with the tube's row gone: the Python of the
+    tube's asked Fire drops its row and empties the system's list, and the
+    Fire fails; `GetNumTargets() == 0 and weapon.IsDumbFire()` must then ask
+    Python (the row is gone), and FireDumb follows. Per tick equal to
+    Python."""
+    asks = []
     real_next = _h.combat_k1_next
     names = {v: k for k, v in _h.combat_k1_kinds().items()}
 
     def spy():
         rec = real_next()
-        kind = names[rec[0]]
-        if kind == "BANK_STOP" and the_tube \
-                and rec[1] == the_tube[0].__dict__.get("_nslot"):
-            pending.append(the_tube[0])
-        elif kind == "ASK":
+        if names[rec[0]] == "ASK":
             asks.append(rec[1])
         return rec
-    real_pin = nc._K1Walk.pin_system
-
-    def pin_system(walk, system):
-        while pending:
-            nc._drop(pending.pop())
-        return real_pin(walk, system)
     monkeypatch.setattr(_h, "combat_k1_next", spy)
-    monkeypatch.setattr(nc._K1Walk, "pin_system", pin_system)
+    dropped = {}
 
     def script(w, t):
-        torps = w.ships["Galaxy"].GetTorpedoSystem()
         if t == 2:
-            tube = torps.GetWeapon(0)
-            tube.SetNumReady(0)             # CanFire refuses
-            tube._firing = True             # its stop is a BANK_STOP record
-            the_tube[:] = [tube]
-            torps.StartFiring(None)
-        elif t == 3:
-            the_tube[:] = []
+            dropped[w.native] = d = {}
+            _drop_a_failing_tube(w.mp, w, d, clear_list=True)
 
-    _ref, _nat, counts = _both(monkeypatch, ships, script, 30)
+    _ref, _nat, counts = _both(monkeypatch, _BEHIND_BOP, script, 30)
+    assert dropped[True] == dropped[False] and dropped[False].get("tube")
     assert "is_dumb" in asks, asks
     assert counts["k1_asks"] > 0, counts
 
 
-@pytest.mark.parametrize("case", ("tube_failed", "phaser_fired"))
+@pytest.mark.parametrize("case", ("tube_fired", "pulse_fired"))
 def test_walked_system_row_dropped_mid_walk_raises(monkeypatch, case):
-    """The protocol invariant (k1_fire_control.h): a handler that drops the
+    """The protocol invariant (k1_fire_control.h): Python that drops the
     WALKED SYSTEM's row mid-walk cannot be followed (Python cannot resume
     update_weapons mid-loop). Native raises a RuntimeError naming the
     invariant, after abandoning the session; the mirror still equals the
-    Python. Two places the kernel next reads the system: the retry after a
-    tube's FIRE_FAILED, and the bookkeeping after a phaser's FIRE."""
+    Python. The Python is a launch's (a tube's, a cannon's FIRE record);
+    the kernel next reads the system in the bookkeeping after it."""
     ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
-             ("Behind", "vorcha", (-12.0, -230.0, 4.0), 0.0),
              ("Ahead", "vorcha", (0.0, 240.0, 0.0), math.pi))
     w = World(monkeypatch, True, ships, "k1_sys_drop")
     try:
         for _ in range(3):
             w.tick()        # the banks charge
-        galaxy = w.ships["Galaxy"]
-        if case == "tube_failed":
-            system, event = galaxy.GetTorpedoSystem(), App.ET_WEAPON_FIRE_FAILED
-            target = w.ships["Behind"]
-        else:
-            system, event = galaxy.GetPhaserSystem(), App.ET_WEAPON_FIRED
+        if case == "tube_fired":
+            system = w.ships["Galaxy"].GetTorpedoSystem()
             target = w.ships["Ahead"]
+        else:
+            system = w.ships["Ahead"].GetPulseWeaponSystem()
+            target = w.ships["Galaxy"]
+        dropped = []
 
-        def hook(evt):
-            if evt.GetEventType() == event and w.hooks:
-                w.hooks.clear()
+        def drop_system(_emitter):
+            if not dropped:
+                dropped.append(True)
                 nc._drop(system)
-        w.hooks.append(hook)
+        _launch_hook(monkeypatch, drop_system)
         # The message names the system of the last walk Python saw, as
         # that -- not "the walked system" -- is what the driver knows.
         with pytest.raises(RuntimeError, match=(
                 "%r, the system of the last walk Python saw, lost its "
                 "mirror row" % (system.GetName(),))):
             system.StartFiring(target)
-        assert not w.hooks
+        assert dropped
         assert _h.combat_k1_depth() == 0
         nc.audit_mirror()
         assert nc.audit_failures() == []
@@ -1535,23 +1552,25 @@ def _is_beam_decision(d):
 def test_beam_sustain_logged_not_recorded(monkeypatch):
     """A Fire on a beam that is ALREADY firing is three field writes in
     Python (_firing, _target, _target_offset): no sound, no event. K1 logs
-    them and returns no record (k1_logged.beam_sustain counts them); every
-    beam FIRE record left is an edge. Per tick equal to Python."""
+    them and returns no record (k1_logged.beam_sustain counts them); since
+    its edge is logged too (combat fire events), no beam FIRE record is
+    left at all. Per tick equal to Python."""
     log = []
     _spy_fire_records(monkeypatch, log)
     _ref, _nat, counts = _both(monkeypatch, _DUEL, _phaser_duel, 240)
     beams = [d for kind, _b, _f, d in log
              if kind == "FIRE" and _is_beam_decision(d)]
-    assert beams, log[:20]
-    assert all(d == (False,) for d in beams), beams
+    assert beams == [], beams
     assert counts["k1_logged"]["beam_sustain"] > 0, counts
+    assert counts["k1_logged"]["beam_edge"] > 0, counts
     assert counts["k1_python_systems"] == 0, counts
 
 
-def test_beam_edge_still_records(monkeypatch):
-    """The was-not-firing edge keeps its FIRE record: the fire sound and
-    ET_WEAPON_FIRED are Python's. The sound plays exactly as often ON as
-    OFF (the events are compared by _both), once per beam edge record."""
+def test_beam_edge_is_logged_writes_and_entries(monkeypatch):
+    """The was-not-firing edge (combat fire events §4.3): its writes are
+    logged and its fire sound and ET_WEAPON_FIRED are queue entries, no
+    FIRE record. The sound plays exactly as often ON as OFF (the events are
+    compared by _both), once per logged edge and per FIRE_SOUND entry."""
     log = []
     _spy_fire_records(monkeypatch, log)
     sounds = {}
@@ -1571,55 +1590,58 @@ def test_beam_edge_still_records(monkeypatch):
             monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx",
                                 real)
 
-    ref, _nat, _counts = _both(monkeypatch, _DUEL, script, 240)
+    ref, _nat, counts = _both(monkeypatch, _DUEL, script, 240)
     assert "fired" in _kinds(ref)
     assert sounds[False] and sounds[True] == sounds[False]
-    edges = [b for kind, b, _f, d in log if kind == "FIRE" and d == (False,)]
-    assert len(edges) == len(sounds[True]), (len(edges), len(sounds[True]))
+    assert not [d for kind, _b, _f, d in log if kind == "FIRE"
+                and _is_beam_decision(d)]
+    assert counts["k1_logged"]["beam_edge"] == len(sounds[True]), counts
+    assert counts["k1_entries"]["FIRE_SOUND"] == len(sounds[True]), counts
+    assert counts["k1_entries"]["WEAPON_FIRED"] == len(sounds[True]), counts
 
 
 def test_logged_target_offset_is_the_walk_object(monkeypatch):
-    """Review Focus 2: a sustained beam's logged stamp, then a LATER record
-    of the same walk (another bank's edge FIRE) runs Python -- its
-    ET_WEAPON_FIRED handler reads the sustained bank's _target_offset. It
-    must already be this walk's offset OBJECT (identity, not a copy, and
-    not last tick's): the held offset is a new object every tick."""
+    """Review Focus 2 (round trips): a lit beam's logged stamp, then a
+    LATER record of the same pump session runs Python -- a tube's launch,
+    whose spawn reads each lit bank's _target_offset. It must already be
+    that walk's offset OBJECT (identity, not a copy, and not last tick's):
+    the held offset is a new object every tick, and the phaser walk
+    returns no record of its own (its edges and sustains are logged), so
+    the walk is materialised by the apply of the tube's record."""
     seen = {}
 
     def script(w, t):
-        g = w.ships["Galaxy"].GetPhaserSystem()
+        galaxy = w.ships["Galaxy"]
+        g, torps = galaxy.GetPhaserSystem(), galaxy.GetTorpedoSystem()
         if t == 0:
             obs = seen[w.native] = []
             g.SetSingleFire(0)
             g.StartFiring(w.ships["Vorcha"], TGPoint3(0.5, 1.0, -0.25))
+            torps.StartFiring(w.ships["Vorcha"])
 
-            def hook(evt, _w=w, _g=g, _obs=obs):
-                if evt.GetEventType() != App.ET_WEAPON_FIRED:
-                    return
-                src = evt.GetSource()
-                if not isinstance(src, ws.PhaserBank) \
-                        or src.GetParentSubsystem() is not _g:
-                    return
+            def spy(_tube, _w=w, _g=g, _obs=obs):
                 for i in range(_g.GetNumWeapons()):
-                    other = _g.GetWeapon(i)
-                    if other is src or not other.__dict__.get("_firing"):
+                    bank = _g.GetWeapon(i)
+                    if not bank.__dict__.get("_firing"):
                         continue
-                    off = other.__dict__.get("_target_offset")
-                    _obs.append((_w.n, _w.label(src), _w.label(other),
+                    off = bank.__dict__.get("_target_offset")
+                    _obs.append((_w.n, _w.label(bank),
                                  off is _g.__dict__.get("_held_offset"),
-                                 _w.label(other.__dict__.get("_target"))))
-            w.hooks.append(hook)
+                                 _w.label(bank.__dict__.get("_target"))))
+            _launch_hook(w.mp, spy)
         elif t % 40 == 20:
             # One bank drops out; it relights (an edge) while the others
-            # sustain, some before it in the walk.
+            # sustain; the tubes are reloaded by hand to launch again.
             g.GetWeapon((t // 40) % g.GetNumWeapons()).StopFiring()
+            for i in range(torps.GetNumWeapons()):
+                torps.GetWeapon(i).SetNumReady(1)
         # A new offset object every tick (the same value).
         g._held_offset = TGPoint3(0.5, 1.0, -0.25)
 
     _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 700)
     assert seen[True] == seen[False]
-    # Some edge followed a sustain stamped in the same walk.
-    assert any(o[3] for o in seen[False]), seen[False][:20]
+    # Some launch read a stamp made in the same tick's pump.
+    assert any(o[2] for o in seen[False] if o[0] > 1), seen[False][:20]
     assert counts["k1_logged"]["beam_sustain"] > 0, counts
 
 
@@ -1680,11 +1702,11 @@ class _Loop:
         self.log.append(self.label)
 
 
-def test_firing_bank_stop_still_records(monkeypatch):
-    """A FIRING bank's stop keeps its BANK_STOP record: Python stops the
-    loop sound. Every BANK_STOP record names a bank Python holds firing,
-    and the loop stops happen exactly as often, in the same order, ON as
-    OFF."""
+def test_firing_bank_stop_is_logged_with_its_loop_stop(monkeypatch):
+    """A FIRING bank's stop (combat fire events §4.3): its writes are
+    logged and its loop sound's stop is a LOOP_STOP entry, no BANK_STOP
+    record. The loop stops happen exactly as often, in the same order, ON
+    as OFF."""
     log = []
     # _firing as StopFiring sees it: after the record's writes are applied.
     _spy_fire_records(monkeypatch, log)
@@ -1713,9 +1735,9 @@ def test_firing_bank_stop_still_records(monkeypatch):
 
     _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 700)
     assert stops[False] and stops[True] == stops[False]
-    bank_stops = [f for kind, _b, f, _d in log if kind == "BANK_STOP"]
-    assert bank_stops, log[:20]
-    assert all(f for f in bank_stops), bank_stops
+    assert [k for k, _b, _f, _d in log if k == "BANK_STOP"] == []
+    assert counts["k1_logged"]["firing_bank_stop"] > 0, counts
+    assert counts["k1_entries"]["LOOP_STOP"] > 0, counts
 
 
 _TRACED = ("_firing", "_beam_on_countdown", "_target", "_target_offset")
@@ -1977,3 +1999,342 @@ def test_materialise_raise_applies_later_writes(monkeypatch):
             assert nc.audit_failures() == [], nc.audit_failures()
         finally:
             w.close()
+
+
+# ── The effect queue (combat fire events, Task 2) ────────────────────────────
+# Inside the tick's scope (host_loop._combat_effect_scope, native on) the
+# sounds and events of K1's effects are queued and delivered, in order, when
+# the scope closes (engine/appc/effect_queue.py).
+
+def _scoped_tick(w, before=None):
+    with host_loop._combat_effect_scope():
+        w.tick(before=before)
+
+
+def test_bank_fired_natively_and_stopped_from_python_plays_then_stops(
+        monkeypatch):
+    """Review Focus 1. K1 lights the Galaxy's banks inside the tick's scope
+    and Python stops them in the same tick (a death, a K2 Python record):
+    nothing sounds until the boundary, then each bank's loop starts and
+    stops, in that order; none is left playing."""
+    from engine.appc import effect_queue as eq
+    sounds = []
+
+    def sfx(self):
+        sounds.append(("play", self.GetName(), eq.deferring()))
+        self._loop_handle = _Loop(sounds, ("stop", self.GetName()))
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", sfx)
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _DUEL, "k1_eq_stop")
+        try:
+            g = w.ships["Galaxy"].GetPhaserSystem()
+            before = nc.counts()["k1_records"]
+            with host_loop._combat_effect_scope():
+                g.StartFiring(w.ships["Vorcha"])
+                w.tick()
+                lit = [b for b in _weapons(g) if b._firing]
+                assert lit, "K1 lit no bank"
+                g.StopFiring()
+                assert sounds == []
+            assert nc.counts()["k1_records"] > before
+            names = [b.GetName() for b in lit]
+            plays = [s for s in sounds if s[0] == "play"]
+            assert [s[1] for s in plays] == names
+            assert not any(s[2] for s in plays)    # delivered, scope closed
+            for name in names:
+                assert sounds.index(("stop", name)) > sounds.index(
+                    ("play", name, False))
+            assert all(b._loop_handle is None for b in _weapons(g))
+        finally:
+            w.close()
+
+
+def test_tube_launch_events_keep_bcs_order_at_the_boundary(monkeypatch):
+    """Review Focus 2. A tube launch inside the scope: ET_TORPEDO_FIRED,
+    ET_WEAPON_FIRED, ET_TORPEDO_AMMO_CONSUMED are delivered at the boundary,
+    in that order, with the torpedo still alive at delivery."""
+    from engine.appc import effect_queue as eq
+    from engine.appc import projectiles
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+             ("Ahead", "vorcha", (10.0, 240.0, 5.0), math.pi))
+    with monkeypatch.context() as mp:
+        w = World(mp, True, ships, "k1_eq_tube", player="Galaxy")
+        alive = []
+
+        def hook(evt):
+            if evt.GetEventType() == App.ET_TORPEDO_FIRED:
+                alive.append(evt.GetSource() in projectiles._active)
+        w.hooks.append(hook)
+        try:
+            torps = w.ships["Galaxy"].GetTorpedoSystem()
+            with host_loop._combat_effect_scope():
+                torps.StartFiring(w.ships["Ahead"])
+                w.tick()
+                assert w.events == []
+                assert eq.deferring()
+            kinds = [e[0] for e in w.events]
+            assert kinds[:3] == ["torpedo_fired", "fired", "ammo_consumed"], \
+                kinds
+            assert len(kinds) % 3 == 0 and kinds == kinds[:3] * (
+                len(kinds) // 3), kinds
+            assert alive and all(alive), alive
+        finally:
+            w.close()
+
+
+def test_a_failing_delivery_still_delivers_the_rest(monkeypatch):
+    """Review Focus 4. The first delivered bank's fire sound raises: every
+    later entry (its ET_WEAPON_FIRED, any other bank's) is still
+    delivered, the error is re-raised after the flush (tests are the loud
+    mode), and the queue is empty."""
+    from engine.appc import effect_queue as eq
+
+    class Boom(Exception):
+        pass
+    played = []
+
+    def sfx(self):
+        if not played:
+            played.append(None)
+            raise Boom("sound")
+        played.append(self.GetName())
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", sfx)
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _DUEL, "k1_eq_raise")
+        try:
+            g = w.ships["Galaxy"].GetPhaserSystem()
+            with pytest.raises(Boom):
+                with host_loop._combat_effect_scope():
+                    g.StartFiring(w.ships["Vorcha"])
+                    w.tick()
+                    lit = sum(1 for b in _weapons(g) if b._firing)
+            assert lit >= 1, lit
+            assert len(played) == lit
+            # Each bank's ET_WEAPON_FIRED followed its sound in the queue.
+            fired = [e for e in w.events if e[0] == "fired"]
+            assert len(fired) == lit, (fired, lit)
+            assert eq.counts()["failed"] == 1
+            assert _h.combat_effect_take() == []
+            assert not eq.deferring()
+        finally:
+            w.close()
+
+
+# ── K1 appends to the queue (combat fire events, Task 3) ─────────────────────
+# A beam's edge, a FIRE_FAILED and a firing bank's stop are queue entries
+# K1 appends; a K1 session that begins while nothing defers opens its own
+# deferral (effect_queue.session(), ruling F3) and delivers at its end.
+
+def _event_log(w):
+    return [e[:3] for e in w.events]
+
+
+def test_ai_session_fire_failed_then_launch_keep_emission_order(monkeypatch):
+    """Review Focus 3 and ruling F3 (a). An AI-style StartFiring outside the
+    tick's scope runs a K1 system session: the forward tubes fail the cone
+    at the target behind (native WEAPON_FIRE_FAILED entries), then an aft
+    tube launches (Python's ET_TORPEDO_FIRED, ET_WEAPON_FIRED). Native delivers
+    them in the Python's order -- the failure first -- and by the time
+    StartFiring returns (the session's end), not at the next tick."""
+    from engine.appc import effect_queue as eq
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+             ("Ahead", "vorcha", (10.0, 240.0, 5.0), math.pi),
+             ("Behind", "vorcha", (-12.0, -230.0, 4.0), 0.0))
+    logs, depth_at_post = {}, {}
+    for native in (False, True):
+        with monkeypatch.context() as mp:
+            w = World(mp, native, ships, "k1_ai_order_%d" % native)
+            seen = depth_at_post[native] = []
+            w.hooks.append(lambda evt: seen.append(_h.combat_k1_depth())
+                           if evt.GetEventType() in _EVENT_NAMES else None)
+            try:
+                torps = w.ships["Galaxy"].GetTorpedoSystem()
+                torps.StartFiring(w.ships["Behind"])
+                logs[native] = _event_log(w)
+                assert not eq.deferring()
+                assert _h.combat_effect_take() == []
+            finally:
+                w.close()
+    kinds = [e[0] for e in logs[False]]
+    assert "fire_failed" in kinds and "torpedo_fired" in kinds, kinds
+    assert kinds.index("fire_failed") < kinds.index("torpedo_fired"), kinds
+    assert logs[True] == logs[False]
+    # Native: every event delivered at the session's end, none mid-walk.
+    assert depth_at_post[True] and not any(depth_at_post[True])
+
+
+def test_bank_lit_and_stopped_in_one_out_of_scope_session(monkeypatch):
+    """Ruling F3 (b). One pump session outside the scope: K1 lights the
+    Galaxy's phasers (native FIRE_SOUND entries), then a tube's launch
+    Python (the same session) stops the phaser system. Each lit bank plays,
+    then stops, its loop -- as in the Python -- and none is left playing."""
+    sounds = {}
+    for native in (False, True):
+        log = sounds[native] = []
+
+        def sfx(self, log=log):
+            log.append(("play", self.GetName()))
+            self._loop_handle = _Loop(log, ("stop", self.GetName()))
+        with monkeypatch.context() as mp:
+            mp.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", sfx)
+            w = World(mp, native, _DUEL, "k1_lit_stop_%d" % native)
+            try:
+                g = w.ships["Galaxy"].GetPhaserSystem()
+                torps = w.ships["Galaxy"].GetTorpedoSystem()
+                banks, tubes = _weapons(g), _weapons(torps)
+                charge = [b.GetChargeLevel() for b in banks]
+                for b in banks:
+                    b.SetChargeLevel(0.0)
+                for t in tubes:
+                    t.SetNumReady(0)
+                # Held, nothing lit or launched yet.
+                g.StartFiring(w.ships["Vorcha"])
+                torps.StartFiring(w.ships["Vorcha"])
+                assert not any(b._firing for b in banks) and log == []
+                for b, c in zip(banks, charge):
+                    b.SetChargeLevel(c)
+                for t in tubes:
+                    t.SetNumReady(1)
+                g.SetForceUpdate(1)
+                torps.SetForceUpdate(1)
+                spawn = ws._spawn_projectile
+                stopped = []
+
+                def stop_on_launch(*a, **kw):
+                    if not stopped:
+                        stopped.append(True)
+                        g.StopFiring()
+                    return spawn(*a, **kw)
+                mp.setattr(ws, "_spawn_projectile", stop_on_launch)
+                w.tick()        # one pump session: phasers, then tubes
+                assert stopped
+                assert all(b._loop_handle is None for b in banks)
+            finally:
+                w.close()
+    plays = [s for s in sounds[False] if s[0] == "play"]
+    assert plays, sounds[False]
+    for _, name in plays:
+        log = sounds[False]
+        assert log.index(("stop", name)) > log.index(("play", name))
+    assert sounds[True] == sounds[False]
+
+
+def test_session_started_by_a_delivery_delivers_nested_in_order(
+        monkeypatch):
+    """Ruling F3 (c). Inside the tick's scope a handler on the first
+    delivered ET_WEAPON_FIRED (a Galaxy phaser's edge) starts the Vor'cha's
+    phasers: that K1 session runs inside the delivery, defers its own
+    entries (the Vor'cha's edges) and delivers them at its end -- nested,
+    before the rest of the tick's batch (the Galaxy's other edges) -- in
+    the Python's order."""
+    from engine.appc import effect_queue as eq
+    logs = {}
+    for native in (False, True):
+        with monkeypatch.context() as mp:
+            w = World(mp, native, _DUEL, "k1_nested_%d" % native)
+            started = []
+
+            def hook(evt, w=w, started=started):
+                if evt.GetEventType() == App.ET_WEAPON_FIRED and not started:
+                    started.append(eq._draining)
+                    w.ships["Vorcha"].GetPhaserSystem().StartFiring(
+                        w.ships["Galaxy"])
+            w.hooks.append(hook)
+            try:
+                for _ in range(3):
+                    w.tick()        # the banks charge
+                g = w.ships["Galaxy"].GetPhaserSystem()
+                g.SetSingleFire(0)
+                with eq.scope():    # the tick's scope, in both arms
+                    g.StartFiring(w.ships["Vorcha"])
+                    assert w.events == []
+                assert started == [True]
+                logs[native] = _event_log(w)
+            finally:
+                w.close()
+    srcs = [e[1].split("/")[0] for e in logs[False] if e[0] == "fired"]
+    # Galaxy's first edge, the Vor'cha's (nested), then the Galaxy's rest.
+    assert srcs[0] == "Galaxy" and srcs[1] == "Vorcha", srcs
+    assert "Galaxy" in srcs[srcs.index("Vorcha"):], srcs
+    assert logs[True] == logs[False]
+
+
+def test_an_abandoned_session_still_delivers_its_entries(monkeypatch):
+    """Ruling F5 (replaces Review Focus 5's truncation). Inside the tick's
+    scope a pump session lights the Galaxy's phasers (native entries,
+    appended once their writes were applied) and then a tube's launch
+    raises: the session is abandoned, but its entries stand for effects
+    that already happened, so they are delivered at the scope's end with
+    the one queued before the session: every lit bank's sound and its
+    ET_WEAPON_FIRED."""
+    from engine.appc import effect_queue as eq
+
+    class Boom(Exception):
+        pass
+    played = []
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx",
+                        lambda self: played.append(self.GetName()))
+    w = World(monkeypatch, True, _DUEL, "k1_abandon")
+    try:
+        g = w.ships["Galaxy"].GetPhaserSystem()
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        banks, tubes = _weapons(g), _weapons(torps)
+        charge = [b.GetChargeLevel() for b in banks]
+        for b in banks:
+            b.SetChargeLevel(0.0)
+        for t in tubes:
+            t.SetNumReady(0)
+        g.StartFiring(w.ships["Vorcha"])
+        torps.StartFiring(w.ships["Vorcha"])
+        for b, c in zip(banks, charge):
+            b.SetChargeLevel(c)
+        for t in tubes:
+            t.SetNumReady(1)
+        g.SetForceUpdate(1)
+        torps.SetForceUpdate(1)
+
+        def boom(*a, **kw):
+            raise Boom("launch")
+        monkeypatch.setattr(ws, "_spawn_projectile", boom)
+        other = w.ships["Vorcha"].GetPhaserSystem().GetWeapon(0)
+        del w.events[:]
+        with pytest.raises(Boom):
+            with host_loop._combat_effect_scope():
+                eq.post(eq.FIRE_SOUND, other)       # before the session
+                w.tick()
+        lit = [b.GetName() for b in banks if b._firing]
+        assert lit                                   # lit (its writes stay)
+        assert played == [other.GetName()] + lit, played
+        fired = [e[1] for e in w.events if e[0] == "fired"]
+        assert fired == ["Galaxy/" + n for n in lit], w.events
+        assert _h.combat_k1_depth() == 0
+        assert _h.combat_effect_take() == []
+    finally:
+        w.close()
+
+
+def test_system_instance_stop_patch_runs_python(monkeypatch):
+    """The pump's `sys_.StopFiring()` (a held system switched off) is logged
+    natively only when no StopFiring K1 stands in for is patched: an
+    instance-patched StopFiring on the SYSTEM itself runs Python's own,
+    exactly as often ON as OFF (_K1_SYSTEM_PATCHES, the walk check)."""
+    calls = {}
+
+    def script(w, t):
+        g = w.ships["Galaxy"].GetPhaserSystem()
+        if t == 0:
+            key = w.native
+            calls[key] = []
+            g.StartFiring(w.ships["Vorcha"])
+            real = ws.PhaserSystem.StopFiring
+
+            def stop(*a, _g=g, _key=key):
+                calls[_key].append((w.n, _g.GetName()))
+                return real(_g, *a)
+            w.mp.setattr(g, "StopFiring", stop, raising=False)
+        elif t == 5:
+            g.TurnOff()
+
+    _both(monkeypatch, _DUEL, script, 12)
+    assert calls[False], calls
+    assert calls[True] == calls[False]

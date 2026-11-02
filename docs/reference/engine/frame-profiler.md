@@ -145,7 +145,8 @@ a one-line insert per boundary instead of re-indenting 1,300 lines into `with`
 blocks, and it cannot mis-nest.
 
 **Underneath those phases it is a tree**, and has been since the `sim.gameloop`
-split: `sim` ⊃ `sim.gameloop` ⊃ `gl.*`, `sim` ⊃ `sim.combat` ⊃ `cb.*`,
+split: `sim` ⊃ `sim.gameloop` ⊃ `gl.*`, `sim` ⊃ `sim.combat` ⊃ `cb.*`, `sim` ⊃ `sim.effects` (the
+end-of-tick effect-queue delivery, native combat on only),
 `ui_panels` ⊃ `ui.render_all` ⊃ `ui.<panel>`. `scope()` records the scope (or
 mark phase) it opened inside and the report indents by that depth. Printed flat
 — which it was — every child appeared *above* its parent with nothing marking
@@ -159,8 +160,13 @@ number and reach a wrong conclusion:
 * **Indented rows are INCLUDED in their parent's total.** `gl.ai` is part of
   `sim.gameloop` is part of `sim`. Do not sum the column.
 * **`*` marks per-tick rows.** `sim.gameloop` and everything inside it is a sum
-  over the frame's N catch-up ticks; its siblings `sim.weapons` / `sim.combat` /
-  `sim.collisions` and everything inside *them* run **once per frame**. With the
+  over the frame's N catch-up ticks. ⚠️ **Stale since 2026-10-30:** `sim.weapons`,
+  `sim.combat` and (native combat on) `sim.effects` now also run once per
+  catch-up tick, inside the same loop, but `PER_TICK_ROOTS`
+  (`engine/core/frame_profiler.py`) still names only `sim.gameloop`, so the
+  report leaves them unmarked; read them with their `calls` column, or divide
+  by the tick count as `compare_native2.py` does. `sim.collisions` and
+  everything inside it run **once per frame**. With the
   tick count printed above the table and nothing distinguishing the two, the
   natural move — divide everything by N — is wrong for half the rows. The
   `calls` column is the generic backstop: a row entered 4 times says `4`.
