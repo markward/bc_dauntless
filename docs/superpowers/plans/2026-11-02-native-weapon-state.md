@@ -16,7 +16,7 @@
 - Bit-exact: floats by `.hex()` (−0.0 included); Python's write ORDER, object IDENTITY (new lists stay new, in-place lists stay the same object), value TYPES (`True`/`False` stay bool); events in the same order.
 - Ruling P1: logged writes are applied before any later Python runs. A field the kernel reads MUST push from every writer, in-place list writers included.
 - Switch `DAUNTLESS_NATIVE_COMBAT=1`, default OFF, byte-identical off. `DAUNTLESS_NATIVE_AUDIT=1` / `DAUNTLESS_PASSIVE_AUDIT=1`: K0 stands down (reason `audit`). GIL held.
-- K0 steps every weapon (the per-tick model), never consults or changes the passive awake list; tractor beams always hand back.
+- K0 steps every weapon (the per-tick model), never consults or changes the passive awake list; tractor beams always hand back (superseded by ruling W6, §10: idle tractors step natively).
 - Focused tests only, by name; never whole suites/directories, `scripts/check_tests.sh`, pytest with no files, or `ctest` without `-R`. Engine-class guard active: `monkeypatch` only.
 - Git: banned `git checkout -- <path>`, `git checkout .`, `git restore`, `git stash`, `git clean`, `git reset --hard`, `git add -A`, `git add .`. Stage explicit paths; `git commit -F <file>`; end messages with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. Restore mutated files by `cp`, then `diff`.
 - Never spell `game` or `sdk` as a path segment. Never launch `./build/dauntless` (the controller runs benchmarks).
