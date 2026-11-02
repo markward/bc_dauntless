@@ -137,10 +137,9 @@ def test_hull_smoke_ignores_collision_exactly_like_none(monkeypatch):
     hull_hit_smoke.maybe_emit(ship, pt, n, None, ship_instances={ship: 1})
     hull_hit_smoke.maybe_emit(ship, pt, n, "collision", ship_instances={ship: 1})
     assert emitted == []
-    # Control — the gate is real: a torpedo with a forced roll DOES emit.
-    import App
-    monkeypatch.setattr(App.g_kSystemWrapper, "GetRandomNumber", lambda n: 0,
-                        raising=False)
+    # Control — the gate is real: a torpedo with a forced roll DOES emit. The
+    # smoke rolls the presentation generator, so that is the roll forced.
+    monkeypatch.setattr(hull_hit_smoke.presentation_rng, "rand", lambda n: 0)
     hull_hit_smoke.maybe_emit(ship, pt, n, "torpedo", ship_instances={ship: 1})
     assert emitted, "control: torpedo smoke should have fired"
 

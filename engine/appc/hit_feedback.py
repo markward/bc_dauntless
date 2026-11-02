@@ -199,8 +199,10 @@ def _audio_should_play(ship, severity: Severity) -> bool:
     now = damage_decals.current_game_time()
     last = _last_dispatch_time.get(key)
     _last_dispatch_time[key] = now
-    if last is None:
-        return True   # first contact ever for this (ship, severity)
+    if last is None or now < last:
+        # First contact ever for this (ship, severity), or game time went
+        # backwards (a reset, a load): a stamp from the future is stale.
+        return True
     return (now - last) >= _AUDIO_CONTACT_GAP_S
 
 

@@ -526,6 +526,33 @@ def test_audio_contact_gap_runs_on_game_time_not_the_wall_clock(host, spy,
     assert len(spy["audio"]) == 2
 
 
+def test_audio_rearms_when_game_time_goes_backwards(host, spy, monkeypatch):
+    """A stamp from a later game time than now means the clock was rewound
+    (a reset, a load): the contact is fresh, so the sound plays. Without
+    this a reused id(ship) stays silent until game time passes the old
+    stamp (presentation RNG final review M3)."""
+    from engine.appc import damage_decals
+    game = [100.0]
+    monkeypatch.setattr(damage_decals, "_game_time_source", lambda: game[0])
+
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    kwargs = dict(
+        ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
+        normal=None, damage=30.0, subsystem=hull,
+        absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
+        sub_transition=None, ship_instances={ship: 42},
+    )
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 1
+    game[0] = 0.0                       # the clock rewound, no reset ran
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 2
+    game[0] = 0.017                     # the same contact, one tick on
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 2
+
+
 # ── Spark burst wiring ─────────────────────────────────────────────────────
 
 def test_heavy_hull_hit_spawns_sparks_with_body_anchor(monkeypatch):

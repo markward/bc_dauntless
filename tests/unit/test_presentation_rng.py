@@ -201,6 +201,36 @@ def test_random_point_on_model_surface_pick_follows_the_scope(monkeypatch):
         render_instances.reset()
 
 
+def test_random_unit_vector_draws_p_inside_the_scope():
+    """Final review M4: a death script (run in the scope) that asks for a
+    random unit vector, as Effects.CollisionEffect does, draws P, not the
+    AI's private unit-vector generator (flee/evade headings)."""
+    from engine.appc import math as appc_math
+    appc_math.reset_random_unit_vector_rng()
+    unit = appc_math._unit_vector_rng.getstate()
+    s1, s2 = _s1_state(), random.getstate()
+    prng.reset()
+    with prng.scope():
+        a = App.TGPoint3_GetRandomUnitVector()
+    assert appc_math._unit_vector_rng.getstate() == unit
+    assert (_s1_state(), random.getstate()) == (s1, s2)
+    assert abs(a.x * a.x + a.y * a.y + a.z * a.z - 1.0) < 1e-9
+    prng.reset()
+    with prng.scope():
+        b = App.TGPoint3_GetRandomUnitVector()
+    assert (a.x, a.y, a.z) == (b.x, b.y, b.z)
+
+
+def test_random_unit_vector_draws_its_own_generator_outside():
+    from engine.appc import math as appc_math
+    p = prng._rng.getstate()
+    appc_math.reset_random_unit_vector_rng()
+    unit = appc_math._unit_vector_rng.getstate()
+    App.TGPoint3_GetRandomUnitVector()
+    assert prng._rng.getstate() == p
+    assert appc_math._unit_vector_rng.getstate() != unit
+
+
 # ── Gameplay is never drawn from P ──────────────────────────────────────────
 
 def test_apply_hit_inside_a_presentation_scope_is_caught():
@@ -215,17 +245,35 @@ def test_apply_hit_inside_a_presentation_scope_is_caught():
     assert not prng.in_scope()
 
 
-def test_the_gameplay_check_is_silent_in_production(monkeypatch):
+def test_the_gameplay_check_is_silent_in_production(monkeypatch, capsys):
     from engine import dev_mode
     monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
     with prng.scope():
         prng.check_gameplay("apply_hit", modules={})        # no raise
         with pytest.raises(AssertionError):
             prng.check_gameplay("apply_hit", modules={"pytest": None})
-        monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
-        with pytest.raises(AssertionError):
-            prng.check_gameplay("apply_hit", modules={})    # --developer
     prng.check_gameplay("apply_hit")                        # out of scope
+    assert capsys.readouterr().err == ""
+
+
+def test_under_developer_the_gameplay_check_logs_once_and_carries_on(
+        monkeypatch, capsys):
+    """Final review M2: a dev session plays the same game as production, so
+    --developer reports a scoped gameplay call on stderr, once per call
+    site, and never raises (raising would skip the rest of the script and
+    its damage). Only pytest raises."""
+    from engine import dev_mode
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    monkeypatch.setattr(prng, "_reported", set())
+    with prng.scope():
+        prng.check_gameplay("apply_hit", modules={})        # no raise
+        prng.check_gameplay("apply_hit", modules={})
+        prng.check_gameplay("other_site", modules={})
+    prng.check_gameplay("third_site", modules={})           # out of scope
+    lines = capsys.readouterr().err.splitlines()
+    assert len(lines) == 2, lines
+    assert lines[0].startswith("[presentation-rng] apply_hit ")
+    assert lines[1].startswith("[presentation-rng] other_site ")
 
 
 # ── Every differential's seed_every_rng resets P ────────────────────────────
@@ -276,9 +324,11 @@ def _swap():
 def test_mission_swap_reseeds_p_and_rearms_the_hit_sound(monkeypatch):
     """R3: P reseeded at every mission load (host_loop._reset_session_scratch,
     the seam every load, swap and in-transit mission change runs). Review
-    Focus 4: the hit-sound edge stamps are cleared too. They run on game time, which the swap
-    zeroes: a stamp left at the old mission's late game time would silence
-    a new ship that reuses the old one's id()."""
+    Focus 4: the hit-sound edge stamps are cleared too: a new ship that
+    reuses the old one's id() inside the contact gap of its stamp would
+    otherwise be silent. (A clock that went backwards re-arms on its own,
+    _audio_should_play, so the probe clock sits just AFTER the stamp: only
+    the reset can re-arm it.)"""
     from engine.appc import damage_decals, hit_feedback
     ship = object()
     clock = [100.0]
@@ -291,7 +341,7 @@ def test_mission_swap_reseeds_p_and_rearms_the_hit_sound(monkeypatch):
     _swap()
 
     assert prng._rng.getstate() == fresh
-    clock[0] = 0.0          # the new mission's clock; the same id(ship)
+    clock[0] = 100.0 + hit_feedback._AUDIO_CONTACT_GAP_S / 2   # the same id(ship)
     assert hit_feedback._audio_should_play(ship, hit_feedback.Severity.HULL)
 
 
@@ -361,8 +411,10 @@ def test_a_hit_presents_without_touching_the_gameplay_streams(monkeypatch):
     App.g_kSystemWrapper.SetRandomSeed(3)
     s1, s2 = _s1_state(), random.getstate()
     sub = object()
+    ships = []      # held, so no freed ship's id() is reused (and throttled)
     for i in range(40):
         ship = _HitShip()
+        ships.append(ship)
         critical = i % 2 == 1
         hit_feedback.dispatch(
             ship=ship, source=None, point=TGPoint3(1.0, 2.0, 3.0),

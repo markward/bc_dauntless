@@ -615,8 +615,9 @@ def apply_hit(*args, **kwargs) -> None:
     dropped on the way in and on the way out (engine.core.step_memo).
 
     A hit is gameplay: it must never run inside a presentation scope, where
-    its draws would come from the presentation generator (loud under tests
-    and --developer: engine.appc.presentation_rng.check_gameplay)."""
+    its draws would come from the presentation generator (raises under
+    tests, logs once under --developer:
+    engine.appc.presentation_rng.check_gameplay)."""
     from engine.appc import presentation_rng
     presentation_rng.check_gameplay("combat.apply_hit")
     from engine.core import step_memo

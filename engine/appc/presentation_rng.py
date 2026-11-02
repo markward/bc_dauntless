@@ -12,9 +12,10 @@ SDK script the engine runs ONLY to present (``LoadTacticalSounds
 .GetRandomSound``, ``Effects.CreateSmokeHigh``, a bridge animation builder, a
 mission death script) is called inside ``scope()``: while one is open on
 this thread, ``GetRandomNumber`` and ``ObjectClass.GetRandomPointOnModel``
-answer from P. ``combat.apply_hit`` asserts no scope is open (under tests and
-``--developer``), so a presentation script that reaches gameplay is caught
-rather than silently drawing gameplay numbers from P.
+answer from P. ``combat.apply_hit`` checks no scope is open (raising under tests, logging
+once per call site under ``--developer``), so a presentation script that
+reaches gameplay is caught rather than silently drawing gameplay numbers
+from P.
 
 The scope is thread-local: presentation is moving to its own queue and the
 Python work to its own thread, and a global flag would leak across them.
@@ -82,18 +83,26 @@ def scope():
         _local.depth -= 1
 
 
+_reported = set()   # call sites --developer has already reported
+
+
 def check_gameplay(where: str, modules=None) -> None:
-    """Gameplay is never drawn from P: raise if a presentation scope is open
-    on this thread at a gameplay entry point (``combat.apply_hit``). Loud
-    under tests (pytest imported) and ``--developer``; production pays one
-    thread-local read and carries on."""
+    """Gameplay is never drawn from P: report a presentation scope open on
+    this thread at a gameplay entry point (``combat.apply_hit``). Under
+    tests (pytest imported) it raises. Under ``--developer`` it logs once
+    per call site to stderr and carries on, so a dev session plays the same
+    game as production (raising would skip the rest of the presenting
+    script, and the damage). Production pays one thread-local read."""
     if not in_scope():
         return
-    from engine import dev_mode
     if modules is None:
         modules = sys.modules
-    if "pytest" in modules or dev_mode.is_enabled():
-        raise AssertionError(
-            "%s ran inside a presentation scope: presentation code reached "
-            "gameplay, whose draws would come from the presentation "
-            "generator" % where)
+    message = ("%s ran inside a presentation scope: presentation code "
+               "reached gameplay, whose draws would come from the "
+               "presentation generator" % where)
+    if "pytest" in modules:
+        raise AssertionError(message)
+    from engine import dev_mode
+    if dev_mode.is_enabled() and where not in _reported:
+        _reported.add(where)
+        sys.stderr.write("[presentation-rng] %s\n" % message)
