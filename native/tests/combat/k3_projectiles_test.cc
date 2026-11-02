@@ -1094,3 +1094,188 @@ TEST(K3Projectiles, CandidatesMergeAcrossRegionsByIndex) {
         w.k.end();
     }
 }
+
+// ── THE HITS (native damage, Task 4) ────────────────────────────────────────
+
+namespace {
+
+// A ship the hit can damage: hurtable, stood in for, a critical hull and no
+// other subsystem.
+int64_t hull_of(World& w, int64_t ship, double hull_max) {
+    w.m.set_i(ship, Field::dmg_ship, 1);
+    w.m.set_i(ship, Field::_hurtable, 1);
+    const int64_t hull = w.m.register_row(Kind::Subsystem);
+    w.m.set_f(hull, Field::_max_condition, hull_max);
+    w.m.set_f(hull, Field::_condition, hull_max);
+    w.m.set_f(hull, Field::_disabled_percentage, 0.5);
+    w.m.set_ref(hull, Field::_parent_ship, ship);
+    w.m.set_i(hull, Field::dmg_class, kDmgLeaf);
+    w.m.set_i(hull, Field::_critical, 1);
+    w.m.set_ref(ship, Field::_hull, hull);
+    w.m.set_mount_order(ship, {});
+    return hull;
+}
+
+void payload(World& w, int64_t torp_h, double damage, double drf) {
+    w.m.torpedoes().set_f(torp_h, TorpField::_damage, damage);
+    w.m.torpedoes().set_f(torp_h, TorpField::_damage_radius_factor, drf);
+}
+
+K2PulseCtx hit_ctx(std::initializer_list<int64_t> clean) {
+    K2PulseCtx p;
+    p.ok = true;
+    p.default_radius = 0.15;
+    p.hit_weapon = 2;       // HIT_WEAPON_TORPEDO
+    p.weapon_hit_type = 1;  // WeaponHitEvent.TORPEDO
+    p.clean = clean;
+    return p;
+}
+
+const DamageEntry& first(const K3Applied& a, DamageKind kind) {
+    for (const DamageEntry& e : a.out.entries)
+        if (e.kind == kind) return e;
+    throw std::logic_error("no such entry");
+}
+
+}  // namespace
+
+TEST(K3Hits, DoneKeepsItsHitsWithWhatTheirTorpedoesCarry) {
+    World w;
+    const int64_t src = w.listed("S", 0, 0, 0);
+    const int64_t x = w.listed("X", 0, 50, 0);
+    const int64_t a = w.torp("A", {0, 40, 0}, {0, 600, 0}, -1, src);
+    payload(w, a, 125.0, 0.5);
+    ASSERT_EQ(w.begin(), std::nullopt);
+    const K3Record r = w.done();
+    w.k.end();
+    ASSERT_EQ(w.k.hits().size(), 1u);
+    const K3Hit& h = w.k.hits()[0];
+    EXPECT_EQ(h.ship, x);
+    EXPECT_EQ(h.damage, 125.0);
+    EXPECT_EQ(h.drf, 0.5);
+    EXPECT_EQ(h.source, src);
+    // The row may go (the driver's expire) before the hit is applied.
+    w.m.torpedoes().drop(a);
+    EXPECT_EQ(w.k.hits()[0].damage, 125.0);
+    EXPECT_EQ(r.hits.size(), 1u);
+}
+
+TEST(K3Hits, EachHitIsAppliedFullyBeforeTheNextInMovingOrder) {
+    World w;
+    const int64_t src = w.listed("S", 0, 0, 0);
+    const int64_t x = w.listed("X", 0, 50, 0);
+    const int64_t hull = hull_of(w, x, 50.0);
+    const int64_t a = w.torp("A", {0, 40, 0}, {0, 600, 0}, -1, src);
+    const int64_t b = w.torp("B", {0, 41, 0}, {0, 600, 0}, -1, src);
+    payload(w, a, 40.0, 0.0);
+    payload(w, b, 40.0, 0.5);
+    ASSERT_EQ(w.begin(), std::nullopt);
+    w.done();
+    w.k.end();
+    std::vector<K3Applied> out;
+    EXPECT_EQ(w.k.apply_hits(0, hit_ctx({x}), {}, out), 2u);
+    ASSERT_EQ(out.size(), 2u);
+    EXPECT_EQ(out[0].index, 0u);
+    EXPECT_EQ(out[1].index, 1u);
+    EXPECT_EQ(out[0].source, src);
+    EXPECT_EQ(w.m.get_f(hull, Field::_condition), 0.0);
+    // A took 50 -> 10; B, written after, crossed zero.
+    const DamageEntry& z = first(out[1], DamageKind::ZERO_CROSS);
+    EXPECT_TRUE(z.ops[2].boolean);
+    const DamageEntry& pa = first(out[0], DamageKind::HIT_PRESENT);
+    const DamageEntry& pb = first(out[1], DamageKind::HIT_PRESENT);
+    EXPECT_EQ(pa.ops[17].number, 0.15);  // no DRF: the default radius
+    EXPECT_EQ(pb.ops[17].number, 0.5);
+    EXPECT_EQ(pa.ops[16].integer, 2);
+    EXPECT_TRUE(pa.ops[19].boolean);     // damage_hull
+    EXPECT_EQ(first(out[0], DamageKind::WEAPON_HIT).ops[12].integer, 1);
+    EXPECT_EQ(w.k.counts().native_hits, 2);
+    EXPECT_TRUE(w.m.sensor_state().memo.empty());
+}
+
+TEST(K3Hits, ABubbleHitsShieldPointIsItsHitPoint) {
+    World w;
+    const int64_t x = w.listed("X", 0, 50, 0);
+    w.shields(x);
+    w.m.set_floats(w.m.get_ref(x, Field::_shield_subsystem),
+                   Field::_current_shields, {0, 0, 0, 0, 0, 0});
+    w.m.set_floats(w.m.get_ref(x, Field::_shield_subsystem),
+                   Field::_max_shields, {0, 0, 0, 0, 0, 0});
+    w.m.set_floats(w.m.get_ref(x, Field::_shield_subsystem),
+                   Field::_ramp_fraction, {0, 0, 0, 0, 0, 0});
+    w.m.set_floats(w.m.get_ref(x, Field::_shield_subsystem),
+                   Field::_ramp_set, {0, 0, 0, 0, 0, 0});
+    w.m.set_i(w.m.get_ref(x, Field::_shield_subsystem), Field::dmg_class,
+              kDmgLeaf);
+    hull_of(w, x, 500.0);
+    const int64_t a = w.torp("A", {0, 40, 0}, {0, 600, 0});
+    payload(w, a, 10.0, 0.0);
+    ASSERT_EQ(w.begin(), std::nullopt);
+    w.done();
+    w.k.end();
+    ASSERT_TRUE(w.k.hits()[0].hit_is_bubble);
+    std::vector<K3Applied> out;
+    EXPECT_EQ(w.k.apply_hits(0, hit_ctx({x}), {}, out), 1u);
+    const DamageEntry& p = first(out[0], DamageKind::HIT_PRESENT);
+    EXPECT_TRUE(p.ops[20].boolean);   // has_shield_point
+    EXPECT_TRUE(p.ops[21].boolean);   // shield_point IS hit_point
+}
+
+TEST(K3Hits, ApplyStopsAtTheFirstHitItCannotApply) {
+    struct Case {
+        const char* why;
+        int reason;  // K2PulseWhy, or -1: the driver's own `python` index
+    };
+    for (const Case c : {Case{"not_ok", 0}, Case{"unscanned", 1},
+                         Case{"fallback", 3}, Case{"python", -1}}) {
+        SCOPED_TRACE(c.why);
+        World w;
+        const int64_t x = w.listed("X", 0, 50, 0);
+        const int64_t y = w.listed("Y", 100, 50, 0);
+        const int64_t hx = hull_of(w, x, 500.0);
+        const int64_t hy = hull_of(w, y, 500.0);
+        payload(w, w.torp("A", {0, 40, 0}, {0, 600, 0}), 10.0, 0.0);
+        payload(w, w.torp("B", {100, 40, 0}, {0, 600, 0}), 20.0, 0.0);
+        ASSERT_EQ(w.begin(), std::nullopt);
+        w.done();
+        w.k.end();
+        K2PulseCtx p = hit_ctx({x, y});
+        std::unordered_set<size_t> python;
+        if (c.reason == 0) p.ok = false;
+        if (c.reason == 1) p.clean.erase(y);
+        if (c.reason == 3) w.m.set_i(y, Field::dmg_ship, 0);
+        if (c.reason == -1) python.insert(1);
+        std::vector<K3Applied> out;
+        if (c.reason == 0) {
+            EXPECT_EQ(w.k.apply_hits(0, p, python, out), 0u);
+            EXPECT_TRUE(out.empty());
+            EXPECT_EQ(w.m.get_f(hx, Field::_condition), 500.0);
+            continue;
+        }
+        // A lands; B is handed back with Y untouched; nothing after it.
+        EXPECT_EQ(w.k.apply_hits(0, p, python, out), 1u);
+        ASSERT_EQ(out.size(), 1u);
+        EXPECT_EQ(w.m.get_f(hx, Field::_condition), 490.0);
+        EXPECT_EQ(w.m.get_f(hy, Field::_condition), 500.0);
+        if (c.reason >= 0)
+            EXPECT_EQ(w.k.counts().hit_why[static_cast<size_t>(c.reason)], 1);
+        // From past it: nothing left.
+        out.clear();
+        EXPECT_EQ(w.k.apply_hits(2, p, python, out), 2u);
+        EXPECT_TRUE(out.empty());
+    }
+}
+
+TEST(K3Hits, BeginForgetsTheLastStepsHits) {
+    World w;
+    w.listed("X", 0, 50, 0);
+    w.torp("A", {0, 40, 0}, {0, 600, 0});
+    ASSERT_EQ(w.begin(), std::nullopt);
+    w.done();
+    w.k.end();
+    ASSERT_EQ(w.k.hits().size(), 1u);
+    w.m.torpedoes().clear();
+    ASSERT_EQ(w.begin(), std::nullopt);
+    EXPECT_TRUE(w.k.hits().empty());
+    w.k.abandon();
+}

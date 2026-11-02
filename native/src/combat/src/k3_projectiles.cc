@@ -26,7 +26,9 @@
 #include <utility>
 
 #include "dauntless/combat/beam_geometry.h"
+#include "dauntless/combat/damage.h"
 #include "dauntless/combat/fire_gates.h"
+#include "dauntless/combat/sensor_detect.h"
 #include "geometry_internal.h"
 
 namespace dauntless::combat {
@@ -492,6 +494,12 @@ void Walker::hit() {
     // hit (projectiles.py: `seg_cur = bubble_entry`).
     h.hit_is_bubble =
         s_.bubble.has_value() && h.hit.tier == ResolvedHit::Tier::Fallback;
+    // What host_loop's hit loop reads of the torpedo (THE HITS): no ASK
+    // writes them, so they are the values the loop will read.
+    const TorpedoRow& tr = row(mv.torp);
+    h.damage = tr.damage;
+    h.drf = tr.damage_radius_factor;
+    h.source = m_.torpedo_ref(tr, TorpField::_source_ship);
     s_.answer = K3Answer{};
     s_.hits.push_back(std::move(h));
     s_.hit_expired.push_back(mv.torp);
@@ -828,13 +836,17 @@ K3Kernel::K3Kernel(Mirror& m, TransformStore& store, StepScan& scan)
 }
 K3Kernel::~K3Kernel() = default;
 
-void K3Kernel::clear() { session_.reset(); }
+void K3Kernel::clear() {
+    session_.reset();
+    hits_.clear();
+}
 
 std::optional<K3Why> K3Kernel::begin(double dt, const GuideClocks& clocks,
                                      bool use_memo, K2Context ctx,
                                      int64_t n_active, bool keep_iids,
                                      std::optional<uint64_t> scan_serial) {
     if (session_) lost("a session is already open");
+    hits_.clear();
     if (keep_iids) ctx.iids = std::move(ctx_.iids);
     ctx_ = std::move(ctx);
     auto python = [this](K3Why w) -> std::optional<K3Why> {
@@ -915,7 +927,9 @@ K3Record K3Kernel::next() {
     s.has_answer = false;
     try {
         Walker w(m_, store_, scan_, s, ctx_, counts_);
-        return w.run();
+        K3Record r = w.run();
+        if (r.kind == K3Kind::DONE) hits_ = r.hits;  // THE HITS
+        return r;
     } catch (...) {
         s = std::move(before);
         throw;
@@ -944,6 +958,61 @@ void K3Kernel::end() {
 void K3Kernel::abandon() {
     if (!session_) lost("no session is open");
     session_.reset();
+}
+
+// THE HITS (k3_projectiles.h): host_loop's
+//   for torpedo, ship, hit_point, hit_normal in hits:
+//       combat.apply_hit(ship, torpedo._damage, hit_point,
+//           source=torpedo._source_ship, normal=hit_normal,
+//           ship_instances=ship_instances, weapon_type="torpedo",
+//           hardpoint_weapon=torpedo, shield_point=torpedo._bubble_entry)
+// from hit `from`, until one the kernel cannot apply.
+size_t K3Kernel::apply_hits(size_t from, const K2PulseCtx& p,
+                            const std::unordered_set<size_t>& python,
+                            std::vector<K3Applied>& out) {
+    auto handed = [this](K2PulseWhy why, size_t i) {
+        ++counts_.hit_why[static_cast<size_t>(why)];
+        return i;
+    };
+    for (size_t i = from; i < hits_.size(); ++i) {
+        const K3Hit& h = hits_[i];
+        if (!p.ok) return handed(K2PulseWhy::not_ok, i);
+        if (p.clean.count(h.ship) == 0) return handed(K2PulseWhy::unscanned, i);
+        if (python.count(i)) return i;  // the driver's own reason
+        HitInput in;
+        in.ship = h.ship;
+        in.source = h.source;
+        in.damage = h.damage;
+        in.point = h.hit.point;
+        in.has_normal = h.hit.normal.has_value();
+        if (in.has_normal) in.normal = *h.hit.normal;
+        // weapon_splash_radius(torpedo, None): its DRF if > 0, else the
+        // default.
+        in.r_hit = h.drf > 0.0 ? h.drf : p.default_radius;
+        in.damage_hull = true;
+        in.has_shield_point = h.bubble.has_value();
+        if (in.has_shield_point) in.shield_point = *h.bubble;
+        // On a fallback-tier bubble hit the hit point, seg_cur and
+        // `_bubble_entry` are one object (projectiles.py).
+        in.shield_point_is_point = h.hit_is_bubble;
+        in.hit_weapon = p.hit_weapon;
+        in.weapon_hit_type = p.weapon_hit_type;
+        in.has_instances = p.has_instances;
+        K3Applied a;
+        a.index = i;
+        a.source = h.source;
+        // combat.apply_hit: step_memo.forget() on the way in and out.
+        memo_clear(m_);
+        try {
+            apply_hit(m_, in, p.dc, a.out);
+        } catch (const std::invalid_argument&) {
+            return handed(K2PulseWhy::fallback, i);  // the mirror as it was
+        }
+        memo_clear(m_);
+        out.push_back(std::move(a));
+        ++counts_.native_hits;
+    }
+    return hits_.size();
 }
 
 K3Kernel& k3_kernel() {

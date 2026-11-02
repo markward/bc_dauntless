@@ -103,14 +103,36 @@ struct DamageEntry {
     std::array<DamageOperand, kMaxOperands> ops{};
 };
 
+// The value one write replaced (DamageOut::undo): a kernel that applies a
+// hit in its walk (K2's pulse) undoes it with undo_damage when it rolls the
+// walk back (k2_beams.h, THE DAMAGE PULSE). `face`: a slot of
+// `_current_shields` (`index`); else `d` (an F field) or `i`.
+struct DamageUndo {
+    int64_t h = -1;
+    Field f = Field::_condition;
+    bool face = false;
+    size_t index = 0;
+    double d = 0.0;
+    int64_t i = 0;
+};
+
 struct DamageOut {
     std::vector<LoggedWrite> writes;
     std::vector<DamageEntry> entries;
+    // One per write, in write order: what it replaced. A fallback truncates
+    // it with the rest.
+    std::vector<DamageUndo> undo;
     void clear() {
         writes.clear();
         entries.clear();
+        undo.clear();
     }
 };
+
+// Restore what undo[from..] replaced, newest first (the writes' own order
+// reversed).
+void undo_damage(Mirror& m, const std::vector<DamageUndo>& undo,
+                 size_t from = 0);
 
 // What apply_hit reads that is not mirrored state: dev_combat_cheats'
 // three getters (god_mode_active, double_player_weapons_active,

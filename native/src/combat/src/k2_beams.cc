@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "dauntless/combat/beam_geometry.h"
+#include "dauntless/combat/damage.h"
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/py_math.h"
@@ -84,6 +85,15 @@ const char* k2_query_name(K2Query q) {
         "bubble",  "resolve_hit", "bank_step"};
     static_assert(std::size(kNames) == static_cast<size_t>(K2Query::kCount));
     const auto i = static_cast<size_t>(q);
+    return i < std::size(kNames) ? kNames[i] : "?";
+}
+
+const char* k2_pulse_why_name(K2PulseWhy w) {
+    static constexpr const char* kNames[] = {"not_ok", "unscanned", "level",
+                                             "fallback"};
+    static_assert(std::size(kNames) ==
+                  static_cast<size_t>(K2PulseWhy::kCount));
+    const auto i = static_cast<size_t>(w);
     return i < std::size(kNames) ? kNames[i] : "?";
 }
 
@@ -165,12 +175,14 @@ struct K2Kernel::Session {
     bool ship_recorded = false;  // a record was returned for it
     size_t ship_mark = 0;        // writes.size() when it began
     size_t ship_entry_mark = 0;  // entries.size() when it began
+    size_t ship_hit_mark = 0;    // hits.size() when it began
 
     // The bank's locals.
     bool in_bank = false;
     bool bank_recorded = false;
     size_t bank_mark = 0;
     size_t bank_entry_mark = 0;
+    size_t bank_hit_mark = 0;
     int64_t bank = -1, target = -1;
     double dwell = 0.0;                 // the idle branch's take_dwell
     std::optional<double> flush_dwell;  // None on the IsFiring branch
@@ -192,6 +204,10 @@ struct K2Kernel::Session {
     // a firing bank's LOOP_STOP), each placed after the writes before it;
     // rolled back with them.
     std::vector<K1Entry> entries;
+    // The damage pulses applied since the last record (THE DAMAGE PULSE,
+    // k2_beams.h), each placed among the writes and entries; rolled back
+    // with them.
+    std::vector<K2Hit> hits;
     // The resting contacts queued for the drain (RESTING CONTACTS,
     // k2_beams.h), in walk order.
     std::vector<K2Rest> rests;
@@ -201,10 +217,17 @@ struct K2Kernel::Session {
 };
 
 // Undo the session's logged writes from `mark` on, newest first, and drop
-// them from the log, with the queue entries from `entry_mark` on: they never
-// reached Python.
+// them from the log, with the queue entries from `entry_mark` on and the
+// damage pulses from `hit_mark` on (their own writes undone, newest first):
+// they never reached Python. A pulse writes fields no logged write does
+// (damage.h: conditions, threshold states, watcher values, faces), so the
+// two undo in either order.
 static void k2_roll_back(Mirror& m, K2Kernel::Session& s, size_t mark,
-                         size_t entry_mark) {
+                         size_t entry_mark, size_t hit_mark) {
+    while (s.hits.size() > hit_mark) {
+        undo_damage(m, s.hits.back().out.undo);
+        s.hits.pop_back();
+    }
     s.entries.resize(entry_mark);
     while (s.undo.size() > mark) {
         const K2Undo& u = s.undo.back();
@@ -422,6 +445,8 @@ private:
         s_.writes.clear();
         r.entries = std::move(s_.entries);
         s_.entries.clear();
+        r.hits = std::move(s_.hits);
+        s_.hits.clear();
         s_.undo.clear();  // delivered: Python applies them
         s_.st = next;
         s_.ship_recorded = true;
@@ -432,7 +457,8 @@ private:
     // The ship handed to Python whole, before any record for it: its own
     // undelivered writes are undone (Python makes them itself).
     K2Record run_python(K2Why why) {
-        k2_roll_back(m_, s_, s_.ship_mark, s_.ship_entry_mark);
+        k2_roll_back(m_, s_, s_.ship_mark, s_.ship_entry_mark,
+                     s_.ship_hit_mark);
         ++c_.python_ships;
         ++c_.why[static_cast<size_t>(why)];
         return emit(K2Kind::RUN_PYTHON, St::SHIP_NEXT, s_.ship,
@@ -459,7 +485,8 @@ private:
     // first record, else the one bank (nothing delivered for it yet).
     K2Record bank_fallback(K2Why why) {
         if (!s_.ship_recorded) return run_python(why);
-        k2_roll_back(m_, s_, s_.bank_mark, s_.bank_entry_mark);
+        k2_roll_back(m_, s_, s_.bank_mark, s_.bank_entry_mark,
+                     s_.bank_hit_mark);
         return ask(K2Query::bank_step,
                    {s_.ship, s_.sys, static_cast<int64_t>(s_.i)},
                    St::BANK_STEP_ANSWER);
@@ -508,6 +535,7 @@ private:
 
     K2Record contact();
     bool queue_contact();
+    bool pulse();
 
     Mirror& m_;
     Session& s_;
@@ -638,11 +666,94 @@ bool Walker::queue_contact() {
     return true;
 }
 
-// A damage pulse: the CONTACT record. Python does the damage arithmetic.
+// A damage pulse the kernel could not apply (THE DAMAGE PULSE): the CONTACT
+// record, and Python runs _phaser_contact.
 K2Record Walker::contact() {
     K2Record r = emit(K2Kind::CONTACT, St::BANK_NEXT);
     r.contact = make_contact(s_);
     return r;
+}
+
+// A damage pulse (`flush_dwell > 0.0`), host_loop._phaser_contact's damage
+// branch, applied in the walk (THE DAMAGE PULSE, k2_beams.h): true, and the
+// walk goes on. False keeps the CONTACT record (counted by why), with the
+// mirror untouched.
+bool Walker::pulse() {
+    const K2PulseCtx& p = ctx_.pulse;
+    auto python = [this](K2PulseWhy why) {
+        ++c_.pulse_why[static_cast<size_t>(why)];
+        return false;
+    };
+    if (!p.ok) return python(K2PulseWhy::not_ok);
+    if (p.clean.count(s_.target) == 0) return python(K2PulseWhy::unscanned);
+    const SubsystemRow* b = subrow(s_.bank);
+    const SubsystemRow* y = subrow(s_.sys);
+    if (!b || !y) return python(K2PulseWhy::fallback);
+    // PHASER_INTENSITY_SCALE[level]: a 3-tuple, indexed as Python indexes
+    // (-3..2; anything else raises IndexError in Python).
+    const int64_t level = y->_power_level;
+    const int64_t index = level < 0 ? level + 3 : level;
+    if (index < 0 || index >= 3) return python(K2PulseWhy::level);
+    // _phaser_damage_for_tick(max_damage=bank.GetMaxDamage(),
+    //     max_damage_distance=bank.GetMaxDamageDistance(), dist=dist,
+    //     dt=flush_dwell) * PHASER_INTENSITY_SCALE[level]     (HL:1286-1291)
+    const double md = b->_max_damage, mdd = b->_max_damage_distance;
+    const double dt = *s_.flush_dwell;
+    double damage;
+    if (mdd <= 0.0)
+        damage = 0.0;
+    else if (s_.dist <= mdd)
+        damage = md * dt;
+    else
+        damage = md * (mdd / s_.dist) * dt;
+    damage = damage * p.intensity[static_cast<size_t>(index)];
+    if (damage > 0) {
+        // damage_hull = sys_.GetPowerLevel() != sys_.PP_LOW
+        // combat.apply_hit(target, damage, impact_point, source=ship,
+        //     normal=impact_normal, ship_instances=..., weapon_type="phaser",
+        //     hardpoint_weapon=bank, damage_hull=..., shield_point=bubble)
+        HitInput in;
+        in.ship = s_.target;
+        in.source = s_.ship;
+        in.damage = damage;
+        in.point = s_.hit.point;
+        in.has_normal = s_.hit.normal.has_value();
+        if (in.has_normal) in.normal = *s_.hit.normal;
+        // weapon_splash_radius(bank, None): the bank's DRF if > 0, else the
+        // default.
+        const double drf = b->_damage_radius_factor;
+        in.r_hit = drf > 0.0 ? drf : p.default_radius;
+        in.damage_hull = level != p.pp_low;
+        // shield_bubble_entry makes its own point: never the impact point.
+        in.has_shield_point = s_.bubble.has_value();
+        if (in.has_shield_point) in.shield_point = *s_.bubble;
+        in.hit_weapon = p.hit_weapon;
+        in.weapon_hit_type = p.weapon_hit_type;
+        in.has_instances = p.has_instances;
+        K2Hit h;
+        h.at_write = s_.writes.size();
+        h.at_entry = s_.entries.size();
+        h.source = s_.ship;
+        h.bank = s_.bank;
+        h.target = s_.target;
+        h.tier = s_.hit.tier;
+        // combat.apply_hit: step_memo.forget() on the way in and out.
+        memo_clear(m_);
+        try {
+            apply_hit(m_, in, p.dc, h.out);
+        } catch (const std::invalid_argument&) {
+            return python(K2PulseWhy::fallback);  // the mirror is as it was
+        }
+        memo_clear(m_);
+        s_.hits.push_back(std::move(h));
+        ++c_.native_pulses;
+    }
+    // The bank's body has run in full and the ship's has started (as after a
+    // resting contact): a later bank that cannot be walked is a bank_step.
+    s_.ship_recorded = true;
+    s_.bank_recorded = true;
+    s_.st = St::BANK_NEXT;
+    return true;
 }
 
 // ── The cursor loop ──────────────────────────────────────────────────────────
@@ -661,6 +772,7 @@ K2Record Walker::run() {
                 s_.ship_recorded = false;
                 s_.ship_mark = s_.writes.size();
                 s_.ship_entry_mark = s_.entries.size();
+                s_.ship_hit_mark = s_.hits.size();
                 s_.in_bank = false;
                 const ObjectRow* so = objrow(s_.ship);
                 if (!so) return run_python(K2Why::UnslottedShip);
@@ -714,6 +826,7 @@ K2Record Walker::run() {
                 s_.bank_recorded = false;
                 s_.bank_mark = s_.writes.size();
                 s_.bank_entry_mark = s_.entries.size();
+                s_.bank_hit_mark = s_.hits.size();
                 if (std::optional<K2Why> why = ship_why())
                     return bank_fallback(*why);
                 // bank = sys_.GetWeapon(i): the LIVE children; None past
@@ -1032,7 +1145,7 @@ K2Record Walker::run() {
                         return ask(K2Query::bubble, args, St::BUBBLE_ANSWER);
                     }
                 }
-                if (queue_contact()) break;
+                if (queue_contact() || pulse()) break;
                 return contact();
             }
             case St::BUBBLE_ANSWER: {
@@ -1041,7 +1154,7 @@ K2Record Walker::run() {
                     s_.bubble.reset();
                 else
                     s_.bubble = a.point;
-                if (queue_contact()) break;
+                if (queue_contact() || pulse()) break;
                 return contact();
             }
 
@@ -1115,9 +1228,11 @@ K2Record K2Kernel::next() {
     s.has_answer = false;
     try {
         Walker w(m_, s, ctx_, counts_);
-        return w.run();
+        K2Record r = w.run();
+        hits_returned_ += static_cast<int64_t>(r.hits.size());
+        return r;
     } catch (...) {
-        k2_roll_back(m_, s, 0, 0);
+        k2_roll_back(m_, s, 0, 0, 0);
         rests = std::move(s.rests);
         rests.resize(rest_mark);
         s = std::move(before);

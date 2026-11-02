@@ -311,6 +311,31 @@ TEST(Damage, AFallbackRestoresEveryWriteAndKeepsWhatOutHeld) {
     EXPECT_EQ(w.m.get_i(w.hull, Field::_threshold_state), 0);
     EXPECT_EQ(out.writes.size(), writes);
     EXPECT_EQ(out.entries.size(), entries);
+    EXPECT_EQ(out.undo.size(), writes);
+}
+
+TEST(Damage, UndoDamageRestoresAHitAndOutKeepsOneUndoPerWrite) {
+    // K2's pulse is rolled back with its walk (k2_beams.h): the undo log a
+    // call leaves in `out` restores every value it wrote, faces included.
+    World w;
+    w.m.set_float_at(w.shields, Field::_current_shields, 0, 450.0);
+    w.m.set_float_at(w.shields, Field::_ramp_fraction, 0, 0.45);
+    w.m.set_float_at(w.shields, Field::_ramp_set, 0, 1.0);
+    DamageOut out;
+    set_condition(w.m, w.sensor, 150.0, -1, -1, out);
+    const size_t first = out.undo.size();
+    EXPECT_EQ(first, out.writes.size());
+    apply_hit(w.m, w.hit(100.0, {0.0, 2.0, 0.0}), {}, out);
+    EXPECT_EQ(out.undo.size(), out.writes.size());
+    EXPECT_NE(w.face(0), 450.0);
+    EXPECT_NE(w.cond(w.hull), 1000.0);
+    undo_damage(w.m, out.undo, first);
+    EXPECT_EQ(w.face(0), 450.0);
+    EXPECT_EQ(w.cond(w.hull), 1000.0);
+    EXPECT_EQ(w.m.get_i(w.hull, Field::_threshold_state), 0);
+    EXPECT_EQ(w.cond(w.sensor), 150.0);   // before `first`: kept
+    undo_damage(w.m, out.undo);
+    EXPECT_EQ(w.cond(w.sensor), 200.0);
 }
 
 TEST(Damage, AClassThePythonOwnsFallsBack) {

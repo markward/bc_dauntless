@@ -78,13 +78,13 @@ class Session {
 public:
     Session(Mirror& m, DamageOut& out)
         : m_(m), out_(out), writes0_(out.writes.size()),
-          entries0_(out.entries.size()) {}
+          entries0_(out.entries.size()), undo0_(out.undo.size()) {}
 
     Mirror& m() { return m_; }
 
     void put_f(int64_t h, Field f, double v, std::string_view field,
                bool watcher) {
-        undo_.push_back({h, f, false, 0, m_.get_f(h, f), 0});
+        out_.undo.push_back({h, f, false, 0, m_.get_f(h, f), 0});
         m_.set_f(h, f, v);
         if (watcher)
             out_.writes.push_back({h, field, WatcherWrite{v}});
@@ -92,14 +92,14 @@ public:
             out_.writes.push_back({h, field, v});
     }
     void put_i(int64_t h, Field f, int64_t v, std::string_view field) {
-        undo_.push_back({h, f, false, 0, 0.0, m_.get_i(h, f)});
+        out_.undo.push_back({h, f, false, 0, 0.0, m_.get_i(h, f)});
         m_.set_i(h, f, v);
         out_.writes.push_back({h, field, v});
     }
     void put_face(int64_t shields, size_t index, double v) {
         const SubsystemRow& s = sub(m_, shields);
-        undo_.push_back({shields, Field::_current_shields, true, index,
-                         s._current_shields.at(index), 0});
+        out_.undo.push_back({shields, Field::_current_shields, true, index,
+                             s._current_shields.at(index), 0});
         m_.set_float_at(shields, Field::_current_shields, index, v);
         out_.writes.push_back(
             {shields, kFaces,
@@ -116,32 +116,16 @@ public:
 
     // The fallback: every mirror value back, `out` as it was at entry.
     void rollback() {
-        for (auto it = undo_.rbegin(); it != undo_.rend(); ++it) {
-            if (it->face)
-                m_.set_float_at(it->h, it->f, it->index, it->d);
-            else if (field_type(it->f) == FieldType::F)
-                m_.set_f(it->h, it->f, it->d);
-            else
-                m_.set_i(it->h, it->f, it->i);
-        }
-        undo_.clear();
+        undo_damage(m_, out_.undo, undo0_);
+        out_.undo.resize(undo0_);
         out_.writes.resize(writes0_);
         out_.entries.resize(entries0_);
     }
 
 private:
-    struct Old {
-        int64_t h;
-        Field f;
-        bool face;
-        size_t index;
-        double d;
-        int64_t i;
-    };
     Mirror& m_;
     DamageOut& out_;
-    size_t writes0_, entries0_;
-    std::vector<Old> undo_;
+    size_t writes0_, entries0_, undo0_;
 };
 
 // Runs `body` in a Session; a throw rolls the session back first.
@@ -392,6 +376,18 @@ void push_point(DamageEntry& e, const Vec3& p) {
 }
 
 }  // namespace
+
+void undo_damage(Mirror& m, const std::vector<DamageUndo>& undo, size_t from) {
+    for (size_t k = undo.size(); k > from; --k) {
+        const DamageUndo& u = undo[k - 1];
+        if (u.face)
+            m.set_float_at(u.h, u.f, u.index, u.d);
+        else if (field_type(u.f) == FieldType::F)
+            m.set_f(u.h, u.f, u.d);
+        else
+            m.set_i(u.h, u.f, u.i);
+    }
+}
 
 // ── combat.py _shield_face_from_hit_point (DM H5) ───────────────────────────
 

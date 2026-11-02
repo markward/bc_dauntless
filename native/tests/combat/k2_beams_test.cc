@@ -1455,3 +1455,326 @@ TEST(K2, ThrowDropsTheCallsLoopStops) {
     EXPECT_EQ(w.entries(r), (World::V{"LOOP_STOP b0@2"}));
     w.k.abandon();
 }
+
+// ── THE DAMAGE PULSE (native damage, Task 4) ────────────────────────────────
+
+namespace {
+
+// A target the hit can damage: hurtable, stood in for, a critical hull of
+// 1000 and no shield generator; no other subsystem (an empty mount order).
+int64_t damageable(World& w, int64_t target, double hull_max = 1000.0) {
+    w.m.set_i(target, Field::dmg_ship, 1);
+    w.m.set_i(target, Field::_hurtable, 1);
+    const int64_t hull = w.m.register_row(Kind::Subsystem);
+    w.names[hull] = w.name(target) + ".hull";
+    w.m.set_f(hull, Field::_max_condition, hull_max);
+    w.m.set_f(hull, Field::_condition, hull_max);
+    w.m.set_f(hull, Field::_disabled_percentage, 0.5);
+    w.m.set_ref(hull, Field::_parent_ship, target);
+    w.m.set_i(hull, Field::dmg_class, kDmgLeaf);
+    w.m.set_i(hull, Field::_critical, 1);
+    w.m.set_ref(target, Field::_hull, hull);
+    w.m.set_mount_order(target, {});
+    return hull;
+}
+
+// The bank's pulse inputs (a PhaserProperty's MaxDamage and
+// MaxDamageDistance; DamageRadiusFactor 0 = the default radius).
+void arm(World& w, int64_t bank, double md, double mdd, double drf = 0.0) {
+    w.m.set_f(bank, Field::_max_damage, md);
+    w.m.set_f(bank, Field::_max_damage_distance, mdd);
+    w.m.set_f(bank, Field::_damage_radius_factor, drf);
+}
+
+// What the driver sends (host_loop.PHASER_INTENSITY_SCALE, combat.
+// PHASER_DEFAULT_DAMAGE_RADIUS, PhaserSystem.PP_LOW, the phaser codes).
+K2PulseCtx pulse_ctx(std::initializer_list<int64_t> clean) {
+    K2PulseCtx p;
+    p.ok = true;
+    p.intensity = {0.25, 0.5, 0.5};
+    p.default_radius = 0.15;
+    p.pp_low = 0;
+    p.hit_weapon = 1;
+    p.weapon_hit_type = 0;
+    p.clean = clean;
+    return p;
+}
+
+void begin_pulse(World& w, std::vector<int64_t> ships, K2PulseCtx p) {
+    K2Context ctx;
+    ctx.hooks = w.host.hooks();
+    ctx.view_offsets[w.set] = std::nullopt;
+    ctx.pulse = std::move(p);
+    w.k.begin(std::move(ships), kDt, 10.0, true, 0.0, std::move(ctx));
+}
+
+std::vector<DamageKind> hit_kinds(const K2Hit& h) {
+    std::vector<DamageKind> k;
+    for (const DamageEntry& e : h.out.entries) k.push_back(e.kind);
+    return k;
+}
+
+const DamageEntry& entry(const K2Hit& h, DamageKind kind) {
+    for (const DamageEntry& e : h.out.entries)
+        if (e.kind == kind) return e;
+    throw std::logic_error("no such entry");
+}
+
+double cond(const World& w, int64_t s) {
+    return w.m.get_f(s, Field::_condition);
+}
+
+}  // namespace
+
+TEST(K2Pulse, NamesItsReasons) {
+    EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::not_ok), "not_ok");
+    EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::unscanned), "unscanned");
+    EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::level), "level");
+    EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::fallback), "fallback");
+}
+
+TEST(K2Pulse, ADamagePulseIsAppliedInTheWalk) {
+    World w;
+    const auto s = w.scene(true, 0.6);  // flushes 0.6 + dt this tick
+    const int64_t hull = damageable(w, s.target);
+    arm(w, s.bank, 100.0, 60.0);        // dist 50: the plateau
+    w.m.set_i(s.sys, Field::_power_level, 1);
+    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    const K2Record r = w.k.next();
+    ASSERT_EQ(r.kind, K2Kind::DONE);    // no CONTACT record
+    EXPECT_EQ(w.writes(r), (World::V{"b0._dwell=0"}));
+    ASSERT_EQ(r.hits.size(), 1u);
+    const K2Hit& h = r.hits[0];
+    EXPECT_EQ(h.at_write, 1u);
+    EXPECT_EQ(h.at_entry, 0u);
+    EXPECT_EQ(h.source, s.ship);
+    // _phaser_damage_for_tick(100, 60, 50, 0.6 + dt) * SCALE[1]
+    const double damage = 100.0 * (0.6 + kDt) * 0.5;
+    EXPECT_EQ(cond(w, hull), 1000.0 - damage);
+    EXPECT_EQ(hit_kinds(h), (std::vector<DamageKind>{
+                                DamageKind::REPAIR_ADD,
+                                DamageKind::HIT_PRESENT,
+                                DamageKind::WEAPON_HIT}));
+    const DamageEntry& p = entry(h, DamageKind::HIT_PRESENT);
+    EXPECT_EQ(p.ops[0].handle, s.target);
+    EXPECT_EQ(p.ops[1].type, DamageOperand::Type::Held);
+    EXPECT_EQ(p.ops[1].handle, s.ship);
+    EXPECT_EQ(p.ops[10].number, damage);
+    EXPECT_EQ(p.ops[16].integer, 1);      // the phaser's HitWeapon
+    EXPECT_EQ(p.ops[17].number, 0.15);    // no DRF: the default radius
+    EXPECT_TRUE(p.ops[19].boolean);       // damage_hull: not PP_LOW
+    EXPECT_FALSE(p.ops[20].boolean);      // no bubble entry
+    const DamageEntry& wh = entry(h, DamageKind::WEAPON_HIT);
+    EXPECT_EQ(wh.ops[12].integer, 0);     // WeaponHitEvent.PHASER
+    EXPECT_EQ(w.k.counts().native_pulses, 1);
+    EXPECT_EQ(w.k.take_hits(), 1);
+    EXPECT_EQ(w.k.take_hits(), 0);
+    w.k.end();
+}
+
+TEST(K2Pulse, BeyondItsDistanceItFallsOffAndLowPowerSparesTheHull) {
+    World w;
+    const auto s = w.scene(true, 0.6);
+    const int64_t hull = damageable(w, s.target);
+    arm(w, s.bank, 100.0, 25.0, 0.375);  // dist 50 > 25: R/d
+    w.m.set_i(s.sys, Field::_power_level, 0);  // PP_LOW
+    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    const K2Record r = w.k.next();
+    ASSERT_EQ(r.kind, K2Kind::DONE);
+    ASSERT_EQ(r.hits.size(), 1u);
+    const double damage = 100.0 * (25.0 / 50.0) * (0.6 + kDt) * 0.25;
+    EXPECT_EQ(cond(w, hull), 1000.0);    // damage_hull False
+    const DamageEntry& p = entry(r.hits[0], DamageKind::HIT_PRESENT);
+    EXPECT_EQ(p.ops[10].number, damage);
+    EXPECT_EQ(p.ops[14].number, damage);  // absorbed_hull, unwritten
+    EXPECT_EQ(p.ops[17].number, 0.375);   // the bank's DRF
+    EXPECT_FALSE(p.ops[19].boolean);
+    w.k.end();
+}
+
+TEST(K2Pulse, TheNextBankOnTheSameTargetSeesThePulseAndTheTargetLives) {
+    // Ruling P1 by construction, and M5: the first pulse zeroes the
+    // critical hull, the second bank still fires at the target (no death in
+    // the walk) and its write starts from 0 -- a crossing only the first
+    // reports as crossed.
+    World w;
+    const auto s = w.scene(true, 0.6);
+    const int64_t b1 = w.bank("b1", s.sys, s.target, true, 0.6);
+    const int64_t hull = damageable(w, s.target, 10.0);
+    arm(w, s.bank, 100.0, 60.0);
+    arm(w, b1, 100.0, 60.0);
+    w.m.set_i(s.sys, Field::_power_level, 2);
+    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    const K2Record r = w.k.next();
+    ASSERT_EQ(r.kind, K2Kind::DONE);
+    EXPECT_EQ(w.writes(r), (World::V{"b0._dwell=0", "b1._dwell=0"}));
+    ASSERT_EQ(r.hits.size(), 2u);
+    EXPECT_EQ(r.hits[1].at_write, 2u);
+    EXPECT_EQ(cond(w, hull), 0.0);
+    EXPECT_EQ(w.m.get_i(s.target, Field::_dead), 0);
+    EXPECT_EQ(w.m.get_i(b1, Field::_firing), 1);  // not stopped
+    const DamageEntry& z0 = entry(r.hits[0], DamageKind::ZERO_CROSS);
+    const DamageEntry& z1 = entry(r.hits[1], DamageKind::ZERO_CROSS);
+    EXPECT_TRUE(z0.ops[2].boolean);
+    EXPECT_FALSE(z1.ops[2].boolean);   // the second read the first's 0
+    w.k.end();
+}
+
+TEST(K2Pulse, AnArcFailPartialPulseLandsAfterItsStop) {
+    World w;
+    const auto s = w.scene(true, 0.2);
+    w.store.set_position(
+        static_cast<uint32_t>(w.m.get_i(s.target, Field::xform_index)),
+        static_cast<uint32_t>(w.m.get_i(s.target, Field::xform_gen)), 0.0,
+        -50.0, 0.0);  // astern
+    const int64_t hull = damageable(w, s.target);
+    arm(w, s.bank, 100.0, 60.0);
+    w.m.set_i(s.sys, Field::_power_level, 1);
+    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    const K2Record r = w.k.next();
+    ASSERT_EQ(r.kind, K2Kind::DONE);
+    EXPECT_EQ(w.writes(r), (World::V{"b0._dwell=0", "b0._firing=False",
+                                     "b0._beam_on_countdown=0"}));
+    EXPECT_EQ(w.entries(r), (World::V{"LOOP_STOP b0@3"}));
+    ASSERT_EQ(r.hits.size(), 1u);
+    EXPECT_EQ(r.hits[0].at_write, 3u);
+    EXPECT_EQ(r.hits[0].at_entry, 1u);
+    EXPECT_EQ(cond(w, hull), 1000.0 - 100.0 * 0.2 * 0.5);
+    w.k.end();
+}
+
+TEST(K2Pulse, WhatTheKernelCannotApplyStaysACONTACT) {
+    struct Case {
+        const char* why;
+        K2PulseWhy reason;
+    };
+    for (const Case c : {Case{"not_ok", K2PulseWhy::not_ok},
+                         Case{"unscanned", K2PulseWhy::unscanned},
+                         Case{"level", K2PulseWhy::level},
+                         Case{"fallback", K2PulseWhy::fallback}}) {
+        SCOPED_TRACE(c.why);
+        World w;
+        const auto s = w.scene(true, 0.6);
+        const int64_t hull = damageable(w, s.target);
+        arm(w, s.bank, 100.0, 60.0);
+        w.m.set_i(s.sys, Field::_power_level, 1);
+        K2PulseCtx p = pulse_ctx({s.target});
+        if (c.reason == K2PulseWhy::not_ok) p.ok = false;
+        if (c.reason == K2PulseWhy::unscanned) p.clean.clear();
+        if (c.reason == K2PulseWhy::level)
+            w.m.set_i(s.sys, Field::_power_level, 3);  // IndexError
+        if (c.reason == K2PulseWhy::fallback)
+            w.m.set_i(s.target, Field::dmg_ship, 0);   // a class Python owns
+        begin_pulse(w, {s.ship}, p);
+        const K2Record r = w.k.next();
+        EXPECT_EQ(w.brief(r),
+                  "CONTACT b0@t flush=" + World::num(0.6 + kDt));
+        EXPECT_TRUE(r.hits.empty());
+        EXPECT_EQ(cond(w, hull), 1000.0);
+        EXPECT_EQ(w.k.counts().pulse_why[static_cast<size_t>(c.reason)], 1);
+        EXPECT_EQ(w.k.counts().native_pulses, 0);
+        EXPECT_EQ(w.brief(w.k.next()), "DONE");
+        w.k.end();
+    }
+}
+
+TEST(K2Pulse, ANegativeLevelIndexesFromTheEndAsPython) {
+    World w;
+    const auto s = w.scene(true, 0.6);
+    const int64_t hull = damageable(w, s.target);
+    arm(w, s.bank, 100.0, 60.0);
+    w.m.set_i(s.sys, Field::_power_level, -3);  // SCALE[-3] == SCALE[0]
+    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    const K2Record r = w.k.next();
+    ASSERT_EQ(r.kind, K2Kind::DONE);
+    ASSERT_EQ(r.hits.size(), 1u);
+    EXPECT_EQ(cond(w, hull), 1000.0 - 100.0 * (0.6 + kDt) * 0.25);
+    w.k.end();
+}
+
+TEST(K2Pulse, AZeroDamagePulseDoesNothing) {
+    World w;
+    const auto s = w.scene(true, 0.6);
+    const int64_t hull = damageable(w, s.target);
+    arm(w, s.bank, 100.0, 0.0);  // MaxDamageDistance 0: no damage
+    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    const K2Record r = w.k.next();
+    ASSERT_EQ(r.kind, K2Kind::DONE);
+    EXPECT_TRUE(r.hits.empty());
+    EXPECT_EQ(cond(w, hull), 1000.0);
+    EXPECT_EQ(w.k.counts().native_pulses, 0);
+    w.k.end();
+}
+
+TEST(K2Pulse, APulseClearsTheStepMemoAroundItsHit) {
+    World w;
+    const auto s = w.scene(true, 0.6);
+    damageable(w, s.target);
+    arm(w, s.bank, 100.0, 60.0);
+    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    w.k.next();
+    // The walk's can_detect filled the memo before the pulse; the pulse's
+    // forget (combat.apply_hit's, DM H13) leaves it empty.
+    EXPECT_TRUE(w.m.sensor_state().memo.empty());
+    EXPECT_TRUE(w.m.sensor_state().mounts.empty());
+    w.k.end();
+}
+
+TEST(K2Pulse, AThrowLaterInTheCallUndoesThePulse) {
+    World w;
+    const auto s = w.scene(true, 0.6);
+    const int64_t hull = damageable(w, s.target);
+    arm(w, s.bank, 100.0, 60.0);
+    w.m.set_i(s.sys, Field::_power_level, 1);
+    // A second ship whose bank traces through the host: the throw.
+    const int64_t b = w.ship("B", 100.0, 0.0, 0.0);
+    const int64_t bsys = w.system("bsys", b);
+    const int64_t t2 = w.ship("t2", 100.0, 50.0, 0.0);
+    w.bank("bb", bsys, t2, true);
+    K2Context ctx;
+    ctx.hooks = w.host.hooks();
+    ctx.view_offsets[w.set] = std::nullopt;
+    ctx.iids[t2] = K2Context::Iid{false, {1, 1}};
+    ctx.pulse = pulse_ctx({s.target});
+    w.host.throw_foreign = true;
+    w.k.begin({s.ship, b}, kDt, 10.0, true, 0.0, ctx);
+    EXPECT_ANY_THROW(w.k.next());
+    EXPECT_EQ(cond(w, hull), 1000.0);
+    EXPECT_EQ(w.m.get_i(hull, Field::_threshold_state), 0);
+    EXPECT_EQ(w.m.get_f(s.bank, Field::_dwell), 0.6);
+    w.host.throw_foreign = false;
+    const K2Record r = w.k.next();
+    ASSERT_EQ(r.kind, K2Kind::DONE);
+    ASSERT_EQ(r.hits.size(), 1u);  // applied again, once
+    EXPECT_EQ(cond(w, hull), 1000.0 - 100.0 * (0.6 + kDt) * 0.5);
+    w.k.end();
+}
+
+TEST(K2Pulse, TheNextRecordCarriesThePulse) {
+    // A pulse is not a record: it rides the next one -- here an ASK on the
+    // next bank -- which the binding applies and appends before Python
+    // answers.
+    World w;
+    const auto s = w.scene(true, 0.6);
+    const int64_t hull = damageable(w, s.target);
+    arm(w, s.bank, 100.0, 60.0);
+    w.m.set_i(s.sys, Field::_power_level, 1);
+    const int64_t stub = w.ship("stub", 0.0, 80.0, 0.0);
+    w.m.set_i(stub, Field::has_real_is_dead, 0);  // is_dead is Python's
+    w.bank("b1", s.sys, stub, true);
+    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    const K2Record r = w.k.next();
+    ASSERT_EQ(w.brief(r), "ASK is_dead");
+    ASSERT_EQ(r.hits.size(), 1u);
+    EXPECT_EQ(r.hits[0].at_write, 1u);
+    EXPECT_EQ(cond(w, hull), 1000.0 - 100.0 * (0.6 + kDt) * 0.5);
+    EXPECT_EQ(w.k.take_hits(), 1);
+    K2Answer a;
+    a.flag = false;
+    w.k.answer(a);
+    const K2Record d = w.k.next();
+    EXPECT_EQ(d.kind, K2Kind::DONE);
+    EXPECT_TRUE(d.hits.empty());
+    EXPECT_EQ(w.k.take_hits(), 0);
+    w.k.end();
+}

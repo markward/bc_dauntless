@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -149,6 +150,26 @@
 // no ASK could have dropped) restores the session -- cursor, pending answer
 // -- to its state before the call; nothing was written, so abandon() leaves
 // the mirror equal to Python.
+//
+// THE HITS (native damage, spec 2026-11-02-native-damage §3 goal 2; Task
+// 4). DONE keeps its hits, in `moving` order, each with what its apply_hit
+// reads of its torpedo taken there (the row is dropped by the expire()
+// that follows): `torpedo._damage`, its DamageRadiusFactor and
+// `_source_ship`. After the driver's expiries (ET_TORPEDO_EXITED_SET before
+// any hit: K3M §A6), apply_hits(from, p) applies hits [from, ...) as
+// host_loop's hit loop does, each fully before the next: damage.h's
+// apply_hit(ship, damage, hit point, source = the source ship, the normal,
+// R_hit = the torpedo's DRF if > 0 else `p.default_radius`, damage_hull
+// True, shield point = the bubble entry (the hit point itself on a
+// fallback-tier bubble hit, `hit_is_bubble`), the torpedo codes,
+// `p.has_instances`) with `p.dc`, the step memo cleared before and after
+// each. It stops at the first hit it cannot apply -- `p.ok` false, its
+// ship not in `p.clean`, its index in `python`, or damage.h falling back --
+// and returns that index (hits().size() when every one landed): the driver
+// runs that hit in Python and calls again from the next. Each applied hit's
+// writes and entries (its Held operands: the source ship) go to `out`, in
+// order; the binding applies and appends them before it returns. The hits
+// are kept until the next begin() or clear().
 
 namespace dauntless::combat {
 
@@ -203,6 +224,18 @@ struct K3Hit {
     ResolvedHit hit;  // point, tier, normal
     std::optional<Vec3> bubble;
     bool hit_is_bubble = false;
+    // The torpedo's `_damage`, DamageRadiusFactor and `_source_ship` (an
+    // Object handle, -1 None) at DONE (THE HITS).
+    double damage = 0.0, drf = 0.0;
+    int64_t source = -1;
+};
+
+// One hit apply_hits applied (THE HITS): its index in hits(), the Held
+// operands' handle (the source ship) and what damage.h returned.
+struct K3Applied {
+    size_t index = 0;
+    int64_t source = -1;
+    DamageOut out;
 };
 
 using K3Arg = std::variant<std::monostate, int64_t, double, Vec3>;
@@ -260,6 +293,14 @@ public:
 
     void end();      // the session must have returned DONE
     void abandon();  // whatever its state (an exception unwound Python)
+
+    // THE HITS: the last DONE's hits, and apply_hits (see above). `p`'s
+    // intensity and pp_low are unused (a phaser's). `python`: indices the
+    // driver hands to Python itself.
+    const std::vector<K3Hit>& hits() const { return hits_; }
+    size_t apply_hits(size_t from, const K2PulseCtx& p,
+                      const std::unordered_set<size_t>& python,
+                      std::vector<K3Applied>& out);
     bool open() const { return static_cast<bool>(session_); }
     void clear();
     const K2Context& context() const { return ctx_; }
@@ -281,6 +322,11 @@ public:
         // `_mount_key` attributions the kernel made itself (round trips,
         // Task 4): each one a steer_point ASK (unattributed) not emitted.
         int64_t native_attributions = 0;
+        // THE HITS: hits applied natively, and those handed to Python by why
+        // (K2PulseWhy; `level` unused; `python` counted as not_ok's
+        // neighbour by the driver, not here).
+        int64_t native_hits = 0;
+        std::array<int64_t, static_cast<size_t>(K2PulseWhy::kCount)> hit_why{};
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }
@@ -294,6 +340,7 @@ private:
     K2Context ctx_;
     std::unique_ptr<Session> session_;
     Counts counts_;
+    std::vector<K3Hit> hits_;
 
 public:
     ~K3Kernel();
