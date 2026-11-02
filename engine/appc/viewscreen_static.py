@@ -14,7 +14,7 @@ fMin/fMax intensity range — stays driven by the SDK's SetStaticIsOn /
 SetStaticVariation calls. If the icon manager is ever implemented, this constant
 is the single thing to replace.
 """
-import random
+from engine.appc import presentation_rng
 
 # icon-group name -> ordered list of texture file names (SDK: EffectTextures.LoadStatic)
 _STATIC_TEXTURE_FILES = {
@@ -35,10 +35,14 @@ def static_texture_paths(icon_group):
     return [str(paths.game_asset(f"data/Textures/Effects/{f}")) for f in files]
 
 
-def static_intensity(fmin, fmax, rng=random.random):
+def static_intensity(fmin, fmax, rng=None):
     """Per-frame static intensity: a random flicker in [fmin, fmax], clamped to
     [0, 1] (so the SDK's E5M4 (5,5) reads as full snow). `rng` returns a float
-    in [0, 1); injectable for deterministic tests."""
+    in [0, 1); injectable for deterministic tests. Default: the presentation
+    generator (drawn every frame, so the frame rate must not shift gameplay
+    rolls)."""
+    if rng is None:
+        rng = presentation_rng.random
     value = float(fmin) + (float(fmax) - float(fmin)) * rng()
     if value < 0.0:
         return 0.0

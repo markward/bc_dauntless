@@ -177,3 +177,34 @@ def test_build_sequence_clips_skips_non_animation_actions(monkeypatch):
         "fake_anim_mod.Foo", object(),
         _AnimMgr({"E1M1_HELM_025": "data/animations/wrong.nif"}))
     assert clips == []
+
+
+def test_build_sequence_clips_runs_the_builder_in_the_presentation_scope(
+        monkeypatch):
+    """An animation builder's own draws (37 SDK builders call
+    GetRandomNumber, HitStanding on every player hit) come from the
+    presentation generator: the bridge view and the frame rate never shift
+    a gameplay roll (rng-map §0.3)."""
+    import App
+    from engine.appc import presentation_rng
+    from engine.bridge_idle_gestures import build_sequence_clips
+    seq = App.TGSequence_Create()
+    act = App.TGAnimAction_Create(None, "lean_%d" % 0, 0, 0)
+    seq.AppendAction(act)
+    seen = []
+
+    def builder(ch):
+        seen.append(presentation_rng.in_scope())
+        App.g_kSystemWrapper.GetRandomNumber(2)
+        return seq
+
+    import sys, types
+    fake = types.ModuleType("fake_anim_mod")
+    fake.Foo = builder
+    monkeypatch.setitem(sys.modules, "fake_anim_mod", fake)
+    s1 = App.g_kSystemWrapper._rng.getstate()
+    clips = build_sequence_clips("fake_anim_mod.Foo", object(),
+                                 _AnimMgr({"lean_0": "lean_0.nif"}))
+    assert clips == [("lean_0.nif", 0.0)]
+    assert seen == [True]
+    assert App.g_kSystemWrapper._rng.getstate() == s1

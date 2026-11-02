@@ -4943,7 +4943,8 @@ def _reset_action_registry(keep=None) -> None:
 
 
 def _reset_session_scratch() -> None:
-    """The crew-speech channel, live ObjectGroups and the tooltip throttle."""
+    """The crew-speech channel, live ObjectGroups, the tooltip and hit-sound
+    throttles and the presentation generator."""
     # Clear the global crew-speech channel so a line still "live" at swap
     # time can't suppress the next mission's first SpeakLine. The subtitle
     # crew slot itself is cleared transitively by reset_for_tests (it
@@ -4973,6 +4974,15 @@ def _reset_session_scratch() -> None:
     _tooltip_dispatch_state["last"] = -1e9
     from engine.appc.characters import CharacterClass_SetCurrentToolTipOwner
     CharacterClass_SetCurrentToolTipOwner(None)
+    # The hit-sound edge stamps: the same game-time hazard (they compare the
+    # new clock against the old mission's stamps) and the recycled-id() one
+    # (a new ship at a dead one's address inherits its stamp): either would
+    # silence a new ship's first hits.
+    hit_feedback.reset_audio_throttle()
+    # The presentation generator starts every mission alike (ruling R3), so
+    # a capture of a mission looks the same whatever ran before it.
+    from engine.appc import presentation_rng
+    presentation_rng.reset()
 
 
 def _reset_missionlib_state() -> None:

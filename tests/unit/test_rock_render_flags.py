@@ -23,7 +23,8 @@ def test_hull_smoke_skips_rocks(monkeypatch):
                         lambda: particles.EffectController.HIGH)
     monkeypatch.setattr(hull_hit_smoke.host_io, "world_to_body",
                         lambda iid, p, n: ((0.1, 0.2, 0.3), (0.0, 0.0, 1.0)))
-    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", _RNG([0]))
+    monkeypatch.setattr(hull_hit_smoke.presentation_rng, "rand",
+                        _RNG([0]).GetRandomNumber)
     emits = []
     monkeypatch.setattr(hull_hit_smoke, "_emit_smoke",
                         lambda *a: emits.append(a))

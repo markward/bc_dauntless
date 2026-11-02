@@ -26,14 +26,19 @@ UpdateReload does), on top of the K1 differential's own record. Every
 ET_TORPEDO_RELOAD, ET_CHARGE_TOGGLE and ET_WEAPON_FIRED is logged, in
 order; the queued kinds also compare per tick as an ordered list of their
 own (tests/helpers/effect_split.py, the K1 scene's). A launch's
-ET_WEAPON_FIRED is also logged with the state of every weapon of its ship
-WHERE IT IS PRODUCED (the producer's call, `_post_weapon_fired`): a write
-applied after its record's Python shows there. K0's own reloads and
-watcher crossings have no Python producer to spy since combat fire events
-Task 4 (the kernel logs the writes and queues TORPEDO_RELOAD / WATCH
-itself), as K1's beam edges since Task 3: their writes are in the per-tick
-record and their events in the queued list, and the native arm's tallies
-(k0_logged, k0_entries) must account for every one.
+ET_WEAPON_FIRED is also logged where it is POSTED (the producer's call
+that acts, `_post_weapon_fired` with nothing deferring), with the state of
+every weapon of its ship when the op or the tick step that produced it
+ends: the moment both arms share. Since launch deferral a tube's, a dumb
+fire's and a cannon's launch is the kernel's (a SPAWN, posted when the
+queue is delivered at the end of the step, or of a K1 session an op's
+StartFiring ran), so the native arm has no Python call where the reference
+produced it, and the weapons' state there is the kernel's. K0's own
+reloads and watcher crossings have no Python producer to spy since combat
+fire events Task 4 (the kernel logs the writes and queues TORPEDO_RELOAD /
+WATCH itself), as K1's beam edges since Task 3: their writes are in the
+per-tick record and their events in the queued list, and the native arm's
+tallies (k0_logged, k0_entries) must account for every one.
 
 Review Focus 4: with three ticks a frame the host's three K0 sessions run
 back to back on one game clock; the tubes credit the whole frame in the
@@ -117,8 +122,11 @@ class _K0Scene(k1d._Scene):
                     evt)
         self.k0_log = []        # per tick: (now, [weapon state])
         self.k0_events = []     # (kind, source, destination, tick)
-        # (kind, weapon, tick, its ship's weapons' state) per production.
+        # (kind, weapon, tick, "op" / "step", its ship's weapons' state when
+        # that op or step ended) per production; `_pending` holds the
+        # productions of the op or step still running.
         self.k0_produced = []
+        self._pending = []
         self.held_lists = {}    # id(weapon) -> (timers, advanced, watcher)
         self.watch_checked = 0  # native arm: watchers compared with the row
         self.watch_mismatch = []
@@ -126,28 +134,36 @@ class _K0Scene(k1d._Scene):
         self._spy_producers(mp)
 
     def _spy_producers(self, mp):
-        """A launch's ET_WEAPON_FIRED, logged where it is PRODUCED: the
-        producer called by K1's launch Python (never by the queue's
-        delivery, which calls the same producer with the scope closed). Not
-        a beam's edge (K1 queues it natively since combat fire events Task
-        3), nor K0's reloads and watcher crossings (K0 queues them natively
-        since Task 4): no Python call to spy, and a spy on
-        TorpedoTube._broadcast_reload or FloatRangeWatcher._update would be
-        a class patch K0's override guard obeys by handing the weapons
-        back."""
+        """A launch's ET_WEAPON_FIRED, logged where it is POSTED: the
+        producer's call with nothing deferring -- the reference's own, at
+        once; the native arm's at the delivery of the queue (a kernel
+        launch's SPAWN or WEAPON_FIRED, or Python's entry, appended by the
+        same producer while deferring, which is not logged). The ship's
+        weapons' state is taken when the op or step ends (`_settle`): where
+        the reference produced it mid-step the native arm ran no Python
+        (launch deferral). Not a beam's edge (K1 queues it natively since
+        combat fire events Task 3), nor K0's reloads and watcher crossings
+        (K0 queues them natively since Task 4): no Python call to spy, and a
+        spy on TorpedoTube._broadcast_reload or FloatRangeWatcher._update
+        would be a class patch K0's override guard obeys by handing the
+        weapons back."""
         fired = ws._post_weapon_fired
 
-        def produced(kind, weapon):
-            if not effect_queue._draining:
-                self.k0_produced.append((kind, self.label(weapon), self.tick,
-                                         self.ship_state(weapon)))
-
         def fired_spy(weapon, target, _orig=fired):
-            if not isinstance(weapon, ws.PhaserBank):
-                produced("fired", weapon)
+            if (not isinstance(weapon, ws.PhaserBank)
+                    and not effect_queue.deferring()):
+                self._pending.append(("fired", weapon, self.tick))
             return _orig(weapon, target)
 
         mp.setattr(ws, "_post_weapon_fired", fired_spy)
+
+    def _settle(self, where):
+        """The op or step that just ended: log its productions with their
+        ships' weapons' state now."""
+        for kind, weapon, tick in self._pending:
+            self.k0_produced.append((kind, self.label(weapon), tick, where,
+                                     self.ship_state(weapon)))
+        self._pending = []
 
     # ── Record ───────────────────────────────────────────────────────────────
 
@@ -174,8 +190,9 @@ class _K0Scene(k1d._Scene):
                      if ship is not None and self.ship_of(w) is ship)
 
     def payload(self, evt):
-        """K1's payload; K0's events are logged (k0_events) too. Their
-        weapons' state is logged where they are produced (k0_produced)."""
+        """K1's payload; K0's events are logged (k0_events) too. A
+        launch's is logged with its ship's weapons' state too
+        (k0_produced)."""
         base = super().payload(evt)
         kind = self.k0_kinds.get(evt.GetEventType())
         if kind is None:
@@ -185,6 +202,7 @@ class _K0Scene(k1d._Scene):
         return (base, kind)
 
     def record(self):
+        self._settle("step")
         super().record()
         if self.native:
             # K0's WATCH carries old = the mirrored `_watch_value`: every
@@ -216,6 +234,10 @@ class _K0Scene(k1d._Scene):
     # ── Ops ──────────────────────────────────────────────────────────────────
 
     def op(self, rng, ops):
+        self._op(rng, ops)
+        self._settle("op")
+
+    def _op(self, rng, ops):
         kind = rng.choice(ops)
         if kind == "charge":
             w = rng.choice(self.chargers)
@@ -379,6 +401,10 @@ def _check_native_ran(ref, nat, ticks=TICKS):
     kinds = {e[0] for e in ref.k0_events}
     assert kinds == {"reload", "charge_toggle", "fired"}, kinds
     assert {e[0] for e in ref.k0_produced} == {"fired"}, ref.k0_produced[:5]
+    # Launches posted by ops (an op's StartFiring, a hand tube_fire) and by
+    # the tick's step alike.
+    assert {e[3] for e in ref.k0_produced} == {"op", "step"}, \
+        ref.k0_produced[:5]
     # The native arm's were queued and delivered at the tick boundary.
     e = nat.effects
     assert e["delivered"] > 0 and e["skipped_gone"] == e["failed"] == 0, e
@@ -395,13 +421,14 @@ def test_k0_matches_python_in_a_fight(monkeypatch, ticks_per_frame, seed):
     ref, nat = _both(monkeypatch, ticks_per_frame, seed)
     _check_native_ran(ref, nat)
     print("k0 differential (tpf=%d seed=%d): k0 %r logged %r entries %r "
-          "reasons %r, c_applied %d, fast pushes %d, k0 events %d"
+          "reasons %r, c_applied %d, fast pushes %d, k0 events %d, "
+          "launches posted %d"
           % (ticks_per_frame, seed,
              {k: v for k, v in nat.counts["k0_records"].items() if v},
              nat.counts["k0_logged"], nat.counts["k0_entries"],
              {k: v for k, v in nat.counts["k0_python_reasons"].items() if v},
              nat.counts["c_applied_writes"], nat.counts["fast_pushes"],
-             len(ref.k0_events)))
+             len(ref.k0_events), len(ref.k0_produced)))
 
 
 def _slot_rows(scene):

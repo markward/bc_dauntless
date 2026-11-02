@@ -612,7 +612,14 @@ def apply_hit(*args, **kwargs) -> None:
 
     Damage can change what a sensor sees (a sensor's condition, a cloak) or
     detach a part a mount sits on, so the combat step's memoised answers are
-    dropped on the way in and on the way out (engine.core.step_memo)."""
+    dropped on the way in and on the way out (engine.core.step_memo).
+
+    A hit is gameplay: it must never run inside a presentation scope, where
+    its draws would come from the presentation generator (raises under
+    tests, logs once under --developer:
+    engine.appc.presentation_rng.check_gameplay)."""
+    from engine.appc import presentation_rng
+    presentation_rng.check_gameplay("combat.apply_hit")
     from engine.core import step_memo
     step_memo.forget()
     try:

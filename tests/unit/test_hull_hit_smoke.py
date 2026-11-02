@@ -6,7 +6,8 @@ from engine.appc.math import TGPoint3
 
 
 class _RNG:
-    """Deterministic App.g_kSystemWrapper.GetRandomNumber stand-in.
+    """Deterministic stand-in for the smoke's rolls (presentation_rng.rand,
+    which has GetRandomNumber's semantics; installed by _use).
     Returns queued values in order; falls back to `default` when drained."""
     def __init__(self, values, default=0):
         self._values = list(values)
@@ -16,6 +17,13 @@ class _RNG:
     def GetRandomNumber(self, n):
         self.calls.append(n)
         return self._values.pop(0) if self._values else self._default
+
+
+def _use(monkeypatch, rng):
+    """Roll the smoke from `rng` (the module draws presentation_rng.rand)."""
+    monkeypatch.setattr(hull_hit_smoke.presentation_rng, "rand",
+                        rng.GetRandomNumber)
+    return rng
 
 
 @pytest.fixture
@@ -57,7 +65,7 @@ def _emit(rng_values, weapon, monkeypatch, ship_instances=None):
     if ship_instances is None:
         ship_instances = {"ship": 7}
     rng = _RNG(rng_values)
-    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", rng)
+    _use(monkeypatch, rng)
     hull_hit_smoke.maybe_emit(
         "ship", TGPoint3(5.0, 6.0, 7.0), TGPoint3(0.0, 1.0, 0.0),
         weapon, ship_instances=ship_instances)
@@ -75,6 +83,27 @@ def test_torpedo_emits_below_threshold(captured, monkeypatch):
     assert captured["emit_dir"] == (0.0, 0.0, 1.0)
     assert captured["emit_from"] == "ship"
     assert captured["inherit"] == 0                     # released into world space
+
+
+def test_the_recipe_builds_in_the_scope_and_starts_outside_it(monkeypatch):
+    """The SDK recipe draws GetRandomNumber, so it builds inside the
+    presentation scope; Start() runs outside it, so nothing it dispatches
+    inline can draw gameplay from P (presentation RNG final review M5)."""
+    from engine.appc import presentation_rng
+    seen = {}
+
+    def fake_create(*_a):
+        seen["built_in_scope"] = presentation_rng.in_scope()
+        controller = types.SimpleNamespace(SetInheritsVelocity=lambda on: None)
+        return types.SimpleNamespace(
+            GetController=lambda: controller,
+            Start=lambda: seen.__setitem__("started_in_scope",
+                                           presentation_rng.in_scope()))
+
+    monkeypatch.setitem(__import__("sys").modules, "Effects",
+                        types.SimpleNamespace(CreateSmokeHigh=fake_create))
+    hull_hit_smoke._emit_smoke("ship", (0.1, 0.2, 0.3), (0.0, 0.0, 1.0))
+    assert seen == {"built_in_scope": True, "started_in_scope": False}
 
 
 def test_torpedo_silent_at_threshold(captured, monkeypatch):
@@ -101,7 +130,7 @@ def test_detail_below_medium_suppresses(captured, monkeypatch):
 
 def test_missing_normal_skips(captured, monkeypatch):
     rng = _RNG([0, 0])
-    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", rng)
+    _use(monkeypatch, rng)
     hull_hit_smoke.maybe_emit(
         "ship", TGPoint3(5.0, 6.0, 7.0), None, "torpedo",
         ship_instances={"ship": 7})
@@ -115,7 +144,7 @@ def test_no_instance_skips(captured, monkeypatch):
 
 def test_ship_instances_none_skips(captured, monkeypatch):
     rng = _RNG([0, 0])
-    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", rng)
+    _use(monkeypatch, rng)
     hull_hit_smoke.maybe_emit(
         "ship", TGPoint3(5.0, 6.0, 7.0), TGPoint3(0.0, 1.0, 0.0), "torpedo")
     assert "started" not in captured
@@ -147,7 +176,7 @@ def clock(monkeypatch):
 def _beam(monkeypatch, ship="ship", source="attacker", weapon="phaser"):
     """One weapon-impact tick. RNG always passes the roll, so the ONLY thing
     that can suppress an emit is the throttle."""
-    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", _RNG([], default=0))
+    _use(monkeypatch, _RNG([], default=0))
     hull_hit_smoke.maybe_emit(
         ship, TGPoint3(5.0, 6.0, 7.0), TGPoint3(0.0, 1.0, 0.0),
         weapon, ship_instances={ship: 7}, source=source)
@@ -213,7 +242,7 @@ def test_throttle_gates_before_the_roll(captured, clock, monkeypatch):
     does not consume an RNG draw. Rolling first and throttling after would emit
     on ~every interval instead of ~30% of them."""
     rng = _RNG([], default=0)
-    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", rng)
+    _use(monkeypatch, rng)
     monkeypatch.setattr(hull_hit_smoke, "_emit_smoke", lambda *a: None)
     hull_hit_smoke.maybe_emit(
         "ship", TGPoint3(5.0, 6.0, 7.0), TGPoint3(0.0, 1.0, 0.0),
@@ -239,7 +268,7 @@ def test_emitted_puff_lives_in_world_space(monkeypatch):
     Uses the REAL Effects factory + particle controller, so this asserts the
     value the renderer actually consumes.
     """
-    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", _RNG([5]))
+    _use(monkeypatch, _RNG([5]))
     particles.reset()
     hull_hit_smoke._emit_smoke("ship", (0.1, 0.2, 0.3), (0.0, 0.0, 1.0))
     assert particles.active_count() == 1

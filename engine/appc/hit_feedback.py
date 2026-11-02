@@ -15,7 +15,6 @@ The WeaponHitEvent broadcast in apply_hit is unchanged; dispatch runs
 before it, and dispatch failures are swallowed so a renderer-binding
 crash never suppresses mission-side event handlers.
 """
-import time
 from enum import IntEnum
 
 from engine import host_io
@@ -169,6 +168,10 @@ def classify(*, absorbed_shields: float, absorbed_subsystem: float,
 # _AUDIO_CONTACT_GAP_S since the previous dispatch on this (ship,
 # severity) marks a fresh contact. Continuous fire updates the timestamp
 # each tick but only plays once at the start of the burst.
+# The gap is GAME time (damage_decals.current_game_time, as the smoke and
+# decal throttles): several sim ticks run in one frame, microseconds apart on
+# the wall clock, so a wall-clock gap made a slow frame play fewer sounds.
+# The clock restarts at a mission swap, which therefore clears the stamps.
 _AUDIO_CONTACT_GAP_S = 0.15
 
 _last_dispatch_time: dict[tuple[int, "Severity"], float] = {}
@@ -176,7 +179,7 @@ _last_dispatch_time: dict[tuple[int, "Severity"], float] = {}
 
 def reset_audio_throttle() -> None:
     """Clear the per-(ship, severity) edge-trigger state. Called by
-    tests and by view-mode transitions.
+    tests, by view-mode transitions and at a mission swap.
 
     Name kept for callers that already imported it; semantics shifted
     from rate-limit to edge-trigger but the reset contract is unchanged.
@@ -191,12 +194,15 @@ def _audio_should_play(ship, severity: Severity) -> bool:
     _AUDIO_CONTACT_GAP_S (continuous fire → silent ticks, burst-start
     → fresh play).
     """
+    from engine.appc import damage_decals
     key = (id(ship), severity)
-    now = time.monotonic()
+    now = damage_decals.current_game_time()
     last = _last_dispatch_time.get(key)
     _last_dispatch_time[key] = now
-    if last is None:
-        return True   # first contact ever for this (ship, severity)
+    if last is None or now < last:
+        # First contact ever for this (ship, severity), or game time went
+        # backwards (a reset, a load): a stamp from the future is stale.
+        return True
     return (now - last) >= _AUDIO_CONTACT_GAP_S
 
 
@@ -464,39 +470,49 @@ def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> No
     mgr = getattr(App, "g_kSoundManager", None)
     if mgr is None:
         return
-
-    if severity == Severity.SHIELD:
-        if weapon_type != "torpedo":
-            return
-        try:
-            import LoadTacticalSounds
-            name = LoadTacticalSounds.GetRandomSound(
-                LoadTacticalSounds.g_lsWeaponExplosions)
-        except Exception:
-            return
-    elif severity == Severity.HULL:
-        try:
-            import LoadTacticalSounds
-            name = LoadTacticalSounds.GetRandomSound(
-                LoadTacticalSounds.g_lsWeaponExplosions)
-        except Exception:
-            return
-    else:  # CRITICAL
-        try:
-            import LoadDamageHitSounds
-            picker = LoadDamageHitSounds.GetRandomSound
-            if picker is None:
-                # LoadSounds() hasn't run yet — fall back to first entry.
-                name = LoadDamageHitSounds.g_lsSubsystemCriticals[0]
-            else:
-                name = picker(LoadDamageHitSounds.g_lsSubsystemCriticals)
-        except Exception:
-            return
+    # The SDK picker draws GetRandomNumber: inside the presentation scope that
+    # is the presentation generator, so a sound played or throttled never
+    # shifts a gameplay roll (engine/appc/presentation_rng.py).
+    from engine.appc import presentation_rng
+    with presentation_rng.scope():
+        name = _pick_sound(severity, weapon_type)
+    if name is None:
+        return
 
     snd = mgr.GetSound(name)
     if snd is None:
         return
     snd.Play(position=(point.x, point.y, point.z))
+
+
+def _pick_sound(severity: Severity, weapon_type: str | None):
+    """The tier's sound name (an SDK random pick), or None for silence."""
+    if severity == Severity.SHIELD:
+        if weapon_type != "torpedo":
+            return None
+        try:
+            import LoadTacticalSounds
+            return LoadTacticalSounds.GetRandomSound(
+                LoadTacticalSounds.g_lsWeaponExplosions)
+        except Exception:
+            return None
+    if severity == Severity.HULL:
+        try:
+            import LoadTacticalSounds
+            return LoadTacticalSounds.GetRandomSound(
+                LoadTacticalSounds.g_lsWeaponExplosions)
+        except Exception:
+            return None
+    # CRITICAL
+    try:
+        import LoadDamageHitSounds
+        picker = LoadDamageHitSounds.GetRandomSound
+        if picker is None:
+            # LoadSounds() hasn't run yet — fall back to first entry.
+            return LoadDamageHitSounds.g_lsSubsystemCriticals[0]
+        return picker(LoadDamageHitSounds.g_lsSubsystemCriticals)
+    except Exception:
+        return None
 
 
 def _hull_impact_visual(*, ship, point, normal, severity, weapon_type,

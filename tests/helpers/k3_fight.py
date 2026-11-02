@@ -68,14 +68,17 @@ _ZERO = (0.0, 0.0, 0.0)
 
 def seed_every_rng(seed):
     """Every RNG a fight draws on (the K1 differential's list): the module
-    `random`, the SDK's App.g_kSystemWrapper.GetRandomNumber and the engine's
-    two process-lifetime streams (avoidance, random unit vectors)."""
+    `random`, the SDK's App.g_kSystemWrapper.GetRandomNumber, the engine's
+    two process-lifetime streams (avoidance, random unit vectors) and the
+    presentation generator (engine/appc/presentation_rng.py)."""
     from engine.appc import collision_avoidance
+    from engine.appc import presentation_rng
     from engine.appc.math import reset_random_unit_vector_rng
     random.seed(seed)
     App.g_kSystemWrapper.SetRandomSeed(seed)
     collision_avoidance._rng.seed(collision_avoidance._AVOID_RNG_SEED)
     reset_random_unit_vector_rng()
+    presentation_rng.reset()
 
 
 def subsystems(ship):

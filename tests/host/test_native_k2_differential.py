@@ -190,11 +190,13 @@ def _t(v):
 def _seed_every_rng(seed):
     """Every RNG a fight draws on (the K1 differential's list)."""
     from engine.appc import collision_avoidance
+    from engine.appc import presentation_rng
     from engine.appc.math import reset_random_unit_vector_rng
     random.seed(seed)
     App.g_kSystemWrapper.SetRandomSeed(seed)
     collision_avoidance._rng.seed(collision_avoidance._AVOID_RNG_SEED)
     reset_random_unit_vector_rng()
+    presentation_rng.reset()
 
 
 def _xyz(p):

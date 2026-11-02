@@ -24,11 +24,18 @@ def build_sequence_clips(module_path, character, anim_mgr):
     CharacterAction; TGAnimAction's GetDuration IS real surface
     (TGTimedAction, sdk App.py:2474). The clip-name → NIF-path mapping is
     ours: natively these sequences just Play, so flattening for the anim
-    controller is a Dauntless-side mechanism by construction."""
+    controller is a Dauntless-side mechanism by construction.
+
+    The builder runs in the presentation scope: 37 SDK builders draw
+    GetRandomNumber (HitStanding on every player hit, the idle gestures on
+    frame time), and those draws must not shift a gameplay roll
+    (engine/appc/presentation_rng.py)."""
+    from engine.appc import presentation_rng
     try:
         mod_name, func_name = module_path.rsplit(".", 1)
         func = getattr(importlib.import_module(mod_name), func_name)
-        seq = func(character)
+        with presentation_rng.scope():
+            seq = func(character)
     except Exception:
         return []
     from engine.appc.actions import TGAnimAction, TGSequence_Cast

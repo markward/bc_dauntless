@@ -434,6 +434,8 @@ def TGPoint3_GetModelLeft() -> TGPoint3:
 
 import random as _random
 
+from engine.appc import presentation_rng as _presentation_rng
+
 # Fixed seed, not drawn from OS entropy: this RNG backs every SDK
 # flee/evade/avoidance candidate-direction draw (see the call sites below),
 # so an unseeded `random.Random()` makes the SAME scripted scene steer a
@@ -464,10 +466,17 @@ def TGPoint3_GetRandomUnitVector() -> TGPoint3:
     AI/PlainAI/Flee.py:115, EvadeTorps.py:172, Warp.py:367,
     AI/Preprocessors.py:1904 (AvoidObstacles). Each draws N candidates and
     scores them, so the distribution must cover the whole sphere — a
-    biased draw would bias every flee/evade heading."""
+    biased draw would bias every flee/evade heading.
+
+    Inside a presentation scope (a death script, which may scatter debris
+    with it as Effects.CollisionEffect does) it draws the presentation
+    generator instead, so a cosmetic call never shifts an AI heading
+    (engine/appc/presentation_rng.py)."""
+    rng = (_presentation_rng if _presentation_rng.in_scope()
+           else _unit_vector_rng)
     while True:
-        a = _unit_vector_rng.uniform(-1.0, 1.0)
-        b = _unit_vector_rng.uniform(-1.0, 1.0)
+        a = rng.uniform(-1.0, 1.0)
+        b = rng.uniform(-1.0, 1.0)
         s = a * a + b * b
         if 0.0 < s < 1.0:
             break

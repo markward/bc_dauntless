@@ -373,7 +373,19 @@ class ObjectClass(TGEventHandlerObject):
         this object's set — the same sample the nebula hull discharges use);
         headless or instance-less objects fall back to a uniform random point
         on the bounding sphere (GetRadius() is already world-scale), and a
-        radius-less object degrades to its world location."""
+        radius-less object degrades to its world location.
+
+        The draw comes from the module random (gameplay: a death blast's
+        damage point), or from the presentation generator while a
+        presentation scope is open (a death script's debris, a blast that
+        only shows): engine/appc/presentation_rng.py."""
+        from engine.appc import presentation_rng
+        rng = presentation_rng if presentation_rng.in_scope() else random
+        return self._random_point_on_model(rng)
+
+    def _random_point_on_model(self, rng) -> TGPoint3:
+        """GetRandomPointOnModel drawing from `rng` (anything with
+        ``randrange`` and ``gauss``: the module random or presentation_rng)."""
         from engine.appc import render_instances
         iid = render_instances.instance_for(self)
         if iid is not None:
@@ -386,7 +398,7 @@ class ObjectClass(TGEventHandlerObject):
                 # The renderer reports VIEW coordinates; BC gets the point in
                 # this object's own set (Plan 2's rule).
                 from engine.systems import frames
-                x, y, z = pts[random.randrange(len(pts))]
+                x, y, z = pts[rng.randrange(len(pts))]
                 return frames.shifted(
                     TGPoint3(float(x), float(y), float(z)),
                     frames.view_offset(frames.containing_set(self)), -1.0)
@@ -394,9 +406,9 @@ class ObjectClass(TGEventHandlerObject):
         radius = self.GetRadius()
         if radius <= 0.0:
             return center
-        dx = random.gauss(0.0, 1.0)
-        dy = random.gauss(0.0, 1.0)
-        dz = random.gauss(0.0, 1.0)
+        dx = rng.gauss(0.0, 1.0)
+        dy = rng.gauss(0.0, 1.0)
+        dz = rng.gauss(0.0, 1.0)
         norm = math.sqrt(dx * dx + dy * dy + dz * dz)
         if norm < 1e-12:
             return center

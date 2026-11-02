@@ -264,3 +264,196 @@ def test_blast_scale_sizes_the_fireball_the_light_and_the_hole(monkeypatch):
     assert r == pytest.approx(4.0 * death_cascade.DAMAGE_RADIUS_FRACTION)
     assert s == pytest.approx(death_cascade.DAMAGE_STRENGTH)
     assert visible_damage.current_hole_scale() == 1.0, "scale ends with the call"
+
+
+# ── Presentation never moves a gameplay roll (presentation RNG; map
+#    docs/reference/engine/native-combat/rng-map.md §7.4, §7.5 test 3) ──────
+
+def _doomed_class():
+    from engine.appc.objects import ObjectClass
+
+    class Doomed(ObjectClass):
+        """A real ObjectClass, so GetRandomPointOnModel draws as a ship's
+        does (headless: three gausses on the module random, or on P inside
+        a presentation scope); in a set, so the sound and sparks run."""
+        def __init__(self):
+            super().__init__()
+            self.SetTranslateXYZ(10.0, 20.0, 30.0)
+            self.SetRadius(4.0)
+            self._set = FakeSet()
+            self._set.GetEffectRoot = lambda: None
+            self.damage_calls = []
+        def GetContainingSet(self): return self._set
+        def GetLifeTime(self):      return 1.0e30
+        def AddDamage(self, pEmitPos, fRadius, fDamage):
+            self.damage_calls.append((pEmitPos, fRadius, fDamage))
+
+    return Doomed
+
+
+def _hexes(p):
+    return tuple(float(c).hex() for c in (p.x, p.y, p.z))
+
+
+def _whole_death(monkeypatch, noise=None, seed=11):
+    """One whole cascade from seeded S1 and S2: the duration, the blast plan,
+    every AddDamage (point by .hex(), radius, strength), the points the
+    damaging blasts' fireballs were drawn at, and both streams' end state."""
+    import random
+    import App
+    from engine.appc import presentation_rng
+    random.seed(seed)
+    App.g_kSystemWrapper.SetRandomSeed(seed)
+    presentation_rng.reset()
+    fired_at = []
+    debris = death_cascade._debris_explosion
+
+    def spy(ship, point, size, *a, **k):
+        fired_at.append(point)
+        return debris(ship, point, size, *a, **k)
+
+    monkeypatch.setattr(death_cascade, "_debris_explosion", spy)
+    ship = _doomed_class()()
+    duration = death_cascade.roll_duration(ship)
+    state = death_cascade.begin(ship, duration)
+    plan = list(state["blasts"])
+    for _ in range(int((duration + 1.0) * 60)):
+        if noise is not None:
+            noise(state)
+        death_cascade.advance(state, 1.0 / 60.0)
+    assert state["final_fired"]
+    damage = [(_hexes(p), r, s) for p, r, s in ship.damage_calls]
+    # A damaging blast's fireball is at its hole (Review Focus 3).
+    assert all(any(p is q for q in fired_at) for p, _r, _s in ship.damage_calls)
+    return (duration, plan, damage, App.g_kSystemWrapper._rng.getstate(),
+            random.getstate())
+
+
+def test_presentation_never_moves_a_death_cascade_roll(monkeypatch):
+    """The throes, the blast plan, which blasts damage and where, and both
+    gameplay streams' end state are the same whether every blast plays a
+    sound, the effect level shrinks the final barrage, or presentation
+    draws more between blasts."""
+    import App
+    from engine.appc import presentation_rng
+    quiet = _whole_death(monkeypatch)
+    assert quiet[2], "the cascade carved nothing"
+
+    def every_sound(state):
+        state["last_sound_at"] = None
+
+    def extra_draws(state):
+        for _ in range(3):
+            presentation_rng.rand(1000)
+
+    assert _whole_death(monkeypatch, every_sound) == quiet
+    assert _whole_death(monkeypatch, extra_draws) == quiet
+    monkeypatch.setattr(App, "EffectController_GetEffectLevel",
+                        lambda: App.EffectController.LOW)
+    assert _whole_death(monkeypatch) == quiet
+
+
+def test_only_a_damaging_blast_draws_its_point_from_the_gameplay_stream(
+        monkeypatch):
+    """The damage roll comes first; a damaging blast's point is drawn from
+    the module random (three gausses headless), a non-damaging one's from P.
+    So the module random ends exactly as many points in as there were
+    holes."""
+    import random
+    seed = 11
+    damage, s2 = _whole_death(monkeypatch, seed=seed)[2::2]
+    ref = random.Random(seed)
+    for _ in range(3 * len(damage)):
+        ref.gauss(0.0, 1.0)
+    assert s2 == ref.getstate()
+
+
+def test_a_death_cascade_draws_exactly_its_gameplay_rolls_from_s1(monkeypatch):
+    """BC's stream (S1) ends a whole cascade exactly the gameplay rolls in:
+    the throes randrange(100), the plan's randrange(4) per blast, one
+    randrange(10) damage roll per blast, and a damaging blast's size --
+    randrange(1000) then randrange(1001), right after its damage roll -- since
+    its hole feeds hull breakup (visible_damage.hole_scale -> hull_breakup).
+    Nothing else: a non-damaging blast's size, the puffs, the sparks, the
+    sound and the final barrage draw P. And it holds under noise: every
+    sound, the LOW effect level, extra P draws."""
+    import random
+    import App
+    from engine.appc import presentation_rng
+    seed = 11
+    quiet = _whole_death(monkeypatch, seed=seed)
+    _duration, plan, damage, s1 = quiet[:4]
+
+    ref = random.Random(seed)
+    ref.randrange(100)
+    for _ in plan:
+        ref.randrange(death_cascade.BLAST_SPACING_STEPS)
+    damaging = 0
+    for _ in plan:
+        if ref.randrange(10) < death_cascade.DAMAGE_CHANCE_IN_10:
+            damaging += 1
+            ref.randrange(1000)
+            ref.randrange(1001)
+    assert damaging == len(damage) > 0
+    assert damaging < len(plan), "some blasts must only show"
+    assert s1 == ref.getstate()
+
+    def every_sound(state):
+        state["last_sound_at"] = None
+
+    def extra_draws(state):
+        for _ in range(3):
+            presentation_rng.rand(1000)
+
+    assert _whole_death(monkeypatch, every_sound, seed=seed)[3] == s1
+    assert _whole_death(monkeypatch, extra_draws, seed=seed)[3] == s1
+    monkeypatch.setattr(App, "EffectController_GetEffectLevel",
+                        lambda: App.EffectController.LOW)
+    assert _whole_death(monkeypatch, seed=seed)[3] == s1
+
+
+# ── Scopes cover the SDK builders only (presentation RNG final review M5):
+#    Play() runs outside, so nothing it dispatches inline draws from P. ──────
+
+def _scope_recording_effects(monkeypatch):
+    """Fake Effects whose builders and actions record whether a presentation
+    scope was open when each ran."""
+    import sys
+    import types
+    from engine.appc import presentation_rng
+    log = []
+
+    def builder(kind):
+        def build(*_a, **_k):
+            log.append((kind + " built", presentation_rng.in_scope()))
+            return types.SimpleNamespace(
+                GetController=lambda: None,
+                Play=lambda: log.append((kind + " played",
+                                         presentation_rng.in_scope())))
+        return build
+
+    monkeypatch.setitem(sys.modules, "Effects", types.SimpleNamespace(
+        CreateDebrisExplosion=builder("explosion"),
+        CreateDebrisSparks=builder("sparks"),
+        GetDeathExplosionSound=lambda ship: "boom"))
+    monkeypatch.setattr(death_cascade, "_light", lambda ship, size: None)
+    monkeypatch.setattr(death_cascade, "_death_sound", lambda ship: None)
+    return log
+
+
+def test_a_blast_builds_its_fireball_in_the_scope_and_plays_it_outside(
+        monkeypatch):
+    log = _scope_recording_effects(monkeypatch)
+    death_cascade._debris_explosion(FakeShip(), None, 1.0)
+    assert log == [("explosion built", True), ("explosion played", False)]
+
+
+def test_the_final_barrage_builds_in_the_scope_and_plays_outside(monkeypatch):
+    log = _scope_recording_effects(monkeypatch)
+    ship = FakeShip()
+    ship._set.GetEffectRoot = lambda: None
+    death_cascade._fire_final(death_cascade.begin(ship, 1.0, rand=lambda n: 0))
+    built = [inside for what, inside in log if what.endswith("built")]
+    played = [inside for what, inside in log if what.endswith("played")]
+    assert built and all(built), log
+    assert len(played) == len(built) and not any(played), log

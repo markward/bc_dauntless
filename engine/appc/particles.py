@@ -6,11 +6,11 @@ particles. The renderer (ParticlePass) derives every particle analytically
 from these fields each frame. See
 docs/superpowers/specs/2026-06-11-particle-backend-a1-smoke-design.md.
 """
-import random as _random
 
 import engine.dev_mode as dev_mode
 
 from engine import sprites as _sprites
+from engine.appc import presentation_rng as _presentation_rng
 from engine.appc import texture_anim as _texture_anim
 
 # The stock sheets' grid (8x8; B is the greyscale twin of A) and ExplosionA's
@@ -61,8 +61,9 @@ class AnimTSParticleController:
         # Stable per-emitter hash seed. The renderer derives ALL per-particle
         # randomness (jitter, birth offset, variant row) from this, NOT from
         # the emitter's world position — a moving emitter must not re-roll
-        # its particles every frame.
-        self._seed = _random.random()
+        # its particles every frame. Drawn from the presentation generator:
+        # a controller made or not never shifts a gameplay roll.
+        self._seed = _presentation_rng.random()
         # runtime, owned by the registry
         self._effect_age = 0.0
         self._stop_age = None      # None => still emitting

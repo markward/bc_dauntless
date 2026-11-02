@@ -94,10 +94,15 @@ def begin(ship, killer=None) -> None:
         "cascade": death_cascade.begin(ship, duration),
     })
     # Run the mission's authored death script (SDK SetDeathScript) before the
-    # generic fireball, so authored debris VFX/sound lead. Raise-safe.
+    # generic fireball, so authored debris VFX/sound lead. Raise-safe. In the
+    # presentation scope (ruling R1, Mark 2026-11-02): every stock death
+    # script draws only for debris, sparks and sounds; a mod script drawing
+    # for gameplay in it would draw the presentation generator.
     if hasattr(ship, "RunDeathScript"):
         try:
-            ship.RunDeathScript()
+            from engine.appc import presentation_rng
+            with presentation_rng.scope():
+                ship.RunDeathScript()
         except Exception as _e:
             dev_mode.log_swallowed("run death script from begin", _e)
     _broadcast_exploding(ship, killer)
