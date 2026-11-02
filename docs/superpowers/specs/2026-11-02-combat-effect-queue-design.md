@@ -1,6 +1,6 @@
 # Native combat: event inventory and the presentation queue — design
 
-**Status:** built 2026-11-02, outcome in §10; awaiting Mark's live check. Mark asked for steps 1 and 2 of the boundary-queue work ("spec it, plan it, implement it subagent driven"); he live-tests before any merge. Campaign special cases (roadmap §5.1, §5.2) are discussed with Mark after this phase, not decided here.
+**Status:** built 2026-11-02, outcome in §10; live-verified by Mark 2026-11-02 ("no issues") and merged into `project/combat_threading` (`040a588c2`). Mark asked for steps 1 and 2 of the boundary-queue work ("spec it, plan it, implement it subagent driven"); he live-tests before any merge. Campaign special cases (roadmap §5.1, §5.2) are discussed with Mark after this phase, not decided here.
 **Branch:** `ws/combat-effect-queue`, off `project/combat_threading` (`245ddc618`), in worktree `.claude/worktrees/native-combat-damage`. Merges into `project/combat_threading` after Mark's live check. No main gate: focused tests, differentials, two benchmark runs.
 **Roadmap:** `2026-11-01-threaded-weapons-combat-roadmap.md` workstream G (event queue), decision 6 (events queued and delivered in order at the tick boundary). Input maps: `docs/reference/engine/native-combat/remaining-fallbacks-map.md` §4 (RFM), `damage-map.md`, `k2-beams-map.md`.
 

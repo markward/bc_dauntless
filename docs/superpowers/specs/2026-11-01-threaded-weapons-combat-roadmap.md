@@ -29,8 +29,8 @@ The two halves run **pipelined, one tick apart**: AI reviews last tick's combat 
 | Posed parts (C) | `ws/combat-posed-parts` | posed ships/targets and Manual Aim on them, in K1/K2/K3 | built 2026-11-01, differentials green, live-verified by Mark 2026-11-01; merged into `project/combat_threading` |
 | Round trips (C) | `ws/combat-round-trips` | walk starts, beam sustains, idle bank stops, offline system stops as native/logged writes; resting contacts batched; K3 steer attribution | built 2026-11-01, live-verified by Mark 2026-11-02; merged into `project/combat_threading` (`547de0cce`) |
 | Weapon state | `ws/combat-weapon-state` | charging and reloading (K0); K0/K1/K2 write logs applied in C; one-call scalar mirror push | built 2026-11-02, live-verified by Mark 2026-11-02 (87-ship battle, ~8 fps); merged (`ea4e59503`) |
-| Event inventory + presentation queue (G, steps 1-2) | `ws/combat-effect-queue` | resting beam contacts leave the K2 walk: queued natively, shield splashes presented in C++ after `DONE`; inventory of every combat event (`event-inventory.md`) | built 2026-11-02; awaiting Mark's live check |
-| Fire events (G, step 3) | `ws/combat-fire-events` | weapon events and sounds through one ordered effect queue at the tick boundary; K0 hands back nothing, K1 only launches, K2 only damage pulses; `ET_WEAPON_FIRED` target + pulse fix | built 2026-11-02; awaiting Mark's live check |
+| Event inventory + presentation queue (G, steps 1-2) | `ws/combat-effect-queue` | resting beam contacts leave the K2 walk: queued natively, shield splashes presented in C++ after `DONE`; inventory of every combat event (`event-inventory.md`) | built 2026-11-02, live-verified by Mark 2026-11-02; merged (`040a588c2`) |
+| Fire events (G, step 3) | `ws/combat-fire-events` | weapon events and sounds through one ordered effect queue at the tick boundary; K0 hands back nothing, K1 only launches, K2 only damage pulses; `ET_WEAPON_FIRED` target + pulse fix | built 2026-11-02, live-verified by Mark 2026-11-02; merged (`70da394a3`) |
 
 All are behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF, unmerged.
 

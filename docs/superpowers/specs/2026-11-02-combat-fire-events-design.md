@@ -1,6 +1,6 @@
 # Native combat: weapon events and sounds through the boundary queue — design
 
-**Status:** built 2026-11-02, outcome in §10; awaiting Mark's live check. Mark: "Agreed with your next step. Spec it, plan it, implement it subagent driven." Step 3 of roadmap workstream G, under decisions 6, 9, 12 and 13 (`2026-11-01-threaded-weapons-combat-roadmap.md` §3) and Mark's rule that the sim must run without checking in with Python.
+**Status:** built 2026-11-02, outcome in §10; live-verified by Mark 2026-11-02 ("no issues") and merged into `project/combat_threading` (`70da394a3`). Mark: "Agreed with your next step. Spec it, plan it, implement it subagent driven." Step 3 of roadmap workstream G, under decisions 6, 9, 12 and 13 (`2026-11-01-threaded-weapons-combat-roadmap.md` §3) and Mark's rule that the sim must run without checking in with Python.
 **Branch:** `ws/combat-fire-events`, off `ws/combat-effect-queue` (`e47215f19`; step 2, awaiting Mark's live check), in worktree `.claude/worktrees/native-combat-k3`. Merges after step 2. No main gate: focused tests, differentials, two benchmark runs.
 **Inputs:** `docs/reference/engine/native-combat/event-inventory.md` (EI §n), `remaining-fallbacks-map.md` §4, `docs/reference/engine/event-emitter-gaps.md` #14 (the `ET_WEAPON_FIRED` bugs, decided "fix both").
 
