@@ -36,6 +36,7 @@ except ImportError:
     _h = None
 
 from engine import host_loop
+from engine.appc import effect_queue
 from engine.appc import native_combat as nc
 from engine.appc import sensor_contacts
 from engine.appc import sensor_detection as sd
@@ -43,7 +44,7 @@ from engine.appc.ship_iter import iter_ships
 from engine.core import loop as game_loop
 from engine.core import step_memo
 from engine.core.loop import TICK_DELTA
-from tests.helpers import bc_assets, headless_mission
+from tests.helpers import bc_assets, effect_split, headless_mission
 
 pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "combat_can_detect"),
@@ -106,6 +107,9 @@ class _Scene:
         self.tick = 0
         self.log = []
         self.events = []
+        # The queued kinds (fired, torpedo_fired; the sounds) compare per
+        # tick on their own: native delivers them at the tick boundary.
+        self.queued = effect_split.Queued(mp, _name, lambda: self.tick)
         names = {App.ET_WEAPON_FIRED: "fired",
                  App.ET_TORPEDO_FIRED: "torpedo_fired",
                  App.ET_WEAPON_HIT: "hit"}
@@ -115,7 +119,11 @@ class _Scene:
             kind = names.get(evt.GetEventType())
             if kind is not None:
                 dest = evt.GetDestination()
-                self.events.append((kind, _name(dest), self.tick))
+                row = (kind, _name(dest), self.tick)
+                if self.queued.takes(evt):
+                    self.queued.rows.append(row)
+                else:
+                    self.events.append(row)
             return _orig(evt)
 
         mp.setattr(App.g_kEventManager, "AddEvent", add_event)
@@ -177,16 +185,17 @@ class _Scene:
             for _ in range(ticks_per_frame):
                 self.tick += 1
                 ships = list(iter_ships())
-                host_loop._advance_weapons(ships, TICK_DELTA)
-                host_loop._advance_combat(ships, TICK_DELTA,
-                                          player=self.player,
-                                          push_render_data=False)
+                with host_loop._combat_effect_scope():
+                    host_loop._advance_weapons(ships, TICK_DELTA)
+                    host_loop._advance_combat(ships, TICK_DELTA,
+                                              player=self.player,
+                                              push_render_data=False)
                 self.record()
                 if rng.random() < 0.3:
                     self.op(rng)
             sensor_contacts.tick(self.player,
                                  App.g_kUtopiaModule.GetGameTime())
-        return self.log, self.events
+        return self.log, self.events, self.queued
 
 
 # Weighted toward firing, so the fight goes on while sensors and cloaks
@@ -203,7 +212,7 @@ def _name(obj):
 
 @pytest.mark.parametrize("ticks_per_frame", (1, 6))
 def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
-    runs, counts = {}, {}
+    runs, counts, effects = {}, {}, {}
     failures = None
     for name, env in ARMS:
         with monkeypatch.context() as mp:
@@ -211,16 +220,25 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
             if env is AUDIT:
                 failures = list(nc.audit_failures())
             counts[name] = nc.counts()
-    ref_log, ref_events = runs["off"]
-    kinds = {e[0] for e in ref_events}
+            effects[name] = effect_queue.counts()
+    ref_log, ref_events, ref_queued = runs["off"]
+    kinds = {e[0] for e in ref_events + ref_queued.rows}
     assert {"fired", "hit"} <= kinds, kinds
+    assert any(r[0] == "fired" for r in ref_queued.rows)
     for name in ("on", "audit"):
-        log, events = runs[name]
+        log, events, queued = runs[name]
         assert len(log) == len(ref_log) == TICKS
         for tick, (row, ref_row) in enumerate(zip(log, ref_log), start=1):
             assert row == ref_row, "%s: state differs at tick %d" % (name, tick)
         assert events == ref_events, name
+        effect_split.compare(ref_queued, queued, name)
     assert failures == [], failures
+    # Both native arms delivered their weapon events at the tick boundary;
+    # the reference never opened the scope.
+    assert effects["off"]["delivered"] == 0, effects
+    for name in ("on", "audit"):
+        assert effects[name]["delivered"] > 0, effects
+        assert effects[name]["skipped_gone"] == effects[name]["failed"] == 0
     assert counts["off"]["native_calls"] == 0, counts
     assert counts["off"]["k1_records"] == 0, counts
     for name in ("on", "audit"):
@@ -242,4 +260,4 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
         counts["on"]["k2_batched_contacts"], counts
     assert counts["audit"]["k2_batched_contacts"] == 0, counts
     print("native-combat-step counts (tpf=%d):" % ticks_per_frame, counts,
-          "events:", len(ref_events))
+          "events:", len(ref_events), "queued:", len(ref_queued.rows))

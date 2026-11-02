@@ -444,10 +444,11 @@ class _Scene:
                 if before_tick is not None:
                     before_tick(self)
                 ships = list(iter_ships())
-                host_loop._advance_weapons(ships, TICK_DELTA)
-                host_loop._advance_combat(ships, TICK_DELTA,
-                                          player=self.player,
-                                          push_render_data=False)
+                with host_loop._combat_effect_scope():
+                    host_loop._advance_weapons(ships, TICK_DELTA)
+                    host_loop._advance_combat(ships, TICK_DELTA,
+                                              player=self.player,
+                                              push_render_data=False)
                 self.rec.record()
                 if rng.random() < 0.03:
                     self.op(rng)

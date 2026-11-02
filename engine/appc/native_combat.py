@@ -41,6 +41,7 @@ import sys
 import weakref
 from typing import Mapping
 
+from engine.appc import effect_queue as _effect_queue
 from engine.appc import passive_state as _passive_state
 from engine.appc.math import TGPoint3
 from engine.appc.passive_power import FrozenField, ThawParentWakeField
@@ -135,7 +136,8 @@ def available() -> bool:
             and hasattr(_h, "combat_k4_eligible")
             and hasattr(_h, "combat_k3_begin")
             and hasattr(_h, "combat_set_part_poses")
-            and hasattr(_h, "combat_k0_begin"))
+            and hasattr(_h, "combat_k0_begin")
+            and hasattr(_h, "combat_effect_take"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -212,6 +214,9 @@ def reset() -> None:
     for k in _K0_STEP_REASONS:
         _k0_step_reasons[k] = 0
     _k0_clear_caches()
+    # Entries a test or a swapped-out mission left queued, and a scope left
+    # open, go undelivered.
+    _effect_queue.reset()
     if available():
         _h.combat_apply_reset_counts()
         _h.combat_push_reset_counts()

@@ -100,18 +100,36 @@ class FloatRangeWatcher:
         Crossing is evaluated against the *previous* value, so a check only
         fires on the tick the boundary is actually traversed — not while the
         value lingers on one side.
+
+        A weapon's charge watcher (one with an owner: only a weapon is ever
+        one) inside the combat effect queue's scope commits the value at
+        once and queues WATCH(self, old, new); delivery runs _fire_crossed
+        against the checks registered then (engine/appc/effect_queue.py,
+        spec 2026-11-02-combat-fire-events §4.2, ruling E3). Every other
+        watcher -- shields, condition, batteries -- fires here, as before.
         """
         new_value = float(new_value)
         if not self._checks:
             self._value = new_value
             return
         old_value = self._value
+        if self._owner is not None:
+            from engine.appc import effect_queue
+            if effect_queue.deferring():
+                self._value = new_value
+                effect_queue.post(effect_queue.WATCH, self, old_value,
+                                  new_value)
+                return
+        self._fire_crossed(old_value, new_value)
+        self._value = new_value
+
+    def _fire_crossed(self, old_value: float, new_value: float) -> None:
+        """Fire every check crossed between the two values."""
         # Snapshot so a handler that mutates the check set mid-dispatch can't
         # corrupt iteration.
         for threshold, direction, pEvent in list(self._checks.values()):
             if self._crossed(old_value, new_value, threshold, direction):
                 self._fire(pEvent, new_value)
-        self._value = new_value
 
     @staticmethod
     def _crossed(old_value: float, new_value: float, threshold: float,

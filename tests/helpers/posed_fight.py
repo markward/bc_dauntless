@@ -812,11 +812,12 @@ class PosedFight:
                 if before_tick is not None:
                     before_tick(self)
                 ships = list(iter_ships())
-                host_loop._advance_weapons(ships, TICK_DELTA)
-                host_loop._advance_combat(ships, TICK_DELTA,
-                                          ship_instances=instances,
-                                          player=self.player,
-                                          push_render_data=False)
+                with host_loop._combat_effect_scope():
+                    host_loop._advance_weapons(ships, TICK_DELTA)
+                    host_loop._advance_combat(ships, TICK_DELTA,
+                                              ship_instances=instances,
+                                              player=self.player,
+                                              push_render_data=False)
                 self.rec.record()
                 if rng.random() < 0.04:
                     self.op(rng)
@@ -952,6 +953,6 @@ def check_posed(ref, nat):
     assert hits and all(e[4] is not None for e in hits)
     targets = {e[4][7] for e in hits}
     assert {"Enemy-B", "Enemy-4"} <= targets, targets
-    fired = {e[1].split("/")[0] for e in ref.rec.events
+    fired = {e[1].split("/")[0] for e in ref.rec.queued.rows
              if e[0] in (App.ET_WEAPON_FIRED, App.ET_TORPEDO_FIRED)}
     assert {"Enemy-B", "Enemy-4", "Player"} <= fired, fired

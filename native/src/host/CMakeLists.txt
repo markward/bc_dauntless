@@ -15,6 +15,7 @@ add_library(dauntless_host_core STATIC
     developer_mode.cc
     bridge_highlight.cc
     model_identity_maps.cc
+    combat_effect_queue.cc
 )
 target_compile_features(dauntless_host_core PUBLIC cxx_std_20)
 target_include_directories(dauntless_host_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

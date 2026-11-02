@@ -10,6 +10,7 @@
 // through the remaining bindings.
 
 #include "host_bindings.h"
+#include "combat_effect_queue.h"
 #include "combat_write_apply.h"
 
 #include <algorithm>
@@ -12341,6 +12342,119 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_apply_reset_counts",
               [] { dauntless::host::write_applier().reset_counts(); });
+
+        // ── The combat effect queue (combat_effect_queue.h) ──────────────
+        // Entries come out as (kind, native, operands): a kernel's operands
+        // are handles (int) and numbers (float), Python's the objects it
+        // posted. engine/appc/effect_queue.py delivers them.
+        {
+            namespace hq = dauntless::host;
+            hq::effect_queue().set_release(
+                [](void* p) { Py_DECREF(static_cast<PyObject*>(p)); });
+            auto kind_of = [](long k) {
+                if (k < 0 || k >= static_cast<long>(hq::EffectKind::kCount))
+                    throw py::value_error("combat effect: unknown kind");
+                return static_cast<hq::EffectKind>(k);
+            };
+            m.def("combat_effect_kinds", [] {
+                py::dict d;
+                for (int i = 0;
+                     i < static_cast<int>(hq::EffectKind::kCount); ++i)
+                    d[hq::effect_kind_name(static_cast<hq::EffectKind>(i))] =
+                        i;
+                return d;
+            });
+            m.def("combat_effect_post",
+                  [kind_of](long kind, py::args objs) {
+                      const hq::EffectKind k = kind_of(kind);
+                      if (objs.size() > hq::EffectEntry::kMaxOperands)
+                          throw py::value_error(
+                              "combat effect: too many operands");
+                      void* ptrs[hq::EffectEntry::kMaxOperands];
+                      size_t n = 0;
+                      for (py::handle o : objs)
+                          ptrs[n++] = Py_NewRef(o.ptr());
+                      hq::effect_queue().append_objects(
+                          k, std::span<void* const>(ptrs, n));
+                  },
+                  py::arg("kind"),
+                  "Append Python's entry: `kind` and its operand objects "
+                  "(the queue holds a reference to each until delivery).");
+            m.def("combat_effect_post_native",
+                  [kind_of](long kind, py::args ops) {
+                      const hq::EffectKind k = kind_of(kind);
+                      if (ops.size() > hq::EffectEntry::kMaxOperands)
+                          throw py::value_error(
+                              "combat effect: too many operands");
+                      hq::NativeOperand v[hq::EffectEntry::kMaxOperands];
+                      size_t n = 0;
+                      for (py::handle o : ops) {
+                          if (PyFloat_Check(o.ptr()))
+                              v[n++] = o.cast<double>();
+                          else
+                              v[n++] = o.cast<std::int64_t>();
+                      }
+                      auto& q = hq::effect_queue();
+                      switch (n) {
+                      case 0: q.append_native_list(k, {}); break;
+                      case 1: q.append_native_list(k, {v[0]}); break;
+                      case 2: q.append_native_list(k, {v[0], v[1]}); break;
+                      default:
+                          q.append_native_list(k, {v[0], v[1], v[2]});
+                      }
+                  },
+                  py::arg("kind"),
+                  "Test entry: append a KERNEL's entry -- ints are mirror "
+                  "handles (-1 None), floats numbers -- as append_native "
+                  "does.");
+            m.def("combat_effect_take", [] {
+                std::vector<hq::EffectEntry> taken = hq::effect_queue().take();
+                // Every object reference moves into the result, even if
+                // building it fails part-way (steal each exactly once).
+                std::vector<py::object> owned;
+                for (const hq::EffectEntry& e : taken)
+                    for (int i = 0; i < e.count; ++i)
+                        if (e.ops[i].type == hq::EffectOperand::Type::Object)
+                            owned.push_back(py::reinterpret_steal<py::object>(
+                                static_cast<PyObject*>(e.ops[i].object)));
+                py::list out;
+                size_t next = 0;
+                for (const hq::EffectEntry& e : taken) {
+                    py::tuple ops(e.count);
+                    for (int i = 0; i < e.count; ++i) {
+                        const hq::EffectOperand& o = e.ops[i];
+                        switch (o.type) {
+                        case hq::EffectOperand::Type::Handle:
+                            ops[i] = py::int_(o.handle);
+                            break;
+                        case hq::EffectOperand::Type::Number:
+                            ops[i] = py::float_(o.number);
+                            break;
+                        case hq::EffectOperand::Type::Object:
+                            ops[i] = owned[next++];
+                            break;
+                        }
+                    }
+                    out.append(py::make_tuple(static_cast<int>(e.kind),
+                                              e.native, ops));
+                }
+                return out;
+            }, "Every queued entry, in emission order, as (kind, native, "
+               "operands); the queue is empty after.");
+            m.def("combat_effect_mark",
+                  [] { return hq::effect_queue().mark(); },
+                  "The queue's length: a kernel session's start mark.");
+            m.def("combat_effect_truncate",
+                  [](size_t mark) { hq::effect_queue().truncate(mark); },
+                  py::arg("mark"),
+                  "Drop every entry appended at or after `mark` (an "
+                  "abandoned kernel session's).");
+            m.def("combat_effect_clear",
+                  [] { hq::effect_queue().clear(); },
+                  "Drop every entry (native_combat.reset).");
+            m.def("combat_effect_size",
+                  [] { return hq::effect_queue().size(); });
+        }
 
         // ── The K3 torpedo kernel (k3_projectiles.h) ─────────────────────
         // One resumable session over the torpedo table and the step scan:

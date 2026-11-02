@@ -1977,3 +1977,122 @@ def test_materialise_raise_applies_later_writes(monkeypatch):
             assert nc.audit_failures() == [], nc.audit_failures()
         finally:
             w.close()
+
+
+# ── The effect queue (combat fire events, Task 2) ────────────────────────────
+# Inside the tick's scope (host_loop._combat_effect_scope, native on) the
+# sounds and events of K1's effects are queued and delivered, in order, when
+# the scope closes (engine/appc/effect_queue.py).
+
+def _scoped_tick(w, before=None):
+    with host_loop._combat_effect_scope():
+        w.tick(before=before)
+
+
+def test_bank_fired_natively_and_stopped_from_python_plays_then_stops(
+        monkeypatch):
+    """Review Focus 1. K1 lights the Galaxy's banks inside the tick's scope
+    and Python stops them in the same tick (a death, a K2 Python record):
+    nothing sounds until the boundary, then each bank's loop starts and
+    stops, in that order; none is left playing."""
+    from engine.appc import effect_queue as eq
+    sounds = []
+
+    def sfx(self):
+        sounds.append(("play", self.GetName(), eq.deferring()))
+        self._loop_handle = _Loop(sounds, ("stop", self.GetName()))
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", sfx)
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _DUEL, "k1_eq_stop")
+        try:
+            g = w.ships["Galaxy"].GetPhaserSystem()
+            before = nc.counts()["k1_records"]
+            with host_loop._combat_effect_scope():
+                g.StartFiring(w.ships["Vorcha"])
+                w.tick()
+                lit = [b for b in _weapons(g) if b._firing]
+                assert lit, "K1 lit no bank"
+                g.StopFiring()
+                assert sounds == []
+            assert nc.counts()["k1_records"] > before
+            names = [b.GetName() for b in lit]
+            plays = [s for s in sounds if s[0] == "play"]
+            assert [s[1] for s in plays] == names
+            assert not any(s[2] for s in plays)    # delivered, scope closed
+            for name in names:
+                assert sounds.index(("stop", name)) > sounds.index(
+                    ("play", name, False))
+            assert all(b._loop_handle is None for b in _weapons(g))
+        finally:
+            w.close()
+
+
+def test_tube_launch_events_keep_bcs_order_at_the_boundary(monkeypatch):
+    """Review Focus 2. A tube launch inside the scope: ET_TORPEDO_FIRED,
+    ET_WEAPON_FIRED, ET_TORPEDO_AMMO_CONSUMED are delivered at the boundary,
+    in that order, with the torpedo still alive at delivery."""
+    from engine.appc import effect_queue as eq
+    from engine.appc import projectiles
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+             ("Ahead", "vorcha", (10.0, 240.0, 5.0), math.pi))
+    with monkeypatch.context() as mp:
+        w = World(mp, True, ships, "k1_eq_tube", player="Galaxy")
+        alive = []
+
+        def hook(evt):
+            if evt.GetEventType() == App.ET_TORPEDO_FIRED:
+                alive.append(evt.GetSource() in projectiles._active)
+        w.hooks.append(hook)
+        try:
+            torps = w.ships["Galaxy"].GetTorpedoSystem()
+            with host_loop._combat_effect_scope():
+                torps.StartFiring(w.ships["Ahead"])
+                w.tick()
+                assert w.events == []
+                assert eq.deferring()
+            kinds = [e[0] for e in w.events]
+            assert kinds[:3] == ["torpedo_fired", "fired", "ammo_consumed"], \
+                kinds
+            assert len(kinds) % 3 == 0 and kinds == kinds[:3] * (
+                len(kinds) // 3), kinds
+            assert alive and all(alive), alive
+        finally:
+            w.close()
+
+
+def test_a_failing_delivery_still_delivers_the_rest(monkeypatch):
+    """Review Focus 4. The first delivered bank's fire sound raises: every
+    later entry (its ET_WEAPON_FIRED, any other bank's) is still
+    delivered, the error is re-raised after the flush (tests are the loud
+    mode), and the queue is empty."""
+    from engine.appc import effect_queue as eq
+
+    class Boom(Exception):
+        pass
+    played = []
+
+    def sfx(self):
+        if not played:
+            played.append(None)
+            raise Boom("sound")
+        played.append(self.GetName())
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", sfx)
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _DUEL, "k1_eq_raise")
+        try:
+            g = w.ships["Galaxy"].GetPhaserSystem()
+            with pytest.raises(Boom):
+                with host_loop._combat_effect_scope():
+                    g.StartFiring(w.ships["Vorcha"])
+                    w.tick()
+                    lit = sum(1 for b in _weapons(g) if b._firing)
+            assert lit >= 1, lit
+            assert len(played) == lit
+            # Each bank's ET_WEAPON_FIRED followed its sound in the queue.
+            fired = [e for e in w.events if e[0] == "fired"]
+            assert len(fired) == lit, (fired, lit)
+            assert eq.counts()["failed"] == 1
+            assert _h.combat_effect_take() == []
+            assert not eq.deferring()
+        finally:
+            w.close()

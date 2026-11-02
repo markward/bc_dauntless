@@ -702,3 +702,37 @@ def test_index_beyond_int64_drops_the_row():
     system._power_level = 2 ** 64          # no exception: the row is dropped
     assert "_nslot" not in system.__dict__
     assert system._power_level == 2 ** 64
+
+
+def test_reload_and_watcher_crossing_delivered_at_the_boundary(monkeypatch):
+    """Combat fire events, Task 2: inside the tick's scope (native on) a
+    tube's ET_TORPEDO_RELOAD and a pulse cannon's watcher crossing are
+    queued and delivered when the scope closes, not mid-walk; a crossing's
+    handler reads the watcher's new value, committed at production (E3)."""
+    from engine.appc import effect_queue as eq
+    toggle = charge_toggle_type()
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_eq")
+        try:
+            _galaxy_tubes_reload_together(w)
+            cannon = w.weapons("Vorcha", PULSE)[0]
+            _watch(w, cannon)
+            cannon.SetChargeLevel(cannon.GetMaxCharge() * 0.5)
+            watcher = cannon.GetChargeWatcher()
+            seen = []
+            w.hooks.append(lambda evt: seen.append((
+                evt.GetEventType(), eq.deferring(), eq._draining,
+                watcher.GetWatchedVariable())))
+            for _ in range(120):
+                with host_loop._combat_effect_scope():
+                    w.tick()
+            kinds = {k for k, *_ in seen}
+            assert {App.ET_TORPEDO_RELOAD, toggle} <= kinds, kinds
+            # Every one delivered by the flush, never inside the walk.
+            assert all(not d and drain for _k, d, drain, _v in seen), seen
+            # The upward crossing of 0.6: its handler sees the new value.
+            ups = [v for k, _d, _dr, v in seen if k == toggle]
+            assert ups and all(v >= 0.6 for v in ups), ups
+            assert nc.counts()["k0_records"]["WATCH"] > 0
+        finally:
+            w.close()

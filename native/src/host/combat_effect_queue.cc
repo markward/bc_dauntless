@@ -1,0 +1,80 @@
+// native/src/host/combat_effect_queue.cc -- see combat_effect_queue.h.
+#include "combat_effect_queue.h"
+
+#include <cassert>
+
+namespace dauntless::host {
+
+const char* effect_kind_name(EffectKind k) {
+    switch (k) {
+    case EffectKind::FIRE_SOUND: return "FIRE_SOUND";
+    case EffectKind::LOOP_STOP: return "LOOP_STOP";
+    case EffectKind::WEAPON_FIRED: return "WEAPON_FIRED";
+    case EffectKind::WEAPON_FIRE_FAILED: return "WEAPON_FIRE_FAILED";
+    case EffectKind::TORPEDO_FIRED: return "TORPEDO_FIRED";
+    case EffectKind::AMMO_CONSUMED: return "AMMO_CONSUMED";
+    case EffectKind::TORPEDO_RELOAD: return "TORPEDO_RELOAD";
+    case EffectKind::WATCH: return "WATCH";
+    case EffectKind::kCount: break;
+    }
+    return nullptr;
+}
+
+void EffectQueue::append_native_list(EffectKind kind,
+                                     std::initializer_list<NativeOperand> ops) {
+    assert(ops.size() <= EffectEntry::kMaxOperands);
+    EffectEntry e;
+    e.kind = kind;
+    e.native = true;
+    for (const NativeOperand& op : ops) {
+        EffectOperand& o = e.ops[e.count++];
+        if (const auto* h = std::get_if<std::int64_t>(&op)) {
+            o.type = EffectOperand::Type::Handle;
+            o.handle = *h;
+        } else {
+            o.type = EffectOperand::Type::Number;
+            o.number = std::get<double>(op);
+        }
+    }
+    entries_.push_back(e);
+}
+
+void EffectQueue::append_objects(EffectKind kind, std::span<void* const> objs) {
+    assert(objs.size() <= EffectEntry::kMaxOperands);
+    EffectEntry e;
+    e.kind = kind;
+    for (void* obj : objs) {
+        EffectOperand& o = e.ops[e.count++];
+        o.type = EffectOperand::Type::Object;
+        o.object = obj;
+    }
+    entries_.push_back(e);
+}
+
+void EffectQueue::truncate(std::size_t mark) {
+    if (mark >= entries_.size()) return;
+    // Detach first: a release may run arbitrary code (a Python finaliser)
+    // that must not see half-dropped entries.
+    std::vector<EffectEntry> dropped(entries_.begin() +
+                                         static_cast<std::ptrdiff_t>(mark),
+                                     entries_.end());
+    entries_.resize(mark);
+    if (release_ == nullptr) return;
+    for (const EffectEntry& e : dropped)
+        for (int i = 0; i < e.count; ++i)
+            if (e.ops[i].type == EffectOperand::Type::Object)
+                release_(e.ops[i].object);
+}
+
+std::vector<EffectEntry> EffectQueue::take() {
+    std::vector<EffectEntry> out;
+    out.swap(entries_);
+    return out;
+}
+
+EffectQueue& effect_queue() {
+    static EffectQueue* q = new EffectQueue();
+    return *q;
+}
+
+}  // namespace dauntless::host

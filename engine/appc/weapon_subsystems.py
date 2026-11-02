@@ -16,7 +16,7 @@ bottom of subsystems.py guarantees the normal load order).
 import math as _math
 
 from engine.core import ids
-from engine.appc import native_combat, passive_weapons
+from engine.appc import effect_queue, native_combat, passive_weapons
 from engine.appc.native_combat import (
     NativeField, NativeFloatList, NativeRefField, NativeRefList,
     NativeSlotMap, NativeThawParentWakeField, NativeWakeField)
@@ -701,11 +701,15 @@ def _post_weapon_fired(weapon, target) -> None:
     owning ship (resolved via ``_climb_to_ship``), object pointer = the
     target the shot went at (None for a dumbfire) -- the SDK's WeaponFired
     handlers (E1M2, E2M1) ShipClass_Cast it and return when it is None.
-    Shared by TorpedoTube.Fire
-    (posted AFTER ET_TORPEDO_FIRED — see TorpedoTube._broadcast_weapon_fired)
-    and PhaserBank.Fire (posted on the was-not-firing edge, Task 10, audited
-    §1.6/§6 — the SDK surface for the event bounds it to (weapon, owner ship)
-    regardless of weapon type)."""
+    Shared by TorpedoTube.Fire (posted AFTER ET_TORPEDO_FIRED -- see
+    TorpedoTube._broadcast_weapon_fired), PhaserBank.Fire (posted on the
+    was-not-firing edge, Task 10, audited §1.6/§6) and PulseWeapon's shot
+    (one per bolt) -- the SDK surface for the event bounds it to (weapon,
+    owner ship) regardless of weapon type. Inside the effect queue's scope
+    it is queued (WEAPON_FIRED) and posted at the tick boundary."""
+    if effect_queue.deferring():
+        effect_queue.post(effect_queue.WEAPON_FIRED, weapon, target)
+        return
     import App
     from engine import dev_mode
     try:
@@ -905,14 +909,28 @@ class _EnergyWeaponFireMixin:
         if not was_firing:
             self._beam_on_countdown = BEAM_ON_DELAY_S
             self._dwell = 0.0
-            self._play_fire_sfx()
+            if effect_queue.deferring():
+                effect_queue.post(effect_queue.FIRE_SOUND, self)
+            else:
+                self._play_fire_sfx()
         return True
 
     def StopFiring(self) -> None:
         was_firing = self._firing
         self._firing = False
         self._beam_on_countdown = 0.0
-        if was_firing and self._loop_handle is not None:
+        if not was_firing:
+            return
+        if effect_queue.deferring():
+            # Queued whether or not a loop plays yet: a FIRE_SOUND queued
+            # this tick sets the handle at delivery, before this stops it.
+            effect_queue.post(effect_queue.LOOP_STOP, self)
+        else:
+            self._stop_loop_sound()
+
+    def _stop_loop_sound(self) -> None:
+        """Stop and drop the bank's looped fire sound, if one plays."""
+        if self._loop_handle is not None:
             self._loop_handle.Stop()
             self._loop_handle = None
 
@@ -3509,7 +3527,12 @@ class TorpedoTube(Weapon):
         emitters (which all pair Source = the emitting object with Destination
         = whatever the handler casts or filters on) is why this one is inert.
         If this event ever needs a real consumer, give it a Source and decide
-        its destination deliberately rather than inheriting this shape."""
+        its destination deliberately rather than inheriting this shape.
+
+        Inside the effect queue's scope it is queued (WEAPON_FIRE_FAILED)."""
+        if effect_queue.deferring():
+            effect_queue.post(effect_queue.WEAPON_FIRE_FAILED, self)
+            return
         import App
         from engine import dev_mode
         try:
@@ -3523,7 +3546,12 @@ class TorpedoTube(Weapon):
     def _broadcast_ammo_consumed_if_player(self) -> None:
         """Post ET_TORPEDO_AMMO_CONSUMED, but ONLY when the firing ship is
         the player ship (BC locality gate — audited).  Source = the TUBE,
-        Destination = the ship, mirroring ET_WEAPON_FIRED."""
+        Destination = the ship, mirroring ET_WEAPON_FIRED.  Inside the
+        effect queue's scope it is queued (AMMO_CONSUMED), the gate read at
+        delivery."""
+        if effect_queue.deferring():
+            effect_queue.post(effect_queue.AMMO_CONSUMED, self)
+            return
         ship = self._climb_to_ship()
         import App
         try:
@@ -3714,7 +3742,12 @@ class TorpedoTube(Weapon):
         We previously set Source to the parent TorpedoSystem and labelled it "a
         CHOICE, not a finding". The probe says BC posts NO source. Corrected —
         do not re-add one.
+
+        Inside the effect queue's scope it is queued (TORPEDO_RELOAD).
         """
+        if effect_queue.deferring():
+            effect_queue.post(effect_queue.TORPEDO_RELOAD, self)
+            return
         import App
         from engine import dev_mode
         try:
@@ -3747,8 +3780,14 @@ class TorpedoTube(Weapon):
 
         Only torpedo tubes post this. _spawn_projectile is shared with pulse
         cannons, hence the call site is here in TorpedoTube, not in that helper.
+
+        Inside the effect queue's scope it is queued (TORPEDO_FIRED), ahead
+        of the launch's WEAPON_FIRED and AMMO_CONSUMED (BC's order, EI R3).
         """
         if torp is None:
+            return
+        if effect_queue.deferring():
+            effect_queue.post(effect_queue.TORPEDO_FIRED, self, torp)
             return
         import App
         from engine import dev_mode

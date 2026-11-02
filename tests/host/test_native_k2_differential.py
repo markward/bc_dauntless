@@ -84,6 +84,7 @@ pytestmark = pytest.mark.skipif(
 from engine import host_loop  # noqa: E402
 from engine.appc import articulation  # noqa: E402
 from engine.appc import combat  # noqa: E402
+from engine.appc import effect_queue  # noqa: E402
 from engine.appc import hit_feedback  # noqa: E402
 from engine.appc import native_combat as nc  # noqa: E402
 from engine.appc import part_pose  # noqa: E402
@@ -97,7 +98,7 @@ from engine.core import loop as game_loop  # noqa: E402
 from engine.core import step_memo  # noqa: E402
 from engine.core.loop import TICK_DELTA  # noqa: E402
 from engine.core.tracked_instances import TrackedInstances  # noqa: E402
-from tests.helpers import headless_mission  # noqa: E402
+from tests.helpers import effect_split, headless_mission  # noqa: E402
 from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
 from tests.helpers.k3_fight import (  # noqa: E402
     capture_native_shield_hits, compare_calls, contact_row, presented,
@@ -475,13 +476,19 @@ class _Scene:
         spy_presentation(mp, self.calls, lambda: self.tick, self.label,
                          contacts=False)    # contact_spy above has them
 
+        # The queued kinds (weapon events, bank sounds): a per-tick ordered
+        # list of their own (tests/helpers/effect_split.py).
+        self.queued = effect_split.Queued(mp, self.label, lambda: self.tick)
         orig = App.g_kEventManager.AddEvent
 
         def add_event(evt, _orig=orig):
-            self.events.append((evt.GetEventType(),
-                                self.label(evt.GetSource()),
-                                self.label(evt.GetDestination()), self.tick,
-                                self.payload(evt)))
+            row = (evt.GetEventType(), self.label(evt.GetSource()),
+                   self.label(evt.GetDestination()), self.tick,
+                   self.payload(evt))
+            if self.queued.takes(evt):
+                self.queued.rows.append(row)
+            else:
+                self.events.append(row)
             return _orig(evt)
 
         mp.setattr(App.g_kEventManager, "AddEvent", add_event)
@@ -871,11 +878,12 @@ class _Scene:
                 if before_tick is not None:
                     before_tick(self)
                 ships = list(iter_ships())
-                host_loop._advance_weapons(ships, TICK_DELTA)
-                host_loop._advance_combat(ships, TICK_DELTA,
-                                          ship_instances=instances,
-                                          player=self.player,
-                                          push_render_data=False)
+                with host_loop._combat_effect_scope():
+                    host_loop._advance_weapons(ships, TICK_DELTA)
+                    host_loop._advance_combat(ships, TICK_DELTA,
+                                              ship_instances=instances,
+                                              player=self.player,
+                                              push_render_data=False)
                 self.record()
                 if rng.random() < 0.04:
                     self.op(rng, rng.choice(ops))
@@ -886,6 +894,7 @@ class _Scene:
             self.audit = list(nc.audit_failures())
             assert not _h.combat_k2_open()
         self.counts = nc.counts()
+        self.effects = effect_queue.counts()
         return self
 
 
@@ -907,6 +916,12 @@ def _compare(ref, nat):
     for i, (x, y) in enumerate(zip(ref.events, nat.events)):
         assert x == y, "event %d differs:\n python %r\n native %r" % (i, x, y)
     assert len(ref.events) == len(nat.events)
+    effect_split.compare(ref.queued, nat.queued)
+    # The native arm's were delivered at the tick boundary; the reference
+    # never opened the scope.
+    e = nat.effects
+    assert e["delivered"] > 0 and e["skipped_gone"] == e["failed"] == 0, e
+    assert ref.effects["delivered"] == 0, ref.effects
     assert nat.audit == [], nat.audit
     assert ref.counts.get("k2_records", 0) == 0, ref.counts
     assert nat.counts["k2_records"] > 0, nat.counts

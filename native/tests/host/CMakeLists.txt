@@ -4,6 +4,7 @@
 add_executable(host_tests
     bridge_highlight_test.cc
     model_identity_maps_test.cc
+    combat_effect_queue_test.cc
 )
 target_link_libraries(host_tests
     PRIVATE

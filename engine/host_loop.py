@@ -94,6 +94,7 @@ from engine.appc import (
     weapon_tactical_commands,
     render_instances,
 )
+from engine.appc import effect_queue as _effect_queue
 from engine.appc import explosion_lights as _explosion_lights
 from engine.appc import native_combat as _native_combat
 from engine.appc import target_menu as _target_menu_mod
@@ -952,6 +953,19 @@ def _advance_weapons(ships, dt: float) -> None:
         return
     for ship in ships:
         passive_weapons.step_every_weapon(ship, dt)
+
+
+def _combat_effect_scope():
+    """The tick's deferral scope around sim.weapons and sim.combat: with
+    native combat on, every weapon event and weapon sound they produce is
+    queued and delivered, in order, when it closes -- the tick boundary
+    (engine/appc/effect_queue.py, spec 2026-11-02-combat-fire-events §4.1).
+    Switch off it opens nothing and every producer acts at once. A caller
+    running _advance_weapons / _advance_combat by itself (a test, a tool)
+    gets no scope unless it opens this."""
+    if _native_combat.enabled():
+        return _effect_queue.scope()
+    return contextlib.nullcontext()
 
 
 # Beam damage per second is MaxDamage × this, by the phaser system's power
@@ -12621,18 +12635,21 @@ def run(mission_name: Optional[str] = None,
                         # The tick before may have killed or spawned a ship.
                         with frame_profiler.scope("sim.ship_list"):
                             _ships_this_tick = list(_all_ships_for_tick())
-                    with frame_profiler.scope("sim.weapons"):
-                        _advance_weapons(_ships_this_tick, TICK_DT)
-                    with frame_profiler.scope("sim.combat"):
-                        _advance_combat(
-                            _ships_this_tick, TICK_DT,
-                            ship_instances=(session.ship_instances if session is not None else None),
-                            ship_emitters=(session.ship_emitters if session is not None else None),
-                            player=player,
-                            # Pushed after the camera, once the render origin is
-                            # set (_push_combat_render_data below).
-                            push_render_data=False,
-                        )
+                    # Weapon events and sounds both produce are delivered
+                    # when this closes (native combat on; _combat_effect_scope).
+                    with _combat_effect_scope():
+                        with frame_profiler.scope("sim.weapons"):
+                            _advance_weapons(_ships_this_tick, TICK_DT)
+                        with frame_profiler.scope("sim.combat"):
+                            _advance_combat(
+                                _ships_this_tick, TICK_DT,
+                                ship_instances=(session.ship_instances if session is not None else None),
+                                ship_emitters=(session.ship_emitters if session is not None else None),
+                                player=player,
+                                # Pushed after the camera, once the render origin is
+                                # set (_push_combat_render_data below).
+                                push_render_data=False,
+                            )
 
                 # Player-only contact manager: bands, proximity events and the
                 # identification dwell (engine/appc/sensor_contacts.py). Sim-gated

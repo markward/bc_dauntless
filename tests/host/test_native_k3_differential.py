@@ -293,11 +293,12 @@ class _Scene:
                 self.rec.tick = self.tick
                 self.beats(beat_rng)
                 ships = list(iter_ships())
-                host_loop._advance_weapons(ships, TICK_DELTA)
-                host_loop._advance_combat(ships, TICK_DELTA,
-                                          ship_instances=instances,
-                                          player=self.player,
-                                          push_render_data=False)
+                with host_loop._combat_effect_scope():
+                    host_loop._advance_weapons(ships, TICK_DELTA)
+                    host_loop._advance_combat(ships, TICK_DELTA,
+                                              ship_instances=instances,
+                                              player=self.player,
+                                              push_render_data=False)
                 self.rec.record()
                 if rng.random() < 0.03:
                     self.op(rng)

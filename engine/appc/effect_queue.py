@@ -1,0 +1,224 @@
+"""The combat effect queue: weapon events and weapon sounds, delivered at the
+tick boundary.
+
+Spec docs/superpowers/specs/2026-11-02-combat-fire-events-design.md §4.1-4.2
+(roadmap decisions 6, 9, 13). The combat step must not check in with Python
+mid-step, so the effects that only report or present -- a weapon's fire
+sound and loop stop, its ET_WEAPON_FIRED, a tube's cannot-fire, launch,
+ammo and reload events, a charge watcher's crossings -- go into ONE ordered
+queue (native/src/host/combat_effect_queue.h) and are delivered here, in
+emission order, when the deferral scope closes.
+
+THE SCOPE. ``host_loop`` opens it around each sim tick's ``sim.weapons`` and
+``sim.combat``, only with native combat on (``host_loop._combat_effect_scope``);
+switch off it is never open and every producer acts at once, as before.
+While it is open every producer below appends instead of acting, Python
+ones included (E4: no split path per kind). Nestable: only the outermost
+exit flushes, and it flushes even when the tick raised (what was produced
+was produced). Outside it a producer acts at once.
+
+THE PRODUCERS (each ``if effect_queue.deferring(): post(...)``, else today's
+code; weapon_subsystems / float_range_watcher):
+  FIRE_SOUND(bank)            _EnergyWeaponFireMixin._fire_effect's edge
+  LOOP_STOP(bank)             _EnergyWeaponFireMixin.StopFiring of a firing
+                              bank (its loop handle may not exist yet: a
+                              FIRE_SOUND queued this tick)
+  WEAPON_FIRED(weapon, target)  _post_weapon_fired
+  WEAPON_FIRE_FAILED(tube)    TorpedoTube._broadcast_weapon_fire_failed
+  TORPEDO_FIRED(tube, torp)   TorpedoTube._broadcast_torpedo_fired
+  AMMO_CONSUMED(tube)         TorpedoTube._broadcast_ammo_consumed_if_player
+  TORPEDO_RELOAD(tube)        TorpedoTube._broadcast_reload
+  WATCH(watcher, old, new)    FloatRangeWatcher._update of a weapon's charge
+                              watcher with checks: the value is committed at
+                              once; delivery fires the checks crossed
+                              between old and new, as registered THEN (E3)
+A kernel appends the same kinds natively, naming objects by mirror handle
+(-1 None); its WATCH names the WEAPON, whose charge watcher it means.
+
+DELIVERY (``flush``). The queue is taken whole and each entry performed in
+order with the scope closed -- so a delivered event's handler, and anything
+it produces, acts at once -- by the producer's own method (deferring() is
+False while the queue drains). A kernel entry naming an object freed or
+unregistered since is skipped and counted ("skipped_gone"). An entry whose
+delivery raises does not stop the rest (decision 13): in play it is logged
+and delivery carries on; under tests and ``--developer`` the flush delivers
+the rest, then re-raises the first error with each later one noted on it.
+Entries appended while draining (a native session a handler started) are
+delivered in the same flush.
+"""
+import contextlib
+import logging
+import sys
+
+try:
+    import _dauntless_host as _h
+except ImportError:
+    _h = None
+
+_logger = logging.getLogger(__name__)
+
+#: The kinds, in combat_effect_queue.h's order (combat_effect_kinds()).
+KIND_NAMES = ("FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED",
+              "TORPEDO_FIRED", "AMMO_CONSUMED", "TORPEDO_RELOAD", "WATCH")
+(FIRE_SOUND, LOOP_STOP, WEAPON_FIRED, WEAPON_FIRE_FAILED, TORPEDO_FIRED,
+ AMMO_CONSUMED, TORPEDO_RELOAD, WATCH) = range(len(KIND_NAMES))
+
+_depth = 0              # open scopes
+_draining = False       # a flush is delivering: producers act at once
+_epoch = 0              # bumped by reset(): a scope opened before it is gone
+_counts = {"delivered": 0, "skipped_gone": 0, "failed": 0}
+
+
+def deferring() -> bool:
+    """Whether a producer must append (post) rather than act."""
+    return _depth > 0 and not _draining
+
+
+@contextlib.contextmanager
+def scope():
+    """Open the deferral scope; the outermost exit flushes. A scope a
+    reset() closed exits doing nothing."""
+    global _depth
+    epoch = _epoch
+    _depth += 1
+    try:
+        yield
+    finally:
+        if epoch == _epoch:
+            _depth -= 1
+            if _depth == 0:
+                flush()
+
+
+def post(kind: int, *operands) -> None:
+    """Append Python's entry (the caller checked deferring())."""
+    _h.combat_effect_post(kind, *operands)
+
+
+def counts() -> dict:
+    """Since the last reset(): entries delivered (failed ones included),
+    kernel entries skipped because an object they name was gone, and
+    deliveries that raised."""
+    return dict(_counts)
+
+
+def reset() -> None:
+    """native_combat.reset(): drop every queued entry undelivered, close
+    any scope left open, zero the counts."""
+    global _depth, _draining, _epoch
+    _depth = 0
+    _draining = False
+    _epoch += 1
+    for k in _counts:
+        _counts[k] = 0
+    if _h is not None and hasattr(_h, "combat_effect_clear"):
+        _h.combat_effect_clear()
+
+
+def _strict(modules=None) -> bool:
+    """Decision 13's loud mode: under tests (pytest imported, as
+    host_loop._boot_notice_wanted asks) or with --developer."""
+    from engine import dev_mode
+    if modules is None:
+        modules = sys.modules
+    return "pytest" in modules or dev_mode.is_enabled()
+
+
+def flush() -> None:
+    """Deliver every queued entry, in order (see the module docstring)."""
+    global _draining
+    if _draining:
+        return          # a handler's flush: the outer drain delivers it
+    errors = []
+    _draining = True
+    try:
+        while True:
+            entries = _h.combat_effect_take()
+            if not entries:
+                break
+            for kind, native, ops in entries:
+                if native:
+                    ops = _resolve(ops)
+                    if ops is None:
+                        _counts["skipped_gone"] += 1
+                        continue
+                _counts["delivered"] += 1
+                try:
+                    _DELIVER[kind](*ops)
+                except Exception as x:
+                    _counts["failed"] += 1
+                    errors.append((kind, x))
+    finally:
+        _draining = False
+    if not errors:
+        return
+    if not _strict():
+        for kind, x in errors:
+            _logger.error("combat effect queue: %s delivery raised %r",
+                          KIND_NAMES[kind], x, exc_info=x)
+        return
+    first = errors[0][1]
+    for kind, x in errors[1:]:
+        first.add_note("combat effect queue: a later %s delivery raised "
+                       "%s: %s" % (KIND_NAMES[kind], type(x).__name__, x))
+    raise first
+
+
+def _resolve(ops):
+    """A kernel entry's operands: a handle -> its object (-1 None), a
+    number kept. None when a handle names no live registered object."""
+    from engine.appc import native_combat
+    out = []
+    for v in ops:
+        if type(v) is int:
+            if v == native_combat.REF_NONE:
+                v = None
+            else:
+                o = native_combat._registry.get(v)
+                if o is None or o.__dict__.get("_nslot") != v:
+                    return None
+                v = o
+        out.append(v)
+    return out
+
+
+# ── Delivery: each kind's producer, acting now ───────────────────────────────
+
+def _fire_sound(bank):
+    bank._play_fire_sfx()
+
+
+def _loop_stop(bank):
+    bank._stop_loop_sound()
+
+
+def _weapon_fired(weapon, target):
+    from engine.appc.weapon_subsystems import _post_weapon_fired
+    _post_weapon_fired(weapon, target)
+
+
+def _weapon_fire_failed(tube):
+    tube._broadcast_weapon_fire_failed()
+
+
+def _torpedo_fired(tube, torp):
+    tube._broadcast_torpedo_fired(torp)
+
+
+def _ammo_consumed(tube):
+    tube._broadcast_ammo_consumed_if_player()
+
+
+def _torpedo_reload(tube):
+    tube._broadcast_reload()
+
+
+def _watch(watcher, old, new):
+    from engine.appc.float_range_watcher import FloatRangeWatcher
+    if not isinstance(watcher, FloatRangeWatcher):
+        watcher = watcher._charge_watcher       # a kernel's: the weapon
+    watcher._fire_crossed(old, new)
+
+
+_DELIVER = (_fire_sound, _loop_stop, _weapon_fired, _weapon_fire_failed,
+            _torpedo_fired, _ammo_consumed, _torpedo_reload, _watch)
