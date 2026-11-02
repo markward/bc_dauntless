@@ -47,12 +47,12 @@ As WM §4.1: `combat_k1_begin_pump` / `combat_k1_begin_system` scan in the bindi
 
 - **L1. Defer the launch, don't cache it.** Every launch script is pure (LM §2-3), so running `Create` at the boundary equals a cached record, with no cache and no guard that `Create` is unchanged. Decision 5's purpose (no launch script on the combat thread) is met. *If wrong:* an impure script (a future mod) draws its randomness at the boundary instead of mid-walk. Amended during the build (rulings L5, L6): every launch, pure or impure, tube or pulse, goes through `SPAWN` while the queue defers, Python fallbacks included (ruling E4, one path per kind); a purity check would decide nothing, so there is none. The kernel hands a launch back to Python only when it cannot compute the fire-time values, and that Python run defers its spawn too.
 - **L2. `ET_TORPEDO_ENTERED_SET` moves to the boundary** with the spawn (ConditionIncomingTorps, E8M2's handler that calls `SetLifetime`): decision 9.
-- **L3. Object ids are allocated at delivery** (`TGObject` ids, `projectiles._next_id`): later than mid-walk, in the same order. *If wrong:* something else allocating an id inside the walk would interleave differently; the differential's labels catch it.
+- **L3. Object ids are allocated at delivery** (`TGObject` ids, `projectiles._next_id`): later than mid-walk, in the same order. *If wrong:* something else allocating an id inside the walk would interleave differently. The K1 differential now labels torpedoes in their own sequence (needed for deferral), so it no longer catches an id-interleaving change; nothing in the engine allocates object ids inside the walk today.
 - **L4. The torpedo's first flight is unchanged:** K3 (`cb.projectiles`) runs before K1 (`cb.held_weapons`) in the step, so a torpedo spawned at the boundary first flies next tick, as today.
 
 ## 6. Testing
 
-- **Spawn parity:** the K1/K3/step differentials compare every spawned torpedo field by field (`.hex()`), switch on (delivered at the boundary) against the reference (spawned mid-walk), per tick after the boundary; a torpedo fired by a ship a tractor moves in the same step spawns where it fired.
+- **Spawn parity:** the K1 differential compares every in-flight torpedo field by field (`.hex()`) per tick, switch on (delivered at the boundary) against the reference (spawned mid-walk); the K3 differential compares kinematics and target; unit tests compare each spawned torpedo at `ENTERED_SET`; a torpedo fired by a ship a tractor moves in the same step spawns where it fired. (The step differential gains a torpedo row in the final-review fixes.)
 - **Event order:** `SPAWN` → `ENTERED_SET` (in delivery) → `TORPEDO_FIRED` → `WEAPON_FIRED` → `AMMO_CONSUMED`; E8M2's `SetLifetime` handler acts on the spawned torpedo.
 - **Fallbacks:** unresolved module, uncached speed, a bake the kernel cannot make, or a patched launch function → FIRE record, counted by reason (no purity check: ruling L6).
 - **Walk check:** every existing pin (WM §4.4) still passes; new: a K1 method patched mid-pump (from an ASK answer) is obeyed by a later walk in the same tick; nested sessions keep separate sets; unbuilt dicts stay unbuilt.
@@ -83,7 +83,7 @@ Built 2026-11-02 on `ws/combat-launch-cache`. Commits: `3d867df40` (walk check i
 
 ### Measured (perf register C-270, C-271, SIG-175)
 
-K1 FIRE records per tick 0.103 → 0.0004 (4 per 8,999 ticks, all a type's first launch). Launch work moved from `cb.held_weapons` (0.664 → 0.604 ms per tick) to `sim.effects` (0.069 → 0.196); `sim.combat` 1.545 → 1.509; `sim` 9.13 → 9.27, with more torpedoes in flight in this pair. Roughly break-even; the phase's gain is structural.
+K1 FIRE records per tick 0.103 → 0.0004 (4 per 8,999 ticks, all a type's first launch). Launch work moved from `cb.held_weapons` (0.664 → 0.604 ms per tick) to `sim.effects` (0.069 → 0.196): net about +0.07 ms per tick in the touched rows; `sim.combat` 1.545 → 1.509; `sim` 9.13 → 9.27, with more torpedoes in flight in this pair. The phase's gain is structural, not speed.
 
 ### Next (roadmap)
 
