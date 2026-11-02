@@ -149,7 +149,8 @@ struct K2Undo {
 };
 
 struct K2Kernel::Session {
-    // Shared, so next()'s per-call backup of the session copies no list.
+    // Shared, so next()'s per-call backup of the session copies no list
+    // (`rests` is moved aside for it, not copied).
     std::shared_ptr<const std::vector<int64_t>> ships;
     double dt = 0.0, now = 0.0, drift_now = 0.0;
     bool use_memo = false;
@@ -992,8 +993,14 @@ K2Record K2Kernel::next() {
         lost("ASK has no answer (combat_k2_answer)");
     // A throw must leave the session and the mirror as they were: the
     // pending answer kept, every unflushed write undone (mirror == Python),
-    // so abandon() -- or a retry -- starts from a consistent state.
+    // the queue cut back to what earlier calls queued, so abandon() -- or a
+    // retry -- starts from a consistent state. The queue grows all step:
+    // the backup leaves it out (moved aside), so it is never copied.
+    const size_t rest_mark = s.rests.size();
+    std::vector<K2Rest> rests = std::move(s.rests);
+    s.rests.clear();
     Session before = s;
+    s.rests = std::move(rests);
     s.awaiting_answer = false;
     s.has_answer = false;
     try {
@@ -1001,7 +1008,10 @@ K2Record K2Kernel::next() {
         return w.run();
     } catch (...) {
         k2_roll_back(m_, s, 0);
+        rests = std::move(s.rests);
+        rests.resize(rest_mark);
         s = std::move(before);
+        s.rests = std::move(rests);
         throw;
     }
 }

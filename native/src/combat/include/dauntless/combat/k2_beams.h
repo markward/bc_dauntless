@@ -201,9 +201,10 @@
 // locals would hold at that point:
 //   - SYSTEM_STOP: the system, before its StopFiring;
 //   - a drained resting contact: the bank, the target, the ship and the
-//     system, when the driver presents it -- by handle through the weak
-//     registry (_K2Walk.obj): a row freed between its queueing and the
-//     drain is skipped (its presentation would have run before the free);
+//     system, when the driver presents it -- by handle through the pin set
+//     and the weak registry (_K2Walk.live): an entry naming an object freed
+//     or unregistered between its queueing and the drain is skipped (its
+//     presentation would have run before then);
 //   - BANK_STOP: the bank, its `_target` and its system (pin_bank), before
 //     the bank's StopFiring;
 //   - CONTACT: the bank, the target, the ship and the system, before the
@@ -276,7 +277,7 @@
 //         GetDirection, GetUp, GetArcWidthAngles, GetArcHeightAngles,
 //         IsDisabled, IsDestroyed;
 //       PhaserSystem: GetNumWeapons, GetWeapon, GetNumChildSubsystems,
-//         GetChildSubsystem, IsOn, IsDisabled, IsDestroyed;
+//         GetChildSubsystem, IsOn, IsDisabled, IsDestroyed, GetPowerLevel;
 //       ShieldSubsystem: HasShields, IsOn, IsDisabled, IsDestroyed;
 //       CloakingSubsystem: IsCloaking, IsDecloaking;
 //       ShipSubsystem: the subsystem names;
@@ -300,10 +301,12 @@
 //     GetTargetOffsetTG, GetShields, IsDead, GetWorldLocation,
 //     GetWorldRotation;
 //   its phaser system: GetNumWeapons, GetWeapon, IsOn, IsDisabled,
-//     IsDestroyed, StopFiring;
+//     IsDestroyed, StopFiring, GetPowerLevel;
 //   a bank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
 //     _strip_emit_position, _emitter_world_position, GetLength, StopFiring.
-// (StopFiring: THE OFFLINE STOP stands in for it. A class overriding it --
+// (GetPowerLevel: a resting contact carries the system's mirrored
+// `_power_level`, RESTING CONTACTS. StopFiring: THE OFFLINE STOP stands in
+// for it. A class overriding it --
 // the phaser system's or a bank's -- is k1_overridden, K1's guard: the
 // system's sends its ship to Python, a bank's keeps the SYSTEM_STOP
 // record. K2 relies on K1's _k1_recheck_overrides, run at K1's entry -- the

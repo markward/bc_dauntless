@@ -1238,6 +1238,39 @@ TEST(K2, ThrowAfterAQueuedContactRestoresTheQueue) {
     w.k.end();
 }
 
+TEST(K2, ThrowKeepsRestsQueuedByEarlierRecords) {
+    // b0 rests, b1 pulses (a record: b0's rest is queued before it), b2
+    // rests, then b3's trace throws: the throw drops only what that next()
+    // queued (b2), never a rest an earlier call queued (b0). A retry queues
+    // b2 again, once.
+    World w;
+    const auto s = w.scene(true, 0.1);
+    w.bank("b1", s.sys, s.target, true, 0.6);
+    w.bank("b2", s.sys, s.target, true, 0.2);
+    const int64_t t2 = w.ship("t2", 0.0, 60.0, 0.0);
+    w.bank("b3", s.sys, t2, true, 0.3);
+    K2Context ctx;
+    ctx.hooks = w.host.hooks();
+    ctx.view_offsets[w.set] = std::nullopt;
+    ctx.iids[t2] = K2Context::Iid{false, {1, 1}};  // only b3 traces
+    w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
+    const K2Record pulse = w.k.next();
+    ASSERT_EQ(w.name(pulse.contact.bank), "b1");
+    ASSERT_EQ(w.k.rests().size(), 1u);
+    w.host.throw_foreign = true;
+    EXPECT_ANY_THROW(w.k.next());
+    ASSERT_EQ(w.k.rests().size(), 1u);
+    EXPECT_EQ(w.name(w.k.rests()[0].contact.bank), "b0");
+    w.host.throw_foreign = false;
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    const std::vector<K2Rest>& q = w.k.rests();
+    ASSERT_EQ(q.size(), 3u);
+    EXPECT_EQ(w.name(q[0].contact.bank), "b0");
+    EXPECT_EQ(w.name(q[1].contact.bank), "b2");
+    EXPECT_EQ(w.name(q[2].contact.bank), "b3");
+    w.k.end();
+}
+
 TEST(K2, OfflineStopIsLoggedWrites) {
     // An off system whose banks are all idle: WeaponSystem.StopFiring's
     // writes, then each bank's _EnergyWeaponFireMixin.StopFiring writes, in

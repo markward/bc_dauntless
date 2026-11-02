@@ -57,6 +57,7 @@ from engine.appc.events import WeaponHitEvent  # noqa: E402
 from engine.appc.math import TGMatrix3, TGPoint3  # noqa: E402
 from engine.core import step_memo  # noqa: E402
 from engine.core.tracked_instances import TrackedInstances  # noqa: E402
+from tests.helpers.k3_fight import compare_calls  # noqa: E402
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
 DT = 1.0 / 60.0
@@ -332,35 +333,9 @@ def _both(monkeypatch, ships, script, ticks, instances=None, setup=None):
         for x, y in zip(a, b):
             assert x == y, "tick %d differs:\n python %r\n native %r" % (
                 i, x, y)
-    ref_calls, ref_shown = _split(ref.calls)
-    nat_calls, nat_shown = _split(nat.calls)
-    for i, (a, b) in enumerate(zip(ref_calls, nat_calls)):
-        assert a == b, "call %d differs:\n python %r\n native %r" % (i, a, b)
-    assert len(ref_calls) == len(nat_calls)
-    assert sorted(ref_shown) == sorted(nat_shown)
-    for t in ref_shown:
-        assert ref_shown[t] == nat_shown[t], (
-            "tick %d presentation differs:\n python %r\n native %r" % (
-                t, ref_shown[t], nat_shown[t]))
+    compare_calls(ref.calls, nat.calls)
     assert nat.events == ref.events
     return ref, nat, counts
-
-
-#: Presentation calls (a beam_contact and what it draws): no order inside a
-#: tick (ruling Q1, spec 2026-11-02 §5).
-_PRESENTATION = ("beam_contact", "vfx", "shield_hit")
-
-
-def _split(calls):
-    """(the game-state calls in order, {tick: that tick's presentation
-    calls, sorted})."""
-    ordered, shown = [], {}
-    for c in calls:
-        if c[0] in _PRESENTATION:
-            shown.setdefault(c[1], []).append(c)
-        else:
-            ordered.append(c)
-    return ordered, {t: sorted(v, key=repr) for t, v in shown.items()}
 
 
 def _calls(world, kind):
@@ -969,7 +944,8 @@ STOOD_IN_METHODS = [
 ] + [
     ("PhaserSystem", n) for n in _SUBSYSTEM_NAMES + (
         "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
-        "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed")
+        "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed",
+        "GetPowerLevel")
 ] + [
     ("ShieldSubsystem", n) for n in _SUBSYSTEM_NAMES + (
         "HasShields", "IsOn", "IsDisabled", "IsDestroyed")
@@ -1060,7 +1036,7 @@ def test_instance_patch_sends_its_ship_to_python(monkeypatch):
     phaser system or a bank sends THAT ship to Python (python_ships); the
     rest of the step stays native."""
     for owner, name in (("ship", "GetTargetSubsystem"), ("system", "IsOn"),
-                        ("bank", "take_dwell")):
+                        ("system", "GetPowerLevel"), ("bank", "take_dwell")):
         def patch(mp, w, owner=owner, name=name):
             g = w.ships["Galaxy"]
             obj = {"ship": g, "system": g.GetPhaserSystem(),
@@ -1186,6 +1162,34 @@ def test_subclass_override_sends_its_ship_to_python(monkeypatch):
     counts = _one_native_step(monkeypatch, patch)
     assert counts["k2_records"] > 0, counts
     assert counts["k2_python_reasons"]["overridden"] == 1, counts
+
+
+def test_power_level_override_matches_python(monkeypatch):
+    """A PhaserSystem subclass whose GetPowerLevel answers PP_LOW while its
+    `_power_level` (the mirror's) stays PP_HIGH: the kernel would carry the
+    mirror's level on a resting contact, so the ship goes to Python whole
+    (RUN_PYTHON "overridden") and every rest and pulse matches Python's."""
+
+    class FixedLevel(ws.PhaserSystem):
+        def GetPowerLevel(self):
+            return self.PP_LOW
+
+    def setup(w, mp):
+        g = w.ships["Galaxy"].GetPhaserSystem()
+        mp.setattr(g, "__class__", FixedLevel)
+        assert g.__dict__["_power_level"] == g.PP_HIGH
+
+    def script(w, t):
+        if t == 0:
+            g = w.ships["Galaxy"].GetPhaserSystem()
+            g.SetSingleFire(0)
+            g.StartFiring(w.ships["Vorcha"])
+
+    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 60,
+                              setup=setup)
+    assert _calls(ref, "beam_contact")
+    assert counts["k2_records"] > 0, counts
+    assert counts["k2_python_reasons"]["overridden"] > 0, counts
 
 
 # ── The CONTACT record's points keep Python's object identity ───────────────
@@ -1926,6 +1930,31 @@ def test_drained_rest_naming_a_freed_object_is_skipped(monkeypatch):
     assert ran == [h]
     c = nc.counts()
     assert (c["k2_present_gone"], c["k2_present_python"]) == (1, 1), c
+
+
+def test_batch_reraises_the_first_raise_noting_the_later_ones(monkeypatch):
+    """Review Focus 2. Two of three presentations raise: all three run, the
+    first exception is re-raised, and the later one rides on it as a note
+    (its type and message), never dropped silently."""
+    nc.configure(ON)
+    ran = []
+
+    def run(c, *a, **kw):
+        ran.append(len(ran))
+        if len(ran) == 1:
+            raise KeyError("first")
+        if len(ran) == 3:
+            raise ValueError("third")
+    monkeypatch.setattr(nc, "_k2_run_contact", run)
+    ship = App.ShipClass_Create("Live")
+    h = nc.slot(ship)
+    row = (h, h, h, h) + (None,) * 10 + (2, None, None)
+    with pytest.raises(KeyError) as e:
+        nc._k2_present_batch([row, row, row], nc._K2Walk(), DT, None)
+    assert ran == [0, 1, 2]
+    notes = getattr(e.value, "__notes__", [])
+    assert len(notes) == 1 and "ValueError" in notes[0] \
+        and "third" in notes[0], notes
 
 
 def test_abandoned_step_presents_nothing_next_step(monkeypatch):

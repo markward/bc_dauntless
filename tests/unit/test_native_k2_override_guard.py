@@ -43,7 +43,8 @@ ROLES = (
         "IsDisabled", "IsDestroyed")),
     ("engine.appc.weapon_subsystems", "PhaserSystem", (
         "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
-        "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed")),
+        "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed",
+        "GetPowerLevel")),
     ("engine.appc.subsystems", "ShieldSubsystem", (
         "HasShields", "IsOn", "IsDisabled", "IsDestroyed")),
     ("engine.appc.subsystems", "CloakingSubsystem", (

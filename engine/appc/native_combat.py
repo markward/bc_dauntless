@@ -66,7 +66,8 @@ _counts = {"native_calls": 0, "fallbacks": 0}
 # (DAUNTLESS_NATIVE_AUDIT=1: the kernel's can_detect would bypass the audit).
 # The drain (run_k2, spec 2026-11-02 §4.4): "k2_present_python", resting
 # contacts presented by the Python batch; "k2_present_gone", drained
-# contacts skipped because an object they name was freed before the drain.
+# contacts skipped because an object they name was freed or unregistered
+# before the drain.
 _k2_steps = {"k2_python_steps": 0, "k2_present_python": 0,
              "k2_present_gone": 0}
 _K2_STEP_REASONS = ("nested", "instances", "patched", "audit")
@@ -284,9 +285,9 @@ def counts() -> dict:
     (k2_beams.h; posed_ship retired, part_stale its successor), plus
     "k2_present_python" (drained resting contacts the Python batch
     presented), "k2_present_gone" (drained ones skipped: an object they
-    name was freed before the drain), "k2_python_steps" (steps run whole in
-    Python) and "k2_python_step_reasons" ({"nested", "instances",
-    "patched", "audit"}: n).
+    name was freed or unregistered before the drain), "k2_python_steps"
+    (steps run whole in Python) and "k2_python_step_reasons" ({"nested",
+    "instances", "patched", "audit"}: n).
 
     K4 (`cb.eligibility`): "k4_runs" (calls the kernel decided) and
     "k4_python_reasons" ({why: n}, the kernel's hand-backs -- scan, player,
@@ -3773,7 +3774,8 @@ _K2_ROLES = (
     ("system", "engine.appc.weapon_subsystems", "PhaserSystem",
      _K2_SUBSYSTEM_NAMES + (
          "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
-         "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed")),
+         "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed",
+         "GetPowerLevel")),
     ("shield", "engine.appc.subsystems", "ShieldSubsystem",
      _K2_SUBSYSTEM_NAMES + ("HasShields", "IsOn", "IsDisabled",
                             "IsDestroyed")),
@@ -3797,10 +3799,11 @@ _K2_SHIP_PATCHES = frozenset((
     "GetTargetOffsetTG", "GetShields", "IsDead", "GetWorldLocation",
     "GetWorldRotation"))
 # StopFiring (system and bank): an offline system's stop is logged writes
-# when its banks are idle (round trips Task 3).
+# when its banks are idle (round trips Task 3). GetPowerLevel: a resting
+# contact carries the mirror's `_power_level` (spec 2026-11-02 §4.3).
 _K2_SYSTEM_PATCHES = frozenset((
     "GetNumWeapons", "GetWeapon", "IsOn", "IsDisabled", "IsDestroyed",
-    "StopFiring"))
+    "StopFiring", "GetPowerLevel"))
 _K2_BANK_PATCHES = frozenset((
     "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
     "_strip_emit_position", "_emitter_world_position", "GetLength",
@@ -4249,10 +4252,11 @@ def _k2_present_batch(entries, walk, dt, ship_instances) -> None:
     """The drained resting contacts (combat_k2_drain), in queue order: each
     presented by _k2_run_contact with the power level and shields answer
     the kernel took at contact time (k2_beams.h, RESTING CONTACTS). An
-    entry naming an object freed since it was queued is skipped (counted
-    "k2_present_gone"): Python would have presented it before the free. A
-    presentation that raises does not stop the others: every entry is
-    presented, then the first exception is re-raised."""
+    entry naming an object freed or unregistered since it was queued is
+    skipped (counted "k2_present_gone"): Python would have presented it
+    before then. A presentation that raises does not stop the others:
+    every entry is presented, then the first exception is re-raised, each
+    later one noted on it (its type and message)."""
     err = None
     for e in entries:
         if any(walk.live(h) is None for h in e[:4]):
@@ -4264,6 +4268,10 @@ def _k2_present_batch(entries, walk, dt, ship_instances) -> None:
         except Exception as x:
             if err is None:
                 err = x
+            else:
+                err.add_note("combat K2: a later resting contact's "
+                             "presentation raised %s: %s"
+                             % (type(x).__name__, x))
     if err is not None:
         raise err
 
