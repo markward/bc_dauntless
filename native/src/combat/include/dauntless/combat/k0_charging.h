@@ -220,9 +220,17 @@ public:
     void begin(std::vector<int64_t> ships, double dt, double now,
                std::vector<std::optional<K0Reason>> ship_handback = {});
 
-    // The next record. Throws std::logic_error when no session is open or it
-    // already returned DONE.
+    // The next record. Throws std::logic_error when no session is open, it
+    // already returned DONE, or the previous record is being delivered.
     K0Record next();
+
+    // THE DELIVERY. A record's `writes` view the session's log, which the
+    // next next() clears; the caller applying them runs Python (wake hooks,
+    // setters) that could call next() again. The caller marks the delivery,
+    // and a next() inside it throws std::logic_error with the log and the
+    // cursor untouched, so the delivery finishes on the writes it was given.
+    void set_delivering(bool on) { delivering_ = on; }
+    bool delivering() const { return delivering_; }
 
     // Close the session, which must have returned DONE.
     void end();
@@ -252,6 +260,7 @@ private:
     std::unique_ptr<Log> log_;  // the write log and its undo, reused
     Counts counts_;
     K0WeaponCheck check_;
+    bool delivering_ = false;
 };
 
 // The process-wide session over mirror().

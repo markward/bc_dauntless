@@ -4129,8 +4129,9 @@ bool k1_walk_needs_python(std::int64_t sys_h, std::int64_t ship_h) {
     return v != 0;
 }
 
-// The scan reads PyDictObject::ma_version_tag (deprecated in 3.12, still
-// bumped on every mutation through 3.13).
+// The scan reads PyDictObject::ma_version_tag, and only where kK0ObjectCache
+// allows (CPython 3.11, the one version verified; see below): elsewhere it
+// is never read. The pragmas keep the field's deprecation quiet.
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -11684,11 +11685,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k0_next", [] {
             // The GIL is held (as combat_k1_next). The weapon check is a set
             // lookup made at begin: no CPython call inside the walk.
-            cb::K0Record r = cb::k0_session().next();
+            cb::K0Session& k = cb::k0_session();
+            cb::K0Record r = k.next();
             py::list writes;
             dauntless::host::WriteApplier& applier =
                 dauntless::host::write_applier();
             if (applier.has_context()) {
+                // r.writes views the session's log: the Python the apply
+                // runs (wake hooks, setters) must not reach next() and
+                // clear it (THE DELIVERY, k0_charging.h).
+                struct Delivering {
+                    cb::K0Session& k;
+                    explicit Delivering(cb::K0Session& s) : k(s) {
+                        k.set_delivering(true);
+                    }
+                    ~Delivering() { k.set_delivering(false); }
+                } delivering(k);
                 if (!applier.apply(r.writes)) throw py::error_already_set();
             } else {
                 for (const cb::K0Write& w : r.writes)
@@ -12080,6 +12092,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     static_cast<dauntless::host::ApplyKind>(i))] = i;
             return d;
         });
+        m.def("combat_k0_field_name",
+              [](long field, bool watcher) {
+                  namespace cb = dauntless::combat;
+                  cb::K0FieldWrite w;
+                  w.type = watcher ? cb::K0FieldWrite::Type::Watcher
+                                   : cb::K0FieldWrite::Type::Float;
+                  w.field = static_cast<cb::Field>(field);
+                  PyObject* o = dauntless::host::k0_field_name(w);
+                  if (o == nullptr) throw py::error_already_set();
+                  return py::reinterpret_borrow<py::object>(o);
+              },
+              py::arg("field"), py::arg("watcher"),
+              "The attribute a K0 write of Field `field` (or the watcher "
+              "write) stores into, as the applier names it (tests).");
         m.def("combat_set_applier",
               [](py::handle ctx) {
                   PyObject* prev =

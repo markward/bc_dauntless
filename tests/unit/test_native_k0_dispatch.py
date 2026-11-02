@@ -29,7 +29,7 @@ from engine.appc import passive_state  # noqa: E402
 from engine.appc import weapon_subsystems as ws  # noqa: E402
 from engine.appc.float_range_watcher import FloatRangeWatcher  # noqa: E402
 from tests.helpers.k0_fight import (  # noqa: E402
-    DT, ON, World, charge_toggle_type, run_both,
+    DT, GALAXY_VORCHA, ON, World, charge_toggle_type, run_both,
 )
 
 PHASER, PULSE, TRACTOR, TORPEDO = range(4)
@@ -545,6 +545,90 @@ def test_exception_in_a_record_abandons_the_session(monkeypatch):
             assert nc.audit_failures() == []
             w.tick()                                # the next tick runs
             assert nc.counts()["k0_records"]["DONE"] == 1
+        finally:
+            w.close()
+
+
+def test_python_kind_k0_writes_call_the_setter_once(monkeypatch):
+    """A `_quiet_setter` answering a Python setter for every field (a test's
+    tracing wrapper) makes K0's scalar writes PYTHON kind: each one is
+    applied by calling that setter exactly once, with Python's value and
+    type (a bool stays a bool), and the run equals the Python walk. A lone
+    Galaxy (no pulse cannon: no watcher writes; full tubes: no slot
+    writes), its banks drained so they recharge, one lit so it depletes."""
+    calls = []
+
+    def setup(w):
+        for bank in w.weapons("Galaxy", PHASER):
+            bank.SetChargeLevel(0.0)
+        lit = w.weapons("Galaxy", PHASER)[1]
+        lit.SetChargeLevel(lit.GetMaxCharge() * 0.05)
+        lit._firing = True
+        lit._beam_on_countdown = 0.0
+        if not w.native:
+            return
+        real = nc._quiet_setter
+
+        def quiet(cls, name):
+            setter, kind = real(cls, name)
+
+            def traced(obj, value, _s=setter, _n=name):
+                calls.append((_n, type(value).__name__))
+                return _s(obj, value)
+            return traced, kind
+        w.mp.setattr(nc, "_quiet_setter", quiet)
+
+    ref, nat, counts = run_both(monkeypatch.context, lambda w, t: None, 30,
+                                ships=GALAXY_VORCHA[:1], setup=setup)
+    assert counts["k0_logged_writes"] > 0, counts
+    assert len(calls) == counts["k0_logged_writes"], (len(calls), counts)
+    assert ("_charge_level", "float") in calls, calls[:10]
+    assert ("_depleted", "bool") in calls, calls
+    assert _records(counts)["DEPLETE_STOP"] == 1, counts
+
+
+def test_reentrant_next_during_delivery_fails_loudly(monkeypatch):
+    """A record's writes are applied by the binding from a view of the
+    session's log while Python runs (here passive_state.wake, called for a
+    WAKE-kind `_charge_level` write on a weapon flagged asleep). A
+    combat_k0_next from that Python would clear the log under the view: it
+    must raise the session's protocol error instead, the session must be
+    abandoned, and the next tick must run as normal."""
+    seen = []
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_reenter")
+        try:
+            bank = w.weapons("Galaxy", PHASER)[0]
+            bank.SetChargeLevel(0.0)        # recharging: K0 logs its charge
+            # A later record (a Vor'cha cannon's WATCH) delivers it, so the
+            # walk is not done: a re-entrant next() would step on.
+            _watch(w, w.weapons("Vorcha", PULSE)[0])
+            wake = passive_state.wake
+
+            def hook(obj):
+                if obj is bank:
+                    try:
+                        _h.combat_k0_next()
+                    except RuntimeError as e:
+                        seen.append(str(e))
+                        raise
+                    seen.append("re-entered")
+                return wake(obj)
+
+            mp.setattr(passive_state, "wake", hook)
+            bank.__dict__["_passive_asleep"] = True
+            with pytest.raises(RuntimeError, match="deliver"):
+                w.tick()
+            assert len(seen) == 1 and "deliver" in seen[0], seen
+            assert not _h.combat_k0_open()
+            mp.setattr(passive_state, "wake", wake)
+            bank.__dict__["_passive_asleep"] = False
+            nc.audit_mirror()
+            assert nc.audit_failures() == []
+            done = nc.counts()["k0_records"]["DONE"]
+            w.tick()                                # the next tick runs
+            assert nc.counts()["k0_records"]["DONE"] == done + 1
+            assert not _h.combat_k0_open()
         finally:
             w.close()
 

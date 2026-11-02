@@ -181,10 +181,11 @@ std::string_view pooled_name(const char* s, size_t n) {
 PyObject* k0_field(const cb::K0FieldWrite& w) {
     constexpr size_t kWatcher = static_cast<size_t>(cb::Field::kCount);
     static PyObject* table[kWatcher + 1] = {};
-    const size_t i = w.type == cb::K0FieldWrite::Type::Watcher
-                         ? kWatcher
-                         : static_cast<size_t>(w.field);
-    if (i > kWatcher) {
+    const bool watcher = w.type == cb::K0FieldWrite::Type::Watcher;
+    const size_t i = watcher ? kWatcher : static_cast<size_t>(w.field);
+    // A non-watcher write's id must name a Field: kWatcher is the watcher's
+    // slot, never a field's.
+    if (!watcher && i >= kWatcher) {
         PyErr_SetString(PyExc_SystemError, "combat apply: K0 write field");
         return nullptr;
     }
@@ -716,19 +717,11 @@ bool store_and_wake(const Ctx& c, PyObject* obj, PyObject* field,
 
 // ── One write: _apply_write ──────────────────────────────────────────────
 
-// `value` stored on `obj` (walk.obj(h), resolved) as _apply_write does.
+// `value` stored on `obj` by the kind `k` (kind_of's answer for its type
+// and `field`, asked once: its setter reference is taken over).
 template <class V>
-bool apply_value(const Ctx& c, PyObject* obj, PyObject* field,
-                 const V& value) {
-    if constexpr (is_alternative<ApplySlot, V>::value) {
-        if (const auto* s = std::get_if<ApplySlot>(&value))
-            return apply_slot(obj, field, *s);
-        if (const auto* w = std::get_if<ApplyWatcher>(&value))
-            return apply_watcher(obj, field, *w);
-    }
-    KindEntry k;                                    // _quiet_setter(...)
-    if (!kind_of(c, reinterpret_cast<PyObject*>(Py_TYPE(obj)), field, &k))
-        return false;
+bool apply_value_as(const Ctx& c, PyObject* obj, PyObject* field,
+                    const V& value, const KindEntry& k) {
     Ref setter(k.setter);
     const int conv = k.kind == kPython ? k.conv : k.kind;
     Ref v;
@@ -748,6 +741,22 @@ bool apply_value(const Ctx& c, PyObject* obj, PyObject* field,
         return static_cast<bool>(r);
     }
     return store_and_wake(c, obj, field, v.get(), k.kind == kWake);
+}
+
+// `value` stored on `obj` (walk.obj(h), resolved) as _apply_write does.
+template <class V>
+bool apply_value(const Ctx& c, PyObject* obj, PyObject* field,
+                 const V& value) {
+    if constexpr (is_alternative<ApplySlot, V>::value) {
+        if (const auto* s = std::get_if<ApplySlot>(&value))
+            return apply_slot(obj, field, *s);
+        if (const auto* w = std::get_if<ApplyWatcher>(&value))
+            return apply_watcher(obj, field, *w);
+    }
+    KindEntry k;                                    // _quiet_setter(...)
+    if (!kind_of(c, reinterpret_cast<PyObject*>(Py_TYPE(obj)), field, &k))
+        return false;
+    return apply_value_as(c, obj, field, value, k);
 }
 
 template <class V>
@@ -799,8 +808,9 @@ bool apply_k0(const Ctx& c, const cb::K0Write& kw, KeyCache& kc) {
                          &k);
             if (!ok) break;
             if (k.kind != kPlain && k.kind != kWake) {
-                Py_XDECREF(k.setter);
-                ok = apply_value(c, obj, field, k0_value(w));
+                // The general path with the kind already asked (once, as
+                // _apply_write asks _quiet_setter once).
+                ok = apply_value_as(c, obj, field, k0_value(w), k);
                 break;
             }
             PyObject* v =
@@ -1140,5 +1150,7 @@ bool WriteApplier::parse_log(PyObject* log, std::vector<ApplyWrite>* out) {
     }
     return true;
 }
+
+PyObject* k0_field_name(const cb::K0FieldWrite& w) { return k0_field(w); }
 
 }  // namespace dauntless::host

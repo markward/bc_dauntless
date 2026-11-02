@@ -716,3 +716,19 @@ def test_handle_re_resolved_after_python_changes_the_pins(monkeypatch):
         assert ("wake", 0) in _EVENTS["c"]
     finally:
         _SWAP.clear()
+
+
+def test_k0_write_field_bounds():
+    """A K0 write names its attribute by Field id (the watcher by its type):
+    every id in range is its field's name, the watcher write is
+    "_charge_watcher", and a non-watcher id at or past Field::kCount is a
+    SystemError (a kernel bug), never the watcher's name."""
+    ids = _h.combat_field_names()
+    n = len(ids)
+    for name, fid in ids.items():
+        expect = "_radius" if name == "Subsystem._radius" else name
+        assert _h.combat_k0_field_name(fid, False) == expect
+    assert _h.combat_k0_field_name(0, True) == "_charge_watcher"
+    for bad in (n, n + 1, 10 ** 6):
+        with pytest.raises(SystemError):
+            _h.combat_k0_field_name(bad, False)

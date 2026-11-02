@@ -698,6 +698,9 @@ void roll_back(Mirror& m, K0Session::Log& log) {
 }  // namespace
 
 K0Record K0Session::next() {
+    if (delivering_)
+        lost("next() while the previous record's writes are being "
+             "delivered (re-entered from the Python they run)");
     if (!s_) lost("no session is open");
     if (s_->done) lost("the session already returned DONE");
     // The previous record's writes were delivered (its view ends here).

@@ -149,4 +149,9 @@ private:
 // The process-wide applier (never destroyed: it owns Python references).
 WriteApplier& write_applier();
 
+// The attribute a K0 write stores into: its Field's name (interned, never
+// freed: a borrowed reference), or "_charge_watcher" for a watcher write.
+// nullptr with SystemError for a Field id out of range.
+PyObject* k0_field_name(const combat::K0FieldWrite& w);
+
 }  // namespace dauntless::host
