@@ -756,7 +756,13 @@ class _Scene:
             # and K2's offline stops LOG them (no call), so this row is where
             # those writes are compared.
             # Asleep (passive weapons): a `_firing` write, logged or not,
-            # wakes a sleeping bank (WakeField).
+            # wakes a sleeping bank (WakeField). The RAW flag is comparable
+            # here although K0 (which sleeps nothing) runs on the native
+            # arm: this scene's spies patch the stock PhaserBank.StopFiring
+            # and PhaserSystem.StopFiring, names K0's override guard covers
+            # (_K0_METHODS), so K0 hands every ship back whole (reason
+            # override) and the passive walk steps -- and sleeps -- the
+            # weapons on both arms.
             row.append((self.label(b), _t(d.get("_dwell")),
                         _t(d.get("_firing")), self.label(d.get("_target")),
                         _t(d.get("_beam_on_countdown")),

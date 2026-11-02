@@ -851,9 +851,11 @@ class ChargeWatcherField:
     `_owner` becomes the weapon, so its check adds and removes push the
     count. Anything else -- a subclass (its own `_update`, which K0's
     logged `_value` store would skip), a watcher another weapon owns --
-    sets WATCH_ALWAYS: K0 never stands in for it. A previous watcher this
-    weapon owned is released (its checks no longer push here). Cost: only
-    at assignment; the switch-off path stores the same values."""
+    sets WATCH_ALWAYS: K0 never stands in for it (one naming this weapon
+    as its owner is released, so its checks cannot push here). A previous
+    watcher this weapon owned is released (its checks no longer push here).
+    Cost: only at assignment; the switch-off path stores the same
+    values."""
 
     def __set_name__(self, owner, name) -> None:
         self._name = name
@@ -873,6 +875,12 @@ class ChargeWatcherField:
                 value._owner = obj
             obj._watch_checks = len(value._checks)
         else:
+            # Not adopted: if it names this weapon as its owner anyway
+            # (FloatRangeWatcher(owner=weapon)), release it, or its next
+            # Add/RemoveRangeCheck would overwrite WATCH_ALWAYS.
+            vd = getattr(value, "__dict__", None)
+            if vd is not None and vd.get("_owner") is obj:
+                del vd["_owner"]        # back to the class default
             obj._watch_checks = WATCH_ALWAYS
 
 
@@ -3402,11 +3410,13 @@ def _k1_system_ships(system) -> list:
 # THE OVERRIDE GUARD. K0 computes what the walk's methods would; a test,
 # tool or mod replacing one must still be obeyed (WSM §7(a) A6):
 #   class     _K0_METHODS (A6, plus the walk's GetNumWeapons / GetWeapon /
-#             GetNumChildSubsystems / GetChildSubsystem), resolved on a
-#             weapon-kind class against the stock class of its kind,
-#             _K0_SHIP_METHODS on a ShipClass, _K0_AMMO_METHODS on a
-#             TorpedoAmmoType -- against the import-time snapshot
-#             (k0_snapshot_stock, k0_snapshot_ship). The binding keeps each
+#             GetNumChildSubsystems / GetChildSubsystem) on a weapon-kind
+#             class, _K0_SHIP_METHODS on a ShipClass, _K0_AMMO_METHODS on a
+#             TorpedoAmmoType: every entry the names have anywhere in the
+#             class's MRO (_k0_chain: a super() call reaches the entries
+#             below the first) against the stock class of its role's
+#             import-time snapshot (k0_snapshot_stock, k0_snapshot_ship).
+#             The binding keeps each
 #             class's verdict while CPython's version tag of the class is
 #             unchanged (an attribute assignment on it or a base changes
 #             it); a class with no valid verdict comes back from begin and
@@ -3427,8 +3437,15 @@ def _k1_system_ships(system) -> list:
 # The binding's begin scan applies them (host_bindings.cc, k0_scan): a
 # flagged or patched ship or weapon system -> the ship whole (override); a
 # flagged or patched weapon -> that weapon at its turn (override); in a
-# torpedo system one such tube, or a flagged magazine, sends every tube. A
-# patch made by a handler during a session is seen at the next session.
+# torpedo system one such tube, or a flagged magazine, sends every tube.
+#
+# THE BEGIN-SNAPSHOT BOUNDARY. Both checks are decided once, at begin, for
+# the whole session: a patch a record's handler makes DURING a session (a
+# class attribute, an instance attribute on a weapon later in the walk)
+# takes effect at the next session, one tick later; the rest of this walk
+# steps from the begin verdicts. K1 is stricter only in where it looks
+# again: it rechecks per walk (each system's), so a handler's patch is seen
+# by the next walk of the same tick.
 
 _K0_METHODS = (
     # WSM §7(a) A6.
@@ -3470,21 +3487,32 @@ def _k0_clear_caches() -> None:
         _h.combat_k0_clear_caches()
 
 
+def _k0_chain(cls, names) -> tuple:
+    """Every entry `names` have in `cls`'s MRO, class by class: (name, the
+    class's own attribute), in MRO order. Not only the first one each name
+    resolves to: a method can reach the entries below it through super()
+    (PulseWeapon.UpdateCharge and TractorBeam.UpdateCharge call
+    `super().UpdateCharge`, so a patch of _EnergyWeaponFireMixin's changes
+    what they do while their own entries stay the same)."""
+    return tuple((n, d[n]) for klass in cls.__mro__ for d in (vars(klass),)
+                 for n in names if n in d)
+
+
 def k0_snapshot_stock(classes) -> None:
     """weapon_subsystems, as it finishes defining its classes, passes
-    {weapon_kind: stock class, "ammo": TorpedoAmmoType}: snapshot what every
-    K0 name resolves to on each, before any test, tool or mod can patch
-    one."""
+    {weapon_kind: stock class, "ammo": TorpedoAmmoType}: snapshot every
+    entry the K0 names have in each one's MRO (_k0_chain), before any test,
+    tool or mod can patch one."""
     for role, cls in classes.items():
         names = _K0_AMMO_METHODS if role == "ammo" else _K0_METHODS
-        _k0_stock[role] = (cls, names, _k1_resolve(cls, names))
+        _k0_stock[role] = (cls, names, _k0_chain(cls, names))
     _k0_clear_caches()
 
 
 def k0_snapshot_ship(ship_class) -> None:
     """ships.py, as it finishes defining ShipClass (with k1_snapshot_ship)."""
     _k0_stock["ship"] = (ship_class, _K0_SHIP_METHODS,
-                         _k1_resolve(ship_class, _K0_SHIP_METHODS))
+                         _k0_chain(ship_class, _K0_SHIP_METHODS))
     _k0_clear_caches()
 
 
@@ -3500,15 +3528,18 @@ def _k0_role(cls):
 
 
 def _k0_flag(cls) -> int:
-    """1 when `cls` resolves a K0 name of its role differently from the
-    stock class's import-time snapshot; 0 otherwise (a class of no role:
-    the kernel decides it, a ship of another class is not_weapon_system).
-    Computed afresh: the binding caches it per class version tag."""
+    """1 when any class in `cls`'s MRO holds a K0 name of its role that the
+    stock class's import-time snapshot does not hold, or holds it with
+    another value (_k0_chain: an override in a subclass, a patch of the
+    stock class or of a base a super() call reaches); 0 otherwise (a class
+    of no role: the kernel decides it, a ship of another class is
+    not_weapon_system). Computed afresh: the binding caches it per class
+    version tag (a patch of a base changes every subclass's tag too)."""
     stock = _k0_stock.get(_k0_role(cls))
     if stock is None:
         return 0
     _stock_cls, names, snapshot = stock
-    return int(_k1_resolve(cls, names) != snapshot)
+    return int(_k0_chain(cls, names) != snapshot)
 
 
 def _k0_kinds() -> tuple:

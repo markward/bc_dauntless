@@ -425,6 +425,33 @@ def test_replacing_a_watcher_detaches_the_old_one():
     assert nc.audit_failures() == []
 
 
+def test_unadopted_watcher_owned_by_the_weapon_is_released():
+    """A watcher the field does not adopt (a subclass) whose `_owner` is
+    already the weapon (FloatRangeWatcher(owner=weapon)): its `_owner` is
+    cleared, so its later AddRangeCheck / RemoveRangeCheck cannot overwrite
+    WATCH_ALWAYS (a 0 there would have K0 store `_value` and skip the
+    subclass's `_update`)."""
+    nc.configure(ON)
+    cannon = ws.PulseWeapon("c")
+    loud = _LoudWatcher(owner=cannon)
+    cannon._charge_watcher = loud
+    assert cannon._watch_checks == nc.WATCH_ALWAYS
+    assert loud._owner is None
+    cid = loud.AddRangeCheck(0.5, FloatRangeWatcher.FRW_BOTH,
+                             App.TGEvent_Create())
+    loud.RemoveRangeCheck(cid)
+    assert cannon._watch_checks == nc.WATCH_ALWAYS
+    assert _h.combat_dump(cannon.__dict__["_nslot"])["_watch_checks"] \
+        == nc.WATCH_ALWAYS
+    # Owned by ANOTHER weapon: left alone (it pushes that weapon's count).
+    other = ws.PulseWeapon("d")
+    shared = _LoudWatcher(owner=other)
+    cannon._charge_watcher = shared
+    assert shared._owner is other
+    nc.audit_mirror()
+    assert nc.audit_failures() == []
+
+
 # ── Stand-downs ──────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("which", ["native_audit", "passive_audit"])

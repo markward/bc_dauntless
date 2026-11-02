@@ -4204,7 +4204,7 @@ struct K0Scan {
 };
 
 struct K0TypeEntry {
-    PyTypeObject* type;
+    PyTypeObject* type;  // owned in K0Caches::types (see clear())
     unsigned int tag;
     int flag;
 };
@@ -4261,11 +4261,20 @@ struct K0Caches {
         systems_p = nullptr;
         systems_n = 0;
     }
+    // `types` OWNS a reference to each type (taken in k0_flagged): every
+    // scan re-validates them by reading the type (k0_types_unchanged), so
+    // a type it keeps must not be freed under it. The table's entries are
+    // copies of `types`' entries.
     void clear() {
+        // Moved out first: a release may run Python (a type's dealloc),
+        // which must find the caches already empty.
+        std::vector<K0TypeEntry> old = std::move(types);
         types.clear();
         for (K0TypeEntry& e : table) e = K0TypeEntry{};
         forget_objects();
         names[0] = names[1] = names[2] = nullptr;
+        for (K0TypeEntry& e : old)
+            Py_DECREF(reinterpret_cast<PyObject*>(e.type));
     }
 };
 
@@ -4326,16 +4335,33 @@ K0_INLINE PyObject* k0_dict_of(PyObject* o) {
     return k1_built_dict(o);
 }
 
+// The per-object answer cache (THE CACHES, "object") rests on PEP 509's
+// ma_version_tag changing on every insert, replace and delete. Verified on
+// CPython 3.11 only (3.12 repurposes its low bits for dict watchers, 3.14
+// drops the field): any other version takes the uncached path -- every
+// object's answer computed at every scan, the same verdicts, slower.
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030C0000
+constexpr bool kK0ObjectCache = true;
+#else
+constexpr bool kK0ObjectCache = false;
+#endif
+
 // The dict's mutation version (PEP 509): every insert, replace and delete
 // takes a new value from a process-wide counter, so it never repeats.
 K0_INLINE std::uint64_t k0_dict_version(PyObject* d) {
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030C0000
     return reinterpret_cast<PyDictObject*>(d)->ma_version_tag;
+#else
+    (void)d;
+    return 0;
+#endif
 }
 
-// `o` is in the state `k` was computed on (`d` its dict, or nullptr).
+// `o` is in the state `k` was computed on (`d` its dict, or nullptr). Never
+// on an unverified Python (kK0ObjectCache).
 K0_INLINE bool k0_same(const K0ObjKey& k, PyObject* o, PyObject* d) {
-    return d != nullptr && o->ob_type == k.type && d == k.dict &&
-           k0_dict_version(d) == k.version;
+    return kK0ObjectCache && d != nullptr && o->ob_type == k.type &&
+           d == k.dict && k0_dict_version(d) == k.version;
 }
 
 // The table entry `t` hashes to (Fibonacci hashing of its address: heap
@@ -4403,8 +4429,12 @@ int k0_flagged(const K0Guard& g, PyObject* o, K0Scan& s, K0Caches& c) {
     const int flag = PyObject_IsTrue(v);  // an int: no Python runs
     if (flag < 0) return -1;
     const K0TypeEntry e{t, k0_type_tag(t), flag};
-    if (hit != nullptr) *hit = e;
-    else c.types.push_back(e);
+    if (hit != nullptr) {
+        *hit = e;  // the same type: its reference is already held
+    } else {
+        Py_INCREF(reinterpret_cast<PyObject*>(t));  // released by clear()
+        c.types.push_back(e);
+    }
     slot = e;
     return flag;
 }
@@ -4505,12 +4535,12 @@ K0_INLINE int k0_guard_system(const K0Guard& g, PyObject* sys, int gi, K0Scan& s
         // (Short-circuit order matters: the slot before the object is read
         // only for a type with a managed dict.)
         const K0WeaponEntry* we = pos_c < wsize ? wdata + pos_c : nullptr;
-        if (we != nullptr && kK0ManagedSlot && c->ob_type == we->key.type &&
+        if (we != nullptr && kK0ObjectCache && kK0ManagedSlot &&
+            c->ob_type == we->key.type &&
             (c->ob_type->tp_flags & Py_TPFLAGS_MANAGED_DICT) != 0 &&
             reinterpret_cast<std::uintptr_t*>(c)[-3] ==
                 reinterpret_cast<std::uintptr_t>(we->key.dict) &&
-            reinterpret_cast<PyDictObject*>(we->key.dict)->ma_version_tag ==
-                we->key.version) {
+            k0_dict_version(we->key.dict) == we->key.version) {
             m = we->verdict;
         } else {
             m = k0_weapon_slow(g, c, k0_dict_of(c), s, cc, pos_c);
@@ -11715,6 +11745,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k0_clear_caches", [] { k0_caches().clear(); },
               "Forget the begin scan's class verdicts and dict states "
               "(native_combat.reset, a re-taken stock snapshot).");
+        m.def("combat_k0_object_cache", [] { return kK0ObjectCache; },
+              "Whether the begin scan caches each object's answer by its "
+              "dict's ma_version_tag (CPython 3.11 only; else uncached).");
         m.def("combat_k0_cache_sizes", [] {
             const K0Caches& c = k0_caches();
             return py::make_tuple(c.types.size(), c.ships.size(),

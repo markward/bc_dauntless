@@ -372,3 +372,136 @@ def test_class_swap_between_two_sessions_is_seen(monkeypatch):
             assert _override(nc.counts()) == 1
         finally:
             w.close()
+
+
+# ── Review fix round 2 ───────────────────────────────────────────────────────
+
+def test_mixin_patch_reached_through_super_runs_python(monkeypatch):
+    """A patch of `_EnergyWeaponFireMixin.UpdateCharge` is reached by
+    PulseWeapon.UpdateCharge and an idle TractorBeam.UpdateCharge through
+    `super()`, though neither's MRO-first UpdateCharge changed: every pulse
+    cannon and idle tractor (and every phaser bank) runs in Python (reason
+    override), the patch called exactly as often as without K0."""
+    calls = {}
+
+    def setup(w):
+        w.ships["Galaxy"].GetTractorBeamSystem().TurnOn()
+        for beam in w.weapons("Galaxy", TRACTOR):
+            beam.SetChargeLevel(0.0)            # idle, recharging
+        for cannon in w.weapons("Vorcha", PULSE):
+            cannon.SetChargeLevel(0.0)
+
+    def script(w, t):
+        if t != 2:
+            return
+        log = calls[w.native] = []
+        real = ws._EnergyWeaponFireMixin.UpdateCharge
+
+        def patched(self, dt):
+            log.append((w.n, w.label(self)))
+            real(self, dt)
+        # The arm's own monkeypatch: undone when the arm ends.
+        w.mp.setattr(ws._EnergyWeaponFireMixin, "UpdateCharge", patched)
+
+    ticks = 8
+    _ref, nat, counts = run_both(monkeypatch.context, script, ticks,
+                                 setup=setup, passive=False)
+    pulses = len(nat.weapons("Vorcha", PULSE))
+    tractors = sum(len(nat.weapons(s, TRACTOR)) for s in nat.ships)
+    banks = sum(len(nat.weapons(s, PHASER)) for s in nat.ships)
+    assert pulses and tractors and banks
+    # The patch is reached by the pulse cannons and the idle tractors.
+    labels = {lbl for _n, lbl in calls[False]}
+    for x in nat.weapons("Vorcha", PULSE) + nat.weapons("Galaxy", TRACTOR):
+        assert nat.label(x) in labels, nat.label(x)
+    assert calls[True] == calls[False]
+    # From the patch on (the session of tick 3): every energy weapon.
+    assert _override(counts) == (ticks - 2) * (pulses + tractors + banks), \
+        counts
+
+
+def test_mixin_patch_flags_the_pulse_and_tractor_classes(monkeypatch):
+    """_k0_flag compares every MRO class's own entries, not only the first
+    one each name resolves to."""
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
+    for cls in (ws.PulseWeapon, ws.TractorBeam, ws.PhaserBank):
+        assert nc._k0_flag(cls) == 0, cls
+    real = ws._EnergyWeaponFireMixin.UpdateCharge
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "UpdateCharge",
+                        lambda self, dt: real(self, dt))
+    for cls in (ws.PulseWeapon, ws.TractorBeam, ws.PhaserBank):
+        assert nc._k0_flag(cls) == 1, cls
+
+
+def test_verdict_cache_owns_its_types(monkeypatch):
+    """The binding's class verdict cache re-validates every type it keeps
+    by reading the type, every scan: it must hold a REFERENCE to each, so a
+    test-local subclass it has seen cannot be freed under it (other engine
+    caches keyed by class hold it too, so "freed" cannot be staged here;
+    the reference count is what pins it). Released by
+    combat_k0_clear_caches (reset); sessions after it run correctly."""
+    import sys
+    from tests.helpers.k0_fight import World
+
+    class _Local(ws.PhaserBank):
+        pass
+
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_typeref")
+        try:
+            bank = w.weapons("Galaxy", PHASER)[0]
+            _swap_class(bank, _Local)
+            w.tick()
+            w.tick()
+            _swap_class(bank, ws.PhaserBank)
+            w.tick()
+            held = sys.getrefcount(_Local)
+            _h.combat_k0_clear_caches()
+            assert sys.getrefcount(_Local) == held - 1
+            w.tick()                    # the cache refills without _Local
+            assert sys.getrefcount(_Local) == held - 1
+            for _ in range(3):
+                w.tick()
+            assert _override(nc.counts()) == 0
+            nc.audit_mirror()
+            assert nc.audit_failures() == []
+        finally:
+            w.close()
+
+
+def test_object_cache_is_gated_to_verified_pythons(monkeypatch):
+    """The per-object answer cache keys on the dict's PEP 509
+    ma_version_tag, verified on CPython 3.11 only: other versions take the
+    uncached path. On the running version, an instance attribute set on a
+    weapon whose dict is materialized -- by setattr, and by a direct
+    __dict__ store -- drops the cached answer at the next session."""
+    import sys
+    from tests.helpers.k0_fight import World
+    enabled = _h.combat_k0_object_cache()
+    assert enabled == (sys.version_info[:2] == (3, 11))
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_objcache")
+        try:
+            w.tick()
+            w.tick()
+            if enabled:
+                assert _h.combat_k0_cache_sizes()[3] > 0
+            bank = w.weapons("Galaxy", PHASER)[1]
+            d = bank.__dict__                   # materialized
+            calls = []
+            real = bank.UpdateCharge
+
+            def patched(dt):
+                calls.append(dt)
+                real(dt)
+            bank.UpdateCharge = patched
+            w.tick()
+            assert (_override(nc.counts()), len(calls)) == (1, 1)
+            del d["UpdateCharge"]
+            w.tick()
+            assert (_override(nc.counts()), len(calls)) == (1, 1)
+            d["UpdateCharge"] = patched
+            w.tick()
+            assert (_override(nc.counts()), len(calls)) == (2, 2)
+        finally:
+            w.close()
