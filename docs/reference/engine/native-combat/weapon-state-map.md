@@ -1,3 +1,5 @@
+> **Implemented 2026-11-02** on branch `ws/combat-weapon-state` (tip `1d714e767`): C-applied write logs, the one-call scalar push and kernel K0 (charging and reloading). Outcome, measurements and rulings: `docs/superpowers/specs/2026-11-02-native-weapon-state-design.md` §10. The rows below are the pre-build snapshot (§4.1's `K1Write` field note was updated since).
+
 > Snapshot map written 2026-11-02 at commit 9102c2f34 (branch `ws/combat-native-damage`). It covers weapon charging and reloading (`sim.weapons`) and the weapon fields the K1/K2 kernels log back to Python. It is the factual input for "charging native + native-owned logged fields". It maps facts and does not design anything. Line numbers drift. "Inferred" marks anything not read directly in code or measured.
 
 # Weapon state map: charging, reloading and the logged fields
