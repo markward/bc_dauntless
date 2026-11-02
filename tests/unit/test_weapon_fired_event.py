@@ -44,13 +44,15 @@ class _Target:
         return False
 
 
-def test_plain_event_object_pointer_defaults_to_none():
-    evt = App.TGEvent_Create()
-    assert evt.GetObjPtr() is None
-    thing = object()
-    evt.SetObjPtr(thing)
-    assert evt.GetObjPtr() is thing
-    assert TGEvent().GetObjPtr() is None
+def test_weapon_fired_is_an_object_pointer_event(fired):
+    """ET_WEAPON_FIRED is a TGObjPtrEvent (the class whose object pointer
+    the SDK handlers read); a plain TGEvent has no real object pointer."""
+    from engine.appc.actions import TGObjPtrEvent
+    bank = make_charged_bank()
+    bank.Fire(target=_Target())
+    assert len(fired) == 1 and isinstance(fired[0], TGObjPtrEvent)
+    assert App.TGObjPtrEvent_Create().GetObjPtr() is None
+    assert "GetObjPtr" not in vars(TGEvent)
 
 
 def test_phaser_first_fire_carries_the_target(fired):
@@ -95,6 +97,21 @@ def test_pulse_shot_posts_one_event_per_shot_with_the_target(fired):
     assert all(e.GetObjPtr() is target and e.GetSource() is cannon
                for e in fired)
     assert fired[0].GetDestination() is ship
+
+
+def test_pulse_shot_with_no_bolt_posts_nothing(fired, monkeypatch):
+    """No bolt spawned (no projectile script, no ship): no shot happened,
+    so no ET_WEAPON_FIRED -- the charge and cooldown are spent as before."""
+    from engine.appc import weapon_subsystems as ws
+    from tests.unit.test_pulse_weapon_fire import _pulse_weapon
+    cannon = _pulse_weapon()
+    monkeypatch.setattr(ws, "_spawn_projectile", lambda *a, **kw: None)
+    cannon._cooldown_remaining = 0.0
+    cannon._charge_level = cannon._max_charge
+    assert cannon.Fire(_Target(), None) is True
+    assert fired == []
+    assert cannon._charge_level < cannon._max_charge
+    assert cannon._cooldown_remaining > 0.0
 
 
 def test_tractor_posts_no_weapon_fired(fired):

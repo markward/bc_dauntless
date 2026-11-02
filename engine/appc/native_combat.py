@@ -462,7 +462,10 @@ def _drop(obj) -> None:
     # it is gone (effect_queue._resolve), losing events the Python reference
     # posts for this live object: they name the object instead (combat fire
     # events Task 4). A FREED object (the finalizer's unregister) has none.
-    _h.combat_effect_rebind(h, obj)
+    # Guarded like the other optional bindings: a .so without it has no
+    # queue to rebind (and runs with the switch off).
+    if hasattr(_h, "combat_effect_rebind"):
+        _h.combat_effect_rebind(h, obj)
     unregister_handle(h)
     if not _enabled:
         return

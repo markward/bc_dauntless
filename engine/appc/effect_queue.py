@@ -44,7 +44,18 @@ unregistered by the time its batch is taken is skipped and counted
 a value the mirror cannot hold) is not gone -- _drop first rebinds the
 entries still queued naming it to the object (combat_effect_rebind), and a
 batch being delivered had its handles resolved when it was taken (_drain),
-so either way they are delivered. An entry whose
+so either way they are delivered. Two consequences of delivering
+later than the reference acted:
+  * A LOOP_STOP whose bank is gone by delivery (skipped_gone) stops
+    nothing: the queue holds the bank, never its loop handle, so that loop
+    would play on. Not reachable today: the host loop's tick list
+    (`_ships_this_tick`) holds every ship, and through it its banks, alive
+    across the flush, and a bank whose row was dropped is rebound, not
+    skipped. Hold the handle in the entry if that ever changes.
+  * A kernel WATCH names the weapon; it is delivered to the charge watcher
+    the weapon holds AT DELIVERY (`weapon._charge_watcher`): a watcher
+    swapped in between gets the crossing, the one swapped out does not.
+An entry whose
 delivery raises does not stop the rest (decision 13): in play it is logged
 and delivery carries on; under tests and ``--developer`` the flush delivers
 the rest, then re-raises the first error with each later one noted on it.
@@ -102,9 +113,11 @@ def deferring() -> bool:
 
 
 @contextlib.contextmanager
-def scope():
+def scope(profile=None):
     """Open the deferral scope; the outermost exit flushes. A scope a
-    reset() closed exits doing nothing."""
+    reset() closed exits doing nothing. `profile`: a frame-profiler row the
+    exit's flush is timed under (host_loop: "sim.effects"), None for no
+    timing."""
     global _depth
     epoch = _epoch
     _depth += 1
@@ -115,7 +128,7 @@ def scope():
             # The tick raised: what it produced is still delivered, and a
             # delivery error rides on the tick's own, never replaces it.
             try:
-                flush()
+                _exit_flush(profile)
             except Exception as x:
                 body.add_note("combat effect queue: the flush at the scope's "
                               "exit raised %s: %s" % (type(x).__name__, x))
@@ -124,7 +137,16 @@ def scope():
         raise
     else:
         if _close(epoch):
-            flush()
+            _exit_flush(profile)
+
+
+def _exit_flush(profile) -> None:
+    if profile is None:
+        flush()
+        return
+    from engine.core import frame_profiler
+    with frame_profiler.scope(profile):
+        flush()
 
 
 def _close(epoch) -> bool:
@@ -186,6 +208,17 @@ def session_ended() -> None:
     included (see the module docstring); session() calls it."""
     if not deferring():
         flush()
+
+
+def check_acting_directly(what: str) -> None:
+    """For a producer that posts a queued kind directly, by design only
+    where nothing defers (TorpedoSystem._post_cant_fire: ET_CANT_FIRE is
+    ET_WEAPON_FIRE_FAILED): under tests and --developer, raise if it runs
+    while the queue defers -- one kind on two paths (ruling E4). In play,
+    nothing."""
+    if deferring() and _strict():
+        raise AssertionError(
+            "combat effect queue: %s posted directly while deferring" % what)
 
 
 def post(kind: int, *operands) -> None:
@@ -328,7 +361,8 @@ def _torpedo_reload(tube):
 def _watch(watcher, old, new):
     from engine.appc.float_range_watcher import FloatRangeWatcher
     if not isinstance(watcher, FloatRangeWatcher):
-        watcher = watcher._charge_watcher       # a kernel's: the weapon
+        # A kernel's names the weapon: its watcher as of NOW (see DELIVERY).
+        watcher = watcher._charge_watcher
     watcher._fire_crossed(old, new)
 
 

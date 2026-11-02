@@ -59,7 +59,7 @@ from engine.appc.ship_iter import iter_ships
 from engine.core import loop as game_loop
 from engine.core.loop import TICK_DELTA
 from engine.appc import sensor_contacts
-from tests.helpers import bc_assets
+from tests.helpers import bc_assets, effect_split
 from tests.helpers.k0_fight import charge_toggle_type
 from tests.helpers.k3_fight import check_weapon_state_paths
 from tests.integration import test_native_k1_differential as k1d
@@ -354,6 +354,9 @@ def _check_native_ran(ref, nat, ticks=TICKS):
     c = nat.counts
     check_weapon_state_paths(c)
     assert ref.counts["k0_steps"] == 0, ref.counts
+    # Banks were stopped (depleted, or by the op stream) with their loops
+    # playing, and those stops compared.
+    assert effect_split.stops(ref.queued) > 0, ref.queued.rows[:20]
     assert c["k0_records"]["DONE"] == ticks, c["k0_records"]
     assert not any(c["k0_python_step_reasons"].values()), c
     # Every owned watcher's value equalled its row's `_watch_value`, every

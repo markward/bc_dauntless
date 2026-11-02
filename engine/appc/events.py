@@ -124,15 +124,6 @@ class TGEvent(TGObject):
         # BC's TGIEvent handled flag — see SetHandled below. Eager init so
         # TGObject.__getattr__ can never vend a truthy _Stub for it.
         self._handled: int = 0
-        # The object pointer SetObjPtr/GetObjPtr carry (ET_WEAPON_FIRED's
-        # target); None until set, so an event with none reads None.
-        self._obj_ptr = None
-
-    def SetObjPtr(self, obj) -> None:
-        self._obj_ptr = obj
-
-    def GetObjPtr(self):
-        return self._obj_ptr
 
     def SetHandled(self) -> None:
         """Mark this event as consumed, BC's TGIEvent.SetHandled

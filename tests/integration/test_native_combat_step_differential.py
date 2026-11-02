@@ -232,6 +232,8 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
             assert row == ref_row, "%s: state differs at tick %d" % (name, tick)
         assert events == ref_events, name
         effect_split.compare(ref_queued, queued, name)
+    # Firing banks were stopped, and their loop stops compared.
+    assert effect_split.stops(ref_queued) > 0, ref_queued.rows[:20]
     assert failures == [], failures
     # Both native arms delivered their weapon events at the tick boundary;
     # the reference never opened the scope.

@@ -14,11 +14,21 @@ The queued kinds: ET_WEAPON_FIRED, ET_WEAPON_FIRE_FAILED, ET_TORPEDO_FIRED
 with a source (a launch; an unload has none and is not queued),
 ET_TORPEDO_AMMO_CONSUMED, ET_TORPEDO_RELOAD, every event a weapon's charge
 watcher fires, and the bank sounds: `_play_fire_sfx` ("play") and a loop
-actually stopped by `_stop_loop_sound` ("stop").
+actually stopped by `_stop_loop_sound` ("stop"). Headless, no sound plays
+(Play returns no handle), so the play spy gives a bank that got none a
+stand-in loop handle, in both arms: its stops are then real stops, and
+compared.
 """
 import App
 
 from engine.appc import weapon_subsystems as ws
+
+
+class StandInLoop:
+    """A loop handle for a bank whose fire sound played none (headless)."""
+
+    def Stop(self):
+        pass
 from engine.appc.float_range_watcher import FloatRangeWatcher
 
 
@@ -48,7 +58,10 @@ class Queued:
 
         def play_spy(bank, _orig=play):
             self.rows.append(("sound", "play", self.label(bank), self.tick()))
-            return _orig(bank)
+            result = _orig(bank)
+            if bank.__dict__.get("_loop_handle") is None:
+                bank._loop_handle = StandInLoop()
+            return result
 
         def stop_spy(bank, _orig=stop):
             if bank.__dict__.get("_loop_handle") is not None:
@@ -76,6 +89,11 @@ class Queued:
         if t not in self.types:
             return False
         return t != App.ET_TORPEDO_FIRED or evt.GetSource() is not None
+
+
+def stops(q) -> int:
+    """The loop stops an arm recorded."""
+    return sum(1 for r in q.rows if r[:2] == ("sound", "stop"))
 
 
 def compare(ref, nat, what="queued"):

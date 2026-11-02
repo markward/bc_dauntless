@@ -53,6 +53,7 @@ from engine.appc import part_pose
 from engine.appc import passive_state
 from engine.appc import sensor_contacts
 from engine.appc import weapon_subsystems as ws
+from engine.appc.actions import TGObjPtrEvent
 from engine.appc.events import WeaponHitEvent
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.ship_iter import iter_ships
@@ -283,7 +284,8 @@ class _Scene:
         other event's payload is its object pointer (ET_WEAPON_FIRED's
         target)."""
         if not isinstance(evt, WeaponHitEvent):
-            return self.label(evt.GetObjPtr())
+            return (self.label(evt.GetObjPtr())
+                    if isinstance(evt, TGObjPtrEvent) else None)
         return (_t(evt.GetDamage()), _vec(evt.GetHitPoint()),
                 _vec(evt.GetNormal()), _t(evt.GetRadius()),
                 _t(evt.IsHullHit()), _t(evt.GetWeaponType()),
@@ -668,6 +670,8 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
     assert any(r[4] == ("bool", True) for rows in ref.log
                for r in rows[banks]), "no bank ran dry"
     assert ref.manual
+    # Lit banks were stopped, and their loop stops compared.
+    assert effect_split.stops(ref.queued) > 0, ref.queued.rows[:20]
     _round_trips_ran(nat)
     print("k1 differential (tpf=%d): counts %r walked %r fired %r "
           "events %d presentation calls %d"

@@ -27,6 +27,7 @@ from engine import host_loop  # noqa: E402
 from engine.appc import effect_queue as eq  # noqa: E402
 from engine.appc import native_combat as nc  # noqa: E402
 from engine.appc import weapon_subsystems as ws  # noqa: E402
+from engine.appc.actions import TGObjPtrEvent  # noqa: E402
 from engine.appc.float_range_watcher import FloatRangeWatcher  # noqa: E402
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
@@ -57,7 +58,8 @@ def events(monkeypatch):
     orig = App.g_kEventManager.AddEvent
 
     def add_event(evt, _orig=orig):
-        ptr = evt.GetObjPtr() if hasattr(evt, "GetObjPtr") else None
+        ptr = (evt.GetObjPtr() if isinstance(evt, TGObjPtrEvent)
+               else None)
         log.append((evt.GetEventType(), evt.GetSource(),
                     evt.GetDestination(), ptr))
         return _orig(evt)
@@ -180,6 +182,43 @@ def test_switch_off_never_opens_the_scope():
     assert not eq.deferring()
 
 
+@pytest.fixture
+def profiler():
+    from engine.core import frame_profiler as fp
+    fp.set_enabled(False, native=False)
+    fp.reset()
+    fp.set_enabled(True, native=False)
+    yield fp
+    fp.set_enabled(False, native=False)
+    fp.reset()
+
+
+def test_the_tick_flush_is_its_own_profiler_row(monkeypatch, profiler):
+    """The delivery at the tick scope's close is timed as "sim.effects",
+    under the row the scope sits in; with the switch off there is no such
+    row (the scope is never opened)."""
+    fp = profiler
+    stack = []
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx",
+                        lambda self: stack.append(list(fp._scope_stack)))
+    for native in (False, True):
+        if native:
+            nc.configure(ON)
+        fp.begin_frame()
+        with fp.scope("sim"):
+            with host_loop._combat_effect_scope():
+                ws._EnergyWeaponFireMixin._fire_effect(
+                    _bank("A"), _bank("T"), None, (False,))
+        fp.end_frame()
+        if not native:
+            assert "sim.effects" not in fp.calls(), fp.calls()
+            assert stack == [["sim"]]           # played at once, in "sim"
+            stack.clear()
+    assert fp.parents()["sim.effects"] == "sim"
+    assert fp.calls()["sim.effects"] == 1
+    assert stack == [["sim", "sim.effects"]]
+
+
 def test_host_loop_tick_runs_weapons_and_combat_inside_the_scope():
     """The sim tick opens the scope around sim.weapons and sim.combat."""
     import inspect
@@ -267,6 +306,17 @@ def test_python_reference_keeps_its_object_alive(calls):
         eq.post(eq.FIRE_SOUND, _bank("Held"))
         gc.collect()
     assert calls == [("play", "Held")]
+
+
+def test_drop_without_the_rebind_binding_does_not_raise(monkeypatch):
+    """A stale .so with no combat_effect_rebind: dropping a row (switch
+    off) still works."""
+    import types
+    bank = _bank("A")
+    stale = types.SimpleNamespace(combat_unregister=_h.combat_unregister)
+    monkeypatch.setattr(nc, "_h", stale)
+    nc._drop(bank)
+    assert "_nslot" not in bank.__dict__
 
 
 # ── Decision 13 ──────────────────────────────────────────────────────────────
@@ -652,6 +702,23 @@ def test_ammo_consumed_reads_the_player_gate_at_delivery(events,
         tube._broadcast_ammo_consumed_if_player()   # the player now...
         player[0] = None                            # ...not at delivery
     assert events == []
+
+
+def test_cant_fire_posted_while_deferring_raises_when_strict(events,
+                                                            monkeypatch):
+    """ET_CANT_FIRE is ET_WEAPON_FIRE_FAILED, posted directly by design
+    (StartFiring, outside any deferral): an in-scope post raises under
+    tests / --developer, posts in play, and posts outside as before."""
+    system = ws.TorpedoSystem("Torps")
+    system._post_cant_fire()
+    assert [e[0] for e in events] == [App.ET_CANT_FIRE]
+    with pytest.raises(AssertionError, match="ET_CANT_FIRE"):
+        with eq.scope():
+            system._post_cant_fire()
+    monkeypatch.setattr(eq, "_strict", lambda: False)
+    with eq.scope():
+        system._post_cant_fire()
+    assert [e[0] for e in events] == [App.ET_CANT_FIRE] * 2
 
 
 def test_tube_producers_act_at_once_outside(events):

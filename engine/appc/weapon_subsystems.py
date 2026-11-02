@@ -697,10 +697,11 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
 
 
 def _post_weapon_fired(weapon, target) -> None:
-    """Post ET_WEAPON_FIRED: Source = the firing weapon, Destination = the
-    owning ship (resolved via ``_climb_to_ship``), object pointer = the
-    target the shot went at (None for a dumbfire) -- the SDK's WeaponFired
-    handlers (E1M2, E2M1) ShipClass_Cast it and return when it is None.
+    """Post ET_WEAPON_FIRED, a TGObjPtrEvent: Source = the firing weapon,
+    Destination = the owning ship (resolved via ``_climb_to_ship``), object
+    pointer = the target the shot went at (None for a dumbfire) -- the SDK's
+    WeaponFired handlers (E1M2, E2M1) ShipClass_Cast it and return when it
+    is None.
     Shared by TorpedoTube.Fire (posted AFTER ET_TORPEDO_FIRED -- see
     TorpedoTube._broadcast_weapon_fired), PhaserBank.Fire (posted on the
     was-not-firing edge, Task 10, audited §1.6/§6) and PulseWeapon's shot
@@ -713,7 +714,7 @@ def _post_weapon_fired(weapon, target) -> None:
     import App
     from engine import dev_mode
     try:
-        evt = App.TGEvent_Create()
+        evt = App.TGObjPtrEvent_Create()
         evt.SetEventType(App.ET_WEAPON_FIRED)
         evt.SetSource(weapon)
         evt.SetDestination(weapon._climb_to_ship())
@@ -1947,9 +1948,10 @@ class TorpedoSystem(WeaponSystem):
         unguarded in general. Revisit once these handlers are live-verified.
         """
         # ET_CANT_FIRE IS ET_WEAPON_FIRE_FAILED, a queued kind -- but this is
-        # reached only from StartFiring, never inside the tick's effect
-        # scope, so it posts at once (an in-scope post would split the
-        # kind: the differentials' queued list would catch it).
+        # reached only from StartFiring, never while the effect queue
+        # defers, so it posts at once (an in-scope post would split the
+        # kind; under tests and --developer it raises instead).
+        effect_queue.check_acting_directly("ET_CANT_FIRE")
         import App
         evt = App.TGEvent_Create()
         evt.SetEventType(App.ET_CANT_FIRE)
@@ -3005,9 +3007,11 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         # where BC waits ~2 s.  No held beam.
         self._charge_level = max(0.0, self._charge_level - self._shot_cost())
         self._cooldown_remaining = self.GetCooldownTime()
-        # One ET_WEAPON_FIRED per shot, once the bolt exists; decision[1] is
-        # the target the shot used (the weapon's, else the ship's).
-        _post_weapon_fired(self, decision[1])
+        # One ET_WEAPON_FIRED per shot, once the bolt exists (no bolt, no
+        # shot to report); decision[1] is the target the shot used (the
+        # weapon's, else the ship's).
+        if torp is not None:
+            _post_weapon_fired(self, decision[1])
         return True
 
     def UpdateCharge(self, dt: float) -> None:

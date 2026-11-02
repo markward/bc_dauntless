@@ -1009,6 +1009,8 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
                                                ticks_per_frame):
     t0 = time.perf_counter()
     ref, nat = _both(monkeypatch, host, ticks_per_frame)
+    # Firing banks were stopped, and their loop stops compared.
+    assert effect_split.stops(ref.queued) > 0, ref.queued.rows[:20]
     elapsed = time.perf_counter() - t0
     n = nat.tally.n
     reasons = nat.counts["k2_python_reasons"]

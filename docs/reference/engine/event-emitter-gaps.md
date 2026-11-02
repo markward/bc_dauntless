@@ -649,17 +649,20 @@ and return when it is `None` — so E1M2's `WeaponFired` (`E1M2.py:1384`, the
 the Karoon) never got past that line. (2) `PulseWeapon` never posted the event
 at all.
 
-**Fix:** `TGEvent` has a real `SetObjPtr`/`GetObjPtr` pair (an event with none
-set reads `None`), and `weapon_subsystems._post_weapon_fired(weapon, target)`
-sets it. Phaser (was-not-firing edge), tube (after `ET_TORPEDO_FIRED`, before
+**Fix:** `weapon_subsystems._post_weapon_fired(weapon, target)` posts the
+event as a `TGObjPtrEvent` (`App.TGObjPtrEvent_Create()`, the object-pointer
+event class the handlers read) and sets the target as its object pointer; a
+plain `TGEvent` keeps no object pointer. Phaser (was-not-firing edge), tube (after `ET_TORPEDO_FIRED`, before
 `ET_TORPEDO_AMMO_CONSUMED`) and pulse (`PulseWeapon._fire_effect`, once per
-shot after the bolt is spawned, with the target the shot used) all pass their
+shot after the bolt is spawned -- none when no bolt spawned -- with the target
+the shot used) all pass their
 target; tractors still post nothing. It lives in `_fire_effect`, so it holds
 with native combat on and off. Pinned by `tests/unit/test_weapon_fired_event.py`
 and `tests/integration/test_weapon_fired_mission_handlers.py`.
 
 
 **Newly live with the fix (not verified in play):** E2M2's and E6M4's broadcast `WeaponFired` handlers also get past their early return now. E6M4 plays a Kessok combat line; E2M2 turns Cardassian ships hostile when they are fired on, as its script intends.
+
 ---
 
 ## Summary table

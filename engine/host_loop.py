@@ -962,9 +962,10 @@ def _combat_effect_scope():
     (engine/appc/effect_queue.py, spec 2026-11-02-combat-fire-events §4.1).
     Switch off it opens nothing and every producer acts at once. A caller
     running _advance_weapons / _advance_combat by itself (a test, a tool)
-    gets no scope unless it opens this."""
+    gets no scope unless it opens this. The delivery at its close is its
+    own frame-profiler row, "sim.effects" (under "sim" in the host loop)."""
     if _native_combat.enabled():
-        return _effect_queue.scope()
+        return _effect_queue.scope(profile="sim.effects")
     return contextlib.nullcontext()
 
 
