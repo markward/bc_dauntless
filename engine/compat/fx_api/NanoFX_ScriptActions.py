@@ -1,7 +1,8 @@
 """Custom.NanoFXv2.NanoFX_ScriptActions on Dauntless systems
 (spec 2026-10-16 §8.4). Script-action functions return 0 (BC: "completed").
 Its random draws are the presentation generator's
-(engine/appc/presentation_rng.py)."""
+(engine/appc/presentation_rng.py), except SetNanoRotation's spin kick, which
+sets physics."""
 import App
 
 from engine.appc import glow_maps
@@ -51,7 +52,8 @@ def NanoDamageShip(pAction, pObject, vEmitPos, fRadius, fDamage):
 
 
 def SetNanoRotation(pAction, pShip, fRotation, fSpeed):
-    rnd = presentation_rng.rand
+    # The spin kick is a physics write, so it draws the gameplay stream.
+    rnd = App.g_kSystemWrapper.GetRandomNumber
     if fSpeed:
         v = App.TGPoint3()
         v.SetXYZ(fSpeed, fSpeed, fSpeed)

@@ -28,6 +28,12 @@ PRESENTATION_MODULES = (
     "engine/compat/fx_api/NanoFX_ScriptActions.py",
 )
 
+# Functions of a presentation module that write physics, so draw gameplay.
+GAMEPLAY_FUNCTIONS = {
+    "engine/compat/fx_api/NanoFX_Lib.py": ("CreateRotationSeq",),
+    "engine/compat/fx_api/NanoFX_ScriptActions.py": ("SetNanoRotation",),
+}
+
 # The presentation functions of modules that also hold gameplay draws.
 PRESENTATION_FUNCTIONS = {
     "engine/appc/death_cascade.py": ("roll_blast_scale", "_fire_final",
@@ -63,7 +69,21 @@ def _parse(rel):
 
 @pytest.mark.parametrize("rel", PRESENTATION_MODULES)
 def test_presentation_module_draws_no_gameplay_stream(rel):
-    assert _gameplay_draws(_parse(rel)) == [], rel
+    tree = _parse(rel)
+    exempt = GAMEPLAY_FUNCTIONS.get(rel, ())
+    tree.body = [n for n in tree.body
+                 if not (isinstance(n, ast.FunctionDef) and n.name in exempt)]
+    assert _gameplay_draws(tree) == [], rel
+
+
+@pytest.mark.parametrize("rel,name", [
+    (rel, name) for rel, names in GAMEPLAY_FUNCTIONS.items()
+    for name in names])
+def test_physics_writer_draws_the_gameplay_stream(rel, name):
+    funcs = [n for n in ast.walk(_parse(rel))
+             if isinstance(n, ast.FunctionDef) and n.name == name]
+    assert len(funcs) == 1, (rel, name)
+    assert [w for _l, w in _gameplay_draws(funcs[0])] == ["GetRandomNumber"]
 
 
 @pytest.mark.parametrize("rel,name", [

@@ -1,7 +1,8 @@
 """Custom.NanoFXv2.NanoFX_Lib -- NanoFX 2.0's public helper API rebuilt on
 Dauntless systems (spec 2026-10-16 §8.2). The import name is fixed by the
 mods that call it; nothing here is NanoFX's code. Its random draws are the
-presentation generator's (engine/appc/presentation_rng.py)."""
+presentation generator's (engine/appc/presentation_rng.py), except the spin
+roll, which sets physics."""
 import App
 
 from engine.appc import presentation_rng
@@ -45,7 +46,8 @@ def _action(func, *args):
 def CreateRotationSeq(pShip, fRotation=None, fSpeed=None):
     seq = App.TGSequence_Create()
     if fRotation is not None:
-        fRotation = (presentation_rng.rand(int(fRotation)) + fRotation) * 0.01
+        # A spin is a physics write, so it draws the gameplay stream.
+        fRotation = (App.g_kSystemWrapper.GetRandomNumber(int(fRotation)) + fRotation) * 0.01
     seq.AddAction(_action("SetNanoRotation", pShip, fRotation, fSpeed))
     return seq
 
