@@ -41,6 +41,9 @@ enum class TorpField : int32_t {
     // (target, x, y, z, (bx, by, bz)) or None: baked_attributed, baked_key,
     // baked
     _baked_offset,
+    // double: the hit K3 applies (native damage Task 4): the torpedo's
+    // damage and its DamageRadiusFactor (weapon_splash_radius's R_hit)
+    _damage, _damage_radius_factor,
     kCount
 };
 
@@ -54,6 +57,7 @@ struct TorpedoRow {
     int64_t xform_index = -1, xform_gen = -1;
     double age = 0.0, ttl = 0.0, guidance_lifetime = 0.0,
            guidance_initial = 0.0, max_angular_accel = 0.0;
+    double damage = 0.0, damage_radius_factor = 0.0;
     Vec3 vel{0, 0, 0};
     int64_t target = -1;
     Vec3 target_offset{0, 0, 0};

@@ -57,7 +57,7 @@ class Torpedo(ObjectClass):
     regardless. The fields the native K3 kernel reads (`_age`, `_ttl`,
     `_guidance_*`, `_max_angular_accel`, `_target_ship`, `_target_offset`,
     `_last_seen_target_pos`, `_last_target_vel`, `_mount_key`,
-    `_baked_offset`) are NOT slots:
+    `_baked_offset`, `_damage`, `_damage_radius_factor`) are NOT slots:
     they are `native_combat.TorpedoField` descriptors (a slot and a
     descriptor cannot share a name), so their values live in the instance
     __dict__ and every write reaches the torpedo's table row. The rest keep
@@ -68,7 +68,6 @@ class Torpedo(ObjectClass):
     """
     __slots__ = (
         "_vel",
-        "_damage", "_damage_radius_factor",
         "_src", "_cset", "_scan_live", "_rad",
         "_id", "_bubble_entry",
         "_core_texture", "_core_color", "_core_size_a", "_core_size_b",
@@ -95,6 +94,9 @@ class Torpedo(ObjectClass):
     _last_target_vel = _nc.TorpedoField()
     _mount_key = _nc.TorpedoField()
     _baked_offset = _nc.TorpedoField()
+    # The hit K3 applies itself (native damage Task 4).
+    _damage = _nc.TorpedoField()
+    _damage_radius_factor = _nc.TorpedoField()
 
     def __init__(self):
         # Before super(): ObjectClass.__init__ assigns _containing_set, whose

@@ -11545,12 +11545,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_field_names", [] {
             // Python attribute name -> field id. Subsystem._radius shares the
-            // name of Object._radius, so it is keyed "Subsystem._radius".
+            // name of Object._radius, so it is keyed "Subsystem._radius";
+            // Object._invincible shares Subsystem._invincible's, so it is
+            // keyed "Object._invincible".
             py::dict d;
             for (int i = 0; i < static_cast<int>(cb::Field::kCount); ++i) {
                 auto f = static_cast<cb::Field>(i);
                 std::string n = cb::field_name(f);
                 if (f == cb::Field::s_radius) n = "Subsystem._radius";
+                if (f == cb::Field::o_invincible) n = "Object._invincible";
                 d[py::str(n)] = i;
             }
             return d;
@@ -11717,6 +11720,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 d["guidance_lifetime"] = r.guidance_lifetime;
                 d["guidance_initial"] = r.guidance_initial;
                 d["max_angular_accel"] = r.max_angular_accel;
+                d["damage"] = r.damage;
+                d["damage_radius_factor"] = r.damage_radius_factor;
                 d["vel"] = vec(r.vel);
                 d["target"] = mi.torpedo_ref(r, cb::TorpField::_target_ship);
                 d["target_offset"] = opt(r.target_offset_set, r.target_offset);

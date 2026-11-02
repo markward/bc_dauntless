@@ -2746,6 +2746,10 @@ _TORP_FIELDS = {
     "_containing_set": (_enc_ref("Set"), "r", "cset"),
     "_mount_key": (_enc_mount, "m", None),
     "_baked_offset": (_enc_baked, "b", None),
+    # The hit K3 applies at DONE (native damage Task 4).
+    "_damage": (lambda t, v: _num(v), "f", "damage"),
+    "_damage_radius_factor": (lambda t, v: _num(v), "f",
+                              "damage_radius_factor"),
 }
 # The fields kept in the torpedo's __dict__ (TorpedoField); the other three
 # are Torpedo properties over the `_vel` / `_src` / `_cset` slots.

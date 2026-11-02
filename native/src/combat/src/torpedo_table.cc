@@ -16,6 +16,7 @@ constexpr const char* kNames[] = {
     "_max_angular_accel", "_velocity", "_target_offset",
     "_last_seen_target_pos", "_last_target_vel", "_target_ship",
     "_source_ship", "_containing_set", "_mount_key", "_baked_offset",
+    "_damage", "_damage_radius_factor",
 };
 static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
               static_cast<size_t>(TorpField::kCount));
@@ -111,6 +112,8 @@ void TorpedoTable::set_f(int64_t h, TorpField f, double v) {
         case TorpField::_guidance_lifetime: r.guidance_lifetime = v; break;
         case TorpField::_guidance_initial: r.guidance_initial = v; break;
         case TorpField::_max_angular_accel: r.max_angular_accel = v; break;
+        case TorpField::_damage: r.damage = v; break;
+        case TorpField::_damage_radius_factor: r.damage_radius_factor = v; break;
         default: bad("not a double field", f);
     }
     r.unrepresentable &= ~bit(f);

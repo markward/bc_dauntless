@@ -355,6 +355,11 @@ class ShipSubsystem(TGEventHandlerObject):
     _arc_set = NativeField(bool)
     # Phaser-strip length (K2 reads it for the emitter position).
     _length = NativeField(float)
+    # A phaser bank's pulse damage and R_hit (K2 applies the pulse in the
+    # walk: native damage Task 4), copied from its property.
+    _max_damage = NativeField(float)
+    _max_damage_distance = NativeField(float)
+    _damage_radius_factor = NativeField(float)
     # In its bay's repair queue (RepairSubsystem._queue keeps it, ruling I3):
     # a write below max emits REPAIR_ADD only when this is False.
     # Native damage (Task 3) reads these through the mirror too: the

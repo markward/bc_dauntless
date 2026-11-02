@@ -245,3 +245,77 @@ def test_a_class_overriding_the_chain_is_flagged():
             return 0.5
     assert _row(Patched("odd"))["dmg_class"] == nc.DMG_PYTHON
     _clean()
+
+
+# ── What K2 and K3 read to apply a hit in the kernel (native damage Task 4) ──
+#
+#   PhaserBank   _max_damage, _max_damage_distance, _damage_radius_factor
+#                (the pulse's damage and its R_hit), from construction, the
+#                property copy and SetDamageRadiusFactor
+#   Torpedo      _damage, _damage_radius_factor (the K3 hit's damage and
+#                R_hit), in the torpedo table: construction, SetDamage,
+#                SetDamageRadiusFactor, the launcher's DRF override and the
+#                launch's damage scale
+#   ShipClass    _invincible, _splash_damage, _splash_damage_radius
+
+
+def test_a_banks_pulse_inputs_are_mirrored():
+    from engine.appc.properties import PhaserProperty
+    bank = ws.PhaserBank("Bank")
+    row = _row(bank)
+    assert _hexes((row["_max_damage"], row["_max_damage_distance"],
+                   row["_damage_radius_factor"])) == _hexes((0.0, 0.0, 0.0))
+    prop = PhaserProperty("Phaser Prop")
+    prop.SetMaxDamage(275.5)
+    prop.SetMaxDamageDistance(61.25)
+    prop.SetDamageRadiusFactor(0.375)
+    bank.SetProperty(prop)
+    row = _row(bank)
+    assert _hexes((row["_max_damage"], row["_max_damage_distance"],
+                   row["_damage_radius_factor"])) == \
+        _hexes((275.5, 61.25, 0.375))
+    bank.SetDamageRadiusFactor(0.125)
+    assert float(_row(bank)["_damage_radius_factor"]).hex() == \
+        (0.125).hex()
+    _clean()
+
+
+def test_a_torpedos_hit_inputs_are_mirrored():
+    from engine.appc import projectiles
+    nc.torpedo_table_rebuild(projectiles._active)
+    t = projectiles.Torpedo()
+    projectiles.register(t)
+    try:
+        d = _h.combat_torp_dump(t.__dict__["_k3_row"])
+        assert _hexes((d["damage"], d["damage_radius_factor"])) == \
+            _hexes((0.0, 0.0))
+        t.SetDamage(412.5)
+        t.SetDamageRadiusFactor(0.3125)
+        d = _h.combat_torp_dump(t.__dict__["_k3_row"])
+        assert _hexes((d["damage"], d["damage_radius_factor"])) == \
+            _hexes((412.5, 0.3125))
+        # The launch's damage scale (weapon_subsystems: `torp._damage =
+        # float(torp._damage) * scale`) is a plain write: pushed too.
+        t._damage = float(t._damage) * 1.5
+        d = _h.combat_torp_dump(t.__dict__["_k3_row"])
+        assert float(d["damage"]).hex() == (412.5 * 1.5).hex()
+        _clean()
+    finally:
+        projectiles.expire(t)
+
+
+def test_a_ships_invincible_and_splash_are_mirrored():
+    ship = _ship()
+    row = _row(ship)
+    assert row["_invincible"] == 0
+    assert _hexes((row["_splash_damage"], row["_splash_damage_radius"])) == \
+        _hexes((0.0, 0.0))
+    ship.SetInvincible(1)
+    ship.SetSplashDamage(150.0, 7.5)
+    row = _row(ship)
+    assert row["_invincible"] == 1
+    assert _hexes((row["_splash_damage"], row["_splash_damage_radius"])) == \
+        _hexes((150.0, 7.5))
+    ship.SetInvincible(0)
+    assert _row(ship)["_invincible"] == 0
+    _clean()

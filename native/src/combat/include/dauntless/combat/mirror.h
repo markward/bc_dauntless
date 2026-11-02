@@ -147,6 +147,15 @@ enum class Field : int32_t {
     cond_watch_checks, comb_watch_checks, cond_watch_value, comb_watch_value,
     _current_shields, _max_shields, _ramp_fraction, _ramp_set,
     _hurtable, dmg_ship,
+    // Native damage in the kernels (Task 4): what K2's pulse reads of its
+    // phaser bank (_max_damage, _max_damage_distance; its R_hit is
+    // _damage_radius_factor above), and the ship's _invincible (o_invincible:
+    // a Subsystem field has the name) and death splash (_splash_damage,
+    // _splash_damage_radius), mirrored with every other hit input although
+    // only Python reads them today (the death check and the splash, at
+    // delivery).
+    _max_damage, _max_damage_distance, o_invincible, _splash_damage,
+    _splash_damage_radius,
     kCount
 };
 
@@ -206,6 +215,8 @@ struct ObjectRow {
     int64_t arriving = 0;
     // Native damage (Field comment above).
     int64_t _hurtable = 0, dmg_ship = 0;
+    int64_t _invincible = 0;
+    double _splash_damage = 0.0, _splash_damage_radius = 0.0;
     // Posed parts: the pose table (empty while has_posed_parts is 0) and the
     // ship's subsystems in combat._iter_subsystems order (Subsystem handles;
     // kRefUnrepresentable for one the mirror cannot name). Not Fields: set
@@ -279,6 +290,7 @@ struct SubsystemRow {
     double cond_watch_value = 0.0, comb_watch_value = 0.0;
     std::vector<double> _current_shields, _max_shields, _ramp_fraction,
         _ramp_set;
+    double _max_damage = 0.0, _max_damage_distance = 0.0;
     // Posed parts: the index into the owning ship's part_poses of the part
     // Python resolved for this subsystem's own mount (detachment ignored;
     // -1 = no posable part), stamped with the global part_gen at

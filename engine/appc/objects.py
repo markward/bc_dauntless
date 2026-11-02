@@ -896,6 +896,12 @@ class DamageableObject(PhysicsObjectClass):
     _dead = native_combat.NativeField(bool)
     _life_time = native_combat.NativeField(float)
 
+    # The death splash (SetSplashDamage), mirrored with the hit's other
+    # inputs (native damage Task 4); ship_death reads it at delivery, in
+    # Python.
+    _splash_damage = native_combat.NativeField(float)
+    _splash_damage_radius = native_combat.NativeField(float)
+
     def __init__(self):
         super().__init__()
         from engine.appc.properties import TGModelPropertySet

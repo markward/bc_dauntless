@@ -42,6 +42,11 @@ class ShipClass(DamageableObject):
     # SetHurtable(0) makes the ship immune (IsImmuneToDamage): the native
     # hit reads it (native damage Task 3).
     _hurtable = native_combat.NativeField(bool)
+    # SetInvincible(1): the ship cannot die (ruling M1). Mirrored with the
+    # hit's other inputs (native damage Task 4); the death check reads it at
+    # delivery, in Python. A Subsystem field has the name, so the key is
+    # qualified.
+    _invincible = native_combat.NativeField(bool, key="Object._invincible")
     # A rebind may change has_posed_parts (native_combat.PosedPartsField).
     _articulation_poses = native_combat.PosedPartsField()
 

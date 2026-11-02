@@ -161,6 +161,11 @@ constexpr FieldInfo kInfo[] = {
     {"_ramp_set", Kind::Subsystem, FieldType::FloatList},
     {"_hurtable", Kind::Object, FieldType::I},
     {"dmg_ship", Kind::Object, FieldType::I},
+    {"_max_damage", Kind::Subsystem, FieldType::F},
+    {"_max_damage_distance", Kind::Subsystem, FieldType::F},
+    {"_invincible", Kind::Object, FieldType::I},
+    {"_splash_damage", Kind::Object, FieldType::F},
+    {"_splash_damage_radius", Kind::Object, FieldType::F},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -275,6 +280,8 @@ double* fptr(ObjectRow& r, Field f) {
         case Field::_life_time: return &r._life_time;
         case Field::o_radius: return &r._radius;
         case Field::_scale: return &r._scale;
+        case Field::_splash_damage: return &r._splash_damage;
+        case Field::_splash_damage_radius: return &r._splash_damage_radius;
         default: return nullptr;
     }
 }
@@ -298,6 +305,7 @@ int64_t* iptr(ObjectRow& r, Field f) {
         case Field::arriving: return &r.arriving;
         case Field::_hurtable: return &r._hurtable;
         case Field::dmg_ship: return &r.dmg_ship;
+        case Field::o_invincible: return &r._invincible;
         default: return nullptr;
     }
 }
@@ -361,6 +369,8 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_damage_radius_factor: return &r._damage_radius_factor;
         case Field::cond_watch_value: return &r.cond_watch_value;
         case Field::comb_watch_value: return &r.comb_watch_value;
+        case Field::_max_damage: return &r._max_damage;
+        case Field::_max_damage_distance: return &r._max_damage_distance;
         default: return nullptr;
     }
 }
