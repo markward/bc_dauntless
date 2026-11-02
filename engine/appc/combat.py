@@ -888,21 +888,33 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
     # audio, camera shake and severance (hit_feedback.present), WEAPON_HIT
     # posts ET_WEAPON_HIT (post_weapon_hit). Their handlers run at the
     # flush, so a handler sees every hit of the tick applied.
+    # The entries are the frozen encoding (effect_queue, THE DAMAGE KINDS):
+    # no instances map in the entry -- delivery looks up the map in force
+    # (hit_feedback.delivery_instances), which a hit given one sets here.
     from engine.appc import effect_queue
-    effect_queue.emit(
-        effect_queue.HIT_PRESENT,
-        ship, source, hit_point, normal, damage, primary_subsystem,
-        absorbed_shields, absorbed_subsystem_total, absorbed_hull,
-        primary_transition, ship_instances, weapon_type, r_hit, _commit,
-        damage_hull, shield_point, hit_tangent, decal_radius, decal_dent,
-        single_impact, shield_radius)
+    if ship_instances is not None:
+        from engine.appc import hit_feedback
+        hit_feedback.use_instances(ship_instances)
+    effect_queue.emit(effect_queue.HIT_PRESENT, *effect_queue.hit_present_operands(
+        ship=ship, source=source, point=hit_point, normal=normal,
+        damage=damage, subsystem=primary_subsystem,
+        absorbed_shields=absorbed_shields,
+        absorbed_subsystem=absorbed_subsystem_total,
+        absorbed_hull=absorbed_hull, sub_transition=primary_transition,
+        has_instances=ship_instances is not None, weapon_type=weapon_type,
+        radius=r_hit, persist_decal=_commit,
+        allow_structural_wear=damage_hull, shield_point=shield_point,
+        tangent=hit_tangent, decal_radius=decal_radius,
+        decal_dent=decal_dent, single_impact=single_impact,
+        shield_radius=shield_radius))
     # The hull-vs-shield flag reuses the `post_shield > 0` branch above: any
     # damage left after the facing absorbed its share reached the hull.
-    effect_queue.emit(
-        effect_queue.WEAPON_HIT,
-        ship, source, damage, hit_point, normal, r_hit, primary_subsystem,
-        _WEAPON_TYPE_IDS.get(weapon_type, WeaponHitEvent.NON_WEAPON),
-        post_shield > 0.0)
+    effect_queue.emit(effect_queue.WEAPON_HIT, *effect_queue.weapon_hit_operands(
+        ship=ship, source=source, damage=damage, hit_point=hit_point,
+        normal=normal, radius=r_hit, subsystem=primary_subsystem,
+        weapon_type=_WEAPON_TYPE_IDS.get(weapon_type,
+                                         WeaponHitEvent.NON_WEAPON),
+        is_hull_hit=post_shield > 0.0))
 
 
 def post_weapon_hit(*, ship, source, damage, hit_point, normal, radius,

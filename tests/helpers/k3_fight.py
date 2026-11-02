@@ -390,6 +390,30 @@ def compare_calls(ref_calls, nat_calls):
                 t, ref_shown[t], nat_shown[t]))
 
 
+def _place_in_ship(ship, sub):
+    """`sub`'s name, made unique within `ship` by its place among the
+    subsystems of that name in the ship's own walk order (the same in both
+    arms): "Phaser[1]" for the second of two "Phaser" banks."""
+    from engine.appc.subsystems import iter_subsystems
+    name = sub.GetName()
+    same = [s for s in iter_subsystems(ship) if s.GetName() == name]
+    if len(same) < 2:
+        return name
+    for i, s in enumerate(same):
+        if s is sub:
+            return "%s[%d]" % (name, i)
+    return name
+
+
+def _claim(labels, obj, name):
+    """Give `obj` the label `name`; one taken by another object is a
+    collision two arms could compare equal through (task review M6)."""
+    assert name not in labels.values(), (
+        "recorder label %r names two objects" % name)
+    labels[id(obj)] = name
+    return name
+
+
 class Recorder:
     """The per-tick record, the call log and the event log of one arm (see
     the module docstring). `ships` are labelled by name; anything else by
@@ -439,14 +463,16 @@ class Recorder:
             # against the native arm's boundary launches that differs from
             # the reference's mid-step ones. Held apart from the numbered
             # objects, so it never shifts a number.
-            ship = self.labels.get(id(obj._owning_ship()))
+            owner = obj._owning_ship()
+            ship = self.labels.get(id(owner))
             if ship is not None:
-                name = self.labels[id(obj)] = "%s/%s" % (ship, obj.GetName())
+                name = _claim(self.labels, obj, "%s/%s" % (
+                    ship, _place_in_ship(owner, obj)))
                 self.named.append(obj)
         if name is None and isinstance(obj, SetClass):
             # A set, by name, for the same reason (a death's events, which
             # both arms deliver at the boundary, name the ship's set).
-            name = self.labels[id(obj)] = "set:%s" % obj.GetName()
+            name = _claim(self.labels, obj, "set:%s" % obj.GetName())
             self.named.append(obj)
         if name is None:
             name = self.labels[id(obj)] = "%s#%d" % (type(obj).__name__,

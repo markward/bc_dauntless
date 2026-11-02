@@ -168,7 +168,10 @@ def test_weapon_hit_event_carries_radius_and_normal(restore_event_manager):
     evt = holder[0]
     # No hardpoint or payload passed → phaser default 0.15
     assert evt.GetRadius() == 0.15
-    assert evt.GetNormal() is normal
+    # The entry spells the normal as xyz (native damage I4): the event
+    # carries its value, rebuilt at delivery.
+    n = evt.GetNormal()
+    assert (n.x, n.y, n.z) == (1.0, 0.0, 0.0)
 
 
 def test_apply_hit_accepts_optional_hardpoint_and_payload(restore_event_manager):

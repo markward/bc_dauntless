@@ -226,6 +226,25 @@ def _structural_hit(weapon_type, allow_structural_wear: bool) -> bool:
     return bool(allow_structural_wear) or weapon_type != "phaser"
 
 
+# The ship -> render instance map HIT_PRESENT's delivery hands dispatch
+# (native damage I4: the entry carries only whether its hit had one). The
+# last map a hit was given -- the host's session.ship_instances in play,
+# which every live caller passes; a native arm's caller sets it before its
+# kernel's hits are delivered.
+_delivery_instances = [None]
+
+
+def use_instances(ship_instances) -> None:
+    """The map in force for HIT_PRESENT's delivery (combat.apply_hit sets
+    the one it was given)."""
+    _delivery_instances[0] = ship_instances
+
+
+def delivery_instances():
+    """The map HIT_PRESENT's delivery uses when its hit had one."""
+    return _delivery_instances[0]
+
+
 def present(**inputs) -> None:
     """HIT_PRESENT's delivery: ``dispatch(**inputs)`` (the hit's F0-F7, F7
     severance included), a failure swallowed as it was at the hit."""

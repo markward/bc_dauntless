@@ -132,6 +132,14 @@ def _queued():
             in _h.combat_effect_take()]
 
 
+def _peek():
+    """The queue's entries, left queued in their order."""
+    taken = _h.combat_effect_take()
+    for kind, _native, ops in taken:
+        eq.post(kind, *ops)
+    return [(eq.KIND_NAMES[k], ops) for k, _native, ops in taken]
+
+
 # ── The kinds ────────────────────────────────────────────────────────────────
 
 def test_the_damage_kinds_follow_the_weapon_kinds_in_the_native_order():
@@ -187,11 +195,13 @@ def test_each_kind_carries_its_contract_fields():
     assert present["ship"] is ship and present["source"] is killer
     assert present["absorbed_hull"] == 800.0
     assert present["subsystem"] is sensor
-    assert present["weapon_type"] == "phaser"
+    assert present["weapon_type"] == eq.HIT_WEAPON_PHASER
     hit = dict(zip(eq.WEAPON_HIT_FIELDS, entries["WEAPON_HIT"]))
     assert hit["ship"] is ship and hit["source"] is killer
-    assert hit["damage"] == 800.0 and hit["hit_point"] is _AT
+    assert hit["damage"] == 800.0
+    assert (hit["hit_x"], hit["hit_y"], hit["hit_z"]) == (0.0, 10.0, 0.0)
     assert hit["subsystem"] is sensor and hit["is_hull_hit"] is True
+    assert hit["weapon_type"] == eq.WEAPON_HIT_PHASER
 
 
 # ── Held outside the scope; delivered at the boundary ────────────────────────
@@ -256,6 +266,32 @@ def test_a_handlers_flag_takes_effect_after_the_flush_never_retroactively(
     assert hull.GetCondition() == 800.0          # the flag, from now on
 
 
+def test_a_handlers_invincibility_saves_the_ship_from_a_same_tick_kill(
+        monkeypatch):
+    """Review Focus 3 for SetInvincible (M5, "invincible by then"): the
+    first hit's ET_WEAPON_HIT handler makes the ship invincible; the second,
+    killing hit of the same tick has its death check later in the flush, so
+    the ship survives at hull 0. Unlike SetHurtable, which only stops later
+    hits, the death check reads the flag as of its delivery."""
+    ship = _ship()
+    hull = ship.GetHull()
+    orig = App.g_kEventManager.AddEvent
+
+    def spy(evt, _orig=orig):
+        if evt.GetEventType() == App.ET_WEAPON_HIT:
+            ship.SetInvincible(1)
+        return _orig(evt)
+
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent", spy)
+    away = TGPoint3(0.0, -10.0, 0.0)
+    with eq.scope():
+        apply_hit(ship, 100.0, away, source=None)
+        apply_hit(ship, 5000.0, away, source=None)
+    assert hull.GetCondition() == 0.0
+    assert not ship.IsDying()
+    assert subsystem_cascade._active == []
+
+
 def test_a_condition_watcher_commits_at_once_and_fires_the_checks_at_delivery():
     """Ruling E3 for condition watchers: the value is committed in the write;
     delivery fires the checks crossed, as registered THEN."""
@@ -299,6 +335,57 @@ def test_the_repair_list_is_added_to_at_delivery(events):
     eq.boundary()
     assert bay._queue == [hull]
     assert (App.ET_ADD_TO_REPAIR_LIST, bay) in events
+
+
+def _repairing_ship():
+    """_ship with a working bay: 50 points, 3 teams."""
+    from engine.appc.properties import RepairSubsystemProperty
+    ship = _ship()
+    bay = ship.GetRepairSubsystem()
+    bay.SetMaxCondition(8000.0)
+    prop = RepairSubsystemProperty("Engineering")
+    prop.SetMaxRepairPoints(50.0)
+    prop.SetNumRepairTeams(3)
+    bay.SetProperty(prop)
+    return ship
+
+
+def test_a_repair_bay_tick_emits_no_repair_add():
+    """Ruling I3: REPAIR_ADD is emitted only when the subsystem is not in its
+    bay's queue already, so a bay working an item emits nothing for it."""
+    ship = _repairing_ship()
+    hull = ship.GetHull()
+    bay = ship.GetRepairSubsystem()
+    hull.SetCondition(500.0)
+    eq.boundary()
+    assert bay._queue == [hull] and hull._in_repair_queue is True
+    bay.Update(1.0)
+    assert 500.0 < hull.GetCondition() < 1000.0      # repaired, still below
+    assert "REPAIR_ADD" not in [k for k, _ in _queued()]
+    hull.SetCondition(400.0)                          # damaged again, queued
+    assert "REPAIR_ADD" not in [k for k, _ in _queued()]
+
+
+def test_leaving_the_repair_queue_clears_the_membership():
+    """The flag follows the queue: completion, a cleared list and a demote
+    to the tail; a subsystem out of the queue emits REPAIR_ADD again."""
+    ship = _repairing_ship()
+    hull = ship.GetHull()
+    bay = ship.GetRepairSubsystem()
+    hull.SetCondition(999.0)
+    eq.boundary()
+    bay.Update(1.0)                                   # completes it
+    assert bay._queue == [] and hull._in_repair_queue is False
+    hull.SetCondition(500.0)
+    assert [k for k, _ in _queued()].count("REPAIR_ADD") == 1
+    hull.SetCondition(500.0)
+    eq.boundary()
+    bay.HandleIncreasePriority(hull)                  # demoted, still queued
+    assert hull._in_repair_queue is True
+    bay._queue.clear()                                # as repair_ship_fully
+    assert hull._in_repair_queue is False
+    hull.SetCondition(400.0)
+    assert [k for k, _ in _queued()].count("REPAIR_ADD") == 1
 
 
 # ── ZERO_CROSS: the death check, in emission order (R7) ──────────────────────
@@ -422,6 +509,27 @@ class _Tube:
         pass
 
 
+def test_damage_held_across_a_sessions_end_keeps_its_order(delivered,
+                                                          events):
+    """Review M1: a whole killing hit is held across a native session's end
+    and delivered at the boundary in emission order -- its death (ZERO_CROSS,
+    ET_OBJECT_EXPLODING) before its ET_WEAPON_HIT (R2)."""
+    ship = _ship()
+    ship.SetSplashDamage(100.0, 5.0)
+    apply_hit(ship, 5000.0, _AT, source=None)    # outside the scope: held
+    emitted = [k for k, _ in _peek()]
+    assert emitted.index("ZERO_CROSS") < emitted.index("WEAPON_HIT")
+    with eq.session():
+        eq.post(eq.TORPEDO_RELOAD, _Tube())
+    del events[:]
+    eq.boundary()
+    kinds = [k for k, _ in delivered]
+    assert kinds[0] == "TORPEDO_RELOAD"
+    assert kinds[1:] == emitted + ["SPLASH"]
+    types = [t for t, _ in events]
+    assert types.index(App.ET_OBJECT_EXPLODING) < types.index(App.ET_WEAPON_HIT)
+
+
 def test_a_host_less_game_loop_tick_is_a_boundary_and_the_hosts_is_not():
     from engine.core.loop import GameLoop
     ship = _ship()
@@ -430,6 +538,55 @@ def test_a_host_less_game_loop_tick_is_a_boundary_and_the_hosts_is_not():
     assert not ship.IsDying()
     GameLoop().tick()
     assert ship.IsDying()
+
+
+# ── I2: the per-tick boundary is "sim.effects" in both switch states ─────────
+
+@pytest.fixture
+def profiler():
+    from engine.core import frame_profiler as fp
+    fp.set_enabled(False, native=False)
+    fp.reset()
+    fp.set_enabled(True, native=False)
+    yield fp
+    fp.set_enabled(False, native=False)
+    fp.reset()
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_the_tick_boundary_is_timed_as_sim_effects_in_both_switch_states(
+        native, profiler, monkeypatch):
+    """Ruling I2: a tick's hits report under "sim.effects" whichever the
+    switch, once per tick -- with it off that is _combat_tick_boundary's own
+    row, with it on the scope's exit flush (the boundary after it is then
+    empty) -- so "sim.combat" is like for like in both states."""
+    from engine import host_loop
+    from engine.appc import native_combat as nc
+    fp = profiler
+    stacks = []
+    real = eq._DELIVER[eq.WEAPON_HIT]
+    monkeypatch.setattr(
+        eq, "_DELIVER",
+        eq._DELIVER[:eq.WEAPON_HIT] + (
+            lambda *ops: (stacks.append(list(fp._scope_stack)),
+                          real(*ops)),) + eq._DELIVER[eq.WEAPON_HIT + 1:])
+    nc.reset()
+    if native:
+        nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
+    try:
+        ship = _ship()
+        fp.begin_frame()
+        with fp.scope("sim"):
+            with host_loop._combat_effect_scope():
+                with fp.scope("sim.combat"):
+                    apply_hit(ship, 100.0, _AT, source=None)
+            host_loop._combat_tick_boundary()
+        fp.end_frame()
+    finally:
+        nc.reset()
+    assert stacks == [["sim", "sim.effects"]]
+    assert fp.calls()["sim.effects"] == 1
+    assert fp.parents()["sim.effects"] == "sim"
 
 
 # ── R9: the destroyed-plant trigger is the same seam ─────────────────────────

@@ -162,7 +162,7 @@ class FloatRangeWatcher:
         if self._checks:
             from engine.appc import effect_queue
             effect_queue.emit(effect_queue.COND_WATCH, subsystem, which,
-                              old_value, new_value)
+                              float(old_value), new_value)
 
     def _fire_crossed(self, old_value: float, new_value: float) -> None:
         """Fire every check crossed between the two values."""

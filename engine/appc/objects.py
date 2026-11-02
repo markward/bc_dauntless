@@ -1462,6 +1462,12 @@ def broadcast_object_deleted(obj) -> None:
     every caller is a single plain call: matching BC's own policy of
     reporting a Python handler exception and continuing, the same ruling as
     ObjectGroup.broadcast_membership above."""
+    # Gone from the world: an effect-queue entry naming it is skipped at
+    # delivery (native damage, THE GONE-OBJECT RULE in
+    # engine/appc/effect_queue.py).
+    d = getattr(obj, "__dict__", None)
+    if d is not None:
+        d["_deleted"] = True
     import App
     evt = App.TGEvent_Create()
     evt.SetEventType(App.ET_DELETE_OBJECT_PUBLIC)

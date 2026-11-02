@@ -9,6 +9,10 @@
 #include "combat_effect_queue.h"
 
 #include <cstdint>
+#include <cstring>
+#include <map>
+#include <span>
+#include <string>
 #include <vector>
 
 namespace {
@@ -109,8 +113,110 @@ TEST_F(EffectQueueTest, DamageKindsFollowTheWeaponKindsInOrder) {
         EXPECT_STREQ(dauntless::host::effect_kind_name(
                          static_cast<EffectKind>(first + i)),
                      names[i]);
-    // HIT_PRESENT carries dispatch's 21 arguments.
-    EXPECT_GE(EffectEntry::kMaxOperands, 21);
+    // HIT_PRESENT, spelled (points as xyz), is the longest entry.
+    EXPECT_GE(EffectEntry::kMaxOperands, 35);
+}
+
+// The damage kinds' frozen operand layouts (native damage fix round, I4):
+// one type letter per operand -- R a mirror handle (-1 None), H an object
+// the entry holds, D a double, I an int code, B a bool -- the same layout
+// effect_queue.OPERANDS gives Python. The weapon kinds have none.
+TEST_F(EffectQueueTest, TheDamageKindsHaveFrozenOperandLayouts) {
+    using dauntless::host::effect_kind_operands;
+    EXPECT_STREQ(effect_kind_operands(EffectKind::COND_WATCH), "RIDD");
+    EXPECT_STREQ(effect_kind_operands(EffectKind::SUBSYS_EVENT), "RI");
+    EXPECT_STREQ(effect_kind_operands(EffectKind::REPAIR_ADD), "R");
+    EXPECT_STREQ(effect_kind_operands(EffectKind::ZERO_CROSS), "RRBH");
+    EXPECT_STREQ(effect_kind_operands(EffectKind::SPLASH), "R");
+    EXPECT_STREQ(effect_kind_operands(EffectKind::HIT_PRESENT),
+                 "RHBDDDBDDDDRDDDIIDBBBBDDDBDDDBDDBBD");
+    EXPECT_STREQ(effect_kind_operands(EffectKind::WEAPON_HIT),
+                 "RHDDDDBDDDDRIB");
+    EXPECT_EQ(effect_kind_operands(EffectKind::SPAWN), nullptr);
+    EXPECT_EQ(effect_kind_operands(EffectKind::WATCH), nullptr);
+    EXPECT_EQ(static_cast<int>(std::strlen(
+                  effect_kind_operands(EffectKind::HIT_PRESENT))),
+              EffectEntry::kMaxOperands);
+}
+
+// A kernel's int code and bool flag are their own operand types, apart
+// from a handle (a bare int64) and a number.
+TEST_F(EffectQueueTest, IntsAndBoolsAreTheirOwnOperandTypes) {
+    using dauntless::host::EffectBool;
+    using dauntless::host::EffectInt;
+    q.append_native(EffectKind::ZERO_CROSS, std::int64_t{4}, std::int64_t{9},
+                    EffectBool{true}, std::int64_t{-1});
+    q.append_native(EffectKind::COND_WATCH, std::int64_t{9}, EffectInt{1},
+                    1.0, 0.25);
+    std::vector<EffectEntry> out = q.take();
+    ASSERT_EQ(out.size(), 2u);
+    EXPECT_EQ(out[0].ops[2].type, EffectOperand::Type::Bool);
+    EXPECT_TRUE(out[0].ops[2].boolean);
+    EXPECT_EQ(out[0].ops[3].type, EffectOperand::Type::Handle);
+    EXPECT_EQ(out[0].ops[3].handle, -1);
+    EXPECT_EQ(out[1].ops[1].type, EffectOperand::Type::Int);
+    EXPECT_EQ(out[1].ops[1].integer, 1);
+    EXPECT_EQ(out[1].ops[2].number, 1.0);
+    EXPECT_TRUE(dauntless::host::effect_operands_match(
+        EffectKind::COND_WATCH, std::span(out[1].ops.data(), out[1].count)));
+    EXPECT_TRUE(dauntless::host::effect_operands_match(
+        EffectKind::ZERO_CROSS, std::span(out[0].ops.data(), out[0].count)));
+}
+
+// The layout check a kernel's append is held to (assert): the type of
+// every operand, and the count.
+TEST_F(EffectQueueTest, AnOperandOfTheWrongTypeDoesNotMatchTheLayout) {
+    using dauntless::host::effect_operands_match;
+    EffectOperand ok[4], h, d, i, b, obj;
+    h.type = EffectOperand::Type::Handle;
+    h.handle = 3;
+    d.type = EffectOperand::Type::Number;
+    d.number = 0.5;
+    i.type = EffectOperand::Type::Int;
+    i.integer = 0;
+    b.type = EffectOperand::Type::Bool;
+    b.boolean = false;
+    obj.type = EffectOperand::Type::Object;
+    obj.object = &a;
+    ok[0] = h; ok[1] = i; ok[2] = d; ok[3] = d;
+    EXPECT_TRUE(effect_operands_match(EffectKind::COND_WATCH, ok));
+    EffectOperand wrong[4] = {h, d, d, d};          // `which` as a number
+    EXPECT_FALSE(effect_operands_match(EffectKind::COND_WATCH, wrong));
+    EXPECT_FALSE(effect_operands_match(EffectKind::COND_WATCH,
+                                       std::span(ok, 3)));
+    // R: a handle, or an object a rebind left; H: an object, or -1.
+    EffectOperand rebound[4] = {obj, i, d, d};
+    EXPECT_TRUE(effect_operands_match(EffectKind::COND_WATCH, rebound));
+    EffectOperand none = h;
+    none.handle = -1;
+    EffectOperand zc[4] = {h, h, b, none};
+    EXPECT_TRUE(effect_operands_match(EffectKind::ZERO_CROSS, zc));
+    zc[3] = obj;
+    EXPECT_TRUE(effect_operands_match(EffectKind::ZERO_CROSS, zc));
+    zc[3] = h;                                       // a live handle
+    EXPECT_FALSE(effect_operands_match(EffectKind::ZERO_CROSS, zc));
+    // A weapon kind has no layout: anything matches.
+    EXPECT_TRUE(effect_operands_match(EffectKind::WATCH, wrong));
+}
+
+// The code operands' values (effect_queue.py's constants of the same
+// names; combat_effect_codes() hands Python this table).
+TEST_F(EffectQueueTest, TheCodeTableNamesEveryCode) {
+    using namespace dauntless::host;
+    std::map<std::string, int> codes;
+    for (const EffectCode& c : effect_codes())
+        EXPECT_TRUE(codes.emplace(c.name, c.value).second) << c.name;
+    EXPECT_EQ(codes.size(), 17u);
+    EXPECT_EQ(codes["WATCH_CONDITION"], static_cast<int>(CondWatch::CONDITION));
+    EXPECT_EQ(codes["WATCH_COMBINED"], 1);
+    EXPECT_EQ(codes["SUBSYS_DESTROYED"], 0);
+    EXPECT_EQ(codes["SUBSYS_OPERATIONAL"],
+              static_cast<int>(SubsysEvent::OPERATIONAL));
+    EXPECT_EQ(codes["TRANSITION_DESTROYED"], 2);
+    EXPECT_EQ(codes["HIT_WEAPON_COLLISION"],
+              static_cast<int>(HitWeapon::COLLISION));
+    EXPECT_EQ(codes["WEAPON_HIT_NON_WEAPON"], -1);
+    EXPECT_EQ(codes["WEAPON_HIT_TRACTOR_BEAM"], 2);
 }
 
 // A row dropped while its kernel entries wait (native_combat._drop: a value

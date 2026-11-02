@@ -14,6 +14,7 @@
 #include "combat_write_apply.h"
 
 #include <algorithm>
+#include <cstring>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -13047,6 +13048,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       if (objs.size() > hq::EffectEntry::kMaxOperands)
                           throw py::value_error(
                               "combat effect: too many operands");
+                      // A damage kind's frozen layout (effect_kind_operands):
+                      // its operand count.
+                      if (const char* layout = hq::effect_kind_operands(k);
+                          layout != nullptr &&
+                          std::strlen(layout) != objs.size())
+                          throw py::value_error(
+                              std::string("combat effect: ") +
+                              hq::effect_kind_name(k) + " takes " +
+                              std::to_string(std::strlen(layout)) +
+                              " operands");
                       void* ptrs[hq::EffectEntry::kMaxOperands];
                       size_t n = 0;
                       for (py::handle o : objs)
@@ -13080,6 +13091,85 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   "Test entry: append a KERNEL's entry -- ints are mirror "
                   "handles (-1 None), floats numbers -- as append_native "
                   "does.");
+            m.def("combat_effect_codes", [] {
+                py::dict d;
+                for (const hq::EffectCode& c : hq::effect_codes())
+                    d[c.name] = c.value;
+                return d;
+            }, "The damage kinds' code operands by name "
+               "(combat_effect_queue.h; effect_queue.py's constants).");
+            m.def("combat_effect_operands", [] {
+                py::dict d;
+                for (int i = 0;
+                     i < static_cast<int>(hq::EffectKind::kCount); ++i) {
+                    const auto k = static_cast<hq::EffectKind>(i);
+                    if (const char* layout = hq::effect_kind_operands(k))
+                        d[hq::effect_kind_name(k)] = layout;
+                }
+                return d;
+            }, "The damage kinds' frozen operand layouts by kind name "
+               "(effect_kind_operands; effect_queue.OPERANDS).");
+            m.def("combat_effect_post_typed",
+                  [kind_of](long kind, const std::string& types,
+                            py::args ops) {
+                      const hq::EffectKind k = kind_of(kind);
+                      if (ops.size() > hq::EffectEntry::kMaxOperands ||
+                          ops.size() != types.size())
+                          throw py::value_error(
+                              "combat effect: operands do not fit the types");
+                      std::vector<hq::NativeOperand> v;
+                      v.reserve(ops.size());
+                      for (size_t i = 0; i < ops.size(); ++i) {
+                          py::handle o = ops[i];
+                          switch (types[i]) {
+                          case 'R': v.push_back(o.cast<std::int64_t>()); break;
+                          case 'H':
+                              if (PyLong_Check(o.ptr()))
+                                  v.push_back(o.cast<std::int64_t>());
+                              else
+                                  v.push_back(hq::OwnedObject{
+                                      Py_NewRef(o.ptr())});
+                              break;
+                          case 'D': v.push_back(o.cast<double>()); break;
+                          case 'I':
+                              v.push_back(hq::EffectInt{o.cast<std::int64_t>()});
+                              break;
+                          case 'B':
+                              v.push_back(hq::EffectBool{o.cast<bool>()});
+                              break;
+                          default:
+                              throw py::value_error(
+                                  "combat effect: unknown operand type");
+                          }
+                      }
+                      std::vector<hq::EffectOperand> check(v.size());
+                      for (size_t i = 0; i < v.size(); ++i) {
+                          if (std::holds_alternative<std::int64_t>(v[i])) {
+                              check[i].handle = std::get<std::int64_t>(v[i]);
+                          } else if (std::holds_alternative<double>(v[i])) {
+                              check[i].type = hq::EffectOperand::Type::Number;
+                          } else if (std::holds_alternative<hq::EffectInt>(v[i])) {
+                              check[i].type = hq::EffectOperand::Type::Int;
+                          } else if (std::holds_alternative<hq::EffectBool>(v[i])) {
+                              check[i].type = hq::EffectOperand::Type::Bool;
+                          } else {
+                              check[i].type = hq::EffectOperand::Type::Object;
+                          }
+                      }
+                      if (!hq::effect_operands_match(k, check)) {
+                          for (const hq::NativeOperand& op : v)
+                              if (const auto* h = std::get_if<hq::OwnedObject>(&op))
+                                  Py_DECREF(static_cast<PyObject*>(h->object));
+                          throw py::value_error(
+                              "combat effect: operands do not fit the "
+                              "kind's layout");
+                      }
+                      hq::effect_queue().append_native_span(k, v);
+                  },
+                  py::arg("kind"), py::arg("types"),
+                  "Test entry: append a KERNEL's entry typed by `types`, one "
+                  "letter per operand as effect_kind_operands spells them "
+                  "(R handle, H object or -1, D double, I int, B bool).");
             m.def("combat_effect_take", [] {
                 std::vector<hq::EffectEntry> taken = hq::effect_queue().take();
                 // Every object reference moves into the result, even if
@@ -13105,6 +13195,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                             break;
                         case hq::EffectOperand::Type::Object:
                             ops[i] = owned[next++];
+                            break;
+                        case hq::EffectOperand::Type::Int:
+                            ops[i] = py::int_(o.integer);
+                            break;
+                        case hq::EffectOperand::Type::Bool:
+                            ops[i] = py::bool_(o.boolean);
                             break;
                         }
                     }

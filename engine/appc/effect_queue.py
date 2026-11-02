@@ -67,8 +67,8 @@ one kind only a kernel appends (spec 2026-11-02-combat-launch-deferral
                               writes applied never loses its events.
 
 THE DAMAGE KINDS (spec 2026-11-02-native-damage-design.md M2, M5, §4.3;
-controller rulings R7-R9). What a condition write and a hit REPORT, in
-today's synchronous order minus nesting -- per write (subsystems.
+controller rulings R7-R9, I1-I4). What a condition write and a hit REPORT,
+in today's synchronous order minus nesting -- per write (subsystems.
 ShipSubsystem._set_condition): COND_WATCH (combined watcher, then condition
 watcher), SUBSYS_EVENT, REPAIR_ADD, ZERO_CROSS; per hit (combat._apply_hit):
 each write's, then HIT_PRESENT, then WEAPON_HIT:
@@ -78,17 +78,37 @@ each write's, then HIT_PRESENT, then WEAPON_HIT:
                               delivery as registered then (E3)
   SUBSYS_EVENT(subsystem, which)  ET_SUBSYSTEM_DESTROYED (and its internal
                               blast) / _DISABLED / _OPERATIONAL
-  REPAIR_ADD(subsystem)       a write left it below max: AddToRepairList
+  REPAIR_ADD(subsystem)       a write left it below max while it is not in
+                              its bay's queue (I3): AddToRepairList
   ZERO_CROSS(ship, subsystem, crossed, killer)
                               the death check (death_check._check): the
-                              invincibility read at delivery, then the
-                              breach / hull cascade and the death. Also
-                              the destroyed-plant trigger's (R9)
+                              invincibility and the condition read at
+                              delivery (I1), then the breach / hull
+                              cascade and the death. Also the
+                              destroyed-plant trigger's (R9)
   SPLASH(ship)                appended by ship_death.begin after its
                               ET_OBJECT_EXPLODING: the death splash
   HIT_PRESENT(*HIT_PRESENT_FIELDS)  hit_feedback.present (dispatch, F7
                               severance included)
   WEAPON_HIT(*WEAPON_HIT_FIELDS)    combat.post_weapon_hit
+THEIR ENTRIES ARE A FROZEN CONTRACT (I4) the native arm reproduces: one
+layout per kind (OPERANDS, the C++ effect_kind_operands), one letter per
+operand -- R an object reference (a kernel's mirror handle, -1 None; the
+entry's SUBJECT is one), H an object the entry holds (a hit's source, a
+death's killer), D a float, I an int code (the named constants below,
+combat_effect_codes), B a bool -- with exactly those Python types in BOTH
+arms once taken, so the two compare without normalising. HIT_PRESENT
+spells its points as xyz with presence flags, its weapon type as a code,
+carries no instances map (delivery looks it up: hit_feedback.
+delivery_instances) and flags its shield point standing for the hit point
+itself (DM H14), so delivery rebuilds that alias (hit_present_operands /
+_hit_present are the encoding's two halves). ONE GONE-OBJECT RULE (I4):
+an entry whose subject -- its ship, or for COND_WATCH / SUBSYS_EVENT /
+REPAIR_ADD its subsystem's ship -- has left the world (objects.
+broadcast_object_deleted: DeleteObjectFromSet, a death's linger end, the
+SetDeleteMe sweep) by its delivery is skipped and counted "skipped_gone",
+whichever arm emitted it; a kernel's whose subject's row was freed is
+skipped the same way.
 Unlike the weapon kinds they are queued in BOTH switch states (``emit``),
 and outside the tick scope they are HELD for the next BOUNDARY
 (``boundary()``: each tick's combat flush, the host's frame-end drain, a
@@ -157,6 +177,34 @@ except ImportError:
 
 _logger = logging.getLogger(__name__)
 
+
+class _PyQueue:
+    """The queue without the native module (task review M4): the binding's
+    four calls over a Python list, so the hold-and-boundary rules -- and
+    with them KillGonDev's survival and R2's order -- are the same with or
+    without it. Python entries only (nothing native runs without it)."""
+
+    def __init__(self):
+        self._entries = []
+
+    def combat_effect_post(self, kind, *ops):
+        self._entries.append((kind, False, ops))
+
+    def combat_effect_take(self):
+        out, self._entries = self._entries, []
+        return out
+
+    def combat_effect_clear(self):
+        del self._entries[:]
+
+    def combat_effect_size(self):
+        return len(self._entries)
+
+
+#: The queue: the native one (combat_effect_queue.h) when built.
+_q = (_h if _h is not None and hasattr(_h, "combat_effect_take")
+      else _PyQueue())
+
 #: The kinds, in combat_effect_queue.h's order (combat_effect_kinds()).
 KIND_NAMES = ("FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED",
               "TORPEDO_FIRED", "AMMO_CONSUMED", "TORPEDO_RELOAD", "WATCH",
@@ -171,22 +219,69 @@ KIND_NAMES = ("FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED",
 DAMAGE_KINDS = frozenset((COND_WATCH, SUBSYS_EVENT, REPAIR_ADD, ZERO_CROSS,
                           SPLASH, HIT_PRESENT, WEAPON_HIT))
 
+# ── The damage kinds' code operands (combat_effect_queue.h's enums, by the
+# same names: combat_effect_codes) ──
 #: COND_WATCH's `which`: the subsystem's GetConditionWatcher or its
 #: GetCombinedPercentageWatcher.
 WATCH_CONDITION, WATCH_COMBINED = 0, 1
 #: SUBSYS_EVENT's `which`: the event the threshold state machine posts.
 SUBSYS_DESTROYED, SUBSYS_DISABLED, SUBSYS_OPERATIONAL = 0, 1, 2
-#: HIT_PRESENT's operands: hit_feedback.dispatch's keyword arguments.
+#: HIT_PRESENT's sub_transition: the primary subsystem's worst new state
+#: (combat._diff_state's None / "disabled" / "destroyed").
+TRANSITION_NONE, TRANSITION_DISABLED, TRANSITION_DESTROYED = 0, 1, 2
+#: HIT_PRESENT's weapon_type: apply_hit's weapon_type string.
+(HIT_WEAPON_NONE, HIT_WEAPON_PHASER, HIT_WEAPON_TORPEDO, HIT_WEAPON_TRACTOR,
+ HIT_WEAPON_COLLISION) = range(5)
+#: WEAPON_HIT's weapon_type: the WeaponHitEvent id (events.WeaponHitEvent).
+(WEAPON_HIT_NON_WEAPON, WEAPON_HIT_PHASER, WEAPON_HIT_TORPEDO,
+ WEAPON_HIT_TRACTOR_BEAM) = (-1, 0, 1, 2)
+CODE_NAMES = (
+    "WATCH_CONDITION", "WATCH_COMBINED",
+    "SUBSYS_DESTROYED", "SUBSYS_DISABLED", "SUBSYS_OPERATIONAL",
+    "TRANSITION_NONE", "TRANSITION_DISABLED", "TRANSITION_DESTROYED",
+    "HIT_WEAPON_NONE", "HIT_WEAPON_PHASER", "HIT_WEAPON_TORPEDO",
+    "HIT_WEAPON_TRACTOR", "HIT_WEAPON_COLLISION",
+    "WEAPON_HIT_NON_WEAPON", "WEAPON_HIT_PHASER", "WEAPON_HIT_TORPEDO",
+    "WEAPON_HIT_TRACTOR_BEAM")
+_TRANSITIONS = (None, "disabled", "destroyed")
+_TRANSITION_CODES = {t: i for i, t in enumerate(_TRANSITIONS)}
+_HIT_WEAPONS = (None, "phaser", "torpedo", "tractor", "collision")
+_HIT_WEAPON_CODES = {w: i for i, w in enumerate(_HIT_WEAPONS)}
+
+#: HIT_PRESENT's operands, in order: hit_feedback.dispatch's inputs, points
+#: spelled as xyz behind a presence flag (hit_present_operands).
 HIT_PRESENT_FIELDS = (
-    "ship", "source", "point", "normal", "damage", "subsystem",
+    "ship", "source", "has_instances",
+    "point_x", "point_y", "point_z",
+    "has_normal", "normal_x", "normal_y", "normal_z",
+    "damage", "subsystem",
     "absorbed_shields", "absorbed_subsystem", "absorbed_hull",
-    "sub_transition", "ship_instances", "weapon_type", "radius",
-    "persist_decal", "allow_structural_wear", "shield_point", "tangent",
-    "decal_radius", "decal_dent", "single_impact", "shield_radius")
-#: WEAPON_HIT's operands: the WeaponHitEvent combat.apply_hit posts.
+    "sub_transition", "weapon_type", "radius",
+    "persist_decal", "allow_structural_wear",
+    "has_shield_point", "shield_point_is_point",
+    "shield_point_x", "shield_point_y", "shield_point_z",
+    "has_tangent", "tangent_x", "tangent_y", "tangent_z",
+    "has_decal_radius", "decal_radius", "decal_dent", "single_impact",
+    "has_shield_radius", "shield_radius")
+#: WEAPON_HIT's operands, in order: the WeaponHitEvent combat.apply_hit
+#: posts (weapon_hit_operands).
 WEAPON_HIT_FIELDS = (
-    "ship", "source", "damage", "hit_point", "normal", "radius",
+    "ship", "source", "damage", "hit_x", "hit_y", "hit_z",
+    "has_normal", "normal_x", "normal_y", "normal_z", "radius",
     "subsystem", "weapon_type", "is_hull_hit")
+
+#: Each damage kind's frozen layout (combat_effect_queue.h
+#: effect_kind_operands; see THE DAMAGE KINDS): R a reference (handle), H a
+#: held object, D float, I int, B bool.
+OPERANDS = {
+    COND_WATCH: "RIDD",
+    SUBSYS_EVENT: "RI",
+    REPAIR_ADD: "R",
+    ZERO_CROSS: "RRBH",
+    SPLASH: "R",
+    HIT_PRESENT: "RHBDDDBDDDDRDDDIIDBBBBDDDBDDDBDDBBD",
+    WEAPON_HIT: "RHDDDDBDDDDRIB",
+}
 
 _depth = 0              # open scopes
 _sessions = 0           # open native-session deferrals (session())
@@ -320,11 +415,52 @@ def emit(kind: int, *operands) -> None:
     """A damage kind's producer (see THE DAMAGE KINDS): append, in both
     switch states, wherever it runs -- in the scope, outside it (held for
     the next boundary) or during a delivery (delivered in the same flush).
-    Without the native module there is no queue: deliver at once."""
-    if _h is None:
-        _DELIVER[kind](*operands)
-        return
-    _h.combat_effect_post(kind, *operands)
+    The operands fit the kind's layout (OPERANDS), Python types exact."""
+    _q.combat_effect_post(kind, *operands)
+
+
+def _xyz(p):
+    return (0.0, 0.0, 0.0) if p is None else (float(p.x), float(p.y),
+                                               float(p.z))
+
+
+def hit_present_operands(*, ship, source, point, normal, damage, subsystem,
+                         absorbed_shields, absorbed_subsystem, absorbed_hull,
+                         sub_transition, has_instances, weapon_type, radius,
+                         persist_decal, allow_structural_wear, shield_point,
+                         tangent, decal_radius, decal_dent, single_impact,
+                         shield_radius) -> tuple:
+    """HIT_PRESENT's operands (HIT_PRESENT_FIELDS) from dispatch's inputs:
+    the encoding _hit_present decodes. `has_instances`: the hit was given an
+    instances map (delivery uses delivery_instances, not a carried one). A
+    weapon type with no code is HIT_WEAPON_NONE: dispatch only ever compares
+    it with "phaser", "torpedo" and "collision", so any other string acts as
+    None does (as WEAPON_HIT's id makes it NON_WEAPON)."""
+    weapon = _HIT_WEAPON_CODES.get(weapon_type, HIT_WEAPON_NONE)
+    return ((ship, source, bool(has_instances)) + _xyz(point)
+            + (normal is not None,) + _xyz(normal)
+            + (float(damage), subsystem, float(absorbed_shields),
+               float(absorbed_subsystem), float(absorbed_hull),
+               _TRANSITION_CODES[sub_transition], weapon, float(radius),
+               bool(persist_decal), bool(allow_structural_wear),
+               shield_point is not None,
+               shield_point is not None and shield_point is point)
+            + _xyz(shield_point)
+            + (tangent is not None,) + _xyz(tangent)
+            + (decal_radius is not None,
+               0.0 if decal_radius is None else float(decal_radius),
+               float(decal_dent), bool(single_impact),
+               shield_radius is not None,
+               0.0 if shield_radius is None else float(shield_radius)))
+
+
+def weapon_hit_operands(*, ship, source, damage, hit_point, normal, radius,
+                        subsystem, weapon_type, is_hull_hit) -> tuple:
+    """WEAPON_HIT's operands (WEAPON_HIT_FIELDS): the encoding _weapon_hit
+    decodes. `weapon_type` is the WeaponHitEvent id (WEAPON_HIT_*)."""
+    return ((ship, source, float(damage)) + _xyz(hit_point)
+            + (normal is not None,) + _xyz(normal)
+            + (float(radius), subsystem, int(weapon_type), bool(is_hull_hit)))
 
 
 def check_acting_directly(what: str) -> None:
@@ -340,7 +476,7 @@ def check_acting_directly(what: str) -> None:
 
 def post(kind: int, *operands) -> None:
     """Append Python's entry (the caller checked deferring())."""
-    _h.combat_effect_post(kind, *operands)
+    _q.combat_effect_post(kind, *operands)
 
 
 def counts() -> dict:
@@ -362,8 +498,7 @@ def reset() -> None:
     _epoch += 1
     for k in _counts:
         _counts[k] = 0
-    if _h is not None and hasattr(_h, "combat_effect_clear"):
-        _h.combat_effect_clear()
+    _q.combat_effect_clear()
 
 
 def _strict(modules=None) -> bool:
@@ -400,7 +535,7 @@ def flush(boundary: bool = True) -> None:
         del _held[:]
         if epoch == _epoch:
             for kind, ops in held:
-                _h.combat_effect_post(kind, *ops)
+                _q.combat_effect_post(kind, *ops)
     if not errors:
         return
     if not _strict():
@@ -425,10 +560,10 @@ def _drain() -> None:
     of the batch is the old mission's, and is dropped like the queue."""
     epoch = _epoch
     while True:
-        entries = _h.combat_effect_take()
+        entries = _q.combat_effect_take()
         if not entries:
             break
-        batch = [(kind, _resolve(ops) if native else ops)
+        batch = [(kind, _resolve(kind, ops) if native else ops)
                  for kind, native, ops in entries]
         for kind, ops in batch:
             if _epoch != epoch:
@@ -436,12 +571,15 @@ def _drain() -> None:
             if ops is None:
                 _counts["skipped_gone"] += 1
                 continue
-            if not _boundary and kind in DAMAGE_KINDS:
-                _held.append((kind, ops))   # for the next boundary (R8)
-                continue
-            _counts["delivered"] += 1
-            if kind in DAMAGE_KINDS:
+            if kind >= COND_WATCH:      # a damage kind (they come last)
+                if not _boundary:
+                    _held.append((kind, ops))   # for the next boundary (R8)
+                    continue
+                if _subject_gone(kind, ops):
+                    _counts["skipped_gone"] += 1    # the gone rule (I4)
+                    continue
                 _counts["damage"] += 1
+            _counts["delivered"] += 1
             try:
                 _DELIVER[kind](*ops)
             except Exception as x:
@@ -449,14 +587,18 @@ def _drain() -> None:
                 _errors.append((kind, x))
 
 
-def _resolve(ops):
+def _resolve(kind, ops):
     """A kernel entry's operands: a handle -> its object (-1 None), a
-    number kept. None when a handle names no live registered object."""
+    number kept. None when a handle names no live registered object. A
+    damage kind's by its layout (OPERANDS): only an R operand is a handle
+    (an I is an int code); an H is held, an int there only -1 (None)."""
     from engine.appc import native_combat
+    layout = OPERANDS.get(kind)
     out = []
-    for v in ops:
-        if type(v) is int:
-            if v == native_combat.REF_NONE:
+    for i, v in enumerate(ops):
+        if type(v) is int and (layout is None or layout[i] in "RH"):
+            if v == native_combat.REF_NONE or layout is not None and \
+                    layout[i] == "H":
                 v = None
             else:
                 o = native_combat._registry.get(v)
@@ -465,6 +607,19 @@ def _resolve(ops):
                 v = o
         out.append(v)
     return out
+
+
+def _subject_gone(kind, ops) -> bool:
+    """THE GONE-OBJECT RULE (I4): the entry's subject -- its ship, or a
+    subsystem's ship for the per-subsystem kinds -- has left the world
+    (objects.broadcast_object_deleted) by its delivery."""
+    subject = ops[0]
+    if kind <= REPAIR_ADD and subject is not None:
+        # COND_WATCH, SUBSYS_EVENT, REPAIR_ADD name a subsystem.
+        owning = getattr(type(subject), "_owning_ship", None)
+        subject = owning(subject) if owning is not None else None
+    d = getattr(subject, "__dict__", None)
+    return d is not None and d.get("_deleted", False) is True
 
 
 # ── Delivery: each kind's producer, acting now ───────────────────────────────
@@ -538,14 +693,53 @@ def _splash(ship):
     ship_death.deliver_splash(ship)
 
 
-def _hit_present(*ops):
+def _point(has, x, y, z):
+    if not has:
+        return None
+    from engine.appc.math import TGPoint3
+    return TGPoint3(x, y, z)
+
+
+def _hit_present(ship, source, has_instances, px, py, pz, has_normal,
+                 nx, ny, nz, damage, subsystem, absorbed_shields,
+                 absorbed_subsystem, absorbed_hull, transition, weapon,
+                 radius, persist_decal, allow_structural_wear,
+                 has_shield_point, shield_point_is_point, sx, sy, sz,
+                 has_tangent, tx, ty, tz, has_decal_radius, decal_radius,
+                 decal_dent, single_impact, has_shield_radius, shield_radius):
+    # hit_present_operands' inverse: the points rebuilt, the shield point
+    # the hit point itself when it was (DM H14), the instances map the one
+    # in force now.
     from engine.appc import hit_feedback
-    hit_feedback.present(**dict(zip(HIT_PRESENT_FIELDS, ops)))
+    point = _point(True, px, py, pz)
+    hit_feedback.present(
+        ship=ship, source=source, point=point,
+        normal=_point(has_normal, nx, ny, nz), damage=damage,
+        subsystem=subsystem, absorbed_shields=absorbed_shields,
+        absorbed_subsystem=absorbed_subsystem, absorbed_hull=absorbed_hull,
+        sub_transition=_TRANSITIONS[transition],
+        ship_instances=(hit_feedback.delivery_instances() if has_instances
+                        else None),
+        weapon_type=_HIT_WEAPONS[weapon], radius=radius,
+        persist_decal=persist_decal,
+        allow_structural_wear=allow_structural_wear,
+        shield_point=(point if shield_point_is_point
+                      else _point(has_shield_point, sx, sy, sz)),
+        tangent=_point(has_tangent, tx, ty, tz),
+        decal_radius=decal_radius if has_decal_radius else None,
+        decal_dent=decal_dent, single_impact=single_impact,
+        shield_radius=shield_radius if has_shield_radius else None)
 
 
-def _weapon_hit(*ops):
+def _weapon_hit(ship, source, damage, hx, hy, hz, has_normal, nx, ny, nz,
+                radius, subsystem, weapon_type, is_hull_hit):
     from engine.appc import combat
-    combat.post_weapon_hit(**dict(zip(WEAPON_HIT_FIELDS, ops)))
+    combat.post_weapon_hit(
+        ship=ship, source=source, damage=damage,
+        hit_point=_point(True, hx, hy, hz),
+        normal=_point(has_normal, nx, ny, nz), radius=radius,
+        subsystem=subsystem, weapon_type=weapon_type,
+        is_hull_hit=is_hull_hit)
 
 
 _DELIVER = (_fire_sound, _loop_stop, _weapon_fired, _weapon_fire_failed,

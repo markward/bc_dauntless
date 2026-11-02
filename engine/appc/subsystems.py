@@ -26,6 +26,8 @@ from engine.appc import passive_weapons
 from engine.appc import passive_power, passive_state
 from engine.appc.passive_power import FrozenField
 from engine.appc import native_combat
+from engine.appc import death_check as _death_check
+from engine.appc import effect_queue as _effect_queue
 from engine.appc.native_combat import NativeField, NativeRefField
 
 
@@ -353,6 +355,10 @@ class ShipSubsystem(TGEventHandlerObject):
     _arc_set = NativeField(bool)
     # Phaser-strip length (K2 reads it for the emitter position).
     _length = NativeField(float)
+    # In its bay's repair queue (RepairSubsystem._queue keeps it, ruling I3):
+    # a write below max emits REPAIR_ADD only when this is False. The native
+    # damage arm mirrors it (Task 3).
+    _in_repair_queue = False
 
     def __init__(self, name: str = ""):
         super().__init__()
@@ -755,13 +761,16 @@ class ShipSubsystem(TGEventHandlerObject):
         before = self._condition
         self._condition = max(0.0, float(value))
         self._condition_changed()
-        if self._condition < self.GetMaxCondition():
-            # Added at delivery (REPAIR_ADD; native damage M2).
-            from engine.appc import effect_queue
-            effect_queue.emit(effect_queue.REPAIR_ADD, self)
-        from engine.appc import death_check
-        death_check.note_write(ship if ship is not None else self._owning_ship(),
-                               self, before, killer)
+        if (not self._in_repair_queue
+                and self._condition < self.GetMaxCondition()):
+            # Added at delivery (REPAIR_ADD; native damage M2) -- only when
+            # not queued already (ruling I3): a bay's own tick of an item it
+            # works emits nothing.
+            _effect_queue.emit(_effect_queue.REPAIR_ADD, self)
+        if self._condition <= 0.0:
+            _death_check.note_write(
+                ship if ship is not None else self._owning_ship(),
+                self, before, killer)
 
     def SetConditionPercentage(self, fraction) -> None:
         """SDK ShipSubsystem.SetConditionPercentage (App.py:5665): condition =
@@ -822,7 +831,7 @@ class ShipSubsystem(TGEventHandlerObject):
         boundary (native damage M2; engine/appc/effect_queue.py, THE DAMAGE
         KINDS): a watcher with checks commits now and queues COND_WATCH, a
         state change queues SUBSYS_EVENT."""
-        from engine.appc import effect_queue as eq
+        eq = _effect_queue
         if self._combined_watcher is not None:
             self._combined_watcher._update_queued(
                 self.GetConditionPercentage(), self, eq.WATCH_COMBINED)
@@ -2872,6 +2881,79 @@ class PowerSubsystem(ShipSubsystem):
         return take
 
 
+class _RepairQueue(list):
+    """A repair bay's queue: a list that keeps each subsystem's
+    ``_in_repair_queue`` true exactly while it is a member (ruling I3), on
+    every mutation -- the bay's own (add, completion, the priority toggle)
+    and a caller's (``repair_ship_fully``'s ``clear``, a test's). A plain
+    list member that is not a subsystem is carried unmarked."""
+
+    def append(self, sub):
+        list.append(self, sub)
+        _mark_queued(sub, True)
+
+    def insert(self, index, sub):
+        list.insert(self, index, sub)
+        _mark_queued(sub, True)
+
+    def extend(self, subs):
+        subs = list(subs)
+        list.extend(self, subs)
+        for sub in subs:
+            _mark_queued(sub, True)
+
+    def __iadd__(self, subs):
+        self.extend(subs)
+        return self
+
+    def clear(self):
+        gone = list(self)
+        list.clear(self)
+        self._unmark(gone)
+
+    def pop(self, index=-1):
+        sub = list.pop(self, index)
+        self._unmark((sub,))
+        return sub
+
+    def remove(self, sub):
+        list.remove(self, sub)
+        self._unmark((sub,))
+
+    def __delitem__(self, index):
+        gone = self[index] if isinstance(index, slice) else (self[index],)
+        list.__delitem__(self, index)
+        self._unmark(gone)
+
+    def __setitem__(self, index, value):
+        if isinstance(index, slice):
+            gone, value = self[index], list(value)
+            new = value
+        else:
+            gone, new = (self[index],), (value,)
+        list.__setitem__(self, index, value)
+        self._unmark(gone)
+        for sub in new:
+            _mark_queued(sub, True)
+
+    def discard(self, sub):
+        """Remove `sub` by identity, if queued."""
+        for i, s in enumerate(self):
+            if s is sub:
+                del self[i]
+                return
+
+    def _unmark(self, gone):
+        for sub in gone:
+            if not any(s is sub for s in self):
+                _mark_queued(sub, False)
+
+
+def _mark_queued(sub, queued: bool) -> None:
+    if isinstance(sub, ShipSubsystem):
+        sub._in_repair_queue = queued
+
+
 class RepairSubsystem(PoweredSubsystem):
     """Engineering / damage-control subsystem — the per-ship repair queue.
 
@@ -2889,10 +2971,10 @@ class RepairSubsystem(PoweredSubsystem):
         # RE layout: +0x9C (isOn) inits to 1 — the bay ticks and draws
         # power without ever being switched on.
         self._is_on = True
-        # Ordered repair queue (head = active). Python list of subsystem
-        # refs; identity comparisons throughout (TGObject __eq__ is not
-        # trusted).
-        self._queue: list = []
+        # Ordered repair queue (head = active). A list of subsystem refs that
+        # keeps each member's _in_repair_queue (_RepairQueue); identity
+        # comparisons throughout (TGObject __eq__ is not trusted).
+        self._queue: list = _RepairQueue()
         # id(sub) values already notified ET_REPAIR_CANNOT_BE_COMPLETED
         # (destroyed-while-queued fires once, not per tick).
         self._cannot_complete_notified: set = set()
@@ -3009,7 +3091,7 @@ class RepairSubsystem(PoweredSubsystem):
             if sub.GetCondition() >= sub.GetMaxCondition():
                 completed.append(sub)
         for sub in completed:
-            self._queue = [s for s in self._queue if s is not sub]
+            self._queue.discard(sub)
             self._fire_repair_event("ET_REPAIR_COMPLETED", sub)
 
     # ── Event emission ──────────────────────────────────────────────────────

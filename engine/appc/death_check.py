@@ -12,12 +12,16 @@ write. Delivery (``_check``) runs the check at the boundary:
 * the ship is invincible NOW -> nothing (M1, R5): no hull cascade, no breach
   arm, no death. E3M5's ``KillGonDev`` zeroes the hull and only then makes
   the derelict invincible, so a check inside the write would have killed it;
+* the subsystem is no longer at 0 NOW -> nothing (ruling I1): the crossing
+  is decided at the boundary like the death, so a hull dipped to 0 and
+  restored before it (QB ``sim_restore``, ``repair_ship_fully``) neither
+  cascades nor dies;
 * else a >0 -> 0 crossing of the power plant arms the warp-core breach, of
   the hull schedules the subsystem cascade (objects._route_zero_crossing);
 * then, unless the ship is dying or dead, the death begins through the one
   death entry (``ship_death.begin``, a rock's ``rocks.death.begin``) with the
-  write's killer when the subsystem is critical and STILL at 0, or is the
-  ship's targetable power plant, destroyed (a breach destroys the ship).
+  write's killer when the subsystem is critical, or is the ship's targetable
+  power plant, destroyed (a breach destroys the ship).
 
 Because ZERO_CROSS is emitted at the write, the killing hit's death -- its
 ET_OBJECT_EXPLODING -- is delivered before that hit's own ET_WEAPON_HIT
@@ -68,11 +72,12 @@ def _check(ship, subsystem, crossed, killer) -> None:
     from engine.core.ids import implements
     if implements(ship, "IsInvincible") and ship.IsInvincible():
         return
+    if subsystem.GetCondition() > 0.0:
+        return              # restored before the boundary (ruling I1)
     _route_zero_crossing(ship, subsystem, crossed)
     if ship.IsDying() or ship.IsDead():
         return
-    if ((subsystem.GetCondition() <= 0.0 and _is_critical(subsystem))
-            or _is_breached_plant(ship, subsystem)):
+    if _is_critical(subsystem) or _is_breached_plant(ship, subsystem):
         _begin_death(ship, killer)
 
 

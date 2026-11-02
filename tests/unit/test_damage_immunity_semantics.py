@@ -200,10 +200,33 @@ def test_hull_zeroed_then_made_invincible_survives():
 
 
 def test_hull_restored_before_the_boundary_does_not_die():
+    """Ruling I1: a zero crossing is decided at the boundary, like the death
+    (M5). A hull dipped to 0 and restored before it schedules no cascade, so
+    the ship is still alive past the cascade's delay."""
     ship = _ship()
     ship.GetHull().SetCondition(0.0)
     ship.GetHull().SetCondition(500.0)
     effect_queue.boundary()
+    assert ship.IsDying() == 0
+    assert subsystem_cascade._active == []
+    subsystem_cascade.advance(subsystem_cascade.CASCADE_DELAY + 0.5)
+    effect_queue.boundary()
+    assert ship.GetHull().GetCondition() == 500.0
+    assert ship.IsDying() == 0
+
+
+def test_plant_restored_before_the_boundary_arms_no_breach():
+    """Ruling I1 for the breach arm: a plant dipped to 0 and restored before
+    the boundary arms nothing."""
+    ship = _ship()
+    plant = PowerSubsystem("Warp Core")
+    plant.SetMaxCondition(100.0)
+    plant.SetTargetable(1)
+    ship.SetPowerSubsystem(plant)
+    plant.SetCondition(0.0)
+    plant.SetCondition(50.0)
+    effect_queue.boundary()
+    assert warp_core_breach._armed == []
     assert ship.IsDying() == 0
 
 
@@ -295,3 +318,58 @@ def test_reset_drops_pending_checks():
     effect_queue.reset()
     effect_queue.boundary()
     assert ship.IsDying() == 0
+
+
+# ── M4: the same semantics without the native module ─────────────────────────
+
+@pytest.fixture(params=["native queue", "python queue"])
+def either_queue(request, monkeypatch):
+    """Each test below runs on the queue the build has and on the Python
+    list effect_queue falls back to without the native module (task review
+    M4): the hold-and-boundary rules must not depend on it."""
+    if request.param == "python queue":
+        monkeypatch.setattr(effect_queue, "_q", effect_queue._PyQueue())
+    elif isinstance(effect_queue._q, effect_queue._PyQueue):
+        pytest.skip("native module not built")
+    return request.param
+
+
+def test_without_the_native_module_kill_gon_dev_still_survives(either_queue):
+    ship = _ship()
+    ship.GetHull().SetCondition(0)
+    assert ship.IsDying() == 0               # held, not delivered at once
+    ship.SetInvincible(1)
+    effect_queue.boundary()
+    assert ship.IsDying() == 0
+
+
+def test_without_the_native_module_a_kill_waits_for_the_boundary(
+        either_queue, monkeypatch):
+    import App
+    order = []
+    orig = App.g_kEventManager.AddEvent
+
+    def spy(evt, _orig=orig):
+        if evt.GetEventType() in (App.ET_OBJECT_EXPLODING, App.ET_WEAPON_HIT):
+            order.append(evt.GetEventType())
+        return _orig(evt)
+
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent", spy)
+    ship = _ship()
+    _drop_shields(ship)
+    apply_hit(ship, 5000.0, TGPoint3(0, 10, 0), source=None)
+    assert order == [] and ship.IsDying() == 0
+    effect_queue.boundary()
+    assert ship.IsDying() == 1
+    assert order == [App.ET_OBJECT_EXPLODING, App.ET_WEAPON_HIT]   # R2
+
+
+def test_without_the_native_module_a_session_end_still_holds_damage(
+        either_queue):
+    ship = _ship()
+    ship.GetHull().SetCondition(0.0)
+    with effect_queue.session():
+        pass
+    assert ship.IsDying() == 0
+    effect_queue.boundary()
+    assert ship.IsDying() == 1

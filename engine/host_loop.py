@@ -979,8 +979,17 @@ def _combat_tick_boundary():
     With native combat off this is where the tick's hits are reported.
     Writes made outside the combat step wait for a boundary: a GameLoop
     tick's (a script) for this one, the frame's post-step pass's
-    (radiation, collisions, scenery, hull breakup) for the frame-end one."""
-    _effect_queue.boundary()
+    (radiation, collisions, scenery, hull breakup) for the frame-end one.
+
+    Timed as "sim.effects" with the switch off, the row the switch-on
+    scope's exit flush uses (ruling I2): a tick's delivery reports under one
+    row in both states, so "sim.combat" compares like for like. With it on
+    this boundary is empty (the scope delivered) and is not timed again."""
+    if _native_combat.enabled():
+        _effect_queue.boundary()
+        return
+    with frame_profiler.scope("sim.effects"):
+        _effect_queue.boundary()
 
 
 # Beam damage per second is MaxDamage × this, by the phaser system's power

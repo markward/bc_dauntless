@@ -81,6 +81,11 @@ def _apply_creation_hit(ship, hull_arg, shield_arg):
         return
     if _ignores_env_damage(ship):
         return
+    # SetHurtable(0) is the only immunity (native damage M1), as for
+    # radiation's drain (radiation.apply_chunk) and combat.apply_hit.
+    from engine.core.ids import implements
+    if implements(ship, "IsImmuneToDamage") and bool(ship.IsImmuneToDamage()):
+        return
     from engine.core.game import Game_GetDifficulty
     if Game_GetDifficulty() <= 0:
         return                                   # easy: nothing lands
