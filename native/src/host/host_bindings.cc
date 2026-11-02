@@ -4167,11 +4167,49 @@ void k1_launch_recheck() {
     }
 }
 
+// The objects a launch's queue entries hold from fire time (final review
+// 1): each operand the object its handle names now, when the session's
+// applier can name it (WriteApplier::live), owned here until the queue
+// takes it (release()), else dropped with this. So a row freed between the
+// fire and the boundary loses neither the spawn nor its events, whose
+// launcher writes already applied: the launcher, ship and set as the
+// target and the shot's target always were (Review Focus 5).
+class K1Held {
+public:
+    K1Held() = default;
+    K1Held(const K1Held&) = delete;
+    K1Held& operator=(const K1Held&) = delete;
+    ~K1Held() {
+        for (PyObject* o : owned_) Py_DECREF(o);
+    }
+
+    // `h` (-1 kept). A handle naming no live object: -1 (None) for a
+    // target (`none_ok`: the torpedo's target is None, not a skipped
+    // spawn), else the handle (skipped at delivery if gone).
+    dauntless::host::NativeOperand operator()(std::int64_t h, bool none_ok) {
+        namespace hq = dauntless::host;
+        hq::WriteApplier& applier = hq::write_applier();
+        if (h == -1 || !applier.has_context()) return h;
+        PyObject* o = applier.live(h);
+        if (o == nullptr) throw py::error_already_set();
+        if (o == Py_None) {
+            Py_DECREF(o);
+            return none_ok ? std::int64_t{-1} : h;
+        }
+        owned_.push_back(o);
+        return hq::OwnedObject{o};
+    }
+
+    // The queue took every reference handed out.
+    void release() { owned_.clear(); }
+
+private:
+    std::vector<PyObject*> owned_;
+};
+
 // A SPAWN's operands (combat_effect_queue.h; effect_queue._spawn): the
 // record in order, flags and the kind as numbers (a handle is an int), the
-// target as the object itself when the session's applier can name it
-// (WriteApplier::live), held by the queue from fire time on: a target
-// freed before the boundary is still the torpedo's (Review Focus 5).
+// launcher, ship, set, target and the shot's target held (K1Held).
 void k1_append_spawn(const dauntless::combat::K1Entry& e) {
     namespace cb = dauntless::combat;
     namespace hq = dauntless::host;
@@ -4185,33 +4223,18 @@ void k1_append_spawn(const dauntless::combat::K1Entry& e) {
             "combat K1: a SPAWN's row has no module (push_ammo_launch, "
             "push_pulse_params)");
     PyObject* const module = mi->second;
-    hq::WriteApplier& applier = hq::write_applier();
-    auto held = [&](std::int64_t h) -> hq::NativeOperand {
-        if (h == -1 || !applier.has_context()) return h;
-        PyObject* o = applier.live(h);
-        if (o == nullptr) throw py::error_already_set();
-        if (o == Py_None) {
-            Py_DECREF(o);  // no live object: the handle (skipped if gone)
-            return h;
-        }
-        return hq::OwnedObject{o};
-    };
-    // The target and the shot's target (a pulse's ET_WEAPON_FIRED pointer)
-    // as objects held from fire time.
-    const hq::NativeOperand target = held(s.target);
-    hq::NativeOperand fired_at;
-    try {
-        fired_at = held(s.fired_at);
-    } catch (...) {
-        if (const auto* o = std::get_if<hq::OwnedObject>(&target))
-            Py_DECREF(static_cast<PyObject*>(o->object));
-        throw;
-    }
+    K1Held held;
+    const hq::NativeOperand launcher = held(e.a, false);
+    const hq::NativeOperand ship = held(s.ship, false);
+    const hq::NativeOperand set = held(s.set, false);
+    // The shot's target (a pulse's ET_WEAPON_FIRED pointer) too.
+    const hq::NativeOperand target = held(s.target, true);
+    const hq::NativeOperand fired_at = held(s.fired_at, true);
     const hq::NativeOperand ops[] = {
-        e.a,
+        launcher,
         static_cast<double>(static_cast<int32_t>(s.kind)),
-        s.ship,
-        s.set,
+        ship,
+        set,
         hq::OwnedObject{Py_NewRef(module)},
         target,
         s.position[0], s.position[1], s.position[2],
@@ -4226,7 +4249,7 @@ void k1_append_spawn(const dauntless::combat::K1Entry& e) {
     };
     static_assert(std::size(ops) <= hq::EffectEntry::kMaxOperands);
     hq::effect_queue().append_native_span(hq::EffectKind::SPAWN, ops);
-    // (The queue now owns the module, target and fired-at references.)
+    held.release();  // the queue owns the module and every held reference
 }
 
 // A K1 record's queue entries (k1_fire_control.h, THE EFFECT QUEUE) into
@@ -4241,20 +4264,30 @@ void k1_append_entries(const std::vector<dauntless::combat::K1Entry>& entries) {
                 if (!e.spawn) throw std::logic_error("combat K1: SPAWN, no record");
                 k1_append_spawn(e);
                 break;
-            case cb::K1Effect::AMMO_CONSUMED:
+            case cb::K1Effect::AMMO_CONSUMED: {
+                // A launch's event: held like its SPAWN (K1Held).
+                K1Held held;
                 hq::effect_queue().append_native(hq::EffectKind::AMMO_CONSUMED,
-                                                 e.a);
+                                                 held(e.a, false));
+                held.release();
                 break;
+            }
             case cb::K1Effect::FIRE_SOUND:
                 hq::effect_queue().append_native(hq::EffectKind::FIRE_SOUND, e.a);
                 break;
             case cb::K1Effect::LOOP_STOP:
                 hq::effect_queue().append_native(hq::EffectKind::LOOP_STOP, e.a);
                 break;
-            case cb::K1Effect::WEAPON_FIRED:
+            case cb::K1Effect::WEAPON_FIRED: {
+                // A launch's (or an edge's) event: held like a SPAWN.
+                K1Held held;
+                const hq::NativeOperand weapon = held(e.a, false);
+                const hq::NativeOperand target = held(e.b, true);
                 hq::effect_queue().append_native(hq::EffectKind::WEAPON_FIRED,
-                                                 e.a, e.b);
+                                                 weapon, target);
+                held.release();
                 break;
+            }
             case cb::K1Effect::WEAPON_FIRE_FAILED:
                 hq::effect_queue().append_native(
                     hq::EffectKind::WEAPON_FIRE_FAILED, e.a);

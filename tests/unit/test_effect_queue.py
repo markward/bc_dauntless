@@ -301,6 +301,28 @@ def test_a_row_dropped_by_a_delivery_keeps_its_later_entries(monkeypatch):
     assert eq.counts() == {"delivered": 2, "skipped_gone": 0, "failed": 0}
 
 
+def test_a_reset_by_a_delivery_stops_its_batch(monkeypatch):
+    """Final review 2: a delivered entry's handler resets the queue (a
+    mission swap's native_combat.reset). The rest of the batch that entry
+    was taken with is the old mission's: not delivered (a SPAWN in it would
+    register an old-mission torpedo in the new one), Python's and kernel's
+    entries alike."""
+    log = []
+    a, b, c = _bank("A"), _bank("B"), _bank("C")
+
+    def play(bank):
+        log.append(("play", bank.GetName()))
+        if bank is a:
+            eq.reset()
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", play)
+    with eq.scope():
+        eq.post(eq.FIRE_SOUND, a)
+        _post_native(eq.FIRE_SOUND, b.__dict__["_nslot"])
+        eq.post(eq.FIRE_SOUND, c)
+    assert log == [("play", "A")]
+    assert not eq.deferring() and _h.combat_effect_take() == []
+
+
 def test_python_reference_keeps_its_object_alive(calls):
     with eq.scope():
         eq.post(eq.FIRE_SOUND, _bank("Held"))

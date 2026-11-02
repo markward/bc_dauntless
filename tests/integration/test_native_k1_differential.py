@@ -689,6 +689,8 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
     # launch since types cache at load, Task 5); a bank's edge is logged
     # writes and queue entries (combat fire events), never a record.
     assert nat.counts["k1_logged"]["pulse_launch"] > 0, nat.counts
+    # The equalities below would hold at 0 == 0: tubes really launched.
+    assert nat.counts["k1_logged"]["tube_launch"] > 0, nat.counts
     assert nat.fired.get(CANNON, 0) == 0, nat.fired
     assert nat.fired.get(TUBE, 0) == sum(
         nat.counts["k1_launch_reasons"].values()), (nat.fired, nat.counts)

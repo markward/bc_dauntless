@@ -172,7 +172,12 @@
 // GetCooldownTime, GetDamageRadiusFactor, _emitter_world_position,
 // _shot_cost, _climb_to_ship. One of those patched on an INSTANCE is not
 // obeyed by a native launch (roadmap decision 2: runtime patching of
-// engine internals is not a supported mod surface). The module-level launch
+// engine internals is not a supported mod surface). Others it stands in for
+// with NO guard, class or instance, read from the mirror instead: the ammo
+// type's AddAvailable and GetTorpedoScript, the system's
+// GetCurrentAmmoType, the firing ship's GetVelocityTG, GetWorldRotation and
+// GetContainingSet, and the target's IsDead; an override of any of those
+// is not obeyed by a native launch either. The module-level launch
 // functions are the launch check's (K1LaunchWhy::Patched).
 //
 // THE P6 WINDOW. A cannon's launch speed and module are read when its

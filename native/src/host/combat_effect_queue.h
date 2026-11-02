@@ -10,8 +10,9 @@
 // it:
 //   a kernel  append_native: mirror handles (-1 = None) and numbers (a
 //             watcher's old / new value); no Python call. The binding may
-//             hand one operand over as an object reference the queue then
-//             owns (OwnedObject: a SPAWN's target, held from fire time);
+//             hand operands over as object references the queue then
+//             owns (OwnedObject: a launch's SPAWN, WEAPON_FIRED and
+//             AMMO_CONSUMED objects, held from fire time: K1Held);
 //   Python    append_objects (the binding combat_effect_post): object
 //             references the queue OWNS until the entry leaves it.
 // The lock is held for both (the kernels run under it today).

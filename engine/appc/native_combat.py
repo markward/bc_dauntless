@@ -1988,6 +1988,9 @@ def push_ammo_launch(ammo) -> None:
     """Push the ammo type's launch (_ammo_launch) at its creation, a new
     script, a cache re-read: its script's launch is cached first
     (_cache_tube_launch), so the row is pushed cached."""
+    # A type built mid-swap (_pulse_stale: the SDK tree half reloaded)
+    # resolves its module now, memoizing a failed import earlier than its
+    # first launch would; the next swap's reset clears it.
     if _enabled:
         if _pulse_stale:
             refresh_stale_pulse_params()    # re-pushes every type, this one too
@@ -2000,12 +2003,15 @@ def _cache_tube_launch(script) -> None:
     it (_resolve_projectile_module: an unimportable script is the stock
     photon, None when that fails too; it catches every import error itself,
     and tube_launch_params a raising GetLaunchSpeed, so loading never
-    breaks). Native combat only: with the switch off the module is first
-    resolved at its first launch, as before."""
+    breaks). An uncached answer (that raise) is not stored: an entry stops
+    learn_tube_launch, so Python's launch may still learn it. Native combat
+    only: with the switch off the module is first resolved at its first
+    launch, as before."""
     from engine.appc import weapon_subsystems as ws
     if script and script not in ws._tube_launch_cache:
-        ws._tube_launch_cache[script] = ws.tube_launch_params(
-            ws._resolve_projectile_module(script))
+        launch = ws.tube_launch_params(ws._resolve_projectile_module(script))
+        if launch[0] != ws.LAUNCH_UNCACHED:
+            ws._tube_launch_cache[script] = launch
 
 
 def _push_ammo_row(ammo) -> None:

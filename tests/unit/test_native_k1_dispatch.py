@@ -2772,6 +2772,44 @@ def test_first_launch_of_a_script_is_python_then_cached(monkeypatch):
     assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) - 1 >= 2
 
 
+def test_a_launcher_freed_before_the_boundary_still_spawns(monkeypatch):
+    """Final review 1: a launch's queue entries hold the launcher, ship and
+    set as objects from fire time, as they hold the target. A tube row
+    freed between the fire and the boundary (unregistered behind the
+    registry's back, as its finalizer would) loses neither the torpedo nor
+    its events once the launch writes have applied: every launch is still
+    the spawn, ENTERED_SET, TORPEDO_FIRED, WEAPON_FIRED, AMMO_CONSUMED, and
+    nothing is skipped."""
+    from engine.appc import effect_queue as eq
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _LAUNCH_SHIPS, "k1_freed_launcher",
+                  player="Galaxy")
+        launches = _Launches(w)
+        freed = []
+        try:
+            for t in range(40):
+                before = nc.counts()["k1_logged"]["tube_launch"]
+                with host_loop._combat_effect_scope():
+                    w.tick(before=lambda w, t=t: _tube_volley(w, t))
+                    if nc.counts()["k1_logged"]["tube_launch"] > before:
+                        torps = w.ships["Galaxy"].GetTorpedoSystem()
+                        for tube in _weapons(torps):
+                            freed.append(tube)
+                            nc.unregister_handle(tube.__dict__.pop("_nslot"))
+                if freed:
+                    break
+            launched = nc.counts()["k1_logged"]["tube_launch"]
+            gone = eq.counts()["skipped_gone"]
+        finally:
+            w.close()
+    assert freed and launched >= 1
+    assert gone == 0
+    assert len(launches.spawned) == launched, launches.events
+    kinds = [e[0] for e in launches.events]
+    assert kinds == ["entered", "torpedo_fired", "fired",
+                     "ammo_consumed"] * launched, kinds
+
+
 def test_spawn_is_where_the_ship_was_at_fire_time(monkeypatch):
     """Review Focus 1. After the weapons the rest of the step moves the
     firing ship (a tractor): the torpedo still spawns, and flies, from
@@ -3278,6 +3316,50 @@ def test_a_type_that_does_not_resolve_keeps_its_fallbacks(monkeypatch):
         else:
             assert why["launch_unresolved"] >= 2, why
             assert logged == 0 and nl.spawned == [], counts
+
+
+# A GetLaunchSpeed that raises while RAISE[0] is set (test-local).
+_RAISING_SPEED_TORP = _PURE_TORP.replace(
+    "def GetLaunchSpeed():\n    return(21.0)\n",
+    "RAISE = [1]\n\n"
+    "def GetLaunchSpeed():\n"
+    "    if RAISE[0]:\n"
+    "        raise RuntimeError('k1fx: no launch speed yet')\n"
+    "    return(21.0)\n")
+
+
+def test_a_raising_launch_speed_at_load_stays_uncached(tmp_path, monkeypatch):
+    """Task 5 review: the type's module raises from GetLaunchSpeed when
+    the type is loaded (SetTorpedoScript). Loading succeeds, the type stays
+    uncached (as tube_launch_params always left it), and its first launch
+    is handed back (launch_uncached): Python's launch, as before, which
+    learns it -- by then the getter answers -- so the rest are native,
+    every torpedo as the reference's (which never read it at load)."""
+    name = "k1fx_raising_speed"
+    mod = _fixture_module(tmp_path, monkeypatch, name, _RAISING_SPEED_TORP)
+    assert "RAISE" in vars(mod)         # the replace took
+    states = []
+
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        if t == 0:
+            ws._reset_projectile_module_cache()     # each arm resolves
+            mod.RAISE[0] = 1
+            ammo = torps.GetCurrentAmmoType()
+            ammo.SetTorpedoScript(name)             # loads: must not raise
+            if w.native:
+                states.append(_h.combat_dump(
+                    ammo.__dict__["_nslot"])["ammo_launch_state"])
+            mod.RAISE[0] = 0
+        _tube_volley(w, t)
+
+    try:
+        (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 95)
+    finally:
+        ws._reset_projectile_module_cache()
+    assert states == [ws.LAUNCH_UNCACHED]
+    assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
+    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) - 1 >= 2
 
 
 def test_kernel_spawn_launches_the_fire_time_module(monkeypatch):
