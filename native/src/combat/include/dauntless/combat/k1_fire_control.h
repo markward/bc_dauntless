@@ -211,7 +211,7 @@ using K1Value = std::variant<std::monostate, bool, int64_t, double,
 
 struct K1Write {
     int64_t handle = -1;
-    std::string field;  // the Python attribute name
+    std::string_view field;  // the Python attribute name (write_log.h)
     K1Value value;
 };
 

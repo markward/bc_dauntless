@@ -593,3 +593,126 @@ def test_k2_queued_contacts_interleave_with_c_applied_writes(monkeypatch):
         finally:
             w.close()
     assert len(checked) > 4, checked
+
+
+# ── Fix round 2: names and the registry read in C ────────────────────────────
+
+def test_field_names_built_at_run_time(monkeypatch):
+    """A parsed log's names are pooled views and the applier caches each
+    name's str by address (checked by content): 300 distinct names built at
+    run time (more than the address cache holds), each written twice in
+    interleaved logs, land exactly where apply_writes puts them."""
+    py, c = _twins()
+    names = ["".join(("_dyn", str(i))) for i in range(300)]
+    for rnd in range(2):
+        for i in range(0, 300, 30):
+            log = [(_handle(j % 4), names[j], float(j * 10 + rnd))
+                   for j in range(i, i + 30)]
+            _both(log, py, c, monkeypatch)
+    assert py.objs[0].__dict__["_dyn296"] == 2961.0
+
+
+def _kill_in_both(py, c, i):
+    """Object i's registry entry turned into a DEAD KeyedRef that stays in
+    the registry's `data` (as during an iteration: the removal is
+    deferred), in both arms."""
+    import gc
+    import weakref
+    for arm in (py, c):
+        guard = weakref._IterationGuard(arm.registry)
+        guard.__enter__()
+        arm.__dict__.setdefault("guards", []).append(guard)
+        h = arm.objs[i].__dict__["_nslot"]
+        del arm.objs[i]
+        gc.collect()
+        assert h in arm.registry.data and arm.registry.data[h]() is None
+        assert arm.registry._pending_removals == [h]
+    return h
+
+
+def _release(py, c):
+    for arm in (py, c):
+        for g in arm.__dict__.pop("guards", []):
+            g.__exit__(None, None, None)
+
+
+def test_registry_dead_ref_answers_none(monkeypatch):
+    """A handle whose registry entry is a dead KeyedRef still in `data`:
+    `.get` answers None, so walk.obj raises its RuntimeError; the C read of
+    `data` must answer the same (no write lands, the same exception), and a
+    live handle in the same log is still written."""
+    py, c = _twins()
+    h = _kill_in_both(py, c, 1)
+    try:
+        log = [(h, "_f", 1.5), (_handle(0), "_f", 2.5)]
+        perr, _cerr = _both(log, py, c, monkeypatch)
+        assert isinstance(perr, RuntimeError), perr
+        assert py.objs[0].__dict__["_f"] == 2.5
+    finally:
+        _release(py, c)
+
+
+class _CountingRegistry(__import__("weakref").WeakValueDictionary):
+    """A registry subclass: the C read stands down and asks its `.get`."""
+
+    def get(self, key, default=None):
+        self.asked = getattr(self, "asked", 0) + 1
+        return super().get(key, default)
+
+
+def test_registry_subclass_is_asked_through_get(monkeypatch):
+    py, c = _twins()
+    for arm in (py, c):
+        reg = _CountingRegistry()
+        for o in arm.objs:
+            reg[o.__dict__["_nslot"]] = o
+        arm.registry = reg
+    log = [(_handle(i), "_f", float(i)) for i in range(4)]
+    _both(log, py, c, monkeypatch)
+    assert c.registry.asked == py.registry.asked == 4
+
+
+def test_registry_data_holding_a_non_weakref(monkeypatch):
+    """An entry of `data` that is not a weakref: the C read stands down and
+    `.get` raises what it raises (calling it)."""
+    py, c = _twins()
+    for arm in (py, c):
+        arm.registry.data[_UNKNOWN] = 7         # not callable
+    _both([(_UNKNOWN, "_f", 1.0), (_handle(0), "_f", 2.0)], py, c,
+          monkeypatch)
+
+
+_SWAP = {}
+
+
+class _SwapLeaf(Leaf):
+    """Its wake hook re-pins its handle to another object of the arm (Python
+    run between two writes on the same handle)."""
+
+    def _passive_on_wake(self):
+        Leaf._passive_on_wake(self)
+        walk, h, other = _SWAP[self._arm]
+        walk.pins[h] = other
+
+
+def test_handle_re_resolved_after_python_changes_the_pins(monkeypatch):
+    """Consecutive writes on one handle reuse the object walk.obj found only
+    while the pins dict is unchanged: a wake hook that re-pins the handle
+    between them sends the next write to the new object, as apply_writes
+    (walk.obj per write) does."""
+    py, c = _twins()
+    h = _handle(0)
+    for arm in (py, c):
+        o = arm.objs[0]
+        o.__class__ = _SwapLeaf
+        o.__dict__["_passive_asleep"] = True
+        _SWAP[arm.arm] = (arm.walk, h, arm.objs[1])
+    try:
+        log = [(h, "_f", 1.0), (h, "_wake", True), (h, "_f", 2.0),
+               (h, "_i", 3)]
+        _both(log, py, c, monkeypatch)
+        assert py.objs[0].__dict__["_f"] == 1.0
+        assert py.objs[1].__dict__["_f"] == 2.0
+        assert ("wake", 0) in _EVENTS["c"]
+    finally:
+        _SWAP.clear()

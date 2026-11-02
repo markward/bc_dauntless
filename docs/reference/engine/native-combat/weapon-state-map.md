@@ -248,7 +248,7 @@ Tests that touch the logged fields directly: **45 files**. Charge/reload fields:
 
 | Item | Detail | Site |
 |---|---|---|
-| Value type | `K1Value = variant<monostate, bool, int64, double, K1WalkOffset, vector<int64>>`; `K1Write{handle, std::string field, value}` | k1_fire_control.h:207-224 |
+| Value type | `K1Value = variant<monostate, bool, int64, double, K1WalkOffset, vector<int64>>`; `K1Write{handle, std::string_view field, value}` (a static name; `std::string` until native weapon state Task 5 fix round 2) | k1_fire_control.h:207-224 |
 | Make + log | `write_float/write_i/write_flag/write_int/write_target/write_target_list/write_target_offset`: read the old value for the undo, `m_.set_*`, push the undo, `log(h, "<name>", v)` | k1_fire_control.cc:289-363 |
 | Row gone | `_target` on a dropped bank row is logged only (no mirror write) | k1_fire_control.cc:317-324 |
 | Undo | A throw from `next()` undoes the writes made but not yet returned. A returned record's writes are final. | k1_fire_control.h:87-99 |

@@ -771,6 +771,16 @@ void Mirror::set_floats(int64_t h, Field f, const std::vector<double>& v) {
     ++epoch_;
 }
 
+void Mirror::set_float_at(int64_t h, Field f, size_t index, double v) {
+    if (info(f).type != FieldType::FloatList) bad("not a float-list field", f);
+    visit(h, info(f).kind, [&](auto& row) {
+        auto* p = flptr(row, f);
+        if (!p) bad("field not on this row", f);
+        p->at(index) = v;
+    });
+    ++epoch_;
+}
+
 std::vector<double> Mirror::get_floats(int64_t h, Field f) const {
     if (info(f).type != FieldType::FloatList) bad("not a float-list field", f);
     return visit(h, info(f).kind, [&](auto& row) {

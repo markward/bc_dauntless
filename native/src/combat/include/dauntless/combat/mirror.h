@@ -369,6 +369,9 @@ public:
                       const std::vector<std::vector<int64_t>>& lists);
     // A FloatList field: the whole list, every bit kept.
     void set_floats(int64_t handle, Field f, const std::vector<double>& v);
+    // One element of a FloatList field, in place (the list keeps its
+    // storage). std::out_of_range for an index past its end.
+    void set_float_at(int64_t handle, Field f, size_t index, double v);
     void set_spheres(int64_t handle, std::vector<Sphere> spheres);
     void set_profile_rows(int64_t handle, std::vector<ProfileRow> rows,
                           double full_concealment);

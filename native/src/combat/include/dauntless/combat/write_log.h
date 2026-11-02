@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -10,7 +10,12 @@
 // (native/src/host/combat_write_apply.h applies it: ApplyWrite is
 // LoggedWrite). Plain C++: no Python here.
 //
-// A logged write is (handle, Python attribute name, value). The value is one
+// A logged write is (handle, Python attribute name, value). The name is a
+// std::string_view of storage that outlives every log: a string literal or
+// field_name()'s static table in the kernels, the applier's never-freed name
+// pool for a parsed Python log (combat_write_apply.cc). The applier caches
+// each name's interned str by the view's address (checked by content), so a
+// write costs no string copy or hash. The value is one
 // of K1's encodings (None, bool, int, float, the walk-offset marker, a
 // handle list) or one of K0's two in-place writes:
 //   SlotWrite     obj.<field>[index] = value, on the object's EXISTING list
@@ -18,7 +23,9 @@
 //   WatcherWrite  obj.<field>._value = value, `field` the attribute holding
 //                 the FloatRangeWatcher ("_charge_watcher")
 // K1 and K2 keep their own value type (K1Value, the first six
-// alternatives); only K0 and the applier use LoggedValue.
+// alternatives) and the same name type; the applier's Python-log parser
+// (combat_apply_log) uses LoggedValue. K0 logs its own plain K0Write
+// (k0_charging.h): no string, no variant.
 
 namespace dauntless::combat {
 
@@ -53,7 +60,7 @@ using LoggedValue =
 
 struct LoggedWrite {
     int64_t handle = -1;
-    std::string field;  // the Python attribute name
+    std::string_view field;  // the Python attribute name (see above)
     LoggedValue value;
 };
 

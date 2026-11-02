@@ -7,8 +7,11 @@
 #include "combat_write_apply.h"
 
 #include <algorithm>
+#include <cstring>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace dauntless::host {
@@ -42,23 +45,32 @@ constexpr int kRefs = static_cast<int>(ApplyKind::REFS);
 constexpr int kWake = static_cast<int>(ApplyKind::WAKE);
 constexpr int kPython = static_cast<int>(ApplyKind::PYTHON);
 
+// The applier runs once per logged write: its small helpers are forced
+// inline, as the K0 scan's are (a Debug, -O0 build otherwise pays a call for
+// each, every write).
+#if defined(__clang__) || defined(__GNUC__)
+#define APPLY_INLINE inline __attribute__((always_inline))
+#else
+#define APPLY_INLINE inline
+#endif
+
 // An owned reference, released at scope exit.
 class Ref {
 public:
-    explicit Ref(PyObject* p = nullptr) : p_(p) {}
+    APPLY_INLINE explicit Ref(PyObject* p = nullptr) : p_(p) {}
     Ref(const Ref&) = delete;
     Ref& operator=(const Ref&) = delete;
-    Ref& operator=(Ref&& o) noexcept {
+    APPLY_INLINE Ref& operator=(Ref&& o) noexcept {
         if (this != &o) {
             Py_XDECREF(p_);
             p_ = o.release();
         }
         return *this;
     }
-    ~Ref() { Py_XDECREF(p_); }
-    PyObject* get() const { return p_; }
-    explicit operator bool() const { return p_ != nullptr; }
-    PyObject* release() {
+    APPLY_INLINE ~Ref() { Py_XDECREF(p_); }
+    APPLY_INLINE PyObject* get() const { return p_; }
+    APPLY_INLINE explicit operator bool() const { return p_ != nullptr; }
+    APPLY_INLINE PyObject* release() {
         PyObject* p = p_;
         p_ = nullptr;
         return p;
@@ -81,13 +93,21 @@ struct Names {
     PyObject* walk_offset;
     PyObject* slot;
     PyObject* watcher;
+    PyObject* data;
     PyObject* minus_one;
     PyObject* handle_fmt;
     PyObject* note_fmt;
 };
 
-const Names* names() {
-    static Names* n = nullptr;
+Names* g_names = nullptr;
+const Names* make_names();
+
+APPLY_INLINE const Names* names() {
+    return g_names != nullptr ? g_names : make_names();
+}
+
+const Names* make_names() {
+    Names*& n = g_names;
     if (n != nullptr) return n;
     auto* t = new Names;
     t->dict = PyUnicode_InternFromString("__dict__");
@@ -101,6 +121,7 @@ const Names* names() {
     t->walk_offset = PyUnicode_InternFromString("walk_offset");
     t->slot = PyUnicode_InternFromString("slot");
     t->watcher = PyUnicode_InternFromString("watcher");
+    t->data = PyUnicode_InternFromString("data");
     t->minus_one = PyLong_FromLong(-1);
     // native_combat._K1Walk.obj's and _apply_rest's messages, verbatim.
     t->handle_fmt = PyUnicode_FromString(
@@ -109,8 +130,8 @@ const Names* names() {
         PyUnicode_FromString("combat K1: walk %d's offset also raised %r");
     for (PyObject* o : {t->dict, t->get, t->materialise, t->walk, t->nslot,
                         t->asleep, t->value, t->add_note, t->walk_offset,
-                        t->slot, t->watcher, t->minus_one, t->handle_fmt,
-                        t->note_fmt}) {
+                        t->slot, t->watcher, t->data, t->minus_one,
+                        t->handle_fmt, t->note_fmt}) {
         if (o == nullptr) return nullptr;  // error set; retried next call
     }
     n = t;
@@ -118,13 +139,59 @@ const Names* names() {
 }
 
 // A field name as an interned str (owned by the table, never released).
-PyObject* intern_field(const std::string& s) {
+// Names are views of static or pooled storage (write_log.h), so the answer
+// is cached by the view's address in a direct-mapped table in front of the
+// by-name table; a hit is confirmed by length and content (an address can
+// only be reused by a name that is not static -- never in the kernels --
+// and then the content check sends it to the by-name table).
+PyObject* intern_field(std::string_view s) {
+    struct Slot {
+        const char* p = nullptr;
+        size_t n = 0;
+        PyObject* o = nullptr;
+    };
+    static Slot by_addr[128];
+    Slot& e = by_addr[(reinterpret_cast<std::uintptr_t>(s.data()) >> 3) & 127u];
+    if (e.o != nullptr && e.p == s.data() && e.n == s.size() &&
+        std::memcmp(PyUnicode_AsUTF8(e.o), s.data(), s.size()) == 0)
+        return e.o;
     static auto* table = new std::unordered_map<std::string, PyObject*>;
-    auto it = table->find(s);
-    if (it != table->end()) return it->second;
-    PyObject* o = PyUnicode_InternFromString(s.c_str());
-    if (o == nullptr) return nullptr;
-    table->emplace(s, o);
+    std::string key(s);
+    auto it = table->find(key);
+    PyObject* o;
+    if (it != table->end()) {
+        o = it->second;
+    } else {
+        o = PyUnicode_InternFromString(key.c_str());
+        if (o == nullptr) return nullptr;
+        table->emplace(std::move(key), o);
+    }
+    e = Slot{s.data(), s.size(), o};
+    return o;
+}
+
+// A parsed Python log's field name, as a view of the never-freed pool (one
+// copy per distinct name).
+std::string_view pooled_name(const char* s, size_t n) {
+    static auto* pool = new std::unordered_set<std::string>;
+    return *pool->emplace(s, n).first;
+}
+
+// A K0 write's attribute: its Field's name, or the watcher's.
+PyObject* k0_field(const cb::K0FieldWrite& w) {
+    constexpr size_t kWatcher = static_cast<size_t>(cb::Field::kCount);
+    static PyObject* table[kWatcher + 1] = {};
+    const size_t i = w.type == cb::K0FieldWrite::Type::Watcher
+                         ? kWatcher
+                         : static_cast<size_t>(w.field);
+    if (i > kWatcher) {
+        PyErr_SetString(PyExc_SystemError, "combat apply: K0 write field");
+        return nullptr;
+    }
+    PyObject*& o = table[i];
+    if (o == nullptr)
+        o = PyUnicode_InternFromString(i == kWatcher ? "_charge_watcher"
+                                                     : cb::field_name(w.field));
     return o;
 }
 
@@ -170,7 +237,27 @@ struct KindEntry {
 struct KindCache {
     PyObject* kinds = nullptr;  // owned: the mapping the entries came from
     std::unordered_map<KindKey, KindEntry, KindKeyHash> map;
+    // A direct-mapped table in front of `map` for the kinds with no setter
+    // (PLAIN .. WAKE): an entry is valid while its epoch is the cache's
+    // (every reset bumps it). Keys borrowed: `map` owns them.
+    struct Front {
+        PyObject* type = nullptr;
+        PyObject* field = nullptr;
+        std::uint64_t epoch = 0;
+        int kind = kPlain;
+    };
+    Front front[256];
+    std::uint64_t epoch = 1;
 };
+
+std::size_t front_slot(PyObject* type, PyObject* field) {
+    const std::uint64_t h =
+        (static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(type)) ^
+         (static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(field))
+          << 1)) *
+        0x9E3779B97F4A7C15ull;
+    return static_cast<std::size_t>(h >> 56);
+}
 
 KindCache& kind_cache() {
     static auto* c = new KindCache;
@@ -183,6 +270,7 @@ void reset_kind_cache(PyObject* kinds) {
     // already consistent.
     auto old = std::move(c.map);
     c.map.clear();
+    ++c.epoch;  // every front entry stale
     PyObject* old_kinds = c.kinds;
     Py_INCREF(kinds);
     c.kinds = kinds;
@@ -200,10 +288,19 @@ void reset_kind_cache(PyObject* kinds) {
 // or answered something that is not a kind).
 bool kind_of(const Ctx& c, PyObject* type, PyObject* field, KindEntry* out) {
     KindCache& cache = kind_cache();
+    KindCache::Front& f = cache.front[front_slot(type, field)];
+    if (f.epoch == cache.epoch && f.type == type && f.field == field &&
+        cache.kinds == c.kinds) {
+        out->kind = out->conv = f.kind;
+        out->setter = nullptr;
+        return true;
+    }
     auto it = cache.map.find(KindKey{type, field});
     if (it != cache.map.end()) {
         *out = it->second;
         Py_XINCREF(out->setter);
+        if (it->second.kind != kPython && cache.kinds == c.kinds)
+            f = KindCache::Front{type, field, cache.epoch, it->second.kind};
         return true;
     }
     Ref key(PyTuple_Pack(2, type, field));
@@ -257,6 +354,65 @@ bool kind_of(const Ctx& c, PyObject* type, PyObject* field, KindEntry* out) {
 
 // ── walk.obj ─────────────────────────────────────────────────────────────
 
+// weakref.WeakValueDictionary (borrowed from the module, kept alive by it);
+// nullptr when it cannot be found (every registry then takes `.get`).
+PyTypeObject* weak_value_dict_type() {
+    static PyTypeObject* t = [] {
+        PyObject* mod = PyImport_ImportModule("weakref");
+        PyObject* type =
+            mod != nullptr ? PyObject_GetAttrString(mod, "WeakValueDictionary")
+                           : nullptr;
+        Py_XDECREF(mod);
+        if (type == nullptr || !PyType_Check(type)) {
+            PyErr_Clear();
+            Py_XDECREF(type);
+            return static_cast<PyTypeObject*>(nullptr);
+        }
+        return reinterpret_cast<PyTypeObject*>(type);  // kept: never freed
+    }();
+    return t;
+}
+
+// `registry.get(h)` (a new reference; nullptr with an error set). For an
+// exact WeakValueDictionary, its own lines in C -- `wr = self.data[h]`
+// (KeyError -> None), `o = wr()` (a dead KeyedRef -> None) -- with no
+// Python call. One difference no caller can see: `.get` first commits the
+// removals deferred while the dict is being iterated (dead refs whose keys
+// it drops); the C read finds those keys too and answers None for them,
+// as `.get` would. Anything else -- a plain dict, a subclass, a `data`
+// that is not a dict or an entry that is not a weakref -- is asked as the
+// reference asks it.
+PyObject* registry_get(PyObject* registry, PyObject* h) {
+    const Names* n = names();
+    if (PyDict_CheckExact(registry)) {
+        PyObject* r = PyDict_GetItemWithError(registry, h);
+        if (r == nullptr && PyErr_Occurred()) return nullptr;
+        return Py_NewRef(r != nullptr ? r : Py_None);
+    }
+    PyTypeObject* wvd = weak_value_dict_type();
+    if (wvd != nullptr && Py_TYPE(registry) == wvd) {
+        PyObject* data = PyObject_GetAttr(registry, n->data);  // self.data
+        if (data == nullptr) return nullptr;
+        if (PyDict_CheckExact(data)) {
+            PyObject* wr = PyDict_GetItemWithError(data, h);
+            if (wr == nullptr) {
+                Py_DECREF(data);
+                if (PyErr_Occurred()) return nullptr;
+                return Py_NewRef(Py_None);
+            }
+            if (PyWeakref_CheckRef(wr)) {
+                // Borrowed; Py_None when the referent is gone.
+                PyObject* o = PyWeakref_GetObject(wr);
+                Py_INCREF(o);
+                Py_DECREF(data);
+                return o;
+            }
+        }
+        Py_DECREF(data);
+    }
+    return PyObject_CallMethodOneArg(registry, n->get, h);
+}
+
 // _K1Walk.obj(h) for any object `h`: None for -1; the pinned object; else
 // the registry's, checked by its `_nslot`, then pinned. A new reference, or
 // nullptr with the reference's RuntimeError set.
@@ -269,15 +425,8 @@ PyObject* walk_obj(const Ctx& c, PyObject* h) {
     PyObject* o = PyDict_GetItemWithError(c.pins, h);  // self.pins.get(h)
     if (o == nullptr && PyErr_Occurred()) return nullptr;
     if (o != nullptr && o != Py_None) return Py_NewRef(o);
-    Ref reg;
-    if (PyDict_CheckExact(c.registry)) {
-        PyObject* r = PyDict_GetItemWithError(c.registry, h);
-        if (r == nullptr && PyErr_Occurred()) return nullptr;
-        reg = Ref(Py_NewRef(r != nullptr ? r : Py_None));
-    } else {
-        reg = Ref(PyObject_CallMethodOneArg(c.registry, n->get, h));
-        if (!reg) return nullptr;
-    }
+    Ref reg(registry_get(c.registry, h));
+    if (!reg) return nullptr;
     bool live = reg.get() != Py_None;
     if (live) {
         Ref d(PyObject_GetAttr(reg.get(), n->dict));
@@ -311,6 +460,55 @@ PyObject* walk_obj_int(const Ctx& c, std::int64_t h) {
     Ref key(PyLong_FromLongLong(h));
     if (!key) return nullptr;
     return walk_obj(c, key.get());
+}
+
+// One log's last handle: consecutive writes on the same handle (a weapon's
+// several fields) share one int key, and -- where the pins dict's PEP 509
+// version proves it unchanged since (CPython 3.11, as the K0 scan's object
+// cache) -- the object walk.obj found: `pins.get(h)` is then that object
+// still (pins holds it, so it is alive), exactly what walk.obj answers.
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030C0000
+constexpr bool kPinsVersion = true;
+APPLY_INLINE std::uint64_t pins_version(PyObject* pins) {
+    return reinterpret_cast<PyDictObject*>(pins)->ma_version_tag;
+}
+#else
+constexpr bool kPinsVersion = false;
+APPLY_INLINE std::uint64_t pins_version(PyObject*) { return 0; }
+#endif
+
+struct KeyCache {
+    std::int64_t h = -1;
+    PyObject* key = nullptr;  // owned
+    PyObject* obj = nullptr;  // borrowed from pins (valid at `version`)
+    std::uint64_t version = 0;
+    KeyCache() = default;
+    KeyCache(const KeyCache&) = delete;
+    KeyCache& operator=(const KeyCache&) = delete;
+    ~KeyCache() { Py_XDECREF(key); }
+};
+
+PyObject* walk_obj_keyed(const Ctx& c, std::int64_t h, KeyCache& kc) {
+    if (h == -1) return Py_NewRef(Py_None);
+    if (kc.key != nullptr && kc.h == h) {
+        if (kPinsVersion && kc.obj != nullptr &&
+            pins_version(c.pins) == kc.version)
+            return Py_NewRef(kc.obj);
+    } else {
+        PyObject* key = PyLong_FromLongLong(h);
+        if (key == nullptr) return nullptr;
+        Py_XSETREF(kc.key, key);
+        kc.h = h;
+    }
+    kc.obj = nullptr;
+    PyObject* o = walk_obj(c, kc.key);
+    // Pinned now (walk.obj pins every object it answers): reusable while
+    // the pins dict stays as it is.
+    if (o != nullptr && o != Py_None) {
+        kc.obj = o;
+        kc.version = pins_version(c.pins);
+    }
+    return o;
 }
 
 // ── Values ───────────────────────────────────────────────────────────────
@@ -445,49 +643,91 @@ bool store(PyObject* obj, PyObject* field, PyObject* value,
     return true;
 }
 
-bool apply_slot(PyObject* obj, PyObject* field, const ApplySlot& s) {
+// obj.__dict__[field][index] = value (steals `value`; nullptr: an error is
+// set).
+bool slot_store(PyObject* obj, PyObject* field, std::int64_t index,
+                PyObject* value) {
+    Ref v(value);
+    if (!v) return false;
     Ref d(PyObject_GetAttr(obj, names()->dict));
     if (!d) return false;
     Ref list(PyObject_GetItem(d.get(), field));
     if (!list) return false;
-    Ref index(PyLong_FromLongLong(s.index));
-    Ref value(box_scalar(s.value));
-    if (!index || !value) return false;
-    return PyObject_SetItem(list.get(), index.get(), value.get()) == 0;
+    if (PyList_CheckExact(list.get()) && index >= 0 &&
+        index < PyList_GET_SIZE(list.get()))
+        // list.__setitem__ itself, without boxing the index.
+        return PyList_SetItem(list.get(), static_cast<Py_ssize_t>(index),
+                              v.release()) == 0;
+    Ref i(PyLong_FromLongLong(index));
+    if (!i) return false;
+    return PyObject_SetItem(list.get(), i.get(), v.get()) == 0;
 }
 
-bool apply_watcher(PyObject* obj, PyObject* field, const ApplyWatcher& w) {
+// obj.__dict__[field].__dict__["_value"] = value (steals `value`).
+bool watcher_store(PyObject* obj, PyObject* field, PyObject* value) {
     const Names* n = names();
+    Ref v(value);
+    if (!v) return false;
     Ref d(PyObject_GetAttr(obj, n->dict));
     if (!d) return false;
     Ref watcher(PyObject_GetItem(d.get(), field));
     if (!watcher) return false;
     Ref wd(PyObject_GetAttr(watcher.get(), n->dict));
-    Ref value(box_scalar(w.value));
-    if (!wd || !value) return false;
-    return PyObject_SetItem(wd.get(), n->value, value.get()) == 0;
+    if (!wd) return false;
+    return PyObject_SetItem(wd.get(), n->value, v.get()) == 0;
+}
+
+bool apply_slot(PyObject* obj, PyObject* field, const ApplySlot& s) {
+    return slot_store(obj, field, s.index, box_scalar(s.value));
+}
+
+bool apply_watcher(PyObject* obj, PyObject* field, const ApplyWatcher& w) {
+    return watcher_store(obj, field, box_scalar(w.value));
+}
+
+// The PLAIN / WAKE store: obj.__dict__[field] = v, then (WAKE)
+// WakeField.__set__'s `if obj.__dict__.get("_passive_asleep", False):
+// wake(obj)`.
+bool store_and_wake(const Ctx& c, PyObject* obj, PyObject* field,
+                    PyObject* v, bool wake) {
+    const Names* n = names();
+    Ref d;
+    if (!store(obj, field, v, &d)) return false;
+    if (!wake) return true;
+    // Owned: the truth test can run Python that mutates the dict.
+    Ref asleep;
+    if (PyDict_Check(d.get())) {
+        PyObject* a = PyDict_GetItemWithError(d.get(), n->asleep);
+        if (a == nullptr && PyErr_Occurred()) return false;
+        asleep = Ref(Py_NewRef(a != nullptr ? a : Py_False));
+    } else {
+        asleep = Ref(PyObject_CallMethodObjArgs(d.get(), n->get, n->asleep,
+                                                Py_False, nullptr));
+        if (!asleep) return false;
+    }
+    const int truth = PyObject_IsTrue(asleep.get());
+    if (truth < 0) return false;
+    if (truth) {
+        Ref r(PyObject_CallOneArg(c.wake, obj));
+        if (!r) return false;
+    }
+    return true;
 }
 
 // ── One write: _apply_write ──────────────────────────────────────────────
 
+// `value` stored on `obj` (walk.obj(h), resolved) as _apply_write does.
 template <class V>
-bool apply_one(const Ctx& c, std::int64_t handle, const std::string& name,
-               const V& value) {
-    const Names* n = names();
-    if (n == nullptr) return false;
-    PyObject* field = intern_field(name);
-    if (field == nullptr) return false;
-    Ref obj(walk_obj_int(c, handle));               // obj = walk.obj(h)
-    if (!obj) return false;
+bool apply_value(const Ctx& c, PyObject* obj, PyObject* field,
+                 const V& value) {
     if constexpr (is_alternative<ApplySlot, V>::value) {
         if (const auto* s = std::get_if<ApplySlot>(&value))
-            return apply_slot(obj.get(), field, *s);
+            return apply_slot(obj, field, *s);
         if (const auto* w = std::get_if<ApplyWatcher>(&value))
-            return apply_watcher(obj.get(), field, *w);
+            return apply_watcher(obj, field, *w);
     }
     KindEntry k;                                    // _quiet_setter(...)
-    if (!kind_of(c, reinterpret_cast<PyObject*>(Py_TYPE(obj.get())), field,
-                 &k))
+    if (!kind_of(c, reinterpret_cast<PyObject*>(Py_TYPE(obj)), field, &k))
         return false;
     Ref setter(k.setter);
     const int conv = k.kind == kPython ? k.conv : k.kind;
@@ -503,33 +743,94 @@ bool apply_one(const Ctx& c, std::int64_t handle, const std::string& name,
     }
     if (!v) return false;
     if (k.kind == kPython) {
-        Ref r(PyObject_CallFunctionObjArgs(setter.get(), obj.get(), v.get(),
+        Ref r(PyObject_CallFunctionObjArgs(setter.get(), obj, v.get(),
                                            nullptr));
         return static_cast<bool>(r);
     }
-    Ref d;
-    if (!store(obj.get(), field, v.get(), &d)) return false;
-    if (k.kind != kWake) return true;
-    // WakeField.__set__: `if obj.__dict__.get("_passive_asleep", False):
-    // wake(obj)`.
-    // Owned: the truth test can run Python that mutates the dict.
-    Ref asleep;
-    if (PyDict_Check(d.get())) {
-        PyObject* a = PyDict_GetItemWithError(d.get(), n->asleep);
-        if (a == nullptr && PyErr_Occurred()) return false;
-        asleep = Ref(Py_NewRef(a != nullptr ? a : Py_False));
-    } else {
-        asleep = Ref(PyObject_CallMethodObjArgs(d.get(), n->get, n->asleep,
-                                                Py_False, nullptr));
-        if (!asleep) return false;
+    return store_and_wake(c, obj, field, v.get(), k.kind == kWake);
+}
+
+template <class V>
+bool apply_one(const Ctx& c, std::int64_t handle, std::string_view name,
+               const V& value, KeyCache& kc) {
+    if (names() == nullptr) return false;
+    PyObject* field = intern_field(name);
+    if (field == nullptr) return false;
+    Ref obj(walk_obj_keyed(c, handle, kc));         // obj = walk.obj(h)
+    if (!obj) return false;
+    return apply_value(c, obj.get(), field, value);
+}
+
+// A K0 write as the encoded value it stands for (the general path).
+ApplyValue k0_value(const cb::K0FieldWrite& w) {
+    switch (w.type) {
+        case cb::K0FieldWrite::Type::Float: return w.d;
+        case cb::K0FieldWrite::Type::Flag: return w.i != 0;
+        case cb::K0FieldWrite::Type::Int: return static_cast<std::int64_t>(w.i);
+        case cb::K0FieldWrite::Type::Slot:
+            return ApplySlot{w.index, ApplyScalar{w.d}};
+        case cb::K0FieldWrite::Type::Watcher:
+            return ApplyWatcher{ApplyScalar{w.d}};
     }
-    const int truth = PyObject_IsTrue(asleep.get());
-    if (truth < 0) return false;
-    if (truth) {
-        Ref r(PyObject_CallOneArg(c.wake, obj.get()));
-        if (!r) return false;
+    return std::monostate{};
+}
+
+// One K0 write: the same as apply_one on k0_value(w), without building the
+// variant for the kinds a K0 write meets (a PLAIN or WAKE field, a slot, the
+// watcher); any other kind (a test's Python setter) takes the general path.
+bool apply_k0(const Ctx& c, const cb::K0Write& kw, KeyCache& kc) {
+    const cb::K0FieldWrite& w = kw.w;
+    if (names() == nullptr) return false;
+    PyObject* field = k0_field(w);
+    if (field == nullptr) return false;
+    PyObject* obj = walk_obj_keyed(c, kw.handle, kc);  // obj = walk.obj(h)
+    if (obj == nullptr) return false;
+    bool ok;
+    switch (w.type) {
+        case cb::K0FieldWrite::Type::Slot:
+            ok = slot_store(obj, field, w.index, PyFloat_FromDouble(w.d));
+            break;
+        case cb::K0FieldWrite::Type::Watcher:
+            ok = watcher_store(obj, field, PyFloat_FromDouble(w.d));
+            break;
+        default: {
+            KindEntry k;
+            ok = kind_of(c, reinterpret_cast<PyObject*>(Py_TYPE(obj)), field,
+                         &k);
+            if (!ok) break;
+            if (k.kind != kPlain && k.kind != kWake) {
+                Py_XDECREF(k.setter);
+                ok = apply_value(c, obj, field, k0_value(w));
+                break;
+            }
+            PyObject* v =
+                w.type == cb::K0FieldWrite::Type::Float ? PyFloat_FromDouble(w.d)
+                : w.type == cb::K0FieldWrite::Type::Flag
+                    ? PyBool_FromLong(w.i != 0 ? 1 : 0)
+                    : PyLong_FromLongLong(w.i);
+            ok = v != nullptr &&
+                 store_and_wake(c, obj, field, v, k.kind == kWake);
+            Py_XDECREF(v);
+            break;
+        }
     }
-    return true;
+    Py_DECREF(obj);
+    return ok;
+}
+
+// A write's walk-offset marker, if it is one (K0 logs none).
+template <class W>
+const cb::K1WalkOffset* marker_of(const W& w) {
+    return std::get_if<cb::K1WalkOffset>(&w.value);
+}
+const cb::K1WalkOffset* marker_of(const cb::K0Write&) { return nullptr; }
+
+template <class W>
+bool apply_write(const Ctx& c, const W& w, KeyCache& kc) {
+    return apply_one(c, w.handle, w.field, w.value, kc);
+}
+bool apply_write(const Ctx& c, const cb::K0Write& w, KeyCache& kc) {
+    return apply_k0(c, w, kc);
 }
 
 // ── The handled exception ────────────────────────────────────────────────
@@ -587,12 +888,12 @@ struct Raised {
 
 // _apply_rest(writes[from:to], walk, failed, exc).
 template <class W>
-bool apply_rest(const Ctx& c, const std::vector<W>& w, size_t from,
-                size_t to, std::vector<std::int64_t>& failed, PyObject* exc,
-                std::uint64_t* applied) {
+bool apply_rest(const Ctx& c, const W* w, size_t from, size_t to,
+                std::vector<std::int64_t>& failed, PyObject* exc,
+                std::uint64_t* applied, KeyCache& kc) {
     const Names* n = names();
     for (size_t j = from; j < to; ++j) {
-        if (const auto* m = std::get_if<cb::K1WalkOffset>(&w[j].value)) {
+        if (const auto* m = marker_of(w[j])) {
             Ref walk_n(PyLong_FromLongLong(m->walk));
             if (!walk_n) return false;
             Ref cur(PyObject_GetAttr(c.walk, n->walk));
@@ -622,7 +923,7 @@ bool apply_rest(const Ctx& c, const std::vector<W>& w, size_t from,
                 }
             }
         }
-        if (!apply_one(c, w[j].handle, w[j].field, w[j].value)) return false;
+        if (!apply_write(c, w[j], kc)) return false;
         ++*applied;
     }
     return true;
@@ -630,10 +931,11 @@ bool apply_rest(const Ctx& c, const std::vector<W>& w, size_t from,
 
 // apply_writes(writes[from:to], walk).
 template <class W>
-bool apply_log(const Ctx& c, const std::vector<W>& w, size_t from, size_t to,
+bool apply_log(const Ctx& c, const W* w, size_t from, size_t to,
                std::uint64_t* applied) {
+    KeyCache kc;
     for (size_t i = from; i < to; ++i) {
-        if (apply_one(c, w[i].handle, w[i].field, w[i].value)) {
+        if (apply_write(c, w[i], kc)) {
             ++*applied;
             continue;
         }
@@ -642,12 +944,11 @@ bool apply_log(const Ctx& c, const std::vector<W>& w, size_t from, size_t to,
                             "combat apply: a write failed with no error");
         Raised e;
         std::vector<std::int64_t> failed;
-        if (const auto* m = std::get_if<cb::K1WalkOffset>(&w[i].value))
-            failed.push_back(m->walk);
+        if (const auto* m = marker_of(w[i])) failed.push_back(m->walk);
         bool ok;
         {
             HandledAs handling(e.value);
-            ok = apply_rest(c, w, i + 1, to, failed, e.value, applied);
+            ok = apply_rest(c, w, i + 1, to, failed, e.value, applied, kc);
         }
         if (ok) e.restore();  // re-raise the first; else the rest's own
         return false;
@@ -773,7 +1074,7 @@ PyObject* WriteApplier::set_context(PyObject* ctx) {
 }
 
 template <class W>
-bool WriteApplier::apply_range(const std::vector<W>& w, size_t from,
+bool WriteApplier::apply_range(const W* w, size_t size, size_t from,
                                size_t to) {
     if (ctx_ == nullptr) {
         PyErr_SetString(PyExc_RuntimeError,
@@ -781,7 +1082,7 @@ bool WriteApplier::apply_range(const std::vector<W>& w, size_t from,
                         "(combat_set_applier)");
         return false;
     }
-    to = std::min(to, w.size());
+    to = std::min(to, size);
     if (from >= to) return true;
     // Held for the apply: Python run inside may install another context.
     Ref ctx(Py_NewRef(ctx_));
@@ -790,17 +1091,21 @@ bool WriteApplier::apply_range(const std::vector<W>& w, size_t from,
 
 bool WriteApplier::apply(const std::vector<cb::K1Write>& w, size_t from,
                          size_t to) {
-    return apply_range(w, from, to);
+    return apply_range(w.data(), w.size(), from, to);
 }
 
 bool WriteApplier::apply(const std::vector<cb::K2Write>& w, size_t from,
                          size_t to) {
-    return apply_range(w, from, to);
+    return apply_range(w.data(), w.size(), from, to);
 }
 
 bool WriteApplier::apply(const std::vector<ApplyWrite>& w, size_t from,
                          size_t to) {
-    return apply_range(w, from, to);
+    return apply_range(w.data(), w.size(), from, to);
+}
+
+bool WriteApplier::apply(std::span<const cb::K0Write> w) {
+    return apply_range(w.data(), w.size(), 0, w.size());
 }
 
 bool WriteApplier::parse_log(PyObject* log, std::vector<ApplyWrite>* out) {
@@ -829,7 +1134,7 @@ bool WriteApplier::parse_log(PyObject* log, std::vector<ApplyWrite>* out) {
         Py_ssize_t len = 0;
         const char* s = PyUnicode_AsUTF8AndSize(field, &len);
         if (s == nullptr) return false;
-        w.field.assign(s, static_cast<size_t>(len));
+        w.field = pooled_name(s, static_cast<size_t>(len));
         if (!parse_value(PyTuple_GET_ITEM(item, 2), &w.value)) return false;
         out->push_back(std::move(w));
     }

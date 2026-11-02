@@ -133,30 +133,13 @@ struct World {
         auto it = names.find(h);
         return it == names.end() ? std::to_string(h) : it->second;
     }
-    static std::string scalar(const WriteScalar& v) {
-        if (std::holds_alternative<std::monostate>(v)) return "None";
-        if (auto* b = std::get_if<bool>(&v)) return *b ? "True" : "False";
-        if (auto* i = std::get_if<int64_t>(&v)) return std::to_string(*i);
-        return py_hex(std::get<double>(v));
-    }
-    std::string write(const LoggedWrite& w) const {
-        const std::string head = name(w.handle) + "." + w.field;
-        if (auto* s = std::get_if<SlotWrite>(&w.value))
-            return head + "[" + std::to_string(s->index) +
-                   "]=" + scalar(s->value);
-        if (auto* x = std::get_if<WatcherWrite>(&w.value))
-            return head + "._value=" + scalar(x->value);
-        if (std::holds_alternative<std::monostate>(w.value)) return head + "=None";
-        if (auto* b = std::get_if<bool>(&w.value))
-            return head + "=" + (*b ? "True" : "False");
-        if (auto* i = std::get_if<int64_t>(&w.value))
-            return head + "=" + std::to_string(*i);
-        if (auto* d = std::get_if<double>(&w.value)) return head + "=" + py_hex(*d);
-        return head + "=?";
-    }
     std::vector<std::string> writes(const K0Record& r) const {
         std::vector<std::string> out;
-        for (const LoggedWrite& w : r.writes) out.push_back(write(w));
+        for (const K0Write& w : r.writes) {
+            K0Step s;
+            s.writes.push_back(w.w);
+            for (std::string& x : writes(w.handle, s)) out.push_back(x);
+        }
         return out;
     }
     // A pure step's writes, rendered like the log.
@@ -837,6 +820,64 @@ TEST(K0Charging, UndoRestoresSlotLists) {
     EXPECT_EQ(u.w.m.get_floats(u.t, Field::_reload_timers), std::vector<double>{3.0});
     EXPECT_EQ(u.w.m.get_floats(u.t, Field::_reload_advanced_at), std::vector<double>{99.0});
     u.w.k.abandon();
+}
+
+TEST(K0Charging, UndoRestoresMultiSlotLists) {
+    // Every slot of a tube advances (two slot writes each): the snapshot a
+    // throw restores is the lists as they were before the tube's step.
+    Tube u;
+    const int64_t t2 = u.w.weapon("t2", u.sys);
+    u.w.slots(u.t, {3.0, -1.0, 1.0}, {99.0, 98.0, 97.0}, 3, 1);
+    u.w.m.set_f(u.t, Field::_reload_delay, 1000.0);  // advances, no reload
+    u.w.k.set_weapon_check([&](int64_t h) -> bool {
+        if (h == t2) throw std::runtime_error("check raised");
+        return false;
+    });
+    u.w.k.begin({u.ship}, kDt, kNow);
+    EXPECT_THROW(u.w.k.next(), std::runtime_error);
+    EXPECT_EQ(u.w.m.get_floats(u.t, Field::_reload_timers),
+              (std::vector<double>{3.0, -1.0, 1.0}));
+    EXPECT_EQ(u.w.m.get_floats(u.t, Field::_reload_advanced_at),
+              (std::vector<double>{99.0, 98.0, 97.0}));
+    // A retry makes the same writes from the restored lists.
+    u.w.k.set_weapon_check({});
+    const K0Record r = u.w.k.next();
+    EXPECT_EQ(u.w.rec(r), "DONE");
+    EXPECT_EQ(u.w.writes(r),
+              // 3.0 + 1.0 * (100 - 99), 1.0 + 1.0 * (100 - 97); t2 is full.
+              (V{"t._reload_timers[0]=0x1.0000000000000p+2",
+                 "t._reload_advanced_at[0]=0x1.9000000000000p+6",
+                 "t._reload_timers[2]=0x1.0000000000000p+2",
+                 "t._reload_advanced_at[2]=0x1.9000000000000p+6"}));
+    u.w.k.end();
+}
+
+TEST(K0Charging, LogStorageIsReused) {
+    // A record's writes view the session's log (valid until the next
+    // next()): cleared, not reallocated, so a later call or session logs
+    // into the same storage. Each entry is the step's K0FieldWrite on its
+    // handle.
+    Tube u;
+    u.w.slots(u.t, {3.0}, {99.0}, 1, 0);
+    u.w.m.set_f(u.t, Field::_reload_delay, 1000.0);
+    u.w.k.begin({u.ship}, kDt, kNow);
+    const K0Record r1 = u.w.k.next();
+    ASSERT_EQ(r1.writes.size(), 2u);
+    const K0Write* first = r1.writes.data();
+    EXPECT_EQ(r1.writes[0].handle, u.t);
+    EXPECT_EQ(r1.writes[0].w.type, K0FieldWrite::Type::Slot);
+    EXPECT_EQ(r1.writes[0].w.field, Field::_reload_timers);
+    EXPECT_EQ(r1.writes[1].w.field, Field::_reload_advanced_at);
+    u.w.k.end();
+    // A longer log next session (40 slots: 80 writes) still lands in the
+    // same storage: it was kept, not freed and grown again.
+    u.w.slots(u.t, std::vector<double>(40, 3.0), std::vector<double>(40, 99.0),
+              40, 0);
+    u.w.k.begin({u.ship}, kDt, kNow + 1.0);
+    const K0Record r2 = u.w.k.next();
+    ASSERT_EQ(r2.writes.size(), 80u);
+    EXPECT_EQ(r2.writes.data(), first);
+    u.w.k.end();
 }
 
 TEST(K0Charging, Counters) {

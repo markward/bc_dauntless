@@ -194,7 +194,7 @@ struct World {
                 v = std::get<int64_t>(w.value) == -1
                         ? "None"
                         : name(std::get<int64_t>(w.value));
-            out.push_back(name(w.handle) + "." + w.field + "=" + v);
+            out.push_back(name(w.handle) + "." + std::string(w.field) + "=" + v);
         }
         return out;
     }

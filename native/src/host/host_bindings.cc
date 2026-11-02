@@ -4656,35 +4656,29 @@ bool k0_scan(PyObject* ships, const K0Guard* g, K0Scan& s) {
 #pragma GCC diagnostic pop
 #endif
 
-// LoggedValue -> the Python encoding (combat_write_apply.h): a slot write is
+// A K0 write -> (handle, field, value) in the Python encoding
+// (combat_write_apply.h): a float, bool or int; a slot write
 // ("slot", index, value), a watcher write ("watcher", value).
-py::object k0_scalar(const dauntless::combat::WriteScalar& v) {
-    return std::visit(
-        [](const auto& x) -> py::object {
-            using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, std::monostate>) return py::none();
-            else return py::cast(x);
-        },
-        v);
-}
-
-py::object k0_value(const dauntless::combat::LoggedValue& v) {
+py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
     namespace cb = dauntless::combat;
-    return std::visit(
-        [](const auto& x) -> py::object {
-            using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, std::monostate>)
-                return py::none();
-            else if constexpr (std::is_same_v<T, cb::K1WalkOffset>)
-                return py::make_tuple("walk_offset", x.walk, x.system);
-            else if constexpr (std::is_same_v<T, cb::SlotWrite>)
-                return py::make_tuple("slot", x.index, k0_scalar(x.value));
-            else if constexpr (std::is_same_v<T, cb::WatcherWrite>)
-                return py::make_tuple("watcher", k0_scalar(x.value));
-            else
-                return py::cast(x);
-        },
-        v);
+    using T = cb::K0FieldWrite::Type;
+    const cb::K0FieldWrite& w = kw.w;
+    switch (w.type) {
+        case T::Float:
+            return py::make_tuple(kw.handle, cb::field_name(w.field), w.d);
+        case T::Flag:
+            return py::make_tuple(kw.handle, cb::field_name(w.field),
+                                  w.i != 0);
+        case T::Int:
+            return py::make_tuple(kw.handle, cb::field_name(w.field), w.i);
+        case T::Slot:
+            return py::make_tuple(kw.handle, cb::field_name(w.field),
+                                  py::make_tuple("slot", w.index, w.d));
+        case T::Watcher:
+            return py::make_tuple(kw.handle, "_charge_watcher",
+                                  py::make_tuple("watcher", w.d));
+    }
+    throw std::logic_error("combat K0: a write of no type");
 }
 
 }  // namespace
@@ -11695,12 +11689,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
             dauntless::host::WriteApplier& applier =
                 dauntless::host::write_applier();
             if (applier.has_context()) {
-                if (!applier.apply(r.writes, 0, r.writes.size()))
-                    throw py::error_already_set();
+                if (!applier.apply(r.writes)) throw py::error_already_set();
             } else {
-                for (const cb::LoggedWrite& w : r.writes)
-                    writes.append(
-                        py::make_tuple(w.handle, w.field, k0_value(w.value)));
+                for (const cb::K0Write& w : r.writes)
+                    writes.append(k0_write_tuple(w));
             }
             // The reason names, made once and never freed (no decref
             // after the interpreter is gone).

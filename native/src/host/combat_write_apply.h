@@ -43,15 +43,24 @@
 // marker (combat::K1WalkOffset) is a value too: walk.materialise(walk,
 // system), the walk's own offset object, then stored by the field's kind.
 //
-// THE NATIVE REPRESENTATION for Tasks 4-5 (K0): combat/write_log.h (the
-// combat library's, which the K0 kernel logs). A K0 log is a vector of
-// ApplyWrite. A slot write is ApplyWrite{handle, "<list attribute>",
-// ApplySlot{index, scalar}}; a watcher write is ApplyWrite{handle,
-// "_charge_watcher", ApplyWatcher{scalar}}; every other write uses the
-// K1Value alternatives as K1/K2 do (ApplyValue lists them first, in
-// K1Value's order). The Python encoding (combat_apply_log, tests) is the
-// reference's plus two tagged tuples: ("slot", index, value) and
+// THE NATIVE REPRESENTATIONS. K1 / K2 log K1Write / K2Write; a Python log
+// (combat_apply_log, tests) parses to ApplyWrite (combat/write_log.h), whose
+// slot write is ApplyWrite{handle, "<list attribute>", ApplySlot{index,
+// scalar}} and watcher write ApplyWrite{handle, "_charge_watcher",
+// ApplyWatcher{scalar}}; every other write uses the K1Value alternatives
+// (ApplyValue lists them first, in K1Value's order). Every name is a
+// string_view of static (or pooled, never freed) storage: its interned str
+// is cached by address. K0 logs combat::K0Write (k0_charging.h): its Field
+// (or the watcher) maps to an interned str through a table, its value is a
+// float, bool, int, slot element or watcher value -- the same writes as the
+// SLOT / WATCHER encodings, applied by the same rules. The Python encoding
+// is the reference's plus two tagged tuples: ("slot", index, value) and
 // ("watcher", value).
+//
+// THE REGISTRY. `walk.obj` reads `registry.get(h)`; for the real registry
+// (an exact weakref.WeakValueDictionary) the applier reads its `data` dict
+// and the KeyedRef's referent in C, exactly as `.get` does (a dead ref is
+// None), with no Python call. Any other registry is asked through `.get`.
 //
 // EXCEPTIONS (apply_writes / _apply_rest): when a write raises, every later
 // write of the range is still applied, in order -- a later walk-offset
@@ -70,10 +79,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
 
+#include "dauntless/combat/k0_charging.h"
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/k2_beams.h"
 #include "dauntless/combat/write_log.h"
@@ -113,6 +124,8 @@ public:
     bool apply(const std::vector<combat::K1Write>& w, size_t from, size_t to);
     bool apply(const std::vector<combat::K2Write>& w, size_t from, size_t to);
     bool apply(const std::vector<ApplyWrite>& w, size_t from, size_t to);
+    // A K0 record's writes (a view of the session's log), all of them.
+    bool apply(std::span<const combat::K0Write> w);
 
     // The Python encoding (a list of (handle, field, value)) -> `out`.
     // False: a Python error is set (TypeError / OverflowError).
@@ -127,7 +140,7 @@ public:
 
 private:
     template <class W>
-    bool apply_range(const std::vector<W>& w, size_t from, size_t to);
+    bool apply_range(const W* w, size_t size, size_t from, size_t to);
 
     PyObject* ctx_ = nullptr;  // owned: the 6-tuple
     std::uint64_t applied_ = 0;

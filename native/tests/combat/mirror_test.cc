@@ -697,3 +697,28 @@ TEST(MirrorTest, PhaserDischargeTableGlobals) {
     EXPECT_THROW(f.m.set_global_f(Global::PHASER_DISCHARGE_LEN, 3.0),
                  std::invalid_argument);
 }
+
+TEST(MirrorTest, FloatListElementInPlace) {
+    Fixture f;
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    f.m.set_floats(s, Field::_reload_timers, {-1.0, 2.0, 3.0});
+    const double* data = f.m.subsystem(s)->_reload_timers.data();
+    uint64_t e = f.m.epoch();
+    f.m.set_float_at(s, Field::_reload_timers, 1, -0.0);
+    EXPECT_GT(f.m.epoch(), e);
+    EXPECT_TRUE(same_bits(f.m.get_floats(s, Field::_reload_timers),
+                          {-1.0, -0.0, 3.0}));
+    // In place: the list is not reallocated.
+    EXPECT_EQ(f.m.subsystem(s)->_reload_timers.data(), data);
+    // Out of range, the wrong field type, the wrong row, a stale handle.
+    EXPECT_THROW(f.m.set_float_at(s, Field::_reload_timers, 3, 1.0),
+                 std::out_of_range);
+    EXPECT_THROW(f.m.set_float_at(s, Field::_condition, 0, 1.0),
+                 std::invalid_argument);
+    int64_t o = f.m.register_row(Kind::Object);
+    EXPECT_THROW(f.m.set_float_at(o, Field::_reload_timers, 0, 1.0),
+                 std::invalid_argument);
+    f.m.unregister_row(s);
+    EXPECT_THROW(f.m.set_float_at(s, Field::_reload_timers, 0, 1.0),
+                 std::invalid_argument);
+}

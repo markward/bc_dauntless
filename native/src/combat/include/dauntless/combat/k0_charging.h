@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "dauntless/combat/mirror.h"
@@ -57,15 +58,21 @@
 // run (plan ruling P1); the next next() reads the LIVE mirror again (a
 // handler's writes push to it).
 //
-// THE WRITE LOG. Every write is made in the mirror and logged (LoggedWrite,
-// write_log.h): `_charge_level`, `_beam_on_countdown`, `_cooldown_remaining`
-// (float), `_depleted` (bool), `_num_ready` (int), slot elements
-// (SlotWrite on `_reload_timers` / `_reload_advanced_at`, in place) and the
-// watcher value (WatcherWrite on `_charge_watcher`, logged only: the watcher
-// is not mirrored). Each record carries the writes made since the previous
-// record. A throw from next() (a protocol error, or the weapon check
-// throwing) undoes the writes it made but never returned, in the mirror, and
-// restores the session and the counters to the state before the call.
+// THE WRITE LOG. Every write is made in the mirror and logged (K0Write: the
+// step's K0FieldWrite on its handle): `_charge_level`, `_beam_on_countdown`,
+// `_cooldown_remaining` (Float), `_depleted` (Flag, a bool), `_num_ready`
+// (Int), slot elements (Slot on `_reload_timers` / `_reload_advanced_at`,
+// in place) and the watcher value (Watcher: `_charge_watcher._value`,
+// logged only: the watcher is not mirrored). Plain data: no string, no
+// variant (the host's applier maps the Field to its interned name). Each
+// record carries the writes made since the previous record, as a VIEW of
+// the session's log: valid until the next next(), whose first act is to
+// clear it (the log keeps its storage across calls and sessions, so a
+// steady fight logs without allocating). A throw from next() (a protocol
+// error, or the weapon check throwing) undoes the writes it made but never
+// returned, in the mirror, and restores the session and the counters to
+// the state before the call. A slot list's undo is one snapshot per (tube,
+// list) per step, taken before its first element write.
 //
 // HAND-BACKS (RUN_PYTHON, counted by reason):
 //   per ship (decided at begin; a = the ship, group = index = -1):
@@ -172,6 +179,12 @@ K0Step step_tube(const Mirror& m, int64_t tube, double now);
 // once per weapon K0 would step natively, at its turn.
 using K0WeaponCheck = std::function<bool(int64_t weapon)>;
 
+// One logged write: a pure step's write, made on `handle`.
+struct K0Write {
+    int64_t handle = -1;
+    K0FieldWrite w;
+};
+
 struct K0Record {
     K0Kind kind = K0Kind::DONE;
     // DEPLETE_STOP / RELOADED / WATCH: the weapon. RUN_PYTHON: the weapon
@@ -185,7 +198,9 @@ struct K0Record {
     int32_t group = -1;
     int64_t index = -1;
     std::optional<K0Reason> reason;  // RUN_PYTHON
-    std::vector<LoggedWrite> writes;
+    // The writes since the previous record, in order: a view of the
+    // session's log, valid until its next next() (THE WRITE LOG).
+    std::span<const K0Write> writes;
 };
 
 class K0Session {
@@ -227,12 +242,14 @@ public:
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }
 
-    // Opaque cursor (k0_charging.cc).
+    // Opaque cursor and log storage (k0_charging.cc).
     struct State;
+    struct Log;
 
 private:
     Mirror& m_;
     std::unique_ptr<State> s_;  // null when no session is open
+    std::unique_ptr<Log> log_;  // the write log and its undo, reused
     Counts counts_;
     K0WeaponCheck check_;
 };

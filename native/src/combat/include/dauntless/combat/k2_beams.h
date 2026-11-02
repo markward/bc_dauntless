@@ -376,7 +376,7 @@ const char* k2_query_name(K2Query q);
 // offline stop's fields (THE OFFLINE STOP). The value is K1's encoding.
 struct K2Write {
     int64_t handle = -1;
-    std::string field;
+    std::string_view field;  // a static name (write_log.h)
     K1Value value;
 };
 

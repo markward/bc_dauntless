@@ -204,7 +204,7 @@ struct World {
     std::vector<std::string> writes(const K2Record& r) const {
         std::vector<std::string> out;
         for (const K2Write& w : r.writes)
-            out.push_back(name(w.handle) + "." + w.field + "=" + value(w.value));
+            out.push_back(name(w.handle) + "." + std::string(w.field) + "=" + value(w.value));
         return out;
     }
     // The kernel's records as the driver acts on them (run_k2): a record's
