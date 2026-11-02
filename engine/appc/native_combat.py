@@ -1272,8 +1272,11 @@ _K1_SYSTEM_METHODS = (
 # system and each child: the cheap subset that tests and tools patch. Made by
 # the bindings' walk check (k1_walk_check, host_bindings.cc), which hands a
 # walk start with one back to Python as a WALK_START record (walk_start).
+# The pump asks the same check before it logs a system's stop (combat fire
+# events Task 3), so the system's own StopFiring is here too (a system with
+# it patched also has its walk starts handed back: conservative).
 _K1_SYSTEM_PATCHES = ("update_weapons", "try_fire_weapon",
-                      "_live_held_offset")
+                      "_live_held_offset", "StopFiring")
 _K1_LEAF_PATCHES = ("Fire", "_fire_decide", "_fire_effect", "StopFiring",
                     "CanFire")
 # The firing ship's side of the walk offset (_live_held_offset's probe and
@@ -3275,9 +3278,11 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     event's handler), the session opens its own deferral
     (effect_queue.session) and delivers everything it produced at its end,
     in emission order; inside the tick's scope (or an enclosing session)
-    that one delivers. The queue's mark is taken at the start: an abandon
-    truncates to it, dropping the entries this session appended (its
-    kernel's and its records' Python's) and keeping every earlier one.
+    that one delivers. An abandon drops nothing from the queue (ruling F5):
+    every entry in it stands for an effect that already happened -- a
+    kernel entry reaches the queue only once its record's writes are
+    applied (a raising next() drops its own), a Python one follows its
+    effect -- so they are delivered as usual.
 
     On any exception the session is abandoned (the kernel's mirror still
     equals Python) and the exception re-raised; the walked system's row
@@ -3295,7 +3300,6 @@ def _run_k1(dt, ships, pump_body, system) -> None:
     if system is not None:
         walk.pin_system(system)
     prev = _UNSET
-    mark = _h.combat_effect_mark()
     try:
         prev = _h.combat_set_applier(_applier_context(walk))
         while True:
@@ -3374,7 +3378,6 @@ def _run_k1(dt, ships, pump_body, system) -> None:
         _h.combat_k1_end()
     except BaseException:
         _h.combat_k1_abandon()
-        _h.combat_effect_truncate(*mark)
         raise
     finally:
         if prev is not _UNSET:

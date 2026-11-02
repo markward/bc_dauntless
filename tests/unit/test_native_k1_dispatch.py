@@ -2259,12 +2259,14 @@ def test_session_started_by_a_delivery_delivers_nested_in_order(
     assert logs[True] == logs[False]
 
 
-def test_an_abandoned_session_drops_only_its_own_entries(monkeypatch):
-    """Review Focus 5. Inside the tick's scope a pump session lights the
-    Galaxy's phasers (native entries) and then a tube's launch raises: the
-    session is abandoned and truncated to its mark -- the phasers' sounds
-    and events are never delivered -- while an entry queued before the
-    session still is."""
+def test_an_abandoned_session_still_delivers_its_entries(monkeypatch):
+    """Ruling F5 (replaces Review Focus 5's truncation). Inside the tick's
+    scope a pump session lights the Galaxy's phasers (native entries,
+    appended once their writes were applied) and then a tube's launch
+    raises: the session is abandoned, but its entries stand for effects
+    that already happened, so they are delivered at the scope's end with
+    the one queued before the session: every lit bank's sound and its
+    ET_WEAPON_FIRED."""
     from engine.appc import effect_queue as eq
 
     class Boom(Exception):
@@ -2300,10 +2302,39 @@ def test_an_abandoned_session_drops_only_its_own_entries(monkeypatch):
             with host_loop._combat_effect_scope():
                 eq.post(eq.FIRE_SOUND, other)       # before the session
                 w.tick()
-        assert any(b._firing for b in banks)        # lit (its writes stay)
-        assert played == [other.GetName()]
-        assert not any(e[0] == "fired" for e in w.events), w.events
+        lit = [b.GetName() for b in banks if b._firing]
+        assert lit                                   # lit (its writes stay)
+        assert played == [other.GetName()] + lit, played
+        fired = [e[1] for e in w.events if e[0] == "fired"]
+        assert fired == ["Galaxy/" + n for n in lit], w.events
         assert _h.combat_k1_depth() == 0
         assert _h.combat_effect_take() == []
     finally:
         w.close()
+
+
+def test_system_instance_stop_patch_runs_python(monkeypatch):
+    """The pump's `sys_.StopFiring()` (a held system switched off) is logged
+    natively only when no StopFiring K1 stands in for is patched: an
+    instance-patched StopFiring on the SYSTEM itself runs Python's own,
+    exactly as often ON as OFF (_K1_SYSTEM_PATCHES, the walk check)."""
+    calls = {}
+
+    def script(w, t):
+        g = w.ships["Galaxy"].GetPhaserSystem()
+        if t == 0:
+            key = w.native
+            calls[key] = []
+            g.StartFiring(w.ships["Vorcha"])
+            real = ws.PhaserSystem.StopFiring
+
+            def stop(*a, _g=g, _key=key):
+                calls[_key].append((w.n, _g.GetName()))
+                return real(_g, *a)
+            w.mp.setattr(g, "StopFiring", stop, raising=False)
+        elif t == 5:
+            g.TurnOff()
+
+    _both(monkeypatch, _DUEL, script, 12)
+    assert calls[False], calls
+    assert calls[True] == calls[False]

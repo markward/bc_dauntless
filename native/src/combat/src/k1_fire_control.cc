@@ -436,9 +436,9 @@ private:
     // _target_list = []; _last_group_fired = -1`, then `w.StopFiring()` for
     // each child in order (bank_stop). The pre-scan ran in this same call
     // (every child a live, unoverridden leaf). The stop runs before any
-    // walk, so the walk check -- an instance-patched StopFiring among the
-    // rest -- is asked here first: true leaves the STOP_SYSTEM record
-    // (false, nothing written).
+    // walk, so the walk check is asked here first -- its names include a
+    // StopFiring patched on the system's instance or a child's -- and true
+    // leaves the STOP_SYSTEM record (false, nothing written).
     bool system_stop(int64_t sys) {
         if (check_ && check_(sys, climb_to_ship_of(m_, sys))) return false;
         const std::vector<int64_t> kids = subrow(sys)->_children;

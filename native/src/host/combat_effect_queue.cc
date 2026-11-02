@@ -51,27 +51,11 @@ void EffectQueue::append_objects(EffectKind kind, std::span<void* const> objs) {
     entries_.push_back(e);
 }
 
-void EffectQueue::truncate(EffectMark mark) {
-    if (mark.generation != generation_) {
-        ++stale_truncates_;
-        return;
-    }
-    drop_from(mark.index);
-}
-
 void EffectQueue::clear() {
-    if (!entries_.empty()) ++generation_;   // an empty queue: marks hold
-    drop_from(0);
-}
-
-void EffectQueue::drop_from(std::size_t index) {
-    if (index >= entries_.size()) return;
     // Detach first: a release may run arbitrary code (a Python finaliser)
     // that must not see half-dropped entries.
-    std::vector<EffectEntry> dropped(entries_.begin() +
-                                         static_cast<std::ptrdiff_t>(index),
-                                     entries_.end());
-    entries_.resize(index);
+    std::vector<EffectEntry> dropped;
+    dropped.swap(entries_);
     if (release_ == nullptr) return;
     for (const EffectEntry& e : dropped)
         for (int i = 0; i < e.count; ++i)
@@ -80,7 +64,6 @@ void EffectQueue::drop_from(std::size_t index) {
 }
 
 std::vector<EffectEntry> EffectQueue::take() {
-    if (!entries_.empty()) ++generation_;   // an empty take moves nothing
     std::vector<EffectEntry> out;
     out.swap(entries_);
     return out;

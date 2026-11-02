@@ -450,45 +450,21 @@ def test_a_raising_tick_keeps_its_error_and_notes_the_delivery_errors(
     assert "_Boom: bank B" in notes[0] and "bank C" in notes[1], notes
 
 
-# ── A kernel's abandon ───────────────────────────────────────────────────────
+# ── Dropping entries ─────────────────────────────────────────────────────────
+# Only native_combat.reset() drops queued entries (combat_effect_clear): an
+# abandoned kernel session no longer does (ruling F5), so the queue has no
+# mark / truncate.
 
-def test_truncate_drops_only_later_entries(calls):
-    a, b, c = _bank("A"), _bank("B"), _bank("C")
-    with eq.scope():
-        eq.post(eq.FIRE_SOUND, a)
-        m = _h.combat_effect_mark()
-        _post_native(eq.FIRE_SOUND, b.__dict__["_nslot"])
-        eq.post(eq.FIRE_SOUND, c)
-        _h.combat_effect_truncate(*m)
-    assert calls == [("play", "A")]
-
-
-def test_a_mark_made_stale_by_a_take_truncates_nothing(calls):
-    """A session's mark, then a flush delivering its entries (take), then
-    later entries: the abandon must not drop those (counted instead)."""
-    _h.combat_effect_reset_counts()
-    a, b = _bank("A"), _bank("B")
-    m = _h.combat_effect_mark()
-    _post_native(eq.FIRE_SOUND, a.__dict__["_nslot"])
-    eq.flush()
-    with eq.scope():
-        eq.post(eq.FIRE_SOUND, b)
-        _h.combat_effect_truncate(*m)
-    assert calls == [("play", "A"), ("play", "B")]
-    assert _h.combat_effect_counts() == {"stale_truncates": 1}
-
-
-def test_truncate_releases_the_dropped_references():
+def test_clear_releases_the_dropped_references():
     import weakref
     bank = _bank("Dropped")
     _free(bank)
     ref = weakref.ref(bank)
-    m = _h.combat_effect_mark()
     eq.post(eq.FIRE_SOUND, bank)
     del bank
     gc.collect()
     assert ref() is not None            # the queue holds it
-    _h.combat_effect_truncate(*m)
+    _h.combat_effect_clear()
     gc.collect()
     assert ref() is None
 

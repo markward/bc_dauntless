@@ -11571,17 +11571,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
         //   (STOP_SYSTEM, system, tag, writes)
         //   (RUN_PYTHON, system, ship_pos, getter_idx, tag, writes)
         //   (BANK_STOP, bank, tag, writes)
-        //   (FIRE, bank, target, decision, tag, writes)
-        //       decision: beam (was_firing,), pulse ((x, y, z), target_used),
-        //       tube (target_used,); handles -1 = None
-        //   (FIRE_FAILED, tube, tag, writes)
+        //   (FIRE, bank, target, decision, tag, writes)  a tube or a cannon
+        //       decision: pulse ((x, y, z), target_used), tube
+        //       (target_used,); handles -1 = None. (A beam's (was_firing,)
+        //       is no longer returned: its edge is logged.)
         //   (FIRE_DUMB, tube, tag, writes)
         //   (ASK, query, *args, tag, writes)    -> reply combat_k1_answer
-        // FIRE_FAILED is no longer returned (an entry; spec 2026-11-02-
-        // combat-fire-events §4.3), nor FIRE for a beam. A record's queue
+        // FIRE_FAILED (its kind number kept) is no longer returned: an entry
+        // (spec 2026-11-02-combat-fire-events §4.3). A record's queue
         // entries go into the combat effect queue (k1_append_entries) once
-        // its writes are applied, before it is returned: a raising apply
-        // drops them, as run_k1's abandon truncates the session's anyway.
+        // its writes are applied, before it is returned; a raising apply
+        // drops them (the Python walk would have raised before them).
         m.def("combat_k1_kinds", [] {
             py::dict d;
             for (int i = 0; i < static_cast<int>(cb::K1Kind::kCount); ++i)
@@ -12488,33 +12488,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 return out;
             }, "Every queued entry, in emission order, as (kind, native, "
                "operands); the queue is empty after.");
-            m.def("combat_effect_mark",
-                  [] {
-                      const hq::EffectMark mk = hq::effect_queue().mark();
-                      return py::make_tuple(mk.generation, mk.index);
-                  },
-                  "A kernel session's start mark: (take generation, "
-                  "queue length).");
-            m.def("combat_effect_truncate",
-                  [](std::uint64_t generation, size_t index) {
-                      hq::effect_queue().truncate({generation, index});
-                  },
-                  py::arg("generation"), py::arg("index"),
-                  "Drop every entry appended since the mark (an abandoned "
-                  "kernel session's); nothing for a mark a take or clear "
-                  "made stale (counted). Called as truncate(*mark).");
             m.def("combat_effect_clear",
                   [] { hq::effect_queue().clear(); },
                   "Drop every entry (native_combat.reset).");
             m.def("combat_effect_size",
                   [] { return hq::effect_queue().size(); });
-            m.def("combat_effect_counts", [] {
-                py::dict d;
-                d["stale_truncates"] = hq::effect_queue().stale_truncates();
-                return d;
-            });
-            m.def("combat_effect_reset_counts",
-                  [] { hq::effect_queue().reset_counts(); });
         }
 
         // ── The K3 torpedo kernel (k3_projectiles.h) ─────────────────────

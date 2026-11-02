@@ -137,9 +137,9 @@ def session():
     """A native session's own deferral (see the module docstring, A NATIVE
     SESSION OUTSIDE THE SCOPE): opened only when nothing defers; its exit
     delivers what was appended in it (session_ended), even when its body
-    raised -- a driver that abandons truncates its kernel's entries first
-    -- with a delivery error then noted on the body's own. A session a
-    reset() closed exits doing nothing."""
+    raised -- an abandoned kernel session's entries stand for effects that
+    already happened (ruling F5) -- with a delivery error then noted on
+    the body's own. A session a reset() closed exits doing nothing."""
     global _sessions
     if deferring():
         yield                   # the enclosing scope or session delivers
@@ -207,7 +207,6 @@ def reset() -> None:
         _counts[k] = 0
     if _h is not None and hasattr(_h, "combat_effect_clear"):
         _h.combat_effect_clear()
-        _h.combat_effect_reset_counts()
 
 
 def _strict(modules=None) -> bool:

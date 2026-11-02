@@ -13,17 +13,15 @@
 //             references the queue OWNS until the entry leaves it.
 // The lock is held for both (the kernels run under it today).
 //
-// A kernel whose session is abandoned drops the entries it appended in that
-// session: mark() at its start, truncate(mark) at the abandon. Every entry
-// appended before the mark stays. A mark names the queue's take generation
-// too: a take() or clear() that removed entries between mark and truncate (a
-// nested flush delivered the session's entries) makes it stale, and a stale
-// truncate drops nothing -- counted (stale_truncates), never guessed at.
+// An abandoned kernel session drops nothing from the queue (ruling F5):
+// a kernel's entries reach it only once their record's writes are applied
+// (a throwing call drops its own), and Python's follow their effect, so
+// every queued entry stands for an effect that already happened.
 //
 // OWNERSHIP. The queue never touches Python: an object operand is an opaque
 // pointer, released through the Release function the owner installed (the
-// bindings install Py_DECREF). truncate and clear release what they drop;
-// take hands every entry -- and its references -- to the caller.
+// bindings install Py_DECREF). clear releases what it drops; take hands
+// every entry -- and its references -- to the caller.
 //
 // Python-free on purpose, so it is tested from C++ (native/tests/host).
 #pragma once
@@ -72,12 +70,6 @@ struct EffectEntry {
 // A kernel operand: a mirror handle or a number.
 using NativeOperand = std::variant<std::int64_t, double>;
 
-// Where a kernel session started (mark()).
-struct EffectMark {
-    std::uint64_t generation = 0;   // takes + clears before it
-    std::size_t index = 0;          // the queue's length then
-};
-
 class EffectQueue {
 public:
     using Release = void (*)(void*);
@@ -102,30 +94,18 @@ public:
     // kMaxOperands).
     void append_objects(EffectKind kind, std::span<void* const> objs);
 
-    EffectMark mark() const { return {generation_, entries_.size()}; }
-    // Drop every entry appended at or after `mark` (released); nothing for
-    // a stale mark (counted).
-    void truncate(EffectMark mark);
     // Every entry, in order; the queue is empty after. The caller owns the
     // object references.
     std::vector<EffectEntry> take();
     // Drop every entry (released).
     void clear();
 
-    // Truncates that named a stale mark, since the last reset_counts().
-    std::uint64_t stale_truncates() const { return stale_truncates_; }
-    void reset_counts() { stale_truncates_ = 0; }
-
     std::size_t size() const { return entries_.size(); }
     bool empty() const { return entries_.empty(); }
 
 private:
-    void drop_from(std::size_t index);
-
     Release release_;
     std::vector<EffectEntry> entries_;
-    std::uint64_t generation_ = 0;
-    std::uint64_t stale_truncates_ = 0;
 };
 
 // The process-wide queue (never destroyed: it may own Python references at

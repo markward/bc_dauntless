@@ -1218,6 +1218,8 @@ class Weapon(ShipSubsystem):
         return 0
 
     def StopFiring(self) -> None:
+        # K1 logs this write itself for a tube its walk stops (bank_stop,
+        # k1_fire_control.cc): change both together.
         self._firing = False
 
     def IsFiring(self) -> int:
@@ -1566,6 +1568,9 @@ class WeaponSystem(PoweredSubsystem):
             self.update_weapons(0.0)
 
     def StopFiring(self, *args) -> None:
+        # K1 (the pump's system_stop) and K2 (an offline phaser system's
+        # stop) log these writes, then each child's stop, themselves
+        # (k1_fire_control.cc, k2_beams.cc): change all three together.
         self._fire_held = False
         self._held_target = None
         self._held_offset = None
@@ -3016,6 +3021,8 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
 
     def StopFiring(self) -> None:
         # Discrete weapon — no _loop_handle to silence; just clear target refs.
+        # K1 logs these writes itself for a cannon its walk stops (bank_stop,
+        # k1_fire_control.cc): change both together.
         self._firing = False
         self._target = None
         self._target_offset = None

@@ -25,9 +25,9 @@
 // ONE RECORD PER CALL. next() runs the walk until the first thing only
 // Python may do -- an effect (a tube's or a cannon's Fire effect, a dumb
 // fire, a StopFiring the kernel cannot log), a whole system Python must
-// run, or a question the mirror cannot answer any more -- and returns it. The next next() resumes from the
-// cursor and reads the LIVE mirror again, so no decision outlives a Python
-// effect (plan ruling P1).
+// run, or a question the mirror cannot answer any more -- and returns it.
+// The next next() resumes from the cursor and reads the LIVE mirror again,
+// so no decision outlives a Python effect (plan ruling P1).
 //
 // THE WALK START (round trips, spec 2026-11-01 §4.1). update_weapons'
 // `offset = self._live_held_offset()` is computed HERE, from the mirror
@@ -83,19 +83,23 @@
 //       FIRE_SOUND(bank), WEAPON_FIRED(bank, target)  (the mixin's
 //       _fire_effect, then PhaserBank._fire_effect's post)
 //   a tube's failed aim            WEAPON_FIRE_FAILED(tube)
-//   a FIRING bank's StopFiring     its class's writes as above, then, for an
-//       energy bank, LOOP_STOP(bank)
+//   a FIRING bank's StopFiring     its class's writes as above, then, for a
+//       PhaserBank, LOOP_STOP(bank)
 //   the pump's sys_.StopFiring()   WeaponSystem.StopFiring's `_fire_held =
 //       False; _held_target = None; _held_offset = None; _target_list = [];
 //       _last_group_fired = -1`, then each child's StopFiring in order. The
 //       stop runs before any walk, so the walk check is asked first: true
-//       keeps the STOP_SYSTEM record (an instance-patched StopFiring ...).
+//       keeps the STOP_SYSTEM record. Its names cover a StopFiring patched
+//       on the system's instance (native_combat._K1_SYSTEM_PATCHES) or on
+//       a child's (_K1_LEAF_PATCHES); a class override is k1_overridden,
+//       which the pre-scan hands back whole before any gate.
 // Each entry rides the next record with the writes (K1Record::entries; its
 // `at` places it after the writes logged before it); the binding appends
 // them to the combat effect queue (combat_effect_queue.h, which this
 // library does not link) as it hands the record back. A throw drops the
-// entries of the call with its writes. The driver takes the queue's mark
-// when the session begins and truncates to it if it abandons the session.
+// entries of the call with its writes. An abandoned session drops nothing
+// from the queue (ruling F5): every entry there stands for an effect that
+// already happened, and is delivered as usual.
 // Records left: FIRE for a tube or a cannon only, FIRE_DUMB, ASK,
 // RUN_PYTHON, a handed-back WALK_START, BANK_STOP / STOP_SYSTEM only for a
 // row gone or a stop the walk check hands back, DONE. FIRE_FAILED is never

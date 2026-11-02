@@ -2060,9 +2060,11 @@ TEST(K1Native, SystemStopIsLoggedWrites) {
 }
 
 TEST(K1Native, SystemStopTheWalkCheckRefusesStaysARecord) {
-    // The stop runs before any walk, so the walk check (an instance-patched
-    // StopFiring ...) is asked first: when it hands the system back, the
-    // STOP_SYSTEM record stays and nothing of the stop is logged.
+    // The stop runs before any walk, so the walk check is asked first: when
+    // it hands the system back, the STOP_SYSTEM record stays and nothing of
+    // the stop is logged. (Which patches it answers for is the bindings':
+    // tests/unit/test_native_k1_dispatch.py
+    // test_system_instance_stop_patch_runs_python.)
     World w(false);
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
