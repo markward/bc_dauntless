@@ -1256,3 +1256,29 @@ TEST(K0Charging, NextWhileDeliveringIsLost) {
 }
 
 }  // namespace
+
+TEST(K0Charging, UndoRestoresAPulseStopsRefAndOffset) {
+    // Review minor 3: a pulse cannon drained dry logs its StopFiring's
+    // `_target = None` (Ref) and `_target_offset = None` (Null); a throw
+    // later in the same call undoes both in the mirror, with the rest.
+    Pulse q(0.0);
+    q.w.m.set_i(q.p, Field::_firing, 1);
+    q.w.m.set_ref(q.p, Field::_target, q.ship);
+    q.w.m.set_fv(q.p, Field::_target_offset, {1.0, 2.0, 3.0});
+    q.w.m.set_f(q.p, Field::_charge_level, 0.001);
+    const int64_t p2 = q.w.weapon("p2", q.sys);
+    q.w.k.set_weapon_check([&](int64_t h) -> bool {
+        if (h == p2) throw std::runtime_error("check raised");
+        return false;
+    });
+    q.w.k.begin({q.ship}, kDt, kNow);
+    EXPECT_THROW(q.w.k.next(), std::runtime_error);
+    EXPECT_EQ(q.w.m.get_i(q.p, Field::_firing), 1);
+    EXPECT_EQ(q.w.m.get_i(q.p, Field::_depleted), 0);
+    EXPECT_EQ(q.w.m.get_ref(q.p, Field::_target), q.ship);
+    const SubsystemRow& r = *q.w.m.subsystem(q.p);
+    EXPECT_TRUE(r.target_offset_set);
+    EXPECT_EQ(r._target_offset, (Vec3{1.0, 2.0, 3.0}));
+    EXPECT_EQ(q.w.m.get_f(q.p, Field::_charge_level), 0.001);
+    q.w.k.abandon();
+}

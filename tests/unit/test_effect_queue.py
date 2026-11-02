@@ -240,6 +240,28 @@ def test_a_dropped_rows_entries_are_still_delivered(calls, events):
     assert _h.combat_effect_size() == 0
 
 
+def test_a_row_dropped_by_a_delivery_keeps_its_later_entries(monkeypatch):
+    """Review minor 2: a delivered entry's handler drops another row
+    (native_combat._drop) whose kernel entry comes LATER in the same batch.
+    The batch left the queue before its first delivery (so _drop's rebind
+    cannot reach it): its handles are resolved as it is taken, before any
+    entry is delivered, and the later entry is still delivered."""
+    log = []
+    a, b = _bank("A"), _bank("B")
+
+    def play(bank):
+        log.append(("play", bank.GetName()))
+        if bank is a:
+            nc._drop(b)
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", play)
+    with eq.scope():
+        eq.post(eq.FIRE_SOUND, a)
+        _post_native(eq.FIRE_SOUND, b.__dict__["_nslot"])
+    assert "_nslot" not in b.__dict__
+    assert log == [("play", "A"), ("play", "B")]
+    assert eq.counts() == {"delivered": 2, "skipped_gone": 0, "failed": 0}
+
+
 def test_python_reference_keeps_its_object_alive(calls):
     with eq.scope():
         eq.post(eq.FIRE_SOUND, _bank("Held"))

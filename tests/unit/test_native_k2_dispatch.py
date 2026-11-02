@@ -105,11 +105,13 @@ def _k1_stop() -> bool:
     K1's -- the held-weapon pump's, or a walk's (update_weapons, run_k1),
     since combat fire events Task 3 -- or K2's -- the phaser step's
     (_phaser_step_ship / _phaser_step_bank, run_k2), since Task 4 -- or
-    K0's, a bank drained dry in the weapons step (_advance_weapons), since
-    Task 4 too. They log those, a firing bank's included, and queue its
-    LOOP_STOP (no Python call natively), so the compared call log leaves them to the per-tick
-    record and the queued list (a ship K2 hands to Python whole calls them
-    in BOTH arms: left out alike)."""
+    K0's, a bank drained dry in host_loop's weapons step (_advance_weapons),
+    since Task 4 too (this World steps weapons with step_every_weapon in
+    BOTH arms, so it meets none of those). They log those, a firing bank's
+    included, and queue its LOOP_STOP (no Python call natively), so the
+    compared call log leaves them to the per-tick record and the queued
+    list (a ship K2 hands to Python whole calls them in BOTH arms: left out
+    alike)."""
     f = sys._getframe(2)
     while f is not None:
         if f.f_code.co_name in ("_pump_held_weapons", "update_weapons",
@@ -280,6 +282,14 @@ class World:
         names, _stock = nc._k1_stock[kind]
         mp.setitem(nc._k1_stock, kind,
                    (names, nc._k1_resolve(ws.PhaserSystem, names)))
+        # ... and in K0's: K0 logs a drained bank's StopFiring (combat fire
+        # events Task 4), so its guard looks for a bank's (not a system's):
+        # the spy only wraps the stock method, and K0 must not stand down
+        # wherever this world runs the weapons step through it.
+        stock, names, _snap = nc._k0_stock[5]
+        mp.setitem(nc._k0_stock, 5,
+                   (stock, names, nc._k0_chain(stock, names)))
+        nc._k0_clear_caches()
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
         mp.setattr(host_io, "shield_hit", shield_spy)
         capture_native_shield_hits(mp, native_hit)

@@ -279,14 +279,15 @@ def counts() -> dict:
     RELOADED, WATCH, RUN_PYTHON: n}), "k0_python_reasons" (the RUN_PYTHON
     hand-backs by K0Reason name, k0_charging.h: tractor, no_row,
     not_weapon_system, stale_row, slot_heal, override, audit, power_level,
-    parent, unrepresentable, unknown_kind, watcher; zeros included) and
+    parent, unrepresentable, unknown_kind, watcher -- a pulse cannon whose
+    charge watcher it does not own; zeros included) and
     "k0_logged_writes" (writes returned in records), "k0_logged"
     ({deplete_stop, reload, watch}: what were DEPLETE_STOP / RELOADED /
     WATCH records, now logged writes plus queue entries -- combat fire
     events Task 4; those three records are never returned) and
     "k0_entries" ({LOOP_STOP, TORPEDO_RELOAD, WATCH}: the queue entries K0
-    produced; reason "watcher" hands back a pulse cannon whose watcher it
-    does not own), plus the driver's "k0_python_steps" /
+    produced; a throw in next() restores these counters with the session,
+    so they do not overcount), plus the driver's "k0_python_steps" /
     "k0_python_step_reasons" ({off, nested, audit}: whole steps k0_weapons
     left to the Python walk).
 
@@ -301,9 +302,12 @@ def counts() -> dict:
     "k2_logged_bank_stop" the walk's stops of a firing bank logged instead
     of a BANK_STOP record, with "k2_entries" ({K1 effect name: n}: their
     LOOP_STOP entries; combat fire events Task 4). k2_batched_contacts is
-    counted when the contact is
-    queued, so a kernel throw later in the same next() (which restores the
-    queue) or an abandoned session (which drops it) can overcount}
+    counted when the contact is queued, so a kernel throw later in the same
+    next() (which restores the queue) or an abandoned session (which drops
+    it) can overcount; k2_logged_system_stop, k2_logged_firing_system_stop,
+    k2_logged_bank_stop and k2_entries likewise, when a throw -- or a ship
+    or bank handed back to Python -- undoes the writes and entries they
+    counted}
     (k2_beams.h; posed_ship retired, part_stale its successor), plus
     "k2_present_native" (drained resting contacts the drain presented
     itself: the shield splash, spec 2026-11-02 §4.4), "k2_present_python"
@@ -911,10 +915,10 @@ class ChargeWatcherField:
     reads are plain instance-dict reads.
 
     A plain FloatRangeWatcher with no owner (or this weapon) is adopted: its
-    `_owner` becomes the weapon, so its check adds and removes push the
-    count and its commits its value (`_watch_value`). Anything else -- a subclass (its own `_update`, which K0's
-    logged `_value` store would skip), a watcher another weapon owns --
-    sets WATCH_ALWAYS: K0 never stands in for it (one naming this weapon
+    `_owner` becomes the weapon, so each check it adds or removes pushes
+    the count, and each value it commits pushes `_watch_value`. Anything
+    else -- a subclass (its own `_update`, which K0's logged `_value` store
+    would skip), a watcher another weapon owns -- sets WATCH_ALWAYS: K0 never stands in for it (one naming this weapon
     as its owner is released, so its checks cannot push here). A previous
     watcher this weapon owned is released (its checks no longer push here).
     Cost: only at assignment; the switch-off path stores the same
@@ -3518,8 +3522,9 @@ def _k1_system_ships(system) -> list:
 # THE OVERRIDE GUARD. K0 computes what the walk's methods would; a test,
 # tool or mod replacing one must still be obeyed (WSM §7(a) A6):
 #   class     _K0_METHODS (A6, plus the walk's GetNumWeapons / GetWeapon /
-#             GetNumChildSubsystems / GetChildSubsystem) on a weapon-kind
-#             class, _K0_SHIP_METHODS on a ShipClass, _K0_AMMO_METHODS on a
+#             GetNumChildSubsystems / GetChildSubsystem; and on a bank,
+#             cannon or tube the stop / reload names _K0_LEAF_METHODS) on a
+#             weapon-kind class, _K0_SHIP_METHODS on a ShipClass, _K0_AMMO_METHODS on a
 #             TorpedoAmmoType: every entry the names have anywhere in the
 #             class's MRO (_k0_chain: a super() call reaches the entries
 #             below the first) against the stock class of its role's
@@ -3564,15 +3569,18 @@ def _k1_system_ships(system) -> list:
 # again: it rechecks per walk (each system's), so a handler's patch is seen
 # by the next walk of the same tick.
 
-# WSM §7(a) A6 in full: StopFiring and _broadcast_reload too, since combat
-# fire events Task 4 (K0 logs a drained bank's stop and queues a reload's
-# event instead of calling them in Python; a class patch of either -- a
-# mod's, a test's spy -- hands its weapon back so the patch runs where the
-# Python reference runs it). A tube's StopFiring is never called by the
-# walk: a tube class overriding it is handed back needlessly (conservative).
+# WSM §7(a) A6, every role; plus, on the LEAVES K0 stands in for them on
+# (_K0_LEAF_METHODS, since combat fire events Task 4), StopFiring and
+# _broadcast_reload: K0 logs a drained bank's or cannon's stop and queues a
+# reload's event instead of calling them in Python, so a class patch of
+# either -- a mod's, a test's spy -- hands that weapon back and the patch
+# runs where the Python reference runs it. A weapon system's or a tractor's
+# StopFiring is never stood in for (K0 hands a holding tractor back), so
+# their roles do not look for it. A tube's StopFiring is in the shared stop
+# encoding but never called by the walk: a tube overriding it is handed
+# back needlessly (conservative).
 _K0_METHODS = (
     # WSM §7(a) A6.
-    "StopFiring", "_broadcast_reload",
     "UpdateCharge", "UpdateReload", "_discharge_rate_per_second",
     "GetParentSubsystem", "IsOn", "GetNormalPowerPercentage",
     "GetPowerPercentage", "GetNormalPowerWanted", "GetConditionPercentage",
@@ -3584,6 +3592,11 @@ _K0_METHODS = (
     # The walk's own (passive_weapons._groups' systems).
     "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
     "GetChildSubsystem")
+_K0_LEAF_METHODS = {
+    5: ("StopFiring",),                         # PhaserBank
+    6: ("StopFiring",),                         # PulseWeapon
+    8: ("StopFiring", "_broadcast_reload"),     # TorpedoTube
+}
 _K0_SHIP_METHODS = ("GetPhaserSystem", "GetPulseWeaponSystem",
                     "GetTractorBeamSystem", "GetTorpedoSystem")
 _K0_AMMO_METHODS = ("GetAvailable",)
@@ -3628,6 +3641,13 @@ def _k0_chain(cls, names) -> tuple:
                  for n in names if n in d)
 
 
+def _k0_names(role) -> tuple:
+    """The K0 names of a weapon-kind or "ammo" role (THE OVERRIDE GUARD)."""
+    if role == "ammo":
+        return _K0_AMMO_METHODS
+    return _K0_LEAF_METHODS.get(role, ()) + _K0_METHODS
+
+
 def k0_snapshot_stock(classes) -> None:
     """weapon_subsystems, as it finishes defining its classes, passes
     {weapon_kind: stock class, "ammo": TorpedoAmmoType}: snapshot every
@@ -3635,7 +3655,7 @@ def k0_snapshot_stock(classes) -> None:
     tool or mod can patch one."""
     global _k0_watcher_stock
     for role, cls in classes.items():
-        names = _K0_AMMO_METHODS if role == "ammo" else _K0_METHODS
+        names = _k0_names(role)
         _k0_stock[role] = (cls, names, _k0_chain(cls, names))
     from engine.appc.float_range_watcher import FloatRangeWatcher
     _k0_watcher_stock = (FloatRangeWatcher,

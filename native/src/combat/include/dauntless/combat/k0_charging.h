@@ -69,6 +69,10 @@
 //       handler reads the committed value). A watcher the weapon does not
 //       own (`_watch_checks` -1, WATCH_ALWAYS) runs its own `_update`: the
 //       cannon is handed back whole (reason `watcher`) before any write.
+//       A native WATCH names the WEAPON: delivery finds its watcher then
+//       (`weapon._charge_watcher`), where Python's WATCH names the watcher
+//       object it was produced by -- the two differ only if a handler
+//       replaces the cannon's watcher between production and delivery.
 // Each entry rides the next record with the writes (K0Record::entries, a
 // view of the session's log like `writes`; its `at` places it after the
 // writes logged before it); the binding appends them to the combat effect
@@ -188,7 +192,8 @@ const char* k0_reason_name(K0Reason r);
 struct K0FieldWrite {
     enum class Type : int32_t { Float, Flag, Int, Slot, Watcher, Ref, Null };
     Type type = Type::Float;
-    Field field = Field::kCount;  // Slot: the list field; Watcher: unused
+    Field field = Field::kCount;  // Slot: the list field; Watcher:
+                                  // _watch_value (the mirror's copy)
     int64_t index = -1;           // Slot
     double d = 0.0;               // Float, Slot, Watcher
     int64_t i = 0;                // Flag (0/1), Int, Ref (the handle)

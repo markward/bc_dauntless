@@ -217,8 +217,10 @@ def _k1_stop() -> bool:
     (_phaser_step_ship / _phaser_step_bank, run_k2), since Task 4 -- or
     K0's, a bank drained dry in the weapons step (_advance_weapons), since
     Task 4 too. They log those, a firing bank's included, and queue its
-    LOOP_STOP (no Python call natively), so the compared call log leaves them to the per-tick
-    record and the queued list."""
+    LOOP_STOP (no Python call natively), so the compared call log leaves
+    them to the per-tick record and the queued list (a stop Python makes
+    there in the native arm -- a ship or weapon a kernel hands back -- is
+    left out in both arms alike)."""
     f = sys._getframe(2)
     while f is not None:
         if f.f_code.co_name in ("_pump_held_weapons", "update_weapons",
@@ -511,12 +513,11 @@ class _Scene:
         mp.setitem(nc._k1_stock, kind,
                    (names, nc._k1_resolve(ws.PhaserSystem, names)))
         # ... and in K0's (combat fire events Task 4: K0 logs a drained
-        # bank's StopFiring): the spies only wrap the stock methods.
-        for cls in (ws.PhaserBank, ws.PhaserSystem):
-            kind = nc._weapon_kind_of_class(cls)
-            stock, names, _snap = nc._k0_stock[kind]
-            mp.setitem(nc._k0_stock, kind,
-                       (stock, names, nc._k0_chain(stock, names)))
+        # bank's StopFiring; a system's is not in its guard): the spy only
+        # wraps the stock method.
+        stock, names, _snap = nc._k0_stock[5]
+        mp.setitem(nc._k0_stock, 5,
+                   (stock, names, nc._k0_chain(stock, names)))
         nc._k0_clear_caches()
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
         mp.setattr(combat, "apply_hit", hit_spy)

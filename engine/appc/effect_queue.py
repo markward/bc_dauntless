@@ -39,10 +39,12 @@ DELIVERY (``flush``). The queue is taken whole and each entry performed in
 order with the scope closed -- so a delivered event's handler, and anything
 it produces, acts at once -- by the producer's own method (deferring() is
 False while the queue drains). A kernel entry naming an object freed or
-unregistered since is skipped and counted ("skipped_gone"); a row DROPPED
-while its object lives (native_combat._drop: a value the mirror cannot
-hold) is not gone -- _drop first rebinds the pending entries naming it to
-the object (combat_effect_rebind), so they are delivered. An entry whose
+unregistered by the time its batch is taken is skipped and counted
+("skipped_gone"); a row DROPPED while its object lives (native_combat._drop:
+a value the mirror cannot hold) is not gone -- _drop first rebinds the
+entries still queued naming it to the object (combat_effect_rebind), and a
+batch being delivered had its handles resolved when it was taken (_drain),
+so either way they are delivered. An entry whose
 delivery raises does not stop the rest (decision 13): in play it is logged
 and delivery carries on; under tests and ``--developer`` the flush delivers
 the rest, then re-raises the first error with each later one noted on it.
@@ -251,17 +253,21 @@ def flush() -> None:
 
 
 def _drain() -> None:
-    """Take and deliver until the queue is empty; errors into _errors."""
+    """Take and deliver until the queue is empty; errors into _errors. A
+    batch's kernel handles are resolved as it is taken, before any of its
+    entries is delivered: a delivery that drops a row (native_combat._drop)
+    cannot rebind entries that already left the queue, so a later entry of
+    the same batch naming that row must hold its object already."""
     while True:
         entries = _h.combat_effect_take()
         if not entries:
             break
-        for kind, native, ops in entries:
-            if native:
-                ops = _resolve(ops)
-                if ops is None:
-                    _counts["skipped_gone"] += 1
-                    continue
+        batch = [(kind, _resolve(ops) if native else ops)
+                 for kind, native, ops in entries]
+        for kind, ops in batch:
+            if ops is None:
+                _counts["skipped_gone"] += 1
+                continue
             _counts["delivered"] += 1
             try:
                 _DELIVER[kind](*ops)

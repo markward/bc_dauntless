@@ -392,9 +392,10 @@ def test_stock_classes_are_not_flagged():
 
 
 def test_method_list_covers_wsm_a6():
-    """Every method WSM §7(a) A6 lists is in the guard's class list --
+    """Every method WSM §7(a) A6 lists is in the guard's class lists --
     StopFiring and _broadcast_reload too since K0 stands in for them
-    (combat fire events Task 4); the instance list has both as well."""
+    (combat fire events Task 4), on the leaves it stands in for them on
+    (_K0_LEAF_METHODS); the instance list has both as well."""
     text = WSM.read_text()
     row = next(line for line in text.splitlines() if line.startswith("| A6 "))
     cell = row.split("|")[2]
@@ -407,7 +408,10 @@ def test_method_list_covers_wsm_a6():
             names.add(tok)
     assert names, row
     assert {"StopFiring", "_broadcast_reload"} <= names
-    assert names <= set(nc._K0_METHODS), names - set(nc._K0_METHODS)
+    leaf = {n for ns in nc._K0_LEAF_METHODS.values() for n in ns}
+    assert leaf == {"StopFiring", "_broadcast_reload"}
+    guarded = set(nc._K0_METHODS) | leaf
+    assert names <= guarded, names - guarded
     assert {"StopFiring", "_broadcast_reload"} <= set(nc._K0_WEAPON_PATCHES)
     assert not hasattr(nc, "_K0_CALLED_IN_PYTHON")
 
@@ -635,3 +639,25 @@ def test_object_cache_is_gated_to_verified_pythons(monkeypatch):
             assert (_override(nc.counts()), len(calls)) == (2, 2)
         finally:
             w.close()
+
+
+def test_stop_names_are_guarded_only_on_the_leaves_k0_stands_in_for():
+    """Review minor 1: K0 stands in for StopFiring only on a drained phaser
+    bank or pulse cannon (and a tube's, Weapon.StopFiring, is in the shared
+    encoding), and for _broadcast_reload only on a tube. A weapon SYSTEM or
+    a tractor overriding StopFiring is not a reason to hand anything back
+    (K0 never calls theirs)."""
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
+
+    def sub(base, name):
+        return type("_Sub" + base.__name__, (base,),
+                    {name: lambda self, *a: None})
+
+    for base in (ws.PhaserBank, ws.PulseWeapon, ws.TorpedoTube):
+        assert nc._k0_flag(sub(base, "StopFiring")) == 1, base
+    assert nc._k0_flag(sub(ws.TorpedoTube, "_broadcast_reload")) == 1
+    for base in (ws.PhaserSystem, ws.PulseWeaponSystem, ws.TractorBeamSystem,
+                 ws.TorpedoSystem, ws.TractorBeam):
+        assert nc._k0_flag(sub(base, "StopFiring")) == 0, base
+    for base in (ws.PhaserBank, ws.PulseWeapon, ws.TorpedoSystem):
+        assert nc._k0_flag(sub(base, "_broadcast_reload")) == 0, base

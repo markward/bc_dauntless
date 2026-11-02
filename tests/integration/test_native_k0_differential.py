@@ -120,6 +120,8 @@ class _K0Scene(k1d._Scene):
         # (kind, weapon, tick, its ship's weapons' state) per production.
         self.k0_produced = []
         self.held_lists = {}    # id(weapon) -> (timers, advanced, watcher)
+        self.watch_checked = 0  # native arm: watchers compared with the row
+        self.watch_mismatch = []
         self.odd = {}           # odd charges written, by repr
         self._spy_producers(mp)
 
@@ -184,6 +186,19 @@ class _K0Scene(k1d._Scene):
 
     def record(self):
         super().record()
+        if self.native:
+            # K0's WATCH carries old = the mirrored `_watch_value`: every
+            # tick it must be the owned watcher's committed `_value`.
+            for w in self.weapons:
+                watcher = w.__dict__.get("_charge_watcher")
+                h = w.__dict__.get("_nslot")
+                if h is None or not nc._owns_watcher(w, watcher):
+                    continue
+                self.watch_checked += 1
+                got = _h.combat_dump(h)["_watch_value"]
+                if float(got).hex() != watcher._value.hex():
+                    self.watch_mismatch.append(
+                        (self.tick, self.label(w), watcher._value, got))
         row = []
         for w in self.weapons:
             d = w.__dict__
@@ -341,6 +356,10 @@ def _check_native_ran(ref, nat, ticks=TICKS):
     assert ref.counts["k0_steps"] == 0, ref.counts
     assert c["k0_records"]["DONE"] == ticks, c["k0_records"]
     assert not any(c["k0_python_step_reasons"].values()), c
+    # Every owned watcher's value equalled its row's `_watch_value`, every
+    # tick (the old value K0's WATCH carries).
+    assert nat.watch_checked >= ticks, nat.watch_checked
+    assert nat.watch_mismatch == [], nat.watch_mismatch[:5]
     # K0 returns only RUN_PYTHON and DONE (combat fire events Task 4): the
     # stops, reloads and watcher lines are logged with their entries.
     for kind in ("DEPLETE_STOP", "RELOADED", "WATCH"):
