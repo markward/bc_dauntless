@@ -1,6 +1,6 @@
 # Presentation random-number generator — design
 
-**Status:** draft 2026-11-02. Roadmap decision 12 ("presentation gets its own random-number generator", Mark 2026-11-02), the one prerequisite of native damage (D) on the threading path (Mark: the trimmed path is this phase → D → off the lock → the AI ↔ combat pipeline). Mark ruled 2026-11-02 that mission death scripts run in the presentation scope.
+**Status:** built 2026-11-02 (§10); not live-verified. Roadmap decision 12 ("presentation gets its own random-number generator", Mark 2026-11-02), the one prerequisite of native damage (D) on the threading path (Mark: the trimmed path is this phase → D → off the lock → the AI ↔ combat pipeline). Mark ruled 2026-11-02 that mission death scripts run in the presentation scope.
 **Branch:** `ws/combat-presentation-rng`, off `project/combat_threading` (`c286fbac6`), in worktree `.claude/worktrees/native-combat-k3`. No main gate; focused tests. **No benchmarking and no game runs** unless Mark says (he asked for a pause on 2026-11-02); this phase's cost is negligible by construction.
 **Input map:** `docs/reference/engine/native-combat/rng-map.md` (RM §n).
 
@@ -51,4 +51,13 @@ RM §7.5 tests 1-7, plus: the debug assert fires when a presentation scope wraps
 
 ## 10. Outcome
 
-To be written after the build.
+Built 2026-11-02 on `ws/combat-presentation-rng` (`4eafae6be`, `aa2419d3e`), as one task with one end review (plan `2026-11-02-presentation-rng.md`, made lean at Mark's request).
+
+- **The falsifier did its job.** Written before any routing, the noisy fight diverged at tick 63: the AI aimed Friend-3's forward torpedo at a different point, because hit-sound picks and officer animation builders had moved its `GetRandomNumber` rolls. With every RM site routed, the fights are identical tick for tick (conditions, events, the hit log, final S1/S2 state). No site was missing from the map.
+- **Mutation proofs.** Putting the hit-sound picker back on S1 makes the falsifier fail at tick 434. Drawing a blast's point before its damage roll fails the cascade test. A `GetRandomNumber` that ignores the scope fails the scope test.
+- **Resets.** P and the hit-sound stamps reset in `host_loop._reset_session_scratch`, not the swap block RM §7.1 names. It runs on every load path (first load, swap, Quick Battle, in-transit mission change), so R3 holds on loads the swap block never sees.
+- **Damage Preview** now seeds S2 as well as S1 and P. Damaging blast points come from S2, so its captures would differ otherwise.
+- **Ruling, NanoFX spin.** `CreateRotationSeq` and `SetNanoRotation` stay on S1 (RM classed them presentation). They set a ship's angular velocity, a physics write, like debris spin (D12). The source guard exempts them by name and pins that they draw S1.
+- **Residuals, as designed.** SDK line picks inside gameplay handlers (M2/A3), `DynamicMusic.ProcessQueue` (X6) and debris spin stay on S1/S2. R1's caveat stands: a mod death script that draws for gameplay draws P, and if it damages, the debug assert in `apply_hit` raises under tests and `--developer` only.
+- **Differentials.** K2, K3 and the step differential passed unchanged. Two needed test-only fixes. K1's game-loop fight no longer produced a failed aim by luck, so Friend-3 now starts facing away from its foe (`fdb28869f`). K0's had been broken since launch deferral (`c286fbac6`), because its spy skipped a launch's weapon-fired event posted during queue delivery; it now logs at the posting call (`74a20a0c3`). There was no engine divergence: 72 posts in each arm, same order.
+- **Cost.** None measured (benchmarks paused); the change is a few generator swaps and a thread-local depth check per scoped call.
