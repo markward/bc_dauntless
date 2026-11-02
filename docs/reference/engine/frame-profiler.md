@@ -160,13 +160,11 @@ number and reach a wrong conclusion:
 * **Indented rows are INCLUDED in their parent's total.** `gl.ai` is part of
   `sim.gameloop` is part of `sim`. Do not sum the column.
 * **`*` marks per-tick rows.** `sim.gameloop` and everything inside it is a sum
-  over the frame's N catch-up ticks. ⚠️ **Stale since 2026-10-30:** `sim.weapons`,
-  `sim.combat` and (native combat on) `sim.effects` now also run once per
-  catch-up tick, inside the same loop, but `PER_TICK_ROOTS`
-  (`engine/core/frame_profiler.py`) still names only `sim.gameloop`, so the
-  report leaves them unmarked; read them with their `calls` column, or divide
-  by the tick count as `compare_native2.py` does. `sim.collisions` and
-  everything inside it run **once per frame**. With the
+  over the frame's N catch-up ticks, and so are `sim.weapons`, `sim.combat`
+  and (native combat on) `sim.effects`, which run once per catch-up tick too
+  (since 2026-10-30; marked since 2026-11-02, `PER_TICK_ROOTS` in
+  `engine/core/frame_profiler.py`). `sim.collisions` and everything inside it
+  run **once per frame**. With the
   tick count printed above the table and nothing distinguishing the two, the
   natural move — divide everything by N — is wrong for half the rows. The
   `calls` column is the generic backstop: a row entered 4 times says `4`.

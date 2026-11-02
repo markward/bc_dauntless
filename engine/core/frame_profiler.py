@@ -20,8 +20,11 @@ the report came to print `gl.ai` above `sim` with nothing marking the relation:
     sim                  (mark)
       sim.gameloop       (scope, once per catch-up tick)
         gl.ai gl.motion gl.subsystems ...
-      sim.combat         (scope, once per frame)
+      sim.weapons        (scope, once per catch-up tick)
+      sim.combat         (scope, once per catch-up tick)
         cb.projectiles cb.phasers ...
+      sim.effects        (scope, once per catch-up tick; native combat on)
+      sim.collisions     (scope, once per frame)
     ui_panels            (mark)
       ui.render_all
         ui.<panel>
@@ -106,17 +109,20 @@ _last_raw: dict[str, float] = {}
 _last_total_ms = 0.0
 
 # Rows that are summed over the frame's catch-up ticks rather than measured
-# once per frame. Only the ROOT is named: everything nested inside it inherits
-# the property, which the parent chain already knows. This is host_loop's
+# once per frame. Only the ROOTS are named: everything nested inside one
+# inherits the property, which the parent chain already knows. host_loop runs
 #
 #     for _ in range(_sim_ticks_this_frame):
 #         with frame_profiler.scope("sim.gameloop"):
 #             loop.tick()
 #
-# and its siblings sim.weapons / sim.combat / sim.collisions deliberately sit
-# OUTSIDE that loop. If the scope is ever renamed, rename it here too -- the
-# per-frame `calls` column is the backstop that still tells the truth.
-PER_TICK_ROOTS = frozenset({"sim.gameloop"})
+# then, once per catch-up tick too (since 2026-10-30), sim.weapons and
+# sim.combat, with sim.effects when native combat delivers its effect queue
+# at the tick's end; sim.collisions still runs once per frame. If a scope is
+# renamed or moved, change it here too -- the per-frame `calls` column is the
+# backstop that still tells the truth.
+PER_TICK_ROOTS = frozenset({"sim.gameloop", "sim.weapons", "sim.combat",
+                            "sim.effects"})
 
 
 def is_enabled() -> bool:

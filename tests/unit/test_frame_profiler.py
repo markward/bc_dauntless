@@ -265,8 +265,11 @@ def _nested_frame():
         sim                 <- mark
           sim.gameloop      <- scope, once per catch-up tick
             gl.ai           <- scope, inside the tick
-          sim.combat        <- scope, once per frame
+          sim.weapons       <- scope, once per catch-up tick (since 2026-10-30)
+          sim.combat        <- scope, once per catch-up tick
             cb.projectiles  <- scope, inside it
+          sim.effects       <- scope, once per catch-up tick (native combat on)
+          sim.collisions    <- scope, once per frame
     """
     fp.begin_frame()
     fp.mark("sim")
@@ -275,9 +278,16 @@ def _nested_frame():
         with fp.scope("sim.gameloop"):
             with fp.scope("gl.ai"):
                 _busy(0.001)
-    with fp.scope("sim.combat"):
-        with fp.scope("cb.projectiles"):
-            _busy(0.001)
+    for _ in range(3):
+        with fp.scope("sim.weapons"):
+            _busy(0.0005)
+        with fp.scope("sim.combat"):
+            with fp.scope("cb.projectiles"):
+                _busy(0.001)
+        with fp.scope("sim.effects"):
+            _busy(0.0005)
+    with fp.scope("sim.collisions"):
+        _busy(0.0005)
     fp.end_frame()
 
 
@@ -289,8 +299,9 @@ def _phase_rows(lines):
         if not stripped:
             continue
         head = stripped.split()[0]
-        if head in ("sim", "sim.gameloop", "gl.ai", "sim.combat",
-                    "cb.projectiles"):
+        if head in ("sim", "sim.gameloop", "gl.ai", "sim.weapons",
+                    "sim.combat", "cb.projectiles", "sim.effects",
+                    "sim.collisions"):
             rows[head] = ln
     return rows
 
@@ -314,8 +325,9 @@ def test_the_report_indents_children_under_their_parent(monkeypatch):
 
     lines = fp.report_lines()
     rows = _phase_rows(lines)
-    assert set(rows) == {"sim", "sim.gameloop", "gl.ai", "sim.combat",
-                         "cb.projectiles"}, sorted(rows)
+    assert set(rows) == {"sim", "sim.gameloop", "gl.ai", "sim.weapons",
+                         "sim.combat", "cb.projectiles", "sim.effects",
+                         "sim.collisions"}, sorted(rows)
 
     # Parents print ABOVE their children...
     order = [ln for ln in lines if ln in rows.values()]
@@ -346,10 +358,13 @@ def test_the_report_says_the_phase_column_must_not_be_summed(monkeypatch):
 
 
 def test_per_tick_rows_are_marked_apart_from_per_frame_ones(monkeypatch):
-    """`sim.gameloop` and everything under it is a SUM over the frame's N
-    catch-up ticks; `sim.combat` and everything under IT runs once per frame.
-    Printed adjacent with nothing distinguishing them, the tick count beside
-    the table invites dividing all of them by N -- wrong for half the rows."""
+    """`sim.gameloop`, `sim.weapons`, `sim.combat` and `sim.effects` (and
+    everything under them) are SUMS over the frame's N catch-up ticks;
+    `sim.collisions` runs once per frame. Printed adjacent with nothing
+    distinguishing them, the tick count beside the table invites dividing all
+    of them by N -- wrong for the per-frame rows. (Until 2026-11-02 the mark
+    still treated `sim.combat` as per frame, two days after combat moved into
+    the tick loop.)"""
     from engine import host_io
     monkeypatch.setattr(host_io, "profiler_scopes", lambda: [])
     monkeypatch.setattr(
@@ -363,8 +378,10 @@ def test_per_tick_rows_are_marked_apart_from_per_frame_ones(monkeypatch):
     marker = fp.PER_TICK_MARK
     assert rows["sim.gameloop"].rstrip().endswith(marker), rows["sim.gameloop"]
     assert rows["gl.ai"].rstrip().endswith(marker), rows["gl.ai"]
-    assert not rows["sim.combat"].rstrip().endswith(marker), rows["sim.combat"]
-    assert not rows["cb.projectiles"].rstrip().endswith(marker)
+    for name in ("sim.weapons", "sim.combat", "cb.projectiles",
+                 "sim.effects"):
+        assert rows[name].rstrip().endswith(marker), rows[name]
+    assert not rows["sim.collisions"].rstrip().endswith(marker)
     assert not rows["sim"].rstrip().endswith(marker)
     # And the legend says what the mark means, so it is not a mystery glyph.
     assert "per tick" in "\n".join(fp.report_lines())
@@ -382,11 +399,14 @@ def test_the_phase_table_carries_per_frame_call_counts(monkeypatch):
     fp.set_enabled(True, native=False)
     _nested_frame()
     assert fp.calls() == {"sim": 1, "sim.gameloop": 3, "gl.ai": 3,
-                          "sim.combat": 1, "cb.projectiles": 1}
+                          "sim.weapons": 3, "sim.combat": 3,
+                          "cb.projectiles": 3, "sim.effects": 3,
+                          "sim.collisions": 1}
     rows = _phase_rows(fp.report_lines())
     # "<name> <cpu ms> <calls> [mark]"
     assert rows["gl.ai"].split()[2] == "3", rows["gl.ai"]
-    assert rows["sim.combat"].split()[2] == "1", rows["sim.combat"]
+    assert rows["sim.combat"].split()[2] == "3", rows["sim.combat"]
+    assert rows["sim.collisions"].split()[2] == "1", rows["sim.collisions"]
 
 
 def test_sim_ticks_is_smoothed_like_every_other_number_beside_it(monkeypatch):
