@@ -116,6 +116,17 @@ enum class Field : int32_t {
     rows, full_concealment,
     // Ammo (TorpedoAmmoType)
     _unlimited, _available,
+    // The launch deferral (spec 2026-11-02-combat-launch-deferral §4.1):
+    // a tube's DamageRadiusFactor (Subsystem; ShipSubsystem's
+    // _damage_radius_factor, the launcher's override); whether the ship is
+    // sliding onto its warp-in placement (Object; warp_state.is_arriving,
+    // FireDumb's hold); the ammo type's capacity (AddAvailable's clamp) and
+    // its projectile module's launch as Python resolved it, per script
+    // (Ammo; native_combat.push_ammo_launch): ammo_launch_state 0 not
+    // cached yet, 1 cached, 2 no module (or no script); ammo_launch_speed
+    // its GetLaunchSpeed().
+    _damage_radius_factor, arriving, _max_torpedoes, ammo_launch_state,
+    ammo_launch_speed,
     kCount
 };
 
@@ -172,6 +183,7 @@ struct ObjectRow {
     int64_t _shield_subsystem = -1;
     Vec3 _shield_hull_box_center{0, 0, 0}, _shield_hull_box_half{0, 0, 0};
     int64_t hull_box_set = 0;
+    int64_t arriving = 0;
     // Posed parts: the pose table (empty while has_posed_parts is 0) and the
     // ship's subsystems in combat._iter_subsystems order (Subsystem handles;
     // kRefUnrepresentable for one the mirror cannot name). Not Fields: set
@@ -237,6 +249,7 @@ struct SubsystemRow {
     std::vector<double> _reload_timers, _reload_advanced_at;
     int64_t _watch_checks = 0, _power_level = 0;
     double _watch_value = 0.0;
+    double _damage_radius_factor = 0.0;
     // Posed parts: the index into the owning ship's part_poses of the part
     // Python resolved for this subsystem's own mount (detachment ignored;
     // -1 = no posable part), stamped with the global part_gen at
@@ -256,6 +269,9 @@ struct PropertyRow {
 
 struct AmmoRow {
     int64_t _unlimited = 0, _available = 0;
+    int64_t _max_torpedoes = 0;
+    int64_t ammo_launch_state = 0;
+    double ammo_launch_speed = 0.0;
 };
 
 struct SetRow {
@@ -305,6 +321,21 @@ enum class Global : int32_t {
     // The K1 kernel's beam edge (spec 2026-11-02-combat-fire-events §4.3):
     // weapon_subsystems.BEAM_ON_DELAY_S, the lit bank's beam-on countdown
     BEAM_ON_DELAY_S,
+    // The launch deferral: 1 while a function K1's native launch stands in
+    // for is not the stock one (native_combat._k1_launch_patched: a test or
+    // a tool patched weapon_subsystems._spawn_projectile ...): every launch
+    // is then Python's (K1LaunchWhy::Patched). Set by the bindings before
+    // every combat_k1_next (THE LAUNCH CHECK).
+    K1_LAUNCH_PATCHED,
+    // A cannon's launch (launch deferral, Task 3): PULSE_DAMAGE_SCALE_BY_
+    // POWER_SETTING[0..2] (PulseWeapon.GetDamageScale), and 1 while a pulse
+    // module the cannons' launches carry (weapon_subsystems._pulse_modules)
+    // is not the one sys.modules holds now -- PulseWeapon._fire_decide would
+    // import another, or none: every cannon launch is then Python's
+    // (K1LaunchWhy::Unresolved). Set by the bindings before every
+    // combat_k1_next (THE LAUNCH CHECK).
+    PULSE_DAMAGE_SCALE_0, PULSE_DAMAGE_SCALE_1, PULSE_DAMAGE_SCALE_2,
+    K1_PULSE_MODULE_STALE,
     kCount
 };
 
@@ -332,6 +363,10 @@ struct Globals {
            PHASER_DISCHARGE_2 = 0.0;
     int64_t PHASER_DISCHARGE_LEN = 0;
     double BEAM_ON_DELAY_S = 0.0;
+    int64_t K1_LAUNCH_PATCHED = 0;
+    double PULSE_DAMAGE_SCALE_0 = 0.0, PULSE_DAMAGE_SCALE_1 = 0.0,
+           PULSE_DAMAGE_SCALE_2 = 0.0;
+    int64_t K1_PULSE_MODULE_STALE = 0;
 };
 
 struct ProfileRowSet {

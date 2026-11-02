@@ -41,20 +41,23 @@
 // no record and logs no such write runs no Python at all; its writes ride
 // the next record (or DONE).
 //
-// The WALK CHECK (set_walk_check) runs at every walk start, before any
-// offset: when it answers true the walk starts the old way -- a WALK_START
-// record, answered by set_offset (Python's own _live_held_offset) or
-// skip_walk (an instance-patched method: Python runs the walk whole). The
-// bindings install the check: an instance attribute shadowing a method K1
-// stands in for (system, child, or the ship's is_using_target_offset /
-// GetTargetOffsetTG), or a ship class whose offset methods are not the
-// stock ShipClass's. With no check installed every walk starts natively.
-// The kernel itself is plain C++, but the bindings' check is not: no Python
-// bytecode runs in it, CPython lookups do (instance dicts, MRO entries, the
-// registry's weak references), with the GIL held and no GC-tracked
-// allocation -- an instance dict not yet materialised is never built, the
-// walk goes back to Python instead (host_bindings.cc, k1_built_dict). So
-// next() needs the GIL while the check is installed (workstream I).
+// The WALK CHECK runs at every walk start, before any offset: when it
+// answers true the walk starts the old way -- a WALK_START record, answered
+// by set_offset (Python's own _live_held_offset) or skip_walk (an
+// instance-patched method: Python runs the walk whole). It is the session's
+// own (begin_pump / begin_system), else the kernel's (set_walk_check); with
+// neither every walk starts natively. The bindings give each session one: a
+// lookup in that session's verdict sets -- an instance attribute shadowing
+// a method K1 stands in for (system, child, or the ship's
+// is_using_target_offset / GetTargetOffsetTG), or a ship class whose offset
+// methods are not the stock ShipClass's -- so the kernel's compute makes no
+// CPython call (spec 2026-11-02-combat-launch-deferral §4.2). The bindings
+// scan the live objects into the sets before each next() of the session
+// (top_walk_check), so a verdict is as current as the last Python run
+// between records, as when the check ran in here
+// (host_bindings.cc, THE K1 WALK CHECK). Sessions nest, so the sets are per
+// session. next() itself still runs with the GIL held (workstream I: the
+// mirror rows' lifetime, test_native_k1_holds_gil.py).
 //
 // THE WRITE LOG. No Python bytecode runs inside next(). The writes the Python
 // decision path makes (fire timers, the `_depleted` clear, cleared targets,
@@ -100,10 +103,98 @@
 // entries of the call with its writes. An abandoned session drops nothing
 // from the queue (ruling F5): every entry there stands for an effect that
 // already happened, and is delivered as usual.
-// Records left: FIRE for a tube or a cannon only, FIRE_DUMB, ASK,
-// RUN_PYTHON, a handed-back WALK_START, BANK_STOP / STOP_SYSTEM only for a
-// row gone or a stop the walk check hands back, DONE. FIRE_FAILED is never
-// returned.
+//
+// LAUNCHES AT THE BOUNDARY (spec 2026-11-02-combat-launch-deferral §4.1).
+// A tube's launch -- a Fire on a tube decided natively, or the dumb fire
+// (Weapon.FireDumb: `_dewarp_blocks_fire`, then Fire(None, None)) -- is no
+// record either. Its Python, TorpedoTube._fire_effect through
+// _spawn_torpedo, is logged in its order:
+//     `_target = target; _target_offset = <the walk's offset>` (None, None
+//     on the dumb path); `_firing = True`; `_num_ready -= 1`;
+//     `_last_fire_time = now`; the system's `_last_system_fire_time = now`;
+//     _start_slot_cooldown(now)'s first loaded slot (`_reload_timers[i] =
+//     0.0; _reload_advanced_at[i] = now`, slot writes); the ammo type's
+//     AddAvailable(-1) for a finite magazine (`_available = max(0,
+//     min(_available - 1, _max_torpedoes))`)
+// then SPAWN(tube, K1Spawn) -- the fire-time record the spawn needs, every
+// value computed here at fire time so a pose that moves later in the step
+// (a tractor) cannot move the launch -- WEAPON_FIRED(tube, target),
+// AMMO_CONSUMED(tube), and last `_firing = False`. The delivery of SPAWN
+// (effect_queue.py) builds the torpedo from the record through the shared
+// spawn path (weapon_subsystems._new_projectile / _launch_projectile:
+// Create, register, ET_TORPEDO_ENTERED_SET, the launch sound) and posts its
+// ET_TORPEDO_FIRED, so the delivered order is BC's: the spawn, ENTERED_SET,
+// TORPEDO_FIRED, WEAPON_FIRED, AMMO_CONSUMED. A launch the kernel cannot
+// make is the FIRE (FIRE_DUMB) record as before, with no launch write,
+// counted by K1LaunchWhy: no ammo type or no module (Unresolved), the
+// type's launch not cached (Uncached: read when the type is loaded, so
+// only inside THE P6 WINDOW or for a GetLaunchSpeed that raises; Python's
+// launch then caches it), a function the launch stands in for patched
+// (Patched), a posed target's offset it cannot bake (PosedOffset),
+// anything else the mirror cannot say (Other: slot lists out of step with
+// MaxReady, an unnamed set). Whatever the module's Create does, it runs at the
+// delivery (rulings L1, L6: an impure script draws there). The Python of a
+// handed-back record, running inside the deferral, appends its own SPAWN
+// too (effect_queue E4; weapon_subsystems._defer_spawn), so every launch
+// in the scope spawns at the boundary in emission order. A dumb fire
+// Python would refuse (the ship arriving, CanFire false) is decided
+// natively too.
+//
+// A cannon's launch (Task 3) -- a Fire on a PulseWeapon decided natively --
+// is no record either. PulseWeapon._fire_effect inside the deferral is, in
+// its order: SPAWN(cannon, K1Spawn) (_defer_spawn: the mount, unit(the
+// decision's led world_dir) x the cannon's P6 launch speed + the ship's
+// velocity, the target the shot used if alive, the walk's offset and its
+// bake, GetDamageRadiusFactor(), GetDamageScale() from the pushed table,
+// and the target as fired_at), then `_charge_level = max(0.0,
+// _charge_level - _shot_cost())` and `_cooldown_remaining =
+// GetCooldownTime()`. No WEAPON_FIRED entry: the delivery scales the
+// bolt's damage after register and posts its ET_WEAPON_FIRED once the bolt
+// exists (M4), so the delivered order is the spawn, ENTERED_SET,
+// WEAPON_FIRED. The SPAWN's module is the cannon's own (the one its P6
+// params were read from, held by the bindings per row); while any such
+// module is not the one sys.modules holds -- PulseWeapon._fire_decide
+// imports its script at every shot -- the bindings set
+// K1_PULSE_MODULE_STALE and every cannon launch is a FIRE record
+// (Unresolved), as is one with a launch function patched (Patched), a
+// posed target's offset it cannot bake (PosedOffset) or a row it cannot
+// read (Other).
+//
+// WHAT A LAUNCH OBEYS (ruling L8). The instance-level patch scan (THE WALK
+// START's verdict sets, native_combat._K1_LEAF_PATCHES) covers the ENTRY
+// POINTS only -- Fire, _fire_decide, _fire_effect, StopFiring, CanFire,
+// FireDumb, _spawn_torpedo -- "the cheap subset tests and tools patch", as
+// K0's ruling W9. The deeper getters a native launch stands in for are
+// guarded at CLASS level only (_K1_LEAF_METHODS -> k1_overridden: a class
+// or base override hands the system to Python): a tube's
+// GetDamageRadiusFactor, GetDirection, GetRight, _emitter_world_position,
+// _start_slot_cooldown, _ensure_slots; a cannon's GetDamageScale,
+// GetCooldownTime, GetDamageRadiusFactor, _emitter_world_position,
+// _shot_cost, _climb_to_ship. One of those patched on an INSTANCE is not
+// obeyed by a native launch (roadmap decision 2: runtime patching of
+// engine internals is not a supported mod surface). Others it stands in for
+// with NO guard, class or instance, read from the mirror instead: the ammo
+// type's AddAvailable and GetTorpedoScript, the system's
+// GetCurrentAmmoType, the firing ship's GetVelocityTG, GetWorldRotation and
+// GetContainingSet, and the target's IsDead; an override of any of those
+// is not obeyed by a native launch either. The module-level launch
+// functions are the launch check's (K1LaunchWhy::Patched).
+//
+// THE P6 WINDOW. A cannon's launch speed and module are read when its
+// params are pushed (SetProperty, a mission swap's refresh); an ammo
+// type's when it is pushed (its creation, SetTorpedoScript, the refresh:
+// native_combat.push_ammo_launch, launch deferral Task 5). A
+// SetModuleName on a cannon's property after SetProperty is never
+// re-pushed, so the cached module and launch params stay the old ones; and
+// a projectile-cache reset (_reset_projectile_module_cache) made by Python
+// run in the middle of a K1 session leaves a cannon's old ones, and its
+// ammo types uncached (each launch handed back, Uncached), until the next
+// K1 entry refreshes them. The lead solve's params have the same window.
+//
+// Records left: FIRE for a launch the kernel cannot make (a tube's or a
+// cannon's, counted by K1LaunchWhy), FIRE_DUMB likewise, ASK, RUN_PYTHON,
+// a handed-back WALK_START, BANK_STOP / STOP_SYSTEM only for a row gone or
+// a stop the walk check hands back, DONE. FIRE_FAILED is never returned.
 //
 // PINNING (the Python driver's contract; Task 5's run_k1). Python's walk
 // holds strong references in its locals (the system, `target`, the retry
@@ -215,9 +306,41 @@ enum class K1Effect : int32_t {
     LOOP_STOP,           // (bank)
     WEAPON_FIRED,        // (bank, target or -1)
     WEAPON_FIRE_FAILED,  // (tube)
+    SPAWN,               // (launcher) + K1Entry::spawn
+    AMMO_CONSUMED,       // (tube)
     kCount
 };
 const char* k1_effect_name(K1Effect e);
+
+// A launch's fire-time record (LAUNCHES AT THE BOUNDARY): what
+// weapon_subsystems._spawn_projectile reads live, read here when the
+// launch is decided. Handles are -1 for None.
+struct K1Spawn {
+    enum class Kind : int32_t { Tube = 0, Pulse = 1, Dumb = 2 };
+    Kind kind = Kind::Tube;
+    int64_t ship = -1;    // emitter._climb_to_ship(): the torpedo's source
+    int64_t set = -1;     // the ship's containing set (register joins it)
+    // The row whose launch module the SPAWN carries (the bindings'
+    // k1_launch_modules): a tube's ammo type, a cannon itself.
+    int64_t ammo = -1;
+    int64_t target = -1;  // _target_ship: the launcher's target, if alive
+    Vec3 position{0, 0, 0};  // emitter._emitter_world_position()
+    // unit(dir) * launch speed + ship velocity; false when the direction
+    // has no length (Python then leaves the torpedo's velocity alone).
+    bool has_velocity = false;
+    Vec3 velocity{0, 0, 0};
+    // SetTargetOffset(the launcher's offset): with a target and a TGPoint3
+    // offset, the offset and its point as posed now (_bake_offset).
+    bool has_offset = false;
+    Vec3 offset{0, 0, 0}, baked{0, 0, 0};
+    double drf_override = 0.0;  // the launcher's GetDamageRadiusFactor()
+    // A cannon's (a tube's are 1.0 and -1): the power setting's
+    // GetDamageScale() at fire time, applied after register as Python
+    // does, and the target the shot used, its ET_WEAPON_FIRED's pointer
+    // (posted by the delivery, after the bolt exists: M4).
+    double damage_scale = 1.0;
+    int64_t fired_at = -1;
+};
 
 // One entry, in walk order. `at`: how many of the carrying record's writes
 // were logged before it (the entry follows them in Python's order).
@@ -225,7 +348,28 @@ struct K1Entry {
     K1Effect kind = K1Effect::FIRE_SOUND;
     int64_t a = -1, b = -1;
     size_t at = 0;
+    std::optional<K1Spawn> spawn;  // SPAWN
 };
+
+// Why a launch went to Python as a FIRE / FIRE_DUMB record (LAUNCHES AT THE
+// BOUNDARY), in combat_k1_counts' k1_launch_reasons.
+enum class K1LaunchWhy : int32_t {
+    Unresolved = 0,  // no ammo type, no script or no module; a cannon's
+                     // module not sys.modules' (K1_PULSE_MODULE_STALE)
+    Uncached,        // the type's launch is not cached yet
+    Patched,         // a function the launch stands in for is patched
+                     // (native_combat._K1_LAUNCH_FUNCS: a test's spy, a
+                     // tool), K1_LAUNCH_PATCHED, re-checked by the bindings
+                     // before every next() like the walk check
+    PosedOffset,     // a posed target's offset the kernel cannot bake: no
+                     // Manual Aim slot holds it (an AI's held offset: the
+                     // box rule is Python's), or its slot is stale
+    Other,           // the mirror is inconsistent: slot lists out of step
+                     // with MaxReady (_ensure_slots would rebuild them), an
+                     // unnamed set, a row the plan cannot read
+    kCount
+};
+const char* k1_launch_why_name(K1LaunchWhy w);
 
 // Why a system went to Python whole (a RUN_PYTHON, or a skip_walk). Counted
 // per session type: the pump's and StartFiring's system sessions apart.
@@ -257,9 +401,11 @@ const char* k1_why_name(K1Why w);
 // K1WalkOffset, the marker for "the walk's own offset object" (ruling P5),
 // lives in write_log.h (the shared write representation).
 
-// One write-log value. monostate is Python None.
+// One write-log value. monostate is Python None. A SlotWrite is a tube's
+// in-place slot write (`_reload_timers[i] = v`, write_log.h): the launch's
+// _start_slot_cooldown.
 using K1Value = std::variant<std::monostate, bool, int64_t, double,
-                             K1WalkOffset, std::vector<int64_t>>;
+                             K1WalkOffset, std::vector<int64_t>, SlotWrite>;
 
 struct K1Write {
     int64_t handle = -1;
@@ -310,7 +456,8 @@ std::optional<Vec3> k1_live_held_offset(const Mirror& m, int64_t system,
                                         int64_t ship);
 
 // The walk check (see THE WALK START): (system, its ship or -1) -> true
-// when the walk must start the old way (a WALK_START record).
+// when the walk must start the old way (a WALK_START record). Called inside
+// next(): it must not call into Python.
 using K1WalkCheck = std::function<bool(int64_t system, int64_t ship)>;
 
 class K1Kernel {
@@ -321,19 +468,27 @@ public:
     // order, -1 for a ship with no row (it RUN_PYTHONs every getter). `now` is
     // weapon_subsystems._game_time() (the Utopia game time, 0.0 if it raises;
     // also the occlusion clock), `drift_now` native_combat.now() (the nebula
-    // drift clock). `use_memo` is step_memo.active().
+    // drift clock). `use_memo` is step_memo.active(). `check`: the
+    // session's own walk check (THE WALK START), asked instead of the
+    // kernel's (set_walk_check) for as long as the session is open; empty:
+    // the kernel's.
     void begin_pump(std::vector<int64_t> ships, double dt, double now,
-                    bool use_memo, double drift_now);
+                    bool use_memo, double drift_now, K1WalkCheck check = {});
     // WeaponSystem.StartFiring's immediate update_weapons(dt) on one system.
     void begin_system(int64_t system, double dt, double now, bool use_memo,
-                      double drift_now);
+                      double drift_now, K1WalkCheck check = {});
 
     // The next record of the top session. Throws std::logic_error when no
     // session is open, a WALK_START has no offset yet or an ASK no answer.
     K1Record next();
 
-    // Install (or, with an empty function, remove) the walk check.
+    // Install (or, with an empty function, remove) the kernel's walk check,
+    // asked by a session begun without its own.
     void set_walk_check(K1WalkCheck check) { walk_check_ = std::move(check); }
+    // The top session's own walk check (begin_pump / begin_system), or
+    // nullptr (no session, or one begun without): the bindings re-validate
+    // the verdicts behind it before each next().
+    const K1WalkCheck* top_walk_check() const;
 
     // The reply to WALK_START: the walk's `_live_held_offset()` as xyz when it
     // is a TGPoint3, nullopt otherwise.
@@ -386,6 +541,16 @@ public:
                 logged_firing_bank_stop = 0, logged_system_stop = 0;
         // The queue entries produced, by K1Effect (k1_entries).
         std::array<int64_t, static_cast<size_t>(K1Effect::kCount)> entries{};
+        // Launches made as logged writes and a SPAWN entry (LAUNCHES AT THE
+        // BOUNDARY): a tube's Fire, a dumb fire; dumb fires Python would
+        // refuse (decided natively, nothing written); and the launches
+        // handed back as FIRE / FIRE_DUMB records, by why.
+        int64_t logged_tube_launch = 0, logged_dumb_launch = 0,
+                logged_dumb_refused = 0;
+        // ... and a cannon's Fire (Task 3): its drain, cooldown and SPAWN.
+        int64_t logged_pulse_launch = 0;
+        std::array<int64_t, static_cast<size_t>(K1LaunchWhy::kCount)>
+            launch_why{};
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

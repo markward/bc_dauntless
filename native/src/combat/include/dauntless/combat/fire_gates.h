@@ -57,6 +57,9 @@ struct CanFireResult {
 // named. Shared by the tube's CanFire and K0's reload gate.
 const AmmoRow* current_ammo_type(const Mirror& m,
                                  const SubsystemRow& torpedo_system);
+// The same, as its Ammo handle: -1 for None.
+int64_t current_ammo_handle(const Mirror& m,
+                            const SubsystemRow& torpedo_system);
 
 // CanFire for a leaf weapon, dispatched on weapon_kind: 5 phaser bank and 7
 // tractor beam (_EnergyWeaponFireMixin.CanFire), 6 pulse cannon
@@ -67,5 +70,13 @@ const AmmoRow* current_ammo_type(const Mirror& m,
 // GetGameTime()) (0.0 if that raises). Python reads it twice in one CanFire;
 // the caller passes the one value both reads would see. Unused by banks.
 CanFireResult can_fire(const Mirror& m, int64_t bank, double now);
+
+// A cannon's launch (k1_fire_control.h, LAUNCHES AT THE BOUNDARY), from the
+// power-setting tables Python pushes (PULSE_COST_SCALE_*, PULSE_DAMAGE_
+// SCALE_*): PulseWeapon._shot_cost, NormalDischargeRate x the cost scale,
+// and PulseWeapon.GetDamageScale. A power setting outside 0..2 throws
+// (Python would raise IndexError).
+double pulse_shot_cost(const Mirror& m, const SubsystemRow& cannon);
+double pulse_damage_scale(const Mirror& m, const SubsystemRow& cannon);
 
 }  // namespace dauntless::combat

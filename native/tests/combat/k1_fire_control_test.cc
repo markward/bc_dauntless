@@ -181,6 +181,12 @@ struct World {
             return buf;
         }
         if (std::holds_alternative<K1WalkOffset>(v)) return "walk_offset";
+        if (auto* sw = std::get_if<SlotWrite>(&v)) {
+            const double d = std::get<double>(sw->value);
+            std::snprintf(buf, sizeof buf, "[%lld]=%.17g",
+                          static_cast<long long>(sw->index), d);
+            return buf;
+        }
         std::string out = "[";
         for (int64_t h : std::get<std::vector<int64_t>>(v))
             out += (out.size() > 1 ? "," : "") + name(h);
@@ -207,6 +213,9 @@ struct World {
             std::string s = std::string(k1_effect_name(e.kind)) + " " + name(e.a);
             if (e.kind == K1Effect::WEAPON_FIRED)
                 s += "@" + (e.b == -1 ? std::string("None") : name(e.b));
+            if (e.kind == K1Effect::SPAWN && e.spawn)
+                s += "@" + (e.spawn->target == -1 ? std::string("None")
+                                                  : name(e.spawn->target));
             out.push_back(s + "^" + std::to_string(e.at));
         }
         return out;
@@ -643,7 +652,8 @@ TEST(K1, HeldTargetVsListHead) {
 
 TEST(K1, DumbFireOnlyWithNoTargets) {
     {   // An empty list and a tube that cannot fire: stop (idle: logged,
-        // round trips Task 2), then dumb fire.
+        // round trips Task 2), then dumb fire -- whose Fire refuses too,
+        // decided natively (launch deferral): no record.
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t sys = w.system("tsys", ship, 4, {});
@@ -652,9 +662,9 @@ TEST(K1, DumbFireOnlyWithNoTargets) {
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
         EXPECT_EQ(w.run_to_done(),
-                  (std::vector<std::string>{"WALK_START tsys",
-                                            "FIRE_DUMB tube", "DONE"}));
+                  (std::vector<std::string>{"WALK_START tsys", "DONE"}));
         EXPECT_EQ(w.k.counts().logged_idle_bank_stop, 1);
+        EXPECT_EQ(w.k.counts().logged_dumb_refused, 1);
     }
     {   // An empty list and a ready tube: Fire(None) fires dumb itself.
         World w;
@@ -719,6 +729,9 @@ TEST(K1, PulseStampsBeforeArc) {
     const int64_t sys = w.system("psys", ship, 2, {t});
     const int64_t c = w.bank("cannon", sys);
     w.m.set_i(sys, Field::_force_update, 1);
+    // The launch handed back (a cannon's launch is logged writes and a
+    // SPAWN otherwise: K1PulseLaunch), so the FIRE record shows the stamps.
+    w.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     EXPECT_EQ(w.brief(w.k.next()), "WALK_START psys");
     w.k.set_offset(Vec3{1.0, 2.0, 3.0});
@@ -1644,6 +1657,8 @@ TEST(K1Native, WalkOffsetMarkerNamesItsWalk) {
     const int64_t c = w.bank("cannon", sys);
     w.m.set_fv(sys, Field::_held_offset, {1.0, 2.0, 3.0});
     w.m.set_i(sys, Field::_force_update, 1);
+    // The launch handed back, so the stamp is the FIRE record's last write.
+    w.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     const K1Record f = w.k.next();
     EXPECT_EQ(w.brief(f), "FIRE cannon@t");
@@ -1668,6 +1683,7 @@ TEST(K1Native, WalkOffsetMarkerNamesItsWalk) {
     const int64_t vc = v.bank("cannon", vsys);
     v.m.set_fv(vsys, Field::_held_offset, {1.0, 2.0, 3.0});
     v.m.set_i(vsys, Field::_force_update, 1);
+    v.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
     v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
     EXPECT_EQ(v.brief(v.k.next()), "FIRE cannon@t");
     EXPECT_EQ(v.m.get_fv(vc, Field::_target_offset),
@@ -1703,6 +1719,52 @@ TEST(K1Native, WalkCheckHandsTheWalkStartBack) {
     EXPECT_EQ(w.brief(w.k.next()), "DONE");
     EXPECT_EQ(w.k.counts().logged_walk_start, 1);
     EXPECT_EQ(why_of(w.k.counts(), K1Why::InstancePatch), 1);
+}
+
+TEST(K1Native, SessionWalkCheckIsAskedAndNests) {
+    // A session begun with its own walk check (the bindings' per-session
+    // verdict sets) asks it instead of the kernel's; a session begun inside
+    // it asks ITS own, and the outer one's is asked again once it ends.
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t psys = w.system("sys", ship, 1, {t});
+    w.bank("b0", psys);
+    const int64_t tsys = w.system("tsys", ship, 4, {t});
+    w.bank("tube", tsys);
+    std::vector<std::string> asked;
+    w.k.set_walk_check([&](int64_t, int64_t) {
+        asked.push_back("kernel");
+        return true;
+    });
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0,
+                   [&](int64_t s, int64_t sh) {
+                       asked.push_back("outer " + w.names[s] + "/" +
+                                       w.names[sh]);
+                       return s == psys;
+                   });
+    ASSERT_NE(w.k.top_walk_check(), nullptr);
+    EXPECT_EQ(w.brief(w.k.next()), "WALK_START sys");
+    w.k.skip_walk();
+    w.k.begin_system(tsys, kDt, 10.0, false, 0.0, [&](int64_t s, int64_t) {
+        asked.push_back("inner " + w.names[s]);
+        return true;
+    });
+    EXPECT_EQ(w.brief(w.k.next()), "WALK_START tsys");
+    w.k.skip_walk();
+    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    w.k.end();
+    std::string last;
+    for (int i = 0; i < 8 && last != "DONE"; ++i) last = w.brief(w.k.next());
+    EXPECT_EQ(last, "DONE");
+    w.k.end();
+    EXPECT_EQ(asked, (std::vector<std::string>{"outer sys/ship", "inner tsys",
+                                               "outer tsys/ship"}));
+    // A session begun with none asks the kernel's.
+    w.k.begin_system(psys, kDt, 10.0, false, 0.0);
+    EXPECT_EQ(w.k.top_walk_check(), nullptr);
+    EXPECT_EQ(w.brief(w.k.next()), "WALK_START sys");
+    EXPECT_EQ(asked.back(), "kernel");
 }
 
 // ── Round trips Task 2: beam sustain and idle stops as logged writes ─────────
@@ -2085,4 +2147,540 @@ TEST(K1Native, SystemStopTheWalkCheckRefusesStaysARecord) {
     EXPECT_EQ(asked, sys);
     EXPECT_EQ(w.m.get_i(b0, Field::_firing), 1);
     EXPECT_EQ(w.k.counts().logged_system_stop, 0);
+}
+
+
+// ── Launches at the boundary (spec 2026-11-02-combat-launch-deferral §4.1) ──
+// A tube's or a dumb launch is the launcher writes, logged in Python's order
+// (TorpedoTube._fire_effect, _start_slot_cooldown, _spawn_torpedo's ammo
+// debit), and SPAWN(tube, fire-time record), WEAPON_FIRED, AMMO_CONSUMED
+// queued after them; no FIRE record. A launch the kernel cannot make is the
+// FIRE (or FIRE_DUMB) record as before, counted by why.
+
+namespace {
+
+struct Launcher {
+    int64_t ship = -1, sys = -1, tube = -1, ammo = -1;
+};
+
+// A torpedo system on a ship at (10, 20, 30) moving (1, 2, 3), held at
+// `targets`, with one tube that launches natively: its ammo type's launch
+// cached (19 GU/s), a finite magazine of `rounds` (max 4),
+// its one slot loaded, its DamageRadiusFactor 0.2, the timer forced.
+Launcher launcher(World& w, std::vector<int64_t> targets, int64_t rounds = 3) {
+    Launcher l;
+    l.ship = w.ship("ship", 10.0, 20.0, 30.0);
+    l.sys = w.system("tsys", l.ship, 4, std::move(targets));
+    l.tube = w.bank("tube", l.sys);
+    l.ammo = w.m.get_ids(l.sys, Field::_ammo_by_slot)[1];
+    w.names[l.ammo] = "ammo";
+    w.m.set_i(l.ammo, Field::_unlimited, 0);
+    w.m.set_i(l.ammo, Field::_available, rounds);
+    w.m.set_i(l.ammo, Field::_max_torpedoes, 4);
+    w.m.set_i(l.ammo, Field::ammo_launch_state, 1);
+    w.m.set_f(l.ammo, Field::ammo_launch_speed, 19.0);
+    w.m.set_floats(l.tube, Field::_reload_timers, {-1.0});
+    w.m.set_floats(l.tube, Field::_reload_advanced_at, {0.0});
+    w.m.set_f(l.tube, Field::_damage_radius_factor, 0.2);
+    w.m.set_fv(l.ship, Field::_velocity, {1.0, 2.0, 3.0});
+    w.m.set_i(l.sys, Field::_force_update, 1);
+    return l;
+}
+
+// The writes of `r` from the first one equal to `from`, `n` of them.
+std::vector<std::string> writes_from(const World& w, const K1Record& r,
+                                     const std::string& from, size_t n) {
+    const std::vector<std::string> ws = w.writes(r);
+    auto it = std::find(ws.begin(), ws.end(), from);
+    if (it == ws.end()) return {};
+    const size_t at = static_cast<size_t>(it - ws.begin());
+    return std::vector<std::string>(
+        it, it + static_cast<std::ptrdiff_t>(std::min(n, ws.size() - at)));
+}
+
+size_t launch_why(const World& w, K1LaunchWhy why) {
+    return static_cast<size_t>(
+        w.k.counts().launch_why[static_cast<size_t>(why)]);
+}
+
+const K1Entry* spawn_of(const K1Record& r) {
+    for (const K1Entry& e : r.entries)
+        if (e.kind == K1Effect::SPAWN) return &e;
+    return nullptr;
+}
+
+}  // namespace
+
+TEST(K1Launch, TubeLaunchIsLoggedWritesAndASpawnEntry) {
+    World w(false);
+    const int64_t t = w.object("t", 10.0, 270.0, 30.0);
+    const Launcher l = launcher(w, {t});
+    w.m.set_i(l.tube, Field::_skew_fire, 1);
+    w.m.set_fv(l.sys, Field::_held_offset, {0.25, -0.5, 0.125});
+    w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    // _fire_effect's stamps, _start_slot_cooldown's first loaded slot, the
+    // ammo debit (AddAvailable(-1)), and `_firing = False` at the end.
+    EXPECT_EQ(writes_from(w, done, "tube._target=t", 10),
+              (std::vector<std::string>{
+                  "tube._target=t", "tube._target_offset=walk_offset",
+                  "tube._firing=True", "tube._num_ready=0",
+                  "tube._last_fire_time=10",
+                  "tsys._last_system_fire_time=10",
+                  "tube._reload_timers=[0]=0",
+                  "tube._reload_advanced_at=[0]=10", "ammo._available=2",
+                  "tube._firing=False"}));
+    // The three entries follow the debit, before `_firing = False`.
+    const auto ws = w.writes(done);
+    const size_t after = static_cast<size_t>(
+        std::find(ws.begin(), ws.end(), "ammo._available=2") - ws.begin()) + 1;
+    EXPECT_EQ(w.entries(done),
+              (std::vector<std::string>{
+                  "SPAWN tube@t^" + std::to_string(after),
+                  "WEAPON_FIRED tube@t^" + std::to_string(after),
+                  "AMMO_CONSUMED tube^" + std::to_string(after)}));
+    const K1Entry* e = spawn_of(done);
+    ASSERT_NE(e, nullptr);
+    ASSERT_TRUE(e->spawn.has_value());
+    const K1Spawn& s = *e->spawn;
+    EXPECT_EQ(s.kind, K1Spawn::Kind::Tube);
+    EXPECT_EQ(s.ship, l.ship);
+    EXPECT_EQ(s.set, w.set);
+    EXPECT_EQ(s.ammo, l.ammo);
+    EXPECT_EQ(s.target, t);
+    EXPECT_EQ(s.position, (Vec3{10.0, 20.0, 30.0}));
+    // _emitter_forward_world(skew=True): Direction + 0.033 x Right, then
+    // unit(dir) * 19 + the ship's velocity (the Python's operand order).
+    const double dx = 0.0 + 0.033 * 1.0, dy = 1.0 + 0.033 * 0.0,
+                 dz = 0.0 + 0.033 * 0.0;
+    const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+    ASSERT_TRUE(s.has_velocity);
+    EXPECT_EQ(s.velocity, (Vec3{dx / len * 19.0 + 1.0, dy / len * 19.0 + 2.0,
+                                dz / len * 19.0 + 3.0}));
+    ASSERT_TRUE(s.has_offset);
+    EXPECT_EQ(s.offset, (Vec3{0.25, -0.5, 0.125}));
+    EXPECT_EQ(s.baked, (Vec3{0.25, -0.5, 0.125}));  // an unposed target
+    EXPECT_EQ(s.drf_override, 0.2);
+    // A pulse's (Task 3): a tube's carries none.
+    EXPECT_EQ(s.damage_scale, 1.0);
+    EXPECT_EQ(s.fired_at, -1);
+    // The mirror holds what Python will.
+    EXPECT_EQ(w.m.get_i(l.tube, Field::_num_ready), 0);
+    EXPECT_EQ(w.m.get_i(l.tube, Field::_firing), 0);
+    EXPECT_EQ(w.m.get_floats(l.tube, Field::_reload_timers),
+              (std::vector<double>{0.0}));
+    EXPECT_EQ(w.m.get_floats(l.tube, Field::_reload_advanced_at),
+              (std::vector<double>{10.0}));
+    EXPECT_EQ(w.m.get_i(l.ammo, Field::_available), 2);
+    EXPECT_EQ(w.m.get_f(l.sys, Field::_last_system_fire_time), 10.0);
+    const auto& c = w.k.counts();
+    EXPECT_EQ(c.logged_tube_launch, 1);
+    EXPECT_EQ(c.records, 1);
+    EXPECT_EQ(c.entries[static_cast<size_t>(K1Effect::SPAWN)], 1);
+    EXPECT_EQ(c.entries[static_cast<size_t>(K1Effect::AMMO_CONSUMED)], 1);
+}
+
+TEST(K1Launch, LaunchDirectionTurnsWithTheShip) {
+    // A ship turned 90 degrees about Z: the tube's Direction (+y) becomes
+    // world -x, the mount (0.5, 0, 0) world (0, 0.5, 0); no skew.
+    World w(false);
+    const int64_t t = w.object("t", -240.0, 20.0, 30.0);
+    const Launcher l = launcher(w, {t});
+    const ObjectRow* so = w.m.object(l.ship);
+    w.store.set_rotation(static_cast<uint32_t>(so->xform_index),
+                         static_cast<uint32_t>(so->xform_gen),
+                         {0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0});
+    w.m.set_fv(l.tube, Field::_position, {0.5, 0.0, 0.0});
+    w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    const K1Entry* e = spawn_of(done);
+    ASSERT_TRUE(e != nullptr && e->spawn);
+    EXPECT_EQ(e->spawn->position, (Vec3{10.0, 20.5, 30.0}));
+    EXPECT_EQ(e->spawn->velocity, (Vec3{-1.0 * 19.0 + 1.0, 0.0 * 19.0 + 2.0,
+                                        0.0 * 19.0 + 3.0}));
+    EXPECT_FALSE(e->spawn->has_offset);  // the walk's offset is None
+}
+
+TEST(K1Launch, AmmoDebitIsAddAvailableMinusOne) {
+    // max(0, min(available - 1, max_torpedoes)): the last round, a magazine
+    // over its maximum, and an unlimited type (no write at all).
+    struct Case { int64_t available; bool unlimited; int64_t want; };
+    for (const Case c : {Case{1, false, 0}, Case{7, false, 4},
+                         Case{5, true, -1}}) {
+        World w(false);
+        const int64_t t = w.object("t", 10.0, 270.0, 30.0);
+        const Launcher l = launcher(w, {t}, c.available);
+        w.m.set_i(l.ammo, Field::_unlimited, c.unlimited ? 1 : 0);
+        w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
+        const K1Record done = w.k.next();
+        EXPECT_EQ(w.brief(done), "DONE") << c.available;
+        if (c.want < 0) {
+            EXPECT_TRUE(writes_on(w, done, "ammo").empty()) << c.available;
+            EXPECT_EQ(w.m.get_i(l.ammo, Field::_available), c.available);
+        } else {
+            EXPECT_EQ(writes_on(w, done, "ammo"),
+                      (std::vector<std::string>{"ammo._available=" +
+                                                std::to_string(c.want)}))
+                << c.available;
+        }
+        // AMMO_CONSUMED is queued either way (the player gate is read at
+        // delivery).
+        EXPECT_EQ(w.k.counts().entries[static_cast<size_t>(
+                      K1Effect::AMMO_CONSUMED)], 1);
+    }
+}
+
+TEST(K1Launch, NoLoadedSlotWritesNoSlot) {
+    // _start_slot_cooldown finds no loaded slot (all cooling): no write.
+    World w(false);
+    const int64_t t = w.object("t", 10.0, 270.0, 30.0);
+    const Launcher l = launcher(w, {t});
+    w.m.set_floats(l.tube, Field::_reload_timers, {0.5});
+    w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_EQ(writes_from(w, done, "tsys._last_system_fire_time=10", 2),
+              (std::vector<std::string>{"tsys._last_system_fire_time=10",
+                                        "ammo._available=2"}));
+}
+
+TEST(K1Launch, PosedTargetBakesThroughTheManualAimSlot) {
+    // A posed target: the walk's offset is baked through the firing ship's
+    // Manual Aim slot for it (the box rule's part, resolved by Python). No
+    // slot for this target and offset: the launch is Python's (other).
+    for (bool slot : {true, false}) {
+        World w(false);
+        const int64_t t = w.ship("t", 10.0, 270.0, 30.0);
+        w.m.set_i(t, Field::is_ship_class, 1);
+        w.m.set_i(t, Field::has_posed_parts, 1);
+        w.m.set_part_poses(t, {shift_pose()});
+        const Launcher l = launcher(w, {t});
+        w.m.set_fv(l.sys, Field::_held_offset, {0.25, -0.5, 0.125});
+        if (slot)
+            w.m.set_manual_slot(l.ship, t, {0.25, -0.5, 0.125}, 0,
+                                w.m.part_gen());
+        w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
+        const K1Record r = w.k.next();
+        if (slot) {
+            EXPECT_EQ(w.brief(r), "DONE");
+            const K1Entry* e = spawn_of(r);
+            ASSERT_TRUE(e != nullptr && e->spawn);
+            EXPECT_EQ(e->spawn->offset, (Vec3{0.25, -0.5, 0.125}));
+            EXPECT_EQ(e->spawn->baked, (Vec3{0.25 + 0.25, -0.5, 0.125}));
+        } else {
+            EXPECT_EQ(w.brief(r), "FIRE tube@t");
+            EXPECT_EQ(launch_why(w, K1LaunchWhy::PosedOffset), 1u);
+            EXPECT_EQ(launch_why(w, K1LaunchWhy::Other), 0u);
+            EXPECT_TRUE(writes_on(w, r, "ammo").empty());
+            EXPECT_EQ(w.m.get_i(l.tube, Field::_num_ready), 1);
+        }
+    }
+}
+
+TEST(K1Launch, LaunchesTheKernelCannotMakeAreFireRecords) {
+    // Never guessed: the FIRE record as before (no launch write, nothing
+    // queued), counted by why.
+    enum Case { kUncached, kUnresolved, kNoAmmo, kPatched, kSlots };
+    for (int c = kUncached; c <= kSlots; ++c) {
+        World w(false);
+        const int64_t t = w.object("t", 10.0, 270.0, 30.0);
+        const Launcher l = launcher(w, {t});
+        K1LaunchWhy want = K1LaunchWhy::Other;
+        switch (c) {
+            case kUncached:
+                w.m.set_i(l.ammo, Field::ammo_launch_state, 0);
+                want = K1LaunchWhy::Uncached;
+                break;
+            case kUnresolved:
+                w.m.set_i(l.ammo, Field::ammo_launch_state, 2);
+                want = K1LaunchWhy::Unresolved;
+                break;
+            case kNoAmmo:  // the property's script: Python's
+                w.m.set_ids(l.sys, Field::_ammo_by_slot, {});
+                want = K1LaunchWhy::Unresolved;
+                break;
+            case kPatched:  // a spawn function patched (a test, a tool)
+                w.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
+                want = K1LaunchWhy::Patched;
+                break;
+            case kSlots:  // _ensure_slots would rebuild the lists
+                w.m.set_floats(l.tube, Field::_reload_timers, {});
+                want = K1LaunchWhy::Other;
+                break;
+        }
+        w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
+        const K1Record r = w.k.next();
+        EXPECT_EQ(w.brief(r), "FIRE tube@t") << c;
+        EXPECT_EQ(r.decision.shape, K1Decision::Shape::Tube) << c;
+        EXPECT_EQ(launch_why(w, want), 1u) << c << " " << k1_launch_why_name(want);
+        EXPECT_TRUE(r.entries.empty()) << c;
+        EXPECT_FALSE(has_write(w, r, "tube._firing=True")) << c;
+        EXPECT_EQ(w.m.get_i(l.tube, Field::_num_ready), 1) << c;
+        EXPECT_EQ(w.k.counts().logged_tube_launch, 0) << c;
+    }
+}
+
+TEST(K1Launch, DumbFireIsDecidedNatively) {
+    // An empty target list and the timer below its threshold: try_fire
+    // returns False, `_target = None`, then Weapon.FireDumb(0, 1):
+    // _dewarp_blocks_fire, then Fire(None, None) -- CanFire, the launch with
+    // no target and no offset.
+    World w(false);
+    const Launcher l = launcher(w, {});
+    w.m.set_i(l.sys, Field::_force_update, 0);
+    w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_EQ(writes_from(w, done, "tube._target_offset=None", 3),
+              (std::vector<std::string>{"tube._target_offset=None",
+                                        "tube._firing=True",
+                                        "tube._num_ready=0"}));
+    EXPECT_EQ(fx(w, done),
+              (std::vector<std::string>{"SPAWN tube@None",
+                                        "WEAPON_FIRED tube@None",
+                                        "AMMO_CONSUMED tube"}));
+    const K1Entry* e = spawn_of(done);
+    ASSERT_TRUE(e != nullptr && e->spawn);
+    EXPECT_EQ(e->spawn->kind, K1Spawn::Kind::Dumb);
+    EXPECT_FALSE(e->spawn->has_offset);
+    EXPECT_EQ(w.k.counts().logged_dumb_launch, 1);
+    EXPECT_EQ(w.k.counts().logged_tube_launch, 0);
+}
+
+TEST(K1Launch, DumbFireRefusedIsNoRecord) {
+    // FireDumb that does nothing in Python: the ship is sliding onto its
+    // warp-in placement, or the tube's Fire refuses (not loaded). No record,
+    // no write of its own.
+    for (bool arriving : {true, false}) {
+        World w(false);
+        const Launcher l = launcher(w, {});
+        w.m.set_i(l.sys, Field::_force_update, 0);
+        if (arriving)
+            w.m.set_i(l.ship, Field::arriving, 1);
+        else
+            w.m.set_i(l.tube, Field::_num_ready, 0);
+        w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
+        const K1Record done = w.k.next();
+        EXPECT_EQ(w.brief(done), "DONE") << arriving;
+        EXPECT_TRUE(done.entries.empty()) << arriving;
+        EXPECT_FALSE(has_write(w, done, "tube._firing=True")) << arriving;
+        EXPECT_EQ(w.k.counts().logged_dumb_refused, 1) << arriving;
+    }
+}
+
+TEST(K1Launch, DumbLaunchTheKernelCannotMakeIsAFireDumbRecord) {
+    World w(false);
+    const Launcher l = launcher(w, {});
+    w.m.set_i(l.sys, Field::_force_update, 0);
+    w.m.set_i(l.ammo, Field::ammo_launch_state, 0);
+    w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
+    const K1Record r = w.k.next();
+    EXPECT_EQ(w.brief(r), "FIRE_DUMB tube");
+    EXPECT_TRUE(r.entries.empty());
+    EXPECT_FALSE(has_write(w, r, "tube._firing=True"));
+    EXPECT_EQ(launch_why(w, K1LaunchWhy::Uncached), 1u);
+}
+
+TEST(K1Launch, AThrowUndoesTheLaunchWrites) {
+    // A later walk of the same call throws: the launch's writes (the slot
+    // and the ammo debit included) are undone in the mirror and its entries
+    // dropped; the retried call makes them once.
+    World w(false);
+    const int64_t t = w.object("t", 10.0, 270.0, 30.0);
+    const Launcher l = launcher(w, {t});
+    const int64_t b = w.ship("b", 0.0, 10.0, 0.0);
+    const int64_t sys2 = w.system("sys2", b, 1, {t});
+    w.bank("c0", sys2);
+    bool boom = true;
+    w.k.set_walk_check([&](int64_t s, int64_t) {
+        if (s == sys2 && boom) throw std::runtime_error("walk check");
+        return false;
+    });
+    w.k.begin_pump({l.ship, b}, kDt, 10.0, false, 0.0);
+    EXPECT_THROW(w.k.next(), std::runtime_error);
+    EXPECT_EQ(w.m.get_i(l.tube, Field::_num_ready), 1);
+    EXPECT_EQ(w.m.get_floats(l.tube, Field::_reload_timers),
+              (std::vector<double>{-1.0}));
+    EXPECT_EQ(w.m.get_floats(l.tube, Field::_reload_advanced_at),
+              (std::vector<double>{0.0}));
+    EXPECT_EQ(w.m.get_i(l.ammo, Field::_available), 3);
+    boom = false;
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_EQ(fx(w, done).size(), 3u);
+    EXPECT_EQ(w.m.get_i(l.ammo, Field::_available), 2);
+}
+
+// ── A cannon's launch at the boundary (launch deferral, Task 3) ────────────
+// PulseWeapon._fire_effect inside the deferral: SPAWN(cannon, the fire-time
+// record) -- Python's _defer_spawn, appended first -- then the drain
+// (`_charge_level = max(0.0, _charge_level - _shot_cost())`) and the
+// cooldown (`_cooldown_remaining = GetCooldownTime()`). Its ET_WEAPON_FIRED
+// is the SPAWN delivery's (once the bolt exists: M4), never a K1 entry.
+
+namespace {
+
+struct Cannon {
+    int64_t ship = -1, target = -1, sys = -1, cannon = -1;
+};
+
+// A pulse system on a ship at (10, 20, 30) moving (1, 2, 3), held at a
+// target ahead with the offset (0.25, -0.5, 0.125); one cannon at the
+// ship's origin (launch speed 50, charge 5 of 5, discharge rate 1) at power
+// setting `power`, its cooldown 0.2 and DamageRadiusFactor 0.3, the timer
+// forced. The power setting's damage scales are BC's 0.2 / 0.5 / 1.0.
+Cannon cannon_world(World& w, int64_t power = 2) {
+    Cannon c;
+    c.ship = w.ship("ship", 10.0, 20.0, 30.0);
+    c.target = w.object("t", 10.0, 270.0, 30.0);
+    c.sys = w.system("psys", c.ship, 2, {c.target});
+    c.cannon = w.bank("cannon", c.sys);
+    w.m.set_i(c.cannon, Field::_power_setting, power);
+    w.m.set_f(c.cannon, Field::_cooldown_time, 0.2);
+    w.m.set_f(c.cannon, Field::_damage_radius_factor, 0.3);
+    w.m.set_fv(c.ship, Field::_velocity, {1.0, 2.0, 3.0});
+    w.m.set_fv(c.sys, Field::_held_offset, {0.25, -0.5, 0.125});
+    w.m.set_i(c.sys, Field::_force_update, 1);
+    w.m.set_global_f(Global::PULSE_DAMAGE_SCALE_0, 0.2);
+    w.m.set_global_f(Global::PULSE_DAMAGE_SCALE_1, 0.5);
+    w.m.set_global_f(Global::PULSE_DAMAGE_SCALE_2, 1.0);
+    return c;
+}
+
+// The led launch direction the kernel decides for cannon_world's shot (the
+// FIRE record's, with every launch handed back).
+Vec3 decided_dir(int64_t power) {
+    World p(false);
+    const Cannon c = cannon_world(p, power);
+    p.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
+    p.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
+    const K1Record r = p.k.next();
+    EXPECT_EQ(p.brief(r), "FIRE cannon@t");
+    return r.decision.world_dir;
+}
+
+}  // namespace
+
+TEST(K1PulseLaunch, CannonLaunchIsLoggedWritesAndASpawnEntry) {
+    const Vec3 dir = decided_dir(2);
+    World w(false);
+    const Cannon c = cannon_world(w);
+    w.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
+    const K1Record done = w.k.next();
+    ASSERT_EQ(w.brief(done), "DONE");
+    // The decision's stamps, then the effect's drain (5 - 1 x 2.0) and the
+    // cooldown; the SPAWN between them (Python appends it first).
+    EXPECT_EQ(writes_from(w, done, "cannon._target=t", 4),
+              (std::vector<std::string>{
+                  "cannon._target=t", "cannon._target_offset=walk_offset",
+                  "cannon._charge_level=3",
+                  "cannon._cooldown_remaining=0.20000000000000001"}));
+    const auto ws = w.writes(done);
+    const size_t after = static_cast<size_t>(
+        std::find(ws.begin(), ws.end(), "cannon._target_offset=walk_offset") -
+        ws.begin()) + 1;
+    // No WEAPON_FIRED entry: the delivery posts it once the bolt exists.
+    EXPECT_EQ(w.entries(done),
+              (std::vector<std::string>{"SPAWN cannon@t^" +
+                                        std::to_string(after)}));
+    const K1Entry* e = spawn_of(done);
+    ASSERT_TRUE(e != nullptr && e->spawn);
+    const K1Spawn& s = *e->spawn;
+    EXPECT_EQ(s.kind, K1Spawn::Kind::Pulse);
+    EXPECT_EQ(s.ship, c.ship);
+    EXPECT_EQ(s.set, w.set);
+    EXPECT_EQ(s.ammo, c.cannon);  // the row its module is kept by
+    EXPECT_EQ(s.target, c.target);
+    EXPECT_EQ(s.position, (Vec3{10.0, 20.0, 30.0}));
+    // unit(the decided world_dir) x 50 + the ship's velocity.
+    const double len =
+        std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+    ASSERT_TRUE(s.has_velocity);
+    EXPECT_EQ(s.velocity, (Vec3{dir[0] / len * 50.0 + 1.0,
+                                dir[1] / len * 50.0 + 2.0,
+                                dir[2] / len * 50.0 + 3.0}));
+    ASSERT_TRUE(s.has_offset);
+    EXPECT_EQ(s.offset, (Vec3{0.25, -0.5, 0.125}));
+    EXPECT_EQ(s.baked, (Vec3{0.25, -0.5, 0.125}));  // an unposed target
+    EXPECT_EQ(s.drf_override, 0.3);
+    EXPECT_EQ(s.damage_scale, 1.0);
+    EXPECT_EQ(s.fired_at, c.target);
+    // The mirror holds what Python will.
+    EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 3.0);
+    EXPECT_EQ(w.m.get_f(c.cannon, Field::_cooldown_remaining), 0.2);
+    const auto& n = w.k.counts();
+    EXPECT_EQ(n.logged_pulse_launch, 1);
+    EXPECT_EQ(n.records, 1);
+    EXPECT_EQ(n.entries[static_cast<size_t>(K1Effect::SPAWN)], 1);
+    EXPECT_EQ(n.entries[static_cast<size_t>(K1Effect::WEAPON_FIRED)], 0);
+}
+
+TEST(K1PulseLaunch, DrainClampsAndTheScaleFollowsThePowerSetting) {
+    // A charge just under the shot's cost (the gate's 1e-9 slack): the drain
+    // is max(0.0, charge - cost) = 0; the bolt's scale is the setting's.
+    for (const int64_t power : {0, 1}) {
+        World w(false);
+        const Cannon c = cannon_world(w, power);
+        const double cost = power == 0 ? 0.5 : 1.0;
+        w.m.set_f(c.cannon, Field::_charge_level, cost - 5e-10);
+        w.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
+        const K1Record done = w.k.next();
+        ASSERT_EQ(w.brief(done), "DONE") << power;
+        EXPECT_TRUE(has_write(w, done, "cannon._charge_level=0")) << power;
+        const K1Entry* e = spawn_of(done);
+        ASSERT_TRUE(e != nullptr && e->spawn) << power;
+        EXPECT_EQ(e->spawn->damage_scale, power == 0 ? 0.2 : 0.5) << power;
+    }
+}
+
+TEST(K1PulseLaunch, LaunchesTheKernelCannotMakeAreFireRecords) {
+    // A launch function patched, or a cannon module sys.modules no longer
+    // holds (Python's decide would import another, or none): the FIRE record
+    // as before -- the decision's stamps only, nothing queued -- counted.
+    for (const bool stale : {false, true}) {
+        World w(false);
+        const Cannon c = cannon_world(w);
+        w.m.set_global_i(stale ? Global::K1_PULSE_MODULE_STALE
+                               : Global::K1_LAUNCH_PATCHED,
+                         1);
+        w.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
+        const K1Record r = w.k.next();
+        EXPECT_EQ(w.brief(r), "FIRE cannon@t") << stale;
+        EXPECT_EQ(r.decision.shape, K1Decision::Shape::Pulse) << stale;
+        EXPECT_EQ(launch_why(w, stale ? K1LaunchWhy::Unresolved
+                                      : K1LaunchWhy::Patched),
+                  1u)
+            << stale;
+        EXPECT_TRUE(r.entries.empty()) << stale;
+        EXPECT_EQ(w.writes(r).back(), "cannon._target_offset=walk_offset");
+        EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 5.0) << stale;
+        EXPECT_EQ(w.k.counts().logged_pulse_launch, 0) << stale;
+    }
+}
+
+TEST(K1PulseLaunch, AThrowUndoesTheLaunchWrites) {
+    // As a tube's: a later walk of the same call throws, the drain and the
+    // cooldown are undone in the mirror and the SPAWN dropped; the retried
+    // call makes them once.
+    World w(false);
+    const Cannon c = cannon_world(w);
+    const int64_t b = w.ship("b", 0.0, 10.0, 0.0);
+    const int64_t sys2 = w.system("sys2", b, 1, {c.target});
+    w.bank("c0", sys2);
+    bool boom = true;
+    w.k.set_walk_check([&](int64_t s, int64_t) {
+        if (s == sys2 && boom) throw std::runtime_error("walk check");
+        return false;
+    });
+    w.k.begin_pump({c.ship, b}, kDt, 10.0, false, 0.0);
+    EXPECT_THROW(w.k.next(), std::runtime_error);
+    EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 5.0);
+    EXPECT_EQ(w.m.get_f(c.cannon, Field::_cooldown_remaining), 0.0);
+    boom = false;
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 3.0);
+    EXPECT_EQ(w.entries(done).size(), 1u);
 }

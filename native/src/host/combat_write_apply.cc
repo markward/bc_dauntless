@@ -758,9 +758,12 @@ bool apply_value_as(const Ctx& c, PyObject* obj, PyObject* field,
 template <class V>
 bool apply_value(const Ctx& c, PyObject* obj, PyObject* field,
                  const V& value) {
+    // K1's log carries slot writes (a tube's launch), K0's both.
     if constexpr (is_alternative<ApplySlot, V>::value) {
         if (const auto* s = std::get_if<ApplySlot>(&value))
             return apply_slot(obj, field, *s);
+    }
+    if constexpr (is_alternative<ApplyWatcher, V>::value) {
         if (const auto* w = std::get_if<ApplyWatcher>(&value))
             return apply_watcher(obj, field, *w);
     }

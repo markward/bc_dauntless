@@ -51,6 +51,7 @@ from engine.appc import effect_queue
 from engine.appc import native_combat as nc
 from engine.appc import part_pose
 from engine.appc import passive_state
+from engine.appc import projectiles
 from engine.appc import sensor_contacts
 from engine.appc import weapon_subsystems as ws
 from engine.appc.actions import TGObjPtrEvent
@@ -183,6 +184,7 @@ class _Scene:
             self.labels[id(w)] = "%s/%s" % (
                 w.GetParentSubsystem().GetParentShip().GetName(), w.GetName())
         self.held = []
+        self.torps = []         # torpedoes and bolts, in creation order
         self.tick = 0
         self.log = []
         self.events = []
@@ -272,11 +274,32 @@ class _Scene:
         if obj is None:
             return None
         name = self.labels.get(id(obj))
+        if name is None and isinstance(obj, projectiles.Torpedo):
+            # Torpedoes (and bolts) in their own sequence: with native on a
+            # launch's torpedo is made at the tick boundary (launch
+            # deferral, ruling L3), after objects the rest of the step
+            # numbers, but in the same order as the reference makes them.
+            name = self.labels[id(obj)] = "Torpedo@%d" % len(self.torps)
+            self.torps.append(obj)
+            return name
         if name is None:
             name = self.labels[id(obj)] = "%s#%d" % (type(obj).__name__,
                                                      len(self.held))
             self.held.append(obj)
         return name
+
+    def torp_row(self, t):
+        g = lambda name: getattr(t, name, None)  # noqa: E731
+        baked = g("_baked_offset")
+        return (self.label(t), _vec(t.GetTranslate()), _vec(t._velocity),
+                self.label(g("_target_ship")), _vec(g("_target_offset")),
+                None if baked is None else (self.label(baked[0]),
+                                            _vec(baked[1:4]),
+                                            _vec(baked[4])),
+                _t(g("_damage")), _t(g("_damage_radius_factor")),
+                _t(g("_ttl")), _t(g("_age")), _t(g("_guidance_lifetime")),
+                _t(g("_max_angular_accel")), self.label(t._source_ship),
+                t.GetContainingSet() is not None, _t(g("_is_disruptor")))
 
     def payload(self, evt):
         """A weapon hit's payload: damage, hit point and normal by .hex(),
@@ -497,6 +520,12 @@ class _Scene:
                         None if shields is None else tuple(
                             _t(float(shields.GetCurShields(f)))
                             for f in range(6))))
+        # Last (after the ships: the slices below index those): every
+        # torpedo and bolt in flight, in `_active` order (K3's flight and
+        # hit order), field by field -- the spawn's values (launch
+        # deferral) and its flight since.
+        for t in projectiles._active:
+            row.append(self.torp_row(t))
         self.log.append(row)
 
     # ── Run ──────────────────────────────────────────────────────────────────
@@ -600,7 +629,16 @@ def _round_trips_ran(nat):
                 "fire_failed"):
         assert c["k1_logged"][key] > 0, (key, c["k1_logged"])
     e = c["k1_entries"]
-    assert e["FIRE_SOUND"] == e["WEAPON_FIRED"] == c["k1_logged"]["beam_edge"]
+    logged = c["k1_logged"]
+    # A beam's edge and a tube's launch (launch deferral) each queue one
+    # ET_WEAPON_FIRED; a launch also its SPAWN and AMMO_CONSUMED. A
+    # cannon's launch (Task 3) queues its SPAWN only: the delivery posts
+    # its ET_WEAPON_FIRED once the bolt exists.
+    launches = logged["tube_launch"] + logged["dumb_launch"]
+    assert e["FIRE_SOUND"] == logged["beam_edge"], c
+    assert e["WEAPON_FIRED"] == logged["beam_edge"] + launches, c
+    assert e["AMMO_CONSUMED"] == launches, c
+    assert e["SPAWN"] == launches + logged["pulse_launch"], c
     assert e["WEAPON_FIRE_FAILED"] == c["k1_logged"]["fire_failed"], c
     for key in ("k2_batched_contacts", "k2_logged_system_stop",
                 "k3_native_attributions"):
@@ -645,10 +683,17 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
     # ... and K1 really walked and fired each kind natively.
     for k in (PHASERS, PULSES, TORPEDOES):
         assert nat.walked.get(k, 0) > 0, nat.walked
-    # Cannons and tubes fire through FIRE records; a bank's edge is logged
+    # A cannon's launch is logged writes and a SPAWN (launch deferral,
+    # Task 3), never a FIRE record; a tube's too unless the kernel cannot
+    # make it (the counted hand-backs: a posed target's offset; no first
+    # launch since types cache at load, Task 5); a bank's edge is logged
     # writes and queue entries (combat fire events), never a record.
-    for k in (CANNON, TUBE):
-        assert nat.fired.get(k, 0) > 0, nat.fired
+    assert nat.counts["k1_logged"]["pulse_launch"] > 0, nat.counts
+    # The equalities below would hold at 0 == 0: tubes really launched.
+    assert nat.counts["k1_logged"]["tube_launch"] > 0, nat.counts
+    assert nat.fired.get(CANNON, 0) == 0, nat.fired
+    assert nat.fired.get(TUBE, 0) == sum(
+        nat.counts["k1_launch_reasons"].values()), (nat.fired, nat.counts)
     assert nat.fired.get(BANK, 0) == 0, nat.fired
     for key in ("beam_edge", "firing_bank_stop", "system_stop"):
         assert nat.counts["k1_logged"][key] > 0, (key, nat.counts)
@@ -678,8 +723,10 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
           % (ticks_per_frame, nat.counts, nat.walked, nat.fired,
              len(ref.events), presented(ref.calls)))
     print("k1 differential (tpf=%d) tallies: records %d, logged %r, "
-          "entries %r" % (ticks_per_frame, nat.counts["k1_records"],
-                          nat.counts["k1_logged"], nat.counts["k1_entries"]))
+          "entries %r, FIRE by leaf kind %r, launch hand-backs %r"
+          % (ticks_per_frame, nat.counts["k1_records"],
+             nat.counts["k1_logged"], nat.counts["k1_entries"], nat.fired,
+             nat.counts["k1_launch_reasons"]))
 
 
 def test_k1_matches_python_with_k0_stood_down(monkeypatch):
@@ -1080,7 +1127,12 @@ def test_k1_matches_python_under_the_game_loop_ai(monkeypatch):
                                                         ref.k1_systems)
     for k in (PHASERS, TORPEDOES):
         assert nat.walked.get(k, 0) > 0, nat.walked
-    assert nat.fired, nat.fired
+    # ... and fired natively: every type's launch was cached when it was
+    # loaded (launch deferral Task 5), so no first launch is handed back.
+    logged = nat.counts["k1_logged"]
+    assert logged["tube_launch"] > 0 and logged["beam_edge"] > 0, logged
+    assert nat.counts["k1_launch_reasons"]["launch_uncached"] == 0, \
+        nat.counts["k1_launch_reasons"]
     for et in (App.ET_WEAPON_FIRED, App.ET_WEAPON_HIT, App.ET_OBJECT_EXPLODING,
                App.ET_OBJECT_DESTROYED):
         assert et in _kinds(ref), et

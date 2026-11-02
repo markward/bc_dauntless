@@ -485,11 +485,12 @@ class Recorder:
 
         register = projectiles.register
 
-        def register_spy(torpedo, _orig=register):
+        def register_spy(torpedo, *args, _orig=register, **kwargs):
             # Numbered at launch: with native on, its ET_TORPEDO_FIRED (its
             # first sight before) is delivered at the tick boundary, after
-            # objects the rest of the step labels.
-            _orig(torpedo)
+            # objects the rest of the step labels. (A launch K1 deferred is
+            # registered there too, with its fire-time set: `args`.)
+            _orig(torpedo, *args, **kwargs)
             self.label(torpedo)
 
         mp.setattr(projectiles, "register", register_spy)

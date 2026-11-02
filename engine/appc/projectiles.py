@@ -244,6 +244,17 @@ class Torpedo(ObjectClass):
     def GetTargetOffset(self):
         return self._target_offset
 
+    def _set_launch_offset(self, offset, baked) -> None:
+        """SetTargetOffset at launch with its bake already made: `offset` a
+        TGPoint3 copy or None, `baked` the point `_bake_offset` gives for it
+        at fire time (weapon_subsystems._launch_projectile: the reference
+        bakes live, a SPAWN delivery passes the kernel's fire-time bake).
+        `_target_ship` is set first."""
+        self._target_offset = offset
+        self._baked_offset = (None if offset is None
+                              else (self._target_ship, offset.x, offset.y,
+                                    offset.z, baked))
+
     def SetDamageRadiusFactor(self, v) -> None:   self._damage_radius_factor = float(v)
     def GetDamageRadiusFactor(self) -> float:     return self._damage_radius_factor
     def SetGuidanceLifetime(self, v) -> None:
@@ -525,15 +536,33 @@ def _scan_rebuild(scan) -> None:
             _scan_put(scan, t)
 
 
-def register(torpedo: Torpedo) -> None:
+# register's `kset` default: the source ship's set, read now.
+LIVE_SET = object()
+
+
+def source_set(source):
+    """The set _join_source_set joins a torpedo from `source` to, now: its
+    containing set, or None (no source, a source in no set or without
+    GetContainingSet)."""
+    from engine.core.ids import implements
+    if source is None or not implements(source, "GetContainingSet"):
+        return None
+    return source.GetContainingSet()
+
+
+def register(torpedo: Torpedo, kset=LIVE_SET) -> None:
+    """Number `torpedo`, put it in flight and join it to a set. `kset`: the
+    set to join (None: none), read at fire time for a launch K1 deferred to
+    the tick boundary (weapon_subsystems.spawn_launch); LIVE_SET (default)
+    reads the source ship's containing set now (_join_source_set)."""
     global _next_id
     torpedo._id = _next_id
     _next_id += 1
     _active.append(torpedo)
-    _join_source_set(torpedo)
+    _join_source_set(torpedo, kset)
 
 
-def _join_source_set(torpedo: Torpedo) -> None:
+def _join_source_set(torpedo: Torpedo, kset=LIVE_SET) -> None:
     """Add *torpedo* to its firing ship's set and post ET_TORPEDO_ENTERED_SET.
 
     Emitter gaps #6/#7. Torpedoes used to live only in `_active`, so
@@ -554,17 +583,15 @@ def _join_source_set(torpedo: Torpedo) -> None:
     "entered set" for a set it is not in would make ConditionIncomingTorps
     track a torpedo its PeriodicCheck can never find.
     """
-    source = torpedo._source_ship
-    # `implements`, not hasattr: on a TGObject __getattr__ hands back a truthy
-    # _Stub for any unknown name, so hasattr would be vacuously True and we
-    # would call a stub and get a _Stub "set" back. This also covers the
-    # legitimate case of a source that is not an ObjectClass at all — the
-    # projectile-motion fixtures fire from bare fakes, and BC-side a torpedo
-    # can outlive its shooter. Same degradation as "source is in no set".
-    from engine.core.ids import implements
-    if source is None or not implements(source, "GetContainingSet"):
-        return
-    kset = source.GetContainingSet()
+    if kset is LIVE_SET:
+        # `implements`, not hasattr (source_set): on a TGObject __getattr__
+        # hands back a truthy _Stub for any unknown name, so hasattr would
+        # be vacuously True and we would call a stub and get a _Stub "set"
+        # back. This also covers the legitimate case of a source that is not
+        # an ObjectClass at all — the projectile-motion fixtures fire from
+        # bare fakes, and BC-side a torpedo can outlive its shooter. Same
+        # degradation as "source is in no set".
+        kset = source_set(torpedo._source_ship)
     if kset is None:
         return
     kset.AddObjectToSet(torpedo, "Torpedo %d" % torpedo._id)

@@ -141,3 +141,38 @@ TEST_F(EffectQueueTest, RebindTurnsAHandleIntoTheObject) {
     q.clear();
     EXPECT_EQ(g_released, (std::vector<void*>{&c}));
 }
+
+// A launch's SPAWN (spec 2026-11-02-combat-launch-deferral §4.1): a kernel
+// entry carrying its whole fire-time record -- handles, numbers and the
+// target as an object the queue owns (its fire-time value, delivered even
+// if its row is freed) -- in one entry, in order.
+TEST_F(EffectQueueTest, ASpawnCarriesItsWholeRecord) {
+    using dauntless::host::NativeOperand;
+    using dauntless::host::OwnedObject;
+    std::vector<NativeOperand> ops;
+    ops.push_back(std::int64_t{4});   // the launcher
+    ops.push_back(0.0);               // the kind
+    ops.push_back(OwnedObject{&a});   // the target
+    for (int i = 0; i < EffectEntry::kMaxOperands - 3; ++i)
+        ops.push_back(0.5 * i);
+    q.append_native_span(EffectKind::SPAWN, ops);
+    std::vector<EffectEntry> out = q.take();
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].kind, EffectKind::SPAWN);
+    EXPECT_TRUE(out[0].native);
+    ASSERT_EQ(out[0].count, EffectEntry::kMaxOperands);
+    EXPECT_EQ(out[0].ops[0].handle, 4);
+    EXPECT_EQ(out[0].ops[1].type, EffectOperand::Type::Number);
+    EXPECT_EQ(out[0].ops[2].type, EffectOperand::Type::Object);
+    EXPECT_EQ(out[0].ops[2].object, &a);
+    EXPECT_EQ(out[0].ops[EffectEntry::kMaxOperands - 1].number,
+              0.5 * (EffectEntry::kMaxOperands - 4));
+    EXPECT_TRUE(g_released.empty());  // the taker owns it
+    // Dropped undelivered, the owned object is released once.
+    q.append_native_span(EffectKind::SPAWN, ops);
+    q.clear();
+    EXPECT_EQ(g_released, (std::vector<void*>{&a}));
+    EXPECT_STREQ(dauntless::host::effect_kind_name(EffectKind::SPAWN),
+                 "SPAWN");
+    EXPECT_GE(EffectEntry::kMaxOperands, 23);
+}

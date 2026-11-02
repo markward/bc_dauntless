@@ -38,6 +38,7 @@ except ImportError:
 from engine import host_loop
 from engine.appc import effect_queue
 from engine.appc import native_combat as nc
+from engine.appc import projectiles
 from engine.appc import sensor_contacts
 from engine.appc import sensor_detection as sd
 from engine.appc.ship_iter import iter_ships
@@ -107,6 +108,7 @@ class _Scene:
         self.tick = 0
         self.log = []
         self.events = []
+        self.torps = []         # torpedoes by first sight (held: ids stay)
         # The queued kinds (fired, torpedo_fired; the sounds) compare per
         # tick on their own: native delivers them at the tick boundary.
         self.queued = effect_split.Queued(mp, _name, lambda: self.tick)
@@ -170,9 +172,38 @@ class _Scene:
                 for w in self.weapons]
         row += [sd._latched(a, b) for a in self.ships for b in self.ships
                 if a is not b]
+        # Every torpedo and bolt in flight, in `_active` order, field by
+        # field (the K1 differential's torp_row): the spawn's values -- made
+        # at the boundary with native on (launch deferral) -- and its
+        # flight since.
+        row += [self.torp_row(t) for t in projectiles._active]
         self.log.append(row)
         if nc.audit_enabled():
             nc.audit_mirror()           # what GameLoop.tick does under audit
+
+    def label(self, obj):
+        """A ship's or weapon's name; a torpedo numbered by first sight, so
+        two arms that make them in the same order label them alike."""
+        if isinstance(obj, projectiles.Torpedo):
+            for i, t in enumerate(self.torps):
+                if t is obj:
+                    return "Torpedo@%d" % i
+            self.torps.append(obj)
+            return "Torpedo@%d" % (len(self.torps) - 1)
+        return _name(obj)
+
+    def torp_row(self, t):
+        g = lambda name: getattr(t, name, None)  # noqa: E731
+        baked = g("_baked_offset")
+        return (self.label(t), _vec(t.GetTranslate()), _vec(t._velocity),
+                self.label(g("_target_ship")), _vec(g("_target_offset")),
+                None if baked is None else (self.label(baked[0]),
+                                            _vec(baked[1:4]),
+                                            _vec(baked[4])),
+                _t(g("_damage")), _t(g("_damage_radius_factor")),
+                _t(g("_ttl")), _t(g("_age")), _t(g("_guidance_lifetime")),
+                _t(g("_max_angular_accel")), self.label(t._source_ship),
+                t.GetContainingSet() is not None, _t(g("_is_disruptor")))
 
     def run(self, ticks_per_frame):
         rng = random.Random(SEED)
@@ -210,6 +241,24 @@ def _name(obj):
         else None
 
 
+def _t(v):
+    """A value with its type; floats by .hex()."""
+    if isinstance(v, float):
+        return ("float", v.hex())
+    return (type(v).__name__, v)
+
+
+def _vec(p):
+    """A point-like value by .hex(): an x/y/z point, a 3-sequence, or None."""
+    if p is None:
+        return None
+    if hasattr(p, "x"):
+        return tuple(float(c).hex() for c in (p.x, p.y, p.z))
+    if isinstance(p, (tuple, list)):
+        return tuple(float(c).hex() for c in p)
+    return repr(p)
+
+
 @pytest.mark.parametrize("ticks_per_frame", (1, 6))
 def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
     runs, counts, effects = {}, {}, {}
@@ -222,6 +271,9 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
             counts[name] = nc.counts()
             effects[name] = effect_queue.counts()
     ref_log, ref_events, ref_queued = runs["off"]
+    # Torpedoes flew, so the per-tick torpedo rows compared something.
+    assert any(isinstance(c, tuple) and str(c[0]).startswith("Torpedo@")
+               for row in ref_log for c in row), "no torpedo in flight"
     kinds = {e[0] for e in ref_events + ref_queued.rows}
     assert {"fired", "hit"} <= kinds, kinds
     assert any(r[0] == "fired" for r in ref_queued.rows)
@@ -256,8 +308,19 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
         # boundary delivered them.
         logged, entries = counts[name]["k1_logged"], counts[name]["k1_entries"]
         assert logged["beam_edge"] > 0, (name, counts)
-        assert entries["FIRE_SOUND"] == entries["WEAPON_FIRED"] == \
-            logged["beam_edge"], (name, counts)
+        # ... and a tube's launch (launch deferral) is writes plus SPAWN,
+        # WEAPON_FIRED and AMMO_CONSUMED entries, never a FIRE record; a
+        # cannon's (Task 3) writes plus a SPAWN, whose delivery posts its
+        # ET_WEAPON_FIRED once the bolt exists.
+        launches = logged["tube_launch"] + logged["dumb_launch"]
+        # The equalities below would hold at 0 == 0: tubes really launched.
+        assert logged["tube_launch"] > 0, (name, counts)
+        assert entries["FIRE_SOUND"] == logged["beam_edge"], (name, counts)
+        assert entries["WEAPON_FIRED"] == logged["beam_edge"] + launches, (
+            name, counts)
+        assert entries["AMMO_CONSUMED"] == launches, (name, counts)
+        assert entries["SPAWN"] == launches + logged["pulse_launch"], (
+            name, counts)
     # K2 stands down under the audit; with native on its resting contacts
     # were queued for the drain and every one presented by the Python batch
     # (spec 2026-11-02 §4.3-4.4): headless, no ship has an instance, so the

@@ -157,8 +157,11 @@ def test_contact_record_layout(scene):
                            "k2_logged_firing_system_stop",
                            "k2_logged_bank_stop", "k2_entries",
                            "k2_present_native"}
+    # K1Effect's names (K2 appends only LOOP_STOP; SPAWN and AMMO_CONSUMED
+    # are K1's launch entries, launch deferral).
     assert set(counts["k2_entries"]) == {
-        "FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED"}
+        "FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED",
+        "SPAWN", "AMMO_CONSUMED"}
     assert counts["k2_batched_contacts"] == 1, counts
     # No applier context (and no constants sent): the drain presented none.
     assert counts["k2_present_native"] == 0, counts
