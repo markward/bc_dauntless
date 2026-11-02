@@ -32,7 +32,7 @@ The two halves run **pipelined, one tick apart**: AI reviews last tick's combat 
 | Event inventory + presentation queue (G, steps 1-2) | `ws/combat-effect-queue` | resting beam contacts leave the K2 walk: queued natively, shield splashes presented in C++ after `DONE`; inventory of every combat event (`event-inventory.md`) | built 2026-11-02, live-verified by Mark 2026-11-02; merged (`040a588c2`) |
 | Fire events (G, step 3) | `ws/combat-fire-events` | weapon events and sounds through one ordered effect queue at the tick boundary; K0 hands back nothing, K1 only launches, K2 only damage pulses; `ET_WEAPON_FIRED` target + pulse fix | built 2026-11-02, live-verified by Mark 2026-11-02; merged (`70da394a3`) |
 | Launch deferral (F + I's K1 blocker) | `ws/combat-launch-cache` | every torpedo/pulse/dumb launch through `SPAWN` at the boundary (fire-time values in C++); K1's walk check out of the kernel (sets re-validated in the binding) | built 2026-11-02, live-verified by Mark 2026-11-02; merged |
-| Presentation RNG (decision 12) | `ws/combat-presentation-rng` | none (Python only): cosmetic draws on their own generator, a scope for SDK presentation calls, death-cascade blasts roll damage first, hit-sound gap on game time | built 2026-11-02, falsifier green; not live-verified |
+| Presentation RNG (decision 12) | `ws/combat-presentation-rng` | none (Python only): cosmetic draws on their own generator, a scope for SDK presentation calls, death-cascade blasts roll damage first, hit-sound gap on game time | built 2026-11-02, falsifier green, live-verified by Mark 2026-11-02; merged |
 
 All are behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF, unmerged.
 

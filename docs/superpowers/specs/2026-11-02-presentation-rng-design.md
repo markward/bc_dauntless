@@ -1,6 +1,6 @@
 # Presentation random-number generator — design
 
-**Status:** built 2026-11-02 (§10); not live-verified. Roadmap decision 12 ("presentation gets its own random-number generator", Mark 2026-11-02), the one prerequisite of native damage (D) on the threading path (Mark: the trimmed path is this phase → D → off the lock → the AI ↔ combat pipeline). Mark ruled 2026-11-02 that mission death scripts run in the presentation scope.
+**Status:** built 2026-11-02 (§10); live-verified by Mark 2026-11-02 ("it all plays great"); merged into `project/combat_threading`. Roadmap decision 12 ("presentation gets its own random-number generator", Mark 2026-11-02), the one prerequisite of native damage (D) on the threading path (Mark: the trimmed path is this phase → D → off the lock → the AI ↔ combat pipeline). Mark ruled 2026-11-02 that mission death scripts run in the presentation scope.
 **Branch:** `ws/combat-presentation-rng`, off `project/combat_threading` (`c286fbac6`), in worktree `.claude/worktrees/native-combat-k3`. No main gate; focused tests. **No benchmarking and no game runs** unless Mark says (he asked for a pause on 2026-11-02); this phase's cost is negligible by construction.
 **Input map:** `docs/reference/engine/native-combat/rng-map.md` (RM §n).
 
