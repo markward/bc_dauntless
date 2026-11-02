@@ -26,6 +26,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/k0_charging.cc
     src/k2_beams.cc
     src/k3_projectiles.cc
+    src/damage.cc
 )
 
 add_library(dauntless_combat STATIC ${DAUNTLESS_COMBAT_SOURCES})
