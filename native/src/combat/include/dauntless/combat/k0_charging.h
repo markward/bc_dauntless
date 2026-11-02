@@ -75,7 +75,10 @@
 //     audit / override / any reason the caller passes in `ship_handback`
 //   per weapon (decided at its turn, before any write of that weapon; a =
 //   the weapon handle, -2 when the mirror cannot name it):
-//     tractor            every tractor beam
+//     tractor            a tractor beam that is firing (holding); an idle
+//                        one (`_firing` false) takes the mixin's energy
+//                        step, which is TractorBeam.UpdateCharge's
+//                        `super().UpdateCharge(dt)` (ruling W6)
 //     stale_row          the handle's row is gone (dropped mid-walk)
 //     unknown_kind       a row of no weapon kind (Python dispatches by
 //                        isinstance; only it can tell)
@@ -144,7 +147,9 @@ struct K0Step {
 // _EnergyWeaponFireMixin.UpdateCharge (WS:957) on a phaser bank (its
 // `_discharge_rate_per_second` is PhaserBank's table lookup) or, reached
 // through PulseWeapon.UpdateCharge, a pulse cannon (the mixin's
-// `_normal_discharge_rate`). `weapon` must be a live row of kind 5 or 6.
+// `_normal_discharge_rate`), or an idle tractor beam (TractorBeam's
+// `super().UpdateCharge(dt)`; a firing one hands back `tractor`). `weapon`
+// must be a live row of kind 5, 6 or 7.
 K0Step step_energy(const Mirror& m, int64_t weapon, double dt);
 
 // PulseWeapon.UpdateCharge (WS:2970) up to, not including, the watcher

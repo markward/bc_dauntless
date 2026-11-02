@@ -244,23 +244,87 @@ def test_handler_sets_later_weapon_charge(monkeypatch):
     assert _records(counts)["RELOADED"] > 0, counts
 
 
+def _hold(w, ship_name):
+    """Every tractor of the ship holding (its `_firing`, written as the
+    beam's engage writes it: the K0 kernel reads the pushed value). A real
+    engage needs a target within 120 GU with its shields down."""
+    for beam in w.weapons(ship_name, TRACTOR):
+        beam._firing = True
+
+
 def test_tractor_handed_back(monkeypatch):
-    """Tractor beams always run in Python (their UpdateCharge stops a beam
+    """A HOLDING tractor beam runs in Python (its UpdateCharge stops a beam
     whose parent is off or starved, with a power program thaw K0 does not
-    port), firing or not."""
+    port): held, the parent turned off (Python's power-loss StopFiring),
+    turned on again."""
 
     def script(w, t):
-        g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+        tractors = w.ships["Galaxy"].GetTractorBeamSystem()
         if t == 0:
-            g.GetTractorBeamSystem().StartFiring(v)
+            tractors.TurnOn()
+            _hold(w, "Galaxy")
         elif t == 40:
-            g.GetTractorBeamSystem().TurnOff()
+            tractors.TurnOff()
         elif t == 60:
-            g.GetTractorBeamSystem().TurnOn()
+            tractors.TurnOn()
 
-    _ref, _nat, counts = run_both(monkeypatch.context, script, 90)
-    assert _reasons(counts).get("tractor", 0) > 0, counts
+    ref, nat, counts = run_both(monkeypatch.context, script, 90)
+    beams = [nat.leaves.index(b) for b in nat.weapons("Galaxy", TRACTOR)]
+    assert nat.log[39][beams[0]][2] == ("bool", True)
+    assert nat.log[41][beams[0]][2] == ("bool", False)     # Python stopped it
+    # Holding at ticks 1-41 (the TurnOff before tick 41's step: Python's
+    # UpdateCharge then stops it), idle (native) otherwise.
+    assert _reasons(counts).get("tractor", 0) == 41 * len(beams), counts
     assert counts["k0_steps"] > 0, counts
+
+
+def test_idle_tractors_step_natively(monkeypatch):
+    """Ruling W6: an idle tractor (`_firing` false) is TractorBeam's
+    `super().UpdateCharge(dt)`, the mixin step K0 ports, so it recharges
+    natively; only the ticks it holds are handed back."""
+
+    def setup(w):
+        w.ships["Galaxy"].GetTractorBeamSystem().TurnOn()
+        for beam in w.weapons("Galaxy", TRACTOR):
+            beam.SetChargeLevel(0.0)
+
+    def script(w, t):
+        if t == 20:
+            _hold(w, "Galaxy")
+        elif t == 40:
+            w.ships["Galaxy"].GetTractorBeamSystem().StopFiring()
+
+    ref, nat, counts = run_both(monkeypatch.context, script, 70, setup=setup)
+    beams = [nat.leaves.index(b) for b in nat.weapons("Galaxy", TRACTOR)]
+    # Idle ticks recharged them; the hold kept the charge; idle again after.
+    i = beams[0]
+    assert nat.log[0][i][1] != nat.log[18][i][1]
+    assert nat.log[25][i][1] == nat.log[30][i][1]
+    assert nat.log[50][i][1] != nat.log[60][i][1]
+    assert _reasons(counts).get("tractor", 0) == 20 * len(beams), counts
+
+
+def test_tractor_firing_is_mirrored(monkeypatch):
+    """K0 reads a tractor's `_firing` (NativeThawParentWakeField) from the
+    mirror: every write pushes it."""
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_tractor_mirror")
+        try:
+            beams = w.weapons("Galaxy", TRACTOR)
+
+            def check():
+                for b in beams:
+                    row = _h.combat_dump(b.__dict__["_nslot"])
+                    assert row["_firing"] == int(b.__dict__["_firing"]), (
+                        b.GetName(), row["_firing"], b.__dict__["_firing"])
+            w.ships["Galaxy"].GetTractorBeamSystem().TurnOn()
+            _hold(w, "Galaxy")
+            check()
+            w.ships["Galaxy"].GetTractorBeamSystem().StopFiring()
+            assert not any(b.__dict__["_firing"] for b in beams)
+            check()
+        finally:
+            w.close()
 
 
 def test_rowless_ship_runs_python(monkeypatch):

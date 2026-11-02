@@ -185,6 +185,11 @@ const char* k0_reason_name(K0Reason r) {
 K0Step step_energy(const Mirror& m, int64_t weapon, double dt) {
     const SubsystemRow* w = weapon < 0 ? nullptr : m.subsystem(weapon);
     if (w == nullptr) return hand_back(K0Reason::StaleRow);
+    // TractorBeam.UpdateCharge (WS:3012): a holding tractor's branch (its
+    // power-loss StopFiring and parent power thaw) is Python's; an idle one
+    // is `super().UpdateCharge(dt)`, this mixin step (ruling W6).
+    if (w->weapon_kind == kTractorBeam && w->_firing)
+        return hand_back(K0Reason::Tractor);
     K0Step s;
     if (w->_firing) {
         if (w->_beam_on_countdown > 0.0) {
@@ -564,13 +569,17 @@ K0Record Walker::run() {
                 ++s_.weapon_pos;
                 continue;
             }
-            if (kind == kTractorBeam) return python(K0Reason::Tractor);
-            if (kind != kPhaserBank && kind != kPulseWeapon && kind != kTorpedoTube)
+            // A holding tractor is Python's; an idle one is the mixin's
+            // energy step (ruling W6).
+            if (kind == kTractorBeam && row->_firing)
+                return python(K0Reason::Tractor);
+            if (kind != kPhaserBank && kind != kPulseWeapon &&
+                kind != kTorpedoTube && kind != kTractorBeam)
                 return python(K0Reason::UnknownKind);
             if (check_ && check_(h)) return python(K0Reason::Override);
-            const K0Step st = kind == kPhaserBank   ? step_energy(m_, h, s_.dt)
-                              : kind == kPulseWeapon ? step_pulse(m_, h, s_.dt)
-                                                     : step_tube(m_, h, s_.now);
+            const K0Step st = kind == kPulseWeapon   ? step_pulse(m_, h, s_.dt)
+                              : kind == kTorpedoTube ? step_tube(m_, h, s_.now)
+                                                     : step_energy(m_, h, s_.dt);
             if (st.handback) return python(*st.handback);
             ++c_.steps;
             apply(h, st);

@@ -655,6 +655,7 @@ struct Armed {
         b = w.weapon("b", ph);
         w.m.set_i(b, Field::_firing, 1);
         w.m.set_f(b, Field::_charge_level, 0.001);
+        w.m.set_i(tb, Field::_firing, 1);  // a firing tractor: Python's
         w.m.set_i(p, Field::_watch_checks, 1);
         w.slots(t, {3.0}, {99.0}, 1, 0);
         w.m.set_f(t, Field::_reload_delay, 3.5);
@@ -981,6 +982,87 @@ TEST(K0Charging, TubeRoundsLoadedSumsEveryTubeSibling) {
     EXPECT_EQ(s.record, K0Kind::DONE);
     EXPECT_EQ(u.w.writes(u.t, s), (V{"t._reload_timers[0]=0x1.0000000000000p+2",
                                      "t._reload_advanced_at[0]=0x1.9000000000000p+6"}));
+}
+
+// ── TractorBeam.UpdateCharge (WS:3012): idle is the mixin's ────────────────
+
+// A tractor recharging from 2.0 of 5.0 under a tractor system (kind 3).
+struct Tractor {
+    World w;
+    int64_t ship, sys, tb;
+    explicit Tractor(double pf = 0.8, double cond = 75.0) {
+        ship = w.ship("ship");
+        sys = w.system("tractors", ship, 3);
+        w.m.set_f(sys, Field::_power_factor, pf);
+        tb = w.weapon("tb", sys);
+        w.m.set_f(tb, Field::_condition, cond);
+        w.m.set_f(tb, Field::_charge_level, 2.0);
+        w.m.set_f(tb, Field::_recharge_rate, 0.3);
+    }
+    // The session's records and every write they carry.
+    V run() {
+        w.k.begin({ship}, kDt, kNow);
+        V out;
+        for (int guard = 0; guard < 10; ++guard) {
+            K0Record r = w.k.next();
+            out.push_back(w.rec(r));
+            for (const std::string& x : w.writes(r)) out.push_back(x);
+            if (r.kind == K0Kind::DONE) {
+                w.k.end();
+                return out;
+            }
+        }
+        ADD_FAILURE() << "no DONE";
+        return out;
+    }
+};
+
+TEST(K0Charging, IdleTractorRechargesNatively) {
+    // `if self._firing: ...` false -> super().UpdateCharge(dt): the mixin's
+    // recharge (the same formula and values as RechargeFormula).
+    Tractor t;
+    EXPECT_EQ(t.run(), (V{"DONE", "tb._charge_level=0x1.00624dd2f1aa0p+1"}));
+    EXPECT_EQ(t.w.k.counts().steps, 1);
+    EXPECT_EQ(t.w.k.counts().python_reasons[static_cast<size_t>(
+                  K0Reason::Tractor)], 0);
+}
+
+TEST(K0Charging, IdleTractorParentOffOrNone) {
+    {   // Parent off: the mixin's IsOn() gate, nothing written.
+        Tractor t;
+        t.w.m.set_i(t.sys, Field::_is_on, 0);
+        EXPECT_EQ(t.run(), (V{"DONE"}));
+    }
+    {   // Parent None: power factor 1.0.
+        Tractor t;
+        t.w.m.set_ref(t.tb, Field::_parent_subsystem, -1);
+        EXPECT_EQ(t.run(), (V{"DONE", "tb._charge_level=0x1.007ae147ae148p+1"}));
+    }
+}
+
+TEST(K0Charging, IdleTractorNaNConditionReadsFull) {
+    Tractor t(0.8, kNaN);
+    EXPECT_EQ(t.run(), (V{"DONE", "tb._charge_level=0x1.0083126e978d5p+1"}));
+}
+
+TEST(K0Charging, FiringTractorHandsBack) {
+    // The holding branch (power-loss / starvation StopFiring, the parent's
+    // power program thaw) is Python's, before any write.
+    Tractor t;
+    t.w.m.set_i(t.tb, Field::_firing, 1);
+    EXPECT_EQ(t.run(), (V{"RUN_PYTHON tb tractor", "DONE"}));
+    EXPECT_EQ(t.w.m.get_f(t.tb, Field::_charge_level), 2.0);
+    // step_energy itself never stands in for a firing tractor.
+    const K0Step s = step_energy(t.w.m, t.tb, kDt);
+    ASSERT_TRUE(s.handback);
+    EXPECT_EQ(*s.handback, K0Reason::Tractor);
+    EXPECT_TRUE(s.writes.empty());
+}
+
+TEST(K0Charging, IdleTractorObeysTheWeaponCheck) {
+    Tractor t;
+    t.w.k.set_weapon_check([&](int64_t h) { return h == t.tb; });
+    EXPECT_EQ(t.run(), (V{"RUN_PYTHON tb override", "DONE"}));
 }
 
 TEST(K0Charging, Protocol) {
