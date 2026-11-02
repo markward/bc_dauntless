@@ -903,8 +903,9 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
         return hits
 
     # Native combat on: the K3 kernel decides steps 0-3 and native_combat
-    # applies them (engine/appc/native_combat.py, run_k3); None hands this
-    # step to the Python below.
+    # applies them (engine/appc/native_combat.py, run_k3), its hits included
+    # (native damage Task 4: it returns none for the caller to apply); None
+    # hands this step to the Python below.
     if _nc._enabled:
         native = _nc.run_k3(dt, all_ships, ship_instances)
         if native is not None:

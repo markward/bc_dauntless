@@ -343,13 +343,13 @@ def test_k3_matches_python_with_real_instances(monkeypatch, host,
     print("\nk3 host differential (tpf=%d): %.1f s for 2 x %d ticks;\n  "
           "kernel records %r\n  k3_runs %d k3_asks %r k3_guide_reasons %r\n"
           "  k4_runs %d k4 %r\n  k3 python reasons %r\n  k4 python reasons "
-          "%r\n  hits %d, apply_hits %d, events %d"
+          "%r\n  hits %d, presented %d, events %d"
           % (ticks_per_frame, elapsed, TICKS, dict(sorted(n.items())),
              nat.counts["k3_runs"], nat.counts["k3_asks"],
              nat.counts["k3_guide_reasons"], nat.counts["k4_runs"],
              nat.rec.k4, k3_why, k4_why,
              len([c for c in ref.rec.calls if c[0] == "hit"]),
-             len([c for c in ref.rec.calls if c[0] == "apply_hit"]),
+             len([c for c in ref.rec.calls if c[0] == "hit_present"]),
              len(ref.rec.events)))
     print("  latched (pair x tick) %d" % nat.rec.latched)
     print("  round trips %r, presentation calls %d"
@@ -363,6 +363,9 @@ def test_k3_matches_python_with_real_instances(monkeypatch, host,
     check_weapon_state_paths(nat.counts)
     assert nat.counts["k1_logged"]["walk_start"] > 0, round_trips(
         nat.counts)
+    # Native damage Task 4: K3 applies every hit itself, none handed back.
+    assert nat.counts["k3_native_hits"] > 0, nat.counts
+    assert nat.counts["k3_hit_python"] == 0, nat.counts["k3_hit_python_reasons"]
     assert nat.counts["k3_runs"] > 0 and nat.counts["k3_python_steps"] == 0, \
         nat.counts
     assert nat.counts["k4_runs"] == TICKS and not k4_why, nat.counts

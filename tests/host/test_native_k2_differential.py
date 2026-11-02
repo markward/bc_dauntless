@@ -51,13 +51,16 @@ K2 drain presents natively, from its capture (all arguments: the
 presentation, round trips Task 5; per tick as a multiset, since K2 presents
 resting contacts after the step's last record -- spec 2026-11-02 §4.4, §5,
 Q1)
-and every combat.apply_hit (all arguments); and the full ordered event log,
+and every hit as its HIT_PRESENT delivers it (all inputs: K2 applies its
+damage pulses in the walk, native damage Task 4); and the full ordered event
+log,
 with each ET_WEAPON_HIT's payload. The native arm must show that every
 branch the scene is built for really happened in the KERNEL (the record
 stream, tallied as it is returned, and the drained resting contacts, those
 the drain presented natively included):
-CONTACTs on the mesh and the sphere
-tier, bubble entries, windup contacts, pulses, arc-fail partial pulses,
+contacts on the mesh and the sphere
+tier, bubble entries, windup contacts, pulses (applied in the walk: no
+CONTACT record), arc-fail partial pulses,
 firing banks' stops (logged with their LOOP_STOP since combat fire events
 Task 4: no BANK_STOP / SYSTEM_STOP record), a lock on another ship, Manual Aim on and off, a cloaking
 target and a posed ship (walked natively, and a lock on it aimed natively:
@@ -104,7 +107,7 @@ from tests.helpers import effect_split, headless_mission  # noqa: E402
 from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
 from tests.helpers.k3_fight import (  # noqa: E402
     capture_native_shield_hits, compare_calls, contact_row, presented,
-    spy_presentation)
+    spy_hits, spy_presentation)
 
 GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy"
               / "Galaxy.nif")
@@ -268,8 +271,22 @@ class _Tally:
             return rec
         if kind == "CONTACT":
             self.contact(rec[1:15])
+        self.pulses()
         self.last_stop = None
         return rec
+
+    def pulses(self):
+        """The damage pulses the kernel applied in its walk since the last
+        record (native damage Task 4: no CONTACT record), each tallied as a
+        pulse of its bank, target and ship."""
+        reg = nc._registry
+        for bh, th, bubble, tier in _h.combat_k2_last_hits():
+            bank, target = reg.get(bh), reg.get(th)
+            self.bump("native_pulse")
+            self.bump("tier:" + tier)
+            if bubble:
+                self.bump("bubble")
+            self.objects(bh, bank, target, bank.GetParentShip(), 1.0)
 
     def drain(self):
         """Wraps combat_k2_drain: the resting contacts queued for the drain,
@@ -424,7 +441,6 @@ class _Scene:
         bank_stop = ws.PhaserBank.StopFiring
         sys_stop = ws.PhaserSystem.StopFiring
         beam_contact = hit_feedback.beam_contact
-        apply_hit = combat.apply_hit
 
         def bank_spy(bank, _orig=bank_stop):
             # A FIRING bank's stop only: a stop of a bank not firing is pure
@@ -467,17 +483,6 @@ class _Scene:
                 kw["ship_instances"], kw["ship"]))
             return beam_contact(**kw)
 
-        def hit_spy(target, damage, point, **kw):
-            self.calls.append((
-                "apply_hit", self.tick, self.label(target), _t(damage),
-                _t(point), self.label(kw.get("source")), _t(kw.get("normal")),
-                kw.get("ship_instances") is self.session.ship_instances,
-                _t(kw.get("weapon_type")),
-                self.label(kw.get("hardpoint_weapon")),
-                _t(kw.get("damage_hull")), _t(kw.get("shield_point")),
-                sorted(kw)))
-            return apply_hit(target, damage, point, **kw)
-
         mp.setattr(ws.PhaserBank, "StopFiring", bank_spy)
         mp.setattr(ws.PhaserSystem, "StopFiring", sys_spy)
         # A bank's StopFiring is in K1's override guard (round trips Task 2:
@@ -501,7 +506,10 @@ class _Scene:
                    (stock, names, nc._k0_chain(stock, names)))
         nc._k0_clear_caches()
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
-        mp.setattr(combat, "apply_hit", hit_spy)
+        # Every hit as its HIT_PRESENT delivers it (native damage Task 4:
+        # K2 applies a pulse in its walk, with no combat.apply_hit call --
+        # and a spy ON it would be obeyed, the pulse handed back).
+        spy_hits(mp, self.calls, lambda: self.tick, self.label, _t)
         # What the contacts and hits PRESENT (every hit VFX spawn and shield
         # hit, with their arguments), in the same log: a resting contact is
         # presented at the drain after the step's last record, so the
@@ -1034,7 +1042,12 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
         nat.counts, n)
     assert nat.counts["k2_present_gone"] == 0, nat.counts
     assert nat.counts["k2_logged_system_stop"] > 0, nat.counts
-    assert n.get("CONTACT", 0) == n["pulse"], n
+    # Every damage pulse was applied in the walk (native damage Task 4): no
+    # CONTACT record, none handed back.
+    assert n.get("CONTACT", 0) == 0, n
+    assert n["pulse"] == n["native_pulse"] == \
+        nat.counts["k2_native_pulses"] > 0, (n, nat.counts)
+    assert nat.counts["k2_pulse_python"] == 0, nat.counts
     # K1's round trips ran under the beams: walks started with no record and
     # lit beams sustained as logged writes (Tasks 1-2). K1's idle bank stop
     # is NOT asserted here: this scene rarely has one (measured 19 at tpf 1,
@@ -1053,7 +1066,7 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
     assert n.get("point_blank", 0) > 0, n         # the F7 rig
     assert n.get("reversed_arc", 0) > 0, n        # the F8 rig
     # ... and the effects reached the world.
-    assert _calls(ref, "apply_hit") and _calls(ref, "beam_contact")
+    assert _calls(ref, "hit_present") and _calls(ref, "beam_contact")
     hits = [e for e in ref.events if e[0] == App.ET_WEAPON_HIT]
     assert hits and all(e[4] is not None for e in hits)
 

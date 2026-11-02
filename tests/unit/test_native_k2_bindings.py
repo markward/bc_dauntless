@@ -156,7 +156,13 @@ def test_contact_record_layout(scene):
                            "k2_batched_contacts", "k2_logged_system_stop",
                            "k2_logged_firing_system_stop",
                            "k2_logged_bank_stop", "k2_entries",
-                           "k2_present_native"}
+                           "k2_present_native", "k2_native_pulses",
+                           "k2_pulse_python", "k2_pulse_python_reasons"}
+    # No pulse context sent: a damage pulse is a CONTACT record (THE DAMAGE
+    # PULSE, native damage Task 4), counted not_ok.
+    assert set(counts["k2_pulse_python_reasons"]) == {
+        "not_ok", "unscanned", "level", "fallback"}
+    assert counts["k2_native_pulses"] == 0, counts
     # K1Effect's names (K2 appends only LOOP_STOP; SPAWN and AMMO_CONSUMED
     # are K1's launch entries, launch deferral).
     assert set(counts["k2_entries"]) == {

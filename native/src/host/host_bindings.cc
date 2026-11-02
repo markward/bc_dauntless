@@ -3859,6 +3859,15 @@ bool& k2_delivering() {
     return delivering;
 }
 
+// The (bank, target, bubble entry, trace tier) of each damage pulse the last
+// combat_k2_next record carried (k2_beams.h THE DAMAGE PULSE;
+// combat_k2_last_hits).
+using K2LastHit = std::tuple<std::int64_t, std::int64_t, bool, int>;
+std::vector<K2LastHit>& k2_last_hits() {
+    static std::vector<K2LastHit> hits;
+    return hits;
+}
+
 void k2_not_delivering(const char* call) {
     if (k2_delivering())
         throw std::runtime_error(
@@ -4257,7 +4266,7 @@ void k1_append_spawn(const dauntless::combat::K1Entry& e) {
 // A K1 record's queue entries (k1_fire_control.h, THE EFFECT QUEUE) into
 // the combat effect queue, in walk order: K1Effect names the kinds of the
 // same names (the combat library does not link the host layer).
-void k1_append_entries(const std::vector<dauntless::combat::K1Entry>& entries) {
+void k1_append_entries(std::span<const dauntless::combat::K1Entry> entries) {
     namespace cb = dauntless::combat;
     namespace hq = dauntless::host;
     for (const cb::K1Entry& e : entries) {
@@ -4437,6 +4446,153 @@ bool damage_run(Fn&& fn, PyObject* held) {
         throw py::error_already_set();
     damage_append_entries(out.entries, held);
     return true;
+}
+
+// A kernel's damage entries (K2's pulse, K3's hit: native damage Task 4):
+// every H operand is the object handle `held` names now, resolved through
+// the session's applier (the firing ship, the torpedo's source ship; -1
+// None), as K1Held resolves a launch's.
+void damage_append_held(const std::vector<dauntless::combat::DamageEntry>& entries,
+                        std::int64_t held) {
+    namespace hq = dauntless::host;
+    if (held == -1) {
+        damage_append_entries(entries, nullptr);
+        return;
+    }
+    PyObject* o = hq::write_applier().live(held);
+    if (o == nullptr) throw py::error_already_set();
+    struct Drop {
+        PyObject* o;
+        ~Drop() { Py_DECREF(o); }
+    } drop{o};
+    damage_append_entries(entries, o);
+}
+
+// A kernel's damage context (k2_beams.h K2PulseCtx: THE DAMAGE PULSE; K3's
+// THE HITS), from the driver's dict: "ok", "player", "god_mode",
+// "double_damage", "npc_shields_off", "intensity" (3 floats),
+// "default_radius", "pp_low", "hit_weapon", "weapon_hit_type",
+// "has_instances", "clean" (Object handles).
+dauntless::combat::K2PulseCtx k2_pulse_ctx(const py::dict& d) {
+    dauntless::combat::K2PulseCtx p;
+    p.ok = d["ok"].cast<bool>();
+    p.dc.player = d["player"].cast<std::int64_t>();
+    p.dc.god_mode = d["god_mode"].cast<bool>();
+    p.dc.double_damage = d["double_damage"].cast<bool>();
+    p.dc.npc_shields_off = d["npc_shields_off"].cast<bool>();
+    p.intensity = d["intensity"].cast<std::array<double, 3>>();
+    p.default_radius = d["default_radius"].cast<double>();
+    p.pp_low = d["pp_low"].cast<std::int64_t>();
+    p.hit_weapon = d["hit_weapon"].cast<std::int64_t>();
+    p.weapon_hit_type = d["weapon_hit_type"].cast<std::int64_t>();
+    p.has_instances = d["has_instances"].cast<bool>();
+    for (auto h : d["clean"]) p.clean.insert(h.cast<std::int64_t>());
+    return p;
+}
+
+// ── combat_dmg_clean (native damage Task 4; override-guard gap 1) ────────
+// Which `targets` a kernel may hit natively: a ship whose instance dict
+// holds none of `ship_names` and each of whose subsystems the hit can reach
+// -- its mount order (combat._iter_subsystems: the overlap walk, children
+// included), its hull and its shield generator, by their mirror handles,
+// each object found through `registry_data` (native_combat._registry's
+// handle -> weakref dict) -- holds none of `sub_names` (the methods the
+// hit and the condition chain stand in for: an instance attribute
+// shadowing one must be obeyed, so that ship's hit goes to Python). A ship
+// with no row, a handle the mirror cannot name, a subsystem not in the
+// registry or freed: not clean. Raw CPython calls; no Python code runs.
+// Returns a list of bools, one per target.
+PyObject* dmg_clean(PyObject* targets, PyObject* registry_data,
+                    PyObject* ship_names, PyObject* sub_names) {
+    namespace cb = dauntless::combat;
+    if (!PyDict_Check(registry_data)) {
+        PyErr_SetString(PyExc_TypeError, "registry_data must be a dict");
+        return nullptr;
+    }
+    PyObject* sn = PySequence_Fast(ship_names, "ship_names");
+    PyObject* un = sn ? PySequence_Fast(sub_names, "sub_names") : nullptr;
+    PyObject* seq = un ? PySequence_Fast(targets, "targets") : nullptr;
+    if (seq == nullptr) {
+        Py_XDECREF(un);
+        Py_XDECREF(sn);
+        return nullptr;
+    }
+    const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    PyObject* out = PyList_New(n);
+    bool failed = out == nullptr;
+    const cb::Mirror& mi = cb::mirror();
+    PyObject* nslot = k2_scan_names().nslot;
+    // 1 clean, 0 not, -1 error: one subsystem handle.
+    auto sub_clean = [&](std::int64_t h) -> int {
+        if (h == -1) return 1;
+        if (h == cb::kRefUnrepresentable || mi.subsystem(h) == nullptr)
+            return 0;
+        PyObject* key = PyLong_FromLongLong(h);
+        if (key == nullptr) return -1;
+        PyObject* ref = PyDict_GetItemWithError(registry_data, key);
+        Py_DECREF(key);
+        if (ref == nullptr) return PyErr_Occurred() ? -1 : 0;
+        if (!PyWeakref_Check(ref)) return 0;
+        PyObject* obj = PyWeakref_GetObject(ref);  // borrowed
+        if (obj == nullptr) return -1;
+        if (obj == Py_None) return 0;
+        PyObject* d = k2_dict_of(obj);
+        if (d == nullptr) return 0;
+        const int r = k2_holds(d, PySequence_Fast_ITEMS(un),
+                               PySequence_Fast_GET_SIZE(un));
+        return r < 0 ? -1 : (r == 1 ? 0 : 1);
+    };
+    for (Py_ssize_t i = 0; i < n && !failed; ++i) {
+        PyObject* t = PySequence_Fast_GET_ITEM(seq, i);
+        int clean = 0;
+        PyObject* d = t == Py_None ? nullptr : k2_dict_of(t);
+        if (d != nullptr) {
+            const int r = k2_holds(d, PySequence_Fast_ITEMS(sn),
+                                   PySequence_Fast_GET_SIZE(sn));
+            if (r < 0) failed = true;
+            PyObject* h = r == 0 ? PyDict_GetItemWithError(d, nslot) : nullptr;
+            if (h == nullptr && PyErr_Occurred()) failed = true;
+            if (!failed && h != nullptr && PyLong_CheckExact(h)) {
+                const long long hv = PyLong_AsLongLong(h);
+                if (hv == -1 && PyErr_Occurred()) failed = true;
+                const cb::ObjectRow* row =
+                    failed || cb::Mirror::kind_of(hv) != cb::Kind::Object
+                        ? nullptr
+                        : mi.object(hv);
+                if (row != nullptr) {
+                    clean = 1;
+                    for (const std::int64_t sh : row->mount_order) {
+                        const int c = sub_clean(sh);
+                        if (c != 1) {
+                            if (c < 0) failed = true;
+                            clean = 0;
+                            break;
+                        }
+                    }
+                    for (const std::int64_t sh :
+                         {row->_hull, row->_shield_subsystem}) {
+                        if (clean != 1) break;
+                        const int c = sub_clean(sh);
+                        if (c != 1) {
+                            if (c < 0) failed = true;
+                            clean = 0;
+                        }
+                    }
+                }
+            }
+        }
+        PyObject* b = clean == 1 ? Py_True : Py_False;
+        Py_INCREF(b);
+        PyList_SET_ITEM(out, i, b);
+    }
+    Py_DECREF(seq);
+    Py_DECREF(un);
+    Py_DECREF(sn);
+    if (failed) {
+        Py_XDECREF(out);
+        return nullptr;
+    }
+    return out;
 }
 
 // An optional point argument: None, or three floats.
@@ -12764,6 +12920,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
         //   "trace": bool (True): the installed hooks; False when
         //       host_io._h is None (every trace a miss)
         //   "python_ships": iterable of Object handles to RUN_PYTHON (())
+        //   "pulse": THE DAMAGE PULSE's context (k2_pulse_ctx's dict; absent:
+        //       every damage pulse is a CONTACT record)
+        // A record also carries the damage pulses the kernel applied since
+        // the last one (k2_beams.h K2Hit): applied and appended here, each
+        // where the walk made it among the record's own writes and entries.
         static constexpr const char* kK2Tiers[] = {"mesh", "sphere",
                                                    "fallback", "origin"};
         auto k2_apply_ctx = [](cb::K2Context& c, const py::dict& d) {
@@ -12802,6 +12963,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 for (auto h : d["python_ships"])
                     c.python_ships.insert(h.cast<std::int64_t>());
             }
+            // THE DAMAGE PULSE (k2_beams.h; k2_pulse_ctx's keys).
+            if (d.contains("pulse"))
+                c.pulse = k2_pulse_ctx(d["pulse"].cast<py::dict>());
         };
         m.def("combat_k2_kinds", [] {
             py::dict d;
@@ -12866,9 +13030,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
             py::list log;
             dauntless::host::WriteApplier& applier =
                 dauntless::host::write_applier();
+            if (!r.hits.empty() && !applier.has_context())
+                throw std::logic_error(
+                    "combat K2: a damage pulse needs the applier context");
             if (applier.has_context()) {
                 const K2Delivering delivering;
-                if (!applier.apply(r.writes, 0, r.writes.size()))
+                // THE DAMAGE PULSE: each pulse's writes after the record's
+                // writes the walk made before it.
+                size_t done = 0;
+                for (const cb::K2Hit& h : r.hits) {
+                    if (!applier.apply(r.writes, done, h.at_write) ||
+                        !applier.apply(h.out.writes, 0, h.out.writes.size()))
+                        throw py::error_already_set();
+                    done = h.at_write;
+                }
+                if (!applier.apply(r.writes, done, r.writes.size()))
                     throw py::error_already_set();
             } else for (const cb::K2Write& w : r.writes) {
                 py::object v = std::visit(
@@ -12888,8 +13064,28 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 log.append(py::make_tuple(w.handle, w.field, v));
             }
             // Its queue entries (a firing bank's LOOP_STOP: k2_beams.h, THE
-            // EFFECT QUEUE), once its writes are applied, as K1's.
-            k1_append_entries(r.entries);
+            // EFFECT QUEUE), once its writes are applied, as K1's, with each
+            // damage pulse's after the entries made before it.
+            k2_last_hits().clear();
+            for (const cb::K2Hit& h : r.hits) {
+                // HIT_PRESENT's has_shield_point (op 20): a bubble entry.
+                bool bubble = false;
+                for (const cb::DamageEntry& e : h.out.entries)
+                    if (e.kind == cb::DamageKind::HIT_PRESENT)
+                        bubble = e.ops[20].boolean;
+                k2_last_hits().push_back(
+                    {h.bank, h.target, bubble, static_cast<int>(h.tier)});
+            }
+            {
+                const std::span<const cb::K1Entry> all(r.entries);
+                size_t done = 0;
+                for (const cb::K2Hit& h : r.hits) {
+                    k1_append_entries(all.subspan(done, h.at_entry - done));
+                    damage_append_held(h.out.entries, h.source);
+                    done = h.at_entry;
+                }
+                k1_append_entries(all.subspan(done));
+            }
             const int kind = static_cast<int>(r.kind);
             switch (r.kind) {
                 case cb::K2Kind::DONE:
@@ -13081,8 +13277,75 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k2_entries"] = entries;
             // Drained rests the drain presented itself (the shield splash).
             d["k2_present_native"] = k2_present().presented;
+            // THE DAMAGE PULSE: pulses applied in the walk, and those kept
+            // as a CONTACT record, by why and in all.
+            d["k2_native_pulses"] = c.native_pulses;
+            py::dict pulse_why;
+            std::int64_t pulse_python = 0;
+            for (size_t i = 0; i < c.pulse_why.size(); ++i) {
+                pulse_why[cb::k2_pulse_why_name(
+                    static_cast<cb::K2PulseWhy>(i))] = c.pulse_why[i];
+                pulse_python += c.pulse_why[i];
+            }
+            d["k2_pulse_python_reasons"] = pulse_why;
+            d["k2_pulse_python"] = pulse_python;
             return d;
         });
+        m.def("combat_k2_pulse_targets",
+              [](const std::vector<std::int64_t>& ships) {
+                  // The targets a damage pulse may land on this step (THE
+                  // DAMAGE PULSE; the driver scans them, combat_dmg_clean):
+                  // each distinct `_target` of a bank of a listed ship's
+                  // phaser system that fires or holds a dwell -- the only
+                  // banks whose walk can flush one -- in first-seen order.
+                  // Mirror reads only.
+                  const cb::Mirror& mi = cb::mirror();
+                  std::vector<std::int64_t> out;
+                  std::unordered_set<std::int64_t> seen;
+                  for (const std::int64_t sh : ships) {
+                      const cb::ObjectRow* o =
+                          sh < 0 ? nullptr : mi.object(sh);
+                      if (o == nullptr || o->_phaser_system < 0) continue;
+                      const cb::SubsystemRow* y =
+                          mi.subsystem(o->_phaser_system);
+                      if (y == nullptr) continue;
+                      for (const std::int64_t b : y->_children) {
+                          const cb::SubsystemRow* r =
+                              b < 0 ? nullptr : mi.subsystem(b);
+                          if (r == nullptr || r->_target < 0) continue;
+                          if (!r->_firing && !(r->_dwell > 0.0)) continue;
+                          if (seen.insert(r->_target).second)
+                              out.push_back(r->_target);
+                      }
+                  }
+                  return out;
+              },
+              py::arg("ships"),
+              "Object handles a damage pulse may land on this step.");
+        m.def("combat_k2_last_hits",
+              [] {
+                  py::list out;
+                  for (const auto& [b, t, bubble, tier] : k2_last_hits())
+                      out.append(py::make_tuple(b, t, bubble, kK2Tiers[tier]));
+                  return out;
+              },
+              "[(bank, target, bubble, tier), ...]: the damage pulses the last record "
+              "carried (THE DAMAGE PULSE; for the differentials' tallies).");
+        m.def("combat_k2_take_hits", [] { return cb::k2_kernel().take_hits(); },
+              "The damage pulses the records returned since the last call "
+              "carried (THE DAMAGE PULSE).");
+        m.def("combat_dmg_clean",
+              [](py::handle targets, py::handle registry_data,
+                 py::handle ship_names, py::handle sub_names) {
+                  PyObject* r = dmg_clean(targets.ptr(), registry_data.ptr(),
+                                          ship_names.ptr(), sub_names.ptr());
+                  if (r == nullptr) throw py::error_already_set();
+                  return py::reinterpret_steal<py::list>(r);
+              },
+              py::arg("targets"), py::arg("registry_data"),
+              py::arg("ship_names"), py::arg("sub_names"),
+              "[bool, ...]: which targets a kernel may hit natively (see "
+              "dmg_clean).");
         m.def("combat_k2_reset_counts", [] {
             cb::k2_kernel().reset_counts();
             k2_present().presented = 0;
@@ -13598,6 +13861,36 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "((x, y, z), normal or None, tier).");
         m.def("combat_k3_end", [] { cb::k3_kernel().end(); },
               "End the session (it must have returned DONE).");
+        m.def("combat_k3_apply_hits",
+              [](std::size_t start, const py::dict& pulse,
+                 const std::vector<std::size_t>& python) {
+                  // THE HITS (k3_projectiles.h): the last DONE's hits from
+                  // `start`, applied natively until one the kernel cannot
+                  // apply; each one's writes applied by the session's
+                  // applier and its entries queued, in order. Returns the
+                  // index of the hit handed back (len(hits) when none).
+                  cb::K2PulseCtx p = k2_pulse_ctx(pulse);
+                  const std::unordered_set<std::size_t> py_hits(
+                      python.begin(), python.end());
+                  std::vector<cb::K3Applied> out;
+                  const std::size_t k =
+                      cb::k3_kernel().apply_hits(start, p, py_hits, out);
+                  auto& applier = dauntless::host::write_applier();
+                  if (!out.empty() && !applier.has_context())
+                      throw std::logic_error(
+                          "combat K3: applying hits needs the applier "
+                          "context");
+                  for (const cb::K3Applied& a : out) {
+                      if (!a.out.writes.empty() &&
+                          !applier.apply(a.out.writes, 0, a.out.writes.size()))
+                          throw py::error_already_set();
+                      damage_append_held(a.out.entries, a.source);
+                  }
+                  return k;
+              },
+              py::arg("start"), py::arg("pulse"), py::arg("python"),
+              "Apply the last DONE's hits from `start` (THE HITS); the index "
+              "of the first one handed back, or len(hits).");
         m.def("combat_k3_abandon", [] { cb::k3_kernel().abandon(); },
               "End the session whatever its state (exception path).");
         m.def("combat_k3_open", [] { return cb::k3_kernel().open(); });
@@ -13625,6 +13918,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k3_posed_steers"] = c.posed_steers;
             d["k3_baked_steers"] = c.baked_steers;
             d["k3_native_attributions"] = c.native_attributions;
+            // THE HITS: hits applied natively, and those the kernel handed
+            // back, by why (the driver adds its own).
+            d["k3_native_hits"] = c.native_hits;
+            py::dict hit_why;
+            std::int64_t hit_python = 0;
+            for (size_t i = 0; i < c.hit_why.size(); ++i) {
+                hit_why[cb::k2_pulse_why_name(
+                    static_cast<cb::K2PulseWhy>(i))] = c.hit_why[i];
+                hit_python += c.hit_why[i];
+            }
+            d["k3_hit_python_reasons"] = hit_why;
+            d["k3_hit_python"] = hit_python;
             return d;
         });
         m.def("combat_k3_reset_counts",

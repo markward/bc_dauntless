@@ -40,11 +40,12 @@ ROLES = (
         "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
         "_strip_emit_position", "_emitter_world_position", "GetLength",
         "GetDirection", "GetUp", "GetArcWidthAngles", "GetArcHeightAngles",
-        "IsDisabled", "IsDestroyed")),
+        "IsDisabled", "IsDestroyed", "GetMaxDamage", "GetMaxDamageDistance",
+        "GetDamageRadiusFactor")),
     ("engine.appc.weapon_subsystems", "PhaserSystem", (
         "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
         "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed",
-        "GetPowerLevel")),
+        "GetPowerLevel", "PP_LOW")),
     ("engine.appc.subsystems", "ShieldSubsystem", (
         "HasShields", "IsOn", "IsDisabled", "IsDestroyed")),
     ("engine.appc.subsystems", "CloakingSubsystem", (

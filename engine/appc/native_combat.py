@@ -209,6 +209,7 @@ def reset() -> None:
         _k4_reasons[k] = 0
     for k in _K3_REASONS:
         _k3_reasons[k] = 0
+    _k3_hit_python[0] = 0
     _k3_iids_sent[:] = [_K2_UNSENT, -1, -1]
     # K3's class watch re-baselines with K2's (a watch built while a class
     # was patched must not outlive the patch).
@@ -360,6 +361,12 @@ def counts() -> dict:
         for k, n in _k3_reasons.items():
             why[k] = why.get(k, 0) + n
             k3["k3_python_steps"] += n
+        # Every hit handed back ran in _k3_apply_hits; those the kernel did
+        # not name a reason for are the driver's own (a torpedo instance
+        # patch): "python".
+        k3["k3_hit_python_reasons"]["python"] = (
+            _k3_hit_python[0] - k3["k3_hit_python"])
+        k3["k3_hit_python"] = _k3_hit_python[0]
         c.update(k3)
     return c
 
@@ -4363,12 +4370,14 @@ _K2_ROLES = (
          "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
          "_strip_emit_position", "_emitter_world_position", "GetLength",
          "GetDirection", "GetUp", "GetArcWidthAngles", "GetArcHeightAngles",
-         "IsDisabled", "IsDestroyed")),
+         "IsDisabled", "IsDestroyed",
+         # THE DAMAGE PULSE (native damage Task 4) reads their values.
+         "GetMaxDamage", "GetMaxDamageDistance", "GetDamageRadiusFactor")),
     ("system", "engine.appc.weapon_subsystems", "PhaserSystem",
      _K2_SUBSYSTEM_NAMES + (
          "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
          "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed",
-         "GetPowerLevel")),
+         "GetPowerLevel", "PP_LOW")),
     ("shield", "engine.appc.subsystems", "ShieldSubsystem",
      _K2_SUBSYSTEM_NAMES + ("HasShields", "IsOn", "IsDisabled",
                             "IsDestroyed")),
@@ -4394,13 +4403,17 @@ _K2_SHIP_PATCHES = frozenset((
 # StopFiring (system and bank): an offline system's stop is logged writes
 # when its banks are idle (round trips Task 3). GetPowerLevel: a resting
 # contact carries the mirror's `_power_level` (spec 2026-11-02 §4.3).
+# PP_LOW, and a bank's GetMaxDamage, GetMaxDamageDistance and
+# GetDamageRadiusFactor: THE DAMAGE PULSE reads the mirrored values (native
+# damage Task 4).
 _K2_SYSTEM_PATCHES = frozenset((
     "GetNumWeapons", "GetWeapon", "IsOn", "IsDisabled", "IsDestroyed",
-    "StopFiring", "GetPowerLevel"))
+    "StopFiring", "GetPowerLevel", "PP_LOW"))
 _K2_BANK_PATCHES = frozenset((
     "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
     "_strip_emit_position", "_emitter_world_position", "GetLength",
-    "StopFiring"))
+    "StopFiring", "GetMaxDamage", "GetMaxDamageDistance",
+    "GetDamageRadiusFactor"))
 
 # The snapshot (k2_snapshot_stock): [(module, getter, values), ...] for the
 # functions; [(role, stock class, resolution), ...] for the classes; the
@@ -4975,6 +4988,8 @@ def _run_k2(ships, dt, ship_instances, cx) -> None:
         prev = _h.combat_set_applier(_applier_context(walk))
         while True:
             rec = _h.combat_k2_next()
+            if _h.combat_k2_take_hits():
+                _kernel_hits_landed(ship_instances)
             kind = rec[0]
             if kind == ASK:
                 gen = _part_gen
@@ -5072,6 +5087,7 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     ctx = cx.delta()
     ctx["python_ships"] = python_ships
     ctx["trace"] = _k2_host_io._h is not None
+    ctx["pulse"] = _k2_pulse_ctx(handles, ship_instances)
     t, use_memo, drift = _k1_clocks()
     _h.combat_k2_begin(handles, dt, t, use_memo, drift, ctx)
     cx.commit()
@@ -5601,7 +5617,11 @@ def _k3_walk(dt, ship_instances, st, walk, ask):
     expire = _k3_proj.expire
     for t in expiring:
         expire(t)
-    return out
+    # THE HITS: applied here, after every ET_TORPEDO_EXITED_SET (K3M §A6),
+    # each fully before the next; none is handed to host_loop.
+    if out:
+        _k3_apply_hits(out, ship_instances, walk)
+    return []
 
 
 def _k3_apply(writes, rows, walk) -> None:
@@ -5732,9 +5752,11 @@ def _dmg_snapshot() -> dict:
 
 def damage_snapshot_stock() -> None:
     """host_loop, beside k3_snapshot_stock: take the snapshots now (the
-    classes' and the functions')."""
+    classes' and the functions', the kernels' damage's included), before
+    any test, tool or mod can replace one."""
     _dmg_snapshot()
     _dmg_functions()
+    _kdmg_functions()
 
 
 def _dmg_class(cls) -> int:
@@ -5937,6 +5959,11 @@ def apply_hit(ship, damage, hit_point, source, *, normal=None,
     if ship_h is None or ship_h == REF_NONE:
         _dmg_counts["fallbacks"] += 1
         return False
+    # An instance attribute on a subsystem the hit can reach shadowing a
+    # method it stands in for (override-guard gap 1): the reference obeys it.
+    if not _kdmg_clean([ship])[0]:
+        _dmg_counts["fallbacks"] += 1
+        return False
     import App
     from engine.appc import combat
     import engine.dev_combat_cheats as cheats
@@ -6028,6 +6055,188 @@ def damage_system(ship, sub, amount: float, source=None) -> bool:
                      _dmg_held(source), source)
     _dmg_counts["damage_systems" if done else "fallbacks"] += 1
     return done
+
+
+# ── Native damage in the kernels (spec 2026-11-02-native-damage §3 goal 2;
+# Task 4) ───────────────────────────────────────────────────────────────────
+#
+# K2 applies each damage pulse in its walk (k2_beams.h, THE DAMAGE PULSE) and
+# K3 its hits after the step's expiries (k3_projectiles.h, THE HITS): no
+# record hands the damage to Python. What they read that the mirror does not
+# hold rides a context (_kdmg_ctx): the player and the cheats, the module
+# constants of the arithmetic, the weapon's codes, and the targets the
+# override guard scanned clean. A pulse or hit the kernel cannot apply
+# (counted by why: k2_pulse_python_reasons, k3_hit_python_reasons) goes to
+# Python as before -- K2's CONTACT record, K3's hand-back here.
+#
+# THE OVERRIDE GUARD. The context is "not ok" -- every pulse and hit to
+# Python -- when a function or stock-class method the native hit stands in
+# for is replaced (_dmg_unchanged), or one the kernels' damage stands in for
+# (_KDMG_FUNCTIONS: host_loop's pulse arithmetic and the two entry points,
+# so a test's spy on combat.apply_hit is obeyed), or the player is an object
+# the mirror cannot name. A target is "clean" when neither it nor any
+# subsystem its hit can reach (its mount order, hull, shield generator) has
+# an instance attribute shadowing a method the hit stands in for
+# (combat_dmg_clean; override-guard gap 1, Task 3's report §8.3, closed the
+# K1 way: scanned at the entry point -- K2's begin, K3's apply, the
+# non-kernel apply_hit -- ruling L8). A patch made later in the step is seen
+# at the next entry.
+
+#: (module, names) the kernels' damage stands in for beyond the native hit's
+#: own (_DMG_FUNCTIONS), identity-checked at every entry, never foreign.
+_KDMG_FUNCTIONS = (
+    ("engine.host_loop", ("_phaser_contact", "_phaser_damage_for_tick",
+                          "_phaser_level")),
+    ("engine.appc.combat", ("apply_hit", "weapon_splash_radius")),
+)
+#: The instance attributes combat_dmg_clean looks for: on the target ship
+#: (_DMG_SHIP_NAMES) and on each subsystem its hit can reach (the condition
+#: chain's names, the predicates, the shield names).
+_KDMG_SUB_NAMES = tuple(dict.fromkeys(_DMG_SUB_NAMES + _DMG_PREDICATES
+                                      + _DMG_SHIELD_NAMES))
+#: A torpedo's: weapon_splash_radius reads GetDamageRadiusFactor on it.
+_KDMG_TORP_NAMES = ("GetDamageRadiusFactor",)
+_kdmg_fn_snapshot = None
+
+
+def _kdmg_functions() -> list:
+    global _kdmg_fn_snapshot
+    if _kdmg_fn_snapshot is None:
+        from engine.appc.projectiles import Torpedo
+        snap = []
+        for name, names in _KDMG_FUNCTIONS:
+            mod = importlib.import_module(name)
+            snap.append((mod, operator.attrgetter(*names),
+                         operator.attrgetter(*names)(mod)))
+        snap.append((Torpedo, operator.attrgetter(*_KDMG_TORP_NAMES),
+                     (operator.attrgetter(*_KDMG_TORP_NAMES)(Torpedo),)))
+        _kdmg_fn_snapshot = snap
+    return _kdmg_fn_snapshot
+
+
+def _kdmg_unchanged() -> bool:
+    for owner, get, values in _kdmg_functions():
+        try:
+            now = get(owner)
+        except AttributeError:
+            return False
+        if type(now) is not tuple:
+            now = (now,)
+        if now != values or any(_k2_foreign(v) for v in now):
+            return False
+    return True
+
+
+def _kdmg_clean(objs) -> list:
+    """combat_dmg_clean on `objs` (None reads not clean)."""
+    return _h.combat_dmg_clean(objs, _registry.data, _DMG_SHIP_NAMES,
+                               _KDMG_SUB_NAMES)
+
+
+def _kdmg_ctx(weapon: str, ship_instances, clean) -> dict:
+    """The kernels' damage context (the binding's k2_pulse_ctx keys) for a
+    `weapon` ("phaser" / "torpedo") step: computed exactly as combat.
+    apply_hit and host_loop._phaser_contact read them."""
+    import App
+    from engine.appc import combat
+    from engine.appc.weapon_subsystems import PhaserSystem
+    import engine.dev_combat_cheats as cheats
+    ok = _dmg_unchanged() and _kdmg_unchanged()
+    try:
+        game = (App.Game_GetCurrentGame()
+                if hasattr(App, "Game_GetCurrentGame") else None)
+        player = (game.GetPlayer()
+                  if game is not None and hasattr(game, "GetPlayer")
+                  else None)
+    except Exception:
+        player = None
+    player_h = _dmg_handle(player, "Object")
+    if player_h is None:
+        ok, player_h = False, REF_NONE
+    scale = _k2_hl.PHASER_INTENSITY_SCALE
+    try:
+        intensity = tuple(float(x) for x in scale)
+        if len(intensity) != 3 or any(
+                type(x) not in (int, float) for x in scale):
+            raise TypeError
+    except (TypeError, ValueError, OverflowError):
+        ok, intensity = False, (0.0, 0.0, 0.0)
+    radius = combat.PHASER_DEFAULT_DAMAGE_RADIUS
+    pp_low = PhaserSystem.PP_LOW
+    if (type(radius) not in (int, float) or type(pp_low) is not int):
+        ok, radius, pp_low = False, 0.0, 0
+    return {
+        "ok": ok, "player": player_h,
+        "god_mode": bool(cheats.god_mode_active()),
+        "double_damage": bool(cheats.double_player_weapons_active()),
+        "npc_shields_off": bool(cheats.disable_npc_shields_active()),
+        "intensity": intensity, "default_radius": float(radius),
+        "pp_low": pp_low,
+        "hit_weapon": _effect_queue._HIT_WEAPON_CODES[weapon],
+        "weapon_hit_type": int(combat._WEAPON_TYPE_IDS[weapon]),
+        "has_instances": ship_instances is not None,
+        "clean": clean,
+    }
+
+
+def _k2_pulse_ctx(handles, ship_instances) -> dict:
+    """THE DAMAGE PULSE's context for this step: the targets of the banks
+    that can pulse, scanned (combat_dmg_clean)."""
+    targets = _h.combat_k2_pulse_targets(handles)
+    objs = [_registry.get(h) for h in targets]
+    clean = [h for h, c in zip(targets, _kdmg_clean(objs)) if c] \
+        if targets else []
+    return _kdmg_ctx("phaser", ship_instances, clean)
+
+
+def _kernel_hits_landed(ship_instances) -> None:
+    """A kernel applied hits in its compute since its last record: clear the
+    step memo's Python tables before Python reads them (combat.apply_hit
+    forgets on every hit; the kernel cleared its own memo, DM H13), and make
+    the hits' map the one their HIT_PRESENT delivers with (R13)."""
+    from engine.core import step_memo
+    step_memo.forget_tables()
+    if ship_instances is not None:
+        from engine.appc import hit_feedback
+        hit_feedback.use_instances(ship_instances)
+
+
+def _k3_apply_hits(hits, ship_instances, walk) -> None:
+    """THE HITS (k3_projectiles.h): host_loop's hit loop, natively, after
+    the step's expiries. `hits` is _k3_walk's list of (torpedo, ship,
+    hit_point, hit_normal); a hit the kernel hands back runs here, in its
+    place, exactly as host_loop runs it (counted "k3_hit_python")."""
+    from engine.appc import combat
+    ships = [h[1] for h in hits]
+    clean = [nc_h for nc_h, c in
+             zip((_slot_of(s) for s in ships), _kdmg_clean(ships)) if c]
+    pulse = _kdmg_ctx("torpedo", ship_instances, clean)
+    # A torpedo shadowing GetDamageRadiusFactor: its hit is Python's.
+    python = [i for i, h in enumerate(hits)
+              if _dmg_patched(h[0], _KDMG_TORP_NAMES)]
+    prev = _h.combat_set_applier(_applier_context(walk))
+    try:
+        i = 0
+        while i < len(hits):
+            k = _h.combat_k3_apply_hits(i, pulse, python)
+            if k > i:
+                _kernel_hits_landed(ship_instances)
+            if k >= len(hits):
+                break
+            _k3_hit_python[0] += 1
+            t, ship, point, normal = hits[k]
+            combat.apply_hit(ship, t._damage, point,
+                             source=t._source_ship, normal=normal,
+                             ship_instances=ship_instances,
+                             weapon_type="torpedo", hardpoint_weapon=t,
+                             shield_point=t._bubble_entry)
+            i = k + 1
+    finally:
+        _h.combat_set_applier(prev)
+
+
+#: K3 hits run here in Python (_k3_apply_hits' hand-backs).
+_k3_hit_python = [0]
 
 
 if available():

@@ -130,6 +130,39 @@ def test_an_instance_patch_runs_the_reference():
     assert nc.damage_counts()["hits"] == 0
 
 
+@pytest.mark.parametrize("where", ("sensors", "hull", "shields"))
+def test_an_instance_patch_on_a_reachable_subsystem_runs_the_reference(
+        where):
+    """Override-guard gap 1 (native damage Task 4): an instance attribute
+    shadowing a method the hit stands in for, on a subsystem the hit can
+    reach -- an overlapped one, the hull, the shield generator -- is obeyed:
+    the hit is the reference's, which calls it."""
+    ship = _ship()
+    nc.configure(ON)
+    sub = {"sensors": ship.GetSensorSubsystem(), "hull": ship.GetHull(),
+           "shields": ship.GetShields()}[where]
+    got = []
+    stock = type(sub).IsDestroyed
+
+    def patched(_s=sub):
+        got.append(_s.GetName())
+        return stock(_s)
+    sub.IsDestroyed = patched
+    # Through the shields for their generator; past them for the others.
+    bypass = where != "shields"
+    combat.apply_hit(ship, 50.0, TGPoint3(0.0, 1.0, 0.0), None,
+                     bypass_shields=bypass)
+    # (The reference's own DamageSystem / SetCondition calls on the
+    # patched subsystem hand back too: more than one fallback.)
+    assert nc.damage_counts()["hits"] == 0
+    assert nc.damage_counts()["fallbacks"] >= 1
+    assert got, where
+    del sub.IsDestroyed
+    combat.apply_hit(ship, 50.0, TGPoint3(0.0, 1.0, 0.0), None,
+                     bypass_shields=bypass)
+    assert nc.damage_counts()["hits"] == 1
+
+
 def test_a_foreign_subsystem_class_runs_the_reference():
     class Odd(ShipSubsystem):
         def GetConditionPercentage(self):

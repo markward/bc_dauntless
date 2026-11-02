@@ -874,7 +874,7 @@ def report(label, ticks_per_frame, elapsed, ref, nat):
           "  sever %r\n  k1 python reasons %r\n  k2 python reasons %r\n"
           "  k3 steer reasons %r\n  k3 asks %r\n  kernel records %r\n"
           "  round trips %r\n"
-          "  hits %d, apply_hits %d, events %d, presentation calls %d"
+          "  hits %d, presented %d, events %d, presentation calls %d"
           % (label, ticks_per_frame, elapsed, TICKS, posed_branches(c),
              {k: v for k, v in posed_fallbacks(c).items() if v},
              posed_no_mount(c), nat.stats, nat.sever,
@@ -885,7 +885,7 @@ def report(label, ticks_per_frame, elapsed, ref, nat):
              c["k3_asks"], dict(sorted(nat.rec.tally.n.items())),
              round_trips(c),
              len([x for x in ref.rec.calls if x[0] == "hit"]),
-             len([x for x in ref.rec.calls if x[0] == "apply_hit"]),
+             len([x for x in ref.rec.calls if x[0] == "hit_present"]),
              len(ref.rec.events), presented(ref.rec.calls)))
 
 

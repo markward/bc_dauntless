@@ -329,6 +329,10 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
     # drain presents none itself. No phaser system is switched off here
     # (k2_logged_system_stop measured 0).
     assert counts["on"]["k2_batched_contacts"] > 0, counts
+    # Native damage Task 4: every damage pulse applied in the walk, none
+    # handed back as a CONTACT record.
+    assert counts["on"]["k2_native_pulses"] > 0, counts
+    assert counts["on"]["k2_pulse_python"] == 0, counts
     assert counts["on"]["k2_present_native"] == 0, counts
     assert counts["on"]["k2_present_python"] == \
         counts["on"]["k2_batched_contacts"], counts

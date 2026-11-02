@@ -1377,6 +1377,9 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
         # holds ships_list), and no later update_all may read it as current.
         if _native_combat._step is not None:
             _native_combat.clear_step()
+    # Only the hits a Python update_all step returns: the native K3 step
+    # applies its own after its expiries (native damage Task 4;
+    # native_combat._k3_apply_hits) and returns none.
     for torpedo, ship, hit_point, hit_normal in hits:
         combat.apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship,
