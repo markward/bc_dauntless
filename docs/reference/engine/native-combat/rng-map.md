@@ -9,6 +9,8 @@ Streams:
 - **S2** the process-global `random` module.
 - **P** (proposed) the presentation generator.
 
+**Superseded where built (2026-11-02):** the design in §7 is implemented on `ws/combat-presentation-rng`; spec `docs/superpowers/specs/2026-11-02-presentation-rng-design.md` §10 is the record of what was built and where it departs from this map (blast size of a damaging blast is gameplay, §7.4; NanoFX spin stays on S1, X7; resets in `_reset_session_scratch`, §7.1). Line numbers below are the pre-change code.
+
 ---
 
 ## 0. Corrections to the existing docs
@@ -211,7 +213,7 @@ Pitfalls:
 
 ### 7.4 Mixed cases
 - **D3/D4/D5 (`_fire`):** draw the gameplay roll D5 first, on S1. If it passes, draw the damage point from S2 (gameplay) and reuse it for the VFX, so the hole and the blast still coincide. If it fails, draw the VFX point from P.
-  - D4 `roll_blast_scale` → P. It is the visible tier under Ruling 5, and its breakup tail on an already-dying ship is accepted as presentation-driven (**flag to Mark**).
+  - D4 `roll_blast_scale` → P. It is the visible tier under Ruling 5, and its breakup tail on an already-dying ship is accepted as presentation-driven (**flag to Mark**). **Reversed in the build (2026-11-02, final review I1):** only a damaging blast makes a hole, and its size reaches gameplay through `hole_scale` around `AddDamage`, so a damaging blast draws its size on S1 right after its damage roll; a non-damaging blast's size feeds only particles and light and stays on P.
   - D1 and D2 stay on S1.
   - This is a one-time order change, in line with the roadmap.
 - **D12 debris spin:** stays on S2 (collidable body) or moves to a gameplay-private generator. Leave as is.
