@@ -2365,7 +2365,8 @@ TEST(K1Launch, PosedTargetBakesThroughTheManualAimSlot) {
             EXPECT_EQ(e->spawn->baked, (Vec3{0.25 + 0.25, -0.5, 0.125}));
         } else {
             EXPECT_EQ(w.brief(r), "FIRE tube@t");
-            EXPECT_EQ(launch_why(w, K1LaunchWhy::Other), 1u);
+            EXPECT_EQ(launch_why(w, K1LaunchWhy::PosedOffset), 1u);
+            EXPECT_EQ(launch_why(w, K1LaunchWhy::Other), 0u);
             EXPECT_TRUE(writes_on(w, r, "ammo").empty());
             EXPECT_EQ(w.m.get_i(l.tube, Field::_num_ready), 1);
         }

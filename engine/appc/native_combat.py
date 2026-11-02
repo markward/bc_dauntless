@@ -183,9 +183,8 @@ def reset() -> None:
     _kind_by_type.clear()
     _k1_overridden_by_type.clear()
     _k1_watch.clear()
-    global _pulse_stale, _k1_launch_pushed
+    global _pulse_stale
     _pulse_stale = False
-    _k1_launch_pushed = None    # re-pushed at the next K1 entry
     _counts["native_calls"] = 0
     _counts["fallbacks"] = 0
     for k in _k2_steps:
@@ -993,6 +992,16 @@ class MountSlotField:
             push_mount_order(obj)
 
 
+class WarpSlotField(MountSlotField):
+    """ShipClass._warp_engine_subsystem: a MountSlotField whose every write
+    also re-pushes the ship's `arriving` flag (Weapon.FireDumb's warp-in
+    hold reads the slot's slide; launch deferral)."""
+
+    def __set__(self, obj, value) -> None:
+        super().__set__(obj, value)
+        push_arriving(obj)
+
+
 class NativeMountRefField(NativeRefField):
     """A mirrored subsystem slot of the ship (`_hull`, `_phaser_system`,
     ...): pushes its ref, then the ship's mount order (MountSlotField)."""
@@ -1399,6 +1408,9 @@ def _k1_send_walk_check() -> None:
     _h.combat_k1_set_walk_check(_registry.data, _K1_SYSTEM_PATCHES,
                                 _K1_LEAF_PATCHES, _K1_SHIP_PATCHES,
                                 iu, gto, cls)
+    # And the launch check, re-checked with it before every record.
+    _h.combat_k1_set_launch_check(
+        _k1_launch_check() if _k1_launch_stock is not None else None)
     _k1_walk_check_sent = True
 
 
@@ -1948,6 +1960,15 @@ def _ammo_launch(ammo) -> tuple:
     return ws._tube_launch_cache.get(script, (ws.LAUNCH_UNCACHED, 0.0))
 
 
+def _ammo_module(ammo, state):
+    """The module a cached ammo type's launches use (the one Python's launch
+    of its script resolved), else None."""
+    from engine.appc import weapon_subsystems as ws
+    if state != ws.LAUNCH_CACHED:
+        return None
+    return ws._projectile_modules.get(ammo.__dict__.get("_script"))
+
+
 def push_ammo_launch(ammo) -> None:
     """Push the ammo type's launch (_ammo_launch): at its creation, a new
     script, a learned or forgotten cache."""
@@ -1956,6 +1977,9 @@ def push_ammo_launch(ammo) -> None:
         if h is None:
             return
         state, speed = _ammo_launch(ammo)
+        # The module a kernel SPAWN of this type carries (its fire-time
+        # module), set before the state that lets the kernel launch.
+        _h.combat_set_ammo_module(h, _ammo_module(ammo, state))
         _call(ammo, _h.combat_set_i, h, _fid("ammo_launch_state"), state)
         if "_nslot" in ammo.__dict__:
             _call(ammo, _h.combat_set_f, h, _fid("ammo_launch_speed"),
@@ -1999,31 +2023,35 @@ def push_arriving(ship) -> None:
                   _arriving_flag(ship))
 
 
-# The functions K1's native launch stands in for, as weapon_subsystems and
-# projectiles define them (k1_snapshot_launch): any patched (a test's spy, a
-# tool) hands every launch to Python (K1_LAUNCH_PATCHED, K1LaunchWhy::
-# Patched), as a patched K1 method is never decided natively.
+# The functions K1's native launch stands in for, as weapon_subsystems,
+# projectiles and subsystems define them (k1_snapshot_launch): any patched
+# (a test's spy, a tool) hands every launch to Python (K1_LAUNCH_PATCHED,
+# K1LaunchWhy::Patched; re-checked by the bindings before every record,
+# THE LAUNCH CHECK), as a patched K1 method is never decided natively; and
+# Python's own launch then spawns at once through it (_defer_spawn is not
+# used: the spy is the point).
 _K1_LAUNCH_FUNCS = (
     ("engine.appc.weapon_subsystems",
      ("_spawn_projectile", "_emitter_forward_world", "_dewarp_blocks_fire",
       "_resolve_projectile_module", "_new_projectile",
-      "_launch_projectile")),
+      "_launch_projectile", "_launch_reads", "_defer_spawn",
+      "spawn_launch")),
     ("engine.appc.projectiles", ("_bake_offset",)),
+    ("engine.appc.subsystems", ("subsystem_world_position",)),
 )
 _k1_launch_mods = None
 _k1_launch_stock = None
-_k1_launch_pushed = None
 
 
 def k1_snapshot_launch() -> None:
     """weapon_subsystems, once defined: snapshot the stock launch functions
     (_K1_LAUNCH_FUNCS)."""
-    global _k1_launch_mods, _k1_launch_stock, _k1_launch_pushed
+    global _k1_launch_mods, _k1_launch_stock, _k1_walk_check_sent
     import importlib
     _k1_launch_mods = tuple((importlib.import_module(m), names)
                             for m, names in _K1_LAUNCH_FUNCS)
     _k1_launch_stock = _k1_launch_funcs()
-    _k1_launch_pushed = None
+    _k1_walk_check_sent = False      # resend the launch check with it
 
 
 def _k1_launch_funcs() -> tuple:
@@ -2033,6 +2061,20 @@ def _k1_launch_funcs() -> tuple:
     return tuple(out)
 
 
+def _k1_launch_funcs_names() -> list:
+    return [n for _m, names in _K1_LAUNCH_FUNCS for n in names]
+
+
+def _k1_launch_check() -> list:
+    """combat_k1_set_launch_check's list: (module dict, name, stock)."""
+    out = []
+    stock = iter(_k1_launch_stock or ())
+    for mod, names in _k1_launch_mods or ():
+        for n in names:
+            out.append((vars(mod), n, next(stock)))
+    return out
+
+
 def launch_patched() -> bool:
     """Whether a function a launch's deferral stands in for is not stock
     (_K1_LAUNCH_FUNCS): a test's spy, a tool. Its launches then spawn
@@ -2040,13 +2082,7 @@ def launch_patched() -> bool:
     return _k1_launch_stock is None or _k1_launch_funcs() != _k1_launch_stock
 
 
-def _k1_push_launch_patched() -> None:
-    """At each K1 entry: whether a launch function is patched."""
-    global _k1_launch_pushed
-    patched = int(launch_patched())
-    if patched != _k1_launch_pushed:
-        _h.combat_set_globals({"K1_LAUNCH_PATCHED": patched})
-        _k1_launch_pushed = patched
+
 
 
 def refresh_stale_pulse_params() -> None:
@@ -2357,9 +2393,7 @@ def resync() -> None:
     on). Sets go first, so their frames' profile rows exist; every object's
     _containing_set is re-pushed with them, including objects whose set
     registered after them."""
-    global _k1_launch_pushed
     push_globals()
-    _k1_launch_pushed = None    # re-pushed at the next K1 entry
     # Slots resolved before the switch went off are not trusted: the
     # generation moves on (and is pushed), and every ship re-resolves.
     _forget_part_caches()
@@ -3611,7 +3645,6 @@ def k1_pump(ships, dt, pump_body) -> None:
     if not _k1_walk_check_sent:
         _k1_send_walk_check()
     _k1_recheck_overrides()
-    _k1_push_launch_patched()
     if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
         refresh_stale_pulse_params()
     # A step boundary: every slot the walk reads is fresh (the torpedo hits,
@@ -3637,7 +3670,6 @@ def k1_system(system, dt) -> None:
     if not _k1_walk_check_sent:
         _k1_send_walk_check()
     _k1_recheck_overrides()
-    _k1_push_launch_patched()
     if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
         refresh_stale_pulse_params()
     # A step boundary (StartFiring runs inside gl.ai, an effect's handler,

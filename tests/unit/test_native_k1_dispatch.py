@@ -951,16 +951,17 @@ def test_pulse_params_refresh_across_a_mission_swap_reset(monkeypatch):
     swap_at, ticks = 90, 240
     bolts = {}
     now = [0]
-    real_spawn = ws._spawn_projectile
+    from engine.appc import projectiles
+    real_register = projectiles.register
 
-    def spawn(emitter, mod, *, drf_override=0.0, world_dir=None):
+    def register(torp, *a, **kw):
+        # Not a launch function (_K1_LAUNCH_FUNCS): the native arm's bolts
+        # still spawn through SPAWN at the session's end, the same tick.
+        v = torp._velocity
         bolts[nc.enabled()].append((
-            now[0], emitter.GetName(),
-            None if world_dir is None else tuple(
-                float(c).hex() for c in (world_dir.x, world_dir.y,
-                                         world_dir.z))))
-        return real_spawn(emitter, mod, drf_override=drf_override,
-                          world_dir=world_dir)
+            now[0], torp._source_ship.GetName(),
+            tuple(float(c).hex() for c in (v.x, v.y, v.z))))
+        return real_register(torp, *a, **kw)
 
     def script(w, t):
         galaxy = w.ships["Galaxy"]
@@ -971,7 +972,7 @@ def test_pulse_params_refresh_across_a_mission_swap_reset(monkeypatch):
         now[0] = t
         if t == 0:
             bolts[w.native] = []
-            monkeypatch.setattr(ws, "_spawn_projectile", spawn)
+            monkeypatch.setattr(projectiles, "register", register)
             cannons.StartFiring(galaxy)
         elif t == swap_at:
             mod = importlib.import_module(
@@ -2961,3 +2962,202 @@ def test_native_dumb_fire_matches_python(monkeypatch):
     assert logged["dumb_launch"] >= 1, counts
     assert logged["dumb_launch"] + logged["tube_launch"] == len(nl.spawned)
     assert logged["dumb_refused"] > 0, counts
+
+
+def test_tube_launch_cache_follows_a_mission_swap_reset(monkeypatch):
+    """P6 extended, with today's invalidation: the mission-swap reset
+    (_reset_projectile_module_cache) with the torpedo module now answering
+    a different launch speed, and a launch made before any GameLoop.tick.
+    The cached launch is forgotten: exactly one launch (Python's, which
+    learns the new speed) is handed back uncached, and every later one is
+    native, at the new speed -- each torpedo as the reference's."""
+    from engine.appc import projectiles
+    state = {}
+
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        if t == 0:
+            torps.StartFiring(w.ships["Ahead"], TGPoint3(0.25, -0.5, 0.125))
+        elif t == 31:
+            mod = importlib.import_module(
+                torps.GetCurrentAmmoType().GetTorpedoScript())
+            state["slow"] = slow = float(mod.GetLaunchSpeed()) * 0.5
+            w.mp.setattr(mod, "GetLaunchSpeed", lambda: slow)
+            ws._reset_projectile_module_cache()     # the mission swap's
+            for tube in _weapons(torps):
+                tube.SetNumReady(1)
+            torps.StartFiring(w.ships["Ahead"],     # before any tick
+                              TGPoint3(0.25, -0.5, 0.125))
+        elif t == 62:
+            for tube in _weapons(torps):
+                tube.SetNumReady(1)
+
+    try:
+        (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 95)
+    finally:
+        ws._reset_projectile_module_cache()
+    assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
+    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) - 1 >= 2
+    # The launches after the reset left at the new speed.
+    ship_v = nw.ships["Galaxy"].GetVelocityTG()
+    after = [t for t in nl.torps
+             if nl.events[[e[1] for e in nl.events].index(nl.label(t))][3]
+             > 31]
+    assert len(after) >= 2, nl.events
+    for t in after:
+        v = t._velocity
+        d = TGPoint3(v.x - ship_v.x, v.y - ship_v.y, v.z - ship_v.z)
+        assert abs(d.Length() - state["slow"]) < 1e-9, (d.Length(), state)
+
+
+def test_kernel_spawn_launches_the_fire_time_module(monkeypatch):
+    """A kernel SPAWN carries the module resolved when the launch was
+    decided (as Python's own does): a module cache changed between the walk
+    and the boundary does not change what is launched."""
+    class _Other:
+        @staticmethod
+        def Create(pTorp):
+            pTorp.SetDamage(1.0)
+
+    held = []
+
+    def swap(w, t):
+        # After the walk, before the boundary; put back by the next tick.
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        script = torps.GetCurrentAmmoType().GetTorpedoScript()
+        if t < 39:
+            held.append((script, ws._projectile_modules.get(script)))
+            ws._projectile_modules[script] = _Other
+
+    def script(w, t):
+        while held:
+            name, mod = held.pop()
+            ws._projectile_modules[name] = mod
+        _tube_volley(w, t)
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, script, 40, inside=swap)
+    assert counts["k1_logged"]["tube_launch"] >= 2, counts
+    assert all(x[3] != ("float", 1.0) for x in nl.spawned), nl.spawned
+
+
+def test_posed_target_offset_hand_back_has_its_own_reason(monkeypatch):
+    """A posed target and an offset no Manual Aim slot holds (an AI's held
+    offset): the kernel cannot bake it, so the launch is handed back as
+    launch_posed_offset (not launch_other), and equals the reference."""
+    def script(w, t):
+        if t == 0:
+            _pose_ahead(w)
+        _tube_volley(w, t)
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, script, 40, ships=_POSED_LAUNCH_SHIPS)
+    why = counts["k1_launch_reasons"]
+    assert why["launch_posed_offset"] >= 1, why
+    assert why["launch_other"] == 0, why
+
+
+_TWO_LAUNCHERS = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+                  ("Galaxy2", "galaxy", (20.0, 0.0, 0.0), 0.0),
+                  ("Ahead", "vorcha", (10.0, 240.0, 5.0), math.pi))
+
+
+def test_patched_launch_function_seen_by_the_next_walk(monkeypatch):
+    """M3: a launch function patched mid-session -- here by the Python of
+    the session's first launch, a FIRE record (uncached) -- is seen at the
+    next record's re-validation, not only at the next K1 entry: the second
+    ship's launch in the same pump is handed back (launch_patched)."""
+    from engine.appc import subsystems
+    real = subsystems.subsystem_world_position
+    learn = nc.learn_tube_launch
+
+    def spy(*a, **kw):
+        return real(*a, **kw)
+
+    def script(w, t):
+        if t == 0:
+            def learn_and_patch(*a, **kw):
+                w.mp.setattr(subsystems, "subsystem_world_position", spy)
+                return learn(*a, **kw)
+            w.mp.setattr(nc, "learn_tube_launch", learn_and_patch)
+            for name in ("Galaxy", "Galaxy2"):
+                torps = w.ships[name].GetTorpedoSystem()
+                for tube in _weapons(torps):
+                    tube.SetNumReady(0)
+                torps.StartFiring(w.ships["Ahead"])
+        elif t == 1:
+            for name in ("Galaxy", "Galaxy2"):
+                for tube in _weapons(w.ships[name].GetTorpedoSystem()):
+                    tube.SetNumReady(1)
+
+    # Native only: under a patch Python's launches spawn at once through it
+    # (the spy is the point), so a tick with two launches orders its events
+    # unlike the reference's; parity under a patch is not what this pins.
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _TWO_LAUNCHERS, "k1_patch_mid", player="Galaxy")
+        try:
+            for t in range(40):
+                with host_loop._combat_effect_scope():
+                    w.tick(before=lambda w, t=t: script(w, t))
+            counts = nc.counts()
+        finally:
+            w.close()
+    why = counts["k1_launch_reasons"]
+    assert why["launch_uncached"] == 1, why
+    assert why["launch_patched"] >= 1, why
+    assert counts["k1_logged"]["tube_launch"] == 0, counts
+    names = nc._k1_launch_funcs_names()
+    for name in ("_launch_reads", "_defer_spawn", "spawn_launch",
+                 "subsystem_world_position"):
+        assert name in names, name
+
+
+_POSED_LAUNCH_SHIPS = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+                       ("Ahead", "birdofprey", (10.0, 240.0, 5.0), math.pi,
+                        "ships.BirdOfPrey"))
+
+
+def _pose_ahead(w):
+    articulation.force_pose(w.ships["Ahead"], "cruise")
+
+
+def test_warp_engine_slot_write_pushes_arriving(monkeypatch):
+    """Every writer of what `arriving` reads pushes it: a warp engine whose
+    slide is under way, given to a ship (SetWarpEngineSubsystem), makes its
+    row's `arriving` 1 (FireDumb's hold), and the audit agrees."""
+    from engine.appc.subsystems import WarpEngineSubsystem
+    nc.configure(ON)
+    ship = App.ShipClass_Create("Arriver")
+    h = ship.__dict__["_nslot"]
+    assert _h.combat_dump(h)["arriving"] == 0
+    warp = WarpEngineSubsystem("Warp")
+    warp._dewarp_drive = object()       # a slide under way
+    ship.SetWarpEngineSubsystem(warp)
+    assert _h.combat_dump(h)["arriving"] == 1
+    warp._end_dewarp_drive()
+    assert _h.combat_dump(h)["arriving"] == 0
+    nc.audit_mirror()
+    assert [f for f in nc.audit_failures() if f[1] == "arriving"] == []
+
+
+def test_python_dumb_fire_spawn_is_tagged_dumb(monkeypatch):
+    """Python's FireDumb (a dumb fire the kernel hands back) defers its
+    SPAWN tagged as the dumb kind, like the kernel's."""
+    from engine.appc import effect_queue as eq
+    kinds = []
+    post = eq.post
+
+    def spy(kind, *ops):
+        if kind == eq.SPAWN:
+            kinds.append(ops[1])
+        return post(kind, *ops)
+    monkeypatch.setattr(eq, "post", spy)
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _LAUNCH_SHIPS, "k1_dumb_tag", player="Galaxy")
+        try:
+            tube = w.ships["Galaxy"].GetTorpedoSystem().GetWeapon(0)
+            with eq.scope():
+                tube.FireDumb(0, 1)
+            assert kinds == [ws.SPAWN_DUMB], kinds
+        finally:
+            w.close()

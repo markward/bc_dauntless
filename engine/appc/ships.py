@@ -29,7 +29,7 @@ class ShipClass(DamageableObject):
     _tractor_beam_system = native_combat.NativeMountRefField("Subsystem")
     _torpedo_system = native_combat.NativeMountRefField("Subsystem")
     _impulse_engine_subsystem = native_combat.MountSlotField()
-    _warp_engine_subsystem = native_combat.MountSlotField()
+    _warp_engine_subsystem = native_combat.WarpSlotField()
     _power_subsystem = native_combat.MountSlotField()
     _repair_subsystem = native_combat.MountSlotField()
     # What the K2 beam kernel reads: the lock, the Manual Aim offset, the

@@ -4070,6 +4070,56 @@ py::object k1_value_py(const dauntless::combat::K1Value& value) {
         value);
 }
 
+// The module each Ammo row's launch resolved to (launch deferral, M1): an
+// OWNED reference per Ammo handle, set by native_combat.push_ammo_launch
+// beside the row's cached state (combat_set_ammo_module), so a kernel SPAWN
+// carries the module resolved at fire time, as Python's own SPAWN does.
+// A freed row's entry is never read again (handles carry a generation);
+// combat_clear and a None set drop references.
+std::unordered_map<std::int64_t, PyObject*>& k1_ammo_modules() {
+    static auto* m = new std::unordered_map<std::int64_t, PyObject*>();
+    return *m;  // never destroyed: it may own references at exit
+}
+
+void k1_ammo_modules_clear() {
+    std::unordered_map<std::int64_t, PyObject*> old;
+    old.swap(k1_ammo_modules());
+    for (auto& [h, o] : old) Py_DECREF(o);
+}
+
+// THE LAUNCH CHECK (launch deferral, M3): the functions a native launch
+// stands in for (native_combat._K1_LAUNCH_FUNCS), each as (its module's
+// dict, its name, the stock function), owned. Re-checked before every
+// combat_k1_next, as the walk check is re-scanned there: a function patched
+// by Python run mid-session (a record's, an ASK's) makes the next launch
+// Python's (K1_LAUNCH_PATCHED, K1LaunchWhy::Patched). A dict read, no call.
+struct K1LaunchFunc {
+    PyObject* dict = nullptr;
+    PyObject* name = nullptr;
+    PyObject* stock = nullptr;
+};
+
+std::vector<K1LaunchFunc>*& k1_launch_check() {
+    static std::vector<K1LaunchFunc>* c = nullptr;  // nullptr: not installed
+    return c;
+}
+
+void k1_launch_recheck() {
+    namespace cb = dauntless::combat;
+    const std::vector<K1LaunchFunc>* c = k1_launch_check();
+    if (c == nullptr) return;
+    std::int64_t patched = 0;
+    for (const K1LaunchFunc& f : *c) {
+        PyObject* cur = PyDict_GetItemWithError(f.dict, f.name);  // borrowed
+        if (cur == nullptr && PyErr_Occurred()) PyErr_Clear();
+        if (cur != f.stock) {
+            patched = 1;
+            break;
+        }
+    }
+    cb::mirror().set_global_i(cb::Global::K1_LAUNCH_PATCHED, patched);
+}
+
 // A SPAWN's operands (combat_effect_queue.h; effect_queue._spawn): the
 // record in order, flags and the kind as numbers (a handle is an int), the
 // target as the object itself when the session's applier can name it
@@ -4079,6 +4129,13 @@ void k1_append_spawn(const dauntless::combat::K1Entry& e) {
     namespace cb = dauntless::combat;
     namespace hq = dauntless::host;
     const cb::K1Spawn& s = *e.spawn;
+    // The module the ammo type's launch resolved to (k1_ammo_modules): set
+    // with the cached state the kernel launched on, so always present.
+    const auto mi = k1_ammo_modules().find(s.ammo);
+    if (mi == k1_ammo_modules().end())
+        throw std::logic_error(
+            "combat K1: a SPAWN's ammo type has no module (push_ammo_launch)");
+    PyObject* const module = mi->second;
     hq::WriteApplier& applier = hq::write_applier();
     auto held = [&](std::int64_t h) -> hq::NativeOperand {
         if (h == -1 || !applier.has_context()) return h;
@@ -4106,7 +4163,7 @@ void k1_append_spawn(const dauntless::combat::K1Entry& e) {
         static_cast<double>(static_cast<int32_t>(s.kind)),
         s.ship,
         s.set,
-        s.ammo,
+        hq::OwnedObject{Py_NewRef(module)},
         target,
         s.position[0], s.position[1], s.position[2],
         s.has_velocity ? 1.0 : 0.0,
@@ -4120,6 +4177,7 @@ void k1_append_spawn(const dauntless::combat::K1Entry& e) {
     };
     static_assert(std::size(ops) <= hq::EffectEntry::kMaxOperands);
     hq::effect_queue().append_native_span(hq::EffectKind::SPAWN, ops);
+    // (The queue now owns the module, target and fired-at references.)
 }
 
 // A K1 record's queue entries (k1_fire_control.h, THE EFFECT QUEUE) into
@@ -11254,6 +11312,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   cb::k2_kernel().clear();
                   cb::k3_kernel().clear();
                   cb::mirror().clear();
+                  k1_ammo_modules_clear();
               },
               "Drop every row (tests only; rows normally live as long as their "
               "Python object).");
@@ -12002,6 +12061,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
             if (const cb::K1WalkCheck* c = cb::k1_kernel().top_walk_check())
                 if (const K1SessionCheck* sc = c->target<K1SessionCheck>())
                     k1_scan(*sc->v);
+            k1_launch_recheck();
             cb::K1Record r = cb::k1_kernel().next();
             py::list writes;
             dauntless::host::WriteApplier& applier =
@@ -12126,6 +12186,52 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "the walked system, its children and its ship, the stock "
               "ShipClass's raw is_using_target_offset / GetTargetOffsetTG "
               "and ShipClass. registry None removes it.");
+        m.def("combat_set_ammo_module",
+              [](std::int64_t ammo, py::handle module) {
+                  auto& t = k1_ammo_modules();
+                  PyObject* old = nullptr;
+                  if (auto it = t.find(ammo); it != t.end()) {
+                      old = it->second;
+                      t.erase(it);
+                  }
+                  if (!module.is_none())
+                      t[ammo] = Py_NewRef(module.ptr());
+                  Py_XDECREF(old);
+              },
+              py::arg("ammo"), py::arg("module"),
+              "The module an Ammo row's cached launch resolved to (a kernel "
+              "SPAWN carries it); None drops it.");
+        m.def("combat_k1_set_launch_check",
+              [](py::handle funcs) {
+                  // [(module dict, name, stock function), ...] or None.
+                  std::vector<K1LaunchFunc>* next = nullptr;
+                  if (!funcs.is_none()) {
+                      next = new std::vector<K1LaunchFunc>();
+                      for (py::handle item : funcs) {
+                          auto t = py::reinterpret_borrow<py::tuple>(item);
+                          if (t.size() != 3 || !PyDict_Check(t[0].ptr()))
+                              throw py::type_error(
+                                  "(module dict, name, stock function)");
+                          next->push_back(K1LaunchFunc{
+                              Py_NewRef(t[0].ptr()), Py_NewRef(t[1].ptr()),
+                              Py_NewRef(t[2].ptr())});
+                      }
+                  }
+                  std::vector<K1LaunchFunc>* old = k1_launch_check();
+                  k1_launch_check() = next;
+                  if (old != nullptr) {
+                      for (K1LaunchFunc& f : *old) {
+                          Py_DECREF(f.dict);
+                          Py_DECREF(f.name);
+                          Py_DECREF(f.stock);
+                      }
+                      delete old;
+                  }
+              },
+              py::arg("funcs"),
+              "Install the launch check (THE LAUNCH CHECK): the functions a "
+              "native launch stands in for, re-checked before every "
+              "combat_k1_next; None removes it.");
         m.def("combat_k1_walk_offset",
               [](std::int64_t system) -> py::object {
                   const cb::Mirror& mm = cb::mirror();
@@ -12855,8 +12961,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       for (py::handle o : ops) {
                           if (PyFloat_Check(o.ptr()))
                               v[n++] = o.cast<double>();
-                          else
+                          else if (PyLong_Check(o.ptr()))
                               v[n++] = o.cast<std::int64_t>();
+                          else  // an object the entry owns (a SPAWN's)
+                              v[n++] = hq::OwnedObject{Py_NewRef(o.ptr())};
                       }
                       hq::effect_queue().append_native_span(
                           k, std::span<const hq::NativeOperand>(v, n));

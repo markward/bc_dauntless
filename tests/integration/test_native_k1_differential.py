@@ -288,6 +288,19 @@ class _Scene:
             self.held.append(obj)
         return name
 
+    def torp_row(self, t):
+        g = lambda name: getattr(t, name, None)  # noqa: E731
+        baked = g("_baked_offset")
+        return (self.label(t), _vec(t.GetTranslate()), _vec(t._velocity),
+                self.label(g("_target_ship")), _vec(g("_target_offset")),
+                None if baked is None else (self.label(baked[0]),
+                                            _vec(baked[1:4]),
+                                            _vec(baked[4])),
+                _t(g("_damage")), _t(g("_damage_radius_factor")),
+                _t(g("_ttl")), _t(g("_age")), _t(g("_guidance_lifetime")),
+                _t(g("_max_angular_accel")), self.label(t._source_ship),
+                t.GetContainingSet() is not None, _t(g("_is_disruptor")))
+
     def payload(self, evt):
         """A weapon hit's payload: damage, hit point and normal by .hex(),
         hull hit, weapon type, the struck subsystem and the target.  Any
@@ -507,6 +520,12 @@ class _Scene:
                         None if shields is None else tuple(
                             _t(float(shields.GetCurShields(f)))
                             for f in range(6))))
+        # Last (after the ships: the slices below index those): every
+        # torpedo and bolt in flight, in `_active` order (K3's flight and
+        # hit order), field by field -- the spawn's values (launch
+        # deferral) and its flight since.
+        for t in projectiles._active:
+            row.append(self.torp_row(t))
         self.log.append(row)
 
     # ── Run ──────────────────────────────────────────────────────────────────

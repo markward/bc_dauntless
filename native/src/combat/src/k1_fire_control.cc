@@ -108,7 +108,7 @@ const char* k1_effect_name(K1Effect e) {
 const char* k1_launch_why_name(K1LaunchWhy w) {
     static constexpr const char* kNames[] = {
         "launch_unresolved", "launch_uncached", "launch_patched",
-        "launch_other"};
+        "launch_posed_offset", "launch_other"};
     static_assert(std::size(kNames) ==
                   static_cast<size_t>(K1LaunchWhy::kCount));
     const auto i = static_cast<size_t>(w);
@@ -996,7 +996,12 @@ std::optional<Walker::LaunchPlan> Walker::plan_launch(int64_t tube,
             if (s_.offset) {
                 s.has_offset = true;
                 s.offset = *s_.offset;
-                s.baked = bake_offset(target, s.offset, s.ship);
+                try {
+                    s.baked = bake_offset(target, s.offset, s.ship);
+                } catch (const std::invalid_argument&) {
+                    *why = K1LaunchWhy::PosedOffset;
+                    return std::nullopt;
+                }
             }
         }
         // drf_override = self.GetDamageRadiusFactor()

@@ -50,7 +50,7 @@ enum class EffectKind : int {
     AMMO_CONSUMED,       // (tube)                 ET_TORPEDO_AMMO_CONSUMED
     TORPEDO_RELOAD,      // (tube)                 ET_TORPEDO_RELOAD
     WATCH,               // (watcher | weapon, old, new)  crossed checks
-    SPAWN,               // (launcher, kind, ship, set, ammo, target,
+    SPAWN,               // (launcher, kind, ship, set, module, target,
                          //  position xyz, has velocity, velocity xyz,
                          //  has offset, offset xyz, baked xyz, drf,
                          //  damage scale, fired at)

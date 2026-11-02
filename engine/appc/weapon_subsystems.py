@@ -14,7 +14,6 @@ bottom of subsystems.py guarantees the normal load order).
 """
 
 import math as _math
-import types as _types
 
 from engine.core import ids
 from engine.appc import effect_queue, native_combat, passive_weapons
@@ -814,7 +813,7 @@ def _play_launch_sound(mod, torp) -> None:
                     snd.Play()
 
 
-def spawn_launch(launcher, kind, ship, kset, ammo, target, record):
+def spawn_launch(launcher, kind, ship, kset, mod, target, record):
     """The SPAWN entry's delivery (effect_queue._spawn; spec 2026-11-02-
     combat-launch-deferral §4.1): K1 decided a launch and computed its fire-
     time values -- `record` is (position xyz, has velocity, velocity xyz,
@@ -822,22 +821,18 @@ def spawn_launch(launcher, kind, ship, kset, ammo, target, record):
     at) -- so the torpedo is
     built now, at the boundary, through the reference's own body
     (_new_projectile, _launch_projectile) with those values for its live
-    reads. `ammo` names the module (its script, resolved as _spawn_torpedo
-    resolves it: a cache hit). A tube's launch (kind 0, a dumb one 2) then
+    reads. `mod` is the module resolved when the launch was decided (the
+    kernel's: the ammo type's cached one, held from fire time; Python's: the
+    one its launch resolved). A tube's launch (kind 0, a dumb one 2) then
     posts its ET_TORPEDO_FIRED, as _spawn_torpedo does after the spawn.
     Returns the torpedo."""
     from engine.appc.math import TGPoint3
 
     (px, py, pz, has_velocity, vx, vy, vz, has_offset, ox, oy, oz,
      bx, by, bz, drf, damage_scale, fired_at) = record
-    if isinstance(ammo, _types.ModuleType):
-        mod = ammo                      # Python's own SPAWN (_defer_spawn)
-    else:
-        script = ammo.GetTorpedoScript() if ammo is not None else None
-        mod = _resolve_projectile_module(script) if script else None
     if mod is None:
-        raise RuntimeError("combat SPAWN: ammo %r has no module (K1 "
-                           "launches only a cached script)" % (ammo,))
+        raise RuntimeError("combat SPAWN: no module (a launch is deferred "
+                           "only with its module resolved)")
     torp = _new_projectile(mod, ship, px, py, pz)
     velocity = TGPoint3(vx, vy, vz) if has_velocity else None
     offset = baked = None
@@ -858,6 +853,10 @@ def spawn_launch(launcher, kind, ship, kset, ammo, target, record):
 
 # K1Spawn::Kind (k1_fire_control.h): a SPAWN entry's kind operand.
 SPAWN_TUBE, SPAWN_PULSE, SPAWN_DUMB = range(3)
+
+# The weapons inside Weapon.FireDumb's Fire (innermost last): their launch
+# is the dumb kind.
+_dumb_firing: list = []
 
 
 def _post_weapon_fired(weapon, target) -> None:
@@ -1417,7 +1416,13 @@ class Weapon(ShipSubsystem):
         """
         if _dewarp_blocks_fire(self):
             return
-        self.Fire(target=None, offset=None)
+        # The launch its Fire makes is the dumb kind (a deferred SPAWN's
+        # tag, as the kernel's: k1_fire_control.cc, dumb_fire).
+        _dumb_firing.append(self)
+        try:
+            self.Fire(target=None, offset=None)
+        finally:
+            _dumb_firing.pop()
 
     def CalculateRoughDirection(self) -> TGPoint3:
         """WORLD-space mount direction.  SDK AI/Preprocessors.py:456 and
@@ -3838,7 +3843,9 @@ class TorpedoTube(Weapon):
         if effect_queue.deferring() and not native_combat.launch_patched():
             # Deferred like K1's launch (E4): the spawn and its
             # ET_TORPEDO_FIRED at the boundary, in emission order.
-            _defer_spawn(self, mod, SPAWN_TUBE, self.GetDamageRadiusFactor())
+            kind = (SPAWN_DUMB if _dumb_firing and _dumb_firing[-1] is self
+                    else SPAWN_TUBE)
+            _defer_spawn(self, mod, kind, self.GetDamageRadiusFactor())
             return
         torp = _spawn_projectile(self, mod,
                                  drf_override=self.GetDamageRadiusFactor())

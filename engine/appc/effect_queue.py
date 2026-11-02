@@ -36,7 +36,7 @@ A kernel appends the same kinds natively, naming objects by mirror handle
 (-1 None); its WATCH names the WEAPON, whose charge watcher it means. And
 one kind only a kernel appends (spec 2026-11-02-combat-launch-deferral
 §4.1):
-  SPAWN(launcher, kind, ship, set, ammo, target, position xyz, has
+  SPAWN(launcher, kind, ship, set, module, target, position xyz, has
         velocity, velocity xyz, has offset, offset xyz, baked xyz, drf,
         damage scale, fired at)
                               a launch, its fire-time values read when it
@@ -53,10 +53,12 @@ one kind only a kernel appends (spec 2026-11-02-combat-launch-deferral
                               or a cannon's damage scale and its
                               ET_WEAPON_FIRED at `fired at` (M4: once the
                               bolt exists). A kernel's kind and flags are
-                              numbers, its target and `fired at` the
+                              numbers; its module (the one its launch
+                              resolved), target and `fired at` are the
                               objects themselves, held from fire time, so
-                              one freed before the boundary is still the
-                              torpedo's (the bindings, k1_append_spawn).
+                              one freed or swapped before the boundary is
+                              still the torpedo's (the bindings,
+                              k1_append_spawn).
 
 DELIVERY (``flush``). The queue is taken whole and each entry performed in
 order with the scope closed -- so a delivered event's handler, and anything
@@ -390,9 +392,9 @@ def _watch(watcher, old, new):
     watcher._fire_crossed(old, new)
 
 
-def _spawn(launcher, kind, ship, kset, ammo, target, *record):
+def _spawn(launcher, kind, ship, kset, module, target, *record):
     from engine.appc.weapon_subsystems import spawn_launch
-    spawn_launch(launcher, kind, ship, kset, ammo, target, record)
+    spawn_launch(launcher, kind, ship, kset, module, target, record)
 
 
 _DELIVER = (_fire_sound, _loop_stop, _weapon_fired, _weapon_fire_failed,

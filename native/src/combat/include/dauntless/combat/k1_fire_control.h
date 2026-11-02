@@ -129,9 +129,9 @@
 // counted by K1LaunchWhy: no ammo type or no module (Unresolved), the
 // type's launch not cached yet (Uncached: Python's own first launch of a
 // script caches it), a function the launch stands in for patched
-// (Patched), anything the mirror cannot say (Other: slot lists out of step
-// with MaxReady, an unnamed set, a posed target's offset with no Manual
-// Aim slot to bake it). Whatever the module's Create does, it runs at the
+// (Patched), a posed target's offset it cannot bake (PosedOffset),
+// anything else the mirror cannot say (Other: slot lists out of step with
+// MaxReady, an unnamed set). Whatever the module's Create does, it runs at the
 // delivery (rulings L1, L6: an impure script draws there). The Python of a
 // handed-back record, running inside the deferral, appends its own SPAWN
 // too (effect_queue E4; weapon_subsystems._defer_spawn), so every launch
@@ -304,11 +304,14 @@ enum class K1LaunchWhy : int32_t {
     Uncached,        // the type's launch is not cached yet
     Patched,         // a function the launch stands in for is patched
                      // (native_combat._K1_LAUNCH_FUNCS: a test's spy, a
-                     // tool), pushed as K1_LAUNCH_PATCHED
-    Other,           // the mirror cannot say: slot lists out of step with
-                     // MaxReady (_ensure_slots would rebuild them), an
-                     // unnamed set, a posed target's offset with no Manual
-                     // Aim slot to bake it, a row the plan cannot read
+                     // tool), K1_LAUNCH_PATCHED, re-checked by the bindings
+                     // before every next() like the walk check
+    PosedOffset,     // a posed target's offset the kernel cannot bake: no
+                     // Manual Aim slot holds it (an AI's held offset: the
+                     // box rule is Python's), or its slot is stale
+    Other,           // the mirror is inconsistent: slot lists out of step
+                     // with MaxReady (_ensure_slots would rebuild them), an
+                     // unnamed set, a row the plan cannot read
     kCount
 };
 const char* k1_launch_why_name(K1LaunchWhy w);

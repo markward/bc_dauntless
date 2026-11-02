@@ -852,6 +852,17 @@ def _h_of(obj):
     return obj.__dict__["_nslot"]
 
 
+def _module(name):
+    """A stock projectile module: a SPAWN carries the module itself (the one
+    its launch resolved, held from fire time)."""
+    import importlib
+    return importlib.import_module("Tactical.Projectiles." + name)
+
+
+def _photon():
+    return _module("PhotonTorpedo")
+
+
 def test_spawn_builds_the_torpedo_from_its_record(events):
     """SPAWN(tube, kind, ship, set, ammo, target, position, velocity,
     offset, baked, drf): the delivery builds the torpedo through the shared
@@ -864,7 +875,7 @@ def test_spawn_builds_the_torpedo_from_its_record(events):
         before = list(projectiles._active)
         with eq.scope():
             _post_native(eq.SPAWN, _h_of(tube), 0.0, _h_of(ship),
-                         _h_of(kset), _h_of(ammo), _h_of(target),
+                         _h_of(kset), _photon(), _h_of(target),
                          1.0, 2.0, 3.0, 1.0, 4.0, 5.0, 6.0,
                          1.0, 0.125, -0.25, 0.5, 0.375, -0.25, 0.5, 0.25,
                          1.0, -1)
@@ -907,7 +918,7 @@ def test_spawn_without_velocity_offset_or_override(events):
         before = list(projectiles._active)
         with eq.scope():
             _post_native(eq.SPAWN, _h_of(tube), 2.0, _h_of(ship),
-                         _h_of(kset), _h_of(ammo), -1,
+                         _h_of(kset), _photon(), -1,
                          1.0, 2.0, 3.0, 0.0, 9.0, 9.0, 9.0,
                          0.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 0.0,
                          1.0, -1)
@@ -933,7 +944,6 @@ def test_pulse_spawn_scales_its_bolt_then_reports_the_shot(events,
     now that the bolt exists (M4). No ET_TORPEDO_FIRED: tubes only."""
     from engine.appc import projectiles
     kset, ship, target, cannon, ammo = _spawn_scene()
-    ammo.SetTorpedoScript("Tactical.Projectiles.Disruptor")
     seen = []
     orig = App.g_kEventManager.AddEvent
 
@@ -947,7 +957,7 @@ def test_pulse_spawn_scales_its_bolt_then_reports_the_shot(events,
         monkeypatch.setattr(App.g_kEventManager, "AddEvent", add)
         with eq.scope():
             _post_native(eq.SPAWN, _h_of(cannon), 1.0, _h_of(ship),
-                         _h_of(kset), _h_of(ammo), -1,
+                         _h_of(kset), _module("Disruptor"), -1,
                          1.0, 2.0, 3.0, 1.0, 4.0, 5.0, 6.0,
                          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                          1.5, _h_of(target))
