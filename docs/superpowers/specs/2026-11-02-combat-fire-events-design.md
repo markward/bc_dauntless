@@ -28,7 +28,7 @@ After it, K0 returns nothing but its whole-ship fallback, K1 only launches (0.10
 2. **K0, K1 and K2 stop returning records for them** (§4.3): the kernel logs the writes and appends queue entries.
 3. **Bug fix, both switch states** (event-emitter-gaps #14): `ET_WEAPON_FIRED` carries the target ship as its object pointer, and pulse weapons post it.
 4. Game state bit-exact with the Python reference, switch on, apart from the timing of the queued events themselves (§5); behaviour byte-identical, switch off, apart from goal 3.
-5. Measured: two benchmark runs against step 2's (`eq-*` logs). No speed target; the expected change is small (0.56 records per tick), and must not be a slowdown.
+5. Measured: two benchmark runs against step 2's (`eq-*` logs). No speed target; the expected change is small (0.66 records per tick), and must not be a slowdown.
 
 **Non-goals**
 - Torpedo and pulse launches (the launch script, the projectile): workstream F. Their events are queued (from Python) in this phase; the record stays.
@@ -47,7 +47,7 @@ After it, K0 returns nothing but its whole-ship fallback, K1 only launches (0.10
 
 - A native, ordered queue in the host layer (beside `combat_write_apply`), one per process. An entry is a kind plus its operands: mirror handles when a kernel appends, Python object references when Python appends (the lock is held for both). One emission order for both.
 - **The deferral scope.** With the switch on, `host_loop` opens the scope around each sim tick's `sim.weapons` and `sim.combat` and **flushes it when the tick's combat step ends** (the tick boundary). Inside the scope every producer in §4.2 appends instead of acting. Outside it (an AI's `StartFiring` running a K1 system session from `gl.ai`, a mission script calling `StopFiring`):
-  - a Python producer acts at once, as today;
+  - a Python producer acts at once, as today, unless a native session is open (ruling F3, §10: a native session opens its own deferral);
   - a native session's entries are delivered when that session ends (its caller is Python already; nothing waits on a boundary).
 - **Delivery** (Python, in queue order): resolve handles (an entry whose object was freed or unregistered is skipped and counted), then perform the entry's Python (§4.2). A failing entry is logged and delivery carries on (decision 13); under tests and `--developer` the flush delivers the rest, then re-raises the first error with the later ones as notes.
 - Switch off: no scope is ever open; every producer acts at once. Byte-identical.
@@ -83,7 +83,7 @@ Every producer appends when the scope is open, **including Python ones** (a ship
 
 ## 6. Testing
 
-- **Queue unit tests:** emission order across native and Python appends; scope open/closed; native session outside the scope delivers at its end; freed objects skipped and counted; decision 13 in both modes; abandon drops a session's entries.
+- **Queue unit tests:** emission order across native and Python appends; scope open/closed; native session outside the scope delivers at its end; freed objects skipped and counted; decision 13 in both modes; an abandoned session keeps its entries (ruling F5, §10).
 - **Kernel tests (C++):** each converted record is now logged writes plus the right entries, in walk order; the remaining records are unchanged.
 - **Dispatch tests (Python):** a bank fired natively and stopped from Python in the same tick plays then stops its loop; a tube launch's three events arrive in R3 order; a reload and a watcher crossing are delivered at the boundary.
 - **Differentials (K0, K1, K2, step):** the queued kinds compare per tick as an ordered list among themselves (both arms emit them in the same order) and leave the ordered game-state event log; everything else unchanged. Every existing branch tally still fires.
@@ -102,7 +102,7 @@ Built 2026-11-02 on `ws/combat-fire-events`; awaiting Mark's live check (after s
 
 - **`ET_WEAPON_FIRED` carries its target** as the object pointer, and pulse weapons post it (event-emitter-gaps #14). Also brings E2M2's and E6M4's `WeaponFired` handlers to life (not verified in play).
 - **The effect queue** (`native/src/host/combat_effect_queue.{h,cc}`, `engine/appc/effect_queue.py`): one ordered queue for the §4.2 kinds from kernels (mirror handles) and Python (object references); the tick scope around `sim.weapons` + `sim.combat`; delivery with decision 13; a session-level deferral for native sessions outside the scope (ruling F3); entries naming a row dropped for an unencodable value are rebound to the object first, so they are still delivered.
-- **Kernels:** K0 returns only `RUN_PYTHON`/`DONE`; K1 only tube/pulse/dumb `FIRE`, `ASK`, `RUN_PYTHON`, handed-back `WALK_START`, `DONE` (plus a documented fallback stop for a gone row); K2 only `CONTACT` (damage pulse), `ASK`, `RUN_PYTHON`, `DONE` (plus documented fallback stops). One shared stop encoding (`stop_firing.h`) for all three.
+- **Kernels:** K0 returns only `RUN_PYTHON`/`DONE`; K1 only tube/pulse/dumb `FIRE`, `ASK`, `RUN_PYTHON`, handed-back `WALK_START`, `DONE` (plus documented fallback stops: `BANK_STOP` for a gone row, `STOP_SYSTEM` when the walk check hands the stop back); K2 only `CONTACT` (damage pulse), `ASK`, `RUN_PYTHON`, `DONE` (plus documented fallback stops). One shared stop encoding (`stop_firing.h`) for all three.
 
 ### Rulings worth keeping
 
@@ -116,7 +116,7 @@ Built 2026-11-02 on `ws/combat-fire-events`; awaiting Mark's live check (after s
 
 ### Measured (perf register C-266, C-267, SIG-173)
 
-Records handed back to Python per tick (64 ships): K0 0.087 → 0; K1 0.599 → 0.103 (launches only); K2 0.522 → 0.471 (damage pulses only). Queue: 1.1 entries per tick, none skipped or failed. Benchmark, two runs against two: `cb.phasers` 0.573 → 0.526 ms per tick; `cb.held_weapons`, `sim.weapons`, `sim.combat` within spread; `sim` 8.94 → 9.31, attributed to `gl.ai` run-to-run noise (the queue's own cost, instrumented, is ~0.06 ms per tick, and the AI-started K1 sessions cost the same as before). A third pair of runs would settle the `sim` row.
+Records handed back to Python per tick (64 ships): K0 0.087 → 0; K1 0.599 → 0.103 (launches only); K2 0.522 → 0.471 (damage pulses only). Queue: 1.1 entries per tick, none skipped or failed. Benchmark, two runs against two: `cb.phasers` 0.573 → 0.526 ms per tick; `cb.held_weapons`, `sim.weapons`, `sim.combat` within spread; `sim` 8.94 → 9.31, **unexplained**: the end-of-tick flush ran outside every profiled sub-row, and the ~0.06 ms per tick instrumented for the queue was measured headless, where sounds cost nothing (final review I1). A `sim.effects` scope and a third pair of runs settle it.
 
 ### Next
 
