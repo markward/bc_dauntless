@@ -33,7 +33,30 @@ code; weapon_subsystems / float_range_watcher):
                               once; delivery fires the checks crossed
                               between old and new, as registered THEN (E3)
 A kernel appends the same kinds natively, naming objects by mirror handle
-(-1 None); its WATCH names the WEAPON, whose charge watcher it means.
+(-1 None); its WATCH names the WEAPON, whose charge watcher it means. And
+one kind only a kernel appends (spec 2026-11-02-combat-launch-deferral
+§4.1):
+  SPAWN(launcher, kind, ship, set, ammo, target, position xyz, has
+        velocity, velocity xyz, has offset, offset xyz, baked xyz, drf,
+        damage scale, fired at)
+                              a launch, its fire-time values read when it
+                              was decided: K1's (k1_fire_control.h,
+                              LAUNCHES AT THE BOUNDARY) or Python's own
+                              while this queue defers (E4 for launches,
+                              rulings L5-L6: weapon_subsystems._defer_spawn,
+                              a tube's or a cannon's, whatever its module's
+                              Create does). Delivery builds the torpedo from
+                              that record (weapon_subsystems.spawn_launch:
+                              Create, register -- ET_TORPEDO_ENTERED_SET, so
+                              ruling L2 moves it to the boundary -- and the
+                              launch sound), then a tube's ET_TORPEDO_FIRED,
+                              or a cannon's damage scale and its
+                              ET_WEAPON_FIRED at `fired at` (M4: once the
+                              bolt exists). A kernel's kind and flags are
+                              numbers, its target and `fired at` the
+                              objects themselves, held from fire time, so
+                              one freed before the boundary is still the
+                              torpedo's (the bindings, k1_append_spawn).
 
 DELIVERY (``flush``). The queue is taken whole and each entry performed in
 order with the scope closed -- so a delivered event's handler, and anything
@@ -93,9 +116,10 @@ _logger = logging.getLogger(__name__)
 
 #: The kinds, in combat_effect_queue.h's order (combat_effect_kinds()).
 KIND_NAMES = ("FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED",
-              "TORPEDO_FIRED", "AMMO_CONSUMED", "TORPEDO_RELOAD", "WATCH")
+              "TORPEDO_FIRED", "AMMO_CONSUMED", "TORPEDO_RELOAD", "WATCH",
+              "SPAWN")
 (FIRE_SOUND, LOOP_STOP, WEAPON_FIRED, WEAPON_FIRE_FAILED, TORPEDO_FIRED,
- AMMO_CONSUMED, TORPEDO_RELOAD, WATCH) = range(len(KIND_NAMES))
+ AMMO_CONSUMED, TORPEDO_RELOAD, WATCH, SPAWN) = range(len(KIND_NAMES))
 
 _depth = 0              # open scopes
 _sessions = 0           # open native-session deferrals (session())
@@ -366,5 +390,10 @@ def _watch(watcher, old, new):
     watcher._fire_crossed(old, new)
 
 
+def _spawn(launcher, kind, ship, kset, ammo, target, *record):
+    from engine.appc.weapon_subsystems import spawn_launch
+    spawn_launch(launcher, kind, ship, kset, ammo, target, record)
+
+
 _DELIVER = (_fire_sound, _loop_stop, _weapon_fired, _weapon_fire_failed,
-            _torpedo_fired, _ammo_consumed, _torpedo_reload, _watch)
+            _torpedo_fired, _ammo_consumed, _torpedo_reload, _watch, _spawn)

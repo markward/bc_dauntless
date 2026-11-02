@@ -183,8 +183,9 @@ def reset() -> None:
     _kind_by_type.clear()
     _k1_overridden_by_type.clear()
     _k1_watch.clear()
-    global _pulse_stale
+    global _pulse_stale, _k1_launch_pushed
     _pulse_stale = False
+    _k1_launch_pushed = None    # re-pushed at the next K1 entry
     _counts["native_calls"] = 0
     _counts["fallbacks"] = 0
     for k in _k2_steps:
@@ -1302,7 +1303,13 @@ _K1_LEAF_METHODS = (
     "_charge_gate",
     "_shot_cost", "_aim_in_arc", "IsFiring", "IsMemberOfGroup", "IsDumbFire",
     "GetConditionPercentage", "GetDisabledPercentage", "IsDisabled",
-    "_ammo_exhausted", "IsSkewFire", "GetParentSubsystem", "_climb_to_ship")
+    "_ammo_exhausted", "IsSkewFire", "GetParentSubsystem", "_climb_to_ship",
+    # A tube's launch (launch deferral): the spawn, its slot cooldown, the
+    # launcher's reads and the dumb fire.
+    # (Its events are delivered by the class's own methods: not here.)
+    "_spawn_torpedo", "_start_slot_cooldown", "_ensure_slots",
+    "GetDamageRadiusFactor", "GetDirection", "GetRight",
+    "_emitter_world_position", "FireDumb")
 _K1_SYSTEM_METHODS = (
     "update_weapons", "try_fire_weapon", "_prune_targets",
     "_active_chain_groups", "_resolve_working_group", "_firing_weapon",
@@ -1324,7 +1331,7 @@ _K1_SYSTEM_METHODS = (
 _K1_SYSTEM_PATCHES = ("update_weapons", "try_fire_weapon",
                       "_live_held_offset", "StopFiring")
 _K1_LEAF_PATCHES = ("Fire", "_fire_decide", "_fire_effect", "StopFiring",
-                    "CanFire")
+                    "CanFire", "FireDumb", "_spawn_torpedo")
 # The firing ship's side of the walk offset (_live_held_offset's probe and
 # its Manual Aim branch), which the kernel computes from the mirror: an
 # instance attribute shadowing one, or a class resolving them to anything
@@ -1507,6 +1514,8 @@ def _flags(obj, h) -> dict:
             # is a ship.
             "has_real_get_shields": int(implements(obj, "GetShields")),
             "is_ship_class": int(isinstance(obj, ShipClass)),
+            # Weapon.FireDumb's warp-in hold (K1's native dumb fire).
+            "arriving": _arriving_flag(obj),
         }
     if k == _kind("Subsystem"):
         return {"has_parent_ship_getter": int(implements(obj,
@@ -1905,10 +1914,139 @@ def mark_pulse_stale() -> None:
     resolved now (the SDK tree may be half reloaded); the next push, the
     next K1 entry (k1_pump / k1_system: a K1 decision reads the params, and
     Python's Fire would read the module at that moment) or
-    refresh_stale_pulse_params (GameLoop.tick) re-reads every built bank."""
+    refresh_stale_pulse_params (GameLoop.tick) re-reads every built bank.
+    Every ammo type's launch is forgotten at once (nothing is resolved for
+    that: its next launch is Python's, which learns it again)."""
     global _pulse_stale
     if _enabled:
         _pulse_stale = True
+        for h, obj in list(_registry.items()):
+            if ((h >> _KIND_SHIFT) == _kind("Ammo")
+                    and obj.__dict__.get("_nslot") == h):
+                push_ammo_launch(obj)
+
+
+# ── The per-type launch cache (launch deferral; P6 extended to tubes) ────────
+# Spec docs/superpowers/specs/2026-11-02-combat-launch-deferral-design.md
+# §4.1. K1 makes a tube's launch natively only from an ammo type whose
+# script's launch Python has cached (weapon_subsystems._tube_launch_cache):
+# its state (cached / unresolved) and launch speed, pushed to every
+# Ammo row of that script. Learned from Python's own launch of the script
+# (TorpedoTube._spawn_torpedo, which has just resolved its module, so no
+# import happens at any other time); until then the type's launches are
+# handed back (K1LaunchWhy::Uncached). Forgotten with the projectile module
+# cache (mark_pulse_stale).
+
+def _ammo_launch(ammo) -> tuple:
+    """(ammo_launch_state, ammo_launch_speed) for an ammo type: its
+    script's cached launch, (0, 0.0) not cached yet, unresolved when it has
+    no script (_spawn_torpedo then reads the property's: not mirrored)."""
+    from engine.appc import weapon_subsystems as ws
+    script = ammo.__dict__.get("_script")
+    if not script:
+        return (ws.LAUNCH_UNRESOLVED, 0.0)
+    return ws._tube_launch_cache.get(script, (ws.LAUNCH_UNCACHED, 0.0))
+
+
+def push_ammo_launch(ammo) -> None:
+    """Push the ammo type's launch (_ammo_launch): at its creation, a new
+    script, a learned or forgotten cache."""
+    if _enabled:
+        h = ammo.__dict__.get("_nslot")
+        if h is None:
+            return
+        state, speed = _ammo_launch(ammo)
+        _call(ammo, _h.combat_set_i, h, _fid("ammo_launch_state"), state)
+        if "_nslot" in ammo.__dict__:
+            _call(ammo, _h.combat_set_f, h, _fid("ammo_launch_speed"),
+                  float(speed))
+
+
+def learn_tube_launch(script, mod) -> None:
+    """Python resolved torpedo `script` to `mod` for a launch: cache its
+    launch (weapon_subsystems.tube_launch_params) and push it to every
+    ammo type of that script."""
+    from engine.appc import weapon_subsystems as ws
+    if not script or script in ws._tube_launch_cache:
+        return
+    ws._tube_launch_cache[script] = ws.tube_launch_params(mod)
+    for h, obj in list(_registry.items()):
+        if ((h >> _KIND_SHIFT) == _kind("Ammo")
+                and obj.__dict__.get("_nslot") == h
+                and obj.__dict__.get("_script") == script):
+            push_ammo_launch(obj)
+
+
+def _arriving_flag(ship) -> int:
+    """warp_state.is_arriving(ship) (Weapon.FireDumb's warp-in hold), read
+    from the instance dicts: safe while the ship is still being built."""
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import WarpEngineSubsystem
+    if not isinstance(ship, ShipClass):
+        return 0
+    sub = ship.__dict__.get("_warp_engine_subsystem")
+    return int(isinstance(sub, WarpEngineSubsystem)
+               and sub.__dict__.get("_dewarp_drive") is not None)
+
+
+def push_arriving(ship) -> None:
+    """The ship's warp-in slide began or ended
+    (WarpEngineSubsystem._begin_dewarp_drive / _end_dewarp_drive)."""
+    if _enabled and ship is not None:
+        h = ship.__dict__.get("_nslot")
+        if h is not None and (h >> _KIND_SHIFT) == _kind("Object"):
+            _call(ship, _h.combat_set_i, h, _fid("arriving"),
+                  _arriving_flag(ship))
+
+
+# The functions K1's native launch stands in for, as weapon_subsystems and
+# projectiles define them (k1_snapshot_launch): any patched (a test's spy, a
+# tool) hands every launch to Python (K1_LAUNCH_PATCHED, K1LaunchWhy::
+# Patched), as a patched K1 method is never decided natively.
+_K1_LAUNCH_FUNCS = (
+    ("engine.appc.weapon_subsystems",
+     ("_spawn_projectile", "_emitter_forward_world", "_dewarp_blocks_fire",
+      "_resolve_projectile_module", "_new_projectile",
+      "_launch_projectile")),
+    ("engine.appc.projectiles", ("_bake_offset",)),
+)
+_k1_launch_mods = None
+_k1_launch_stock = None
+_k1_launch_pushed = None
+
+
+def k1_snapshot_launch() -> None:
+    """weapon_subsystems, once defined: snapshot the stock launch functions
+    (_K1_LAUNCH_FUNCS)."""
+    global _k1_launch_mods, _k1_launch_stock, _k1_launch_pushed
+    import importlib
+    _k1_launch_mods = tuple((importlib.import_module(m), names)
+                            for m, names in _K1_LAUNCH_FUNCS)
+    _k1_launch_stock = _k1_launch_funcs()
+    _k1_launch_pushed = None
+
+
+def _k1_launch_funcs() -> tuple:
+    out = []
+    for mod, names in _k1_launch_mods or ():
+        out.extend(getattr(mod, n, None) for n in names)
+    return tuple(out)
+
+
+def launch_patched() -> bool:
+    """Whether a function a launch's deferral stands in for is not stock
+    (_K1_LAUNCH_FUNCS): a test's spy, a tool. Its launches then spawn
+    mid-walk through the patched function, kernel's and Python's alike."""
+    return _k1_launch_stock is None or _k1_launch_funcs() != _k1_launch_stock
+
+
+def _k1_push_launch_patched() -> None:
+    """At each K1 entry: whether a launch function is patched."""
+    global _k1_launch_pushed
+    patched = int(launch_patched())
+    if patched != _k1_launch_pushed:
+        _h.combat_set_globals({"K1_LAUNCH_PATCHED": patched})
+        _k1_launch_pushed = patched
 
 
 def refresh_stale_pulse_params() -> None:
@@ -1966,6 +2104,8 @@ def _push_extras(obj, h) -> None:
     elif k == _kind("Set"):
         push_set_members(obj)
         push_set_frame(obj)
+    elif k == _kind("Ammo"):
+        push_ammo_launch(obj)
 
 
 def _push_all(obj, h) -> None:
@@ -2217,7 +2357,9 @@ def resync() -> None:
     on). Sets go first, so their frames' profile rows exist; every object's
     _containing_set is re-pushed with them, including objects whose set
     registered after them."""
+    global _k1_launch_pushed
     push_globals()
+    _k1_launch_pushed = None    # re-pushed at the next K1 entry
     # Slots resolved before the switch went off are not trusted: the
     # generation moves on (and is pushed), and every ship re-resolves.
     _forget_part_caches()
@@ -2665,6 +2807,20 @@ def audit_mirror() -> None:
             ok, speed, life = ws.resolve_pulse_module_params(
                 ws.pulse_module_script(obj))
             expected.update(module_ok=ok, launch_speed=speed, lifetime=life)
+        if (h >> _KIND_SHIFT) == _kind("Ammo"):
+            # Resolved afresh from the module Python's launch resolved (a
+            # stale cache entry would otherwise agree with a stale row).
+            from engine.appc import weapon_subsystems as ws
+            script = d.get("_script")
+            if not script:
+                state, speed = ws.LAUNCH_UNRESOLVED, 0.0
+            elif script in ws._tube_launch_cache:
+                state, speed = ws.tube_launch_params(
+                    ws._projectile_modules.get(script))
+            else:
+                state, speed = ws.LAUNCH_UNCACHED, 0.0
+            expected.update(ammo_launch_state=state,
+                            ammo_launch_speed=float(speed))
         if (h >> _KIND_SHIFT) == _kind("Object") and row["py_id"] != id(obj):
             _failures.append((name, "py_id"))
         for field, v in expected.items():
@@ -3072,7 +3228,9 @@ def _quiet_setter(cls, name) -> tuple:
 def apply_writes(writes, walk=None) -> None:
     """Apply a K1 write log [(handle, field, value), ...] in order, without
     pushing (the kernel already wrote the mirror). Ref values are handles
-    (-1: None), a ref list a list of handles; the marker ("walk_offset",
+    (-1: None), a ref list a list of handles, ("slot", index, value) an
+    in-place write of one element of the object's own list (K1's launch:
+    a tube's slot cooldown); the marker ("walk_offset",
     walk, system) is that walk's own offset object (_K1Walk.materialise:
     the first write naming a walk not yet materialised fetches it). `walk`
     maps handles through its pin set; without one, through the registry.
@@ -3121,13 +3279,20 @@ def apply_writes(writes, walk=None) -> None:
     except BaseException as e:
         failed = writes[i][2]
         _apply_rest(writes[i + 1:], walk,
-                    {failed[1]} if type(failed) is tuple else set(), e)
+                    {failed[1]} if (type(failed) is tuple
+                                    and failed[0] == "walk_offset")
+                    else set(), e)
         raise
 
 
 def _apply_write(walk, h, field, value) -> None:
     """One logged write (apply_writes)."""
     obj = walk.obj(h)
+    if type(value) is tuple and value[0] == "slot":
+        # ("slot", index, value): in place, on the object's own list (a
+        # tube's _reload_timers / _reload_advanced_at: K1's launch).
+        obj.__dict__[field][value[1]] = value[2]
+        return
     setter, kind = _quiet_setter(type(obj), field)
     if kind is _REF:
         value = walk.obj(value)
@@ -3145,7 +3310,8 @@ def _apply_rest(writes, walk, failed, exc) -> None:
     note to `exc` (re-raised by the caller). Any other raise propagates,
     with `exc` as its __context__."""
     for h, field, value in writes:
-        if type(value) is tuple and walk.walk != value[1]:
+        if (type(value) is tuple and value[0] == "walk_offset"
+                and walk.walk != value[1]):
             if value[1] in failed:
                 continue
             try:
@@ -3445,6 +3611,7 @@ def k1_pump(ships, dt, pump_body) -> None:
     if not _k1_walk_check_sent:
         _k1_send_walk_check()
     _k1_recheck_overrides()
+    _k1_push_launch_patched()
     if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
         refresh_stale_pulse_params()
     # A step boundary: every slot the walk reads is fresh (the torpedo hits,
@@ -3470,6 +3637,7 @@ def k1_system(system, dt) -> None:
     if not _k1_walk_check_sent:
         _k1_send_walk_check()
     _k1_recheck_overrides()
+    _k1_push_launch_patched()
     if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
         refresh_stale_pulse_params()
     # A step boundary (StartFiring runs inside gl.ai, an effect's handler,

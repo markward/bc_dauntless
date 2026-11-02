@@ -103,10 +103,46 @@
 // entries of the call with its writes. An abandoned session drops nothing
 // from the queue (ruling F5): every entry there stands for an effect that
 // already happened, and is delivered as usual.
-// Records left: FIRE for a tube or a cannon only, FIRE_DUMB, ASK,
-// RUN_PYTHON, a handed-back WALK_START, BANK_STOP / STOP_SYSTEM only for a
-// row gone or a stop the walk check hands back, DONE. FIRE_FAILED is never
-// returned.
+//
+// LAUNCHES AT THE BOUNDARY (spec 2026-11-02-combat-launch-deferral §4.1).
+// A tube's launch -- a Fire on a tube decided natively, or the dumb fire
+// (Weapon.FireDumb: `_dewarp_blocks_fire`, then Fire(None, None)) -- is no
+// record either. Its Python, TorpedoTube._fire_effect through
+// _spawn_torpedo, is logged in its order:
+//     `_target = target; _target_offset = <the walk's offset>` (None, None
+//     on the dumb path); `_firing = True`; `_num_ready -= 1`;
+//     `_last_fire_time = now`; the system's `_last_system_fire_time = now`;
+//     _start_slot_cooldown(now)'s first loaded slot (`_reload_timers[i] =
+//     0.0; _reload_advanced_at[i] = now`, slot writes); the ammo type's
+//     AddAvailable(-1) for a finite magazine (`_available = max(0,
+//     min(_available - 1, _max_torpedoes))`)
+// then SPAWN(tube, K1Spawn) -- the fire-time record the spawn needs, every
+// value computed here at fire time so a pose that moves later in the step
+// (a tractor) cannot move the launch -- WEAPON_FIRED(tube, target),
+// AMMO_CONSUMED(tube), and last `_firing = False`. The delivery of SPAWN
+// (effect_queue.py) builds the torpedo from the record through the shared
+// spawn path (weapon_subsystems._new_projectile / _launch_projectile:
+// Create, register, ET_TORPEDO_ENTERED_SET, the launch sound) and posts its
+// ET_TORPEDO_FIRED, so the delivered order is BC's: the spawn, ENTERED_SET,
+// TORPEDO_FIRED, WEAPON_FIRED, AMMO_CONSUMED. A launch the kernel cannot
+// make is the FIRE (FIRE_DUMB) record as before, with no launch write,
+// counted by K1LaunchWhy: no ammo type or no module (Unresolved), the
+// type's launch not cached yet (Uncached: Python's own first launch of a
+// script caches it), a function the launch stands in for patched
+// (Patched), anything the mirror cannot say (Other: slot lists out of step
+// with MaxReady, an unnamed set, a posed target's offset with no Manual
+// Aim slot to bake it). Whatever the module's Create does, it runs at the
+// delivery (rulings L1, L6: an impure script draws there). The Python of a
+// handed-back record, running inside the deferral, appends its own SPAWN
+// too (effect_queue E4; weapon_subsystems._defer_spawn), so every launch
+// in the scope spawns at the boundary in emission order. A dumb fire
+// Python would refuse (the ship arriving, CanFire false) is decided
+// natively too.
+//
+// Records left: FIRE for a launch the kernel cannot make (a tube's or a
+// cannon's), FIRE_DUMB likewise, ASK, RUN_PYTHON, a handed-back
+// WALK_START, BANK_STOP / STOP_SYSTEM only for a row gone or a stop the
+// walk check hands back, DONE. FIRE_FAILED is never returned.
 //
 // PINNING (the Python driver's contract; Task 5's run_k1). Python's walk
 // holds strong references in its locals (the system, `target`, the retry
@@ -218,9 +254,39 @@ enum class K1Effect : int32_t {
     LOOP_STOP,           // (bank)
     WEAPON_FIRED,        // (bank, target or -1)
     WEAPON_FIRE_FAILED,  // (tube)
+    SPAWN,               // (launcher) + K1Entry::spawn
+    AMMO_CONSUMED,       // (tube)
     kCount
 };
 const char* k1_effect_name(K1Effect e);
+
+// A launch's fire-time record (LAUNCHES AT THE BOUNDARY): what
+// weapon_subsystems._spawn_projectile reads live, read here when the
+// launch is decided. Handles are -1 for None.
+struct K1Spawn {
+    enum class Kind : int32_t { Tube = 0, Pulse = 1, Dumb = 2 };
+    Kind kind = Kind::Tube;
+    int64_t ship = -1;    // emitter._climb_to_ship(): the torpedo's source
+    int64_t set = -1;     // the ship's containing set (register joins it)
+    int64_t ammo = -1;    // the ammo type fired: its script names the module
+    int64_t target = -1;  // _target_ship: the launcher's target, if alive
+    Vec3 position{0, 0, 0};  // emitter._emitter_world_position()
+    // unit(dir) * launch speed + ship velocity; false when the direction
+    // has no length (Python then leaves the torpedo's velocity alone).
+    bool has_velocity = false;
+    Vec3 velocity{0, 0, 0};
+    // SetTargetOffset(the launcher's offset): with a target and a TGPoint3
+    // offset, the offset and its point as posed now (_bake_offset).
+    bool has_offset = false;
+    Vec3 offset{0, 0, 0}, baked{0, 0, 0};
+    double drf_override = 0.0;  // the launcher's GetDamageRadiusFactor()
+    // A pulse's (Task 3; a tube's are 1.0 and -1): the power setting's
+    // GetDamageScale() at fire time, applied after register as Python
+    // does, and the target the shot used, its ET_WEAPON_FIRED's pointer
+    // (posted by the delivery, after the bolt exists: M4).
+    double damage_scale = 1.0;
+    int64_t fired_at = -1;
+};
 
 // One entry, in walk order. `at`: how many of the carrying record's writes
 // were logged before it (the entry follows them in Python's order).
@@ -228,7 +294,24 @@ struct K1Entry {
     K1Effect kind = K1Effect::FIRE_SOUND;
     int64_t a = -1, b = -1;
     size_t at = 0;
+    std::optional<K1Spawn> spawn;  // SPAWN
 };
+
+// Why a launch went to Python as a FIRE / FIRE_DUMB record (LAUNCHES AT THE
+// BOUNDARY), in combat_k1_counts' k1_launch_reasons.
+enum class K1LaunchWhy : int32_t {
+    Unresolved = 0,  // no ammo type, no script or no module
+    Uncached,        // the type's launch is not cached yet
+    Patched,         // a function the launch stands in for is patched
+                     // (native_combat._K1_LAUNCH_FUNCS: a test's spy, a
+                     // tool), pushed as K1_LAUNCH_PATCHED
+    Other,           // the mirror cannot say: slot lists out of step with
+                     // MaxReady (_ensure_slots would rebuild them), an
+                     // unnamed set, a posed target's offset with no Manual
+                     // Aim slot to bake it, a row the plan cannot read
+    kCount
+};
+const char* k1_launch_why_name(K1LaunchWhy w);
 
 // Why a system went to Python whole (a RUN_PYTHON, or a skip_walk). Counted
 // per session type: the pump's and StartFiring's system sessions apart.
@@ -260,9 +343,11 @@ const char* k1_why_name(K1Why w);
 // K1WalkOffset, the marker for "the walk's own offset object" (ruling P5),
 // lives in write_log.h (the shared write representation).
 
-// One write-log value. monostate is Python None.
+// One write-log value. monostate is Python None. A SlotWrite is a tube's
+// in-place slot write (`_reload_timers[i] = v`, write_log.h): the launch's
+// _start_slot_cooldown.
 using K1Value = std::variant<std::monostate, bool, int64_t, double,
-                             K1WalkOffset, std::vector<int64_t>>;
+                             K1WalkOffset, std::vector<int64_t>, SlotWrite>;
 
 struct K1Write {
     int64_t handle = -1;
@@ -398,6 +483,14 @@ public:
                 logged_firing_bank_stop = 0, logged_system_stop = 0;
         // The queue entries produced, by K1Effect (k1_entries).
         std::array<int64_t, static_cast<size_t>(K1Effect::kCount)> entries{};
+        // Launches made as logged writes and a SPAWN entry (LAUNCHES AT THE
+        // BOUNDARY): a tube's Fire, a dumb fire; dumb fires Python would
+        // refuse (decided natively, nothing written); and the launches
+        // handed back as FIRE / FIRE_DUMB records, by why.
+        int64_t logged_tube_launch = 0, logged_dumb_launch = 0,
+                logged_dumb_refused = 0;
+        std::array<int64_t, static_cast<size_t>(K1LaunchWhy::kCount)>
+            launch_why{};
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

@@ -4040,6 +4040,88 @@ bool& k1_apply_raised() {
     return raised;
 }
 
+// A K1 write value in the Python encoding (combat_write_apply.h): None,
+// bool, int, float, a handle list, ("walk_offset", walk, system) or
+// ("slot", index, value).
+py::object k1_value_py(const dauntless::combat::K1Value& value) {
+    namespace cb = dauntless::combat;
+    return std::visit(
+        [](const auto& x) -> py::object {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, std::monostate>)
+                return py::none();
+            else if constexpr (std::is_same_v<T, cb::K1WalkOffset>)
+                return py::make_tuple("walk_offset", x.walk, x.system);
+            else if constexpr (std::is_same_v<T, cb::SlotWrite>)
+                return py::make_tuple(
+                    "slot", x.index,
+                    std::visit(
+                        [](const auto& v) -> py::object {
+                            using V = std::decay_t<decltype(v)>;
+                            if constexpr (std::is_same_v<V, std::monostate>)
+                                return py::none();
+                            else
+                                return py::cast(v);
+                        },
+                        x.value));
+            else
+                return py::cast(x);  // a scalar, or a handle list
+        },
+        value);
+}
+
+// A SPAWN's operands (combat_effect_queue.h; effect_queue._spawn): the
+// record in order, flags and the kind as numbers (a handle is an int), the
+// target as the object itself when the session's applier can name it
+// (WriteApplier::live), held by the queue from fire time on: a target
+// freed before the boundary is still the torpedo's (Review Focus 5).
+void k1_append_spawn(const dauntless::combat::K1Entry& e) {
+    namespace cb = dauntless::combat;
+    namespace hq = dauntless::host;
+    const cb::K1Spawn& s = *e.spawn;
+    hq::WriteApplier& applier = hq::write_applier();
+    auto held = [&](std::int64_t h) -> hq::NativeOperand {
+        if (h == -1 || !applier.has_context()) return h;
+        PyObject* o = applier.live(h);
+        if (o == nullptr) throw py::error_already_set();
+        if (o == Py_None) {
+            Py_DECREF(o);  // no live object: the handle (skipped if gone)
+            return h;
+        }
+        return hq::OwnedObject{o};
+    };
+    // The target and the shot's target (a pulse's ET_WEAPON_FIRED pointer)
+    // as objects held from fire time.
+    const hq::NativeOperand target = held(s.target);
+    hq::NativeOperand fired_at;
+    try {
+        fired_at = held(s.fired_at);
+    } catch (...) {
+        if (const auto* o = std::get_if<hq::OwnedObject>(&target))
+            Py_DECREF(static_cast<PyObject*>(o->object));
+        throw;
+    }
+    const hq::NativeOperand ops[] = {
+        e.a,
+        static_cast<double>(static_cast<int32_t>(s.kind)),
+        s.ship,
+        s.set,
+        s.ammo,
+        target,
+        s.position[0], s.position[1], s.position[2],
+        s.has_velocity ? 1.0 : 0.0,
+        s.velocity[0], s.velocity[1], s.velocity[2],
+        s.has_offset ? 1.0 : 0.0,
+        s.offset[0], s.offset[1], s.offset[2],
+        s.baked[0], s.baked[1], s.baked[2],
+        s.drf_override,
+        s.damage_scale,
+        fired_at,
+    };
+    static_assert(std::size(ops) <= hq::EffectEntry::kMaxOperands);
+    hq::effect_queue().append_native_span(hq::EffectKind::SPAWN, ops);
+}
+
 // A K1 record's queue entries (k1_fire_control.h, THE EFFECT QUEUE) into
 // the combat effect queue, in walk order: K1Effect names the kinds of the
 // same names (the combat library does not link the host layer).
@@ -4048,6 +4130,14 @@ void k1_append_entries(const std::vector<dauntless::combat::K1Entry>& entries) {
     namespace hq = dauntless::host;
     for (const cb::K1Entry& e : entries) {
         switch (e.kind) {
+            case cb::K1Effect::SPAWN:
+                if (!e.spawn) throw std::logic_error("combat K1: SPAWN, no record");
+                k1_append_spawn(e);
+                break;
+            case cb::K1Effect::AMMO_CONSUMED:
+                hq::effect_queue().append_native(hq::EffectKind::AMMO_CONSUMED,
+                                                 e.a);
+                break;
             case cb::K1Effect::FIRE_SOUND:
                 hq::effect_queue().append_native(hq::EffectKind::FIRE_SOUND, e.a);
                 break;
@@ -4983,12 +5073,16 @@ int k1_system_verdict(const K1WalkCheckRefs& r, K1Caches& c, std::int64_t h) {
     if (e.verdict != 0) return 1;
     PyObject* kids = e.children;
     if (kids == nullptr) return 0;
-    // Read live: an in-place append changes the list, not the dict.
+    // Read live: an in-place append changes the list, not the dict. The
+    // list is borrowed from the system's dict: held for the loop, so
+    // nothing the probes below touch can free it under `items`.
+    Py_INCREF(kids);
     PyObject* const* items = PySequence_Fast_ITEMS(kids);
     const Py_ssize_t n = PySequence_Fast_GET_SIZE(kids);
     if (e.kids.size() < static_cast<size_t>(n))
         e.kids.resize(static_cast<size_t>(n));
-    for (Py_ssize_t i = 0; i < n; ++i) {
+    int verdict = 0;
+    for (Py_ssize_t i = 0; i < n && verdict == 0; ++i) {
         PyObject* ch = items[i];
         K0WeaponEntry& we = e.kids[static_cast<size_t>(i)];
         // K0's fast path: the same type, its managed dict slot the same
@@ -4998,24 +5092,29 @@ int k1_system_verdict(const K1WalkCheckRefs& r, K1Caches& c, std::int64_t h) {
             reinterpret_cast<std::uintptr_t*>(ch)[-3] ==
                 reinterpret_cast<std::uintptr_t>(we.key.dict) &&
             k0_dict_version(we.key.dict) == we.key.version) {
-            if (we.verdict != 0) return 1;
+            if (we.verdict != 0) verdict = 1;
             continue;
         }
         PyObject* cd = k0_dict_of(ch);
-        if (cd == nullptr) return 1;
+        if (cd == nullptr) {
+            verdict = 1;
+            break;
+        }
         if (!k0_same(we.key, ch, cd)) {
             we.key = K0ObjKey{};
             const int m = k1_holds(cd, r.leaf_names);
             if (m < 0) {
                 PyErr_Clear();
-                return 1;
+                verdict = 1;
+                break;
             }
             we.verdict = m;
             we.key = K0ObjKey{ch->ob_type, cd, k0_dict_version(cd)};
         }
-        if (we.verdict != 0) return 1;
+        if (we.verdict != 0) verdict = 1;
     }
-    return 0;
+    Py_DECREF(kids);
+    return verdict;
 }
 
 // 1: a ship of type `t` must have its walks started by Python (its offset
@@ -5128,12 +5227,13 @@ void k1_scan(K1Verdicts& v) {
     }
 }
 
-// The walk check for a session about to begin over `v`, or none when no
-// check is installed (every walk native). Its sets are first made by the
-// session's first combat_k1_next, before the kernel computes anything (a
-// scan here would be redone there).
+// The walk check for a session about to begin over `v`. Its sets are
+// first made by the session's first combat_k1_next, before the kernel
+// computes anything (a scan here would be redone there).
 dauntless::combat::K1WalkCheck k1_session_check(std::shared_ptr<K1Verdicts> v) {
-    if (k1_walk_check_refs().registry == nullptr) return {};
+    // Always attached, the check installed or not: k1_scan empties the sets
+    // while no check is installed (every walk native), and a check
+    // installed mid-session is obeyed from the session's next record.
     return K1SessionCheck{std::move(v)};
 }
 
@@ -11914,21 +12014,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     throw py::error_already_set();
                 }
             } else for (const cb::K1Write& w : r.writes) {
-                py::object v = std::visit(
-                    [](const auto& x) -> py::object {
-                        using T = std::decay_t<decltype(x)>;
-                        if constexpr (std::is_same_v<T, std::monostate>)
-                            return py::none();
-                        else if constexpr (std::is_same_v<T, cb::K1WalkOffset>)
-                            return py::make_tuple("walk_offset", x.walk,
-                                                  x.system);
-                        else if constexpr (std::is_same_v<T, std::vector<std::int64_t>>)
-                            return py::cast(x);  // a list
-                        else
-                            return py::cast(x);
-                    },
-                    w.value);
-                writes.append(py::make_tuple(w.handle, w.field, v));
+                writes.append(
+                    py::make_tuple(w.handle, w.field, k1_value_py(w.value)));
             }
             k1_append_entries(r.entries);
             const py::object tag =
@@ -12094,7 +12181,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
             logged["fire_failed"] = c.logged_fire_failed;
             logged["firing_bank_stop"] = c.logged_firing_bank_stop;
             logged["system_stop"] = c.logged_system_stop;
+            // ... and launches at the boundary (spec 2026-11-02-combat-
+            // launch-deferral §4.1): tube and dumb launches made as writes
+            // plus a SPAWN, dumb fires Python would refuse.
+            logged["tube_launch"] = c.logged_tube_launch;
+            logged["dumb_launch"] = c.logged_dumb_launch;
+            logged["dumb_refused"] = c.logged_dumb_refused;
             d["k1_logged"] = logged;
+            // The launches handed back as FIRE / FIRE_DUMB records, by why.
+            py::dict launch;
+            for (size_t i = 0; i < c.launch_why.size(); ++i)
+                launch[cb::k1_launch_why_name(static_cast<cb::K1LaunchWhy>(i))] =
+                    c.launch_why[i];
+            d["k1_launch_reasons"] = launch;
             // The queue entries K1 produced, by kind.
             py::dict entries;
             for (size_t i = 0; i < c.entries.size(); ++i)
@@ -12437,6 +12536,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                         else if constexpr (std::is_same_v<T, cb::K1WalkOffset>)
                             throw std::logic_error(
                                 "combat K2: a walk-offset write");
+                        else if constexpr (std::is_same_v<T, cb::SlotWrite>)
+                            throw std::logic_error("combat K2: a slot write");
                         else
                             return py::cast(x);
                     },
@@ -12757,14 +12858,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                           else
                               v[n++] = o.cast<std::int64_t>();
                       }
-                      auto& q = hq::effect_queue();
-                      switch (n) {
-                      case 0: q.append_native_list(k, {}); break;
-                      case 1: q.append_native_list(k, {v[0]}); break;
-                      case 2: q.append_native_list(k, {v[0], v[1]}); break;
-                      default:
-                          q.append_native_list(k, {v[0], v[1], v[2]});
-                      }
+                      hq::effect_queue().append_native_span(
+                          k, std::span<const hq::NativeOperand>(v, n));
                   },
                   py::arg("kind"),
                   "Test entry: append a KERNEL's entry -- ints are mirror "

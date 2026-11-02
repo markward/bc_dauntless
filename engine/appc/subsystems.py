@@ -1972,6 +1972,8 @@ class WarpEngineSubsystem(PoweredSubsystem):
         self._dewarp_drive = _DewarpDrive(
             self.GetWarpExitLocation(), placement.GetWorldLocation(),
             placement.GetWorldRotation())
+        # K1 reads the slide (FireDumb's hold) from the ship's row.
+        native_combat.push_arriving(ship)
         self._hold_ship(ship, self._dewarp_drive.start)
         self._stop_ship_weapons(ship)
 
@@ -2003,6 +2005,7 @@ class WarpEngineSubsystem(PoweredSubsystem):
     def _end_dewarp_drive(self) -> None:
         self._dewarp_drive = None
         self._placement = None
+        native_combat.push_arriving(self.GetParentShip())
 
     def step_dewarp_drive(self, dt: float) -> None:
         """Advance the warp-in slide by `dt` seconds of game time; on landing

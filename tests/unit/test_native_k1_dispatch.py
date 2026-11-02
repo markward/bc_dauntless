@@ -2519,3 +2519,445 @@ def test_system_instance_stop_patch_runs_python(monkeypatch):
     _both(monkeypatch, _DUEL, script, 12)
     assert calls[False], calls
     assert calls[True] == calls[False]
+
+
+# ── Launches at the boundary (spec 2026-11-02-combat-launch-deferral) ────────
+# A tube's launch is logged writes plus a SPAWN entry delivered at the tick
+# boundary (or the K1 session's end); the delivery builds the torpedo from
+# the fire-time record. Every launch inside the deferral spawns there, a
+# module whose Create draws random numbers included (rulings L5, L6): the
+# test-local fixture modules below (never a mod's).
+
+_PURE_TORP = '''
+import App
+
+def Create(pTorp):
+    kGlow = App.TGColorA()
+    kGlow.SetRGBA(255.0 / 255.0, 0.5, 0.0, 1.0)
+    pTorp.CreateTorpedoModel("a.tga", kGlow, 0.2, 1.2, "b.tga", kGlow, 3.0,
+                             0.3, 0.6, "c.tga", kGlow, 8, 0.7, 0.4)
+    pTorp.SetDamage(GetDamage())
+    pTorp.SetDamageRadiusFactor(0.13)
+    pTorp.SetGuidanceLifetime(GetGuidanceLifetime())
+    pTorp.SetMaxAngularAccel(-(-0.15))
+    return(0)
+
+def GetLaunchSpeed():
+    return(21.0)
+
+def GetLaunchSound():
+    return("Photon Torpedo")
+
+def GetDamage():
+    return 444.0
+
+def GetGuidanceLifetime():
+    return 5.0
+'''
+
+# A Create that draws a random number (ruling L6: it launches through SPAWN
+# like any other).
+_IMPURE_TORP = _PURE_TORP.replace(
+    "    pTorp.SetDamage(GetDamage())\n",
+    "    pTorp.SetDamage(App.g_kSystemWrapper.GetRandomNumber(500))\n")
+
+
+def _fixture_module(tmp_path, monkeypatch, name, source):
+    """Write `source` as module `name` under tmp_path and import it."""
+    (tmp_path / (name + ".py")).write_text(source)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    sys.modules.pop(name, None)
+    monkeypatch.delitem(sys.modules, name, raising=False)
+    return importlib.import_module(name)
+
+
+_LAUNCH_SHIPS = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+                 ("Ahead", "vorcha", (10.0, 240.0, 5.0), math.pi))
+
+_LAUNCH_EVENTS = {
+    App.ET_TORPEDO_ENTERED_SET: "entered",
+    App.ET_TORPEDO_FIRED: "torpedo_fired",
+    App.ET_WEAPON_FIRED: "fired",
+    App.ET_TORPEDO_AMMO_CONSUMED: "ammo_consumed",
+}
+
+
+def _hx(p):
+    if p is None:
+        return None
+    if isinstance(p, TGPoint3):
+        p = (p.x, p.y, p.z)
+    return tuple(float(c).hex() for c in p)
+
+
+class _Launches:
+    """One arm's launches: every spawned torpedo (numbered in creation
+    order, labelled "T<n>"), the launch events in order, and each torpedo's
+    fields (`spawned`) as they were when it entered its set."""
+
+    def __init__(self, w):
+        from engine.appc import projectiles
+        self.w = w
+        self.torps = []
+        self.events = []
+        self.spawned = []
+        register = projectiles.register
+
+        def spy(torp, *a, _orig=register, **kw):
+            self.torps.append(torp)
+            _orig(torp, *a, **kw)
+        w.mp.setattr(projectiles, "register", spy)
+        w.hooks.append(self._hook)
+
+    def label(self, obj):
+        for i, t in enumerate(self.torps):
+            if t is obj:
+                return "T%d" % i
+        return self.w.label(obj)
+
+    def _hook(self, evt):
+        kind = _LAUNCH_EVENTS.get(evt.GetEventType())
+        if kind is None:
+            return
+        self.events.append((kind, self.label(evt.GetSource()),
+                            self.label(evt.GetDestination()), self.w.n))
+        if kind == "entered":
+            self.spawned.append(self.fields(evt.GetDestination()))
+
+    def fields(self, t):
+        """Every value the spawn sets, by .hex()."""
+        g = lambda name: getattr(t, name, None)  # noqa: E731
+        baked = g("_baked_offset")
+        return (
+            self.label(t), _hx(t.GetTranslate()), _hx(t._velocity),
+            _t(g("_damage")), _t(g("_damage_radius_factor")),
+            _t(g("_ttl")), _t(g("_guidance_lifetime")),
+            _t(g("_guidance_initial")), _t(g("_max_angular_accel")),
+            self.label(g("_target_ship")), _hx(g("_target_offset")),
+            None if baked is None else (self.label(baked[0]),
+                                        _hx(baked[1:4]), _hx(baked[4])),
+            self.label(t._source_ship),
+            t.GetContainingSet() is self.w.set,
+            g("_core_texture"), _t(g("_is_disruptor")),
+        )
+
+
+def _learn_launches(w):
+    """Python's first launch of a script caches its launch; here, as if one
+    had run: every ammo type's script, learned (native arm only)."""
+    if not w.native:
+        return
+    for s in w.order:
+        torps = s.GetTorpedoSystem()
+        if torps is None:
+            continue
+        for ammo in torps._ammo_by_slot.values():
+            script = ammo.GetTorpedoScript()
+            nc.learn_tube_launch(script, ws._resolve_projectile_module(script))
+
+
+def _launch_arms(monkeypatch, script, ticks, *, ships=_LAUNCH_SHIPS,
+                 learn=True, inside=None, player="Galaxy"):
+    """Both arms over `ticks` scoped ticks (the tick's effect scope, as in
+    play): `script(w, t)` before each tick, `inside(w, t)` inside the scope
+    after it (what the rest of the step does after the weapons: in the
+    reference it runs after the launches too). Returns (ref, nat) as
+    (world, launches, counts)."""
+    arms = []
+    for native in (False, True):
+        with monkeypatch.context() as mp:
+            w = World(mp, native, ships, "k1_launch_%d" % native,
+                      player=player)
+            launches = _Launches(w)
+            try:
+                if learn:
+                    _learn_launches(w)
+                for t in range(ticks):
+                    with host_loop._combat_effect_scope():
+                        w.tick(before=lambda w, t=t: script(w, t))
+                        if inside is not None:
+                            inside(w, t)
+                counts = nc.counts() if native else None
+                if native:
+                    nc.audit_mirror()
+                    assert nc.audit_failures() == [], nc.audit_failures()
+                    assert _h.combat_k1_depth() == 0
+                    assert _h.combat_effect_take() == []
+            finally:
+                w.close()
+            arms.append((w, launches, counts))
+    (rw, rl, _), (nw, nl, _) = arms
+    for i, (a, b) in enumerate(zip(rw.log, nw.log), start=1):
+        assert a == b, "tick %d differs:\n python %r\n native %r" % (i, a, b)
+    assert nl.events == rl.events
+    for i, (a, b) in enumerate(zip(rl.spawned, nl.spawned)):
+        for j, (x, y) in enumerate(zip(a, b)):
+            assert x == y, "torpedo %d field %d:\n python %r\n native %r" % (
+                i, j, x, y)
+    assert len(nl.spawned) == len(rl.spawned)
+    return arms
+
+
+def _tube_volley(w, t):
+    torps = w.ships["Galaxy"].GetTorpedoSystem()
+    if t == 0:
+        torps.StartFiring(w.ships["Ahead"], TGPoint3(0.25, -0.5, 0.125))
+    elif t % 31 == 0:
+        for tube in _weapons(torps):
+            tube.SetNumReady(1)
+
+
+def test_native_tube_launch_spawns_at_the_boundary(monkeypatch):
+    """Spec §4.1, ruling L2. The Galaxy's tubes launch at the Vor'cha: with
+    native on each launch is logged writes plus a SPAWN delivered at the
+    tick's boundary -- no FIRE record -- and every spawned torpedo, field by
+    field, and every launch event, in order, equals Python's: the spawn
+    (ENTERED_SET), TORPEDO_FIRED, WEAPON_FIRED, AMMO_CONSUMED (the
+    player's)."""
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, _tube_volley, 95)
+    assert len(rl.spawned) >= 3, rl.events
+    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned), counts
+    assert not any(counts["k1_launch_reasons"].values()), counts
+    kinds = [e[0] for e in nl.events]
+    assert kinds == ["entered", "torpedo_fired", "fired",
+                     "ammo_consumed"] * (len(kinds) // 4), kinds
+    for spawned in nl.spawned:          # aimed: the held offset, baked
+        assert spawned[9] == "Ahead" and spawned[10] is not None
+
+
+def test_first_launch_of_a_script_is_python_then_cached(monkeypatch):
+    """P6 extended: a type's launch is not cached until Python launches its
+    script once (the FIRE record, launch_uncached); every later launch of
+    any ammo type of that script is native."""
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, _tube_volley, 95, learn=False)
+    assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
+    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) - 1 >= 2
+
+
+def test_spawn_is_where_the_ship_was_at_fire_time(monkeypatch):
+    """Review Focus 1. After the weapons the rest of the step moves the
+    firing ship (a tractor): the torpedo still spawns, and flies, from
+    where the tube was when it fired -- as in the reference, which spawned
+    it there mid-walk."""
+    def tractor(w, t):
+        g = w.ships["Galaxy"]
+        p = g.GetTranslate()
+        g.SetTranslateXYZ(p.x + 3.0, p.y - 2.0, p.z + 1.0)
+        g.SetVelocity(TGPoint3(t * 0.5, 1.0, -0.25))
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, _tube_volley, 95, inside=tractor)
+    assert counts["k1_logged"]["tube_launch"] >= 3, counts
+
+
+def test_last_round_debits_like_python(monkeypatch):
+    """Review Focus 2. A finite magazine down to its last rounds: the ammo
+    debit, `_num_ready`, the slot cooldown and the fire stamps are Python's
+    exactly, the magazine ends empty, and the player's
+    ET_TORPEDO_AMMO_CONSUMED follows each spawn."""
+    state = {}
+
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        if t == 0:
+            ammo = torps.GetCurrentAmmoType()
+            ammo.SetMaxTorpedoes(4)
+            ammo.SetAvailable(2)
+        _tube_volley(w, t)
+        tube_rows = []
+        for tube in _weapons(torps):
+            d = tube.__dict__
+            tube_rows.append((_t(d["_num_ready"]), _t(d["_last_fire_time"]),
+                              [x.hex() for x in d["_reload_timers"]],
+                              [x.hex() for x in d["_reload_advanced_at"]]))
+        state.setdefault(w.native, []).append((
+            _t(torps.GetCurrentAmmoType().GetAvailable()),
+            _t(torps.__dict__["_last_system_fire_time"]), tube_rows))
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 95)
+    assert state[True] == state[False]
+    assert state[False][-1][0] == ("int", 0)
+    assert len(nl.spawned) == 2 and counts["k1_logged"]["tube_launch"] == 2
+    assert [e[0] for e in nl.events].count("ammo_consumed") == 2
+
+
+def test_dead_or_dropped_target_keeps_the_fire_time_values(monkeypatch):
+    """Review Focus 5. The target dies after the weapons (and, the next
+    volley, its row is dropped: a value the mirror cannot hold) before the
+    boundary: the torpedo is spawned anyway with the target it fired at,
+    as the reference -- which spawned it mid-walk, the target still alive
+    -- did."""
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        ahead = w.ships["Ahead"]
+        if t in (0, 31):
+            ahead.SetDead(False)
+            for tube in _weapons(torps):
+                tube.SetNumReady(1)
+            torps.StartFiring(ahead, TGPoint3(0.25, -0.5, 0.125))
+
+    def kill(w, t):
+        if t == 0:
+            w.ships["Ahead"].SetDead(True)
+        elif t == 31 and w.native:
+            nc._drop(w.ships["Ahead"])
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, script, 40, inside=kill)
+    assert [s[9] for s in nl.spawned] == ["Ahead", "Ahead"], nl.spawned
+    assert counts["k1_logged"]["tube_launch"] == 2, counts
+
+
+_MATAN = []
+
+
+def _matan_like_handler(TGObject, pEvent):
+    """E8M2.TorpedoEnterSet's shape: a torpedo entering its set locked on
+    the one ship gets a 10 s lifetime."""
+    pTorpedo = App.Torpedo_Cast(pEvent.GetDestination())
+    if pTorpedo and _MATAN and pTorpedo.GetTargetID() == _MATAN[0]:
+        pTorpedo.SetLifetime(10)
+    TGObject.CallNextHandler(pEvent)
+
+
+def test_entered_set_handler_acts_on_the_spawned_torpedo(monkeypatch):
+    """Ruling L2: ET_TORPEDO_ENTERED_SET moves to the boundary with the
+    spawn, and a handler like E8M2's that shortens a torpedo's life sees
+    the torpedo there and sets it, exactly as mid-walk."""
+    def script(w, t):
+        if t == 0:
+            _MATAN[:] = [w.ships["Ahead"].GetObjID()]
+            App.g_kEventManager.AddBroadcastPythonFuncHandler(
+                App.ET_TORPEDO_ENTERED_SET, w.ships["Galaxy"],
+                __name__ + "._matan_like_handler")
+        _tube_volley(w, t)
+
+    try:
+        (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 40)
+    finally:
+        _MATAN[:] = []
+    lives = [t._ttl for t in nl.torps]
+    assert lives and all(life == 10.0 for life in lives), lives
+    assert counts["k1_logged"]["tube_launch"] >= 2, counts
+
+
+def test_launches_the_kernel_cannot_make_run_python(monkeypatch):
+    """Review Focus 4. An ammo type with no script (Python reads the
+    property's: launch_unresolved) and a patched spawn function
+    (launch_patched): each launch is the FIRE record, run in Python, never
+    guessed -- and equal to the reference."""
+    for case in ("unresolved", "patched"):
+        def script(w, t, case=case):
+            torps = w.ships["Galaxy"].GetTorpedoSystem()
+            if t == 0:
+                ammo = torps.GetCurrentAmmoType()
+                if case == "unresolved":
+                    ammo.SetTorpedoScript(None)
+                else:
+                    spawn = ws._spawn_projectile
+                    w.mp.setattr(ws, "_spawn_projectile",
+                                 lambda *a, **kw: spawn(*a, **kw))
+            _tube_volley(w, t)
+
+        (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 64)
+        assert len(nl.spawned) >= 2, case
+        why = counts["k1_launch_reasons"]
+        assert why["launch_" + case] >= 1, (case, why)
+        assert counts["k1_logged"]["tube_launch"] == 0, (case, counts)
+
+
+def test_python_fallback_launch_defers_its_spawn(monkeypatch):
+    """Ruling E4 for launches: the launch K1 hands back (here uncached, the
+    script's first) runs Python's effect mid-walk, but its spawn -- and
+    its ET_TORPEDO_ENTERED_SET -- wait for the boundary like the kernel's,
+    so every launch in the scope spawns there in emission order."""
+    from engine.appc import effect_queue as eq
+    spawned_while = []
+
+    def script(w, t):
+        _tube_volley(w, t)
+        if t == 0:
+            w.hooks.append(lambda evt: spawned_while.append(
+                (eq._draining, _h.combat_k1_depth()))
+                if evt.GetEventType() == App.ET_TORPEDO_ENTERED_SET
+                else None)
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, script, 40, learn=False)
+    assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
+    native = spawned_while[len(spawned_while) // 2:]
+    assert native and all(d and depth == 0 for d, depth in native), \
+        spawned_while
+
+
+def test_impure_module_launches_through_spawn(tmp_path, monkeypatch):
+    """Ruling L6: a module whose Create draws a random number is no reason
+    to hand a launch back: it is cached like any other, the kernel makes
+    the launch, and Create runs (and draws) at the boundary. With nothing
+    else drawing in the tick the torpedo equals the reference's."""
+    impure = "k1fx_impure_launch"
+    _fixture_module(tmp_path, monkeypatch, impure, _IMPURE_TORP)
+
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        if t == 0:
+            torps.GetCurrentAmmoType().SetTorpedoScript(impure)
+            App.g_kSystemWrapper.SetRandomSeed(7)
+        _tube_volley(w, t)
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 64)
+    assert len(nl.spawned) >= 2
+    # Its first launch caches it (Python's, deferred too); then native.
+    assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
+    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) - 1 >= 1
+
+
+_PULSE_SHIPS = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
+                ("Galaxy", "galaxy", (40.0, 220.0, 12.0), math.pi))
+
+
+def test_python_pulse_launch_defers_its_spawn(monkeypatch):
+    """Ruling L5. A cannon's launch is still a FIRE record run in Python
+    (Task 3 makes it native), but inside the deferral its bolt is a SPAWN
+    too: built at the boundary with the fire-time values, scaled by the
+    fire-time power setting after its set entry, then its ET_WEAPON_FIRED
+    -- every bolt, field by field, and every event, as the reference."""
+    def script(w, t):
+        if t == 0:
+            w.ships["Vorcha"].GetPulseWeaponSystem().StartFiring(
+                w.ships["Galaxy"], TGPoint3(0.5, 1.0, -0.25))
+            for c in _weapons(w.ships["Vorcha"].GetPulseWeaponSystem()):
+                c.SetPowerSetting(2)
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, script, 240, ships=_PULSE_SHIPS, player="Vorcha")
+    assert len(nl.spawned) >= 2
+    assert all(s[15] == ("bool", True) for s in nl.spawned)  # bolts
+    kinds = [e[0] for e in nl.events]
+    assert kinds == ["entered", "fired"] * (len(kinds) // 2), kinds
+    damages = [t._damage for t in nl.torps]
+    assert damages == [t._damage for t in rl.torps]
+
+
+def test_native_dumb_fire_matches_python(monkeypatch):
+    """A torpedo system held with no target: every walk's try_fire fails
+    its timer gate and the tubes dumb-fire (Weapon.FireDumb) -- decided
+    natively now: the launch with no target, no FIRE_DUMB record."""
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        if t == 0:
+            torps.StartFiring(None)
+        elif t % 31 == 0:
+            for tube in _weapons(torps):
+                tube.SetNumReady(1)
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 64)
+    assert len(nl.spawned) >= 2
+    assert all(s[9] is None for s in nl.spawned)
+    # StartFiring's own forced walk fires Fire(None) (a tube launch with no
+    # target); every later one is the dumb fire past the timer gate.
+    logged = counts["k1_logged"]
+    assert logged["dumb_launch"] >= 1, counts
+    assert logged["dumb_launch"] + logged["tube_launch"] == len(nl.spawned)
+    assert logged["dumb_refused"] > 0, counts

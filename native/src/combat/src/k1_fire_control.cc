@@ -15,6 +15,7 @@
 #include "dauntless/combat/k1_fire_control.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <iterator>
 #include <limits>
@@ -29,6 +30,7 @@
 #include "dauntless/combat/sensor_detect.h"
 #include "dauntless/combat/stop_firing.h"
 #include "dauntless/combat/weapon_geometry.h"
+#include "geometry_internal.h"
 
 namespace dauntless::combat {
 
@@ -47,6 +49,9 @@ int64_t leaf_kind_of(int64_t kind) {
         default: return -1;
     }
 }
+
+// weapon_subsystems._SLOT_LOADED: a tube slot holding a round.
+constexpr double kSlotLoaded = -1.0;
 
 // Python `a % n` for n > 0 (the sign of the divisor).
 int64_t py_mod(int64_t a, int64_t n) {
@@ -93,9 +98,20 @@ const char* k1_kind_name(K1Kind k) {
 
 const char* k1_effect_name(K1Effect e) {
     static constexpr const char* kNames[] = {
-        "FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED"};
+        "FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED",
+        "SPAWN", "AMMO_CONSUMED"};
     static_assert(std::size(kNames) == static_cast<size_t>(K1Effect::kCount));
     const auto i = static_cast<size_t>(e);
+    return i < std::size(kNames) ? kNames[i] : "?";
+}
+
+const char* k1_launch_why_name(K1LaunchWhy w) {
+    static constexpr const char* kNames[] = {
+        "launch_unresolved", "launch_uncached", "launch_patched",
+        "launch_other"};
+    static_assert(std::size(kNames) ==
+                  static_cast<size_t>(K1LaunchWhy::kCount));
+    const auto i = static_cast<size_t>(w);
     return i < std::size(kNames) ? kNames[i] : "?";
 }
 
@@ -167,7 +183,8 @@ enum class Caller : int32_t { Lit, Delta };
 
 // The mirror value one logged write replaced.
 struct K1Undo {
-    enum class Type : int32_t { F, I, Ref, Ids, Offset } type = Type::F;
+    // Slot: element `i` of a FloatList field, its old value `d`.
+    enum class Type : int32_t { F, I, Ref, Ids, Offset, Slot } type = Type::F;
     int64_t h = -1;
     Field f = Field::kCount;
     double d = 0.0;
@@ -258,6 +275,9 @@ static void k1_roll_back(Mirror& m, K1Kernel::Session& s, size_t mark) {
                     m.set_fv(u.h, u.f, {u.v[0], u.v[1], u.v[2]});
                 else
                     m.set_fv(u.h, u.f, {});
+                break;
+            case K1Undo::Type::Slot:
+                m.set_float_at(u.h, u.f, static_cast<size_t>(u.i), u.d);
                 break;
         }
         s.undo.pop_back();
@@ -398,11 +418,42 @@ private:
         log(h, "_held_offset", std::monostate{});
     }
 
+    // `obj.<field>[index] = v` in place: a tube's slot list (the write the
+    // launch's _start_slot_cooldown makes).
+    void write_slot(int64_t h, Field f, const char* name, size_t index,
+                    double v) {
+        K1Undo u = undo_of(K1Undo::Type::Slot, h, f);
+        u.i = static_cast<int64_t>(index);
+        u.d = m_.get_floats(h, f).at(index);
+        m_.set_float_at(h, f, index, v);
+        s_.undo.push_back(std::move(u));
+        log(h, name, SlotWrite{static_cast<int64_t>(index), WriteScalar{v}});
+    }
+
     // ── The effect queue: entries in walk order, after the writes before ──
     void enqueue(K1Effect kind, int64_t a, int64_t b = -1) {
-        s_.entries.push_back(K1Entry{kind, a, b, s_.writes.size()});
+        s_.entries.push_back(K1Entry{kind, a, b, s_.writes.size(), {}});
         ++c_.entries[static_cast<size_t>(kind)];
     }
+
+    // ── Launches at the boundary (k1_fire_control.h) ──────────────────────
+    // Everything a tube launch reads, read before any of its writes.
+    struct LaunchPlan {
+        K1Spawn spawn;
+        int64_t parent = -1;   // the TorpedoSystem
+        int64_t slot = -1;     // _start_slot_cooldown's first loaded slot
+        bool debit = false;    // a finite magazine: AddAvailable(-1)
+        int64_t available = 0;
+    };
+    std::optional<LaunchPlan> plan_launch(int64_t tube, int64_t target,
+                                          K1Spawn::Kind kind,
+                                          K1LaunchWhy* why);
+    // The part's point of a posed target's offset (Python's _bake_offset).
+    Vec3 bake_offset(int64_t target, const Vec3& offset, int64_t ship) const;
+    void log_launch(int64_t tube, int64_t target, const LaunchPlan& p);
+    // Weapon.FireDumb(0, 1) natively; true with the FIRE_DUMB record in
+    // *out when Python must run it.
+    bool dumb_fire(int64_t tube, K1Record* out);
 
     // `weapon.StopFiring()` is its class's writes, logged in its order
     // (round trips §4.3; the one encoding, stop_firing.h), and for a FIRING
@@ -845,6 +896,205 @@ Walker::Outcome Walker::decide_tube(int64_t bank, int64_t target) {
     return o;
 }
 
+// ── Launches at the boundary (spec 2026-11-02-combat-launch-deferral) ───────
+// The Python they stand in for, CHANGE BOTH: TorpedoTube._fire_effect (from
+// its stamps), _start_slot_cooldown, _spawn_torpedo (the ammo debit, the
+// script's module), TorpedoAmmoType.AddAvailable, _spawn_projectile's fire-
+// time reads (_emitter_world_position, _emitter_forward_world(skew=True),
+// the launch velocity, the homing stamps and projectiles._bake_offset) and
+// Weapon.FireDumb.
+
+// Every read of the launch, before any write; nullopt (and why) when the
+// kernel cannot make it: the FIRE / FIRE_DUMB record then runs Python's.
+std::optional<Walker::LaunchPlan> Walker::plan_launch(int64_t tube,
+                                                      int64_t target,
+                                                      K1Spawn::Kind kind,
+                                                      K1LaunchWhy* why) {
+    // A function the launch stands in for is not the stock one.
+    if (m_.globals().K1_LAUNCH_PATCHED != 0) {
+        *why = K1LaunchWhy::Patched;
+        return std::nullopt;
+    }
+    try {
+        LaunchPlan p;
+        const SubsystemRow& tr = detail::sub(m_, tube);
+        // parent = self.GetParentSubsystem() (the pre-scan named it).
+        p.parent = tr._parent_subsystem;
+        const SubsystemRow& sys = detail::sub(m_, p.parent);
+        // ammo = parent.GetCurrentAmmoType(); its script's module. With no
+        // ammo type Python reads the property's script: not mirrored.
+        const int64_t ammo_h = current_ammo_handle(m_, sys);
+        if (ammo_h == -1) {
+            *why = K1LaunchWhy::Unresolved;
+            return std::nullopt;
+        }
+        const AmmoRow& ammo = *m_.ammo(ammo_h);
+        switch (ammo.ammo_launch_state) {
+            case 1: break;
+            case 2: *why = K1LaunchWhy::Unresolved; return std::nullopt;
+            default: *why = K1LaunchWhy::Uncached; return std::nullopt;
+        }
+        // _start_slot_cooldown(now): _ensure_slots() rebuilds lists whose
+        // length is not MaxReady (not here), then the first loaded slot.
+        const auto n = static_cast<int64_t>(tr._reload_timers.size());
+        if (n != tr._max_ready ||
+            static_cast<int64_t>(tr._reload_advanced_at.size()) != n) {
+            *why = K1LaunchWhy::Other;
+            return std::nullopt;
+        }
+        for (int64_t i = 0; i < n; ++i)
+            if (tr._reload_timers[static_cast<size_t>(i)] == kSlotLoaded) {
+                p.slot = i;
+                break;
+            }
+        // `if ammo is not None and not getattr(ammo, "_unlimited", True):
+        // ammo.AddAvailable(-1)`: max(0, min(available - 1, max)).
+        if (!ammo._unlimited) {
+            p.debit = true;
+            p.available = std::max<int64_t>(
+                0, std::min<int64_t>(ammo._available + -1,
+                                     ammo._max_torpedoes));
+        }
+        K1Spawn& s = p.spawn;
+        s.kind = kind;
+        s.ammo = ammo_h;
+        // torp._source_ship = emitter._climb_to_ship()
+        s.ship = climb_to_ship_of(m_, tube);
+        const ObjectRow& so = detail::obj(m_, s.ship);
+        // register: source.GetContainingSet()
+        s.set = so._containing_set;
+        if (s.set == kRefUnrepresentable || (s.set >= 0 && !m_.set(s.set)))
+            detail::fall_back("the ship's set is unnamed");
+        // spawn_pos = emitter._emitter_world_position()
+        s.position = subsystem_world_position(m_, tube, -1, s_.use_memo);
+        // world_dir = _emitter_forward_world(emitter, source_ship,
+        // skew=True): Direction, + 0.033 x Right when IsSkewFire, then
+        // MultMatrixLeft(ship.GetWorldRotation()).
+        Vec3 local = tr._direction;
+        if (tr._skew_fire)
+            local = {local[0] + 0.033 * tr._right[0],
+                     local[1] + 0.033 * tr._right[1],
+                     local[2] + 0.033 * tr._right[2]};
+        const Vec3 dir =
+            detail::mult_matrix_left(detail::xform(m_, so).rot, local);
+        // length = world_dir.Length(); ship_vel = GetVelocityTG();
+        // `if length > 1e-6: torp._velocity = unit * launch_speed + vel`.
+        const double length = detail::length(dir);
+        if (length > 1e-6) {
+            const double speed = ammo.ammo_launch_speed;
+            const Vec3& v = so._velocity;
+            s.has_velocity = true;
+            s.velocity = {dir[0] / length * speed + v[0],
+                          dir[1] / length * speed + v[1],
+                          dir[2] / length * speed + v[2]};
+        }
+        // target_ship = emitter._target (the stamp below): alive -> its
+        // homing, then SetTargetOffset(emitter._target_offset), the walk's
+        // offset (a TGPoint3 copy, else None) baked against its pose now.
+        if (target != -1 && !ship_dead(m_, target)) {
+            s.target = target;
+            if (s_.offset) {
+                s.has_offset = true;
+                s.offset = *s_.offset;
+                s.baked = bake_offset(target, s.offset, s.ship);
+            }
+        }
+        // drf_override = self.GetDamageRadiusFactor()
+        s.drf_override = tr._damage_radius_factor;
+        return p;
+    } catch (const std::invalid_argument&) {
+        *why = K1LaunchWhy::Other;
+        return std::nullopt;
+    }
+}
+
+// projectiles._bake_offset's point: part_transform_point(target, offset,
+// authored=False) -- the offset itself on an unposed target; on a posed one
+// the box rule's part, which Python resolved into the firing ship's Manual
+// Aim slot for exactly this target and offset (none for them: Python's).
+Vec3 Walker::bake_offset(int64_t target, const Vec3& offset,
+                         int64_t ship) const {
+    const ObjectRow& t = detail::obj(m_, target);
+    if (!t.has_posed_parts) return offset;
+    const PartPose* pose = nullptr;
+    const std::optional<SlotState> st =
+        manual_slot_pose(m_, detail::obj(m_, ship), target, t, offset, &pose);
+    if (!st) detail::fall_back("posed target, no Manual Aim slot to bake");
+    if (*st == SlotState::stale) detail::fall_back("part_stale");
+    return *st == SlotState::ok ? apply_part_pose(*pose, offset) : offset;
+}
+
+// The launch's writes and entries, in TorpedoTube._fire_effect's order.
+void Walker::log_launch(int64_t tube, int64_t target, const LaunchPlan& p) {
+    // if target is not None: _target = target; _target_offset = offset
+    // else: _target = None; _target_offset = None
+    write_target(tube, target);
+    write_target_offset(tube, target != -1);
+    write_flag(tube, Field::_firing, "_firing", true);
+    // now = _game_time(); _num_ready -= 1; _last_fire_time = now;
+    // parent._last_system_fire_time = now; _start_slot_cooldown(now)
+    write_int(tube, Field::_num_ready, "_num_ready",
+              subrow(tube)->_num_ready - 1);
+    write_float(tube, Field::_last_fire_time, "_last_fire_time", s_.now);
+    write_float(p.parent, Field::_last_system_fire_time,
+                "_last_system_fire_time", s_.now);
+    if (p.slot >= 0) {
+        const auto i = static_cast<size_t>(p.slot);
+        write_slot(tube, Field::_reload_timers, "_reload_timers", i, 0.0);
+        write_slot(tube, Field::_reload_advanced_at, "_reload_advanced_at", i,
+                   s_.now);
+    }
+    // _spawn_torpedo: the ammo debit, then the spawn (its ET_TORPEDO_FIRED
+    // is posted by the SPAWN's delivery); _broadcast_weapon_fired(target);
+    // _broadcast_ammo_consumed_if_player()
+    if (p.debit)
+        write_int(p.spawn.ammo, Field::_available, "_available", p.available);
+    s_.entries.push_back(
+        K1Entry{K1Effect::SPAWN, tube, -1, s_.writes.size(), p.spawn});
+    ++c_.entries[static_cast<size_t>(K1Effect::SPAWN)];
+    enqueue(K1Effect::WEAPON_FIRED, tube, target);
+    enqueue(K1Effect::AMMO_CONSUMED, tube);
+    // Discrete-shot: auto-stop after launch.
+    write_flag(tube, Field::_firing, "_firing", false);
+}
+
+// Weapon.FireDumb(0, 1) (WS:1231): `if _dewarp_blocks_fire(self): return;
+// self.Fire(target=None, offset=None)` -- TorpedoTube.Fire's decision
+// (CanFire; no aim, no cone) and, when it fires, the launch with no target.
+bool Walker::dumb_fire(int64_t tube, K1Record* out) {
+    const size_t mark = s_.writes.size();
+    Outcome o;
+    try {
+        // _dewarp_blocks_fire: the parent ship sliding onto its warp-in
+        // placement (warp_state.is_arriving, pushed as `arriving`).
+        const ObjectRow* so = objrow(climb_to_ship_of(m_, tube));
+        if (so != nullptr && so->arriving) {
+            ++c_.logged_dumb_refused;
+            return false;
+        }
+        o = decide_tube(tube, -1);
+    } catch (const std::invalid_argument&) {
+        k1_roll_back(m_, s_, mark);
+        *out = emit(K1Kind::FIRE_DUMB, St::UW_NEXT_DELTA, tube);
+        return true;
+    }
+    if (o.what != Outcome::What::Fire) {
+        ++c_.logged_dumb_refused;
+        return false;
+    }
+    K1LaunchWhy why = K1LaunchWhy::Other;
+    if (std::optional<LaunchPlan> p =
+            plan_launch(tube, -1, K1Spawn::Kind::Dumb, &why)) {
+        log_launch(tube, -1, *p);
+        ++c_.logged_dumb_launch;
+        return false;
+    }
+    ++c_.launch_why[static_cast<size_t>(why)];
+    k1_roll_back(m_, s_, mark);
+    *out = emit(K1Kind::FIRE_DUMB, St::UW_NEXT_DELTA, tube);
+    return true;
+}
+
 // ── The cursor loop ──────────────────────────────────────────────────────────
 
 K1Record Walker::run() {
@@ -1085,9 +1335,10 @@ K1Record Walker::run() {
                 const SubsystemRow* wr = subrow(s_.weapon);
                 if (!wr)  // dropped by an effect's handler: Python answers
                     return ask("is_dumb", {s_.weapon}, St::UW_DUMB_ANSWER);
-                if (wr->weapon_kind == kTorpedoTube)
-                    return emit(K1Kind::FIRE_DUMB, St::UW_NEXT_DELTA,
-                                s_.weapon);
+                if (wr->weapon_kind == kTorpedoTube) {
+                    K1Record r;
+                    if (dumb_fire(s_.weapon, &r)) return r;
+                }
             }
             next_delta();
             break;
@@ -1243,6 +1494,21 @@ K1Record Walker::run() {
                         s_.st = St::TF_FIRED;
                         break;
                     }
+                    if (o.d.shape == K1Decision::Shape::Tube) {
+                        // The tube's launch (LAUNCHES AT THE BOUNDARY):
+                        // logged writes and a SPAWN, unless the kernel
+                        // cannot make it (the FIRE record, counted).
+                        K1LaunchWhy why = K1LaunchWhy::Other;
+                        if (std::optional<LaunchPlan> p = plan_launch(
+                                w, s_.fire_target, K1Spawn::Kind::Tube,
+                                &why)) {
+                            log_launch(w, s_.fire_target, *p);
+                            ++c_.logged_tube_launch;
+                            s_.st = St::TF_FIRED;
+                            break;
+                        }
+                        ++c_.launch_why[static_cast<size_t>(why)];
+                    }
                     K1Record r =
                         emit(K1Kind::FIRE, St::TF_FIRED, w, s_.fire_target);
                     r.decision = o.d;
@@ -1388,6 +1654,9 @@ K1Record K1Kernel::next() {
     s.awaiting_answer = false;
     s.has_answer = false;
     try {
+        // Both arms are lvalues of K1WalkCheck, so the conditional is an
+        // lvalue naming one of them (no temporary): s.check lives in the
+        // session and walk_check_ in the kernel, both past the Walker.
         Walker w(m_, s, counts_, s.check ? s.check : walk_check_);
         return w.run();
     } catch (...) {

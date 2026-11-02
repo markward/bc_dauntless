@@ -57,6 +57,9 @@ struct CanFireResult {
 // named. Shared by the tube's CanFire and K0's reload gate.
 const AmmoRow* current_ammo_type(const Mirror& m,
                                  const SubsystemRow& torpedo_system);
+// The same, as its Ammo handle: -1 for None.
+int64_t current_ammo_handle(const Mirror& m,
+                            const SubsystemRow& torpedo_system);
 
 // CanFire for a leaf weapon, dispatched on weapon_kind: 5 phaser bank and 7
 // tractor beam (_EnergyWeaponFireMixin.CanFire), 6 pulse cannon

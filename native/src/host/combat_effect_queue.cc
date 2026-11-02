@@ -15,6 +15,7 @@ const char* effect_kind_name(EffectKind k) {
     case EffectKind::AMMO_CONSUMED: return "AMMO_CONSUMED";
     case EffectKind::TORPEDO_RELOAD: return "TORPEDO_RELOAD";
     case EffectKind::WATCH: return "WATCH";
+    case EffectKind::SPAWN: return "SPAWN";
     case EffectKind::kCount: break;
     }
     return nullptr;
@@ -22,6 +23,12 @@ const char* effect_kind_name(EffectKind k) {
 
 void EffectQueue::append_native_list(EffectKind kind,
                                      std::initializer_list<NativeOperand> ops) {
+    append_native_span(kind, std::span<const NativeOperand>(ops.begin(),
+                                                            ops.size()));
+}
+
+void EffectQueue::append_native_span(EffectKind kind,
+                                     std::span<const NativeOperand> ops) {
     assert(ops.size() <= EffectEntry::kMaxOperands);
     EffectEntry e;
     e.kind = kind;
@@ -31,9 +38,12 @@ void EffectQueue::append_native_list(EffectKind kind,
         if (const auto* h = std::get_if<std::int64_t>(&op)) {
             o.type = EffectOperand::Type::Handle;
             o.handle = *h;
-        } else {
+        } else if (const auto* d = std::get_if<double>(&op)) {
             o.type = EffectOperand::Type::Number;
-            o.number = std::get<double>(op);
+            o.number = *d;
+        } else {
+            o.type = EffectOperand::Type::Object;
+            o.object = std::get<OwnedObject>(op).object;
         }
     }
     entries_.push_back(e);

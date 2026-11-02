@@ -82,7 +82,7 @@ def test_kinds_match_the_native_queue():
     """Python's kind numbers are the binding's, name for name."""
     native = _h.combat_effect_kinds()
     assert native == {name: getattr(eq, name) for name in eq.KIND_NAMES}
-    assert len(eq.KIND_NAMES) == 8
+    assert len(eq.KIND_NAMES) == 9
 
 
 # ── Order ────────────────────────────────────────────────────────────────────
@@ -827,3 +827,140 @@ def test_native_watch_names_the_weapon(monkeypatch):
     with eq.scope():
         _post_native(eq.WATCH, cannon.__dict__["_nslot"], 0.25, 0.75)
     assert fired == [0.75]
+
+
+# ── SPAWN: a launch's spawn at the boundary (spec 2026-11-02-combat-launch-
+# deferral §4.1) ─────────────────────────────────────────────────────────────
+
+def _spawn_scene():
+    """A ship in a set with a tube, its ammo type naming the stock photon,
+    and a target: the objects a kernel SPAWN names."""
+    from engine.appc.math import TGPoint3  # noqa: F401
+    kset = App.SetClass_Create()
+    App.g_kSetManager.AddSet(kset, "eq_spawn")
+    ship = App.ShipClass_Create("Launcher")
+    target = App.ShipClass_Create("Target")
+    kset.AddObjectToSet(ship, "Launcher")
+    kset.AddObjectToSet(target, "Target")
+    tube = ws.TorpedoTube("Tube")
+    ammo = ws.TorpedoAmmoType("Photon", script="Tactical.Projectiles."
+                              "PhotonTorpedo")
+    return kset, ship, target, tube, ammo
+
+
+def _h_of(obj):
+    return obj.__dict__["_nslot"]
+
+
+def test_spawn_builds_the_torpedo_from_its_record(events):
+    """SPAWN(tube, kind, ship, set, ammo, target, position, velocity,
+    offset, baked, drf): the delivery builds the torpedo through the shared
+    spawn path with the RECORD's values (none read live), registers it
+    (ET_TORPEDO_ENTERED_SET) and then posts its ET_TORPEDO_FIRED."""
+    from engine.appc import projectiles
+    kset, ship, target, tube, ammo = _spawn_scene()
+    events.clear()                  # the scene's own set entries
+    try:
+        before = list(projectiles._active)
+        with eq.scope():
+            _post_native(eq.SPAWN, _h_of(tube), 0.0, _h_of(ship),
+                         _h_of(kset), _h_of(ammo), _h_of(target),
+                         1.0, 2.0, 3.0, 1.0, 4.0, 5.0, 6.0,
+                         1.0, 0.125, -0.25, 0.5, 0.375, -0.25, 0.5, 0.25,
+                         1.0, -1)
+            assert events == []
+        new = [t for t in projectiles._active if t not in before]
+        assert len(new) == 1
+        torp = new[0]
+        p = torp.GetTranslate()
+        assert (p.x, p.y, p.z) == (1.0, 2.0, 3.0)
+        v = torp._velocity
+        assert (v.x, v.y, v.z) == (4.0, 5.0, 6.0)
+        assert torp._source_ship is ship
+        assert torp._target_ship is target
+        o = torp._target_offset
+        assert (o.x, o.y, o.z) == (0.125, -0.25, 0.5)
+        assert torp._baked_offset == (target, 0.125, -0.25, 0.5,
+                                      (0.375, -0.25, 0.5))
+        assert torp._damage_radius_factor == 0.25   # the launcher's override
+        assert torp._damage == 500.0                 # PhotonTorpedo.Create
+        assert torp.GetContainingSet() is kset
+        assert [(e[0], e[1], e[2]) for e in events] == [
+            (App.ET_TORPEDO_ENTERED_SET, torp, torp),
+            (App.ET_TORPEDO_FIRED, torp, tube)]
+        assert eq.counts() == {"delivered": 1, "skipped_gone": 0,
+                               "failed": 0}
+    finally:
+        for t in list(projectiles._active):
+            if t not in before:
+                projectiles.expire(t)
+        App.g_kSetManager.DeleteSet("eq_spawn")
+
+
+def test_spawn_without_velocity_offset_or_override(events):
+    """No velocity (the direction had no length), no offset (a target only)
+    and no launcher override: the torpedo keeps its own defaults there, as
+    _spawn_projectile leaves them."""
+    from engine.appc import projectiles
+    kset, ship, target, tube, ammo = _spawn_scene()
+    try:
+        before = list(projectiles._active)
+        with eq.scope():
+            _post_native(eq.SPAWN, _h_of(tube), 2.0, _h_of(ship),
+                         _h_of(kset), _h_of(ammo), -1,
+                         1.0, 2.0, 3.0, 0.0, 9.0, 9.0, 9.0,
+                         0.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 0.0,
+                         1.0, -1)
+        (torp,) = [t for t in projectiles._active if t not in before]
+        v = torp._velocity
+        assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
+        assert torp._target_ship is None
+        assert torp._target_offset is None and torp._baked_offset is None
+        assert torp._damage_radius_factor == 0.13   # PhotonTorpedo.Create
+    finally:
+        for t in list(projectiles._active):
+            if t not in before:
+                projectiles.expire(t)
+        App.g_kSetManager.DeleteSet("eq_spawn")
+
+
+def test_pulse_spawn_scales_its_bolt_then_reports_the_shot(events,
+                                                          monkeypatch):
+    """A pulse's SPAWN (ruling L5): the bolt is built and registered (its
+    ET_TORPEDO_ENTERED_SET handlers see the module's damage), THEN scaled
+    by the fire-time power setting's GetDamageScale, as PulseWeapon's
+    effect does; then the shot's ET_WEAPON_FIRED at the target it used,
+    now that the bolt exists (M4). No ET_TORPEDO_FIRED: tubes only."""
+    from engine.appc import projectiles
+    kset, ship, target, cannon, ammo = _spawn_scene()
+    ammo.SetTorpedoScript("Tactical.Projectiles.Disruptor")
+    seen = []
+    orig = App.g_kEventManager.AddEvent
+
+    def add(evt, _orig=orig):
+        if evt.GetEventType() == App.ET_TORPEDO_ENTERED_SET:
+            seen.append(evt.GetDestination()._damage)
+        return _orig(evt)
+    events.clear()
+    try:
+        before = list(projectiles._active)
+        monkeypatch.setattr(App.g_kEventManager, "AddEvent", add)
+        with eq.scope():
+            _post_native(eq.SPAWN, _h_of(cannon), 1.0, _h_of(ship),
+                         _h_of(kset), _h_of(ammo), -1,
+                         1.0, 2.0, 3.0, 1.0, 4.0, 5.0, 6.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         1.5, _h_of(target))
+        (bolt,) = [t for t in projectiles._active if t not in before]
+        import Tactical.Projectiles.Disruptor as mod
+        assert seen == [float(mod.GetDamage())]
+        assert bolt._damage == float(mod.GetDamage()) * 1.5
+        assert bolt._is_disruptor
+        assert [(e[0], e[1], e[3]) for e in events] == [
+            (App.ET_TORPEDO_ENTERED_SET, bolt, None),
+            (App.ET_WEAPON_FIRED, cannon, target)]
+    finally:
+        for t in list(projectiles._active):
+            if t not in before:
+                projectiles.expire(t)
+        App.g_kSetManager.DeleteSet("eq_spawn")

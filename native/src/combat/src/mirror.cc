@@ -141,6 +141,11 @@ constexpr FieldInfo kInfo[] = {
     {"full_concealment", Kind::Profile, FieldType::F},
     {"_unlimited", Kind::Ammo, FieldType::I},
     {"_available", Kind::Ammo, FieldType::I},
+    {"_damage_radius_factor", Kind::Subsystem, FieldType::F},
+    {"arriving", Kind::Object, FieldType::I},
+    {"_max_torpedoes", Kind::Ammo, FieldType::I},
+    {"ammo_launch_state", Kind::Ammo, FieldType::I},
+    {"ammo_launch_speed", Kind::Ammo, FieldType::F},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -189,6 +194,7 @@ constexpr GlobalInfo kGlobals[] = {
     {"PHASER_DISCHARGE_2", false, &Globals::PHASER_DISCHARGE_2, nullptr},
     {"PHASER_DISCHARGE_LEN", true, nullptr, &Globals::PHASER_DISCHARGE_LEN},
     {"BEAM_ON_DELAY_S", false, &Globals::BEAM_ON_DELAY_S, nullptr},
+    {"K1_LAUNCH_PATCHED", true, nullptr, &Globals::K1_LAUNCH_PATCHED},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));
@@ -269,6 +275,7 @@ int64_t* iptr(ObjectRow& r, Field f) {
         case Field::is_meta_nebula: return &r.is_meta_nebula;
         case Field::_dead: return &r._dead;
         case Field::_dying: return &r._dying;
+        case Field::arriving: return &r.arriving;
         default: return nullptr;
     }
 }
@@ -329,6 +336,7 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_recharge_rate: return &r._recharge_rate;
         case Field::_reload_delay: return &r._reload_delay;
         case Field::_watch_value: return &r._watch_value;
+        case Field::_damage_radius_factor: return &r._damage_radius_factor;
         default: return nullptr;
     }
 }
@@ -418,8 +426,13 @@ int64_t* iptr(AmmoRow& r, Field f) {
     switch (f) {
         case Field::_unlimited: return &r._unlimited;
         case Field::_available: return &r._available;
+        case Field::_max_torpedoes: return &r._max_torpedoes;
+        case Field::ammo_launch_state: return &r.ammo_launch_state;
         default: return nullptr;
     }
+}
+double* fptr(AmmoRow& r, Field f) {
+    return f == Field::ammo_launch_speed ? &r.ammo_launch_speed : nullptr;
 }
 
 int64_t* iptr(SetRow& r, Field f) {

@@ -5,10 +5,13 @@
 // weapon sounds the combat step produces, delivered by Python
 // (engine/appc/effect_queue.py) at the tick boundary.
 //
-// An entry is a kind plus up to three operands, in one emission order
-// whoever appends it:
+// An entry is a kind plus its operands (at most kMaxOperands: a SPAWN's
+// fire-time record is the longest), in one emission order whoever appends
+// it:
 //   a kernel  append_native: mirror handles (-1 = None) and numbers (a
-//             watcher's old / new value); no Python call;
+//             watcher's old / new value); no Python call. The binding may
+//             hand one operand over as an object reference the queue then
+//             owns (OwnedObject: a SPAWN's target, held from fire time);
 //   Python    append_objects (the binding combat_effect_post): object
 //             references the queue OWNS until the entry leaves it.
 // The lock is held for both (the kernels run under it today).
@@ -47,6 +50,12 @@ enum class EffectKind : int {
     AMMO_CONSUMED,       // (tube)                 ET_TORPEDO_AMMO_CONSUMED
     TORPEDO_RELOAD,      // (tube)                 ET_TORPEDO_RELOAD
     WATCH,               // (watcher | weapon, old, new)  crossed checks
+    SPAWN,               // (launcher, kind, ship, set, ammo, target,
+                         //  position xyz, has velocity, velocity xyz,
+                         //  has offset, offset xyz, baked xyz, drf,
+                         //  damage scale, fired at)
+                         // a launch's spawn (effect_queue._spawn; spec
+                         // 2026-11-02-combat-launch-deferral §4.1)
     kCount
 };
 const char* effect_kind_name(EffectKind k);
@@ -60,15 +69,21 @@ struct EffectOperand {
 };
 
 struct EffectEntry {
-    static constexpr int kMaxOperands = 3;
+    static constexpr int kMaxOperands = 24;
     EffectKind kind = EffectKind::FIRE_SOUND;
     bool native = false;      // appended by a kernel (handles, numbers)
     int count = 0;
     std::array<EffectOperand, kMaxOperands> ops{};
 };
 
-// A kernel operand: a mirror handle or a number.
-using NativeOperand = std::variant<std::int64_t, double>;
+// A reference the queue takes over in a kernel entry (released as any
+// object operand is).
+struct OwnedObject {
+    void* object = nullptr;
+};
+
+// A kernel operand: a mirror handle, a number, or an owned object.
+using NativeOperand = std::variant<std::int64_t, double, OwnedObject>;
 
 class EffectQueue {
 public:
@@ -89,6 +104,9 @@ public:
     }
     void append_native_list(EffectKind kind,
                             std::initializer_list<NativeOperand> ops);
+    // Any number of operands up to kMaxOperands (a SPAWN).
+    void append_native_span(EffectKind kind,
+                            std::span<const NativeOperand> ops);
 
     // Python's entry: each pointer a reference the queue now owns (at most
     // kMaxOperands).

@@ -14,6 +14,7 @@ bottom of subsystems.py guarantees the normal load order).
 """
 
 import math as _math
+import types as _types
 
 from engine.core import ids
 from engine.appc import effect_queue, native_combat, passive_weapons
@@ -427,14 +428,44 @@ def _reset_projectile_module_cache() -> None:
     either."""
     _projectile_modules.clear()
     _pulse_params_cache.clear()
+    _tube_launch_cache.clear()
     # Not re-resolved here (mid mission-swap teardown): banks already built
-    # re-read their module on the next native push.
+    # re-read their module on the next native push, ammo types learn their
+    # launch again from Python's next launch of their script.
     native_combat.mark_pulse_stale()
 
 
 # script name -> (module_ok, launch_speed, lifetime) for the native mirror
 # (ruling P6). Cleared with _projectile_modules.
 _pulse_params_cache: dict = {}
+
+# script name -> (launch state, launch speed) of a torpedo script, the per-
+# type launch cache K1's native tube launch reads (P6 extended to tubes;
+# spec 2026-11-02-combat-launch-deferral §4.1): learned from Python's own
+# launch of the script (TorpedoTube._spawn_torpedo, which resolved its
+# module then), pushed to every ammo type of that script
+# (native_combat.learn_tube_launch). Cleared with _projectile_modules.
+_tube_launch_cache: dict = {}
+
+# The launch states (mirror.h ammo_launch_state).
+LAUNCH_UNCACHED, LAUNCH_CACHED, LAUNCH_UNRESOLVED = range(3)
+
+
+def tube_launch_params(mod) -> tuple:
+    """(state, launch speed) of a resolved torpedo module: LAUNCH_UNRESOLVED
+    for None (no module: _spawn_torpedo spawns nothing), else LAUNCH_CACHED
+    and the speed _spawn_projectile reads (GetLaunchSpeed(), 0.0 without
+    one). What its Create does decides nothing: every launch inside the
+    deferral runs it at the boundary (rulings L1, L6). A GetLaunchSpeed that
+    raises stays uncached: Python's own launches then raise it, as today."""
+    if mod is None:
+        return (LAUNCH_UNRESOLVED, 0.0)
+    try:
+        speed = (float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed")
+                 else 0.0)
+    except Exception:       # noqa: BLE001 - Python's own launch raises it
+        return (LAUNCH_UNCACHED, 0.0)
+    return (LAUNCH_CACHED, speed)
 
 
 def pulse_module_script(bank) -> str:
@@ -591,27 +622,33 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
 
     Registers it and plays mod.GetLaunchSound.  Returns the Torpedo, or None
     if mod is unusable.
+
+    THE REFERENCE of a launch's fire-time reads: everything below reads the
+    emitter, its ship and its target LIVE, then hands the values to the
+    shared body (_new_projectile, _launch_projectile) that the SPAWN
+    delivery (spawn_launch) runs with the values K1 computed at fire time
+    instead (spec 2026-11-02-combat-launch-deferral §4.1). The kernel
+    mirrors these reads (k1_fire_control.cc, plan_launch): CHANGE BOTH.
     """
-    from engine.appc.projectiles import Torpedo, register
-    from engine.appc.math import TGPoint3
-    from engine.audio.tg_sound import TGSoundManager
+    from engine.appc import projectiles
 
-    torp = Torpedo()
     source_ship = emitter._climb_to_ship()
-    torp._source_ship = source_ship
     spawn_pos = emitter._emitter_world_position()
-    torp.SetTranslateXYZ(spawn_pos.x, spawn_pos.y, spawn_pos.z)
+    torp = _new_projectile(mod, source_ship, spawn_pos.x, spawn_pos.y,
+                           spawn_pos.z)
+    velocity, target, offset, baked = _launch_reads(emitter, mod, source_ship,
+                                                    world_dir)
+    _launch_projectile(torp, mod, drf_override, velocity, target, offset,
+                       baked, projectiles.LIVE_SET)
+    return torp
 
-    mod.Create(torp)
 
-    # §3.2 DRF override: if the launching tube has a non-zero
-    # DamageRadiusFactor (set by the hardpoint script, e.g.
-    # galaxy.py ForwardTorpedo1.SetDamageRadiusFactor(0.20)),
-    # it overrides the payload value set by mod.Create above.
-    # host_loop passes the torpedo as hardpoint_weapon to apply_hit,
-    # so torp._damage_radius_factor must carry the launcher value.
-    if drf_override > 0.0:
-        torp._damage_radius_factor = drf_override
+def _launch_reads(emitter, mod, source_ship, world_dir):
+    """_spawn_projectile's live reads after Create: (velocity or None, the
+    homing target or None, its offset copy or None, the offset baked
+    against the target's pose now or None)."""
+    from engine.appc import projectiles
+    from engine.appc.math import TGPoint3
 
     launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
 
@@ -628,8 +665,9 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
                 else TGPoint3(0.0, 0.0, 0.0))
     if not isinstance(ship_vel, TGPoint3):
         ship_vel = TGPoint3(0.0, 0.0, 0.0)
+    velocity = None
     if length > 1e-6:
-        torp._velocity = TGPoint3(
+        velocity = TGPoint3(
             world_dir.x / length * launch_speed + ship_vel.x,
             world_dir.y / length * launch_speed + ship_vel.y,
             world_dir.z / length * launch_speed + ship_vel.z,
@@ -642,14 +680,96 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
     # read source_ship.GetTarget() directly, which meant even a dumbfire
     # inherited the ship's lock; that's wrong per the audited split.
     target_ship = getattr(emitter, "_target", None)
+    target = offset = baked = None
     if (target_ship is not None
             and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
-        torp._target_ship = target_ship
-        torp.SetTargetOffset(getattr(emitter, "_target_offset", None))
+        # Torpedo.SetTargetOffset's copy and its launch-time bake.
+        target = target_ship
+        v = getattr(emitter, "_target_offset", None)
+        if isinstance(v, TGPoint3):
+            offset = TGPoint3(v.x, v.y, v.z)
+            baked = projectiles._bake_offset(target, offset)[4]
+    return velocity, target, offset, baked
+
+
+def _defer_spawn(emitter, mod, kind, drf_override, world_dir=None,
+                 damage_scale=1.0, fired_at=None) -> None:
+    """While the effect queue defers (E4: every producer appends, Python's
+    included), Python's own launch (a FIRE record K1 handed back, an ASKed
+    Fire, a system Python runs whole; a tube's or a cannon's, rulings L5,
+    L6) appends its SPAWN like the kernel's: the fire-time values read now,
+    as _spawn_projectile reads them, the spawn -- Create, register,
+    ET_TORPEDO_ENTERED_SET -- at the boundary in emission order (spec
+    2026-11-02-combat-launch-deferral §4.1). `mod` rides in the entry's
+    ammo slot. A cannon's: `damage_scale` its GetDamageScale() now,
+    `fired_at` the target the shot used (its ET_WEAPON_FIRED's pointer)."""
+    from engine.appc import projectiles
+    source_ship = emitter._climb_to_ship()
+    p = emitter._emitter_world_position()
+    velocity, target, offset, baked = _launch_reads(emitter, mod, source_ship,
+                                                    world_dir)
+    v = velocity if velocity is not None else TGPoint3(0.0, 0.0, 0.0)
+    o = offset if offset is not None else TGPoint3(0.0, 0.0, 0.0)
+    b = baked if baked is not None else (0.0, 0.0, 0.0)
+    effect_queue.post(
+        effect_queue.SPAWN, emitter, kind, source_ship,
+        projectiles.source_set(source_ship), mod, target, p.x, p.y, p.z,
+        velocity is not None, v.x, v.y, v.z, offset is not None,
+        o.x, o.y, o.z, b[0], b[1], b[2], drf_override, damage_scale,
+        fired_at)
+
+
+def _new_projectile(mod, source_ship, x, y, z):
+    """The shared spawn's first half (the reference _spawn_projectile and the
+    SPAWN delivery spawn_launch): a Torpedo from `source_ship` at (x, y, z),
+    then the module's Create (at the boundary for a deferred launch, whatever
+    it does: rulings L1, L6)."""
+    from engine.appc.projectiles import Torpedo
+
+    torp = Torpedo()
+    torp._source_ship = source_ship
+    torp.SetTranslateXYZ(x, y, z)
+
+    mod.Create(torp)
+    return torp
+
+
+def _launch_projectile(torp, mod, drf_override, velocity, target, offset,
+                       baked, kset):
+    """The shared spawn's second half, with the fire-time values given:
+    the launcher's DRF override (> 0), the launch velocity (None: the
+    direction had no length, the torpedo keeps its own), the homing target
+    (alive at fire time, else None), its offset (a TGPoint3 copy or None)
+    and the offset baked against the target's pose at fire time; then
+    register (joining `kset`: projectiles.LIVE_SET reads the source's set
+    now) -- ET_TORPEDO_ENTERED_SET -- and the launch sound."""
+    from engine.appc import projectiles
+
+    # §3.2 DRF override: if the launching tube has a non-zero
+    # DamageRadiusFactor (set by the hardpoint script, e.g.
+    # galaxy.py ForwardTorpedo1.SetDamageRadiusFactor(0.20)),
+    # it overrides the payload value set by mod.Create above.
+    # host_loop passes the torpedo as hardpoint_weapon to apply_hit,
+    # so torp._damage_radius_factor must carry the launcher value.
+    if drf_override > 0.0:
+        torp._damage_radius_factor = drf_override
+
+    if velocity is not None:
+        torp._velocity = velocity
+
+    if target is not None:
+        torp._target_ship = target
+        torp._set_launch_offset(offset, baked)
     else:
         torp._target_ship = None
 
-    register(torp)
+    projectiles.register(torp, kset)
+    _play_launch_sound(mod, torp)
+
+
+def _play_launch_sound(mod, torp) -> None:
+    """mod.GetLaunchSound(), attached to the torpedo's node and played."""
+    from engine.audio.tg_sound import TGSoundManager
 
     if hasattr(mod, "GetLaunchSound"):
         sound_name = mod.GetLaunchSound()
@@ -693,7 +813,51 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
                     snd.AttachToNode(node)
                     snd.Play()
 
+
+def spawn_launch(launcher, kind, ship, kset, ammo, target, record):
+    """The SPAWN entry's delivery (effect_queue._spawn; spec 2026-11-02-
+    combat-launch-deferral §4.1): K1 decided a launch and computed its fire-
+    time values -- `record` is (position xyz, has velocity, velocity xyz,
+    has offset, offset xyz, baked xyz, drf override, damage scale, fired
+    at) -- so the torpedo is
+    built now, at the boundary, through the reference's own body
+    (_new_projectile, _launch_projectile) with those values for its live
+    reads. `ammo` names the module (its script, resolved as _spawn_torpedo
+    resolves it: a cache hit). A tube's launch (kind 0, a dumb one 2) then
+    posts its ET_TORPEDO_FIRED, as _spawn_torpedo does after the spawn.
+    Returns the torpedo."""
+    from engine.appc.math import TGPoint3
+
+    (px, py, pz, has_velocity, vx, vy, vz, has_offset, ox, oy, oz,
+     bx, by, bz, drf, damage_scale, fired_at) = record
+    if isinstance(ammo, _types.ModuleType):
+        mod = ammo                      # Python's own SPAWN (_defer_spawn)
+    else:
+        script = ammo.GetTorpedoScript() if ammo is not None else None
+        mod = _resolve_projectile_module(script) if script else None
+    if mod is None:
+        raise RuntimeError("combat SPAWN: ammo %r has no module (K1 "
+                           "launches only a cached script)" % (ammo,))
+    torp = _new_projectile(mod, ship, px, py, pz)
+    velocity = TGPoint3(vx, vy, vz) if has_velocity else None
+    offset = baked = None
+    if target is not None and has_offset:
+        offset = TGPoint3(ox, oy, oz)
+        baked = (bx, by, bz)
+    _launch_projectile(torp, mod, drf, velocity, target, offset, baked, kset)
+    if int(kind) == SPAWN_PULSE:
+        # PulseWeapon._fire_effect's tail, after the bolt exists: its damage
+        # scaled AFTER register (its set-entry handlers saw the module's:
+        # today's order, kept), then the shot's ET_WEAPON_FIRED (M4).
+        torp._damage = float(torp._damage) * damage_scale
+        _post_weapon_fired(launcher, fired_at)
+    else:
+        launcher._broadcast_torpedo_fired(torp)
     return torp
+
+
+# K1Spawn::Kind (k1_fire_control.h): a SPAWN entry's kind operand.
+SPAWN_TUBE, SPAWN_PULSE, SPAWN_DUMB = range(3)
 
 
 def _post_weapon_fired(weapon, target) -> None:
@@ -1246,6 +1410,10 @@ class Weapon(ShipSubsystem):
 
         Bypasses WeaponSystem.StartFiring, so the warp-in hold-fire gate is
         checked here too.
+
+        K1 decides a tube's dumb fire from the walk itself (the gate from the
+        mirrored `arriving` flag, then the tube's Fire and its launch;
+        k1_fire_control.cc, dumb_fire): change both.
         """
         if _dewarp_blocks_fire(self):
             return
@@ -1793,8 +1961,10 @@ class TorpedoAmmoType:
     compares ``pTorpType.GetAmmoName() == "Photon"``.
     """
     # Mirrored into the native combat row on every write (native_combat).
+    # _max_torpedoes is AddAvailable's clamp (K1's native launch debits).
     _unlimited = NativeField(bool)
     _available = NativeField(int)
+    _max_torpedoes = NativeField(int)
 
     def __init__(self, name: str, launch_speed: float = 0.0, power_cost: float = 0.0,
                  max_torpedoes=None, script=None):
@@ -1820,6 +1990,8 @@ class TorpedoAmmoType:
         self._unlimited = max_torpedoes is None
         self._max_torpedoes = 0 if max_torpedoes is None else int(max_torpedoes)
         self._available = self._max_torpedoes
+        # Its script's launch, if Python has launched that script already.
+        native_combat.push_ammo_launch(self)
 
     def GetAmmoName(self) -> str:
         return self._name
@@ -1841,6 +2013,7 @@ class TorpedoAmmoType:
 
     def SetTorpedoScript(self, script) -> None:
         self._script = script
+        native_combat.push_ammo_launch(self)
 
     def GetAvailable(self) -> int:
         """Rounds currently loaded for this type — the value the system exposes
@@ -1853,7 +2026,8 @@ class TorpedoAmmoType:
 
     def AddAvailable(self, delta) -> None:
         """Load (+) or expend (-) rounds, clamped to [0, max].  No-op for an
-        unlimited (undeclared-max) type."""
+        unlimited (undeclared-max) type. K1 logs a launch's AddAvailable(-1)
+        itself (k1_fire_control.cc, log_launch): change both."""
         if self._unlimited:
             return
         self._available = max(0, min(self._available + int(delta), self._max_torpedoes))
@@ -2994,9 +3168,20 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         world_dir = decision[0]
         if not isinstance(world_dir, TGPoint3):
             world_dir = TGPoint3(*world_dir)
-        torp = _spawn_projectile(self, decision[2],
-                                 drf_override=self.GetDamageRadiusFactor(),
-                                 world_dir=world_dir)
+        torp = None
+        if effect_queue.deferring() and not native_combat.launch_patched():
+            # Inside the deferral the bolt is a SPAWN like a tube's (E4,
+            # ruling L5): built at the boundary from these fire-time values,
+            # scaled there after register, its ET_WEAPON_FIRED posted by
+            # the delivery once it exists (spawn_launch; M4).
+            _defer_spawn(self, decision[2], SPAWN_PULSE,
+                         self.GetDamageRadiusFactor(), world_dir=world_dir,
+                         damage_scale=self.GetDamageScale(),
+                         fired_at=decision[1])
+        else:
+            torp = _spawn_projectile(self, decision[2],
+                                     drf_override=self.GetDamageRadiusFactor(),
+                                     world_dir=world_dir)
         if torp is not None:
             # The bolt carries script GetDamage() × GetDamageScale() —
             # 0x00576080 scales it at spawn (PulseWeaponDamage.md C1).
@@ -3202,6 +3387,9 @@ class TorpedoTube(Weapon):
     _reload_delay = NativeField(float)
     _reload_timers = NativeFloatList()
     _reload_advanced_at = NativeFloatList()
+    # K1's native launch reads the launcher's DamageRadiusFactor override
+    # (written by ShipSubsystem's property copy).
+    _damage_radius_factor = NativeField(float)
 
     def _passive_at_rest(self) -> bool:
         """True when UpdateReload, run now, would return at its
@@ -3266,7 +3454,10 @@ class TorpedoTube(Weapon):
 
         A cooling slot's timer counts UP from 0.0; seeding the last-advanced-at
         stamp to `now` means its FIRST UpdateReload call credits only the interval
-        since firing, not the whole game clock."""
+        since firing, not the whole game clock.
+
+        K1 logs a native launch's call as slot writes (k1_fire_control.cc,
+        plan_launch / log_launch): change both."""
         self._ensure_slots()
         for i in range(len(self._reload_timers)):
             if self._reload_timers[i] == _SLOT_LOADED:
@@ -3492,6 +3683,10 @@ class TorpedoTube(Weapon):
         return (target,)
 
     def _fire_effect(self, target, offset, decision) -> bool:
+        # K1 makes a tube's launch itself -- these writes, logged in this
+        # order, and a SPAWN entry standing for _spawn_torpedo's spawn and
+        # its ET_TORPEDO_FIRED, then WEAPON_FIRED and AMMO_CONSUMED
+        # (k1_fire_control.h, LAUNCHES AT THE BOUNDARY): change both.
         if target is not None:
             self._target = target
             self._target_offset = offset
@@ -3633,9 +3828,18 @@ class TorpedoTube(Weapon):
             return
 
         mod = _resolve_projectile_module(script_name)
+        if native_combat._enabled:
+            # Python resolved this script for a launch: the per-type launch
+            # K1's native launches read (launch deferral; P6 extended).
+            native_combat.learn_tube_launch(script_name, mod)
         if mod is None:
             return
 
+        if effect_queue.deferring() and not native_combat.launch_patched():
+            # Deferred like K1's launch (E4): the spawn and its
+            # ET_TORPEDO_FIRED at the boundary, in emission order.
+            _defer_spawn(self, mod, SPAWN_TUBE, self.GetDamageRadiusFactor())
+            return
         torp = _spawn_projectile(self, mod,
                                  drf_override=self.GetDamageRadiusFactor())
         # ET_TORPEDO_FIRED carries the PROJECTILE as its source, so it can only be
@@ -3887,3 +4091,5 @@ native_combat.k0_snapshot_stock({
     1: PhaserSystem, 2: PulseWeaponSystem, 3: TractorBeamSystem,
     4: TorpedoSystem, 5: PhaserBank, 6: PulseWeapon, 7: TractorBeam,
     8: TorpedoTube, "ammo": TorpedoAmmoType})
+# And the functions a tube's native launch stands in for (launch deferral).
+native_combat.k1_snapshot_launch()

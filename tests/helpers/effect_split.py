@@ -12,7 +12,9 @@ mean equal per-tick order.
 
 The queued kinds: ET_WEAPON_FIRED, ET_WEAPON_FIRE_FAILED, ET_TORPEDO_FIRED
 with a source (a launch; an unload has none and is not queued),
-ET_TORPEDO_AMMO_CONSUMED, ET_TORPEDO_RELOAD, every event a weapon's charge
+ET_TORPEDO_AMMO_CONSUMED, ET_TORPEDO_RELOAD, ET_TORPEDO_ENTERED_SET (posted
+by the spawn, which a K1 launch defers to the boundary: launch deferral,
+ruling L2), every event a weapon's charge
 watcher fires, and the bank sounds: `_play_fire_sfx` ("play") and a loop
 actually stopped by `_stop_loop_sound` ("stop"). Headless, no sound plays
 (Play returns no handle), so the play spy gives a bank that got none a
@@ -35,7 +37,7 @@ from engine.appc.float_range_watcher import FloatRangeWatcher
 def _queued_types():
     return {App.ET_WEAPON_FIRED, App.ET_WEAPON_FIRE_FAILED,
             App.ET_TORPEDO_FIRED, App.ET_TORPEDO_AMMO_CONSUMED,
-            App.ET_TORPEDO_RELOAD}
+            App.ET_TORPEDO_RELOAD, App.ET_TORPEDO_ENTERED_SET}
 
 
 class Queued:

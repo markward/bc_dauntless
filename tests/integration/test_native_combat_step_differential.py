@@ -256,8 +256,14 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
         # boundary delivered them.
         logged, entries = counts[name]["k1_logged"], counts[name]["k1_entries"]
         assert logged["beam_edge"] > 0, (name, counts)
-        assert entries["FIRE_SOUND"] == entries["WEAPON_FIRED"] == \
-            logged["beam_edge"], (name, counts)
+        # ... and a tube's launch (launch deferral) is writes plus SPAWN,
+        # WEAPON_FIRED and AMMO_CONSUMED entries, never a FIRE record.
+        launches = logged["tube_launch"] + logged["dumb_launch"]
+        assert entries["FIRE_SOUND"] == logged["beam_edge"], (name, counts)
+        assert entries["WEAPON_FIRED"] == logged["beam_edge"] + launches, (
+            name, counts)
+        assert entries["SPAWN"] == entries["AMMO_CONSUMED"] == launches, (
+            name, counts)
     # K2 stands down under the audit; with native on its resting contacts
     # were queued for the drain and every one presented by the Python batch
     # (spec 2026-11-02 §4.3-4.4): headless, no ship has an instance, so the

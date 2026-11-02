@@ -51,6 +51,7 @@ from engine.appc import effect_queue
 from engine.appc import native_combat as nc
 from engine.appc import part_pose
 from engine.appc import passive_state
+from engine.appc import projectiles
 from engine.appc import sensor_contacts
 from engine.appc import weapon_subsystems as ws
 from engine.appc.actions import TGObjPtrEvent
@@ -183,6 +184,7 @@ class _Scene:
             self.labels[id(w)] = "%s/%s" % (
                 w.GetParentSubsystem().GetParentShip().GetName(), w.GetName())
         self.held = []
+        self.torps = []         # torpedoes and bolts, in creation order
         self.tick = 0
         self.log = []
         self.events = []
@@ -272,6 +274,14 @@ class _Scene:
         if obj is None:
             return None
         name = self.labels.get(id(obj))
+        if name is None and isinstance(obj, projectiles.Torpedo):
+            # Torpedoes (and bolts) in their own sequence: with native on a
+            # launch's torpedo is made at the tick boundary (launch
+            # deferral, ruling L3), after objects the rest of the step
+            # numbers, but in the same order as the reference makes them.
+            name = self.labels[id(obj)] = "Torpedo@%d" % len(self.torps)
+            self.torps.append(obj)
+            return name
         if name is None:
             name = self.labels[id(obj)] = "%s#%d" % (type(obj).__name__,
                                                      len(self.held))
@@ -600,7 +610,13 @@ def _round_trips_ran(nat):
                 "fire_failed"):
         assert c["k1_logged"][key] > 0, (key, c["k1_logged"])
     e = c["k1_entries"]
-    assert e["FIRE_SOUND"] == e["WEAPON_FIRED"] == c["k1_logged"]["beam_edge"]
+    logged = c["k1_logged"]
+    # A beam's edge and a tube's launch (launch deferral) each queue one
+    # ET_WEAPON_FIRED; a launch also its SPAWN and AMMO_CONSUMED.
+    launches = logged["tube_launch"] + logged["dumb_launch"]
+    assert e["FIRE_SOUND"] == logged["beam_edge"], c
+    assert e["WEAPON_FIRED"] == logged["beam_edge"] + launches, c
+    assert e["SPAWN"] == e["AMMO_CONSUMED"] == launches, c
     assert e["WEAPON_FIRE_FAILED"] == c["k1_logged"]["fire_failed"], c
     for key in ("k2_batched_contacts", "k2_logged_system_stop",
                 "k3_native_attributions"):

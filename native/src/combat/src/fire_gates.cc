@@ -160,11 +160,17 @@ CanFireResult energy_can_fire(const Mirror& m, int64_t h, bool pulse) {
 
 const AmmoRow* current_ammo_type(const Mirror& m,
                                  const SubsystemRow& torpedo_system) {
+    const int64_t ammo_h = current_ammo_handle(m, torpedo_system);
+    return ammo_h == -1 ? nullptr : m.ammo(ammo_h);
+}
+
+int64_t current_ammo_handle(const Mirror& m,
+                            const SubsystemRow& torpedo_system) {
     const SubsystemRow* parent = &torpedo_system;
     if (parent->weapon_kind != kTorpedoSystem)
         fall_back("tube parent is not a torpedo system");
     const std::vector<int64_t>& slots = parent->_ammo_by_slot;  // [slot, h, ...]
-    if (slots.empty()) return nullptr;  // GetCurrentAmmoType: None
+    if (slots.empty()) return -1;  // GetCurrentAmmoType: None
     // GetCurrentAmmoSlot (weapon_subsystems.py:2063): the explicit selection
     // when populated, else the lowest populated slot.
     int64_t slot = slots[0];
@@ -180,11 +186,10 @@ const AmmoRow* current_ammo_type(const Mirror& m,
         if (slots[i] == slot) { ammo_h = slots[i + 1]; break; }
     }
     // A slot holding None.
-    if (ammo_h == -1) return nullptr;
+    if (ammo_h == -1) return -1;
     if (ammo_h == kRefUnrepresentable) fall_back("ammo type is unnamed");
-    const AmmoRow* ammo = m.ammo(ammo_h);
-    if (!ammo) fall_back("ammo row is stale");
-    return ammo;
+    if (!m.ammo(ammo_h)) fall_back("ammo row is stale");
+    return ammo_h;
 }
 
 namespace {
