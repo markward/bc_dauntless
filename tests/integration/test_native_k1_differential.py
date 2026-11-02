@@ -269,9 +269,11 @@ class _Scene:
 
     def payload(self, evt):
         """A weapon hit's payload: damage, hit point and normal by .hex(),
-        hull hit, weapon type, the struck subsystem and the target."""
+        hull hit, weapon type, the struck subsystem and the target.  Any
+        other event's payload is its object pointer (ET_WEAPON_FIRED's
+        target)."""
         if not isinstance(evt, WeaponHitEvent):
-            return None
+            return self.label(evt.GetObjPtr())
         return (_t(evt.GetDamage()), _vec(evt.GetHitPoint()),
                 _vec(evt.GetNormal()), _t(evt.GetRadius()),
                 _t(evt.IsHullHit()), _t(evt.GetWeaponType()),

@@ -696,9 +696,12 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
     return torp
 
 
-def _post_weapon_fired(weapon) -> None:
+def _post_weapon_fired(weapon, target) -> None:
     """Post ET_WEAPON_FIRED: Source = the firing weapon, Destination = the
-    owning ship (resolved via ``_climb_to_ship``).  Shared by TorpedoTube.Fire
+    owning ship (resolved via ``_climb_to_ship``), object pointer = the
+    target the shot went at (None for a dumbfire) -- the SDK's WeaponFired
+    handlers (E1M2, E2M1) ShipClass_Cast it and return when it is None.
+    Shared by TorpedoTube.Fire
     (posted AFTER ET_TORPEDO_FIRED — see TorpedoTube._broadcast_weapon_fired)
     and PhaserBank.Fire (posted on the was-not-firing edge, Task 10, audited
     §1.6/§6 — the SDK surface for the event bounds it to (weapon, owner ship)
@@ -710,6 +713,7 @@ def _post_weapon_fired(weapon) -> None:
         evt.SetEventType(App.ET_WEAPON_FIRED)
         evt.SetSource(weapon)
         evt.SetDestination(weapon._climb_to_ship())
+        evt.SetObjPtr(target)
         App.g_kEventManager.AddEvent(evt)
     except Exception as _e:
         dev_mode.log_swallowed("ET_WEAPON_FIRED broadcast", _e)
@@ -2677,12 +2681,11 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
     def _fire_effect(self, target, offset, decision) -> bool:
         """The shared beam-fire effect, then ET_WEAPON_FIRED on the
         was-not-firing edge — the same edge the mixin already uses for the
-        SFX one-shot (Task 10, audited §1.6/§6; spec §7). TractorBeam and
-        PulseWeapon do not post this event yet — out of scope for the
-        "phaser safe group"."""
+        SFX one-shot (Task 10, audited §1.6/§6; spec §7). TractorBeam does
+        not post it; PulseWeapon posts its own, once per shot."""
         _EnergyWeaponFireMixin._fire_effect(self, target, offset, decision)
         if not decision[0]:
-            _post_weapon_fired(self)
+            _post_weapon_fired(self, target)
         return True
 
     def GetMaxCharge(self) -> float:                return self._max_charge
@@ -2968,6 +2971,9 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         # where BC waits ~2 s.  No held beam.
         self._charge_level = max(0.0, self._charge_level - self._shot_cost())
         self._cooldown_remaining = self.GetCooldownTime()
+        # One ET_WEAPON_FIRED per shot, once the bolt exists; decision[1] is
+        # the target the shot used (the weapon's, else the ship's).
+        _post_weapon_fired(self, decision[1])
         return True
 
     def UpdateCharge(self, dt: float) -> None:
@@ -3468,20 +3474,20 @@ class TorpedoTube(Weapon):
         # BC's order (audited): ET_TORPEDO_FIRED (posted inside _spawn_torpedo,
         # once the projectile exists) THEN ET_WEAPON_FIRED, then the
         # player-only ET_TORPEDO_AMMO_CONSUMED.
-        self._broadcast_weapon_fired()
+        self._broadcast_weapon_fired(target)
         self._broadcast_ammo_consumed_if_player()
 
         # Discrete-shot — auto-stop after launch.
         self._firing = False
         return True
 
-    def _broadcast_weapon_fired(self) -> None:
+    def _broadcast_weapon_fired(self, target) -> None:
         """Post ET_WEAPON_FIRED: Source = the TUBE, Destination = the owning
         ship.  Posted AFTER ET_TORPEDO_FIRED on every successful launch
         (weapon-firing-mechanics.md §1.5/§2.4, audited).  Delegates to the
         module-level ``_post_weapon_fired`` shared with PhaserBank.Fire
         (Task 10)."""
-        _post_weapon_fired(self)
+        _post_weapon_fired(self, target)
 
     def _broadcast_weapon_fire_failed(self) -> None:
         """Post ET_WEAPON_FIRE_FAILED: Destination = the TUBE.  Posted when a
