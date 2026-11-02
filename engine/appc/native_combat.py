@@ -138,7 +138,8 @@ def available() -> bool:
             and hasattr(_h, "combat_set_part_poses")
             and hasattr(_h, "combat_k0_begin")
             and hasattr(_h, "combat_effect_take")
-            and hasattr(_h, "combat_effect_rebind"))
+            and hasattr(_h, "combat_effect_rebind")
+            and hasattr(_h, "combat_apply_hit"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -182,6 +183,8 @@ def reset() -> None:
     # Per-class caches: a class patched or re-based since must recompute.
     _kind_by_type.clear()
     _dmg_classes.clear()
+    for k in _dmg_counts:
+        _dmg_counts[k] = 0
     _k1_overridden_by_type.clear()
     _k1_watch.clear()
     global _pulse_stale
@@ -5724,8 +5727,10 @@ def _dmg_snapshot() -> dict:
 
 
 def damage_snapshot_stock() -> None:
-    """host_loop, beside k3_snapshot_stock: take the snapshot now."""
+    """host_loop, beside k3_snapshot_stock: take the snapshots now (the
+    classes' and the functions')."""
     _dmg_snapshot()
+    _dmg_functions()
 
 
 def _dmg_class(cls) -> int:
@@ -5773,6 +5778,252 @@ def _dmg_ship(cls) -> int:
                 hit = 1
         _dmg_classes[("ship", cls)] = hit
     return hit
+
+
+# ── Native damage: the callers (spec 2026-11-02-native-damage §3 goal 4) ─────
+#
+# With the switch on, every NON-kernel caller of the hit and the condition
+# chain runs the native one (damage.h) through these, synchronously: the
+# hit (combat.apply_hit: collisions, AddDamage and the death cascade, the
+# death splash at its SPLASH delivery, scenery contact, direct calls), the
+# DamageSystem (radiation, the SDK), the condition write (SetCondition,
+# SetConditionPercentage, DestroySystem, repairs, severance). Each returns
+# True when the native chain did it, False when the caller must run the
+# Python reference (a patched function or class, an object the mirror
+# cannot name, a value it cannot hold -- the native call then changed
+# nothing). The binding applies the writes through an applier context
+# installed here, and queues the entries holding their objects (damage.h,
+# Held; the bindings' damage_append_entries).
+
+#: Module functions the native chain stands in for (identity-checked at
+#: every native call against the snapshot, and never foreign).
+_DMG_FUNCTIONS = (
+    ("engine.appc.combat", ("_apply_hit", "_shield_face_from_hit_point",
+                            "_body_frame_delta", "_hull_box_for",
+                            "shields_block", "cloak_shields_suspended",
+                            "_iter_subsystems", "_subsystem_world_position",
+                            "_splash_weight",
+                            "_pick_primary_subsystem_for_dispatch",
+                            "_subsystem_state_flags", "_diff_state")),
+    ("engine.appc.subsystems", ("subsystem_world_position",)),
+    ("engine.appc.objects", ("write_condition", "_is_critical")),
+    ("engine.appc.death_check", ("note_write",)),
+    ("engine.appc.effect_queue", ("emit", "hit_present_operands",
+                                  "weapon_hit_operands")),
+    ("engine.dev_combat_cheats", ("god_mode_active",
+                                  "double_player_weapons_active",
+                                  "disable_npc_shields_active")),
+    ("engine.core.ids", ("implements",)),
+)
+#: The stock-class methods re-checked at every native call: the snapshot's,
+#: plus FloatRangeWatcher._update_queued (COND_WATCH's producer).
+_dmg_fn_snapshot = None
+_dmg_counts = {"hits": 0, "conditions": 0, "damage_systems": 0,
+               "fallbacks": 0}
+
+
+def damage_counts() -> dict:
+    """Since the last reset(): the native hits, condition writes and
+    DamageSystem calls, and the calls handed back to Python (a native
+    call's fallback or the guard's)."""
+    return dict(_dmg_counts)
+
+
+def _dmg_functions() -> list:
+    global _dmg_fn_snapshot
+    if _dmg_fn_snapshot is None:
+        from engine.appc.float_range_watcher import FloatRangeWatcher
+        snap = []
+        for name, names in _DMG_FUNCTIONS:
+            mod = importlib.import_module(name)
+            snap.append((mod, operator.attrgetter(*names),
+                         operator.attrgetter(*names)(mod)))
+        snap.append((FloatRangeWatcher, operator.attrgetter("_update_queued"),
+                     FloatRangeWatcher._update_queued))
+        _dmg_fn_snapshot = snap
+    return _dmg_fn_snapshot
+
+
+def _dmg_unchanged() -> bool:
+    """Every function and stock-class method the native chain stands in for
+    is the one snapshotted, and none is foreign (a test's patch made before
+    the snapshot)."""
+    for owner, get, values in _dmg_functions():
+        try:
+            now = get(owner)
+        except AttributeError:
+            return False
+        if now != values:
+            return False
+        if type(now) is tuple:
+            if any(_k2_foreign(v) for v in now):
+                return False
+        elif _k2_foreign(now):
+            return False
+    st = _dmg_snapshot()
+    ship_subsystem, weapon_system, shield, ship = st["classes"]
+    return (_dmg_resolve(ship_subsystem, _DMG_SUB_NAMES) == st["sub"]
+            and _dmg_resolve(ship_subsystem, _DMG_PREDICATES) == st["leaf"]
+            and _dmg_resolve(weapon_system, _DMG_PREDICATES)
+            == st["aggregate"]
+            and _dmg_resolve(shield, _DMG_SHIELD_NAMES) == st["shield"]
+            and _dmg_resolve(ship, _DMG_SHIP_NAMES) == st["ship"])
+
+
+def _dmg_handle(obj, kind: str):
+    """`obj`'s row handle when it is a registered row of `kind`, -1 for None,
+    else None (the native chain cannot name it)."""
+    if obj is None:
+        return REF_NONE
+    h = _slot_of(obj)
+    if h is None or (h >> _KIND_SHIFT) != _kind(kind):
+        return None
+    return h
+
+
+def _dmg_held(obj) -> int:
+    """An H operand's handle (damage.h, Held): -1 None, the row of a
+    registered object, -2 one the mirror cannot name (its object is still
+    the one the entry holds)."""
+    if obj is None:
+        return REF_NONE
+    h = _slot_of(obj)
+    return REF_UNREPRESENTABLE if h is None else h
+
+
+def _dmg_patched(obj, names) -> bool:
+    """An instance attribute shadows a method the chain stands in for."""
+    d = getattr(obj, "__dict__", None)
+    return d is not None and any(n in d for n in names)
+
+
+def _dmg_call(fn, *args) -> bool:
+    """`fn(*args)` (a native damage binding) under an applier context of its
+    own (the previous one restored: a K1/K2 session's)."""
+    prev = _h.combat_set_applier(_applier_context(_K1Walk()))
+    try:
+        return fn(*args)
+    finally:
+        _h.combat_set_applier(prev)
+
+
+def _dmg_point(p):
+    """A TGPoint3 as three floats (float() of each, as effect_queue._xyz),
+    or None."""
+    if p is None:
+        return None
+    return (float(p.x), float(p.y), float(p.z))
+
+
+def apply_hit(ship, damage, hit_point, source, *, normal=None,
+              ship_instances=None, weapon_type=None, hardpoint_weapon=None,
+              payload_template=None, splash_radius=None, damage_hull=True,
+              bypass_shields=False, shield_point=None, hit_tangent=None,
+              decal_radius=None, decal_dent=0.0, single_impact=False,
+              shield_radius=None) -> bool:
+    """combat._apply_hit natively (its arguments; True: done). The values
+    the native hit takes as given are computed here exactly as the
+    reference computes them: R_hit (weapon_splash_radius, the splash_radius
+    override), the player, the cheats, each operand's float()/bool()."""
+    if (hit_point is None or not _dmg_unchanged()
+            or _dmg_patched(ship, _DMG_SHIP_NAMES)):
+        _dmg_counts["fallbacks"] += 1
+        return False
+    ship_h = _dmg_handle(ship, "Object")
+    if ship_h is None or ship_h == REF_NONE:
+        _dmg_counts["fallbacks"] += 1
+        return False
+    import App
+    from engine.appc import combat
+    import engine.dev_combat_cheats as cheats
+    try:
+        game = (App.Game_GetCurrentGame()
+                if hasattr(App, "Game_GetCurrentGame") else None)
+        player = (game.GetPlayer()
+                  if game is not None and hasattr(game, "GetPlayer")
+                  else None)
+    except Exception:
+        player = None
+    player_h = _dmg_handle(player, "Object")
+    source_h = _dmg_handle(source, "Object")
+    if source_h is None:
+        source_h = REF_UNREPRESENTABLE      # never the player's
+    try:
+        r_hit = combat.weapon_splash_radius(hardpoint_weapon,
+                                            payload_template)
+        if splash_radius is not None:
+            r_hit = float(splash_radius)
+        args = (
+            ship_h, source, source_h, float(damage), _dmg_point(hit_point),
+            _dmg_point(normal), float(r_hit), bool(damage_hull),
+            bool(bypass_shields), _dmg_point(shield_point),
+            shield_point is not None and shield_point is hit_point,
+            _dmg_point(hit_tangent),
+            None if decal_radius is None else float(decal_radius),
+            float(decal_dent), bool(single_impact),
+            None if shield_radius is None else float(shield_radius),
+            _effect_queue._HIT_WEAPON_CODES.get(weapon_type,
+                                                _effect_queue.HIT_WEAPON_NONE),
+            int(combat._WEAPON_TYPE_IDS.get(
+                weapon_type, _effect_queue.WEAPON_HIT_NON_WEAPON)),
+            ship_instances is not None)
+    except (TypeError, ValueError, AttributeError, OverflowError):
+        _dmg_counts["fallbacks"] += 1
+        return False                # the reference raises it
+    if player_h is None:
+        _dmg_counts["fallbacks"] += 1
+        return False
+    if ship_instances is not None:
+        # The map HIT_PRESENT's delivery presents with (R13).
+        from engine.appc import hit_feedback
+        hit_feedback.use_instances(ship_instances)
+    done = _dmg_call(_h.combat_apply_hit, *args, player_h,
+                     bool(cheats.god_mode_active()),
+                     bool(cheats.double_player_weapons_active()),
+                     bool(cheats.disable_npc_shields_active()))
+    _dmg_counts["hits" if done else "fallbacks"] += 1
+    return done
+
+
+def set_condition(sub, value, killer=None, ship=None) -> bool:
+    """ShipSubsystem._set_condition natively (True: done)."""
+    if (not _dmg_unchanged()
+            or _dmg_patched(sub, _DMG_SUB_NAMES + _DMG_PREDICATES)):
+        _dmg_counts["fallbacks"] += 1
+        return False
+    sub_h = _dmg_handle(sub, "Subsystem")
+    ship_h = _dmg_handle(ship, "Object")
+    try:
+        v = float(value)
+    except (TypeError, ValueError, OverflowError):
+        _dmg_counts["fallbacks"] += 1
+        return False                # the reference raises it
+    if sub_h is None or sub_h == REF_NONE or ship_h is None:
+        _dmg_counts["fallbacks"] += 1
+        return False
+    done = _dmg_call(_h.combat_set_condition, sub_h, v, _dmg_held(killer),
+                     ship_h, killer)
+    _dmg_counts["conditions" if done else "fallbacks"] += 1
+    return done
+
+
+def damage_system(ship, sub, amount: float, source=None) -> bool:
+    """DamageableObject.DamageSystem natively, past its None and `amt <= 0`
+    returns (`amount` already float()); True: done."""
+    from engine.appc.subsystems import ShipSubsystem
+    if (not _dmg_unchanged() or not isinstance(sub, ShipSubsystem)
+            or _dmg_patched(sub, _DMG_SUB_NAMES + _DMG_PREDICATES)):
+        _dmg_counts["fallbacks"] += 1
+        return False
+    ship_h = _dmg_handle(ship, "Object")
+    sub_h = _dmg_handle(sub, "Subsystem")
+    if ship_h is None or ship_h == REF_NONE or sub_h is None:
+        _dmg_counts["fallbacks"] += 1
+        return False
+    done = _dmg_call(_h.combat_damage_system, ship_h, sub_h, amount,
+                     _dmg_held(source), source)
+    _dmg_counts["damage_systems" if done else "fallbacks"] += 1
+    return done
 
 
 if available():

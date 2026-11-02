@@ -1132,6 +1132,11 @@ class DamageableObject(PhysicsObjectClass):
         amt = float(amount)
         if amt <= 0.0:
             return
+        # Native combat on: the native DamageSystem stands in (native damage
+        # Task 3), else -- or when it hands back -- the reference below.
+        if native_combat._enabled and native_combat.damage_system(
+                self, subsystem, amt, source):
+            return
         cur = subsystem.GetCondition()
         write_condition(self, subsystem, max(0.0, cur - amt), killer=source)
 

@@ -768,7 +768,14 @@ class ShipSubsystem(TGEventHandlerObject):
     def _set_condition(self, value, killer=None, ship=None) -> None:
         """SetCondition's body. `killer` (the firing ship) and `ship` (whom
         the write is charged to, default the owning ship) come from
-        DamageableObject.DamageSystem via objects.write_condition."""
+        DamageableObject.DamageSystem via objects.write_condition.
+
+        With native combat on the native condition chain stands in
+        (native damage Task 3; native_combat.set_condition), else -- or when
+        it hands back -- this body, the reference."""
+        if native_combat._enabled and native_combat.set_condition(
+                self, value, killer, ship):
+            return
         before = self._condition
         self._condition = max(0.0, float(value))
         self._condition_changed()

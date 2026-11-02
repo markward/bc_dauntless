@@ -1307,6 +1307,8 @@ def _phaser_contact(ship, sys_, bank, target, dist: float, dt: float,
 _native_combat.k2_snapshot_stock(sys.modules[__name__])
 # ... and the functions and classes K3 (cb.projectiles) stands in for.
 _native_combat.k3_snapshot_stock()
+# ... and those the native hit and condition chain stand in for (damage).
+_native_combat.damage_snapshot_stock()
 
 
 def _advance_combat(*args, **kwargs) -> None:

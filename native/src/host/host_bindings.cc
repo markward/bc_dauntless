@@ -22,6 +22,7 @@
 #include "dauntless/torpedo_scan.h"
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/beam_trace.h"
+#include "dauntless/combat/damage.h"
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/k0_charging.h"
 #include "dauntless/combat/k1_fire_control.h"
@@ -4321,6 +4322,129 @@ void k0_append_entries(std::span<const dauntless::combat::K0Entry> entries) {
             case cb::K0Effect::kCount:
                 throw std::logic_error("combat K0: unknown queue entry");
         }
+    }
+}
+
+// ── Native damage (spec 2026-11-02-native-damage-design.md §4.2) ─────────
+// damage.h computes a hit or a condition write on the mirror; these turn
+// its result into Python's: the writes applied by the session's applier
+// (combat_write_apply.h), the entries appended to the effect queue under
+// THE FROZEN ENTRY CONTRACT (combat_effect_queue.h, effect_queue.py).
+
+// The combat library's damage kinds and codes are the queue's.
+static_assert(dauntless::combat::kWatchCondition ==
+                  static_cast<int>(dauntless::host::CondWatch::CONDITION) &&
+              dauntless::combat::kWatchCombined ==
+                  static_cast<int>(dauntless::host::CondWatch::COMBINED));
+static_assert(
+    dauntless::combat::kSubsysDestroyed ==
+        static_cast<int>(dauntless::host::SubsysEvent::DESTROYED) &&
+    dauntless::combat::kSubsysDisabled ==
+        static_cast<int>(dauntless::host::SubsysEvent::DISABLED) &&
+    dauntless::combat::kSubsysOperational ==
+        static_cast<int>(dauntless::host::SubsysEvent::OPERATIONAL));
+static_assert(
+    dauntless::combat::kTransitionNone ==
+        static_cast<int>(dauntless::host::HitTransition::NONE) &&
+    dauntless::combat::kTransitionDisabled ==
+        static_cast<int>(dauntless::host::HitTransition::DISABLED) &&
+    dauntless::combat::kTransitionDestroyed ==
+        static_cast<int>(dauntless::host::HitTransition::DESTROYED));
+
+dauntless::host::EffectKind damage_effect_kind(dauntless::combat::DamageKind k) {
+    namespace cb = dauntless::combat;
+    namespace hq = dauntless::host;
+    switch (k) {
+        case cb::DamageKind::COND_WATCH: return hq::EffectKind::COND_WATCH;
+        case cb::DamageKind::SUBSYS_EVENT: return hq::EffectKind::SUBSYS_EVENT;
+        case cb::DamageKind::REPAIR_ADD: return hq::EffectKind::REPAIR_ADD;
+        case cb::DamageKind::ZERO_CROSS: return hq::EffectKind::ZERO_CROSS;
+        case cb::DamageKind::HIT_PRESENT: return hq::EffectKind::HIT_PRESENT;
+        case cb::DamageKind::WEAPON_HIT: return hq::EffectKind::WEAPON_HIT;
+        case cb::DamageKind::kCount: break;
+    }
+    throw std::logic_error("combat damage: unknown entry kind");
+}
+
+// A native damage call's entries into the effect queue, in order. Each R
+// operand is held as the object its handle names now (K1Held: the entry
+// holds its subject from emission, as the Python reference's does, so a
+// row freed before the boundary loses nothing); every H operand is the
+// call's `held` object (damage.h, Held: the hit's source, the write's
+// killer), or -1 for None.
+void damage_append_entries(const std::vector<dauntless::combat::DamageEntry>& entries,
+                           PyObject* held) {
+    namespace cb = dauntless::combat;
+    namespace hq = dauntless::host;
+    for (const cb::DamageEntry& e : entries) {
+        K1Held holder;
+        std::vector<PyObject*> extra;   // the held object's references
+        struct Release {
+            std::vector<PyObject*>& refs;
+            ~Release() {
+                for (PyObject* o : refs) Py_DECREF(o);
+            }
+        } release{extra};
+        hq::NativeOperand ops[cb::DamageEntry::kMaxOperands];
+        for (int i = 0; i < e.count; ++i) {
+            const cb::DamageOperand& o = e.ops[i];
+            switch (o.type) {
+                case cb::DamageOperand::Type::Handle:
+                    ops[i] = holder(o.handle, false);
+                    break;
+                case cb::DamageOperand::Type::Held:
+                    if (held == nullptr || held == Py_None) {
+                        ops[i] = std::int64_t{-1};
+                    } else {
+                        extra.push_back(Py_NewRef(held));
+                        ops[i] = hq::OwnedObject{held};
+                    }
+                    break;
+                case cb::DamageOperand::Type::Number:
+                    ops[i] = o.number;
+                    break;
+                case cb::DamageOperand::Type::Int:
+                    ops[i] = hq::EffectInt{o.integer};
+                    break;
+                case cb::DamageOperand::Type::Bool:
+                    ops[i] = hq::EffectBool{o.boolean};
+                    break;
+            }
+        }
+        hq::effect_queue().append_native_span(
+            damage_effect_kind(e.kind),
+            std::span<const hq::NativeOperand>(ops, e.count));
+        holder.release();   // the queue owns every reference now
+        extra.clear();
+    }
+}
+
+// Run a damage.h call: false when it fell back (the mirror is as it was,
+// nothing applied, nothing queued: the caller runs the Python); else its
+// writes applied through the session's applier, then its entries queued.
+template <class Fn>
+bool damage_run(Fn&& fn, PyObject* held) {
+    namespace cb = dauntless::combat;
+    namespace hq = dauntless::host;
+    cb::DamageOut out;
+    try {
+        fn(out);
+    } catch (const std::invalid_argument&) {
+        return false;
+    }
+    if (!out.writes.empty() &&
+        !hq::write_applier().apply(out.writes, 0, out.writes.size()))
+        throw py::error_already_set();
+    damage_append_entries(out.entries, held);
+    return true;
+}
+
+// An optional point argument: None, or three floats.
+void damage_point(const py::object& o, bool& has, dauntless::combat::Vec3& v) {
+    has = !o.is_none();
+    if (has) {
+        const auto a = o.cast<std::array<double, 3>>();
+        v = {a[0], a[1], a[2]};
     }
 }
 
@@ -13091,6 +13215,89 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   "Test entry: append a KERNEL's entry -- ints are mirror "
                   "handles (-1 None), floats numbers -- as append_native "
                   "does.");
+            m.def(
+                "combat_apply_hit",
+                [](std::int64_t ship, py::object source, std::int64_t source_h,
+                   double damage, std::array<double, 3> point,
+                   py::object normal, double r_hit, bool damage_hull,
+                   bool bypass_shields, py::object shield_point,
+                   bool shield_point_is_point, py::object tangent,
+                   py::object decal_radius, double decal_dent,
+                   bool single_impact, py::object shield_radius,
+                   std::int64_t hit_weapon, std::int64_t weapon_hit_type,
+                   bool has_instances, std::int64_t player, bool god_mode,
+                   bool double_damage, bool npc_shields_off) {
+                    namespace cb = dauntless::combat;
+                    cb::HitInput in;
+                    in.ship = ship;
+                    in.source = source_h;
+                    in.damage = damage;
+                    in.point = {point[0], point[1], point[2]};
+                    damage_point(normal, in.has_normal, in.normal);
+                    in.r_hit = r_hit;
+                    in.damage_hull = damage_hull;
+                    in.bypass_shields = bypass_shields;
+                    damage_point(shield_point, in.has_shield_point,
+                                 in.shield_point);
+                    in.shield_point_is_point = shield_point_is_point;
+                    damage_point(tangent, in.has_tangent, in.tangent);
+                    in.has_decal_radius = !decal_radius.is_none();
+                    if (in.has_decal_radius)
+                        in.decal_radius = decal_radius.cast<double>();
+                    in.decal_dent = decal_dent;
+                    in.single_impact = single_impact;
+                    in.has_shield_radius = !shield_radius.is_none();
+                    if (in.has_shield_radius)
+                        in.shield_radius = shield_radius.cast<double>();
+                    in.hit_weapon = hit_weapon;
+                    in.weapon_hit_type = weapon_hit_type;
+                    in.has_instances = has_instances;
+                    cb::DamageContext ctx;
+                    ctx.player = player;
+                    ctx.god_mode = god_mode;
+                    ctx.double_damage = double_damage;
+                    ctx.npc_shields_off = npc_shields_off;
+                    return damage_run(
+                        [&](cb::DamageOut& out) {
+                            cb::apply_hit(cb::mirror(), in, ctx, out);
+                        },
+                        source.ptr());
+                },
+                "Native damage: combat._apply_hit natively (damage.h), "
+                "`source` the hit's source object (its handle `source_h`, "
+                "-1 None, -2 unnamed), the points as hit_present_operands "
+                "spells them, the weapon type as its two codes, the cheats "
+                "and the player handle. Under an applier context "
+                "(combat_set_applier). False: it fell back, nothing "
+                "changed -- run the Python.");
+            m.def(
+                "combat_set_condition",
+                [](std::int64_t sub, double value, std::int64_t killer_h,
+                   std::int64_t ship, py::object killer) {
+                    namespace cb = dauntless::combat;
+                    return damage_run(
+                        [&](cb::DamageOut& out) {
+                            cb::set_condition(cb::mirror(), sub, value,
+                                              killer_h, ship, out);
+                        },
+                        killer.ptr());
+                },
+                "Native damage: ShipSubsystem._set_condition(value, killer, "
+                "ship) natively (`ship` -1 for None). False: fell back.");
+            m.def(
+                "combat_damage_system",
+                [](std::int64_t ship, std::int64_t sub, double amount,
+                   std::int64_t killer_h, py::object killer) {
+                    namespace cb = dauntless::combat;
+                    return damage_run(
+                        [&](cb::DamageOut& out) {
+                            cb::damage_system(cb::mirror(), ship, sub, amount,
+                                              killer_h, out);
+                        },
+                        killer.ptr());
+                },
+                "Native damage: DamageableObject.DamageSystem(sub, amount, "
+                "killer) natively. False: fell back.");
             m.def("combat_effect_codes", [] {
                 py::dict d;
                 for (const hq::EffectCode& c : hq::effect_codes())
