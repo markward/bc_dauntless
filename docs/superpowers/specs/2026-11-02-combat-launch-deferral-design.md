@@ -1,6 +1,6 @@
 # Native combat: launches at the boundary, K1's walk check out of the kernel — design
 
-**Status:** built 2026-11-02, outcome in §10; awaiting Mark's live check. Mark chose this phase ("Straight to A it is"): roadmap workstream F (launch-script cache) plus moving K1's walk check out of the kernel (workstream I's known blocker), under his rule that the sim must not check in with Python mid-step.
+**Status:** built 2026-11-02, outcome in §10; live-verified by Mark 2026-11-02 and merged into `project/combat_threading`. Mark chose this phase ("Straight to A it is"): roadmap workstream F (launch-script cache) plus moving K1's walk check out of the kernel (workstream I's known blocker), under his rule that the sim must not check in with Python mid-step.
 **Branch:** `ws/combat-launch-cache`, off `project/combat_threading` (`c2b0534c1`), in worktree `.claude/worktrees/native-combat-k3`. No main gate: focused tests, differentials, benchmark runs. Mark live-tests before merge.
 **Input maps:** `docs/reference/engine/native-combat/launch-map.md` (LM §n), `docs/reference/engine/native-combat/k1-walk-check-map.md` (WM §n).
 
