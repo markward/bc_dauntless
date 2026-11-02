@@ -1,0 +1,282 @@
+"""The K0 override guard (native weapon state, Task 5; spec
+docs/superpowers/specs/2026-11-02-native-weapon-state-design.md §4.3,
+docs/reference/engine/native-combat/weapon-state-map.md §7(a) A6).
+
+K0 computes, from the mirror, what the charging walk's Python methods would
+do. A test, tool or mod that replaces one must still be obeyed:
+
+  - on the CLASS: a class whose MRO resolves any of A6's methods (plus the
+    walk's own GetNumWeapons / GetWeapon / the ship's group getters) to
+    anything but the stock class of its role had when the engine defined it
+    -> a weapon class: that weapon runs in Python; a weapon system or ship
+    class: the whole ship runs in Python. Rechecked at every session, so a
+    patch made between ticks is seen at the next one;
+  - on the INSTANCE: an instance attribute shadowing one of the cheap
+    subset tests, tools and SWIG patch (native_combat._K0_*_PATCHES: a
+    weapon's UpdateCharge / UpdateReload / ReloadTorpedo -> that weapon; a
+    system's IsOn / GetNormalPowerPercentage / GetPowerLevel or a ship's
+    group getters -> the whole ship).
+A torpedo tube's reload gate reads its siblings' GetNumReady and the
+magazine's GetAvailable, so one overridden tube or magazine hands every tube
+of that system back.
+"""
+import pathlib
+import re
+
+import pytest
+
+import App
+
+try:
+    import _dauntless_host as _h
+except ImportError:
+    _h = None
+
+pytestmark = pytest.mark.skipif(
+    _h is None or not hasattr(_h, "combat_register"),
+    reason="native combat bindings not built")
+
+from engine.appc import native_combat as nc  # noqa: E402
+from engine.appc import passive_state  # noqa: E402
+from engine.appc import weapon_subsystems as ws  # noqa: E402
+from engine.appc.ships import ShipClass  # noqa: E402
+from tests.helpers.k0_fight import groups, run_both  # noqa: E402
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+WSM = ROOT / "docs" / "reference" / "engine" / "native-combat" \
+    / "weapon-state-map.md"
+PHASER, PULSE, TRACTOR, TORPEDO = range(4)
+
+
+@pytest.fixture(autouse=True)
+def _switch():
+    nc.reset()
+    passive_state.reset()
+    yield
+    nc.reset()
+    passive_state.reset()
+    App.g_kModelPropertyManager.ClearLocalTemplates()
+
+
+def _override(counts):
+    return counts["k0_python_reasons"]["override"]
+
+
+def _swap_class(obj, cls):
+    obj.__class__ = cls
+    nc.reclassify(obj)          # the row's class flags (both arms)
+
+
+class _CountingBank(ws.PhaserBank):
+    calls = []
+
+    def UpdateCharge(self, dt):
+        _CountingBank.calls.append(self.GetName())
+        ws.PhaserBank.UpdateCharge(self, dt)
+
+
+def _drain_and_recharge(w, t):
+    g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+    if t == 0:
+        g.GetPhaserSystem().StartFiring(v)
+    elif t == 100:
+        g.GetPhaserSystem().StopFiring()
+
+
+def test_class_override_of_update_charge_runs_python(monkeypatch):
+    """A bank whose CLASS overrides UpdateCharge: that bank runs in Python
+    (reason override), the override called exactly as often as without K0;
+    the ship's other weapons stay native."""
+    calls = {}
+
+    def setup(w):
+        _CountingBank.calls = []
+        _swap_class(w.weapons("Galaxy", PHASER)[0], _CountingBank)
+
+    def script(w, t):
+        _drain_and_recharge(w, t)
+        calls[w.native] = list(_CountingBank.calls)
+
+    _ref, _nat, counts = run_both(monkeypatch.context, script, 160,
+                                  setup=setup, passive=False)
+    assert calls[False] and calls[True] == calls[False]
+    assert _override(counts) == 160, counts
+    assert counts["k0_steps"] > 0, counts
+
+
+def test_instance_attribute_update_charge_runs_python(monkeypatch):
+    """`bank.UpdateCharge = ...` on one instance: that bank runs in Python
+    and the patch is called, ON == OFF."""
+    calls = {}
+
+    def setup(w):
+        bank = w.weapons("Galaxy", PHASER)[1]
+        log = calls[w.native] = []
+        real = bank.UpdateCharge
+
+        def patched(dt):
+            log.append(w.n)
+            real(dt)
+        bank.UpdateCharge = patched
+
+    _ref, _nat, counts = run_both(monkeypatch.context, _drain_and_recharge,
+                                  160, setup=setup, passive=False)
+    assert calls[False] and calls[True] == calls[False]
+    assert _override(counts) == 160, counts
+
+
+def test_stock_class_patch_between_ticks_is_seen(monkeypatch):
+    """A patch on the stock TorpedoTube.UpdateReload made between ticks is
+    seen from the next session on: every tube runs in Python and the patch
+    is called, ON == OFF."""
+    calls = {}
+
+    def script(w, t):
+        if t == 0:
+            for tube in w.weapons("Galaxy", TORPEDO):
+                tube._reload_delay = 0.4
+            w.ships["Galaxy"].GetTorpedoSystem().StartFiring(
+                w.ships["Vorcha"])
+        if t == 20:
+            log = calls[w.native] = []
+            real = ws.TorpedoTube.UpdateReload
+
+            def patched(self, dt=0.0):
+                log.append((w.n, self.GetName()))
+                real(self, dt)
+            # The arm's own monkeypatch: undone when the arm ends.
+            w.mp.setattr(ws.TorpedoTube, "UpdateReload", patched)
+
+    _ref, _nat, counts = run_both(monkeypatch.context, script, 60,
+                                  passive=False)
+    assert calls[False] and calls[True] == calls[False]
+    assert _override(counts) > 0, counts
+
+
+class _AlwaysOnPhasers(ws.PhaserSystem):
+    def IsOn(self):
+        return 1
+
+
+def test_system_class_override_hands_the_ship_back(monkeypatch):
+    """A phaser SYSTEM class overriding IsOn (read by its banks' recharge):
+    the whole ship runs in Python, the patched IsOn obeyed (the banks
+    recharge while the system is off)."""
+
+    def setup(w):
+        _swap_class(w.ships["Galaxy"].GetPhaserSystem(), _AlwaysOnPhasers)
+
+    def script(w, t):
+        if t == 0:
+            w.ships["Galaxy"].GetPhaserSystem().TurnOff()
+            for bank in w.weapons("Galaxy", PHASER):
+                bank.SetChargeLevel(0.0)
+
+    ref, _nat, counts = run_both(monkeypatch.context, script, 30, setup=setup)
+    assert _override(counts) == 30, counts      # one whole-ship hand-back
+    bank = ref.weapons("Galaxy", PHASER)[0]
+    assert bank.GetChargeLevel() > 0.0
+
+
+def test_system_instance_patch_hands_the_ship_back(monkeypatch):
+    """`system.IsOn = lambda: True` (as several tests do): the ship runs in
+    Python and the patch is obeyed."""
+
+    def setup(w):
+        w.ships["Galaxy"].GetPhaserSystem().IsOn = lambda: True
+
+    def script(w, t):
+        if t == 0:
+            w.ships["Galaxy"].GetPhaserSystem().TurnOff()
+            for bank in w.weapons("Galaxy", PHASER):
+                bank.SetChargeLevel(0.0)
+
+    ref, _nat, counts = run_both(monkeypatch.context, script, 30, setup=setup)
+    assert _override(counts) == 30, counts
+    assert ref.weapons("Galaxy", PHASER)[0].GetChargeLevel() > 0.0
+
+
+class _NoPhasersShip(ShipClass):
+    def GetPhaserSystem(self):
+        return None
+
+
+def test_ship_class_group_getter_override_hands_the_ship_back(monkeypatch):
+    """A ship class whose GetPhaserSystem answers None: the passive walk
+    never steps its phasers; K0 hands the ship back and so does not
+    either."""
+
+    def setup(w):
+        w.ships["Galaxy"].GetPhaserSystem().TurnOn()
+        _swap_class(w.ships["Galaxy"], _NoPhasersShip)
+        for bank in w.weapons("Galaxy", PHASER):
+            bank.SetChargeLevel(0.0)
+
+    ref, nat, counts = run_both(monkeypatch.context, lambda w, t: None, 10,
+                                setup=setup)
+    assert _override(counts) == 10, counts
+    for world in (ref, nat):
+        assert world.weapons("Galaxy", PHASER)[0].GetChargeLevel() == 0.0
+
+
+class _CountingTube(ws.TorpedoTube):
+    def GetNumReady(self):
+        return ws.TorpedoTube.GetNumReady(self)
+
+
+def test_one_overridden_tube_hands_back_its_siblings(monkeypatch):
+    """One tube class overriding GetNumReady (which every sibling's reload
+    gate sums): every tube of that system runs in Python."""
+
+    def setup(w):
+        _swap_class(w.weapons("Galaxy", TORPEDO)[0], _CountingTube)
+
+    _ref, _nat, counts = run_both(monkeypatch.context, lambda w, t: None, 5,
+                                  setup=setup)
+    tubes = len(groups(_nat.ships["Galaxy"])[-1]._children)
+    assert _override(counts) == 5 * tubes, counts
+
+
+class _CountedAmmo(ws.TorpedoAmmoType):
+    def GetAvailable(self):
+        return ws.TorpedoAmmoType.GetAvailable(self)
+
+
+def test_magazine_class_override_hands_back_its_tubes(monkeypatch):
+    def setup(w):
+        torps = w.ships["Vorcha"].GetTorpedoSystem()
+        _swap_class(torps.GetCurrentAmmoType(), _CountedAmmo)
+
+    _ref, nat, counts = run_both(monkeypatch.context, lambda w, t: None, 5,
+                                 setup=setup)
+    tubes = len(nat.weapons("Vorcha", TORPEDO))
+    assert _override(counts) == 5 * tubes, counts
+
+
+def test_stock_classes_are_not_flagged():
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
+    assert nc.enabled()
+    for cls in (ws.PhaserSystem, ws.PulseWeaponSystem, ws.TractorBeamSystem,
+                ws.TorpedoSystem, ws.PhaserBank, ws.PulseWeapon,
+                ws.TractorBeam, ws.TorpedoTube, ws.TorpedoAmmoType,
+                ShipClass):
+        assert nc._k0_flag(cls) == 0, cls
+    for cls in (_CountingBank, _AlwaysOnPhasers, _NoPhasersShip,
+                _CountingTube, _CountedAmmo):
+        assert nc._k0_flag(cls) == 1, cls
+
+
+def test_method_list_covers_wsm_a6():
+    """Every method WSM §7(a) A6 lists is in the guard's class list."""
+    text = WSM.read_text()
+    row = next(line for line in text.splitlines() if line.startswith("| A6 "))
+    cell = row.split("|")[2]
+    cell = cell.split("Tests class-patch")[0]
+    names = set()
+    for tok in re.findall(r"`([^`]+)`", cell):
+        if tok.startswith("GetCurrentAmmoType/"):
+            names.update(("GetCurrentAmmoType", "GetCurrentAmmoSlot"))
+        else:
+            names.add(tok)
+    assert names, row
+    assert names <= set(nc._K0_METHODS), names - set(nc._K0_METHODS)

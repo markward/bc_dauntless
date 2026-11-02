@@ -455,9 +455,14 @@ class _Scene:
                 # What an energy bank's idle StopFiring writes with
                 # `_firing`; K1 logs those writes since round trips Task 2.
                 _t(d.get("_beam_on_countdown")) if energy else None,
-                # Asleep (passive weapons): every `_firing` write, a logged
-                # one included, wakes a sleeping weapon (WakeField).
-                _t(passive_state.is_asleep(w)),
+                # A missed wake (passive weapons): asleep while NOT at rest.
+                # Every `_firing` write, a logged one included, wakes a
+                # sleeping weapon (WakeField). The raw asleep flag differs
+                # by design with native on: K0 steps every weapon and puts
+                # none to sleep (spec 2026-11-02-native-weapon-state-design
+                # .md §4.3).
+                _t(passive_state.is_asleep(w)
+                   and not w._passive_at_rest()),
             ))
         for s in self.ships:
             hull = s.GetHull()

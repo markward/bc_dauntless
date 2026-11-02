@@ -101,6 +101,7 @@ INDEX = "index"
 _profiles: dict = {}
 
 _KIND_SHIFT = 60
+_INT64_LIMIT = 1 << 63
 
 # The one-call scalar push (combat_push_scalar, spec 2026-11-02 §4.2): a
 # NativeField type -> its push code's name in combat_push_codes(). Every
@@ -124,7 +125,8 @@ def available() -> bool:
             and hasattr(_h, "combat_step_serial")
             and hasattr(_h, "combat_k4_eligible")
             and hasattr(_h, "combat_k3_begin")
-            and hasattr(_h, "combat_set_part_poses"))
+            and hasattr(_h, "combat_set_part_poses")
+            and hasattr(_h, "combat_k0_begin"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -196,6 +198,10 @@ def reset() -> None:
     _k3_watch_seen[0] = -1
     global _apply_kinds
     _apply_kinds = None
+    for k in _K0_STEP_REASONS:
+        _k0_step_reasons[k] = 0
+    _k0_flags.clear()
+    _k0_watch.clear()
     if available():
         _h.combat_apply_reset_counts()
         _h.combat_push_reset_counts()
@@ -205,6 +211,9 @@ def reset() -> None:
         if _h.combat_k3_open():
             _h.combat_k3_abandon()
         _h.combat_k3_reset_counts()
+        if _h.combat_k0_open():
+            _h.combat_k0_abandon()
+        _h.combat_k0_reset_counts()
         _h.combat_step_reset()
 
 
@@ -239,9 +248,19 @@ def counts() -> dict:
     is decided in the walk -- those three are counted in
     k1_fire_ask_reasons only.
 
-    "c_applied_writes": the K1/K2 log writes the bindings applied
+    "c_applied_writes": the K1/K2/K0 log writes the bindings applied
     themselves (C-applied write logs, _applier_context). "fast_pushes":
     scalar NativeField pushes stored by combat_push_scalar.
+
+    K0 (`sim.weapons`, the charging kernel): the kernel's "k0_steps"
+    (weapons stepped natively), "k0_records" ({DONE, DEPLETE_STOP,
+    RELOADED, WATCH, RUN_PYTHON: n}), "k0_python_reasons" (the RUN_PYTHON
+    hand-backs by K0Reason name, k0_charging.h: tractor, no_row,
+    not_weapon_system, stale_row, slot_heal, override, audit, power_level,
+    parent, unrepresentable, unknown_kind; zeros included) and
+    "k0_logged_writes" (writes returned in records), plus the driver's
+    "k0_python_steps" / "k0_python_step_reasons" ({off, nested, audit}:
+    whole steps k0_weapons left to the Python walk).
 
     K2 (`cb.phasers`): the kernel's {"k2_records", "k2_python_ships",
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
@@ -278,7 +297,10 @@ def counts() -> dict:
     c = dict(_counts)
     c.update(_k2_steps)
     c["k2_python_step_reasons"] = dict(_k2_step_reasons)
+    c["k0_python_step_reasons"] = dict(_k0_step_reasons)
+    c["k0_python_steps"] = sum(_k0_step_reasons.values())
     if available():
+        c.update(_h.combat_k0_counts())
         c.update(_h.combat_apply_counts())
         c.update(_h.combat_push_counts())
         c.update(_h.combat_k1_counts())
@@ -556,7 +578,12 @@ class NativeField:
         if t is OPT_INT:
             return -1 if value is None else int(value)
         if t is INDEX:
-            return operator.index(value)
+            v = operator.index(value)
+            # combat_set_i takes an int64: a bigger int would escape _call
+            # as pybind's TypeError and leave the row stale.
+            if not -_INT64_LIMIT <= v < _INT64_LIMIT:
+                raise OverflowError("index %d does not fit the int64 row" % v)
+            return v
         if t is OFFSET:
             if isinstance(value, TGPoint3):
                 return [float(value.x), float(value.y), float(value.z)]
@@ -802,6 +829,52 @@ class NativeThawParentWakeField(NativeWrapped, ThawParentWakeField):
     def __set__(self, obj, value) -> None:
         ThawParentWakeField.__set__(self, obj, value)
         self._after_set(obj, value)
+
+
+#: `_watch_checks` of a pulse weapon whose watcher it does not own: K0 then
+#: always hands the watcher line to Python (a WATCH record), whatever it is.
+WATCH_ALWAYS = -1
+
+
+def _owns_watcher(weapon, watcher) -> bool:
+    from engine.appc.float_range_watcher import FloatRangeWatcher
+    return type(watcher) is FloatRangeWatcher \
+        and watcher.__dict__.get("_owner") is weapon
+
+
+class ChargeWatcherField:
+    """PulseWeapon._charge_watcher: keeps `_watch_checks` (what K0 reads to
+    decide whether the watcher line needs Python) true to the watcher the
+    weapon holds, when one is assigned after construction too. No __get__:
+    reads are plain instance-dict reads.
+
+    A plain FloatRangeWatcher with no owner (or this weapon) is adopted: its
+    `_owner` becomes the weapon, so its check adds and removes push the
+    count. Anything else -- a subclass (its own `_update`, which K0's
+    logged `_value` store would skip), a watcher another weapon owns --
+    sets WATCH_ALWAYS: K0 never stands in for it. A previous watcher this
+    weapon owned is released (its checks no longer push here). Cost: only
+    at assignment; the switch-off path stores the same values."""
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
+
+    def __set__(self, obj, value) -> None:
+        from engine.appc.float_range_watcher import FloatRangeWatcher
+        d = obj.__dict__
+        old = d.get(self._name)
+        d[self._name] = value
+        if old is not None and old is not value:
+            od = getattr(old, "__dict__", None)
+            if od is not None and od.get("_owner") is obj:
+                del od["_owner"]        # back to the class default, None
+        if type(value) is FloatRangeWatcher \
+                and value.__dict__.get("_owner") in (None, obj):
+            if value.__dict__.get("_owner") is None:
+                value._owner = obj
+            obj._watch_checks = len(value._checks)
+        else:
+            obj._watch_checks = WATCH_ALWAYS
 
 
 class PartKeyField(NativeField):
@@ -2608,10 +2681,15 @@ def _audit_watch_checks(weapon, row, name) -> None:
     """A pulse weapon's `_watch_checks` is its charge watcher's check
     count, kept by the watcher (FloatRangeWatcher._owner): the row must hold
     the count the watcher has NOW, so a check added or removed behind the
-    watcher's methods is caught, not only a missed push."""
+    watcher's methods is caught, not only a missed push. A watcher the
+    weapon does not own (ChargeWatcherField) holds WATCH_ALWAYS."""
     watcher = weapon.__dict__.get("_charge_watcher")
-    checks = getattr(watcher, "_checks", None)
-    if not isinstance(checks, dict) or row["_watch_checks"] != len(checks):
+    if not _owns_watcher(weapon, watcher):
+        want = WATCH_ALWAYS
+    else:
+        checks = getattr(watcher, "_checks", None)
+        want = len(checks) if isinstance(checks, dict) else None
+    if want is None or row["_watch_checks"] != want:
         _failures.append((name, "_watch_checks"))
 
 
@@ -3290,6 +3368,307 @@ def _k1_system_ships(system) -> list:
         if t is not None and hasattr(t, "__dict__"):
             ships.append(t)
     return ships
+
+
+# ── K0: the native charging kernel's driver (native weapon state) ─────────
+#
+# native/src/combat/include/dauntless/combat/k0_charging.h is the contract;
+# spec docs/superpowers/specs/2026-11-02-native-weapon-state-design.md §4.3.
+# host_loop._advance_weapons(ships, dt) asks k0_weapons first: K0 steps
+# every weapon of every ship from the mirror (the per-tick model: the awake
+# list is never consulted or changed, and nothing is put to sleep) and
+# stops at each thing only Python may do; the binding applies the record's
+# write log (C-applied write logs, _applier_context) before returning it,
+# and run_k0 does that one thing:
+#   DEPLETE_STOP  bank.StopFiring()            (the sound; `_depleted` was
+#                                               logged before it)
+#   RELOADED      tube._broadcast_reload()     (ET_TORPEDO_RELOAD)
+#   WATCH         the pulse cannon's watcher line,
+#                 `_charge_watcher._update(GetChargePercentage())`
+#   RUN_PYTHON    a weapon's UpdateCharge / UpdateReload (isinstance
+#                 dispatch, as step_every_weapon), or a whole ship: what
+#                 the passive walk runs for it (passive_weapons.advance of
+#                 that ship with passive state on, step_every_weapon off)
+#
+# WHO A RECORD NAMES. A record names its weapon by handle and by position
+# in the begin snapshot (ship_pos, group, index: the ship list run_k0 holds,
+# the group getter, GetWeapon(index)). A handle with a live row (or one the
+# walk already pinned) is that object. A weapon the mirror cannot name (-2:
+# unregistered, or None in `_children`) or whose row went stale is found by
+# position, through the same getters the passive walk calls -- the object
+# at that index at begin unless a handler re-ordered that system's children
+# mid-walk (no live trigger does; the passive walk's stale-registry rule has
+# the same blind spot).
+#
+# THE OVERRIDE GUARD. K0 computes what the walk's methods would; a test,
+# tool or mod replacing one must still be obeyed (WSM §7(a) A6):
+#   class     _K0_METHODS (A6, plus the walk's GetNumWeapons / GetWeapon /
+#             GetNumChildSubsystems / GetChildSubsystem), resolved on a
+#             weapon-kind class against the stock class of its kind,
+#             _K0_SHIP_METHODS on a ShipClass, _K0_AMMO_METHODS on a
+#             TorpedoAmmoType -- against the import-time snapshot
+#             (k0_snapshot_stock, k0_snapshot_ship). Flags live in
+#             _k0_flags {class: 0/1}, computed on first sight and re-checked
+#             at every session (the K1 watch);
+#   instance  an instance attribute named in _K0_SHIP_PATCHES /
+#             _K0_SYSTEM_PATCHES / _K0_WEAPON_PATCHES: the cheap subset of
+#             A6 that tests, tools and SWIG patch -- the update entry points
+#             on a weapon (UpdateCharge / UpdateReload; SWIG's
+#             ReloadTorpedo), the power reads on a system (tests patch
+#             `system.IsOn`), the group getters on a ship. An instance patch
+#             of the rest is NOT looked for: every name is a dict probe of
+#             every weapon, every tick (~20 ns each; 630 weapons at 64
+#             ships), for names nothing patches. StopFiring and
+#             _broadcast_reload need no guard at the instance: K0's records
+#             CALL them in Python.
+# The binding's begin scan applies them (host_bindings.cc, k0_scan): a
+# flagged or patched ship or weapon system -> the ship whole (override); a
+# flagged or patched weapon -> that weapon at its turn (override); in a
+# torpedo system one such tube, or a flagged magazine, sends every tube. A
+# patch made by a handler during a session is seen at the next session.
+
+_K0_METHODS = (
+    # WSM §7(a) A6.
+    "UpdateCharge", "UpdateReload", "_discharge_rate_per_second",
+    "GetParentSubsystem", "IsOn", "GetNormalPowerPercentage",
+    "GetPowerPercentage", "GetNormalPowerWanted", "GetConditionPercentage",
+    "GetMaxCondition", "GetPowerLevel", "StopFiring", "GetChargePercentage",
+    "_passive_at_rest", "_ensure_slots", "ReloadTorpedo",
+    "_reload_denied_by_ammo", "_parent_ammo", "GetCurrentAmmoType",
+    "GetCurrentAmmoSlot", "GetAvailable", "_rounds_loaded_systemwide",
+    "GetNumReady", "_broadcast_reload",
+    # The walk's own (passive_weapons._groups' systems).
+    "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
+    "GetChildSubsystem")
+_K0_SHIP_METHODS = ("GetPhaserSystem", "GetPulseWeaponSystem",
+                    "GetTractorBeamSystem", "GetTorpedoSystem")
+_K0_AMMO_METHODS = ("GetAvailable",)
+_K0_SHIP_PATCHES = _K0_SHIP_METHODS
+_K0_SYSTEM_PATCHES = ("IsOn", "GetNormalPowerPercentage", "GetPowerLevel")
+_K0_WEAPON_PATCHES = ("UpdateCharge", "UpdateReload", "ReloadTorpedo")
+# k0_weapons' own stand-downs: "off" (native off), "nested" (a K0 session is
+# already open: a record's handler re-entered the weapons step), "audit"
+# (DAUNTLESS_NATIVE_AUDIT or DAUNTLESS_PASSIVE_AUDIT: the audits compare the
+# Python walk, which K0 would bypass).
+_K0_STEP_REASONS = ("off", "nested", "audit")
+_k0_step_reasons = dict.fromkeys(_K0_STEP_REASONS, 0)
+# role -> (names, the stock class's resolution of them); role is a weapon
+# kind 1..8, "ship" or "ammo".
+_k0_stock: dict = {}
+_k0_flags: dict = {}
+_k0_watch: dict = {}
+_k0_kind_ids = None
+_k0_ctx = None
+
+
+def k0_snapshot_stock(classes) -> None:
+    """weapon_subsystems, as it finishes defining its classes, passes
+    {weapon_kind: stock class, "ammo": TorpedoAmmoType}: snapshot what every
+    K0 name resolves to on each, before any test, tool or mod can patch
+    one."""
+    for role, cls in classes.items():
+        names = _K0_AMMO_METHODS if role == "ammo" else _K0_METHODS
+        _k0_stock[role] = (cls, names, _k1_resolve(cls, names))
+    _k0_flags.clear()
+    _k0_watch.clear()
+
+
+def k0_snapshot_ship(ship_class) -> None:
+    """ships.py, as it finishes defining ShipClass (with k1_snapshot_ship)."""
+    _k0_stock["ship"] = (ship_class, _K0_SHIP_METHODS,
+                         _k1_resolve(ship_class, _K0_SHIP_METHODS))
+    _k0_flags.clear()
+    _k0_watch.clear()
+
+
+def _k0_role(cls):
+    kind = _weapon_kind_of_class(cls)
+    if kind:
+        return kind
+    for role in ("ship", "ammo"):
+        stock = _k0_stock.get(role)
+        if stock is not None and issubclass(cls, stock[0]):
+            return role
+    return None
+
+
+def _k0_flag(cls) -> int:
+    """1 when `cls` resolves a K0 name of its role differently from the
+    stock class's import-time snapshot; 0 otherwise (a class of no role:
+    the kernel decides it, a ship of another class is not_weapon_system).
+    Cached in _k0_flags with a K1-style watch (_k0_recheck_overrides)."""
+    hit = _k0_flags.get(cls)
+    if hit is not None:
+        return hit
+    hit = 0
+    stock = _k0_stock.get(_k0_role(cls))
+    if stock is not None:
+        _stock_cls, names, snapshot = stock
+        resolved = _k1_resolve(cls, names)
+        hit = int(resolved != snapshot)
+        present = [n for n, f in zip(names, resolved) if f is not None]
+        missing = tuple(n for n, f in zip(names, resolved) if f is None)
+        values = tuple(f for f in resolved if f is not None)
+        if len(present) > 1:
+            _k0_watch[cls] = (operator.attrgetter(*present), values, missing)
+        elif present:       # attrgetter of one name: a bare value
+            _k0_watch[cls] = (operator.attrgetter(present[0]), values[0],
+                              missing)
+        else:
+            _k0_watch[cls] = (lambda _c: (), (), missing)
+    _k0_flags[cls] = hit
+    return hit
+
+
+def _k0_recheck_overrides() -> None:
+    """A K0 name patched on a class (or a base) since its flag was computed:
+    forget the flag; the next begin scan reports the class and its flag is
+    recomputed. One attrgetter call per class seen, every session."""
+    changed = None
+    for cls, (get, values, missing) in _k0_watch.items():
+        try:
+            same = get(cls) == values
+        except AttributeError:          # a present name was deleted
+            same = False
+        if same:
+            for n in missing:
+                if getattr(cls, n, None) is not None:
+                    same = False
+                    break
+        if not same:
+            if changed is None:
+                changed = []
+            changed.append(cls)
+    if changed is not None:
+        for cls in changed:
+            del _k0_watch[cls]
+            _k0_flags.pop(cls, None)
+
+
+def _k0_kinds() -> tuple:
+    global _k0_kind_ids
+    if _k0_kind_ids is None:
+        k = _h.combat_k0_kinds()
+        _k0_kind_ids = tuple(k[n] for n in (
+            "DONE", "DEPLETE_STOP", "RELOADED", "WATCH", "RUN_PYTHON"))
+    return _k0_kind_ids
+
+
+def _k0_python(why: str) -> bool:
+    _k0_step_reasons[why] += 1
+    return False
+
+
+def k0_weapons(ships, dt) -> bool:
+    """host_loop._advance_weapons(ships, dt) through K0. False: K0 did not
+    run (counts()["k0_python_step_reasons"]) and the caller runs today's
+    Python walk; True: every weapon of every ship was stepped."""
+    if not _enabled:
+        return _k0_python("off")
+    if _audit or _passive_state.audit_enabled():
+        return _k0_python("audit")
+    if _h.combat_k0_open():
+        return _k0_python("nested")
+    global _ws, _step_memo, _k0_ctx
+    if _ws is None:
+        from engine.appc import weapon_subsystems
+        from engine.core import step_memo
+        _ws, _step_memo = weapon_subsystems, step_memo
+    if _k0_watch:
+        _k0_recheck_overrides()
+    if type(ships) is not list:
+        ships = list(ships)
+    # The clock every tube of this step reads (WSM D5): one read, Python's
+    # own _game_time (its failure is its 0.0 and its log, WSM A10).
+    now_ = _ws._game_time()
+    ctx = _k0_ctx
+    if ctx is None:
+        ctx = _k0_ctx = (_k0_flags, _K0_SHIP_PATCHES, _K0_SYSTEM_PATCHES,
+                         _K0_WEAPON_PATCHES)
+    # A class not seen before: its flag is computed here, and the scan runs
+    # again (a flagged ship or system is not looked into, so a class below
+    # it can surface only on a later pass; bounded by the class depth).
+    for _attempt in range(8):
+        missing = _h.combat_k0_begin(ships, dt, now_, ctx)
+        if missing is None:
+            break
+        for cls in missing:
+            _k0_flag(cls)
+    else:
+        raise RuntimeError("combat K0: no guard flag for %r" % (missing,))
+    run_k0(ships, dt)
+    return True
+
+
+def _k0_weapon(rec, ships, walk):
+    """The weapon a record names (see WHO A RECORD NAMES), or None."""
+    a = rec[1]
+    if a >= 0:
+        o = walk.pins.get(a)
+        if o is not None:
+            return o
+        o = _registry.get(a)
+        if o is not None and o.__dict__.get("_nslot") == a:
+            walk.pins[a] = o
+            return o
+    from engine.appc import passive_weapons
+    group = passive_weapons._groups(ships[rec[2]])[rec[3]]
+    if group is None:
+        return None
+    return group.GetWeapon(rec[4])
+
+
+def _k0_ship_python(ship, dt) -> None:
+    """What host_loop._advance_weapons' Python runs for this one ship."""
+    from engine.appc import passive_weapons
+    if _passive_state.enabled():
+        passive_weapons.advance((ship,), dt)
+    else:
+        passive_weapons.step_every_weapon(ship, dt)
+
+
+def run_k0(ships, dt) -> None:
+    """Drive the open K0 session to DONE (see the section comment). On any
+    exception the session is abandoned (the records already returned were
+    applied; the kernel undoes what it had not returned) and re-raised. The
+    applier context in force before (an outer K1 session's) is restored."""
+    DONE, DEPLETE_STOP, RELOADED, WATCH, RUN_PYTHON = _k0_kinds()
+    walk = _K1Walk()
+    prev = _UNSET
+    try:
+        prev = _h.combat_set_applier(_applier_context(walk))
+        while True:
+            rec = _h.combat_k0_next()
+            kind = rec[0]
+            if kind == DONE:
+                break
+            if kind == RUN_PYTHON and rec[3] < 0:
+                _k0_ship_python(ships[rec[2]], dt)
+                continue
+            w = _k0_weapon(rec, ships, walk)
+            if kind == DEPLETE_STOP:
+                w.StopFiring()
+            elif kind == RELOADED:
+                w._broadcast_reload()
+            elif kind == WATCH:
+                w._charge_watcher._update(w.GetChargePercentage())
+            elif kind == RUN_PYTHON:
+                # step_every_weapon's dispatch: None (a None child) and
+                # anything else are skipped.
+                if isinstance(w, _ws.TorpedoTube):
+                    w.UpdateReload(dt)
+                elif isinstance(w, _ws._EnergyWeaponFireMixin):
+                    w.UpdateCharge(dt)
+            else:
+                raise RuntimeError("combat K0: unknown record %r" % (rec,))
+        _h.combat_k0_end()
+    except BaseException:
+        if _h.combat_k0_open():
+            _h.combat_k0_abandon()
+        raise
+    finally:
+        if prev is not _UNSET:
+            _h.combat_set_applier(prev)
 
 
 # ── K2: the native beam kernel's driver (phase 2) ───────────────────────────

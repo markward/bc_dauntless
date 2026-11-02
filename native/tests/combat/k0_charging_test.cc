@@ -858,6 +858,131 @@ TEST(K0Charging, Counters) {
     EXPECT_EQ(a.w.k.counts().steps, 0);
 }
 
+TEST(K0Charging, NoneChildHandsBackUnrepresentable) {
+    // A None child: the mirror's id lists hold no -1 (set_ids refuses it),
+    // so `_children` pushes None as -2 like any object it cannot name. The
+    // kernel hands it back by position; the driver resolves it to None and
+    // skips it, as step_every_weapon's `if emitter is None: continue`.
+    Firing f;
+    auto kids = f.w.m.get_ids(f.sys, Field::_children);
+    EXPECT_THROW(
+        {
+            auto bad = kids;
+            bad.insert(bad.begin(), -1);
+            f.w.m.set_ids(f.sys, Field::_children, bad);
+        },
+        std::invalid_argument);
+    kids.insert(kids.begin(), kRefUnrepresentable);
+    f.w.m.set_ids(f.sys, Field::_children, kids);
+    f.w.m.set_f(f.b, Field::_charge_level, 0.001);
+    f.w.k.begin({f.ship}, kDt, kNow);
+    const K0Record r = f.w.k.next();
+    EXPECT_EQ(f.w.rec(r), "RUN_PYTHON -2 unrepresentable");
+    EXPECT_EQ(r.ship_pos, 0);
+    EXPECT_EQ(r.group, 0);
+    EXPECT_EQ(r.index, 0);
+    EXPECT_TRUE(r.writes.empty());
+    EXPECT_EQ(f.w.rec(f.w.k.next()), "DEPLETE_STOP b");
+    EXPECT_EQ(f.w.rec(f.w.k.next()), "DONE");
+    f.w.k.end();
+}
+
+TEST(K0Charging, CountdownExactlyZeroOrNaNDrains) {
+    // `_beam_on_countdown > 0.0` is false for 0.0 and NaN: the drain runs
+    // (level 2 from 5.0, as DrainAtEachPowerLevel).
+    for (double c : {0.0, -0.0, kNaN}) {
+        Firing f;
+        f.w.m.set_f(f.b, Field::_beam_on_countdown, c);
+        const K0Step s = step_energy(f.w.m, f.b, kDt);
+        EXPECT_FALSE(s.handback) << c;
+        EXPECT_EQ(f.w.writes(f.b, s), (V{"b._charge_level=0x1.3eeeeeeeeeeefp+2"}))
+            << c;
+    }
+}
+
+TEST(K0Charging, TubeParentOffStillReloads) {
+    // UpdateReload reads no IsOn() (WSM A11): an off parent's factor is used.
+    Tube u;
+    u.w.m.set_i(u.sys, Field::_is_on, 0);
+    u.w.slots(u.t, {3.0}, {99.0}, 1, 0);
+    EXPECT_EQ(u.step(), (V{"t._reload_timers[0]=0x1.0000000000000p+2",
+                           "t._reload_advanced_at[0]=0x1.9000000000000p+6",
+                           "t._reload_timers[0]=-0x1.0000000000000p+0",
+                           "t._num_ready=1"}));
+}
+
+TEST(K0Charging, TubeNoParentFactorOneNoAmmoGate) {
+    // parent None: factor 1.0 (not the system's 0.5), and _parent_ammo is
+    // None, so the system's empty finite ammo denies nothing.
+    Tube u;
+    u.w.m.set_f(u.sys, Field::_power_factor, 0.5);
+    const int64_t ammo = u.w.m.register_row(Kind::Ammo);
+    u.w.m.set_i(ammo, Field::_unlimited, 0);
+    u.w.m.set_i(ammo, Field::_available, 0);
+    u.w.m.set_ids(u.sys, Field::_ammo_by_slot, {0, ammo});
+    u.w.m.set_ref(u.t, Field::_parent_subsystem, -1);
+    u.w.slots(u.t, {3.0}, {99.0}, 1, 0);
+    EXPECT_EQ(u.step(), (V{"t._reload_timers[0]=0x1.0000000000000p+2",
+                           "t._reload_advanced_at[0]=0x1.9000000000000p+6",
+                           "t._reload_timers[0]=-0x1.0000000000000p+0",
+                           "t._num_ready=1"}));
+}
+
+TEST(K0Charging, TubeParentHandsBack) {
+    {   // A parent the mirror cannot name: before any write.
+        Tube u;
+        u.w.slots(u.t, {3.0}, {99.0}, 1, 0);
+        u.w.m.set_ref(u.t, Field::_parent_subsystem, kRefUnrepresentable);
+        const K0Step s = step_tube(u.w.m, u.t, kNow);
+        ASSERT_TRUE(s.handback);
+        EXPECT_EQ(*s.handback, K0Reason::Parent);
+        EXPECT_TRUE(s.writes.empty());
+    }
+    {   // A weapon-system parent that is not a TorpedoSystem: its factor
+        // serves the slot advance, but only Python answers its
+        // GetCurrentAmmoType() -- the whole step is Python's.
+        Tube u;
+        u.w.m.set_i(u.sys, Field::weapon_kind, 1);
+        u.w.slots(u.t, {3.0}, {99.0}, 1, 0);
+        const K0Step s = step_tube(u.w.m, u.t, kNow);
+        ASSERT_TRUE(s.handback);
+        EXPECT_EQ(*s.handback, K0Reason::Parent);
+        EXPECT_TRUE(s.writes.empty());
+        // No reload due: the ammo gate is never reached.
+        u.w.slots(u.t, {1.0}, {99.0}, 1, 0);
+        EXPECT_EQ(u.step(), (V{"t._reload_timers[0]=0x1.0000000000000p+1",
+                               "t._reload_advanced_at[0]=0x1.9000000000000p+6"}));
+    }
+}
+
+TEST(K0Charging, TubeRoundsLoadedSumsEveryTubeSibling) {
+    // _rounds_loaded_systemwide: GetNumReady() of every TorpedoTube among
+    // the parent's _children -- a sibling stepped nowhere else counts, a
+    // non-tube child does not.
+    Tube u;
+    const int64_t ammo = u.w.m.register_row(Kind::Ammo);
+    u.w.m.set_i(ammo, Field::_unlimited, 0);
+    u.w.m.set_i(ammo, Field::_available, 2);
+    u.w.m.set_ids(u.sys, Field::_ammo_by_slot, {0, ammo});
+    const int64_t o1 = u.w.weapon("o1", u.sys);  // a tube, 1 ready
+    (void)o1;
+    const int64_t bank = u.w.weapon("bank", u.sys);
+    u.w.m.set_i(bank, Field::weapon_kind, 5);   // not a tube: not counted
+    u.w.slots(u.t, {3.0}, {99.0}, 1, 0);
+    EXPECT_EQ(step_tube(u.w.m, u.t, kNow).record, K0Kind::RELOADED);  // 2 > 1
+    // A second loaded tube sibling: 2 <= 2, denied (the slot still advances).
+    const int64_t o2 = u.w.m.register_row(Kind::Subsystem);
+    u.w.m.set_i(o2, Field::weapon_kind, 8);
+    u.w.m.set_i(o2, Field::_num_ready, 1);
+    auto kids = u.w.m.get_ids(u.sys, Field::_children);
+    kids.push_back(o2);
+    u.w.m.set_ids(u.sys, Field::_children, kids);
+    const K0Step s = step_tube(u.w.m, u.t, kNow);
+    EXPECT_EQ(s.record, K0Kind::DONE);
+    EXPECT_EQ(u.w.writes(u.t, s), (V{"t._reload_timers[0]=0x1.0000000000000p+2",
+                                     "t._reload_advanced_at[0]=0x1.9000000000000p+6"}));
+}
+
 TEST(K0Charging, Protocol) {
     World w;
     EXPECT_THROW(w.k.next(), std::logic_error);

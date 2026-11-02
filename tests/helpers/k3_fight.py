@@ -691,7 +691,11 @@ def weapon_rows(label, systems, weapons):
             hx(w.GetNumReady()) if tube else None,
             hx(off) if isinstance(off, TGPoint3) else repr(off),
             None if off is None else first[id(off)],
-            passive_state.is_asleep(w)))
+            # A missed wake: asleep while NOT at rest (any write of a
+            # WakeField wakes). The raw asleep flag differs by design with
+            # native on: K0 steps every weapon and puts none to sleep
+            # (spec 2026-11-02-native-weapon-state-design.md §4.3).
+            passive_state.is_asleep(w) and not w._passive_at_rest()))
     return rows
 
 

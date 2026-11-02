@@ -21,6 +21,7 @@
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/beam_trace.h"
 #include "dauntless/combat/fire_gates.h"
+#include "dauntless/combat/k0_charging.h"
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/k2_beams.h"
 #include "dauntless/combat/k3_projectiles.h"
@@ -4126,6 +4127,235 @@ bool k1_walk_needs_python(std::int64_t sys_h, std::int64_t ship_h) {
     const int v = k1_walk_check(r, sys_h, ship_h);
     if (v < 0) PyErr_Clear();
     return v != 0;
+}
+
+// ── The K0 session's begin scan (combat_k0_begin; k0_charging.h) ───────────
+// One pass over the Python ship list, made before the kernel's begin: each
+// ship's Object handle (its "_nslot"; -1 without one) and, with a guard
+// context, the override guard (native_combat._k0_context): which ships the
+// kernel must hand back whole (reason override) and which weapons it must
+// hand to Python at their turn (the weapon check). It reads instance dicts
+// and a {type: flag} dict only -- no Python code runs, so the borrowed
+// references it walks cannot change under it, and it allocates nothing
+// GC-tracked. A type with no flag yet is collected in `missing` (the caller
+// computes those flags in Python and begins again).
+//   ship      its class flag, or an instance attribute in `ship_names`
+//             -> the ship whole;
+//   system    each group the ship's dict holds ("_phaser_system", ...):
+//             its class flag, or an instance attribute in `system_names`
+//             -> the ship whole;
+//   weapon    each child in the system's "_children": its class flag, or an
+//             instance attribute in `weapon_names` -> that weapon. In the
+//             torpedo system any marked tube, or a magazine (a value of
+//             "_ammo_by_slot") whose class is flagged, marks every tube:
+//             each tube's reload gate reads its siblings' GetNumReady and
+//             the magazine's GetAvailable.
+// Anything unexpected (an instance dict not built, a "_children" that is not
+// a list or tuple) answers "Python": the guard is the fast path of a
+// decision Python can always make.
+struct K0Guard {
+    PyObject* flags = nullptr;          // {type: int}
+    PyObject* ship_names = nullptr;     // tuples of str
+    PyObject* system_names = nullptr;
+    PyObject* weapon_names = nullptr;
+};
+
+struct K0Scan {
+    std::vector<std::int64_t> handles;
+    std::vector<std::optional<dauntless::combat::K0Reason>> handback;
+    std::unordered_set<std::int64_t> python_weapons;
+    std::vector<PyObject*> missing;     // borrowed: types with no flag yet
+    bool any_handback = false;
+};
+
+struct K0ScanNames {
+    PyObject* nslot;
+    PyObject* groups[4];
+    PyObject* children;
+    PyObject* ammo_by_slot;
+};
+
+const K0ScanNames& k0_scan_names() {
+    static const K0ScanNames n{
+        PyUnicode_InternFromString("_nslot"),
+        {PyUnicode_InternFromString("_phaser_system"),
+         PyUnicode_InternFromString("_pulse_weapon_system"),
+         PyUnicode_InternFromString("_tractor_beam_system"),
+         PyUnicode_InternFromString("_torpedo_system")},
+        PyUnicode_InternFromString("_children"),
+        PyUnicode_InternFromString("_ammo_by_slot")};
+    return n;
+}
+
+// 1: type(o) is flagged; 0: not, or no flag yet (noted in s.missing: the
+// session will not begin, so the scan goes on to find every missing type
+// in one pass); -1: error.
+int k0_flagged(const K0Guard& g, PyObject* o, K0Scan& s) {
+    PyObject* t = reinterpret_cast<PyObject*>(Py_TYPE(o));
+    PyObject* v = PyDict_GetItemWithError(g.flags, t);
+    if (v == nullptr) {
+        if (PyErr_Occurred()) return -1;
+        if (std::find(s.missing.begin(), s.missing.end(), t) ==
+            s.missing.end())
+            s.missing.push_back(t);
+        return 0;
+    }
+    const int r = PyObject_IsTrue(v);  // an int: no Python runs
+    return r;
+}
+
+// `d`'s "_nslot" as a handle of `kind`, or -1.
+std::int64_t k0_handle(PyObject* d, std::int64_t kind) {
+    PyObject* hs = PyDict_GetItemWithError(d, k0_scan_names().nslot);
+    if (hs == nullptr || !PyLong_Check(hs)) {
+        PyErr_Clear();
+        return -1;
+    }
+    const long long v = PyLong_AsLongLong(hs);
+    if (v == -1 && PyErr_Occurred()) {
+        PyErr_Clear();
+        return -1;
+    }
+    return (v >= 0 && (v >> 60) == kind) ? v : -1;
+}
+
+// 1: Python must step this child (marked); 0: native; -1: error.
+int k0_weapon_marked(const K0Guard& g, PyObject* c, K0Scan& s) {
+    PyObject* cd = k1_built_dict(c);
+    if (cd == nullptr) return 1;
+    const int f = k0_flagged(g, c, s);
+    if (f != 0) return f;
+    return k1_holds(cd, g.weapon_names);
+}
+
+// Mark child `c` (its handle, when it has one: one without is the
+// kernel's unrepresentable hand-back anyway).
+void k0_mark(PyObject* c, K0Scan& s) {
+    PyObject* cd = k1_built_dict(c);
+    if (cd == nullptr) return;
+    const std::int64_t h = k0_handle(
+        cd, static_cast<std::int64_t>(dauntless::combat::Kind::Subsystem));
+    if (h >= 0) s.python_weapons.insert(h);
+}
+
+// 1: the ship must run whole in Python; 0: no; -1: error. Marks weapons.
+int k0_guard_ship(const K0Guard& g, PyObject* ship, PyObject* d, K0Scan& s) {
+    const K0ScanNames& n = k0_scan_names();
+    int r = k0_flagged(g, ship, s);
+    if (r != 0) return r;
+    r = k1_holds(d, g.ship_names);
+    if (r != 0) return r;
+    for (int gi = 0; gi < 4; ++gi) {
+        PyObject* sys = PyDict_GetItemWithError(d, n.groups[gi]);
+        if (sys == nullptr) {
+            if (PyErr_Occurred()) return -1;
+            continue;
+        }
+        if (sys == Py_None) continue;
+        PyObject* sd = k1_built_dict(sys);
+        if (sd == nullptr) return 1;
+        r = k0_flagged(g, sys, s);
+        if (r != 0) return r;
+        r = k1_holds(sd, g.system_names);
+        if (r != 0) return r;
+        PyObject* kids = PyDict_GetItemWithError(sd, n.children);
+        if (kids == nullptr) {
+            if (PyErr_Occurred()) return -1;
+            continue;
+        }
+        if (!PyList_CheckExact(kids) && !PyTuple_CheckExact(kids)) return 1;
+        PyObject* const* items = PySequence_Fast_ITEMS(kids);
+        const Py_ssize_t nk = PySequence_Fast_GET_SIZE(kids);
+        const bool torpedo = gi == 3;
+        bool all = false;
+        for (Py_ssize_t i = 0; i < nk && !all; ++i) {
+            if (items[i] == Py_None) continue;
+            const int m = k0_weapon_marked(g, items[i], s);
+            if (m < 0) return -1;
+            if (m == 0) continue;
+            if (torpedo) all = true;
+            else k0_mark(items[i], s);
+        }
+        if (!torpedo) continue;
+        PyObject* ammo = PyDict_GetItemWithError(sd, n.ammo_by_slot);
+        if (ammo == nullptr && PyErr_Occurred()) return -1;
+        if (ammo != nullptr && PyDict_CheckExact(ammo)) {
+            Py_ssize_t pos = 0;
+            PyObject *k, *v;
+            while (!all && PyDict_Next(ammo, &pos, &k, &v)) {
+                if (v == Py_None) continue;
+                const int f = k0_flagged(g, v, s);
+                if (f < 0) return -1;
+                all = f != 0;
+            }
+        } else if (ammo != nullptr) {
+            all = true;
+        }
+        if (all)
+            for (Py_ssize_t i = 0; i < nk; ++i)
+                if (items[i] != Py_None) k0_mark(items[i], s);
+    }
+    return 0;
+}
+
+// The scan over `ships` (a list or tuple). False: a Python error is set.
+bool k0_scan(PyObject* ships, const K0Guard* g, K0Scan& s) {
+    namespace cb = dauntless::combat;
+    if (!PyList_CheckExact(ships) && !PyTuple_CheckExact(ships)) {
+        PyErr_SetString(PyExc_TypeError, "combat_k0_begin: ships: a list");
+        return false;
+    }
+    PyObject* const* items = PySequence_Fast_ITEMS(ships);
+    const Py_ssize_t n = PySequence_Fast_GET_SIZE(ships);
+    s.handles.reserve(static_cast<size_t>(n));
+    s.handback.reserve(static_cast<size_t>(n));
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* ship = items[i];
+        PyObject* d = k1_built_dict(ship);
+        const std::int64_t h =
+            d ? k0_handle(d, static_cast<std::int64_t>(cb::Kind::Object)) : -1;
+        s.handles.push_back(h);
+        s.handback.emplace_back(std::nullopt);
+        if (g == nullptr || h < 0) continue;  // no row: the kernel's no_row
+        const int r = k0_guard_ship(*g, ship, d, s);
+        if (r < 0) return false;
+        if (r != 0) {
+            s.handback.back() = cb::K0Reason::Override;
+            s.any_handback = true;
+        }
+    }
+    return true;
+}
+
+// LoggedValue -> the Python encoding (combat_write_apply.h): a slot write is
+// ("slot", index, value), a watcher write ("watcher", value).
+py::object k0_scalar(const dauntless::combat::WriteScalar& v) {
+    return std::visit(
+        [](const auto& x) -> py::object {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, std::monostate>) return py::none();
+            else return py::cast(x);
+        },
+        v);
+}
+
+py::object k0_value(const dauntless::combat::LoggedValue& v) {
+    namespace cb = dauntless::combat;
+    return std::visit(
+        [](const auto& x) -> py::object {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, std::monostate>)
+                return py::none();
+            else if constexpr (std::is_same_v<T, cb::K1WalkOffset>)
+                return py::make_tuple("walk_offset", x.walk, x.system);
+            else if constexpr (std::is_same_v<T, cb::SlotWrite>)
+                return py::make_tuple("slot", x.index, k0_scalar(x.value));
+            else if constexpr (std::is_same_v<T, cb::WatcherWrite>)
+                return py::make_tuple("watcher", k0_scalar(x.value));
+            else
+                return py::cast(x);
+        },
+        v);
 }
 
 }  // namespace
@@ -11043,6 +11273,145 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_k1_reset_counts",
               [] { cb::k1_kernel().reset_counts(); });
+
+        // ── The K0 charging kernel (k0_charging.h) ───────────────────────
+        // One resumable session over the mirror: host_loop._advance_weapons
+        // in the per-tick model. Records are tuples
+        //   (kind, a, ship_pos, group, index, reason, writes)
+        // kind a combat_k0_kinds() int; a the weapon (or the ship for a
+        // whole-ship RUN_PYTHON, -2 for a weapon the mirror cannot name);
+        // ship_pos / group / index where in the begin snapshot (group 0
+        // phaser, 1 pulse, 2 tractor, 3 torpedo; -1 for a whole ship and
+        // DONE); reason the K0Reason name of a RUN_PYTHON (else None);
+        // writes [] when an applier context is installed (the binding
+        // applied the record's log before returning, combat_write_apply.h),
+        // else the log in the Python encoding.
+        m.def("combat_k0_kinds", [] {
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(cb::K0Kind::kCount); ++i)
+                d[cb::k0_kind_name(static_cast<cb::K0Kind>(i))] = i;
+            return d;
+        });
+        m.def("combat_k0_begin",
+              [](py::handle ships, double dt, double now,
+                 py::handle ctx) -> py::object {
+                  // ctx: None (no guard: every ship and weapon native) or
+                  // (flags, ship_names, system_names, weapon_names); see
+                  // k0_scan. Returns None (the session is open) or the list
+                  // of types with no flag yet (nothing begun: the caller
+                  // computes their flags and calls again).
+                  K0Guard g;
+                  const K0Guard* gp = nullptr;
+                  if (!ctx.is_none()) {
+                      if (!PyTuple_Check(ctx.ptr()) ||
+                          PyTuple_GET_SIZE(ctx.ptr()) != 4)
+                          throw py::type_error(
+                              "combat_k0_begin: ctx (flags, ship_names, "
+                              "system_names, weapon_names) or None");
+                      g.flags = PyTuple_GET_ITEM(ctx.ptr(), 0);
+                      g.ship_names = PyTuple_GET_ITEM(ctx.ptr(), 1);
+                      g.system_names = PyTuple_GET_ITEM(ctx.ptr(), 2);
+                      g.weapon_names = PyTuple_GET_ITEM(ctx.ptr(), 3);
+                      if (!PyDict_Check(g.flags))
+                          throw py::type_error("flags: a dict");
+                      for (PyObject* t :
+                           {g.ship_names, g.system_names, g.weapon_names})
+                          if (!PyTuple_Check(t))
+                              throw py::type_error("names: tuples of str");
+                      gp = &g;
+                  }
+                  K0Scan s;
+                  if (!k0_scan(ships.ptr(), gp, s))
+                      throw py::error_already_set();
+                  if (!s.missing.empty()) {
+                      py::list out;
+                      for (PyObject* t : s.missing)
+                          out.append(py::reinterpret_borrow<py::object>(t));
+                      return out;
+                  }
+                  cb::K0Session& k = cb::k0_session();
+                  if (k.open())
+                      throw std::logic_error(
+                          "combat K0: a session is already open");
+                  if (s.python_weapons.empty()) {
+                      k.set_weapon_check(nullptr);
+                  } else {
+                      auto marked =
+                          std::make_shared<const std::unordered_set<
+                              std::int64_t>>(std::move(s.python_weapons));
+                      k.set_weapon_check([marked](std::int64_t w) {
+                          return marked->count(w) != 0;
+                      });
+                  }
+                  if (s.any_handback)
+                      k.begin(std::move(s.handles), dt, now,
+                              std::move(s.handback));
+                  else
+                      k.begin(std::move(s.handles), dt, now);
+                  return py::none();
+              },
+              py::arg("ships"), py::arg("dt"), py::arg("now"),
+              py::arg("ctx"),
+              "Begin _advance_weapons(ships, dt) for one tick: `ships` the "
+              "Python ship list (each one's Object handle read from its "
+              "_nslot), `now` weapon_subsystems._game_time(), `ctx` the "
+              "override guard or None. None: begun; else the types whose "
+              "guard flag is missing (nothing begun).");
+        m.def("combat_k0_next", [] {
+            // The GIL is held (as combat_k1_next). The weapon check is a set
+            // lookup made at begin: no CPython call inside the walk.
+            cb::K0Record r = cb::k0_session().next();
+            py::list writes;
+            dauntless::host::WriteApplier& applier =
+                dauntless::host::write_applier();
+            if (applier.has_context()) {
+                if (!applier.apply(r.writes, 0, r.writes.size()))
+                    throw py::error_already_set();
+            } else {
+                for (const cb::LoggedWrite& w : r.writes)
+                    writes.append(
+                        py::make_tuple(w.handle, w.field, k0_value(w.value)));
+            }
+            // The reason names, made once and never freed (no decref
+            // after the interpreter is gone).
+            static PyObject** const reasons = [] {
+                constexpr size_t n = static_cast<size_t>(cb::K0Reason::kCount);
+                PyObject** a = new PyObject*[n];
+                for (size_t i = 0; i < n; ++i)
+                    a[i] = PyUnicode_InternFromString(
+                        cb::k0_reason_name(static_cast<cb::K0Reason>(i)));
+                return a;
+            }();
+            const py::object reason =
+                r.reason ? py::reinterpret_borrow<py::object>(
+                               reasons[static_cast<size_t>(*r.reason)])
+                         : py::object(py::none());
+            return py::make_tuple(static_cast<int>(r.kind), r.a, r.ship_pos,
+                                  r.group, r.index, reason, writes);
+        }, "The session's next record (see combat_k0_kinds).");
+        m.def("combat_k0_end", [] { cb::k0_session().end(); },
+              "Close the session (it must have returned DONE).");
+        m.def("combat_k0_abandon", [] { cb::k0_session().abandon(); },
+              "Close the session whatever its state (exception path).");
+        m.def("combat_k0_open", [] { return cb::k0_session().open(); });
+        m.def("combat_k0_counts", [] {
+            const auto& c = cb::k0_session().counts();
+            py::dict d;
+            d["k0_steps"] = c.steps;
+            py::dict rec, why;
+            for (size_t i = 0; i < c.records.size(); ++i)
+                rec[cb::k0_kind_name(static_cast<cb::K0Kind>(i))] =
+                    c.records[i];
+            for (size_t i = 0; i < c.python_reasons.size(); ++i)
+                why[cb::k0_reason_name(static_cast<cb::K0Reason>(i))] =
+                    c.python_reasons[i];
+            d["k0_records"] = rec;
+            d["k0_python_reasons"] = why;
+            d["k0_logged_writes"] = c.logged_writes;
+            return d;
+        });
+        m.def("combat_k0_reset_counts",
+              [] { cb::k0_session().reset_counts(); });
 
         // ── The K2 beam kernel (k2_beams.h) ──────────────────────────────
         // One resumable session over the mirror: the `cb.phasers` loop. Each

@@ -2773,6 +2773,9 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     # when it has checks). The watcher keeps it: every AddRangeCheck /
     # RemoveRangeCheck writes it back onto its owner (FloatRangeWatcher).
     _watch_checks = NativeField(int)
+    # Assigning a watcher (construction, or a later replacement) re-derives
+    # _watch_checks from it (native_combat.ChargeWatcherField).
+    _charge_watcher = native_combat.ChargeWatcherField()
     _passive_audit_children = ("_charge_watcher",)
 
     def _passive_at_rest(self) -> bool:
@@ -3808,3 +3811,8 @@ class TorpedoTube(Weapon):
 native_combat.k1_snapshot_stock({
     1: PhaserSystem, 2: PulseWeaponSystem, 4: TorpedoSystem,
     5: PhaserBank, 6: PulseWeapon, 8: TorpedoTube})
+# And the stock methods K0 stands in for (the charging walk; WSM §7(a) A6).
+native_combat.k0_snapshot_stock({
+    1: PhaserSystem, 2: PulseWeaponSystem, 3: TractorBeamSystem,
+    4: TorpedoSystem, 5: PhaserBank, 6: PulseWeapon, 7: TractorBeam,
+    8: TorpedoTube, "ammo": TorpedoAmmoType})

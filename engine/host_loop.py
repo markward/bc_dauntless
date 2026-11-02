@@ -938,7 +938,15 @@ def _advance_weapons(ships, dt: float) -> None:
     weapons in the same order but skips the full idle banks and loaded
     tubes, whose update would return at its first test, until a field that
     test reads is written. DAUNTLESS_PASSIVE_STATE=0 steps every weapon.
+
+    With native combat on, the native charging kernel K0 steps every weapon
+    from the mirror instead (native_combat.k0_weapons; the per-tick model,
+    spec 2026-11-02-native-weapon-state-design.md §4.3), Python running
+    only its records; when it cannot run at all (an audit, a nested call)
+    the Python walk below runs.
     """
+    if _native_combat.enabled() and _native_combat.k0_weapons(ships, dt):
+        return
     if passive_state.enabled():
         passive_weapons.advance(ships, dt)
         return
