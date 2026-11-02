@@ -1029,6 +1029,13 @@ LOOP_TICKS = 1500
 # Hull left on every ship (and shields down), so the fight kills inside the
 # window: hull 0 at ~550 ticks, the death sequence done (IsDead) by ~1300.
 LOOP_HULL_FRACTION = 0.05
+# Turned to face directly away from the foe it was faced at (its forward and
+# aft tubes loaded): the AI's first torpedo walks then try forward tubes
+# with the target astern, so failed aims (WEAPON_FIRE_FAILED) happen in
+# every fight. Without it a failed aim needed the fight to put a target
+# behind a loaded tube when a launch came due, which the presentation RNG
+# phase's changed roll stream no longer did.
+LOOP_TURNED_AWAY = "Friend-3"
 
 
 def _deterministic_loop(mp):
@@ -1056,7 +1063,9 @@ def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
     tick the timers, the real AI (QuickBattle's BasicAttack: its FireScript
     StartFiring -> K1 system sessions with native on), motion and
     subsystems, then host_loop._advance_weapons and _advance_combat (the
-    held-weapon pump -> K1), then the per-tick record."""
+    held-weapon pump -> K1), then the per-tick record. Every ship starts
+    near death with its shields down, and LOOP_TURNED_AWAY with its foe
+    astern."""
     with monkeypatch.context() as mp:
         scene = _Scene(mp, env)
         mp.setenv("DAUNTLESS_NATIVE_COMBAT",
@@ -1071,6 +1080,12 @@ def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
             if shields is not None:
                 for face in range(6):
                     shields.SetCurShields(face, 0.0)
+        turned = [s for s in scene.ships if s.GetName() == LOOP_TURNED_AWAY]
+        assert len(turned) == 1, [s.GetName() for s in scene.ships]
+        half_turn = TGMatrix3()
+        half_turn.MakeZRotation(math.pi)
+        turned[0].SetMatrixRotation(
+            turned[0].GetWorldRotation().MultMatrix(half_turn))
         scene.starts = 0
         start_firing = ws.WeaponSystem.StartFiring
 
