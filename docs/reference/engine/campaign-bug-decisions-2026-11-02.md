@@ -6,7 +6,7 @@ Bugs found by the combat event inventory (`docs/reference/engine/native-combat/e
 |---|---|---|---|
 | 1 | `ET_WEAPON_FIRED` has no target pointer; pulse weapons never post it | Fix both | Decided; recorded in `event-emitter-gaps.md` #14 |
 | 2 | `SetConditionPercentage` is a no-op on every subsystem | Implement; post the same events as weapon damage | Decided |
-| 3 | E3M1: an invincible player takes no collision damage | Simulation mode handled by the engine: weapons deal 0.1% damage while E3M1's `g_bSimulationMode` is on; E3M1's player-invincibility calls ignored; collisions unchanged | Decided (supersedes the collision-chain proposal) |
+| 3 | E3M1: an invincible player takes no collision damage | **Closed by the invincibility ruling** (native-damage M1: invincible = cannot die, damage lands). The 0.1% plan is dropped: it made the drill unwinnable | Re-decided 2026-11-02; built with native damage (D) |
 
 ## 2. `SetConditionPercentage` is a no-op on every subsystem
 
@@ -33,3 +33,9 @@ Bugs found by the combat event inventory (`docs/reference/engine/native-combat/e
 4. **Collisions are unchanged** (events, then damage, no veto). With the player no longer invincible, a crash during the drill does real damage through the normal path; `PlayerCollisionHandler` still runs and its toggling becomes harmless.
 
 **To check when built:** the drill's outcome (how it decides that a ship is knocked out) is unaffected by 0.1% damage; the Klingon attack after the Bird of Prey cutscene, which re-enters simulation mode, plays as before; E1M2's ordering tests stay green (collisions untouched).
+
+### 3a. Re-decided (Mark, 2026-11-02, native-damage phase): the 0.1% plan is dropped
+
+Building it showed the drill cannot end at 0.1%. A drill ship is knocked out only by real damage: hull, power or warp below 25% (player, Geronimo) or 50% (Klingons), via `ConditionSystemBelow` in `GeronimoAttackAI.py`, `RanKufAI.py` and `BOPAI.py`. At 0.1%, shield regeneration (12-24 per second per face) beats the incoming fire 10-65×. Measured headless, the Geronimo's hull was untouched after 600 s of nonstop fire, against below 25% in 15 s at full damage.
+
+The original design is a live-fire exercise in which nobody can die. Every drill ship, the player included, is made invincible; a ship is knocked out by damage; `EndShipSimulation` then repairs, reloads and parks it. That needs invincible to mean "cannot die", which the native-damage phase adopts for every mission (spec `docs/superpowers/specs/2026-11-02-native-damage-design.md` M1, on `project/combat_threading`). With it E3M1 runs as written. There is no simulation-mode listener and no damage scale, and its player-invincibility calls stay. A collision damages the invincible player, which closes the original complaint.
