@@ -54,7 +54,7 @@ As WM §4.1: `combat_k1_begin_pump` / `combat_k1_begin_system` scan in the bindi
 
 - **Spawn parity:** the K1/K3/step differentials compare every spawned torpedo field by field (`.hex()`), switch on (delivered at the boundary) against the reference (spawned mid-walk), per tick after the boundary; a torpedo fired by a ship a tractor moves in the same step spawns where it fired.
 - **Event order:** `SPAWN` → `ENTERED_SET` (in delivery) → `TORPEDO_FIRED` → `WEAPON_FIRED` → `AMMO_CONSUMED`; E8M2's `SetLifetime` handler acts on the spawned torpedo.
-- **Fallbacks:** unresolved module or uncached speed → FIRE record, counted; a purity check failure → FIRE record.
+- **Fallbacks:** unresolved module, uncached speed, a bake the kernel cannot make, or a patched launch function → FIRE record, counted by reason (no purity check: ruling L6).
 - **Walk check:** every existing pin (WM §4.4) still passes; new: a K1 method patched mid-pump (from an ASK answer) is obeyed by a later walk in the same tick; nested sessions keep separate sets; unbuilt dicts stay unbuilt.
 - **Mutation checks:** read the launcher pose at delivery instead of fire time; skip a launcher write; let the kernel's check see a stale set.
 
