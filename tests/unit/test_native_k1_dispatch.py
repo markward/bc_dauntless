@@ -1277,9 +1277,14 @@ def test_no_walk_start_records(monkeypatch):
     """No WALK_START reaches Python: every walk starts in the kernel
     (k1_logged.walk_start counts them), and the first record a walk hands
     back carries the walk's tag. Per tick equal to Python."""
+    def script(w, t):
+        if t == 0:
+            _forget_launches(w)     # a FIRE record (uncached) to tag
+        _volleys(w, t)
+
     log = []
     _spy_records(monkeypatch, log)
-    _ref, _nat, counts = _both(monkeypatch, _DUEL, _volleys, 240)
+    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 240)
     kinds = [k for k, _tag in log]
     assert kinds.count("WALK_START") == 0, kinds[:20]
     assert counts["k1_logged"]["walk_start"] > 0, counts
@@ -2657,6 +2662,19 @@ def _learn_launches(w):
             nc.learn_tube_launch(script, ws._resolve_projectile_module(script))
 
 
+def _forget_launches(w):
+    """Every ammo type's launch forgotten without the re-read -- as a
+    projectile-cache reset made inside a K1 session leaves them (THE P6
+    WINDOW) -- so its next launch is handed back uncached and Python's
+    launch learns it (native arm only)."""
+    if not w.native:
+        return
+    ws._tube_launch_cache.clear()
+    for h, obj in list(nc._registry.items()):
+        if isinstance(obj, ws.TorpedoAmmoType):
+            nc._push_ammo_row(obj)
+
+
 def _launch_arms(monkeypatch, script, ticks, *, ships=_LAUNCH_SHIPS,
                  learn=True, inside=None, player="Galaxy"):
     """Both arms over `ticks` scoped ticks (the tick's effect scope, as in
@@ -2726,12 +2744,30 @@ def test_native_tube_launch_spawns_at_the_boundary(monkeypatch):
         assert spawned[9] == "Ahead" and spawned[10] is not None
 
 
-def test_first_launch_of_a_script_is_python_then_cached(monkeypatch):
-    """P6 extended: a type's launch is not cached until Python launches its
-    script once (the FIRE record, launch_uncached); every later launch of
-    any ammo type of that script is native."""
+def test_a_type_is_cached_when_loaded(monkeypatch):
+    """Task 5: a type's launch is read when its ammo type is loaded, not
+    learned from its first shot: with nothing launched before, the first
+    launch of each script is native (no launch_uncached), every torpedo
+    field by field as the reference's."""
     (rw, rl, _), (nw, nl, counts) = _launch_arms(
         monkeypatch, _tube_volley, 95, learn=False)
+    assert counts["k1_launch_reasons"]["launch_uncached"] == 0, counts
+    assert not any(counts["k1_launch_reasons"].values()), counts
+    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) >= 3
+
+
+def test_first_launch_of_a_script_is_python_then_cached(monkeypatch):
+    """P6 extended: a type whose launch is not cached (forgotten without the
+    re-read: THE P6 WINDOW) hands its next launch back (the FIRE record,
+    launch_uncached); Python's launch caches it and every later launch of
+    any ammo type of that script is native."""
+    def script(w, t):
+        if t == 0:
+            _forget_launches(w)
+        _tube_volley(w, t)
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, script, 95, learn=False)
     assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
     assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) - 1 >= 2
 
@@ -2869,14 +2905,16 @@ def test_launches_the_kernel_cannot_make_run_python(monkeypatch):
 
 
 def test_python_fallback_launch_defers_its_spawn(monkeypatch):
-    """Ruling E4 for launches: the launch K1 hands back (here uncached, the
-    script's first) runs Python's effect mid-walk, but its spawn -- and
+    """Ruling E4 for launches: the launch K1 hands back (here uncached, its
+    launch forgotten) runs Python's effect mid-walk, but its spawn -- and
     its ET_TORPEDO_ENTERED_SET -- wait for the boundary like the kernel's,
     so every launch in the scope spawns there in emission order."""
     from engine.appc import effect_queue as eq
     spawned_while = []
 
     def script(w, t):
+        if t == 0:
+            _forget_launches(w)
         _tube_volley(w, t)
         if t == 0:
             w.hooks.append(lambda evt: spawned_while.append(
@@ -2909,9 +2947,9 @@ def test_impure_module_launches_through_spawn(tmp_path, monkeypatch):
 
     (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 64)
     assert len(nl.spawned) >= 2
-    # Its first launch caches it (Python's, deferred too); then native.
-    assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
-    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) - 1 >= 1
+    # SetTorpedoScript cached it (Task 5): every launch native.
+    assert counts["k1_launch_reasons"]["launch_uncached"] == 0, counts
+    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) >= 2
 
 
 _PULSE_SHIPS = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
@@ -3121,9 +3159,9 @@ def test_tube_launch_cache_follows_a_mission_swap_reset(monkeypatch):
     """P6 extended, with today's invalidation: the mission-swap reset
     (_reset_projectile_module_cache) with the torpedo module now answering
     a different launch speed, and a launch made before any GameLoop.tick.
-    The cached launch is forgotten: exactly one launch (Python's, which
-    learns the new speed) is handed back uncached, and every later one is
-    native, at the new speed -- each torpedo as the reference's."""
+    The cached launch is forgotten and re-read at the next K1 entry (Task
+    5): no launch is handed back, every one is native, those after the
+    reset at the new speed -- each torpedo as the reference's."""
     from engine.appc import projectiles
     state = {}
 
@@ -3149,8 +3187,8 @@ def test_tube_launch_cache_follows_a_mission_swap_reset(monkeypatch):
         (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 95)
     finally:
         ws._reset_projectile_module_cache()
-    assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
-    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) - 1 >= 2
+    assert not any(counts["k1_launch_reasons"].values()), counts
+    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) >= 3
     # The launches after the reset left at the new speed.
     ship_v = nw.ships["Galaxy"].GetVelocityTG()
     after = [t for t in nl.torps
@@ -3161,6 +3199,85 @@ def test_tube_launch_cache_follows_a_mission_swap_reset(monkeypatch):
         v = t._velocity
         d = TGPoint3(v.x - ship_v.x, v.y - ship_v.y, v.z - ship_v.z)
         assert abs(d.Length() - state["slow"]) < 1e-9, (d.Length(), state)
+
+
+def test_swap_reloaded_module_launches_natively(tmp_path, monkeypatch):
+    """Task 5 after a mission swap that reloads the SDK tree: the torpedo
+    script is a new module object answering other params (a test-local
+    fixture). The reset's re-read at the next K1 entry caches it, so every
+    launch after it is native and launches the new module -- its speed,
+    its Create -- each torpedo as the reference's."""
+    fresh = _fixture_module(tmp_path, monkeypatch, "k1fx_reloaded_torp",
+                            _PURE_TORP)
+
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        if t == 0:
+            # Each arm resolves afresh: the module memo outlives an arm.
+            ws._reset_projectile_module_cache()
+            torps.StartFiring(w.ships["Ahead"], TGPoint3(0.25, -0.5, 0.125))
+        elif t == 31:
+            w.mp.setitem(sys.modules,
+                         torps.GetCurrentAmmoType().GetTorpedoScript(), fresh)
+            ws._reset_projectile_module_cache()     # the mission swap's
+            for tube in _weapons(torps):
+                tube.SetNumReady(1)
+            torps.StartFiring(w.ships["Ahead"],     # before any tick
+                              TGPoint3(0.25, -0.5, 0.125))
+        elif t == 62:
+            for tube in _weapons(torps):
+                tube.SetNumReady(1)
+
+    try:
+        (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 95)
+    finally:
+        ws._reset_projectile_module_cache()
+    assert not any(counts["k1_launch_reasons"].values()), counts
+    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) >= 3
+    ship_v = nw.ships["Galaxy"].GetVelocityTG()
+    fired = {e[1]: e[3] for e in nl.events if e[0] == "entered"}
+    after = [t for t in nl.torps if fired[nl.label(t)] > 31]
+    assert len(after) >= 2 and len(after) < len(nl.torps), fired
+    for t in after:
+        assert t._damage == 444.0, t._damage
+        v = t._velocity
+        d = TGPoint3(v.x - ship_v.x, v.y - ship_v.y, v.z - ship_v.z)
+        assert abs(d.Length() - 21.0) < 1e-9, d.Length()
+
+
+def test_a_type_that_does_not_resolve_keeps_its_fallbacks(monkeypatch):
+    """Task 5 keeps the resolve's own fallbacks, and loading never raises:
+    a script that does not import is cached as the stock photon Python's
+    launch substitutes (every launch native, as the reference's); one whose
+    photon fallback fails too is unresolved -- every launch handed back
+    (launch_unresolved, never launch_uncached) and Python spawns nothing,
+    as before."""
+    for case in ("photon", "unresolved"):
+        def script(w, t, case=case):
+            torps = w.ships["Galaxy"].GetTorpedoSystem()
+            if t == 0:
+                ws._reset_projectile_module_cache()     # each arm resolves
+                if case == "unresolved":
+                    w.mp.setattr(ws, "_FALLBACK_PROJECTILE",
+                                 "k1fx_no_such_fallback")
+                torps.GetCurrentAmmoType().SetTorpedoScript(
+                    "k1fx_no_such_torpedo")
+            _tube_volley(w, t)
+
+        try:
+            (rw, rl, _), (nw, nl, counts) = _launch_arms(
+                monkeypatch, script, 64)
+        finally:
+            ws._reset_projectile_module_cache()
+        why = counts["k1_launch_reasons"]
+        logged = counts["k1_logged"]["tube_launch"]
+        assert why["launch_uncached"] == 0, (case, why)
+        if case == "photon":
+            assert not any(why.values()), why
+            assert logged == len(nl.spawned) >= 2, counts
+        else:
+            assert why["launch_unresolved"] >= 2, why
+            assert logged == 0 and nl.spawned == [], counts
 
 
 def test_kernel_spawn_launches_the_fire_time_module(monkeypatch):
@@ -3217,7 +3334,8 @@ _TWO_LAUNCHERS = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
 
 def test_patched_launch_function_seen_by_the_next_walk(monkeypatch):
     """M3: a launch function patched mid-session -- here by the Python of
-    the session's first launch, a FIRE record (uncached) -- is seen at the
+    the session's first launch, a FIRE record (uncached: its launch
+    forgotten) -- is seen at the
     next record's re-validation, not only at the next K1 entry: the second
     ship's launch in the same pump is handed back (launch_patched)."""
     from engine.appc import subsystems
@@ -3229,6 +3347,8 @@ def test_patched_launch_function_seen_by_the_next_walk(monkeypatch):
 
     def script(w, t):
         if t == 0:
+            _forget_launches(w)
+
             def learn_and_patch(*a, **kw):
                 w.mp.setattr(subsystems, "subsystem_world_position", spy)
                 return learn(*a, **kw)

@@ -685,9 +685,9 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
         assert nat.walked.get(k, 0) > 0, nat.walked
     # A cannon's launch is logged writes and a SPAWN (launch deferral,
     # Task 3), never a FIRE record; a tube's too unless the kernel cannot
-    # make it (the counted hand-backs: a script's first launch, a posed
-    # target's offset); a bank's edge is logged writes and queue entries
-    # (combat fire events), never a record.
+    # make it (the counted hand-backs: a posed target's offset; no first
+    # launch since types cache at load, Task 5); a bank's edge is logged
+    # writes and queue entries (combat fire events), never a record.
     assert nat.counts["k1_logged"]["pulse_launch"] > 0, nat.counts
     assert nat.fired.get(CANNON, 0) == 0, nat.fired
     assert nat.fired.get(TUBE, 0) == sum(
@@ -1125,7 +1125,12 @@ def test_k1_matches_python_under_the_game_loop_ai(monkeypatch):
                                                         ref.k1_systems)
     for k in (PHASERS, TORPEDOES):
         assert nat.walked.get(k, 0) > 0, nat.walked
-    assert nat.fired, nat.fired
+    # ... and fired natively: every type's launch was cached when it was
+    # loaded (launch deferral Task 5), so no first launch is handed back.
+    logged = nat.counts["k1_logged"]
+    assert logged["tube_launch"] > 0 and logged["beam_edge"] > 0, logged
+    assert nat.counts["k1_launch_reasons"]["launch_uncached"] == 0, \
+        nat.counts["k1_launch_reasons"]
     for et in (App.ET_WEAPON_FIRED, App.ET_WEAPON_HIT, App.ET_OBJECT_EXPLODING,
                App.ET_OBJECT_DESTROYED):
         assert et in _kinds(ref), et

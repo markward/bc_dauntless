@@ -429,9 +429,8 @@ def _reset_projectile_module_cache() -> None:
     _pulse_params_cache.clear()
     _pulse_modules.clear()      # in place: the bindings hold this dict
     _tube_launch_cache.clear()
-    # Not re-resolved here (mid mission-swap teardown): banks already built
-    # re-read their module on the next native push, ammo types learn their
-    # launch again from Python's next launch of their script.
+    # Not re-resolved here (mid mission-swap teardown): banks and ammo types
+    # already built re-read their module on the next native push or K1 entry.
     native_combat.mark_pulse_stale()
 
 
@@ -448,10 +447,11 @@ _pulse_modules: dict = {}
 
 # script name -> (launch state, launch speed) of a torpedo script, the per-
 # type launch cache K1's native tube launch reads (P6 extended to tubes;
-# spec 2026-11-02-combat-launch-deferral §4.1): learned from Python's own
-# launch of the script (TorpedoTube._spawn_torpedo, which resolved its
-# module then), pushed to every ammo type of that script
-# (native_combat.learn_tube_launch). Cleared with _projectile_modules.
+# spec 2026-11-02-combat-launch-deferral §4.1): read when an ammo type of the
+# script is loaded (native_combat.push_ammo_launch, native combat only), or
+# learned from Python's own launch of a script not cached yet
+# (TorpedoTube._spawn_torpedo -> native_combat.learn_tube_launch), and
+# pushed to every ammo type of that script. Cleared with _projectile_modules.
 _tube_launch_cache: dict = {}
 
 # The launch states (mirror.h ammo_launch_state).
@@ -2022,7 +2022,8 @@ class TorpedoAmmoType:
         self._unlimited = max_torpedoes is None
         self._max_torpedoes = 0 if max_torpedoes is None else int(max_torpedoes)
         self._available = self._max_torpedoes
-        # Its script's launch, if Python has launched that script already.
+        # Its script's launch, read now (native combat: launch deferral
+        # Task 5), so its first launch is native too.
         native_combat.push_ammo_launch(self)
 
     def GetAmmoName(self) -> str:
@@ -3875,7 +3876,8 @@ class TorpedoTube(Weapon):
         mod = _resolve_projectile_module(script_name)
         if native_combat._enabled:
             # Python resolved this script for a launch: the per-type launch
-            # K1's native launches read (launch deferral; P6 extended).
+            # K1's native launches read (launch deferral; P6 extended), if
+            # its load did not cache it already (Task 5).
             native_combat.learn_tube_launch(script_name, mod)
         if mod is None:
             return

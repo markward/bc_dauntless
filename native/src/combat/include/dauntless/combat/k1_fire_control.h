@@ -127,8 +127,9 @@
 // TORPEDO_FIRED, WEAPON_FIRED, AMMO_CONSUMED. A launch the kernel cannot
 // make is the FIRE (FIRE_DUMB) record as before, with no launch write,
 // counted by K1LaunchWhy: no ammo type or no module (Unresolved), the
-// type's launch not cached yet (Uncached: Python's own first launch of a
-// script caches it), a function the launch stands in for patched
+// type's launch not cached (Uncached: read when the type is loaded, so
+// only inside THE P6 WINDOW or for a GetLaunchSpeed that raises; Python's
+// launch then caches it), a function the launch stands in for patched
 // (Patched), a posed target's offset it cannot bake (PosedOffset),
 // anything else the mirror cannot say (Other: slot lists out of step with
 // MaxReady, an unnamed set). Whatever the module's Create does, it runs at the
@@ -175,12 +176,15 @@
 // functions are the launch check's (K1LaunchWhy::Patched).
 //
 // THE P6 WINDOW. A cannon's launch speed and module are read when its
-// params are pushed (SetProperty, a mission swap's refresh). A
-// SetModuleName on its property after SetProperty is never re-pushed, so
-// the cached module and launch params stay the old ones; and a projectile-
-// cache reset (_reset_projectile_module_cache) made by Python run in the
-// middle of a K1 session leaves the old ones until the next K1 entry
-// refreshes them. The lead solve's params have the same window.
+// params are pushed (SetProperty, a mission swap's refresh); an ammo
+// type's when it is pushed (its creation, SetTorpedoScript, the refresh:
+// native_combat.push_ammo_launch, launch deferral Task 5). A
+// SetModuleName on a cannon's property after SetProperty is never
+// re-pushed, so the cached module and launch params stay the old ones; and
+// a projectile-cache reset (_reset_projectile_module_cache) made by Python
+// run in the middle of a K1 session leaves a cannon's old ones, and its
+// ammo types uncached (each launch handed back, Uncached), until the next
+// K1 entry refreshes them. The lead solve's params have the same window.
 //
 // Records left: FIRE for a launch the kernel cannot make (a tube's or a
 // cannon's, counted by K1LaunchWhy), FIRE_DUMB likewise, ASK, RUN_PYTHON,

@@ -1937,16 +1937,16 @@ def mark_pulse_stale() -> None:
     resolved now (the SDK tree may be half reloaded); the next push, the
     next K1 entry (k1_pump / k1_system: a K1 decision reads the params, and
     Python's Fire would read the module at that moment) or
-    refresh_stale_pulse_params (GameLoop.tick) re-reads every built bank.
-    Every ammo type's launch is forgotten at once (nothing is resolved for
-    that: its next launch is Python's, which learns it again)."""
+    refresh_stale_pulse_params (GameLoop.tick) re-reads every built bank
+    and ammo type. Every ammo type's launch is forgotten at once (pushed
+    uncached, nothing resolved) until that re-read caches it again."""
     global _pulse_stale
     if _enabled:
         _pulse_stale = True
         for h, obj in list(_registry.items()):
             if ((h >> _KIND_SHIFT) == _kind("Ammo")
                     and obj.__dict__.get("_nslot") == h):
-                push_ammo_launch(obj)
+                _push_ammo_row(obj)
 
 
 # ── The per-type launch cache (launch deferral; P6 extended to tubes) ────────
@@ -1954,11 +1954,15 @@ def mark_pulse_stale() -> None:
 # §4.1. K1 makes a tube's launch natively only from an ammo type whose
 # script's launch Python has cached (weapon_subsystems._tube_launch_cache):
 # its state (cached / unresolved) and launch speed, pushed to every
-# Ammo row of that script. Learned from Python's own launch of the script
-# (TorpedoTube._spawn_torpedo, which has just resolved its module, so no
-# import happens at any other time); until then the type's launches are
-# handed back (K1LaunchWhy::Uncached). Forgotten with the projectile module
-# cache (mark_pulse_stale).
+# Ammo row of that script. Read when the type is loaded (push_ammo_launch:
+# its creation, SetTorpedoScript, the re-read after a cache reset) through
+# the resolve Python's launch uses (weapon_subsystems.
+# _resolve_projectile_module, tube_launch_params), so the first launch is
+# native too (launch deferral Task 5); Python's own launch of a script not
+# cached yet still learns it (learn_tube_launch). A type not cached hands its
+# launches back (K1LaunchWhy::Uncached): a GetLaunchSpeed that raises, or a
+# reset made inside a K1 session (THE P6 WINDOW). Forgotten with the
+# projectile module cache (mark_pulse_stale).
 
 def _ammo_launch(ammo) -> tuple:
     """(ammo_launch_state, ammo_launch_speed) for an ammo type: its
@@ -1981,8 +1985,31 @@ def _ammo_module(ammo, state):
 
 
 def push_ammo_launch(ammo) -> None:
-    """Push the ammo type's launch (_ammo_launch): at its creation, a new
-    script, a learned or forgotten cache."""
+    """Push the ammo type's launch (_ammo_launch) at its creation, a new
+    script, a cache re-read: its script's launch is cached first
+    (_cache_tube_launch), so the row is pushed cached."""
+    if _enabled:
+        if _pulse_stale:
+            refresh_stale_pulse_params()    # re-pushes every type, this one too
+        _cache_tube_launch(ammo.__dict__.get("_script"))
+        _push_ammo_row(ammo)
+
+
+def _cache_tube_launch(script) -> None:
+    """Cache torpedo `script`'s launch, resolved as Python's launch resolves
+    it (_resolve_projectile_module: an unimportable script is the stock
+    photon, None when that fails too; it catches every import error itself,
+    and tube_launch_params a raising GetLaunchSpeed, so loading never
+    breaks). Native combat only: with the switch off the module is first
+    resolved at its first launch, as before."""
+    from engine.appc import weapon_subsystems as ws
+    if script and script not in ws._tube_launch_cache:
+        ws._tube_launch_cache[script] = ws.tube_launch_params(
+            ws._resolve_projectile_module(script))
+
+
+def _push_ammo_row(ammo) -> None:
+    """Push the ammo type's launch as cached now, resolving nothing."""
     if _enabled:
         h = ammo.__dict__.get("_nslot")
         if h is None:
@@ -2009,7 +2036,7 @@ def learn_tube_launch(script, mod) -> None:
         if ((h >> _KIND_SHIFT) == _kind("Ammo")
                 and obj.__dict__.get("_nslot") == h
                 and obj.__dict__.get("_script") == script):
-            push_ammo_launch(obj)
+            _push_ammo_row(obj)
 
 
 def _arriving_flag(ship) -> int:
@@ -2101,13 +2128,16 @@ def refresh_stale_pulse_params() -> None:
 
 
 def refresh_pulse_params() -> None:
-    """Every pulse bank already built re-reads its module."""
+    """Every pulse bank and ammo type already built re-reads its module."""
     if _enabled:
         for h, obj in list(_registry.items()):
-            if (obj.__dict__.get("_nslot") == h
-                    and (h >> _KIND_SHIFT) == _kind("Subsystem")
-                    and _weapon_kind(obj) == 6):
+            if obj.__dict__.get("_nslot") != h:
+                continue
+            k = h >> _KIND_SHIFT
+            if k == _kind("Subsystem") and _weapon_kind(obj) == 6:
                 push_pulse_params(obj)
+            elif k == _kind("Ammo"):
+                push_ammo_launch(obj)
 
 
 def _property_values(prop) -> dict:
@@ -2853,8 +2883,8 @@ def audit_mirror() -> None:
                 ws.pulse_module_script(obj))
             expected.update(module_ok=ok, launch_speed=speed, lifetime=life)
         if (h >> _KIND_SHIFT) == _kind("Ammo"):
-            # Resolved afresh from the module Python's launch resolved (a
-            # stale cache entry would otherwise agree with a stale row).
+            # Resolved afresh from the module the cache entry was read from
+            # (a stale cache entry would otherwise agree with a stale row).
             from engine.appc import weapon_subsystems as ws
             script = d.get("_script")
             if not script:
