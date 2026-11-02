@@ -64,7 +64,7 @@ Records per tick by kind (K1 target: no FIRE), and two benchmark runs against C-
 
 ## 10. Outcome
 
-Built 2026-11-02 on `ws/combat-launch-cache`. Commits: `3d867df40` (walk check in the binding), `e1b37beae`, `0eb1fc8ce` (tube and dumb launches, Python pulse deferral), `8c16e2ae2`, `76fdb5c39` (native pulse launches).
+Built 2026-11-02 on `ws/combat-launch-cache`. Commits: `3d867df40` (walk check in the binding), `e1b37beae`, `0eb1fc8ce` (tube and dumb launches, Python pulse deferral), `8c16e2ae2`, `76fdb5c39` (native pulse launches), `df0b07f42` (Task 5, added by Mark: the launch cache is filled when a torpedo type is loaded, not on its first shot), `1ab1e5b2f` (final review: a SPAWN holds its launcher, ship and set as objects, so a freed row still spawns; a reset during delivery stops the batch; the differentials assert native launches and the step differential compares torpedoes; a raising `GetLaunchSpeed` at load no longer pins its type to Python).
 
 ### What shipped
 
@@ -83,7 +83,7 @@ Built 2026-11-02 on `ws/combat-launch-cache`. Commits: `3d867df40` (walk check i
 
 ### Measured (perf register C-270, C-271, SIG-175)
 
-K1 FIRE records per tick 0.103 → 0.0004 (4 per 8,999 ticks, all a type's first launch). Launch work moved from `cb.held_weapons` (0.664 → 0.604 ms per tick) to `sim.effects` (0.069 → 0.196): net about +0.07 ms per tick in the touched rows; `sim.combat` 1.545 → 1.509; `sim` 9.13 → 9.27, with more torpedoes in flight in this pair. The phase's gain is structural, not speed.
+K1 FIRE records per tick 0.103 → 0.0004 (4 per 8,999 ticks, all a type's first launch); after Task 5's load-time fill, **2 per 8,999 ticks, both `launch_posed_offset`** (a posed target's AI offset), `launch_uncached` 0 (re-measured 2026-11-02, headless; no benchmark pair was taken after Task 5 and the final fixes, which should not change speed — deferred while Mark is in meetings). Launch work moved from `cb.held_weapons` (0.664 → 0.604 ms per tick) to `sim.effects` (0.069 → 0.196): net about +0.07 ms per tick in the touched rows; `sim.combat` 1.545 → 1.509; `sim` 9.13 → 9.27, with more torpedoes in flight in this pair. The phase's gain is structural, not speed.
 
 ### Next (roadmap)
 
