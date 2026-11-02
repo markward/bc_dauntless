@@ -1,23 +1,25 @@
 """Isolate a differential arm's hit audio from wall-clock speed and from the
 fights before it.
 
-A hit sound is one SDK RNG draw (LoadTacticalSounds.GetRandomSound), and the
-death cascade rolls on the same RNG, so whether a hit plays a sound must not
-differ between two arms of a native-vs-Python differential. Four things
-decided it beyond the fight itself:
+A hit sound's pick (LoadTacticalSounds.GetRandomSound) draws on the
+presentation generator now (engine/appc/presentation_rng.py), so it no longer
+moves a gameplay roll; but an officer's call-out still plays an animation and
+a line pick inside gameplay SDK handlers, which draw on the SDK RNG, so
+whether one happens must not differ between two arms of a native-vs-Python
+differential. What decided it beyond the fight itself:
 
 * the SDK's recent-sound memory (``LoadTacticalSounds.g_dRecentSounds``):
   each pick is narrowed by it, and no mission load resets it;
 * hit_feedback's audio edge stamps (keyed by ``id(ship)``: a ship of this arm
-  can reuse a freed id of the last);
-* the WALL clock those gaps run on (hit_feedback's 0.15 s contact gap, and
-  crew_speech / speak_queue's speech expiry): a slower arm plays more sounds;
+  can reuse a freed id of the last; they run on game time already);
+* the WALL clock crew_speech / speak_queue's speech expiry runs on: a slower
+  arm keeps an officer talking longer;
 * the bridge crew's announcement throttles (``reset_crew_timestamps``).
 
-``isolate_fight_audio(mp)`` clears both memories, runs every gap on the game
-clock and resets the crew's throttles, through the given monkeypatch context
-(so the real values come back when it closes). Used by the K1, K2 and K3
-differentials' scenes and the K3 dispatch test.
+``isolate_fight_audio(mp)`` clears both memories, runs the speech clocks on
+the game clock and resets the crew's throttles, through the given monkeypatch
+context (so the real values come back when it closes). Used by the K1, K2 and
+K3 differentials' scenes and the K3 dispatch test.
 """
 import types
 
@@ -32,7 +34,7 @@ def isolate_fight_audio(mp) -> None:
     hit_feedback.reset_audio_throttle()
     clock = types.SimpleNamespace(
         monotonic=lambda: App.g_kTimerManager.get_time())
-    for module in (hit_feedback, crew_speech, speak_queue):
+    for module in (crew_speech, speak_queue):
         mp.setattr(module, "time", clock)
     reset_crew_timestamps(mp)
 

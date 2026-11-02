@@ -120,14 +120,17 @@ def _vec(p):
 
 def _seed_every_rng(seed):
     """Every RNG a fight draws on, to one state: the module `random`, the
-    SDK's App.g_kSystemWrapper.GetRandomNumber (unseeded by default) and the
-    engine's two process-lifetime streams (avoidance, random unit vectors)."""
+    SDK's App.g_kSystemWrapper.GetRandomNumber (unseeded by default), the
+    engine's two process-lifetime streams (avoidance, random unit vectors)
+    and the presentation generator."""
     from engine.appc import collision_avoidance
+    from engine.appc import presentation_rng
     from engine.appc.math import reset_random_unit_vector_rng
     random.seed(seed)
     App.g_kSystemWrapper.SetRandomSeed(seed)
     collision_avoidance._rng.seed(collision_avoidance._AVOID_RNG_SEED)
     reset_random_unit_vector_rng()
+    presentation_rng.reset()
 
 
 class _Scene:

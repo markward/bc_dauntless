@@ -11,8 +11,7 @@ doesn't leave a stale backlog for the next unmuted one.
 
 Every number lives in engine.rocks.minor_dials; see §5 there.
 """
-import random
-
+from engine.appc import presentation_rng
 from engine.appc.math import TGPoint3
 
 _buckets: dict = {}  # response kind -> (tokens, last game-time)
@@ -71,7 +70,7 @@ def _play_grit(point, radius: float) -> bool:
     name never registered) is skipped rather than raising."""
     import App
     from engine.rocks import minor_dials as md
-    name = "Collision %d" % random.randint(1, 8)
+    name = "Collision %d" % (presentation_rng.rand(8) + 1)
     snd = App.g_kSoundManager.GetSound(name)
     if snd is None:
         return False

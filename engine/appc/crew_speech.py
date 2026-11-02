@@ -272,12 +272,10 @@ def _mission_database():
 
 
 def _rand5() -> int:
-    """App.g_kSystemWrapper.GetRandomNumber(5) (0..4), best-effort -> 0."""
-    try:
-        import App
-        return int(App.g_kSystemWrapper.GetRandomNumber(5))
-    except Exception:
-        return 0
+    """GetRandomNumber(5) (0..4) on the presentation generator: which ack
+    line plays never shifts a gameplay roll (presentation_rng)."""
+    from engine.appc import presentation_rng
+    return presentation_rng.rand(5)
 
 
 def acknowledge(character) -> None:

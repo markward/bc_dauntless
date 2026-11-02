@@ -9,6 +9,7 @@ import App
 import Foundation
 from engine import foundation, ship_catalog
 from engine.appc import glow_maps
+from engine.appc import presentation_rng
 
 ACTIONS = "Custom.NanoFXv2.NanoFX_ScriptActions"
 
@@ -48,7 +49,7 @@ def _script_steps(seq):
 
 
 def test_flicker_ends_on_requested_state_and_caps_concurrency(lib, monkeypatch):
-    monkeypatch.setattr(App.g_kSystemWrapper, "GetRandomNumber", lambda n: 0)
+    monkeypatch.setattr(presentation_rng, "rand", lambda n: 0)
     ship = App.ShipClass_Create("F")
     seq = lib.CreateFlickerSeq(ship, 1.0, 0.2, "Off")
     steps = _script_steps(seq)
@@ -96,7 +97,7 @@ def test_turn_off_and_on_lights(acts):
 
 
 def test_set_nano_rotation_sets_spin_magnitude(acts, monkeypatch):
-    monkeypatch.setattr(App.g_kSystemWrapper, "GetRandomNumber", lambda n: n - 1)
+    monkeypatch.setattr(presentation_rng, "rand", lambda n: n - 1)
     ship = App.ShipClass_Create("Rot")
     acts.SetNanoRotation(None, ship, 90.0, None)
     w = ship.GetAngularVelocityTG()
@@ -105,7 +106,7 @@ def test_set_nano_rotation_sets_spin_magnitude(acts, monkeypatch):
 
 
 def test_rotation_seq_schedules_set_nano_rotation(lib, monkeypatch):
-    monkeypatch.setattr(App.g_kSystemWrapper, "GetRandomNumber", lambda n: 0)
+    monkeypatch.setattr(presentation_rng, "rand", lambda n: 0)
     ship = App.ShipClass_Create("RS")
     seq = lib.CreateRotationSeq(ship, 200)
     (name, args, _delay), = _script_steps(seq)

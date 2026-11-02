@@ -36,8 +36,19 @@ because BC defers the call inside a TGSequence that may cross a save/load, and
 we fire immediately from a live reference.
 
 See engine/appc/visible_damage.py (ADD_DAMAGE_*) for the hole size and wear.
+
+RANDOM STREAMS (presentation RNG, docs/reference/engine/native-combat/rng-map.md
+§7.4). The throes, the blast plan and each blast's damage roll are gameplay and
+draw BC's stream (GetRandomNumber); a damaging blast's point is gameplay too
+(the module random, through GetRandomPointOnModel). Everything else a blast
+does only shows -- its size (Ruling R2), a non-damaging blast's point, the
+fireball's puffs, the sparks, the sound, the final barrage -- and draws the
+presentation generator (engine.appc.presentation_rng), so no cosmetic draw
+ever shifts a gameplay roll. That is why the damage roll comes FIRST in
+`_fire`: BC draws the point before it.
 """
 import engine.dev_mode as dev_mode
+from engine.appc import presentation_rng
 from engine.core import frame_profiler
 
 # ── BC constants (Effects.py) ────────────────────────────────────────────────
@@ -152,8 +163,10 @@ def roll_duration(ship, rand=None) -> float:
 
 
 def roll_blast_scale(rand=None) -> float:
-    """One blast's size multiplier from BLAST_SIZE_TIERS, on the cascade's RNG."""
-    rand = rand or _rand
+    """One blast's size multiplier from BLAST_SIZE_TIERS, on the presentation
+    generator by default: the size is presentation (Ruling R2), though its
+    visible hole can break parts off a ship that is already dying."""
+    rand = rand or presentation_rng.rand
     pick = rand(1000) / 1000.0
     acc = 0.0
     for p, lo, hi in BLAST_SIZE_TIERS:
@@ -225,8 +238,15 @@ def _sound_due(state: dict, blast_time: float) -> bool:
 
 
 def _fire(state: dict, sound_ok: bool) -> None:
-    """One explosion of the cascade: sample a point on the hull, maybe damage
-    it there, then play the debris explosion (and maybe a sound) at it.
+    """One explosion of the cascade: roll whether it damages, sample a point
+    on the hull, maybe damage it there, then play the debris explosion (and
+    maybe a sound) at it.
+
+    The damage roll comes before the point (BC samples the point first): a
+    damaging blast's point is gameplay and is drawn from the module random,
+    a non-damaging one's only shows and is drawn from the presentation
+    generator, so how many blasts merely show never shifts a gameplay roll.
+    A damaging blast's fireball is at its hole: the one point serves both.
 
     The damage is done BEFORE the VFX deliberately: a missing effect backend
     must never cost the ship its damage. Raise-safe as a whole -- death logic
@@ -235,18 +255,23 @@ def _fire(state: dict, sound_ok: bool) -> None:
     ship = state["ship"]
     rand = state["rand"] or _rand
     try:
+        damaging = rand(10) < DAMAGE_CHANCE_IN_10
         with frame_profiler.scope("casc.point"):
-            point = ship.GetRandomPointOnModel()
+            if damaging:
+                point = ship.GetRandomPointOnModel()
+            else:
+                with presentation_rng.scope():
+                    point = ship.GetRandomPointOnModel()
         radius = float(ship.GetRadius())
-        m = roll_blast_scale(rand)
+        m = roll_blast_scale(presentation_rng.rand)
 
-        if rand(10) < DAMAGE_CHANCE_IN_10:
+        if damaging:
             from engine.appc import visible_damage
             with frame_profiler.scope("casc.add_damage"), visible_damage.hole_scale(m):
                 ship.AddDamage(point, radius * DAMAGE_RADIUS_FRACTION, DAMAGE_STRENGTH)
 
         with frame_profiler.scope("casc.explosion"):
-            _debris_explosion(ship, point, radius * BLAST_SIZE_FRACTION * m, rand)
+            _debris_explosion(ship, point, radius * BLAST_SIZE_FRACTION * m)
         with frame_profiler.scope("casc.light"):
             _light(ship, radius * BLAST_SIZE_FRACTION * m)
         if sound_ok:
@@ -258,7 +283,9 @@ def _fire(state: dict, sound_ok: bool) -> None:
 
 def _fire_final(state: dict) -> None:
     """BC's closing barrage: sparks plus full-ship-radius explosions at fresh
-    points, two more of them above the MEDIUM effect level."""
+    points, two more of them above the MEDIUM effect level. Presentation
+    only, so every draw in it (the points, the SDK sparks and sound) is the
+    presentation generator's."""
     ship = state["ship"]
     try:
         radius = float(ship.GetRadius())
@@ -268,20 +295,22 @@ def _fire_final(state: dict) -> None:
         pSet = ship.GetContainingSet()
         root = pSet.GetEffectRoot() if pSet is not None else None
 
-        point = ship.GetRandomPointOnModel()
-        Effects.CreateDebrisSparks(1.0, point, 0, root).Play()
+        with presentation_rng.scope():
+            point = ship.GetRandomPointOnModel()
+            Effects.CreateDebrisSparks(1.0, point, 0, root).Play()
 
-        count = 2
-        if App.EffectController_GetEffectLevel() >= App.EffectController.MEDIUM:
-            count = 4
-        for _ in range(count):
-            action = Effects.CreateDebrisExplosion(
-                radius, BLAST_LIFE, ship.GetRandomPointOnModel(), 1, root)
-            # Same animation speed as every other blast — a finale that plays
-            # at a different frame rate reads as a different effect. It does
-            # get the full puff count: this is the one that should be big.
-            _tune(action, PUFFS_MAX)
-            action.Play()
+            count = 2
+            if App.EffectController_GetEffectLevel() >= App.EffectController.MEDIUM:
+                count = 4
+            for _ in range(count):
+                action = Effects.CreateDebrisExplosion(
+                    radius, BLAST_LIFE, ship.GetRandomPointOnModel(), 1, root)
+                # Same animation speed as every other blast — a finale that
+                # plays at a different frame rate reads as a different
+                # effect. It does get the full puff count: this is the one
+                # that should be big.
+                _tune(action, PUFFS_MAX)
+                action.Play()
         _light(ship, radius)
         _death_sound(ship)
     except Exception as _e:
@@ -293,14 +322,16 @@ def _debris_explosion(ship, point, size, rand=None) -> None:
     with the helper's puff life and puff count overridden — see PUFF_LIFE.
 
     A missing controller (a backend that hands back a bare action) just leaves
-    the SDK defaults in place rather than failing the blast.
+    the SDK defaults in place rather than failing the blast. Presentation
+    only: the puff count and the SDK helper draw the presentation generator.
     """
     import Effects
-    rand = rand or _rand
-    action = Effects.CreateDebrisExplosion(size, BLAST_LIFE, point, 1,
-                                           ship.GetNode())
-    _tune(action, PUFFS_MIN + rand(PUFFS_MAX - PUFFS_MIN + 1))
-    action.Play()
+    rand = rand or presentation_rng.rand
+    with presentation_rng.scope():
+        action = Effects.CreateDebrisExplosion(size, BLAST_LIFE, point, 1,
+                                               ship.GetNode())
+        _tune(action, PUFFS_MIN + rand(PUFFS_MAX - PUFFS_MIN + 1))
+        action.Play()
 
 
 def _tune(action, puffs: int) -> None:
@@ -320,14 +351,16 @@ def _tune(action, puffs: int) -> None:
 
 
 def _death_sound(ship) -> None:
-    """The ship's authored death-explosion sound group (ShipProperty)."""
+    """The ship's authored death-explosion sound group (ShipProperty); the
+    SDK's pick draws the presentation generator."""
     import App
     import Effects
     pSet = ship.GetContainingSet()
     if pSet is None:
         return
-    action = App.TGSoundAction_Create(Effects.GetDeathExplosionSound(ship), 0,
-                                      pSet.GetName())
+    with presentation_rng.scope():
+        name = Effects.GetDeathExplosionSound(ship)
+    action = App.TGSoundAction_Create(name, 0, pSet.GetName())
     action.SetNode(ship.GetNode())
     action.Play()
 

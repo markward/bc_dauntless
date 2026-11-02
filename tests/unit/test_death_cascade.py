@@ -264,3 +264,105 @@ def test_blast_scale_sizes_the_fireball_the_light_and_the_hole(monkeypatch):
     assert r == pytest.approx(4.0 * death_cascade.DAMAGE_RADIUS_FRACTION)
     assert s == pytest.approx(death_cascade.DAMAGE_STRENGTH)
     assert visible_damage.current_hole_scale() == 1.0, "scale ends with the call"
+
+
+# ── Presentation never moves a gameplay roll (presentation RNG; map
+#    docs/reference/engine/native-combat/rng-map.md §7.4, §7.5 test 3) ──────
+
+def _doomed_class():
+    from engine.appc.objects import ObjectClass
+
+    class Doomed(ObjectClass):
+        """A real ObjectClass, so GetRandomPointOnModel draws as a ship's
+        does (headless: three gausses on the module random, or on P inside
+        a presentation scope); in a set, so the sound and sparks run."""
+        def __init__(self):
+            super().__init__()
+            self.SetTranslateXYZ(10.0, 20.0, 30.0)
+            self.SetRadius(4.0)
+            self._set = FakeSet()
+            self._set.GetEffectRoot = lambda: None
+            self.damage_calls = []
+        def GetContainingSet(self): return self._set
+        def GetLifeTime(self):      return 1.0e30
+        def AddDamage(self, pEmitPos, fRadius, fDamage):
+            self.damage_calls.append((pEmitPos, fRadius, fDamage))
+
+    return Doomed
+
+
+def _hexes(p):
+    return tuple(float(c).hex() for c in (p.x, p.y, p.z))
+
+
+def _whole_death(monkeypatch, noise=None, seed=11):
+    """One whole cascade from seeded S1 and S2: the duration, the blast plan,
+    every AddDamage (point by .hex(), radius, strength), the points the
+    damaging blasts' fireballs were drawn at, and both streams' end state."""
+    import random
+    import App
+    from engine.appc import presentation_rng
+    random.seed(seed)
+    App.g_kSystemWrapper.SetRandomSeed(seed)
+    presentation_rng.reset()
+    fired_at = []
+    debris = death_cascade._debris_explosion
+
+    def spy(ship, point, size, *a, **k):
+        fired_at.append(point)
+        return debris(ship, point, size, *a, **k)
+
+    monkeypatch.setattr(death_cascade, "_debris_explosion", spy)
+    ship = _doomed_class()()
+    duration = death_cascade.roll_duration(ship)
+    state = death_cascade.begin(ship, duration)
+    plan = list(state["blasts"])
+    for _ in range(int((duration + 1.0) * 60)):
+        if noise is not None:
+            noise(state)
+        death_cascade.advance(state, 1.0 / 60.0)
+    assert state["final_fired"]
+    damage = [(_hexes(p), r, s) for p, r, s in ship.damage_calls]
+    # A damaging blast's fireball is at its hole (Review Focus 3).
+    assert all(any(p is q for q in fired_at) for p, _r, _s in ship.damage_calls)
+    return (duration, plan, damage, App.g_kSystemWrapper._rng.getstate(),
+            random.getstate())
+
+
+def test_presentation_never_moves_a_death_cascade_roll(monkeypatch):
+    """The throes, the blast plan, which blasts damage and where, and both
+    gameplay streams' end state are the same whether every blast plays a
+    sound, the effect level shrinks the final barrage, or presentation
+    draws more between blasts."""
+    import App
+    from engine.appc import presentation_rng
+    quiet = _whole_death(monkeypatch)
+    assert quiet[2], "the cascade carved nothing"
+
+    def every_sound(state):
+        state["last_sound_at"] = None
+
+    def extra_draws(state):
+        for _ in range(3):
+            presentation_rng.rand(1000)
+
+    assert _whole_death(monkeypatch, every_sound) == quiet
+    assert _whole_death(monkeypatch, extra_draws) == quiet
+    monkeypatch.setattr(App, "EffectController_GetEffectLevel",
+                        lambda: App.EffectController.LOW)
+    assert _whole_death(monkeypatch) == quiet
+
+
+def test_only_a_damaging_blast_draws_its_point_from_the_gameplay_stream(
+        monkeypatch):
+    """The damage roll comes first; a damaging blast's point is drawn from
+    the module random (three gausses headless), a non-damaging one's from P.
+    So the module random ends exactly as many points in as there were
+    holes."""
+    import random
+    seed = 11
+    damage, s2 = _whole_death(monkeypatch, seed=seed)[2::2]
+    ref = random.Random(seed)
+    for _ in range(3 * len(damage)):
+        ref.gauss(0.0, 1.0)
+    assert s2 == ref.getstate()

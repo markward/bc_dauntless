@@ -1,8 +1,11 @@
 """Custom.NanoFXv2.NanoFX_ScriptActions on Dauntless systems
-(spec 2026-10-16 §8.4). Script-action functions return 0 (BC: "completed")."""
+(spec 2026-10-16 §8.4). Script-action functions return 0 (BC: "completed").
+Its random draws are the presentation generator's
+(engine/appc/presentation_rng.py)."""
 import App
 
 from engine.appc import glow_maps
+from engine.appc import presentation_rng
 
 
 def DestroyTGSequence(pAction, pSequence):
@@ -48,7 +51,7 @@ def NanoDamageShip(pAction, pObject, vEmitPos, fRadius, fDamage):
 
 
 def SetNanoRotation(pAction, pShip, fRotation, fSpeed):
-    rnd = App.g_kSystemWrapper.GetRandomNumber
+    rnd = presentation_rng.rand
     if fSpeed:
         v = App.TGPoint3()
         v.SetXYZ(fSpeed, fSpeed, fSpeed)
@@ -80,7 +83,7 @@ def SetupController(sType, fSize, fLifeTime, fRed, fGreen, fBlue, fBrightness):
     follow NanoFX's documented types so callers' effects keep their timing
     and shape; textures come from the sprite library (spec §7)."""
     r, g, b = fRed / 255.0, fGreen / 255.0, fBlue / 255.0
-    rnd = App.g_kSystemWrapper.GetRandomNumber
+    rnd = presentation_rng.rand
     if sType == "Plume":
         c = App.AnimTSParticleController_Create()
         s = fSize + rnd(20) * 0.01

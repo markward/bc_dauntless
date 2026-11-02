@@ -1,6 +1,7 @@
 """tests/helpers/fight_audio.py: what every native-combat differential arm
-runs so whether a hit plays a sound (one SDK RNG draw) is decided by the
-fight alone, never by wall-clock speed or an earlier fight."""
+runs so whether an officer speaks (an animation and a line pick on the SDK
+RNG) is decided by the fight alone, never by wall-clock speed or an earlier
+fight. (hit_feedback's contact gap runs on game time itself.)"""
 import App
 import LoadTacticalSounds
 
@@ -16,13 +17,13 @@ def test_clears_the_memories_and_runs_the_gaps_on_game_time(monkeypatch):
         isolate_fight_audio(mp)
         assert LoadTacticalSounds.g_dRecentSounds == {}
         assert hit_feedback._last_dispatch_time == {}
-        for module in (hit_feedback, crew_speech, speak_queue):
+        for module in (crew_speech, speak_queue):
             assert module.time.monotonic() == 12.5, module
         App.g_kTimerManager._time = 13.0
-        assert hit_feedback.time.monotonic() == 13.0
+        assert speak_queue.time.monotonic() == 13.0
     # The clocks are the real ones again once the context closes.
     import time
-    for module in (hit_feedback, crew_speech, speak_queue):
+    for module in (crew_speech, speak_queue):
         assert module.time is time, module
 
 

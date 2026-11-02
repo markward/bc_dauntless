@@ -1653,6 +1653,13 @@ def _reset_leakable_engine_globals():
         reset_random_unit_vector_rng()
     except Exception:
         pass
+    # The presentation generator (engine/appc/presentation_rng.py): reseeded
+    # at every mission load in play, so per test here, for the same reason.
+    try:
+        from engine.appc import presentation_rng
+        presentation_rng.reset()
+    except Exception:
+        pass
     # Defensive-cloak controller: per-ship DEFENSIVE mode set (mirrors
     # collision_avoidance's per-tick reconciliation) leaks between tests
     # since nothing else clears it. A ship id surviving from a prior test

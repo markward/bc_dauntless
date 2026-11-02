@@ -146,6 +146,20 @@ def test_death_script_runs_once():
     assert runs == [1]
 
 
+def test_death_script_runs_in_the_presentation_scope():
+    """Ruling R1: a rock's death script (E1M2's AsteroidExploding: a point,
+    sparks, a sound) runs in the presentation scope, as a ship's does."""
+    from engine.appc import presentation_rng
+    from engine.rocks import death
+    rock = _make(App.GENUS_ASTEROID)
+    _in_set(rock, "Asteroid 5b")
+    seen = []
+    rock.RunDeathScript = lambda: seen.append(presentation_rng.in_scope())
+    death.begin(rock)
+    assert seen == [True]
+    assert not presentation_rng.in_scope()
+
+
 def test_big_rock_spawns_named_major_pieces_without_death_script():
     from engine.rocks import breakup, death
     from engine.rocks.rock import is_rock

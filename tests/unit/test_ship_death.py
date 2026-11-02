@@ -592,6 +592,28 @@ def test_begin_invokes_run_death_script_once():
     assert ship.ran == 1
 
 
+def test_death_script_runs_in_the_presentation_scope():
+    """Ruling R1 (Mark 2026-11-02): every stock death script draws only for
+    debris, sparks and sounds, so it runs in the presentation scope: its
+    SDK draws come from the presentation generator, never from the gameplay
+    stream (engine/appc/presentation_rng.py)."""
+    import App
+    from engine.appc import presentation_rng
+
+    class DeathScriptShip(FakeShip):
+        def RunDeathScript(self):
+            self.scoped = presentation_rng.in_scope()
+            self.state = App.g_kSystemWrapper._rng.getstate()
+            App.g_kSystemWrapper.GetRandomNumber(8)
+            self.after = App.g_kSystemWrapper._rng.getstate()
+
+    ship = DeathScriptShip(name="Freighter")
+    ship_death.begin(ship)
+    assert ship.scoped is True
+    assert ship.after == ship.state
+    assert not presentation_rng.in_scope()
+
+
 def test_begin_skips_run_death_script_when_absent():
     """A ship without RunDeathScript (e.g. non-ship object) is handled
     gracefully — begin() must not raise."""
