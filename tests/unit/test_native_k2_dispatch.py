@@ -45,6 +45,7 @@ from engine import host_io  # noqa: E402
 from engine import host_loop  # noqa: E402
 from engine.appc import articulation  # noqa: E402
 from engine.appc import combat  # noqa: E402
+from engine.appc import effect_queue  # noqa: E402
 from engine.appc import hit_feedback  # noqa: E402
 from engine.appc import native_combat as nc  # noqa: E402
 from engine.appc import part_pose  # noqa: E402
@@ -97,6 +98,21 @@ def _hx(v):
     if isinstance(v, TGPoint3):
         return tuple(float(c).hex() for c in (v.x, v.y, v.z))
     return ("%s" % type(v).__name__, v)
+
+
+def _k1_stop() -> bool:
+    """Whether the StopFiring running now is one K1 stands in for: the
+    held-weapon pump's, or a walk's (update_weapons, run_k1). K1 logs those,
+    a firing bank's included, since combat fire events Task 3 (no Python
+    call natively), so the compared call log leaves them to the per-tick
+    record."""
+    f = sys._getframe(2)
+    while f is not None:
+        if f.f_code.co_name in ("_pump_held_weapons", "update_weapons",
+                                "run_k1"):
+            return True
+        f = f.f_back
+    return False
 
 
 class World:
@@ -172,8 +188,9 @@ class World:
         def bank_spy(bank, _orig=bank_stop):
             # A FIRING bank's stop only: a stop of a bank not firing is pure
             # field writes, which K1 logs with no call (round trips Task 2);
-            # its effect is in the per-tick record.
-            if bank.__dict__.get("_firing"):
+            # its effect is in the per-tick record. Nor one of K1's: K1 logs
+            # a firing bank's stop too (combat fire events Task 3).
+            if bank.__dict__.get("_firing") and not _k1_stop():
                 self.calls.append(("bank_stop", self.n, self.label(bank)))
             return _orig(bank)
 
@@ -185,7 +202,8 @@ class World:
             # its effect is in the per-tick record.
             self.sys_stops.append((self.n, self.label(sys_)))
             if any(b.__dict__.get("_firing")
-                   for b in sys_.__dict__.get("_children", ())):
+                   for b in sys_.__dict__.get("_children", ())) \
+                    and not _k1_stop():
                 self.calls.append(("system_stop", self.n, self.label(sys_)))
             return _orig(sys_, *args)
 
@@ -315,16 +333,22 @@ class World:
 
     def tick(self, before=None):
         """One host tick: the weapons' own update, then the whole combat
-        step (K1's pump, then `cb.phasers`)."""
+        step (K1's pump, then `cb.phasers`) inside the effect queue's scope,
+        opened in BOTH arms, as is the script before it (its StartFiring):
+        the queued weapon events and sounds are then delivered at the end
+        in both, so the one event log compares (a K1 session outside any
+        scope defers its own to its end, ruling F3)."""
         self.n += 1
         self.clock[0] += DT
         if before is not None:
-            before(self)
+            with effect_queue.scope():
+                before(self)
         for s in self.order:
             passive_weapons.step_every_weapon(s, DT)
-        host_loop._advance_combat(list(self.order), DT,
-                                  ship_instances=self.instances,
-                                  push_render_data=False)
+        with effect_queue.scope():
+            host_loop._advance_combat(list(self.order), DT,
+                                      ship_instances=self.instances,
+                                      push_render_data=False)
         self.record()
 
 
@@ -543,7 +567,10 @@ def test_off_system_stops_every_tick(monkeypatch):
     assert set(range(92, 121)) <= stops, sorted(stops)
     native_stops = {n for n, label in nat.sys_stops
                     if label.startswith("Galaxy/")}
-    assert counts["k2_logged_system_stop"] >= len(stops - native_stops) > 0, (
+    # K1's pump logs its stop too (combat fire events Task 3).
+    logged = counts["k2_logged_system_stop"] + \
+        counts["k1_logged"]["system_stop"]
+    assert logged >= len(stops - native_stops) > 0, (
         counts, sorted(native_stops))
     _native_ran(counts)
 

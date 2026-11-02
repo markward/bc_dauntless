@@ -882,8 +882,10 @@ class _EnergyWeaponFireMixin:
 
         Split in two (native combat phase 1b): `_fire_decide` is the
         decision, which the native K1 kernel also computes, and
-        `_fire_effect` the one copy of what follows it, which K1 calls with
-        its own decision (native_combat.run_k1)."""
+        `_fire_effect` what follows it. For a beam K1 no longer calls it:
+        it logs the same writes and queues the same FIRE_SOUND and
+        WEAPON_FIRED itself (k1_fire_control.h, THE EFFECT QUEUE) -- a
+        change to either effect below changes K1's twin too."""
         d = self._fire_decide(target, offset)
         return False if d is None else self._fire_effect(target, offset, d)
 
@@ -916,6 +918,8 @@ class _EnergyWeaponFireMixin:
         return True
 
     def StopFiring(self) -> None:
+        # K1 logs these writes and queues the LOOP_STOP itself for a bank
+        # its walk stops (k1_fire_control.h): change both together.
         was_firing = self._firing
         self._firing = False
         self._beam_on_countdown = 0.0
@@ -3457,8 +3461,8 @@ class TorpedoTube(Weapon):
     def _fire_decide(self, target, offset):
         """CanFire, then (targeted) the aim point from the tube's STORED
         offset and the cone; either failure posts ET_WEAPON_FIRE_FAILED here.
-        None: no launch. Else (target_used,). K1 posts the failure itself (a
-        FIRE_FAILED record) and calls only _fire_effect."""
+        None: no launch. Else (target_used,). K1 queues the failure itself (a
+        WEAPON_FIRE_FAILED entry) and calls only _fire_effect."""
         if not self.CanFire():
             return None
         if target is not None:

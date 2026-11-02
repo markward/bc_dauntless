@@ -4040,6 +4040,34 @@ bool& k1_apply_raised() {
     return raised;
 }
 
+// A K1 record's queue entries (k1_fire_control.h, THE EFFECT QUEUE) into
+// the combat effect queue, in walk order: K1Effect names the kinds of the
+// same names (the combat library does not link the host layer).
+void k1_append_entries(const std::vector<dauntless::combat::K1Entry>& entries) {
+    namespace cb = dauntless::combat;
+    namespace hq = dauntless::host;
+    for (const cb::K1Entry& e : entries) {
+        switch (e.kind) {
+            case cb::K1Effect::FIRE_SOUND:
+                hq::effect_queue().append_native(hq::EffectKind::FIRE_SOUND, e.a);
+                break;
+            case cb::K1Effect::LOOP_STOP:
+                hq::effect_queue().append_native(hq::EffectKind::LOOP_STOP, e.a);
+                break;
+            case cb::K1Effect::WEAPON_FIRED:
+                hq::effect_queue().append_native(hq::EffectKind::WEAPON_FIRED,
+                                                 e.a, e.b);
+                break;
+            case cb::K1Effect::WEAPON_FIRE_FAILED:
+                hq::effect_queue().append_native(
+                    hq::EffectKind::WEAPON_FIRE_FAILED, e.a);
+                break;
+            case cb::K1Effect::kCount:
+                throw std::logic_error("combat K1: unknown queue entry");
+        }
+    }
+}
+
 // ── The one-call scalar push (combat_push_scalar; spec 2026-11-02 §4.2) ───
 // NativeField._encode's scalar branches, in C++: float(value), int(value),
 // truthiness, `is True`, None -> -1. The codes are combat_push_codes().
@@ -11549,6 +11577,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
         //   (FIRE_FAILED, tube, tag, writes)
         //   (FIRE_DUMB, tube, tag, writes)
         //   (ASK, query, *args, tag, writes)    -> reply combat_k1_answer
+        // FIRE_FAILED is no longer returned (an entry; spec 2026-11-02-
+        // combat-fire-events §4.3), nor FIRE for a beam. A record's queue
+        // entries go into the combat effect queue (k1_append_entries) once
+        // its writes are applied, before it is returned: a raising apply
+        // drops them, as run_k1's abandon truncates the session's anyway.
         m.def("combat_k1_kinds", [] {
             py::dict d;
             for (int i = 0; i < static_cast<int>(cb::K1Kind::kCount); ++i)
@@ -11617,6 +11650,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     w.value);
                 writes.append(py::make_tuple(w.handle, w.field, v));
             }
+            k1_append_entries(r.entries);
             const py::object tag =
                 r.walk_first ? py::object(py::make_tuple(r.walk, r.walk_system))
                              : py::object(py::none());
@@ -11772,7 +11806,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
             logged["walk_start"] = c.logged_walk_start;
             logged["beam_sustain"] = c.logged_beam_sustain;
             logged["idle_bank_stop"] = c.logged_idle_bank_stop;
+            // ... and, as writes plus queue entries (spec 2026-11-02-combat-
+            // fire-events §4.3): beam edges, FIRE_FAILEDs, firing banks'
+            // stops and the pump's system stops.
+            logged["beam_edge"] = c.logged_beam_edge;
+            logged["fire_failed"] = c.logged_fire_failed;
+            logged["firing_bank_stop"] = c.logged_firing_bank_stop;
+            logged["system_stop"] = c.logged_system_stop;
             d["k1_logged"] = logged;
+            // The queue entries K1 produced, by kind.
+            py::dict entries;
+            for (size_t i = 0; i < c.entries.size(); ++i)
+                entries[cb::k1_effect_name(static_cast<cb::K1Effect>(i))] =
+                    c.entries[i];
+            d["k1_entries"] = entries;
             return d;
         });
         m.def("combat_k1_reset_counts",

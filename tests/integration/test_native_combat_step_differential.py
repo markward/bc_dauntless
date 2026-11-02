@@ -249,6 +249,13 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
         # Tasks 1-2) ran in both native arms: K1 walks under the audit too.
         for key in ("walk_start", "beam_sustain", "idle_bank_stop"):
             assert counts[name]["k1_logged"][key] > 0, (name, key, counts)
+        # Combat fire events Task 3: beam edges are K1's queue entries
+        # (FIRE_SOUND, WEAPON_FIRED), never FIRE records, and the
+        # boundary delivered them.
+        logged, entries = counts[name]["k1_logged"], counts[name]["k1_entries"]
+        assert logged["beam_edge"] > 0, (name, counts)
+        assert entries["FIRE_SOUND"] == entries["WEAPON_FIRED"] == \
+            logged["beam_edge"], (name, counts)
     # K2 stands down under the audit; with native on its resting contacts
     # were queued for the drain and every one presented by the Python batch
     # (spec 2026-11-02 §4.3-4.4): headless, no ship has an instance, so the

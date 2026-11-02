@@ -500,33 +500,49 @@ class _Scene:
     # ── Run ──────────────────────────────────────────────────────────────────
 
     def run(self, ticks_per_frame, ops, ticks=TICKS, before_frame=None,
-            scope=True):
-        """`scope=False` runs each tick's weapons and combat with no effect
-        scope, so with native on too every weapon event is posted (and its
-        handlers run) mid-walk, as a K1 session outside the tick does."""
+            scope="tick"):
+        """`scope` "tick" runs each tick's weapons and combat inside the
+        host's effect scope (open with native on only, as in play). "both"
+        opens effect_queue.scope() itself, in BOTH arms, around each tick
+        and each op: every weapon event a tick or an op produces is then
+        delivered when it ends, in the Python reference too."""
         rng = random.Random(SEED)
+
+        def tick_scope():
+            if scope == "both":
+                return effect_queue.scope()
+            return host_loop._combat_effect_scope()
+
+        def op_scope():
+            if scope == "both":
+                return effect_queue.scope()
+            return contextlib.nullcontext()
+
+        def op():
+            with op_scope():
+                self.op(rng, ops)
+
         while self.tick < ticks:
             if before_frame is not None:
                 before_frame(self)
             for _ in range(rng.randint(0, 2)):
-                self.op(rng, ops)
+                op()
             for _ in range(ticks_per_frame):
                 App.g_kTimerManager._time += TICK_DELTA
                 game_loop._update_ship_subsystems()
             for _ in range(rng.randint(0, 2)):
-                self.op(rng, ops)
+                op()
             for _ in range(ticks_per_frame):
                 self.tick += 1
                 ships = list(iter_ships())
-                with (host_loop._combat_effect_scope() if scope
-                      else contextlib.nullcontext()):
+                with tick_scope():
                     host_loop._advance_weapons(ships, TICK_DELTA)
                     host_loop._advance_combat(ships, TICK_DELTA,
                                               player=self.player,
                                               push_render_data=False)
                 self.record()
                 if rng.random() < 0.3:
-                    self.op(rng, ops)
+                    op()
             sensor_contacts.tick(self.player,
                                  App.g_kUtopiaModule.GetGameTime())
         if self.native:
@@ -573,10 +589,17 @@ def _round_trips_ran(nat):
     started natively (Task 1), lit beams sustained and idle banks stopped as
     logged writes (Task 2), resting contacts batched and offline systems
     stopped as logged writes (Task 3), and torpedo mounts attributed
-    natively (Task 4)."""
+    natively (Task 4). And the records combat fire events (Task 3) turned
+    into logged writes plus queue entries: beam edges (FIRE_SOUND,
+    WEAPON_FIRED) and failed aims (WEAPON_FIRE_FAILED), counted as the
+    entries K1 appended, not as records."""
     c = nat.counts
-    for key in ("walk_start", "beam_sustain", "idle_bank_stop"):
+    for key in ("walk_start", "beam_sustain", "idle_bank_stop", "beam_edge",
+                "fire_failed"):
         assert c["k1_logged"][key] > 0, (key, c["k1_logged"])
+    e = c["k1_entries"]
+    assert e["FIRE_SOUND"] == e["WEAPON_FIRED"] == c["k1_logged"]["beam_edge"]
+    assert e["WEAPON_FIRE_FAILED"] == c["k1_logged"]["fire_failed"], c
     for key in ("k2_batched_contacts", "k2_logged_system_stop",
                 "k3_native_attributions"):
         assert c[key] > 0, (key, c)
@@ -620,8 +643,14 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
     # ... and K1 really walked and fired each kind natively.
     for k in (PHASERS, PULSES, TORPEDOES):
         assert nat.walked.get(k, 0) > 0, nat.walked
-    for k in (BANK, CANNON, TUBE):
+    # Cannons and tubes fire through FIRE records; a bank's edge is logged
+    # writes and queue entries (combat fire events), never a record.
+    for k in (CANNON, TUBE):
         assert nat.fired.get(k, 0) > 0, nat.fired
+    assert nat.fired.get(BANK, 0) == 0, nat.fired
+    for key in ("beam_edge", "firing_bank_stop", "system_stop"):
+        assert nat.counts["k1_logged"][key] > 0, (key, nat.counts)
+    assert nat.counts["k1_entries"]["LOOP_STOP"] > 0, nat.counts
     # The fight happened: fires, torpedo launches, hits, fire failures and
     # the player's ammo use.
     for et in (App.ET_WEAPON_FIRED, App.ET_TORPEDO_FIRED, App.ET_WEAPON_HIT,
@@ -644,6 +673,9 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
           "events %d presentation calls %d"
           % (ticks_per_frame, nat.counts, nat.walked, nat.fired,
              len(ref.events), presented(ref.calls)))
+    print("k1 differential (tpf=%d) tallies: records %d, logged %r, "
+          "entries %r" % (ticks_per_frame, nat.counts["k1_records"],
+                          nat.counts["k1_logged"], nat.counts["k1_entries"]))
 
 
 def test_k1_matches_python_with_k0_stood_down(monkeypatch):
@@ -665,6 +697,13 @@ def test_k1_matches_python_with_k0_stood_down(monkeypatch):
 
 
 # ── Review Focus 1: a handler changes state mid-walk ─────────────────────────
+# Ruling F2, revised by ruling F3 (combat fire events, Task 3): the queued
+# weapon events never reach a handler mid-walk any more -- inside the tick's
+# scope they are delivered at the boundary, outside it a K1 session defers
+# them to its own end -- so a Python reference that runs them mid-walk is
+# no longer comparable. Both arms open the effect scope themselves around
+# each tick and each op: the handlers run at the scope's end in both, and
+# their StartFiring is a K1 session started inside a delivery (native).
 
 _HANDLER = {}
 
@@ -672,22 +711,21 @@ _HANDLER = {}
 def WeaponEventHandler(_dest, evt):
     """An SDK-style broadcast handler on ET_WEAPON_FIRED and
     ET_WEAPON_FIRE_FAILED: stop the firing system, then start another
-    ship's system (re-entrant K1), sometimes switch a ship's sensors off or
-    destroy a tube. Seeded, and bounded in depth."""
+    ship's system (inside the delivery: a K1 session there), sometimes
+    switch a ship's sensors off or destroy a tube. Seeded. It acts only at
+    depth 0: the events its own StartFiring produces reach it mid-walk in
+    the Python and at that session's end natively (ruling F3), so acting
+    on them would compare two different orders."""
     state = _HANDLER.get("scene")
-    if state is None or _HANDLER["depth"] >= 2:
+    if state is None or _HANDLER["depth"] >= 1:
         return
     scene, rng = state
     weapon = evt.GetSource()
     system = getattr(weapon, "GetParentSubsystem", lambda: None)()
     if system is None or rng.random() < 0.3:
         return
-    # The K1 sessions open around this post: 0 in Python, 1 mid-walk, 2
-    # when a handler's own StartFiring session posted it.
-    session = _h.combat_k1_depth()
-    if session:
-        _HANDLER["in_session"] += 1
-    _HANDLER["max_session"] = max(_HANDLER["max_session"], session)
+    if effect_queue._draining:
+        _HANDLER["in_delivery"] += 1
     _HANDLER["depth"] += 1
     _HANDLER["calls"] += 1
     try:
@@ -713,9 +751,10 @@ def WeaponEventHandler(_dest, evt):
 @pytest.mark.parametrize("ticks_per_frame", (1, 6))
 def test_handler_stops_and_restarts_mid_walk(monkeypatch, ticks_per_frame):
     """Review Focus 1: a handler on the events K1's effects post changes
-    the world in the middle of a walk -- stops the firing system, starts
-    another ship's (a K1 session inside a K1 session), turns sensors off,
-    destroys a tube -- and the rest of the walk goes as Python's does."""
+    the world -- stops the firing system, starts another ship's (a K1
+    session inside the effect queue's delivery), turns sensors off,
+    destroys a tube -- between walks, and every later walk goes as
+    Python's does."""
     events = (App.ET_WEAPON_FIRED, App.ET_WEAPON_FIRE_FAILED)
     name = __name__ + ".WeaponEventHandler"
     ops = ("fire",) * 6 + ("fire_pulse", "reload", "player_torps",
@@ -728,17 +767,21 @@ def test_handler_stops_and_restarts_mid_walk(monkeypatch, ticks_per_frame):
                 scene = _Scene(mp, env)
                 _HANDLER.clear()
                 _HANDLER.update(scene=(scene, random.Random(SEED + 1)),
-                                depth=0, calls=0, in_session=0,
-                                max_session=0)
+                                depth=0, calls=0, in_delivery=0,
+                                k1_in_delivery=0)
+                k1_system = nc.k1_system
+
+                def counting_k1_system(system, dt, _orig=k1_system):
+                    if effect_queue._draining:
+                        _HANDLER["k1_in_delivery"] += 1
+                    return _orig(system, dt)
+                mp.setattr(nc, "k1_system", counting_k1_system)
                 for et in events:
                     App.g_kEventManager.AddBroadcastPythonFuncHandler(
                         et, scene.player, name)
                 try:
-                    # No effect scope: the handlers run mid-walk in both
-                    # arms (with the scope, native would run them at the
-                    # tick boundary, ruling E1, and the states part).
                     runs.append(scene.run(ticks_per_frame, ops, ticks=300,
-                                          scope=False))
+                                          scope="both"))
                 finally:
                     for et in events:
                         App.g_kEventManager.RemoveBroadcastHandler(
@@ -750,17 +793,18 @@ def test_handler_stops_and_restarts_mid_walk(monkeypatch, ticks_per_frame):
     _compare(ref, nat)
     py, native = stats[False], stats[True]
     assert py["calls"] > 0 and native["calls"] == py["calls"], stats
-    # In the native arm the handler ran inside K1 sessions (mid-walk), and
-    # its StartFiring opened a session inside one.
-    assert native["in_session"] > 0 and py["in_session"] == 0, stats
-    assert native["max_session"] >= 2, stats
+    # Every handler ran in a delivery, in both arms, and natively its
+    # StartFiring was a K1 session started there.
+    assert native["in_delivery"] == native["calls"], stats
+    assert py["in_delivery"] == py["calls"], stats
+    assert native["k1_in_delivery"] > 0 and py["k1_in_delivery"] == 0, stats
     for k in (PHASERS, PULSES, TORPEDOES):
         assert nat.walked.get(k, 0) > 0, nat.walked
-    # The logged K1 paths ran among the handlers' mid-walk changes (no
-    # offline system here: k2_logged_system_stop measured 0).
+    # The logged K1 paths ran among the handlers' changes (no offline
+    # system here: k2_logged_system_stop measured 0).
     logged = nat.counts["k1_logged"]
-    assert logged["beam_sustain"] > 0 and logged["idle_bank_stop"] > 0, \
-        logged
+    for key in ("beam_sustain", "idle_bank_stop", "beam_edge", "fire_failed"):
+        assert logged[key] > 0, logged
     assert nat.counts["k2_batched_contacts"] > 0, nat.counts
     print("k1 handler differential (tpf=%d): handler %r, counts %r"
           % (ticks_per_frame, native, nat.counts))

@@ -187,6 +187,7 @@ constexpr GlobalInfo kGlobals[] = {
     {"PHASER_DISCHARGE_1", false, &Globals::PHASER_DISCHARGE_1, nullptr},
     {"PHASER_DISCHARGE_2", false, &Globals::PHASER_DISCHARGE_2, nullptr},
     {"PHASER_DISCHARGE_LEN", true, nullptr, &Globals::PHASER_DISCHARGE_LEN},
+    {"BEAM_ON_DELAY_S", false, &Globals::BEAM_ON_DELAY_S, nullptr},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));

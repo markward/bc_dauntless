@@ -23,9 +23,9 @@
 // engine/appc/weapon_subsystems.py).
 //
 // ONE RECORD PER CALL. next() runs the walk until the first thing only
-// Python may do -- an effect (StopFiring, a Fire effect, a FIRE_FAILED post,
-// a dumb fire), a whole system Python must run, or a question the mirror
-// cannot answer any more -- and returns it. The next next() resumes from the
+// Python may do -- an effect (a tube's or a cannon's Fire effect, a dumb
+// fire, a StopFiring the kernel cannot log), a whole system Python must
+// run, or a question the mirror cannot answer any more -- and returns it. The next next() resumes from the
 // cursor and reads the LIVE mirror again, so no decision outlives a Python
 // effect (plan ruling P1).
 //
@@ -63,16 +63,43 @@
 // carries the writes made since the previous record as its LAST element, and
 // Python applies them before it acts on the record.
 //
-// Two effects are pure field writes and are logged too, with no record
-// (round trips, spec 2026-11-01 §4.2-4.3): a Fire on a beam ALREADY firing
+// Effects that are pure field writes are logged too, with no record (round
+// trips, spec 2026-11-01 §4.2-4.3): a Fire on a beam ALREADY firing
 // (`_firing = True; _target = target; _target_offset = <the walk's offset
 // object>`, _EnergyWeaponFireMixin._fire_effect with was_firing), and a
 // StopFiring on a bank that is NOT firing (its class's writes: energy bank
 // `_firing = False; _beam_on_countdown = 0.0`; tube `_firing = False`;
-// pulse `_firing = False; _target = None; _target_offset = None`). The
-// was-not-firing beam edge (sound, ET_WEAPON_FIRED) and a firing bank's
-// stop (its loop sound) stay FIRE and BANK_STOP records. `_firing` is a
-// WakeField: the driver's quiet setter still wakes a sleeping bank.
+// pulse `_firing = False; _target = None; _target_offset = None`). `_firing`
+// is a WakeField: the driver's quiet setter still wakes a sleeping bank.
+//
+// THE EFFECT QUEUE (spec 2026-11-02-combat-fire-events §4.1-4.3). Effects
+// that are field writes plus a sound or an event no longer return a record
+// either: the writes are logged and the sound or event is a K1Entry, in
+// walk order, delivered by Python (engine/appc/effect_queue.py) at the tick
+// boundary or at the session's end, never mid-walk:
+//   a beam's was-not-firing edge   `_firing = True; _target = target;
+//       _target_offset = <the walk's offset>; _beam_on_countdown =
+//       BEAM_ON_DELAY_S (pushed from Python); _dwell = 0.0`, then
+//       FIRE_SOUND(bank), WEAPON_FIRED(bank, target)  (the mixin's
+//       _fire_effect, then PhaserBank._fire_effect's post)
+//   a tube's failed aim            WEAPON_FIRE_FAILED(tube)
+//   a FIRING bank's StopFiring     its class's writes as above, then, for an
+//       energy bank, LOOP_STOP(bank)
+//   the pump's sys_.StopFiring()   WeaponSystem.StopFiring's `_fire_held =
+//       False; _held_target = None; _held_offset = None; _target_list = [];
+//       _last_group_fired = -1`, then each child's StopFiring in order. The
+//       stop runs before any walk, so the walk check is asked first: true
+//       keeps the STOP_SYSTEM record (an instance-patched StopFiring ...).
+// Each entry rides the next record with the writes (K1Record::entries; its
+// `at` places it after the writes logged before it); the binding appends
+// them to the combat effect queue (combat_effect_queue.h, which this
+// library does not link) as it hands the record back. A throw drops the
+// entries of the call with its writes. The driver takes the queue's mark
+// when the session begins and truncates to it if it abandons the session.
+// Records left: FIRE for a tube or a cannon only, FIRE_DUMB, ASK,
+// RUN_PYTHON, a handed-back WALK_START, BANK_STOP / STOP_SYSTEM only for a
+// row gone or a stop the walk check hands back, DONE. FIRE_FAILED is never
+// returned.
 //
 // PINNING (the Python driver's contract; Task 5's run_k1). Python's walk
 // holds strong references in its locals (the system, `target`, the retry
@@ -160,7 +187,8 @@ namespace dauntless::combat {
 
 // Record kinds, in combat_k1_kinds() order. WALK_START is returned only
 // for a walk the walk check hands back (see THE WALK START); every other
-// walk start is counted in Counts::logged_walk_start.
+// walk start is counted in Counts::logged_walk_start. FIRE_FAILED is no
+// longer returned (an entry: THE EFFECT QUEUE); its number is kept.
 enum class K1Kind : int32_t {
     DONE = 0,
     WALK_START,
@@ -174,6 +202,26 @@ enum class K1Kind : int32_t {
     kCount
 };
 const char* k1_kind_name(K1Kind k);
+
+// The effect-queue entries K1 appends (THE EFFECT QUEUE): the kinds of the
+// same names in native/src/host/combat_effect_queue.h, which the combat
+// library does not link; the binding maps them.
+enum class K1Effect : int32_t {
+    FIRE_SOUND = 0,      // (bank)
+    LOOP_STOP,           // (bank)
+    WEAPON_FIRED,        // (bank, target or -1)
+    WEAPON_FIRE_FAILED,  // (tube)
+    kCount
+};
+const char* k1_effect_name(K1Effect e);
+
+// One entry, in walk order. `at`: how many of the carrying record's writes
+// were logged before it (the entry follows them in Python's order).
+struct K1Entry {
+    K1Effect kind = K1Effect::FIRE_SOUND;
+    int64_t a = -1, b = -1;
+    size_t at = 0;
+};
 
 // Why a system went to Python whole (a RUN_PYTHON, or a skip_walk). Counted
 // per session type: the pump's and StartFiring's system sessions apart.
@@ -218,7 +266,8 @@ struct K1Write {
 // The decision a FIRE record hands to `bank._fire_effect`.
 struct K1Decision {
     enum class Shape : int32_t { Beam, Pulse, Tube } shape = Shape::Beam;
-    bool was_firing = false;      // Beam: (was_firing,)
+    bool was_firing = false;      // Beam: (was_firing,) -- never returned
+                                  // now (edge and sustain are logged)
     Vec3 world_dir{0, 0, 0};      // Pulse: (world_dir_xyz, target_used)
     int64_t target_used = -1;     // Pulse and Tube: the target Fire used
 };
@@ -229,8 +278,9 @@ struct K1Record {
     // RUN_PYTHON: a = system (or -1/-2 when the pump cannot name it),
     //             b = position in the pump's ship list (-1: a system session),
     //             c = getter index 0..3 (Phaser, Pulse, Tractor, Torpedo; -1).
-    // BANK_STOP / FIRE_FAILED / FIRE_DUMB: a = bank.
-    // FIRE: a = bank, b = the target Fire was called with (-1 = None).
+    // BANK_STOP / FIRE_DUMB: a = bank.
+    // FIRE: a = bank (a tube or a cannon), b = the target Fire was called
+    //       with (-1 = None).
     int64_t a = -1, b = -1, c = -1;
     K1Decision decision;            // FIRE
     std::string query;              // ASK
@@ -241,6 +291,8 @@ struct K1Record {
     int64_t walk = -1;
     int64_t walk_system = -1;
     std::vector<K1Write> writes;
+    // The queue entries produced since the previous record, in walk order.
+    std::vector<K1Entry> entries;
 };
 
 // update_weapons' `self._live_held_offset()` (WS:1551) on the mirror: the
@@ -320,6 +372,16 @@ public:
         // firing (k1_logged.beam_sustain) and a StopFiring on a bank that
         // is not firing (k1_logged.idle_bank_stop).
         int64_t logged_beam_sustain = 0, logged_idle_bank_stop = 0;
+        // Records not returned because their Python is field writes plus
+        // queue entries (spec 2026-11-02-combat-fire-events §4.3): a beam's
+        // was-not-firing edge (k1_logged.beam_edge), a FIRE_FAILED
+        // (k1_logged.fire_failed), a firing bank's StopFiring
+        // (k1_logged.firing_bank_stop) and the pump's sys_.StopFiring()
+        // (k1_logged.system_stop).
+        int64_t logged_beam_edge = 0, logged_fire_failed = 0,
+                logged_firing_bank_stop = 0, logged_system_stop = 0;
+        // The queue entries produced, by K1Effect (k1_entries).
+        std::array<int64_t, static_cast<size_t>(K1Effect::kCount)> entries{};
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

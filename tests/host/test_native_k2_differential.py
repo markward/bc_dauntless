@@ -65,6 +65,7 @@ posed parts, Task 4) -- and end with a clean mirror audit.
 import math
 import os
 import random
+import sys
 import time
 
 import pytest
@@ -207,6 +208,21 @@ def _subsystems(ship):
 
 
 # ── The kernel's record stream, tallied in the native arm ───────────────────
+
+def _k1_stop() -> bool:
+    """Whether the StopFiring running now is one K1 stands in for: the
+    held-weapon pump's, or a walk's (update_weapons, run_k1). K1 logs those,
+    a firing bank's included, since combat fire events Task 3 (no Python
+    call natively), so the compared call log leaves them to the per-tick
+    record."""
+    f = sys._getframe(2)
+    while f is not None:
+        if f.f_code.co_name in ("_pump_held_weapons", "update_weapons",
+                                "run_k1"):
+            return True
+        f = f.f_back
+    return False
+
 
 class _Tally:
     """Wraps combat_k2_next: every record the kernel returns is classified
@@ -405,8 +421,9 @@ class _Scene:
         def bank_spy(bank, _orig=bank_stop):
             # A FIRING bank's stop only: a stop of a bank not firing is pure
             # field writes, which K1 logs with no call (round trips Task 2);
-            # its effect is in the per-tick record.
-            if bank.__dict__.get("_firing"):
+            # its effect is in the per-tick record. Nor one of K1's: K1 logs
+            # a firing bank's stop too (combat fire events Task 3).
+            if bank.__dict__.get("_firing") and not _k1_stop():
                 self.calls.append(("bank_stop", self.tick, self.label(bank)))
             return _orig(bank)
 
@@ -415,7 +432,8 @@ class _Scene:
             # are all idle is stopped with logged writes and no call (round
             # trips Task 3); its effect is in the per-tick record.
             if any(b.__dict__.get("_firing")
-                   for b in sys_.__dict__.get("_children", ())):
+                   for b in sys_.__dict__.get("_children", ())) \
+                    and not _k1_stop():
                 self.calls.append(("system_stop", self.tick,
                                    self.label(sys_)))
             return _orig(sys_, *args)

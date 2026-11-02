@@ -299,6 +299,9 @@ enum class Global : int32_t {
     // can tell an index Python would answer from one it would not.
     PHASER_DISCHARGE_0, PHASER_DISCHARGE_1, PHASER_DISCHARGE_2,
     PHASER_DISCHARGE_LEN,
+    // The K1 kernel's beam edge (spec 2026-11-02-combat-fire-events §4.3):
+    // weapon_subsystems.BEAM_ON_DELAY_S, the lit bank's beam-on countdown
+    BEAM_ON_DELAY_S,
     kCount
 };
 
@@ -325,6 +328,7 @@ struct Globals {
     double PHASER_DISCHARGE_0 = 0.0, PHASER_DISCHARGE_1 = 0.0,
            PHASER_DISCHARGE_2 = 0.0;
     int64_t PHASER_DISCHARGE_LEN = 0;
+    double BEAM_ON_DELAY_S = 0.0;
 };
 
 struct ProfileRowSet {

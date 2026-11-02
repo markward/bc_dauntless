@@ -47,14 +47,22 @@ When the tick itself raised, the scope re-raises the tick's error with the
 delivery errors noted on it instead.
 
 A NATIVE SESSION OUTSIDE THE SCOPE (an AI's StartFiring running a K1 system
-session from gl.ai, or one a delivered event's handler started) delivers
-what it appended when it ENDS: its driver calls ``session_ended()``, which
-flushes unless a scope is deferring. Inside a delivery that flush is
-nested: the outer drain already took its batch whole, so the nested one
-delivers only the session's entries, there and then -- before the rest of
-the outer batch, exactly where the Python reference's producers would have
-acted -- and its errors join the outermost flush's (decision 13 is applied
-once, there).
+session from gl.ai, or one a delivered event's handler started) opens its
+own deferral, ``session()`` (ruling F3): while it runs EVERY producer
+appends -- its kernel's entries and the Python of its records alike (a tube
+launch, an asked Fire, a handler stopping a bank) -- so the session keeps
+one emission order, and a bank it lit natively and Python stopped in it
+plays, then stops, its loop (Python acting at once there would stop a loop
+not yet started, which then plays forever). It counts even inside a
+delivery, where nothing else defers. When it ends it delivers what it
+appended (``session_ended()``). Inside a delivery that flush is nested: the
+outer drain already took its batch whole, so the nested one delivers only
+the session's entries, there and then -- before the rest of the outer
+batch -- and its errors join the outermost flush's (decision 13 is applied
+once, there). A session begun while something already defers (the tick's
+scope, an enclosing session) opens nothing: that one delivers. The cost
+(spec ruling E1): a weapon event a K1 session produces outside the tick
+never reaches its handlers mid-walk, only at the session's end.
 """
 import contextlib
 import logging
@@ -74,6 +82,7 @@ KIND_NAMES = ("FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED",
  AMMO_CONSUMED, TORPEDO_RELOAD, WATCH) = range(len(KIND_NAMES))
 
 _depth = 0              # open scopes
+_sessions = 0           # open native-session deferrals (session())
 _draining = False       # a flush is delivering: producers act at once
 _errors: list = []      # (kind, exception) of the outermost flush
 _epoch = 0              # bumped by reset(): a scope opened before it is gone
@@ -81,8 +90,10 @@ _counts = {"delivered": 0, "skipped_gone": 0, "failed": 0}
 
 
 def deferring() -> bool:
-    """Whether a producer must append (post) rather than act."""
-    return _depth > 0 and not _draining
+    """Whether a producer must append (post) rather than act: inside an
+    open native session (even mid-delivery), or the scope while it is not
+    draining."""
+    return _sessions > 0 or (_depth > 0 and not _draining)
 
 
 @contextlib.contextmanager
@@ -121,11 +132,53 @@ def _close(epoch) -> bool:
     return _depth == 0
 
 
+@contextlib.contextmanager
+def session():
+    """A native session's own deferral (see the module docstring, A NATIVE
+    SESSION OUTSIDE THE SCOPE): opened only when nothing defers; its exit
+    delivers what was appended in it (session_ended), even when its body
+    raised -- a driver that abandons truncates its kernel's entries first
+    -- with a delivery error then noted on the body's own. A session a
+    reset() closed exits doing nothing."""
+    global _sessions
+    if deferring():
+        yield                   # the enclosing scope or session delivers
+        return
+    epoch = _epoch
+    _sessions += 1
+    try:
+        yield
+    except BaseException as body:
+        if _end_session(epoch):
+            try:
+                session_ended()
+            except Exception as x:
+                body.add_note("combat effect queue: the delivery at the "
+                              "session's end raised %s: %s"
+                              % (type(x).__name__, x))
+                for note in getattr(x, "__notes__", ()):
+                    body.add_note(note)
+        raise
+    else:
+        if _end_session(epoch):
+            session_ended()
+
+
+def _end_session(epoch) -> bool:
+    """Leave a session opened at `epoch`; False when a reset() closed it
+    already."""
+    global _sessions
+    if epoch != _epoch:
+        return False
+    _sessions -= 1
+    return True
+
+
 def session_ended() -> None:
     """A native session (a kernel run of Tasks 3-4) has ended: deliver what
-    it appended, now, unless a scope is deferring (then the tick boundary
-    delivers it). Safe anywhere, inside a delivery included (see the module
-    docstring)."""
+    it appended, now, unless something still defers (the tick's scope or an
+    enclosing session then delivers it). Safe anywhere, inside a delivery
+    included (see the module docstring); session() calls it."""
     if not deferring():
         flush()
 
@@ -144,9 +197,10 @@ def counts() -> dict:
 
 def reset() -> None:
     """native_combat.reset(): drop every queued entry undelivered, close
-    any scope left open, zero the counts."""
-    global _depth, _draining, _epoch
+    any scope or session left open, zero the counts."""
+    global _depth, _sessions, _draining, _epoch
     _depth = 0
+    _sessions = 0
     _draining = False
     _epoch += 1
     for k in _counts:

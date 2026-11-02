@@ -344,6 +344,94 @@ def test_session_ended_outside_the_scope_delivers_now(calls):
     assert calls == [("play", "B")]
 
 
+# ── A native session's own deferral (ruling F3) ─────────────────────────────
+# A K1 session that begins while nothing defers (an AI's StartFiring from
+# gl.ai, one a delivery's handler starts) opens its own deferral: every
+# producer appends while it runs, native and Python alike, and its end
+# delivers -- one emission order per session, no loop stopped before it
+# plays.
+
+def test_a_session_defers_every_producer_until_it_ends(calls, events):
+    a, b, t = _bank("A"), _bank("B"), _bank("T")
+    assert not eq.deferring()
+    with eq.session():
+        assert eq.deferring()
+        _post_native(eq.FIRE_SOUND, a.__dict__["_nslot"])
+        b._firing = True
+        b.StopFiring()                      # a Python producer: queued
+        ws._post_weapon_fired(b, t)
+        assert calls == [] and events == []
+    assert not eq.deferring()
+    assert calls == [("play", "A"), ("stop", "B")]
+    assert [(e[0], e[1], e[3]) for e in events] == [
+        (App.ET_WEAPON_FIRED, b, t)]
+    assert _h.combat_effect_take() == []
+
+
+def test_a_session_inside_the_scope_leaves_delivery_to_the_boundary(calls):
+    a = _bank("A")
+    with eq.scope():
+        with eq.session():
+            _post_native(eq.FIRE_SOUND, a.__dict__["_nslot"])
+        assert calls == [] and eq.deferring()
+    assert calls == [("play", "A")]
+
+
+def test_a_session_inside_a_session_delivers_at_the_outer_end(calls):
+    a, b = _bank("A"), _bank("B")
+    with eq.session():
+        _post_native(eq.FIRE_SOUND, a.__dict__["_nslot"])
+        with eq.session():
+            _post_native(eq.FIRE_SOUND, b.__dict__["_nslot"])
+        assert calls == []
+    assert calls == [("play", "A"), ("play", "B")]
+
+
+def test_a_session_started_by_a_delivery_defers_then_delivers_nested(
+        monkeypatch):
+    """Inside a delivery nothing defers (the drain acts at once), so a
+    session a handler starts opens its own deferral: its native AND Python
+    entries wait for its end, then are delivered there, nested -- before C,
+    in emission order."""
+    log = []
+    a, b, c, d = _bank("A"), _bank("B"), _bank("C"), _bank("D")
+
+    def play(self):
+        log.append(("play", self.GetName(), eq.deferring()))
+        if self.GetName() == "A":
+            with eq.session():
+                assert eq.deferring()
+                _post_native(eq.FIRE_SOUND, b.__dict__["_nslot"])
+                eq.post(eq.FIRE_SOUND, d)       # Python: queued too
+                assert len(log) == 1        # nothing delivered mid-session
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", play)
+    with eq.scope():
+        eq.post(eq.FIRE_SOUND, a)
+        eq.post(eq.FIRE_SOUND, c)
+    assert log == [("play", "A", False), ("play", "B", False),
+                   ("play", "D", False), ("play", "C", False)]
+    assert _h.combat_effect_take() == []
+
+
+def test_a_raising_session_still_delivers_and_keeps_its_error(calls):
+    a = _bank("A")
+    with pytest.raises(KeyError):
+        with eq.session():
+            _post_native(eq.FIRE_SOUND, a.__dict__["_nslot"])
+            raise KeyError("session")
+    assert calls == [("play", "A")]
+    assert not eq.deferring()
+
+
+def test_reset_closes_an_open_session(calls):
+    with eq.session():
+        _post_native(eq.FIRE_SOUND, _bank("A").__dict__["_nslot"])
+        nc.reset()
+        assert not eq.deferring()
+    assert calls == []
+    assert not eq.deferring()
+
+
 # ── The tick raised ──────────────────────────────────────────────────────────
 
 def test_a_raising_tick_keeps_its_error_and_notes_the_delivery_errors(

@@ -2141,6 +2141,8 @@ def _globals() -> dict:
     g["LEAD_ACCEL_K"] = float(projectiles._LEAD_ACCEL_K)
     # K1's 0.33 s timer gate: a class constant of WeaponSystem.
     g["FIRE_TIMER_THRESHOLD"] = float(ws.WeaponSystem.FIRE_TIMER_THRESHOLD)
+    # K1's beam edge: the lit bank's beam-on countdown (combat fire events).
+    g["BEAM_ON_DELAY_S"] = float(ws.BEAM_ON_DELAY_S)
     # K0: the phaser drain by power level, read at use (a module constant a
     # test may patch). Three entries, 0.0 past the table's end, and its
     # length: the kernel answers only the indices Python's table would.
@@ -3049,7 +3051,10 @@ def apply_writes(writes, walk=None) -> None:
     system's stop (round trips Task 3) -- the system's `_fire_held`,
     `_held_target`, `_held_offset`, `_target_list` (a NEW list every time,
     built here) and `_last_group_fired`, each bank's `_firing` and
-    `_beam_on_countdown`: plain NativeFields and the same WakeField."""
+    `_beam_on_countdown`: plain NativeFields and the same WakeField. K1's
+    beam edge and pump stop (combat fire events Task 3) log only those
+    fields too: a bank's `_beam_on_countdown` and `_dwell`, the system
+    stop's five."""
     if walk is None:
         walk = _K1Walk()
     i = 0
@@ -3255,22 +3260,42 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     """Drive the kernel's top session (begun by k1_pump / k1_system) until
     DONE. Each record: its writes are applied by the binding before it is
     returned (the session's applier context, _applier_context; the
-    previous context -- an outer session's -- is restored at the end),
+    previous context -- an outer session's -- is restored at the end), and
+    its queue entries appended (a beam's edge, a FIRE_FAILED, a firing
+    bank's or the pump's stop: k1_fire_control.h, THE EFFECT QUEUE);
     materialise the walk on its first record (_K1Walk.materialise), then
-    act -- the Fire effect, a StopFiring,
-    the FIRE_FAILED post, the dumb fire, a handed-back walk start, a whole
-    system in Python, or an ASK answered in Python. `ships` and
+    act -- a tube's or a cannon's Fire effect, a StopFiring the kernel
+    handed back, the dumb fire, a handed-back walk start, a whole system in
+    Python, or an ASK answered in Python. `ships` and
     `pump_body(ship, getter_index)` serve a pump's RUN_PYTHON, `system` a
-    system session's. On any exception the session is abandoned (the
-    kernel's mirror still equals Python) and the exception re-raised; the
-    walked system's row dropped by a handler mid-walk (the kernel cannot
-    follow it) re-raises as a RuntimeError naming that invariant."""
+    system session's.
+
+    THE EFFECT QUEUE (spec 2026-11-02-combat-fire-events §4.1, ruling F3):
+    begun while nothing defers (StartFiring from gl.ai, from a delivered
+    event's handler), the session opens its own deferral
+    (effect_queue.session) and delivers everything it produced at its end,
+    in emission order; inside the tick's scope (or an enclosing session)
+    that one delivers. The queue's mark is taken at the start: an abandon
+    truncates to it, dropping the entries this session appended (its
+    kernel's and its records' Python's) and keeping every earlier one.
+
+    On any exception the session is abandoned (the kernel's mirror still
+    equals Python) and the exception re-raised; the walked system's row
+    dropped by a handler mid-walk (the kernel cannot follow it) re-raises
+    as a RuntimeError naming that invariant."""
+    with _effect_queue.session():
+        _run_k1(dt, ships, pump_body, system)
+
+
+def _run_k1(dt, ships, pump_body, system) -> None:
+    """run_k1's loop, inside the session's deferral."""
     (DONE, WALK_START, STOP_SYSTEM, RUN_PYTHON, BANK_STOP, FIRE,
-     FIRE_FAILED, FIRE_DUMB, ASK) = _k1_kinds()
+     _FIRE_FAILED, FIRE_DUMB, ASK) = _k1_kinds()
     walk = _K1Walk()
     if system is not None:
         walk.pin_system(system)
     prev = _UNSET
+    mark = _h.combat_effect_mark()
     try:
         prev = _h.combat_set_applier(_applier_context(walk))
         while True:
@@ -3326,9 +3351,9 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
                 bank._fire_effect(walk.obj(rec[2]), walk.offset,
                                   _k1_decision(bank, rec[3], walk))
             elif kind == BANK_STOP or kind == STOP_SYSTEM:
+                # Only what the kernel cannot log: a row gone, a system the
+                # walk check hands back (an instance-patched StopFiring).
                 walk.obj(rec[1]).StopFiring()
-            elif kind == FIRE_FAILED:
-                walk.obj(rec[1])._broadcast_weapon_fire_failed()
             elif kind == FIRE_DUMB:
                 walk.obj(rec[1]).FireDumb(0, 1)
             elif kind == RUN_PYTHON:
@@ -3349,6 +3374,7 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
         _h.combat_k1_end()
     except BaseException:
         _h.combat_k1_abandon()
+        _h.combat_effect_truncate(*mark)
         raise
     finally:
         if prev is not _UNSET:

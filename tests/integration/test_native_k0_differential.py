@@ -137,7 +137,11 @@ class _K0Scene(k1d._Scene):
             return _orig(tube)
 
         def fired_spy(weapon, target, _orig=fired):
-            produced("fired", weapon)
+            # Not a beam's edge: K1 produces that natively since combat
+            # fire events Task 3 (a queue entry, no Python call to spy; the
+            # K1 differential compares its writes and its entries).
+            if not isinstance(weapon, ws.PhaserBank):
+                produced("fired", weapon)
             return _orig(weapon, target)
 
         def update_spy(watcher, value, _orig=update):
