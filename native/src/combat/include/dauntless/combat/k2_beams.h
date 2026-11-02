@@ -69,7 +69,11 @@
 // DONE and before end() (combat_k2_drain, take_rests()), so a rest is
 // presented after every later record's Python of the step: presentation
 // has no order inside a tick (spec 2026-11-02 §5, Q1); game state keeps
-// its exact order. begin(), end() and abandon() clear the queue: an
+// its exact order. The drain presents a rest itself -- beam_contact's
+// shield splash, through the shield pass -- when its shields answer is
+// True and its iid and view offset are known (`view_known`), and returns
+// every other one, in queue order, for Python's beam_contact (spec
+// 2026-11-02 §4.4). begin(), end() and abandon() clear the queue: an
 // abandoned step presents nothing it queued. A damage pulse
 // (`flush_dwell > 0.0`) is still a CONTACT record.
 //
@@ -77,7 +81,8 @@
 // binding builds them (handles are mirror handles, -1 = None; xyz = a
 // 3-tuple of floats). Every record ends (..., writes).
 //   0 DONE        (DONE, writes)
-//        -> then combat_k2_drain(): the queued rests, each
+//        -> then combat_k2_drain(): the queued rests it did not present
+//        itself (RESTING CONTACTS), each
 //   (bank, target, ship, system, emitter_xyz, target_pos_xyz, dist,
 //    aim_unit_xyz | None, impact_xyz, normal_xyz | None, tier,
 //    bubble_xyz | None, shields_block (True / False / None), flush_dwell,

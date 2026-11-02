@@ -67,9 +67,13 @@ _counts = {"native_calls": 0, "fallbacks": 0}
 # The drain (run_k2, spec 2026-11-02 §4.4): "k2_present_python", resting
 # contacts presented by the Python batch; "k2_present_gone", drained
 # contacts skipped because an object they name was freed or unregistered
-# before the drain.
+# before the drain. (The ones the drain presents natively, the shield
+# splash, are the binding's "k2_present_native", combat_k2_counts.)
 _k2_steps = {"k2_python_steps": 0, "k2_present_python": 0,
              "k2_present_gone": 0}
+# The drain's native presentation constants as last sent
+# (combat_k2_present_constants): (intensity, default radius), None unsent.
+_k2_present_sent = [None]
 _K2_STEP_REASONS = ("nested", "instances", "patched", "audit")
 _k2_step_reasons = dict.fromkeys(_K2_STEP_REASONS, 0)
 # handle -> object, for resync and the audit. Weak: the row's lifetime is the
@@ -188,6 +192,7 @@ def reset() -> None:
     _k2_watch_seen[0] = -1
     _k2_iids_cache[:] = [None, -1, -1, None]
     _k2_iids_sent[:] = [_K2_UNSENT, -1, -1]
+    _k2_present_sent[0] = None
     global _k2_drop_epoch
     _k2_drop_epoch += 1
     torpedo_table_mark_dirty()
@@ -283,9 +288,12 @@ def counts() -> dict:
     queued, so a kernel throw later in the same next() (which restores the
     queue) or an abandoned session (which drops it) can overcount}
     (k2_beams.h; posed_ship retired, part_stale its successor), plus
-    "k2_present_python" (drained resting contacts the Python batch
-    presented), "k2_present_gone" (drained ones skipped: an object they
-    name was freed or unregistered before the drain), "k2_python_steps"
+    "k2_present_native" (drained resting contacts the drain presented
+    itself: the shield splash, spec 2026-11-02 §4.4), "k2_present_python"
+    (drained resting contacts the Python batch presented),
+    "k2_present_gone" (drained ones skipped: an object they name was freed
+    or unregistered before the drain; the three sum to the drained
+    contacts), "k2_python_steps"
     (steps run whole in Python) and "k2_python_step_reasons" ({"nested",
     "instances", "patched", "audit"}: n).
 
@@ -3705,8 +3713,11 @@ def run_k0(ships, dt) -> None:
 # StopFiring, a damage pulse (host_loop._phaser_contact: apply_hit, the
 # damage arithmetic included), a whole ship or one bank of the loop body, or
 # the answer to a question. After each it re-sends the per-step context the
-# effect may have changed (_K2Context.resend). After DONE it presents the
-# resting contacts the kernel queued, in one batch (_k2_present_batch).
+# effect may have changed (_K2Context.resend). After DONE it drains the
+# resting contacts the kernel queued: the drain presents the shield splashes
+# it can itself (spec 2026-11-02 §4.4, with the constants
+# _k2_send_present_constants sent) and returns the rest, which run_k2
+# presents in one batch (_k2_present_batch).
 #
 # WHAT K2 STANDS IN FOR. The kernel computes, from the mirror, what these
 # Python functions and methods would answer. A test, tool or mod that
@@ -4353,8 +4364,10 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
     _applier_context) before it is returned; then act -- a StopFiring, a
     damage pulse, a whole ship in Python, or an ASK answered in Python --
     then re-send whatever context the Python changed. After DONE, before
-    the session ends, the resting contacts the kernel queued are drained
-    and presented in one batch (_k2_present_batch). On any exception the
+    the session ends, the resting contacts the kernel queued are drained:
+    the drain presents a shielded one whose instance and view offset the
+    kernel knew itself (the shield splash, natively), and the rest are
+    presented in one batch (_k2_present_batch). On any exception the
     session is abandoned (the kernel's mirror still equals Python; an
     abandoned walk's queue is dropped unpresented) and the exception
     re-raised; the kernel's own protocol-invariant RuntimeError
@@ -4427,6 +4440,18 @@ def _tracked_instances():
     return _tracked_cls
 
 
+def _k2_send_present_constants() -> None:
+    """The drain's native shield splash takes beam_contact's intensity and
+    its default radius from here, never from C++ literals: sent when they
+    differ from what was last sent (spec 2026-11-02 §4.4)."""
+    from engine.appc import combat, hit_feedback
+    consts = (float(hit_feedback.shield_impact_intensity("phaser")),
+              float(combat.PHASER_DEFAULT_DAMAGE_RADIUS))
+    if consts != _k2_present_sent[0]:
+        _h.combat_k2_present_constants(*consts)
+        _k2_present_sent[0] = consts
+
+
 def k2_phasers(ships, dt, ship_instances) -> bool:
     """host_loop's `cb.phasers` step through K2: True when it ran, False when
     the caller must run the step in Python whole (counted by why in
@@ -4444,6 +4469,7 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
         refresh_stale_pulse_params()
     # A step boundary: the K1 pump's effects may have bumped the generation.
     resolve_stale_part_slots(ships)
+    _k2_send_present_constants()
     cx = _K2Context(ship_instances)
     ctx = cx.delta()
     ctx["python_ships"] = python_ships

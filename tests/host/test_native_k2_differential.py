@@ -44,14 +44,18 @@ with its type): every phaser bank's `_dwell`, `_firing`, `_target` and
 death flag, hull condition and six shield faces; the ordered call log of
 every bank and phaser-system StopFiring that runs with a bank firing (an
 idle one is logged writes, round trips Tasks 2-3), every
-hit_feedback.beam_contact (all arguments, and the shields_block it acted on),
-every hit VFX spawn and shield hit those make (all arguments: the
+hit_feedback.beam_contact (all arguments, and the shields_block it acted on;
+a shielded one stands out of the compare for the shield hit it makes),
+every hit VFX spawn and shield hit those make -- and every shield splash the
+K2 drain presents natively, from its capture (all arguments: the
 presentation, round trips Task 5; per tick as a multiset, since K2 presents
-resting contacts after the step's last record -- spec 2026-11-02 §5, Q1)
+resting contacts after the step's last record -- spec 2026-11-02 §4.4, §5,
+Q1)
 and every combat.apply_hit (all arguments); and the full ordered event log,
 with each ET_WEAPON_HIT's payload. The native arm must show that every
 branch the scene is built for really happened in the KERNEL (the record
-stream, tallied as it is returned, and the drained resting contacts):
+stream, tallied as it is returned, and the drained resting contacts, those
+the drain presented natively included):
 CONTACTs on the mesh and the sphere
 tier, bubble entries, windup contacts, pulses, arc-fail partial pulses,
 SYSTEM_STOPs, a lock on another ship, Manual Aim on and off, a cloaking
@@ -96,7 +100,8 @@ from engine.core.tracked_instances import TrackedInstances  # noqa: E402
 from tests.helpers import headless_mission  # noqa: E402
 from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
 from tests.helpers.k3_fight import (  # noqa: E402
-    compare_calls, presented, spy_presentation)
+    capture_native_shield_hits, compare_calls, contact_row, presented,
+    spy_presentation)
 
 GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy"
               / "Galaxy.nif")
@@ -252,6 +257,18 @@ class _Tally:
             self.contact(e[:14])
         return entries
 
+    def native(self, item):
+        """A rest the drain presented natively (its capture,
+        capture_native_shield_hits): a shielded resting contact, tallied by
+        what its bank, target and ship say (the capture has no trace tier or
+        bubble)."""
+        bh, th = item[0], item[1]
+        reg = nc._registry
+        bank, target = reg.get(bh), reg.get(th)
+        self.bump("native_contact")
+        self.bump("shields:True")
+        self.objects(bh, bank, target, bank.GetParentShip(), 0.0)
+
     def contact(self, c):
         """One contact's fields, CONTACT's layout from `bank` to
         `flush_dwell` (a CONTACT record's, or a drained rest's)."""
@@ -264,6 +281,10 @@ class _Tally:
             self.bump("bubble")
         if shields is not None:
             self.bump("shields:%s" % bool(shields))
+        self.objects(bh, bank, target, ship, flush)
+
+    def objects(self, bh, bank, target, ship, flush):
+        """The branches a contact's bank, target and ship show."""
         if flush > 0.0:
             self.bump("pulse")
             if self.last_stop == bh:
@@ -367,6 +388,7 @@ class _Scene:
             self.tally.orig_drain = _h.combat_k2_drain
             mp.setattr(_h, "combat_k2_next", self.tally)
             mp.setattr(_h, "combat_k2_drain", self.tally.drain)
+            capture_native_shield_hits(mp, self.tally.native)
 
     def close(self):
         host_loop.teardown_set_objects(self.session, self.set, self.r)
@@ -402,7 +424,10 @@ class _Scene:
                 acted = kw["shields_block"]
             else:
                 acted = bool(combat.shields_block(kw["ship"]))
-            self.calls.append((
+            # A shielded contact's row is a ShieldedContact: its shield hit
+            # stands for it in the compare (the drain presents most of them
+            # natively, with no beam_contact call; spec 2026-11-02 §4.4).
+            self.calls.append(contact_row((
                 "beam_contact", self.tick, self.label(kw["ship"]),
                 self.label(kw["source"]), _t(kw["point"]), _t(kw["normal"]),
                 _t(kw["shield_point"]), _t(kw["tick_damage"]),
@@ -410,7 +435,7 @@ class _Scene:
                 _t(kw.get("weapon_type")), _t(kw.get("radius")), _t(acted),
                 # K2 hands the loop's shields_block in as a kwarg (the value
                 # acted on is compared above); every other kwarg must match.
-                sorted(k for k in kw if k != "shields_block")))
+                sorted(k for k in kw if k != "shields_block")), acted))
             return beam_contact(**kw)
 
         def hit_spy(target, damage, point, **kw):
@@ -934,11 +959,16 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
                 "cloaking_target", "shields:True", "shields:False",
                 "queued_contact"):
         assert n.get(key, 0) > 0, (key, n)
-    # Resting contacts were queued for the drain (spec 2026-11-02 §4.3) and
-    # presented by the Python batch, offline stops with every bank idle were
-    # logged writes; a CONTACT record is a pulse.
-    assert nat.counts["k2_batched_contacts"] == n["queued_contact"], (
+    # Resting contacts were queued for the drain (spec 2026-11-02 §4.3):
+    # the shield splashes presented by the drain itself (compared through
+    # its capture), the rest returned and presented by the Python batch;
+    # offline stops with every bank idle were logged writes; a CONTACT
+    # record is a pulse.
+    assert nat.counts["k2_present_native"] == n["native_contact"] > 0, (
         nat.counts, n)
+    assert nat.counts["k2_present_python"] > 0, nat.counts
+    assert nat.counts["k2_batched_contacts"] == (
+        n["queued_contact"] + n["native_contact"]), (nat.counts, n)
     assert nat.counts["k2_present_python"] == n["queued_contact"], (
         nat.counts, n)
     assert nat.counts["k2_logged_system_stop"] > 0, nat.counts

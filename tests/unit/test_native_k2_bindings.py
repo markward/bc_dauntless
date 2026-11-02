@@ -153,8 +153,11 @@ def test_contact_record_layout(scene):
     counts = _h.combat_k2_counts()
     assert set(counts) == {"k2_records", "k2_python_ships", "k2_asks",
                            "k2_python_reasons", "k2_ask_queries", "k2_posed",
-                           "k2_batched_contacts", "k2_logged_system_stop"}
+                           "k2_batched_contacts", "k2_logged_system_stop",
+                           "k2_present_native"}
     assert counts["k2_batched_contacts"] == 1, counts
+    # No applier context (and no constants sent): the drain presented none.
+    assert counts["k2_present_native"] == 0, counts
     assert counts["k2_posed"] == {"banks": 0, "lock_aims": 0, "manual_aims": 0}
     assert set(counts["k2_ask_queries"]) == {
         "is_dead", "can_detect", "aim_point", "shields_block", "bubble",

@@ -57,7 +57,8 @@ from engine.appc.events import WeaponHitEvent  # noqa: E402
 from engine.appc.math import TGMatrix3, TGPoint3  # noqa: E402
 from engine.core import step_memo  # noqa: E402
 from engine.core.tracked_instances import TrackedInstances  # noqa: E402
-from tests.helpers.k3_fight import compare_calls  # noqa: E402
+from tests.helpers.k3_fight import (  # noqa: E402
+    ShieldedContact, capture_native_shield_hits, compare_calls, contact_row)
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
 DT = 1.0 / 60.0
@@ -191,18 +192,38 @@ class World:
         def contact_spy(**kw):
             # What it acts on: the kwarg (K2 passes the loop's answer) or its
             # own evaluation (the Python path; K2 when the loop had none).
+            # A shielded contact's row is a ShieldedContact: its shield hit
+            # stands for it in the compare (the drain presents most natively).
             if "shields_block" in kw:
                 acted = kw["shields_block"]
             else:
                 acted = bool(combat.shields_block(kw["ship"]))
-            self.calls.append((
+            self.calls.append(contact_row((
                 "beam_contact", self.n, self.label(kw["ship"]),
                 self.label(kw["source"]), _hx(kw["point"]),
                 _hx(kw["normal"]), _hx(kw["shield_point"]),
                 _hx(kw["tick_damage"]), kw["ship_instances"] is
                 self.instances, _hx(kw.get("weapon_type")),
-                _hx(kw.get("radius")), _hx(acted)))
+                _hx(kw.get("radius")), _hx(acted)), acted))
             return beam_contact(**kw)
+
+        def shield_row(point, rgba, intensity, radius):
+            return ("shield_hit", self.n,
+                    tuple(_hx(float(c)) for c in point), tuple(rgba),
+                    _hx(float(intensity)), _hx(float(radius)))
+
+        shield_hit = host_io.shield_hit
+
+        def shield_spy(iid, point, rgba=(0.0, 0.0, 0.0, 0.0), intensity=1.0,
+                       radius=0.0):
+            self.calls.append(shield_row(point, rgba, intensity, radius))
+            return shield_hit(iid, point, rgba, intensity, radius)
+
+        def native_hit(item):
+            # A splash the K2 drain presented natively (its capture): the
+            # row shield_spy logs for the same push.
+            _b, _t, _iid, view, _rel, rgba, intensity, radius = item
+            self.calls.append(shield_row(view, rgba, intensity, radius))
 
         def hit_spy(target, damage, point, **kw):
             self.calls.append((
@@ -234,6 +255,8 @@ class World:
         mp.setitem(nc._k1_stock, kind,
                    (names, nc._k1_resolve(ws.PhaserSystem, names)))
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
+        mp.setattr(host_io, "shield_hit", shield_spy)
+        capture_native_shield_hits(mp, native_hit)
         mp.setattr(combat, "apply_hit", hit_spy)
 
         orig = App.g_kEventManager.AddEvent
@@ -1698,15 +1721,18 @@ def test_remaining_aim_point_asks_match_python(monkeypatch, case):
 # A resting CONTACT (`flush_dwell <= 0`: _phaser_contact's beam_contact
 # branch, presentation only) never comes back on a record: the kernel queues
 # it, in walk order, with its power level, shields answer, instance and view
-# offset as they were at contact time, and run_k2 presents the queue once,
-# after DONE (combat_k2_drain; spec 2026-11-02 §4.3-4.4). A SYSTEM_STOP on an
+# offset as they were at contact time, and the queue is presented once,
+# after DONE (combat_k2_drain; spec 2026-11-02 §4.3-4.4): the shield splashes
+# it can, natively, by the drain itself; the rest by run_k2's Python batch,
+# from the entries the drain returns. A SYSTEM_STOP on an
 # offline system whose banks are all idle is the system's five writes and
 # each bank's StopFiring writes, logged.
 
 def _spy_k2_records(mp, log):
     """Log every K2 record as it is returned, before Python acts on it --
     (kind, its own flush (CONTACT) or None) -- and every drain: ("DRAIN",
-    [(flush, level, shields) of each entry])."""
+    [(flush, level, shields) of each entry it returned], how many it
+    presented natively)."""
     names = {v: k for k, v in _h.combat_k2_kinds().items()}
     real, real_drain = _h.combat_k2_next, _h.combat_k2_drain
 
@@ -1717,8 +1743,10 @@ def _spy_k2_records(mp, log):
         return rec
 
     def drain_spy():
+        before = _h.combat_k2_counts()["k2_present_native"]
         entries = real_drain()
-        log.append(("DRAIN", [(e[13], e[14], e[12]) for e in entries]))
+        log.append(("DRAIN", [(e[13], e[14], e[12]) for e in entries],
+                    _h.combat_k2_counts()["k2_present_native"] - before))
         return entries
     mp.setattr(_h, "combat_k2_next", spy)
     mp.setattr(_h, "combat_k2_drain", drain_spy)
@@ -1737,10 +1765,11 @@ def _mark_contacts(w, mp, log):
 
 
 def _spy_presentation(w, mp):
-    """What a contact presents, into the compared call log: every hit VFX
-    spawn and every shield hit, with their arguments."""
+    """What a hull contact presents, into the compared call log: every hit
+    VFX spawn, with its arguments. (Every shield hit, Python's and the
+    drain's native ones, is in the log already: World._spy.)"""
     from engine.appc import hit_vfx
-    spawn, shield_hit = hit_vfx.spawn, host_io.shield_hit
+    spawn = hit_vfx.spawn
 
     def spawn_spy(position, **kw):
         w.calls.append(("vfx", w.n, _hx(position), _hx(kw.get("normal")),
@@ -1749,15 +1778,7 @@ def _spy_presentation(w, mp):
                         w.label(kw.get("pSet"))))
         return spawn(position, **kw)
 
-    def shield_spy(iid, point, rgba=(0.0, 0.0, 0.0, 0.0), intensity=1.0,
-                   radius=0.0):
-        w.calls.append(("shield_hit", w.n, tuple(_hx(float(c))
-                                                 for c in point),
-                        _hx(float(intensity)), _hx(float(radius))))
-        return shield_hit(iid, point, rgba, intensity, radius)
-
     mp.setattr(hit_vfx, "spawn", spawn_spy)
-    mp.setattr(host_io, "shield_hit", shield_spy)
 
 
 def test_resting_contacts_presented_after_the_steps_last_record(
@@ -1765,9 +1786,13 @@ def test_resting_contacts_presented_after_the_steps_last_record(
     """A volley each way, the Vor'cha's shields up and then down. No
     resting contact comes back on a record (a CONTACT record is a damage
     pulse): each tick's resting contacts are presented after the step's
-    DONE, from its one drain, in walk order -- the same beam_contact calls,
-    in the same order, as the Python step makes -- and the hit VFX and
-    shield hits they draw equal Python's (per tick, as a multiset)."""
+    DONE, from its one drain -- the Vor'cha's shield splashes by the drain
+    itself (it has an instance in the viewed set), in walk order, exactly
+    the shield hits the Python step pushes; every other contact (the
+    Galaxy has no instance; the Vor'cha unshielded) by the Python batch,
+    the same beam_contact calls, in the same order, as the Python step
+    makes -- and the hit VFX they draw equal Python's (per tick, as a
+    multiset)."""
     log = []
     _spy_k2_records(monkeypatch, log)
 
@@ -1792,13 +1817,17 @@ def test_resting_contacts_presented_after_the_steps_last_record(
     _native_ran(counts)
     assert counts["k2_python_ships"] == 0, counts
     resting = _calls(nat, "beam_contact")
-    assert counts.get("k2_batched_contacts", 0) == len(resting) > 0, counts
+    native = counts.get("k2_present_native", 0)
+    assert native > 0 and resting, (counts, len(resting))
+    assert counts.get("k2_batched_contacts", 0) == len(resting) + native, \
+        counts
     assert counts.get("k2_present_python", 0) == len(resting), counts
-    contacts = [f for kind, f in log if kind == "CONTACT"]
+    contacts = [r[1] for r in log if r[0] == "CONTACT"]
     assert contacts and all(f > 0.0 for f in contacts), contacts
-    # Every presentation follows the step's DONE and its drain, one per
-    # entry: nothing is presented between records.
-    drained = 0
+    # Every presentation follows the step's DONE and its drain: the drain
+    # presents its native ones, then one beam_contact per entry it returned;
+    # nothing is presented between records.
+    drained = presented = 0
     for i, row in enumerate(log):
         if row[0] != "DRAIN":
             continue
@@ -1807,13 +1836,22 @@ def test_resting_contacts_presented_after_the_steps_last_record(
         n = len(row[1])
         assert [r[0] for r in log[i + 1:i + 1 + n]] == ["beam_contact"] * n
         drained += n
+        presented += row[2]
     assert drained == len(resting) == sum(
         1 for r in log if r[0] == "beam_contact")
-    assert max(len(r[1]) for r in log if r[0] == "DRAIN") > 1, log[:20]
-    # Walk order: each tick's contacts in the Python step's own order.
+    assert presented == native
+    assert max(len(r[1]) + r[2] for r in log if r[0] == "DRAIN") > 1, \
+        log[:20]
+    # Walk order: each tick's natively presented splashes are the Python
+    # step's Vor'cha shield hits, in its order; its other contacts are the
+    # Python batch's, in its order.
     for t in range(1, 161):
+        assert [c for c in _calls(nat, "shield_hit") if c[1] == t] == \
+            [c for c in _calls(ref, "shield_hit") if c[1] == t], t
         assert [c for c in _calls(nat, "beam_contact") if c[1] == t] == \
-            [c for c in _calls(ref, "beam_contact") if c[1] == t], t
+            [c for c in _calls(ref, "beam_contact") if c[1] == t
+             and not (isinstance(c, ShieldedContact)
+                      and c[2] == "Vorcha")], t
 
 
 def _lit_volley(w):
@@ -1993,7 +2031,8 @@ def test_abandoned_step_presents_nothing_next_step(monkeypatch):
             w.tick()
             queued = nc.counts()["k2_batched_contacts"] - before
             drains = [r for r in log if r[0] == "DRAIN"]
-            assert len(drains) == 1 and len(drains[0][1]) == queued > 0
+            assert len(drains) == 1 \
+                and len(drains[0][1]) + drains[0][2] == queued > 0
             assert [c[1] for c in _calls(w, "beam_contact")] == [2] * queued
         finally:
             w.close()
@@ -2154,7 +2193,7 @@ def test_firing_bank_on_offline_system_still_records(monkeypatch):
                             (26, stops[False][0][1])], stops
     assert stops[True] == stops[False]
     assert [c[1] for c in _calls(ref, "system_stop")] == [11, 26]
-    assert sum(1 for kind, _f in log if kind == "SYSTEM_STOP") == 2, log
+    assert sum(1 for r in log if r[0] == "SYSTEM_STOP") == 2, log
     assert counts.get("k2_logged_system_stop", 0) > 0, counts
 
 

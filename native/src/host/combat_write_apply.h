@@ -127,6 +127,12 @@ public:
     // A K0 record's writes (a view of the session's log), all of them.
     bool apply(std::span<const combat::K0Write> w);
 
+    // `walk.live(h)` on the context's walk (_K1Walk.live): the object the
+    // handle names, pinned on the way, or None (-1, or a row freed since).
+    // A new reference; nullptr with a Python error set (also when no
+    // context is installed: RuntimeError).
+    PyObject* live(std::int64_t h);
+
     // The Python encoding (a list of (handle, field, value)) -> `out`.
     // False: a Python error is set (TypeError / OverflowError).
     static bool parse_log(PyObject* log, std::vector<ApplyWrite>* out);

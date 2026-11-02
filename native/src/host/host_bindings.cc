@@ -684,6 +684,26 @@ std::optional<glm::dvec3> instance_translation_for_python(
     return inst->world_translation_d;
 }
 
+// The shield_hit binding's body: ONE implementation, two callers -- the
+// binding (pybind has already narrowed its Python floats) and the K2
+// drain's native presentation (combat_k2_drain; it narrows the same way).
+// Callers pass an INSTANCE-RELATIVE point (the world hit minus
+// instance_translation, formed in double), but the state stores BODY so the
+// splash rides the hull instead of being left behind as the ship flies on.
+// Convert here, once, inverting only rotation*scale — never a large
+// translation (the floating render origin). No shield pass (headless) or an
+// unknown instance drops the hit — the pass would drop it anyway.
+void push_shield_hit(scenegraph::InstanceId id, const glm::vec3& point,
+                     const glm::vec4& rgba, float intensity, float radius) {
+    if (!g_shield_pass) return;
+    const auto* inst = g_world.get(id);
+    if (inst == nullptr) return;
+    const glm::vec3 body = scenegraph::relative_to_body(inst->world_linear,
+                                                        point);
+    g_shield_pass->shield_hit(id, body, rgba, intensity, glfwGetTime(),
+                              radius);
+}
+
 // The ray_trace_mesh binding's body: ONE implementation, two callers -- the
 // binding (pybind has already narrowed its Python floats) and the K2 kernel's
 // trace hook (install_combat_trace_hooks; the kernel narrows the same way).
@@ -3873,6 +3893,118 @@ void k2_contact_fields(py::list& items, const dauntless::combat::K2Contact& c,
     items.append(opt(c.bubble));
     items.append(shields);
     items.append(c.flush_dwell);
+}
+
+// ── K2's native presentation at the drain (spec 2026-11-02 §4.4) ─────────
+// What Python sends once per change (combat_k2_present_constants), the test
+// capture (combat_present_capture) and the rests presented here
+// ("k2_present_native", combat_k2_counts).
+struct K2Present {
+    bool have_consts = false;     // nothing is presented natively until sent
+    double intensity = 0.0;       // hit_feedback.shield_impact_intensity("phaser")
+    double default_radius = 0.0;  // combat.PHASER_DEFAULT_DAMAGE_RADIUS
+    PyObject* capture = nullptr;  // owned: a list, or nullptr (off)
+    std::int64_t presented = 0;
+};
+
+K2Present& k2_present() {
+    static K2Present* p = new K2Present;  // never destroyed: owns a reference
+    return *p;
+}
+
+// combat.weapon_splash_radius(bank, None): the bank's own
+// GetDamageRadiusFactor() when > 0 (as float()), else the default. nullopt,
+// the Python error cleared, when any step raises: the entry then goes to the
+// Python batch, which meets the same call (hasattr included) in Python.
+std::optional<double> k2_splash_radius(PyObject* bank, double fallback) {
+    py::object r = py::reinterpret_steal<py::object>(
+        PyObject_CallMethod(bank, "GetDamageRadiusFactor", nullptr));
+    if (!r) {
+        PyErr_Clear();
+        return std::nullopt;
+    }
+    if (PyFloat_CheckExact(r.ptr())) {
+        const double d = PyFloat_AS_DOUBLE(r.ptr());
+        return d > 0.0 ? d : fallback;
+    }
+    const py::float_ zero(0.0);
+    const int gt = PyObject_RichCompareBool(r.ptr(), zero.ptr(), Py_GT);
+    if (gt < 0) {
+        PyErr_Clear();
+        return std::nullopt;
+    }
+    if (!gt) return fallback;
+    py::object f = py::reinterpret_steal<py::object>(PyNumber_Float(r.ptr()));
+    if (!f) {
+        PyErr_Clear();
+        return std::nullopt;
+    }
+    return PyFloat_AS_DOUBLE(f.ptr());
+}
+
+// hit_feedback.beam_contact's shield branch for one drained rest, here,
+// when it can be: the shields answer True, the target's instance id and its
+// set's view offset known at contact time, the constants sent, the four
+// objects it names still live (walk.live, through the session's applier
+// context: else the Python batch counts it gone) and the bank's radius
+// factor read cleanly. Then exactly what Python pushes: the anchor (the
+// bubble entry, else the impact point) shifted into VIEW coordinates in
+// double (hit_feedback._mesh_xyz: frames.shifted keeps the point itself for
+// a zero offset), minus the instance's double translation
+// (host_io._instance_relative; a stale instance pushes nothing), narrowed as
+// the binding narrows, through push_shield_hit. rgba (0, 0, 0, 0): the
+// ship's default ShieldGlowColor. False: the entry goes to Python.
+template <class Vec>
+bool k2_present_rest(const dauntless::combat::K2Rest& e, const Vec& vec) {
+    namespace cb = dauntless::combat;
+    K2Present& st = k2_present();
+    const cb::K2Contact& c = e.contact;
+    if (!st.have_consts || !c.shields_block || !*c.shields_block || !e.iid ||
+        !e.view_known)
+        return false;
+    auto& applier = dauntless::host::write_applier();
+    if (!applier.has_context()) return false;
+    py::object bank;
+    for (const std::int64_t h : {c.bank, c.target, c.ship, c.system}) {
+        py::object o = py::reinterpret_steal<py::object>(applier.live(h));
+        if (!o) {
+            PyErr_Clear();
+            return false;
+        }
+        if (o.is_none()) return false;
+        if (!bank) bank = std::move(o);
+    }
+    const std::optional<double> radius =
+        k2_splash_radius(bank.ptr(), st.default_radius);
+    if (!radius) return false;
+    const cb::Vec3& a = c.bubble ? *c.bubble : c.hit.point;
+    cb::Vec3 p = a;
+    if (e.view_offset) {
+        const cb::Vec3& o = *e.view_offset;
+        if (!(o[0] == 0.0 && o[1] == 0.0 && o[2] == 0.0))
+            p = {a[0] + o[0], a[1] + o[1], a[2] + o[2]};
+    }
+    const scenegraph::InstanceId id{e.iid->index, e.iid->generation};
+    std::optional<cb::Vec3> rel;
+    if (const auto t = instance_translation_for_python(id))
+        rel = cb::Vec3{p[0] - t->x, p[1] - t->y, p[2] - t->z};
+    if (rel)
+        push_shield_hit(id,
+                        glm::vec3(static_cast<float>((*rel)[0]),
+                                  static_cast<float>((*rel)[1]),
+                                  static_cast<float>((*rel)[2])),
+                        glm::vec4(0.0f), static_cast<float>(st.intensity),
+                        static_cast<float>(*radius));
+    if (st.capture != nullptr) {
+        py::tuple item = py::make_tuple(
+            c.bank, c.target, id, vec(p),
+            rel ? py::object(vec(*rel)) : py::object(py::none()),
+            py::make_tuple(0.0, 0.0, 0.0, 0.0), st.intensity, *radius);
+        if (PyList_Append(st.capture, item.ptr()) < 0)
+            throw py::error_already_set();
+    }
+    ++st.presented;
+    return true;
 }
 
 // Marks the delivery for its scope (cleared on a throw too).
@@ -8884,7 +9016,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
              std::tuple<float, float, float, float> rgba,
              float intensity,
              float radius) {
-              if (!g_shield_pass) return;
               const glm::vec3 p(std::get<0>(point),
                                  std::get<1>(point),
                                  std::get<2>(point));
@@ -8892,18 +9023,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<1>(rgba),
                                  std::get<2>(rgba),
                                  std::get<3>(rgba));
-              // Callers pass an INSTANCE-RELATIVE point (the world hit minus
-              // instance_translation, formed in double), but the state stores
-              // BODY so the splash rides the hull instead of being left behind
-              // as the ship flies on. Convert here, once, inverting only
-              // rotation*scale — never a large translation (the floating render
-              // origin). An unknown instance drops the hit — the pass would
-              // drop it anyway.
-              const auto* inst = g_world.get(id);
-              if (inst == nullptr) return;
-              const glm::vec3 body = scenegraph::relative_to_body(inst->world_linear, p);
-              g_shield_pass->shield_hit(id, body, c, intensity, glfwGetTime(),
-                                        radius);
+              push_shield_hit(id, p, c, intensity, radius);
           },
           py::arg("instance_id"), py::arg("point"),
           py::arg("rgba") = std::make_tuple(0.0f, 0.0f, 0.0f, 0.0f),
@@ -11806,9 +11926,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // record is a tuple whose first element is a kind int
         // (combat_k2_kinds) and whose LAST element is the write log since the
         // previous record: with an applier context, [] (applied); else a
-        // list of (handle, field, value). After DONE, combat_k2_drain hands
-        // over the resting contacts queued for the drain (k2_beams.h,
-        // RESTING CONTACTS).
+        // list of (handle, field, value). After DONE, combat_k2_drain
+        // presents the resting contacts queued for the drain that it can
+        // (the shield splash, k2_present_rest) and hands over the rest
+        // (k2_beams.h, RESTING CONTACTS).
         // Layouts
         // (handles -1 = None, xyz = a 3-tuple):
         //   (DONE, writes)
@@ -12039,13 +12160,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k2_drain",
               [vec] {
                   k2_not_delivering("drain()");
-                  // Each rest: CONTACT's fields from `bank` to
-                  // `flush_dwell`, then what the kernel took at contact
-                  // time (k2_beams.h, K2Rest): level, iid (an InstanceId)
-                  // or None, view offset or None.
+                  // A shielded rest whose instance and view offset the
+                  // kernel knew is presented here, in queue order
+                  // (k2_present_rest); every other one is returned, in
+                  // queue order, for the Python batch: CONTACT's fields
+                  // from `bank` to `flush_dwell`, then what the kernel took
+                  // at contact time (k2_beams.h, K2Rest): level, iid (an
+                  // InstanceId) or None, view offset or None.
                   std::vector<cb::K2Rest> rests = cb::k2_kernel().take_rests();
                   py::list out;
                   for (const cb::K2Rest& e : rests) {
+                      if (k2_present_rest(e, vec)) continue;
                       py::list items;
                       k2_contact_fields(items, e.contact, vec, true);
                       items.append(e.level);
@@ -12060,9 +12185,40 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   }
                   return out;
               },
-              "The resting contacts queued for the drain, in walk order, "
-              "taken (the queue is left empty): after DONE, before "
-              "combat_k2_end (k2_beams.h, RECORDS).");
+              "The resting contacts queued for the drain, taken (the queue "
+              "is left empty): after DONE, before combat_k2_end (k2_beams.h, "
+              "RECORDS). The shielded ones whose instance and view offset "
+              "the kernel knew are presented here (the shield splash, spec "
+              "2026-11-02 §4.4); the rest are returned, in walk order.");
+        m.def("combat_k2_present_constants",
+              [](double intensity, double default_radius) {
+                  K2Present& st = k2_present();
+                  st.intensity = intensity;
+                  st.default_radius = default_radius;
+                  st.have_consts = true;
+              },
+              py::arg("intensity"), py::arg("default_radius"),
+              "The drain's native presentation constants: "
+              "hit_feedback.shield_impact_intensity(\"phaser\") and "
+              "combat.PHASER_DEFAULT_DAMAGE_RADIUS (sent by k2_phasers when "
+              "they change; until then the drain presents nothing).");
+        m.def("combat_present_capture",
+              [](py::object lst) {
+                  if (!lst.is_none() && !PyList_Check(lst.ptr()))
+                      throw py::type_error(
+                          "combat_present_capture: a list or None");
+                  K2Present& st = k2_present();
+                  PyObject* old = st.capture;
+                  st.capture = lst.is_none() ? nullptr : Py_NewRef(lst.ptr());
+                  Py_XDECREF(old);
+              },
+              py::arg("lst"),
+              "Tests: while set, every rest the drain presents natively is "
+              "also appended to `lst` as (bank, target, iid, view_xyz, "
+              "relative_xyz | None, rgba, intensity, radius) -- view_xyz "
+              "the point host_io.shield_hit would be given, relative_xyz "
+              "what host_io._instance_relative would make of it (None: the "
+              "instance is stale, nothing pushed). None turns it off.");
         m.def("combat_k2_end",
               [] {
                   k2_not_delivering("end()");
@@ -12099,10 +12255,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // queued for the drain, offline stops logged as writes.
             d["k2_batched_contacts"] = c.batched_contacts;
             d["k2_logged_system_stop"] = c.logged_system_stop;
+            // Drained rests the drain presented itself (the shield splash).
+            d["k2_present_native"] = k2_present().presented;
             return d;
         });
-        m.def("combat_k2_reset_counts",
-              [] { cb::k2_kernel().reset_counts(); });
+        m.def("combat_k2_reset_counts", [] {
+            cb::k2_kernel().reset_counts();
+            k2_present().presented = 0;
+        });
 
         // ── C-applied write logs (combat_write_apply.h) ──────────────────
         m.def("combat_apply_kinds", [] {
