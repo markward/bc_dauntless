@@ -71,7 +71,7 @@ Every producer appends when the scope is open, **including Python ones** (a ship
 - **K1:** a beam edge becomes logged writes (`_firing`, `_target`, `_target_offset`, `_beam_on_countdown`, `_dwell`, as the sustain FIRE already is) plus `FIRE_SOUND` and `WEAPON_FIRED`; `FIRE_FAILED` becomes an entry; a firing bank's `BANK_STOP`/`STOP_SYSTEM` becomes logged writes plus `LOOP_STOP`. Tube, pulse and dumb fires stay records.
 - **K2:** a firing bank's `BANK_STOP`/`SYSTEM_STOP` becomes logged writes plus `LOOP_STOP`.
 - **K0:** `DEPLETE_STOP` becomes logged writes plus `LOOP_STOP`; `RELOADED` becomes logged writes plus `TORPEDO_RELOAD`; `WATCH` becomes the watcher's committed value plus `WATCH`.
-- Kernel-appended entries carry mirror handles; the native queue holds them with no Python call. A kernel whose session is abandoned drops the entries it appended in that session.
+- Kernel-appended entries carry mirror handles; the native queue holds them with no Python call. An abandoned session keeps the entries it appended (ruling F5, 2026-11-02, replacing "drops them"): a kernel appends an entry only after its record's writes applied, so every entry belongs to an effect that already happened, and the Python reference posts those events too.
 
 ## 5. Rulings
 
