@@ -1,6 +1,6 @@
 # Native combat: weapon state (cheap sync + charging kernel K0) — design
 
-**Status:** implemented 2026-11-02, outcome in §10; not live-verified. Spec written without Mark (he asked for "spec, plan and build the next largest phase" and will review afterwards). Workstream re-chosen by measurement (§1); the roadmap's D (native damage) was mapped and deferred.
+**Status:** implemented 2026-11-02, outcome in §10; live-verified by Mark 2026-11-02 and merged into `project/combat_threading` (`ea4e59503`). Spec written without Mark (he asked for "spec, plan and build the next largest phase" and will review afterwards). Workstream re-chosen by measurement (§1); the roadmap's D (native damage) was mapped and deferred.
 **Branch:** `ws/combat-weapon-state`, off `ws/combat-round-trips` (head `9102c2f34`, not yet live-verified or merged), in worktree `.claude/worktrees/native-combat-damage`. Merges into `project/combat_threading` after round trips does; no main gate — focused tests, differentials, two benchmark runs.
 **Input maps:** `docs/reference/engine/native-combat/weapon-state-map.md` (WSM §n), `docs/reference/engine/native-combat/damage-map.md` (DM §n).
 
@@ -107,7 +107,7 @@ Exception semantics are today's: if a write raises (a materialise, a python-kind
 
 ## 10. Outcome
 
-Implemented 2026-11-02 on branch `ws/combat-weapon-state` (off `ws/combat-round-trips` `9102c2f34`; merges into `project/combat_threading` after round trips does). Commits: spec `79303db63`; Task 1 `5492fca58`; Task 2 `9ecd6e8e6` + review minors `608169e78`; Task 3 `5cf6e53d8`; Task 4 `805ebbeff`; Task 5 `11178edf4`, fix round 1 `da2eee30b` + `3c8f5be23`, fix round 2 `a6d68b2ba` + `6cfde63c5`; Task 6 `ec1e18c1c` + `1d714e767`. Everything is behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF; switch off is unchanged. **Live verification: NOT yet.** Mark to play a large battle with the switch on (§6 item 3).
+Implemented 2026-11-02 on branch `ws/combat-weapon-state` (off `ws/combat-round-trips` `9102c2f34`; merges into `project/combat_threading` after round trips does). Commits: spec `79303db63`; Task 1 `5492fca58`; Task 2 `9ecd6e8e6` + review minors `608169e78`; Task 3 `5cf6e53d8`; Task 4 `805ebbeff`; Task 5 `11178edf4`, fix round 1 `da2eee30b` + `3c8f5be23`, fix round 2 `a6d68b2ba` + `6cfde63c5`; Task 6 `ec1e18c1c` + `1d714e767`. Everything is behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF; switch off is unchanged. **Live-verified by Mark 2026-11-02** with the switch on (an 87-ship battle at about 8 fps, his reading, not a capture; the only console error was the unrelated `apply_texture_replacements` miss for the named Nebula `TKumbra.tga`, whose name comes from the hull decal). Merged into `project/combat_threading` (`ea4e59503`) after round trips (`547de0cce`).
 
 ### What shipped
 

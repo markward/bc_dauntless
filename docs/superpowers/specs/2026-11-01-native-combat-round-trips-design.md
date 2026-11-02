@@ -1,6 +1,6 @@
 # Native combat: cut the per-record Python round trips — design
 
-**Status:** implemented 2026-11-01, outcome in §10; not live-verified. Workstream C (second half) of `2026-11-01-threaded-weapons-combat-roadmap.md`, re-scoped by measurement.
+**Status:** implemented 2026-11-01, outcome in §10; live-verified by Mark 2026-11-02 and merged into `project/combat_threading` (`547de0cce`). Workstream C (second half) of `2026-11-01-threaded-weapons-combat-roadmap.md`, re-scoped by measurement.
 **Branch:** `ws/combat-round-trips`, off `project/combat_threading` (after `ws/combat-posed-parts` merges back); merges back into it (no main gate — focused tests, differentials, and two benchmark runs).
 **Input map:** `docs/reference/engine/native-combat/remaining-fallbacks-map.md` (MAP §n).
 
