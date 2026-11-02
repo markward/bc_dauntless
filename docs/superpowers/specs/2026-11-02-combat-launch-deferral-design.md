@@ -1,6 +1,6 @@
 # Native combat: launches at the boundary, K1's walk check out of the kernel — design
 
-**Status:** draft 2026-11-02. Mark chose this phase ("Straight to A it is"): roadmap workstream F (launch-script cache) plus moving K1's walk check out of the kernel (workstream I's known blocker), under his rule that the sim must not check in with Python mid-step.
+**Status:** built 2026-11-02, outcome in §10; awaiting Mark's live check. Mark chose this phase ("Straight to A it is"): roadmap workstream F (launch-script cache) plus moving K1's walk check out of the kernel (workstream I's known blocker), under his rule that the sim must not check in with Python mid-step.
 **Branch:** `ws/combat-launch-cache`, off `project/combat_threading` (`c2b0534c1`), in worktree `.claude/worktrees/native-combat-k3`. No main gate: focused tests, differentials, benchmark runs. Mark live-tests before merge.
 **Input maps:** `docs/reference/engine/native-combat/launch-map.md` (LM §n), `docs/reference/engine/native-combat/k1-walk-check-map.md` (WM §n).
 
@@ -64,4 +64,27 @@ Records per tick by kind (K1 target: no FIRE), and two benchmark runs against C-
 
 ## 10. Outcome
 
-To be written after the build.
+Built 2026-11-02 on `ws/combat-launch-cache`. Commits: `3d867df40` (walk check in the binding), `e1b37beae`, `0eb1fc8ce` (tube and dumb launches, Python pulse deferral), `8c16e2ae2`, `76fdb5c39` (native pulse launches).
+
+### What shipped
+
+- **K1's walk check left the kernel**: per-session C++ verdict sets, re-scanned in the binding before every `combat_k1_next` with K0's object and type caches; the kernel's check is a set lookup. Same semantics as before (a patched method is never decided natively; a patch made between records is seen by the next walk start). No CPython call is left inside `K1Kernel::next()`.
+- **Every launch goes through `SPAWN`** while the queue defers: K1 computes the fire-time values (spawn point, velocity, target, offsets, bake, DRF, pulse damage scale) and logs the launcher writes; delivery runs one shared Python spawn body (`_new_projectile`, `_launch_projectile`) with those values, then `ET_TORPEDO_ENTERED_SET`, the launch sound and the queued trio. The fire-time module object rides the entry. Per-type launch speed cached (ruling P6 extended to tubes).
+- **K1 hands back** a launch only when it cannot compute it natively, counted: `launch_uncached` (a type's first launch), `launch_unresolved` (also a pulse module re-imported since it was cached), `launch_patched` (a launch function patched: Python spawns through the patch mid-walk, ruling L7), `launch_posed_offset` (a posed target whose AI offset has no Manual Aim slot to bake), `launch_other`.
+- `arriving` is now pushed by every writer of a ship's warp-engine slot (`WarpSlotField`).
+
+### Rulings worth keeping
+
+- **L1** (amended), **L5, L6:** every launch, pure or impure, tube or pulse, Python fallback included, defers while the queue defers; no purity check (it would decide nothing). An impure mod script draws its randomness at the boundary.
+- **L7:** a patched launch function spawns mid-walk through the patch.
+- **L8:** K1's instance-level patch scan covers entry points only; the deeper launch getters are guarded at class level (`k1_fire_control.h`, WHAT A LAUNCH OBEYS).
+- **The P6 window** (`k1_fire_control.h`): a `SetModuleName` after `SetProperty`, or a projectile-cache reset mid-session, leaves the cached module and launch params stale until the next reset.
+- Parked: the pulse module's stale flag is global and sticky until the next cache reset (test-only in practice).
+
+### Measured (perf register C-270, C-271, SIG-175)
+
+K1 FIRE records per tick 0.103 → 0.0004 (4 per 8,999 ticks, all a type's first launch). Launch work moved from `cb.held_weapons` (0.664 → 0.604 ms per tick) to `sim.effects` (0.069 → 0.196); `sim.combat` 1.545 → 1.509; `sim` 9.13 → 9.27, with more torpedoes in flight in this pair. Roughly break-even; the phase's gain is structural.
+
+### Next (roadmap)
+
+Damage prerequisites (third random generator, collisions into the sim tick, severance without a renderer), then native damage (D), then kernels off the lock (I: the row-lifetime blocker, K1 now has no in-compute CPython), then the AI ↔ combat pipeline (J).

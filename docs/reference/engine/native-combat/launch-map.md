@@ -1,5 +1,8 @@
 # Launch-script cache (workstream F): code map
 
+> *Built 2026-11-02 as the launch deferral (spec `2026-11-02-combat-launch-deferral-design.md` §10): launches go through `SPAWN` at the boundary; this map is the pre-build snapshot.*
+
+
 Worktree `native-combat-k3`, branch `ws/combat-launch-cache` at `c2b0534c1`. Read-only research, 2026-11-02.
 Abbreviations: **NC** `engine/appc/native_combat.py`, **WS** `engine/appc/weapon_subsystems.py`, **PR** `engine/appc/projectiles.py`, **EQ** `engine/appc/effect_queue.py`, **SS** `engine/appc/subsystems.py`, **EV** `engine/appc/events.py`, **SDK** `sdk/Build/scripts/`.
 Unmarked claims were read in the code. **inferred** = not verified by running or by a test.
