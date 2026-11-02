@@ -3847,6 +3847,128 @@ bool& k1_apply_raised() {
     return raised;
 }
 
+// ── The one-call scalar push (combat_push_scalar; spec 2026-11-02 §4.2) ───
+// NativeField._encode's scalar branches, in C++: float(value), int(value),
+// truthiness, `is True`, None -> -1. The codes are combat_push_codes().
+enum class PushCode : int {
+    kFloat, kInt, kBool, kIsTrue, kOptInt, kCount
+};
+
+constexpr const char* kPushCodeNames[] = {
+    "PUSH_FLOAT", "PUSH_INT", "PUSH_BOOL", "PUSH_IS_TRUE", "PUSH_OPT_INT"};
+static_assert(sizeof(kPushCodeNames) / sizeof(kPushCodeNames[0]) ==
+              static_cast<size_t>(PushCode::kCount));
+
+// Pushes the binding stored (counts()["fast_pushes"]).
+std::uint64_t& fast_pushes() {
+    static std::uint64_t n = 0;
+    return n;
+}
+
+// int(value) as an int64 into *out: false with int(value)'s own exception
+// set, or OverflowError for an int the int64 row cannot hold.
+bool push_int(PyObject* value, std::int64_t* out) {
+    PyObject* r = PyNumber_Long(value);
+    if (r == nullptr) return false;
+    int overflow = 0;
+    const long long v = PyLong_AsLongLongAndOverflow(r, &overflow);
+    Py_DECREF(r);
+    if (v == -1 && PyErr_Occurred()) return false;
+    if (overflow != 0) {
+        PyErr_SetString(PyExc_OverflowError,
+                        "combat_push_scalar: int does not fit the int64 row");
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
+// combat_push_scalar(h, fid, code, value): NativeField._push for a scalar
+// field in one call. A raw METH_FASTCALL function, not an m.def: pybind11's
+// argument dispatch cost more than the encode and the store together (the
+// push runs ~244 times a tick). Encodes FIRST, exactly as _push, so an
+// encoding error raises before the handle is looked at; then the store,
+// whose std::invalid_argument (stale handle, unknown or mistyped field) is
+// pybind's ValueError.
+PyObject* combat_push_scalar(PyObject*, PyObject* const* args,
+                             Py_ssize_t nargs) {
+    namespace cb = dauntless::combat;
+    if (nargs != 4) {
+        PyErr_Format(PyExc_TypeError,
+                     "combat_push_scalar() takes 4 arguments (%zd given)",
+                     nargs);
+        return nullptr;
+    }
+    const long long h = PyLong_AsLongLong(args[0]);
+    if (h == -1 && PyErr_Occurred()) return nullptr;
+    const long f = PyLong_AsLong(args[1]);
+    if (f == -1 && PyErr_Occurred()) return nullptr;
+    const long code = PyLong_AsLong(args[2]);
+    if (code == -1 && PyErr_Occurred()) return nullptr;
+    PyObject* v = args[3];
+    bool is_float = false;
+    double d = 0.0;
+    std::int64_t i = 0;
+    switch (static_cast<PushCode>(code)) {
+        case PushCode::kFloat: {                    // float(value)
+            PyObject* r = PyNumber_Float(v);
+            if (r == nullptr) return nullptr;
+            d = PyFloat_AS_DOUBLE(r);
+            Py_DECREF(r);
+            is_float = true;
+            break;
+        }
+        case PushCode::kInt:                        // int(value)
+            if (!push_int(v, &i)) return nullptr;
+            break;
+        case PushCode::kBool: {                     // 1 if value else 0
+            const int t = PyObject_IsTrue(v);
+            if (t < 0) return nullptr;
+            i = t;
+            break;
+        }
+        case PushCode::kIsTrue:                     // 1 if value is True
+            i = v == Py_True ? 1 : 0;
+            break;
+        case PushCode::kOptInt:                     // -1 for None, int()
+            if (v == Py_None) i = -1;
+            else if (!push_int(v, &i)) return nullptr;
+            break;
+        default:
+            PyErr_Format(PyExc_ValueError,
+                         "combat_push_scalar: unknown push code %ld", code);
+            return nullptr;
+    }
+    if (f < 0 || f >= static_cast<long>(cb::Field::kCount)) {
+        PyErr_SetString(PyExc_ValueError, "combat mirror: unknown field");
+        return nullptr;
+    }
+    const auto field = static_cast<cb::Field>(f);
+    try {
+        if (is_float) cb::mirror().set_f(h, field, d);
+        else cb::mirror().set_i(h, field, i);
+    } catch (const std::invalid_argument& e) {
+        PyErr_SetString(PyExc_ValueError, e.what());
+        return nullptr;
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_RuntimeError, e.what());
+        return nullptr;
+    }
+    ++fast_pushes();
+    Py_RETURN_NONE;
+}
+
+PyMethodDef g_push_scalar_def = {
+    "combat_push_scalar",
+    reinterpret_cast<PyCFunction>(
+        reinterpret_cast<void (*)()>(&combat_push_scalar)),
+    METH_FASTCALL,
+    "combat_push_scalar(h, fid, code, value): NativeField._push for a "
+    "scalar field in one call. Encodes `value` by `code` "
+    "(combat_push_codes) with _encode's rules and raises where it raises "
+    "(TypeError / ValueError / OverflowError, and OverflowError for an int "
+    "beyond int64); a stale handle raises ValueError."};
+
 // ── The K1 walk check (k1_fire_control.h, THE WALK START) ──────────────────
 // Installed into the K1 kernel by combat_k1_set_walk_check. The kernel asks
 // it at every walk start (inside combat_k1_next, the GIL held); true sends
@@ -9847,6 +9969,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_set_i", [fld](std::int64_t h, int f, std::int64_t v) {
             cb::mirror().set_i(h, fld(f), v);
         });
+        m.def("combat_push_codes", [] {
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(PushCode::kCount); ++i)
+                d[kPushCodeNames[i]] = i;
+            return d;
+        });
+        m.add_object("combat_push_scalar",
+                     py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                         &g_push_scalar_def, nullptr,
+                         m.attr("__name__").ptr())));
+        m.def("combat_push_counts", [] {
+            py::dict d;
+            d["fast_pushes"] = fast_pushes();
+            return d;
+        });
+        m.def("combat_push_reset_counts", [] { fast_pushes() = 0; });
         m.def("combat_set_ref", [fld](std::int64_t h, int f, std::int64_t t) {
             cb::mirror().set_ref(h, fld(f), t);
         });

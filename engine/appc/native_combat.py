@@ -97,6 +97,13 @@ _profiles: dict = {}
 
 _KIND_SHIFT = 60
 
+# The one-call scalar push (combat_push_scalar, spec 2026-11-02 §4.2): a
+# NativeField type -> its push code's name in combat_push_codes(). Every
+# other type keeps NativeField._push.
+_PUSH_CODE_NAMES = {float: "PUSH_FLOAT", int: "PUSH_INT", bool: "PUSH_BOOL",
+                    IS_TRUE: "PUSH_IS_TRUE", OPT_INT: "PUSH_OPT_INT"}
+_push_codes: dict = {}
+
 
 # ── The switch ───────────────────────────────────────────────────────────────
 
@@ -183,6 +190,7 @@ def reset() -> None:
     _apply_kinds = None
     if available():
         _h.combat_apply_reset_counts()
+        _h.combat_push_reset_counts()
         _h.combat_k1_reset_counts()
         _h.combat_k2_reset_counts()
         _h.combat_k4_reset_counts()
@@ -224,7 +232,8 @@ def counts() -> dict:
     k1_fire_ask_reasons only.
 
     "c_applied_writes": the K1/K2 log writes the bindings applied
-    themselves (C-applied write logs, _applier_context).
+    themselves (C-applied write logs, _applier_context). "fast_pushes":
+    scalar NativeField pushes stored by combat_push_scalar.
 
     K2 (`cb.phasers`): the kernel's {"k2_records", "k2_python_ships",
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
@@ -263,6 +272,7 @@ def counts() -> dict:
     c["k2_python_step_reasons"] = dict(_k2_step_reasons)
     if available():
         c.update(_h.combat_apply_counts())
+        c.update(_h.combat_push_counts())
         c.update(_h.combat_k1_counts())
         c.update(_h.combat_k2_counts())
         k4 = _h.combat_k4_counts()
@@ -330,6 +340,14 @@ def _fid(key: str) -> int:
         _field_ids.update(_h.combat_field_names())
         fid = _field_ids[key]
     return fid
+
+
+def _push_code(name: str) -> int:
+    code = _push_codes.get(name)
+    if code is None:
+        _push_codes.update(_h.combat_push_codes())
+        code = _push_codes[name]
+    return code
 
 
 def _kind(name: str) -> int:
@@ -468,7 +486,12 @@ class NativeField:
     """A mirrored attribute. ``type_``: float, int, bool (truthiness),
     IS_TRUE (``is True``), list (ordered ids) or set (unordered ids). ``key``
     names the mirror field when it differs from the attribute (the subsystem
-    radius is "Subsystem._radius"). Like WakeField: no __get__."""
+    radius is "Subsystem._radius"). Like WakeField: no __get__.
+
+    A scalar type (float, int, bool, IS_TRUE, OPT_INT) pushes in ONE call,
+    combat_push_scalar, which encodes in C++ by _encode's rules
+    (`_push_scalar`); _encode / _push stay the reference, and a subclass
+    with its own _encode or _push keeps _push."""
 
     def __init__(self, type_=float, key=None) -> None:
         self._type = type_
@@ -481,13 +504,36 @@ class NativeField:
         # The combat_dump key: the field's own name ("Subsystem._radius"
         # dumps as "_radius").
         self._dump_key = self._key.rsplit(".", 1)[-1]
+        cls = type(self)
+        own = (cls._encode is NativeField._encode
+               and cls._push is NativeField._push)
+        # The push code's name, or None: this field takes _push.
+        self._scalar = _PUSH_CODE_NAMES.get(self._type) if own else None
+        self._fast = None           # (field id, push code), at first push
 
     def __set__(self, obj, value) -> None:
         obj.__dict__[self._name] = value
         if _enabled:
             h = obj.__dict__.get("_nslot")
             if h is not None:
-                self._push(obj, h, value)
+                if self._scalar is None:
+                    self._push(obj, h, value)
+                else:
+                    self._push_scalar(obj, h, value)
+
+    def _push_scalar(self, obj, h, value) -> None:
+        """_push for a scalar type in one binding call: the binding raises
+        TypeError / ValueError / OverflowError where _encode does, and
+        ValueError for a stale handle, so the drop is _push's. (An int
+        beyond int64 drops too; through _push it escaped as pybind's
+        TypeError and left the row stale.)"""
+        fast = self._fast
+        if fast is None:
+            fast = self._fast = (_fid(self._key), _push_code(self._scalar))
+        try:
+            _h.combat_push_scalar(h, fast[0], fast[1], value)
+        except (TypeError, ValueError, OverflowError):
+            _drop(obj)
 
     def _encode(self, value):
         t = self._type
@@ -671,7 +717,11 @@ class NativeWrapped:
         if _enabled:
             h = obj.__dict__.get("_nslot")
             if h is not None:
-                self._native._push(obj, h, value)
+                native = self._native
+                if native._scalar is None:
+                    native._push(obj, h, value)
+                else:
+                    native._push_scalar(obj, h, value)
 
 
 class NativeFrozenField(NativeWrapped, FrozenField):
