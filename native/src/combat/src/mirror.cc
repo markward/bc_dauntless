@@ -120,6 +120,12 @@ constexpr FieldInfo kInfo[] = {
     {"_beam_on_countdown", Kind::Subsystem, FieldType::F},
     {"_dwell", Kind::Subsystem, FieldType::F},
     {"has_shields", Kind::Subsystem, FieldType::I},
+    {"_recharge_rate", Kind::Subsystem, FieldType::F},
+    {"_reload_delay", Kind::Subsystem, FieldType::F},
+    {"_reload_timers", Kind::Subsystem, FieldType::FloatList},
+    {"_reload_advanced_at", Kind::Subsystem, FieldType::FloatList},
+    {"_watch_checks", Kind::Subsystem, FieldType::I},
+    {"_power_level", Kind::Subsystem, FieldType::I},
     {"MaxCondition", Kind::Property, FieldType::F},
     {"MaxCondition_set", Kind::Property, FieldType::I},
     {"_firing_chains", Kind::Property, FieldType::IdLists},
@@ -177,6 +183,10 @@ constexpr GlobalInfo kGlobals[] = {
     {"SHIELD_ELLIPSOID_AXIS_SCALE", false,
      &Globals::SHIELD_ELLIPSOID_AXIS_SCALE, nullptr},
     {"LEAD_ACCEL_K", false, &Globals::LEAD_ACCEL_K, nullptr},
+    {"PHASER_DISCHARGE_0", false, &Globals::PHASER_DISCHARGE_0, nullptr},
+    {"PHASER_DISCHARGE_1", false, &Globals::PHASER_DISCHARGE_1, nullptr},
+    {"PHASER_DISCHARGE_2", false, &Globals::PHASER_DISCHARGE_2, nullptr},
+    {"PHASER_DISCHARGE_LEN", true, nullptr, &Globals::PHASER_DISCHARGE_LEN},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));
@@ -230,6 +240,7 @@ template <class R> int64_t* iptr(R&, Field) { return nullptr; }
 template <class R> int64_t* rptr(R&, Field) { return nullptr; }
 template <class R> std::vector<int64_t>* idptr(R&, Field) { return nullptr; }
 template <class R> Vec3* vptr(R&, Field) { return nullptr; }
+template <class R> std::vector<double>* flptr(R&, Field) { return nullptr; }
 
 double* fptr(ObjectRow& r, Field f) {
     switch (f) {
@@ -313,6 +324,8 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_length: return &r._length;
         case Field::_beam_on_countdown: return &r._beam_on_countdown;
         case Field::_dwell: return &r._dwell;
+        case Field::_recharge_rate: return &r._recharge_rate;
+        case Field::_reload_delay: return &r._reload_delay;
         default: return nullptr;
     }
 }
@@ -343,6 +356,8 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::_destroyed: return &r._destroyed;
         case Field::_radiation_out: return &r._radiation_out;
         case Field::_cloak_state: return &r._cloak_state;
+        case Field::_watch_checks: return &r._watch_checks;
+        case Field::_power_level: return &r._power_level;
         default: return nullptr;
     }
 }
@@ -363,6 +378,13 @@ std::vector<int64_t>* idptr(SubsystemRow& r, Field f) {
         case Field::_target_list: return &r._target_list;
         case Field::_children: return &r._children;
         case Field::_ammo_by_slot: return &r._ammo_by_slot;
+        default: return nullptr;
+    }
+}
+std::vector<double>* flptr(SubsystemRow& r, Field f) {
+    switch (f) {
+        case Field::_reload_timers: return &r._reload_timers;
+        case Field::_reload_advanced_at: return &r._reload_advanced_at;
         default: return nullptr;
     }
 }
@@ -737,6 +759,35 @@ std::vector<std::vector<int64_t>> Mirror::get_id_lists(int64_t h,
             std::to_string(h));
     if (f != Field::_firing_chains) bad("field not on this row", f);
     return row->_firing_chains;
+}
+
+void Mirror::set_floats(int64_t h, Field f, const std::vector<double>& v) {
+    if (info(f).type != FieldType::FloatList) bad("not a float-list field", f);
+    visit(h, info(f).kind, [&](auto& row) {
+        auto* p = flptr(row, f);
+        if (!p) bad("field not on this row", f);
+        *p = v;
+    });
+    ++epoch_;
+}
+
+void Mirror::set_float_at(int64_t h, Field f, size_t index, double v) {
+    if (info(f).type != FieldType::FloatList) bad("not a float-list field", f);
+    visit(h, info(f).kind, [&](auto& row) {
+        auto* p = flptr(row, f);
+        if (!p) bad("field not on this row", f);
+        p->at(index) = v;
+    });
+    ++epoch_;
+}
+
+std::vector<double> Mirror::get_floats(int64_t h, Field f) const {
+    if (info(f).type != FieldType::FloatList) bad("not a float-list field", f);
+    return visit(h, info(f).kind, [&](auto& row) {
+        auto* p = flptr(row, f);
+        if (!p) bad("field not on this row", f);
+        return *p;
+    });
 }
 
 void Mirror::set_spheres(int64_t h, std::vector<Sphere> spheres) {

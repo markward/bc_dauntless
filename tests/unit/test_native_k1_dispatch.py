@@ -1506,17 +1506,15 @@ def test_no_getattr_stub_on_live_held_offset_path(monkeypatch):
 
 # ── Round trips Task 2: beam sustain and idle stops as logged writes ─────────
 
-def _spy_fire_records(mp, log, after_writes=False):
+def _spy_fire_records(mp, log):
     """Wrap combat_k1_next: log (kind name, the named bank's object or None,
     the bank's _firing as Python holds it, the FIRE decision or None) for
-    every record. `_firing` is read when the record is returned (before
-    run_k1 applies its writes), or with `after_writes` once the record's own
-    writes are applied: the value its effect (a BANK_STOP's StopFiring)
-    really sees, a logged `_firing` among those writes included."""
+    every record. `_firing` is read when the record is returned: the
+    binding has already applied the record's own writes (C-applied write
+    logs), so it is the value its effect (a BANK_STOP's StopFiring) really
+    sees, a logged `_firing` among those writes included."""
     real = _h.combat_k1_next
-    real_apply = nc.apply_writes
     names = {v: k for k, v in _h.combat_k1_kinds().items()}
-    pending = []        # the log index whose writes run_k1 applies next
 
     def spy():
         rec = real()
@@ -1526,22 +1524,8 @@ def _spy_fire_records(mp, log, after_writes=False):
             bank = nc._registry.get(rec[1])
         firing = bank.__dict__.get("_firing") if bank is not None else None
         log.append((kind, bank, firing, rec[3] if kind == "FIRE" else None))
-        pending[:] = []
-        if after_writes and bank is not None and rec[-1]:
-            # run_k1 applies exactly these writes next (only when there are
-            # any), before anything else can run.
-            pending.append(len(log) - 1)
         return rec
-
-    def apply(writes, walk=None):
-        real_apply(writes, walk)
-        if pending:
-            i = pending.pop()
-            kind, bank, _firing, d = log[i]
-            log[i] = (kind, bank, bank.__dict__.get("_firing"), d)
     mp.setattr(_h, "combat_k1_next", spy)
-    if after_writes:
-        mp.setattr(nc, "apply_writes", apply)
 
 
 def _is_beam_decision(d):
@@ -1703,7 +1687,7 @@ def test_firing_bank_stop_still_records(monkeypatch):
     OFF."""
     log = []
     # _firing as StopFiring sees it: after the record's writes are applied.
-    _spy_fire_records(monkeypatch, log, after_writes=True)
+    _spy_fire_records(monkeypatch, log)
     stops = {}
     real = ws._EnergyWeaponFireMixin._play_fire_sfx
 
@@ -1942,30 +1926,41 @@ class _OffsetBoom(Exception):
 
 
 def test_materialise_raise_applies_later_writes(monkeypatch):
-    """apply_writes fetches the walk's offset object (materialise ->
-    system._live_held_offset()) mid-log. If that raises, the writes logged
-    after it -- already in the mirror -- are still applied, in order, and the
-    exception propagates: the mirror still equals Python."""
+    """The binding's write apply fetches the walk's offset object
+    (materialise -> system._live_held_offset()) mid-log, inside
+    combat_k1_next (C-applied write logs). If that raises, the writes
+    logged after it -- already in the mirror -- are still applied, in order,
+    and the exception propagates out of run_k1 as it is: the mirror still
+    equals Python. (The log-level semantics, notes included, are pinned
+    against apply_writes by tests/unit/test_native_write_apply.py.)"""
     with monkeypatch.context() as mp:
         w = World(mp, True, _DUEL, "k1_materialise_raise")
         phasers = w.ships["Galaxy"].GetPhaserSystem()
         real = _h.combat_k1_next
-        armed = []
-        seen = []
+        real_mat = nc._K1Walk.materialise
+        armed, inside, fired = [], [], []
 
         def boom():
             raise _OffsetBoom("offset")
 
         def spy():
-            rec = real()
-            writes = rec[-1]
-            marks = [i for i, x in enumerate(writes) if type(x[2]) is tuple]
-            if armed and marks:
+            inside.append(True)
+            try:
+                return real()
+            finally:
+                inside.pop()
+
+        def materialise(walk, n, h):
+            # A logged marker of the phasers' walk, first fetched while the
+            # binding applies a record's writes.
+            if armed and inside and walk.walk != n \
+                    and h == phasers.__dict__["_nslot"]:
                 del armed[:]
-                seen.extend(writes[marks[0] + 1:])
+                fired.append(n)
                 mp.setattr(phasers, "_live_held_offset", boom, raising=False)
-            return rec
+            return real_mat(walk, n, h)
         mp.setattr(_h, "combat_k1_next", spy)
+        mp.setattr(nc._K1Walk, "materialise", materialise)
         try:
             phasers.StartFiring(w.ships["Vorcha"])
             for _ in range(5):
@@ -1974,7 +1969,7 @@ def test_materialise_raise_applies_later_writes(monkeypatch):
             armed.append(True)
             with pytest.raises(_OffsetBoom):
                 w.tick()
-            assert ("_force_update", False) in [(f, v) for _h_, f, v in seen]
+            assert fired, "no logged marker reached materialise"
             assert phasers.__dict__["_force_update"] is False
             assert _h.combat_k1_depth() == 0
             mp.delattr(phasers, "_live_held_offset")

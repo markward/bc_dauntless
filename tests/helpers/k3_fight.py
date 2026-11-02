@@ -691,7 +691,11 @@ def weapon_rows(label, systems, weapons):
             hx(w.GetNumReady()) if tube else None,
             hx(off) if isinstance(off, TGPoint3) else repr(off),
             None if off is None else first[id(off)],
-            passive_state.is_asleep(w)))
+            # A missed wake: asleep while NOT at rest (any write of a
+            # WakeField wakes). The raw asleep flag differs by design with
+            # native on: K0 steps every weapon and puts none to sleep
+            # (spec 2026-11-02-native-weapon-state-design.md §4.3).
+            passive_state.is_asleep(w) and not w._passive_at_rest()))
     return rows
 
 
@@ -752,6 +756,22 @@ def round_trips(counts):
             "k2_batched_contacts": counts["k2_batched_contacts"],
             "k2_logged_system_stop": counts["k2_logged_system_stop"],
             "k3_native_attributions": counts["k3_native_attributions"]}
+
+
+def weapon_state_paths(counts):
+    """The native weapon-state counters (spec 2026-11-02-native-weapon-
+    state-design.md §5): weapons K0 stepped natively, writes the bindings
+    applied in C (K0, K1, K2 logs), scalar mirror pushes made in one call."""
+    return {"k0_steps": counts["k0_steps"],
+            "c_applied_writes": counts["c_applied_writes"],
+            "fast_pushes": counts["fast_pushes"]}
+
+
+def check_weapon_state_paths(counts):
+    """Each native weapon-state path ran in the native arm of a fight."""
+    paths = weapon_state_paths(counts)
+    for key, n in paths.items():
+        assert n > 0, (key, paths)
 
 
 def check_native_attributions(counts, tally):

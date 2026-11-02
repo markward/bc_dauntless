@@ -128,6 +128,12 @@ class _Scene:
     """combat_stress, loaded fresh, with the native switch set after the
     load; the op stream, the per-tick record and the full event log."""
 
+    # Record the RAW passive asleep flag of each weapon (only meaningful
+    # with K0 stood down: K0 puts no weapon to sleep, so with it running the
+    # flag differs by design and the record keeps "asleep while NOT at
+    # rest" instead).
+    raw_asleep = False
+
     def __init__(self, mp, env, ships="8"):
         mp.delenv("DAUNTLESS_NATIVE_COMBAT", raising=False)
         mp.delenv("DAUNTLESS_NATIVE_AUDIT", raising=False)
@@ -455,9 +461,15 @@ class _Scene:
                 # What an energy bank's idle StopFiring writes with
                 # `_firing`; K1 logs those writes since round trips Task 2.
                 _t(d.get("_beam_on_countdown")) if energy else None,
-                # Asleep (passive weapons): every `_firing` write, a logged
-                # one included, wakes a sleeping weapon (WakeField).
-                _t(passive_state.is_asleep(w)),
+                # A missed wake (passive weapons): asleep while NOT at rest.
+                # Every `_firing` write, a logged one included, wakes a
+                # sleeping weapon (WakeField). The raw asleep flag differs
+                # by design with native on: K0 steps every weapon and puts
+                # none to sleep (spec 2026-11-02-native-weapon-state-design
+                # .md §4.3).
+                _t(passive_state.is_asleep(w)) if self.raw_asleep else
+                _t(passive_state.is_asleep(w)
+                   and not w._passive_at_rest()),
             ))
         for s in self.ships:
             hull = s.GetHull()
@@ -607,6 +619,24 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
           "events %d presentation calls %d"
           % (ticks_per_frame, nat.counts, nat.walked, nat.fired,
              len(ref.events), presented(ref.calls)))
+
+
+def test_k1_matches_python_with_k0_stood_down(monkeypatch):
+    """K0 stood down (native_combat.k0_weapons answers False, as an audit
+    makes it: the passive walk runs on both arms and sleeps at-rest
+    weapons), so the RAW asleep flag is compared again: a wake that one of
+    K1 / K2's C-applied writes misses (a WAKE-kind field stored without
+    waking its sleeping weapon) shows as a difference."""
+    monkeypatch.setattr(nc, "k0_weapons", lambda ships, dt: False)
+    monkeypatch.setattr(_Scene, "raw_asleep", True)
+    ref, nat = _both(monkeypatch, 1)
+    assert nat.counts["k0_steps"] == 0, nat.counts
+    # Weapons really slept (and so were woken by the fight's writes).
+    weapons = slice(len(ref.systems), len(ref.systems) + len(ref.weapons))
+    asleep = [r[-1] for rows in ref.log for r in rows[weapons]]
+    assert ("bool", True) in asleep and ("bool", False) in asleep
+    assert nat.counts["c_applied_writes"] > 0, nat.counts
+    _round_trips_ran(nat)
 
 
 # ── Review Focus 1: a handler changes state mid-walk ─────────────────────────

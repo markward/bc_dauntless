@@ -41,6 +41,7 @@ import sys
 import weakref
 from typing import Mapping
 
+from engine.appc import passive_state as _passive_state
 from engine.appc.math import TGPoint3
 from engine.appc.passive_power import FrozenField, ThawParentWakeField
 from engine.appc.passive_state import WakeField
@@ -89,12 +90,25 @@ SPHERES = "spheres"
 #: NativeField type for an int-or-None (``TorpedoSystem._selected_slot``):
 #: None pushes -1 (slots are never negative).
 OPT_INT = "opt int"
+#: NativeField type for a value the reader uses as a SEQUENCE INDEX
+#: (``PhaserSystem._power_level``, PHASER_DISCHARGE_BY_POWER_LEVEL[level]):
+#: pushes ``operator.index(value)``, so a float, which the index would
+#: reject (TypeError: rate 0.0), drops the row instead of reading as an int.
+INDEX = "index"
 
 # system name -> (the map's Profile object, its Profile row handle). One row
 # per system map, registered lazily at the first frame push that needs it.
 _profiles: dict = {}
 
 _KIND_SHIFT = 60
+_INT64_LIMIT = 1 << 63
+
+# The one-call scalar push (combat_push_scalar, spec 2026-11-02 §4.2): a
+# NativeField type -> its push code's name in combat_push_codes(). Every
+# other type keeps NativeField._push.
+_PUSH_CODE_NAMES = {float: "PUSH_FLOAT", int: "PUSH_INT", bool: "PUSH_BOOL",
+                    IS_TRUE: "PUSH_IS_TRUE", OPT_INT: "PUSH_OPT_INT"}
+_push_codes: dict = {}
 
 
 # ── The switch ───────────────────────────────────────────────────────────────
@@ -103,12 +117,16 @@ def available() -> bool:
     # The phase-3 bindings too (the torpedo table, the step scan, K4 and the
     # K3 kernel): a .so older than any of them is stale.
     return (_h is not None and hasattr(_h, "combat_register")
+            and hasattr(_h, "combat_push_scalar")
+            and hasattr(_h, "combat_apply_reset_counts")
+            and hasattr(_h, "combat_set_floats")
             and hasattr(_h, "combat_torp_add")
             and hasattr(_h, "combat_step_scan")
             and hasattr(_h, "combat_step_serial")
             and hasattr(_h, "combat_k4_eligible")
             and hasattr(_h, "combat_k3_begin")
-            and hasattr(_h, "combat_set_part_poses"))
+            and hasattr(_h, "combat_set_part_poses")
+            and hasattr(_h, "combat_k0_begin"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -178,13 +196,28 @@ def reset() -> None:
     # was patched must not outlive the patch).
     _k3_watch.clear()
     _k3_watch_seen[0] = -1
+    global _apply_kinds
+    _apply_kinds = None
+    for k in _K0_STEP_REASONS:
+        _k0_step_reasons[k] = 0
+    _k0_clear_caches()
     if available():
+        _h.combat_apply_reset_counts()
+        _h.combat_push_reset_counts()
         _h.combat_k1_reset_counts()
+        # A leaked K2 session and its record's pending writes (the binding
+        # drops them with the session), and a leaked applier context.
+        if _h.combat_k2_open():
+            _h.combat_k2_abandon()
         _h.combat_k2_reset_counts()
+        _h.combat_set_applier(None)
         _h.combat_k4_reset_counts()
         if _h.combat_k3_open():
             _h.combat_k3_abandon()
         _h.combat_k3_reset_counts()
+        if _h.combat_k0_open():
+            _h.combat_k0_abandon()
+        _h.combat_k0_reset_counts()
         _h.combat_step_reset()
 
 
@@ -218,6 +251,20 @@ def counts() -> dict:
     pre-scan never hands a system back for a posed target's offset, which
     is decided in the walk -- those three are counted in
     k1_fire_ask_reasons only.
+
+    "c_applied_writes": the K1/K2/K0 log writes the bindings applied
+    themselves (C-applied write logs, _applier_context). "fast_pushes":
+    scalar NativeField pushes stored by combat_push_scalar.
+
+    K0 (`sim.weapons`, the charging kernel): the kernel's "k0_steps"
+    (weapons stepped natively), "k0_records" ({DONE, DEPLETE_STOP,
+    RELOADED, WATCH, RUN_PYTHON: n}), "k0_python_reasons" (the RUN_PYTHON
+    hand-backs by K0Reason name, k0_charging.h: tractor, no_row,
+    not_weapon_system, stale_row, slot_heal, override, audit, power_level,
+    parent, unrepresentable, unknown_kind; zeros included) and
+    "k0_logged_writes" (writes returned in records), plus the driver's
+    "k0_python_steps" / "k0_python_step_reasons" ({off, nested, audit}:
+    whole steps k0_weapons left to the Python walk).
 
     K2 (`cb.phasers`): the kernel's {"k2_records", "k2_python_ships",
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
@@ -254,7 +301,12 @@ def counts() -> dict:
     c = dict(_counts)
     c.update(_k2_steps)
     c["k2_python_step_reasons"] = dict(_k2_step_reasons)
+    c["k0_python_step_reasons"] = dict(_k0_step_reasons)
+    c["k0_python_steps"] = sum(_k0_step_reasons.values())
     if available():
+        c.update(_h.combat_k0_counts())
+        c.update(_h.combat_apply_counts())
+        c.update(_h.combat_push_counts())
         c.update(_h.combat_k1_counts())
         c.update(_h.combat_k2_counts())
         k4 = _h.combat_k4_counts()
@@ -322,6 +374,14 @@ def _fid(key: str) -> int:
         _field_ids.update(_h.combat_field_names())
         fid = _field_ids[key]
     return fid
+
+
+def _push_code(name: str) -> int:
+    code = _push_codes.get(name)
+    if code is None:
+        _push_codes.update(_h.combat_push_codes())
+        code = _push_codes[name]
+    return code
 
 
 def _kind(name: str) -> int:
@@ -460,7 +520,12 @@ class NativeField:
     """A mirrored attribute. ``type_``: float, int, bool (truthiness),
     IS_TRUE (``is True``), list (ordered ids) or set (unordered ids). ``key``
     names the mirror field when it differs from the attribute (the subsystem
-    radius is "Subsystem._radius"). Like WakeField: no __get__."""
+    radius is "Subsystem._radius"). Like WakeField: no __get__.
+
+    A scalar type (float, int, bool, IS_TRUE, OPT_INT) pushes in ONE call,
+    combat_push_scalar, which encodes in C++ by _encode's rules
+    (`_push_scalar`); _encode / _push stay the reference, and a subclass
+    with its own _encode or _push keeps _push."""
 
     def __init__(self, type_=float, key=None) -> None:
         self._type = type_
@@ -473,13 +538,36 @@ class NativeField:
         # The combat_dump key: the field's own name ("Subsystem._radius"
         # dumps as "_radius").
         self._dump_key = self._key.rsplit(".", 1)[-1]
+        cls = type(self)
+        own = (cls._encode is NativeField._encode
+               and cls._push is NativeField._push)
+        # The push code's name, or None: this field takes _push.
+        self._scalar = _PUSH_CODE_NAMES.get(self._type) if own else None
+        self._fast = None           # (field id, push code), at first push
 
     def __set__(self, obj, value) -> None:
         obj.__dict__[self._name] = value
         if _enabled:
             h = obj.__dict__.get("_nslot")
             if h is not None:
-                self._push(obj, h, value)
+                if self._scalar is None:
+                    self._push(obj, h, value)
+                else:
+                    self._push_scalar(obj, h, value)
+
+    def _push_scalar(self, obj, h, value) -> None:
+        """_push for a scalar type in one binding call: the binding raises
+        TypeError / ValueError / OverflowError where _encode does, and
+        ValueError for a stale handle, so the drop is _push's. (An int
+        beyond int64 drops too; through _push it escaped as pybind's
+        TypeError and left the row stale.)"""
+        fast = self._fast
+        if fast is None:
+            fast = self._fast = (_fid(self._key), _push_code(self._scalar))
+        try:
+            _h.combat_push_scalar(h, fast[0], fast[1], value)
+        except (TypeError, ValueError, OverflowError):
+            _drop(obj)
 
     def _encode(self, value):
         t = self._type
@@ -493,6 +581,13 @@ class NativeField:
             return int(value)
         if t is OPT_INT:
             return -1 if value is None else int(value)
+        if t is INDEX:
+            v = operator.index(value)
+            # combat_set_i takes an int64: a bigger int would escape _call
+            # as pybind's TypeError and leave the row stale.
+            if not -_INT64_LIMIT <= v < _INT64_LIMIT:
+                raise OverflowError("index %d does not fit the int64 row" % v)
+            return v
         if t is OFFSET:
             if isinstance(value, TGPoint3):
                 return [float(value.x), float(value.y), float(value.z)]
@@ -628,6 +723,43 @@ class NativeRefList(NativeField):
             return False
 
 
+class NativeFloatList(NativeField):
+    """An ordered list of floats (TorpedoTube._reload_timers /
+    _reload_advanced_at), pushed whole, every bit kept. The value must be a
+    list (its readers store into it by index) of ints and floats (its
+    readers do arithmetic on them); anything else drops the row. An
+    in-place ``list[i] = v`` is invisible to a descriptor: each such
+    writer calls ``push_field`` after mutating."""
+
+    def __init__(self, key=None) -> None:
+        super().__init__(list, key)
+
+    def _encode(self, value):
+        if type(value) is not list:
+            raise TypeError("not a list: %r" % type(value).__name__)
+        out = []
+        for x in value:
+            if isinstance(x, (str, bytes)) or not isinstance(x, (int, float)):
+                raise TypeError("not a number: %r" % type(x).__name__)
+            out.append(float(x))
+        return out
+
+    def _push(self, obj, h, value) -> None:
+        try:
+            v = self._encode(value)
+        except (TypeError, ValueError, OverflowError):
+            _drop(obj)
+            return
+        _call(obj, _h.combat_set_floats, h, _fid(self._key), v)
+
+    def _matches(self, value, mirrored) -> bool:
+        try:
+            v = self._encode(value)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return _hexes(v) == _hexes(mirrored)
+
+
 class NativeSlotMap(NativeRefList):
     """TorpedoSystem._ammo_by_slot, a {slot: ammo} dict: pushed as the
     interleaved list [slot, Ammo handle, slot, Ammo handle, ...] in dict
@@ -663,7 +795,11 @@ class NativeWrapped:
         if _enabled:
             h = obj.__dict__.get("_nslot")
             if h is not None:
-                self._native._push(obj, h, value)
+                native = self._native
+                if native._scalar is None:
+                    native._push(obj, h, value)
+                else:
+                    native._push_scalar(obj, h, value)
 
 
 class NativeFrozenField(NativeWrapped, FrozenField):
@@ -697,6 +833,60 @@ class NativeThawParentWakeField(NativeWrapped, ThawParentWakeField):
     def __set__(self, obj, value) -> None:
         ThawParentWakeField.__set__(self, obj, value)
         self._after_set(obj, value)
+
+
+#: `_watch_checks` of a pulse weapon whose watcher it does not own: K0 then
+#: always hands the watcher line to Python (a WATCH record), whatever it is.
+WATCH_ALWAYS = -1
+
+
+def _owns_watcher(weapon, watcher) -> bool:
+    from engine.appc.float_range_watcher import FloatRangeWatcher
+    return type(watcher) is FloatRangeWatcher \
+        and watcher.__dict__.get("_owner") is weapon
+
+
+class ChargeWatcherField:
+    """PulseWeapon._charge_watcher: keeps `_watch_checks` (what K0 reads to
+    decide whether the watcher line needs Python) true to the watcher the
+    weapon holds, when one is assigned after construction too. No __get__:
+    reads are plain instance-dict reads.
+
+    A plain FloatRangeWatcher with no owner (or this weapon) is adopted: its
+    `_owner` becomes the weapon, so its check adds and removes push the
+    count. Anything else -- a subclass (its own `_update`, which K0's
+    logged `_value` store would skip), a watcher another weapon owns --
+    sets WATCH_ALWAYS: K0 never stands in for it (one naming this weapon
+    as its owner is released, so its checks cannot push here). A previous
+    watcher this weapon owned is released (its checks no longer push here).
+    Cost: only at assignment; the switch-off path stores the same
+    values."""
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
+
+    def __set__(self, obj, value) -> None:
+        from engine.appc.float_range_watcher import FloatRangeWatcher
+        d = obj.__dict__
+        old = d.get(self._name)
+        d[self._name] = value
+        if old is not None and old is not value:
+            od = getattr(old, "__dict__", None)
+            if od is not None and od.get("_owner") is obj:
+                del od["_owner"]        # back to the class default, None
+        if type(value) is FloatRangeWatcher \
+                and value.__dict__.get("_owner") in (None, obj):
+            if value.__dict__.get("_owner") is None:
+                value._owner = obj
+            obj._watch_checks = len(value._checks)
+        else:
+            # Not adopted: if it names this weapon as its owner anyway
+            # (FloatRangeWatcher(owner=weapon)), release it, or its next
+            # Add/RemoveRangeCheck would overwrite WATCH_ALWAYS.
+            vd = getattr(value, "__dict__", None)
+            if vd is not None and vd.get("_owner") is obj:
+                del vd["_owner"]        # back to the class default
+            obj._watch_checks = WATCH_ALWAYS
 
 
 class PartKeyField(NativeField):
@@ -1929,6 +2119,14 @@ def _globals() -> dict:
     g["LEAD_ACCEL_K"] = float(projectiles._LEAD_ACCEL_K)
     # K1's 0.33 s timer gate: a class constant of WeaponSystem.
     g["FIRE_TIMER_THRESHOLD"] = float(ws.WeaponSystem.FIRE_TIMER_THRESHOLD)
+    # K0: the phaser drain by power level, read at use (a module constant a
+    # test may patch). Three entries, 0.0 past the table's end, and its
+    # length: the kernel answers only the indices Python's table would.
+    table = ws.PHASER_DISCHARGE_BY_POWER_LEVEL
+    for i in range(3):
+        g["PHASER_DISCHARGE_%d" % i] = (float(table[i]) if i < len(table)
+                                        else 0.0)
+    g["PHASER_DISCHARGE_LEN"] = len(table)
     return g
 
 
@@ -2422,6 +2620,8 @@ def audit_mirror() -> None:
                 _audit_posed(obj, row, name, expected["has_posed_parts"])
         elif (h >> _KIND_SHIFT) == _kind("Subsystem"):
             _audit_slot(obj, row, name)
+            if "_watch_checks" in d:
+                _audit_watch_checks(obj, row, name)
     _audit_torpedoes()
     _audit_globals()
     if _h.combat_part_gen() != _part_gen:
@@ -2487,6 +2687,22 @@ def _audit_slot(sub, row, name) -> None:
     if leaf is None or _part_slot(leaf, _pose_names(ship), sub) \
             != row["part_slot"]:
         _failures.append((name, "part_slot"))
+
+
+def _audit_watch_checks(weapon, row, name) -> None:
+    """A pulse weapon's `_watch_checks` is its charge watcher's check
+    count, kept by the watcher (FloatRangeWatcher._owner): the row must hold
+    the count the watcher has NOW, so a check added or removed behind the
+    watcher's methods is caught, not only a missed push. A watcher the
+    weapon does not own (ChargeWatcherField) holds WATCH_ALWAYS."""
+    watcher = weapon.__dict__.get("_charge_watcher")
+    if not _owns_watcher(weapon, watcher):
+        want = WATCH_ALWAYS
+    else:
+        checks = getattr(watcher, "_checks", None)
+        want = len(checks) if isinstance(checks, dict) else None
+    if want is None or row["_watch_checks"] != want:
+        _failures.append((name, "_watch_checks"))
 
 
 def _audit_set(pSet, row, name) -> None:
@@ -2601,9 +2817,10 @@ def now() -> float:
 # native/src/combat/include/dauntless/combat/k1_fire_control.h is the
 # contract. The kernel walks host_loop._pump_held_weapons /
 # WeaponSystem.update_weapons over the mirror and returns ONE record per
-# combat_k1_next(); run_k1 applies the record's write log (the decision-path
-# writes the kernel already made in the mirror) and then does the one thing
-# only Python may do, then asks for the next record.
+# combat_k1_next(); the binding applies the record's write log (the
+# decision-path writes the kernel already made in the mirror; C-applied
+# write logs, below apply_writes) and run_k1 then does the one thing only
+# Python may do, then asks for the next record.
 
 _k1_kind_ids = None
 _ws = None
@@ -2652,7 +2869,8 @@ class _K1Walk:
         `h`. The kernel started it with no record (k1_fire_control.h, THE
         WALK START); the first Python that reaches it calls this -- run_k1
         on the walk's first record, before that record's own Python, and
-        apply_writes on a logged write naming the walk's offset
+        the write apply (the binding's, or apply_writes) on a logged write
+        naming the walk's offset
         (("walk_offset", n, h)), whichever comes first. Once per walk:
         pins the walk (pin_system) and fetches update_weapons' `offset =
         self._live_held_offset()` -- today's walk-start Python, in today's
@@ -2754,6 +2972,7 @@ def _quiet_setter(cls, name) -> tuple:
 
         def setter(obj, value, _name=name):
             obj.__dict__[_name] = value
+        setter._plain_store = True      # _ApplyKinds: the C path's store
     else:
         raise TypeError("combat K1: no quiet write for %s.%s"
                         % (cls.__name__, name))
@@ -2768,6 +2987,13 @@ def apply_writes(writes, walk=None) -> None:
     walk, system) is that walk's own offset object (_K1Walk.materialise:
     the first write naming a walk not yet materialised fetches it). `walk`
     maps handles through its pin set; without one, through the registry.
+
+    THE REFERENCE: the K1/K2 drivers no longer call this -- the bindings
+    apply each record's log themselves through the applier context
+    (_applier_context, native/src/host/combat_write_apply.h), which must
+    equal this function write for write, exceptions included
+    (tests/unit/test_native_write_apply.py). It stays for the tests and for
+    a binding with no context installed.
 
     A RAISE PART-WAY: the kernel has already written every value in the
     log to the mirror, and run_k1's abandon cannot undo a delivered write
@@ -2841,6 +3067,73 @@ def _apply_rest(writes, walk, failed, exc) -> None:
                              "%r" % (value[1], e2))
                 continue
         _apply_write(walk, h, field, value)
+
+
+# ── C-applied write logs (native weapon state, Task 1) ──────────────────────
+#
+# native/src/host/combat_write_apply.h is the contract. The drivers install
+# an applier context for each session (combat_set_applier) and the bindings
+# apply every record's write log themselves, exactly as apply_writes above
+# (kept: the reference, and the path with no context). The apply kinds
+# (combat_apply_kinds):
+APPLY_PLAIN, APPLY_REF, APPLY_REFS, APPLY_WAKE, APPLY_PYTHON, APPLY_SLOT, \
+    APPLY_WATCHER = range(7)
+
+
+class _ApplyKinds(dict):
+    """(class, field) -> apply kind, computed on first ask from the
+    `_quiet_setter` in force when this mapping was made (`source`): its
+    plain store is PLAIN / REF / REFS by its value kind, a WakeField's own
+    __set__ is WAKE (C stores, then passive_state.wake), any other setter
+    PYTHON, kept in `setters` as (setter, value kind) for the binding to
+    call. A lookup that raises (no quiet write) is not cached, as in
+    _quiet_setter."""
+
+    __slots__ = ("source", "setters")
+
+    def __init__(self, source) -> None:
+        super().__init__()
+        self.source = source
+        self.setters = {}
+
+    def __missing__(self, key):
+        cls, name = key
+        setter, vkind = self.source(cls, name)
+        conv = (APPLY_REF if vkind is _REF else
+                APPLY_REFS if vkind is _REFS else APPLY_PLAIN)
+        if getattr(setter, "_plain_store", False):
+            kind = conv
+        elif (conv == APPLY_PLAIN
+              and getattr(setter, "__func__", None) is WakeField.__set__
+              and getattr(setter.__self__, "_name", None) == name):
+            kind = APPLY_WAKE
+        else:
+            kind = APPLY_PYTHON
+            self.setters[key] = (setter, conv)
+        self[key] = kind
+        return kind
+
+
+_apply_kinds = None
+
+
+def _applier_context(walk) -> tuple:
+    """combat_set_applier's context for a session walking with `walk`:
+    (pins, registry, walk, kinds, wake, python_setters). The kinds mapping
+    lives until reset() or until `_quiet_setter` is replaced (a test's
+    tracing wrapper); the binding caches its answers per (type, field)
+    until it is handed another one.
+
+    So the apply kinds are FIXED for the session (in practice for the
+    process): a descriptor patched onto a class after its (type, field)
+    was first asked keeps the old kind, exactly as Python's own
+    `_quiet_setters` cache keeps the old setter per class."""
+    global _apply_kinds
+    kinds = _apply_kinds
+    if kinds is None or kinds.source is not _quiet_setter:
+        kinds = _apply_kinds = _ApplyKinds(_quiet_setter)
+    return (walk.pins, _registry, walk, kinds, _passive_state.wake,
+            kinds.setters)
 
 
 def _k1_decision(bank, decision, walk) -> tuple:
@@ -2933,8 +3226,11 @@ def _k1_answer(rec, walk, dt):
 
 def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     """Drive the kernel's top session (begun by k1_pump / k1_system) until
-    DONE. Each record: apply its writes, materialise the walk on its first
-    record (_K1Walk.materialise), then act -- the Fire effect, a StopFiring,
+    DONE. Each record: its writes are applied by the binding before it is
+    returned (the session's applier context, _applier_context; the
+    previous context -- an outer session's -- is restored at the end),
+    materialise the walk on its first record (_K1Walk.materialise), then
+    act -- the Fire effect, a StopFiring,
     the FIRE_FAILED post, the dumb fire, a handed-back walk start, a whole
     system in Python, or an ASK answered in Python. `ships` and
     `pump_body(ship, getter_index)` serve a pump's RUN_PYTHON, `system` a
@@ -2947,7 +3243,9 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     walk = _K1Walk()
     if system is not None:
         walk.pin_system(system)
+    prev = _UNSET
     try:
+        prev = _h.combat_set_applier(_applier_context(walk))
         while True:
             try:
                 rec = _h.combat_k1_next()
@@ -2955,9 +3253,12 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
                 # walk.walked is the system of the last walk Python saw
                 # (materialised): the current walk when it has handed back
                 # a record, which a dropped walked-system row needs (only a
-                # record's Python can drop one), else an earlier walk.
+                # record's Python can drop one), else an earlier walk. A
+                # raise from applying the record's writes is not the
+                # kernel's: it propagates as it is (apply_writes').
                 walked = walk.walked
-                if walked is not None and "_nslot" not in walked.__dict__:
+                if walked is not None and "_nslot" not in walked.__dict__ \
+                        and not _h.combat_apply_raised():
                     # k1_fire_control.h, PROTOCOL INVARIANT: no Python
                     # resume point exists mid-update_weapons.
                     raise RuntimeError(
@@ -2968,9 +3269,6 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
                         % (walked.GetName(),)) from e
                 raise
             kind = rec[0]
-            writes = rec[-1]
-            if writes:
-                apply_writes(writes, walk)
             tag = rec[-2]
             if kind == WALK_START:
                 # A walk start the walk check handed back (an instance
@@ -3025,6 +3323,9 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     except BaseException:
         _h.combat_k1_abandon()
         raise
+    finally:
+        if prev is not _UNSET:
+            _h.combat_set_applier(prev)
 
 
 def k1_pump(ships, dt, pump_body) -> None:
@@ -3081,13 +3382,314 @@ def _k1_system_ships(system) -> list:
     return ships
 
 
+# ── K0: the native charging kernel's driver (native weapon state) ─────────
+#
+# native/src/combat/include/dauntless/combat/k0_charging.h is the contract;
+# spec docs/superpowers/specs/2026-11-02-native-weapon-state-design.md §4.3.
+# host_loop._advance_weapons(ships, dt) asks k0_weapons first: K0 steps
+# every weapon of every ship from the mirror (the per-tick model: the awake
+# list is never consulted or changed, and nothing is put to sleep) and
+# stops at each thing only Python may do; the binding applies the record's
+# write log (C-applied write logs, _applier_context) before returning it,
+# and run_k0 does that one thing:
+#   DEPLETE_STOP  bank.StopFiring()            (the sound; `_depleted` was
+#                                               logged before it)
+#   RELOADED      tube._broadcast_reload()     (ET_TORPEDO_RELOAD)
+#   WATCH         the pulse cannon's watcher line,
+#                 `_charge_watcher._update(GetChargePercentage())`
+#   RUN_PYTHON    a weapon's UpdateCharge / UpdateReload (isinstance
+#                 dispatch, as step_every_weapon), or a whole ship: what
+#                 the passive walk runs for it (passive_weapons.advance of
+#                 that ship with passive state on, step_every_weapon off)
+#
+# WHO A RECORD NAMES. A record names its weapon by handle and by position
+# in the begin snapshot (ship_pos, group, index: the ship list run_k0 holds,
+# the group getter, GetWeapon(index)). A handle with a live row (or one the
+# walk already pinned) is that object. A weapon the mirror cannot name (-2:
+# unregistered, or None in `_children`) or whose row went stale is found by
+# position, through the same getters the passive walk calls -- the object
+# at that index at begin unless a handler re-ordered that system's children
+# mid-walk (no live trigger does; the passive walk's stale-registry rule has
+# the same blind spot).
+#
+# THE OVERRIDE GUARD. K0 computes what the walk's methods would; a test,
+# tool or mod replacing one must still be obeyed (WSM §7(a) A6):
+#   class     _K0_METHODS (A6, plus the walk's GetNumWeapons / GetWeapon /
+#             GetNumChildSubsystems / GetChildSubsystem) on a weapon-kind
+#             class, _K0_SHIP_METHODS on a ShipClass, _K0_AMMO_METHODS on a
+#             TorpedoAmmoType: every entry the names have anywhere in the
+#             class's MRO (_k0_chain: a super() call reaches the entries
+#             below the first) against the stock class of its role's
+#             import-time snapshot (k0_snapshot_stock, k0_snapshot_ship).
+#             The binding keeps each
+#             class's verdict while CPython's version tag of the class is
+#             unchanged (an attribute assignment on it or a base changes
+#             it); a class with no valid verdict comes back from begin and
+#             _k0_flag computes it here;
+#   instance  an instance attribute named in _K0_SHIP_PATCHES /
+#             _K0_SYSTEM_PATCHES / _K0_WEAPON_PATCHES: the cheap subset of
+#             A6 that tests, tools and SWIG patch -- the update entry points
+#             on a weapon (UpdateCharge / UpdateReload; SWIG's
+#             ReloadTorpedo), the power reads on a system (tests patch
+#             `system.IsOn`), the group getters on a ship. An instance patch
+#             of the rest is NOT looked for: every name is a dict probe of
+#             every weapon, every tick (~20 ns each; 630 weapons at 64
+#             ships), for names nothing patches. StopFiring and
+#             _broadcast_reload need no guard, at the instance or on the
+#             class (_K0_CALLED_IN_PYTHON): K0's records CALL them in
+#             Python. The binding re-probes a dict only when
+#             it changed (its PEP 509 version), so an idle weapon costs no
+#             probe.
+# The binding's begin scan applies them (host_bindings.cc, k0_scan): a
+# flagged or patched ship or weapon system -> the ship whole (override); a
+# flagged or patched weapon -> that weapon at its turn (override); in a
+# torpedo system one such tube, or a flagged magazine, sends every tube.
+#
+# THE BEGIN-SNAPSHOT BOUNDARY. Both checks are decided once, at begin, for
+# the whole session: a patch a record's handler makes DURING a session (a
+# class attribute, an instance attribute on a weapon later in the walk)
+# takes effect at the next session, one tick later; the rest of this walk
+# steps from the begin verdicts. K1 is stricter only in where it looks
+# again: it rechecks per walk (each system's), so a handler's patch is seen
+# by the next walk of the same tick.
+
+# WSM §7(a) A6 names two more, StopFiring and _broadcast_reload, that the
+# guard does NOT look for, on the class as at the instance: K0 never stands
+# in for them -- its DEPLETE_STOP / RELOADED records CALL them in Python (a
+# holding tractor, whose power-loss stop is the other caller, is handed
+# back) -- so a patch of either is honoured with the walk still native.
+_K0_CALLED_IN_PYTHON = ("StopFiring", "_broadcast_reload")
+_K0_METHODS = (
+    # WSM §7(a) A6, but _K0_CALLED_IN_PYTHON.
+    "UpdateCharge", "UpdateReload", "_discharge_rate_per_second",
+    "GetParentSubsystem", "IsOn", "GetNormalPowerPercentage",
+    "GetPowerPercentage", "GetNormalPowerWanted", "GetConditionPercentage",
+    "GetMaxCondition", "GetPowerLevel", "GetChargePercentage",
+    "_passive_at_rest", "_ensure_slots", "ReloadTorpedo",
+    "_reload_denied_by_ammo", "_parent_ammo", "GetCurrentAmmoType",
+    "GetCurrentAmmoSlot", "GetAvailable", "_rounds_loaded_systemwide",
+    "GetNumReady",
+    # The walk's own (passive_weapons._groups' systems).
+    "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
+    "GetChildSubsystem")
+_K0_SHIP_METHODS = ("GetPhaserSystem", "GetPulseWeaponSystem",
+                    "GetTractorBeamSystem", "GetTorpedoSystem")
+_K0_AMMO_METHODS = ("GetAvailable",)
+_K0_SHIP_PATCHES = _K0_SHIP_METHODS
+_K0_SYSTEM_PATCHES = ("IsOn", "GetNormalPowerPercentage", "GetPowerLevel")
+_K0_WEAPON_PATCHES = ("UpdateCharge", "UpdateReload", "ReloadTorpedo")
+# k0_weapons' own stand-downs: "off" (native off), "nested" (a K0 session is
+# already open: a record's handler re-entered the weapons step), "audit"
+# (DAUNTLESS_NATIVE_AUDIT or DAUNTLESS_PASSIVE_AUDIT: the audits compare the
+# Python walk, which K0 would bypass).
+_K0_STEP_REASONS = ("off", "nested", "audit")
+_k0_step_reasons = dict.fromkeys(_K0_STEP_REASONS, 0)
+# role -> (stock class, names, the stock class's resolution of them); role
+# is a weapon kind 1..8, "ship" or "ammo".
+_k0_stock: dict = {}
+_k0_kind_ids = None
+# begin's ctx with no fresh verdicts (the common case: every class seen).
+_K0_NO_FRESH: dict = {}
+_k0_ctx = (_K0_NO_FRESH, _K0_SHIP_PATCHES, _K0_SYSTEM_PATCHES,
+           _K0_WEAPON_PATCHES)
+
+
+def _k0_clear_caches() -> None:
+    if _h is not None and hasattr(_h, "combat_k0_clear_caches"):
+        _h.combat_k0_clear_caches()
+
+
+def _k0_chain(cls, names) -> tuple:
+    """Every entry `names` have in `cls`'s MRO, class by class: (name, the
+    class's own attribute), in MRO order. Not only the first one each name
+    resolves to: a method can reach the entries below it through super()
+    (PulseWeapon.UpdateCharge and TractorBeam.UpdateCharge call
+    `super().UpdateCharge`, so a patch of _EnergyWeaponFireMixin's changes
+    what they do while their own entries stay the same)."""
+    return tuple((n, d[n]) for klass in cls.__mro__ for d in (vars(klass),)
+                 for n in names if n in d)
+
+
+def k0_snapshot_stock(classes) -> None:
+    """weapon_subsystems, as it finishes defining its classes, passes
+    {weapon_kind: stock class, "ammo": TorpedoAmmoType}: snapshot every
+    entry the K0 names have in each one's MRO (_k0_chain), before any test,
+    tool or mod can patch one."""
+    for role, cls in classes.items():
+        names = _K0_AMMO_METHODS if role == "ammo" else _K0_METHODS
+        _k0_stock[role] = (cls, names, _k0_chain(cls, names))
+    _k0_clear_caches()
+
+
+def k0_snapshot_ship(ship_class) -> None:
+    """ships.py, as it finishes defining ShipClass (with k1_snapshot_ship)."""
+    _k0_stock["ship"] = (ship_class, _K0_SHIP_METHODS,
+                         _k0_chain(ship_class, _K0_SHIP_METHODS))
+    _k0_clear_caches()
+
+
+def _k0_role(cls):
+    kind = _weapon_kind_of_class(cls)
+    if kind:
+        return kind
+    for role in ("ship", "ammo"):
+        stock = _k0_stock.get(role)
+        if stock is not None and issubclass(cls, stock[0]):
+            return role
+    return None
+
+
+def _k0_flag(cls) -> int:
+    """1 when any class in `cls`'s MRO holds a K0 name of its role that the
+    stock class's import-time snapshot does not hold, or holds it with
+    another value (_k0_chain: an override in a subclass, a patch of the
+    stock class or of a base a super() call reaches); 0 otherwise (a class
+    of no role: the kernel decides it, a ship of another class is
+    not_weapon_system). Computed afresh: the binding caches it per class
+    version tag (a patch of a base changes every subclass's tag too)."""
+    stock = _k0_stock.get(_k0_role(cls))
+    if stock is None:
+        return 0
+    _stock_cls, names, snapshot = stock
+    return int(_k0_chain(cls, names) != snapshot)
+
+
+def _k0_kinds() -> tuple:
+    global _k0_kind_ids
+    if _k0_kind_ids is None:
+        k = _h.combat_k0_kinds()
+        _k0_kind_ids = tuple(k[n] for n in (
+            "DONE", "DEPLETE_STOP", "RELOADED", "WATCH", "RUN_PYTHON"))
+    return _k0_kind_ids
+
+
+def _k0_python(why: str) -> bool:
+    _k0_step_reasons[why] += 1
+    return False
+
+
+def k0_weapons(ships, dt) -> bool:
+    """host_loop._advance_weapons(ships, dt) through K0. False: K0 did not
+    run (counts()["k0_python_step_reasons"]) and the caller runs today's
+    Python walk; True: every weapon of every ship was stepped."""
+    if not _enabled:
+        return _k0_python("off")
+    if _audit or _passive_state.audit_enabled():
+        return _k0_python("audit")
+    if _h.combat_k0_open():
+        return _k0_python("nested")
+    global _ws, _step_memo, _k0_ctx
+    if _ws is None:
+        from engine.appc import weapon_subsystems
+        from engine.core import step_memo
+        _ws, _step_memo = weapon_subsystems, step_memo
+    if type(ships) is not list:
+        ships = list(ships)
+    # The clock every tube of this step reads (WSM D5): one read, Python's
+    # own _game_time (its failure is its 0.0 and its log, WSM A10).
+    now_ = _ws._game_time()
+    # A class with no valid verdict (new, or patched since): computed here,
+    # and the scan runs again with it (a flagged ship or system is not
+    # looked into, so a class below it can surface only on a later pass;
+    # bounded by the class depth).
+    ctx = _k0_ctx
+    fresh = None
+    for _attempt in range(8):
+        missing = _h.combat_k0_begin(ships, dt, now_, ctx)
+        if missing is None:
+            break
+        if fresh is None:
+            fresh = {}
+            ctx = (fresh,) + _k0_ctx[1:]
+        for cls in missing:
+            fresh[cls] = _k0_flag(cls)
+    else:
+        raise RuntimeError("combat K0: no guard flag for %r" % (missing,))
+    run_k0(ships, dt)
+    return True
+
+
+def _k0_weapon(rec, ships, walk):
+    """The weapon a record names (see WHO A RECORD NAMES), or None."""
+    a = rec[1]
+    if a >= 0:
+        o = walk.pins.get(a)
+        if o is not None:
+            return o
+        o = _registry.get(a)
+        if o is not None and o.__dict__.get("_nslot") == a:
+            walk.pins[a] = o
+            return o
+    from engine.appc import passive_weapons
+    group = passive_weapons._groups(ships[rec[2]])[rec[3]]
+    if group is None:
+        return None
+    return group.GetWeapon(rec[4])
+
+
+def _k0_ship_python(ship, dt) -> None:
+    """What host_loop._advance_weapons' Python runs for this one ship."""
+    from engine.appc import passive_weapons
+    if _passive_state.enabled():
+        passive_weapons.advance((ship,), dt)
+    else:
+        passive_weapons.step_every_weapon(ship, dt)
+
+
+def run_k0(ships, dt) -> None:
+    """Drive the open K0 session to DONE (see the section comment). On any
+    exception the session is abandoned (the records already returned were
+    applied; the kernel undoes what it had not returned) and re-raised --
+    the setup before the first record included, or the open session would
+    stand every later tick down as `nested`. The applier context in force
+    before (an outer K1 session's) is restored."""
+    prev = _UNSET
+    try:
+        DONE, DEPLETE_STOP, RELOADED, WATCH, RUN_PYTHON = _k0_kinds()
+        walk = _K1Walk()
+        prev = _h.combat_set_applier(_applier_context(walk))
+        while True:
+            rec = _h.combat_k0_next()
+            kind = rec[0]
+            if kind == DONE:
+                break
+            if kind == RUN_PYTHON and rec[3] < 0:
+                _k0_ship_python(ships[rec[2]], dt)
+                continue
+            w = _k0_weapon(rec, ships, walk)
+            if kind == DEPLETE_STOP:
+                w.StopFiring()
+            elif kind == RELOADED:
+                w._broadcast_reload()
+            elif kind == WATCH:
+                w._charge_watcher._update(w.GetChargePercentage())
+            elif kind == RUN_PYTHON:
+                # step_every_weapon's dispatch: None (a None child) and
+                # anything else are skipped.
+                if isinstance(w, _ws.TorpedoTube):
+                    w.UpdateReload(dt)
+                elif isinstance(w, _ws._EnergyWeaponFireMixin):
+                    w.UpdateCharge(dt)
+            else:
+                raise RuntimeError("combat K0: unknown record %r" % (rec,))
+        _h.combat_k0_end()
+    except BaseException:
+        if _h.combat_k0_open():
+            _h.combat_k0_abandon()
+        raise
+    finally:
+        if prev is not _UNSET:
+            _h.combat_set_applier(prev)
+
+
 # ── K2: the native beam kernel's driver (phase 2) ───────────────────────────
 #
 # native/src/combat/include/dauntless/combat/k2_beams.h is the contract. The
 # kernel walks host_loop's `cb.phasers` loop (host_loop._phaser_step_ship)
-# over the mirror and returns ONE record per combat_k2_next(); run_k2 applies
-# the record's write log (the `_dwell` writes the kernel already made in the
-# mirror), then does the one thing only Python may do: a StopFiring, a
+# over the mirror and returns ONE record per combat_k2_next(); the binding
+# applies the record's write log (the `_dwell` writes the kernel already
+# made in the mirror; with queued resting contacts, _k2_deliver has it apply
+# them in segments), then run_k2 does the one thing only Python may do: a StopFiring, a
 # contact's effect (host_loop._phaser_contact: beam_contact or apply_hit, the
 # damage arithmetic included), a whole ship or one bank of the loop body, or
 # the answer to a question. After each it re-sends the per-step context the
@@ -3631,34 +4233,37 @@ def _k2_contact(rec, walk, dt, ship_instances) -> None:
     _k2_run_contact(rec[1:15], walk, dt, ship_instances)
 
 
-def _k2_deliver(queued, writes, walk, dt, ship_instances):
+def _k2_deliver(queued, pending, walk, dt, ship_instances) -> None:
     """A record's queued resting contacts (k2_beams.h, RESTING CONTACTS), in
-    walk order, each after the writes logged before it (its `at`), BEFORE
-    the record's own effect. Returns the writes still to apply.
+    walk order, each after the writes logged before it (its `at`), then the
+    rest of the record's writes, BEFORE the record's own effect. The
+    writes are the record's `pending` ones, still in the binding
+    (combat_write_apply.h), applied in segments by combat_apply_writes.
 
     A contact's Python that raises (its presentation: beam_contact,
     world_to_body, hit_vfx.spawn, GetMaxDamage, ...) must not strand the
     rest of the record's writes: the kernel already made them in the mirror
     and dropped their undo when it returned the record, and run_k2's
     abandon only ends the session. So every write still outstanding in
-    this record is applied, in order, through apply_writes, and then the
-    contact's exception is re-raised (if that apply itself raises, its
-    exception propagates with the contact's as its __context__)."""
+    this record is applied, in order, and then the contact's exception is
+    re-raised (if that apply itself raises, its exception propagates with
+    the contact's as its __context__)."""
     done = 0
     for q in queued:
         at = q[0]
         if at > done:
-            apply_writes(writes[done:at], walk)
+            _h.combat_apply_writes(at)
             done = at
         try:
             # A queued contact's shields_block is None when Python
             # answered it.
             _k2_run_contact(q[1:], walk, dt, ship_instances)
         except BaseException:
-            if done < len(writes):
-                apply_writes(writes[done:], walk)
+            if done < pending:
+                _h.combat_apply_writes()
             raise
-    return writes[done:] if done else writes
+    if done < pending:
+        _h.combat_apply_writes()
 
 
 def _k2_run_contact(c, walk, dt, ship_instances) -> None:
@@ -3730,9 +4335,11 @@ def _k2_answer(rec, walk, cx, dt, ship_instances):
 
 
 def run_k2(ships, dt, ship_instances, cx) -> None:
-    """Drive the open K2 session until DONE. Each record: run the resting
-    contacts queued on it and apply its writes, in the kernel's order
-    (_k2_deliver), then act -- a StopFiring, a damage pulse, a whole ship in
+    """Drive the open K2 session until DONE. Each record: its writes are
+    applied by the binding (the session's applier context,
+    _applier_context) -- before it is returned, or, when resting contacts
+    are queued on it, interleaved with them in the kernel's order
+    (_k2_deliver) -- then act -- a StopFiring, a damage pulse, a whole ship in
     Python, or an ASK answered in Python -- then re-send whatever context
     the Python changed (once per record: a resting contact changes none).
     On any exception the session is abandoned (the kernel's mirror still
@@ -3740,15 +4347,15 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
     protocol-invariant RuntimeError (k2_beams.h) included."""
     DONE, SYSTEM_STOP, BANK_STOP, CONTACT, RUN_PYTHON, ASK = _k2_kinds()
     walk = _K2Walk()
+    prev = _UNSET
     try:
+        prev = _h.combat_set_applier(_applier_context(walk))
         while True:
             rec = _h.combat_k2_next()
             kind = rec[0]
-            queued, writes = rec[-2], rec[-1]
+            queued = rec[-2]
             if queued:
-                writes = _k2_deliver(queued, writes, walk, dt, ship_instances)
-            if writes:
-                apply_writes(writes, walk)
+                _k2_deliver(queued, rec[-1], walk, dt, ship_instances)
             if kind == ASK:
                 gen = _part_gen
                 answer = _k2_answer(rec, walk, cx, dt, ship_instances)
@@ -3773,6 +4380,9 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
     except BaseException:
         _h.combat_k2_abandon()
         raise
+    finally:
+        if prev is not _UNSET:
+            _h.combat_set_applier(prev)
 
 
 def _k2_step_fallback(ship_instances):

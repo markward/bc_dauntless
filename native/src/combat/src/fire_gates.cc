@@ -156,15 +156,15 @@ CanFireResult energy_can_fire(const Mirror& m, int64_t h, bool pulse) {
     return r;
 }
 
-// TorpedoTube._ammo_exhausted (weapon_subsystems.py:3232): the parent
-// TorpedoSystem's selected ammo type is a FINITE magazine with nothing left.
-bool ammo_exhausted(const Mirror& m, const SubsystemRow* parent) {
-    // _parent_ammo: parent.GetCurrentAmmoType() (TorpedoSystem only).
-    if (parent == nullptr) return false;
+}  // namespace
+
+const AmmoRow* current_ammo_type(const Mirror& m,
+                                 const SubsystemRow& torpedo_system) {
+    const SubsystemRow* parent = &torpedo_system;
     if (parent->weapon_kind != kTorpedoSystem)
         fall_back("tube parent is not a torpedo system");
     const std::vector<int64_t>& slots = parent->_ammo_by_slot;  // [slot, h, ...]
-    if (slots.empty()) return false;  // GetCurrentAmmoType: None
+    if (slots.empty()) return nullptr;  // GetCurrentAmmoType: None
     // GetCurrentAmmoSlot (weapon_subsystems.py:2063): the explicit selection
     // when populated, else the lowest populated slot.
     int64_t slot = slots[0];
@@ -179,11 +179,24 @@ bool ammo_exhausted(const Mirror& m, const SubsystemRow* parent) {
     for (size_t i = 0; i + 1 < slots.size(); i += 2) {
         if (slots[i] == slot) { ammo_h = slots[i + 1]; break; }
     }
-    // A slot holding None: `ammo is not None` is false, so not finite.
-    if (ammo_h == -1) return false;
+    // A slot holding None.
+    if (ammo_h == -1) return nullptr;
     if (ammo_h == kRefUnrepresentable) fall_back("ammo type is unnamed");
     const AmmoRow* ammo = m.ammo(ammo_h);
     if (!ammo) fall_back("ammo row is stale");
+    return ammo;
+}
+
+namespace {
+
+// TorpedoTube._ammo_exhausted (weapon_subsystems.py:3232): the parent
+// TorpedoSystem's selected ammo type is a FINITE magazine with nothing left.
+bool ammo_exhausted(const Mirror& m, const SubsystemRow* parent) {
+    // _parent_ammo: parent.GetCurrentAmmoType() (TorpedoSystem only).
+    if (parent == nullptr) return false;
+    const AmmoRow* ammo = current_ammo_type(m, *parent);
+    // `ammo is not None` is false: not finite.
+    if (ammo == nullptr) return false;
     const bool finite = !ammo->_unlimited;  // getattr(ammo, "_unlimited", True)
     return finite && ammo->_available <= 0;
 }

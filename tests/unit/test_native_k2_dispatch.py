@@ -2046,6 +2046,81 @@ def test_raise_in_a_queued_contact_applies_the_records_later_writes(
             w.close()
 
 
+@pytest.mark.parametrize("entry,pending", [
+    ("combat_k2_next", True), ("combat_k2_end", True),
+    ("combat_k2_abandon", True), ("combat_apply_writes", True),
+    ("combat_k2_next", False), ("combat_k2_abandon", False)])
+def test_reentrant_k2_call_during_delivery_fails_loudly(monkeypatch, entry,
+                                                        pending):
+    """A record's writes are applied by the binding while Python runs (here
+    passive_state.wake, for the Vor'cha offline stop's WAKE-kind `_firing`
+    write on a sleeping bank). `pending`: the Galaxy fires, so the record
+    carries its queued contacts and the stop is delivered from the
+    session's pending list by combat_apply_writes; else the record has no
+    contact and combat_k2_next applies it itself. A combat_k2_next / _end /
+    _abandon from that Python would clear or free the list under the apply
+    (or step the kernel on mid-record), and a nested combat_apply_writes
+    would apply out of order: each must raise the delivery protocol error
+    instead; the session is abandoned, the mirror equals Python and the
+    next tick runs natively."""
+    seen = []
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k2_reenter")
+        try:
+            g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+            vsys = v.GetPhaserSystem()
+            vsys.TurnOff()
+            if pending:
+                g.GetPhaserSystem().SetSingleFire(0)
+                g.GetPhaserSystem().StartFiring(v)
+            for _ in range(39):
+                w.tick()
+            vbank = vsys.GetWeapon(0)
+            wake = passive_state.wake
+            segments = []
+            if not pending:
+                real_apply = _h.combat_apply_writes
+
+                def apply_spy(*a):
+                    segments.append(a)
+                    return real_apply(*a)
+                mp.setattr(_h, "combat_apply_writes", apply_spy)
+
+            def hook(obj):
+                if obj is vbank and not seen:
+                    try:
+                        getattr(_h, entry)()
+                    except RuntimeError as e:
+                        seen.append(str(e))
+                        raise
+                    seen.append("re-entered")
+                return wake(obj)
+
+            def sleep(_w):
+                if "_passive_slot" not in vbank.__dict__:
+                    passive_weapons._build(v)   # the passive walk's registry
+                passive_state.put_to_sleep(vbank)
+                mp.setattr(passive_state, "wake", hook)
+            with pytest.raises(RuntimeError, match="deliver"):
+                w.tick(before=sleep)
+            assert len(seen) == 1 and "deliver" in seen[0], seen
+            assert not _h.combat_k2_open()
+            if not pending:     # applied by next() itself, not pending
+                assert segments == [], segments
+            mp.setattr(passive_state, "wake", wake)
+            passive_state.wake(vbank)
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+            before = nc.counts()["k2_records"]
+            w.tick()                                # the next tick runs
+            assert nc.counts()["k2_records"] > before
+            assert not _h.combat_k2_open()
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+        finally:
+            w.close()
+
+
 def test_damage_pulse_handler_starts_another_ships_k1_session(monkeypatch):
     """Final review, Review Focus 2. A damage pulse's apply_hit handler
     (after_hit) pulls another ship's trigger -- StartFiring, whose immediate

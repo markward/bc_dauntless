@@ -34,7 +34,9 @@ enum class Kind : int32_t {
 };
 
 enum class FieldType : int32_t {
-    F, I, Ref, Ids, Vec3, Spheres, Rows, IdLists
+    F, I, Ref, Ids, Vec3, Spheres, Rows, IdLists,
+    // An ordered list of doubles (a tube's per-slot reload lists).
+    FloatList
 };
 
 enum class Field : int32_t {
@@ -95,6 +97,15 @@ enum class Field : int32_t {
     // _dwell) and of a ShieldSubsystem (has_shields = sum(_max_shields) > 0,
     // computed by Python's own HasShields expression).
     _length, _beam_on_countdown, _dwell, has_shields,
+    // Subsystem: what the K0 charging kernel reads (native weapon state,
+    // Task 3). _recharge_rate (energy weapons); _reload_delay and the per-slot
+    // lists _reload_timers / _reload_advanced_at (tubes; written IN PLACE by
+    // Python, each writer pushes the whole list after mutating);
+    // _watch_checks (a pulse weapon's charge watcher's check count, pushed by
+    // every check add/remove); _power_level (a PhaserSystem's, pushed only
+    // when it is an index: a float level drops the row).
+    _recharge_rate, _reload_delay, _reload_timers, _reload_advanced_at,
+    _watch_checks, _power_level,
     // Property
     MaxCondition, MaxCondition_set, _firing_chains, _groups,
     // Set
@@ -219,6 +230,10 @@ struct SubsystemRow {
     int64_t module_ok = 0;
     double _length = 0.0, _beam_on_countdown = 0.0, _dwell = 0.0;
     int64_t has_shields = 0;
+    // K0's inputs (Field comment above).
+    double _recharge_rate = 0.0, _reload_delay = 0.0;
+    std::vector<double> _reload_timers, _reload_advanced_at;
+    int64_t _watch_checks = 0, _power_level = 0;
     // Posed parts: the index into the owning ship's part_poses of the part
     // Python resolved for this subsystem's own mount (detachment ignored;
     // -1 = no posable part), stamped with the global part_gen at
@@ -278,6 +293,12 @@ enum class Global : int32_t {
     BEAM_DWELL_FLUSH_S, SHIELD_ELLIPSOID_AXIS_SCALE,
     // The K3 kernel: projectiles._LEAD_ACCEL_K (the guidance lead term)
     LEAD_ACCEL_K,
+    // The K0 kernel: weapon_subsystems.PHASER_DISCHARGE_BY_POWER_LEVEL, the
+    // phaser bank's drain indexed by its PhaserSystem's power level. Entries
+    // 0..2 (0.0 past the table's end) and the table's length, so a kernel
+    // can tell an index Python would answer from one it would not.
+    PHASER_DISCHARGE_0, PHASER_DISCHARGE_1, PHASER_DISCHARGE_2,
+    PHASER_DISCHARGE_LEN,
     kCount
 };
 
@@ -301,6 +322,9 @@ struct Globals {
     double FIRE_TIMER_THRESHOLD = 0.0, PHASER_MAX_RANGE_GU = 0.0;
     double BEAM_DWELL_FLUSH_S = 0.0, SHIELD_ELLIPSOID_AXIS_SCALE = 0.0;
     double LEAD_ACCEL_K = 0.0;
+    double PHASER_DISCHARGE_0 = 0.0, PHASER_DISCHARGE_1 = 0.0,
+           PHASER_DISCHARGE_2 = 0.0;
+    int64_t PHASER_DISCHARGE_LEN = 0;
 };
 
 struct ProfileRowSet {
@@ -343,6 +367,11 @@ public:
     void set_fv(int64_t handle, Field f, const std::vector<double>& v);
     void set_id_lists(int64_t handle, Field f,
                       const std::vector<std::vector<int64_t>>& lists);
+    // A FloatList field: the whole list, every bit kept.
+    void set_floats(int64_t handle, Field f, const std::vector<double>& v);
+    // One element of a FloatList field, in place (the list keeps its
+    // storage). std::out_of_range for an index past its end.
+    void set_float_at(int64_t handle, Field f, size_t index, double v);
     void set_spheres(int64_t handle, std::vector<Sphere> spheres);
     void set_profile_rows(int64_t handle, std::vector<ProfileRow> rows,
                           double full_concealment);
@@ -384,6 +413,7 @@ public:
     std::vector<double> get_fv(int64_t handle, Field f) const;
     std::vector<std::vector<int64_t>> get_id_lists(int64_t handle,
                                                    Field f) const;
+    std::vector<double> get_floats(int64_t handle, Field f) const;
 
     // Typed row access for the kernel: nullptr when the handle is stale,
     // freed or of another kind.

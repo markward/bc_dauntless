@@ -18,7 +18,7 @@ The end state is a weapons and combat system split across two threads:
 
 The two halves run **pipelined, one tick apart**: AI reviews last tick's combat results and decides, while combat executes the decisions AI made last tick.
 
-## 2. Where we are (2026-11-01)
+## 2. Where we are (2026-11-02)
 
 | Milestone | Branch | What moved to C++ | State |
 |---|---|---|---|
@@ -28,22 +28,24 @@ The two halves run **pipelined, one tick apart**: AI reviews last tick's combat 
 | K3+K4 | `perf/native-combat-k3` | torpedo flight + damage eligibility | live-verified 2026-11-01; full gate green |
 | Posed parts (C) | `ws/combat-posed-parts` | posed ships/targets and Manual Aim on them, in K1/K2/K3 | built 2026-11-01, differentials green, live-verified by Mark 2026-11-01; merged into `project/combat_threading` |
 | Round trips (C) | `ws/combat-round-trips` | walk starts, beam sustains, idle bank stops, offline system stops as native/logged writes; resting contacts batched; K3 steer attribution | built 2026-11-01, differentials green, not live-verified; merges into `project/combat_threading` |
+| Weapon state | `ws/combat-weapon-state` | charging and reloading (K0); K0/K1/K2 write logs applied in C; one-call scalar mirror push | built 2026-11-02, differentials green, not live-verified; merges into `project/combat_threading` after round trips |
 
 All are behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF, unmerged.
 
-Measured, 64-ship fight, switch on, milliseconds per game tick, average of two runs each (perf register SIG-158, SIG-162, SIG-164, SIG-166; the posed-parts column is the round-trips baseline, C-250/C-251):
+Measured, 64-ship fight, switch on, milliseconds per game tick, average of two runs each (perf register SIG-158, SIG-162, SIG-164, SIG-166, SIG-170; the posed-parts column is the round-trips baseline, C-250/C-251; the round-trips column is the weapon-state baseline, C-252/C-253; — = not scored):
 
-| Row | 1b | K2 | K3+K4 | Posed parts | Round trips |
-|---|---|---|---|---|---|
-| fire control (`cb.held_weapons`) | 1.30 | 1.32 | 1.40 | 1.34 | 1.00 |
-| phasers | 1.77 | 0.74 | 0.77 | 0.75 | 0.74 |
-| torpedoes | 0.92 | 0.83 | 0.17 | 0.13 | 0.15 |
-| eligibility | 0.29 | 0.28 | 0.04 | 0.05 | 0.05 |
-| **combat step** (`sim.combat`) | **4.47** | **3.33** | **2.45** | **2.48** | **2.11** |
-| AI (`gl.ai`) | 3.25 | 3.27 | 3.23 | 3.41 | 3.33 |
-| **whole sim** | **11.86** | **10.57** | **9.99** | **10.16** | **9.80** |
+| Row | 1b | K2 | K3+K4 | Posed parts | Round trips | Weapon state |
+|---|---|---|---|---|---|---|
+| charging/reloading (`sim.weapons`) | — | — | — | — | 0.60 | 0.25 |
+| fire control (`cb.held_weapons`) | 1.30 | 1.32 | 1.40 | 1.34 | 1.00 | 0.66 |
+| phasers | 1.77 | 0.74 | 0.77 | 0.75 | 0.74 | 0.73 |
+| torpedoes | 0.92 | 0.83 | 0.17 | 0.13 | 0.15 | 0.16 |
+| eligibility | 0.29 | 0.28 | 0.04 | 0.05 | 0.05 | — |
+| **combat step** (`sim.combat`) | **4.47** | **3.33** | **2.45** | **2.48** | **2.11** | **1.76** |
+| AI (`gl.ai`) | 3.25 | 3.27 | 3.23 | 3.41 | 3.33 | 3.31 |
+| **whole sim** | **11.86** | **10.57** | **9.99** | **10.16** | **9.80** | **9.12** |
 
-Combat is down 53%, but the programme's 1 ms target is not met. Fire control is still the largest combat cost. AI is now larger than combat. Round trips saved ~0.37 ms per tick against ~1 ms inferred: resting beam contacts kept their Python presentation, so phasers did not move (spec `2026-11-01-native-combat-round-trips-design.md` §10).
+Combat is down 61% since 1b, but the programme's 1 ms target is not met. Phasers (0.73) are now the largest combat cost, just ahead of fire control (0.66). AI is now larger than combat. Round trips saved ~0.37 ms per tick against ~1 ms inferred: resting beam contacts kept their Python presentation, so phasers did not move (spec `2026-11-01-native-combat-round-trips-design.md` §10). Weapon state saved ~0.68 ms per tick of `sim` against ~1 ms expected: charging/reloading −59%, fire control −34%, phasers flat again (K2's write path was not reworked; spec `2026-11-02-native-weapon-state-design.md` §10).
 
 ## 3. Decisions taken
 
@@ -62,13 +64,13 @@ Combat is down 53%, but the programme's 1 ms target is not met. Fire control is 
 - **B. Measure before moving more.**
   - Per-part timers inside fire control: the hand-off, Python answers to C++ questions, ships done wholly in Python, applying results, actual firing (projectile creation, events, sounds).
   - A breakdown of the ~4 ms per tick outside combat and AI (motion, subsystems, game loop).
-- **C. Close the routine fallbacks in C++.** Posed parts: **closed** (branch `ws/combat-posed-parts`, merged into `project/combat_threading`; spec `2026-11-01-native-combat-posed-parts-design.md` §10; all posed fallbacks 0 in the differentials, not live-verified). Routine round trips: **done** (branch `ws/combat-round-trips`; spec `2026-11-01-native-combat-round-trips-design.md` §10; records −84-87% in the differentials, fire control −25%, combat step −15%, not live-verified). Measured in a 64-ship fight, every counted fallback reason was already 0 (`docs/reference/engine/native-combat/remaining-fallbacks-map.md` §0). Still open: ships before they acquire a target, a torpedo whose target record was dropped (per-torpedo instead of whole-step), targets outside the step scan, and the `no_mount` steer/fire asks (offsets that are no mount, torpedoes at an old Manual Aim pick), which are exact but cost speed. Until these are closed, the Python copies still do real work every tick and cannot be retired.
-- **D. Move damage application to C++** (`apply_hit`: shield absorption, hull, subsystem damage), reading the invincible/hurtable/cutscene flags.
+- **C. Close the routine fallbacks in C++.** Posed parts: **closed** (branch `ws/combat-posed-parts`, merged into `project/combat_threading`; spec `2026-11-01-native-combat-posed-parts-design.md` §10; all posed fallbacks 0 in the differentials, not live-verified). Routine round trips: **done** (branch `ws/combat-round-trips`; spec `2026-11-01-native-combat-round-trips-design.md` §10; records −84-87% in the differentials, fire control −25%, combat step −15%, not live-verified). Measured in a 64-ship fight, every counted fallback reason was already 0 (`docs/reference/engine/native-combat/remaining-fallbacks-map.md` §0). Still open: ships before they acquire a target, a torpedo whose target record was dropped (per-torpedo instead of whole-step), targets outside the step scan, and the `no_mount` steer/fire asks (offsets that are no mount, torpedoes at an old Manual Aim pick), which are exact but cost speed. Until these are closed, the Python copies still do real work every tick and cannot be retired. Weapon state, chosen ahead of D by measurement (charging and reloading as kernel K0, K0/K1/K2 write logs applied in C, a one-call scalar mirror push): **done** (branch `ws/combat-weapon-state`; spec `2026-11-02-native-weapon-state-design.md` §10; `sim.weapons` −59%, fire control −34%, combat step −17% to 1.76 ms per tick, not live-verified).
+- **D. Move damage application to C++** (`apply_hit`: shield absorption, hull, subsystem damage), reading the invincible/hurtable/cutscene flags. Mapped 2026-11-02 (`docs/reference/engine/native-combat/damage-map.md`) and deferred on measurement: it would save at most ~0.3 ms per tick (perf register SIG-168), and it is a synchronous chain of events, the death cascade and a shared random-number stream.
 - **E. Retire the Python copies, one kernel at a time, fire control first.** Switch default ON, a play period with it on, delete the Python decision code, replace Python-vs-native differentials with recorded golden fights. First check whether anything must still run without the native module (some test setups).
 - **F. Launch-script cache** (decision 5).
 - **G. Event queue design.** Inventory every weapon/combat event: which only *report*, which *gate* an outcome (§5.1), which handlers read state that may already have changed; fix ordering rules (§5.2).
 - **H. Cutscene damage rule** (decision 7), with the headless 26-mission campaign sweep plus Mark's playthrough of cutscene-heavy missions.
-- **I. Native combat off the lock.** A kernel with no remaining Python questions becomes data-in/data-out and can release the lock. Then split per-ship work across cores with a fixed-order merge (care: sensor memo/latch, random numbers). **Blocker found by round trips:** K1's walk check (the instance-patch and ship-class guard) makes CPython lookups inside the kernel's `next()`, so K1 needs the lock while it is installed; it is scaffolding and goes with the Python copies (E), or moves to the step boundary. Next levers: K2 resting-contact presentation in C++ (level ii) and K1's pump `STOP_SYSTEM` as logged writes.
+- **I. Native combat off the lock.** A kernel with no remaining Python questions becomes data-in/data-out and can release the lock. Then split per-ship work across cores with a fixed-order merge (care: sensor memo/latch, random numbers). **Blocker found by round trips:** K1's walk check (the instance-patch and ship-class guard) makes CPython lookups inside the kernel's `next()`, so K1 needs the lock while it is installed; it is scaffolding and goes with the Python copies (E), or moves to the step boundary. Next levers: K2 resting-contact presentation in C++ (level ii) and K1's pump `STOP_SYSTEM` as logged writes; K1/K2 write logs still move a vector per record (give them K0's reused log storage, weapon-state spec §10); K1's override guard still has the `super()` blind spot K0's guard had (an MRO-first compare misses a patched base method reached through `super()`; parked for Mark).
 - **J. Pipelined AI ↔ combat** (decision 4): snapshot for AI, outbox for orders, event list up.
 - **K. Render/sim overlap — investigate.** Possibly the biggest single lever: draw the last finished tick while the sim runs the next. The renderer already draws from snapshotted, smoothed transforms; unknown: how much per-frame draw setup Python builds, and where the GL context lives (macOS window/GL threading rules).
 - **L. AI to C++ — Mark's plan, to be discussed.** AI is partly SDK Python in BC (AI trees, conditions, fire scripts), so the line between engine and SDK has to be drawn carefully here.
@@ -91,7 +93,7 @@ E1M2: asteroids drift toward Haven. The mission removes each asteroid from its l
 
 ## 6. Expected payoffs (bounds, not promises)
 
-- K3+K4 took combat from 3.33 to 2.45 ms per tick; round trips from 2.48 to 2.11. Removing the rest of combat's Python costs is bounded by what fire control's split (B) shows.
+- K3+K4 took combat from 3.33 to 2.45 ms per tick; round trips from 2.48 to 2.11; weapon state from 2.11 to 1.76. Removing the rest of combat's Python costs is bounded by what fire control's split (B) shows.
 - Overlapping two jobs saves at most the **smaller** of the two. AI ↔ combat today: at most ~2.5 ms of a ~10 ms tick. The smaller combat gets, the less this overlap alone buys.
 - Getting frames under 16.7 ms pulls ticks per frame toward 1, which shrinks every per-frame cost.
 - AI (≈3.2 ms per tick) is the largest untouched piece.

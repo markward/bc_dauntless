@@ -23,6 +23,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/beam_trace.cc
     src/fire_gates.cc
     src/k1_fire_control.cc
+    src/k0_charging.cc
     src/k2_beams.cc
     src/k3_projectiles.cc
 )

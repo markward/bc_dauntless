@@ -1941,6 +1941,8 @@ class ShipClass(DamageableObject):
 # round trips): a later patch on ShipClass or a subclass's override hands
 # that ship's walk starts back to Python.
 native_combat.k1_snapshot_ship(ShipClass)
+# The weapon-group getters the charging walk calls (K0's override guard).
+native_combat.k0_snapshot_ship(ShipClass)
 
 
 def _resolve_torpedo_ammo(ts_prop, slot: int):

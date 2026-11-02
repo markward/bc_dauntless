@@ -10,6 +10,7 @@
 // through the remaining bindings.
 
 #include "host_bindings.h"
+#include "combat_write_apply.h"
 
 #include <algorithm>
 
@@ -20,6 +21,7 @@
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/beam_trace.h"
 #include "dauntless/combat/fire_gates.h"
+#include "dauntless/combat/k0_charging.h"
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/k2_beams.h"
 #include "dauntless/combat/k3_projectiles.h"
@@ -3823,6 +3825,178 @@ PyObject* step_scan_ships(PyObject* ships, long long obj_kind, int kind_shift,
     return result;
 }
 
+// ── C-applied write logs (combat_write_apply.h) ───────────────────────────
+// A K2 record carrying queued resting contacts keeps its writes here until
+// native_combat._k2_deliver applies them in segments (combat_apply_writes):
+// each contact after the writes logged before its `at`, then the rest
+// before the record's own effect. Cleared by combat_k2_end / _abandon.
+struct K2PendingWrites {
+    std::vector<dauntless::combat::K2Write> writes;
+    size_t done = 0;
+    // True while the binding applies a record's writes: the Python the
+    // apply runs (wake hooks, setters) must not reach combat_k2_next /
+    // _end / _abandon, which clear or free `writes` under the apply, nor a
+    // nested combat_apply_writes, which would apply out of order -- each
+    // throws instead (K0's delivery guard, k0_charging.h THE DELIVERY).
+    bool delivering = false;
+};
+
+K2PendingWrites& k2_pending_writes() {
+    static K2PendingWrites p;
+    return p;
+}
+
+void k2_not_delivering(const char* call) {
+    if (k2_pending_writes().delivering)
+        throw std::runtime_error(
+            std::string("combat K2: ") + call +
+            " while a record's writes are being delivered (re-entered from "
+            "the Python they run)");
+}
+
+// Marks the delivery for its scope (cleared on a throw too).
+struct K2Delivering {
+    K2Delivering() { k2_pending_writes().delivering = true; }
+    ~K2Delivering() { k2_pending_writes().delivering = false; }
+    K2Delivering(const K2Delivering&) = delete;
+    K2Delivering& operator=(const K2Delivering&) = delete;
+};
+
+// True when the last combat_k1_next raised from applying its record's
+// writes rather than from the kernel (combat_apply_raised): run_k1 reads
+// it before treating a ValueError / RuntimeError as the kernel's.
+bool& k1_apply_raised() {
+    static bool raised = false;
+    return raised;
+}
+
+// ── The one-call scalar push (combat_push_scalar; spec 2026-11-02 §4.2) ───
+// NativeField._encode's scalar branches, in C++: float(value), int(value),
+// truthiness, `is True`, None -> -1. The codes are combat_push_codes().
+enum class PushCode : int {
+    kFloat, kInt, kBool, kIsTrue, kOptInt, kCount
+};
+
+constexpr const char* kPushCodeNames[] = {
+    "PUSH_FLOAT", "PUSH_INT", "PUSH_BOOL", "PUSH_IS_TRUE", "PUSH_OPT_INT"};
+static_assert(sizeof(kPushCodeNames) / sizeof(kPushCodeNames[0]) ==
+              static_cast<size_t>(PushCode::kCount));
+
+// Pushes the binding stored (counts()["fast_pushes"]).
+std::uint64_t& fast_pushes() {
+    static std::uint64_t n = 0;
+    return n;
+}
+
+// int(value) as an int64 into *out: false with int(value)'s own exception
+// set, or OverflowError for an int the int64 row cannot hold.
+bool push_int(PyObject* value, std::int64_t* out) {
+    PyObject* r = PyNumber_Long(value);
+    if (r == nullptr) return false;
+    int overflow = 0;
+    const long long v = PyLong_AsLongLongAndOverflow(r, &overflow);
+    Py_DECREF(r);
+    if (v == -1 && PyErr_Occurred()) return false;
+    if (overflow != 0) {
+        PyErr_SetString(PyExc_OverflowError,
+                        "combat_push_scalar: int does not fit the int64 row");
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
+// combat_push_scalar(h, fid, code, value): NativeField._push for a scalar
+// field in one call. A raw METH_FASTCALL function, not an m.def: pybind11's
+// argument dispatch cost more than the encode and the store together (the
+// push runs ~244 times a tick). Encodes FIRST, exactly as _push, so an
+// encoding error raises before the handle is looked at; then the store,
+// whose std::invalid_argument (stale handle, unknown or mistyped field) is
+// pybind's ValueError. A CALLER bug -- the wrong argument count, an unknown
+// push code, a field id out of range -- raises SystemError instead: never
+// one of the three _push_scalar turns into a silent row drop.
+PyObject* combat_push_scalar(PyObject*, PyObject* const* args,
+                             Py_ssize_t nargs) {
+    namespace cb = dauntless::combat;
+    if (nargs != 4) {
+        PyErr_Format(PyExc_SystemError,
+                     "combat_push_scalar() takes 4 arguments (%zd given)",
+                     nargs);
+        return nullptr;
+    }
+    const long long h = PyLong_AsLongLong(args[0]);
+    if (h == -1 && PyErr_Occurred()) return nullptr;
+    const long f = PyLong_AsLong(args[1]);
+    if (f == -1 && PyErr_Occurred()) return nullptr;
+    const long code = PyLong_AsLong(args[2]);
+    if (code == -1 && PyErr_Occurred()) return nullptr;
+    PyObject* v = args[3];
+    bool is_float = false;
+    double d = 0.0;
+    std::int64_t i = 0;
+    switch (static_cast<PushCode>(code)) {
+        case PushCode::kFloat: {                    // float(value)
+            PyObject* r = PyNumber_Float(v);
+            if (r == nullptr) return nullptr;
+            d = PyFloat_AS_DOUBLE(r);
+            Py_DECREF(r);
+            is_float = true;
+            break;
+        }
+        case PushCode::kInt:                        // int(value)
+            if (!push_int(v, &i)) return nullptr;
+            break;
+        case PushCode::kBool: {                     // 1 if value else 0
+            const int t = PyObject_IsTrue(v);
+            if (t < 0) return nullptr;
+            i = t;
+            break;
+        }
+        case PushCode::kIsTrue:                     // 1 if value is True
+            i = v == Py_True ? 1 : 0;
+            break;
+        case PushCode::kOptInt:                     // -1 for None, int()
+            if (v == Py_None) i = -1;
+            else if (!push_int(v, &i)) return nullptr;
+            break;
+        default:
+            PyErr_Format(PyExc_SystemError,
+                         "combat_push_scalar: unknown push code %ld", code);
+            return nullptr;
+    }
+    if (f < 0 || f >= static_cast<long>(cb::Field::kCount)) {
+        PyErr_Format(PyExc_SystemError,
+                     "combat_push_scalar: unknown field id %ld", f);
+        return nullptr;
+    }
+    const auto field = static_cast<cb::Field>(f);
+    try {
+        if (is_float) cb::mirror().set_f(h, field, d);
+        else cb::mirror().set_i(h, field, i);
+    } catch (const std::invalid_argument& e) {
+        PyErr_SetString(PyExc_ValueError, e.what());
+        return nullptr;
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_RuntimeError, e.what());
+        return nullptr;
+    }
+    ++fast_pushes();
+    Py_RETURN_NONE;
+}
+
+PyMethodDef g_push_scalar_def = {
+    "combat_push_scalar",
+    reinterpret_cast<PyCFunction>(
+        reinterpret_cast<void (*)()>(&combat_push_scalar)),
+    METH_FASTCALL,
+    "combat_push_scalar(h, fid, code, value): NativeField._push for a "
+    "scalar field in one call. Encodes `value` by `code` "
+    "(combat_push_codes) with _encode's rules and raises where it raises "
+    "(TypeError / ValueError / OverflowError, and OverflowError for an int "
+    "beyond int64); a stale handle raises ValueError. A wrong argument "
+    "count, an unknown code or a field id out of range raises "
+    "SystemError."};
+
 // ── The K1 walk check (k1_fire_control.h, THE WALK START) ──────────────────
 // Installed into the K1 kernel by combat_k1_set_walk_check. The kernel asks
 // it at every walk start (inside combat_k1_next, the GIL held); true sends
@@ -3975,6 +4149,559 @@ bool k1_walk_needs_python(std::int64_t sys_h, std::int64_t ship_h) {
     const int v = k1_walk_check(r, sys_h, ship_h);
     if (v < 0) PyErr_Clear();
     return v != 0;
+}
+
+// The scan reads PyDictObject::ma_version_tag, and only where kK0ObjectCache
+// allows (CPython 3.11, the one version verified; see below): elsewhere it
+// is never read. The pragmas keep the field's deprecation quiet.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+// ── The K0 session's begin scan (combat_k0_begin; k0_charging.h) ───────────
+// One pass over the Python ship list, made before the kernel's begin: each
+// ship's Object handle (its "_nslot"; -1 without one) and, with a guard
+// context, the override guard (native_combat, "THE OVERRIDE GUARD"): which
+// ships the kernel must hand back whole (reason override) and which weapons
+// it must hand to Python at their turn (the weapon check). No Python code
+// runs and nothing GC-tracked is allocated, so the borrowed references it
+// walks cannot change under it.
+//   ship      its class verdict, or an instance attribute in `ship_names`
+//             -> the ship whole;
+//   system    each group the ship's dict holds ("_phaser_system", ...):
+//             its class verdict, or an instance attribute in
+//             `system_names` -> the ship whole;
+//   weapon    each child in the system's "_children": its class verdict,
+//             or an instance attribute in `weapon_names` -> that weapon. In
+//             the torpedo system any marked tube, or a magazine (a value of
+//             "_ammo_by_slot") whose class is flagged, marks every tube:
+//             each tube's reload gate reads its siblings' GetNumReady and
+//             the magazine's GetAvailable.
+// Anything unexpected (an instance dict not built, a "_children" that is not
+// a list or tuple) answers "Python".
+//
+// THE CACHES (ruling W7: the scan ran every weapon's dict probes every tick,
+// ~53 us at 65 ships). Both are exact, not heuristics:
+//   class     a verdict per type, valid while the type's version tag is
+//             (CPython's tp_version_tag: any attribute assignment on the
+//             class or a base invalidates it, PyType_Modified). A type with
+//             no valid entry is looked up in `fresh` (the verdicts Python
+//             just computed for this begin); not there -> `missing` (the
+//             caller computes it in Python and begins again).
+//   object    each ship, system slot and weapon's whole answer (its class
+//             verdict OR an instance attribute), kept by POSITION in the
+//             scan (ship i, then its 4 group slots, then each child in
+//             order) with what it was computed on: the object's type and
+//             its dict STATE, (the dict, its ma_version_tag). The version
+//             is a process-wide counter bumped by every insert, replace
+//             and delete, so an unchanged (dict, version) is an unchanged
+//             dict -- the same keys, the same references (a cached ship's
+//             group systems, a system's "_children" list and
+//             "_ammo_by_slot" dict are still the ones it holds; the list
+//             and the magazine dict are read live, as they change in place).
+//             A `__class__` assignment changes the type, not the dict: the
+//             type is compared too. The class verdicts the entries used are
+//             re-validated once per scan (every cached type's tag); any
+//             change drops every entry for that scan.
+// So an idle weapon costs a handful of pointer compares (no dict probe), a
+// weapon written this tick pays its probes, and a class patch or an
+// instance attribute made between two sessions is seen at the next one (one
+// made by a handler during a session, at the next session).
+struct K0Guard {
+    PyObject* fresh = nullptr;          // {type: int}, may be empty
+    PyObject* ship_names = nullptr;     // tuples of str
+    PyObject* system_names = nullptr;
+    PyObject* weapon_names = nullptr;
+};
+
+struct K0Scan {
+    std::vector<std::int64_t> handles;
+    std::vector<std::optional<dauntless::combat::K0Reason>> handback;
+    std::unordered_set<std::int64_t> python_weapons;
+    std::vector<PyObject*> missing;     // borrowed: types with no verdict
+    bool any_handback = false;
+    size_t sys_pos = 0, weapon_pos = 0;  // positional cache cursors
+};
+
+struct K0TypeEntry {
+    PyTypeObject* type;  // owned in K0Caches::types (see clear())
+    unsigned int tag;
+    int flag;
+};
+
+// What one object's answer was computed on (type == nullptr: nothing).
+struct K0ObjKey {
+    PyTypeObject* type = nullptr;
+    PyObject* dict = nullptr;
+    std::uint64_t version = 0;
+};
+
+struct K0ShipEntry {
+    K0ObjKey key;
+    std::int64_t handle = -1;
+    int verdict = 0;                    // the ship whole
+    PyObject* groups[4] = {nullptr, nullptr, nullptr, nullptr};
+};
+
+struct K0SysEntry {
+    K0ObjKey key;
+    int verdict = 0;                    // the ship whole
+    PyObject* children = nullptr;       // borrowed from key.dict
+    PyObject* ammo = nullptr;
+};
+
+struct K0WeaponEntry {
+    K0ObjKey key;
+    int verdict = 0;                    // Python steps it
+};
+
+struct K0Caches {
+    // Every type's verdict, and a direct-mapped table in front of it.
+    std::vector<K0TypeEntry> types;
+    static constexpr size_t kTable = 64;  // the hash's top 6 bits
+    K0TypeEntry table[kTable] = {};
+    std::vector<K0ShipEntry> ships;
+    std::vector<K0SysEntry> systems;
+    std::vector<K0WeaponEntry> weapons;
+    // `systems`' data and size (a Debug build calls the vector's accessors).
+    K0SysEntry* systems_p = nullptr;
+    size_t systems_n = 0;
+    void grow_systems(size_t n) {
+        if (systems.size() < n) systems.resize(n);
+        systems_p = systems.data();
+        systems_n = systems.size();
+    }
+    // The name tuples the answers were made with: other tuples, other
+    // answers (forget them).
+    PyObject* names[3] = {nullptr, nullptr, nullptr};
+    void forget_objects() {
+        ships.clear();
+        systems.clear();
+        weapons.clear();
+        systems_p = nullptr;
+        systems_n = 0;
+    }
+    // `types` OWNS a reference to each type (taken in k0_flagged): every
+    // scan re-validates them by reading the type (k0_types_unchanged), so
+    // a type it keeps must not be freed under it. The table's entries are
+    // copies of `types`' entries.
+    void clear() {
+        // Moved out first: a release may run Python (a type's dealloc),
+        // which must find the caches already empty.
+        std::vector<K0TypeEntry> old = std::move(types);
+        types.clear();
+        for (K0TypeEntry& e : table) e = K0TypeEntry{};
+        forget_objects();
+        names[0] = names[1] = names[2] = nullptr;
+        for (K0TypeEntry& e : old)
+            Py_DECREF(reinterpret_cast<PyObject*>(e.type));
+    }
+};
+
+K0Caches& k0_caches() {
+    static K0Caches c;
+    return c;
+}
+
+struct K0ScanNames {
+    PyObject* nslot;
+    PyObject* groups[4];
+    PyObject* children;
+    PyObject* ammo_by_slot;
+    PyObject* tag_probe;  // any interned name: _PyType_Lookup assigns a tag
+};
+
+const K0ScanNames& k0_scan_names() {
+    static const K0ScanNames n{
+        PyUnicode_InternFromString("_nslot"),
+        {PyUnicode_InternFromString("_phaser_system"),
+         PyUnicode_InternFromString("_pulse_weapon_system"),
+         PyUnicode_InternFromString("_tractor_beam_system"),
+         PyUnicode_InternFromString("_torpedo_system")},
+        PyUnicode_InternFromString("_children"),
+        PyUnicode_InternFromString("_ammo_by_slot"),
+        PyUnicode_InternFromString("__init__")};
+    return n;
+}
+
+// The scan's per-object helpers are forced inline: it runs every tick over
+// every weapon, and a Debug (-O0) build otherwise pays a call for each
+// helper and each CPython accessor (Py_TYPE, PyType_HasFeature are calls
+// there too, so fields are read directly).
+#if defined(__clang__) || defined(__GNUC__)
+#define K0_INLINE inline __attribute__((always_inline))
+#else
+#define K0_INLINE inline
+#endif
+
+// Whether the managed dict sits in the slot three pointers before the
+// object (3.11-3.13; k1_built_dict).
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030E0000
+constexpr bool kK0ManagedSlot = true;
+#else
+constexpr bool kK0ManagedSlot = false;
+#endif
+
+// k1_built_dict, the managed-dict case read in place (3.11-3.13).
+K0_INLINE PyObject* k0_dict_of(PyObject* o) {
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030E0000
+    if (o->ob_type->tp_flags & Py_TPFLAGS_MANAGED_DICT) {
+        const std::uintptr_t sl = reinterpret_cast<std::uintptr_t*>(o)[-3];
+        if (sl == 0 || (sl & 1u) != 0) return nullptr;
+        PyObject* d = reinterpret_cast<PyObject*>(sl);
+        return d->ob_type == &PyDict_Type ? d : nullptr;
+    }
+#endif
+    return k1_built_dict(o);
+}
+
+// The per-object answer cache (THE CACHES, "object") rests on PEP 509's
+// ma_version_tag changing on every insert, replace and delete. Verified on
+// CPython 3.11 only (3.12 repurposes its low bits for dict watchers, 3.14
+// drops the field): any other version takes the uncached path -- every
+// object's answer computed at every scan, the same verdicts, slower.
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030C0000
+constexpr bool kK0ObjectCache = true;
+#else
+constexpr bool kK0ObjectCache = false;
+#endif
+
+// The dict's mutation version (PEP 509): every insert, replace and delete
+// takes a new value from a process-wide counter, so it never repeats.
+K0_INLINE std::uint64_t k0_dict_version(PyObject* d) {
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030C0000
+    return reinterpret_cast<PyDictObject*>(d)->ma_version_tag;
+#else
+    (void)d;
+    return 0;
+#endif
+}
+
+// `o` is in the state `k` was computed on (`d` its dict, or nullptr). Never
+// on an unverified Python (kK0ObjectCache).
+K0_INLINE bool k0_same(const K0ObjKey& k, PyObject* o, PyObject* d) {
+    return kK0ObjectCache && d != nullptr && o->ob_type == k.type &&
+           d == k.dict && k0_dict_version(d) == k.version;
+}
+
+// The table entry `t` hashes to (Fibonacci hashing of its address: heap
+// types sit at allocator-aligned addresses, whose low bits alone collide).
+K0_INLINE K0TypeEntry& k0_slot(K0Caches& c, PyTypeObject* t) {
+    return c.table[(static_cast<std::uint64_t>(
+                        reinterpret_cast<std::uintptr_t>(t)) *
+                    0x9E3779B97F4A7C15ull) >>
+                   58];
+}
+
+// `e` is `t`'s verdict and `t` is unchanged since (its version tag).
+K0_INLINE bool k0_type_valid(const K0TypeEntry& e, PyTypeObject* t) {
+    return e.type == t && e.tag != 0 &&
+           (t->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) != 0 &&
+           t->tp_version_tag == e.tag;
+}
+
+// `t`'s version tag, assigned if it has none (0: none can be).
+unsigned int k0_type_tag(PyTypeObject* t) {
+    if ((t->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) == 0)
+        (void)_PyType_Lookup(t, k0_scan_names().tag_probe);
+    return (t->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) != 0
+               ? t->tp_version_tag
+               : 0u;
+}
+
+int k0_flagged(const K0Guard& g, PyObject* o, K0Scan& s, K0Caches& c);
+
+// k0_flagged when `o`'s class verdict is in the table (the common case).
+K0_INLINE int k0_flagged_fast(const K0Guard& g, PyObject* o, K0Scan& s,
+                              K0Caches& c) {
+    PyTypeObject* t = o->ob_type;
+    const K0TypeEntry& slot = k0_slot(c, t);
+    if (k0_type_valid(slot, t)) return slot.flag;
+    return k0_flagged(g, o, s, c);
+}
+
+// 1: type(o) is flagged; 0: not, or no verdict yet (noted in s.missing:
+// the session will not begin, so the scan goes on to find every missing
+// type in one pass); -1: error.
+int k0_flagged(const K0Guard& g, PyObject* o, K0Scan& s, K0Caches& c) {
+    PyTypeObject* t = o->ob_type;
+    K0TypeEntry& slot = k0_slot(c, t);
+    if (k0_type_valid(slot, t)) return slot.flag;
+    K0TypeEntry* hit = nullptr;
+    for (K0TypeEntry& e : c.types)
+        if (e.type == t) {
+            hit = &e;
+            break;
+        }
+    if (hit != nullptr && k0_type_valid(*hit, t)) {
+        slot = *hit;
+        return hit->flag;
+    }
+    PyObject* v =
+        PyDict_GetItemWithError(g.fresh, reinterpret_cast<PyObject*>(t));
+    if (v == nullptr) {
+        if (PyErr_Occurred()) return -1;
+        if (std::find(s.missing.begin(), s.missing.end(),
+                      reinterpret_cast<PyObject*>(t)) == s.missing.end())
+            s.missing.push_back(reinterpret_cast<PyObject*>(t));
+        return 0;
+    }
+    const int flag = PyObject_IsTrue(v);  // an int: no Python runs
+    if (flag < 0) return -1;
+    const K0TypeEntry e{t, k0_type_tag(t), flag};
+    if (hit != nullptr) {
+        *hit = e;  // the same type: its reference is already held
+    } else {
+        Py_INCREF(reinterpret_cast<PyObject*>(t));  // released by clear()
+        c.types.push_back(e);
+    }
+    slot = e;
+    return flag;
+}
+
+// Every cached type verdict still valid (no class patched since).
+bool k0_types_unchanged(const K0Caches& c) {
+    for (const K0TypeEntry& e : c.types)
+        if (!k0_type_valid(e, e.type)) return false;
+    return true;
+}
+
+// `d`'s "_nslot" as a handle of `kind`, or -1.
+std::int64_t k0_handle(PyObject* d, std::int64_t kind) {
+    PyObject* hs = PyDict_GetItemWithError(d, k0_scan_names().nslot);
+    if (hs == nullptr || !PyLong_Check(hs)) {
+        PyErr_Clear();
+        return -1;
+    }
+    const long long v = PyLong_AsLongLong(hs);
+    if (v == -1 && PyErr_Occurred()) {
+        PyErr_Clear();
+        return -1;
+    }
+    return (v >= 0 && (v >> 60) == kind) ? v : -1;
+}
+
+// Mark child `c` (its handle, when it has one: one without is the
+// kernel's unrepresentable hand-back anyway).
+void k0_mark(PyObject* c, K0Scan& s) {
+    PyObject* cd = k0_dict_of(c);
+    if (cd == nullptr) return;
+    const std::int64_t h = k0_handle(
+        cd, static_cast<std::int64_t>(dauntless::combat::Kind::Subsystem));
+    if (h >= 0) s.python_weapons.insert(h);
+}
+
+// A child's answer, computed (the cache missed): 1 Python, 0 native, -1
+// error.
+int k0_weapon_slow(const K0Guard& g, PyObject* c, PyObject* cd, K0Scan& s,
+                   K0Caches& cc, size_t pos) {
+    if (cd == nullptr) return 1;
+    int v = k0_flagged(g, c, s, cc);
+    if (v == 0) v = k1_holds(cd, g.weapon_names);
+    if (v < 0) return -1;
+    if (pos >= cc.weapons.size()) cc.weapons.resize(pos + 1);
+    cc.weapons[pos] = K0WeaponEntry{
+        K0ObjKey{c->ob_type, cd, k0_dict_version(cd)}, v};
+    return v;
+}
+
+// One group slot of a ship: 1 the ship whole, 0 no, -1 error.
+K0_INLINE int k0_guard_system(const K0Guard& g, PyObject* sys, int gi, K0Scan& s,
+                    K0Caches& cc) {
+    const K0ScanNames& n = k0_scan_names();
+    const size_t pos = s.sys_pos++;
+    if (sys == Py_None) return 0;
+    PyObject* sd = k0_dict_of(sys);
+    if (sd == nullptr) return 1;
+    if (pos >= cc.systems_n) cc.grow_systems(pos + 1 + 16);
+    K0SysEntry* e = cc.systems_p + pos;
+    if (!k0_same(e->key, sys, sd)) {
+        int v = k0_flagged(g, sys, s, cc);
+        if (v == 0) v = k1_holds(sd, g.system_names);
+        if (v < 0) return -1;
+        PyObject* kids = PyDict_GetItemWithError(sd, n.children);
+        if (kids == nullptr && PyErr_Occurred()) return -1;
+        PyObject* ammo = PyDict_GetItemWithError(sd, n.ammo_by_slot);
+        if (ammo == nullptr && PyErr_Occurred()) return -1;
+        *e = K0SysEntry{K0ObjKey{sys->ob_type, sd, k0_dict_version(sd)}, v,
+                        kids, ammo};
+    }
+    if (e->verdict != 0) return 1;
+    PyObject* kids = e->children;
+    PyObject* ammo = e->ammo;
+    if (kids == nullptr) return 0;
+    // Read live: an in-place append changes the list, not the dict.
+    PyObject* const* items;
+    if (kids->ob_type == &PyList_Type)
+        items = reinterpret_cast<PyListObject*>(kids)->ob_item;
+    else if (kids->ob_type == &PyTuple_Type)
+        items = reinterpret_cast<PyTupleObject*>(kids)->ob_item;
+    else
+        return 1;
+    const Py_ssize_t nk = reinterpret_cast<PyVarObject*>(kids)->ob_size;
+    const bool torpedo = gi == 3;
+    bool all = false;
+    size_t wpos = s.weapon_pos;
+    const K0WeaponEntry* wdata = cc.weapons.data();
+    size_t wsize = cc.weapons.size();
+    for (Py_ssize_t i = 0; i < nk && !all; ++i) {
+        PyObject* c = items[i];
+        if (c == Py_None) continue;
+        const size_t pos_c = wpos++;
+        int m;
+        // The fast path, field by field: the same type, its dict (the
+        // managed slot, as k0_dict_of reads it) the same object in the same
+        // state.
+        // (Short-circuit order matters: the slot before the object is read
+        // only for a type with a managed dict.)
+        const K0WeaponEntry* we = pos_c < wsize ? wdata + pos_c : nullptr;
+        if (we != nullptr && kK0ObjectCache && kK0ManagedSlot &&
+            c->ob_type == we->key.type &&
+            (c->ob_type->tp_flags & Py_TPFLAGS_MANAGED_DICT) != 0 &&
+            reinterpret_cast<std::uintptr_t*>(c)[-3] ==
+                reinterpret_cast<std::uintptr_t>(we->key.dict) &&
+            k0_dict_version(we->key.dict) == we->key.version) {
+            m = we->verdict;
+        } else {
+            m = k0_weapon_slow(g, c, k0_dict_of(c), s, cc, pos_c);
+            if (m < 0) return -1;
+            wdata = cc.weapons.data();
+            wsize = cc.weapons.size();
+        }
+        if (m == 0) continue;
+        if (torpedo) all = true;
+        else k0_mark(c, s);
+    }
+    s.weapon_pos = wpos;
+    if (!torpedo) return 0;
+    if (ammo != nullptr && ammo->ob_type == &PyDict_Type) {
+        Py_ssize_t p = 0;
+        PyObject *k, *v;
+        while (!all && PyDict_Next(ammo, &p, &k, &v)) {
+            if (v == Py_None) continue;
+            const int f = k0_flagged_fast(g, v, s, cc);
+            if (f < 0) return -1;
+            all = f != 0;
+        }
+    } else if (ammo != nullptr) {
+        all = true;
+    }
+    if (all)
+        for (Py_ssize_t i = 0; i < nk; ++i)
+            if (items[i] != Py_None) k0_mark(items[i], s);
+    return 0;
+}
+
+// The scan over `ships` (a list or tuple). False: a Python error is set.
+bool k0_scan(PyObject* ships, const K0Guard* g, K0Scan& s) {
+    namespace cb = dauntless::combat;
+    const K0ScanNames& n = k0_scan_names();
+    if (!PyList_CheckExact(ships) && !PyTuple_CheckExact(ships)) {
+        PyErr_SetString(PyExc_TypeError, "combat_k0_begin: ships: a list");
+        return false;
+    }
+    K0Caches& cc = k0_caches();
+    if (g != nullptr &&
+        (cc.names[0] != g->ship_names || cc.names[1] != g->system_names ||
+         cc.names[2] != g->weapon_names)) {
+        // Compared by identity only (never dereferenced): the driver passes
+        // the same module-level tuples every session.
+        cc.forget_objects();
+        cc.names[0] = g->ship_names;
+        cc.names[1] = g->system_names;
+        cc.names[2] = g->weapon_names;
+    }
+    // A class patched since: every cached object answer may rest on it.
+    if (g != nullptr && !k0_types_unchanged(cc)) cc.forget_objects();
+    PyObject* const* items =
+        ships->ob_type == &PyList_Type
+            ? reinterpret_cast<PyListObject*>(ships)->ob_item
+            : reinterpret_cast<PyTupleObject*>(ships)->ob_item;
+    const Py_ssize_t count = reinterpret_cast<PyVarObject*>(ships)->ob_size;
+    if (cc.ships.size() < static_cast<size_t>(count))
+        cc.ships.resize(static_cast<size_t>(count));
+    s.handles.assign(static_cast<size_t>(count), -1);
+    s.handback.assign(static_cast<size_t>(count), std::nullopt);
+    std::int64_t* handles = s.handles.data();
+    K0ShipEntry* entries = cc.ships.data();
+    for (Py_ssize_t i = 0; i < count; ++i) {
+        PyObject* ship = items[i];
+        PyObject* d = k0_dict_of(ship);
+        if (d == nullptr) continue;
+        K0ShipEntry& e = entries[i];
+        if (!k0_same(e.key, ship, d)) {
+            e = K0ShipEntry{};
+            e.handle =
+                k0_handle(d, static_cast<std::int64_t>(cb::Kind::Object));
+            if (g != nullptr && e.handle >= 0) {
+                int v = k0_flagged(*g, ship, s, cc);
+                if (v == 0) v = k1_holds(d, g->ship_names);
+                if (v < 0) return false;
+                e.verdict = v;
+                for (int gi = 0; gi < 4; ++gi) {
+                    e.groups[gi] = PyDict_GetItemWithError(d, n.groups[gi]);
+                    if (e.groups[gi] == nullptr && PyErr_Occurred())
+                        return false;
+                }
+            }
+            // Keyed only once complete (a guard-less scan leaves it unkeyed).
+            if (g != nullptr)
+                e.key = K0ObjKey{ship->ob_type, d, k0_dict_version(d)};
+        }
+        handles[i] = e.handle;
+        if (g == nullptr || e.handle < 0) continue;  // no row: no_row
+        int r = e.verdict;
+        for (int gi = 0; gi < 4 && r == 0; ++gi) {
+            PyObject* sys = e.groups[gi];
+            if (sys == nullptr) {
+                ++s.sys_pos;
+                continue;
+            }
+            r = k0_guard_system(*g, sys, gi, s, cc);
+        }
+        if (r < 0) return false;
+        if (r != 0) {
+            s.handback[static_cast<size_t>(i)] = cb::K0Reason::Override;
+            s.any_handback = true;
+        }
+    }
+    // Answers resting on a type with no verdict yet are provisional.
+    if (!s.missing.empty()) cc.forget_objects();
+    return true;
+}
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
+// A K0 write -> (handle, field, value) in the Python encoding
+// (combat_write_apply.h): a float, bool or int; a slot write
+// ("slot", index, value), a watcher write ("watcher", value).
+py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
+    namespace cb = dauntless::combat;
+    using T = cb::K0FieldWrite::Type;
+    const cb::K0FieldWrite& w = kw.w;
+    switch (w.type) {
+        case T::Float:
+            return py::make_tuple(kw.handle, cb::field_name(w.field), w.d);
+        case T::Flag:
+            return py::make_tuple(kw.handle, cb::field_name(w.field),
+                                  w.i != 0);
+        case T::Int:
+            return py::make_tuple(kw.handle, cb::field_name(w.field), w.i);
+        case T::Slot:
+            return py::make_tuple(kw.handle, cb::field_name(w.field),
+                                  py::make_tuple("slot", w.index, w.d));
+        case T::Watcher:
+            return py::make_tuple(kw.handle, "_charge_watcher",
+                                  py::make_tuple("watcher", w.d));
+    }
+    throw std::logic_error("combat K0: a write of no type");
 }
 
 }  // namespace
@@ -9823,6 +10550,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_set_i", [fld](std::int64_t h, int f, std::int64_t v) {
             cb::mirror().set_i(h, fld(f), v);
         });
+        m.def("combat_push_codes", [] {
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(PushCode::kCount); ++i)
+                d[kPushCodeNames[i]] = i;
+            return d;
+        });
+        m.add_object("combat_push_scalar",
+                     py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                         &g_push_scalar_def, nullptr,
+                         m.attr("__name__").ptr())));
+        m.def("combat_push_counts", [] {
+            py::dict d;
+            d["fast_pushes"] = fast_pushes();
+            return d;
+        });
+        m.def("combat_push_reset_counts", [] { fast_pushes() = 0; });
         m.def("combat_set_ref", [fld](std::int64_t h, int f, std::int64_t t) {
             cb::mirror().set_ref(h, fld(f), t);
         });
@@ -9834,6 +10577,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               [fld](std::int64_t h, int f, const std::vector<double>& v) {
                   cb::mirror().set_fv(h, fld(f), v);
               });
+        m.def("combat_set_floats",
+              [fld](std::int64_t h, int f, const std::vector<double>& v) {
+                  cb::mirror().set_floats(h, fld(f), v);
+              },
+              py::arg("handle"), py::arg("field"), py::arg("values"),
+              "A FloatList field (a tube's _reload_timers / "
+              "_reload_advanced_at): the whole list, every bit kept.");
         m.def("combat_set_id_lists",
               [fld](std::int64_t h, int f,
                     const std::vector<std::vector<std::int64_t>>& v) {
@@ -10031,6 +10781,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     case cb::FieldType::Ids: d[n] = mi.get_ids(h, f); break;
                     case cb::FieldType::IdLists:
                         d[n] = mi.get_id_lists(h, f);
+                        break;
+                    case cb::FieldType::FloatList:
+                        d[n] = mi.get_floats(h, f);
                         break;
                     case cb::FieldType::Vec3: {
                         auto v = mi.get_fv(h, f);
@@ -10617,7 +11370,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // ── The K1 fire-control kernel (k1_fire_control.h) ───────────────
         // A stack of resumable sessions over the mirror. Each record is a
         // tuple whose first element is a kind int (combat_k1_kinds) and whose
-        // LAST element is the write log since the previous record: a list of
+        // LAST element is the write log since the previous record: [] when
+        // an applier context is installed (combat_set_applier: the binding
+        // applied it before returning; combat_write_apply.h), else a list of
         // (handle, field name, value). Values: float / bool / int; `_target`
         // an Object handle or -1 (None); `_target_list` a list of handles;
         // `_target_offset` None or ("walk_offset", walk, system) (that walk's
@@ -10675,9 +11430,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // the packaged build's log tee (engine/log_tee.py) allocates, so
             // a released GIL could free a row mid-read. A call takes
             // microseconds. tests/unit/test_native_k1_holds_gil.py guards it.
+            k1_apply_raised() = false;
             cb::K1Record r = cb::k1_kernel().next();
             py::list writes;
-            for (const cb::K1Write& w : r.writes) {
+            dauntless::host::WriteApplier& applier =
+                dauntless::host::write_applier();
+            if (applier.has_context()) {
+                // The record's writes applied here, in order, before it is
+                // returned (combat_write_apply.h); `writes` stays [].
+                if (!applier.apply(r.writes, 0, r.writes.size())) {
+                    k1_apply_raised() = true;
+                    throw py::error_already_set();
+                }
+            } else for (const cb::K1Write& w : r.writes) {
                 py::object v = std::visit(
                     [](const auto& x) -> py::object {
                         using T = std::decay_t<decltype(x)>;
@@ -10855,11 +11620,174 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k1_reset_counts",
               [] { cb::k1_kernel().reset_counts(); });
 
+        // ── The K0 charging kernel (k0_charging.h) ───────────────────────
+        // One resumable session over the mirror: host_loop._advance_weapons
+        // in the per-tick model. Records are tuples
+        //   (kind, a, ship_pos, group, index, reason, writes)
+        // kind a combat_k0_kinds() int; a the weapon (or the ship for a
+        // whole-ship RUN_PYTHON, -2 for a weapon the mirror cannot name);
+        // ship_pos / group / index where in the begin snapshot (group 0
+        // phaser, 1 pulse, 2 tractor, 3 torpedo; -1 for a whole ship and
+        // DONE); reason the K0Reason name of a RUN_PYTHON (else None);
+        // writes [] when an applier context is installed (the binding
+        // applied the record's log before returning, combat_write_apply.h),
+        // else the log in the Python encoding.
+        m.def("combat_k0_kinds", [] {
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(cb::K0Kind::kCount); ++i)
+                d[cb::k0_kind_name(static_cast<cb::K0Kind>(i))] = i;
+            return d;
+        });
+        m.def("combat_k0_begin",
+              [](py::handle ships, double dt, double now,
+                 py::handle ctx) -> py::object {
+                  // ctx: None (no guard: every ship and weapon native) or
+                  // (fresh, ship_names, system_names, weapon_names); see
+                  // k0_scan. Returns None (the session is open) or the list
+                  // of types with no valid class verdict (nothing begun:
+                  // the caller computes them and calls again with them in
+                  // `fresh`).
+                  K0Guard g;
+                  const K0Guard* gp = nullptr;
+                  if (!ctx.is_none()) {
+                      if (!PyTuple_Check(ctx.ptr()) ||
+                          PyTuple_GET_SIZE(ctx.ptr()) != 4)
+                          throw py::type_error(
+                              "combat_k0_begin: ctx (fresh, ship_names, "
+                              "system_names, weapon_names) or None");
+                      g.fresh = PyTuple_GET_ITEM(ctx.ptr(), 0);
+                      g.ship_names = PyTuple_GET_ITEM(ctx.ptr(), 1);
+                      g.system_names = PyTuple_GET_ITEM(ctx.ptr(), 2);
+                      g.weapon_names = PyTuple_GET_ITEM(ctx.ptr(), 3);
+                      if (!PyDict_Check(g.fresh))
+                          throw py::type_error("fresh: a dict");
+                      for (PyObject* t :
+                           {g.ship_names, g.system_names, g.weapon_names})
+                          if (!PyTuple_Check(t))
+                              throw py::type_error("names: tuples of str");
+                      gp = &g;
+                  }
+                  K0Scan s;
+                  if (!k0_scan(ships.ptr(), gp, s))
+                      throw py::error_already_set();
+                  if (!s.missing.empty()) {
+                      py::list out;
+                      for (PyObject* t : s.missing)
+                          out.append(py::reinterpret_borrow<py::object>(t));
+                      return out;
+                  }
+                  cb::K0Session& k = cb::k0_session();
+                  if (k.open())
+                      throw std::logic_error(
+                          "combat K0: a session is already open");
+                  if (s.python_weapons.empty()) {
+                      k.set_weapon_check(nullptr);
+                  } else {
+                      auto marked =
+                          std::make_shared<const std::unordered_set<
+                              std::int64_t>>(std::move(s.python_weapons));
+                      k.set_weapon_check([marked](std::int64_t w) {
+                          return marked->count(w) != 0;
+                      });
+                  }
+                  if (s.any_handback)
+                      k.begin(std::move(s.handles), dt, now,
+                              std::move(s.handback));
+                  else
+                      k.begin(std::move(s.handles), dt, now);
+                  return py::none();
+              },
+              py::arg("ships"), py::arg("dt"), py::arg("now"),
+              py::arg("ctx"),
+              "Begin _advance_weapons(ships, dt) for one tick: `ships` the "
+              "Python ship list (each one's Object handle read from its "
+              "_nslot), `now` weapon_subsystems._game_time(), `ctx` the "
+              "override guard or None. None: begun; else the types whose "
+              "guard flag is missing (nothing begun).");
+        m.def("combat_k0_next", [] {
+            // The GIL is held (as combat_k1_next). The weapon check is a set
+            // lookup made at begin: no CPython call inside the walk.
+            cb::K0Session& k = cb::k0_session();
+            cb::K0Record r = k.next();
+            py::list writes;
+            dauntless::host::WriteApplier& applier =
+                dauntless::host::write_applier();
+            if (applier.has_context()) {
+                // r.writes views the session's log: the Python the apply
+                // runs (wake hooks, setters) must not reach next() and
+                // clear it (THE DELIVERY, k0_charging.h).
+                struct Delivering {
+                    cb::K0Session& k;
+                    explicit Delivering(cb::K0Session& s) : k(s) {
+                        k.set_delivering(true);
+                    }
+                    ~Delivering() { k.set_delivering(false); }
+                } delivering(k);
+                if (!applier.apply(r.writes)) throw py::error_already_set();
+            } else {
+                for (const cb::K0Write& w : r.writes)
+                    writes.append(k0_write_tuple(w));
+            }
+            // The reason names, made once and never freed (no decref
+            // after the interpreter is gone).
+            static PyObject** const reasons = [] {
+                constexpr size_t n = static_cast<size_t>(cb::K0Reason::kCount);
+                PyObject** a = new PyObject*[n];
+                for (size_t i = 0; i < n; ++i)
+                    a[i] = PyUnicode_InternFromString(
+                        cb::k0_reason_name(static_cast<cb::K0Reason>(i)));
+                return a;
+            }();
+            const py::object reason =
+                r.reason ? py::reinterpret_borrow<py::object>(
+                               reasons[static_cast<size_t>(*r.reason)])
+                         : py::object(py::none());
+            return py::make_tuple(static_cast<int>(r.kind), r.a, r.ship_pos,
+                                  r.group, r.index, reason, writes);
+        }, "The session's next record (see combat_k0_kinds).");
+        m.def("combat_k0_end", [] { cb::k0_session().end(); },
+              "Close the session (it must have returned DONE).");
+        m.def("combat_k0_abandon", [] { cb::k0_session().abandon(); },
+              "Close the session whatever its state (exception path).");
+        m.def("combat_k0_open", [] { return cb::k0_session().open(); });
+        m.def("combat_k0_counts", [] {
+            const auto& c = cb::k0_session().counts();
+            py::dict d;
+            d["k0_steps"] = c.steps;
+            py::dict rec, why;
+            for (size_t i = 0; i < c.records.size(); ++i)
+                rec[cb::k0_kind_name(static_cast<cb::K0Kind>(i))] =
+                    c.records[i];
+            for (size_t i = 0; i < c.python_reasons.size(); ++i)
+                why[cb::k0_reason_name(static_cast<cb::K0Reason>(i))] =
+                    c.python_reasons[i];
+            d["k0_records"] = rec;
+            d["k0_python_reasons"] = why;
+            d["k0_logged_writes"] = c.logged_writes;
+            return d;
+        });
+        m.def("combat_k0_reset_counts",
+              [] { cb::k0_session().reset_counts(); });
+        m.def("combat_k0_clear_caches", [] { k0_caches().clear(); },
+              "Forget the begin scan's class verdicts and dict states "
+              "(native_combat.reset, a re-taken stock snapshot).");
+        m.def("combat_k0_object_cache", [] { return kK0ObjectCache; },
+              "Whether the begin scan caches each object's answer by its "
+              "dict's ma_version_tag (CPython 3.11 only; else uncached).");
+        m.def("combat_k0_cache_sizes", [] {
+            const K0Caches& c = k0_caches();
+            return py::make_tuple(c.types.size(), c.ships.size(),
+                                  c.systems.size(), c.weapons.size());
+        });
+
         // ── The K2 beam kernel (k2_beams.h) ──────────────────────────────
         // One resumable session over the mirror: the `cb.phasers` loop. Each
         // record is a tuple whose first element is a kind int
         // (combat_k2_kinds) and whose LAST element is the write log since the
-        // previous record: a list of (handle, "_dwell", float). Layouts
+        // previous record: with an applier context, [] (applied) or, when
+        // resting contacts are queued, the count of writes pending
+        // (combat_apply_writes); else a list of (handle, "_dwell", float).
+        // Layouts
         // (handles -1 = None, xyz = a 3-tuple):
         //   (DONE, writes)
         //   (SYSTEM_STOP, system, writes)
@@ -10977,11 +11905,35 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k2_next", [vec] {
             // The GIL is HELD for the walk (ruling J), as combat_k1_next:
             // the kernel and the trace hooks touch no Python object.
+            k2_not_delivering("next()");
+            K2PendingWrites& pending = k2_pending_writes();
+            if (pending.done < pending.writes.size())
+                throw std::runtime_error(
+                    "combat K2: the previous record's writes are not all "
+                    "applied (combat_apply_writes)");
+            pending.writes.clear();
+            pending.done = 0;
             cb::K2Record r = cb::k2_kernel().next();
-            // The write log: K1's value encoding (None, bool, int, float, a
-            // handle list) -- native_combat.apply_writes applies both.
-            py::list writes;
-            for (const cb::K2Write& w : r.writes) {
+            // The write log. With an applier context (combat_write_apply.h)
+            // a record with no queued resting contact has its writes applied
+            // here and carries []; one with queued contacts keeps them
+            // pending (combat_apply_writes) and carries their count. With
+            // none, K1's value encoding (None, bool, int, float, a handle
+            // list) -- native_combat.apply_writes applies both.
+            py::list log;
+            py::object writes = log;
+            dauntless::host::WriteApplier& applier =
+                dauntless::host::write_applier();
+            if (applier.has_context()) {
+                if (r.contacts.empty()) {
+                    const K2Delivering delivering;
+                    if (!applier.apply(r.writes, 0, r.writes.size()))
+                        throw py::error_already_set();
+                } else {
+                    pending.writes = std::move(r.writes);
+                    writes = py::int_(pending.writes.size());
+                }
+            } else for (const cb::K2Write& w : r.writes) {
                 py::object v = std::visit(
                     [](const auto& x) -> py::object {
                         using T = std::decay_t<decltype(x)>;
@@ -10994,7 +11946,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                             return py::cast(x);
                     },
                     w.value);
-                writes.append(py::make_tuple(w.handle, w.field, v));
+                log.append(py::make_tuple(w.handle, w.field, v));
             }
             const int kind = static_cast<int>(r.kind);
             auto opt = [&vec](const std::optional<cb::Vec3>& v) -> py::object {
@@ -11114,9 +12066,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "ASK's reply, shaped per query (k2_beams.h): a bool; "
               "aim_point ((x, y, z), has_sub); bubble (x, y, z) or None; "
               "resolve_hit ((x, y, z), normal or None, tier); bank_step None.");
-        m.def("combat_k2_end", [] { cb::k2_kernel().end(); },
+        m.def("combat_k2_end",
+              [] {
+                  k2_not_delivering("end()");
+                  k2_pending_writes() = K2PendingWrites{};
+                  cb::k2_kernel().end();
+              },
               "End the session (it must have returned DONE).");
-        m.def("combat_k2_abandon", [] { cb::k2_kernel().abandon(); },
+        m.def("combat_k2_abandon",
+              [] {
+                  k2_not_delivering("abandon()");
+                  k2_pending_writes() = K2PendingWrites{};
+                  cb::k2_kernel().abandon();
+              },
               "End the session whatever its state (exception path).");
         m.def("combat_k2_open", [] { return cb::k2_kernel().open(); });
         m.def("combat_k2_counts", [] {
@@ -11146,6 +12108,89 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_k2_reset_counts",
               [] { cb::k2_kernel().reset_counts(); });
+
+        // ── C-applied write logs (combat_write_apply.h) ──────────────────
+        m.def("combat_apply_kinds", [] {
+            py::dict d;
+            for (int i = 0;
+                 i < static_cast<int>(dauntless::host::ApplyKind::kCount); ++i)
+                d[dauntless::host::apply_kind_name(
+                    static_cast<dauntless::host::ApplyKind>(i))] = i;
+            return d;
+        });
+        m.def("combat_k0_field_name",
+              [](long field, bool watcher) {
+                  namespace cb = dauntless::combat;
+                  cb::K0FieldWrite w;
+                  w.type = watcher ? cb::K0FieldWrite::Type::Watcher
+                                   : cb::K0FieldWrite::Type::Float;
+                  w.field = static_cast<cb::Field>(field);
+                  PyObject* o = dauntless::host::k0_field_name(w);
+                  if (o == nullptr) throw py::error_already_set();
+                  return py::reinterpret_borrow<py::object>(o);
+              },
+              py::arg("field"), py::arg("watcher"),
+              "The attribute a K0 write of Field `field` (or the watcher "
+              "write) stores into, as the applier names it (tests).");
+        m.def("combat_set_applier",
+              [](py::handle ctx) {
+                  PyObject* prev =
+                      dauntless::host::write_applier().set_context(ctx.ptr());
+                  if (prev == nullptr) throw py::error_already_set();
+                  return py::reinterpret_steal<py::object>(prev);
+              },
+              py::arg("ctx"),
+              "Install the applier context (pins, registry, walk, kinds, "
+              "wake, python_setters), or None; returns the previous one "
+              "(the driver restores it when its session ends).");
+        m.def("combat_apply_writes",
+              [](std::optional<std::int64_t> upto) {
+                  k2_not_delivering("combat_apply_writes()");
+                  K2PendingWrites& pending = k2_pending_writes();
+                  const auto n = static_cast<std::int64_t>(
+                      pending.writes.size());
+                  const size_t to = static_cast<size_t>(
+                      upto ? std::clamp<std::int64_t>(*upto, 0, n) : n);
+                  if (to <= pending.done) return;
+                  const size_t from = pending.done;
+                  // Consumed even if a write raises: apply_writes(writes[
+                  // done:at]) applies the rest of its slice, then raises.
+                  pending.done = to;
+                  const K2Delivering delivering;
+                  if (!dauntless::host::write_applier().apply(
+                          pending.writes, from, to))
+                      throw py::error_already_set();
+              },
+              py::arg("upto") = py::none(),
+              "Apply the pending K2 record's writes up to index `upto` (all "
+              "when None) that are not applied yet.");
+        m.def("combat_apply_log",
+              [](py::handle writes) {
+                  std::vector<dauntless::host::ApplyWrite> w;
+                  if (!dauntless::host::WriteApplier::parse_log(writes.ptr(),
+                                                                &w) ||
+                      !dauntless::host::write_applier().apply(w, 0, w.size()))
+                      throw py::error_already_set();
+              },
+              py::arg("writes"),
+              "Apply a Python-encoded write log [(handle, field, value), "
+              "...] through the C path (values as apply_writes', plus "
+              "(\"slot\", index, value) and (\"watcher\", value)). "
+              "Test-only entry: its encoding is the kernels' logs', not "
+              "apply_writes', in two places -- a list value is always a "
+              "list of int64 handles (on a PLAIN field apply_writes stores "
+              "the list object itself; here a new list is built, and a "
+              "non-int entry raises TypeError), and an int beyond 64 bits "
+              "raises OverflowError where apply_writes stores it.");
+        m.def("combat_apply_raised", [] { return k1_apply_raised(); },
+              "Whether the last combat_k1_next raised applying its writes.");
+        m.def("combat_apply_counts", [] {
+            py::dict d;
+            d["c_applied_writes"] = dauntless::host::write_applier().applied();
+            return d;
+        });
+        m.def("combat_apply_reset_counts",
+              [] { dauntless::host::write_applier().reset_counts(); });
 
         // ── The K3 torpedo kernel (k3_projectiles.h) ─────────────────────
         // One resumable session over the torpedo table and the step scan:
