@@ -10,8 +10,9 @@ records after every tick everything Task 5's dispatch test compares
 (tests/unit/test_native_k3_dispatch.py) -- every torpedo in flight (or that
 left flight this tick): position, velocity, age, guidance fields, mount key,
 bubble entry (floats by .hex()); update_all's hits; every apply_hit, and in
-the same ordered log every beam contact, hit VFX spawn and shield hit (the
-presentation: spy_presentation, round trips Task 5); the
+the same log every beam contact, hit VFX spawn and shield hit (the
+presentation: spy_presentation, round trips Task 5; compared per tick as a
+multiset, compare_calls); the
 incoming-torpedo table's velocity writes (a per-tick multiset) and its
 incoming_ids answer -- plus what the phase adds: every ship's death, hull and
 shield faces, ``damage_eligibility._current`` (see eligibility_view: ids
@@ -211,13 +212,13 @@ def spy_presentation(mp, calls, tick, label, contacts=True):
     arm's tick, `label` its labeller); with `contacts`, every
     hit_feedback.beam_contact too (its arguments, and the shields_block it
     acted on: headless, a contact on a shielded ship presents nothing, so
-    the contact itself is what shows its order). What a beam contact or a
-    hit PRESENTS: since round trips Task 3 a K2 resting contact is batched
-    and run with the next record that runs Python, so its presentation must
-    still land in Python's per-tick order, among the pulses' apply_hits
-    (when the arm logs those into the same list). The instance id is
-    compared only as present or not: two loads realize alike but number
-    their instances independently."""
+    the contact itself is what shows it). What a beam contact or a hit
+    PRESENTS: a K2 resting contact is presented at the drain after the
+    step's last record (spec 2026-11-02 §4.3-4.4), so presentation is
+    compared per tick as a multiset (compare_calls; ruling Q1), while the
+    game-state calls logged into the same list keep their order. The
+    instance id is compared only as present or not: two loads realize
+    alike but number their instances independently."""
     from engine import host_io
     from engine.appc import hit_feedback, hit_vfx
     spawn, shield_hit = hit_vfx.spawn, host_io.shield_hit
@@ -261,11 +262,43 @@ def spy_presentation(mp, calls, tick, label, contacts=True):
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
 
 
+#: The presentation calls spy_presentation logs: no order inside a tick
+#: (ruling Q1, spec 2026-11-02 §5).
+PRESENTATION = ("beam_contact", "vfx", "shield_hit")
+
+
 def presented(calls):
     """How many presentation calls (beam contacts, VFX spawns, shield hits)
     `calls` holds."""
-    return sum(1 for c in calls
-               if c[0] in ("beam_contact", "vfx", "shield_hit"))
+    return sum(1 for c in calls if c[0] in PRESENTATION)
+
+
+def split_calls(calls):
+    """(every other call, in order; {tick: that tick's presentation calls,
+    sorted}). A call's second element is its tick."""
+    ordered, shown = [], {}
+    for c in calls:
+        if c[0] in PRESENTATION:
+            shown.setdefault(c[1], []).append(c)
+        else:
+            ordered.append(c)
+    return ordered, {t: sorted(v, key=repr) for t, v in shown.items()}
+
+
+def compare_calls(ref_calls, nat_calls):
+    """The game-state calls equal in order; each tick's presentation equal
+    as a multiset (ruling Q1)."""
+    ref, ref_shown = split_calls(ref_calls)
+    nat, nat_shown = split_calls(nat_calls)
+    for i, (x, y) in enumerate(zip(ref, nat)):
+        assert x == y, "call %d differs:\n python %r\n native %r" % (i, x, y)
+    assert len(ref) == len(nat)
+    assert sorted(ref_shown) == sorted(nat_shown), (sorted(ref_shown),
+                                                    sorted(nat_shown))
+    for t in ref_shown:
+        assert ref_shown[t] == nat_shown[t], (
+            "tick %d presentation differs:\n python %r\n native %r" % (
+                t, ref_shown[t], nat_shown[t]))
 
 
 class Recorder:
@@ -616,7 +649,8 @@ class K3Tally:
 
 
 def compare(ref, nat):
-    """Every per-tick row, call and event equal (floats by .hex())."""
+    """Every per-tick row, call and event equal (floats by .hex();
+    presentation per tick as a multiset, compare_calls)."""
     assert len(ref.log) == len(nat.log)
     for tick, (a, b) in enumerate(zip(ref.log, nat.log), start=1):
         assert len(a) == len(b), "tick %d: %d rows vs %d" % (tick, len(a),
@@ -624,9 +658,7 @@ def compare(ref, nat):
         for x, y in zip(a, b):
             assert x == y, "tick %d differs:\n python %r\n native %r" % (
                 tick, x, y)
-    for i, (x, y) in enumerate(zip(ref.calls, nat.calls)):
-        assert x == y, "call %d differs:\n python %r\n native %r" % (i, x, y)
-    assert len(ref.calls) == len(nat.calls)
+    compare_calls(ref.calls, nat.calls)
     for i, (x, y) in enumerate(zip(ref.events, nat.events)):
         assert x == y, "event %d differs:\n python %r\n native %r" % (i, x, y)
     assert len(ref.events) == len(nat.events)

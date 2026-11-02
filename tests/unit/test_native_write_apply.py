@@ -488,12 +488,11 @@ def test_reset_clears_a_leaked_applier_context():
     assert _h.combat_set_applier(None) is None
 
 
-def test_reset_abandons_a_leaked_k2_session_and_its_pending_writes(
-        monkeypatch):
-    """A K2 session left open with a record's writes still pending (here
-    its abandon swallowed once, after a raise at a record carrying queued
-    resting contacts): native_combat.reset() abandons it and drops the
-    pending writes, so the next session begins and runs to DONE."""
+def test_reset_abandons_a_leaked_k2_session_and_its_queue(monkeypatch):
+    """A K2 session left open with resting contacts queued for its drain
+    (here its abandon swallowed once, after a raise at a DONE): reset()
+    abandons it and drops the queue unpresented, so the next session
+    begins and runs to DONE."""
     class _Leak(Exception):
         pass
 
@@ -502,11 +501,13 @@ def test_reset_abandons_a_leaked_k2_session_and_its_pending_writes(
         w = _world(mp, "wa_reset_k2")
         try:
             real_next, real_abandon = _h.combat_k2_next, _h.combat_k2_abandon
+            kinds = _h.combat_k2_kinds()
 
             def next_():
                 rec = real_next()
-                if rec[-2] and rec[-1] and not leaked:
-                    leaked.append(rec[-1])
+                if rec[0] == kinds["DONE"] and not leaked \
+                        and _h.combat_k2_counts()["k2_batched_contacts"]:
+                    leaked.append(w.n)
                     raise _Leak()
                 return rec
 
@@ -523,15 +524,20 @@ def test_reset_abandons_a_leaked_k2_session_and_its_pending_writes(
             with pytest.raises(_Leak):
                 for _ in range(60):
                     w.tick()
-            assert leaked[0] > 0 and leaked[1] == "swallowed", leaked
+            assert leaked[1] == "swallowed", leaked
             assert _h.combat_k2_open()
+            contacts = sum(1 for c in w.calls if c[0] == "beam_contact")
             nc.reset()
             assert not _h.combat_k2_open()
+            assert _h.combat_k2_drain() == []
             nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
             before = nc.counts()["k2_records"]
             w.tick()                        # begins, and next() may run
             assert nc.counts()["k2_records"] > before
             assert not _h.combat_k2_open()
+            # Only the new step's own contacts were presented.
+            assert sum(1 for c in w.calls if c[0] == "beam_contact") \
+                - contacts == nc.counts()["k2_batched_contacts"] > 0
             nc.audit_mirror()
             assert nc.audit_failures() == [], nc.audit_failures()
         finally:
@@ -539,13 +545,11 @@ def test_reset_abandons_a_leaked_k2_session_and_its_pending_writes(
 
 
 def test_records_return_empty_writes(monkeypatch):
-    """K1 records, and K2 records with no queued resting contact, come back
-    with their writes already applied (the C counter moves inside next()):
-    `writes` is []. A K2 record carrying queued contacts returns the count
-    of writes still pending, applied by _k2_deliver. The Galaxy's phasers
-    rest on the Vor'cha (queued contacts) until tick 30; the Vor'cha's own
-    phasers are offline throughout (their stop is logged writes every tick,
-    on a record with no queued contact once the Galaxy stops)."""
+    """K1 and K2 records come back with their writes already applied (the C
+    counter moves inside next()): `writes` is []. The Galaxy's phasers rest
+    on the Vor'cha (resting contacts queued for the drain) until tick 30;
+    the Vor'cha's own phasers are offline throughout (their stop is logged
+    writes every tick)."""
     k1, k2 = [], []
     with monkeypatch.context() as mp:
         w = _world(mp, "wa_empty")
@@ -579,79 +583,42 @@ def test_records_return_empty_writes(monkeypatch):
             w.close()
     assert k1 and all(rec[-1] == [] for rec, _n in k1)
     assert any(n > 0 for _rec, n in k1), "no K1 record carried writes"
-    plain = [(rec, n) for rec, n in k2 if not rec[-2]]
-    queued = [(rec, n) for rec, n in k2 if rec[-2]]
-    assert plain and all(rec[-1] == [] for rec, _n in plain)
-    assert any(n > 0 for _rec, n in plain), "no plain K2 record's writes"
-    assert queued and all(type(rec[-1]) is int and n == 0
-                          for rec, n in queued)
-    assert any(rec[-1] > 0 for rec, _n in queued)
+    assert k2 and all(rec[-1] == [] for rec, _n in k2)
+    assert any(n > 0 for _rec, n in k2), "no K2 record carried writes"
+    assert nc.counts()["k2_batched_contacts"] > 0
 
 
-def test_k2_queued_contacts_interleave_with_c_applied_writes(monkeypatch):
-    """Each queued resting contact runs after exactly the writes logged
-    before its `at` and none after: at the k-th contact, the banks of the
-    contacts before it (and its own) hold their new `_dwell`, the later
-    ones the old; after the record, all hold the new."""
+def test_k2_drained_contacts_run_after_every_write(monkeypatch):
+    """The drain runs after DONE: when each resting contact is presented,
+    every write of the step is applied -- every Galaxy bank's `_dwell`
+    equals the mirror's -- and the contact carries its level."""
     checked = []
-    state = {}
     with monkeypatch.context() as mp:
-        w = _world(mp, "wa_interleave")
+        w = _world(mp, "wa_drain")
         try:
-            real_next, real_contact = _h.combat_k2_next, nc._k2_run_contact
-            real_deliver = nc._k2_deliver
-
-            def dwell(h):
-                return nc._registry[h].__dict__["_dwell"].hex()
-
-            def spy_deliver(*args):
-                result = real_deliver(*args)
-                banks = state.pop("banks", None)
-                if banks is not None:
-                    # Before the record's own effect: every write applied.
-                    assert [dwell(h) for h in banks] == state["new"]
-                    assert state["k"] == len(banks)
-                return result
-
-            def spy_next():
-                rec = real_next()
-                banks = [q[1] for q in rec[-2]]
-                ats = [q[0] for q in rec[-2]]
-                # Contacts each after writes of their own (dwell moved).
-                if len(banks) > 1 and ats[0] > 0 \
-                        and ats == sorted(set(ats)):
-                    state["banks"] = banks
-                    state["old"] = [dwell(h) for h in banks]
-                    state["new"] = [float(_h.combat_dump(h)["_dwell"]).hex()
-                                    for h in banks]
-                    assert all(o != n for o, n in zip(state["old"],
-                                                      state["new"]))
-                    state["k"] = 0
-                return rec
-
-            def spy_contact(c, walk, dt, si):
-                banks = state.get("banks")
-                if banks is not None:
-                    k = state["k"]
-                    assert c[0] == banks[k]
-                    want = state["new"][:k + 1] + state["old"][k + 1:]
-                    assert [dwell(h) for h in banks] == want
-                    state["k"] = k + 1
-                    checked.append(len(banks))
-                return real_contact(c, walk, dt, si)
-            mp.setattr(_h, "combat_k2_next", spy_next)
-            mp.setattr(nc, "_k2_run_contact", spy_contact)
-            mp.setattr(nc, "_k2_deliver", spy_deliver)
+            real_contact = nc._k2_run_contact
             g, v = w.ships["Galaxy"], w.ships["Vorcha"]
-            g.GetPhaserSystem().SetSingleFire(0)
-            g.GetPhaserSystem().StartFiring(v)
+            sys_ = g.GetPhaserSystem()
+            banks = [sys_.GetWeapon(i) for i in range(sys_.GetNumWeapons())]
+
+            def spy_contact(c, walk, dt, si, level=None):
+                if level is not None:
+                    assert [b.__dict__["_dwell"].hex() for b in banks] == [
+                        float(_h.combat_dump(b.__dict__["_nslot"])[
+                            "_dwell"]).hex() for b in banks]
+                    checked.append(level)
+                return real_contact(c, walk, dt, si, level=level)
+            mp.setattr(nc, "_k2_run_contact", spy_contact)
+            sys_.SetSingleFire(0)
+            sys_.StartFiring(v)
             for _ in range(60):
                 w.tick()
             nc.audit_mirror()
             assert nc.audit_failures() == [], nc.audit_failures()
         finally:
             w.close()
-    assert len(checked) > 4, checked
+    assert len(checked) > 4 and set(checked) == {sys_.GetPowerLevel()}, \
+        checked
 
 
 # ── Fix round 2: names and the registry read in C ────────────────────────────

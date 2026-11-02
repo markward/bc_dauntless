@@ -54,51 +54,56 @@
 // is replaced. A firing bank (its loop sound), a child that is not such a
 // bank, or a row gone keeps the SYSTEM_STOP record.
 //
-// RESTING CONTACTS (round trips, spec 2026-11-01 §4.4). A contact whose
-// Python is presentation only -- `flush_dwell <= 0.0`, _phaser_contact's
-// beam_contact branch: no damage, no event, no RNG -- is not returned on
-// its own. The kernel queues it, in walk order, with the number of logged
-// writes made before it (`at`), and the queue rides the NEXT record that
-// runs Python, or DONE (K2Record::contacts). The driver runs every queued
-// contact, each after the writes logged before it, BEFORE that record's own
-// effect, so the presentation calls and every other Python call keep their
-// order. Python runs nothing between a contact's queueing and its delivery,
-// so what it reads there (the system's power level, the ship's pose) is
-// what it would have read. `shields_asked`: the loop's shields_block was
-// answered by Python (an ASK), and beam_contact evaluates its own. A damage
-// pulse (`flush_dwell > 0.0`) is still a CONTACT record.
+// RESTING CONTACTS (spec 2026-11-02 §4.3). A contact whose Python is
+// presentation only -- `flush_dwell <= 0.0`, _phaser_contact's beam_contact
+// branch: no damage, no event, no RNG -- never comes back on a record. The
+// kernel appends it to the session's queue (rests()), in walk order, as a
+// K2Rest: the contact plus every value its presentation could otherwise
+// read after later Python changed it, taken at contact time -- the
+// system's `_power_level` (indexing PHASER_INTENSITY_SCALE), the loop's
+// shields_block answer ALWAYS carried (an ASK's too, marked
+// `shields_asked`; with no aim unit the loop never evaluated it, so the
+// kernel does, natively, for the entry, and leaves it unknown if that
+// would need an ASK), the target's instance id (ctx.iids) and its set's
+// view offset (ctx.view_offsets). The driver drains the queue once, after
+// DONE and before end() (combat_k2_drain, take_rests()), so a rest is
+// presented after every later record's Python of the step: presentation
+// has no order inside a tick (spec 2026-11-02 §5, Q1); game state keeps
+// its exact order. begin(), end() and abandon() clear the queue: an
+// abandoned step presents nothing it queued. A damage pulse
+// (`flush_dwell > 0.0`) is still a CONTACT record.
 //
 // RECORDS (K2Kind, in combat_k2_kinds() order). The Python layouts, as the
 // binding builds them (handles are mirror handles, -1 = None; xyz = a
-// 3-tuple of floats). Every record ends (..., queued, writes): `queued` is
-// the resting contacts queued since the previous record, each
-//   (at, bank, target, ship, system, emitter_xyz, target_pos_xyz, dist,
+// 3-tuple of floats). Every record ends (..., writes).
+//   0 DONE        (DONE, writes)
+//        -> then combat_k2_drain(): the queued rests, each
+//   (bank, target, ship, system, emitter_xyz, target_pos_xyz, dist,
 //    aim_unit_xyz | None, impact_xyz, normal_xyz | None, tier,
-//    bubble_xyz | None, shields_block (True / False / None), flush_dwell)
-// (shields_block None when the loop had none or Python answered it), run
-// in order before the record's effect, each after writes[:at].
-//   0 DONE        (DONE, queued, writes)
-//   1 SYSTEM_STOP (SYSTEM_STOP, system, queued, writes) -> sys_.StopFiring()
-//   2 BANK_STOP   (BANK_STOP, bank, queued, writes)   -> bank.StopFiring()
+//    bubble_xyz | None, shields_block (True / False / None), flush_dwell,
+//    level, iid | None, view_offset_xyz | None)
+//        (shields_block None: unknown, beam_contact evaluates its own;
+//        view_offset None: no shift, or no entry for the set).
+//   1 SYSTEM_STOP (SYSTEM_STOP, system, writes) -> sys_.StopFiring()
+//   2 BANK_STOP   (BANK_STOP, bank, writes)   -> bank.StopFiring()
 //   3 CONTACT     (CONTACT, bank, target, ship, system, emitter_xyz,
 //                  target_pos_xyz, dist, aim_unit_xyz | None, impact_xyz,
 //                  normal_xyz | None, tier, bubble_xyz | None,
 //                  shields_block (True / False / None), flush_dwell,
-//                  queued, writes)
+//                  writes)
 //        tier is "mesh", "sphere", "fallback" (the impact point IS
 //        target_pos) or "origin" (the impact point IS emitter_pos), so Python
 //        rebuilds Python's object identity. shields_block is None when the
 //        loop did not evaluate it (aim_unit None) or Python answered it (an
-//        ASK; K2Contact::shields_asked): beam_contact then evaluates its
-//        own. Python: hit_feedback.beam_contact(...) if
-//        flush_dwell <= 0.0, else combat.apply_hit(...) if the damage is > 0
-//        (the damage arithmetic, PHASER_INTENSITY_SCALE[level],
-//        weapon_splash_radius and damage_hull stay Python). Only a damage
-//        pulse comes back as a CONTACT record; a resting contact is queued
-//        (RESTING CONTACTS above).
-//   4 RUN_PYTHON  (RUN_PYTHON, ship, ship_pos, queued, writes)
+//        ASK; K2Contact::shields_asked). Python: combat.apply_hit(...) if
+//        the damage is > 0 (the damage arithmetic,
+//        PHASER_INTENSITY_SCALE[level], weapon_splash_radius and
+//        damage_hull stay Python). Only a damage pulse comes back as a
+//        CONTACT record; a resting contact is queued (RESTING CONTACTS
+//        above).
+//   4 RUN_PYTHON  (RUN_PYTHON, ship, ship_pos, writes)
 //        -> the loop body for ships_list[ship_pos], in Python, whole.
-//   5 ASK         (ASK, query, *args, queued, writes)
+//   5 ASK         (ASK, query, *args, writes)
 //        -> reply combat_k2_answer.
 //
 // FALLBACK, two stages (ruling H):
@@ -195,9 +200,10 @@
 // driver resolves and pins (_K2Walk.obj, pin_bank) -- the objects Python's
 // locals would hold at that point:
 //   - SYSTEM_STOP: the system, before its StopFiring;
-//   - a queued resting contact: the bank, the target, the ship and the
-//     system, when the driver delivers it (no Python runs between its
-//     queueing and its delivery, so nothing can free one first);
+//   - a drained resting contact: the bank, the target, the ship and the
+//     system, when the driver presents it -- by handle through the weak
+//     registry (_K2Walk.obj): a row freed between its queueing and the
+//     drain is skipped (its presentation would have run before the free);
 //   - BANK_STOP: the bank, its `_target` and its system (pin_bank), before
 //     the bank's StopFiring;
 //   - CONTACT: the bank, the target, the ship and the system, before the
@@ -220,21 +226,11 @@
 // memo are not undone: they are the writes Python's own calls make at the
 // same point (sensor_detect.h, weapon_geometry.h). Once a record is
 // returned its writes are in the mirror and their undo is gone, so the
-// driver must get every one of them into Python whatever happens:
-//   - applying a write must not fail part-way (apply_writes' quiet
-//     setters: plain fields on pinned rows, and the `_firing` WakeField);
-//   - a queued contact's Python that RAISES (its presentation) is caught by
-//     the driver (native_combat._k2_deliver), which applies every write of
-//     the record still outstanding, in order, and re-raises; run_k2 then
-//     abandons the session with the mirror equal to Python. Those writes
-//     include some the pure-Python step would never have made: in Python
-//     the raise ends the step there, but the kernel has already walked on
-//     (later banks' `_dwell`, an offline system's stop writes). Mirror and
-//     Python stay equal to each other; the state differs from a
-//     pure-Python run only if a caller swallows the exception and carries
-//     on (the driver itself always re-raises);
-//   - a raise in the record's own effect comes after all its writes were
-//     applied.
+// binding applies them all before it returns the record, and applying a
+// write must not fail part-way (apply_writes' quiet setters: plain fields
+// on pinned rows, and the `_firing` WakeField). A raise in the record's own
+// effect, or in a drained rest's presentation, comes after all of the
+// step's writes were applied.
 // abandon() itself only ends the session: it undoes nothing.
 //
 // THE CONTEXT (K2Context): per-step Python state that is not mirrored. Set
@@ -395,13 +391,6 @@ struct K2Contact {
     double flush_dwell = 0.0;
 };
 
-// A resting contact queued for the next record (RESTING CONTACTS): run
-// after the record's first `at` writes, before its effect.
-struct K2Queued {
-    K2Contact contact;
-    size_t at = 0;
-};
-
 struct K2Record {
     K2Kind kind = K2Kind::DONE;
     // SYSTEM_STOP: a = system. BANK_STOP: a = bank.
@@ -410,9 +399,19 @@ struct K2Record {
     K2Contact contact;           // CONTACT
     K2Query query = K2Query::kCount;  // ASK
     std::vector<K2Arg> args;     // ASK
-    // The resting contacts queued since the previous record, in walk order.
-    std::vector<K2Queued> contacts;
     std::vector<K2Write> writes;
+};
+
+// A resting contact queued for the drain (RESTING CONTACTS), with what its
+// presentation would otherwise read later, as it was at contact time.
+struct K2Rest {
+    K2Contact contact;  // shields_block: the answer, ASKed or native; nullopt
+                        // only when no aim unit and the mirror cannot answer
+    int64_t level = 0;  // the system's `_power_level` (GetPowerLevel)
+    std::optional<InstanceId> iid;  // ctx.iids[target]: nullopt when absent
+                                    // or not an InstanceId
+    bool view_known = false;  // the target's set has a view_offsets entry
+    std::optional<Vec3> view_offset;  // that entry (nullopt: None, no shift)
 };
 
 // The reply to an ASK. Which fields are read depends on the query:
@@ -479,6 +478,13 @@ public:
     // The reply to an ASK.
     void answer(const K2Answer& a);
 
+    // The resting contacts queued for the drain this session, in walk
+    // order (empty when no session is open). take_rests() hands them over
+    // and leaves the queue empty (combat_k2_drain); it throws
+    // std::logic_error while the session has not returned DONE.
+    const std::vector<K2Rest>& rests() const;
+    std::vector<K2Rest> take_rests();
+
     // Ends the session, which must have returned DONE.
     void end();
     // Ends the session whatever its state (an exception unwound Python).
@@ -496,8 +502,8 @@ public:
         // Manual Aim picks on a posed target answered natively (Task 4b).
         int64_t posed_manual_aims = 0;
         // Round trips (spec 2026-11-01 §4.4-4.5): resting contacts queued
-        // (no CONTACT record of their own) and offline stops logged (no
-        // SYSTEM_STOP record).
+        // for the drain (no record of their own) and offline stops logged
+        // (no SYSTEM_STOP record).
         int64_t batched_contacts = 0, logged_system_stop = 0;
     };
     const Counts& counts() const { return counts_; }

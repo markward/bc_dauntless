@@ -3826,38 +3826,59 @@ PyObject* step_scan_ships(PyObject* ships, long long obj_kind, int kind_shift,
 }
 
 // ── C-applied write logs (combat_write_apply.h) ───────────────────────────
-// A K2 record carrying queued resting contacts keeps its writes here until
-// native_combat._k2_deliver applies them in segments (combat_apply_writes):
-// each contact after the writes logged before its `at`, then the rest
-// before the record's own effect. Cleared by combat_k2_end / _abandon.
-struct K2PendingWrites {
-    std::vector<dauntless::combat::K2Write> writes;
-    size_t done = 0;
-    // True while the binding applies a record's writes: the Python the
-    // apply runs (wake hooks, setters) must not reach combat_k2_next /
-    // _end / _abandon, which clear or free `writes` under the apply, nor a
-    // nested combat_apply_writes, which would apply out of order -- each
-    // throws instead (K0's delivery guard, k0_charging.h THE DELIVERY).
-    bool delivering = false;
-};
-
-K2PendingWrites& k2_pending_writes() {
-    static K2PendingWrites p;
-    return p;
+// True while combat_k2_next applies a record's writes: the Python the apply
+// runs (wake hooks, setters) must not reach combat_k2_next / _end /
+// _abandon / _drain, which would step, free or drain the session under the
+// apply -- each throws instead (K0's delivery guard, k0_charging.h THE
+// DELIVERY).
+bool& k2_delivering() {
+    static bool delivering = false;
+    return delivering;
 }
 
 void k2_not_delivering(const char* call) {
-    if (k2_pending_writes().delivering)
+    if (k2_delivering())
         throw std::runtime_error(
             std::string("combat K2: ") + call +
             " while a record's writes are being delivered (re-entered from "
             "the Python they run)");
 }
 
+// A K2 contact's fields, CONTACT's layout from `bank` to `flush_dwell`
+// (k2_beams.h, RECORDS); `vec` makes an xyz tuple. A CONTACT record's
+// shields_block is None when the loop had none or Python answered it (an
+// ASK); a drained rest carries the answer either way (`rest`, K2Rest).
+template <class Vec>
+void k2_contact_fields(py::list& items, const dauntless::combat::K2Contact& c,
+                       const Vec& vec, bool rest) {
+    static constexpr const char* kTiers[] = {"mesh", "sphere", "fallback",
+                                             "origin"};
+    auto opt = [&vec](const std::optional<dauntless::combat::Vec3>& v) {
+        return v ? py::object(vec(*v)) : py::object(py::none());
+    };
+    py::object shields = py::none();
+    if (c.shields_block && (rest || !c.shields_asked))
+        shields = py::bool_(*c.shields_block);
+    items.append(c.bank);
+    items.append(c.target);
+    items.append(c.ship);
+    items.append(c.system);
+    items.append(vec(c.emitter));
+    items.append(vec(c.target_pos));
+    items.append(c.dist);
+    items.append(opt(c.aim_unit));
+    items.append(vec(c.hit.point));
+    items.append(opt(c.hit.normal));
+    items.append(kTiers[static_cast<int>(c.hit.tier)]);
+    items.append(opt(c.bubble));
+    items.append(shields);
+    items.append(c.flush_dwell);
+}
+
 // Marks the delivery for its scope (cleared on a throw too).
 struct K2Delivering {
-    K2Delivering() { k2_pending_writes().delivering = true; }
-    ~K2Delivering() { k2_pending_writes().delivering = false; }
+    K2Delivering() { k2_delivering() = true; }
+    ~K2Delivering() { k2_delivering() = false; }
     K2Delivering(const K2Delivering&) = delete;
     K2Delivering& operator=(const K2Delivering&) = delete;
 };
@@ -11784,9 +11805,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // One resumable session over the mirror: the `cb.phasers` loop. Each
         // record is a tuple whose first element is a kind int
         // (combat_k2_kinds) and whose LAST element is the write log since the
-        // previous record: with an applier context, [] (applied) or, when
-        // resting contacts are queued, the count of writes pending
-        // (combat_apply_writes); else a list of (handle, "_dwell", float).
+        // previous record: with an applier context, [] (applied); else a
+        // list of (handle, field, value). After DONE, combat_k2_drain hands
+        // over the resting contacts queued for the drain (k2_beams.h,
+        // RESTING CONTACTS).
         // Layouts
         // (handles -1 = None, xyz = a 3-tuple):
         //   (DONE, writes)
@@ -11906,33 +11928,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // The GIL is HELD for the walk (ruling J), as combat_k1_next:
             // the kernel and the trace hooks touch no Python object.
             k2_not_delivering("next()");
-            K2PendingWrites& pending = k2_pending_writes();
-            if (pending.done < pending.writes.size())
-                throw std::runtime_error(
-                    "combat K2: the previous record's writes are not all "
-                    "applied (combat_apply_writes)");
-            pending.writes.clear();
-            pending.done = 0;
             cb::K2Record r = cb::k2_kernel().next();
             // The write log. With an applier context (combat_write_apply.h)
-            // a record with no queued resting contact has its writes applied
-            // here and carries []; one with queued contacts keeps them
-            // pending (combat_apply_writes) and carries their count. With
+            // the writes are applied here and the record carries []. With
             // none, K1's value encoding (None, bool, int, float, a handle
             // list) -- native_combat.apply_writes applies both.
             py::list log;
-            py::object writes = log;
             dauntless::host::WriteApplier& applier =
                 dauntless::host::write_applier();
             if (applier.has_context()) {
-                if (r.contacts.empty()) {
-                    const K2Delivering delivering;
-                    if (!applier.apply(r.writes, 0, r.writes.size()))
-                        throw py::error_already_set();
-                } else {
-                    pending.writes = std::move(r.writes);
-                    writes = py::int_(pending.writes.size());
-                }
+                const K2Delivering delivering;
+                if (!applier.apply(r.writes, 0, r.writes.size()))
+                    throw py::error_already_set();
             } else for (const cb::K2Write& w : r.writes) {
                 py::object v = std::visit(
                     [](const auto& x) -> py::object {
@@ -11949,52 +11956,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 log.append(py::make_tuple(w.handle, w.field, v));
             }
             const int kind = static_cast<int>(r.kind);
-            auto opt = [&vec](const std::optional<cb::Vec3>& v) -> py::object {
-                return v ? py::object(vec(*v)) : py::object(py::none());
-            };
-            // A contact's fields, CONTACT's layout from `bank` to
-            // `flush_dwell`. shields_block is None when the loop had none
-            // or Python answered it (an ASK): beam_contact evaluates its own.
-            auto contact = [&](py::list& items, const cb::K2Contact& c) {
-                py::object shields = py::none();
-                if (c.shields_block && !c.shields_asked)
-                    shields = py::bool_(*c.shields_block);
-                items.append(c.bank);
-                items.append(c.target);
-                items.append(c.ship);
-                items.append(c.system);
-                items.append(vec(c.emitter));
-                items.append(vec(c.target_pos));
-                items.append(c.dist);
-                items.append(opt(c.aim_unit));
-                items.append(vec(c.hit.point));
-                items.append(opt(c.hit.normal));
-                items.append(kK2Tiers[static_cast<int>(c.hit.tier)]);
-                items.append(opt(c.bubble));
-                items.append(shields);
-                items.append(c.flush_dwell);
-            };
-            // The resting contacts queued since the previous record, each
-            // (at, *contact): run before the record's effect, each after
-            // writes[:at].
-            py::list queued;
-            for (const cb::K2Queued& q : r.contacts) {
-                py::list items;
-                items.append(q.at);
-                contact(items, q.contact);
-                queued.append(py::tuple(items));
-            }
             switch (r.kind) {
                 case cb::K2Kind::DONE:
-                    return py::make_tuple(kind, queued, writes);
+                    return py::make_tuple(kind, log);
                 case cb::K2Kind::RUN_PYTHON:
-                    return py::make_tuple(kind, r.a, r.b, queued, writes);
+                    return py::make_tuple(kind, r.a, r.b, log);
                 case cb::K2Kind::CONTACT: {
                     py::list items;
                     items.append(kind);
-                    contact(items, r.contact);
-                    items.append(queued);
-                    items.append(writes);
+                    k2_contact_fields(items, r.contact, vec, false);
+                    items.append(log);
                     return py::tuple(items);
                 }
                 case cb::K2Kind::ASK: {
@@ -12014,12 +11985,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                             },
                             a));
                     }
-                    items.append(queued);
-                    items.append(writes);
+                    items.append(log);
                     return py::tuple(items);
                 }
                 default:  // SYSTEM_STOP, BANK_STOP
-                    return py::make_tuple(kind, r.a, queued, writes);
+                    return py::make_tuple(kind, r.a, log);
             }
         }, "The session's next record (see combat_k2_kinds).");
         m.def("combat_k2_answer",
@@ -12066,17 +12036,42 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "ASK's reply, shaped per query (k2_beams.h): a bool; "
               "aim_point ((x, y, z), has_sub); bubble (x, y, z) or None; "
               "resolve_hit ((x, y, z), normal or None, tier); bank_step None.");
+        m.def("combat_k2_drain",
+              [vec] {
+                  k2_not_delivering("drain()");
+                  // Each rest: CONTACT's fields from `bank` to
+                  // `flush_dwell`, then what the kernel took at contact
+                  // time (k2_beams.h, K2Rest): level, iid (an InstanceId)
+                  // or None, view offset or None.
+                  std::vector<cb::K2Rest> rests = cb::k2_kernel().take_rests();
+                  py::list out;
+                  for (const cb::K2Rest& e : rests) {
+                      py::list items;
+                      k2_contact_fields(items, e.contact, vec, true);
+                      items.append(e.level);
+                      items.append(
+                          e.iid ? py::cast(scenegraph::InstanceId{
+                                      e.iid->index, e.iid->generation})
+                                : py::object(py::none()));
+                      items.append(e.view_offset
+                                       ? py::object(vec(*e.view_offset))
+                                       : py::object(py::none()));
+                      out.append(py::tuple(items));
+                  }
+                  return out;
+              },
+              "The resting contacts queued for the drain, in walk order, "
+              "taken (the queue is left empty): after DONE, before "
+              "combat_k2_end (k2_beams.h, RECORDS).");
         m.def("combat_k2_end",
               [] {
                   k2_not_delivering("end()");
-                  k2_pending_writes() = K2PendingWrites{};
                   cb::k2_kernel().end();
               },
               "End the session (it must have returned DONE).");
         m.def("combat_k2_abandon",
               [] {
                   k2_not_delivering("abandon()");
-                  k2_pending_writes() = K2PendingWrites{};
                   cb::k2_kernel().abandon();
               },
               "End the session whatever its state (exception path).");
@@ -12101,7 +12096,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
             posed["manual_aims"] = c.posed_manual_aims;
             d["k2_posed"] = posed;
             // Records K2 no longer returns (round trips): resting contacts
-            // queued onto the next record, offline stops logged as writes.
+            // queued for the drain, offline stops logged as writes.
             d["k2_batched_contacts"] = c.batched_contacts;
             d["k2_logged_system_stop"] = c.logged_system_stop;
             return d;
@@ -12143,27 +12138,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "Install the applier context (pins, registry, walk, kinds, "
               "wake, python_setters), or None; returns the previous one "
               "(the driver restores it when its session ends).");
-        m.def("combat_apply_writes",
-              [](std::optional<std::int64_t> upto) {
-                  k2_not_delivering("combat_apply_writes()");
-                  K2PendingWrites& pending = k2_pending_writes();
-                  const auto n = static_cast<std::int64_t>(
-                      pending.writes.size());
-                  const size_t to = static_cast<size_t>(
-                      upto ? std::clamp<std::int64_t>(*upto, 0, n) : n);
-                  if (to <= pending.done) return;
-                  const size_t from = pending.done;
-                  // Consumed even if a write raises: apply_writes(writes[
-                  // done:at]) applies the rest of its slice, then raises.
-                  pending.done = to;
-                  const K2Delivering delivering;
-                  if (!dauntless::host::write_applier().apply(
-                          pending.writes, from, to))
-                      throw py::error_already_set();
-              },
-              py::arg("upto") = py::none(),
-              "Apply the pending K2 record's writes up to index `upto` (all "
-              "when None) that are not applied yet.");
         m.def("combat_apply_log",
               [](py::handle writes) {
                   std::vector<dauntless::host::ApplyWrite> w;

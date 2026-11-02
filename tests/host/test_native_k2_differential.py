@@ -46,12 +46,13 @@ every bank and phaser-system StopFiring that runs with a bank firing (an
 idle one is logged writes, round trips Tasks 2-3), every
 hit_feedback.beam_contact (all arguments, and the shields_block it acted on),
 every hit VFX spawn and shield hit those make (all arguments: the
-presentation, round trips Task 5) and every combat.apply_hit (all
-arguments); and the full ordered event log,
+presentation, round trips Task 5; per tick as a multiset, since K2 presents
+resting contacts after the step's last record -- spec 2026-11-02 §5, Q1)
+and every combat.apply_hit (all arguments); and the full ordered event log,
 with each ET_WEAPON_HIT's payload. The native arm must show that every
 branch the scene is built for really happened in the KERNEL (the record
-stream, tallied as it is returned, a record's queued resting contacts
-included): CONTACTs on the mesh and the sphere
+stream, tallied as it is returned, and the drained resting contacts):
+CONTACTs on the mesh and the sphere
 tier, bubble entries, windup contacts, pulses, arc-fail partial pulses,
 SYSTEM_STOPs, a lock on another ship, Manual Aim on and off, a cloaking
 target and a posed ship (walked natively, and a lock on it aimed natively:
@@ -94,7 +95,8 @@ from engine.core.loop import TICK_DELTA  # noqa: E402
 from engine.core.tracked_instances import TrackedInstances  # noqa: E402
 from tests.helpers import headless_mission  # noqa: E402
 from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
-from tests.helpers.k3_fight import presented, spy_presentation  # noqa: E402
+from tests.helpers.k3_fight import (  # noqa: E402
+    compare_calls, presented, spy_presentation)
 
 GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy"
               / "Galaxy.nif")
@@ -221,11 +223,6 @@ class _Tally:
             self.kinds = {v: name for name, v in k.items()}
         kind = self.kinds[rec[0]]
         self.bump(kind)
-        # The resting contacts queued on this record (round trips Task 3):
-        # Python runs them first, so they are tallied first.
-        for q in rec[-2]:
-            self.bump("queued_contact")
-            self.contact(q[1:])
         if kind == "BANK_STOP":
             self.last_stop = rec[1]
             if self.scene.killed_at == self.scene.tick:
@@ -245,9 +242,19 @@ class _Tally:
         self.last_stop = None
         return rec
 
+    def drain(self):
+        """Wraps combat_k2_drain: the resting contacts queued for the drain,
+        each tallied as it is handed over (after DONE, before Python
+        presents it)."""
+        entries = self.orig_drain()
+        for e in entries:
+            self.bump("queued_contact")
+            self.contact(e[:14])
+        return entries
+
     def contact(self, c):
         """One contact's fields, CONTACT's layout from `bank` to
-        `flush_dwell` (a CONTACT record's, or a queued contact's)."""
+        `flush_dwell` (a CONTACT record's, or a drained rest's)."""
         (bh, th, sh, _yh, _e, _tp, _dist, _aim, _impact, normal, tier,
          bubble, shields, flush) = c
         reg = nc._registry
@@ -357,7 +364,9 @@ class _Scene:
         if self.native:
             self.tally = _Tally(self)
             self.tally.orig = _h.combat_k2_next
+            self.tally.orig_drain = _h.combat_k2_drain
             mp.setattr(_h, "combat_k2_next", self.tally)
+            mp.setattr(_h, "combat_k2_drain", self.tally.drain)
 
     def close(self):
         host_loop.teardown_set_objects(self.session, self.set, self.r)
@@ -433,9 +442,9 @@ class _Scene:
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
         mp.setattr(combat, "apply_hit", hit_spy)
         # What the contacts and hits PRESENT (every hit VFX spawn and shield
-        # hit, with their arguments), in the same ordered log: a resting
-        # contact batched onto a later record (round trips Task 3) must still
-        # present in Python's order, among the pulses' apply_hits.
+        # hit, with their arguments), in the same log: a resting contact is
+        # presented at the drain after the step's last record, so the
+        # presentation compares per tick as a multiset (compare_calls).
         spy_presentation(mp, self.calls, lambda: self.tick, self.label,
                          contacts=False)    # contact_spy above has them
 
@@ -867,9 +876,7 @@ def _compare(ref, nat):
         for x, y in zip(a, b):
             assert x == y, "tick %d differs:\n python %r\n native %r" % (
                 tick, x, y)
-    for i, (x, y) in enumerate(zip(ref.calls, nat.calls)):
-        assert x == y, "call %d differs:\n python %r\n native %r" % (i, x, y)
-    assert len(ref.calls) == len(nat.calls)
+    compare_calls(ref.calls, nat.calls)
     for i, (x, y) in enumerate(zip(ref.events, nat.events)):
         assert x == y, "event %d differs:\n python %r\n native %r" % (i, x, y)
     assert len(ref.events) == len(nat.events)
@@ -927,9 +934,12 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
                 "cloaking_target", "shields:True", "shields:False",
                 "queued_contact"):
         assert n.get(key, 0) > 0, (key, n)
-    # Round trips Task 3: resting contacts rode other records, offline stops
-    # with every bank idle were logged writes; a CONTACT record is a pulse.
+    # Resting contacts were queued for the drain (spec 2026-11-02 §4.3) and
+    # presented by the Python batch, offline stops with every bank idle were
+    # logged writes; a CONTACT record is a pulse.
     assert nat.counts["k2_batched_contacts"] == n["queued_contact"], (
+        nat.counts, n)
+    assert nat.counts["k2_present_python"] == n["queued_contact"], (
         nat.counts, n)
     assert nat.counts["k2_logged_system_stop"] > 0, nat.counts
     assert n.get("CONTACT", 0) == n["pulse"], n

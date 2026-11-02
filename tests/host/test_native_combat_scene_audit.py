@@ -165,7 +165,8 @@ def test_combat_stress_walks_beams_natively_without_the_audit(monkeypatch):
     # The round trips the plan removed (2026-11-01-native-combat-round-trips)
     # ran in the live loop: K1 walks with no WALK_START record (Task 1), lit
     # beams sustained and idle banks stopped as logged writes (Task 2), K2
-    # resting contacts batched (Task 3). NOT asserted: K2's logged offline
+    # resting contacts queued for the drain (Task 3; spec 2026-11-02 §4.3)
+    # and presented by its Python batch. NOT asserted: K2's logged offline
     # system stop (nothing switches a phaser system off in this scene:
     # measured 0) and K3's native mount attributions (measured 10 here; like
     # the posed steers below, whether a guided shot at a subsystem flies in
@@ -174,6 +175,8 @@ def test_combat_stress_walks_beams_natively_without_the_audit(monkeypatch):
     for key in ("walk_start", "beam_sustain", "idle_bank_stop"):
         assert logged[key] > 0, (key, logged)
     assert counts["k2_batched_contacts"] > 0, counts
+    assert counts["k2_present_python"] == counts["k2_batched_contacts"], \
+        counts
     # K2 walked the beams natively (never the whole step in Python), with
     # the session's real instances (no "instances" fallback).
     assert counts["k2_records"] > 0, counts

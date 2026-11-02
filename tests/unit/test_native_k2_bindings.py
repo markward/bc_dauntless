@@ -110,21 +110,28 @@ def test_contact_record_layout(scene):
     rec = _h.combat_k2_next()
     # Every other bank of A is idle at +0.0: no writes, no records.
     assert rec[0] == k["CONTACT"]
-    assert rec[14] == 0.6 + DT and rec[-2:] == ([], [(_sub(bank), "_dwell",
-                                                      0.0)])
-    assert _h.combat_k2_next() == (k["DONE"], [], [])
+    assert len(rec) == 16 and rec[14] == 0.6 + DT
+    assert rec[-1] == [(_sub(bank), "_dwell", 0.0)]
+    assert _h.combat_k2_next() == (k["DONE"], [])
+    assert _h.combat_k2_drain() == []
     _h.combat_k2_end()
-    # A resting contact (round trips Task 3): queued on the next record --
-    # here DONE -- as (at, *CONTACT's fields), `at` = the writes before it.
+    # A resting contact: no record of its own; DONE carries the writes and
+    # the drain (after DONE, before end) hands it over as CONTACT's fields
+    # plus the values taken at contact time (level, iid, view offset).
     bank._dwell = 0.125
+    sys_.SetPowerLevel(sys_.PP_LOW)
     _h.combat_k2_begin([nc.slot(a)], DT, 100.0, True, 0.0, ctx)
     rec = _h.combat_k2_next()
-    assert rec[0] == k["DONE"] and len(rec) == 3
-    (queued, writes) = rec[1:]
-    assert len(queued) == 1
-    (at, rbank, rtarget, rship, rsys, emitter, target_pos, dist, aim_unit,
-     impact, normal, tier, bubble, shields, flush) = queued[0]
-    assert at == 1
+    assert rec[0] == k["DONE"] and len(rec) == 2
+    writes = rec[1]
+    entries = _h.combat_k2_drain()
+    assert len(entries) == 1
+    (rbank, rtarget, rship, rsys, emitter, target_pos, dist, aim_unit,
+     impact, normal, tier, bubble, shields, flush, level, iid,
+     view_offset) = entries[0]
+    assert _h.combat_k2_drain() == []           # the drain empties it
+    assert level == sys_.PP_LOW and type(level) is int
+    assert iid is None and view_offset is None  # no instance; no shift
     assert (rbank, rtarget, rship, rsys) == (
         _sub(bank), nc.slot(b), nc.slot(a), _sub(sys_))
     assert writes == [(_sub(bank), "_dwell", 0.125 + DT)]
@@ -136,7 +143,8 @@ def test_contact_record_layout(scene):
     assert isinstance(dist, float) and len(aim_unit) == 3
     # No instance in the table: the fallback point IS target_pos.
     assert tier == "fallback" and impact == target_pos and normal is None
-    assert shields in (True, False) and flush == 0.0
+    from engine.appc import combat
+    assert shields is bool(combat.shields_block(b)) and flush == 0.0
     assert bubble is None
     _h.combat_k2_end()
     assert not _h.combat_k2_open()
@@ -167,17 +175,19 @@ def test_context_and_ask_answers(scene):
     _h.combat_k2_begin([nc.slot(a)], DT, 100.0, True, 0.0, ctx)
     rec = _h.combat_k2_next()
     assert rec[0] == k["ASK"] and rec[1] == "resolve_hit"
-    target, emitter, direction, max_dist, fallback, queued, writes = rec[2:]
-    assert queued == []
+    target, emitter, direction, max_dist, fallback, writes = rec[2:]
     assert target == nc.slot(b) and len(emitter) == 3 and len(direction) == 3
     assert isinstance(max_dist, float) and len(fallback) == 3
     with pytest.raises(ValueError):
         _h.combat_k2_answer(((0.0, 1.0, 2.0), None, "nowhere"))
     _h.combat_k2_answer(((0.0, 1.0, 2.0), (0.0, -1.0, 0.0), "mesh"))
-    # A resting contact: queued on DONE, CONTACT's fields after its `at`.
+    # A resting contact: drained after DONE, the answer in its fields; the
+    # value that is not an InstanceId is no iid, and the set has no offset.
     rec = _h.combat_k2_next()
     assert rec[0] == k["DONE"]
-    assert rec[1][0][9:12] == ((0.0, 1.0, 2.0), (0.0, -1.0, 0.0), "mesh")
+    (entry,) = _h.combat_k2_drain()
+    assert entry[8:11] == ((0.0, 1.0, 2.0), (0.0, -1.0, 0.0), "mesh")
+    assert entry[15:] == (None, None)
     _h.combat_k2_end()
 
     # set_ctx replaces only the keys it is given: with the offset now known
@@ -185,8 +195,22 @@ def test_context_and_ask_answers(scene):
     _h.combat_k2_begin([nc.slot(a)], DT, 100.0, True, 0.0, ctx)
     _h.combat_k2_set_ctx({"view_offsets": {_set_handle(a): None}})
     rec = _h.combat_k2_next()
-    assert rec[0] == k["DONE"] and rec[1][0][11] in ("sphere", "fallback",
-                                                     "origin")
+    assert rec[0] == k["DONE"]
+    assert _h.combat_k2_drain()[0][10] in ("sphere", "fallback", "origin")
+    _h.combat_k2_end()
+
+    # An InstanceId and a shifted set: both ride the entry, as they were.
+    iid = _h.InstanceId()
+    _h.combat_k2_begin([nc.slot(a)], DT, 100.0, True, 0.0,
+                       {"iids": {nc.slot(b): iid},
+                        "view_offsets": {_set_handle(a): (1.0, 2.0, 3.0)},
+                        "trace": False})
+    assert _h.combat_k2_next()[0] == k["DONE"]
+    (entry,) = _h.combat_k2_drain()
+    got = entry[15]
+    assert isinstance(got, _h.InstanceId)
+    assert (got.index, got.generation) == (iid.index, iid.generation)
+    assert entry[16] == (1.0, 2.0, 3.0)
     _h.combat_k2_end()
     assert _h.combat_k2_counts()["k2_ask_queries"]["resolve_hit"] >= 1
 
@@ -200,8 +224,11 @@ def test_protocol_errors_raise(scene):
     _h.combat_k2_begin([nc.slot(a)], DT, 100.0, True, 0.0, {})
     with pytest.raises(RuntimeError):
         _h.combat_k2_begin([nc.slot(a)], DT, 100.0, True, 0.0, {})
+    with pytest.raises(RuntimeError):
+        _h.combat_k2_drain()            # before DONE
     _h.combat_k2_abandon()
     assert not _h.combat_k2_open()
+    assert _h.combat_k2_drain() == []   # no session: nothing queued
 
 
 def test_system_stop_and_run_python(scene):
@@ -212,29 +239,29 @@ def test_system_stop_and_run_python(scene):
     sys_.GetWeapon(0)._firing = True
     _h.combat_k2_begin([nc.slot(a), -1], DT, 100.0, True, 0.0,
                        {"python_ships": [nc.slot(b)]})
-    assert _h.combat_k2_next() == (k["SYSTEM_STOP"], _sub(sys_), [], [])
-    assert _h.combat_k2_next() == (k["RUN_PYTHON"], -1, 1, [], [])
-    assert _h.combat_k2_next() == (k["DONE"], [], [])
+    assert _h.combat_k2_next() == (k["SYSTEM_STOP"], _sub(sys_), [])
+    assert _h.combat_k2_next() == (k["RUN_PYTHON"], -1, 1, [])
+    assert _h.combat_k2_next() == (k["DONE"], [])
     _h.combat_k2_end()
     # Every bank idle: the stop is logged writes in the value encoding
     # (round trips Task 3), the system's five then each bank's two.
     sys_.GetWeapon(0)._firing = False
     _h.combat_k2_begin([nc.slot(a)], DT, 100.0, True, 0.0, {})
     rec = _h.combat_k2_next()
-    assert rec[:2] == (k["DONE"], [])
+    assert rec[0] == k["DONE"] and len(rec) == 2
     h = _sub(sys_)
-    assert rec[2][:5] == [(h, "_fire_held", False), (h, "_held_target", -1),
+    assert rec[1][:5] == [(h, "_fire_held", False), (h, "_held_target", -1),
                           (h, "_held_offset", None), (h, "_target_list", []),
                           (h, "_last_group_fired", -1)]
     banks = [_sub(sys_.GetWeapon(i)) for i in range(sys_.GetNumWeapons())]
-    assert rec[2][5:] == [w for bh in banks for w in (
+    assert rec[1][5:] == [w for bh in banks for w in (
         (bh, "_firing", False), (bh, "_beam_on_countdown", 0.0))]
-    assert type(rec[2][0][2]) is bool and type(rec[2][4][2]) is int
+    assert type(rec[1][0][2]) is bool and type(rec[1][4][2]) is int
     _h.combat_k2_end()
     assert _h.combat_k2_counts()["k2_logged_system_stop"] == 1
     _h.combat_k2_begin([nc.slot(b)], DT, 100.0, True, 0.0,
                        {"python_ships": [nc.slot(b)]})
-    assert _h.combat_k2_next() == (k["RUN_PYTHON"], nc.slot(b), 0, [], [])
+    assert _h.combat_k2_next() == (k["RUN_PYTHON"], nc.slot(b), 0, [])
     _h.combat_k2_next()
     _h.combat_k2_end()
     reasons = _h.combat_k2_counts()["k2_python_reasons"]
