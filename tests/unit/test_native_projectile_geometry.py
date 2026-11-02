@@ -205,9 +205,11 @@ def _native_guide(t, dt, use_memo=False):
     """The native guide of `t`, an ASK for the steer point answered by
     Python's _steer_point (the `_mount_key` and `_baked_offset` it writes
     are put back after, so the Python arm starts from the same torpedo). Returns (status, writes as
-    [(field, hex xyz)], latch or None)."""
+    [(field, hex xyz)], latch or None, asked, the mount attributed natively
+    (a handle, -1 None) or None)."""
     drift, occ = _clocks()
     r = _h.combat_test_guide_torpedo(_row(t), dt, use_memo, drift, occ)
+    attributed = r[2] if r[0] == "done" else None
     asked = False
     if r[0] == "steer_point":
         asked = True
@@ -223,9 +225,9 @@ def _native_guide(t, dt, use_memo=False):
         t._mount_key, t._baked_offset = saved_key, saved_bake
         assert r[0] == "done", r
     if r[0] != "done":
-        return r[0], r[1], None, asked
+        return r[0], r[1], None, asked, None
     writes = [(name, _hx(v)) for name, v in r[1]]
-    return "done", writes, _latch(t), asked
+    return "done", writes, _latch(t), asked, attributed
 
 
 def _latch(t):
@@ -244,16 +246,28 @@ def _python_guide(t, dt):
 
 
 def _compare_guide(t, dt, use_memo=False):
-    """Native then Python from one starting state; asserts they agree and
-    returns (native writes, asked for the steer point)."""
+    """Native then Python from one starting state; asserts they agree --
+    a mount the kernel attributed is the one Python's _steer_point wrote
+    into `_mount_key` (round trips, Task 4) -- and returns (native writes,
+    asked for the steer point). `_compare_guide.attributed` counts the
+    native attributions."""
     _reset_sensors()
-    status, writes, latch, asked = _native_guide(t, dt, use_memo)
+    key = t.__dict__.get("_mount_key")
+    status, writes, latch, asked, mount = _native_guide(t, dt, use_memo)
     assert status == "done", (status, writes)
     _reset_sensors()
     py_writes, py_latch = _python_guide(t, dt)
     assert writes == py_writes
     assert latch == py_latch
+    if mount is not None:
+        _compare_guide.attributed += 1
+        new = t.__dict__.get("_mount_key")
+        assert new is not key and new[0] is t._target_ship
+        assert _slot(new[4]) == mount
     return writes, asked
+
+
+_compare_guide.attributed = 0
 
 
 # ── B1: bubble_bound_radius ──────────────────────────────────────────────────
@@ -586,6 +600,7 @@ def test_guide_matches(world):
     w, rng = world, random.Random(SEED + 4)
     seen = {}
     asked = 0
+    _compare_guide.attributed = 0
     for i in range(CASES):
         t, dt, mode = _setup_guide_case(w, rng, i)
         writes, did_ask = _compare_guide(t, dt)
@@ -598,7 +613,10 @@ def test_guide_matches(world):
     assert ("_velocity",) in seen[3]                    # frozen last-seen
     assert () in seen[4] and () in seen[5] and () in seen[6] and () in seen[7]
     assert GUIDE_FIELDS[:2] in seen[8]                  # dist < 1e-6
-    assert asked > 50                                   # steer-point ASKs
+    print("steer ASKs %d, native attributions %d"
+          % (asked, _compare_guide.attributed))
+    assert asked > 20                                   # steer-point ASKs
+    assert _compare_guide.attributed > 50               # native mounts
     # The source in another frame: can_detect is still asked, both ways.
     assert full in seen[13] and any(n != full for n in seen[13])
     # The cross-region call sees the target (its raw distance is ~1000 GU).
@@ -688,7 +706,7 @@ def test_guide_memo_only_for_same_set(world):
                 sensor_detection.can_detect(w.src_a1, target)   # seeds memo
                 target.SetTranslateXYZ(*far)
                 if arm == "native":
-                    st, writes, _, _ = _native_guide(t, 1.0 / 60.0,
+                    st, writes, _, _, _ = _native_guide(t, 1.0 / 60.0,
                                                      use_memo=True)
                     assert st == "done"
                     arms.append(writes)

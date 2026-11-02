@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "dauntless/combat/beam_trace.h"
+#include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/mirror.h"
 
 // K2, the native phaser beam kernel (native combat phase 2, Task 4).
@@ -29,35 +30,76 @@
 // The next next() resumes from the cursor and reads the LIVE mirror again, so
 // no decision outlives a Python effect. There is no epoch check.
 //
-// THE WRITE LOG (rulings A and P7). The only write the decision path makes is
-// the bank's `_dwell` (take_dwell / accumulate_dwell). The kernel makes it in
-// the mirror and logs it, in the Python's order; every record carries the
+// THE WRITE LOG (rulings A and P7). The decision path writes the bank's
+// `_dwell` (take_dwell / accumulate_dwell). The kernel makes it in the
+// mirror and logs it, in the Python's order; every record carries the
 // writes made since the previous record as its LAST element, and Python
 // applies them (without pushing) before it acts on the record. An idle
 // bank's take_dwell writing +0.0 over a +0.0 dwell is ELIDED (a plain float
-// attribute: no side effect to preserve). `_beam_on_countdown` is only read.
+// attribute: no side effect to preserve). A write's value is K1's
+// (K1Value: None, bool, int, float, a handle list), applied by the same
+// driver (native_combat.apply_writes, its quiet setters).
+//
+// THE OFFLINE STOP (round trips, spec 2026-11-01 §4.5). `sys_.StopFiring()`
+// on an offline or off system whose banks are all idle stock PhaserBanks
+// (each row's `_firing` 0, not k1_overridden) is pure field writes, so it is
+// logged, with no SYSTEM_STOP record, in WeaponSystem.StopFiring's order
+// (WS:1540-1549): the system's `_fire_held = False`, `_held_target = None`,
+// `_held_offset = None`, `_target_list = []` (a NEW list each time: Python's
+// StopFiring builds one, and AddTarget appends in place), `_last_group_fired
+// = -1`; then, in GetWeapon order, each bank's
+// _EnergyWeaponFireMixin.StopFiring (WS:905-911): `_firing = False`,
+// `_beam_on_countdown = 0.0`. Never elided when equal: `_firing` is a
+// WakeField (the driver's quiet setter wakes a sleeping bank) and the list
+// is replaced. A firing bank (its loop sound), a child that is not such a
+// bank, or a row gone keeps the SYSTEM_STOP record.
+//
+// RESTING CONTACTS (round trips, spec 2026-11-01 §4.4). A contact whose
+// Python is presentation only -- `flush_dwell <= 0.0`, _phaser_contact's
+// beam_contact branch: no damage, no event, no RNG -- is not returned on
+// its own. The kernel queues it, in walk order, with the number of logged
+// writes made before it (`at`), and the queue rides the NEXT record that
+// runs Python, or DONE (K2Record::contacts). The driver runs every queued
+// contact, each after the writes logged before it, BEFORE that record's own
+// effect, so the presentation calls and every other Python call keep their
+// order. Python runs nothing between a contact's queueing and its delivery,
+// so what it reads there (the system's power level, the ship's pose) is
+// what it would have read. `shields_asked`: the loop's shields_block was
+// answered by Python (an ASK), and beam_contact evaluates its own. A damage
+// pulse (`flush_dwell > 0.0`) is still a CONTACT record.
 //
 // RECORDS (K2Kind, in combat_k2_kinds() order). The Python layouts, as the
 // binding builds them (handles are mirror handles, -1 = None; xyz = a
-// 3-tuple of floats):
-//   0 DONE        (DONE, writes)
-//   1 SYSTEM_STOP (SYSTEM_STOP, system, writes)       -> sys_.StopFiring()
-//   2 BANK_STOP   (BANK_STOP, bank, writes)           -> bank.StopFiring()
+// 3-tuple of floats). Every record ends (..., queued, writes): `queued` is
+// the resting contacts queued since the previous record, each
+//   (at, bank, target, ship, system, emitter_xyz, target_pos_xyz, dist,
+//    aim_unit_xyz | None, impact_xyz, normal_xyz | None, tier,
+//    bubble_xyz | None, shields_block (True / False / None), flush_dwell)
+// (shields_block None when the loop had none or Python answered it), run
+// in order before the record's effect, each after writes[:at].
+//   0 DONE        (DONE, queued, writes)
+//   1 SYSTEM_STOP (SYSTEM_STOP, system, queued, writes) -> sys_.StopFiring()
+//   2 BANK_STOP   (BANK_STOP, bank, queued, writes)   -> bank.StopFiring()
 //   3 CONTACT     (CONTACT, bank, target, ship, system, emitter_xyz,
 //                  target_pos_xyz, dist, aim_unit_xyz | None, impact_xyz,
 //                  normal_xyz | None, tier, bubble_xyz | None,
-//                  shields_block (True / False / None), flush_dwell, writes)
+//                  shields_block (True / False / None), flush_dwell,
+//                  queued, writes)
 //        tier is "mesh", "sphere", "fallback" (the impact point IS
 //        target_pos) or "origin" (the impact point IS emitter_pos), so Python
 //        rebuilds Python's object identity. shields_block is None when the
-//        loop did not evaluate it (aim_unit None): beam_contact then
-//        evaluates its own. Python: hit_feedback.beam_contact(...) if
+//        loop did not evaluate it (aim_unit None) or Python answered it (an
+//        ASK; K2Contact::shields_asked): beam_contact then evaluates its
+//        own. Python: hit_feedback.beam_contact(...) if
 //        flush_dwell <= 0.0, else combat.apply_hit(...) if the damage is > 0
 //        (the damage arithmetic, PHASER_INTENSITY_SCALE[level],
-//        weapon_splash_radius and damage_hull stay Python).
-//   4 RUN_PYTHON  (RUN_PYTHON, ship, ship_pos, writes)
+//        weapon_splash_radius and damage_hull stay Python). Only a damage
+//        pulse comes back as a CONTACT record; a resting contact is queued
+//        (RESTING CONTACTS above).
+//   4 RUN_PYTHON  (RUN_PYTHON, ship, ship_pos, queued, writes)
 //        -> the loop body for ships_list[ship_pos], in Python, whole.
-//   5 ASK         (ASK, query, *args, writes) -> reply combat_k2_answer.
+//   5 ASK         (ASK, query, *args, queued, writes)
+//        -> reply combat_k2_answer.
 //
 // FALLBACK, two stages (ruling H):
 //   1. Before the FIRST RECORD for a ship the kernel pre-scans it (prescan()
@@ -153,6 +195,9 @@
 // driver resolves and pins (_K2Walk.obj, pin_bank) -- the objects Python's
 // locals would hold at that point:
 //   - SYSTEM_STOP: the system, before its StopFiring;
+//   - a queued resting contact: the bank, the target, the ship and the
+//     system, when the driver delivers it (no Python runs between its
+//     queueing and its delivery, so nothing can free one first);
 //   - BANK_STOP: the bank, its `_target` and its system (pin_bank), before
 //     the bank's StopFiring;
 //   - CONTACT: the bank, the target, the ship and the system, before the
@@ -169,14 +214,28 @@
 //
 // A THROW from next() (a protocol error, or the invariant above) undoes the
 // field writes it made but never returned, in the mirror, and restores the
-// session -- cursor, pending answer -- to the state before the call. The
-// mirror's `_dwell` fields then still equal Python, so abandon() is safe.
-// Caveat: can_detect's memo and lock-break latch writes and the mount memo
-// are not undone: they are the writes Python's own calls make at the same
-// point (sensor_detect.h, weapon_geometry.h). The guarantee covers the
-// kernel's side only: once a record is returned its writes are in the
-// mirror, so Python applying them must not fail part-way (a plain float on
-// a pinned bank).
+// session -- cursor, pending answer, queue -- to the state before the call.
+// The mirror's logged fields then still equal Python, so abandon() is
+// safe. Caveat: can_detect's memo and lock-break latch writes and the mount
+// memo are not undone: they are the writes Python's own calls make at the
+// same point (sensor_detect.h, weapon_geometry.h). Once a record is
+// returned its writes are in the mirror and their undo is gone, so the
+// driver must get every one of them into Python whatever happens:
+//   - applying a write must not fail part-way (apply_writes' quiet
+//     setters: plain fields on pinned rows, and the `_firing` WakeField);
+//   - a queued contact's Python that RAISES (its presentation) is caught by
+//     the driver (native_combat._k2_deliver), which applies every write of
+//     the record still outstanding, in order, and re-raises; run_k2 then
+//     abandons the session with the mirror equal to Python. Those writes
+//     include some the pure-Python step would never have made: in Python
+//     the raise ends the step there, but the kernel has already walked on
+//     (later banks' `_dwell`, an offline system's stop writes). Mirror and
+//     Python stay equal to each other; the state differs from a
+//     pure-Python run only if a caller swallows the exception and carries
+//     on (the driver itself always re-raises);
+//   - a raise in the record's own effect comes after all its writes were
+//     applied.
+// abandon() itself only ends the session: it undoes nothing.
 //
 // THE CONTEXT (K2Context): per-step Python state that is not mirrored. Set
 // whole at begin and partly by set_context (combat_k2_set_ctx), which the
@@ -245,9 +304,15 @@
 //     GetTargetOffsetTG, GetShields, IsDead, GetWorldLocation,
 //     GetWorldRotation;
 //   its phaser system: GetNumWeapons, GetWeapon, IsOn, IsDisabled,
-//     IsDestroyed;
+//     IsDestroyed, StopFiring;
 //   a bank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
-//     _strip_emit_position, _emitter_world_position, GetLength.
+//     _strip_emit_position, _emitter_world_position, GetLength, StopFiring.
+// (StopFiring: THE OFFLINE STOP stands in for it. A class overriding it --
+// the phaser system's or a bank's -- is k1_overridden, K1's guard: the
+// system's sends its ship to Python, a bank's keeps the SYSTEM_STOP
+// record. K2 relies on K1's _k1_recheck_overrides, run at K1's entry -- the
+// pump, which precedes `cb.phasers` every tick -- to notice a class patch:
+// one made between the two steps is seen a tick late.)
 // It also lists the ship when the ship's own class, or the class of a bank's
 // `_target`, is one K2 never saw (no object of that class ever registered or
 // was reclassified), and runs the whole step in Python when that class is
@@ -307,11 +372,12 @@ enum class K2Query : int32_t {
 };
 const char* k2_query_name(K2Query q);
 
-// One write-log entry: `handle.field = value` (field is always "_dwell").
+// One write-log entry: `handle.field = value` -- a bank's "_dwell", or an
+// offline stop's fields (THE OFFLINE STOP). The value is K1's encoding.
 struct K2Write {
     int64_t handle = -1;
     std::string field;
-    double value = 0.0;
+    K1Value value;
 };
 
 // An ASK argument: None, a handle / index, a float, or a point.
@@ -325,7 +391,15 @@ struct K2Contact {
     ResolvedHit hit;
     std::optional<Vec3> bubble;
     std::optional<bool> shields_block;  // nullopt: not evaluated (no aim_unit)
+    bool shields_asked = false;  // shields_block came from an ASK answer
     double flush_dwell = 0.0;
+};
+
+// A resting contact queued for the next record (RESTING CONTACTS): run
+// after the record's first `at` writes, before its effect.
+struct K2Queued {
+    K2Contact contact;
+    size_t at = 0;
 };
 
 struct K2Record {
@@ -336,6 +410,8 @@ struct K2Record {
     K2Contact contact;           // CONTACT
     K2Query query = K2Query::kCount;  // ASK
     std::vector<K2Arg> args;     // ASK
+    // The resting contacts queued since the previous record, in walk order.
+    std::vector<K2Queued> contacts;
     std::vector<K2Write> writes;
 };
 
@@ -419,6 +495,10 @@ public:
         int64_t posed_banks = 0, posed_lock_aims = 0;
         // Manual Aim picks on a posed target answered natively (Task 4b).
         int64_t posed_manual_aims = 0;
+        // Round trips (spec 2026-11-01 §4.4-4.5): resting contacts queued
+        // (no CONTACT record of their own) and offline stops logged (no
+        // SYSTEM_STOP record).
+        int64_t batched_contacts = 0, logged_system_stop = 0;
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

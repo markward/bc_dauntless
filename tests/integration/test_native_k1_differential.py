@@ -18,7 +18,10 @@ bank's offset is the same OBJECT as which), every ship's hull condition and
 six shield faces, and the whole event log (every AddEvent: type, source,
 destination, tick, order, and a weapon hit's payload -- damage, hit point and
 normal by .hex(); torpedoes and bolts numbered by first sight) are compared
-with ``==``. Each
+with ``==``, and so is the ordered log of every apply_hit and every hit VFX
+spawn and shield hit (the presentation: a K2 resting contact is batched onto
+a later record since round trips Task 3, and must still present in Python's
+order among the pulses' hits). Each
 arm starts with nothing in flight: the other arm's torpedoes would otherwise
 fly on in it (headless_mission.clear_in_flight). The native arm must show that K1 really walked and
 fired phaser, pulse and torpedo systems (not merely that the scene has
@@ -41,8 +44,10 @@ except ImportError:
 
 from engine import host_loop
 from engine.appc import articulation
+from engine.appc import combat
 from engine.appc import native_combat as nc
 from engine.appc import part_pose
+from engine.appc import passive_state
 from engine.appc import sensor_contacts
 from engine.appc import weapon_subsystems as ws
 from engine.appc.events import WeaponHitEvent
@@ -53,6 +58,7 @@ from engine.core import step_memo
 from engine.core.loop import TICK_DELTA
 from tests.helpers import bc_assets, headless_mission
 from tests.helpers.fight_audio import isolate_fight_audio
+from tests.helpers.k3_fight import presented, spy_presentation
 
 pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "combat_k1_next"),
@@ -169,6 +175,8 @@ class _Scene:
         self.tick = 0
         self.log = []
         self.events = []
+        self.calls = []
+        self.lists = {}         # id(system) -> its last recorded _target_list
         self.manual = []        # the manual offsets set, as hexes
         orig = App.g_kEventManager.AddEvent
 
@@ -181,22 +189,51 @@ class _Scene:
 
         mp.setattr(App.g_kEventManager, "AddEvent", add_event)
 
+        # The presentation (round trips Task 5): every apply_hit (its
+        # target and damage: the event log holds the rest), then every hit
+        # VFX spawn and shield hit, in one ordered log.
+        apply_hit = combat.apply_hit
+
+        def hit_spy(target, damage, point, *args, _orig=apply_hit, **kw):
+            self.calls.append(("apply_hit", self.tick, self.label(target),
+                               _t(damage), _vec(point)))
+            return _orig(target, damage, point, *args, **kw)
+
+        mp.setattr(combat, "apply_hit", hit_spy)
+        spy_presentation(mp, self.calls, lambda: self.tick, self.label)
+
         # Evidence that K1 itself walked and decided, per kind: the walked
-        # systems (WALK_START) and the banks K1 decided to fire (FIRE).
+        # systems Python reached (a walk K1 started natively is materialised
+        # when something of it reaches Python, its first record or a logged
+        # offset write: round trips Task 1; a walk start the walk check
+        # handed back is seen at its WALK_START) and the banks K1 decided to
+        # fire (FIRE). A native walk that returned nothing is not seen here:
+        # it ran no Python at all (counted in k1_logged.walk_start).
         self.walked = {}
         self.walked_names = set()
         self.fired = {}
         if self.native:
             walk_start = nc._K1Walk.walk_start
+            materialise = nc._K1Walk.materialise
             decision = nc._k1_decision
+
+            def walked(system):
+                k = nc._weapon_kind(system)
+                self.walked[k] = self.walked.get(k, 0) + 1
+                self.walked_names.add(self.label(system))
 
             def counting_walk_start(walk, system, _orig=walk_start):
                 patched = _orig(walk, system)
                 if not patched:     # handed to Python: not a native walk
-                    k = nc._weapon_kind(system)
-                    self.walked[k] = self.walked.get(k, 0) + 1
-                    self.walked_names.add(self.label(system))
+                    walked(system)
                 return patched
+
+            def counting_materialise(walk, n, h, _orig=materialise):
+                first = walk.walk != n
+                offset = _orig(walk, n, h)
+                if first:
+                    walked(walk.walked)
+                return offset
 
             def counting_decision(bank, d, walk, _orig=decision):
                 k = nc._weapon_kind(bank)
@@ -204,6 +241,7 @@ class _Scene:
                 return _orig(bank, d, walk)
 
             mp.setattr(nc._K1Walk, "walk_start", counting_walk_start)
+            mp.setattr(nc._K1Walk, "materialise", counting_materialise)
             mp.setattr(nc, "_k1_decision", counting_decision)
 
     def label(self, obj):
@@ -377,13 +415,21 @@ class _Scene:
         row = []
         for g in self.systems:
             d = g.__dict__
+            # Whether `_target_list` is a NEW object since the last record:
+            # every walk's prune writes a new list, unchanged or not (K1
+            # logs that write on every walk since round trips Task 1). The
+            # previous object is held, so its id is never reused.
+            lst = d.get("_target_list")
+            new = lst is not self.lists.get(id(g))
+            self.lists[id(g)] = lst
             row.append((self.label(g), _t(g.IsFiring()),
                         _t(d.get("_fire_held")), _t(d.get("_force_update")),
                         _t(d.get("_last_weapon_idx")),
                         _t(d.get("_last_group_fired")),
                         _t(d.get("_group_fire_mode")),
                         self.label(d.get("_held_target")),
-                        [self.label(t) for t in d.get("_target_list", ())]))
+                        [self.label(t) for t in d.get("_target_list", ())],
+                        new))
         first = {}      # id(offset object) -> the first bank holding it
         for i, w in enumerate(self.weapons):
             d = w.__dict__
@@ -406,6 +452,12 @@ class _Scene:
                 off is not None and any(
                     off is g.__dict__.get("_held_offset")
                     for g in self.systems),
+                # What an energy bank's idle StopFiring writes with
+                # `_firing`; K1 logs those writes since round trips Task 2.
+                _t(d.get("_beam_on_countdown")) if energy else None,
+                # Asleep (passive weapons): every `_firing` write, a logged
+                # one included, wakes a sleeping weapon (WakeField).
+                _t(passive_state.is_asleep(w)),
             ))
         for s in self.ships:
             hull = s.GetHull()
@@ -472,9 +524,30 @@ def _compare(ref, nat):
     for i, (x, y) in enumerate(zip(ref.events, nat.events)):
         assert x == y, "event %d differs:\n python %r\n native %r" % (i, x, y)
     assert len(ref.events) == len(nat.events)
+    for i, (x, y) in enumerate(zip(ref.calls, nat.calls)):
+        assert x == y, "call %d differs:\n python %r\n native %r" % (i, x, y)
+    assert len(ref.calls) == len(nat.calls)
     assert nat.audit == [], nat.audit
     assert nat.counts["k1_records"] > 0, nat.counts
     assert ref.counts["k1_records"] == 0, ref.counts
+    # Round trips Task 1: every native walk starts with no WALK_START.
+    assert nat.counts["k1_logged"]["walk_start"] > 0, nat.counts
+    assert ref.counts["k1_logged"]["walk_start"] == 0, ref.counts
+
+
+def _round_trips_ran(nat):
+    """Every round trip the plan removed ran in the native arm: walks
+    started natively (Task 1), lit beams sustained and idle banks stopped as
+    logged writes (Task 2), resting contacts batched and offline systems
+    stopped as logged writes (Task 3), and torpedo mounts attributed
+    natively (Task 4)."""
+    c = nat.counts
+    for key in ("walk_start", "beam_sustain", "idle_bank_stop"):
+        assert c["k1_logged"][key] > 0, (key, c["k1_logged"])
+    for key in ("k2_batched_contacts", "k2_logged_system_stop",
+                "k3_native_attributions"):
+        assert c[key] > 0, (key, c)
+    assert presented(nat.calls) > 0
 
 
 def _both(monkeypatch, ticks_per_frame, ops=OPS, ships="8", ticks=TICKS,
@@ -529,9 +602,11 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
     assert any(r[4] == ("bool", True) for rows in ref.log
                for r in rows[banks]), "no bank ran dry"
     assert ref.manual
+    _round_trips_ran(nat)
     print("k1 differential (tpf=%d): counts %r walked %r fired %r "
-          "events %d" % (ticks_per_frame, nat.counts, nat.walked, nat.fired,
-                         len(ref.events)))
+          "events %d presentation calls %d"
+          % (ticks_per_frame, nat.counts, nat.walked, nat.fired,
+             len(ref.events), presented(ref.calls)))
 
 
 # ── Review Focus 1: a handler changes state mid-walk ─────────────────────────
@@ -622,6 +697,12 @@ def test_handler_stops_and_restarts_mid_walk(monkeypatch, ticks_per_frame):
     assert native["max_session"] >= 2, stats
     for k in (PHASERS, PULSES, TORPEDOES):
         assert nat.walked.get(k, 0) > 0, nat.walked
+    # The logged K1 paths ran among the handlers' mid-walk changes (no
+    # offline system here: k2_logged_system_stop measured 0).
+    logged = nat.counts["k1_logged"]
+    assert logged["beam_sustain"] > 0 and logged["idle_bank_stop"] > 0, \
+        logged
+    assert nat.counts["k2_batched_contacts"] > 0, nat.counts
     print("k1 handler differential (tpf=%d): handler %r, counts %r"
           % (ticks_per_frame, native, nat.counts))
 
@@ -897,6 +978,7 @@ def test_k1_matches_python_under_the_game_loop_ai(monkeypatch):
     ships = slice(len(ref.systems) + len(ref.weapons), None)
     dead = {r[0] for r in ref.log[-1][ships] if r[1] == ("int", 1)}
     assert dead, ref.log[-1][ships]
+    _round_trips_ran(nat)
     print("k1 game-loop differential: %.1f s, starts %d, k1 system "
           "sessions %d, dead %r, counts %r walked %r fired %r"
           % (time.perf_counter() - t0, ref.starts, nat.k1_systems,

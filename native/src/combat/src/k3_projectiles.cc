@@ -292,6 +292,13 @@ K3Record Walker::guide() {
         case GuideResult::Status::done:
             if (g.posed_steer) ++c_.posed_steers;
             if (g.baked_steer) ++c_.baked_steers;
+            if (g.attributed) {
+                // _steer_point's `_mount_key = (target, x, y, z, mount)`,
+                // logged for DONE (round trips, Task 4).
+                s_.cur.mount =
+                    K3MountWrite{target, r.target_offset, g.mount};
+                ++c_.native_attributions;
+            }
             take(g);
             s_.st = St::ADVANCE;
             return K3Record{};  // no record: the caller carries on
@@ -495,8 +502,12 @@ void Walker::hit() {
 // checked before anything is written, so the writes are all-or-nothing.
 K3Record Walker::finish() {
     TorpedoTable& tt = m_.torpedoes();
-    for (const K3TorpWrite& w : s_.writes)
+    for (const K3TorpWrite& w : s_.writes) {
         if (!tt.find(w.torp)) lost("a torpedo row was dropped mid-walk");
+        // No ASK frees a row (PINNING): the attributed mount is still live.
+        if (w.mount && w.mount->sub != -1 && !m_.subsystem(w.mount->sub))
+            lost("an attributed mount's row was dropped mid-walk");
+    }
     std::vector<std::pair<uint32_t, uint32_t>> slots;
     slots.reserve(s_.positions.size());
     for (const PosWrite& p : s_.positions) {
@@ -516,6 +527,10 @@ K3Record Walker::finish() {
         if (w.last_tvel)
             tt.set_v(w.torp, TorpField::_last_target_vel, true, *w.last_tvel);
         if (w.vel) tt.set_v(w.torp, TorpField::_velocity, true, *w.vel);
+        // `_mount_key`: its target IS the torpedo's `_target_ship` (the
+        // attributed flag), key[1:4] the offset, key[4] the mount.
+        if (w.mount)
+            tt.set_mount(w.torp, true, w.mount->sub, w.mount->offset);
     }
     // t.SetTranslateXYZ(cur_pos.x, cur_pos.y, cur_pos.z): ObjectClass's,
     // store.set_position(*self._xform, float(x), float(y), float(z)).

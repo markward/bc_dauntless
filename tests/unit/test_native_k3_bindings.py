@@ -130,7 +130,7 @@ def test_done_layout_writes_and_expiry_order(world):
     assert [wr[0] for wr in writes] == [_row(hit), _row(ttl)]
     assert by[_row(hit)][1].hex() == (0.0 + DT).hex()
     assert by[_row(ttl)][1].hex() == (59.99 + DT).hex()
-    assert by[_row(hit)][2:] == (None, None, None)   # not guided
+    assert by[_row(hit)][2:] == (None,) * 4   # not guided, no attribution
     # The kernel wrote the store at DONE: Python reads it back.
     p = hit.GetTranslate()
     assert _hx((p.x, p.y, p.z)) == _hx((0.0, 50.0, 0.0))
@@ -149,12 +149,42 @@ def test_done_layout_writes_and_expiry_order(world):
         "ship_cache"}
 
 
+def test_native_attribution_rides_on_done(world):
+    """An unattributed mount the kernel can attribute itself (round trips,
+    Task 4): no ASK; DONE's write carries (target, offset, sub) -- here no
+    mount claims the offset, sub -1 -- and the row holds the key; the next
+    tick attributes nothing."""
+    w = world
+    t = _fire(w, (0.0, -100.0, 0.0), (0.0, 60.0, 0.0), target=w.x)
+    t.SetTargetOffset(TGPoint3(1.0, 0.25, -0.5))
+    assert nc.step_scan(w.ships).ok
+    assert _begin() is None
+    rec = _h.combat_k3_next()
+    assert rec[0] == 0
+    (wr,) = rec[1]
+    assert len(wr) == 6 and wr[5] == (_slot(w.x), (1.0, 0.25, -0.5), -1)
+    _h.combat_k3_end()
+    row = _h.combat_torp_dump(_row(t))
+    assert (row["mount_attributed"], row["mount_sub"],
+            tuple(row["mount_offset"])) == (1, -1, (1.0, 0.25, -0.5))
+    assert nc.step_scan(w.ships).ok
+    assert _begin() is None
+    assert _h.combat_k3_next()[1][0][5] is None
+    _h.combat_k3_end()
+    c = _h.combat_k3_counts()
+    assert c["k3_native_attributions"] == 1
+    assert c["k3_asks"]["steer_point"] == 0
+
+
 def test_steer_point_ask_round_trip(world):
-    """An unattributed mount: ASK steer_point(torp, target, off); Python's
-    _steer_point writes `_mount_key` (pushed) and answers the point."""
+    """A steer point the kernel cannot decide (here: no mount and the shot's
+    `_baked_offset` dropped -- unbaked): ASK steer_point(torp, target, off);
+    Python's _steer_point writes `_mount_key` (pushed) and answers the
+    point, and DONE logs no `_mount_key` of its own."""
     w = world
     t = _fire(w, (0.0, -100.0, 0.0), (0.0, 60.0, 0.0), target=w.x)
     t.SetTargetOffset(TGPoint3(1.0, 0.0, 0.0))
+    t._baked_offset = None
     assert nc.step_scan(w.ships).ok
     assert _begin() is None
     rec = _h.combat_k3_next()
@@ -170,6 +200,7 @@ def test_steer_point_ask_round_trip(world):
     assert wr[0] == _row(t)
     assert wr[2] == (p.x, p.y, p.z)            # last_seen is the point
     assert wr[3] is not None and wr[4] is not None
+    assert wr[5] is None                       # Python wrote the key
     _h.combat_k3_end()
     # Next tick: attributed, so no ASK.
     assert nc.step_scan(w.ships).ok
@@ -216,7 +247,7 @@ def test_frame_ask_answered_from_the_step_keys(two_sets):
     # target's; each installed once, so the broadphase asks nothing.
     assert asked == [_slot(w.set), _slot(w.other)]
     (wr,) = rec[1]
-    assert wr[0] == _row(t) and wr[2:] == (None, None, None)
+    assert wr[0] == _row(t) and wr[2:] == (None,) * 4
     _h.combat_k3_end()
     assert _h.combat_k3_counts()["k3_asks"]["frame"] == 2
 
@@ -233,7 +264,7 @@ def test_frame_ask_answered_none(two_sets):
     while rec[0] != 0:
         _h.combat_k3_answer(None)
         rec = _h.combat_k3_next()
-    assert rec[1][0][2:] == (None, None, None)
+    assert rec[1][0][2:] == (None,) * 4
     _h.combat_k3_end()
 
 

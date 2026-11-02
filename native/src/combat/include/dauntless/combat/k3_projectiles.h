@@ -70,7 +70,8 @@
 // None; xyz a 3-tuple of floats):
 //   0 DONE  (DONE, writes, expired, hits)
 //     writes   [(torp, age, last_seen_xyz | None, last_tvel_xyz | None,
-//                vel_xyz | None), ...] one per torpedo in `_active` order.
+//                vel_xyz | None, mount | None), ...] one per torpedo in
+//              `_active` order.
 //              `age` is `t._age` after `+= dt`. The other three are the
 //              native _guide's writes in Python's write order (last_seen,
 //              last_tvel, velocity), None where _guide did not write that
@@ -79,6 +80,15 @@
 //              an ASK guide, whose writes Python already made and pushed).
 //              A `vel` write must also reach torpedo_scan.set_velocity,
 //              exactly as the `_velocity` setter does today.
+//              `mount` (target, offset_xyz, sub | -1): the kernel attributed
+//              the shot's mount itself (round trips, Task 4: a steer
+//              decided natively whose `_mount_key` was not this target and
+//              offset). Python's `_steer_point` would have written
+//              `_mount_key = (target, x, y, z, sub or None)`: the driver
+//              writes that tuple of the live objects WITHOUT a push (the
+//              row took it at DONE), before any expire().
+//              None otherwise, including when the attribution came from an
+//              ASK steer_point (Python wrote and pushed the key itself).
 //     expired  [torp, ...]: TTL expiries in list order, then hits in list
 //              order -- the order Python calls expire(t).
 //     hits     [(torp, ship, hit_xyz, tier, normal_xyz | None,
@@ -101,7 +111,10 @@
 //     steer_point  (torp, target, off_xyz) -> p = projectiles._steer_point(
 //                                          t, target, off) -> (p.x, p.y, p.z)
 //         The shot's `_mount_key` is not attributed to this target and
-//         offset; or no mount and its `_baked_offset` is not for them
+//         offset and the mirror cannot attribute it (kMountUnknown: a
+//         mount-order entry it cannot name before a match, or a target
+//         that is not a ShipClass; otherwise the kernel attributes it,
+//         DONE's `mount`); or no mount and its `_baked_offset` is not for them
 //         (unbaked); or the target is posed and its attributed mount's
 //         part slot cannot carry the offset (the offset off the mount, a
 //         slot that is not current): counted by why (SteerWhy,
@@ -165,11 +178,24 @@ enum class K3Why : int32_t {
 };
 const char* k3_why_name(K3Why w);
 
+// `_steer_point`'s `_mount_key = (target, x, y, z,
+// authored_mount_subsystem(target, (x, y, z)))`, attributed natively
+// (round trips, Task 4): the target's Object handle, the offset (the
+// TGPoint3's own doubles, as Python stores them) and the mount's
+// Subsystem handle (-1 None).
+struct K3MountWrite {
+    int64_t target = -1;
+    Vec3 offset{0, 0, 0};
+    int64_t sub = -1;
+};
+
 // One torpedo's write log entry (DONE).
 struct K3TorpWrite {
     int64_t torp = -1;
     double age = 0.0;
     std::optional<Vec3> last_seen, last_tvel, vel;
+    // Set when the kernel attributed the shot's mount itself this tick.
+    std::optional<K3MountWrite> mount;
 };
 
 struct K3Hit {
@@ -252,6 +278,9 @@ public:
         // ...of them, a picked spot steered at its launch-time point
         // (`_baked_offset`, posed parts Task 7).
         int64_t baked_steers = 0;
+        // `_mount_key` attributions the kernel made itself (round trips,
+        // Task 4): each one a steer_point ASK (unattributed) not emitted.
+        int64_t native_attributions = 0;
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

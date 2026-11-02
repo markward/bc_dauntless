@@ -7,8 +7,11 @@ loop body, host_loop._phaser_step_ship) and native on (K2 decides, Python runs
 only the effects through native_combat.run_k2) -- through the whole combat
 step (host_loop._advance_combat), and compares after every tick:
 
-- every phaser bank's (`_dwell.hex()`, `_firing`, `_target is None`);
-- the call log of every StopFiring (bank and system), every
+- every phaser bank's (`_dwell.hex()`, `_firing`, `_target is None`,
+  `_beam_on_countdown`) and every phaser system's held-fire state (what an
+  offline stop writes);
+- the call log of every StopFiring (bank and system) that runs with a bank
+  firing (an idle one is logged writes, round trips Tasks 2-3), every
   hit_feedback.beam_contact (arguments by .hex(), and the shields_block it
   acted on: the kwarg when given, else its own evaluation) and every
   combat.apply_hit (arguments by .hex());
@@ -97,8 +100,11 @@ class World:
 
     `ships` is ((name, hardpoint, (x, y, z), yaw[, script]), ...). Built the
     same way in both arms, so labels (ship name / subsystem name) line up.
-    The spies call the real function; `after_contact` hooks run after each
-    beam_contact (a stand-in for an effect's handler)."""
+    The spies call the real function; `after_hit` hooks run after each
+    combat.apply_hit (a stand-in for a damage pulse's handler). There is no
+    such hook after a beam_contact: a resting contact is presentation only,
+    and K2 queues it onto the next record (round trips Task 3), so nothing
+    it runs may change what the walk reads."""
 
     def __init__(self, mp, native, ships, tag, instances=None):
         nc.reset()
@@ -148,8 +154,9 @@ class World:
         self.n = 0
         self.log = []
         self.calls = []
+        self.sys_stops = []
         self.events = []
-        self.after_contact = []
+        self.after_hit = []
         self._spy(mp)
 
     def _spy(self, mp):
@@ -159,11 +166,23 @@ class World:
         apply_hit = combat.apply_hit
 
         def bank_spy(bank, _orig=bank_stop):
-            self.calls.append(("bank_stop", self.n, self.label(bank)))
+            # A FIRING bank's stop only: a stop of a bank not firing is pure
+            # field writes, which K1 logs with no call (round trips Task 2);
+            # its effect is in the per-tick record.
+            if bank.__dict__.get("_firing"):
+                self.calls.append(("bank_stop", self.n, self.label(bank)))
             return _orig(bank)
 
         def sys_spy(sys_, *args, _orig=sys_stop):
-            self.calls.append(("system_stop", self.n, self.label(sys_)))
+            # Every stop, for the tests that count them (sys_stops); the
+            # compared call log only a stop that still runs Python with a
+            # bank FIRING: an offline system whose banks are all idle is
+            # stopped with logged writes and no call (round trips Task 3);
+            # its effect is in the per-tick record.
+            self.sys_stops.append((self.n, self.label(sys_)))
+            if any(b.__dict__.get("_firing")
+                   for b in sys_.__dict__.get("_children", ())):
+                self.calls.append(("system_stop", self.n, self.label(sys_)))
             return _orig(sys_, *args)
 
         def contact_spy(**kw):
@@ -180,10 +199,7 @@ class World:
                 _hx(kw["tick_damage"]), kw["ship_instances"] is
                 self.instances, _hx(kw.get("weapon_type")),
                 _hx(kw.get("radius")), _hx(acted)))
-            result = beam_contact(**kw)
-            for hook in list(self.after_contact):
-                hook(self)
-            return result
+            return beam_contact(**kw)
 
         def hit_spy(target, damage, point, **kw):
             self.calls.append((
@@ -194,10 +210,26 @@ class World:
                 self.label(kw.get("hardpoint_weapon")),
                 _hx(kw.get("damage_hull")), _hx(kw.get("shield_point")),
                 sorted(kw)))
-            return apply_hit(target, damage, point, **kw)
+            result = apply_hit(target, damage, point, **kw)
+            for hook in list(self.after_hit):
+                hook(self)
+            return result
 
         mp.setattr(ws.PhaserBank, "StopFiring", bank_spy)
         mp.setattr(ws.PhaserSystem, "StopFiring", sys_spy)
+        # A bank's StopFiring is in K1's override guard (round trips Task 2:
+        # an idle bank's stop is logged writes): the spy only wraps the stock
+        # method, so for this world K1's stock snapshot takes it as stock
+        # (restored with mp). K1's logged idle stops never call it.
+        names, _stock = nc._k1_stock[5]
+        mp.setitem(nc._k1_stock, 5,
+                   (names, nc._k1_resolve(ws.PhaserBank, names)))
+        # ... and so is a phaser system's (round trips Task 3: an offline
+        # system whose banks are idle is stopped with logged writes).
+        kind = nc._weapon_kind_of_class(ws.PhaserSystem)
+        names, _stock = nc._k1_stock[kind]
+        mp.setitem(nc._k1_stock, kind,
+                   (names, nc._k1_resolve(ws.PhaserSystem, names)))
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
         mp.setattr(combat, "apply_hit", hit_spy)
 
@@ -231,9 +263,23 @@ class World:
         row = []
         for b in self.banks:
             d = b.__dict__
+            # `_firing` and `_beam_on_countdown` are what a bank's idle
+            # StopFiring writes: K1's idle stops and K2's offline stops LOG
+            # them since round trips Tasks 2-3, so this row compares them.
             row.append((self.label(b), d.get("_dwell").hex(),
                         _hx(d.get("_firing")), d.get("_target") is None,
-                        self.label(d.get("_target"))))
+                        self.label(d.get("_target")),
+                        _hx(d.get("_beam_on_countdown"))))
+        for s in self.order:
+            g = s.GetPhaserSystem()
+            if g is None:
+                continue
+            d = g.__dict__
+            row.append((self.label(g), _hx(d.get("_fire_held")),
+                        self.label(d.get("_held_target")),
+                        _hx(d.get("_held_offset")),
+                        tuple(self.label(t) for t in d.get("_target_list")),
+                        _hx(d.get("_last_group_fired"))))
         for s in self.order:
             row.append((self.label(s),
                         _hx(float(s.GetHull().GetCondition()))))
@@ -391,10 +437,15 @@ def test_lock_and_manual_aim_match(monkeypatch):
 
 def test_shields_drop_mid_volley(monkeypatch):
     """The Vor'cha has a hull box (so the beam meets its bubble) and shields
-    up. In the middle of tick 120 a handler turns the disable-NPC-shields
-    cheat on (K2 learns it through the re-sent context): the banks after it
-    no longer stop at the bubble. At tick 130 it is off again; at 160 the
-    shields go off for good."""
+    up. Right after the first damage pulse from tick 120 on, a handler turns
+    the disable-NPC-shields cheat on (K2 learns it through the re-sent
+    context): the banks after it in that step no longer stop at the bubble.
+    At tick 150 it is off again; at 160 the shields go off for good.
+
+    (The handler runs after a PULSE, a record's effect: a resting contact
+    is presentation only and is queued -- round trips Task 3 -- so nothing
+    it runs may change what the walk reads. It ran after any contact
+    before.)"""
     import engine.dev_combat_cheats as cheats
     import engine.dev_mode as dev_mode
 
@@ -404,18 +455,20 @@ def test_shields_drop_mid_volley(monkeypatch):
         mp.setattr(dev_mode, "is_enabled", lambda: True)
         mp.setattr(cheats, "_disable_npc_shields", False)
         nc.push_globals()       # the mirror's dev_mode global follows it
+        w.cheat_at = None
 
         def cheat_on(world):
-            if world.n == 120:
+            if world.n >= 120 and world.cheat_at is None:
+                world.cheat_at = world.n
                 cheats._disable_npc_shields = True
-        w.after_contact.append(cheat_on)
+        w.after_hit.append(cheat_on)
 
     def script(w, t):
         g, v = w.ships["Galaxy"], w.ships["Vorcha"]
         if w.n == 1:
             g.GetPhaserSystem().SetSingleFire(0)
             g.GetPhaserSystem().StartFiring(v)
-        elif w.n == 130:
+        elif w.n == 150:
             cheats._disable_npc_shields = False
         elif w.n == 160:
             v.GetShields().TurnOff()
@@ -425,8 +478,13 @@ def test_shields_drop_mid_volley(monkeypatch):
     contacts = _calls(ref, "beam_contact")
     assert {c[11] for c in contacts} == {_hx(True), _hx(False)}
     assert any(c[6] is not None for c in contacts)      # a bubble entry
-    in_120 = [c[11] for c in contacts if c[1] == 120]
-    assert in_120[0] == _hx(True) and _hx(False) in in_120, in_120
+    at = ref.cheat_at
+    assert at is not None and at < 150, at
+    pulses = [c[11] for c in _calls(ref, "apply_hit") if c[1] == at]
+    # The first pulse met the bubble, the ones after it in the step do not.
+    assert len(pulses) > 1 and pulses[0] is not None, pulses
+    assert all(p is None for p in pulses[1:]), pulses
+    assert all(c[11] == _hx(False) for c in contacts if at < c[1] < 150)
     assert all(c[11] == _hx(False) for c in contacts if c[1] > 160)
     _native_ran(counts)
     assert counts["k2_ask_queries"]["shields_block"] == 0, counts
@@ -449,11 +507,18 @@ def test_off_system_stops_every_tick(monkeypatch):
             for i in range(g.GetPhaserSystem().GetNumWeapons()):
                 g.GetPhaserSystem().GetWeapon(i).SetCondition(0.0)
 
-    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 120)
-    stops = {c[1] for c in _calls(ref, "system_stop")
-             if c[2].startswith("Galaxy/")}
+    ref, nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 120)
+    # Python's StopFiring ran on every one of those ticks (sys_stops: every
+    # stop, firing banks or not); in the native arm a stop whose banks are
+    # all idle is logged writes (round trips Task 3), whose effect the
+    # per-tick record compares.
+    stops = {n for n, label in ref.sys_stops if label.startswith("Galaxy/")}
     assert set(range(32, 60)) <= stops, sorted(stops)
     assert set(range(92, 121)) <= stops, sorted(stops)
+    native_stops = {n for n, label in nat.sys_stops
+                    if label.startswith("Galaxy/")}
+    assert counts["k2_logged_system_stop"] >= len(stops - native_stops) > 0, (
+        counts, sorted(native_stops))
     _native_ran(counts)
 
 
@@ -507,18 +572,23 @@ def test_instances_resent_after_mutation(monkeypatch):
     the ones before it saw a non-InstanceId (the sphere tier). K2 learns it
     through the re-sent context (TrackedInstances.version), and the sphere
     radius makes the two tiers land on different points. Later the entry
-    comes back."""
+    comes back. The handler runs after a damage PULSE (a record's effect;
+    a resting contact is queued, round trips Task 3)."""
 
     def setup(w, mp):
         w.ships["Vorcha"].SetRadius(3.0)
+        w.popped = w.restored = None
 
         def pop_then_restore(world):
             v = world.ships["Vorcha"]
-            if world.n == 70 and v in world.instances:
+            if world.popped is None and world.n >= 60:
+                world.popped = world.n
                 world.instances.pop(v)
-            elif world.n == 100 and v not in world.instances:
+            elif (world.restored is None and world.n >= 90
+                  and world.n > world.popped):
+                world.restored = world.n
                 world.instances[v] = _h.InstanceId()
-        w.after_contact.append(pop_then_restore)
+        w.after_hit.append(pop_then_restore)
 
     def script(w, t):
         if t == 0:
@@ -528,18 +598,25 @@ def test_instances_resent_after_mutation(monkeypatch):
     ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 130,
                               instances=_tracked, setup=setup)
     at = {}
-    for c in _calls(ref, "beam_contact"):
+    for c in _calls(ref, "apply_hit"):
         at.setdefault(c[1], []).append(c[4])
-    # Several banks touch at tick 70: the first saw a stale InstanceId (the
-    # trace raises: the sphere tier), the rest no instance (the fallback
-    # point IS the aim point, here the Vor'cha's centre). The scenario tells
-    # the two apart.
+    contacts = {}
+    for c in _calls(ref, "beam_contact"):
+        contacts.setdefault(c[1], []).append(c[4])
+    popped, restored = ref.popped, ref.restored
+    assert popped is not None and restored is not None, (popped, restored)
+    # Several banks pulse at the pop's tick: the first saw a stale
+    # InstanceId (the trace raises: the sphere tier), the rest no instance
+    # (the fallback point IS the aim point, here the Vor'cha's centre). The
+    # scenario tells the two apart.
     centre = _hx(ref.ships["Vorcha"].GetWorldLocation())
-    assert at[70][0] != centre and len(at[70]) > 1, at[70]
-    assert all(p == centre for p in at[70][1:]), at[70]
-    # Restored after tick 100's first contact: the sphere tier again.
-    assert at[100][0] == centre and at[100][1] != centre, at[100]
-    assert all(p != centre for p in at[101]), at[101]
+    assert at[popped][0] != centre and len(at[popped]) > 1, at[popped]
+    assert all(p == centre for p in at[popped][1:]), at[popped]
+    assert all(p == centre for p in contacts[popped + 1]), contacts
+    # Restored after that tick's first pulse: the sphere tier again.
+    assert at[restored][0] == centre, at[restored]
+    assert all(p != centre for p in at[restored][1:]), at[restored]
+    assert all(p != centre for p in contacts[restored + 1]), contacts
     _native_ran(counts)
     # The kernel traced (the viewing set has its offset): no ASK.
     assert counts["k2_ask_queries"]["resolve_hit"] == 0, counts
@@ -780,25 +857,32 @@ def test_unviewed_set_asks_resolve_hit(monkeypatch):
 
 
 def test_dropped_row_mid_walk_asks_bank_step(monkeypatch):
-    """A handler drops the target's mirror row after the first contact of a
-    step: the Galaxy's later banks cannot be walked natively, so each is
+    """A handler drops the target's mirror row after the first damage pulse
+    of a step (a record's effect; a resting contact is queued, round trips
+    Task 3): the Galaxy's later banks cannot be walked natively, so each is
     run in Python (ASK bank_step); from the next step its whole ship is
     (the pre-scan: an unnameable target)."""
 
     def setup(w, mp):
+        w.dropped = None
+
         def drop(world):
-            if world.n == 50 and "_nslot" in world.ships["Vorcha"].__dict__:
-                nc._drop(world.ships["Vorcha"])     # harmless when off
-        w.after_contact.append(drop)
+            if world.n >= 50 and world.dropped is None:
+                world.dropped = world.n
+                if "_nslot" in world.ships["Vorcha"].__dict__:
+                    nc._drop(world.ships["Vorcha"])     # none when off
+        w.after_hit.append(drop)
 
     def script(w, t):
         if t == 0:
             w.ships["Galaxy"].GetPhaserSystem().SetSingleFire(0)
             w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["Vorcha"])
 
-    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 70,
+    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 90,
                               setup=setup)
-    assert sum(1 for c in _calls(ref, "beam_contact") if c[1] == 50) > 1
+    assert ref.dropped is not None
+    assert sum(1 for c in _calls(ref, "apply_hit")
+               if c[1] == ref.dropped) > 1
     assert counts["k2_records"] > 0, counts
     assert counts["k2_ask_queries"]["bank_step"] > 0, counts
     assert counts["k2_python_ships"] > 0, counts
@@ -1569,3 +1653,444 @@ def test_remaining_aim_point_asks_match_python(monkeypatch, case):
         assert counts["k2_posed"]["manual_aims"] > 0, counts
     if case == "unnameable_lock":
         assert counts["k2_posed"]["lock_aims"] > 0, counts
+
+
+# ── Round trips Task 3: resting contacts batched, offline stops logged ──────
+#
+# A resting CONTACT (`flush_dwell <= 0`: _phaser_contact's beam_contact
+# branch, presentation only) no longer comes back on its own: the kernel
+# queues it, in walk order, and the queue rides the NEXT record that runs
+# Python (or DONE); run_k2 runs every queued contact before that record's
+# own effect. A SYSTEM_STOP on an offline system whose banks are all idle is
+# the system's five writes and each bank's StopFiring writes, logged.
+
+def _spy_k2_records(mp, log):
+    """Log every K2 record as it is returned, before Python acts on it:
+    (kind, its own flush (CONTACT) or None, [each queued contact's
+    flush])."""
+    names = {v: k for k, v in _h.combat_k2_kinds().items()}
+    real = _h.combat_k2_next
+
+    def spy():
+        rec = real()
+        kind = names[rec[0]]
+        log.append((kind, rec[14] if kind == "CONTACT" else None,
+                    [q[-1] for q in rec[-2]]))
+        return rec
+    mp.setattr(_h, "combat_k2_next", spy)
+
+
+def _spy_presentation(w, mp):
+    """What a contact presents, into the compared call log: every hit VFX
+    spawn and every shield hit, with their arguments."""
+    from engine.appc import hit_vfx
+    spawn, shield_hit = hit_vfx.spawn, host_io.shield_hit
+
+    def spawn_spy(position, **kw):
+        w.calls.append(("vfx", w.n, _hx(position), _hx(kw.get("normal")),
+                        repr(kw.get("severity")), kw.get("weapon_kind"),
+                        kw.get("spark_count"), repr(kw.get("body_point")),
+                        w.label(kw.get("pSet"))))
+        return spawn(position, **kw)
+
+    def shield_spy(iid, point, rgba=(0.0, 0.0, 0.0, 0.0), intensity=1.0,
+                   radius=0.0):
+        w.calls.append(("shield_hit", w.n, tuple(_hx(float(c))
+                                                 for c in point),
+                        _hx(float(intensity)), _hx(float(radius))))
+        return shield_hit(iid, point, rgba, intensity, radius)
+
+    mp.setattr(hit_vfx, "spawn", spawn_spy)
+    mp.setattr(host_io, "shield_hit", shield_spy)
+
+
+def test_resting_contacts_batched_in_walk_order(monkeypatch):
+    """A volley each way, the Vor'cha's shields up and then down: every
+    resting contact is batched (no CONTACT record of its own; a CONTACT
+    record is a damage pulse), and the per-tick presentation -- the
+    beam_contact calls, each hit VFX spawn and shield hit they make, and
+    their order among the pulses' apply_hits -- is identical to Python's."""
+    log = []
+    _spy_k2_records(monkeypatch, log)
+
+    def setup(w, mp):
+        _spy_presentation(w, mp)
+
+    def script(w, t):
+        g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+        if t == 0:
+            g.GetPhaserSystem().SetSingleFire(0)
+            g.GetPhaserSystem().StartFiring(v)
+        elif t == 20:
+            v.GetPhaserSystem().SetSingleFire(0)
+            v.GetPhaserSystem().StartFiring(g)
+        elif t == 90:
+            v.GetShields().TurnOff()
+
+    ref, nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 160,
+                             instances=_tracked, setup=setup)
+    assert _calls(ref, "vfx") and _calls(ref, "shield_hit"), ref.calls[:10]
+    _native_ran(counts)
+    assert counts["k2_python_ships"] == 0, counts
+    resting = _calls(nat, "beam_contact")
+    assert counts.get("k2_batched_contacts", 0) == len(resting) > 0, counts
+    contacts = [f for kind, f, _q in log if kind == "CONTACT"]
+    assert contacts and all(f > 0.0 for f in contacts), contacts
+    queued = [q for _k, _f, q in log if q]
+    assert all(f <= 0.0 for q in queued for f in q), queued
+    assert sum(len(q) for q in queued) == len(resting)
+    assert max(len(q) for q in queued) > 1, queued     # several per record
+
+
+def test_queued_contacts_precede_damage_pulse(monkeypatch):
+    """Review Focus 4. Banks lit by hand on the same target, beams on: the
+    walk's earlier banks rest, its last one pulses on the first tick. Every
+    queued resting contact's beam_contact (and its VFX) runs BEFORE the
+    pulse's apply_hit, exactly as the Python step does -- the pulse's
+    CONTACT record carries them and run_k2 runs them first."""
+    log = []
+    _spy_k2_records(monkeypatch, log)
+
+    def setup(w, mp):
+        _spy_presentation(w, mp)
+        g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+        banks = _banks_in_arc(g, v)
+        assert len(banks) >= 2, banks
+        w.lit = banks
+
+    def script(w, t):
+        if t == 0:
+            v = w.ships["Vorcha"]
+            for bank in w.lit:
+                _light(bank, v, countdown=0.0)
+                bank._dwell = 0.0
+            w.lit[-1]._dwell = 0.6          # past the flush: pulses at once
+
+    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 3,
+                              setup=setup)
+    first = [c[0] for c in ref.calls if c[1] == 1
+             and c[0] in ("beam_contact", "apply_hit")]
+    rest = len(_nat.lit) - 1
+    assert first[:rest + 1] == ["beam_contact"] * rest + ["apply_hit"], first
+    _native_ran(counts)
+    pulse = next(r for r in log if r[0] == "CONTACT")
+    assert pulse[1] > 0.0 and len(pulse[2]) == rest, log[:5]
+
+
+_STOP_TRACED = ("_fire_held", "_held_target", "_held_offset", "_target_list",
+                "_last_group_fired", "_firing", "_beam_on_countdown")
+
+
+def _stop_value(w, name, value):
+    if name == "_held_target":
+        return w.label(value)
+    if name == "_target_list":
+        return ("list", tuple(w.label(t) for t in value))
+    return _hx(value)
+
+
+def _offline_run(monkeypatch, native, ticks, off_at):
+    """The Galaxy holds its phasers on the Vor'cha, then its phaser system is
+    switched off (tick off_at + 1) and stays off. From then on bank 0 is put
+    to sleep before each combat step, after the passive weapons walk, so
+    only the stop's `_firing` write can wake it. Traces every write of the
+    stop's fields on the system and its banks during the combat step:
+    Python's through the class __setattr__, the kernels' logged ones
+    through apply_writes' quiet setters. Returns (traces, per-tick
+    `_target_list` objects, per-tick asleep-after-step, world log, calls,
+    counts or None)."""
+    traces, lists, asleep = [], [], []
+    with monkeypatch.context() as mp:
+        w = World(mp, native, GALAXY_VORCHA, "k2_offline_%d" % native)
+        try:
+            g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+            system = g.GetPhaserSystem()
+            owned = {id(system)} | {id(system.GetWeapon(i))
+                                    for i in range(system.GetNumWeapons())}
+            state = {"on": False}
+
+            def note(obj, name, value):
+                if state["on"] and name in _STOP_TRACED \
+                        and id(obj) in owned:
+                    traces.append((w.n, type(obj).__name__, w.label(obj),
+                                   name, _stop_value(w, name, value)))
+
+            real_quiet = nc._quiet_setter
+
+            def quiet(cls, name):
+                setter, kind = real_quiet(cls, name)
+
+                def traced(obj, value, _s=setter, _n=name):
+                    note(obj, _n, value)
+                    return _s(obj, value)
+                return traced, kind
+
+            mp.setattr(nc, "_quiet_setter", quiet)
+            for cls in (ws.PhaserSystem, ws.PhaserBank):
+                def setattr_(self, name, value, _real=cls.__setattr__):
+                    note(self, name, value)
+                    _real(self, name, value)
+                mp.setattr(cls, "__setattr__", setattr_)
+            bank0 = system.GetWeapon(0)
+            system.SetSingleFire(0)
+            system.StartFiring(v)
+            for t in range(ticks):
+                w.n += 1
+                w.clock[0] += DT
+                if t == off_at:
+                    system.TurnOff()
+                passive_weapons.advance(w.order, DT)
+                if t > off_at and not passive_state.is_asleep(bank0):
+                    passive_state.put_to_sleep(bank0)
+                state["on"] = True
+                try:
+                    host_loop._advance_combat(list(w.order), DT,
+                                              ship_instances=None,
+                                              push_render_data=False)
+                finally:
+                    state["on"] = False
+                asleep.append(passive_state.is_asleep(bank0))
+                lists.append(system.__dict__["_target_list"])  # held
+                w.record()
+            counts = None
+            if native:
+                counts = nc.counts()
+                nc.audit_mirror()
+                assert nc.audit_failures() == [], nc.audit_failures()
+            return traces, lists, asleep, w.log, w.calls, counts
+        finally:
+            w.close()
+
+
+def test_offline_system_stop_logged_new_list_every_tick(monkeypatch):
+    """Review Focus 5. An offline phaser system whose banks are all idle is
+    stopped EVERY tick with logged writes, no record: the system's five
+    (`_target_list` a NEW empty list each tick, as Python's StopFiring
+    builds one), then each bank's, in Python's order and with its values.
+    The bank `_firing` write still wakes a sleeping bank."""
+    ticks, off_at = 60, 20
+    ref = _offline_run(monkeypatch, False, ticks, off_at)
+    nat = _offline_run(monkeypatch, True, ticks, off_at)
+    r_traces, r_lists, r_asleep, r_log, r_calls, _ = ref
+    n_traces, n_lists, n_asleep, n_log, n_calls, counts = nat
+    assert n_log == r_log
+    assert n_calls == r_calls
+    assert n_traces == r_traces
+    assert n_asleep == r_asleep
+    assert False in r_asleep[off_at + 2:], r_asleep
+    for lists in (r_lists, n_lists):
+        after = lists[off_at + 1:]
+        assert all(a is not b for a, b in zip(after, after[1:]))
+        assert all(x == [] for x in after)
+    # The order of one logged stop, written out: the system's five, then
+    # each bank's two, in GetWeapon order.
+    last = [(c, f, val) for n, c, _l, f, val in r_traces if n == ticks]
+    n_banks = len({label for _n, c, label, _f, _v in r_traces
+                   if c == "PhaserBank"})
+    assert n_banks > 1, r_traces[-12:]
+    want = [("PhaserSystem", "_fire_held", _hx(False)),
+            ("PhaserSystem", "_held_target", None),
+            ("PhaserSystem", "_held_offset", None),
+            ("PhaserSystem", "_target_list", ("list", ())),
+            ("PhaserSystem", "_last_group_fired", _hx(-1))]
+    want += [("PhaserBank", "_firing", _hx(False)),
+             ("PhaserBank", "_beam_on_countdown", _hx(0.0))] * n_banks
+    assert last == want, last
+    assert counts.get("k2_logged_system_stop", 0) >= ticks - off_at - 2, \
+        counts
+
+
+class _Loop:
+    def __init__(self, log, label):
+        self.log, self.label = log, label
+
+    def Stop(self):
+        self.log.append(self.label)
+
+
+def test_firing_bank_on_offline_system_still_records(monkeypatch):
+    """A bank lit by hand on a phaser system that is off: the stop has a
+    FIRING bank, so it stays a SYSTEM_STOP record and Python's StopFiring
+    stops the bank's loop sound -- exactly as often, at the same ticks, ON
+    as OFF. The ticks after it, with every bank idle, are logged."""
+    log = []
+    _spy_k2_records(monkeypatch, log)
+    stops = {}
+
+    def script(w, t):
+        g = w.ships["Galaxy"].GetPhaserSystem()
+        if t == 0:
+            stops[w.native] = []
+            g.TurnOff()
+        if t in (10, 25):
+            bank = _banks_in_arc(w.ships["Galaxy"], w.ships["Vorcha"])[0]
+            _light(bank, w.ships["Vorcha"])
+            bank._loop_handle = _Loop(stops[w.native], (w.n, w.label(bank)))
+
+    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 40)
+    assert stops[False] == [(11, stops[False][0][1]),
+                            (26, stops[False][0][1])], stops
+    assert stops[True] == stops[False]
+    assert [c[1] for c in _calls(ref, "system_stop")] == [11, 26]
+    assert sum(1 for kind, _f, _q in log if kind == "SYSTEM_STOP") == 2, log
+    assert counts.get("k2_logged_system_stop", 0) > 0, counts
+
+
+@pytest.mark.parametrize("where", ["system_class", "system_instance",
+                                   "bank_class", "bank_instance"])
+def test_system_stop_override_runs_python(monkeypatch, where):
+    """While the Python copies exist, the StopFiring an offline stop stands
+    in for -- the phaser system's and each bank's -- is guarded: patched on
+    the class (k1_overridden) or on an instance (the K2 instance-patch
+    names), Python's own runs, exactly as often ON as OFF."""
+    calls = {}
+
+    def counting(real, key):
+        def f(self, *args):
+            calls[key].append(self.GetName())
+            return real(self, *args)
+        return f
+
+    def script(w, t):
+        g = w.ships["Galaxy"].GetPhaserSystem()
+        if t == 0:
+            key = w.native
+            calls[key] = []
+            g.TurnOff()
+            bank = g.GetWeapon(0)
+            if where == "system_class":
+                monkeypatch.setattr(ws.PhaserSystem, "StopFiring",
+                                    counting(ws.PhaserSystem.StopFiring, key))
+            elif where == "system_instance":
+                f = counting(ws.PhaserSystem.StopFiring, key)
+                monkeypatch.setattr(g, "StopFiring", lambda *a: f(g, *a),
+                                    raising=False)
+            elif where == "bank_class":
+                monkeypatch.setattr(ws.PhaserBank, "StopFiring",
+                                    counting(ws.PhaserBank.StopFiring, key))
+            else:
+                f = counting(ws.PhaserBank.StopFiring, key)
+                monkeypatch.setattr(bank, "StopFiring", lambda: f(bank),
+                                    raising=False)
+        if t == 29:
+            monkeypatch.undo()
+
+    _both(monkeypatch, GALAXY_VORCHA, script, 30)
+    assert len(calls[False]) >= 25, calls
+    assert calls[True] == calls[False]
+
+
+def test_raise_in_a_queued_contact_applies_the_records_later_writes(
+        monkeypatch):
+    """A queued resting contact's Python raises (its presentation, here
+    beam_contact itself). The kernel has already written every write of the
+    record into the mirror, so before the exception leaves run_k2 every
+    write still outstanding in that record is applied: the Galaxy's later
+    bank `_dwell` and the Vor'cha's offline stop (its system fields, and
+    the `_firing` write that wakes a sleeping bank). The exception
+    propagates, the session is abandoned and the mirror equals Python."""
+    raise_at = 40
+
+    class Boom(Exception):
+        pass
+
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k2_raise")
+        try:
+            g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+            vsys = v.GetPhaserSystem()
+            vsys.TurnOff()
+            g.GetPhaserSystem().SetSingleFire(0)
+            g.GetPhaserSystem().StartFiring(v)
+            spied = hit_feedback.beam_contact
+            calls = []
+
+            def boom(**kw):
+                calls.append(w.n)
+                if w.n == raise_at and calls.count(raise_at) == 1:
+                    raise Boom()
+                return spied(**kw)
+            mp.setattr(hit_feedback, "beam_contact", boom)
+            log = []
+            _spy_k2_records(mp, log)
+            for _ in range(raise_at - 1):
+                w.tick()
+            # State the Vor'cha's stop must overwrite, pushed as Python does
+            # (not `_fire_held`: K1's pump would stop a held system first).
+            vsys._held_target = g
+            vsys._last_group_fired = 3
+            vbank = vsys.GetWeapon(0)
+
+            def sleep(_w):
+                if "_passive_slot" not in vbank.__dict__:
+                    passive_weapons._build(v)   # the passive walk's registry
+                passive_state.put_to_sleep(vbank)
+            del log[:]
+            with pytest.raises(Boom):
+                w.tick(before=sleep)
+            assert not _h.combat_k2_open()
+            # The raising record: the DONE carrying the Galaxy's contacts,
+            # with writes after the first contact's.
+            assert log[-1][0] == "DONE" and len(log[-1][2]) > 1, log
+            assert vsys.__dict__["_held_target"] is None
+            assert vsys.__dict__["_last_group_fired"] == -1
+            assert vsys.__dict__["_target_list"] == []
+            assert not passive_state.is_asleep(vbank)
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+            # ... and the fight goes on natively.
+            w.tick()
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+        finally:
+            w.close()
+
+
+def test_damage_pulse_handler_starts_another_ships_k1_session(monkeypatch):
+    """Final review, Review Focus 2. A damage pulse's apply_hit handler
+    (after_hit) pulls another ship's trigger -- StartFiring, whose immediate
+    update_weapons runs a K1 session nested inside the K2 step -- while the
+    pulse's CONTACT record carries queued resting contacts, and a third
+    ship's offline phaser stop is logged writes later in the same step.
+    Per tick, every call, event and field equals the Python arm."""
+    log = []
+    _spy_k2_records(monkeypatch, log)
+    ships = GALAXY_VORCHA + (("Dark", "vorcha", (-30.0, -240.0, 0.0), 0.0),)
+
+    def setup(w, mp):
+        _spy_presentation(w, mp)
+        g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+        w.ships["Dark"].GetPhaserSystem().TurnOff()
+        w.lit = _banks_in_arc(g, v)
+        assert len(w.lit) >= 2, w.lit
+        w.started = []
+        w.at_hook = None
+
+        def start_other(w):
+            if w.started:
+                return
+            w.started.append(w.n)
+            if w.native:
+                w.at_hook = log[-1]
+            vs = w.ships["Vorcha"].GetPhaserSystem()
+            vs.SetSingleFire(0)
+            vs.StartFiring(w.ships["Galaxy"])
+        w.after_hit.append(start_other)
+
+    def script(w, t):
+        if t == 0:
+            v = w.ships["Vorcha"]
+            for bank in w.lit:
+                _light(bank, v, countdown=0.0)
+                bank._dwell = 0.0
+            w.lit[-1]._dwell = 0.6          # past the flush: pulses at once
+
+    ref, nat, counts = _both(monkeypatch, ships, script, 60, setup=setup)
+    _native_ran(counts)
+    assert ref.started == nat.started == [1]
+    kind, flush, queued = nat.at_hook
+    assert kind == "CONTACT" and flush > 0.0 and queued, nat.at_hook
+    assert counts["k2_logged_system_stop"] > 0, counts
+    assert counts["k1_records"] > 0, counts
+    assert any(e[0] == App.ET_WEAPON_FIRED and e[1].startswith("Vorcha/")
+               for e in ref.events), ref.events[:20]

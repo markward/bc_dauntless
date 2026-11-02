@@ -324,15 +324,25 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
     std::optional<Vec3> offset;
     int64_t mount_sub = -1;
     const Vec3* baked = nullptr;
+    bool attributed = false;
     if (row.target_offset_set) {
         // key is None or key[0] is not target or key[1:4] != offset: Python
-        // attributes the mount (and writes _mount_key). A NaN never matches.
+        // attributes the mount, `_mount_key = (target, x, y, z,
+        // authored_mount_subsystem(target, (x, y, z)))`. A NaN never
+        // matches. The mirror attributes it too (round trips, Task 4),
+        // unless it cannot tell (kMountUnknown: an entry it cannot name
+        // before a match, or a target that is not a ShipClass).
         const Vec3& o = row.target_offset;
         const Vec3& k = row.mount_offset;
         if (!row.mount_attributed || !(k[0] == o[0]) || !(k[1] == o[1]) ||
-            !(k[2] == o[2]))
-            return steer_ask(ask, SteerWhy::unattributed);
-        mount_sub = m.torpedo_ref(row, TorpField::_mount_key);
+            !(k[2] == o[2])) {
+            mount_sub = authored_mount_subsystem(m, tr, o);
+            if (mount_sub == kMountUnknown)
+                return steer_ask(ask, SteerWhy::unattributed);
+            attributed = true;
+        } else {
+            mount_sub = m.torpedo_ref(row, TorpField::_mount_key);
+        }
         if (mount_sub == kRefUnrepresentable)
             return steer_ask(ask, SteerWhy::mount_unrepresentable);
         if (tr.has_posed_parts) {
@@ -375,6 +385,10 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
     GuideResult r = guide_torpedo_resume(m, row, dt, ask.resume, pos);
     r.posed_steer = offset.has_value() && tr.has_posed_parts;
     r.baked_steer = r.posed_steer && baked != nullptr;
+    // Only a steer decided here logs the key: any ASK above runs Python's
+    // _steer_point, which attributes (and writes `_mount_key`) itself.
+    r.attributed = attributed;
+    r.mount = attributed ? mount_sub : -1;
     return r;
 }
 

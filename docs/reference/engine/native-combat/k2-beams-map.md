@@ -733,6 +733,8 @@ Copy K1's resumable session. `combat_k2_begin(ships, dt, use_memo, player, view_
 
 - `SYSTEM_STOP(sys)`: Python calls `sys_.StopFiring()`.
 - `BANK_STOP(bank)`: Python calls `bank.StopFiring()`. For an arc failure it is followed by the same bank's `CONTACT` (the partial pulse).
+> *Round trips (2026-11-01, spec `2026-11-01-native-combat-round-trips-design.md` §10):* every K2 record now ends `(..., queued, writes)`. On the record path `CONTACT` is a **damage pulse** only: a resting contact (`flush_dwell <= 0`) is queued, in walk order, onto the next record that runs Python (or DONE), and the driver runs it before that record's effect. `SYSTEM_STOP` is emitted only when a bank is firing (below, risk 11).
+
 - `CONTACT(bank, target, ship, impact_xyz, normal_xyz|None, impact_tier, bubble_xyz|None, shields_block, dist, flush_dwell, writes)`:
   - Python does `beam_contact` (with `flush <= 0`) or `apply_hit` (with `damage > 0`), using the record.
   - It must rebuild the exact objects:
@@ -815,7 +817,7 @@ Ships go in list order. Banks go in `_children` order, with the length read once
    - F2 NaN gives None; F14 NaN gives no hit and NaN `tick_damage`.
 9. **Two clocks of pose.** The sim reads the TransformStore at this tick; the trace reads `g_world` as of the last `frame()` sync, so it can be several ticks stale in a catch-up frame. Native must call the same `g_world` at the same point in the order, never re-sync.
 10. **`view_offset` depends on the viewing set.** That is the player's set or the explicit rendered set (FR:242), which handlers can change (SetPlayer, ChangeRenderedSet). It is almost always the identity: one set, no shift. Pass per-set offsets at begin, and re-check the viewing set identity on resume, or fall back when the target's set is not the viewed set.
-11. **StopFiring on off systems every tick** wakes every bank of that system (equal-value WakeField write). This is pre-existing behaviour. K2 must emit `SYSTEM_STOP` exactly as often; it must not skip the call because the system is "already stopped".
+11. **StopFiring on off systems every tick** wakes every bank of that system (equal-value WakeField write). This is pre-existing behaviour. K2 must emit `SYSTEM_STOP` exactly as often; it must not skip the call because the system is "already stopped". *Round trips (2026-11-01): when every bank is idle the stop is logged writes instead of a record (the system's five fields, a new `[]`, each bank's two), still every tick and still waking; a firing bank keeps the `SYSTEM_STOP` record.*
 12. **`shields_block` on non-ship targets** goes through `_Stub` chains with telemetry. Fall back (needs a new class flag, `has_real_get_shields` or "is ShipClass").
 13. **The dwell is written by two owners.** K1's `_fire_effect` (Python, WS:897) resets it to 0 on the lit edge; K2 accumulates and takes it. `tests/helpers/beams.py` writes `_dwell` and `_beam_on_countdown` directly. A native-owned dwell needs Python's copy to stay authoritative for those writers (a NativeField push) or a write log.
 

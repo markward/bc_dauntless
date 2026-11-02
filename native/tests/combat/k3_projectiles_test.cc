@@ -619,9 +619,96 @@ TEST(K3Projectiles, PosedTargetMountSteersNatively) {
     }
 }
 
-// A shot whose mount is not yet attributed asks _steer_point once (Python
-// writes `_mount_key`, pushed); the next tick steers natively.
-TEST(K3Projectiles, UnattributedMountAsksSteerPointOnce) {
+// A shot whose mount is not yet attributed: the kernel attributes it itself
+// (round trips, Task 4) -- the FIRST subsystem of the mount order within
+// 1e-5 per axis -- steers at it with no ASK, logs Python's `_mount_key`
+// write and, at DONE, puts the mount in the row: the next tick needs no
+// attribution.
+TEST(K3Projectiles, UnattributedMountAttributedNatively) {
+    World w;
+    const int64_t x = w.listed("X", 0, 100, 0);
+    const Vec3 off{1.0 + 0.25e-5, 0.0, 0.0};
+    // Both within 1e-5 of the offset; `b` is the exact point, `a` first.
+    const int64_t a = w.m.register_row(Kind::Subsystem);
+    w.m.set_ref(a, Field::_parent_ship, x);
+    w.m.set_fv(a, Field::_position, {1.0, 0.0, 0.0});
+    const int64_t b = w.m.register_row(Kind::Subsystem);
+    w.m.set_ref(b, Field::_parent_ship, x);
+    w.m.set_fv(b, Field::_position, {off[0], off[1], off[2]});
+    w.m.set_mount_order(x, {a, b});
+    const int64_t t = w.torp("T", {0, 0, 0}, {0, 60, 0}, x);
+    w.m.torpedoes().set_v(t, TorpField::_target_offset, true, off);
+    // A stale key: another offset.
+    w.m.set_torpedo_mount(t, true, b, {2.0, 0.0, 0.0});
+    const GuideResult want = guide_torpedo_resume(
+        w.m, w.row(t), kDt, GuideResume{x, 60.0, {0, 0, 0}},
+        steer_point_native(w.m, x, off, a, {0, 0, 0}));
+    ASSERT_EQ(w.begin(), std::nullopt);
+    K3Record r = w.done();
+    const K3TorpWrite& wt = w.write_of(r, t);
+    ASSERT_TRUE(wt.last_seen && wt.last_tvel && wt.vel);
+    EXPECT_EQ(*wt.last_seen, want.writes[0].value);
+    EXPECT_EQ(*wt.vel, want.writes[2].value);
+    ASSERT_TRUE(wt.mount.has_value());
+    EXPECT_EQ(wt.mount->target, x);
+    EXPECT_EQ(wt.mount->offset, off);
+    EXPECT_EQ(wt.mount->sub, a);
+    // The row holds the key now (Python copies it without pushing).
+    EXPECT_TRUE(w.row(t).mount_attributed);
+    EXPECT_EQ(w.row(t).mount_sub, a);
+    EXPECT_EQ(w.row(t).mount_offset, off);
+    w.k.end();
+    EXPECT_EQ(w.k.counts().native_attributions, 1);
+    for (const int64_t k : w.k.counts().steer_why) EXPECT_EQ(k, 0);
+    // Next tick: attributed, nothing to write.
+    ASSERT_EQ(w.begin(), std::nullopt);
+    r = w.done();
+    EXPECT_FALSE(w.write_of(r, t).mount.has_value());
+    w.k.end();
+    EXPECT_EQ(w.k.counts().native_attributions, 1);
+    EXPECT_EQ(
+        w.k.counts().queries[static_cast<size_t>(K3Query::steer_point)], 0);
+}
+
+// A mount order entry the mirror cannot name (or a freed row) before any
+// match: it might have matched, so the attribution is Python's (ASK,
+// unattributed), and the kernel logs no `_mount_key` (Python wrote it).
+TEST(K3Projectiles, MountUnknownAsksUnattributed) {
+    for (const bool freed : {false, true}) {
+        World w;
+        const int64_t x = w.listed("X", 0, 100, 0);
+        const int64_t a = w.m.register_row(Kind::Subsystem);
+        w.m.set_fv(a, Field::_position, {1.0, 0.0, 0.0});
+        int64_t first = kRefUnrepresentable;
+        if (freed) {
+            first = w.m.register_row(Kind::Subsystem);
+            w.m.set_fv(first, Field::_position, {7.0, 0.0, 0.0});
+        }
+        w.m.set_mount_order(x, {first, a});
+        if (freed) w.m.unregister_row(first);
+        const int64_t t = w.torp("T", {0, 0, 0}, {0, 60, 0}, x);
+        w.m.torpedoes().set_v(t, TorpField::_target_offset, true, {1, 0, 0});
+        ASSERT_EQ(w.begin(), std::nullopt) << freed;
+        EXPECT_EQ(w.brief(w.k.next()), "ASK steer_point T") << freed;
+        w.m.set_torpedo_mount(t, true, a, {1, 0, 0});  // Python's _mount_key
+        K3Answer ans;
+        ans.point = {1, 100, 0};
+        w.k.answer(ans);
+        const K3Record r = w.done();
+        EXPECT_FALSE(w.write_of(r, t).mount.has_value()) << freed;
+        w.k.end();
+        const auto& n = w.k.counts();
+        EXPECT_EQ(n.steer_why[static_cast<size_t>(SteerWhy::unattributed)], 1)
+            << freed;
+        EXPECT_EQ(n.native_attributions, 0) << freed;
+    }
+}
+
+// No mount claims the offset (a picked spot) and the shot is not baked
+// for it: the kernel attributes None but the bake is Python's (ASK
+// unbaked), whose _steer_point writes `_mount_key` itself -- so no
+// native write is logged for it.
+TEST(K3Projectiles, NoMountUnbakedAsksWithoutAMountWrite) {
     World w;
     const int64_t x = w.listed("X", 0, 100, 0);
     const int64_t t = w.torp("T", {0, 0, 0}, {0, 60, 0}, x);
@@ -635,14 +722,18 @@ TEST(K3Projectiles, UnattributedMountAsksSteerPointOnce) {
     K3Answer ans;
     ans.point = {1, 100, 0};
     w.k.answer(ans);
-    w.done();
+    r = w.done();
+    EXPECT_FALSE(w.write_of(r, t).mount.has_value());
     w.k.end();
     ASSERT_EQ(w.begin(), std::nullopt);
     r = w.done();
     EXPECT_TRUE(w.write_of(r, t).vel.has_value());
     w.k.end();
-    EXPECT_EQ(
-        w.k.counts().queries[static_cast<size_t>(K3Query::steer_point)], 1);
+    const auto& n = w.k.counts();
+    EXPECT_EQ(n.queries[static_cast<size_t>(K3Query::steer_point)], 1);
+    EXPECT_EQ(n.steer_why[static_cast<size_t>(SteerWhy::unbaked)], 1);
+    EXPECT_EQ(n.steer_why[static_cast<size_t>(SteerWhy::unattributed)], 0);
+    EXPECT_EQ(n.native_attributions, 0);
 }
 
 // A target with a stub IsDead cannot be in the step scan, so its torpedo's

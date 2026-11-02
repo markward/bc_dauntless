@@ -116,9 +116,9 @@ enum class St : int32_t {
     // WeaponSystem.update_weapons
     UW_DEAD_PRUNE,     // if ship ... ship.IsDead(): return False
                        // self._prune_targets(); target = self._target_list[0]
-    UW_OFFSET,         // offset = self._live_held_offset(); groups = ...;
-                       // working = ...; base_idx = ...; if self._single_fire:
-                       //     lit = self._firing_weapon()
+                       // offset = self._live_held_offset() (the value)
+    UW_OFFSET,         // groups = ...; working = ...; base_idx = ...;
+                       // if self._single_fire: lit = self._firing_weapon()
     UW_LIT_RETURN,     // self._force_update = False; return bool(lit.IsFiring())
     UW_WHILE,          // while True: self.SetGroupFireMode(working);
                        //     n = self.GetNumWeapons(); fired_this_group = False
@@ -206,6 +206,11 @@ struct K1Kernel::Session {
     std::vector<K1Undo> undo;
     bool awaiting_offset = false;
     bool awaiting_answer = false, has_answer = false;
+    // The walk tag (THE WALK START): the session's walk number (1, 2, ...),
+    // whether a walk is running (UW_DEAD_PRUNE past the dead check to
+    // WALK_END) and whether it has returned its first record yet.
+    int64_t walk_no = 0;
+    bool in_walk = false, walk_tagged = false;
     std::optional<int64_t> answer;
 };
 
@@ -254,7 +259,9 @@ using Session = K1Kernel::Session;
 // One next() call: runs the cursor to the next record.
 class Walker {
 public:
-    Walker(Mirror& m, Session& s, K1Kernel::Counts& c) : m_(m), s_(s), c_(c) {}
+    Walker(Mirror& m, Session& s, K1Kernel::Counts& c,
+           const K1WalkCheck& check)
+        : m_(m), s_(s), c_(c), check_(check) {}
 
     K1Record run();
 
@@ -285,12 +292,15 @@ private:
     }
     // Every write reads the value it replaces first (a gone row throws there,
     // before anything is changed), writes the mirror, then logs.
-    void write_timer(int64_t h, double v) {
-        K1Undo u = undo_of(K1Undo::Type::F, h, Field::_fire_timer);
-        u.d = m_.get_f(h, Field::_fire_timer);
-        m_.set_f(h, Field::_fire_timer, v);
+    void write_float(int64_t h, Field f, const char* name, double v) {
+        K1Undo u = undo_of(K1Undo::Type::F, h, f);
+        u.d = m_.get_f(h, f);
+        m_.set_f(h, f, v);
         s_.undo.push_back(std::move(u));
-        log(h, "_fire_timer", v);
+        log(h, name, v);
+    }
+    void write_timer(int64_t h, double v) {
+        write_float(h, Field::_fire_timer, "_fire_timer", v);
     }
     void write_i(int64_t h, Field f, const char* name, int64_t v, K1Value lv) {
         K1Undo u = undo_of(K1Undo::Type::I, h, f);
@@ -329,6 +339,8 @@ private:
         log(h, "_target_list", std::move(v));
     }
     // `_target_offset = offset` (the walk's offset object, ruling P5) or None.
+    // The walk's object is stamped whatever it is (a beam stamps it raw); the
+    // mirror reads it as the pushed OFFSET would: unset unless a TGPoint3.
     void write_target_offset(int64_t h, bool walk_offset) {
         K1Undo u = undo_of(K1Undo::Type::Offset, h, Field::_target_offset);
         const SubsystemRow* r = subrow(h);
@@ -337,13 +349,44 @@ private:
         u.v = r->_target_offset;
         s_.undo.push_back(std::move(u));
         if (walk_offset) {
-            const Vec3& o = *s_.offset;
-            m_.set_fv(h, Field::_target_offset, {o[0], o[1], o[2]});
-            log(h, "_target_offset", std::string("walk_offset"));
+            if (s_.offset) {
+                const Vec3& o = *s_.offset;
+                m_.set_fv(h, Field::_target_offset, {o[0], o[1], o[2]});
+            } else {
+                m_.set_fv(h, Field::_target_offset, {});
+            }
+            log(h, "_target_offset", K1WalkOffset{s_.walk_no, s_.sys});
         } else {
             m_.set_fv(h, Field::_target_offset, {});
             log(h, "_target_offset", std::monostate{});
         }
+    }
+
+    // `weapon.StopFiring()` on a bank that is NOT firing is pure writes:
+    // logged in its class's order (round trips §4.3) and true. A firing bank
+    // (the loop sound) or a row gone: false, the caller emits BANK_STOP.
+    bool idle_stop(int64_t h) {
+        const SubsystemRow* r = subrow(h);
+        if (!r || r->_firing) return false;
+        switch (r->weapon_kind) {
+            case kPhaserBank:  // _EnergyWeaponFireMixin.StopFiring (WS:905)
+                write_flag(h, Field::_firing, "_firing", false);
+                write_float(h, Field::_beam_on_countdown, "_beam_on_countdown",
+                            0.0);
+                break;
+            case kTorpedoTube:  // Weapon.StopFiring (WS:1192)
+                write_flag(h, Field::_firing, "_firing", false);
+                break;
+            case kPulseWeapon:  // PulseWeapon.StopFiring (WS:2971)
+                write_flag(h, Field::_firing, "_firing", false);
+                write_target(h, -1);
+                write_target_offset(h, false);
+                break;
+            default:
+                return false;
+        }
+        ++c_.logged_idle_bank_stop;
+        return true;
     }
 
     // ── Records ─────────────────────────────────────────────────────────────
@@ -358,6 +401,13 @@ private:
         s_.writes.clear();
         s_.undo.clear();  // delivered: Python applies them
         s_.st = next;
+        // The walk's first record: the driver materialises the walk on it.
+        if (s_.in_walk && !s_.walk_tagged) {
+            r.walk_first = true;
+            r.walk = s_.walk_no;
+            r.walk_system = s_.sys;
+            s_.walk_tagged = true;
+        }
         ++c_.records;
         if (kind == K1Kind::RUN_PYTHON) ++c_.python_systems;
         return r;
@@ -428,6 +478,7 @@ private:
     Mirror& m_;
     Session& s_;
     K1Kernel::Counts& c_;
+    const K1WalkCheck& check_;
 };
 
 // Everything the system's walk can read must be representable before its
@@ -809,11 +860,27 @@ K1Record Walker::run() {
                 if (!ship_dead(m_, t)) kept.push_back(t);
             // target = self._target_list[0] if self._target_list else None
             s_.target = kept.empty() ? -1 : kept.front();
+            // Logged on EVERY walk, unchanged or not: Python's list is a NEW
+            // object each time (AddTarget appends in place).
             write_target_list(s_.sys, std::move(kept));
-            // offset = self._live_held_offset(): Python's object (ruling P5).
-            s_.offset.reset();
-            s_.awaiting_offset = true;
-            return emit(K1Kind::WALK_START, St::UW_OFFSET, s_.sys);
+            ++s_.walk_no;
+            s_.in_walk = true;
+            s_.walk_tagged = false;
+            // offset = self._live_held_offset(). Python's own when the walk
+            // check hands the walk start back (a patched or overridden
+            // method on its path: WALK_START, answered by set_offset or
+            // skip_walk); else its value from the mirror, and Python fetches
+            // the object when something of the walk first reaches it
+            // (ruling P5, the K1WalkOffset marker and the record tag).
+            if (check_ && check_(s_.sys, s_.ship)) {
+                s_.offset.reset();
+                s_.awaiting_offset = true;
+                return emit(K1Kind::WALK_START, St::UW_OFFSET, s_.sys);
+            }
+            s_.offset = k1_live_held_offset(m_, s_.sys, s_.ship);
+            ++c_.logged_walk_start;
+            s_.st = St::UW_OFFSET;
+            break;
         }
         case St::UW_OFFSET: {
             // groups = self._active_chain_groups()
@@ -833,8 +900,9 @@ K1Record Walker::run() {
                 int64_t lit = -1;
                 for (const int64_t c : sysrow()._children) {
                     // The pre-scan named every child, and nothing ran in
-                    // Python between it and here but WALK_START's offset
-                    // reply (no effect, no handler).
+                    // Python between it and here but (a handed-back walk
+                    // start) WALK_START's offset reply: no effect, no
+                    // handler.
                     if (!named_leaf(c))
                         lost("a child became unnamed before the first effect");
                     if (subrow(c)->_firing) {
@@ -983,6 +1051,7 @@ K1Record Walker::run() {
             s_.st = St::WALK_END;
             break;
         case St::WALK_END:
+            s_.in_walk = false;
             if (s_.pump) {
                 s_.st = St::PUMP_CONTINUE;
                 break;
@@ -1021,14 +1090,26 @@ K1Record Walker::run() {
             // later gate refuses (Task 3 ruling).
             if (cf.clear_depleted)
                 write_flag(w, Field::_depleted, "_depleted", false);
-            if (!cf.ok) return emit(K1Kind::BANK_STOP, St::TF_STOPPED, w);
+            if (!cf.ok) {
+                // weapon.StopFiring(); return False
+                if (idle_stop(w)) {
+                    try_returns(false);
+                    break;
+                }
+                return emit(K1Kind::BANK_STOP, St::TF_STOPPED, w);
+            }
             s_.fire_target = s_.target;
             s_.st = St::TF_FIRE;
             break;
         }
         case St::TF_CANFIRE_ANSWER:
-            if (!take_answer())
+            if (!take_answer()) {
+                if (idle_stop(s_.tf_weapon)) {
+                    try_returns(false);
+                    break;
+                }
                 return emit(K1Kind::BANK_STOP, St::TF_STOPPED, s_.tf_weapon);
+            }
             s_.fire_target = s_.target;
             s_.st = St::TF_FIRE;
             break;
@@ -1053,6 +1134,17 @@ K1Record Walker::run() {
             }
             switch (o.what) {
                 case Outcome::What::Fire: {
+                    if (o.d.shape == K1Decision::Shape::Beam &&
+                        o.d.was_firing) {
+                        // _fire_effect on a beam already firing: three
+                        // writes, no sound, no event (WS:895-898).
+                        write_flag(w, Field::_firing, "_firing", true);
+                        write_target(w, s_.fire_target);
+                        write_target_offset(w, true);
+                        ++c_.logged_beam_sustain;
+                        s_.st = St::TF_FIRED;
+                        break;
+                    }
                     K1Record r =
                         emit(K1Kind::FIRE, St::TF_FIRED, w, s_.fire_target);
                     r.decision = o.d;
@@ -1192,7 +1284,7 @@ K1Record K1Kernel::next() {
     s.awaiting_answer = false;
     s.has_answer = false;
     try {
-        Walker w(m_, s, counts_);
+        Walker w(m_, s, counts_, walk_check_);
         return w.run();
     } catch (...) {
         k1_roll_back(m_, s, 0);
@@ -1242,6 +1334,29 @@ void K1Kernel::end() {
 void K1Kernel::abandon() {
     if (sessions_.empty()) lost("no session is open");
     sessions_.pop_back();
+}
+
+// WeaponSystem._live_held_offset (WS:1551-1564):
+//   ship = self.GetParentShip()
+//   probe = getattr(type(ship), "is_using_target_offset", None) ...
+//   if callable(probe) and ship.is_using_target_offset():
+//       return ship.GetTargetOffsetTG()   # a TGPoint3 copy of the manual one
+//   return getattr(self, "_held_offset", None)
+// is_using_target_offset (SHIPS:1797): bool(self._use_target_offset and
+// self._manual_target_offset is not None). A non-ShipClass ship has no probe
+// (the walk check hands back any class whose probe is not the stock
+// ShipClass's). The OFFSET mirror type reads "unset" for anything that is
+// not a TGPoint3; ShipClass only ever stores a TGPoint3 or None there.
+std::optional<Vec3> k1_live_held_offset(const Mirror& m, int64_t system,
+                                        int64_t ship) {
+    if (const ObjectRow* so = ship < 0 ? nullptr : m.object(ship);
+        so && so->is_ship_class && so->_use_target_offset &&
+        so->manual_offset_set)
+        return so->_manual_target_offset;
+    const SubsystemRow* r = system < 0 ? nullptr : m.subsystem(system);
+    if (!r) throw std::logic_error("combat K1: no row for the walked system");
+    if (r->held_offset_set) return r->_held_offset;
+    return std::nullopt;
 }
 
 K1Kernel& k1_kernel() {

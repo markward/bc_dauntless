@@ -395,8 +395,9 @@ def test_volley_matches(monkeypatch):
     assert any(e[0] == App.ET_TORPEDO_EXITED_SET for e in ref.events)
     assert any(ref.scan_writes.values())
     _k3_ran(counts)
-    # The offset shots asked once each for their mount attribution.
-    assert counts["k3_asks"]["steer_point"] >= 2, counts
+    # The offset shots' mounts attributed natively (round trips, Task 4).
+    assert counts["k3_asks"]["steer_point"] == 0, counts
+    assert counts["k3_native_attributions"] >= 2, counts
 
 
 def test_ttl_and_hit_expire_order(monkeypatch):
@@ -593,9 +594,9 @@ def test_torpedo_subclass_overriding_translate_runs_python(monkeypatch):
 
 def test_forced_part_pose_target_steers_natively(monkeypatch):
     """Shots at a subsystem of a ship with a part forced off its NIF pose
-    (no mount on it: the slot reads "no part", the offset itself): after
-    the first guided tick attributes the mount (ASK steer_point, which
-    writes `_mount_key`), the steer point is the kernel's. (Was
+    (no mount on it: the slot reads "no part", the offset itself): the
+    first guided tick attributes the mount natively (round trips, Task 4;
+    was an ASK steer_point), and the steer point is the kernel's. (Was
     test_posed_target_asks_and_matches -- an ASK steer_point every guided
     tick -- before posed parts went native.)"""
 
@@ -613,8 +614,9 @@ def test_forced_part_pose_target_steers_natively(monkeypatch):
                               ships=SCRIPTED_GALAXY_VORCHA)
     assert _calls(ref, "hit")
     _k3_ran(counts)
-    # One attribution ASK for the one offset shot; every later tick native.
-    assert counts["k3_asks"]["steer_point"] == 1, counts
+    # The one offset shot attributed natively; no steer ASK at all.
+    assert counts["k3_asks"]["steer_point"] == 0, counts
+    assert counts["k3_native_attributions"] == 1, counts
     assert counts["k3_posed_steers"] > 30, counts
     assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts
 
@@ -930,7 +932,7 @@ def test_ask_guide_round_trip_advances_on_pushed_velocity(monkeypatch):
             rec = _h.combat_k3_next()
             assert rec[0] == 0
             (wr,) = rec[1]
-            assert wr[2:] == (None, None, None)   # Python already wrote
+            assert wr[2:] == (None,) * 4   # Python already wrote
             _h.combat_k3_end()
             want = start + t._vel * DT
             assert _hx(t.GetTranslate()) == _hx(want)
@@ -995,8 +997,8 @@ def test_available_needs_the_k3_and_step_bindings(monkeypatch):
 
 def test_posed_target_steer_point_native(monkeypatch):
     """Shots locked on a Bird of Prey's wing cannons with the wings swung
-    for cruise: once each shot has attributed its mount (one ASK, which
-    writes `_mount_key`), the steer point is the posed mount, computed
+    for cruise: each shot's mount attributed natively (round trips, Task 4;
+    was one ASK each), the steer point is the posed mount, computed
     natively -- per tick equal to Python."""
     moved = []
 
@@ -1020,7 +1022,8 @@ def test_posed_target_steer_point_native(monkeypatch):
     assert moved and all(moved), moved
     assert any(c[3] == "BoP" for c in _calls(ref, "hit")), ref.calls
     _k3_ran(counts)
-    assert counts["k3_asks"]["steer_point"] == 2, counts
+    assert counts["k3_asks"]["steer_point"] == 0, counts
+    assert counts["k3_native_attributions"] == 2, counts
     assert counts["k3_posed_steers"] > 30, counts
     assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts
 
@@ -1092,7 +1095,8 @@ def test_manual_aim_on_posed_target_steers_natively(monkeypatch):
     assert moved == [True, True], moved
     assert any(c[3] == "BoP" for c in _calls(ref, "hit")), ref.calls
     _k3_ran(counts)
-    assert counts["k3_asks"]["steer_point"] == 2, counts
+    assert counts["k3_asks"]["steer_point"] == 0, counts
+    assert counts["k3_native_attributions"] == 2, counts
     assert counts["k3_posed_steers"] > 30, counts
     assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts
 
@@ -1133,10 +1137,200 @@ def test_picked_spot_keeps_its_launch_point_natively(monkeypatch):
     assert seen.get("moved") is True, seen
     assert any(c[3] == "BoP" for c in _calls(ref, "hit")), ref.calls
     _k3_ran(counts)
-    # One attribution ASK per shot; every later tick native.
-    assert counts["k3_asks"]["steer_point"] == 3, counts
+    # Every shot's mount attributed natively; no steer ASK at all.
+    assert counts["k3_asks"]["steer_point"] == 0, counts
+    assert counts["k3_native_attributions"] == 3, counts
     assert counts["k3_steer_reasons"]["no_mount"] == 0, counts
     assert counts["k3_steer_reasons"]["unbaked"] == 0, counts
     assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts
     assert counts["k3_baked_steers"] > 30, counts
     assert counts["k3_posed_steers"] > counts["k3_baked_steers"], counts
+
+
+# ── Native mount attribution (round trips, Task 4) ──────────────────────────
+#
+# A shot's first guided tick at a new (target, offset) attributes the mount
+# (`_steer_point`: `_mount_key = (target, x, y, z,
+# authored_mount_subsystem(...))`). The kernel does it natively for a
+# ShipClass target whose mount order it can read, and logs the `_mount_key`
+# write for `_k3_apply` (quiet: no push echo). A mount it cannot tell
+# (kMountUnknown) or a non-ShipClass target still ASKs.
+
+
+def _quiet_mount_pushes(w, mp):
+    """Count the `_mount_key` pushes made INSIDE update_all (a Python
+    `_steer_point` writing the key through the TorpedoField setter)."""
+    w.mount_pushes = []
+    inside = [False]
+    push = nc._torp_push
+    update_all = projectiles.update_all
+
+    def push_spy(t, h, name, value):
+        if inside[0] and name == "_mount_key":
+            w.mount_pushes.append((w.n, w.label(t)))
+        return push(t, h, name, value)
+
+    def update_spy(dt, ships, *, ship_instances=None):
+        inside[0] = True
+        try:
+            return update_all(dt, ships, ship_instances=ship_instances)
+        finally:
+            inside[0] = False
+
+    mp.setattr(nc, "_torp_push", push_spy)
+    mp.setattr(projectiles, "update_all", update_spy)
+
+
+def _expire_reads_mount_key(w, mp):
+    """An expire() that reads the torpedo's `_mount_key` first (a stand-in
+    for an ET_TORPEDO_EXITED_SET handler): into the compared call log."""
+    expire = projectiles.expire
+
+    def expire_spy(t):
+        key = t.__dict__.get("_mount_key")
+        w.calls.append(("expire", w.n, w.label(t), None if key is None else (
+            w.label(key[0]), _hx(key[1]), _hx(key[2]), _hx(key[3]),
+            w.label(key[4]))))
+        return expire(t)
+
+    mp.setattr(projectiles, "expire", expire_spy)
+
+
+def test_unattributed_steer_is_native(monkeypatch):
+    """Shots at a subsystem's mount and at a spot no mount claims, from both
+    ships: no steer_point ASK at all -- the kernel attributes each mount
+    itself and `_k3_apply` writes Python's tuple quietly: the target and
+    mount OBJECTS (identity), the offset's own floats, the row's mount
+    fields in step (no re-attribution next tick). One shot reaches its TTL
+    on its first guided tick: expire() already sees its `_mount_key`.
+    Per tick equal to Python."""
+    seen = {}
+
+    def setup(w, mp):
+        _quiet_mount_pushes(w, mp)
+        _expire_reads_mount_key(w, mp)
+
+    def script(w, t):
+        g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+        _move_vorcha(w, t)
+        if t == 0:
+            w.fire(g, (-0.5, 4.0, 0.0), (-3.0, 59.5, 1.0), target=v,
+                   offset=v.GetShields().GetPosition())
+            w.fire(g, (0.5, 4.0, 0.0), (2.0, 59.0, 3.0), target=v,
+                   offset=TGPoint3(0.25, -1.5, 0.75))       # no mount
+            w.fire(g, (0.0, 4.0, 0.5), (0.0, 60.0, 0.0), target=v,
+                   offset=v.GetShields().GetPosition(), ttl=DT * 0.5)
+            w.fire(v, (10.0, 115.0, 8.0), (0.0, -60.0, 0.0), target=g,
+                   offset=g.GetShields().GetPosition())
+            # Two mounts at one point: a child of an earlier system moved
+            # onto a later top-level system's mount. The first in mount
+            # order (the child) is the attribution.
+            tops = [s for s in v.GetSubsystems()
+                    if s is not None and s is not v.GetHull()]
+            parent = next(s for s in tops if getattr(s, "_children", None))
+            child = parent._children[-1]
+            later = tops[tops.index(parent) + 1]
+            at = later.GetPosition()
+            child._position = TGPoint3(at.x, at.y, at.z)
+            seen["shared"] = (child, later)
+            w.fire(g, (0.25, 4.0, -0.25), (1.0, 59.5, 2.0), target=v,
+                   offset=later.GetPosition())
+        elif t == 1:
+            t1, t2, _t3, t4, t5 = w.torps
+            k1, k2, k4 = t1._mount_key, t2._mount_key, t4._mount_key
+            child, later = seen["shared"]
+            assert child.GetName() != later.GetName()
+            seen[w.native] = (
+                k1[0] is v and k1[4] is v.GetShields(),
+                k2[0] is v and k2[4] is None,
+                k4[0] is g and k4[4] is g.GetShields(),
+                t5._mount_key[4] is child,
+                tuple(type(c) for c in k1[1:4]))
+            if w.native:
+                row = _h.combat_torp_dump(t1._k3_row)
+                o = t1._target_offset
+                seen["row"] = (
+                    row["mount_attributed"],
+                    row["mount_sub"] == v.GetShields().__dict__["_nslot"],
+                    _hx(tuple(row["mount_offset"])) == _hx(o))
+                seen["key"] = _hx(tuple(k1[1:4])) == _hx(o)
+
+    ref, nat, counts = _both(monkeypatch, script, 40, setup=setup)
+    _k3_ran(counts)
+    assert seen[False] == seen[True] == (True,) * 4 + ((float,) * 3,), seen
+    assert seen["row"] == (1, True, True) and seen["key"], seen
+    assert counts["k3_asks"]["steer_point"] == 0, counts
+    assert counts["k3_native_attributions"] == 5, counts
+    # The Python arm's _steer_point pushed nothing (switch off); the native
+    # arm's write is quiet: no push from inside update_all.
+    assert nat.mount_pushes == [], nat.mount_pushes
+    expires = [c for c in ref.calls if c[0] == "expire"]
+    assert expires and expires[0][3] is not None, expires
+
+
+class _Unnamed:
+    """A mounted subsystem the mirror cannot name (no row): -2 in the
+    mount order, so the kernel cannot tell the mount (kMountUnknown)."""
+
+    def __init__(self, p):
+        self._p = p
+
+    def GetPosition(self):
+        return TGPoint3(*self._p)
+
+
+def test_mount_unknown_still_asks(monkeypatch):
+    """A Vor'cha whose first mount-order entry is a subsystem the mirror
+    cannot name: the kernel cannot attribute the shot's offset (the
+    unnamed one might match), so the steer point is Python's (ASK,
+    unattributed), which writes `_mount_key` itself. Equal to Python."""
+
+    def script(w, t):
+        g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+        if t == 0:
+            first = next(s for s in v.GetSubsystems()
+                         if s is not None and s is not v.GetHull())
+            first._children = [_Unnamed((31.5, 32.5, 33.5))] + list(
+                first._children)
+            nc.push_mount_order(v)
+            w.fire(g, (-0.5, 4.0, 0.0), (-3.0, 59.5, 1.0), target=v,
+                   offset=v.GetShields().GetPosition())
+
+    _ref, _nat, counts = _both(monkeypatch, script, 20)
+    _k3_ran(counts)
+    assert counts["k3_steer_reasons"]["unattributed"] == 1, counts
+    assert counts["k3_native_attributions"] == 0, counts
+
+
+def test_non_ship_target_still_asks(monkeypatch):
+    """A guided shot with an offset at a target that is not a ShipClass (a
+    hulk): its mount order is never pushed, so the kernel cannot attribute
+    the mount. Such a target is never in the step scan (the scan holds
+    ShipClass rows only), so its torpedo's whole _guide is Python's (ASK
+    guide, target_not_in_scan) -- the attribution with it -- and none is
+    made natively. (The kernel-level refusal itself is the
+    ProjectileGeometry.GuideAttributesTheMountNatively gtest.) Equal to
+    Python."""
+    from engine.appc.objects import DamageableObject
+
+    def setup(w, mp):
+        hulk = DamageableObject()
+        hulk.SetTranslateXYZ(-10.0, 120.0, 0.0)
+        hulk.SetRadius(3.0)
+        w.set.AddObjectToSet(hulk, "Hulk")
+        w.labels[id(hulk)] = "Hulk"
+        w.ships["Hulk"] = hulk
+
+    def script(w, t):
+        if t == 0:
+            w.fire(w.ships["Galaxy"], (-0.5, 4.0, 0.0), (-3.0, 59.5, 1.0),
+                   target=w.ships["Hulk"], offset=TGPoint3(0.5, 0.25, 0.0))
+
+    _ref, nat, counts = _both(monkeypatch, script, 20, setup=setup)
+    _k3_ran(counts)
+    assert counts["k3_guide_reasons"].get("target_not_in_scan", 0) > 0, \
+        counts
+    assert counts["k3_native_attributions"] == 0, counts
+    key = nat.torps[0].__dict__.get("_mount_key")
+    assert key is not None and key[0] is nat.ships["Hulk"] \
+        and key[4] is None, key

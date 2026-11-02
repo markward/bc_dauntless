@@ -133,10 +133,19 @@ enum class St : int32_t {
     DONE,               // returned DONE; only end() / abandon() may follow
 };
 
-// The mirror value one logged `_dwell` write replaced.
+// The mirror value one logged write replaced: a float (`_dwell`,
+// `_beam_on_countdown`), an int (`_fire_held`, `_last_group_fired`,
+// `_firing`), a ref (`_held_target`), a handle list (`_target_list`) or an
+// offset (`_held_offset`).
 struct K2Undo {
-    int64_t bank = -1;
-    double value = 0.0;
+    enum class Type : int32_t { F, I, Ref, Ids, Offset } type = Type::F;
+    int64_t h = -1;
+    Field f = Field::_dwell;
+    double d = 0.0;
+    int64_t i = 0;
+    std::vector<int64_t> ids;
+    Vec3 v{0, 0, 0};
+    bool set = false;
 };
 
 struct K2Kernel::Session {
@@ -168,12 +177,16 @@ struct K2Kernel::Session {
     std::optional<Vec3> aim_unit;
     ResolvedHit hit;
     std::optional<bool> shields;
+    bool shields_asked = false;  // `shields` is an ASK's answer
     std::optional<Vec3> bubble;
 
     // The write log since the last record, and, one for one, the value each
     // write replaced (rolled back if the writes never reach Python).
     std::vector<K2Write> writes;
     std::vector<K2Undo> undo;
+    // The resting contacts queued since the last record (RESTING CONTACTS,
+    // k2_beams.h); each `at` indexes `writes`.
+    std::vector<K2Queued> queue;
     bool awaiting_answer = false, has_answer = false;
     K2Query pending = K2Query::kCount;
     K2Answer answer;
@@ -184,7 +197,18 @@ struct K2Kernel::Session {
 static void k2_roll_back(Mirror& m, K2Kernel::Session& s, size_t mark) {
     while (s.undo.size() > mark) {
         const K2Undo& u = s.undo.back();
-        m.set_f(u.bank, Field::_dwell, u.value);
+        switch (u.type) {
+            case K2Undo::Type::F: m.set_f(u.h, u.f, u.d); break;
+            case K2Undo::Type::I: m.set_i(u.h, u.f, u.i); break;
+            case K2Undo::Type::Ref: m.set_ref(u.h, u.f, u.i); break;
+            case K2Undo::Type::Ids: m.set_ids(u.h, u.f, u.ids); break;
+            case K2Undo::Type::Offset:
+                if (u.set)
+                    m.set_fv(u.h, u.f, {u.v[0], u.v[1], u.v[2]});
+                else
+                    m.set_fv(u.h, u.f, {});
+                break;
+        }
         s.undo.pop_back();
     }
     s.writes.resize(mark);
@@ -227,9 +251,89 @@ private:
         if (!b) throw std::invalid_argument("combat K2: bank row is gone");
         const double old = b->_dwell;
         if (idle && positive_zero(old) && positive_zero(v)) return;
-        s_.undo.push_back(K2Undo{bank, old});
-        m_.set_f(bank, Field::_dwell, v);
-        s_.writes.push_back(K2Write{bank, "_dwell", v});
+        write_f(bank, Field::_dwell, "_dwell", v);
+    }
+    // Each write reads the value it replaces (for the undo), writes the
+    // mirror, then logs. The caller checked the row exists.
+    void write_f(int64_t h, Field f, const char* name, double v) {
+        K2Undo u;
+        u.type = K2Undo::Type::F;
+        u.h = h;
+        u.f = f;
+        u.d = m_.get_f(h, f);
+        m_.set_f(h, f, v);
+        s_.undo.push_back(std::move(u));
+        s_.writes.push_back(K2Write{h, name, v});
+    }
+    void write_i(int64_t h, Field f, const char* name, int64_t v, K1Value lv) {
+        K2Undo u;
+        u.type = K2Undo::Type::I;
+        u.h = h;
+        u.f = f;
+        u.i = m_.get_i(h, f);
+        m_.set_i(h, f, v);
+        s_.undo.push_back(std::move(u));
+        s_.writes.push_back(K2Write{h, name, std::move(lv)});
+    }
+    // `sys_.StopFiring()` with every bank idle: the logged writes (THE
+    // OFFLINE STOP, k2_beams.h) and true. A firing bank, a child that is
+    // not a live, unoverridden phaser bank: false, and nothing written (the
+    // caller emits SYSTEM_STOP).
+    bool offline_stop(int64_t sys) {
+        // for i in range(self.GetNumWeapons()): w = self.GetWeapon(i) --
+        // the children cannot change: no Python runs in between.
+        const std::vector<int64_t> kids = subrow(sys)->_children;
+        for (const int64_t k : kids) {
+            const SubsystemRow* b = subrow(k);
+            if (!b || b->weapon_kind != kPhaserBank || b->k1_overridden ||
+                b->_firing)
+                return false;
+        }
+        // WeaponSystem.StopFiring (WS:1540-1549)
+        write_i(sys, Field::_fire_held, "_fire_held", 0, false);
+        {
+            K2Undo u;
+            u.type = K2Undo::Type::Ref;
+            u.h = sys;
+            u.f = Field::_held_target;
+            u.i = m_.get_ref(sys, Field::_held_target);
+            m_.set_ref(sys, Field::_held_target, -1);
+            s_.undo.push_back(std::move(u));
+            s_.writes.push_back(K2Write{sys, "_held_target", int64_t{-1}});
+        }
+        {
+            const SubsystemRow* r = subrow(sys);
+            K2Undo u;
+            u.type = K2Undo::Type::Offset;
+            u.h = sys;
+            u.f = Field::_held_offset;
+            u.set = r->held_offset_set;
+            u.v = r->_held_offset;
+            m_.set_fv(sys, Field::_held_offset, {});
+            s_.undo.push_back(std::move(u));
+            s_.writes.push_back(K2Write{sys, "_held_offset", std::monostate{}});
+        }
+        {
+            K2Undo u;
+            u.type = K2Undo::Type::Ids;
+            u.h = sys;
+            u.f = Field::_target_list;
+            u.ids = subrow(sys)->_target_list;  // raw: stale entries kept
+            m_.set_ids(sys, Field::_target_list, {});
+            s_.undo.push_back(std::move(u));
+            s_.writes.push_back(
+                K2Write{sys, "_target_list", std::vector<int64_t>{}});
+        }
+        write_i(sys, Field::_last_group_fired, "_last_group_fired", -1,
+                int64_t{-1});
+        // w.StopFiring(): _EnergyWeaponFireMixin.StopFiring (WS:905-911),
+        // not firing, so no loop sound.
+        for (const int64_t k : kids) {
+            write_i(k, Field::_firing, "_firing", 0, false);
+            write_f(k, Field::_beam_on_countdown, "_beam_on_countdown", 0.0);
+        }
+        ++c_.logged_system_stop;
+        return true;
     }
 
     // ── Records ─────────────────────────────────────────────────────────────
@@ -238,6 +342,8 @@ private:
         r.kind = kind;
         r.a = a;
         r.b = b;
+        r.contacts = std::move(s_.queue);
+        s_.queue.clear();
         r.writes = std::move(s_.writes);
         s_.writes.clear();
         s_.undo.clear();  // delivered: Python applies them
@@ -325,6 +431,7 @@ private:
     std::optional<K2Why> prescan() const;
 
     K2Record contact();
+    bool queue_contact();
 
     Mirror& m_;
     Session& s_;
@@ -394,24 +501,45 @@ std::optional<K2Why> Walker::prescan() const {
     return std::nullopt;
 }
 
-// The bank's CONTACT: everything beam_contact / apply_hit take that the
-// kernel decided. Python does the damage arithmetic.
-K2Record Walker::contact() {
+// The bank's contact as Python's _phaser_contact takes it: everything
+// beam_contact / apply_hit take that the kernel decided.
+static K2Contact make_contact(const K2Kernel::Session& s) {
     K2Contact c;
-    c.bank = s_.bank;
-    c.target = s_.target;
-    c.ship = s_.ship;
-    c.system = s_.sys;
-    c.emitter = s_.emitter;
-    c.target_pos = s_.target_pos;
-    c.dist = s_.dist;
-    c.aim_unit = s_.aim_unit;
-    c.hit = s_.hit;
-    c.bubble = s_.bubble;
-    c.shields_block = s_.shields;
-    c.flush_dwell = *s_.flush_dwell;
+    c.bank = s.bank;
+    c.target = s.target;
+    c.ship = s.ship;
+    c.system = s.sys;
+    c.emitter = s.emitter;
+    c.target_pos = s.target_pos;
+    c.dist = s.dist;
+    c.aim_unit = s.aim_unit;
+    c.hit = s.hit;
+    c.bubble = s.bubble;
+    c.shields_block = s.shields;
+    c.shields_asked = s.shields_asked;
+    c.flush_dwell = *s.flush_dwell;
+    return c;
+}
+
+// A RESTING contact (`flush_dwell <= 0.0`: beam_contact, presentation only)
+// is queued for the next record, after the writes logged so far, and the
+// walk goes on: true. A damage pulse: false (the caller emits CONTACT).
+bool Walker::queue_contact() {
+    if (!(*s_.flush_dwell <= 0.0)) return false;
+    s_.queue.push_back(K2Queued{make_contact(s_), s_.writes.size()});
+    ++c_.batched_contacts;
+    // The bank's body has run in full and the ship's has started: a later
+    // bank that cannot be walked is a bank_step, never the whole ship again.
+    s_.ship_recorded = true;
+    s_.bank_recorded = true;
+    s_.st = St::BANK_NEXT;
+    return true;
+}
+
+// A damage pulse: the CONTACT record. Python does the damage arithmetic.
+K2Record Walker::contact() {
     K2Record r = emit(K2Kind::CONTACT, St::BANK_NEXT);
-    r.contact = std::move(c);
+    r.contact = make_contact(s_);
     return r;
 }
 
@@ -457,8 +585,14 @@ K2Record Walker::run() {
                 } catch (const std::invalid_argument&) {
                     return run_python(K2Why::Gate);
                 }
-                if (stop)
+                if (stop) {
+                    // Every bank idle: logged writes, no record.
+                    if (offline_stop(sys)) {
+                        s_.st = St::SHIP_NEXT;
+                        break;
+                    }
                     return emit(K2Kind::SYSTEM_STOP, St::SHIP_NEXT, sys);
+                }
                 if (std::optional<K2Why> why = prescan())
                     return run_python(*why);
                 // for i in range(sys_.GetNumWeapons()): read ONCE
@@ -724,6 +858,7 @@ K2Record Walker::run() {
             // `aim_unit is not None and combat.shields_block(target)`
             case St::SHIELDS:
                 s_.shields.reset();
+                s_.shields_asked = false;
                 if (s_.aim_unit) {
                     try {
                         s_.shields = shields_block(m_, s_.target,
@@ -738,6 +873,7 @@ K2Record Walker::run() {
                 break;
             case St::SHIELDS_ANSWER:
                 s_.shields = take_answer().flag;
+                s_.shields_asked = true;
                 s_.st = St::BUBBLE;
                 break;
 
@@ -761,6 +897,7 @@ K2Record Walker::run() {
                         return ask(K2Query::bubble, args, St::BUBBLE_ANSWER);
                     }
                 }
+                if (queue_contact()) break;
                 return contact();
             }
             case St::BUBBLE_ANSWER: {
@@ -769,6 +906,7 @@ K2Record Walker::run() {
                     s_.bubble.reset();
                 else
                     s_.bubble = a.point;
+                if (queue_contact()) break;
                 return contact();
             }
 

@@ -27,10 +27,11 @@ branches certain: a shooter's sensors off with its shots in flight (guided
 invisible on the frozen last-seen point), a shooter moved into another frame
 with its shots in flight (``_target_visible``'s ``off is None`` can_detect),
 a target moved into another frame (ballistic), a target killed (ballistic),
-a target posed off its NIF pose while shots at its subsystems home (ASK
-steer_point every tick), a target inside a dense MetaNebula with guided shots
-at it (every can_detect at it breaks its lock: the latch the record
-compares). Half the ships carry a shield hull box, so shots meet
+a target posed off its NIF pose while shots at its subsystems home (the
+mount attributed and the posed steer point computed natively), a target
+inside a dense MetaNebula with guided shots at it (every can_detect at it
+breaks its lock: the latch the record compares). Half the ships carry a
+shield hull box, so shots meet
 the bubble (the fallback tier: hit point, ``_bubble_entry`` and apply_hit's
 shield_point ONE object).
 
@@ -72,8 +73,10 @@ from engine.systems import frames
 from tests.helpers import bc_assets, headless_mission
 from tests.helpers.fight_audio import isolate_fight_audio
 from tests.helpers.k3_fight import (K3Tally, Recorder, aim_velocity,
-                                    check_guide_asks, compare, face, fire,
-                                    nebula_around, seed_every_rng, subsystems,
+                                    check_guide_asks,
+                                    check_native_attributions, compare, face,
+                                    fire, nebula_around, presented,
+                                    round_trips, seed_every_rng, subsystems,
                                     xyz)
 from tests.helpers.mapped_regions import load_region
 
@@ -488,7 +491,7 @@ BRANCHES = (
     "guided_visible", "guided_invisible", "ballistic_dead",
     "ballistic_frame", "unguided", "window_end", "ttl",
     "cross_region_homing", "cross_region_hit", "hit_is_bubble",
-    "tier:fallback", "steer_point:posed", "steer_point:mount",
+    "tier:fallback", "steer_point:posed", "steer_point:native_mount",
     "source_other_frame", "source_other_frame_unseen", "same_ship_hits",
     "ttl_and_hit_same_tick")
 
@@ -512,6 +515,14 @@ def test_k3_k4_match_python_in_a_torpedo_fight(monkeypatch, odd_hull_box,
              len([c for c in ref.rec.calls if c[0] == "apply_hit"]),
              len(ref.rec.events)))
     print("  latched (pair x tick) %d" % nat.rec.latched)
+    print("  round trips %r, presentation calls %d"
+          % (round_trips(nat.counts), presented(ref.rec.calls)))
+    # Round trips Task 4: the mounts were attributed natively; and K1
+    # walked the ships' tubes with no WALK_START record (Task 1). A torpedo
+    # fight: no beam sustains or batched contacts (measured 0).
+    check_native_attributions(nat.counts, nat.rec.tally)
+    assert nat.counts["k1_logged"]["walk_start"] > 0, round_trips(
+        nat.counts)
     # K3 and K4 decided every step: no whole-step hand-back.
     assert nat.counts["k3_runs"] > 0 and nat.counts["k3_python_steps"] == 0, \
         nat.counts

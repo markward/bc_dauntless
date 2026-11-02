@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -186,11 +187,53 @@ struct World {
         std::snprintf(buf, sizeof buf, "%.17g", d);
         return buf;
     }
+    std::string value(const K1Value& v) const {
+        if (std::holds_alternative<std::monostate>(v)) return "None";
+        if (const bool* b = std::get_if<bool>(&v)) return *b ? "True" : "False";
+        if (const int64_t* i = std::get_if<int64_t>(&v))
+            return std::to_string(*i);
+        if (const double* d = std::get_if<double>(&v)) return num(*d);
+        if (const auto* ids = std::get_if<std::vector<int64_t>>(&v)) {
+            std::string out = "[";
+            for (const int64_t h : *ids)
+                out += (out.size() > 1 ? "," : "") + name(h);
+            return out + "]";
+        }
+        return "walk_offset";
+    }
     std::vector<std::string> writes(const K2Record& r) const {
         std::vector<std::string> out;
         for (const K2Write& w : r.writes)
-            out.push_back(name(w.handle) + "." + w.field + "=" + num(w.value));
+            out.push_back(name(w.handle) + "." + w.field + "=" + value(w.value));
         return out;
+    }
+    // The kernel's records as the driver acts on them (run_k2): a record's
+    // queued resting contacts first -- each as a CONTACT carrying the writes
+    // logged before it -- then the record with the rest of its writes. The
+    // raw record is in `raw` (its queue intact).
+    std::deque<K2Record> pending;
+    K2Record raw;
+    K2Record next() {
+        if (pending.empty()) {
+            raw = k.next();
+            K2Record r = raw;
+            size_t done = 0;
+            for (const K2Queued& q : r.contacts) {
+                K2Record c;
+                c.kind = K2Kind::CONTACT;
+                c.contact = q.contact;
+                c.writes.assign(r.writes.begin() + done,
+                                r.writes.begin() + q.at);
+                done = q.at;
+                pending.push_back(std::move(c));
+            }
+            r.writes.erase(r.writes.begin(), r.writes.begin() + done);
+            r.contacts.clear();
+            pending.push_back(std::move(r));
+        }
+        K2Record r = std::move(pending.front());
+        pending.pop_front();
+        return r;
     }
     // "KIND a" for a quick sequence check.
     std::string brief(const K2Record& r) const {
@@ -214,7 +257,7 @@ struct World {
     std::vector<std::string> run_to_done() {
         std::vector<std::string> out;
         for (int guard = 0; guard < 200; ++guard) {
-            const K2Record r = k.next();
+            const K2Record r = next();
             out.push_back(brief(r));
             if (r.kind == K2Kind::DONE) break;
         }
@@ -223,7 +266,7 @@ struct World {
     // Run the rest of the session (no ASK expected) and end it.
     void finish() {
         for (int guard = 0; guard < 200; ++guard)
-            if (k.next().kind == K2Kind::DONE) break;
+            if (next().kind == K2Kind::DONE) break;
         k.end();
     }
     using V = std::vector<std::string>;
@@ -247,22 +290,25 @@ TEST(K2, KindsAndNames) {
 TEST(K2, SystemGateStopsEveryTick) {
     // `if _is_offline(sys_) or not sys_.IsOn(): sys_.StopFiring(); continue`
     // -- every tick, even for a system already stopped, and its banks are
-    // never walked (a dirty idle dwell is NOT taken).
+    // never walked (a dirty idle dwell is NOT taken). With every bank idle
+    // the stop is logged writes (OfflineStopIsLoggedWrites); a firing bank
+    // keeps the SYSTEM_STOP record.
     for (int gate = 0; gate < 2; ++gate) {
         World w;
-        const auto s = w.scene(false, 0.25);
+        const auto s = w.scene(true, 0.25);
         if (gate == 0) w.m.set_i(s.sys, Field::_is_on, 0);
         // WeaponSystem.IsDisabled aggregates: every child disabled.
         if (gate == 1) w.m.set_f(s.bank, Field::_condition, 10.0);
         for (int tick = 0; tick < 2; ++tick) {
             w.begin({s.ship});
-            const K2Record r = w.k.next();
+            const K2Record r = w.next();
             EXPECT_EQ(w.brief(r), "SYSTEM_STOP sys") << gate << " " << tick;
             EXPECT_TRUE(r.writes.empty());
-            EXPECT_EQ(w.brief(w.k.next()), "DONE");
+            EXPECT_EQ(w.brief(w.next()), "DONE");
             w.k.end();
         }
         EXPECT_EQ(w.m.get_f(s.bank, Field::_dwell), 0.25);
+        EXPECT_EQ(w.k.counts().logged_system_stop, 0);
     }
 }
 
@@ -281,10 +327,10 @@ TEST(K2, IdleBankTakesDwellElided) {
     const int64_t b1 = w.bank("b1", s.sys, -1, false, 0.3);  // None target
     const int64_t b2 = w.bank("b2", s.sys, s.target, false, -0.0);  // signed
     w.begin({s.ship});
-    const K2Record r = w.k.next();
+    const K2Record r = w.next();
     EXPECT_EQ(w.brief(r), "DONE");
     EXPECT_EQ(w.writes(r), (World::V{"b1._dwell=0", "b2._dwell=0"}));
-    EXPECT_FALSE(std::signbit(r.writes[1].value));
+    EXPECT_FALSE(std::signbit(std::get<double>(r.writes[1].value)));
     EXPECT_EQ(w.m.get_f(b1, Field::_dwell), 0.0);
     EXPECT_FALSE(std::signbit(w.m.get_f(b2, Field::_dwell)));
     w.k.end();
@@ -299,9 +345,9 @@ TEST(K2, DeadOrNoneTargetStops) {
     w.bank("b1", s.sys, dead, true);
     const int64_t b2 = w.bank("b2", s.sys, dead, false, 0.4);  // idle: no stop
     w.begin({s.ship});
-    EXPECT_EQ(w.brief(w.k.next()), "BANK_STOP b0");
-    EXPECT_EQ(w.brief(w.k.next()), "BANK_STOP b1");
-    const K2Record r = w.k.next();
+    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b0");
+    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b1");
+    const K2Record r = w.next();
     EXPECT_EQ(w.brief(r), "DONE");
     EXPECT_EQ(w.writes(r), (World::V{"b2._dwell=0"}));
     EXPECT_EQ(w.m.get_f(b2, Field::_dwell), 0.0);
@@ -314,7 +360,7 @@ TEST(K2, StubIsDeadAsks) {
     const auto s = w.scene(true);
     w.m.set_i(s.target, Field::has_real_is_dead, 0);
     w.begin({s.ship});
-    const K2Record r = w.k.next();
+    const K2Record r = w.next();
     ASSERT_EQ(w.brief(r), "ASK is_dead");
     ASSERT_EQ(r.args.size(), 1u);
     EXPECT_EQ(std::get<int64_t>(r.args[0]), s.target);
@@ -322,8 +368,8 @@ TEST(K2, StubIsDeadAsks) {
     K2Answer a;
     a.flag = true;  // the stub is truthy: dead
     w.k.answer(a);
-    EXPECT_EQ(w.brief(w.k.next()), "BANK_STOP b0");
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b0");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
     EXPECT_EQ(w.k.counts().asks, 1);
     EXPECT_EQ(w.k.counts().queries[static_cast<size_t>(K2Query::is_dead)], 1);
@@ -334,8 +380,8 @@ TEST(K2, UndetectableStops) {
     const auto s = w.scene(true);
     w.cloak(s.target);
     w.begin({s.ship});
-    EXPECT_EQ(w.brief(w.k.next()), "BANK_STOP b0");
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b0");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
     // can_detect ran through the native memo (use_memo).
     EXPECT_FALSE(w.m.sensor_state().memo.empty());
@@ -352,14 +398,14 @@ TEST(K2, CrossSetStopsOrDropsDwell) {
     w.m.set_ref(setless, Field::_containing_set, -1);
     w.bank("b2", s.sys, setless, true);
     w.begin({s.ship});
-    const K2Record r0 = w.k.next();
+    const K2Record r0 = w.next();
     EXPECT_EQ(w.brief(r0), "BANK_STOP b0");
     EXPECT_TRUE(r0.writes.empty());
     // b1's banked dwell is taken and DROPPED: no stop, no contact.
-    const K2Record r1 = w.k.next();
+    const K2Record r1 = w.next();
     EXPECT_EQ(w.brief(r1), "BANK_STOP b2");
     EXPECT_EQ(w.writes(r1), (World::V{"b1._dwell=0"}));
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     EXPECT_EQ(w.m.get_f(b1, Field::_dwell), 0.0);
     w.k.end();
 }
@@ -372,12 +418,12 @@ TEST(K2, WindupContactsEveryTick) {
     w.m.set_f(s.bank, Field::_beam_on_countdown, 0.3);
     for (int tick = 0; tick < 2; ++tick) {
         w.begin({s.ship});
-        const K2Record r = w.k.next();
+        const K2Record r = w.next();
         EXPECT_EQ(w.brief(r), "CONTACT b0@t flush=0");
         EXPECT_TRUE(r.writes.empty());
         EXPECT_EQ(r.contact.system, s.sys);
         EXPECT_EQ(r.contact.ship, s.ship);
-        EXPECT_EQ(w.brief(w.k.next()), "DONE");
+        EXPECT_EQ(w.brief(w.next()), "DONE");
         w.k.end();
     }
     EXPECT_EQ(w.m.get_f(s.bank, Field::_dwell), 0.0);
@@ -387,18 +433,18 @@ TEST(K2, BeamOnAccumulatesAndFlushes) {
     World w;
     const auto s = w.scene(true, 0.25);
     w.begin({s.ship});
-    K2Record r = w.k.next();
+    K2Record r = w.next();
     EXPECT_EQ(w.brief(r), "CONTACT b0@t flush=0");
     EXPECT_EQ(w.writes(r), (World::V{"b0._dwell=" + World::num(0.25 + kDt)}));
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
     // Past the threshold: the flush tick counts its own dt.
     w.m.set_f(s.bank, Field::_dwell, 0.6);
     w.begin({s.ship});
-    r = w.k.next();
+    r = w.next();
     EXPECT_EQ(w.brief(r), "CONTACT b0@t flush=" + World::num(0.6 + kDt));
     EXPECT_EQ(w.writes(r), (World::V{"b0._dwell=0"}));
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
 }
 
@@ -411,14 +457,14 @@ TEST(K2, ArcFailStopsThenFlushes) {
                          static_cast<uint32_t>(w.m.get_i(s.target, Field::xform_gen)),
                          0.0, -50.0, 0.0);  // astern
     w.begin({s.ship});
-    const K2Record stop = w.k.next();
+    const K2Record stop = w.next();
     EXPECT_EQ(w.brief(stop), "BANK_STOP b0");
     EXPECT_EQ(w.writes(stop), (World::V{"b0._dwell=0"}));
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     EXPECT_EQ(w.brief(c), "CONTACT b0@t flush=0.20000000000000001");
     EXPECT_TRUE(c.writes.empty());
     EXPECT_EQ(c.contact.target_pos, (Vec3{0.0, -50.0, 0.0}));
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
 }
 
@@ -432,32 +478,35 @@ TEST(K2, FlushPathSkipsDetectAndArc) {
                          static_cast<uint32_t>(w.m.get_i(s.target, Field::xform_gen)),
                          0.0, -50.0, 0.0);
     w.begin({s.ship});
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     EXPECT_EQ(w.brief(c), "CONTACT b0@t flush=0.29999999999999999");
     EXPECT_EQ(w.writes(c), (World::V{"b0._dwell=0"}));
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
     EXPECT_TRUE(w.m.sensor_state().memo.empty());
 }
 
 TEST(K2, NumWeaponsReadOnce) {
     // `range(sys_.GetNumWeapons())` is evaluated once; GetWeapon(i) live.
+    // b0 pulses (a CONTACT record: its handlers run between the banks).
     World w;
-    const auto s = w.scene(true);
+    const auto s = w.scene(true, 0.6);
     const int64_t b1 = w.bank("b1", s.sys, s.target, true);
+    const std::string pulse = "CONTACT b0@t flush=" + World::num(0.6 + kDt);
     w.begin({s.ship});
-    EXPECT_EQ(w.brief(w.k.next()), "CONTACT b0@t flush=0");
+    EXPECT_EQ(w.brief(w.next()), pulse);
     // A handler appends a bank: not walked this tick.
     const int64_t b2 = w.bank("b2", s.sys, s.target, true);
-    EXPECT_EQ(w.brief(w.k.next()), "CONTACT b1@t flush=0");
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "CONTACT b1@t flush=0");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
     // ... and a handler that removes one: GetWeapon(i) past the end is None.
+    w.m.set_f(s.bank, Field::_dwell, 0.6);
     w.begin({s.ship});
-    EXPECT_EQ(w.brief(w.k.next()), "CONTACT b0@t flush=0");
+    EXPECT_EQ(w.brief(w.next()), pulse);
     w.m.set_ids(s.sys, Field::_children, {s.bank, b2});
-    EXPECT_EQ(w.brief(w.k.next()), "CONTACT b2@t flush=0");
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "CONTACT b2@t flush=0");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
     (void)b1;
 }
@@ -472,13 +521,13 @@ TEST(K2, PrescanRunsPythonBeforeAnyRecord) {
     // B is posed and its bank's part slot was never resolved (stamp 0).
     w.m.set_i(b, Field::has_posed_parts, 1);
     w.begin({a.ship, b, -1});
-    const K2Record r = w.k.next();
+    const K2Record r = w.next();
     // a's write rides on the record; none of B's was made.
     EXPECT_EQ(w.brief(r), "RUN_PYTHON B 1");
     EXPECT_EQ(w.writes(r), (World::V{"b0._dwell=0"}));
     EXPECT_EQ(w.m.get_f(bb, Field::_dwell), 0.7);
-    EXPECT_EQ(w.brief(w.k.next()), "RUN_PYTHON -1 2");
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "RUN_PYTHON -1 2");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
     const auto& c = w.k.counts();
     EXPECT_EQ(c.python_ships, 2);
@@ -523,8 +572,8 @@ TEST(K2, PrescanReasons) {
         ctx.view_offsets[w.set] = std::nullopt;
         if (c == 5) ctx.python_ships.insert(s.ship);
         w.k.begin({s.ship}, kDt, 10.0, true, 0.0, std::move(ctx));
-        EXPECT_EQ(w.brief(w.k.next()), "RUN_PYTHON ship 0") << c;
-        EXPECT_EQ(w.brief(w.k.next()), "DONE") << c;
+        EXPECT_EQ(w.brief(w.next()), "RUN_PYTHON ship 0") << c;
+        EXPECT_EQ(w.brief(w.next()), "DONE") << c;
         w.k.end();
         EXPECT_EQ(w.k.counts().why[static_cast<size_t>(want)], 1) << c;
     }
@@ -539,7 +588,7 @@ TEST(K2, UnnameableLockAsks) {
     const auto s = w.scene(true);
     w.m.set_ref(s.ship, Field::_target_subsystem, kRefUnrepresentable);
     w.begin({s.ship});
-    const K2Record r = w.k.next();
+    const K2Record r = w.next();
     ASSERT_EQ(w.brief(r), "ASK aim_point");
     ASSERT_EQ(r.args.size(), 2u);
     EXPECT_EQ(std::get<int64_t>(r.args[0]), s.ship);
@@ -548,22 +597,22 @@ TEST(K2, UnnameableLockAsks) {
     a.point = {0.0, 70.0, 1.0};
     a.flag = true;
     w.k.answer(a);
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     EXPECT_EQ(w.brief(c), "CONTACT b0@t flush=0");
     EXPECT_EQ(c.contact.target_pos, (Vec3{0.0, 70.0, 1.0}));
     EXPECT_EQ(c.contact.hit.tier, ResolvedHit::Tier::Fallback);
     EXPECT_EQ(c.contact.hit.point, (Vec3{0.0, 70.0, 1.0}));
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
 
     // With the answer's point behind the bank, the arc test fails on it.
     w.m.set_f(s.bank, Field::_dwell, 0.1);
     w.begin({s.ship});
-    ASSERT_EQ(w.brief(w.k.next()), "ASK aim_point");
+    ASSERT_EQ(w.brief(w.next()), "ASK aim_point");
     a.point = {0.0, -70.0, 0.0};
     w.k.answer(a);
-    EXPECT_EQ(w.brief(w.k.next()), "BANK_STOP b0");
-    EXPECT_EQ(w.brief(w.k.next()), "CONTACT b0@t flush=0.10000000000000001");
+    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b0");
+    EXPECT_EQ(w.brief(w.next()), "CONTACT b0@t flush=0.10000000000000001");
     w.finish();
 }
 
@@ -575,7 +624,7 @@ TEST(K2, ManualAimArcUsesTheHullCentre) {
     w.m.set_i(s.ship, Field::_use_target_offset, 1);
     w.m.set_fv(s.ship, Field::_manual_target_offset, {0.0, -100.0, 0.0});
     w.begin({s.ship});
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     // The offset point (0, -50, 0) is astern, the centre ahead: in arc.
     EXPECT_EQ(w.brief(c), "CONTACT b0@t flush=0");
     EXPECT_EQ(c.contact.target_pos, (Vec3{0.0, -50.0, 0.0}));
@@ -592,7 +641,7 @@ TEST(K2, ContactMatchesTheGeometry) {
     w.m.set_fv(lock, Field::_position, {3.0, -2.0, 1.0});
     w.m.set_ref(s.ship, Field::_target_subsystem, lock);
     w.begin({s.ship}, false);
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     ASSERT_EQ(c.kind, K2Kind::CONTACT);
     const AimPoint ap = phaser_aim_point(w.m, s.ship, s.target, false);
     const Vec3 e = strip_emit_position(w.m, s.bank, ap.point, false);
@@ -620,21 +669,21 @@ TEST(K2, TraceBeforeShieldsBlockAndOnlyWithAimUnit) {
     ctx.view_offsets[w.set] = std::nullopt;
     ctx.iids[s.target] = K2Context::Iid{false, InstanceId{1, 1}};
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
-    const K2Record r = w.k.next();
+    const K2Record r = w.next();
     ASSERT_EQ(w.brief(r), "ASK shields_block");
     EXPECT_EQ(w.host.calls, 1);  // the trace ran first
     K2Answer a;
     a.flag = true;
     w.k.answer(a);
     // shields up: the bubble of a non-ShipClass is Python's too.
-    const K2Record b = w.k.next();
+    const K2Record b = w.next();
     ASSERT_EQ(w.brief(b), "ASK bubble");
     ASSERT_EQ(b.args.size(), 4u);
     EXPECT_EQ(std::get<double>(b.args[3]), 50.0 * 1.5);
     K2Answer none;
     none.none = true;
     w.k.answer(none);
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     EXPECT_EQ(w.brief(c), "CONTACT b0@t flush=0");
     EXPECT_EQ(c.contact.shields_block, std::optional<bool>(true));
     EXPECT_FALSE(c.contact.bubble.has_value());
@@ -649,7 +698,7 @@ TEST(K2, TraceBeforeShieldsBlockAndOnlyWithAimUnit) {
                          0.0, 0.0, 0.0);
     w.host.calls = 0;
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
-    const K2Record z = w.k.next();
+    const K2Record z = w.next();
     EXPECT_EQ(w.brief(z), "CONTACT b0@t flush=0");
     EXPECT_FALSE(z.contact.aim_unit.has_value());
     EXPECT_FALSE(z.contact.shields_block.has_value());
@@ -671,12 +720,12 @@ TEST(K2, BubbleAfterShieldsAskWithTheTargetRowGone) {
     ctx.hooks = w.host.hooks();
     ctx.view_offsets[w.set] = std::nullopt;
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
-    ASSERT_EQ(w.brief(w.k.next()), "ASK shields_block");
+    ASSERT_EQ(w.brief(w.next()), "ASK shields_block");
     w.m.unregister_row(s.target);
     K2Answer a;
     a.flag = true;
     w.k.answer(a);
-    EXPECT_THROW(w.k.next(), std::logic_error);
+    EXPECT_THROW(w.next(), std::logic_error);
     w.k.abandon();
 }
 
@@ -703,7 +752,7 @@ TEST(K2, InstanceOutcomes) {
         ctx.view_offsets[w.set] = std::nullopt;
         if (cs.iid) ctx.iids[s.target] = *cs.iid;
         w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
-        const K2Record c = w.k.next();
+        const K2Record c = w.next();
         ASSERT_EQ(c.kind, K2Kind::CONTACT);
         EXPECT_EQ(c.contact.hit.tier, cs.tier);
         EXPECT_EQ(c.contact.hit.point, cs.point);
@@ -714,7 +763,7 @@ TEST(K2, InstanceOutcomes) {
     ctx.hooks = w.host.hooks();
     ctx.iids[s.target] = K2Context::Iid{false, {1, 1}};
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
-    const K2Record r = w.k.next();
+    const K2Record r = w.next();
     ASSERT_EQ(w.brief(r), "ASK resolve_hit");
     ASSERT_EQ(r.args.size(), 5u);
     EXPECT_EQ(std::get<int64_t>(r.args[0]), s.target);
@@ -726,19 +775,23 @@ TEST(K2, InstanceOutcomes) {
     a.normal = Vec3{0.0, -1.0, 0.0};
     a.tier = ResolvedHit::Tier::Mesh;
     w.k.answer(a);
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     EXPECT_EQ(c.contact.hit.tier, ResolvedHit::Tier::Mesh);
     EXPECT_EQ(c.contact.hit.point, (Vec3{0.0, 49.0, 0.0}));
     w.finish();
-    // The context re-sent mid-session is read live.
+    // The context re-sent mid-session (after a record's effect: the first
+    // contact is a pulse) is read live.
+    w.m.set_f(s.bank, Field::_dwell, 0.6);
     w.k.begin({s.ship, s.ship}, kDt, 10.0, true, 0.0, ctx);
-    ASSERT_EQ(w.brief(w.k.next()), "ASK resolve_hit");
+    ASSERT_EQ(w.brief(w.next()), "ASK resolve_hit");
     w.k.answer(a);
-    ASSERT_EQ(w.k.next().kind, K2Kind::CONTACT);
+    const K2Record pulse = w.next();
+    ASSERT_EQ(pulse.kind, K2Kind::CONTACT);
+    ASSERT_GT(pulse.contact.flush_dwell, 0.0);
     K2Context ctx2 = w.k.context();
     ctx2.view_offsets[w.set] = std::nullopt;
     w.k.set_context(ctx2);
-    const K2Record c2 = w.k.next();
+    const K2Record c2 = w.next();
     ASSERT_EQ(c2.kind, K2Kind::CONTACT);
     EXPECT_EQ(c2.contact.hit.point, (Vec3{0.0, 48.0, 0.0}));
     w.finish();
@@ -760,17 +813,17 @@ TEST(K2, BeginKeepsTheIidsWhenAsked) {
     K2Context first = ctx();
     first.iids[s.target] = K2Context::Iid{false, {1, 1}};
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, first);
-    ASSERT_EQ(w.k.next().contact.hit.tier, ResolvedHit::Tier::Mesh);
+    ASSERT_EQ(w.next().contact.hit.tier, ResolvedHit::Tier::Mesh);
     w.finish();
     // Kept: still the mesh, though this context names no instance.
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx(), /*keep_iids=*/true);
     EXPECT_EQ(w.k.context().iids.size(), 1u);
-    ASSERT_EQ(w.k.next().contact.hit.tier, ResolvedHit::Tier::Mesh);
+    ASSERT_EQ(w.next().contact.hit.tier, ResolvedHit::Tier::Mesh);
     w.finish();
     // Not kept: no instance, the fallback point.
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx());
     EXPECT_TRUE(w.k.context().iids.empty());
-    ASSERT_EQ(w.k.next().contact.hit.tier, ResolvedHit::Tier::Fallback);
+    ASSERT_EQ(w.next().contact.hit.tier, ResolvedHit::Tier::Fallback);
     w.finish();
     // A begin refused (a session is open) keeps nothing away from it.
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, first);
@@ -787,50 +840,52 @@ TEST(K2, CanDetectThrowAsks) {
     const auto s = w.scene(true);
     w.m.set_ref(s.ship, Field::_sensor_subsystem, kRefUnrepresentable);
     w.begin({s.ship});
-    const K2Record r = w.k.next();
+    const K2Record r = w.next();
     ASSERT_EQ(w.brief(r), "ASK can_detect");
     EXPECT_EQ(std::get<int64_t>(r.args[0]), s.ship);
     EXPECT_EQ(std::get<int64_t>(r.args[1]), s.target);
     K2Answer a;
     a.flag = false;
     w.k.answer(a);
-    EXPECT_EQ(w.brief(w.k.next()), "BANK_STOP b0");
+    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b0");
     w.finish();
 }
 
 TEST(K2, ResumeReadsLiveMirror) {
     World w;
-    const auto s = w.scene(true);
+    const auto s = w.scene(true, 0.6);  // b0 pulses: a record, a handler
     const int64_t b1 = w.bank("b1", s.sys, s.target, true);
     const int64_t t2 = w.ship("t2", 10.0, 60.0, 0.0);
     w.begin({s.ship});
-    EXPECT_EQ(w.brief(w.k.next()), "CONTACT b0@t flush=0");
+    EXPECT_EQ(w.brief(w.next()),
+              "CONTACT b0@t flush=" + World::num(0.6 + kDt));
     // The effect's handlers retarget bank 1 and move ship 2.
     w.m.set_ref(b1, Field::_target, t2);
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     EXPECT_EQ(w.brief(c), "CONTACT b1@t2 flush=0");
     EXPECT_EQ(c.contact.target_pos, (Vec3{10.0, 60.0, 0.0}));
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
 }
 
 TEST(K2, BankStepAfterAHandlerDropsARow) {
     World w;
-    const auto s = w.scene(true);
+    const auto s = w.scene(true, 0.6);  // b0 pulses: a record, a handler
     const int64_t b1 = w.bank("b1", s.sys, s.target, true, 0.0);
     w.bank("b2", s.sys, s.target, true);
     w.begin({s.ship});
-    EXPECT_EQ(w.brief(w.k.next()), "CONTACT b0@t flush=0");
+    EXPECT_EQ(w.brief(w.next()),
+              "CONTACT b0@t flush=" + World::num(0.6 + kDt));
     w.m.unregister_row(b1);  // a value the mirror cannot encode
-    const K2Record r = w.k.next();
+    const K2Record r = w.next();
     ASSERT_EQ(w.brief(r), "ASK bank_step");
     ASSERT_EQ(r.args.size(), 3u);
     EXPECT_EQ(std::get<int64_t>(r.args[0]), s.ship);
     EXPECT_EQ(std::get<int64_t>(r.args[1]), s.sys);
     EXPECT_EQ(std::get<int64_t>(r.args[2]), 1);
     w.k.answer(K2Answer{});
-    EXPECT_EQ(w.brief(w.k.next()), "CONTACT b2@t flush=0");
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.brief(w.next()), "CONTACT b2@t flush=0");
+    EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
 }
 
@@ -846,19 +901,19 @@ TEST(K2, UnwindLeavesMirrorEqual) {
     ctx.iids[s.target] = K2Context::Iid{false, {1, 1}};
     w.host.throw_foreign = true;
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
-    EXPECT_ANY_THROW(w.k.next());
+    EXPECT_ANY_THROW(w.next());
     // Both undelivered writes undone: the mirror equals Python.
     EXPECT_EQ(w.m.get_f(idle, Field::_dwell), 0.4);
     EXPECT_EQ(w.m.get_f(s.bank, Field::_dwell), 0.25);
     // The session was restored: a retry reaches the same point.
-    EXPECT_ANY_THROW(w.k.next());
+    EXPECT_ANY_THROW(w.next());
     EXPECT_EQ(w.m.get_f(idle, Field::_dwell), 0.4);
     w.k.abandon();
     EXPECT_FALSE(w.k.open());
     // A healthy run afterwards.
     w.host.throw_foreign = false;
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     EXPECT_EQ(w.writes(c),
               (World::V{"idle._dwell=0", "b0._dwell=" + World::num(0.25 + kDt)}));
     w.finish();
@@ -866,13 +921,13 @@ TEST(K2, UnwindLeavesMirrorEqual) {
 
 TEST(K2, ProtocolErrors) {
     World w;
-    EXPECT_THROW(w.k.next(), std::logic_error);
+    EXPECT_THROW(w.next(), std::logic_error);
     const auto s = w.scene(true);
     w.m.set_i(s.target, Field::has_real_is_dead, 0);
     w.begin({s.ship});
     EXPECT_THROW(w.begin({s.ship}), std::logic_error);
-    ASSERT_EQ(w.k.next().kind, K2Kind::ASK);
-    EXPECT_THROW(w.k.next(), std::logic_error);  // no answer yet
+    ASSERT_EQ(w.next().kind, K2Kind::ASK);
+    EXPECT_THROW(w.next(), std::logic_error);  // no answer yet
     EXPECT_THROW(w.k.end(), std::logic_error);   // not DONE
     w.k.abandon();
     EXPECT_THROW(w.k.answer(K2Answer{}), std::logic_error);
@@ -900,7 +955,7 @@ TEST(K2, PosedShipBeamsNatively) {
     w.m.set_part_poses(s.ship, {shift_pose()});
     w.m.set_part_slot(s.bank, 0, w.m.part_gen());
     w.begin({s.ship});
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     ASSERT_EQ(c.kind, K2Kind::CONTACT);
     EXPECT_EQ(c.contact.emitter, (Vec3{0.25, 0.0, 0.0}));
     w.finish();
@@ -910,7 +965,7 @@ TEST(K2, PosedShipBeamsNatively) {
     w.m.set_part_gen(w.m.part_gen() + 1);
     w.k.reset_counts();
     w.begin({s.ship});
-    EXPECT_EQ(w.brief(w.k.next()), "RUN_PYTHON ship 0");
+    EXPECT_EQ(w.brief(w.next()), "RUN_PYTHON ship 0");
     w.finish();
     const auto& n = w.k.counts();
     EXPECT_EQ(n.why[static_cast<size_t>(K2Why::PartStale)], 1);
@@ -932,7 +987,7 @@ TEST(K2, LockOnPosedShipIsNative) {
     w.m.set_part_poses(other, {shift_pose()});
     w.m.set_part_slot(lock, 0, w.m.part_gen());
     w.begin({s.ship});
-    const K2Record c = w.k.next();
+    const K2Record c = w.next();
     ASSERT_EQ(c.kind, K2Kind::CONTACT);
     EXPECT_EQ(c.contact.target_pos, (Vec3{0.25, 80.0, 0.0}));
     w.finish();
@@ -942,8 +997,205 @@ TEST(K2, LockOnPosedShipIsNative) {
     w.m.set_part_gen(w.m.part_gen() + 1);
     w.k.reset_counts();
     w.begin({s.ship});
-    EXPECT_EQ(w.brief(w.k.next()), "RUN_PYTHON ship 0");
+    EXPECT_EQ(w.brief(w.next()), "RUN_PYTHON ship 0");
     w.finish();
     EXPECT_EQ(w.k.counts().why[static_cast<size_t>(K2Why::PartStale)], 1);
     EXPECT_EQ(w.k.counts().asks, 0);
+}
+
+// ── Round trips (spec 2026-11-01 §4.4-4.5) ──────────────────────────────────
+
+TEST(K2, RestingContactsQueueOnTheNextRecord) {
+    // b0 and b1 rest (beams on, dwell under the flush), b2 pulses, b3 rests:
+    // the pulse is the only CONTACT record and carries b0's and b1's
+    // contacts, each with the writes logged before it (`at`); b3's rides
+    // DONE.
+    World w;
+    const auto s = w.scene(true, 0.1);
+    w.bank("b1", s.sys, s.target, true, 0.2);
+    w.bank("b2", s.sys, s.target, true, 0.6);
+    w.bank("b3", s.sys, s.target, true, 0.3);
+    w.begin({s.ship});
+    const K2Record r = w.k.next();
+    ASSERT_EQ(r.kind, K2Kind::CONTACT);
+    EXPECT_EQ(w.name(r.contact.bank), "b2");
+    EXPECT_EQ(r.contact.flush_dwell, 0.6 + kDt);
+    ASSERT_EQ(r.contacts.size(), 2u);
+    EXPECT_EQ(w.name(r.contacts[0].contact.bank), "b0");
+    EXPECT_EQ(r.contacts[0].at, 1u);
+    EXPECT_EQ(w.name(r.contacts[1].contact.bank), "b1");
+    EXPECT_EQ(r.contacts[1].at, 2u);
+    EXPECT_EQ(r.contacts[0].contact.flush_dwell, 0.0);
+    EXPECT_EQ(w.writes(r),
+              (World::V{"b0._dwell=" + World::num(0.1 + kDt),
+                        "b1._dwell=" + World::num(0.2 + kDt), "b2._dwell=0"}));
+    const K2Record d = w.k.next();
+    ASSERT_EQ(d.kind, K2Kind::DONE);
+    ASSERT_EQ(d.contacts.size(), 1u);
+    EXPECT_EQ(w.name(d.contacts[0].contact.bank), "b3");
+    EXPECT_EQ(d.contacts[0].at, 1u);
+    EXPECT_EQ(w.writes(d), (World::V{"b3._dwell=" + World::num(0.3 + kDt)}));
+    w.k.end();
+    EXPECT_EQ(w.k.counts().batched_contacts, 3);
+    EXPECT_EQ(w.k.counts().records, 2);
+}
+
+TEST(K2, QueuedContactCarriesShieldsAsked) {
+    // shields_block answered by Python (ASK): the queued contact says so,
+    // and beam_contact then evaluates its own. A native answer: not asked.
+    World w;
+    const auto s = w.scene(true);
+    w.m.set_i(s.target, Field::is_ship_class, 0);
+    w.begin({s.ship});
+    ASSERT_EQ(w.brief(w.k.next()), "ASK shields_block");
+    K2Answer a;
+    a.flag = false;
+    w.k.answer(a);
+    const K2Record d = w.k.next();
+    ASSERT_EQ(d.kind, K2Kind::DONE);
+    ASSERT_EQ(d.contacts.size(), 1u);
+    EXPECT_TRUE(d.contacts[0].contact.shields_asked);
+    EXPECT_EQ(d.contacts[0].contact.shields_block, std::optional<bool>(false));
+    w.k.end();
+    w.m.set_i(s.target, Field::is_ship_class, 1);
+    w.begin({s.ship});
+    const K2Record n = w.k.next();
+    ASSERT_EQ(n.contacts.size(), 1u);
+    EXPECT_FALSE(n.contacts[0].contact.shields_asked);
+    EXPECT_TRUE(n.contacts[0].contact.shields_block.has_value());
+    w.k.end();
+}
+
+TEST(K2, ThrowAfterAQueuedContactRestoresTheQueue) {
+    // b0 is queued, then b1's trace throws a foreign exception: next()
+    // undoes both writes and restores the session (an empty queue), so a
+    // retry delivers b0 exactly once.
+    World w;
+    const auto s = w.scene(true, 0.1);
+    const int64_t t2 = w.ship("t2", 0.0, 60.0, 0.0);
+    w.bank("b1", s.sys, t2, true, 0.2);
+    K2Context ctx;
+    ctx.hooks = w.host.hooks();
+    ctx.view_offsets[w.set] = std::nullopt;
+    ctx.iids[t2] = K2Context::Iid{false, {1, 1}};  // only b1 traces
+    w.host.throw_foreign = true;
+    w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
+    EXPECT_ANY_THROW(w.k.next());
+    EXPECT_EQ(w.m.get_f(s.bank, Field::_dwell), 0.1);
+    EXPECT_EQ(w.k.counts().batched_contacts, 1);  // counted, then undone
+    w.host.throw_foreign = false;
+    const K2Record d = w.k.next();
+    ASSERT_EQ(d.kind, K2Kind::DONE);
+    ASSERT_EQ(d.contacts.size(), 2u);
+    EXPECT_EQ(w.name(d.contacts[0].contact.bank), "b0");
+    EXPECT_EQ(w.name(d.contacts[1].contact.bank), "b1");
+    EXPECT_EQ(d.contacts[1].contact.hit.tier, ResolvedHit::Tier::Sphere);
+    w.k.end();
+}
+
+TEST(K2, OfflineStopIsLoggedWrites) {
+    // An off system whose banks are all idle: WeaponSystem.StopFiring's
+    // writes, then each bank's _EnergyWeaponFireMixin.StopFiring writes, in
+    // order, every tick -- the `_target_list = []` too when it is already
+    // empty (Python builds a new list) -- and no record.
+    World w;
+    const auto s = w.scene(false, 0.25);
+    const int64_t b1 = w.bank("b1", s.sys, -1, false);
+    w.m.set_i(s.sys, Field::_is_on, 0);
+    w.m.set_i(s.sys, Field::_fire_held, 1);
+    w.m.set_ref(s.sys, Field::_held_target, s.target);
+    w.m.set_fv(s.sys, Field::_held_offset, {1.0, 2.0, 3.0});
+    w.m.set_ids(s.sys, Field::_target_list, {s.target});
+    w.m.set_i(s.sys, Field::_last_group_fired, 2);
+    w.m.set_f(b1, Field::_beam_on_countdown, 0.4);
+    const World::V want{"sys._fire_held=False", "sys._held_target=-1",
+                        "sys._held_offset=None", "sys._target_list=[]",
+                        "sys._last_group_fired=-1", "b0._firing=False",
+                        "b0._beam_on_countdown=0", "b1._firing=False",
+                        "b1._beam_on_countdown=0"};
+    for (int tick = 0; tick < 2; ++tick) {
+        w.begin({s.ship});
+        const K2Record r = w.k.next();
+        EXPECT_EQ(w.brief(r), "DONE") << tick;
+        EXPECT_EQ(w.writes(r), want) << tick;
+        w.k.end();
+    }
+    const SubsystemRow& sr = *w.m.subsystem(s.sys);
+    EXPECT_EQ(sr._fire_held, 0);
+    EXPECT_EQ(sr._held_target, -1);
+    EXPECT_FALSE(sr.held_offset_set);
+    EXPECT_TRUE(sr._target_list.empty());
+    EXPECT_EQ(sr._last_group_fired, -1);
+    EXPECT_EQ(w.m.get_f(b1, Field::_beam_on_countdown), 0.0);
+    EXPECT_EQ(w.m.get_f(s.bank, Field::_dwell), 0.25);  // banks not walked
+    EXPECT_EQ(w.k.counts().logged_system_stop, 2);
+    EXPECT_EQ(w.k.counts().records, 2);  // the two DONEs
+}
+
+TEST(K2, OfflineStopKeepsTheRecordUnlessEveryBankIsIdleStock) {
+    // A firing bank (its loop sound), a bank class overriding a K1 method
+    // (its StopFiring may be another), a child that is not a phaser bank, a
+    // child row gone: SYSTEM_STOP, nothing written.
+    for (int c = 0; c < 4; ++c) {
+        World w;
+        const auto s = w.scene(false);
+        const int64_t b1 = w.bank("b1", s.sys, -1, false);
+        w.m.set_i(s.sys, Field::_is_on, 0);
+        w.m.set_i(s.sys, Field::_fire_held, 1);
+        switch (c) {
+            case 0: w.m.set_i(b1, Field::_firing, 1); break;
+            case 1: w.m.set_i(b1, Field::k1_overridden, 1); break;
+            case 2: w.m.set_i(b1, Field::weapon_kind, 8); break;
+            case 3: w.m.unregister_row(b1); break;
+        }
+        w.begin({s.ship});
+        const K2Record r = w.k.next();
+        EXPECT_EQ(w.brief(r), "SYSTEM_STOP sys") << c;
+        EXPECT_TRUE(r.writes.empty()) << c;
+        EXPECT_EQ(w.brief(w.k.next()), "DONE") << c;
+        w.k.end();
+        EXPECT_EQ(w.m.get_i(s.sys, Field::_fire_held), 1) << c;
+        EXPECT_EQ(w.k.counts().logged_system_stop, 0) << c;
+    }
+}
+
+TEST(K2, UnwindUndoesOfflineStopWrites) {
+    // Ship A's offline stop is logged, then ship B's trace throws: every
+    // field the stop wrote is back as it was, and a retry logs it again.
+    World w;
+    const auto a = w.scene(false, 0.0);
+    w.m.set_i(a.sys, Field::_is_on, 0);
+    w.m.set_i(a.sys, Field::_fire_held, 1);
+    w.m.set_ref(a.sys, Field::_held_target, a.target);
+    w.m.set_fv(a.sys, Field::_held_offset, {1.0, 2.0, 3.0});
+    w.m.set_ids(a.sys, Field::_target_list, {a.target});
+    w.m.set_i(a.sys, Field::_last_group_fired, 2);
+    w.m.set_f(a.bank, Field::_beam_on_countdown, 0.4);
+    const int64_t b = w.ship("B", 100.0, 0.0, 0.0);
+    const int64_t bsys = w.system("bsys", b);
+    w.bank("bb", bsys, a.target, true);
+    K2Context ctx;
+    ctx.hooks = w.host.hooks();
+    ctx.view_offsets[w.set] = std::nullopt;
+    ctx.iids[a.target] = K2Context::Iid{false, {1, 1}};
+    w.host.throw_foreign = true;
+    w.k.begin({a.ship, b}, kDt, 10.0, true, 0.0, ctx);
+    EXPECT_ANY_THROW(w.k.next());
+    const SubsystemRow& sr = *w.m.subsystem(a.sys);
+    EXPECT_EQ(sr._fire_held, 1);
+    EXPECT_EQ(sr._held_target, a.target);
+    EXPECT_TRUE(sr.held_offset_set);
+    EXPECT_EQ(sr._held_offset, (Vec3{1.0, 2.0, 3.0}));
+    EXPECT_EQ(sr._target_list, (std::vector<int64_t>{a.target}));
+    EXPECT_EQ(sr._last_group_fired, 2);
+    EXPECT_EQ(w.m.get_f(a.bank, Field::_beam_on_countdown), 0.4);
+    w.host.throw_foreign = false;
+    const K2Record d = w.k.next();
+    ASSERT_EQ(d.kind, K2Kind::DONE);
+    const World::V got = w.writes(d);
+    ASSERT_EQ(got.size(), 8u);  // A's stop, then B's bank accumulates
+    EXPECT_EQ(got.front(), "sys._fire_held=False");
+    EXPECT_EQ(got[6], "b0._beam_on_countdown=0");
+    EXPECT_EQ(got[7], "bb._dwell=" + World::num(kDt));
+    w.k.end();
 }
