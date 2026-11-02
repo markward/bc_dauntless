@@ -2047,7 +2047,7 @@ _K1_LAUNCH_FUNCS = (
       "_resolve_projectile_module", "_new_projectile",
       "_launch_projectile", "_launch_reads", "_defer_spawn",
       "spawn_launch")),
-    ("engine.appc.projectiles", ("_bake_offset",)),
+    ("engine.appc.projectiles", ("_bake_offset", "source_set")),
     ("engine.appc.subsystems", ("subsystem_world_position",)),
 )
 _k1_launch_mods = None
@@ -3455,9 +3455,9 @@ def _k1_pulse_module(bank):
     since registration. Reached only for a launch K1 handed back: one it
     makes carries the cannon's cached module, and THE LAUNCH CHECK hands
     every cannon launch back while a cached module is not sys.modules'
-    (launch deferral, Task 3). An ImportError is where decide refuses, before its stamps;
-    after the kernel's FIRE decision (stamps applied) that cannot be
-    followed, so it raises and the session abandons. Any other exception
+    (launch deferral, Task 3). An ImportError is where decide refuses,
+    before its stamps; after the kernel's FIRE decision (stamps applied)
+    that cannot be followed, so it raises and the session abandons. Any other exception
     propagates, as it does out of Python's Fire."""
     import importlib
     from engine.appc import weapon_subsystems as ws

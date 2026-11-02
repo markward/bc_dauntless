@@ -159,6 +159,29 @@
 // posed target's offset it cannot bake (PosedOffset) or a row it cannot
 // read (Other).
 //
+// WHAT A LAUNCH OBEYS (ruling L8). The instance-level patch scan (THE WALK
+// START's verdict sets, native_combat._K1_LEAF_PATCHES) covers the ENTRY
+// POINTS only -- Fire, _fire_decide, _fire_effect, StopFiring, CanFire,
+// FireDumb, _spawn_torpedo -- "the cheap subset tests and tools patch", as
+// K0's ruling W9. The deeper getters a native launch stands in for are
+// guarded at CLASS level only (_K1_LEAF_METHODS -> k1_overridden: a class
+// or base override hands the system to Python): a tube's
+// GetDamageRadiusFactor, GetDirection, GetRight, _emitter_world_position,
+// _start_slot_cooldown, _ensure_slots; a cannon's GetDamageScale,
+// GetCooldownTime, GetDamageRadiusFactor, _emitter_world_position,
+// _shot_cost, _climb_to_ship. One of those patched on an INSTANCE is not
+// obeyed by a native launch (roadmap decision 2: runtime patching of
+// engine internals is not a supported mod surface). The module-level launch
+// functions are the launch check's (K1LaunchWhy::Patched).
+//
+// THE P6 WINDOW. A cannon's launch speed and module are read when its
+// params are pushed (SetProperty, a mission swap's refresh). A
+// SetModuleName on its property after SetProperty is never re-pushed, so
+// the cached module and launch params stay the old ones; and a projectile-
+// cache reset (_reset_projectile_module_cache) made by Python run in the
+// middle of a K1 session leaves the old ones until the next K1 entry
+// refreshes them. The lead solve's params have the same window.
+//
 // Records left: FIRE for a launch the kernel cannot make (a tube's or a
 // cannon's, counted by K1LaunchWhy), FIRE_DUMB likewise, ASK, RUN_PYTHON,
 // a handed-back WALK_START, BANK_STOP / STOP_SYSTEM only for a row gone or

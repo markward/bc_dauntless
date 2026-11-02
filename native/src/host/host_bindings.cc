@@ -4140,7 +4140,8 @@ void k1_launch_recheck() {
     if (const std::vector<K1LaunchFunc>* c = k1_launch_check()) {
         std::int64_t patched = 0;
         for (const K1LaunchFunc& f : *c) {
-            PyObject* cur = PyDict_GetItemWithError(f.dict, f.name);  // borrowed
+            // borrowed
+            PyObject* cur = PyDict_GetItemWithError(f.dict, f.name);
             if (cur == nullptr && PyErr_Occurred()) PyErr_Clear();
             if (cur != f.stock) {
                 patched = 1;
@@ -11202,8 +11203,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "combat_dump's 'py_id').");
         m.def("combat_unregister",
               [](std::int64_t h) {
+                  // Its launch module first, so a throwing unregister (a
+                  // freed or stale handle) cannot keep the reference.
+                  k1_launch_module_release(h);
                   cb::mirror().unregister_row(h);
-                  k1_launch_module_release(h);  // its launch module, if any
               });
         m.def("combat_set_f", [fld](std::int64_t h, int f, double v) {
             cb::mirror().set_f(h, fld(f), v);
@@ -12239,6 +12242,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "and ShipClass. registry None removes it.");
         m.def("combat_set_launch_module",
               [](std::int64_t row, py::handle module) {
+                  // A handle no longer live is ignored: nothing would ever
+                  // release its entry (combat_unregister has run).
+                  if (!cb::mirror().valid(row)) return;
                   auto& t = k1_launch_modules();
                   PyObject* old = nullptr;
                   if (auto it = t.find(row); it != t.end()) {

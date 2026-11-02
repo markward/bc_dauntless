@@ -3086,7 +3086,11 @@ def test_launch_modules_are_released_with_their_rows(monkeypatch):
     for row, mod in ((ammo, ws._projectile_modules[script]),
                      (cannon, sys.modules[ws.pulse_module_script(cannon)])):
         held = sys.getrefcount(mod)
+        h = row.__dict__["_nslot"]
         nc._drop(row)
+        assert sys.getrefcount(mod) == held - 1, row
+        # A handle no longer live takes no module: nothing would free it.
+        _h.combat_set_launch_module(h, mod)
         assert sys.getrefcount(mod) == held - 1, row
 
 
@@ -3257,7 +3261,7 @@ def test_patched_launch_function_seen_by_the_next_walk(monkeypatch):
     assert counts["k1_logged"]["tube_launch"] == 0, counts
     names = nc._k1_launch_funcs_names()
     for name in ("_launch_reads", "_defer_spawn", "spawn_launch",
-                 "subsystem_world_position"):
+                 "subsystem_world_position", "source_set"):
         assert name in names, name
 
 
