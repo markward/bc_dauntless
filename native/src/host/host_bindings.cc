@@ -3912,15 +3912,27 @@ K2Present& k2_present() {
     return *p;
 }
 
+// A Python error on the native-presentation path: an Exception is cleared
+// (the caller then routes the entry to the Python batch, which meets the
+// same call again in Python -- a raising or side-effecting
+// GetDamageRadiusFactor runs twice; accepted under ruling Q2); anything
+// else (KeyboardInterrupt, SystemExit) propagates out of the drain.
+void k2_present_clear_or_raise() {
+    if (!PyErr_ExceptionMatches(PyExc_Exception))
+        throw py::error_already_set();
+    PyErr_Clear();
+}
+
 // combat.weapon_splash_radius(bank, None): the bank's own
 // GetDamageRadiusFactor() when > 0 (as float()), else the default. nullopt,
-// the Python error cleared, when any step raises: the entry then goes to the
-// Python batch, which meets the same call (hasattr included) in Python.
+// the Exception cleared (k2_present_clear_or_raise), when any step raises:
+// the entry then goes to the Python batch, which repeats the call
+// (hasattr included) in Python.
 std::optional<double> k2_splash_radius(PyObject* bank, double fallback) {
     py::object r = py::reinterpret_steal<py::object>(
         PyObject_CallMethod(bank, "GetDamageRadiusFactor", nullptr));
     if (!r) {
-        PyErr_Clear();
+        k2_present_clear_or_raise();
         return std::nullopt;
     }
     if (PyFloat_CheckExact(r.ptr())) {
@@ -3930,13 +3942,13 @@ std::optional<double> k2_splash_radius(PyObject* bank, double fallback) {
     const py::float_ zero(0.0);
     const int gt = PyObject_RichCompareBool(r.ptr(), zero.ptr(), Py_GT);
     if (gt < 0) {
-        PyErr_Clear();
+        k2_present_clear_or_raise();
         return std::nullopt;
     }
     if (!gt) return fallback;
     py::object f = py::reinterpret_steal<py::object>(PyNumber_Float(r.ptr()));
     if (!f) {
-        PyErr_Clear();
+        k2_present_clear_or_raise();
         return std::nullopt;
     }
     return PyFloat_AS_DOUBLE(f.ptr());
@@ -3968,7 +3980,8 @@ bool k2_present_rest(const dauntless::combat::K2Rest& e, const Vec& vec) {
     for (const std::int64_t h : {c.bank, c.target, c.ship, c.system}) {
         py::object o = py::reinterpret_steal<py::object>(applier.live(h));
         if (!o) {
-            PyErr_Clear();
+            // To the Python batch, whose walk.live meets it again.
+            k2_present_clear_or_raise();
             return false;
         }
         if (o.is_none()) return false;
@@ -3988,13 +4001,9 @@ bool k2_present_rest(const dauntless::combat::K2Rest& e, const Vec& vec) {
     std::optional<cb::Vec3> rel;
     if (const auto t = instance_translation_for_python(id))
         rel = cb::Vec3{p[0] - t->x, p[1] - t->y, p[2] - t->z};
-    if (rel)
-        push_shield_hit(id,
-                        glm::vec3(static_cast<float>((*rel)[0]),
-                                  static_cast<float>((*rel)[1]),
-                                  static_cast<float>((*rel)[2])),
-                        glm::vec4(0.0f), static_cast<float>(st.intensity),
-                        static_cast<float>(*radius));
+    // The capture first: an append that raises (a test's list) leaves this
+    // splash unpushed and uncounted; the drain then raises, run_k2 abandons
+    // the step, and the later rests it had taken are not presented.
     if (st.capture != nullptr) {
         py::tuple item = py::make_tuple(
             c.bank, c.target, id, vec(p),
@@ -4003,6 +4012,13 @@ bool k2_present_rest(const dauntless::combat::K2Rest& e, const Vec& vec) {
         if (PyList_Append(st.capture, item.ptr()) < 0)
             throw py::error_already_set();
     }
+    if (rel)
+        push_shield_hit(id,
+                        glm::vec3(static_cast<float>((*rel)[0]),
+                                  static_cast<float>((*rel)[1]),
+                                  static_cast<float>((*rel)[2])),
+                        glm::vec4(0.0f), static_cast<float>(st.intensity),
+                        static_cast<float>(*radius));
     ++st.presented;
     return true;
 }

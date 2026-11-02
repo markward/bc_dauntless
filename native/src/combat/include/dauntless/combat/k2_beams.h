@@ -73,7 +73,10 @@
 // shield splash, through the shield pass -- when its shields answer is
 // True and its iid and view offset are known (`view_known`), and returns
 // every other one, in queue order, for Python's beam_contact (spec
-// 2026-11-02 §4.4). begin(), end() and abandon() clear the queue: an
+// 2026-11-02 §4.4); beam_contact, _mesh_xyz, host_io.shield_hit and
+// weapon_splash_radius are deliberately not watched (ruling Q5: a patch of
+// them is not obeyed for a native splash; native_combat.py, WHAT K2 STANDS
+// IN FOR). begin(), end() and abandon() clear the queue: an
 // abandoned step presents nothing it queued. A damage pulse
 // (`flush_dwell > 0.0`) is still a CONTACT record.
 //

@@ -3744,6 +3744,15 @@ def run_k0(ships, dt) -> None:
 # walked ship, its phaser system or a bank (_K2_*_PATCHES) -> that ship runs
 # in Python. (One on a TARGET is not looked for: it would cost a dict probe
 # of every target, every tick.)
+# NOT WATCHED, deliberately (ruling Q5, spec 2026-11-02-combat-effect-queue;
+# roadmap decision 2: presentation internals are not a mod surface):
+# hit_feedback.beam_contact, hit_feedback._mesh_xyz, host_io.shield_hit and
+# combat.weapon_splash_radius. The drain's native shield splash stands in
+# for them, so a patch of one is NOT obeyed for a splash the drain presents
+# (it still is for every entry the drain returns to the Python batch). The
+# differentials spy them and compare the native splashes through
+# combat_present_capture. What the splash's point depends on IS watched:
+# frames.view_offset, shifted and containing_set are in _K2_FUNCTIONS.
 
 _k2_kind_ids = None
 _k2_hl = None

@@ -971,6 +971,7 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
         n["queued_contact"] + n["native_contact"]), (nat.counts, n)
     assert nat.counts["k2_present_python"] == n["queued_contact"], (
         nat.counts, n)
+    assert nat.counts["k2_present_gone"] == 0, nat.counts
     assert nat.counts["k2_logged_system_stop"] > 0, nat.counts
     assert n.get("CONTACT", 0) == n["pulse"], n
     # K1's round trips ran under the beams: walks started with no record and

@@ -359,3 +359,30 @@ def test_patched_radius_factor_is_read_at_drain(monkeypatch, instance):
     assert [r.hex() for r in radii] == [float(r).hex() for r in want]
     assert {item[6] for item in nat.captured} == {
         hit_feedback.shield_impact_intensity("phaser")}
+
+
+@pytest.mark.parametrize("exc", (ValueError, KeyboardInterrupt))
+def test_raising_radius_factor(monkeypatch, instance, exc):
+    """A GetDamageRadiusFactor that raises an Exception sends the entry to
+    the Python batch, which calls it again and raises it there (after
+    presenting the rest); a KeyboardInterrupt (not an Exception) is never
+    cleared: it propagates out of the drain itself, the call made once."""
+    calls = []
+
+    def setup(w, mp):
+        g = w.ships["Galaxy"].GetPhaserSystem()
+        for i in range(g.GetNumWeapons()):
+            b = g.GetWeapon(i)
+
+            def factor(b=b):
+                calls.append(b.GetName())
+                if b is w.lit[0]:
+                    raise exc("factor")
+                return 0.0
+            mp.setattr(b, "GetDamageRadiusFactor", factor)
+
+    with monkeypatch.context() as mp:
+        with pytest.raises(exc):
+            Arm(mp, True, iids={"Vorcha": instance}, setup=setup)
+    first = calls[0]
+    assert calls.count(first) == (2 if exc is ValueError else 1), calls
