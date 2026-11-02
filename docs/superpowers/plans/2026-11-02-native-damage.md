@@ -25,33 +25,44 @@
 
 ## Review Focus
 
-1. A hit on a ship that dies mid-tick and is hit again in the same tick: the second hit damages but begins no second death; one `DEATH`, one `SPLASH`, in order after the first hit's entries.
+1. A hit on a ship that dies mid-tick and is hit again in the same tick: the second hit damages but begins no second death; one death (from its `ZERO_CROSS`), one `SPLASH`, in order after the first hit's entries.
 2. A splash chain (a splash victim dies and splashes): every entry is delivered in the same flush, in emission order, and terminates (`_out_of_action`).
 3. A handler at delivery that writes a flag (`SetHurtable(0)`, `SetInvincible`, a clamp): it takes effect for every hit after the flush, never retroactively, and the native arm reads it at the next step.
 4. Shield faces written in place by any of the seven writers (DR §6) between two hits: the native arm sees the new charge (no stale mirror).
-5. An invincible ship whose hull reaches 0: no death, no `DEATH` entry, hull stays at 0; making it vulnerable later does not retro-kill it until the next condition write takes a critical subsystem to 0 (M3).
+5. An invincible ship whose hull reaches 0: no death, no cascade, hull stays at 0; making it vulnerable later does not retro-kill it until the next condition write takes a critical subsystem to 0 (M3).
 
 ---
 
-### Task 1: The new semantics in Python (M1, M3, bugs 2 and 3)
+### Task 1: The new semantics in Python (M1, M3, M5, bug 2)
 
-**Files:** `engine/appc/ships.py` (immunity: `SetHurtable(0)` = no damage, `SetInvincible` = cannot die), `engine/appc/combat.py` (gate on hurtable + subsystem invincible only), `engine/appc/objects.py` (`DamageSystem` death gate on ship invincible), `engine/appc/subsystems.py` (`SetCondition` routes a critical 0 through the zero-crossing and death check per M3; `SetConditionPercentage` on `ShipSubsystem`, = fraction × `GetMaxCondition()` through `SetCondition`), `engine/appc/radiation.py` (same flags), the E3M1 simulation-mode listener (SDK load-time transform: find the existing AST transform pipeline in `tools/mission_harness.py` / `tests/conftest.py` / the SDK finder and add a hook that reports `g_bSimulationMode` writes to an engine flag), the 0.1% weapon scale in `combat.apply_hit` (weapon hits only, spec ruling R1), and ignoring E3M1's player-invincibility calls (the same transform). Tests: new `tests/unit/test_damage_immunity_semantics.py`, `tests/unit/test_set_condition_percentage.py`, `tests/integration/test_e3m1_simulation_mode.py`, mission tests (spec §6) where the headless harness reaches them, plus the existing tests of each touched module.
+**Files:**
+- `engine/appc/ships.py`: immunity. `SetHurtable(0)` = no damage; `SetInvincible` = cannot die.
+- `engine/appc/combat.py`: gate on hurtable and on subsystem invincible only.
+- `engine/appc/objects.py` and `engine/appc/subsystems.py`: one shared "critical at 0" path for `DamageSystem`, `SetCondition` and severance (R2).
+- The M5 boundary check: a pending set drained at the effect-queue flush. Outside a tick it waits for the next flush. It re-reads invincibility, then runs zero crossings (R5) and the death.
+- `SetConditionPercentage` on `ShipSubsystem` = fraction × `GetMaxCondition()` through `SetCondition`.
+- `engine/appc/radiation.py`: same flags.
+- `engine/dev_missions/vesuvi_dust_cloud.py`: R6.
+
+Tests: new `tests/unit/test_damage_immunity_semantics.py`, `tests/unit/test_set_condition_percentage.py`, mission tests (spec §6) where the headless harness reaches them, plus the existing tests of each touched module.
 
 - [ ] **Step 1: tests (RED).**
-  - M1: a hurtable-0 ship takes nothing. An invincible ship takes damage and never dies at hull 0. An invincible subsystem takes nothing.
-  - M3: a critical subsystem set to 0 by `SetCondition` or `SetConditionPercentage` kills, unless the ship is invincible.
+  - M1: a hurtable-0 ship takes nothing. An invincible ship takes damage and never dies at hull 0, and keeps its systems (R5). An invincible subsystem takes nothing.
+  - M3 and M5: a critical subsystem at 0 kills at the flush, from `DamageSystem`, `SetCondition`, `SetConditionPercentage` or severance, unless the ship is invincible by the flush. A hull set to 0 then made invincible in the same call sequence survives. R4: no retroactive death.
   - Bug 2: `SetConditionPercentage` posts the same subsystem events as damage, and `MissionLib.SetConditionPercentage` walks children.
-  - Bug 3: the listener sees `g_bSimulationMode` set and cleared; weapon hits deal 0.1% while it is on; collisions are unchanged; the player's invincibility calls are ignored.
-  - Missions: E7M1/E7M2 scripted hull 0 kills; E8M2 Matan takes damage and does not die while invincible; E3M1's drill ships lose hull.
-  - **The E3M1 drill ends at 0.1% (the bug 3 decision's check). If it cannot, report BLOCKED with the evidence. Do not change the scale.**
+  - Missions:
+    - E7M1/E7M2: a scripted hull 0 kills.
+    - E3M5: GonDev survives creation.
+    - E8M2: Matan takes damage and does not die while invincible.
+    - E3M1: drill ships are knocked out at their thresholds and repaired; nobody dies; a collision damages the invincible player.
 - [ ] **Step 2:** implement.
 - [ ] **Step 3:** bug 2's headless pass over the 15 missions (decision text). For each, record whether the scripted effect lands, in the report.
-- [ ] **Step 4:** run the new tests, every touched module's existing tests, and the differential files (K0, K1, K3, step, K2, presentation falsifier) → PASS. Update any test that pinned the old immunity meaning, keeping its purpose.
-- [ ] **Step 5:** mutations: invincible blocks damage again → the M1 test fails; `SetCondition` skips the death check → the M3 test fails. Commit.
+- [ ] **Step 4:** run the new tests, every touched module's existing tests, and the six differential files → PASS. Update any test that pinned the old immunity meaning, keeping its purpose.
+- [ ] **Step 5:** mutations: invincible blocks damage again → the M1 test fails; the death check runs inside the write → the GonDev test fails. Commit.
 
 ### Task 2: Hit effects queued (M2), Python reference
 
-**Files:** `engine/appc/effect_queue.py` (kinds `COND_WATCH`, `SUBSYS_EVENT`, `REPAIR_ADD`, `ZERO_CROSS`, `DEATH`, `SPLASH`, `HIT_PRESENT`, `WEAPON_HIT`, spec §4.3; delivery for each; entries appended during delivery delivered in the same flush), `native/src/host/combat_effect_queue.{h,cc}` (the same kinds, so the native arm can append them in Task 3; the C++ enum order matches Python's), `engine/appc/combat.py`, `engine/appc/objects.py`, `engine/appc/subsystems.py`, `engine/appc/float_range_watcher.py` (condition watchers queue like an owned watcher), `engine/appc/ship_death.py` and `engine/rocks/death.py` (split: `SetDying` at the hit; the rest at `DEATH` delivery; `SPLASH` appended after `ET_OBJECT_EXPLODING`), `engine/appc/hit_feedback.py` (dispatch from `HIT_PRESENT`, F7 included). Outside the tick scope, a caller's entries deliver at the end of its call (ruling F3). Tests: new `tests/unit/test_damage_effect_queue.py`, `tests/integration/test_damage_queue_order.py`, plus the existing effect-queue, hit-feedback, ship-death, collision and differential tests.
+**Files:** `engine/appc/effect_queue.py` (kinds `COND_WATCH`, `SUBSYS_EVENT`, `REPAIR_ADD`, `ZERO_CROSS` (carries Task 1's boundary death check), `SPLASH`, `HIT_PRESENT`, `WEAPON_HIT`, spec §4.3; delivery for each; entries appended during delivery delivered in the same flush), `native/src/host/combat_effect_queue.{h,cc}` (the same kinds, so the native arm can append them in Task 3; the C++ enum order matches Python's), `engine/appc/combat.py`, `engine/appc/objects.py`, `engine/appc/subsystems.py`, `engine/appc/float_range_watcher.py` (condition watchers queue like an owned watcher), `engine/appc/ship_death.py` and `engine/rocks/death.py` (`SPLASH` appended after `ET_OBJECT_EXPLODING`; Task 1's pending death set becomes the ordered `ZERO_CROSS` entries), `engine/appc/hit_feedback.py` (dispatch from `HIT_PRESENT`, F7 included). Outside the tick scope, a caller's entries deliver at the end of its call (ruling F3). Tests: new `tests/unit/test_damage_effect_queue.py`, `tests/integration/test_damage_queue_order.py`, plus the existing effect-queue, hit-feedback, ship-death, collision and differential tests.
 
 - [ ] **Step 1: tests (RED).**
   - Per-hit emission order equals today's synchronous order minus nesting.
@@ -78,8 +89,7 @@
   - every ramp band;
   - god mode, double damage and NPC shields off;
   - hurtable, invincible and invincible subsystems;
-  - simulation mode;
-  - zero and multiple overlaps, and ties for the primary subsystem;
+    - zero and multiple overlaps, and ties for the primary subsystem;
   - deaths and a splash chain;
   - Review Focus 4, with all seven face writers between hits.
   

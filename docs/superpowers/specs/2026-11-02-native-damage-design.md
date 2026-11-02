@@ -15,20 +15,21 @@ Cost is not the reason: `apply_hit` is 0.09 ms per tick in the 64-ship fight, 0.
 
 - **M1. Invincible means "cannot die".** `ShipClass.SetInvincible(1)`: damage lands, but the ship never begins dying; a critical subsystem may sit at 0. `SetHurtable(0)`: the ship takes no damage (today's immunity). `ShipSubsystem.SetInvincible(1)`: that subsystem takes no damage. This is the scripts' reading (E3M5 "set ship invincible so it won't actually blow up", E6M1, E3M1's drill, E8M2's Matan disable, E2M0's Warbird warp-out; DR §3.7) and replaces `IsImmuneToDamage = invincible or not hurtable`. Radiation follows the same flags.
 - **M2. Hit events go to the tick boundary.** `ET_WEAPON_HIT`, `ET_SUBSYSTEM_DISABLED/DESTROYED/OPERATIONAL`, `ET_ADD_TO_REPAIR_LIST`, condition-watcher crossings and `ET_OBJECT_EXPLODING` become effect-queue kinds, delivered at the flush in emission order (decision 9; BC's own bus enqueues, DR §3.6). **The death splash is queued too, after its `ET_OBJECT_EXPLODING`**, so E2M2's "make the partner invincible" still runs before the splash.
-- **M3. A critical subsystem set to 0 kills**, unless the ship is invincible. This applies to every condition write (`DamageSystem`, `SetCondition`, `SetConditionPercentage`, severance), not only weapon damage: E3M5's `KillGonDev` sets the hull to 0 and makes the ship invincible "so it won't actually blow up".
-- **M4. Campaign bugs 2 and 3 are built in this phase** (decisions in `docs/reference/engine/campaign-bug-decisions-2026-11-02.md` on main):
+- **M3. A critical subsystem at 0 kills**, unless the ship is invincible. This applies to every condition write (`DamageSystem`, `SetCondition`, `SetConditionPercentage`, severance), not only weapon damage: E3M5's `KillGonDev` sets the hull to 0 and makes the ship invincible "so it won't actually blow up".
+- **M5. The death check runs at the tick boundary** (Mark, after Task 1's first attempt), for every write, hits and scripts alike. A ship whose critical subsystem is at 0 begins dying at the flush unless it is invincible by then. `KillGonDev` sets the hull to 0 *before* `SetInvincible(1)` (`E3M5.py:1060-1067`), so an in-write check would kill the derelict at creation. Consequences: a ship hit to 0 stays targetable, and takes further hits, for the rest of that tick; the C++ kernels never decide deaths, only write conditions.
+- **M4. Campaign bug 2 is built in this phase; bug 3 is closed by M1** (decisions in `docs/reference/engine/campaign-bug-decisions-2026-11-02.md` on main).
   - Bug 2: `SetConditionPercentage` on every subsystem = fraction × max condition through the normal condition path, posting the same events.
-  - Bug 3: an engine listener on E3M1's `g_bSimulationMode` (SDK load-time transform); while on, every weapon hit deals 0.1% of its damage; E3M1's player-invincibility calls are ignored; collisions unchanged.
+  - Bug 3: the 0.1% "simulated weapons" plan is **dropped** (Mark, 2026-11-02). At 0.1%, shield regeneration beats the incoming fire 10-65×, so no drill ship drops below its knock-out threshold and E3M1 never ends: measured headless, the Geronimo's hull was untouched after 600 s, against under 25% in 15 s at full damage. The original drill needs damage to land and invincibility to stop destruction. Every drill ship, the player included, is made invincible. A ship is knocked out when hull, power or warp drops below 25% (player, Geronimo) or 50% (Klingons), and the script then repairs it (`EndShipSimulation`). That is M1. With M1, E3M1 runs as written: no listener, no scale, and its player-invincibility calls stay. Collisions damage an invincible player, which was the original complaint.
 
 ## 3. Goals
 
 1. **One damage implementation in C++** (combat library), used by every caller when `DAUNTLESS_NATIVE_COMBAT=1`:
-   - the hit: shields block, face choice, the absorption ramp, hull and overlapping subsystems, the immunity flags (M1), the dev cheats, the simulation-mode scale (M4);
-   - the condition chain: condition write, threshold state machine, watcher crossings, repair enqueue, zero crossings, the death decision (M3).
+   - the hit: shields block, face choice, the absorption ramp, hull and overlapping subsystems, the immunity flags (M1), the dev cheats;
+   - the condition chain: condition write, threshold state machine, watcher crossings, repair enqueue. The death check and zero crossings run at the boundary (M3, M5).
    
    Python's `combat.apply_hit` / `DamageSystem` / `SetCondition` stay as the reference with the switch off.
 2. **K2 applies damage pulses in the kernel**: no CONTACT damage record, no Python inside the walk. The next bank on the same target sees the pulse's result (ruling P1, now by construction). **K3 applies its hits natively at `DONE`**, in today's order.
-3. **Every effect of a hit is queued** (M2): its events, the death begin (cascade rolls, death script, `ET_OBJECT_EXPLODING`), the death splash, hit presentation (dispatch F1-F6) and appendage severance (F7). In-tick and native: the condition and shield writes, `SetDying`, and the immunity and death decisions.
+3. **Every effect of a hit is queued** (M2): its events, the death begin (cascade rolls, death script, `ET_OBJECT_EXPLODING`), the death splash, hit presentation (dispatch F1-F6) and appendage severance (F7). In-tick and native: the condition and shield writes and the immunity decisions. The death check runs at the flush (M5), and `SetDying` with it.
 4. **Non-kernel callers use the same native function**, synchronously. These are collisions, `AddDamage` (the cascade, SDK, NanoFX), the death splash at delivery, scenery contact, radiation's `DamageSystem`, SDK `DamageSystem`/`DestroySystem`/`SetCondition`/`SetConditionPercentage`. Outside the tick scope their entries deliver at the end of the call (fire-events ruling F3), so their events still follow their damage at once.
 5. **Bit-exact**: the native arm equals the Python reference by `.hex()` on every condition, face charge and death, and the queued entries are compared kind by kind, in order (DM §7 hazards H1-H15).
 
@@ -43,7 +44,7 @@ New mirror fields, pushed at every writer:
 - **Phaser bank:** `_max_damage`, `_max_damage_distance`, DRF.
 - **Torpedo:** `_damage`, DRF.
 - **Watchers:** each subsystem's two condition watchers' check presence and current value, as K0's `_watch_checks` / `_watch_value`.
-- **Per-step context:** the player handle (always), god mode, double damage, NPC shields off, simulation mode.
+- **Per-step context:** the player handle (always), god mode, double damage, NPC shields off.
 
 ### 4.2 The native hit
 
@@ -67,8 +68,8 @@ In emission order within a hit, matching today's synchronous order so delivery o
 | `COND_WATCH` | subsystem, which watcher (condition / combined), old, new | `_fire_crossed` against the checks registered at delivery (K0 `WATCH` precedent, ruling E3) |
 | `SUBSYS_EVENT` | subsystem, DESTROYED / DISABLED / OPERATIONAL | posts the event; DESTROYED also `internal_blast.queue` |
 | `REPAIR_ADD` | subsystem | `AddToRepairList` (append + `ET_ADD_TO_REPAIR_LIST`) |
-| `ZERO_CROSS` | ship, plant / hull | `warp_core_breach.arm` / `subsystem_cascade.schedule` |
-| `DEATH` | ship, killer | `ship_death.begin` (or `rocks.death.begin`) minus `SetDying` (already native): cascade rolls on S1, death script, `ET_OBJECT_EXPLODING`, then appends `SPLASH` |
+| `ZERO_CROSS` | ship, plant / hull, killer | at delivery, the M5 check: if the ship is not invincible, `warp_core_breach.arm` / `subsystem_cascade.schedule` (ruling R5); then, if the subsystem is critical and the ship not invincible, dying or dead: the death |
+| `DEATH` | — | (folded into `ZERO_CROSS` delivery: `ship_death.begin` / `rocks.death.begin` as today, cascade rolls on S1, death script, `ET_OBJECT_EXPLODING`, then appends `SPLASH`) |
 | `SPLASH` | ship | `splash_damage.apply` → the native hit per victim (its own entries are appended and delivered in the same flush) |
 | `HIT_PRESENT` | dispatch's inputs (F0-F7) | `hit_feedback.dispatch` minus the event; F1's shield flash may be native (`push_shield_hit`) |
 | `WEAPON_HIT` | the `WeaponHitEvent` fields | posts `ET_WEAPON_HIT` |
@@ -84,7 +85,7 @@ The Python reference changes with the native arm, as decision 12 did, so the dif
   - E3M5's 15% clamp and E8M2's disable clamp land at the flush.
   - E2M0's scripted Sovereign damage, including its S1 draws, lands at the flush.
   - E2M2's partner is made invincible before the splash (M2), and under M1 takes the splash but survives.
-- **A death begins at the flush**, so the cascade's first blast lands a tick later for a K3 kill, as it already does for a K2 kill (DR §4.1 step 5). Its S1 rolls move to the flush; the order of S1 draws changes once.
+- **A death begins at the flush** (M5), so the cascade's first blast lands a tick later for a K3 kill, as it already does for a K2 kill (DR §4.1 step 5). Its S1 rolls move to the flush; the order of S1 draws changes once.
 - **Zero crossings land at the flush.** The cascade's 1.5 s delay and the breach's arming start a tick later for K3 kills; no damage moves.
 - **Severance (F7) is decided at the flush**: later hits in the same tick still see the part's subsystems. Renderer-gated as today.
 - **Invincible ships take damage** (M1). Mission beats that depend on it start working. That is the intent, and the mission tests in §6 check each one.
@@ -99,7 +100,9 @@ The Python reference changes with the native arm, as decision 12 did, so the dif
 
 ## 5. Rulings (mine; Mark may overturn)
 
-- **R1. Simulation-mode scale** applies to weapon hits only: K2 pulses, K3 torpedoes and pulse bolts. It does not apply to the death splash, cascade `AddDamage` or radiation. *If wrong:* a ship dying during the drill splashes at full strength. Under M1 the drill ships cannot die anyway.
+- **R1.** (Withdrawn with bug 3's scale.)
+- **R5. Zero crossings follow the death rule.** The hull cascade (`DestroySystem` on every subsystem 1.5 s later) and the breach arm happen only for a ship that is not invincible at the flush. Otherwise an invincible ship at hull 0 (E3M5's GonDev, E3M2's derelict Warbird) would lose every system. *If wrong:* an invincible hulk keeps its systems where BC strips them.
+- **R6.** Dev mission `engine/dev_missions/vesuvi_dust_cloud.py` switches to `SetHurtable(0)`, so the B3 perf baseline keeps its no-damage player.
 - **R2. A severed critical subsystem now kills** under M3; the old "severance bypass" is closed. *If wrong:* a ship dies when it loses a part carrying its hull-critical subsystem, where today it lives on at 0.
 - **R4. Clearing invincibility does not kill retroactively.** A ship that sat at a critical 0 while invincible dies at the next condition write that leaves a critical subsystem at 0, not at the moment `SetInvincible(0)` is called. *If wrong:* E3M5's `KillGonDev` hulk, made vulnerable later, would need a hit to die rather than exploding on the flag change.
 - **R3. The cascade's damaging point** keeps its S2 draw (presentation-RNG ruling); the native port needs a sim-side surface-point source only if the cascade itself moves to C++, which it does not here.
@@ -112,7 +115,8 @@ The Python reference changes with the native arm, as decision 12 did, so the dif
   - E8M2: Matan can be disabled by damage and never dies while invincible.
   - E3M5: the clamp holds at 15% across two same-tick hits once delivered.
   - E2M2: the partner survives its partner's splash.
-  - E3M1: the drill ships drop hull under 0.1% weapons. **To check (bug 3 decision): the drill still ends.** If it cannot end at 0.1%, stop and ask Mark.
+  - E3M1: the drill ships take damage, are knocked out at their thresholds and are repaired; nobody dies; a collision damages the invincible player.
+  - E3M5: GonDev survives its creation at hull 0.
   - E7M1/E7M2: a scripted hull 0 kills.
   - Bug 2's pass over the 15 missions.
 - **Existing differentials** (K0-K3, step, falsifier) stay green.
