@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "dauntless/combat/mirror.h"
+#include "dauntless/combat/write_log.h"
 
 // K1, the native fire-control kernel (phase 1b, Task 4).
 //
@@ -201,16 +202,8 @@ enum class K1Why : int32_t {
 };
 const char* k1_why_name(K1Why w);
 
-// The marker for "the walk's own offset object" (ruling P5): the walk that
-// logged it (the session's walk number) and its system, so the driver can
-// fetch that walk's object even when the write rides a later walk's record.
-struct K1WalkOffset {
-    int64_t walk = -1;
-    int64_t system = -1;
-    bool operator==(const K1WalkOffset& o) const {
-        return walk == o.walk && system == o.system;
-    }
-};
+// K1WalkOffset, the marker for "the walk's own offset object" (ruling P5),
+// lives in write_log.h (the shared write representation).
 
 // One write-log value. monostate is Python None.
 using K1Value = std::variant<std::monostate, bool, int64_t, double,

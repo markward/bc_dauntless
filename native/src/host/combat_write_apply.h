@@ -43,7 +43,8 @@
 // marker (combat::K1WalkOffset) is a value too: walk.materialise(walk,
 // system), the walk's own offset object, then stored by the field's kind.
 //
-// THE NATIVE REPRESENTATION for Tasks 4-5 (K0): a K0 log is a vector of
+// THE NATIVE REPRESENTATION for Tasks 4-5 (K0): combat/write_log.h (the
+// combat library's, which the K0 kernel logs). A K0 log is a vector of
 // ApplyWrite. A slot write is ApplyWrite{handle, "<list attribute>",
 // ApplySlot{index, scalar}}; a watcher write is ApplyWrite{handle,
 // "_charge_watcher", ApplyWatcher{scalar}}; every other write uses the
@@ -75,6 +76,7 @@
 
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/k2_beams.h"
+#include "dauntless/combat/write_log.h"
 
 namespace dauntless::host {
 
@@ -90,25 +92,14 @@ enum class ApplyKind : int {
 };
 const char* apply_kind_name(ApplyKind k);
 
-// A slot or watcher value: None, bool, int or float.
-using ApplyScalar = std::variant<std::monostate, bool, std::int64_t, double>;
-struct ApplySlot {
-    std::int64_t index = 0;
-    ApplyScalar value;
-};
-struct ApplyWatcher {
-    ApplyScalar value;
-};
-// combat::K1Value's alternatives, then K0's two.
-using ApplyValue =
-    std::variant<std::monostate, bool, std::int64_t, double,
-                 combat::K1WalkOffset, std::vector<std::int64_t>, ApplySlot,
-                 ApplyWatcher>;
-struct ApplyWrite {
-    std::int64_t handle = -1;
-    std::string field;
-    ApplyValue value;
-};
+// The write representation is the combat library's (write_log.h), so the K0
+// kernel logs exactly what this applies: combat::K1Value's alternatives,
+// then K0's two (a slot or watcher value: None, bool, int or float).
+using ApplyScalar = combat::WriteScalar;
+using ApplySlot = combat::SlotWrite;
+using ApplyWatcher = combat::WatcherWrite;
+using ApplyValue = combat::LoggedValue;
+using ApplyWrite = combat::LoggedWrite;
 
 class WriteApplier {
 public:

@@ -49,6 +49,15 @@ struct CanFireResult {
     bool clear_depleted = false;
 };
 
+// TorpedoSystem.GetCurrentAmmoType (weapon_subsystems.py:2083) on the
+// mirror: the selected slot when it is populated, else the lowest populated
+// slot (GetCurrentAmmoSlot), and that slot's Ammo row -- nullptr for Python's
+// None (no ammo configured, or a slot holding None). Throws (see FALLBACK)
+// when `torpedo_system` is not a torpedo system or the ammo row cannot be
+// named. Shared by the tube's CanFire and K0's reload gate.
+const AmmoRow* current_ammo_type(const Mirror& m,
+                                 const SubsystemRow& torpedo_system);
+
 // CanFire for a leaf weapon, dispatched on weapon_kind: 5 phaser bank and 7
 // tractor beam (_EnergyWeaponFireMixin.CanFire), 6 pulse cannon
 // (PulseWeapon.CanFire), 8 torpedo tube (TorpedoTube.CanFire).
