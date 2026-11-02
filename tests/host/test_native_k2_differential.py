@@ -424,9 +424,10 @@ class _Scene:
                 acted = kw["shields_block"]
             else:
                 acted = bool(combat.shields_block(kw["ship"]))
-            # A shielded contact's row is a ShieldedContact: its shield hit
-            # stands for it in the compare (the drain presents most of them
-            # natively, with no beam_contact call; spec 2026-11-02 §4.4).
+            # A shielded contact on a target with an instance id is a
+            # ShieldedContact: its shield hit stands for it in the compare
+            # (the drain presents most of them natively, with no
+            # beam_contact call; spec 2026-11-02 §4.4).
             self.calls.append(contact_row((
                 "beam_contact", self.tick, self.label(kw["ship"]),
                 self.label(kw["source"]), _t(kw["point"]), _t(kw["normal"]),
@@ -435,7 +436,8 @@ class _Scene:
                 _t(kw.get("weapon_type")), _t(kw.get("radius")), _t(acted),
                 # K2 hands the loop's shields_block in as a kwarg (the value
                 # acted on is compared above); every other kwarg must match.
-                sorted(k for k in kw if k != "shields_block")), acted))
+                sorted(k for k in kw if k != "shields_block")), acted,
+                kw["ship_instances"], kw["ship"]))
             return beam_contact(**kw)
 
         def hit_spy(target, damage, point, **kw):

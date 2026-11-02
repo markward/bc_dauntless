@@ -192,8 +192,9 @@ class World:
         def contact_spy(**kw):
             # What it acts on: the kwarg (K2 passes the loop's answer) or its
             # own evaluation (the Python path; K2 when the loop had none).
-            # A shielded contact's row is a ShieldedContact: its shield hit
-            # stands for it in the compare (the drain presents most natively).
+            # A shielded contact on a target with an instance id is a
+            # ShieldedContact: its shield hit stands for it in the compare
+            # (the drain presents most natively).
             if "shields_block" in kw:
                 acted = kw["shields_block"]
             else:
@@ -204,7 +205,8 @@ class World:
                 _hx(kw["normal"]), _hx(kw["shield_point"]),
                 _hx(kw["tick_damage"]), kw["ship_instances"] is
                 self.instances, _hx(kw.get("weapon_type")),
-                _hx(kw.get("radius")), _hx(acted)), acted))
+                _hx(kw.get("radius")), _hx(acted)), acted,
+                kw["ship_instances"], kw["ship"]))
             return beam_contact(**kw)
 
         def shield_row(point, rgba, intensity, radius):
@@ -1915,6 +1917,58 @@ def test_rest_keeps_level_and_shields_from_contact_time(monkeypatch):
     ws_ = nat.ships["Galaxy"].GetPhaserSystem()
     assert [(lvl, sh) for _f, lvl, sh in drain[1]][:rest] == \
         [(ws_.PP_HIGH, True)] * rest, drain
+    assert ws_.GetPowerLevel() == ws_.PP_LOW
+
+
+def test_rest_keeps_level_from_contact_time_on_the_hull(monkeypatch):
+    """The carried power level alone, on the hull branch. The Vor'cha's
+    shields are off from the start, so every resting contact takes the hull
+    path, where tick_damage (PHASER_INTENSITY_SCALE[level]) sets the flash
+    and its spark burst; the pulse's handler only drops the Galaxy's
+    phasers to PP_LOW. Python presents the earlier banks' rests BEFORE the
+    pulse, at PP_HIGH; K2 presents them after the step from the level its
+    queue took at contact time, so their beam_contact rows (tick_damage by
+    .hex()) and the hit VFX they spawn still equal Python's -- a level read
+    at the drain would present them at PP_LOW."""
+    log = []
+    _spy_k2_records(monkeypatch, log)
+
+    def setup(w, mp):
+        _spy_presentation(w, mp)
+        _lit_setup(w, mp)
+        w.ships["Vorcha"].GetShields().TurnOff()
+        w.dropped = []
+
+        def drop(w):
+            if not w.dropped:
+                w.dropped.append(w.n)
+                g = w.ships["Galaxy"].GetPhaserSystem()
+                g.SetPowerLevel(g.PP_LOW)
+        w.after_hit.append(drop)
+
+    def script(w, t):
+        if t == 0:
+            _lit_volley(w)
+
+    ref, nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 3,
+                             setup=setup)
+    _native_ran(counts)
+    assert ref.dropped == nat.dropped == [1]
+    ws_ = nat.ships["Galaxy"].GetPhaserSystem()
+    assert host_loop.PHASER_INTENSITY_SCALE[ws_.PP_HIGH] != \
+        host_loop.PHASER_INTENSITY_SCALE[ws_.PP_LOW]
+    rest = len(nat.lit) - 1
+    first = [c for c in ref.calls if c[1] == 1
+             and c[0] in ("beam_contact", "apply_hit")]
+    assert [c[0] for c in first[:rest + 1]] == \
+        ["beam_contact"] * rest + ["apply_hit"], first
+    # The hull branch, and compared (not a ShieldedContact).
+    assert all(c[-1] == _hx(False) and not isinstance(c, ShieldedContact)
+               for c in first[:rest]), first
+    pulse = next(i for i, r in enumerate(log) if r[0] == "CONTACT")
+    drain = next(r for r in log[pulse:] if r[0] == "DRAIN")
+    assert [(lvl, sh) for _f, lvl, sh in drain[1]][:rest] == \
+        [(ws_.PP_HIGH, False)] * rest, drain
     assert ws_.GetPowerLevel() == ws_.PP_LOW
 
 

@@ -207,20 +207,27 @@ def eligibility_view(player, ships, eligible, label):
 
 
 class ShieldedContact(tuple):
-    """A spy's beam_contact row for a contact that acted on shields up. Its
-    whole presentation is the shield_hit it makes, and the K2 drain makes
-    most of those in C++ with no beam_contact call at all (spec 2026-11-02
-    §4.4): compare_calls leaves these rows out and compares the shield hits
-    -- the shield_hit spy's rows and the drain's captured ones
-    (capture_native_shield_hits) alike. Still a tuple: a test reading the
-    log sees it as any other row."""
+    """A spy's beam_contact row for a contact that acted on shields up on a
+    target with an instance id: its whole presentation is the shield_hit it
+    makes, and the K2 drain makes most of those in C++ with no beam_contact
+    call at all (spec 2026-11-02 §4.4). compare_calls leaves these rows out
+    and compares the shield hits -- the shield_hit spy's rows and the
+    drain's captured ones (capture_native_shield_hits) alike. Still a tuple:
+    a test reading the log sees it as any other row."""
 
     __slots__ = ()
 
 
-def contact_row(row, acted):
-    """A beam_contact spy's `row`, marked ShieldedContact when `acted`."""
-    return ShieldedContact(row) if acted else row
+def contact_row(row, acted, ship_instances, ship):
+    """A beam_contact spy's `row`, marked ShieldedContact when `acted` and
+    the target has an instance id -- exactly when a shield_hit row stands
+    for it (beam_contact pushes a splash only then). A shielded contact on a
+    target with none presents nothing, the drain never takes it natively
+    (no iid), so both arms call beam_contact and its row stays compared."""
+    if acted and ship_instances is not None \
+            and ship_instances.get(ship) is not None:
+        return ShieldedContact(row)
+    return row
 
 
 #: The capture list the outermost capture_native_shield_hits wrapper
@@ -267,7 +274,8 @@ def spy_presentation(mp, calls, tick, label, contacts=True):
     have logged; with `contacts`, every hit_feedback.beam_contact too (its
     arguments, and the shields_block it acted on: headless, a contact on a
     shielded ship presents nothing, so the contact itself is what shows it;
-    a shielded one is a ShieldedContact, left out of the compare). What a
+    a shielded one on a target with an instance id is a ShieldedContact,
+    left out of the compare for the shield hit that stands for it). What a
     beam contact or a hit PRESENTS: a K2 resting contact is presented at the
     drain after the step's last record (spec 2026-11-02 §4.3-4.4), so
     presentation is compared per tick as a multiset (compare_calls; ruling
@@ -289,7 +297,8 @@ def spy_presentation(mp, calls, tick, label, contacts=True):
              hx(kw["point"]), hx(kw["normal"]), hx(kw["shield_point"]),
              hx(kw["tick_damage"]), hx(kw.get("weapon_type")),
              hx(kw.get("radius")), hx(bool(acted)),
-             sorted(k for k in kw if k != "shields_block")), acted))
+             sorted(k for k in kw if k != "shields_block")), acted,
+            kw["ship_instances"], kw["ship"]))
         return beam_contact(**kw)
 
     def spawn_spy(position, *args, **kw):
