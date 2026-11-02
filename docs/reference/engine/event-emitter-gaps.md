@@ -637,6 +637,18 @@ must be: `AsteroidHitStation` leaves the name in `g_dAsteroidInfo`, and
 `beats == ["station", "destroyed"]` and the unit
 `test_collision_event_precedes_the_impact_damage`.
 
+## 14. `ET_WEAPON_FIRED`: no target pointer, and pulse weapons never post it — ❌ OPEN (decided 2026-11-02, not built)
+
+Found by the combat event inventory (`docs/reference/engine/native-combat/event-inventory.md` §7 F5, on branch `ws/combat-effect-queue`).
+
+**Bug 1, the target pointer.** Every stock `WeaponFired` handler reads the firer from `GetDestination()` and the target from `ShipClass_Cast(pEvent.GetObjPtr())`, and returns when the target is None (`Maelstrom/Episode1/E1M2/E1M2.py:1384-1390`, `Maelstrom/Episode2/E2M1/E2M1.py:963-971`; E2M2 and E6M4 per the inventory). Our `_post_weapon_fired` (`engine/appc/weapon_subsystems.py`) never sets the object pointer, so `GetObjPtr()` falls to the `TGEvent` stub (`docs/stub_heatmap.md`, `TGEvent.GetObjPtr`) and the cast gives None: every handler returns on its second line. Lost beats include E1M2's Picard suggestion after the player's tenth shot and E2M1's Warbird-fires-on-the-Karoon check.
+
+**Bug 2, pulse weapons.** Only beam phasers and torpedo tubes post the event; pulse weapons (disruptors) never do, so a Bird of Prey's shots never reach these handlers.
+
+**Decided (Mark, 2026-11-02): fix both.** Set the event's object pointer to the firing weapon's target ship; post `ET_WEAPON_FIRED` for pulse weapons too, as beams and tubes do. Tractor beams stay out: they have their own started/stopped events (#8, #9). Test: one headless check per mission handler that it gets past its early return, plus a pulse-weapon post.
+
+**Evidence:** SDK usage only (the handlers' casts). That BC posted it for pulse weapons is **inferred** from the handlers casting any target to a ship.
+
 ---
 
 ## Summary table
@@ -656,3 +668,4 @@ must be: `AsteroidHitStation` leaves the name in `g_dAsteroidInfo`, and
 | `ET_IN_SYSTEM_WARP` | `ScienceMenuHandlers.py:95/515` | ✅ **DONE** — `ships.py` engage + `_end_in_system_warp()` shared by all 4 disengage sites |
 | `ET_SET_WARP_SEQUENCE` | `ConditionWarpingToSet.py:33/69` | ✅ **DONE** — `subsystems.py` `WarpEngineSubsystem.SetWarpSequence`, unguarded ping |
 | `ET_PLANET_COLLISION` | `E1M2.py:1135/1308` | ✅ **DONE** (#13, found after the 12) — `collisions.py` `_emit_planet_collision()`, impact path, source planet / destination body, posted before impact damage |
+| `ET_WEAPON_FIRED` (target pointer, pulse weapons) | `E1M2.py:1384`, `E2M1.py:963` (+ E2M2, E6M4) | ❌ **OPEN** (#14) — decided 2026-11-02: set `ObjPtr` to the target; post for pulse weapons too |
