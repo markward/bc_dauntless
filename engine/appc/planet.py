@@ -321,10 +321,12 @@ class ProximityManager:
         """Everything this manager can report: the containing set's objects,
         plus anything hand-registered through AddObject.
 
-        BC's ProximityManager IS the set's spatial index — the SDK's own
-        ``lDontAvoidTypes`` filter (AvoidObstacles) exists precisely because
-        the walk hands back every class of object in the set, proximity checks
-        included. Ours only ever held what AddObject was called with, and
+        BC's ProximityManager IS the set's spatial index. Its QUERIES
+        (GetNearObjects / GetLineIntersectObjects) never return a
+        ProximityCheck (ruling 1, native-motion design s3), so they skip
+        checks; this list still holds them, because AddObject registers them
+        here. The per-tick check evaluator (proximity_table) does not read
+        this list. Ours only ever held what AddObject was called with, and
         nothing registers ships, so a live QuickBattle scene had 5 ships in the
         world and GetNumObjects() == 0.
 
@@ -383,7 +385,9 @@ class ProximityManager:
     def _near_objects(self, point, radius):
         r2 = float(radius) * float(radius)
         px, py, pz = point.x, point.y, point.z
-        candidates = self._candidates()
+        from engine.appc.ai import ProximityCheck
+        candidates = [o for o in self._candidates()
+                      if not isinstance(o, ProximityCheck)]
         # Every ConditionInRange registers a proximity check here, so a
         # 64-ship fight walks ~337 candidates per AvoidObstacles query; one
         # store crossing each was 40% of all AI time. Objects whose location
@@ -452,8 +456,11 @@ class ProximityManager:
         ax, ay, az = start.x, start.y, start.z
         dx, dy, dz = end.x - ax, end.y - ay, end.z - az
         seg_len2 = dx * dx + dy * dy + dz * dz
+        from engine.appc.ai import ProximityCheck
         result = []
         for obj in self._candidates():
+            if isinstance(obj, ProximityCheck):
+                continue
             loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
             if loc is None:
                 continue
