@@ -5149,8 +5149,9 @@ def _init_episode_context(episode, mission_module_name: str) -> None:
     the episode DB is never set and goals fall back to raw string ids
     (``E1DestroyDebrisGoal`` instead of ``Clear Debris``). We restore just the DB
     by deriving its path (see _episode_tgl_path) and loading it — no episode
-    Initialize, so none of its side effects (music, sound, event-handler,
-    real-bridge-module imports) leak into the process. Best-effort: a missing or
+    Initialize, so none of its side effects (sound, event-handler,
+    real-bridge-module imports) leak into the process; its music alone is
+    set up, by _init_campaign_music. Best-effort: a missing or
     unreadable TGL leaves goals labelled by raw id and never blocks the load."""
     path = _episode_tgl_path(mission_module_name)
     if path is None:
@@ -5162,6 +5163,33 @@ def _init_episode_context(episode, mission_module_name: str) -> None:
             episode.SetDatabase(db)
     except Exception as e:
         dev_mode.log_swallowed("episode DB init", e)
+
+
+def _init_campaign_music(game, mission_module_name: str) -> None:
+    """Start the campaign's music for a mission loaded directly.
+
+    BC's Game.LoadEpisode runs the campaign module's Initialize, whose
+    SetupMusic(pGame) is DynamicMusic.Initialize (the track list, the music
+    state machine and its game event hooks), then the episode's Initialize,
+    whose SetupMusic() swaps in that episode's tracks. Both run before the
+    mission's Initialize, which may already steer the music. The dev loader
+    skips that cascade (see _init_episode_context), which left every mission
+    started from the picker or DAUNTLESS_MISSION silent. Only the two
+    SetupMusic calls run here, not either Initialize: the campaign's through
+    mission_change._ensure_campaign_music (a no-op once DynamicMusic is
+    initialized), then the episode's. Best-effort."""
+    from engine.core import mission_change
+    episode_name = mission_change.episode_module_for(mission_module_name)
+    if episode_name is None:
+        return
+    import importlib
+    try:
+        mission_change._ensure_campaign_music(game, episode_name)
+        episode = importlib.import_module(episode_name)
+        if hasattr(episode, "SetupMusic"):
+            episode.SetupMusic()
+    except Exception as e:
+        dev_mode.log_swallowed("campaign music init", e)
 
 
 def _init_mission(mission_module_name: str):
@@ -5194,6 +5222,7 @@ def _init_mission(mission_module_name: str):
     # the episode cascade that BC's Game.LoadEpisode would run.
     _init_campaign_context(game, mission_module_name)
     _init_episode_context(episode, mission_module_name)
+    _init_campaign_music(game, mission_module_name)
 
     # Import through sensor_mission_guards.install_after_import, not a raw
     # importlib.import_module: reset_sdk_globals's call (above, via
