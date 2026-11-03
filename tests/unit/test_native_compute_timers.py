@@ -202,8 +202,16 @@ def test_compute_rows_nest_under_their_parents_with_the_switch_on(
     assert [_h.combat_compute_take(k) for k in range(5)] == [(0.0, 0)] * 5
 
 
-def test_no_compute_rows_with_the_switch_off(monkeypatch, _assets):
+def test_only_k1_compute_rows_with_the_switch_off(monkeypatch, _assets):
+    """With DAUNTLESS_NATIVE_COMBAT=0 K0, K2, K3 and K4 run in Python, so
+    they record no compute row; fire control is native whatever the switch
+    (fire control native only, M9), so K1's rows still appear."""
     from tests.integration import test_native_k1_differential as k1d
     frames = _fight(monkeypatch, k1d.OFF)
-    assert frames and all(not _compute_rows(raw) for raw, _ in frames)
+    seen = set()
+    for raw, _ in frames:
+        seen |= _compute_rows(raw)
+    assert frames and seen, seen
+    assert all(name.partition("@")[0] == "k1.compute" for name in seen), \
+        sorted(seen)
     assert [_h.combat_compute_take(k) for k in range(5)] == [(0.0, 0)] * 5

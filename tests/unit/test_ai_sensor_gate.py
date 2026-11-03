@@ -20,6 +20,14 @@ from engine.appc.ai_sensor_gate import (
 from engine.appc.objects import ObjectGroup
 from tests.helpers.cloak_geometry import inside_gu, outside_gu
 
+# The Python sensor rules, with doubles only the Python sees (monkeypatched
+# flags and dials, fake nebulae): DAUNTLESS_NATIVE_COMBAT=0, now the switch
+# defaults on (fire control native only, R1; tests/helpers/native_off.py).
+import pytest  # noqa: E402
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
+pytestmark = pytest.mark.usefixtures("native_switch_zero")
+
 
 def _ship_with_sensor(base_range, condition=100.0, max_condition=100.0,
                       at=(0.0, 0.0, 0.0)):

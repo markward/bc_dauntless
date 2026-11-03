@@ -952,7 +952,7 @@ def _reset_leakable_engine_globals():
         _passive_power.reset()
     except Exception:
         pass
-    # Native combat mirror: the switch back to off, and every C++ row dropped
+    # Native combat mirror: reset (mirror off), and every C++ row dropped
     # (process-lifetime state). Objects a previous test left alive would keep
     # a stale handle; forget_rows() drops them all at once (one at a time is
     # a quadratic re-push cascade that hung the gate for over an hour).
@@ -967,6 +967,14 @@ def _reset_leakable_engine_globals():
         _native_combat.forget_rows()
     except Exception:
         pass
+    # Then the mirror live again and the switch where configure() puts it
+    # from the environment (on unless DAUNTLESS_NATIVE_COMBAT=0): fire
+    # control is native in every test, as in the game (fire control native
+    # only, ruling R1). A test needing the Python arm of K0, K2, K3, K4 or
+    # damage pins =0 itself. NOT swallowed: a stale build or a failed
+    # self-check must fail loudly here too (M10).
+    from engine.appc import native_combat as _native_combat
+    _native_combat.configure()
     # Warp-in: radius seeder hook + live dial values are module globals.
     try:
         from engine.appc import warp_in_dials as _warp_in_dials

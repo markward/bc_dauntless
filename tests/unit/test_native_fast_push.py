@@ -378,10 +378,12 @@ def test_stale_so_without_a_binding_is_unavailable(monkeypatch, name):
     """A .so older than a binding the module calls unconditionally (reset()
     calls combat_apply_reset_counts; every scalar push combat_push_scalar;
     every slot-list push combat_set_floats) is stale: native is
-    unavailable, never an AttributeError later."""
+    unavailable, never an AttributeError later -- and configure() says so,
+    naming the binding (fire control native only, M10)."""
     assert nc.available()
     monkeypatch.delattr(_h, name)
     assert not nc.available()
-    nc.configure(ON)
-    assert not nc.enabled()
+    with pytest.raises(RuntimeError, match=name):
+        nc.configure(ON)
+    assert not nc.enabled() and not nc.fire_control_native()
     nc.reset()                                  # no AttributeError

@@ -1135,7 +1135,7 @@ class DamageableObject(PhysicsObjectClass):
             return
         # Native combat on: the native DamageSystem stands in (native damage
         # Task 3), else -- or when it hands back -- the reference below.
-        if native_combat._enabled and native_combat.damage_system(
+        if native_combat._switch and native_combat.damage_system(
                 self, subsystem, amt, source):
             return
         cur = subsystem.GetCondition()

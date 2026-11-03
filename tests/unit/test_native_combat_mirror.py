@@ -299,9 +299,13 @@ def test_stale_handle_after_clear_unregisters_silently():
     nc.drain()                                  # the drain swallows it
 
 
-def test_switch_off_pushes_nothing_then_resync_catches_up():
+def test_unconfigured_pushes_nothing_then_resync_catches_up():
+    """Before configure() (a fresh process; here, after reset()) objects
+    register but nothing is pushed; configure() resyncs every row. The
+    switch no longer stops the pushes: fire control reads the mirror
+    whatever it says (fire control native only, M9)."""
     from engine.appc.subsystems import SensorSubsystem
-    assert not nc.enabled()
+    assert not nc.fire_control_native()
     sub = SensorSubsystem("Off")
     assert "_nslot" in sub.__dict__             # registered even when off
     sub.SetBaseSensorRange(777.25)
@@ -309,62 +313,66 @@ def test_switch_off_pushes_nothing_then_resync_catches_up():
     row = _dump(sub)
     assert row["_base_sensor_range"] != 777.25
     assert row["_condition"] != 0.5
-    nc.configure(ON)
-    assert nc.enabled()
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "0"})
+    assert nc.fire_control_native() and not nc.enabled()
     row = _dump(sub)
     assert row["_base_sensor_range"] == 777.25
     assert row["_condition"] == 0.5
     assert row["has_parent_ship_getter"] == 1
+    sub.SetBaseSensorRange(555.5)               # =0 still pushes
+    assert _dump(sub)["_base_sensor_range"] == 555.5
 
 
 def test_configure_switch_values():
     nc.configure({})
-    assert not nc.enabled() and not nc.audit_enabled()
+    assert nc.enabled() and not nc.audit_enabled()
     nc.configure({"DAUNTLESS_NATIVE_COMBAT": "0"})
     assert not nc.enabled()
     nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
     assert nc.enabled() and not nc.audit_enabled()
     nc.configure({"DAUNTLESS_NATIVE_AUDIT": "1"})
     assert nc.enabled() and nc.audit_enabled()
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "0",
+                  "DAUNTLESS_NATIVE_AUDIT": "1"})
+    assert nc.enabled() and nc.audit_enabled()      # the audit implies on
 
 
 def test_game_loop_reads_the_switch(monkeypatch):
     from engine.core.loop import GameLoop
-    monkeypatch.setenv("DAUNTLESS_NATIVE_COMBAT", "1")
+    monkeypatch.setenv("DAUNTLESS_NATIVE_COMBAT", "0")
     GameLoop()
-    assert nc.enabled()
+    assert not nc.enabled() and nc.fire_control_native()
     monkeypatch.delenv("DAUNTLESS_NATIVE_COMBAT")
     GameLoop()
-    assert not nc.enabled()
+    assert nc.enabled() and nc.fire_control_native()
 
 
 def test_self_check_passes_on_this_interpreter():
     assert nc._self_check() is None
 
 
-def test_self_check_disables_on_mismatch(monkeypatch, capsys):
+def test_self_check_names_the_mismatch(monkeypatch):
     real = math.dist
     monkeypatch.setattr(math, "dist",
                         lambda a, b: math.nextafter(real(a, b), math.inf))
-    nc.configure(ON)
-    assert not nc.enabled()
+    with pytest.raises(RuntimeError, match="dist3"):
+        nc.configure(ON)
+    assert not nc.enabled() and not nc.fire_control_native()
     reason = nc._self_check()
     assert reason is not None and "dist3" in reason
-    err = capsys.readouterr().err
-    assert err.count("[native-combat] disabled:") == 2   # configure + call
 
 
-def test_failed_self_check_leaves_the_audit_off(monkeypatch, capsys):
+def test_failed_self_check_leaves_the_audit_off(monkeypatch):
     """DAUNTLESS_NATIVE_AUDIT=1 on an interpreter whose math.dist differs:
-    native stays off, and so must the audit -- else GameLoop.tick audits
+    configure raises and the audit stays off -- else GameLoop.tick audits
     never-pushed rows every tick and records every field as a failure."""
     real = math.dist
     monkeypatch.setattr(math, "dist",
                         lambda a, b: math.nextafter(real(a, b), math.inf))
-    nc.configure({"DAUNTLESS_NATIVE_AUDIT": "1"})
+    with pytest.raises(RuntimeError, match="self-check"):
+        nc.configure({"DAUNTLESS_NATIVE_AUDIT": "1"})
     assert not nc.enabled()
     assert not nc.audit_enabled()
-    capsys.readouterr()
 
 
 def test_audit_mirror_flags_a_bypassed_write():

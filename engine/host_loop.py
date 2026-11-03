@@ -1045,8 +1045,10 @@ def _pump_held_weapons(ships_list, dt: float) -> None:
     global fire range). A TractorBeamSystem's tick is the native K1
     kernel's whole (fire control native only, M4: its ENGAGE intent
     survives out-of-range / out-of-arc and re-acquires; k1_fire_control.h,
-    THE TRACTOR WALK): it is never handed back here, and with native combat
-    off no tractor engages (TractorBeamSystem.StartFiring).
+    THE TRACTOR WALK): it is never handed back here. Gated on
+    fire_control_native, never the switch: DAUNTLESS_NATIVE_COMBAT=0 still
+    walks K1 natively (fire control native only, M9); only K2 below
+    follows the switch.
     """
     if _native_combat.fire_control_native():
         # The same loop, walked by the native K1 kernel; Python runs only the
@@ -1366,7 +1368,7 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
         with frame_profiler.scope("cb.eligibility"):
             # The step scan K4 (here) and K3 (cb.projectiles) share: once a
             # step.
-            if _native_combat._enabled:
+            if _native_combat._switch:
                 _native_combat.step_scan(ships_list)
             damage_eligibility.update(ships_list)
 

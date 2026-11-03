@@ -30,8 +30,9 @@ unchanged: they answer for unregistered objects (test fakes, plain objects,
 None), for any call the kernel cannot answer (it raises ValueError), and for
 every can_detect / in_reach inside a probe walk (`_walking_probes`: the
 kernel's own probe guard cannot see the Python's). The lock-break latch has
-one owner per pair: the native latch for a registered pair (`_latched` /
-`_set_latched` read and write it), `_broken` otherwise. Under the audit
+one owner per pair: the native latch for a registered pair while the mirror
+is live -- whatever the switch says, as K1's native can_detect latches too
+(`_latched` / `_set_latched` read and write it) -- `_broken` otherwise. Under the audit
 (`native_combat.audit_enabled()`) both run, a difference is recorded, and the
 PYTHON answer is returned, with the latch exactly where the Python alone
 leaves it.
@@ -164,10 +165,14 @@ CLOAK_DETECTION_BASE_GU = 5.0   # Flat bubble floor, added atop the percentage t
 _broken: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
-def _native_pair(observer, target):
+def _native_pair(observer, target, *, latch=False):
     """(observer row, target row) when native answers for the pair, else
-    None."""
-    if not _nc.enabled():
+    None. The queries follow the switch (native_combat.enabled); the LATCH
+    (`latch=True`) follows the mirror (native_combat.fire_control_native):
+    K1's native can_detect latches broken locks whatever the switch says,
+    so with DAUNTLESS_NATIVE_COMBAT=0 a registered pair's latch is still
+    the native one (ruling R7: one owner per pair)."""
+    if not (_nc.fire_control_native() if latch else _nc.enabled()):
         return None
     a = _nc.slot(observer)
     if a is None:
@@ -181,7 +186,7 @@ def _native_pair(observer, target):
 def _latched(observer, target) -> bool:
     """True iff this pair's lock is currently broken. A registered pair's
     latch is the native one (ruling R7: one owner per pair)."""
-    pair = _native_pair(observer, target)
+    pair = _native_pair(observer, target, latch=True)
     if pair is not None:
         try:
             return _nc._h.combat_latched(*pair)
@@ -192,7 +197,7 @@ def _latched(observer, target) -> bool:
 
 def _set_latched(observer, target, broken: bool) -> None:
     """Record (or clear) this pair's broken-lock latch."""
-    pair = _native_pair(observer, target)
+    pair = _native_pair(observer, target, latch=True)
     if pair is not None:
         try:
             _nc._h.combat_set_latched(pair[0], pair[1], bool(broken))

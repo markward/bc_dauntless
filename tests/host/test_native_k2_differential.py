@@ -423,6 +423,7 @@ class _Scene:
         self.lists = {}         # id(system) -> its last recorded _target_list
         self.tally = None
         self.killed_at = None
+        self.scopes = effect_split.Scopes(mp)
         self._spy(mp)
         if self.native:
             self.tally = _Tally(self)
@@ -960,12 +961,17 @@ def _compare(ref, nat):
     assert len(ref.events) == len(nat.events)
     effect_split.compare(ref.queued, nat.queued)
     # The native arm's were delivered at the tick boundary; the reference
-    # never opened the scope, so it queued only the damage kinds (native
-    # damage M2: both arms).
+    # never opened the scope, so its K0 and K2 producers acted at once and
+    # it queued only the damage kinds (native damage M2: both arms) and
+    # what K1's own sessions deferred (fire control is native in both arms:
+    # fire control native only, M9).
     e = nat.effects
     assert e["delivered"] > e["damage"], e
     assert e["skipped_gone"] == e["failed"] == 0, e
-    assert ref.effects["delivered"] == ref.effects["damage"], ref.effects
+    assert nat.scopes.opened > 0, nat.scopes.opened
+    assert ref.scopes.opened == 0, ref.scopes.opened
+    assert ref.effects["skipped_gone"] == ref.effects["failed"] == 0, \
+        ref.effects
     assert nat.audit == [], nat.audit
     assert ref.counts.get("k2_records", 0) == 0, ref.counts
     assert nat.counts["k2_records"] > 0, nat.counts

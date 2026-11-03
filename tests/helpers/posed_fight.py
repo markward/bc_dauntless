@@ -859,7 +859,10 @@ def both(monkeypatch, ticks_per_frame, seed, r=None, ticks=TICKS,
     compare(ref.rec, nat.rec)
     assert nat.audit == [], nat.audit
     assert ref.counts.get("k3_runs", 0) == 0, ref.counts
-    assert ref.counts.get("k1_records", 0) == 0, ref.counts
+    # Fire control is native in both arms (fire control native only, M9):
+    # the reference is the Python of K0, K2, K3, K4 and damage only.
+    assert ref.counts["k1_records"] > 0, ref.counts
+    assert ref.counts["k2_records"] == 0, ref.counts
     # The sever happened alike (the native arm also checked its mounts).
     same = [{k: v for k, v in d.items() if k != "checked"}
             for d in (ref.sever, nat.sever)]

@@ -99,6 +99,7 @@ class _K0Scene(k1d._Scene):
 
     def __init__(self, mp, env, ships="8"):
         super().__init__(mp, env, ships=ships)
+        self.scopes = effect_split.Scopes(mp)
         self.toggle = charge_toggle_type()
         self.k0_kinds = {App.ET_TORPEDO_RELOAD: "reload",
                          self.toggle: "charge_toggle",
@@ -356,7 +357,9 @@ def _both(monkeypatch, ticks_per_frame, seed, ops=OPS, mid_ops=MID_OPS,
 
 
 def _compare(ref, nat):
-    k1d._compare(ref, nat)      # K1's record, every event, the presentation
+    # K1's record, every event, the presentation; fire control is native in
+    # both arms (fire control native only, M9).
+    k1d._compare(ref, nat, ref_fire_control_native=True)
     assert len(ref.k0_log) == len(nat.k0_log) == ref.tick
     for tick, ((now_a, a), (now_b, b)) in enumerate(
             zip(ref.k0_log, nat.k0_log), start=1):
@@ -407,11 +410,17 @@ def _check_native_ran(ref, nat, ticks=TICKS):
     assert {e[3] for e in ref.k0_produced} == {"op", "step"}, \
         ref.k0_produced[:5]
     # The native arm's were queued and delivered at the tick boundary; the
-    # reference queued only the damage kinds (native damage M2: both arms).
+    # reference never opened the tick's scope, so its K0 producers acted at
+    # once and it queued only the damage kinds (native damage M2: both
+    # arms) and what K1's own sessions deferred (fire control is native in
+    # both arms: fire control native only, M9).
     e = nat.effects
     assert e["delivered"] > e["damage"], e
     assert e["skipped_gone"] == e["failed"] == 0, e
-    assert ref.effects["delivered"] == ref.effects["damage"], ref.effects
+    assert nat.scopes.opened > 0, nat.scopes.opened
+    assert ref.scopes.opened == 0, ref.scopes.opened
+    assert ref.effects["skipped_gone"] == ref.effects["failed"] == 0, \
+        ref.effects
     # The odd charges were written, and kept ones reached the comparison.
     assert set(ref.odd) == {"nan", "-0.0", "0.0"}, ref.odd
     states = [s for _now, row in ref.k0_log for s in row]

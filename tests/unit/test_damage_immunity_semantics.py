@@ -328,6 +328,13 @@ def either_queue(request, monkeypatch):
     list effect_queue falls back to without the native module (task review
     M4): the hold-and-boundary rules must not depend on it."""
     if request.param == "python queue":
+        # No native module means no native damage either: the Python damage
+        # arm, which only DAUNTLESS_NATIVE_COMBAT=0 runs now the switch
+        # defaults on (native damage posts to the native queue, which this
+        # Python list replaces).
+        from engine.appc import native_combat
+        native_combat.configure({"DAUNTLESS_NATIVE_COMBAT": "0"})
+        assert not native_combat.enabled()
         monkeypatch.setattr(effect_queue, "_q", effect_queue._PyQueue())
     elif isinstance(effect_queue._q, effect_queue._PyQueue):
         pytest.skip("native module not built")

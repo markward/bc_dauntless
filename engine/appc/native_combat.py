@@ -27,12 +27,23 @@ Rows live exactly as long as their Python object: ``register`` in
 ``__init__``, unregistered by the object's ``weakref.finalize`` -- recorded
 there and freed at the next drain point (``drain``: no row is freed while a
 kernel computes). Objects are
-registered whenever the bindings are built, even with the switch off; nothing
-is PUSHED while it is off, and turning it on resyncs every row.
+registered whenever the bindings are built, even before ``configure()``;
+nothing is PUSHED until it has run, and then it resyncs every row.
 
-The switch is read only in ``configure()`` (called by ``GameLoop.__init__``):
-``DAUNTLESS_NATIVE_COMBAT=1`` on, ``=0`` or unset off;
-``DAUNTLESS_NATIVE_AUDIT=1`` turns the audit on and implies native on.
+``configure()`` (called by ``GameLoop.__init__``) makes the mirror live and
+reads the switch (fire control native only, spec
+docs/superpowers/specs/2026-11-03-fire-control-native-only-design.md §4.1):
+
+- The module is REQUIRED (M2, M10): a missing binding (a stale build) or a
+  failed ``_self_check()`` raises there, naming what is missing or what
+  differed. Once it has run, the mirror is live and fire control (K1, the
+  tractors with it) is native, whatever the switch says
+  (``fire_control_native``, M9).
+- The switch, ``DAUNTLESS_NATIVE_COMBAT``, is on unless ``=0`` (M1). It
+  governs only the other kernels (``enabled``): K0, K2, K3 and its torpedo
+  table, K4, native damage, the tick's effect scope and the dispatched
+  sensor queries. ``DAUNTLESS_NATIVE_AUDIT=1`` turns the audit on and
+  implies the switch on.
 """
 import collections
 import importlib
@@ -60,7 +71,12 @@ try:
 except ImportError:
     _h = None  # bindings not built: nothing registers, Python answers.
 
+# The mirror is live: configure() found every binding and the self-check
+# passed. Fire control is native exactly then (fire_control_native).
 _enabled = False
+# The switch (DAUNTLESS_NATIVE_COMBAT, on unless =0) as configure() last set
+# it, never True while the mirror is not live: the other kernels (enabled).
+_switch = False
 _audit = False
 _failures: list = []
 # Dispatched queries (sensor_detection, sensor_occlusion) the kernel answered,
@@ -130,66 +146,94 @@ _push_codes: dict = {}
 
 # ── The switch ───────────────────────────────────────────────────────────────
 
+#: Every binding a current build has; one missing means the .so is older
+#: than this module (a stale build: configure raises, naming it).
+_REQUIRED_BINDINGS = (
+    "combat_register", "combat_push_scalar", "combat_apply_reset_counts",
+    "combat_set_floats",
+    # The phase-3 bindings too (the torpedo table, the step scan, K4 and
+    # the K3 kernel).
+    "combat_torp_add", "combat_step_scan", "combat_step_serial",
+    "combat_k4_eligible", "combat_k3_begin", "combat_set_part_poses",
+    "combat_k0_begin", "combat_effect_take", "combat_effect_rebind",
+    "combat_apply_hit", "combat_dmg_guard_check",
+    "combat_dmg_guard_invalidate", "combat_dmg_set_condition",
+    "combat_dmg_clean_handles", "combat_k2_scan_clear",
+    "combat_compute_take",
+    # Tractors native (fire control native only, M4).
+    "combat_k1_begin_tractor", "combat_tractor_force_step",
+)
+
+
+def missing_bindings() -> list:
+    """What this build lacks: ["_dauntless_host"] when the module itself
+    did not import, else the names of _REQUIRED_BINDINGS it does not
+    have (empty for a current build)."""
+    if _h is None:
+        return ["_dauntless_host"]
+    return [name for name in _REQUIRED_BINDINGS if not hasattr(_h, name)]
+
+
 def available() -> bool:
-    # The phase-3 bindings too (the torpedo table, the step scan, K4 and the
-    # K3 kernel): a .so older than any of them is stale.
-    return (_h is not None and hasattr(_h, "combat_register")
-            and hasattr(_h, "combat_push_scalar")
-            and hasattr(_h, "combat_apply_reset_counts")
-            and hasattr(_h, "combat_set_floats")
-            and hasattr(_h, "combat_torp_add")
-            and hasattr(_h, "combat_step_scan")
-            and hasattr(_h, "combat_step_serial")
-            and hasattr(_h, "combat_k4_eligible")
-            and hasattr(_h, "combat_k3_begin")
-            and hasattr(_h, "combat_set_part_poses")
-            and hasattr(_h, "combat_k0_begin")
-            and hasattr(_h, "combat_effect_take")
-            and hasattr(_h, "combat_effect_rebind")
-            and hasattr(_h, "combat_apply_hit")
-            and hasattr(_h, "combat_dmg_guard_check")
-            and hasattr(_h, "combat_dmg_guard_invalidate")
-            and hasattr(_h, "combat_dmg_set_condition")
-            and hasattr(_h, "combat_dmg_clean_handles")
-            and hasattr(_h, "combat_k2_scan_clear")
-            and hasattr(_h, "combat_compute_take")
-            # Tractors native (fire control native only, M4).
-            and hasattr(_h, "combat_k1_begin_tractor")
-            and hasattr(_h, "combat_tractor_force_step"))
+    """The bindings are built and current (missing_bindings is empty)."""
+    h = _h
+    return h is not None and all(hasattr(h, n) for n in _REQUIRED_BINDINGS)
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
-    global _enabled, _audit
+    """Make the mirror live and set the switch from `environ` (module
+    docstring). Raises RuntimeError when the bindings are missing or stale
+    (naming every missing one) or the self-check fails (naming what
+    differed): fire control has no other copy to fall back to (M2, M10).
+    Neither the switch nor the audit excuses it."""
+    global _enabled, _switch, _audit
+    missing = missing_bindings()
+    if missing:
+        if _h is None:
+            raise RuntimeError(
+                "native combat: the _dauntless_host module did not import; "
+                "fire control is native only -- build it "
+                "(cmake --build build -j)")
+        raise RuntimeError(
+            "native combat: stale build, missing bindings: %s; fire control "
+            "is native only -- rebuild (cmake --build build -j)"
+            % ", ".join(missing))
     audit = environ.get("DAUNTLESS_NATIVE_AUDIT") == "1"
-    want = (audit or environ.get("DAUNTLESS_NATIVE_COMBAT") == "1") \
-        and available()
-    # The audit is on only when native ended up on: auditing rows that were
-    # never pushed would record every field of every row, every tick.
+    switch = audit or environ.get("DAUNTLESS_NATIVE_COMBAT") != "0"
+    # The audit is on only when the switch ended up on: auditing rows that
+    # were never pushed would record every field of every row, every tick.
     _audit = False
-    if not want:
-        if _enabled:
-            torpedo_table_mark_dirty()  # unpushed from here on: drop it
-        _enabled = False
-        return
     if not _enabled:
-        if _self_check() is not None:
-            return                  # _self_check disabled native and said why
+        reason = _self_check()
+        if reason is not None:
+            raise RuntimeError(
+                "native combat: self-check failed: %s; fire control is "
+                "native only" % reason)
         _enabled = True
         resync()
+    if _switch and not switch:
+        torpedo_table_mark_dirty()  # K3's table, unpushed from here on
+    _switch = switch
     _audit = audit
 
 
 def enabled() -> bool:
-    return _enabled
+    """The switch: whether K0, K2, K3, K4, native damage, the tick's effect
+    scope and the dispatched sensor queries run natively (M9). Fire control
+    does not read it (fire_control_native)."""
+    return _switch
 
 
 def fire_control_native() -> bool:
     """Whether fire control (K1) runs natively: the ONE predicate every
     fire-control entry gates on -- the held-weapon pump
-    (host_loop._pump_held_weapons), WeaponSystem.StartFiring's session and
+    (host_loop._pump_held_weapons), WeaponSystem.StartFiring's session,
     the SDK's own weapon calls (Weapon.FireDumb, CanFire, Fire: fire
-    control native only, M8.1, M8.6). The switch today; Task 5 makes it
-    "the module is available" (M9)."""
+    control native only, M8.1, M8.6) and the tractors (k1_tractor_start,
+    tractor_force_step). The module is available and its self-check passed
+    (M9): configure() has run, and the mirror is live. Never the switch.
+    False only before configure() (or after a test's reset()), when the
+    mirror K1 reads has not been pushed."""
     return _enabled
 
 
@@ -198,8 +242,9 @@ def audit_enabled() -> bool:
 
 
 def reset() -> None:
-    global _enabled, _audit
+    global _enabled, _switch, _audit
     _enabled = False
+    _switch = False
     _audit = False
     _failures.clear()
     _profiles.clear()
@@ -285,7 +330,7 @@ def reset() -> None:
         for k in range(len(_COMPUTE_HOME)):
             _h.combat_compute_take(k)
     # Pending frees apply to the mirror they were recorded against, before
-    # a test's combat_clear rebuilds it; queued pushes go (the switch is
+    # a test's combat_clear rebuilds it; queued pushes go (the mirror is
     # off now).
     drain()
     _k1_compute.clear()
@@ -422,20 +467,22 @@ def counts() -> dict:
 
 
 def _disable(reason: str) -> str:
-    global _enabled
+    global _enabled, _switch
     _enabled = False
-    sys.stderr.write("[native-combat] disabled: %s\n" % reason)
+    _switch = False
     return reason
 
 
 def _self_check():
     """Compare the native primitives with THIS interpreter's Python on fixed
     seeded inputs. The native math.dist is CPython 3.11.15's, ported; another
-    interpreter may round differently, and then native must stay off. Returns
-    the reason it disabled native, or None. Inputs stay finite: a non-finite
-    drift/freq/seed makes the Python density raise where native returns NaN."""
+    interpreter may round differently, and then native cannot run (configure
+    raises with this reason). Returns the reason, with the mirror left off,
+    or None. Inputs stay finite: a non-finite drift/freq/seed makes the
+    Python density raise where native returns NaN."""
     if not available():
-        return _disable("native combat bindings not built")
+        return _disable("native combat bindings missing: %s"
+                        % ", ".join(missing_bindings()))
     from engine.appc import nebula_density as nd
     from engine.appc.nebula import DEFAULT_FBM_DIALS
     rng = random.Random(20261031)
@@ -2441,8 +2488,8 @@ def _cache_tube_launch(script) -> None:
     photon, None when that fails too; it catches every import error itself,
     and tube_launch_params a raising GetLaunchSpeed, so loading never
     breaks). An uncached answer (that raise) is not stored: an entry stops
-    learn_tube_launch, so Python's launch may still learn it. Native combat
-    only: with the switch off the module is first resolved at its first
+    learn_tube_launch, so Python's launch may still learn it. Mirror live
+    only: before configure() the module is first resolved at its first
     launch, as before."""
     from engine.appc import weapon_subsystems as ws
     if script and script not in ws._tube_launch_cache:
@@ -3239,7 +3286,7 @@ class TorpedoField:
     def __set__(self, obj, value) -> None:
         d = obj.__dict__
         d[self._name] = value
-        if _enabled:
+        if _switch:
             h = d.get("_k3_row")
             if h is not None:
                 _torp_push(obj, h, self._name, value)
@@ -3247,8 +3294,9 @@ class TorpedoField:
 
 def push_torpedo_field(t, name: str, value) -> None:
     """A Torpedo property (`_velocity`, `_source_ship`, `_containing_set`)
-    was written: push it if the torpedo has a row. Callers test `_enabled`
-    first, so the switch-off cost is that read."""
+    was written: push it if the torpedo has a row. Callers test `_switch`
+    first (K3's table follows the switch), so the switch-off cost is that
+    read."""
     h = t.__dict__.get("_k3_row")
     if h is not None:
         _torp_push(t, h, name, value)
@@ -3271,7 +3319,7 @@ def torpedo_row_add(t) -> None:
     """`_active.append(t)`: a row at the end, unless the table is dirty (the
     rebuild will include it) or `t` already has one (appended twice: the
     list now holds it twice, so the table is rebuilt)."""
-    if not _enabled or _k3_dirty:
+    if not _switch or _k3_dirty:
         return
     h = t.__dict__.get("_k3_row")
     if h is not None and _k3_rows.get(h) is t:
@@ -3315,7 +3363,7 @@ def torpedo_table_rebuild(active) -> None:
     advances it twice a tick) leaves the table dirty and empty: one row
     cannot stand for it, so K3 hands the step to Python until it is gone."""
     global _k3_dirty
-    if not _enabled:
+    if not _switch:
         return
     torpedo_table_mark_dirty()
     from engine.appc.projectiles import Torpedo
@@ -4357,16 +4405,16 @@ def k1_tractor_start(system, target, offset) -> None:
     native system session: `_can_engage` -> `_engage_beam(target, offset)`
     -> the firing edge's event (an effect-queue entry, ruling R8). Every
     write the kernel logs lands on the live objects (a projector's `_firing`
-    through its NativeThawParentWakeField setter: the power thaw). With
-    native combat off nothing can engage: a tractor is native only (logged
-    once)."""
+    through its NativeThawParentWakeField setter: the power thaw). Gated on
+    fire_control_native, never the switch: before configure() nothing can
+    engage, a tractor being native only (logged once)."""
     system._add_target(target)
     system._fire_held = True
     system._held_target = target
     system._held_offset = offset
-    if not _enabled:
-        _log_once("tractor_off", "tractors are native only: with native "
-                  "combat off a tractor engages nothing")
+    if not fire_control_native():
+        _log_once("tractor_off", "tractors are native only: before "
+                  "native_combat.configure() a tractor engages nothing")
         return
     drain()                     # a session start (ruling R2)
     h = system.__dict__.get("_nslot")
@@ -4502,11 +4550,13 @@ def tractor_force_step(ships, dt) -> None:
     applies what it hands back: HOLD's damped targets (SetVelocity(0)) and
     the engage geometry it captured (`_engage_state`, stored quietly: the
     mirror already holds it). A ship with no Object row, or a tractor the
-    mirror cannot name, does nothing (logged once). With native combat off
-    the force does nothing (logged once)."""
-    if not _enabled:
-        _log_once("tractor_force_off", "tractors are native only: with "
-                  "native combat off the tractor force does nothing")
+    mirror cannot name, does nothing (logged once). Gated on
+    fire_control_native, never the switch: before configure() the force
+    does nothing (logged once)."""
+    if not fire_control_native():
+        _log_once("tractor_force_off", "tractors are native only: before "
+                  "native_combat.configure() the tractor force does "
+                  "nothing")
         return
     handles = []
     for ship in ships:
@@ -4786,7 +4836,7 @@ def k0_weapons(ships, dt) -> bool:
     """host_loop._advance_weapons(ships, dt) through K0. False: K0 did not
     run (counts()["k0_python_step_reasons"]) and the caller runs today's
     Python walk; True: every weapon of every ship was stepped."""
-    if not _enabled:
+    if not _switch:
         return _k0_python("off")
     if _audit or _passive_state.audit_enabled():
         return _k0_python("audit")
@@ -6173,7 +6223,7 @@ def _k3_python(why: str):
 
 def _k3_fallback(all_ships, ship_instances):
     """Why this `cb.projectiles` step must run whole in Python, or None."""
-    if not _enabled:
+    if not _switch:
         return "off"
     # The kernel's own can_detect would bypass the audit (as K2).
     if _audit:

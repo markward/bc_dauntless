@@ -270,7 +270,7 @@ class Torpedo(ObjectClass):
         self._vel = v
         if self._scan_live == _scan_gen and not _scan_dirty:
             _scan_table().set_velocity(self.GetObjID(), v.x, v.y, v.z)
-        if _nc._enabled:
+        if _nc._switch:
             _nc.push_torpedo_field(self, "_velocity", v)
 
     @property
@@ -282,7 +282,7 @@ class Torpedo(ObjectClass):
         self._src = src
         if self._scan_live == _scan_gen and not _scan_dirty:
             _scan_table().set_source(self.GetObjID(), *_source_key(src))
-        if _nc._enabled:
+        if _nc._switch:
             _nc.push_torpedo_field(self, "_source_ship", src)
 
     @property
@@ -310,7 +310,7 @@ class Torpedo(ObjectClass):
         if old is not pSet and self._scan_live == _scan_gen and not _scan_dirty:
             _group_leave(old)
             _scan_table().set_group(self.GetObjID(), _group_join(pSet))
-        if _nc._enabled:
+        if _nc._switch:
             _nc.push_torpedo_field(self, "_containing_set", pSet)
 
     def GetVelocityTG(self) -> TGPoint3:
@@ -887,7 +887,7 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     # applies them (engine/appc/native_combat.py, run_k3), its hits included
     # (native damage Task 4: it returns none for the caller to apply); None
     # hands this step to the Python below.
-    if _nc._enabled:
+    if _nc._switch:
         native = _nc.run_k3(dt, all_ships, ship_instances)
         if native is not None:
             return native

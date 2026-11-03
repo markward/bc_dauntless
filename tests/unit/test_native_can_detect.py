@@ -92,8 +92,9 @@ def _both(scenario, envs=(OFF, ON)):
 
 
 def _latch(observer, target) -> bool:
-    """The pair's latch from its owner: native when on (ruling R7)."""
-    if nc.enabled():
+    """The pair's latch from its owner: native while the mirror is live,
+    whatever the switch says (ruling R7; fire control native only, M9)."""
+    if nc.fire_control_native():
         return _h.combat_latched(nc.slot(observer), nc.slot(target))
     targets = sd._broken.get(observer)
     return targets is not None and target in targets

@@ -626,8 +626,8 @@ def apply_hit(*args, **kwargs) -> None:
         # Task 3; native_combat.apply_hit), else -- or when it hands back --
         # the Python reference.
         from engine.appc import native_combat
-        if native_combat._enabled and native_combat.apply_hit(*args,
-                                                              **kwargs):
+        if native_combat._switch and native_combat.apply_hit(*args,
+                                                             **kwargs):
             return None
         return _apply_hit(*args, **kwargs)
     finally:

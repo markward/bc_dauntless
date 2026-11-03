@@ -151,6 +151,11 @@ def test_the_code_operands_are_the_native_constants():
 # ── Python's entries fit the layout exactly (types included) ─────────────────
 
 def test_a_hits_entries_fit_their_layouts_with_exact_types(scratch_set):
+    # PYTHON's entries: the Python damage arm, which only
+    # DAUNTLESS_NATIVE_COMBAT=0 runs now the switch defaults on (a native
+    # entry carries mirror handles, not objects).
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "0"})
+    assert not nc.enabled()
     ship = _ship()
     scratch_set.AddObjectToSet(ship, "Keldon")
     ship.SetSplashDamage(10.0, 1.0)

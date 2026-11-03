@@ -102,7 +102,11 @@ def test_restart_after_depletion_needs_min_firing_charge():
 def test_dead_ship_cannot_fire():
     bank = make_charged_bank(min_firing=1.0, charge=5.0)
     ship = bank._climb_to_ship()
-    ship.IsDead = lambda: True
+    # Dead the real way: CanFire is the native rule (fire control native
+    # only, M8.6), which reads the ship's mirrored `_dead`, not an
+    # instance-patched IsDead.
+    ship.SetDead(1)
+    assert ship.IsDead()
     assert bank.CanFire() == 0
 
 

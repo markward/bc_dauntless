@@ -381,7 +381,11 @@ def test_lead_accel_k_global_pushed(on):
 # ── Switch off ───────────────────────────────────────────────────────────────
 
 def test_switch_off_registers_nothing():
-    assert not nc.enabled()
+    """K3's torpedo table follows the switch, not the mirror: with =0 the
+    mirror is live (fire control native only, M9) and no torpedo gets a
+    row."""
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "0"})
+    assert not nc.enabled() and nc.fire_control_native()
     before = _h.combat_torp_size()
     nc.torpedo_table_rebuild(projectiles._active)
     t = _fire()
@@ -390,4 +394,7 @@ def test_switch_off_registers_nothing():
     t._velocity = TGPoint3(1.0, 0.0, 0.0)
     assert "_k3_row" not in t.__dict__
     assert _h.combat_torp_size() == before == 0
+    nc.torpedo_table_rebuild(projectiles._active)   # with t in flight
+    assert "_k3_row" not in t.__dict__
+    assert _h.combat_torp_size() == 0
     projectiles.expire(t)

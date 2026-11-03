@@ -25,6 +25,13 @@ from engine.core.game import Game, Episode, Mission, _set_current_game
 from engine.rocks import far_tier
 from tests.helpers.rocks import make_major_rock, occlusion_enabled
 
+# The Python sensor rules, with doubles only the Python sees (monkeypatched
+# flags and dials, fake nebulae): DAUNTLESS_NATIVE_COMBAT=0, now the switch
+# defaults on (fire control native only, R1; tests/helpers/native_off.py).
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
+pytestmark = pytest.mark.usefixtures("native_switch_zero")
+
 SCAN_MENU = "Scan Object"
 _exited = []
 

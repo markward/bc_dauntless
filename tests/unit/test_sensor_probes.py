@@ -14,6 +14,13 @@ from engine.appc.subsystems import SensorSubsystem
 from tests.unit.test_sensor_reach import _observer_in_set, _ship_at, _Neb, _nebulae
 from tests.helpers.rocks import occlusion_enabled  # noqa: F401  (fixture)
 
+# The Python sensor rules, with doubles only the Python sees (monkeypatched
+# flags and dials, fake nebulae): DAUNTLESS_NATIVE_COMBAT=0, now the switch
+# defaults on (fire control native only, R1; tests/helpers/native_off.py).
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
+pytestmark = pytest.mark.usefixtures("native_switch_zero")
+
 
 def _probe_at(s, owner_sensors, x, base_range=1000.0):
     probe = ShipClass_Create("Probe")

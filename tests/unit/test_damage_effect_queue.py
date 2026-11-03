@@ -513,7 +513,15 @@ def test_damage_held_across_a_sessions_end_keeps_its_order(delivered,
                                                           events):
     """Review M1: a whole killing hit is held across a native session's end
     and delivered at the boundary in emission order -- its death (ZERO_CROSS,
-    ET_OBJECT_EXPLODING) before its ET_WEAPON_HIT (R2)."""
+    ET_OBJECT_EXPLODING) before its ET_WEAPON_HIT (R2).
+
+    The Python damage arm (DAUNTLESS_NATIVE_COMBAT=0, now the switch
+    defaults on): _peek re-posts the taken entries through eq.post, which
+    holds for the Python producer's entries (object operands) only; a
+    native entry's operands are mirror handles."""
+    from engine.appc import native_combat as nc
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "0"})
+    assert not nc.enabled()
     ship = _ship()
     ship.SetSplashDamage(100.0, 5.0)
     apply_hit(ship, 5000.0, _AT, source=None)    # outside the scope: held

@@ -108,7 +108,7 @@ def update(ships) -> None:
         player = game.GetPlayer() if game is not None and hasattr(game, "GetPlayer") else None
     except Exception:
         player = None
-    if _native_combat._enabled and _native_combat.k4_update(player, ships):
+    if _native_combat._switch and _native_combat.k4_update(player, ships):
         return
     set_current(select_eligible(player, ships))
 

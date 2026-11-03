@@ -8,6 +8,7 @@ import App
 import pytest
 
 from engine import host_loop
+from engine.appc import native_combat
 from engine.appc import passive_state
 from engine.appc.ship_iter import iter_ships
 from engine.appc.weapon_subsystems import (
@@ -23,8 +24,14 @@ def ships(monkeypatch):
     monkeypatch.delenv("DAUNTLESS_PASSIVE_STATE", raising=False)
     monkeypatch.delenv("DAUNTLESS_PASSIVE_AUDIT", raising=False)
     monkeypatch.setenv("DAUNTLESS_COMBAT_SHIPS", "4")
+    # Sleeping weapons are the Python weapons walk: K0's Python arm, which
+    # only DAUNTLESS_NATIVE_COMBAT=0 runs now the switch defaults on (fire
+    # control native only, M1, R1).
+    monkeypatch.setenv("DAUNTLESS_NATIVE_COMBAT", "0")
     App.g_kTimerManager._time = 0.0
     headless_mission.load("engine.dev_missions.combat_stress")
+    native_combat.configure()
+    assert not native_combat.enabled()
     return list(iter_ships())
 
 

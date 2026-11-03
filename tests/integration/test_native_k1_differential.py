@@ -75,6 +75,14 @@ SEED = 20261031
 
 OFF = {"DAUNTLESS_NATIVE_COMBAT": "0"}
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
+#: This differential's reference arm: fire control's PYTHON copy. =0 no
+#: longer reaches it -- fire control is native whenever the module is
+#: available (fire control native only, M9; OFF keeps K1 native and only
+#: K0, K2, K3, K4 and damage Python) -- so the reference leaves the mirror
+#: unconfigured (native_combat.reset(), no configure()), the one state
+#: whose fire_control_native() is False, until Task 6 deletes the Python
+#: copy and this differential becomes golden tests (spec §4.7).
+PYTHON = {"DAUNTLESS_NATIVE_COMBAT": "0"}
 
 # Weapon kinds (native_combat._weapon_kind): systems, then their leaves.
 PHASERS, PULSES, TORPEDOES = 1, 2, 4
@@ -168,8 +176,10 @@ class _Scene:
         for ship in self.ships:
             self.face(ship, self._enemy_of(face, ship))
         step_memo.forget()
-        nc.configure(env)
+        if env is not PYTHON:
+            nc.configure(env)
         assert nc.enabled() is (env is ON)
+        assert nc.fire_control_native() is (env is not PYTHON)
         self.native = env is ON
         self.firing = [g for s in self.ships for g in _groups(s)
                        if g is not s.GetTractorBeamSystem()]
@@ -598,7 +608,10 @@ OPS = (("fire",) * 10 + ("fire_pulse",) * 3 + ("reload",) * 2
           "move", "turn", "face", "manual_on", "manual_move", "manual_off"))
 
 
-def _compare(ref, nat):
+def _compare(ref, nat, ref_fire_control_native=False):
+    """`ref_fire_control_native`: the reference arm is OFF (=0: K1 native,
+    the other kernels Python; fire control native only, M9 -- the K0
+    differential's), not PYTHON (this differential's)."""
     assert len(ref.log) == len(nat.log)
     for tick, (a, b) in enumerate(zip(ref.log, nat.log), start=1):
         assert len(a) == len(b)
@@ -612,10 +625,14 @@ def _compare(ref, nat):
     compare_calls(ref.calls, nat.calls)
     assert nat.audit == [], nat.audit
     assert nat.counts["k1_records"] > 0, nat.counts
-    assert ref.counts["k1_records"] == 0, ref.counts
     # Round trips Task 1: every native walk starts with no WALK_START.
     assert nat.counts["k1_logged"]["walk_start"] > 0, nat.counts
-    assert ref.counts["k1_logged"]["walk_start"] == 0, ref.counts
+    if ref_fire_control_native:
+        assert ref.counts["k1_records"] > 0, ref.counts
+        assert ref.counts["k1_logged"]["walk_start"] > 0, ref.counts
+    else:
+        assert ref.counts["k1_records"] == 0, ref.counts
+        assert ref.counts["k1_logged"]["walk_start"] == 0, ref.counts
 
 
 def _round_trips_ran(nat):
@@ -656,7 +673,7 @@ def _round_trips_ran(nat):
 def _both(monkeypatch, ticks_per_frame, ops=OPS, ships="8", ticks=TICKS,
           before_frame=None, setup=None):
     runs = []
-    for env in (OFF, ON):
+    for env in (PYTHON, ON):
         with monkeypatch.context() as mp:
             scene = _Scene(mp, env, ships=ships)
             if setup is not None:
@@ -853,7 +870,7 @@ def test_handler_stops_and_restarts_mid_walk(monkeypatch, ticks_per_frame):
     Python's does."""
     stats = {}
     runs = [handler_arm(monkeypatch, env, ticks_per_frame, stats)
-            for env in (OFF, ON)]
+            for env in (PYTHON, ON)]
     ref, nat = runs
     _compare(ref, nat)
     py, native = stats[False], stats[True]
@@ -1081,6 +1098,10 @@ def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
         scene = _Scene(mp, env)
         mp.setenv("DAUNTLESS_NATIVE_COMBAT",
                    env["DAUNTLESS_NATIVE_COMBAT"])
+        if env is PYTHON:
+            # The Python reference: GameLoop's configure() would make fire
+            # control native (see PYTHON).
+            mp.setattr(nc, "configure", lambda environ=None: None)
         loop = game_loop.GameLoop()         # configure() reads the env
         assert nc.enabled() is scene.native
         _deterministic_loop(mp)
@@ -1145,8 +1166,8 @@ def test_k1_matches_python_under_the_game_loop_ai(monkeypatch):
     chased), while any two later arms matched exactly."""
     import time
     t0 = time.perf_counter()
-    _loop_arm(monkeypatch, OFF, ticks=LOOP_TICKS)       # warm-up, discarded
-    ref = _loop_arm(monkeypatch, OFF)
+    _loop_arm(monkeypatch, PYTHON, ticks=LOOP_TICKS)    # warm-up, discarded
+    ref = _loop_arm(monkeypatch, PYTHON)
     nat = _loop_arm(monkeypatch, ON)
     _compare(ref, nat)
     # The AI fired on its own, and with native on its StartFiring walks

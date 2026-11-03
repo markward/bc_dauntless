@@ -790,7 +790,7 @@ class ShipSubsystem(TGEventHandlerObject):
         With native combat on the native condition chain stands in
         (native damage Task 3; native_combat.set_condition), else -- or when
         it hands back -- this body, the reference."""
-        if native_combat._enabled and native_combat.set_condition(
+        if native_combat._switch and native_combat.set_condition(
                 self, value, killer, ship):
             return
         before = self._condition

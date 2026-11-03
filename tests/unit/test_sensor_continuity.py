@@ -26,12 +26,17 @@ from engine.core.game import Game, _set_current_game
 from engine.rocks import far_tier
 from tests.helpers.rocks import make_major_rock, occlusion_enabled
 
+# The Python sensor rules, with doubles only the Python sees (monkeypatched
+# flags and dials, fake nebulae): DAUNTLESS_NATIVE_COMBAT=0, now the switch
+# defaults on (fire control native only, R1; tests/helpers/native_off.py).
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 # Several tests here put a bird "behind a rock" and assert the continuity
 # clock runs -- occlusion ships default On (sensor_occlusion.DEFAULT_ENABLED),
 # but it is enabled explicitly so those tests exercise real blocking without
 # riding on the default. Harmless for the
 # tests in this module with no rocks.
-pytestmark = pytest.mark.usefixtures("occlusion_enabled")
+pytestmark = pytest.mark.usefixtures("occlusion_enabled", "native_switch_zero")
 
 _exited_events: list = []
 

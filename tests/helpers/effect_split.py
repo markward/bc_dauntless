@@ -104,3 +104,25 @@ def compare(ref, nat, what="queued"):
         assert x == y, "%s %d differs:\n python %r\n native %r" % (
             what, i, x, y)
     assert len(ref.rows) == len(nat.rows), (len(ref.rows), len(nat.rows))
+
+
+class Scopes:
+    """Counts the tick's effect scopes an arm opened (`opened`).
+
+    Fire control is native in both arms of a differential (fire control
+    native only, M9), so a reference arm (DAUNTLESS_NATIVE_COMBAT=0) also
+    queues: each K1 session defers what it produces and delivers it at its
+    own end (effect_queue.session). What still tells the reference apart is
+    that it never opens the tick's scope (host_loop._combat_effect_scope):
+    its K0, K2 and K3 producers act at once."""
+
+    def __init__(self, mp):
+        from engine.appc import effect_queue
+        self.opened = 0
+        orig = effect_queue.scope
+
+        def scope_spy(*args, _orig=orig, **kwargs):
+            self.opened += 1
+            return _orig(*args, **kwargs)
+
+        mp.setattr(effect_queue, "scope", scope_spy)

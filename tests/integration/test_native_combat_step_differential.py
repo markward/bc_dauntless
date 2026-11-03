@@ -258,10 +258,11 @@ def _vec(p):
 
 @pytest.mark.parametrize("ticks_per_frame", (1, 6))
 def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
-    runs, counts, effects = {}, {}, {}
+    runs, counts, effects, scopes = {}, {}, {}, {}
     failures = None
     for name, env in ARMS:
         with monkeypatch.context() as mp:
+            scopes[name] = effect_split.Scopes(mp)
             runs[name] = _Scene(mp, env).run(ticks_per_frame)
             if env is AUDIT:
                 failures = list(nc.audit_failures())
@@ -286,13 +287,17 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
     assert failures == [], failures
     # Both native arms delivered their weapon events at the tick boundary;
     # the reference never opened the scope, so it queued only the damage
-    # kinds (native damage M2: both arms).
-    assert effects["off"]["delivered"] == effects["off"]["damage"], effects
+    # kinds (native damage M2: both arms) and what K1's own sessions
+    # deferred (fire control is native in every arm: fire control native
+    # only, M9).
+    assert scopes["off"].opened == 0, scopes["off"].opened
+    assert effects["off"]["skipped_gone"] == effects["off"]["failed"] == 0
     for name in ("on", "audit"):
+        assert scopes[name].opened > 0, (name, scopes[name].opened)
         assert effects[name]["delivered"] > effects[name]["damage"], effects
         assert effects[name]["skipped_gone"] == effects[name]["failed"] == 0
     assert counts["off"]["native_calls"] == 0, counts
-    assert counts["off"]["k1_records"] == 0, counts
+    assert counts["off"]["k1_records"] > 0, counts      # M9: native K1
     for name in ("on", "audit"):
         assert counts[name]["native_calls"] > 0, counts
         assert counts[name]["fallbacks"] == 0, counts
