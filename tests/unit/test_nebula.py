@@ -283,6 +283,23 @@ def test_no_creation_hit_at_easy_difficulty():
     assert ship.GetHull().GetCondition() == 1000.0
 
 
+class _UnhurtableShip(_DamageableShip):
+    def IsImmuneToDamage(self):
+        return 1
+
+
+def test_no_creation_hit_on_an_unhurtable_ship():
+    """SetHurtable(0) is the only immunity (native damage M1): the creation
+    hit honours it, as radiation's drain and combat.apply_hit do."""
+    s, n = _set_with_nebula()
+    n.SetupDamage(5000.0, 5000.0)
+    up = _UnhurtableShip("U", 0.0, 1500.0, 0.0, hull=1000.0, shield=500.0)
+    down = _UnhurtableShip("D", 0.0, 1500.0, 0.0, hull=1000.0, shield=0.0)
+    NebulaTracker().update(s, [up, down], 1.0 / 60.0)
+    assert up.GetShieldSubsystem().GetCurrentShields(0) == 500.0
+    assert down.GetHull().GetCondition() == 1000.0
+
+
 def test_environment_damage_event_at_16_hz_while_inside():
     import App
     s, n = _set_with_nebula()                       # SetupDamage(150, 20): armed

@@ -24,7 +24,9 @@ mirrored instead by their own TABLE, kept in ``projectiles._active`` order
 (the K3 section below: ``TorpedoField``, ``torpedo_row_add``).
 
 Rows live exactly as long as their Python object: ``register`` in
-``__init__``, unregistered by the object's ``weakref.finalize``. Objects are
+``__init__``, unregistered by the object's ``weakref.finalize`` -- recorded
+there and freed at the next drain point (``drain``: no row is freed while a
+kernel computes). Objects are
 registered whenever the bindings are built, even with the switch off; nothing
 is PUSHED while it is off, and turning it on resyncs every row.
 
@@ -32,12 +34,15 @@ The switch is read only in ``configure()`` (called by ``GameLoop.__init__``):
 ``DAUNTLESS_NATIVE_COMBAT=1`` on, ``=0`` or unset off;
 ``DAUNTLESS_NATIVE_AUDIT=1`` turns the audit on and implies native on.
 """
+import collections
 import importlib
 import math
 import operator
 import os
 import random
 import sys
+import threading
+import traceback
 import weakref
 from typing import Mapping
 
@@ -46,6 +51,8 @@ from engine.appc import passive_state as _passive_state
 from engine.appc.math import TGPoint3
 from engine.appc.passive_power import FrozenField, ThawParentWakeField
 from engine.appc.passive_state import WakeField
+from engine.core import frame_profiler as _prof
+from engine.core import ids as _ids
 from engine.core.ids import implements
 
 try:
@@ -138,7 +145,14 @@ def available() -> bool:
             and hasattr(_h, "combat_set_part_poses")
             and hasattr(_h, "combat_k0_begin")
             and hasattr(_h, "combat_effect_take")
-            and hasattr(_h, "combat_effect_rebind"))
+            and hasattr(_h, "combat_effect_rebind")
+            and hasattr(_h, "combat_apply_hit")
+            and hasattr(_h, "combat_dmg_guard_check")
+            and hasattr(_h, "combat_dmg_guard_invalidate")
+            and hasattr(_h, "combat_dmg_set_condition")
+            and hasattr(_h, "combat_dmg_clean_handles")
+            and hasattr(_h, "combat_k2_scan_clear")
+            and hasattr(_h, "combat_compute_take"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -176,11 +190,28 @@ def reset() -> None:
     _audit = False
     _failures.clear()
     _profiles.clear()
+    _logged_once.clear()
     # The part-map generation is NOT reset: it is monotonic for the process,
     # so a slot stamped before the reset can never read fresh again.
     _forget_part_caches()
     # Per-class caches: a class patched or re-based since must recompute.
     _kind_by_type.clear()
+    # The field caches too: each keys its class strongly, so a class a test
+    # defined would otherwise outlive the test (and every later
+    # __subclasses__() walk would see it).
+    _class_fields.clear()
+    _class_hidden.clear()
+    _quiet_setters.clear()
+    _dmg_classes.clear()
+    for k in _dmg_counts:
+        _dmg_counts[k] = 0
+    for k in _dmg_guard_computed:
+        _dmg_guard_computed[k] = 0
+    if available():
+        _h.combat_dmg_guard_clear()
+        _h.combat_dmg_clean_clear()
+        _h.combat_k2_scan_clear()
+    _dmg_ctx[0] = None
     _k1_overridden_by_type.clear()
     _k1_watch.clear()
     global _pulse_stale
@@ -205,6 +236,7 @@ def reset() -> None:
         _k4_reasons[k] = 0
     for k in _K3_REASONS:
         _k3_reasons[k] = 0
+    _k3_hit_python[0] = 0
     _k3_iids_sent[:] = [_K2_UNSENT, -1, -1]
     # K3's class watch re-baselines with K2's (a watch built while a class
     # was patched must not outlive the patch).
@@ -237,6 +269,13 @@ def reset() -> None:
             _h.combat_k0_abandon()
         _h.combat_k0_reset_counts()
         _h.combat_step_reset()
+        for k in range(len(_COMPUTE_HOME)):
+            _h.combat_compute_take(k)
+    # Pending frees apply to the mirror they were recorded against, before
+    # a test's combat_clear rebuilds it; queued pushes go (the switch is
+    # off now).
+    drain()
+    _k1_compute.clear()
 
 
 def counts() -> dict:
@@ -356,6 +395,12 @@ def counts() -> dict:
         for k, n in _k3_reasons.items():
             why[k] = why.get(k, 0) + n
             k3["k3_python_steps"] += n
+        # Every hit handed back ran in _k3_apply_hits; those the kernel did
+        # not name a reason for are the driver's own (a torpedo instance
+        # patch): "python".
+        k3["k3_hit_python_reasons"]["python"] = (
+            _k3_hit_python[0] - k3["k3_hit_python"])
+        k3["k3_hit_python"] = _k3_hit_python[0]
         c.update(k3)
     return c
 
@@ -446,10 +491,19 @@ def _slot_of(value):
 def _drop(obj) -> None:
     """Unregister `obj`: its handle went stale (a test's combat_clear), or it
     holds a value the mirror cannot represent. From then on it takes the
-    Python path. Its row is freed now; the finalizer's later unregister of
-    the same handle fails quietly. Silent by design (R2)."""
+    Python path. Its row is freed now, on the main thread: a drop mid-walk
+    is the kernels' "row gone" protocol (a K1 walk ASKs Python, or raises
+    for its walked system; test_native_k1_dispatch), which a deferred free
+    would hide. Off the main thread the whole drop is queued for the next
+    drain point (drain(); spec 2026-11-03 ruling R2): it re-pushes
+    referrers and set members, which are mirror pushes. The finalizer's
+    later unregister of the same handle fails quietly. Silent by design
+    (R2)."""
     h = obj.__dict__.get("_nslot")
     if h is None:
+        return
+    if _off_main():
+        _queue_push(obj, _drop_queued, None, "_drop")
         return
     global _k2_drop_epoch
     _k2_drop_epoch += 1         # K2's cached ship -> iid table names handles
@@ -466,7 +520,7 @@ def _drop(obj) -> None:
     # queue to rebind (and runs with the switch off).
     if hasattr(_h, "combat_effect_rebind"):
         _h.combat_effect_rebind(h, obj)
-    unregister_handle(h)
+    _apply_free(h, None)
     if not _enabled:
         return
     # Rows that NAME the dropped object now read it as unrepresentable (-2),
@@ -482,6 +536,10 @@ def _drop(obj) -> None:
             push_set_members(pSet)
     if k in (_kind("Object"), _kind("Subsystem"), _kind("Ammo")):
         _repush_referrers(obj)
+
+
+def _drop_queued(obj, _arg) -> None:
+    _drop(obj)
 
 
 def _repush_referrers(dropped) -> None:
@@ -595,7 +653,9 @@ class NativeField:
         if _enabled:
             h = obj.__dict__.get("_nslot")
             if h is not None:
-                if self._scalar is None:
+                if _get_ident() != _MAIN_IDENT:
+                    _queue_push(obj, _repush_native, self, self._name)
+                elif self._scalar is None:
                     self._push(obj, h, value)
                 else:
                     self._push_scalar(obj, h, value)
@@ -841,7 +901,9 @@ class NativeWrapped:
             h = obj.__dict__.get("_nslot")
             if h is not None:
                 native = self._native
-                if native._scalar is None:
+                if _get_ident() != _MAIN_IDENT:
+                    _queue_push(obj, _repush_native, native, native._name)
+                elif native._scalar is None:
                     native._push(obj, h, value)
                 else:
                     native._push_scalar(obj, h, value)
@@ -899,8 +961,16 @@ def push_watch_value(weapon, value) -> None:
     if _enabled:
         h = weapon.__dict__.get("_nslot")
         if h is not None:
+            if _off_main():     # the watcher's value at the drain
+                _queue_push(weapon, _push_watch_value_of_arg, None,
+                            "_watch_value")
+                return
             _call(weapon, _h.combat_set_f, h, _fid("_watch_value"),
                   float(value))
+
+
+def _push_watch_value_of_arg(weapon, _arg) -> None:
+    _push_watch_value_of(weapon)
 
 
 def _push_watch_value_of(weapon) -> None:
@@ -953,6 +1023,155 @@ class ChargeWatcherField:
             if vd is not None and vd.get("_owner") is obj:
                 del vd["_owner"]        # back to the class default
             obj._watch_checks = WATCH_ALWAYS
+
+
+# ── Native damage: the mirror (spec 2026-11-02-native-damage-design.md §4.1) ─
+#
+# What the native hit and condition chain (native/src/combat/.../damage.h)
+# read that no kernel read before: a ShieldSubsystem's face lists, the
+# subsystem flags and threshold state, the repair-queue membership, each
+# condition watcher's check count and value, the ship's _hurtable, and two
+# class flags saying which stock rules a class follows (dmg_class,
+# dmg_ship). The face lists are written IN PLACE by Python: every writer
+# (damage-map-refresh §6, W1-W7) pushes after mutating, before anything it
+# then posts.
+
+#: dmg_class: a subsystem class following ShipSubsystem's leaf predicates,
+#: WeaponSystem's aggregate ones, or neither (the chain hands it to Python).
+DMG_PYTHON, DMG_LEAF, DMG_AGGREGATE = -1, 0, 1
+#: cond_watch_checks / comb_watch_checks: no watcher in the slot, or one the
+#: native chain cannot stand in for (not a plain FloatRangeWatcher, or not
+#: this subsystem's own). Otherwise the watcher's check count.
+COND_WATCH_NONE, COND_WATCH_FOREIGN = -2, -1
+#: which (effect_queue.WATCH_*) -> (slot attribute, checks field, value
+#: field).
+_COND_WATCH_SLOTS = {
+    _effect_queue.WATCH_CONDITION: ("_condition_watcher",
+                                    "cond_watch_checks", "cond_watch_value"),
+    _effect_queue.WATCH_COMBINED: ("_combined_watcher",
+                                   "comb_watch_checks", "comb_watch_value"),
+}
+
+
+def _cond_watch_state(sub, which) -> tuple:
+    """(checks, value) the row holds for `sub`'s watcher `which`."""
+    w = sub.__dict__.get(_COND_WATCH_SLOTS[which][0])
+    if w is None:
+        return COND_WATCH_NONE, 0.0
+    from engine.appc.float_range_watcher import FloatRangeWatcher
+    wd = getattr(w, "__dict__", None)
+    if (type(w) is not FloatRangeWatcher or wd.get("_cond_owner") is not sub
+            or wd.get("_cond_which") != which):
+        return COND_WATCH_FOREIGN, 0.0
+    checks = wd.get("_checks")
+    value = wd.get("_value")
+    if type(checks) is not dict or type(value) is not float:
+        return COND_WATCH_FOREIGN, 0.0
+    return len(checks), value
+
+
+def push_cond_watch(sub, which) -> None:
+    """`sub`'s condition watcher `which` changed: assigned, or a check
+    added or removed (FloatRangeWatcher, `_cond_owner`)."""
+    if not _enabled:
+        return
+    h = sub.__dict__.get("_nslot")
+    if h is None:
+        return
+    if _off_main():
+        _queue_push(sub, push_cond_watch, which, "cond_watch")
+        return
+    n, v = _cond_watch_state(sub, which)
+    _slot, checks_field, value_field = _COND_WATCH_SLOTS[which]
+    _call(sub, _h.combat_set_i, h, _fid(checks_field), n)
+    if "_nslot" in sub.__dict__:
+        _call(sub, _h.combat_set_f, h, _fid(value_field), v)
+
+
+def push_cond_watch_value(sub, which, value) -> None:
+    """An owned condition watcher committed `value` (_update_queued)."""
+    if _enabled:
+        h = sub.__dict__.get("_nslot")
+        if h is not None:
+            if _off_main():     # the watcher's state at the drain
+                _queue_push(sub, push_cond_watch, which, "cond_watch")
+                return
+            _call(sub, _h.combat_set_f, h,
+                  _fid(_COND_WATCH_SLOTS[which][2]), value)
+
+
+class CondWatcherField:
+    """ShipSubsystem._condition_watcher / _combined_watcher: a plain
+    FloatRangeWatcher assigned here is ADOPTED (its `_cond_owner` is the
+    subsystem, `_cond_which` the slot), so each check it adds or removes and
+    each value it commits pushes the row; anything else reads
+    COND_WATCH_FOREIGN (the native chain then hands that subsystem's writes
+    to Python). A watcher replaced is released. No __get__."""
+
+    def __init__(self, which) -> None:
+        self._which = which
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
+
+    def __set__(self, obj, value) -> None:
+        from engine.appc.float_range_watcher import FloatRangeWatcher
+        d = obj.__dict__
+        old = d.get(self._name)
+        d[self._name] = value
+        if old is not None and old is not value:
+            od = getattr(old, "__dict__", None)
+            if od is not None and od.get("_cond_owner") is obj:
+                del od["_cond_owner"]
+                del od["_cond_which"]
+        if (type(value) is FloatRangeWatcher
+                and value.__dict__.get("_cond_owner") is None):
+            value._cond_owner = obj
+            value._cond_which = self._which
+        push_cond_watch(obj, self._which)
+
+
+class RampField(NativeField):
+    """ShieldSubsystem._ramp_fraction, a list of floats or None (no charge
+    tick yet: ApplyDamage reads the face live): pushed as `_ramp_fraction`
+    (0.0 for None) and `_ramp_set` (1.0 where a float). Written in place by
+    the charge tick, which pushes (push_field)."""
+
+    def __init__(self) -> None:
+        super().__init__(list)
+
+    def _encode(self, value):
+        if type(value) is not list:
+            raise TypeError("not a list: %r" % type(value).__name__)
+        vals, sets = [], []
+        for x in value:
+            if x is None:
+                vals.append(0.0)
+                sets.append(0.0)
+                continue
+            if isinstance(x, (str, bytes)) or not isinstance(x, (int, float)):
+                raise TypeError("not a number: %r" % type(x).__name__)
+            vals.append(float(x))
+            sets.append(1.0)
+        return vals, sets
+
+    def _push(self, obj, h, value) -> None:
+        try:
+            vals, sets = self._encode(value)
+        except (TypeError, ValueError, OverflowError):
+            _drop(obj)
+            return
+        _call(obj, _h.combat_set_floats, h, _fid("_ramp_fraction"), vals)
+        if "_nslot" in obj.__dict__:
+            _call(obj, _h.combat_set_floats, h, _fid("_ramp_set"), sets)
+
+    def audit(self, value, row) -> bool:
+        try:
+            vals, sets = self._encode(value)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return (_hexes(vals) == _hexes(row["_ramp_fraction"])
+                and _hexes(sets) == _hexes(row["_ramp_set"]))
 
 
 class PartKeyField(NativeField):
@@ -1107,19 +1326,16 @@ class HullBoxField(NativeField):
                 and _hexes(row["_shield_hull_box_half"]) == _hexes(hh))
 
 
-class HasShieldsField:
-    """``ShieldSubsystem._max_shields``: plain storage, but every rebind
-    re-pushes the derived ``has_shields`` flag. The flag is whatever the
-    subsystem's own ``HasShields()`` answers -- the expression is never
-    re-typed here. The in-place ``_max_shields[f] = v`` write
-    (``SetMaxShields``) cannot be seen by a descriptor and calls
-    `push_has_shields` itself."""
-
-    def __set_name__(self, owner, name) -> None:
-        self._name = name
+class HasShieldsField(NativeFloatList):
+    """``ShieldSubsystem._max_shields``: the face caps, mirrored as a list
+    (the native hit's ramp reads them), and every rebind re-pushes the
+    derived ``has_shields`` flag too. The flag is whatever the subsystem's
+    own ``HasShields()`` answers -- the expression is never re-typed here.
+    The in-place ``_max_shields[f] = v`` write (``SetMaxShields``) cannot be
+    seen by a descriptor and pushes both itself."""
 
     def __set__(self, obj, value) -> None:
-        obj.__dict__[self._name] = value
+        NativeFloatList.__set__(self, obj, value)
         push_has_shields(obj)
 
 
@@ -1128,12 +1344,19 @@ def push_has_shields(sub) -> None:
     if _enabled:
         h = sub.__dict__.get("_nslot")
         if h is not None:
+            if _off_main():
+                _queue_push(sub, _push_has_shields_arg, None, "has_shields")
+                return
             try:
                 v = int(sub.HasShields())
             except (TypeError, ValueError, OverflowError):
                 _drop(sub)  # not representable: never leave a stale row
                 return
             _call(sub, _h.combat_set_i, h, _fid("has_shields"), v)
+
+
+def _push_has_shields_arg(sub, _arg) -> None:
+    push_has_shields(sub)
 
 
 def _has_shields_flag(sub) -> int:
@@ -1254,6 +1477,7 @@ def forget_rows() -> None:
     for obj in list(_registry.values()):
         obj.__dict__.pop("_nslot", None)
     _registry.clear()
+    _discard_pending_rows()
     _forget_part_caches()
     bump_part_gen()     # the cleared mirror's generation is back at 1
     torpedo_table_mark_dirty()
@@ -1262,13 +1486,219 @@ def forget_rows() -> None:
     _k2_watch_seen[0] = -1
 
 
+# ── Deferred frees and off-main pushes (spec 2026-11-03-kernels-off-the-lock
+# §2 goal 2, §4, ruling R2) ────────────────────────────────────────────────
+#
+# Nothing may mutate the mirror tables while a kernel computes (Task 3
+# computes with the GIL released). So:
+#
+# - FREES are recorded, never applied where they happen: a mirror row (a
+#   finalizer, a replaced Profile row) and an ObjectClass's transform slot
+#   (objects.py's finalizer), with the row's launch module
+#   (combat_unregister's k1_launch_module_release) and its part caches. A
+#   pending row stays valid, so its handle is not reused, until the drain.
+#   The one exception is a _drop on the main thread: a LIVE object's row
+#   leaving the mirror mid-walk is the kernels' "row gone" protocol, so it
+#   frees at once, between records, as before (off the main thread the
+#   whole _drop is queued, like a push).
+# - PUSHES made on a thread other than the main one (a finalizer or an SDK
+#   __del__ that ran there: ConditionPulseReady's RemoveRangeCheck pushes
+#   `_watch_checks`) are queued. Main-thread pushes keep their direct path.
+#   A queued push re-pushes what the object holds AT THE DRAIN, never the
+#   value it recorded: a main-thread write in between must not be undone.
+#
+# drain() applies them, frees first, each in recorded order. Drain points:
+# the start of each kernel session (no-op while one is open: a nested
+# session's start never frees under its parent), host_loop's tick boundary,
+# the GameLoop's own end-of-tick, a paused frame (host_loop.run), the
+# per-tick mirror audit (DAUNTLESS_NATIVE_AUDIT, GameLoop.tick), both
+# mission swaps and reset(). forget_rows() (after a test's combat_clear
+# rebuilt the mirror) applies no pending row free or push, only the
+# transform-slot frees.
+#
+# A queued push that raises at the drain is logged (once per site) and the
+# drain carries on, as the push did inside the __del__ that made it (Python
+# reports an exception there and carries on; roadmap decision 13's rule for
+# a queued flush). Two stalls are logged once each: more than
+# PENDING_FREES_WARN frees pending (no tick ran to drain them: a menu, a
+# pre-boot screen), and a drain at a tick boundary skipped because a kernel
+# session is still open there (a leaked session: K1 nests, so the next begin
+# does not throw).
+#
+# Both lists are deques: append and popleft are atomic under the GIL on any
+# thread, and the Python a drain runs may record more.
+
+_get_ident = threading.get_ident
+_MAIN_IDENT = threading.main_thread().ident
+# (row handle or None, (store, transform handle) or None)
+_pending_frees: collections.deque = collections.deque()
+# (weakref to the object, re-push function, its argument, label)
+_pending_pushes: collections.deque = collections.deque()
+# More pending frees than this is logged once (a stalled drain).
+PENDING_FREES_WARN = 10_000
+# The keys _log_once has logged (reset() forgets them).
+_logged_once: set = set()
+
+
+def _log_once(key, message: str) -> None:
+    """One stderr line per `key`, the first time."""
+    if key in _logged_once:
+        return
+    _logged_once.add(key)
+    sys.stderr.write("[native-combat] %s\n" % message)
+
+
+def _off_main() -> bool:
+    return _get_ident() != _MAIN_IDENT
+
+
+def defer_free(h=None, store=None, xform=None) -> None:
+    """Record a free: row `h` and/or transform slot `xform` of `store`.
+    Never raises (a finalizer body)."""
+    _pending_frees.append((h, None if xform is None else (store, xform)))
+    if len(_pending_frees) > PENDING_FREES_WARN:
+        try:
+            _log_once("pending_frees",
+                      "%d mirror frees pending, more than %d: nothing has "
+                      "drained them (no tick ran?)"
+                      % (len(_pending_frees), PENDING_FREES_WARN))
+        except Exception:
+            pass
+
+
+def _queue_push(obj, fn, arg, label) -> None:
+    """A push `fn(obj, arg)` made off the main thread, for the drain."""
+    _pending_pushes.append((weakref.ref(obj), fn, arg, label))
+
+
+def _repush_native(obj, field) -> None:
+    """A queued NativeField push: the field's value as the object holds it
+    now, by the field's own push."""
+    d = obj.__dict__
+    h = d.get("_nslot")
+    if not _enabled or h is None or field._name not in d:
+        return
+    if field._scalar is None:
+        field._push(obj, h, d[field._name])
+    else:
+        field._push_scalar(obj, h, d[field._name])
+
+
+def _session_open() -> bool:
+    return bool(available() and (
+        _h.combat_k0_open() or _h.combat_k1_depth() or _h.combat_k2_open()
+        or _h.combat_k3_open()))
+
+
+def _apply_free(h, slot) -> None:
+    if slot is not None:
+        try:
+            slot[0].free(*slot[1])
+        except Exception:
+            # A store reset (tests) or interpreter teardown can invalidate
+            # the handle first.
+            pass
+    if h is not None:
+        _forget_part_caches(h)
+        try:
+            _h.combat_unregister(h)
+        except Exception:
+            pass        # a combat_clear may have freed it
+
+
+def drain(boundary: bool = False) -> None:
+    """Apply every pending free, then every queued push, in recorded order,
+    on the main thread with the GIL held. Nothing while a kernel session is
+    open, and nothing when called off the main thread. What a push's own
+    Python records (a collection it triggers) waits for the next drain. A
+    push that raises is logged once per site; the rest still apply.
+    `boundary`: a tick boundary, where no session should be open, so a
+    skipped drain there is logged once."""
+    if not (_pending_frees or _pending_pushes) or _off_main():
+        return
+    if _session_open():
+        if boundary:
+            _log_once("boundary_session",
+                      "a drain at the tick boundary was skipped: a kernel "
+                      "session is still open (K0 %d, K1 depth %d, K2 %d, "
+                      "K3 %d); frees and queued pushes wait until it closes"
+                      % (_h.combat_k0_open(), _h.combat_k1_depth(),
+                         _h.combat_k2_open(), _h.combat_k3_open()))
+        return
+    frees, pushes = _pending_frees, _pending_pushes
+    while frees:
+        _apply_free(*frees.popleft())
+    for _ in range(len(pushes)):
+        ref, fn, arg, label = pushes.popleft()
+        obj = ref()
+        if obj is not None:
+            try:
+                fn(obj, arg)
+            except Exception as e:
+                site = (getattr(fn, "__qualname__", repr(fn)), label)
+                if site not in _logged_once:
+                    _log_once(site, "a queued push (%s, %s) raised at the "
+                              "drain: %r; the drain carries on"
+                              % (site[0], label, e))
+                    traceback.print_exception(e, file=sys.stderr)
+
+
+def _discard_pending_rows() -> None:
+    """forget_rows: the mirror was rebuilt (combat_clear), so no pending row
+    free or push may reach it. Transform-slot frees still apply: the store
+    was not cleared."""
+    frees = _pending_frees
+    _pending_pushes.clear()
+    while frees:
+        _apply_free(None, frees.popleft()[1])
+
+
+def pending_frees() -> list:
+    """(row handle or None, (store, transform handle) or None) per pending
+    free, in recorded order."""
+    return list(_pending_frees)
+
+
+def pending_pushes() -> list:
+    """(object or None if collected, label) per queued push, in recorded
+    order."""
+    return [(ref(), label) for ref, _fn, _arg, label in _pending_pushes]
+
+
 def unregister_handle(h: int) -> None:
-    """Finalizer body: never raises (a combat_clear may have freed it)."""
-    _forget_part_caches(h)
+    """Finalizer body: records the free (drain() applies it). Never
+    raises."""
+    defer_free(h)
+
+
+def _obj_id_findable(obj, _findable) -> None:
+    """engine.core.ids' hook: `obj` left (or rejoined) the id registry.
+    Python's probe walk (SensorSubsystem.probes) skips an id that does not
+    resolve; native can_detect's finds its probes by obj_id in the mirror,
+    where a collected object's row waits for the drain. So the row's obj_id
+    lookup follows the registry. Queued off the main thread, like a push."""
+    h = obj.__dict__.get("_nslot")
+    if h is None or not available() or (h >> _KIND_SHIFT) != _kind("Object"):
+        return
+    if _off_main():
+        _queue_push(obj, _push_obj_id_findable, None, "obj_id_findable")
+        return
+    _push_obj_id_findable(obj, None)
+
+
+def _push_obj_id_findable(obj, _arg) -> None:
+    """Whether `obj`'s id resolves to it now, pushed to its row."""
+    h = obj.__dict__.get("_nslot")
+    if h is None:
+        return
     try:
-        _h.combat_unregister(h)
-    except Exception:
-        pass
+        _h.combat_set_obj_id_findable(
+            h, _ids.get_object_by_id(obj.GetObjID()) is obj)
+    except ValueError:
+        pass        # a combat_clear freed the row
+
+
+_ids._findable_hook = _obj_id_findable
 
 
 #: Subsystem.weapon_kind by class, in isinstance order (a bank is not a
@@ -1533,6 +1963,8 @@ def _flags(obj, h) -> dict:
             "is_ship_class": int(isinstance(obj, ShipClass)),
             # Weapon.FireDumb's warp-in hold (K1's native dumb fire).
             "arriving": _arriving_flag(obj),
+            # The native hit stands in for this ship class's (damage).
+            "dmg_ship": _dmg_ship(type(obj)),
         }
     if k == _kind("Subsystem"):
         return {"has_parent_ship_getter": int(implements(obj,
@@ -1541,7 +1973,9 @@ def _flags(obj, h) -> dict:
                 "k1_overridden": _k1_overridden(type(obj)),
                 "pump_self_managed": int(bool(getattr(
                     type(obj), "_pump_self_managed", False))),
-                "has_shields": _has_shields_flag(obj)}
+                "has_shields": _has_shields_flag(obj),
+                # The condition chain's rules for this class (damage).
+                "dmg_class": _dmg_class(type(obj))}
     return {}
 
 
@@ -1600,6 +2034,21 @@ def bump_part_gen() -> None:
     and turning it on bumps again (resync)."""
     global _part_gen
     _part_gen += 1
+    if _enabled:
+        if _off_main():         # the generation as it stands at the drain
+            _queue_push(_PART_GEN, _push_part_gen, None, "part_gen")
+            return
+        _h.combat_set_part_gen(_part_gen)
+
+
+class _PartGen:
+    """The weakly referenceable owner of a queued part-generation push."""
+
+
+_PART_GEN = _PartGen()
+
+
+def _push_part_gen(_owner, _arg) -> None:
     if _enabled:
         _h.combat_set_part_gen(_part_gen)
 
@@ -1870,12 +2319,13 @@ def _resolve_manual_slot(ship, h, drop=True) -> None:
 def _mount_order(ship) -> list:
     """The ship's subsystems as `part_severance.authored_mount_subsystem`
     walks them (`_mounted_subsystems`: combat._iter_subsystems order), as
-    Subsystem handles; -2 for one the mirror cannot name."""
+    Subsystem handles; -2 for one the mirror cannot name, or whose
+    GetPosition() raises (the hit hands back, and the reference raises)."""
     from engine.appc.part_severance import _mounted_subsystems
     sub_kind = _kind("Subsystem")
     out = []
-    for sub, _mount in _mounted_subsystems(ship):
-        t = _slot_of(sub)
+    for sub, mount in _mounted_subsystems(ship, keep_raising=True):
+        t = None if mount is None else _slot_of(sub)
         out.append(t if t is not None and (t >> _KIND_SHIFT) == sub_kind
                    else REF_UNREPRESENTABLE)
     return out
@@ -2181,6 +2631,9 @@ def _push_extras(obj, h) -> None:
             push_pulse_params(obj)
             if "_nslot" in obj.__dict__:
                 _push_watch_value_of(obj)
+        for which in _COND_WATCH_SLOTS:
+            if "_nslot" in obj.__dict__:
+                push_cond_watch(obj, which)
     elif k == _kind("Set"):
         push_set_members(obj)
         push_set_frame(obj)
@@ -2595,6 +3048,10 @@ _TORP_FIELDS = {
     "_containing_set": (_enc_ref("Set"), "r", "cset"),
     "_mount_key": (_enc_mount, "m", None),
     "_baked_offset": (_enc_baked, "b", None),
+    # The hit K3 applies at DONE (native damage Task 4).
+    "_damage": (lambda t, v: _num(v), "f", "damage"),
+    "_damage_radius_factor": (lambda t, v: _num(v), "f",
+                              "damage_radius_factor"),
 }
 # The fields kept in the torpedo's __dict__ (TorpedoField); the other three
 # are Torpedo properties over the `_vel` / `_src` / `_cset` slots.
@@ -2934,6 +3391,7 @@ def audit_mirror() -> None:
             _audit_slot(obj, row, name)
             if "_watch_checks" in d:
                 _audit_watch_checks(obj, row, name)
+            _audit_cond_watch(obj, row, name)
     _audit_torpedoes()
     _audit_globals()
     if _h.combat_part_gen() != _part_gen:
@@ -3021,6 +3479,18 @@ def _audit_watch_checks(weapon, row, name) -> None:
     if owned and float(watcher._value).hex() \
             != float(row["_watch_value"]).hex():
         _failures.append((name, "_watch_value"))
+
+
+def _audit_cond_watch(sub, row, name) -> None:
+    """Each condition watcher's check count and (an adopted one's) value,
+    as the watcher holds them NOW: a check added behind its methods is
+    caught, not only a missed push."""
+    for which, (_slot, cf, vf) in _COND_WATCH_SLOTS.items():
+        n, v = _cond_watch_state(sub, which)
+        if row[cf] != n:
+            _failures.append((name, cf))
+        if n >= 0 and v.hex() != float(row[vf]).hex():
+            _failures.append((name, vf))
 
 
 def _audit_set(pSet, row, name) -> None:
@@ -3128,6 +3598,69 @@ def now() -> float:
         return float(get())
     except Exception:
         return 0.0
+
+
+# ── The compute timers (kernels off the lock, Task 1) ──────────────────────
+#
+# The binding times exactly each kernel's compute call (ComputeSpan in
+# host_bindings.cc: K0-K3's next(), K3's apply_hits, K4's k4_eligible) into
+# one accumulator per kernel; combat_compute_take(k) reads and zeroes it.
+# K0-K3 compute with the GIL released (THE GIL RELEASE there: kernels off
+# the lock, Task 3). Each driver takes its kernel's once a session (K3: once
+# more after its hits; K4: once a call) and reports it to the frame
+# profiler as `k<k>.compute`, a child of the scope the session ran in. That
+# scope is the kernel's home row (_COMPUTE_HOME) in the tick's own step; a
+# session run under any other scope -- K1's AI-started system sessions
+# (StartFiring inside gl.ai), or one started by an effect delivered in
+# sim.effects -- reports as `k<k>.compute@<scope>`, so no row is ever
+# recorded under two parents (frame_profiler.record) and each reads at most
+# its parent. The take runs whether the profiler is on or not, so the
+# accumulator never carries a session's time into another.
+#
+# K1 sessions nest (a handler a record runs may start one): a session's own
+# compute is what the accumulator gained while it was the innermost one, so
+# entering a nested session first banks the accumulator into the enclosing
+# session's tally (_k1_compute: [scope, ms, calls] per open session).
+# K0, K2 and K3 refuse to nest, and their accumulators are their own.
+
+_COMPUTE_HOME = ("sim.weapons", "cb.held_weapons", "cb.phasers",
+                 "cb.projectiles", "cb.eligibility")
+_k1_compute: list = []
+
+
+def _compute_record(k, where, ms, n) -> None:
+    """Report kernel `k`'s compute (`n` calls, `ms`) run under `where`."""
+    if n and _prof._enabled:
+        if where == _COMPUTE_HOME[k]:
+            _prof.record("k%d.compute" % k, ms, n)
+        else:
+            _prof.record("k%d.compute@%s" % (k, where), ms, n)
+
+
+def _compute_taken(k) -> None:
+    """A K0/K2/K3 session or a K4 call is over: its compute, to the scope
+    open around it."""
+    ms, n = _h.combat_compute_take(k)
+    _compute_record(k, _prof.open_scope(), ms, n)
+
+
+def _k1_compute_enter() -> None:
+    """A K1 session starts: bank what the enclosing one computed so far."""
+    if _k1_compute:
+        ms, n = _h.combat_compute_take(1)
+        top = _k1_compute[-1]
+        top[1] += ms
+        top[2] += n
+    _k1_compute.append([_prof.open_scope(), 0.0, 0])
+
+
+def _k1_compute_exit() -> None:
+    """A K1 session ends: its own compute, to the scope it started in."""
+    ms, n = _h.combat_compute_take(1)
+    if not _k1_compute:         # reset() mid-session (tests)
+        return
+    where, ms0, n0 = _k1_compute.pop()
+    _compute_record(1, where, ms0 + ms, n0 + n)
 
 
 # ── K1: the native fire-control kernel's driver (phase 1b) ─────────────────
@@ -3591,8 +4124,12 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     equals Python) and the exception re-raised; the walked system's row
     dropped by a handler mid-walk (the kernel cannot follow it) re-raises
     as a RuntimeError naming that invariant."""
-    with _effect_queue.session():
-        _run_k1(dt, ships, pump_body, system)
+    _k1_compute_enter()
+    try:
+        with _effect_queue.session():
+            _run_k1(dt, ships, pump_body, system)
+    finally:
+        _k1_compute_exit()
 
 
 def _run_k1(dt, ships, pump_body, system) -> None:
@@ -3691,6 +4228,7 @@ def k1_pump(ships, dt, pump_body) -> None:
     """host_loop._pump_held_weapons(ships, dt) through K1. `ships` is a
     list; a ship with no Object row is passed as -1, and the kernel hands
     each of its getters back (RUN_PYTHON) to `pump_body(ship, getter)`."""
+    drain()                     # a session start (ruling R2)
     if not _k1_walk_check_sent:
         _k1_send_walk_check()
     _k1_recheck_overrides()
@@ -3712,6 +4250,7 @@ def k1_system(system, dt) -> None:
     """WeaponSystem.StartFiring's immediate update_weapons(dt) through K1.
     A system with no Subsystem row runs its Python update_weapons, as the
     kernel's RUN_PYTHON would."""
+    drain()                     # a session start (ruling R2)
     h = system.__dict__.get("_nslot")
     if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
         system.update_weapons(dt)
@@ -3987,6 +4526,7 @@ def k0_weapons(ships, dt) -> bool:
         return _k0_python("audit")
     if _h.combat_k0_open():
         return _k0_python("nested")
+    drain()                     # a session start (ruling R2)
     global _ws, _step_memo, _k0_ctx
     if _ws is None:
         from engine.appc import weapon_subsystems
@@ -4065,8 +4605,11 @@ def run_k0(ships, dt) -> None:
     RUN_PYTHON records' Python alike -- at its end, in emission order;
     inside the tick's scope that one delivers. An abandoned session keeps
     the entries already queued (ruling F5)."""
-    with _effect_queue.session():
-        _run_k0(ships, dt)
+    try:
+        with _effect_queue.session():
+            _run_k0(ships, dt)
+    finally:
+        _compute_taken(0)
 
 
 def _run_k0(ships, dt) -> None:
@@ -4195,12 +4738,14 @@ _K2_ROLES = (
          "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
          "_strip_emit_position", "_emitter_world_position", "GetLength",
          "GetDirection", "GetUp", "GetArcWidthAngles", "GetArcHeightAngles",
-         "IsDisabled", "IsDestroyed")),
+         "IsDisabled", "IsDestroyed",
+         # THE DAMAGE PULSE (native damage Task 4) reads their values.
+         "GetMaxDamage", "GetMaxDamageDistance", "GetDamageRadiusFactor")),
     ("system", "engine.appc.weapon_subsystems", "PhaserSystem",
      _K2_SUBSYSTEM_NAMES + (
          "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
          "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed",
-         "GetPowerLevel")),
+         "GetPowerLevel", "PP_LOW")),
     ("shield", "engine.appc.subsystems", "ShieldSubsystem",
      _K2_SUBSYSTEM_NAMES + ("HasShields", "IsOn", "IsDisabled",
                             "IsDestroyed")),
@@ -4226,13 +4771,23 @@ _K2_SHIP_PATCHES = frozenset((
 # StopFiring (system and bank): an offline system's stop is logged writes
 # when its banks are idle (round trips Task 3). GetPowerLevel: a resting
 # contact carries the mirror's `_power_level` (spec 2026-11-02 §4.3).
+# PP_LOW, and a bank's GetMaxDamage, GetMaxDamageDistance and
+# GetDamageRadiusFactor: THE DAMAGE PULSE reads the mirrored values (native
+# damage Task 4). The bank's three (_K2_BANK_PULSE_PATCHES) are read by the
+# pulse alone, so one on a bank's instance hands THAT bank's pulses to
+# Python (pulse "python_banks"), not its ship: the walk and the drain, which
+# calls the bank's own GetDamageRadiusFactor, stay native.
 _K2_SYSTEM_PATCHES = frozenset((
     "GetNumWeapons", "GetWeapon", "IsOn", "IsDisabled", "IsDestroyed",
-    "StopFiring", "GetPowerLevel"))
+    "StopFiring", "GetPowerLevel", "PP_LOW"))
 _K2_BANK_PATCHES = frozenset((
     "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
     "_strip_emit_position", "_emitter_world_position", "GetLength",
-    "StopFiring"))
+    "StopFiring", "GetMaxDamage", "GetMaxDamageDistance",
+    "GetDamageRadiusFactor"))
+_K2_BANK_PULSE_PATCHES = frozenset((
+    "GetMaxDamage", "GetMaxDamageDistance", "GetDamageRadiusFactor"))
+_K2_BANK_WALK_PATCHES = _K2_BANK_PATCHES - _K2_BANK_PULSE_PATCHES
 
 # The snapshot (k2_snapshot_stock): [(module, getter, values), ...] for the
 # functions; [(role, stock class, resolution), ...] for the classes; the
@@ -4453,7 +5008,7 @@ def _k2_unseen(cls) -> int:
     return 2 if _k2_flag(cls)[1] else 1
 
 
-def _k2_python_ship(ship) -> int:
+def _k2_python_ship(ship, pulse_banks=None) -> int:
     """0: K2 may walk `ship`'s phaser step; 1: its ship must run in Python
     (an instance attribute shadowing a stood-in name on it, its phaser
     system or a bank, a bank or system class overriding one of its own
@@ -4461,7 +5016,10 @@ def _k2_python_ship(ship) -> int:
     saw); 2: the whole step must (a bank or system class overriding a
     subsystem name, or a never-seen class flagged "whole"). k2_phasers
     inlines the common case (stock classes, no instance attribute, seen
-    classes) and calls this for the rest."""
+    classes) and calls this for the rest. A bank whose instance shadows
+    only names the pulse reads (_K2_BANK_PULSE_PATCHES) leaves the ship
+    walkable: its handle is appended to `pulse_banks` (its pulses are
+    Python's); a bank with no Subsystem handle sends the ship instead."""
     d = ship.__dict__
     why = _k2_unseen(type(ship))
     if why == 2:
@@ -4492,8 +5050,15 @@ def _k2_python_ship(ship) -> int:
         bd = getattr(b, "__dict__", None)
         if bd is None:
             continue
-        if not bd.keys().isdisjoint(_K2_BANK_PATCHES):
-            why = 1
+        keys = bd.keys()
+        if not keys.isdisjoint(_K2_BANK_PATCHES):
+            h = bd.get("_nslot")
+            if (not keys.isdisjoint(_K2_BANK_WALK_PATCHES)
+                    or pulse_banks is None or type(h) is not int
+                    or (h >> _KIND_SHIFT) != _kind("Subsystem")):
+                why = 1
+            else:
+                pulse_banks.append(h)
         target = bd.get("_target")
         if target is not None:
             unseen = _k2_unseen(type(target))
@@ -4504,9 +5069,10 @@ def _k2_python_ship(ship) -> int:
 
 
 def _k2_ship_handles(ships):
-    """(handles, python_ships, whole) for begin: each ship's Object handle
-    (-1: no row), the ships _k2_python_ship sends to Python, and whether one
-    sends the whole step. The common case -- a stock phaser system of stock
+    """(handles, python_ships, whole, pulse_banks) for begin: each ship's
+    Object handle (-1: no row), the ships _k2_python_ship sends to Python,
+    whether one sends the whole step, and the banks of walked ships whose
+    pulses are Python's. The common case -- a stock phaser system of stock
     banks, no instance attribute, seen classes -- is decided in the binding
     (combat_k2_scan_ships, a C loop over the instance dicts: this runs every
     tick over every bank); only the ships it could not call clean come back
@@ -4516,13 +5082,17 @@ def _k2_ship_handles(ships):
         _k2_stock_system, _k2_stock_bank, _K2_SHIP_PATCHES,
         _K2_SYSTEM_PATCHES, _K2_BANK_PATCHES)
     python_ships = []
+    pulse_banks = []
     for ship, h in unclean:
-        why = _k2_python_ship(ship)
+        banks = []
+        why = _k2_python_ship(ship, banks)
         if why == 2:
-            return handles, python_ships, True
+            return handles, python_ships, True, []
         if why == 1:
             python_ships.append(h)
-    return handles, python_ships, False
+        else:
+            pulse_banks.extend(banks)
+    return handles, python_ships, False, pulse_banks
 
 
 class _K2Walk(_K1Walk):
@@ -4794,8 +5364,11 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
     stepping `cb.phasers` outside the tick's scope), the session opens its
     own deferral and delivers what it produced -- its kernel's entries and
     its records' Python alike -- at its end, in emission order."""
-    with _effect_queue.session():
-        _run_k2(ships, dt, ship_instances, cx)
+    try:
+        with _effect_queue.session():
+            _run_k2(ships, dt, ship_instances, cx)
+    finally:
+        _compute_taken(2)
 
 
 def _run_k2(ships, dt, ship_instances, cx) -> None:
@@ -4807,6 +5380,8 @@ def _run_k2(ships, dt, ship_instances, cx) -> None:
         prev = _h.combat_set_applier(_applier_context(walk))
         while True:
             rec = _h.combat_k2_next()
+            if _h.combat_k2_take_hits():
+                _kernel_hits_landed(ship_instances)
             kind = rec[0]
             if kind == ASK:
                 gen = _part_gen
@@ -4886,9 +5461,10 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     """host_loop's `cb.phasers` step through K2: True when it ran, False when
     the caller must run the step in Python whole (counted by why in
     counts()["k2_python_step_reasons"])."""
+    drain()                     # a session start (ruling R2)
     why = _k2_step_fallback(ship_instances)
     if why is None:
-        handles, python_ships, whole = _k2_ship_handles(ships)
+        handles, python_ships, whole, pulse_banks = _k2_ship_handles(ships)
         if whole:
             why = "patched"
     if why is not None:
@@ -4904,6 +5480,7 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     ctx = cx.delta()
     ctx["python_ships"] = python_ships
     ctx["trace"] = _k2_host_io._h is not None
+    ctx["pulse"] = _k2_pulse_ctx(handles, ship_instances, pulse_banks)
     t, use_memo, drift = _k1_clocks()
     _h.combat_k2_begin(handles, dt, t, use_memo, drift, ctx)
     cx.commit()
@@ -5175,6 +5752,7 @@ def k4_update(player, ships) -> bool:
     if pw is None or sw is None:
         return _k4_python("weights")
     idx = _h.combat_k4_eligible(ph, max_count, pw, sw)
+    _compute_taken(4)
     if idx is None:
         return False            # counted by the kernel, by why
     ids = {id(player)} if player is not None else set()
@@ -5373,6 +5951,7 @@ def run_k3(dt, all_ships, ship_instances):
     is only a profiler scope); an exception from expire() (an
     ET_TORPEDO_EXITED_SET handler) comes after every write was applied, as in
     Python."""
+    drain()                     # a session start (ruling R2)
     why = _k3_fallback(all_ships, ship_instances)
     if why is not None:
         return _k3_python(why)
@@ -5411,6 +5990,8 @@ def _k3_walk(dt, ship_instances, st, walk, ask):
         if _h.combat_k3_open():
             _h.combat_k3_abandon()
         raise
+    finally:
+        _compute_taken(3)
     _kind, writes, expired, hits = rec
     rows = _k3_rows
     # Every handle to its object BEFORE any expire(): `_active.remove` drops
@@ -5433,7 +6014,11 @@ def _k3_walk(dt, ship_instances, st, walk, ask):
     expire = _k3_proj.expire
     for t in expiring:
         expire(t)
-    return out
+    # THE HITS: applied here, after every ET_TORPEDO_EXITED_SET (K3M §A6),
+    # each fully before the next; none is handed to host_loop.
+    if out:
+        _k3_apply_hits(out, ship_instances, walk)
+    return []
 
 
 def _k3_apply(writes, rows, walk) -> None:
@@ -5504,6 +6089,718 @@ def _k3_answer(rec, walk, dt, ship_instances, st):
         return ((p.x, p.y, p.z),
                 None if n is None else (n.x, n.y, n.z), tier)
     raise RuntimeError("combat K3: unknown ASK %r" % (query,))
+
+
+# ── Native damage: the class rules (spec 2026-11-02-native-damage §4.2) ─────
+#
+# The native hit and condition chain (damage.h) stand in for these methods.
+# A class follows the stock rules when each name resolves to what the stock
+# class's did at the snapshot (_dmg_snapshot) and none to code outside the
+# engine package (_k2_foreign: a test's, a tool's, a mod's); its rows then
+# carry dmg_class / dmg_ship, which the native chain reads, and a class that
+# does not is handed to Python. A stock class patched after the snapshot,
+# and any class patched after its rows were flagged, is caught at every
+# native call (_dmg_unchanged: it re-derives every flagged class's rules).
+
+#: ShipSubsystem methods the condition chain stands in for.
+_DMG_SUB_NAMES = ("GetCondition", "SetCondition", "SetConditionPercentage",
+                  "_set_condition", "_condition_changed",
+                  "_threshold_state_now", "GetConditionPercentage",
+                  "GetMaxCondition", "IsCritical", "IsInvincible",
+                  "_owning_ship", "GetPosition", "GetRadius")
+#: The state predicates: ShipSubsystem's leaf rules or WeaponSystem's
+#: aggregate ones (dmg_class), nothing else.
+_DMG_PREDICATES = ("IsDamaged", "IsDisabled", "IsDestroyed")
+#: ShieldSubsystem methods the hit stands in for.
+_DMG_SHIELD_NAMES = ("ApplyDamage", "GetCurrentShields", "HasShields",
+                     "IsOn", "IsDisabled", "IsDestroyed")
+#: ShipClass methods the hit stands in for (`_iter_subsystems` must stay
+#: absent: part_severance's mount order, the hit's walk, would follow it).
+_DMG_SHIP_NAMES = ("DamageSystem", "IsImmuneToDamage", "GetShields",
+                   "GetHull", "GetSubsystems", "GetWorldLocation",
+                   "GetWorldRotation", "GetScale", "GetCloakingSubsystem",
+                   "_iter_subsystems")
+#: CloakingSubsystem methods the hit stands in for (cloak_shields_suspended
+#: calls them; the native shields_block reads the mirrored `_cloak_state`).
+_DMG_CLOAK_NAMES = ("IsCloaking", "IsDecloaking")
+_dmg_stock = None
+_dmg_classes: dict = {}
+
+
+def _dmg_resolve(cls, names) -> tuple:
+    return tuple(getattr(cls, n, None) for n in names)
+
+
+def _dmg_snapshot() -> dict:
+    """The stock classes' resolutions, taken once (before any test, tool or
+    mod can patch them: at the first row's flags, or host_loop's start)."""
+    global _dmg_stock
+    if _dmg_stock is None:
+        from engine.appc.ships import ShipClass
+        from engine.appc.subsystems import (CloakingSubsystem,
+                                            ShieldSubsystem, ShipSubsystem)
+        from engine.appc.weapon_subsystems import WeaponSystem
+        _dmg_stock = {
+            "classes": (ShipSubsystem, WeaponSystem, ShieldSubsystem,
+                        ShipClass),
+            "cloak_class": CloakingSubsystem,
+            "cloak": _dmg_resolve(CloakingSubsystem, _DMG_CLOAK_NAMES),
+            "sub": _dmg_resolve(ShipSubsystem, _DMG_SUB_NAMES),
+            "leaf": _dmg_resolve(ShipSubsystem, _DMG_PREDICATES),
+            "aggregate": _dmg_resolve(WeaponSystem, _DMG_PREDICATES),
+            "shield": _dmg_resolve(ShieldSubsystem, _DMG_SHIELD_NAMES),
+            "ship": _dmg_resolve(ShipClass, _DMG_SHIP_NAMES),
+        }
+    return _dmg_stock
+
+
+def damage_snapshot_stock() -> None:
+    """host_loop, beside k3_snapshot_stock: take the snapshots now (the
+    classes' and the functions', the kernels' damage's included), before
+    any test, tool or mod can replace one."""
+    _dmg_snapshot()
+    _dmg_functions()
+    _kdmg_functions()
+
+
+def _dmg_class(cls) -> int:
+    """dmg_class for a subsystem class: DMG_LEAF, DMG_AGGREGATE or
+    DMG_PYTHON (cached per class until reset(); _dmg_unchanged re-derives
+    every cached one whenever one of these classes changes)."""
+    hit = _dmg_classes.get(("sub", cls))
+    if hit is None:
+        hit = _dmg_classes[("sub", cls)] = _dmg_class_of(cls)
+        _dmg_watch_grew()
+    return hit
+
+
+def _dmg_watch_grew() -> None:
+    """A class was flagged for the first time: the guard's cache (which
+    watches every flagged class, _dmg_unchanged) must be filled again with
+    it among the watched."""
+    if available():
+        _h.combat_dmg_guard_invalidate(_DMG_GUARD)
+
+
+def _dmg_class_of(cls) -> int:
+    st = _dmg_snapshot()
+    ship_subsystem, _ws, shield, _ship = st["classes"]
+    if not issubclass(cls, ship_subsystem):
+        return DMG_PYTHON
+    names = _dmg_resolve(cls, _DMG_SUB_NAMES)
+    preds = _dmg_resolve(cls, _DMG_PREDICATES)
+    if names != st["sub"] or any(_k2_foreign(v) for v in names + preds):
+        return DMG_PYTHON
+    if preds == st["leaf"]:
+        rule = DMG_LEAF
+    elif preds == st["aggregate"]:
+        rule = DMG_AGGREGATE
+    else:
+        return DMG_PYTHON
+    if issubclass(cls, shield):
+        values = _dmg_resolve(cls, _DMG_SHIELD_NAMES)
+        if values != st["shield"] or any(_k2_foreign(v) for v in values):
+            return DMG_PYTHON
+    if issubclass(cls, st["cloak_class"]):
+        # A ship's cloak: the hit reads its state natively (damage.cc
+        # apply_hit hands back a DMG_PYTHON cloak).
+        values = _dmg_resolve(cls, _DMG_CLOAK_NAMES)
+        if values != st["cloak"] or any(_k2_foreign(v) for v in values):
+            return DMG_PYTHON
+    return rule
+
+
+def _dmg_ship(cls) -> int:
+    """dmg_ship for an object class: 1 for a ShipClass whose hit the native
+    chain stands in for, else 0 (cached per class, as _dmg_class)."""
+    hit = _dmg_classes.get(("ship", cls))
+    if hit is None:
+        hit = _dmg_classes[("ship", cls)] = _dmg_ship_of(cls)
+        _dmg_watch_grew()
+    return hit
+
+
+def _dmg_ship_of(cls) -> int:
+    st = _dmg_snapshot()
+    if issubclass(cls, st["classes"][3]):
+        values = _dmg_resolve(cls, _DMG_SHIP_NAMES)
+        if values == st["ship"] and not any(_k2_foreign(v) for v in values):
+            return 1
+    return 0
+
+
+# ── Native damage: the callers (spec 2026-11-02-native-damage §3 goal 4) ─────
+#
+# With the switch on, every NON-kernel caller of the hit and the condition
+# chain runs the native one (damage.h) through these, synchronously: the
+# hit (combat.apply_hit: collisions, AddDamage and the death cascade, the
+# death splash at its SPLASH delivery, scenery contact, direct calls), the
+# DamageSystem (radiation, the SDK), the condition write (SetCondition,
+# SetConditionPercentage, DestroySystem, repairs, severance). Each returns
+# True when the native chain did it, False when the caller must run the
+# Python reference (a patched function or class, an object the mirror
+# cannot name, a value it cannot hold -- the native call then changed
+# nothing). The binding applies the writes through an applier context
+# installed here, and queues the entries holding their objects (damage.h,
+# Held; the bindings' damage_append_entries).
+
+#: Module functions the native chain stands in for (identity-checked at
+#: every native call against the snapshot, and never foreign).
+_DMG_FUNCTIONS = (
+    ("engine.appc.combat", ("_apply_hit", "_shield_face_from_hit_point",
+                            "_body_frame_delta", "_hull_box_for",
+                            "shields_block", "cloak_shields_suspended",
+                            "_iter_subsystems", "_subsystem_world_position",
+                            "_splash_weight",
+                            "_pick_primary_subsystem_for_dispatch",
+                            "_subsystem_state_flags", "_diff_state")),
+    ("engine.appc.subsystems", ("subsystem_world_position",)),
+    ("engine.appc.objects", ("write_condition", "_is_critical")),
+    ("engine.appc.death_check", ("note_write",)),
+    ("engine.appc.effect_queue", ("emit", "hit_present_operands",
+                                  "weapon_hit_operands")),
+    ("engine.dev_combat_cheats", ("god_mode_active",
+                                  "double_player_weapons_active",
+                                  "disable_npc_shields_active")),
+    ("engine.core.ids", ("implements",)),
+)
+#: The stock-class methods re-checked at every native call: the snapshot's,
+#: plus FloatRangeWatcher._update_queued (COND_WATCH's producer).
+_dmg_fn_snapshot = None
+_dmg_counts = {"hits": 0, "conditions": 0, "damage_systems": 0,
+               "fallbacks": 0}
+
+
+def damage_counts() -> dict:
+    """Since the last reset(): the native hits, condition writes and
+    DamageSystem calls, and the calls handed back to Python (a native
+    call's fallback or the guard's)."""
+    return dict(_dmg_counts)
+
+
+def _dmg_functions() -> list:
+    global _dmg_fn_snapshot
+    if _dmg_fn_snapshot is None:
+        from engine.appc.float_range_watcher import FloatRangeWatcher
+        snap = []
+        for name, names in _DMG_FUNCTIONS:
+            mod = importlib.import_module(name)
+            snap.append((mod, operator.attrgetter(*names),
+                         operator.attrgetter(*names)(mod), names))
+        snap.append((FloatRangeWatcher, operator.attrgetter("_update_queued"),
+                     FloatRangeWatcher._update_queued, ("_update_queued",)))
+        _dmg_fn_snapshot = snap
+    return _dmg_fn_snapshot
+
+
+#: How often each guard was computed in Python (damage_guard_counts).
+_dmg_guard_computed = {"dmg": 0, "kdmg": 0}
+
+
+def damage_guard_counts() -> dict:
+    """Since the last reset(): how often _dmg_unchanged and _kdmg_unchanged
+    were computed in Python (not answered from the binding's cache)."""
+    return dict(_dmg_guard_computed)
+
+
+#: The binding's guard cache slots (THE DAMAGE GUARD CACHE, host_bindings).
+_DMG_GUARD, _KDMG_GUARD = 0, 1
+
+
+def _guard_watch(snapshot, classes=()) -> tuple:
+    """What a guard reads, for combat_dmg_guard_fill: ((module, names), ...)
+    and the classes (a class owner of the snapshot's, and `classes`)."""
+    modules, types = [], list(classes)
+    for owner, get, _values, names in snapshot:
+        if isinstance(owner, type):
+            types.append(owner)
+        else:
+            modules.append((owner, names))
+    return modules, types
+
+
+def _dmg_unchanged() -> bool:
+    """_dmg_unchanged_now, answered from the binding's cache while nothing
+    it reads has changed (THE DAMAGE GUARD CACHE): a patch since the fill
+    makes it stale, and it is computed again. It watches the stock classes
+    and every class rows have been flagged with -- a ship's cloak's among
+    them, whose IsCloaking / IsDecloaking are part of its rules -- and a
+    class first flagged later invalidates the fill (_dmg_watch_grew)."""
+    r = _h.combat_dmg_guard_check(_DMG_GUARD)
+    if r is None:
+        r = _dmg_unchanged_now()
+        st = _dmg_snapshot()
+        modules, types = _guard_watch(
+            _dmg_functions(), dict.fromkeys(
+                st["classes"] + tuple(cls for _kind, cls in _dmg_classes)))
+        _h.combat_dmg_guard_fill(_DMG_GUARD, r, modules, types)
+    return r
+
+
+def _dmg_unchanged_now() -> bool:
+    """Every function and stock-class method the native chain stands in for
+    is the one snapshotted, and none is foreign (a test's patch made before
+    the snapshot); and every class rows have been flagged with still has
+    the rules its rows carry (final review I-1: a subclass patched after its
+    rows were flagged)."""
+    _dmg_guard_computed["dmg"] += 1
+    for owner, get, values, _names in _dmg_functions():
+        try:
+            now = get(owner)
+        except AttributeError:
+            return False
+        if now != values:
+            return False
+        if type(now) is tuple:
+            if any(_k2_foreign(v) for v in now):
+                return False
+        elif _k2_foreign(now):
+            return False
+    st = _dmg_snapshot()
+    ship_subsystem, weapon_system, shield, ship = st["classes"]
+    if not (_dmg_resolve(ship_subsystem, _DMG_SUB_NAMES) == st["sub"]
+            and _dmg_resolve(ship_subsystem, _DMG_PREDICATES) == st["leaf"]
+            and _dmg_resolve(weapon_system, _DMG_PREDICATES)
+            == st["aggregate"]
+            and _dmg_resolve(shield, _DMG_SHIELD_NAMES) == st["shield"]
+            and _dmg_resolve(ship, _DMG_SHIP_NAMES) == st["ship"]):
+        return False
+    for (kind, cls), verdict in _dmg_classes.items():
+        now = _dmg_class_of(cls) if kind == "sub" else _dmg_ship_of(cls)
+        if now != verdict:
+            return False
+    return True
+
+
+def _dmg_handle(obj, kind: str):
+    """`obj`'s row handle when it is a registered row of `kind`, -1 for None,
+    else None (the native chain cannot name it)."""
+    if obj is None:
+        return REF_NONE
+    h = _slot_of(obj)
+    if h is None or (h >> _KIND_SHIFT) != _kind(kind):
+        return None
+    return h
+
+
+def _dmg_held(obj) -> int:
+    """An H operand's handle (damage.h, Held): -1 None, the row of a
+    registered object, -2 one the mirror cannot name (its object is still
+    the one the entry holds)."""
+    if obj is None:
+        return REF_NONE
+    h = _slot_of(obj)
+    return REF_UNREPRESENTABLE if h is None else h
+
+
+def _dmg_patched(obj, names) -> bool:
+    """An instance attribute shadows a method the chain stands in for."""
+    d = getattr(obj, "__dict__", None)
+    return d is not None and any(n in d for n in names)
+
+
+#: The one applier context the native damage calls reuse (_dmg_context).
+_dmg_ctx = [None]
+
+
+def _dmg_context() -> tuple:
+    """The native damage calls' applier context, made once and reused
+    (each call used to make its own _K1Walk's): rebuilt whenever what
+    _applier_context reads has changed since -- the kinds mapping (reset(),
+    a replaced _quiet_setter), the registry, passive_state.wake. Its pins
+    are emptied after every call (_dmg_call; the binding's THE FAST DAMAGE
+    ENTRIES), so between calls it holds nothing alive and each call
+    resolves its handles afresh, as a fresh walk did."""
+    ctx = _dmg_ctx[0]
+    kinds = _apply_kinds
+    if (ctx is None or kinds is None or ctx[3] is not kinds
+            or kinds.source is not _quiet_setter or ctx[1] is not _registry
+            or ctx[4] is not _passive_state.wake):
+        ctx = _dmg_ctx[0] = _applier_context(_K1Walk())
+    return ctx
+
+
+def _dmg_call(fn, *args) -> bool:
+    """`fn(*args)` (a native damage binding) under the reused applier
+    context (the previous one restored: a K1/K2 session's), its pins
+    emptied after. A call made while it is already installed (an enclosing
+    native call's) gets a fresh one of its own."""
+    ctx = _dmg_context()
+    prev = _h.combat_set_applier(ctx)
+    if prev is ctx:
+        _h.combat_set_applier(_applier_context(_K1Walk()))
+        try:
+            return fn(*args)
+        finally:
+            _h.combat_set_applier(prev)
+    try:
+        return fn(*args)
+    finally:
+        _h.combat_set_applier(prev)
+        ctx[0].clear()
+
+
+def _dmg_point(p):
+    """A TGPoint3 as three floats (float() of each, as effect_queue._xyz),
+    or None."""
+    if p is None:
+        return None
+    return (float(p.x), float(p.y), float(p.z))
+
+
+def apply_hit(ship, damage, hit_point, source, *, normal=None,
+              ship_instances=None, weapon_type=None, hardpoint_weapon=None,
+              payload_template=None, splash_radius=None, damage_hull=True,
+              bypass_shields=False, shield_point=None, hit_tangent=None,
+              decal_radius=None, decal_dent=0.0, single_impact=False,
+              shield_radius=None) -> bool:
+    """combat._apply_hit natively (its arguments; True: done). The values
+    the native hit takes as given are computed here exactly as the
+    reference computes them: R_hit (weapon_splash_radius, the splash_radius
+    override), the player, the cheats, each operand's float()/bool()."""
+    if (hit_point is None or not _dmg_unchanged()
+            or _dmg_patched(ship, _DMG_SHIP_NAMES)):
+        _dmg_counts["fallbacks"] += 1
+        return False
+    ship_h = _dmg_handle(ship, "Object")
+    if ship_h is None or ship_h == REF_NONE:
+        _dmg_counts["fallbacks"] += 1
+        return False
+    # An instance attribute on a subsystem the hit can reach shadowing a
+    # method it stands in for (override-guard gap 1): the reference obeys it.
+    if not _kdmg_clean([ship])[0]:
+        _dmg_counts["fallbacks"] += 1
+        return False
+    import App
+    from engine.appc import combat
+    import engine.dev_combat_cheats as cheats
+    try:
+        game = (App.Game_GetCurrentGame()
+                if hasattr(App, "Game_GetCurrentGame") else None)
+        player = (game.GetPlayer()
+                  if game is not None and hasattr(game, "GetPlayer")
+                  else None)
+    except Exception:
+        player = None
+    player_h = _dmg_handle(player, "Object")
+    source_h = _dmg_handle(source, "Object")
+    if source_h is None:
+        source_h = REF_UNREPRESENTABLE      # never the player's
+    try:
+        r_hit = combat.weapon_splash_radius(hardpoint_weapon,
+                                            payload_template)
+        if splash_radius is not None:
+            r_hit = float(splash_radius)
+        args = (
+            ship_h, source, source_h, float(damage), _dmg_point(hit_point),
+            _dmg_point(normal), float(r_hit), bool(damage_hull),
+            bool(bypass_shields), _dmg_point(shield_point),
+            shield_point is not None and shield_point is hit_point,
+            _dmg_point(hit_tangent),
+            None if decal_radius is None else float(decal_radius),
+            float(decal_dent), bool(single_impact),
+            None if shield_radius is None else float(shield_radius),
+            _effect_queue._HIT_WEAPON_CODES.get(weapon_type,
+                                                _effect_queue.HIT_WEAPON_NONE),
+            int(combat._WEAPON_TYPE_IDS.get(
+                weapon_type, _effect_queue.WEAPON_HIT_NON_WEAPON)),
+            ship_instances is not None)
+    except (TypeError, ValueError, AttributeError, OverflowError):
+        _dmg_counts["fallbacks"] += 1
+        return False                # the reference raises it
+    if player_h is None:
+        _dmg_counts["fallbacks"] += 1
+        return False
+    if ship_instances is not None:
+        # The map HIT_PRESENT's delivery presents with (R13).
+        from engine.appc import hit_feedback
+        hit_feedback.use_instances(ship_instances)
+    done = _dmg_call(_h.combat_apply_hit, *args, player_h,
+                     bool(cheats.god_mode_active()),
+                     bool(cheats.double_player_weapons_active()),
+                     bool(cheats.disable_npc_shields_active()))
+    _dmg_counts["hits" if done else "fallbacks"] += 1
+    return done
+
+
+#: The instance attributes that hand a condition write back (_dmg_patched).
+_DMG_SUB_PATCHES = _DMG_SUB_NAMES + _DMG_PREDICATES
+_dmg_ship_subsystem = [None]
+
+
+def set_condition(sub, value, killer=None, ship=None) -> bool:
+    """ShipSubsystem._set_condition natively (True: done): the binding's
+    one-call path (THE FAST DAMAGE ENTRIES), else -- None: a case it does
+    not decide -- _set_condition_py, the same steps in Python."""
+    done = _h.combat_dmg_set_condition(sub, value, killer, ship,
+                                       _dmg_context(), _DMG_SUB_PATCHES)
+    if done is None:
+        return _set_condition_py(sub, value, killer, ship)
+    _dmg_counts["conditions" if done else "fallbacks"] += 1
+    return done
+
+
+def _set_condition_py(sub, value, killer=None, ship=None) -> bool:
+    """set_condition's steps in Python."""
+    if (not _dmg_unchanged()
+            or _dmg_patched(sub, _DMG_SUB_PATCHES)):
+        _dmg_counts["fallbacks"] += 1
+        return False
+    sub_h = _dmg_handle(sub, "Subsystem")
+    ship_h = _dmg_handle(ship, "Object")
+    try:
+        v = float(value)
+    except (TypeError, ValueError, OverflowError):
+        _dmg_counts["fallbacks"] += 1
+        return False                # the reference raises it
+    if sub_h is None or sub_h == REF_NONE or ship_h is None:
+        _dmg_counts["fallbacks"] += 1
+        return False
+    done = _dmg_call(_h.combat_set_condition, sub_h, v, _dmg_held(killer),
+                     ship_h, killer)
+    _dmg_counts["conditions" if done else "fallbacks"] += 1
+    return done
+
+
+def damage_system(ship, sub, amount: float, source=None) -> bool:
+    """DamageableObject.DamageSystem natively, past its None and `amt <= 0`
+    returns (`amount` already float()); True: done. The binding's one-call
+    path, else (None) _damage_system_py."""
+    cls = _dmg_ship_subsystem[0]
+    if cls is None:
+        from engine.appc.subsystems import ShipSubsystem
+        cls = _dmg_ship_subsystem[0] = ShipSubsystem
+    done = _h.combat_dmg_damage_system(ship, sub, amount, source,
+                                       _dmg_context(), _DMG_SUB_PATCHES, cls)
+    if done is None:
+        return _damage_system_py(ship, sub, amount, source)
+    _dmg_counts["damage_systems" if done else "fallbacks"] += 1
+    return done
+
+
+def _damage_system_py(ship, sub, amount: float, source=None) -> bool:
+    """damage_system's steps in Python."""
+    from engine.appc.subsystems import ShipSubsystem
+    if (not _dmg_unchanged() or not isinstance(sub, ShipSubsystem)
+            or _dmg_patched(sub, _DMG_SUB_PATCHES)):
+        _dmg_counts["fallbacks"] += 1
+        return False
+    ship_h = _dmg_handle(ship, "Object")
+    sub_h = _dmg_handle(sub, "Subsystem")
+    if ship_h is None or ship_h == REF_NONE or sub_h is None:
+        _dmg_counts["fallbacks"] += 1
+        return False
+    done = _dmg_call(_h.combat_damage_system, ship_h, sub_h, amount,
+                     _dmg_held(source), source)
+    _dmg_counts["damage_systems" if done else "fallbacks"] += 1
+    return done
+
+
+# ── Native damage in the kernels (spec 2026-11-02-native-damage §3 goal 2;
+# Task 4) ───────────────────────────────────────────────────────────────────
+#
+# K2 applies each damage pulse in its walk (k2_beams.h, THE DAMAGE PULSE) and
+# K3 its hits after the step's expiries (k3_projectiles.h, THE HITS): no
+# record hands the damage to Python. What they read that the mirror does not
+# hold rides a context (_kdmg_ctx): the player and the cheats, the module
+# constants of the arithmetic, the weapon's codes, and the targets the
+# override guard scanned clean. A pulse or hit the kernel cannot apply
+# (counted by why: k2_pulse_python_reasons, k3_hit_python_reasons) goes to
+# Python as before -- K2's CONTACT record, K3's hand-back here.
+#
+# THE OVERRIDE GUARD. The context is "not ok" -- every pulse and hit to
+# Python -- when a function or stock-class method the native hit stands in
+# for is replaced (_dmg_unchanged), or one the kernels' damage stands in for
+# (_KDMG_FUNCTIONS: host_loop's pulse arithmetic and the two entry points,
+# so a test's spy on combat.apply_hit is obeyed), or the player is an object
+# the mirror cannot name. A target is "clean" when neither it nor any
+# subsystem its hit can reach (its mount order, hull, shield generator) has
+# an instance attribute shadowing a method the hit stands in for
+# (combat_dmg_clean; override-guard gap 1, Task 3's report §8.3, closed the
+# K1 way: scanned at the entry point -- K2's begin, K3's apply, the
+# non-kernel apply_hit -- ruling L8). A patch made later in the step is seen
+# at the next entry.
+
+#: (module, names) the kernels' damage stands in for beyond the native hit's
+#: own (_DMG_FUNCTIONS), identity-checked at every entry, never foreign.
+_KDMG_FUNCTIONS = (
+    ("engine.host_loop", ("_phaser_contact", "_phaser_damage_for_tick",
+                          "_phaser_level")),
+    ("engine.appc.combat", ("apply_hit", "weapon_splash_radius")),
+)
+#: The instance attributes combat_dmg_clean looks for: on the target ship
+#: (_DMG_SHIP_NAMES) and on each subsystem its hit can reach (the condition
+#: chain's names, the predicates, the shield names).
+_KDMG_SUB_NAMES = tuple(dict.fromkeys(_DMG_SUB_NAMES + _DMG_PREDICATES
+                                      + _DMG_SHIELD_NAMES
+                                      + _DMG_CLOAK_NAMES))
+#: A torpedo's: weapon_splash_radius reads GetDamageRadiusFactor on it.
+_KDMG_TORP_NAMES = ("GetDamageRadiusFactor",)
+_kdmg_fn_snapshot = None
+
+
+def _kdmg_functions() -> list:
+    global _kdmg_fn_snapshot
+    if _kdmg_fn_snapshot is None:
+        from engine.appc.projectiles import Torpedo
+        snap = []
+        for name, names in _KDMG_FUNCTIONS:
+            mod = importlib.import_module(name)
+            snap.append((mod, operator.attrgetter(*names),
+                         operator.attrgetter(*names)(mod), names))
+        snap.append((Torpedo, operator.attrgetter(*_KDMG_TORP_NAMES),
+                     (operator.attrgetter(*_KDMG_TORP_NAMES)(Torpedo),),
+                     _KDMG_TORP_NAMES))
+        _kdmg_fn_snapshot = snap
+    return _kdmg_fn_snapshot
+
+
+def _kdmg_unchanged() -> bool:
+    """_kdmg_unchanged_now, from the binding's cache (as _dmg_unchanged)."""
+    r = _h.combat_dmg_guard_check(_KDMG_GUARD)
+    if r is None:
+        r = _kdmg_unchanged_now()
+        modules, types = _guard_watch(_kdmg_functions())
+        _h.combat_dmg_guard_fill(_KDMG_GUARD, r, modules, types)
+    return r
+
+
+def _kdmg_unchanged_now() -> bool:
+    _dmg_guard_computed["kdmg"] += 1
+    for owner, get, values, _names in _kdmg_functions():
+        try:
+            now = get(owner)
+        except AttributeError:
+            return False
+        if type(now) is not tuple:
+            now = (now,)
+        if now != values or any(_k2_foreign(v) for v in now):
+            return False
+    return True
+
+
+def _kdmg_clean(objs) -> list:
+    """combat_dmg_clean on `objs` (None reads not clean). Each object's
+    answer is cached on its dict's version (THE CLEAN CACHE)."""
+    return _h.combat_dmg_clean(objs, _registry.data, _DMG_SHIP_NAMES,
+                               _KDMG_SUB_NAMES)
+
+
+def _kdmg_clean_handles(handles) -> list:
+    """The clean ones of Object `handles`, in order: _kdmg_clean on each
+    one's `_registry.get(h)`, in the binding."""
+    return _h.combat_dmg_clean_handles(handles, _registry.data,
+                                       _DMG_SHIP_NAMES, _KDMG_SUB_NAMES)
+
+
+def _kdmg_ctx(weapon: str, ship_instances, clean) -> dict:
+    """The kernels' damage context (the binding's k2_pulse_ctx keys) for a
+    `weapon` ("phaser" / "torpedo") step: computed exactly as combat.
+    apply_hit and host_loop._phaser_contact read them."""
+    import App
+    from engine.appc import combat
+    from engine.appc.weapon_subsystems import PhaserSystem
+    import engine.dev_combat_cheats as cheats
+    ok = _dmg_unchanged() and _kdmg_unchanged()
+    try:
+        game = (App.Game_GetCurrentGame()
+                if hasattr(App, "Game_GetCurrentGame") else None)
+        player = (game.GetPlayer()
+                  if game is not None and hasattr(game, "GetPlayer")
+                  else None)
+    except Exception:
+        player = None
+    player_h = _dmg_handle(player, "Object")
+    if player_h is None:
+        ok, player_h = False, REF_NONE
+    scale = _k2_hl.PHASER_INTENSITY_SCALE
+    try:
+        intensity = tuple(float(x) for x in scale)
+        if len(intensity) != 3 or any(
+                type(x) not in (int, float) for x in scale):
+            raise TypeError
+    except (TypeError, ValueError, OverflowError):
+        ok, intensity = False, (0.0, 0.0, 0.0)
+    radius = combat.PHASER_DEFAULT_DAMAGE_RADIUS
+    pp_low = PhaserSystem.PP_LOW
+    if (type(radius) not in (int, float) or type(pp_low) is not int):
+        ok, radius, pp_low = False, 0.0, 0
+    return {
+        "ok": ok, "player": player_h,
+        "god_mode": bool(cheats.god_mode_active()),
+        "double_damage": bool(cheats.double_player_weapons_active()),
+        "npc_shields_off": bool(cheats.disable_npc_shields_active()),
+        "intensity": intensity, "default_radius": float(radius),
+        "pp_low": pp_low,
+        "hit_weapon": _effect_queue._HIT_WEAPON_CODES[weapon],
+        "weapon_hit_type": int(combat._WEAPON_TYPE_IDS[weapon]),
+        "has_instances": ship_instances is not None,
+        "clean": clean,
+    }
+
+
+def _k2_pulse_ctx(handles, ship_instances, python_banks=()) -> dict:
+    """THE DAMAGE PULSE's context for this step: the targets of the banks
+    that can pulse, scanned (combat_dmg_clean), and the banks whose pulses
+    are Python's (_k2_ship_handles' pulse_banks)."""
+    targets = _h.combat_k2_pulse_targets(handles)
+    clean = _kdmg_clean_handles(targets) if targets else []
+    ctx = _kdmg_ctx("phaser", ship_instances, clean)
+    ctx["python_banks"] = list(python_banks)
+    return ctx
+
+
+def _kernel_hits_landed(ship_instances) -> None:
+    """A kernel applied hits in its compute since its last record: clear the
+    step memo's Python tables before Python reads them (combat.apply_hit
+    forgets on every hit; the kernel cleared its own memo, DM H13), and make
+    the hits' map the one their HIT_PRESENT delivers with (R13)."""
+    from engine.core import step_memo
+    step_memo.forget_tables()
+    if ship_instances is not None:
+        from engine.appc import hit_feedback
+        hit_feedback.use_instances(ship_instances)
+
+
+def _k3_apply_hits(hits, ship_instances, walk) -> None:
+    """THE HITS (k3_projectiles.h): host_loop's hit loop, natively, after
+    the step's expiries. `hits` is _k3_walk's list of (torpedo, ship,
+    hit_point, hit_normal); a hit the kernel hands back runs here, in its
+    place, exactly as host_loop runs it (counted "k3_hit_python")."""
+    from engine.appc import combat
+    ships = [h[1] for h in hits]
+    clean = [nc_h for nc_h, c in
+             zip((_slot_of(s) for s in ships), _kdmg_clean(ships)) if c]
+    pulse = _kdmg_ctx("torpedo", ship_instances, clean)
+    # A torpedo shadowing GetDamageRadiusFactor: its hit is Python's.
+    python = [i for i, h in enumerate(hits)
+              if _dmg_patched(h[0], _KDMG_TORP_NAMES)]
+    prev = _h.combat_set_applier(_applier_context(walk))
+    try:
+        i = 0
+        while i < len(hits):
+            k = _h.combat_k3_apply_hits(i, pulse, python)
+            if k > i:
+                _kernel_hits_landed(ship_instances)
+            if k >= len(hits):
+                break
+            _k3_hit_python[0] += 1
+            t, ship, point, normal = hits[k]
+            combat.apply_hit(ship, t._damage, point,
+                             source=t._source_ship, normal=normal,
+                             ship_instances=ship_instances,
+                             weapon_type="torpedo", hardpoint_weapon=t,
+                             shield_point=t._bubble_entry)
+            i = k + 1
+    finally:
+        _h.combat_set_applier(prev)
+        # apply_hits' compute is K3's (released and timed with next()'s):
+        # into k3.compute, beside the walk's, never the next session's.
+        _compute_taken(3)
+
+
+#: K3 hits run here in Python (_k3_apply_hits' hand-backs).
+_k3_hit_python = [0]
 
 
 if available():

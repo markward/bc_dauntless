@@ -25,6 +25,7 @@ the report came to print `gl.ai` above `sim` with nothing marking the relation:
         cb.projectiles cb.phasers ...
       sim.effects        (scope, once per catch-up tick; native combat on)
       sim.collisions     (scope, once per frame)
+      sim.effects_frame  (scope, once per frame: the frame-end boundary)
     ui_panels            (mark)
       ui.render_all
         ui.<panel>
@@ -300,6 +301,33 @@ def scope(name: str):
         if _scope_stack:
             _scope_stack.pop()
         _accumulate(name, (_perf() - t0) * 1000.0)
+
+
+def open_scope() -> Optional[str]:
+    """The scope (or mark phase) a scope() opened now would be a child of;
+    None while disabled or outside every phase."""
+    if not _enabled:
+        return None
+    return _scope_stack[-1] if _scope_stack else _open_name
+
+
+def record(name: str, ms: float, calls: int = 1) -> None:
+    """Add `ms` measured ELSEWHERE -- and `calls` entries -- to `name`, as a
+    child of the open scope (see open_scope).
+
+    For spans this module cannot time itself: the native combat kernels'
+    compute-only timers (native_combat's `k*.compute` rows), which run inside
+    a binding and are read once a session. It sums within the frame like a
+    repeated scope(), so a caller that records twice under one parent gets one
+    row. A name recorded under two parents in one frame keeps the LAST one,
+    as scope() does: a caller whose span can run under different parents must
+    name the rows apart.
+    """
+    if not _enabled:
+        return
+    _note(name, _scope_stack[-1] if _scope_stack else _open_name)
+    _frame_acc[name] = _frame_acc.get(name, 0.0) + ms
+    _frame_calls[name] = _frame_calls.get(name, 0) + calls
 
 
 def _note(name: str, parent: Optional[str]) -> None:

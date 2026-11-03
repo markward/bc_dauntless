@@ -21,6 +21,7 @@ import pytest
 
 import App
 from engine.core.loop import GameLoop, TICK_DELTA
+from engine.appc import effect_queue
 
 RUN_S = 30.0
 RATE_TOL = 0.03
@@ -147,6 +148,7 @@ def test_weapon_hit_on_hull_queues_it_for_repair(galaxy):
     galaxy.GetShields().TurnOff()
     hull = galaxy.GetHull()
     apply_hit(galaxy, 400.0, TGPoint3(0.0, -6.0, 0.0), None)
+    effect_queue.boundary()             # the tick boundary
     assert hull.GetCondition() < hull.GetMaxCondition()
     assert galaxy.GetRepairSubsystem().IsBeingRepaired(hull) == 1
 

@@ -26,6 +26,8 @@ from engine.appc import passive_weapons
 from engine.appc import passive_power, passive_state
 from engine.appc.passive_power import FrozenField
 from engine.appc import native_combat
+from engine.appc import death_check as _death_check
+from engine.appc import effect_queue as _effect_queue
 from engine.appc.native_combat import NativeField, NativeRefField
 
 
@@ -353,6 +355,25 @@ class ShipSubsystem(TGEventHandlerObject):
     _arc_set = NativeField(bool)
     # Phaser-strip length (K2 reads it for the emitter position).
     _length = NativeField(float)
+    # A phaser bank's pulse damage and R_hit (K2 applies the pulse in the
+    # walk: native damage Task 4), copied from its property.
+    _max_damage = NativeField(float)
+    _max_damage_distance = NativeField(float)
+    _damage_radius_factor = NativeField(float)
+    # In its bay's repair queue (RepairSubsystem._queue keeps it, ruling I3):
+    # a write below max emits REPAIR_ADD only when this is False.
+    # Native damage (Task 3) reads these through the mirror too: the
+    # membership, the threshold state machine's state, the two flags, and
+    # each condition watcher (adopted by CondWatcherField: its check count
+    # and committed value).
+    _in_repair_queue = NativeField(bool)
+    _threshold_state = NativeField(int)
+    _invincible = NativeField(bool)
+    _critical = NativeField(bool)
+    _combined_watcher = native_combat.CondWatcherField(
+        _effect_queue.WATCH_COMBINED)
+    _condition_watcher = native_combat.CondWatcherField(
+        _effect_queue.WATCH_CONDITION)
 
     def __init__(self, name: str = ""):
         super().__init__()
@@ -364,6 +385,7 @@ class ShipSubsystem(TGEventHandlerObject):
         self._parent_subsystem = None
         self._child_subsystem = None
         self._radiation_out = False
+        self._in_repair_queue = False
         self._children: list["ShipSubsystem"] = []
         self._condition = 1.0
         self._max_condition = 1.0
@@ -739,11 +761,48 @@ class ShipSubsystem(TGEventHandlerObject):
         raise that stays short of max queues too: a subsystem a script brings
         back from destroyed is repaired the rest of the way (Mark, 2026-10-23).
         AddToRepairList owns all validation (duplicate / destroyed / undamaged
-        reject)."""
+        reject).
+
+        Every condition write, a script's included, is the one write
+        (objects.write_condition): a critical subsystem left at zero kills the
+        ship and a >0 -> 0 crossing routes the breach / hull cascade, both at
+        the tick boundary unless the ship is invincible by then
+        (engine/appc/death_check.py, rulings M3, M5)."""
+        self._set_condition(value)
+
+    def _set_condition(self, value, killer=None, ship=None) -> None:
+        """SetCondition's body. `killer` (the firing ship) and `ship` (whom
+        the write is charged to, default the owning ship) come from
+        DamageableObject.DamageSystem via objects.write_condition.
+
+        With native combat on the native condition chain stands in
+        (native damage Task 3; native_combat.set_condition), else -- or when
+        it hands back -- this body, the reference."""
+        if native_combat._enabled and native_combat.set_condition(
+                self, value, killer, ship):
+            return
+        before = self._condition
         self._condition = max(0.0, float(value))
         self._condition_changed()
-        if self._condition < self.GetMaxCondition():
-            self._auto_enqueue_for_repair()
+        if (not self._in_repair_queue
+                and self._condition < self.GetMaxCondition()):
+            # Added at delivery (REPAIR_ADD; native damage M2) -- only when
+            # not queued already (ruling I3): a bay's own tick of an item it
+            # works emits nothing.
+            _effect_queue.emit(_effect_queue.REPAIR_ADD, self)
+        if self._condition <= 0.0:
+            _death_check.note_write(
+                ship if ship is not None else self._owning_ship(),
+                self, before, killer)
+
+    def SetConditionPercentage(self, fraction) -> None:
+        """SDK ShipSubsystem.SetConditionPercentage (App.py:5665): condition =
+        `fraction` x GetMaxCondition(), through SetCondition -- the same write
+        as weapon damage, so it posts the same subsystem events, enqueues the
+        repair and reaches the death check (campaign bug 2, decided
+        2026-11-02). GetMaxCondition, not _max_condition, so the value reads
+        back through GetConditionPercentage (E3M5's 15% clamp compares it)."""
+        self.SetCondition(float(fraction) * self.GetMaxCondition())
 
     def _auto_enqueue_for_repair(self) -> None:
         ship = self._owning_ship()
@@ -784,35 +843,54 @@ class ShipSubsystem(TGEventHandlerObject):
         self._condition_changed()
 
     def _condition_changed(self) -> None:
-        """Push the fresh condition FRACTION into the combined watcher (if one
-        was ever handed out) so its registered threshold crossings fire, then
-        advance the disabled/destroyed/operational state machine.
-        Called from every _condition/_max_condition mutation path — all
-        writes route through SetCondition/SetMaxCondition (combat damage in
-        engine/appc/objects.py calls SetCondition)."""
+        """Push the fresh condition FRACTION into the combined and condition
+        watchers (if ever handed out), then advance the disabled/destroyed/
+        operational state machine. Called from every _condition/
+        _max_condition mutation path — all writes route through SetCondition/
+        SetMaxCondition (combat damage in engine/appc/objects.py calls
+        SetCondition).
+
+        The state changes at once; what it REPORTS is queued to the tick
+        boundary (native damage M2; engine/appc/effect_queue.py, THE DAMAGE
+        KINDS): a watcher with checks commits now and queues COND_WATCH, a
+        state change queues SUBSYS_EVENT."""
+        eq = _effect_queue
         if self._combined_watcher is not None:
-            self._combined_watcher._update(self.GetConditionPercentage())
+            self._combined_watcher._update_queued(
+                self.GetConditionPercentage(), self, eq.WATCH_COMBINED)
         if self._condition_watcher is not None:
-            self._condition_watcher._update(self.GetConditionPercentage())
+            self._condition_watcher._update_queued(
+                self.GetConditionPercentage(), self, eq.WATCH_CONDITION)
         new_state = self._threshold_state_now()
         old_state = self._threshold_state
         if new_state != old_state:
             self._threshold_state = new_state
             if new_state == _THRESHOLD_DESTROYED:
-                self._fire_threshold_event("ET_SUBSYSTEM_DESTROYED")
-                # SPIKE (damage redesign): the blast, drawn only where it
-                # reaches the hull (engine/appc/internal_blast.py).
-                try:
-                    from engine.appc import internal_blast
-                    internal_blast.queue(self)
-                except Exception as _e:
-                    import engine.dev_mode as _dm
-                    _dm.log_swallowed("internal blast queue", _e)
+                eq.emit(eq.SUBSYS_EVENT, self, eq.SUBSYS_DESTROYED)
             elif new_state == _THRESHOLD_DISABLED and old_state == _THRESHOLD_OPERATIONAL:
-                self._fire_threshold_event("ET_SUBSYSTEM_DISABLED")
+                eq.emit(eq.SUBSYS_EVENT, self, eq.SUBSYS_DISABLED)
             elif new_state == _THRESHOLD_OPERATIONAL:
-                self._fire_threshold_event("ET_SUBSYSTEM_OPERATIONAL")
+                eq.emit(eq.SUBSYS_EVENT, self, eq.SUBSYS_OPERATIONAL)
             # destroyed -> disabled (partial repair from zero) is silent.
+
+    def _deliver_threshold_event(self, which) -> None:
+        """SUBSYS_EVENT's delivery: post the threshold event; a destroyed
+        subsystem's also queues its internal blast."""
+        from engine.appc import effect_queue as eq
+        if which == eq.SUBSYS_DESTROYED:
+            self._fire_threshold_event("ET_SUBSYSTEM_DESTROYED")
+            # SPIKE (damage redesign): the blast, drawn only where it
+            # reaches the hull (engine/appc/internal_blast.py).
+            try:
+                from engine.appc import internal_blast
+                internal_blast.queue(self)
+            except Exception as _e:
+                import engine.dev_mode as _dm
+                _dm.log_swallowed("internal blast queue", _e)
+        elif which == eq.SUBSYS_DISABLED:
+            self._fire_threshold_event("ET_SUBSYSTEM_DISABLED")
+        else:
+            self._fire_threshold_event("ET_SUBSYSTEM_OPERATIONAL")
 
     def _threshold_state_now(self) -> int:
         if self.IsDestroyed():
@@ -2067,8 +2145,14 @@ class ShieldSubsystem(PoweredSubsystem):
     NUM_SHIELDS    = 6
 
     # Every rebind re-pushes the derived has_shields flag; SetMaxShields
-    # (the one in-place writer) pushes it itself.
+    # (the one in-place writer) pushes it itself. The face lists are
+    # mirrored for the native hit (native damage Task 3): every in-place
+    # writer below pushes the list it wrote, before anything it then posts
+    # (damage-map-refresh §6: SetMaxShields, SetCurrentShields, Update's
+    # ramp refresh, offline drain and regen, ApplyDamage).
     _max_shields = native_combat.HasShieldsField()
+    _current_shields = native_combat.NativeFloatList()
+    _ramp_fraction = native_combat.RampField()
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -2139,8 +2223,10 @@ class ShieldSubsystem(PoweredSubsystem):
         v = float(value)
         if self._current_shields[f] == 0.0:
             self._current_shields[f] = v
+            native_combat.push_field(self, "_current_shields")
         self._max_shields[f] = v
         native_combat.push_has_shields(self)    # in place: no descriptor sees it
+        native_combat.push_field(self, "_max_shields")
 
     def GetCurrentShields(self, face: int) -> float:
         return self._current_shields[int(face)]
@@ -2148,6 +2234,7 @@ class ShieldSubsystem(PoweredSubsystem):
     def SetCurrentShields(self, face: int, value: float) -> None:
         f = int(face)
         self._current_shields[f] = float(value)
+        native_combat.push_field(self, "_current_shields")   # in place
         # Keep the face watcher's value fresh so a Condition reading
         # GetWatchedVariable() right after a damage write sees the new
         # fraction (ConditionSingleShieldBelow.py:122 reads it at setup).
@@ -2319,6 +2406,7 @@ class ShieldSubsystem(PoweredSubsystem):
         for f in range(self.NUM_SHIELDS):
             mx = self._max_shields[f]
             self._ramp_fraction[f] = (self._current_shields[f] / mx) if mx > 0.0 else 0.0
+        native_combat.push_field(self, "_ramp_fraction")     # in place
 
         if _is_offline(self):
             # A disabled (or destroyed) generator does not merely stop
@@ -2332,6 +2420,7 @@ class ShieldSubsystem(PoweredSubsystem):
             if any(self._current_shields):
                 for f in range(self.NUM_SHIELDS):
                     self._current_shields[f] = 0.0
+                native_combat.push_field(self, "_current_shields")
                 for f in range(self.NUM_SHIELDS):
                     self._shield_watchers[f]._update(self.GetSingleShieldPercentage(f))
                 self._shield_watchers[self.NUM_SHIELDS]._update(
@@ -2349,6 +2438,7 @@ class ShieldSubsystem(PoweredSubsystem):
             if new > mx:
                 new = mx
             self._current_shields[f] = new
+        native_combat.push_field(self, "_current_shields")   # in place
         # Drive each face watcher with its FRACTION so
         # Conditions/ConditionSingleShieldBelow.py fires its
         # ET_AI_SHIELD_WATCHER crossing event; the combined watcher (index
@@ -2405,8 +2495,10 @@ class ShieldSubsystem(PoweredSubsystem):
         new = cur - (1.0 - b) * amt
         if new >= 0.0:
             self._current_shields[f] = new
+            native_combat.push_field(self, "_current_shields")   # in place
             return b * amt
         self._current_shields[f] = 0.0
+        native_combat.push_field(self, "_current_shields")       # in place
         return b * amt - new
 
 
@@ -2624,17 +2716,18 @@ class PowerSubsystem(ShipSubsystem):
         re-evaluate every tick — the plant is marked "handled" even though
         no breach is emitted.
 
-        Two effects (targetable path only), matching the
-        objects.py:695-699 critical-subsystem pattern:
+        Targetable path only: the plant's crossing goes to the one death
+        path (controller ruling R9), a ZERO_CROSS checked at the tick
+        boundary (engine/appc/death_check.py). There, unless the ship is
+        invincible by then:
 
         * warp_core_breach.arm(ship) — queues the breach VFX (shockwave ring +
           hull wound records), spawned on the next warp_core_breach.advance() (driven
           by the game loop). It deals no damage; the source ship's collateral
           comes from its faithful splash (splash_damage, via ship_death.begin).
         * ship_death.begin(ship) — starts the source ship's own death sequence
-          (which also applies its splash damage), guarded on IsDying()/IsDead()
-          so a ship already dying (e.g. the hull-zero cascade already began it)
-          is untouched.
+          (which also queues its splash damage), unless the ship is already
+          dying or dead (e.g. the hull-zero cascade already began it).
 
         Raise-safe: a missing parent ship or import error must never crash
         the power tick."""
@@ -2642,18 +2735,16 @@ class PowerSubsystem(ShipSubsystem):
             from engine.appc.objects import _is_targetable
             if not _is_targetable(self):
                 return
-            from engine.appc import warp_core_breach
             ship = self.GetParentShip()
             if ship is None:
                 return
-            warp_core_breach.arm(ship)
-            # implements(), NOT hasattr(): __getattr__ answers every hasattr
-            # probe on a TGObject with a truthy _Stub, so the old guard could
-            # not tell a real IsDying() from a stub that reads as "dying".
-            if implements(ship, "IsDying") and implements(ship, "IsDead") \
-                    and not ship.IsDying() and not ship.IsDead():
-                from engine.appc import ship_death
-                ship_death.begin(ship)
+            # The one death path (R9): the plant's crossing, checked at the
+            # tick boundary like a write's (death_check.note_breach), which
+            # re-reads invincibility there (rulings M1, M5, R5). The plant
+            # stays handled (_breach_fired): making the ship vulnerable later
+            # kills nothing retroactively (R4).
+            from engine.appc import death_check
+            death_check.note_breach(ship, self)
         except Exception as _e:
             import engine.dev_mode as dev_mode
             dev_mode.log_swallowed("warp core breach trigger", _e)
@@ -2827,6 +2918,79 @@ class PowerSubsystem(ShipSubsystem):
         return take
 
 
+class _RepairQueue(list):
+    """A repair bay's queue: a list that keeps each subsystem's
+    ``_in_repair_queue`` true exactly while it is a member (ruling I3), on
+    every mutation -- the bay's own (add, completion, the priority toggle)
+    and a caller's (``repair_ship_fully``'s ``clear``, a test's). A plain
+    list member that is not a subsystem is carried unmarked."""
+
+    def append(self, sub):
+        list.append(self, sub)
+        _mark_queued(sub, True)
+
+    def insert(self, index, sub):
+        list.insert(self, index, sub)
+        _mark_queued(sub, True)
+
+    def extend(self, subs):
+        subs = list(subs)
+        list.extend(self, subs)
+        for sub in subs:
+            _mark_queued(sub, True)
+
+    def __iadd__(self, subs):
+        self.extend(subs)
+        return self
+
+    def clear(self):
+        gone = list(self)
+        list.clear(self)
+        self._unmark(gone)
+
+    def pop(self, index=-1):
+        sub = list.pop(self, index)
+        self._unmark((sub,))
+        return sub
+
+    def remove(self, sub):
+        list.remove(self, sub)
+        self._unmark((sub,))
+
+    def __delitem__(self, index):
+        gone = self[index] if isinstance(index, slice) else (self[index],)
+        list.__delitem__(self, index)
+        self._unmark(gone)
+
+    def __setitem__(self, index, value):
+        if isinstance(index, slice):
+            gone, value = self[index], list(value)
+            new = value
+        else:
+            gone, new = (self[index],), (value,)
+        list.__setitem__(self, index, value)
+        self._unmark(gone)
+        for sub in new:
+            _mark_queued(sub, True)
+
+    def discard(self, sub):
+        """Remove `sub` by identity, if queued."""
+        for i, s in enumerate(self):
+            if s is sub:
+                del self[i]
+                return
+
+    def _unmark(self, gone):
+        for sub in gone:
+            if not any(s is sub for s in self):
+                _mark_queued(sub, False)
+
+
+def _mark_queued(sub, queued: bool) -> None:
+    if isinstance(sub, ShipSubsystem):
+        sub._in_repair_queue = queued
+
+
 class RepairSubsystem(PoweredSubsystem):
     """Engineering / damage-control subsystem — the per-ship repair queue.
 
@@ -2844,10 +3008,10 @@ class RepairSubsystem(PoweredSubsystem):
         # RE layout: +0x9C (isOn) inits to 1 — the bay ticks and draws
         # power without ever being switched on.
         self._is_on = True
-        # Ordered repair queue (head = active). Python list of subsystem
-        # refs; identity comparisons throughout (TGObject __eq__ is not
-        # trusted).
-        self._queue: list = []
+        # Ordered repair queue (head = active). A list of subsystem refs that
+        # keeps each member's _in_repair_queue (_RepairQueue); identity
+        # comparisons throughout (TGObject __eq__ is not trusted).
+        self._queue: list = _RepairQueue()
         # id(sub) values already notified ET_REPAIR_CANNOT_BE_COMPLETED
         # (destroyed-while-queued fires once, not per tick).
         self._cannot_complete_notified: set = set()
@@ -2964,7 +3128,7 @@ class RepairSubsystem(PoweredSubsystem):
             if sub.GetCondition() >= sub.GetMaxCondition():
                 completed.append(sub)
         for sub in completed:
-            self._queue = [s for s in self._queue if s is not sub]
+            self._queue.discard(sub)
             self._fire_repair_event("ET_REPAIR_COMPLETED", sub)
 
     # ── Event emission ──────────────────────────────────────────────────────

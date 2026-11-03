@@ -221,6 +221,7 @@ class _Scene:
                     host_loop._advance_combat(ships, TICK_DELTA,
                                               player=self.player,
                                               push_render_data=False)
+                host_loop._combat_tick_boundary()   # as the host does (native damage)
                 self.record()
                 if rng.random() < 0.3:
                     self.op(rng)
@@ -288,10 +289,11 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
     assert effect_split.stops(ref_queued) > 0, ref_queued.rows[:20]
     assert failures == [], failures
     # Both native arms delivered their weapon events at the tick boundary;
-    # the reference never opened the scope.
-    assert effects["off"]["delivered"] == 0, effects
+    # the reference never opened the scope, so it queued only the damage
+    # kinds (native damage M2: both arms).
+    assert effects["off"]["delivered"] == effects["off"]["damage"], effects
     for name in ("on", "audit"):
-        assert effects[name]["delivered"] > 0, effects
+        assert effects[name]["delivered"] > effects[name]["damage"], effects
         assert effects[name]["skipped_gone"] == effects[name]["failed"] == 0
     assert counts["off"]["native_calls"] == 0, counts
     assert counts["off"]["k1_records"] == 0, counts
@@ -327,6 +329,10 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
     # drain presents none itself. No phaser system is switched off here
     # (k2_logged_system_stop measured 0).
     assert counts["on"]["k2_batched_contacts"] > 0, counts
+    # Native damage Task 4: every damage pulse applied in the walk, none
+    # handed back as a CONTACT record.
+    assert counts["on"]["k2_native_pulses"] > 0, counts
+    assert counts["on"]["k2_pulse_python"] == 0, counts
     assert counts["on"]["k2_present_native"] == 0, counts
     assert counts["on"]["k2_present_python"] == \
         counts["on"]["k2_batched_contacts"], counts

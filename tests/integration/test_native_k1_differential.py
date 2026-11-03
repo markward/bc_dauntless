@@ -146,6 +146,9 @@ class _Scene:
     def __init__(self, mp, env, ships="8"):
         mp.delenv("DAUNTLESS_NATIVE_COMBAT", raising=False)
         mp.delenv("DAUNTLESS_NATIVE_AUDIT", raising=False)
+        # Radii come from the models, as live: a leaked headless flag from
+        # another test gives every ship a nominal radius and changes the fight.
+        mp.delenv("OPEN_STBC_HOST_HEADLESS", raising=False)
         mp.setenv("DAUNTLESS_COMBAT_SHIPS", ships)
         nc.reset()
         App.g_kTimerManager._time = 0.0
@@ -574,6 +577,7 @@ class _Scene:
                     host_loop._advance_combat(ships, TICK_DELTA,
                                               player=self.player,
                                               push_render_data=False)
+                host_loop._combat_tick_boundary()   # as the host does (native damage)
                 self.record()
                 if rng.random() < 0.3:
                     op()
@@ -1110,6 +1114,7 @@ def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
                 host_loop._advance_combat(ships, TICK_DELTA,
                                           player=scene.player,
                                           push_render_data=False)
+            host_loop._combat_tick_boundary()   # as the host does (native damage)
             scene.record()
             sensor_contacts.tick(scene.player,
                                  App.g_kUtopiaModule.GetGameTime())

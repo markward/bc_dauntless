@@ -10,9 +10,11 @@ answers its ASKs and applies its DONE) -- through the whole combat step
 
 - every torpedo's position, velocity, age, guidance fields, mount key and
   bubble entry (floats by .hex()), and whether it is still in flight;
-- update_all's returned hits (points by .hex(), and whether the hit point IS
-  the torpedo's `_bubble_entry` object), and every combat.apply_hit (all
-  arguments by .hex(), and whether `shield_point is point`);
+- the step's hits (points by .hex(), and whether the hit point IS the
+  torpedo's `_bubble_entry` object: update_all's returned ones, or those the
+  native step applies itself, native damage Task 4), and every hit as its
+  HIT_PRESENT delivers it (all inputs by .hex(), and whether `shield_point
+  is point`);
 - the full ordered event log (every AddEvent: type, source, destination,
   tick; a weapon hit's damage, point and normal by .hex());
 - the incoming-torpedo table's velocity writes (torpedo_scan set_velocity,
@@ -64,6 +66,7 @@ from engine.appc.ships import ShipClass  # noqa: E402
 from engine.core import ids  # noqa: E402
 from engine.systems import frames  # noqa: E402
 from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
+from tests.helpers.k3_fight import spy_hits, spy_k3_hits  # noqa: E402
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
 DT = 1.0 / 60.0
@@ -112,8 +115,9 @@ class World:
 
     `ships` is ((name, hardpoint, (x, y, z), yaw[, script]), ...), built the
     same way in both arms so labels line up. Torpedoes are labelled T1, T2,
-    ... in firing order. `after_hit` hooks run after each combat.apply_hit (a
-    stand-in for an ET_WEAPON_HIT handler)."""
+    ... in firing order. `after_hit` hooks run after each hit's HIT_PRESENT
+    is delivered (a stand-in for an ET_WEAPON_HIT handler, at the tick
+    boundary as handlers are since native damage M2)."""
 
     def __init__(self, mp, native, ships, tag):
         nc.reset()
@@ -161,33 +165,28 @@ class World:
         self._spy(mp)
 
     def _spy(self, mp):
-        apply_hit = combat.apply_hit
         update_all = projectiles.update_all
+        # Every hit as its HIT_PRESENT delivers it (native damage Task 4: K3
+        # applies its hits with no combat.apply_hit call, and a spy ON it
+        # would be obeyed -- the hits handed back), the after_hit hooks after
+        # each; K3's decided hits in both arms.
+        spy_hits(mp, self.calls, lambda: self.n, self.label, _hx,
+                 after=[lambda: [hook(self) for hook in list(self.after_hit)]])
 
-        def hit_spy(target, damage, point, **kw):
-            sp = kw.get("shield_point")
+        def hit_row(t, ship, point, normal):
             self.calls.append((
-                "apply_hit", self.n, self.label(target), _hx(damage),
-                _hx(point), self.label(kw.get("source")),
-                _hx(kw.get("normal")), _hx(kw.get("weapon_type")),
-                self.label(kw.get("hardpoint_weapon")), _hx(sp),
-                sp is not None and sp is point, sorted(kw)))
-            result = apply_hit(target, damage, point, **kw)
-            for hook in list(self.after_hit):
-                hook(self)
-            return result
+                "hit", self.n, self.label(t), self.label(ship),
+                _hx(point), _hx(normal), _hx(t._bubble_entry),
+                point is t._bubble_entry))
 
         def update_spy(dt, ships, *, ship_instances=None):
             hits = update_all(dt, ships, ship_instances=ship_instances)
             for t, ship, point, normal in hits:
-                self.calls.append((
-                    "hit", self.n, self.label(t), self.label(ship),
-                    _hx(point), _hx(normal), _hx(t._bubble_entry),
-                    point is t._bubble_entry))
+                hit_row(t, ship, point, normal)
             return hits
 
-        mp.setattr(combat, "apply_hit", hit_spy)
         mp.setattr(projectiles, "update_all", update_spy)
+        spy_k3_hits(mp, hit_row)
 
         scan_cls = type(torpedo_scan.get_scan())
         set_velocity = scan_cls.set_velocity
@@ -286,6 +285,7 @@ class World:
         host_loop._advance_combat(list(self.listed), DT,
                                   ship_instances=self.instances,
                                   push_render_data=False)
+        host_loop._combat_tick_boundary()   # as the host does (native damage)
         self.record()
 
 
@@ -332,6 +332,8 @@ def _calls(world, kind):
 def _k3_ran(counts):
     assert counts.get("k3_runs", 0) > 0, counts
     assert counts.get("k3_python_steps", 0) == 0, counts
+    # Native damage Task 4: no hit the kernel decided is handed to Python.
+    assert counts["k3_hit_python"] == 0, counts["k3_hit_python_reasons"]
 
 
 def _k3_stood_down(counts, why, at_least=1):
@@ -390,7 +392,7 @@ def test_volley_matches(monkeypatch):
     """Guided shots (one at a subsystem offset), a dumbfire and a wide shot
     that turns, from both ships at a drifting target: steer, advance, hit."""
     ref, _nat, counts = _both(monkeypatch, _volley, 200)
-    assert _calls(ref, "hit") and _calls(ref, "apply_hit")
+    assert _calls(ref, "hit") and _calls(ref, "hit_present")
     assert any(e[0] == App.ET_WEAPON_HIT for e in ref.events)
     assert any(e[0] == App.ET_TORPEDO_EXITED_SET for e in ref.events)
     assert any(ref.scan_writes.values())
@@ -426,7 +428,7 @@ def _shield_box(w, mp):
 
 def test_bubble_hit_point_is_shield_point(monkeypatch):
     """A shot into a raised bubble detonates ON it: update_all's hit point,
-    the torpedo's `_bubble_entry` and apply_hit's shield_point are ONE
+    the torpedo's `_bubble_entry` and the hit's shield_point are ONE
     object (the fallback tier, headless), in both arms."""
 
     def script(w, t):
@@ -438,14 +440,14 @@ def test_bubble_hit_point_is_shield_point(monkeypatch):
     ref, nat, counts = _both(monkeypatch, script, 20, setup=_shield_box)
     (hit,) = _calls(ref, "hit")
     assert hit[6] is not None and hit[7] is True, hit
-    (applied,) = _calls(ref, "apply_hit")
+    (applied,) = _calls(ref, "hit_present")
     assert applied[9] is not None and applied[10] is True, applied
     _k3_ran(counts)
 
 
 def test_handler_launch_moves_next_tick(monkeypatch):
-    """A torpedo launched by a hit's handler (during the hit loop, after
-    update_all) is not moved until the next tick, in both arms."""
+    """A torpedo launched by a hit's handler (at the hit's delivery, after
+    the step) is not moved until the next tick, in both arms."""
 
     def setup(w, mp):
         def launch(world):
@@ -1334,3 +1336,72 @@ def test_non_ship_target_still_asks(monkeypatch):
     key = nat.torps[0].__dict__.get("_mount_key")
     assert key is not None and key[0] is nat.ships["Hulk"] \
         and key[4] is None, key
+
+
+# ── THE HITS (native damage, Task 4) ────────────────────────────────────────
+#
+# K3 applies its hits itself (every scenario above asserts none is handed
+# back, _k3_ran); what it cannot apply runs in Python in its place.
+
+
+def test_a_spy_on_apply_hit_hands_every_hit_back(monkeypatch):
+    """A patched combat.apply_hit is obeyed: every hit is Python's, in
+    order, with the patch called once per hit in both arms."""
+    seen = []
+
+    def setup(w, mp):
+        stock = combat.apply_hit
+
+        def spy(*args, _w=w, **kw):
+            seen.append(_w.native)
+            return stock(*args, **kw)
+        mp.setattr(combat, "apply_hit", spy)
+
+    _ref, _nat, counts = _both(monkeypatch, _volley, 200,
+                               setup=setup)
+    assert counts["k3_native_hits"] == 0, counts
+    assert counts["k3_hit_python_reasons"]["not_ok"] > 0, counts
+    assert seen.count(True) == seen.count(False) > 0, seen
+
+
+def test_an_instance_patch_on_a_hit_ships_subsystem_hands_its_hits_back(
+        monkeypatch):
+    """Override-guard gap 1: the Galaxy's shield generator shadows
+    ApplyDamage on the instance: its hits are Python's (the patch obeyed in
+    both arms); the Vor'cha's stay native."""
+    seen = []
+
+    def setup(w, mp):
+        shields = w.ships["Galaxy"].GetShields()
+        stock = type(shields).ApplyDamage
+
+        def patched(face, amount, _s=shields, _w=w):
+            seen.append(_w.native)
+            return stock(_s, face, amount)
+        mp.setattr(shields, "ApplyDamage", patched, raising=False)
+
+    _ref, _nat, counts = _both(monkeypatch, _volley, 200,
+                               setup=setup)
+    assert counts["k3_hit_python_reasons"]["unscanned"] > 0, counts
+    assert counts["k3_native_hits"] > 0, counts
+    assert True in seen and False in seen, seen
+
+
+def test_a_torpedo_shadowing_its_drf_is_handed_back(monkeypatch):
+    """weapon_splash_radius reads GetDamageRadiusFactor on the torpedo: an
+    instance attribute there is obeyed (the driver's own reason)."""
+    seen = []
+
+    def script(w, t):
+        if t == 0:
+            g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+            p = v.GetWorldLocation()
+            torp = w.fire(g, (p.x, p.y - 6.0, p.z), (0.0, 60.0, 0.0))
+            torp.GetDamageRadiusFactor = (
+                lambda _w=w: seen.append(_w.native) or 0.75)
+
+    ref, _nat, counts = _both(monkeypatch, script, 20)
+    assert counts["k3_hit_python_reasons"]["python"] == 1, counts
+    assert seen == [False, True], seen
+    (hit,) = _calls(ref, "hit_present")
+    assert hit[8] == _hx(0.75), hit      # its R_hit

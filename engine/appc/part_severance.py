@@ -480,9 +480,15 @@ def sever(ship, iid, part_name):
     return part_name
 
 
-def _mounted_subsystems(ship):
+def _mounted_subsystems(ship, keep_raising=False):
     """(subsystem, body-frame mount point) for every subsystem of `ship` that
-    has an authored position (`combat._iter_subsystems`: hull excluded)."""
+    has an authored position (`combat._iter_subsystems`: hull excluded).
+
+    `keep_raising`: a subsystem whose GetPosition() raises is kept, in its
+    place, as (subsystem, None) -- combat._apply_hit calls it unguarded, so
+    the native hit's walk (native_combat._mount_order) must hand such a hit
+    back rather than skip it. One with no GetPosition at all (hasattr false)
+    is skipped either way, as _apply_hit skips it."""
     it = getattr(ship, "_iter_subsystems", None)
     try:
         if it is None:
@@ -496,7 +502,20 @@ def _mounted_subsystems(ship):
     out = []
     for sub in subs:
         try:
-            pos = sub.GetPosition()
+            get = sub.GetPosition
+        except AttributeError:
+            continue
+        except Exception:  # noqa: BLE001 - hasattr would raise it too
+            if keep_raising:
+                out.append((sub, None))
+            continue
+        try:
+            pos = get()
+        except Exception:  # noqa: BLE001 - not a mounted subsystem
+            if keep_raising:
+                out.append((sub, None))
+            continue
+        try:
             out.append((sub, (pos.GetX(), pos.GetY(), pos.GetZ())))
         except Exception:  # noqa: BLE001 - not a mounted subsystem
             continue

@@ -22,9 +22,16 @@ class GameLoop:
     Physics + render run downstream in host_loop, not here.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, owns_boundary: bool = True) -> None:
+        """`owns_boundary`: this loop's tick is the whole sim tick (the
+        headless harness, tools), so its end is the tick boundary where the
+        held effects of every condition write and hit are delivered, the
+        death check among them (effect_queue.boundary). The host passes
+        False: its boundaries are the per-tick combat flush and the frame's
+        end (host_loop)."""
         passive_state.configure()
         native_combat.configure()
+        self.owns_boundary = owns_boundary
 
     def tick(self) -> None:
         # Drop the avoidance obstacle snapshot: a new tick means the world has
@@ -113,7 +120,20 @@ class GameLoop:
         # object, once a tick, so a write that bypassed a NativeField is
         # caught where it happened (engine/appc/native_combat.py).
         if native_combat.audit_enabled():
+            # After a drain: an off-main push queued since the last one is
+            # not a bypass, and would read as Python != mirror.
+            native_combat.drain()
             native_combat.audit_mirror()
+
+        # The tick boundary when no host drives this loop: the held damage
+        # effects are delivered, the death check among them (native damage
+        # M2, M5; engine/appc/effect_queue.py).
+        if self.owns_boundary:
+            from engine.appc import effect_queue
+            effect_queue.boundary()
+            # The mirror's pending frees and off-main pushes (spec
+            # 2026-11-03 ruling R2): host_loop's tick boundary otherwise.
+            native_combat.drain(boundary=True)
 
     def advance(self, n: int) -> None:
         for _ in range(n):

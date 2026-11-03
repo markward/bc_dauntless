@@ -146,6 +146,26 @@ constexpr FieldInfo kInfo[] = {
     {"_max_torpedoes", Kind::Ammo, FieldType::I},
     {"ammo_launch_state", Kind::Ammo, FieldType::I},
     {"ammo_launch_speed", Kind::Ammo, FieldType::F},
+    {"_threshold_state", Kind::Subsystem, FieldType::I},
+    {"_invincible", Kind::Subsystem, FieldType::I},
+    {"_critical", Kind::Subsystem, FieldType::I},
+    {"_in_repair_queue", Kind::Subsystem, FieldType::I},
+    {"dmg_class", Kind::Subsystem, FieldType::I},
+    {"cond_watch_checks", Kind::Subsystem, FieldType::I},
+    {"comb_watch_checks", Kind::Subsystem, FieldType::I},
+    {"cond_watch_value", Kind::Subsystem, FieldType::F},
+    {"comb_watch_value", Kind::Subsystem, FieldType::F},
+    {"_current_shields", Kind::Subsystem, FieldType::FloatList},
+    {"_max_shields", Kind::Subsystem, FieldType::FloatList},
+    {"_ramp_fraction", Kind::Subsystem, FieldType::FloatList},
+    {"_ramp_set", Kind::Subsystem, FieldType::FloatList},
+    {"_hurtable", Kind::Object, FieldType::I},
+    {"dmg_ship", Kind::Object, FieldType::I},
+    {"_max_damage", Kind::Subsystem, FieldType::F},
+    {"_max_damage_distance", Kind::Subsystem, FieldType::F},
+    {"_invincible", Kind::Object, FieldType::I},
+    {"_splash_damage", Kind::Object, FieldType::F},
+    {"_splash_damage_radius", Kind::Object, FieldType::F},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -260,6 +280,8 @@ double* fptr(ObjectRow& r, Field f) {
         case Field::_life_time: return &r._life_time;
         case Field::o_radius: return &r._radius;
         case Field::_scale: return &r._scale;
+        case Field::_splash_damage: return &r._splash_damage;
+        case Field::_splash_damage_radius: return &r._splash_damage_radius;
         default: return nullptr;
     }
 }
@@ -281,6 +303,9 @@ int64_t* iptr(ObjectRow& r, Field f) {
         case Field::_dead: return &r._dead;
         case Field::_dying: return &r._dying;
         case Field::arriving: return &r.arriving;
+        case Field::_hurtable: return &r._hurtable;
+        case Field::dmg_ship: return &r.dmg_ship;
+        case Field::o_invincible: return &r._invincible;
         default: return nullptr;
     }
 }
@@ -342,6 +367,10 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_reload_delay: return &r._reload_delay;
         case Field::_watch_value: return &r._watch_value;
         case Field::_damage_radius_factor: return &r._damage_radius_factor;
+        case Field::cond_watch_value: return &r.cond_watch_value;
+        case Field::comb_watch_value: return &r.comb_watch_value;
+        case Field::_max_damage: return &r._max_damage;
+        case Field::_max_damage_distance: return &r._max_damage_distance;
         default: return nullptr;
     }
 }
@@ -374,6 +403,13 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::_cloak_state: return &r._cloak_state;
         case Field::_watch_checks: return &r._watch_checks;
         case Field::_power_level: return &r._power_level;
+        case Field::_threshold_state: return &r._threshold_state;
+        case Field::_invincible: return &r._invincible;
+        case Field::_critical: return &r._critical;
+        case Field::_in_repair_queue: return &r._in_repair_queue;
+        case Field::dmg_class: return &r.dmg_class;
+        case Field::cond_watch_checks: return &r.cond_watch_checks;
+        case Field::comb_watch_checks: return &r.comb_watch_checks;
         default: return nullptr;
     }
 }
@@ -401,6 +437,10 @@ std::vector<double>* flptr(SubsystemRow& r, Field f) {
     switch (f) {
         case Field::_reload_timers: return &r._reload_timers;
         case Field::_reload_advanced_at: return &r._reload_advanced_at;
+        case Field::_current_shields: return &r._current_shields;
+        case Field::_max_shields: return &r._max_shields;
+        case Field::_ramp_fraction: return &r._ramp_fraction;
+        case Field::_ramp_set: return &r._ramp_set;
         default: return nullptr;
     }
 }
@@ -666,6 +706,20 @@ int64_t Mirror::find_by_obj_id(int64_t obj_id) const {
     auto it = by_obj_id_.find(obj_id);
     if (it == by_obj_id_.end()) return -1;
     return find(objects_, it->second, Kind::Object) ? it->second : -1;
+}
+
+void Mirror::set_obj_id_findable(int64_t h, bool findable) {
+    if (kind_of(h) != Kind::Object)
+        throw std::invalid_argument("combat mirror: not an Object row");
+    const ObjectRow& r = checked(objects_, h, Kind::Object);
+    if (r.obj_id < 0) return;
+    if (findable) {
+        by_obj_id_[r.obj_id] = h;
+    } else {
+        auto it = by_obj_id_.find(r.obj_id);
+        if (it != by_obj_id_.end() && it->second == h) by_obj_id_.erase(it);
+    }
+    ++epoch_;
 }
 
 void Mirror::set_f(int64_t h, Field f, double v) {

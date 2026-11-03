@@ -7,10 +7,12 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "dauntless/combat/beam_trace.h"
+#include "dauntless/combat/damage.h"
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/mirror.h"
 
@@ -93,8 +95,39 @@
 // weapon_splash_radius are deliberately not watched (ruling Q5: a patch of
 // them is not obeyed for a native splash; native_combat.py, WHAT K2 STANDS
 // IN FOR). begin(), end() and abandon() clear the queue: an
-// abandoned step presents nothing it queued. A damage pulse
-// (`flush_dwell > 0.0`) is still a CONTACT record.
+// abandoned step presents nothing it queued.
+//
+// THE DAMAGE PULSE (native damage, spec 2026-11-02-native-damage §3 goal 2;
+// Task 4). A contact with `flush_dwell > 0.0` is _phaser_contact's damage
+// branch, applied IN THE WALK when the context's `pulse.ok` holds and its
+// target is in `pulse.clean` (the driver's scan found no instance
+// attribute on it or its subsystems shadowing a method the hit stands in
+// for): the damage is `_phaser_damage_for_tick(bank._max_damage,
+// bank._max_damage_distance, dist, flush_dwell) *
+// PHASER_INTENSITY_SCALE[level]` (level the system's mirrored
+// `_power_level`, indexed as Python indexes a 3-tuple), and when it is > 0
+// the hit is damage.h's apply_hit(target, damage, impact point, source =
+// the ship, the normal, R_hit = the bank's DamageRadiusFactor if > 0 else
+// `pulse.default_radius`, damage_hull = level != `pulse.pp_low`, shield
+// point = the bubble entry, the phaser codes, `pulse.has_instances`) with
+// `pulse.dc`. The step memo is cleared before and after it (combat.
+// apply_hit's step_memo.forget, DM H13: memo_clear here; the Python tables
+// are the driver's, at the next record). Its writes and entries ride the
+// next record as a K2Hit, placed among the record's own writes and entries
+// where they were made; the binding applies and appends them in that order
+// (the Held operands: the ship). The mirror holds the result at once, so
+// the next bank on the same target reads it (ruling P1). A damage of 0
+// (or NaN) does nothing, as Python's `if damage > 0`. The kernel never
+// decides a death (M5): a pulse that zeroes a critical subsystem leaves
+// the target alive for the rest of the step. The pulse is rolled back with
+// its walk: a throw, or its ship handed to Python whole (it never is once
+// a pulse landed: the ship's body has started, as after a resting contact)
+// undoes its writes (DamageOut::undo) and drops its entries.
+// Anything else -- `pulse.ok` false (the driver found a function or class
+// the hit stands in for replaced, or a player the mirror cannot name), a
+// target not scanned clean, a level Python would raise on, or damage.h
+// falling back -- keeps the CONTACT record, counted by why (K2PulseWhy):
+// Python then runs _phaser_contact itself.
 //
 // RECORDS (K2Kind, in combat_k2_kinds() order). The Python layouts, as the
 // binding builds them (handles are mirror handles, -1 = None; xyz = a
@@ -123,11 +156,10 @@
 //        target_pos) or "origin" (the impact point IS emitter_pos), so Python
 //        rebuilds Python's object identity. shields_block is None when the
 //        loop did not evaluate it (aim_unit None) or Python answered it (an
-//        ASK; K2Contact::shields_asked). Python: combat.apply_hit(...) if
-//        the damage is > 0 (the damage arithmetic,
-//        PHASER_INTENSITY_SCALE[level], weapon_splash_radius and
-//        damage_hull stay Python). Only a damage pulse comes back as a
-//        CONTACT record; a resting contact is queued (RESTING CONTACTS
+//        ASK; K2Contact::shields_asked). Python: _phaser_contact, i.e.
+//        combat.apply_hit(...) if the damage is > 0. Only a damage pulse
+//        the kernel could not apply comes back as a CONTACT record (THE
+//        DAMAGE PULSE); a resting contact is queued (RESTING CONTACTS
 //        above).
 //   4 RUN_PYTHON  (RUN_PYTHON, ship, ship_pos, writes)
 //        -> the loop body for ships_list[ship_pos], in Python, whole.
@@ -305,9 +337,11 @@
 //       PhaserBank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
 //         _strip_emit_position, _emitter_world_position, GetLength,
 //         GetDirection, GetUp, GetArcWidthAngles, GetArcHeightAngles,
-//         IsDisabled, IsDestroyed;
+//         IsDisabled, IsDestroyed, GetMaxDamage, GetMaxDamageDistance,
+//         GetDamageRadiusFactor;
 //       PhaserSystem: GetNumWeapons, GetWeapon, GetNumChildSubsystems,
-//         GetChildSubsystem, IsOn, IsDisabled, IsDestroyed, GetPowerLevel;
+//         GetChildSubsystem, IsOn, IsDisabled, IsDestroyed, GetPowerLevel,
+//         PP_LOW;
 //       ShieldSubsystem: HasShields, IsOn, IsDisabled, IsDestroyed;
 //       CloakingSubsystem: IsCloaking, IsDecloaking;
 //       ShipSubsystem: the subsystem names;
@@ -331,9 +365,12 @@
 //     GetTargetOffsetTG, GetShields, IsDead, GetWorldLocation,
 //     GetWorldRotation;
 //   its phaser system: GetNumWeapons, GetWeapon, IsOn, IsDisabled,
-//     IsDestroyed, StopFiring, GetPowerLevel;
+//     IsDestroyed, StopFiring, GetPowerLevel, PP_LOW;
 //   a bank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
-//     _strip_emit_position, _emitter_world_position, GetLength, StopFiring.
+//     _strip_emit_position, _emitter_world_position, GetLength, StopFiring,
+//     GetMaxDamage, GetMaxDamageDistance, GetDamageRadiusFactor.
+// (GetMaxDamage, GetMaxDamageDistance, GetDamageRadiusFactor, PP_LOW: THE
+// DAMAGE PULSE reads the bank's and system's mirrored values.)
 // (GetPowerLevel: a resting contact carries the system's mirrored
 // `_power_level`, RESTING CONTACTS. StopFiring: THE OFFLINE STOP and the
 // walk's logged bank stops stand in for it. A class overriding it --
@@ -424,6 +461,29 @@ struct K2Contact {
     double flush_dwell = 0.0;
 };
 
+// Why a damage pulse came back as a CONTACT record (THE DAMAGE PULSE).
+enum class K2PulseWhy : int32_t {
+    not_ok = 0,   // the context's pulse.ok is false
+    unscanned,    // the target is not in pulse.clean
+    level,        // the power level is not an index of the 3-tuple
+    fallback,     // damage.h fell back (the mirror is as it was)
+    python,       // the bank is in pulse.python_banks (K3: the driver's own)
+    kCount
+};
+const char* k2_pulse_why_name(K2PulseWhy w);
+
+// A damage pulse applied in the walk (THE DAMAGE PULSE): its writes and
+// entries, placed after the record's first `at_write` writes and
+// `at_entry` entries. `source` is the Held operands' handle (the ship);
+// `bank`, `target` and the trace's `tier` describe the contact
+// (combat_k2_last_hits).
+struct K2Hit {
+    size_t at_write = 0, at_entry = 0;
+    int64_t source = -1, bank = -1, target = -1;
+    ResolvedHit::Tier tier = ResolvedHit::Tier::Fallback;
+    DamageOut out;
+};
+
 struct K2Record {
     K2Kind kind = K2Kind::DONE;
     // SYSTEM_STOP: a = system. BANK_STOP: a = bank.
@@ -436,6 +496,9 @@ struct K2Record {
     // The queue entries produced since the previous record, in walk order
     // (THE EFFECT QUEUE): K1's entry type, LOOP_STOP only.
     std::vector<K1Entry> entries;
+    // The damage pulses applied since the previous record, in walk order
+    // (THE DAMAGE PULSE).
+    std::vector<K2Hit> hits;
 };
 
 // A resting contact queued for the drain (RESTING CONTACTS), with what its
@@ -464,6 +527,31 @@ struct K2Answer {
     ResolvedHit::Tier tier = ResolvedHit::Tier::Fallback;
 };
 
+// What a damage pulse reads that the mirror does not hold (THE DAMAGE
+// PULSE), sent by the driver at begin.
+struct K2PulseCtx {
+    // The pulse may be applied in the walk this step.
+    bool ok = false;
+    // The player (always) and the three cheats (damage.h).
+    DamageContext dc;
+    // host_loop.PHASER_INTENSITY_SCALE (a 3-tuple), combat.
+    // PHASER_DEFAULT_DAMAGE_RADIUS and PhaserSystem.PP_LOW.
+    std::array<double, 3> intensity{0.0, 0.0, 0.0};
+    double default_radius = 0.0;
+    int64_t pp_low = 0;
+    // The phaser's codes: HIT_PRESENT's weapon (effect_queue's HitWeapon)
+    // and WEAPON_HIT's (WeaponHitEvent.PHASER).
+    int64_t hit_weapon = 0, weapon_hit_type = 0;
+    // ship_instances is not None.
+    bool has_instances = false;
+    // Targets the driver scanned clean (Object handles).
+    std::unordered_set<int64_t> clean;
+    // K2: banks (Subsystem handles) whose instance dict shadows a name the
+    // pulse reads from the mirror (GetMaxDamage, GetMaxDamageDistance,
+    // GetDamageRadiusFactor): their pulses are Python's. Unused by K3.
+    std::unordered_set<int64_t> python_banks;
+};
+
 struct K2Context {
     // dev_combat_cheats.disable_npc_shields_active()
     bool npc_shields_off = false;
@@ -486,6 +574,8 @@ struct K2Context {
     TraceHooks hooks;
     // Ships the driver hands to Python whole (a class override it found).
     std::unordered_set<int64_t> python_ships;
+    // THE DAMAGE PULSE.
+    K2PulseCtx pulse;
 };
 
 class K2Kernel {
@@ -547,9 +637,18 @@ public:
         // entries produced, by K1Effect (LOOP_STOP only).
         int64_t logged_firing_system_stop = 0, logged_bank_stop = 0;
         std::array<int64_t, static_cast<size_t>(K1Effect::kCount)> entries{};
+        // THE DAMAGE PULSE: pulses applied in the walk (counted when made:
+        // a throw or a hand-back that undoes one can overcount), and those
+        // kept as a CONTACT record, by why.
+        int64_t native_pulses = 0;
+        std::array<int64_t, static_cast<size_t>(K2PulseWhy::kCount)>
+            pulse_why{};
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }
+    // The damage pulses the records returned since the last call carried
+    // (the driver forgets the step memo's Python tables when it is > 0).
+    int64_t take_hits() { return std::exchange(hits_returned_, 0); }
 
     struct Session;  // the cursor (k2_beams.cc)
 
@@ -558,6 +657,7 @@ private:
     K2Context ctx_;
     std::unique_ptr<Session> session_;
     Counts counts_;
+    int64_t hits_returned_ = 0;
 
 public:
     ~K2Kernel();

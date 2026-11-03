@@ -5,6 +5,11 @@ ONE list, shared by tests/conftest.py's `_reset_leakable_engine_globals`
 (cleared between tests) and tests/helpers/headless_mission.py's
 `clear_in_flight` (cleared between the arms of a test that loads a mission
 twice). Each entry is (module name, attribute); the attribute has `.clear()`.
+
+Not a list, so not here: the combat effect queue's held entries (a condition
+write's or a hit's effects awaiting the tick boundary, the death check among
+them). tests/conftest.py drops them through native_combat.reset();
+headless_mission.clear_in_flight through effect_queue.reset().
 """
 
 IN_FLIGHT = (

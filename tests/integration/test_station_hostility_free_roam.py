@@ -13,6 +13,7 @@ from tests.helpers import headless_mission as hm  # noqa: E402
 from tests.integration.test_quickbattle_setup_e2e import world  # noqa: E402,F401
 from tests.integration.test_home_stations_free_roam import (  # noqa: E402
     _player, _warp_to_starbase_12)
+from engine.appc import effect_queue  # noqa: E402
 
 
 def _close_to(player, station, gu=25.0):
@@ -45,6 +46,7 @@ def _hit(station, player):
     player.SetTarget(station)   # a hit only counts on the player's target
     combat.apply_hit(station, 50.0, station.GetWorldLocation(), player,
                      weapon_type="phaser")
+    effect_queue.boundary()             # the tick boundary
 
 
 def _enemies():

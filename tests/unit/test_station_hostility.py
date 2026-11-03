@@ -12,6 +12,7 @@ from engine.systems import home_stations as hs
 from engine.systems import station_hostility as sh
 from tests.helpers.fresh_world import _fresh_world
 from tests.helpers.mapped_regions import load_region
+from engine.appc import effect_queue
 
 HANDLER = "engine.systems.station_hostility.on_weapon_hit"
 
@@ -62,6 +63,7 @@ def hit(w, station, t, source=None, weapon="phaser", aim=True):
     combat.apply_hit(station, 50.0, station.GetWorldLocation(),
                      source if source is not None else w.player,
                      weapon_type=weapon)
+    effect_queue.boundary()             # the tick boundary
 
 
 def enemies(w):

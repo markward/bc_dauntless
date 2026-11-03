@@ -168,8 +168,9 @@ _SEVER = {}
 
 def SeverHandler(_dest, evt):
     """ET_WEAPON_HIT broadcast handler: from SEVER_AT, the first hit on the
-    cruising Bird of Prey severs a wing it still has, in the middle of the
-    step that hit it (apply_hit posts the event). In the native arm every
+    cruising Bird of Prey severs a wing it still has, at the boundary of the
+    tick that hit it (the hit's ET_WEAPON_HIT is delivered there: native
+    damage M2; before, in the middle of the step). In the native arm every
     mount of the ship is then asked of the kernel at once (no resolution in
     between) and must equal Python's bit for bit; the severed wing's mounts
     must be their rest point."""
@@ -818,6 +819,7 @@ class PosedFight:
                                               ship_instances=instances,
                                               player=self.player,
                                               push_render_data=False)
+                host_loop._combat_tick_boundary()   # as the host does (native damage)
                 self.rec.record()
                 if rng.random() < 0.04:
                     self.op(rng)
@@ -872,7 +874,7 @@ def report(label, ticks_per_frame, elapsed, ref, nat):
           "  sever %r\n  k1 python reasons %r\n  k2 python reasons %r\n"
           "  k3 steer reasons %r\n  k3 asks %r\n  kernel records %r\n"
           "  round trips %r\n"
-          "  hits %d, apply_hits %d, events %d, presentation calls %d"
+          "  hits %d, presented %d, events %d, presentation calls %d"
           % (label, ticks_per_frame, elapsed, TICKS, posed_branches(c),
              {k: v for k, v in posed_fallbacks(c).items() if v},
              posed_no_mount(c), nat.stats, nat.sever,
@@ -883,7 +885,7 @@ def report(label, ticks_per_frame, elapsed, ref, nat):
              c["k3_asks"], dict(sorted(nat.rec.tally.n.items())),
              round_trips(c),
              len([x for x in ref.rec.calls if x[0] == "hit"]),
-             len([x for x in ref.rec.calls if x[0] == "apply_hit"]),
+             len([x for x in ref.rec.calls if x[0] == "hit_present"]),
              len(ref.rec.events), presented(ref.rec.calls)))
 
 
@@ -939,10 +941,11 @@ def check_posed(ref, nat):
     assert s["stale_seen"] >= 4, s
     assert s["mount_checks"] > 10 * TICKS, s
     assert s["emitter_checks"] > 10 * TICKS, s
-    # A wing came off INSIDE a step, and the very next native query of
-    # every mount gave Python's bits, the severed wing's its rest point.
+    # A wing came off at a tick's boundary, outside the step (native damage
+    # M2), and the very next native query of every mount gave Python's
+    # bits, the severed wing's its rest point.
     sev = nat.sever
-    assert sev.get("step_open") is True, sev
+    assert sev.get("step_open") is False, sev
     assert sev["on_wing"] > 0 and sev["rest"] == sev["on_wing"], sev
     assert sev["moved"] > 0, sev            # the wing was posed when cut
     assert sev["checked"] > 0, sev

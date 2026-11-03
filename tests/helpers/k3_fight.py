@@ -9,7 +9,8 @@ them in the same order), spies on the calls a torpedo step makes, and
 records after every tick everything Task 5's dispatch test compares
 (tests/unit/test_native_k3_dispatch.py) -- every torpedo in flight (or that
 left flight this tick): position, velocity, age, guidance fields, mount key,
-bubble entry (floats by .hex()); update_all's hits; every apply_hit, and in
+bubble entry (floats by .hex()); the K3 step's hits; every hit as its
+HIT_PRESENT delivers it (spy_hits), and in
 the same log every beam contact, hit VFX spawn and shield hit (the
 presentation: spy_presentation, round trips Task 5; compared per tick as a
 multiset, compare_calls); the
@@ -60,6 +61,8 @@ from engine.appc import weapon_subsystems as ws
 from engine.appc.events import WeaponHitEvent
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.projectiles import Torpedo
+from engine.appc.sets import SetClass
+from engine.appc.subsystems import ShipSubsystem
 from engine.systems import frames
 from tests.helpers import effect_split
 
@@ -274,6 +277,66 @@ def capture_native_shield_hits(mp, on_item):
     mp.setattr(_h, "combat_k2_drain", drain)
 
 
+def spy_hits(mp, calls, tick, label, hexer=None, after=None):
+    """Every hit, as both arms make it (native damage Task 4: K2 applies a
+    damage pulse in its walk and K3 its hits after the step's expiries, so
+    combat.apply_hit is no longer called for them natively -- and a spy ON
+    it would be obeyed: the kernels hand a patched apply_hit's hits back).
+
+    - "hit_present" rows: each HIT_PRESENT as it is delivered
+      (hit_feedback.present, at the tick boundary in both arms), every input
+      the hit gave its presentation: (tick, ship, damage, point, source,
+      normal, weapon_type, radius, shield_point, shield_point IS point,
+      absorbed shields / subsystem / hull, the primary subsystem, its
+      transition, persist_decal, allow_structural_wear, ship_instances given,
+      tangent, decal radius and dent, single_impact, shield radius); `after`
+      hooks run after each (a stand-in for a hit's handler, now at the
+      boundary).
+    - "hit" rows are the K3 hits update_all decided, logged by the caller's
+      update_all spy (Python's step returns them) and by spy_k3_hits (the
+      native step applies them itself)."""
+    from engine.appc import hit_feedback
+    hexer = hexer or hx
+    present = hit_feedback.present
+
+    def present_spy(**kw):
+        sp, point = kw.get("shield_point"), kw.get("point")
+        calls.append((
+            "hit_present", tick(), label(kw["ship"]), hexer(kw["damage"]),
+            hexer(point), label(kw.get("source")), hexer(kw.get("normal")),
+            hexer(kw.get("weapon_type")), hexer(kw.get("radius")),
+            hexer(sp), sp is not None and sp is point,
+            hexer(kw.get("absorbed_shields")),
+            hexer(kw.get("absorbed_subsystem")),
+            hexer(kw.get("absorbed_hull")), label(kw.get("subsystem")),
+            repr(kw.get("sub_transition")), kw.get("persist_decal"),
+            kw.get("allow_structural_wear"),
+            kw.get("ship_instances") is not None, hexer(kw.get("tangent")),
+            hexer(kw.get("decal_radius")), hexer(kw.get("decal_dent")),
+            kw.get("single_impact"), hexer(kw.get("shield_radius")),
+            sorted(kw)))
+        result = present(**kw)
+        for hook in list(after or ()):
+            hook()
+        return result
+
+    mp.setattr(hit_feedback, "present", present_spy)
+
+
+def spy_k3_hits(mp, row):
+    """The native K3 step's hits as _k3_walk hands them to _k3_apply_hits
+    (after the expiries), each through `row(torpedo, ship, point, normal)`
+    -- the row an update_all spy logs for Python's returned hits."""
+    apply = nc._k3_apply_hits
+
+    def apply_spy(hits, ship_instances, walk, _orig=apply):
+        for t, ship, point, normal in hits:
+            row(t, ship, point, normal)
+        return _orig(hits, ship_instances, walk)
+
+    mp.setattr(nc, "_k3_apply_hits", apply_spy)
+
+
 def spy_presentation(mp, calls, tick, label, contacts=True):
     """Every hit VFX spawn and every shield hit, with their arguments, into
     the compared call log `calls`, in the order they happen (`tick()` the
@@ -388,6 +451,30 @@ def compare_calls(ref_calls, nat_calls):
                 t, ref_shown[t], nat_shown[t]))
 
 
+def _place_in_ship(ship, sub):
+    """`sub`'s name, made unique within `ship` by its place among the
+    subsystems of that name in the ship's own walk order (the same in both
+    arms): "Phaser[1]" for the second of two "Phaser" banks."""
+    from engine.appc.subsystems import iter_subsystems
+    name = sub.GetName()
+    same = [s for s in iter_subsystems(ship) if s.GetName() == name]
+    if len(same) < 2:
+        return name
+    for i, s in enumerate(same):
+        if s is sub:
+            return "%s[%d]" % (name, i)
+    return name
+
+
+def _claim(labels, obj, name):
+    """Give `obj` the label `name`; one taken by another object is a
+    collision two arms could compare equal through (task review M6)."""
+    assert name not in labels.values(), (
+        "recorder label %r names two objects" % name)
+    labels[id(obj)] = name
+    return name
+
+
 class Recorder:
     """The per-tick record, the call log and the event log of one arm (see
     the module docstring). `ships` are labelled by name; anything else by
@@ -429,16 +516,25 @@ class Recorder:
         if obj is None:
             return None
         name = self.labels.get(id(obj))
-        if name is None and isinstance(obj, (ws.Weapon, ws.WeaponSystem)):
-            # A recorded ship's weapon or weapon system, by name: its first
-            # sight is often a weapon event, which native delivers at the
-            # tick boundary, after objects the rest of the step numbers.
-            # Held apart from the numbered objects, so it never shifts a
-            # number.
-            ship = self.labels.get(id(obj._climb_to_ship()))
+        if name is None and isinstance(obj, ShipSubsystem):
+            # A recorded ship's subsystem (a weapon, a weapon system), by
+            # name: its first sight is often an event delivered at the tick
+            # boundary -- a weapon event native delivers there, a damage
+            # event both arms deliver there (native damage M2), in an order
+            # against the native arm's boundary launches that differs from
+            # the reference's mid-step ones. Held apart from the numbered
+            # objects, so it never shifts a number.
+            owner = obj._owning_ship()
+            ship = self.labels.get(id(owner))
             if ship is not None:
-                name = self.labels[id(obj)] = "%s/%s" % (ship, obj.GetName())
+                name = _claim(self.labels, obj, "%s/%s" % (
+                    ship, _place_in_ship(owner, obj)))
                 self.named.append(obj)
+        if name is None and isinstance(obj, SetClass):
+            # A set, by name, for the same reason (a death's events, which
+            # both arms deliver at the boundary, name the ship's set).
+            name = _claim(self.labels, obj, "set:%s" % obj.GetName())
+            self.named.append(obj)
         if name is None:
             name = self.labels[id(obj)] = "%s#%d" % (type(obj).__name__,
                                                      len(self.held))
@@ -459,32 +555,25 @@ class Recorder:
     # ── Spies ────────────────────────────────────────────────────────────────
 
     def _spy(self, mp):
-        apply_hit = combat.apply_hit
         update_all = projectiles.update_all
+        # Every hit as delivered, and K3's decided hits in both arms
+        # (spy_hits: the kernels apply theirs without combat.apply_hit).
+        spy_hits(mp, self.calls, lambda: self.tick, self.label)
 
-        def hit_spy(target, damage, point, **kw):
-            sp = kw.get("shield_point")
+        def hit_row(t, ship, point, normal):
             self.calls.append((
-                "apply_hit", self.tick, self.label(target), hx(damage),
-                hx(point), self.label(kw.get("source")),
-                hx(kw.get("normal")), hx(kw.get("weapon_type")),
-                self.label(kw.get("hardpoint_weapon")), hx(sp),
-                sp is not None and sp is point,
-                kw.get("ship_instances") is self.ship_instances,
-                hx(kw.get("damage_hull")), sorted(kw)))
-            return apply_hit(target, damage, point, **kw)
+                "hit", self.tick, self.label(t), self.label(ship),
+                hx(point), hx(normal), hx(t._bubble_entry),
+                point is t._bubble_entry))
 
         def update_spy(dt, ships, *, ship_instances=None):
             hits = update_all(dt, ships, ship_instances=ship_instances)
             for t, ship, point, normal in hits:
-                self.calls.append((
-                    "hit", self.tick, self.label(t), self.label(ship),
-                    hx(point), hx(normal), hx(t._bubble_entry),
-                    point is t._bubble_entry))
+                hit_row(t, ship, point, normal)
             return hits
 
-        mp.setattr(combat, "apply_hit", hit_spy)
         mp.setattr(projectiles, "update_all", update_spy)
+        spy_k3_hits(mp, hit_row)
 
         register = projectiles.register
 

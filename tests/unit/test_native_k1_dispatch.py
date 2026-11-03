@@ -1011,6 +1011,29 @@ def test_reset_clears_the_per_class_caches(monkeypatch):
     assert nc._k1_overridden(ws.PhaserBank) == 1
 
 
+def test_reset_lets_go_of_a_class_the_field_caches_saw():
+    """nc.reset() drops the class-keyed field caches (`_class_fields`,
+    `_class_hidden`, `_quiet_setters`) too, so a class a test defined
+    is freed once the test is done with it. A strong key there kept a
+    test-local PhaserSystem subclass alive for the rest of the process,
+    where every later `WeaponSystem.__subclasses__()` walk saw it
+    (tests/unit/test_subsystem_obj_type.py's classification check)."""
+    import gc
+    import weakref
+
+    class Local(ws.PhaserSystem):
+        pass
+
+    nc._fields_of(Local)
+    nc._hidden_fields(Local)
+    nc._quiet_setter(Local, "_target_list")
+    gone = weakref.ref(Local)
+    del Local
+    nc.reset()
+    gc.collect()
+    assert gone() is None
+
+
 # ── Posed parts (native-combat posed parts, Task 4) ─────────────────────────
 #
 # A Bird of Prey swung for cruise carries its disruptor cannons on its wings;

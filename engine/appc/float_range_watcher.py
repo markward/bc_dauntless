@@ -45,6 +45,27 @@ def _push_value(owner, value: float) -> None:
         _native_combat.push_watch_value(owner, value)
 
 
+def _push_cond(sub, which) -> None:
+    """An adopted condition watcher's check count changed: the subsystem's
+    mirror row (native damage Task 3). Nothing with native combat off."""
+    global _native_combat
+    if _native_combat is None:
+        from engine.appc import native_combat
+        _native_combat = native_combat
+    if _native_combat._enabled:
+        _native_combat.push_cond_watch(sub, which)
+
+
+def _push_cond_value(sub, which, value: float) -> None:
+    """An adopted condition watcher committed `value`."""
+    global _native_combat
+    if _native_combat is None:
+        from engine.appc import native_combat
+        _native_combat = native_combat
+    if _native_combat._enabled:
+        _native_combat.push_cond_watch_value(sub, which, value)
+
+
 class FloatRangeWatcher:
     """Watches a single float; fires registered events on threshold crossings.
 
@@ -72,6 +93,13 @@ class FloatRangeWatcher:
     # only for a watcher with checks). None: nobody. A class default, so an
     # unowned watcher's instance dict is unchanged.
     _owner = None
+    # The subsystem whose condition watcher this is, and which one
+    # (effect_queue.WATCH_*), when it adopted it (native_combat.
+    # CondWatcherField): each check added or removed and each value
+    # committed (_update_queued) pushes its mirror row. None: nobody. Class
+    # defaults, so an unowned watcher's instance dict is unchanged.
+    _cond_owner = None
+    _cond_which = None
 
     def __init__(self, initial_value: float = 0.0, event_manager=None,
                  owner=None) -> None:
@@ -96,6 +124,8 @@ class FloatRangeWatcher:
         self._checks[check_id] = (float(threshold), int(direction), pEvent)
         if self._owner is not None:
             self._owner._watch_checks = len(self._checks)
+        if self._cond_owner is not None:
+            _push_cond(self._cond_owner, self._cond_which)
         return check_id
 
     def RemoveRangeCheck(self, check_id: int) -> None:
@@ -103,6 +133,8 @@ class FloatRangeWatcher:
         self._checks.pop(check_id, None)
         if self._owner is not None:
             self._owner._watch_checks = len(self._checks)
+        if self._cond_owner is not None:
+            _push_cond(self._cond_owner, self._cond_which)
 
     def GetWatchedVariable(self) -> float:
         """Return the latest watched value."""
@@ -147,6 +179,24 @@ class FloatRangeWatcher:
         self._value = new_value
         if owner is not None:
             _push_value(owner, new_value)
+
+    def _update_queued(self, new_value: float, subsystem, which: int) -> None:
+        """A subsystem's condition watcher's _update (native damage M2): it
+        queues like an owned watcher, in both switch states -- the value is
+        committed at once and, when the watcher has checks, COND_WATCH(
+        subsystem, which, old, new) is emitted; delivery fires the checks
+        crossed, as registered THEN (engine/appc/effect_queue.py, ruling
+        E3). `which` names this watcher on `subsystem`
+        (effect_queue.WATCH_CONDITION / WATCH_COMBINED)."""
+        new_value = float(new_value)
+        old_value = self._value
+        self._value = new_value
+        if self._cond_owner is subsystem:
+            _push_cond_value(subsystem, which, new_value)
+        if self._checks:
+            from engine.appc import effect_queue
+            effect_queue.emit(effect_queue.COND_WATCH, subsystem, which,
+                              float(old_value), new_value)
 
     def _fire_crossed(self, old_value: float, new_value: float) -> None:
         """Fire every check crossed between the two values."""

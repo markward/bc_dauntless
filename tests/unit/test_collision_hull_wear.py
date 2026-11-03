@@ -16,6 +16,7 @@ import pytest
 
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass
+from engine.appc import effect_queue
 
 # ships/Hardpoints/Galaxy.py: `Galaxy.SetMass(120.0)`. NOT in
 # GlobalPropertyTemplates.py, which carries only 12 masses and no Galaxy.
@@ -88,6 +89,7 @@ def test_a_hard_collision_wears_both_hulls(wear_boundary):
 
     _respond_pair(_resolve_body(a), _resolve_body(b),
                   ship_instances={a: 11, b: 22})
+    effect_queue.boundary()             # the tick boundary
 
     # positional signature: (instance_id, point, normal, radius, wear, kind)
     worn = {c[0]: c[4] for c in wear_boundary}

@@ -39,6 +39,14 @@ class ShipClass(DamageableObject):
     _manual_target_offset = native_combat.NativeField(native_combat.OFFSET)
     _shield_subsystem = native_combat.NativeMountRefField("Subsystem")
     _shield_hull_box = native_combat.HullBoxField()
+    # SetHurtable(0) makes the ship immune (IsImmuneToDamage): the native
+    # hit reads it (native damage Task 3).
+    _hurtable = native_combat.NativeField(bool)
+    # SetInvincible(1): the ship cannot die (ruling M1). Mirrored with the
+    # hit's other inputs (native damage Task 4); the death check reads it at
+    # delivery, in Python. A Subsystem field has the name, so the key is
+    # qualified.
+    _invincible = native_combat.NativeField(bool, key="Object._invincible")
     # A rebind may change has_posed_parts (native_combat.PosedPartsField).
     _articulation_poses = native_combat.PosedPartsField()
 
@@ -1811,8 +1819,13 @@ class ShipClass(DamageableObject):
         self._destroy_broken_systems = bool(v)
 
     # Immunity (SDK App.py:5482-5485). Real 0/1 getters so combat.apply_hit
-    # reads a genuine flag, never a truthy _Stub. IsImmuneToDamage() is the
-    # single predicate combat consults: invincible OR not hurtable.
+    # reads a genuine flag, never a truthy _Stub. The two flags mean
+    # different things (spec 2026-11-02-native-damage-design.md, ruling M1 --
+    # the scripts' reading: E3M5 "Set ship invincible so it won't actually
+    # blow up", E3M1's drill, E8M2's Matan disable):
+    #   SetHurtable(0)   -> the ship takes no damage (IsImmuneToDamage);
+    #   SetInvincible(1) -> damage lands, the ship never begins dying
+    #                       (engine/appc/death_check.py).
     def IsInvincible(self) -> int:
         return 1 if self._invincible else 0
 
@@ -1826,9 +1839,11 @@ class ShipClass(DamageableObject):
         self._hurtable = bool(v)
 
     def IsImmuneToDamage(self) -> bool:
-        """True when this ship must take no gameplay damage — the union of
-        both BC immunity flags. Not an SDK method; combat.apply_hit's gate."""
-        return self._invincible or not self._hurtable
+        """True when this ship must take no gameplay damage: SetHurtable(0).
+        Invincibility does NOT make a ship immune -- it only stops its death
+        (ruling M1). Not an SDK method; combat.apply_hit's and radiation's
+        gate."""
+        return not self._hurtable
     # IsDying / SetDying / IsDead / SetDead live on DamageableObject, where BC
     # declares them (App.py:5363-5365).
 

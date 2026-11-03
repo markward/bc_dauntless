@@ -474,6 +474,19 @@ ships at lower frequency; (c) move hot paths to C++.
   `vd.after_carve` ⊃ `hb.split_detached` (the connectivity BFS) /
   `hb.spawn` (chunk spawns); under `sim.debris_chunks`, `dc.tick` and
   `dc.breakup_drain` (the throttled split, ⊃ the same `hb.*`).
+  Native combat compute rows (native combat on only; kernels off the lock,
+  spec `2026-11-03-kernels-off-the-lock-design.md` goal 1): `k0.compute`
+  under `sim.weapons`, `k1.compute` under `cb.held_weapons`, `k2.compute`
+  under `cb.phasers`, `k3.compute` under `cb.projectiles`, `k4.compute` under
+  `cb.eligibility`. Each is ONLY the kernel's compute call, timed by a
+  `steady_clock` span in the binding (`ComputeSpan`, `host_bindings.cc`) and
+  reported once a session through `frame_profiler.record()`, the one way to
+  add a span the Python half did not time itself. Its `calls` is the number
+  of compute calls (records), not sessions. A session run under any other
+  scope reports apart as `k<n>.compute@<scope>` -- chiefly
+  `k1.compute@gl.ai`, the AI's StartFiring sessions -- so no row has two
+  parents. The parent minus its compute row is the Python and binding work
+  around the kernel.
   `planet_detail` (clipmap bake for the planet surface detail pass) is a
   top-level, GPU-timed scope — a sibling of `space`/`bloom`/`post`, not
   nested under any of them.

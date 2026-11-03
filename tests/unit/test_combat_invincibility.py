@@ -1,10 +1,13 @@
 """combat.apply_hit must honour BC's invincibility surface — real gameplay,
 NOT a dev cheat, so these apply with dev mode OFF:
 
-* ShipClass.SetInvincible / SetHurtable make the WHOLE ship immune (E7M2 boss
-  ships, E3M1 scripted player-invulnerability windows). Immune = takes no
+* ShipClass.SetHurtable(0) makes the WHOLE ship immune (E7M2's JonKa and
+  Chairo "not hurtable", E3M1's "player can't be hurt"). Immune = takes no
   hull/shield/subsystem damage, but hit feedback still fires (the shot
   visually connects).
+* ShipClass.SetInvincible(1) does NOT make it immune: damage lands and only
+  the death is stopped (native-damage ruling M1; the death side is pinned in
+  test_damage_immunity_semantics.py).
 * ShipSubsystem.SetInvincible protects one subsystem (MissionLib.
   MakeSubsystemsInvincible — e.g. a capture-mission warp core that must
   survive) while the rest of the ship takes damage normally.
@@ -20,6 +23,7 @@ from engine.appc.math import TGPoint3
 from engine.appc.combat import apply_hit
 from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import HullSubsystem, ShieldSubsystem, SensorSubsystem
+from engine.appc import effect_queue
 
 
 def _ship(name, hull_max=2000.0, face_max=1000.0):
@@ -39,14 +43,15 @@ def _ship(name, hull_max=2000.0, face_max=1000.0):
 
 
 # ── ship-level: SetInvincible ──────────────────────────────────────────────
-def test_invincible_ship_takes_no_damage_but_feedback_fires():
+def test_invincible_ship_takes_damage_and_feedback_fires():
     ship = _ship("Vorcha")
     ship.SetInvincible(1)
     ship.GetShields().SetCurrentShields(0, 0.0)   # drained: hit would reach hull
     with patch("engine.appc.hit_feedback.dispatch") as mock_dispatch:
-        apply_hit(ship, 5000.0, TGPoint3(0, 10, 0), source=None)
-    assert ship.GetHull().GetCondition() == 2000.0   # no damage
-    assert mock_dispatch.called                       # but the shot connects
+        apply_hit(ship, 500.0, TGPoint3(0, 10, 0), source=None)
+        effect_queue.boundary()             # the tick boundary
+    assert ship.GetHull().GetCondition() == 1500.0   # damage lands (M1)
+    assert mock_dispatch.called
 
 
 def test_invincible_cleared_restores_damage():
@@ -59,12 +64,15 @@ def test_invincible_cleared_restores_damage():
 
 
 # ── ship-level: SetHurtable ────────────────────────────────────────────────
-def test_unhurtable_ship_takes_no_damage():
+def test_unhurtable_ship_takes_no_damage_but_feedback_fires():
     ship = _ship("Player")
     ship.SetHurtable(0)
     ship.GetShields().SetCurrentShields(0, 0.0)
-    apply_hit(ship, 5000.0, TGPoint3(0, 10, 0), source=None)
-    assert ship.GetHull().GetCondition() == 2000.0
+    with patch("engine.appc.hit_feedback.dispatch") as mock_dispatch:
+        apply_hit(ship, 5000.0, TGPoint3(0, 10, 0), source=None)
+        effect_queue.boundary()             # the tick boundary
+    assert ship.GetHull().GetCondition() == 2000.0   # no damage
+    assert mock_dispatch.called                       # but the shot connects
 
 
 def test_hurtable_restored_takes_damage():

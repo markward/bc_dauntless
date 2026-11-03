@@ -32,7 +32,7 @@ mount attributed and the posed steer point computed natively), a target
 inside a dense MetaNebula with guided shots at it (every can_detect at it
 breaks its lock: the latch the record compares). Half the ships carry a
 shield hull box, so shots meet
-the bubble (the fallback tier: hit point, ``_bubble_entry`` and apply_hit's
+the bubble (the fallback tier: hit point, ``_bubble_entry`` and the hit's
 shield_point ONE object).
 
 K4: ``select_eligible``'s max_count is raised to 11 (player + the 8 ring ships
@@ -449,6 +449,7 @@ class _Scene:
                     host_loop._advance_combat(ships, TICK_DELTA,
                                               player=self.player,
                                               push_render_data=False)
+                host_loop._combat_tick_boundary()   # as the host does (native damage)
                 self.rec.record()
                 if rng.random() < 0.03:
                     self.op(rng)
@@ -509,12 +510,12 @@ def test_k3_k4_match_python_in_a_torpedo_fight(monkeypatch, odd_hull_box,
     print("\nk3/k4 headless differential (tpf=%d): %.1f s for 2 x %d ticks;"
           "\n  kernel records %r\n  k4 %r\n  k3_runs %d k3_asks %r "
           "k3_guide_reasons %r\n  k4_runs %d\n  k3 python reasons %r\n  "
-          "k4 python reasons %r\n  hits %d, apply_hits %d, events %d"
+          "k4 python reasons %r\n  hits %d, presented %d, events %d"
           % (ticks_per_frame, elapsed, TICKS, dict(sorted(n.items())),
              nat.rec.k4, nat.counts["k3_runs"], nat.counts["k3_asks"],
              nat.counts["k3_guide_reasons"], nat.counts["k4_runs"], k3_why,
              k4_why, len([c for c in ref.rec.calls if c[0] == "hit"]),
-             len([c for c in ref.rec.calls if c[0] == "apply_hit"]),
+             len([c for c in ref.rec.calls if c[0] == "hit_present"]),
              len(ref.rec.events)))
     print("  latched (pair x tick) %d" % nat.rec.latched)
     print("  round trips %r, presentation calls %d"
@@ -529,6 +530,9 @@ def test_k3_k4_match_python_in_a_torpedo_fight(monkeypatch, odd_hull_box,
     assert nat.counts["k1_logged"]["walk_start"] > 0, round_trips(
         nat.counts)
     # K3 and K4 decided every step: no whole-step hand-back.
+    # Native damage Task 4: K3 applies every hit itself, none handed back.
+    assert nat.counts["k3_native_hits"] > 0, nat.counts
+    assert nat.counts["k3_hit_python"] == 0, nat.counts["k3_hit_python_reasons"]
     assert nat.counts["k3_runs"] > 0 and nat.counts["k3_python_steps"] == 0, \
         nat.counts
     assert nat.counts["k4_runs"] == TICKS and not k4_why, nat.counts
@@ -543,12 +547,12 @@ def test_k3_k4_match_python_in_a_torpedo_fight(monkeypatch, odd_hull_box,
     # K4: the cut fell inside an exact tie, and cross-frame ships scored.
     assert nat.rec.k4["tie_at_cut"] > 0 and nat.rec.k4["cross_frame"] > 0, \
         nat.rec.k4
-    # The effects reached the world: hits, apply_hits, weapon-hit events
+    # The effects reached the world: hits, their presentation, weapon-hit events
     # with their payload, shots leaving flight.
     calls = ref.rec.calls
     assert any(c[0] == "hit" for c in calls)
-    assert any(c[0] == "apply_hit" and c[10] for c in calls), \
-        "no apply_hit with shield_point IS the hit point"
+    assert any(c[0] == "hit_present" and c[10] for c in calls), \
+        "no hit with shield_point IS the hit point"
     hits = [e for e in ref.rec.events if e[0] == App.ET_WEAPON_HIT]
     assert hits and all(e[4] is not None for e in hits)
     assert any(e[0] == App.ET_TORPEDO_EXITED_SET for e in ref.rec.events)

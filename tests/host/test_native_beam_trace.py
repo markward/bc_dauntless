@@ -75,13 +75,17 @@ def _load_hardpoint(ship, name):
 
 
 @pytest.fixture
-def host():
-    """Headless host + one Galaxy model; yields (model handle, live iid)."""
+def host(monkeypatch):
+    """Headless host + one Galaxy model; yields (model handle, live iid).
+    The headless switch is set for this test only: combat_stress reads it
+    (a headless run seeds nominal hull radii), so leaving it set changed
+    every later fight in the process
+    (tests/integration/test_native_k1_differential.py)."""
     if not GALAXY_NIF.is_file():
         pytest.skip("BC asset not available")
     if not GALAXY_TEX.is_dir():
         pytest.skip("BC texture dir not available")
-    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
     try:
         _h.init(256, 256, "native-beam-trace-tests")
     except RuntimeError as e:

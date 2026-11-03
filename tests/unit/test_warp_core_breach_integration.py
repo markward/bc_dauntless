@@ -93,6 +93,8 @@ def test_critical_death_splashes_neighbour_breach_is_vfx_only(monkeypatch):
     # applying src's splash to the neighbour. The neighbour is damaged by the
     # SPLASH, not by the warp-core breach.
     src.DamageSystem(src.GetHull(), 20.0)
+    from engine.appc import effect_queue
+    effect_queue.boundary()             # the tick boundary (ruling M5)
 
     targets = [h[0] for h in hits]
     assert nbr in targets and src not in targets
@@ -101,6 +103,7 @@ def test_critical_death_splashes_neighbour_breach_is_vfx_only(monkeypatch):
     # further damage (breach is VFX-only now).
     n_before = len(hits)
     subsystem_cascade.advance(subsystem_cascade.CASCADE_DELAY * 2.0)
+    effect_queue.boundary()             # the cascade's warp-core crossing arms here
     warp_core_breach.advance(0.0)
     assert len(hits) == n_before
 

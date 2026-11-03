@@ -6,6 +6,11 @@ from engine.core import stub_telemetry
 _counter = itertools.count(1)
 _registry: dict[int, "TGObject"] = {}
 _weak_registry: dict[int, "weakref.ref"] = {}
+# Called as (obj, findable) when a strongly registered object leaves the
+# registry (unregister) or rejoins it (register): engine/appc/native_combat
+# keeps its mirror row's obj_id lookup in step, so native can_detect's probe
+# walk skips the ids Python's skips.
+_findable_hook = None
 
 
 def get_object_by_id(obj_id: int) -> "TGObject | None":
@@ -34,14 +39,18 @@ def unregister(obj_id: int) -> None:
     engine/appc/actions.py TGSequence. engine/appc/events.py dispatch_passes
     also releases each event it dispatches once that dispatch has ended.
     """
-    _registry.pop(obj_id, None)
+    obj = _registry.pop(obj_id, None)
     _weak_registry.pop(obj_id, None)
+    if obj is not None and _findable_hook is not None:
+        _findable_hook(obj, False)
 
 
 def register(obj: "TGObject") -> None:
     """Re-add an object to the id registry (e.g. a completed sequence that is
     replayed). Idempotent."""
     _registry[obj.GetObjID()] = obj
+    if _findable_hook is not None:
+        _findable_hook(obj, True)
 
 
 def register_weak(obj) -> None:

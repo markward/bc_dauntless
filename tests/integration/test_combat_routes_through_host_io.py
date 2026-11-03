@@ -12,6 +12,7 @@ import pytest
 from engine import host_io
 from engine.appc import combat
 from engine.appc.math import TGPoint3
+from engine.appc import effect_queue
 
 
 class _Shield:
@@ -66,6 +67,7 @@ def test_apply_hit_shield_hit_routes_through_host_io(monkeypatch):
     combat.apply_hit(ship, damage=30.0, hit_point=point, source=None,
                      normal=None, ship_instances={ship: 77},
                      weapon_type="torpedo")
+    effect_queue.boundary()             # the tick boundary
 
     assert len(calls) == 1, "apply_hit did not route the shield flash through host_io"
     instance_id, pt, rgba, intensity = calls[0]
@@ -95,4 +97,5 @@ def test_apply_hit_shield_flash_skipped_without_instance(monkeypatch):
     combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0.0, 1.0, 0.0),
                      source=None, normal=None, ship_instances=None,
                      weapon_type="torpedo")
+    effect_queue.boundary()             # the tick boundary
     assert calls == []

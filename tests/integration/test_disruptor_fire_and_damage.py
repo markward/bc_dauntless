@@ -129,9 +129,11 @@ def test_held_trigger_refires_via_advance_combat_hook():
     spawn_count = {"n": 0}
     real_register = projectiles.register
 
-    def counting_register(torp):
+    # register's signature is (torpedo, kset=LIVE_SET): the shared spawn
+    # body passes the fire-time set (weapon_subsystems._launch_projectile).
+    def counting_register(torp, *args, **kwargs):
         spawn_count["n"] += 1
-        return real_register(torp)
+        return real_register(torp, *args, **kwargs)
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance"), \
          patch.object(projectiles, "register", counting_register):

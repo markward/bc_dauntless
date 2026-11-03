@@ -665,6 +665,20 @@ and `tests/integration/test_weapon_fired_mission_handlers.py`.
 
 ---
 
+## 15. `ET_SUBSYSTEM_COMPLETELY_DESTROYED`, `ET_SUBSYSTEM_DAMAGED`, `ET_SUBSYSTEM_STATE_CHANGED` — OPEN (found 2026-11-02)
+
+Stock missions listen for three subsystem events that the engine never posts. It posts only `ET_SUBSYSTEM_DESTROYED`, `_DISABLED`, `_OPERATIONAL` and `_POWER_CHANGED`. Found by the native-damage handler scan (`docs/reference/engine/native-combat/damage-map-refresh.md` §3.3).
+
+| Event | Listeners (SDK) |
+|---|---|
+| `ET_SUBSYSTEM_COMPLETELY_DESTROYED` | `Maelstrom/Maelstrom.py:223` (player, `HandleSubsystemDestroyed`), `Maelstrom/Episode8/E8M1/E8M1.py:889` (`GalorDisableHandler`), `Maelstrom/Episode8/E8M2/E8M2.py:4723` (`MatanDisableHandler`) |
+| `ET_SUBSYSTEM_DAMAGED` | `Maelstrom/Episode2/E2M0/E2M0.py:825` (`PlayerSubsystemDamaged`: Picard suggests repair after 5 damaged systems) |
+| `ET_SUBSYSTEM_STATE_CHANGED` | `Maelstrom/Episode3/E3M4/E3M4.py:533` (`SubsystemStateChanged`) |
+
+When BC posts each is not established; no RE read has been done. A fix would add them as queued kinds beside the other subsystem events (native-damage spec §4.3), so the native and Python arms post them identically. Not built in the native-damage phase (spec §4.5).
+
+---
+
 ## Summary table
 
 | Event | SDK handler (file:line) | Engine emitter |
@@ -683,3 +697,4 @@ and `tests/integration/test_weapon_fired_mission_handlers.py`.
 | `ET_SET_WARP_SEQUENCE` | `ConditionWarpingToSet.py:33/69` | ✅ **DONE** — `subsystems.py` `WarpEngineSubsystem.SetWarpSequence`, unguarded ping |
 | `ET_PLANET_COLLISION` | `E1M2.py:1135/1308` | ✅ **DONE** (#13, found after the 12) — `collisions.py` `_emit_planet_collision()`, impact path, source planet / destination body, posted before impact damage |
 | `ET_WEAPON_FIRED` (target + pulse) | `E1M2.py:1139/1384`, `E2M1.py:704/963` | ✅ **DONE** (#14, found 2026-11-02) — `weapon_subsystems.py` `_post_weapon_fired(weapon, target)` sets the object pointer; `PulseWeapon._fire_effect` now posts it |
+| `ET_SUBSYSTEM_COMPLETELY_DESTROYED` / `_DAMAGED` / `_STATE_CHANGED` | `Maelstrom.py:223`, `E8M1.py:889`, `E8M2.py:4723`, `E2M0.py:825`, `E3M4.py:533` | **OPEN** (#15, found 2026-11-02) — never posted |

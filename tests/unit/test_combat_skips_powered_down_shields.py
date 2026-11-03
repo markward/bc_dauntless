@@ -23,6 +23,7 @@ from engine.appc.combat import apply_hit
 from engine.appc.events import ET_WEAPON_HIT
 from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import HullSubsystem, ShieldSubsystem
+from engine.appc import effect_queue
 
 
 def _ship_with_full_shields_and_hull(hull_max=2000.0, face_max=1000.0):
@@ -149,6 +150,7 @@ def test_event_is_hull_hit_zero_when_shields_absorb():
     received, cleanup = _capture_weapon_hit_events()
     try:
         apply_hit(ship, 500.0, TGPoint3(0, 10, 0), source=None)
+        effect_queue.boundary()             # the tick boundary
         assert len(received) == 1
         assert received[0].IsHullHit() == 0
     finally:
@@ -166,6 +168,7 @@ def test_event_is_hull_hit_one_when_face_down():
     received, cleanup = _capture_weapon_hit_events()
     try:
         apply_hit(ship, 500.0, TGPoint3(0, 10, 0), source=None)
+        effect_queue.boundary()             # the tick boundary
         assert len(received) == 1
         assert received[0].IsHullHit() == 1
     finally:

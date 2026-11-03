@@ -13,6 +13,7 @@ from engine.appc.math import TGPoint3
 from engine.appc.combat import apply_hit
 from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import HullSubsystem, ShieldSubsystem
+from engine.appc import effect_queue
 
 
 def _ship(name, hull_max=2000.0, face_max=1000.0):
@@ -62,6 +63,7 @@ def test_god_mode_player_takes_no_damage_but_feedback_fires(env):
     cheats.set_god_mode(True)
     with patch("engine.appc.hit_feedback.dispatch") as mock_dispatch:
         apply_hit(player, 5000.0, TGPoint3(0, 10, 0), source=None)
+        effect_queue.boundary()             # the tick boundary
     # Shields and hull untouched.
     assert player.GetShields().GetCurrentShields(0) == 1000.0
     assert player.GetHull().GetCondition() == 2000.0

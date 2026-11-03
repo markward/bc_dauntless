@@ -50,6 +50,15 @@ def forget() -> None:
         fn()
 
 
+def forget_tables() -> None:
+    """forget() of this module's own tables only, not the hooks': a native
+    kernel applied a hit in its compute and cleared its own memo there
+    (native damage Task 4); Python's tables are cleared before the next
+    Python reader, at the kernel's next record."""
+    for t in _tables:
+        t.clear()
+
+
 @contextlib.contextmanager
 def combat_step():
     """Open (or join) a block. The outermost block's exit drops every

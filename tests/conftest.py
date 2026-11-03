@@ -1234,6 +1234,9 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc import hit_feedback as _hf
         _hf._last_decal_emit.clear()
+        # HIT_PRESENT's delivery map (the last a hit was given) holds an
+        # earlier test's ships.
+        _hf.use_instances(None)
         from engine.appc import hull_wear as _hw
         _hw.reset()
     except Exception:

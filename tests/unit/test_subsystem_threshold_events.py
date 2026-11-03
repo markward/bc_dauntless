@@ -1,6 +1,9 @@
-"""Threshold-crossing events on ShipSubsystem condition changes."""
+"""Threshold-crossing events on ShipSubsystem condition changes, delivered
+at the tick boundary (native damage M2): each write is followed by
+effect_queue.boundary(), the boundary a test stands in for."""
 import App
 from engine.appc.subsystems import ShipSubsystem, PhaserSystem, PhaserBank
+from engine.appc import effect_queue
 
 
 def _capture(monkeypatch):
@@ -28,8 +31,10 @@ def test_crossing_into_disabled_fires_once(monkeypatch):
     s = _sub()
     fired = _capture(monkeypatch)
     s.SetCondition(200.0)          # 20% <= 25% -> disabled
+    effect_queue.boundary()             # the tick boundary
     assert _types(fired) == [App.ET_SUBSYSTEM_DISABLED]
     s.SetCondition(150.0)          # still disabled -> no re-fire
+    effect_queue.boundary()             # the tick boundary
     assert _types(fired) == [App.ET_SUBSYSTEM_DISABLED]
 
 
@@ -37,22 +42,27 @@ def test_destroyed_fires_and_beats_disabled(monkeypatch):
     s = _sub()
     fired = _capture(monkeypatch)
     s.SetCondition(0.0)            # straight to destroyed
+    effect_queue.boundary()             # the tick boundary
     assert _types(fired) == [App.ET_SUBSYSTEM_DESTROYED]
 
 
 def test_repair_back_above_threshold_fires_operational(monkeypatch):
     s = _sub()
     s.SetCondition(100.0)          # disabled
+    effect_queue.boundary()             # the tick boundary
     fired = _capture(monkeypatch)
     s.Repair(400.0)                # 50% -> operational
+    effect_queue.boundary()             # the tick boundary
     assert App.ET_SUBSYSTEM_OPERATIONAL in _types(fired)
 
 
 def test_destroyed_to_disabled_is_silent(monkeypatch):
     s = _sub()
     s.SetCondition(0.0)
+    effect_queue.boundary()             # the tick boundary
     fired = _capture(monkeypatch)
     s.Repair(100.0)                # 10% — above 0, still <= 25%
+    effect_queue.boundary()             # the tick boundary
     assert _types(fired) == []     # no event for destroyed->disabled
 
 
@@ -63,6 +73,7 @@ def test_event_shape_source_sub_dest_ship(monkeypatch):
     sensors.SetMaxCondition(1000.0)
     fired = _capture(monkeypatch)
     sensors.SetCondition(0.0)
+    effect_queue.boundary()             # the tick boundary
     destroyed = [e for e in fired
                  if e.GetEventType() == App.ET_SUBSYSTEM_DESTROYED]
     assert len(destroyed) == 1
@@ -98,6 +109,7 @@ def test_weapon_parent_alive_children_zero_raw_condition_no_destroyed_event(monk
     parent, banks = _phaser_parent_with_banks()
     fired = _capture(monkeypatch)
     parent.SetCondition(0.0)          # raw pool zeroed; children still alive
+    effect_queue.boundary()             # the tick boundary
     assert parent.IsDestroyed() == 0  # aggregate: children alive => not destroyed
     assert App.ET_SUBSYSTEM_DESTROYED not in _types(fired)
 
@@ -116,6 +128,7 @@ def test_weapon_parent_destroyed_fires_only_when_all_children_destroyed(monkeypa
     # SetCondition/SetMaxCondition call — it does not observe child mutations
     # automatically. Drive it exactly like combat.py's splash loop does.
     parent.SetCondition(parent.GetCondition())
+    effect_queue.boundary()             # the tick boundary
     assert _types(fired) == [App.ET_SUBSYSTEM_DESTROYED]
 
 
@@ -126,6 +139,7 @@ def test_plain_subsystem_still_destroys_on_zero_condition_regression(monkeypatch
     s = _sub()
     fired = _capture(monkeypatch)
     s.SetCondition(0.0)
+    effect_queue.boundary()             # the tick boundary
     assert _types(fired) == [App.ET_SUBSYSTEM_DESTROYED]
 
 
@@ -138,6 +152,7 @@ def test_child_subsystem_resolves_ship_via_parent_chain(monkeypatch):
     parent.AddChildSubsystem(child)
     fired = _capture(monkeypatch)
     child.SetCondition(0.0)
+    effect_queue.boundary()             # the tick boundary
     destroyed = [e for e in fired
                  if e.GetEventType() == App.ET_SUBSYSTEM_DESTROYED]
     assert destroyed and destroyed[0].GetDestination() is ship

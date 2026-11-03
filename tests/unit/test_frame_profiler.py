@@ -143,6 +143,33 @@ def test_scope_accumulates_across_uses_in_one_frame():
     assert fp.phases()["helper"] >= 3.0
 
 
+def test_record_adds_a_span_measured_elsewhere_under_the_open_scope():
+    """record() is for a span something else timed (the native combat
+    kernels' compute timers): it lands as a CHILD of the scope open around
+    the call, sums within the frame like a repeated scope, and adds the
+    entries it is given to the calls column."""
+    fp.set_enabled(True, native=False)
+    fp.begin_frame()
+    fp.mark("sim")
+    with fp.scope("cb.phasers"):
+        assert fp.open_scope() == "cb.phasers"
+        fp.record("k2.compute", 0.25, 3)
+        fp.record("k2.compute", 0.5, 2)
+    assert fp.open_scope() == "sim"
+    fp.end_frame()
+    assert fp.phases()["k2.compute"] == pytest.approx(0.75)
+    assert fp.parents()["k2.compute"] == "cb.phasers"
+    assert fp.calls()["k2.compute"] == 5
+
+
+def test_record_is_a_no_op_when_disabled():
+    fp.begin_frame()
+    fp.record("k2.compute", 1.0, 1)
+    fp.end_frame()
+    assert fp.phases() == {}
+    assert fp.open_scope() is None
+
+
 def test_scope_is_a_passthrough_when_disabled():
     ran = []
     with fp.scope("x"):

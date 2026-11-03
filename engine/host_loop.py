@@ -969,6 +969,33 @@ def _combat_effect_scope():
     return contextlib.nullcontext()
 
 
+def _combat_tick_boundary():
+    """The tick boundary, both switch states: right after the tick's
+    effect-queue scope has flushed (native combat on), every effect a
+    condition write or a hit reported since the last boundary is delivered
+    -- its events, its watcher crossings, the repair list, the death check
+    (zero crossings and deaths, unless the ship is invincible by now) and
+    the death splash (effect_queue.boundary; native damage M2, M5, R8).
+    With native combat off this is where the tick's hits are reported.
+    Writes made outside the combat step wait for a boundary: a GameLoop
+    tick's (a script) for this one, the frame's post-step pass's
+    (radiation, collisions, scenery, hull breakup) for the frame-end one.
+
+    Timed as "sim.effects" with the switch off, the row the switch-on
+    scope's exit flush uses (ruling I2): a tick's delivery reports under one
+    row in both states, so "sim.combat" compares like for like. With it on
+    this boundary is empty (the scope delivered) and is not timed again.
+
+    Then the mirror's pending frees and off-main pushes are applied
+    (native_combat.drain, both switch states; spec 2026-11-03 ruling R2)."""
+    if _native_combat.enabled():
+        _effect_queue.boundary()
+    else:
+        with frame_profiler.scope("sim.effects"):
+            _effect_queue.boundary()
+    _native_combat.drain(boundary=True)
+
+
 # Beam damage per second is MaxDamage × this, by the phaser system's power
 # level (PP_LOW, PP_MEDIUM, PP_HIGH). Measured on the original exe: a Kessok
 # Heavy's four MaxDamage-400 beams deliver 825/s at HIGH, 849/s at MED and
@@ -1284,6 +1311,8 @@ def _phaser_contact(ship, sys_, bank, target, dist: float, dt: float,
 _native_combat.k2_snapshot_stock(sys.modules[__name__])
 # ... and the functions and classes K3 (cb.projectiles) stands in for.
 _native_combat.k3_snapshot_stock()
+# ... and those the native hit and condition chain stand in for (damage).
+_native_combat.damage_snapshot_stock()
 
 
 def _advance_combat(*args, **kwargs) -> None:
@@ -1352,6 +1381,9 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
         # holds ships_list), and no later update_all may read it as current.
         if _native_combat._step is not None:
             _native_combat.clear_step()
+    # Only the hits a Python update_all step returns: the native K3 step
+    # applies its own after its expiries (native damage Task 4;
+    # native_combat._k3_apply_hits) and returns none.
     for torpedo, ship, hit_point, hit_normal in hits:
         combat.apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship,
@@ -7852,8 +7884,13 @@ class HostController:
             self.session.teardown(self.renderer)
         # The native combat step scan holds the old mission's ships_list.
         _native_combat.clear_step()
+        # Frees and off-main pushes still pending land now, before the next
+        # mission builds a row (spec 2026-11-03 ruling R2).
+        _native_combat.drain()
         from engine.appc import ship_lifecycle
         ship_lifecycle.reset()
+        # Effects held for the tick boundary name the old mission's ships.
+        _effect_queue.reset()
         from engine.appc import ship_death
         ship_death.reset()
         from engine.rocks import death as _rock_death
@@ -11741,7 +11778,9 @@ def run(mission_name: Optional[str] = None,
         TICK_DT = 1.0 / 60.0
         MAX_FRAME_DT = 0.25  # Fiedler spiral-of-death cap
 
-        loop = GameLoop()
+        # The host's tick boundary is the per-tick combat flush below
+        # (_combat_tick_boundary), not the end of the GameLoop tick.
+        loop = GameLoop(owns_boundary=False)
         ticks = 0
         init_audio()
         _bootstrap_firing_pipeline()
@@ -12351,6 +12390,10 @@ def run(mission_name: Optional[str] = None,
                 perf_monitor_panel.tick(_wall_dt)
             if pause.sim_frozen:
                 _frame_dt = 0.0
+                # No tick runs, so no tick boundary drains: the mirror's
+                # pending frees and off-main pushes are applied here (no
+                # kernel session is open between frames).
+                _native_combat.drain()
             _accumulator, _sim_ticks_this_frame = step_accumulator(
                 _accumulator, _frame_dt, TICK_DT, MAX_FRAME_DT
             )
@@ -12661,6 +12704,7 @@ def run(mission_name: Optional[str] = None,
                                 # set (_push_combat_render_data below).
                                 push_render_data=False,
                             )
+                    _combat_tick_boundary()
 
                 # Player-only contact manager: bands, proximity events and the
                 # identification dwell (engine/appc/sensor_contacts.py). Sim-gated
@@ -12868,6 +12912,13 @@ def run(mission_name: Optional[str] = None,
 
                 with frame_profiler.scope("sim.rock_promotion"):
                     _pump_rock_promotion(player, session=session)
+
+                # The frame-end boundary (native damage, ruling R8): what the
+                # post-step pass above reported -- radiation, hull breakup,
+                # collisions, scenery contact, rock promotion's restores --
+                # is delivered now, its deaths included, not a frame later.
+                with frame_profiler.scope("sim.effects_frame"):
+                    _effect_queue.boundary()
 
                 # The player's dash (engine/appc/dash.py): its align, its
                 # engage, and the drop-out of a flight that ended this frame

@@ -59,7 +59,8 @@ from engine.appc.math import TGMatrix3, TGPoint3  # noqa: E402
 from engine.core import step_memo  # noqa: E402
 from engine.core.tracked_instances import TrackedInstances  # noqa: E402
 from tests.helpers.k3_fight import (  # noqa: E402
-    ShieldedContact, capture_native_shield_hits, compare_calls, contact_row)
+    ShieldedContact, capture_native_shield_hits, compare_calls, contact_row,
+    spy_hits)
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
 DT = 1.0 / 60.0
@@ -2600,3 +2601,100 @@ def test_a_k2_session_outside_the_scope_delivers_at_its_end(monkeypatch):
             assert nc.counts()["k2_logged_bank_stop"] == 1
         finally:
             w.close()
+
+
+# ── THE DAMAGE PULSE (native damage, Task 4) ────────────────────────────────
+#
+# The World spies on combat.apply_hit, and a spy ON it is obeyed: every
+# pulse is then a CONTACT record and Python's (every scenario above runs
+# that path). These setups take the spy off, so the pulses land in the
+# walk; the hits are compared as their HIT_PRESENT delivers them.
+
+_STOCK_APPLY_HIT = combat.apply_hit
+
+
+def _native_hits(w, mp):
+    mp.setattr(combat, "apply_hit", _STOCK_APPLY_HIT)
+    spy_hits(mp, w.calls, lambda: w.n, w.label, _hx)
+
+
+def _volley(w, t):
+    if t == 0:
+        w.ships["Galaxy"].GetPhaserSystem().SetSingleFire(0)
+        w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["Vorcha"])
+    elif t == 20:
+        w.ships["Vorcha"].GetPhaserSystem().StartFiring(w.ships["Galaxy"])
+
+
+def test_pulses_land_in_the_walk(monkeypatch):
+    ref, nat, counts = _both(monkeypatch, GALAXY_VORCHA, _volley, 240,
+                             setup=_native_hits)
+    assert _calls(ref, "hit_present")
+    assert any(e[0] == App.ET_WEAPON_HIT for e in ref.events)
+    _native_ran(counts)
+    assert counts["k2_native_pulses"] > 0, counts
+    assert counts["k2_pulse_python"] == 0, counts["k2_pulse_python_reasons"]
+
+
+def test_a_spy_on_apply_hit_hands_every_pulse_back(monkeypatch):
+    _ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, _volley, 240)
+    assert counts["k2_native_pulses"] == 0, counts
+    assert counts["k2_pulse_python_reasons"]["not_ok"] > 0, counts
+
+
+def test_an_instance_patch_on_a_targets_subsystem_hands_its_pulses_back(
+        monkeypatch):
+    """Override-guard gap 1: the Vor'cha's shield generator shadows
+    ApplyDamage on the instance (only a hit calls it). The guard's scan
+    finds it, so every pulse on the Vor'cha is Python's -- the patch is
+    obeyed, in both arms -- and every pulse on the Galaxy native."""
+    seen = []
+
+    def setup(w, mp):
+        _native_hits(w, mp)
+        shields = w.ships["Vorcha"].GetShields()
+        stock = type(shields).ApplyDamage
+
+        def patched(face, amount, _s=shields, _w=w):
+            seen.append(_w.native)
+            return stock(_s, face, amount)
+        mp.setattr(shields, "ApplyDamage", patched, raising=False)
+
+    _ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, _volley, 240,
+                               setup=setup)
+    assert counts["k2_pulse_python_reasons"]["unscanned"] > 0, counts
+    assert counts["k2_native_pulses"] > 0, counts      # the Galaxy's
+    assert True in seen and False in seen
+
+
+@pytest.mark.parametrize("name", ("GetMaxDamage", "GetMaxDamageDistance",
+                                  "GetDamageRadiusFactor"))
+def test_an_instance_patch_on_a_banks_damage_getter_hands_its_pulses_back(
+        monkeypatch, name):
+    """The pulse reads a bank's GetMaxDamage, GetMaxDamageDistance and
+    GetDamageRadiusFactor from the mirror. One shadowed on a Galaxy bank's
+    instance is obeyed by handing THAT bank's pulses to Python (reason
+    `python`), not its ship: the Galaxy is still walked natively (its
+    resting contacts still reach the drain, which calls the bank's own
+    DamageRadiusFactor: spec 2026-11-02 combat-effect-queue §4.4), and the
+    Vor'cha's pulses stay native. The patch returns a different value, so a
+    pulse that ignored it would differ from the reference."""
+    seen = []
+
+    def setup(w, mp):
+        _native_hits(w, mp)
+        for bank in _banks_in_arc(w.ships["Galaxy"], w.ships["Vorcha"]):
+            stock = getattr(bank, name)
+
+            def patched(_stock=stock, _w=w):
+                seen.append(_w.native)
+                return _stock() * 1.5 + 0.25
+            mp.setattr(bank, name, patched, raising=False)
+
+    _ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, _volley, 240,
+                               setup=setup)
+    _native_ran(counts)
+    assert counts["k2_python_reasons"]["overridden"] == 0, counts
+    assert counts["k2_pulse_python_reasons"].get("python", 0) > 0, counts
+    assert counts["k2_native_pulses"] > 0, counts      # the Vor'cha's
+    assert True in seen and False in seen

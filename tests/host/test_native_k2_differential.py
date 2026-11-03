@@ -51,13 +51,16 @@ K2 drain presents natively, from its capture (all arguments: the
 presentation, round trips Task 5; per tick as a multiset, since K2 presents
 resting contacts after the step's last record -- spec 2026-11-02 §4.4, §5,
 Q1)
-and every combat.apply_hit (all arguments); and the full ordered event log,
+and every hit as its HIT_PRESENT delivers it (all inputs: K2 applies its
+damage pulses in the walk, native damage Task 4); and the full ordered event
+log,
 with each ET_WEAPON_HIT's payload. The native arm must show that every
 branch the scene is built for really happened in the KERNEL (the record
 stream, tallied as it is returned, and the drained resting contacts, those
 the drain presented natively included):
-CONTACTs on the mesh and the sphere
-tier, bubble entries, windup contacts, pulses, arc-fail partial pulses,
+contacts on the mesh and the sphere
+tier, bubble entries, windup contacts, pulses (applied in the walk: no
+CONTACT record), arc-fail partial pulses,
 firing banks' stops (logged with their LOOP_STOP since combat fire events
 Task 4: no BANK_STOP / SYSTEM_STOP record), a lock on another ship, Manual Aim on and off, a cloaking
 target and a posed ship (walked natively, and a lock on it aimed natively:
@@ -104,7 +107,7 @@ from tests.helpers import effect_split, headless_mission  # noqa: E402
 from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
 from tests.helpers.k3_fight import (  # noqa: E402
     capture_native_shield_hits, compare_calls, contact_row, presented,
-    spy_presentation)
+    spy_hits, spy_presentation)
 
 GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy"
               / "Galaxy.nif")
@@ -261,36 +264,29 @@ class _Tally:
             self.kinds = {v: name for name, v in k.items()}
         kind = self.kinds[rec[0]]
         self.bump(kind)
-        if self.scene.killed_at == self.scene.tick:
-            # The kernel's logged stops in this call (a bank firing before
-            # it, not after: no Python runs inside next()) of banks on the
-            # KILLED ship, in the kill's tick.
-            for b in self.scene.banks:
-                d = b.__dict__
-                if d.get("_nslot") in self.firing and not d.get("_firing"):
-                    target = d.get("_target")
-                    if (target is not None
-                            and target.GetName() == KILL_TARGET
-                            and target.IsDead()):
-                        self.bump("stop_after_kill")
         if kind == "BANK_STOP":
             self.last_stop = rec[1]
-            if self.scene.killed_at == self.scene.tick:
-                # A stop of a bank on the KILLED ship (read before Python's
-                # StopFiring clears it), not any stop in the kill's tick.
-                bank = nc._registry.get(rec[1])
-                target = bank.__dict__.get("_target") if bank else None
-                if (target is not None
-                        and target.GetName() == KILL_TARGET
-                        and target.IsDead()):
-                    self.bump("stop_after_kill")
             return rec
         if kind == "ASK":
             return rec
         if kind == "CONTACT":
             self.contact(rec[1:15])
+        self.pulses()
         self.last_stop = None
         return rec
+
+    def pulses(self):
+        """The damage pulses the kernel applied in its walk since the last
+        record (native damage Task 4: no CONTACT record), each tallied as a
+        pulse of its bank, target and ship."""
+        reg = nc._registry
+        for bh, th, bubble, tier in _h.combat_k2_last_hits():
+            bank, target = reg.get(bh), reg.get(th)
+            self.bump("native_pulse")
+            self.bump("tier:" + tier)
+            if bubble:
+                self.bump("bubble")
+            self.objects(bh, bank, target, bank.GetParentShip(), 1.0)
 
     def drain(self):
         """Wraps combat_k2_drain: the resting contacts queued for the drain,
@@ -445,7 +441,6 @@ class _Scene:
         bank_stop = ws.PhaserBank.StopFiring
         sys_stop = ws.PhaserSystem.StopFiring
         beam_contact = hit_feedback.beam_contact
-        apply_hit = combat.apply_hit
 
         def bank_spy(bank, _orig=bank_stop):
             # A FIRING bank's stop only: a stop of a bank not firing is pure
@@ -488,17 +483,6 @@ class _Scene:
                 kw["ship_instances"], kw["ship"]))
             return beam_contact(**kw)
 
-        def hit_spy(target, damage, point, **kw):
-            self.calls.append((
-                "apply_hit", self.tick, self.label(target), _t(damage),
-                _t(point), self.label(kw.get("source")), _t(kw.get("normal")),
-                kw.get("ship_instances") is self.session.ship_instances,
-                _t(kw.get("weapon_type")),
-                self.label(kw.get("hardpoint_weapon")),
-                _t(kw.get("damage_hull")), _t(kw.get("shield_point")),
-                sorted(kw)))
-            return apply_hit(target, damage, point, **kw)
-
         mp.setattr(ws.PhaserBank, "StopFiring", bank_spy)
         mp.setattr(ws.PhaserSystem, "StopFiring", sys_spy)
         # A bank's StopFiring is in K1's override guard (round trips Task 2:
@@ -522,7 +506,10 @@ class _Scene:
                    (stock, names, nc._k0_chain(stock, names)))
         nc._k0_clear_caches()
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
-        mp.setattr(combat, "apply_hit", hit_spy)
+        # Every hit as its HIT_PRESENT delivers it (native damage Task 4:
+        # K2 applies a pulse in its walk, with no combat.apply_hit call --
+        # and a spy ON it would be obeyed, the pulse handed back).
+        spy_hits(mp, self.calls, lambda: self.tick, self.label, _t)
         # What the contacts and hits PRESENT (every hit VFX spawn and shield
         # hit, with their arguments), in the same log: a resting contact is
         # presented at the drain after the step's last record, so the
@@ -938,6 +925,7 @@ class _Scene:
                                               ship_instances=instances,
                                               player=self.player,
                                               push_render_data=False)
+                host_loop._combat_tick_boundary()   # as the host does (native damage)
                 self.record()
                 if rng.random() < 0.04:
                     self.op(rng, rng.choice(ops))
@@ -972,10 +960,12 @@ def _compare(ref, nat):
     assert len(ref.events) == len(nat.events)
     effect_split.compare(ref.queued, nat.queued)
     # The native arm's were delivered at the tick boundary; the reference
-    # never opened the scope.
+    # never opened the scope, so it queued only the damage kinds (native
+    # damage M2: both arms).
     e = nat.effects
-    assert e["delivered"] > 0 and e["skipped_gone"] == e["failed"] == 0, e
-    assert ref.effects["delivered"] == 0, ref.effects
+    assert e["delivered"] > e["damage"], e
+    assert e["skipped_gone"] == e["failed"] == 0, e
+    assert ref.effects["delivered"] == ref.effects["damage"], ref.effects
     assert nat.audit == [], nat.audit
     assert ref.counts.get("k2_records", 0) == 0, ref.counts
     assert nat.counts["k2_records"] > 0, nat.counts
@@ -1052,7 +1042,12 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
         nat.counts, n)
     assert nat.counts["k2_present_gone"] == 0, nat.counts
     assert nat.counts["k2_logged_system_stop"] > 0, nat.counts
-    assert n.get("CONTACT", 0) == n["pulse"], n
+    # Every damage pulse was applied in the walk (native damage Task 4): no
+    # CONTACT record, none handed back.
+    assert n.get("CONTACT", 0) == 0, n
+    assert n["pulse"] == n["native_pulse"] == \
+        nat.counts["k2_native_pulses"] > 0, (n, nat.counts)
+    assert nat.counts["k2_pulse_python"] == 0, nat.counts
     # K1's round trips ran under the beams: walks started with no record and
     # lit beams sustained as logged writes (Tasks 1-2). K1's idle bank stop
     # is NOT asserted here: this scene rarely has one (measured 19 at tpf 1,
@@ -1071,7 +1066,7 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
     assert n.get("point_blank", 0) > 0, n         # the F7 rig
     assert n.get("reversed_arc", 0) > 0, n        # the F8 rig
     # ... and the effects reached the world.
-    assert _calls(ref, "apply_hit") and _calls(ref, "beam_contact")
+    assert _calls(ref, "hit_present") and _calls(ref, "beam_contact")
     hits = [e for e in ref.events if e[0] == App.ET_WEAPON_HIT]
     assert hits and all(e[4] is not None for e in hits)
 
@@ -1118,9 +1113,9 @@ def WeaponHitHandler(_dest, evt):
     """An SDK-style broadcast handler on ET_WEAPON_HIT. On the first phaser
     pulse on the target from tick CHANGE_AT it drops the target's shields and
     shoves it sideways; on the first from tick KILL_AT it kills it (the death
-    sequence, splash included, then SetDead). Both run inside the
-    `cb.phasers` step (a pulse is an apply_hit, which posts the event), so
-    every bank after it in the step must see the changed target."""
+    sequence, splash included, then SetDead). Both run at that tick's
+    boundary, where the pulse's ET_WEAPON_HIT is delivered (native damage
+    M2), so every bank from the next step on must see the changed target."""
     scene = _HANDLER.get("scene")
     if scene is None or evt.GetWeaponType() != WeaponHitEvent.PHASER:
         return
@@ -1145,11 +1140,21 @@ def WeaponHitHandler(_dest, evt):
 def test_handler_kills_target_mid_volley(monkeypatch, host):
     """Every friendly beams the same Galor. A real ET_WEAPON_HIT handler
     (one of an apply_hit's own effects) first drops its shields and moves
-    it, later kills it, each in the MIDDLE of a step: the banks after it in
-    that step must see it shieldless and moved, then dead (a firing bank
-    stops; a banked flush is dropped), exactly as the Python step does."""
+    it, later kills it, each at a tick's boundary (native damage M2: before,
+    in the middle of a step): the banks of the next step must see it
+    shieldless and moved, then dead (a firing bank stops; a banked flush is
+    dropped), exactly as the Python step does."""
+
+    on_dead = {}
 
     def before_tick(scene):
+        if scene.killed_at is not None and scene.tick - scene.killed_at in (
+                1, 2):
+            # Banks still firing on the dead target as each step begins.
+            on_dead[scene.native, scene.tick - scene.killed_at] = sum(
+                1 for b in scene.banks
+                if b.__dict__.get("_firing")
+                and b.__dict__.get("_target") is scene.ship(KILL_TARGET))
         if scene.tick == VOLLEY_AT + 1:
             target = scene.ship(KILL_TARGET)
             for g in scene.systems:
@@ -1188,8 +1193,9 @@ def test_handler_kills_target_mid_volley(monkeypatch, host):
                       ("handler_kill", "killed")):
         i = next(i for i, c in enumerate(ref.calls) if c[0] == kind)
         assert ref.calls[i + 1][1] == py[key], ref.calls[i:i + 3]
-    # In the native arm the kernel itself stopped banks on the dead target
-    # in the kill's step, after the kill (logged stops since combat fire
-    # events Task 4: no BANK_STOP record).
-    assert nat.tally.n.get("stop_after_kill", 0) > 0, nat.tally.n
+    # The kill lands at the boundary (native damage M2, M5), so no bank
+    # meets a target dying mid-walk any more: the banks still on it begin
+    # the next step firing and that step stops them, in both arms.
+    for native in (False, True):
+        assert on_dead[native, 1] > 0 and on_dead[native, 2] == 0, on_dead
     assert ref.ship(KILL_TARGET).IsDead()

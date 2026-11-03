@@ -119,6 +119,9 @@ public:
     // nullptr with a Python error set (nothing changed) for a bad ctx.
     PyObject* set_context(PyObject* ctx);
     bool has_context() const { return ctx_ != nullptr; }
+    // The installed context, borrowed (nullptr: none). Identity only: the
+    // native damage entries' "is my reused context in use" check.
+    PyObject* context() const { return ctx_; }
 
     // Apply writes[from, to) (see EXCEPTIONS). False: a Python error is set.
     bool apply(const std::vector<combat::K1Write>& w, size_t from, size_t to);
