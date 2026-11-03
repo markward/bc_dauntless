@@ -75,7 +75,7 @@ Built 2026-11-03 on `ws/process-replace`: `6e7de906e` (weak instance reference a
 - Three existing tests (`tests/unit/test_time_slice.py`, `tests/unit/test_loop.py`) passed an instance held only by its process; they now keep it referenced. No engine, tool or SDK caller does this (review grep).
 - Focused set green: the new file, `test_time_slice.py`, `test_time_slice_self_register.py`, `test_condition_timer_end_to_end.py`, `test_timers.py`, `test_loop.py`, `test_native_k1_differential.py`.
 - **Final review: ready** (0 critical, 0 important, 5 minor test points, all fixed). The reviewer also checked a save/load round trip of `ProcessWrapper` and a destructor chain dropping a later owner mid-tick.
-- **Not live-verified.**
+- **Live-verified by Mark 2026-11-03:** power display bars follow the sliders (also after a mission change), AI faces, fires and reacts in a fight. The helm collision alert stayed silent, which is pre-existing and unrelated: `CollisionAlertCheck` gates on `MissionLib.GetPlayerShipController() == "Captain"`, and the engine's manual flight (`host_loop._cancel_player_ai`, since `01cbd2642`) sets the controller to None where BC's `TacticalInterfaceHandlers.TurnShip`/`SetImpulse` set "Captain". Headless trace: the check runs every 5 s on both this branch and its base.
 
 ## 7. Not covered: a condition script and its engine wrapper hold each other
 
