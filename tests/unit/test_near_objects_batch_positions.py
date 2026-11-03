@@ -65,16 +65,21 @@ def test_the_radius_boundary_is_inclusive():
 def test_store_backed_objects_are_tested_in_one_store_call(monkeypatch):
     pm, want = _scene()
     cls = type(get_store())
-    singles, bulks = [], []
-    real_get, real_bulk = cls.get_position, cls.within_radius
+    singles, flags, bulks = [], [], []
+    real_get, real_flags = cls.get_position, cls.within_radius
+    real_bulk = cls.near_indices
     monkeypatch.setattr(cls, "get_position",
                         lambda self, *h: singles.append(h) or real_get(self, *h))
     monkeypatch.setattr(cls, "within_radius",
-                        lambda self, hs, *a: bulks.append(list(hs)) or real_bulk(self, hs, *a))
+                        lambda self, hs, *a: flags.append(hs) or real_flags(self, hs, *a))
+    monkeypatch.setattr(cls, "near_indices",
+                        lambda self, p, *a: bulks.append(list(p)) or real_bulk(self, p, *a))
     got = list(pm.GetNearObjects(TGPoint3(0.0, 0.0, 0.0), 10.0))
     assert got == want
-    assert singles == []
-    assert len(bulks) == 1 and len(bulks[0]) == 4   # 3 ships + registered
+    assert singles == [] and flags == []
+    # One near_indices call over the packed (index, generation) pairs:
+    # 3 ships + registered.
+    assert len(bulks) == 1 and len(bulks[0]) == 2 * 4
 
 
 def teardown_function(_):

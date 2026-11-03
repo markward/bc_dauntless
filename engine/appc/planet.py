@@ -17,9 +17,12 @@ damage tunables — but the visual mesh ("data/models/.../*.nif") is rendered
 in Phase 2.  Hailable + atmosphere damage are real gameplay logic.
 """
 
-from engine.appc.objects import ObjectClass
+from array import array
+
+from engine.appc.objects import ObjectClass, PhysicsObjectClass
 from engine.appc import proximity_cache
 from engine.appc import proximity_table
+from engine.appc.transform_store import get_store
 from engine.core import frame_profiler
 
 
@@ -276,10 +279,64 @@ class _ProximityIteration(tuple):
         return obj
 
 
+_deps = None
+
+
+def _query_deps():
+    """(ProximityCheck, SetClass, projectiles), imported once.
+
+    Not at module scope: engine.appc.ai and projectiles sit above this module
+    in the import graph. Cached so a query does no per-call import."""
+    global _deps
+    if _deps is None:
+        from engine.appc.ai import ProximityCheck
+        from engine.appc.sets import SetClass
+        from engine.appc import projectiles
+        _deps = (ProximityCheck, SetClass, projectiles)
+    return _deps
+
+
+class _Cand:
+    """One manager's candidate list for one membership generation.
+
+    `objs` is ProximityManager._candidates()'s order, except that it lists
+    EVERY set member (participant or not; a member under two names once) and
+    no ProximityCheck. Per entry: `is_set`, `physics` (a PhysicsObjectClass:
+    always participates), `stored` (location_is_stored) and `dup_of` (a
+    manager entry that is also a set member: that member's index, else -1).
+    `packed` holds the stored entries' (index, generation) handles flat, and
+    `packed_pos` their positions in `objs`; `unstored_pos` the rest.
+
+    Holds strong references, so no listed object's transform slot can be
+    freed while the cache lists it (a stale handle would raise)."""
+    __slots__ = ("gen", "objs", "is_set", "physics", "stored", "dup_of",
+                 "packed", "packed_pos", "unstored_pos")
+
+
+def _radius_participates(obj) -> bool:
+    """_is_proximity_participant for a known non-physics object."""
+    try:
+        return float(obj.GetRadius()) > 0.0
+    except Exception:
+        return False
+
+
+def _reports(cand, i) -> bool:
+    """Whether entry `i` is a candidate THIS query (the uncached walk's
+    rule): a set member when it participates now; a manager entry unless its
+    set twin participates (then it was reported at the set slot)."""
+    if cand.is_set[i]:
+        return cand.physics[i] or _radius_participates(cand.objs[i])
+    d = cand.dup_of[i]
+    return d < 0 or not (cand.physics[d] or _radius_participates(cand.objs[d]))
+
+
 class ProximityManager:
     def __init__(self, pSet=None):
         self._set = pSet
         self._objects: list = []
+        # The cached candidate list (_cached); None until the first query.
+        self._cand = None
         # Eager init — TGObject.__getattr__ returns a truthy _Stub for
         # missing attrs, so the lazy `getattr(..., None)` idiom would
         # mis-resolve.  See engine/appc/events.py TGPythonInstanceWrapper.
@@ -350,8 +407,7 @@ class ProximityManager:
             # radius, so while none has, walk the set's non-torpedo index
             # (SetClass._non_torpedo): same members, same order, without
             # stepping through every torpedo in flight.
-            from engine.appc.sets import SetClass
-            from engine.appc import projectiles
+            _, SetClass, projectiles = _query_deps()
             if isinstance(pSet, SetClass) and not projectiles.sized_torpedo_in(pSet):
                 members = list(pSet._non_torpedo.values())
             else:
@@ -369,6 +425,66 @@ class ProximityManager:
                 out.append(obj)
         return out
 
+    def _cached(self):
+        """This manager's _Cand for the current membership generation, or
+        None when the query must take the uncached Python path: a set that
+        is not a SetClass (no `_non_torpedo` index to cache), or one holding
+        a sized torpedo (then every member is walked, as `_candidates` does).
+
+        The key is (proximity_cache.generation(), sized_torpedo_in(set)); a
+        sized torpedo is never cached and its transitions bump the
+        generation, so the generation alone decides a rebuild."""
+        _, SetClass, projectiles = _query_deps()
+        pSet = self._set
+        if pSet is not None and (not isinstance(pSet, SetClass)
+                                 or projectiles.sized_torpedo_in(pSet)):
+            return None
+        gen = proximity_cache.generation()
+        cand = self._cand
+        if cand is None or cand.gen != gen:
+            cand = self._cand = self._build_cand(gen)
+        return cand
+
+    def _build_cand(self, gen):
+        ProximityCheck = _query_deps()[0]
+        objs, is_set, dup_of = [], [], []
+        at = {}                 # id(set member) -> its index in objs
+        if self._set is not None:
+            for obj in self._set._non_torpedo.values():
+                if id(obj) in at or isinstance(obj, ProximityCheck):
+                    continue
+                at[id(obj)] = len(objs)
+                objs.append(obj)
+                is_set.append(True)
+                dup_of.append(-1)
+        seen = set()
+        for obj in self._objects:
+            if id(obj) in seen or isinstance(obj, ProximityCheck):
+                continue
+            seen.add(id(obj))
+            objs.append(obj)
+            is_set.append(False)
+            dup_of.append(at.get(id(obj), -1))
+        cand = _Cand()
+        cand.gen = gen
+        cand.objs = objs
+        cand.is_set = is_set
+        cand.dup_of = dup_of
+        cand.physics = [isinstance(o, PhysicsObjectClass) for o in objs]
+        cand.stored = [proximity_table.location_is_stored(o) for o in objs]
+        cand.packed = array("I")
+        cand.packed_pos = []
+        cand.unstored_pos = []
+        for i, obj in enumerate(objs):
+            if cand.stored[i]:
+                index, generation = obj._xform
+                cand.packed.append(index)
+                cand.packed.append(generation)
+                cand.packed_pos.append(i)
+            else:
+                cand.unstored_pos.append(i)
+        return cand
+
     def GetNearObjects(self, point, radius, eType=None):
         """Objects within `radius` world-space units of `point`.
 
@@ -382,14 +498,54 @@ class ProximityManager:
         accepted and ignored so those call sites round-trip.
 
         Timed as `prox.near` (native motion + proximity phase 0).
+
+        Answered from the cached candidate list (_cached) with one native
+        `near_indices` call for every store-backed entry; same objects, same
+        order as the uncached walk (tests/helpers/proximity_oracle.py).
         """
         with frame_profiler.scope("prox.near"):
             return self._near_objects(point, radius)
 
     def _near_objects(self, point, radius):
+        cand = self._cached()
+        if cand is None:
+            return self._near_objects_python(point, radius)
         r2 = float(radius) * float(radius)
         px, py, pz = point.x, point.y, point.z
-        from engine.appc.ai import ProximityCheck
+        objs = cand.objs
+        keep = []
+        if cand.packed:
+            pos = cand.packed_pos
+            for k in get_store().near_indices(cand.packed, px, py, pz, r2):
+                i = pos[k]
+                if _reports(cand, i):
+                    keep.append(i)
+        if cand.unstored_pos:
+            # Asked themselves (none in a fight). Participation first, as the
+            # uncached walk never asks a non-candidate where it is.
+            more = []
+            for i in cand.unstored_pos:
+                if not _reports(cand, i):
+                    continue
+                obj = objs[i]
+                loc = (obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation")
+                       else None)
+                if loc is None:
+                    continue
+                dx = loc.x - px
+                dy = loc.y - py
+                dz = loc.z - pz
+                if dx * dx + dy * dy + dz * dz <= r2:
+                    more.append(i)
+            if more:
+                keep = sorted(keep + more) if keep else more
+        return _ProximityIteration([objs[i] for i in keep])
+
+    def _near_objects_python(self, point, radius):
+        """The uncached query: a set holding a sized torpedo, or no SetClass."""
+        r2 = float(radius) * float(radius)
+        px, py, pz = point.x, point.y, point.z
+        ProximityCheck = _query_deps()[0]
         candidates = [o for o in self._candidates()
                       if not isinstance(o, ProximityCheck)]
         # Every ConditionInRange registers a proximity check here, so a
@@ -399,7 +555,6 @@ class ProximityManager:
         # (within_radius: the compare below, rounded the same way). One that
         # answers GetWorldLocation itself (DebrisChunk, subsystems, ...) is
         # still asked.
-        from engine.appc.transform_store import get_store
         stored = [obj for obj in candidates
                   if proximity_table.location_is_stored(obj)]
         inside = {}
@@ -450,21 +605,28 @@ class ProximityManager:
         The trailing flag is accepted and ignored, as on GetNearObjects (a type
         filter / encompassing-volume flag in the real engine).
 
-        Timed as `prox.line` (native motion + proximity phase 0).
+        Timed as `prox.line` (native motion + proximity phase 0). Walks the
+        cached candidate list (_cached), reading each participant's radius at
+        query time; the segment math is unchanged.
         """
         with frame_profiler.scope("prox.line"):
             return self._line_objects(start, end, radius)
 
     def _line_objects(self, start, end, radius):
+        cand = self._cached()
+        if cand is None:
+            ProximityCheck = _query_deps()[0]
+            candidates = [o for o in self._candidates()
+                          if not isinstance(o, ProximityCheck)]
+        else:
+            objs = cand.objs
+            candidates = [objs[i] for i in range(len(objs)) if _reports(cand, i)]
         r = float(radius)
         ax, ay, az = start.x, start.y, start.z
         dx, dy, dz = end.x - ax, end.y - ay, end.z - az
         seg_len2 = dx * dx + dy * dy + dz * dz
-        from engine.appc.ai import ProximityCheck
         result = []
-        for obj in self._candidates():
-            if isinstance(obj, ProximityCheck):
-                continue
+        for obj in candidates:
             loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
             if loc is None:
                 continue
