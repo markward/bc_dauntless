@@ -78,10 +78,10 @@ ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
 #: This differential's reference arm: fire control's PYTHON copy. =0 no
 #: longer reaches it -- fire control is native whenever the module is
 #: available (fire control native only, M9; OFF keeps K1 native and only
-#: K0, K2, K3, K4 and damage Python) -- so the reference leaves the mirror
-#: unconfigured (native_combat.reset(), no configure()), the one state
-#: whose fire_control_native() is False, until Task 6 deletes the Python
-#: copy and this differential becomes golden tests (spec §4.7).
+#: K0, K2, K3, K4 and damage Python) -- so the reference is OFF plus the
+#: explicit test hook native_combat.use_python_fire_control_for_tests(),
+#: until Task 6 deletes the Python copy and this differential becomes
+#: golden tests (spec §4.7).
 PYTHON = {"DAUNTLESS_NATIVE_COMBAT": "0"}
 
 # Weapon kinds (native_combat._weapon_kind): systems, then their leaves.
@@ -176,8 +176,9 @@ class _Scene:
         for ship in self.ships:
             self.face(ship, self._enemy_of(face, ship))
         step_memo.forget()
-        if env is not PYTHON:
-            nc.configure(env)
+        nc.configure(env)
+        if env is PYTHON:
+            nc.use_python_fire_control_for_tests()
         assert nc.enabled() is (env is ON)
         assert nc.fire_control_native() is (env is not PYTHON)
         self.native = env is ON
@@ -1098,10 +1099,6 @@ def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
         scene = _Scene(mp, env)
         mp.setenv("DAUNTLESS_NATIVE_COMBAT",
                    env["DAUNTLESS_NATIVE_COMBAT"])
-        if env is PYTHON:
-            # The Python reference: GameLoop's configure() would make fire
-            # control native (see PYTHON).
-            mp.setattr(nc, "configure", lambda environ=None: None)
         loop = game_loop.GameLoop()         # configure() reads the env
         assert nc.enabled() is scene.native
         _deterministic_loop(mp)

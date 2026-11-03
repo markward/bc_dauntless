@@ -133,10 +133,22 @@ def _queued():
 
 
 def _peek():
-    """The queue's entries, left queued in their order."""
+    """The queue's entries, left queued in their order -- each put back the
+    way it was posted: a Python entry through eq.post, a native one (native
+    damage: objects named by mirror handle) as a native entry typed by its
+    kind's layout, so its delivery still resolves the handles."""
     taken = _h.combat_effect_take()
-    for kind, _native, ops in taken:
-        eq.post(kind, *ops)
+    for kind, native, ops in taken:
+        if native:
+            # A native entry may carry a Python object where its layout
+            # names a handle (a producer without its row): typed as an
+            # object ("H") there, as the binding took it.
+            types = "".join(
+                "H" if t == "R" and not isinstance(v, int) else t
+                for t, v in zip(eq.OPERANDS[kind], ops))
+            _h.combat_effect_post_typed(kind, types, *ops)
+        else:
+            eq.post(kind, *ops)
     return [(eq.KIND_NAMES[k], ops) for k, _native, ops in taken]
 
 
@@ -509,22 +521,23 @@ class _Tube:
         pass
 
 
-def test_damage_held_across_a_sessions_end_keeps_its_order(delivered,
+@pytest.mark.parametrize("arm", ["python", "native"])
+def test_damage_held_across_a_sessions_end_keeps_its_order(arm, delivered,
                                                           events):
     """Review M1: a whole killing hit is held across a native session's end
     and delivered at the boundary in emission order -- its death (ZERO_CROSS,
-    ET_OBJECT_EXPLODING) before its ET_WEAPON_HIT (R2).
-
-    The Python damage arm (DAUNTLESS_NATIVE_COMBAT=0, now the switch
-    defaults on): _peek re-posts the taken entries through eq.post, which
-    holds for the Python producer's entries (object operands) only; a
-    native entry's operands are mirror handles."""
+    ET_OBJECT_EXPLODING) before its ET_WEAPON_HIT (R2). Both damage arms:
+    the Python producer (DAUNTLESS_NATIVE_COMBAT=0) and native damage (the
+    default), whose entries name objects by mirror handle."""
     from engine.appc import native_combat as nc
-    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "0"})
-    assert not nc.enabled()
+    from tests.helpers.native_off import ZERO
+    nc.configure(ZERO if arm == "python" else {})
+    assert nc.enabled() is (arm == "native")
+    before = nc.damage_counts()["hits"]
     ship = _ship()
     ship.SetSplashDamage(100.0, 5.0)
     apply_hit(ship, 5000.0, _AT, source=None)    # outside the scope: held
+    assert nc.damage_counts()["hits"] - before == (arm == "native")
     emitted = [k for k, _ in _peek()]
     assert emitted.index("ZERO_CROSS") < emitted.index("WEAPON_HIT")
     with eq.session():

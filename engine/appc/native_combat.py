@@ -38,7 +38,9 @@ docs/superpowers/specs/2026-11-03-fire-control-native-only-design.md §4.1):
   failed ``_self_check()`` raises there, naming what is missing or what
   differed. Once it has run, the mirror is live and fire control (K1, the
   tractors with it) is native, whatever the switch says
-  (``fire_control_native``, M9).
+  (``fire_control_native``, M9). A fire-control call before it (the host
+  loads the mission before it builds the GameLoop) makes the mirror live
+  itself, or raises the same way.
 - The switch, ``DAUNTLESS_NATIVE_COMBAT``, is on unless ``=0`` (M1). It
   governs only the other kernels (``enabled``): K0, K2, K3 and its torpedo
   table, K4, native damage, the tick's effect scope and the dispatched
@@ -77,6 +79,9 @@ _enabled = False
 # The switch (DAUNTLESS_NATIVE_COMBAT, on unless =0) as configure() last set
 # it, never True while the mirror is not live: the other kernels (enabled).
 _switch = False
+# TEST ONLY (use_python_fire_control_for_tests): fire control's Python copy,
+# for the K1 differential's reference arm until Task 6 deletes it.
+_python_fire_control = False
 _audit = False
 _failures: list = []
 # Dispatched queries (sensor_detection, sensor_occlusion) the kernel answered,
@@ -181,14 +186,32 @@ def available() -> bool:
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
-    """Make the mirror live and set the switch from `environ` (module
-    docstring). Raises RuntimeError when the bindings are missing or stale
-    (naming every missing one) or the self-check fails (naming what
+    """Make the mirror live (_go_live) and set the switch from `environ`
+    (module docstring). Raises RuntimeError when the bindings are missing or
+    stale (naming every missing one) or the self-check fails (naming what
     differed): fire control has no other copy to fall back to (M2, M10).
     Neither the switch nor the audit excuses it."""
-    global _enabled, _switch, _audit
+    global _switch, _audit
+    audit = environ.get("DAUNTLESS_NATIVE_AUDIT") == "1"
+    switch = audit or environ.get("DAUNTLESS_NATIVE_COMBAT") != "0"
+    # The audit is on only when the switch ended up on: auditing rows that
+    # were never pushed would record every field of every row, every tick.
+    _audit = False
+    _go_live()
+    if _switch and not switch:
+        torpedo_table_mark_dirty()  # K3's table, unpushed from here on
+    _switch = switch
+    _audit = audit
+
+
+def _go_live() -> None:
+    """The mirror live: every binding present, the self-check passed, every
+    registered row resynced. Raises RuntimeError otherwise (configure's
+    message). A no-op once live. Leaves the switch alone: configure()'s."""
+    global _enabled
     missing = missing_bindings()
     if missing:
+        _disable("bindings missing")
         if _h is None:
             raise RuntimeError(
                 "native combat: the _dauntless_host module did not import; "
@@ -198,11 +221,6 @@ def configure(environ: Mapping[str, str] = os.environ) -> None:
             "native combat: stale build, missing bindings: %s; fire control "
             "is native only -- rebuild (cmake --build build -j)"
             % ", ".join(missing))
-    audit = environ.get("DAUNTLESS_NATIVE_AUDIT") == "1"
-    switch = audit or environ.get("DAUNTLESS_NATIVE_COMBAT") != "0"
-    # The audit is on only when the switch ended up on: auditing rows that
-    # were never pushed would record every field of every row, every tick.
-    _audit = False
     if not _enabled:
         reason = _self_check()
         if reason is not None:
@@ -211,10 +229,6 @@ def configure(environ: Mapping[str, str] = os.environ) -> None:
                 "native only" % reason)
         _enabled = True
         resync()
-    if _switch and not switch:
-        torpedo_table_mark_dirty()  # K3's table, unpushed from here on
-    _switch = switch
-    _audit = audit
 
 
 def enabled() -> bool:
@@ -230,11 +244,27 @@ def fire_control_native() -> bool:
     (host_loop._pump_held_weapons), WeaponSystem.StartFiring's session,
     the SDK's own weapon calls (Weapon.FireDumb, CanFire, Fire: fire
     control native only, M8.1, M8.6) and the tractors (k1_tractor_start,
-    tractor_force_step). The module is available and its self-check passed
-    (M9): configure() has run, and the mirror is live. Never the switch.
-    False only before configure() (or after a test's reset()), when the
-    mirror K1 reads has not been pushed."""
-    return _enabled
+    tractor_force_step). Always true (M9), never the switch: the first call
+    before configure() makes the mirror live itself (_go_live), so a call
+    in the host's mission load -- which runs before the GameLoop that calls
+    configure() -- is native too, or raises RuntimeError naming the missing
+    binding or the failed self-check (M10). Every entry point reaches this
+    predicate, every loader therefore needs nothing of its own. False only
+    under the test hook (use_python_fire_control_for_tests)."""
+    if _enabled:
+        return not _python_fire_control
+    if _python_fire_control:
+        return False
+    _go_live()
+    return True
+
+
+def use_python_fire_control_for_tests(on: bool = True) -> None:
+    """TEST ONLY: fire control takes its Python copy (fire_control_native
+    False) until reset() -- the K1 differential's reference arm, until
+    Task 6 deletes that copy. Nothing in the engine calls it."""
+    global _python_fire_control
+    _python_fire_control = bool(on)
 
 
 def audit_enabled() -> bool:
@@ -242,10 +272,11 @@ def audit_enabled() -> bool:
 
 
 def reset() -> None:
-    global _enabled, _switch, _audit
+    global _enabled, _switch, _audit, _python_fire_control
     _enabled = False
     _switch = False
     _audit = False
+    _python_fire_control = False
     _failures.clear()
     _profiles.clear()
     _logged_once.clear()

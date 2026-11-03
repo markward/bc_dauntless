@@ -305,7 +305,7 @@ def test_unconfigured_pushes_nothing_then_resync_catches_up():
     switch no longer stops the pushes: fire control reads the mirror
     whatever it says (fire control native only, M9)."""
     from engine.appc.subsystems import SensorSubsystem
-    assert not nc.fire_control_native()
+    assert not nc._enabled                      # reset(): the mirror is off
     sub = SensorSubsystem("Off")
     assert "_nslot" in sub.__dict__             # registered even when off
     sub.SetBaseSensorRange(777.25)
@@ -357,7 +357,7 @@ def test_self_check_names_the_mismatch(monkeypatch):
                         lambda a, b: math.nextafter(real(a, b), math.inf))
     with pytest.raises(RuntimeError, match="dist3"):
         nc.configure(ON)
-    assert not nc.enabled() and not nc.fire_control_native()
+    assert not nc.enabled() and not nc._enabled
     reason = nc._self_check()
     assert reason is not None and "dist3" in reason
 

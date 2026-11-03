@@ -20,13 +20,13 @@ from engine.appc.ai_sensor_gate import (
 from engine.appc.objects import ObjectGroup
 from tests.helpers.cloak_geometry import inside_gu, outside_gu
 
-# The Python sensor rules, with doubles only the Python sees (monkeypatched
-# flags and dials, fake nebulae): DAUNTLESS_NATIVE_COMBAT=0, now the switch
-# defaults on (fire control native only, R1; tests/helpers/native_off.py).
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
 import pytest  # noqa: E402
 from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
-
-pytestmark = pytest.mark.usefixtures("native_switch_zero")
 
 
 def _ship_with_sensor(base_range, condition=100.0, max_condition=100.0,
@@ -357,6 +357,7 @@ def test_fire_script_stops_at_a_cloaked_target_outside_the_bubble():
     assert fs.bTargetVisible == 0
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_fire_script_cloak_gate_is_absolute_with_the_contest_off(monkeypatch):
     """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False: cloak is
     absolute, so even the 15 GU target the contest engages stops the AI firing.

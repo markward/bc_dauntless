@@ -340,6 +340,11 @@ def test_watcher_without_owner_unchanged():
 
 
 def test_switch_off_never_pushes(clock, monkeypatch):
+    """Before the mirror is live (reset(), no configure()) no K0 write
+    pushes. The "Fire" writer is left out: Fire is a fire-control call,
+    which makes the mirror live itself (fire control native only, I1;
+    test_native_switch_default.py::test_fire_control_before_configure_takes_
+    the_native_path)."""
     calls = []
 
     def _rec(name):
@@ -347,9 +352,11 @@ def test_switch_off_never_pushes(clock, monkeypatch):
     for name in ("combat_set_floats", "combat_push_scalar", "combat_set_f",
                  "combat_set_i"):
         monkeypatch.setattr(_h, name, _rec(name))
-    assert not nc.enabled()
+    assert not nc.enabled() and not nc._enabled
     tube = _tube()
-    for _, setup, write in WRITERS:
+    for name, setup, write in WRITERS:
+        if name == "Fire":
+            continue
         setup(tube, clock)
         write(tube, clock)
     tube._reload_delay = 3.0
@@ -361,6 +368,7 @@ def test_switch_off_never_pushes(clock, monkeypatch):
     PhaserSystem("Phasers").SetPowerLevel(0)
     assert calls == []
     assert weapon.__dict__["_watch_checks"] == 0
+    assert not nc._enabled
 
 
 # ── The discharge table ──────────────────────────────────────────────────────

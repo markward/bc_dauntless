@@ -95,6 +95,11 @@ class World:
         if native:
             nc.configure(ON)
             assert nc.enabled()
+        else:
+            # The Python reference: fire control's Python copy, by the
+            # explicit test hook until Task 6 deletes it (an unconfigured
+            # mirror is native on first use: fire control native only, I1).
+            nc.use_python_fire_control_for_tests()
         self.native = native
         self.clock = [100.0]
         mp.setattr(ws, "_game_time", lambda: self.clock[0])

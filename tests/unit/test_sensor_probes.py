@@ -14,12 +14,12 @@ from engine.appc.subsystems import SensorSubsystem
 from tests.unit.test_sensor_reach import _observer_in_set, _ship_at, _Neb, _nebulae
 from tests.helpers.rocks import occlusion_enabled  # noqa: F401  (fixture)
 
-# The Python sensor rules, with doubles only the Python sees (monkeypatched
-# flags and dials, fake nebulae): DAUNTLESS_NATIVE_COMBAT=0, now the switch
-# defaults on (fire control native only, R1; tests/helpers/native_off.py).
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
 from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
-
-pytestmark = pytest.mark.usefixtures("native_switch_zero")
 
 
 def _probe_at(s, owner_sensors, x, base_range=1000.0):
@@ -150,6 +150,7 @@ def test_rock_between_probe_and_target_hides_it(occlusion_enabled):
     assert sd.can_detect(obs, far) is False
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_jam_does_not_cancel_the_probe_branch(monkeypatch):
     s, obs, sensors = _observer_in_set(2000.0)
     far = _ship_at(s, "far", 4500.0)
@@ -159,6 +160,7 @@ def test_jam_does_not_cancel_the_probe_branch(monkeypatch):
     assert sd.can_detect(obs, far) is True
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_dense_core_still_hides_from_the_probe(monkeypatch):
     s, obs, sensors = _observer_in_set(2000.0)
     far = _ship_at(s, "far", 4500.0)
@@ -178,6 +180,7 @@ def test_probe_reach_obeys_apply_concealment_false(monkeypatch):
     assert sd.can_detect(obs, far, apply_concealment=False) is True
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_probe_walk_samples_concealment_once(monkeypatch):
     """concealment_at depends only on the target: one sample per can_detect,
     however many probes the walk visits."""

@@ -5,7 +5,9 @@ dispatched sensor queries (sensor_detection's `_py_*` rules) -- pins it off
 itself. Fire control stays native (M9).
 
     from tests.helpers.native_off import native_switch_zero  # noqa: F401
-    pytestmark = pytest.mark.usefixtures("native_switch_zero")
+
+    @pytest.mark.usefixtures("native_switch_zero")
+    def test_...  # only a test whose doubles only the Python sees
 
 Typically a test whose doubles only the Python can see: a monkeypatched
 module flag or dial dict entry (the native globals are pushed by the
@@ -20,7 +22,10 @@ ZERO = {"DAUNTLESS_NATIVE_COMBAT": "0"}
 
 
 @pytest.fixture
-def native_switch_zero():
+def native_switch_zero(monkeypatch):
+    """The environment too, so a later configure() in the test -- a
+    GameLoop(), another fixture -- keeps the switch off."""
+    monkeypatch.setenv("DAUNTLESS_NATIVE_COMBAT", "0")
     nc.configure(ZERO)
     assert not nc.enabled()
     yield

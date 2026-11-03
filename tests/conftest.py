@@ -1188,6 +1188,24 @@ def _reset_leakable_engine_globals():
     # module sees BC's original CreateAI replaced for the rest of the
     # session. Only touch the module if it is already imported -- importing
     # it here just to reset it would itself be a new leak.
+    # Felix's Tactical orders (Bridge.TacticalMenuHandlers): module globals
+    # that a mission giving Felix an order (E1M2's tactical tutorial, a free
+    # roam fight) or a test setting one by hand leaves set for the whole
+    # session. The next scene's first player target change then ran
+    # UpdateOrders and installed an attack AI on the player (an extra
+    # ET_AI_DONE in the k1_ops goldens). Back to the SDK file's own initial
+    # values (tests/unit/test_conftest_resets_tactical_orders.py); only when
+    # the module is already imported.
+    _tmh = sys.modules.get("Bridge.TacticalMenuHandlers")
+    if _tmh is not None:
+        _tmh.g_bIgnoreNextAIDone = 0
+        _tmh.g_fLastWarnTime = 0
+        _tmh.g_lPlayerFireAIs = []
+        _tmh.g_idCurrentAI = None
+        _tmh.g_iAutoTargetChange = 0
+        _tmh.g_iOrderState = -1
+        _tmh.g_iTacticState = 0
+        _tmh.g_iManeuverState = 0
     _orbit_mod = sys.modules.get("AI.Player.OrbitPlanet")
     if _orbit_mod is not None:
         _orbit_orig = getattr(_orbit_mod.CreateAI,

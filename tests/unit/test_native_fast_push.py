@@ -385,5 +385,7 @@ def test_stale_so_without_a_binding_is_unavailable(monkeypatch, name):
     assert not nc.available()
     with pytest.raises(RuntimeError, match=name):
         nc.configure(ON)
-    assert not nc.enabled() and not nc.fire_control_native()
+    assert not nc.enabled() and not nc._enabled
+    with pytest.raises(RuntimeError, match=name):
+        nc.fire_control_native()
     nc.reset()                                  # no AttributeError

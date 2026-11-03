@@ -69,7 +69,7 @@ def test_fire_control_native_with_switch_zero(monkeypatch):
     ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
              ("Vorcha", "vorcha", (20.0, 160.0, 15.0), math.pi))
     with monkeypatch.context() as mp:
-        w = k1.World(mp, False, ships, "k1_zero")
+        w = k1.World(mp, True, ships, "k1_zero")
         try:
             for s in w.order:
                 s.SetRadius(4.0)    # headless hulls are 0: let torpedoes hit
@@ -117,7 +117,9 @@ def test_missing_binding_raises_at_configure(monkeypatch):
     with pytest.raises(RuntimeError,
                        match="stale build.*combat_k1_begin_tractor"):
         nc.configure(ZERO)              # the switch does not excuse it
-    assert not nc.fire_control_native()
+    assert not nc._enabled
+    with pytest.raises(RuntimeError, match="stale build"):
+        nc.fire_control_native()        # nor a fire-control call (M10)
     monkeypatch.setattr(nc, "_h", None)
     with pytest.raises(RuntimeError, match="_dauntless_host.*did not import"):
         nc.configure({})
@@ -130,8 +132,10 @@ def test_failed_self_check_raises(monkeypatch):
                         lambda a, b: math.nextafter(real(a, b), math.inf))
     with pytest.raises(RuntimeError, match="self-check.*dist3"):
         nc.configure({})
-    assert not nc.fire_control_native()
+    assert not nc._enabled
     assert not nc.enabled() and not nc.audit_enabled()
+    with pytest.raises(RuntimeError, match="self-check.*dist3"):
+        nc.fire_control_native()
     with pytest.raises(RuntimeError, match="self-check.*dist3"):
         nc.configure({"DAUNTLESS_NATIVE_AUDIT": "1"})
     assert not nc.audit_enabled()
@@ -200,3 +204,65 @@ def test_tractors_are_native_with_switch_zero(monkeypatch):
         assert logged["tractor_walk"] == 5, logged
     finally:
         w.close()
+
+
+# ── Fix round 1, I1: native from before the GameLoop exists ─────────────────
+
+def test_fire_control_before_configure_takes_the_native_path(monkeypatch):
+    """The host loads the mission (whose Initialize, handlers or mod scripts
+    may fire) before it builds the GameLoop that calls configure(). A
+    fire-control call in that window is native: it makes the mirror live
+    itself. It leaves the switch where it was (configure()'s alone)."""
+    from tests.helpers.k0_fight import World
+    w = World(monkeypatch, False, "before_configure")    # nc.reset() only
+    try:
+        assert not nc._enabled
+        g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+        tube = g.GetTorpedoSystem().GetWeapon(0)
+        assert tube.CanFire() in (0, 1)
+        assert nc._enabled, "CanFire ran before the mirror was live"
+        assert not nc.enabled()          # the switch: configure()'s alone
+        logged = nc.counts()["k1_logged"]
+        assert logged["sdk_can_fire"] == 1, logged
+        nc.reset()
+        sessions = []
+        k1_system = nc.k1_system
+        monkeypatch.setattr(nc, "k1_system",
+                            lambda s, dt: (sessions.append(s),
+                                           k1_system(s, dt)))
+        g.GetPhaserSystem().StartFiring(v)
+        assert sessions == [g.GetPhaserSystem()]
+        assert nc._enabled and nc.fire_control_native()
+    finally:
+        w.close()
+
+
+def test_fire_control_before_configure_raises_without_the_module(
+        monkeypatch):
+    """The same window with a stale build: the first fire-control call
+    raises, naming the binding, instead of quietly running Python."""
+    from tests.helpers.k0_fight import World
+    w = World(monkeypatch, False, "before_configure_stale")
+    try:
+        tube = w.ships["Galaxy"].GetTorpedoSystem().GetWeapon(0)
+        monkeypatch.setattr(nc, "_h", _Without(_h, "combat_k1_begin_tractor"))
+        with pytest.raises(RuntimeError,
+                           match="stale build.*combat_k1_begin_tractor"):
+            tube.CanFire()
+        with pytest.raises(RuntimeError, match="stale build"):
+            nc.fire_control_native()
+    finally:
+        monkeypatch.setattr(nc, "_h", _h)
+        w.close()
+
+
+def test_python_fire_control_is_an_explicit_test_hook():
+    """The K1 differential's Python reference is a test-only hook, not an
+    unconfigured state: while it is set fire control is Python even with
+    the mirror live; reset() clears it."""
+    nc.configure({})
+    nc.use_python_fire_control_for_tests()
+    assert not nc.fire_control_native()
+    assert nc.enabled()                  # the switch is untouched
+    nc.reset()
+    assert nc.fire_control_native()      # live again on first use
