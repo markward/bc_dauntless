@@ -85,7 +85,7 @@ def _seed_radius(pShip) -> None:
     if not _headless():
         return
     try:
-        if pShip.GetRadius() <= 0.0:
+        if pShip.GetBaseRadius() <= 0.0:
             pShip.SetRadius(NOMINAL_HULL_RADIUS_GU)
     except Exception:
         pass

@@ -229,7 +229,7 @@ def _place_on_ring(pShip, index: int, total: int) -> None:
     if not _headless():
         return
     try:
-        if pShip.GetRadius() <= 0.0:
+        if pShip.GetBaseRadius() <= 0.0:
             pShip.SetRadius(_NOMINAL_HULL_RADIUS_GU)
     except Exception:
         pass
@@ -252,7 +252,7 @@ def Initialize(pMission):
     # radius removes the player from avoidance and collision entirely.
     if _headless():                       # see _place_on_ring
         try:
-            if pPlayer.GetRadius() <= 0.0:
+            if pPlayer.GetBaseRadius() <= 0.0:
                 pPlayer.SetRadius(_NOMINAL_HULL_RADIUS_GU)
         except Exception:
             pass

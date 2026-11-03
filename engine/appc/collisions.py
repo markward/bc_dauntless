@@ -129,7 +129,11 @@ def world_radius(obj) -> float:
     truthy _Stub for any unknown name) and a non-positive or unreadable scale
     counts as 1."""
     from engine.appc.debris_chunk import DebrisChunk
-    r = float(obj.GetRadius())
+    from engine.appc.objects import ObjectClass
+    if isinstance(obj, ObjectClass):
+        r = float(obj.GetBaseRadius())
+    else:
+        r = float(obj.GetRadius())
     if isinstance(obj, DebrisChunk):
         return r
     fn = getattr(type(obj), "GetScale", None)

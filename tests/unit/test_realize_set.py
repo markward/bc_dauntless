@@ -94,6 +94,32 @@ def test_rerealize_after_departure_uses_the_current_radius(monkeypatch):
     assert sess.planet_natural_scale[planet] == pytest.approx(20.0 * scale_at_90)
 
 
+def test_scaled_planet_natural_scale_uses_the_base_radius(monkeypatch):
+    """Realise reads the BASE radius: with GetRadius() simulated as base x
+    scale, a planet scaled 2x must still get 90 / sphere, not 180 / sphere."""
+    from engine import host_loop as hl
+    from engine.appc.objects import ObjectClass
+    monkeypatch.setattr(hl, "_planet_nif_path", lambda planet, **k: "fake.nif")
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+    ref = App.Planet_Create(90.0, "data/models/environment/RedPlanet.nif")
+    s.AddObjectToSet(ref, "Ref 1")
+    sess0 = hl.MissionSession(mission_name="t")
+    hl.realize_set_objects(sess0, s, _FakeRenderer())
+    expected = sess0.planet_natural_scale[ref]
+
+    s2 = SetClass_Create()
+    App.g_kSetManager.AddSet(s2, "S2")
+    planet = App.Planet_Create(90.0, "data/models/environment/RedPlanet.nif")
+    planet.SetScale(2.0)
+    s2.AddObjectToSet(planet, "Ona 1")
+    monkeypatch.setattr(ObjectClass, "GetRadius",
+                        lambda self: self._radius * self._scale)
+    sess = hl.MissionSession(mission_name="t")
+    hl.realize_set_objects(sess, s2, _FakeRenderer())
+    assert sess.planet_natural_scale[planet] == pytest.approx(expected)
+
+
 def test_teardown_set_objects_leaves_another_sets_live_atmosphere_entries(monkeypatch):
     """Fix round 1 finding 1: the warp spine realizes the DESTINATION set
     before tearing down the SOURCE set, so teardown_set_objects must only

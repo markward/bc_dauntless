@@ -192,7 +192,7 @@ def _rescale_sun(sun, radius_gu: float) -> None:
     values, they are already correct, and rescaling geometry is no reason to
     restate them -- OmegaDraconis1_S's 360/sec stays 360/sec.
     """
-    old_radius = float(sun.GetRadius())
+    old_radius = float(sun.GetBaseRadius())
     ratio = (float(sun.GetAtmosphereRadius()) / old_radius
              if old_radius > 0.0 else STAR_ATMOSPHERE_RATIO)
     sun.SetRadius(radius_gu)

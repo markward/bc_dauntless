@@ -63,7 +63,7 @@ def effective_radius(rock) -> float:
     GetRadius is 0 (HullProperty.SetRadius sets only the hull), and live the
     host sets GetRadius from the mesh extent without SetScale. E1M2 scales
     its rocks 3.7-8.5x, so reading GetRadius alone plans them at ~0.8 GU."""
-    base = float(rock.GetRadius())
+    base = float(rock.GetBaseRadius())
     if base <= 0.0:
         hull = rock.GetHull()
         base = float(hull.GetRadius()) if hull is not None else 0.0

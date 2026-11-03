@@ -6516,7 +6516,7 @@ def _seed_ship_radius(ship, extent: float, sphere_radius: float) -> None:
     apply no shrink to it, and the corner distance is ~1.7x too big for a
     roughly spherical mesh. Both are unscaled: the collision and hit code
     multiply by GetScale() (collisions.world_radius)."""
-    if ship.GetRadius() > 0.0:
+    if ship.GetBaseRadius() > 0.0:
         return
     from engine.rocks.rock import is_rock
     r = sphere_radius if is_rock(ship) else extent
@@ -7118,12 +7118,12 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         if loaded is None:
             continue
         handle, extent, sphere_radius = loaded
-        if planet.GetRadius() <= 0.0:
+        if planet.GetBaseRadius() <= 0.0:
             try:
                 planet.SetRadius(extent * BC_MODEL_SCALE)
             except Exception as _e:
                 dev_mode.log_swallowed("realize planet.SetRadius fallback", _e)
-        radius = planet.GetRadius()
+        radius = planet.GetBaseRadius()
         # Divide by the bound-sphere radius (BC's render_scale divisor), not the
         # AABB corner, so the planet draws at exactly GetRadius() game units.
         natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
@@ -8266,7 +8266,7 @@ class _MissionLoader:
             the next ship of the class.
 
         Rocks take the sphere radius, via _seed_ship_radius's own rule."""
-        if ship is None or ship.GetRadius() > 0.0:
+        if ship is None or ship.GetBaseRadius() > 0.0:
             return
         src = _runtime_ship_model_source(ship, verbose=self._verbose)
         if src is None:
@@ -8434,12 +8434,12 @@ class _MissionLoader:
             if loaded is None:
                 continue
             handle, extent, sphere_radius = loaded
-            if planet.GetRadius() <= 0.0:
+            if planet.GetBaseRadius() <= 0.0:
                 try:
                     planet.SetRadius(extent * BC_MODEL_SCALE)
                 except Exception as _e:
                     dev_mode.log_swallowed("planet.SetRadius fallback", _e)
-            radius = planet.GetRadius()
+            radius = planet.GetBaseRadius()
             # Divide by the bound-sphere radius (BC's render_scale divisor), not
             # the AABB corner, so the planet draws at exactly GetRadius() GU.
             natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0

@@ -188,3 +188,21 @@ def test_hull_chunk_parent_mask_holds_until_clear_of_the_scaled_parent():
     c._loc = TGPoint3(p.x + clear + 0.01, p.y, p.z)
     dc.tick(0.0, r)
     assert collisions._collision_disabled_ids(c) == frozenset()
+
+
+def test_radius_helpers_never_read_get_radius(monkeypatch):
+    """The two radius x scale helpers read the BASE, so the GetRadius flip
+    cannot double-scale them."""
+    from engine.appc.objects import ObjectClass
+    from engine.rocks.rock import effective_radius
+    rock = _rock(1.2, 5.0)
+    bare = _rock(1.0, 5.0)
+    bare.SetRadius(0.0)                  # headless hardpoint rock: hull only
+    bare.GetHull().SetRadius(0.8)
+
+    def _boom(self):
+        raise AssertionError("helper read GetRadius()")
+    monkeypatch.setattr(ObjectClass, "GetRadius", _boom)
+    assert collisions.world_radius(rock) == 1.2 * 5.0
+    assert effective_radius(rock) == 1.2 * 5.0
+    assert effective_radius(bare) == 0.8 * 5.0

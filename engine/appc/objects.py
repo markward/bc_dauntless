@@ -210,7 +210,14 @@ class ObjectClass(TGEventHandlerObject):
     def GetRadius(self) -> float:
         return self._radius
 
+    def GetBaseRadius(self) -> float:
+        """The unscaled radius that SetRadius() sets. Engine surface, not SDK:
+        BC has no such call. Readers that apply GetScale() themselves read
+        this, so they never double-scale."""
+        return self._radius
+
     def SetRadius(self, r: float) -> None:
+        """Sets the base radius (see GetBaseRadius)."""
         self._radius = float(r)
 
     def GetScale(self) -> float:

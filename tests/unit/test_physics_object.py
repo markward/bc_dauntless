@@ -206,3 +206,10 @@ def test_damageable_object_is_physics_object():
 def test_app_physicsobj_direction_constants():
     assert App.PhysicsObjectClass.DIRECTION_MODEL_SPACE == 0
     assert App.PhysicsObjectClass.DIRECTION_WORLD_SPACE == 1
+
+
+def test_base_radius_is_the_set_radius_at_any_scale():
+    obj = ObjectClass()
+    obj.SetRadius(500.0)
+    obj.SetScale(2.5)
+    assert obj.GetBaseRadius() == 500.0
