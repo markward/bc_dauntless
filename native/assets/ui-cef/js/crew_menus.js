@@ -10,6 +10,21 @@
 // Leaf buttons fire crew-menu/click:<id>. The payload carries every menu so
 // widget ids stay stable for dispatch.
 
+// A left press on the page background (no element under it: the layout
+// zones are pointer-events:none, so their empty gutters fall through to the
+// body) is a click off the open crew menu. Python closes the menu
+// (crew_menu_panel.dispatch_event "click-off"); with no menu open it is a
+// no-op there.
+if (typeof document.addEventListener === "function") {   // absent in the node test DOM
+  document.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    if (e.target !== document.body && e.target !== document.documentElement) return;
+    const host = document.getElementById("crew-menu-host");
+    if (!host || !host.firstChild) return;
+    dauntlessEvent("crew-menu/click-off");
+  });
+}
+
 function setCrewMenus(payload) {
   const host = document.getElementById("crew-menu-host");
   if (!host) return;
