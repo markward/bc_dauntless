@@ -1,12 +1,13 @@
 # Campaign bugs from the combat event inventory: decisions (2026-11-02)
 
-Bugs found by the combat event inventory (`docs/reference/engine/native-combat/event-inventory.md` §7, branch `ws/combat-effect-queue`), each decided by Mark one at a time on 2026-11-02. **None is built yet**; each becomes a fix on a branch off main. SDK citations are relative to the SDK scripts root.
+Bugs found by the combat event inventory (`docs/reference/engine/native-combat/event-inventory.md` §7, branch `ws/combat-effect-queue`), each decided by Mark one at a time on 2026-11-02. Bugs 2 and 3 were built with native damage (D, unmerged); bug 1 is not built. Bug 4 was found later, while building D, and is not decided. SDK citations are relative to the SDK scripts root.
 
 | # | Bug | Decision | Status |
 |---|---|---|---|
 | 1 | `ET_WEAPON_FIRED` has no target pointer; pulse weapons never post it | Fix both | Decided; recorded in `event-emitter-gaps.md` #14 |
 | 2 | `SetConditionPercentage` is a no-op on every subsystem | Implement; post the same events as weapon damage | Decided |
 | 3 | E3M1: an invincible player takes no collision damage | **Closed by the invincibility ruling** (native-damage M1: invincible = cannot die, damage lands). The 0.1% plan is dropped: it made the drill unwinnable | Re-decided 2026-11-02; built with native damage (D) |
+| 4 | Extra hull entries are children of the main hull, so `MissionLib.SetConditionPercentage` on a hull skips the hull | Open | Found 2026-11-02 (native damage, Task 1); **awaiting Mark** |
 
 ## 2. `SetConditionPercentage` is a no-op on every subsystem
 
@@ -39,3 +40,21 @@ Bugs found by the combat event inventory (`docs/reference/engine/native-combat/e
 Building it showed the drill cannot end at 0.1%. A drill ship is knocked out only by real damage: hull, power or warp below 25% (player, Geronimo) or 50% (Klingons), via `ConditionSystemBelow` in `GeronimoAttackAI.py`, `RanKufAI.py` and `BOPAI.py`. At 0.1%, shield regeneration (12-24 per second per face) beats the incoming fire 10-65×. Measured headless, the Geronimo's hull was untouched after 600 s of nonstop fire, against below 25% in 15 s at full damage.
 
 The original design is a live-fire exercise in which nobody can die. Every drill ship, the player included, is made invincible; a ship is knocked out by damage; `EndShipSimulation` then repairs, reloads and parks it. That needs invincible to mean "cannot die", which the native-damage phase adopts for every mission (spec `docs/superpowers/specs/2026-11-02-native-damage-design.md` M1, on `project/combat_threading`). With it E3M1 runs as written. There is no simulation-mode listener and no damage scale, and its player-invincibility calls stay. A collision damages the invincible player, which closes the original complaint.
+
+## 4. Extra hull entries are children of the main hull, so the SDK's condition helper skips the hull
+
+**Broken:** some ships' hardpoint files declare more than one `HullProperty`: the Nebula has a critical, non-primary "Bridge" (`ships/Hardpoints/nebula.py:968-973`), and E7M1's BombFreighter has a critical, non-primary "Cargo Hold" (`ships/Hardpoints/bombfreighter.py:15-20`). Since 2026-06-09 (`599144566`, "attach secondary hull (bridge) under primary hull") our engine makes the first one the hull and attaches every other one as a **child** of it (`engine/appc/ships.py`, the `HullProperty` branch of property setup; its comment: "so they are damageable + viewer-visible").
+
+`MissionLib.SetConditionPercentage(pSubsystem, fPercent)` (`MissionLib.py:2293-2301`) sets a subsystem itself only when it has no children; otherwise it sets only its children. That suits a weapon system and its banks. On our hull it means the hull is never set:
+- **E3M4** `MissionLib.SetConditionPercentage(pBerkeley.GetHull(), .75)` (`Maelstrom/Episode3/E3M4/E3M4.py:189`): the Berkeley should arrive at 75% hull. Its Bridge goes to 75% and the hull bar shows 100%.
+- **E7M1** `StarbaseCollision` (`Maelstrom/Episode7/E7M1/E7M1.py:1872-1876`) sets the freighter's hull to 0 to destroy it. Only the Cargo Hold goes to 0; because it is critical the freighter still dies (native-damage M3), by the wrong route, with its hull bar at 100%.
+
+**Not caused by the combat work.** Before native damage the subsystem setter was a stub, so neither call did anything. D made it real (bug 2) and exposed the parenting.
+
+**Evidence on BC:** whether BC's ships parent extra hull entries under the hull is **not established**; no clean-room read has been done. The mission authors evidently expected the hull itself to change, which suggests BC's hull has no children (**inferred**).
+
+**Options (for Mark):**
+- **A.** Stop parenting extra hull entries under the hull: attach them to the ship beside it, keeping what the parenting was for (damageable, shown in the viewer, out of the AI loop). Recommended, after a clean-room check of BC's structure.
+- **B.** Keep the parenting and leave the two missions as they behave now.
+
+**To check when built:** E3M4's Berkeley shows 75% hull; E7M1's freighter dies through its hull; the Nebula's Bridge and the freighter's Cargo Hold still take damage, still show in the Ship Property Viewer, and a critical one at 0 still kills.
