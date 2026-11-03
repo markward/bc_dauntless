@@ -1531,6 +1531,7 @@ TEST(K2Pulse, NamesItsReasons) {
     EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::unscanned), "unscanned");
     EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::level), "level");
     EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::fallback), "fallback");
+    EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::python), "python");
 }
 
 TEST(K2Pulse, ADamagePulseIsAppliedInTheWalk) {
@@ -1651,7 +1652,8 @@ TEST(K2Pulse, WhatTheKernelCannotApplyStaysACONTACT) {
     for (const Case c : {Case{"not_ok", K2PulseWhy::not_ok},
                          Case{"unscanned", K2PulseWhy::unscanned},
                          Case{"level", K2PulseWhy::level},
-                         Case{"fallback", K2PulseWhy::fallback}}) {
+                         Case{"fallback", K2PulseWhy::fallback},
+                         Case{"python", K2PulseWhy::python}}) {
         SCOPED_TRACE(c.why);
         World w;
         const auto s = w.scene(true, 0.6);
@@ -1665,6 +1667,8 @@ TEST(K2Pulse, WhatTheKernelCannotApplyStaysACONTACT) {
             w.m.set_i(s.sys, Field::_power_level, 3);  // IndexError
         if (c.reason == K2PulseWhy::fallback)
             w.m.set_i(s.target, Field::dmg_ship, 0);   // a class Python owns
+        if (c.reason == K2PulseWhy::python)
+            p.python_banks = {s.bank};  // it shadows a name the pulse reads
         begin_pulse(w, {s.ship}, p);
         const K2Record r = w.k.next();
         EXPECT_EQ(w.brief(r),

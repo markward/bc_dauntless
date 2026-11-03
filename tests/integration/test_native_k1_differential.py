@@ -146,6 +146,9 @@ class _Scene:
     def __init__(self, mp, env, ships="8"):
         mp.delenv("DAUNTLESS_NATIVE_COMBAT", raising=False)
         mp.delenv("DAUNTLESS_NATIVE_AUDIT", raising=False)
+        # Radii come from the models, as live: a leaked headless flag from
+        # another test gives every ship a nominal radius and changes the fight.
+        mp.delenv("OPEN_STBC_HOST_HEADLESS", raising=False)
         mp.setenv("DAUNTLESS_COMBAT_SHIPS", ships)
         nc.reset()
         App.g_kTimerManager._time = 0.0

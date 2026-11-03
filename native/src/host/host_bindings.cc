@@ -4527,7 +4527,8 @@ void damage_append_held(const std::vector<dauntless::combat::DamageEntry>& entri
 // THE HITS), from the driver's dict: "ok", "player", "god_mode",
 // "double_damage", "npc_shields_off", "intensity" (3 floats),
 // "default_radius", "pp_low", "hit_weapon", "weapon_hit_type",
-// "has_instances", "clean" (Object handles).
+// "has_instances", "clean" (Object handles); K2's also "python_banks"
+// (Subsystem handles whose pulses are Python's; absent: none).
 dauntless::combat::K2PulseCtx k2_pulse_ctx(const py::dict& d) {
     dauntless::combat::K2PulseCtx p;
     p.ok = d["ok"].cast<bool>();
@@ -4542,6 +4543,9 @@ dauntless::combat::K2PulseCtx k2_pulse_ctx(const py::dict& d) {
     p.weapon_hit_type = d["weapon_hit_type"].cast<std::int64_t>();
     p.has_instances = d["has_instances"].cast<bool>();
     for (auto h : d["clean"]) p.clean.insert(h.cast<std::int64_t>());
+    if (d.contains("python_banks"))
+        for (auto h : d["python_banks"])
+            p.python_banks.insert(h.cast<std::int64_t>());
     return p;
 }
 
