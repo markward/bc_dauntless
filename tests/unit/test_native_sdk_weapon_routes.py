@@ -14,10 +14,10 @@ docs/reference/engine/native-combat/k1-retirement-map.md).
   reset in the middle of a K1 session -- launches from the cache it has and
   is re-pushed at the next K1 entry: no hand-back, no no-fire (M8.3).
 
-Each runs with native combat on (the K1 pump's predicate,
-native_combat.fire_control_native); with it off the Python path is kept
-until Task 6. Real ships, as tests/unit/test_native_k1_dispatch.py builds
-them; where Python is the reference, both arms run and must be equal.
+Fire control has no Python copy (M3): each runs natively, on real ships
+as tests/unit/test_native_k1_dispatch.py builds them; where Python was the
+reference, the run is compared with its recording (that module's RECORDED
+EXPECTATIONS, tests/fixtures/k1_dispatch/).
 """
 import importlib
 import sys
@@ -68,7 +68,7 @@ def test_sdk_fire_dumb_is_native(monkeypatch):
     logged writes plus a SPAWN (no FIRE_DUMB record, no Python decision),
     a dumb fire Python would refuse (the ship-wide stagger, an empty tube)
     writes nothing. Every torpedo, field by field, and every launch event,
-    in order, equal the Python reference's."""
+    in order, equal the recorded Python reference's."""
     def script(w, t):
         tubes = k1._weapons(w.ships["Galaxy"].GetTorpedoSystem())
         if t == 0:
@@ -85,7 +85,7 @@ def test_sdk_fire_dumb_is_native(monkeypatch):
     assert logged["dumb_launch"] == len(nl.spawned), logged
     assert logged["dumb_launch"] + logged["dumb_refused"] == 4, logged
     assert not any(counts["k1_launch_reasons"].values()), counts
-    assert counts["k1_python_systems"] == 0, counts
+    k1._no_fire_free(counts)
 
 
 # ── M8.6: CanFire and Fire ───────────────────────────────────────────────────
@@ -133,29 +133,25 @@ def test_can_fire_is_native_and_clears_depleted(monkeypatch):
     """CanFire is the native rule (fire_gates.cc can_fire), with Python's
     side effect: a latched bank whose charge is back at MinFiringCharge has
     `_depleted` cleared, whatever it then answers. Over the sweep every
-    answer and every latch equal the Python rule's, the mirror agrees, and
-    every call was the native one."""
-    arms = []
-    for native in (False, True):
-        with monkeypatch.context() as mp:
-            w = k1.World(mp, native, k1._PULSE_SHIPS,
-                         "k1_canfire_%d" % native)
-            try:
-                _h.combat_k1_reset_counts()
-                rows = _can_fire_sweep(w)
-                if native:
-                    counts = nc.counts()
-                    nc.audit_mirror()
-                    assert nc.audit_failures() == [], nc.audit_failures()
-            finally:
-                w.close()
-            arms.append(rows)
-    ref, nat = arms
+    answer and every latch equal the recorded Python rule's, the mirror
+    agrees, and every call was the native one."""
+    want = k1._recorded("rows")["rows"]
+    with monkeypatch.context() as mp:
+        w = k1.World(mp, True, k1._PULSE_SHIPS, "k1_canfire_1")
+        try:
+            _h.combat_k1_reset_counts()
+            nat = k1._norm(_can_fire_sweep(w))
+            counts = nc.counts()
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+        finally:
+            w.close()
+    ref = want
     assert len(ref) == len(nat) > 50
     for a, b in zip(ref, nat):
         assert a == b, "python %r\nnative %r" % (a, b)
     # A latch cleared: the sweep did reach the side effect.
-    assert any(r[2] is True and r[5] == ("bool", False) for r in ref[:-4])
+    assert any(r[2] is True and r[5] == ["bool", False] for r in ref[:-4])
     assert counts["k1_logged"].get("sdk_can_fire", 0) == len(nat), counts
 
 
@@ -164,7 +160,8 @@ def test_fire_wrapper_native(monkeypatch):
     M8.6): a beam's edge and sustain (a TractorBeam's without its
     ET_WEAPON_FIRED), a tube's launch and a refused aim, a cannon's bolt at
     a target and at its ship's target. Every answer, every bolt and torpedo
-    field by field, every event in order: as the Python reference."""
+    field by field, every event in order: as the recorded Python
+    reference."""
     def script(w, t):
         galaxy, ahead = w.ships["Galaxy"], w.ships["Ahead"]
         if t == 0:
@@ -189,25 +186,25 @@ def test_fire_wrapper_native(monkeypatch):
 
     arms = k1._launch_arms(monkeypatch, script, 30, player="Galaxy")
     (rw, rl, _), (nw, nl, counts) = arms
-    assert nw.fired == rw.fired
-    assert ("bool", True) in rw.fired and ("bool", False) in rw.fired
+    assert k1._norm(nw.fired) == rw.recorded["fired"]
+    assert ("bool", True) in nw.fired and ("bool", False) in nw.fired
     assert len(nl.spawned) >= 3, rl.events
     logged = counts["k1_logged"]
     assert logged.get("sdk_fire", 0) == len(nw.fired), logged
     assert logged["tube_launch"] + logged["pulse_launch"] \
         == len(nl.spawned), logged
     assert not any(counts["k1_launch_reasons"].values()), counts
-    assert counts["k1_python_systems"] == 0, counts
+    k1._no_fire_free(counts)
 
 
 # ── M8.2: a tube with no ammo type ───────────────────────────────────────────
 
 def test_tube_without_ammo_type_fires_slot0_script(tmp_path, monkeypatch):
     """A torpedo system with no ammo type launches its property's slot-0
-    script (_spawn_torpedo's fallback): that script's launch is in the
-    launch cache, pushed with the property (and again by its
+    script (the deleted _spawn_torpedo's fallback): that script's launch
+    is in the launch cache, pushed with the property (and again by its
     SetTorpedoScript), so the kernel makes the launch -- every torpedo
-    field by field as Python's, its module the slot-0 one, no hand-back."""
+    field by field as the recorded Python's, its module the slot-0 one."""
     name = "k1fx_slot0_launch"
     fixture = k1._fixture_module(tmp_path, monkeypatch, name, k1._PURE_TORP)
 
@@ -228,23 +225,21 @@ def test_tube_without_ammo_type_fires_slot0_script(tmp_path, monkeypatch):
 
 
 # ── M8.3: a stale launch cache ───────────────────────────────────────────────
+# No Python runs inside a K1 session (fire control native only, M3), so a
+# cache goes stale only between sessions: the next K1 entry re-pushes it
+# (_refresh_stale_launches) -- never a hand-back, never a no-fire.
 
-def _mid_session_pump(ships, body):
-    """One pump session over `ships` in the tick's scope, the first ship's
-    phaser system row dropped so the kernel hands that getter (0) to Python
-    (RUN_PYTHON) BEFORE it walks any other: `body(ship, getter)` is Python
-    run in the middle of the session."""
-    nc._drop(ships[0].GetPhaserSystem())
+def _pump(ships):
+    """One pump session over `ships` in the tick's scope."""
     with eq.scope(), step_memo.combat_step():
-        nc.k1_pump(list(ships), k1.DT, body)
+        nc.k1_pump(list(ships), k1.DT)
 
 
 def test_reimported_pulse_module_repushed_not_no_fire(monkeypatch):
-    """A cannon's module re-imported in the middle of a K1 session (a new
-    module object in sys.modules): the rest of that session launches from
-    the module it cached, natively -- not a hand-back, not a no-fire, not
-    counted -- and the next K1 entry re-pushes the new one, which every
-    later bolt carries."""
+    """A cannon's module re-imported between two K1 sessions (a new module
+    object in sys.modules): the next K1 entry re-pushes the new one, which
+    every later bolt carries -- not a hand-back, not a no-fire, not
+    counted."""
     with monkeypatch.context() as mp:
         w = k1.World(mp, True, k1._PULSE_SHIPS, "k1_reimport",
                      player="Vorcha")
@@ -255,61 +250,38 @@ def test_reimported_pulse_module_repushed_not_no_fire(monkeypatch):
             script = ws.pulse_module_script(cannons.GetWeapon(0))
             old = sys.modules[script]
             created = []
-            mp.setattr(old, "Create",
-                       lambda t, _c=old.Create: (created.append("old"),
-                                                 _c(t))[1])
             cannons.StartFiring(galaxy, TGPoint3(0.5, 1.0, -0.25))
             pkg, _dot, leaf = script.rpartition(".")
             mp.setattr(sys.modules[pkg], leaf, old)     # restored after
-            new = []
-
-            def body(ship, getter):
-                mp.delitem(sys.modules, script)
-                mod = importlib.import_module(script)
-                mp.setattr(mod, "Create",
-                           lambda t, _c=mod.Create: (created.append("new"),
-                                                     _c(t))[1])
-                new.append(mod)
-
-            def rearm():
-                w.clock[0] += 1.0
-                for c in k1._weapons(cannons):
-                    c._cooldown_remaining = 0.0
-                    c._charge_level = c._max_charge
-                cannons.SetForceUpdate(1)       # the walk tries this tick
-
-            rearm()
+            mp.delitem(sys.modules, script)
+            new = importlib.import_module(script)
+            assert new is not old
+            mp.setattr(new, "Create",
+                       lambda t, _c=new.Create: (created.append("new"),
+                                                 _c(t))[1])
+            w.clock[0] += 1.0
+            for c in k1._weapons(cannons):
+                c._cooldown_remaining = 0.0
+                c._charge_level = c._max_charge
+            cannons.SetForceUpdate(1)       # the walk tries this tick
             _h.combat_k1_reset_counts()
-            created.clear()
-            _mid_session_pump([galaxy, vorcha], body)
-            assert len(new) == 1 and new[0] is not old
+            _pump([galaxy, vorcha])
+            assert ws.pulse_module(script) is new
             c = nc.counts()
-            assert c["k1_launch_reasons"] == dict.fromkeys(
-                c["k1_launch_reasons"], 0), c["k1_launch_reasons"]
             assert c["k1_logged"]["pulse_launch"] >= 1, c["k1_logged"]
-            assert created and set(created) == {"old"}, created
-            assert not any(c["k1_no_fire"].values()), c["k1_no_fire"]
-            # The next K1 entry re-pushes the new module.
-            rearm()
-            created.clear()
-            with eq.scope():
-                cannons.StartFiring(galaxy, TGPoint3(0.5, 1.0, -0.25))
-            assert ws.pulse_module(script) is new[0]
-            c = nc.counts()
             assert created and set(created) == {"new"}, created
             assert not any(c["k1_launch_reasons"].values()), c
             assert not any(c["k1_no_fire"].values()), c["k1_no_fire"]
-            assert len(launches.torps) >= 2
+            assert launches.torps
         finally:
             w.close()
 
 
 def test_cache_reset_mid_session_repushed(monkeypatch):
-    """The projectile-cache reset (a mission swap's) made in the middle of
-    a K1 session (THE P6 WINDOW): the rest of that session's launches come
-    from the launch cache the rows hold, natively -- not handed back
-    uncached, not a no-fire, not counted -- and the next K1 entry re-reads
-    every type."""
+    """The projectile-cache reset (a mission swap's) made between two K1
+    sessions (THE P6 WINDOW): the rows keep the launch they hold until the
+    next K1 entry, which re-reads every type -- its launch native, not
+    handed back uncached, not a no-fire, not counted."""
     with monkeypatch.context() as mp:
         w = k1.World(mp, True, k1._LAUNCH_SHIPS, "k1_reset_window",
                      player="Galaxy")
@@ -320,39 +292,24 @@ def test_cache_reset_mid_session_repushed(monkeypatch):
             ammo = torps.GetCurrentAmmoType()
             script = ammo.GetTorpedoScript()
             torps.StartFiring(ahead)
-            resets = []
-
-            def body(ship, getter):
-                ws._reset_projectile_module_cache()     # mid-session
-                resets.append((ship.GetName(), getter))
-
-            def rearm():
-                w.clock[0] += 1.0
-                for tube in k1._weapons(torps):
-                    tube.SetNumReady(1)
-                torps.SetForceUpdate(1)         # the walk tries this tick
-
-            rearm()
+            ws._reset_projectile_module_cache()     # between sessions
+            assert script not in ws._tube_launch_cache
+            row = _h.combat_dump(ammo.__dict__["_nslot"])
+            assert row["ammo_launch_state"] == ws.LAUNCH_CACHED  # as it was
+            w.clock[0] += 1.0
+            for tube in k1._weapons(torps):
+                tube.SetNumReady(1)
+            torps.SetForceUpdate(1)         # the walk tries this tick
             _h.combat_k1_reset_counts()
             fired = len(launches.torps)
-            _mid_session_pump([galaxy], body)
-            assert resets == [("Galaxy", 0)]
-            c = nc.counts()
-            assert c["k1_launch_reasons"] == dict.fromkeys(
-                c["k1_launch_reasons"], 0), c["k1_launch_reasons"]
-            assert c["k1_logged"]["tube_launch"] == 1, c["k1_logged"]
-            assert len(launches.torps) == fired + 1
-            assert not any(c["k1_no_fire"].values()), c["k1_no_fire"]
-            # Not re-read inside the window: at the next K1 entry.
-            assert script not in ws._tube_launch_cache
-            rearm()
-            with eq.scope():
-                torps.StartFiring(ahead)
-            assert script in ws._tube_launch_cache
+            _pump([galaxy])
+            assert script in ws._tube_launch_cache  # re-read at the entry
             row = _h.combat_dump(ammo.__dict__["_nslot"])
             assert row["ammo_launch_state"] == ws.LAUNCH_CACHED
             c = nc.counts()
-            assert c["k1_logged"]["tube_launch"] == 2, c["k1_logged"]
+            assert c["k1_logged"]["tube_launch"] == 1, c["k1_logged"]
+            assert len(launches.torps) == fired + 1
             assert not any(c["k1_launch_reasons"].values()), c
+            assert not any(c["k1_no_fire"].values()), c["k1_no_fire"]
         finally:
             w.close()

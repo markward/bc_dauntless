@@ -5,7 +5,10 @@ Each test builds real ships with native combat on, randomises poses, mounts,
 arcs, velocities and scales (seeded random.Random(20261031), 2,000 cases each)
 and compares the `combat_test_*` binding with the Python function of the same
 name BY float.hex(): no tolerance anywhere. K1M section 3 (F2, F7, F9-F13) is
-the specification.
+the specification. The functions only fire control used (the torpedo aim and
+cone, the pulse lead, the emitter forward) were deleted with its Python copy
+(fire control native only, M3): they are compared with the frozen reference
+of them, tests/helpers/k1_reference.py.
 """
 import importlib
 import math
@@ -31,6 +34,7 @@ from engine.appc import subsystems as ss  # noqa: E402
 from engine.appc import weapon_subsystems as ws  # noqa: E402
 from engine.appc.math import TGMatrix3, TGPoint3  # noqa: E402
 from engine.core import step_memo  # noqa: E402
+from tests.helpers import k1_reference as ref  # noqa: E402
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
 SEED = 20261031
@@ -287,7 +291,7 @@ def test_emitter_forward_world_matches(world):
         ship = rng.choice((w.galaxy, None))
         assert _hx(_h.combat_test_emitter_forward_world(
             _slot(em), _slot(ship))) == _hx(
-                ws._emitter_forward_world(em, ship))
+                ref._emitter_forward_world(em, ship))
 
 
 # ── Arc gate ─────────────────────────────────────────────────────────────────
@@ -378,7 +382,7 @@ def test_torpedo_cone_matches(world):
             aim = TGPoint3(NAN, 0.0, 1.0)
         else:
             aim = _rand_vec(rng, 800.0)
-        want = ws._in_torpedo_cone(tube, ship, aim)
+        want = ref._in_torpedo_cone(tube, ship, aim)
         got = _h.combat_test_in_torpedo_cone(
             _slot(tube), _slot(ship), (aim.x, aim.y, aim.z), False)
         assert got is want, i
@@ -404,7 +408,7 @@ def test_torpedo_cone_boundary_at_exactly_the_literal(world):
                 xx = math.nextafter(xx, math.inf if step > 0 else -math.inf)
             aim = TGPoint3(xx, 1.0, 0.0) if axis == "yaw" else TGPoint3(
                 0.0, 1.0, xx)
-            want = ws._in_torpedo_cone(tube, w.galaxy, aim)
+            want = ref._in_torpedo_cone(tube, w.galaxy, aim)
             got = _h.combat_test_in_torpedo_cone(
                 _slot(tube), _slot(w.galaxy), (aim.x, aim.y, aim.z), False)
             assert got is want, (axis, step)
@@ -432,7 +436,7 @@ def test_torpedo_aim_point_matches(world):
             w.warbird.SetDead()
         else:
             w.warbird._dead = False
-        want = ws._resolve_torpedo_aim_point(tube, target)
+        want = ref._resolve_torpedo_aim_point(tube, target)
         got = _h.combat_test_resolve_torpedo_aim_point(
             _slot(tube), _slot(target))
         assert _hx(got) == _hx(want), i
@@ -487,7 +491,7 @@ def test_pulse_launch_matches(world):
             m = ss.subsystem_world_position(cannon)
             w.warbird.SetTranslateXYZ(m.x, m.y, m.z)
             cannon._target_offset = None
-        want = ws._solve_pulse_launch_direction(cannon, w.vorcha, w.warbird, mod)
+        want = ref._solve_pulse_launch_direction(cannon, w.vorcha, w.warbird, mod)
         got = _h.combat_test_solve_pulse_launch_direction(
             _slot(cannon), _slot(w.vorcha), _slot(w.warbird), False)
         assert _hx(got) == _hx(want), i
@@ -525,7 +529,7 @@ def test_pulse_launch_edges(world):
         _h.combat_set_f(_slot(cannon), nc._fid("launch_speed"), speed)
         _h.combat_set_f(_slot(cannon), nc._fid("lifetime"), lifetime)
         _h.combat_set_i(_slot(cannon), nc._fid("module_ok"), 1)
-        want = ws._solve_pulse_launch_direction(
+        want = ref._solve_pulse_launch_direction(
             cannon, w.vorcha, w.warbird, _fake_mod(speed, lifetime))
         got = _h.combat_test_solve_pulse_launch_direction(
             _slot(cannon), _slot(w.vorcha), _slot(w.warbird), False)
@@ -663,7 +667,7 @@ def test_pulse_launch_with_no_ship_uses_zero_velocity(world):
         w.warbird.SetVelocity(_rand_vec(rng, 3.0))
         cannon._target_offset = None
         mod = _fake_mod(7.0, 50.0)
-        want = ws._solve_pulse_launch_direction(cannon, None, w.warbird, mod)
+        want = ref._solve_pulse_launch_direction(cannon, None, w.warbird, mod)
         got = _h.combat_test_solve_pulse_launch_direction(
             _slot(cannon), -1, _slot(w.warbird), False)
         assert _hx(got) == _hx(want)
@@ -691,7 +695,7 @@ def test_pulse_launch_n_below_epsilon_is_none(world):
         w.warbird.SetVelocity(TGPoint3(0.0, vy, 0.0))
         _h.combat_set_f(_slot(cannon), nc._fid("launch_speed"), speed)
         _h.combat_set_f(_slot(cannon), nc._fid("lifetime"), 100.0)
-        want = ws._solve_pulse_launch_direction(
+        want = ref._solve_pulse_launch_direction(
             cannon, w.vorcha, w.warbird, _fake_mod(speed, 100.0))
         got = _h.combat_test_solve_pulse_launch_direction(
             _slot(cannon), _slot(w.vorcha), _slot(w.warbird), False)

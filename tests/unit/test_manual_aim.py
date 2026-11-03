@@ -80,35 +80,29 @@ def test_weapon_system_uses_the_ships_live_offset_while_manual_aim_is_on():
     """StartFiring captures the offset ONCE (_held_offset); with the cursor
     moving every frame, a torpedo fired mid-hold must read the ship's
     CURRENT offset, not the one captured at keydown."""
+    import _dauntless_host as _h
+    from engine.appc import native_combat as nc
     from engine.appc.ships import ShipClass
     from engine.appc.subsystems import TorpedoSystem
+    nc.fire_control_native()            # the mirror live
     ship = ShipClass()
     sys_ = TorpedoSystem("Torpedoes")
     sys_.SetParentShip(ship)
 
+    def walk_offset():
+        # The walk's offset, as the native walk computes it (fire control
+        # native only, M3; the deleted _live_held_offset's rule).
+        return _h.combat_k1_walk_offset(sys_.__dict__["_nslot"])
+
     sys_._held_offset = TGPoint3(0.0, 0.0, 0.0)          # captured at keydown
-    assert sys_._live_held_offset() is sys_._held_offset  # off: held wins
+    assert walk_offset() == (0.0, 0.0, 0.0)               # off: held wins
 
     ship.set_manual_target_offset(TGPoint3(2.0, 0.0, 7.0))
-    live = sys_._live_held_offset()
-    assert (live.x, live.y, live.z) == (2.0, 0.0, 7.0)
+    assert walk_offset() == (2.0, 0.0, 7.0)
 
     ship.UseTargetOffsetTG(0)
-    assert sys_._live_held_offset() is sys_._held_offset
+    assert walk_offset() == (0.0, 0.0, 0.0)
 
-
-def test_live_offset_tolerates_a_parent_without_the_manual_aim_api():
-    """Legacy fakes / no parent: fall back to _held_offset, never raise."""
-    from engine.appc.subsystems import TorpedoSystem
-    sys_ = TorpedoSystem("Torpedoes")
-    sys_._held_offset = "held"
-    assert sys_._live_held_offset() == "held"
-    class _Bare: pass
-    sys_.SetParentShip(_Bare())
-    assert sys_._live_held_offset() == "held"
-
-
-# ── Task 3: phaser aim point ─────────────────────────────────────────────────
 
 def _galaxy_target_at(x, y, z):
     from engine.appc.ships import ShipClass_Create

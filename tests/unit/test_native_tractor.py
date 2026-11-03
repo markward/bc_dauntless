@@ -103,9 +103,6 @@ def _yaw(ship, angle):
 
 def _no_fallbacks():
     c = nc.counts()
-    assert c["k1_python_systems"] == 0, c["k1_python_reasons"]
-    for side in ("pump", "system"):
-        assert c["k1_python_reasons"][side]["self_managed"] == 0
     assert not any(c["k1_no_fire"].values()), c["k1_no_fire"]
     return c
 
@@ -354,27 +351,20 @@ def test_unnamed_tractor_is_never_handed_to_python(world, monkeypatch,
                                                    dropped):
     """A ship whose tractor system has no mirror row (its ref pushes -2, as
     after an unencodable `_engage_state` drops it) or a ship with no row:
-    the pump's tractor getter is a counted no-fire, never a RUN_PYTHON into
-    host_loop._pump_held_system (whose generic path would stop the engage
-    intent and run the BC group walk on the projectors)."""
-    from engine import host_loop
+    the pump's tractor getter (the ship's, for a ship with no row) is a
+    counted no-fire -- tractor_row, unslotted_ship -- and the drop itself
+    one ("dropped", fire control native only, R3): nothing stops the engage
+    intent or runs a group walk on the projectors."""
     g, v = world.ships["Galaxy"], world.ships["Vorcha"]
     tractors = g.GetTractorBeamSystem()
     tractors.StartFiring(v)
     assert tractors.IsEngaged() and _lit(g)
     nc._drop(tractors if dropped == "tractor_system" else g)
-    calls = []
-    orig = host_loop._pump_held_system
-
-    def spy(ship, getter, dt, _orig=orig):
-        calls.append(getter)
-        return _orig(ship, getter, dt)
-
-    monkeypatch.setattr(host_loop, "_pump_held_system", spy)
-    before = nc.counts()["k1_no_fire"]["tractor_row"]
+    assert nc.counts()["k1_no_fire"]["dropped"] == 1
+    why = "tractor_row" if dropped == "tractor_system" else "unslotted_ship"
+    before = nc.counts()["k1_no_fire"][why]
     world.tick()
-    assert "GetTractorBeamSystem" not in calls, calls
-    assert nc.counts()["k1_no_fire"]["tractor_row"] == before + 1
+    assert nc.counts()["k1_no_fire"][why] == before + 1
     # The intent and the grip are as they were: nothing ran the generic
     # held-weapon path on the tractor.
     assert tractors.IsEngaged() and _lit(g)

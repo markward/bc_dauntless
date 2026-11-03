@@ -4,12 +4,16 @@ docs/superpowers/specs/2026-11-03-fire-control-native-only-design.md §4.2,
 decision M7, rulings R9 and R10; the proposal and its rows are
 docs/reference/engine/native-combat/k1-retirement-map.md §5.5).
 
-A scene is one of the native-vs-Python differentials' fights, run as ONE
-arm ("python": ``DAUNTLESS_NATIVE_COMBAT=0``, "native": ``=1``). The scenes
+A scene is one of the former native-vs-Python differentials' fights, run
+as ONE arm: "native" (``DAUNTLESS_NATIVE_COMBAT=1``), the only one since
+fire control's Python copy was deleted (fire control native only, Task 6,
+M3; scenes 1-5 were recorded from that Python arm, then checked native).
+Every scene also asserts that nothing failed to fire for want of the
+mirror and no row was dropped (k1_no_fire all zero: ruling R3). The scenes
 are those fights themselves, imported, not copied:
 
 * ``k1_ops_tpf1`` / ``k1_ops_tpf6``: the K1 differential's combat_stress op
-  stream (tests/integration/test_native_k1_differential.py ``_Scene``,
+  stream (tests/helpers/k1_fight.py ``_Scene``,
   ``OPS``), 1 and 6 ticks per frame;
 * ``k1_gameloop_ai``: the same fight under GameLoop's real AI (its
   ``_loop_arm``, after a discarded warm-up arm, as the differential runs);
@@ -82,12 +86,14 @@ from engine.appc.ship_iter import iter_ships
 from engine.core import loop as game_loop
 from engine.core.loop import TICK_DELTA
 from tests.helpers import k3_fight, posed_fight
-from tests.integration import test_native_k1_differential as k1d
+from tests.helpers import k1_fight as k1d
 
 SCHEMA = 3     # the file format; bump it on any change to it or to the rows
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "golden_fights"
 UPDATE_ENV = "UPDATE_COMBAT_GOLDEN"
-ARMS = {"python": k1d.OFF, "native": k1d.ON}
+#: The arms a scene can run as: native only (fire control has no Python
+#: copy, M3; a re-record is labelled with the arm it ran).
+ARMS = {"native": k1d.ON}
 
 #: The tick tuple's components, in order.
 COMPONENTS = ("tick", "state", "events", "queued", "calls", "presented",
@@ -95,7 +101,7 @@ COMPONENTS = ("tick", "state", "events", "queued", "calls", "presented",
 
 #: Field names of each state row kind, after its kind (index 0 = label).
 FIELDS = {
-    # test_native_k1_differential._Scene.record
+    # tests/helpers/k1_fight._Scene.record
     "system": ("label", "IsFiring", "_fire_held", "_force_update",
                "_last_weapon_idx", "_last_group_fired", "_group_fire_mode",
                "_held_target", "_target_list", "_target_list_is_new"),
@@ -565,18 +571,6 @@ def _beat_tick(beat):
 DUMB_DIFFICULTY = 0.0           # BasicAttack's floor: DumbFireTorps on
 
 
-class _CountingList(list):
-    """A list that counts its appends (and is otherwise a list)."""
-
-    def __init__(self):
-        super().__init__()
-        self.appends = 0
-
-    def append(self, item):
-        self.appends += 1
-        super().append(item)
-
-
 def _sdk_dumb_fire(mp, env, spec):
     """The GameLoop fight (k1d._loop_arm) with every AI's BasicAttack at
     Difficulty 0.0 (AI/Compound/BasicAttack.py: the 0.0 row turns on
@@ -588,28 +582,17 @@ def _sdk_dumb_fire(mp, env, spec):
     k1d._loop_arm(mp, k1d.OFF, ticks=WARM_UP_TICKS)
     gc.collect()
     # The scene is what it claims: the SDK's FireDumb ran (past its warp-in
-    # hold) and launched. Counted on Weapon.FireDumb's own marker list
-    # (weapon_subsystems._dumb_firing, read only through that module's
-    # global) in the Python arm, and natively by the kernel's dumb-fire
-    # sessions (fire control native only, M8.1: the SDK's FireDumb is one),
-    # never by patching FireDumb: a patch there, on the class or the
-    # instance, is a K1 override (native_combat._K1_LEAF_METHODS,
-    # _K1_LEAF_PATCHES) and would change the native arm's path.
-    marker = _CountingList()
-    mp.setattr(ws, "_dumb_firing", marker)
+    # hold) and launched, counted by the kernel's dumb-fire sessions (fire
+    # control native only, M8.1: the SDK's FireDumb is one).
     nc._h.combat_k1_reset_counts()
     scene = k1d._loop_arm(mp, env, ticks=spec.ticks)
-    if scene.native:
-        assert scene.audit == [], scene.audit
-        logged = scene.counts["k1_logged"]
-        assert logged["sdk_dumb_fire"] > 0, "the SDK never dumb-fired a tube"
-        assert logged["dumb_launch"] > 0, logged
-        assert not any(scene.counts["k1_launch_reasons"].values()), \
-            scene.counts["k1_launch_reasons"]
-        assert marker.appends == 0, "a dumb fire ran Python's FireDumb"
-    else:
-        assert marker.appends > 0, "the SDK never dumb-fired a tube"
-    assert not marker
+    assert scene.native
+    assert scene.audit == [], scene.audit
+    logged = scene.counts["k1_logged"]
+    assert logged["sdk_dumb_fire"] > 0, "the SDK never dumb-fired a tube"
+    assert logged["dumb_launch"] > 0, logged
+    assert not any(scene.counts["k1_launch_reasons"].values()), \
+        scene.counts["k1_launch_reasons"]
     launched = [e for e in scene.queued.rows
                 if e[0] == App.ET_TORPEDO_FIRED]
     assert launched, "no torpedo launched"
@@ -690,15 +673,21 @@ def _canonical(take):
 
 
 def run_scene(name: str, arm: str) -> list:
-    """Run scene `name` as `arm` ("python" or "native"); its canonical
-    per-tick rows (module docstring)."""
+    """Run scene `name` as `arm` ("native": ARMS); its canonical per-tick
+    rows (module docstring). Asserts the scene's run had no no-fire and
+    dropped no row (k1_no_fire all zero, "dropped" included: R3)."""
     spec = SCENES[name]
+    if arm not in ARMS:
+        raise ValueError("golden arm %r: fire control is native only (M3), "
+                         "the arms are %r" % (arm, sorted(ARMS)))
     env = ARMS[arm]
     gc.collect()
     with pytest.MonkeyPatch.context() as mp:
         _patch_records(mp)
         random.seed(spec.seed)
         take = spec.run(mp, env, spec)
+        no_fire = nc.counts()["k1_no_fire"]
+    assert not any(no_fire.values()), (name, no_fire)
     _LAST_ARM[name] = arm
     return _canonical(take)
 

@@ -171,9 +171,10 @@ def test_start_firing_engages_close_cloaked_target_but_not_beyond_the_bubble():
     bank = _FakeBank()
     sys = _build_system([bank], ship)
 
-    # Inside the cloak bubble and inside weapon range → fires.
+    # Inside the cloak bubble and inside weapon range → engaged (the held
+    # trigger latches; the shot itself is the native walk's, fire control
+    # native only, M3: these fake banks have no mirror row to fire).
     sys.StartFiring(target=_CloakedTarget(inside_gu(), 0, 0))
-    assert len(bank.fire_calls) == 1
     assert sys._fire_held is True
 
     # Still inside the 60 GU weapon range, but outside the cloak bubble →
@@ -194,87 +195,8 @@ def test_start_firing_dispatches_when_target_detectable():
 
     sys.StartFiring(target=target)
 
-    assert len(bank.fire_calls) == 1
-    assert sys._fire_held is True
+    assert sys._fire_held is True       # engaged (the shot: the native walk)
 
 
 # ── held-trigger pump gate (host_loop._pump_held_weapons) ─────────────────
 
-def test_pump_stops_when_target_cloaks_mid_burst(monkeypatch):
-    """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False.
-
-    Same reason as the StartFiring case above: this ship's effective range is
-    the `sensorless_range_gu` dial, and holding the flag off keeps the test
-    about absolute cloak whatever that observer's bubble is. Assertions
-    unchanged; the companion below pins the default configuration.
-    """
-    import engine.appc.sensor_detection as sd
-    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
-    from engine.host_loop import _pump_held_weapons
-    ship = _Ship(0, 0, 0)
-    bank = _FakeBank(can_fire=True)
-    sys = _build_system([bank], ship)
-    ship.GetPhaserSystem = lambda: sys   # pump walks ship getters
-
-    # Start on a detectable target (latches held state).
-    sys.StartFiring(target=_PlainTarget(50, 0, 0))
-    assert sys._fire_held is True
-
-    # Target cloaks mid-burst.
-    sys._held_target = _CloakedTarget(50, 0, 0)
-    bank.fire_calls.clear()
-    _pump_held_weapons([ship], 0.34)
-
-    assert bank.fire_calls == []            # no re-fire → no restarted SFX
-    assert sys._fire_held is False          # held state cleared
-    assert sys._held_target is None
-
-
-def test_pump_continues_on_close_cloak_and_stops_outside_the_bubble():
-    """INTENTIONAL DIVERGENCE (ENHANCED_SENSOR_CONTEST default-on): a target
-    that cloaks while inside the bubble stays engaged; the burst only stops once
-    it is outside. _SensorShip's bubble is far below its 60 GU weapon range, so
-    both cases stay inside weapon range and detectability is the only variable.
-    """
-    from engine.host_loop import _pump_held_weapons
-    ship = _SensorShip(0, 0, 0)
-    bank = _FakeBank(can_fire=True)
-    sys = _build_system([bank], ship)
-    ship.GetPhaserSystem = lambda: sys
-
-    sys.StartFiring(target=_PlainTarget(inside_gu(), 0, 0))
-    assert sys._fire_held is True
-
-    # Cloaks inside the bubble, so the burst continues.
-    sys._held_target = _CloakedTarget(inside_gu(), 0, 0)
-    bank.fire_calls.clear()
-    bank._firing = False                   # bank cycled
-    _pump_held_weapons([ship], 0.34)
-    assert len(bank.fire_calls) == 1
-    assert sys._fire_held is True
-
-    # Slips outside the bubble, so the burst stops.
-    sys._held_target = _CloakedTarget(outside_gu(), 0, 0)
-    bank.fire_calls.clear()
-    bank._firing = False
-    _pump_held_weapons([ship], 0.34)
-    assert bank.fire_calls == []
-    assert sys._fire_held is False
-    assert sys._held_target is None
-
-
-def test_held_tick_continues_when_target_detectable():
-    """Control: a detectable held target keeps re-firing as banks recycle."""
-    ship = _Ship(0, 0, 0)
-    target = _PlainTarget(50, 0, 0)
-    bank = _FakeBank(can_fire=True)
-    sys = _build_system([bank], ship)
-
-    sys.StartFiring(target=target)
-    bank.fire_calls.clear()
-    bank._firing = False  # bank cycled
-
-    sys.update_weapons(0.34)   # 0.34 > the 0.33 inter-shot threshold
-
-    assert len(bank.fire_calls) == 1
-    assert sys._fire_held is True

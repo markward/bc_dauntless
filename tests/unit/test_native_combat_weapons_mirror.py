@@ -354,9 +354,10 @@ def test_target_list_order_follows_append_and_prune(arena):
     # A duplicate does not append again.
     phasers.StartFiring(vorcha)
     assert _dump(phasers)["_target_list"] == [_slot(vorcha), _slot(warbird)]
-    # Pruning rebinds the list without the dead.
+    # Pruning (the walk's, native: fire control native only, M3) rebinds
+    # the list without the dead.
     vorcha.SetDead(1)
-    phasers._prune_targets()
+    nc.k1_system(phasers, 0.0)
     assert phasers._target_list == [warbird]
     assert _dump(phasers)["_target_list"] == [_slot(warbird)]
     phasers.StopFiring()

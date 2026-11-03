@@ -75,6 +75,7 @@ def _tube_on_ship_away_from_origin():
     ship._torpedo_system = parent
     tube = TorpedoTube("Forward Torpedo 1")
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     tube._reload_delay = 40.0
     parent.AddChildSubsystem(tube)

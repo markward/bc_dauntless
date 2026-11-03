@@ -69,7 +69,7 @@ class _Fight:
     scene), its op stream, and the host's per-tick drive."""
 
     def __init__(self, mp):
-        from tests.integration import test_native_k1_differential as k1d
+        from tests.helpers import k1_fight as k1d
         self.k1d = k1d
         self.scene = k1d._Scene(mp, k1d.ON)
         self.rng = random.Random(k1d.SEED)

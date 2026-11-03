@@ -36,16 +36,6 @@ def test_active_chain_groups_ordered_and_group0_fallback():
     assert bare._active_chain_groups() == [0]
 
 
-def test_resolve_working_group_resume_semantics():
-    sys_ = _system_with_chains()
-    sys_.SetFiringChainMode(1)           # "Dual" -> [1, 2, 3]
-    assert sys_._resolve_working_group() == 1        # sentinel -> first group
-    sys_._last_group_fired = 2
-    assert sys_._resolve_working_group() == 2        # resume last-fired
-    sys_._last_group_fired = 7                       # no longer in the chain
-    assert sys_._resolve_working_group() == 1        # fall back to first
-
-
 def test_quad_chain_sweeps_authored_order_not_shipped_ascending_bitmask():
     """Pins a DELIBERATE Dauntless-vs-shipped-BC divergence, not a bug.
 
@@ -84,19 +74,10 @@ def test_quad_chain_sweeps_authored_order_not_shipped_ascending_bitmask():
     sys_.SetFiringChainMode(2)           # "Quad" chain ("53" authored digits)
     assert sys_._active_chain_groups() == [5, 3]      # authored order preserved
     assert sys_._last_group_fired == -1               # fresh system, no prior fire
-    assert sys_._resolve_working_group() == 5         # forward quad first, not aft
-
-
-def test_target_list_prunes_dead():
-    class _T:
-        def __init__(self, dead): self._dead = dead
-        def IsDead(self): return self._dead
-    sys_ = _system_with_chains()
-    live, dead = _T(False), _T(True)
-    sys_._add_target(live); sys_._add_target(dead); sys_._add_target(live)
-    assert sys_.GetNumTargets() == 2      # deduped
-    sys_._prune_targets()
-    assert sys_.GetNumTargets() == 1
+    # The first working group the walk resolves (5, forward quad first, not
+    # aft) is the kernel's now (fire control native only, M3): its
+    # resume-from-the-chain's-head rule is K1.GroupWalkAdvancesOnDryGroup's
+    # (native/tests/combat/k1_fire_control_test.cc).
 
 
 def test_phaser_bank_is_member_of_group():

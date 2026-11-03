@@ -44,7 +44,7 @@ from engine.core import loop as game_loop
 from engine.core.loop import TICK_DELTA
 from tests.helpers import bc_assets
 from tests.helpers.k3_fight import compare_calls, seed_every_rng
-from tests.integration import test_native_k1_differential as k1d
+from tests.helpers import k1_fight as k1d
 
 TICKS = k1d.LOOP_TICKS          # the deaths land inside the window
 WARM_UP_TICKS = 60

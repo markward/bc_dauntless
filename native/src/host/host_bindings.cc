@@ -4054,7 +4054,7 @@ private:
 // THE GIL RELEASE (kernels off the lock, Task 3; spec goal 3): a kernel's
 // compute -- K0-K3's next() and K3's apply_hits (its hits' native damage) --
 // runs with the GIL released, and only the compute: everything before and
-// after it in a binding is CPython (the scans, k1_launch_recheck, the
+// after it in a binding is CPython (the scans, the
 // applier, the queue appends, the record build) and keeps the lock. Each
 // site is one released_compute call whose lambda is the kernel call alone
 // (tests/unit/test_native_k1_holds_gil.py guards the source). K4 and
@@ -4064,8 +4064,8 @@ private:
 // reads: a finalizer's free waits for a drain, and a push made off the main
 // thread is queued (native_combat, "Deferred frees and off-main pushes");
 // the main thread itself is in compute. The combat library has no CPython
-// (lock map 0), and its hooks (the trace hooks, K0's weapon check, K1's walk
-// check) read C++ state only.
+// (lock map 0), and its hooks (the trace hooks, K0's weapon check) read C++
+// state only.
 //
 // The release is declared BEFORE the span, so the compute timer closes
 // before the GIL is re-acquired and never counts the wait for it. A throw
@@ -4211,74 +4211,6 @@ void k1_launch_module_release(std::int64_t h) {
     PyObject* const old = it->second;
     t.erase(it);
     Py_DECREF(old);
-}
-
-// THE LAUNCH CHECK (launch deferral, M3): the functions a native launch
-// stands in for (native_combat._K1_LAUNCH_FUNCS), each as (its module's
-// dict, its name, the stock function), owned. Re-checked before every
-// combat_k1_next, as the walk check is re-scanned there: a function patched
-// by Python run mid-session (a record's, an ASK's) makes the next launch
-// Python's (K1_LAUNCH_PATCHED, K1LaunchWhy::Patched). A dict read, no call.
-struct K1LaunchFunc {
-    PyObject* dict = nullptr;
-    PyObject* name = nullptr;
-    PyObject* stock = nullptr;
-};
-
-std::vector<K1LaunchFunc>*& k1_launch_check() {
-    static std::vector<K1LaunchFunc>* c = nullptr;  // nullptr: not installed
-    return c;
-}
-
-// The cannons' launch modules (Task 3): weapon_subsystems._pulse_modules,
-// the live script -> module dict the P6 params were read from, owned (None:
-// not installed). PulseWeapon._fire_decide imports its script at every
-// shot -- a sys.modules hit -- so a module sys.modules no longer holds (an
-// SDK reload, a test) would make Python launch another one, or none: every
-// cannon launch is then Python's (K1_PULSE_MODULE_STALE,
-// K1LaunchWhy::Unresolved) until the cache is re-read. Dict reads, no call.
-PyObject*& k1_pulse_modules() {
-    static PyObject* d = nullptr;
-    return d;
-}
-
-// The launch check's flags, set only when they change: every set moves the
-// mirror's epoch, which K0's and K2's caches key on.
-void k1_set_flag(dauntless::combat::Global g, std::int64_t v) {
-    namespace cb = dauntless::combat;
-    if (cb::mirror().get_global_i(g) != v) cb::mirror().set_global_i(g, v);
-}
-
-void k1_launch_recheck() {
-    namespace cb = dauntless::combat;
-    if (const std::vector<K1LaunchFunc>* c = k1_launch_check()) {
-        std::int64_t patched = 0;
-        for (const K1LaunchFunc& f : *c) {
-            // borrowed
-            PyObject* cur = PyDict_GetItemWithError(f.dict, f.name);
-            if (cur == nullptr && PyErr_Occurred()) PyErr_Clear();
-            if (cur != f.stock) {
-                patched = 1;
-                break;
-            }
-        }
-        k1_set_flag(cb::Global::K1_LAUNCH_PATCHED, patched);
-    }
-    if (PyObject* const d = k1_pulse_modules()) {
-        std::int64_t stale = 0;
-        PyObject* const modules = PyImport_GetModuleDict();  // borrowed
-        PyObject *script, *mod;
-        Py_ssize_t pos = 0;
-        while (PyDict_Next(d, &pos, &script, &mod)) {
-            PyObject* cur = PyDict_GetItemWithError(modules, script);
-            if (cur == nullptr && PyErr_Occurred()) PyErr_Clear();
-            if (cur != mod) {
-                stale = 1;
-                break;
-            }
-        }
-        k1_set_flag(cb::Global::K1_PULSE_MODULE_STALE, stale);
-    }
 }
 
 // The objects a launch's queue entries hold from fire time (final review
@@ -4791,49 +4723,12 @@ PyMethodDef g_push_scalar_def = {
     "count, an unknown code or a field id out of range raises "
     "SystemError."};
 
-// ── The K1 walk check (k1_fire_control.h, THE WALK START) ──────────────────
-// Which walk starts (and pump stops) the K1 kernel must hand back to Python
-// the old way (a WALK_START, or a STOP_SYSTEM record). Since the walk check
-// left the kernel (spec 2026-11-02-combat-launch-deferral §4.2;
-// docs/reference/engine/native-combat/k1-walk-check-map.md §4.1) the kernel
-// asks only its session's verdict sets, a plain C++ lookup (K1SessionCheck):
-// no CPython call is left inside the kernel's compute. The binding makes the
-// sets (k1_scan) afresh at the top of every combat_k1_next, the session's
-// first included, before the kernel runs. Python runs only between records,
-// so a verdict a walk start reads is as current as the last Python -- an ASK
-// answer, a RUN_PYTHON body, an effect -- exactly as when the check ran at
-// the walk start itself. The scan runs no Python bytecode and allocates
-// nothing GC-tracked (a GC-tracked allocation can run cyclic GC, whose
-// weakref.finalize -> native_combat.unregister_handle frees mirror rows): it
-// never BUILDS an instance dict (k1_built_dict); its only allocation is a
-// registry lookup's int key, which is not GC-tracked. A system or ship is
-// "Python" when:
-//   - the system's dict holds one of `system_names`, or a child's (its
-//     "_children") one of `leaf_names` (native_combat.walk_start's
-//     instance-patch scan);
-//   - the firing ship's dict holds one of `ship_names`
-//     (is_using_target_offset / GetTargetOffsetTG on the instance);
-//   - the ship's class resolves is_using_target_offset to anything but the
-//     stock ShipClass's (or it is not a ShipClass), or GetTargetOffsetTG to
-//     anything but the stock one. A class with no is_using_target_offset is
-//     fine: Python's probe is None there, it reads the held offset.
-// Anything it cannot read (no row in the registry, no dict, an instance
-// dict not yet materialised, a `_children` that is not a list or tuple, a
-// CPython error) answers "Python": Python, as before, is the authority.
-struct K1WalkCheckRefs {
-    PyObject* registry = nullptr;        // native_combat._registry.data
-    PyObject* system_names = nullptr;    // tuples of str
-    PyObject* leaf_names = nullptr;
-    PyObject* ship_names = nullptr;
-    PyObject* stock_is_using = nullptr;  // raw MRO entries of ShipClass
-    PyObject* stock_get_offset = nullptr;
-    PyObject* ship_class = nullptr;
-};
-
-K1WalkCheckRefs& k1_walk_check_refs() {
-    static K1WalkCheckRefs r;  // owned references, never released at exit
-    return r;
-}
+// ── Registry lookups (K0's scan, THE CLEAN CACHE) ─────────────────────────
+// These scans run no Python bytecode and allocate nothing GC-tracked (a
+// GC-tracked allocation can run cyclic GC, whose weakref.finalize ->
+// native_combat.unregister_handle frees mirror rows): they never BUILD an
+// instance dict (k1_built_dict); their only allocation is a registry
+// lookup's int key, which is not GC-tracked.
 
 // The registry's KeyedRef for handle `h`, borrowed, or nullptr (no error
 // set): native_combat._registry is a WeakValueDictionary, `data` its dict of
@@ -4858,12 +4753,12 @@ PyObject* k1_registry_ref(PyObject* registry, std::int64_t h) {
 // ordinary class's instance (Py_TPFLAGS_MANAGED_DICT) keeps its attributes
 // in a values array until something asks for its __dict__, and
 // _PyObject_GetDictPtr (k2_dict_of) then BUILDS the dict: a GC-tracked
-// allocation, which the walk check must never make (see above). The managed
+// allocation, which the scans must never make (see above). The managed
 // dict slot sits three pointers before the object: 3.11 and 3.13 the dict
 // pointer (NULL until built), 3.12 the dict or the values pointer tagged
-// with bit 0. Any other version answers nullptr (Python decides). In
-// practice a registered object's dict is built at registration (the mirror
-// fields write obj.__dict__), so the hand-back is a guard, not a cost.
+// with bit 0. Any other version answers nullptr. In practice a registered
+// object's dict is built at registration (the mirror fields write
+// obj.__dict__), so the nullptr is a guard, not a cost.
 PyObject* k1_built_dict(PyObject* o) {
 #if PY_VERSION_HEX >= 0x030B0000
     if (PyType_HasFeature(Py_TYPE(o), Py_TPFLAGS_MANAGED_DICT)) {
@@ -5414,83 +5309,17 @@ bool k0_scan(PyObject* ships, const K0Guard* g, K0Scan& s) {
 #pragma GCC diagnostic pop
 #endif
 
-// ── The K1 walk check's verdicts (THE K1 WALK CHECK, above) ────────────────
-// One session's answer: the systems and the ships whose walks Python must
-// start. Usually both empty.
-struct K1Verdicts {
-    bool pump = false;
-    std::vector<std::int64_t> ships;  // begin_pump's Object handles
-    std::int64_t system = -1;         // begin_system's system
-    std::unordered_set<std::int64_t> python_systems, python_ships;
-};
-
-// The kernel's check for one session: a set lookup, no CPython. Sessions
-// nest (a StartFiring from Python the pump runs begins another), so each
-// carries its own sets; combat_k1_next re-validates the top one's
-// (K1Kernel::top_walk_check).
-struct K1SessionCheck {
-    std::shared_ptr<K1Verdicts> v;
-    bool operator()(std::int64_t sys, std::int64_t ship) const {
-        return v->python_systems.count(sys) != 0 ||
-               v->python_ships.count(ship) != 0;
-    }
-};
-
-// THE CACHES (K0's, THE CACHES above, keyed the same way; exact, and only
-// where kK0ObjectCache allows -- elsewhere every scan probes everything):
-//   registry  a handle's KeyedRef, while the registry dict is the same
-//             object at the same ma_version_tag (it then still holds the
-//             ref); the referent is read live (a dead one answers Python).
-//   object    a system's own answer (`system_names` on its instance, its
-//             "_children" a list or tuple), each child's (`leaf_names`) and
-//             a ship's (`ship_names`), on (type, dict, ma_version_tag);
-//             the children list is read live (an in-place append changes
-//             the list, not the dict), and a `__class__` assignment changes
-//             the type in the key.
-//   class     a ship class's verdict (its MRO's is_using_target_offset /
-//             GetTargetOffsetTG), valid while its tp_version_tag is.
-// Entries are kept by the handle's row index; the handle is compared. Every
-// combat_k1_set_walk_check drops them all (other names, other answers).
+// A handle's registry entry, cached (K0's THE CACHES, keyed the same way;
+// exact, and only where kK0ObjectCache allows): its KeyedRef, while the
+// registry dict is the same object at the same ma_version_tag (it then
+// still holds the ref); the referent is read live. Kept by the handle's row
+// index; the handle is compared.
 struct K1RefEntry {
     std::int64_t h = -1;
     PyObject* registry = nullptr;
     std::uint64_t version = 0;
     PyObject* ref = nullptr;  // borrowed from the registry dict
 };
-
-struct K1SysEntry {
-    K1RefEntry ref;
-    K0ObjKey key;
-    int verdict = 0;
-    PyObject* children = nullptr;  // borrowed from key.dict
-    std::vector<K0WeaponEntry> kids;
-};
-
-struct K1ShipEntry {
-    K1RefEntry ref;
-    K0ObjKey key;
-    int verdict = 0;
-};
-
-struct K1Caches {
-    std::vector<K1SysEntry> systems;
-    std::vector<K1ShipEntry> ships;
-    std::vector<K0TypeEntry> types;  // OWNS a reference to each type
-    void clear() {
-        // Moved out first: a release may run Python (a type's dealloc).
-        std::vector<K0TypeEntry> old = std::move(types);
-        types.clear();
-        systems.clear();
-        ships.clear();
-        for (K0TypeEntry& e : old)
-            Py_DECREF(reinterpret_cast<PyObject*>(e.type));
-    }
-};
-
-K1Caches& k1_caches() {
-    static K1Caches c;
-    return c;
-}
 
 // The cache entry of handle `h` (its row index), or `scratch` past a sane
 // table size.
@@ -5524,205 +5353,6 @@ PyObject* k1_lookup(K1RefEntry& e, PyObject* registry, std::int64_t h) {
     return o;
 }
 
-// 1: system `h`'s walks go to Python; 0: native. Never an error.
-int k1_system_verdict(const K1WalkCheckRefs& r, K1Caches& c, std::int64_t h) {
-    K1SysEntry scratch;
-    K1SysEntry& e = k1_entry(c.systems, h, scratch);
-    PyObject* sys = k1_lookup(e.ref, r.registry, h);
-    PyObject* sd = sys ? k0_dict_of(sys) : nullptr;
-    if (sd == nullptr) return 1;
-    if (!k0_same(e.key, sys, sd)) {
-        e.key = K0ObjKey{};
-        int v = k1_holds(sd, r.system_names);
-        PyObject* kids = nullptr;
-        if (v == 0) {
-            kids = PyDict_GetItemWithError(sd, k0_scan_names().children);
-            if (kids == nullptr && PyErr_Occurred()) v = -1;
-            // A list or tuple only (read in place below).
-            else if (kids != nullptr && !PyList_CheckExact(kids) &&
-                     !PyTuple_CheckExact(kids))
-                v = 1;
-        }
-        if (v < 0) {
-            PyErr_Clear();
-            return 1;
-        }
-        e.verdict = v;
-        e.children = kids;
-        e.key = K0ObjKey{sys->ob_type, sd, k0_dict_version(sd)};
-    }
-    if (e.verdict != 0) return 1;
-    PyObject* kids = e.children;
-    if (kids == nullptr) return 0;
-    // Read live: an in-place append changes the list, not the dict. The
-    // list is borrowed from the system's dict: held for the loop, so
-    // nothing the probes below touch can free it under `items`.
-    Py_INCREF(kids);
-    PyObject* const* items = PySequence_Fast_ITEMS(kids);
-    const Py_ssize_t n = PySequence_Fast_GET_SIZE(kids);
-    if (e.kids.size() < static_cast<size_t>(n))
-        e.kids.resize(static_cast<size_t>(n));
-    int verdict = 0;
-    for (Py_ssize_t i = 0; i < n && verdict == 0; ++i) {
-        PyObject* ch = items[i];
-        K0WeaponEntry& we = e.kids[static_cast<size_t>(i)];
-        // K0's fast path: the same type, its managed dict slot the same
-        // dict, at the same version.
-        if (kK0ObjectCache && kK0ManagedSlot && ch->ob_type == we.key.type &&
-            (ch->ob_type->tp_flags & Py_TPFLAGS_MANAGED_DICT) != 0 &&
-            reinterpret_cast<std::uintptr_t*>(ch)[-3] ==
-                reinterpret_cast<std::uintptr_t>(we.key.dict) &&
-            k0_dict_version(we.key.dict) == we.key.version) {
-            if (we.verdict != 0) verdict = 1;
-            continue;
-        }
-        PyObject* cd = k0_dict_of(ch);
-        if (cd == nullptr) {
-            verdict = 1;
-            break;
-        }
-        if (!k0_same(we.key, ch, cd)) {
-            we.key = K0ObjKey{};
-            const int m = k1_holds(cd, r.leaf_names);
-            if (m < 0) {
-                PyErr_Clear();
-                verdict = 1;
-                break;
-            }
-            we.verdict = m;
-            we.key = K0ObjKey{ch->ob_type, cd, k0_dict_version(cd)};
-        }
-        if (we.verdict != 0) verdict = 1;
-    }
-    Py_DECREF(kids);
-    return verdict;
-}
-
-// 1: a ship of type `t` must have its walks started by Python (its offset
-// methods are not the stock ShipClass's); 0: not.
-int k1_class_verdict(const K1WalkCheckRefs& r, K1Caches& c, PyTypeObject* t) {
-    static PyObject* const k_iu =
-        PyUnicode_InternFromString("is_using_target_offset");
-    static PyObject* const k_gto =
-        PyUnicode_InternFromString("GetTargetOffsetTG");
-    K0TypeEntry* hit = nullptr;
-    for (K0TypeEntry& e : c.types)
-        if (e.type == t) {
-            if (k0_type_valid(e, t)) return e.flag;
-            hit = &e;
-            break;
-        }
-    PyTypeObject* const ship_class =
-        reinterpret_cast<PyTypeObject*>(r.ship_class);
-    int flag;
-    PyObject* iu = _PyType_Lookup(t, k_iu);  // borrowed, no error set
-    // No is_using_target_offset: Python's probe is None and it reads the
-    // held offset. The kernel's row of a ShipClass (is_ship_class) would
-    // take the Manual Aim branch, so a ShipClass without one goes to Python.
-    if (iu == nullptr)
-        flag = ship_class != nullptr && PyType_IsSubtype(t, ship_class);
-    else if (iu != r.stock_is_using || ship_class == nullptr ||
-             !PyType_IsSubtype(t, ship_class))
-        flag = 1;
-    else
-        flag = _PyType_Lookup(t, k_gto) != r.stock_get_offset;
-    const unsigned int tag = k0_type_tag(t);
-    if (tag == 0) return flag;  // no version tag: not cacheable
-    const K0TypeEntry e{t, tag, flag};
-    if (hit != nullptr) {
-        *hit = e;  // the same type: its reference is already held
-    } else {
-        Py_INCREF(reinterpret_cast<PyObject*>(t));  // released by clear()
-        c.types.push_back(e);
-    }
-    return flag;
-}
-
-// 1: ship `h`'s walks go to Python; 0: native. Never an error.
-int k1_ship_verdict(const K1WalkCheckRefs& r, K1Caches& c, std::int64_t h) {
-    K1ShipEntry scratch;
-    K1ShipEntry& e = k1_entry(c.ships, h, scratch);
-    PyObject* ship = k1_lookup(e.ref, r.registry, h);
-    PyObject* d = ship ? k0_dict_of(ship) : nullptr;
-    if (d == nullptr) return 1;
-    if (!k0_same(e.key, ship, d)) {
-        e.key = K0ObjKey{};
-        const int v = k1_holds(d, r.ship_names);
-        if (v < 0) {
-            PyErr_Clear();
-            return 1;
-        }
-        e.verdict = v;
-        e.key = K0ObjKey{ship->ob_type, d, k0_dict_version(d)};
-    }
-    if (e.verdict != 0) return 1;
-    return k1_class_verdict(r, c, ship->ob_type);
-}
-
-// The session's verdict sets, made afresh from the live objects: every
-// system the session's next() could walk or stop, with the ship the kernel
-// pairs it with (climb_to_ship_of, which is the pump list's ship or not).
-// A pump walks or stops only a held system of a listed ship's four group
-// slots (the mirror's, as the kernel reads them) that does not manage its
-// own pump, and next() never makes a system held; a system session walks
-// its one system. No Python runs and no error is left set.
-void k1_scan(K1Verdicts& v) {
-    namespace cb = dauntless::combat;
-    v.python_systems.clear();
-    v.python_ships.clear();
-    const K1WalkCheckRefs& r = k1_walk_check_refs();
-    if (r.registry == nullptr) return;  // no check: every walk is native
-    K1Caches& c = k1_caches();
-    const cb::Mirror& m = cb::mirror();
-    auto cover = [&](std::int64_t sys) {
-        if (k1_system_verdict(r, c, sys) != 0) v.python_systems.insert(sys);
-        std::int64_t ship;
-        try {
-            ship = cb::climb_to_ship_of(m, sys);
-        } catch (const std::exception&) {
-            // A climb the mirror cannot make: the kernel's pre-scan hands
-            // such a system to Python before any check (and the same climb
-            // would throw there). Python, to be safe.
-            v.python_systems.insert(sys);
-            return;
-        }
-        if (ship >= 0 && v.python_ships.count(ship) == 0 &&
-            k1_ship_verdict(r, c, ship) != 0)
-            v.python_ships.insert(ship);
-    };
-    if (!v.pump) {
-        cover(v.system);
-        return;
-    }
-    for (const std::int64_t sh : v.ships) {
-        const cb::ObjectRow* so = sh < 0 ? nullptr : m.object(sh);
-        if (so == nullptr) continue;
-        // A tractor system's walk is never handed back (tractors native):
-        // the walk check is not asked for it.
-        for (const std::int64_t sys :
-             {so->_phaser_system, so->_pulse_weapon_system,
-              so->_torpedo_system}) {
-            const cb::SubsystemRow* sr = sys < 0 ? nullptr : m.subsystem(sys);
-            if (sr == nullptr || !sr->_fire_held) continue;
-            cover(sys);
-        }
-    }
-}
-
-// The walk check for a session about to begin over `v`. Its sets are
-// first made by the session's first combat_k1_next, before the kernel
-// computes anything (a scan here would be redone there).
-dauntless::combat::K1WalkCheck k1_session_check(std::shared_ptr<K1Verdicts> v) {
-    // Always attached, the check installed or not: k1_scan empties the sets
-    // while no check is installed (every walk native), and a check
-    // installed mid-session is obeyed from the session's next record.
-    return K1SessionCheck{std::move(v)};
-}
-
-// A K0 write -> (handle, field, value) in the Python encoding
-// (combat_write_apply.h): a float, bool or int (a Ref: the handle, -1
-// None), None; a slot write ("slot", index, value), a watcher write
-// ("watcher", value).
 py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
     namespace cb = dauntless::combat;
     using T = cb::K0FieldWrite::Type;
@@ -13233,34 +12863,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "pybind's own narrowing of a float argument, for comparison.");
 
         // ── The K1 fire-control kernel (k1_fire_control.h) ───────────────
-        // A stack of resumable sessions over the mirror. Each record is a
-        // tuple whose first element is a kind int (combat_k1_kinds) and whose
-        // LAST element is the write log since the previous record: [] when
-        // an applier context is installed (combat_set_applier: the binding
-        // applied it before returning; combat_write_apply.h), else a list of
-        // (handle, field name, value). Values: float / bool / int; `_target`
-        // an Object handle or -1 (None); `_target_list` a list of handles;
-        // `_target_offset` None or ("walk_offset", walk, system) (that walk's
-        // own offset object, ruling P5). The element before the writes is
-        // the walk tag: (walk, system) on the first record a walk returns
-        // (the driver materialises the walk on it), else None. Layouts:
-        //   (DONE, tag, writes)
-        //   (WALK_START, system, tag, writes)  -> reply combat_k1_set_offset
-        //       (only for a walk start the walk check hands back)
-        //   (STOP_SYSTEM, system, tag, writes)
-        //   (RUN_PYTHON, system, ship_pos, getter_idx, tag, writes)
-        //   (BANK_STOP, bank, tag, writes)
-        //   (FIRE, bank, target, decision, tag, writes)  a tube or a cannon
-        //       decision: pulse ((x, y, z), target_used), tube
-        //       (target_used,); handles -1 = None. (A beam's (was_firing,)
-        //       is no longer returned: its edge is logged.)
-        //   (FIRE_DUMB, tube, tag, writes)
-        //   (ASK, query, *args, tag, writes)    -> reply combat_k1_answer
-        // FIRE_FAILED (its kind number kept) is no longer returned: an entry
-        // (spec 2026-11-02-combat-fire-events §4.3). A record's queue
-        // entries go into the combat effect queue (k1_append_entries) once
-        // its writes are applied, before it is returned; a raising apply
-        // drops them (the Python walk would have raised before them).
+        // A stack of sessions over the mirror, each run whole by ONE
+        // combat_k1_next (ONE CALL PER SESSION): its record is
+        //   (DONE, writes, no_fire_new)
+        // `writes` [] when an applier context is installed
+        // (combat_set_applier: the binding applied them before returning;
+        // combat_write_apply.h), else a list of (handle, field name, value).
+        // Values: float / bool / int; `_target` an Object handle or -1
+        // (None); `_target_list` a list of handles; `_target_offset` None or
+        // ("walk_offset", walk, system) (that walk's own offset object,
+        // ruling P5). `no_fire_new`: the K1NoFire names counted for the
+        // first time since the counts were reset (the driver logs each
+        // once). The record's queue entries go into the combat effect queue
+        // (k1_append_entries) once its writes are applied, before it is
+        // returned; a raising apply drops them.
         m.def("combat_k1_kinds", [] {
             py::dict d;
             for (int i = 0; i < static_cast<int>(cb::K1Kind::kCount); ++i)
@@ -13270,14 +12886,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k1_begin_pump",
               [](std::vector<std::int64_t> ships, double dt, double now,
                  bool use_memo, double drift_now) {
-                  // The session's walk check (THE K1 WALK CHECK): its
-                  // verdicts scanned before each of its combat_k1_next.
-                  auto v = std::make_shared<K1Verdicts>();
-                  v->pump = true;
-                  v->ships = ships;
                   cb::k1_kernel().begin_pump(std::move(ships), dt, now,
-                                             use_memo, drift_now,
-                                             k1_session_check(std::move(v)));
+                                             use_memo, drift_now);
               },
               py::arg("ship_handles"), py::arg("dt"), py::arg("now"),
               py::arg("use_memo"), py::arg("drift_now"),
@@ -13287,15 +12897,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k1_begin_system",
               [](std::int64_t system, double dt, double now, bool use_memo,
                  double drift_now) {
-                  auto v = std::make_shared<K1Verdicts>();
-                  v->system = system;
                   cb::k1_kernel().begin_system(system, dt, now, use_memo,
-                                               drift_now,
-                                               k1_session_check(std::move(v)));
+                                               drift_now);
               },
               py::arg("system"), py::arg("dt"), py::arg("now"),
               py::arg("use_memo"), py::arg("drift_now"),
-              "StartFiring's immediate update_weapons(dt) on one system.");
+              "StartFiring's immediate update (dt 0) on one system.");
         m.def("combat_k1_begin_tractor",
               [](std::int64_t system, std::int64_t target,
                  std::optional<std::array<double, 3>> offset, double now,
@@ -13337,7 +12944,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "None, -2 unnamed), `offset` Fire's offset xyz when it is a "
               "TGPoint3 (else None), `ship_target` the weapon's ship's "
               "GetTarget() handle, None when not read. combat_k1_result() "
-              "after DONE: 1 fired, 0 not, -1 Python's Fire must run.");
+              "after DONE: 1 fired, 0 not (a no-fire included).");
         m.def("combat_k1_result", [] { return cb::k1_kernel().result(); },
               "The top session's result (combat_k1_begin_fire), read after "
               "its DONE and before combat_k1_end.");
@@ -13352,20 +12959,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "ValueError when the mirror cannot answer.");
         m.def("combat_k1_next", [] {
             // The kernel's compute runs with the GIL released, and only it
-            // (THE GIL RELEASE). It makes no CPython call: its walk check
-            // is the top session's verdict sets, re-validated HERE, with the
-            // GIL held, before it runs (k1_scan probes instance dicts, MRO
-            // entries and the registry's weak references, no GC-tracked
-            // allocation), so a patch Python made since the last record is
-            // seen by this record's walk starts. k1_launch_recheck (which
-            // writes mirror globals) also stays before the release, and the
-            // applier and the appends after it.
+            // (THE GIL RELEASE): it makes no CPython call. The applier and
+            // the appends after it keep the lock.
             // tests/unit/test_native_k1_holds_gil.py guards it.
             k1_apply_raised() = false;
-            if (const cb::K1WalkCheck* c = cb::k1_kernel().top_walk_check())
-                if (const K1SessionCheck* sc = c->target<K1SessionCheck>())
-                    k1_scan(*sc->v);
-            k1_launch_recheck();
             cb::K1Record r = released_compute(ComputeSite::K1, [] {
                 return cb::k1_kernel().next();
             });
@@ -13384,114 +12981,27 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     py::make_tuple(w.handle, w.field, k1_value_py(w.value)));
             }
             k1_append_entries(r.entries);
-            const py::object tag =
-                r.walk_first ? py::object(py::make_tuple(r.walk, r.walk_system))
-                             : py::object(py::none());
-            const int kind = static_cast<int>(r.kind);
-            switch (r.kind) {
-                case cb::K1Kind::DONE:
-                    return py::make_tuple(kind, tag, writes);
-                case cb::K1Kind::RUN_PYTHON:
-                    return py::make_tuple(kind, r.a, r.b, r.c, tag, writes);
-                case cb::K1Kind::FIRE: {
-                    py::tuple d;
-                    switch (r.decision.shape) {
-                        case cb::K1Decision::Shape::Beam:
-                            d = py::make_tuple(r.decision.was_firing);
-                            break;
-                        case cb::K1Decision::Shape::Pulse:
-                            d = py::make_tuple(
-                                py::make_tuple(r.decision.world_dir[0],
-                                               r.decision.world_dir[1],
-                                               r.decision.world_dir[2]),
-                                r.decision.target_used);
-                            break;
-                        case cb::K1Decision::Shape::Tube:
-                            d = py::make_tuple(r.decision.target_used);
-                            break;
-                    }
-                    return py::make_tuple(kind, r.a, r.b, d, tag, writes);
-                }
-                case cb::K1Kind::ASK: {
-                    py::list items;
-                    items.append(kind);
-                    items.append(r.query);
-                    for (std::int64_t h : r.args) items.append(h);
-                    items.append(tag);
-                    items.append(writes);
-                    return py::tuple(items);
-                }
-                default:  // WALK_START, STOP_SYSTEM, BANK_STOP, FIRE_FAILED,
-                          // FIRE_DUMB
-                    return py::make_tuple(kind, r.a, tag, writes);
-            }
-        }, "The top session's next record (see combat_k1_kinds).");
-        m.def("combat_k1_set_offset",
-              [](std::optional<std::array<double, 3>> xyz) {
-                  cb::k1_kernel().set_offset(xyz);
+            py::list fresh;
+            for (size_t i = 0;
+                 i < static_cast<size_t>(cb::K1NoFire::kCount); ++i)
+                if ((r.no_fire_new >> i) & 1u)
+                    fresh.append(cb::k1_no_fire_name(
+                        static_cast<cb::K1NoFire>(i)));
+            return py::make_tuple(static_cast<int>(r.kind), writes,
+                                  py::tuple(fresh));
+        }, "The top session's record, the whole session (see "
+           "combat_k1_kinds).");
+        m.def("combat_k1_walk_manual_offset",
+              [](std::int64_t walk) -> py::object {
+                  const std::optional<cb::Vec3> o =
+                      cb::k1_kernel().walk_manual_offset(walk);
+                  if (!o) return py::none();
+                  return py::make_tuple((*o)[0], (*o)[1], (*o)[2]);
               },
-              py::arg("xyz"),
-              "WALK_START's reply: the walk's offset xyz when it is a "
-              "TGPoint3, else None.");
-        m.def("combat_k1_answer",
-              [](py::object v) {
-                  if (v.is_none())
-                      cb::k1_kernel().answer(std::nullopt);
-                  else
-                      cb::k1_kernel().answer(py::cast<std::int64_t>(
-                          py::int_(v)));
-              },
-              py::arg("value"), "ASK's reply: a bool, an int or None.");
-        m.def("combat_k1_skip_walk", [] { cb::k1_kernel().skip_walk(); },
-              "WALK_START's other reply: Python ran the system's "
-              "update_weapons itself (an instance-patched Fire ...).");
-        m.def("combat_k1_set_walk_check",
-              [](py::handle registry, py::handle system_names,
-                 py::handle leaf_names, py::handle ship_names,
-                 py::handle stock_is_using, py::handle stock_get_offset,
-                 py::handle ship_class) {
-                  // K1WalkCheckRefs (THE K1 WALK CHECK): None as the
-                  // registry removes the check (every walk starts
-                  // natively, open sessions' from their next record). Any
-                  // call drops the cached verdicts: other names, other
-                  // answers.
-                  k1_caches().clear();
-                  K1WalkCheckRefs& r = k1_walk_check_refs();
-                  PyObject* olds[] = {r.registry, r.system_names,
-                                      r.leaf_names, r.ship_names,
-                                      r.stock_is_using, r.stock_get_offset,
-                                      r.ship_class};
-                  r = K1WalkCheckRefs{};
-                  if (!registry.is_none()) {
-                      if (!PyDict_Check(registry.ptr()))
-                          throw py::type_error("registry: a dict");
-                      for (py::handle t : {system_names, leaf_names,
-                                           ship_names})
-                          if (!PyTuple_Check(t.ptr()))
-                              throw py::type_error("names: tuples of str");
-                      auto own = [](py::handle o) {
-                          return o.is_none() ? nullptr
-                                             : o.inc_ref().ptr();
-                      };
-                      r.registry = own(registry);
-                      r.system_names = own(system_names);
-                      r.leaf_names = own(leaf_names);
-                      r.ship_names = own(ship_names);
-                      r.stock_is_using = own(stock_is_using);
-                      r.stock_get_offset = own(stock_get_offset);
-                      r.ship_class = own(ship_class);
-                  }
-                  for (PyObject* o : olds) Py_XDECREF(o);
-              },
-              py::arg("registry"), py::arg("system_names"),
-              py::arg("leaf_names"), py::arg("ship_names"),
-              py::arg("stock_is_using"), py::arg("stock_get_offset"),
-              py::arg("ship_class"),
-              "Install the walk check (THE K1 WALK CHECK): the registry's "
-              "handle -> KeyedRef dict, the instance names looked for on "
-              "the walked system, its children and its ship, the stock "
-              "ShipClass's raw is_using_target_offset / GetTargetOffsetTG "
-              "and ShipClass. registry None removes it.");
+              py::arg("walk"),
+              "THE WALK OFFSET: the Manual Aim pick the top session's walk "
+              "`walk` took its offset from, (x, y, z), or None when it was "
+              "the system's _held_offset.");
         m.def("combat_set_launch_module",
               [](std::int64_t row, py::handle module) {
                   // A handle no longer live is ignored: nothing would ever
@@ -13511,51 +13021,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "The module a row's launch resolved to -- an Ammo row's cached "
               "launch, a pulse cannon's P6 module -- (a kernel SPAWN carries "
               "it); None drops it. Released when the row is unregistered.");
-        m.def("combat_k1_set_pulse_modules",
-              [](py::handle modules) {
-                  if (!modules.is_none() && !PyDict_Check(modules.ptr()))
-                      throw py::type_error("a script -> module dict or None");
-                  PyObject* const old = k1_pulse_modules();
-                  k1_pulse_modules() =
-                      modules.is_none() ? nullptr : Py_NewRef(modules.ptr());
-                  Py_XDECREF(old);
-              },
-              py::arg("modules"),
-              "Install the cannons' module check (THE LAUNCH CHECK): the live "
-              "script -> module dict their launches carry modules from, "
-              "re-checked against sys.modules before every combat_k1_next; "
-              "None removes it.");
-        m.def("combat_k1_set_launch_check",
-              [](py::handle funcs) {
-                  // [(module dict, name, stock function), ...] or None.
-                  std::vector<K1LaunchFunc>* next = nullptr;
-                  if (!funcs.is_none()) {
-                      next = new std::vector<K1LaunchFunc>();
-                      for (py::handle item : funcs) {
-                          auto t = py::reinterpret_borrow<py::tuple>(item);
-                          if (t.size() != 3 || !PyDict_Check(t[0].ptr()))
-                              throw py::type_error(
-                                  "(module dict, name, stock function)");
-                          next->push_back(K1LaunchFunc{
-                              Py_NewRef(t[0].ptr()), Py_NewRef(t[1].ptr()),
-                              Py_NewRef(t[2].ptr())});
-                      }
-                  }
-                  std::vector<K1LaunchFunc>* old = k1_launch_check();
-                  k1_launch_check() = next;
-                  if (old != nullptr) {
-                      for (K1LaunchFunc& f : *old) {
-                          Py_DECREF(f.dict);
-                          Py_DECREF(f.name);
-                          Py_DECREF(f.stock);
-                      }
-                      delete old;
-                  }
-              },
-              py::arg("funcs"),
-              "Install the launch check (THE LAUNCH CHECK): the functions a "
-              "native launch stands in for, re-checked before every "
-              "combat_k1_next; None removes it.");
         m.def("combat_k1_walk_offset",
               [](std::int64_t system) -> py::object {
                   const cb::Mirror& mm = cb::mirror();
@@ -13577,35 +13042,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
             const auto& c = cb::k1_kernel().counts();
             py::dict d;
             d["k1_records"] = c.records;
-            d["k1_python_systems"] = c.python_systems;
-            d["k1_asks"] = c.asks;
-            // RUN_PYTHON (and skip_walk) by why, pump and StartFiring apart;
-            // the ASK fire hand-backs by why.
-            py::dict pump, system, fire_ask;
-            for (size_t i = 0; i < c.pump_why.size(); ++i) {
-                const char* n = cb::k1_why_name(static_cast<cb::K1Why>(i));
-                pump[n] = c.pump_why[i];
-                system[n] = c.system_why[i];
-                fire_ask[n] = c.fire_ask_why[i];
-            }
-            py::dict why;
-            why["pump"] = pump;
-            why["system"] = system;
-            d["k1_python_reasons"] = why;
-            d["k1_fire_ask_reasons"] = fire_ask;
             py::dict posed;
             posed["walks"] = c.posed_walks;
             posed["target_aims"] = c.posed_target_aims;
             d["k1_posed"] = posed;
-            // Records K1 no longer returns (round trips): walk starts made
-            // with no WALK_START, Fires on a beam already firing and stops
-            // of a bank not firing, logged as writes instead.
+            // The walk starts, and the effects logged as writes (round
+            // trips): Fires on a beam already firing and stops of a bank not
+            // firing.
             py::dict logged;
             logged["walk_start"] = c.logged_walk_start;
             logged["beam_sustain"] = c.logged_beam_sustain;
             logged["idle_bank_stop"] = c.logged_idle_bank_stop;
             // ... and, as writes plus queue entries (spec 2026-11-02-combat-
-            // fire-events §4.3): beam edges, FIRE_FAILEDs, firing banks'
+            // fire-events §4.3): beam edges, failed aims, firing banks'
             // stops and the pump's system stops.
             logged["beam_edge"] = c.logged_beam_edge;
             logged["fire_failed"] = c.logged_fire_failed;
@@ -13613,11 +13062,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
             logged["system_stop"] = c.logged_system_stop;
             // ... and launches at the boundary (spec 2026-11-02-combat-
             // launch-deferral §4.1): tube and dumb launches made as writes
-            // plus a SPAWN, dumb fires Python would refuse.
+            // plus a SPAWN, dumb fires refused.
             logged["tube_launch"] = c.logged_tube_launch;
             logged["dumb_launch"] = c.logged_dumb_launch;
             logged["dumb_refused"] = c.logged_dumb_refused;
-            // ... and a cannon's (Task 3): its drain, cooldown and SPAWN.
+            // ... and a cannon's: its drain, cooldown and SPAWN.
             logged["pulse_launch"] = c.logged_pulse_launch;
             // ... and the tractor walks (fire control native only, M4): the
             // pump's, and StartFiring's sessions.
@@ -13628,13 +13077,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
             logged["sdk_fire"] = c.logged_sdk_fire;
             logged["sdk_can_fire"] = c.logged_sdk_can_fire;
             d["k1_logged"] = logged;
-            // Walks that did not fire that tick, by why (R2).
+            // Walks that did not fire that tick, by why (NO FIRE: R2, R3;
+            // native_combat.counts adds the driver's own).
             py::dict no_fire;
             for (size_t i = 0; i < c.no_fire.size(); ++i)
                 no_fire[cb::k1_no_fire_name(static_cast<cb::K1NoFire>(i))] =
                     c.no_fire[i];
             d["k1_no_fire"] = no_fire;
-            // The launches handed back as FIRE / FIRE_DUMB records, by why.
+            // The launches the kernel could not make, by why.
             py::dict launch;
             for (size_t i = 0; i < c.launch_why.size(); ++i)
                 launch[cb::k1_launch_why_name(static_cast<cb::K1LaunchWhy>(i))] =

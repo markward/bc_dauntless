@@ -16,12 +16,14 @@ from engine.appc.properties import WeaponSystemProperty
 from engine.appc.subsystems import TorpedoSystem, TorpedoTube
 
 
-class LiveTarget:
-    """A live (never-dead) target at a fixed world location."""
-    def __init__(self, x, y, z):
-        self._loc = TGPoint3(x, y, z)
-    def GetWorldLocation(self): return self._loc
-    def IsDead(self): return 0
+def LiveTarget(x, y, z):
+    """A live target at a fixed world location: a real ship (fire control
+    is native only, M3: the kernel aims only at objects the mirror names --
+    a duck-typed stand-in would be a counted no-fire, unnamed_target)."""
+    from engine.appc.ships import ShipClass_Create
+    target = ShipClass_Create("Target")
+    target.SetTranslateXYZ(float(x), float(y), float(z))
+    return target
 
 
 def identity_rotation():
@@ -52,6 +54,7 @@ def system_with_tubes(num_tubes, *, target=None, rot=None):
     for i in range(num_tubes):
         tube = TorpedoTube("Torpedo %d" % i)
         tube._max_ready = 1
+        tube._resize_slots()    # as ships.py sizes a hardpoint tube's
         tube._num_ready = 1
         tube._reload_delay = 40.0
         parent.AddChildSubsystem(tube)
@@ -106,3 +109,21 @@ def advance_game_clock_by(dt: float) -> float:
     now = float(getattr(App.g_kTimerManager, "_time", 0.0)) + float(dt)
     App.g_kTimerManager._time = now
     return now
+
+
+def arm(system, ship=None, script="Tactical.Projectiles.PhotonTorpedo"):
+    """Give a bare TorpedoSystem what a hardpoint system has before its
+    tubes can launch (fire control native only, M3: the kernel makes no
+    launch with no firing ship or no module -- a counted no-fire): a parent
+    ship, and a torpedo property with a slot-0 script when it has none.
+    Returns the ship."""
+    from engine.appc.ships import ShipClass_Create
+    if ship is None:
+        ship = ShipClass_Create("Test")
+    if system.GetProperty() is None:
+        prop = WeaponSystemProperty(system.GetName())
+        prop.SetTorpedoScript(0, script)
+        system.SetProperty(prop)
+    system._parent_ship = ship
+    ship._torpedo_system = system
+    return ship

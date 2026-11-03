@@ -8,7 +8,7 @@ Two fresh loads of combat_stress -- the Python reference
 and native (``=1``: K0 steps every weapon from the mirror, Python runs only
 its records; K1 / K2 / K3 run the fight around it) -- get the same seeded
 stream of operations through public calls: the K1 differential's fight
-(tests/integration/test_native_k1_differential.py, whose scene this
+(tests/helpers/k1_fight.py, whose scene this
 extends) plus the writes K0's inputs see: charges set (NaN and -0.0
 included), banks refilled, tractors drained, tubes fired, unloaded and
 loaded by hand, weapon systems' power wanted and the phaser power level
@@ -67,7 +67,7 @@ from engine.appc import sensor_contacts
 from tests.helpers import bc_assets, effect_split
 from tests.helpers.k0_fight import charge_toggle_type
 from tests.helpers.k3_fight import check_weapon_state_paths
-from tests.integration import test_native_k1_differential as k1d
+from tests.helpers import k1_fight as k1d
 
 pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "combat_k0_next"),
@@ -359,7 +359,7 @@ def _both(monkeypatch, ticks_per_frame, seed, ops=OPS, mid_ops=MID_OPS,
 def _compare(ref, nat):
     # K1's record, every event, the presentation; fire control is native in
     # both arms (fire control native only, M9).
-    k1d._compare(ref, nat, ref_fire_control_native=True)
+    k1d._compare(ref, nat)
     assert len(ref.k0_log) == len(nat.k0_log) == ref.tick
     for tick, ((now_a, a), (now_b, b)) in enumerate(
             zip(ref.k0_log, nat.k0_log), start=1):

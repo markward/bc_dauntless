@@ -280,7 +280,7 @@ def test_under_developer_the_gameplay_check_logs_once_and_carries_on(
 
 def _seed_copies():
     from tests.helpers import k3_fight
-    from tests.integration import test_native_k1_differential as k1d
+    from tests.helpers import k1_fight as k1d
     from tests.host import test_native_k2_differential as k2d
     return (k3_fight.seed_every_rng, k1d._seed_every_rng,
             k2d._seed_every_rng)

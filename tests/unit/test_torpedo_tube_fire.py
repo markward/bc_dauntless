@@ -6,22 +6,28 @@ from engine.appc.subsystems import TorpedoTube, TorpedoSystem
 
 
 def _loaded_tube(num_ready=1, max_ready=1):
+    from tests.helpers.torpedo_fixtures import arm
     tube = TorpedoTube("Forward Torpedo 1")
     parent = TorpedoSystem("Torpedoes")
+    arm(parent)     # a ship and a slot-0 script: the tube launches
     parent.TurnOn()
     parent.AddChildSubsystem(tube)
     tube._max_ready = max_ready
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = num_ready
     tube._reload_delay = 40.0
     return tube
 
 
-class _AheadTarget:
+def _AheadTarget():
     """A live target dead ahead of a default-oriented tube (Direction (0,1,0)),
-    so Task 7's aim-resolve + +/-30 degree cone gate both pass — used by
-    tests that only care about Fire's bookkeeping, not the gates themselves."""
-    def GetWorldLocation(self): return TGPoint3(0.0, 100.0, 0.0)
-    def IsDead(self): return 0
+    so Task 7's aim-resolve + +/-30 degree cone gate both pass -- used by
+    tests that only care about Fire's bookkeeping, not the gates themselves.
+    A real ship: the kernel aims only at objects the mirror names."""
+    from engine.appc.ships import ShipClass_Create
+    target = ShipClass_Create("Ahead")
+    target.SetTranslateXYZ(0.0, 100.0, 0.0)
+    return target
 
 
 def test_can_fire_true_when_loaded_and_on():
@@ -122,6 +128,7 @@ def _galaxy_tube_with_photon_script():
     ship.SetWorldLocation(TGPoint3(0, 0, 0))
     tube = _TT("Forward Torpedo 1")
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     tube._reload_delay = 40.0
     parent.AddChildSubsystem(tube)
@@ -154,6 +161,7 @@ def _sovereign_tube_photon_and_quantum():
     ship.SetWorldLocation(TGPoint3(0, 0, 0))
     tube = _TT("Forward Torpedo 1")
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     tube._reload_delay = 40.0
     parent.AddChildSubsystem(tube)
@@ -239,10 +247,10 @@ def test_fire_stamps_target_lock_but_launch_ignores_its_position():
     _active.clear()
     tube, _, ship = _galaxy_tube_with_photon_script()
     from engine.appc.math import TGPoint3
-    class _Tgt:
-        def GetWorldLocation(self): return TGPoint3(50, 200, 0)
-        def IsDead(self): return 0
-    ship._target = _Tgt()
+    from engine.appc.ships import ShipClass_Create
+    tgt = ShipClass_Create("Tgt")       # a real ship: the mirror names it
+    tgt.SetTranslateXYZ(50.0, 200.0, 0.0)
+    ship._target = tgt
     ship._target_subsystem = None
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         assert tube.Fire(target=ship._target, offset=None) is True
@@ -254,16 +262,22 @@ def test_fire_stamps_target_lock_but_launch_ignores_its_position():
 
 
 def test_fire_no_script_bound_silent_no_op():
+    """No script anywhere (no ammo type, no slot-0 script): the launch
+    cannot be made, so the tube does not fire -- a counted no-fire (fire
+    control native only, M6), its round NOT spent (the deleted Python spent
+    it and launched nothing), nothing spawned, nothing raised."""
+    from engine.appc import native_combat as nc
     _active.clear()
     tube, parent, _ = _galaxy_tube_with_photon_script()
-    parent.GetProperty()._torpedo_scripts.clear()
+    parent.GetProperty().SetTorpedoScript(0, "")
+    parent._ammo_by_slot.clear()
+    nc.push_field(parent, "_ammo_by_slot")
     initial_ready = tube.GetNumReady()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        tube.Fire(target=None, offset=None)
-    # PR 2a behaviour: NumReady decremented.
-    assert tube.GetNumReady() == initial_ready - 1
-    # No torpedo spawned.
+        assert tube.Fire(target=None, offset=None) is False
+    assert tube.GetNumReady() == initial_ready
     assert len(_active) == 0
+    assert nc.counts()["k1_no_fire"]["launch"] == 1
     _active.clear()
 
 

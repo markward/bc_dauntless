@@ -6,9 +6,10 @@ Revised deliberately from phase 1b's guard (controller ruling J), which
 banned any release in the K1 bindings: a mirror row could then be freed by a
 finalizer on another thread mid-read. Task 2 made frees wait for a drain and
 queued off-main pushes, so the compute may now run without the lock -- but
-ONLY the compute. Everything around it in a binding is CPython (K1's k1_scan
-and k1_launch_recheck, the applier, the queue appends, the record tuple) and
-must keep the GIL.
+ONLY the compute. Everything around it in a binding is CPython (the
+applier, the queue appends, the record tuple; K1's walk check and launch
+check went with fire control's Python copy, fire control native only, M3)
+and must keep the GIL.
 
 A released GIL around the wrong code cannot be caught by a behavioural test
 (the race needs a second thread to run at the wrong microsecond), so this
@@ -126,14 +127,15 @@ def test_the_release_wraps_exactly_the_compute_call(source, name):
     assert re.match(pattern, site), (name, site)
 
 
-def test_k1_scans_before_and_applies_after_the_release(source):
-    """K1's CPython around its compute -- the walk check's scan and the
-    launch recheck before it, the applier and the queue appends after it --
-    stays outside the released lambda."""
+def test_k1_applies_after_the_release(source):
+    """K1's CPython around its compute -- the applier and the queue appends
+    after it -- stays outside the released lambda, and nothing runs before
+    it: the walk check's scan and the launch recheck went with fire
+    control's Python copy (fire control native only, M3)."""
     code, _raw = _bindings(source)["combat_k1_next"]
     at = code.index("released_compute(")
-    for before in ("k1_scan(", "k1_launch_recheck("):
-        assert code.index(before) < at, before
+    for gone in ("k1_scan(", "k1_launch_recheck("):
+        assert gone not in code, gone
     for after in ("applier.apply(", "k1_append_entries("):
         assert code.index(after) > at, after
 

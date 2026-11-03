@@ -53,7 +53,8 @@ class _Boom(Exception):
 
 
 class _Offset:
-    """What a system's _live_held_offset returns: a new object per call."""
+    """What a fixture system's walk_offset_object returns: a new object per
+    call."""
 
     def __init__(self, idx):
         self.idx = idx
@@ -93,11 +94,30 @@ class Leaf:
 class System(Leaf):
     """A walked system: materialise pins it and fetches its offset."""
 
-    def _live_held_offset(self):
+    def walk_offset_object(self):
         _EVENTS[self._arm].append(("offset", self._idx))
         if self.__dict__.get("_offset_boom"):
             raise _Boom("offset %d" % self._idx)
         return _Offset(self._idx)
+
+
+class _Walk(nc._K1Walk):
+    """The engine's walk, its offset objects made by the fixture systems:
+    the engine's materialise asks the open K1 session for what the kernel
+    recorded (THE WALK OFFSET, M8.8), and none is open here. Both arms use
+    it, so the twin compares the appliers, not the offsets."""
+
+    __slots__ = ()
+
+    def materialise(self, n, h):
+        if self.walk == n:
+            return self.offset
+        system = self.obj(h)
+        self.pin_system(system)
+        self.offset = system.walk_offset_object()
+        self.walk = n
+        self.walked = system
+        return self.offset
 
 
 _BASE = 3 << 60
@@ -120,7 +140,7 @@ class _Arm:
         self.registry = weakref.WeakValueDictionary()
         for o in self.objs:
             self.registry[o.__dict__["_nslot"]] = o
-        self.walk = nc._K1Walk()
+        self.walk = _Walk()
 
 
 def _canon_scalar(v):
@@ -248,7 +268,7 @@ def _rand_value(rng, field, n, systems):
         if rng.random() < 0.2:
             return None
         # Mostly a system's walk; now and then a leaf (no
-        # _live_held_offset: AttributeError) or an unknown handle.
+        # walk_offset_object: AttributeError) or an unknown handle.
         r = rng.random()
         h = (rng.choice(systems) if r < 0.85
              else _UNKNOWN if r < 0.9 else _handle(0))
@@ -291,7 +311,7 @@ def test_c_apply_equals_python_apply_random_logs(monkeypatch):
     raised = notes = 0
     for i in range(2000):
         if rng.random() < 0.3:
-            py.walk, c.walk = nc._K1Walk(), nc._K1Walk()
+            py.walk, c.walk = _Walk(), _Walk()
         if rng.random() < 0.02:
             py, c = _twins()
         perr, _cerr = _both(_rand_log(rng, n, systems), py, c, monkeypatch)
@@ -581,7 +601,8 @@ def test_records_return_empty_writes(monkeypatch):
             assert nc.audit_failures() == [], nc.audit_failures()
         finally:
             w.close()
-    assert k1 and all(rec[-1] == [] for rec, _n in k1)
+    # A K1 record is (DONE, writes, no_fire_new): one a session.
+    assert k1 and all(rec[1] == [] for rec, _n in k1)
     assert any(n > 0 for _rec, n in k1), "no K1 record carried writes"
     assert k2 and all(rec[-1] == [] for rec, _n in k2)
     assert any(n > 0 for _rec, n in k2), "no K2 record carried writes"

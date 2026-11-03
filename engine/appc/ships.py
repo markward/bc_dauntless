@@ -1952,10 +1952,6 @@ class ShipClass(DamageableObject):
             dev_mode.log_swallowed("run death script " + name, _e)
 
 
-# The stock walk-offset methods K1 computes from the mirror (native combat
-# round trips): a later patch on ShipClass or a subclass's override hands
-# that ship's walk starts back to Python.
-native_combat.k1_snapshot_ship(ShipClass)
 # The weapon-group getters the charging walk calls (K0's override guard).
 native_combat.k0_snapshot_ship(ShipClass)
 

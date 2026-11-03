@@ -210,8 +210,7 @@ def test_the_tick_flush_is_its_own_profiler_row(monkeypatch, profiler):
         fp.begin_frame()
         with fp.scope("sim"):
             with host_loop._combat_effect_scope():
-                ws._EnergyWeaponFireMixin._fire_effect(
-                    _bank("A"), _bank("T"), None, (False,))
+                _beam_edge(_bank("A"), _bank("T"))
         fp.end_frame()
         if not native:
             assert "sim.effects" not in fp.calls(), fp.calls()
@@ -628,10 +627,25 @@ def _deferred(fn, *args):
     return [(k, ops) for k, _n, ops in taken]
 
 
+def _beam_edge(bank, target):
+    """A beam's was-not-firing edge as its producer makes it -- the K1
+    kernel since fire control went native only (M3; k1_fire_control.h, THE
+    EFFECT QUEUE): its writes, then its fire sound, queued while the queue
+    defers, played at once otherwise (the deleted Python _fire_effect's
+    order). These tests are the queue's; the kernel's edge is
+    K1Native.BeamEdgeIsLoggedWritesAndEntries."""
+    bank._firing = True
+    bank._target = target
+    if eq.deferring():
+        eq.post(eq.FIRE_SOUND, bank)
+    else:
+        bank._play_fire_sfx()
+    return True
+
+
 def test_fire_sound_is_queued_on_the_edge(calls):
     bank, target = _bank("A"), _bank("T")
-    q = _deferred(ws._EnergyWeaponFireMixin._fire_effect, bank, target, None,
-                  (False,))
+    q = _deferred(_beam_edge, bank, target)
     assert q == [(eq.FIRE_SOUND, (bank,))]
     assert calls == [("play", "A")]
     assert bank._firing is True and bank._target is target
@@ -643,7 +657,7 @@ def test_loop_stop_is_queued_for_a_firing_bank_without_a_handle_yet(calls):
     queued, and delivery plays then stops."""
     bank, target = _bank("A"), _bank("T")
     with eq.scope():
-        ws._EnergyWeaponFireMixin._fire_effect(bank, target, None, (False,))
+        _beam_edge(bank, target)
         bank.StopFiring()
         assert bank._firing is False and calls == []
     assert calls == [("play", "A"), ("stop", "A")]

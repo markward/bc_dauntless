@@ -31,6 +31,7 @@ def _loaded_tube(name="Forward Torp 1"):
     tube = TorpedoTube(name)
     tube._reload_delay = 40.0
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._resize_slots()
     tube.SetNumReady(1)
     system.AddChildSubsystem(tube)

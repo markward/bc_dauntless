@@ -742,8 +742,9 @@ class PosedFight:
     def emitters(self, ship):
         """Every weapon of the posed `ship`: its world forward, whether its
         arc holds each live foe, and (a phaser bank) its strip emit point at
-        each -- Python's, by .hex(); the native arm requires the kernel's
-        own bits. Arc, strip and cone DIRECTIONS are never posed (MAP R7):
+        each, by .hex(): the forward the kernel's (fire control's one copy
+        since its Python copy was deleted, M3), the arc and strip Python's,
+        the native arm requiring the kernel's own bits. Arc, strip and cone DIRECTIONS are never posed (MAP R7):
         only the emit point's centre follows the part."""
         out = []
         if ship.IsDead():
@@ -753,7 +754,8 @@ class PosedFight:
         for g in groups(ship):
             for w in ws_weapons(g):
                 h = w.__dict__["_nslot"]
-                fwd = _hexes(ws._emitter_forward_world(w, ship))
+                fwd = tuple(v.hex() for v in
+                            _h.combat_test_emitter_forward_world(h, sh))
                 c = xyz(ss._subsystem_world_position(w, None))
                 aims = []
                 for f in foes:
@@ -767,9 +769,6 @@ class PosedFight:
                 out.append((fwd, arcs, strips))
                 if not self.native:
                     continue
-                got = _h.combat_test_emitter_forward_world(h, sh)
-                assert tuple(v.hex() for v in got) == fwd, (
-                    self.tick, w.GetName(), got, fwd)
                 for a, want in zip(aims, arcs):
                     assert _h.combat_test_emitter_in_arc(
                         h, sh, (a.x, a.y, a.z)) is want, (
@@ -874,15 +873,14 @@ def report(label, ticks_per_frame, elapsed, ref, nat):
     c = nat.counts
     print("\n%s (tpf=%d): %.1f s for 2 x %d ticks\n  posed branches %r\n"
           "  posed fallbacks %r\n  scene %r\n"
-          "  sever %r\n  k1 python reasons %r\n  k2 python reasons %r\n"
+          "  sever %r\n  k1 no-fire %r\n  k2 python reasons %r\n"
           "  k3 steer reasons %r\n  k3 asks %r\n  kernel records %r\n"
           "  round trips %r\n"
           "  hits %d, presented %d, events %d, presentation calls %d"
           % (label, ticks_per_frame, elapsed, TICKS, posed_branches(c),
              {k: v for k, v in posed_fallbacks(c).items() if v},
              nat.stats, nat.sever,
-             {s: {k: v for k, v in r.items() if v}
-              for s, r in c["k1_python_reasons"].items()},
+             {k: v for k, v in c["k1_no_fire"].items() if v},
              {k: v for k, v in c["k2_python_reasons"].items() if v},
              {k: v for k, v in c["k3_steer_reasons"].items() if v},
              c["k3_asks"], dict(sorted(nat.rec.tally.n.items())),
@@ -903,8 +901,11 @@ def check_posed(ref, nat):
                 "k2_posed/banks", "k2_posed/lock_aims", "k3_posed_steers"):
         assert branches[key] > 0, (key, branches)
     # No whole-step or whole-system hand-back either.
-    assert c["k1_python_systems"] == 0, c
+    assert not any(c["k1_no_fire"].values()), c["k1_no_fire"]
     assert c["k2_python_ships"] == 0 and c["k2_python_steps"] == 0, c
+    # No posed aim handed to Python by K2 either (Task 2 review: Manual Aim
+    # on a posed target is a plain body point, M5).
+    assert c["k2_ask_queries"].get("aim_point", 0) == 0, c["k2_ask_queries"]
     assert c["k3_runs"] > 0 and c["k3_python_steps"] == 0, c
     check_guide_asks(c, nat.rec.tally, expected=())
     # Every round trip the plan removed ran on and at posed ships: K1 walks

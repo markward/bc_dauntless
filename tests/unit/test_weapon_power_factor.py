@@ -83,11 +83,14 @@ def _torpedo_fixture():
     Tube starts loaded (_num_ready=1), reload_delay=40.0 s, max_ready=1.
     """
     system = TorpedoSystem("Torpedoes")
+    from tests.helpers.torpedo_fixtures import arm as _arm
+    _arm(system)    # a ship and a slot-0 script: tubes launch
     system.TurnOn()
     system._power_factor = 1.0
 
     tube = TorpedoTube("Tube1")
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     tube._reload_delay = 40.0
     tube._resize_slots()
@@ -234,6 +237,7 @@ def test_torpedo_reload_no_parent_uses_normal_delay(clock):
     """
     tube = TorpedoTube("Orphan")
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 0
     tube._reload_delay = 40.0
     tube._resize_slots()

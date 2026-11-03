@@ -568,7 +568,9 @@ TEST(K2, PrescanRunsPythonBeforeAnyRecord) {
 }
 
 TEST(K2, PrescanReasons) {
-    for (int c = 0; c < 6; ++c) {
+    // (Case 1, a bank class overriding a K1 method, went with K1's override
+    // guard: fire control native only, M8.7.)
+    for (int c : {0, 2, 3, 4, 5}) {
         World w;
         const auto s = w.scene(true);
         K2Why want = K2Why::Other;
@@ -576,10 +578,6 @@ TEST(K2, PrescanReasons) {
             case 0:  // a bank's target the mirror cannot name
                 w.m.set_ref(s.bank, Field::_target, kRefUnrepresentable);
                 want = K2Why::StaleRow;
-                break;
-            case 1:  // a bank class overriding a K1 method
-                w.m.set_i(s.bank, Field::k1_overridden, 1);
-                want = K2Why::Overridden;
                 break;
             case 2:  // not a ShipClass
                 w.m.set_i(s.ship, Field::is_ship_class, 0);
@@ -1364,10 +1362,11 @@ TEST(K2, OfflineStopOfAFiringBankQueuesItsLoopStop) {
 }
 
 TEST(K2, OfflineStopKeepsTheRecordUnlessEveryBankIsStock) {
-    // A bank class overriding a K1 method (its StopFiring may be another),
-    // a child that is not a phaser bank, a child row gone: SYSTEM_STOP,
-    // nothing written, nothing queued.
-    for (int c = 1; c < 4; ++c) {
+    // A child that is not a phaser bank, a child row gone: SYSTEM_STOP,
+    // nothing written, nothing queued. (A bank class overriding a K1 method
+    // is no case since K1's override guard went: fire control native only,
+    // M8.7.)
+    for (int c = 2; c < 4; ++c) {
         World w;
         const auto s = w.scene(false);
         const int64_t b1 = w.bank("b1", s.sys, -1, false);
@@ -1375,7 +1374,6 @@ TEST(K2, OfflineStopKeepsTheRecordUnlessEveryBankIsStock) {
         w.m.set_i(s.sys, Field::_fire_held, 1);
         w.m.set_i(s.bank, Field::_firing, 1);  // b0 firing: no entry either
         switch (c) {
-            case 1: w.m.set_i(b1, Field::k1_overridden, 1); break;
             case 2: w.m.set_i(b1, Field::weapon_kind, 8); break;
             case 3: w.m.unregister_row(b1); break;
         }

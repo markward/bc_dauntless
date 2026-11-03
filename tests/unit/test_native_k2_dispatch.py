@@ -270,19 +270,6 @@ class World:
 
         mp.setattr(ws.PhaserBank, "StopFiring", bank_spy)
         mp.setattr(ws.PhaserSystem, "StopFiring", sys_spy)
-        # A bank's StopFiring is in K1's override guard (round trips Task 2:
-        # an idle bank's stop is logged writes): the spy only wraps the stock
-        # method, so for this world K1's stock snapshot takes it as stock
-        # (restored with mp). K1's logged idle stops never call it.
-        names, _stock = nc._k1_stock[5]
-        mp.setitem(nc._k1_stock, 5,
-                   (names, nc._k1_resolve(ws.PhaserBank, names)))
-        # ... and so is a phaser system's (round trips Task 3: an offline
-        # system whose banks are idle is stopped with logged writes).
-        kind = nc._weapon_kind_of_class(ws.PhaserSystem)
-        names, _stock = nc._k1_stock[kind]
-        mp.setitem(nc._k1_stock, kind,
-                   (names, nc._k1_resolve(ws.PhaserSystem, names)))
         # ... and in K0's: K0 logs a drained bank's StopFiring (combat fire
         # events Task 4), so its guard looks for a bank's (not a system's):
         # the spy only wraps the stock method, and K0 must not stand down
@@ -1508,11 +1495,23 @@ def test_lock_on_posed_ship_needs_no_aim_ask(monkeypatch):
 
 @pytest.mark.parametrize("case", ["ship", "lock"])
 def test_stale_slot_falls_back_part_stale(monkeypatch, case):
-    """With no step boundary resolving the slots, every one stays
-    unresolved: a posed firing ship ("ship") or a lock on a posed ship
-    ("lock") hands the firing ship to Python with reason part_stale --
-    never posed_ship, never a stale part read. Equal to Python."""
-    monkeypatch.setattr(nc, "resolve_stale_part_slots", lambda ships: None)
+    """With no step boundary resolving the slots for K2, every one stays
+    unresolved there: a posed firing ship ("ship") or a lock on a posed
+    ship ("lock") hands the firing ship to Python with reason part_stale --
+    never posed_ship, never a stale part read. Equal to Python. (K1 resolves
+    at its own entry and fires: a posed ship with stale slots does not fire
+    at all since fire control went native only, M8.4; K2 then sees the
+    slots stale -- the generation bumped after the pump -- and resolves
+    none.)"""
+    real_k2 = nc.k2_phasers
+
+    def k2_stale(*a, **kw):
+        nc.bump_part_gen()
+        with monkeypatch.context() as mp:
+            mp.setattr(nc, "resolve_stale_part_slots",
+                       lambda ships, drop=True: None)
+            return real_k2(*a, **kw)
+    monkeypatch.setattr(nc, "k2_phasers", k2_stale)
 
     def script(w, t):
         g, v, bop = w.ships["Galaxy"], w.ships["Vorcha"], w.ships["BoP"]
@@ -1577,16 +1576,17 @@ def test_resolve_runs_at_step_boundary(monkeypatch):
             cannons.StartFiring(v)
 
     ref, _nat, counts = _both(monkeypatch, LOCK_ON_BOP, script, 120)
-    assert {"step_scan", "k1_pump", "k1_system", "k2_phasers"} <= set(
+    # K1's entries (the pump, StartFiring's sessions) resolve through
+    # native_combat._k1_entry.
+    assert {"step_scan", "_k1_entry", "k2_phasers"} <= set(
         callers), callers
     assert any(c[2] == "BoP" for c in _calls(ref, "beam_contact"))
     _native_ran(counts)
     assert counts["k2_python_reasons"]["part_stale"] == 0, counts
     assert counts["k2_ask_queries"]["aim_point"] == 0, counts
     assert counts["k2_posed"]["lock_aims"] > 0, counts
-    for session in ("pump", "system"):
-        assert counts["k1_python_reasons"][session]["part_stale"] == 0, counts
-    assert counts["k1_fire_ask_reasons"]["part_stale"] == 0, counts
+    assert counts["k1_no_fire"]["part_stale"] == 0, counts
+    assert counts["k1_no_fire"]["decision"] == 0, counts
     assert counts["k1_posed"]["walks"] > 0, counts
 
 
@@ -2264,10 +2264,13 @@ def test_firing_bank_on_offline_system_is_logged_with_loop_stop(
 @pytest.mark.parametrize("where", ["system_class", "system_instance",
                                    "bank_class", "bank_instance"])
 def test_system_stop_override_runs_python(monkeypatch, where):
-    """While the Python copies exist, the StopFiring an offline stop stands
-    in for -- the phaser system's and each bank's -- is guarded: patched on
-    the class (k1_overridden) or on an instance (the K2 instance-patch
-    names), Python's own runs, exactly as often ON as OFF."""
+    """While K2's Python copy exists, the StopFiring an offline stop stands
+    in for -- the phaser system's and each bank's -- patched on an instance
+    (the K2 instance-patch names) is obeyed: Python's own runs, exactly as
+    often ON as OFF. Patched on the CLASS it is not any more: that guard was
+    K1's (k1_overridden), deleted with fire control's Python copy (fire
+    control native only, M8.7) -- K2's native stop logs its writes and
+    never calls it, while the Python reference arm does."""
     calls = {}
 
     def counting(real, key):
@@ -2302,7 +2305,10 @@ def test_system_stop_override_runs_python(monkeypatch, where):
 
     _both(monkeypatch, GALAXY_VORCHA, script, 30)
     assert len(calls[False]) >= 25, calls
-    assert calls[True] == calls[False]
+    if where.endswith("_class"):
+        assert calls[True] == [], calls      # not obeyed (M8.7)
+    else:
+        assert calls[True] == calls[False]
 
 
 def test_raise_in_a_batch_presentation_presents_the_rest_then_raises(

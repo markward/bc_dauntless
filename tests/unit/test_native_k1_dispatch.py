@@ -1,23 +1,30 @@
 """K1 dispatch: the held-weapons pump and StartFiring's immediate update run
-through the native fire-control kernel when native combat is on (phase 1b,
-Task 5; plan docs/superpowers/plans/2026-10-31-native-combat-phase1b-fire-control.md).
+through the native fire-control kernel, fire control's one copy of its rules
+(phase 1b, Task 5; fire control native only, M3:
+docs/superpowers/specs/2026-11-03-fire-control-native-only-design.md).
 
-Each scenario runs twice on fresh real ships -- native off (today's Python)
-and native on (K1 decides, Python runs only the effects through
-native_combat.run_k1) -- and compares, after every tick, each system's
-bookkeeping and each bank's (IsFiring, _target is None, _fire_timer.hex(),
-_depleted, charge.hex(), GetNumReady()) plus the weapon event log
-(ET_WEAPON_FIRED, ET_TORPEDO_FIRED, ET_WEAPON_FIRE_FAILED (= ET_CANT_FIRE),
-ET_TORPEDO_AMMO_CONSUMED: type, source, destination, order, tick). The native
-arm must also show that K1 actually ran (its record count), and its mirror
+Each scenario runs on fresh real ships, natively, and is compared after every
+tick -- each system's bookkeeping and each bank's (IsFiring, _target is None,
+_fire_timer.hex(), _depleted, charge.hex(), GetNumReady(), the offset and
+its walk-object identity) plus the weapon event log (ET_WEAPON_FIRED,
+ET_TORPEDO_FIRED, ET_WEAPON_FIRE_FAILED (= ET_CANT_FIRE),
+ET_TORPEDO_AMMO_CONSUMED: type, source, destination, order, tick) -- with
+RECORDED EXPECTATIONS: the same scenario's run through fire control's Python
+copy, recorded at 9c3db5ec6 before that copy was deleted (Task 6, spec §4.7;
+tests/fixtures/k1_dispatch/<module>__<test>.<platform>.json.gz, one file per
+test, one entry per arm-run call in call order). A platform with no
+recording skips, naming the missing file (as the goldens, R9). The native
+run must also show that K1 actually ran (its record count), that nothing
+failed to fire for want of the mirror (k1_no_fire all zero), and its mirror
 must still equal the Python at the end (audit_mirror).
-
-The neutrality of the Fire split with native off is proven by the existing
-fire tests (controller ruling D), not here.
 """
+import gzip
 import importlib
+import json
 import math
+import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -64,6 +71,69 @@ def _switch():
     App.g_kModelPropertyManager.ClearLocalTemplates()
 
 
+# ── Recorded expectations (fire control's Python copy, at 9c3db5ec6) ────────
+
+RECORDINGS = Path(__file__).resolve().parents[1] / "fixtures" / "k1_dispatch"
+_CALLS = {}     # (test, call kind) -> the next call index
+
+
+def _norm(v):
+    """`v` as the recording holds it (JSON: tuples are lists)."""
+    return json.loads(json.dumps(v))
+
+
+def _recording_key():
+    path, rest = os.environ["PYTEST_CURRENT_TEST"].split("::", 1)
+    return Path(path).stem + "__" + rest.rsplit(" (", 1)[0]
+
+
+def _recording():
+    key = _recording_key()
+    f = RECORDINGS / ("%s.%s.json.gz" % (key, sys.platform))
+    if not f.exists():
+        pytest.skip("no recorded expectation for %s on %s: %s is missing "
+                    "(recordings are per platform)" % (key, sys.platform,
+                                                       f.name))
+    with gzip.open(f, "rt") as fh:
+        return json.load(fh)["calls"]
+
+
+def _recorded(kind):
+    """The next recorded call of `kind` in this test (in call order)."""
+    calls = [c for c in _recording() if c["kind"] == kind]
+    key = (_recording_key(), kind)
+    i = _CALLS.get(key, 0)
+    _CALLS[key] = i + 1
+    assert i < len(calls), "no recorded %s call #%d" % (kind, i)
+    return calls[i]
+
+
+def recorded_side(name):
+    """A value the test compared between the arms, as the Python recorded
+    it (the recording's "side" entries, by name, in order)."""
+    calls = [c for c in _recording()
+             if c["kind"] == "side" and c["name"] == name]
+    key = (_recording_key(), "side:" + name)
+    i = _CALLS.get(key, 0)
+    _CALLS[key] = i + 1
+    assert i < len(calls), "no recorded side value %r #%d" % (name, i)
+    return calls[i]["value"]
+
+
+def _same_log(want, got, what="tick"):
+    assert len(got) == len(want), (len(got), len(want))
+    for i, (a, b) in enumerate(zip(want, got), start=1):
+        assert len(a) == len(b), (what, i)
+        for x, y in zip(a, b):
+            assert x == y, "%s %d differs:\n python %r\n native %r" % (
+                what, i, x, y)
+
+
+def _no_fire_free(counts):
+    """Nothing failed to fire for want of the mirror (R2, R3)."""
+    assert not any(counts["k1_no_fire"].values()), counts["k1_no_fire"]
+
+
 def _load_hardpoint(ship, name):
     mod_name = "ships.Hardpoints." + name
     App.g_kModelPropertyManager.ClearLocalTemplates()
@@ -85,22 +155,19 @@ class World:
     """Real ships in one set, a pinned weapon clock, the event log.
 
     `ships` is ((name, hardpoint, (x, y, z), yaw[, script]), ...). Built the
-    same way in both arms, so labels (ship name / subsystem name) line up.
-    A script (e.g. "ships.BirdOfPrey") lets articulation resolve the ship's
-    hardpoint leaf, so a posed ship's part slots can be resolved."""
+    same way as the recordings' Python runs, so labels (ship name /
+    subsystem name) line up. A script (e.g. "ships.BirdOfPrey") lets
+    articulation resolve the ship's hardpoint leaf, so a posed ship's part
+    slots can be resolved. `native` must be True: fire control has no other
+    copy (M3); the argument stays for the call sites' shape."""
 
     def __init__(self, mp, native, ships, tag, player=None):
+        assert native, "fire control is native only"
         self.mp = mp        # the arm's patches (undone when the arm ends)
         nc.reset()
-        if native:
-            nc.configure(ON)
-            assert nc.enabled()
-        else:
-            # The Python reference: fire control's Python copy, by the
-            # explicit test hook until Task 6 deletes it (an unconfigured
-            # mirror is native on first use: fire control native only, I1).
-            nc.use_python_fire_control_for_tests()
-        self.native = native
+        nc.configure(ON)
+        assert nc.enabled()
+        self.native = True
         self.clock = [100.0]
         mp.setattr(ws, "_game_time", lambda: self.clock[0])
         self.set = App.SetClass_Create()
@@ -216,34 +283,27 @@ def _t(v):
 
 
 def _both(monkeypatch, ships, script, ticks, player=None):
-    """Run `script(world, tick)` before each of `ticks` ticks, native off then
-    on; compare. Returns (reference world, native world, native counts)."""
-    worlds = []
-    counts = None
-    for native in (False, True):
-        with monkeypatch.context() as mp:
-            w = World(mp, native, ships, "k1_%d" % native, player=player)
-            try:
-                for t in range(ticks):
-                    w.tick(before=lambda w, t=t: script(w, t))
-                if native:
-                    counts = nc.counts()
-                    nc.audit_mirror()
-                    assert nc.audit_failures() == [], nc.audit_failures()
-                    assert _h.combat_k1_depth() == 0
-            finally:
-                w.close()
-            worlds.append(w)
-    ref, nat = worlds
-    assert len(ref.log) == len(nat.log) >= ticks
-    for i, (a, b) in enumerate(zip(ref.log, nat.log), start=1):
-        assert len(a) == len(b)
-        for x, y in zip(a, b):
-            assert x == y, "tick %d differs:\n python %r\n native %r" % (
-                i, x, y)
-    assert nat.events == ref.events
+    """Run `script(world, tick)` before each of `ticks` ticks natively and
+    compare with the recorded Python run. Returns (world, world, counts):
+    the native world stands for the reference too, being equal to it."""
+    want = _recorded("both")
+    with monkeypatch.context() as mp:
+        w = World(mp, True, ships, "k1_1", player=player)
+        try:
+            for t in range(ticks):
+                w.tick(before=lambda w, t=t: script(w, t))
+            counts = nc.counts()
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+            assert _h.combat_k1_depth() == 0
+        finally:
+            w.close()
+    assert len(w.log) >= ticks
+    _same_log(want["log"], _norm(w.log))
+    assert _norm(w.events) == want["events"]
     assert counts["k1_records"] > 0, counts
-    return ref, nat, counts
+    _no_fire_free(counts)
+    return w, w, counts
 
 
 def _kinds(world):
@@ -273,7 +333,7 @@ def test_phaser_volley_matches(monkeypatch):
     leaves = slice(len(ref.systems), None)
     assert any(row[5][1] for rows in ref.log for row in rows[leaves]), \
         "no bank ran dry"
-    assert counts["k1_python_systems"] == 0, counts
+    _no_fire_free(counts)
 
 
 def test_pulse_lead_and_cooldown_matches(monkeypatch):
@@ -304,7 +364,7 @@ def test_pulse_lead_and_cooldown_matches(monkeypatch):
     assert len(charges) > 1
     # The cannons stamped the walk's own offset object at least once.
     assert any(row[-1] for rows in ref.log for row in rows[leaves])
-    assert counts["k1_python_systems"] == 0, counts
+    _no_fire_free(counts)
 
 
 def test_tube_cone_failures_match(monkeypatch):
@@ -337,7 +397,7 @@ def test_tube_cone_failures_match(monkeypatch):
         _kinds(ref)
     # The dumb volley after tick 300 launched too.
     assert any(e[0] == "torpedo_fired" and e[3] > 301 for e in ref.events)
-    assert counts["k1_python_systems"] == 0, counts
+    _no_fire_free(counts)
 
 
 def test_single_fire_and_chain_modes_match(monkeypatch):
@@ -364,7 +424,7 @@ def test_single_fire_and_chain_modes_match(monkeypatch):
 
     ref, _nat, counts = _both(monkeypatch, ships, script, 400)
     assert {"fired", "torpedo_fired"} <= _kinds(ref), _kinds(ref)
-    assert counts["k1_python_systems"] == 0, counts
+    _no_fire_free(counts)
 
 
 def test_start_firing_immediate_update_matches(monkeypatch):
@@ -390,105 +450,7 @@ def test_start_firing_immediate_update_matches(monkeypatch):
 
     ref, _nat, counts = _both(monkeypatch, ships, script, 150)
     assert {"fired", "torpedo_fired"} <= _kinds(ref), _kinds(ref)
-    assert counts["k1_python_systems"] == 0, counts
-
-
-def test_unregistered_ship_runs_python_in_order(monkeypatch):
-    """A ship with no mirror row is run by today's Python loop body at its
-    place in the pump's order: the kernel hands back RUN_PYTHON for each of
-    its four getters, and the events interleave exactly as the Python's."""
-    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
-             ("Rowless", "vorcha", (8.0, 240.0, 0.0), math.pi),
-             ("Vorcha", "vorcha", (-8.0, 250.0, 3.0), math.pi))
-    ticks = 200
-
-    def script(w, t):
-        if t == 0:
-            nc._drop(w.ships["Rowless"])     # both arms: harmless when off
-            galaxy = w.ships["Galaxy"]
-            w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["Vorcha"])
-            w.ships["Rowless"].GetTorpedoSystem().StartFiring(galaxy)
-            w.ships["Vorcha"].GetTorpedoSystem().StartFiring(galaxy)
-
-    ref, _nat, counts = _both(monkeypatch, ships, script, ticks)
-    sources = {e[1].split("/")[0] for e in ref.events if e[0] == "fired"}
-    assert {"Galaxy", "Rowless", "Vorcha"} <= sources, ref.events
-    # Four getters for the row-less ship, every pump.
-    assert counts["k1_python_systems"] >= 4 * ticks, counts
-
-
-def _launch_hook(mp, act):
-    """Run `act(tube)` inside every torpedo or bolt spawn (the launch
-    Python of a tube's or cannon's FIRE record: the Python that still runs
-    mid-walk, now that a beam's edge and a failed aim are queue entries
-    delivered at the session's end), before the spawn itself."""
-    spawn = ws._spawn_projectile
-
-    def hooked(emitter, *a, **kw):
-        act(emitter)
-        return spawn(emitter, *a, **kw)
-    mp.setattr(ws, "_spawn_projectile", hooked)
-
-
-def test_ask_answers_match_python(monkeypatch):
-    """The first torpedo launch of a multi-fire walk drops the target's
-    mirror row (its launch Python, mid-walk): the rest of that walk cannot
-    read it, so the kernel ASKs Python to run each remaining tube's whole
-    Fire, and the walk goes on with the Python answers. Later walks see an
-    unnameable list entry and run whole in Python."""
-    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
-             ("Vorcha", "vorcha", (0.0, 240.0, 30.0), math.pi))
-    dropped = []
-
-    def script(w, t):
-        if t == 3:
-            torps = w.ships["Galaxy"].GetTorpedoSystem()
-            torps.SetSingleFire(0)
-            torps.SetFiringChainMode(2)     # Quad: four tubes in one walk
-            del dropped[:]
-
-            def drop_target(_tube, _w=w):
-                if not dropped:
-                    dropped.append(True)
-                    nc._drop(_w.ships["Vorcha"])    # both arms: harmless off
-            _launch_hook(w.mp, drop_target)
-            # With an aim offset: each asked Fire stamps the walk's object.
-            torps.StartFiring(w.ships["Vorcha"], TGPoint3(1.0, -2.0, 0.5))
-
-    ref, _nat, counts = _both(monkeypatch, ships, script, 60)
-    assert sum(1 for e in ref.events if e[0] == "torpedo_fired") >= 2, \
-        ref.events
-    assert counts["k1_asks"] > 0, counts
-
-
-def test_exception_in_an_effect_abandons_the_session(monkeypatch):
-    """An effect raises (a tube's launch, here: the Python a FIRE record
-    runs mid-walk): run_k1 abandons the kernel session and re-raises, and
-    the mirror still equals the Python."""
-    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
-             ("Vorcha", "vorcha", (0.0, 240.0, 0.0), math.pi))
-
-    class Boom(Exception):
-        pass
-
-    def boom(*a, **kw):
-        raise Boom()
-
-    w = World(monkeypatch, True, ships, "k1_boom")
-    try:
-        for _ in range(3):
-            w.tick()
-        monkeypatch.setattr(ws, "_spawn_projectile", boom)
-        before = nc.counts()["k1_records"]
-        with pytest.raises(Boom):
-            w.ships["Galaxy"].GetTorpedoSystem().StartFiring(
-                w.ships["Vorcha"])
-        assert nc.counts()["k1_records"] > before
-        assert _h.combat_k1_depth() == 0
-        nc.audit_mirror()
-        assert nc.audit_failures() == []
-    finally:
-        w.close()
+    _no_fire_free(counts)
 
 
 def test_apply_writes_wakes_sleeping_bank(monkeypatch):
@@ -536,118 +498,14 @@ def test_apply_writes_wakes_sleeping_bank(monkeypatch):
 
 # ── Task 5 fix round ─────────────────────────────────────────────────────────
 
-class _CountingTube(ws.TorpedoTube):
-    """A mod-style subclass whose Fire does something of its own."""
-    calls = []
-
-    def Fire(self, target=None, offset=None):
-        _CountingTube.calls.append(self.GetName())
-        return ws.TorpedoTube.Fire(self, target, offset)
-
-
-def _python_reasons(counts, session="pump"):
-    return {k: v for k, v in counts["k1_python_reasons"][session].items() if v}
-
-
-def test_class_override_runs_python(monkeypatch):
-    """A tube whose CLASS overrides Fire: K1 must not stand in for it, so its
-    system runs in Python (counted as overridden), with the same results and
-    the override called the same number of times, ON and OFF."""
-    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
-             ("Vorcha", "vorcha", (10.0, 240.0, 5.0), math.pi))
-    calls = {}
-
-    def script(w, t):
-        torps = w.ships["Galaxy"].GetTorpedoSystem()
-        if t == 0:
-            _CountingTube.calls = []
-            tube = torps.GetWeapon(0)
-            tube.__class__ = _CountingTube
-            nc.reclassify(tube)         # the row's class flags (both arms)
-            torps.StartFiring(w.ships["Vorcha"])
-        calls[w.native] = list(_CountingTube.calls)
-
-    _ref, _nat, counts = _both(monkeypatch, ships, script, 120)
-    assert calls[False] and calls[True] == calls[False]
-    assert _python_reasons(counts).get("overridden", 0) > 0, counts
-    assert _python_reasons(counts, "system").get("overridden", 0) > 0, counts
-
-
-def test_k1_overridden_flag_follows_the_class(monkeypatch):
-    """The row flag is 1 for a class overriding a K1 method (leaf or
-    system), 0 for every stock class."""
-    nc.configure(ON)
-    stock = ws.TorpedoTube("t")
-    sub = _CountingTube("s")
-
-    class _Sys(ws.PhaserSystem):
-        def update_weapons(self, dt):
-            return ws.PhaserSystem.update_weapons(self, dt)
-
-    system = _Sys("p")
-    stock_sys = ws.PhaserSystem("q")
-    flag = lambda o: _h.combat_dump(o.__dict__["_nslot"])["k1_overridden"]
-    assert (flag(stock), flag(sub), flag(system), flag(stock_sys)) == \
-        (0, 1, 1, 0)
-
-
-def test_instance_patch_runs_python(monkeypatch):
-    """`tube.Fire = ...` on one instance (as tests and tools do): found at
-    WALK_START, the system runs in Python (instance_patch), ON == OFF."""
-    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
-             ("Vorcha", "vorcha", (10.0, 240.0, 5.0), math.pi))
-    calls = {}
-
-    def script(w, t):
-        torps = w.ships["Galaxy"].GetTorpedoSystem()
-        if t == 0:
-            log = calls[w.native] = []
-            tube = torps.GetWeapon(0)
-            real = tube.Fire
-
-            def patched(target=None, offset=None):
-                log.append(target is None)
-                return real(target, offset)
-            tube.Fire = patched
-            torps.StartFiring(w.ships["Vorcha"])
-
-    _ref, _nat, counts = _both(monkeypatch, ships, script, 120)
-    assert calls[False] and calls[True] == calls[False]
-    assert _python_reasons(counts).get("instance_patch", 0) > 0, counts
-
-
-def test_pulse_effect_uses_the_decided_module(monkeypatch):
-    """Python's decision carries the module it resolved; on the K1 path a
-    module that no longer imports is re-read at the K1 entry (fire control
-    native only, M8.3: _refresh_stale_launches) as unresolved, so the
-    cannon refuses as Python's decide does -- nothing raised, no bolt, never
-    reaching _spawn_projectile with None. (One merely unloaded from
-    sys.modules is imported again, as decide does:
-    test_unloaded_pulse_module_reimports_like_python.)"""
+def test_unimportable_pulse_module_does_not_fire(monkeypatch):
+    """A module that no longer imports is re-read at the K1 entry (fire
+    control native only, M8.3: _refresh_stale_launches) as unresolved, so
+    the cannon does not fire -- a counted no-fire (pulse_module, logged
+    once), nothing raised, no bolt. (One merely unloaded from sys.modules
+    is imported again: test_unloaded_pulse_module_reimports_like_python.)"""
     ships = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
              ("Galaxy", "galaxy", (40.0, 220.0, 12.0), math.pi))
-    w = World(monkeypatch, False, ships, "k1_mod_off")
-    try:
-        for _ in range(3):
-            w.tick()
-        cannon = w.ships["Vorcha"].GetPulseWeaponSystem().GetWeapon(0)
-        script = ws.pulse_module_script(cannon)
-        d = cannon._fire_decide(None, None)
-        assert d is not None and d[2] is sys.modules[script]
-        # One property read and one module-name read per Fire, as before
-        # the split (no second resolve in the effect).
-        reads = []
-        prop_cls = type(cannon.GetProperty())
-        real = prop_cls.GetModuleName
-        monkeypatch.setattr(prop_cls, "GetModuleName",
-                            lambda self: reads.append(1) or real(self))
-        cannon._cooldown_remaining = 0.0
-        cannon._charge_level = cannon._max_charge
-        assert cannon.Fire(None, None) is True
-        assert len(reads) == 1
-    finally:
-        w.close()
-
     w = World(monkeypatch, True, ships, "k1_mod_on")
     try:
         for _ in range(3):
@@ -661,7 +519,9 @@ def test_pulse_effect_uses_the_decided_module(monkeypatch):
         vorcha.GetPulseWeaponSystem().StartFiring(w.ships["Galaxy"])
         cannon = vorcha.GetPulseWeaponSystem().GetWeapon(0)
         assert _h.combat_dump(cannon.__dict__["_nslot"])["module_ok"] == 0
-        assert nc.counts()["k1_logged"]["pulse_launch"] == 0
+        counts = nc.counts()
+        assert counts["k1_logged"]["pulse_launch"] == 0
+        assert counts["k1_no_fire"]["pulse_module"] == 1, counts["k1_no_fire"]
         assert _h.combat_k1_depth() == 0
     finally:
         w.close()
@@ -734,16 +594,7 @@ def test_tuple_offset_reads_unset_like_python(monkeypatch):
     leaves = slice(len(ref.systems), None)
     assert any(row[8] == repr(offset) for rows in ref.log
                for row in rows[leaves]), "no bank stamped the tuple"
-    assert counts["k1_python_systems"] == 0, counts
-
-
-def _counting_can_fire(calls):
-    real = ws.PhaserBank.CanFire
-
-    def can_fire(self):
-        calls.append(self.GetName())
-        return real(self)
-    return can_fire
+    _no_fire_free(counts)
 
 
 def _phaser_duel(w, t):
@@ -755,49 +606,11 @@ _DUEL = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
          ("Vorcha", "vorcha", (0.0, 240.0, 0.0), math.pi))
 
 
-def test_stock_class_patch_runs_python(monkeypatch):
-    """A STOCK class's own method patched (as a test or a mod does with
-    `setattr(PhaserBank, "CanFire", ...)`): K1 must not stand in for it, so
-    the system runs in Python (overridden) and the patch is called exactly
-    as often ON as OFF."""
-    calls = {}
-
-    def script(w, t):
-        if t == 0:
-            calls[w.native] = []
-            monkeypatch.setattr(ws.PhaserBank, "CanFire",
-                                _counting_can_fire(calls[w.native]))
-        _phaser_duel(w, t)
-        if t == 119:
-            monkeypatch.undo()
-
-    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 120)
-    assert calls[False] and calls[True] == calls[False]
-    assert _python_reasons(counts).get("overridden", 0) > 0, counts
-
-
-def test_stock_class_patch_before_registration_runs_python(monkeypatch):
-    """The same patch made before the ships exist: their rows are flagged
-    at registration against the import-time snapshot of the stock class."""
-    calls = []
-    monkeypatch.setattr(ws.PhaserBank, "CanFire", _counting_can_fire(calls))
-    seen = {}
-
-    def script(w, t):
-        if t == 0:
-            del calls[:]
-        _phaser_duel(w, t)
-        seen[w.native] = list(calls)
-
-    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 120)
-    assert seen[False] and seen[True] == seen[False]
-    assert _python_reasons(counts).get("overridden", 0) > 0, counts
-
-
 def test_unloaded_pulse_module_reimports_like_python(monkeypatch):
     """The cannons' projectile module leaves sys.modules mid-fight (an SDK
-    reload): Python's _fire_decide simply imports it again, and so must
-    K1's effect -- ON identical to OFF, bolts still launching."""
+    reload): Python's decide simply imported it again, and K1 re-reads it
+    at its next entry (M8.3) -- equal to the recorded Python, bolts still
+    launching."""
     ships = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
              ("Galaxy", "galaxy", (40.0, 220.0, 12.0), math.pi))
     seen = {}
@@ -812,168 +625,24 @@ def test_unloaded_pulse_module_reimports_like_python(monkeypatch):
             seen.setdefault(w.native, []).append(t)
 
     ref, _nat, counts = _both(monkeypatch, ships, script, 240)
-    assert seen[False] == seen[True]
+    assert _norm(seen[True]) == recorded_side("seen")
     leaves = slice(len(ref.systems), None)
     cannons = [i for i, row in enumerate(ref.log[0][leaves])
                if row[0].startswith("Vorcha/") and row[6] is not None]
     after = {ref.log[t][leaves][i][6] for t in range(20, len(ref.log))
              for i in cannons}
     assert len(after) > 1, "no bolt after the first unload"
-    assert counts["k1_python_systems"] == 0, counts
-
-
-def _unknown_mounts(w, ship):
-    """Make `ship`'s mounts ones the mirror cannot tell: its pushed mount
-    order opens with an entry it cannot name, so on a posed `ship` a Fire
-    aimed at its offset is an ASK (k1_fire_ask_reasons mount_unknown) and
-    Python runs it mid-walk. (The box rule's no_mount ASK did this until an
-    offset no mount claims became a plain body point: fire control native
-    only, M5.) The audit reads the same order. Native arm only:
-    push_mount_order does nothing with native off."""
-    real = nc._mount_order
-
-    def order(s):
-        out = real(s)
-        return [nc.REF_UNREPRESENTABLE] + out if s is ship else out
-    w.mp.setattr(nc, "_mount_order", order)
-    nc.push_mount_order(ship)
-
-
-def _drop_a_failing_tube(mp, w, dropped, clear_list=False):
-    """The Galaxy's tubes held on a Bird of Prey BEHIND it, in cruise, each
-    tube's stored aim offset on its wing, its mounts unknown to the mirror
-    (_unknown_mounts): each tube's Fire is ASKed (mount_unknown), so Python
-    runs it mid-walk; a forward tube's fails
-    the cone, and its failure Python -- the arm's first
-    TorpedoTube._broadcast_weapon_fire_failed -- drops the failing tube's
-    row (and, `clear_list`, empties the system's list). Both arms: _drop is
-    harmless with native off."""
-    real = ws.TorpedoTube._broadcast_weapon_fire_failed
-
-    def failing(tube):
-        if "tube" not in dropped:
-            dropped["tube"] = w.label(tube)
-            if clear_list:
-                tube.GetParentSubsystem()._target_list = []
-            nc._drop(tube)
-        return real(tube)
-    mp.setattr(ws.TorpedoTube, "_broadcast_weapon_fire_failed", failing)
-    bop = w.ships["BoP"]
-    articulation.force_pose(bop, "cruise")
-    torps = w.ships["Galaxy"].GetTorpedoSystem()
-    pick = _wing_pick(bop)
-    # A tube aims at its STORED offset (the previous shot's): the pick.
-    for i in range(torps.GetNumWeapons()):
-        torps.GetWeapon(i)._target_offset = TGPoint3(*pick)
-    _unknown_mounts(w, bop)
-    torps.StartFiring(bop, TGPoint3(*pick))
-
-
-_BEHIND_BOP = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
-               ("BoP", "birdofprey", (-12.0, -200.0, 4.0), 0.0,
-                "ships.BirdOfPrey"))
-
-
-def test_handler_drops_the_failing_tube_row_mid_walk(monkeypatch):
-    """The failing tube's row is made unencodable (its mirror row dropped)
-    in the middle of the walk, by the Python of its own asked Fire. Python
-    carries on with the tube object; so must K1: the tube's `_target = None`
-    goes to Python as a logged write (no row to write), and its retry Fire
-    is ASKed. ON identical to OFF; later walks see a stale child and run
-    whole in Python."""
-    dropped = {}
-
-    def script(w, t):
-        if t == 2:
-            dropped[w.native] = d = {}
-            _drop_a_failing_tube(w.mp, w, d)
-
-    ref, _nat, counts = _both(monkeypatch, _BEHIND_BOP, script, 60)
-    assert dropped[False].get("tube"), dropped
-    assert dropped[True] == dropped[False]
-    assert dropped[False]["tube"].startswith("Galaxy/Forward"), dropped
-    assert "fire_failed" in _kinds(ref)
-    assert counts["k1_fire_ask_reasons"]["mount_unknown"] > 0, counts
-
-
-def test_handler_drops_the_dumb_tube_row_mid_walk(monkeypatch):
-    """The dumb-fire branch with the tube's row gone: the Python of the
-    tube's asked Fire drops its row and empties the system's list, and the
-    Fire fails; `GetNumTargets() == 0 and weapon.IsDumbFire()` must then ask
-    Python (the row is gone), and FireDumb follows. Per tick equal to
-    Python."""
-    asks = []
-    real_next = _h.combat_k1_next
-    names = {v: k for k, v in _h.combat_k1_kinds().items()}
-
-    def spy():
-        rec = real_next()
-        if names[rec[0]] == "ASK":
-            asks.append(rec[1])
-        return rec
-    monkeypatch.setattr(_h, "combat_k1_next", spy)
-    dropped = {}
-
-    def script(w, t):
-        if t == 2:
-            dropped[w.native] = d = {}
-            _drop_a_failing_tube(w.mp, w, d, clear_list=True)
-
-    _ref, _nat, counts = _both(monkeypatch, _BEHIND_BOP, script, 30)
-    assert dropped[True] == dropped[False] and dropped[False].get("tube")
-    assert "is_dumb" in asks, asks
-    assert counts["k1_asks"] > 0, counts
-
-
-@pytest.mark.parametrize("case", ("tube_fired", "pulse_fired"))
-def test_walked_system_row_dropped_mid_walk_raises(monkeypatch, case):
-    """The protocol invariant (k1_fire_control.h): Python that drops the
-    WALKED SYSTEM's row mid-walk cannot be followed (Python cannot resume
-    update_weapons mid-loop). Native raises a RuntimeError naming the
-    invariant, after abandoning the session; the mirror still equals the
-    Python. The Python is a launch's (a tube's, a cannon's FIRE record);
-    the kernel next reads the system in the bookkeeping after it."""
-    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
-             ("Ahead", "vorcha", (0.0, 240.0, 0.0), math.pi))
-    w = World(monkeypatch, True, ships, "k1_sys_drop")
-    try:
-        for _ in range(3):
-            w.tick()        # the banks charge
-        if case == "tube_fired":
-            system = w.ships["Galaxy"].GetTorpedoSystem()
-            target = w.ships["Ahead"]
-        else:
-            system = w.ships["Ahead"].GetPulseWeaponSystem()
-            target = w.ships["Galaxy"]
-        dropped = []
-
-        def drop_system(_emitter):
-            if not dropped:
-                dropped.append(True)
-                nc._drop(system)
-        _launch_hook(monkeypatch, drop_system)
-        # The message names the system of the last walk Python saw, as
-        # that -- not "the walked system" -- is what the driver knows.
-        with pytest.raises(RuntimeError, match=(
-                "%r, the system of the last walk Python saw, lost its "
-                "mirror row" % (system.GetName(),))):
-            system.StartFiring(target)
-        assert dropped
-        assert _h.combat_k1_depth() == 0
-        nc.audit_mirror()
-        assert nc.audit_failures() == []
-    finally:
-        w.close()
+    _no_fire_free(counts)
 
 
 def test_pulse_params_refresh_across_a_mission_swap_reset(monkeypatch):
     """The mission-swap reset (_reset_projectile_module_cache) with native
     on, and the projectile module now answering a different launch speed.
-    Python's decide reads the module live; K1's lead solve uses the params
+    Python's decide read the module live; K1's lead solve uses the params
     cached at registration (ruling P6), so the stale ones must be re-read
     before the next K1 decision -- even a StartFiring with no GameLoop.tick
     between the reset and it (one made during the swap). Every bolt's launch
-    direction, by .hex(), ON identical to OFF."""
+    direction, by .hex(), equal to the recorded Python."""
     ships = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
              ("Galaxy", "galaxy", (6.0, 70.0, 3.0), math.pi))
     swap_at, ticks = 90, 240
@@ -1023,20 +692,18 @@ def test_pulse_params_refresh_across_a_mission_swap_reset(monkeypatch):
         _ref, _nat, counts = _both(monkeypatch, ships, script, ticks)
     finally:
         ws._reset_projectile_module_cache()
-    assert bolts[True] == bolts[False]
-    assert sum(1 for b in bolts[False] if b[0] >= swap_at) > 2, bolts[False]
-    assert counts["k1_python_systems"] == 0, counts
+    assert _norm(bolts[True]) == recorded_side("bolts")
+    assert sum(1 for b in bolts[True] if b[0] >= swap_at) > 2, bolts[True]
+    _no_fire_free(counts)
 
 
 def test_reset_clears_the_per_class_caches(monkeypatch):
-    """nc.reset() forgets every per-class answer (weapon kind, override
-    flag), so a class patched between two runs is judged afresh."""
-    assert nc._k1_overridden(ws.PhaserBank) == 0
+    """nc.reset() forgets every per-class answer (the weapon kind), so a
+    class re-based between two runs is judged afresh."""
     assert nc._weapon_kind_of_class(ws.PhaserBank) == 5
-    monkeypatch.setattr(ws.PhaserBank, "CanFire", lambda self: 0)
+    assert ws.PhaserBank in nc._kind_by_type
     nc.reset()
     assert ws.PhaserBank not in nc._kind_by_type
-    assert nc._k1_overridden(ws.PhaserBank) == 1
 
 
 def test_reset_lets_go_of_a_class_the_field_caches_saw():
@@ -1071,10 +738,6 @@ def test_reset_lets_go_of_a_class_the_field_caches_saw():
 # part slots, and aims tubes and cannons at a posed target's mount natively.
 
 _HINGE = part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0)
-#: Every reason a posed ship or target (or its part slots) could send K1 to
-#: Python.
-_POSED_REASONS = ("posed_ship", "posed_target", "part_stale",
-                  "mount_unknown")
 
 
 def _pose_galaxy_phasers(galaxy):
@@ -1105,23 +768,10 @@ def _charges(world, prefix):
             if row[0].startswith(prefix)}
 
 
-def _posed_reasons(counts):
-    """The posed-part hand-backs: RUN_PYTHON (pump, StartFiring) and the
-    Fire ASKs, by reason."""
-    out = {}
-    for session in ("pump", "system"):
-        why = counts["k1_python_reasons"][session]
-        for r in _POSED_REASONS:
-            out[(session, r)] = why[r]
-    for r in _POSED_REASONS:
-        out[("fire_ask", r)] = counts["k1_fire_ask_reasons"][r]
-    return out
-
-
 def test_posed_ship_fires_natively(monkeypatch):
     """A Bird of Prey in cruise fires its wing cannons and its torpedo tube,
     and a Galaxy fires phaser banks sitting on a forced part: per tick
-    equal to Python, with no posed hand-back at all."""
+    equal to the recorded Python, with no no-fire at all."""
     ships = (("BoP", "birdofprey", (0.0, 0.0, 0.0), 0.0, "ships.BirdOfPrey"),
              ("Galaxy", "galaxy", (80.0, 0.0, 0.0), 0.0, "ships.Galaxy"),
              ("Vorcha", "vorcha", (40.0, 260.0, 15.0), math.pi))
@@ -1142,7 +792,7 @@ def test_posed_ship_fires_natively(monkeypatch):
             g.GetPhaserSystem().StartFiring(v)
 
     ref, _nat, counts = _both(monkeypatch, ships, script, 360)
-    assert all(moved[0]) and all(moved[1]), moved
+    assert len(moved) == 1 and all(moved[0]), moved
     sources = {e[1].split("/")[0] for e in ref.events
                if e[0] in ("fired", "torpedo_fired")}
     assert {"BoP", "Galaxy"} <= sources, ref.events
@@ -1150,15 +800,14 @@ def test_posed_ship_fires_natively(monkeypatch):
     # The wing cannons fired (a bolt posts no weapon event: their charge).
     assert len(_charges(ref, "BoP/Port Cannon")) > 1
     assert len(_charges(ref, "BoP/Star Cannon")) > 1
-    assert counts["k1_python_systems"] == 0, counts
-    assert set(_posed_reasons(counts).values()) == {0}, counts
+    _no_fire_free(counts)
     assert counts["k1_posed"]["walks"] > 0, counts
 
 
 def test_posed_target_tube_aim_native(monkeypatch):
     """Torpedo tubes and disruptor cannons aim at the wing mounts of a Bird
     of Prey in cruise (`_RESOLVE`: the first mount at the offset, posed
-    natively): per tick equal to Python, with no posed hand-back."""
+    natively): per tick equal to the recorded Python, with no no-fire."""
     ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
              ("Vorcha", "vorcha", (30.0, 0.0, 0.0), 0.0),
              ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi,
@@ -1179,58 +828,10 @@ def test_posed_target_tube_aim_native(monkeypatch):
             v.GetPulseWeaponSystem().StartFiring(bop, star.GetPosition())
 
     ref, _nat, counts = _both(monkeypatch, ships, script, 360)
-    assert moved == [(True, True)] * 2, moved     # both arms
+    assert moved == [(True, True)], moved
     assert {"fired", "torpedo_fired"} <= _kinds(ref), ref.events
-    assert counts["k1_python_systems"] == 0, counts
-    assert set(_posed_reasons(counts).values()) == {0}, counts
+    _no_fire_free(counts)
     assert counts["k1_posed"]["target_aims"] > 0, counts
-
-
-@pytest.mark.parametrize("where", ["boundary", "mid_walk"])
-def test_stale_slot_falls_back_part_stale(monkeypatch, where):
-    """A part slot that is not current is never read: at the system's
-    pre-scan the whole system runs in Python (RUN_PYTHON part_stale); after
-    an effect bumped the part-map generation mid-walk, the next cannon's
-    Fire is Python's (ASK fire, counted part_stale). Equal to Python either
-    way; never posed_ship."""
-    ships = (("BoP", "birdofprey", (0.0, 0.0, 0.0), 0.0, "ships.BirdOfPrey"),
-             ("Vorcha", "vorcha", (5.0, 80.0, 3.0), math.pi))
-    if where == "boundary":
-        # No step boundary resolves the slots: every one stays unresolved.
-        monkeypatch.setattr(nc, "resolve_stale_part_slots",
-                            lambda ships: None)
-    else:
-        # A bolt's spawn (the first cannon's Fire effect) bumps the part-map
-        # generation, as any effect's handler may: the second cannon's mount
-        # slot is stale within the same walk.
-        spawn = ws._spawn_projectile
-
-        def spawn_then_bump(*a, **kw):
-            result = spawn(*a, **kw)
-            nc.bump_part_gen()
-            return result
-
-        monkeypatch.setattr(ws, "_spawn_projectile", spawn_then_bump)
-
-    def script(w, t):
-        bop, v = w.ships["BoP"], w.ships["Vorcha"]
-        if t == 0:
-            articulation.force_pose(bop, "cruise")
-            cannons = bop.GetPulseWeaponSystem()
-            cannons.SetSingleFire(0)
-            cannons.StartFiring(v)
-            bop.GetTorpedoSystem().StartFiring(v)
-
-    ref, _nat, counts = _both(monkeypatch, ships, script, 240)
-    assert len(_charges(ref, "BoP/Star Cannon")) > 1
-    reasons = _posed_reasons(counts)
-    assert reasons[("pump", "posed_ship")] == 0, counts
-    assert reasons[("system", "posed_ship")] == 0, counts
-    if where == "boundary":
-        assert reasons[("pump", "part_stale")] > 0, counts
-        assert reasons[("system", "part_stale")] > 0, counts
-    else:
-        assert reasons[("fire_ask", "part_stale")] > 0, counts
 
 
 # ── Manual Aim on a posed target (posed parts, Task 4b) ──────────────────────
@@ -1257,7 +858,8 @@ def test_manual_aim_on_posed_target_native(monkeypatch):
     """The Vor'cha's Manual Aim pick sits on a Bird of Prey's wing in
     cruise: its cannons (the walk's offset) and tubes (the stored offset)
     aim at it as a plain body point natively (fire control native only,
-    M5) -- no Fire ASK."""
+    M5), equal to the recorded Python. (No Fire ASK: K1 has no ASK left at
+    all -- tests/unit/test_fire_control_python_retired.py.)"""
     ships = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
              ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi,
               "ships.BirdOfPrey"))
@@ -1278,40 +880,22 @@ def test_manual_aim_on_posed_target_native(monkeypatch):
             v.GetTorpedoSystem().StartFiring(bop)
 
     ref, _nat, counts = _both(monkeypatch, ships, script, 240)
-    assert moved == [True, True], moved
+    assert moved == [True], moved
     assert "torpedo_fired" in _kinds(ref), ref.events
     assert len(_charges(ref, "Vorcha/")) > 1
-    assert counts["k1_python_systems"] == 0, counts
-    assert set(_posed_reasons(counts).values()) == {0}, counts
+    _no_fire_free(counts)
     assert counts["k1_posed"]["target_aims"] > 0, counts
 
 
-# ── Round trips, Task 1: no WALK_START record ───────────────────────────────
+# ── The walk offset (round trips, Task 1; fire control native only, M8.8) ───
 #
-# Spec docs/superpowers/specs/2026-11-01-native-combat-round-trips-design.md
-# §4.1. The kernel computes the walk's aim offset VALUE itself; Python fetches
-# the offset OBJECT (walked._live_held_offset(), ruling P5) and pins the walk
-# only when the walk's first record arrives, or when a logged write naming
-# the walk's offset is applied, whichever comes first
-# (native_combat._K1Walk.materialise). A walk that hands nothing back runs no
-# Python at all.
+# The kernel computes the walk's aim offset VALUE itself; Python makes the
+# offset OBJECT (ruling P5) when a logged write naming the walk's offset is
+# applied (native_combat._K1Walk.materialise): the system's own _held_offset,
+# or a TGPoint3 of the Manual Aim pick the kernel recorded for the walk.
 
 from engine.appc.ships import ShipClass  # noqa: E402
 from engine.core import ids  # noqa: E402
-
-
-def _spy_records(mp, log):
-    """Wrap combat_k1_next: log (kind name, walk tag) for every record. The
-    walk tag (rec[-2]) is None, or (walk, system handle) on the first record
-    a walk hands back."""
-    real = _h.combat_k1_next
-    names = {v: k for k, v in _h.combat_k1_kinds().items()}
-
-    def spy():
-        rec = real()
-        log.append((names[rec[0]], rec[-2]))
-        return rec
-    mp.setattr(_h, "combat_k1_next", spy)
 
 
 def _volleys(w, t):
@@ -1325,38 +909,17 @@ def _volleys(w, t):
         vorcha.GetPulseWeaponSystem().StartFiring(galaxy)
 
 
-def test_no_walk_start_records(monkeypatch):
-    """No WALK_START reaches Python: every walk starts in the kernel
-    (k1_logged.walk_start counts them), and the first record a walk hands
-    back carries the walk's tag. Per tick equal to Python."""
-    def script(w, t):
-        if t == 0:
-            _forget_launches(w)     # a FIRE record (uncached) to tag
-        _volleys(w, t)
-
-    log = []
-    _spy_records(monkeypatch, log)
-    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 240)
-    kinds = [k for k, _tag in log]
-    assert kinds.count("WALK_START") == 0, kinds[:20]
-    assert counts["k1_logged"]["walk_start"] > 0, counts
-    # Most walks hand nothing back: fewer tagged records than walks.
-    tagged = [tag for _k, tag in log if tag is not None]
-    assert tagged, log[:20]
-    assert len(tagged) < counts["k1_logged"]["walk_start"], counts
-    assert counts["k1_python_systems"] == 0, counts
-
-
 def _hexes3(p):
     return tuple(float(c).hex() for c in (p.x, p.y, p.z))
 
 
 def test_offset_value_matches_live_held_offset(monkeypatch):
     """The kernel's walk offset (combat_k1_walk_offset, the predicate the
-    walk uses) against WeaponSystem._live_held_offset(), by .hex(): none,
-    held, a non-TGPoint3 held value (unset), Manual Aim (the manual offset
-    wins), the use flag without a manual offset (held), and a firing ship
-    that is not a ShipClass (held, whatever its row says)."""
+    walk uses) against the recorded answers of the deleted
+    WeaponSystem._live_held_offset(), by .hex(): none, held, a non-TGPoint3
+    held value (unset), Manual Aim (the manual offset wins), the use flag
+    without a manual offset (held), and a firing ship that is not a
+    ShipClass (held, whatever its row says)."""
     from engine.appc.objects import DamageableObject
     w = World(monkeypatch, True, _DUEL, "k1_offset")
     try:
@@ -1364,14 +927,10 @@ def test_offset_value_matches_live_held_offset(monkeypatch):
         torps = galaxy.GetTorpedoSystem()
 
         def check(system, want):
-            py = system._live_held_offset()
             nat = _h.combat_k1_walk_offset(system.__dict__["_nslot"])
             if want is None:
-                assert not isinstance(py, TGPoint3), py
                 assert nat is None, nat
             else:
-                assert isinstance(py, TGPoint3)
-                assert _hexes3(py) == want
                 assert nat is not None
                 assert tuple(float(c).hex() for c in nat) == want
 
@@ -1397,8 +956,8 @@ def test_offset_value_matches_live_held_offset(monkeypatch):
         assert galaxy._manual_target_offset is None
         check(torps, _hexes3(held))
 
-        # A firing ship that is not a ShipClass: Python's probe finds no
-        # is_using_target_offset, so it reads the held offset -- even when
+        # A firing ship that is not a ShipClass: Python's probe found no
+        # is_using_target_offset, so it read the held offset -- even when
         # the row's manual-aim fields say otherwise.
         hulk = DamageableObject()
         assert "_nslot" in hulk.__dict__
@@ -1417,73 +976,12 @@ def test_offset_value_matches_live_held_offset(monkeypatch):
         w.close()
 
 
-def _unknown_mount_cannons(w, t):
-    """The Vor'cha's cannons held on a Bird of Prey in cruise with an aim
-    offset on its wing, the BoP's mounts unknown to the mirror
-    (_unknown_mounts): the lead solve cannot be made natively
-    (mount_unknown), so the cannon's Fire is an ASK -- the FIRST record of
-    its walk."""
-    v, bop = w.ships["Vorcha"], w.ships["BoP"]
-    if t == 0:
-        articulation.force_pose(bop, "cruise")
-        _unknown_mounts(w, bop)
-        cannons = v.GetPulseWeaponSystem()
-        cannons.SetSingleFire(0)
-        cannons.StartFiring(bop, TGPoint3(*_wing_pick(bop)))
-
-
-_UNKNOWN_MOUNT = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
-                  ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi,
-                   "ships.BirdOfPrey"))
-
-
-def test_first_record_ask_sees_pinned_offset_object(monkeypatch):
-    """Review Focus 1: a walk whose first record is an ASK. The walk's
-    offset object is fetched, and the walk pinned, BEFORE the ASK's Python
-    runs (it Fires with that object, which the cannon stamps: identity, the
-    P5 column of every row), in today's order: pin, then the offset."""
-    order = []
-    _spy_records(monkeypatch, order)
-    real_mat = nc._K1Walk.materialise
-    real_pin = nc._K1Walk.pin_system
-    real_answer = nc._k1_answer
-
-    def materialise(walk, n, h):
-        order.append(("materialise", n))
-        return real_mat(walk, n, h)
-
-    def pin_system(walk, system):
-        order.append(("pin", system.GetName()))
-        return real_pin(walk, system)
-
-    def answer(rec, walk, dt):
-        order.append(("answer", rec[1]))
-        return real_answer(rec, walk, dt)
-
-    monkeypatch.setattr(nc._K1Walk, "materialise", materialise)
-    monkeypatch.setattr(nc._K1Walk, "pin_system", pin_system)
-    monkeypatch.setattr(nc, "_k1_answer", answer)
-    _ref, _nat, counts = _both(monkeypatch, _UNKNOWN_MOUNT,
-                               _unknown_mount_cannons, 120)
-    assert counts["k1_fire_ask_reasons"]["mount_unknown"] > 0, counts
-    first_asks = [i for i, e in enumerate(order)
-                  if e[0] == "ASK" and e[1] is not None]
-    assert first_asks, order[:20]
-    for i in first_asks:
-        n = order[i][1][0]
-        j = order.index(("answer", "fire"), i)
-        # The walk's materialise (pin, then its offset) is the last Python
-        # before the ASK's own.
-        assert order[j - 2:j] == [("materialise", n),
-                                  ("pin", "Disruptor Cannons")], order[i:j + 1]
-
-
 def test_target_list_write_on_every_walk_is_a_new_list(monkeypatch):
     """Python's _prune_targets builds a NEW list on every update_weapons
     (AddTarget appends in place, so an older list object must never be the
     live one). The kernel keeps the `_target_list` write on every walk --
     a walk that hands nothing back too: its writes ride the next record or
-    DONE. Each tick's list is a new object, ON as OFF."""
+    DONE. Each tick's list is a new object, as Python's was."""
     seen = {}
 
     def script(w, t):
@@ -1495,145 +993,42 @@ def test_target_list_write_on_every_walk_is_a_new_list(monkeypatch):
                 g.__dict__["_target_list"])     # held: never reused
 
     _both(monkeypatch, _DUEL, script, 120)
-    assert len(seen) == 6, sorted(seen)
+    assert len(seen) == 3, sorted(seen)
     for (arm, label), lists in seen.items():
         assert len(lists) == 120
         assert all(a is not b for a, b in zip(lists, lists[1:])), \
             (arm, label)
 
 
-@pytest.mark.parametrize("where", ["system_class", "ship_class",
-                                   "ship_instance", "system_instance"])
-def test_live_held_offset_override_runs_python(monkeypatch, where):
-    """While the Python copies exist, the walk-offset methods the kernel now
-    stands in for are guarded: a patched `_live_held_offset` (system),
-    `is_using_target_offset` / `GetTargetOffsetTG` (ship), on the class or
-    on the instance, runs Python's own, exactly as often ON as OFF."""
-    calls = {}
-
-    def counting(real, key):
-        def f(self, *a):
-            calls[key].append(self.GetName())
-            return real(self, *a)
-        return f
-
-    def script(w, t):
-        galaxy = w.ships["Galaxy"]
-        torps = galaxy.GetTorpedoSystem()
-        if t == 0:
-            key = w.native
-            calls[key] = []
-            galaxy.set_manual_target_offset(TGPoint3(0.25, 1.5, -0.5))
-            if where == "system_class":
-                monkeypatch.setattr(ws.WeaponSystem, "_live_held_offset",
-                                    counting(ws.WeaponSystem._live_held_offset,
-                                             key))
-            elif where == "ship_class":
-                monkeypatch.setattr(ShipClass, "GetTargetOffsetTG",
-                                    counting(ShipClass.GetTargetOffsetTG, key))
-            elif where == "ship_instance":
-                f = counting(ShipClass.is_using_target_offset, key)
-                monkeypatch.setattr(galaxy, "is_using_target_offset",
-                                    lambda: f(galaxy), raising=False)
-            else:
-                f = counting(ws.WeaponSystem._live_held_offset, key)
-                monkeypatch.setattr(torps, "_live_held_offset",
-                                    lambda: f(torps), raising=False)
-            torps.StartFiring(w.ships["Vorcha"], TGPoint3(1.0, 2.0, 3.0))
-        if t == 119:
-            monkeypatch.undo()
-
-    _both(monkeypatch, _DUEL, script, 120)
-    assert calls[False], calls
-    assert calls[True] == calls[False]
-
-
-def test_no_getattr_stub_on_live_held_offset_path(monkeypatch):
-    """MAP §3.1 flagged it inferred: no TGObject.__getattr__ stub sits on
-    `_live_held_offset`'s path (a stub would answer for a method the kernel
-    reads from the mirror). A ShipClass parent with and without Manual Aim,
-    a non-ShipClass parent and no parent: the stub hook is never reached."""
-    from engine.appc.objects import DamageableObject
-    reached = []
-    real = ids.TGObject.__getattr__
-
-    def spy(self, name):
-        reached.append((type(self).__name__, name))
-        return real(self, name)
-
-    w = World(monkeypatch, True, _DUEL, "k1_stub")
-    try:
-        galaxy = w.ships["Galaxy"]
-        torps = galaxy.GetTorpedoSystem()
-        torps._held_offset = TGPoint3(1.0, 2.0, 3.0)
-        hulk = DamageableObject()
-        on_hulk = ws.TorpedoSystem("hulk torps")
-        on_hulk._parent_ship = hulk
-        orphan = ws.TorpedoSystem("orphan torps")
-        monkeypatch.setattr(ids.TGObject, "__getattr__", spy)
-        assert torps._live_held_offset() is torps._held_offset
-        galaxy.set_manual_target_offset(TGPoint3(4.0, 5.0, 6.0))
-        assert _hexes3(torps._live_held_offset()) == _hexes3(
-            TGPoint3(4.0, 5.0, 6.0))
-        assert on_hulk._live_held_offset() is None
-        assert orphan._live_held_offset() is None
-        assert reached == [], reached
-    finally:
-        w.close()
-
-
 # ── Round trips Task 2: beam sustain and idle stops as logged writes ─────────
 
-def _spy_fire_records(mp, log):
-    """Wrap combat_k1_next: log (kind name, the named bank's object or None,
-    the bank's _firing as Python holds it, the FIRE decision or None) for
-    every record. `_firing` is read when the record is returned: the
-    binding has already applied the record's own writes (C-applied write
-    logs), so it is the value its effect (a BANK_STOP's StopFiring) really
-    sees, a logged `_firing` among those writes included."""
-    real = _h.combat_k1_next
-    names = {v: k for k, v in _h.combat_k1_kinds().items()}
+def _spawn_hook(mp, act):
+    """Run `act(launcher)` at every launch's SPAWN delivery (the session's
+    end or the tick's boundary), before the spawn itself."""
+    real = ws.spawn_launch
 
-    def spy():
-        rec = real()
-        kind = names[rec[0]]
-        bank = None
-        if kind in ("FIRE", "BANK_STOP", "FIRE_FAILED", "FIRE_DUMB"):
-            bank = nc._registry.get(rec[1])
-        firing = bank.__dict__.get("_firing") if bank is not None else None
-        log.append((kind, bank, firing, rec[3] if kind == "FIRE" else None))
-        return rec
-    mp.setattr(_h, "combat_k1_next", spy)
-
-
-def _is_beam_decision(d):
-    return d is not None and len(d) == 1 and type(d[0]) is bool
+    def hooked(launcher, *a, **kw):
+        act(launcher)
+        return real(launcher, *a, **kw)
+    mp.setattr(ws, "spawn_launch", hooked)
 
 
 def test_beam_sustain_logged_not_recorded(monkeypatch):
     """A Fire on a beam that is ALREADY firing is three field writes in
     Python (_firing, _target, _target_offset): no sound, no event. K1 logs
-    them and returns no record (k1_logged.beam_sustain counts them); since
-    its edge is logged too (combat fire events), no beam FIRE record is
-    left at all. Per tick equal to Python."""
-    log = []
-    _spy_fire_records(monkeypatch, log)
+    them (k1_logged.beam_sustain counts them), as its edge (combat fire
+    events). Per tick equal to the recorded Python."""
     _ref, _nat, counts = _both(monkeypatch, _DUEL, _phaser_duel, 240)
-    beams = [d for kind, _b, _f, d in log
-             if kind == "FIRE" and _is_beam_decision(d)]
-    assert beams == [], beams
     assert counts["k1_logged"]["beam_sustain"] > 0, counts
     assert counts["k1_logged"]["beam_edge"] > 0, counts
-    assert counts["k1_python_systems"] == 0, counts
+    _no_fire_free(counts)
 
 
 def test_beam_edge_is_logged_writes_and_entries(monkeypatch):
     """The was-not-firing edge (combat fire events §4.3): its writes are
-    logged and its fire sound and ET_WEAPON_FIRED are queue entries, no
-    FIRE record. The sound plays exactly as often ON as OFF (the events are
+    logged and its fire sound and ET_WEAPON_FIRED are queue entries. The
+    sound plays exactly as often as in the recorded Python (the events are
     compared by _both), once per logged edge and per FIRE_SOUND entry."""
-    log = []
-    _spy_fire_records(monkeypatch, log)
     sounds = {}
     real = ws._EnergyWeaponFireMixin._play_fire_sfx
 
@@ -1653,9 +1048,7 @@ def test_beam_edge_is_logged_writes_and_entries(monkeypatch):
 
     ref, _nat, counts = _both(monkeypatch, _DUEL, script, 240)
     assert "fired" in _kinds(ref)
-    assert sounds[False] and sounds[True] == sounds[False]
-    assert not [d for kind, _b, _f, d in log if kind == "FIRE"
-                and _is_beam_decision(d)]
+    assert sounds[True] and _norm(sounds[True]) == recorded_side("sounds")
     assert counts["k1_logged"]["beam_edge"] == len(sounds[True]), counts
     assert counts["k1_entries"]["FIRE_SOUND"] == len(sounds[True]), counts
     assert counts["k1_entries"]["WEAPON_FIRED"] == len(sounds[True]), counts
@@ -1663,12 +1056,11 @@ def test_beam_edge_is_logged_writes_and_entries(monkeypatch):
 
 def test_logged_target_offset_is_the_walk_object(monkeypatch):
     """Review Focus 2 (round trips): a lit beam's logged stamp, then a
-    LATER record of the same pump session runs Python -- a tube's launch,
-    whose spawn reads each lit bank's _target_offset. It must already be
-    that walk's offset OBJECT (identity, not a copy, and not last tick's):
-    the held offset is a new object every tick, and the phaser walk
-    returns no record of its own (its edges and sustains are logged), so
-    the walk is materialised by the apply of the tube's record."""
+    tube's launch of the same pump session, whose spawn (its SPAWN
+    delivery at the session's end) reads each lit bank's _target_offset.
+    It must be that walk's offset OBJECT (identity, not a copy, and not
+    last tick's: fire control native only, M8.8): the held offset is a new
+    object every tick. As the recorded Python, which read it mid-walk."""
     seen = {}
 
     def script(w, t):
@@ -1689,7 +1081,7 @@ def test_logged_target_offset_is_the_walk_object(monkeypatch):
                     _obs.append((_w.n, _w.label(bank),
                                  off is _g.__dict__.get("_held_offset"),
                                  _w.label(bank.__dict__.get("_target"))))
-            _launch_hook(w.mp, spy)
+            _spawn_hook(w.mp, spy)
         elif t % 40 == 20:
             # One bank drops out; it relights (an edge) while the others
             # sustain; the tubes are reloaded by hand to launch again.
@@ -1700,20 +1092,20 @@ def test_logged_target_offset_is_the_walk_object(monkeypatch):
         g._held_offset = TGPoint3(0.5, 1.0, -0.25)
 
     _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 700)
-    assert seen[True] == seen[False]
+    assert _norm(seen[True]) == recorded_side("seen")
     # Some launch read a stamp made in the same tick's pump.
-    assert any(o[2] for o in seen[False] if o[0] > 1), seen[False][:20]
+    assert any(o[2] for o in seen[True] if o[0] > 1), seen[True][:20]
     assert counts["k1_logged"]["beam_sustain"] > 0, counts
 
 
-def _sleepy_duel(monkeypatch, native, ticks):
+def _sleepy_duel(monkeypatch, ticks):
     """The Galaxy holds its phasers (all banks, not single fire) on the
     Vor'cha with bank 0 disabled (CanFire always refuses: idle stops).
     Bank 0 is put to sleep right before each pump, after the passive
-    weapons walk, so only the pump's writes can wake it. Returns (per-tick asleep-after-pump, world log,
-    counts or None)."""
+    weapons walk, so only the pump's writes can wake it. Returns (per-tick
+    asleep-after-pump, world log, counts)."""
     with monkeypatch.context() as mp:
-        w = World(mp, native, _DUEL, "k1_sleepy_%d" % native)
+        w = World(mp, True, _DUEL, "k1_sleepy_1")
         try:
             galaxy, vorcha = w.ships["Galaxy"], w.ships["Vorcha"]
             g = galaxy.GetPhaserSystem()
@@ -1732,11 +1124,9 @@ def _sleepy_duel(monkeypatch, native, ticks):
                     host_loop._pump_held_weapons(list(w.order), DT)
                 asleep.append(passive_state.is_asleep(bank))
                 w.record()
-            counts = None
-            if native:
-                counts = nc.counts()
-                nc.audit_mirror()
-                assert nc.audit_failures() == [], nc.audit_failures()
+            counts = nc.counts()
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
             return asleep, w.log, counts
         finally:
             w.close()
@@ -1746,13 +1136,15 @@ def test_idle_bank_stop_wakes_sleeping_bank(monkeypatch):
     """Review Focus 3: an idle bank's stop is logged writes now, and
     `_firing` is a WakeField -- the logged write still wakes the sleeping
     bank through apply_writes' quiet setter, exactly as Python's
-    `self._firing = False` in StopFiring does. Per tick equal to Python."""
-    ref_asleep, ref_log, _ = _sleepy_duel(monkeypatch, False, 120)
-    nat_asleep, nat_log, counts = _sleepy_duel(monkeypatch, True, 120)
-    assert False in ref_asleep and True in ref_asleep, ref_asleep
-    assert nat_asleep == ref_asleep
-    assert nat_log == ref_log
+    `self._firing = False` in StopFiring did. Per tick equal to the
+    recorded Python."""
+    want = _recorded("sleepy")
+    nat_asleep, nat_log, counts = _sleepy_duel(monkeypatch, 120)
+    assert False in want["asleep"] and True in want["asleep"], want["asleep"]
+    assert nat_asleep == want["asleep"]
+    _same_log(want["log"], _norm(nat_log))
     assert counts["k1_logged"]["idle_bank_stop"] > 0, counts
+    _no_fire_free(counts)
 
 
 class _Loop:
@@ -1765,12 +1157,9 @@ class _Loop:
 
 def test_firing_bank_stop_is_logged_with_its_loop_stop(monkeypatch):
     """A FIRING bank's stop (combat fire events §4.3): its writes are
-    logged and its loop sound's stop is a LOOP_STOP entry, no BANK_STOP
-    record. The loop stops happen exactly as often, in the same order, ON
-    as OFF."""
-    log = []
-    # _firing as StopFiring sees it: after the record's writes are applied.
-    _spy_fire_records(monkeypatch, log)
+    logged and its loop sound's stop is a LOOP_STOP entry. The loop stops
+    happen exactly as often, in the same order, as in the recorded
+    Python."""
     stops = {}
     real = ws._EnergyWeaponFireMixin._play_fire_sfx
 
@@ -1795,8 +1184,7 @@ def test_firing_bank_stop_is_logged_with_its_loop_stop(monkeypatch):
                                 real)
 
     _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 700)
-    assert stops[False] and stops[True] == stops[False]
-    assert [k for k, _b, _f, _d in log if k == "BANK_STOP"] == []
+    assert stops[True] and _norm(stops[True]) == recorded_side("stops")
     assert counts["k1_logged"]["firing_bank_stop"] > 0, counts
     assert counts["k1_entries"]["LOOP_STOP"] > 0, counts
 
@@ -1819,9 +1207,9 @@ def _trace_value(w, name, value):
 def test_bank_write_order_matches_python(monkeypatch):
     """Per bank class (a disabled phaser bank among them), the pump's writes of _firing, _beam_on_countdown,
     _target and _target_offset on every leaf, in order, with their values
-    (offsets by .hex() and walk-object identity): ON equal to OFF. Python
-    writes go through the class's __setattr__; K1's logged writes through
-    apply_writes' quiet setters, traced at the setter. Phasers, cannons and
+    (offsets by .hex() and walk-object identity): equal to the recorded
+    Python, whose writes went through the class's __setattr__; K1's logged
+    writes go through apply_writes' quiet setters, traced at the setter. Phasers, cannons and
     tubes all walk (_volleys), and both new logged paths run."""
     traces = {}
     real_quiet = nc._quiet_setter
@@ -1872,315 +1260,13 @@ def test_bank_write_order_matches_python(monkeypatch):
         _volleys(w, t)
 
     _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 240)
-    assert traces[True] == traces[False]
-    classes = {c for _n, c, _l, _f, _v in traces[False]}
+    assert _norm(traces[True]) == recorded_side("traces")
+    classes = {c for _n, c, _l, _f, _v in traces[True]}
     assert classes == {"PhaserBank", "PulseWeapon", "TorpedoTube"}, classes
     assert any(f == "_beam_on_countdown" for _n, _c, _l, f, _v
-               in traces[False]), "no energy bank stop"
+               in traces[True]), "no energy bank stop"
     assert counts["k1_logged"]["beam_sustain"] > 0, counts
     assert counts["k1_logged"]["idle_bank_stop"] > 0, counts
-
-
-def test_ship_class_without_is_using_target_offset_hands_walk_back(
-        monkeypatch):
-    """A ShipClass whose class no longer resolves is_using_target_offset
-    (deleted): Python's probe is None and it reads the HELD offset; the
-    kernel's row says ShipClass + Manual Aim. The walk check must hand such
-    a walk back (Python answers it) -- the cannons' stamps and the mirror
-    then agree with Python."""
-    monkeypatch.delattr(ShipClass, "is_using_target_offset")
-
-    def script(w, t):
-        v = w.ships["Vorcha"]
-        if t == 0:
-            v.set_manual_target_offset(TGPoint3(2.0, -3.0, 0.5))
-            v.GetPulseWeaponSystem().StartFiring(w.ships["Galaxy"],
-                                                 TGPoint3(0.5, 1.0, -0.25))
-
-    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 120)
-    assert counts["k1_records"] > 0, counts
-
-
-@pytest.mark.parametrize("where", ["class", "instance"])
-def test_stop_firing_override_runs_python(monkeypatch, where):
-    """While the Python copies exist, a bank's StopFiring -- which K1 now
-    stands in for on an idle bank (logged writes) -- is guarded: patched on
-    the class (k1_overridden) or on the instance (the walk check), Python's
-    own runs, exactly as often ON as OFF."""
-    calls = {}
-
-    def counting(real, key):
-        def f(self):
-            calls[key].append(self.GetName())
-            return real(self)
-        return f
-
-    def script(w, t):
-        g = w.ships["Galaxy"].GetPhaserSystem()
-        if t == 0:
-            key = w.native
-            calls[key] = []
-            bank = g.GetWeapon(0)
-            bank.SetDisabledPercentage(1.5)     # idle stops
-            if where == "class":
-                monkeypatch.setattr(ws.PhaserBank, "StopFiring",
-                                    counting(ws.PhaserBank.StopFiring, key))
-            else:
-                f = counting(ws.PhaserBank.StopFiring, key)
-                monkeypatch.setattr(bank, "StopFiring", lambda: f(bank),
-                                    raising=False)
-            g.SetSingleFire(0)
-            g.StartFiring(w.ships["Vorcha"])
-        if t == 119:
-            monkeypatch.undo()
-
-    _both(monkeypatch, _DUEL, script, 120)
-    assert calls[False], calls
-    assert calls[True] == calls[False]
-
-
-# ── Final review A1: the walk check never builds an instance dict ───────────
-#
-# k1_walk_check runs inside combat_k1_next with the GIL held. On CPython 3.11+
-# an instance's __dict__ may still be "values only" (not materialised);
-# _PyObject_GetDictPtr would BUILD it -- a GC-tracked allocation that can run
-# cyclic GC, so weakref.finalize -> unregister_handle could free a mirror row
-# mid-walk. The check must instead hand such a walk back to Python.
-
-def _dict_materialised(obj):
-    """True when `obj`'s managed instance dict exists as a dict object. The
-    managed-dict slot sits three pointers before the object (3.11: the dict
-    pointer; 3.12: the dict, or the values pointer tagged with bit 0; 3.13:
-    the dict pointer)."""
-    import ctypes
-    slot = ctypes.c_size_t.from_address(
-        id(obj) - 3 * ctypes.sizeof(ctypes.c_void_p)).value
-    return slot != 0 and not slot & 1
-
-
-class _ValuesOnly:
-    """An ordinary class: its instances start with a values-only dict."""
-
-    def __init__(self):
-        self.a = 1
-
-
-@pytest.mark.skipif(sys.version_info < (3, 11) or sys.version_info >= (3, 14),
-                    reason="managed-dict layout known for 3.11-3.13 only")
-def test_walk_check_hands_back_an_unmaterialised_dict(monkeypatch):
-    """The walked system's registry entry resolves to an object whose
-    instance dict is not materialised: the walk check answers "Python" (a
-    WALK_START record) and leaves the dict unbuilt."""
-    fresh = _ValuesOnly()
-    assert type(fresh).__flags__ & (1 << 4), "not a managed-dict class"
-    assert not _dict_materialised(fresh)
-    with monkeypatch.context() as mp:
-        w = World(mp, True, _DUEL, "k1_values_only")
-        log = []
-        _spy_records(mp, log)
-        try:
-            phasers = w.ships["Galaxy"].GetPhaserSystem()
-            phasers.StartFiring(w.ships["Vorcha"])
-            w.tick()
-            nc._k1_send_walk_check()
-            h = phasers.__dict__["_nslot"]
-            import weakref
-            fake = dict(nc._registry.data)
-            fake[h] = weakref.KeyedRef(fresh, None, h)
-            cls, (iu, gto) = nc._k1_ship_stock
-            _h.combat_k1_set_walk_check(fake, nc._K1_SYSTEM_PATCHES,
-                                        nc._K1_LEAF_PATCHES,
-                                        nc._K1_SHIP_PATCHES, iu, gto, cls)
-            mp.setattr(nc, "_k1_walk_check_sent", True)
-            del log[:]
-            for _ in range(3):
-                w.tick()
-            assert [k for k, _t in log].count("WALK_START") >= 3, log[:20]
-            assert not _dict_materialised(fresh)
-        finally:
-            nc._k1_send_walk_check()
-            w.close()
-
-
-@pytest.mark.skipif(sys.version_info < (3, 11) or sys.version_info >= (3, 14),
-                    reason="managed-dict layout known for 3.11-3.13 only")
-def test_walk_check_hands_back_a_ship_with_an_unmaterialised_dict(
-        monkeypatch):
-    """The firing SHIP's registry entry resolves to an object whose instance
-    dict is not materialised: its walks are handed back (WALK_START) and the
-    dict stays unbuilt."""
-    fresh = _ValuesOnly()
-    assert not _dict_materialised(fresh)
-    with monkeypatch.context() as mp:
-        w = World(mp, True, _DUEL, "k1_values_only_ship")
-        log = []
-        _spy_records(mp, log)
-        try:
-            galaxy = w.ships["Galaxy"]
-            galaxy.GetPhaserSystem().StartFiring(w.ships["Vorcha"])
-            w.tick()
-            nc._k1_send_walk_check()
-            h = galaxy.__dict__["_nslot"]
-            import weakref
-            fake = dict(nc._registry.data)
-            fake[h] = weakref.KeyedRef(fresh, None, h)
-            cls, (iu, gto) = nc._k1_ship_stock
-            _h.combat_k1_set_walk_check(fake, nc._K1_SYSTEM_PATCHES,
-                                        nc._K1_LEAF_PATCHES,
-                                        nc._K1_SHIP_PATCHES, iu, gto, cls)
-            mp.setattr(nc, "_k1_walk_check_sent", True)
-            del log[:]
-            for _ in range(3):
-                w.tick()
-            assert [k for k, _t in log].count("WALK_START") >= 3, log[:20]
-            assert not _dict_materialised(fresh)
-        finally:
-            nc._k1_send_walk_check()
-            w.close()
-
-
-# ── The walk check out of the kernel (spec 2026-11-02-combat-launch-deferral
-# §4.2; k1-walk-check-map.md §4.1): verdicts scanned in the binding at
-# session begin and re-validated before every combat_k1_next ───────────────
-
-@pytest.mark.parametrize("where", ["ship", "leaf"])
-def test_walk_check_names_changing_drop_the_caches(monkeypatch, where):
-    """The walk check's verdicts are cached on the objects' dict versions.
-    Re-sending the check with other names (a name an instance attribute
-    already present now matches, on the firing ship or on a bank) must drop
-    them: the next walks are handed back though no dict changed."""
-    with monkeypatch.context() as mp:
-        w = World(mp, True, _DUEL, "k1_names_drop_" + where)
-        log = []
-        _spy_records(mp, log)
-        try:
-            galaxy = w.ships["Galaxy"]
-            phasers = galaxy.GetPhaserSystem()
-            owner = galaxy if where == "ship" else phasers.GetWeapon(0)
-            owner._k1_probe_name = 1
-            phasers.StartFiring(w.ships["Vorcha"])
-            for _ in range(3):
-                w.tick()
-            assert "WALK_START" not in [k for k, _t in log], log[:20]
-            nc._k1_send_walk_check()
-            cls, (iu, gto) = nc._k1_ship_stock
-            leaf = nc._K1_LEAF_PATCHES
-            ship = nc._K1_SHIP_PATCHES
-            if where == "ship":
-                ship = ship + ("_k1_probe_name",)
-            else:
-                leaf = leaf + ("_k1_probe_name",)
-            _h.combat_k1_set_walk_check(nc._registry.data,
-                                        nc._K1_SYSTEM_PATCHES, leaf, ship,
-                                        iu, gto, cls)
-            mp.setattr(nc, "_k1_walk_check_sent", True)
-            del log[:]
-            for _ in range(3):
-                w.tick()
-            assert [k for k, _t in log].count("WALK_START") >= 3, log[:20]
-        finally:
-            nc._k1_send_walk_check()
-            w.close()
-
-
-# The Vor'cha's cannons ASK their Fire (mount_unknown,
-# _unknown_mount_cannons), so a cannon's whole Python Fire -- its bolt's
-# _spawn_projectile -- runs inside an ASK answer, in the middle of the pump;
-# the Galaxy, later in the ship list, is walked after it in the same pump.
-_ASK_THEN_LATER = (
-    ("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
-    ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi, "ships.BirdOfPrey"),
-    ("Galaxy", "galaxy", (30.0, 360.0, 0.0), math.pi))
-
-
-def _on_first_ask_spawn(w, hook):
-    """Run `hook(w)` once, inside the first bolt spawn of the cannons' ASKed
-    Fire (the same Python ON and OFF, at the same tick)."""
-    real = ws._spawn_projectile
-    done = []
-
-    def spawn(*a, **k):
-        if not done:
-            done.append(w.n)
-            hook(w)
-        return real(*a, **k)
-    w.mp.setattr(ws, "_spawn_projectile", spawn)
-    return done
-
-
-def test_mid_pump_instance_patch_is_obeyed_the_same_tick(monkeypatch):
-    """Review Focus 3: Python running in the middle of the pump (an ASK
-    answer) patches a method K1 stands in for on a LATER system's instance
-    (`phasers.try_fire_weapon = ...`). Python's pump calls it at that
-    system's walk in the same tick; so must K1 -- the verdicts are
-    re-validated before every combat_k1_next, so that walk is handed back.
-    ON == OFF, tick by tick."""
-    calls = {}
-    spawned = {}
-
-    def patch_later_system(w):
-        phasers = w.ships["Galaxy"].GetPhaserSystem()
-        real = phasers.try_fire_weapon
-        log = calls[w.native]
-
-        def try_fire_weapon(*a):
-            log.append(w.n)
-            return real(*a)
-        phasers.try_fire_weapon = try_fire_weapon
-
-    def script(w, t):
-        _unknown_mount_cannons(w, t)
-        if t == 0:
-            calls[w.native] = []
-            spawned[w.native] = _on_first_ask_spawn(w, patch_later_system)
-            w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["BoP"])
-
-    _ref, _nat, counts = _both(monkeypatch, _ASK_THEN_LATER, script, 90)
-    assert spawned[False] and spawned[True] == spawned[False], spawned
-    assert counts["k1_fire_ask_reasons"]["mount_unknown"] > 0, counts
-    assert calls[False], calls
-    assert calls[True] == calls[False]
-    assert calls[False][0] == spawned[False][0], (calls, spawned)
-    assert _python_reasons(counts).get("instance_patch", 0) > 0, counts
-
-
-def test_nested_session_keeps_its_own_walk_check(monkeypatch):
-    """A K1 session begun inside another (StartFiring from Python the pump
-    runs: an ASK answer) scans its own system: a tube Fire patched on the
-    instance just before is obeyed by the nested walk, though the outer
-    pump's verdicts never cover that system (its ship is not in the pump's
-    list). ON == OFF, tick by tick."""
-    calls = {}
-    spawned = {}
-
-    def patch_and_start(w):
-        galaxy = w.ships["Galaxy"]
-        torps = galaxy.GetTorpedoSystem()
-        tube = torps.GetWeapon(0)
-        real = tube.Fire
-        log = calls[w.native]
-
-        def fire(target=None, offset=None):
-            log.append(w.n)
-            return real(target, offset)
-        tube.Fire = fire
-        torps.StartFiring(w.ships["BoP"])
-
-    def script(w, t):
-        _unknown_mount_cannons(w, t)
-        if t == 0:
-            # The Galaxy fires only through StartFiring's own walk.
-            w.order = [s for s in w.order if s.GetName() != "Galaxy"]
-            calls[w.native] = []
-            spawned[w.native] = _on_first_ask_spawn(w, patch_and_start)
-
-    _ref, _nat, counts = _both(monkeypatch, _ASK_THEN_LATER, script, 90)
-    assert spawned[False] and spawned[True] == spawned[False], spawned
-    assert calls[False], calls
-    assert calls[True] == calls[False]
-    assert calls[False][0] == spawned[False][0], (calls, spawned)
-    assert _python_reasons(counts, "system").get("instance_patch", 0) > 0, \
-        counts
 
 
 # ── Final review A2: a raise in materialise does not strand later writes ────
@@ -2191,11 +1277,11 @@ class _OffsetBoom(Exception):
 
 def test_materialise_raise_applies_later_writes(monkeypatch):
     """The binding's write apply fetches the walk's offset object
-    (materialise -> system._live_held_offset()) mid-log, inside
-    combat_k1_next (C-applied write logs). If that raises, the writes
+    (materialise) mid-log, inside combat_k1_next (C-applied write logs).
+    If that raises, the writes
     logged after it -- already in the mirror -- are still applied, in order,
     and the exception propagates out of run_k1 as it is: the mirror still
-    equals Python. (The log-level semantics, notes included, are pinned
+    equals the objects. (The log-level semantics, notes included, are pinned
     against apply_writes by tests/unit/test_native_write_apply.py.)"""
     with monkeypatch.context() as mp:
         w = World(mp, True, _DUEL, "k1_materialise_raise")
@@ -2203,9 +1289,6 @@ def test_materialise_raise_applies_later_writes(monkeypatch):
         real = _h.combat_k1_next
         real_mat = nc._K1Walk.materialise
         armed, inside, fired = [], [], []
-
-        def boom():
-            raise _OffsetBoom("offset")
 
         def spy():
             inside.append(True)
@@ -2221,7 +1304,7 @@ def test_materialise_raise_applies_later_writes(monkeypatch):
                     and h == phasers.__dict__["_nslot"]:
                 del armed[:]
                 fired.append(n)
-                mp.setattr(phasers, "_live_held_offset", boom, raising=False)
+                raise _OffsetBoom("offset")
             return real_mat(walk, n, h)
         mp.setattr(_h, "combat_k1_next", spy)
         mp.setattr(nc._K1Walk, "materialise", materialise)
@@ -2236,7 +1319,6 @@ def test_materialise_raise_applies_later_writes(monkeypatch):
             assert fired, "no logged marker reached materialise"
             assert phasers.__dict__["_force_update"] is False
             assert _h.combat_k1_depth() == 0
-            mp.delattr(phasers, "_live_held_offset")
             nc.audit_mirror()
             assert nc.audit_failures() == [], nc.audit_failures()
         finally:
@@ -2247,11 +1329,6 @@ def test_materialise_raise_applies_later_writes(monkeypatch):
 # Inside the tick's scope (host_loop._combat_effect_scope, native on) the
 # sounds and events of K1's effects are queued and delivered, in order, when
 # the scope closes (engine/appc/effect_queue.py).
-
-def _scoped_tick(w, before=None):
-    with host_loop._combat_effect_scope():
-        w.tick(before=before)
-
 
 def test_bank_fired_natively_and_stopped_from_python_plays_then_stops(
         monkeypatch):
@@ -2375,15 +1452,15 @@ def test_ai_session_fire_failed_then_launch_keep_emission_order(monkeypatch):
     """Review Focus 3 and ruling F3 (a). An AI-style StartFiring outside the
     tick's scope runs a K1 system session: the forward tubes fail the cone
     at the target behind (native WEAPON_FIRE_FAILED entries), then an aft
-    tube launches (Python's ET_TORPEDO_FIRED, ET_WEAPON_FIRED). Native delivers
-    them in the Python's order -- the failure first -- and by the time
+    tube launches (ET_TORPEDO_FIRED, ET_WEAPON_FIRED). Native delivers them
+    in the recorded Python's order -- the failure first -- and by the time
     StartFiring returns (the session's end), not at the next tick."""
     from engine.appc import effect_queue as eq
     ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
              ("Ahead", "vorcha", (10.0, 240.0, 5.0), math.pi),
              ("Behind", "vorcha", (-12.0, -230.0, 4.0), 0.0))
     logs, depth_at_post = {}, {}
-    for native in (False, True):
+    for native in (True,):
         with monkeypatch.context() as mp:
             w = World(mp, native, ships, "k1_ai_order_%d" % native)
             seen = depth_at_post[native] = []
@@ -2397,68 +1474,13 @@ def test_ai_session_fire_failed_then_launch_keep_emission_order(monkeypatch):
                 assert _h.combat_effect_take() == []
             finally:
                 w.close()
-    kinds = [e[0] for e in logs[False]]
+    assert _norm(logs[True]) == _recorded("events")["events"]
+    assert _norm(logs[True]) == recorded_side("logs")
+    kinds = [e[0] for e in logs[True]]
     assert "fire_failed" in kinds and "torpedo_fired" in kinds, kinds
     assert kinds.index("fire_failed") < kinds.index("torpedo_fired"), kinds
-    assert logs[True] == logs[False]
     # Native: every event delivered at the session's end, none mid-walk.
     assert depth_at_post[True] and not any(depth_at_post[True])
-
-
-def test_bank_lit_and_stopped_in_one_out_of_scope_session(monkeypatch):
-    """Ruling F3 (b). One pump session outside the scope: K1 lights the
-    Galaxy's phasers (native FIRE_SOUND entries), then a tube's launch
-    Python (the same session) stops the phaser system. Each lit bank plays,
-    then stops, its loop -- as in the Python -- and none is left playing."""
-    sounds = {}
-    for native in (False, True):
-        log = sounds[native] = []
-
-        def sfx(self, log=log):
-            log.append(("play", self.GetName()))
-            self._loop_handle = _Loop(log, ("stop", self.GetName()))
-        with monkeypatch.context() as mp:
-            mp.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", sfx)
-            w = World(mp, native, _DUEL, "k1_lit_stop_%d" % native)
-            try:
-                g = w.ships["Galaxy"].GetPhaserSystem()
-                torps = w.ships["Galaxy"].GetTorpedoSystem()
-                banks, tubes = _weapons(g), _weapons(torps)
-                charge = [b.GetChargeLevel() for b in banks]
-                for b in banks:
-                    b.SetChargeLevel(0.0)
-                for t in tubes:
-                    t.SetNumReady(0)
-                # Held, nothing lit or launched yet.
-                g.StartFiring(w.ships["Vorcha"])
-                torps.StartFiring(w.ships["Vorcha"])
-                assert not any(b._firing for b in banks) and log == []
-                for b, c in zip(banks, charge):
-                    b.SetChargeLevel(c)
-                for t in tubes:
-                    t.SetNumReady(1)
-                g.SetForceUpdate(1)
-                torps.SetForceUpdate(1)
-                spawn = ws._spawn_projectile
-                stopped = []
-
-                def stop_on_launch(*a, **kw):
-                    if not stopped:
-                        stopped.append(True)
-                        g.StopFiring()
-                    return spawn(*a, **kw)
-                mp.setattr(ws, "_spawn_projectile", stop_on_launch)
-                w.tick()        # one pump session: phasers, then tubes
-                assert stopped
-                assert all(b._loop_handle is None for b in banks)
-            finally:
-                w.close()
-    plays = [s for s in sounds[False] if s[0] == "play"]
-    assert plays, sounds[False]
-    for _, name in plays:
-        log = sounds[False]
-        assert log.index(("stop", name)) > log.index(("play", name))
-    assert sounds[True] == sounds[False]
 
 
 def test_session_started_by_a_delivery_delivers_nested_in_order(
@@ -2468,10 +1490,10 @@ def test_session_started_by_a_delivery_delivers_nested_in_order(
     phasers: that K1 session runs inside the delivery, defers its own
     entries (the Vor'cha's edges) and delivers them at its end -- nested,
     before the rest of the tick's batch (the Galaxy's other edges) -- in
-    the Python's order."""
+    the recorded Python's order."""
     from engine.appc import effect_queue as eq
     logs = {}
-    for native in (False, True):
+    for native in (True,):
         with monkeypatch.context() as mp:
             w = World(mp, native, _DUEL, "k1_nested_%d" % native)
             started = []
@@ -2494,92 +1516,12 @@ def test_session_started_by_a_delivery_delivers_nested_in_order(
                 logs[native] = _event_log(w)
             finally:
                 w.close()
-    srcs = [e[1].split("/")[0] for e in logs[False] if e[0] == "fired"]
+    assert _norm(logs[True]) == _recorded("events")["events"]
+    assert _norm(logs[True]) == recorded_side("logs")
+    srcs = [e[1].split("/")[0] for e in logs[True] if e[0] == "fired"]
     # Galaxy's first edge, the Vor'cha's (nested), then the Galaxy's rest.
     assert srcs[0] == "Galaxy" and srcs[1] == "Vorcha", srcs
     assert "Galaxy" in srcs[srcs.index("Vorcha"):], srcs
-    assert logs[True] == logs[False]
-
-
-def test_an_abandoned_session_still_delivers_its_entries(monkeypatch):
-    """Ruling F5 (replaces Review Focus 5's truncation). Inside the tick's
-    scope a pump session lights the Galaxy's phasers (native entries,
-    appended once their writes were applied) and then a tube's launch
-    raises: the session is abandoned, but its entries stand for effects
-    that already happened, so they are delivered at the scope's end with
-    the one queued before the session: every lit bank's sound and its
-    ET_WEAPON_FIRED."""
-    from engine.appc import effect_queue as eq
-
-    class Boom(Exception):
-        pass
-    played = []
-    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx",
-                        lambda self: played.append(self.GetName()))
-    w = World(monkeypatch, True, _DUEL, "k1_abandon")
-    try:
-        g = w.ships["Galaxy"].GetPhaserSystem()
-        torps = w.ships["Galaxy"].GetTorpedoSystem()
-        banks, tubes = _weapons(g), _weapons(torps)
-        charge = [b.GetChargeLevel() for b in banks]
-        for b in banks:
-            b.SetChargeLevel(0.0)
-        for t in tubes:
-            t.SetNumReady(0)
-        g.StartFiring(w.ships["Vorcha"])
-        torps.StartFiring(w.ships["Vorcha"])
-        for b, c in zip(banks, charge):
-            b.SetChargeLevel(c)
-        for t in tubes:
-            t.SetNumReady(1)
-        g.SetForceUpdate(1)
-        torps.SetForceUpdate(1)
-
-        def boom(*a, **kw):
-            raise Boom("launch")
-        monkeypatch.setattr(ws, "_spawn_projectile", boom)
-        other = w.ships["Vorcha"].GetPhaserSystem().GetWeapon(0)
-        del w.events[:]
-        with pytest.raises(Boom):
-            with host_loop._combat_effect_scope():
-                eq.post(eq.FIRE_SOUND, other)       # before the session
-                w.tick()
-        lit = [b.GetName() for b in banks if b._firing]
-        assert lit                                   # lit (its writes stay)
-        assert played == [other.GetName()] + lit, played
-        fired = [e[1] for e in w.events if e[0] == "fired"]
-        assert fired == ["Galaxy/" + n for n in lit], w.events
-        assert _h.combat_k1_depth() == 0
-        assert _h.combat_effect_take() == []
-    finally:
-        w.close()
-
-
-def test_system_instance_stop_patch_runs_python(monkeypatch):
-    """The pump's `sys_.StopFiring()` (a held system switched off) is logged
-    natively only when no StopFiring K1 stands in for is patched: an
-    instance-patched StopFiring on the SYSTEM itself runs Python's own,
-    exactly as often ON as OFF (_K1_SYSTEM_PATCHES, the walk check)."""
-    calls = {}
-
-    def script(w, t):
-        g = w.ships["Galaxy"].GetPhaserSystem()
-        if t == 0:
-            key = w.native
-            calls[key] = []
-            g.StartFiring(w.ships["Vorcha"])
-            real = ws.PhaserSystem.StopFiring
-
-            def stop(*a, _g=g, _key=key):
-                calls[_key].append((w.n, _g.GetName()))
-                return real(_g, *a)
-            w.mp.setattr(g, "StopFiring", stop, raising=False)
-        elif t == 5:
-            g.TurnOff()
-
-    _both(monkeypatch, _DUEL, script, 12)
-    assert calls[False], calls
-    assert calls[True] == calls[False]
 
 
 # ── Launches at the boundary (spec 2026-11-02-combat-launch-deferral) ────────
@@ -2701,76 +1643,72 @@ class _Launches:
 
 
 def _learn_launches(w):
-    """Python's first launch of a script caches its launch; here, as if one
-    had run: every ammo type's script, learned (native arm only)."""
-    if not w.native:
-        return
+    """Every ammo type's launch cached and pushed (as its loading already
+    did: push_ammo_launch; kept so a scene's caches are as its recording
+    run's)."""
     for s in w.order:
         torps = s.GetTorpedoSystem()
         if torps is None:
             continue
         for ammo in torps._ammo_by_slot.values():
-            script = ammo.GetTorpedoScript()
-            nc.learn_tube_launch(script, ws._resolve_projectile_module(script))
-
-
-def _forget_launches(w):
-    """Every ammo type's (and torpedo property's slot-0) launch forgotten
-    without the re-read, so its next launch is handed back uncached and
-    Python's launch learns it (native arm only). (A projectile-cache reset
-    made inside a K1 session no longer leaves rows so -- they keep their
-    launch until the next K1 entry, fire control native only, M8.3: this
-    is the uncached state itself.)"""
-    if not w.native:
-        return
-    ws._tube_launch_cache.clear()
-    for h, obj in list(nc._registry.items()):
-        if isinstance(obj, ws.TorpedoAmmoType):
-            nc._push_ammo_row(obj)
-        elif "_torpedo_scripts" in obj.__dict__:
-            nc._push_slot0_row(obj)
+            nc.push_ammo_launch(ammo)
 
 
 def _launch_arms(monkeypatch, script, ticks, *, ships=_LAUNCH_SHIPS,
-                 learn=True, inside=None, player="Galaxy"):
-    """Both arms over `ticks` scoped ticks (the tick's effect scope, as in
-    play): `script(w, t)` before each tick, `inside(w, t)` inside the scope
-    after it (what the rest of the step does after the weapons: in the
-    reference it runs after the launches too). Returns (ref, nat) as
-    (world, launches, counts)."""
-    arms = []
-    for native in (False, True):
-        with monkeypatch.context() as mp:
-            w = World(mp, native, ships, "k1_launch_%d" % native,
-                      player=player)
-            launches = _Launches(w)
-            try:
-                if learn:
-                    _learn_launches(w)
-                for t in range(ticks):
-                    with host_loop._combat_effect_scope():
-                        w.tick(before=lambda w, t=t: script(w, t))
-                        if inside is not None:
-                            inside(w, t)
-                counts = nc.counts() if native else None
-                if native:
-                    nc.audit_mirror()
-                    assert nc.audit_failures() == [], nc.audit_failures()
-                    assert _h.combat_k1_depth() == 0
-                    assert _h.combat_effect_take() == []
-            finally:
-                w.close()
-            arms.append((w, launches, counts))
-    (rw, rl, _), (nw, nl, _) = arms
-    for i, (a, b) in enumerate(zip(rw.log, nw.log), start=1):
-        assert a == b, "tick %d differs:\n python %r\n native %r" % (i, a, b)
-    assert nl.events == rl.events
-    for i, (a, b) in enumerate(zip(rl.spawned, nl.spawned)):
+                 learn=True, inside=None, player="Galaxy", recorded=True,
+                 until=None):
+    """`ticks` scoped ticks natively (the tick's effect scope, as in play):
+    `script(w, t)` before each tick, `inside(w, t)` inside the scope after
+    it (what the rest of the step does after the weapons: in the recorded
+    reference it ran after the launches too), compared with the recorded
+    Python run -- every tick's state, every launch event in order, every
+    spawned torpedo field by field. Returns (ref, nat) as (world,
+    launches, counts), the native run standing for both; the reference's
+    `pulse_state` and `fired`, which the native run's are compared with,
+    as recorded (`ref.recorded`). `until`: compare only the ticks (and
+    events) up to that tick -- the scene diverges from the recording after
+    it by design (a no-fire, R2, R3) --, and every spawned torpedo.
+    `recorded` False: no recording (a scene whose Python is no reference
+    any more, the test's own assertions stand alone)."""
+    want = _recorded("launch") if recorded else None
+    with monkeypatch.context() as mp:
+        w = World(mp, True, ships, "k1_launch_1", player=player)
+        launches = _Launches(w)
+        try:
+            if learn:
+                _learn_launches(w)
+            for t in range(ticks):
+                with host_loop._combat_effect_scope():
+                    w.tick(before=lambda w, t=t: script(w, t))
+                    if inside is not None:
+                        inside(w, t)
+            counts = nc.counts()
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+            assert _h.combat_k1_depth() == 0
+            assert _h.combat_effect_take() == []
+        finally:
+            w.close()
+    if want is None:
+        w.recorded = None
+        return [(w, launches, counts), (w, launches, counts)]
+    if until is None:
+        _same_log(want["log"], _norm(w.log))
+        assert _norm(launches.events) == want["events"]
+    else:
+        _same_log(want["log"][:until], _norm(w.log[:until]))
+        assert _norm([e for e in launches.events if e[3] <= until]) == [
+            e for e in want["events"] if e[3] <= until]
+    got = _norm(launches.spawned)
+    for i, (a, b) in enumerate(zip(want["spawned"], got)):
         for j, (x, y) in enumerate(zip(a, b)):
             assert x == y, "torpedo %d field %d:\n python %r\n native %r" % (
                 i, j, x, y)
-    assert len(nl.spawned) == len(rl.spawned)
-    return arms
+    assert len(got) == len(want["spawned"])
+    for name in ("pulse_state", "fired"):
+        assert _norm(getattr(w, name, None)) == want[name], name
+    w.recorded = want
+    return [(w, launches, counts), (w, launches, counts)]
 
 
 def _tube_volley(w, t):
@@ -2810,22 +1748,6 @@ def test_a_type_is_cached_when_loaded(monkeypatch):
     assert counts["k1_launch_reasons"]["launch_uncached"] == 0, counts
     assert not any(counts["k1_launch_reasons"].values()), counts
     assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) >= 3
-
-
-def test_first_launch_of_a_script_is_python_then_cached(monkeypatch):
-    """P6 extended: a type whose launch is not cached (forgotten without the
-    re-read: THE P6 WINDOW) hands its next launch back (the FIRE record,
-    launch_uncached); Python's launch caches it and every later launch of
-    any ammo type of that script is native."""
-    def script(w, t):
-        if t == 0:
-            _forget_launches(w)
-        _tube_volley(w, t)
-
-    (rw, rl, _), (nw, nl, counts) = _launch_arms(
-        monkeypatch, script, 95, learn=False)
-    assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
-    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) - 1 >= 2
 
 
 def test_a_launcher_freed_before_the_boundary_still_spawns(monkeypatch):
@@ -2885,7 +1807,7 @@ def test_spawn_is_where_the_ship_was_at_fire_time(monkeypatch):
 def test_last_round_debits_like_python(monkeypatch):
     """Review Focus 2. A finite magazine down to its last rounds: the ammo
     debit, `_num_ready`, the slot cooldown and the fire stamps are Python's
-    exactly, the magazine ends empty, and the player's
+    exactly (recorded), the magazine ends empty, and the player's
     ET_TORPEDO_AMMO_CONSUMED follows each spawn."""
     state = {}
 
@@ -2907,8 +1829,8 @@ def test_last_round_debits_like_python(monkeypatch):
             _t(torps.__dict__["_last_system_fire_time"]), tube_rows))
 
     (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 95)
-    assert state[True] == state[False]
-    assert state[False][-1][0] == ("int", 0)
+    assert _norm(state[True]) == recorded_side("state")
+    assert state[True][-1][0] == ("int", 0)
     assert len(nl.spawned) == 2 and counts["k1_logged"]["tube_launch"] == 2
     assert [e[0] for e in nl.events].count("ammo_consumed") == 2
 
@@ -2917,8 +1839,11 @@ def test_dead_or_dropped_target_keeps_the_fire_time_values(monkeypatch):
     """Review Focus 5. The target dies after the weapons (and, the next
     volley, its row is dropped: a value the mirror cannot hold) before the
     boundary: the torpedo is spawned anyway with the target it fired at,
-    as the reference -- which spawned it mid-walk, the target still alive
-    -- did."""
+    as the recorded reference -- which spawned it mid-walk, the target
+    still alive -- did. From the drop on the Galaxy's torpedoes, whose
+    target list names a row gone, do not fire (fire control native only,
+    R3: counted, stale_row; the drop itself is counted, dropped), where
+    the reference walked on: compared up to the drop's tick."""
     def script(w, t):
         torps = w.ships["Galaxy"].GetTorpedoSystem()
         ahead = w.ships["Ahead"]
@@ -2931,13 +1856,15 @@ def test_dead_or_dropped_target_keeps_the_fire_time_values(monkeypatch):
     def kill(w, t):
         if t == 0:
             w.ships["Ahead"].SetDead(True)
-        elif t == 31 and w.native:
+        elif t == 31:
             nc._drop(w.ships["Ahead"])
 
     (rw, rl, _), (nw, nl, counts) = _launch_arms(
-        monkeypatch, script, 40, inside=kill)
+        monkeypatch, script, 40, inside=kill, until=32)
     assert [s[9] for s in nl.spawned] == ["Ahead", "Ahead"], nl.spawned
     assert counts["k1_logged"]["tube_launch"] == 2, counts
+    assert counts["k1_no_fire"]["dropped"] == 1, counts["k1_no_fire"]
+    assert counts["k1_no_fire"]["stale_row"] > 0, counts["k1_no_fire"]
 
 
 _MATAN = []
@@ -2973,57 +1900,6 @@ def test_entered_set_handler_acts_on_the_spawned_torpedo(monkeypatch):
     assert counts["k1_logged"]["tube_launch"] >= 2, counts
 
 
-def test_launches_the_kernel_cannot_make_run_python(monkeypatch):
-    """Review Focus 4. An ammo type with no script (Python reads the
-    property's: launch_unresolved) and a patched spawn function
-    (launch_patched): each launch is the FIRE record, run in Python, never
-    guessed -- and equal to the reference."""
-    for case in ("unresolved", "patched"):
-        def script(w, t, case=case):
-            torps = w.ships["Galaxy"].GetTorpedoSystem()
-            if t == 0:
-                ammo = torps.GetCurrentAmmoType()
-                if case == "unresolved":
-                    ammo.SetTorpedoScript(None)
-                else:
-                    spawn = ws._spawn_projectile
-                    w.mp.setattr(ws, "_spawn_projectile",
-                                 lambda *a, **kw: spawn(*a, **kw))
-            _tube_volley(w, t)
-
-        (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 64)
-        assert len(nl.spawned) >= 2, case
-        why = counts["k1_launch_reasons"]
-        assert why["launch_" + case] >= 1, (case, why)
-        assert counts["k1_logged"]["tube_launch"] == 0, (case, counts)
-
-
-def test_python_fallback_launch_defers_its_spawn(monkeypatch):
-    """Ruling E4 for launches: the launch K1 hands back (here uncached, its
-    launch forgotten) runs Python's effect mid-walk, but its spawn -- and
-    its ET_TORPEDO_ENTERED_SET -- wait for the boundary like the kernel's,
-    so every launch in the scope spawns there in emission order."""
-    from engine.appc import effect_queue as eq
-    spawned_while = []
-
-    def script(w, t):
-        if t == 0:
-            _forget_launches(w)
-        _tube_volley(w, t)
-        if t == 0:
-            w.hooks.append(lambda evt: spawned_while.append(
-                (eq._draining, _h.combat_k1_depth()))
-                if evt.GetEventType() == App.ET_TORPEDO_ENTERED_SET
-                else None)
-
-    (rw, rl, _), (nw, nl, counts) = _launch_arms(
-        monkeypatch, script, 40, learn=False)
-    assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
-    native = spawned_while[len(spawned_while) // 2:]
-    assert native and all(d and depth == 0 for d, depth in native), \
-        spawned_while
-
-
 def test_impure_module_launches_through_spawn(tmp_path, monkeypatch):
     """Ruling L6: a module whose Create draws a random number is no reason
     to hand a launch back: it is cached like any other, the kernel makes
@@ -3048,30 +1924,6 @@ def test_impure_module_launches_through_spawn(tmp_path, monkeypatch):
 
 _PULSE_SHIPS = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
                 ("Galaxy", "galaxy", (40.0, 220.0, 12.0), math.pi))
-
-
-def test_python_pulse_launch_defers_its_spawn(monkeypatch):
-    """Ruling L5. Inside the deferral a cannon's bolt is a SPAWN (the
-    kernel's since Task 3; a launch it hands back runs Python's, which
-    defers too: test_pulse_launch_with_an_unloaded_module_runs_python):
-    built at the boundary with the fire-time values, scaled by the
-    fire-time power setting after its set entry, then its ET_WEAPON_FIRED
-    -- every bolt, field by field, and every event, as the reference."""
-    def script(w, t):
-        if t == 0:
-            w.ships["Vorcha"].GetPulseWeaponSystem().StartFiring(
-                w.ships["Galaxy"], TGPoint3(0.5, 1.0, -0.25))
-            for c in _weapons(w.ships["Vorcha"].GetPulseWeaponSystem()):
-                c.SetPowerSetting(2)
-
-    (rw, rl, _), (nw, nl, counts) = _launch_arms(
-        monkeypatch, script, 240, ships=_PULSE_SHIPS, player="Vorcha")
-    assert len(nl.spawned) >= 2
-    assert all(s[14] == ("bool", True) for s in nl.spawned)  # bolts
-    kinds = [e[0] for e in nl.events]
-    assert kinds == ["entered", "fired"] * (len(kinds) // 2), kinds
-    damages = [t._damage for t in nl.torps]
-    assert damages == [t._damage for t in rl.torps]
 
 
 def _pulse_volley(w, t):
@@ -3156,54 +2008,6 @@ def test_pulse_launch_with_an_unloaded_module_is_repushed(monkeypatch):
     assert counts["k1_logged"]["pulse_launch"] == len(nl.spawned), counts
 
 
-def test_pulse_launch_with_a_patched_launch_function_runs_python(
-        monkeypatch):
-    """Review Focus 4 for cannons: a launch function patched (a test's
-    spy, a tool) -- every cannon launch is the FIRE record (launch_patched)
-    and spawns mid-walk through the patch (ruling L7). Native only: two
-    cannons launching in one walk then order their events unlike the
-    reference (the spawns mid-walk, the ET_WEAPON_FIRED at the boundary),
-    as a patched tube's do (test_patched_launch_function_seen_by_the_next_
-    walk); parity under a patch is not what this pins."""
-    spawned = []
-    with monkeypatch.context() as mp:
-        w = World(mp, True, _PULSE_SHIPS, "k1_pulse_patch", player="Vorcha")
-        spawn = ws._spawn_projectile
-
-        def spy(*a, **kw):
-            torp = spawn(*a, **kw)
-            spawned.append(torp)
-            return torp
-        mp.setattr(ws, "_spawn_projectile", spy)
-        try:
-            for t in range(120):
-                with host_loop._combat_effect_scope():
-                    w.tick(before=lambda w, t=t: _pulse_volley(w, t))
-            counts = nc.counts()
-        finally:
-            w.close()
-    assert len(spawned) >= 2
-    assert counts["k1_launch_reasons"]["launch_patched"] == len(spawned)
-    assert counts["k1_logged"]["pulse_launch"] == 0, counts
-
-
-def test_launch_check_moves_the_epoch_only_on_a_change(monkeypatch):
-    """The launch check runs before every combat_k1_next: it sets its
-    flags only when they change, so a record that changes nothing leaves
-    the mirror's epoch where it was (K0's and K2's caches key on it)."""
-    w = World(monkeypatch, True, (("Galaxy", "galaxy", (0.0, 0.0, 0.0),
-                                   0.0),), "k1_epoch")
-    try:
-        w.tick()
-        before = _h.combat_epoch()
-        for _ in range(3):
-            with step_memo.combat_step():
-                host_loop._pump_held_weapons([], DT)
-        assert _h.combat_epoch() == before
-    finally:
-        w.close()
-
-
 def test_launch_modules_are_released_with_their_rows(monkeypatch):
     """A row's launch module (an ammo type's, a cannon's) is an owned
     reference in the bindings: dropped when the row is unregistered, not
@@ -3215,7 +2019,7 @@ def test_launch_modules_are_released_with_their_rows(monkeypatch):
     torps = ship.GetTorpedoSystem()
     ammo = torps.GetCurrentAmmoType()
     script = ammo.GetTorpedoScript()
-    nc.learn_tube_launch(script, ws._resolve_projectile_module(script))
+    nc.push_ammo_launch(ammo)
     for row, mod in ((ammo, ws._projectile_modules[script]),
                      (cannon, sys.modules[ws.pulse_module_script(cannon)])):
         held = sys.getrefcount(mod)
@@ -3343,10 +2147,11 @@ def test_swap_reloaded_module_launches_natively(tmp_path, monkeypatch):
 def test_a_type_that_does_not_resolve_keeps_its_fallbacks(monkeypatch):
     """Task 5 keeps the resolve's own fallbacks, and loading never raises:
     a script that does not import is cached as the stock photon Python's
-    launch substitutes (every launch native, as the reference's); one whose
-    photon fallback fails too is unresolved -- every launch handed back
-    (launch_unresolved, never launch_uncached) and Python spawns nothing,
-    as before."""
+    launch substitutes (every launch native, as the recorded reference's);
+    one whose photon fallback fails too is unresolved -- its launch does
+    not fire (fire control native only, M6: a counted no-fire, launch, its
+    why launch_unresolved, never launch_uncached; the tubes keep their
+    rounds), where the reference's spawned nothing but spent the round."""
     for case in ("photon", "unresolved"):
         def script(w, t, case=case):
             torps = w.ships["Galaxy"].GetTorpedoSystem()
@@ -3361,7 +2166,7 @@ def test_a_type_that_does_not_resolve_keeps_its_fallbacks(monkeypatch):
 
         try:
             (rw, rl, _), (nw, nl, counts) = _launch_arms(
-                monkeypatch, script, 64)
+                monkeypatch, script, 64, recorded=case == "photon")
         finally:
             ws._reset_projectile_module_cache()
         why = counts["k1_launch_reasons"]
@@ -3372,51 +2177,11 @@ def test_a_type_that_does_not_resolve_keeps_its_fallbacks(monkeypatch):
             assert logged == len(nl.spawned) >= 2, counts
         else:
             assert why["launch_unresolved"] >= 2, why
+            assert counts["k1_no_fire"]["launch"] == \
+                why["launch_unresolved"], counts["k1_no_fire"]
             assert logged == 0 and nl.spawned == [], counts
-
-
-# A GetLaunchSpeed that raises while RAISE[0] is set (test-local).
-_RAISING_SPEED_TORP = _PURE_TORP.replace(
-    "def GetLaunchSpeed():\n    return(21.0)\n",
-    "RAISE = [1]\n\n"
-    "def GetLaunchSpeed():\n"
-    "    if RAISE[0]:\n"
-    "        raise RuntimeError('k1fx: no launch speed yet')\n"
-    "    return(21.0)\n")
-
-
-def test_a_raising_launch_speed_at_load_stays_uncached(tmp_path, monkeypatch):
-    """Task 5 review: the type's module raises from GetLaunchSpeed when
-    the type is loaded (SetTorpedoScript). Loading succeeds, the type stays
-    uncached (as tube_launch_params always left it), and its first launch
-    is handed back (launch_uncached): Python's launch, as before, which
-    learns it -- by then the getter answers -- so the rest are native,
-    every torpedo as the reference's (which never read it at load)."""
-    name = "k1fx_raising_speed"
-    mod = _fixture_module(tmp_path, monkeypatch, name, _RAISING_SPEED_TORP)
-    assert "RAISE" in vars(mod)         # the replace took
-    states = []
-
-    def script(w, t):
-        torps = w.ships["Galaxy"].GetTorpedoSystem()
-        if t == 0:
-            ws._reset_projectile_module_cache()     # each arm resolves
-            mod.RAISE[0] = 1
-            ammo = torps.GetCurrentAmmoType()
-            ammo.SetTorpedoScript(name)             # loads: must not raise
-            if w.native:
-                states.append(_h.combat_dump(
-                    ammo.__dict__["_nslot"])["ammo_launch_state"])
-            mod.RAISE[0] = 0
-        _tube_volley(w, t)
-
-    try:
-        (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 95)
-    finally:
-        ws._reset_projectile_module_cache()
-    assert states == [ws.LAUNCH_UNCACHED]
-    assert counts["k1_launch_reasons"]["launch_uncached"] == 1, counts
-    assert counts["k1_logged"]["tube_launch"] == len(nl.spawned) - 1 >= 2
+            tubes = _weapons(nw.ships["Galaxy"].GetTorpedoSystem())
+            assert all(t.GetNumReady() == 1 for t in tubes)
 
 
 def test_kernel_spawn_launches_the_fire_time_module(monkeypatch):
@@ -3469,64 +2234,6 @@ def test_posed_target_offset_launches_natively(monkeypatch):
     assert nl.spawned, nl.spawned
 
 
-_TWO_LAUNCHERS = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
-                  ("Galaxy2", "galaxy", (20.0, 0.0, 0.0), 0.0),
-                  ("Ahead", "vorcha", (10.0, 240.0, 5.0), math.pi))
-
-
-def test_patched_launch_function_seen_by_the_next_walk(monkeypatch):
-    """M3: a launch function patched mid-session -- here by the Python of
-    the session's first launch, a FIRE record (uncached: its launch
-    forgotten) -- is seen at the
-    next record's re-validation, not only at the next K1 entry: the second
-    ship's launch in the same pump is handed back (launch_patched)."""
-    from engine.appc import subsystems
-    real = subsystems.subsystem_world_position
-    learn = nc.learn_tube_launch
-
-    def spy(*a, **kw):
-        return real(*a, **kw)
-
-    def script(w, t):
-        if t == 0:
-            _forget_launches(w)
-
-            def learn_and_patch(*a, **kw):
-                w.mp.setattr(subsystems, "subsystem_world_position", spy)
-                return learn(*a, **kw)
-            w.mp.setattr(nc, "learn_tube_launch", learn_and_patch)
-            for name in ("Galaxy", "Galaxy2"):
-                torps = w.ships[name].GetTorpedoSystem()
-                for tube in _weapons(torps):
-                    tube.SetNumReady(0)
-                torps.StartFiring(w.ships["Ahead"])
-        elif t == 1:
-            for name in ("Galaxy", "Galaxy2"):
-                for tube in _weapons(w.ships[name].GetTorpedoSystem()):
-                    tube.SetNumReady(1)
-
-    # Native only: under a patch Python's launches spawn at once through it
-    # (the spy is the point), so a tick with two launches orders its events
-    # unlike the reference's; parity under a patch is not what this pins.
-    with monkeypatch.context() as mp:
-        w = World(mp, True, _TWO_LAUNCHERS, "k1_patch_mid", player="Galaxy")
-        try:
-            for t in range(40):
-                with host_loop._combat_effect_scope():
-                    w.tick(before=lambda w, t=t: script(w, t))
-            counts = nc.counts()
-        finally:
-            w.close()
-    why = counts["k1_launch_reasons"]
-    assert why["launch_uncached"] == 1, why
-    assert why["launch_patched"] >= 1, why
-    assert counts["k1_logged"]["tube_launch"] == 0, counts
-    names = nc._k1_launch_funcs_names()
-    for name in ("_launch_reads", "_defer_spawn", "spawn_launch",
-                 "subsystem_world_position", "source_set"):
-        assert name in names, name
-
-
 _POSED_LAUNCH_SHIPS = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
                        ("Ahead", "birdofprey", (10.0, 240.0, 5.0), math.pi,
                         "ships.BirdOfPrey"))
@@ -3555,29 +2262,3 @@ def test_warp_engine_slot_write_pushes_arriving(monkeypatch):
     assert [f for f in nc.audit_failures() if f[1] == "arriving"] == []
 
 
-def test_python_dumb_fire_spawn_is_tagged_dumb(monkeypatch):
-    """Python's FireDumb (a dumb fire the kernel hands back: here its
-    launch forgotten, uncached) defers its SPAWN tagged as the dumb kind,
-    like the kernel's. (The SDK's FireDumb is itself a native session since
-    fire control native only, M8.1: the hand-back is its FIRE_DUMB.)"""
-    from engine.appc import effect_queue as eq
-    kinds = []
-    post = eq.post
-
-    def spy(kind, *ops):
-        if kind == eq.SPAWN:
-            kinds.append(ops[1])
-        return post(kind, *ops)
-    monkeypatch.setattr(eq, "post", spy)
-    with monkeypatch.context() as mp:
-        w = World(mp, True, _LAUNCH_SHIPS, "k1_dumb_tag", player="Galaxy")
-        try:
-            tube = w.ships["Galaxy"].GetTorpedoSystem().GetWeapon(0)
-            _forget_launches(w)
-            with eq.scope():
-                tube.FireDumb(0, 1)
-            assert kinds == [ws.SPAWN_DUMB], kinds
-            why = nc.counts()["k1_launch_reasons"]
-            assert why["launch_uncached"] >= 1, why
-        finally:
-            w.close()

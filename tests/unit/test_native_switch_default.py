@@ -93,7 +93,7 @@ def test_fire_control_native_with_switch_zero(monkeypatch):
             counts = nc.counts()
             after = [shields.GetCurShields(i) for i in range(6)]
             assert counts["k1_records"] > 0, counts
-            assert counts["k1_python_systems"] == 0, counts
+            assert not any(counts["k1_no_fire"].values()), counts
             assert counts["k0_steps"] == 0, counts
             assert counts["k2_records"] == 0, counts
             assert counts["k3_runs"] == 0, counts
@@ -254,15 +254,3 @@ def test_fire_control_before_configure_raises_without_the_module(
     finally:
         monkeypatch.setattr(nc, "_h", _h)
         w.close()
-
-
-def test_python_fire_control_is_an_explicit_test_hook():
-    """The K1 differential's Python reference is a test-only hook, not an
-    unconfigured state: while it is set fire control is Python even with
-    the mirror live; reset() clears it."""
-    nc.configure({})
-    nc.use_python_fire_control_for_tests()
-    assert not nc.fire_control_native()
-    assert nc.enabled()                  # the switch is untouched
-    nc.reset()
-    assert nc.fire_control_native()      # live again on first use

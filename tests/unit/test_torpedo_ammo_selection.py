@@ -13,8 +13,8 @@ from engine.appc.weapon_subsystems import TorpedoAmmoType
 
 def _system_with_two_types():
     t = TorpedoSystem("Torpedoes")
-    t.AddAmmoType(TorpedoAmmoType("Photon", power_cost=20.0))
-    t.AddAmmoType(TorpedoAmmoType("Quantum", power_cost=30.0))
+    t.AddAmmoType(TorpedoAmmoType("Photon", power_cost=20.0, script="Tactical.Projectiles.PhotonTorpedo"))
+    t.AddAmmoType(TorpedoAmmoType("Quantum", power_cost=30.0, script="Tactical.Projectiles.PhotonTorpedo"))
     return t
 
 
@@ -49,7 +49,7 @@ def test_cycle_ammo_type_advances_and_wraps():
 
 def test_cycle_single_type_no_op():
     t = TorpedoSystem("Torpedoes")
-    t.AddAmmoType(TorpedoAmmoType("Photon", power_cost=20.0))
+    t.AddAmmoType(TorpedoAmmoType("Photon", power_cost=20.0, script="Tactical.Projectiles.PhotonTorpedo"))
     t.CycleAmmoType()
     assert t.GetCurrentAmmoType().GetAmmoName() == "Photon"
 
@@ -103,13 +103,13 @@ def test_set_ammo_type_unpopulated_slot_is_noop():
 # ── Ammo-type reserve state (SDK GetMaxTorpedoes / GetNumAvailableTorpsToType) ──
 
 def test_ammo_type_seeds_available_to_declared_max():
-    a = TorpedoAmmoType("Photon", max_torpedoes=200)
+    a = TorpedoAmmoType("Photon", max_torpedoes=200, script="Tactical.Projectiles.PhotonTorpedo")
     assert a.GetMaxTorpedoes() == 200
     assert a.GetAvailable() == 200  # spawns fully loaded
 
 
 def test_add_available_clamps_to_range():
-    a = TorpedoAmmoType("Photon", max_torpedoes=10)
+    a = TorpedoAmmoType("Photon", max_torpedoes=10, script="Tactical.Projectiles.PhotonTorpedo")
     a.AddAvailable(-3)
     assert a.GetAvailable() == 7
     a.AddAvailable(+100)          # clamp up to max
@@ -121,14 +121,14 @@ def test_add_available_clamps_to_range():
 def test_undeclared_max_is_unlimited_no_op():
     # max_torpedoes=None (the undeclared-slot / legacy fallback) => reserve is
     # inert: AddAvailable never changes anything, so firing can't run it dry.
-    a = TorpedoAmmoType("Photon")  # no max declared
+    a = TorpedoAmmoType("Photon", script="Tactical.Projectiles.PhotonTorpedo")  # no max declared
     a.AddAvailable(-5)
     assert a.GetAvailable() == 0   # unlimited types report 0 available, unchanged
     assert a.GetMaxTorpedoes() == 0
 
 
 def test_set_max_torpedoes_makes_finite():
-    a = TorpedoAmmoType("Photon")  # unlimited
+    a = TorpedoAmmoType("Photon", script="Tactical.Projectiles.PhotonTorpedo")  # unlimited
     a.SetMaxTorpedoes(5)
     a.SetAvailable(5)
     a.AddAvailable(-2)
@@ -144,8 +144,8 @@ def test_ammo_type_script_round_trip():
 
 def _system_with_finite_types():
     t = TorpedoSystem("Torpedoes")
-    t.AddAmmoType(TorpedoAmmoType("Photon", power_cost=20.0, max_torpedoes=200))
-    t.AddAmmoType(TorpedoAmmoType("Quantum", power_cost=30.0, max_torpedoes=60))
+    t.AddAmmoType(TorpedoAmmoType("Photon", power_cost=20.0, max_torpedoes=200, script="Tactical.Projectiles.PhotonTorpedo"))
+    t.AddAmmoType(TorpedoAmmoType("Quantum", power_cost=30.0, max_torpedoes=60, script="Tactical.Projectiles.PhotonTorpedo"))
     return t
 
 
@@ -165,9 +165,9 @@ def test_get_available_missing_slot_is_zero():
 
 def test_remove_ammo_type_drops_slot_and_fixes_count():
     t = TorpedoSystem("Torpedoes")
-    t.AddAmmoType(TorpedoAmmoType("Photon", max_torpedoes=200))
-    t.AddAmmoType(TorpedoAmmoType("Quantum", max_torpedoes=60))
-    t.AddAmmoType(TorpedoAmmoType("Phased", max_torpedoes=0))
+    t.AddAmmoType(TorpedoAmmoType("Photon", max_torpedoes=200, script="Tactical.Projectiles.PhotonTorpedo"))
+    t.AddAmmoType(TorpedoAmmoType("Quantum", max_torpedoes=60, script="Tactical.Projectiles.PhotonTorpedo"))
+    t.AddAmmoType(TorpedoAmmoType("Phased", max_torpedoes=0, script="Tactical.Projectiles.PhotonTorpedo"))
     # QuickBattle prunes everything past index 1.
     for i in range(t.GetNumAmmoTypes()):
         if i >= 2:
@@ -206,9 +206,9 @@ def test_empty_declared_type_not_selectable():
     (GetNumAvailableTorpsToType > 0), so it's hidden in missions too, not only
     QuickBattle where it's also hard-removed."""
     t = TorpedoSystem("Torpedoes")
-    t.AddAmmoType(TorpedoAmmoType("Photon", max_torpedoes=200))
-    t.AddAmmoType(TorpedoAmmoType("Quantum", max_torpedoes=60))
-    t.AddAmmoType(TorpedoAmmoType("Phased", max_torpedoes=0))
+    t.AddAmmoType(TorpedoAmmoType("Photon", max_torpedoes=200, script="Tactical.Projectiles.PhotonTorpedo"))
+    t.AddAmmoType(TorpedoAmmoType("Quantum", max_torpedoes=60, script="Tactical.Projectiles.PhotonTorpedo"))
+    t.AddAmmoType(TorpedoAmmoType("Phased", max_torpedoes=0, script="Tactical.Projectiles.PhotonTorpedo"))
     assert t.GetNumAmmoTypes() == 3
     assert t.GetSelectableAmmoSlots() == [0, 1]
     assert t.IsAmmoTypeSelectable(2) is False
@@ -225,7 +225,7 @@ def test_unlimited_type_is_selectable_despite_zero_available():
     """Undeclared-max (unlimited) types report 0 available but are an
     inexhaustible supply — they must stay selectable."""
     t = TorpedoSystem("Torpedoes")
-    t.AddAmmoType(TorpedoAmmoType("Photon"))  # unlimited
+    t.AddAmmoType(TorpedoAmmoType("Photon", script="Tactical.Projectiles.PhotonTorpedo"))  # unlimited
     assert t.GetNumAvailableTorpsToType(0) == 0
     assert t.IsAmmoTypeSelectable(0) is True
     assert t.GetSelectableAmmoSlots() == [0]
@@ -233,9 +233,9 @@ def test_unlimited_type_is_selectable_despite_zero_available():
 
 def test_cycle_skips_empty_type():
     t = TorpedoSystem("Torpedoes")
-    t.AddAmmoType(TorpedoAmmoType("Photon", max_torpedoes=200))
-    t.AddAmmoType(TorpedoAmmoType("Quantum", max_torpedoes=60))
-    t.AddAmmoType(TorpedoAmmoType("Phased", max_torpedoes=0))  # empty
+    t.AddAmmoType(TorpedoAmmoType("Photon", max_torpedoes=200, script="Tactical.Projectiles.PhotonTorpedo"))
+    t.AddAmmoType(TorpedoAmmoType("Quantum", max_torpedoes=60, script="Tactical.Projectiles.PhotonTorpedo"))
+    t.AddAmmoType(TorpedoAmmoType("Phased", max_torpedoes=0, script="Tactical.Projectiles.PhotonTorpedo"))  # empty
     assert t.GetCurrentAmmoType().GetAmmoName() == "Photon"
     t.CycleAmmoType()
     assert t.GetCurrentAmmoType().GetAmmoName() == "Quantum"
@@ -258,11 +258,8 @@ def _firing_system_with_reserve(max_torpedoes):
     R = TGMatrix3(); R.MakeIdentity()
     ship.SetMatrixRotation(R)
 
-    class _Tgt:
-        def __init__(self): self._loc = TGPoint3(0, 100, 0)
-        def GetWorldLocation(self): return self._loc
-        def IsDead(self): return 0
-    tgt = _Tgt()
+    tgt = ShipClass_Create("Tgt")       # a real ship: the mirror names it
+    tgt.SetTranslateXYZ(0.0, 100.0, 0.0)
     ship._target = tgt
     ship._target_subsystem = None
 
@@ -274,10 +271,11 @@ def _firing_system_with_reserve(max_torpedoes):
     parent._parent_ship = ship
     ship._torpedo_system = parent
     parent.AddAmmoType(TorpedoAmmoType(
-        "Photon", power_cost=20.0, max_torpedoes=max_torpedoes))
+        "Photon", power_cost=20.0, max_torpedoes=max_torpedoes, script="Tactical.Projectiles.PhotonTorpedo"))
 
     tube = TorpedoTube("Torpedo 0")
     tube._max_ready = 99
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 99
     tube._reload_delay = 40.0
     parent.AddChildSubsystem(tube)
@@ -340,6 +338,7 @@ def test_fire_uses_selected_ammo_slot():
 
     tube = TorpedoTube("Forward Torpedo 1")
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     parent.AddChildSubsystem(tube)
 

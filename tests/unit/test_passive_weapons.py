@@ -10,6 +10,7 @@ import pytest
 from engine import host_loop
 from engine.appc import native_combat
 from engine.appc import passive_state
+from engine.appc import weapon_subsystems as ws
 from engine.appc.ship_iter import iter_ships
 from engine.appc.weapon_subsystems import (
     PhaserBank, PhaserSystem, PulseWeapon, TorpedoTube, TractorBeam,
@@ -99,7 +100,8 @@ def _a_bank_that_fires(ships):
     for bank in _sleeping(_weapons(ships, PhaserBank)):
         own = bank.GetParentShip()
         for target in ships:
-            if target is not own and bank._aim_in_arc(target):
+            if target is not own and ws._emitter_in_arc(
+                    bank, own, ws._resolve_bank_aim_world(bank, target)):
                 return bank, target
     raise AssertionError("no bank has a ship in arc")
 

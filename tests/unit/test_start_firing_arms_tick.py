@@ -2,12 +2,13 @@
 
 Task 5 of the BC-faithful weapon dispatch branch: `WeaponSystem.StartFiring`
 records held-trigger state (`_fire_held`, `_held_target`, `_held_offset`,
-`_add_target`) and forces one immediate `update_weapons(0.0)` (SetForceUpdate
+`_add_target`) and forces one immediate update, dt 0.0 (SetForceUpdate
 makes the inter-shot timer pass, so a single tap still fires this frame —
 the SDK's FireWeapons does exactly StartFiring + SetForceUpdate(1)).
 `StopFiring` disarms: clears the held state, the target list, and resets
 `_last_group_fired` to the -1 sentinel.
 """
+from engine.appc import native_combat
 from engine.appc.weapon_subsystems import TorpedoSystem
 
 
@@ -19,7 +20,10 @@ def test_start_firing_arms_and_fires_via_force_update(monkeypatch):
     sys_ = TorpedoSystem("Torpedoes")
     sys_.TurnOn()
     fired = []
-    monkeypatch.setattr(sys_, "update_weapons", lambda dt: fired.append(dt) or True)
+    # The immediate update is a native K1 system session (fire control
+    # native only, M3): native_combat.k1_system(system, 0.0).
+    monkeypatch.setattr(native_combat, "k1_system",
+                        lambda s, dt: fired.append(dt) if s is sys_ else None)
     target = _LiveTarget()
     sys_.StartFiring(target, None)
     assert getattr(sys_, "_fire_held", False)

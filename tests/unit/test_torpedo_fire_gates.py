@@ -202,30 +202,36 @@ def test_gated_out_fire_returns_false_and_posts_nothing(recorded_events):
     assert recorded_events == []
 
 
-# ── Module helpers, exercised directly ──────────────────────────────────────
+# ── The kernel's helpers, exercised directly (fire control's one copy since
+# its Python copy was deleted: fire control native only, M3) ────────────────
+
+def _h():
+    import _dauntless_host
+    return _dauntless_host
+
+
+def _slot(obj):
+    return obj.__dict__["_nslot"]
+
 
 def test_resolve_aim_point_none_for_dead_target():
-    from engine.appc.weapon_subsystems import _resolve_torpedo_aim_point
+    from engine.appc.ships import ShipClass_Create
 
     ship, sys_, (t1, _) = make_ship_with_two_tubes()
-
-    class _Dead:
-        def GetWorldLocation(self): return TGPoint3(0, 100, 0)
-        def IsDead(self): return 1
-
-    assert _resolve_torpedo_aim_point(t1, _Dead()) is None
+    dead = ShipClass_Create("Dead")
+    dead.SetTranslateXYZ(0.0, 100.0, 0.0)
+    dead.SetDead(1)
+    assert _h().combat_test_resolve_torpedo_aim_point(_slot(t1),
+                                                      _slot(dead)) is None
 
 
 def test_resolve_aim_point_none_for_none_target():
-    from engine.appc.weapon_subsystems import _resolve_torpedo_aim_point
-
     ship, sys_, (t1, _) = make_ship_with_two_tubes()
-    assert _resolve_torpedo_aim_point(t1, None) is None
+    assert _h().combat_test_resolve_torpedo_aim_point(_slot(t1), -1) is None
 
 
 def test_in_torpedo_cone_rejects_zero_length_aim_vector():
-    from engine.appc.weapon_subsystems import _in_torpedo_cone
-
     ship, sys_, (t1, _) = make_ship_with_two_tubes()
     mount = t1._emitter_world_position()
-    assert _in_torpedo_cone(t1, ship, mount) is False
+    assert _h().combat_test_in_torpedo_cone(
+        _slot(t1), _slot(ship), (mount.x, mount.y, mount.z), False) is False

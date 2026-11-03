@@ -50,9 +50,20 @@ def test_fire_sets_firing_flag():
 
 
 def test_fire_records_target_and_offset():
+    """The beam's stamps: the target, and the offset object as it is (a
+    non-TGPoint3 offset stays itself). A real target: the kernel fires
+    only at objects the mirror names (fire control native only, M3)."""
+    from engine.appc.ships import ShipClass_Create
     bank = _charged_bank()
-    bank.Fire(target="enemy_ship", offset="hit_point")
-    assert bank._target == "enemy_ship"
+    enemy = ShipClass_Create("enemy_ship")
+    ship = bank._climb_to_ship()
+    p = ship.GetWorldLocation() if ship is not None else None
+    if p is not None:
+        d = bank.GetDirection()
+        enemy.SetTranslateXYZ(p.x + d.x * 100.0, p.y + d.y * 100.0,
+                              p.z + d.z * 100.0)
+    bank.Fire(target=enemy, offset="hit_point")
+    assert bank._target is enemy
     assert bank._target_offset == "hit_point"
 
 

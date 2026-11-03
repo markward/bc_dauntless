@@ -69,9 +69,12 @@ def test_the_fixture_actually_moves_the_cannon():
 
 
 def test_a_torpedo_tube_aims_at_the_DRAWN_cannon():
-    from engine.appc.weapon_subsystems import _resolve_torpedo_aim_point
-    tube = types.SimpleNamespace(_target_offset=TGPoint3(*STAR_CANNON))
-    aim = _resolve_torpedo_aim_point(tube, _BoP())
+    """The tube's aim point at a stored offset that IS a mount: the shared
+    target_offset_world (K2's and K3's Python copies; the tube's own aim is
+    the kernel's since fire control went native only, M3, checked against
+    it by tests/helpers/posed_fight.py)."""
+    from engine.appc.subsystems import target_offset_world
+    aim = target_offset_world(_BoP(), TGPoint3(*STAR_CANNON))
     assert _xyz(aim) == pytest.approx(_drawn(_BoP()))
 
 

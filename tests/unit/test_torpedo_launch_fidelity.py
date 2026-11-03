@@ -12,8 +12,11 @@ without depending on PhotonTorpedo.py's authored 19.0.
 """
 import math
 
+import pytest
+
+from engine.appc import projectiles
+from engine.appc import weapon_subsystems as ws
 from engine.appc.math import TGPoint3
-from engine.appc.weapon_subsystems import _spawn_projectile
 
 from tests.helpers.torpedo_fixtures import system_with_tubes, LiveTarget
 
@@ -21,45 +24,50 @@ from tests.helpers.torpedo_fixtures import system_with_tubes, LiveTarget
 SKEW = 0.033   # audited .rdata constant, fixed sign, local frame
 
 
-class _FakeTorpedoModule:
-    """Stand-in for a Tactical.Projectiles.* module — only what
-    _spawn_projectile touches."""
-    def __init__(self, launch_speed):
-        self._launch_speed = launch_speed
+@pytest.fixture
+def spawned(monkeypatch):
+    """Every torpedo the launches register (at their SPAWN delivery)."""
+    out = []
+    real = projectiles.register
 
-    def Create(self, torp):
-        pass
-
-    def GetLaunchSpeed(self):
-        return self._launch_speed
-
-    def GetLaunchSound(self):
-        return ""
+    def spy(torp, *a, **kw):
+        out.append(torp)
+        return real(torp, *a, **kw)
+    monkeypatch.setattr(projectiles, "register", spy)
+    return out
 
 
-def _fire_and_capture(tube_direction, tube_right, ship_vel, skew=False,
-                      launch_speed=10.0):
+def _launch_speed():
+    """The stock photon's launch speed (the fixture tubes' slot-0 script),
+    as the launch cache holds it."""
+    mod = ws._resolve_projectile_module("Tactical.Projectiles.PhotonTorpedo")
+    return ws.tube_launch_params(mod)[1]
+
+
+def _fire_and_capture(spawned, tube_direction, tube_right, ship_vel,
+                      skew=False, target_at=(60.0, 400.0, 0.0)):
     """Build a ready tube on a ship (tests/helpers/torpedo_fixtures.py),
     author the tube's mount Direction/Right, set the ship's velocity, and
-    spawn a projectile via _spawn_projectile directly (bypassing the real
-    hardpoint script so launch_speed is test-controlled).  A live target far
-    off to starboard proves the launch ignores target position.
+    fire it natively (fire control native only, M3: the kernel's launch,
+    spawned at its session's end). A live target off to starboard, inside
+    the +/-30 degree cone, proves the launch ignores target position.
     Returns the spawned Torpedo."""
-    target = LiveTarget(1000.0, 0.0, 0.0)
+    target = LiveTarget(*target_at)
     system, ship = system_with_tubes(1, target=target)
     tube = system.GetWeapon(0)
     tube.SetDirection(tube_direction)
     tube.SetRight(tube_right)
     tube.SetSkewFire(1 if skew else 0)
     ship.SetVelocity(ship_vel)
+    before = len(spawned)
+    assert tube.Fire(target) is True
+    assert len(spawned) == before + 1
+    return spawned[-1]
 
-    mod = _FakeTorpedoModule(launch_speed)
-    return _spawn_projectile(tube, mod)
 
-
-def test_targeted_launch_ignores_target_position():
-    # Target far off to starboard; tube points ship-forward.
-    torp = _fire_and_capture(tube_direction=TGPoint3(0, 1, 0),
+def test_targeted_launch_ignores_target_position(spawned):
+    # Target off to starboard; tube points ship-forward.
+    torp = _fire_and_capture(spawned, tube_direction=TGPoint3(0, 1, 0),
                              tube_right=TGPoint3(1, 0, 0),
                              ship_vel=TGPoint3(0, 0, 0))
     v = torp._velocity
@@ -68,18 +76,19 @@ def test_targeted_launch_ignores_target_position():
     assert abs(v.x) < 1e-6 and abs(v.z) < 1e-6
 
 
-def test_velocity_inherits_ship_motion():
-    torp = _fire_and_capture(tube_direction=TGPoint3(0, 1, 0),
+def test_velocity_inherits_ship_motion(spawned):
+    torp = _fire_and_capture(spawned, tube_direction=TGPoint3(0, 1, 0),
                              tube_right=TGPoint3(1, 0, 0),
-                             ship_vel=TGPoint3(3.0, 0, 0), launch_speed=10.0)
+                             ship_vel=TGPoint3(3.0, 0, 0))
     assert abs(torp._velocity.x - 3.0) < 1e-6
-    assert abs(torp._velocity.y - 10.0) < 1e-6
+    assert abs(torp._velocity.y - _launch_speed()) < 1e-6
 
 
-def test_skew_perturbs_local_direction_fixed_sign():
-    straight = _fire_and_capture(TGPoint3(0, 1, 0), TGPoint3(1, 0, 0),
-                                 TGPoint3(0, 0, 0), skew=False)
-    skewed = _fire_and_capture(TGPoint3(0, 1, 0), TGPoint3(1, 0, 0),
+def test_skew_perturbs_local_direction_fixed_sign(spawned):
+    straight = _fire_and_capture(spawned, TGPoint3(0, 1, 0),
+                                 TGPoint3(1, 0, 0), TGPoint3(0, 0, 0),
+                                 skew=False)
+    skewed = _fire_and_capture(spawned, TGPoint3(0, 1, 0), TGPoint3(1, 0, 0),
                                TGPoint3(0, 0, 0), skew=True)
     # +0.033 x Right -> positive x component, same speed.
     assert skewed._velocity.x > 0
@@ -89,24 +98,15 @@ def test_skew_perturbs_local_direction_fixed_sign():
     assert abs(skewed._velocity.Length() - straight._velocity.Length()) < 1e-6
 
 
-def test_target_lock_still_stamped_but_not_used_for_velocity():
-    """Guidance (Task 9) still needs the target lock stamped — this task
-    only forbids USING it to steer the launch.
-
-    Task 7 audited: "Fire stamps the homing state" — _spawn_projectile now
-    reads the EMITTER's own ``_target`` (stamped by TorpedoTube.Fire's gated
-    targeted path), not the ship's target lock directly.  This test calls
-    _spawn_projectile in isolation (bypassing Fire's CanFire/cone gates to
-    keep the launch-fidelity harness's test-controlled launch_speed), so it
-    stamps tube._target itself — exactly what Fire's targeted path would
-    have done on a successful gate pass."""
-    target = LiveTarget(1000.0, 0.0, 0.0)
-    system, ship = system_with_tubes(1, target=target)
-    tube = system.GetWeapon(0)
-    tube.SetDirection(TGPoint3(0, 1, 0))
-    tube.SetRight(TGPoint3(1, 0, 0))
-    ship.SetVelocity(TGPoint3(0, 0, 0))
-    tube._target = target
-
-    torp = _spawn_projectile(tube, _FakeTorpedoModule(10.0))
-    assert torp._target_ship is target
+def test_target_lock_still_stamped_but_not_used_for_velocity(spawned):
+    """Guidance (Task 9) still needs the target lock stamped -- this task
+    only forbids USING it to steer the launch. Task 7 audited: "Fire stamps
+    the homing state": the launch reads the tube's own `_target`, stamped
+    by its targeted Fire."""
+    torp = _fire_and_capture(spawned, tube_direction=TGPoint3(0, 1, 0),
+                             tube_right=TGPoint3(1, 0, 0),
+                             ship_vel=TGPoint3(0, 0, 0))
+    target = torp._target_ship
+    assert target is not None and target.GetName() == "Target"
+    v = torp._velocity
+    assert abs(v.x) < 1e-6 and abs(v.z) < 1e-6   # straight out regardless

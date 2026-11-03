@@ -67,62 +67,6 @@ def test_start_firing_no_ops_when_no_emitters():
     assert ws.IsFiring() == 0
 
 
-def test_multi_fire_engages_all_eligible():
-    """Default multi-fire: one trigger fires every eligible group member
-    in the same tick (BC §3.2 walk — SetSingleFire(0) hardpoints)."""
-    a = _StubEmitter("A")
-    b = _StubEmitter("B")
-    ws = _system_with([a, b])
-    ws.StartFiring(target="T", offset="O")
-    assert a.fire_calls == [("T", "O")]
-    assert b.fire_calls == [("T", "O")]
-    assert ws.IsFiring() == 1
-
-
-def test_single_fire_picks_one_emitter():
-    a = _StubEmitter("A")
-    b = _StubEmitter("B")
-    ws = _system_with([a, b], single_fire=True)
-    ws.StartFiring(target="T", offset="O")
-    assert a.fire_calls == [("T", "O")]
-    assert b.fire_calls == []
-    assert ws.IsFiring() == 1
-
-
-def test_single_fire_cursor_advances_after_fire():
-    a = _StubEmitter("A")
-    b = _StubEmitter("B")
-    c = _StubEmitter("C")
-    ws = _system_with([a, b, c], single_fire=True)
-    ws.StartFiring(None, None)
-    ws.StopFiring()
-    ws.StartFiring(None, None)
-    assert len(a.fire_calls) == 1
-    assert len(b.fire_calls) == 1
-    assert len(c.fire_calls) == 0
-
-
-def test_single_fire_cursor_wraps_around():
-    a = _StubEmitter("A")
-    b = _StubEmitter("B")
-    ws = _system_with([a, b], single_fire=True)
-    for _ in range(3):
-        ws.StartFiring(None, None)
-        ws.StopFiring()
-    # 3 clicks across 2 emitters → A,B,A
-    assert len(a.fire_calls) == 2
-    assert len(b.fire_calls) == 1
-
-
-def test_cursor_skips_ineligible_emitters():
-    a = _StubEmitter("A", can_fire=False)
-    b = _StubEmitter("B", can_fire=True)
-    ws = _system_with([a, b], single_fire=True)
-    ws.StartFiring(None, None)
-    assert a.fire_calls == []
-    assert b.fire_calls == [(None, None)]
-
-
 def test_no_eligible_emitter_fires_nothing():
     a = _StubEmitter("A", can_fire=False)
     b = _StubEmitter("B", can_fire=False)

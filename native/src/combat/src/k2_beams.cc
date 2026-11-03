@@ -376,8 +376,8 @@ private:
 
     // `sys_.StopFiring()` (THE OFFLINE STOP, k2_beams.h): the logged writes
     // and true -- a firing bank's LOOP_STOP after its own writes. A child
-    // that is not a live, unoverridden phaser bank: false, and nothing
-    // written (the caller emits SYSTEM_STOP).
+    // that is not a live phaser bank: false, and nothing written (the
+    // caller emits SYSTEM_STOP).
     bool offline_stop(int64_t sys) {
         // for i in range(self.GetNumWeapons()): w = self.GetWeapon(i) --
         // the children cannot change: no Python runs in between.
@@ -385,7 +385,7 @@ private:
         bool any_firing = false;
         for (const int64_t k : kids) {
             const SubsystemRow* b = subrow(k);
-            if (!b || b->weapon_kind != kPhaserBank || b->k1_overridden)
+            if (!b || b->weapon_kind != kPhaserBank)
                 return false;
             any_firing = any_firing || b->_firing != 0;
         }
@@ -559,14 +559,13 @@ std::optional<K2Why> Walker::ship_why() const {
     return std::nullopt;
 }
 
-// One child: a live, unoverridden PhaserBank of this ship, and its `_target`
+// One child: a live PhaserBank of this ship, and its `_target`
 // None or a placed Object in a nameable set. The target's IsDead, its lock,
 // its shields and its instance are per-bank ASKs, not fallbacks.
 std::optional<K2Why> Walker::child_why(int64_t bank) const {
     const SubsystemRow* b = subrow(bank);
     if (!b) return K2Why::StaleRow;
     if (b->weapon_kind != kPhaserBank) return K2Why::Other;
-    if (b->k1_overridden) return K2Why::Overridden;
     try {
         if (climb_to_ship_of(m_, bank) != s_.ship) return K2Why::Other;
     } catch (const std::invalid_argument&) {
@@ -782,7 +781,6 @@ K2Record Walker::run() {
                 if (!sr) return run_python(K2Why::StaleRow);
                 if (sr->weapon_kind != kPhaserSystem)
                     return run_python(K2Why::Other);
-                if (sr->k1_overridden) return run_python(K2Why::Overridden);
                 s_.sys = sys;
                 // if _is_offline(sys_) or not sys_.IsOn():
                 //     sys_.StopFiring(); continue      (EVERY tick)

@@ -36,12 +36,12 @@ def fired():
     App.g_kEventManager._broadcast_handlers.pop(App.ET_WEAPON_FIRED, None)
 
 
-class _Target:
-    def GetWorldLocation(self):
-        return TGPoint3(0.0, 100.0, 0.0)
-
-    def IsDead(self):
-        return False
+def _Target():
+    """A live target ahead (a real ship: fire control is native only, M3,
+    and the kernel aims only at objects the mirror names)."""
+    target = ShipClass_Create("Target")
+    target.SetTranslateXYZ(0.0, 100.0, 0.0)
+    return target
 
 
 def test_weapon_fired_is_an_object_pointer_event(fired):
@@ -99,19 +99,21 @@ def test_pulse_shot_posts_one_event_per_shot_with_the_target(fired):
     assert fired[0].GetDestination() is ship
 
 
-def test_pulse_shot_with_no_bolt_posts_nothing(fired, monkeypatch):
-    """No bolt spawned (no projectile script, no ship): no shot happened,
-    so no ET_WEAPON_FIRED -- the charge and cooldown are spent as before."""
-    from engine.appc import weapon_subsystems as ws
+def test_pulse_shot_with_no_bolt_posts_nothing(fired):
+    """No bolt can be made (the projectile module does not resolve): no
+    shot happens, so no ET_WEAPON_FIRED -- and, fire control being native
+    only (M3, M6), nothing is spent either: the Fire is a counted no-fire,
+    its charge and cooldown untouched."""
+    from engine.appc import native_combat as nc
     from tests.unit.test_pulse_weapon_fire import _pulse_weapon
-    cannon = _pulse_weapon()
-    monkeypatch.setattr(ws, "_spawn_projectile", lambda *a, **kw: None)
+    cannon = _pulse_weapon(module_name="k1fx_no_such_pulse_module")
     cannon._cooldown_remaining = 0.0
     cannon._charge_level = cannon._max_charge
-    assert cannon.Fire(_Target(), None) is True
+    assert cannon.Fire(_Target(), None) is False
     assert fired == []
-    assert cannon._charge_level < cannon._max_charge
-    assert cannon._cooldown_remaining > 0.0
+    assert cannon._charge_level == cannon._max_charge
+    assert cannon._cooldown_remaining == 0.0
+    assert nc.counts()["k1_no_fire"]["decision"] == 1
 
 
 def test_tractor_posts_no_weapon_fired(fired):

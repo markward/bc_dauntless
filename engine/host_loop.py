@@ -1034,64 +1034,19 @@ def _phaser_damage_for_tick(max_damage: float,
 
 
 def _pump_held_weapons(ships_list, dt: float) -> None:
-    """BC WeaponSystem tick (weapon-firing-mechanics.md §3.2): one
-    update_weapons per ARMED system per frame.  Replaces the per-class
-    retry_held_fire pumps.
-
-    Stop conditions (checked per frame while the trigger stays held):
-    offline/powered-down, target undetectable (the anti-horn-loop stop —
-    a held burst at a target that cloaks must end, not restart its warm-up
-    SFX every tick), and the per-class _can_engage range gate (phaser
-    global fire range). A TractorBeamSystem's tick is the native K1
-    kernel's whole (fire control native only, M4: its ENGAGE intent
-    survives out-of-range / out-of-arc and re-acquires; k1_fire_control.h,
-    THE TRACTOR WALK): it is never handed back here. Gated on
-    fire_control_native, never the switch: DAUNTLESS_NATIVE_COMBAT=0 still
-    walks K1 natively (fire control native only, M9); only K2 below
-    follows the switch.
+    """BC WeaponSystem tick (weapon-firing-mechanics.md §3.2): every ARMED
+    weapon system of every ship walked once per frame by the native K1
+    kernel (native_combat.k1_pump; fire control's one copy, fire control
+    native only, M3) -- the stop gates (offline/powered-down, the held
+    target dead or undetectable, the per-class range gate), then the walk.
+    Python runs only the effects the walk queued. A TractorBeamSystem's tick
+    is the kernel's too (k1_fire_control.h, THE TRACTOR WALK). Never the
+    switch: DAUNTLESS_NATIVE_COMBAT=0 still walks K1 natively (M9); only K2
+    below follows it. Whatever the mirror cannot answer does not fire that
+    tick (k1_no_fire, logged once).
     """
-    if _native_combat.fire_control_native():
-        # The same loop, walked by the native K1 kernel; Python runs only the
-        # effects, and this module's loop body for whatever K1 hands back
-        # (RUN_PYTHON: a ship with no mirror row, an articulated ship,
-        # anything the mirror cannot represent -- never a tractor).
-        ships = ships_list if isinstance(ships_list, list) else list(ships_list)
-        _native_combat.k1_pump(
-            ships, dt,
-            lambda ship, getter: _pump_held_system(
-                ship, _PUMP_GETTERS[getter], dt))
-        return
-    for ship in ships_list:
-        for getter in _PUMP_GETTERS:
-            if getter != "GetTractorBeamSystem":    # native only
-                _pump_held_system(ship, getter, dt)
-
-
-# The pump's system getters, in its order (K1's getter index is the position).
-_PUMP_GETTERS = ("GetPhaserSystem", "GetPulseWeaponSystem",
-                 "GetTractorBeamSystem", "GetTorpedoSystem")
-
-
-def _pump_held_system(ship, getter: str, dt: float) -> None:
-    """_pump_held_weapons' loop body for one ship and one getter."""
-    sys_ = getattr(ship, getter)() if hasattr(ship, getter) else None
-    if sys_ is None or not getattr(sys_, "_fire_held", False):
-        return
-    if _is_offline(sys_) or not sys_.IsOn():
-        sys_.StopFiring()
-        return
-    held = getattr(sys_, "_held_target", None)
-    if held is not None and (hasattr(held, "IsDead") and held.IsDead()):
-        sys_.StopFiring()      # target destroyed — end the burst
-        return
-    if held is not None and _target_undetectable(sys_, held):
-        sys_.StopFiring()      # preserves the anti-horn-loop stop
-        return
-    if held is not None and hasattr(sys_, "_can_engage") \
-            and not sys_._can_engage(ship, held):
-        sys_.StopFiring()      # range gate (phaser global range etc.)
-        return
-    sys_.update_weapons(dt)
+    ships = ships_list if isinstance(ships_list, list) else list(ships_list)
+    _native_combat.k1_pump(ships, dt)
 
 
 def _phaser_aim_point(ship, target):

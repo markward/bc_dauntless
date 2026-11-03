@@ -59,7 +59,9 @@ def clock():
 
 
 def _tube(max_ready: int = 2, reload_delay: float = 40.0) -> TorpedoTube:
+    from tests.helpers.torpedo_fixtures import arm
     system = TorpedoSystem("Torpedoes")
+    arm(system)     # a ship and a slot-0 script: the tube's Fire launches
     system.TurnOn()
     tube = TorpedoTube("Forward Torpedo 1")
     tube._reload_delay = reload_delay
@@ -137,8 +139,10 @@ def _setup_mismatch(tube, clock):
 WRITERS = [
     ("_start_slot_cooldown", _setup_loaded,
      lambda t, c: t._start_slot_cooldown(12.5)),
-    ("Fire", _setup_loaded,
-     lambda t, c: (c(2.25), t.Fire())),
+    # (Fire is no Python writer of the lists any more: the kernel's launch
+    # writes them in the mirror and logs them -- fire control native only,
+    # M3; K1Launch.TubeLaunchIsLoggedWritesAndASpawnEntry and the dispatch
+    # recording test_last_round_debits_like_python.)
     ("_sync_slots_to_num_ready demote", _setup_loaded,
      lambda t, c: (c(3.25), t.SetNumReady(0))),
     ("_sync_slots_to_num_ready promote", _setup_cooling_progress,

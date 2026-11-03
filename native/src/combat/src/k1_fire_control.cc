@@ -1,13 +1,15 @@
-// The K1 fire-control kernel -- see k1_fire_control.h. A resumable port of
+// The K1 fire-control kernel -- see k1_fire_control.h: fire control's one
+// copy of its rules. A port of
 //   engine/host_loop.py            _pump_held_weapons            (HL:984)
 //   engine/appc/weapon_subsystems.py WeaponSystem.update_weapons (WS:1651)
 //                                    WeaponSystem.try_fire_weapon (WS:1573)
-// and the decision half of PhaserBank.Fire (WS:2644, the mixin's WS:865),
-// PulseWeapon.Fire (WS:2852) and TorpedoTube.Fire (WS:3324). Line numbers are
-// the current Python's. Each cursor state (enum St) is named after the
-// Python line it stands for; Walker::run's switch reads top to bottom like
-// the Python. Every float decision is made by weapon_geometry / fire_gates /
-// sensor_detect, the Python-exact ports of Tasks 2-3 and phase 1a.
+// and PhaserBank.Fire (WS:2644, the mixin's WS:865), PulseWeapon.Fire
+// (WS:2852) and TorpedoTube.Fire (WS:3324), as that Python stood at
+// 9c3db5ec6 (deleted since: fire control native only, M3). Line numbers are
+// that Python's. Each cursor state (enum St) is named after the Python line
+// it was ported from; Walker::run's switch reads top to bottom like it. Every
+// float decision is made by weapon_geometry / fire_gates / sensor_detect,
+// the Python-exact ports of Tasks 2-3 and phase 1a.
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
@@ -76,20 +78,10 @@ bool xform_ok(const Mirror& m, const ObjectRow& o) {
                            static_cast<uint32_t>(o.xform_gen));
 }
 
-// Why a Fire decision went to Python (ASK fire): the posed-part fallbacks
-// by their type (part_pose.h), anything else Other.
-K1Why fire_ask_why(const std::invalid_argument& e) {
-    if (dynamic_cast<const PartStale*>(&e)) return K1Why::PartStale;
-    if (dynamic_cast<const MountUnknown*>(&e)) return K1Why::MountUnknown;
-    return K1Why::Other;
-}
-
 }  // namespace
 
 const char* k1_kind_name(K1Kind k) {
-    static constexpr const char* kNames[] = {
-        "DONE",      "WALK_START",  "STOP_SYSTEM", "RUN_PYTHON", "BANK_STOP",
-        "FIRE",      "FIRE_FAILED", "FIRE_DUMB",   "ASK"};
+    static constexpr const char* kNames[] = {"DONE"};
     static_assert(std::size(kNames) == static_cast<size_t>(K1Kind::kCount));
     const auto i = static_cast<size_t>(k);
     return i < std::size(kNames) ? kNames[i] : "?";
@@ -104,8 +96,17 @@ const char* k1_effect_name(K1Effect e) {
     return i < std::size(kNames) ? kNames[i] : "?";
 }
 
+static_assert(static_cast<size_t>(K1NoFire::kCount) <= 64,
+              "Counts::no_fire_reported is one bit per K1NoFire");
+
 const char* k1_no_fire_name(K1NoFire w) {
-    static constexpr const char* kNames[] = {"tractor_row"};
+    static constexpr const char* kNames[] = {
+        "tractor_row",    "stale_row",      "stub_or_unplaced",
+        "pulse_ship_target", "pulse_module", "ammo_row",
+        "part_stale",     "unslotted_ship", "gate",
+        "structure",      "not_k1_system",  "can_fire",
+        "decision",       "launch",         "walk",
+        "reseed",         "retry",          "is_dead"};
     static_assert(std::size(kNames) == static_cast<size_t>(K1NoFire::kCount));
     const auto i = static_cast<size_t>(w);
     return i < std::size(kNames) ? kNames[i] : "?";
@@ -113,23 +114,9 @@ const char* k1_no_fire_name(K1NoFire w) {
 
 const char* k1_launch_why_name(K1LaunchWhy w) {
     static constexpr const char* kNames[] = {
-        "launch_unresolved", "launch_uncached", "launch_patched",
-        "launch_other"};
+        "launch_unresolved", "launch_uncached", "launch_other"};
     static_assert(std::size(kNames) ==
                   static_cast<size_t>(K1LaunchWhy::kCount));
-    const auto i = static_cast<size_t>(w);
-    return i < std::size(kNames) ? kNames[i] : "?";
-}
-
-const char* k1_why_name(K1Why w) {
-    static constexpr const char* kNames[] = {
-        "self_managed",   "overridden",       "instance_patch",
-        "posed_ship",     "posed_target",     "part_stale",
-        "mount_unknown",  "stub_or_unplaced",
-        "pulse_ship_target", "pulse_module",  "ammo_row",
-        "stale_row",      "unslotted_ship",   "gate",
-        "other"};
-    static_assert(std::size(kNames) == static_cast<size_t>(K1Why::kCount));
     const auto i = static_cast<size_t>(w);
     return i < std::size(kNames) ? kNames[i] : "?";
 }
@@ -145,11 +132,9 @@ enum class St : int32_t {
     SYSTEM_START,
     // TractorBeamSystem.StartFiring's engage (THE TRACTOR WALK)
     TRACTOR_START,
-    // THE SDK ROUTES: Weapon.FireDumb(0, 1); weapon.Fire(target, offset),
-    // and its FIRE record's effect returned (it fired)
+    // THE SDK ROUTES: Weapon.FireDumb(0, 1); weapon.Fire(target, offset)
     DUMB_START,
     FIRE_START,
-    FIRE_FIRED,
     // WeaponSystem.update_weapons
     UW_DEAD_PRUNE,     // if ship ... ship.IsDead(): return False
                        // self._prune_targets(); target = self._target_list[0]
@@ -161,13 +146,8 @@ enum class St : int32_t {
                        //     n = self.GetNumWeapons(); fired_this_group = False
     UW_FOR_DELTA,      // for delta in range(1, n + 1): idx = ...;
                        //     weapon = self.GetWeapon(idx); IsMemberOfGroup
-    UW_MEMBER_ANSWER,  //     (ASK is_member answered)
-    UW_STEP_ANSWER,    //     (ASK group_step answered)
     UW_TRIED,          //     if self.try_fire_weapon(...): ... else:
                        //         weapon._target = None; FireDumb
-    UW_RESEED_ANSWER,  //     self._reseed_all_fire_timers() (ASK answered); break
-    UW_NEXT_DELTA,     //     (after weapon.FireDumb(0, 1)) the next delta
-    UW_DUMB_ANSWER,    //     (ASK is_dumb answered: the weapon's row is gone)
     UW_GROUP_ADVANCE,  // if fired_this_group or len(groups) <= 1: break;
                        // working = groups[...]; if working == start_group: ...
     UW_EXIT,           // self._force_update = False; return did_fire
@@ -175,19 +155,13 @@ enum class St : int32_t {
     // WeaponSystem.try_fire_weapon
     TF_TIMER,          // _fire_timer = ...; if not IsFiring() and _fire_timer
                        // < FIRE_TIMER_THRESHOLD: return False; _fire_timer =
-                       // 0.0; if not weapon.CanFire():
-    TF_CANFIRE_ANSWER, //     (ASK can_fire answered)
-    TF_STOPPED,        //     weapon.StopFiring(); return False
+                       // 0.0; if not weapon.CanFire(): StopFiring; False
     TF_FIRE,           // result = weapon.Fire(target, offset)  [or entry]
     TF_FIRED,          // if self._weapon_did_fire(...): return True
-    TF_FIRE_FALSE,     // (after FIRE_FAILED) Fire returned False
-    TF_FIRE_ANSWER,    // (ASK fire answered) _weapon_did_fire's answer
     TF_NOT_FIRED,      // weapon._target = None; for entry in
                        // list(self._target_list):   [or the next entry]
     TF_RETRY_NEXT,     //     if entry is None or entry.IsDead(): continue;
                        //     result = weapon.Fire(entry, offset)
-    TF_DEAD_ANSWER,    //     (ASK is_dead answered)
-    TF_RETRY_ANSWER,   // (ASK retry answered) the whole retry loop's answer
     DONE,              // returned DONE; only end() / abandon() may follow
 };
 
@@ -196,7 +170,10 @@ enum class Caller : int32_t { Lit, Delta };
 // The mirror value one logged write replaced.
 struct K1Undo {
     // Slot: element `i` of a FloatList field, its old value `d`.
-    enum class Type : int32_t { F, I, Ref, Ids, Offset, Slot } type = Type::F;
+    // None: a write with no mirror row behind it (nothing to undo); every
+    // logged write has one undo, so a rollback mark is both.
+    enum class Type : int32_t { F, I, Ref, Ids, Offset, Slot, None } type =
+        Type::F;
     int64_t h = -1;
     Field f = Field::kCount;
     double d = 0.0;
@@ -237,27 +214,24 @@ struct K1Kernel::Session {
     std::vector<int64_t> retry;
     size_t retry_pos = 0;
 
-    // The write log since the last record, and, one for one, the mirror
-    // value each write replaced (rolled back if the walk throws before the
-    // writes reach Python).
+    // The session's write log, and, one for one, the mirror value each
+    // write replaced (rolled back by a no-fire before the walk's first shot,
+    // or by a throw).
     std::vector<K1Write> writes;
     std::vector<K1Undo> undo;
-    // The queue entries since the last record (THE EFFECT QUEUE), each
-    // placed after the writes logged before it. A throw drops them with the
-    // session restore (next()); a decision's own rollback (k1_roll_back)
-    // never meets one: no decision produces an entry.
+    // The session's queue entries (THE EFFECT QUEUE), each placed after the
+    // writes logged before it. A throw drops them with the session restore
+    // (next()); a walk's rollback drops its own.
     std::vector<K1Entry> entries;
-    bool awaiting_offset = false;
-    bool awaiting_answer = false, has_answer = false;
-    // The walk tag (THE WALK START): the session's walk number (1, 2, ...),
-    // whether a walk is running (UW_DEAD_PRUNE past the dead check to
-    // WALK_END) and whether it has returned its first record yet.
+    // The session's walk number (1, 2, ...), and per walk the Manual Aim
+    // pick its offset came from (nullopt: the system's _held_offset; THE
+    // WALK OFFSET), index walk - 1.
     int64_t walk_no = 0;
-    bool in_walk = false, walk_tagged = false;
-    std::optional<int64_t> answer;
-    // The session's own walk check (begin_pump / begin_system; empty: the
-    // kernel's).
-    K1WalkCheck check;
+    std::vector<std::optional<Vec3>> walk_manual;
+    // The walk being walked: where its writes and entries begin (its
+    // rollback mark) and whether it has shot yet (NO FIRE).
+    size_t walk_mark = 0, walk_entry_mark = 0;
+    bool walk_shot = false;
     // begin_tractor's target.
     int64_t tractor_target = -1;
     // THE SDK ROUTES: the dumb-fired tube or the Fire's weapon (`weapon`
@@ -266,10 +240,6 @@ struct K1Kernel::Session {
     std::optional<int64_t> ship_target;
     int64_t result = 0;
 };
-
-static void count_why(K1Kernel::Counts& c, bool pump, K1Why why) {
-    (pump ? c.pump_why : c.system_why)[static_cast<size_t>(why)] += 1;
-}
 
 static K1Undo undo_of(K1Undo::Type type, int64_t h, Field f) {
     K1Undo u;
@@ -280,7 +250,7 @@ static K1Undo undo_of(K1Undo::Type type, int64_t h, Field f) {
 }
 
 // Undo the session's logged writes from `mark` on, newest first, and drop
-// them from the log: they never reached Python.
+// them from the log: they never reach Python.
 static void k1_roll_back(Mirror& m, K1Kernel::Session& s, size_t mark) {
     while (s.undo.size() > mark) {
         const K1Undo& u = s.undo.back();
@@ -298,6 +268,8 @@ static void k1_roll_back(Mirror& m, K1Kernel::Session& s, size_t mark) {
             case K1Undo::Type::Slot:
                 m.set_float_at(u.h, u.f, static_cast<size_t>(u.i), u.d);
                 break;
+            case K1Undo::Type::None:
+                break;
         }
         s.undo.pop_back();
     }
@@ -312,12 +284,11 @@ using Session = K1Kernel::Session;
     throw std::logic_error(std::string("combat K1: ") + why);
 }
 
-// One next() call: runs the cursor to the next record.
+// One next() call: runs the session to its end.
 class Walker {
 public:
-    Walker(Mirror& m, Session& s, K1Kernel::Counts& c,
-           const K1WalkCheck& check)
-        : m_(m), s_(s), c_(c), check_(check) {}
+    Walker(Mirror& m, Session& s, K1Kernel::Counts& c)
+        : m_(m), s_(s), c_(c) {}
 
     K1Record run();
 
@@ -372,10 +343,11 @@ private:
         write_i(h, f, name, v, v);
     }
     void write_target(int64_t h, int64_t t) {
-        // A bank whose row a handler dropped mid-walk (an unencodable value)
-        // is still Python's object, pinned by run_k1: the write goes to
-        // Python only. There is no row to write, so nothing to undo.
+        // A bank with no row (named by the walk, freed since: no Python runs
+        // in a session, so never seen) is still the driver's pinned object:
+        // the write goes to Python only, with nothing to undo.
         if (!subrow(h)) {
+            s_.undo.push_back(undo_of(K1Undo::Type::None, h, Field::_target));
             log(h, "_target", t);
             return;
         }
@@ -484,33 +456,33 @@ private:
                                                K1LaunchWhy* why);
     void log_pulse_launch(int64_t cannon, const PulsePlan& p);
     void log_launch(int64_t tube, int64_t target, const LaunchPlan& p);
-    // Weapon.FireDumb(0, 1) natively; true with the FIRE_DUMB record in
-    // *out (resuming at `next`) when Python must run it.
-    bool dumb_fire(int64_t tube, K1Record* out,
-                   St next = St::UW_NEXT_DELTA);
+    // Weapon.FireDumb(0, 1): nullopt when decided (launched or refused);
+    // else why it cannot be (a decision or a launch the mirror cannot
+    // make), its own writes rolled back and its launch why counted.
+    std::optional<K1NoFire> dumb_fire(int64_t tube);
     // How weapon.Fire(target, offset) ended once decided (fire_effect).
     enum class FireEnd {
         Fired,     // its effect is logged (writes, entries): Fire is True
         Refused,   // a FIRE_FAILED queued: Fire is False
         NotFired,  // the decision refused: Fire is False
-        Record,    // the FIRE record in *out: Python makes the launch
+        NoLaunch,  // a launch the kernel cannot make (launch_why counted):
+                   // nothing of the effect written; a no-fire
     };
     struct Outcome;
     // The effect half of weapon.Fire(target, offset), after its decision
-    // `o` (the walk's try_fire_weapon, THE TRACTOR WALK and THE SDK ROUTES
-    // share it): a beam's sustain or edge (a TractorBeam posts no
-    // WEAPON_FIRED), a tube's or a cannon's launch, a tube's refused aim.
-    // A launch the kernel cannot make is the FIRE record, resuming at
-    // `record_next`.
-    FireEnd fire_effect(int64_t w, int64_t target, const Outcome& o,
-                        K1Record* out, St record_next);
+    // `o` (the walk's try-fire, THE TRACTOR WALK and THE SDK ROUTES share
+    // it): a beam's sustain or edge (a TractorBeam posts no WEAPON_FIRED), a
+    // tube's or a cannon's launch, a tube's refused aim. Fired and Refused
+    // mark the walk shot (NO FIRE).
+    FireEnd fire_effect(int64_t w, int64_t target, const Outcome& o);
+    FireEnd fire_effect_of(int64_t w, int64_t target, const Outcome& o);
 
     // `weapon.StopFiring()` is its class's writes, logged in its order
     // (round trips §4.3; the one encoding, stop_firing.h), and for a FIRING
     // energy bank the loop sound's LOOP_STOP(bank) after them (spec
     // 2026-11-02-combat-fire-events §4.3; `was_firing = self._firing` is
     // read first). True; a row gone (or not a K1 leaf): false, nothing
-    // written, the caller emits BANK_STOP.
+    // written (the caller's no-fire).
     bool bank_stop(int64_t h) {
         const SubsystemRow* r = subrow(h);
         if (!r) return false;
@@ -543,12 +515,8 @@ private:
     // `_fire_held = False; _held_target = None; _held_offset = None;
     // _target_list = []; _last_group_fired = -1`, then `w.StopFiring()` for
     // each child in order (bank_stop). The pre-scan ran in this same call
-    // (every child a live, unoverridden leaf). The stop runs before any
-    // walk, so the walk check is asked here first -- its names include a
-    // StopFiring patched on the system's instance or a child's -- and true
-    // leaves the STOP_SYSTEM record (false, nothing written).
-    bool system_stop(int64_t sys) {
-        if (check_ && check_(sys, climb_to_ship_of(m_, sys))) return false;
+    // (every child a live leaf).
+    void system_stop(int64_t sys) {
         const std::vector<int64_t> kids = subrow(sys)->_children;
         write_flag(sys, Field::_fire_held, "_fire_held", false);
         write_held_target_none(sys);
@@ -559,60 +527,58 @@ private:
         for (const int64_t k : kids)
             if (!bank_stop(k)) lost("a stopped system's child is not a leaf");
         ++c_.logged_system_stop;
-        return true;
     }
 
-    // ── Records ─────────────────────────────────────────────────────────────
-    K1Record emit(K1Kind kind, St next, int64_t a = -1, int64_t b = -1,
-                  int64_t c = -1) {
+    // ── The record ──────────────────────────────────────────────────────────
+    // DONE: the session's writes and entries, and the no-fire whys counted
+    // for the first time since the counts were reset.
+    K1Record done() {
         K1Record r;
-        r.kind = kind;
-        r.a = a;
-        r.b = b;
-        r.c = c;
+        r.kind = K1Kind::DONE;
         r.writes = std::move(s_.writes);
         s_.writes.clear();
         r.entries = std::move(s_.entries);
         s_.entries.clear();
         s_.undo.clear();  // delivered: Python applies them
-        s_.st = next;
-        // The walk's first record: the driver materialises the walk on it.
-        if (s_.in_walk && !s_.walk_tagged) {
-            r.walk_first = true;
-            r.walk = s_.walk_no;
-            r.walk_system = s_.sys;
-            s_.walk_tagged = true;
-        }
+        s_.st = St::DONE;
+        uint64_t seen = 0;
+        for (size_t i = 0; i < c_.no_fire.size(); ++i)
+            if (c_.no_fire[i] != 0) seen |= uint64_t{1} << i;
+        r.no_fire_new = seen & ~c_.no_fire_reported;
+        c_.no_fire_reported |= seen;
         ++c_.records;
-        if (kind == K1Kind::RUN_PYTHON) ++c_.python_systems;
         return r;
-    }
-    // A whole system handed to Python, counted by why (pump or system).
-    K1Record run_python(K1Why why, St next, int64_t a, int64_t b, int64_t c) {
-        count_why(c_, s_.pump, why);
-        return emit(K1Kind::RUN_PYTHON, next, a, b, c);
-    }
-    K1Record ask(const char* query, std::vector<int64_t> args, St next) {
-        K1Record r = emit(K1Kind::ASK, next);
-        r.query = query;
-        r.args = std::move(args);
-        s_.awaiting_answer = true;
-        s_.has_answer = false;
-        ++c_.asks;
-        return r;
-    }
-    int64_t take_answer() {
-        const int64_t v = s_.answer.value_or(0);
-        s_.answer.reset();
-        return v;
     }
 
-    // ── The pre-scan (ruling H, stage 1) ───────────────────────────────────
-    // nullopt: the walk can run natively; else why it cannot.
-    std::optional<K1Why> prescan(int64_t sys, int64_t pump_ship) const;
+    // ── NO FIRE (k1_fire_control.h) ─────────────────────────────────────────
+    void count_no_fire(K1NoFire why) {
+        ++c_.no_fire[static_cast<size_t>(why)];
+    }
+    // The walk's writes and entries since its mark, undone and dropped.
+    void roll_back_walk() {
+        k1_roll_back(m_, s_, s_.walk_mark);
+        for (size_t i = s_.walk_entry_mark; i < s_.entries.size(); ++i)
+            --c_.entries[static_cast<size_t>(s_.entries[i].kind)];
+        s_.entries.resize(s_.walk_entry_mark);
+    }
+    // A failure the mirror cannot answer, in the walk: counted; before the
+    // walk's first shot its writes are rolled back, after it what happened
+    // is kept; either way the walk ends (does not fire that tick).
+    void walk_no_fire(K1NoFire why) {
+        count_no_fire(why);
+        if (!s_.walk_shot) roll_back_walk();
+        s_.st = St::WALK_END;
+    }
+
+    // ── The pre-scan ────────────────────────────────────────────────────────
+    // nullopt: the walk can run natively; else why it does not fire.
+    std::optional<K1NoFire> prescan(int64_t sys, int64_t pump_ship) const;
     // The pump's gates: true = StopFiring. Throws std::invalid_argument when
-    // the mirror cannot answer (the system then runs in Python).
+    // the mirror cannot answer (a no-fire).
     bool pump_stops(int64_t sys, int64_t pump_ship);
+    // A walk's start: its number, its offset (THE WALK OFFSET) and where
+    // its writes begin.
+    void start_walk(int64_t sys, int64_t ship);
 
     // ── Walk pieces ─────────────────────────────────────────────────────────
     std::vector<int64_t> active_chain_groups() const;
@@ -630,8 +596,8 @@ private:
         ++s_.delta;
         s_.st = St::UW_FOR_DELTA;
     }
-    // The success branch of the delta loop; may emit ASK reseed.
-    bool fired_bookkeeping(K1Record* out);
+    // The success branch of the delta loop.
+    void fired_bookkeeping();
 
     // ── THE TRACTOR WALK (k1_fire_control.h) ───────────────────────────────
     // A tractor walk, guarded: rolled back whole (no fire, counted) when
@@ -670,47 +636,44 @@ private:
     Mirror& m_;
     Session& s_;
     K1Kernel::Counts& c_;
-    const K1WalkCheck& check_;
 };
 
 // Everything the system's walk can read must be representable before its
-// first write (plan P2 / ruling H): the system and every child row, the parent
-// ship, every target-list entry (and, in the pump, the held target), a real
-// IsDead on each, a current part slot for every leaf of a posed ship (its
-// mount), the ammo rows, the pulse module, and the chain table. A posed
-// target's offset aim is decided in the walk (an ASK fire if the mirror
-// cannot: its slot went stale, its mount is unknown or none).
-std::optional<K1Why> Walker::prescan(int64_t sys,
-                                     int64_t pump_ship) const {
+// first write (NO FIRE): the system and every child row, the parent ship,
+// every target-list entry (and, in the pump, the held target), a real IsDead
+// on each, a current part slot for every leaf of a posed ship (its mount),
+// the ammo rows, the pulse module, and the chain table. A posed target's
+// offset aim is decided in the walk (a Decision no-fire if the mirror
+// cannot: its slot went stale, its mount is unknown).
+std::optional<K1NoFire> Walker::prescan(int64_t sys,
+                                        int64_t pump_ship) const {
     const SubsystemRow* s = subrow(sys);
-    if (!s) return K1Why::StaleRow;
+    if (!s) return K1NoFire::StaleRow;
     const int64_t kind = s->weapon_kind;
     // Phaser, pulse and torpedo walks only (a tractor's is its own).
-    if (leaf_kind_of(kind) < 0) return K1Why::SelfManaged;
-    // A class overriding a method the kernel stands in for (Task 5 fix).
-    if (s->k1_overridden) return K1Why::Overridden;
+    if (leaf_kind_of(kind) < 0) return K1NoFire::NotK1System;
 
     // self.GetParentShip(): alive-testable, placed.
     int64_t ship;
     try {
         ship = climb_to_ship_of(m_, sys);
     } catch (const std::invalid_argument&) {
-        return K1Why::StaleRow;
+        return K1NoFire::StaleRow;
     }
     const ObjectRow* so = objrow(ship);
-    if (!so) return K1Why::StaleRow;
-    if (!so->has_real_is_dead) return K1Why::StubOrUnplaced;
-    if (!xform_ok(m_, *so)) return K1Why::StubOrUnplaced;
+    if (!so) return K1NoFire::StaleRow;
+    if (!so->has_real_is_dead) return K1NoFire::StubOrUnplaced;
+    if (!xform_ok(m_, *so)) return K1NoFire::StubOrUnplaced;
     if (pump_ship != -1) {  // the pump's own `ship` (the range gate)
         const ObjectRow* po = objrow(pump_ship);
-        if (!po) return K1Why::StaleRow;
-        if (!xform_ok(m_, *po)) return K1Why::StubOrUnplaced;
+        if (!po) return K1NoFire::StaleRow;
+        if (!xform_ok(m_, *po)) return K1NoFire::StubOrUnplaced;
         const int64_t held = s->_held_target;
         if (held != -1) {
             const ObjectRow* ho = objrow(held);
-            if (!ho) return K1Why::StaleRow;
+            if (!ho) return K1NoFire::StaleRow;
             if (!ho->has_real_is_dead || !xform_ok(m_, *ho))
-                return K1Why::StubOrUnplaced;
+                return K1NoFire::StubOrUnplaced;
             // The phaser range gate runs AFTER can_detect (which writes its
             // memo and latch): everything it reads must be answerable here,
             // so no gate can throw once a side-effecting one has run.
@@ -720,7 +683,7 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
             };
             if (kind == kPhaserSystem &&
                 (!set_ok(po->_containing_set) || !set_ok(ho->_containing_set)))
-                return K1Why::StaleRow;
+                return K1NoFire::StaleRow;
         }
     }
 
@@ -729,48 +692,47 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
     bool any_alive = false;
     for (const int64_t t : s->_target_list) {
         const ObjectRow* to = objrow(t);
-        if (!to) return K1Why::StaleRow;
+        if (!to) return K1NoFire::StaleRow;
         if (!to->has_real_is_dead || !xform_ok(m_, *to))
-            return K1Why::StubOrUnplaced;
+            return K1NoFire::StubOrUnplaced;
         if (!to->_dead) any_alive = true;
     }
     // PulseWeapon.Fire(None) falls back to ship.GetTarget(), not mirrored.
-    if (kind == kPulseSystem && !any_alive) return K1Why::PulseShipTarget;
+    if (kind == kPulseSystem && !any_alive) return K1NoFire::PulseShipTarget;
 
     // GetFiringChains: the property (None reads []); group ids >= 0 (a
     // negative id raises in IsMemberOfGroup's shift).
     if (s->_property != -1) {
         const PropertyRow* p = m_.property(s->_property);
-        if (!p) return K1Why::StaleRow;
+        if (!p) return K1NoFire::StaleRow;
         for (const auto& chain : p->_firing_chains)
             for (const int64_t g : chain)
-                if (g < 0) return K1Why::Other;
+                if (g < 0) return K1NoFire::Structure;
     }
 
     // _children: rows of the system's leaf kind, under this system and ship.
     const int64_t leaf = leaf_kind_of(kind);
     for (const int64_t c : s->_children) {
         const SubsystemRow* w = subrow(c);
-        if (!w) return K1Why::StaleRow;
-        if (w->weapon_kind != leaf) return K1Why::Other;
-        if (w->k1_overridden) return K1Why::Overridden;
-        if (w->_parent_subsystem != sys) return K1Why::Other;
+        if (!w) return K1NoFire::StaleRow;
+        if (w->weapon_kind != leaf) return K1NoFire::Structure;
+        if (w->_parent_subsystem != sys) return K1NoFire::Structure;
         try {
-            if (climb_to_ship_of(m_, c) != ship) return K1Why::Other;
+            if (climb_to_ship_of(m_, c) != ship) return K1NoFire::Structure;
         } catch (const std::invalid_argument&) {
-            return K1Why::StaleRow;
+            return K1NoFire::StaleRow;
         }
         if (w->_property != -1 && !m_.property(w->_property))
-            return K1Why::StaleRow;
+            return K1NoFire::StaleRow;
         // A posed ship's leaf mount is read through its part slot
         // (mount_position): one that is not current is Python's.
         Vec3 local;
         if (so->has_posed_parts &&
             posed_local(m_, *so, *w, &local) == SlotState::stale)
-            return K1Why::PartStale;
+            return K1NoFire::PartStale;
         if (leaf == kPulseWeapon &&
             (!w->module_ok || w->_power_setting < 0 || w->_power_setting > 2))
-            return K1Why::PulseModule;
+            return K1NoFire::PulseModule;
     }
 
     // TorpedoSystem._ammo_by_slot: [slot, Ammo handle, ...]; -1 is a slot
@@ -778,7 +740,7 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
     if (kind == kTorpedoSystem) {
         const auto& slots = s->_ammo_by_slot;
         for (size_t i = 1; i < slots.size(); i += 2)
-            if (slots[i] != -1 && !m_.ammo(slots[i])) return K1Why::AmmoRow;
+            if (slots[i] != -1 && !m_.ammo(slots[i])) return K1NoFire::AmmoRow;
     }
     return std::nullopt;
 }
@@ -828,26 +790,36 @@ std::vector<int64_t> Walker::active_chain_groups() const {
 // update_weapons (WS:1700-1707): did_fire = fired_this_group = True;
 // self._last_weapon_idx = idx; self._last_group_fired = working;
 // if self._single_fire: self._reseed_all_fire_timers(); break.
-// Returns true when it emitted a record into *out.
-bool Walker::fired_bookkeeping(K1Record* out) {
+void Walker::fired_bookkeeping() {
     s_.did_fire = s_.fired_this_group = true;
     write_int(s_.sys, Field::_last_weapon_idx, "_last_weapon_idx", s_.idx);
     write_int(s_.sys, Field::_last_group_fired, "_last_group_fired", s_.working);
     if (!sysrow()._single_fire) {
         next_delta();
-        return false;
+        return;
     }
-    // _reseed_all_fire_timers (WS:1620): every child's _fire_timer = 0.0.
+    // _reseed_all_fire_timers (WS:1620): every child's _fire_timer = 0.0. A
+    // child the mirror cannot name: the reseed is skipped, the shot kept
+    // (NO FIRE, after a shot).
     const std::vector<int64_t> kids = sysrow()._children;
-    for (const int64_t c : kids) {
-        if (!named_leaf(c)) {
-            *out = ask("reseed", {s_.sys}, St::UW_RESEED_ANSWER);
-            return true;
-        }
-    }
-    for (const int64_t c : kids) write_timer(c, 0.0);
+    bool named = true;
+    for (const int64_t c : kids) named = named && named_leaf(c);
+    if (named)
+        for (const int64_t c : kids) write_timer(c, 0.0);
+    else
+        count_no_fire(K1NoFire::Reseed);
     s_.st = St::UW_GROUP_ADVANCE;  // break
-    return false;
+}
+
+// update_weapons' walk start (WS:1655-1660, after the prune): the walk's
+// number, `offset = self._live_held_offset()` from the mirror and where its
+// Manual Aim pick came from (THE WALK OFFSET), and its rollback mark.
+void Walker::start_walk(int64_t sys, int64_t ship) {
+    ++s_.walk_no;
+    s_.offset = k1_live_held_offset(m_, sys, ship);
+    s_.walk_manual.resize(static_cast<size_t>(s_.walk_no));
+    s_.walk_manual.back() = k1_manual_offset(m_, ship);
+    s_.walk_shot = false;
 }
 
 
@@ -913,9 +885,7 @@ bool Walker::tractor_bears(int64_t beam, int64_t ship, int64_t target) {
 // edge `_beam_on_countdown = BEAM_ON_DELAY_S; _dwell = 0.0` and FIRE_SOUND
 // (a TractorBeam posts no ET_WEAPON_FIRED). Its return value is unused.
 void Walker::tractor_fire(int64_t beam, int64_t target) {
-    const Outcome o = decide_beam(beam, target);
-    K1Record unused;  // a beam's effect is never a record
-    fire_effect(beam, target, o, &unused, St::DONE);
+    fire_effect(beam, target, decide_beam(beam, target));
 }
 
 // _engage_beam(target, offset, ship): the offset is the walk's (s_.offset,
@@ -1022,8 +992,7 @@ void Walker::tractor_update(int64_t sys) {
         return;
     }
     // fired = self._engage_beam(target, self._live_held_offset(), ship)
-    ++s_.walk_no;
-    s_.offset = k1_live_held_offset(m_, sys, ship);
+    start_walk(sys, ship);
     tractor_engage(sys, ship, target);
     tractor_sync(sys);
 }
@@ -1169,16 +1138,11 @@ Walker::Outcome Walker::decide_tube(int64_t bank, int64_t target) {
 // the launch velocity and the homing stamps) and Weapon.FireDumb.
 
 // Every read of the launch, before any write; nullopt (and why) when the
-// kernel cannot make it: the FIRE / FIRE_DUMB record then runs Python's.
+// kernel cannot make it (a no-fire: K1NoFire::Launch).
 std::optional<Walker::LaunchPlan> Walker::plan_launch(int64_t tube,
                                                       int64_t target,
                                                       K1Spawn::Kind kind,
                                                       K1LaunchWhy* why) {
-    // A function the launch stands in for is not the stock one.
-    if (m_.globals().K1_LAUNCH_PATCHED != 0) {
-        *why = K1LaunchWhy::Patched;
-        return std::nullopt;
-    }
     try {
         LaunchPlan p;
         const SubsystemRow& tr = detail::sub(m_, tube);
@@ -1301,19 +1265,9 @@ void Walker::launch_reads(K1Spawn& s, int64_t launcher, int64_t target,
 // with the decision's led direction, GetDamageRadiusFactor(),
 // GetDamageScale() and the target the shot used; the module's launch speed
 // is the cannon's own (ruling P6, the lead solve's). Every read before any
-// write; nullopt (and why) when the FIRE record must run Python's.
+// write; nullopt (and why) when the kernel cannot make it (a no-fire).
 std::optional<Walker::PulsePlan> Walker::plan_pulse_launch(
     int64_t cannon, const K1Decision& d, K1LaunchWhy* why) {
-    if (m_.globals().K1_LAUNCH_PATCHED != 0) {
-        *why = K1LaunchWhy::Patched;
-        return std::nullopt;
-    }
-    // The module decide would import now is not the one the cannons'
-    // launches carry (THE LAUNCH CHECK): Python's.
-    if (m_.globals().K1_PULSE_MODULE_STALE != 0) {
-        *why = K1LaunchWhy::Unresolved;
-        return std::nullopt;
-    }
     try {
         PulsePlan p;
         const SubsystemRow& cr = detail::sub(m_, cannon);
@@ -1383,7 +1337,7 @@ void Walker::log_launch(int64_t tube, int64_t target, const LaunchPlan& p) {
 // Weapon.FireDumb(0, 1) (WS:1231): `if _dewarp_blocks_fire(self): return;
 // self.Fire(target=None, offset=None)` -- TorpedoTube.Fire's decision
 // (CanFire; no aim, no cone) and, when it fires, the launch with no target.
-bool Walker::dumb_fire(int64_t tube, K1Record* out, St next) {
+std::optional<K1NoFire> Walker::dumb_fire(int64_t tube) {
     const size_t mark = s_.writes.size();
     Outcome o;
     try {
@@ -1392,34 +1346,39 @@ bool Walker::dumb_fire(int64_t tube, K1Record* out, St next) {
         const ObjectRow* so = objrow(climb_to_ship_of(m_, tube));
         if (so != nullptr && so->arriving) {
             ++c_.logged_dumb_refused;
-            return false;
+            return std::nullopt;
         }
         o = decide_tube(tube, -1);
     } catch (const std::invalid_argument&) {
         k1_roll_back(m_, s_, mark);
-        *out = emit(K1Kind::FIRE_DUMB, next, tube);
-        return true;
+        return K1NoFire::Decision;
     }
     if (o.what != Outcome::What::Fire) {
         ++c_.logged_dumb_refused;
-        return false;
+        return std::nullopt;
     }
     K1LaunchWhy why = K1LaunchWhy::Other;
     if (std::optional<LaunchPlan> p =
             plan_launch(tube, -1, K1Spawn::Kind::Dumb, &why)) {
         log_launch(tube, -1, *p);
         ++c_.logged_dumb_launch;
-        return false;
+        s_.walk_shot = true;
+        return std::nullopt;
     }
     ++c_.launch_why[static_cast<size_t>(why)];
     k1_roll_back(m_, s_, mark);
-    *out = emit(K1Kind::FIRE_DUMB, next, tube);
-    return true;
+    return K1NoFire::Launch;
 }
 
 Walker::FireEnd Walker::fire_effect(int64_t w, int64_t target,
-                                    const Outcome& o, K1Record* out,
-                                    St record_next) {
+                                    const Outcome& o) {
+    const FireEnd end = fire_effect_of(w, target, o);
+    if (end == FireEnd::Fired || end == FireEnd::Refused) s_.walk_shot = true;
+    return end;
+}
+
+Walker::FireEnd Walker::fire_effect_of(int64_t w, int64_t target,
+                                       const Outcome& o) {
     switch (o.what) {
         case Outcome::What::Fire: {
             if (o.d.shape == K1Decision::Shape::Beam && o.d.was_firing) {
@@ -1450,8 +1409,8 @@ Walker::FireEnd Walker::fire_effect(int64_t w, int64_t target,
             }
             if (o.d.shape == K1Decision::Shape::Tube) {
                 // The tube's launch (LAUNCHES AT THE BOUNDARY): logged writes
-                // and a SPAWN, unless the kernel cannot make it (the FIRE
-                // record, counted).
+                // and a SPAWN, unless the kernel cannot make it (a no-fire,
+                // its why counted).
                 K1LaunchWhy why = K1LaunchWhy::Other;
                 if (std::optional<LaunchPlan> p =
                         plan_launch(w, target, K1Spawn::Kind::Tube, &why)) {
@@ -1472,9 +1431,7 @@ Walker::FireEnd Walker::fire_effect(int64_t w, int64_t target,
                 }
                 ++c_.launch_why[static_cast<size_t>(why)];
             }
-            *out = emit(K1Kind::FIRE, record_next, w, target);
-            out->decision = o.d;
-            return FireEnd::Record;
+            return FireEnd::NoLaunch;
         }
         case Outcome::What::FailedEvent:
             // self._broadcast_weapon_fire_failed(); return False
@@ -1494,23 +1451,15 @@ K1Record Walker::run() {
         switch (s_.st) {
         // ── host_loop._pump_held_weapons ──────────────────────────────────
         case St::PUMP_FOR_GETTER: {
-            if (s_.ship_pos >= s_.ships->size())
-                return emit(K1Kind::DONE, St::DONE);
+            if (s_.ship_pos >= s_.ships->size()) return done();
             const int64_t ship = (*s_.ships)[s_.ship_pos];
-            const int pos = static_cast<int>(s_.ship_pos);
             const ObjectRow* so = objrow(ship);
-            // A ship the mirror cannot name: Python runs each getter's body
-            // -- but a tractor's, which only K1 has (THE TRACTOR WALK): a
-            // no-fire, counted (whether or not the ship has a tractor
-            // engaged: the mirror cannot tell).
+            // A ship the mirror cannot name: none of its systems fires
+            // (counted once per pump, at its first getter).
             if (!so) {
-                if (s_.getter == 2) {
-                    ++c_.no_fire[static_cast<size_t>(K1NoFire::TractorRow)];
-                    s_.st = St::PUMP_CONTINUE;
-                    break;
-                }
-                return run_python(K1Why::UnslottedShip, St::PUMP_CONTINUE, -1,
-                                  pos, s_.getter);
+                if (s_.getter == 0) count_no_fire(K1NoFire::UnslottedShip);
+                s_.st = St::PUMP_CONTINUE;
+                break;
             }
             // sys_ = getattr(ship, getter)() for getter in ("GetPhaserSystem",
             // "GetPulseWeaponSystem", "GetTractorBeamSystem",
@@ -1523,15 +1472,10 @@ K1Record Walker::run() {
                 default: sys = so->_torpedo_system; break;
             }
             if (sys == kRefUnrepresentable) {
-                // A tractor system the mirror cannot name is never Python's
-                // (THE TRACTOR WALK): a counted no-fire.
-                if (s_.getter == 2) {
-                    ++c_.no_fire[static_cast<size_t>(K1NoFire::TractorRow)];
-                    s_.st = St::PUMP_CONTINUE;
-                    break;
-                }
-                return run_python(K1Why::StaleRow, St::PUMP_CONTINUE, sys, pos,
-                                  s_.getter);
+                count_no_fire(s_.getter == 2 ? K1NoFire::TractorRow
+                                             : K1NoFire::StaleRow);
+                s_.st = St::PUMP_CONTINUE;
+                break;
             }
             const SubsystemRow* sr = subrow(sys);
             // if sys_ is None or not getattr(sys_, "_fire_held", False): continue
@@ -1539,30 +1483,31 @@ K1Record Walker::run() {
                 s_.st = St::PUMP_CONTINUE;
                 break;
             }
-            // A tractor: its own walk, K1's whole (THE TRACTOR WALK).
+            // A tractor: its own walk (THE TRACTOR WALK).
             if (sr->weapon_kind == kTractorSystem) {
                 tractor_walk(sys, false);
                 s_.st = St::PUMP_CONTINUE;
                 break;
             }
-            // Anything the walk could not represent: Python, whole.
-            if (const std::optional<K1Why> why = prescan(sys, ship))
-                return run_python(*why, St::PUMP_CONTINUE, sys, pos,
-                                  s_.getter);
+            // Anything the walk could not represent: no fire.
+            if (const std::optional<K1NoFire> why = prescan(sys, ship)) {
+                count_no_fire(*why);
+                s_.st = St::PUMP_CONTINUE;
+                break;
+            }
             bool stop;
             try {
                 stop = pump_stops(sys, ship);
             } catch (const std::invalid_argument&) {
-                return run_python(K1Why::Gate, St::PUMP_CONTINUE, sys, pos,
-                                  s_.getter);
+                count_no_fire(K1NoFire::Gate);
+                s_.st = St::PUMP_CONTINUE;
+                break;
             }
             if (stop) {
                 // sys_.StopFiring(); continue
-                if (system_stop(sys)) {
-                    s_.st = St::PUMP_CONTINUE;
-                    break;
-                }
-                return emit(K1Kind::STOP_SYSTEM, St::PUMP_CONTINUE, sys);
+                system_stop(sys);
+                s_.st = St::PUMP_CONTINUE;
+                break;
             }
             // sys_.update_weapons(dt)
             s_.sys = sys;
@@ -1578,8 +1523,11 @@ K1Record Walker::run() {
             break;
 
         case St::SYSTEM_START:
-            if (const std::optional<K1Why> why = prescan(s_.sys, -1))
-                return run_python(*why, St::WALK_END, s_.sys, -1, -1);
+            if (const std::optional<K1NoFire> why = prescan(s_.sys, -1)) {
+                count_no_fire(*why);
+                s_.st = St::WALK_END;
+                break;
+            }
             s_.st = St::UW_DEAD_PRUNE;
             break;
         case St::TRACTOR_START:
@@ -1591,19 +1539,21 @@ K1Record Walker::run() {
         case St::DUMB_START: {
             // Weapon.FireDumb(0, 1) (WS:1415) on one tube.
             ++c_.logged_sdk_dumb_fire;
-            K1Record r;
-            if (dumb_fire(s_.weapon, &r, St::WALK_END)) return r;
+            if (const std::optional<K1NoFire> why = dumb_fire(s_.weapon))
+                count_no_fire(*why);
             s_.st = St::WALK_END;
             break;
         }
         case St::FIRE_START: {
             // weapon.Fire(target, offset): the decision (a TractorBeam's is
-            // the mixin's, decide_beam), then its effect. A decision the
-            // mirror cannot make writes nothing (rolled back): result -1,
-            // and Python's Fire runs instead (not counted).
+            // the mixin's, decide_beam), then its effect. A decision or a
+            // launch the mirror cannot make writes nothing (rolled back):
+            // Fire returns False, a counted no-fire.
             const int64_t w = s_.weapon;
             const int64_t t = s_.fire_target;
             const size_t mark = s_.writes.size();
+            s_.result = 0;
+            s_.st = St::WALK_END;
             Outcome o;
             try {
                 const SubsystemRow* wr = subrow(w);
@@ -1614,26 +1564,21 @@ K1Record Walker::run() {
                                                     : decide(w, t);
             } catch (const std::invalid_argument&) {
                 k1_roll_back(m_, s_, mark);
-                s_.result = -1;
-                s_.st = St::WALK_END;
+                count_no_fire(K1NoFire::Decision);
                 break;
             }
             ++c_.logged_sdk_fire;
-            K1Record r;
-            switch (fire_effect(w, t, o, &r, St::FIRE_FIRED)) {
+            switch (fire_effect(w, t, o)) {
                 case FireEnd::Fired: s_.result = 1; break;
                 case FireEnd::Refused:
-                case FireEnd::NotFired: s_.result = 0; break;
-                case FireEnd::Record: return r;
+                case FireEnd::NotFired: break;
+                case FireEnd::NoLaunch:
+                    k1_roll_back(m_, s_, mark);
+                    count_no_fire(K1NoFire::Launch);
+                    break;
             }
-            s_.st = St::WALK_END;
             break;
         }
-        case St::FIRE_FIRED:
-            // The FIRE record's _fire_effect ran: it returns True.
-            s_.result = 1;
-            s_.st = St::WALK_END;
-            break;
 
         // ── WeaponSystem.update_weapons ───────────────────────────────────
         case St::UW_DEAD_PRUNE: {
@@ -1648,6 +1593,9 @@ K1Record Walker::run() {
                 s_.st = St::WALK_END;
                 break;
             }
+            // The walk's rollback mark: before its first write (NO FIRE).
+            s_.walk_mark = s_.writes.size();
+            s_.walk_entry_mark = s_.entries.size();
             // self._prune_targets(): a NEW list of the live entries.
             std::vector<int64_t> kept;
             for (const int64_t t : sysrow()._target_list)
@@ -1657,21 +1605,9 @@ K1Record Walker::run() {
             // Logged on EVERY walk, unchanged or not: Python's list is a NEW
             // object each time (AddTarget appends in place).
             write_target_list(s_.sys, std::move(kept));
-            ++s_.walk_no;
-            s_.in_walk = true;
-            s_.walk_tagged = false;
-            // offset = self._live_held_offset(). Python's own when the walk
-            // check hands the walk start back (a patched or overridden
-            // method on its path: WALK_START, answered by set_offset or
-            // skip_walk); else its value from the mirror, and Python fetches
-            // the object when something of the walk first reaches it
-            // (ruling P5, the K1WalkOffset marker and the record tag).
-            if (check_ && check_(s_.sys, s_.ship)) {
-                s_.offset.reset();
-                s_.awaiting_offset = true;
-                return emit(K1Kind::WALK_START, St::UW_OFFSET, s_.sys);
-            }
-            s_.offset = k1_live_held_offset(m_, s_.sys, s_.ship);
+            // offset = self._live_held_offset(): from the mirror (THE WALK
+            // OFFSET); Python makes the object when a write names it.
+            start_walk(s_.sys, s_.ship);
             ++c_.logged_walk_start;
             s_.st = St::UW_OFFSET;
             break;
@@ -1693,10 +1629,7 @@ K1Record Walker::run() {
             if (sysrow()._single_fire) {
                 int64_t lit = -1;
                 for (const int64_t c : sysrow()._children) {
-                    // The pre-scan named every child, and nothing ran in
-                    // Python between it and here but (a handed-back walk
-                    // start) WALK_START's offset reply: no effect, no
-                    // handler.
+                    // The pre-scan named every child, in this same call.
                     if (!named_leaf(c))
                         lost("a child became unnamed before the first effect");
                     if (subrow(c)->_firing) {
@@ -1743,19 +1676,20 @@ K1Record Walker::run() {
                 break;
             }
             s_.weapon = kids[static_cast<size_t>(s_.idx)];
-            if (!named_leaf(s_.weapon))  // a handler swapped the children
-                return ask("group_step",
-                           {s_.sys, s_.idx, s_.working, s_.target},
-                           St::UW_STEP_ANSWER);
+            if (!named_leaf(s_.weapon)) {
+                walk_no_fire(K1NoFire::Walk);
+                break;
+            }
             // if ... not weapon.IsMemberOfGroup(working): continue
             if (s_.working != 0) {
                 const int64_t p = subrow(s_.weapon)->_property;
                 int64_t mask = 0;  // a None property: mask 0
                 if (p != -1) {
                     const PropertyRow* pr = m_.property(p);
-                    if (!pr)
-                        return ask("is_member", {s_.weapon, s_.working},
-                                   St::UW_MEMBER_ANSWER);
+                    if (!pr) {
+                        walk_no_fire(K1NoFire::Walk);
+                        break;
+                    }
                     mask = pr->_groups;
                 }
                 if (!group_bit(mask, s_.working)) {
@@ -1767,27 +1701,9 @@ K1Record Walker::run() {
             begin_try(s_.weapon, Caller::Delta);
             break;
         }
-        case St::UW_MEMBER_ANSWER:
-            if (take_answer())
-                begin_try(s_.weapon, Caller::Delta);
-            else
-                next_delta();
-            break;
-        case St::UW_STEP_ANSWER: {
-            // 0: skipped, 1: fired, 2: failed (ClearTarget and dumb fire done)
-            const int64_t a = take_answer();
-            if (a == 1) {
-                K1Record r;
-                if (fired_bookkeeping(&r)) return r;
-            } else {
-                next_delta();
-            }
-            break;
-        }
         case St::UW_TRIED: {
             if (s_.tf_result) {
-                K1Record r;
-                if (fired_bookkeeping(&r)) return r;
+                fired_bookkeeping();
                 break;
             }
             // weapon._target = None      (ClearTarget, NOT a timer reset)
@@ -1796,28 +1712,21 @@ K1Record Walker::run() {
             //     weapon.FireDumb(0, 1)      (only TorpedoTube is dumb-capable)
             if (sysrow()._target_list.empty()) {
                 const SubsystemRow* wr = subrow(s_.weapon);
-                if (!wr)  // dropped by an effect's handler: Python answers
-                    return ask("is_dumb", {s_.weapon}, St::UW_DUMB_ANSWER);
+                if (!wr) {
+                    walk_no_fire(K1NoFire::Walk);
+                    break;
+                }
                 if (wr->weapon_kind == kTorpedoTube) {
-                    K1Record r;
-                    if (dumb_fire(s_.weapon, &r)) return r;
+                    if (const std::optional<K1NoFire> why =
+                            dumb_fire(s_.weapon)) {
+                        walk_no_fire(*why);
+                        break;
+                    }
                 }
             }
             next_delta();
             break;
         }
-        case St::UW_DUMB_ANSWER:
-            if (take_answer())
-                return emit(K1Kind::FIRE_DUMB, St::UW_NEXT_DELTA, s_.weapon);
-            next_delta();
-            break;
-        case St::UW_RESEED_ANSWER:
-            take_answer();
-            s_.st = St::UW_GROUP_ADVANCE;  // break
-            break;
-        case St::UW_NEXT_DELTA:
-            next_delta();
-            break;
         case St::UW_GROUP_ADVANCE: {
             // if fired_this_group or len(groups) <= 1: break
             if (s_.fired_this_group || s_.groups.size() <= 1) {
@@ -1846,18 +1755,16 @@ K1Record Walker::run() {
             s_.st = St::WALK_END;
             break;
         case St::WALK_END:
-            s_.in_walk = false;
             if (s_.pump) {
                 s_.st = St::PUMP_CONTINUE;
                 break;
             }
-            return emit(K1Kind::DONE, St::DONE);
+            return done();
 
         // ── WeaponSystem.try_fire_weapon ──────────────────────────────────
         case St::TF_TIMER: {
             const int64_t w = s_.tf_weapon;
-            // Every begin_try names a live leaf in the same call, except after
-            // ASK is_member, where only the stock (pure) IsMemberOfGroup ran.
+            // Every begin_try names a live leaf in the same call.
             if (!named_leaf(w)) lost("the tried weapon's row is gone");
             const double threshold = m_.globals().FIRE_TIMER_THRESHOLD;
             // if self._force_update: weapon._fire_timer = FIRE_TIMER_THRESHOLD
@@ -1879,7 +1786,8 @@ K1Record Walker::run() {
             try {
                 cf = can_fire(m_, w, s_.now);
             } catch (const std::invalid_argument&) {
-                return ask("can_fire", {w}, St::TF_CANFIRE_ANSWER);
+                walk_no_fire(K1NoFire::CanFire);
+                break;
             }
             // _charge_gate's `self._depleted = False`, written even when a
             // later gate refuses (Task 3 ruling).
@@ -1887,67 +1795,45 @@ K1Record Walker::run() {
                 write_flag(w, Field::_depleted, "_depleted", false);
             if (!cf.ok) {
                 // weapon.StopFiring(); return False
-                if (bank_stop(w)) {
-                    try_returns(false);
+                if (!bank_stop(w)) {
+                    walk_no_fire(K1NoFire::Walk);
                     break;
                 }
-                return emit(K1Kind::BANK_STOP, St::TF_STOPPED, w);
+                try_returns(false);
+                break;
             }
             s_.fire_target = s_.target;
             s_.st = St::TF_FIRE;
             break;
         }
-        case St::TF_CANFIRE_ANSWER:
-            if (!take_answer()) {
-                if (bank_stop(s_.tf_weapon)) {
-                    try_returns(false);
-                    break;
-                }
-                return emit(K1Kind::BANK_STOP, St::TF_STOPPED, s_.tf_weapon);
-            }
-            s_.fire_target = s_.target;
-            s_.st = St::TF_FIRE;
-            break;
-        case St::TF_STOPPED:
-            // weapon.StopFiring(); return False
-            try_returns(false);
-            break;
         case St::TF_FIRE: {
-            // result = weapon.Fire(target, offset) -- its decision half. A
-            // throw undoes the decision's own writes and asks Python to run
-            // the whole Fire.
+            // result = weapon.Fire(target, offset). A decision the mirror
+            // cannot make undoes its own writes and is a no-fire; so is a
+            // launch the kernel cannot make.
             const int64_t w = s_.tf_weapon;
             const size_t mark = s_.writes.size();
             Outcome o;
             try {
                 o = decide(w, s_.fire_target);
-            } catch (const std::invalid_argument& e) {
+            } catch (const std::invalid_argument&) {
                 k1_roll_back(m_, s_, mark);
-                ++c_.fire_ask_why[static_cast<size_t>(fire_ask_why(e))];
-                return ask("fire", {s_.sys, w, s_.fire_target},
-                           St::TF_FIRE_ANSWER);
+                walk_no_fire(K1NoFire::Decision);
+                break;
             }
-            K1Record r;
-            switch (fire_effect(w, s_.fire_target, o, &r, St::TF_FIRED)) {
+            switch (fire_effect(w, s_.fire_target, o)) {
                 case FireEnd::Fired: s_.st = St::TF_FIRED; break;
-                case FireEnd::Refused: s_.st = St::TF_FIRE_FALSE; break;
+                case FireEnd::Refused:
                 case FireEnd::NotFired: s_.st = St::TF_NOT_FIRED; break;
-                case FireEnd::Record: return r;
+                case FireEnd::NoLaunch:
+                    k1_roll_back(m_, s_, mark);
+                    walk_no_fire(K1NoFire::Launch);
+                    break;
             }
             break;
         }
         case St::TF_FIRED:
             // _weapon_did_fire: the effect returned True
             try_returns(true);
-            break;
-        case St::TF_FIRE_FALSE:
-            s_.st = St::TF_NOT_FIRED;
-            break;
-        case St::TF_FIRE_ANSWER:
-            if (take_answer())
-                try_returns(true);
-            else
-                s_.st = St::TF_NOT_FIRED;
             break;
         case St::TF_NOT_FIRED: {
             if (s_.in_retry) {  // the next entry
@@ -1957,14 +1843,19 @@ K1Record Walker::run() {
             }
             // weapon._target = None
             write_target(s_.tf_weapon, -1);
-            // for entry in list(self._target_list): the LIVE list, now
-            std::vector<int64_t> snap = sysrow()._target_list;
-            for (const int64_t e : snap) {
+            // for entry in list(self._target_list): the LIVE list, now. An
+            // entry the mirror cannot read is treated as gone (NO FIRE,
+            // after a shot).
+            std::vector<int64_t> snap;
+            bool unread = false;
+            for (const int64_t e : sysrow()._target_list) {
                 const ObjectRow* eo = objrow(e);
                 if (!eo || !eo->has_real_is_dead)
-                    return ask("retry", {s_.sys, s_.tf_weapon},
-                               St::TF_RETRY_ANSWER);
+                    unread = true;
+                else
+                    snap.push_back(e);
             }
+            if (unread) count_no_fire(K1NoFire::Retry);
             s_.retry = std::move(snap);
             s_.retry_pos = 0;
             s_.in_retry = true;
@@ -1978,12 +1869,14 @@ K1Record Walker::run() {
             }
             const int64_t e = s_.retry[s_.retry_pos];
             // if entry is None or (hasattr(entry, "IsDead") and
-            //     entry.IsDead()): continue
+            //     entry.IsDead()): continue -- an IsDead the mirror cannot
+            // answer is treated as gone (NO FIRE, after a shot).
             bool dead;
             try {
                 dead = ship_dead(m_, e);
             } catch (const std::invalid_argument&) {
-                return ask("is_dead", {e}, St::TF_DEAD_ANSWER);
+                count_no_fire(K1NoFire::IsDead);
+                dead = true;
             }
             if (dead) {
                 ++s_.retry_pos;
@@ -1994,18 +1887,6 @@ K1Record Walker::run() {
             s_.st = St::TF_FIRE;
             break;
         }
-        case St::TF_DEAD_ANSWER:
-            if (take_answer()) {
-                ++s_.retry_pos;
-                s_.st = St::TF_RETRY_NEXT;
-            } else {
-                s_.fire_target = s_.retry[s_.retry_pos];
-                s_.st = St::TF_FIRE;
-            }
-            break;
-        case St::TF_RETRY_ANSWER:
-            try_returns(take_answer() != 0);
-            break;
 
         case St::DONE:
             lost("the session already returned DONE");
@@ -2023,9 +1904,8 @@ K1Kernel::~K1Kernel() = default;
 void K1Kernel::clear() { sessions_.clear(); }
 
 void K1Kernel::begin_pump(std::vector<int64_t> ships, double dt, double now,
-                          bool use_memo, double drift_now, K1WalkCheck check) {
+                          bool use_memo, double drift_now) {
     auto s = std::make_unique<Session>();
-    s->check = std::move(check);
     s->pump = true;
     s->ships = std::make_shared<const std::vector<int64_t>>(std::move(ships));
     s->dt = dt;
@@ -2037,10 +1917,8 @@ void K1Kernel::begin_pump(std::vector<int64_t> ships, double dt, double now,
 }
 
 void K1Kernel::begin_system(int64_t system, double dt, double now,
-                            bool use_memo, double drift_now,
-                            K1WalkCheck check) {
+                            bool use_memo, double drift_now) {
     auto s = std::make_unique<Session>();
-    s->check = std::move(check);
     s->pump = false;
     s->sys = system;
     s->dt = dt;
@@ -2111,66 +1989,29 @@ int64_t K1Kernel::result() const {
     return sessions_.back()->result;
 }
 
+std::optional<Vec3> K1Kernel::walk_manual_offset(int64_t walk) const {
+    if (sessions_.empty()) lost("no session is open");
+    const Session& s = *sessions_.back();
+    if (walk < 1 || walk > static_cast<int64_t>(s.walk_manual.size()))
+        lost("walk_manual_offset: the session started no such walk");
+    return s.walk_manual[static_cast<size_t>(walk - 1)];
+}
+
 K1Record K1Kernel::next() {
     if (sessions_.empty()) lost("no session is open");
     Session& s = *sessions_.back();
-    if (s.awaiting_offset) lost("WALK_START has no offset (combat_k1_set_offset)");
-    if (s.awaiting_answer && !s.has_answer)
-        lost("ASK has no answer (combat_k1_answer)");
-    // A throw must leave the session and the mirror as they were: the
-    // pending answer kept, every unflushed write undone (mirror == Python),
-    // so abandon() -- or a retry -- starts from a consistent state.
+    // A throw must leave the session and the mirror as they were: every
+    // unflushed write undone (mirror == Python), so abandon() -- or a retry
+    // -- starts from a consistent state.
     Session before = s;
-    s.awaiting_answer = false;
-    s.has_answer = false;
     try {
-        // Both arms are lvalues of K1WalkCheck, so the conditional is an
-        // lvalue naming one of them (no temporary): s.check lives in the
-        // session and walk_check_ in the kernel, both past the Walker.
-        Walker w(m_, s, counts_, s.check ? s.check : walk_check_);
+        Walker w(m_, s, counts_);
         return w.run();
     } catch (...) {
         k1_roll_back(m_, s, 0);
         s = std::move(before);
         throw;
     }
-}
-
-void K1Kernel::set_offset(std::optional<Vec3> xyz) {
-    if (sessions_.empty() || !sessions_.back()->awaiting_offset)
-        lost("no WALK_START is waiting for its offset");
-    Session& s = *sessions_.back();
-    s.offset = xyz;
-    s.awaiting_offset = false;
-}
-
-void K1Kernel::answer(std::optional<int64_t> v) {
-    if (sessions_.empty() || !sessions_.back()->awaiting_answer ||
-        sessions_.back()->has_answer)
-        lost("no ASK is waiting for an answer");
-    Session& s = *sessions_.back();
-    s.answer = v;
-    s.has_answer = true;
-}
-
-void K1Kernel::skip_walk() {
-    if (sessions_.empty() || !sessions_.back()->awaiting_offset)
-        lost("skip_walk: no WALK_START is waiting for a reply");
-    Session& s = *sessions_.back();
-    s.awaiting_offset = false;
-    s.st = St::WALK_END;  // Python ran update_weapons; nothing to write
-    ++counts_.python_systems;
-    count_why(counts_, s.pump, K1Why::InstancePatch);
-}
-
-const K1WalkCheck* K1Kernel::top_walk_check() const {
-    if (sessions_.empty() || !sessions_.back()->check) return nullptr;
-    return &sessions_.back()->check;
-}
-
-bool K1Kernel::answer_pending() const {
-    return !sessions_.empty() && sessions_.back()->awaiting_answer &&
-           sessions_.back()->has_answer;
 }
 
 void K1Kernel::end() {
@@ -2184,23 +2025,25 @@ void K1Kernel::abandon() {
     sessions_.pop_back();
 }
 
-// WeaponSystem._live_held_offset (WS:1551-1564):
-//   ship = self.GetParentShip()
-//   probe = getattr(type(ship), "is_using_target_offset", None) ...
-//   if callable(probe) and ship.is_using_target_offset():
-//       return ship.GetTargetOffsetTG()   # a TGPoint3 copy of the manual one
-//   return getattr(self, "_held_offset", None)
-// is_using_target_offset (SHIPS:1797): bool(self._use_target_offset and
-// self._manual_target_offset is not None). A non-ShipClass ship has no probe
-// (the walk check hands back any class whose probe is not the stock
-// ShipClass's). The OFFSET mirror type reads "unset" for anything that is
-// not a TGPoint3; ShipClass only ever stores a TGPoint3 or None there.
-std::optional<Vec3> k1_live_held_offset(const Mirror& m, int64_t system,
-                                        int64_t ship) {
+// ShipClass.is_using_target_offset (SHIPS:1805): bool(self._use_target_offset
+// and self._manual_target_offset is not None), and GetTargetOffsetTG's copy of
+// the manual pick. Only a ShipClass has the probe. The OFFSET mirror type
+// reads "unset" for anything that is not a TGPoint3; ShipClass only ever
+// stores a TGPoint3 or None there.
+std::optional<Vec3> k1_manual_offset(const Mirror& m, int64_t ship) {
     if (const ObjectRow* so = ship < 0 ? nullptr : m.object(ship);
         so && so->is_ship_class && so->_use_target_offset &&
         so->manual_offset_set)
         return so->_manual_target_offset;
+    return std::nullopt;
+}
+
+// WeaponSystem._live_held_offset (WS:1551-1564, deleted since):
+//   if ship.is_using_target_offset(): return ship.GetTargetOffsetTG()
+//   return getattr(self, "_held_offset", None)
+std::optional<Vec3> k1_live_held_offset(const Mirror& m, int64_t system,
+                                        int64_t ship) {
+    if (std::optional<Vec3> manual = k1_manual_offset(m, ship)) return manual;
     const SubsystemRow* r = system < 0 ? nullptr : m.subsystem(system);
     if (!r) throw std::logic_error("combat K1: no row for the walked system");
     if (r->held_offset_set) return r->_held_offset;

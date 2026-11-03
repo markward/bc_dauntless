@@ -21,10 +21,11 @@ def _wire_loaded_tube(ship):
     ship._torpedo_system = parent
     parent._parent_ship = ship
     from engine.appc.subsystems import TorpedoAmmoType
-    parent.AddAmmoType(TorpedoAmmoType("Photon", launch_speed=19.0, power_cost=20.0))
+    parent.AddAmmoType(TorpedoAmmoType("Photon", launch_speed=19.0, power_cost=20.0, script="Tactical.Projectiles.PhotonTorpedo"))
     ship.SetWorldLocation(TGPoint3(0, 0, 0))
     tube = TorpedoTube("Forward Torpedo 1")
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     tube._reload_delay = 40.0
     tube.SetMaxCondition(100.0)

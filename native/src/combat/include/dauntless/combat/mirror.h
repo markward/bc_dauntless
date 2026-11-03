@@ -70,9 +70,6 @@ enum class Field : int32_t {
     // system, 3 tractor system, 4 torpedo system, 5 phaser bank, 6 pulse
     // weapon, 7 tractor beam, 8 torpedo tube.
     weapon_kind,
-    // k1_overridden: the class overrides a method the K1 kernel stands in
-    // for (Fire, CanFire, update_weapons ...); K1 hands its system to Python.
-    k1_overridden,
     // Subsystem: PoweredSubsystem
     _is_on,
     // Subsystem: WeaponSystem held-fire state (_target_list holds Object
@@ -252,7 +249,7 @@ struct SubsystemRow {
     std::vector<int64_t> _known_objects;  // sorted, unique (set semantics)
     std::vector<int64_t> _probe_ids;      // list order
     int64_t _cloak_state = 0;
-    int64_t weapon_kind = 0, k1_overridden = 0, _is_on = 0;
+    int64_t weapon_kind = 0, _is_on = 0;
     int64_t _fire_held = 0, _held_target = -1;
     Vec3 _held_offset{0, 0, 0};
     bool held_offset_set = false;
@@ -375,21 +372,9 @@ enum class Global : int32_t {
     // The K1 kernel's beam edge (spec 2026-11-02-combat-fire-events §4.3):
     // weapon_subsystems.BEAM_ON_DELAY_S, the lit bank's beam-on countdown
     BEAM_ON_DELAY_S,
-    // The launch deferral: 1 while a function K1's native launch stands in
-    // for is not the stock one (native_combat._k1_launch_patched: a test or
-    // a tool patched weapon_subsystems._spawn_projectile ...): every launch
-    // is then Python's (K1LaunchWhy::Patched). Set by the bindings before
-    // every combat_k1_next (THE LAUNCH CHECK).
-    K1_LAUNCH_PATCHED,
     // A cannon's launch (launch deferral, Task 3): PULSE_DAMAGE_SCALE_BY_
-    // POWER_SETTING[0..2] (PulseWeapon.GetDamageScale), and 1 while a pulse
-    // module the cannons' launches carry (weapon_subsystems._pulse_modules)
-    // is not the one sys.modules holds now -- PulseWeapon._fire_decide would
-    // import another, or none: every cannon launch is then Python's
-    // (K1LaunchWhy::Unresolved). Set by the bindings before every
-    // combat_k1_next (THE LAUNCH CHECK).
+    // POWER_SETTING[0..2] (PulseWeapon.GetDamageScale).
     PULSE_DAMAGE_SCALE_0, PULSE_DAMAGE_SCALE_1, PULSE_DAMAGE_SCALE_2,
-    K1_PULSE_MODULE_STALE,
     // Tractors native (fire control native only, R7): engine/appc/tractor.py's
     // force constants (TRACTOR_EPS is its _EPS) and weapon_subsystems.
     // TRACTOR_MAX_RANGE_GU, K1's engage range. Python is their one home.
@@ -424,10 +409,8 @@ struct Globals {
            PHASER_DISCHARGE_2 = 0.0;
     int64_t PHASER_DISCHARGE_LEN = 0;
     double BEAM_ON_DELAY_S = 0.0;
-    int64_t K1_LAUNCH_PATCHED = 0;
     double PULSE_DAMAGE_SCALE_0 = 0.0, PULSE_DAMAGE_SCALE_1 = 0.0,
            PULSE_DAMAGE_SCALE_2 = 0.0;
-    int64_t K1_PULSE_MODULE_STALE = 0;
     double TRACTOR_REFERENCE_MASS = 0.0, TRACTOR_REFERENCE_SPEED_GUPS = 0.0,
            TRACTOR_MAX_SPEED_GUPS = 0.0, TRACTOR_FALLBACK_MASS = 0.0,
            TRACTOR_TOW_DRAG_FRACTION = 0.0, TRACTOR_DOCK_GENTLE_FRACTION = 0.0,

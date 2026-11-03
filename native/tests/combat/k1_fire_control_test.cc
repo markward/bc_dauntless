@@ -1,8 +1,9 @@
 // The K1 fire-control kernel (k1_fire_control.h) on hand-built mirror rows:
-// the record sequence of the pump and the walk, the write log, the fallbacks
-// and the session stack. The native-vs-Python differentials run from
-// tests/unit/test_native_k1_dispatch.py and
-// tests/integration/test_native_k1_differential.py (Tasks 5 and 6).
+// the pump and the walk, the write log and the queue entries of a session's
+// one record, the no-fires (NO FIRE) and the session stack. Fire control's
+// Python copy is deleted (fire control native only, M3): the end-to-end
+// checks are tests/unit/test_native_k1_dispatch.py (recorded expectations)
+// and tests/integration/test_golden_fights.py.
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
@@ -23,6 +24,7 @@
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/mirror.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/weapon_geometry.h"
 #include "dauntless/transform_store.h"
 
 using namespace dauntless::combat;
@@ -40,12 +42,7 @@ struct World {
     int64_t next_id = 1;
     std::map<int64_t, std::string> names;
 
-    // `legacy`: every walk starts the old way, with a WALK_START record (a
-    // walk check that always answers true) -- the record sequences the
-    // walk tests below were written against. World(false) has no check:
-    // walks start natively (round trips Task 1).
-    explicit World(bool legacy = true) {
-        if (legacy) k.set_walk_check([](int64_t, int64_t) { return true; });
+    World() {
         m.set_global_f(Global::FIRE_TIMER_THRESHOLD, 0.33);
         m.set_global_f(Global::PHASER_MAX_RANGE_GU, 700.0);
         m.set_global_f(Global::BEAM_ON_DELAY_S, 2 * 0.33);
@@ -119,9 +116,11 @@ struct World {
                              : kind == 3 ? Field::_tractor_beam_system
                                          : Field::_torpedo_system;
         m.set_ref(ship_h, getter, s);
-        if (kind == 4) {
+        if (kind == 4) {  // its ammo type's launch cached: tubes launch
             const int64_t ammo = m.register_row(Kind::Ammo);
             m.set_i(ammo, Field::_unlimited, 1);
+            m.set_i(ammo, Field::ammo_launch_state, 1);
+            m.set_f(ammo, Field::ammo_launch_speed, 19.0);
             m.set_ids(s, Field::_ammo_by_slot, {0, ammo});
         }
         return s;
@@ -154,6 +153,10 @@ struct World {
         m.set_i(b, Field::_num_ready, 1);
         m.set_i(b, Field::_max_ready, 1);
         m.set_f(b, Field::_last_fire_time, -1000.0);
+        if (kind == 8) {  // its one slot loaded
+            m.set_floats(b, Field::_reload_timers, {-1.0});
+            m.set_floats(b, Field::_reload_advanced_at, {0.0});
+        }
         auto kids = m.get_ids(sys, Field::_children);
         kids.push_back(b);
         m.set_ids(sys, Field::_children, kids);
@@ -219,36 +222,18 @@ struct World {
         }
         return out;
     }
-    // "KIND a" for a quick sequence check.
-    std::string brief(const K1Record& r) const {
-        std::string s = k1_kind_name(r.kind);
-        switch (r.kind) {
-            case K1Kind::DONE: break;
-            case K1Kind::FIRE: s += " " + name(r.a) + "@" + (r.b == -1 ? "None" : name(r.b)); break;
-            case K1Kind::ASK: s += " " + r.query; break;
-            case K1Kind::RUN_PYTHON:
-                s += " " + (r.a < 0 ? std::to_string(r.a) : name(r.a)) + " " +
-                     std::to_string(r.b) + " " + std::to_string(r.c);
-                break;
-            default: s += " " + name(r.a); break;
-        }
-        return s;
+    // The record's kind (DONE: a session has no other).
+    std::string brief(const K1Record& r) const { return k1_kind_name(r.kind); }
+    // The session's one record.
+    K1Record step() { return k.next(); }
+    // One no-fire why's count.
+    int64_t no_fire(K1NoFire why) const {
+        return k.counts().no_fire[static_cast<size_t>(why)];
     }
-    // next(), answering WALK_START with no offset.
-    K1Record step() {
-        K1Record r = k.next();
-        if (r.kind == K1Kind::WALK_START) k.set_offset(std::nullopt);
-        return r;
-    }
-    // Every record up to and including DONE, as brief strings.
-    std::vector<std::string> run_to_done() {
-        std::vector<std::string> out;
-        for (int guard = 0; guard < 200; ++guard) {
-            K1Record r = step();
-            out.push_back(brief(r));
-            if (r.kind == K1Kind::DONE) break;
-        }
-        return out;
+    int64_t no_fires() const {
+        int64_t n = 0;
+        for (int64_t c : k.counts().no_fire) n += c;
+        return n;
     }
 };
 
@@ -262,10 +247,8 @@ std::vector<std::string> fx(const World& w, const K1Record& r) {
 
 // A posed ShipClass target whose mount order opens with an entry the
 // mirror cannot name, so it cannot tell which mount `bank`'s stored offset
-// is: a tube's Fire at it is Python's (ASK fire, mount_unknown) -- the
-// Python point the walk tests below pause at, now that a beam's edge and a
-// FIRE_FAILED are no longer records (and an offset no mount claims is a
-// plain point, fire control native only M5).
+// is: a tube's Fire decision at it cannot be made (a Decision no-fire;
+// an offset no mount claims is a plain point, fire control native only M5).
 PartPose shift_pose();
 int64_t posed_target(World& w, const std::string& name, double x, double y,
                      double z, int64_t bank) {
@@ -287,6 +270,17 @@ bool has_write(const World& w, const K1Record& r, const std::string& s) {
     return std::find(ws.begin(), ws.end(), s) != ws.end();
 }
 
+// The writes of `r` from the first one equal to `from`, `n` of them.
+std::vector<std::string> writes_from(const World& w, const K1Record& r,
+                                     const std::string& from, size_t n) {
+    const std::vector<std::string> ws = w.writes(r);
+    auto it = std::find(ws.begin(), ws.end(), from);
+    if (it == ws.end()) return {};
+    const size_t at = static_cast<size_t>(it - ws.begin());
+    return std::vector<std::string>(
+        it, it + static_cast<std::ptrdiff_t>(std::min(n, ws.size() - at)));
+}
+
 // The writes of `r` on `who`, in order, as w.writes() spells them.
 std::vector<std::string> writes_on(const World& w, const K1Record& r,
                                    const std::string& who) {
@@ -300,7 +294,7 @@ std::vector<std::string> writes_on(const World& w, const K1Record& r,
 
 TEST(K1, GateOrderStopsBeforeWalk) {
     // The pump's gates in order: offline / IsOn, held dead, undetectable,
-    // _can_engage. Each stops with no write and no walk.
+    // _can_engage. Each stops the system (its logged stop) with no walk.
     for (int gate = 0; gate < 4; ++gate) {
         World w;
         const int64_t ship = w.ship("ship");
@@ -320,14 +314,15 @@ TEST(K1, GateOrderStopsBeforeWalk) {
         set_latched(w.m, ship, held, true);
         w.k.begin_pump({ship}, kDt, 10.0, true, 0.0);
         const K1Record r = w.step();
-        EXPECT_EQ(w.brief(r), "STOP_SYSTEM sys") << "gate " << gate;
-        EXPECT_TRUE(r.writes.empty());
+        EXPECT_EQ(w.brief(r), "DONE") << "gate " << gate;
+        EXPECT_EQ(w.writes(r).front(), "sys._fire_held=False") << "gate " << gate;
+        EXPECT_EQ(w.k.counts().logged_system_stop, 1) << "gate " << gate;
+        EXPECT_EQ(w.k.counts().logged_walk_start, 0) << "gate " << gate;
         // can_detect (memo, latch) runs only once the earlier gates passed;
         // the cloak gate answers before the latch is touched.
         const bool detect_ran = gate >= 2;
         EXPECT_EQ(w.m.sensor_state().memo.empty(), !detect_ran) << "gate " << gate;
         EXPECT_EQ(latched(w.m, ship, held), gate != 3) << "gate " << gate;
-        EXPECT_EQ(w.brief(w.step()), "DONE");
         w.k.end();
     }
     // A torpedo system has no range gate: the same far target walks.
@@ -337,7 +332,9 @@ TEST(K1, GateOrderStopsBeforeWalk) {
     const int64_t sys = w.system("tsys", ship, 4, {far});
     w.bank("tube", sys);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.brief(w.step()), "WALK_START tsys");
+    w.step();
+    EXPECT_EQ(w.k.counts().logged_walk_start, 1);
+    EXPECT_EQ(w.k.counts().logged_system_stop, 0);
 }
 
 TEST(K1, TimerGateAndForceUpdate) {
@@ -348,21 +345,19 @@ TEST(K1, TimerGateAndForceUpdate) {
         const int64_t sys = w.system("sys", ship, 1, {t});
         const int64_t b0 = w.bank("b0", sys);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        const K1Record ws = w.step();
-        EXPECT_EQ(w.brief(ws), "WALK_START sys");
-        EXPECT_EQ(w.writes(ws), (std::vector<std::string>{"sys._target_list=[t]"}));
         const K1Record done = w.step();
         EXPECT_EQ(w.brief(done), "DONE");
         char dt[64];
         std::snprintf(dt, sizeof dt, "%.17g", 0.0 + kDt);
         EXPECT_EQ(w.writes(done),
                   (std::vector<std::string>{
-                      "sys._group_fire_mode=0", std::string("b0._fire_timer=") + dt,
-                      "b0._target=None", "sys._force_update=False"}));
+                      "sys._target_list=[t]", "sys._group_fire_mode=0",
+                      std::string("b0._fire_timer=") + dt, "b0._target=None",
+                      "sys._force_update=False"}));
         EXPECT_EQ(w.m.get_f(b0, Field::_fire_timer), 0.0 + kDt);
     }
     {   // Crossing the threshold: attempt, and the timer resets to 0.0 (a
-        // tube: its FIRE is a record; a beam's edge is logged writes).
+        // tube: its launch).
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -370,16 +365,14 @@ TEST(K1, TimerGateAndForceUpdate) {
         const int64_t b0 = w.bank("b0", sys);
         w.m.set_f(b0, Field::_fire_timer, 0.30);
         w.k.begin_pump({ship}, 0.05, 10.0, false, 0.0);
-        w.step();
         const K1Record f = w.step();
-        EXPECT_EQ(w.brief(f), "FIRE b0@t");
-        EXPECT_EQ(w.writes(f), (std::vector<std::string>{
-                                   "sys._group_fire_mode=0",
-                                   "b0._fire_timer=0.34999999999999998",
-                                   "b0._fire_timer=0"}));
-        EXPECT_EQ(f.decision.shape, K1Decision::Shape::Tube);
-        EXPECT_EQ(f.decision.target_used, t);
+        EXPECT_EQ(writes_on(w, f, "b0")[0], "b0._fire_timer=0.34999999999999998");
+        EXPECT_EQ(writes_on(w, f, "b0")[1], "b0._fire_timer=0");
+        EXPECT_EQ(fx(w, f), (std::vector<std::string>{
+                                "SPAWN b0@t", "WEAPON_FIRED b0@t",
+                                "AMMO_CONSUMED b0"}));
         EXPECT_EQ(w.m.get_f(b0, Field::_fire_timer), 0.0);
+        EXPECT_EQ(w.k.counts().logged_tube_launch, 1);
     }
     {   // _force_update bypasses the threshold (timer := 0.33), even at dt 0.
         World w;
@@ -389,13 +382,11 @@ TEST(K1, TimerGateAndForceUpdate) {
         w.bank("b0", sys);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_system(sys, 0.0, 10.0, false, 0.0);
-        w.step();
         const K1Record f = w.step();
-        EXPECT_EQ(w.brief(f), "FIRE b0@t");
-        EXPECT_EQ(w.writes(f)[1], "b0._fire_timer=0.33000000000000002");
+        EXPECT_EQ(writes_on(w, f, "b0")[0], "b0._fire_timer=0.33000000000000002");
+        EXPECT_EQ(w.k.counts().logged_tube_launch, 1);
     }
-    {   // A lit beam ignores the threshold (its sustain is logged writes,
-        // round trips Task 2: no FIRE record).
+    {   // A lit beam ignores the threshold (its sustain is logged writes).
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -403,7 +394,6 @@ TEST(K1, TimerGateAndForceUpdate) {
         const int64_t b0 = w.bank("b0", sys);
         w.m.set_i(b0, Field::_firing, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        w.step();
         const K1Record f = w.step();
         EXPECT_EQ(w.brief(f), "DONE");
         const auto b0w = writes_on(w, f, "b0");
@@ -426,11 +416,11 @@ TEST(K1, TimerGateAndForceUpdate) {
         w.m.set_f(b0, Field::_charge_level, 0.0);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        w.step();
         // The idle bank's StopFiring is logged (round trips Task 2).
         const K1Record done = w.step();
         EXPECT_EQ(w.brief(done), "DONE");
         EXPECT_EQ(w.writes(done), (std::vector<std::string>{
+                                      "sys._target_list=[t]",
                                       "sys._group_fire_mode=0",
                                       "b0._fire_timer=0.33000000000000002",
                                       "b0._fire_timer=0", "b0._firing=False",
@@ -453,9 +443,7 @@ TEST(K1, DepletedClearIsLoggedEvenWhenRefused) {
     w.bank("b1", sys);  // healthy, so the system is not offline
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    w.step();
-    // b0's stop is logged (idle, round trips Task 2), the clear before the
-    // stop; b1's edge is logged too, so everything rides DONE.
+    // b0's stop is logged (idle), the clear before the stop.
     const K1Record s = w.step();
     EXPECT_EQ(w.brief(s), "DONE");
     const auto b0w = writes_on(w, s, "b0");
@@ -467,38 +455,38 @@ TEST(K1, DepletedClearIsLoggedEvenWhenRefused) {
 }
 
 TEST(K1, RoundRobinFromLastIdx) {
-    // Tubes: each FIRE is a record, so the rotation shows record by record.
+    // Tubes, multi fire: the rotation shows in the launches' order (skew
+    // fire: exempt from the ship-wide stagger, so every tube launches).
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t sys = w.system("sys", ship, 4, {t});
-    w.bank("b0", sys);
-    w.bank("b1", sys);
-    w.bank("b2", sys);
+    for (const char* n : {"b0", "b1", "b2"})
+        w.m.set_i(w.bank(n, sys), Field::_skew_fire, 1);
     w.m.set_i(sys, Field::_last_weapon_idx, 1);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
-    EXPECT_EQ(w.brief(w.step()), "FIRE b2@t");
-    const K1Record second = w.step();
-    EXPECT_EQ(w.brief(second), "FIRE b0@t");
-    // base_idx is captured once: the cursor writes do not move the rotation.
-    EXPECT_EQ(w.writes(second)[0], "sys._last_weapon_idx=2");
-    EXPECT_EQ(w.writes(second)[1], "sys._last_group_fired=0");
-    EXPECT_EQ(w.brief(w.step()), "FIRE b1@t");
     const K1Record done = w.step();
-    EXPECT_EQ(w.brief(done), "DONE");
-    EXPECT_EQ(w.writes(done), (std::vector<std::string>{
-                                  "sys._last_weapon_idx=1",
-                                  "sys._last_group_fired=0",
-                                  "sys._force_update=False"}));
+    std::vector<std::string> spawns;
+    for (const std::string& e : fx(w, done))
+        if (e.rfind("SPAWN", 0) == 0) spawns.push_back(e);
+    EXPECT_EQ(spawns, (std::vector<std::string>{"SPAWN b2@t", "SPAWN b0@t",
+                                                "SPAWN b1@t"}));
+    // base_idx is captured once: the cursor writes do not move the rotation.
+    std::vector<std::string> idx;
+    for (const std::string& s : w.writes(done))
+        if (s.rfind("sys._last_weapon_idx", 0) == 0) idx.push_back(s);
+    EXPECT_EQ(idx, (std::vector<std::string>{"sys._last_weapon_idx=2",
+                                             "sys._last_weapon_idx=0",
+                                             "sys._last_weapon_idx=1"}));
+    EXPECT_EQ(w.writes(done).back(), "sys._force_update=False");
 }
 
 TEST(K1, SingleFireReseedsTimers) {
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 4, {t});  // tubes: FIRE records
+    const int64_t sys = w.system("sys", ship, 4, {t});
     const int64_t b0 = w.bank("b0", sys);
     const int64_t b1 = w.bank("b1", sys);
     const int64_t b2 = w.bank("b2", sys);
@@ -507,16 +495,14 @@ TEST(K1, SingleFireReseedsTimers) {
     w.m.set_f(b2, Field::_fire_timer, 0.2);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    w.step();
-    EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
     const K1Record done = w.step();
     EXPECT_EQ(w.brief(done), "DONE");
-    EXPECT_EQ(w.writes(done), (std::vector<std::string>{
-                                  "sys._last_weapon_idx=0",
-                                  "sys._last_group_fired=0",
-                                  "b0._fire_timer=0", "b1._fire_timer=0",
-                                  "b2._fire_timer=0",
-                                  "sys._force_update=False"}));
+    EXPECT_EQ(writes_from(w, done, "sys._last_weapon_idx=0", 6),
+              (std::vector<std::string>{
+                  "sys._last_weapon_idx=0", "sys._last_group_fired=0",
+                  "b0._fire_timer=0", "b1._fire_timer=0", "b2._fire_timer=0",
+                  "sys._force_update=False"}));
+    EXPECT_EQ(w.k.counts().logged_tube_launch, 1);  // one shot: single fire
     EXPECT_EQ(w.m.get_f(b0, Field::_fire_timer), 0.0);
     EXPECT_EQ(w.m.get_f(b1, Field::_fire_timer), 0.0);
     EXPECT_EQ(w.m.get_f(b2, Field::_fire_timer), 0.0);
@@ -532,11 +518,10 @@ TEST(K1, SingleFireReseedsTimers) {
     v.m.set_i(vsys, Field::_single_fire, 1);
     v.m.set_i(vb1, Field::_firing, 1);
     v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
-    v.step();
-    // The lit beam sustains: logged writes, no FIRE record (Task 2).
     const K1Record vdone = v.step();
     EXPECT_EQ(v.brief(vdone), "DONE");
     EXPECT_EQ(v.writes(vdone), (std::vector<std::string>{
+                                   "sys._target_list=[t]",
                                    "b1._fire_timer=0.016666666666666666",
                                    "b1._fire_timer=0", "b1._firing=True",
                                    "b1._target=t",
@@ -548,7 +533,7 @@ TEST(K1, GroupWalkAdvancesOnDryGroup) {
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 4, {t});  // tubes: FIRE records
+    const int64_t sys = w.system("sys", ship, 4, {t});
     const int64_t b0 = w.bank("b0", sys);
     const int64_t b1 = w.bank("b1", sys);
     const int64_t sp = w.m.register_row(Kind::Property);
@@ -558,77 +543,51 @@ TEST(K1, GroupWalkAdvancesOnDryGroup) {
     w.m.set_ref(b1, Field::_property, w.prop(2));  // group 2
     w.m.set_f(b1, Field::_fire_timer, 0.4);        // only b1 is due
     w.k.begin_pump({ship}, 0.0, 10.0, false, 0.0);
-    w.step();
     const K1Record f = w.step();
-    EXPECT_EQ(w.brief(f), "FIRE b1@t");
-    EXPECT_EQ(w.writes(f), (std::vector<std::string>{
-                               "sys._group_fire_mode=1", "b0._fire_timer=0",
-                               "b0._target=None", "sys._group_fire_mode=2",
-                               "b1._fire_timer=0.40000000000000002",
-                               "b1._fire_timer=0"}));
-    const K1Record done = w.step();
-    EXPECT_EQ(w.writes(done), (std::vector<std::string>{
-                                  "sys._last_weapon_idx=1",
-                                  "sys._last_group_fired=2",
-                                  "sys._force_update=False"}));
+    EXPECT_EQ(writes_from(w, f, "sys._group_fire_mode=1", 6),
+              (std::vector<std::string>{
+                  "sys._group_fire_mode=1", "b0._fire_timer=0",
+                  "b0._target=None", "sys._group_fire_mode=2",
+                  "b1._fire_timer=0.40000000000000002", "b1._fire_timer=0"}));
+    EXPECT_EQ(fx(w, f).front(), "SPAWN b1@t");
+    const auto ws = w.writes(f);
+    ASSERT_GE(ws.size(), 3u);
+    EXPECT_EQ((std::vector<std::string>(ws.end() - 3, ws.end())),
+              (std::vector<std::string>{"sys._last_weapon_idx=1",
+                                        "sys._last_group_fired=2",
+                                        "sys._force_update=False"}));
     w.k.end();
 
     // Every group dry: the walk wraps to its start and clears the resume.
     w.m.set_f(b1, Field::_fire_timer, 0.0);
     w.k.begin_pump({ship}, 0.0, 10.0, false, 0.0);
-    w.step();
     const K1Record dry = w.step();
     EXPECT_EQ(w.brief(dry), "DONE");
-    const auto ws = w.writes(dry);
-    ASSERT_GE(ws.size(), 2u);
-    EXPECT_EQ(ws[ws.size() - 2], "sys._last_group_fired=-1");
-    EXPECT_EQ(ws.back(), "sys._force_update=False");
+    const auto dws = w.writes(dry);
+    ASSERT_GE(dws.size(), 3u);
+    EXPECT_EQ(dws[dws.size() - 2], "sys._last_group_fired=-1");
+    EXPECT_EQ(dws.back(), "sys._force_update=False");
     // _last_group_fired (2, from the first walk) was the working group.
-    EXPECT_EQ(ws[0], "sys._group_fire_mode=2");
+    EXPECT_EQ(dws[1], "sys._group_fire_mode=2");
 }
 
 TEST(K1, TubeRetryPostsFailedPerAttempt) {
     // Both targets are behind the tube: Fire(list[0]) fails, then the retry
     // re-tries list[0] and the other entry: 1 + 2 WEAPON_FIRE_FAILED
-    // entries, no record between them.
+    // entries.
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t1 = w.object("t1", 0.0, -50.0, 0.0);
     const int64_t t2 = w.object("t2", 10.0, -50.0, 0.0);
     const int64_t sys = w.system("tsys", ship, 4, {t1, t2});
-    const int64_t tube = w.bank("tube", sys);
+    w.bank("tube", sys);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.brief(w.step()), "WALK_START tsys");
     const K1Record done = w.step();
     EXPECT_EQ(w.brief(done), "DONE");
     EXPECT_EQ(fx(w, done), (std::vector<std::string>(
                                3, "WEAPON_FIRE_FAILED tube")));
-    w.k.end();
-
-    // The retry reads the list LIVE after the first failure (an ASK fire's
-    // Python, the one point a change can come from now): a t2 killed there
-    // leaves one retry (posed t1 again, ASKed again).
-    World v;
-    const int64_t vship = v.ship("ship");
-    const int64_t vtube_sys = v.system("tsys", vship, 4, {});
-    const int64_t vtube = v.bank("tube", vtube_sys);
-    const int64_t p1 = posed_target(v, "t1", 0.0, 50.0, 0.0, vtube);
-    const int64_t v2 = v.object("t2", 10.0, -50.0, 0.0);
-    v.m.set_ids(vtube_sys, Field::_target_list, {p1, v2});
-    v.m.set_ref(vtube_sys, Field::_held_target, v2);
-    v.m.set_i(vtube_sys, Field::_force_update, 1);
-    v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
-    v.step();
-    EXPECT_EQ(v.brief(v.step()), "ASK fire");
-    v.m.set_i(v2, Field::_dead, 1);
-    v.k.answer(0);
-    EXPECT_EQ(v.brief(v.step()), "ASK fire");  // the retry: t1 only
-    v.k.answer(0);
-    const K1Record vdone = v.step();
-    EXPECT_EQ(v.brief(vdone), "DONE");
-    EXPECT_TRUE(vdone.entries.empty());
-    (void)tube;
+    EXPECT_EQ(w.no_fires(), 0);
 }
 
 TEST(K1, HeldTargetVsListHead) {
@@ -643,7 +602,6 @@ TEST(K1, HeldTargetVsListHead) {
     w.bank("b0", sys);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    w.step();
     // The beam's edge: logged, its ET_WEAPON_FIRED aimed at t1.
     const K1Record done = w.step();
     EXPECT_EQ(w.brief(done), "DONE");
@@ -652,9 +610,8 @@ TEST(K1, HeldTargetVsListHead) {
 }
 
 TEST(K1, DumbFireOnlyWithNoTargets) {
-    {   // An empty list and a tube that cannot fire: stop (idle: logged,
-        // round trips Task 2), then dumb fire -- whose Fire refuses too,
-        // decided natively (launch deferral): no record.
+    {   // An empty list and a tube that cannot fire: stop (idle: logged),
+        // then dumb fire -- whose Fire refuses too, decided natively.
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t sys = w.system("tsys", ship, 4, {});
@@ -662,23 +619,23 @@ TEST(K1, DumbFireOnlyWithNoTargets) {
         w.m.set_i(tube, Field::_num_ready, 0);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        EXPECT_EQ(w.run_to_done(),
-                  (std::vector<std::string>{"WALK_START tsys", "DONE"}));
+        EXPECT_EQ(w.brief(w.step()), "DONE");
         EXPECT_EQ(w.k.counts().logged_idle_bank_stop, 1);
         EXPECT_EQ(w.k.counts().logged_dumb_refused, 1);
     }
-    {   // An empty list and a ready tube: Fire(None) fires dumb itself.
+    {   // An empty list and a ready tube: Fire(None) fires dumb itself (the
+        // walk's own Fire: a tube launch at no target).
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t sys = w.system("tsys", ship, 4, {});
         w.bank("tube", sys);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        w.step();
         const K1Record f = w.step();
-        EXPECT_EQ(w.brief(f), "FIRE tube@None");
-        EXPECT_EQ(f.decision.shape, K1Decision::Shape::Tube);
-        EXPECT_EQ(f.decision.target_used, -1);
+        EXPECT_EQ(fx(w, f), (std::vector<std::string>{
+                                "SPAWN tube@None", "WEAPON_FIRED tube@None",
+                                "AMMO_CONSUMED tube"}));
+        EXPECT_EQ(w.k.counts().logged_tube_launch, 1);
     }
     {   // A failure with a target in the list never dumb-fires.
         World w;
@@ -688,11 +645,11 @@ TEST(K1, DumbFireOnlyWithNoTargets) {
         w.bank("tube", sys);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        EXPECT_EQ(w.brief(w.step()), "WALK_START tsys");
         const K1Record done = w.step();
         EXPECT_EQ(w.brief(done), "DONE");
         EXPECT_EQ(fx(w, done), (std::vector<std::string>(
                                    2, "WEAPON_FIRE_FAILED tube")));
+        EXPECT_EQ(w.k.counts().logged_dumb_launch, 0);
     }
     {   // A phaser bank is not dumb-fire capable.
         World w;
@@ -702,8 +659,7 @@ TEST(K1, DumbFireOnlyWithNoTargets) {
         w.m.set_f(b0, Field::_charge_level, 0.0);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_system(sys, 0.0, 10.0, false, 0.0);
-        EXPECT_EQ(w.run_to_done(),
-                  (std::vector<std::string>{"WALK_START sys", "DONE"}));
+        EXPECT_EQ(w.brief(w.step()), "DONE");
         EXPECT_EQ(w.k.counts().logged_idle_bank_stop, 1);
     }
 }
@@ -730,23 +686,19 @@ TEST(K1, PulseStampsBeforeArc) {
     const int64_t sys = w.system("psys", ship, 2, {t});
     const int64_t c = w.bank("cannon", sys);
     w.m.set_i(sys, Field::_force_update, 1);
-    // The launch handed back (a cannon's launch is logged writes and a
-    // SPAWN otherwise: K1PulseLaunch), so the FIRE record shows the stamps.
-    w.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
+    w.m.set_fv(sys, Field::_held_offset, {1.0, 2.0, 3.0});
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.brief(w.k.next()), "WALK_START psys");
-    w.k.set_offset(Vec3{1.0, 2.0, 3.0});
     const K1Record f = w.step();
-    EXPECT_EQ(w.brief(f), "FIRE cannon@t");
-    const auto ws = w.writes(f);
-    ASSERT_GE(ws.size(), 2u);
-    EXPECT_EQ(ws[ws.size() - 2], "cannon._target=t");
-    EXPECT_EQ(ws.back(), "cannon._target_offset=walk_offset");
-    EXPECT_EQ(f.decision.shape, K1Decision::Shape::Pulse);
-    EXPECT_EQ(f.decision.target_used, t);
+    // The stamps, then the launch's SPAWN after them.
+    const auto cw = writes_on(w, f, "cannon");
+    ASSERT_GE(cw.size(), 4u);
+    EXPECT_EQ(cw[2], "cannon._target=t");
+    EXPECT_EQ(cw[3], "cannon._target_offset=walk_offset");
+    EXPECT_EQ(fx(w, f), (std::vector<std::string>{"SPAWN cannon@t"}));
     EXPECT_EQ(w.m.get_fv(c, Field::_target_offset),
               (std::vector<double>{1.0, 2.0, 3.0}));
-    w.k.abandon();
+    EXPECT_EQ(w.k.counts().logged_pulse_launch, 1);
+    w.k.end();
 
     // Out of the arc: the stamps persist, _target is cleared again after,
     // _target_offset is not.
@@ -757,10 +709,10 @@ TEST(K1, PulseStampsBeforeArc) {
     const int64_t vc = v.bank("cannon", vsys);
     v.m.set_i(vsys, Field::_force_update, 1);
     v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
-    v.step();
     const K1Record done = v.step();
     EXPECT_EQ(v.brief(done), "DONE");
     EXPECT_EQ(v.writes(done), (std::vector<std::string>{
+                                  "psys._target_list=[t]",
                                   "psys._group_fire_mode=0",
                                   "cannon._fire_timer=0.33000000000000002",
                                   "cannon._fire_timer=0",
@@ -772,8 +724,10 @@ TEST(K1, PulseStampsBeforeArc) {
     EXPECT_EQ(v.m.get_ref(vc, Field::_target), -1);
 }
 
-TEST(K1, PythonFallbackBeforeAnyWrite) {
-    auto fallback = [](auto&& setup, const std::string& want) {
+TEST(K1, NoFireBeforeAnyWrite) {
+    // Whatever the pre-scan finds the mirror cannot represent: the system
+    // does not fire that tick, nothing written, counted by why (NO FIRE).
+    auto no_fire = [](auto&& setup, K1NoFire want) {
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -784,46 +738,35 @@ TEST(K1, PythonFallbackBeforeAnyWrite) {
         const uint64_t before = w.m.epoch();
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
         const K1Record r = w.step();
-        EXPECT_EQ(w.brief(r), want);
-        EXPECT_TRUE(r.writes.empty());
-        EXPECT_EQ(w.m.epoch(), before) << want;  // nothing written
-        EXPECT_EQ(w.k.counts().python_systems, 1);
+        EXPECT_EQ(w.brief(r), "DONE");
+        EXPECT_TRUE(r.writes.empty()) << k1_no_fire_name(want);
+        EXPECT_EQ(w.m.epoch(), before) << k1_no_fire_name(want);
+        EXPECT_EQ(w.no_fire(want), 1) << k1_no_fire_name(want);
+        EXPECT_EQ(w.no_fires(), 1) << k1_no_fire_name(want);
+        EXPECT_EQ(r.no_fire_new, uint64_t{1} << static_cast<int>(want));
     };
-    fallback([](World& w, int64_t ship, int64_t, int64_t, int64_t) {
+    using I = int64_t;
+    no_fire([](World& w, I ship, I, I, I) {
         w.m.set_i(ship, Field::has_posed_parts, 1);
-    }, "RUN_PYTHON sys 0 0");
-    fallback([](World& w, int64_t, int64_t t, int64_t sys, int64_t) {
+    }, K1NoFire::PartStale);
+    no_fire([](World& w, I, I t, I sys, I) {
         w.m.set_ids(sys, Field::_target_list, {t, kRefUnrepresentable});
-    }, "RUN_PYTHON sys 0 0");
-    fallback([](World& w, int64_t, int64_t t, int64_t, int64_t) {
+    }, K1NoFire::StaleRow);
+    no_fire([](World& w, I, I t, I, I) {
         w.m.set_i(t, Field::has_real_is_dead, 0);
-    }, "RUN_PYTHON sys 0 0");
-    {   // An unresolved pulse module.
-        World w;
-        const int64_t ship = w.ship("ship");
-        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-        const int64_t sys = w.system("psys", ship, 2, {t});
-        const int64_t c = w.bank("cannon", sys);
-        w.m.set_i(c, Field::module_ok, 0);
-        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        const K1Record r = w.step();
-        EXPECT_EQ(w.brief(r), "RUN_PYTHON psys 0 1");
-        EXPECT_TRUE(r.writes.empty());
-    }
-    {   // A ship with no row: every getter but the tractor's (THE TRACTOR
-        // WALK: K1's whole); a tractor walks natively, no record.
+    }, K1NoFire::StubOrUnplaced);
+    {   // A ship with no row: none of its systems fires (counted once).
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
         const int64_t sys = w.system("tr", ship, 3, {t});
         w.bank("beam", sys);
         w.k.begin_pump({-1, ship}, kDt, 10.0, false, 0.0);
-        EXPECT_EQ(w.run_to_done(),
-                  (std::vector<std::string>{
-                      "RUN_PYTHON -1 0 0", "RUN_PYTHON -1 0 1",
-                      "RUN_PYTHON -1 0 3", "DONE"}));
+        EXPECT_EQ(w.brief(w.step()), "DONE");
+        EXPECT_EQ(w.no_fire(K1NoFire::UnslottedShip), 1);
+        EXPECT_EQ(w.no_fires(), 1);
     }
-    {   // A system session falls back to update_weapons (no ship position).
+    {   // A system session: the same, nothing written.
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -831,138 +774,45 @@ TEST(K1, PythonFallbackBeforeAnyWrite) {
         w.bank("b0", sys);
         w.m.set_i(ship, Field::has_posed_parts, 1);
         w.k.begin_system(sys, 0.0, 10.0, false, 0.0);
-        EXPECT_EQ(w.run_to_done(),
-                  (std::vector<std::string>{"RUN_PYTHON sys -1 -1", "DONE"}));
+        const K1Record r = w.step();
+        EXPECT_TRUE(r.writes.empty());
+        EXPECT_EQ(w.no_fire(K1NoFire::PartStale), 1);
     }
 }
 
 TEST(K1, ReentrantSessionStack) {
-    // Tubes: their FIREs are records, Python points a handler can act at.
+    // An effect's handler, delivered at a session's end, may StartFiring: a
+    // nested one-system session runs whole before the outer one resumes.
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t sys = w.system("sys", ship, 4, {t});
     w.bank("b0", sys);
-    w.bank("b1", sys);
     w.m.set_i(sys, Field::_force_update, 1);
     const int64_t other = w.ship("other", 0.0, -100.0, 0.0);
     const int64_t osys = w.system("osys", other, 4, {t});
     w.bank("ob", osys);
-    w.m.set_i(osys, Field::_fire_held, 0);
-
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    w.step();
-    EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
-    // The FIRE effect's handler calls osys.StartFiring(t): a nested session.
-    w.m.set_i(osys, Field::_fire_held, 1);
     w.m.set_i(osys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     w.k.begin_system(osys, 0.0, 10.0, false, 0.0);
     EXPECT_EQ(w.k.depth(), 2u);
-    EXPECT_EQ(w.run_to_done(), (std::vector<std::string>{
-                                   "WALK_START osys", "FIRE ob@t", "DONE"}));
+    const K1Record inner = w.step();
+    EXPECT_EQ(fx(w, inner).front(), "SPAWN ob@t");
     w.k.end();
     EXPECT_EQ(w.k.depth(), 1u);
-    // The outer walk resumes where it stopped.
-    const K1Record r = w.step();
-    EXPECT_EQ(w.brief(r), "FIRE b1@t");
-    EXPECT_EQ(w.writes(r)[0], "sys._last_weapon_idx=0");
-    EXPECT_EQ(w.brief(w.step()), "DONE");
+    const K1Record outer = w.step();
+    EXPECT_EQ(fx(w, outer).front(), "SPAWN b0@t");
     w.k.end();
     EXPECT_EQ(w.k.depth(), 0u);
     EXPECT_THROW(w.k.next(), std::logic_error);
-}
-
-TEST(K1, ResumeReadsLiveMirror) {
-    World w;
-    const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 4, {t});
-    w.bank("b0", sys);
-    const int64_t b1 = w.bank("b1", sys);
-    w.m.set_i(b1, Field::_firing, 1);
-    const int64_t ship2 = w.ship("ship2", 5.0, 0.0, 0.0);  // pumped after
-    const int64_t psys = w.system("psys", ship2, 2, {t});
-    w.bank("cannon", psys);
-    w.m.set_i(sys, Field::_force_update, 1);
-    w.m.set_i(psys, Field::_force_update, 1);
-    w.k.begin_pump({ship, ship2}, kDt, 10.0, false, 0.0);
-    w.step();
-    EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
-    // A handler empties b1 and releases both triggers. The running walk
-    // keeps its locals (Python does not re-check _fire_held mid-walk) but
-    // reads b1 live: its stop (logged writes, no record); the pump then
-    // skips the released pulse system.
-    w.m.set_i(b1, Field::_num_ready, 0);
-    w.m.set_i(sys, Field::_fire_held, 0);
-    w.m.set_i(psys, Field::_fire_held, 0);
-    const K1Record done = w.step();
-    EXPECT_EQ(w.brief(done), "DONE");
-    EXPECT_TRUE(has_write(w, done, "b1._firing=False"))
-        << ::testing::PrintToString(w.writes(done));
-}
-
-TEST(K1, MidWalkThrowBecomesAsk) {
-    World w;
-    const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 4, {t});  // tubes: FIRE records
-    w.bank("b0", sys);
-    const int64_t b1 = w.bank("b1", sys);
-    w.m.set_i(sys, Field::_force_update, 1);
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    w.step();
-    EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
-    // A handler re-parents b1 under something the mirror cannot name: its
-    // CanFire can no longer be answered natively, and no whole-system
-    // fallback is possible after an effect.
-    w.m.set_ref(b1, Field::_parent_subsystem, kRefUnrepresentable);
-    const K1Record a = w.step();
-    EXPECT_EQ(w.brief(a), "ASK can_fire");
-    EXPECT_EQ(a.args, (std::vector<int64_t>{b1}));
-    EXPECT_THROW(w.k.next(), std::logic_error);  // no answer yet
-    w.k.answer(1);
-    const K1Record f = w.step();
-    EXPECT_EQ(w.brief(f), "ASK fire");
-    EXPECT_EQ(f.args, (std::vector<int64_t>{sys, b1, t}));
-    w.k.answer(1);
-    const K1Record done = w.step();
-    EXPECT_EQ(w.brief(done), "DONE");
-    EXPECT_EQ(w.writes(done)[0], "sys._last_weapon_idx=1");
-    EXPECT_EQ(w.k.counts().asks, 2);
-    w.k.end();
-
-    // An entry the mirror cannot name in the retry list: the whole retry
-    // loop is asked. The list changes at the Python point before the
-    // failure (an ASK fire on a posed target), the failed aim itself being
-    // an entry now.
-    World v;
-    const int64_t vship = v.ship("ship");
-    const int64_t vsys = v.system("tsys", vship, 4, {});
-    const int64_t tube = v.bank("tube", vsys);
-    const int64_t vt = posed_target(v, "t", 0.0, 50.0, 0.0, tube);
-    v.m.set_ids(vsys, Field::_target_list, {vt});
-    v.m.set_ref(vsys, Field::_held_target, vt);
-    v.m.set_i(vsys, Field::_force_update, 1);
-    v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
-    v.step();
-    EXPECT_EQ(v.brief(v.step()), "ASK fire");
-    v.m.set_ids(vsys, Field::_target_list, {vt, kRefUnrepresentable});
-    v.k.answer(0);
-    const K1Record r = v.step();
-    EXPECT_EQ(v.brief(r), "ASK retry");
-    EXPECT_EQ(r.args, (std::vector<int64_t>{vsys, tube}));
-    EXPECT_EQ(v.writes(r), (std::vector<std::string>{"tube._target=None"}));
-    v.k.answer(0);
-    const K1Record done2 = v.step();
-    EXPECT_EQ(v.brief(done2), "DONE");
-    EXPECT_EQ(v.writes(done2), (std::vector<std::string>{
-                                   "tube._target=None",
-                                   "tsys._force_update=False"}));
+    EXPECT_EQ(w.k.counts().records, 2);
 }
 
 TEST(K1, CountsAndKinds) {
-    EXPECT_STREQ(k1_kind_name(K1Kind::WALK_START), "WALK_START");
-    EXPECT_STREQ(k1_kind_name(K1Kind::ASK), "ASK");
+    EXPECT_STREQ(k1_kind_name(K1Kind::DONE), "DONE");
+    EXPECT_EQ(static_cast<int>(K1Kind::kCount), 1);
+    EXPECT_STREQ(k1_no_fire_name(K1NoFire::Launch), "launch");
+    EXPECT_STREQ(k1_no_fire_name(K1NoFire::IsDead), "is_dead");
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -970,118 +820,18 @@ TEST(K1, CountsAndKinds) {
     w.bank("b0", sys);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.run_to_done().size(), 3u);  // WALK_START, FIRE, DONE
-    EXPECT_EQ(w.k.counts().records, 3);
+    EXPECT_EQ(w.brief(w.step()), "DONE");  // one record a session
+    EXPECT_EQ(w.k.counts().records, 1);
+    EXPECT_THROW(w.k.next(), std::logic_error);  // already DONE
     w.k.end();
-    // A system with no row: Python runs its update_weapons.
+    // A system with no row does not fire (a stale row).
     w.k.begin_system(-1, 0.0, 0.0, false, 0.0);
-    EXPECT_EQ(w.run_to_done(),
-              (std::vector<std::string>{"RUN_PYTHON -1 -1 -1", "DONE"}));
-    EXPECT_EQ(w.k.counts().python_systems, 1);
-}
-
-TEST(K1, EveryAskQuery) {
-    {   // is_member: a bank's property became unnamed mid-walk.
-        World w;
-        const int64_t ship = w.ship("ship");
-        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-        const int64_t sys = w.system("sys", ship, 4, {t});  // tubes
-        const int64_t b0 = w.bank("b0", sys);
-        const int64_t b1 = w.bank("b1", sys);
-        const int64_t sp = w.m.register_row(Kind::Property);
-        w.m.set_id_lists(sp, Field::_firing_chains, {{1}});
-        w.m.set_ref(sys, Field::_property, sp);
-        w.m.set_ref(b0, Field::_property, w.prop(1));
-        w.m.set_ref(b1, Field::_property, w.prop(1));
-        w.m.set_i(sys, Field::_force_update, 1);
-        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        w.step();
-        EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
-        w.m.set_ref(b1, Field::_property, kRefUnrepresentable);
-        const K1Record a = w.step();
-        EXPECT_EQ(w.brief(a), "ASK is_member");
-        EXPECT_EQ(a.args, (std::vector<int64_t>{b1, 1}));
-        w.k.answer(1);
-        // A tube's CanFire has no condition product (the unnamed property's
-        // MaxCondition): answered natively.
-        EXPECT_EQ(w.brief(w.step()), "FIRE b1@t");
-    }
-    for (int64_t answer : {1, 2}) {  // group_step: an unnamed child
-        World w;
-        const int64_t ship = w.ship("ship");
-        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-        const int64_t sys = w.system("sys", ship, 4, {t});  // tubes
-        const int64_t b0 = w.bank("b0", sys);
-        w.bank("b1", sys);
-        w.m.set_i(sys, Field::_force_update, 1);
-        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        w.step();
-        EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
-        w.m.set_ids(sys, Field::_children, {b0, kRefUnrepresentable});
-        const K1Record a = w.step();
-        EXPECT_EQ(w.brief(a), "ASK group_step");
-        EXPECT_EQ(a.args, (std::vector<int64_t>{sys, 1, 0, t}));
-        w.k.answer(answer);
-        const K1Record done = w.step();
-        EXPECT_EQ(w.brief(done), "DONE");
-        if (answer == 1)
-            EXPECT_EQ(w.writes(done)[0], "sys._last_weapon_idx=1");
-        else
-            EXPECT_EQ(w.writes(done)[0], "sys._force_update=False");
-    }
-    {   // reseed: single fire with an unnamed child to re-seed.
-        World w;
-        const int64_t ship = w.ship("ship");
-        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-        const int64_t sys = w.system("sys", ship, 4, {t});  // tubes
-        const int64_t b0 = w.bank("b0", sys);
-        w.m.set_i(sys, Field::_single_fire, 1);
-        w.m.set_i(sys, Field::_force_update, 1);
-        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        w.step();
-        EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
-        w.m.set_ids(sys, Field::_children, {b0, kRefUnrepresentable});
-        const K1Record a = w.step();
-        EXPECT_EQ(w.brief(a), "ASK reseed");
-        EXPECT_EQ(a.args, (std::vector<int64_t>{sys}));
-        EXPECT_EQ(w.writes(a), (std::vector<std::string>{
-                                   "sys._last_weapon_idx=0",
-                                   "sys._last_group_fired=0"}));
-        w.k.answer(std::nullopt);
-        const K1Record done = w.step();
-        EXPECT_EQ(w.writes(done),
-                  (std::vector<std::string>{"sys._force_update=False"}));
-    }
-    {   // is_dead, then fire: a retry entry lost its real IsDead mid-loop
-        // (at the retry's ASK fire of the posed t1, the one Python point
-        // inside the loop).
-        World w;
-        const int64_t ship = w.ship("ship");
-        const int64_t sys = w.system("tsys", ship, 4, {});
-        const int64_t tube = w.bank("tube", sys);
-        const int64_t t1 = posed_target(w, "t1", 0.0, 50.0, 0.0, tube);
-        const int64_t t2 = w.object("t2", 10.0, -50.0, 0.0);
-        w.m.set_ids(sys, Field::_target_list, {t1, t2});
-        w.m.set_ref(sys, Field::_held_target, t2);
-        w.m.set_i(sys, Field::_force_update, 1);
-        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        w.step();
-        EXPECT_EQ(w.brief(w.step()), "ASK fire");  // Fire(t1)
-        w.k.answer(0);
-        EXPECT_EQ(w.brief(w.step()), "ASK fire");  // retry t1
-        w.m.set_i(t2, Field::has_real_is_dead, 0);
-        w.k.answer(0);
-        const K1Record d = w.step();
-        EXPECT_EQ(w.brief(d), "ASK is_dead");
-        EXPECT_EQ(d.args, (std::vector<int64_t>{t2}));
-        w.k.answer(0);
-        const K1Record f = w.step();
-        EXPECT_EQ(w.brief(f), "ASK fire");
-        EXPECT_EQ(f.args, (std::vector<int64_t>{sys, tube, t2}));
-        w.k.answer(0);
-        EXPECT_EQ(w.brief(w.step()), "DONE");
-        EXPECT_EQ(w.k.counts().asks, 4);
-    }
+    EXPECT_EQ(w.brief(w.step()), "DONE");
+    EXPECT_EQ(w.no_fire(K1NoFire::StaleRow), 1);
+    w.k.end();
+    w.k.reset_counts();
+    EXPECT_EQ(w.no_fires(), 0);
+    EXPECT_EQ(w.k.counts().no_fire_reported, uint64_t{0});
 }
 
 TEST(K1, MemoOnlyWhenAsked) {
@@ -1095,16 +845,15 @@ TEST(K1, MemoOnlyWhenAsked) {
         w.bank("b0", sys);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, use_memo, 0.0);
-        w.run_to_done();
+        w.step();
         EXPECT_EQ(w.m.sensor_state().mounts.empty(), !use_memo);
         EXPECT_EQ(w.m.sensor_state().memo.empty(), !use_memo);
     }
 }
 
 TEST(K1, RangeGateNeverThrowsAfterCanDetect) {
-    // The phaser range gate reads both containing sets. An unnamed one must
-    // send the system to Python BEFORE can_detect writes its memo / latch,
-    // or Python would run can_detect a second time.
+    // The phaser range gate reads both containing sets. An unnamed one is a
+    // no-fire found BEFORE can_detect writes its memo / latch.
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -1113,144 +862,16 @@ TEST(K1, RangeGateNeverThrowsAfterCanDetect) {
     w.m.set_ref(ship, Field::_containing_set, kRefUnrepresentable);
     w.k.begin_pump({ship}, kDt, 10.0, true, 0.0);
     const K1Record r = w.step();
-    EXPECT_EQ(w.brief(r), "RUN_PYTHON sys 0 0");
+    EXPECT_TRUE(r.writes.empty());
+    EXPECT_EQ(w.no_fire(K1NoFire::StaleRow), 1);
     EXPECT_TRUE(w.m.sensor_state().memo.empty());
 }
 
-TEST(K1, UnwindLeavesMirrorEqualToPython) {
-    // A throw mid-walk after a write: the pending writes never reached
-    // Python, so they are undone, and the session is as it was.
-    World w;
-    const int64_t ship = w.ship("ship");
-    const int64_t sys = w.system("sys", ship, 4, {});
-    const int64_t b0 = w.bank("b0", sys);
-    const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, b0);
-    w.m.set_ids(sys, Field::_target_list, {t});
-    w.m.set_ref(sys, Field::_held_target, t);
-    w.m.set_ref(b0, Field::_target, t);
-    w.m.set_i(sys, Field::_force_update, 1);
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    w.step();
-    EXPECT_EQ(w.brief(w.step()), "ASK fire");
-    // The Fire's Python leaves the walked system's row gone.
-    w.m.unregister_row(sys);
-    w.k.answer(0);
-    // Resuming writes b0._target = None, then cannot read the system.
-    EXPECT_THROW(w.k.next(), std::logic_error);
-    EXPECT_EQ(w.m.get_ref(b0, Field::_target), t);  // undone
-    EXPECT_THROW(w.k.next(), std::logic_error);       // same state, same throw
-    EXPECT_EQ(w.m.get_ref(b0, Field::_target), t);
-    w.k.abandon();
-    EXPECT_EQ(w.k.depth(), 0u);
-}
-
-TEST(K1, ThrowKeepsThePendingAnswer) {
-    World w;
-    const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 4, {t});  // tubes: FIRE records
-    const int64_t b0 = w.bank("b0", sys);
-    const int64_t b1 = w.bank("b1", sys);
-    const int64_t sp = w.m.register_row(Kind::Property);
-    w.m.set_id_lists(sp, Field::_firing_chains, {{1}});
-    w.m.set_ref(sys, Field::_property, sp);
-    w.m.set_ref(b0, Field::_property, w.prop(1));
-    w.m.set_ref(b1, Field::_property, w.prop(1));
-    w.m.set_i(sys, Field::_force_update, 1);
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    w.step();
-    EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
-    w.m.set_ref(b1, Field::_property, kRefUnrepresentable);
-    EXPECT_EQ(w.brief(w.step()), "ASK is_member");
-    w.k.answer(0);
-    EXPECT_TRUE(w.k.answer_pending());
-    w.m.unregister_row(sys);
-    EXPECT_THROW(w.k.next(), std::logic_error);
-    EXPECT_TRUE(w.k.answer_pending());  // not consumed by the failed call
-    w.k.abandon();
-}
-
-TEST(K1, GroupReReadsWeaponCount) {
-    // n = self.GetNumWeapons() is re-read for each group: Python that drops
-    // a child during group 1 (b2's Fire, asked: its stored offset names no
-    // mount on the posed target) changes group 2's rotation.
-    World w;
-    const int64_t ship = w.ship("ship");
-    const int64_t sys = w.system("sys", ship, 4, {});
-    const int64_t b0 = w.bank("b0", sys);
-    const int64_t b1 = w.bank("b1", sys);
-    const int64_t b2 = w.bank("b2", sys);
-    const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, b2);
-    w.m.set_ids(sys, Field::_target_list, {t});
-    w.m.set_ref(sys, Field::_held_target, t);
-    const int64_t sp = w.m.register_row(Kind::Property);
-    w.m.set_id_lists(sp, Field::_firing_chains, {{1, 2}});
-    w.m.set_ref(sys, Field::_property, sp);
-    w.m.set_ref(b0, Field::_property, w.prop(2));
-    w.m.set_ref(b1, Field::_property, w.prop(2));
-    w.m.set_ref(b2, Field::_property, w.prop(1));
-    w.m.set_i(sys, Field::_last_weapon_idx, 2);
-    w.m.set_i(sys, Field::_force_update, 1);
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    w.step();
-    EXPECT_EQ(w.brief(w.step()), "ASK fire");
-    w.m.set_ids(sys, Field::_children, {b0, b1});  // the Python drops b2
-    w.k.answer(0);
-    EXPECT_EQ(w.brief(w.step()), "ASK fire");  // b2's retry: group 1 dry
-    w.k.answer(0);
-    // n = 2, base_idx 2: idx 1 then 0. (n kept at 3 would give 0, 1, None.)
-    EXPECT_EQ(w.brief(w.step()), "FIRE b1@t");
-    EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
-    EXPECT_EQ(w.brief(w.step()), "DONE");
-}
-
-TEST(K1, RetryWalksItsSnapshot) {
-    // for entry in list(self._target_list): the list is copied when the
-    // retry starts; a later change (at the retry's ASK fire, its one Python
-    // point) does not alter the loop.
-    World w;
-    const int64_t ship = w.ship("ship");
-    const int64_t sys = w.system("tsys", ship, 4, {});
-    const int64_t tube = w.bank("tube", sys);
-    const int64_t t1 = posed_target(w, "t1", 0.0, 50.0, 0.0, tube);
-    const int64_t t2 = w.object("t2", 10.0, -50.0, 0.0);
-    w.m.set_ids(sys, Field::_target_list, {t1, t2});
-    w.m.set_ref(sys, Field::_held_target, t2);
-    w.m.set_i(sys, Field::_force_update, 1);
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    w.step();
-    EXPECT_EQ(w.brief(w.step()), "ASK fire");  // Fire(t1)
-    w.k.answer(0);
-    EXPECT_EQ(w.brief(w.step()), "ASK fire");  // retry t1
-    w.m.set_ids(sys, Field::_target_list, {t1});  // the Python drops t2
-    w.k.answer(0);
-    const K1Record done = w.step();             // retry t2 (snapshot)
-    EXPECT_EQ(w.brief(done), "DONE");
-    EXPECT_EQ(fx(w, done),
-              (std::vector<std::string>{"WEAPON_FIRE_FAILED tube"}));
-}
-
-// ── Fallback reasons (Task 5 fix round: every RUN_PYTHON is counted by why,
-// pump and StartFiring system sessions apart) ──────────────────────────────
-
-namespace {
-int64_t why_of(const K1Kernel::Counts& c, K1Why w, bool system = false) {
-    return (system ? c.system_why : c.pump_why)[static_cast<size_t>(w)];
-}
-int64_t why_total(const K1Kernel::Counts& c) {
-    int64_t n = 0;
-    for (size_t i = 0; i < static_cast<size_t>(K1Why::kCount); ++i)
-        n += c.pump_why[i] + c.system_why[i];
-    return n;
-}
-}  // namespace
-
-
-TEST(K1, BankRowGoneAfterAFireAskAsksPython) {
-    // The Python of an asked Fire drops the tube's row (a value it cannot
-    // encode) and the Fire fails. Python carries on with the object:
-    // `weapon._target = None` is logged for Python with no mirror write
-    // (the row is gone), and the retry's Fire is ASKed.
+TEST(K1, NoFireBeforeTheFirstShotRollsTheWalkBack) {
+    // NO FIRE (R2): a Fire decision the mirror cannot make (a posed target
+    // whose mount it cannot tell) before the walk's first shot rolls the
+    // walk back -- its pruned list, its timers -- and the walk ends: the
+    // mirror is as if it had not walked, and nothing is logged.
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t sys = w.system("sys", ship, 4, {});
@@ -1260,80 +881,55 @@ TEST(K1, BankRowGoneAfterAFireAskAsksPython) {
     w.m.set_ref(sys, Field::_held_target, t);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
-    EXPECT_EQ(w.brief(w.step()), "ASK fire");
-    w.m.unregister_row(b0);
-    w.k.answer(0);
-    K1Record r = w.step();
-    EXPECT_EQ(w.brief(r), "ASK fire");
-    EXPECT_TRUE(has_write(w, r, "b0._target=None"))
-        << ::testing::PrintToString(w.writes(r));
-    w.k.answer(0);
-    r = w.step();
+    const K1Record r = w.step();
     EXPECT_EQ(w.brief(r), "DONE");
-    EXPECT_TRUE(has_write(w, r, "b0._target=None"))
-        << ::testing::PrintToString(w.writes(r));
-    w.k.end();
+    EXPECT_TRUE(r.writes.empty()) << ::testing::PrintToString(w.writes(r));
+    EXPECT_TRUE(r.entries.empty());
+    EXPECT_EQ(w.no_fire(K1NoFire::Decision), 1);
+    EXPECT_EQ(w.m.get_i(sys, Field::_force_update), 1);   // not consumed
+    EXPECT_EQ(w.m.get_f(b0, Field::_fire_timer), 0.0);
+    EXPECT_EQ(w.k.counts().logged_tube_launch, 0);
 }
 
-TEST(K1, BankRowGoneBeforeTheDumbCheckAsksPython) {
-    // An asked Fire's Python drops the tube's row and empties the list; the
-    // Fire fails, so update_weapons asks weapon.IsDumbFire() -- of Python,
-    // the row being gone -- and dumb-fires on its answer.
-    for (const int64_t answer : {1, 0}) {
-        World w;
-        const int64_t ship = w.ship("ship");
-        const int64_t sys = w.system("sys", ship, 4, {});
-        const int64_t b0 = w.bank("b0", sys);
-        const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, b0);
-        w.m.set_ids(sys, Field::_target_list, {t});
-        w.m.set_ref(sys, Field::_held_target, t);
-        w.m.set_i(sys, Field::_force_update, 1);
-        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
-        EXPECT_EQ(w.brief(w.step()), "ASK fire");
-        w.m.unregister_row(b0);
-        w.m.set_ids(sys, Field::_target_list, {});
-        w.k.answer(0);
-        K1Record r = w.step();
-        EXPECT_EQ(w.brief(r), "ASK is_dumb");
-        EXPECT_EQ(r.args, (std::vector<int64_t>{b0}));
-        EXPECT_TRUE(has_write(w, r, "b0._target=None"))
-            << ::testing::PrintToString(w.writes(r));
-        w.k.answer(answer);
-        // Not dumb-capable (0): no FireDumb.
-        if (answer) EXPECT_EQ(w.brief(w.step()), "FIRE_DUMB b0");
-        EXPECT_EQ(w.brief(w.step()), "DONE");
-        w.k.end();
-    }
-}
-
-TEST(K1, WalkedSystemRowGoneMidWalkThrows) {
-    // The protocol invariant (k1_fire_control.h): the walked SYSTEM's row
-    // must outlive its walk. Gone after Python ran (an asked Fire), next()
-    // throws and leaves the session as it was, for run_k1 to abandon.
+TEST(K1, NoFireAfterTheFirstShotKeepsTheShot) {
+    // NO FIRE (R2): b0 launches at t, then b1's decision cannot be made (its
+    // stored offset names a mount the mirror cannot tell): the shot is
+    // kept, the walk ends there (no `_force_update = False`). Skew fire:
+    // exempt from the ship-wide stagger, so b1 is tried.
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t sys = w.system("sys", ship, 4, {});
     const int64_t b0 = w.bank("b0", sys);
-    const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, b0);
+    const int64_t b1 = w.bank("b1", sys);
+    w.m.set_i(b0, Field::_skew_fire, 1);
+    w.m.set_i(b1, Field::_skew_fire, 1);
+    const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, b1);
+    w.m.set_fv(b0, Field::_target_offset, {});   // b0 aims at the centre
     w.m.set_ids(sys, Field::_target_list, {t});
     w.m.set_ref(sys, Field::_held_target, t);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
-    EXPECT_EQ(w.brief(w.step()), "ASK fire");
-    w.m.unregister_row(sys);
-    w.k.answer(0);
-    EXPECT_ANY_THROW(w.k.next());
-    EXPECT_EQ(w.k.depth(), 1u);
-    w.k.abandon();
-    EXPECT_EQ(w.k.depth(), 0u);
+    const K1Record r = w.step();
+    EXPECT_EQ(fx(w, r), (std::vector<std::string>{
+                            "SPAWN b0@t", "WEAPON_FIRED b0@t",
+                            "AMMO_CONSUMED b0"}));
+    EXPECT_EQ(w.k.counts().logged_tube_launch, 1);
+    EXPECT_EQ(w.no_fire(K1NoFire::Decision), 1);
+    // Kept: b0's shot and bookkeeping, b1's passed timer gate; b1's
+    // decision writes nothing (its own rollback), nor anything after it.
+    EXPECT_TRUE(has_write(w, r, "sys._last_group_fired=0"));
+    EXPECT_EQ(w.writes(r).back(), "b1._fire_timer=0");
+    EXPECT_EQ(w.m.get_i(sys, Field::_force_update), 1);
+    EXPECT_EQ(w.m.get_i(b0, Field::_num_ready), 0);
 }
+
+
 
 TEST(K1, NoneAmmoSlotWalksNatively) {
-    // A torpedo system whose slot holds None (-1) is no fallback: the tube
-    // gate reads it as "no ammo configured", as Python does.
+    // A torpedo system whose slot holds None (-1) is no no-fire at the
+    // pre-scan: the tube gate reads it as "no ammo configured", as Python
+    // did, and the launch is the hardpoint's slot-0 script's (none here:
+    // the launch cannot be made, a counted no-fire of its own).
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -1342,22 +938,15 @@ TEST(K1, NoneAmmoSlotWalksNatively) {
     w.m.set_ids(sys, Field::_ammo_by_slot, {0, -1});
     w.m.set_i(sys, Field::_force_update, 1);  // past the fire timer
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    const std::vector<std::string> recs = w.run_to_done();
-    EXPECT_EQ(recs.front(), "WALK_START sys");
-    EXPECT_NE(std::find(recs.begin(), recs.end(), "FIRE b0@t"), recs.end())
-        << ::testing::PrintToString(recs);
-    EXPECT_EQ(w.k.counts().python_systems, 0);
+    w.step();
+    EXPECT_EQ(w.k.counts().logged_walk_start, 1);
+    EXPECT_EQ(w.no_fire(K1NoFire::Launch), 1);
+    EXPECT_EQ(w.no_fires(), 1);
 }
 
-TEST(K1, FallbackReasonsAreCounted) {
-    EXPECT_STREQ(k1_why_name(K1Why::PosedShip), "posed_ship");
-    EXPECT_STREQ(k1_why_name(K1Why::PosedTarget), "posed_target");
-    EXPECT_STREQ(k1_why_name(K1Why::PartStale), "part_stale");
-    EXPECT_STREQ(k1_why_name(K1Why::MountUnknown), "mount_unknown");
-    EXPECT_STREQ(k1_why_name(K1Why::StubOrUnplaced), "stub_or_unplaced");
-    EXPECT_STREQ(k1_why_name(K1Why::InstancePatch), "instance_patch");
-    // One pump over one phaser (or `kind`) system, set up to fall back.
-    auto pump = [](int64_t kind, auto&& setup, K1Why want) {
+TEST(K1, NoFireReasonsAreCounted) {
+    // One pump over one phaser (or `kind`) system, set up not to fire.
+    auto pump = [](int64_t kind, auto&& setup, K1NoFire want) {
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -1366,88 +955,52 @@ TEST(K1, FallbackReasonsAreCounted) {
         setup(w, ship, t, sys, b0);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
         const K1Record r = w.step();
-        EXPECT_EQ(r.kind, K1Kind::RUN_PYTHON) << k1_why_name(want);
-        EXPECT_EQ(why_of(w.k.counts(), want), 1) << k1_why_name(want);
-        EXPECT_EQ(why_total(w.k.counts()), 1) << k1_why_name(want);
-        EXPECT_EQ(w.k.counts().python_systems, 1);
+        EXPECT_EQ(r.kind, K1Kind::DONE) << k1_no_fire_name(want);
+        EXPECT_EQ(w.no_fire(want), 1) << k1_no_fire_name(want);
+        EXPECT_EQ(w.no_fires(), 1) << k1_no_fire_name(want);
     };
     using I = int64_t;
-    // A posed ship whose bank's part slot was never resolved (stamp 0): the
-    // mount is Python's. (Was K1Why::PosedShip before posed parts went
-    // native; a posed TARGET is no pre-scan fallback any more -- see
-    // PosedTargetOffsetAimByReason.)
+    // A posed ship whose bank's part slot was never resolved (stamp 0).
     pump(1, [](World& w, I ship, I, I, I) {
         w.m.set_i(ship, Field::has_posed_parts, 1);
-    }, K1Why::PartStale);
+    }, K1NoFire::PartStale);
     pump(1, [](World& w, I, I t, I, I) {
         w.m.set_i(t, Field::has_real_is_dead, 0);
-    }, K1Why::StubOrUnplaced);
+    }, K1NoFire::StubOrUnplaced);
     pump(1, [](World& w, I, I t, I sys, I) {
         w.m.set_ids(sys, Field::_target_list, {t, kRefUnrepresentable});
-    }, K1Why::StaleRow);
+    }, K1NoFire::StaleRow);
     pump(2, [](World& w, I, I, I, I c) {
         w.m.set_i(c, Field::module_ok, 0);
-    }, K1Why::PulseModule);
+    }, K1NoFire::PulseModule);
     pump(2, [](World& w, I, I, I sys, I) {
         w.m.set_ids(sys, Field::_target_list, {});
-    }, K1Why::PulseShipTarget);
+    }, K1NoFire::PulseShipTarget);
     pump(4, [](World& w, I, I, I sys, I) {
         const int64_t gone = w.m.register_row(Kind::Ammo);
         w.m.set_ids(sys, Field::_ammo_by_slot, {0, gone});
         w.m.unregister_row(gone);
-    }, K1Why::AmmoRow);
+    }, K1NoFire::AmmoRow);
     pump(1, [](World& w, I, I, I sys, I) {
-        w.m.set_i(sys, Field::k1_overridden, 1);
-    }, K1Why::Overridden);
+        w.m.set_i(sys, Field::weapon_kind, 0);   // a plain WeaponSystem
+    }, K1NoFire::NotK1System);
     pump(1, [](World& w, I, I, I, I b0) {
-        w.m.set_i(b0, Field::k1_overridden, 1);    // one overridden bank
-    }, K1Why::Overridden);
-
-    {   // A ship with no row: one per getter but the tractor's.
-        World w;
-        w.k.begin_pump({-1}, kDt, 10.0, false, 0.0);
-        w.run_to_done();
-        EXPECT_EQ(why_of(w.k.counts(), K1Why::UnslottedShip), 3);
-        EXPECT_EQ(w.k.counts().python_systems, 3);
-    }
-    {   // A StartFiring system session counts apart from the pump.
-        World w;
-        const int64_t ship = w.ship("ship");
-        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-        const int64_t sys = w.system("sys", ship, 1, {t});
-        w.bank("b0", sys);
-        w.m.set_i(ship, Field::has_posed_parts, 1);
-        w.k.begin_system(sys, 0.0, 10.0, false, 0.0);
-        w.run_to_done();
-        EXPECT_EQ(why_of(w.k.counts(), K1Why::PartStale, true), 1);
-        EXPECT_EQ(why_of(w.k.counts(), K1Why::PartStale), 0);
-        EXPECT_EQ(why_of(w.k.counts(), K1Why::PosedShip, true), 0);
-        w.k.reset_counts();
-        EXPECT_EQ(why_total(w.k.counts()), 0);
-    }
-}
-
-TEST(K1, SkipWalkHandsTheWalkToPython) {
-    // Python found an instance-patched Fire at WALK_START and ran the
-    // system's update_weapons itself: the kernel moves on with no write.
+        w.m.set_i(b0, Field::weapon_kind, 8);    // a tube under phasers
+    }, K1NoFire::Structure);
+    // The first count of a why is reported once in a record, then not again
+    // until the counts are reset.
     World w;
-    const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
-    w.bank("b0", sys);
-    w.m.set_i(sys, Field::_force_update, 1);
-    EXPECT_THROW(w.k.skip_walk(), std::logic_error);   // no session
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    const K1Record ws = w.k.next();
-    ASSERT_EQ(w.brief(ws), "WALK_START sys");
-    w.k.skip_walk();
-    EXPECT_THROW(w.k.skip_walk(), std::logic_error);   // not awaiting
-    const K1Record r = w.k.next();
-    EXPECT_EQ(w.brief(r), "DONE");
-    EXPECT_TRUE(r.writes.empty());
-    EXPECT_EQ(why_of(w.k.counts(), K1Why::InstancePatch), 1);
-    EXPECT_EQ(w.k.counts().python_systems, 1);
+    w.k.begin_pump({-1}, kDt, 10.0, false, 0.0);
+    EXPECT_EQ(w.step().no_fire_new,
+              uint64_t{1} << static_cast<int>(K1NoFire::UnslottedShip));
     w.k.end();
+    w.k.begin_pump({-1}, kDt, 10.0, false, 0.0);
+    EXPECT_EQ(w.step().no_fire_new, uint64_t{0});
+    w.k.end();
+    EXPECT_EQ(w.no_fire(K1NoFire::UnslottedShip), 2);
+    w.k.reset_counts();
+    w.k.begin_pump({-1}, kDt, 10.0, false, 0.0);
+    EXPECT_NE(w.step().no_fire_new, uint64_t{0});
 }
 
 // ── Posed parts (native-combat posed parts, Task 4) ─────────────────────────
@@ -1465,7 +1018,7 @@ PartPose shift_pose() {
 TEST(K1, PosedShipWalksNatively) {
     // The firing ship is posed and its bank's slot is current: the walk is
     // the kernel's (its mount through the pose). A generation bump makes the
-    // slot stale: the system is Python's, part_stale -- never posed_ship.
+    // slot stale: the system does not fire, part_stale.
     World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -1476,33 +1029,29 @@ TEST(K1, PosedShipWalksNatively) {
     w.m.set_part_slot(b0, 0, w.m.part_gen());
     w.m.set_i(sys, Field::_force_update, 1);  // past the fire timer
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    std::vector<std::string> recs = w.run_to_done();
-    // The beam lit (its edge: logged writes and entries, no record).
-    EXPECT_EQ(w.k.counts().logged_beam_edge, 1)
-        << ::testing::PrintToString(recs);
+    w.step();
+    // The beam lit (its edge: logged writes and entries).
+    EXPECT_EQ(w.k.counts().logged_beam_edge, 1);
     w.k.end();
-    EXPECT_EQ(w.k.counts().python_systems, 0);
+    EXPECT_EQ(w.no_fires(), 0);
     EXPECT_EQ(w.k.counts().posed_walks, 1);
 
     w.m.set_part_gen(w.m.part_gen() + 1);
     w.k.reset_counts();
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.brief(w.step()), "RUN_PYTHON sys 0 0");
-    w.run_to_done();
+    EXPECT_TRUE(w.step().writes.empty());
     w.k.end();
-    EXPECT_EQ(why_of(w.k.counts(), K1Why::PartStale), 1);
-    EXPECT_EQ(why_of(w.k.counts(), K1Why::PosedShip), 0);
+    EXPECT_EQ(w.no_fire(K1NoFire::PartStale), 1);
     EXPECT_EQ(w.k.counts().posed_walks, 0);
 }
 
 TEST(K1, PosedTargetOffsetAimByReason) {
     // A tube aims at a posed target's offset (`_RESOLVE`): the first mount
-    // at the offset, its slot current -> FIRE, decided natively; so is an
-    // offset no mount claims, or one within 1e-5 of a mount but not on it
+    // at the offset, its slot current -> launched, decided natively; so is
+    // an offset no mount claims, or one within 1e-5 of a mount but not on it
     // (a plain body point: fire control native only, M5, M8.5). The mirror
     // cannot tell the mount (not a ShipClass) or the slot is stale -> the
-    // Fire is Python's (ASK fire), counted by why. The system is never
-    // handed back whole (no posed_target).
+    // Fire's decision is a no-fire (decision), never the system's.
     enum Case { kNative, kUnknown, kNoMountHere, kStale, kOffMount };
     for (int c = kNative; c <= kOffMount; ++c) {
         World w;
@@ -1527,25 +1076,17 @@ TEST(K1, PosedTargetOffsetAimByReason) {
         if (c == kStale) w.m.set_part_gen(w.m.part_gen() + 1);
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-        EXPECT_EQ(w.brief(w.step()), "WALK_START sys") << c;
         const K1Record r = w.step();
         const auto& n = w.k.counts();
-        auto ask_why = [&](K1Why why) {
-            return n.fire_ask_why[static_cast<size_t>(why)];
-        };
         if (c == kNative || c == kNoMountHere || c == kOffMount) {
-            EXPECT_EQ(w.brief(r), "FIRE b0@t") << c;
+            EXPECT_EQ(fx(w, r).front(), "SPAWN b0@t") << c;
             EXPECT_EQ(n.posed_target_aims, 1) << c;
+            EXPECT_EQ(w.no_fires(), 0) << c;
         } else {
-            EXPECT_EQ(w.brief(r), "ASK fire") << c;
-            const K1Why want = c == kUnknown ? K1Why::MountUnknown
-                                             : K1Why::PartStale;
-            EXPECT_EQ(ask_why(want), 1) << c;
+            EXPECT_TRUE(r.entries.empty()) << c;
+            EXPECT_EQ(w.no_fire(K1NoFire::Decision), 1) << c;
             EXPECT_EQ(n.posed_target_aims, 0) << c;
         }
-        EXPECT_EQ(n.python_systems, 0) << c;
-        EXPECT_EQ(why_of(n, K1Why::PosedTarget), 0) << c;
-        w.k.abandon();
     }
 }
 
@@ -1556,7 +1097,7 @@ TEST(K1Native, LiveHeldOffsetPredicate) {
     // _live_held_offset: a ShipClass ship with is_using_target_offset()
     // (the flag AND a manual offset) -> the manual offset; anything else ->
     // the held offset when it is a TGPoint3, else none.
-    World w(false);
+    World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t sys = w.system("tsys", ship, 4, {t});
@@ -1584,9 +1125,9 @@ TEST(K1Native, LiveHeldOffsetPredicate) {
 }
 
 TEST(K1Native, RecordlessWalkReturnsOnlyDone) {
-    // Below the timer threshold the walk returns nothing: its writes (the
-    // pruned list first, a NEW list every walk) ride DONE, untagged.
-    World w(false);
+    // Below the timer threshold the walk fires nothing: its writes (the
+    // pruned list first, a NEW list every walk) ride DONE.
+    World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t sys = w.system("sys", ship, 1, {t});
@@ -1594,7 +1135,6 @@ TEST(K1Native, RecordlessWalkReturnsOnlyDone) {
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     const K1Record done = w.k.next();
     EXPECT_EQ(w.brief(done), "DONE");
-    EXPECT_FALSE(done.walk_first);
     char dt[64];
     std::snprintf(dt, sizeof dt, "%.17g", 0.0 + kDt);
     EXPECT_EQ(w.writes(done),
@@ -1611,68 +1151,59 @@ TEST(K1Native, RecordlessWalkReturnsOnlyDone) {
     EXPECT_EQ(w.k.counts().logged_walk_start, 2);
 }
 
-TEST(K1Native, FirstRecordOfEachWalkIsTagged) {
-    // Two walks in one pump: the phasers' returns nothing, the tubes' two
-    // FIREs. The tubes' first FIRE is tagged (walk 2, tsys) and carries the
-    // phaser walk's writes before its own; the second FIRE is not tagged.
-    World w(false);
+TEST(K1Native, WalkManualOffsetRecordsEachWalksSource) {
+    // THE WALK OFFSET (M8.8): per walk of the session, the Manual Aim pick
+    // its offset came from (the driver makes a TGPoint3 of it), or nullopt
+    // (its object is the system's own _held_offset).
+    World w;
     const int64_t ship = w.ship("ship");
+    w.m.set_i(ship, Field::is_ship_class, 1);
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t psys = w.system("sys", ship, 1, {t});
     w.bank("b0", psys);
     const int64_t tsys = w.system("tsys", ship, 4, {t});
     w.bank("tube0", tsys);
-    w.bank("tube1", tsys);
-    w.m.set_i(tsys, Field::_force_update, 1);
+    w.m.set_fv(psys, Field::_held_offset, {1.0, 2.0, 3.0});
+    EXPECT_THROW(w.k.walk_manual_offset(1), std::logic_error);  // no session
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    const K1Record first = w.k.next();
-    EXPECT_EQ(w.brief(first), "FIRE tube0@t");
-    EXPECT_TRUE(first.walk_first);
-    EXPECT_EQ(first.walk, 2);
-    EXPECT_EQ(first.walk_system, tsys);
-    const auto ws = w.writes(first);
-    ASSERT_GE(ws.size(), 2u);
-    EXPECT_EQ(ws.front(), "sys._target_list=[t]");
-    EXPECT_NE(std::find(ws.begin(), ws.end(), "tsys._target_list=[t]"),
-              ws.end());
-    const K1Record second = w.k.next();
-    EXPECT_EQ(w.brief(second), "FIRE tube1@t");
-    EXPECT_FALSE(second.walk_first);
-    EXPECT_EQ(second.walk, -1);
-    EXPECT_EQ(second.walk_system, -1);
-    const K1Record done = w.k.next();
-    EXPECT_EQ(w.brief(done), "DONE");
-    EXPECT_FALSE(done.walk_first);
-    EXPECT_EQ(w.k.counts().logged_walk_start, 2);
+    w.k.next();
+    using O = std::optional<Vec3>;
+    EXPECT_EQ(w.k.walk_manual_offset(1), O{});   // the held offset's object
+    EXPECT_EQ(w.k.walk_manual_offset(2), O{});
+    EXPECT_THROW(w.k.walk_manual_offset(3), std::logic_error);
+    w.k.end();
+    w.m.set_i(ship, Field::_use_target_offset, 1);
+    w.m.set_fv(ship, Field::_manual_target_offset, {7.0, 8.0, 9.0});
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    w.k.next();
+    EXPECT_EQ(w.k.walk_manual_offset(1), (O{Vec3{7.0, 8.0, 9.0}}));
+    EXPECT_EQ(w.k.walk_manual_offset(2), (O{Vec3{7.0, 8.0, 9.0}}));
 }
 
 TEST(K1Native, WalkOffsetMarkerNamesItsWalk) {
     // A cannon's stamp of the walk's offset names the walk and its system,
     // and the mirror holds the value the kernel computed (the held offset).
-    World w(false);
+    World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t sys = w.system("psys", ship, 2, {t});
     const int64_t c = w.bank("cannon", sys);
     w.m.set_fv(sys, Field::_held_offset, {1.0, 2.0, 3.0});
     w.m.set_i(sys, Field::_force_update, 1);
-    // The launch handed back, so the stamp is the FIRE record's last write.
-    w.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     const K1Record f = w.k.next();
-    EXPECT_EQ(w.brief(f), "FIRE cannon@t");
-    EXPECT_TRUE(f.walk_first);
-    ASSERT_FALSE(f.writes.empty());
-    const K1Write& stamp = f.writes.back();
-    EXPECT_EQ(stamp.field, "_target_offset");
-    ASSERT_TRUE(std::holds_alternative<K1WalkOffset>(stamp.value));
-    EXPECT_EQ(std::get<K1WalkOffset>(stamp.value), (K1WalkOffset{1, sys}));
+    const K1Write* stamp = nullptr;
+    for (const K1Write& wr : f.writes)
+        if (wr.handle == c && wr.field == "_target_offset") stamp = &wr;
+    ASSERT_NE(stamp, nullptr);
+    ASSERT_TRUE(std::holds_alternative<K1WalkOffset>(stamp->value));
+    EXPECT_EQ(std::get<K1WalkOffset>(stamp->value), (K1WalkOffset{1, sys}));
     EXPECT_EQ(w.m.get_fv(c, Field::_target_offset),
               (std::vector<double>{1.0, 2.0, 3.0}));
-    w.k.abandon();
+    w.k.end();
 
     // Manual Aim on the firing ShipClass: the manual offset is stamped.
-    World v(false);
+    World v;
     const int64_t vship = v.ship("ship");
     v.m.set_i(vship, Field::is_ship_class, 1);
     v.m.set_i(vship, Field::_use_target_offset, 1);
@@ -1682,88 +1213,10 @@ TEST(K1Native, WalkOffsetMarkerNamesItsWalk) {
     const int64_t vc = v.bank("cannon", vsys);
     v.m.set_fv(vsys, Field::_held_offset, {1.0, 2.0, 3.0});
     v.m.set_i(vsys, Field::_force_update, 1);
-    v.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
     v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(v.brief(v.k.next()), "FIRE cannon@t");
+    v.k.next();
     EXPECT_EQ(v.m.get_fv(vc, Field::_target_offset),
               (std::vector<double>{7.0, 8.0, 9.0}));
-}
-
-TEST(K1Native, WalkCheckHandsTheWalkStartBack) {
-    // The walk check sees (system, ship) at every walk start; true -> the
-    // old WALK_START (tagged: it is the walk's first record), answered by
-    // set_offset or skip_walk; false -> the walk starts natively.
-    World w(false);
-    const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t psys = w.system("sys", ship, 1, {t});
-    w.bank("b0", psys);
-    const int64_t tsys = w.system("tsys", ship, 4, {t});
-    w.bank("tube", tsys);
-    std::vector<std::pair<int64_t, int64_t>> seen;
-    w.k.set_walk_check([&](int64_t s, int64_t sh) {
-        seen.emplace_back(s, sh);
-        return s == tsys;
-    });
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    const K1Record ws = w.k.next();
-    EXPECT_EQ(w.brief(ws), "WALK_START tsys");
-    EXPECT_TRUE(ws.walk_first);
-    EXPECT_EQ(ws.walk, 2);
-    EXPECT_EQ(ws.walk_system, tsys);
-    EXPECT_EQ(seen, (std::vector<std::pair<int64_t, int64_t>>{
-                        {psys, ship}, {tsys, ship}}));
-    EXPECT_THROW(w.k.next(), std::logic_error);   // awaiting the offset
-    w.k.skip_walk();
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
-    EXPECT_EQ(w.k.counts().logged_walk_start, 1);
-    EXPECT_EQ(why_of(w.k.counts(), K1Why::InstancePatch), 1);
-}
-
-TEST(K1Native, SessionWalkCheckIsAskedAndNests) {
-    // A session begun with its own walk check (the bindings' per-session
-    // verdict sets) asks it instead of the kernel's; a session begun inside
-    // it asks ITS own, and the outer one's is asked again once it ends.
-    World w(false);
-    const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t psys = w.system("sys", ship, 1, {t});
-    w.bank("b0", psys);
-    const int64_t tsys = w.system("tsys", ship, 4, {t});
-    w.bank("tube", tsys);
-    std::vector<std::string> asked;
-    w.k.set_walk_check([&](int64_t, int64_t) {
-        asked.push_back("kernel");
-        return true;
-    });
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0,
-                   [&](int64_t s, int64_t sh) {
-                       asked.push_back("outer " + w.names[s] + "/" +
-                                       w.names[sh]);
-                       return s == psys;
-                   });
-    ASSERT_NE(w.k.top_walk_check(), nullptr);
-    EXPECT_EQ(w.brief(w.k.next()), "WALK_START sys");
-    w.k.skip_walk();
-    w.k.begin_system(tsys, kDt, 10.0, false, 0.0, [&](int64_t s, int64_t) {
-        asked.push_back("inner " + w.names[s]);
-        return true;
-    });
-    EXPECT_EQ(w.brief(w.k.next()), "WALK_START tsys");
-    w.k.skip_walk();
-    EXPECT_EQ(w.brief(w.k.next()), "DONE");
-    w.k.end();
-    std::string last;
-    for (int i = 0; i < 8 && last != "DONE"; ++i) last = w.brief(w.k.next());
-    EXPECT_EQ(last, "DONE");
-    w.k.end();
-    EXPECT_EQ(asked, (std::vector<std::string>{"outer sys/ship", "inner tsys",
-                                               "outer tsys/ship"}));
-    // A session begun with none asks the kernel's.
-    w.k.begin_system(psys, kDt, 10.0, false, 0.0);
-    EXPECT_EQ(w.k.top_walk_check(), nullptr);
-    EXPECT_EQ(w.brief(w.k.next()), "WALK_START sys");
-    EXPECT_EQ(asked.back(), "kernel");
 }
 
 // ── Round trips Task 2: beam sustain and idle stops as logged writes ─────────
@@ -1775,7 +1228,7 @@ TEST(K1Native, BeamSustainIsLoggedWrites) {
     // stamp is the walk's offset OBJECT (the marker), whatever it is: with
     // no TGPoint3 offset the mirror reads unset.
     for (const bool with_offset : {true, false}) {
-        World w(false);
+        World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
         const int64_t sys = w.system("sys", ship, 1, {t});
@@ -1819,7 +1272,7 @@ TEST(K1Native, BeamEdgeIsLoggedWritesAndEntries) {
     // = 0.0` -- logged in that order, then FIRE_SOUND(bank) and
     // PhaserBank's WEAPON_FIRED(bank, target), both after those writes. No
     // FIRE record: the walk's writes and entries ride DONE.
-    World w(false);
+    World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t sys = w.system("sys", ship, 1, {t});
@@ -1860,11 +1313,10 @@ TEST(K1Native, BeamEdgeIsLoggedWritesAndEntries) {
     EXPECT_EQ(w.k.counts().entries[static_cast<size_t>(K1Effect::WEAPON_FIRED)], 1);
 }
 
-TEST(K1Native, EntriesRideTheNextRecordInWalkOrder) {
-    // The remaining records are unchanged: a tube's FIRE is still a record,
-    // and it carries the entries the phaser walk before it produced; the
-    // tube's own Python (its launch events) follows them.
-    World w(false);
+TEST(K1Native, EntriesRideTheRecordInWalkOrder) {
+    // The phasers' entries (their edge), then the tubes' (the launch), in
+    // walk order, each after the writes logged before it.
+    World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t psys = w.system("psys", ship, 1, {t});
@@ -1874,16 +1326,16 @@ TEST(K1Native, EntriesRideTheNextRecordInWalkOrder) {
     w.m.set_i(psys, Field::_force_update, 1);
     w.m.set_i(tsys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    const K1Record f = w.k.next();
-    EXPECT_EQ(w.brief(f), "FIRE tube@t");
-    EXPECT_EQ(f.decision.shape, K1Decision::Shape::Tube);
-    std::vector<std::string> e = w.entries(f);
-    ASSERT_EQ(e.size(), 2u);
-    EXPECT_EQ(e[0].substr(0, e[0].find('^')), "FIRE_SOUND b0");
-    EXPECT_EQ(e[1].substr(0, e[1].find('^')), "WEAPON_FIRED b0@t");
     const K1Record done = w.k.next();
-    EXPECT_EQ(w.brief(done), "DONE");
-    EXPECT_TRUE(done.entries.empty());
+    EXPECT_EQ(fx(w, done), (std::vector<std::string>{
+                               "FIRE_SOUND b0", "WEAPON_FIRED b0@t",
+                               "SPAWN tube@t", "WEAPON_FIRED tube@t",
+                               "AMMO_CONSUMED tube"}));
+    size_t last = 0;
+    for (const K1Entry& e : done.entries) {
+        EXPECT_GE(e.at, last);
+        last = e.at;
+    }
 }
 
 TEST(K1Native, FireFailedIsAnEntry) {
@@ -1891,7 +1343,7 @@ TEST(K1Native, FireFailedIsAnEntry) {
     // return False` is the entry WEAPON_FIRE_FAILED(tube), no record; the
     // retry over the list fails again, a second entry. Both ride DONE, each
     // after the writes made before it.
-    World w(false);
+    World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, -50.0, 0.0);  // behind: no cone
     const int64_t sys = w.system("tsys", ship, 4, {t});
@@ -1918,36 +1370,6 @@ TEST(K1Native, FireFailedIsAnEntry) {
         2);
 }
 
-TEST(K1Native, AThrowDropsTheEntriesItsCallProduced) {
-    // Entries are session state like the write log: a call that throws
-    // after producing some leaves none behind, and the retried call
-    // produces them once.
-    World w(false);
-    const int64_t a = w.ship("a");
-    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", a, 1, {t});
-    const int64_t b0 = w.bank("b0", sys);
-    w.m.set_i(sys, Field::_force_update, 1);
-    const int64_t b = w.ship("b", 0.0, 10.0, 0.0);
-    const int64_t sys2 = w.system("sys2", b, 1, {t});
-    w.bank("c0", sys2);
-    bool boom = true;
-    w.k.set_walk_check([&](int64_t s, int64_t) {
-        if (s == sys2 && boom) throw std::runtime_error("walk check");
-        return false;
-    });
-    w.k.begin_pump({a, b}, kDt, 10.0, false, 0.0);
-    EXPECT_THROW(w.k.next(), std::runtime_error);
-    EXPECT_EQ(w.m.get_i(b0, Field::_firing), 0);  // undone
-    boom = false;
-    const K1Record done = w.k.next();
-    EXPECT_EQ(w.brief(done), "DONE");
-    std::vector<std::string> e = w.entries(done);
-    ASSERT_EQ(e.size(), 2u);
-    EXPECT_EQ(e[0].substr(0, e[0].find('^')), "FIRE_SOUND b0");
-    EXPECT_EQ(e[1].substr(0, e[1].find('^')), "WEAPON_FIRED b0@t");
-}
-
 TEST(K1Native, IdleStopIsLoggedPerBankClass) {
     // A bank that is not firing and cannot fire: its class's StopFiring is
     // pure writes, logged in Python's order, no BANK_STOP record --
@@ -1965,7 +1387,7 @@ TEST(K1Native, IdleStopIsLoggedPerBankClass) {
         {2, {"b0._firing=False", "b0._target=None", "b0._target_offset=None"}},
     };
     for (const Case& c : cases) {
-        World w(false);
+        World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
         const int64_t sys = w.system("sys", ship, c.kind, {t});
@@ -2030,7 +1452,7 @@ TEST(K1Native, FiringBankStopIsLoggedPerBankClass) {
          false},
     };
     for (const Case& c : cases) {
-        World w(false);
+        World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
         const int64_t sys = w.system("sys", ship, c.kind, {t});
@@ -2089,7 +1511,7 @@ TEST(K1Native, SystemStopIsLoggedWrites) {
     // = None; _held_offset = None; _target_list = []; _last_group_fired =
     // -1` -- then each child's StopFiring in order, a firing energy bank's
     // LOOP_STOP after its writes. No STOP_SYSTEM record.
-    World w(false);
+    World w;
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t sys = w.system("sys", ship, 1, {t});
@@ -2120,41 +1542,13 @@ TEST(K1Native, SystemStopIsLoggedWrites) {
     EXPECT_EQ(w.k.counts().records, 1);
 }
 
-TEST(K1Native, SystemStopTheWalkCheckRefusesStaysARecord) {
-    // The stop runs before any walk, so the walk check is asked first: when
-    // it hands the system back, the STOP_SYSTEM record stays and nothing of
-    // the stop is logged. (Which patches it answers for is the bindings':
-    // tests/unit/test_native_k1_dispatch.py
-    // test_system_instance_stop_patch_runs_python.)
-    World w(false);
-    const int64_t ship = w.ship("ship");
-    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
-    const int64_t sys = w.system("sys", ship, 1, {t});
-    const int64_t b0 = w.bank("b0", sys);
-    w.m.set_i(b0, Field::_firing, 1);
-    w.m.set_i(sys, Field::_is_on, 0);
-    int64_t asked = -1;
-    w.k.set_walk_check([&](int64_t s, int64_t) {
-        asked = s;
-        return true;
-    });
-    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
-    const K1Record r = w.k.next();
-    EXPECT_EQ(w.brief(r), "STOP_SYSTEM sys");
-    EXPECT_TRUE(r.writes.empty());
-    EXPECT_TRUE(r.entries.empty());
-    EXPECT_EQ(asked, sys);
-    EXPECT_EQ(w.m.get_i(b0, Field::_firing), 1);
-    EXPECT_EQ(w.k.counts().logged_system_stop, 0);
-}
-
 
 // ── Launches at the boundary (spec 2026-11-02-combat-launch-deferral §4.1) ──
 // A tube's or a dumb launch is the launcher writes, logged in Python's order
 // (TorpedoTube._fire_effect, _start_slot_cooldown, _spawn_torpedo's ammo
 // debit), and SPAWN(tube, fire-time record), WEAPON_FIRED, AMMO_CONSUMED
-// queued after them; no FIRE record. A launch the kernel cannot make is the
-// FIRE (or FIRE_DUMB) record as before, counted by why.
+// queued after them. A launch the kernel cannot make does not fire (NO
+// FIRE), counted by why.
 
 namespace {
 
@@ -2186,17 +1580,6 @@ Launcher launcher(World& w, std::vector<int64_t> targets, int64_t rounds = 3) {
     return l;
 }
 
-// The writes of `r` from the first one equal to `from`, `n` of them.
-std::vector<std::string> writes_from(const World& w, const K1Record& r,
-                                     const std::string& from, size_t n) {
-    const std::vector<std::string> ws = w.writes(r);
-    auto it = std::find(ws.begin(), ws.end(), from);
-    if (it == ws.end()) return {};
-    const size_t at = static_cast<size_t>(it - ws.begin());
-    return std::vector<std::string>(
-        it, it + static_cast<std::ptrdiff_t>(std::min(n, ws.size() - at)));
-}
-
 size_t launch_why(const World& w, K1LaunchWhy why) {
     return static_cast<size_t>(
         w.k.counts().launch_why[static_cast<size_t>(why)]);
@@ -2211,7 +1594,7 @@ const K1Entry* spawn_of(const K1Record& r) {
 }  // namespace
 
 TEST(K1Launch, TubeLaunchIsLoggedWritesAndASpawnEntry) {
-    World w(false);
+    World w;
     const int64_t t = w.object("t", 10.0, 270.0, 30.0);
     const Launcher l = launcher(w, {t});
     w.m.set_i(l.tube, Field::_skew_fire, 1);
@@ -2282,7 +1665,7 @@ TEST(K1Launch, TubeLaunchIsLoggedWritesAndASpawnEntry) {
 TEST(K1Launch, LaunchDirectionTurnsWithTheShip) {
     // A ship turned 90 degrees about Z: the tube's Direction (+y) becomes
     // world -x, the mount (0.5, 0, 0) world (0, 0.5, 0); no skew.
-    World w(false);
+    World w;
     const int64_t t = w.object("t", -240.0, 20.0, 30.0);
     const Launcher l = launcher(w, {t});
     const ObjectRow* so = w.m.object(l.ship);
@@ -2307,7 +1690,7 @@ TEST(K1Launch, AmmoDebitIsAddAvailableMinusOne) {
     struct Case { int64_t available; bool unlimited; int64_t want; };
     for (const Case c : {Case{1, false, 0}, Case{7, false, 4},
                          Case{5, true, -1}}) {
-        World w(false);
+        World w;
         const int64_t t = w.object("t", 10.0, 270.0, 30.0);
         const Launcher l = launcher(w, {t}, c.available);
         w.m.set_i(l.ammo, Field::_unlimited, c.unlimited ? 1 : 0);
@@ -2332,7 +1715,7 @@ TEST(K1Launch, AmmoDebitIsAddAvailableMinusOne) {
 
 TEST(K1Launch, NoLoadedSlotWritesNoSlot) {
     // _start_slot_cooldown finds no loaded slot (all cooling): no write.
-    World w(false);
+    World w;
     const int64_t t = w.object("t", 10.0, 270.0, 30.0);
     const Launcher l = launcher(w, {t});
     w.m.set_floats(l.tube, Field::_reload_timers, {0.5});
@@ -2348,7 +1731,7 @@ TEST(K1Launch, PosedTargetLaunchCarriesTheOffsetAsIs) {
     // A posed target: the walk's offset (no mount claims it) is launched as
     // it is, with no bake (fire control native only, M5): the torpedo
     // steers at it as a plain body point for its whole flight.
-    World w(false);
+    World w;
     const int64_t t = w.ship("t", 10.0, 270.0, 30.0);
     w.m.set_i(t, Field::is_ship_class, 1);
     w.m.set_i(t, Field::has_posed_parts, 1);
@@ -2366,12 +1749,13 @@ TEST(K1Launch, PosedTargetLaunchCarriesTheOffsetAsIs) {
         EXPECT_EQ(launch_why(w, static_cast<K1LaunchWhy>(i)), 0u) << i;
 }
 
-TEST(K1Launch, LaunchesTheKernelCannotMakeAreFireRecords) {
-    // Never guessed: the FIRE record as before (no launch write, nothing
-    // queued), counted by why.
-    enum Case { kUncached, kUnresolved, kNoAmmo, kPatched, kSlots };
+TEST(K1Launch, LaunchesTheKernelCannotMakeAreNoFires) {
+    // Never guessed: a launch the kernel cannot make does not fire (NO
+    // FIRE: Launch, its why in launch_why) -- before the walk's first shot,
+    // the walk rolled back: no launch write, nothing queued.
+    enum Case { kUncached, kUnresolved, kNoAmmo, kSlots };
     for (int c = kUncached; c <= kSlots; ++c) {
-        World w(false);
+        World w;
         const int64_t t = w.object("t", 10.0, 270.0, 30.0);
         const Launcher l = launcher(w, {t});
         K1LaunchWhy want = K1LaunchWhy::Other;
@@ -2384,13 +1768,9 @@ TEST(K1Launch, LaunchesTheKernelCannotMakeAreFireRecords) {
                 w.m.set_i(l.ammo, Field::ammo_launch_state, 2);
                 want = K1LaunchWhy::Unresolved;
                 break;
-            case kNoAmmo:  // the property's script: Python's
+            case kNoAmmo:  // no ammo type and no slot-0 script
                 w.m.set_ids(l.sys, Field::_ammo_by_slot, {});
                 want = K1LaunchWhy::Unresolved;
-                break;
-            case kPatched:  // a spawn function patched (a test, a tool)
-                w.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
-                want = K1LaunchWhy::Patched;
                 break;
             case kSlots:  // _ensure_slots would rebuild the lists
                 w.m.set_floats(l.tube, Field::_reload_timers, {});
@@ -2399,12 +1779,13 @@ TEST(K1Launch, LaunchesTheKernelCannotMakeAreFireRecords) {
         }
         w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
         const K1Record r = w.k.next();
-        EXPECT_EQ(w.brief(r), "FIRE tube@t") << c;
-        EXPECT_EQ(r.decision.shape, K1Decision::Shape::Tube) << c;
+        EXPECT_EQ(w.brief(r), "DONE") << c;
         EXPECT_EQ(launch_why(w, want), 1u) << c << " " << k1_launch_why_name(want);
+        EXPECT_EQ(w.no_fire(K1NoFire::Launch), 1) << c;
         EXPECT_TRUE(r.entries.empty()) << c;
-        EXPECT_FALSE(has_write(w, r, "tube._firing=True")) << c;
+        EXPECT_TRUE(r.writes.empty()) << c << ::testing::PrintToString(w.writes(r));
         EXPECT_EQ(w.m.get_i(l.tube, Field::_num_ready), 1) << c;
+        EXPECT_EQ(w.m.get_i(l.sys, Field::_force_update), 1) << c;
         EXPECT_EQ(w.k.counts().logged_tube_launch, 0) << c;
     }
 }
@@ -2414,7 +1795,7 @@ TEST(K1Launch, DumbFireIsDecidedNatively) {
     // returns False, `_target = None`, then Weapon.FireDumb(0, 1):
     // _dewarp_blocks_fire, then Fire(None, None) -- CanFire, the launch with
     // no target and no offset.
-    World w(false);
+    World w;
     const Launcher l = launcher(w, {});
     w.m.set_i(l.sys, Field::_force_update, 0);
     w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
@@ -2441,7 +1822,7 @@ TEST(K1Launch, DumbFireRefusedIsNoRecord) {
     // warp-in placement, or the tube's Fire refuses (not loaded). No record,
     // no write of its own.
     for (bool arriving : {true, false}) {
-        World w(false);
+        World w;
         const Launcher l = launcher(w, {});
         w.m.set_i(l.sys, Field::_force_update, 0);
         if (arriving)
@@ -2457,47 +1838,28 @@ TEST(K1Launch, DumbFireRefusedIsNoRecord) {
     }
 }
 
-TEST(K1Launch, DumbLaunchTheKernelCannotMakeIsAFireDumbRecord) {
-    World w(false);
+TEST(K1Launch, DumbLaunchTheKernelCannotMakeIsANoFire) {
+    // Counted once (the FIRE_DUMB hand-back counted its why twice: once in
+    // the walk, once in Python's Fire): launch_why 1, no_fire launch 1.
+    World w;
     const Launcher l = launcher(w, {});
     w.m.set_i(l.sys, Field::_force_update, 0);
     w.m.set_i(l.ammo, Field::ammo_launch_state, 0);
     w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
     const K1Record r = w.k.next();
-    EXPECT_EQ(w.brief(r), "FIRE_DUMB tube");
     EXPECT_TRUE(r.entries.empty());
     EXPECT_FALSE(has_write(w, r, "tube._firing=True"));
     EXPECT_EQ(launch_why(w, K1LaunchWhy::Uncached), 1u);
-}
-
-TEST(K1Launch, AThrowUndoesTheLaunchWrites) {
-    // A later walk of the same call throws: the launch's writes (the slot
-    // and the ammo debit included) are undone in the mirror and its entries
-    // dropped; the retried call makes them once.
-    World w(false);
-    const int64_t t = w.object("t", 10.0, 270.0, 30.0);
-    const Launcher l = launcher(w, {t});
-    const int64_t b = w.ship("b", 0.0, 10.0, 0.0);
-    const int64_t sys2 = w.system("sys2", b, 1, {t});
-    w.bank("c0", sys2);
-    bool boom = true;
-    w.k.set_walk_check([&](int64_t s, int64_t) {
-        if (s == sys2 && boom) throw std::runtime_error("walk check");
-        return false;
-    });
-    w.k.begin_pump({l.ship, b}, kDt, 10.0, false, 0.0);
-    EXPECT_THROW(w.k.next(), std::runtime_error);
-    EXPECT_EQ(w.m.get_i(l.tube, Field::_num_ready), 1);
-    EXPECT_EQ(w.m.get_floats(l.tube, Field::_reload_timers),
-              (std::vector<double>{-1.0}));
-    EXPECT_EQ(w.m.get_floats(l.tube, Field::_reload_advanced_at),
-              (std::vector<double>{0.0}));
-    EXPECT_EQ(w.m.get_i(l.ammo, Field::_available), 3);
-    boom = false;
-    const K1Record done = w.k.next();
-    EXPECT_EQ(w.brief(done), "DONE");
-    EXPECT_EQ(fx(w, done).size(), 3u);
-    EXPECT_EQ(w.m.get_i(l.ammo, Field::_available), 2);
+    EXPECT_EQ(w.no_fire(K1NoFire::Launch), 1);
+    w.k.end();
+    // The SDK's own dumb fire: the same, once.
+    w.k.reset_counts();
+    w.k.begin_dumb(l.tube, 10.0, false, 0.0);
+    const K1Record d = w.k.next();
+    EXPECT_TRUE(d.writes.empty() && d.entries.empty());
+    EXPECT_EQ(launch_why(w, K1LaunchWhy::Uncached), 1u);
+    EXPECT_EQ(w.no_fire(K1NoFire::Launch), 1);
+    EXPECT_EQ(w.k.counts().logged_sdk_dumb_fire, 1);
 }
 
 // ── A cannon's launch at the boundary (launch deferral, Task 3) ────────────
@@ -2536,23 +1898,23 @@ Cannon cannon_world(World& w, int64_t power = 2) {
     return c;
 }
 
-// The led launch direction the kernel decides for cannon_world's shot (the
-// FIRE record's, with every launch handed back).
+// The led launch direction the kernel decides for cannon_world's shot: the
+// lead solve itself (weapon_geometry), on the same rows and offset.
 Vec3 decided_dir(int64_t power) {
-    World p(false);
+    World p;
     const Cannon c = cannon_world(p, power);
-    p.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
-    p.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
-    const K1Record r = p.k.next();
-    EXPECT_EQ(p.brief(r), "FIRE cannon@t");
-    return r.decision.world_dir;
+    p.m.set_fv(c.cannon, Field::_target_offset, {0.25, -0.5, 0.125});
+    const std::optional<Vec3> dir =
+        _solve_pulse_launch_direction(p.m, c.cannon, c.ship, c.target, false);
+    EXPECT_TRUE(dir.has_value());
+    return dir.value_or(Vec3{0.0, 0.0, 0.0});
 }
 
 }  // namespace
 
 TEST(K1PulseLaunch, CannonLaunchIsLoggedWritesAndASpawnEntry) {
     const Vec3 dir = decided_dir(2);
-    World w(false);
+    World w;
     const Cannon c = cannon_world(w);
     w.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
     const K1Record done = w.k.next();
@@ -2607,7 +1969,7 @@ TEST(K1PulseLaunch, DrainClampsAndTheScaleFollowsThePowerSetting) {
     // A charge just under the shot's cost (the gate's 1e-9 slack): the drain
     // is max(0.0, charge - cost) = 0; the bolt's scale is the setting's.
     for (const int64_t power : {0, 1}) {
-        World w(false);
+        World w;
         const Cannon c = cannon_world(w, power);
         const double cost = power == 0 ? 0.5 : 1.0;
         w.m.set_f(c.cannon, Field::_charge_level, cost - 5e-10);
@@ -2621,56 +1983,6 @@ TEST(K1PulseLaunch, DrainClampsAndTheScaleFollowsThePowerSetting) {
     }
 }
 
-TEST(K1PulseLaunch, LaunchesTheKernelCannotMakeAreFireRecords) {
-    // A launch function patched, or a cannon module sys.modules no longer
-    // holds (Python's decide would import another, or none): the FIRE record
-    // as before -- the decision's stamps only, nothing queued -- counted.
-    for (const bool stale : {false, true}) {
-        World w(false);
-        const Cannon c = cannon_world(w);
-        w.m.set_global_i(stale ? Global::K1_PULSE_MODULE_STALE
-                               : Global::K1_LAUNCH_PATCHED,
-                         1);
-        w.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
-        const K1Record r = w.k.next();
-        EXPECT_EQ(w.brief(r), "FIRE cannon@t") << stale;
-        EXPECT_EQ(r.decision.shape, K1Decision::Shape::Pulse) << stale;
-        EXPECT_EQ(launch_why(w, stale ? K1LaunchWhy::Unresolved
-                                      : K1LaunchWhy::Patched),
-                  1u)
-            << stale;
-        EXPECT_TRUE(r.entries.empty()) << stale;
-        EXPECT_EQ(w.writes(r).back(), "cannon._target_offset=walk_offset");
-        EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 5.0) << stale;
-        EXPECT_EQ(w.k.counts().logged_pulse_launch, 0) << stale;
-    }
-}
-
-TEST(K1PulseLaunch, AThrowUndoesTheLaunchWrites) {
-    // As a tube's: a later walk of the same call throws, the drain and the
-    // cooldown are undone in the mirror and the SPAWN dropped; the retried
-    // call makes them once.
-    World w(false);
-    const Cannon c = cannon_world(w);
-    const int64_t b = w.ship("b", 0.0, 10.0, 0.0);
-    const int64_t sys2 = w.system("sys2", b, 1, {c.target});
-    w.bank("c0", sys2);
-    bool boom = true;
-    w.k.set_walk_check([&](int64_t s, int64_t) {
-        if (s == sys2 && boom) throw std::runtime_error("walk check");
-        return false;
-    });
-    w.k.begin_pump({c.ship, b}, kDt, 10.0, false, 0.0);
-    EXPECT_THROW(w.k.next(), std::runtime_error);
-    EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 5.0);
-    EXPECT_EQ(w.m.get_f(c.cannon, Field::_cooldown_remaining), 0.0);
-    boom = false;
-    const K1Record done = w.k.next();
-    EXPECT_EQ(w.brief(done), "DONE");
-    EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 3.0);
-    EXPECT_EQ(w.entries(done).size(), 1u);
-}
-
 // ── THE TRACTOR WALK (fire control native only, M4, R8) ─────────────────────
 
 // The pump's tractor walk: no record. A held target in range and arc is
@@ -2679,7 +1991,7 @@ TEST(K1PulseLaunch, AThrowUndoesTheLaunchWrites) {
 // `_was_firing` write. Out of range the beam drops, the engage intent kept,
 // with a TRACTOR_STOPPED.
 TEST(K1, TractorWalkGripsAndDrops) {
-    World w(false);
+    World w;
     w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -2699,7 +2011,7 @@ TEST(K1, TractorWalkGripsAndDrops) {
     EXPECT_EQ(w.entries(r), (std::vector<std::string>{
                                 "FIRE_SOUND beam^5", "TRACTOR_STARTED tr^7"}));
     EXPECT_EQ(w.k.counts().logged_tractor_walk, 1);
-    EXPECT_EQ(w.k.counts().python_systems, 0);
+    EXPECT_EQ(w.no_fires(), 0);
     w.k.end();
 
     // Out of range: dropped (the mixin's stop, LOOP_STOP), intent kept.
@@ -2722,7 +2034,7 @@ TEST(K1, TractorWalkGripsAndDrops) {
 // A tractor walk the mirror cannot read does not fire that tick: nothing
 // written, nothing queued, counted (no Python hand-back).
 TEST(K1, TractorWalkTheMirrorCannotReadDoesNotFire) {
-    World w(false);
+    World w;
     w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -2736,7 +2048,7 @@ TEST(K1, TractorWalkTheMirrorCannotReadDoesNotFire) {
     EXPECT_TRUE(r.entries.empty());
     EXPECT_EQ(w.k.counts().no_fire[static_cast<size_t>(K1NoFire::TractorRow)],
               1);
-    EXPECT_EQ(w.k.counts().python_systems, 0);
+    EXPECT_EQ(w.no_fires(), 1);
     EXPECT_EQ(w.k.counts().entries[static_cast<size_t>(
                   K1Effect::TRACTOR_STARTED)], 0);
     w.k.end();
@@ -2746,7 +2058,7 @@ TEST(K1, TractorWalkTheMirrorCannotReadDoesNotFire) {
 // and the sync; nothing for a target out of range but the intent Python
 // wrote.
 TEST(K1, TractorStartSession) {
-    World w(false);
+    World w;
     w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -2762,7 +2074,7 @@ TEST(K1, TractorStartSession) {
     EXPECT_EQ(w.k.counts().logged_tractor_start, 1);
     w.k.end();
 
-    World far(false);
+    World far;
     far.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
     const int64_t s2 = far.ship("ship");
     const int64_t t2 = far.object("t", 0.0, 130.0, 0.0);
@@ -2782,35 +2094,68 @@ TEST(K1, TractorStartSession) {
 // each a counted no-fire, and the pump goes on.
 TEST(K1, TractorGetterIsNeverHandedBack) {
     {
-        World w(false);
+        World w;
         w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
         const int64_t ship = w.ship("ship");
         w.m.set_ref(ship, Field::_tractor_beam_system, kRefUnrepresentable);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
         const K1Record r = w.step();
         EXPECT_EQ(w.brief(r), "DONE");
-        EXPECT_EQ(w.k.counts().python_systems, 0);
-        EXPECT_EQ(w.k.counts().no_fire[static_cast<size_t>(
-                      K1NoFire::TractorRow)], 1);
+        EXPECT_EQ(w.no_fire(K1NoFire::TractorRow), 1);
+        EXPECT_EQ(w.no_fires(), 1);
         w.k.end();
     }
-    {
-        World w(false);
+    {   // A ship with no row: one unslotted-ship no-fire, its tractor
+        // included.
+        World w;
         w.k.begin_pump({-1}, kDt, 10.0, false, 0.0);
-        EXPECT_EQ(w.run_to_done(),
-                  (std::vector<std::string>{
-                      "RUN_PYTHON -1 0 0", "RUN_PYTHON -1 0 1",
-                      "RUN_PYTHON -1 0 3", "DONE"}));
-        EXPECT_EQ(w.k.counts().no_fire[static_cast<size_t>(
-                      K1NoFire::TractorRow)], 1);
+        EXPECT_EQ(w.brief(w.step()), "DONE");
+        EXPECT_EQ(w.no_fire(K1NoFire::UnslottedShip), 1);
+        EXPECT_EQ(w.no_fires(), 1);
     }
+}
+
+TEST(K1Sdk, FireThatCannotBeDecidedReturnsFalseOnce) {
+    // THE SDK ROUTES: weapon.Fire whose decision the mirror cannot make
+    // (here: a posed target's mount it cannot tell) or whose launch it
+    // cannot make returns 0 with nothing written -- never a hand-back, so
+    // nothing can make the shot a second time.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t sys = w.system("tsys", ship, 4, {});
+    const int64_t tube = w.bank("tube", sys);
+    const int64_t t = posed_target(w, "t", 0.0, 50.0, 0.0, tube);
+    w.k.begin_fire(tube, t, std::nullopt, std::nullopt, 10.0, false, 0.0);
+    const K1Record r = w.k.next();
+    EXPECT_EQ(w.k.result(), 0);
+    EXPECT_TRUE(r.writes.empty() && r.entries.empty());
+    EXPECT_EQ(w.no_fire(K1NoFire::Decision), 1);
+    w.k.end();
+    // The launch it cannot make.
+    const int64_t ok = w.object("ok", 0.0, 50.0, 0.0);
+    w.m.set_fv(tube, Field::_target_offset, {});
+    w.m.set_i(w.m.get_ids(sys, Field::_ammo_by_slot)[1],
+              Field::ammo_launch_state, 0);
+    w.k.begin_fire(tube, ok, std::nullopt, std::nullopt, 10.0, false, 0.0);
+    const K1Record l = w.k.next();
+    EXPECT_EQ(w.k.result(), 0);
+    EXPECT_TRUE(l.writes.empty() && l.entries.empty());
+    EXPECT_EQ(w.no_fire(K1NoFire::Launch), 1);
+    EXPECT_EQ(w.m.get_i(tube, Field::_num_ready), 1);
+    w.k.end();
+    // And one it can: 1.
+    w.m.set_i(w.m.get_ids(sys, Field::_ammo_by_slot)[1],
+              Field::ammo_launch_state, 1);
+    w.k.begin_fire(tube, ok, std::nullopt, std::nullopt, 10.0, false, 0.0);
+    w.k.next();
+    EXPECT_EQ(w.k.result(), 1);
 }
 
 // Python's drop loop: `(not engageable) or (not in arc)` -- out of range
 // the aim is never resolved, so a mount the mirror cannot place (a posed
 // ship's stale part slot) does not stop the out-of-range drop.
 TEST(K1, TractorDropOutOfRangeResolvesNoAim) {
-    World w(false);
+    World w;
     w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 125.0, 0.0);

@@ -36,6 +36,8 @@ def clock():
 
 def _torpedo_fixture():
     system = TorpedoSystem("Torpedoes")
+    from tests.helpers.torpedo_fixtures import arm as _arm
+    _arm(system)    # a ship and a slot-0 script: tubes launch
     system.TurnOn()
     system._power_factor = 1.0
 

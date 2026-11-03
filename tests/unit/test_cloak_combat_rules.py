@@ -55,13 +55,12 @@ def _cloak_ship():
 
 
 def _target():
-    class _T:
-        def GetWorldLocation(self):
-            from engine.appc.math import TGPoint3
-            return TGPoint3(0.0, 100.0, 0.0)
-        def IsDead(self): return False
-        def GetContainingSet(self): return _SHARED_SET
-    return _T()
+    """A real ship ahead (the mirror names it), in the shooter's set."""
+    from engine.appc.ships import ShipClass
+    target = ShipClass()
+    target.SetTranslateXYZ(0.0, 100.0, 0.0)
+    target._containing_set = _SHARED_SET
+    return target
 
 
 # ── Weapons lockout ───────────────────────────────────────────────────────────

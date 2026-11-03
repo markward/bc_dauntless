@@ -37,6 +37,7 @@ def clock():
 def _tube(name: str) -> TorpedoTube:
     tube = TorpedoTube(name)
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     tube._reload_delay = 40.0
     tube._resize_slots()
@@ -51,8 +52,13 @@ def _system_loaded(system) -> int:
 
 def test_reload_does_not_re_chamber_a_round_already_in_another_tube(clock):
     system = TorpedoSystem("Torpedoes")
+    from tests.helpers.torpedo_fixtures import arm as _arm
+    _arm(system)    # a ship and a slot-0 script: tubes launch
     system.TurnOn()
     ammo = TorpedoAmmoType("Photon", max_torpedoes=2)   # available == 2, finite
+    # Its own script: a type with none does not launch (fire control native
+    # only, M6: a counted no-fire, not the property's slot-0 fallback).
+    ammo.SetTorpedoScript("Tactical.Projectiles.PhotonTorpedo")
     system.AddAmmoType(ammo)
 
     tube_a = _tube("Forward Torpedo 1")

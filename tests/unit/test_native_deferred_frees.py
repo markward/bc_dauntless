@@ -350,7 +350,7 @@ def test_a_kernel_session_start_drains():
     _forget(obj)
     del obj
     gc.collect()
-    nc.k1_pump([], 1.0 / 60.0, lambda ship, getter: None)
+    nc.k1_pump([], 1.0 / 60.0)
     assert not _live(h)
 
 

@@ -44,8 +44,8 @@
 // driver (native_combat.apply_writes, its quiet setters).
 //
 // THE OFFLINE STOP (round trips, spec 2026-11-01 §4.5). `sys_.StopFiring()`
-// on an offline or off system whose banks are all stock PhaserBanks (live
-// rows, not k1_overridden) is logged, with no SYSTEM_STOP record, in
+// on an offline or off system whose banks are all PhaserBanks (live rows)
+// is logged, with no SYSTEM_STOP record, in
 // WeaponSystem.StopFiring's order (WS:1572): the system's `_fire_held =
 // False`, `_held_target = None`, `_held_offset = None`, `_target_list = []`
 // (a NEW list each time: Python's StopFiring builds one, and AddTarget
@@ -374,12 +374,9 @@
 // DAMAGE PULSE reads the bank's and system's mirrored values.)
 // (GetPowerLevel: a resting contact carries the system's mirrored
 // `_power_level`, RESTING CONTACTS. StopFiring: THE OFFLINE STOP and the
-// walk's logged bank stops stand in for it. A class overriding it --
-// the phaser system's or a bank's -- is k1_overridden, K1's guard: the
-// system's sends its ship to Python, a bank's keeps the SYSTEM_STOP
-// record. K2 relies on K1's _k1_recheck_overrides, run at K1's entry -- the
-// pump, which precedes `cb.phasers` every tick -- to notice a class patch:
-// one made between the two steps is seen a tick late.)
+// walk's logged bank stops stand in for it. K1's class-override guard,
+// which K2 shared, is deleted with fire control's Python copy (fire control
+// native only, M8.7): a class overriding StopFiring is not obeyed.)
 // It also lists the ship when the ship's own class, or the class of a bank's
 // `_target`, is one K2 never saw (no object of that class ever registered or
 // was reclassified), and runs the whole step in Python when that class is
@@ -411,8 +408,7 @@ const char* k2_kind_name(K2Kind k);
 enum class K2Why : int32_t {
     UnslottedShip = 0,  // the ship has no mirror row
     NotShipClass,       // not a ShipClass (GetPhaserSystem is a stub)
-    Overridden,         // the system or a bank overrides a K1 method, or the
-                        // driver listed the ship (context python_ships)
+    Overridden,         // the driver listed the ship (context python_ships)
     PosedShip,          // retired (posed parts, Task 4): never counted;
                         // kept for dashboards one release (spec §4.5)
     PartStale,          // a part slot the walk reads is not current (a

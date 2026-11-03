@@ -139,7 +139,7 @@ def _fight(monkeypatch, env):
     mark("sim"), ops that start firing inside a gl.ai scope (as the AI's
     FireScript does), then per tick sim.weapons and sim.combat. Returns
     [(raw ms per name, parents)] per frame."""
-    from tests.integration import test_native_k1_differential as k1d
+    from tests.helpers import k1_fight as k1d
     frames = []
     with monkeypatch.context() as mp:
         scene = k1d._Scene(mp, env)
@@ -181,7 +181,7 @@ def _assets(monkeypatch, tmp_path):
 
 def test_compute_rows_nest_under_their_parents_with_the_switch_on(
         monkeypatch, _assets):
-    from tests.integration import test_native_k1_differential as k1d
+    from tests.helpers import k1_fight as k1d
     frames = _fight(monkeypatch, k1d.ON)
     seen = set()
     for raw, parents in frames:
@@ -206,7 +206,7 @@ def test_only_k1_compute_rows_with_the_switch_off(monkeypatch, _assets):
     """With DAUNTLESS_NATIVE_COMBAT=0 K0, K2, K3 and K4 run in Python, so
     they record no compute row; fire control is native whatever the switch
     (fire control native only, M9), so K1's rows still appear."""
-    from tests.integration import test_native_k1_differential as k1d
+    from tests.helpers import k1_fight as k1d
     frames = _fight(monkeypatch, k1d.OFF)
     seen = set()
     for raw, _ in frames:

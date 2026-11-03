@@ -486,19 +486,6 @@ class _Scene:
 
         mp.setattr(ws.PhaserBank, "StopFiring", bank_spy)
         mp.setattr(ws.PhaserSystem, "StopFiring", sys_spy)
-        # A bank's StopFiring is in K1's override guard (round trips Task 2:
-        # an idle bank's stop is logged writes): the spy only wraps the stock
-        # method, so for this world K1's stock snapshot takes it as stock
-        # (restored with mp). K1's logged idle stops never call it.
-        names, _stock = nc._k1_stock[5]
-        mp.setitem(nc._k1_stock, 5,
-                   (names, nc._k1_resolve(ws.PhaserBank, names)))
-        # ... and so is a phaser system's (round trips Task 3: an offline
-        # system whose banks are idle is stopped with logged writes).
-        kind = nc._weapon_kind_of_class(ws.PhaserSystem)
-        names, _stock = nc._k1_stock[kind]
-        mp.setitem(nc._k1_stock, kind,
-                   (names, nc._k1_resolve(ws.PhaserSystem, names)))
         # ... and in K0's (combat fire events Task 4: K0 logs a drained
         # bank's StopFiring; a system's is not in its guard): the spy only
         # wraps the stock method.

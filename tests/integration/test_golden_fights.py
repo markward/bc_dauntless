@@ -14,9 +14,11 @@ Re-record ONLY on purpose, with a reason, one scene at a time where you can:
     UPDATE_COMBAT_GOLDEN=1 COMBAT_GOLDEN_REASON="<why>" \\
         uv run pytest tests/integration/test_golden_fights.py::<test>
 
-which writes the file and skips. ``COMBAT_GOLDEN_ARM=python|native``
-overrides a scene's arm (scenes 1-5 were recorded from the Python arm, then
-checked native). ``tractor_modes`` runs native only since tractors went
+which writes the file and skips. Every scene runs native, the only arm
+since fire control's Python copy was deleted (Task 6, M3; a re-record's
+header says so); scenes 1-5 were recorded from the Python arm, then checked
+native. Each scene also asserts it had no no-fire and dropped no row
+(k1_no_fire all zero: ruling R3). ``tractor_modes`` runs native only since tractors went
 native (fire control native only, Task 3) and was re-recorded once for
 ruling R8 (its events queued). ``sdk_dumb_fire`` runs native since the SDK's
 FireDumb went native (Task 4, M8.1), against its Python recording,
@@ -89,6 +91,15 @@ def test_sdk_dumb_fire():
 
 
 # ── The recorder itself ──────────────────────────────────────────────────────
+
+def test_golden_arm_is_native_only():
+    """A re-record is labelled with the arm it ran, and the only arm is
+    native (fire control native only, M3): asking for "python" fails
+    loudly instead of recording native rows as Python's."""
+    assert golden_fight.ARMS == {"native": golden_fight.k1d.ON}
+    with pytest.raises(ValueError, match="native only"):
+        golden_fight.run_scene("k1_ops_tpf1", "python")
+
 
 def test_golden_missing_platform_skips(monkeypatch):
     """R9: a golden is compared only on the platform that recorded it; on

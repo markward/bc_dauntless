@@ -21,10 +21,12 @@ def _first_bank(ship):
 
 
 def _fire_and_dispatch(ship, target):
+    from engine.appc import weapon_subsystems as ws
     bank = _first_bank(ship)
-    # The effect half of Fire (the arc test is not under test here): the
-    # was-not-firing edge posts ET_WEAPON_FIRED.
-    assert bank._fire_effect(target, None, (False,))
+    # The edge's event (the arc test is not under test here): the beam's
+    # was-not-firing edge is the native kernel's since fire control went
+    # native only (M3), and its delivery posts ET_WEAPON_FIRED through this.
+    ws._post_weapon_fired(bank, target)
     GameLoop().advance(2)           # the queued event dispatches
 
 
@@ -64,9 +66,9 @@ def test_e2m1_warbird_firing_at_the_karoon_triggers_the_attack_beat():
     cannon = warbird.GetPulseWeaponSystem().GetChildSubsystem(0)
     cannon._charge_level = cannon._max_charge
     cannon._cooldown_remaining = 0.0
-    import importlib
     from engine.appc import weapon_subsystems as ws
-    mod_ = importlib.import_module(ws.pulse_module_script(cannon))
-    assert cannon._fire_effect(karoon, None, ((0.0, 1.0, 0.0), karoon, mod_))
+    # The bolt's event, as the SPAWN delivery posts it once the bolt exists
+    # (the cannon's launch is the kernel's: fire control native only, M3).
+    ws._post_weapon_fired(cannon, karoon)
     GameLoop().advance(2)
     assert called == [1]

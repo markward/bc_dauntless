@@ -30,11 +30,14 @@ def test_et_torpedo_reload_is_a_real_int_not_a_stub():
 
 def test_reload_broadcasts_with_the_tube_as_destination(clock):
     system = TorpedoSystem("Torpedoes")
+    from tests.helpers.torpedo_fixtures import arm as _arm
+    _arm(system)    # a ship and a slot-0 script: tubes launch
     system.TurnOn()
     tube = TorpedoTube("Forward Torpedo 1")
     tube._reload_delay = 40.0
     tube._immediate_delay = 0.25
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     tube._resize_slots()
     system.AddChildSubsystem(tube)

@@ -5,7 +5,7 @@ plan Review Focus 5).
 
 The 64-ship combat_stress fight, switch on, driven the host's way with the
 K1 differential's seeded op stream (tests/integration/
-test_native_k1_differential.py's _Scene), is fought twice from fresh loads
+tests/helpers/k1_fight.py's _Scene), is fought twice from fresh loads
 with the same seeds:
 
 - the reference, alone;
@@ -76,7 +76,7 @@ from engine.core import loop as game_loop
 from engine.core.loop import TICK_DELTA
 from tests.helpers import bc_assets, effect_split
 from tests.helpers.k3_fight import compare_calls
-from tests.integration import test_native_k1_differential as k1d
+from tests.helpers import k1_fight as k1d
 
 pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "combat_gil_probe_arm"),

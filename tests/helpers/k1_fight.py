@@ -1,35 +1,31 @@
-"""Native K1 fire control is bit-identical to the Python in real fights
-(native combat phase 1b, Task 6; plan
-docs/superpowers/plans/2026-10-31-native-combat-phase1b-fire-control.md).
+"""The K1 fights: combat_stress scenes with a seeded op stream, driven the
+host's way, recorded tick by tick (fire control native only, Task 6: the
+former K1 differential, tests/integration/test_native_k1_differential.py,
+whose Python reference arm is deleted with fire control's Python copy, M3).
 
-Two fresh loads of combat_stress -- the Python reference
-(``DAUNTLESS_NATIVE_COMBAT=0``) and native (``=1``, where every held-weapon
-pump and every StartFiring's immediate update is walked by the K1 kernel and
-Python runs only the effects) -- get the same seeded stream of operations,
-all through public calls: StartFiring / StopFiring / re-target without a
-stop, SetSingleFire, SetFiringChainMode, weapon systems TurnOff / TurnOn,
+They are the golden fights' scenes 1-3 (tests/helpers/golden_fight.py:
+k1_ops_tpf1/tpf6, k1_gameloop_ai, k1_midwalk_handler) and the other kernels'
+differentials' (K0, the off-lock stress, the presentation RNG), which keep
+both arms of THEIR switch with fire control native in both (M9).
+
+A fresh load of combat_stress gets a seeded stream of operations, all
+through public calls: StartFiring / StopFiring / re-target without a stop,
+SetSingleFire, SetFiringChainMode, weapon systems TurnOff / TurnOn,
 SetCondition on banks and tubes, SetPowerSetting on emitters, a torpedo
 magazine emptied and refilled, ships nudged and turned, and the player's
-Manual Aim switched on and off with a locked subsystem.
-
-After every tick each weapon system's and each bank's state (the Task 5
-tuple: type-tagged, floats by .hex(), the `_target_offset` values and which
-bank's offset is the same OBJECT as which), every ship's hull condition and
-six shield faces, and the whole event log (every AddEvent: type, source,
-destination, tick, order, and a weapon hit's payload -- damage, hit point and
-normal by .hex(); torpedoes and bolts numbered by first sight) are compared
-with ``==``, and so is the ordered log of every apply_hit, and every hit VFX
-spawn and shield hit per tick as a multiset (the presentation: a K2 resting
-contact is presented at the drain after the step's last record, spec
-2026-11-02 §4.3-4.4, and presentation has no order inside a tick, §5 Q1;
-compare_calls). Each
-arm starts with nothing in flight: the other arm's torpedoes would otherwise
-fly on in it (headless_mission.clear_in_flight). The native arm must show that K1 really walked and
-fired phaser, pulse and torpedo systems (not merely that the scene has
-them), and end with a clean mirror audit.
+Manual Aim switched on and off with a locked subsystem. After every tick
+each weapon system's and each bank's state (type-tagged, floats by .hex(),
+the `_target_offset` values and which bank's offset is the same OBJECT as
+which), every ship's hull condition and six shield faces, every torpedo in
+flight, and the whole event log (every AddEvent: type, source, destination,
+tick, order, and a weapon hit's payload -- damage, hit point and normal by
+.hex(); torpedoes and bolts numbered by first sight) are recorded, and so
+is the ordered log of every apply_hit, and every hit VFX spawn and shield
+hit per tick (compare_calls). Each scene starts with nothing in flight
+(headless_mission.clear_in_flight).
 
 Driven the host's way, without GameLoop.tick (AI draws on the unseeded
-module ``random``), exactly as the phase 1a step differential does.
+module ``random``), except _loop_arm, which runs GameLoop.tick on purpose.
 """
 import contextlib
 import math
@@ -66,36 +62,17 @@ from tests.helpers.fight_audio import isolate_fight_audio
 from tests.helpers.k3_fight import (compare_calls, presented,
                                    spy_presentation)
 
-pytestmark = pytest.mark.skipif(
-    _h is None or not hasattr(_h, "combat_k1_next"),
-    reason="native K1 bindings not built")
-
 TICKS = 600
 SEED = 20261031
 
+#: The other kernels' switch (fire control is native in both: M9): OFF
+#: runs K0, K2, K3, K4 and damage in Python, ON natively.
 OFF = {"DAUNTLESS_NATIVE_COMBAT": "0"}
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
-#: This differential's reference arm: fire control's PYTHON copy. =0 no
-#: longer reaches it -- fire control is native whenever the module is
-#: available (fire control native only, M9; OFF keeps K1 native and only
-#: K0, K2, K3, K4 and damage Python) -- so the reference is OFF plus the
-#: explicit test hook native_combat.use_python_fire_control_for_tests(),
-#: until Task 6 deletes the Python copy and this differential becomes
-#: golden tests (spec §4.7).
-PYTHON = {"DAUNTLESS_NATIVE_COMBAT": "0"}
 
 # Weapon kinds (native_combat._weapon_kind): systems, then their leaves.
 PHASERS, PULSES, TORPEDOES = 1, 2, 4
 BANK, CANNON, TUBE = 5, 6, 8
-
-
-@pytest.fixture(autouse=True)
-def _needs_assets_and_hermetic_mods(monkeypatch, tmp_path):
-    bc_assets.require_game_dir("data/Models/Ships/Galaxy")
-    monkeypatch.setenv("DAUNTLESS_MODS_DIR", str(tmp_path / "empty_mods"))
-    nc.reset()
-    yield
-    nc.reset()
 
 
 def _groups(ship):
@@ -177,10 +154,8 @@ class _Scene:
             self.face(ship, self._enemy_of(face, ship))
         step_memo.forget()
         nc.configure(env)
-        if env is PYTHON:
-            nc.use_python_fire_control_for_tests()
         assert nc.enabled() is (env is ON)
-        assert nc.fire_control_native() is (env is not PYTHON)
+        assert nc.fire_control_native()
         self.native = env is ON
         self.firing = [g for s in self.ships for g in _groups(s)
                        if g is not s.GetTractorBeamSystem()]
@@ -241,47 +216,25 @@ class _Scene:
         mp.setattr(combat, "apply_hit", hit_spy)
         spy_presentation(mp, self.calls, lambda: self.tick, self.label)
 
-        # Evidence that K1 itself walked and decided, per kind: the walked
-        # systems Python reached (a walk K1 started natively is materialised
-        # when something of it reaches Python, its first record or a logged
-        # offset write: round trips Task 1; a walk start the walk check
-        # handed back is seen at its WALK_START) and the banks K1 decided to
-        # fire (FIRE). A native walk that returned nothing is not seen here:
-        # it ran no Python at all (counted in k1_logged.walk_start).
+        # Evidence that K1 itself walked, per kind: the walked systems whose
+        # offset object Python made (a logged write naming the walk's
+        # offset: _K1Walk.materialise). A walk that stamped no offset is not
+        # seen here (counted in k1_logged.walk_start).
         self.walked = {}
         self.walked_names = set()
-        self.fired = {}
-        if self.native:
-            walk_start = nc._K1Walk.walk_start
-            materialise = nc._K1Walk.materialise
-            decision = nc._k1_decision
+        materialise = nc._K1Walk.materialise
 
-            def walked(system):
+        def counting_materialise(walk, n, h, _orig=materialise):
+            first = walk.walk != n
+            offset = _orig(walk, n, h)
+            if first:
+                system = walk.walked
                 k = nc._weapon_kind(system)
                 self.walked[k] = self.walked.get(k, 0) + 1
                 self.walked_names.add(self.label(system))
+            return offset
 
-            def counting_walk_start(walk, system, _orig=walk_start):
-                patched = _orig(walk, system)
-                if not patched:     # handed to Python: not a native walk
-                    walked(system)
-                return patched
-
-            def counting_materialise(walk, n, h, _orig=materialise):
-                first = walk.walk != n
-                offset = _orig(walk, n, h)
-                if first:
-                    walked(walk.walked)
-                return offset
-
-            def counting_decision(bank, d, walk, _orig=decision):
-                k = nc._weapon_kind(bank)
-                self.fired[k] = self.fired.get(k, 0) + 1
-                return _orig(bank, d, walk)
-
-            mp.setattr(nc._K1Walk, "walk_start", counting_walk_start)
-            mp.setattr(nc._K1Walk, "materialise", counting_materialise)
-            mp.setattr(nc, "_k1_decision", counting_decision)
+        mp.setattr(nc._K1Walk, "materialise", counting_materialise)
 
     def label(self, obj):
         """A ship's or weapon's name; any other object (a torpedo, a pulse
@@ -609,34 +562,28 @@ OPS = (("fire",) * 10 + ("fire_pulse",) * 3 + ("reload",) * 2
           "move", "turn", "face", "manual_on", "manual_move", "manual_off"))
 
 
-def _compare(ref, nat, ref_fire_control_native=False):
-    """`ref_fire_control_native`: the reference arm is OFF (=0: K1 native,
-    the other kernels Python; fire control native only, M9 -- the K0
-    differential's), not PYTHON (this differential's)."""
+def _compare(ref, nat):
+    """Two runs of a scene, tick by tick: every recorded row, the event log,
+    the queued rows, the presentation calls (compare_calls). Fire control
+    is native in both (M9): both ran K1."""
     assert len(ref.log) == len(nat.log)
     for tick, (a, b) in enumerate(zip(ref.log, nat.log), start=1):
         assert len(a) == len(b)
         for x, y in zip(a, b):
-            assert x == y, "tick %d differs:\n python %r\n native %r" % (
+            assert x == y, "tick %d differs:\n ref %r\n native %r" % (
                 tick, x, y)
     for i, (x, y) in enumerate(zip(ref.events, nat.events)):
-        assert x == y, "event %d differs:\n python %r\n native %r" % (i, x, y)
+        assert x == y, "event %d differs:\n ref %r\n native %r" % (i, x, y)
     assert len(ref.events) == len(nat.events)
     effect_split.compare(ref.queued, nat.queued)
     compare_calls(ref.calls, nat.calls)
     assert nat.audit == [], nat.audit
-    assert nat.counts["k1_records"] > 0, nat.counts
-    # Round trips Task 1: every native walk starts with no WALK_START.
-    assert nat.counts["k1_logged"]["walk_start"] > 0, nat.counts
-    if ref_fire_control_native:
-        assert ref.counts["k1_records"] > 0, ref.counts
-        assert ref.counts["k1_logged"]["walk_start"] > 0, ref.counts
-    else:
-        assert ref.counts["k1_records"] == 0, ref.counts
-        assert ref.counts["k1_logged"]["walk_start"] == 0, ref.counts
+    for arm in (ref, nat):
+        assert arm.counts["k1_records"] > 0, arm.counts
+        assert arm.counts["k1_logged"]["walk_start"] > 0, arm.counts
 
 
-def _round_trips_ran(nat):
+def round_trips_ran(nat):
     """Every round trip the plan removed ran in the native arm: walks
     started natively (Task 1), lit beams sustained and idle banks stopped as
     logged writes (Task 2), resting contacts batched and offline systems
@@ -671,101 +618,8 @@ def _round_trips_ran(nat):
     assert e["delivered"] > 0 and e["skipped_gone"] == e["failed"] == 0, e
 
 
-def _both(monkeypatch, ticks_per_frame, ops=OPS, ships="8", ticks=TICKS,
-          before_frame=None, setup=None):
-    runs = []
-    for env in (PYTHON, ON):
-        with monkeypatch.context() as mp:
-            scene = _Scene(mp, env, ships=ships)
-            if setup is not None:
-                setup(scene, mp)
-            runs.append(scene.run(ticks_per_frame, ops, ticks=ticks,
-                                  before_frame=before_frame))
-    ref, nat = runs
-    _compare(ref, nat)
-    return ref, nat
-
-
 def _kinds(scene):
     return {e[0] for e in scene.events + scene.queued.rows}
-
-
-def _reasons(counts, session="pump"):
-    return {k: v for k, v in counts["k1_python_reasons"][session].items()
-            if v}
-
-
-@pytest.mark.parametrize("ticks_per_frame", (1, 6))
-def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
-    ref, nat = _both(monkeypatch, ticks_per_frame)
-    # The scene carries every kind K1 decides for.
-    kinds = {nc._weapon_kind(g) for g in ref.firing}
-    assert {PHASERS, PULSES, TORPEDOES} <= kinds, kinds
-    # ... and K1 really walked and fired each kind natively.
-    for k in (PHASERS, PULSES, TORPEDOES):
-        assert nat.walked.get(k, 0) > 0, nat.walked
-    # A cannon's launch is logged writes and a SPAWN (launch deferral,
-    # Task 3), never a FIRE record; a tube's too unless the kernel cannot
-    # make it (the counted hand-backs: a posed target's offset; no first
-    # launch since types cache at load, Task 5); a bank's edge is logged
-    # writes and queue entries (combat fire events), never a record.
-    assert nat.counts["k1_logged"]["pulse_launch"] > 0, nat.counts
-    # The equalities below would hold at 0 == 0: tubes really launched.
-    assert nat.counts["k1_logged"]["tube_launch"] > 0, nat.counts
-    assert nat.fired.get(CANNON, 0) == 0, nat.fired
-    assert nat.fired.get(TUBE, 0) == sum(
-        nat.counts["k1_launch_reasons"].values()), (nat.fired, nat.counts)
-    assert nat.fired.get(BANK, 0) == 0, nat.fired
-    for key in ("beam_edge", "firing_bank_stop", "system_stop"):
-        assert nat.counts["k1_logged"][key] > 0, (key, nat.counts)
-    assert nat.counts["k1_entries"]["LOOP_STOP"] > 0, nat.counts
-    # The fight happened: fires, torpedo launches, hits, fire failures and
-    # the player's ammo use.
-    for et in (App.ET_WEAPON_FIRED, App.ET_TORPEDO_FIRED, App.ET_WEAPON_HIT,
-               App.ET_WEAPON_FIRE_FAILED, App.ET_TORPEDO_AMMO_CONSUMED):
-        assert et in _kinds(ref), et
-    # Hits carried their payload into the comparison (damage, hit point),
-    # and the shields it compared moved.
-    hits = [e[4] for e in ref.events if e[0] == App.ET_WEAPON_HIT]
-    assert hits and all(h is not None and h[1] is not None for h in hits)
-    ships = slice(len(ref.systems) + len(ref.weapons), None)
-    assert any(a[3] != b[3] for a, b in zip(ref.log[0][ships],
-                                            ref.log[-1][ships]))
-    # A bank ran dry and Manual Aim's offset reached a bank.
-    banks = slice(len(ref.systems), len(ref.systems) + len(ref.weapons))
-    assert any(r[4] == ("bool", True) for rows in ref.log
-               for r in rows[banks]), "no bank ran dry"
-    assert ref.manual
-    # Lit banks were stopped, and their loop stops compared.
-    assert effect_split.stops(ref.queued) > 0, ref.queued.rows[:20]
-    _round_trips_ran(nat)
-    print("k1 differential (tpf=%d): counts %r walked %r fired %r "
-          "events %d presentation calls %d"
-          % (ticks_per_frame, nat.counts, nat.walked, nat.fired,
-             len(ref.events), presented(ref.calls)))
-    print("k1 differential (tpf=%d) tallies: records %d, logged %r, "
-          "entries %r, FIRE by leaf kind %r, launch hand-backs %r"
-          % (ticks_per_frame, nat.counts["k1_records"],
-             nat.counts["k1_logged"], nat.counts["k1_entries"], nat.fired,
-             nat.counts["k1_launch_reasons"]))
-
-
-def test_k1_matches_python_with_k0_stood_down(monkeypatch):
-    """K0 stood down (native_combat.k0_weapons answers False, as an audit
-    makes it: the passive walk runs on both arms and sleeps at-rest
-    weapons), so the RAW asleep flag is compared again: a wake that one of
-    K1 / K2's C-applied writes misses (a WAKE-kind field stored without
-    waking its sleeping weapon) shows as a difference."""
-    monkeypatch.setattr(nc, "k0_weapons", lambda ships, dt: False)
-    monkeypatch.setattr(_Scene, "raw_asleep", True)
-    ref, nat = _both(monkeypatch, 1)
-    assert nat.counts["k0_steps"] == 0, nat.counts
-    # Weapons really slept (and so were woken by the fight's writes).
-    weapons = slice(len(ref.systems), len(ref.systems) + len(ref.weapons))
-    asleep = [r[-1] for rows in ref.log for r in rows[weapons]]
-    assert ("bool", True) in asleep and ("bool", False) in asleep
-    assert nat.counts["c_applied_writes"] > 0, nat.counts
-    _round_trips_ran(nat)
 
 
 # ── Review Focus 1: a handler changes state mid-walk ─────────────────────────
@@ -862,195 +716,9 @@ def handler_arm(monkeypatch, env, ticks_per_frame, stats):
         _HANDLER.clear()
 
 
-@pytest.mark.parametrize("ticks_per_frame", (1, 6))
-def test_handler_stops_and_restarts_mid_walk(monkeypatch, ticks_per_frame):
-    """Review Focus 1: a handler on the events K1's effects post changes
-    the world -- stops the firing system, starts another ship's (a K1
-    session inside the effect queue's delivery), turns sensors off,
-    destroys a tube -- between walks, and every later walk goes as
-    Python's does."""
-    stats = {}
-    runs = [handler_arm(monkeypatch, env, ticks_per_frame, stats)
-            for env in (PYTHON, ON)]
-    ref, nat = runs
-    _compare(ref, nat)
-    py, native = stats[False], stats[True]
-    assert py["calls"] > 0 and native["calls"] == py["calls"], stats
-    # Every handler ran in a delivery, in both arms, and natively its
-    # StartFiring was a K1 session started there.
-    assert native["in_delivery"] == native["calls"], stats
-    assert py["in_delivery"] == py["calls"], stats
-    assert native["k1_in_delivery"] > 0 and py["k1_in_delivery"] == 0, stats
-    for k in (PHASERS, PULSES, TORPEDOES):
-        assert nat.walked.get(k, 0) > 0, nat.walked
-    # The logged K1 paths ran among the handlers' changes (no offline
-    # system here: k2_logged_system_stop measured 0).
-    logged = nat.counts["k1_logged"]
-    for key in ("beam_sustain", "idle_bank_stop", "beam_edge", "fire_failed"):
-        assert logged[key] > 0, logged
-    assert nat.counts["k2_batched_contacts"] > 0, nat.counts
-    print("k1 handler differential (tpf=%d): handler %r, counts %r"
-          % (ticks_per_frame, native, nat.counts))
-
-
 # ── Review Focus 5: Manual Aim, and a ship on a rig ──────────────────────────
 
-def test_manual_aim_offset_matches(monkeypatch):
-    """The player fights on Manual Aim with a locked subsystem: the cursor
-    pick moves, Manual Aim drops back to the lock and is picked again. Each
-    of the player's banks stamps the walk's offset as Python does."""
-    ops = (("manual_on",) * 3 + ("manual_move",) * 4
-           + ("manual_off", "fire", "fire"))
-    ref, nat = _both(monkeypatch, 1, ops=ops, ticks=360)
-    assert ref.manual
-    # A Manual Aim pick reached one of the player's banks...
-    banks = slice(len(ref.systems), len(ref.systems) + len(ref.weapons))
-    player_banks = [i for i, w in enumerate(ref.weapons)
-                    if w.GetParentSubsystem().GetParentShip() is ref.player]
-    picks = set(ref.manual)
-    stamped = {rows[banks][i][8] for rows in ref.log for i in player_banks}
-    assert picks & stamped, "no manual pick reached a bank"
-    # ... through K1 itself: the player's systems were walked natively.
-    assert any(n.startswith("Player/") for n in nat.walked_names), \
-        nat.walked_names
-    assert any(e[0] == App.ET_WEAPON_FIRED and e[1].startswith("Player/")
-               for e in ref.queued.rows)
-
-
-def test_forced_pose_ship_runs_native(monkeypatch):
-    """Six ships (no Bird of Prey, so nothing is rigged): K1 walks every
-    armed system, and goes on walking the Galaxy's natively once a pose is
-    forced on it at tick 120 -- its mounts through the pushed part slots
-    (posed parts, Task 4). The results stay the Python's. (Was
-    test_rigged_ship_runs_python -- RUN_PYTHON posed_ship from the pose
-    on -- before posed parts went native.)"""
-    pose_at = 120
-    seen = {}
-
-    def before_frame(scene):
-        if scene.tick >= pose_at and "posed" not in scene.__dict__:
-            scene.posed = True
-            galaxy = [s for s in scene.ships
-                      if s.GetScript() == "ships.Galaxy"][0]
-            seen[scene.native] = (nc.counts(), set(scene.walked_names))
-            articulation.force_part_pose(
-                galaxy, "probe part",
-                part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0))
-            assert articulation.posed_part_names(galaxy)
-            scene.walked_names.clear()
-
-    ref, nat = _both(monkeypatch, 1, ships="6", ticks=360,
-                     before_frame=before_frame)
-    before, walked_before = seen[True]
-    assert before["k1_python_systems"] == 0, before
-    assert before["k1_posed"]["walks"] == 0, before
-    assert any(n.startswith("Friend-3/") for n in walked_before), \
-        walked_before
-    assert nat.counts["k1_python_systems"] == 0, nat.counts
-    assert nat.counts["k1_posed"]["walks"] > 0, nat.counts
-    assert any(n.startswith("Friend-3/") for n in nat.walked_names), \
-        nat.walked_names
-    assert any(e[0] == App.ET_WEAPON_FIRED and e[1].startswith("Friend-3/")
-               and e[3] > pose_at for e in ref.queued.rows)
-
-
 # ── Task 6b: a rigged Bird of Prey at its natural pose runs native ──────────
-
-def test_rigged_bop_at_red_runs_native(monkeypatch):
-    """The scene's Bird of Prey (Enemy-4, rigged: both wings) has a target,
-    so it is in "red", which its rig authors as the NIF pose: every part at
-    identity, its mounts the unrigged mounts. K1 walks its systems, and
-    those aiming at it, natively. At tick 200 both arms force its wings to
-    cruise (a forced transition window); tick_ship eases them home over the
-    rig's 2 s. In that window K1 walks it natively too -- its posed mounts
-    through the pushed pose table and part slots (posed parts, Task 4; it
-    fell back to Python before) -- and once home, native as ever. No posed
-    fallback (posed_ship, posed_target, part_stale) at all; native and
-    Python identical throughout."""
-    force_at, home_by = 200, 360
-    seen = {}
-
-    def bop_of(scene):
-        return [s for s in scene.ships
-                if s.GetScript() == "ships.BirdOfPrey"][0]
-
-    def setup(scene, mp):
-        bop = bop_of(scene)
-        assert [p.GetName() for p in articulation.parts_for_ship(bop)] == [
-            "left wing", "left wing01"]
-        bop.SetTarget(scene._enemy_of(random.Random(SEED + 3), bop))
-        assert articulation.state_for(bop) == "red"
-
-    def posed(counts):
-        # Every posed fallback. A random op-stream offset on the posed BoP
-        # that no mount claims is a plain body point, decided natively
-        # (fire control native only, M5).
-        return tuple(counts["k1_python_reasons"][session][why]
-                     for session in ("pump", "system")
-                     for why in ("posed_ship", "posed_target", "part_stale",
-                                 "mount_unknown")) + tuple(
-            counts["k1_fire_ask_reasons"][why]
-            for why in ("part_stale", "mount_unknown"))
-
-    def before_frame(scene):
-        bop = bop_of(scene)
-        if scene.tick >= force_at and "forced" not in scene.__dict__:
-            scene.forced = True
-            seen[scene.native, "before"] = (nc.counts(),
-                                            set(scene.walked_names))
-            scene.walked_names.clear()  # from here: walks in the window
-            assert all(part_pose.is_identity(p)
-                       for p in bop._articulation_poses.values())
-            articulation.force_pose(bop, "cruise")
-            assert scene.native is False or _h.combat_dump(
-                bop.__dict__["_nslot"])["has_posed_parts"] == 1
-            # Its own systems ask K1 inside the window (StartFiring's
-            # immediate walk, then the pump), whatever the op stream did:
-            # cannons on, a full magazine, loaded tubes.
-            torps = bop.GetTorpedoSystem()
-            ammo = torps.GetCurrentAmmoType()
-            ammo.SetAvailable(ammo.GetMaxTorpedoes())
-            for i in range(torps.GetNumWeapons()):
-                torps.GetWeapon(i).SetNumReady(1)
-            for g in (bop.GetPulseWeaponSystem(), torps):
-                g.TurnOn()
-                g.StartFiring(bop.GetTarget(), None)
-                assert g._fire_held
-        if scene.tick >= home_by and "home" not in scene.__dict__:
-            scene.home = True
-            assert not bop._articulation_transitions
-            assert all(part_pose.is_identity(p)
-                       for p in bop._articulation_poses.values())
-            seen[scene.native, "home"] = (nc.counts(),
-                                          set(scene.walked_names))
-            # From here on, walks AFTER the wings came home only.
-            scene.walked_names.clear()
-
-    ref, nat = _both(monkeypatch, 1, setup=setup, before_frame=before_frame)
-    before, walked_before = seen[True, "before"]
-    home, walked_window = seen[True, "home"]
-    nothing = (0,) * len(posed(before))
-    # At identity before the window: native, no articulation fallback.
-    assert posed(before) == nothing, before
-    assert any(n.startswith("Enemy-4/") for n in walked_before), \
-        walked_before
-    # In the window: native too (it fell back to Python before posed parts
-    # went native) -- its own systems walked with posed mounts.
-    assert posed(home) == nothing, home
-    assert home["k1_posed"]["walks"] > before["k1_posed"]["walks"], home
-    assert any(n.startswith("Enemy-4/") for n in walked_window), \
-        walked_window
-    # Home again: no articulation fallback to the end, and the BoP walks
-    # natively (walked_names was cleared at home).
-    assert posed(nat.counts) == nothing, nat.counts
-    assert any(n.startswith("Enemy-4/") for n in nat.walked_names), \
-        nat.walked_names
-    print("k1 rigged BoP differential: posed walks before %d home %d end "
-          "%d; posed target aims %d"
-          % (before["k1_posed"]["walks"], home["k1_posed"]["walks"],
-             nat.counts["k1_posed"]["walks"],
-             nat.counts["k1_posed"]["target_aims"]))
-
 
 # ── Ruling P3: the real AI's own StartFiring cadence, through GameLoop.tick ─
 
@@ -1154,42 +822,3 @@ def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
         return scene
 
 
-def test_k1_matches_python_under_the_game_loop_ai(monkeypatch):
-    """Ruling P3's gap: the AI's OWN StartFiring cadence (no op stream), with
-    GameLoop.tick driving it, native vs Python, until ships die. A first,
-    discarded arm runs before the two compared ones: the first combat_stress
-    fight in a process diverged from every later one in this harness
-    (observed in the AI's tick-1 avoidance scheduling; the cause was not
-    chased), while any two later arms matched exactly."""
-    import time
-    t0 = time.perf_counter()
-    _loop_arm(monkeypatch, PYTHON, ticks=LOOP_TICKS)    # warm-up, discarded
-    ref = _loop_arm(monkeypatch, PYTHON)
-    nat = _loop_arm(monkeypatch, ON)
-    _compare(ref, nat)
-    # The AI fired on its own, and with native on its StartFiring walks
-    # went through K1 (system sessions), as did the pump.
-    assert ref.starts > 0 and nat.starts == ref.starts, (ref.starts,
-                                                         nat.starts)
-    assert nat.k1_systems > 0 and ref.k1_systems == 0, (nat.k1_systems,
-                                                        ref.k1_systems)
-    for k in (PHASERS, TORPEDOES):
-        assert nat.walked.get(k, 0) > 0, nat.walked
-    # ... and fired natively: every type's launch was cached when it was
-    # loaded (launch deferral Task 5), so no first launch is handed back.
-    logged = nat.counts["k1_logged"]
-    assert logged["tube_launch"] > 0 and logged["beam_edge"] > 0, logged
-    assert nat.counts["k1_launch_reasons"]["launch_uncached"] == 0, \
-        nat.counts["k1_launch_reasons"]
-    for et in (App.ET_WEAPON_FIRED, App.ET_WEAPON_HIT, App.ET_OBJECT_EXPLODING,
-               App.ET_OBJECT_DESTROYED):
-        assert et in _kinds(ref), et
-    # At least one ship destroyed inside the window.
-    ships = slice(len(ref.systems) + len(ref.weapons), None)
-    dead = {r[0] for r in ref.log[-1][ships] if r[1] == ("int", 1)}
-    assert dead, ref.log[-1][ships]
-    _round_trips_ran(nat)
-    print("k1 game-loop differential: %.1f s, starts %d, k1 system "
-          "sessions %d, dead %r, counts %r walked %r fired %r"
-          % (time.perf_counter() - t0, ref.starts, nat.k1_systems,
-             sorted(dead), nat.counts, nat.walked, nat.fired))

@@ -894,7 +894,7 @@ def check_guide_asks(counts, tally, expected):
 
 def weapon_rows(label, systems, weapons):
     """Every weapon system's and weapon's fire-control state (the K1
-    differential's record, tests/integration/test_native_k1_differential.py):
+    fight's record, tests/helpers/k1_fight.py):
     floats by .hex(), objects by `label`, a weapon's `_target_offset` by its
     hexes and by WHICH weapon first held that same object, and whether it is
     asleep (passive weapons: a `_firing` write, a logged one included, wakes
@@ -944,11 +944,7 @@ def weapon_rows(label, systems, weapons):
 #: plain body points (fire control native only, M5) an offset no mount
 #: claims is no hand-back at all, in K1, K2 or K3.
 _POSED_ZERO = (
-    [("k1_python_reasons", s, why) for s in ("pump", "system")
-     for why in ("posed_ship", "posed_target", "part_stale",
-                 "mount_unknown")]
-    + [("k1_fire_ask_reasons", None, why)
-       for why in ("part_stale", "mount_unknown")]
+    [("k1_no_fire", None, why) for why in ("part_stale", "decision")]
     + [("k2_python_reasons", None, why)
        for why in ("posed_ship", "part_stale")]
     + [("k3_steer_reasons", None, why)

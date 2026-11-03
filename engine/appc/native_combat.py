@@ -79,15 +79,22 @@ _enabled = False
 # The switch (DAUNTLESS_NATIVE_COMBAT, on unless =0) as configure() last set
 # it, never True while the mirror is not live: the other kernels (enabled).
 _switch = False
-# TEST ONLY (use_python_fire_control_for_tests): fire control's Python copy,
-# for the K1 differential's reference arm until Task 6 deletes it.
-_python_fire_control = False
 _audit = False
 _failures: list = []
 # Dispatched queries (sensor_detection, sensor_occlusion) the kernel answered,
 # and the ones that fell back to the Python on its ValueError. Counted only on
 # the native path, so the switch-off path pays nothing.
 _counts = {"native_calls": 0, "fallbacks": 0}
+# Fire control's no-fires found by this driver, not the kernel (fire control
+# native only, R2, R3; k1_no_fire, summed with the kernel's by name, and each
+# why logged once: _k1_no_fire): "no_row" (a weapon or system the mirror has
+# no row for), "unnamed_target" (a Fire whose target the mirror cannot
+# name), "sdk_can_fire" (a CanFire the mirror could not answer), "dropped"
+# (a row dropped: a value it cannot encode, or a stale handle; _drop) and
+# "tractor_row" (a tractor StartFiring or a tractored ship with no row).
+_K1_PY_NO_FIRE = ("no_row", "unnamed_target", "sdk_can_fire", "dropped",
+                  "tractor_row")
+_k1_no_fire_py = dict.fromkeys(_K1_PY_NO_FIRE, 0)
 # K2: `cb.phasers` steps run whole in Python (k2_phasers returned False), by
 # why: "nested" (a K2 session is already open), "instances" (the step's
 # ship_instances is not the session's TrackedInstances), "patched" (a
@@ -249,22 +256,11 @@ def fire_control_native() -> bool:
     in the host's mission load -- which runs before the GameLoop that calls
     configure() -- is native too, or raises RuntimeError naming the missing
     binding or the failed self-check (M10). Every entry point reaches this
-    predicate, every loader therefore needs nothing of its own. False only
-    under the test hook (use_python_fire_control_for_tests)."""
-    if _enabled:
-        return not _python_fire_control
-    if _python_fire_control:
-        return False
-    _go_live()
+    predicate, every loader therefore needs nothing of its own. Fire
+    control has no other copy (M3): this never returns False."""
+    if not _enabled:
+        _go_live()
     return True
-
-
-def use_python_fire_control_for_tests(on: bool = True) -> None:
-    """TEST ONLY: fire control takes its Python copy (fire_control_native
-    False) until reset() -- the K1 differential's reference arm, until
-    Task 6 deletes that copy. Nothing in the engine calls it."""
-    global _python_fire_control
-    _python_fire_control = bool(on)
 
 
 def audit_enabled() -> bool:
@@ -272,11 +268,12 @@ def audit_enabled() -> bool:
 
 
 def reset() -> None:
-    global _enabled, _switch, _audit, _python_fire_control
+    global _enabled, _switch, _audit
     _enabled = False
     _switch = False
     _audit = False
-    _python_fire_control = False
+    for k in _k1_no_fire_py:
+        _k1_no_fire_py[k] = 0
     _failures.clear()
     _profiles.clear()
     _logged_once.clear()
@@ -301,8 +298,6 @@ def reset() -> None:
         _h.combat_dmg_clean_clear()
         _h.combat_k2_scan_clear()
     _dmg_ctx[0] = None
-    _k1_overridden_by_type.clear()
-    _k1_watch.clear()
     global _pulse_stale
     _pulse_stale = False
     _counts["native_calls"] = 0
@@ -369,37 +364,24 @@ def reset() -> None:
 
 def counts() -> dict:
     """Since the last reset(): {"native_calls": n, "fallbacks": n} for the
-    dispatched sensor queries, and the K1 kernel's {"k1_records": n,
-    "k1_python_systems": n, "k1_asks": n} (records returned, RUN_PYTHON
-    hand-backs, ASKs answered by Python; counted by the kernel), plus
-    "k1_python_reasons": {"pump": {...}, "system": {...}} -- the
-    k1_python_systems hand-backs by K1Why name (k1_fire_control.h:
-    part_stale, overridden, instance_patch, ...; every reason, zeros
-    included), for the held-weapon pump and StartFiring apart --
-    "k1_fire_ask_reasons" ({K1Why name: n}: the Fire decisions handed to
-    Python, ASK fire -- part_stale, mount_unknown, other) and
-    "k1_posed" ({"walks", "target_aims"}: systems of a posed ship walked
-    natively, Fire decisions aimed natively at a posed target's offset) and
-    "k1_logged" ({"walk_start"}: walks started with no WALK_START record,
-    their offset computed by the kernel -- round trips Task 1; k1_records
-    counts only the records returned, so a walk start the walk check hands
-    back is a WALK_START record there instead; "beam_sustain": Fires on a
-    beam already firing and "idle_bank_stop": StopFirings of a bank not
-    firing, both pure field writes logged instead of a FIRE / BANK_STOP
-    record -- round trips Task 2; "tractor_walk" / "tractor_start": the
-    pump's tractor walks and StartFiring's tractor sessions, k1_fire_
-    control.h THE TRACTOR WALK), "k1_no_fire" ({K1NoFire name: n}: walks
-    that did not fire that tick because the mirror could not read them --
-    tractor_row; fire control native only, R2). The k1_logged counters are bumped as
-    the kernel logs, and a kernel throw later in the same next() (which
-    undoes those writes) does not roll them back, so they can overcount,
-    like k2_batched_contacts below.
-    posed_ship / posed_target are retired reasons, always 0 (posed parts
-    run natively; spec 2026-11-01 §4.5). In k1_python_reasons,
-    mount_unknown is always 0 too: the pre-scan never hands a system back
-    for a posed target's offset, which is decided in the walk -- it is
-    counted in k1_fire_ask_reasons only. An offset no mount claims is no
-    hand-back at all: a plain body point (fire control native only, M5).
+    dispatched sensor queries, and the K1 kernel's {"k1_records": n}
+    (sessions run: each returns one record, DONE), "k1_posed" ({"walks",
+    "target_aims"}: systems of a posed ship walked, Fire decisions aimed at
+    a posed target's offset), "k1_logged" ({"walk_start": walks started;
+    "beam_sustain": Fires on a beam already firing and "idle_bank_stop":
+    StopFirings of a bank not firing, both pure field writes; beam_edge,
+    fire_failed, firing_bank_stop, system_stop: writes plus queue entries;
+    tube_launch, dumb_launch, dumb_refused, pulse_launch: the launches;
+    "tractor_walk" / "tractor_start": the pump's tractor walks and
+    StartFiring's tractor sessions; sdk_dumb_fire, sdk_fire, sdk_can_fire:
+    THE SDK ROUTES}), "k1_entries" ({K1Effect name: n}), "k1_launch_reasons"
+    ({launch_unresolved, launch_uncached, launch_other: n}: the launches the
+    kernel could not make) and "k1_no_fire" ({why: n}: what did not fire
+    that tick because the mirror could not answer -- fire control native
+    only, R2, R3; the kernel's K1NoFire names, k1_fire_control.h NO FIRE,
+    summed with the driver's own, _K1_PY_NO_FIRE; every why is logged once
+    per session on stderr). A launch the kernel could not make is counted
+    in both k1_launch_reasons and k1_no_fire["launch"].
 
     "c_applied_writes": the K1/K2/K0 log writes the bindings applied
     themselves (C-applied write logs, _applier_context). "fast_pushes":
@@ -475,7 +457,11 @@ def counts() -> dict:
         c.update(_h.combat_k0_counts())
         c.update(_h.combat_apply_counts())
         c.update(_h.combat_push_counts())
-        c.update(_h.combat_k1_counts())
+        k1 = _h.combat_k1_counts()
+        why = k1["k1_no_fire"]
+        for k, n in _k1_no_fire_py.items():
+            why[k] = why.get(k, 0) + n
+        c.update(k1)
         c.update(_h.combat_k2_counts())
         k4 = _h.combat_k4_counts()
         why = k4["k4_python_reasons"]
@@ -584,21 +570,26 @@ def _slot_of(value):
 
 def _drop(obj) -> None:
     """Unregister `obj`: its handle went stale (a test's combat_clear), or it
-    holds a value the mirror cannot represent. From then on it takes the
-    Python path. Its row is freed now, on the main thread: a drop mid-walk
-    is the kernels' "row gone" protocol (a K1 walk ASKs Python, or raises
-    for its walked system; test_native_k1_dispatch), which a deferred free
-    would hide. Off the main thread the whole drop is queued for the next
-    drain point (drain(); spec 2026-11-03 ruling R2): it re-pushes
-    referrers and set members, which are mirror pushes. The finalizer's
-    later unregister of the same handle fails quietly. Silent by design
-    (R2)."""
+    holds a value the mirror cannot represent. Its row is freed now, on the
+    main thread (no kernel session is open there: none runs Python). Off
+    the main thread the whole drop is queued for the next drain point
+    (drain(); spec 2026-11-03 ruling R2): it re-pushes referrers and set
+    members, which are mirror pushes. The finalizer's later unregister of
+    the same handle fails quietly.
+
+    A dropped weapon, system or ship never fires again -- fire control has
+    no Python copy to take it over (M3) -- and the other kernels take their
+    Python paths for it: counted as fire control's no-fire "dropped" and
+    logged once (fire control native only, R3)."""
     h = obj.__dict__.get("_nslot")
     if h is None:
         return
     if _off_main():
         _queue_push(obj, _drop_queued, None, "_drop")
         return
+    _k1_no_fire("dropped", "a %s row was dropped (a value the mirror "
+                "cannot encode, or a stale handle): it never fires again"
+                % type(obj).__name__)
     global _k2_drop_epoch
     _k2_drop_epoch += 1         # K2's cached ship -> iid table names handles
     if _enabled and (h >> _KIND_SHIFT) == _kind("Object"):
@@ -1692,6 +1683,49 @@ def _log_once(key, message: str) -> None:
     sys.stderr.write("[native-combat] %s\n" % message)
 
 
+def _k1_no_fire(why: str, message: str) -> None:
+    """Fire control's driver-side no-fire (fire control native only, R2,
+    R3): counted under `why` (_K1_PY_NO_FIRE) and logged once per why."""
+    _k1_no_fire_py[why] += 1
+    _log_once(("k1_no_fire", why), "fire control: %s -- does not fire "
+              "(no_fire %s)" % (message, why))
+
+
+#: What each of the kernel's K1NoFire whys means, for its one log line.
+_K1_NO_FIRE_TEXT = {
+    "tractor_row": "a tractor walk the mirror cannot read",
+    "stale_row": "a row the walk reads is unnamed or freed",
+    "stub_or_unplaced": "a ship with no real IsDead or no valid transform",
+    "pulse_ship_target": "a pulse system with no live target-list entry",
+    "pulse_module": "a pulse module unresolved, or its power setting out "
+                    "of range",
+    "ammo_row": "a torpedo ammo slot names no live ammo row",
+    "part_stale": "a posed ship's part slot is not current (its part "
+                  "resolution raised: retried every step)",
+    "unslotted_ship": "a ship in the pump has no mirror row",
+    "gate": "a pump gate the mirror could not answer",
+    "structure": "a weapon system's child structure the walk cannot follow",
+    "not_k1_system": "a held weapon system of no fire-control kind",
+    "can_fire": "a weapon's CanFire the mirror could not answer",
+    "decision": "a Fire decision the mirror could not make",
+    "launch": "a launch the kernel cannot make (k1_launch_reasons)",
+    "walk": "a mid-walk read the mirror could not answer",
+    "reseed": "single fire's reseed with a child the mirror cannot name "
+              "(skipped)",
+    "retry": "a retry target the mirror cannot read (treated as gone)",
+    "is_dead": "a retry target whose IsDead the mirror cannot answer "
+               "(treated as gone)",
+}
+
+
+def _k1_log_kernel_no_fires(names) -> None:
+    """The kernel's no-fire whys counted for the first time (a DONE
+    record's no_fire_new): one line each (fire control native only, R2)."""
+    for name in names:
+        _log_once(("k1_no_fire", name), "fire control: %s -- does not fire "
+                  "(no_fire %s)" % (_K1_NO_FIRE_TEXT.get(name, name), name))
+
+
 def _off_main() -> bool:
     return _get_ident() != _MAIN_IDENT
 
@@ -1874,187 +1908,6 @@ def _weapon_kind_of_class(cls) -> int:
     return k
 
 
-# The methods K1 stands in for (it computes their answer from the mirror
-# instead of calling them). A class whose MRO gives any of them a different
-# function than the STOCK class of its weapon_kind had when
-# weapon_subsystems defined it (the import-time snapshot, k1_snapshot_stock)
-# gets k1_overridden = 1, and K1 hands its system to Python whole: a mod
-# subclassing a weapon, or a patch on the stock class itself or on a base
-# (`setattr(PhaserBank, "CanFire", ...)`).
-_K1_LEAF_METHODS = (
-    "Fire", "_fire_decide", "_fire_effect", "StopFiring", "CanFire",
-    "_charge_gate",
-    "_shot_cost", "_aim_in_arc", "IsFiring", "IsMemberOfGroup", "IsDumbFire",
-    "GetConditionPercentage", "GetDisabledPercentage", "IsDisabled",
-    "_ammo_exhausted", "IsSkewFire", "GetParentSubsystem", "_climb_to_ship",
-    # A tube's launch (launch deferral): the spawn, its slot cooldown, the
-    # launcher's reads and the dumb fire.
-    # (Its events are delivered by the class's own methods: not here.)
-    "_spawn_torpedo", "_start_slot_cooldown", "_ensure_slots",
-    "GetDamageRadiusFactor", "GetDirection", "GetRight",
-    "_emitter_world_position", "FireDumb",
-    # A cannon's launch (Task 3): its damage scale and cooldown.
-    "GetDamageScale", "GetCooldownTime")
-_K1_SYSTEM_METHODS = (
-    "update_weapons", "try_fire_weapon", "_prune_targets",
-    "_active_chain_groups", "_resolve_working_group", "_firing_weapon",
-    "_reseed_all_fire_timers", "GetFiringChains", "GetNumWeapons",
-    "GetWeapon", "GetNumTargets", "IsOn", "IsDisabled", "_can_engage",
-    "GetParentShip", "_fired_counter", "_weapon_did_fire",
-    "_live_held_offset",
-    # K2 logs an offline phaser system's stop (round trips Task 3).
-    "StopFiring")
-# Checked on the INSTANCE (its __dict__), for the walked system and each
-# child: the cheap subset that tests and tools patch. Made by the bindings'
-# walk check (host_bindings.cc, THE K1 WALK CHECK: scanned before each
-# record of a K1 session, so a patch made by Python mid-pump is seen by the
-# next walk start), which hands a walk start
-# with one back to Python as a WALK_START record (walk_start).
-# The pump asks the same check before it logs a system's stop (combat fire
-# events Task 3), so the system's own StopFiring is here too (a system with
-# it patched also has its walk starts handed back: conservative).
-_K1_SYSTEM_PATCHES = ("update_weapons", "try_fire_weapon",
-                      "_live_held_offset", "StopFiring")
-_K1_LEAF_PATCHES = ("Fire", "_fire_decide", "_fire_effect", "StopFiring",
-                    "CanFire", "FireDumb", "_spawn_torpedo")
-# The firing ship's side of the walk offset (_live_held_offset's probe and
-# its Manual Aim branch), which the kernel computes from the mirror: an
-# instance attribute shadowing one, or a class resolving them to anything
-# but the stock ShipClass's (k1_snapshot_ship), hands the walk start back
-# too, and Python's own _live_held_offset answers it.
-_K1_SHIP_PATCHES = ("is_using_target_offset", "GetTargetOffsetTG")
-# (ShipClass, its raw MRO entries of _K1_SHIP_PATCHES) as ships.py defined
-# them, and whether the walk check was sent to the bindings.
-_k1_ship_stock = None
-_k1_walk_check_sent = False
-# weapon_kind -> (names, the stock class's resolution of them).
-_k1_stock: dict = {}
-# class -> its k1_overridden flag, and _k1_watch[class] -> (getter, values,
-# missing): what the flag was computed on, re-checked cheaply by
-# _k1_recheck_overrides at every K1 entry.
-_k1_overridden_by_type: dict = {}
-_k1_watch: dict = {}
-
-
-def _k1_resolve(cls, names) -> tuple:
-    """What each name resolves to on `cls` (None: absent). getattr on the
-    class, so a staticmethod reads its function, a classmethod a bound
-    method that compares equal (==) to the next one."""
-    return tuple(getattr(cls, n, None) for n in names)
-
-
-def k1_snapshot_stock(classes) -> None:
-    """weapon_subsystems, as it finishes defining its classes, passes
-    {weapon_kind: stock class}: snapshot what every K1 name resolves to on
-    each, before any test, tool or mod can patch one."""
-    _k1_stock.clear()
-    for kind, cls in classes.items():
-        names = _K1_LEAF_METHODS if kind >= 5 else _K1_SYSTEM_METHODS
-        _k1_stock[kind] = (names, _k1_resolve(cls, names))
-    _k1_overridden_by_type.clear()
-    _k1_watch.clear()
-
-
-def _k1_raw(cls, name):
-    """`name`'s entry in the first class of `cls`'s MRO that defines it (what
-    CPython's _PyType_Lookup returns, the walk check's comparison), or None."""
-    for klass in cls.__mro__:
-        d = vars(klass)
-        if name in d:
-            return d[name]
-    return None
-
-
-def k1_snapshot_ship(ship_class) -> None:
-    """ships.py, as it finishes defining ShipClass: snapshot the raw
-    is_using_target_offset / GetTargetOffsetTG the walk check accepts as
-    stock, before any test, tool or mod can patch one."""
-    global _k1_ship_stock, _k1_walk_check_sent
-    _k1_ship_stock = (ship_class, tuple(_k1_raw(ship_class, n)
-                                        for n in _K1_SHIP_PATCHES))
-    _k1_walk_check_sent = False
-
-
-def _k1_send_walk_check() -> None:
-    """Install the bindings' walk check (k1_fire_control.h, THE WALK START)
-    once: the registry it maps handles through and the names it looks for."""
-    global _k1_walk_check_sent
-    cls, (iu, gto) = _k1_ship_stock if _k1_ship_stock is not None \
-        else (None, (None, None))
-    _h.combat_k1_set_walk_check(_registry.data, _K1_SYSTEM_PATCHES,
-                                _K1_LEAF_PATCHES, _K1_SHIP_PATCHES,
-                                iu, gto, cls)
-    # And the launch check, re-checked with it before every record: the
-    # launch functions. The cannons' modules are not checked against
-    # sys.modules there any more: a module re-imported mid-session is
-    # launched from the cache until the next K1 entry re-pushes it
-    # (_refresh_stale_launches; fire control native only, M8.3).
-    _h.combat_k1_set_launch_check(
-        _k1_launch_check() if _k1_launch_stock is not None else None)
-    _h.combat_k1_set_pulse_modules(None)
-    _k1_walk_check_sent = True
-
-
-def _k1_overridden(cls) -> int:
-    hit = _k1_overridden_by_type.get(cls)
-    if hit is None:
-        stock = _k1_stock.get(_weapon_kind_of_class(cls))
-        hit = 0
-        if stock is not None:
-            names, snapshot = stock
-            resolved = _k1_resolve(cls, names)
-            hit = int(resolved != snapshot)
-            present = [(n, f) for n, f in zip(names, resolved)
-                       if f is not None]
-            missing = tuple(n for n, f in zip(names, resolved) if f is None)
-            if len(present) > 1:
-                _k1_watch[cls] = (
-                    operator.attrgetter(*[n for n, _f in present]),
-                    tuple(f for _n, f in present), missing)
-            elif present:       # attrgetter of one name: a bare value
-                _k1_watch[cls] = (operator.attrgetter(present[0][0]),
-                                  present[0][1], missing)
-            else:
-                _k1_watch[cls] = (lambda _c: (), (), missing)
-        _k1_overridden_by_type[cls] = hit
-    return hit
-
-
-def _k1_recheck_overrides() -> None:
-    """Has a K1 method been patched on a flagged class (or a base) since its
-    flag was computed? Called at every K1 entry (k1_pump, k1_system): one
-    attrgetter call per class with a row, plus a getattr per name the class
-    lacks -- about 1.5 us for the six stock classes. On a change the class's
-    flag is recomputed against the snapshot and re-pushed to every row of
-    that class (an exceptional path: a scan of the registry). A patch made
-    in the middle of a K1 session is seen at the next entry."""
-    changed = None
-    for cls, (get, values, missing) in _k1_watch.items():
-        try:
-            same = get(cls) == values
-        except AttributeError:          # a present name was deleted
-            same = False
-        if same:
-            for n in missing:
-                if getattr(cls, n, None) is not None:
-                    same = False
-                    break
-        if not same:
-            if changed is None:
-                changed = []
-            changed.append(cls)
-    if changed is None:
-        return
-    for cls in changed:
-        del _k1_overridden_by_type[cls]
-        del _k1_watch[cls]
-    changed = set(changed)
-    fid = _fid("k1_overridden")
-    for h, obj in list(_registry.items()):
-        if type(obj) in changed and obj.__dict__.get("_nslot") == h:
-            _call(obj, _h.combat_set_i, h, fid, _k1_overridden(type(obj)))
-
-
 def _posed_flag(ship) -> int:
     """1 while some part of `ship` is drawn off its NIF pose, else 0.
 
@@ -2116,7 +1969,6 @@ def _flags(obj, h) -> dict:
         return {"has_parent_ship_getter": int(implements(obj,
                                                          "GetParentShip")),
                 "weapon_kind": _weapon_kind(obj),
-                "k1_overridden": _k1_overridden(type(obj)),
                 "has_shields": _has_shields_flag(obj),
                 # The condition chain's rules for this class (damage).
                 "dmg_class": _dmg_class(type(obj))}
@@ -2296,7 +2148,8 @@ def _part_slot(leaf, names, sub):
     """The index in `names` of the part `articulation._live_part` resolves
     for `sub`'s own mount, by the same calls minus the detached test (the
     table's detached bit carries that); -1 for no posable part; None when
-    the resolution raised (the slot is then left stale)."""
+    the resolution raised (the slot is then left stale, and resolved again
+    at the next step boundary: resolve_part_slots, M8.4)."""
     from engine.appc import part_severance, physical_parents
     try:
         local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
@@ -2308,7 +2161,7 @@ def _part_slot(leaf, names, sub):
             name = physical_parents.part_for_property(leaf, prop, point)
         else:
             name = part_severance.part_for_mount(leaf, point)
-    except Exception:  # noqa: BLE001 - Python answers it (and raises) itself
+    except Exception:  # noqa: BLE001 - a no-fire, retried (M8.4)
         return None
     if name is None or name not in names:
         return -1
@@ -2340,6 +2193,7 @@ def resolve_part_slots(ship, drop=True) -> None:
         return
     if ship.__dict__.get("_nslot") != h:
         return
+    raised = False
     if names:
         sub_kind = _kind("Subsystem")
         for sub in _slot_subsystems(ship):
@@ -2349,9 +2203,19 @@ def resolve_part_slots(ship, drop=True) -> None:
             slot = _part_slot(leaf, names, sub)
             if slot is None:
                 _call(sub, _h.combat_set_part_slot, sh, -1, 0)  # stale
+                raised = True
             else:
                 _call(sub, _h.combat_set_part_slot, sh, slot, gen)
-    if _part_gen == gen:    # nothing bumped while resolving
+    if raised:
+        # The slot stays stale -- a posed ship's walk does not fire
+        # (k1_no_fire part_stale) -- and is resolved again at the next step
+        # boundary, not only at the next generation (fire control native
+        # only, M8.4).
+        _log_once(("part_resolution", type(ship).__name__),
+                  "fire control: a %s's part resolution raised: its posed "
+                  "weapons do not fire until it resolves (retried every "
+                  "step)" % type(ship).__name__)
+    elif _part_gen == gen:  # nothing bumped while resolving
         _resolved_gen[h] = gen
 
 
@@ -2471,18 +2335,15 @@ def mark_pulse_stale() -> None:
 # its state (cached / unresolved) and launch speed, pushed to every
 # Ammo row of that script. Read when the type is loaded (push_ammo_launch:
 # its creation, SetTorpedoScript, the re-read after a cache reset) through
-# the resolve Python's launch uses (weapon_subsystems.
-# _resolve_projectile_module, tube_launch_params), so the first launch is
-# native too (launch deferral Task 5); Python's own launch of a script not
-# cached yet still learns it (learn_tube_launch). A type not cached hands its
-# launches back (K1LaunchWhy::Uncached): a GetLaunchSpeed that raises, or a
-# reset made inside a K1 session (THE P6 WINDOW). Forgotten with the
-# projectile module cache (mark_pulse_stale).
+# weapon_subsystems._resolve_projectile_module and tube_launch_params. A
+# type not cached does not fire (K1LaunchWhy::Uncached, a no-fire): a
+# GetLaunchSpeed that raises. Forgotten with the projectile module cache
+# (mark_pulse_stale) and re-read at the next K1 entry.
 
 def _ammo_launch(ammo) -> tuple:
     """(ammo_launch_state, ammo_launch_speed) for an ammo type: its
     script's cached launch, (0, 0.0) not cached yet, unresolved when it has
-    no script (_spawn_torpedo then reads the property's: not mirrored)."""
+    no script (its launch then does not fire: a no-fire, M6)."""
     from engine.appc import weapon_subsystems as ws
     script = ammo.__dict__.get("_script")
     if not script:
@@ -2518,10 +2379,8 @@ def _cache_tube_launch(script) -> None:
     it (_resolve_projectile_module: an unimportable script is the stock
     photon, None when that fails too; it catches every import error itself,
     and tube_launch_params a raising GetLaunchSpeed, so loading never
-    breaks). An uncached answer (that raise) is not stored: an entry stops
-    learn_tube_launch, so Python's launch may still learn it. Mirror live
-    only: before configure() the module is first resolved at its first
-    launch, as before."""
+    breaks). An uncached answer (that raise) is not stored, so the next
+    re-read tries again. Mirror live only."""
     from engine.appc import weapon_subsystems as ws
     if script and script not in ws._tube_launch_cache:
         launch = ws.tube_launch_params(ws._resolve_projectile_module(script))
@@ -2545,33 +2404,12 @@ def _push_ammo_row(ammo) -> None:
                   float(speed))
 
 
-def learn_tube_launch(script, mod) -> None:
-    """Python resolved torpedo `script` to `mod` for a launch: cache its
-    launch (weapon_subsystems.tube_launch_params) and push it to every
-    ammo type of that script, and every torpedo property whose slot-0
-    script it is."""
-    from engine.appc import weapon_subsystems as ws
-    if not script or script in ws._tube_launch_cache:
-        return
-    ws._tube_launch_cache[script] = ws.tube_launch_params(mod)
-    for h, obj in list(_registry.items()):
-        if obj.__dict__.get("_nslot") != h:
-            continue
-        k = h >> _KIND_SHIFT
-        if k == _kind("Ammo") and obj.__dict__.get("_script") == script:
-            _push_ammo_row(obj)
-        elif k == _kind("Property"):
-            scripts = obj.__dict__.get("_torpedo_scripts")
-            if isinstance(scripts, dict) and scripts.get(0) == script:
-                _push_slot0_row(obj)    # the slot-0 launch (M8.2)
-
-
 def _slot0_launch(prop) -> tuple:
     """(slot0_launch_state, slot0_launch_speed, module) of a torpedo system
     property: its slot-0 script's cached launch -- the script
-    TorpedoTube._spawn_torpedo launches for a tube with no ammo type
+    the kernel launches for a tube with no ammo type
     (`parent.GetProperty().GetTorpedoScript(0)`; fire control native only,
-    M8.2) -- unresolved when it has none (Python then launches nothing).
+    M8.2) -- unresolved when it has none (the launch does not fire).
     Read from the instance dict, so it is safe while the property is still
     being built."""
     from engine.appc import weapon_subsystems as ws
@@ -2618,7 +2456,7 @@ def _refresh_stale_launches() -> None:
     only, M8.3): the projectile-cache reset's re-read
     (refresh_stale_pulse_params), and a cannon module re-imported since its
     params were read -- `sys.modules` no longer holds the module the
-    cannons' launches carry (PulseWeapon._fire_decide imports its script
+    cannons' launches carry (the cannon decision imported its script
     at every shot) -- whose script is read again and pushed to every cannon
     of it. Between the staleness and this (Python run in the middle of a
     session) the kernel launches from the cache it has. Neither is a
@@ -2667,65 +2505,6 @@ def push_arriving(ship) -> None:
         if h is not None and (h >> _KIND_SHIFT) == _kind("Object"):
             _call(ship, _h.combat_set_i, h, _fid("arriving"),
                   _arriving_flag(ship))
-
-
-# The functions K1's native launch stands in for, as weapon_subsystems,
-# projectiles and subsystems define them (k1_snapshot_launch): any patched
-# (a test's spy, a tool) hands every launch to Python (K1_LAUNCH_PATCHED,
-# K1LaunchWhy::Patched; re-checked by the bindings before every record,
-# THE LAUNCH CHECK), as a patched K1 method is never decided natively; and
-# Python's own launch then spawns at once through it (_defer_spawn is not
-# used: the spy is the point).
-_K1_LAUNCH_FUNCS = (
-    ("engine.appc.weapon_subsystems",
-     ("_spawn_projectile", "_emitter_forward_world", "_dewarp_blocks_fire",
-      "_resolve_projectile_module", "_new_projectile",
-      "_launch_projectile", "_launch_reads", "_defer_spawn",
-      "spawn_launch")),
-    ("engine.appc.projectiles", ("source_set",)),
-    ("engine.appc.subsystems", ("subsystem_world_position",)),
-)
-_k1_launch_mods = None
-_k1_launch_stock = None
-
-
-def k1_snapshot_launch() -> None:
-    """weapon_subsystems, once defined: snapshot the stock launch functions
-    (_K1_LAUNCH_FUNCS)."""
-    global _k1_launch_mods, _k1_launch_stock, _k1_walk_check_sent
-    import importlib
-    _k1_launch_mods = tuple((importlib.import_module(m), names)
-                            for m, names in _K1_LAUNCH_FUNCS)
-    _k1_launch_stock = _k1_launch_funcs()
-    _k1_walk_check_sent = False      # resend the launch check with it
-
-
-def _k1_launch_funcs() -> tuple:
-    out = []
-    for mod, names in _k1_launch_mods or ():
-        out.extend(getattr(mod, n, None) for n in names)
-    return tuple(out)
-
-
-def _k1_launch_funcs_names() -> list:
-    return [n for _m, names in _K1_LAUNCH_FUNCS for n in names]
-
-
-def _k1_launch_check() -> list:
-    """combat_k1_set_launch_check's list: (module dict, name, stock)."""
-    out = []
-    stock = iter(_k1_launch_stock or ())
-    for mod, names in _k1_launch_mods or ():
-        for n in names:
-            out.append((vars(mod), n, next(stock)))
-    return out
-
-
-def launch_patched() -> bool:
-    """Whether a function a launch's deferral stands in for is not stock
-    (_K1_LAUNCH_FUNCS): a test's spy, a tool. Its launches then spawn
-    mid-walk through the patched function, kernel's and Python's alike."""
-    return _k1_launch_stock is None or _k1_launch_funcs() != _k1_launch_stock
 
 
 def refresh_stale_pulse_params() -> None:
@@ -3032,7 +2811,7 @@ def _globals() -> dict:
     from engine.appc import projectiles
     g["LEAD_ACCEL_K"] = float(projectiles._LEAD_ACCEL_K)
     # K1's 0.33 s timer gate: a class constant of WeaponSystem.
-    g["FIRE_TIMER_THRESHOLD"] = float(ws.WeaponSystem.FIRE_TIMER_THRESHOLD)
+    g["FIRE_TIMER_THRESHOLD"] = float(ws.FIRE_TIMER_THRESHOLD)
     # K1's beam edge: the lit bank's beam-on countdown (combat fire events).
     g["BEAM_ON_DELAY_S"] = float(ws.BEAM_ON_DELAY_S)
     # K0: the phaser drain by power level, read at use (a module constant a
@@ -3808,12 +3587,14 @@ def _k1_compute_exit() -> None:
 # ── K1: the native fire-control kernel's driver (phase 1b) ─────────────────
 #
 # native/src/combat/include/dauntless/combat/k1_fire_control.h is the
-# contract. The kernel walks host_loop._pump_held_weapons /
-# WeaponSystem.update_weapons over the mirror and returns ONE record per
-# combat_k1_next(); the binding applies the record's write log (the
-# decision-path writes the kernel already made in the mirror; C-applied
-# write logs, below apply_writes) and run_k1 then does the one thing only
-# Python may do, then asks for the next record.
+# contract, and the kernel fire control's one copy of its rules (fire
+# control native only, M3): it walks the held-weapon pump and each weapon
+# system's update over the mirror and runs a session WHOLE in one
+# combat_k1_next(), whose one record (DONE) carries the session's writes;
+# the binding applies them (C-applied write logs, below apply_writes) and
+# appends its queue entries. No Python runs inside a session. Whatever the
+# mirror cannot answer does not fire that tick (k1_fire_control.h, NO FIRE),
+# counted in k1_no_fire and logged once per why.
 
 _k1_kind_ids = None
 _ws = None
@@ -3823,10 +3604,7 @@ _step_memo = None
 def _k1_kinds() -> tuple:
     global _k1_kind_ids
     if _k1_kind_ids is None:
-        k = _h.combat_k1_kinds()
-        _k1_kind_ids = tuple(k[n] for n in (
-            "DONE", "WALK_START", "STOP_SYSTEM", "RUN_PYTHON", "BANK_STOP",
-            "FIRE", "FIRE_FAILED", "FIRE_DUMB", "ASK"))
+        _k1_kind_ids = (_h.combat_k1_kinds()["DONE"],)
     return _k1_kind_ids
 
 
@@ -3843,10 +3621,10 @@ def _k1_clocks() -> tuple:
 
 
 class _K1Walk:
-    """One run_k1 loop's pin set -- handle -> object, holding every object
-    the kernel may still name alive for the walk (k1_fire_control.h,
-    PINNING) -- and the materialised walk: its number in the session, its
-    system and its offset object."""
+    """One K1 session's pin set -- handle -> object, holding every object a
+    write may name alive until the session's record is applied
+    (k1_fire_control.h, PINNING) -- and its materialised walk: its number
+    in the session, its system and its offset object."""
 
     __slots__ = ("pins", "offset", "walk", "walked", "result")
 
@@ -3858,23 +3636,22 @@ class _K1Walk:
         self.result = 0
 
     def materialise(self, n, h):
-        """THE hook for "this walk's Python side" (round trips, ruling D5):
-        the walk numbered `n` in this session, of the system with handle
-        `h`. The kernel started it with no record (k1_fire_control.h, THE
-        WALK START); the first Python that reaches it calls this -- run_k1
-        on the walk's first record, before that record's own Python, and
-        the write apply (the binding's, or apply_writes) on a logged write
-        naming the walk's offset
-        (("walk_offset", n, h)), whichever comes first. Once per walk:
-        pins the walk (pin_system) and fetches update_weapons' `offset =
-        self._live_held_offset()` -- today's walk-start Python, in today's
-        order, later but with no Python in between. Returns the offset
-        object (ruling P5: every effect and stamp of the walk uses it)."""
+        """The offset OBJECT of the session's walk `n`, of the system with
+        handle `h` (ruling P5: every bank the walk stamps holds this one
+        object): made once per walk, on the first logged write naming it
+        (("walk_offset", n, h); the write apply, the binding's or
+        apply_writes). Built from what the kernel recorded for the walk
+        (k1_fire_control.h, THE WALK OFFSET; fire control native only,
+        M8.8): the system's own `_held_offset` object when the walk's
+        offset came from it, else a new TGPoint3 of the Manual Aim pick the
+        walk took (ShipClass.GetTargetOffsetTG's copy)."""
         if self.walk == n:
             return self.offset
         system = self.obj(h)
         self.pin_system(system)
-        self.offset = system._live_held_offset()
+        manual = _h.combat_k1_walk_manual_offset(n)
+        self.offset = (system.__dict__.get("_held_offset") if manual is None
+                       else TGPoint3(*manual))
         self.walk = n
         self.walked = system
         return self.offset
@@ -3894,29 +3671,6 @@ class _K1Walk:
             self.pin(child)
         for target in d.get("_target_list", ()):
             self.pin(target)
-
-    def walk_start(self, system) -> bool:
-        """pin_system at a handed-back WALK_START (the walk check found an
-        instance attribute or a ship class it cannot stand in for), plus the
-        instance-patch check: True when the system or a child has an
-        instance attribute shadowing a method K1 stands in for (`tube.Fire =
-        ...`); K1 must not decide for it. A patch made later in the walk (by
-        a handler) is not seen."""
-        self.pin(system)
-        d = system.__dict__
-        patched = False
-        for name in _K1_SYSTEM_PATCHES:
-            if name in d:
-                patched = True
-        for child in d.get("_children", ()):
-            self.pin(child)
-            cd = child.__dict__
-            for name in _K1_LEAF_PATCHES:
-                if name in cd:
-                    patched = True
-        for target in d.get("_target_list", ()):
-            self.pin(target)
-        return patched
 
     def live(self, h):
         """The object `h` names, as obj(), or None when it names no pinned
@@ -4005,13 +3759,11 @@ def apply_writes(writes, walk=None) -> None:
     when one write raises, every write after it is still applied, in order
     (_apply_rest), and then the exception is re-raised: the mirror still
     equals Python except for the write that raised. One Python call sits in
-    the log: materialise -> the walked system's _live_held_offset() (ruling
-    D5), which a patched method could make raise. A later "walk_offset"
-    write of the walk whose materialise raised is then skipped, not
-    retried: Python has no offset object for that walk (the pure-Python
-    walk would have raised before writing anything), and the bank keeps its
-    previous one; a later walk's is fetched as usual (the pure-Python pump
-    would have stopped before it, but its writes are in the mirror). The
+    the log: materialise (a dict read or a TGPoint3; THE WALK OFFSET, M8.8),
+    which a patched TGPoint3 could make raise. A later "walk_offset" write
+    of the walk whose materialise raised is then skipped, not retried, and
+    the bank keeps its previous offset object; a later walk's is fetched as
+    usual. The
     plain writes cannot raise: the logged fields are a fixed set
     on pinned rows -- plain NativeFields, whose quiet write is a dict store,
     and a bank's `_firing` (round trips Task 2), a NativeWakeField whose
@@ -4148,145 +3900,41 @@ def _applier_context(walk) -> tuple:
             kinds.setters)
 
 
-def _k1_decision(bank, decision, walk) -> tuple:
-    """A FIRE record's decision in _fire_decide's shape: handles to objects
-    (pulse (xyz, target_used, module), tube (target_used,)); a beam's
-    (was_firing,) as it is."""
-    kind = _weapon_kind(bank)
-    if kind == 6:
-        return (decision[0], walk.obj(decision[1]), _k1_pulse_module(bank))
-    if kind == 8:
-        return (walk.obj(decision[0]),)
-    return decision
-
-
-def _k1_pulse_module(bank):
-    """The module PulseWeapon._fire_decide would have resolved:
-    importlib.import_module of the bank's script, exactly as decide calls
-    it -- a sys.modules hit, or a fresh import when the module was unloaded
-    since registration. Reached only for a launch K1 handed back: one it
-    makes carries the cannon's cached module, and THE LAUNCH CHECK hands
-    every cannon launch back while a cached module is not sys.modules'
-    (launch deferral, Task 3). An ImportError is where decide refuses,
-    before its stamps; after the kernel's FIRE decision (stamps applied)
-    that cannot be followed, so it raises and the session abandons. Any other exception
-    propagates, as it does out of Python's Fire."""
-    import importlib
-    from engine.appc import weapon_subsystems as ws
-    script = ws.pulse_module_script(bank)
-    if not script:
-        raise RuntimeError("combat K1: pulse bank %r has no module"
-                           % (bank.GetName(),))
-    try:
-        return importlib.import_module(script)
-    except ImportError as e:
-        raise RuntimeError("combat K1: pulse module %r does not import"
-                           % (script,)) from e
-
-
-def _k1_answer(rec, walk, dt):
-    """An ASK record's answer: exactly the Python the kernel stands in for
-    (k1_fire_control.h), run on the live objects with the walk's offset."""
-    query, args = rec[1], rec[2:-2]         # (..., tag, writes)
-    offset = walk.offset
-    if query == "can_fire":
-        return bool(walk.obj(args[0]).CanFire())
-    if query == "fire":
-        system, bank = walk.obj(args[0]), walk.obj(args[1])
-        before = system._fired_counter(bank)
-        result = bank.Fire(walk.obj(args[2]), offset)
-        return bool(system._weapon_did_fire(bank, result, before))
-    if query == "retry":
-        # try_fire_weapon's retry loop; its `weapon._target = None` came in
-        # the write log.
-        system, bank = walk.obj(args[0]), walk.obj(args[1])
-        for entry in list(system._target_list):
-            if entry is None or (hasattr(entry, "IsDead") and entry.IsDead()):
-                continue
-            before = system._fired_counter(bank)
-            result = bank.Fire(entry, offset)
-            if system._weapon_did_fire(bank, result, before):
-                return True
-        return False
-    if query == "is_dead":
-        entry = walk.obj(args[0])
-        return bool(hasattr(entry, "IsDead") and entry.IsDead())
-    if query == "is_member":
-        return bool(walk.obj(args[0]).IsMemberOfGroup(args[1]))
-    if query == "is_dumb":
-        # update_weapons' `weapon.IsDumbFire()` (GetNumTargets() == 0 already
-        # held), for a weapon whose row an effect's handler dropped.
-        return bool(walk.obj(args[0]).IsDumbFire())
-    if query == "group_step":
-        # One pass of update_weapons' delta loop body; the kernel does the
-        # success bookkeeping itself.
-        system, idx, group = walk.obj(args[0]), args[1], args[2]
-        target = walk.obj(args[3])
-        weapon = system.GetWeapon(idx)
-        if weapon is None or not weapon.IsMemberOfGroup(group):
-            return 0
-        walk.pin(weapon)
-        if system.try_fire_weapon(weapon, dt, target, offset):
-            return 1
-        weapon._target = None
-        if system.GetNumTargets() == 0 and weapon.IsDumbFire():
-            weapon.FireDumb(0, 1)
-        return 2
-    if query == "reseed":
-        walk.obj(args[0])._reseed_all_fire_timers()
-        return None
-    raise RuntimeError("combat K1: unknown ASK %r" % (query,))
-
-
 # run_k1's `offset` when the session has no pre-made walk.
 _NO_OFFSET = object()
 
 
-def run_k1(dt, ships=(), pump_body=None, system=None,
-           offset=_NO_OFFSET) -> None:
-    """Drive the kernel's top session (begun by k1_pump / k1_system) until
-    DONE. Each record: its writes are applied by the binding before it is
-    returned (the session's applier context, _applier_context; the
-    previous context -- an outer session's -- is restored at the end), and
-    its queue entries appended (a beam's edge, a FIRE_FAILED, a firing
-    bank's or the pump's stop: k1_fire_control.h, THE EFFECT QUEUE);
-    materialise the walk on its first record (_K1Walk.materialise), then
-    act -- a tube's or a cannon's Fire effect, a StopFiring the kernel
-    handed back, the dumb fire, a handed-back walk start, a whole system in
-    Python, or an ASK answered in Python. `ships` and
-    `pump_body(ship, getter_index)` serve a pump's RUN_PYTHON, `system` a
-    system session's.
+def run_k1(dt, system=None, offset=_NO_OFFSET) -> int:
+    """Run the kernel's top session (begun by k1_pump, k1_system,
+    k1_tractor_start or THE SDK ROUTES) whole: its one record's writes are
+    applied by the binding before it is returned (the session's applier
+    context, _applier_context; the previous context -- an outer session's
+    -- is restored at the end) and its queue entries appended. `system`, a
+    system session's, is pinned. `offset` (a tractor StartFiring session, a
+    Fire session): the session's walk 1 is already materialised, its offset
+    object this one. Returns the session's result (combat_k1_result: a Fire
+    session's). The kernel's no-fire whys counted for the first time are
+    logged, one line each.
 
     THE EFFECT QUEUE (spec 2026-11-02-combat-fire-events §4.1, ruling F3):
     begun while nothing defers (StartFiring from gl.ai, from a delivered
     event's handler), the session opens its own deferral
     (effect_queue.session) and delivers everything it produced at its end,
     in emission order; inside the tick's scope (or an enclosing session)
-    that one delivers. An abandon drops nothing from the queue (ruling F5):
-    every entry in it stands for an effect that already happened -- a
-    kernel entry reaches the queue only once its record's writes are
-    applied (a raising next() drops its own), a Python one follows its
-    effect -- so they are delivered as usual.
+    that one delivers.
 
     On any exception the session is abandoned (the kernel's mirror still
-    equals Python) and the exception re-raised; the walked system's row
-    dropped by a handler mid-walk (the kernel cannot follow it) re-raises
-    as a RuntimeError naming that invariant."""
+    equals Python) and the exception re-raised."""
     _k1_compute_enter()
     try:
         with _effect_queue.session():
-            return _run_k1(dt, ships, pump_body, system, offset)
+            return _run_k1(system, offset)
     finally:
         _k1_compute_exit()
 
 
-def _run_k1(dt, ships, pump_body, system, offset=_NO_OFFSET) -> int:
-    """run_k1's loop, inside the session's deferral. `offset` (a tractor
-    StartFiring session, k1_tractor_start; a Fire session, k1_fire): the
-    session's walk 1 is already materialised, its offset object this one.
-    Returns the session's result (combat_k1_result: a Fire session's)."""
-    (DONE, WALK_START, STOP_SYSTEM, RUN_PYTHON, BANK_STOP, FIRE,
-     _FIRE_FAILED, FIRE_DUMB, ASK) = _k1_kinds()
+def _run_k1(system, offset=_NO_OFFSET) -> int:
+    """run_k1's one call, inside the session's deferral."""
     walk = _K1Walk()
     if system is not None:
         walk.pin_system(system)
@@ -4295,82 +3943,8 @@ def _run_k1(dt, ships, pump_body, system, offset=_NO_OFFSET) -> int:
     prev = _UNSET
     try:
         prev = _h.combat_set_applier(_applier_context(walk))
-        while True:
-            try:
-                rec = _h.combat_k1_next()
-            except (ValueError, RuntimeError) as e:
-                # walk.walked is the system of the last walk Python saw
-                # (materialised): the current walk when it has handed back
-                # a record, which a dropped walked-system row needs (only a
-                # record's Python can drop one), else an earlier walk. A
-                # raise from applying the record's writes is not the
-                # kernel's: it propagates as it is (apply_writes').
-                walked = walk.walked
-                if walked is not None and "_nslot" not in walked.__dict__ \
-                        and not _h.combat_apply_raised():
-                    # k1_fire_control.h, PROTOCOL INVARIANT: no Python
-                    # resume point exists mid-update_weapons.
-                    raise RuntimeError(
-                        "combat K1: %r, the system of the last walk Python "
-                        "saw, lost its mirror row (a value it cannot "
-                        "encode); K1 cannot follow a walked system dropped "
-                        "mid-walk (protocol invariant, k1_fire_control.h)"
-                        % (walked.GetName(),)) from e
-                raise
-            kind = rec[0]
-            tag = rec[-2]
-            if kind == WALK_START:
-                # A walk start the walk check handed back (an instance
-                # attribute or a ship class it cannot stand in for):
-                # update_weapons' `offset = self._live_held_offset()` here,
-                # Python's own; every effect and "walk_offset" write of this
-                # walk uses this very object (ruling P5).
-                walk.walked = walked = walk.obj(rec[1])
-                if walk.walk_start(walked):
-                    # An instance-patched method: Python runs the walk whole
-                    # (the gates already ran), the kernel writes nothing more
-                    # for this system.
-                    walked.update_weapons(dt)
-                    _h.combat_k1_skip_walk()
-                    continue
-                walk.offset = offset = walked._live_held_offset()
-                walk.walk = tag[0]
-                _h.combat_k1_set_offset(
-                    (offset.x, offset.y, offset.z)
-                    if isinstance(offset, TGPoint3) else None)
-                continue
-            if tag is not None:
-                # The walk's first record: its Python side before any of
-                # the record's own (Review Focus 1).
-                walk.materialise(tag[0], tag[1])
-            if kind == FIRE:
-                bank = walk.obj(rec[1])
-                bank._fire_effect(walk.obj(rec[2]), walk.offset,
-                                  _k1_decision(bank, rec[3], walk))
-            elif kind == BANK_STOP or kind == STOP_SYSTEM:
-                # Only what the kernel cannot log: a row gone, a system the
-                # walk check hands back (an instance-patched StopFiring).
-                walk.obj(rec[1]).StopFiring()
-            elif kind == FIRE_DUMB:
-                # FireDumb's own body (not the SDK wrapper, which would begin
-                # this dumb fire's session again).
-                walk.obj(rec[1])._python_fire_dumb()
-            elif kind == RUN_PYTHON:
-                if rec[2] >= 0:
-                    pump_body(ships[rec[2]], rec[3])
-                else:
-                    system.update_weapons(dt)
-            elif kind == ASK:
-                # No heal here (cf. run_k2): every K1 slot read after an ASK
-                # is inside a Fire decision, whose PartStale is an ASK fire.
-                _h.combat_k1_answer(_k1_answer(rec, walk, dt))
-            elif kind == DONE:
-                walk.result = _h.combat_k1_result()
-                break
-            else:
-                raise RuntimeError("combat K1: unknown record %r" % (rec,))
-            if walk.walked is not None:
-                walk.pin_system(walk.walked)    # what the handlers left
+        rec = _h.combat_k1_next()
+        walk.result = _h.combat_k1_result()
         _h.combat_k1_end()
     except BaseException:
         _h.combat_k1_abandon()
@@ -4378,52 +3952,48 @@ def _run_k1(dt, ships, pump_body, system, offset=_NO_OFFSET) -> int:
     finally:
         if prev is not _UNSET:
             _h.combat_set_applier(prev)
+    if rec[2]:
+        _k1_log_kernel_no_fires(rec[2])
     return walk.result
 
 
-def k1_pump(ships, dt, pump_body) -> None:
-    """host_loop._pump_held_weapons(ships, dt) through K1. `ships` is a
-    list; a ship with no Object row is passed as -1, and the kernel hands
-    each of its getters back (RUN_PYTHON) to `pump_body(ship, getter)`."""
-    drain()                     # a session start (ruling R2)
-    if not _k1_walk_check_sent:
-        _k1_send_walk_check()
-    _k1_recheck_overrides()
-    # A mission swap's reset (before GameLoop.tick), a re-imported cannon
-    # module: re-pushed (M8.3).
+def _k1_entry(ships) -> tuple:
+    """Every K1 session's start: the drain point (ruling R2), a stale
+    launch cache re-pushed (M8.3: a mission swap's reset, a re-imported
+    cannon module), and every part slot the walk reads fresh (a step
+    boundary: hits, deaths and damage may have bumped the generation; a
+    resolution that raised is retried, M8.4). Returns the clocks."""
+    drain()
     _refresh_stale_launches()
-    # A step boundary: every slot the walk reads is fresh (the torpedo hits,
-    # deaths and damage before the pump may have bumped the generation).
     resolve_stale_part_slots(ships)
+    return _k1_clocks()
+
+
+def k1_pump(ships, dt) -> None:
+    """host_loop._pump_held_weapons(ships, dt): one native session (fire
+    control native only, M3). `ships` is a list; a ship with no Object row
+    is passed as -1 and does not fire (k1_no_fire unslotted_ship)."""
+    t, use_memo, drift = _k1_entry(ships)
     handles = []
     for ship in ships:
         h = slot(ship)
         handles.append(REF_NONE if h is None else h)
-    t, use_memo, drift = _k1_clocks()
     _h.combat_k1_begin_pump(handles, dt, t, use_memo, drift)
-    run_k1(dt, ships=ships, pump_body=pump_body)
+    run_k1(dt)
 
 
 def k1_system(system, dt) -> None:
-    """WeaponSystem.StartFiring's immediate update_weapons(dt) through K1.
-    A system with no Subsystem row runs its Python update_weapons, as the
-    kernel's RUN_PYTHON would."""
-    drain()                     # a session start (ruling R2)
+    """WeaponSystem.StartFiring's immediate update (dt 0) as one native
+    session. A system with no Subsystem row does not fire (k1_no_fire
+    no_row, logged once)."""
     h = system.__dict__.get("_nslot")
     if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
-        system.update_weapons(dt)
+        _k1_no_fire("no_row", "a weapon system with no mirror row")
         return
-    if not _k1_walk_check_sent:
-        _k1_send_walk_check()
-    _k1_recheck_overrides()
-    # A mission swap's reset (before GameLoop.tick), a re-imported cannon
-    # module: re-pushed (M8.3).
-    _refresh_stale_launches()
-    # A step boundary (StartFiring runs inside gl.ai, an effect's handler,
-    # ...): the walk reads the parent ship's slots and, aiming at a posed
-    # target's offset, the target's.
-    resolve_stale_part_slots(_k1_system_ships(system))
-    t, use_memo, drift = _k1_clocks()
+    # StartFiring runs inside gl.ai, an effect's handler, ...: the walk reads
+    # the parent ship's slots and, aiming at a posed target's offset, the
+    # target's.
+    t, use_memo, drift = _k1_entry(_k1_system_ships(system))
     _h.combat_k1_begin_system(h, dt, t, use_memo, drift)
     run_k1(dt, system=system)
 
@@ -4433,31 +4003,22 @@ def k1_tractor_start(system, target, offset) -> None:
     only, M4; k1_fire_control.h, THE TRACTOR WALK): the engage intent is
     recorded here, in Python, before the engage-range check -- so the pump
     re-acquires when the geometry allows -- and the engage itself is a
-    native system session: `_can_engage` -> `_engage_beam(target, offset)`
-    -> the firing edge's event (an effect-queue entry, ruling R8). Every
-    write the kernel logs lands on the live objects (a projector's `_firing`
-    through its NativeThawParentWakeField setter: the power thaw). Gated on
-    fire_control_native, never the switch: before configure() nothing can
-    engage, a tractor being native only (logged once)."""
+    native system session: the range check, the engage at `offset`, the
+    firing edge's event (an effect-queue entry, ruling R8). Every write the
+    kernel logs lands on the live objects (a projector's `_firing` through
+    its NativeThawParentWakeField setter: the power thaw). A system with no
+    mirror row engages nothing (k1_no_fire tractor_row, logged once)."""
     system._add_target(target)
     system._fire_held = True
     system._held_target = target
     system._held_offset = offset
-    if not fire_control_native():
-        _log_once("tractor_off", "tractors are native only: before "
-                  "native_combat.configure() a tractor engages nothing")
-        return
-    drain()                     # a session start (ruling R2)
+    fire_control_native()       # the mirror live (or a loud failure)
     h = system.__dict__.get("_nslot")
     if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
-        _log_once("tractor_row", "a tractor system with no mirror row "
-                  "engages nothing")
+        _k1_no_fire("tractor_row", "a tractor system with no mirror row "
+                    "engages nothing")
         return
-    # A mission swap's reset (before GameLoop.tick), a re-imported cannon
-    # module: re-pushed (M8.3).
-    _refresh_stale_launches()
-    resolve_stale_part_slots(_k1_system_ships(system))
-    t, use_memo, drift = _k1_clocks()
+    t, use_memo, drift = _k1_entry(_k1_system_ships(system))
     th = REF_NONE if target is None else _handle_of(target, "Object")
     _h.combat_k1_begin_tractor(
         h, th, (offset.x, offset.y, offset.z)
@@ -4469,35 +4030,17 @@ def k1_tractor_start(system, target, offset) -> None:
 # M8.6): the SDK's own Weapon.FireDumb, Fire and CanFire as the native rule.
 
 def _sdk_leaf(weapon, kinds):
-    """`weapon`'s Subsystem handle when the native rule may stand in for its
-    SDK call: fire control native, a live row of a leaf kind in `kinds`,
-    neither its class nor its instance replacing a method K1 stands in for
-    (_K1_LEAF_METHODS, _K1_LEAF_PATCHES: those keep Python's, as the walk
-    hands them back). Else None (Python's own body runs)."""
-    if not fire_control_native():
+    """`weapon`'s Subsystem handle for its SDK call: a live row of a leaf
+    kind in `kinds`. Else None, a no-fire (k1_no_fire no_row, logged once):
+    fire control has no other copy (M3). Makes the mirror live first
+    (fire_control_native)."""
+    fire_control_native()
+    h = weapon.__dict__.get("_nslot")
+    if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem") \
+            or _weapon_kind_of_class(type(weapon)) not in kinds:
+        _k1_no_fire("no_row", "a weapon with no mirror row")
         return None
-    d = weapon.__dict__
-    h = d.get("_nslot")
-    if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
-        return None
-    cls = type(weapon)
-    if _weapon_kind_of_class(cls) not in kinds or _k1_overridden(cls):
-        return None
-    for name in _K1_LEAF_PATCHES:
-        if name in d:
-            return None
     return h
-
-
-def _sdk_entry(ships) -> tuple:
-    """A K1 entry outside the walk (THE SDK ROUTES): as k1_system's."""
-    drain()                     # a session start (ruling R2)
-    if not _k1_walk_check_sent:
-        _k1_send_walk_check()
-    _k1_recheck_overrides()
-    _refresh_stale_launches()
-    resolve_stale_part_slots(ships)
-    return _k1_clocks()
 
 
 def _weapon_ship(weapon):
@@ -4506,69 +4049,75 @@ def _weapon_ship(weapon):
     return [] if ship is None else [ship]
 
 
-def k1_dumb_fire(tube) -> bool:
+def k1_dumb_fire(tube) -> None:
     """Weapon.FireDumb(0, 1) as a one-tube native session (M8.1): the
-    kernel's dumb_fire -- the warp-in hold, TorpedoTube.Fire's decision with
-    no target, the launch logged with its SPAWN. False when the tube is not
-    one the native rule may stand in for (_sdk_leaf): its caller runs
-    Python's FireDumb."""
+    kernel's dumb fire -- the warp-in hold, the tube's Fire decision with
+    no target, the launch logged with its SPAWN. A weapon that is not a
+    torpedo tube (the SDK dumb-fires tubes only) is, past the same warp-in
+    hold, its own Fire(None, None): native for every fire-control kind, and
+    a Weapon subclass that never implemented Fire still raises
+    NotImplementedError (loud)."""
+    if _weapon_kind_of_class(type(tube)) != 8:
+        from engine.appc import weapon_subsystems as ws
+        if not ws._dewarp_blocks_fire(tube):    # the warp-in hold, as a tube's
+            tube.Fire(target=None, offset=None)
+        return
     h = _sdk_leaf(tube, (8,))
     if h is None:
-        return False
-    t, use_memo, drift = _sdk_entry(_weapon_ship(tube))
+        return
+    t, use_memo, drift = _k1_entry(_weapon_ship(tube))
     _h.combat_k1_begin_dumb(h, t, use_memo, drift)
     run_k1(0.0)
-    return True
 
 
-def k1_fire(weapon, target, offset):
+def k1_fire(weapon, target, offset) -> bool:
     """weapon.Fire(target, offset) as a one-weapon native session (M8.6):
-    the walk's decision and its effect. Returns Fire's bool, or None when
-    Python's Fire must run instead: the weapon is not one the native rule
-    may stand in for (_sdk_leaf), its target has no row, or the mirror
-    could not make the decision (nothing written)."""
+    the decision and its effect. Returns Fire's bool: False for a weapon
+    with no row, a target the mirror cannot name, or a decision or launch
+    the mirror cannot make (each a counted no-fire, its writes rolled
+    back): never Python's Fire, so a shot is never made twice."""
     h = _sdk_leaf(weapon, (5, 6, 7, 8))
     if h is None:
-        return None
+        return False
     th = REF_NONE if target is None else _handle_of(target, "Object")
     if th == REF_UNREPRESENTABLE:
-        return None
+        _k1_no_fire("unnamed_target", "a Fire whose target the mirror "
+                    "cannot name")
+        return False
     ships = _weapon_ship(weapon)
     if target is not None:
         ships.append(target)
-    # PulseWeapon._fire_decide's `ship.GetTarget()` fallback (target None,
-    # no stamped _target): SDK state the mirror does not hold, read here.
+    # The cannon decision's `ship.GetTarget()` fallback (target None, no
+    # stamped _target): SDK state the mirror does not hold, read here.
     ship_target = None
     if (target is None and weapon.__dict__.get("_target") is None
             and ships and hasattr(ships[0], "GetTarget")):
         st = ships[0].GetTarget()
         ship_target = REF_NONE if st is None else _handle_of(st, "Object")
-    t, use_memo, drift = _sdk_entry(ships)
+    t, use_memo, drift = _k1_entry(ships)
     _h.combat_k1_begin_fire(
         h, th, (offset.x, offset.y, offset.z)
         if isinstance(offset, TGPoint3) else None, ship_target,
         t, use_memo, drift)
-    result = run_k1(0.0, system=None, offset=offset)
-    if result < 0:
-        return None
-    return bool(result)
+    return bool(run_k1(0.0, offset=offset))
 
 
-def k1_can_fire(weapon):
+def k1_can_fire(weapon) -> int:
     """weapon.CanFire() from the mirror (M8.6): the native rule's answer as
-    Python's int, its `_depleted = False` made through the field's own
-    setter (so the mirror, already answering as if it were made, agrees).
-    None when Python's CanFire must answer: the weapon is not one the
-    native rule may stand in for, or the mirror cannot answer."""
+    an int, its `_depleted = False` made through the field's own setter (so
+    the mirror, already answering as if it were made, agrees). 0 for a
+    weapon with no row or one the mirror cannot answer for (a counted
+    no-fire)."""
     h = _sdk_leaf(weapon, (5, 6, 7, 8))
     if h is None:
-        return None
+        return 0
     from engine.appc import weapon_subsystems as ws
     now = ws._game_time() if _weapon_kind(weapon) == 8 else 0.0
     try:
         ok, clear = _h.combat_k1_can_fire(h, now)
     except ValueError:
-        return None
+        _k1_no_fire("sdk_can_fire", "a CanFire the mirror cannot answer")
+        return 0
     if clear:
         weapon._depleted = False
     return 1 if ok else 0
@@ -4580,22 +4129,18 @@ def tractor_force_step(ships, dt) -> None:
     `cb.tractors`. The kernel writes the transform store itself; Python then
     applies what it hands back: HOLD's damped targets (SetVelocity(0)) and
     the engage geometry it captured (`_engage_state`, stored quietly: the
-    mirror already holds it). A ship with no Object row, or a tractor the
-    mirror cannot name, does nothing (logged once). Gated on
-    fire_control_native, never the switch: before configure() the force
-    does nothing (logged once)."""
-    if not fire_control_native():
-        _log_once("tractor_force_off", "tractors are native only: before "
-                  "native_combat.configure() the tractor force does "
-                  "nothing")
-        return
+    mirror already holds it). A ship with no Object row does nothing
+    (k1_no_fire tractor_row, logged once); a tractor the mirror cannot name
+    moves nothing (logged once). Never the switch: the mirror is made live
+    first (fire_control_native)."""
+    fire_control_native()
     handles = []
     for ship in ships:
         h = ship.__dict__.get("_nslot") if hasattr(ship, "__dict__") else None
         if h is None or (h >> _KIND_SHIFT) != _kind("Object"):
             if getattr(ship, "GetTractorBeamSystem", None) is not None:
-                _log_once("tractor_force_row", "a ship with no mirror row: "
-                          "its tractor moves nothing")
+                _k1_no_fire("tractor_row", "a ship with no mirror row: its "
+                            "tractor moves nothing")
             continue
         handles.append(h)
     zero, captures, _applied, skipped = _h.combat_tractor_force_step(

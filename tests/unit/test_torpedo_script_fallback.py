@@ -64,6 +64,7 @@ def _armed_tube(script) -> TorpedoTube:
     tube._reload_delay = 40.0
     tube._immediate_delay = 0.25
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     tube._resize_slots()
     system.AddChildSubsystem(tube)

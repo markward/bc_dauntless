@@ -300,6 +300,10 @@ PULSE_DAMAGE_SCALE_BY_POWER_SETTING = (0.2, 0.5, 1.0)   # LOW, MED, HIGH
 # flush includes this frame's dt, so a pulse carries 32 ticks of dwell
 # (0.533 at 60 Hz, quantum 106.7) — what the rows show — not 31.
 BEAM_ON_DELAY_S = 2 * 0.33
+# BC's inter-shot delay threshold (TryFireWeapon, 0x00584E40): a held
+# weapon's fire timer must reach it before the walk tries it again. Pushed to
+# the native K1 kernel (fire control's one copy, native_combat.push_globals).
+FIRE_TIMER_THRESHOLD = 0.33
 BEAM_DWELL_FLUSH_S = 0.5
 
 # Default PowerSetting.  ASSUMED, not RE'd: the SDK never calls
@@ -448,10 +452,8 @@ _pulse_modules: dict = {}
 # script name -> (launch state, launch speed) of a torpedo script, the per-
 # type launch cache K1's native tube launch reads (P6 extended to tubes;
 # spec 2026-11-02-combat-launch-deferral §4.1): read when an ammo type of the
-# script is loaded (native_combat.push_ammo_launch, native combat only), or
-# learned from Python's own launch of a script not cached yet
-# (TorpedoTube._spawn_torpedo -> native_combat.learn_tube_launch), and
-# pushed to every ammo type of that script. Cleared with _projectile_modules.
+# script is loaded (native_combat.push_ammo_launch), and pushed to every
+# ammo type of that script. Cleared with _projectile_modules.
 _tube_launch_cache: dict = {}
 
 # The launch states (mirror.h ammo_launch_state).
@@ -460,17 +462,18 @@ LAUNCH_UNCACHED, LAUNCH_CACHED, LAUNCH_UNRESOLVED = range(3)
 
 def tube_launch_params(mod) -> tuple:
     """(state, launch speed) of a resolved torpedo module: LAUNCH_UNRESOLVED
-    for None (no module: _spawn_torpedo spawns nothing), else LAUNCH_CACHED
-    and the speed _spawn_projectile reads (GetLaunchSpeed(), 0.0 without
+    for None (no module: the launch does not fire), else LAUNCH_CACHED
+    and the speed the kernel's launch uses (GetLaunchSpeed(), 0.0 without
     one). What its Create does decides nothing: every launch inside the
     deferral runs it at the boundary (rulings L1, L6). A GetLaunchSpeed that
-    raises stays uncached: Python's own launches then raise it, as today."""
+    raises stays uncached: its launches do not fire (a counted no-fire,
+    launch_uncached)."""
     if mod is None:
         return (LAUNCH_UNRESOLVED, 0.0)
     try:
         speed = (float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed")
                  else 0.0)
-    except Exception:       # noqa: BLE001 - Python's own launch raises it
+    except Exception:       # noqa: BLE001 - uncached: a no-fire
         return (LAUNCH_UNCACHED, 0.0)
     return (LAUNCH_CACHED, speed)
 
@@ -515,7 +518,7 @@ def resolve_pulse_module_params(script) -> tuple:
 
 def _resolve_pulse_module(script) -> tuple:
     """(the module or None, (module_ok, launch_speed, lifetime)) for
-    `script`, imported as PulseWeapon._fire_decide imports it."""
+    `script`, imported as the cannon's decision imported it."""
     hit = (0, 0.0, 0.0)
     mod = None
     if script:
@@ -528,217 +531,25 @@ def _resolve_pulse_module(script) -> tuple:
             life = (float(mod.GetLifetime()) if hasattr(mod, "GetLifetime")
                     else _PULSE_DEFAULT_LIFETIME)
             hit = (1, speed, life)
-        except Exception as _e:  # noqa: BLE001 - Fire reports it itself
+        except Exception as _e:  # noqa: BLE001 - announced, a no-fire
             mod = None
             dev_mode.log_swallowed(
                 "pulse module %r not resolvable for the native mirror"
                 % (script,), _e)
+            # No fallback bolt (unlike torpedoes): the cannon stays dead
+            # (module_ok 0: its Fire is a counted no-fire, fire control
+            # native only, M6), but it says why instead of just never
+            # firing -- the line the deleted Python decision printed.
+            _announce_once(("projectile", script),
+                           "pulse module %s not loadable -- those cannons "
+                           "will not fire" % script)
     return mod, hit
-
-
-def _emitter_forward_world(emitter, ship, *, skew=False) -> TGPoint3:
-    """The emitter's local forward (tube Direction / cannon OrientationForward)
-    rotated to world.  ``skew`` adds BC's +0.033 x Right fan in the LOCAL
-    frame first (audited §2.4.1; torpedo skew salvo only)."""
-    got = emitter.GetDirection() if hasattr(emitter, "GetDirection") else None
-    local = (TGPoint3(got.x, got.y, got.z) if isinstance(got, TGPoint3)
-             else TGPoint3(0.0, 1.0, 0.0))
-    if skew and getattr(emitter, "IsSkewFire", None) and emitter.IsSkewFire():
-        right = emitter.GetRight() if hasattr(emitter, "GetRight") else None
-        if isinstance(right, TGPoint3):
-            local = TGPoint3(local.x + 0.033 * right.x,
-                             local.y + 0.033 * right.y,
-                             local.z + 0.033 * right.z)
-    if ship is not None and hasattr(ship, "GetWorldRotation"):
-        rot = ship.GetWorldRotation()
-        if isinstance(rot, TGMatrix3):
-            local.MultMatrixLeft(rot)
-    return local
 
 
 # BC's range gate on the pulse launch solve: refuse when the predicted
 # intercept is further than this many seconds' worth of effective bolt speed.
 _PULSE_RANGE_GATE_SECONDS = 30.0
 _PULSE_DEFAULT_LIFETIME = 8.0        # C++ default when the module has no GetLifetime
-
-
-def _solve_pulse_launch_direction(cannon, ship, target, mod):
-    """BC's targeted pulse launch (PulseWeapon vtable slot +0x7C): a
-    world-space unit launch direction that LEADS the target, or None when
-    the shot must be refused.  Read from the retail binary 2026-09-14
-    (clean-room answer); prose, not transcription:
-
-      aim    = target centre + local aim offset, rotated & scaled (0x005852A0
-               -- the same resolver the torpedo tube's fire gate uses)
-      muzzle = cannon mount position in world
-      v_eff  = launchSpeed + (shipVel - targetVel) . unit(aim - muzzle)
-      t      = |aim - muzzle| / v_eff
-      pred   = aim + targetVel*t + 0.5*targetAccel*t^2   (lead helper 0x005A0B50)
-               - shipVel*t     (the bolt inherits shipVel; cancel that drift)
-      dir    = unit(pred - muzzle)
-
-    Refusals, in BC's order: v_eff <= 0 (target outruns the bolt), t <= 0,
-    t > the module's GetLifetime() (default 8 s), predicted range beyond
-    30 * v_eff.  The arc test is the caller's, on the returned direction.
-
-    launchSpeed is the module's GetLaunchSpeed() -- BC keeps a separate
-    per-weapon copy for the solver (PulseWeapon+0xCC) that script is
-    expected to keep equal to the module value; the SDK AI reads it via
-    PulseWeapon.GetLaunchSpeed() for its own lead, so one source is the
-    faithful reading.
-    """
-    aim = _resolve_torpedo_aim_point(cannon, target)
-    if aim is None:
-        return None
-    muzzle = cannon._emitter_world_position()
-    to_aim = aim - muzzle
-    dist = to_aim.Length()
-    if dist < 1e-6:
-        return None
-    u = TGPoint3(to_aim.x / dist, to_aim.y / dist, to_aim.z / dist)
-
-    def _vec(obj, name):
-        v = getattr(obj, name)() if (obj is not None and hasattr(obj, name)) else None
-        return v if isinstance(v, TGPoint3) else TGPoint3(0.0, 0.0, 0.0)
-
-    ship_vel = _vec(ship, "GetVelocityTG")
-    tgt_vel = _vec(target, "GetVelocityTG")
-    tgt_acc = _vec(target, "GetAccelerationTG")
-
-    launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
-    v_eff = launch_speed + (ship_vel - tgt_vel).Dot(u)
-    if v_eff <= 0.0:
-        return None
-    t = dist / v_eff
-    if t <= 0.0:
-        return None
-    lifetime = (float(mod.GetLifetime()) if hasattr(mod, "GetLifetime")
-                else _PULSE_DEFAULT_LIFETIME)
-    if t > lifetime:
-        return None
-    pred = TGPoint3(
-        aim.x + tgt_vel.x * t + 0.5 * tgt_acc.x * t * t - ship_vel.x * t,
-        aim.y + tgt_vel.y * t + 0.5 * tgt_acc.y * t * t - ship_vel.y * t,
-        aim.z + tgt_vel.z * t + 0.5 * tgt_acc.z * t * t - ship_vel.z * t,
-    )
-    launch = pred - muzzle
-    n = launch.Length()
-    if n < 1e-6 or n > _PULSE_RANGE_GATE_SECONDS * v_eff:
-        return None
-    return TGPoint3(launch.x / n, launch.y / n, launch.z / n)
-
-
-def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
-    """Spawn an in-flight projectile from `emitter` using SDK module `mod`.
-
-    Shared by torpedo tubes and pulse-weapon cannons. Builds a Torpedo at the
-    emitter's world position, runs mod.Create to populate visuals/behaviour,
-    applies drf_override (the launcher's DamageRadiusFactor) when > 0, and
-    launches it at GetLaunchSpeed() plus the firing ship's own linear
-    velocity.  The launch DIRECTION differs by weapon class, and the caller
-    owns that choice:
-
-      * torpedo tubes pass ``world_dir=None`` -> straight out the tube's
-        authored Direction (skewed +0.033 x Right when IsSkewFire) rotated to
-        world (audited §2.4.1) -- the aim point never steers the launch;
-      * pulse cannons pass the world-space unit vector their launch solve
-        produced (``_solve_pulse_launch_direction``) -- for them the launch
-        IS the aim, since every stock pulse module authors zero guidance.
-
-    Registers it and plays mod.GetLaunchSound.  Returns the Torpedo, or None
-    if mod is unusable.
-
-    THE REFERENCE of a launch's fire-time reads: everything below reads the
-    emitter, its ship and its target LIVE, then hands the values to the
-    shared body (_new_projectile, _launch_projectile) that the SPAWN
-    delivery (spawn_launch) runs with the values K1 computed at fire time
-    instead (spec 2026-11-02-combat-launch-deferral §4.1). The kernel
-    mirrors these reads (k1_fire_control.cc, launch_reads: a tube's and a
-    cannon's launch): CHANGE BOTH.
-    """
-    from engine.appc import projectiles
-
-    source_ship = emitter._climb_to_ship()
-    spawn_pos = emitter._emitter_world_position()
-    torp = _new_projectile(mod, source_ship, spawn_pos.x, spawn_pos.y,
-                           spawn_pos.z)
-    velocity, target, offset = _launch_reads(emitter, mod, source_ship,
-                                             world_dir)
-    _launch_projectile(torp, mod, drf_override, velocity, target, offset,
-                       projectiles.LIVE_SET)
-    return torp
-
-
-def _launch_reads(emitter, mod, source_ship, world_dir):
-    """_spawn_projectile's live reads after Create: (velocity or None, the
-    homing target or None, its offset copy or None)."""
-    from engine.appc.math import TGPoint3
-
-    launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
-
-    if isinstance(world_dir, TGPoint3):
-        world_dir = TGPoint3(world_dir.x, world_dir.y, world_dir.z)
-    else:
-        # ── Tube launch trajectory (audited §2.4.1): the aim point NEVER
-        # steers the launch. Direction = tube-local Direction (skew: + 0.033
-        # x Right, local frame, fixed sign) rotated to world.
-        world_dir = _emitter_forward_world(emitter, source_ship, skew=True)
-    length = world_dir.Length()
-    ship_vel = (source_ship.GetVelocityTG()
-                if source_ship is not None and hasattr(source_ship, "GetVelocityTG")
-                else TGPoint3(0.0, 0.0, 0.0))
-    if not isinstance(ship_vel, TGPoint3):
-        ship_vel = TGPoint3(0.0, 0.0, 0.0)
-    velocity = None
-    if length > 1e-6:
-        velocity = TGPoint3(
-            world_dir.x / length * launch_speed + ship_vel.x,
-            world_dir.y / length * launch_speed + ship_vel.y,
-            world_dir.z / length * launch_speed + ship_vel.z,
-        )
-
-    # Homing state (guidance-only; does not shape the launch).  Task 7 audited
-    # flow: "Fire stamps the homing state" — read the EMITTER's own _target
-    # (stamped by TorpedoTube.Fire's gated targeted path, cleared/absent on
-    # the dumb path / FireDumb), NOT the ship's target lock.  Previously this
-    # read source_ship.GetTarget() directly, which meant even a dumbfire
-    # inherited the ship's lock; that's wrong per the audited split.
-    target_ship = getattr(emitter, "_target", None)
-    target = offset = None
-    if (target_ship is not None
-            and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
-        # Torpedo.SetTargetOffset's copy: steered at as it is (a mount is
-        # posed every tick, anything else is a plain body point; M5).
-        target = target_ship
-        v = getattr(emitter, "_target_offset", None)
-        if isinstance(v, TGPoint3):
-            offset = TGPoint3(v.x, v.y, v.z)
-    return velocity, target, offset
-
-
-def _defer_spawn(emitter, mod, kind, drf_override, world_dir=None,
-                 damage_scale=1.0, fired_at=None) -> None:
-    """While the effect queue defers (E4: every producer appends, Python's
-    included), Python's own launch (a FIRE record K1 handed back, an ASKed
-    Fire, a system Python runs whole; a tube's or a cannon's, rulings L5,
-    L6) appends its SPAWN like the kernel's: the fire-time values read now,
-    as _spawn_projectile reads them, the spawn -- Create, register,
-    ET_TORPEDO_ENTERED_SET -- at the boundary in emission order (spec
-    2026-11-02-combat-launch-deferral §4.1). `mod` rides in the entry's
-    ammo slot. A cannon's: `damage_scale` its GetDamageScale() now,
-    `fired_at` the target the shot used (its ET_WEAPON_FIRED's pointer)."""
-    from engine.appc import projectiles
-    source_ship = emitter._climb_to_ship()
-    p = emitter._emitter_world_position()
-    velocity, target, offset = _launch_reads(emitter, mod, source_ship,
-                                             world_dir)
-    v = velocity if velocity is not None else TGPoint3(0.0, 0.0, 0.0)
-    o = offset if offset is not None else TGPoint3(0.0, 0.0, 0.0)
-    effect_queue.post(
-        effect_queue.SPAWN, emitter, kind, source_ship,
-        projectiles.source_set(source_ship), mod, target, p.x, p.y, p.z,
-        velocity is not None, v.x, v.y, v.z, offset is not None,
-        o.x, o.y, o.z, drf_override, damage_scale, fired_at)
 
 
 def _new_projectile(mod, source_ship, x, y, z):
@@ -877,7 +688,6 @@ SPAWN_TUBE, SPAWN_PULSE, SPAWN_DUMB = range(3)
 
 # The weapons inside Weapon.FireDumb's Fire (innermost last): their launch
 # is the dumb kind.
-_dumb_firing: list = []
 
 
 def _post_weapon_fired(weapon, target) -> None:
@@ -996,19 +806,6 @@ class _EnergyWeaponFireMixin:
             return False
         return player is not None and ship is player
 
-    def _aim_in_arc(self, target) -> bool:
-        """Firing-arc gate in the weapon's OWN fire path (spec §2.4: the
-        dispatch-level `_emitter_in_arc` checks moved here, logic unchanged,
-        when StartFiring became a tick-arm — BC puts arc in the weapon's fire
-        path, not in the system tick).  Aim originates at this emitter's
-        mount Position (research doc § Bug F); no target → ship-forward."""
-        ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
-        if target is not None:
-            aim_world = _resolve_bank_aim_world(self, target)
-        else:
-            aim_world = _resolve_aim_world(ship, None)
-        return _emitter_in_arc(self, ship, aim_world)
-
     def CanFire(self) -> int:
         """Three gates:
 
@@ -1024,7 +821,7 @@ class _EnergyWeaponFireMixin:
             depleted bank does latch.  The restart threshold itself is only
             bounded (> 0.45 on a 5-charge bank); MinFiringCharge is the one
             authored value in range.  Pulse cannons use affordability
-            instead (PulseWeapon._charge_gate).
+            instead (one shot's cost, PulseWeapon._shot_cost).
           * disabled-product — the bank's own condition times the parent
             system's condition must clear the authored DisabledPercentage
             threshold (``GetOverallConditionPercentage`` in the audit); a
@@ -1034,88 +831,23 @@ class _EnergyWeaponFireMixin:
         The existing parent-IsOn gate is unchanged (BC gates power
         elsewhere, not inside this predicate).
 
-        With fire control native this is the native rule (fire_gates.cc
-        can_fire; native_combat.k1_can_fire, fire control native only,
-        M8.6), the latch clear included; the Python below answers only a
-        weapon it may not stand in for (Task 6 deletes it)."""
-        native = native_combat.k1_can_fire(self)
-        if native is not None:
-            return native
-        parent = self.GetParentSubsystem()
-        on = parent is not None and parent.IsOn()
-        if not on:
-            return 0
-        ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
-        if ship is not None and hasattr(ship, "IsDead") and ship.IsDead():
-            return 0
-        if not self._charge_gate():
-            return 0
-        # `parent` is guaranteed non-None here (the IsOn gate above already
-        # returned 0 otherwise); GetDisabledPercentage() lives on self
-        # (ShipSubsystem field, sane 0.25 default) so this never raises even
-        # on a bank with no property bound.
-        combined = self.GetConditionPercentage() * parent.GetConditionPercentage()
-        if self.GetDisabledPercentage() >= combined:
-            return 0
-        return 1
-
-    def _charge_gate(self) -> bool:
-        """Beams: any charge at all — unless the bank ran dry, in which case
-        it must climb back to MinFiringCharge first (see CanFire).
-        PulseWeapon overrides with 'can afford the next shot'."""
-        if self._depleted:
-            if self._charge_level < self._min_firing_charge:
-                return False
-            self._depleted = False
-        return self._charge_level > 0.0
+        The rule is the native one, fire control's one copy (fire_gates.cc
+        can_fire; native_combat.k1_can_fire; fire control native only, M3,
+        M8.6): this is the SDK's thin call into it, the latch clear
+        included. A weapon the mirror cannot answer for cannot fire (0)."""
+        return native_combat.k1_can_fire(self)
 
     def Fire(self, target=None, offset=None) -> bool:
-        """Returns True when the beam is firing after this call — the tick's
-        try_fire_weapon consumes the explicit bool (§3.3 step 5).
+        """Returns True when the beam is firing after this call.
 
-        Split in two (native combat phase 1b): `_fire_decide` is the
-        decision, which the native K1 kernel also computes, and
-        `_fire_effect` what follows it. For a beam K1 no longer calls it:
-        it logs the same writes and queues the same FIRE_SOUND and
-        WEAPON_FIRED itself (k1_fire_control.h, THE EFFECT QUEUE) -- a
-        change to either effect below changes K1's twin too.
-
-        With fire control native the SDK's Fire is a one-weapon native
-        session (native_combat.k1_fire; k1_fire_control.h, THE SDK ROUTES,
-        M8.6); the Python below runs only when it may not stand in."""
-        native = native_combat.k1_fire(self, target, offset)
-        if native is not None:
-            return native
-        d = self._fire_decide(target, offset)
-        return False if d is None else self._fire_effect(target, offset, d)
-
-    def _fire_decide(self, target, offset):
-        """CanFire, then the arc. None: no fire. Else (was_firing,)."""
-        if not self.CanFire():
-            return None
-        if not self._aim_in_arc(target):
-            return None
-        return (self._firing,)
-
-    def _fire_effect(self, target, offset, decision) -> bool:
-        # Edge-trigger the SFX. AI scripts call StartFiring on every
-        # evaluation tick; without this gate, each call would spawn a
-        # fresh "Phaser Loop" _PlayingSound handle and overwrite
-        # self._loop_handle, orphaning every prior handle so they loop
-        # forever (no Stop reference). Symptom: continuous phaser SFX
-        # during NPC-vs-NPC fights even after all banks deplete.
-        was_firing = decision[0]
-        self._firing = True
-        self._target = target
-        self._target_offset = offset
-        if not was_firing:
-            self._beam_on_countdown = BEAM_ON_DELAY_S
-            self._dwell = 0.0
-            if effect_queue.deferring():
-                effect_queue.post(effect_queue.FIRE_SOUND, self)
-            else:
-                self._play_fire_sfx()
-        return True
+        The SDK's Fire is a one-weapon native session (native_combat.k1_fire;
+        k1_fire_control.h, THE SDK ROUTES, M8.6): the decision (CanFire, then
+        the arc from this emitter's mount at the target centre, else ship
+        forward) and its effect -- `_firing`, `_target`, `_target_offset`,
+        and on the was-not-firing edge the beam-on countdown, the dwell, the
+        fire sound and (a PhaserBank's) ET_WEAPON_FIRED, queued. Fire
+        control has no Python copy (M3)."""
+        return native_combat.k1_fire(self, target, offset)
 
     def StopFiring(self) -> None:
         # K0 (a bank drained dry), K1 (a bank its walk stops) and K2 (a
@@ -1446,29 +1178,13 @@ class Weapon(ShipSubsystem):
         Bypasses WeaponSystem.StartFiring, so the warp-in hold-fire gate is
         checked here too.
 
-        K1 decides a tube's dumb fire from the walk itself (the gate from the
-        mirrored `arriving` flag, then the tube's Fire and its launch;
-        k1_fire_control.cc, dumb_fire): change both. With fire control
-        native the SDK's call is a one-tube native session on that rule
-        (native_combat.k1_dumb_fire; k1_fire_control.h, THE SDK ROUTES,
-        M8.1); _python_fire_dumb runs only when it may not stand in, or for
-        a launch the kernel hands back (FIRE_DUMB).
+        K1 decides a tube's dumb fire (the gate from the mirrored
+        `arriving` flag, then the tube's Fire and its launch;
+        k1_fire_control.cc, dumb_fire): the SDK's call is a one-tube native
+        session on that rule (native_combat.k1_dumb_fire; k1_fire_control.h,
+        THE SDK ROUTES, M8.1). Fire control has no Python copy (M3).
         """
-        if native_combat.k1_dumb_fire(self):
-            return
-        self._python_fire_dumb()
-
-    def _python_fire_dumb(self) -> None:
-        """FireDumb's Python body (Task 6 deletes it with the rest)."""
-        if _dewarp_blocks_fire(self):
-            return
-        # The launch its Fire makes is the dumb kind (a deferred SPAWN's
-        # tag, as the kernel's: k1_fire_control.cc, dumb_fire).
-        _dumb_firing.append(self)
-        try:
-            self.Fire(target=None, offset=None)
-        finally:
-            _dumb_firing.pop()
+        native_combat.k1_dumb_fire(self)
 
     def CalculateRoughDirection(self) -> TGPoint3:
         """WORLD-space mount direction.  SDK AI/Preprocessors.py:456 and
@@ -1665,26 +1381,10 @@ class WeaponSystem(PoweredSubsystem):
         _label, groups = chains[self._firing_chain_mode % len(chains)]
         return list(groups) if groups else [0]
 
-    def _resolve_working_group(self) -> int:
-        """§3.2 step 3 — LastGroupFired is an INPUT: keep firing the group we
-        last fired while it is still in the chain; else the chain's first."""
-        groups = self._active_chain_groups()
-        if self._last_group_fired != -1 and self._last_group_fired in groups:
-            return self._last_group_fired
-        return groups[0]
-
     def _add_target(self, target) -> None:
         if target is not None and target not in self._target_list:
             self._target_list.append(target)
             native_combat.push_field(self, "_target_list")  # in-place append
-
-    def _prune_targets(self) -> None:
-        """§3.2 step 2 — unlink anything dead or unresolvable."""
-        self._target_list = [
-            t for t in self._target_list
-            if t is not None
-            and not (hasattr(t, "IsDead") and t.IsDead())
-        ]
 
     def GetNumTargets(self) -> int:          return len(self._target_list)
 
@@ -1752,9 +1452,10 @@ class WeaponSystem(PoweredSubsystem):
 
     def StartFiring(self, target=None, offset=None) -> None:
         """Arms the tick (BC StartFiring reads no spread/skew state — §2.10).
-        The actual dispatch is update_weapons, pumped per frame by host_loop;
-        SetForceUpdate(1) + one immediate update makes a tap fire this frame
-        (SDK FireWeapons does exactly StartFiring + SetForceUpdate(1))."""
+        The actual dispatch is the native K1 walk, pumped per frame by
+        host_loop._pump_held_weapons; SetForceUpdate(1) + one immediate
+        update makes a tap fire this frame (SDK FireWeapons does exactly
+        StartFiring + SetForceUpdate(1))."""
         if not self.IsOn():
             return
         # Disabled-weapons gate: when every child reports disabled (Project 2
@@ -1783,12 +1484,9 @@ class WeaponSystem(PoweredSubsystem):
         self._held_offset = offset
         self._fire_held = True
         self.SetForceUpdate(1)
-        if native_combat.fire_control_native():
-            # The same update_weapons(0.0), walked by the native K1 kernel;
-            # Python runs only its effects (native_combat.run_k1).
-            native_combat.k1_system(self, 0.0)
-        else:
-            self.update_weapons(0.0)
+        # One immediate update (dt 0), walked by the native K1 kernel:
+        # Python runs only its effects (native_combat.k1_system).
+        native_combat.k1_system(self, 0.0)
 
     def StopFiring(self, *args) -> None:
         # K1 (the pump's system_stop) and K2 (an offline phaser system's
@@ -1804,21 +1502,6 @@ class WeaponSystem(PoweredSubsystem):
             w = self.GetWeapon(i)
             if w is not None and hasattr(w, "StopFiring"):
                 w.StopFiring()
-
-    def _live_held_offset(self):
-        """The aim offset for THIS tick.
-
-        BC's StartFiring captures the offset once (Weapon+0x90..+0x98); with
-        Manual Aim the player's offset is re-picked off the hull every tick
-        (engine.manual_aim.update), so a torpedo/pulse fired mid-hold must
-        follow the cursor, not the keydown-time point. Only ShipClass
-        parents that report is_using_target_offset() switch; anything else
-        (AI ships, legacy fakes, no parent) keeps _held_offset."""
-        ship = self.GetParentShip()
-        probe = getattr(type(ship), "is_using_target_offset", None) if ship is not None else None
-        if callable(probe) and ship.is_using_target_offset():
-            return ship.GetTargetOffsetTG()
-        return getattr(self, "_held_offset", None)
 
     def StopFiringAtTarget(self, pTarget) -> None:
         """SDK Preprocessors.py:274/469 — alias for StopFiring() since
@@ -1845,164 +1528,10 @@ class WeaponSystem(PoweredSubsystem):
     def GetWeapon(self, i: int):                  return self.GetChildSubsystem(i)
 
     # ── BC tick engine (weapon-firing-mechanics.md §3.2/§3.3) ───────────────
-    # This IS the live dispatch path: StartFiring (above) arms the tick and
-    # host_loop._pump_held_weapons runs update_weapons once per armed system
-    # per frame.
-
-    # BC inter-shot delay threshold (TryFireWeapon, 0x00584E40).
-    FIRE_TIMER_THRESHOLD = 0.33
-
-    def try_fire_weapon(self, weapon, dt, target, offset) -> bool:
-        """TryFireWeapon (0x00584E40), §3.3. Plain bool — BC has no tri-state."""
-        if self._force_update:
-            weapon._fire_timer = self.FIRE_TIMER_THRESHOLD   # bypass this tick
-        else:
-            weapon._fire_timer = getattr(weapon, "_fire_timer", 0.0) + dt
-        if not weapon.IsFiring() and weapon._fire_timer < self.FIRE_TIMER_THRESHOLD:
-            return False
-        # Re-seed reads the PRE-EXISTING state: a continuously-firing weapon
-        # zeroes; everything else draws fresh. BC's draw distribution is
-        # unverified in the corpus — uniform(0, 0.33) is our choice.
-        # Re-seed to ZERO after every attempt, firing or not. The dispatch
-        # spec left BC's re-seed distribution unverified and chose
-        # uniform(0, 0.33); the original exe's captures settle it
-        # (stbc-oracle bible §3/§4): torpedo tubes launch a deterministic
-        # 0.656 s (40 ticks, ± 1) apart — the 0.5 s system gate plus one
-        # further 0.33 s attempt, i.e. two whole thresholds — and a Warbird
-        # cannon's second bolt follows its first by 0.34 s, one threshold.
-        # A random draw put the next attempt anywhere in a 0.33 s window and
-        # made our spacing 0.50–0.83 s.
-        weapon._fire_timer = 0.0
-        if not weapon.CanFire():
-            weapon.StopFiring()      # what makes a beam vanish on charge-out
-            return False
-        before = self._fired_counter(weapon)
-        result = weapon.Fire(target, offset)
-        if self._weapon_did_fire(weapon, result, before):
-            return True
-        # §3.3 step 6: clear target, retry against the system target list.
-        weapon._target = None
-        for entry in list(self._target_list):
-            if entry is None or (hasattr(entry, "IsDead") and entry.IsDead()):
-                continue
-            before = self._fired_counter(weapon)
-            result = weapon.Fire(entry, offset)
-            if self._weapon_did_fire(weapon, result, before):
-                return True
-        return False
-
-    def _firing_weapon(self):
-        """The child weapon currently IsFiring (a held beam), else None."""
-        for i in range(self.GetNumWeapons()):
-            w = self.GetWeapon(i)
-            if w is not None and w.IsFiring():
-                return w
-        return None
-
-    def _reseed_all_fire_timers(self) -> None:
-        for i in range(self.GetNumWeapons()):
-            w = self.GetWeapon(i)
-            if w is not None:
-                w._fire_timer = 0.0
-
-    @staticmethod
-    def _fired_counter(weapon):
-        """Stub-safe read of the test-fake `fired` shot counter.
-
-        NOT hasattr: TGObject.__getattr__ manufactures a truthy _Stub for any
-        unknown public name, so hasattr(weapon, "fired") is vacuously True on
-        every REAL weapon — `before` became a _Stub, `_weapon_did_fire`'s
-        counter comparison silently evaluated False, and every successful
-        discrete shot fell into the §3.3 step-6 retry and fired TWICE (seen
-        as a double ammo debit).  The stub-heatmap phantom lesson: our own
-        probes must read the instance dict, not hasattr."""
-        d = getattr(weapon, "__dict__", None)
-        return d.get("fired") if isinstance(d, dict) else None
-
-    @staticmethod
-    def _weapon_did_fire(weapon, result, before) -> bool:
-        """Success detection, in priority order: explicit True/False returned
-        by Fire (all production weapons since the tick rewire), a test fake's
-        `fired` counter increment, else IsFiring() (held beams)."""
-        if isinstance(result, bool):
-            return result
-        if before is not None:
-            return weapon.fired > before
-        return bool(weapon.IsFiring())
-
-    def update_weapons(self, dt) -> bool:
-        """UpdateWeapons (0x00584930), §3.2. Returns did_fire.
-
-        Single-fire systems (SetSingleFire(1): every Federation phaser
-        array, the Warbird's cannons) behave as measured on the original exe:
-
-          * a weapon that is FIRING (a beam) is the only one tried, so a
-            second bank cannot start while one is up — the Galaxy fires
-            bank 5 for 5.5 s, then bank 6, then bank 1, never two at once
-            (stbc-oracle bible F1, `phaser_galaxy_front_57`);
-          * a successful shot re-seeds EVERY weapon's fire timer, so the
-            next weapon in the rotation fires one threshold (0.33 s) later,
-            not one tick later — the Warbird's four cannons fire at 1.22 /
-            1.53 / 1.88 / 2.19 (`pulse_warbird_front_40_meta`).
-
-        Multi-fire systems keep per-weapon timers: the BoP's two cannons
-        fire together every 0.33 s (`pulse_bop_front_40`).
-        """
-        did_fire = False
-        ship = self.GetParentShip()
-        if ship is not None and hasattr(ship, "IsDead") and ship.IsDead():
-            return False
-        self._prune_targets()
-        target = self._target_list[0] if self._target_list else None
-        offset = self._live_held_offset()
-        groups = self._active_chain_groups()
-        working = self._resolve_working_group()
-        start_group = working
-        # Round-robin base: captured ONCE before the group-retry loop, not
-        # re-read live. self._last_weapon_idx only mutates on a successful
-        # fire, and a successful fire always breaks out to the next tick
-        # (single-fire breaks the inner loop; multi-fire exhausts the group
-        # and `fired_this_group` stops group-advance) — so reading it live
-        # inside the delta loop double-counted the just-fired slot instead
-        # of advancing to the next group member.
-        base_idx = self._last_weapon_idx
-        if self._single_fire:
-            lit = self._firing_weapon()
-            if lit is not None:
-                # Sustain the lit beam; nothing else starts until it stops.
-                self.try_fire_weapon(lit, dt, target, offset)
-                self._force_update = False
-                return bool(lit.IsFiring())
-        while True:
-            self.SetGroupFireMode(working)
-            n = self.GetNumWeapons()
-            fired_this_group = False
-            for delta in range(1, n + 1):
-                idx = (base_idx + delta) % n if n else 0
-                weapon = self.GetWeapon(idx)
-                if weapon is None or not weapon.IsMemberOfGroup(working):
-                    continue
-                if self.try_fire_weapon(weapon, dt, target, offset):
-                    did_fire = fired_this_group = True
-                    self._last_weapon_idx = idx
-                    self._last_group_fired = working
-                    if self._single_fire:
-                        self._reseed_all_fire_timers()
-                        break
-                else:
-                    weapon._target = None      # ClearTarget, NOT a timer reset
-                    if self.GetNumTargets() == 0 and weapon.IsDumbFire():
-                        weapon.FireDumb(0, 1)
-            if fired_this_group or len(groups) <= 1:
-                break
-            # §3.2 step 7: advance to the next group in the chain, wrapping.
-            working = groups[(groups.index(working) + 1) % len(groups)]
-            if working == start_group:
-                self._last_group_fired = -1
-                break
-        self._force_update = False    # one-tick bypass, consumed
-        return did_fire
-
+    # StartFiring (above) arms the tick and host_loop._pump_held_weapons
+    # walks every armed system once per frame: the native K1 kernel's walk
+    # (k1_fire_control.cc), fire control's one copy (fire control native
+    # only, M3). Its inter-shot threshold is FIRE_TIMER_THRESHOLD.
 
 class TorpedoAmmoType:
     """A loaded torpedo ammo type — exposes the SDK GetAmmoName surface.
@@ -2829,16 +2358,6 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
     # Fire is the mixin's (decide, then effect). The decision's was_firing
     # is the value read before CanFire, which never writes _firing.
 
-    def _fire_effect(self, target, offset, decision) -> bool:
-        """The shared beam-fire effect, then ET_WEAPON_FIRED on the
-        was-not-firing edge — the same edge the mixin already uses for the
-        SFX one-shot (Task 10, audited §1.6/§6; spec §7). TractorBeam does
-        not post it; PulseWeapon posts its own, once per shot."""
-        _EnergyWeaponFireMixin._fire_effect(self, target, offset, decision)
-        if not decision[0]:
-            _post_weapon_fired(self, target)
-        return True
-
     def GetMaxCharge(self) -> float:                return self._max_charge
     def GetMinFiringCharge(self) -> float:          return self._min_firing_charge
     def GetNormalDischargeRate(self) -> float:      return self._normal_discharge_rate
@@ -3034,131 +2553,18 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         return (self._normal_discharge_rate
                 * PULSE_COST_SCALE_BY_POWER_SETTING[self._power_setting])
 
-    def _charge_gate(self) -> bool:
-        """A cannon fires whenever it can AFFORD the next bolt; nothing else
-        about its charge matters.  Measured on the original exe per cannon
-        per tick (stbc-oracle `pulse_warbird_front_40_{meta,low,high}`,
-        `pulse_bop_front_40`): a Warbird cannon (MinFiringCharge 1.2) fires
-        at 1.15 and again at 1.01 at MED (cost 1.0), at 0.59 at LOW (cost
-        0.5) and stops at 0.12; a BoP cannon (MinFiringCharge 3.6) fires
-        four bolts straight down 3.8 → 0.33 and again the moment it climbs
-        back over 1.0."""
-        return self._charge_level >= self._shot_cost() - 1e-9
-
     def CanFire(self) -> int:
-        # The native rule with fire control native (the mixin's CanFire).
-        native = native_combat.k1_can_fire(self)
-        if native is not None:
-            return native
-        if self._cooldown_remaining > 0.0:
-            return 0
-        return _EnergyWeaponFireMixin.CanFire(self)
+        """The native rule (fire_gates.cc can_fire: the cooldown, then the
+        mixin's gates with affordability for charge; M8.6)."""
+        return native_combat.k1_can_fire(self)
 
     def Fire(self, target=None, offset=None) -> bool:
-        """Returns True when a bolt launched — a discrete shooter reports
-        IsFiring() False right after a successful shot, so the tick's
-        try_fire_weapon needs the explicit bool (else its §3.3 step-6 retry
-        would double-fire every successful shot). Decide, then effect (see
-        _EnergyWeaponFireMixin.Fire; natively with fire control native)."""
-        native = native_combat.k1_fire(self, target, offset)
-        if native is not None:
-            return native
-        d = self._fire_decide(target, offset)
-        return False if d is None else self._fire_effect(target, offset, d)
-
-    def _fire_decide(self, target, offset):
-        """None: no bolt. Else (world_dir, target_used, module): the module
-        decide resolved is the one the effect launches from (K1's decision
-        carries the live module, native_combat._k1_pulse_module). The target
-        stamps are part of the decision: they are made BEFORE the arc test
-        and persist when it fails."""
-        if not self.CanFire():
-            return None
-        prop = self.GetProperty()
-        script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
-        if not script:
-            return None
-        import importlib
-        try:
-            mod = importlib.import_module(script)
-        except ImportError:
-            # No fallback bolt (unlike torpedoes): the cannon stays dead, but
-            # it says why instead of just never firing.
-            _announce_once(("projectile", script),
-                           "pulse module %s not loadable -- those cannons "
-                           "will not fire" % script)
-            return None
-        ship = self._climb_to_ship()
-        # BC WeaponSystem::Fire picks the branch: the weapon's own target,
-        # else the ship's current target, else the no-target slot (+0x80).
-        if target is None:
-            target = self._target
-        if target is None and ship is not None and hasattr(ship, "GetTarget"):
-            target = ship.GetTarget()
-        if target is not None and hasattr(target, "IsDead") and target.IsDead():
-            target = None
-        if target is not None:
-            # Targeted slot (+0x7C): stamp target + aim offset (BC
-            # Weapon+0x8C/+0x90..+0x98), solve the LED launch direction,
-            # then gate it on the authored arc -- a pure fire/no-fire test on
-            # the solved direction, never a clamp.
-            self._target = target
-            self._target_offset = offset if isinstance(offset, TGPoint3) else None
-            world_dir = _solve_pulse_launch_direction(self, ship, target, mod)
-            if world_dir is None or not _emitter_in_arc(self, ship, world_dir):
-                return None
-        else:
-            # No target anywhere (+0x80): straight out the cannon's
-            # OrientationForward.  Nothing to home on.
-            self._target = None
-            self._target_offset = None
-            world_dir = _emitter_forward_world(self, ship)
-        return (world_dir, target, mod)
-
-    def _fire_effect(self, target, offset, decision) -> bool:
-        """`decision` is (world_dir, target_used, module): the launch
-        direction a TGPoint3 (Python's decision) or an (x, y, z) tuple
-        (K1's FIRE record, a launch it handed back).
-
-        K1 makes a cannon's launch itself inside the deferral -- the SPAWN
-        _defer_spawn appends (its fire-time record computed in C++: the
-        module's launch speed is the P6 one, the module the cannon's cached
-        one), then the drain and the cooldown as logged writes
-        (k1_fire_control.cc, plan_pulse_launch / log_pulse_launch): change
-        both."""
-        world_dir = decision[0]
-        if not isinstance(world_dir, TGPoint3):
-            world_dir = TGPoint3(*world_dir)
-        torp = None
-        if effect_queue.deferring() and not native_combat.launch_patched():
-            # Inside the deferral the bolt is a SPAWN like a tube's (E4,
-            # ruling L5): built at the boundary from these fire-time values,
-            # scaled there after register, its ET_WEAPON_FIRED posted by
-            # the delivery once it exists (spawn_launch; M4).
-            _defer_spawn(self, decision[2], SPAWN_PULSE,
-                         self.GetDamageRadiusFactor(), world_dir=world_dir,
-                         damage_scale=self.GetDamageScale(),
-                         fired_at=decision[1])
-        else:
-            torp = _spawn_projectile(self, decision[2],
-                                     drf_override=self.GetDamageRadiusFactor(),
-                                     world_dir=world_dir)
-        if torp is not None:
-            # The bolt carries script GetDamage() × GetDamageScale() —
-            # 0x00576080 scales it at spawn (PulseWeaponDamage.md C1).
-            torp._damage = float(torp._damage) * self.GetDamageScale()
-        # Discrete drain: a flat per-shot cost of NormalDischargeRate × the
-        # power-setting scale (BC's GetPowerScaled), then the cooldown.  Not
-        # a dump-to-zero — that made a stock BoP wait ~9 s between bolts
-        # where BC waits ~2 s.  No held beam.
-        self._charge_level = max(0.0, self._charge_level - self._shot_cost())
-        self._cooldown_remaining = self.GetCooldownTime()
-        # One ET_WEAPON_FIRED per shot, once the bolt exists (no bolt, no
-        # shot to report); decision[1] is the target the shot used (the
-        # weapon's, else the ship's).
-        if torp is not None:
-            _post_weapon_fired(self, decision[1])
-        return True
+        """Returns True when a bolt launched -- a discrete shooter reports
+        IsFiring() False right after a successful shot, so the explicit bool
+        is the answer. A one-weapon native session (native_combat.k1_fire,
+        M8.6): CanFire, the stamps, the lead solve and the arc, then the
+        bolt's SPAWN, the drain and the cooldown (k1_fire_control.h)."""
+        return native_combat.k1_fire(self, target, offset)
 
     def UpdateCharge(self, dt: float) -> None:
         if self._cooldown_remaining > 0.0:
@@ -3267,56 +2673,6 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
 # launch at all.
 
 _TORPEDO_CONE_HALF_ANGLE = 0.5235984   # BC's literal, NOT math.radians(30)
-
-
-def _resolve_torpedo_aim_point(tube, target):
-    """0x005852A0: target world pos + tube aim offset scaled by target world
-    scale and rotated by target world rotation. None => unresolvable (the
-    caller posts ET_WEAPON_FIRE_FAILED). No speed/velocity/intercept enters."""
-    if target is None or not hasattr(target, "GetWorldLocation"):
-        return None
-    if hasattr(target, "IsDead") and target.IsDead():
-        return None
-    offset = getattr(tube, "_target_offset", None)
-    if not isinstance(offset, TGPoint3):
-        pos = target.GetWorldLocation()
-        return TGPoint3(pos.x, pos.y, pos.z)
-    from engine.appc.subsystems import target_offset_world
-    return target_offset_world(target, offset)
-
-
-def _in_torpedo_cone(tube, ship, aim_point) -> bool:
-    """0x0057DA90->0x0057DC10: square +/-30 degree cone about the tube
-    direction, yaw and pitch checked INDEPENDENTLY via atan2; forward must
-    be > 0.  No occlusion test -- firing through an asteroid is legal
-    (audited)."""
-    mount = tube._emitter_world_position()
-    to_aim = aim_point - mount
-    if to_aim.Length() < 1e-6:
-        return False
-    d = tube.GetDirection() if hasattr(tube, "GetDirection") else None
-    r = tube.GetRight() if hasattr(tube, "GetRight") else None
-    if not isinstance(d, TGPoint3):
-        d = TGPoint3(0.0, 1.0, 0.0)
-    if not isinstance(r, TGPoint3):
-        r = TGPoint3(1.0, 0.0, 0.0)
-    u = TGPoint3(d.y * r.z - d.z * r.y,      # up = dir x right (local)
-                 d.z * r.x - d.x * r.z,
-                 d.x * r.y - d.y * r.x)
-    rot = ship.GetWorldRotation() if (ship is not None
-              and hasattr(ship, "GetWorldRotation")) else None
-    basis = []
-    for v in (d, r, u):
-        w = TGPoint3(v.x, v.y, v.z)
-        if isinstance(rot, TGMatrix3):
-            w.MultMatrixLeft(rot)
-        basis.append(w)
-    fwd = basis[0].Dot(to_aim)
-    if fwd <= 0.0:
-        return False
-    yaw = _math.atan2(abs(basis[1].Dot(to_aim)), fwd)
-    pitch = _math.atan2(abs(basis[2].Dot(to_aim)), fwd)
-    return yaw <= _TORPEDO_CONE_HALF_ANGLE and pitch <= _TORPEDO_CONE_HALF_ANGLE
 
 
 class TorpedoTube(Weapon):
@@ -3511,19 +2867,6 @@ class TorpedoTube(Weapon):
             return None
         return parent.GetCurrentAmmoType()
 
-    def _ammo_exhausted(self) -> bool:
-        """True when the parent's selected ammo type is a FINITE magazine
-        with zero rounds left.  This is the CanFire gate: BC's CanFire keys off
-        the tube's own NumReady (weapon-firing-mechanics.md §2.5), and with the
-        loaded-count-aware reload gate below the invariant NumReady <= inventory
-        holds, so an empty inventory means the tube is empty too.  Unlimited/
-        undeclared ammo (or no ammo configured) NEVER gates — mirrors the
-        existing TorpedoSystem.StartFiring reserve-gate pattern so the
-        legacy/undeclared firing path stays byte-identical."""
-        ammo = self._parent_ammo()
-        finite = ammo is not None and not getattr(ammo, "_unlimited", True)
-        return finite and ammo.GetAvailable() <= 0
-
     def _rounds_loaded_systemwide(self) -> int:
         """System-wide count of rounds currently chambered across ALL of the
         parent system's tubes — BC's TorpedoSystem+0x118 (NumReady), the value
@@ -3583,111 +2926,34 @@ class TorpedoTube(Weapon):
         Skew-fire tubes are exempt — they're the deliberately-desynced spread
         pattern, not the ship-wide volley.
 
-        The native rule with fire control native (the mixin's CanFire).
+        The native rule (fire_gates.cc can_fire, M8.6): fire control has no
+        Python copy (M3).
         """
-        native = native_combat.k1_can_fire(self)
-        if native is not None:
-            return native
-        parent = self.GetParentSubsystem()
-        if parent is None or not parent.IsOn():
-            return 0
-        if (not self.IsSkewFire() and parent is not None
-                and _game_time() - getattr(parent, "_last_system_fire_time", -1000.0) <= 0.5):
-            return 0
-        if self._num_ready <= 0:
-            return 0
-        # Audited gate 2 (spec §3.3): this tube must not itself be disabled
-        # (condition damaged at/below DisabledPercentage). Distinct from the
-        # PARENT power-on check above — a healthy powered-on TorpedoSystem
-        # can still have individual tubes crippled by hull damage.
-        if self.IsDisabled():
-            return 0
-        if _game_time() - self._last_fire_time < self._immediate_delay:
-            return 0
-        if self._ammo_exhausted():
-            return 0
-        return 1
+        return native_combat.k1_can_fire(self)
 
     def Fire(self, target=None, offset=None) -> bool:
-        """Returns True when a torpedo launched — discrete shooter, so the
-        tick's try_fire_weapon needs the explicit bool (see PulseWeapon.Fire).
+        """Returns True when a torpedo launched -- discrete shooter, so the
+        explicit bool is the answer.
 
         Task 7 audited gates, applied AFTER CanFire (power/stagger/reload/
         ammo) passes:
 
           * targeted path (``target`` is not None): resolve the static aim
-            point (no lead — Task 7 audited), then the +/-30 degree square
+            point (no lead -- Task 7 audited), then the +/-30 degree square
             cone about the tube's Direction.  Either failure posts
             ET_WEAPON_FIRE_FAILED and returns False WITHOUT consuming a
-            round or starting the stagger/reload cooldown — a rejected shot
+            round or starting the stagger/reload cooldown -- a rejected shot
             never fires.  Only on success does this stamp ``_target``/
-            ``_target_offset`` — "Fire stamps the homing state"; a
-            downstream FireDumb()/dumb call (target=None) never does, so
-            _spawn_projectile's homing lookup (reading THIS tube's
-            ``_target``) stays None for a dumbfire.
-          * dumb path (``target`` is None): straight to bookkeeping, no aim
-            resolve, no cone — matches BC (FireDumb has no target to gate).
+            ``_target_offset`` -- "Fire stamps the homing state"; a
+            dumb call (target=None) never does, so the torpedo homes on
+            nothing.
+          * dumb path (``target`` is None): straight to the launch, no aim
+            resolve, no cone -- matches BC (FireDumb has no target to gate).
 
-        Natively with fire control native (the mixin's Fire).
+        A one-weapon native session (native_combat.k1_fire, M8.6; the launch
+        at the boundary, k1_fire_control.h LAUNCHES AT THE BOUNDARY).
         """
-        native = native_combat.k1_fire(self, target, offset)
-        if native is not None:
-            return native
-        d = self._fire_decide(target, offset)
-        return False if d is None else self._fire_effect(target, offset, d)
-
-    def _fire_decide(self, target, offset):
-        """CanFire, then (targeted) the aim point from the tube's STORED
-        offset and the cone; either failure posts ET_WEAPON_FIRE_FAILED here.
-        None: no launch. Else (target_used,). K1 queues the failure itself (a
-        WEAPON_FIRE_FAILED entry) and calls only _fire_effect."""
-        if not self.CanFire():
-            return None
-        if target is not None:
-            aim_point = _resolve_torpedo_aim_point(self, target)
-            if aim_point is None:
-                self._broadcast_weapon_fire_failed()
-                return None
-            if not _in_torpedo_cone(self, self._climb_to_ship(), aim_point):
-                self._broadcast_weapon_fire_failed()
-                return None
-        return (target,)
-
-    def _fire_effect(self, target, offset, decision) -> bool:
-        # K1 makes a tube's launch itself -- these writes, logged in this
-        # order, and a SPAWN entry standing for _spawn_torpedo's spawn and
-        # its ET_TORPEDO_FIRED, then WEAPON_FIRED and AMMO_CONSUMED
-        # (k1_fire_control.h, LAUNCHES AT THE BOUNDARY): change both.
-        if target is not None:
-            self._target = target
-            self._target_offset = offset
-        else:
-            # Dumb path: clear any stale lock left by a previous targeted
-            # shot, so _spawn_projectile's homing lookup (reading this
-            # tube's own _target) can't home a dumbfire on a target the
-            # player no longer has selected.
-            self._target = None
-            self._target_offset = None
-        self._firing = True
-        now = _game_time()
-        self._num_ready -= 1
-        self._last_fire_time = now
-        parent = self.GetParentSubsystem()
-        if parent is not None:
-            parent._last_system_fire_time = now
-        self._start_slot_cooldown(now)
-
-        self._spawn_torpedo()
-
-        # BC's order (audited): ET_TORPEDO_FIRED (posted inside _spawn_torpedo,
-        # once the projectile exists) THEN ET_WEAPON_FIRED, then the
-        # player-only ET_TORPEDO_AMMO_CONSUMED.
-        self._broadcast_weapon_fired(target)
-        self._broadcast_ammo_consumed_if_player()
-
-        # Discrete-shot — auto-stop after launch.
-        self._firing = False
-        return True
+        return native_combat.k1_fire(self, target, offset)
 
     def _broadcast_weapon_fired(self, target) -> None:
         """Post ET_WEAPON_FIRED: Source = the TUBE, Destination = the owning
@@ -3758,69 +3024,6 @@ class TorpedoTube(Weapon):
             App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
             dev_mode.log_swallowed("ET_TORPEDO_AMMO_CONSUMED broadcast", _e)
-
-    def _spawn_torpedo(self) -> None:
-        """Look up the parent system's GetTorpedoScript(0), import the SDK
-        projectile module, instantiate a Torpedo, call <module>.Create(t)
-        to populate visuals + behaviour, launch it BC-faithfully (straight
-        out the tube's authored direction + inherited ship velocity — see
-        _spawn_projectile), and play the launch sound.
-
-        The fired projectile is the SELECTED ammo type's — BC reads the module
-        path from the current ammo descriptor (weapon-firing-mechanics.md
-        +0x104), not a fixed slot.  Falls back to the property's slot-0 script
-        for undeclared/legacy tubes that carry no ammo types.  Silent no-op
-        when no script is bound (matches BC for unconfigured tubes).
-        """
-        parent = self.GetParentSubsystem()
-        if parent is None:
-            return
-        # Per-launch ammo debit (moved here from TorpedoSystem.StartFiring's
-        # volley accounting when StartFiring became a pure tick-arm): expend
-        # one round of the parent's selected type per torpedo launched.
-        # Finite types only — unlimited/undeclared magazines never decrement.
-        ammo = (parent.GetCurrentAmmoType()
-                if hasattr(parent, "GetCurrentAmmoType") else None)
-        if ammo is not None and not getattr(ammo, "_unlimited", True):
-            ammo.AddAvailable(-1)
-        # Fire the SELECTED type's projectile.  The ammo descriptor carries its
-        # own module path (_resolve_torpedo_ammo seeds it from the hardpoint's
-        # SetTorpedoScript(slot, ...)); the property's slot-0 script is the
-        # fallback for tubes with no ammo types configured.
-        script_name = None
-        if ammo is not None and hasattr(ammo, "GetTorpedoScript"):
-            script_name = ammo.GetTorpedoScript()
-        if not script_name:
-            parent_prop = parent.GetProperty() if hasattr(parent, "GetProperty") else None
-            if parent_prop is None or not hasattr(parent_prop, "GetTorpedoScript"):
-                return
-            script_name = parent_prop.GetTorpedoScript(0)
-        if not script_name:
-            return
-
-        mod = _resolve_projectile_module(script_name)
-        if native_combat._enabled:
-            # Python resolved this script for a launch: the per-type launch
-            # K1's native launches read (launch deferral; P6 extended), if
-            # its load did not cache it already (Task 5).
-            native_combat.learn_tube_launch(script_name, mod)
-        if mod is None:
-            return
-
-        if effect_queue.deferring() and not native_combat.launch_patched():
-            # Deferred like K1's launch (E4): the spawn and its
-            # ET_TORPEDO_FIRED at the boundary, in emission order.
-            kind = (SPAWN_DUMB if _dumb_firing and _dumb_firing[-1] is self
-                    else SPAWN_TUBE)
-            _defer_spawn(self, mod, kind, self.GetDamageRadiusFactor())
-            return
-        torp = _spawn_projectile(self, mod,
-                                 drf_override=self.GetDamageRadiusFactor())
-        # ET_TORPEDO_FIRED carries the PROJECTILE as its source, so it can only be
-        # posted once the projectile exists.  Posted here rather than inside
-        # _spawn_projectile because that helper is shared with pulse cannons, and
-        # q12 shows this event's destination is always a TorpedoTube.
-        self._broadcast_torpedo_fired(torp)
 
     # FireDumb is inherited from Weapon — it was a byte-identical duplicate here,
     # and keeping the override would have skipped the base's new CanFire() gate.
@@ -4055,15 +3258,8 @@ class TorpedoTube(Weapon):
         return 1 if self._skew_fire else 0
 
 
-# The stock functions K1 stands in for, as defined above: a later patch on
-# any of these classes (or a base) flags its rows k1_overridden.
-native_combat.k1_snapshot_stock({
-    1: PhaserSystem, 2: PulseWeaponSystem, 4: TorpedoSystem,
-    5: PhaserBank, 6: PulseWeapon, 8: TorpedoTube})
-# And the stock methods K0 stands in for (the charging walk; WSM §7(a) A6).
+# The stock methods K0 stands in for (the charging walk; WSM §7(a) A6).
 native_combat.k0_snapshot_stock({
     1: PhaserSystem, 2: PulseWeaponSystem, 3: TractorBeamSystem,
     4: TorpedoSystem, 5: PhaserBank, 6: PulseWeapon, 7: TractorBeam,
     8: TorpedoTube, "ammo": TorpedoAmmoType})
-# And the functions a tube's native launch stands in for (launch deferral).
-native_combat.k1_snapshot_launch()

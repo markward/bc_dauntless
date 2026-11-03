@@ -42,13 +42,10 @@ def make_charged_bank(*, min_firing=1.0, charge=5.0, max_charge=10.0,
 
 
 def make_target():
-    """Straight ahead of the ship on model-Y — inside every default arc."""
-    class _T:
-        def GetWorldLocation(self):
-            return TGPoint3(0.0, 100.0, 0.0)
-        def IsDead(self):
-            return False
-    return _T()
+    """Straight ahead of the ship on model-Y — inside every default arc. A
+    real ship: the mirror must name a target (fire control native only)."""
+    from tests.helpers.targets import real_target
+    return real_target(0.0, 100.0, 0.0)
 
 
 @pytest.fixture

@@ -99,16 +99,13 @@ def _assert_rot(rot, expected):
 
 
 def _target(pSet):
-    class _T:
-        def GetWorldLocation(self):
-            return TGPoint3(100.0, 100.0, 0.0)
-
-        def IsDead(self):
-            return False
-
-        def GetContainingSet(self):
-            return pSet
-    return _T()
+    """A real ship (the mirror names it) in `pSet`."""
+    from engine.appc.ships import ShipClass_Create
+    target = ShipClass_Create("Target")
+    target.SetTranslateXYZ(100.0, 100.0, 0.0)
+    if pSet is not None and hasattr(pSet, "AddObjectToSet"):
+        pSet.AddObjectToSet(target, "Target")
+    return target
 
 
 def test_initiate_with_placement_starts_drive_at_exit_point():
