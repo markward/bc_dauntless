@@ -90,7 +90,7 @@ const char* k2_query_name(K2Query q) {
 
 const char* k2_pulse_why_name(K2PulseWhy w) {
     static constexpr const char* kNames[] = {"not_ok", "unscanned", "level",
-                                             "fallback"};
+                                             "fallback", "python"};
     static_assert(std::size(kNames) ==
                   static_cast<size_t>(K2PulseWhy::kCount));
     const auto i = static_cast<size_t>(w);
@@ -686,6 +686,7 @@ bool Walker::pulse() {
     };
     if (!p.ok) return python(K2PulseWhy::not_ok);
     if (p.clean.count(s_.target) == 0) return python(K2PulseWhy::unscanned);
+    if (p.python_banks.count(s_.bank)) return python(K2PulseWhy::python);
     const SubsystemRow* b = subrow(s_.bank);
     const SubsystemRow* y = subrow(s_.sys);
     if (!b || !y) return python(K2PulseWhy::fallback);

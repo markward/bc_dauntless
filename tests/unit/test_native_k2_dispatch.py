@@ -2665,3 +2665,36 @@ def test_an_instance_patch_on_a_targets_subsystem_hands_its_pulses_back(
     assert counts["k2_pulse_python_reasons"]["unscanned"] > 0, counts
     assert counts["k2_native_pulses"] > 0, counts      # the Galaxy's
     assert True in seen and False in seen
+
+
+@pytest.mark.parametrize("name", ("GetMaxDamage", "GetMaxDamageDistance",
+                                  "GetDamageRadiusFactor"))
+def test_an_instance_patch_on_a_banks_damage_getter_hands_its_pulses_back(
+        monkeypatch, name):
+    """The pulse reads a bank's GetMaxDamage, GetMaxDamageDistance and
+    GetDamageRadiusFactor from the mirror. One shadowed on a Galaxy bank's
+    instance is obeyed by handing THAT bank's pulses to Python (reason
+    `python`), not its ship: the Galaxy is still walked natively (its
+    resting contacts still reach the drain, which calls the bank's own
+    DamageRadiusFactor: spec 2026-11-02 combat-effect-queue §4.4), and the
+    Vor'cha's pulses stay native. The patch returns a different value, so a
+    pulse that ignored it would differ from the reference."""
+    seen = []
+
+    def setup(w, mp):
+        _native_hits(w, mp)
+        for bank in _banks_in_arc(w.ships["Galaxy"], w.ships["Vorcha"]):
+            stock = getattr(bank, name)
+
+            def patched(_stock=stock, _w=w):
+                seen.append(_w.native)
+                return _stock() * 1.5 + 0.25
+            mp.setattr(bank, name, patched, raising=False)
+
+    _ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, _volley, 240,
+                               setup=setup)
+    _native_ran(counts)
+    assert counts["k2_python_reasons"]["overridden"] == 0, counts
+    assert counts["k2_pulse_python_reasons"].get("python", 0) > 0, counts
+    assert counts["k2_native_pulses"] > 0, counts      # the Vor'cha's
+    assert True in seen and False in seen

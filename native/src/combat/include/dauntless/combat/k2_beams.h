@@ -467,6 +467,7 @@ enum class K2PulseWhy : int32_t {
     unscanned,    // the target is not in pulse.clean
     level,        // the power level is not an index of the 3-tuple
     fallback,     // damage.h fell back (the mirror is as it was)
+    python,       // the bank is in pulse.python_banks (K3: the driver's own)
     kCount
 };
 const char* k2_pulse_why_name(K2PulseWhy w);
@@ -545,6 +546,10 @@ struct K2PulseCtx {
     bool has_instances = false;
     // Targets the driver scanned clean (Object handles).
     std::unordered_set<int64_t> clean;
+    // K2: banks (Subsystem handles) whose instance dict shadows a name the
+    // pulse reads from the mirror (GetMaxDamage, GetMaxDamageDistance,
+    // GetDamageRadiusFactor): their pulses are Python's. Unused by K3.
+    std::unordered_set<int64_t> python_banks;
 };
 
 struct K2Context {
