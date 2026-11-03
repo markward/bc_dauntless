@@ -142,9 +142,9 @@ def test_moving_asteroid_striking_the_facility_counts_as_a_station_hit(monkeypat
     monkeypatch.setattr(mod, "AsteroidHitStation", lambda: beats.append("station"))
     monkeypatch.setattr(mod, "AsteroidDestroyed", lambda: beats.append("destroyed"))
     fp = fac.GetWorldLocation()
-    # Clear of the widest boundary any radius rule gives (raw x scale), so
+    # Clear of the widest boundary any radius rule gives (GetRadius() is already base x scale), so
     # the rock is approaching, not born overlapping.
-    r = fac.GetRadius() * fac.GetScale() + rock.GetRadius() * rock.GetScale()
+    r = fac.GetRadius() + rock.GetRadius()
     rock.SetTranslateXYZ(fp.x + r + 0.3, fp.y, fp.z)
     rock.SetVelocity(App.TGPoint3(-6.6, 0.0, 0.0))
     loop = GameLoop()

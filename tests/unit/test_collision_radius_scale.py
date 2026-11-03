@@ -1,11 +1,11 @@
 """Collision and hit radii follow GetScale().
 
-GetRadius() is SDK surface and stays UNSCALED (missions read it; the host
-sets it from the model at GetScale() == 1), but every object DRAWS at
-GetRadius() x GetScale(). E1M2 scales its asteroids 3-8.5x, so a collision
-radius of raw GetRadius() let the player fly most of the way into a rock
+GetBaseRadius() is the UNSCALED radius (SetRadius sets it; the host sets it
+from the model at GetScale() == 1); GetRadius() is base x GetScale(), the
+size every object DRAWS at. E1M2 scales its asteroids 3-8.5x, so a collision
+radius of the raw base let the player fly most of the way into a rock
 before contact (Mark, live). The collision broad phase, projectile sphere
-hits and the death-splash reach now all use GetRadius() x GetScale().
+hits and the death-splash reach all use the scaled GetRadius().
 
 Rocks are also exempt from COLLISION_RADIUS_SCALE (0.8): that shrink
 compensates for a SHIP hull sitting well inside its generous bounding sphere,

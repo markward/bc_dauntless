@@ -966,8 +966,8 @@ def bubble_bound_radius(ship) -> float:
     half-extents are bounded by the bounding-sphere radius.
     """
     try:
-        # Scaled (world_radius = GetRadius(), base x scale): it must contain the projectile loop's
-        # hull-sphere test, which uses the scaled radius.
+        # Scaled (world_radius = GetRadius(), base x scale): it must contain
+        # the projectile loop's hull-sphere test, which uses the scaled radius.
         from engine.appc.collisions import world_radius
         radius = world_radius(ship)
     except Exception:

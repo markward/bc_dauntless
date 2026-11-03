@@ -78,9 +78,10 @@ K4Result k4_eligible(const Mirror& m, const StepScan& s, int64_t player,
         pset = p->_containing_set;
     }
 
-    // E1: max((world_radius(s) for s in ships), default=0.0) or 1.0 -- world_radius
-    // is GetRadius(), base x guarded scale (the C++ twin reads the mirror rows) -- builtin
-    // max keeps the first maximum (py_max folded left from the first item).
+    // E1: max((world_radius(s) for s in ships), default=0.0) or 1.0.
+    // world_radius is GetRadius(), base x guarded scale (the C++ twin reads
+    // the mirror rows). The builtin max keeps the first maximum (py_max
+    // folded left from the first item).
     std::vector<const ObjectRow*> rows(n);
     std::vector<double> radii(n);
     double max_r = 0.0;

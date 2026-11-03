@@ -221,11 +221,15 @@ class ObjectClass(TGEventHandlerObject):
     def GetBaseRadius(self) -> float:
         """The unscaled radius that SetRadius() sets. Engine surface, not SDK:
         BC has no such call. Readers that apply GetScale() themselves read
-        this, so they never double-scale."""
+        this, so they never double-scale. On a ProximityCheck, which overrides
+        GetRadius/SetRadius with its trigger radius, the inherited
+        GetBaseRadius returns the check's unused ``_radius`` (0.0)."""
         return self._radius
 
     def SetRadius(self, r: float) -> None:
-        """Sets the base radius (see GetBaseRadius)."""
+        """Sets the UNSCALED base radius; GetRadius() then returns base x
+        GetScale(). BC has no ObjectClass.SetRadius: this is engine surface
+        (the host calls it from the model, hardpoints may author it)."""
         self._radius = float(r)
 
     def GetScale(self) -> float:

@@ -309,7 +309,7 @@ def bound_radius(ship) -> float:
     Exists so a caller can gate on the whole body before expanding it into
     pieces. That gate is only sound if the radius really encloses them, and
     ``GetRadius()`` does NOT: the host only calls ``SetRadius`` from the model
-    AABB ``if ship.GetRadius() <= 0.0`` (host_loop realize), so a ship whose
+    AABB ``if ship.GetBaseRadius() <= 0.0`` (host_loop realize), so a ship whose
     hardpoint script authored a radius keeps the AUTHORED one, which has no
     guaranteed relationship to the model geometry the pieces come from. A
     protruding nacelle outside an under-sized authored radius would be gated

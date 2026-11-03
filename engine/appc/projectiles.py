@@ -993,9 +993,9 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                 shield_bubble_entry(ship, seg_prev, aim_unit, seg_len)
                 if (aim_unit is not None and shields_block(ship)) else None)
 
-            # The hull sphere as DRAWN (world_radius = GetRadius(), base x scale): E1M2's rocks
-            # are scaled 3-8.5x, and the unscaled base radius let a torpedo fly deep
-            # into one before it hit.
+            # The hull sphere as DRAWN (world_radius = GetRadius(), base x
+            # scale): E1M2's rocks are scaled 3-8.5x, and the unscaled base
+            # radius let a torpedo fly deep into one before it hit.
             if bubble_entry is None and not sphere_hit(
                     seg_cur, ship.GetWorldLocation(), world_radius(ship)):
                 continue
