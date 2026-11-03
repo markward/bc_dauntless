@@ -119,3 +119,28 @@ def test_object_types_generation_increases_on_register():
         object_types._BY_TAG.clear(); object_types._BY_TAG.update(saved[0])
         object_types._BY_CLASS.clear(); object_types._BY_CLASS.update(saved[1])
         object_types._GENERATION += 1
+
+
+def test_istypeof_int_float_bool_do_not_share_cache_entries():
+    from engine.appc import objects
+    tag = object_types.tag_for(ObjectClass)
+    for order in ((tag, float(tag)), (float(tag), tag)):
+        objects._ISTYPEOF_CACHE.clear()
+        got = {}
+        for a in order:
+            got[type(a)] = ObjectClass().IsTypeOf(a)
+        assert got[int] == 1 and got[float] == 0
+    objects._ISTYPEOF_CACHE.clear()
+    assert ObjectClass().IsTypeOf(1) == ObjectClass().IsTypeOf(1)
+    one = ObjectClass().IsTypeOf(True)
+    assert one == 0
+
+
+def test_istypeof_fresh_named_stubs_do_not_grow_the_cache():
+    from engine.appc import objects
+    o = ObjectClass()
+    o.IsTypeOf(ObjectClass)  # prime the generation
+    n = len(objects._ISTYPEOF_CACHE)
+    for _ in range(5):
+        assert o.IsTypeOf(App.CT_NEWLY_INVENTED_THING_THAT_DOES_NOT_EXIST) == 0
+    assert len(objects._ISTYPEOF_CACHE) == n

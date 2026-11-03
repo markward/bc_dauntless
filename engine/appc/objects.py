@@ -172,19 +172,22 @@ class ObjectClass(TGEventHandlerObject):
         # Sun(Planet): a Sun IsTypeOf CT_PLANET and CT_SUN; a plain Planet
         # IsTypeOf CT_SUN is 0 — this is what filters suns out of the orbit menu.
         global _ISTYPEOF_GEN
+        tc = type(cls)
+        if tc is not int and not isinstance(cls, type):
+            # bool/float hash equal to an int tag, and each App.CT_<undefined>
+            # lookup is a fresh stub: neither may share or fill the cache.
+            c = _object_types.resolve_class(cls)
+            return 1 if isinstance(c, type) and isinstance(self, c) else 0
+        # Direct attribute read, not generation(): this is the hot path.
         gen = _object_types._GENERATION
         if gen != _ISTYPEOF_GEN:
             _ISTYPEOF_CACHE.clear()
             _ISTYPEOF_GEN = gen
         # Keyed by type(self): a runtime class swap gets its new answers.
         key = (type(self), cls)
-        try:
-            return _ISTYPEOF_CACHE[key]
-        except KeyError:
-            pass
-        except TypeError:  # unhashable argument: compute uncached
-            c = _object_types.resolve_class(cls)
-            return 1 if isinstance(c, type) and isinstance(self, c) else 0
+        ans = _ISTYPEOF_CACHE.get(key)
+        if ans is not None:
+            return ans
         c = _object_types.resolve_class(cls)
         ans = 1 if isinstance(c, type) and isinstance(self, c) else 0
         # resolve_class may populate the registry (bumping the generation);
