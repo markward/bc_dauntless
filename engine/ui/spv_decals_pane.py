@@ -317,9 +317,7 @@ class DecalsPaneMixin:
                         return r
             except Exception:
                 pass
-        get_r = (getattr(ship, "GetBaseRadius", None)
-                 or getattr(ship, "GetRadius", None))
-        r = float(get_r()) if get_r is not None else 0.0
+        r = float(ship.GetBaseRadius()) if hasattr(ship, "GetBaseRadius") else 0.0
         r /= BC_MODEL_SCALE
         return r if r > 0.0 else 1.0
 

@@ -69,6 +69,9 @@ class _FakeShip:
     def GetRadius(self):
         return RADIUS_GU
 
+    def GetBaseRadius(self):
+        return RADIUS_GU
+
 
 def _instance_world(ship):
     """The render instance's world matrix (row-major 4x4, flat)."""

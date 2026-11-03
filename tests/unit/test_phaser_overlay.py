@@ -214,6 +214,7 @@ class _ShipWithWeapons(_StubShip):
         for p in pulses:
             self._pulse_sys.AddChildSubsystem(p)
     def GetRadius(self): return self._radius
+    def GetBaseRadius(self): return self._radius
     def GetPhaserSystem(self): return self._phaser_sys
     def GetPulseWeaponSystem(self): return self._pulse_sys
 
