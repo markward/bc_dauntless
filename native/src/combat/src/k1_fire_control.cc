@@ -80,8 +80,6 @@ bool xform_ok(const Mirror& m, const ObjectRow& o) {
 K1Why fire_ask_why(const std::invalid_argument& e) {
     if (dynamic_cast<const PartStale*>(&e)) return K1Why::PartStale;
     if (dynamic_cast<const MountUnknown*>(&e)) return K1Why::MountUnknown;
-    if (dynamic_cast<const NoMount*>(&e)) return K1Why::NoMount;
-    if (dynamic_cast<const OffsetOffMount*>(&e)) return K1Why::OffsetOffMount;
     return K1Why::Other;
 }
 
@@ -108,7 +106,7 @@ const char* k1_effect_name(K1Effect e) {
 const char* k1_launch_why_name(K1LaunchWhy w) {
     static constexpr const char* kNames[] = {
         "launch_unresolved", "launch_uncached", "launch_patched",
-        "launch_posed_offset", "launch_other"};
+        "launch_other"};
     static_assert(std::size(kNames) ==
                   static_cast<size_t>(K1LaunchWhy::kCount));
     const auto i = static_cast<size_t>(w);
@@ -119,8 +117,7 @@ const char* k1_why_name(K1Why w) {
     static constexpr const char* kNames[] = {
         "self_managed",   "overridden",       "instance_patch",
         "posed_ship",     "posed_target",     "part_stale",
-        "mount_unknown",  "no_mount",         "offset_off_mount",
-        "stub_or_unplaced",
+        "mount_unknown",  "stub_or_unplaced",
         "pulse_ship_target", "pulse_module",  "ammo_row",
         "stale_row",      "unslotted_ship",   "gate",
         "other"};
@@ -450,11 +447,10 @@ private:
                                           K1LaunchWhy* why);
     // _spawn_projectile's fire-time reads into `s` (_launch_reads and the
     // spawn position): `world_dir` a cannon's led direction, nullopt for a
-    // tube's forward (skewed). False (and why) for a bake the kernel cannot
-    // make; throws std::invalid_argument for anything else it cannot read.
-    bool launch_reads(K1Spawn& s, int64_t launcher, int64_t target,
-                      const std::optional<Vec3>& world_dir, double speed,
-                      K1LaunchWhy* why);
+    // tube's forward (skewed). Throws std::invalid_argument for anything it
+    // cannot read.
+    void launch_reads(K1Spawn& s, int64_t launcher, int64_t target,
+                      const std::optional<Vec3>& world_dir, double speed);
     // A cannon's launch: everything it reads, before any of its writes.
     struct PulsePlan {
         K1Spawn spawn;
@@ -465,8 +461,6 @@ private:
                                                const K1Decision& d,
                                                K1LaunchWhy* why);
     void log_pulse_launch(int64_t cannon, const PulsePlan& p);
-    // The part's point of a posed target's offset (Python's _bake_offset).
-    Vec3 bake_offset(int64_t target, const Vec3& offset, int64_t ship) const;
     void log_launch(int64_t tube, int64_t target, const LaunchPlan& p);
     // Weapon.FireDumb(0, 1) natively; true with the FIRE_DUMB record in
     // *out when Python must run it.
@@ -918,8 +912,7 @@ Walker::Outcome Walker::decide_tube(int64_t bank, int64_t target) {
 // its stamps), _start_slot_cooldown, _spawn_torpedo (the ammo debit, the
 // script's module), TorpedoAmmoType.AddAvailable, _spawn_projectile's fire-
 // time reads (_emitter_world_position, _emitter_forward_world(skew=True),
-// the launch velocity, the homing stamps and projectiles._bake_offset) and
-// Weapon.FireDumb.
+// the launch velocity and the homing stamps) and Weapon.FireDumb.
 
 // Every read of the launch, before any write; nullopt (and why) when the
 // kernel cannot make it: the FIRE / FIRE_DUMB record then runs Python's.
@@ -975,9 +968,7 @@ std::optional<Walker::LaunchPlan> Walker::plan_launch(int64_t tube,
         K1Spawn& s = p.spawn;
         s.kind = kind;
         s.ammo = ammo_h;
-        if (!launch_reads(s, tube, target, std::nullopt,
-                          ammo.ammo_launch_speed, why))
-            return std::nullopt;
+        launch_reads(s, tube, target, std::nullopt, ammo.ammo_launch_speed);
         return p;
     } catch (const std::invalid_argument&) {
         *why = K1LaunchWhy::Other;
@@ -985,9 +976,8 @@ std::optional<Walker::LaunchPlan> Walker::plan_launch(int64_t tube,
     }
 }
 
-bool Walker::launch_reads(K1Spawn& s, int64_t launcher, int64_t target,
-                          const std::optional<Vec3>& world_dir, double speed,
-                          K1LaunchWhy* why) {
+void Walker::launch_reads(K1Spawn& s, int64_t launcher, int64_t target,
+                          const std::optional<Vec3>& world_dir, double speed) {
     const SubsystemRow& lr = detail::sub(m_, launcher);
     // torp._source_ship = emitter._climb_to_ship()
     s.ship = climb_to_ship_of(m_, launcher);
@@ -1025,23 +1015,16 @@ bool Walker::launch_reads(K1Spawn& s, int64_t launcher, int64_t target,
     }
     // target_ship = emitter._target (the stamp): alive -> its homing, then
     // SetTargetOffset(emitter._target_offset), the walk's offset (a TGPoint3
-    // copy, else None) baked against its pose now.
+    // copy, else None), steered at as it is (no bake: M5).
     if (target != -1 && !ship_dead(m_, target)) {
         s.target = target;
         if (s_.offset) {
             s.has_offset = true;
             s.offset = *s_.offset;
-            try {
-                s.baked = bake_offset(target, s.offset, s.ship);
-            } catch (const std::invalid_argument&) {
-                *why = K1LaunchWhy::PosedOffset;
-                return false;
-            }
         }
     }
     // drf_override = self.GetDamageRadiusFactor()
     s.drf_override = lr._damage_radius_factor;
-    return true;
 }
 
 // PulseWeapon._fire_effect inside the deferral (CHANGE BOTH): _defer_spawn
@@ -1067,9 +1050,7 @@ std::optional<Walker::PulsePlan> Walker::plan_pulse_launch(
         K1Spawn& s = p.spawn;
         s.kind = K1Spawn::Kind::Pulse;
         s.ammo = cannon;
-        if (!launch_reads(s, cannon, d.target_used, d.world_dir,
-                          cr.launch_speed, why))
-            return std::nullopt;
+        launch_reads(s, cannon, d.target_used, d.world_dir, cr.launch_speed);
         s.damage_scale = pulse_damage_scale(m_, cr);
         s.fired_at = d.target_used;
         // `max(0.0, x)` is 0.0 unless x > 0.0 (a NaN, -0.0: 0.0).
@@ -1093,22 +1074,6 @@ void Walker::log_pulse_launch(int64_t cannon, const PulsePlan& p) {
     write_float(cannon, Field::_charge_level, "_charge_level", p.charge);
     write_float(cannon, Field::_cooldown_remaining, "_cooldown_remaining",
                 p.cooldown);
-}
-
-// projectiles._bake_offset's point: part_transform_point(target, offset,
-// authored=False) -- the offset itself on an unposed target; on a posed one
-// the box rule's part, which Python resolved into the firing ship's Manual
-// Aim slot for exactly this target and offset (none for them: Python's).
-Vec3 Walker::bake_offset(int64_t target, const Vec3& offset,
-                         int64_t ship) const {
-    const ObjectRow& t = detail::obj(m_, target);
-    if (!t.has_posed_parts) return offset;
-    const PartPose* pose = nullptr;
-    const std::optional<SlotState> st =
-        manual_slot_pose(m_, detail::obj(m_, ship), target, t, offset, &pose);
-    if (!st) detail::fall_back("posed target, no Manual Aim slot to bake");
-    if (*st == SlotState::stale) detail::fall_back("part_stale");
-    return *st == SlotState::ok ? apply_part_pose(*pose, offset) : offset;
 }
 
 // The launch's writes and entries, in TorpedoTube._fire_effect's order.

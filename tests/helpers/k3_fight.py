@@ -36,8 +36,8 @@ Scene helpers both files share: ``seed_every_rng``, ``subsystems``, ``face``,
 Posed parts (Task 5) reuses the record for its own differentials
 (tests/helpers/posed_fight.py): ``Recorder(extra=...)`` appends a scene's
 own rows each tick, ``weapon_rows`` is the K1 differential's fire-control
-record, and ``posed_fallbacks`` / ``posed_no_mount`` / ``posed_branches``
-read the kernels' posed counters.
+record, and ``posed_fallbacks`` / ``posed_branches`` read the kernels'
+posed counters.
 A differential arm's audio and crew throttles are isolated by
 tests/helpers/fight_audio.isolate_fight_audio.
 """
@@ -940,22 +940,19 @@ def weapon_rows(label, systems, weapons):
 # ships must see at 0, and the native posed-branch counters it must see run.
 
 #: (counter path, reason) pairs that are 0 in a fight whose posed ships have
-#: their slots resolved at every step boundary. K1's fire-time `no_mount` is
-#: NOT here: a random offset on a posed target that no mount claims is
-#: Python's box rule at fire time by design (ruling C4) -- see
-#: posed_no_mount. K3's `no_mount` and `unbaked` ARE: an in-flight shot at a
-#: picked spot steers at the point baked at launch (posed parts, Task 7).
+#: their slots resolved at every step boundary. Since aim points became
+#: plain body points (fire control native only, M5) an offset no mount
+#: claims is no hand-back at all, in K1, K2 or K3.
 _POSED_ZERO = (
     [("k1_python_reasons", s, why) for s in ("pump", "system")
      for why in ("posed_ship", "posed_target", "part_stale",
-                 "mount_unknown", "no_mount", "offset_off_mount")]
+                 "mount_unknown")]
     + [("k1_fire_ask_reasons", None, why)
-       for why in ("part_stale", "mount_unknown", "offset_off_mount")]
+       for why in ("part_stale", "mount_unknown")]
     + [("k2_python_reasons", None, why)
        for why in ("posed_ship", "part_stale")]
     + [("k3_steer_reasons", None, why)
-       for why in ("posed_target", "part_stale", "offset_off_mount",
-                   "mount_stale", "no_mount", "unbaked")])
+       for why in ("posed_target", "part_stale", "mount_stale")])
 
 
 def _read(counts, key, sub, why):
@@ -967,16 +964,6 @@ def posed_fallbacks(counts):
     """{name: n} of every posed hand-back that must be 0 (_POSED_ZERO)."""
     return {"%s%s/%s" % (key, "" if sub is None else "[%s]" % sub, why):
             _read(counts, key, sub, why) for key, sub, why in _POSED_ZERO}
-
-
-def posed_no_mount(counts):
-    """The box-rule hand-backs (ruling C4): K1 Fire ASKs at a posed
-    target's offset that no mount claims -- printed, not zero -- and K3's
-    steer ASKs for one, 0 since Task 7 (in _POSED_ZERO too)."""
-    return {"k1_fire_ask_reasons/no_mount":
-            counts["k1_fire_ask_reasons"]["no_mount"],
-            "k3_steer_reasons/no_mount":
-            counts["k3_steer_reasons"]["no_mount"]}
 
 
 def round_trips(counts):
@@ -1025,15 +1012,11 @@ def check_native_attributions(counts, tally):
 
 def posed_branches(counts):
     """The native posed branches: a posed ship's systems walked (K1), a Fire
-    aimed at a posed target's offset (K1 `_RESOLVE` / Manual Aim slot), a
-    posed ship's banks (K2), a lock on a posed ship's subsystem (K2), a
-    Manual Aim beam on a posed target (K2), a torpedo steered at a posed
-    target's mount or pick (K3), and of those a pick steered at its
-    launch-time point (K3, Task 7)."""
+    aimed at a posed target's offset (K1 `_RESOLVE`), a posed ship's banks
+    (K2), a lock on a posed ship's subsystem (K2) and a torpedo steered at a
+    posed target's mount or pick (K3)."""
     return {"k1_posed/walks": counts["k1_posed"]["walks"],
             "k1_posed/target_aims": counts["k1_posed"]["target_aims"],
             "k2_posed/banks": counts["k2_posed"]["banks"],
             "k2_posed/lock_aims": counts["k2_posed"]["lock_aims"],
-            "k2_posed/manual_aims": counts["k2_posed"]["manual_aims"],
-            "k3_posed_steers": counts["k3_posed_steers"],
-            "k3_baked_steers": counts["k3_baked_steers"]}
+            "k3_posed_steers": counts["k3_posed_steers"]}

@@ -195,13 +195,12 @@ def update(*, player, tcw, ship_instances, is_exterior: bool,
     scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
     if scale <= 1e-9:
         scale = 1.0
-    # The pick is on the POSED hull; an offset is stored REST frame (see
-    # subsystems.target_offset_world), so a pick on a raised wing is pulled
-    # back through the wing's hinge before it is stored.
-    from engine.appc.part_severance import rest_point_for_live_point
-    rx, ry, rz = rest_point_for_live_point(
-        target, (dx / scale, dy / scale, dz / scale), iid)
-    player.set_manual_target_offset(TGPoint3(rx, ry, rz))
+    # The pick is on the POSED hull and is stored as the body point it hit
+    # (fire control native only, R5): aim points do not follow articulated
+    # parts, so a pick on a raised wing aims at where the wing was when
+    # picked (subsystems.target_offset_world).
+    player.set_manual_target_offset(TGPoint3(dx / scale, dy / scale,
+                                             dz / scale))
     return True
 
 

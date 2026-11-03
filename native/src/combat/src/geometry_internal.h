@@ -23,7 +23,7 @@ namespace dauntless::combat::detail {
 }
 
 // fall_back with a reason a kernel counts (part_pose.h): `Why` is
-// PartStale, MountUnknown or NoMount. The message keeps fall_back's shape.
+// PartStale or MountUnknown. The message keeps fall_back's shape.
 template <class Why>
 [[noreturn]] inline void fall_back_as(const char* why) {
     throw Why(std::string("combat geometry: ") + why + " -- answer in Python");

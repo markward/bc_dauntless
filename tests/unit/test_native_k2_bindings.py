@@ -171,7 +171,7 @@ def test_contact_record_layout(scene):
     assert counts["k2_batched_contacts"] == 1, counts
     # No applier context (and no constants sent): the drain presented none.
     assert counts["k2_present_native"] == 0, counts
-    assert counts["k2_posed"] == {"banks": 0, "lock_aims": 0, "manual_aims": 0}
+    assert counts["k2_posed"] == {"banks": 0, "lock_aims": 0}
     assert set(counts["k2_ask_queries"]) == {
         "is_dead", "can_detect", "aim_point", "shields_block", "bubble",
         "resolve_hit", "bank_step"}

@@ -150,3 +150,38 @@ def test_golden_round_trip_and_first_difference(monkeypatch, tmp_path):
         golden_fight.json.dump(data, f)
     with pytest.raises(AssertionError, match=r"tick 1.*field 2 _target"):
         golden_fight.check("tiny", rows)
+
+
+def test_golden_schema_2_reads_without_baked_offset(monkeypatch, tmp_path):
+    """A schema-2 golden (torpedo rows with `_baked_offset`, gone since fire
+    control native only M5) is read by dropping that one field: the rest of
+    the recorded row is compared as recorded, and the stored digests stay
+    the recorded rows'."""
+    monkeypatch.setattr(golden_fight, "FIXTURES", tmp_path)
+    monkeypatch.setitem(golden_fight.SCENES, "tiny", golden_fight.Scene(
+        name="tiny", arm="python", seed=1, ships="1", ticks=1, tpf=1,
+        run=None))
+
+    def torp(baked=True, damage="0x1p+0"):
+        row = ["torpedo", "Torpedo@0", ["0x0p+0"] * 3, ["0x1p+0"] * 3,
+               "Enemy-1", ["0x0p+0"] * 3]
+        if baked:
+            row.append(["Enemy-1", ["0x0p+0"] * 3, ["0x0p+0"] * 3])
+        return row + [["float", damage], "Player", True]
+
+    old = [[0, [], [], [], [], [], []], [1, [torp()], [], [], [], [], []]]
+    data = {"header": {"scene": "tiny", "arm": "python", "seed": 1,
+                       "ships": "1", "ticks": 1, "tpf": 1, "schema": 2,
+                       "platform": golden_fight.sys.platform,
+                       "reason": "schema 2"},
+            "digests": [golden_fight._digest(r) for r in old],
+            "ticks": golden_fight._encode(old)}
+    with golden_fight.gzip.open(golden_fight.path("tiny"), "wt") as f:
+        golden_fight.json.dump(data, f)
+    now = [(0, [], [], [], [], [], []),
+           (1, [torp(baked=False)], [], [], [], [], [])]
+    golden_fight.check("tiny", now)
+    bad = [(0, [], [], [], [], [], []),
+           (1, [torp(baked=False, damage="0x1p+1")], [], [], [], [], [])]
+    with pytest.raises(AssertionError, match="field 5 _damage"):
+        golden_fight.check("tiny", bad)

@@ -39,8 +39,8 @@ A kernel appends the same kinds natively, naming objects by mirror handle
 one kind only a kernel appends (spec 2026-11-02-combat-launch-deferral
 §4.1):
   SPAWN(launcher, kind, ship, set, module, target, position xyz, has
-        velocity, velocity xyz, has offset, offset xyz, baked xyz, drf,
-        damage scale, fired at)
+        velocity, velocity xyz, has offset, offset xyz, drf, damage
+        scale, fired at)
                               a launch, its fire-time values read when it
                               was decided: K1's (k1_fire_control.h,
                               LAUNCHES AT THE BOUNDARY: a tube's, a dumb

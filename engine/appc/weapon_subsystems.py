@@ -662,18 +662,16 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
     spawn_pos = emitter._emitter_world_position()
     torp = _new_projectile(mod, source_ship, spawn_pos.x, spawn_pos.y,
                            spawn_pos.z)
-    velocity, target, offset, baked = _launch_reads(emitter, mod, source_ship,
-                                                    world_dir)
+    velocity, target, offset = _launch_reads(emitter, mod, source_ship,
+                                             world_dir)
     _launch_projectile(torp, mod, drf_override, velocity, target, offset,
-                       baked, projectiles.LIVE_SET)
+                       projectiles.LIVE_SET)
     return torp
 
 
 def _launch_reads(emitter, mod, source_ship, world_dir):
     """_spawn_projectile's live reads after Create: (velocity or None, the
-    homing target or None, its offset copy or None, the offset baked
-    against the target's pose now or None)."""
-    from engine.appc import projectiles
+    homing target or None, its offset copy or None)."""
     from engine.appc.math import TGPoint3
 
     launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
@@ -706,16 +704,16 @@ def _launch_reads(emitter, mod, source_ship, world_dir):
     # read source_ship.GetTarget() directly, which meant even a dumbfire
     # inherited the ship's lock; that's wrong per the audited split.
     target_ship = getattr(emitter, "_target", None)
-    target = offset = baked = None
+    target = offset = None
     if (target_ship is not None
             and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
-        # Torpedo.SetTargetOffset's copy and its launch-time bake.
+        # Torpedo.SetTargetOffset's copy: steered at as it is (a mount is
+        # posed every tick, anything else is a plain body point; M5).
         target = target_ship
         v = getattr(emitter, "_target_offset", None)
         if isinstance(v, TGPoint3):
             offset = TGPoint3(v.x, v.y, v.z)
-            baked = projectiles._bake_offset(target, offset)[4]
-    return velocity, target, offset, baked
+    return velocity, target, offset
 
 
 def _defer_spawn(emitter, mod, kind, drf_override, world_dir=None,
@@ -732,17 +730,15 @@ def _defer_spawn(emitter, mod, kind, drf_override, world_dir=None,
     from engine.appc import projectiles
     source_ship = emitter._climb_to_ship()
     p = emitter._emitter_world_position()
-    velocity, target, offset, baked = _launch_reads(emitter, mod, source_ship,
-                                                    world_dir)
+    velocity, target, offset = _launch_reads(emitter, mod, source_ship,
+                                             world_dir)
     v = velocity if velocity is not None else TGPoint3(0.0, 0.0, 0.0)
     o = offset if offset is not None else TGPoint3(0.0, 0.0, 0.0)
-    b = baked if baked is not None else (0.0, 0.0, 0.0)
     effect_queue.post(
         effect_queue.SPAWN, emitter, kind, source_ship,
         projectiles.source_set(source_ship), mod, target, p.x, p.y, p.z,
         velocity is not None, v.x, v.y, v.z, offset is not None,
-        o.x, o.y, o.z, b[0], b[1], b[2], drf_override, damage_scale,
-        fired_at)
+        o.x, o.y, o.z, drf_override, damage_scale, fired_at)
 
 
 def _new_projectile(mod, source_ship, x, y, z):
@@ -761,14 +757,13 @@ def _new_projectile(mod, source_ship, x, y, z):
 
 
 def _launch_projectile(torp, mod, drf_override, velocity, target, offset,
-                       baked, kset):
+                       kset):
     """The shared spawn's second half, with the fire-time values given:
     the launcher's DRF override (> 0), the launch velocity (None: the
     direction had no length, the torpedo keeps its own), the homing target
-    (alive at fire time, else None), its offset (a TGPoint3 copy or None)
-    and the offset baked against the target's pose at fire time; then
-    register (joining `kset`: projectiles.LIVE_SET reads the source's set
-    now) -- ET_TORPEDO_ENTERED_SET -- and the launch sound."""
+    (alive at fire time, else None) and its offset (a TGPoint3 copy or
+    None); then register (joining `kset`: projectiles.LIVE_SET reads the
+    source's set now) -- ET_TORPEDO_ENTERED_SET -- and the launch sound."""
     from engine.appc import projectiles
 
     # §3.2 DRF override: if the launching tube has a non-zero
@@ -785,7 +780,7 @@ def _launch_projectile(torp, mod, drf_override, velocity, target, offset,
 
     if target is not None:
         torp._target_ship = target
-        torp._set_launch_offset(offset, baked)
+        torp._set_launch_offset(offset)
     else:
         torp._target_ship = None
 
@@ -844,8 +839,8 @@ def spawn_launch(launcher, kind, ship, kset, mod, target, record):
     """The SPAWN entry's delivery (effect_queue._spawn; spec 2026-11-02-
     combat-launch-deferral §4.1): K1 decided a launch and computed its fire-
     time values -- `record` is (position xyz, has velocity, velocity xyz,
-    has offset, offset xyz, baked xyz, drf override, damage scale, fired
-    at) -- so the torpedo is
+    has offset, offset xyz, drf override, damage scale, fired at) -- so the
+    torpedo is
     built now, at the boundary, through the reference's own body
     (_new_projectile, _launch_projectile) with those values for its live
     reads. `mod` is the module resolved when the launch was decided (the
@@ -856,17 +851,16 @@ def spawn_launch(launcher, kind, ship, kset, mod, target, record):
     from engine.appc.math import TGPoint3
 
     (px, py, pz, has_velocity, vx, vy, vz, has_offset, ox, oy, oz,
-     bx, by, bz, drf, damage_scale, fired_at) = record
+     drf, damage_scale, fired_at) = record
     if mod is None:
         raise RuntimeError("combat SPAWN: no module (a launch is deferred "
                            "only with its module resolved)")
     torp = _new_projectile(mod, ship, px, py, pz)
     velocity = TGPoint3(vx, vy, vz) if has_velocity else None
-    offset = baked = None
+    offset = None
     if target is not None and has_offset:
         offset = TGPoint3(ox, oy, oz)
-        baked = (bx, by, bz)
-    _launch_projectile(torp, mod, drf, velocity, target, offset, baked, kset)
+    _launch_projectile(torp, mod, drf, velocity, target, offset, kset)
     if int(kind) == SPAWN_PULSE:
         # PulseWeapon._fire_effect's tail, after the bolt exists: its damage
         # scaled AFTER register (its set-entry handlers saw the module's:

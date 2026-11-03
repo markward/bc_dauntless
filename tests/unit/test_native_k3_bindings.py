@@ -177,14 +177,16 @@ def test_native_attribution_rides_on_done(world):
 
 
 def test_steer_point_ask_round_trip(world):
-    """A steer point the kernel cannot decide (here: no mount and the shot's
-    `_baked_offset` dropped -- unbaked): ASK steer_point(torp, target, off);
-    Python's _steer_point writes `_mount_key` (pushed) and answers the
-    point, and DONE logs no `_mount_key` of its own."""
+    """A steer point the kernel cannot decide (here: the target's mount
+    order opens with an entry the mirror cannot name, so it cannot
+    attribute the offset -- unattributed): ASK steer_point(torp, target,
+    off); Python's _steer_point writes `_mount_key` (pushed) and answers
+    the point, and DONE logs no `_mount_key` of its own."""
     w = world
     t = _fire(w, (0.0, -100.0, 0.0), (0.0, 60.0, 0.0), target=w.x)
     t.SetTargetOffset(TGPoint3(1.0, 0.0, 0.0))
-    t._baked_offset = None
+    order = _h.combat_dump(_slot(w.x))["mount_order"]
+    _h.combat_set_mount_order(_slot(w.x), [-2] + list(order))
     assert nc.step_scan(w.ships).ok
     assert _begin() is None
     rec = _h.combat_k3_next()

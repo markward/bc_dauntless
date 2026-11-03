@@ -608,8 +608,12 @@ def test_posed_ship_throws(world):
         with pytest.raises(ValueError):
             _h.combat_test_subsystem_world_position(
                 _slot(w.phasers[1]), _slot(w.galaxy), True)
-        with pytest.raises(ValueError):
-            _h.combat_test_target_offset_world(_slot(w.warbird), (1.0, 2.0, 3.0))
+        # An offset no mount claims on a posed target is a plain body
+        # point, not a throw (fire control native only, M5).
+        want = ss.target_offset_world(w.warbird, TGPoint3(1.0, 2.0, 3.0))
+        got = _h.combat_test_target_offset_world(_slot(w.warbird),
+                                                 (1.0, 2.0, 3.0))
+        assert _hx(got) == _hx(want)
         with pytest.raises(ValueError):
             _h.combat_test_resolve_bank_aim_world(
                 _slot(bank), _slot(w.vorcha), False)

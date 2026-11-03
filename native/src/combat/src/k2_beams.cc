@@ -502,15 +502,6 @@ private:
             e.what());
     }
 
-    // The ship aims by Manual Aim at a posed target (_phaser_aim_point's
-    // first branch), for the counter.
-    bool manual_on_posed() const {
-        const ObjectRow* so = objrow(s_.ship);
-        const ObjectRow* to = objrow(s_.target);
-        return so && to && so->_use_target_offset != 0 &&
-               so->manual_offset_set && to->has_posed_parts;
-    }
-
     // The ship row a subsystem belongs to, or null (also for a chain the
     // mirror cannot climb: the aim_point ASK's). A subsystem attached
     // straight to its ship answers from `_parent_ship` with no climb.
@@ -980,8 +971,6 @@ K2Record Walker::run() {
                     if (s_.has_sub) {
                         const ObjectRow* lo = owner_row(ap.target_sub);
                         if (lo && lo->has_posed_parts) ++c_.posed_lock_aims;
-                    } else if (manual_on_posed()) {
-                        ++c_.posed_manual_aims;
                     }
                 } catch (const std::invalid_argument&) {
                     return ask(K2Query::aim_point, {s_.ship, s_.target},

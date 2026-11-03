@@ -6,8 +6,6 @@
 
 #include "dauntless/combat/part_pose.h"
 
-#include <optional>
-
 #include <cmath>
 
 #include "geometry_internal.h"
@@ -35,29 +33,6 @@ SlotState slot_pose(const Mirror& m, const ObjectRow& ship,
     const auto i = static_cast<size_t>(sub.part_slot);
     if (i >= ship.part_poses.size()) return SlotState::stale;
     const PartPose& p = ship.part_poses[i];
-    if (p.identity || p.detached) return SlotState::none;
-    *pose = &p;
-    return SlotState::ok;
-}
-
-std::optional<SlotState> manual_slot_pose(const Mirror& m,
-                                          const ObjectRow& ship,
-                                          int64_t target_h,
-                                          const ObjectRow& target,
-                                          const Vec3& offset,
-                                          const PartPose** pose) {
-    // Which (target, offset) the slot was resolved for: C == per axis (the
-    // box rule sees -0.0 and +0.0 alike; a NaN never matches).
-    const Vec3& k = ship.manual_slot_offset;
-    if (ship.manual_slot_target != target_h || !(offset[0] == k[0]) ||
-        !(offset[1] == k[1]) || !(offset[2] == k[2]))
-        return std::nullopt;
-    if (!target.has_posed_parts) return SlotState::none;
-    if (ship.manual_slot_gen != m.part_gen()) return SlotState::stale;
-    if (ship.manual_slot < 0) return SlotState::none;
-    const auto i = static_cast<size_t>(ship.manual_slot);
-    if (i >= target.part_poses.size()) return SlotState::stale;
-    const PartPose& p = target.part_poses[i];
     if (p.identity || p.detached) return SlotState::none;
     *pose = &p;
     return SlotState::ok;

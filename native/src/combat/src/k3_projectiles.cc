@@ -293,7 +293,6 @@ K3Record Walker::guide() {
     switch (g.status) {
         case GuideResult::Status::done:
             if (g.posed_steer) ++c_.posed_steers;
-            if (g.baked_steer) ++c_.baked_steers;
             if (g.attributed) {
                 // _steer_point's `_mount_key = (target, x, y, z, mount)`,
                 // logged for DONE (round trips, Task 4).

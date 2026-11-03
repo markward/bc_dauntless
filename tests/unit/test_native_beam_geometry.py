@@ -440,11 +440,13 @@ def test_posed_lock_ship_throws(world):
         got_p, got_sub = _h.combat_test_phaser_aim_point(
             _slot(w.galaxy), _slot(w.warbird), False)
         assert _hx(got_p) == _hx(want_p) and got_sub == -1
-        # Manual Aim on a posed target is Python's.
+        # Manual Aim on a posed target: a pick no mount claims is a plain
+        # body point, answered natively (fire control native only, M5).
         w.galaxy.set_manual_target_offset(TGPoint3(1.0, 2.0, 3.0))
-        with pytest.raises(ValueError):
-            _h.combat_test_phaser_aim_point(
-                _slot(w.galaxy), _slot(w.warbird), False)
+        want_p, _ = hl._phaser_aim_point(w.galaxy, w.warbird)
+        got_p, got_sub = _h.combat_test_phaser_aim_point(
+            _slot(w.galaxy), _slot(w.warbird), False)
+        assert _hx(got_p) == _hx(want_p) and got_sub == -1
     finally:
         articulation.force_pose(w.warbird, None)
 

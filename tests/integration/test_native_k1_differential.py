@@ -296,12 +296,8 @@ class _Scene:
 
     def torp_row(self, t):
         g = lambda name: getattr(t, name, None)  # noqa: E731
-        baked = g("_baked_offset")
         return (self.label(t), _vec(t.GetTranslate()), _vec(t._velocity),
                 self.label(g("_target_ship")), _vec(g("_target_offset")),
-                None if baked is None else (self.label(baked[0]),
-                                            _vec(baked[1:4]),
-                                            _vec(baked[4])),
                 _t(g("_damage")), _t(g("_damage_radius_factor")),
                 _t(g("_ttl")), _t(g("_age")), _t(g("_guidance_lifetime")),
                 _t(g("_max_angular_accel")), self.label(t._source_ship),
@@ -968,13 +964,13 @@ def test_rigged_bop_at_red_runs_native(monkeypatch):
         assert articulation.state_for(bop) == "red"
 
     def posed(counts):
-        # Every posed fallback but the Fire ASKs at a random op-stream
-        # offset on the posed BoP that no mount claims (no_mount: Python's
-        # box rule, by design -- ruling C4).
+        # Every posed fallback. A random op-stream offset on the posed BoP
+        # that no mount claims is a plain body point, decided natively
+        # (fire control native only, M5).
         return tuple(counts["k1_python_reasons"][session][why]
                      for session in ("pump", "system")
                      for why in ("posed_ship", "posed_target", "part_stale",
-                                 "mount_unknown", "no_mount")) + tuple(
+                                 "mount_unknown")) + tuple(
             counts["k1_fire_ask_reasons"][why]
             for why in ("part_stale", "mount_unknown"))
 
@@ -1032,10 +1028,10 @@ def test_rigged_bop_at_red_runs_native(monkeypatch):
     assert any(n.startswith("Enemy-4/") for n in nat.walked_names), \
         nat.walked_names
     print("k1 rigged BoP differential: posed walks before %d home %d end "
-          "%d; no_mount fire ASKs %d"
+          "%d; posed target aims %d"
           % (before["k1_posed"]["walks"], home["k1_posed"]["walks"],
              nat.counts["k1_posed"]["walks"],
-             nat.counts["k1_fire_ask_reasons"]["no_mount"]))
+             nat.counts["k1_posed"]["target_aims"]))
 
 
 # ── Ruling P3: the real AI's own StartFiring cadence, through GameLoop.tick ─

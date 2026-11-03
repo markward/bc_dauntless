@@ -84,7 +84,7 @@ from engine.core.loop import TICK_DELTA
 from tests.helpers import k3_fight, posed_fight
 from tests.integration import test_native_k1_differential as k1d
 
-SCHEMA = 2     # the file format; bump it on any change to it or to the rows
+SCHEMA = 3     # the file format; bump it on any change to it or to the rows
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "golden_fights"
 UPDATE_ENV = "UPDATE_COMBAT_GOLDEN"
 ARMS = {"python": k1d.OFF, "native": k1d.ON}
@@ -106,7 +106,7 @@ FIELDS = {
                "asleep_not_at_rest"),
     "ship": ("name", "IsDead", "hull_condition", "shields"),
     "torpedo": ("label", "translate", "_velocity", "_target_ship",
-                "_target_offset", "_baked_offset", "_damage",
+                "_target_offset", "_damage",
                 "_damage_radius_factor", "_ttl", "_age",
                 "_guidance_lifetime", "_max_angular_accel", "_source_ship",
                 "in_set", "_is_disruptor"),
@@ -830,6 +830,24 @@ def _describe(t, at, want_row):
     return ", ".join(words)
 
 
+def _drop_baked_offset(ticks):
+    """Schema 2 -> 3: torpedo rows lost their `_baked_offset` field (fire
+    control native only, M5: a picked spot is a plain body point, there is
+    no launch-time bake). It sat after `_target_offset`, row index 6; every
+    other field of the recorded row is compared as it was recorded."""
+    out = []
+    for r in ticks:
+        state = [row[:6] + row[7:] if row and row[0] == "torpedo" else row
+                 for row in r[1]]
+        out.append([r[0], state] + r[2:])
+    return out
+
+
+#: Readers of older schemas: each maps a file's decoded ticks to this one's.
+#: The stored digests stay those of the rows as recorded.
+_UPGRADES = {2: _drop_baked_offset}
+
+
 def check(name, rows):
     """Compare `rows` (run_scene's) with this platform's golden of `name`;
     fail naming the first differing tick and field. No golden for this
@@ -841,15 +859,18 @@ def check(name, rows):
                     % (name, sys.platform, p, UPDATE_ENV))
     data = _load(name)
     h = data["header"]
-    assert h["schema"] == SCHEMA, ("golden schema", h, SCHEMA)
-    want = _decode(data["ticks"])
+    assert h["schema"] == SCHEMA or h["schema"] in _UPGRADES, (
+        "golden schema", h, SCHEMA)
+    stored = _decode(data["ticks"])
+    want = (stored if h["schema"] == SCHEMA
+            else _UPGRADES[h["schema"]](stored))
     got = [list(r) for r in _norm([list(r) for r in rows])]
     for t, (a, b) in enumerate(zip(want, got)):
         # The rows themselves are compared (a digest alone would pass a
         # perturbed row), and the stored digest must still be its row's.
         d = _first_difference(a, b)
         if d is None:
-            if data["digests"][t] != _digest(b):
+            if data["digests"][t] != _digest(stored[t]):
                 raise AssertionError("%s tick %d: the golden's digest does "
                                      "not match its own row" % (name, t))
             continue

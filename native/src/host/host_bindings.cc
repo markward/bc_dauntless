@@ -4355,7 +4355,6 @@ void k1_append_spawn(const dauntless::combat::K1Entry& e) {
         s.velocity[0], s.velocity[1], s.velocity[2],
         s.has_offset ? 1.0 : 0.0,
         s.offset[0], s.offset[1], s.offset[2],
-        s.baked[0], s.baked[1], s.baked[2],
         s.drf_override,
         s.damage_scale,
         fired_at,
@@ -12530,17 +12529,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("handle"), py::arg("order"),
               "A ship's subsystems in combat._iter_subsystems order "
               "(-2 for one the mirror cannot name).");
-        m.def("combat_set_manual_slot",
-              [](std::int64_t h, std::int64_t target,
-                 const std::array<double, 3>& offset, std::int32_t slot,
-                 std::uint64_t gen) {
-                  cb::mirror().set_manual_slot(h, target, offset, slot, gen);
-              },
-              py::arg("handle"), py::arg("target"), py::arg("offset"),
-              py::arg("slot"), py::arg("gen"),
-              "A ship's Manual Aim slot (posed parts, Task 4b): the part of "
-              "`target`'s pose table its authored=False `offset` sits on "
-              "(-1 none), at part-map generation `gen`; target -1: no slot.");
         m.def("combat_set_part_gen",
               [](std::uint64_t gen) { cb::mirror().set_part_gen(gen); },
               py::arg("gen"));
@@ -12648,12 +12636,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                      ? x
                                      : cb::kRefUnrepresentable);
                 d["mount_order"] = order;
-                d["manual_slot"] = py::make_tuple(
-                    row.manual_slot_target,
-                    py::make_tuple(row.manual_slot_offset[0],
-                                   row.manual_slot_offset[1],
-                                   row.manual_slot_offset[2]),
-                    row.manual_slot, row.manual_slot_gen);
             } else if (kind == cb::Kind::Subsystem) {
                 const cb::SubsystemRow& row = *mi.subsystem(h);
                 d["part_slot"] = row.part_slot;
@@ -12755,12 +12737,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       cb::mirror().set_torpedo_mount(h, attributed, sub,
                                                      {x, y, z});
                   });
-            m.def("combat_torp_set_baked",
-                  [](std::int64_t h, bool attributed, double kx, double ky,
-                     double kz, double bx, double by, double bz) {
-                      cb::mirror().torpedoes().set_baked(
-                          h, attributed, {kx, ky, kz}, {bx, by, bz});
-                  });
             m.def("combat_torp_set_unrepresentable",
                   [tfld](std::int64_t h, int f) {
                       cb::mirror().torpedoes().set_unrepresentable(h, tfld(f));
@@ -12795,9 +12771,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 d["mount_sub"] = mi.torpedo_ref(r, cb::TorpField::_mount_key);
                 d["mount_attributed"] = r.mount_attributed ? 1 : 0;
                 d["mount_offset"] = vec(r.mount_offset);
-                d["baked_attributed"] = r.baked_attributed ? 1 : 0;
-                d["baked_key"] = vec(r.baked_key);
-                d["baked"] = vec(r.baked);
                 py::list bad;
                 for (int i = 0; i < static_cast<int>(cb::TorpField::kCount);
                      ++i)
@@ -12953,19 +12926,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("emitter"), py::arg("ship"));
         m.def("combat_test_target_offset_world",
               [vec](std::int64_t target, const std::array<double, 3>& offset,
-                    std::optional<std::int64_t> mount,
-                    std::optional<std::int64_t> manual_ship) {
+                    std::optional<std::int64_t> mount) {
                   return vec(cb::target_offset_world(
                       cb::mirror(), target, offset,
-                      mount ? *mount : cb::kNoMount,
-                      manual_ship ? *manual_ship : -1));
+                      mount ? *mount : cb::kNoMount));
               },
               py::arg("target"), py::arg("offset"),
               py::arg("mount") = py::none(),
-              py::arg("manual_ship") = py::none(),
               "subsystems.target_offset_world with an explicit mount_sub "
-              "(None = authored=False; then `manual_ship`'s Manual Aim slot "
-              "answers a posed target).");
+              "(None = no mount: a plain body point).");
         m.def("combat_test_authored_mount",
               [](std::int64_t target, const std::array<double, 3>& offset) {
                   const cb::ObjectRow* row = cb::mirror().object(target);
@@ -13138,21 +13107,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "seg_len and aim_unit are meaningful only when not expired.");
         m.def("combat_test_steer_point",
               [vec](std::int64_t target, py::object offset,
-                    std::int64_t mount_sub, const std::array<double, 3>& off,
-                    py::object baked) {
-                  std::optional<cb::Vec3> o, b;
+                    std::int64_t mount_sub, const std::array<double, 3>& off) {
+                  std::optional<cb::Vec3> o;
                   if (!offset.is_none())
                       o = offset.cast<std::array<double, 3>>();
-                  if (!baked.is_none())
-                      b = baked.cast<std::array<double, 3>>();
                   return vec(cb::steer_point_native(cb::mirror(), target, o,
-                                                    mount_sub, off,
-                                                    b ? &*b : nullptr));
+                                                    mount_sub, off));
               },
               py::arg("target"), py::arg("offset"), py::arg("mount_sub"),
-              py::arg("off"), py::arg("baked") = py::none(),
-              "offset: a 3-tuple or None (no target offset); baked: the "
-              "torpedo's `_baked_offset` point, or None.");
+              py::arg("off"),
+              "offset: a 3-tuple or None (no target offset).");
         auto guide_result = [vec](const cb::GuideResult& r) -> py::tuple {
             using St = cb::GuideResult::Status;
             static const char* const kField[] = {
@@ -14170,7 +14134,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
             py::dict posed;
             posed["banks"] = c.posed_banks;
             posed["lock_aims"] = c.posed_lock_aims;
-            posed["manual_aims"] = c.posed_manual_aims;
             d["k2_posed"] = posed;
             // Records K2 no longer returns (round trips): resting contacts
             // queued for the drain, offline stops logged as writes.
@@ -14926,7 +14889,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k3_guide_reasons"] = guide;
             d["k3_steer_reasons"] = steer;
             d["k3_posed_steers"] = c.posed_steers;
-            d["k3_baked_steers"] = c.baked_steers;
             d["k3_native_attributions"] = c.native_attributions;
             // THE HITS: hits applied natively, and those the kernel handed
             // back, by why (the driver adds its own).

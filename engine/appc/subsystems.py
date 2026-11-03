@@ -95,48 +95,60 @@ _RESOLVE = object()
 
 def target_offset_world(target, offset, mount_sub=_RESOLVE):
     """World point for a target-local aim `offset` on `target` -- 0x005852A0:
-    target world pos + R·(offset·scale), with the offset first carried by the
-    articulated part it sits on.
+    target world pos + R·(offset·scale), a subsystem mount's offset first
+    carried by the articulated part the mount sits on.
 
-    `offset` is REST frame, target-local, unscaled: what a subsystem lock
-    hands over (`GetPositionTG()`, and the SDK's own
-    `SetTargetOffset(pSubsystem.GetPosition())`). Manual Aim picks off the
-    POSED hull and pulls its pick back to rest before storing it
-    (`part_severance.rest_point_for_live_point`), so every offset arrives in
-    the one frame. Without the articulation step a torpedo locked on a raised
-    Bird of Prey wingtip flew at where the tip would be wings-down.
+    `offset` is target-local and unscaled: what a subsystem lock hands over
+    (`GetPositionTG()`, and the SDK's own
+    `SetTargetOffset(pSubsystem.GetPosition())`), or a Manual Aim pick (the
+    body point the ray hit on the posed hull, stored as it is).
+
+    Aim points do not follow articulated parts (fire control native only,
+    M5; Mark: "we dont need torpedoes to track articulated parts moving mid
+    flight"). Only an offset that IS a subsystem's authored mount -- bit for
+    bit its `GetPosition()` -- is posed, so a torpedo locked on a raised
+    Bird of Prey wingtip flies at where the tip is drawn. Anything else (a
+    pick, a stale pick, an NPC offset kept across a re-target, an offset
+    within `authored_mount_subsystem`'s 1e-5 of a mount but not on it: M8.5)
+    is a plain body-frame xyz, `body_point_world(target, offset)`.
 
     The ONE copy of this transform: torpedo/pulse tube aim
     (`weapon_subsystems._resolve_torpedo_aim_point`), in-flight steering
     (`projectiles._steer_point`) and Manual Aim phasers
-    (`host_loop._phaser_aim_point`) all call it.
+    (`host_loop._phaser_aim_point`) all call it. Its native twin is
+    `weapon_geometry.cc` target_offset_world: CHANGE BOTH.
 
     `mount_sub`: the caller's own `authored_mount_subsystem(target, offset)`
-    answer, when it has one -- in-flight steering asks every tick for an
-    offset that never changes, and the attribution scans every subsystem.
+    answer, when it has one (None: no mount) -- in-flight steering asks
+    every tick for an offset that never changes, and the attribution scans
+    every subsystem.
     """
-    from engine.appc.articulation import part_transform_point
-    from engine.appc import physical_parents
     from engine.appc.part_severance import authored_mount_subsystem
     point = (offset.x, offset.y, offset.z)
-    # A subsystem lock's offset is an AUTHORED mount: the shared mount rule,
-    # so the shot goes where the mount is drawn. Anything else (a Manual Aim
-    # pick, pulled back to rest by the box rule) keeps the box rule, so the
-    # round trip is exact and no per-tick pick scans the model.
     if mount_sub is _RESOLVE:
         mount_sub = authored_mount_subsystem(target, point)
+    if mount_sub is None or not _is_own_mount(mount_sub, point):
+        return body_point_world(target, point)
+    from engine.appc.articulation import part_transform_point
+    from engine.appc import physical_parents
     return body_point_world(target, part_transform_point(
-        target, point, authored=mount_sub is not None,
-        prop=(physical_parents.property_of(mount_sub)
-              if mount_sub is not None else None)))
+        target, point, prop=physical_parents.property_of(mount_sub)))
+
+
+def _is_own_mount(sub, point) -> bool:
+    """Is `point` `sub`'s own authored mount, `==` per axis (-0.0 matches
+    0.0, a NaN never matches)? M8.5: a point merely within 1e-5 of it is a
+    plain point."""
+    mount = sub.GetPosition()
+    return (mount.GetX() == point[0] and mount.GetY() == point[1]
+            and mount.GetZ() == point[2])
 
 
 def body_point_world(target, point):
     """World point for a body-frame `point` (x, y, z) already carried by its
     part: target world pos + R·(point·scale), 0x005852A0's tail. No part
-    pose is applied here -- `target_offset_world` posed it first; a torpedo
-    aimed at a picked spot hands in the point it baked at launch
-    (`projectiles._steer_point`)."""
+    pose is applied here -- `target_offset_world` posed a mount first; any
+    other offset is this point as it is."""
     pos = target.GetWorldLocation()
     px, py, pz = point
     scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0

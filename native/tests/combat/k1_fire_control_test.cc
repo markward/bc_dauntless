@@ -261,10 +261,12 @@ std::vector<std::string> fx(const World& w, const K1Record& r) {
     return out;
 }
 
-// A posed ShipClass target whose one mount is not where `bank`'s stored
-// offset points: a tube's Fire at it is Python's (ASK fire, no_mount) --
-// the Python point the walk tests below pause at, now that a beam's edge
-// and a FIRE_FAILED are no longer records.
+// A posed ShipClass target whose mount order opens with an entry the
+// mirror cannot name, so it cannot tell which mount `bank`'s stored offset
+// is: a tube's Fire at it is Python's (ASK fire, mount_unknown) -- the
+// Python point the walk tests below pause at, now that a beam's edge and a
+// FIRE_FAILED are no longer records (and an offset no mount claims is a
+// plain point, fire control native only M5).
 PartPose shift_pose();
 int64_t posed_target(World& w, const std::string& name, double x, double y,
                      double z, int64_t bank) {
@@ -273,7 +275,7 @@ int64_t posed_target(World& w, const std::string& name, double x, double y,
     const int64_t mnt = w.m.register_row(Kind::Subsystem);
     w.m.set_ref(mnt, Field::_parent_ship, t);
     w.m.set_fv(mnt, Field::_position, {0.5, 0.0, 0.0});
-    w.m.set_mount_order(t, {mnt});
+    w.m.set_mount_order(t, {kRefUnrepresentable, mnt});
     w.m.set_i(t, Field::has_posed_parts, 1);
     w.m.set_part_poses(t, {shift_pose()});
     w.m.set_part_slot(mnt, 0, w.m.part_gen());
@@ -1353,8 +1355,7 @@ TEST(K1, FallbackReasonsAreCounted) {
     EXPECT_STREQ(k1_why_name(K1Why::PosedTarget), "posed_target");
     EXPECT_STREQ(k1_why_name(K1Why::PartStale), "part_stale");
     EXPECT_STREQ(k1_why_name(K1Why::MountUnknown), "mount_unknown");
-    EXPECT_STREQ(k1_why_name(K1Why::NoMount), "no_mount");
-    EXPECT_STREQ(k1_why_name(K1Why::OffsetOffMount), "offset_off_mount");
+    EXPECT_STREQ(k1_why_name(K1Why::StubOrUnplaced), "stub_or_unplaced");
     EXPECT_STREQ(k1_why_name(K1Why::InstancePatch), "instance_patch");
     // One pump over one phaser (or `kind`) system, set up to fall back.
     auto pump = [](int64_t kind, auto&& setup, K1Why want) {
@@ -1498,10 +1499,12 @@ TEST(K1, PosedShipWalksNatively) {
 
 TEST(K1, PosedTargetOffsetAimByReason) {
     // A tube aims at a posed target's offset (`_RESOLVE`): the first mount
-    // at the offset, its slot current -> FIRE, decided natively. The mirror
-    // cannot tell the mount (not a ShipClass), no mount claims the offset,
-    // or the slot is stale -> the Fire is Python's (ASK fire), counted by
-    // why. The system is never handed back whole (no posed_target).
+    // at the offset, its slot current -> FIRE, decided natively; so is an
+    // offset no mount claims, or one within 1e-5 of a mount but not on it
+    // (a plain body point: fire control native only, M5, M8.5). The mirror
+    // cannot tell the mount (not a ShipClass) or the slot is stale -> the
+    // Fire is Python's (ASK fire), counted by why. The system is never
+    // handed back whole (no posed_target).
     enum Case { kNative, kUnknown, kNoMountHere, kStale, kOffMount };
     for (int c = kNative; c <= kOffMount; ++c) {
         World w;
@@ -1532,15 +1535,13 @@ TEST(K1, PosedTargetOffsetAimByReason) {
         auto ask_why = [&](K1Why why) {
             return n.fire_ask_why[static_cast<size_t>(why)];
         };
-        if (c == kNative) {
+        if (c == kNative || c == kNoMountHere || c == kOffMount) {
             EXPECT_EQ(w.brief(r), "FIRE b0@t") << c;
             EXPECT_EQ(n.posed_target_aims, 1) << c;
         } else {
             EXPECT_EQ(w.brief(r), "ASK fire") << c;
-            const K1Why want = c == kUnknown       ? K1Why::MountUnknown
-                               : c == kNoMountHere ? K1Why::NoMount
-                               : c == kOffMount    ? K1Why::OffsetOffMount
-                                                   : K1Why::PartStale;
+            const K1Why want = c == kUnknown ? K1Why::MountUnknown
+                                             : K1Why::PartStale;
             EXPECT_EQ(ask_why(want), 1) << c;
             EXPECT_EQ(n.posed_target_aims, 0) << c;
         }
@@ -2260,7 +2261,6 @@ TEST(K1Launch, TubeLaunchIsLoggedWritesAndASpawnEntry) {
                                 dz / len * 19.0 + 3.0}));
     ASSERT_TRUE(s.has_offset);
     EXPECT_EQ(s.offset, (Vec3{0.25, -0.5, 0.125}));
-    EXPECT_EQ(s.baked, (Vec3{0.25, -0.5, 0.125}));  // an unposed target
     EXPECT_EQ(s.drf_override, 0.2);
     // A pulse's (Task 3): a tube's carries none.
     EXPECT_EQ(s.damage_scale, 1.0);
@@ -2346,37 +2346,26 @@ TEST(K1Launch, NoLoadedSlotWritesNoSlot) {
                                         "ammo._available=2"}));
 }
 
-TEST(K1Launch, PosedTargetBakesThroughTheManualAimSlot) {
-    // A posed target: the walk's offset is baked through the firing ship's
-    // Manual Aim slot for it (the box rule's part, resolved by Python). No
-    // slot for this target and offset: the launch is Python's (other).
-    for (bool slot : {true, false}) {
-        World w(false);
-        const int64_t t = w.ship("t", 10.0, 270.0, 30.0);
-        w.m.set_i(t, Field::is_ship_class, 1);
-        w.m.set_i(t, Field::has_posed_parts, 1);
-        w.m.set_part_poses(t, {shift_pose()});
-        const Launcher l = launcher(w, {t});
-        w.m.set_fv(l.sys, Field::_held_offset, {0.25, -0.5, 0.125});
-        if (slot)
-            w.m.set_manual_slot(l.ship, t, {0.25, -0.5, 0.125}, 0,
-                                w.m.part_gen());
-        w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
-        const K1Record r = w.k.next();
-        if (slot) {
-            EXPECT_EQ(w.brief(r), "DONE");
-            const K1Entry* e = spawn_of(r);
-            ASSERT_TRUE(e != nullptr && e->spawn);
-            EXPECT_EQ(e->spawn->offset, (Vec3{0.25, -0.5, 0.125}));
-            EXPECT_EQ(e->spawn->baked, (Vec3{0.25 + 0.25, -0.5, 0.125}));
-        } else {
-            EXPECT_EQ(w.brief(r), "FIRE tube@t");
-            EXPECT_EQ(launch_why(w, K1LaunchWhy::PosedOffset), 1u);
-            EXPECT_EQ(launch_why(w, K1LaunchWhy::Other), 0u);
-            EXPECT_TRUE(writes_on(w, r, "ammo").empty());
-            EXPECT_EQ(w.m.get_i(l.tube, Field::_num_ready), 1);
-        }
-    }
+TEST(K1Launch, PosedTargetLaunchCarriesTheOffsetAsIs) {
+    // A posed target: the walk's offset (no mount claims it) is launched as
+    // it is, with no bake (fire control native only, M5): the torpedo
+    // steers at it as a plain body point for its whole flight.
+    World w(false);
+    const int64_t t = w.ship("t", 10.0, 270.0, 30.0);
+    w.m.set_i(t, Field::is_ship_class, 1);
+    w.m.set_i(t, Field::has_posed_parts, 1);
+    w.m.set_part_poses(t, {shift_pose()});
+    const Launcher l = launcher(w, {t});
+    w.m.set_fv(l.sys, Field::_held_offset, {0.25, -0.5, 0.125});
+    w.k.begin_pump({l.ship}, kDt, 10.0, false, 0.0);
+    const K1Record r = w.k.next();
+    EXPECT_EQ(w.brief(r), "DONE");
+    const K1Entry* e = spawn_of(r);
+    ASSERT_TRUE(e != nullptr && e->spawn);
+    EXPECT_TRUE(e->spawn->has_offset);
+    EXPECT_EQ(e->spawn->offset, (Vec3{0.25, -0.5, 0.125}));
+    for (int i = 0; i < static_cast<int>(K1LaunchWhy::kCount); ++i)
+        EXPECT_EQ(launch_why(w, static_cast<K1LaunchWhy>(i)), 0u) << i;
 }
 
 TEST(K1Launch, LaunchesTheKernelCannotMakeAreFireRecords) {
@@ -2603,7 +2592,6 @@ TEST(K1PulseLaunch, CannonLaunchIsLoggedWritesAndASpawnEntry) {
                                 dir[2] / len * 50.0 + 3.0}));
     ASSERT_TRUE(s.has_offset);
     EXPECT_EQ(s.offset, (Vec3{0.25, -0.5, 0.125}));
-    EXPECT_EQ(s.baked, (Vec3{0.25, -0.5, 0.125}));  // an unposed target
     EXPECT_EQ(s.drf_override, 0.3);
     EXPECT_EQ(s.damage_scale, 1.0);
     EXPECT_EQ(s.fired_at, c.target);

@@ -130,13 +130,12 @@
 // type's launch not cached (Uncached: read when the type is loaded, so
 // only inside THE P6 WINDOW or for a GetLaunchSpeed that raises; Python's
 // launch then caches it), a function the launch stands in for patched
-// (Patched), a posed target's offset it cannot bake (PosedOffset),
-// anything else the mirror cannot say (Other: slot lists out of step with
-// MaxReady, an unnamed set). Whatever the module's Create does, it runs at the
-// delivery (rulings L1, L6: an impure script draws there). The Python of a
-// handed-back record, running inside the deferral, appends its own SPAWN
-// too (effect_queue E4; weapon_subsystems._defer_spawn), so every launch
-// in the scope spawns at the boundary in emission order. A dumb fire
+// (Patched), anything else the mirror cannot say (Other: slot lists out of
+// step with MaxReady, an unnamed set). Whatever the module's Create does, it
+// runs at the delivery (rulings L1, L6: an impure script draws there). The
+// Python of a handed-back record, running inside the deferral, appends its
+// own SPAWN too (effect_queue E4; weapon_subsystems._defer_spawn), so every
+// launch in the scope spawns at the boundary in emission order. A dumb fire
 // Python would refuse (the ship arriving, CanFire false) is decided
 // natively too.
 //
@@ -156,9 +155,8 @@
 // module is not the one sys.modules holds -- PulseWeapon._fire_decide
 // imports its script at every shot -- the bindings set
 // K1_PULSE_MODULE_STALE and every cannon launch is a FIRE record
-// (Unresolved), as is one with a launch function patched (Patched), a
-// posed target's offset it cannot bake (PosedOffset) or a row it cannot
-// read (Other).
+// (Unresolved), as is one with a launch function patched (Patched) or a
+// row it cannot read (Other).
 //
 // WHAT A LAUNCH OBEYS (ruling L8). The instance-level patch scan (THE WALK
 // START's verdict sets, native_combat._K1_LEAF_PATCHES) covers the ENTRY
@@ -258,10 +256,10 @@
 //                                                                     -> bool
 //                   whenever the Fire's decision cannot be made natively,
 //                   counted by why in Counts::fire_ask_why: part_stale (a
-//                   slot that went stale mid-walk), mount_unknown / no_mount
-//                   / offset_off_mount (a posed target's offset), other
-//                   otherwise. The pre-scan never hands a system back for
-//                   those three: they are counted here only.
+//                   slot that went stale mid-walk), mount_unknown (a posed
+//                   target's offset), other otherwise. The pre-scan never
+//                   hands a system back for those two: they are counted
+//                   here only.
 //        retry      (sys, bank)         try_fire_weapon's retry loop over
 //                                       list(sys._target_list)        -> bool
 //        is_dead    (obj)               hasattr(obj, "IsDead") and
@@ -330,9 +328,9 @@ struct K1Spawn {
     bool has_velocity = false;
     Vec3 velocity{0, 0, 0};
     // SetTargetOffset(the launcher's offset): with a target and a TGPoint3
-    // offset, the offset and its point as posed now (_bake_offset).
+    // offset, the offset (steered at as it is: no bake, M5).
     bool has_offset = false;
-    Vec3 offset{0, 0, 0}, baked{0, 0, 0};
+    Vec3 offset{0, 0, 0};
     double drf_override = 0.0;  // the launcher's GetDamageRadiusFactor()
     // A cannon's (a tube's are 1.0 and -1): the power setting's
     // GetDamageScale() at fire time, applied after register as Python
@@ -361,9 +359,6 @@ enum class K1LaunchWhy : int32_t {
                      // (native_combat._K1_LAUNCH_FUNCS: a test's spy, a
                      // tool), K1_LAUNCH_PATCHED, re-checked by the bindings
                      // before every next() like the walk check
-    PosedOffset,     // a posed target's offset the kernel cannot bake: no
-                     // Manual Aim slot holds it (an AI's held offset: the
-                     // box rule is Python's), or its slot is stale
     Other,           // the mirror is inconsistent: slot lists out of step
                      // with MaxReady (_ensure_slots would rebuild them), an
                      // unnamed set, a row the plan cannot read
@@ -381,11 +376,6 @@ enum class K1Why : int32_t {
     PosedTarget,      // for dashboards one release (spec §4.5)
     PartStale,        // a part slot the walk reads is not current
     MountUnknown,     // a posed target's offset mount the mirror can't tell
-    NoMount,          // a posed target's offset names no authored mount
-                      // and the firing ship's Manual Aim slot does not hold
-                      // it (Python's box rule)
-    OffsetOffMount,   // a posed target's offset is within 1e-5 of a mount
-                      // but not its own point
     StubOrUnplaced,   // no real IsDead, or no valid transform
     PulseShipTarget,  // pulse with no live list entry: ship.GetTarget()
     PulseModule,      // pulse module unresolved or power setting out of range
@@ -518,8 +508,7 @@ public:
         std::array<int64_t, static_cast<size_t>(K1Why::kCount)> pump_why{},
             system_why{};
         // ASK fire hand-backs (a Fire decision the mirror could not make) by
-        // why: PartStale, MountUnknown, NoMount, OffsetOffMount; Other for
-        // the rest.
+        // why: PartStale, MountUnknown; Other for the rest.
         std::array<int64_t, static_cast<size_t>(K1Why::kCount)> fire_ask_why{};
         // Posed parts walked natively: systems whose ship is posed, and Fire
         // decisions aimed at a posed target's offset.

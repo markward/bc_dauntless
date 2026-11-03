@@ -88,7 +88,7 @@ from tests.helpers.k3_fight import (K3Tally, Recorder, aim_velocity,
                                     posed_branches, posed_fallbacks,
                                     check_native_attributions,
                                     check_weapon_state_paths,
-                                    posed_no_mount, presented, round_trips,
+                                    presented, round_trips,
                                     seed_every_rng, weapon_rows, xyz)
 
 TICKS = 660
@@ -870,14 +870,14 @@ def both(monkeypatch, ticks_per_frame, seed, r=None, ticks=TICKS,
 def report(label, ticks_per_frame, elapsed, ref, nat):
     c = nat.counts
     print("\n%s (tpf=%d): %.1f s for 2 x %d ticks\n  posed branches %r\n"
-          "  posed fallbacks %r\n  box-rule no_mount %r\n  scene %r\n"
+          "  posed fallbacks %r\n  scene %r\n"
           "  sever %r\n  k1 python reasons %r\n  k2 python reasons %r\n"
           "  k3 steer reasons %r\n  k3 asks %r\n  kernel records %r\n"
           "  round trips %r\n"
           "  hits %d, presented %d, events %d, presentation calls %d"
           % (label, ticks_per_frame, elapsed, TICKS, posed_branches(c),
              {k: v for k, v in posed_fallbacks(c).items() if v},
-             posed_no_mount(c), nat.stats, nat.sever,
+             nat.stats, nat.sever,
              {s: {k: v for k, v in r.items() if v}
               for s, r in c["k1_python_reasons"].items()},
              {k: v for k, v in c["k2_python_reasons"].items() if v},
@@ -897,9 +897,7 @@ def check_posed(ref, nat):
     # Every posed branch ran in the kernel.
     branches = posed_branches(c)
     for key in ("k1_posed/walks", "k1_posed/target_aims",
-                "k2_posed/banks", "k2_posed/lock_aims",
-                "k2_posed/manual_aims", "k3_posed_steers",
-                "k3_baked_steers"):
+                "k2_posed/banks", "k2_posed/lock_aims", "k3_posed_steers"):
         assert branches[key] > 0, (key, branches)
     # No whole-step or whole-system hand-back either.
     assert c["k1_python_systems"] == 0, c

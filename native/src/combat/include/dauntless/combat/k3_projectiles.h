@@ -115,12 +115,10 @@
 //         offset and the mirror cannot attribute it (kMountUnknown: a
 //         mount-order entry it cannot name before a match, or a target
 //         that is not a ShipClass; otherwise the kernel attributes it,
-//         DONE's `mount`); or no mount and its `_baked_offset` is not for them
-//         (unbaked); or the target is posed and its attributed mount's
-//         part slot cannot carry the offset (the offset off the mount, a
-//         slot that is not current): counted by why (SteerWhy,
-//         projectile_geometry.h). Python's _steer_point writes `_mount_key`
-//         and, no mount, `_baked_offset` (both pushed into the row).
+//         DONE's `mount`); or the target is posed and its attributed
+//         mount's row is gone or its part slot is not current: counted by
+//         why (SteerWhy, projectile_geometry.h). Python's _steer_point
+//         writes `_mount_key` (pushed into the row).
 //         `off` is frames.offset_between(torpedo set, target set) as a
 //         tuple.
 //     guide        (torp)               -> projectiles._guide(t, dt); None
@@ -313,12 +311,10 @@ public:
         // "source_not_in_scan").
         std::map<std::string, int64_t> guide_why;
         // steer_point ASKs by reason (SteerWhy, projectile_geometry.h), and
-        // the steer points of a POSED target's mount computed natively.
+        // the steer points of a POSED target's offset (a mount or a picked
+        // spot) computed natively.
         std::array<int64_t, static_cast<size_t>(SteerWhy::kCount)> steer_why{};
         int64_t posed_steers = 0;
-        // ...of them, a picked spot steered at its launch-time point
-        // (`_baked_offset`, posed parts Task 7).
-        int64_t baked_steers = 0;
         // `_mount_key` attributions the kernel made itself (round trips,
         // Task 4): each one a steer_point ASK (unattributed) not emitted.
         int64_t native_attributions = 0;

@@ -15,7 +15,7 @@ constexpr const char* kNames[] = {
     "_age", "_ttl", "_guidance_lifetime", "_guidance_initial",
     "_max_angular_accel", "_velocity", "_target_offset",
     "_last_seen_target_pos", "_last_target_vel", "_target_ship",
-    "_source_ship", "_containing_set", "_mount_key", "_baked_offset",
+    "_source_ship", "_containing_set", "_mount_key",
     "_damage", "_damage_radius_factor",
 };
 static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
@@ -161,15 +161,6 @@ void TorpedoTable::set_mount(int64_t h, bool attributed, int64_t sub,
     r.mount_sub = sub;
     r.mount_offset = off;
     r.unrepresentable &= ~bit(TorpField::_mount_key);
-}
-
-void TorpedoTable::set_baked(int64_t h, bool attributed, const Vec3& key,
-                             const Vec3& baked) {
-    TorpedoRow& r = checked(h);
-    r.baked_attributed = attributed;
-    r.baked_key = key;
-    r.baked = baked;
-    r.unrepresentable &= ~bit(TorpField::_baked_offset);
 }
 
 void TorpedoTable::set_unrepresentable(int64_t h, TorpField f) {

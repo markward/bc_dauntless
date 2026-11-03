@@ -53,8 +53,8 @@ enum class EffectKind : int {
     WATCH,               // (watcher | weapon, old, new)  crossed checks
     SPAWN,               // (launcher, kind, ship, set, module, target,
                          //  position xyz, has velocity, velocity xyz,
-                         //  has offset, offset xyz, baked xyz, drf,
-                         //  damage scale, fired at)
+                         //  has offset, offset xyz, drf, damage
+                         //  scale, fired at)
                          // a launch's spawn (effect_queue._spawn; spec
                          // 2026-11-02-combat-launch-deferral §4.1)
     // The damage kinds (spec 2026-11-02-native-damage-design.md M2, §4.3):

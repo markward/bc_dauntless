@@ -166,11 +166,11 @@ def test_lights_use_the_same_rule(native):
 
 
 # ── Target offsets: only AUTHORED offsets use the mount rule ─────────────────
-# A Manual Aim offset is a per-tick cursor pick, pulled back to rest with the
-# BOX rule (`rest_point_for_live_point`). Pushing it forward with the MESH rule
-# broke the round trip (the aim landed off the cursor on a folded nacelle) and
-# scanned the model + grew `_mount_parts` every tick. A subsystem lock's
-# offset IS an authored mount, so it keeps the shared rule.
+# A Manual Aim offset is a per-tick cursor pick, stored as the posed body
+# point it hit and aimed at as that plain point (fire control native only,
+# M5, R5): no part rule at all, so it never scans the model or grows
+# `_mount_parts`. A subsystem lock's offset IS an authored mount, so it keeps
+# the shared rule.
 
 class _Target(_Ship):
     def GetWorldLocation(self):
@@ -195,14 +195,13 @@ def _world(target, point):
     return (w.x, w.y, w.z)
 
 
-def test_a_manual_pick_on_a_folded_nacelle_round_trips_to_the_cursor(native):
+def test_a_manual_pick_on_a_folded_nacelle_aims_at_the_cursor(native):
     target = _Target([_Sub("Port Warp", PORT_WARP)])
     articulation.force_part_pose(target, "wing left", _warp_pose())
-    # Drawn nacelle surface, at the warp pose: the rest point is inside both
-    # the hull and the nacelle boxes, the mesh says nacelle.
+    # Drawn nacelle surface, at the warp pose: stored as it is, aimed at as
+    # it is -- exactly the cursor's point.
     pick = part_pose.apply(_warp_pose(), (-0.6, -1.0, -0.15))
-    rest = part_severance.rest_point_for_live_point(target, pick)
-    assert _world(target, rest) == pytest.approx(pick)
+    assert _world(target, pick) == tuple(pick)
 
 
 def test_manual_offsets_never_scan_the_model_or_grow_the_cache(native):

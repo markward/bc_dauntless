@@ -18,8 +18,9 @@
 
 namespace dauntless::combat {
 
-// Python None for a target offset's mount subsystem: target_offset_world's
-// `authored=False` (a Manual Aim pick, an offset no mount claims).
+// Python None for a target offset's mount subsystem: an offset no mount
+// claims (a Manual Aim pick), aimed at as a plain body point (fire control
+// native only, M5).
 constexpr int64_t kNoMount = -1;
 
 // The posed-part fallbacks a kernel counts by reason (native-combat posed
@@ -30,25 +31,15 @@ constexpr int64_t kNoMount = -1;
 //                   behind the Mirror's part_gen, past the pose table, or
 //                   asked on another ship): Python must answer.
 //   MountUnknown -- authored_mount_subsystem cannot tell (kMountUnknown).
-//   NoMount      -- a POSED target's offset names no authored mount: Python
-//                   attributes it by the box rule (part_for_point).
-//   OffsetOffMount -- a POSED target's offset matched a mount within 1e-5
-//                   but is not its own point: Python attributes the part
-//                   from the offset, the slot was resolved from the mount.
+// An offset no mount claims, or one within 1e-5 of a mount but not its own
+// point, is no fallback: a plain body point (fire control native only, M5,
+// M8.5).
 struct PartStale : std::invalid_argument {
     explicit PartStale(const std::string& what)
         : std::invalid_argument(what) {}
 };
 struct MountUnknown : std::invalid_argument {
     explicit MountUnknown(const std::string& what)
-        : std::invalid_argument(what) {}
-};
-struct NoMount : std::invalid_argument {
-    explicit NoMount(const std::string& what)
-        : std::invalid_argument(what) {}
-};
-struct OffsetOffMount : std::invalid_argument {
-    explicit OffsetOffMount(const std::string& what)
         : std::invalid_argument(what) {}
 };
 
@@ -70,18 +61,6 @@ enum class SlotState { none, ok, stale };
 // resolved against). `*pose` is set only for ok.
 SlotState slot_pose(const Mirror& m, const ObjectRow& ship,
                     const SubsystemRow& sub, const PartPose** pose);
-
-// The firing `ship`'s Manual Aim slot (Task 4b) for an authored=False
-// `offset` on `target` (handle `target_h`): nullopt when the ship holds no
-// slot for this target and offset (Python's box rule must answer); else as
-// slot_pose -- none (unposed target, no part, identity, detached), stale
-// (stamp behind the Mirror's part_gen, or past the table), ok (`*pose`).
-std::optional<SlotState> manual_slot_pose(const Mirror& m,
-                                          const ObjectRow& ship,
-                                          int64_t target_h,
-                                          const ObjectRow& target,
-                                          const Vec3& offset,
-                                          const PartPose** pose);
 
 // The subsystem's own mount `_position` carried by its part (P1/P2), in the
 // ship's body frame, unscaled. `*out` is set for none (the `_position`

@@ -226,27 +226,6 @@ def part_for_live_point(ship, point, iid=None):
     return None
 
 
-def rest_point_for_live_point(ship, point, iid=None):
-    """Where a POSED body-frame point (ship units) sits in the REST pose:
-    the inverse of `articulation.part_transform_point`.
-
-    Manual Aim picks off the posed hull, but a target offset is stored REST
-    frame (see `subsystems.target_offset_world`), so its pick is pulled back
-    through this. Identity for a point on no part, a part at its identity pose, and a
-    severed part -- mirroring `part_transform_point`, so the round trip is
-    exact in every case it can arise.
-    """
-    name = part_for_live_point(ship, point, iid)
-    if name is None or is_detached(ship, name):
-        return point
-    if name not in articulation.posed_part_names(ship):
-        return point
-    pose = articulation.pose_for_part(ship, name)
-    if part_pose.is_identity(pose):
-        return point
-    return part_pose.inverse_apply(pose, point)
-
-
 def _totals(ship) -> dict:
     """The ship's per-part damage totals, created on first use."""
     t = getattr(ship, "_part_damage", None)
@@ -527,9 +506,10 @@ def authored_mount_subsystem(ship, point, eps=1e-5):
 
     How `subsystems.target_offset_world` tells a subsystem LOCK's offset (the
     SDK's `SetTargetOffset(pSubsystem.GetPosition())`, the AI's
-    `GetPositionTG()` -- an authored point, attributed by `part_for_mount`)
-    from an arbitrary one (a Manual Aim pick, a random point on the model --
-    box rule, exactly as before the mount rule existed)."""
+    `GetPositionTG()` -- an authored point, posed with its part) from an
+    arbitrary one (a Manual Aim pick, a random point on the model -- a
+    plain body point). Aiming then poses only a point that is bit for bit
+    the mount's own (M8.5)."""
     for _sub, mount in _mounted_subsystems(ship):
         if (abs(mount[0] - point[0]) <= eps and abs(mount[1] - point[1]) <= eps
                 and abs(mount[2] - point[2]) <= eps):

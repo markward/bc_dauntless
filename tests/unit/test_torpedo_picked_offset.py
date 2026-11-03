@@ -1,19 +1,18 @@
-"""A torpedo aimed at a PICKED spot keeps the launch-time point; a subsystem
-lock keeps following its part (Mark's ruling, 2026-11-01; posed-parts spec
-§10).
+"""A torpedo aimed at a PICKED spot steers at that body-frame point for its
+whole flight; a subsystem lock keeps following its part (fire control
+native only, M5 and R5: "we dont need torpedoes to track articulated parts
+moving mid flight").
 
 Articulation is a Dauntless feature, not BC, so this is our design. A
 torpedo whose target offset no subsystem mount claims (a Manual Aim pick, an
-AI's random hull offset) fixes its aim point when it is LAUNCHED: the offset
-as posed at that moment (`articulation.part_transform_point(target, offset,
-authored=False)`, the box rule), kept on the torpedo as a body-frame point.
-In flight it is steered at `pos + R·(scale·baked)` -- following the ship's
-position, rotation and scale -- but never re-posed: the wing moving after
-launch does not drag the shot with it. An offset that IS a mount (a
-subsystem lock) is not baked: it follows the subsystem's part every tick.
+AI's random hull offset) is steered at `pos + R·(scale·offset)` --
+following the ship's position, rotation and scale -- and never posed: there
+is no launch-time bake, and the wing moving before or after launch does not
+move the shot's aim. An offset that IS a mount (a subsystem lock) follows
+the subsystem's part every tick.
 
-An unposed target's bake is the offset itself, so its steer point is
-byte-identical to the old per-tick transform.
+An unposed target's steer point is the old per-tick transform, byte for
+byte.
 """
 import importlib
 import math
@@ -108,39 +107,30 @@ def _steer(t, target):
     return projectiles._steer_point(t, target)
 
 
-def test_a_picked_spot_keeps_its_launch_time_point(ships):
+def test_torpedo_at_pick_steers_to_body_point_all_flight(ships):
     bop = ships("BoP", "birdofprey", "ships.BirdOfPrey")
     articulation.force_pose(bop, "cruise")
     p = _wing_pick(bop)
-    launched = articulation.part_transform_point(bop, p, authored=False)
-    assert tuple(launched) != p             # the cruise pose moved the pick
+    # The cruise pose would move the pick (the old launch-time bake).
+    assert tuple(articulation.part_transform_point(
+        bop, p, authored=False)) != p
     t = _launch(bop, TGPoint3(*p))
-    # The wing moves BEFORE the first steer: the shot keeps the launch pose.
-    articulation.force_pose(bop, None)
-    got = _steer(t, bop)
-    assert _hx(got) == _hx(_body_world(bop, launched))
-    # Not the old per-tick rule (the wing's current pose).
-    old = subsystems.target_offset_world(bop, TGPoint3(*p), None)
-    assert _hx(got) != _hx(old)
-    # Another pose later: still the launch point.
-    articulation.force_pose(bop, "warp")
-    assert _hx(_steer(t, bop)) == _hx(_body_world(bop, launched))
-
-
-def test_a_picked_spot_still_follows_the_ship(ships):
-    bop = ships("BoP", "birdofprey", "ships.BirdOfPrey")
-    articulation.force_pose(bop, "cruise")
-    p = _wing_pick(bop)
-    launched = articulation.part_transform_point(bop, p, authored=False)
-    t = _launch(bop, TGPoint3(*p))
-    articulation.force_pose(bop, None)
+    assert _hx(_steer(t, bop)) == _hx(_body_world(bop, p))
+    # The wing moves mid flight: the aim does not.
+    for pose in (None, "warp", "cruise"):
+        articulation.force_pose(bop, pose)
+        assert _hx(_steer(t, bop)) == _hx(_body_world(bop, p)), pose
+    # It still follows the ship's position, rotation and scale.
     bop.SetTranslateXYZ(-300.0, 25.5, 70.0)
     m = TGMatrix3()
     m.MakeZRotation(1.1)
     bop.SetMatrixRotation(m)
     bop.SetScale(2.5)
-    got = _steer(t, bop)
-    assert _hx(got) == _hx(_body_world(bop, launched))
+    assert _hx(_steer(t, bop)) == _hx(_body_world(bop, p))
+    # The one transform: target_offset_world gives the same point.
+    assert _hx(_steer(t, bop)) == _hx(subsystems.target_offset_world(
+        bop, TGPoint3(*p)))
+    assert "_baked_offset" not in vars(Torpedo)      # no bake to keep
 
 
 def test_a_subsystem_lock_still_follows_the_wing(ships):
@@ -158,43 +148,18 @@ def test_a_subsystem_lock_still_follows_the_wing(ships):
     assert _hx(got) != _hx(at_launch)       # it followed the wing
 
 
-def test_a_new_offset_or_target_bakes_again(ships):
-    bop = ships("BoP", "birdofprey", "ships.BirdOfPrey")
-    other = ships("BoP2", "birdofprey", "ships.BirdOfPrey")
-    articulation.force_pose(bop, "cruise")
-    p = _wing_pick(bop)
-    t = _launch(bop, TGPoint3(*p))
-    # A script re-aims after the wing moved: baked at THAT moment.
-    articulation.force_pose(bop, None)
-    q = _wing_pick(bop, frac=(0.25, 0.5, 0.5))
-    t.SetTargetOffset(TGPoint3(*q))
-    now = articulation.part_transform_point(bop, q, authored=False)
-    articulation.force_pose(bop, "cruise")
-    assert _hx(_steer(t, bop)) == _hx(_body_world(bop, now))
-    # A new target: baked against it on the next steer.
-    articulation.force_pose(other, "cruise")
-    t._target_ship = other
-    want = articulation.part_transform_point(other, q, authored=False)
-    assert tuple(want) != q
-    assert _hx(_steer(t, other)) == _hx(_body_world(other, want))
-    articulation.force_pose(other, None)
-    assert _hx(_steer(t, other)) == _hx(_body_world(other, want))
-
-
-def test_a_clear_offset_unbakes(ships):
+def test_a_clear_offset_steers_at_the_centre(ships):
     bop = ships("BoP", "birdofprey", "ships.BirdOfPrey")
     articulation.force_pose(bop, "cruise")
     t = _launch(bop, TGPoint3(*_wing_pick(bop)))
-    assert t._baked_offset is not None
     t.SetTargetOffset(None)
-    assert t._baked_offset is None
     pos = bop.GetWorldLocation()
     assert _hx(_steer(t, bop)) == _hx(pos)
 
 
 def test_an_unposed_target_is_byte_identical(ships):
-    """Galaxy (no rig): the bake is the offset itself and the steer point is
-    the old target_offset_world, by .hex(), signed zeros and NaN included."""
+    """Galaxy (no rig): the steer point is target_offset_world, by .hex(),
+    signed zeros and NaN included."""
     g = ships("Galaxy", "galaxy", "ships.Galaxy")
     rng = random.Random(7071)
     nan = float("nan")
@@ -209,8 +174,6 @@ def test_an_unposed_target_is_byte_identical(ships):
                         tuple(rng.uniform(-3.0, 3.0) for _ in range(3))))
         off = TGPoint3(*o)
         t = _launch(g, off)
-        if not any(map(math.isnan, o)):
-            assert tuple(t._baked_offset[4]) == o
         shift = rng.choice((None, (0.0, 0.0, 0.0), (100.0, -5.0, 0.25)))
         got = projectiles._steer_point(t, g, shift)
         want = projectiles._shifted(

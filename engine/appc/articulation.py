@@ -745,8 +745,9 @@ def part_transform_point(ship, point, part=None, *, authored=True, prop=None):
 
     `authored` (default True) says `point` is an authored mount, attributed
     by the shared `part_severance.part_for_mount`; pass False for an
-    arbitrary point (a Manual Aim pick), which keeps the box rule -- see
-    `subsystems.target_offset_world`.
+    arbitrary point, which keeps the box rule (`part_for_point`). Aiming
+    never does: an aim offset that is no mount is a plain point
+    (`subsystems.target_offset_world`).
 
     `prop` is the authored property the point belongs to, when the caller has
     one: a SET `physical_parent` on it decides the part instead of the
@@ -783,10 +784,8 @@ def _live_part(ship, name, point, authored=True, prop=None):
     posed by name in `ship._articulation_poses` (`posed_part_names`).
 
     `authored` picks the attribution rule for `point`: an AUTHORED point (a
-    hardpoint mount, a light) uses `part_for_mount`; anything else (a Manual
-    Aim pick, a random point on the model) uses the box rule its pull-back
-    (`part_severance.rest_point_for_live_point`) used, so the round trip
-    stays exact."""
+    hardpoint mount, a light) uses `part_for_mount`; anything else (a random
+    point on the model) uses the box rule, `part_for_point`."""
     names = posed_part_names(ship)
     if not names:
         return None

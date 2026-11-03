@@ -223,16 +223,6 @@ struct ObjectRow {
     // by set_part_poses / set_mount_order, shown by combat_dump.
     std::vector<PartPose> part_poses;
     std::vector<int64_t> mount_order;
-    // Manual Aim (posed parts, Task 4b): on the FIRING ship, the part its
-    // Manual Aim offset sits on, by the box rule (authored=False), resolved
-    // by Python for (manual_slot_target, manual_slot_offset) at the
-    // part-map generation manual_slot_gen. manual_slot indexes the TARGET's
-    // part_poses (-1: no posable part). Target -1: no slot. Set by
-    // set_manual_slot; never a Field.
-    int64_t manual_slot_target = -1;
-    Vec3 manual_slot_offset{0, 0, 0};
-    int32_t manual_slot = -1;
-    uint64_t manual_slot_gen = 0;
 };
 
 struct SubsystemRow {
@@ -474,10 +464,6 @@ public:
     void set_part_poses(int64_t object, std::vector<PartPose> poses);
     void set_part_slot(int64_t subsystem, int32_t slot, uint64_t gen);
     void set_mount_order(int64_t object, const std::vector<int64_t>& order);
-    // A ship's Manual Aim slot (Task 4b): `target` an Object handle or -1
-    // (no slot); the slot >= -1.
-    void set_manual_slot(int64_t object, int64_t target, const Vec3& offset,
-                         int32_t slot, uint64_t gen);
     // The global part-map generation, bumped by Python at every input of the
     // slot resolution. Starts (and clears) at 1, so a never-resolved slot
     // (part_gen 0) reads stale.

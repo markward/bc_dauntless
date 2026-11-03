@@ -82,8 +82,6 @@ def test_a_posed_point_attributes_back_to_the_fresh_part(boxes):
     assert part_severance.part_for_point(LEAF, posed) != "head", (
         "fixture: the posed point must have left the rest box")
     assert part_severance.part_for_live_point(ship, posed) == "head"
-    assert part_severance.rest_point_for_live_point(ship, posed) == \
-        pytest.approx((0.0, 0.85, 0.0))
 
 
 def test_the_render_sync_pushes_a_fresh_part_and_clears_it(boxes, pushes):

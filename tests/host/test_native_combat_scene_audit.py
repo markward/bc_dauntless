@@ -31,7 +31,7 @@ import pytest
 from tests.helpers import bc_assets
 from tests.helpers.k3_fight import (check_weapon_state_paths,
                                     posed_branches, posed_fallbacks,
-                                    posed_no_mount, weapon_state_paths)
+                                    weapon_state_paths)
 
 
 @pytest.fixture(autouse=True)
@@ -105,8 +105,7 @@ def _run(monkeypatch, audit):
     counts = native_combat.counts()
     print("native-combat scene (audit %s) counts:" % audit, counts,
           "audits:", audits[0], "posed audits:", posed,
-          "posed branches:", posed_branches(counts),
-          "box-rule no_mount:", posed_no_mount(counts))
+          "posed branches:", posed_branches(counts))
     return counts, list(native_combat.audit_failures()), audits[0], posed
 
 

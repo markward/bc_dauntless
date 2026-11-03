@@ -27,8 +27,8 @@
 // steer_point_native throw std::invalid_argument (Python ValueError) when
 // they cannot answer exactly as the Python would (a stale or unrepresentable
 // ref, an invalid transform, a posed target whose mount slot is not
-// current; steer_point_native answers posed mounts and a picked spot's
-// baked point itself). guide_torpedo
+// current; steer_point_native answers posed mounts and picked spots
+// itself). guide_torpedo
 // never throws for that: it returns a status naming the question Python must
 // answer instead (GuideResult).
 
@@ -61,23 +61,20 @@ Advance advance_torpedo(const Vec3& prev, const Vec3& vel, double dt,
                         double age, double ttl);
 
 // projectiles._steer_point for a target the mirror can answer: `offset`
-// nullopt is the no-offset hull centre (G12). A picked spot (mount_sub -1)
-// with its launch-time point `baked` (the torpedo's `_baked_offset`, posed
-// parts Task 7) is body_point_world(target, *baked): pos + R·(scale·baked),
-// NO part pose -- posed or not, so the identity is a branch and signed zeros
-// survive. Otherwise target_offset_world(target, offset, mount_sub) (G11):
-// an unposed target whatever the mount, a POSED one through the mount's
-// part slot (only when the offset is the mount's own point;
-// weapon_geometry.h). A posed target's mount -1 with no `baked` throws
-// NoMount (the old per-tick box rule, which Python no longer steers by).
-// `off` is frames.offset_between(torpedo set, target set), never None here;
-// the point is shifted only when `off` is not (0, 0, 0) by C `==` (Python's
-// tuple ==). Throws for a mount_sub of -2, a stale target / invalid
-// transform, and target_offset_world's posed fallbacks (PartStale for a
-// slot that is not current, NoMount for a pick no slot holds).
+// nullopt is the no-offset hull centre (G12). Otherwise
+// target_offset_world(target, offset, mount_sub) (G11): an unposed target
+// whatever the mount, a POSED one through the mount's part slot only when
+// the offset is the mount's own point (weapon_geometry.h); a picked spot
+// (mount_sub -1), or an offset off its mount, is body_point_world(target,
+// offset): pos + R·(scale·offset), NO part pose, for the whole flight (fire
+// control native only, M5, M8.5). `off` is frames.offset_between(torpedo
+// set, target set), never None here; the point is shifted only when `off`
+// is not (0, 0, 0) by C `==` (Python's tuple ==). Throws for a mount_sub of
+// -2, a stale target / invalid transform, and target_offset_world's posed
+// fallback (PartStale for a slot that is not current).
 Vec3 steer_point_native(const Mirror& m, int64_t target,
                         const std::optional<Vec3>& offset, int64_t mount_sub,
-                        const Vec3& off, const Vec3* baked = nullptr);
+                        const Vec3& off);
 
 // The two clocks can_detect reads (sensor_detect.h): `drift_now` the nebula
 // drift clock (native_combat.now()), `occ_now` the occlusion clock
@@ -115,27 +112,16 @@ struct GuideResume {
 //                         the kernel attributes it: GuideResult::attributed)
 //   mount_unrepresentable the attributed mount is a row the mirror can't name
 //   posed_target          (retired)
-//   no_mount              a posed target, the offset names no mount and no
-//                         baked point was handed in (never from
-//                         guide_torpedo since Task 7: kept for dashboards)
 //   mount_stale           a posed target, the mount's row is gone
-//   offset_off_mount      a posed target, the offset is not the mount's own
-//                         point (C == per axis, as target_offset_world)
-//   part_stale            a posed target, the mount's part slot (or the
-//                         source's Manual Aim slot) not current
+//   part_stale            a posed target, the mount's part slot not current
 //   geometry              the steer geometry fell back otherwise
-//   unbaked               no mount, and the shot's `_baked_offset` is not
-//                         for this target/offset (Python bakes it)
 enum class SteerWhy : int32_t {
     unattributed = 0,
     mount_unrepresentable,
     posed_target,
-    no_mount,
     mount_stale,
-    offset_off_mount,
     part_stale,
     geometry,
-    unbaked,
     kCount
 };
 // The counter's Python-visible name ("unattributed", ...).
@@ -151,8 +137,8 @@ struct GuideResult {
         // has been decided or written (no can_detect has run).
         need_frame,
         // _steer_point is Python's (a mount the shot has not attributed and
-        // the mirror cannot tell, a picked spot not baked for this offset,
-        // or a posed target whose mount slot cannot carry the offset;
+        // the mirror cannot tell, or a posed target whose mount slot cannot
+        // carry the offset;
         // steer_why says which): ASK steer_point(t), which also
         // writes `_mount_key`, then call guide_torpedo_resume with the point
         // and `resume`. can_detect HAS run: never start over.
@@ -173,10 +159,8 @@ struct GuideResult {
     // need_steer_point: why the steer point is Python's.
     SteerWhy steer_why = SteerWhy::kCount;
     // done: the steer point was a POSED target's offset (a mount, or a
-    // picked spot's baked point), computed natively.
+    // picked spot's plain body point), computed natively.
     bool posed_steer = false;
-    // done: ...and it was a picked spot's baked point (posed parts, Task 7).
-    bool baked_steer = false;
     // done: the shot's `_mount_key` was not this target/offset and the
     // mount was attributed natively (authored_mount_subsystem, round trips
     // Task 4): `mount` is the subsystem handle (-1 None) Python's

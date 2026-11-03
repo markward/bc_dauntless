@@ -1613,10 +1613,10 @@ def _manual_moved(bop, p):
 @pytest.mark.parametrize("wings", ["settled", "transition"])
 def test_manual_aim_on_posed_target_native(monkeypatch, wings):
     """The Galaxy's Manual Aim pick sits on a Bird of Prey's wing (swung for
-    cruise, or swinging home tick by tick): the aim point is the box rule's
-    part through the Galaxy's Manual Aim slot, natively -- no ASK
-    aim_point -- also after the pick moves mid-fight (re-resolved at the
-    next boundary)."""
+    cruise, or swinging home tick by tick): the aim point is the pick as a
+    plain body point (fire control native only, M5), natively -- no ASK
+    aim_point -- also after the pick moves mid-fight, and per tick equal to
+    Python."""
     moved = []
 
     def script(w, t):
@@ -1644,22 +1644,24 @@ def test_manual_aim_on_posed_target_native(monkeypatch, wings):
     _native_ran(counts)
     assert counts["k2_python_ships"] == 0, counts
     assert counts["k2_ask_queries"]["aim_point"] == 0, counts
-    assert counts["k2_posed"]["manual_aims"] > 0, counts
 
 
 # ── Review fixes (posed parts, Task 4 fix round 1) ──────────────────────────
 
-def _manual_aim_elsewhere(w):
-    """The Galaxy fires at the Bird of Prey while its Manual Aim pick is in
-    the Vor'cha's frame (its own target): the beam's aim point at the posed
-    BoP is the pick through `_RESOLVE` -- no mount, and the Galaxy's Manual
-    Aim slot is for the Vor'cha -- so it is Python's (ASK aim_point)."""
-    g, v, bop = w.ships["Galaxy"], w.ships["Vorcha"], w.ships["BoP"]
+def _unnameable_lock(w):
+    """The Galaxy fires at the Bird of Prey locked on a cannon whose mirror
+    row is dropped (native arm only: the off arm has no row): the beam's
+    aim point is Python's (ASK aim_point). (Was a Manual Aim pick for
+    another target, Python's while the box rule aimed: a pick is a plain
+    body point since fire control native only, M5.)"""
+    g, bop = w.ships["Galaxy"], w.ships["BoP"]
+    cannon = _port_cannon(bop)
     articulation.force_pose(bop, "cruise")
+    g.SetTarget(bop)
+    g.SetTargetSubsystem(cannon)
     g.GetPhaserSystem().SetSingleFire(0)
     g.GetPhaserSystem().StartFiring(bop)
-    g.SetTarget(v)
-    g.set_manual_target_offset(TGPoint3(0.1, 0.2, 0.0))
+    nc._drop(cannon)
 
 
 def test_generation_bump_inside_an_aim_answer_heals(monkeypatch):
@@ -1686,7 +1688,7 @@ def test_generation_bump_inside_an_aim_answer_heals(monkeypatch):
     def script(w, t):
         if t == 0:
             _pose_galaxy_phasers(w.ships["Galaxy"])
-            _manual_aim_elsewhere(w)
+            _unnameable_lock(w)
 
     ref, _nat, counts = _both(monkeypatch, LOCK_ON_BOP, script, 60)
     assert bumps, "no aim_point ASK was answered"
@@ -1697,43 +1699,15 @@ def test_generation_bump_inside_an_aim_answer_heals(monkeypatch):
     assert counts["k2_posed"]["banks"] > 0, counts
 
 
-@pytest.mark.parametrize("case", ["other_target", "stale_manual",
-                                  "unnameable_lock"])
-def test_remaining_aim_point_asks_match_python(monkeypatch, case):
-    """The aim points that are still Python's after Manual Aim on posed
-    targets went native (Task 4b), end to end: a pick whose Manual Aim slot
-    is for another target ("other_target"), a pick whose slot is held stale
-    for a window ("stale_manual": the generation bumped and its
-    re-resolution withheld), and a lock the mirror cannot name
-    ("unnameable_lock": its row dropped). Each ASKs aim_point in its window,
-    per tick equal to Python."""
-    window = [False]
-    if case == "stale_manual":
-        real = nc._resolve_manual_slot
-
-        def resolve_unless_held(ship, h, drop=True):
-            if not window[0]:
-                real(ship, h, drop)
-
-        monkeypatch.setattr(nc, "_resolve_manual_slot", resolve_unless_held)
+def test_remaining_aim_point_asks_match_python(monkeypatch):
+    """The aim point that is still Python's, end to end: a lock the mirror
+    cannot name (its row dropped). It ASKs aim_point after the drop, per
+    tick equal to Python. (A Manual Aim pick for another target or with a
+    stale slot was Python's too, until a pick became a plain body point:
+    fire control native only, M5.)"""
 
     def script(w, t):
-        g, v, bop = w.ships["Galaxy"], w.ships["Vorcha"], w.ships["BoP"]
-        if case == "other_target":
-            if t == 0:
-                _manual_aim_elsewhere(w)
-            return
-        if case == "stale_manual":
-            if t == 0:
-                articulation.force_pose(bop, "cruise")
-                g.SetTarget(bop)
-                g.set_manual_target_offset(TGPoint3(*_wing_pick(bop)))
-                g.GetPhaserSystem().SetSingleFire(0)
-                g.GetPhaserSystem().StartFiring(bop)
-            window[0] = 30 <= t < 60
-            if t == 30:
-                nc.bump_part_gen()
-            return
+        v, bop = w.ships["Vorcha"], w.ships["BoP"]
         cannon = _port_cannon(bop)
         if t == 0:
             articulation.force_pose(bop, "cruise")
@@ -1744,24 +1718,11 @@ def test_remaining_aim_point_asks_match_python(monkeypatch, case):
         elif t == 30:
             nc._drop(cannon)        # native arm only: the off arm has no row
 
-    asks = []
-    real_answer = nc._k2_answer
-
-    def count(rec, *a, **kw):
-        if rec[1] == "aim_point":
-            asks.append(window[0] if case == "stale_manual" else True)
-        return real_answer(rec, *a, **kw)
-
-    monkeypatch.setattr(nc, "_k2_answer", count)
     ref, _nat, counts = _both(monkeypatch, LOCK_ON_BOP, script, 90)
     assert any(c[2] == "BoP" for c in _calls(ref, "beam_contact"))
     _native_ran(counts)
     assert counts["k2_ask_queries"]["aim_point"] > 0, counts
-    assert all(asks), "an aim_point ASK outside the window"
-    if case == "stale_manual":
-        assert counts["k2_posed"]["manual_aims"] > 0, counts
-    if case == "unnameable_lock":
-        assert counts["k2_posed"]["lock_aims"] > 0, counts
+    assert counts["k2_posed"]["lock_aims"] > 0, counts
 
 
 # ── Round trips Task 3: resting contacts batched, offline stops logged ──────

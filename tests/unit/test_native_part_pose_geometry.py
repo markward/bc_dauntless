@@ -358,35 +358,94 @@ def test_scaled_posed_target_poses_before_scale(scene):
     bop.SetScale(1.0)
 
 
-def test_no_mount_on_posed_target_falls_back(scene):
-    """mount_sub None is `authored=False`: the BOX rule, which can put the
-    point on a posed part. The native side never resolves a part, so it
-    falls back rather than answer identity."""
+def _wing_pick(bop, part=WINGS[0], frac=(0.5, 0.5, 0.5)):
+    """A point inside `part`'s box that the box rule gives to that part and
+    that is no subsystem's mount: a Manual Aim pick on the wing."""
+    lo, hi = articulation.part_boxes_for(LEAF)[part]
+    p = tuple(a + f * (b - a) for a, b, f in zip(lo, hi, frac))
+    assert part_severance.part_for_point(LEAF, p) == part, p
+    assert part_severance.authored_mount_subsystem(bop, p) is None, p
+    return p
+
+
+def test_non_mount_offset_on_posed_target_is_body_point(scene):
+    """D5 (fire control native only, M5): an offset no mount claims is a
+    plain body-frame xyz on a posed target, in both copies -- the box rule
+    no longer carries it with the wing it falls in."""
     bop, _galaxy = scene
     articulation.force_pose(bop, "cruise")
+    _place(random.Random(SEED + 3), bop)
+    bop.SetScale(1.5)
     nc.resolve_stale_part_slots([bop])
-    moved = 0
+    picks = [_wing_pick(bop, w, f) for w in WINGS
+             for f in ((0.5, 0.5, 0.5), (0.25, 0.75, 0.5))]
+    for p in picks:
+        # The box rule would have moved it: the test is not vacuous.
+        assert tuple(articulation.part_transform_point(
+            bop, p, authored=False)) != p
+        want = ss.body_point_world(bop, p)
+        for mount in (ss._RESOLVE, None):
+            assert _hx(ss.target_offset_world(bop, TGPoint3(*p), mount)) \
+                == _hx(want), (p, mount)
+        got = _h.combat_test_target_offset_world(_slot(bop), p, None)
+        assert _hx(got) == _hx(want), p
+    # An authored mount handed in as no mount is a plain point too.
     for _sub, point in _mounted(bop):
-        want = ss.target_offset_world(bop, TGPoint3(*point), None)
-        moved += _hx(want) != _hx(_unposed_offset(bop, point))
-        with pytest.raises(ValueError):
-            _h.combat_test_target_offset_world(_slot(bop), point, None)
-    assert moved > 0     # identity would have been wrong
+        want = ss.body_point_world(bop, point)
+        assert _hx(ss.target_offset_world(bop, TGPoint3(*point), None)) \
+            == _hx(want)
+        got = _h.combat_test_target_offset_world(_slot(bop), point, None)
+        assert _hx(got) == _hx(want)
+    bop.SetScale(1.0)
 
 
-def test_offset_off_the_mount_falls_back(scene):
-    """Python resolves the part from the OFFSET; the slot was resolved from
-    the mount's `_position`. Only the mount's own point uses the slot."""
+def test_mount_on_posed_part_still_follows_pose(scene):
+    """A subsystem mount on a posed wing is still aimed at its posed
+    position, in both copies (M5)."""
+    bop, _galaxy = scene
+    articulation.force_pose(bop, "cruise")
+    _place(random.Random(SEED + 4), bop)
+    nc.resolve_stale_part_slots([bop])
+    on_wing = [(s, p) for s, p in _mounted(bop) if _row(s)["part_slot"] >= 0]
+    assert on_wing
+    moved = 0
+    for sub, point in on_wing:
+        posed = articulation.part_transform_point(
+            bop, point, prop=physical_parents.property_of(sub))
+        want = ss.body_point_world(bop, tuple(posed))
+        moved += tuple(posed) != tuple(point)
+        for mount in (ss._RESOLVE, sub):
+            assert _hx(ss.target_offset_world(bop, TGPoint3(*point), mount)) \
+                == _hx(want), (sub.GetName(), mount)
+        got = _h.combat_test_target_offset_world(_slot(bop), point,
+                                                 _slot(sub))
+        assert _hx(got) == _hx(want), sub.GetName()
+    assert moved > 0
+
+
+def test_near_mount_offset_is_plain_point(scene):
+    """M8.5: an offset within 1e-5 of a mount but not bit-equal to it is a
+    plain point in both copies (native no longer hands it back)."""
     bop, _galaxy = scene
     articulation.force_pose(bop, "cruise")
     nc.resolve_stale_part_slots([bop])
-    sub, point = _mounted(bop)[0]
-    near = (point[0] + 0.9e-5, point[1], point[2])
-    with pytest.raises(ValueError):
-        _h.combat_test_target_offset_world(_slot(bop), near, _slot(sub))
-    with pytest.raises(ValueError):
-        _h.combat_test_target_offset_world(_slot(bop), (math.nan, 0.0, 0.0),
-                                           _slot(sub))
+    sub, point = next((s, p) for s, p in _mounted(bop)
+                      if _row(s)["part_slot"] >= 0)
+    near = (point[0] + 1e-6, point[1], point[2])
+    assert part_severance.authored_mount_subsystem(bop, near) is sub
+    want = ss.body_point_world(bop, near)
+    # The mount's own point is posed, so a plain point is a real change.
+    assert _hx(ss.target_offset_world(bop, TGPoint3(*point), sub)) \
+        != _hx(ss.body_point_world(bop, point))
+    for mount in (ss._RESOLVE, sub):
+        assert _hx(ss.target_offset_world(bop, TGPoint3(*near), mount)) \
+            == _hx(want), mount
+    got = _h.combat_test_target_offset_world(_slot(bop), near, _slot(sub))
+    assert _hx(got) == _hx(want)
+    # A NaN never matches a mount: a plain point (NaN through) too.
+    nan = (math.nan, point[1], point[2])
+    got = _h.combat_test_target_offset_world(_slot(bop), nan, _slot(sub))
+    assert _hx(got) == _hx(ss.body_point_world(bop, nan))
 
 
 # ── Stale slots ──────────────────────────────────────────────────────────────

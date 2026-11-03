@@ -29,11 +29,11 @@
 //     answered with the pose (part_pose.h); at identity the Python returns
 //     the authored point itself, so a rigged ship with every part there is
 //     answered with no slot read;
-//   * a posed target whose offset is not its given mount's own point (or
-//     has no mount: Python's box rule);
+//   * a posed target's offset mount the mirror cannot name;
 // The posed-part cases throw the part_pose.h subclasses a kernel counts by
-// reason: PartStale (a slot that is not current), NoMount (a posed target,
-// no mount), MountUnknown (the mirror cannot tell the mount).
+// reason: PartStale (a slot that is not current), MountUnknown (the mirror
+// cannot tell the mount). A posed target's offset that is no mount's own
+// point is no fallback: a plain body point (fire control native only, M5).
 //   * an Object's transform is invalid;
 //   * a target with no real IsDead (its stub records telemetry);
 //   * a pulse cannon whose projectile module did not resolve.
@@ -75,32 +75,28 @@ bool _emitter_in_arc(const Mirror& m, int64_t emitter, int64_t ship,
 // weapon_subsystems._emitter_forward_world with skew=False.
 Vec3 _emitter_forward_world(const Mirror& m, int64_t emitter, int64_t ship);
 
-// subsystems.target_offset_world (F11, posed-parts map P4): pos + R .
-// (scale * P1/P2(offset)). `mount_sub` is Python's `mount_sub` argument, the
-// subsystem whose authored mount the offset is (kNoMount = None, i.e.
-// `authored=False`). The pose applies BEFORE the scale. On a posed target
-// the mount's part slot carries the offset, and only when the offset IS the
-// mount's `_position` (C `==` per axis): Python resolves the part from the
-// offset, the slot was resolved from the mount. Otherwise -- no mount (the
-// box rule), a mount the mirror cannot name, an offset off the mount -- it
-// falls back; a stale slot or another ship's mount falls back PartStale.
-// No mount (authored=False, Python's box rule) on a posed target reads the
-// Manual Aim slot of `manual_ship` (the firing ship; -1 none, Task 4b): its
-// part when the slot is for this target and offset and current; NoMount
-// when it holds no slot for them, PartStale when its stamp is behind.
+// subsystems.target_offset_world (F11, posed-parts map P4; fire control
+// native only M5, M8.5): pos + R . (scale * P1/P2(offset)). `mount_sub` is
+// Python's `mount_sub` argument, the subsystem whose authored mount the
+// offset is (kNoMount = None). The pose applies BEFORE the scale. On a
+// posed target the mount's part slot carries the offset only when the
+// offset IS the mount's `_position` (C `==` per axis). No mount, or an
+// offset off the mount, is a plain body point: body_point_world(offset).
+// A mount the mirror cannot name falls back; a stale slot or another
+// ship's mount falls back PartStale.
 Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
-                         int64_t mount_sub, int64_t manual_ship = -1);
+                         int64_t mount_sub);
 
 // subsystems.body_point_world (P4's tail, no part pose): pos + R .
 // (scale * point) for a body-frame point already carried by its part --
-// target_offset_world's own tail, and a picked spot's launch-time point
-// (projectiles._steer_point, posed parts Task 7).
+// target_offset_world's own tail, and the whole of a picked spot's.
 Vec3 body_point_world(const Mirror& m, int64_t target, const Vec3& point);
 
 // weapon_subsystems._resolve_torpedo_aim_point (F11); nullopt is Python None.
 // The tube's stored offset on a POSED target is aimed through its mount
 // (`_RESOLVE`: authored_mount_subsystem, part_pose.h): MountUnknown when the
-// mirror cannot tell it, else target_offset_world with what was found.
+// mirror cannot tell it, else target_offset_world with what was found (no
+// mount: a plain body point).
 std::optional<Vec3> _resolve_torpedo_aim_point(const Mirror& m, int64_t tube,
                                                int64_t target);
 

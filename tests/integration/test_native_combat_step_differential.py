@@ -194,12 +194,8 @@ class _Scene:
 
     def torp_row(self, t):
         g = lambda name: getattr(t, name, None)  # noqa: E731
-        baked = g("_baked_offset")
         return (self.label(t), _vec(t.GetTranslate()), _vec(t._velocity),
                 self.label(g("_target_ship")), _vec(g("_target_offset")),
-                None if baked is None else (self.label(baked[0]),
-                                            _vec(baked[1:4]),
-                                            _vec(baked[4])),
                 _t(g("_damage")), _t(g("_damage_radius_factor")),
                 _t(g("_ttl")), _t(g("_age")), _t(g("_guidance_lifetime")),
                 _t(g("_max_angular_accel")), self.label(t._source_ship),

@@ -812,11 +812,28 @@ def test_unloaded_pulse_module_reimports_like_python(monkeypatch):
     assert counts["k1_python_systems"] == 0, counts
 
 
+def _unknown_mounts(w, ship):
+    """Make `ship`'s mounts ones the mirror cannot tell: its pushed mount
+    order opens with an entry it cannot name, so on a posed `ship` a Fire
+    aimed at its offset is an ASK (k1_fire_ask_reasons mount_unknown) and
+    Python runs it mid-walk. (The box rule's no_mount ASK did this until an
+    offset no mount claims became a plain body point: fire control native
+    only, M5.) The audit reads the same order. Native arm only:
+    push_mount_order does nothing with native off."""
+    real = nc._mount_order
+
+    def order(s):
+        out = real(s)
+        return [nc.REF_UNREPRESENTABLE] + out if s is ship else out
+    w.mp.setattr(nc, "_mount_order", order)
+    nc.push_mount_order(ship)
+
+
 def _drop_a_failing_tube(mp, w, dropped, clear_list=False):
     """The Galaxy's tubes held on a Bird of Prey BEHIND it, in cruise, each
-    tube's stored aim offset on its wing where no authored mount is: each
-    tube's Fire is ASKed (no_mount), so Python runs it mid-walk; a forward
-    tube's fails
+    tube's stored aim offset on its wing, its mounts unknown to the mirror
+    (_unknown_mounts): each tube's Fire is ASKed (mount_unknown), so Python
+    runs it mid-walk; a forward tube's fails
     the cone, and its failure Python -- the arm's first
     TorpedoTube._broadcast_weapon_fire_failed -- drops the failing tube's
     row (and, `clear_list`, empties the system's list). Both arms: _drop is
@@ -838,6 +855,7 @@ def _drop_a_failing_tube(mp, w, dropped, clear_list=False):
     # A tube aims at its STORED offset (the previous shot's): the pick.
     for i in range(torps.GetNumWeapons()):
         torps.GetWeapon(i)._target_offset = TGPoint3(*pick)
+    _unknown_mounts(w, bop)
     torps.StartFiring(bop, TGPoint3(*pick))
 
 
@@ -865,7 +883,7 @@ def test_handler_drops_the_failing_tube_row_mid_walk(monkeypatch):
     assert dropped[True] == dropped[False]
     assert dropped[False]["tube"].startswith("Galaxy/Forward"), dropped
     assert "fire_failed" in _kinds(ref)
-    assert counts["k1_fire_ask_reasons"]["no_mount"] > 0, counts
+    assert counts["k1_fire_ask_reasons"]["mount_unknown"] > 0, counts
 
 
 def test_handler_drops_the_dumb_tube_row_mid_walk(monkeypatch):
@@ -1046,7 +1064,7 @@ _HINGE = part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0)
 #: Every reason a posed ship or target (or its part slots) could send K1 to
 #: Python.
 _POSED_REASONS = ("posed_ship", "posed_target", "part_stale",
-                  "mount_unknown", "no_mount")
+                  "mount_unknown")
 
 
 def _pose_galaxy_phasers(galaxy):
@@ -1211,7 +1229,7 @@ def test_stale_slot_falls_back_part_stale(monkeypatch, where):
 def _wing_pick(bop, part="left wing", frac=(0.5, 0.5, 0.5)):
     """A Manual Aim pick on a Bird of Prey wing: a point inside that part's
     box the box rule gives to it, and no subsystem's mount (so _RESOLVE
-    finds none and the pick is authored=False)."""
+    finds none and the pick is a plain body point)."""
     from engine.appc import part_severance
     lo, hi = articulation.part_boxes_for("birdofprey")[part]
     p = tuple(a + f * (b - a) for a, b, f in zip(lo, hi, frac))
@@ -1228,7 +1246,8 @@ def _manual_moved(bop, p):
 def test_manual_aim_on_posed_target_native(monkeypatch):
     """The Vor'cha's Manual Aim pick sits on a Bird of Prey's wing in
     cruise: its cannons (the walk's offset) and tubes (the stored offset)
-    aim through its Manual Aim slot natively -- no no_mount Fire ASK."""
+    aim at it as a plain body point natively (fire control native only,
+    M5) -- no Fire ASK."""
     ships = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
              ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi,
               "ships.BirdOfPrey"))
@@ -1388,22 +1407,24 @@ def test_offset_value_matches_live_held_offset(monkeypatch):
         w.close()
 
 
-def _no_mount_cannons(w, t):
+def _unknown_mount_cannons(w, t):
     """The Vor'cha's cannons held on a Bird of Prey in cruise with an aim
-    offset on its wing that is no authored mount, and no Manual Aim: the
-    lead solve cannot be made natively (no_mount), so the cannon's Fire is
-    an ASK -- the FIRST record of its walk."""
+    offset on its wing, the BoP's mounts unknown to the mirror
+    (_unknown_mounts): the lead solve cannot be made natively
+    (mount_unknown), so the cannon's Fire is an ASK -- the FIRST record of
+    its walk."""
     v, bop = w.ships["Vorcha"], w.ships["BoP"]
     if t == 0:
         articulation.force_pose(bop, "cruise")
+        _unknown_mounts(w, bop)
         cannons = v.GetPulseWeaponSystem()
         cannons.SetSingleFire(0)
         cannons.StartFiring(bop, TGPoint3(*_wing_pick(bop)))
 
 
-_NO_MOUNT = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
-             ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi,
-              "ships.BirdOfPrey"))
+_UNKNOWN_MOUNT = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
+                  ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi,
+                   "ships.BirdOfPrey"))
 
 
 def test_first_record_ask_sees_pinned_offset_object(monkeypatch):
@@ -1432,8 +1453,9 @@ def test_first_record_ask_sees_pinned_offset_object(monkeypatch):
     monkeypatch.setattr(nc._K1Walk, "materialise", materialise)
     monkeypatch.setattr(nc._K1Walk, "pin_system", pin_system)
     monkeypatch.setattr(nc, "_k1_answer", answer)
-    _ref, _nat, counts = _both(monkeypatch, _NO_MOUNT, _no_mount_cannons, 120)
-    assert counts["k1_fire_ask_reasons"]["no_mount"] > 0, counts
+    _ref, _nat, counts = _both(monkeypatch, _UNKNOWN_MOUNT,
+                               _unknown_mount_cannons, 120)
+    assert counts["k1_fire_ask_reasons"]["mount_unknown"] > 0, counts
     first_asks = [i for i, e in enumerate(order)
                   if e[0] == "ASK" and e[1] is not None]
     assert first_asks, order[:20]
@@ -2051,10 +2073,10 @@ def test_walk_check_names_changing_drop_the_caches(monkeypatch, where):
             w.close()
 
 
-# The Vor'cha's cannons ASK their Fire (no_mount, _no_mount_cannons), so a
-# cannon's whole Python Fire -- its bolt's _spawn_projectile -- runs inside
-# an ASK answer, in the middle of the pump; the Galaxy, later in the ship
-# list, is walked after it in the same pump.
+# The Vor'cha's cannons ASK their Fire (mount_unknown,
+# _unknown_mount_cannons), so a cannon's whole Python Fire -- its bolt's
+# _spawn_projectile -- runs inside an ASK answer, in the middle of the pump;
+# the Galaxy, later in the ship list, is walked after it in the same pump.
 _ASK_THEN_LATER = (
     ("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
     ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi, "ships.BirdOfPrey"),
@@ -2097,7 +2119,7 @@ def test_mid_pump_instance_patch_is_obeyed_the_same_tick(monkeypatch):
         phasers.try_fire_weapon = try_fire_weapon
 
     def script(w, t):
-        _no_mount_cannons(w, t)
+        _unknown_mount_cannons(w, t)
         if t == 0:
             calls[w.native] = []
             spawned[w.native] = _on_first_ask_spawn(w, patch_later_system)
@@ -2105,7 +2127,7 @@ def test_mid_pump_instance_patch_is_obeyed_the_same_tick(monkeypatch):
 
     _ref, _nat, counts = _both(monkeypatch, _ASK_THEN_LATER, script, 90)
     assert spawned[False] and spawned[True] == spawned[False], spawned
-    assert counts["k1_fire_ask_reasons"]["no_mount"] > 0, counts
+    assert counts["k1_fire_ask_reasons"]["mount_unknown"] > 0, counts
     assert calls[False], calls
     assert calls[True] == calls[False]
     assert calls[False][0] == spawned[False][0], (calls, spawned)
@@ -2135,7 +2157,7 @@ def test_nested_session_keeps_its_own_walk_check(monkeypatch):
         torps.StartFiring(w.ships["BoP"])
 
     def script(w, t):
-        _no_mount_cannons(w, t)
+        _unknown_mount_cannons(w, t)
         if t == 0:
             # The Galaxy fires only through StartFiring's own walk.
             w.order = [s for s in w.order if s.GetName() != "Galaxy"]
@@ -2656,15 +2678,12 @@ class _Launches:
     def fields(self, t):
         """Every value the spawn sets, by .hex()."""
         g = lambda name: getattr(t, name, None)  # noqa: E731
-        baked = g("_baked_offset")
         return (
             self.label(t), _hx(t.GetTranslate()), _hx(t._velocity),
             _t(g("_damage")), _t(g("_damage_radius_factor")),
             _t(g("_ttl")), _t(g("_guidance_lifetime")),
             _t(g("_guidance_initial")), _t(g("_max_angular_accel")),
             self.label(g("_target_ship")), _hx(g("_target_offset")),
-            None if baked is None else (self.label(baked[0]),
-                                        _hx(baked[1:4]), _hx(baked[4])),
             self.label(t._source_ship),
             t.GetContainingSet() is self.w.set,
             g("_core_texture"), _t(g("_is_disruptor")),
@@ -3034,7 +3053,7 @@ def test_python_pulse_launch_defers_its_spawn(monkeypatch):
     (rw, rl, _), (nw, nl, counts) = _launch_arms(
         monkeypatch, script, 240, ships=_PULSE_SHIPS, player="Vorcha")
     assert len(nl.spawned) >= 2
-    assert all(s[15] == ("bool", True) for s in nl.spawned)  # bolts
+    assert all(s[14] == ("bool", True) for s in nl.spawned)  # bolts
     kinds = [e[0] for e in nl.events]
     assert kinds == ["entered", "fired"] * (len(kinds) // 2), kinds
     damages = [t._damage for t in nl.torps]
@@ -3416,10 +3435,11 @@ def test_kernel_spawn_launches_the_fire_time_module(monkeypatch):
     assert all(x[3] != ("float", 1.0) for x in nl.spawned), nl.spawned
 
 
-def test_posed_target_offset_hand_back_has_its_own_reason(monkeypatch):
-    """A posed target and an offset no Manual Aim slot holds (an AI's held
-    offset): the kernel cannot bake it, so the launch is handed back as
-    launch_posed_offset (not launch_other), and equals the reference."""
+def test_posed_target_offset_launches_natively(monkeypatch):
+    """A posed target and an AI's held offset no mount claims: the launch
+    carries the offset as it is (no bake, fire control native only, M5), so
+    the kernel makes it -- no launch hand-back -- and equals the
+    reference. (Was launch_posed_offset, a hand-back.)"""
     def script(w, t):
         if t == 0:
             _pose_ahead(w)
@@ -3428,8 +3448,10 @@ def test_posed_target_offset_hand_back_has_its_own_reason(monkeypatch):
     (rw, rl, _), (nw, nl, counts) = _launch_arms(
         monkeypatch, script, 40, ships=_POSED_LAUNCH_SHIPS)
     why = counts["k1_launch_reasons"]
-    assert why["launch_posed_offset"] >= 1, why
-    assert why["launch_other"] == 0, why
+    assert "launch_posed_offset" not in why, why
+    assert set(why.values()) == {0}, why
+    assert counts["k1_logged"]["tube_launch"] >= 1, counts
+    assert nl.spawned, nl.spawned
 
 
 _TWO_LAUNCHERS = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),

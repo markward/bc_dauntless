@@ -892,7 +892,7 @@ def _photon():
 
 def test_spawn_builds_the_torpedo_from_its_record(events):
     """SPAWN(tube, kind, ship, set, ammo, target, position, velocity,
-    offset, baked, drf): the delivery builds the torpedo through the shared
+    offset, drf): the delivery builds the torpedo through the shared
     spawn path with the RECORD's values (none read live), registers it
     (ET_TORPEDO_ENTERED_SET) and then posts its ET_TORPEDO_FIRED."""
     from engine.appc import projectiles
@@ -904,8 +904,7 @@ def test_spawn_builds_the_torpedo_from_its_record(events):
             _post_native(eq.SPAWN, _h_of(tube), 0.0, _h_of(ship),
                          _h_of(kset), _photon(), _h_of(target),
                          1.0, 2.0, 3.0, 1.0, 4.0, 5.0, 6.0,
-                         1.0, 0.125, -0.25, 0.5, 0.375, -0.25, 0.5, 0.25,
-                         1.0, -1)
+                         1.0, 0.125, -0.25, 0.5, 0.25, 1.0, -1)
             assert events == []
         new = [t for t in projectiles._active if t not in before]
         assert len(new) == 1
@@ -918,8 +917,6 @@ def test_spawn_builds_the_torpedo_from_its_record(events):
         assert torp._target_ship is target
         o = torp._target_offset
         assert (o.x, o.y, o.z) == (0.125, -0.25, 0.5)
-        assert torp._baked_offset == (target, 0.125, -0.25, 0.5,
-                                      (0.375, -0.25, 0.5))
         assert torp._damage_radius_factor == 0.25   # the launcher's override
         assert torp._damage == 500.0                 # PhotonTorpedo.Create
         assert torp.GetContainingSet() is kset
@@ -947,13 +944,12 @@ def test_spawn_without_velocity_offset_or_override(events):
             _post_native(eq.SPAWN, _h_of(tube), 2.0, _h_of(ship),
                          _h_of(kset), _photon(), -1,
                          1.0, 2.0, 3.0, 0.0, 9.0, 9.0, 9.0,
-                         0.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 0.0,
-                         1.0, -1)
+                         0.0, 9.0, 9.0, 9.0, 0.0, 1.0, -1)
         (torp,) = [t for t in projectiles._active if t not in before]
         v = torp._velocity
         assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
         assert torp._target_ship is None
-        assert torp._target_offset is None and torp._baked_offset is None
+        assert torp._target_offset is None
         assert torp._damage_radius_factor == 0.13   # PhotonTorpedo.Create
     finally:
         for t in list(projectiles._active):
@@ -986,8 +982,7 @@ def test_pulse_spawn_scales_its_bolt_then_reports_the_shot(events,
             _post_native(eq.SPAWN, _h_of(cannon), 1.0, _h_of(ship),
                          _h_of(kset), _module("Disruptor"), -1,
                          1.0, 2.0, 3.0, 1.0, 4.0, 5.0, 6.0,
-                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                         1.5, _h_of(target))
+                         0.0, 0.0, 0.0, 0.0, 0.0, 1.5, _h_of(target))
         (bolt,) = [t for t in projectiles._active if t not in before]
         import Tactical.Projectiles.Disruptor as mod
         assert seen == [float(mod.GetDamage())]

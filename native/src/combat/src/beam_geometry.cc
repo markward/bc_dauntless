@@ -58,8 +58,8 @@ AimPoint phaser_aim_point(Mirror& m, int64_t ship, int64_t target,
     if (s._use_target_offset != 0 && s.manual_offset_set) {
         // GetTargetOffsetTG copies the manual offset (ships.py:1765), and
         // target_offset_world resolves its mount (`_RESOLVE`). Only a POSED
-        // target reads it: a mount at the pick (authored), else the box
-        // rule through this ship's Manual Aim slot (Task 4b).
+        // target reads it: a mount at the pick is posed, anything else is
+        // a plain body point (fire control native only, M5).
         const ObjectRow& t = obj(m, target);
         const Vec3& off = s._manual_target_offset;
         int64_t mount = kNoMount;
@@ -69,7 +69,7 @@ AimPoint phaser_aim_point(Mirror& m, int64_t ship, int64_t target,
                 detail::fall_back_as<MountUnknown>(
                     "target offset mount unknown");
         }
-        return {target_offset_world(m, target, off, mount, ship), -1};
+        return {target_offset_world(m, target, off, mount), -1};
     }
     // ship.GetTargetSubsystem(): the lock is ship-wide (K2M 1.2).
     const int64_t lock = s._target_subsystem;

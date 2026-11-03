@@ -288,8 +288,7 @@ def counts() -> dict:
     part_stale, overridden, instance_patch, ...; every reason, zeros
     included), for the held-weapon pump and StartFiring apart --
     "k1_fire_ask_reasons" ({K1Why name: n}: the Fire decisions handed to
-    Python, ASK fire -- part_stale, mount_unknown, no_mount,
-    offset_off_mount, other) and
+    Python, ASK fire -- part_stale, mount_unknown, other) and
     "k1_posed" ({"walks", "target_aims"}: systems of a posed ship walked
     natively, Fire decisions aimed natively at a posed target's offset) and
     "k1_logged" ({"walk_start"}: walks started with no WALK_START record,
@@ -304,10 +303,10 @@ def counts() -> dict:
     like k2_batched_contacts below.
     posed_ship / posed_target are retired reasons, always 0 (posed parts
     run natively; spec 2026-11-01 §4.5). In k1_python_reasons,
-    mount_unknown / no_mount / offset_off_mount are always 0 too: the
-    pre-scan never hands a system back for a posed target's offset, which
-    is decided in the walk -- those three are counted in
-    k1_fire_ask_reasons only.
+    mount_unknown is always 0 too: the pre-scan never hands a system back
+    for a posed target's offset, which is decided in the walk -- it is
+    counted in k1_fire_ask_reasons only. An offset no mount claims is no
+    hand-back at all: a plain body point (fire control native only, M5).
 
     "c_applied_writes": the K1/K2/K0 log writes the bindings applied
     themselves (C-applied write logs, _applier_context). "fast_pushes":
@@ -332,7 +331,7 @@ def counts() -> dict:
 
     K2 (`cb.phasers`): the kernel's {"k2_records", "k2_python_ships",
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
-    {query: n}, "k2_posed": {"banks", "lock_aims", "manual_aims"},
+    {query: n}, "k2_posed": {"banks", "lock_aims"},
     "k2_batched_contacts": resting contacts queued for the drain instead
     of a CONTACT record of their own, "k2_logged_system_stop": offline
     systems stopped by logged writes instead of a SYSTEM_STOP record (round
@@ -365,11 +364,9 @@ def counts() -> dict:
     K3 (`cb.projectiles`): the kernel's {"k3_runs", "k3_records",
     "k3_asks": {query: n}, "k3_guide_reasons": {why: n},
     "k3_steer_reasons": {why: n} (the steer_point ASKs: unattributed,
-    part_stale, unbaked, ...; projectile_geometry.h SteerWhy, zeros
-    included; no_mount is 0 since a picked spot steers at its launch-time
-    `_baked_offset`), "k3_posed_steers": n (a posed target's mount or
-    picked spot steered natively), "k3_baked_steers": n (of those, a picked
-    spot at its baked point)}, and
+    part_stale, ...; projectile_geometry.h SteerWhy, zeros included),
+    "k3_posed_steers": n (a posed target's mount or picked spot steered
+    natively)}, and
     "k3_python_steps" / "k3_python_reasons" ({why: n}): the steps run whole
     in Python, the kernel's begin reasons (scan, table, unrepresentable,
     stale_ref, torpedo_xform, ship_cache) summed with run_k3's own (off,
@@ -2057,11 +2054,9 @@ def _forget_part_caches(h=None) -> None:
     if h is None:
         _slot_names.clear()
         _resolved_gen.clear()
-        _manual_resolved.clear()
     else:
         _slot_names.pop(h, None)
         _resolved_gen.pop(h, None)
-        _manual_resolved.pop(h, None)
 
 
 def _leaf_known(ship):
@@ -2215,8 +2210,7 @@ def resolve_part_slots(ship, drop=True) -> None:
 
 def resolve_stale_part_slots(ships, drop=True) -> None:
     """At a step boundary: resolve every ship of `ships` whose slots were
-    resolved at an older generation (or never), and every Manual Aim slot
-    whose (target, offset, generation) moved (Task 4b). `drop`: see
+    resolved at an older generation (or never). `drop`: see
     resolve_part_slots."""
     if not _enabled:
         return
@@ -2227,9 +2221,6 @@ def resolve_stale_part_slots(ships, drop=True) -> None:
             continue
         if _resolved_gen.get(h) != _part_gen:
             resolve_part_slots(ship, drop)
-        if d.get("_manual_target_offset") is not None \
-                or h in _manual_resolved:
-            _resolve_manual_slot(ship, h, drop)
 
 
 def _heal_part_slots(ships, gen) -> None:
@@ -2242,78 +2233,6 @@ def _heal_part_slots(ships, gen) -> None:
     falls back to another, counted ASK.)"""
     if _part_gen != gen:
         resolve_stale_part_slots(ships, drop=False)
-
-
-# ── Manual Aim slots (posed parts, Task 4b) ──────────────────────────────────
-#
-# A Manual Aim pick is a NON-authored point: subsystems.target_offset_world
-# attributes its part by the box rule (`articulation._live_part(target, None,
-# offset, authored=False)` -> part_severance.part_for_point) on every call.
-# Its answer depends only on the target's leaf, the offset and the leaf's part
-# boxes / model -- every one an input the part-map generation already
-# covers -- so Python resolves it ONCE per (target, offset, generation) and
-# pushes it as the firing ship's Manual Aim slot. The kernels read it for an
-# authored=False offset on a posed target only when its target and offset
-# are exactly the ones asked about (and the stamp is current), so a pick
-# moved or a target changed since the last boundary reads "no slot", never a
-# wrong part. The target is `ship.GetTarget()` and the offset its
-# `_manual_target_offset` (the value GetTargetOffsetTG copies under Manual
-# Aim, and the walk's offset K1 stamps into its banks and K3's torpedoes).
-
-#: ship handle -> (target handle, offset xyz, generation) last pushed
-_manual_resolved: dict = {}
-
-
-def _manual_slot(ship, drop=True, cached=None, gen=None):
-    """(target, offset xyz, slot) of `ship`'s Manual Aim pick: the index of
-    the part `_live_part(target, None, offset, authored=False)` resolves in
-    the target's resolved names (-1: none), detachment ignored (the table's
-    bit carries it). None when there is no pick, no target with a row, or a
-    target whose leaf and names are not resolved (R5: never leaf_for).
-    When `cached` (the last pushed key) already equals (target, offset, gen)
-    the box rule is skipped and the slot is None: nothing to push."""
-    off = ship.__dict__.get("_manual_target_offset")
-    target = ship.__dict__.get("_target")
-    if not isinstance(off, TGPoint3) or target is None:
-        return None
-    th = target.__dict__.get("_nslot") if hasattr(target, "__dict__") \
-        else None
-    leaf = _leaf_known(target) if th is not None else None
-    if leaf is None:
-        return None
-    names = _slot_names.get(th)
-    if names is None or _resolved_gen.get(th) != _part_gen:
-        resolve_part_slots(target, drop)
-        names = _slot_names.get(th)
-        if names is None or target.__dict__.get("_nslot") != th:
-            return None
-    point = (off.x, off.y, off.z)
-    if cached is not None and cached == (th, point, gen):
-        return th, point, None
-    from engine.appc import part_severance
-    try:
-        name = part_severance.part_for_point(leaf, point)
-    except Exception:  # noqa: BLE001 - Python answers (and raises) itself
-        return None
-    slot = names.index(name) if name is not None and name in names else -1
-    return th, point, slot
-
-
-def _resolve_manual_slot(ship, h, drop=True) -> None:
-    gen = _part_gen
-    found = _manual_slot(ship, drop, _manual_resolved.get(h), gen)
-    if found is None:
-        if _manual_resolved.get(h, False) is not None:
-            _manual_resolved[h] = None
-            _call(ship, _h.combat_set_manual_slot, h, -1, (0.0, 0.0, 0.0),
-                  -1, 0)
-        return
-    th, point, slot = found
-    if slot is None:
-        return
-    key = (th, point, gen)
-    _call(ship, _h.combat_set_manual_slot, h, th, point, slot, gen)
-    _manual_resolved[h] = key if _part_gen == gen else None
 
 
 def _mount_order(ship) -> list:
@@ -2530,7 +2449,7 @@ _K1_LAUNCH_FUNCS = (
       "_resolve_projectile_module", "_new_projectile",
       "_launch_projectile", "_launch_reads", "_defer_spawn",
       "spawn_launch")),
-    ("engine.appc.projectiles", ("_bake_offset", "source_set")),
+    ("engine.appc.projectiles", ("source_set",)),
     ("engine.appc.subsystems", ("subsystem_world_position",)),
 )
 _k1_launch_mods = None
@@ -3018,20 +2937,6 @@ def _enc_mount(t, key):
             _num(x), _num(y), _num(z))
 
 
-def _enc_baked(t, key):
-    """(attributed, key x, y, z, baked x, y, z). attributed is
-    _steer_point's `baked[0] is target` for the torpedo's CURRENT
-    `_target_ship`."""
-    if key is None:
-        return (False,) + _NO_POINT + _NO_POINT
-    try:
-        target, x, y, z, (bx, by, bz) = key
-    except (TypeError, ValueError):
-        raise _Unrepresentable
-    return ((target is t.__dict__.get("_target_ship")),
-            _num(x), _num(y), _num(z), _num(bx), _num(by), _num(bz))
-
-
 # Python attribute -> (encoder, row setter kind, combat_torp_dump key).
 _TORP_FIELDS = {
     "_age": (lambda t, v: _num(v), "f", "age"),
@@ -3047,7 +2952,6 @@ _TORP_FIELDS = {
     "_source_ship": (_enc_ref("Object"), "r", "source"),
     "_containing_set": (_enc_ref("Set"), "r", "cset"),
     "_mount_key": (_enc_mount, "m", None),
-    "_baked_offset": (_enc_baked, "b", None),
     # The hit K3 applies at DONE (native damage Task 4).
     "_damage": (lambda t, v: _num(v), "f", "damage"),
     "_damage_radius_factor": (lambda t, v: _num(v), "f",
@@ -3110,18 +3014,14 @@ def _torp_push(t, h, name, value) -> None:
             _h.combat_torp_set_v(h, fid, *v)
         elif how == "r":
             _torp_push_ref(t, h, fid, value, v)
-        elif how == "b":
-            _h.combat_torp_set_baked(h, *v)
         else:
             _torp_push_mount(t, h, value, v)
     except ValueError:
         _torp_lost(t)
         return
     if name == "_target_ship":
-        # `_mount_key`'s and `_baked_offset`'s attributed flags are
-        # `key[0] is _target_ship`.
+        # `_mount_key`'s attributed flag is `key[0] is _target_ship`.
         _torp_push(t, h, "_mount_key", t.__dict__.get("_mount_key"))
-        _torp_push(t, h, "_baked_offset", t.__dict__.get("_baked_offset"))
 
 
 def _torp_push_ref(t, h, fid, value, ref) -> None:
@@ -3304,10 +3204,6 @@ def _torp_matches(how, key, want, row) -> bool:
         if not want[0]:
             return got is None
         return got is not None and _hexes(got) == _hexes(want[1:])
-    if how == "b":
-        return (int(want[0]), _hexes(want[1:4]), _hexes(want[4:])) == (
-            row["baked_attributed"], _hexes(row["baked_key"]),
-            _hexes(row["baked"]))
     return (int(want[0]), want[1], _hexes(want[2:])) == (
         row["mount_attributed"], row["mount_sub"],
         _hexes(row["mount_offset"]))
@@ -3415,31 +3311,6 @@ def _audit_posed(ship, row, name, flag) -> None:
             _failures.append((name, "part_poses"))
     if row["mount_order"] != _mount_order(ship):
         _failures.append((name, "mount_order"))
-    _audit_manual_slot(ship, row, name)
-
-
-def _audit_manual_slot(ship, row, name) -> None:
-    """A Manual Aim slot stamped with the current generation, for a target
-    whose names are resolved, must name the part the box rule gives for its
-    own (target, offset) now. A stale stamp, or a pick moved since, is never
-    read (the kernel compares target and offset)."""
-    th, offset, slot, gen = row["manual_slot"]
-    if th == -1 or gen != _part_gen:
-        return
-    target = _registry.get(th)
-    leaf = _leaf_known(target) if target is not None else None
-    names = _slot_names.get(th)
-    if leaf is None or names is None:
-        return
-    from engine.appc import part_severance
-    try:
-        found = part_severance.part_for_point(leaf, tuple(offset))
-    except Exception:  # noqa: BLE001
-        _failures.append((name, "manual_slot"))
-        return
-    want = names.index(found) if found is not None and found in names else -1
-    if want != slot:
-        _failures.append((name, "manual_slot"))
 
 
 def _audit_slot(sub, row, name) -> None:

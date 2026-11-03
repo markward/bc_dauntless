@@ -33,9 +33,9 @@ so `physical_parents` falls back to Auto and its banks ride no forced
 part. The setup's assertions still pass here; the posed-bank and R3
 coverage this file reports comes from the Birds of Prey.
 
-Picked spots (posed parts, Task 7): a torpedo at a spot no mount claims
-steers at its launch-time point natively -- check_posed asserts no
-`no_mount` / `unbaked` steer ASK and `k3_baked_steers` > 0.
+Picked spots (fire control native only, M5): a torpedo at a spot no mount
+claims steers at it as a plain body point natively -- check_posed asserts
+no posed steer ASK.
 """
 import os
 import time
@@ -51,7 +51,7 @@ except ImportError:
     _h = None
 
 pytestmark = pytest.mark.skipif(
-    _h is None or not hasattr(_h, "combat_set_manual_slot"),
+    _h is None or not hasattr(_h, "combat_set_part_slot"),
     reason="native posed-parts bindings not built")
 
 from engine.appc import articulation  # noqa: E402
