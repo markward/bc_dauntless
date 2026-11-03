@@ -4011,6 +4011,43 @@ struct K2Delivering {
     K2Delivering& operator=(const K2Delivering&) = delete;
 };
 
+// THE COMPUTE TIMERS (kernels off the lock, Task 1; spec
+// 2026-11-03-kernels-off-the-lock-design.md goal 1): a steady_clock span
+// around exactly each kernel's compute call -- K0-K3's next() and K4's
+// k4_eligible -- accumulated per kernel (index 0-4) and read-and-reset by
+// combat_compute_take. Pure C++ inside the span (no CPython), so the GIL
+// release of Task 3 wraps the very same span. A throwing compute still
+// closes its span (RAII) and counts.
+struct ComputeTimer {
+    std::int64_t ns = 0;
+    std::int64_t calls = 0;
+};
+constexpr int kComputeKernels = 5;
+
+std::array<ComputeTimer, kComputeKernels>& compute_timers() {
+    static std::array<ComputeTimer, kComputeKernels> t;
+    return t;
+}
+
+class ComputeSpan {
+public:
+    explicit ComputeSpan(int kernel)
+        : t_(compute_timers()[static_cast<size_t>(kernel)]),
+          t0_(std::chrono::steady_clock::now()) {}
+    ~ComputeSpan() {
+        t_.ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                     std::chrono::steady_clock::now() - t0_)
+                     .count();
+        ++t_.calls;
+    }
+    ComputeSpan(const ComputeSpan&) = delete;
+    ComputeSpan& operator=(const ComputeSpan&) = delete;
+
+private:
+    ComputeTimer& t_;
+    std::chrono::steady_clock::time_point t0_;
+};
+
 // True when the last combat_k1_next raised from applying its record's
 // writes rather than from the kernel (combat_apply_raised): run_k1 reads
 // it before treating a ValueError / RuntimeError as the kernel's.
@@ -13197,7 +13234,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 if (const K1SessionCheck* sc = c->target<K1SessionCheck>())
                     k1_scan(*sc->v);
             k1_launch_recheck();
-            cb::K1Record r = cb::k1_kernel().next();
+            cb::K1Record r = [] {
+                const ComputeSpan span(1);
+                return cb::k1_kernel().next();
+            }();
             py::list writes;
             dauntless::host::WriteApplier& applier =
                 dauntless::host::write_applier();
@@ -13558,7 +13598,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // The GIL is held (as combat_k1_next). The weapon check is a set
             // lookup made at begin: no CPython call inside the walk.
             cb::K0Session& k = cb::k0_session();
-            cb::K0Record r = k.next();
+            cb::K0Record r = [&k] {
+                const ComputeSpan span(0);
+                return k.next();
+            }();
             py::list writes;
             dauntless::host::WriteApplier& applier =
                 dauntless::host::write_applier();
@@ -13784,7 +13827,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // The GIL is HELD for the walk (ruling J), as combat_k1_next:
             // the kernel and the trace hooks touch no Python object.
             k2_not_delivering("next()");
-            cb::K2Record r = cb::k2_kernel().next();
+            cb::K2Record r = [] {
+                const ComputeSpan span(2);
+                return cb::k2_kernel().next();
+            }();
             // The write log. With an applier context (combat_write_apply.h)
             // the writes are applied here and the record carries []. With
             // none, K1's value encoding (None, bool, int, float, a handle
@@ -14613,7 +14659,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "(session open) or the whole-step-to-Python reason.");
         m.def("combat_k3_next", [vec] {
             // The GIL is HELD for the walk (ruling J), as combat_k2_next.
-            cb::K3Record r = cb::k3_kernel().next();
+            cb::K3Record r = [] {
+                const ComputeSpan span(3);
+                return cb::k3_kernel().next();
+            }();
             const int kind = static_cast<int>(r.kind);
             auto opt = [&vec](const std::optional<cb::Vec3>& v) -> py::object {
                 return v ? py::object(vec(*v)) : py::object(py::none());
@@ -14838,8 +14887,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k4_eligible",
               [](std::int64_t player, std::int64_t max_count, double prox_w,
                  double size_w) -> py::object {
-                  auto r = cb::k4_eligible(cb::mirror(), cb::step_scan(),
-                                           player, max_count, prox_w, size_w);
+                  auto r = [&] {
+                      const ComputeSpan span(4);
+                      return cb::k4_eligible(cb::mirror(), cb::step_scan(),
+                                             player, max_count, prox_w,
+                                             size_w);
+                  }();
                   auto& c = cb::k4_counts();
                   if (!r.ok) {
                       ++c.why[static_cast<size_t>(r.why)];
@@ -14863,6 +14916,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("prox_w"), py::arg("size_w"),
               "select_eligible over the step scan: indices into ships_list "
               "(after the player), or None = run select_eligible in Python.");
+        m.def("combat_compute_take",
+              [](int kernel) {
+                  if (kernel < 0 || kernel >= kComputeKernels)
+                      throw py::value_error(
+                          "combat_compute_take: kernel 0-4 (K0-K4)");
+                  ComputeTimer& t =
+                      compute_timers()[static_cast<size_t>(kernel)];
+                  const ComputeTimer taken = t;
+                  t = ComputeTimer{};
+                  return py::make_tuple(static_cast<double>(taken.ns) / 1e6,
+                                        taken.calls);
+              },
+              py::arg("kernel"),
+              "(ms, calls): kernel K<kernel>'s compute-only time since the "
+              "last take, and its compute calls, then zeroed (the compute "
+              "timers, kernels off the lock Task 1).");
         m.def("combat_k4_counts", [] {
             const auto& c = cb::k4_counts();
             py::dict why;

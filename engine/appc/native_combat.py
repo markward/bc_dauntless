@@ -46,6 +46,7 @@ from engine.appc import passive_state as _passive_state
 from engine.appc.math import TGPoint3
 from engine.appc.passive_power import FrozenField, ThawParentWakeField
 from engine.appc.passive_state import WakeField
+from engine.core import frame_profiler as _prof
 from engine.core.ids import implements
 
 try:
@@ -144,7 +145,8 @@ def available() -> bool:
             and hasattr(_h, "combat_dmg_guard_invalidate")
             and hasattr(_h, "combat_dmg_set_condition")
             and hasattr(_h, "combat_dmg_clean_handles")
-            and hasattr(_h, "combat_k2_scan_clear"))
+            and hasattr(_h, "combat_k2_scan_clear")
+            and hasattr(_h, "combat_compute_take"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -254,6 +256,9 @@ def reset() -> None:
             _h.combat_k0_abandon()
         _h.combat_k0_reset_counts()
         _h.combat_step_reset()
+        for k in range(len(_COMPUTE_HOME)):
+            _h.combat_compute_take(k)
+    _k1_compute.clear()
 
 
 def counts() -> dict:
@@ -3318,6 +3323,67 @@ def now() -> float:
         return 0.0
 
 
+# ── The compute timers (kernels off the lock, Task 1) ──────────────────────
+#
+# The binding times exactly each kernel's compute call (ComputeSpan in
+# host_bindings.cc: K0-K3's next(), K4's k4_eligible) into one accumulator
+# per kernel; combat_compute_take(k) reads and zeroes it. Each driver takes
+# its kernel's once a session (K4: once a call) and reports it to the frame
+# profiler as `k<k>.compute`, a child of the scope the session ran in. That
+# scope is the kernel's home row (_COMPUTE_HOME) in the tick's own step; a
+# session run under any other scope -- K1's AI-started system sessions
+# (StartFiring inside gl.ai), or one started by an effect delivered in
+# sim.effects -- reports as `k<k>.compute@<scope>`, so no row is ever
+# recorded under two parents (frame_profiler.record) and each reads at most
+# its parent. The take runs whether the profiler is on or not, so the
+# accumulator never carries a session's time into another.
+#
+# K1 sessions nest (a handler a record runs may start one): a session's own
+# compute is what the accumulator gained while it was the innermost one, so
+# entering a nested session first banks the accumulator into the enclosing
+# session's tally (_k1_compute: [scope, ms, calls] per open session).
+# K0, K2 and K3 refuse to nest, and their accumulators are their own.
+
+_COMPUTE_HOME = ("sim.weapons", "cb.held_weapons", "cb.phasers",
+                 "cb.projectiles", "cb.eligibility")
+_k1_compute: list = []
+
+
+def _compute_record(k, where, ms, n) -> None:
+    """Report kernel `k`'s compute (`n` calls, `ms`) run under `where`."""
+    if n and _prof._enabled:
+        if where == _COMPUTE_HOME[k]:
+            _prof.record("k%d.compute" % k, ms, n)
+        else:
+            _prof.record("k%d.compute@%s" % (k, where), ms, n)
+
+
+def _compute_taken(k) -> None:
+    """A K0/K2/K3 session or a K4 call is over: its compute, to the scope
+    open around it."""
+    ms, n = _h.combat_compute_take(k)
+    _compute_record(k, _prof.open_scope(), ms, n)
+
+
+def _k1_compute_enter() -> None:
+    """A K1 session starts: bank what the enclosing one computed so far."""
+    if _k1_compute:
+        ms, n = _h.combat_compute_take(1)
+        top = _k1_compute[-1]
+        top[1] += ms
+        top[2] += n
+    _k1_compute.append([_prof.open_scope(), 0.0, 0])
+
+
+def _k1_compute_exit() -> None:
+    """A K1 session ends: its own compute, to the scope it started in."""
+    ms, n = _h.combat_compute_take(1)
+    if not _k1_compute:         # reset() mid-session (tests)
+        return
+    where, ms0, n0 = _k1_compute.pop()
+    _compute_record(1, where, ms0 + ms, n0 + n)
+
+
 # ── K1: the native fire-control kernel's driver (phase 1b) ─────────────────
 #
 # native/src/combat/include/dauntless/combat/k1_fire_control.h is the
@@ -3779,8 +3845,12 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     equals Python) and the exception re-raised; the walked system's row
     dropped by a handler mid-walk (the kernel cannot follow it) re-raises
     as a RuntimeError naming that invariant."""
-    with _effect_queue.session():
-        _run_k1(dt, ships, pump_body, system)
+    _k1_compute_enter()
+    try:
+        with _effect_queue.session():
+            _run_k1(dt, ships, pump_body, system)
+    finally:
+        _k1_compute_exit()
 
 
 def _run_k1(dt, ships, pump_body, system) -> None:
@@ -4253,8 +4323,11 @@ def run_k0(ships, dt) -> None:
     RUN_PYTHON records' Python alike -- at its end, in emission order;
     inside the tick's scope that one delivers. An abandoned session keeps
     the entries already queued (ruling F5)."""
-    with _effect_queue.session():
-        _run_k0(ships, dt)
+    try:
+        with _effect_queue.session():
+            _run_k0(ships, dt)
+    finally:
+        _compute_taken(0)
 
 
 def _run_k0(ships, dt) -> None:
@@ -4988,8 +5061,11 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
     stepping `cb.phasers` outside the tick's scope), the session opens its
     own deferral and delivers what it produced -- its kernel's entries and
     its records' Python alike -- at its end, in emission order."""
-    with _effect_queue.session():
-        _run_k2(ships, dt, ship_instances, cx)
+    try:
+        with _effect_queue.session():
+            _run_k2(ships, dt, ship_instances, cx)
+    finally:
+        _compute_taken(2)
 
 
 def _run_k2(ships, dt, ship_instances, cx) -> None:
@@ -5372,6 +5448,7 @@ def k4_update(player, ships) -> bool:
     if pw is None or sw is None:
         return _k4_python("weights")
     idx = _h.combat_k4_eligible(ph, max_count, pw, sw)
+    _compute_taken(4)
     if idx is None:
         return False            # counted by the kernel, by why
     ids = {id(player)} if player is not None else set()
@@ -5608,6 +5685,8 @@ def _k3_walk(dt, ship_instances, st, walk, ask):
         if _h.combat_k3_open():
             _h.combat_k3_abandon()
         raise
+    finally:
+        _compute_taken(3)
     _kind, writes, expired, hits = rec
     rows = _k3_rows
     # Every handle to its object BEFORE any expire(): `_active.remove` drops
