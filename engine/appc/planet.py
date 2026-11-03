@@ -246,6 +246,9 @@ def _is_proximity_participant(obj) -> bool:
 
     if isinstance(obj, PhysicsObjectClass):
         return True
+    # _radius_participates (below) mirrors this non-physics half for the
+    # cached queries; the oracle differential in
+    # tests/unit/test_proximity_cached_candidates.py guards the two.
     try:
         return float(obj.GetRadius()) > 0.0
     except Exception:
@@ -308,7 +311,11 @@ class _Cand:
     `packed_pos` their positions in `objs`; `unstored_pos` the rest.
 
     Holds strong references, so no listed object's transform slot can be
-    freed while the cache lists it (a stale handle would raise)."""
+    freed while the cache lists it (a stale handle would raise).
+
+    `stored` and `physics` are frozen at build: a class swap must go through
+    native_combat.reclassify, and a patched GetWorldLocation through a
+    proximity_cache.bump(), or the cache keeps the old answer."""
     __slots__ = ("gen", "objs", "is_set", "physics", "stored", "dup_of",
                  "packed", "packed_pos", "unstored_pos")
 

@@ -11,11 +11,13 @@ Review Focus (plan docs/superpowers/plans/2026-11-03-native-proximity-phase1.md)
 1 same-tick removal, 2 sized torpedo, 3 radius read at query time,
 4 member also in the manager, 5 no stale handle.
 """
-import gc
 import random
 import sys
 
+import pytest
+
 import App
+from engine.appc import native_combat
 from engine.appc import projectiles
 from engine.appc import proximity_cache
 from engine.appc.ai import ProximityCheck
@@ -23,7 +25,7 @@ from engine.appc.math import TGPoint3
 from engine.appc.objects import ObjectClass
 from engine.appc.planet import ProximityManager
 from engine.appc.projectiles import Torpedo
-from engine.appc.transform_store import get_store
+from engine.appc.transform_store import StaleHandleError, get_store
 from tests.helpers import proximity_oracle as oracle
 
 
@@ -317,14 +319,19 @@ def test_member_also_in_manager_reported_once_at_the_right_slot():
 def test_cached_query_never_raises_stale_handle():
     pSet = App.SetClass_Create()
     a = _ship(pSet, "A")
-    _ship(pSet, "B")
+    b = _ship(pSet, "B")
     pm = pSet.GetProximityManager()
-    pm.AddObject(ObjectClass())
-    assert len(_near(pm)) == 3              # the cache lists B and the ghost
+    assert _near(pm) == [a, b]              # the cache lists B's handle
+    old = pm._cand
     pSet.DeleteObjectFromSet("B")
-    pm.RemoveObject(pm._objects[0])
-    gc.collect()
-    fresh = [ObjectClass() for _ in range(8)]   # recycle any freed slot
+    # Free B's transform slot now, as its collection would (engine.core.ids
+    # holds it, so gc.collect() never does), then recycle slots.
+    b._xform_finalizer()
+    native_combat.drain(boundary=True)
+    fresh = [ObjectClass() for _ in range(8)]
+    # The old list is now stale: reusing it past its generation would raise.
+    with pytest.raises(StaleHandleError):
+        get_store().near_indices(old.packed, 0.0, 0.0, 0.0, 1e6)
     assert _near(pm) == [a]
     assert fresh
 
