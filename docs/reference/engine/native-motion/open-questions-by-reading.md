@@ -43,7 +43,7 @@ So, for every reachable state, `pod._radiation_out is True` is False, and the fa
 
 ### Why it still matters for the port
 
-- The player's integrator still calls the **separate** `impulse_online_fraction` (`engine/host_loop.py:3442`), while AI motion calls the fused one (`engine/appc/ship_motion.py:248`). If the gap ever opened, the manual player and AI ships would disagree about the same engine.
+- The player's integrator still calls the **separate** `impulse_online_fraction` (`engine/host_loop.py:3400`), while AI motion calls the fused one (`engine/appc/ship_motion.py:248`). If the gap ever opened, the manual player and AI ships would disagree about the same engine.
 - **Recommendation (not a ruling):** the native kernel reads the mirrored `_radiation_out` of the pod and of the master. The mirror row already carries the field, and today the result is the same. That keeps `_is_offline` the single definition. Pin it with one new case in `test_impulse_fractions_fused.py`: a pod double with `_radiation_out = True`, asserting fused == separate. That case fails on today's fused code. Either add the same clause to the Python fast path, or record the case as a deliberate difference, in that commit.
 
 ---
@@ -159,7 +159,7 @@ From `stbc_reference/spec/ProximityManager.md`, graded `faithful` for the index 
 - **inferred:** that ProximityManager's "bounding radius" is this same `+0xe4` world-bound radius, and that its boxes are the cached world AABB. ProximityManager.md does not name the accessor. It is the obvious reading, not a stated one.
 - **So BC's GetRadius includes scale. Ours does not:**
   - `ObjectClass.GetRadius` returns `_radius` (`objects.py:210-211`) and `GetScale` is separate (`:216-220`).
-  - Ships are seeded at realise with the **AABB corner distance**, unscaled (`engine/host_loop.py:6549-6567`). Its docstring says "Both are unscaled: the collision and hit code multiply by GetScale()".
+  - Ships are seeded at realise with the **AABB corner distance**, unscaled (`engine/host_loop.py:6507-6525`). Its docstring says "Both are unscaled: the collision and hit code multiply by GetScale()".
   - BC's value is the **bounding-sphere** radius, scaled.
   - Rocks have a separate `effective_radius = base × GetScale()` (`engine/rocks/rock.py:60-70`), written for E1M2's 3.7-8.5× rocks.
   - This divergence reaches every SDK `GetRadius()` reader, not just proximity: for example ConditionInRange's trigger radius `fDistance + pObject1.GetRadius()` (`ConditionInRange.py:214`).

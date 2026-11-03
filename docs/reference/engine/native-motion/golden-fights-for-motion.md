@@ -217,7 +217,7 @@ while scene.tick < ticks:
 ```
 
 - **This is ruling 2's order already**: AI, motion and subsystems, then combat, then the boundary, at tpf 1. `sdk_dumb_fire` is the same arm with `combat_stress._AI_DIFFICULTY = 0.0` (`golden_fight.py:577-603`).
-- **Not the host's boundary placement.** The scene builds `GameLoop()` with the default `owns_boundary=True`. So every `GameLoop.tick` ends with its own `effect_queue.boundary()` and `native_combat.drain(boundary=True)` (`loop.py:131-136`), before combat runs. The host builds `GameLoop(owns_boundary=False)` (CT `host_loop.py:11782`), so the GameLoop tick's held effects are delivered at the combat tick boundary, after combat. Phase 4 has to decide which of the two the new order means (**inferred**: ruling 2's "then the combat tick boundary" is `owns_boundary=False`).
+- **Not the host's boundary placement.** The scene builds `GameLoop()` with the default `owns_boundary=True`. So every `GameLoop.tick` ends with its own `effect_queue.boundary()` and `native_combat.drain(boundary=True)` (`loop.py:131-136`), before combat runs. The host builds `GameLoop(owns_boundary=False)` (CT `host_loop.py:11740`), so the GameLoop tick's held effects are delivered at the combat tick boundary, after combat. Phase 4 has to decide which of the two the new order means (**inferred**: ruling 2's "then the combat tick boundary" is `owns_boundary=False`).
 
 **What motion these two goldens exercise** (decoded read-only; branch attribution **inferred**):
 
@@ -239,7 +239,7 @@ while scene.tick < ticks:
 
 | # | Branch | Where | How a scene reaches it |
 |---|---|---|---|
-| 1 | Immobile: return before anything else | `:198-199` (`IsImmobile`, `objects.py:964`) | `SetStatic(1)` (`objects.py:715`) or `SetStationary(1)` (`:962`) on a ship that also has a setpoint |
+| 1 | Immobile: return before anything else | `:198-199` (`IsImmobile`, `objects.py:966`) | `SetStatic(1)` (`objects.py:717`) or `SetStationary(1)` (`:962`) on a ship that also has a setpoint |
 | 2 | In-system warp: `warp_flight.step` returns True → return; False (an "ai" flight holding for parts) → fall through to the impulse path | `:205-207`; `warp_flight.py:324-350` | `ship.InSystemWarp(target, distance)` (`ships.py:758-836`): target beyond radius + distance and nose on it (`IN_SYSTEM_WARP_FACING_COS`), which starts a `WarpFlight(speed_policy="ai")` and posts `ET_IN_SYSTEM_WARP`. A rigged ship (Bird of Prey) gets `_parts_hold > 0` (`warp_flight.py:253-279`), the fall-through case. For a heading flight: `begin_warp_flight(WarpFlight(target=None, ...))` (`ships.py:838-842`). Put the warp ship **between** other rows, so the kernel's segments (NMP §5.2) are tested with ships before and after it |
 | 3 | Arriving: return | `:212-213`; `warp_state.is_arriving` (`warp_state.py:97-104`) | A dewarp drive: `sub.SetPlacement(p)`, `SetWarpState(WES_WARPING)`, `TransitionToState(WES_DEWARP_INITIATED)` (`tests/unit/test_dewarp_drive.py:84-88`), or `loadspacehelper.CreateShip(..., 1)`. Needs `GameLoop.tick`: `tick_warp_states` runs there before motion (`loop.py:97-99`). The slide is 2.0 s |
 | 4 | No setpoints: `drift.step` unless the ship is the current player | `:215-231`; `drift.py:45-76` | A ship with no AI, never given a setpoint, with `SetVelocity` and `SetAngularVelocity(v, MODEL_SPACE)` (post-multiplied), and a second with world-space spin (pre-multiplied). The player with no setpoints must not move |
@@ -251,7 +251,7 @@ The latent `_radiation_out` gap (NMP §5.2): give a pod `_radiation_out = True`.
 
 ### 3.2 What the recorder lacks
 
-The pose row has velocity (`_velocity` through `GetVelocityTG`, `objects.py:651-652`). It lacks the motion state. Add a `motion` row kind, written only by the new scenes:
+The pose row has velocity (`_velocity` through `GetVelocityTG`, `objects.py:653-654`). It lacks the motion state. Add a `motion` row kind, written only by the new scenes:
 
 ```
 "motion": ("name", "_current_speed", "_current_angular_velocity",
@@ -273,7 +273,7 @@ The pose row has velocity (`_velocity` through `GetVelocityTG`, `objects.py:651-
 
 ### 3.3 Driver shape for the motion scene
 
-- Drive with `GameLoop(owns_boundary=False).tick()` then `host_loop._combat_tick_boundary()` per tick, as the host does (CT `host_loop.py:11782`, `:12708`).
+- Drive with `GameLoop(owns_boundary=False).tick()` then `host_loop._combat_tick_boundary()` per tick, as the host does (CT `host_loop.py:11740`, `:12708`).
 - The scene can skip `_advance_weapons` and `_advance_combat`: nothing fires. Keep the tractor out of it; NMP open question 1 decides where the tractor force sits.
 - It does not need `k1d._Scene`. `_Scene.__init__` asserts the ship count and freezes its ship, system and label lists at construction (`k1d:165-189`), so ships added afterwards are never recorded. Write a small scene class that reuses `_seed_every_rng`, `clear_in_flight`, `isolate_fight_audio`, `effect_split.Queued` (for `ET_IN_SYSTEM_WARP` and other events) and the `_pose_rows` helper.
 - With no AI on the scripted ships, there are no AI draws. The seeding stays for safety. Neither the warm-up arm nor `_deterministic_loop` is needed (**inferred**: both exist for combat_stress's AI). If the scene keeps combat_stress's two AI ships, keep both.

@@ -19,11 +19,11 @@ Mark's goal: move these to C++, then decide **with measurements** whether any si
 ## 2. What the mapping found
 
 1. **Proximity queries return objects BC never returns.** Each AvoidObstacles query scans ≈ 337 candidates, 272 of which are ProximityChecks (one per `ConditionInRange`). BC's queries skip ProximityChecks by class (`stbc_reference/spec/ProximityManager.md` §1, §8.1, confidence *faithful*). Ours return them, and the SDK then discards each with `IsTypeOf(CT_PROXIMITY_CHECK)`. From the call counts (4.65 M `NeedToAvoid`, 7.11 M `IsTypeOf`, five types in `lDontAvoidTypes` with the check first), about 87% of the ≈ 88 objects each query returns are checks (**derived**). The `_candidates` docstring (`planet.py:319`) argues the opposite of the clean-room reading; ruling 1 settles it.
-2. **Combat does not read its own tick's poses.** A frame runs all its GameLoop ticks (`advance_ticks`, `host_loop.py:12425`), then all its combat ticks (`for _tick_i in range(...)`, `host_loop.py:12687`). Every combat tick of a frame reads the poses left by the frame's **last** motion tick.
+2. **Combat does not read its own tick's poses.** A frame runs all its GameLoop ticks (`advance_ticks`, `host_loop.py:12383`), then all its combat ticks (`for _tick_i in range(...)`, `host_loop.py:12645`). Every combat tick of a frame reads the poses left by the frame's **last** motion tick.
 3. **Hit tests read on-screen poses.** K2's trace hooks, Manual Aim's `ray_trace_mesh` and `GetRandomPointOnModel` read `g_world`'s instance matrices and `node_overrides`: the interpolated, one-frame-old poses `_sync_instance_transforms` pushes (`host_bindings.cc:683-760`, `k2-beams-map.md:234`, `posed-parts-map.md:36`). So that sync is gameplay, and `lock-map.md:279` lists it as a race for any combat thread.
 4. **Motion's normal path reads only its own ship and fires no events.** Only in-system warp (`warp_flight.step`) reads other objects and posts `ET_IN_SYSTEM_WARP` synchronously. Most impulse inputs are already NativeFields. Motion cost scales with moving ships: quiet 64-ship scene 0.07 ms (SIG-155/159) against 1.39 fighting.
 5. **Glow is presentation only.** `subsystem_glow.update` resends every region's dim every frame with no change guard (`subsystem_glow.py:456-510`); nothing reads its output but the renderer.
-6. **The tractor force step is still Python** (`tractor.advance_tractors`, in `cb.tractors` after K2). The fire-control phase plans it as a native kernel in the same place (R7). It is a pose writer: it moves both the target and the source.
+6. **The tractor force step is native** (fire-control R7, `57767f45c`): `native/src/combat/include/dauntless/combat/tractor_force.h`, driven by `native_combat.tractor_force_step` from `tractor.advance_tractors`, in `cb.tractors` after K2. It has explicit inputs and outputs and writes the transform store itself. Python then applies what it hands back: HOLD's damped targets (`SetVelocity(0)`) and the captured engage geometry. It is a pose writer: it moves both the target and the source.
 
 ## 3. Mark's rulings (2026-11-03)
 
@@ -142,7 +142,7 @@ Instead:
   - online share of pods, and output = clamp(Σ condition% / n, 0, 1) × power wanted, or 0 when off;
   - read from the existing condition, max, disabled, destroyed, radiation, life/dying/dead, `_is_on` and `_children` mirrors and the property `MaxCondition` row;
   - add mirrors for `_power_percentage_wanted`, the ship→IES link, the four authored limits, the setpoints, `_current_*`, `_drift_velocity` and the static/stationary flags.
-  - The fused walk skips a pod's own `_radiation_out` under `_ship_known_good`, while `impulse_online_fraction` tests it. Settled by reading (open-questions-by-reading Q1): no difference today, because radiation only picks top-level subsystems and pods are children. The port copies the fused walk. A test with a pod carrying `_radiation_out` pins the latent gap, since the player's integrator still uses the separate call (`host_loop.py:3442`).
+  - The fused walk skips a pod's own `_radiation_out` under `_ship_known_good`, while `impulse_online_fraction` tests it. Settled by reading (open-questions-by-reading Q1): no difference today, because radiation only picks top-level subsystems and pods are children. The port copies the fused walk. A test with a pod carrying `_radiation_out` pins the latent gap, since the player's integrator still uses the separate call (`host_loop.py:3400`).
 - **Bit-exact with Python:**
   - `MultMatrix` as `0.0 + a·b + c·d + e·f`, k ascending (`test_matrix_multiply_exact.py`);
   - `MakeRotation`'s Rodrigues form;
@@ -154,13 +154,13 @@ Instead:
 - **Python stays the authority; the kernel's outputs are written back in C** (decided after `docs/reference/engine/native-motion/motion-state-audit.md`).
   - The mirror assumes Python holds the real value: resync re-pushes from Python, and row drops and the switch fall back to it.
   - Many readers run after motion: next tick's AI `GetVelocityTG`, the hand-off, collisions, the UI.
-  - Several read through `__dict__` (`collisions.py:310`, `host_loop.py:3209`, `ship_death.py:228`, `ai_inspector_model.py:489`), so storage cannot move behind a property.
+  - Several read through `__dict__` (`collisions.py:310`, `host_loop.py:3167`, `ship_death.py:228`, `ai_inspector_model.py:489`), so storage cannot move behind a property.
   - So M computes with the GIL released into a write log. The log is then applied under the GIL by C code that sets the Python attributes and pushes the `_velocity` mirror, as K0/K1/K2's write logs are (weapon-state phase).
-  - `_current_angular_velocity` keeps its TGPoint3 object and is updated **in place**. Its other in-place writers (`host_loop.py:3211-3213` manual flight, `:3278-3280` the AI hand-off seed) and `test_player_ai_motion_handoff.py:142` keep working.
+  - `_current_angular_velocity` keeps its TGPoint3 object and is updated **in place**. Its other in-place writers (`host_loop.py:3169-3171` manual flight, `:3278-3280` the AI hand-off seed) and `test_player_ai_motion_handoff.py:142` keep working.
   - Inputs that are not yet mirrored (setpoints, authored limits, flags) get pushes on write. `_power_percentage_wanted` is a FrozenField, so it becomes a `NativeFrozenField`.
   - Expected saving falls a little against a row-authoritative design, because the write-back costs about 64 × 4 attribute sets per tick in C. It stays well inside ≈ 1.1 ms.
 - **Python-owned is not "skip natively".** While an in-system warp flight holds for its parts, `warp_flight.step` returns False and that row runs normal motion. So the segment boundary runs `warp_flight.step` in Python first, and then, only if it returned False, the row's native step.
-- **Tractor (fire-control R7):** that phase builds the native tractor force step after K2 in the combat step. This phase records it as a pose-writer stage the motion stage can own. Moving it into the motion stage shifts its pull by one tick relative to the K1 tractor walk; see open question 1.
+- **Tractor (fire-control R7, built):** the native tractor force step runs after K2 in the combat step. This phase records it as a pose-writer stage the motion stage can own. Moving it into the motion stage shifts its pull by one tick relative to the K1 tractor walk; see open question 1.
 - **Published poses:** at the end of the motion stage, copy each ship row's position, rotation and velocity into a native published buffer tagged with the tick number (64 × 15 doubles). Nothing reads it until phases 3 and 4.
 - **Tests:**
   - **The goldens alone do not pin motion** (`docs/reference/engine/native-motion/golden-fights-for-motion.md`).
@@ -262,7 +262,7 @@ Rules:
    - **Ruling needed from Mark before 1d:** scale the radius inside the proximity query only, or make `GetRadius` itself scaled as BC's is (wider than this project).
 3. **Attached ProximityChecks sit at the set origin**, not their anchor: confirmed by reading (open-questions-by-reading Q2). `AttachObject` records the anchor only; BC parents the check's node. Firing is unaffected, because evaluation centres on the anchor. After ruling 1 nothing reads a check's own position, so it is left as is.
 4. **`sim.input`'s missing ≈ 1 ms per frame** (phase 0).
-5. **Headless runs never move tractored ships** (`GameLoop` does not run `cb.tractors`). The fire-control phase may change this; check after the merge.
+5. **Headless runs never move tractored ships** (`GameLoop` does not run `cb.tractors`). Still true after the merge: only `host_loop._advance_combat_step` calls `advance_tractors`.
 6. **Battle sizes to support** for phase 5's threshold (128? 256?), for Mark.
 7. ~~Quick Battle ghosts~~: ruled, see ruling 6.
 8. **Side findings from the motion audit** (inferred, not checked live):
