@@ -1,6 +1,6 @@
 # Native damage (roadmap D) — design
 
-**Status:** draft 2026-11-02. Roadmap workstream D, the next phase on the threading path (presentation RNG → **D** → kernels off the lock (I) → AI ↔ combat pipeline (J)).
+**Status:** built 2026-11-03 (§10); not live-verified; unmerged. Roadmap workstream D, the next phase on the threading path (presentation RNG → **D** → kernels off the lock (I) → AI ↔ combat pipeline (J)).
 **Branch:** `ws/combat-native-damage`, off `project/combat_threading` (`e2b100f2c`), worktree `.claude/worktrees/native-combat-k3`.
 **Input maps:** `docs/reference/engine/native-combat/damage-map.md` (DM, the line-by-line walk and the bit-exactness hazards §7) and `damage-map-refresh.md` (DR, the current state, handler scan, death, numbers).
 **Governing rule (Mark):** the sim runs without checking in with Python; pick the reading of the original scripts that allows it.
@@ -123,4 +123,32 @@ The Python reference changes with the native arm, as decision 12 did, so the dif
 
 ## 10. Outcome
 
-To be written after the build.
+Built 2026-11-02/03 on `ws/combat-native-damage`:
+- Task 1, the semantics: `8d95526db`.
+- Task 2, hit effects queued: `552c9a899`, plus review fixes `ac21dc89a`.
+- Task 3, the native hit for non-kernel callers: `4be286f4f`, `9dd21be87`, `48d767097`.
+- Task 4, K2/K3 in-kernel: `569ed7521`, `bdb46187c`, `09edc2c8f`, `8b6160c9a`.
+- Perf fix: `418fcb3ac`, `c1063ce77`.
+- Test-isolation fix: `6c1fab927`.
+
+- **The check-in is gone.** In the 64-ship fight, K2 hands back 0 damage records (0.381 per tick before) and K3 hands back 0 hits (0.108 per tick before). Every caller uses one C++ hit and condition chain when the switch is on. The kernels' compute is CPython-free; resolving held objects, applying writes and the memo forget stay in the binding, under the GIL.
+- **Bit-exact.** A damage falsifier (`tests/integration/test_native_damage_differential.py`) runs every non-kernel caller both ways and compares every condition, face charge, ramp and `_dying` by `.hex()`, plus the queued entries in order. It was red first. A planted `std::sqrt` for `py_pow`, and the removal of any one of the seven shield-face pushes, each fail it. K0-K3, the step and the presentation falsifier stay green.
+- **Mark's rulings as built:**
+  - M1: only `SetHurtable(0)` blocks damage; `SetInvincible` blocks death.
+  - M5: the death check runs at the boundary for every write, re-reading invincibility. E3M5's GonDev survives.
+  - Bug 2: `SetConditionPercentage` lands in 14 of the 15 missions driven headless; the 15th fires on a 1-in-10 roll and shares the code path.
+  - Bug 3 (E3M1) is closed by M1: the 0.1% plan was dropped after a probe showed the drill could never end. Mission tests pin E7M1/E7M2's scripted kills, GonDev, Matan's disable and E3M1's knock-outs.
+- **Controller rulings added during the build:**
+  - R7: zero crossings are queue entries emitted at the write, which restores event-inventory R2 (`ET_OBJECT_EXPLODING` before the killing hit's `ET_WEAPON_HIT`).
+  - R8: damage effects outside a tick wait for a boundary; a frame-end drain follows the host's post-step pass.
+  - R9: one death path; the reactor breach folds into the seam.
+  - Review fixes: zero crossings are decided on the condition at the boundary; `REPAIR_ADD` only when not already queued; a frozen, natively encodable entry contract with one gone-object rule for both arms.
+- **Benchmark (SIG-176, Debug, two runs each):** `sim` 9.265 → 9.304 ms per tick (inside spread); `sim.combat` 1.509 → 1.434; `sim.effects` 0.196 → 0.325, which now carries hit presentation, hit and subsystem events, and deaths. The first D build was slower (`sim.gameloop` +0.35 ms): a native condition write cost 11.3 µs against Python's 1.9, until the guards were cached on version tags (now 1.3 µs).
+- **Found, not fixed:**
+  - `ET_SUBSYSTEM_COMPLETELY_DESTROYED` / `_DAMAGED` / `_STATE_CHANGED` are never posted (`event-emitter-gaps.md` #15).
+  - `MissionLib.SetConditionPercentage` sets a hull's children rather than the hull when it has children: E3M4's Berkeley hull stays at 100%, and E7M1's freighter dies through its cargo hold. That is the SDK's own walk; parked for Mark.
+  - The death cascade's `[death cascade blast] AttributeError` on hand-built test ships (`GetShipProperty` is None) predates this phase.
+  - A scripted kill in a multi-tick frame waits until that frame's combat flush (within decision 9).
+  - A transiting player's repair-raise entries are dropped by the mission-change reset; no stock handler on them writes combat state.
+  - `_deleted` is never cleared.
+- **Pre-existing failure, still red:** `test_disruptor_fire_and_damage::test_held_trigger_refires_via_advance_combat_hook`, a `TypeError`. It fails at `65a859405` too and must be fixed before the main merge. The order-polluted `test_subsystem_obj_type` passes alone.
