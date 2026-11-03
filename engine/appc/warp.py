@@ -1279,6 +1279,21 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     if not _module_is_empty(dest_module):
         prev = _WarpDepartAction(source, ship, hard_cut=True)
         seq.AddAction(prev)
+    elif (ship is not None and not _is_current_player(ship)
+          and getattr(ship, "GetName", lambda: "")() != "player"):
+        # An NPC warping "blindly" (no destination: AI Warp with
+        # WarpBlindly / WarpBlindlyNoCollisionsIfImpulseDisabled) still LEAVES.
+        # BC's WarpSequence.SetupSequence builds the flash, HideShip and
+        # MOVE_ACTION_1 ("Place the ship in the warp set") whatever the
+        # destination; only the arrival half sits under its
+        # `if pcDestModule != None`. Leaving is what posts ET_EXITED_SET,
+        # which missions wait on: E2M0 moves on only once both retreating
+        # Warbirds have exited Tevron2 (user report 2026-11-03: they turned
+        # away and the campaign never progressed). The player's own
+        # destination-less warp (the current player, or BC's "player" by
+        # name) stays a no-op.
+        prev = _WarpDepartAction(source, ship, hard_cut=True)
+        seq.AddAction(prev)
     if _is_current_player(ship):
         wait = App.TGScriptAction_Create("WarpSequence", "WaitForQueued")
         if prev is None:
