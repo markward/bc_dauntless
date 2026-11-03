@@ -272,6 +272,9 @@ def test_finalize_unregisters():
         ids.unregister(o.GetObjID())
     del sub, obj, o
     gc.collect()
+    # Recorded by the finalizers, freed at the next drain point (spec
+    # 2026-11-03-kernels-off-the-lock, ruling R2).
+    nc.drain()
     for h in handles:
         with pytest.raises(ValueError):
             _h.combat_dump(h)
@@ -292,7 +295,8 @@ def test_stale_handle_after_clear_unregisters_silently():
     _h.combat_clear()
     ids.unregister(other.GetObjID())
     del other
-    gc.collect()                                # finalizer swallows it
+    gc.collect()                                # finalizer records it
+    nc.drain()                                  # the drain swallows it
 
 
 def test_switch_off_pushes_nothing_then_resync_catches_up():

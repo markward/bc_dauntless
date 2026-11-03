@@ -984,12 +984,16 @@ def _combat_tick_boundary():
     Timed as "sim.effects" with the switch off, the row the switch-on
     scope's exit flush uses (ruling I2): a tick's delivery reports under one
     row in both states, so "sim.combat" compares like for like. With it on
-    this boundary is empty (the scope delivered) and is not timed again."""
+    this boundary is empty (the scope delivered) and is not timed again.
+
+    Then the mirror's pending frees and off-main pushes are applied
+    (native_combat.drain, both switch states; spec 2026-11-03 ruling R2)."""
     if _native_combat.enabled():
         _effect_queue.boundary()
-        return
-    with frame_profiler.scope("sim.effects"):
-        _effect_queue.boundary()
+    else:
+        with frame_profiler.scope("sim.effects"):
+            _effect_queue.boundary()
+    _native_combat.drain()
 
 
 # Beam damage per second is MaxDamage × this, by the phaser system's power
@@ -7880,6 +7884,9 @@ class HostController:
             self.session.teardown(self.renderer)
         # The native combat step scan holds the old mission's ships_list.
         _native_combat.clear_step()
+        # Frees and off-main pushes still pending land now, before the next
+        # mission builds a row (spec 2026-11-03 ruling R2).
+        _native_combat.drain()
         from engine.appc import ship_lifecycle
         ship_lifecycle.reset()
         # Effects held for the tick boundary name the old mission's ships.

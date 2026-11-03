@@ -222,6 +222,10 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
     # it does.
     from engine.appc import effect_queue
     effect_queue.reset()
+    # The native mirror's pending frees and off-main pushes land before the
+    # next mission builds a row (spec 2026-11-03 ruling R2).
+    from engine.appc import native_combat
+    native_combat.drain()
 
     host_loop._reset_timers(keep=survivors)
     host_loop._reset_action_registry(keep=survivors)

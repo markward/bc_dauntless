@@ -24,7 +24,9 @@ mirrored instead by their own TABLE, kept in ``projectiles._active`` order
 (the K3 section below: ``TorpedoField``, ``torpedo_row_add``).
 
 Rows live exactly as long as their Python object: ``register`` in
-``__init__``, unregistered by the object's ``weakref.finalize``. Objects are
+``__init__``, unregistered by the object's ``weakref.finalize`` -- recorded
+there and freed at the next drain point (``drain``: no row is freed while a
+kernel computes). Objects are
 registered whenever the bindings are built, even with the switch off; nothing
 is PUSHED while it is off, and turning it on resyncs every row.
 
@@ -32,12 +34,14 @@ The switch is read only in ``configure()`` (called by ``GameLoop.__init__``):
 ``DAUNTLESS_NATIVE_COMBAT=1`` on, ``=0`` or unset off;
 ``DAUNTLESS_NATIVE_AUDIT=1`` turns the audit on and implies native on.
 """
+import collections
 import importlib
 import math
 import operator
 import os
 import random
 import sys
+import threading
 import weakref
 from typing import Mapping
 
@@ -258,6 +262,10 @@ def reset() -> None:
         _h.combat_step_reset()
         for k in range(len(_COMPUTE_HOME)):
             _h.combat_compute_take(k)
+    # Pending frees apply to the mirror they were recorded against, before
+    # a test's combat_clear rebuilds it; queued pushes go (the switch is
+    # off now).
+    drain()
     _k1_compute.clear()
 
 
@@ -474,10 +482,19 @@ def _slot_of(value):
 def _drop(obj) -> None:
     """Unregister `obj`: its handle went stale (a test's combat_clear), or it
     holds a value the mirror cannot represent. From then on it takes the
-    Python path. Its row is freed now; the finalizer's later unregister of
-    the same handle fails quietly. Silent by design (R2)."""
+    Python path. Its row is freed now, on the main thread: a drop mid-walk
+    is the kernels' "row gone" protocol (a K1 walk ASKs Python, or raises
+    for its walked system; test_native_k1_dispatch), which a deferred free
+    would hide. Off the main thread the whole drop is queued for the next
+    drain point (drain(); spec 2026-11-03 ruling R2): it re-pushes
+    referrers and set members, which are mirror pushes. The finalizer's
+    later unregister of the same handle fails quietly. Silent by design
+    (R2)."""
     h = obj.__dict__.get("_nslot")
     if h is None:
+        return
+    if _off_main():
+        _queue_push(obj, _drop_queued, None, "_drop")
         return
     global _k2_drop_epoch
     _k2_drop_epoch += 1         # K2's cached ship -> iid table names handles
@@ -494,7 +511,7 @@ def _drop(obj) -> None:
     # queue to rebind (and runs with the switch off).
     if hasattr(_h, "combat_effect_rebind"):
         _h.combat_effect_rebind(h, obj)
-    unregister_handle(h)
+    _apply_free(h, None)
     if not _enabled:
         return
     # Rows that NAME the dropped object now read it as unrepresentable (-2),
@@ -510,6 +527,10 @@ def _drop(obj) -> None:
             push_set_members(pSet)
     if k in (_kind("Object"), _kind("Subsystem"), _kind("Ammo")):
         _repush_referrers(obj)
+
+
+def _drop_queued(obj, _arg) -> None:
+    _drop(obj)
 
 
 def _repush_referrers(dropped) -> None:
@@ -623,7 +644,9 @@ class NativeField:
         if _enabled:
             h = obj.__dict__.get("_nslot")
             if h is not None:
-                if self._scalar is None:
+                if _get_ident() != _MAIN_IDENT:
+                    _queue_push(obj, _repush_native, self, self._name)
+                elif self._scalar is None:
                     self._push(obj, h, value)
                 else:
                     self._push_scalar(obj, h, value)
@@ -869,7 +892,9 @@ class NativeWrapped:
             h = obj.__dict__.get("_nslot")
             if h is not None:
                 native = self._native
-                if native._scalar is None:
+                if _get_ident() != _MAIN_IDENT:
+                    _queue_push(obj, _repush_native, native, native._name)
+                elif native._scalar is None:
                     native._push(obj, h, value)
                 else:
                     native._push_scalar(obj, h, value)
@@ -927,8 +952,16 @@ def push_watch_value(weapon, value) -> None:
     if _enabled:
         h = weapon.__dict__.get("_nslot")
         if h is not None:
+            if _off_main():     # the watcher's value at the drain
+                _queue_push(weapon, _push_watch_value_of_arg, None,
+                            "_watch_value")
+                return
             _call(weapon, _h.combat_set_f, h, _fid("_watch_value"),
                   float(value))
+
+
+def _push_watch_value_of_arg(weapon, _arg) -> None:
+    _push_watch_value_of(weapon)
 
 
 def _push_watch_value_of(weapon) -> None:
@@ -1036,6 +1069,9 @@ def push_cond_watch(sub, which) -> None:
     h = sub.__dict__.get("_nslot")
     if h is None:
         return
+    if _off_main():
+        _queue_push(sub, push_cond_watch, which, "cond_watch")
+        return
     n, v = _cond_watch_state(sub, which)
     _slot, checks_field, value_field = _COND_WATCH_SLOTS[which]
     _call(sub, _h.combat_set_i, h, _fid(checks_field), n)
@@ -1048,6 +1084,9 @@ def push_cond_watch_value(sub, which, value) -> None:
     if _enabled:
         h = sub.__dict__.get("_nslot")
         if h is not None:
+            if _off_main():     # the watcher's state at the drain
+                _queue_push(sub, push_cond_watch, which, "cond_watch")
+                return
             _call(sub, _h.combat_set_f, h,
                   _fid(_COND_WATCH_SLOTS[which][2]), value)
 
@@ -1296,12 +1335,19 @@ def push_has_shields(sub) -> None:
     if _enabled:
         h = sub.__dict__.get("_nslot")
         if h is not None:
+            if _off_main():
+                _queue_push(sub, _push_has_shields_arg, None, "has_shields")
+                return
             try:
                 v = int(sub.HasShields())
             except (TypeError, ValueError, OverflowError):
                 _drop(sub)  # not representable: never leave a stale row
                 return
             _call(sub, _h.combat_set_i, h, _fid("has_shields"), v)
+
+
+def _push_has_shields_arg(sub, _arg) -> None:
+    push_has_shields(sub)
 
 
 def _has_shields_flag(sub) -> int:
@@ -1422,6 +1468,7 @@ def forget_rows() -> None:
     for obj in list(_registry.values()):
         obj.__dict__.pop("_nslot", None)
     _registry.clear()
+    _discard_pending_rows()
     _forget_part_caches()
     bump_part_gen()     # the cleared mirror's generation is back at 1
     torpedo_table_mark_dirty()
@@ -1430,13 +1477,139 @@ def forget_rows() -> None:
     _k2_watch_seen[0] = -1
 
 
+# ── Deferred frees and off-main pushes (spec 2026-11-03-kernels-off-the-lock
+# §2 goal 2, §4, ruling R2) ────────────────────────────────────────────────
+#
+# Nothing may mutate the mirror tables while a kernel computes (Task 3
+# computes with the GIL released). So:
+#
+# - FREES are recorded, never applied where they happen: a mirror row (a
+#   finalizer, a replaced Profile row) and an ObjectClass's transform slot
+#   (objects.py's finalizer), with the row's launch module
+#   (combat_unregister's k1_launch_module_release) and its part caches. A
+#   pending row stays valid, so its handle is not reused, until the drain.
+#   The one exception is a _drop on the main thread: a LIVE object's row
+#   leaving the mirror mid-walk is the kernels' "row gone" protocol, so it
+#   frees at once, between records, as before (off the main thread the
+#   whole _drop is queued, like a push).
+# - PUSHES made on a thread other than the main one (a finalizer or an SDK
+#   __del__ that ran there: ConditionPulseReady's RemoveRangeCheck pushes
+#   `_watch_checks`) are queued. Main-thread pushes keep their direct path.
+#   A queued push re-pushes what the object holds AT THE DRAIN, never the
+#   value it recorded: a main-thread write in between must not be undone.
+#
+# drain() applies them, frees first, each in recorded order. Drain points:
+# the start of each kernel session (no-op while one is open: a nested
+# session's start never frees under its parent), host_loop's tick boundary,
+# the GameLoop's own end-of-tick, both mission swaps and reset().
+# forget_rows() (after a test's combat_clear rebuilt the mirror) applies no
+# pending row free or push, only the transform-slot frees.
+#
+# Both lists are deques: append and popleft are atomic under the GIL on any
+# thread, and the Python a drain runs may record more.
+
+_get_ident = threading.get_ident
+_MAIN_IDENT = threading.main_thread().ident
+# (row handle or None, (store, transform handle) or None)
+_pending_frees: collections.deque = collections.deque()
+# (weakref to the object, re-push function, its argument, label)
+_pending_pushes: collections.deque = collections.deque()
+
+
+def _off_main() -> bool:
+    return _get_ident() != _MAIN_IDENT
+
+
+def defer_free(h=None, store=None, xform=None) -> None:
+    """Record a free: row `h` and/or transform slot `xform` of `store`.
+    Never raises (a finalizer body)."""
+    _pending_frees.append((h, None if xform is None else (store, xform)))
+
+
+def _queue_push(obj, fn, arg, label) -> None:
+    """A push `fn(obj, arg)` made off the main thread, for the drain."""
+    _pending_pushes.append((weakref.ref(obj), fn, arg, label))
+
+
+def _repush_native(obj, field) -> None:
+    """A queued NativeField push: the field's value as the object holds it
+    now, by the field's own push."""
+    d = obj.__dict__
+    h = d.get("_nslot")
+    if not _enabled or h is None or field._name not in d:
+        return
+    if field._scalar is None:
+        field._push(obj, h, d[field._name])
+    else:
+        field._push_scalar(obj, h, d[field._name])
+
+
+def _session_open() -> bool:
+    return bool(available() and (
+        _h.combat_k0_open() or _h.combat_k1_depth() or _h.combat_k2_open()
+        or _h.combat_k3_open()))
+
+
+def _apply_free(h, slot) -> None:
+    if slot is not None:
+        try:
+            slot[0].free(*slot[1])
+        except Exception:
+            # A store reset (tests) or interpreter teardown can invalidate
+            # the handle first.
+            pass
+    if h is not None:
+        _forget_part_caches(h)
+        try:
+            _h.combat_unregister(h)
+        except Exception:
+            pass        # a combat_clear may have freed it
+
+
+def drain() -> None:
+    """Apply every pending free, then every queued push, in recorded order,
+    on the main thread with the GIL held. Nothing while a kernel session is
+    open, and nothing when called off the main thread. What a push's own
+    Python records (a collection it triggers) waits for the next drain."""
+    if not (_pending_frees or _pending_pushes) or _off_main() \
+            or _session_open():
+        return
+    frees, pushes = _pending_frees, _pending_pushes
+    while frees:
+        _apply_free(*frees.popleft())
+    for _ in range(len(pushes)):
+        ref, fn, arg, _label = pushes.popleft()
+        obj = ref()
+        if obj is not None:
+            fn(obj, arg)
+
+
+def _discard_pending_rows() -> None:
+    """forget_rows: the mirror was rebuilt (combat_clear), so no pending row
+    free or push may reach it. Transform-slot frees still apply: the store
+    was not cleared."""
+    frees = _pending_frees
+    _pending_pushes.clear()
+    while frees:
+        _apply_free(None, frees.popleft()[1])
+
+
+def pending_frees() -> list:
+    """(row handle or None, (store, transform handle) or None) per pending
+    free, in recorded order."""
+    return list(_pending_frees)
+
+
+def pending_pushes() -> list:
+    """(object or None if collected, label) per queued push, in recorded
+    order."""
+    return [(ref(), label) for ref, _fn, _arg, label in _pending_pushes]
+
+
 def unregister_handle(h: int) -> None:
-    """Finalizer body: never raises (a combat_clear may have freed it)."""
-    _forget_part_caches(h)
-    try:
-        _h.combat_unregister(h)
-    except Exception:
-        pass
+    """Finalizer body: records the free (drain() applies it). Never
+    raises."""
+    defer_free(h)
 
 
 #: Subsystem.weapon_kind by class, in isinstance order (a bank is not a
@@ -1772,6 +1945,21 @@ def bump_part_gen() -> None:
     and turning it on bumps again (resync)."""
     global _part_gen
     _part_gen += 1
+    if _enabled:
+        if _off_main():         # the generation as it stands at the drain
+            _queue_push(_PART_GEN, _push_part_gen, None, "part_gen")
+            return
+        _h.combat_set_part_gen(_part_gen)
+
+
+class _PartGen:
+    """The weakly referenceable owner of a queued part-generation push."""
+
+
+_PART_GEN = _PartGen()
+
+
+def _push_part_gen(_owner, _arg) -> None:
     if _enabled:
         _h.combat_set_part_gen(_part_gen)
 
@@ -3949,6 +4137,7 @@ def k1_pump(ships, dt, pump_body) -> None:
     """host_loop._pump_held_weapons(ships, dt) through K1. `ships` is a
     list; a ship with no Object row is passed as -1, and the kernel hands
     each of its getters back (RUN_PYTHON) to `pump_body(ship, getter)`."""
+    drain()                     # a session start (ruling R2)
     if not _k1_walk_check_sent:
         _k1_send_walk_check()
     _k1_recheck_overrides()
@@ -3970,6 +4159,7 @@ def k1_system(system, dt) -> None:
     """WeaponSystem.StartFiring's immediate update_weapons(dt) through K1.
     A system with no Subsystem row runs its Python update_weapons, as the
     kernel's RUN_PYTHON would."""
+    drain()                     # a session start (ruling R2)
     h = system.__dict__.get("_nslot")
     if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
         system.update_weapons(dt)
@@ -4245,6 +4435,7 @@ def k0_weapons(ships, dt) -> bool:
         return _k0_python("audit")
     if _h.combat_k0_open():
         return _k0_python("nested")
+    drain()                     # a session start (ruling R2)
     global _ws, _step_memo, _k0_ctx
     if _ws is None:
         from engine.appc import weapon_subsystems
@@ -5158,6 +5349,7 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     """host_loop's `cb.phasers` step through K2: True when it ran, False when
     the caller must run the step in Python whole (counted by why in
     counts()["k2_python_step_reasons"])."""
+    drain()                     # a session start (ruling R2)
     why = _k2_step_fallback(ship_instances)
     if why is None:
         handles, python_ships, whole = _k2_ship_handles(ships)
@@ -5647,6 +5839,7 @@ def run_k3(dt, all_ships, ship_instances):
     is only a profiler scope); an exception from expire() (an
     ET_TORPEDO_EXITED_SET handler) comes after every write was applied, as in
     Python."""
+    drain()                     # a session start (ruling R2)
     why = _k3_fallback(all_ships, ship_instances)
     if why is not None:
         return _k3_python(why)

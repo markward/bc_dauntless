@@ -10,6 +10,7 @@ import gc
 
 import pytest
 
+from engine.appc import native_combat
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import ObjectClass
 from engine.appc.transform_store import StaleHandleError, get_store
@@ -86,6 +87,14 @@ def test_direction_helpers_read_columns():
     assert (fwd.x, fwd.y, fwd.z) == (2.0, 5.0, 8.0)
 
 
+def _collect():
+    """Collect, then apply the frees the finalizers recorded: a slot is
+    freed at native_combat's next drain point, not inside the finalizer
+    (spec 2026-11-03-kernels-off-the-lock, ruling R2)."""
+    gc.collect()
+    native_combat.drain()
+
+
 def test_slot_is_released_after_unregister_and_collection():
     """NOT a demonstration of production-time release.
 
@@ -106,18 +115,18 @@ def test_slot_is_released_after_unregister_and_collection():
     # A prior test's ObjectClass instances lose their _registry entry the
     # moment THIS test's autouse setup fixture clears it (tests/conftest.py),
     # but cyclic garbage (ObjectClass instances sit in cycles, see the class
-    # below) isn't actually collected until the next gc.collect() -- which
+    # below) isn't actually collected until the next _collect() -- which
     # could be the one further down in THIS test. Flush that backlog first so
-    # "before" is a stable floor, not a count that a later gc.collect() call
+    # "before" is a stable floor, not a count that a later _collect() call
     # would retroactively invalidate.
-    gc.collect()
+    _collect()
     before = store.live_count()
     o = ObjectClass()
     handle = o._xform
     assert store.live_count() == before + 1
     unregister(o.GetObjID())
     del o
-    gc.collect()
+    _collect()
     assert store.live_count() == before
     with pytest.raises(StaleHandleError):
         store.get_position(*handle)
@@ -134,14 +143,14 @@ def test_slot_released_even_in_a_reference_cycle_after_unregister_and_collection
     where a bare __del__ would not be guaranteed to."""
     from engine.core.ids import unregister
     store = get_store()
-    gc.collect()  # flush any backlog from a prior test; see the sibling test
+    _collect()  # flush any backlog from a prior test; see the sibling test
     before = store.live_count()
     o = ObjectClass()
     o._self_cycle = o          # deliberate cycle
     handle = o._xform
     unregister(o.GetObjID())
     del o
-    gc.collect()
+    _collect()
     assert store.live_count() == before
     with pytest.raises(StaleHandleError):
         store.get_position(*handle)
@@ -154,12 +163,12 @@ def test_many_objects_do_not_leak_slots_after_unregister_and_collection():
     collection check."""
     from engine.core.ids import unregister
     store = get_store()
-    gc.collect()  # flush any backlog from a prior test; see the sibling test
+    _collect()  # flush any backlog from a prior test; see the sibling test
     before = store.live_count()
     objs = [ObjectClass() for _ in range(500)]
     for i in range(len(objs)):
         unregister(objs[i].GetObjID())
     del objs  # no lingering loop-variable reference (the `for o in objs`
               # form leaves the last `o` bound and alive after the loop)
-    gc.collect()
+    _collect()
     assert store.live_count() == before

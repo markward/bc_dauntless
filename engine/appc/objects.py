@@ -69,17 +69,10 @@ class _ObjectNodeRef(_NodeStub):
 def _release_transform_slot(store, handle, nslot=None) -> None:
     """Free an object's transform slot and its native combat mirror row.
     Registered via weakref.finalize, so it runs on collection even when the
-    object is part of a cycle."""
-    try:
-        store.free(*handle)
-    except Exception:
-        # A store reset (tests) or interpreter teardown can invalidate the
-        # handle first; a failed release must never propagate out of a
-        # finalizer.
-        pass
-    if nslot is not None:
-        # Never raises: a test's combat_clear() may have freed the row.
-        native_combat.unregister_handle(nslot)
+    object is part of a cycle. Both are RECORDED, as one entry, and freed
+    at native_combat's next drain point (a kernel may be computing on them:
+    spec 2026-11-03-kernels-off-the-lock, ruling R2). Never raises."""
+    native_combat.defer_free(nslot, store, handle)
 
 
 class ObjectClass(TGEventHandlerObject):

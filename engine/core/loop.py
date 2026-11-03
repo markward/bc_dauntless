@@ -128,6 +128,9 @@ class GameLoop:
         if self.owns_boundary:
             from engine.appc import effect_queue
             effect_queue.boundary()
+            # The mirror's pending frees and off-main pushes (spec
+            # 2026-11-03 ruling R2): host_loop's tick boundary otherwise.
+            native_combat.drain()
 
     def advance(self, n: int) -> None:
         for _ in range(n):
