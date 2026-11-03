@@ -16,7 +16,10 @@ and its dtor unregisters. SDK scripts rely on both: they construct a
 process, call SetDelay AFTER construction, never call Add() themselves,
 and stop the process by dropping the reference. TimeSliceProcess.__init__
 mirrors that self-registration here; the manager holds weak references so
-dropping the last Python reference unregisters the process.
+dropping the last Python reference unregisters the process. A
+PythonMethodProcess also stops when its owner goes: it holds its instance
+weakly, so the SDK's owner <-> process cycle (Bridge/PowerDisplay.py:73-98)
+ends the moment the owner is dropped, as in BC (Python 1.5, no cyclic gc).
 """
 import weakref
 
@@ -75,6 +78,10 @@ class PythonMethodProcess(TimeSliceProcess):
     or pmp.SetInstance(instance); pmp.SetFunction(method_name) [1-arg].
 
     On dispatch, getattr(instance, method_name)(dTimeAvailable) is invoked.
+    The instance is held WEAKLY (strongly only if it cannot be weakly
+    referenced): the SDK keeps the process on its owner and passes the owner
+    as the instance, so a strong hold would keep a dropped owner firing until
+    the cyclic collector ran. Once the instance is gone, Update does nothing.
     The two-arg form matches sdk/.../AI/Setup.py; the one-arg + SetInstance
     form is used by HelmMenuHandlers.ProcessWrapper (py:56-70).
     """
@@ -86,26 +93,42 @@ class PythonMethodProcess(TimeSliceProcess):
     def SetInstance(self, instance) -> None:
         # HelmMenuHandlers.ProcessWrapper:69 — separate instance setter used
         # with the 1-arg SetFunction form.
-        self._instance = instance
+        self._set_instance(instance)
+
+    def _set_instance(self, instance) -> None:
+        if instance is None:
+            self._instance = None
+            return
+        try:
+            self._instance = weakref.ref(instance)
+        except TypeError:
+            self._instance = instance       # not weakly referenceable
+
+    def _resolve_instance(self):
+        inst = self._instance
+        if isinstance(inst, weakref.ref):
+            return inst()
+        return inst
 
     def SetFunction(self, instance_or_name, method_name: str = "") -> None:
         if method_name:
             # 2-arg form: SetFunction(instance, "MethodName")
-            self._instance = instance_or_name
+            self._set_instance(instance_or_name)
             self._method_name = method_name
         else:
             # 1-arg form: SetFunction("MethodName") after SetInstance()
             self._method_name = str(instance_or_name)
 
     def Update(self, dTimeAvailable: float = 0.0) -> None:
-        if self._instance is None or not self._method_name:
+        instance = self._resolve_instance()
+        if instance is None or not self._method_name:
             return
         # BC passes the process delay as the time-available budget.  The
         # original Appc.dll uses the configured delay as the representative
         # slice length (HelmMenuHandlers.ProcessWrapper.ProcessFunc confirms
         # the signature: def ProcessFunc(self, dTimeAvailable)).  We mirror
         # that here so SDK callbacks receive a meaningful float, not zero.
-        getattr(self._instance, self._method_name)(dTimeAvailable)
+        getattr(instance, self._method_name)(dTimeAvailable)
 
 
 class TimeSliceProcessManager:
@@ -119,7 +142,8 @@ class TimeSliceProcessManager:
     destructor, and SDK scripts rely on that: they stop a periodic check by
     dropping the reference (`self.pTimerProcess = None`,
     Conditions/ConditionFacingToward.py:100). A strong list would keep every
-    condition's process firing forever.
+    condition's process firing forever. A PythonMethodProcess likewise stops
+    when its owner is dropped (it holds the instance weakly).
     """
     def __init__(self):
         self._procs: list = []          # list[weakref.ref[TimeSliceProcess]]

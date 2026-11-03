@@ -59,9 +59,9 @@ def test_priority_order_normal_runs_before_low():
         def __init__(self, tag): self.tag = tag
         def Go(self, _dt=0.0): order.append(self.tag)
 
-    n = PythonMethodProcess(); n.SetFunction(H("N"), "Go"); n.SetDelay(0.1)
+    hn = H("N"); n = PythonMethodProcess(); n.SetFunction(hn, "Go"); n.SetDelay(0.1)
     n.SetDelayUsesGameTime(1); n.SetPriority(TimeSliceProcess.NORMAL)
-    l = PythonMethodProcess(); l.SetFunction(H("L"), "Go"); l.SetDelay(0.1)
+    hl = H("L"); l = PythonMethodProcess(); l.SetFunction(hl, "Go"); l.SetDelay(0.1)
     l.SetDelayUsesGameTime(1); l.SetPriority(TimeSliceProcess.LOW)
 
     mgr = TimeSliceProcessManager()
@@ -79,9 +79,9 @@ def test_game_time_vs_real_time_isolated():
         def __init__(self, tag): self.tag = tag
         def Go(self, _dt=0.0): fired.append(self.tag)
 
-    g = PythonMethodProcess(); g.SetFunction(H("G"), "Go"); g.SetDelay(1.0)
+    hg = H("G"); g = PythonMethodProcess(); g.SetFunction(hg, "Go"); g.SetDelay(1.0)
     g.SetDelayUsesGameTime(1)
-    r = PythonMethodProcess(); r.SetFunction(H("R"), "Go"); r.SetDelay(1.0)
+    hr = H("R"); r = PythonMethodProcess(); r.SetFunction(hr, "Go"); r.SetDelay(1.0)
     r.SetDelayUsesGameTime(0)
 
     mgr = TimeSliceProcessManager()
@@ -99,7 +99,7 @@ def test_reschedule_after_fire():
     class H:
         def Go(self, _dt=0.0): h_calls.append(1)
 
-    p = PythonMethodProcess(); p.SetFunction(H(), "Go"); p.SetDelay(1.0)
+    h = H(); p = PythonMethodProcess(); p.SetFunction(h, "Go"); p.SetDelay(1.0)
     p.SetDelayUsesGameTime(1)
     mgr = TimeSliceProcessManager()
     mgr.Add(p)
@@ -114,7 +114,7 @@ def test_remove_stops_dispatch():
     fired = []
     class H:
         def Go(self, _dt=0.0): fired.append(1)
-    p = PythonMethodProcess(); p.SetFunction(H(), "Go"); p.SetDelay(0.5)
+    h = H(); p = PythonMethodProcess(); p.SetFunction(h, "Go"); p.SetDelay(0.5)
     p.SetDelayUsesGameTime(1)
     mgr = TimeSliceProcessManager()
     mgr.Add(p)
