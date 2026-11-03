@@ -19,6 +19,7 @@ hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
 import math
 import weakref
 
+from engine.appc import proximity_cache
 from engine.appc import native_combat as _nc
 from engine.appc.math import TGPoint3
 from engine.appc.objects import ObjectClass
@@ -295,9 +296,12 @@ class Torpedo(ObjectClass):
         # one with a radius occupies space (planet._is_proximity_participant).
         self._rad = r
         if r > 0.0:
-            _sized.add(self)
-        else:
+            if self not in _sized:
+                _sized.add(self)
+                proximity_cache.bump()
+        elif self in _sized:
             _sized.discard(self)
+            proximity_cache.bump()
 
     @property
     def _containing_set(self):

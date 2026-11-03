@@ -2,6 +2,7 @@ import re
 from functools import lru_cache
 
 import engine.dev_mode as dev_mode
+from engine.appc import proximity_cache
 from engine.appc import native_combat
 from engine.appc.events import TGEventHandlerObject
 
@@ -261,6 +262,9 @@ class SetClass(TGEventHandlerObject):
 
     def _index_member(self, identifier: str, obj, previous) -> None:
         from engine.appc.projectiles import Torpedo
+        # Any add can change a manager's candidate list or its order
+        # (cache keyed on this generation: engine.appc.proximity_cache).
+        proximity_cache.bump()
         if isinstance(obj, Torpedo):
             self._non_torpedo.pop(identifier, None)
         elif previous is not None and isinstance(previous, Torpedo):
@@ -290,7 +294,9 @@ class SetClass(TGEventHandlerObject):
             ObjectGroup.broadcast_membership(obj, entered=False)
             self._clear_containing_set(obj)
         self._non_torpedo.pop(name, None)
-        return self._objects.pop(name, None)
+        removed = self._objects.pop(name, None)
+        proximity_cache.bump()      # after the handlers, at the index pop
+        return removed
 
     def DeleteObjectFromSet(self, name: str) -> None:
         obj = self._objects.get(name)
@@ -310,6 +316,7 @@ class SetClass(TGEventHandlerObject):
             self._clear_containing_set(obj)
         self._non_torpedo.pop(name, None)
         self._objects.pop(name, None)
+        proximity_cache.bump()      # after the handlers, at the index pop
 
     def _clear_containing_set(self, obj) -> None:
         """Stop `obj` reporting THIS set once it has left it, so

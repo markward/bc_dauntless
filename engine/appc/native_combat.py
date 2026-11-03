@@ -59,6 +59,7 @@ import traceback
 import weakref
 from typing import Mapping
 
+from engine.appc import proximity_cache
 from engine.appc import effect_queue as _effect_queue
 from engine.appc import passive_state as _passive_state
 from engine.appc.math import TGPoint3
@@ -2607,6 +2608,7 @@ def _push_all(obj, h) -> None:
 
 def reclassify(ship) -> None:
     """`ship.__class__` changed (engine.rocks.rock): re-push its class flags."""
+    proximity_cache.bump()
     cls = type(ship)
     if cls not in _k2_seen_set:
         _k2_seen_set.add(cls)

@@ -18,6 +18,7 @@ in Phase 2.  Hailable + atmosphere damage are real gameplay logic.
 """
 
 from engine.appc.objects import ObjectClass
+from engine.appc import proximity_cache
 from engine.appc import proximity_table
 from engine.core import frame_profiler
 
@@ -287,6 +288,7 @@ class ProximityManager:
     def AddObject(self, obj) -> None:
         if obj not in self._objects:
             self._objects.append(obj)
+            proximity_cache.bump()
         # SDK ConditionInRange.SetupProximitySphere calls
         # pProximityManager.AddObject(pProx) — the proximity check is
         # registered here so the per-tick evaluator can find it. We track
@@ -306,6 +308,7 @@ class ProximityManager:
     def RemoveObject(self, obj) -> None:
         if obj in self._objects:
             self._objects.remove(obj)
+            proximity_cache.bump()
 
     def UpdateObject(self, obj) -> None:
         # SDK pattern (QuickBattle.py:2726): notifies the proximity tracker
@@ -313,6 +316,7 @@ class ProximityManager:
         # may need recomputing.  Phase 1: idempotent ensure-present.
         if obj not in self._objects:
             self._objects.append(obj)
+            proximity_cache.bump()
 
     def GetNumObjects(self) -> int:
         return len(self._objects)
