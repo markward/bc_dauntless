@@ -132,7 +132,9 @@ No mount means the offset itself. That applies in both native and Python geometr
 
 Built 2026-11-03 on branch `ws/native-default`, off `project/combat_threading` at `2369cba41`. Commits: map and spec `c93856d22`; plan `1e5f836bc`; Task 1 `aae2cdaa2`, fix round `5f1e67065`; Task 2 `23b3845d5`; Task 3 `57767f45c`, fix round `095109cdf`; Task 4 `de59c20f9`; Task 5 `044cbfa9f`, fix round `9c3db5ec6`; Task 6 `a0fbbb83e` + `86baac29e`, fix round `0447023e1`. Not merged to `project/combat_threading` or main yet.
 
-**Benchmark: pending (controller).**
+**Benchmark** (SIG-179, C-281/C-282 against SIG-178's C-278/C-279, 64 ships, no switch set, Debug): no regression. Per tick, `cb.held_weapons` 0.593 → 0.547 ms, `sim.combat` 1.458 → 1.379, `sim` 9.311 → 9.033 (about half of that is `sim.effects`, which swings run to run, so no `sim` gain is claimed).
+
+**After the final review** (`cbc2f2c5c`): a stale build is refused at start-up (every K1 binding listed, record kinds must be exactly DONE); every fire-control entry makes the mirror live first; a held or listed target with no real IsDead (a planet picked by a script or the AI) reads as dead, so phasers, torpedoes and tractors on it stop as the Python copy did. Parked: no K1 test reaches the unplaced-target `stub_or_unplaced` returns (defensive; objects are always placed); a script's direct `TorpedoTube.Fire(planet)` is a counted no-fire where the Python copy posted `ET_WEAPON_FIRE_FAILED` (no SDK caller). The mission-booting files and the campaign sweep were re-run on the final code: 108 passed, 1 xfailed.
 
 **Live check: pending (Mark).**
 
