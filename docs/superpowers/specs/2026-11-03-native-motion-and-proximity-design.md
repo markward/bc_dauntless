@@ -59,14 +59,14 @@ Rulings 1, 3, 4 and 6 move toward BC; ruling 2 matches BC's measured tick order 
 
 ## 5. Phases
 
-Savings are per tick unless marked, from SIG-178 rows × C-280 shares. cProfile inflates call-heavy Python, so they are ranges, and phase 0 replaces them.
+Savings are per tick unless marked. Phase 1's is from phase 0 (SIG-180 to SIG-182, merged main); the rest are still SIG-178 rows × C-280 shares, which phase 0 confirmed (SIG-180). cProfile inflates call-heavy Python, so they are ranges.
 
 | # | Phase | Expected saving | Threading seam it adds |
 |---|---|---|---|
 | 0 | Re-measure on main | — | the baseline phase 5 is judged on |
-| 1 | Proximity | ≈ 1.0–1.5 of `gl.ai` 3.36 | queries read poses through one accessor |
+| 1 | Proximity | ≈ 1.4–1.7 of `ai.avoid` 2.09 (of `gl.ai` 3.33; avoidance off is 0.97) | queries read poses through one accessor |
 | 2 | Motion kernel | ≈ 1.1 of 1.39 | motion is the only ship-pose writer; published poses |
-| 3 | Sim-pose hit tests, glow, native interpolation | ≈ 1.3–1.5 ms per frame | render reads published poses only |
+| 3 | Sim-pose hit tests, glow, native interpolation | ≈ 1.3–1.5 of `sim.render_xforms` 1.89 ms per frame | render reads published poses only |
 | 4 | Whole ticks | ≈ 0 | combat tick *i* reads motion tick *i*'s published poses |
 | 5 | Threading decision | ≤ ≈ 0.9 at 64 ships | — |
 
@@ -77,6 +77,12 @@ Savings are per tick unless marked, from SIG-178 rows × C-280 shares. cProfile 
 - One `DAUNTLESS_COMBAT_AVOID=0` run to isolate avoidance's share.
 - A spike log (`DAUNTLESS_PROFILE_SPIKES`) to explain `sim.input`, which reads 1.1 ms per frame against ≈ 0.1 ms of its own code. A cyclic-GC pass landing in it is the leading guess (unverified).
 - Record as new signals in `perf-register.md`; never edit SIG-178.
+- **Done 2026-11-03** (`0b55cda86`, C-283 to C-287):
+  - SIG-180 baseline: `ai.avoid` 2.09 of `gl.ai` 3.33 a tick, `prox.near` 0.93 inside it; `gl.motion` 1.40; `sim.render_xforms` 1.89 a frame. The rest matches SIG-178.
+  - SIG-181: avoidance off takes `gl.ai` to 0.97, which bounds phase 1 at ≈ 2.3.
+  - SIG-182: a scan walks 337 candidates and hands the SDK 81, ≈ 86% of them ProximityChecks; the query is 55% of the scan, the SDK's per-object test 35%. Phase 1's estimate: 1a cuts the SDK walk by ≈ 86% (≈ 0.7); 1c takes the 0.93 query to ≈ 0.1.
+  - SIG-183: `sim.input`'s 1.1 ms a frame is steady, not a collector pass. It is the bridge officer pick: ten native `get_instance_head_center` calls a frame, ≈ 0.19 ms each, in bridge view only. Not this project's code; raised with Mark as a separate small fix.
+  - Bigger battles (runbook §6) wait for phase 5.
 
 ### 5.1 Phase 1 — proximity
 
@@ -261,7 +267,7 @@ Rules:
    - Still open: `≤` vs `<`; what "own size" is; result order (registration order inferred).
    - **Ruling needed from Mark before 1d:** scale the radius inside the proximity query only, or make `GetRadius` itself scaled as BC's is (wider than this project).
 3. **Attached ProximityChecks sit at the set origin**, not their anchor: confirmed by reading (open-questions-by-reading Q2). `AttachObject` records the anchor only; BC parents the check's node. Firing is unaffected, because evaluation centres on the anchor. After ruling 1 nothing reads a check's own position, so it is left as is.
-4. **`sim.input`'s missing ≈ 1 ms per frame** (phase 0).
+4. ~~**`sim.input`'s missing ≈ 1 ms per frame** (phase 0).~~ Answered by SIG-183: the bridge officer pick's per-frame head skinning. Outside this project.
 5. **Headless runs never move tractored ships** (`GameLoop` does not run `cb.tractors`). Still true after the merge: only `host_loop._advance_combat_step` calls `advance_tractors`.
 6. **Battle sizes to support** for phase 5's threshold (128? 256?), for Mark.
 7. ~~Quick Battle ghosts~~: ruled, see ruling 6.

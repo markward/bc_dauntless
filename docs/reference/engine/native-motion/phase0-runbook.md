@@ -1,6 +1,6 @@
 # Phase 0 runbook — re-measure on main after the combat_threading merge
 
-**For:** `2026-11-03-native-motion-and-proximity-design.md` §5.0. Written 2026-11-03, before the merge, from the perf register (`docs/reference/engine/perf-register.md` on `project/combat_threading`). Run it only after Mark says the merge is done, with the machine otherwise idle: no tests, builds or agents. The machine is shared and used for perf work.
+**For:** `2026-11-03-native-motion-and-proximity-design.md` §5.0. **Run 2026-11-03: C-283 to C-287, SIG-180 to SIG-183.** Written 2026-11-03, before the merge, from the perf register (`docs/reference/engine/perf-register.md` on `project/combat_threading`). Run it only after Mark says the merge is done, with the machine otherwise idle: no tests, builds or agents. The machine is shared and used for perf work.
 
 ## 0. Before any run
 
@@ -12,13 +12,13 @@
 
 ## 1. Baseline pair (as C-278/C-279)
 
-**The command is reconstructed, so confirm it before the first run.** The capture rows chain back to C-242 for the command: "Headless, 1280x720, `DAUNTLESS_DEV_VIEW=bridge`, `caffeinate -i ./build/dauntless --developer`; 90 s cool-down between runs". `combat_stress.py`'s docstring cites `tools/profile_capture.py`, which does not exist on the branch. Cross-check against the Voice Bridge tab "bc_dauntless – perf baseline commands" or the B2 entry's runner before the first run.
+**Confirmed** (2026-11-03, from the fire-control runner `fc_bench_runs.sh`, used for C-281 to C-284). `DAUNTLESS_PROFILE_FRAMES=1500` makes the run quit by itself:
 
 ```
-OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_MISSION=engine.dev_missions.combat_stress DAUNTLESS_COMBAT_SHIPS=64 DAUNTLESS_DEV_VIEW=bridge DAUNTLESS_PROFILE_FRAMES=100000 caffeinate -i ./build/dauntless --developer 2>&1 | tee ~/Documents/dauntless-perf/p0-brawl-on-run1-cs64-bridge-<yyyymmdd-hhmm>.log
+env -u DAUNTLESS_NATIVE_COMBAT -u DAUNTLESS_COMBAT_IDLE -u DAUNTLESS_COMBAT_AVOID OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_WINDOW_SIZE=1280x720 DAUNTLESS_MISSION=engine.dev_missions.combat_stress DAUNTLESS_COMBAT_SHIPS=64 DAUNTLESS_DEV_VIEW=bridge DAUNTLESS_PROFILE_FRAMES=1500 caffeinate -i ./build/dauntless --developer > ~/Documents/dauntless-perf/p0-brawl-run1-cs64-bridge-<yyyymmdd-hhmm>.log 2>&1
 ```
 
-- **Run length:** 1,500 frames, then quit, as C-278/C-279 ("1,500 each").
+- **Run length:** 1,500 frames, as C-278/C-279.
 - **Repeat:** a second run with `run2` after a 90 s cool-down.
 - **Scoring (SIG-157/158):** for each row, take the value ÷ the report's printed average ticks per frame, then the median of reports 3–11 (n = 9). Never divide by `calls`: it is the last frame's tick count.
 - **Rows to record:**
@@ -34,7 +34,7 @@ Same command with `DAUNTLESS_COMBAT_AVOID=0` (`combat_stress.py:132-153`, avoida
 
 ## 3. Spike log for `sim.input` (one run)
 
-Same command plus `DAUNTLESS_PROFILE_SPIKES=~/Documents/dauntless-perf/p0-spikes-<stamp>.log`. The default threshold is `DAUNTLESS_PROFILE_SPIKE_MS` = 100. Lower it to 30 so the frames that inflate `sim.input` show up.
+Same command plus `DAUNTLESS_PROFILE_SPIKES=~/Documents/dauntless-perf/p0-spikes-<stamp>.log`. The default threshold is `DAUNTLESS_PROFILE_SPIKE_MS` = 100. C-286 used 30, which is under this scene's ≈ 50 ms frame, so nearly every frame was logged raw: useful as a per-frame series, not as spikes.
 
 The question: is `sim.input`'s 1.1 ms per frame, against ≈ 0.1 ms of its own code (SIG-178 counter-signal), a few large frames (a cyclic-GC pass is the leading guess) or a steady cost?
 - **If spikes:** a second run with a `gc.callbacks` timer that prints gen-2 pass durations confirms it. That is a scratch wrapper, never committed.
@@ -45,7 +45,7 @@ The question: is `sim.input`'s 1.1 ms per frame, against ≈ 0.1 ms of its own c
 - C-280 used "a scratch wrapper mission around `combat_stress`, enabled after `Initialize`, dumped at exit", with `DAUNTLESS_PROFILE_FRAMES=900`. The wrapper was never committed, so rebuild it in the session scratchpad:
   - a module that imports `engine.dev_missions.combat_stress`, re-exports its mission functions, and wraps `Initialize` to call `cProfile.Profile().enable()` after the original returns;
   - an `atexit` hook that dumps to `~/Documents/dauntless-perf/p0-cprof-brawl-on-cs64-bridge-<stamp>.prof`.
-  - Point `DAUNTLESS_MISSION` at it through `PYTHONPATH`.
+  - `PYTHONPATH` does NOT work: `host_main.cc` `configure_python_path` overwrites it. It does add `$VIRTUAL_ENV/lib/*/site-packages`, so C-287 used a scratch `VIRTUAL_ENV` whose `lib/` holds a symlink `python3.11` → the real `.venv/lib/python3.11` plus `lib/p0/site-packages/<wrapper>.py`, with `DAUNTLESS_MISSION=<wrapper>`.
 - **Shares only.** cProfile slows the tick about 3×, so catch-up hits the 15-tick cap. Never read absolute times from it.
 - **Read** with `python3 -I -c "import pstats; ..."` from the scratchpad, never from inside the project:
   - callers and callees of `GetNearObjects`, `_candidates`, `location_is_stored`, `TestCourseOverride`, `NeedToAvoid`, `IsTypeOf`, `_step_ship_motion`, `_integrate_rotation`, `impulse_fractions`, `_sync_instance_transforms`, `subsystem_glow.update` and `transform_buffer.sample`;
