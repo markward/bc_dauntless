@@ -27,9 +27,10 @@ are those fights themselves, imported, not copied:
 
 * ``state``: the scene's own per-tick record (weapon systems and leaves,
   ships' hull and shields, torpedoes; the posed fight's whole Recorder row),
-  then every ship's pose (position, rotation, velocity) and every tractor
+  then every ship's pose (position, rotation, velocity), every tractor
   system's ``_mode``, ``_engage_state``, ``_was_firing``,
-  ``_next_emitter_index`` and IsEngaged. Each row is ``[kind, label, ...]``;
+  ``_next_emitter_index`` and IsEngaged, and every torpedo tube's
+  ``_reload_timers`` and ``_last_fire_time``. Each row is ``[kind, label, ...]``;
   ``FIELDS[kind]`` names its fields. Floats by ``.hex()``; objects by ship
   name, ``ship/subsystem`` name, or numbered by first sight (never ``id()``
   or a mirror handle);
@@ -83,7 +84,7 @@ from engine.core.loop import TICK_DELTA
 from tests.helpers import k3_fight, posed_fight
 from tests.integration import test_native_k1_differential as k1d
 
-SCHEMA = 1     # the file format; bump it on any change to it or to the rows
+SCHEMA = 2     # the file format; bump it on any change to it or to the rows
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "golden_fights"
 UPDATE_ENV = "UPDATE_COMBAT_GOLDEN"
 ARMS = {"python": k1d.OFF, "native": k1d.ON}
@@ -121,6 +122,7 @@ FIELDS = {
     "pose": ("name", "position", "rotation", "velocity"),
     "tractor": ("label", "_mode", "_engage_state", "_was_firing",
                 "_next_emitter_index", "IsEngaged"),
+    "tube": ("label", "_reload_timers", "_last_fire_time"),
 }
 
 EVENT_FIELDS = ("type", "source", "destination", "tick", "payload")
@@ -184,9 +186,35 @@ def _tractor_rows(ships, label):
     return rows
 
 
+def _hex_or(v):
+    return v.hex() if isinstance(v, float) else v
+
+
+def _tube_rows(ships, label):
+    """Every torpedo tube's reload slots and last launch time (KRM §5.5:
+    neither is in the scenes' own records; _num_ready alone would pass a
+    reload-timer change that moves no launch)."""
+    rows = []
+    for s in ships:
+        torps = s.GetTorpedoSystem()
+        if torps is None:
+            continue
+        for i in range(torps.GetNumWeapons()):
+            w = torps.GetWeapon(i)
+            if not isinstance(w, ws.TorpedoTube):
+                continue
+            timers = getattr(w, "_reload_timers", None)
+            rows.append(["tube", label(w),
+                         None if timers is None else [_hex_or(float(t))
+                                                      for t in timers],
+                         _hex_or(getattr(w, "_last_fire_time", None))])
+    return rows
+
+
 def _extras(scene_like, ships, label):
     scene_like.__dict__.setdefault("golden_extra", []).append(
-        _pose_rows(ships) + _tractor_rows(ships, label))
+        _pose_rows(ships) + _tractor_rows(ships, label)
+        + _tube_rows(ships, label))
 
 
 def _patch_records(mp):
@@ -309,17 +337,24 @@ def _posed(mp, env, spec):
 TBS = ws.TractorBeamSystem
 TRACTOR_RADIUS = 4.0            # both hulls: a standoff off the hull
 TRACTOR_AHEAD = 25.0            # GU ahead of the player, inside 120
-TRACTOR_FAR = 135.0             # past TRACTOR_MAX_RANGE_GU
+TRACTOR_FAR = 135.0             # past TRACTOR_MAX_RANGE_GU (120)
+# The range pinned from both sides: held at 110 GU, lost at 125 (so a
+# changed TRACTOR_MAX_RANGE_GU, 120 -> 100 or 130, moves the scene).
+TRACTOR_RANGE_IN, TRACTOR_RANGE_OUT = 110.0, 125.0
 # (tick, beat), run at the start of the tick.
 TRACTOR_BEATS = (
     (10, "hold"), (40, "nudge"), (70, "tow"), (140, "pull"),
     (220, "push"), (300, "dock1"), (350, "dock2"), (400, "pull"),
-    (410, "far"), (440, "near"), (480, "out_of_arc"), (500, "astern"),
+    (410, "far"), (440, "near"), (450, "range_in"), (460, "range_out"),
+    (470, "near"), (480, "out_of_arc"), (500, "astern"),
     (520, "face"), (560, "off"), (590, "on"), (720, "arm_handler"),
     (750, "start"), (800, "hold"), (840, "stop"),
 )
 TOW_TURN = (90, 130)            # the player yaws 0.5 deg a tick (tows)
 STARVE = (620, 680)             # the main battery zeroed every tick
+TRACTOR_PLACES = {"far": TRACTOR_FAR, "near": TRACTOR_AHEAD,
+                  "range_in": TRACTOR_RANGE_IN,
+                  "range_out": TRACTOR_RANGE_OUT}
 MODE_OF = {"hold": TBS.TBS_HOLD, "tow": TBS.TBS_TOW, "pull": TBS.TBS_PULL,
            "push": TBS.TBS_PUSH, "dock1": TBS.TBS_DOCK_STAGE_1,
            "dock2": TBS.TBS_DOCK_STAGE_2}
@@ -396,9 +431,8 @@ def _tractor_beat(scene, beat, tractors, target):
     elif beat == "nudge":
         p = target.GetWorldLocation()
         target.SetTranslateXYZ(p.x + 2.0, p.y, p.z + 1.0)
-    elif beat in ("far", "near"):
-        target.SetTranslateXYZ(*_ahead(
-            ship, TRACTOR_FAR if beat == "far" else TRACTOR_AHEAD))
+    elif beat in TRACTOR_PLACES:
+        target.SetTranslateXYZ(*_ahead(ship, TRACTOR_PLACES[beat]))
     elif beat == "out_of_arc":
         _turn_out_of_arc(tractors, ship, target)
     elif beat == "face":
@@ -449,7 +483,7 @@ def _tractor_modes(mp, env, spec):
     cond = ConditionFiringTractorBeam(_Status(notes, tick), ship)
     beats = dict(TRACTOR_BEATS)
     seen = {"modes": set(), "drops": 0, "grips": 0, "starved": 0,
-            "emitters": set()}
+            "emitters": set(), "range": {}}
     power = ship.GetPowerSubsystem()
     try:
         while scene.tick < spec.ticks:
@@ -485,6 +519,8 @@ def _tractor_modes(mp, env, spec):
                     tractors.GetWeapon(i).GetName()
                     for i in range(tractors.GetNumWeapons())
                     if tractors.GetWeapon(i).IsFiring())
+            if beats.get(t) in ("range_in", "range_out"):
+                seen["range"][beats[t]] = now
             seen["drops"] += bool(was and not now)
             seen["grips"] += bool(now and not was)
     finally:
@@ -500,11 +536,13 @@ def _tractor_modes(mp, env, spec):
         _TRACTOR.clear()
     # The scene is what it claims: every mode gripped, by a forward and an
     # aft projector; the grip dropped and came back (range, arc, off, the
-    # handler, the stop) and starvation dropped it; the handler stopped the
-    # beam once; the condition went true and false.
+    # handler, the stop) and starvation dropped it; held at RANGE_IN, lost at
+    # RANGE_OUT; the handler stopped the beam once; the condition went true
+    # and false.
     assert seen["modes"] == set(MODE_OF.values()), seen
     assert stopped == _beat_tick("arm_handler"), stopped
-    assert seen["drops"] >= 5 and seen["grips"] >= 5, seen
+    assert seen["drops"] >= 6 and seen["grips"] >= 6, seen
+    assert seen["range"] == {"range_in": 1, "range_out": 0}, seen
     assert seen["starved"] > 0, seen
     assert {n.split()[0] for n in seen["emitters"]} == {"Aft", "Forward"}, seen
     statuses = {n[2] for n in notes if n[0] == "condition"}
@@ -524,6 +562,18 @@ def _beat_tick(beat):
 DUMB_DIFFICULTY = 0.0           # BasicAttack's floor: DumbFireTorps on
 
 
+class _CountingList(list):
+    """A list that counts its appends (and is otherwise a list)."""
+
+    def __init__(self):
+        super().__init__()
+        self.appends = 0
+
+    def append(self, item):
+        self.appends += 1
+        super().append(item)
+
+
 def _sdk_dumb_fire(mp, env, spec):
     """The GameLoop fight (k1d._loop_arm) with every AI's BasicAttack at
     Difficulty 0.0 (AI/Compound/BasicAttack.py: the 0.0 row turns on
@@ -534,19 +584,22 @@ def _sdk_dumb_fire(mp, env, spec):
     mp.setattr(combat_stress, "_AI_DIFFICULTY", DUMB_DIFFICULTY)
     k1d._loop_arm(mp, k1d.OFF, ticks=WARM_UP_TICKS)
     gc.collect()
+    # The scene is what it claims: the SDK's FireDumb ran (past its warp-in
+    # hold) and launched. Counted on Weapon.FireDumb's own marker list
+    # (weapon_subsystems._dumb_firing, read only through that module's
+    # global), never by patching FireDumb: a patch there, on the class or
+    # the instance, is a K1 override (native_combat._K1_LEAF_METHODS,
+    # _K1_LEAF_PATCHES) and would change the native arm's path.
+    marker = _CountingList()
+    mp.setattr(ws, "_dumb_firing", marker)
     scene = k1d._loop_arm(mp, env, ticks=spec.ticks)
     if scene.native:
         assert scene.audit == [], scene.audit
-    # The scene is what it claims: torpedoes flew with no target (a dumb
-    # shot: FireSystemAtTarget names none when bDumbFireTorps). Counted from
-    # the record, not by a spy on Weapon.FireDumb: a patch there is a K1
-    # override (native_combat._K1_LEAF_METHODS) and would change the native
-    # arm's path.
-    dumb = {r[0] for row in scene.log for r in row[len(scene.systems)
-                                                   + len(scene.weapons)
-                                                   + len(scene.ships):]
-            if r[3] is None}
-    assert dumb, "no torpedo flew without a target: no dumb fire"
+    assert marker.appends > 0, "the SDK never dumb-fired a tube"
+    assert not marker
+    launched = [e for e in scene.queued.rows
+                if e[0] == App.ET_TORPEDO_FIRED]
+    assert launched, "no torpedo launched"
     return _k1_take(scene)
 
 
