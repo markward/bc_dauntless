@@ -179,6 +179,11 @@ public:
     // Any number of operands up to kMaxOperands (a SPAWN).
     void append_native_span(EffectKind kind,
                             std::span<const NativeOperand> ops);
+    // A kernel's entry built in place (`e.kind`, `e.count`, `e.ops`, each
+    // operand typed as append_native_span would type it): appended with
+    // `native` set. The same entry as the span's, without building a
+    // NativeOperand per operand (the native damage entries' hot path).
+    void append_native_entry(const EffectEntry& e);
 
     // Python's entry: each pointer a reference the queue now owns (at most
     // kMaxOperands).

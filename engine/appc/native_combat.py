@@ -139,7 +139,9 @@ def available() -> bool:
             and hasattr(_h, "combat_k0_begin")
             and hasattr(_h, "combat_effect_take")
             and hasattr(_h, "combat_effect_rebind")
-            and hasattr(_h, "combat_apply_hit"))
+            and hasattr(_h, "combat_apply_hit")
+            and hasattr(_h, "combat_dmg_guard_check")
+            and hasattr(_h, "combat_dmg_set_condition"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -185,6 +187,11 @@ def reset() -> None:
     _dmg_classes.clear()
     for k in _dmg_counts:
         _dmg_counts[k] = 0
+    for k in _dmg_guard_computed:
+        _dmg_guard_computed[k] = 0
+    if available():
+        _h.combat_dmg_guard_clear()
+    _dmg_ctx[0] = None
     _k1_overridden_by_type.clear()
     _k1_watch.clear()
     global _pulse_stale
@@ -5863,18 +5870,58 @@ def _dmg_functions() -> list:
         for name, names in _DMG_FUNCTIONS:
             mod = importlib.import_module(name)
             snap.append((mod, operator.attrgetter(*names),
-                         operator.attrgetter(*names)(mod)))
+                         operator.attrgetter(*names)(mod), names))
         snap.append((FloatRangeWatcher, operator.attrgetter("_update_queued"),
-                     FloatRangeWatcher._update_queued))
+                     FloatRangeWatcher._update_queued, ("_update_queued",)))
         _dmg_fn_snapshot = snap
     return _dmg_fn_snapshot
 
 
+#: How often each guard was computed in Python (damage_guard_counts).
+_dmg_guard_computed = {"dmg": 0, "kdmg": 0}
+
+
+def damage_guard_counts() -> dict:
+    """Since the last reset(): how often _dmg_unchanged and _kdmg_unchanged
+    were computed in Python (not answered from the binding's cache)."""
+    return dict(_dmg_guard_computed)
+
+
+#: The binding's guard cache slots (THE DAMAGE GUARD CACHE, host_bindings).
+_DMG_GUARD, _KDMG_GUARD = 0, 1
+
+
+def _guard_watch(snapshot, classes=()) -> tuple:
+    """What a guard reads, for combat_dmg_guard_fill: ((module, names), ...)
+    and the classes (a class owner of the snapshot's, and `classes`)."""
+    modules, types = [], list(classes)
+    for owner, get, _values, names in snapshot:
+        if isinstance(owner, type):
+            types.append(owner)
+        else:
+            modules.append((owner, names))
+    return modules, types
+
+
 def _dmg_unchanged() -> bool:
+    """_dmg_unchanged_now, answered from the binding's cache while nothing
+    it reads has changed (THE DAMAGE GUARD CACHE): a patch since the fill
+    makes it stale, and it is computed again."""
+    r = _h.combat_dmg_guard_check(_DMG_GUARD)
+    if r is None:
+        r = _dmg_unchanged_now()
+        modules, types = _guard_watch(_dmg_functions(),
+                                      _dmg_snapshot()["classes"])
+        _h.combat_dmg_guard_fill(_DMG_GUARD, r, modules, types)
+    return r
+
+
+def _dmg_unchanged_now() -> bool:
     """Every function and stock-class method the native chain stands in for
     is the one snapshotted, and none is foreign (a test's patch made before
     the snapshot)."""
-    for owner, get, values in _dmg_functions():
+    _dmg_guard_computed["dmg"] += 1
+    for owner, get, values, _names in _dmg_functions():
         try:
             now = get(owner)
         except AttributeError:
@@ -5923,14 +5970,45 @@ def _dmg_patched(obj, names) -> bool:
     return d is not None and any(n in d for n in names)
 
 
+#: The one applier context the native damage calls reuse (_dmg_context).
+_dmg_ctx = [None]
+
+
+def _dmg_context() -> tuple:
+    """The native damage calls' applier context, made once and reused
+    (each call used to make its own _K1Walk's): rebuilt whenever what
+    _applier_context reads has changed since -- the kinds mapping (reset(),
+    a replaced _quiet_setter), the registry, passive_state.wake. Its pins
+    are emptied after every call (_dmg_call; the binding's THE FAST DAMAGE
+    ENTRIES), so between calls it holds nothing alive and each call
+    resolves its handles afresh, as a fresh walk did."""
+    ctx = _dmg_ctx[0]
+    kinds = _apply_kinds
+    if (ctx is None or kinds is None or ctx[3] is not kinds
+            or kinds.source is not _quiet_setter or ctx[1] is not _registry
+            or ctx[4] is not _passive_state.wake):
+        ctx = _dmg_ctx[0] = _applier_context(_K1Walk())
+    return ctx
+
+
 def _dmg_call(fn, *args) -> bool:
-    """`fn(*args)` (a native damage binding) under an applier context of its
-    own (the previous one restored: a K1/K2 session's)."""
-    prev = _h.combat_set_applier(_applier_context(_K1Walk()))
+    """`fn(*args)` (a native damage binding) under the reused applier
+    context (the previous one restored: a K1/K2 session's), its pins
+    emptied after. A call made while it is already installed (an enclosing
+    native call's) gets a fresh one of its own."""
+    ctx = _dmg_context()
+    prev = _h.combat_set_applier(ctx)
+    if prev is ctx:
+        _h.combat_set_applier(_applier_context(_K1Walk()))
+        try:
+            return fn(*args)
+        finally:
+            _h.combat_set_applier(prev)
     try:
         return fn(*args)
     finally:
         _h.combat_set_applier(prev)
+        ctx[0].clear()
 
 
 def _dmg_point(p):
@@ -6016,10 +6094,27 @@ def apply_hit(ship, damage, hit_point, source, *, normal=None,
     return done
 
 
+#: The instance attributes that hand a condition write back (_dmg_patched).
+_DMG_SUB_PATCHES = _DMG_SUB_NAMES + _DMG_PREDICATES
+_dmg_ship_subsystem = [None]
+
+
 def set_condition(sub, value, killer=None, ship=None) -> bool:
-    """ShipSubsystem._set_condition natively (True: done)."""
+    """ShipSubsystem._set_condition natively (True: done): the binding's
+    one-call path (THE FAST DAMAGE ENTRIES), else -- None: a case it does
+    not decide -- _set_condition_py, the same steps in Python."""
+    done = _h.combat_dmg_set_condition(sub, value, killer, ship,
+                                       _dmg_context(), _DMG_SUB_PATCHES)
+    if done is None:
+        return _set_condition_py(sub, value, killer, ship)
+    _dmg_counts["conditions" if done else "fallbacks"] += 1
+    return done
+
+
+def _set_condition_py(sub, value, killer=None, ship=None) -> bool:
+    """set_condition's steps in Python."""
     if (not _dmg_unchanged()
-            or _dmg_patched(sub, _DMG_SUB_NAMES + _DMG_PREDICATES)):
+            or _dmg_patched(sub, _DMG_SUB_PATCHES)):
         _dmg_counts["fallbacks"] += 1
         return False
     sub_h = _dmg_handle(sub, "Subsystem")
@@ -6040,10 +6135,25 @@ def set_condition(sub, value, killer=None, ship=None) -> bool:
 
 def damage_system(ship, sub, amount: float, source=None) -> bool:
     """DamageableObject.DamageSystem natively, past its None and `amt <= 0`
-    returns (`amount` already float()); True: done."""
+    returns (`amount` already float()); True: done. The binding's one-call
+    path, else (None) _damage_system_py."""
+    cls = _dmg_ship_subsystem[0]
+    if cls is None:
+        from engine.appc.subsystems import ShipSubsystem
+        cls = _dmg_ship_subsystem[0] = ShipSubsystem
+    done = _h.combat_dmg_damage_system(ship, sub, amount, source,
+                                       _dmg_context(), _DMG_SUB_PATCHES, cls)
+    if done is None:
+        return _damage_system_py(ship, sub, amount, source)
+    _dmg_counts["damage_systems" if done else "fallbacks"] += 1
+    return done
+
+
+def _damage_system_py(ship, sub, amount: float, source=None) -> bool:
+    """damage_system's steps in Python."""
     from engine.appc.subsystems import ShipSubsystem
     if (not _dmg_unchanged() or not isinstance(sub, ShipSubsystem)
-            or _dmg_patched(sub, _DMG_SUB_NAMES + _DMG_PREDICATES)):
+            or _dmg_patched(sub, _DMG_SUB_PATCHES)):
         _dmg_counts["fallbacks"] += 1
         return False
     ship_h = _dmg_handle(ship, "Object")
@@ -6107,15 +6217,27 @@ def _kdmg_functions() -> list:
         for name, names in _KDMG_FUNCTIONS:
             mod = importlib.import_module(name)
             snap.append((mod, operator.attrgetter(*names),
-                         operator.attrgetter(*names)(mod)))
+                         operator.attrgetter(*names)(mod), names))
         snap.append((Torpedo, operator.attrgetter(*_KDMG_TORP_NAMES),
-                     (operator.attrgetter(*_KDMG_TORP_NAMES)(Torpedo),)))
+                     (operator.attrgetter(*_KDMG_TORP_NAMES)(Torpedo),),
+                     _KDMG_TORP_NAMES))
         _kdmg_fn_snapshot = snap
     return _kdmg_fn_snapshot
 
 
 def _kdmg_unchanged() -> bool:
-    for owner, get, values in _kdmg_functions():
+    """_kdmg_unchanged_now, from the binding's cache (as _dmg_unchanged)."""
+    r = _h.combat_dmg_guard_check(_KDMG_GUARD)
+    if r is None:
+        r = _kdmg_unchanged_now()
+        modules, types = _guard_watch(_kdmg_functions())
+        _h.combat_dmg_guard_fill(_KDMG_GUARD, r, modules, types)
+    return r
+
+
+def _kdmg_unchanged_now() -> bool:
+    _dmg_guard_computed["kdmg"] += 1
+    for owner, get, values, _names in _kdmg_functions():
         try:
             now = get(owner)
         except AttributeError:

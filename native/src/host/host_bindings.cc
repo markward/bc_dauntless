@@ -4385,47 +4385,88 @@ void damage_append_entries(const std::vector<dauntless::combat::DamageEntry>& en
                            PyObject* held) {
     namespace cb = dauntless::combat;
     namespace hq = dauntless::host;
+    // Each entry is built in place (append_native_entry): the operands a
+    // NativeOperand span would carry, typed as append_native_span types
+    // them, without building a std::variant per operand (at -O0 that was
+    // half of a native condition write). The references taken for one
+    // entry are released if it cannot be completed; the queue owns them
+    // once it is appended.
+    hq::WriteApplier& applier = hq::write_applier();
+    hq::EffectEntry out;
     for (const cb::DamageEntry& e : entries) {
-        K1Held holder;
-        std::vector<PyObject*> extra;   // the held object's references
+        PyObject* owned[cb::DamageEntry::kMaxOperands];
+        int n_owned = 0;
         struct Release {
-            std::vector<PyObject*>& refs;
+            PyObject** refs;
+            int& n;
             ~Release() {
-                for (PyObject* o : refs) Py_DECREF(o);
+                for (int i = 0; i < n; ++i) Py_DECREF(refs[i]);
             }
-        } release{extra};
-        hq::NativeOperand ops[cb::DamageEntry::kMaxOperands];
+        } release{owned, n_owned};
+        out.kind = damage_effect_kind(e.kind);
+        out.count = e.count;
         for (int i = 0; i < e.count; ++i) {
             const cb::DamageOperand& o = e.ops[i];
+            hq::EffectOperand& x = out.ops[i];
             switch (o.type) {
-                case cb::DamageOperand::Type::Handle:
-                    ops[i] = holder(o.handle, false);
+                case cb::DamageOperand::Type::Handle: {
+                    // K1Held(h, false): the object the handle names now,
+                    // else the handle (skipped at delivery if gone).
+                    x.type = hq::EffectOperand::Type::Handle;
+                    x.handle = o.handle;
+                    if (o.handle == -1 || !applier.has_context()) break;
+                    PyObject* obj = applier.live(o.handle);
+                    if (obj == nullptr) throw py::error_already_set();
+                    if (obj == Py_None) {
+                        Py_DECREF(obj);
+                        break;
+                    }
+                    owned[n_owned++] = obj;
+                    x.type = hq::EffectOperand::Type::Object;
+                    x.object = obj;
                     break;
+                }
                 case cb::DamageOperand::Type::Held:
                     if (held == nullptr || held == Py_None) {
-                        ops[i] = std::int64_t{-1};
+                        x.type = hq::EffectOperand::Type::Handle;
+                        x.handle = -1;
                     } else {
-                        extra.push_back(Py_NewRef(held));
-                        ops[i] = hq::OwnedObject{held};
+                        owned[n_owned++] = Py_NewRef(held);
+                        x.type = hq::EffectOperand::Type::Object;
+                        x.object = held;
                     }
                     break;
                 case cb::DamageOperand::Type::Number:
-                    ops[i] = o.number;
+                    x.type = hq::EffectOperand::Type::Number;
+                    x.number = o.number;
                     break;
                 case cb::DamageOperand::Type::Int:
-                    ops[i] = hq::EffectInt{o.integer};
+                    x.type = hq::EffectOperand::Type::Int;
+                    x.integer = o.integer;
                     break;
                 case cb::DamageOperand::Type::Bool:
-                    ops[i] = hq::EffectBool{o.boolean};
+                    x.type = hq::EffectOperand::Type::Bool;
+                    x.boolean = o.boolean;
                     break;
             }
         }
-        hq::effect_queue().append_native_span(
-            damage_effect_kind(e.kind),
-            std::span<const hq::NativeOperand>(ops, e.count));
-        holder.release();   // the queue owns every reference now
-        extra.clear();
+        hq::effect_queue().append_native_entry(out);
+        n_owned = 0;   // the queue owns every reference now
     }
+}
+
+// The DamageOut buffers damage_run reuses: one per nesting depth (an
+// applied write's Python may make another native damage call), each
+// cleared before use and keeping its capacity, so a call allocates (and
+// moves its writes through a vector's regrowth) only the first time.
+struct DamageOutPool {
+    std::vector<std::unique_ptr<dauntless::combat::DamageOut>> outs;
+    size_t depth = 0;
+};
+
+DamageOutPool& damage_out_pool() {
+    static DamageOutPool p;
+    return p;
 }
 
 // Run a damage.h call: false when it fell back (the mirror is as it was,
@@ -4435,7 +4476,16 @@ template <class Fn>
 bool damage_run(Fn&& fn, PyObject* held) {
     namespace cb = dauntless::combat;
     namespace hq = dauntless::host;
-    cb::DamageOut out;
+    DamageOutPool& pool = damage_out_pool();
+    if (pool.depth == pool.outs.size())
+        pool.outs.push_back(std::make_unique<cb::DamageOut>());
+    cb::DamageOut& out = *pool.outs[pool.depth];
+    out.clear();
+    struct Depth {
+        DamageOutPool& p;
+        ~Depth() { --p.depth; }
+    } depth{pool};
+    ++pool.depth;
     try {
         fn(out);
     } catch (const std::invalid_argument&) {
@@ -5688,6 +5738,463 @@ py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
     }
     throw std::logic_error("combat K0: a write of no type");
 }
+
+// ── THE DAMAGE GUARD CACHE (native damage perf fix) ───────────────────────
+// native_combat's two whole-call override guards -- _dmg_unchanged (every
+// function and stock-class method the native hit and condition chain stand
+// in for is the one snapshotted, none foreign) and _kdmg_unchanged (the
+// kernels' own) -- computed in Python, their verdicts kept here with what
+// they were computed on, so an unchanged world is answered with a few
+// compares (the guard ran ~70 attribute resolutions at every native call):
+//   module  each watched module's dict at its ma_version_tag (where
+//           kK0ObjectCache allows), and every watched name's value at the
+//           fill (borrowing nothing: owned). A dict that moved -- any
+//           global rebound, e.g. effect_queue's scope depth -- is
+//           re-checked name by name: each still bound to the SAME object
+//           keeps the verdict (the guard reads nothing else of a module:
+//           an attrgetter of those names), and the new version is kept.
+//           The module's type is compared too (a __class__ swap could add
+//           a __getattr__).
+//   class   each watched class at its tp_version_tag (CPython's: any
+//           attribute assignment on the class or a base invalidates it,
+//           PyType_Modified), its metaclass plain `type`.
+// Anything else (an unfilled slot, a tag gone, a name rebound, a name
+// that cannot be read) is stale: Python computes the guard again and
+// refills. Exact, not a heuristic: an identical object answers the
+// guard's compares identically. (The one read it does not see is a
+// function object's own `__module__` reassigned, which _k2_foreign reads:
+// no code does that.)
+struct DmgGuardModule {
+    PyObject* module = nullptr;      // owned
+    PyTypeObject* module_type = nullptr;
+    PyObject* dict = nullptr;        // owned (the module's)
+    std::uint64_t version = 0;
+    std::vector<PyObject*> names;    // owned, exact str
+    std::vector<PyObject*> values;   // owned; nullptr: absent at the fill
+};
+
+struct DmgGuardType {
+    PyTypeObject* type = nullptr;    // owned
+    unsigned int tag = 0;
+};
+
+struct DmgGuard {
+    bool filled = false;
+    bool verdict = false;
+    std::vector<DmgGuardModule> modules;
+    std::vector<DmgGuardType> types;
+    std::uint64_t fills = 0, hits = 0, stale = 0;
+    void clear() {
+        // Moved out first: a release may run Python, which must find the
+        // slot already empty.
+        std::vector<DmgGuardModule> mods = std::move(modules);
+        std::vector<DmgGuardType> ts = std::move(types);
+        modules.clear();
+        types.clear();
+        filled = false;
+        verdict = false;
+        for (DmgGuardModule& m : mods) {
+            for (PyObject* o : m.names) Py_XDECREF(o);
+            for (PyObject* o : m.values) Py_XDECREF(o);
+            Py_XDECREF(m.dict);
+            Py_XDECREF(m.module);
+        }
+        for (DmgGuardType& t : ts)
+            Py_XDECREF(reinterpret_cast<PyObject*>(t.type));
+    }
+};
+
+constexpr int kDmgGuards = 2;  // 0: _dmg_unchanged, 1: _kdmg_unchanged
+
+DmgGuard* dmg_guards() {
+    static DmgGuard g[kDmgGuards];
+    return g;
+}
+
+// The slot's cached verdict (0 or 1), or -1: stale (Python computes and
+// fills). No Python runs and no error is left set.
+int dmg_guard_state(int slot) {
+    DmgGuard& g = dmg_guards()[slot];
+    if (!g.filled) {
+        ++g.stale;
+        return -1;
+    }
+    for (const DmgGuardType& t : g.types) {
+        if (Py_TYPE(reinterpret_cast<PyObject*>(t.type)) != &PyType_Type ||
+            (t.type->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) == 0 ||
+            t.type->tp_version_tag != t.tag) {
+            ++g.stale;
+            return -1;
+        }
+    }
+    for (DmgGuardModule& m : g.modules) {
+        if (Py_TYPE(m.module) != m.module_type) {
+            ++g.stale;
+            return -1;
+        }
+        if (kK0ObjectCache && k0_dict_version(m.dict) == m.version) continue;
+        for (size_t i = 0; i < m.names.size(); ++i) {
+            PyObject* v = PyDict_GetItemWithError(m.dict, m.names[i]);
+            if (v == nullptr && PyErr_Occurred()) {
+                PyErr_Clear();
+                ++g.stale;
+                return -1;
+            }
+            if (v != m.values[i]) {
+                ++g.stale;
+                return -1;
+            }
+        }
+        m.version = k0_dict_version(m.dict);
+    }
+    ++g.hits;
+    return g.verdict ? 1 : 0;
+}
+
+// Fill `slot` with `verdict`, computed in Python just now on `modules` (a
+// sequence of (module, names tuple)) and `types` (a sequence of classes).
+// False (the slot left unfilled: every call computes) when something is
+// not of a shape the cache can watch exactly. nullptr: a Python error.
+PyObject* dmg_guard_fill(int slot, bool verdict, PyObject* modules,
+                         PyObject* types) {
+    DmgGuard& g = dmg_guards()[slot];
+    g.clear();
+    PyObject* ms = PySequence_Fast(modules, "modules");
+    if (ms == nullptr) return nullptr;
+    PyObject* ts = PySequence_Fast(types, "types");
+    if (ts == nullptr) {
+        Py_DECREF(ms);
+        return nullptr;
+    }
+    bool ok = true;
+    for (Py_ssize_t i = 0; ok && i < PySequence_Fast_GET_SIZE(ms); ++i) {
+        PyObject* item = PySequence_Fast_GET_ITEM(ms, i);
+        if (!PyTuple_Check(item) || PyTuple_GET_SIZE(item) != 2 ||
+            !PyModule_CheckExact(PyTuple_GET_ITEM(item, 0)) ||
+            !PyTuple_Check(PyTuple_GET_ITEM(item, 1))) {
+            ok = false;
+            break;
+        }
+        PyObject* mod = PyTuple_GET_ITEM(item, 0);
+        PyObject* names = PyTuple_GET_ITEM(item, 1);
+        DmgGuardModule m;
+        m.module = Py_NewRef(mod);
+        m.module_type = Py_TYPE(mod);
+        m.dict = Py_NewRef(PyModule_GetDict(mod));
+        m.version = k0_dict_version(m.dict);
+        g.modules.push_back(m);   // owned from here (clear() releases)
+        DmgGuardModule& gm = g.modules.back();
+        for (Py_ssize_t k = 0; k < PyTuple_GET_SIZE(names); ++k) {
+            PyObject* name = PyTuple_GET_ITEM(names, k);
+            if (!PyUnicode_CheckExact(name)) {
+                ok = false;
+                break;
+            }
+            PyObject* v = PyDict_GetItemWithError(gm.dict, name);
+            if (v == nullptr && PyErr_Occurred()) {
+                PyErr_Clear();
+                ok = false;
+                break;
+            }
+            gm.names.push_back(Py_NewRef(name));
+            gm.values.push_back(Py_XNewRef(v));
+        }
+    }
+    for (Py_ssize_t i = 0; ok && i < PySequence_Fast_GET_SIZE(ts); ++i) {
+        PyObject* t = PySequence_Fast_GET_ITEM(ts, i);
+        if (!PyType_Check(t) || Py_TYPE(t) != &PyType_Type) {
+            ok = false;
+            break;
+        }
+        PyTypeObject* tt = reinterpret_cast<PyTypeObject*>(t);
+        const unsigned int tag = k0_type_tag(tt);
+        if (tag == 0) {
+            ok = false;
+            break;
+        }
+        g.types.push_back(DmgGuardType{
+            reinterpret_cast<PyTypeObject*>(Py_NewRef(t)), tag});
+    }
+    Py_DECREF(ts);
+    Py_DECREF(ms);
+    if (!ok) {
+        g.clear();
+        Py_RETURN_FALSE;
+    }
+    g.filled = true;
+    g.verdict = verdict;
+    ++g.fills;
+    Py_RETURN_TRUE;
+}
+
+// ── THE FAST DAMAGE ENTRIES (native damage perf fix) ─────────────────────
+// native_combat.set_condition / damage_system's whole common case in one
+// raw METH_FASTCALL call (pybind11's dispatch, at -O0, cost more than the
+// native condition write itself): the cached guard (THE DAMAGE GUARD
+// CACHE), the instance-patch check, the handles, float(value), the
+// applier context and the native chain. Exactly the Python wrapper's
+// steps, in its order. Answers True (done natively), False (hand back to
+// the reference: the guard says no, a patch, an object the mirror cannot
+// name, a value float() refuses, the native chain fell back -- nothing
+// changed) or None: anything this path does not decide exactly (a stale
+// guard, an object with no plain instance dict, a non-int `_nslot`, the
+// reused context already in use by an enclosing call), for the Python
+// wrapper's own path, which then decides as before.
+//
+// THE REUSED CONTEXT. `ctx` is native_combat's one damage applier context
+// (_dmg_context: a _K1Walk's pins, the registry, the kinds), installed for
+// the call and the caller's restored after, as _dmg_call does; its pins
+// are emptied after every call, so it holds nothing alive between calls
+// and every call resolves its handles afresh, as a fresh walk would.
+
+// _dmg_handle(o, kind): 1 with `*h` (-1 for None); 0 the mirror cannot
+// name it (None in Python); -1 not decided here (no error set).
+int dmg_fast_handle(PyObject* o, dauntless::combat::Kind kind,
+                    std::int64_t* h) {
+    if (o == Py_None) {
+        *h = -1;
+        return 1;
+    }
+    if (_PyObject_GetDictPtr(o) == nullptr) return -1;
+    PyObject* d = k2_dict_of(o);
+    if (d == nullptr) return -1;
+    PyObject* s = PyDict_GetItemWithError(d, k2_scan_names().nslot);
+    if (s == nullptr) {
+        if (PyErr_Occurred()) {
+            PyErr_Clear();
+            return -1;
+        }
+        return 0;
+    }
+    if (!PyLong_CheckExact(s)) return -1;
+    int overflow = 0;
+    const long long v = PyLong_AsLongLongAndOverflow(s, &overflow);
+    if (overflow != 0 || (v == -1 && PyErr_Occurred())) {
+        PyErr_Clear();
+        return -1;
+    }
+    if (v < 0 || ((v >> 60) & 7) != static_cast<long long>(kind)) return 0;
+    *h = v;
+    return 1;
+}
+
+// _dmg_held(o): 1 with `*h` (-1 None, -2 unnamed); -1 not decided here.
+int dmg_fast_held(PyObject* o, std::int64_t* h) {
+    if (o == Py_None) {
+        *h = -1;
+        return 1;
+    }
+    if (_PyObject_GetDictPtr(o) == nullptr) return -1;
+    PyObject* d = k2_dict_of(o);
+    if (d == nullptr) return -1;
+    PyObject* s = PyDict_GetItemWithError(d, k2_scan_names().nslot);
+    if (s == nullptr) {
+        if (PyErr_Occurred()) {
+            PyErr_Clear();
+            return -1;
+        }
+        *h = dauntless::combat::kRefUnrepresentable;
+        return 1;
+    }
+    if (!PyLong_CheckExact(s)) return -1;
+    int overflow = 0;
+    const long long v = PyLong_AsLongLongAndOverflow(s, &overflow);
+    if (overflow != 0 || (v == -1 && PyErr_Occurred())) {
+        PyErr_Clear();
+        return -1;
+    }
+    *h = v;
+    return 1;
+}
+
+// _dmg_patched(o, names): 1 patched, 0 not, -1 not decided here.
+int dmg_fast_patched(PyObject* o, PyObject* names) {
+    if (!PyTuple_CheckExact(names) || _PyObject_GetDictPtr(o) == nullptr)
+        return -1;
+    PyObject* d = k2_dict_of(o);
+    if (d == nullptr) return -1;
+    const int r = k2_holds(d, &PyTuple_GET_ITEM(names, 0),
+                           PyTuple_GET_SIZE(names));
+    if (r < 0) {
+        PyErr_Clear();
+        return -1;
+    }
+    return r;
+}
+
+// Run `fn` (a damage_run call) under the reused context `ctx`; the
+// caller's context restored and the pins emptied after, whatever happens.
+// A Python object (True / False), or nullptr with an error set.
+template <class Fn>
+PyObject* dmg_fast_run(PyObject* ctx, Fn&& fn) {
+    namespace hq = dauntless::host;
+    PyObject* prev = hq::write_applier().set_context(ctx);
+    if (prev == nullptr) return nullptr;
+    bool done = false;
+    std::optional<py::error_already_set> err;
+    const char* what = nullptr;
+    try {
+        done = fn();
+    } catch (py::error_already_set& e) {
+        err.emplace(std::move(e));      // fetched: no error is set now
+    } catch (const std::exception& e) {
+        what = e.what();
+    }
+    PyObject* back = hq::write_applier().set_context(prev);
+    Py_DECREF(prev);
+    Py_XDECREF(back);
+    PyObject* pins = PyTuple_GET_ITEM(ctx, 0);
+    if (PyDict_GET_SIZE(pins) != 0) PyDict_Clear(pins);
+    if (back == nullptr) {
+        // Restoring a context it held a moment ago cannot fail; if it did,
+        // its error wins.
+        return nullptr;
+    }
+    if (err) {
+        err->restore();
+        return nullptr;
+    }
+    if (what != nullptr) {
+        PyErr_SetString(PyExc_RuntimeError, what);
+        return nullptr;
+    }
+    return Py_NewRef(done ? Py_True : Py_False);
+}
+
+// float(value) as set_condition's `float(value)`: 1 with `*v`; 0 it
+// refused (TypeError / ValueError / OverflowError: the caller hands back,
+// the reference raises it); -1 another error, set (it propagates).
+int dmg_fast_float(PyObject* value, double* v) {
+    if (PyFloat_CheckExact(value)) {
+        *v = PyFloat_AS_DOUBLE(value);
+        return 1;
+    }
+    PyObject* f = PyNumber_Float(value);
+    if (f == nullptr) {
+        if (PyErr_ExceptionMatches(PyExc_TypeError) ||
+            PyErr_ExceptionMatches(PyExc_ValueError) ||
+            PyErr_ExceptionMatches(PyExc_OverflowError)) {
+            PyErr_Clear();
+            return 0;
+        }
+        return -1;
+    }
+    *v = PyFloat_AS_DOUBLE(f);
+    Py_DECREF(f);
+    return 1;
+}
+
+bool dmg_fast_ctx_ok(PyObject* ctx) {
+    return PyTuple_CheckExact(ctx) && PyTuple_GET_SIZE(ctx) == 6 &&
+           PyDict_CheckExact(PyTuple_GET_ITEM(ctx, 0)) &&
+           dauntless::host::write_applier().context() != ctx;
+}
+
+// combat_dmg_set_condition(sub, value, killer, ship, ctx, sub_names):
+// native_combat.set_condition(sub, value, killer, ship).
+PyObject* combat_dmg_set_condition(PyObject*, PyObject* const* args,
+                                   Py_ssize_t nargs) {
+    namespace cb = dauntless::combat;
+    if (nargs != 6) {
+        PyErr_Format(PyExc_SystemError,
+                     "combat_dmg_set_condition() takes 6 arguments (%zd "
+                     "given)",
+                     nargs);
+        return nullptr;
+    }
+    PyObject *sub = args[0], *value = args[1], *killer = args[2],
+             *ship = args[3], *ctx = args[4], *names = args[5];
+    if (!dmg_fast_ctx_ok(ctx)) Py_RETURN_NONE;
+    const int g = dmg_guard_state(0);
+    if (g < 0) Py_RETURN_NONE;
+    if (g == 0) Py_RETURN_FALSE;
+    const int p = dmg_fast_patched(sub, names);
+    if (p < 0) Py_RETURN_NONE;
+    if (p > 0) Py_RETURN_FALSE;
+    std::int64_t sub_h = -1, ship_h = -1, killer_h = -1;
+    const int sh = dmg_fast_handle(sub, cb::Kind::Subsystem, &sub_h);
+    const int oh = dmg_fast_handle(ship, cb::Kind::Object, &ship_h);
+    const int kh = dmg_fast_held(killer, &killer_h);
+    if (sh < 0 || oh < 0 || kh < 0) Py_RETURN_NONE;
+    double v = 0.0;
+    const int f = dmg_fast_float(value, &v);
+    if (f < 0) return nullptr;
+    if (f == 0) Py_RETURN_FALSE;
+    if (sh == 0 || sub_h == -1 || oh == 0) Py_RETURN_FALSE;
+    return dmg_fast_run(ctx, [&] {
+        return damage_run(
+            [&](cb::DamageOut& out) {
+                cb::set_condition(cb::mirror(), sub_h, v, killer_h, ship_h,
+                                  out);
+            },
+            killer);
+    });
+}
+
+PyMethodDef g_dmg_set_condition_def = {
+    "combat_dmg_set_condition",
+    reinterpret_cast<PyCFunction>(
+        reinterpret_cast<void (*)()>(&combat_dmg_set_condition)),
+    METH_FASTCALL,
+    "combat_dmg_set_condition(sub, value, killer, ship, ctx, sub_names): "
+    "native_combat.set_condition's common case in one call (THE FAST "
+    "DAMAGE ENTRIES). True done, False hand back, None: decide in "
+    "Python."};
+
+// combat_dmg_damage_system(ship, sub, amount, source, ctx, sub_names,
+// ship_subsystem): native_combat.damage_system(ship, sub, amount, source).
+PyObject* combat_dmg_damage_system(PyObject*, PyObject* const* args,
+                                   Py_ssize_t nargs) {
+    namespace cb = dauntless::combat;
+    if (nargs != 7) {
+        PyErr_Format(PyExc_SystemError,
+                     "combat_dmg_damage_system() takes 7 arguments (%zd "
+                     "given)",
+                     nargs);
+        return nullptr;
+    }
+    PyObject *ship = args[0], *sub = args[1], *amount = args[2],
+             *source = args[3], *ctx = args[4], *names = args[5],
+             *ship_subsystem = args[6];
+    if (!dmg_fast_ctx_ok(ctx) || !PyFloat_CheckExact(amount) ||
+        !PyType_Check(ship_subsystem))
+        Py_RETURN_NONE;
+    const int g = dmg_guard_state(0);
+    if (g < 0) Py_RETURN_NONE;
+    if (g == 0) Py_RETURN_FALSE;
+    // isinstance(sub, ShipSubsystem): decided here only when it is.
+    if (!PyObject_TypeCheck(sub,
+                            reinterpret_cast<PyTypeObject*>(ship_subsystem)))
+        Py_RETURN_NONE;
+    const int p = dmg_fast_patched(sub, names);
+    if (p < 0) Py_RETURN_NONE;
+    if (p > 0) Py_RETURN_FALSE;
+    std::int64_t ship_h = -1, sub_h = -1, source_h = -1;
+    const int oh = dmg_fast_handle(ship, cb::Kind::Object, &ship_h);
+    const int sh = dmg_fast_handle(sub, cb::Kind::Subsystem, &sub_h);
+    const int kh = dmg_fast_held(source, &source_h);
+    if (sh < 0 || oh < 0 || kh < 0) Py_RETURN_NONE;
+    if (oh == 0 || ship_h == -1 || sh == 0) Py_RETURN_FALSE;
+    const double amt = PyFloat_AS_DOUBLE(amount);
+    return dmg_fast_run(ctx, [&] {
+        return damage_run(
+            [&](cb::DamageOut& out) {
+                cb::damage_system(cb::mirror(), ship_h, sub_h, amt,
+                                  source_h, out);
+            },
+            source);
+    });
+}
+
+PyMethodDef g_dmg_damage_system_def = {
+    "combat_dmg_damage_system",
+    reinterpret_cast<PyCFunction>(
+        reinterpret_cast<void (*)()>(&combat_dmg_damage_system)),
+    METH_FASTCALL,
+    "combat_dmg_damage_system(ship, sub, amount, source, ctx, sub_names, "
+    "ship_subsystem): native_combat.damage_system's common case in one "
+    "call (THE FAST DAMAGE ENTRIES). True done, False hand back, None: "
+    "decide in Python."};
 
 }  // namespace
 
@@ -13346,6 +13853,60 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("ship_names"), py::arg("sub_names"),
               "[bool, ...]: which targets a kernel may hit natively (see "
               "dmg_clean).");
+        auto guard_slot = [](int slot) {
+            if (slot < 0 || slot >= kDmgGuards)
+                throw py::value_error("combat damage guard: no such slot");
+            return slot;
+        };
+        m.def("combat_dmg_guard_check",
+              [guard_slot](int slot) -> py::object {
+                  const int s = dmg_guard_state(guard_slot(slot));
+                  if (s < 0) return py::none();
+                  return py::bool_(s != 0);
+              },
+              py::arg("slot"),
+              "THE DAMAGE GUARD CACHE: guard `slot`'s cached verdict, or "
+              "None when stale (compute it in Python, then "
+              "combat_dmg_guard_fill).");
+        m.def("combat_dmg_guard_fill",
+              [guard_slot](int slot, bool verdict, py::handle modules,
+                           py::handle types) {
+                  PyObject* r = dmg_guard_fill(guard_slot(slot), verdict,
+                                               modules.ptr(), types.ptr());
+                  if (r == nullptr) throw py::error_already_set();
+                  return py::reinterpret_steal<py::object>(r);
+              },
+              py::arg("slot"), py::arg("verdict"), py::arg("modules"),
+              py::arg("types"),
+              "Keep guard `slot`'s `verdict`, computed just now on "
+              "`modules` ((module, names), ...) and `types`. False: not a "
+              "shape the cache can watch (left unfilled).");
+        m.add_object("combat_dmg_set_condition",
+                     py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                         &g_dmg_set_condition_def, nullptr,
+                         m.attr("__name__").ptr())));
+        m.add_object("combat_dmg_damage_system",
+                     py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                         &g_dmg_damage_system_def, nullptr,
+                         m.attr("__name__").ptr())));
+        m.def("combat_dmg_guard_clear", [] {
+            for (int i = 0; i < kDmgGuards; ++i) {
+                dmg_guards()[i].clear();
+                dmg_guards()[i].fills = dmg_guards()[i].hits =
+                    dmg_guards()[i].stale = 0;
+            }
+        });
+        m.def("combat_dmg_guard_counts", [] {
+            py::list out;
+            for (int i = 0; i < kDmgGuards; ++i) {
+                py::dict d;
+                d["fills"] = dmg_guards()[i].fills;
+                d["hits"] = dmg_guards()[i].hits;
+                d["stale"] = dmg_guards()[i].stale;
+                out.append(d);
+            }
+            return out;
+        });
         m.def("combat_k2_reset_counts", [] {
             cb::k2_kernel().reset_counts();
             k2_present().presented = 0;

@@ -139,6 +139,14 @@ void EffectQueue::append_native_span(EffectKind kind,
     entries_.push_back(e);
 }
 
+void EffectQueue::append_native_entry(const EffectEntry& e) {
+    assert(e.count >= 0 && e.count <= EffectEntry::kMaxOperands);
+    assert(effect_operands_match(
+        e.kind, std::span<const EffectOperand>(e.ops.data(), e.count)));
+    entries_.push_back(e);
+    entries_.back().native = true;
+}
+
 void EffectQueue::append_objects(EffectKind kind, std::span<void* const> objs) {
     assert(objs.size() <= EffectEntry::kMaxOperands);
     assert(effect_kind_operands(kind) == nullptr ||

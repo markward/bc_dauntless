@@ -298,3 +298,54 @@ TEST_F(EffectQueueTest, ASpawnCarriesItsWholeRecord) {
                  "SPAWN");
     EXPECT_GE(EffectEntry::kMaxOperands, 23);
 }
+
+// The native damage entries' in-place append: the same entry the span
+// append makes from NativeOperands (native set, operands as typed), in
+// the one emission order, and an object operand released by clear as any.
+TEST_F(EffectQueueTest, AnInPlaceNativeEntryIsTheSpansEntry) {
+    using dauntless::host::EffectBool;
+    using dauntless::host::EffectInt;
+    using dauntless::host::NativeOperand;
+    using dauntless::host::OwnedObject;
+    const NativeOperand span_ops[] = {std::int64_t{4}, OwnedObject{&a},
+                                      EffectBool{true}, std::int64_t{-1}};
+    q.append_native_span(EffectKind::ZERO_CROSS, span_ops);
+    EffectEntry e;
+    e.kind = EffectKind::ZERO_CROSS;
+    e.count = 4;
+    e.ops[0].type = EffectOperand::Type::Handle;
+    e.ops[0].handle = 4;
+    e.ops[1].type = EffectOperand::Type::Object;
+    e.ops[1].object = &b;
+    e.ops[2].type = EffectOperand::Type::Bool;
+    e.ops[2].boolean = true;
+    e.ops[3].type = EffectOperand::Type::Handle;
+    e.ops[3].handle = -1;
+    q.append_native_entry(e);
+    q.append_native(EffectKind::COND_WATCH, std::int64_t{9}, EffectInt{1},
+                    1.0, 0.25);
+    ASSERT_EQ(q.size(), 3u);
+    std::vector<EffectEntry> out = q.take();
+    ASSERT_EQ(out.size(), 3u);
+    for (int k : {0, 1}) {
+        EXPECT_EQ(out[k].kind, EffectKind::ZERO_CROSS);
+        EXPECT_TRUE(out[k].native);
+        ASSERT_EQ(out[k].count, 4);
+        EXPECT_EQ(out[k].ops[0].type, EffectOperand::Type::Handle);
+        EXPECT_EQ(out[k].ops[0].handle, 4);
+        EXPECT_EQ(out[k].ops[1].type, EffectOperand::Type::Object);
+        EXPECT_EQ(out[k].ops[2].type, EffectOperand::Type::Bool);
+        EXPECT_TRUE(out[k].ops[2].boolean);
+        EXPECT_EQ(out[k].ops[3].type, EffectOperand::Type::Handle);
+        EXPECT_EQ(out[k].ops[3].handle, -1);
+    }
+    EXPECT_EQ(out[0].ops[1].object, &a);
+    EXPECT_EQ(out[1].ops[1].object, &b);
+    EXPECT_EQ(out[2].kind, EffectKind::COND_WATCH);
+    // Owned by the queue until taken: nothing released by take.
+    EXPECT_TRUE(g_released.empty());
+    q.append_native_entry(e);
+    q.clear();
+    ASSERT_EQ(g_released.size(), 1u);
+    EXPECT_EQ(g_released[0], &b);
+}
