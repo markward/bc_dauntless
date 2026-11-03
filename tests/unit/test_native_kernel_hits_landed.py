@@ -26,7 +26,7 @@ def test_forget_tables_empties_the_tables_and_calls_no_hook(monkeypatch):
         step_memo.forget()
         assert table == {} and called == [1]
     finally:
-        step_memo._tables.remove(table)
+        step_memo._tables[:] = [t for t in step_memo._tables if t is not table]
 
 
 def test_hits_landed_forgets_the_tables_and_sets_the_map(monkeypatch):
@@ -44,4 +44,4 @@ def test_hits_landed_forgets_the_tables_and_sets_the_map(monkeypatch):
         nc._kernel_hits_landed(None)    # no map: delivery presents none
         assert used == [instances]
     finally:
-        step_memo._tables.remove(table)
+        step_memo._tables[:] = [t for t in step_memo._tables if t is not table]
