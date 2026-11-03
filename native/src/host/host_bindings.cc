@@ -14144,6 +14144,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                      py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                          &g_dmg_damage_system_def, nullptr,
                          m.attr("__name__").ptr())));
+        m.def("combat_dmg_guard_invalidate",
+              [guard_slot](int slot) { dmg_guards()[guard_slot(slot)].clear(); },
+              py::arg("slot"),
+              "Empty guard `slot` (its counters kept): the next check is "
+              "stale, and Python fills it again (native_combat."
+              "_dmg_watch_grew: a class was flagged that it must watch).");
         m.def("combat_dmg_guard_clear", [] {
             for (int i = 0; i < kDmgGuards; ++i) {
                 dmg_guards()[i].clear();

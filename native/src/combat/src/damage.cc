@@ -402,9 +402,11 @@ int shield_face(const Mirror& m, int64_t ship, const Vec3& p) {
     double bx = dxw * R[0] + dyw * R[3] + dzw * R[6];
     double by = dxw * R[1] + dyw * R[4] + dzw * R[7];
     double bz = dxw * R[2] + dyw * R[5] + dzw * R[8];
-    // _hull_box_for: no box, or a degenerate raw extent -> None.
+    // _hull_box_for: no box, or a degenerate raw extent -> None. Python
+    // rejects `hx <= 0.0`, so a NaN half-extent keeps the box.
     const Vec3& hh = o._shield_hull_box_half;
-    if (o.hull_box_set && hh[0] > 0.0 && hh[1] > 0.0 && hh[2] > 0.0) {
+    if (o.hull_box_set && !(hh[0] <= 0.0) && !(hh[1] <= 0.0) &&
+        !(hh[2] <= 0.0)) {
         const Vec3& hc = o._shield_hull_box_center;
         double scale = o._scale;
         if (scale <= 0.0) scale = 1.0;  // NaN passes
@@ -459,6 +461,12 @@ void apply_hit(Mirror& m, const HitInput& in, const DamageContext& ctx,
         // IsImmuneToDamage: SetHurtable(0) (ruling M1).
         const bool ship_immune = !o._hurtable;
         const bool commit = !((ctx.god_mode && target_is_player) || ship_immune);
+
+        // shields_block reads the cloak's state for cloak_shields_suspended
+        // (its IsCloaking / IsDecloaking): a cloak class whose rules the
+        // chain does not stand in for hands back (final review I-1).
+        const int64_t cloak = o._cloaking_subsystem;
+        if (cloak >= 0 && m.subsystem(cloak)) stock(m, cloak);
 
         // 1. The shields take the first bite.
         double remaining = damage;

@@ -236,3 +236,146 @@ def test_the_instances_map_is_set_for_the_delivery(monkeypatch):
                      ship_instances=instances, bypass_shields=True)
     eq.boundary()
     assert got[-1] is instances         # ...which the native hit set
+
+
+# ── A class patched after its rows were flagged (final review I-1) ─────────
+#
+# A row carries its class's rules (dmg_class / dmg_ship), computed once per
+# class. The guard watches every class that has been flagged, and the cloak
+# class whose IsCloaking / IsDecloaking cloak_shields_suspended calls: a
+# class whose rules no longer match its cached verdict hands back.
+
+def _shield_faces(ship):
+    shields = ship.GetShields()
+    return [shields.GetCurrentShields(f)
+            for f in range(ShieldSubsystem.NUM_SHIELDS)]
+
+
+def test_a_subclass_predicate_patched_after_its_rows_runs_the_reference(
+        monkeypatch):
+    """The probe of the final review: SensorSubsystem's rows were flagged
+    with the leaf rules; IsDisabled replaced on the class afterwards. The
+    reference calls the patched method (a sensor at full health reads
+    disabled), so the hit's subsystem transition is the reference's."""
+    ship = _ship()
+    nc.configure(ON)
+    _hit(ship, 1.0)
+    assert nc.damage_counts()["hits"] == 1
+    calls = []
+
+    def disabled(self):
+        calls.append(self)
+        return 1
+    monkeypatch.setattr(SensorSubsystem, "IsDisabled", disabled)
+    _hit(ship, 1.0)
+    assert nc.damage_counts()["hits"] == 1         # handed back
+    assert nc.damage_counts()["fallbacks"] >= 1
+    assert calls
+    monkeypatch.undo()
+    _hit(ship, 1.0)
+    assert nc.damage_counts()["hits"] == 2         # restored: native again
+
+
+def test_a_condition_write_obeys_a_subclass_patched_after_its_rows(
+        monkeypatch):
+    sensor = _ship().GetSensorSubsystem()
+    nc.configure(ON)
+    sensor.SetCondition(90.0)
+    assert nc.damage_counts()["conditions"] == 1
+    monkeypatch.setattr(SensorSubsystem, "IsDisabled", lambda self: 1)
+    sensor.SetCondition(80.0)
+    assert nc.damage_counts()["conditions"] == 1
+    assert sensor.GetCondition() == 80.0           # the reference did it
+
+
+def _cloaked_ship(cloak):
+    ship = _ship()
+    ship.SetCloakingSubsystem(cloak)
+    return ship
+
+
+def test_the_cloak_class_patched_after_the_first_hit_runs_the_reference(
+        monkeypatch):
+    """cloak_shields_suspended reads IsCloaking / IsDecloaking: replaced on
+    CloakingSubsystem, a fading ship's shields are down in the reference,
+    and the hit reaches the hull untouched by the faces."""
+    from engine.appc.subsystems import CloakingSubsystem
+    ship = _cloaked_ship(CloakingSubsystem("Cloak"))
+    nc.configure(ON)
+    combat.apply_hit(ship, 10.0, TGPoint3(0.0, 1.0, 0.0), None)
+    assert nc.damage_counts()["hits"] == 1
+    faces = _shield_faces(ship)
+    monkeypatch.setattr(CloakingSubsystem, "IsCloaking", lambda self: 1)
+    combat.apply_hit(ship, 10.0, TGPoint3(0.0, 1.0, 0.0), None)
+    assert nc.damage_counts()["hits"] == 1
+    assert _shield_faces(ship) == faces            # shields down: no bite
+
+
+def test_a_cloak_subclass_with_its_own_predicate_runs_the_reference():
+    """A cloak class whose IsCloaking is not the stock one (a mod's) is a
+    class the native hit does not stand in for, from its first row."""
+    from engine.appc.subsystems import CloakingSubsystem
+
+    class Fading(CloakingSubsystem):
+        def IsCloaking(self):
+            return 1
+    ship = _cloaked_ship(Fading("Cloak"))
+    nc.configure(ON)
+    faces = _shield_faces(ship)
+    combat.apply_hit(ship, 10.0, TGPoint3(0.0, 1.0, 0.0), None)
+    assert nc.damage_counts()["hits"] == 0
+    assert _shield_faces(ship) == faces
+
+
+def test_an_instance_patch_on_the_cloak_runs_the_reference():
+    """The clean scan looks for IsCloaking / IsDecloaking on the cloak."""
+    from engine.appc.subsystems import CloakingSubsystem
+    cloak = CloakingSubsystem("Cloak")
+    ship = _cloaked_ship(cloak)
+    nc.configure(ON)
+    cloak.IsDecloaking = lambda: 1
+    faces = _shield_faces(ship)
+    combat.apply_hit(ship, 10.0, TGPoint3(0.0, 1.0, 0.0), None)
+    assert nc.damage_counts()["hits"] == 0
+    assert _shield_faces(ship) == faces
+    del cloak.IsDecloaking
+    combat.apply_hit(ship, 10.0, TGPoint3(0.0, 1.0, 0.0), None)
+    assert nc.damage_counts()["hits"] == 1
+    assert _shield_faces(ship) != faces
+
+
+def _faces_after_one_hit(env, box):
+    nc.reset()
+    eq.reset()
+    ship = _ship()
+    ship._shield_hull_box = box
+    nc.configure(env)
+    combat.apply_hit(ship, 10.0, TGPoint3(0.0, 1.0, 0.0), None)
+    return _shield_faces(ship)
+
+
+def test_a_nan_hull_box_half_extent_picks_the_references_face():
+    """_hull_box_for rejects only a half-extent <= 0, so a NaN one keeps
+    the box (its deltas NaN: the last face); the native face choice reads
+    it the same way (final review M-1)."""
+    box = ((0.0, 0.0, 0.0), (float("nan"), 1.0, 1.0))
+    off = _faces_after_one_hit({}, box)
+    on = _faces_after_one_hit(ON, box)
+    assert nc.damage_counts()["hits"] == 1
+    assert on == off
+
+
+@pytest.mark.parametrize("env", ({}, ON), ids=("off", "on"))
+def test_a_subsystem_whose_position_raises_raises_out_of_the_hit(env):
+    """_apply_hit calls each subsystem's GetPosition() unguarded, so one
+    that raises raises out of the hit; the mount order the native hit walks
+    (part_severance._mounted_subsystems) used to skip it, and the native hit
+    went on without it (final review M-2). It now names it
+    REF_UNREPRESENTABLE, and the hit is the reference's."""
+    ship = _ship()
+    sensor = ship.GetSensorSubsystem()
+    sensor.__dict__["_position"] = "not a point"   # GetPosition() raises
+    nc.configure(env)
+    with pytest.raises(AttributeError):
+        _hit(ship)
+    assert nc.damage_counts()["hits"] == 0

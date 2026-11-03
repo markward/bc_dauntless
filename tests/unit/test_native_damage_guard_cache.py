@@ -142,3 +142,26 @@ def test_the_kernels_class_guard_obeys_a_later_patch(monkeypatch):
     monkeypatch.setattr(Torpedo, "GetDamageRadiusFactor",
                         lambda self: 1.0)
     assert not nc._kdmg_ctx("torpedo", None, [])["ok"]
+
+
+def test_a_class_first_flagged_after_the_fill_is_watched(monkeypatch):
+    """The guard watches every class rows have been flagged with (final
+    review I-1), including one first flagged after the cache was filled."""
+    _ship, sensor = _sensor()
+    assert _native_write(sensor, 90.0)              # fills the cache
+
+    class LateSensor(SensorSubsystem):
+        pass
+    other = ShipClass_Create("GuardCacheLate")
+    hull = HullSubsystem("Hull")
+    hull.SetMaxCondition(500.0)
+    other.SetHull(hull)
+    late = LateSensor("Sensors")
+    late.SetMaxCondition(100.0)
+    other.SetSensorSubsystem(late)
+    assert _native_write(late, 90.0)
+    monkeypatch.setattr(LateSensor, "IsDisabled", lambda self: 1)
+    assert not _native_write(late, 80.0)
+    assert _native_write(sensor, 70.0) is False     # one guard for all
+    monkeypatch.undo()
+    assert _native_write(late, 70.0)

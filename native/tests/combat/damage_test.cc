@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <string_view>
@@ -169,6 +170,18 @@ TEST(Damage, TheFaceIsTheHullBoxsDominantAxis) {
     EXPECT_EQ(shield_face(w.m, w.ship, {0.9, 0.1, 0.0}), 5);
     // A tie of y with x goes to y (y -> z -> x).
     EXPECT_EQ(shield_face(w.m, w.ship, {1.0, 2.0, 0.0}), 0);
+}
+
+TEST(Damage, ANanHalfExtentKeepsTheBoxAsPythonDoes) {
+    // _hull_box_for rejects only `hx <= 0.0`: a NaN half-extent keeps the
+    // box, its x delta NaN, and every compare with it false -> face 5. The
+    // raw-axis rule would read (0, 1, 0) as face 0.
+    World w;
+    w.m.set_fv(w.ship, Field::_shield_hull_box_half,
+               {std::nan(""), 2.0, 0.5});
+    EXPECT_EQ(shield_face(w.m, w.ship, {0.0, 1.0, 0.0}), 5);
+    w.m.set_fv(w.ship, Field::_shield_hull_box_half, {0.0, 2.0, 0.5});
+    EXPECT_EQ(shield_face(w.m, w.ship, {0.0, 1.0, 0.0}), 0);
 }
 
 // ── The condition chain ─────────────────────────────────────────────────────
@@ -352,4 +365,20 @@ TEST(Damage, AClassThePythonOwnsFallsBack) {
     w.m.set_i(w.ship, Field::dmg_ship, 0);
     EXPECT_THROW(apply_hit(w.m, w.hit(1.0, {0, 0, 0}), {}, out),
                  std::invalid_argument);
+}
+
+TEST(Damage, ACloakWhoseClassPythonOwnsFallsBack) {
+    // shields_block reads the cloak's state for cloak_shields_suspended,
+    // which calls the class's IsCloaking / IsDecloaking.
+    World w;
+    const int64_t cloak = w.subsystem(100.0, {0, 0, 0}, 0.0);
+    w.m.set_ref(w.ship, Field::_cloaking_subsystem, cloak);
+    DamageOut out;
+    apply_hit(w.m, w.hit(1.0, {0.0, 1.0, 0.0}), {}, out);
+    w.m.set_i(cloak, Field::dmg_class, kDmgPython);
+    const double before = w.face(0);
+    DamageOut again;
+    EXPECT_THROW(apply_hit(w.m, w.hit(1.0, {0.0, 1.0, 0.0}), {}, again),
+                 std::invalid_argument);
+    EXPECT_EQ(w.face(0), before);
 }

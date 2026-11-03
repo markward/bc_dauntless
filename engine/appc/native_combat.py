@@ -141,6 +141,7 @@ def available() -> bool:
             and hasattr(_h, "combat_effect_rebind")
             and hasattr(_h, "combat_apply_hit")
             and hasattr(_h, "combat_dmg_guard_check")
+            and hasattr(_h, "combat_dmg_guard_invalidate")
             and hasattr(_h, "combat_dmg_set_condition")
             and hasattr(_h, "combat_dmg_clean_handles")
             and hasattr(_h, "combat_k2_scan_clear"))
@@ -2036,12 +2037,13 @@ def _resolve_manual_slot(ship, h, drop=True) -> None:
 def _mount_order(ship) -> list:
     """The ship's subsystems as `part_severance.authored_mount_subsystem`
     walks them (`_mounted_subsystems`: combat._iter_subsystems order), as
-    Subsystem handles; -2 for one the mirror cannot name."""
+    Subsystem handles; -2 for one the mirror cannot name, or whose
+    GetPosition() raises (the hit hands back, and the reference raises)."""
     from engine.appc.part_severance import _mounted_subsystems
     sub_kind = _kind("Subsystem")
     out = []
-    for sub, _mount in _mounted_subsystems(ship):
-        t = _slot_of(sub)
+    for sub, mount in _mounted_subsystems(ship, keep_raising=True):
+        t = None if mount is None else _slot_of(sub)
         out.append(t if t is not None and (t >> _KIND_SHIFT) == sub_kind
                    else REF_UNREPRESENTABLE)
     return out
@@ -5712,8 +5714,9 @@ def _k3_answer(rec, walk, dt, ship_instances, st):
 # class's did at the snapshot (_dmg_snapshot) and none to code outside the
 # engine package (_k2_foreign: a test's, a tool's, a mod's); its rows then
 # carry dmg_class / dmg_ship, which the native chain reads, and a class that
-# does not is handed to Python. A stock class patched after the snapshot is
-# caught at every native call (_dmg_unchanged).
+# does not is handed to Python. A stock class patched after the snapshot,
+# and any class patched after its rows were flagged, is caught at every
+# native call (_dmg_unchanged: it re-derives every flagged class's rules).
 
 #: ShipSubsystem methods the condition chain stands in for.
 _DMG_SUB_NAMES = ("GetCondition", "SetCondition", "SetConditionPercentage",
@@ -5733,6 +5736,9 @@ _DMG_SHIP_NAMES = ("DamageSystem", "IsImmuneToDamage", "GetShields",
                    "GetHull", "GetSubsystems", "GetWorldLocation",
                    "GetWorldRotation", "GetScale", "GetCloakingSubsystem",
                    "_iter_subsystems")
+#: CloakingSubsystem methods the hit stands in for (cloak_shields_suspended
+#: calls them; the native shields_block reads the mirrored `_cloak_state`).
+_DMG_CLOAK_NAMES = ("IsCloaking", "IsDecloaking")
 _dmg_stock = None
 _dmg_classes: dict = {}
 
@@ -5747,11 +5753,14 @@ def _dmg_snapshot() -> dict:
     global _dmg_stock
     if _dmg_stock is None:
         from engine.appc.ships import ShipClass
-        from engine.appc.subsystems import ShieldSubsystem, ShipSubsystem
+        from engine.appc.subsystems import (CloakingSubsystem,
+                                            ShieldSubsystem, ShipSubsystem)
         from engine.appc.weapon_subsystems import WeaponSystem
         _dmg_stock = {
             "classes": (ShipSubsystem, WeaponSystem, ShieldSubsystem,
                         ShipClass),
+            "cloak_class": CloakingSubsystem,
+            "cloak": _dmg_resolve(CloakingSubsystem, _DMG_CLOAK_NAMES),
             "sub": _dmg_resolve(ShipSubsystem, _DMG_SUB_NAMES),
             "leaf": _dmg_resolve(ShipSubsystem, _DMG_PREDICATES),
             "aggregate": _dmg_resolve(WeaponSystem, _DMG_PREDICATES),
@@ -5772,11 +5781,21 @@ def damage_snapshot_stock() -> None:
 
 def _dmg_class(cls) -> int:
     """dmg_class for a subsystem class: DMG_LEAF, DMG_AGGREGATE or
-    DMG_PYTHON (cached per class until reset())."""
+    DMG_PYTHON (cached per class until reset(); _dmg_unchanged re-derives
+    every cached one whenever one of these classes changes)."""
     hit = _dmg_classes.get(("sub", cls))
     if hit is None:
         hit = _dmg_classes[("sub", cls)] = _dmg_class_of(cls)
+        _dmg_watch_grew()
     return hit
+
+
+def _dmg_watch_grew() -> None:
+    """A class was flagged for the first time: the guard's cache (which
+    watches every flagged class, _dmg_unchanged) must be filled again with
+    it among the watched."""
+    if available():
+        _h.combat_dmg_guard_invalidate(_DMG_GUARD)
 
 
 def _dmg_class_of(cls) -> int:
@@ -5798,23 +5817,32 @@ def _dmg_class_of(cls) -> int:
         values = _dmg_resolve(cls, _DMG_SHIELD_NAMES)
         if values != st["shield"] or any(_k2_foreign(v) for v in values):
             return DMG_PYTHON
+    if issubclass(cls, st["cloak_class"]):
+        # A ship's cloak: the hit reads its state natively (damage.cc
+        # apply_hit hands back a DMG_PYTHON cloak).
+        values = _dmg_resolve(cls, _DMG_CLOAK_NAMES)
+        if values != st["cloak"] or any(_k2_foreign(v) for v in values):
+            return DMG_PYTHON
     return rule
 
 
 def _dmg_ship(cls) -> int:
     """dmg_ship for an object class: 1 for a ShipClass whose hit the native
-    chain stands in for, else 0."""
+    chain stands in for, else 0 (cached per class, as _dmg_class)."""
     hit = _dmg_classes.get(("ship", cls))
     if hit is None:
-        st = _dmg_snapshot()
-        hit = 0
-        if issubclass(cls, st["classes"][3]):
-            values = _dmg_resolve(cls, _DMG_SHIP_NAMES)
-            if values == st["ship"] and not any(_k2_foreign(v)
-                                                for v in values):
-                hit = 1
-        _dmg_classes[("ship", cls)] = hit
+        hit = _dmg_classes[("ship", cls)] = _dmg_ship_of(cls)
+        _dmg_watch_grew()
     return hit
+
+
+def _dmg_ship_of(cls) -> int:
+    st = _dmg_snapshot()
+    if issubclass(cls, st["classes"][3]):
+        values = _dmg_resolve(cls, _DMG_SHIP_NAMES)
+        if values == st["ship"] and not any(_k2_foreign(v) for v in values):
+            return 1
+    return 0
 
 
 # ── Native damage: the callers (spec 2026-11-02-native-damage §3 goal 4) ─────
@@ -5910,12 +5938,17 @@ def _guard_watch(snapshot, classes=()) -> tuple:
 def _dmg_unchanged() -> bool:
     """_dmg_unchanged_now, answered from the binding's cache while nothing
     it reads has changed (THE DAMAGE GUARD CACHE): a patch since the fill
-    makes it stale, and it is computed again."""
+    makes it stale, and it is computed again. It watches the stock classes
+    and every class rows have been flagged with -- a ship's cloak's among
+    them, whose IsCloaking / IsDecloaking are part of its rules -- and a
+    class first flagged later invalidates the fill (_dmg_watch_grew)."""
     r = _h.combat_dmg_guard_check(_DMG_GUARD)
     if r is None:
         r = _dmg_unchanged_now()
-        modules, types = _guard_watch(_dmg_functions(),
-                                      _dmg_snapshot()["classes"])
+        st = _dmg_snapshot()
+        modules, types = _guard_watch(
+            _dmg_functions(), dict.fromkeys(
+                st["classes"] + tuple(cls for _kind, cls in _dmg_classes)))
         _h.combat_dmg_guard_fill(_DMG_GUARD, r, modules, types)
     return r
 
@@ -5923,7 +5956,9 @@ def _dmg_unchanged() -> bool:
 def _dmg_unchanged_now() -> bool:
     """Every function and stock-class method the native chain stands in for
     is the one snapshotted, and none is foreign (a test's patch made before
-    the snapshot)."""
+    the snapshot); and every class rows have been flagged with still has
+    the rules its rows carry (final review I-1: a subclass patched after its
+    rows were flagged)."""
     _dmg_guard_computed["dmg"] += 1
     for owner, get, values, _names in _dmg_functions():
         try:
@@ -5939,12 +5974,18 @@ def _dmg_unchanged_now() -> bool:
             return False
     st = _dmg_snapshot()
     ship_subsystem, weapon_system, shield, ship = st["classes"]
-    return (_dmg_resolve(ship_subsystem, _DMG_SUB_NAMES) == st["sub"]
+    if not (_dmg_resolve(ship_subsystem, _DMG_SUB_NAMES) == st["sub"]
             and _dmg_resolve(ship_subsystem, _DMG_PREDICATES) == st["leaf"]
             and _dmg_resolve(weapon_system, _DMG_PREDICATES)
             == st["aggregate"]
             and _dmg_resolve(shield, _DMG_SHIELD_NAMES) == st["shield"]
-            and _dmg_resolve(ship, _DMG_SHIP_NAMES) == st["ship"])
+            and _dmg_resolve(ship, _DMG_SHIP_NAMES) == st["ship"]):
+        return False
+    for (kind, cls), verdict in _dmg_classes.items():
+        now = _dmg_class_of(cls) if kind == "sub" else _dmg_ship_of(cls)
+        if now != verdict:
+            return False
+    return True
 
 
 def _dmg_handle(obj, kind: str):
@@ -6207,7 +6248,8 @@ _KDMG_FUNCTIONS = (
 #: (_DMG_SHIP_NAMES) and on each subsystem its hit can reach (the condition
 #: chain's names, the predicates, the shield names).
 _KDMG_SUB_NAMES = tuple(dict.fromkeys(_DMG_SUB_NAMES + _DMG_PREDICATES
-                                      + _DMG_SHIELD_NAMES))
+                                      + _DMG_SHIELD_NAMES
+                                      + _DMG_CLOAK_NAMES))
 #: A torpedo's: weapon_splash_radius reads GetDamageRadiusFactor on it.
 _KDMG_TORP_NAMES = ("GetDamageRadiusFactor",)
 _kdmg_fn_snapshot = None
