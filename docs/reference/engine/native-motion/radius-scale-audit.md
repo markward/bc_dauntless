@@ -333,6 +333,19 @@ Only objects with scale ≠ 1 change (§5.3). Headless, an SDK hardpoint rock ha
 
 **Golden fights.** `tests/integration/test_golden_fights.py` is on the branch base now, so Annex D's "not in `2369cba41`" no longer applies.
 
+## 11. Outcome (2026-11-03)
+
+- Commits on `ws/scaled-getradius`:
+  - `a1e307f06` + `5811d1b36`: refactor. `GetBaseRadius` added; the base readers and the radius × scale helpers read it. No behaviour change.
+  - `f9543f8c8`: the behaviour change. `GetRadius()` is base × guarded scale. K4 and the tractor stand-off use `world_radius`.
+  - `f3ec124a5`: `world_radius` is `GetRadius()`; stale prose rewritten.
+- Golden fights byte-identical: yes (no re-record).
+- Sweep: `tests/integration/test_golden_fights.py` + `test_warp_button_handler_sweep.py` + `test_campaign_warp_transitions.py`: 44 passed.
+- Focused tests at `f3ec124a5`: 779 pytest passed; ctest `-R combat_` 354/354.
+- Tractor stand-off test geometry: the target sits 10 GU from the source. The plan's 33 GU never engaged the stand-off, so it could not fail.
+- D1 (merged bounding sphere): ruled (a) by Mark 2026-11-03, not on this branch.
+- Live check: owed (Mark), before the merge into `project/native-motion-and-proximity`.
+
 ## Annex A. Engine `GetRadius()` calls in `engine/appc/`, `App.py`, `tools/`
 
 
