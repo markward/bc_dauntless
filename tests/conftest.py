@@ -1430,6 +1430,14 @@ def _reset_leakable_engine_globals():
         App.Game_SetDifficulty(1)
     except Exception:
         pass
+    # Difficulty multipliers are global game state a mission sets at init
+    # (E2M2.py:155 defensive 0.75); a mission that sets none (E1M2) built its
+    # player with the last test's (tests/unit/test_conftest_resets_
+    # difficulty_multipliers.py).
+    try:
+        App.Game_SetDefaultDifficultyMultipliers()
+    except Exception:
+        pass
     # Audio singleton: the audio tests' teardown (shutdown_audio_for_tests)
     # leaves TGSoundManager._instance and App.g_kSoundManager as None. A later
     # bridge load then calls App.g_kSoundManager.GetSound(...) -> AttributeError
