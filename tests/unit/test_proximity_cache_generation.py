@@ -132,3 +132,36 @@ def test_class_swap_bumps():
     with _Probe() as p:
         native_combat.reclassify(_ship())
     assert p.bumped
+
+
+def test_torpedo_launch_into_fresh_key_does_not_bump():
+    s = App.SetClass_Create()
+    with _Probe() as p:
+        s.AddObjectToSet(Torpedo(), "T1")
+    assert not p.bumped
+
+
+def test_torpedo_replacing_torpedo_key_does_not_bump():
+    s = App.SetClass_Create()
+    s.AddObjectToSet(Torpedo(), "T1")
+    with _Probe() as p:
+        s.AddObjectToSet(Torpedo(), "T1")
+    assert not p.bumped
+
+
+def test_torpedo_remove_and_delete_do_not_bump():
+    s = App.SetClass_Create()
+    s.AddObjectToSet(Torpedo(), "T1")
+    s.AddObjectToSet(Torpedo(), "T2")
+    with _Probe() as p:
+        s.RemoveObjectFromSet("T1")
+        s.DeleteObjectFromSet("T2")
+    assert not p.bumped
+
+
+def test_remove_and_delete_of_absent_name_do_not_bump():
+    s = App.SetClass_Create()
+    with _Probe() as p:
+        s.RemoveObjectFromSet("nope")
+        s.DeleteObjectFromSet("nope")
+    assert not p.bumped

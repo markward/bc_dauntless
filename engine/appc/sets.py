@@ -262,18 +262,21 @@ class SetClass(TGEventHandlerObject):
 
     def _index_member(self, identifier: str, obj, previous) -> None:
         from engine.appc.projectiles import Torpedo
-        # Any add can change a manager's candidate list or its order
-        # (cache keyed on this generation: engine.appc.proximity_cache).
-        proximity_cache.bump()
+        # Bump (engine.appc.proximity_cache) only when `_non_torpedo` changes:
+        # torpedoes are not candidates, and a sized one is covered by the
+        # projectiles `_radius` setter bump.
         if isinstance(obj, Torpedo):
-            self._non_torpedo.pop(identifier, None)
+            if self._non_torpedo.pop(identifier, None) is not None:
+                proximity_cache.bump()
         elif previous is not None and isinstance(previous, Torpedo):
             # The name kept its slot in `_objects` but is new to the index,
             # which would append it: rebuild so the two orders agree.
             self._non_torpedo = {k: v for k, v in self._objects.items()
                                  if not isinstance(v, Torpedo)}
+            proximity_cache.bump()
         else:
             self._non_torpedo[identifier] = obj
+            proximity_cache.bump()
 
     def GetObject(self, name: str):
         return self._objects.get(name)
@@ -293,9 +296,9 @@ class SetClass(TGEventHandlerObject):
             from engine.appc.objects import ObjectGroup
             ObjectGroup.broadcast_membership(obj, entered=False)
             self._clear_containing_set(obj)
-        self._non_torpedo.pop(name, None)
+        if self._non_torpedo.pop(name, None) is not None:
+            proximity_cache.bump()  # after the handlers, at the index pop
         removed = self._objects.pop(name, None)
-        proximity_cache.bump()      # after the handlers, at the index pop
         return removed
 
     def DeleteObjectFromSet(self, name: str) -> None:
@@ -314,9 +317,9 @@ class SetClass(TGEventHandlerObject):
             ObjectGroup.broadcast_membership(obj, entered=False)
             broadcast_object_deleted(obj)
             self._clear_containing_set(obj)
-        self._non_torpedo.pop(name, None)
+        if self._non_torpedo.pop(name, None) is not None:
+            proximity_cache.bump()  # after the handlers, at the index pop
         self._objects.pop(name, None)
-        proximity_cache.bump()      # after the handlers, at the index pop
 
     def _clear_containing_set(self, obj) -> None:
         """Stop `obj` reporting THIS set once it has left it, so
