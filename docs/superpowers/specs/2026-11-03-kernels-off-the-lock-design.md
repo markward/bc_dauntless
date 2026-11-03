@@ -70,6 +70,7 @@ D's late fixes were merged in at `b2e8bd703`: a K2 regression for patched damage
   - Mirror pushes from a non-main thread are queued; main-thread pushes keep their direct path.
   - Deviation: a main-thread `_drop` still frees at once. It runs between records under the GIL, and the mid-walk "row gone" tests depend on it.
   - The stress test runs a Python thread that churns cyclic garbage, finalizers and an idempotent `__del__` push while the 64-ship fight computes. Per-tick state matches by `.hex()`, and pushes match by label and order. Removing the off-main queue, or the free deferral, makes it fail.
+  - Since the final review it also has a **real-race case** (`1d170e432`): during compute, the off-main thread writes a different value into a field a kernel reads, and the expected run applies the same write at the same drain point. Sending that push direct instead fails the state comparison, on a bank's charge level at tick 75.
 - **Measured** (SIG-177): kernel compute is ≈ 0.59 ms per tick of ≈ 1.61 in the five combat rows. As a share of each kernel's own parent row: K0 14%, K1 26%, K2 63%, K3 14%. Of the 0.59 ms itself, K2 is about 62% and K0 about 6%. The release changes no combat row beyond spread; `sim` 9.138 → 9.311, with `sim.effects` and `gl.ai` varying run to run. **Qualifier:** this was a checkout build, where no second Python thread exists, so the release is inert there. In a packaged build the log follower, or a CPU-bound mod thread, can take the GIL at each of about 5 releases a tick, and each re-acquire can then wait up to a switch interval (5 ms). That case is not measured.
 - **Ruling, per-core split** (spec §3): not built and not recommended yet. It is bounded by the 0.59 ms of compute, most of it K2, which under native damage writes its targets in order. The larger remaining cost is the binding and Python around the kernels (≈ 1.1 ms).
 - **Known limits for J** (final review M1; none is reachable from an SDK `__del__` today, and a combat thread beside Python needs all of them through its snapshot and outbox):
@@ -82,4 +83,20 @@ D's late fixes were merged in at `b2e8bd703`: a K2 regression for patched damage
   - **Transform-store and `g_world` writes** from another thread are unguarded.
   - **The trace hook writes during compute:** it lazily builds `Model::trace_accel`. That is safe while only the main thread renders and loads models, not once J moves render work.
 - **R3 holds with one property J must keep** (final review M4). A push queued off the main thread during a session is invisible to the kernel until the session ends, because the drain skips while a session is open. Today that is safe only because the reachable fields (`_watch_checks`, the condition-watch counts) are conservative when stale-high: they hand the work back to Python.
-- **Found:** `test_shuttle_service.py::test_neighbouring_docks_keep_their_shuttles_apart` failed once in a combined native run and passed alone and on rerun (see the final review).
+- **Final review: ready with fixes** (0 critical, 2 important, 9 minor). The real-race case and the robustness fixes are in `1d170e432` and `48197eb47`:
+  - a queued push that raises is logged and the drain continues;
+  - the audit runs after the drain;
+  - a collected probe is no longer findable by id natively (`combat_set_obj_id_findable`; queued off the main thread);
+  - a paused frame drains;
+  - one-time logs fire when pending frees pass 10,000, or when a drain is skipped at a boundary with a session open.
+  
+  The doc findings are fixed here and in SIG-177.
+- **Parked for Mark, the shuttle flake (final review I2).** It predates this branch and is not about threading.
+  - `test_shuttle_service.py::test_neighbouring_docks_keep_their_shuttles_apart` fails when the process-wide object-id counter starts at certain values. The cause: the AI's avoidance phase is keyed on `GetObjID()` (`ai_optimized._phase_key`), so it depends on how many objects were made before.
+  - Keying the phase on the ship's name (as the K1 differential does) makes the test deterministic, but deterministically failing. Over 26 phase choices, about 1 in 5 dips the Tau Ceti shuttle up to 3.97 GU past `BAND_SLACK_IN` (2.25 GU), below the service's own 20 GU floor from the dock. No collision or separation check failed.
+  - Options:
+    - (A) fix the shuttle service so the band holds for every phase (recommended);
+    - (B) name-key the phase and loosen the slack;
+    - (C) pin a passing phase, which hides the problem.
+  - Separately, the comment in `ai_optimized` that "the same ship gets the same phase on every run" is wrong across load histories.
+  - The test is left unchanged, so it can flake in combined runs until this is decided.
