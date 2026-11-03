@@ -350,17 +350,21 @@ class ProximityManager:
         self._proximity_checks: list = []
 
     def AddObject(self, obj) -> None:
+        ProximityCheck = _query_deps()[0]
+        is_check = isinstance(obj, ProximityCheck)
         if obj not in self._objects:
             self._objects.append(obj)
-            proximity_cache.bump()
+            # A check is never a candidate (_build_cand skips it), so it
+            # changes no cache: ConditionInRange re-adds one per retarget.
+            if not is_check:
+                proximity_cache.bump()
         # SDK ConditionInRange.SetupProximitySphere calls
         # pProximityManager.AddObject(pProx) — the proximity check is
         # registered here so the per-tick evaluator can find it. We track
         # it in _proximity_checks too (anchor=None — anchor will be set
         # by ObjectClass.AttachObject(prox) which is called immediately
         # after).
-        from engine.appc.ai import ProximityCheck
-        if isinstance(obj, ProximityCheck):
+        if is_check:
             # The set this manager belongs to is the check's set when it has
             # no anchor (E6M3.CreateProximityCheck never calls AttachObject).
             obj._manager_set = self._set
@@ -372,7 +376,8 @@ class ProximityManager:
     def RemoveObject(self, obj) -> None:
         if obj in self._objects:
             self._objects.remove(obj)
-            proximity_cache.bump()
+            if not isinstance(obj, _query_deps()[0]):     # see AddObject
+                proximity_cache.bump()
 
     def UpdateObject(self, obj) -> None:
         # SDK pattern (QuickBattle.py:2726): notifies the proximity tracker
@@ -380,7 +385,8 @@ class ProximityManager:
         # may need recomputing.  Phase 1: idempotent ensure-present.
         if obj not in self._objects:
             self._objects.append(obj)
-            proximity_cache.bump()
+            if not isinstance(obj, _query_deps()[0]):     # see AddObject
+                proximity_cache.bump()
 
     def GetNumObjects(self) -> int:
         return len(self._objects)

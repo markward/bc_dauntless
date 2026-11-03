@@ -2,6 +2,7 @@
 proximity_cache's generation; no-op calls do not."""
 import App
 from engine.appc import proximity_cache
+from engine.appc.ai import ProximityCheck
 from engine.appc.planet import ProximityManager
 from engine.appc.projectiles import Torpedo
 
@@ -125,6 +126,22 @@ def test_manager_add_update_remove_bump_only_on_change():
     with _Probe() as p:
         m.RemoveObject(o2)
     assert not p.bumped
+
+
+def test_manager_add_update_remove_of_a_check_does_not_bump():
+    # Checks are never candidates (_Cand skips them in both sections), and
+    # ConditionInRange re-registers its check on every retarget.
+    m = ProximityManager(App.SetClass_Create())
+    c = ProximityCheck(event_type=999)
+    with _Probe() as p:
+        m.AddObject(c)
+        m.RemoveObject(c)
+        m.UpdateObject(c)
+        m.RemoveObject(c)
+    assert not p.bumped
+    assert c not in m._objects
+    m.AddObject(c)
+    assert c in m._objects                  # still registered for the evaluator
 
 
 def test_class_swap_bumps():
