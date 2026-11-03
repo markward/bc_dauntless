@@ -806,6 +806,48 @@ def WeaponEventHandler(_dest, evt):
         _HANDLER["depth"] -= 1
 
 
+HANDLER_OPS = ("fire",) * 6 + ("fire_pulse", "reload", "player_torps",
+                               "retarget", "single", "chain", "on", "on")
+HANDLER_TICKS = 300
+
+
+def handler_arm(monkeypatch, env, ticks_per_frame, stats):
+    """One arm of the mid-walk handler scene: a fresh _Scene with
+    WeaponEventHandler on ET_WEAPON_FIRED and ET_WEAPON_FIRE_FAILED, run
+    with the effect scope opened in both arms. `stats[native]` gets the
+    handler's tallies. (Also tests/helpers/golden_fight.py's
+    k1_midwalk_handler scene.)"""
+    events = (App.ET_WEAPON_FIRED, App.ET_WEAPON_FIRE_FAILED)
+    name = __name__ + ".WeaponEventHandler"
+    try:
+        with monkeypatch.context() as mp:
+            scene = _Scene(mp, env)
+            _HANDLER.clear()
+            _HANDLER.update(scene=(scene, random.Random(SEED + 1)),
+                            depth=0, calls=0, in_delivery=0,
+                            k1_in_delivery=0)
+            k1_system = nc.k1_system
+
+            def counting_k1_system(system, dt, _orig=k1_system):
+                if effect_queue._draining:
+                    _HANDLER["k1_in_delivery"] += 1
+                return _orig(system, dt)
+            mp.setattr(nc, "k1_system", counting_k1_system)
+            for et in events:
+                App.g_kEventManager.AddBroadcastPythonFuncHandler(
+                    et, scene.player, name)
+            try:
+                return scene.run(ticks_per_frame, HANDLER_OPS,
+                                 ticks=HANDLER_TICKS, scope="both")
+            finally:
+                for et in events:
+                    App.g_kEventManager.RemoveBroadcastHandler(
+                        et, scene.player, name)
+                stats[scene.native] = dict(_HANDLER, scene=None)
+    finally:
+        _HANDLER.clear()
+
+
 @pytest.mark.parametrize("ticks_per_frame", (1, 6))
 def test_handler_stops_and_restarts_mid_walk(monkeypatch, ticks_per_frame):
     """Review Focus 1: a handler on the events K1's effects post changes
@@ -813,40 +855,9 @@ def test_handler_stops_and_restarts_mid_walk(monkeypatch, ticks_per_frame):
     session inside the effect queue's delivery), turns sensors off,
     destroys a tube -- between walks, and every later walk goes as
     Python's does."""
-    events = (App.ET_WEAPON_FIRED, App.ET_WEAPON_FIRE_FAILED)
-    name = __name__ + ".WeaponEventHandler"
-    ops = ("fire",) * 6 + ("fire_pulse", "reload", "player_torps",
-                           "retarget", "single", "chain", "on", "on")
     stats = {}
-    runs = []
-    try:
-        for env in (OFF, ON):
-            with monkeypatch.context() as mp:
-                scene = _Scene(mp, env)
-                _HANDLER.clear()
-                _HANDLER.update(scene=(scene, random.Random(SEED + 1)),
-                                depth=0, calls=0, in_delivery=0,
-                                k1_in_delivery=0)
-                k1_system = nc.k1_system
-
-                def counting_k1_system(system, dt, _orig=k1_system):
-                    if effect_queue._draining:
-                        _HANDLER["k1_in_delivery"] += 1
-                    return _orig(system, dt)
-                mp.setattr(nc, "k1_system", counting_k1_system)
-                for et in events:
-                    App.g_kEventManager.AddBroadcastPythonFuncHandler(
-                        et, scene.player, name)
-                try:
-                    runs.append(scene.run(ticks_per_frame, ops, ticks=300,
-                                          scope="both"))
-                finally:
-                    for et in events:
-                        App.g_kEventManager.RemoveBroadcastHandler(
-                            et, scene.player, name)
-                    stats[scene.native] = dict(_HANDLER, scene=None)
-    finally:
-        _HANDLER.clear()
+    runs = [handler_arm(monkeypatch, env, ticks_per_frame, stats)
+            for env in (OFF, ON)]
     ref, nat = runs
     _compare(ref, nat)
     py, native = stats[False], stats[True]
