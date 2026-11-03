@@ -1,3 +1,5 @@
+> **Superseded in part (2026-11-03, kernels off the lock):** §0's "nothing in the bindings releases the GIL" and §1's per-kernel "GIL held" are no longer true. K0-K3's compute and K3's `apply_hits` run with the GIL released; frees are deferred to drain points, and off-main pushes are queued. A compute-only timer now exists (§7.1). See spec `docs/superpowers/specs/2026-11-03-kernels-off-the-lock-design.md` §10.
+
 # Native combat off the lock (roadmap I): lock map
 
 Read-only map, 2026-11-02, worktree `native-combat-k3`, branch `ws/combat-native-damage`, **HEAD `ac21dc89a`**. Every line number is at that commit. Another agent is editing D's Task 3 in this worktree, so they will drift.
