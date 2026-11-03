@@ -17,9 +17,11 @@
 //                  loop sound's stop
 //   6 PulseWeapon  PulseWeapon.StopFiring: `_firing = False; _target =
 //                  None; _target_offset = None` (no loop sound)
+//   7 TractorBeam  the mixin's, as a PhaserBank (K1's tractor walk, K0's
+//                  holding tractor: its `_firing` applies through the
+//                  beam's NativeThawParentWakeField setter, so the parent's
+//                  power program still thaws)
 //   8 TorpedoTube  Weapon.StopFiring: `_firing = False`
-// No other kind: a tractor beam's stop is the mixin's too, but every kernel
-// hands a holding tractor to Python (its power program), so none writes it.
 // A change to one of those StopFiring methods changes this table: change
 // both.
 
@@ -43,6 +45,7 @@ struct StopFiring {
 constexpr std::optional<StopFiring> stop_firing_of(int64_t weapon_kind) {
     switch (weapon_kind) {
         case 5:  // PhaserBank: the mixin's (WS:920)
+        case 7:  // TractorBeam: the mixin's too
             return StopFiring{{StopWrite::FiringFalse,
                                StopWrite::BeamOnCountdownZero},
                               2,

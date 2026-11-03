@@ -17,6 +17,8 @@ const char* effect_kind_name(EffectKind k) {
     case EffectKind::TORPEDO_RELOAD: return "TORPEDO_RELOAD";
     case EffectKind::WATCH: return "WATCH";
     case EffectKind::SPAWN: return "SPAWN";
+    case EffectKind::TRACTOR_STARTED: return "TRACTOR_STARTED";
+    case EffectKind::TRACTOR_STOPPED: return "TRACTOR_STOPPED";
     case EffectKind::COND_WATCH: return "COND_WATCH";
     case EffectKind::SUBSYS_EVENT: return "SUBSYS_EVENT";
     case EffectKind::REPAIR_ADD: return "REPAIR_ADD";

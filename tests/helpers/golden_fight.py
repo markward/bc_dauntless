@@ -332,7 +332,10 @@ def _posed(mp, env, spec):
 # broadcast handler on ET_TRACTOR_BEAM_STARTED_FIRING stops the beam once
 # (E8M2's OD1 TractorHandler, E8M2.py:1010-1034), and the SDK's own
 # ConditionFiringTractorBeam watches the ship (E1M2/E2M1's intercept AI).
-# The force runs host-style, in _advance_combat's cb.tractors.
+# The force runs host-style, in _advance_combat's cb.tractors. Native only
+# since tractors went native (fire control native only, Task 3): its
+# STARTED / STOPPED are effect-queue entries (ruling R8), so the handler's
+# StopFiring no longer nests a STOPPED inside the STARTED it handles.
 
 TBS = ws.TractorBeamSystem
 TRACTOR_RADIUS = 4.0            # both hulls: a standoff off the hull
@@ -614,7 +617,7 @@ SCENES = {s.name: s for s in (
           1, _k1_midwalk_handler),
     Scene("posed_fight", "native", 20261105, "8+Enemy-B", posed_fight.TICKS,
           1, _posed),
-    Scene("tractor_modes", "python", 0, "2", 870, 1, _tractor_modes),
+    Scene("tractor_modes", "native", 0, "2", 870, 1, _tractor_modes),
     Scene("sdk_dumb_fire", "python", k1d.SEED, "8", 900, 1, _sdk_dumb_fire),
 )}
 

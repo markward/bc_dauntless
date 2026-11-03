@@ -102,7 +102,6 @@ struct World {
         const int64_t s = m.register_row(Kind::Subsystem);
         names[s] = name;
         m.set_i(s, Field::weapon_kind, kind);
-        m.set_i(s, Field::pump_self_managed, kind == 3 ? 1 : 0);
         m.set_i(s, Field::_is_on, 1);
         m.set_i(s, Field::has_parent_ship_getter, 1);
         m.set_ref(s, Field::_parent_ship, ship_h);
@@ -811,7 +810,8 @@ TEST(K1, PythonFallbackBeforeAnyWrite) {
         EXPECT_EQ(w.brief(r), "RUN_PYTHON psys 0 1");
         EXPECT_TRUE(r.writes.empty());
     }
-    {   // A tractor (self-managed) and a ship with no row (every getter).
+    {   // A ship with no row: every getter but the tractor's (THE TRACTOR
+        // WALK: K1's whole); a tractor walks natively, no record.
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -821,8 +821,7 @@ TEST(K1, PythonFallbackBeforeAnyWrite) {
         EXPECT_EQ(w.run_to_done(),
                   (std::vector<std::string>{
                       "RUN_PYTHON -1 0 0", "RUN_PYTHON -1 0 1",
-                      "RUN_PYTHON -1 0 2", "RUN_PYTHON -1 0 3",
-                      "RUN_PYTHON tr 1 2", "DONE"}));
+                      "RUN_PYTHON -1 0 3", "DONE"}));
     }
     {   // A system session falls back to update_weapons (no ship position).
         World w;
@@ -1397,7 +1396,6 @@ TEST(K1, FallbackReasonsAreCounted) {
         w.m.set_ids(sys, Field::_ammo_by_slot, {0, gone});
         w.m.unregister_row(gone);
     }, K1Why::AmmoRow);
-    pump(3, [](World&, I, I, I, I) {}, K1Why::SelfManaged);
     pump(1, [](World& w, I, I, I sys, I) {
         w.m.set_i(sys, Field::k1_overridden, 1);
     }, K1Why::Overridden);
@@ -1405,12 +1403,12 @@ TEST(K1, FallbackReasonsAreCounted) {
         w.m.set_i(b0, Field::k1_overridden, 1);    // one overridden bank
     }, K1Why::Overridden);
 
-    {   // A ship with no row: one per getter.
+    {   // A ship with no row: one per getter but the tractor's.
         World w;
         w.k.begin_pump({-1}, kDt, 10.0, false, 0.0);
         w.run_to_done();
-        EXPECT_EQ(why_of(w.k.counts(), K1Why::UnslottedShip), 4);
-        EXPECT_EQ(w.k.counts().python_systems, 4);
+        EXPECT_EQ(why_of(w.k.counts(), K1Why::UnslottedShip), 3);
+        EXPECT_EQ(w.k.counts().python_systems, 3);
     }
     {   // A StartFiring system session counts apart from the pump.
         World w;
@@ -2671,4 +2669,108 @@ TEST(K1PulseLaunch, AThrowUndoesTheLaunchWrites) {
     EXPECT_EQ(w.brief(done), "DONE");
     EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 3.0);
     EXPECT_EQ(w.entries(done).size(), 1u);
+}
+
+// ── THE TRACTOR WALK (fire control native only, M4, R8) ─────────────────────
+
+// The pump's tractor walk: no record. A held target in range and arc is
+// gripped -- the beam's edge writes, its FIRE_SOUND, the cursor -- and the
+// system's firing edge is a TRACTOR_STARTED(system, ship) entry after its
+// `_was_firing` write. Out of range the beam drops, the engage intent kept,
+// with a TRACTOR_STOPPED.
+TEST(K1, TractorWalkGripsAndDrops) {
+    World w(false);
+    w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("tr", ship, 3, {t});
+    const int64_t beam = w.bank("beam", sys);
+    w.m.set_i(sys, Field::_single_fire, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    K1Record r = w.step();
+    EXPECT_EQ(w.brief(r), "DONE");
+    EXPECT_EQ(w.writes(r),
+              (std::vector<std::string>{
+                  "beam._firing=True", "beam._target=t",
+                  "beam._target_offset=walk_offset",
+                  "beam._beam_on_countdown=0.66000000000000003",
+                  "beam._dwell=0", "tr._next_emitter_index=0",
+                  "tr._was_firing=True"}));
+    EXPECT_EQ(w.entries(r), (std::vector<std::string>{
+                                "FIRE_SOUND beam^5", "TRACTOR_STARTED tr^7"}));
+    EXPECT_EQ(w.k.counts().logged_tractor_walk, 1);
+    EXPECT_EQ(w.k.counts().python_systems, 0);
+    w.k.end();
+
+    // Out of range: dropped (the mixin's stop, LOOP_STOP), intent kept.
+    w.store.set_position(static_cast<uint32_t>(w.m.object(t)->xform_index),
+                         static_cast<uint32_t>(w.m.object(t)->xform_gen), 0.0,
+                         125.0, 0.0);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    r = w.step();
+    EXPECT_EQ(w.writes(r), (std::vector<std::string>{
+                               "beam._firing=False",
+                               "beam._beam_on_countdown=0",
+                               "tr._was_firing=False"}));
+    EXPECT_EQ(w.entries(r), (std::vector<std::string>{
+                                "LOOP_STOP beam^2", "TRACTOR_STOPPED tr^3"}));
+    EXPECT_EQ(w.m.get_i(sys, Field::_fire_held), 1);
+    EXPECT_EQ(w.m.get_i(beam, Field::_firing), 0);
+    w.k.end();
+}
+
+// A tractor walk the mirror cannot read does not fire that tick: nothing
+// written, nothing queued, counted (no Python hand-back).
+TEST(K1, TractorWalkTheMirrorCannotReadDoesNotFire) {
+    World w(false);
+    w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("tr", ship, 3, {t});
+    w.bank("beam", sys);
+    w.m.set_i(t, Field::has_real_is_dead, 0);   // a stub IsDead
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record r = w.step();
+    EXPECT_EQ(w.brief(r), "DONE");
+    EXPECT_TRUE(r.writes.empty());
+    EXPECT_TRUE(r.entries.empty());
+    EXPECT_EQ(w.k.counts().no_fire[static_cast<size_t>(K1NoFire::TractorRow)],
+              1);
+    EXPECT_EQ(w.k.counts().python_systems, 0);
+    EXPECT_EQ(w.k.counts().entries[static_cast<size_t>(
+                  K1Effect::TRACTOR_STARTED)], 0);
+    w.k.end();
+}
+
+// StartFiring's session: the engage with the session's own offset (walk 1)
+// and the sync; nothing for a target out of range but the intent Python
+// wrote.
+TEST(K1, TractorStartSession) {
+    World w(false);
+    w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("tr", ship, 3, {t});
+    w.bank("beam", sys);
+    w.m.set_i(sys, Field::_single_fire, 1);
+    w.k.begin_tractor(sys, t, Vec3{0.5, 0.0, 0.0}, 10.0, false, 0.0);
+    K1Record r = w.step();
+    EXPECT_EQ(w.brief(r), "DONE");
+    ASSERT_EQ(r.writes.size(), 7u);
+    EXPECT_EQ(std::get<K1WalkOffset>(r.writes[2].value).walk, 1);
+    EXPECT_EQ(w.entries(r).back(), "TRACTOR_STARTED tr^7");
+    EXPECT_EQ(w.k.counts().logged_tractor_start, 1);
+    w.k.end();
+
+    World far(false);
+    far.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
+    const int64_t s2 = far.ship("ship");
+    const int64_t t2 = far.object("t", 0.0, 130.0, 0.0);
+    const int64_t sys2 = far.system("tr", s2, 3, {t2});
+    far.bank("beam", sys2);
+    far.k.begin_tractor(sys2, t2, std::nullopt, 10.0, false, 0.0);
+    r = far.step();
+    EXPECT_TRUE(r.writes.empty());
+    EXPECT_TRUE(r.entries.empty());
+    far.k.end();
 }

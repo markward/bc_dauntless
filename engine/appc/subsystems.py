@@ -1405,11 +1405,13 @@ class PoweredSubsystem(ShipSubsystem):
     # GetWeapon / a beam's IsFiring / _any_child_firing. The cloak sets False.
     _POWER_FREEZABLE = True
     _is_on = native_combat.NativeFrozenField(bool)
-    _normal_power = FrozenField()
+    # Mirrored too: K0's holding tractor reads GetNormalPowerWanted() and
+    # GetPowerPercentage() (its starvation stop; fire control native only).
+    _normal_power = native_combat.NativeFrozenField(float)
     _power_percentage_wanted = FrozenField()
     _power_wanted = FrozenField()
     _power_received = FrozenField()
-    _efficiency = FrozenField()
+    _efficiency = native_combat.NativeFrozenField(float)
     _power_factor = native_combat.NativeFrozenField(float)
     # The audit compares a program tick with the full pump; the frozen flag is
     # the program's bookkeeping, not consumer state.

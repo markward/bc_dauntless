@@ -1042,16 +1042,17 @@ def _pump_held_weapons(ships_list, dt: float) -> None:
     offline/powered-down, target undetectable (the anti-horn-loop stop —
     a held burst at a target that cloaks must end, not restart its warm-up
     SFX every tick), and the per-class _can_engage range gate (phaser
-    global fire range).  Systems that manage their own stop conditions
-    (TractorBeamSystem — its ENGAGE intent must survive out-of-range /
-    shields-up and re-acquire) set _pump_self_managed and get the frame
-    handed straight to their update_weapons.
+    global fire range). A TractorBeamSystem's tick is the native K1
+    kernel's whole (fire control native only, M4: its ENGAGE intent
+    survives out-of-range / out-of-arc and re-acquires; k1_fire_control.h,
+    THE TRACTOR WALK): it is never handed back here, and with native combat
+    off no tractor engages (TractorBeamSystem.StartFiring).
     """
     if _native_combat.enabled():
         # The same loop, walked by the native K1 kernel; Python runs only the
         # effects, and this module's loop body for whatever K1 hands back
-        # (RUN_PYTHON: a ship with no mirror row, a tractor, an articulated
-        # ship, anything the mirror cannot represent).
+        # (RUN_PYTHON: a ship with no mirror row, an articulated ship,
+        # anything the mirror cannot represent -- never a tractor).
         ships = ships_list if isinstance(ships_list, list) else list(ships_list)
         _native_combat.k1_pump(
             ships, dt,
@@ -1060,7 +1061,8 @@ def _pump_held_weapons(ships_list, dt: float) -> None:
         return
     for ship in ships_list:
         for getter in _PUMP_GETTERS:
-            _pump_held_system(ship, getter, dt)
+            if getter != "GetTractorBeamSystem":    # native only
+                _pump_held_system(ship, getter, dt)
 
 
 # The pump's system getters, in its order (K1's getter index is the position).
@@ -1072,9 +1074,6 @@ def _pump_held_system(ship, getter: str, dt: float) -> None:
     """_pump_held_weapons' loop body for one ship and one getter."""
     sys_ = getattr(ship, getter)() if hasattr(ship, getter) else None
     if sys_ is None or not getattr(sys_, "_fire_held", False):
-        return
-    if getattr(sys_, "_pump_self_managed", False):
-        sys_.update_weapons(dt)
         return
     if _is_offline(sys_) or not sys_.IsOn():
         sys_.StopFiring()
@@ -1446,10 +1445,11 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
                 _phaser_step_ship(ship, dt, ship_instances)
 
     # Tractor beams (hold/tow/pull/push/dock): the weapon tick above sustains
-    # the held grab beam (TractorBeamSystem.update_weapons re-acquires while
-    # engaged); advance_tractors applies the mode's physics — it moves the
-    # target (and reciprocally the source) via direct position displacement.
-    # No-op for ships without a firing tractor (production stays identical).
+    # the held grab beam (K1's tractor walk re-acquires while engaged);
+    # advance_tractors applies the mode's physics -- the native force step
+    # (tractor_force.h), which moves the target (and reciprocally the source)
+    # by direct position displacement in the transform store. No-op for
+    # ships without a firing tractor (production stays identical).
     step_memo.forget()
     with frame_profiler.scope("cb.tractors"):
         from engine.appc import tractor as _tractor

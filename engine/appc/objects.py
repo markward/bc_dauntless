@@ -630,6 +630,8 @@ class PhysicsObjectClass(ObjectClass):
     # Mirrored into the native combat row on every write (native_combat).
     # Always rebound (SetVelocity), never mutated in place.
     _velocity = native_combat.NativeField(native_combat.VEC3)
+    # GetMass: the native tractor force's input (tractor_force.h).
+    _mass = native_combat.NativeField(float)
 
     def __init__(self):
         super().__init__()

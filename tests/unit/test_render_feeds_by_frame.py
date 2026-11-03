@@ -24,6 +24,7 @@ from engine.systems import frames
 from tests.helpers import bc_assets
 from tests.helpers.bc_assets import require_game_asset
 from tests.helpers.mapped_regions import load_region
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
 
 
 @pytest.fixture(autouse=True)
@@ -374,24 +375,26 @@ def _tractor_pair(shooter_set, shooter_xyz, target_set, target_xyz):
         _ship_with_tractor, _target)
     ship, parent = _ship_with_tractor()
     target = _target()
+    # Engage at the helpers' in-range positions in ONE set, THEN place the
+    # pair: the weapon's range gate is not what this file tests, the drawn
+    # beam is. The interim cross-set weapon guard (system-frames Plan 2
+    # Ruling 5) refuses a cross-set engagement, so the target joins its own
+    # set only once the beam is lit (no tick runs here to drop it).
     shooter_set.AddObjectToSet(ship, "Source")
-    target_set.AddObjectToSet(target, "Target")
-    # Engage at the helpers' in-range positions, THEN place the pair: the
-    # weapon's range gate is not what this file tests, the drawn beam is.
-    # The interim cross-set weapon guard (system-frames Plan 2 Ruling 5)
-    # would refuse a cross-set engagement; bypass it for the same reason.
-    from engine.appc.weapon_subsystems import TractorBeamSystem
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"), \
-         patch.object(TractorBeamSystem, "_can_engage",
-                      lambda self, s, t: True):
+    shooter_set.AddObjectToSet(target, "Target")
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         parent.StartFiring(target, None)
     assert parent.IsFiring()
+    if target_set is not shooter_set:
+        shooter_set.RemoveObjectFromSet("Target")
+        target_set.AddObjectToSet(target, "Target")
     ship.SetTranslateXYZ(*shooter_xyz)
     target.SetTranslateXYZ(*target_xyz)
     return ship
 
 
-def test_a_beam_across_regions_draws_each_end_in_its_own_set(world):
+def test_a_beam_across_regions_draws_each_end_in_its_own_set(
+        world, native_combat_on):
     ona1, ona2, _other, off = world
     # The same geometry built in ONE set: the target where Ona2's (0,50,0)
     # sits in Ona1's coordinates.
@@ -419,7 +422,8 @@ def test_a_beam_across_regions_draws_each_end_in_its_own_set(world):
         _shifted(baseline[0]["emitter"], back))
 
 
-def test_a_beam_at_a_target_in_another_frame_is_not_drawn(world):
+def test_a_beam_at_a_target_in_another_frame_is_not_drawn(
+        world, native_combat_on):
     ona1, _ona2, other, _off = world
     ship = _tractor_pair(ona1, (0.0, 0.0, 0.0), other, (0.0, 50.0, 0.0))
     assert host_loop._build_tractor_beam_render_data([ship]) == []

@@ -16,7 +16,9 @@ Re-record ONLY on purpose, with a reason, one scene at a time where you can:
 
 which writes the file and skips. ``COMBAT_GOLDEN_ARM=python|native``
 overrides a scene's arm (scenes 1-5 were recorded from the Python arm, then
-checked native).
+checked native). ``tractor_modes`` runs native only since tractors went
+native (fire control native only, Task 3) and was re-recorded once for
+ruling R8 (its events queued).
 """
 import os
 

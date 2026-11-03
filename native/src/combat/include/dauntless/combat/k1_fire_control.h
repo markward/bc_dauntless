@@ -218,6 +218,41 @@
 // even when one raises (the walk offset's materialise runs Python's
 // _live_held_offset): it applies the rest in order, then re-raises.
 //
+// THE TRACTOR WALK (fire control native only, M4, R8). A TractorBeamSystem
+// is K1's whole: no tractor is ever handed to Python. Its Python is
+// weapon_subsystems.TractorBeamSystem as it stood at 23b3845d5 (the KRM §3.1
+// model, docs/reference/engine/native-combat/k1-retirement-map.md):
+//   the pump (getter 2, `_fire_held` set) -- update_weapons(dt):
+//       held target None: nothing; the system off: the sync only; offline
+//       or the target dead: the system's StopFiring; else every firing
+//       projector out of range (TRACTOR_MAX_RANGE_GU, same set) or out of
+//       arc stops (intent kept); out of range: the sync; one still firing:
+//       the sync; else `_engage_beam(target, self._live_held_offset())`
+//       and the sync
+//   begin_tractor -- StartFiring after its gates and its intent writes
+//       (Python's, native_combat.k1_tractor_start): `_can_engage` ->
+//       `_engage_beam(target, offset)`, then the sync
+//   _engage_beam   single fire: from `_next_emitter_index % n`, the first
+//       in-arc projector whose CanFire holds fires (the beam's Fire: its
+//       decision and its _fire_effect, logged as a beam's edge or sustain
+//       but with no WEAPON_FIRED) and the cursor moves past it; multi fire:
+//       every in-arc projector whose CanFire holds
+//   StopFiring     `_engage_state = None`, WeaponSystem.StopFiring's writes
+//       (each projector's the mixin's stop, stop_firing.h), then the sync
+//   the sync       `_sync_firing_event`: on an IsFiring() edge with a
+//       parent ship, `_was_firing = now` and a TRACTOR_STARTED /
+//       TRACTOR_STOPPED (system, ship) entry: delivered at the boundary as
+//       ET_TRACTOR_BEAM_STARTED_FIRING / _STOPPED_FIRING (ruling R8; a
+//       handler's StopFiring then lands after the tick's force, decision 9)
+// Every write is logged (a projector's `_firing` applies through its
+// NativeThawParentWakeField setter, so the power thaw stays Python's); no
+// record is returned. A tractor walk the mirror cannot read (an unnamed
+// row, a target with no real IsDead) is rolled back whole and does not fire
+// that tick, counted in Counts::no_fire (K1NoFire::TractorRow). The walk
+// check is not asked: nothing of a tractor's is stood in for by Python. A
+// ship the mirror cannot name has its other getters handed back as before;
+// its tractor does nothing.
+//
 // PROTOCOL INVARIANT: THE WALKED SYSTEM'S ROW OUTLIVES ITS WALK. An effect's
 // event handler may make objects unrepresentable (native_combat._drop: a
 // value the mirror cannot encode). A dropped TARGET or BANK row is followed:
@@ -306,9 +341,19 @@ enum class K1Effect : int32_t {
     WEAPON_FIRE_FAILED,  // (tube)
     SPAWN,               // (launcher) + K1Entry::spawn
     AMMO_CONSUMED,       // (tube)
+    TRACTOR_STARTED,     // (tractor system, its ship)  THE TRACTOR WALK
+    TRACTOR_STOPPED,     // (tractor system, its ship)
     kCount
 };
 const char* k1_effect_name(K1Effect e);
+
+// Why a walk did not fire that tick (fire control native only, R2), in
+// combat_k1_counts' k1_no_fire.
+enum class K1NoFire : int32_t {
+    TractorRow = 0,  // a tractor walk the mirror cannot read (THE TRACTOR WALK)
+    kCount
+};
+const char* k1_no_fire_name(K1NoFire w);
 
 // A launch's fire-time record (LAUNCHES AT THE BOUNDARY): what
 // weapon_subsystems._spawn_projectile reads live, read here when the
@@ -369,7 +414,7 @@ const char* k1_launch_why_name(K1LaunchWhy w);
 // Why a system went to Python whole (a RUN_PYTHON, or a skip_walk). Counted
 // per session type: the pump's and StartFiring's system sessions apart.
 enum class K1Why : int32_t {
-    SelfManaged = 0,  // a tractor (_pump_self_managed), or not a K1 system
+    SelfManaged = 0,  // not a K1 system kind (a tractor's walk is K1's own)
     Overridden,       // the system's or a child's class overrides a K1 method
     InstancePatch,    // Python found an instance-patched method (skip_walk)
     PosedShip,        // retired (posed parts, Task 4): never counted; kept
@@ -467,6 +512,13 @@ public:
     // WeaponSystem.StartFiring's immediate update_weapons(dt) on one system.
     void begin_system(int64_t system, double dt, double now, bool use_memo,
                       double drift_now, K1WalkCheck check = {});
+    // TractorBeamSystem.StartFiring's engage (THE TRACTOR WALK) on `system`,
+    // its intent already written: `target` (an Object handle, -1 None, -2
+    // unnamed: no fire), `offset` the StartFiring offset's xyz when it is a
+    // TGPoint3 (the session's walk 1: its object is the offset itself).
+    void begin_tractor(int64_t system, int64_t target,
+                       std::optional<Vec3> offset, double now, bool use_memo,
+                       double drift_now);
 
     // The next record of the top session. Throws std::logic_error when no
     // session is open, a WALK_START has no offset yet or an ASK no answer.
@@ -538,6 +590,10 @@ public:
                 logged_dumb_refused = 0;
         // ... and a cannon's Fire (Task 3): its drain, cooldown and SPAWN.
         int64_t logged_pulse_launch = 0;
+        // THE TRACTOR WALK: the pump's tractor walks, StartFiring's tractor
+        // sessions, and the walks that did not fire, by K1NoFire.
+        int64_t logged_tractor_walk = 0, logged_tractor_start = 0;
+        std::array<int64_t, static_cast<size_t>(K1NoFire::kCount)> no_fire{};
         std::array<int64_t, static_cast<size_t>(K1LaunchWhy::kCount)>
             launch_why{};
     };

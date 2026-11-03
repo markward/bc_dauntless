@@ -35,6 +35,7 @@
 #include "dauntless/combat/projectile_geometry.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/tractor_force.h"
 #include "dauntless/combat/weapon_geometry.h"
 #include "dauntless/transform_store.h"
 #include "platform/relaunch.h"
@@ -4404,6 +4405,14 @@ void k1_append_entries(std::span<const dauntless::combat::K1Entry> entries) {
                 hq::effect_queue().append_native(
                     hq::EffectKind::WEAPON_FIRE_FAILED, e.a);
                 break;
+            case cb::K1Effect::TRACTOR_STARTED:
+                hq::effect_queue().append_native(
+                    hq::EffectKind::TRACTOR_STARTED, e.a, e.b);
+                break;
+            case cb::K1Effect::TRACTOR_STOPPED:
+                hq::effect_queue().append_native(
+                    hq::EffectKind::TRACTOR_STOPPED, e.a, e.b);
+                break;
             case cb::K1Effect::kCount:
                 throw std::logic_error("combat K1: unknown queue entry");
         }
@@ -5688,12 +5697,13 @@ void k1_scan(K1Verdicts& v) {
     for (const std::int64_t sh : v.ships) {
         const cb::ObjectRow* so = sh < 0 ? nullptr : m.object(sh);
         if (so == nullptr) continue;
+        // A tractor system's walk is never handed back (tractors native):
+        // the walk check is not asked for it.
         for (const std::int64_t sys :
              {so->_phaser_system, so->_pulse_weapon_system,
-              so->_tractor_beam_system, so->_torpedo_system}) {
+              so->_torpedo_system}) {
             const cb::SubsystemRow* sr = sys < 0 ? nullptr : m.subsystem(sys);
-            if (sr == nullptr || !sr->_fire_held || sr->pump_self_managed)
-                continue;
+            if (sr == nullptr || !sr->_fire_held) continue;
             cover(sys);
         }
     }
@@ -13286,6 +13296,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("system"), py::arg("dt"), py::arg("now"),
               py::arg("use_memo"), py::arg("drift_now"),
               "StartFiring's immediate update_weapons(dt) on one system.");
+        m.def("combat_k1_begin_tractor",
+              [](std::int64_t system, std::int64_t target,
+                 std::optional<std::array<double, 3>> offset, double now,
+                 bool use_memo, double drift_now) {
+                  cb::k1_kernel().begin_tractor(system, target, offset, now,
+                                                use_memo, drift_now);
+              },
+              py::arg("system"), py::arg("target"), py::arg("offset"),
+              py::arg("now"), py::arg("use_memo"), py::arg("drift_now"),
+              "TractorBeamSystem.StartFiring's engage (k1_fire_control.h, THE "
+              "TRACTOR WALK), its intent already written: `target` an Object "
+              "handle (-1 None, -2 unnamed), `offset` the StartFiring "
+              "offset's xyz when it is a TGPoint3, else None (the session's "
+              "walk 1).");
         m.def("combat_k1_next", [] {
             // The kernel's compute runs with the GIL released, and only it
             // (THE GIL RELEASE). It makes no CPython call: its walk check
@@ -13555,7 +13579,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
             logged["dumb_refused"] = c.logged_dumb_refused;
             // ... and a cannon's (Task 3): its drain, cooldown and SPAWN.
             logged["pulse_launch"] = c.logged_pulse_launch;
+            // ... and the tractor walks (fire control native only, M4): the
+            // pump's, and StartFiring's sessions.
+            logged["tractor_walk"] = c.logged_tractor_walk;
+            logged["tractor_start"] = c.logged_tractor_start;
             d["k1_logged"] = logged;
+            // Walks that did not fire that tick, by why (R2).
+            py::dict no_fire;
+            for (size_t i = 0; i < c.no_fire.size(); ++i)
+                no_fire[cb::k1_no_fire_name(static_cast<cb::K1NoFire>(i))] =
+                    c.no_fire[i];
+            d["k1_no_fire"] = no_fire;
             // The launches handed back as FIRE / FIRE_DUMB records, by why.
             py::dict launch;
             for (size_t i = 0; i < c.launch_why.size(); ++i)
@@ -13734,6 +13768,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
             logged["deplete_stop"] = c.logged_deplete_stop;
             logged["reload"] = c.logged_reload;
             logged["watch"] = c.logged_watch;
+            // ... and a holding tractor's stop (fire control native only).
+            logged["hold_stop"] = c.logged_hold_stop;
             d["k0_logged"] = logged;
             for (size_t i = 0; i < c.entries.size(); ++i)
                 entries[cb::k0_effect_name(static_cast<cb::K0Effect>(i))] =
@@ -13741,6 +13777,28 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k0_entries"] = entries;
             return d;
         });
+        // ── The tractor force (tractor_force.h) ──────────────────────────
+        // One step over Object handles (host order, -1 for a ship with no
+        // row), writing the transform store. Returns (zero_velocity,
+        // captures, applied, skipped): the targets HOLD damps (Python calls
+        // SetVelocity(TGPoint3(0, 0, 0))), the engage geometry captured --
+        // (system, kind 1 hold_point / 2 tow_offset, (x, y, z)), already in
+        // the mirror -- the firing projectors applied and the tractors the
+        // mirror could not name.
+        m.def("combat_tractor_force_step",
+              [](const std::vector<std::int64_t>& ships, double dt) {
+                  const cb::TractorForceResult r = cb::tractor_force_step(
+                      cb::mirror(), dauntless::transform_store(), ships, dt);
+                  py::list captures;
+                  for (const cb::TractorEngageCapture& c : r.captures)
+                      captures.append(py::make_tuple(
+                          c.system, c.kind,
+                          py::make_tuple(c.point[0], c.point[1], c.point[2])));
+                  return py::make_tuple(r.zero_velocity, captures, r.applied,
+                                        r.skipped);
+              },
+              py::arg("ship_handles"), py::arg("dt"),
+              "One tractor force step (cb.tractors).");
         m.def("combat_k0_reset_counts",
               [] { cb::k0_session().reset_counts(); });
         m.def("combat_k0_clear_caches", [] { k0_caches().clear(); },

@@ -57,6 +57,11 @@ enum class EffectKind : int {
                          //  scale, fired at)
                          // a launch's spawn (effect_queue._spawn; spec
                          // 2026-11-02-combat-launch-deferral §4.1)
+    TRACTOR_STARTED,     // (tractor system, ship)  ET_TRACTOR_BEAM_STARTED_
+                         //  FIRING, source the system, destination the
+                         //  ship (fire control native only, R8)
+    TRACTOR_STOPPED,     // (tractor system, ship)  ET_TRACTOR_BEAM_STOPPED_
+                         //  FIRING
     // The damage kinds (spec 2026-11-02-native-damage-design.md M2, §4.3):
     // what a condition write and a hit REPORT, in today's synchronous order
     // minus nesting. Unlike the weapon kinds they are queued in both switch

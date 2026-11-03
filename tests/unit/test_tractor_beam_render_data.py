@@ -5,6 +5,9 @@ A firing tractor emitter yields the outer-shell + inner-core descriptor pair
 colour / TractorBeam texture geometry read off the Galaxy-style hardpoint.  A
 non-firing tractor — and a ship with no tractor system — yields nothing.
 """
+
+import pytest
+
 from unittest.mock import patch
 
 import App  # noqa: F401
@@ -14,6 +17,11 @@ from engine.appc.subsystems import TractorBeam, TractorBeamSystem
 from engine.appc.properties import TractorBeamProperty, WeaponSystemProperty
 from engine.host_loop import _build_tractor_beam_render_data
 from tests.helpers.viewed_set import viewed  # noqa: F401  (fixture)
+
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
+
+# Tractors are native only (fire control native only, M4).
+pytestmark = pytest.mark.usefixtures("native_combat_on")
 
 
 def _make_emitter(name):

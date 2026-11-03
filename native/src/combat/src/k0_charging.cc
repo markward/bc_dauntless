@@ -206,6 +206,7 @@ const char* k0_kind_name(K0Kind k) {
         case K0Kind::RELOADED: return "RELOADED";
         case K0Kind::WATCH: return "WATCH";
         case K0Kind::RUN_PYTHON: return "RUN_PYTHON";
+        case K0Kind::HOLD_STOP: return "HOLD_STOP";
         case K0Kind::kCount: break;
     }
     return "?";
@@ -213,7 +214,6 @@ const char* k0_kind_name(K0Kind k) {
 
 const char* k0_reason_name(K0Reason r) {
     switch (r) {
-        case K0Reason::Tractor: return "tractor";
         case K0Reason::NoRow: return "no_row";
         case K0Reason::NotWeaponSystem: return "not_weapon_system";
         case K0Reason::StaleRow: return "stale_row";
@@ -251,11 +251,26 @@ namespace {
 void energy_into(const Mirror& m, int64_t weapon, double dt, K0Step& s) {
     const SubsystemRow* w = weapon < 0 ? nullptr : m.subsystem(weapon);
     if (w == nullptr) return hand_back(s, K0Reason::StaleRow);
-    // TractorBeam.UpdateCharge (WS:3012): a holding tractor's branch (its
-    // power-loss StopFiring and parent power thaw) is Python's; an idle one
-    // is `super().UpdateCharge(dt)`, this mixin step (ruling W6).
-    if (w->weapon_kind == kTractorBeam && w->_firing)
-        return hand_back(s, K0Reason::Tractor);
+    // TractorBeam.UpdateCharge (WS:3291): a holding tractor (fire control
+    // native only, M4). Its stop's `_firing` applies through the beam's
+    // NativeThawParentWakeField setter, so the parent's power program still
+    // thaws. An idle one is `super().UpdateCharge(dt)`, this mixin step
+    // (ruling W6).
+    if (w->weapon_kind == kTractorBeam && w->_firing) {
+        // parent = self.GetParentSubsystem()
+        const Parent p = powered_parent(m, *w);
+        if (!p.ok) return hand_back(s, K0Reason::Parent);
+        // if parent is None or not parent.IsOn(): self.StopFiring()
+        // elif parent.GetPowerPercentage() <= 0.0 and
+        //      parent.GetNormalPowerWanted() > 0.0: self.StopFiring()
+        // (the starvation gate) -- else no discharge while holding.
+        if (p.row == nullptr || !p.row->_is_on ||
+            (p.row->_efficiency <= 0.0 && p.row->_normal_power > 0.0)) {
+            push_stop(s, *w);
+            s.record = K0Kind::HOLD_STOP;
+        }
+        return;
+    }
     if (w->_firing) {
         if (w->_beam_on_countdown > 0.0) {
             // self._beam_on_countdown -= dt; return
@@ -660,6 +675,10 @@ private:
                 ++c_.logged_deplete_stop;
                 if (st.loop_stop) enqueue(K0Effect::LOOP_STOP, h);
                 break;
+            case K0Kind::HOLD_STOP:
+                ++c_.logged_hold_stop;
+                if (st.loop_stop) enqueue(K0Effect::LOOP_STOP, h);
+                break;
             case K0Kind::RELOADED:
                 ++c_.logged_reload;
                 enqueue(K0Effect::TORPEDO_RELOAD, h);
@@ -734,10 +753,6 @@ K0Record Walker::run() {
                 ++s_.weapon_pos;
                 continue;
             }
-            // A holding tractor is Python's; an idle one is the mixin's
-            // energy step (ruling W6).
-            if (kind == kTractorBeam && row->_firing)
-                return python(K0Reason::Tractor);
             if (kind != kPhaserBank && kind != kPulseWeapon &&
                 kind != kTorpedoTube && kind != kTractorBeam)
                 return python(K0Reason::UnknownKind);

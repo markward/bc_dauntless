@@ -30,6 +30,7 @@ import pytest
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import HullSubsystem, ShieldSubsystem
 from engine.ui.ship_display_panel import _shields_tuple
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
 
 
 def _ship(name="NPC", face_max=1000.0):
@@ -138,22 +139,43 @@ def test_the_panel_agrees_with_the_blocking_predicate():
 
 
 # ── the third reader: the tractor beam's grip ────────────────────────────────
-# _target_tractorable used to refuse a target whose shields were up, and this
-# file pinned that (a live report: with "Disable NPC Shields" on, weapons went
+# The tractor used to refuse a target whose shields were up, and this file
+# pinned that (a live report: with "Disable NPC Shields" on, weapons went
 # through but the tractor still refused). The original exe does not gate on
 # shields at all — stbc-oracle bible §7.5 R1, `tractor_engage_r20_noshields`
 # vs `tractor_engage_r20`: locked within one sample either way. So the grip
 # is unconditional and the cheat, a destroyed generator and healthy shields
-# all read the same.
+# all read the same. The engage is the native K1 tractor walk's (fire
+# control native only, M4): a real projector, native combat on.
+
+def _tractor_player(npc):
+    """A Player with one charged TractorBeam, `npc` 50 GU dead ahead, both in
+    one set."""
+    import App
+    from engine.appc.math import TGPoint3
+    from engine.appc.weapon_subsystems import TractorBeam, TractorBeamSystem
+    player = _ship("Player")
+    beam = TractorBeam("Forward Tractor")
+    beam._max_charge = beam._charge_level = 5.0
+    beam._min_firing_charge = 3.0
+    tractors = TractorBeamSystem("Tractors")
+    tractors.AddChildSubsystem(beam)
+    player.SetTractorBeamSystem(tractors)
+    npc.SetWorldLocation(TGPoint3(0, 50, 0))
+    player._containing_set = npc._containing_set = App.SetClass_Create()
+    return player, tractors
+
 
 @pytest.mark.parametrize("state", ["healthy", "destroyed", "cheat_off"])
-def test_the_tractor_grips_regardless_of_shield_state(monkeypatch, state):
+def test_the_tractor_grips_regardless_of_shield_state(monkeypatch, state,
+                                                      native_combat_on):
     import App
+    from unittest.mock import patch
     from engine import dev_mode, dev_combat_cheats as cheats
-    from engine.appc.weapon_subsystems import _target_tractorable
 
     monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
-    player, npc = _ship("Player"), _ship("NPC")
+    npc = _ship("NPC")
+    player, tractors = _tractor_player(npc)
     game = App.Game()
     App._set_current_game(game)
     game.SetPlayer(player)
@@ -162,15 +184,19 @@ def test_the_tractor_grips_regardless_of_shield_state(monkeypatch, state):
             npc.GetShieldSubsystem().SetDestroyed(1)
         elif state == "cheat_off":
             cheats.set_disable_npc_shields(True)
-        assert _target_tractorable(npc)
+        with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+            tractors.StartFiring(npc)
+        assert tractors.IsFiring()
     finally:
         cheats.reset()
         App._set_current_game(None)
 
 
-def test_the_tractor_does_not_grip_nothing():
-    from engine.appc.weapon_subsystems import _target_tractorable
-    assert not _target_tractorable(None)
+def test_the_tractor_does_not_grip_nothing(native_combat_on):
+    npc = _ship("NPC")
+    _player, tractors = _tractor_player(npc)
+    tractors.StartFiring(None)
+    assert not tractors.IsEngaged() and not tractors.IsFiring()
 
 
 # ── the second HUD readout ──────────────────────────────────────────────────

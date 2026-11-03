@@ -70,7 +70,6 @@ constexpr FieldInfo kInfo[] = {
     {"_probe_ids", Kind::Subsystem, FieldType::Ids},
     {"_cloak_state", Kind::Subsystem, FieldType::I},
     {"weapon_kind", Kind::Subsystem, FieldType::I},
-    {"pump_self_managed", Kind::Subsystem, FieldType::I},
     {"k1_overridden", Kind::Subsystem, FieldType::I},
     {"_is_on", Kind::Subsystem, FieldType::I},
     {"_fire_held", Kind::Subsystem, FieldType::I},
@@ -166,6 +165,14 @@ constexpr FieldInfo kInfo[] = {
     {"_invincible", Kind::Object, FieldType::I},
     {"_splash_damage", Kind::Object, FieldType::F},
     {"_splash_damage_radius", Kind::Object, FieldType::F},
+    {"_mass", Kind::Object, FieldType::F},
+    {"_mode", Kind::Subsystem, FieldType::I},
+    {"_was_firing", Kind::Subsystem, FieldType::I},
+    {"_next_emitter_index", Kind::Subsystem, FieldType::I},
+    {"engage_kind", Kind::Subsystem, FieldType::I},
+    {"engage_point", Kind::Subsystem, FieldType::Vec3},
+    {"_efficiency", Kind::Subsystem, FieldType::F},
+    {"_normal_power", Kind::Subsystem, FieldType::F},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -220,6 +227,21 @@ constexpr GlobalInfo kGlobals[] = {
     {"PULSE_DAMAGE_SCALE_2", false, &Globals::PULSE_DAMAGE_SCALE_2, nullptr},
     {"K1_PULSE_MODULE_STALE", true, nullptr,
      &Globals::K1_PULSE_MODULE_STALE},
+    {"TRACTOR_REFERENCE_MASS", false, &Globals::TRACTOR_REFERENCE_MASS,
+     nullptr},
+    {"TRACTOR_REFERENCE_SPEED_GUPS", false,
+     &Globals::TRACTOR_REFERENCE_SPEED_GUPS, nullptr},
+    {"TRACTOR_MAX_SPEED_GUPS", false, &Globals::TRACTOR_MAX_SPEED_GUPS,
+     nullptr},
+    {"TRACTOR_FALLBACK_MASS", false, &Globals::TRACTOR_FALLBACK_MASS, nullptr},
+    {"TRACTOR_TOW_DRAG_FRACTION", false, &Globals::TRACTOR_TOW_DRAG_FRACTION,
+     nullptr},
+    {"TRACTOR_DOCK_GENTLE_FRACTION", false,
+     &Globals::TRACTOR_DOCK_GENTLE_FRACTION, nullptr},
+    {"TRACTOR_STANDOFF_MARGIN_GU", false,
+     &Globals::TRACTOR_STANDOFF_MARGIN_GU, nullptr},
+    {"TRACTOR_EPS", false, &Globals::TRACTOR_EPS, nullptr},
+    {"TRACTOR_MAX_RANGE_GU", false, &Globals::TRACTOR_MAX_RANGE_GU, nullptr},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));
@@ -282,6 +304,7 @@ double* fptr(ObjectRow& r, Field f) {
         case Field::_scale: return &r._scale;
         case Field::_splash_damage: return &r._splash_damage;
         case Field::_splash_damage_radius: return &r._splash_damage_radius;
+        case Field::_mass: return &r._mass;
         default: return nullptr;
     }
 }
@@ -371,13 +394,14 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::comb_watch_value: return &r.comb_watch_value;
         case Field::_max_damage: return &r._max_damage;
         case Field::_max_damage_distance: return &r._max_damage_distance;
+        case Field::_efficiency: return &r._efficiency;
+        case Field::_normal_power: return &r._normal_power;
         default: return nullptr;
     }
 }
 int64_t* iptr(SubsystemRow& r, Field f) {
     switch (f) {
         case Field::weapon_kind: return &r.weapon_kind;
-        case Field::pump_self_managed: return &r.pump_self_managed;
         case Field::k1_overridden: return &r.k1_overridden;
         case Field::_is_on: return &r._is_on;
         case Field::_fire_held: return &r._fire_held;
@@ -410,6 +434,10 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::dmg_class: return &r.dmg_class;
         case Field::cond_watch_checks: return &r.cond_watch_checks;
         case Field::comb_watch_checks: return &r.comb_watch_checks;
+        case Field::_mode: return &r._mode;
+        case Field::_was_firing: return &r._was_firing;
+        case Field::_next_emitter_index: return &r._next_emitter_index;
+        case Field::engage_kind: return &r.engage_kind;
         default: return nullptr;
     }
 }
@@ -452,6 +480,7 @@ Vec3* vptr(SubsystemRow& r, Field f) {
         case Field::_direction: return &r._direction;
         case Field::_up: return &r._up;
         case Field::_right: return &r._right;
+        case Field::engage_point: return &r.engage_point;
         default: return nullptr;
     }
 }

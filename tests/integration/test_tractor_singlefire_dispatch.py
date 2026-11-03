@@ -1,19 +1,16 @@
-"""TractorBeamSystem held-fire dispatch — now on _HeldFireWeaponSystem.
-
-Tractor beams used to inherit plain WeaponSystem.StartFiring (round-robin one
-shot, no held state).  They now share the held-fire base with PhaserSystem /
-PulseWeaponSystem, so:
+"""TractorBeamSystem held-fire dispatch (the native K1 tractor walk since
+fire control native only, M4; k1_fire_control.h, THE TRACTOR WALK):
 
 1. SingleFire(1) (what every tractor hardpoint sets) keeps exactly ONE beam
    locked on the target per engage — a single grab beam.
-2. update_weapons (the tractor's per-frame maintenance, driven by
-   host_loop._pump_held_weapons) sustains that beam while the trigger (toggle)
-   stays on; the beam does NOT auto-stop on charge depletion the way a phaser
-   does (TractorBeam.UpdateCharge sustains it) — it is still firing well past
-   the ~5 s its discharge rate would otherwise empty it.
-3. _can_engage gates on TRACTOR_MAX_RANGE_GU: a target beyond range never
+2. The held-weapon pump's tractor walk (host_loop._pump_held_weapons, every
+   tick) sustains that beam while the trigger (toggle) stays on; the beam
+   does NOT auto-stop on charge depletion the way a phaser does
+   (TractorBeam.UpdateCharge sustains it) — it is still firing well past the
+   ~5 s its discharge rate would otherwise empty it.
+3. The engage range is TRACTOR_MAX_RANGE_GU: a target beyond range never
    engages, and a held beam whose target drifts out of range is dropped on the
-   next update_weapons.
+   next tick.
 
 Mirrors tests/integration/test_pulse_singlefire_modes.py.
 """
@@ -21,27 +18,34 @@ import pytest
 from unittest.mock import patch
 
 import App  # noqa: F401  (installs the SDK import finder via conftest)
+from engine import host_loop
+from engine.appc import effect_queue
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass_Create
+from engine.core import step_memo
 
 
 # One set for every ship in this file: the interim cross-set weapon guard
 # (system-frames Plan 2 Ruling 5) puts a target outside the shooter's set --
 # or a setless one -- out of tractor range.
 _SHARED_SET = App.SetClass_Create()
+
 from engine.appc.subsystems import TractorBeam, TractorBeamSystem
 from engine.appc.properties import TractorBeamProperty, WeaponSystemProperty
 from engine.appc.weapon_subsystems import TRACTOR_MAX_RANGE_GU
 
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
 
-class _Target:
-    """A live target at a settable world location."""
-    def __init__(self, pos):
-        self._pos = pos
-    def GetWorldLocation(self):  return self._pos
-    def SetWorldLocation(self, p): self._pos = p
-    def IsDead(self):            return 0
-    def GetContainingSet(self):  return _SHARED_SET
+# Tractors are native only (fire control native only, M4).
+pytestmark = pytest.mark.usefixtures("native_combat_on")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_shared_set(native_combat_on):
+    """The shared set, made per test: a module-level one loses its mirror
+    row at the per-test reset, and the native tractor walk must name it."""
+    global _SHARED_SET
+    _SHARED_SET = App.SetClass_Create()
 
 
 def _make_emitter(name):
@@ -93,7 +97,18 @@ def _num_firing(parent):
 
 
 def _target_ahead(dist=50.0):
-    return _Target(TGPoint3(0.0, dist, 0.0))
+    """A live ship target in the shared set (the native walk names it)."""
+    t = ShipClass_Create("Target")
+    t._containing_set = _SHARED_SET
+    t.SetWorldLocation(TGPoint3(0.0, dist, 0.0))
+    return t
+
+
+def _tick(ship, dt=0.34):
+    """One held-weapon pump over the ship (its tractor walk), in the tick's
+    effect scope."""
+    with effect_queue.scope(), step_memo.combat_step():
+        host_loop._pump_held_weapons([ship], dt)
 
 
 # ── SingleFire round-trip on the system (inherited from base) ────────────────
@@ -121,7 +136,7 @@ def test_held_tick_keeps_single_beam_engaged():
     target = _target_ahead()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         parent.StartFiring(target, "hit")
-        parent.update_weapons(0.34)
+        _tick(ship)
     # Still exactly one beam — SingleFire branch must not light the second.
     assert _num_firing(parent) == 1
 
@@ -139,7 +154,7 @@ def test_tractor_sustains_past_depletion_window():
         for _ in range(100):
             for i in range(parent.GetNumWeapons()):
                 parent.GetWeapon(i).UpdateCharge(0.1)
-            parent.update_weapons(0.34)
+            _tick(ship)
     assert _num_firing(parent) == 1, "tractor must sustain past the discharge window"
 
 
@@ -162,7 +177,7 @@ def test_held_beam_drops_when_target_leaves_range():
         assert _num_firing(parent) == 1
         # Target warps out beyond tractor range -> next retry drops the beam.
         target.SetWorldLocation(TGPoint3(0.0, TRACTOR_MAX_RANGE_GU + 100.0, 0.0))
-        parent.update_weapons(0.34)
+        _tick(ship)
     assert _num_firing(parent) == 0
     assert parent.IsFiring() == 0
 
@@ -177,12 +192,12 @@ def test_arc_loss_drops_beam_then_reacquires():
         assert _num_firing(parent) == 1
         # A tight turn swings the target behind — out of every emitter's arc.
         target.SetWorldLocation(TGPoint3(0.0, -50.0, 0.0))
-        parent.update_weapons(0.34)
+        _tick(ship)
         assert _num_firing(parent) == 0, "out-of-arc target must drop the beam"
         # Still engaged (never toggled off): swing it back into the arc and the
         # beam re-fires automatically on the next retry.
         target.SetWorldLocation(TGPoint3(0.0, 50.0, 0.0))
-        parent.update_weapons(0.34)
+        _tick(ship)
         assert _num_firing(parent) == 1, "in-arc target must re-acquire the beam"
 
 
@@ -229,5 +244,5 @@ def test_shields_raised_mid_grip_keep_the_beam():
         sh = target.GetShieldSubsystem()
         for f in range(ShieldSubsystem.NUM_SHIELDS):
             sh.SetCurrentShields(f, 100.0)
-        parent.update_weapons(0.34)
+        _tick(ship)
         assert _num_firing(parent) == 1

@@ -37,8 +37,9 @@ namespace dauntless::combat {
 namespace {
 
 // Subsystem weapon_kind codes (mirror.h).
-constexpr int64_t kPhaserSystem = 1, kPulseSystem = 2, kTorpedoSystem = 4,
-                  kPhaserBank = 5, kPulseWeapon = 6, kTorpedoTube = 8;
+constexpr int64_t kPhaserSystem = 1, kPulseSystem = 2, kTractorSystem = 3,
+                  kTorpedoSystem = 4, kPhaserBank = 5, kPulseWeapon = 6,
+                  kTractorBeam = 7, kTorpedoTube = 8;
 
 // The leaf kind a system of `kind` owns (PhaserBank under PhaserSystem...).
 int64_t leaf_kind_of(int64_t kind) {
@@ -97,9 +98,16 @@ const char* k1_kind_name(K1Kind k) {
 const char* k1_effect_name(K1Effect e) {
     static constexpr const char* kNames[] = {
         "FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED",
-        "SPAWN", "AMMO_CONSUMED"};
+        "SPAWN", "AMMO_CONSUMED", "TRACTOR_STARTED", "TRACTOR_STOPPED"};
     static_assert(std::size(kNames) == static_cast<size_t>(K1Effect::kCount));
     const auto i = static_cast<size_t>(e);
+    return i < std::size(kNames) ? kNames[i] : "?";
+}
+
+const char* k1_no_fire_name(K1NoFire w) {
+    static constexpr const char* kNames[] = {"tractor_row"};
+    static_assert(std::size(kNames) == static_cast<size_t>(K1NoFire::kCount));
+    const auto i = static_cast<size_t>(w);
     return i < std::size(kNames) ? kNames[i] : "?";
 }
 
@@ -135,6 +143,8 @@ enum class St : int32_t {
     PUMP_CONTINUE,     // continue  (the next getter, then the next ship)
     // StartFiring's `self.update_weapons(0.0)`
     SYSTEM_START,
+    // TractorBeamSystem.StartFiring's engage (THE TRACTOR WALK)
+    TRACTOR_START,
     // WeaponSystem.update_weapons
     UW_DEAD_PRUNE,     // if ship ... ship.IsDead(): return False
                        // self._prune_targets(); target = self._target_list[0]
@@ -243,6 +253,8 @@ struct K1Kernel::Session {
     // The session's own walk check (begin_pump / begin_system; empty: the
     // kernel's).
     K1WalkCheck check;
+    // begin_tractor's target.
+    int64_t tractor_target = -1;
 };
 
 static void count_why(K1Kernel::Counts& c, bool pump, K1Why why) {
@@ -594,6 +606,23 @@ private:
     // The success branch of the delta loop; may emit ASK reseed.
     bool fired_bookkeeping(K1Record* out);
 
+    // ── THE TRACTOR WALK (k1_fire_control.h) ───────────────────────────────
+    // A tractor walk, guarded: rolled back whole (no fire, counted) when
+    // the mirror cannot read it. `start`: begin_tractor's engage, else the
+    // pump's update_weapons(dt).
+    void tractor_walk(int64_t sys, bool start);
+    void tractor_update(int64_t sys);
+    void tractor_start(int64_t sys);
+    // The system's projectors: live tractor-beam rows (else the walk throws).
+    std::vector<int64_t> tractor_beams(int64_t sys) const;
+    bool tractor_any_firing(int64_t sys) const;
+    bool tractor_can_engage(int64_t ship, int64_t target) const;
+    bool tractor_bears(int64_t beam, int64_t ship, int64_t target);
+    void tractor_engage(int64_t sys, int64_t ship, int64_t target);
+    void tractor_fire(int64_t beam, int64_t target);
+    void tractor_stop(int64_t sys);
+    void tractor_sync(int64_t sys);
+
     struct Outcome {
         enum class What { Fire, FailedEvent, Fail } what = What::Fail;
         K1Decision d;
@@ -629,9 +658,8 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
     const SubsystemRow* s = subrow(sys);
     if (!s) return K1Why::StaleRow;
     const int64_t kind = s->weapon_kind;
-    // Phaser, pulse and torpedo walks only; a tractor manages itself.
-    if (leaf_kind_of(kind) < 0 || s->pump_self_managed)
-        return K1Why::SelfManaged;
+    // Phaser, pulse and torpedo walks only (a tractor's is its own).
+    if (leaf_kind_of(kind) < 0) return K1Why::SelfManaged;
     // A class overriding a method the kernel stands in for (Task 5 fix).
     if (s->k1_overridden) return K1Why::Overridden;
 
@@ -793,6 +821,209 @@ bool Walker::fired_bookkeeping(K1Record* out) {
     for (const int64_t c : kids) write_timer(c, 0.0);
     s_.st = St::UW_GROUP_ADVANCE;  // break
     return false;
+}
+
+
+// ── THE TRACTOR WALK (k1_fire_control.h) ─────────────────────────────────────
+// weapon_subsystems.TractorBeamSystem at 23b3845d5: update_weapons (WS:2786),
+// StartFiring (WS:2718), _engage_beam (WS:2843), StopFiring (WS:2879),
+// _sync_firing_event (WS:2746), _can_engage (WS:2780).
+
+void Walker::tractor_walk(int64_t sys, bool start) {
+    const size_t mark = s_.writes.size();
+    const size_t emark = s_.entries.size();
+    try {
+        if (start)
+            tractor_start(sys);
+        else
+            tractor_update(sys);
+    } catch (const std::invalid_argument&) {
+        k1_roll_back(m_, s_, mark);
+        for (size_t i = emark; i < s_.entries.size(); ++i)
+            --c_.entries[static_cast<size_t>(s_.entries[i].kind)];
+        s_.entries.resize(emark);
+        ++c_.no_fire[static_cast<size_t>(K1NoFire::TractorRow)];
+    }
+}
+
+std::vector<int64_t> Walker::tractor_beams(int64_t sys) const {
+    const SubsystemRow* r = subrow(sys);
+    if (!r || r->weapon_kind != kTractorSystem)
+        detail::fall_back("the tractor system's row cannot be read");
+    for (const int64_t k : r->_children) {
+        const SubsystemRow* kr = subrow(k);
+        if (!kr || kr->weapon_kind != kTractorBeam)
+            detail::fall_back("a projector cannot be named");
+    }
+    return r->_children;
+}
+
+// _any_child_firing (WS:2690)
+bool Walker::tractor_any_firing(int64_t sys) const {
+    for (const int64_t k : subrow(sys)->_children)
+        if (subrow(k)->_firing) return true;
+    return false;
+}
+
+// _can_engage: _target_within_range_gu(ship, target, TRACTOR_MAX_RANGE_GU)
+// and target is not None.
+bool Walker::tractor_can_engage(int64_t ship, int64_t target) const {
+    return _target_within_range_gu(m_, ship, target,
+                                   m_.globals().TRACTOR_MAX_RANGE_GU) &&
+           target != -1;
+}
+
+// aim_world = _resolve_bank_aim_world(emitter, target);
+// _emitter_in_arc(emitter, ship, aim_world)
+bool Walker::tractor_bears(int64_t beam, int64_t ship, int64_t target) {
+    const Vec3 aim = _resolve_bank_aim_world(m_, beam, target, s_.use_memo);
+    return _emitter_in_arc(m_, beam, ship, aim);
+}
+
+// emitter.Fire(target, offset): the mixin's _fire_decide (CanFire, then the
+// arc from the beam's own ship), then _fire_effect -- `_firing = True;
+// _target = target; _target_offset = offset`, and on the was-not-firing
+// edge `_beam_on_countdown = BEAM_ON_DELAY_S; _dwell = 0.0` and FIRE_SOUND
+// (a TractorBeam posts no ET_WEAPON_FIRED). Its return value is unused.
+void Walker::tractor_fire(int64_t beam, int64_t target) {
+    const Outcome o = decide_beam(beam, target);
+    if (o.what != Outcome::What::Fire) return;
+    write_flag(beam, Field::_firing, "_firing", true);
+    write_target(beam, target);
+    write_target_offset(beam, true);
+    if (o.d.was_firing) {
+        ++c_.logged_beam_sustain;
+        return;
+    }
+    write_float(beam, Field::_beam_on_countdown, "_beam_on_countdown",
+                m_.globals().BEAM_ON_DELAY_S);
+    write_float(beam, Field::_dwell, "_dwell", 0.0);
+    enqueue(K1Effect::FIRE_SOUND, beam);
+    ++c_.logged_beam_edge;
+}
+
+// _engage_beam(target, offset, ship): the offset is the walk's (s_.offset,
+// K1WalkOffset).
+void Walker::tractor_engage(int64_t sys, int64_t ship, int64_t target) {
+    const std::vector<int64_t> kids = tractor_beams(sys);
+    const auto n = static_cast<int64_t>(kids.size());
+    if (n == 0) return;
+    // `hasattr(emitter, "CanFire") and emitter.CanFire()`: its latch clear
+    // is written whatever it answers (Task 3 ruling).
+    auto can_fire_now = [&](int64_t beam) {
+        const CanFireResult cf = can_fire(m_, beam, s_.now);
+        if (cf.clear_depleted)
+            write_flag(beam, Field::_depleted, "_depleted", false);
+        return cf.ok;
+    };
+    if (subrow(sys)->_single_fire) {
+        const int64_t start = py_mod(subrow(sys)->_next_emitter_index, n);
+        for (int64_t delta = 0; delta < n; ++delta) {
+            const int64_t idx = (start + delta) % n;
+            const int64_t beam = kids[static_cast<size_t>(idx)];
+            if (!tractor_bears(beam, ship, target)) continue;
+            if (can_fire_now(beam)) {
+                tractor_fire(beam, target);
+                write_int(sys, Field::_next_emitter_index,
+                          "_next_emitter_index", (idx + 1) % n);
+                return;
+            }
+        }
+        return;
+    }
+    for (const int64_t beam : kids) {
+        if (!tractor_bears(beam, ship, target)) continue;
+        if (can_fire_now(beam)) tractor_fire(beam, target);
+    }
+}
+
+// TractorBeamSystem.StopFiring: `self._engage_state = None`, then
+// WeaponSystem.StopFiring (the five system writes, each projector's stop),
+// then the sync.
+void Walker::tractor_stop(int64_t sys) {
+    const std::vector<int64_t> kids = tractor_beams(sys);
+    write_i(sys, Field::engage_kind, "_engage_state", 0, std::monostate{});
+    write_flag(sys, Field::_fire_held, "_fire_held", false);
+    write_held_target_none(sys);
+    write_held_offset_none(sys);
+    write_target_list(sys, {});
+    write_int(sys, Field::_last_group_fired, "_last_group_fired", -1);
+    for (const int64_t k : kids)
+        if (!bank_stop(k)) lost("a tractor projector has no stop");
+    tractor_sync(sys);
+}
+
+// _sync_firing_event: on an edge, with a parent ship, `_was_firing = now`
+// and the event's entry (source the system, destination the ship).
+void Walker::tractor_sync(int64_t sys) {
+    const bool now = tractor_any_firing(sys);
+    if (now == (subrow(sys)->_was_firing != 0)) return;
+    const int64_t ship = climb_to_ship_of(m_, sys);
+    if (ship == -1) return;  // nowhere to send it: the edge stays unseen
+    write_flag(sys, Field::_was_firing, "_was_firing", now);
+    enqueue(now ? K1Effect::TRACTOR_STARTED : K1Effect::TRACTOR_STOPPED, sys,
+            ship);
+}
+
+// The pump's `sys_.update_weapons(dt)` on a tractor system.
+void Walker::tractor_update(int64_t sys) {
+    s_.sys = sys;
+    const std::vector<int64_t> kids = tractor_beams(sys);
+    const SubsystemRow& r = *subrow(sys);
+    // if not self._fire_held or self._held_target is None: return False
+    const int64_t target = r._held_target;
+    if (!r._fire_held || target == -1) return;
+    if (target < 0 || !objrow(target))
+        detail::fall_back("the held target cannot be named");
+    ++c_.logged_tractor_walk;
+    // if not self.IsOn(): self._sync_firing_event(); return False
+    if (!r._is_on) {
+        tractor_sync(sys);
+        return;
+    }
+    // if _is_offline(self): self.StopFiring()
+    if (weapon_system_offline(m_, sys)) {
+        tractor_stop(sys);
+        return;
+    }
+    const int64_t ship = climb_to_ship_of(m_, sys);
+    // if hasattr(target, "IsDead") and target.IsDead(): self.StopFiring()
+    if (ship_dead(m_, target)) {
+        tractor_stop(sys);
+        return;
+    }
+    const bool engageable = tractor_can_engage(ship, target);
+    // Drop every firing projector that can no longer hold (range, arc).
+    for (const int64_t k : kids) {
+        if (!subrow(k)->_firing) continue;
+        const bool bears = tractor_bears(k, ship, target);
+        if (!engageable || !bears)
+            if (!bank_stop(k)) lost("a tractor projector has no stop");
+    }
+    if (!engageable || tractor_any_firing(sys)) {
+        tractor_sync(sys);
+        return;
+    }
+    // fired = self._engage_beam(target, self._live_held_offset(), ship)
+    ++s_.walk_no;
+    s_.offset = k1_live_held_offset(m_, sys, ship);
+    tractor_engage(sys, ship, target);
+    tractor_sync(sys);
+}
+
+// TractorBeamSystem.StartFiring after its gates and intent writes:
+// `if self._can_engage(ship, target): self._engage_beam(target, offset,
+// ship)`, then the sync. The walk (1) and its offset are begin_tractor's.
+void Walker::tractor_start(int64_t sys) {
+    s_.sys = sys;
+    tractor_beams(sys);
+    const int64_t target = s_.tractor_target;
+    if (target == kRefUnrepresentable || (target >= 0 && !objrow(target)))
+        detail::fall_back("the StartFiring target cannot be named");
+    ++c_.logged_tractor_start;
+    const int64_t ship = climb_to_ship_of(m_, sys);
+    if (tractor_can_engage(ship, target)) tractor_engage(sys, ship, target);
+    tractor_sync(sys);
 }
 
 // ── The decision half of each Fire ───────────────────────────────────────────
@@ -1159,10 +1390,16 @@ K1Record Walker::run() {
             const int64_t ship = (*s_.ships)[s_.ship_pos];
             const int pos = static_cast<int>(s_.ship_pos);
             const ObjectRow* so = objrow(ship);
-            // A ship the mirror cannot name: Python runs each getter's body.
-            if (!so)
+            // A ship the mirror cannot name: Python runs each getter's body
+            // -- but a tractor's, which only K1 has (THE TRACTOR WALK).
+            if (!so) {
+                if (s_.getter == 2) {
+                    s_.st = St::PUMP_CONTINUE;
+                    break;
+                }
                 return run_python(K1Why::UnslottedShip, St::PUMP_CONTINUE, -1,
                                   pos, s_.getter);
+            }
             // sys_ = getattr(ship, getter)() for getter in ("GetPhaserSystem",
             // "GetPulseWeaponSystem", "GetTractorBeamSystem",
             // "GetTorpedoSystem"); a stale ref reads None.
@@ -1182,11 +1419,13 @@ K1Record Walker::run() {
                 s_.st = St::PUMP_CONTINUE;
                 break;
             }
-            // if getattr(sys_, "_pump_self_managed", False): update_weapons
-            // -- and anything the walk could not represent: Python, whole.
-            if (sr->pump_self_managed)
-                return run_python(K1Why::SelfManaged, St::PUMP_CONTINUE, sys,
-                                  pos, s_.getter);
+            // A tractor: its own walk, K1's whole (THE TRACTOR WALK).
+            if (sr->weapon_kind == kTractorSystem) {
+                tractor_walk(sys, false);
+                s_.st = St::PUMP_CONTINUE;
+                break;
+            }
+            // Anything the walk could not represent: Python, whole.
             if (const std::optional<K1Why> why = prescan(sys, ship))
                 return run_python(*why, St::PUMP_CONTINUE, sys, pos,
                                   s_.getter);
@@ -1222,6 +1461,10 @@ K1Record Walker::run() {
             if (const std::optional<K1Why> why = prescan(s_.sys, -1))
                 return run_python(*why, St::WALK_END, s_.sys, -1, -1);
             s_.st = St::UW_DEAD_PRUNE;
+            break;
+        case St::TRACTOR_START:
+            tractor_walk(s_.sys, true);
+            s_.st = St::WALK_END;
             break;
 
         // ── WeaponSystem.update_weapons ───────────────────────────────────
@@ -1702,6 +1945,22 @@ void K1Kernel::begin_system(int64_t system, double dt, double now,
     s->use_memo = use_memo;
     s->drift_now = drift_now;
     s->st = St::SYSTEM_START;
+    sessions_.push_back(std::move(s));
+}
+
+void K1Kernel::begin_tractor(int64_t system, int64_t target,
+                             std::optional<Vec3> offset, double now,
+                             bool use_memo, double drift_now) {
+    auto s = std::make_unique<Session>();
+    s->pump = false;
+    s->sys = system;
+    s->tractor_target = target;
+    s->offset = offset;
+    s->walk_no = 1;
+    s->now = now;
+    s->use_memo = use_memo;
+    s->drift_now = drift_now;
+    s->st = St::TRACTOR_START;
     sessions_.push_back(std::move(s));
 }
 

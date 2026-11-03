@@ -108,10 +108,6 @@
 //     audit / override / any reason the caller passes in `ship_handback`
 //   per weapon (decided at its turn, before any write of that weapon; a =
 //   the weapon handle, -2 when the mirror cannot name it):
-//     tractor            a tractor beam that is firing (holding); an idle
-//                        one (`_firing` false) takes the mixin's energy
-//                        step, which is TractorBeam.UpdateCharge's
-//                        `super().UpdateCharge(dt)` (ruling W6)
 //     stale_row          the handle's row is gone (dropped mid-walk)
 //     unknown_kind       a row of no weapon kind (Python dispatches by
 //                        isinstance; only it can tell)
@@ -141,6 +137,10 @@ enum class K0Kind : int32_t {
     RELOADED,
     WATCH,
     RUN_PYTHON,
+    // A holding tractor beam's stop (TractorBeam.UpdateCharge: its parent
+    // off or starved; fire control native only, M4), never returned: its
+    // writes, then the beam's LOOP_STOP.
+    HOLD_STOP,
     kCount
 };
 const char* k0_kind_name(K0Kind k);
@@ -166,8 +166,7 @@ struct K0Entry {
 };
 
 enum class K0Reason : int32_t {
-    Tractor = 0,
-    NoRow,
+    NoRow = 0,
     NotWeaponSystem,
     StaleRow,
     SlotHeal,
@@ -180,7 +179,7 @@ enum class K0Reason : int32_t {
     Watcher,
     kCount
 };
-// The Python counter key: "tractor", "no_row", "not_weapon_system",
+// The Python counter key: "no_row", "not_weapon_system",
 // "stale_row", "slot_heal", "override", "audit", "power_level", "parent",
 // "unrepresentable", "unknown_kind", "watcher".
 const char* k0_reason_name(K0Reason r);
@@ -316,6 +315,8 @@ public:
         // (k0_logged.deplete_stop), a reload (k0_logged.reload), a watcher
         // line with checks (k0_logged.watch).
         int64_t logged_deplete_stop = 0, logged_reload = 0, logged_watch = 0;
+        // ... and a holding tractor's stop (k0_logged.hold_stop).
+        int64_t logged_hold_stop = 0;
         // The queue entries produced, by K0Effect (k0_entries).
         std::array<int64_t, static_cast<size_t>(K0Effect::kCount)> entries{};
     };

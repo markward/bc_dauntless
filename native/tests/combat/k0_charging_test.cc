@@ -708,10 +708,13 @@ struct Armed {
         b = w.weapon("b", ph);
         w.m.set_i(b, Field::_firing, 1);
         w.m.set_f(b, Field::_charge_level, 0.001);
-        w.m.set_i(tb, Field::_firing, 1);  // a firing tractor: Python's
+        w.m.set_i(tb, Field::_firing, 1);
         w.m.set_i(p, Field::_watch_checks, 1);
         w.slots(t, {3.0}, {99.0}, 1, 0);
         w.m.set_f(t, Field::_reload_delay, 3.5);
+        // The tractor beam is handed back (the weapon check): a record mid
+        // walk.
+        w.k.set_weapon_check([this](int64_t h) { return h == tb; });
     }
 };
 
@@ -722,7 +725,7 @@ TEST(K0Charging, WalkOrderPhaserPulseTractorTorpedo) {
     Armed a;
     a.w.k.begin({a.ship}, kDt, kNow);
     K0Record r = a.w.k.next();
-    EXPECT_EQ(a.w.rec(r), "RUN_PYTHON tb tractor");
+    EXPECT_EQ(a.w.rec(r), "RUN_PYTHON tb override");
     EXPECT_EQ(a.w.entries(r),
               (V{"LOOP_STOP b@4", "WATCH p 0x0.0p+0->0x1.0000000000000p+0@5"}));
     r = a.w.k.next();
@@ -783,7 +786,7 @@ TEST(K0Charging, ReadsTheLiveMirrorAfterARecord) {
     // Python sets the tube's reload delay out of reach.
     Armed a;
     a.w.k.begin({a.ship}, kDt, kNow);
-    EXPECT_EQ(a.w.rec(a.w.k.next()), "RUN_PYTHON tb tractor");
+    EXPECT_EQ(a.w.rec(a.w.k.next()), "RUN_PYTHON tb override");
     a.w.m.set_f(a.t, Field::_reload_delay, 100.0);
     const K0Record r = a.w.k.next();
     EXPECT_EQ(a.w.rec(r), "DONE");
@@ -827,7 +830,7 @@ TEST(K0Charging, HandBacks) {
         auto kids = w.m.get_ids(a.ph, Field::_children);
         kids.insert(kids.begin() + 1, kRefUnrepresentable);
         w.m.set_ids(a.ph, Field::_children, kids);
-        w.k.set_weapon_check([&](int64_t h) { return h == b3; });
+        w.k.set_weapon_check([&](int64_t h) { return h == b3 || h == a.tb; });
         w.k.begin({a.ship}, kDt, kNow);
         w.m.unregister_row(b2);  // dropped after the begin snapshot
         K0Record r = w.k.next();
@@ -838,7 +841,7 @@ TEST(K0Charging, HandBacks) {
         EXPECT_EQ(r.index, 2);
         EXPECT_EQ(w.rec(w.k.next()), "RUN_PYTHON b3 override");
         EXPECT_EQ(w.rec(w.k.next()), "RUN_PYTHON odd unknown_kind");
-        EXPECT_EQ(w.rec(w.k.next()), "RUN_PYTHON tb tractor");
+        EXPECT_EQ(w.rec(w.k.next()), "RUN_PYTHON tb override");
         w.k.abandon();
     }
 }
@@ -971,7 +974,7 @@ TEST(K0Charging, Counters) {
     a.w.k.begin({a.ship, -1}, kDt, kNow);
     a.w.run();
     const K0Session::Counts& c = a.w.k.counts();
-    EXPECT_EQ(c.steps, 3);  // b, p, t (the tractor is Python's)
+    EXPECT_EQ(c.steps, 3);  // b, p, t (the tractor is handed back)
     // Never returned now (THE EFFECT QUEUE): their numbers are kept.
     EXPECT_EQ(c.records[static_cast<size_t>(K0Kind::DEPLETE_STOP)], 0);
     EXPECT_EQ(c.records[static_cast<size_t>(K0Kind::WATCH)], 0);
@@ -984,7 +987,7 @@ TEST(K0Charging, Counters) {
     EXPECT_EQ(c.entries[static_cast<size_t>(K0Effect::LOOP_STOP)], 1);
     EXPECT_EQ(c.entries[static_cast<size_t>(K0Effect::WATCH)], 1);
     EXPECT_EQ(c.entries[static_cast<size_t>(K0Effect::TORPEDO_RELOAD)], 1);
-    EXPECT_EQ(c.python_reasons[static_cast<size_t>(K0Reason::Tractor)], 1);
+    EXPECT_EQ(c.python_reasons[static_cast<size_t>(K0Reason::Override)], 1);
     EXPECT_EQ(c.python_reasons[static_cast<size_t>(K0Reason::NoRow)], 1);
     // b: charge, depleted, the stop's two; p: the watcher's value (full, no
     // cooldown); t: two slot writes, the reload's slot, _num_ready.
@@ -1158,8 +1161,8 @@ TEST(K0Charging, IdleTractorRechargesNatively) {
     Tractor t;
     EXPECT_EQ(t.run(), (V{"DONE", "tb._charge_level=0x1.00624dd2f1aa0p+1"}));
     EXPECT_EQ(t.w.k.counts().steps, 1);
-    EXPECT_EQ(t.w.k.counts().python_reasons[static_cast<size_t>(
-                  K0Reason::Tractor)], 0);
+    EXPECT_EQ(t.w.k.counts().records[static_cast<size_t>(
+                  K0Kind::RUN_PYTHON)], 0);
 }
 
 TEST(K0Charging, IdleTractorParentOffOrNone) {
@@ -1180,18 +1183,61 @@ TEST(K0Charging, IdleTractorNaNConditionReadsFull) {
     EXPECT_EQ(t.run(), (V{"DONE", "tb._charge_level=0x1.0083126e978d5p+1"}));
 }
 
-TEST(K0Charging, FiringTractorHandsBack) {
-    // The holding branch (power-loss / starvation StopFiring, the parent's
-    // power program thaw) is Python's, before any write.
-    Tractor t;
-    t.w.m.set_i(t.tb, Field::_firing, 1);
-    EXPECT_EQ(t.run(), (V{"RUN_PYTHON tb tractor", "DONE"}));
-    EXPECT_EQ(t.w.m.get_f(t.tb, Field::_charge_level), 2.0);
-    // step_energy itself never stands in for a firing tractor.
-    const K0Step s = step_energy(t.w.m, t.tb, kDt);
-    ASSERT_TRUE(s.handback);
-    EXPECT_EQ(*s.handback, K0Reason::Tractor);
-    EXPECT_TRUE(s.writes.empty());
+TEST(K0Charging, HoldingTractorPowerLossStops) {
+    // TractorBeam.UpdateCharge's holding branch (fire control native only,
+    // M4): no hand-back. Powered, it writes nothing (no discharge while
+    // holding); its parent off -- or None -- stops it (the mixin's stop, then
+    // LOOP_STOP); the charge is never touched.
+    {
+        Tractor t;
+        t.w.m.set_i(t.tb, Field::_firing, 1);
+        EXPECT_EQ(t.run(), (V{"DONE"}));
+        EXPECT_EQ(t.w.k.counts().steps, 1);
+        EXPECT_EQ(t.w.k.counts().logged_hold_stop, 0);
+    }
+    for (const bool none : {false, true}) {
+        Tractor t;
+        t.w.m.set_i(t.tb, Field::_firing, 1);
+        if (none)
+            t.w.m.set_ref(t.tb, Field::_parent_subsystem, -1);
+        else
+            t.w.m.set_i(t.sys, Field::_is_on, 0);
+        t.w.k.begin({t.ship}, kDt, kNow);
+        const K0Record r = t.w.k.next();
+        EXPECT_EQ(t.w.rec(r), "DONE");
+        EXPECT_EQ(t.w.writes(r),
+                  (V{"tb._firing=False", "tb._beam_on_countdown=0x0.0p+0"}));
+        EXPECT_EQ(t.w.entries(r), (V{"LOOP_STOP tb@2"}));
+        t.w.k.end();
+        EXPECT_EQ(t.w.m.get_i(t.tb, Field::_firing), 0);
+        EXPECT_EQ(t.w.m.get_f(t.tb, Field::_charge_level), 2.0);
+        EXPECT_EQ(t.w.k.counts().logged_hold_stop, 1);
+    }
+}
+
+TEST(K0Charging, HoldingTractorStarvationStops) {
+    // `parent.GetPowerPercentage() <= 0.0 and parent.GetNormalPowerWanted()
+    // > 0.0`: _efficiency and _normal_power. Either side alone holds.
+    struct C {
+        double efficiency, normal;
+        bool stops;
+    };
+    for (const C c : {C{0.0, 600.0, true}, C{-0.0, 600.0, true},
+                      C{0.25, 600.0, false}, C{0.0, 0.0, false}}) {
+        Tractor t;
+        t.w.m.set_i(t.tb, Field::_firing, 1);
+        t.w.m.set_f(t.sys, Field::_efficiency, c.efficiency);
+        t.w.m.set_f(t.sys, Field::_normal_power, c.normal);
+        t.run();
+        EXPECT_EQ(t.w.m.get_i(t.tb, Field::_firing), c.stops ? 0 : 1)
+            << c.efficiency << " " << c.normal;
+    }
+    {   // A parent the mirror cannot stand in for: Python's.
+        Tractor t;
+        t.w.m.set_i(t.tb, Field::_firing, 1);
+        t.w.m.set_ref(t.tb, Field::_parent_subsystem, kRefUnrepresentable);
+        EXPECT_EQ(t.run(), (V{"RUN_PYTHON tb parent", "DONE"}));
+    }
 }
 
 TEST(K0Charging, IdleTractorObeysTheWeaponCheck) {
@@ -1229,7 +1275,7 @@ TEST(K0Charging, NextWhileDeliveringIsLost) {
     Pulse q(0.5);
     const int64_t tsys = q.w.system("tractors", q.ship, 3);
     const int64_t tb = q.w.weapon("tb", tsys);
-    q.w.m.set_i(tb, Field::_firing, 1);     // holding: Python's
+    q.w.k.set_weapon_check([&](int64_t h) { return h == tb; });  // Python's
     const int64_t p2 = q.w.weapon("p2", q.sys);
     q.w.m.set_f(p2, Field::_cooldown_remaining, 0.5);
     // p2 joined the pulse group after the tractors were made, but the walk
@@ -1238,7 +1284,7 @@ TEST(K0Charging, NextWhileDeliveringIsLost) {
     q.w.m.set_ids(tsys, Field::_children, {tb, p2});
     q.w.k.begin({q.ship}, kDt, kNow);
     const K0Record r = q.w.k.next();
-    ASSERT_EQ(q.w.rec(r), "RUN_PYTHON tb tractor");  // not done: p2 to step
+    ASSERT_EQ(q.w.rec(r), "RUN_PYTHON tb override");  // not done: p2 to step
     const V delivered = q.w.writes(r);
     ASSERT_EQ(delivered.size(), 3u);
     q.w.k.set_delivering(true);

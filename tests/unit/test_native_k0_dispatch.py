@@ -284,11 +284,13 @@ def _hold(w, ship_name):
         beam._firing = True
 
 
-def test_tractor_handed_back(monkeypatch):
-    """A HOLDING tractor beam runs in Python (its UpdateCharge stops a beam
-    whose parent is off or starved, with a power program thaw K0 does not
-    port): held, the parent turned off (Python's power-loss StopFiring),
-    turned on again."""
+def test_k0_holding_tractor_power_loss_stops(monkeypatch):
+    """A HOLDING tractor beam is K0's (fire control native only, M4; no
+    hand-back): it holds with its charge untouched, and stops when its
+    parent is turned off and again when the parent is starved
+    (GetPowerPercentage() 0 while it wants power) -- each stop's `_firing`
+    through the beam's thaw setter, then its LOOP_STOP -- exactly as
+    TractorBeam.UpdateCharge's Python, every tick."""
 
     def script(w, t):
         tractors = w.ships["Galaxy"].GetTractorBeamSystem()
@@ -299,21 +301,34 @@ def test_tractor_handed_back(monkeypatch):
             tractors.TurnOff()
         elif t == 60:
             tractors.TurnOn()
+            _hold(w, "Galaxy")
+        elif t == 70:
+            tractors._normal_power = 600.0
+            tractors._efficiency = 0.0          # starved
+        elif t == 80:
+            tractors._efficiency = 0.5
+            _hold(w, "Galaxy")
 
-    ref, nat, counts = run_both(monkeypatch.context, script, 90)
+    ref, nat, counts = run_both(monkeypatch.context, script, 100)
     beams = [nat.leaves.index(b) for b in nat.weapons("Galaxy", TRACTOR)]
-    assert nat.log[39][beams[0]][2] == ("bool", True)
-    assert nat.log[41][beams[0]][2] == ("bool", False)     # Python stopped it
-    # Holding at ticks 1-41 (the TurnOff before tick 41's step: Python's
-    # UpdateCharge then stops it), idle (native) otherwise.
-    assert _reasons(counts).get("tractor", 0) == 41 * len(beams), counts
-    assert counts["k0_steps"] > 0, counts
+    i = beams[0]
+    assert nat.log[39][i][2] == ("bool", True)
+    assert nat.log[40][i][2] == ("bool", False)     # powered off: stopped
+    assert nat.log[69][i][2] == ("bool", True)
+    assert nat.log[70][i][2] == ("bool", False)     # starved: stopped
+    assert nat.log[99][i][2] == ("bool", True)      # fed again: holds
+    assert nat.log[1][i][1] == nat.log[39][i][1]    # holding: no discharge
+    assert "tractor" not in counts["k0_python_reasons"]
+    assert sum(counts["k0_python_reasons"].values()) == 0, counts
+    assert counts["k0_logged"]["hold_stop"] == 2 * len(beams)
+    assert counts["k0_entries"]["LOOP_STOP"] >= 2 * len(beams)
 
 
 def test_idle_tractors_step_natively(monkeypatch):
     """Ruling W6: an idle tractor (`_firing` false) is TractorBeam's
     `super().UpdateCharge(dt)`, the mixin step K0 ports, so it recharges
-    natively; only the ticks it holds are handed back."""
+    natively; and the ticks it holds are K0's too (fire control native
+    only): nothing is handed back."""
 
     def setup(w):
         w.ships["Galaxy"].GetTractorBeamSystem().TurnOn()
@@ -333,7 +348,7 @@ def test_idle_tractors_step_natively(monkeypatch):
     assert nat.log[0][i][1] != nat.log[18][i][1]
     assert nat.log[25][i][1] == nat.log[30][i][1]
     assert nat.log[50][i][1] != nat.log[60][i][1]
-    assert _reasons(counts).get("tractor", 0) == 20 * len(beams), counts
+    assert _reasons(counts) == {}, counts
 
 
 def test_tractor_firing_is_mirrored(monkeypatch):
@@ -777,12 +792,14 @@ def test_counts_keys_and_reset(monkeypatch):
             w.close()
     c = nc.counts()
     assert set(c["k0_records"]) == {"DONE", "DEPLETE_STOP", "RELOADED",
-                                    "WATCH", "RUN_PYTHON"}
+                                    "WATCH", "RUN_PYTHON", "HOLD_STOP"}
+    # No "tractor": a holding tractor is K0's (fire control native only).
     assert set(c["k0_python_reasons"]) == {
-        "tractor", "no_row", "not_weapon_system", "stale_row", "slot_heal",
+        "no_row", "not_weapon_system", "stale_row", "slot_heal",
         "override", "audit", "power_level", "parent", "unrepresentable",
         "unknown_kind", "watcher"}
-    assert set(c["k0_logged"]) == {"deplete_stop", "reload", "watch"}
+    assert set(c["k0_logged"]) == {"deplete_stop", "reload", "watch",
+                                   "hold_stop"}
     assert set(c["k0_entries"]) == {"LOOP_STOP", "TORPEDO_RELOAD", "WATCH"}
     assert set(c["k0_python_step_reasons"]) == {"off", "nested", "audit"}
     assert c["k0_steps"] > 0 and c["k0_records"]["DONE"] == 1

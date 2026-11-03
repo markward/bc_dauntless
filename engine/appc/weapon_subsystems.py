@@ -1521,8 +1521,9 @@ class WeaponSystem(PoweredSubsystem):
         # descriptor itself (truthy, not a TGPoint3).
         self._target_offset = None
         self._weapon_system_type: int = 0
-        # Round-robin cursor into child emitters (tractor _engage_beam; the
-        # BC tick uses _last_weapon_idx below instead).
+        # Round-robin cursor into child emitters (the K1 tractor walk's
+        # engage, mirrored on TractorBeamSystem; the BC tick uses
+        # _last_weapon_idx below instead).
         self._next_emitter_index: int = 0
         # ── BC tick state (weapon-firing-mechanics.md §3.1-3.3) ──────────
         self._force_update: bool = False    # +0xAC: bypass 0.33s delay this tick
@@ -2465,27 +2466,17 @@ PHASER_MAX_RANGE_GU = 700.0
 # MaxDamageDistance ≈ 118-120 GU (galaxy.py AftTractor2 = 118, vorcha = 120);
 # unlike phasers there is no single engine-wide constant, so we gate the whole
 # system on a representative 120 GU.  A target drifting past this drops the
-# beam (update_weapons re-checks _can_engage per frame; the ENGAGE intent
-# persists so the beam re-acquires when back in range).
+# beam (the K1 tractor walk re-checks it every tick; the ENGAGE intent
+# persists so the beam re-acquires when back in range). Its one home: pushed
+# to the native kernel as a global (native_combat._globals).
+#
+# No other engagement gate: the target's shields do NOT matter. Measured on
+# the original exe (stbc-oracle bible §7.5 R1, `tractor_engage_r20_noshields`
+# against `tractor_engage_r20`): a Galaxy's projector locks a shielded target
+# within one sample of StartFiring exactly as it does an unshielded one.
 TRACTOR_MAX_RANGE_GU = 120.0
 
 
-
-
-def _target_tractorable(target) -> bool:
-    """True iff a tractor beam can grip `target`: anything that exists.
-
-    The target's shields do NOT matter. Measured on the original exe
-    (stbc-oracle bible §7.5 R1, `tractor_engage_r20_noshields` against
-    `tractor_engage_r20`): a Galaxy's projector locks a shielded target
-    within one sample of StartFiring exactly as it does an unshielded one;
-    the only engagement gate is the projector's MaxDamageDistance.
-
-    This used to refuse any target whose shields were up ("active shields
-    deflect the beam"), which was a story with no capture behind it — and
-    it hid the real behaviour behind a rule that was never BC's.
-    """
-    return target is not None
 
 
 def _same_set(a, b) -> bool:
@@ -2627,25 +2618,25 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     """Tractor-beam aggregator.
 
     A tractor is a UI *toggle* (StartFiring = engage, StopFiring =
-    toggle-off).  Unlike phasers/pulse it does NOT ride the generic BC tick:
-    its per-frame maintenance (update_weapons below) keeps the ENGAGE intent
-    (`_fire_held`) alive even when the beam can't currently grip — shields
-    up, out of range, out of arc — and re-acquires automatically when the
-    geometry allows.  `_pump_self_managed` tells host_loop's pump to call
-    update_weapons directly instead of hard-stopping via the generic
-    `_can_engage` / detectability gates (which would kill the intent).
-    The hardpoints set SingleFire(1), so exactly one beam locks the target.
+    toggle-off). Its fire decisions are the native K1 kernel's whole
+    (fire control native only, M4; k1_fire_control.h, THE TRACTOR WALK):
+    StartFiring records the ENGAGE intent (`_fire_held`) and runs the engage
+    as a native session (native_combat.k1_tractor_start); every tick the
+    held-weapon pump's tractor walk keeps the intent alive even when the beam
+    cannot grip -- out of range or out of arc -- and re-acquires when the
+    geometry allows, rotating through the projectors from
+    `_next_emitter_index`. The hardpoints set SingleFire(1), so exactly one
+    beam locks the target.
 
-    Unlike phasers/pulse, a firing tractor does NOT auto-stop on charge
-    depletion (TractorBeam.UpdateCharge sustains it), and per frame
-    engine.appc.tractor.advance_tractors applies the mode's physics to the
-    target.  `_engage_state` caches per-mode engagement geometry (the captured
-    HOLD world-point / TOW body-frame offset); it is invalidated on StopFiring
-    and on any mode change.
+    A holding beam is never discharged; K0 drops it when its parent is off
+    or starved (TractorBeam.UpdateCharge, k0_charging.cc). Each tick the
+    native tractor force (tractor_force.h, engine.appc.tractor) applies the
+    mode to the target. `_engage_state` caches the mode's engagement
+    geometry (the captured HOLD world-point / TOW body-frame offset); it is
+    invalidated on StopFiring and on any mode change.
+
+    The methods below are the SDK's surface, thin over that native state.
     """
-    # host_loop._pump_held_weapons: skip the generic hard-stop gates and hand
-    # the frame straight to update_weapons (it owns its own stop conditions).
-    _pump_self_managed = True
     # q10 ground truth (tools/probes/results/q10_battery_drain.txt): the tractor
     # is a DIRECT main-battery siphon — it bypasses the conduit budget and is
     # unscaled by the power slider (measured 600/s flat with sliders at 1.25).
@@ -2666,16 +2657,23 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     TBS_DOCK_STAGE_1  = 4
     TBS_DOCK_STAGE_2  = 5
 
+    # Mirrored: what the K1 tractor walk and the tractor force read and write.
+    _mode = NativeField(int)
+    _was_firing = NativeField(bool)
+    _next_emitter_index = NativeField(int)
+    _engage_state = native_combat.EngageStateField()
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._mode = self.TBS_HOLD
         self._engage_state = None
         # Last observed IsFiring() value, for the ET_TRACTOR_BEAM_STARTED_/
         # STOPPED_FIRING edge-detect. Not derived from _fire_held: the beam
-        # drops and re-acquires (range, shields, arc) while the ENGAGE intent
-        # is continuously held, and each crossing is a transition BC's
+        # drops and re-acquires (range, arc) while the ENGAGE intent is
+        # continuously held, and each crossing is a transition BC's
         # PowerDisplay repaints for.
         self._was_firing = False
+        self._next_emitter_index = 0
 
     def _wants_power(self) -> bool:
         """The tractor siphons power only while a beam is actually held (a
@@ -2711,15 +2709,14 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         """The persistent toggle *intent*, independent of the instantaneous
         IsFiring() beam state.  The HUD / F2 menu tractor toggle reflects THIS:
         while engaged the beam auto-fires whenever the target is in range (and
-        re-acquires each frame via update_weapons), so the button stays "On"
+        re-acquires each tick in the K1 tractor walk), so the button stays "On"
         even if the beam momentarily isn't gripping."""
         return 1 if self._fire_held else 0
 
     def StartFiring(self, target=None, offset=None) -> None:
-        """Record the held ENGAGE intent even when the target isn't immediately
-        grippable, so update_weapons re-acquires the beam when the geometry
-        allows.  (Mirrors WeaponSystem.StartFiring but records intent BEFORE
-        the engageability check instead of bailing.)"""
+        """The gates, then the native engage (native_combat.k1_tractor_start:
+        the ENGAGE intent is recorded BEFORE the engage-range check, so the
+        pump re-acquires when the geometry allows)."""
         if not self.IsOn() or target is None:
             return
         if _is_offline(self):
@@ -2728,14 +2725,7 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
             return
         if _dewarp_blocks_fire(self):
             return
-        self._add_target(target)
-        self._fire_held = True
-        self._held_target = target
-        self._held_offset = offset
-        ship = self.GetParentShip()
-        if self._can_engage(ship, target):
-            self._engage_beam(target, offset, ship)
-        self._sync_firing_event()
+        native_combat.k1_tractor_start(self, target, offset)
 
     def IsFiring(self) -> int:
         """Instantaneous BEAM state only — deliberately NOT OR'd with
@@ -2744,11 +2734,12 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         return 1 if self._any_child_firing() else 0
 
     def _sync_firing_event(self) -> None:
-        """Post ET_TRACTOR_BEAM_STARTED_/STOPPED_FIRING on a beam transition.
-
-        Gaps #8/#9 in docs/reference/engine/event-emitter-gaps.md. Call after any
-        operation that could change IsFiring(); it is a no-op unless the
-        state actually crossed, so it is safe on the per-tick path.
+        """Queue ET_TRACTOR_BEAM_STARTED_/STOPPED_FIRING on a beam transition
+        (gaps #8/#9 in docs/reference/engine/event-emitter-gaps.md; an
+        effect-queue entry, ruling R8, delivered at the next flush). The
+        Python twin of the K1 tractor walk's sync (k1_fire_control.cc
+        tractor_sync), for StopFiring: change both. A no-op unless the
+        state actually crossed.
 
         Destination is the parent SHIP, not the system:
         Bridge/PowerDisplay.py:1013 casts GetDestination() to ShipClass and
@@ -2769,114 +2760,12 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
             # _was_firing already flipped and treating it as a non-event.
             return
         self._was_firing = now
-        import App
-        evt = App.TGEvent_Create()
-        evt.SetEventType(App.ET_TRACTOR_BEAM_STARTED_FIRING if now
-                         else App.ET_TRACTOR_BEAM_STOPPED_FIRING)
-        evt.SetSource(self)
-        evt.SetDestination(ship)
-        App.g_kEventManager.AddEvent(evt)
-
-    def _can_engage(self, ship, target) -> bool:
-        # Range gate AND shield gate: a tractor grips only targets whose shields
-        # are down (disabled / offline / not equipped / depleted).
-        return (_target_within_range_gu(ship, target, TRACTOR_MAX_RANGE_GU)
-                and _target_tractorable(target))
-
-    def update_weapons(self, dt=0.0) -> bool:
-        """Per-frame held-fire maintenance with arc/shield re-acquisition
-        (the tractor's whole tick — replaces the base BC group walk; was
-        retry_held_fire before the tick rewire).
-
-        Unlike phasers/pulse (whose held burst hard-stops when the target
-        leaves range), a tractor stays ENGAGED until the player toggles it
-        off: if the firing emitter swings out of arc on a tight turn — or the
-        target raises shields / drifts out of range — the beam switches off
-        but `_fire_held` is kept, so it re-fires automatically from any
-        in-arc emitter the moment the geometry allows again.
-        """
-        if not self._fire_held or self._held_target is None:
-            return False
-        if not self.IsOn():
-            # Power loss stops emitters BEHIND this method's back:
-            # TractorBeam.UpdateCharge (:2278-2284) calls StopFiring() on
-            # itself once its parent isn't on, and host_loop's per-frame
-            # emitter pump runs UpdateCharge on every emitter regardless of
-            # parent power -- so by the time we get here on the very next
-            # tick IsFiring() has already flipped to False without this
-            # method ever seeing the transition. Sync here or the beam stops
-            # for real while _was_firing stays stuck True, latching the HUD
-            # "on" and swallowing the STARTED event when power returns.
-            self._sync_firing_event()
-            return False
-        if _is_offline(self):
-            self.StopFiring()           # system disabled — fully disengage
-            return False
-        ship = self.GetParentShip()
-        target = self._held_target
-        if hasattr(target, "IsDead") and target.IsDead():
-            self.StopFiring()           # target gone — fully disengage
-            return False
-        engageable = self._can_engage(ship, target)   # range + shields
-        # Drop any emitter that can no longer hold the beam (out of range /
-        # shields up / rotated out of arc).  Keep _fire_held so it re-acquires.
-        for i in range(self.GetNumWeapons()):
-            em = self.GetWeapon(i)
-            if em is None or not em.IsFiring():
-                continue
-            aim = _resolve_bank_aim_world(em, target)
-            if (not engageable) or (not _emitter_in_arc(em, ship, aim)):
-                em.StopFiring()
-        if not engageable:
-            self._sync_firing_event()
-            return False
-        # Re-dispatch one eligible in-arc emitter if none is currently firing.
-        for i in range(self.GetNumWeapons()):
-            em = self.GetWeapon(i)
-            if em is not None and em.IsFiring():
-                self._sync_firing_event()
-                return False
-        fired = self._engage_beam(target, self._live_held_offset(), ship)
-        self._sync_firing_event()
-        return fired
-
-    def _engage_beam(self, target, offset, ship) -> bool:
-        """Fire one eligible in-arc emitter (SingleFire round-robin via
-        _next_emitter_index) or every eligible emitter (multi-fire).  This is
-        the old shared `_dispatch_one_or_all` dispatch, kept tractor-local:
-        beams are sustained grips, not the discrete BC tick cadence."""
-        n = self.GetNumWeapons()
-        if n == 0:
-            return False
-        if self._single_fire:
-            start = self._next_emitter_index % n
-            for delta in range(n):
-                idx = (start + delta) % n
-                emitter = self.GetWeapon(idx)
-                if emitter is None:
-                    continue
-                aim_world = _resolve_bank_aim_world(emitter, target)
-                if not _emitter_in_arc(emitter, ship, aim_world):
-                    continue
-                if hasattr(emitter, "CanFire") and emitter.CanFire():
-                    emitter.Fire(target, offset)
-                    self._next_emitter_index = (idx + 1) % n
-                    return True
-            return False
-        fired = False
-        for i in range(n):
-            emitter = self.GetWeapon(i)
-            if emitter is None:
-                continue
-            aim_world = _resolve_bank_aim_world(emitter, target)
-            if not _emitter_in_arc(emitter, ship, aim_world):
-                continue
-            if hasattr(emitter, "CanFire") and emitter.CanFire():
-                emitter.Fire(target, offset)
-                fired = True
-        return fired
+        effect_queue.emit(effect_queue.TRACTOR_STARTED if now
+                          else effect_queue.TRACTOR_STOPPED, self, ship)
 
     def StopFiring(self, *args) -> None:
+        # The K1 tractor walk's stop (k1_fire_control.cc tractor_stop) logs
+        # these writes itself: change both.
         self._engage_state = None
         super().StopFiring(*args)
         self._sync_firing_event()

@@ -152,7 +152,10 @@ def available() -> bool:
             and hasattr(_h, "combat_dmg_set_condition")
             and hasattr(_h, "combat_dmg_clean_handles")
             and hasattr(_h, "combat_k2_scan_clear")
-            and hasattr(_h, "combat_compute_take"))
+            and hasattr(_h, "combat_compute_take")
+            # Tractors native (fire control native only, M4).
+            and hasattr(_h, "combat_k1_begin_tractor")
+            and hasattr(_h, "combat_tractor_force_step"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -297,7 +300,11 @@ def counts() -> dict:
     back is a WALK_START record there instead; "beam_sustain": Fires on a
     beam already firing and "idle_bank_stop": StopFirings of a bank not
     firing, both pure field writes logged instead of a FIRE / BANK_STOP
-    record -- round trips Task 2). The k1_logged counters are bumped as
+    record -- round trips Task 2; "tractor_walk" / "tractor_start": the
+    pump's tractor walks and StartFiring's tractor sessions, k1_fire_
+    control.h THE TRACTOR WALK), "k1_no_fire" ({K1NoFire name: n}: walks
+    that did not fire that tick because the mirror could not read them --
+    tractor_row; fire control native only, R2). The k1_logged counters are bumped as
     the kernel logs, and a kernel throw later in the same next() (which
     undoes those writes) does not roll them back, so they can overcount,
     like k2_batched_contacts below.
@@ -315,14 +322,16 @@ def counts() -> dict:
     K0 (`sim.weapons`, the charging kernel): the kernel's "k0_steps"
     (weapons stepped natively), "k0_records" ({DONE, DEPLETE_STOP,
     RELOADED, WATCH, RUN_PYTHON: n}), "k0_python_reasons" (the RUN_PYTHON
-    hand-backs by K0Reason name, k0_charging.h: tractor, no_row,
+    hand-backs by K0Reason name, k0_charging.h: no_row,
     not_weapon_system, stale_row, slot_heal, override, audit, power_level,
     parent, unrepresentable, unknown_kind, watcher -- a pulse cannon whose
     charge watcher it does not own; zeros included) and
     "k0_logged_writes" (writes returned in records), "k0_logged"
     ({deplete_stop, reload, watch}: what were DEPLETE_STOP / RELOADED /
     WATCH records, now logged writes plus queue entries -- combat fire
-    events Task 4; those three records are never returned) and
+    events Task 4; those three records are never returned; hold_stop: a
+    holding tractor beam its parent's power loss stopped, fire control
+    native only) and
     "k0_entries" ({LOOP_STOP, TORPEDO_RELOAD, WATCH}: the queue entries K0
     produced; a throw in next() restores these counters with the session,
     so they do not overcount), plus the driver's "k0_python_steps" /
@@ -1323,6 +1332,56 @@ class HullBoxField(NativeField):
                 and _hexes(row["_shield_hull_box_half"]) == _hexes(hh))
 
 
+#: EngageStateField's encodings: engage_kind (mirror.h).
+ENGAGE_NONE, ENGAGE_HOLD, ENGAGE_TOW = 0, 1, 2
+_ENGAGE_KEYS = {ENGAGE_HOLD: "hold_point", ENGAGE_TOW: "tow_offset"}
+
+
+class EngageStateField(NativeField):
+    """``TractorBeamSystem._engage_state``: None, ``{"hold_point": p}`` or
+    ``{"tow_offset": p}`` with p a TGPoint3 -- the geometry the tractor
+    force captured (tractor_force.h). Pushed as engage_kind (ENGAGE_*) and
+    engage_point; anything else is not representable and drops the row.
+    The force step writes the mirror itself and stores the dict quietly
+    (tractor_force_step); a native StopFiring's `_engage_state = None` is a
+    plain store (_quiet_setter)."""
+
+    def __init__(self) -> None:
+        super().__init__(None)
+
+    @staticmethod
+    def _parse(value):
+        if value is None:
+            return ENGAGE_NONE, (0.0, 0.0, 0.0)
+        if type(value) is not dict or len(value) != 1:
+            raise TypeError("engage state: %r" % (value,))
+        for kind, key in _ENGAGE_KEYS.items():
+            p = value.get(key)
+            if isinstance(p, TGPoint3):
+                return kind, (float(p.x), float(p.y), float(p.z))
+        raise TypeError("engage state: %r" % (value,))
+
+    def _push(self, obj, h, value) -> None:
+        try:
+            kind, point = self._parse(value)
+        except TypeError:
+            _drop(obj)
+            return
+        _call(obj, _h.combat_set_i, h, _fid("engage_kind"), kind)
+        if "_nslot" in obj.__dict__:
+            _call(obj, _h.combat_set_fv, h, _fid("engage_point"), list(point))
+
+    def audit(self, value, row) -> bool:
+        try:
+            kind, point = self._parse(value)
+        except TypeError:
+            return False
+        if row["engage_kind"] != kind:
+            return False
+        return kind == ENGAGE_NONE or \
+            _hexes(row["engage_point"]) == _hexes(point)
+
+
 class HasShieldsField(NativeFloatList):
     """``ShieldSubsystem._max_shields``: the face caps, mirrored as a list
     (the native hit's ramp reads them), and every rebind re-pushes the
@@ -1968,8 +2027,6 @@ def _flags(obj, h) -> dict:
                                                          "GetParentShip")),
                 "weapon_kind": _weapon_kind(obj),
                 "k1_overridden": _k1_overridden(type(obj)),
-                "pump_self_managed": int(bool(getattr(
-                    type(obj), "_pump_self_managed", False))),
                 "has_shields": _has_shields_flag(obj),
                 # The condition chain's rules for this class (damage).
                 "dmg_class": _dmg_class(type(obj))}
@@ -2747,6 +2804,14 @@ _CONSTANTS = ("CONCEAL_K", "LOCK_BREAK_T", "HYSTERESIS",
               "CLOAK_DETECTION_BASE_GU")
 
 
+# engine/appc/tractor.py's force constants, pushed by their own names.
+_TRACTOR_CONSTANTS = (
+    "TRACTOR_REFERENCE_MASS", "TRACTOR_REFERENCE_SPEED_GUPS",
+    "TRACTOR_MAX_SPEED_GUPS", "TRACTOR_FALLBACK_MASS",
+    "TRACTOR_TOW_DRAG_FRACTION", "TRACTOR_DOCK_GENTLE_FRACTION",
+    "TRACTOR_STANDOFF_MARGIN_GU")
+
+
 # Native Global key -> weapon_subsystems module constant (K1 geometry).
 _WEAPON_CONSTANTS = (
     ("TORPEDO_CONE_HALF_ANGLE", "_TORPEDO_CONE_HALF_ANGLE"),
@@ -2797,6 +2862,13 @@ def _globals() -> dict:
         g["PHASER_DISCHARGE_%d" % i] = (float(table[i]) if i < len(table)
                                         else 0.0)
     g["PHASER_DISCHARGE_LEN"] = len(table)
+    # Tractors native (fire control native only, R7): the force constants
+    # and K1's engage range, each read from its one Python home.
+    from engine.appc import tractor
+    for name in _TRACTOR_CONSTANTS:
+        g[name] = float(getattr(tractor, name))
+    g["TRACTOR_EPS"] = float(tractor._EPS)
+    g["TRACTOR_MAX_RANGE_GU"] = float(ws.TRACTOR_MAX_RANGE_GU)
     return g
 
 
@@ -3966,7 +4038,12 @@ def _k1_answer(rec, walk, dt):
     raise RuntimeError("combat K1: unknown ASK %r" % (query,))
 
 
-def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
+# run_k1's `offset` when the session has no pre-made walk.
+_NO_OFFSET = object()
+
+
+def run_k1(dt, ships=(), pump_body=None, system=None,
+           offset=_NO_OFFSET) -> None:
     """Drive the kernel's top session (begun by k1_pump / k1_system) until
     DONE. Each record: its writes are applied by the binding before it is
     returned (the session's applier context, _applier_context; the
@@ -3998,18 +4075,22 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     _k1_compute_enter()
     try:
         with _effect_queue.session():
-            _run_k1(dt, ships, pump_body, system)
+            _run_k1(dt, ships, pump_body, system, offset)
     finally:
         _k1_compute_exit()
 
 
-def _run_k1(dt, ships, pump_body, system) -> None:
-    """run_k1's loop, inside the session's deferral."""
+def _run_k1(dt, ships, pump_body, system, offset=_NO_OFFSET) -> None:
+    """run_k1's loop, inside the session's deferral. `offset` (a tractor
+    StartFiring session, k1_tractor_start): the session's walk 1 is already
+    materialised, its offset object this one."""
     (DONE, WALK_START, STOP_SYSTEM, RUN_PYTHON, BANK_STOP, FIRE,
      _FIRE_FAILED, FIRE_DUMB, ASK) = _k1_kinds()
     walk = _K1Walk()
     if system is not None:
         walk.pin_system(system)
+    if offset is not _NO_OFFSET:
+        walk.walk, walk.offset, walk.walked = 1, offset, system
     prev = _UNSET
     try:
         prev = _h.combat_set_applier(_applier_context(walk))
@@ -4140,6 +4221,81 @@ def k1_system(system, dt) -> None:
     run_k1(dt, system=system)
 
 
+def k1_tractor_start(system, target, offset) -> None:
+    """TractorBeamSystem.StartFiring after its gates (fire control native
+    only, M4; k1_fire_control.h, THE TRACTOR WALK): the engage intent is
+    recorded here, in Python, before the engage-range check -- so the pump
+    re-acquires when the geometry allows -- and the engage itself is a
+    native system session: `_can_engage` -> `_engage_beam(target, offset)`
+    -> the firing edge's event (an effect-queue entry, ruling R8). Every
+    write the kernel logs lands on the live objects (a projector's `_firing`
+    through its NativeThawParentWakeField setter: the power thaw). With
+    native combat off nothing can engage: a tractor is native only (logged
+    once)."""
+    system._add_target(target)
+    system._fire_held = True
+    system._held_target = target
+    system._held_offset = offset
+    if not _enabled:
+        _log_once("tractor_off", "tractors are native only: with native "
+                  "combat off a tractor engages nothing")
+        return
+    drain()                     # a session start (ruling R2)
+    h = system.__dict__.get("_nslot")
+    if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
+        _log_once("tractor_row", "a tractor system with no mirror row "
+                  "engages nothing")
+        return
+    if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
+        refresh_stale_pulse_params()
+    resolve_stale_part_slots(_k1_system_ships(system))
+    t, use_memo, drift = _k1_clocks()
+    th = REF_NONE if target is None else _handle_of(target, "Object")
+    _h.combat_k1_begin_tractor(
+        h, th, (offset.x, offset.y, offset.z)
+        if isinstance(offset, TGPoint3) else None, t, use_memo, drift)
+    run_k1(0.0, system=system, offset=offset)
+
+
+def tractor_force_step(ships, dt) -> None:
+    """engine.appc.tractor.advance_tractors(ships, dt): one native step of
+    the tractor force (tractor_force.h; fire control native only, R7), in
+    `cb.tractors`. The kernel writes the transform store itself; Python then
+    applies what it hands back: HOLD's damped targets (SetVelocity(0)) and
+    the engage geometry it captured (`_engage_state`, stored quietly: the
+    mirror already holds it). A ship with no Object row, or a tractor the
+    mirror cannot name, does nothing (logged once). With native combat off
+    the force does nothing (logged once)."""
+    if not _enabled:
+        _log_once("tractor_force_off", "tractors are native only: with "
+                  "native combat off the tractor force does nothing")
+        return
+    handles = []
+    for ship in ships:
+        h = ship.__dict__.get("_nslot") if hasattr(ship, "__dict__") else None
+        if h is None or (h >> _KIND_SHIFT) != _kind("Object"):
+            if getattr(ship, "GetTractorBeamSystem", None) is not None:
+                _log_once("tractor_force_row", "a ship with no mirror row: "
+                          "its tractor moves nothing")
+            continue
+        handles.append(h)
+    zero, captures, _applied, skipped = _h.combat_tractor_force_step(
+        handles, dt)
+    for h, kind, xyz in captures:
+        system = _registry.get(h)
+        if system is not None and system.__dict__.get("_nslot") == h:
+            system.__dict__["_engage_state"] = {
+                _ENGAGE_KEYS[kind]: TGPoint3(*xyz)}
+    for h in zero:
+        obj = _registry.get(h)
+        if obj is not None and obj.__dict__.get("_nslot") == h \
+                and hasattr(obj, "SetVelocity"):
+            obj.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+    if skipped:
+        _log_once("tractor_force_skipped", "a tractor the mirror cannot "
+                  "name moved nothing")
+
+
 def _k1_system_ships(system) -> list:
     """The ships a system session's walk may read part slots of: the
     parent ship and every entry of the system's target list."""
@@ -4238,9 +4394,9 @@ def _k1_system_ships(system) -> list:
 # _broadcast_reload: K0 logs a drained bank's or cannon's stop and queues a
 # reload's event instead of calling them in Python, so a class patch of
 # either -- a mod's, a test's spy -- hands that weapon back and the patch
-# runs where the Python reference runs it. A weapon system's or a tractor's
-# StopFiring is never stood in for (K0 hands a holding tractor back), so
-# their roles do not look for it. A tube's StopFiring is in the shared stop
+# runs where the Python reference runs it. A holding tractor beam's stop is
+# K0's too (fire control native only, M4). A weapon system's StopFiring is
+# never stood in for, so its role does not look for it. A tube's StopFiring is in the shared stop
 # encoding but never called by the walk: a tube overriding it is handed
 # back needlessly (conservative).
 _K0_METHODS = (
@@ -4259,6 +4415,7 @@ _K0_METHODS = (
 _K0_LEAF_METHODS = {
     5: ("StopFiring",),                         # PhaserBank
     6: ("StopFiring",),                         # PulseWeapon
+    7: ("StopFiring",),                         # TractorBeam (its hold)
     8: ("StopFiring", "_broadcast_reload"),     # TorpedoTube
 }
 _K0_SHIP_METHODS = ("GetPhaserSystem", "GetPulseWeaponSystem",

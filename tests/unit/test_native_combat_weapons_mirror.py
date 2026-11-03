@@ -200,8 +200,9 @@ def test_class_flags_name_each_weapon_kind(arena):
             for obj in members:
                 row = _dump(obj)
                 assert row["weapon_kind"] == kinds[type(obj)], type(obj)
-                assert row["pump_self_managed"] == int(
-                    type(obj) is ws.TractorBeamSystem)
+                # No self-managed flag: a tractor's walk is K1's own (fire
+                # control native only, M4).
+                assert "pump_self_managed" not in row
                 seen.add(type(obj))
     assert seen == set(kinds)
     assert _dump(galaxy.GetSensorSubsystem())["weapon_kind"] == 0

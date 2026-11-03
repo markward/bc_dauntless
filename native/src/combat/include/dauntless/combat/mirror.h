@@ -69,7 +69,7 @@ enum class Field : int32_t {
     // Subsystem: class flags. weapon_kind: 0 none, 1 phaser system, 2 pulse
     // system, 3 tractor system, 4 torpedo system, 5 phaser bank, 6 pulse
     // weapon, 7 tractor beam, 8 torpedo tube.
-    weapon_kind, pump_self_managed,
+    weapon_kind,
     // k1_overridden: the class overrides a method the K1 kernel stands in
     // for (Fire, CanFire, update_weapons ...); K1 hands its system to Python.
     k1_overridden,
@@ -156,6 +156,16 @@ enum class Field : int32_t {
     // delivery).
     _max_damage, _max_damage_distance, o_invincible, _splash_damage,
     _splash_damage_radius,
+    // Tractors native (fire control native only, M4, R7): the force step's
+    // ship mass (Object; PhysicsObjectClass._mass, GetMass), a tractor
+    // system's mode, firing edge, round-robin cursor and engage state
+    // (Subsystem; TractorBeamSystem._mode, _was_firing, _next_emitter_index,
+    // and _engage_state as engage_kind 0 None, 1 {"hold_point": p}, 2
+    // {"tow_offset": p} with p as engage_point), and a powered system's
+    // GetPowerPercentage / GetNormalPowerWanted (Subsystem;
+    // PoweredSubsystem._efficiency, _normal_power: K0's holding tractor).
+    _mass, _mode, _was_firing, _next_emitter_index, engage_kind, engage_point,
+    _efficiency, _normal_power,
     kCount
 };
 
@@ -217,6 +227,7 @@ struct ObjectRow {
     int64_t _hurtable = 0, dmg_ship = 0;
     int64_t _invincible = 0;
     double _splash_damage = 0.0, _splash_damage_radius = 0.0;
+    double _mass = 0.0;  // Tractors native (Field comment above)
     // Posed parts: the pose table (empty while has_posed_parts is 0) and the
     // ship's subsystems in combat._iter_subsystems order (Subsystem handles;
     // kRefUnrepresentable for one the mirror cannot name). Not Fields: set
@@ -235,8 +246,7 @@ struct SubsystemRow {
     std::vector<int64_t> _known_objects;  // sorted, unique (set semantics)
     std::vector<int64_t> _probe_ids;      // list order
     int64_t _cloak_state = 0;
-    int64_t weapon_kind = 0, pump_self_managed = 0, k1_overridden = 0,
-            _is_on = 0;
+    int64_t weapon_kind = 0, k1_overridden = 0, _is_on = 0;
     int64_t _fire_held = 0, _held_target = -1;
     Vec3 _held_offset{0, 0, 0};
     bool held_offset_set = false;
@@ -281,6 +291,11 @@ struct SubsystemRow {
     std::vector<double> _current_shields, _max_shields, _ramp_fraction,
         _ramp_set;
     double _max_damage = 0.0, _max_damage_distance = 0.0;
+    // Tractors native (Field comment above).
+    int64_t _mode = 0, _was_firing = 0, _next_emitter_index = 0,
+            engage_kind = 0;
+    Vec3 engage_point{0, 0, 0};
+    double _efficiency = 0.0, _normal_power = 0.0;
     // Posed parts: the index into the owning ship's part_poses of the part
     // Python resolved for this subsystem's own mount (detachment ignored;
     // -1 = no posable part), stamped with the global part_gen at
@@ -367,6 +382,13 @@ enum class Global : int32_t {
     // combat_k1_next (THE LAUNCH CHECK).
     PULSE_DAMAGE_SCALE_0, PULSE_DAMAGE_SCALE_1, PULSE_DAMAGE_SCALE_2,
     K1_PULSE_MODULE_STALE,
+    // Tractors native (fire control native only, R7): engine/appc/tractor.py's
+    // force constants (TRACTOR_EPS is its _EPS) and weapon_subsystems.
+    // TRACTOR_MAX_RANGE_GU, K1's engage range. Python is their one home.
+    TRACTOR_REFERENCE_MASS, TRACTOR_REFERENCE_SPEED_GUPS,
+    TRACTOR_MAX_SPEED_GUPS, TRACTOR_FALLBACK_MASS, TRACTOR_TOW_DRAG_FRACTION,
+    TRACTOR_DOCK_GENTLE_FRACTION, TRACTOR_STANDOFF_MARGIN_GU, TRACTOR_EPS,
+    TRACTOR_MAX_RANGE_GU,
     kCount
 };
 
@@ -398,6 +420,11 @@ struct Globals {
     double PULSE_DAMAGE_SCALE_0 = 0.0, PULSE_DAMAGE_SCALE_1 = 0.0,
            PULSE_DAMAGE_SCALE_2 = 0.0;
     int64_t K1_PULSE_MODULE_STALE = 0;
+    double TRACTOR_REFERENCE_MASS = 0.0, TRACTOR_REFERENCE_SPEED_GUPS = 0.0,
+           TRACTOR_MAX_SPEED_GUPS = 0.0, TRACTOR_FALLBACK_MASS = 0.0,
+           TRACTOR_TOW_DRAG_FRACTION = 0.0, TRACTOR_DOCK_GENTLE_FRACTION = 0.0,
+           TRACTOR_STANDOFF_MARGIN_GU = 0.0, TRACTOR_EPS = 0.0,
+           TRACTOR_MAX_RANGE_GU = 0.0;
 };
 
 struct ProfileRowSet {

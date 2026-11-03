@@ -82,7 +82,9 @@ def test_kinds_match_the_native_queue():
     """Python's kind numbers are the binding's, name for name."""
     native = _h.combat_effect_kinds()
     assert native == {name: getattr(eq, name) for name in eq.KIND_NAMES}
-    assert len(eq.KIND_NAMES) == 16          # 9 weapon + 7 damage kinds
+    # 9 weapon kinds, the 2 tractor events (fire control native only, R8),
+    # 7 damage kinds.
+    assert len(eq.KIND_NAMES) == 18
 
 
 # ── Order ────────────────────────────────────────────────────────────────────

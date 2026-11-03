@@ -101,13 +101,18 @@ TEST_F(EffectQueueTest, KindNamesCoverEveryKind) {
                  "WATCH");
 }
 
-// The damage kinds (native damage §4.3) follow SPAWN in effect_queue.py's
-// order: the binding hands Python these numbers.
+// The damage kinds (native damage §4.3) follow the weapon kinds -- SPAWN,
+// then the two tractor events (fire control native only, R8) -- in
+// effect_queue.py's order: the binding hands Python these numbers.
 TEST_F(EffectQueueTest, DamageKindsFollowTheWeaponKindsInOrder) {
     const char* names[] = {"COND_WATCH", "SUBSYS_EVENT", "REPAIR_ADD",
                            "ZERO_CROSS", "SPLASH", "HIT_PRESENT",
                            "WEAPON_HIT"};
-    const int first = static_cast<int>(EffectKind::SPAWN) + 1;
+    EXPECT_EQ(static_cast<int>(EffectKind::TRACTOR_STARTED),
+              static_cast<int>(EffectKind::SPAWN) + 1);
+    EXPECT_STREQ(dauntless::host::effect_kind_name(EffectKind::TRACTOR_STOPPED),
+                 "TRACTOR_STOPPED");
+    const int first = static_cast<int>(EffectKind::TRACTOR_STOPPED) + 1;
     ASSERT_EQ(static_cast<int>(EffectKind::kCount), first + 7);
     for (int i = 0; i < 7; ++i)
         EXPECT_STREQ(dauntless::host::effect_kind_name(

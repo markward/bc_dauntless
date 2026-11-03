@@ -65,6 +65,24 @@ one kind only a kernel appends (spec 2026-11-02-combat-launch-deferral
                               is a kernel WEAPON_FIRED's weapon and target
                               and an AMMO_CONSUMED's tube: a launch whose
                               writes applied never loses its events.
+And the tractor's two events (fire control native only, ruling R8; spec
+2026-11-03-fire-control-native-only §4.4):
+  TRACTOR_STARTED(system, ship)  ET_TRACTOR_BEAM_STARTED_FIRING
+  TRACTOR_STOPPED(system, ship)  ET_TRACTOR_BEAM_STOPPED_FIRING
+                              a tractor system's firing edge, source the
+                              system, destination its ship: K1's (its
+                              tractor walk, k1_fire_control.h) or Python's
+                              (TractorBeamSystem.StopFiring's
+                              _sync_firing_event). They are ALWAYS appended
+                              (``emit``), never acted on at once: outside the
+                              tick scope one waits for the next flush (a
+                              session's end delivers it, as any weapon kind)
+                              or boundary, and one a delivered handler
+                              produces is delivered later in the same flush,
+                              never nested inside the event that caused it.
+                              So a STARTED handler's StopFiring (E8M2's OD1)
+                              lands after the tick's tractor force (decision
+                              9).
 
 THE DAMAGE KINDS (spec 2026-11-02-native-damage-design.md M2, M5, §4.3;
 controller rulings R7-R9, I1-I4). What a condition write and a hit REPORT,
@@ -208,12 +226,12 @@ _q = (_h if _h is not None and hasattr(_h, "combat_effect_take")
 #: The kinds, in combat_effect_queue.h's order (combat_effect_kinds()).
 KIND_NAMES = ("FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED",
               "TORPEDO_FIRED", "AMMO_CONSUMED", "TORPEDO_RELOAD", "WATCH",
-              "SPAWN",
+              "SPAWN", "TRACTOR_STARTED", "TRACTOR_STOPPED",
               # The damage kinds (THE DAMAGE KINDS above).
               "COND_WATCH", "SUBSYS_EVENT", "REPAIR_ADD", "ZERO_CROSS",
               "SPLASH", "HIT_PRESENT", "WEAPON_HIT")
 (FIRE_SOUND, LOOP_STOP, WEAPON_FIRED, WEAPON_FIRE_FAILED, TORPEDO_FIRED,
- AMMO_CONSUMED, TORPEDO_RELOAD, WATCH, SPAWN,
+ AMMO_CONSUMED, TORPEDO_RELOAD, WATCH, SPAWN, TRACTOR_STARTED, TRACTOR_STOPPED,
  COND_WATCH, SUBSYS_EVENT, REPAIR_ADD, ZERO_CROSS, SPLASH, HIT_PRESENT,
  WEAPON_HIT) = range(len(KIND_NAMES))
 DAMAGE_KINDS = frozenset((COND_WATCH, SUBSYS_EVENT, REPAIR_ADD, ZERO_CROSS,
@@ -412,10 +430,11 @@ def boundary() -> None:
 
 
 def emit(kind: int, *operands) -> None:
-    """A damage kind's producer (see THE DAMAGE KINDS): append, in both
-    switch states, wherever it runs -- in the scope, outside it (held for
-    the next boundary) or during a delivery (delivered in the same flush).
-    The operands fit the kind's layout (OPERANDS), Python types exact."""
+    """A damage kind's producer (see THE DAMAGE KINDS), or a tractor
+    event's: append, in both switch states, wherever it runs -- in the
+    scope, outside it (held for the next flush) or during a delivery
+    (delivered in the same flush). A damage kind's operands fit its layout
+    (OPERANDS), Python types exact."""
     _q.combat_effect_post(kind, *operands)
 
 
@@ -666,6 +685,29 @@ def _spawn(launcher, kind, ship, kset, module, target, *record):
     spawn_launch(launcher, kind, ship, kset, module, target, record)
 
 
+def _tractor_event(event_type, system, ship):
+    """ET_TRACTOR_BEAM_*: no payload, source the system, destination the
+    ship (Bridge/PowerDisplay.py:1013 and Conditions/
+    ConditionFiringTractorBeam.py:26-27 filter on it; both re-read the live
+    state themselves)."""
+    import App
+    evt = App.TGEvent_Create()
+    evt.SetEventType(event_type)
+    evt.SetSource(system)
+    evt.SetDestination(ship)
+    App.g_kEventManager.AddEvent(evt)
+
+
+def _tractor_started(system, ship):
+    import App
+    _tractor_event(App.ET_TRACTOR_BEAM_STARTED_FIRING, system, ship)
+
+
+def _tractor_stopped(system, ship):
+    import App
+    _tractor_event(App.ET_TRACTOR_BEAM_STOPPED_FIRING, system, ship)
+
+
 def _cond_watch(subsystem, which, old, new):
     # The watcher the subsystem holds NOW, against its checks as registered
     # now (ruling E3, as a kernel's WATCH).
@@ -744,5 +786,5 @@ def _weapon_hit(ship, source, damage, hx, hy, hz, has_normal, nx, ny, nz,
 
 _DELIVER = (_fire_sound, _loop_stop, _weapon_fired, _weapon_fire_failed,
             _torpedo_fired, _ammo_consumed, _torpedo_reload, _watch, _spawn,
-            _cond_watch, _subsys_event, _repair_add, _zero_cross, _splash,
-            _hit_present, _weapon_hit)
+            _tractor_started, _tractor_stopped, _cond_watch, _subsys_event,
+            _repair_add, _zero_cross, _splash, _hit_present, _weapon_hit)

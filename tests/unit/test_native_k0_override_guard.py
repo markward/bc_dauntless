@@ -643,9 +643,10 @@ def test_object_cache_is_gated_to_verified_pythons(monkeypatch):
 
 def test_stop_names_are_guarded_only_on_the_leaves_k0_stands_in_for():
     """Review minor 1: K0 stands in for StopFiring only on a drained phaser
-    bank or pulse cannon (and a tube's, Weapon.StopFiring, is in the shared
-    encoding), and for _broadcast_reload only on a tube. A weapon SYSTEM or
-    a tractor overriding StopFiring is not a reason to hand anything back
+    bank or pulse cannon, and on a holding tractor beam its parent's power
+    loss stops (fire control native only, M4; a tube's, Weapon.StopFiring,
+    is in the shared encoding), and for _broadcast_reload only on a tube. A
+    weapon SYSTEM overriding StopFiring is not a reason to hand anything back
     (K0 never calls theirs)."""
     nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
 
@@ -653,11 +654,12 @@ def test_stop_names_are_guarded_only_on_the_leaves_k0_stands_in_for():
         return type("_Sub" + base.__name__, (base,),
                     {name: lambda self, *a: None})
 
-    for base in (ws.PhaserBank, ws.PulseWeapon, ws.TorpedoTube):
+    for base in (ws.PhaserBank, ws.PulseWeapon, ws.TorpedoTube,
+                 ws.TractorBeam):
         assert nc._k0_flag(sub(base, "StopFiring")) == 1, base
     assert nc._k0_flag(sub(ws.TorpedoTube, "_broadcast_reload")) == 1
     for base in (ws.PhaserSystem, ws.PulseWeaponSystem, ws.TractorBeamSystem,
-                 ws.TorpedoSystem, ws.TractorBeam):
+                 ws.TorpedoSystem):
         assert nc._k0_flag(sub(base, "StopFiring")) == 0, base
     for base in (ws.PhaserBank, ws.PulseWeapon, ws.TorpedoSystem):
         assert nc._k0_flag(sub(base, "_broadcast_reload")) == 0, base
