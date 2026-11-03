@@ -2,6 +2,9 @@
 
 > *Built 2026-11-02 (launch deferral, Task 1): §4.1's design, without a separate begin scan (the first `next()` scans before any compute). This map is the pre-build snapshot.*
 
+> **Superseded (2026-11-03, fire control native only):** the walk check is deleted. The instance-patch and ship-class guards, `set_walk_check`, `k1_scan` and `k1_session_check` went with fire control's Python copy (M3), and a K1 entry the mirror cannot read is a counted no-fire. See `docs/superpowers/specs/2026-11-03-fire-control-native-only-design.md` §6.
+
+
 
 Read-only map, 2026-11-02, worktree `native-combat-k3`, branch `ws/combat-launch-cache` (HEAD `c2b0534c1`).
 Abbreviations: **K1H** `native/src/combat/include/dauntless/combat/k1_fire_control.h`, **K1C** `native/src/combat/src/k1_fire_control.cc`, **HB** `native/src/host/host_bindings.cc`, **NC** `engine/appc/native_combat.py`, **RFM** `docs/reference/engine/native-combat/remaining-fallbacks-map.md`, **PR** `docs/reference/engine/perf-register.md`, **RM** `docs/superpowers/specs/2026-11-01-threaded-weapons-combat-roadmap.md`.

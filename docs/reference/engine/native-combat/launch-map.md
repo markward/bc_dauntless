@@ -2,6 +2,9 @@
 
 > *Built 2026-11-02 as the launch deferral (spec `2026-11-02-combat-launch-deferral-design.md` §10): launches go through `SPAWN` at the boundary; this map is the pre-build snapshot.*
 
+> **Superseded in part (2026-11-03, fire control native only):** the Python launch path (`_spawn_torpedo`, `_spawn_projectile`, `_launch_reads`, `_defer_spawn`), the launch-patch check and the launch-time bake (`_baked_offset`) are deleted. A launch the kernel cannot make is a counted no-fire, not a hand-back. A tube with no ammo type launches slot 0's script from the cache, and a stale cache is re-pushed at the next K1 entry. See `docs/superpowers/specs/2026-11-03-fire-control-native-only-design.md` §6.
+
+
 
 Worktree `native-combat-k3`, branch `ws/combat-launch-cache` at `c2b0534c1`. Read-only research, 2026-11-02.
 Abbreviations: **NC** `engine/appc/native_combat.py`, **WS** `engine/appc/weapon_subsystems.py`, **PR** `engine/appc/projectiles.py`, **EQ** `engine/appc/effect_queue.py`, **SS** `engine/appc/subsystems.py`, **EV** `engine/appc/events.py`, **SDK** `sdk/Build/scripts/`.

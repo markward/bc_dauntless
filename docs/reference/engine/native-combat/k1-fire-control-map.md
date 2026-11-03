@@ -1,3 +1,5 @@
+> **Superseded (2026-11-03, fire control native only):** the Python path this map traces is deleted. That covers `_pump_held_weapons`' Python loop, `update_weapons`, `try_fire_weapon`, the CanFire→Fire decision code and `TractorBeamSystem.update_weapons`. Fire control has one copy, in C++ (`native/src/combat/src/k1_fire_control.cc`). `CanFire`, `Fire` and `FireDumb` are thin native wrappers. See `docs/superpowers/specs/2026-11-03-fire-control-native-only-design.md` §6.
+
 > **Phase 1b implemented this map** (branch `perf/native-combat-1b`, kernel in `native/src/combat/`). The line numbers below are from the snapshot and have since moved; the kernel's comments cite the current lines.
 
 > Snapshot map written 2026-10-31 at commit 7c6ece598 for the native combat step (spec docs/superpowers/specs/2026-10-30-native-combat-step-design.md), input to the phase 1b (K1 fire control) plan. Line numbers drift; re-check them against the code before relying on one.
