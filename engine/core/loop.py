@@ -120,6 +120,9 @@ class GameLoop:
         # object, once a tick, so a write that bypassed a NativeField is
         # caught where it happened (engine/appc/native_combat.py).
         if native_combat.audit_enabled():
+            # After a drain: an off-main push queued since the last one is
+            # not a bypass, and would read as Python != mirror.
+            native_combat.drain()
             native_combat.audit_mirror()
 
         # The tick boundary when no host drives this loop: the held damage
@@ -130,7 +133,7 @@ class GameLoop:
             effect_queue.boundary()
             # The mirror's pending frees and off-main pushes (spec
             # 2026-11-03 ruling R2): host_loop's tick boundary otherwise.
-            native_combat.drain()
+            native_combat.drain(boundary=True)
 
     def advance(self, n: int) -> None:
         for _ in range(n):

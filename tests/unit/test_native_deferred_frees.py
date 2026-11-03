@@ -465,3 +465,144 @@ def test_a_mission_change_drains():
         assert nc.pending_frees() == []
     finally:
         _forget_world()
+
+
+# ── Final review: a raising push, the audit, a pending probe, stalls ────────
+
+def test_a_queued_push_that_raises_is_logged_once_and_the_drain_carries_on(
+        capsys):
+    """M2: before the queue, an off-main push that raised did so inside a
+    __del__, where Python reports it and carries on. A drain does the same:
+    the push is logged (once per site), the rest is applied."""
+    nc.configure(ON)
+    obj = _object()
+    h = obj.__dict__["_nslot"]
+
+    def boom(o, arg):
+        raise RuntimeError("boom %d" % arg)
+    nc._queue_push(obj, boom, 1, "boom")
+    _in_thread(lambda: setattr(obj, "_radius", 3.5))
+    nc._queue_push(obj, boom, 2, "boom")
+    nc.drain()
+    assert _h.combat_dump(h)["_radius"] == 3.5
+    assert nc.pending_pushes() == []
+    err = capsys.readouterr().err
+    assert err.count("[native-combat]") == 1, err
+    assert "boom" in err and "RuntimeError" in err
+    nc._queue_push(obj, boom, 3, "boom")             # the same site again
+    nc.drain()
+    assert "[native-combat]" not in capsys.readouterr().err
+
+
+def test_the_audit_runs_after_the_drain():
+    """M3: DAUNTLESS_NATIVE_AUDIT audits the mirror once a GameLoop tick. An
+    off-main push queued since the last drain is not a mirror bypass: the
+    audit drains first, so it does not read as Python != mirror."""
+    from engine.core.loop import GameLoop
+    loop = GameLoop(owns_boundary=False)    # a host's: its boundary is later
+    nc.configure({"DAUNTLESS_NATIVE_AUDIT": "1"})   # (GameLoop configures)
+    assert nc.audit_enabled()
+    obj = _object()
+    _in_thread(lambda: setattr(obj, "_radius", 3.5))
+    loop.tick()
+    assert ("ObjectClass", "_radius") not in nc.audit_failures(), \
+        nc.audit_failures()
+
+
+def test_an_unregistered_object_id_is_not_found_by_the_mirror():
+    """M5: Python's probe walk (SensorSubsystem.probes) skips an id that no
+    longer resolves (ids.unregister); native can_detect's _live_probes finds
+    its probes by obj_id in the mirror, where a collected object's row waits
+    for the drain. So the row stops being findable at the unregister, and is
+    findable again at ids.register: the two walks agree."""
+    from engine.core import ids
+    nc.configure(ON)
+    obj = _object()
+    h, oid = obj.__dict__["_nslot"], obj.GetObjID()
+    assert _h.combat_find_by_obj_id(oid) == h
+    ids.unregister(oid)
+    assert ids.get_object_by_id(oid) is None
+    assert _h.combat_find_by_obj_id(oid) == -1
+    assert _live(h)
+    ids.register(obj)
+    assert _h.combat_find_by_obj_id(oid) == h
+    # Off the main thread: queued like a push, applied at the drain.
+    _in_thread(lambda: ids.unregister(oid))
+    assert _h.combat_find_by_obj_id(oid) == h
+    nc.drain()
+    assert _h.combat_find_by_obj_id(oid) == -1
+    del obj
+    gc.collect()
+    nc.drain()
+    assert not _live(h)
+
+
+def test_a_long_pending_free_list_is_logged_once(monkeypatch, capsys):
+    """M9: nothing drains while no tick runs (a menu, a pre-boot screen):
+    the frees pile up. Past the bound, one line on stderr."""
+    monkeypatch.setattr(nc, "PENDING_FREES_WARN", 3)
+    for _ in range(3):
+        nc.defer_free()
+    assert "[native-combat]" not in capsys.readouterr().err
+    for _ in range(5):
+        nc.defer_free()
+    err = capsys.readouterr().err
+    assert err.count("[native-combat]") == 1, err
+    assert "pending" in err
+    nc.drain()
+    assert nc.pending_frees() == []
+
+
+def test_a_drain_skipped_at_the_tick_boundary_by_an_open_session_is_logged(
+        capsys):
+    """M9: a K1 session leaked open (K1 nests, so the next begin does not
+    throw) stops every drain. At a tick boundary no session should be open:
+    a drain skipped there says so, once."""
+    from engine import host_loop
+    nc.configure(ON)
+    obj = _object()
+    h = obj.__dict__["_nslot"]
+    t, use_memo, drift = nc._k1_clocks()
+    _h.combat_k1_begin_pump([], 1.0 / 60.0, t, use_memo, drift)
+    try:
+        _forget(obj)
+        del obj
+        gc.collect()
+        host_loop._combat_tick_boundary()
+        host_loop._combat_tick_boundary()
+        assert _live(h)
+        err = capsys.readouterr().err
+        assert err.count("[native-combat]") == 1, err
+        assert "session" in err
+        nc.drain()                          # mid-tick: an open session is
+        assert "[native-combat]" not in capsys.readouterr().err   # normal
+    finally:
+        _h.combat_k1_abandon()
+    host_loop._combat_tick_boundary()
+    assert not _live(h)
+
+
+def test_a_paused_frame_drains():
+    """M9: a paused frame runs no tick, so no tick boundary drains. run()'s
+    paused-frame branch (`if pause.sim_frozen:`) drains instead.
+    STRUCTURAL, like tests/unit/test_spv_anchor_pose.py's: run() has no seam
+    to execute one frame from a test."""
+    import ast
+    import inspect
+    from engine import host_loop
+    tree = ast.parse(inspect.getsource(host_loop.run))
+    found = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.If)
+                and isinstance(node.test, ast.Attribute)
+                and node.test.attr == "sim_frozen"):
+            continue
+        for stmt in node.body:
+            for inner in ast.walk(stmt):
+                if (isinstance(inner, ast.Call)
+                        and isinstance(inner.func, ast.Attribute)
+                        and inner.func.attr == "drain"
+                        and isinstance(inner.func.value, ast.Name)
+                        and inner.func.value.id == "_native_combat"):
+                    found.append(inner)
+    assert len(found) == 1, found

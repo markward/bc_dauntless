@@ -437,6 +437,11 @@ public:
 
     // The live Object handle for a Python object id, or -1.
     int64_t find_by_obj_id(int64_t obj_id) const;
+    // Whether find_by_obj_id finds Object row `handle` by its obj_id: off
+    // while its Python id is unregistered (ids.unregister; the row may wait
+    // for a deferred free), on again at ids.register. Throws
+    // std::invalid_argument for a stale or non-Object handle.
+    void set_obj_id_findable(int64_t handle, bool findable);
 
     bool valid(int64_t handle) const;  // live and of any kind
     static Kind kind_of(int64_t handle);

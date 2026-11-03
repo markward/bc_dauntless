@@ -708,6 +708,20 @@ int64_t Mirror::find_by_obj_id(int64_t obj_id) const {
     return find(objects_, it->second, Kind::Object) ? it->second : -1;
 }
 
+void Mirror::set_obj_id_findable(int64_t h, bool findable) {
+    if (kind_of(h) != Kind::Object)
+        throw std::invalid_argument("combat mirror: not an Object row");
+    const ObjectRow& r = checked(objects_, h, Kind::Object);
+    if (r.obj_id < 0) return;
+    if (findable) {
+        by_obj_id_[r.obj_id] = h;
+    } else {
+        auto it = by_obj_id_.find(r.obj_id);
+        if (it != by_obj_id_.end() && it->second == h) by_obj_id_.erase(it);
+    }
+    ++epoch_;
+}
+
 void Mirror::set_f(int64_t h, Field f, double v) {
     if (info(f).type != FieldType::F) bad("not a double field", f);
     visit(h, info(f).kind, [&](auto& row) {

@@ -12588,6 +12588,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_find_by_obj_id",
               [](std::int64_t id) { return cb::mirror().find_by_obj_id(id); },
               "The live Object handle for a Python object id, or -1.");
+        m.def("combat_set_obj_id_findable",
+              [](std::int64_t h, bool findable) {
+                  cb::mirror().set_obj_id_findable(h, findable);
+              },
+              "Whether combat_find_by_obj_id finds Object row h: off while "
+              "its Python id is unregistered (engine.core.ids), on again at "
+              "ids.register. ValueError for a stale or non-Object handle.");
         m.def("combat_kinds", [] {
             // Row kind name -> the int combat_register takes.
             static constexpr const char* kNames[] = {

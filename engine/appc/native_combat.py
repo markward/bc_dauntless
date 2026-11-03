@@ -42,6 +42,7 @@ import os
 import random
 import sys
 import threading
+import traceback
 import weakref
 from typing import Mapping
 
@@ -51,6 +52,7 @@ from engine.appc.math import TGPoint3
 from engine.appc.passive_power import FrozenField, ThawParentWakeField
 from engine.appc.passive_state import WakeField
 from engine.core import frame_profiler as _prof
+from engine.core import ids as _ids
 from engine.core.ids import implements
 
 try:
@@ -188,6 +190,7 @@ def reset() -> None:
     _audit = False
     _failures.clear()
     _profiles.clear()
+    _logged_once.clear()
     # The part-map generation is NOT reset: it is monotonic for the process,
     # so a slot stamped before the reset can never read fresh again.
     _forget_part_caches()
@@ -1507,9 +1510,20 @@ def forget_rows() -> None:
 # drain() applies them, frees first, each in recorded order. Drain points:
 # the start of each kernel session (no-op while one is open: a nested
 # session's start never frees under its parent), host_loop's tick boundary,
-# the GameLoop's own end-of-tick, both mission swaps and reset().
-# forget_rows() (after a test's combat_clear rebuilt the mirror) applies no
-# pending row free or push, only the transform-slot frees.
+# the GameLoop's own end-of-tick, a paused frame (host_loop.run), the
+# per-tick mirror audit (DAUNTLESS_NATIVE_AUDIT, GameLoop.tick), both
+# mission swaps and reset(). forget_rows() (after a test's combat_clear
+# rebuilt the mirror) applies no pending row free or push, only the
+# transform-slot frees.
+#
+# A queued push that raises at the drain is logged (once per site) and the
+# drain carries on, as the push did inside the __del__ that made it (Python
+# reports an exception there and carries on; roadmap decision 13's rule for
+# a queued flush). Two stalls are logged once each: more than
+# PENDING_FREES_WARN frees pending (no tick ran to drain them: a menu, a
+# pre-boot screen), and a drain at a tick boundary skipped because a kernel
+# session is still open there (a leaked session: K1 nests, so the next begin
+# does not throw).
 #
 # Both lists are deques: append and popleft are atomic under the GIL on any
 # thread, and the Python a drain runs may record more.
@@ -1520,6 +1534,18 @@ _MAIN_IDENT = threading.main_thread().ident
 _pending_frees: collections.deque = collections.deque()
 # (weakref to the object, re-push function, its argument, label)
 _pending_pushes: collections.deque = collections.deque()
+# More pending frees than this is logged once (a stalled drain).
+PENDING_FREES_WARN = 10_000
+# The keys _log_once has logged (reset() forgets them).
+_logged_once: set = set()
+
+
+def _log_once(key, message: str) -> None:
+    """One stderr line per `key`, the first time."""
+    if key in _logged_once:
+        return
+    _logged_once.add(key)
+    sys.stderr.write("[native-combat] %s\n" % message)
 
 
 def _off_main() -> bool:
@@ -1530,6 +1556,14 @@ def defer_free(h=None, store=None, xform=None) -> None:
     """Record a free: row `h` and/or transform slot `xform` of `store`.
     Never raises (a finalizer body)."""
     _pending_frees.append((h, None if xform is None else (store, xform)))
+    if len(_pending_frees) > PENDING_FREES_WARN:
+        try:
+            _log_once("pending_frees",
+                      "%d mirror frees pending, more than %d: nothing has "
+                      "drained them (no tick ran?)"
+                      % (len(_pending_frees), PENDING_FREES_WARN))
+        except Exception:
+            pass
 
 
 def _queue_push(obj, fn, arg, label) -> None:
@@ -1572,22 +1606,41 @@ def _apply_free(h, slot) -> None:
             pass        # a combat_clear may have freed it
 
 
-def drain() -> None:
+def drain(boundary: bool = False) -> None:
     """Apply every pending free, then every queued push, in recorded order,
     on the main thread with the GIL held. Nothing while a kernel session is
     open, and nothing when called off the main thread. What a push's own
-    Python records (a collection it triggers) waits for the next drain."""
-    if not (_pending_frees or _pending_pushes) or _off_main() \
-            or _session_open():
+    Python records (a collection it triggers) waits for the next drain. A
+    push that raises is logged once per site; the rest still apply.
+    `boundary`: a tick boundary, where no session should be open, so a
+    skipped drain there is logged once."""
+    if not (_pending_frees or _pending_pushes) or _off_main():
+        return
+    if _session_open():
+        if boundary:
+            _log_once("boundary_session",
+                      "a drain at the tick boundary was skipped: a kernel "
+                      "session is still open (K0 %d, K1 depth %d, K2 %d, "
+                      "K3 %d); frees and queued pushes wait until it closes"
+                      % (_h.combat_k0_open(), _h.combat_k1_depth(),
+                         _h.combat_k2_open(), _h.combat_k3_open()))
         return
     frees, pushes = _pending_frees, _pending_pushes
     while frees:
         _apply_free(*frees.popleft())
     for _ in range(len(pushes)):
-        ref, fn, arg, _label = pushes.popleft()
+        ref, fn, arg, label = pushes.popleft()
         obj = ref()
         if obj is not None:
-            fn(obj, arg)
+            try:
+                fn(obj, arg)
+            except Exception as e:
+                site = (getattr(fn, "__qualname__", repr(fn)), label)
+                if site not in _logged_once:
+                    _log_once(site, "a queued push (%s, %s) raised at the "
+                              "drain: %r; the drain carries on"
+                              % (site[0], label, e))
+                    traceback.print_exception(e, file=sys.stderr)
 
 
 def _discard_pending_rows() -> None:
@@ -1616,6 +1669,36 @@ def unregister_handle(h: int) -> None:
     """Finalizer body: records the free (drain() applies it). Never
     raises."""
     defer_free(h)
+
+
+def _obj_id_findable(obj, _findable) -> None:
+    """engine.core.ids' hook: `obj` left (or rejoined) the id registry.
+    Python's probe walk (SensorSubsystem.probes) skips an id that does not
+    resolve; native can_detect's finds its probes by obj_id in the mirror,
+    where a collected object's row waits for the drain. So the row's obj_id
+    lookup follows the registry. Queued off the main thread, like a push."""
+    h = obj.__dict__.get("_nslot")
+    if h is None or not available() or (h >> _KIND_SHIFT) != _kind("Object"):
+        return
+    if _off_main():
+        _queue_push(obj, _push_obj_id_findable, None, "obj_id_findable")
+        return
+    _push_obj_id_findable(obj, None)
+
+
+def _push_obj_id_findable(obj, _arg) -> None:
+    """Whether `obj`'s id resolves to it now, pushed to its row."""
+    h = obj.__dict__.get("_nslot")
+    if h is None:
+        return
+    try:
+        _h.combat_set_obj_id_findable(
+            h, _ids.get_object_by_id(obj.GetObjID()) is obj)
+    except ValueError:
+        pass        # a combat_clear freed the row
+
+
+_ids._findable_hook = _obj_id_findable
 
 
 #: Subsystem.weapon_kind by class, in isinstance order (a bank is not a

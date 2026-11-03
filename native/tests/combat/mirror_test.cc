@@ -119,6 +119,31 @@ TEST(Mirror, ClearInvalidatesAll) {
     EXPECT_FALSE(f.m.valid(o));
 }
 
+// ids.unregister(obj_id) / ids.register(obj) (final review M5): an Object
+// row whose Python id stops resolving is not found by its obj_id either,
+// while the row itself (pending a deferred free) stays valid.
+TEST(Mirror, AnObjectRowCanStopAndResumeBeingFoundByItsObjId) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object, -1, -1, 42);
+    const uint64_t e0 = f.m.epoch();
+    f.m.set_obj_id_findable(o, false);
+    EXPECT_EQ(f.m.find_by_obj_id(42), -1);
+    EXPECT_TRUE(f.m.valid(o));
+    EXPECT_GT(f.m.epoch(), e0);
+    f.m.set_obj_id_findable(o, false);              // idempotent
+    EXPECT_EQ(f.m.find_by_obj_id(42), -1);
+    f.m.set_obj_id_findable(o, true);
+    EXPECT_EQ(f.m.find_by_obj_id(42), o);
+    // Unfindable, then freed: nothing to erase, nothing found.
+    f.m.set_obj_id_findable(o, false);
+    f.m.unregister_row(o);
+    EXPECT_EQ(f.m.find_by_obj_id(42), -1);
+    EXPECT_THROW(f.m.set_obj_id_findable(o, true), std::invalid_argument);
+    // Only Object rows have an obj_id.
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    EXPECT_THROW(f.m.set_obj_id_findable(s, false), std::invalid_argument);
+}
+
 TEST(Mirror, EpochRisesOnEverySetterAndClear) {
     Fixture f;
     int64_t o = f.m.register_row(Kind::Object);

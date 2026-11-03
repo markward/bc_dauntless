@@ -993,7 +993,7 @@ def _combat_tick_boundary():
     else:
         with frame_profiler.scope("sim.effects"):
             _effect_queue.boundary()
-    _native_combat.drain()
+    _native_combat.drain(boundary=True)
 
 
 # Beam damage per second is MaxDamage × this, by the phaser system's power
@@ -12390,6 +12390,10 @@ def run(mission_name: Optional[str] = None,
                 perf_monitor_panel.tick(_wall_dt)
             if pause.sim_frozen:
                 _frame_dt = 0.0
+                # No tick runs, so no tick boundary drains: the mirror's
+                # pending frees and off-main pushes are applied here (no
+                # kernel session is open between frames).
+                _native_combat.drain()
             _accumulator, _sim_ticks_this_frame = step_accumulator(
                 _accumulator, _frame_dt, TICK_DT, MAX_FRAME_DT
             )
