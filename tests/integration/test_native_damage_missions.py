@@ -15,11 +15,17 @@ through the real SDK mission script headlessly:
 A headless GameLoop tick is the boundary the death check runs at
 (engine/appc/death_check.py), and where a write's events reach their
 handlers (native damage M2).
+
+Every beat runs with the native-combat switch off (the Python reference)
+and on (the native hit and condition chain), final review M-3.
 """
+import sys
+
 import App
 import pytest
 
 from engine.appc import combat
+from engine.appc import native_combat as nc
 from engine.appc.math import TGPoint3
 from tests.helpers import headless_mission
 
@@ -28,6 +34,36 @@ E3M5 = "Maelstrom.Episode3.E3M5.E3M5"
 E7M1 = "Maelstrom.Episode7.E7M1.E7M1"
 E7M2 = "Maelstrom.Episode7.E7M2.E7M2"
 E8M2 = "Maelstrom.Episode8.E8M2.E8M2"
+
+
+@pytest.fixture(autouse=True, params=("off", "on"))
+def switch(request, monkeypatch):
+    """The native-combat switch, off and on. Each headless GameLoop re-reads
+    it (engine/core/loop.py); _load turns it on before the mission's first
+    script write. On, the native chain must have done some of the work."""
+    on = request.param == "on"
+    if on and not nc.available():
+        pytest.skip("native combat bindings not built")
+    monkeypatch.setenv("DAUNTLESS_NATIVE_COMBAT", "1" if on else "0")
+    monkeypatch.delenv("DAUNTLESS_NATIVE_AUDIT", raising=False)
+    nc.reset()
+    yield request.param
+    if on:
+        assert nc.enabled()
+        counts = nc.damage_counts()
+        assert (counts["hits"] + counts["conditions"]
+                + counts["damage_systems"]) > 0, counts
+    nc.reset()
+
+
+def _load(name):
+    """headless_mission.load on a fresh import of the mission module: its
+    globals (E7M1's bStarbaseCollision) would otherwise carry one arm's
+    beat into the other's."""
+    sys.modules.pop(name, None)
+    loaded = headless_mission.load(name)
+    nc.configure()
+    return loaded
 
 
 def _ship(set_name, name):
@@ -48,7 +84,7 @@ def _alive(ship):
 # ── E7M1 / E7M2: a scripted hull 0 kills ──────────────────────────────────────
 
 def test_e7m2_destroy_ship_kills_by_a_scripted_hull_zero():
-    mission, episode, game, mod = headless_mission.load(E7M2)
+    mission, episode, game, mod = _load(E7M2)
     station = _ship("Albirea3", "Lyra Station")
     assert station is not None and _alive(station)
     mod.DestroyShip(None, station)
@@ -59,7 +95,7 @@ def test_e7m2_destroy_ship_kills_by_a_scripted_hull_zero():
 
 def test_e7m1_starbase_collision_kills_the_freighter():
     from engine.appc import collisions
-    mission, episode, game, mod = headless_mission.load(E7M1)
+    mission, episode, game, mod = _load(E7M1)
     mod.CreateKamikazeFreighters(None)
     starbase = _ship("Starbase12", "Starbase 12")
     freighter = _ship("Starbase12", "Freighter1")
@@ -85,7 +121,7 @@ def test_e7m1_starbase_collision_kills_the_freighter():
 # ── E3M5: the derelict survives its creation at hull 0 ───────────────────────
 
 def test_e3m5_gondev_survives_creation_at_hull_zero():
-    mission, episode, game, mod = headless_mission.load(E3M5)
+    mission, episode, game, mod = _load(E3M5)
     headless_mission.tick(2.0)
     gondev = _ship("Belaruz4", "Derelict Bird of Prey")
     assert gondev is not None
@@ -101,7 +137,7 @@ def test_e3m5_gondev_survives_creation_at_hull_zero():
 # ── E8M2: Matan takes damage, is held above disabled, never dies ─────────────
 
 def test_e8m2_matan_takes_damage_and_never_dies():
-    mission, episode, game, mod = headless_mission.load(E8M2)
+    mission, episode, game, mod = _load(E8M2)
     mod.MatanCometh(None)
     matan = _ship("OmegaDraconis3", "Matan's Keldon")
     assert matan is not None and matan.IsInvincible()
@@ -119,7 +155,7 @@ def test_e8m2_matan_disable_handler_holds_his_systems_above_disabled():
     """Before the disable beat (bCanDisableMatan FALSE) MatanDisableHandler
     answers ET_SUBSYSTEM_DISABLED with SetConditionPercentage(disabled +
     0.1): a no-op stub before bug 2, so his systems stayed disabled."""
-    mission, episode, game, mod = headless_mission.load(E8M2)
+    mission, episode, game, mod = _load(E8M2)
     mod.MatanCometh(None)
     matan = _ship("OmegaDraconis3", "Matan's Keldon")
     assert not mod.bCanDisableMatan
@@ -150,7 +186,7 @@ def test_e3m1_the_drill_knocks_out_an_invincible_geronimo(monkeypatch):
     """The Geronimo is invincible from creation; its drill AI (the mission's
     GeronimoAttackAI) ends the fight when its hull drops below 25%. Under the
     old "invincible = immune" meaning no hit ever landed."""
-    mission, episode, game, mod = headless_mission.load(E3M1)
+    mission, episode, game, mod = _load(E3M1)
     import Maelstrom.Episode3.E3M1.GeronimoAttackAI as geronimo_ai
     knocked = []
     monkeypatch.setattr(mod, "BOPCutscene",
@@ -168,7 +204,7 @@ def test_e3m1_the_drill_knocks_out_an_invincible_geronimo(monkeypatch):
 
 
 def test_e3m1_a_knocked_out_ship_is_repaired_and_nobody_dies():
-    mission, episode, game, mod = headless_mission.load(E3M1)
+    mission, episode, game, mod = _load(E3M1)
     geronimo = _ship("Starbase12", "USS Geronimo")
     _move_to(geronimo, "Savoy1")                       # where the drill is
     hull = geronimo.GetHull()
@@ -187,7 +223,7 @@ def test_e3m1_a_collision_damages_the_invincible_player():
     PlayerCollisionHandler. A crash still damages the player (the original
     complaint, campaign bug 3), and the player does not die of it."""
     from engine.appc import collisions
-    mission, episode, game, mod = headless_mission.load(E3M1)
+    mission, episode, game, mod = _load(E3M1)
     mod.StartSimulation(None)
     player = App.Game_GetCurrentPlayer()
     assert player.IsInvincible()
