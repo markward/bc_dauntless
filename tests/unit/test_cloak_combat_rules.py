@@ -254,6 +254,18 @@ def test_no_event_when_neither_party_cloaked():
     assert _COLLISION_SINK == []
 
 
+def test_collision_with_planet_does_not_fire_cloaked_event():
+    """Planets have no cloak; TGObject stubs must not fake one (#6)."""
+    import engine.appc.collisions as collisions
+    from engine.appc.planet import Planet
+
+    _COLLISION_SINK.clear()
+    ship = ShipClass_Create("Galaxy")
+    planet = Planet(150.0, "planet.nif")
+    collisions._emit_cloaked_collision(ship, planet)
+    assert _COLLISION_SINK == []
+
+
 # Module-level event sink for the broadcast handler.
 _COLLISION_SINK: list = []
 

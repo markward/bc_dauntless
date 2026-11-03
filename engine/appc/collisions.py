@@ -1014,11 +1014,13 @@ def _emit_cloaked_collision(obj_a, obj_b) -> None:
         # this loop's signature. Those two rows were dated markedResolvedOn
         # 2026-08-09 on the strength of the sensor_detection fix; that
         # attribution was WRONG and the dates have been reverted.
-        getter = getattr(cloaked, "GetCloakingSubsystem", None)
+        # Resolve on the class, not the instance — TGObject.__getattr__ vends a
+        # truthy _Stub for missing methods, which made planets look cloaked (#6).
+        getter = getattr(type(cloaked), "GetCloakingSubsystem", None)
         if getter is None:
             continue
         try:
-            cloak = getter()
+            cloak = getter(cloaked)
         except Exception:
             continue
         if cloak is None or not cloak.IsTryingToCloak():
