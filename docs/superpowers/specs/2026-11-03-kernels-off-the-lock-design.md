@@ -70,12 +70,16 @@ D's late fixes were merged in at `b2e8bd703`: a K2 regression for patched damage
   - Mirror pushes from a non-main thread are queued; main-thread pushes keep their direct path.
   - Deviation: a main-thread `_drop` still frees at once. It runs between records under the GIL, and the mid-walk "row gone" tests depend on it.
   - The stress test runs a Python thread that churns cyclic garbage, finalizers and an idempotent `__del__` push while the 64-ship fight computes. Per-tick state matches by `.hex()`, and pushes match by label and order. Removing the off-main queue, or the free deferral, makes it fail.
-- **Measured** (SIG-177): kernel compute is ≈ 0.59 ms per tick of ≈ 1.70 in the combat rows (K0 14%, K1 26%, K2 63%, K3 small). The release changes no combat row beyond spread; `sim` 9.138 → 9.311, with `sim.effects` and `gl.ai` varying run to run.
+- **Measured** (SIG-177): kernel compute is ≈ 0.59 ms per tick of ≈ 1.61 in the five combat rows. As a share of each kernel's own parent row: K0 14%, K1 26%, K2 63%, K3 14%. Of the 0.59 ms itself, K2 is about 62% and K0 about 6%. The release changes no combat row beyond spread; `sim` 9.138 → 9.311, with `sim.effects` and `gl.ai` varying run to run. **Qualifier:** this was a checkout build, where no second Python thread exists, so the release is inert there. In a packaged build the log follower, or a CPU-bound mod thread, can take the GIL at each of about 5 releases a tick, and each re-acquire can then wait up to a switch interval (5 ms). That case is not measured.
 - **Ruling, per-core split** (spec §3): not built and not recommended yet. It is bounded by the 0.59 ms of compute, most of it K2, which under native damage writes its targets in order. The larger remaining cost is the binding and Python around the kernels (≈ 1.1 ms).
-- **Known limits for J:**
-  - Off the main thread, these push paths are not queued: `push_mount_order`, `push_posed_parts`, `push_arriving`, `HullBoxField.__delete__`, `push_ids`/`push_field`, `push_set_members`, `register`, the torpedo table, the globals.
-  - Other combat bindings called off the main thread are unguarded, `combat_can_detect` included.
-  - Transform-store and `g_world` writes from another thread are unguarded.
-  
-  No SDK `__del__` reaches any of these today. A combat thread beside Python (J) needs them, through its snapshot and outbox.
+- **Known limits for J** (final review M1; none is reachable from an SDK `__del__` today, and a combat thread beside Python needs all of them through its snapshot and outbox):
+  - **Push paths not queued off the main thread:**
+    - `push_mount_order`, `push_posed_parts`, `push_arriving`;
+    - `HullBoxField.__delete__`, `push_ids` / `push_field`, `push_set_members`, `register`;
+    - the torpedo table, `push_globals`, `push_property`, `push_pulse_params`;
+    - `push_set_frame` / `_profile_handle`, `_push_ammo_row`, the part-slot and pose pushes, `_set_condition_py`.
+  - **Other combat bindings** called off the main thread are unguarded, `combat_can_detect` included, which writes sensor state.
+  - **Transform-store and `g_world` writes** from another thread are unguarded.
+  - **The trace hook writes during compute:** it lazily builds `Model::trace_accel`. That is safe while only the main thread renders and loads models, not once J moves render work.
+- **R3 holds with one property J must keep** (final review M4). A push queued off the main thread during a session is invisible to the kernel until the session ends, because the drain skips while a session is open. Today that is safe only because the reachable fields (`_watch_checks`, the condition-watch counts) are conservative when stale-high: they hand the work back to Python.
 - **Found:** `test_shuttle_service.py::test_neighbouring_docks_keep_their_shuttles_apart` failed once in a combined native run and passed alone and on rerun (see the final review).
