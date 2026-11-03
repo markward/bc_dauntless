@@ -29,6 +29,21 @@ void TransformStore::within_radius(const std::uint32_t* handles, std::size_t n,
     }
 }
 
+void TransformStore::near_indices(const std::uint32_t* handles, std::size_t n,
+                                  const double point[3], double r2,
+                                  std::vector<std::uint32_t>& out) const {
+    for (std::size_t k = 0; k < n; ++k) {
+        const std::uint32_t index = handles[2 * k];
+        check(index, handles[2 * k + 1]);
+        const Transform& t = slots_[index];
+        const double dx = t.pos[0] - point[0];
+        const double dy = t.pos[1] - point[1];
+        const double dz = t.pos[2] - point[2];
+        if (dx * dx + dy * dy + dz * dz <= r2)
+            out.push_back(static_cast<std::uint32_t>(k));
+    }
+}
+
 void TransformStore::proximity_report(const std::uint32_t* anchors,
                                       const std::uint32_t* objects,
                                       const double* r2,

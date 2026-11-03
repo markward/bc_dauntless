@@ -11851,6 +11851,27 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("handles"), py::arg("x"), py::arg("y"), py::arg("z"),
           py::arg("r2"));
 
+    // Hit positions (ascending) of the packed (index, generation) handles
+    // within or on the sphere. Holds the GIL, as transform_within_radius does
+    // (controller ruling R3: a ~65-handle loop is cheaper than a release).
+    m.def("transform_near_indices",
+          [](py::buffer handles, double x, double y, double z, double r2) {
+              const py::buffer_info info = handles.request();
+              if (info.itemsize != sizeof(std::uint32_t) || info.ndim != 1 ||
+                  info.shape[0] % 2 != 0)
+                  throw py::value_error("handles: flat uint32 (index, generation) pairs");
+              const std::size_t n = static_cast<std::size_t>(info.shape[0]) / 2;
+              std::vector<std::uint32_t> hits;
+              const double p[3] = {x, y, z};
+              dauntless::transform_store().near_indices(
+                  static_cast<const std::uint32_t*>(info.ptr), n, p, r2, hits);
+              py::list out;
+              for (std::uint32_t k : hits) out.append(k);
+              return out;
+          },
+          py::arg("handles"), py::arg("x"), py::arg("y"), py::arg("z"),
+          py::arg("r2"));
+
     // Backs engine/appc/proximity_table.py: the per-tick ProximityCheck pass
     // keeps its pairs packed between ticks and asks once which few need
     // Python. Returns a list because it is nearly always empty.

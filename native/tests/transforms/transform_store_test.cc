@@ -274,6 +274,56 @@ TEST(TransformStoreTest, WithinRadiusMatchesTheUnfusedDoubleCompare) {
     }
 }
 
+TEST(TransformStoreTest, NearIndicesMatchesWithinRadius) {
+    TransformStore s;
+    std::vector<std::uint32_t> flat;
+    std::uint64_t seed = 99;
+    for (int n = 0; n < 300; ++n) {
+        auto h = s.alloc();
+        double c[3];
+        for (double& v : c) {
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            v = static_cast<double>(seed >> 11) / 9007199254740992.0 * 200.0 - 100.0;
+        }
+        s.set_position(h.first, h.second, c[0], c[1], c[2]);
+        flat.push_back(h.first);
+        flat.push_back(h.second);
+    }
+    const double p[3] = {0.1, -0.7, 0.3};
+    for (double r2 : {0.0, 100.0, 2500.0, 9000.0, 1e9}) {
+        std::vector<std::uint8_t> flags(300);
+        s.within_radius(flat.data(), 300, p, r2, flags.data());
+        std::vector<std::uint32_t> want;
+        for (std::uint32_t k = 0; k < 300; ++k)
+            if (flags[k]) want.push_back(k);
+        std::vector<std::uint32_t> got;
+        s.near_indices(flat.data(), 300, p, r2, got);
+        EXPECT_EQ(got, want) << r2;
+    }
+}
+
+TEST(TransformStoreTest, NearIndicesBoundaryInclusive) {
+    TransformStore s;
+    std::vector<std::uint32_t> flat;
+    const double xs[] = {3.0, 3.0000000001, 2.9999999999, -3.0};
+    for (double x : xs) {
+        auto h = s.alloc();
+        s.set_position(h.first, h.second, x, 0.0, 0.0);
+        flat.push_back(h.first);
+        flat.push_back(h.second);
+    }
+    const double p[3] = {0.0, 0.0, 0.0};
+    std::vector<std::uint32_t> got;
+    s.near_indices(flat.data(), 4, p, 9.0, got);
+    EXPECT_EQ(got, (std::vector<std::uint32_t>{0, 2, 3}));
+    EXPECT_ANY_THROW(([&] {
+        auto h = s.alloc();
+        s.free(h.first, h.second);
+        std::uint32_t bad[2] = {h.first, h.second};
+        s.near_indices(bad, 1, p, 1.0, got);
+    }()));
+}
+
 TEST(TransformStoreTest, WithinRadiusRejectsAStaleHandle) {
     TransformStore s;
     auto h = s.alloc();

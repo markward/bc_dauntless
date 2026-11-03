@@ -78,6 +78,13 @@ public:
                        const double point[3], double r2,
                        std::uint8_t* out) const;
 
+    // The positions k (ascending) of the handles within or on the sphere --
+    // the within_radius compare, in the same translation unit -- appended to
+    // `out`. Throws on a stale handle. Backs the AI's nearby-object query.
+    void near_indices(const std::uint32_t* handles, std::size_t n,
+                      const double point[3], double r2,
+                      std::vector<std::uint32_t>& out) const;
+
     // The proximity pairs Python must look at, appended to `out` in order from
     // `start`. Pair k is anchor handle anchors[2k..2k+1], object handle
     // objects[2k..2k+1], radius squared r2[k] and want[k]: 0 reports when the

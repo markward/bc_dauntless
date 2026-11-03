@@ -137,6 +137,29 @@ class PythonTransformStore:
             out[k] = dx * dx + dy * dy + dz * dz <= r2
         return bytes(out)
 
+    def near_indices(self, packed, x: float, y: float, z: float,
+                     r2: float) -> list:
+        """Ascending positions k of the handles within or on the sphere
+        (the within_radius compare). `packed` is flat (index, generation)
+        pairs, e.g. array("I"). A stale handle raises StaleHandleError."""
+        d = self._data
+        gens = self._generations
+        n = len(gens)
+        out = []
+        for k in range(len(packed) // 2):
+            index = packed[2 * k]
+            generation = packed[2 * k + 1]
+            if index < 0 or index >= n or gens[index] != generation:
+                raise StaleHandleError(
+                    "transform handle (%r, %r) is stale" % (index, generation))
+            base = index * _STRIDE
+            dx = d[base] - x
+            dy = d[base + 1] - y
+            dz = d[base + 2] - z
+            if dx * dx + dy * dy + dz * dz <= r2:
+                out.append(k)
+        return out
+
     def proximity_report(self, anchors, objects, r2, want, start: int) -> list:
         """Indices from `start` of the proximity pairs Python must look at.
 
@@ -291,6 +314,16 @@ class NativeTransformStore:
         try:
             return self._h.transform_within_radius(
                 flat, float(x), float(y), float(z), float(r2))
+        except (RuntimeError, TypeError) as exc:
+            raise StaleHandleError(str(exc)) from exc
+
+    def near_indices(self, packed, x: float, y: float, z: float,
+                     r2: float) -> list:
+        """See PythonTransformStore.near_indices. `packed` crosses as it is
+        (array("I") of index, generation pairs)."""
+        try:
+            return self._h.transform_near_indices(
+                packed, float(x), float(y), float(z), float(r2))
         except (RuntimeError, TypeError) as exc:
             raise StaleHandleError(str(exc)) from exc
 
