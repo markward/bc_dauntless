@@ -230,7 +230,7 @@ The engine never calls `gc.disable`, `freeze` or `set_threshold` (grep), so the 
 - Eight SDK AI condition scripts define `__del__`: `SDK/Conditions/` `ConditionInRange`, `ConditionSingleShieldBelow`, `ConditionPulseReady`, `ConditionIncomingTorps`, `ConditionSystemBelow`, `ConditionTimer`, `ConditionPowerBelow`, `ConditionInLineOfSight`.
 - **Example:** `ConditionPulseReady.__del__` (`SDK/Conditions/ConditionPulseReady.py:42-51`) looks up a **live** ship by id and calls `pWeapon.GetChargeWatcher().RemoveRangeCheck(id)`. Our `RemoveRangeCheck` sets `self._owner._watch_checks = len(self._checks)` (`engine/appc/float_range_watcher.py:101-105`). That attribute is `NativeField(int)` (`weapon_subsystems.py:3021`), so the GC'd condition **pushes into a live pulse-weapon row that K0 reads** (`_watch_checks` decides whether K0 emits WATCH; `k0_charging.h:64-71`).
 - `ConditionInRange.__del__` calls `pProx.RemoveAndDelete()` (`:60-66`).
-- RM §7 records that these conditions sit in reference cycles (`SetInstance(self)`), so **when** they run is GC timing.
+- RM §7 records that these conditions sit in reference cycles (`SetInstance(self)`), so **when** they run is GC timing. **Partly superseded 2026-11-03:** the process half of the cycle is gone (the process holds its instance weakly, process-owner-lifetime spec §6); the condition ↔ `ConditionScript` half remains (that spec §7), so a dropped condition's `__del__` is still GC-timed.
 - `engine/appc/debug.py:73` has one engine `__del__`.
 
 **(3) Other finalizers:** `engine/audio/hum_allocator.py:170` (`playing.Stop`), which is audio state, not the mirror.

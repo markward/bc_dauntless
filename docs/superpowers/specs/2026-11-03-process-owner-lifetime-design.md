@@ -69,7 +69,13 @@ Cost if wrong: under (b), BC would accumulate duplicate refresh timers; we would
 
 ## 6. Outcome
 
-(Filled in when built.)
+Built 2026-11-03 on `ws/process-replace`: `6e7de906e` (weak instance reference and tests), review minors in the following test commit.
+- `PythonMethodProcess._set_instance` (used by `SetInstance` and the two-argument `SetFunction`) stores a `weakref.ref`, or the object itself when it cannot be weakly referenced; `Update` resolves it and does nothing once it is dead.
+- `tests/unit/test_time_slice_owner_lifetime.py`, collector off throughout: owner drop (both forms), self-drop in its own callback, a drop mid-tick, the strong fallback, reassignment, and the SDK check (one `PowerDisplay` refresh process after E3M2 and after E6M1; 3 before the fix). Storing the instance strongly fails all five weak-hold tests.
+- Three existing tests (`tests/unit/test_time_slice.py`, `tests/unit/test_loop.py`) passed an instance held only by its process; they now keep it referenced. No engine, tool or SDK caller does this (review grep).
+- Focused set green: the new file, `test_time_slice.py`, `test_time_slice_self_register.py`, `test_condition_timer_end_to_end.py`, `test_timers.py`, `test_loop.py`, `test_native_k1_differential.py`.
+- **Final review: ready** (0 critical, 0 important, 5 minor test points, all fixed). The reviewer also checked a save/load round trip of `ProcessWrapper` and a destructor chain dropping a later owner mid-tick.
+- **Not live-verified.**
 
 ## 7. Not covered: a condition script and its engine wrapper hold each other
 
