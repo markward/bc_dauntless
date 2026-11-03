@@ -187,6 +187,12 @@ def reset() -> None:
     _forget_part_caches()
     # Per-class caches: a class patched or re-based since must recompute.
     _kind_by_type.clear()
+    # The field caches too: each keys its class strongly, so a class a test
+    # defined would otherwise outlive the test (and every later
+    # __subclasses__() walk would see it).
+    _class_fields.clear()
+    _class_hidden.clear()
+    _quiet_setters.clear()
     _dmg_classes.clear()
     for k in _dmg_counts:
         _dmg_counts[k] = 0
