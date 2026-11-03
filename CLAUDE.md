@@ -411,3 +411,41 @@ When asked to execute a plan in `docs/superpowers/plans/`, dispatch one `tdd-eng
 subagent per task in order, run that task's focused test files (never the full
 suite or the gate — see "Test gate") and commit between tasks, and stop on any
 BLOCKED.
+
+## Filing bugs as GitHub issues
+
+Known bugs go on `markward/bc_dauntless` as GitHub issues, so players and
+contributors can find them by symptom and help. Issues post under Mark's
+account: **create or comment only when Mark asks**, and draft first if he
+hasn't seen the wording.
+
+- **What to file.** Only bugs present on the public `origin/main`. A bug that
+  exists only on an unpushed branch waits until the project ends, when it's
+  clear what got fixed and what is left. Check every claim against the code
+  before filing (file, line, the call that is missing), never from memory or
+  an old doc.
+- **Title** = the symptom as a player would notice it, in plain words
+  ("Felix's tactical orders survive a mission change"), not the code cause.
+- **Body sections**, in this order, plain English, short paragraphs:
+  1. `## What you'll notice` — the symptom, the missions by name AND code
+     (Episode 3, "Obscured by Clouds" (E3M4)), and whether it was seen in play
+     or follows from the code.
+  2. `## Why it happens` — the cause, with repo file paths; SDK paths relative
+     to the BC SDK's `Build/scripts`.
+  3. `## What we don't know yet` — above all whether original BC does the
+     same; ask anyone who knows to comment.
+  4. Optional `## What a fix would touch` or `## How you can help`.
+  5. `## Status` — open / fixed on a branch that isn't public yet / closed;
+     say "a maintainer decision is needed" when one is.
+- **Never in an issue:** branch, worktree or session names, SDD ledger or
+  perf-register IDs, internal shorthand, secrets, or BC content beyond short
+  file/line references.
+- **Labels:** `bug` always; `help wanted` when a decision or BC knowledge is
+  needed; `good first issue` when small and well scoped. Milestones only when
+  Mark names one.
+- **How:** write the body to a file in the scratchpad, then
+  `gh issue create --repo markward/bc_dauntless --title "..." --label bug --body-file <file>`.
+- **Reviewing a contributor's PR:** read the diff, but never run their code.
+  To prove a test works, write your own probe in a temporary worktree of
+  `origin/main`: the test should fail without the fix and pass with it (apply
+  the fix yourself). Give Mark the review comment as a draft; don't post it.
