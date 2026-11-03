@@ -3,8 +3,9 @@
 The SDK keeps a process on its owner and the owner is the process's instance
 (Bridge/PowerDisplay.py:73-98): a reference cycle. BC's Python 1.5 has no
 cyclic collector, so dropping the owner stops the process at once; here the
-process holds a non-weakrefable-safe weak reference to its instance so the
-same drop works without waiting for gc. Every test disables the collector.
+process holds its instance weakly (strongly if it cannot be weakly
+referenced), so the same drop works without waiting for gc. Every test
+disables the collector.
 """
 import gc
 import weakref
@@ -42,6 +43,7 @@ class _Wrapper:
 def _run_drop_test(two_arg):
     mgr = TimeSliceProcessManager()
     calls = []
+    assert not gc.isenabled()
     owner = _Wrapper(mgr, calls, two_arg=two_arg)
     mgr.tick(0.0, 0.0)
     mgr.tick(0.5, 0.5)
@@ -83,6 +85,8 @@ def test_non_weakrefable_instance_still_fires():
     mgr = TimeSliceProcessManager()
     inst = Slotted()
     inst.calls = 0
+    with pytest.raises(TypeError):
+        weakref.ref(inst)       # the premise: this exercises the strong fallback
     p = PythonMethodProcess(manager=mgr)
     p.SetInstance(inst)
     p.SetFunction("Fire")
@@ -93,6 +97,8 @@ def test_non_weakrefable_instance_still_fires():
 
 
 def test_reassigned_instance_releases_the_old_one():
+    # A replacement guard (the old instance is not kept), not evidence for the
+    # weak hold: it passed before the weak reference too.
     class Target:
         def __init__(self):
             self.calls = 0
@@ -151,21 +157,39 @@ def test_owner_dropped_mid_tick():
     assert first is not None
 
 
+def test_owner_dropping_itself_in_its_callback():
+    mgr = TimeSliceProcessManager()
+    holder = {}
+    calls = []
+
+    class SelfDrop(_Wrapper):
+        def Fire(self, dt):
+            calls.append(dt)
+            holder.pop("owner")
+
+    holder["owner"] = SelfDrop(mgr, calls)
+    mgr.tick(0.0, 0.0)
+    mgr.tick(0.5, 0.5)
+    assert len(calls) == 1
+    assert mgr.count() == 0
+    mgr.tick(1.0, 1.0)
+    assert len(calls) == 1
+
+
 def _power_display_processes():
     from engine.appc import time_slice
     import Bridge.PowerDisplay as pd
     out = []
     for p in time_slice.g_kAIManager._live():
-        inst = getattr(p, "_instance", None)
-        if isinstance(inst, weakref.ref):
-            inst = inst()
-        if isinstance(inst, pd.ProcessWrapper):
+        resolve = getattr(p, "_resolve_instance", None)
+        if resolve is not None and isinstance(resolve(), pd.ProcessWrapper):
             out.append(p)
     return out
 
 
 def test_sdk_power_display_one_refresh_process_per_load():
     from tests.helpers import headless_mission as hm
+    assert not gc.isenabled()
     for name in ("Maelstrom.Episode3.E3M2.E3M2", "Maelstrom.Episode6.E6M1.E6M1"):
         hm.load(name)
         hm.tick(5.0)
