@@ -25,6 +25,16 @@ _BY_CLASS: dict = {}
 # re-entering an in-progress `import App`.
 _populating = False
 
+# Bumped by every `register`, the only mutator of the maps above.  Callers that
+# cache answers derived from them (ObjectClass.IsTypeOf) compare it to
+# invalidate.
+_GENERATION = 0
+
+
+def generation() -> int:
+    """Increases on every `register`; unchanged means the maps are unchanged."""
+    return _GENERATION
+
 
 def register(tag, cls) -> None:
     """Bind BC's integer type tag `tag` to the class our filters use.
@@ -32,7 +42,9 @@ def register(tag, cls) -> None:
     First registration of a class wins for the reverse direction, so a class
     reachable from two tags reports the tag it was first registered under.
     """
+    global _GENERATION
     tag = int(tag)
+    _GENERATION += 1
     _BY_TAG[tag] = cls
     _BY_CLASS.setdefault(cls, tag)
 

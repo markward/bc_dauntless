@@ -12,6 +12,7 @@ import random
 import weakref
 
 from engine.appc import native_combat
+from engine.appc import object_types as _object_types
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.transform_store import get_store
@@ -73,6 +74,10 @@ def _release_transform_slot(store, handle, nslot=None) -> None:
     at native_combat's next drain point (a kernel may be computing on them:
     spec 2026-11-03-kernels-off-the-lock, ruling R2). Never raises."""
     native_combat.defer_free(nslot, store, handle)
+
+
+_ISTYPEOF_CACHE: dict = {}
+_ISTYPEOF_GEN = -1
 
 
 class ObjectClass(TGEventHandlerObject):
@@ -166,9 +171,27 @@ class ObjectClass(TGEventHandlerObject):
         # isinstance(..., type) guard turns that into 0.
         # Sun(Planet): a Sun IsTypeOf CT_PLANET and CT_SUN; a plain Planet
         # IsTypeOf CT_SUN is 0 — this is what filters suns out of the orbit menu.
-        from engine.appc import object_types
-        cls = object_types.resolve_class(cls)
-        return 1 if isinstance(cls, type) and isinstance(self, cls) else 0
+        global _ISTYPEOF_GEN
+        gen = _object_types._GENERATION
+        if gen != _ISTYPEOF_GEN:
+            _ISTYPEOF_CACHE.clear()
+            _ISTYPEOF_GEN = gen
+        # Keyed by type(self): a runtime class swap gets its new answers.
+        key = (type(self), cls)
+        try:
+            return _ISTYPEOF_CACHE[key]
+        except KeyError:
+            pass
+        except TypeError:  # unhashable argument: compute uncached
+            c = _object_types.resolve_class(cls)
+            return 1 if isinstance(c, type) and isinstance(self, c) else 0
+        c = _object_types.resolve_class(cls)
+        ans = 1 if isinstance(c, type) and isinstance(self, c) else 0
+        # resolve_class may populate the registry (bumping the generation);
+        # only cache if it did not move under us.
+        if _object_types._GENERATION == gen:
+            _ISTYPEOF_CACHE[key] = ans
+        return ans
 
     def GetName(self) -> str:
         return self._name

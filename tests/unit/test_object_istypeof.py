@@ -47,3 +47,75 @@ def test_base_object_class_gets_the_method():
     o = ObjectClass()
     assert o.IsTypeOf(App.CT_OBJECT) == 1
     assert o.IsTypeOf(App.CT_PLANET) == 0
+
+
+# ── cached IsTypeOf (native proximity phase 1, task 2) ──────────────────────
+
+from engine.appc import object_types
+
+
+def test_istypeof_matches_resolve_class_for_every_registered_tag():
+    from engine.appc.ships import ShipClass
+    objs = [Planet_Create(200.0, "colony.nif"), Sun_Create(2000.0, 2000, 500),
+            ObjectClass(), ShipClass()]
+    for obj in objs:
+        for tag in object_types.registered_tags():
+            want = 1 if isinstance(obj, object_types.class_for(tag)) else 0
+            assert obj.IsTypeOf(tag) == want
+            assert obj.IsTypeOf(tag) == want  # second call hits the cache
+
+
+def test_istypeof_sees_a_class_registered_after_the_first_call():
+    o = ObjectClass()
+    tag = 987654
+    assert o.IsTypeOf(tag) == 0
+    saved = dict(object_types._BY_TAG), dict(object_types._BY_CLASS)
+    try:
+        object_types.register(tag, type(o))
+        assert o.IsTypeOf(tag) == 1
+    finally:
+        object_types._BY_TAG.clear(); object_types._BY_TAG.update(saved[0])
+        object_types._BY_CLASS.clear(); object_types._BY_CLASS.update(saved[1])
+        object_types._GENERATION += 1
+
+
+def test_istypeof_accepts_a_class_argument():
+    s = Sun_Create(2000.0, 2000, 500)
+    assert s.IsTypeOf(Planet) == 1
+    assert Planet_Create(200.0, "c.nif").IsTypeOf(Sun) == 0
+
+
+def test_istypeof_bool_and_named_stub_answer_zero():
+    o = ObjectClass()
+    assert o.IsTypeOf(True) == 0
+    assert o.IsTypeOf(False) == 0
+    assert o.IsTypeOf(App.CT_NEWLY_INVENTED_THING_THAT_DOES_NOT_EXIST) == 0
+
+
+def test_istypeof_unhashable_argument_falls_back_uncached():
+    assert ObjectClass().IsTypeOf([1, 2]) == 0
+    assert ObjectClass().IsTypeOf({}) == 0
+
+
+def test_istypeof_keys_by_runtime_type():
+    class A(ObjectClass):
+        pass
+    class B(A):
+        pass
+    a = A()
+    assert a.IsTypeOf(A) == 1 and a.IsTypeOf(B) == 0
+    a.__class__ = B  # reclassify at runtime
+    assert a.IsTypeOf(B) == 1
+
+
+def test_object_types_generation_increases_on_register():
+    g = object_types.generation()
+    tag = 987655
+    saved = dict(object_types._BY_TAG), dict(object_types._BY_CLASS)
+    try:
+        object_types.register(tag, ObjectClass)
+        assert object_types.generation() > g
+    finally:
+        object_types._BY_TAG.clear(); object_types._BY_TAG.update(saved[0])
+        object_types._BY_CLASS.clear(); object_types._BY_CLASS.update(saved[1])
+        object_types._GENERATION += 1
