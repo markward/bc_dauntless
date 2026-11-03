@@ -162,7 +162,7 @@ class Episode(TGObject):
             self._goals.append(goal_id)
         self._disabled_goals.discard(goal_id)
         from engine.appc import mission_goals
-        mission_goals.add_goal_button(self._goal_label(goal_id))
+        mission_goals.add_goal_button(self._goal_label(goal_id), goal_id)
 
     def RemoveGoal(self, goal_id) -> None:
         goal_id = str(goal_id)
