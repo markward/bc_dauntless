@@ -135,7 +135,9 @@ void Step::ship(int64_t ship_h) {
     }
     if (!firing) return;
     // Every read that can fail, before the first write: each firing
-    // projector's target (None or dead: skipped, as `continue`).
+    // projector's target (None or dead: skipped, as `continue`). A target
+    // the mirror cannot read is skipped and counted alone, as Python's
+    // per-emitter loop goes on to the next.
     const Body source = body(ship_h);
     std::vector<Body> targets;
     for (const int64_t k : sr->_children) {
@@ -143,8 +145,12 @@ void Step::ship(int64_t ship_h) {
         if (!kr->_firing) continue;
         const int64_t t = kr->_target;
         if (t == -1) continue;
-        if (ship_dead(m_, t)) continue;
-        targets.push_back(body(t));
+        try {
+            if (ship_dead(m_, t)) continue;
+            targets.push_back(body(t));
+        } catch (const std::invalid_argument&) {
+            ++out_.skipped;
+        }
     }
     const int64_t mode = sr->_mode;  // sys_.GetMode()
     for (const Body& t : targets) apply(source, sys, t, mode);

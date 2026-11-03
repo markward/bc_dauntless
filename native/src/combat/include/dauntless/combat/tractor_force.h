@@ -49,8 +49,10 @@
 // these.
 //
 // A tractor whose rows the mirror cannot name (an unrepresentable ref, a
-// stale row, an object with no real IsDead or no transform) does nothing
-// that step and is counted in `skipped`; the rest of the step goes on.
+// stale row, the source with no transform) does nothing that step and is
+// counted in `skipped`; a single firing projector's target it cannot read
+// (no real IsDead, no transform) is skipped and counted alone, the ship's
+// other targets still applied. The rest of the step goes on.
 
 namespace dauntless::combat {
 
@@ -78,7 +80,7 @@ struct TractorForceResult {
     std::vector<int64_t> zero_velocity;
     std::vector<TractorEngageCapture> captures;
     int64_t applied = 0;  // firing emitters whose mode was applied
-    int64_t skipped = 0;  // tractors the mirror could not name
+    int64_t skipped = 0;  // tractors / targets the mirror could not name
 };
 
 // One step over `ships` (Object handles in host order; -1 or a stale handle

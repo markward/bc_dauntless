@@ -345,3 +345,36 @@ def test_power_thaw_on_firing_write(world):
     assert _lit(g) == []
     assert tractors.__dict__["_power_frozen"] is False
     assert nc.counts()["k0_python_reasons"].get("tractor", 0) == 0
+
+
+# ── Fix round 1: a tractor is never handed back ──────────────────────────────
+
+@pytest.mark.parametrize("dropped", ["tractor_system", "ship"])
+def test_unnamed_tractor_is_never_handed_to_python(world, monkeypatch,
+                                                   dropped):
+    """A ship whose tractor system has no mirror row (its ref pushes -2, as
+    after an unencodable `_engage_state` drops it) or a ship with no row:
+    the pump's tractor getter is a counted no-fire, never a RUN_PYTHON into
+    host_loop._pump_held_system (whose generic path would stop the engage
+    intent and run the BC group walk on the projectors)."""
+    from engine import host_loop
+    g, v = world.ships["Galaxy"], world.ships["Vorcha"]
+    tractors = g.GetTractorBeamSystem()
+    tractors.StartFiring(v)
+    assert tractors.IsEngaged() and _lit(g)
+    nc._drop(tractors if dropped == "tractor_system" else g)
+    calls = []
+    orig = host_loop._pump_held_system
+
+    def spy(ship, getter, dt, _orig=orig):
+        calls.append(getter)
+        return _orig(ship, getter, dt)
+
+    monkeypatch.setattr(host_loop, "_pump_held_system", spy)
+    before = nc.counts()["k1_no_fire"]["tractor_row"]
+    world.tick()
+    assert "GetTractorBeamSystem" not in calls, calls
+    assert nc.counts()["k1_no_fire"]["tractor_row"] == before + 1
+    # The intent and the grip are as they were: nothing ran the generic
+    # held-weapon path on the tractor.
+    assert tractors.IsEngaged() and _lit(g)

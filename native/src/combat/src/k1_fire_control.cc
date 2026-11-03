@@ -994,10 +994,11 @@ void Walker::tractor_update(int64_t sys) {
     }
     const bool engageable = tractor_can_engage(ship, target);
     // Drop every firing projector that can no longer hold (range, arc).
+    // `(not engageable) or (not _emitter_in_arc(...))`: out of range the
+    // aim is never resolved (Python short-circuits).
     for (const int64_t k : kids) {
         if (!subrow(k)->_firing) continue;
-        const bool bears = tractor_bears(k, ship, target);
-        if (!engageable || !bears)
+        if (!engageable || !tractor_bears(k, ship, target))
             if (!bank_stop(k)) lost("a tractor projector has no stop");
     }
     if (!engageable || tractor_any_firing(sys)) {
@@ -1391,9 +1392,12 @@ K1Record Walker::run() {
             const int pos = static_cast<int>(s_.ship_pos);
             const ObjectRow* so = objrow(ship);
             // A ship the mirror cannot name: Python runs each getter's body
-            // -- but a tractor's, which only K1 has (THE TRACTOR WALK).
+            // -- but a tractor's, which only K1 has (THE TRACTOR WALK): a
+            // no-fire, counted (whether or not the ship has a tractor
+            // engaged: the mirror cannot tell).
             if (!so) {
                 if (s_.getter == 2) {
+                    ++c_.no_fire[static_cast<size_t>(K1NoFire::TractorRow)];
                     s_.st = St::PUMP_CONTINUE;
                     break;
                 }
@@ -1410,9 +1414,17 @@ K1Record Walker::run() {
                 case 2: sys = so->_tractor_beam_system; break;
                 default: sys = so->_torpedo_system; break;
             }
-            if (sys == kRefUnrepresentable)
+            if (sys == kRefUnrepresentable) {
+                // A tractor system the mirror cannot name is never Python's
+                // (THE TRACTOR WALK): a counted no-fire.
+                if (s_.getter == 2) {
+                    ++c_.no_fire[static_cast<size_t>(K1NoFire::TractorRow)];
+                    s_.st = St::PUMP_CONTINUE;
+                    break;
+                }
                 return run_python(K1Why::StaleRow, St::PUMP_CONTINUE, sys, pos,
                                   s_.getter);
+            }
             const SubsystemRow* sr = subrow(sys);
             // if sys_ is None or not getattr(sys_, "_fire_held", False): continue
             if (!sr || !sr->_fire_held) {

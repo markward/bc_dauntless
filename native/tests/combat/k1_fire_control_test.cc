@@ -2774,3 +2774,58 @@ TEST(K1, TractorStartSession) {
     EXPECT_TRUE(r.entries.empty());
     far.k.end();
 }
+
+// ── Task 3 fix round 1 ──────────────────────────────────────────────────────
+
+// Getter 2 is never handed to Python: a ship whose tractor system the
+// mirror cannot name (-2, e.g. its row dropped) and a ship with no row are
+// each a counted no-fire, and the pump goes on.
+TEST(K1, TractorGetterIsNeverHandedBack) {
+    {
+        World w(false);
+        w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
+        const int64_t ship = w.ship("ship");
+        w.m.set_ref(ship, Field::_tractor_beam_system, kRefUnrepresentable);
+        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+        const K1Record r = w.step();
+        EXPECT_EQ(w.brief(r), "DONE");
+        EXPECT_EQ(w.k.counts().python_systems, 0);
+        EXPECT_EQ(w.k.counts().no_fire[static_cast<size_t>(
+                      K1NoFire::TractorRow)], 1);
+        w.k.end();
+    }
+    {
+        World w(false);
+        w.k.begin_pump({-1}, kDt, 10.0, false, 0.0);
+        EXPECT_EQ(w.run_to_done(),
+                  (std::vector<std::string>{
+                      "RUN_PYTHON -1 0 0", "RUN_PYTHON -1 0 1",
+                      "RUN_PYTHON -1 0 3", "DONE"}));
+        EXPECT_EQ(w.k.counts().no_fire[static_cast<size_t>(
+                      K1NoFire::TractorRow)], 1);
+    }
+}
+
+// Python's drop loop: `(not engageable) or (not in arc)` -- out of range
+// the aim is never resolved, so a mount the mirror cannot place (a posed
+// ship's stale part slot) does not stop the out-of-range drop.
+TEST(K1, TractorDropOutOfRangeResolvesNoAim) {
+    World w(false);
+    w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 125.0, 0.0);
+    const int64_t sys = w.system("tr", ship, 3, {t});
+    const int64_t beam = w.bank("beam", sys);
+    w.m.set_i(beam, Field::_firing, 1);
+    w.m.set_i(sys, Field::_was_firing, 1);
+    w.m.set_i(ship, Field::has_posed_parts, 1);  // its mount: slot stale
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record r = w.step();
+    EXPECT_EQ(w.writes(r), (std::vector<std::string>{
+                               "beam._firing=False",
+                               "beam._beam_on_countdown=0",
+                               "tr._was_firing=False"}));
+    EXPECT_EQ(w.k.counts().no_fire[static_cast<size_t>(K1NoFire::TractorRow)],
+              0);
+    w.k.end();
+}

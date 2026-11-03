@@ -309,3 +309,42 @@ TEST(TractorForce, AnUnnamedTargetIsSkippedAndCounted) {
     EXPECT_EQ(w.at(s), kSourceAt);
     EXPECT_NE(w.at(t2), hexes({50.0, 20.0, 0.0}));
 }
+
+// One firing projector's target the mirror cannot read (a stub IsDead, no
+// transform) is skipped and counted alone; the ship's other tractored
+// target is still moved (Python's per-emitter `continue`).
+TEST(TractorForce, OneBadTargetSkipsOnlyItself) {
+    for (const bool stub : {true, false}) {
+        World w;
+        const int64_t s = w.object(kSource, 120.0, 4.0, true, kRot);
+        const int64_t bad = w.object({0.0, 40.0, 0.0}, 37.5, 2.5);
+        const int64_t t = w.object(kTarget, 37.5, 2.5);
+        const int64_t sys = w.tractor(s, bad, TractorMode::Push);
+        const int64_t b2 = w.m.register_row(Kind::Subsystem);
+        w.m.set_i(b2, Field::weapon_kind, 7);
+        w.m.set_ref(b2, Field::_parent_subsystem, sys);
+        w.m.set_i(b2, Field::_firing, 1);
+        w.m.set_ref(b2, Field::_target, t);
+        w.m.set_ids(sys, Field::_children,
+                    {w.m.get_ids(sys, Field::_children)[0], b2});
+        if (stub) {
+            w.m.set_i(bad, Field::has_real_is_dead, 0);
+        } else {
+            const ObjectRow* o = w.m.object(bad);
+            w.store.free(static_cast<uint32_t>(o->xform_index),
+                         static_cast<uint32_t>(o->xform_gen));
+        }
+        const TractorForceResult r = tractor_force_step(w.m, w.store, {s},
+                                                        kDt);
+        EXPECT_EQ(r.skipped, 1) << stub;
+        EXPECT_EQ(r.applied, 1) << stub;
+        EXPECT_EQ(w.at(t),
+                  "{0x1.49d2db15d4084p+3, 0x1.eb69aff1fe2cap+4, "
+                  "-0x1.933b006fcf5f0p+1}")
+            << stub;
+        EXPECT_EQ(w.at(s),
+                  "{0x1.7b70dc496deb7p+0, -0x1.288837dcfb6fap+1, "
+                  "0x1.8409c08bc336dp-1}")
+            << stub;
+    }
+}

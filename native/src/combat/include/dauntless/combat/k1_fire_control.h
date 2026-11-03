@@ -249,9 +249,10 @@
 // record is returned. A tractor walk the mirror cannot read (an unnamed
 // row, a target with no real IsDead) is rolled back whole and does not fire
 // that tick, counted in Counts::no_fire (K1NoFire::TractorRow). The walk
-// check is not asked: nothing of a tractor's is stood in for by Python. A
-// ship the mirror cannot name has its other getters handed back as before;
-// its tractor does nothing.
+// check is not asked: nothing of a tractor's is stood in for by Python. The
+// tractor getter is never handed back: a ship the mirror cannot name (its
+// other getters handed back as before) and a tractor system it cannot name
+// (-2) are each that counted no-fire, and the pump goes on.
 //
 // PROTOCOL INVARIANT: THE WALKED SYSTEM'S ROW OUTLIVES ITS WALK. An effect's
 // event handler may make objects unrepresentable (native_combat._drop: a
