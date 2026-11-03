@@ -3520,9 +3520,11 @@ def now() -> float:
 # ── The compute timers (kernels off the lock, Task 1) ──────────────────────
 #
 # The binding times exactly each kernel's compute call (ComputeSpan in
-# host_bindings.cc: K0-K3's next(), K4's k4_eligible) into one accumulator
-# per kernel; combat_compute_take(k) reads and zeroes it. Each driver takes
-# its kernel's once a session (K4: once a call) and reports it to the frame
+# host_bindings.cc: K0-K3's next(), K3's apply_hits, K4's k4_eligible) into
+# one accumulator per kernel; combat_compute_take(k) reads and zeroes it.
+# K0-K3 compute with the GIL released (THE GIL RELEASE there: kernels off
+# the lock, Task 3). Each driver takes its kernel's once a session (K3: once
+# more after its hits; K4: once a call) and reports it to the frame
 # profiler as `k<k>.compute`, a child of the scope the session ran in. That
 # scope is the kernel's home row (_COMPUTE_HOME) in the tick's own step; a
 # session run under any other scope -- K1's AI-started system sessions
@@ -6709,6 +6711,9 @@ def _k3_apply_hits(hits, ship_instances, walk) -> None:
             i = k + 1
     finally:
         _h.combat_set_applier(prev)
+        # apply_hits' compute is K3's (released and timed with next()'s):
+        # into k3.compute, beside the walk's, never the next session's.
+        _compute_taken(3)
 
 
 #: K3 hits run here in Python (_k3_apply_hits' hand-backs).

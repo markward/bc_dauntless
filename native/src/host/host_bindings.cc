@@ -79,7 +79,9 @@
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
 #include <renderer/hull_discharge_pass.h>
+#include <atomic>
 #include <chrono>
+#include <thread>
 #include <renderer/running_light_pass.h>
 #include <renderer/running_light_store.h>
 #include <renderer/nebula_wake_pass.h>
@@ -751,7 +753,7 @@ std::optional<renderer::RayHit> trace_instance_for_python(
 }
 
 // K2's trace hooks: the two bodies above on g_world, touching no Python
-// (ruling J: the kernel calls them holding the GIL).
+// (the kernel calls them inside its compute, with the GIL released).
 dauntless::combat::TraceHooks combat_trace_hooks() {
     namespace cb = dauntless::combat;
     cb::TraceHooks hooks;
@@ -4013,11 +4015,11 @@ struct K2Delivering {
 
 // THE COMPUTE TIMERS (kernels off the lock, Task 1; spec
 // 2026-11-03-kernels-off-the-lock-design.md goal 1): a steady_clock span
-// around exactly each kernel's compute call -- K0-K3's next() and K4's
-// k4_eligible -- accumulated per kernel (index 0-4) and read-and-reset by
-// combat_compute_take. Pure C++ inside the span (no CPython), so the GIL
-// release of Task 3 wraps the very same span. A throwing compute still
-// closes its span (RAII) and counts.
+// around exactly each kernel's compute call -- K0-K3's next(), K3's
+// apply_hits (counted as K3's) and K4's k4_eligible -- accumulated per
+// kernel (index 0-4) and read-and-reset by combat_compute_take. Pure C++
+// inside the span (no CPython): the GIL release (THE GIL RELEASE, below)
+// encloses it. A throwing compute still closes its span (RAII) and counts.
 struct ComputeTimer {
     std::int64_t ns = 0;
     std::int64_t calls = 0;
@@ -4047,6 +4049,101 @@ private:
     ComputeTimer& t_;
     std::chrono::steady_clock::time_point t0_;
 };
+
+// THE GIL RELEASE (kernels off the lock, Task 3; spec goal 3): a kernel's
+// compute -- K0-K3's next() and K3's apply_hits (its hits' native damage) --
+// runs with the GIL released, and only the compute: everything before and
+// after it in a binding is CPython (the scans, k1_launch_recheck, the
+// applier, the queue appends, the record build) and keeps the lock. Each
+// site is one released_compute call whose lambda is the kernel call alone
+// (tests/unit/test_native_k1_holds_gil.py guards the source). K4 and
+// can_detect keep the GIL: single short calls (lock map 5.2).
+//
+// Safe because no Python another thread runs meanwhile mutates what compute
+// reads: a finalizer's free waits for a drain, and a push made off the main
+// thread is queued (native_combat, "Deferred frees and off-main pushes");
+// the main thread itself is in compute. The combat library has no CPython
+// (lock map 0), and its hooks (the trace hooks, K0's weapon check, K1's walk
+// check) read C++ state only.
+//
+// The release is declared BEFORE the span, so the compute timer closes
+// before the GIL is re-acquired and never counts the wait for it. A throw
+// re-acquires the GIL as it unwinds (the release's destructor), before
+// pybind translates it; the driver then abandons its session as for any
+// exception.
+enum class ComputeSite : int { K0, K1, K2, K3, K3Hits, kCount };
+constexpr int kComputeSites = static_cast<int>(ComputeSite::kCount);
+
+constexpr int compute_kernel(ComputeSite s) {
+    return s == ComputeSite::K3Hits ? 3 : static_cast<int>(s);
+}
+
+// THE GIL PROBE (test only; tests/unit/test_native_gil_release.py,
+// tests/integration/test_native_off_lock_stress.py). Unarmed -- always, in
+// play -- a released compute pays one relaxed load. Armed, each released
+// compute call counts itself per site, and whether PyGILState_Check() read 0
+// inside it (callable without the GIL). Armed, it can also:
+//   hold   the next `holds` calls each wait, GIL released, until another
+//          thread's Python steps (combat_gil_probe_step) or `hold_ns`
+//          passes: a churning thread then provably runs while compute does;
+//          `ran` counts calls during whose release a step arrived, `during`
+//          those with one across the compute call itself;
+//   throw  std::runtime_error from inside the released region of the next
+//          call at `throw_site` (Review Focus 3).
+// The counters are the main thread's (it computes and takes them); `steps`
+// is the only one another thread writes.
+struct GilProbe {
+    std::atomic<bool> armed{false};
+    std::atomic<std::int64_t> steps{0};
+    int holds = 0;
+    std::int64_t hold_ns = 0;
+    int throw_site = -1;
+    std::int64_t thrown = 0;
+    std::array<std::int64_t, kComputeSites> calls{}, released{}, ran{},
+        during{};
+};
+
+GilProbe& gil_probe() {
+    static GilProbe p;
+    return p;
+}
+
+template <class F>
+auto gil_probe_compute(ComputeSite site, F& compute) {
+    GilProbe& p = gil_probe();
+    const auto i = static_cast<size_t>(site);
+    ++p.calls[i];
+    if (PyGILState_Check() == 0) ++p.released[i];
+    const std::int64_t entered = p.steps.load();
+    if (p.holds > 0) {
+        --p.holds;
+        const auto until = std::chrono::steady_clock::now() +
+                           std::chrono::nanoseconds(p.hold_ns);
+        while (p.steps.load() == entered &&
+               std::chrono::steady_clock::now() < until)
+            std::this_thread::yield();
+    }
+    if (p.throw_site == static_cast<int>(site)) {
+        p.throw_site = -1;
+        ++p.thrown;
+        throw std::runtime_error("combat GIL probe: thrown in compute");
+    }
+    const std::int64_t before = p.steps.load();
+    auto r = compute();
+    const std::int64_t after = p.steps.load();
+    if (after != entered) ++p.ran[i];
+    if (after != before) ++p.during[i];
+    return r;
+}
+
+template <class F>
+auto released_compute(ComputeSite site, F&& compute) {
+    const py::gil_scoped_release release;
+    const ComputeSpan span(compute_kernel(site));
+    if (gil_probe().armed.load(std::memory_order_relaxed)) [[unlikely]]
+        return gil_probe_compute(site, compute);
+    return compute();
+}
 
 // True when the last combat_k1_next raised from applying its record's
 // writes rather than from the kernel (combat_apply_raised): run_k1 reads
@@ -13219,29 +13316,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("use_memo"), py::arg("drift_now"),
               "StartFiring's immediate update_weapons(dt) on one system.");
         m.def("combat_k1_next", [] {
-            // The GIL is HELD for the walk (controller ruling J; spec 3.3's
-            // release is deferred to the worker-thread phase). The kernel's
-            // compute makes no CPython call: its walk check is the top
-            // session's verdict sets, re-validated HERE, before it runs
-            // (k1_scan probes instance dicts, MRO entries and the
-            // registry's weak references, no GC-tracked allocation), so a
-            // patch Python made since the last record is seen by this
-            // record's walk starts. Releasing the GIL around next() is still
-            // unsafe: a mirror row is freed by weakref.finalize ->
-            // native_combat.unregister_handle, which cyclic GC may run on
-            // whichever thread holds the GIL -- the packaged build's log tee
-            // (engine/log_tee.py) allocates, so a released GIL could free a
-            // row mid-read. A call takes microseconds.
+            // The kernel's compute runs with the GIL released, and only it
+            // (THE GIL RELEASE). It makes no CPython call: its walk check
+            // is the top session's verdict sets, re-validated HERE, with the
+            // GIL held, before it runs (k1_scan probes instance dicts, MRO
+            // entries and the registry's weak references, no GC-tracked
+            // allocation), so a patch Python made since the last record is
+            // seen by this record's walk starts. k1_launch_recheck (which
+            // writes mirror globals) also stays before the release, and the
+            // applier and the appends after it.
             // tests/unit/test_native_k1_holds_gil.py guards it.
             k1_apply_raised() = false;
             if (const cb::K1WalkCheck* c = cb::k1_kernel().top_walk_check())
                 if (const K1SessionCheck* sc = c->target<K1SessionCheck>())
                     k1_scan(*sc->v);
             k1_launch_recheck();
-            cb::K1Record r = [] {
-                const ComputeSpan span(1);
+            cb::K1Record r = released_compute(ComputeSite::K1, [] {
                 return cb::k1_kernel().next();
-            }();
+            });
             py::list writes;
             dauntless::host::WriteApplier& applier =
                 dauntless::host::write_applier();
@@ -13599,13 +13691,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "override guard or None. None: begun; else the types whose "
               "guard flag is missing (nothing begun).");
         m.def("combat_k0_next", [] {
-            // The GIL is held (as combat_k1_next). The weapon check is a set
-            // lookup made at begin: no CPython call inside the walk.
+            // Compute with the GIL released (THE GIL RELEASE), as
+            // combat_k1_next. The weapon check is a set lookup made at
+            // begin: no CPython call inside the walk.
             cb::K0Session& k = cb::k0_session();
-            cb::K0Record r = [&k] {
-                const ComputeSpan span(0);
+            cb::K0Record r = released_compute(ComputeSite::K0, [&k] {
                 return k.next();
-            }();
+            });
             py::list writes;
             dauntless::host::WriteApplier& applier =
                 dauntless::host::write_applier();
@@ -13828,13 +13920,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("bank_patches"),
               "(handles, [(ship, handle), ...]): see k2_scan_ships.");
         m.def("combat_k2_next", [vec] {
-            // The GIL is HELD for the walk (ruling J), as combat_k1_next:
-            // the kernel and the trace hooks touch no Python object.
+            // Compute with the GIL released (THE GIL RELEASE), as
+            // combat_k1_next: the kernel and the trace hooks touch no Python
+            // object.
             k2_not_delivering("next()");
-            cb::K2Record r = [] {
-                const ComputeSpan span(2);
+            cb::K2Record r = released_compute(ComputeSite::K2, [] {
                 return cb::k2_kernel().next();
-            }();
+            });
             // The write log. With an applier context (combat_write_apply.h)
             // the writes are applied here and the record carries []. With
             // none, K1's value encoding (None, bool, int, float, a handle
@@ -14662,11 +14754,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "them; use_memo step_memo.active(); ctx as above. Returns None "
               "(session open) or the whole-step-to-Python reason.");
         m.def("combat_k3_next", [vec] {
-            // The GIL is HELD for the walk (ruling J), as combat_k2_next.
-            cb::K3Record r = [] {
-                const ComputeSpan span(3);
+            // Compute with the GIL released (THE GIL RELEASE), as
+            // combat_k2_next.
+            cb::K3Record r = released_compute(ComputeSite::K3, [] {
                 return cb::k3_kernel().next();
-            }();
+            });
             const int kind = static_cast<int>(r.kind);
             auto opt = [&vec](const std::optional<cb::Vec3>& v) -> py::object {
                 return v ? py::object(vec(*v)) : py::object(py::none());
@@ -14780,8 +14872,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   const std::unordered_set<std::size_t> py_hits(
                       python.begin(), python.end());
                   std::vector<cb::K3Applied> out;
-                  const std::size_t k =
-                      cb::k3_kernel().apply_hits(start, p, py_hits, out);
+                  // Its compute released and timed as K3's (k3.compute).
+                  const std::size_t k = released_compute(
+                      ComputeSite::K3Hits, [&] {
+                          return cb::k3_kernel().apply_hits(start, p, py_hits,
+                                                            out);
+                      });
                   auto& applier = dauntless::host::write_applier();
                   if (!out.empty() && !applier.has_context())
                       throw std::logic_error(
@@ -14936,6 +15032,62 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "(ms, calls): kernel K<kernel>'s compute-only time since the "
               "last take, and its compute calls, then zeroed (the compute "
               "timers, kernels off the lock Task 1).");
+        // THE GIL PROBE (test only; see GilProbe).
+        m.def("combat_gil_probe_arm",
+              [](bool armed, int holds, double hold_ms, int throw_site) {
+                  if (throw_site < -1 || throw_site >= kComputeSites)
+                      throw py::value_error(
+                          "combat_gil_probe_arm: throw_site -1 or 0-4");
+                  GilProbe& p = gil_probe();
+                  p.holds = holds;
+                  p.hold_ns = static_cast<std::int64_t>(hold_ms * 1e6);
+                  p.throw_site = throw_site;
+                  p.armed.store(armed);
+              },
+              py::arg("armed"), py::arg("holds") = 0,
+              py::arg("hold_ms") = 0.0, py::arg("throw_site") = -1,
+              "Test only. Arm (or disarm) the GIL probe: count each released "
+              "compute call per site (K0, K1, K2, K3 next(), K3 apply_hits) "
+              "and whether the GIL was released in it; hold the next "
+              "`holds` calls until another thread steps (up to hold_ms); "
+              "throw from inside the next call at `throw_site`.");
+        m.def("combat_gil_probe_hold",
+              [](int holds, double hold_ms) {
+                  GilProbe& p = gil_probe();
+                  p.holds = holds;
+                  p.hold_ns = static_cast<std::int64_t>(hold_ms * 1e6);
+              },
+              py::arg("holds"), py::arg("hold_ms"),
+              "Test only. Hold the next `holds` released compute calls until "
+              "another thread steps (combat_gil_probe_step), up to hold_ms.");
+        m.def("combat_gil_probe_step",
+              [] { gil_probe().steps.fetch_add(1); },
+              "Test only. A churning thread's progress mark (it holds the "
+              "GIL as it calls this).");
+        m.def("combat_gil_probe_check", [] { return PyGILState_Check(); },
+              "Test only. PyGILState_Check() here: 1 (a binding holds the "
+              "GIL), the probe's negative control.");
+        m.def("combat_gil_probe_take",
+              [] {
+                  GilProbe& p = gil_probe();
+                  auto list = [](const auto& a) {
+                      return std::vector<std::int64_t>(a.begin(), a.end());
+                  };
+                  py::dict d;
+                  d["calls"] = list(p.calls);
+                  d["released"] = list(p.released);
+                  d["ran"] = list(p.ran);
+                  d["during"] = list(p.during);
+                  d["thrown"] = p.thrown;
+                  p.calls = {};
+                  p.released = {};
+                  p.ran = {};
+                  p.during = {};
+                  p.thrown = 0;
+                  return d;
+              },
+              "Test only. The probe's counters per site (calls, released, "
+              "ran, during) and throws, then zeroed.");
         m.def("combat_k4_counts", [] {
             const auto& c = cb::k4_counts();
             py::dict why;
