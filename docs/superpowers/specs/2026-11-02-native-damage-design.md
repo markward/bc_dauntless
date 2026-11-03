@@ -151,4 +151,10 @@ Built 2026-11-02/03 on `ws/combat-native-damage`:
   - A scripted kill in a multi-tick frame waits until that frame's combat flush (within decision 9).
   - A transiting player's repair-raise entries are dropped by the mission-change reset; no stock handler on them writes combat state.
   - `_deleted` is never cleared.
-- **Pre-existing failure, still red:** `test_disruptor_fire_and_damage::test_held_trigger_refires_via_advance_combat_hook`, a `TypeError`. It fails at `65a859405` too and must be fixed before the main merge. The order-polluted `test_subsystem_obj_type` passes alone.
+- **Final review: ready for live test** (0 critical, 1 important, 7 minor).
+  - The important finding: a subclass patched after its rows were flagged kept its old native rules. Fixed in `4159415f8`: guard slot 0 watches every flagged class and the cloak class, and hands back to Python on a mismatch.
+  - Also fixed: a NaN hull-box half-extent, and a `GetPosition()` that raises. The §6 mission tests now run with the switch both ways (`f4480e094`); all 8 beats run natively with no fallback.
+  - Not done: `WeaponHitEvent.GetNormal()` returns a fresh point, not the caller's object. It would need a second held operand per entry.
+  - Blunt but exact: once any flagged class stops matching, native damage hands every hit back for the rest of the session. No stock code does this.
+- **No known-failing tests.** The disruptor test's `TypeError` was a stale spy (`projectiles.register` gained `kset`); fixed in `9e24002e3`. The order-polluted `test_subsystem_obj_type` passes alone.
+- **Found in the harness:** `headless_mission.load` keeps a mission module's globals between loads. E7M1's `bStarbaseCollision` leaked from the off run into the on run. The mission test re-imports the module; the helper is unchanged.
