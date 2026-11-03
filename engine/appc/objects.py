@@ -208,7 +208,15 @@ class ObjectClass(TGEventHandlerObject):
         self._script = script
 
     def GetRadius(self) -> float:
-        return self._radius
+        """The radius as DRAWN: base x GetScale(), as BC's (CameraModes.md
+        s3.1; the scaled-GetRadius audit). A non-positive or non-finite scale
+        counts as 1, the same guard as collisions.world_radius. Readers that
+        apply the scale themselves read GetBaseRadius()."""
+        r = self._radius
+        s = self._scale
+        if s > 0.0 and math.isfinite(s):
+            return r * s
+        return r
 
     def GetBaseRadius(self) -> float:
         """The unscaled radius that SetRadius() sets. Engine surface, not SDK:

@@ -45,15 +45,16 @@ def test_a_scaled_rocks_collision_body_is_scale_times_base():
     assert abs(collisions._resolve_body(rock).radius - 6.0) < 1e-9
 
 
-def test_get_radius_stays_unscaled_and_effective_radius_scales_once():
-    """Guard: if GetRadius() ever starts including the scale, effective_radius
-    (base x GetScale) and the collision body would both double-scale."""
+def test_get_radius_is_scaled_and_effective_radius_scales_once():
+    """Guard: GetRadius() is base x scale, and the helpers read the base, so
+    nothing scales twice."""
     from engine.rocks.rock import effective_radius
     rock = _rock(1.2, 5.0)
-    assert rock.GetRadius() == pytest.approx(1.2)
+    assert rock.GetRadius() == pytest.approx(6.0)
+    assert rock.GetBaseRadius() == pytest.approx(1.2)
     assert effective_radius(rock) == pytest.approx(6.0)
     assert collisions._resolve_body(rock).radius == pytest.approx(
-        effective_radius(rock))
+        rock.GetRadius())
 
 
 @pytest.mark.parametrize("gap, collide", [(-1e-3, True), (1e-3, False)])
@@ -179,7 +180,7 @@ def test_hull_chunk_parent_mask_holds_until_clear_of_the_scaled_parent():
     c = dc.spawn(5, parent, 200, (1.0, 0.0, 0.0), 0.5,
                  parent_mass=120.0, parent_occupied_cells=1000)
     p = parent.GetWorldLocation()
-    unscaled = (c.GetRadius() + parent.GetRadius()) * collisions.COLLISION_RADIUS_SCALE
+    unscaled = (c.GetRadius() + parent.GetBaseRadius()) * collisions.COLLISION_RADIUS_SCALE
     c._loc = TGPoint3(p.x + unscaled + 0.01, p.y, p.z)   # clear only of the raw sphere
     dc.tick(0.0, r)
     assert parent.GetObjID() in collisions._collision_disabled_ids(c)

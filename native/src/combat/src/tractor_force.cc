@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/py_math.h"
 
@@ -71,9 +72,10 @@ private:
             g_.TRACTOR_REFERENCE_SPEED_GUPS * g_.TRACTOR_REFERENCE_MASS / mass;
         return s < g_.TRACTOR_MAX_SPEED_GUPS ? s : g_.TRACTOR_MAX_SPEED_GUPS;
     }
-    // _standoff_distance: rs + rt + TRACTOR_STANDOFF_MARGIN_GU.
+    // _standoff_distance: rs + rt + TRACTOR_STANDOFF_MARGIN_GU, the radii
+    // being the SCALED world radii (GetRadius() is base x scale).
     double standoff(const Body& source, const Body& target) const {
-        return source.row->_radius + target.row->_radius +
+        return world_radius(m_, source.h) + world_radius(m_, target.h) +
                g_.TRACTOR_STANDOFF_MARGIN_GU;
     }
     // _displace: p + d.

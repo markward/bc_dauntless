@@ -173,6 +173,26 @@ def test_k4_matches_select_eligible(pool):
     assert _reasons() == {}
 
 
+def test_k4_matches_select_eligible_with_scaled_ships(pool):
+    sets, every = pool
+    rng = random.Random(20261103)
+    scales = (1.0, 1.0, 2.5, 0.5, 3.0, 8.5, 0.0, -2.0, math.nan, math.inf)
+    try:
+        for scene in range(500):
+            ships = rng.sample(every, rng.randint(0, 70))
+            for s in ships:
+                _randomise(rng, s)
+                s.SetScale(rng.choice(scales))
+            player = rng.choice(ships) if ships and rng.random() < 0.7 else None
+            want = de.select_eligible(player, ships)
+            got = _native(player, ships)
+            assert got == want, "scene %d" % scene
+    finally:
+        for s in every:
+            s.SetScale(1.0)
+    assert _reasons() == {}
+
+
 def test_k4_ties_break_by_id(pool):
     sets, _every = pool
     pSet = sets["K4SysA1"]

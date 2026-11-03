@@ -109,7 +109,7 @@ def test_catalogue_index_forces_that_model():
 
 def test_exact_radius_scales_the_quantised_model():
     rk = rockmod.RockClass_Create(4.37, name="Field Rock 0002", kind="major", exact_radius=True)
-    assert rk.GetRadius() == pytest.approx(4.4)          # 2 significant figures
+    assert rk.GetBaseRadius() == pytest.approx(4.4)      # 2 significant figures
     assert rk.GetScale() == pytest.approx(4.37 / 4.4)
     assert rockmod.effective_radius(rk) == pytest.approx(4.37, abs=1e-9)
 
@@ -156,3 +156,10 @@ def test_damageable_object_create_accepts_the_h_variant_asteroid_nifs():
         obj = App.DamageableObject_Create(name)
         assert is_rock(obj), nif
         assert abs(effective_radius(obj) - radius) < 0.05, nif
+
+
+def test_promoted_rock_reports_its_exact_radius():
+    rk = rockmod.RockClass_Create(4.37, name="Field Rock 0003", kind="major",
+                                  exact_radius=True)
+    assert rk.GetRadius() == pytest.approx(4.37)
+    assert rk.GetBaseRadius() == pytest.approx(4.4)
