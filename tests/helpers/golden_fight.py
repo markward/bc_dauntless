@@ -590,15 +590,25 @@ def _sdk_dumb_fire(mp, env, spec):
     # The scene is what it claims: the SDK's FireDumb ran (past its warp-in
     # hold) and launched. Counted on Weapon.FireDumb's own marker list
     # (weapon_subsystems._dumb_firing, read only through that module's
-    # global), never by patching FireDumb: a patch there, on the class or
-    # the instance, is a K1 override (native_combat._K1_LEAF_METHODS,
+    # global) in the Python arm, and natively by the kernel's dumb-fire
+    # sessions (fire control native only, M8.1: the SDK's FireDumb is one),
+    # never by patching FireDumb: a patch there, on the class or the
+    # instance, is a K1 override (native_combat._K1_LEAF_METHODS,
     # _K1_LEAF_PATCHES) and would change the native arm's path.
     marker = _CountingList()
     mp.setattr(ws, "_dumb_firing", marker)
+    nc._h.combat_k1_reset_counts()
     scene = k1d._loop_arm(mp, env, ticks=spec.ticks)
     if scene.native:
         assert scene.audit == [], scene.audit
-    assert marker.appends > 0, "the SDK never dumb-fired a tube"
+        logged = scene.counts["k1_logged"]
+        assert logged["sdk_dumb_fire"] > 0, "the SDK never dumb-fired a tube"
+        assert logged["dumb_launch"] > 0, logged
+        assert not any(scene.counts["k1_launch_reasons"].values()), \
+            scene.counts["k1_launch_reasons"]
+        assert marker.appends == 0, "a dumb fire ran Python's FireDumb"
+    else:
+        assert marker.appends > 0, "the SDK never dumb-fired a tube"
     assert not marker
     launched = [e for e in scene.queued.rows
                 if e[0] == App.ET_TORPEDO_FIRED]
@@ -618,7 +628,7 @@ SCENES = {s.name: s for s in (
     Scene("posed_fight", "native", 20261105, "8+Enemy-B", posed_fight.TICKS,
           1, _posed),
     Scene("tractor_modes", "native", 0, "2", 870, 1, _tractor_modes),
-    Scene("sdk_dumb_fire", "python", k1d.SEED, "8", 900, 1, _sdk_dumb_fire),
+    Scene("sdk_dumb_fire", "native", k1d.SEED, "8", 900, 1, _sdk_dumb_fire),
 )}
 
 _LAST_ARM = {}

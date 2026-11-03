@@ -13310,6 +13310,46 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "handle (-1 None, -2 unnamed), `offset` the StartFiring "
               "offset's xyz when it is a TGPoint3, else None (the session's "
               "walk 1).");
+        // THE SDK ROUTES (k1_fire_control.h): the SDK's own weapon calls
+        // as one-weapon sessions (driven by native_combat.run_k1 like the
+        // others) and CanFire's native answer.
+        m.def("combat_k1_begin_dumb",
+              [](std::int64_t tube, double now, bool use_memo,
+                 double drift_now) {
+                  cb::k1_kernel().begin_dumb(tube, now, use_memo, drift_now);
+              },
+              py::arg("tube"), py::arg("now"), py::arg("use_memo"),
+              py::arg("drift_now"),
+              "Weapon.FireDumb(0, 1) on `tube` (its Subsystem handle).");
+        m.def("combat_k1_begin_fire",
+              [](std::int64_t weapon, std::int64_t target,
+                 std::optional<std::array<double, 3>> offset,
+                 std::optional<std::int64_t> ship_target, double now,
+                 bool use_memo, double drift_now) {
+                  cb::k1_kernel().begin_fire(weapon, target, offset,
+                                             ship_target, now, use_memo,
+                                             drift_now);
+              },
+              py::arg("weapon"), py::arg("target"), py::arg("offset"),
+              py::arg("ship_target"), py::arg("now"), py::arg("use_memo"),
+              py::arg("drift_now"),
+              "weapon.Fire(target, offset): `target` an Object handle (-1 "
+              "None, -2 unnamed), `offset` Fire's offset xyz when it is a "
+              "TGPoint3 (else None), `ship_target` the weapon's ship's "
+              "GetTarget() handle, None when not read. combat_k1_result() "
+              "after DONE: 1 fired, 0 not, -1 Python's Fire must run.");
+        m.def("combat_k1_result", [] { return cb::k1_kernel().result(); },
+              "The top session's result (combat_k1_begin_fire), read after "
+              "its DONE and before combat_k1_end.");
+        m.def("combat_k1_can_fire",
+              [](std::int64_t weapon, double now) {
+                  const cb::CanFireResult r =
+                      cb::k1_kernel().sdk_can_fire(weapon, now);
+                  return py::make_tuple(r.ok, r.clear_depleted);
+              },
+              py::arg("weapon"), py::arg("now"),
+              "weapon.CanFire() from the mirror: (ok, clear_depleted). "
+              "ValueError when the mirror cannot answer.");
         m.def("combat_k1_next", [] {
             // The kernel's compute runs with the GIL released, and only it
             // (THE GIL RELEASE). It makes no CPython call: its walk check
@@ -13583,6 +13623,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // pump's, and StartFiring's sessions.
             logged["tractor_walk"] = c.logged_tractor_walk;
             logged["tractor_start"] = c.logged_tractor_start;
+            // ... and the SDK's own weapon calls (THE SDK ROUTES).
+            logged["sdk_dumb_fire"] = c.logged_sdk_dumb_fire;
+            logged["sdk_fire"] = c.logged_sdk_fire;
+            logged["sdk_can_fire"] = c.logged_sdk_can_fire;
             d["k1_logged"] = logged;
             // Walks that did not fire that tick, by why (R2).
             py::dict no_fire;

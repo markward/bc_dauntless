@@ -18,7 +18,9 @@ which writes the file and skips. ``COMBAT_GOLDEN_ARM=python|native``
 overrides a scene's arm (scenes 1-5 were recorded from the Python arm, then
 checked native). ``tractor_modes`` runs native only since tractors went
 native (fire control native only, Task 3) and was re-recorded once for
-ruling R8 (its events queued).
+ruling R8 (its events queued). ``sdk_dumb_fire`` runs native since the SDK's
+FireDumb went native (Task 4, M8.1), against its Python recording,
+unchanged.
 """
 import os
 

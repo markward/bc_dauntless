@@ -173,6 +173,8 @@ constexpr FieldInfo kInfo[] = {
     {"engage_point", Kind::Subsystem, FieldType::Vec3},
     {"_efficiency", Kind::Subsystem, FieldType::F},
     {"_normal_power", Kind::Subsystem, FieldType::F},
+    {"slot0_launch_state", Kind::Property, FieldType::I},
+    {"slot0_launch_speed", Kind::Property, FieldType::F},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -486,12 +488,17 @@ Vec3* vptr(SubsystemRow& r, Field f) {
 }
 
 double* fptr(PropertyRow& r, Field f) {
-    return f == Field::MaxCondition ? &r.MaxCondition : nullptr;
+    switch (f) {
+        case Field::MaxCondition: return &r.MaxCondition;
+        case Field::slot0_launch_speed: return &r.slot0_launch_speed;
+        default: return nullptr;
+    }
 }
 int64_t* iptr(PropertyRow& r, Field f) {
     switch (f) {
         case Field::MaxCondition_set: return &r.MaxCondition_set;
         case Field::_groups: return &r._groups;
+        case Field::slot0_launch_state: return &r.slot0_launch_state;
         default: return nullptr;
     }
 }

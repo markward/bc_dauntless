@@ -613,7 +613,9 @@ def test_instance_patch_runs_python(monkeypatch):
 
 def test_pulse_effect_uses_the_decided_module(monkeypatch):
     """Python's decision carries the module it resolved; on the K1 path a
-    module that no longer imports abandons the session (raise), never
+    module that no longer imports is re-read at the K1 entry (fire control
+    native only, M8.3: _refresh_stale_launches) as unresolved, so the
+    cannon refuses as Python's decide does -- nothing raised, no bolt, never
     reaching _spawn_projectile with None. (One merely unloaded from
     sys.modules is imported again, as decide does:
     test_unloaded_pulse_module_reimports_like_python.)"""
@@ -650,8 +652,11 @@ def test_pulse_effect_uses_the_decided_module(monkeypatch):
             vorcha.GetPulseWeaponSystem().GetWeapon(0))
         # None in sys.modules: import_module raises ModuleNotFoundError.
         monkeypatch.setitem(sys.modules, script, None)
-        with pytest.raises(RuntimeError, match="pulse module"):
-            vorcha.GetPulseWeaponSystem().StartFiring(w.ships["Galaxy"])
+        _h.combat_k1_reset_counts()
+        vorcha.GetPulseWeaponSystem().StartFiring(w.ships["Galaxy"])
+        cannon = vorcha.GetPulseWeaponSystem().GetWeapon(0)
+        assert _h.combat_dump(cannon.__dict__["_nslot"])["module_ok"] == 0
+        assert nc.counts()["k1_logged"]["pulse_launch"] == 0
         assert _h.combat_k1_depth() == 0
     finally:
         w.close()
@@ -2705,16 +2710,20 @@ def _learn_launches(w):
 
 
 def _forget_launches(w):
-    """Every ammo type's launch forgotten without the re-read -- as a
-    projectile-cache reset made inside a K1 session leaves them (THE P6
-    WINDOW) -- so its next launch is handed back uncached and Python's
-    launch learns it (native arm only)."""
+    """Every ammo type's (and torpedo property's slot-0) launch forgotten
+    without the re-read, so its next launch is handed back uncached and
+    Python's launch learns it (native arm only). (A projectile-cache reset
+    made inside a K1 session no longer leaves rows so -- they keep their
+    launch until the next K1 entry, fire control native only, M8.3: this
+    is the uncached state itself.)"""
     if not w.native:
         return
     ws._tube_launch_cache.clear()
     for h, obj in list(nc._registry.items()):
         if isinstance(obj, ws.TorpedoAmmoType):
             nc._push_ammo_row(obj)
+        elif "_torpedo_scripts" in obj.__dict__:
+            nc._push_slot0_row(obj)
 
 
 def _launch_arms(monkeypatch, script, ticks, *, ships=_LAUNCH_SHIPS,
@@ -3118,12 +3127,13 @@ def test_pulse_spawn_is_where_the_ship_was_at_fire_time(monkeypatch):
     assert counts["k1_logged"]["pulse_launch"] == len(nl.spawned) >= 2
 
 
-def test_pulse_launch_with_an_unloaded_module_runs_python(monkeypatch):
-    """Review Focus 4 for cannons. The cannons' module gone from sys.modules
-    -- an SDK reload: Python's decide imports it again, a module the
-    kernel's cached one is not (launch_unresolved, THE LAUNCH CHECK): each
-    launch is the FIRE record, run in Python, never guessed -- equal to the
-    reference."""
+def test_pulse_launch_with_an_unloaded_module_is_repushed(monkeypatch):
+    """Review Focus 4 for cannons, since fire control native only (M8.3).
+    The cannons' module gone from sys.modules -- an SDK reload: Python's
+    decide imports it again, a module the kernel's cached one is not. The
+    next K1 entry (StartFiring's session) re-reads it, so every launch is
+    the kernel's, carrying the re-imported module -- no hand-back -- and
+    equal to the reference."""
     def script(w, t):
         if t == 0:                  # before StartFiring's own walk
             cannon = w.ships["Vorcha"].GetPulseWeaponSystem().GetWeapon(0)
@@ -3137,8 +3147,8 @@ def test_pulse_launch_with_an_unloaded_module_runs_python(monkeypatch):
     assert nw.pulse_state == rw.pulse_state
     assert len(nl.spawned) >= 2
     why = counts["k1_launch_reasons"]
-    assert why["launch_unresolved"] == len(nl.spawned), why
-    assert counts["k1_logged"]["pulse_launch"] == 0, counts
+    assert not any(why.values()), why
+    assert counts["k1_logged"]["pulse_launch"] == len(nl.spawned), counts
 
 
 def test_pulse_launch_with_a_patched_launch_function_runs_python(
@@ -3541,8 +3551,10 @@ def test_warp_engine_slot_write_pushes_arriving(monkeypatch):
 
 
 def test_python_dumb_fire_spawn_is_tagged_dumb(monkeypatch):
-    """Python's FireDumb (a dumb fire the kernel hands back) defers its
-    SPAWN tagged as the dumb kind, like the kernel's."""
+    """Python's FireDumb (a dumb fire the kernel hands back: here its
+    launch forgotten, uncached) defers its SPAWN tagged as the dumb kind,
+    like the kernel's. (The SDK's FireDumb is itself a native session since
+    fire control native only, M8.1: the hand-back is its FIRE_DUMB.)"""
     from engine.appc import effect_queue as eq
     kinds = []
     post = eq.post
@@ -3556,8 +3568,11 @@ def test_python_dumb_fire_spawn_is_tagged_dumb(monkeypatch):
         w = World(mp, True, _LAUNCH_SHIPS, "k1_dumb_tag", player="Galaxy")
         try:
             tube = w.ships["Galaxy"].GetTorpedoSystem().GetWeapon(0)
+            _forget_launches(w)
             with eq.scope():
                 tube.FireDumb(0, 1)
             assert kinds == [ws.SPAWN_DUMB], kinds
+            why = nc.counts()["k1_launch_reasons"]
+            assert why["launch_uncached"] >= 1, why
         finally:
             w.close()

@@ -1048,7 +1048,7 @@ def _pump_held_weapons(ships_list, dt: float) -> None:
     THE TRACTOR WALK): it is never handed back here, and with native combat
     off no tractor engages (TractorBeamSystem.StartFiring).
     """
-    if _native_combat.enabled():
+    if _native_combat.fire_control_native():
         # The same loop, walked by the native K1 kernel; Python runs only the
         # effects, and this module's loop body for whatever K1 hands back
         # (RUN_PYTHON: a ship with no mirror row, an articulated ship,

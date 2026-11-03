@@ -145,6 +145,11 @@ enum class St : int32_t {
     SYSTEM_START,
     // TractorBeamSystem.StartFiring's engage (THE TRACTOR WALK)
     TRACTOR_START,
+    // THE SDK ROUTES: Weapon.FireDumb(0, 1); weapon.Fire(target, offset),
+    // and its FIRE record's effect returned (it fired)
+    DUMB_START,
+    FIRE_START,
+    FIRE_FIRED,
     // WeaponSystem.update_weapons
     UW_DEAD_PRUNE,     // if ship ... ship.IsDead(): return False
                        // self._prune_targets(); target = self._target_list[0]
@@ -255,6 +260,11 @@ struct K1Kernel::Session {
     K1WalkCheck check;
     // begin_tractor's target.
     int64_t tractor_target = -1;
+    // THE SDK ROUTES: the dumb-fired tube or the Fire's weapon (`weapon`
+    // above), Fire's target (`fire_target`), the ship's GetTarget()
+    // (nullopt: not read), and the session's result (K1Kernel::result).
+    std::optional<int64_t> ship_target;
+    int64_t result = 0;
 };
 
 static void count_why(K1Kernel::Counts& c, bool pump, K1Why why) {
@@ -475,8 +485,25 @@ private:
     void log_pulse_launch(int64_t cannon, const PulsePlan& p);
     void log_launch(int64_t tube, int64_t target, const LaunchPlan& p);
     // Weapon.FireDumb(0, 1) natively; true with the FIRE_DUMB record in
-    // *out when Python must run it.
-    bool dumb_fire(int64_t tube, K1Record* out);
+    // *out (resuming at `next`) when Python must run it.
+    bool dumb_fire(int64_t tube, K1Record* out,
+                   St next = St::UW_NEXT_DELTA);
+    // How weapon.Fire(target, offset) ended once decided (fire_effect).
+    enum class FireEnd {
+        Fired,     // its effect is logged (writes, entries): Fire is True
+        Refused,   // a FIRE_FAILED queued: Fire is False
+        NotFired,  // the decision refused: Fire is False
+        Record,    // the FIRE record in *out: Python makes the launch
+    };
+    struct Outcome;
+    // The effect half of weapon.Fire(target, offset), after its decision
+    // `o` (the walk's try_fire_weapon, THE TRACTOR WALK and THE SDK ROUTES
+    // share it): a beam's sustain or edge (a TractorBeam posts no
+    // WEAPON_FIRED), a tube's or a cannon's launch, a tube's refused aim.
+    // A launch the kernel cannot make is the FIRE record, resuming at
+    // `record_next`.
+    FireEnd fire_effect(int64_t w, int64_t target, const Outcome& o,
+                        K1Record* out, St record_next);
 
     // `weapon.StopFiring()` is its class's writes, logged in its order
     // (round trips §4.3; the one encoding, stop_firing.h), and for a FIRING
@@ -887,19 +914,8 @@ bool Walker::tractor_bears(int64_t beam, int64_t ship, int64_t target) {
 // (a TractorBeam posts no ET_WEAPON_FIRED). Its return value is unused.
 void Walker::tractor_fire(int64_t beam, int64_t target) {
     const Outcome o = decide_beam(beam, target);
-    if (o.what != Outcome::What::Fire) return;
-    write_flag(beam, Field::_firing, "_firing", true);
-    write_target(beam, target);
-    write_target_offset(beam, true);
-    if (o.d.was_firing) {
-        ++c_.logged_beam_sustain;
-        return;
-    }
-    write_float(beam, Field::_beam_on_countdown, "_beam_on_countdown",
-                m_.globals().BEAM_ON_DELAY_S);
-    write_float(beam, Field::_dwell, "_dwell", 0.0);
-    enqueue(K1Effect::FIRE_SOUND, beam);
-    ++c_.logged_beam_edge;
+    K1Record unused;  // a beam's effect is never a record
+    fire_effect(beam, target, o, &unused, St::DONE);
 }
 
 // _engage_beam(target, offset, ship): the offset is the walk's (s_.offset,
@@ -1082,9 +1098,15 @@ Walker::Outcome Walker::decide_pulse(int64_t bank, int64_t target) {
             throw std::invalid_argument("combat K1: cannon _target unnamed");
     }
     // if target is None and ship is not None and hasattr(ship, "GetTarget"):
-    //     target = ship.GetTarget()     -- not mirrored
-    if (t == -1 && ship != -1)
-        throw std::invalid_argument("combat K1: ship.GetTarget() fallback");
+    //     target = ship.GetTarget()     -- not mirrored: a Fire session
+    //     (THE SDK ROUTES) carries it, read by Python
+    if (t == -1 && ship != -1) {
+        if (!s_.ship_target)
+            throw std::invalid_argument("combat K1: ship.GetTarget() fallback");
+        t = *s_.ship_target;
+        if (t == kRefUnrepresentable || (t >= 0 && !objrow(t)))
+            throw std::invalid_argument("combat K1: ship target unnamed");
+    }
     // if target is not None and hasattr(target, "IsDead") and target.IsDead()
     if (t != -1 && ship_dead(m_, t)) t = -1;
     if (t != -1) {
@@ -1164,14 +1186,30 @@ std::optional<Walker::LaunchPlan> Walker::plan_launch(int64_t tube,
         p.parent = tr._parent_subsystem;
         const SubsystemRow& sys = detail::sub(m_, p.parent);
         // ammo = parent.GetCurrentAmmoType(); its script's module. With no
-        // ammo type Python reads the property's script: not mirrored.
+        // ammo type, `parent.GetProperty().GetTorpedoScript(0)`: the slot-0
+        // script's launch, cached on the property's row (THE SDK ROUTES,
+        // M8.2; native_combat.push_slot0_launch), and no debit.
         const int64_t ammo_h = current_ammo_handle(m_, sys);
-        if (ammo_h == -1) {
-            *why = K1LaunchWhy::Unresolved;
-            return std::nullopt;
+        int64_t state = 0;
+        double speed = 0.0;
+        int64_t module_row = ammo_h;
+        const AmmoRow* ammo = ammo_h == -1 ? nullptr : m_.ammo(ammo_h);
+        if (ammo != nullptr) {
+            state = ammo->ammo_launch_state;
+            speed = ammo->ammo_launch_speed;
+        } else {
+            // parent_prop is None: _spawn_torpedo returns (state 2: no
+            // module), as does a property with no slot-0 script.
+            module_row = sys._property;
+            const PropertyRow* prop =
+                module_row < 0 ? nullptr : m_.property(module_row);
+            if (module_row == kRefUnrepresentable ||
+                (module_row >= 0 && prop == nullptr))
+                detail::fall_back("the torpedo property cannot be named");
+            state = prop == nullptr ? 2 : prop->slot0_launch_state;
+            speed = prop == nullptr ? 0.0 : prop->slot0_launch_speed;
         }
-        const AmmoRow& ammo = *m_.ammo(ammo_h);
-        switch (ammo.ammo_launch_state) {
+        switch (state) {
             case 1: break;
             case 2: *why = K1LaunchWhy::Unresolved; return std::nullopt;
             default: *why = K1LaunchWhy::Uncached; return std::nullopt;
@@ -1191,16 +1229,16 @@ std::optional<Walker::LaunchPlan> Walker::plan_launch(int64_t tube,
             }
         // `if ammo is not None and not getattr(ammo, "_unlimited", True):
         // ammo.AddAvailable(-1)`: max(0, min(available - 1, max)).
-        if (!ammo._unlimited) {
+        if (ammo != nullptr && !ammo->_unlimited) {
             p.debit = true;
             p.available = std::max<int64_t>(
-                0, std::min<int64_t>(ammo._available + -1,
-                                     ammo._max_torpedoes));
+                0, std::min<int64_t>(ammo->_available + -1,
+                                     ammo->_max_torpedoes));
         }
         K1Spawn& s = p.spawn;
         s.kind = kind;
-        s.ammo = ammo_h;
-        launch_reads(s, tube, target, std::nullopt, ammo.ammo_launch_speed);
+        s.ammo = module_row;
+        launch_reads(s, tube, target, std::nullopt, speed);
         return p;
     } catch (const std::invalid_argument&) {
         *why = K1LaunchWhy::Other;
@@ -1345,7 +1383,7 @@ void Walker::log_launch(int64_t tube, int64_t target, const LaunchPlan& p) {
 // Weapon.FireDumb(0, 1) (WS:1231): `if _dewarp_blocks_fire(self): return;
 // self.Fire(target=None, offset=None)` -- TorpedoTube.Fire's decision
 // (CanFire; no aim, no cone) and, when it fires, the launch with no target.
-bool Walker::dumb_fire(int64_t tube, K1Record* out) {
+bool Walker::dumb_fire(int64_t tube, K1Record* out, St next) {
     const size_t mark = s_.writes.size();
     Outcome o;
     try {
@@ -1359,7 +1397,7 @@ bool Walker::dumb_fire(int64_t tube, K1Record* out) {
         o = decide_tube(tube, -1);
     } catch (const std::invalid_argument&) {
         k1_roll_back(m_, s_, mark);
-        *out = emit(K1Kind::FIRE_DUMB, St::UW_NEXT_DELTA, tube);
+        *out = emit(K1Kind::FIRE_DUMB, next, tube);
         return true;
     }
     if (o.what != Outcome::What::Fire) {
@@ -1375,8 +1413,78 @@ bool Walker::dumb_fire(int64_t tube, K1Record* out) {
     }
     ++c_.launch_why[static_cast<size_t>(why)];
     k1_roll_back(m_, s_, mark);
-    *out = emit(K1Kind::FIRE_DUMB, St::UW_NEXT_DELTA, tube);
+    *out = emit(K1Kind::FIRE_DUMB, next, tube);
     return true;
+}
+
+Walker::FireEnd Walker::fire_effect(int64_t w, int64_t target,
+                                    const Outcome& o, K1Record* out,
+                                    St record_next) {
+    switch (o.what) {
+        case Outcome::What::Fire: {
+            if (o.d.shape == K1Decision::Shape::Beam && o.d.was_firing) {
+                // _fire_effect on a beam already firing: three writes, no
+                // sound, no event (WS:895-898).
+                write_flag(w, Field::_firing, "_firing", true);
+                write_target(w, target);
+                write_target_offset(w, true);
+                ++c_.logged_beam_sustain;
+                return FireEnd::Fired;
+            }
+            if (o.d.shape == K1Decision::Shape::Beam) {
+                // The was-not-firing edge (WS:898-916, then
+                // PhaserBank._fire_effect): the mixin's writes, its
+                // FIRE_SOUND, then ET_WEAPON_FIRED at the target (not a
+                // TractorBeam's: the mixin's _fire_effect is its whole).
+                write_flag(w, Field::_firing, "_firing", true);
+                write_target(w, target);
+                write_target_offset(w, true);
+                write_float(w, Field::_beam_on_countdown, "_beam_on_countdown",
+                            m_.globals().BEAM_ON_DELAY_S);
+                write_float(w, Field::_dwell, "_dwell", 0.0);
+                enqueue(K1Effect::FIRE_SOUND, w);
+                if (subrow(w)->weapon_kind != kTractorBeam)
+                    enqueue(K1Effect::WEAPON_FIRED, w, target);
+                ++c_.logged_beam_edge;
+                return FireEnd::Fired;
+            }
+            if (o.d.shape == K1Decision::Shape::Tube) {
+                // The tube's launch (LAUNCHES AT THE BOUNDARY): logged writes
+                // and a SPAWN, unless the kernel cannot make it (the FIRE
+                // record, counted).
+                K1LaunchWhy why = K1LaunchWhy::Other;
+                if (std::optional<LaunchPlan> p =
+                        plan_launch(w, target, K1Spawn::Kind::Tube, &why)) {
+                    log_launch(w, target, *p);
+                    ++c_.logged_tube_launch;
+                    return FireEnd::Fired;
+                }
+                ++c_.launch_why[static_cast<size_t>(why)];
+            }
+            if (o.d.shape == K1Decision::Shape::Pulse) {
+                // The cannon's launch, likewise (Task 3).
+                K1LaunchWhy why = K1LaunchWhy::Other;
+                if (std::optional<PulsePlan> p =
+                        plan_pulse_launch(w, o.d, &why)) {
+                    log_pulse_launch(w, *p);
+                    ++c_.logged_pulse_launch;
+                    return FireEnd::Fired;
+                }
+                ++c_.launch_why[static_cast<size_t>(why)];
+            }
+            *out = emit(K1Kind::FIRE, record_next, w, target);
+            out->decision = o.d;
+            return FireEnd::Record;
+        }
+        case Outcome::What::FailedEvent:
+            // self._broadcast_weapon_fire_failed(); return False
+            enqueue(K1Effect::WEAPON_FIRE_FAILED, w);
+            ++c_.logged_fire_failed;
+            return FireEnd::Refused;
+        case Outcome::What::Fail:
+            break;
+    }
+    return FireEnd::NotFired;
 }
 
 // ── The cursor loop ──────────────────────────────────────────────────────────
@@ -1476,6 +1584,54 @@ K1Record Walker::run() {
             break;
         case St::TRACTOR_START:
             tractor_walk(s_.sys, true);
+            s_.st = St::WALK_END;
+            break;
+
+        // ── THE SDK ROUTES (k1_fire_control.h) ───────────────────────────
+        case St::DUMB_START: {
+            // Weapon.FireDumb(0, 1) (WS:1415) on one tube.
+            ++c_.logged_sdk_dumb_fire;
+            K1Record r;
+            if (dumb_fire(s_.weapon, &r, St::WALK_END)) return r;
+            s_.st = St::WALK_END;
+            break;
+        }
+        case St::FIRE_START: {
+            // weapon.Fire(target, offset): the decision (a TractorBeam's is
+            // the mixin's, decide_beam), then its effect. A decision the
+            // mirror cannot make writes nothing (rolled back): result -1,
+            // and Python's Fire runs instead (not counted).
+            const int64_t w = s_.weapon;
+            const int64_t t = s_.fire_target;
+            const size_t mark = s_.writes.size();
+            Outcome o;
+            try {
+                const SubsystemRow* wr = subrow(w);
+                if (!wr) detail::fall_back("the fired weapon has no row");
+                if (t == kRefUnrepresentable || (t >= 0 && !objrow(t)))
+                    detail::fall_back("Fire's target cannot be named");
+                o = wr->weapon_kind == kTractorBeam ? decide_beam(w, t)
+                                                    : decide(w, t);
+            } catch (const std::invalid_argument&) {
+                k1_roll_back(m_, s_, mark);
+                s_.result = -1;
+                s_.st = St::WALK_END;
+                break;
+            }
+            ++c_.logged_sdk_fire;
+            K1Record r;
+            switch (fire_effect(w, t, o, &r, St::FIRE_FIRED)) {
+                case FireEnd::Fired: s_.result = 1; break;
+                case FireEnd::Refused:
+                case FireEnd::NotFired: s_.result = 0; break;
+                case FireEnd::Record: return r;
+            }
+            s_.st = St::WALK_END;
+            break;
+        }
+        case St::FIRE_FIRED:
+            // The FIRE record's _fire_effect ran: it returns True.
+            s_.result = 1;
             s_.st = St::WALK_END;
             break;
 
@@ -1771,77 +1927,12 @@ K1Record Walker::run() {
                 return ask("fire", {s_.sys, w, s_.fire_target},
                            St::TF_FIRE_ANSWER);
             }
-            switch (o.what) {
-                case Outcome::What::Fire: {
-                    if (o.d.shape == K1Decision::Shape::Beam &&
-                        o.d.was_firing) {
-                        // _fire_effect on a beam already firing: three
-                        // writes, no sound, no event (WS:895-898).
-                        write_flag(w, Field::_firing, "_firing", true);
-                        write_target(w, s_.fire_target);
-                        write_target_offset(w, true);
-                        ++c_.logged_beam_sustain;
-                        s_.st = St::TF_FIRED;
-                        break;
-                    }
-                    if (o.d.shape == K1Decision::Shape::Beam) {
-                        // The was-not-firing edge (WS:898-916, then
-                        // PhaserBank._fire_effect): the mixin's writes, its
-                        // FIRE_SOUND, then ET_WEAPON_FIRED at the target.
-                        write_flag(w, Field::_firing, "_firing", true);
-                        write_target(w, s_.fire_target);
-                        write_target_offset(w, true);
-                        write_float(w, Field::_beam_on_countdown,
-                                    "_beam_on_countdown",
-                                    m_.globals().BEAM_ON_DELAY_S);
-                        write_float(w, Field::_dwell, "_dwell", 0.0);
-                        enqueue(K1Effect::FIRE_SOUND, w);
-                        enqueue(K1Effect::WEAPON_FIRED, w, s_.fire_target);
-                        ++c_.logged_beam_edge;
-                        s_.st = St::TF_FIRED;
-                        break;
-                    }
-                    if (o.d.shape == K1Decision::Shape::Tube) {
-                        // The tube's launch (LAUNCHES AT THE BOUNDARY):
-                        // logged writes and a SPAWN, unless the kernel
-                        // cannot make it (the FIRE record, counted).
-                        K1LaunchWhy why = K1LaunchWhy::Other;
-                        if (std::optional<LaunchPlan> p = plan_launch(
-                                w, s_.fire_target, K1Spawn::Kind::Tube,
-                                &why)) {
-                            log_launch(w, s_.fire_target, *p);
-                            ++c_.logged_tube_launch;
-                            s_.st = St::TF_FIRED;
-                            break;
-                        }
-                        ++c_.launch_why[static_cast<size_t>(why)];
-                    }
-                    if (o.d.shape == K1Decision::Shape::Pulse) {
-                        // The cannon's launch, likewise (Task 3).
-                        K1LaunchWhy why = K1LaunchWhy::Other;
-                        if (std::optional<PulsePlan> p =
-                                plan_pulse_launch(w, o.d, &why)) {
-                            log_pulse_launch(w, *p);
-                            ++c_.logged_pulse_launch;
-                            s_.st = St::TF_FIRED;
-                            break;
-                        }
-                        ++c_.launch_why[static_cast<size_t>(why)];
-                    }
-                    K1Record r =
-                        emit(K1Kind::FIRE, St::TF_FIRED, w, s_.fire_target);
-                    r.decision = o.d;
-                    return r;
-                }
-                case Outcome::What::FailedEvent:
-                    // self._broadcast_weapon_fire_failed(); return False
-                    enqueue(K1Effect::WEAPON_FIRE_FAILED, w);
-                    ++c_.logged_fire_failed;
-                    s_.st = St::TF_FIRE_FALSE;
-                    break;
-                case Outcome::What::Fail:
-                    s_.st = St::TF_NOT_FIRED;
-                    break;
+            K1Record r;
+            switch (fire_effect(w, s_.fire_target, o, &r, St::TF_FIRED)) {
+                case FireEnd::Fired: s_.st = St::TF_FIRED; break;
+                case FireEnd::Refused: s_.st = St::TF_FIRE_FALSE; break;
+                case FireEnd::NotFired: s_.st = St::TF_NOT_FIRED; break;
+                case FireEnd::Record: return r;
             }
             break;
         }
@@ -1974,6 +2065,50 @@ void K1Kernel::begin_tractor(int64_t system, int64_t target,
     s->drift_now = drift_now;
     s->st = St::TRACTOR_START;
     sessions_.push_back(std::move(s));
+}
+
+void K1Kernel::begin_dumb(int64_t tube, double now, bool use_memo,
+                          double drift_now) {
+    auto s = std::make_unique<Session>();
+    s->pump = false;
+    s->weapon = tube;
+    s->now = now;
+    s->use_memo = use_memo;
+    s->drift_now = drift_now;
+    s->st = St::DUMB_START;
+    sessions_.push_back(std::move(s));
+}
+
+void K1Kernel::begin_fire(int64_t weapon, int64_t target,
+                          std::optional<Vec3> offset,
+                          std::optional<int64_t> ship_target, double now,
+                          bool use_memo, double drift_now) {
+    auto s = std::make_unique<Session>();
+    s->pump = false;
+    s->weapon = weapon;
+    s->fire_target = target;
+    s->ship_target = ship_target;
+    // The walk's offset is Fire's own (walk 1, materialised by the driver
+    // with that object), named after the weapon's parent system.
+    s->offset = offset;
+    s->walk_no = 1;
+    if (const SubsystemRow* r = m_.subsystem(weapon)) s->sys = r->_parent_subsystem;
+    s->now = now;
+    s->use_memo = use_memo;
+    s->drift_now = drift_now;
+    s->st = St::FIRE_START;
+    sessions_.push_back(std::move(s));
+}
+
+CanFireResult K1Kernel::sdk_can_fire(int64_t weapon, double now) {
+    const CanFireResult r = can_fire(m_, weapon, now);
+    ++counts_.logged_sdk_can_fire;
+    return r;
+}
+
+int64_t K1Kernel::result() const {
+    if (sessions_.empty()) lost("no session is open");
+    return sessions_.back()->result;
 }
 
 K1Record K1Kernel::next() {

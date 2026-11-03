@@ -166,6 +166,12 @@ enum class Field : int32_t {
     // PoweredSubsystem._efficiency, _normal_power: K0's holding tractor).
     _mass, _mode, _was_firing, _next_emitter_index, engage_kind, engage_point,
     _efficiency, _normal_power,
+    // The SDK weapon routes (fire control native only, M8.2): a torpedo
+    // system property's slot-0 script's launch, as an ammo type's
+    // (Property; native_combat.push_slot0_launch): the script a tube with no
+    // ammo type launches (_spawn_torpedo's `GetTorpedoScript(0)` fallback),
+    // 0 not cached yet, 1 cached, 2 no module (or no script); its speed.
+    slot0_launch_state, slot0_launch_speed,
     kCount
 };
 
@@ -311,6 +317,8 @@ struct PropertyRow {
     // mirrored. Empty for a property with no chains.
     std::vector<std::vector<int64_t>> _firing_chains;
     int64_t _groups = 0;
+    int64_t slot0_launch_state = 0;
+    double slot0_launch_speed = 0.0;
 };
 
 struct AmmoRow {

@@ -183,6 +183,16 @@ def enabled() -> bool:
     return _enabled
 
 
+def fire_control_native() -> bool:
+    """Whether fire control (K1) runs natively: the ONE predicate every
+    fire-control entry gates on -- the held-weapon pump
+    (host_loop._pump_held_weapons), WeaponSystem.StartFiring's session and
+    the SDK's own weapon calls (Weapon.FireDumb, CanFire, Fire: fire
+    control native only, M8.1, M8.6). The switch today; Task 5 makes it
+    "the module is available" (M9)."""
+    return _enabled
+
+
 def audit_enabled() -> bool:
     return _audit
 
@@ -1897,11 +1907,13 @@ def _k1_send_walk_check() -> None:
                                 _K1_LEAF_PATCHES, _K1_SHIP_PATCHES,
                                 iu, gto, cls)
     # And the launch check, re-checked with it before every record: the
-    # launch functions, and the cannons' modules against sys.modules.
-    from engine.appc import weapon_subsystems as ws
+    # launch functions. The cannons' modules are not checked against
+    # sys.modules there any more: a module re-imported mid-session is
+    # launched from the cache until the next K1 entry re-pushes it
+    # (_refresh_stale_launches; fire control native only, M8.3).
     _h.combat_k1_set_launch_check(
         _k1_launch_check() if _k1_launch_stock is not None else None)
-    _h.combat_k1_set_pulse_modules(ws._pulse_modules)
+    _h.combat_k1_set_pulse_modules(None)
     _k1_walk_check_sent = True
 
 
@@ -2361,18 +2373,17 @@ _pulse_stale = False
 def mark_pulse_stale() -> None:
     """weapon_subsystems._reset_projectile_module_cache ran. Nothing is
     resolved now (the SDK tree may be half reloaded); the next push, the
-    next K1 entry (k1_pump / k1_system: a K1 decision reads the params, and
-    Python's Fire would read the module at that moment) or
-    refresh_stale_pulse_params (GameLoop.tick) re-reads every built bank
-    and ammo type. Every ammo type's launch is forgotten at once (pushed
-    uncached, nothing resolved) until that re-read caches it again."""
+    next K1 entry (_refresh_stale_launches: a K1 decision reads the params,
+    and Python's Fire would read the module at that moment) or
+    refresh_stale_pulse_params (GameLoop.tick) re-reads every built bank,
+    ammo type and torpedo property. Until then -- a reset made by Python
+    run in the middle of a K1 session, THE P6 WINDOW -- every row keeps the
+    launch it holds and the kernel launches from it (fire control native
+    only, M8.3: the cache is out of date, the shot is not impossible: not a
+    hand-back, not a no-fire)."""
     global _pulse_stale
     if _enabled:
         _pulse_stale = True
-        for h, obj in list(_registry.items()):
-            if ((h >> _KIND_SHIFT) == _kind("Ammo")
-                    and obj.__dict__.get("_nslot") == h):
-                _push_ammo_row(obj)
 
 
 # ── The per-type launch cache (launch deferral; P6 extended to tubes) ────────
@@ -2459,16 +2470,103 @@ def _push_ammo_row(ammo) -> None:
 def learn_tube_launch(script, mod) -> None:
     """Python resolved torpedo `script` to `mod` for a launch: cache its
     launch (weapon_subsystems.tube_launch_params) and push it to every
-    ammo type of that script."""
+    ammo type of that script, and every torpedo property whose slot-0
+    script it is."""
     from engine.appc import weapon_subsystems as ws
     if not script or script in ws._tube_launch_cache:
         return
     ws._tube_launch_cache[script] = ws.tube_launch_params(mod)
     for h, obj in list(_registry.items()):
-        if ((h >> _KIND_SHIFT) == _kind("Ammo")
-                and obj.__dict__.get("_nslot") == h
-                and obj.__dict__.get("_script") == script):
+        if obj.__dict__.get("_nslot") != h:
+            continue
+        k = h >> _KIND_SHIFT
+        if k == _kind("Ammo") and obj.__dict__.get("_script") == script:
             _push_ammo_row(obj)
+        elif k == _kind("Property"):
+            scripts = obj.__dict__.get("_torpedo_scripts")
+            if isinstance(scripts, dict) and scripts.get(0) == script:
+                _push_slot0_row(obj)    # the slot-0 launch (M8.2)
+
+
+def _slot0_launch(prop) -> tuple:
+    """(slot0_launch_state, slot0_launch_speed, module) of a torpedo system
+    property: its slot-0 script's cached launch -- the script
+    TorpedoTube._spawn_torpedo launches for a tube with no ammo type
+    (`parent.GetProperty().GetTorpedoScript(0)`; fire control native only,
+    M8.2) -- unresolved when it has none (Python then launches nothing).
+    Read from the instance dict, so it is safe while the property is still
+    being built."""
+    from engine.appc import weapon_subsystems as ws
+    scripts = prop.__dict__.get("_torpedo_scripts")
+    script = scripts.get(0) if isinstance(scripts, dict) else None
+    if not script:
+        return (ws.LAUNCH_UNRESOLVED, 0.0, None)
+    state, speed = ws._tube_launch_cache.get(script,
+                                             (ws.LAUNCH_UNCACHED, 0.0))
+    mod = (ws._projectile_modules.get(script)
+           if state == ws.LAUNCH_CACHED else None)
+    return (state, speed, mod)
+
+
+def push_slot0_launch(prop) -> None:
+    """Push a torpedo system property's slot-0 launch (_slot0_launch), its
+    script's launch cached first (_cache_tube_launch, as an ammo type's):
+    at its row's creation, its SetTorpedoScript, a cache re-read."""
+    if _enabled:
+        scripts = prop.__dict__.get("_torpedo_scripts")
+        if isinstance(scripts, dict):
+            _cache_tube_launch(scripts.get(0))
+        _push_slot0_row(prop)
+
+
+def _push_slot0_row(prop) -> None:
+    """Push the property's slot-0 launch as cached now, resolving nothing."""
+    if _enabled:
+        h = prop.__dict__.get("_nslot")
+        if h is None or "_torpedo_scripts" not in prop.__dict__:
+            return
+        state, speed, mod = _slot0_launch(prop)
+        # The module a kernel SPAWN of this launch carries, set before the
+        # state that lets the kernel launch.
+        _h.combat_set_launch_module(h, mod)
+        _call(prop, _h.combat_set_i, h, _fid("slot0_launch_state"), state)
+        if "_nslot" in prop.__dict__:
+            _call(prop, _h.combat_set_f, h, _fid("slot0_launch_speed"),
+                  float(speed))
+
+
+def _refresh_stale_launches() -> None:
+    """Every K1 entry's re-push of a stale launch cache (fire control native
+    only, M8.3): the projectile-cache reset's re-read
+    (refresh_stale_pulse_params), and a cannon module re-imported since its
+    params were read -- `sys.modules` no longer holds the module the
+    cannons' launches carry (PulseWeapon._fire_decide imports its script
+    at every shot) -- whose script is read again and pushed to every cannon
+    of it. Between the staleness and this (Python run in the middle of a
+    session) the kernel launches from the cache it has. Neither is a
+    no-fire, and neither is counted."""
+    if _pulse_stale:
+        refresh_stale_pulse_params()
+    from engine.appc import weapon_subsystems as ws
+    modules = sys.modules
+    stale = None
+    for script, mod in ws._pulse_modules.items():
+        if modules.get(script) is not mod:
+            if stale is None:
+                stale = []
+            stale.append(script)
+    if stale is None:
+        return
+    for script in stale:
+        ws._pulse_modules.pop(script, None)
+        ws._pulse_params_cache.pop(script, None)
+    stale = set(stale)
+    for h, obj in list(_registry.items()):
+        if (obj.__dict__.get("_nslot") == h
+                and (h >> _KIND_SHIFT) == _kind("Subsystem")
+                and _weapon_kind(obj) == 6
+                and ws.pulse_module_script(obj) in stale):
+            push_pulse_params(obj)
 
 
 def _arriving_flag(ship) -> int:
@@ -2560,7 +2658,8 @@ def refresh_stale_pulse_params() -> None:
 
 
 def refresh_pulse_params() -> None:
-    """Every pulse bank and ammo type already built re-reads its module."""
+    """Every pulse bank, ammo type and torpedo property already built
+    re-reads its module."""
     if _enabled:
         for h, obj in list(_registry.items()):
             if obj.__dict__.get("_nslot") != h:
@@ -2570,6 +2669,8 @@ def refresh_pulse_params() -> None:
                 push_pulse_params(obj)
             elif k == _kind("Ammo"):
                 push_ammo_launch(obj)
+            elif k == _kind("Property"):
+                push_slot0_launch(obj)
 
 
 def _property_values(prop) -> dict:
@@ -2602,6 +2703,8 @@ def _push_extras(obj, h) -> None:
             _push_pose_table(obj, h, flags["has_posed_parts"])
     elif k == _kind("Property"):
         push_property(obj)
+        if "_nslot" in obj.__dict__:
+            push_slot0_launch(obj)
     elif k == _kind("Subsystem"):
         if "_nslot" in obj.__dict__ and _weapon_kind(obj) == 6:
             push_pulse_params(obj)
@@ -3313,9 +3416,26 @@ def audit_mirror() -> None:
             ok, speed, life = ws.resolve_pulse_module_params(
                 ws.pulse_module_script(obj))
             expected.update(module_ok=ok, launch_speed=speed, lifetime=life)
-        if (h >> _KIND_SHIFT) == _kind("Ammo"):
+        if (h >> _KIND_SHIFT) == _kind("Property") and not _pulse_stale \
+                and "_torpedo_scripts" in d:
+            # As an ammo type's (below); not inside THE P6 WINDOW, where the
+            # row keeps the launch it had until the next K1 entry (M8.3).
+            from engine.appc import weapon_subsystems as ws
+            scripts = d.get("_torpedo_scripts")
+            script = scripts.get(0) if isinstance(scripts, dict) else None
+            if not script:
+                state, speed = ws.LAUNCH_UNRESOLVED, 0.0
+            elif script in ws._tube_launch_cache:
+                state, speed = ws.tube_launch_params(
+                    ws._projectile_modules.get(script))
+            else:
+                state, speed = ws.LAUNCH_UNCACHED, 0.0
+            expected.update(slot0_launch_state=state,
+                            slot0_launch_speed=float(speed))
+        if (h >> _KIND_SHIFT) == _kind("Ammo") and not _pulse_stale:
             # Resolved afresh from the module the cache entry was read from
             # (a stale cache entry would otherwise agree with a stale row).
+            # Not inside THE P6 WINDOW (the property's note above).
             from engine.appc import weapon_subsystems as ws
             script = d.get("_script")
             if not script:
@@ -3649,13 +3769,14 @@ class _K1Walk:
     PINNING) -- and the materialised walk: its number in the session, its
     system and its offset object."""
 
-    __slots__ = ("pins", "offset", "walk", "walked")
+    __slots__ = ("pins", "offset", "walk", "walked", "result")
 
     def __init__(self) -> None:
         self.pins = {}
         self.offset = None
         self.walk = None
         self.walked = None
+        self.result = 0
 
     def materialise(self, n, h):
         """THE hook for "this walk's Python side" (round trips, ruling D5):
@@ -4075,15 +4196,16 @@ def run_k1(dt, ships=(), pump_body=None, system=None,
     _k1_compute_enter()
     try:
         with _effect_queue.session():
-            _run_k1(dt, ships, pump_body, system, offset)
+            return _run_k1(dt, ships, pump_body, system, offset)
     finally:
         _k1_compute_exit()
 
 
-def _run_k1(dt, ships, pump_body, system, offset=_NO_OFFSET) -> None:
+def _run_k1(dt, ships, pump_body, system, offset=_NO_OFFSET) -> int:
     """run_k1's loop, inside the session's deferral. `offset` (a tractor
-    StartFiring session, k1_tractor_start): the session's walk 1 is already
-    materialised, its offset object this one."""
+    StartFiring session, k1_tractor_start; a Fire session, k1_fire): the
+    session's walk 1 is already materialised, its offset object this one.
+    Returns the session's result (combat_k1_result: a Fire session's)."""
     (DONE, WALK_START, STOP_SYSTEM, RUN_PYTHON, BANK_STOP, FIRE,
      _FIRE_FAILED, FIRE_DUMB, ASK) = _k1_kinds()
     walk = _K1Walk()
@@ -4151,7 +4273,9 @@ def _run_k1(dt, ships, pump_body, system, offset=_NO_OFFSET) -> None:
                 # walk check hands back (an instance-patched StopFiring).
                 walk.obj(rec[1]).StopFiring()
             elif kind == FIRE_DUMB:
-                walk.obj(rec[1]).FireDumb(0, 1)
+                # FireDumb's own body (not the SDK wrapper, which would begin
+                # this dumb fire's session again).
+                walk.obj(rec[1])._python_fire_dumb()
             elif kind == RUN_PYTHON:
                 if rec[2] >= 0:
                     pump_body(ships[rec[2]], rec[3])
@@ -4162,6 +4286,7 @@ def _run_k1(dt, ships, pump_body, system, offset=_NO_OFFSET) -> None:
                 # is inside a Fire decision, whose PartStale is an ASK fire.
                 _h.combat_k1_answer(_k1_answer(rec, walk, dt))
             elif kind == DONE:
+                walk.result = _h.combat_k1_result()
                 break
             else:
                 raise RuntimeError("combat K1: unknown record %r" % (rec,))
@@ -4174,6 +4299,7 @@ def _run_k1(dt, ships, pump_body, system, offset=_NO_OFFSET) -> None:
     finally:
         if prev is not _UNSET:
             _h.combat_set_applier(prev)
+    return walk.result
 
 
 def k1_pump(ships, dt, pump_body) -> None:
@@ -4184,8 +4310,9 @@ def k1_pump(ships, dt, pump_body) -> None:
     if not _k1_walk_check_sent:
         _k1_send_walk_check()
     _k1_recheck_overrides()
-    if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
-        refresh_stale_pulse_params()
+    # A mission swap's reset (before GameLoop.tick), a re-imported cannon
+    # module: re-pushed (M8.3).
+    _refresh_stale_launches()
     # A step boundary: every slot the walk reads is fresh (the torpedo hits,
     # deaths and damage before the pump may have bumped the generation).
     resolve_stale_part_slots(ships)
@@ -4210,8 +4337,9 @@ def k1_system(system, dt) -> None:
     if not _k1_walk_check_sent:
         _k1_send_walk_check()
     _k1_recheck_overrides()
-    if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
-        refresh_stale_pulse_params()
+    # A mission swap's reset (before GameLoop.tick), a re-imported cannon
+    # module: re-pushed (M8.3).
+    _refresh_stale_launches()
     # A step boundary (StartFiring runs inside gl.ai, an effect's handler,
     # ...): the walk reads the parent ship's slots and, aiming at a posed
     # target's offset, the target's.
@@ -4246,8 +4374,9 @@ def k1_tractor_start(system, target, offset) -> None:
         _log_once("tractor_row", "a tractor system with no mirror row "
                   "engages nothing")
         return
-    if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
-        refresh_stale_pulse_params()
+    # A mission swap's reset (before GameLoop.tick), a re-imported cannon
+    # module: re-pushed (M8.3).
+    _refresh_stale_launches()
     resolve_stale_part_slots(_k1_system_ships(system))
     t, use_memo, drift = _k1_clocks()
     th = REF_NONE if target is None else _handle_of(target, "Object")
@@ -4255,6 +4384,115 @@ def k1_tractor_start(system, target, offset) -> None:
         h, th, (offset.x, offset.y, offset.z)
         if isinstance(offset, TGPoint3) else None, t, use_memo, drift)
     run_k1(0.0, system=system, offset=offset)
+
+
+# ── THE SDK ROUTES (k1_fire_control.h; fire control native only, M8.1,
+# M8.6): the SDK's own Weapon.FireDumb, Fire and CanFire as the native rule.
+
+def _sdk_leaf(weapon, kinds):
+    """`weapon`'s Subsystem handle when the native rule may stand in for its
+    SDK call: fire control native, a live row of a leaf kind in `kinds`,
+    neither its class nor its instance replacing a method K1 stands in for
+    (_K1_LEAF_METHODS, _K1_LEAF_PATCHES: those keep Python's, as the walk
+    hands them back). Else None (Python's own body runs)."""
+    if not fire_control_native():
+        return None
+    d = weapon.__dict__
+    h = d.get("_nslot")
+    if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
+        return None
+    cls = type(weapon)
+    if _weapon_kind_of_class(cls) not in kinds or _k1_overridden(cls):
+        return None
+    for name in _K1_LEAF_PATCHES:
+        if name in d:
+            return None
+    return h
+
+
+def _sdk_entry(ships) -> tuple:
+    """A K1 entry outside the walk (THE SDK ROUTES): as k1_system's."""
+    drain()                     # a session start (ruling R2)
+    if not _k1_walk_check_sent:
+        _k1_send_walk_check()
+    _k1_recheck_overrides()
+    _refresh_stale_launches()
+    resolve_stale_part_slots(ships)
+    return _k1_clocks()
+
+
+def _weapon_ship(weapon):
+    ship = weapon._climb_to_ship() if hasattr(weapon, "_climb_to_ship") \
+        else None
+    return [] if ship is None else [ship]
+
+
+def k1_dumb_fire(tube) -> bool:
+    """Weapon.FireDumb(0, 1) as a one-tube native session (M8.1): the
+    kernel's dumb_fire -- the warp-in hold, TorpedoTube.Fire's decision with
+    no target, the launch logged with its SPAWN. False when the tube is not
+    one the native rule may stand in for (_sdk_leaf): its caller runs
+    Python's FireDumb."""
+    h = _sdk_leaf(tube, (8,))
+    if h is None:
+        return False
+    t, use_memo, drift = _sdk_entry(_weapon_ship(tube))
+    _h.combat_k1_begin_dumb(h, t, use_memo, drift)
+    run_k1(0.0)
+    return True
+
+
+def k1_fire(weapon, target, offset):
+    """weapon.Fire(target, offset) as a one-weapon native session (M8.6):
+    the walk's decision and its effect. Returns Fire's bool, or None when
+    Python's Fire must run instead: the weapon is not one the native rule
+    may stand in for (_sdk_leaf), its target has no row, or the mirror
+    could not make the decision (nothing written)."""
+    h = _sdk_leaf(weapon, (5, 6, 7, 8))
+    if h is None:
+        return None
+    th = REF_NONE if target is None else _handle_of(target, "Object")
+    if th == REF_UNREPRESENTABLE:
+        return None
+    ships = _weapon_ship(weapon)
+    if target is not None:
+        ships.append(target)
+    # PulseWeapon._fire_decide's `ship.GetTarget()` fallback (target None,
+    # no stamped _target): SDK state the mirror does not hold, read here.
+    ship_target = None
+    if (target is None and weapon.__dict__.get("_target") is None
+            and ships and hasattr(ships[0], "GetTarget")):
+        st = ships[0].GetTarget()
+        ship_target = REF_NONE if st is None else _handle_of(st, "Object")
+    t, use_memo, drift = _sdk_entry(ships)
+    _h.combat_k1_begin_fire(
+        h, th, (offset.x, offset.y, offset.z)
+        if isinstance(offset, TGPoint3) else None, ship_target,
+        t, use_memo, drift)
+    result = run_k1(0.0, system=None, offset=offset)
+    if result < 0:
+        return None
+    return bool(result)
+
+
+def k1_can_fire(weapon):
+    """weapon.CanFire() from the mirror (M8.6): the native rule's answer as
+    Python's int, its `_depleted = False` made through the field's own
+    setter (so the mirror, already answering as if it were made, agrees).
+    None when Python's CanFire must answer: the weapon is not one the
+    native rule may stand in for, or the mirror cannot answer."""
+    h = _sdk_leaf(weapon, (5, 6, 7, 8))
+    if h is None:
+        return None
+    from engine.appc import weapon_subsystems as ws
+    now = ws._game_time() if _weapon_kind(weapon) == 8 else 0.0
+    try:
+        ok, clear = _h.combat_k1_can_fire(h, now)
+    except ValueError:
+        return None
+    if clear:
+        weapon._depleted = False
+    return 1 if ok else 0
 
 
 def tractor_force_step(ships, dt) -> None:

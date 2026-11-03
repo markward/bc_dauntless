@@ -427,7 +427,7 @@ def _reset_projectile_module_cache() -> None:
     either."""
     _projectile_modules.clear()
     _pulse_params_cache.clear()
-    _pulse_modules.clear()      # in place: the bindings hold this dict
+    _pulse_modules.clear()
     _tube_launch_cache.clear()
     # Not re-resolved here (mid mission-swap teardown): banks and ammo types
     # already built re-read their module on the next native push or K1 entry.
@@ -440,9 +440,9 @@ _pulse_params_cache: dict = {}
 
 # script name -> the module those params were read from (module_ok 1 only):
 # the module a cannon's native launch carries (native_combat.
-# push_pulse_params; launch deferral, Task 3). The bindings hold THIS dict
-# and check every entry against sys.modules before each K1 record (THE
-# LAUNCH CHECK): never rebind it, clear it in place.
+# push_pulse_params; launch deferral, Task 3). Every K1 entry checks each
+# entry against sys.modules and re-pushes a re-imported one
+# (native_combat._refresh_stale_launches; fire control native only, M8.3).
 _pulse_modules: dict = {}
 
 # script name -> (launch state, launch speed) of a torpedo script, the per-
@@ -1032,7 +1032,15 @@ class _EnergyWeaponFireMixin:
             damaged bank throttles a healthy system.
 
         The existing parent-IsOn gate is unchanged (BC gates power
-        elsewhere, not inside this predicate)."""
+        elsewhere, not inside this predicate).
+
+        With fire control native this is the native rule (fire_gates.cc
+        can_fire; native_combat.k1_can_fire, fire control native only,
+        M8.6), the latch clear included; the Python below answers only a
+        weapon it may not stand in for (Task 6 deletes it)."""
+        native = native_combat.k1_can_fire(self)
+        if native is not None:
+            return native
         parent = self.GetParentSubsystem()
         on = parent is not None and parent.IsOn()
         if not on:
@@ -1070,7 +1078,14 @@ class _EnergyWeaponFireMixin:
         `_fire_effect` what follows it. For a beam K1 no longer calls it:
         it logs the same writes and queues the same FIRE_SOUND and
         WEAPON_FIRED itself (k1_fire_control.h, THE EFFECT QUEUE) -- a
-        change to either effect below changes K1's twin too."""
+        change to either effect below changes K1's twin too.
+
+        With fire control native the SDK's Fire is a one-weapon native
+        session (native_combat.k1_fire; k1_fire_control.h, THE SDK ROUTES,
+        M8.6); the Python below runs only when it may not stand in."""
+        native = native_combat.k1_fire(self, target, offset)
+        if native is not None:
+            return native
         d = self._fire_decide(target, offset)
         return False if d is None else self._fire_effect(target, offset, d)
 
@@ -1433,8 +1448,18 @@ class Weapon(ShipSubsystem):
 
         K1 decides a tube's dumb fire from the walk itself (the gate from the
         mirrored `arriving` flag, then the tube's Fire and its launch;
-        k1_fire_control.cc, dumb_fire): change both.
+        k1_fire_control.cc, dumb_fire): change both. With fire control
+        native the SDK's call is a one-tube native session on that rule
+        (native_combat.k1_dumb_fire; k1_fire_control.h, THE SDK ROUTES,
+        M8.1); _python_fire_dumb runs only when it may not stand in, or for
+        a launch the kernel hands back (FIRE_DUMB).
         """
+        if native_combat.k1_dumb_fire(self):
+            return
+        self._python_fire_dumb()
+
+    def _python_fire_dumb(self) -> None:
+        """FireDumb's Python body (Task 6 deletes it with the rest)."""
         if _dewarp_blocks_fire(self):
             return
         # The launch its Fire makes is the dumb kind (a deferred SPAWN's
@@ -1758,7 +1783,7 @@ class WeaponSystem(PoweredSubsystem):
         self._held_offset = offset
         self._fire_held = True
         self.SetForceUpdate(1)
-        if native_combat.enabled():
+        if native_combat.fire_control_native():
             # The same update_weapons(0.0), walked by the native K1 kernel;
             # Python runs only its effects (native_combat.run_k1).
             native_combat.k1_system(self, 0.0)
@@ -3021,6 +3046,10 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         return self._charge_level >= self._shot_cost() - 1e-9
 
     def CanFire(self) -> int:
+        # The native rule with fire control native (the mixin's CanFire).
+        native = native_combat.k1_can_fire(self)
+        if native is not None:
+            return native
         if self._cooldown_remaining > 0.0:
             return 0
         return _EnergyWeaponFireMixin.CanFire(self)
@@ -3030,7 +3059,10 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         IsFiring() False right after a successful shot, so the tick's
         try_fire_weapon needs the explicit bool (else its §3.3 step-6 retry
         would double-fire every successful shot). Decide, then effect (see
-        _EnergyWeaponFireMixin.Fire)."""
+        _EnergyWeaponFireMixin.Fire; natively with fire control native)."""
+        native = native_combat.k1_fire(self, target, offset)
+        if native is not None:
+            return native
         d = self._fire_decide(target, offset)
         return False if d is None else self._fire_effect(target, offset, d)
 
@@ -3550,7 +3582,12 @@ class TorpedoTube(Weapon):
         rest fail this gate within the same tick since gameTime delta is 0).
         Skew-fire tubes are exempt — they're the deliberately-desynced spread
         pattern, not the ship-wide volley.
+
+        The native rule with fire control native (the mixin's CanFire).
         """
+        native = native_combat.k1_can_fire(self)
+        if native is not None:
+            return native
         parent = self.GetParentSubsystem()
         if parent is None or not parent.IsOn():
             return 0
@@ -3590,7 +3627,12 @@ class TorpedoTube(Weapon):
             ``_target``) stays None for a dumbfire.
           * dumb path (``target`` is None): straight to bookkeeping, no aim
             resolve, no cone — matches BC (FireDumb has no target to gate).
+
+        Natively with fire control native (the mixin's Fire).
         """
+        native = native_combat.k1_fire(self, target, offset)
+        if native is not None:
+            return native
         d = self._fire_decide(target, offset)
         return False if d is None else self._fire_effect(target, offset, d)
 

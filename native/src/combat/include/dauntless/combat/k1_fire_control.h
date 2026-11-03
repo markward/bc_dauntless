@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/mirror.h"
 #include "dauntless/combat/write_log.h"
 
@@ -151,12 +152,15 @@
 // bolt's damage after register and posts its ET_WEAPON_FIRED once the bolt
 // exists (M4), so the delivered order is the spawn, ENTERED_SET,
 // WEAPON_FIRED. The SPAWN's module is the cannon's own (the one its P6
-// params were read from, held by the bindings per row); while any such
-// module is not the one sys.modules holds -- PulseWeapon._fire_decide
-// imports its script at every shot -- the bindings set
-// K1_PULSE_MODULE_STALE and every cannon launch is a FIRE record
-// (Unresolved), as is one with a launch function patched (Patched) or a
-// row it cannot read (Other).
+// params were read from, held by the bindings per row). A module
+// sys.modules no longer holds -- re-imported since; PulseWeapon.
+// _fire_decide imports its script at every shot -- is re-read at the next K1
+// entry (native_combat._refresh_stale_launches; fire control native only,
+// M8.3), and until then launched from (THE P6 WINDOW). K1_PULSE_MODULE_STALE
+// is no longer set by Python (it installs no module dict): the kernel's
+// check of it stays for Task 6 to delete. A cannon launch with a launch
+// function patched (Patched) or a row it cannot read (Other) is a FIRE
+// record.
 //
 // WHAT A LAUNCH OBEYS (ruling L8). The instance-level patch scan (THE WALK
 // START's verdict sets, native_combat._K1_LEAF_PATCHES) covers the ENTRY
@@ -181,13 +185,16 @@
 // THE P6 WINDOW. A cannon's launch speed and module are read when its
 // params are pushed (SetProperty, a mission swap's refresh); an ammo
 // type's when it is pushed (its creation, SetTorpedoScript, the refresh:
-// native_combat.push_ammo_launch, launch deferral Task 5). A
-// SetModuleName on a cannon's property after SetProperty is never
-// re-pushed, so the cached module and launch params stay the old ones; and
-// a projectile-cache reset (_reset_projectile_module_cache) made by Python
-// run in the middle of a K1 session leaves a cannon's old ones, and its
-// ammo types uncached (each launch handed back, Uncached), until the next
-// K1 entry refreshes them. The lead solve's params have the same window.
+// native_combat.push_ammo_launch, launch deferral Task 5), and a torpedo
+// property's slot-0 script's likewise (push_slot0_launch: the launch of a
+// tube with no ammo type, M8.2). A SetModuleName on a cannon's property
+// after SetProperty is never re-pushed, so the cached module and launch
+// params stay the old ones; and a projectile-cache reset
+// (_reset_projectile_module_cache) made by Python run in the middle of a K1
+// session, or a cannon module re-imported there, leaves every row the
+// launch it holds -- the kernel launches from it, no hand-back and no
+// no-fire (M8.3) -- until the next K1 entry re-pushes them. The lead
+// solve's params have the same window.
 //
 // Records left: FIRE for a launch the kernel cannot make (a tube's or a
 // cannon's, counted by K1LaunchWhy), FIRE_DUMB likewise, ASK, RUN_PYTHON,
@@ -253,6 +260,26 @@
 // tractor getter is never handed back: a ship the mirror cannot name (its
 // other getters handed back as before) and a tractor system it cannot name
 // (-2) are each that counted no-fire, and the pump goes on.
+//
+// THE SDK ROUTES (fire control native only, M8.1, M8.6). The SDK's own
+// weapon calls outside any walk are one-weapon sessions on the same rules:
+//   begin_dumb   Weapon.FireDumb(0, 1) on a tube (AI/Preprocessors.py:458):
+//       dumb_fire -- the warp-in hold, TorpedoTube.Fire's decision with no
+//       target, the launch (LAUNCHES AT THE BOUNDARY); a launch the kernel
+//       cannot make is the FIRE_DUMB record (Python's FireDumb body)
+//   begin_fire   weapon.Fire(target, offset): decide, then the walk's own
+//       effect of it (a beam's sustain or edge -- a TractorBeam's without
+//       its WEAPON_FIRED --, a tube's or a cannon's launch, a tube's
+//       WEAPON_FIRE_FAILED); a launch it cannot make is the FIRE record.
+//       The offset is the session's walk 1 (its object is Fire's offset, as
+//       begin_tractor's). A cannon's `ship.GetTarget()` fallback is the
+//       session's ship_target (Python reads it: SDK state the mirror does
+//       not hold). result(): 1 fired, 0 not, -1 the decision could not be
+//       made (nothing written: Python's Fire runs instead)
+//   sdk_can_fire weapon.CanFire(): fire_gates can_fire, `_depleted`'s clear
+//       reported for Python's setter to make
+// No walk check is asked (the driver hands an overridden or instance-
+// patched weapon to Python before it begins one).
 //
 // PROTOCOL INVARIANT: THE WALKED SYSTEM'S ROW OUTLIVES ITS WALK. An effect's
 // event handler may make objects unrepresentable (native_combat._drop: a
@@ -520,6 +547,21 @@ public:
     void begin_tractor(int64_t system, int64_t target,
                        std::optional<Vec3> offset, double now, bool use_memo,
                        double drift_now);
+    // THE SDK ROUTES. Weapon.FireDumb(0, 1) on `tube`.
+    void begin_dumb(int64_t tube, double now, bool use_memo, double drift_now);
+    // weapon.Fire(target, offset) on `weapon` (any leaf kind): `target` an
+    // Object handle (-1 None, -2 unnamed: Python's), `offset` Fire's offset
+    // xyz when it is a TGPoint3; `ship_target` the weapon's ship's
+    // GetTarget() (-1 None, -2 unnamed), nullopt when not read.
+    void begin_fire(int64_t weapon, int64_t target, std::optional<Vec3> offset,
+                    std::optional<int64_t> ship_target, double now,
+                    bool use_memo, double drift_now);
+    // weapon.CanFire() (fire_gates can_fire, counted). Throws
+    // std::invalid_argument when the mirror cannot answer.
+    CanFireResult sdk_can_fire(int64_t weapon, double now);
+    // The top session's result (begin_fire: see THE SDK ROUTES; 0 for the
+    // others), readable once it has returned DONE, before end().
+    int64_t result() const;
 
     // The next record of the top session. Throws std::logic_error when no
     // session is open, a WALK_START has no offset yet or an ASK no answer.
@@ -594,6 +636,10 @@ public:
         // THE TRACTOR WALK: the pump's tractor walks, StartFiring's tractor
         // sessions, and the walks that did not fire, by K1NoFire.
         int64_t logged_tractor_walk = 0, logged_tractor_start = 0;
+        // THE SDK ROUTES: dumb-fire sessions, Fire sessions decided
+        // natively (not those handed to Python's Fire), CanFire answers.
+        int64_t logged_sdk_dumb_fire = 0, logged_sdk_fire = 0,
+                logged_sdk_can_fire = 0;
         std::array<int64_t, static_cast<size_t>(K1NoFire::kCount)> no_fire{};
         std::array<int64_t, static_cast<size_t>(K1LaunchWhy::kCount)>
             launch_why{};

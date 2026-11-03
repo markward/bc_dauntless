@@ -914,6 +914,11 @@ class WeaponSystemProperty(PoweredSubsystemProperty):
 
     def SetTorpedoScript(self, slot, module_name) -> None:
         self._torpedo_scripts[int(slot)] = str(module_name)
+        if int(slot) == 0:
+            # The script a tube with no ammo type launches: its launch, read
+            # now (fire control native only, M8.2).
+            from engine.appc import native_combat
+            native_combat.push_slot0_launch(self)
 
     def GetTorpedoScript(self, slot):
         return self._torpedo_scripts.get(int(slot))
