@@ -19,6 +19,7 @@ in Phase 2.  Hailable + atmosphere damage are real gameplay logic.
 
 from engine.appc.objects import ObjectClass
 from engine.appc import proximity_table
+from engine.core import frame_profiler
 
 
 class Planet(ObjectClass):
@@ -373,7 +374,13 @@ class ProximityManager:
         SDK call sites pass an optional third arg (MissionLib.py:5035 passes
         ``1`` — a type filter / encompassing-volume flag in the real engine);
         accepted and ignored so those call sites round-trip.
+
+        Timed as `prox.near` (native motion + proximity phase 0).
         """
+        with frame_profiler.scope("prox.near"):
+            return self._near_objects(point, radius)
+
+    def _near_objects(self, point, radius):
         r2 = float(radius) * float(radius)
         px, py, pz = point.x, point.y, point.z
         candidates = self._candidates()
@@ -434,7 +441,13 @@ class ProximityManager:
 
         The trailing flag is accepted and ignored, as on GetNearObjects (a type
         filter / encompassing-volume flag in the real engine).
+
+        Timed as `prox.line` (native motion + proximity phase 0).
         """
+        with frame_profiler.scope("prox.line"):
+            return self._line_objects(start, end, radius)
+
+    def _line_objects(self, start, end, radius):
         r = float(radius)
         ax, ay, az = start.x, start.y, start.z
         dx, dy, dz = end.x - ax, end.y - ay, end.z - az
