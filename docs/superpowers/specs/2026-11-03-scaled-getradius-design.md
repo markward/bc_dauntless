@@ -74,7 +74,7 @@ Rewrite in plan Task 3: every docstring or comment that says `GetRadius()` is un
 1. **`planet.aggregate_suns_for_renderer`** (`planet.py:147-207`) computes `radius * scale` and `corona * scale` from `GetRadius()`. After the flip that double-scales a scaled sun. **Latent**: no SDK or engine path scales a sun. Request: read `GetBaseRadius()` there, or drop the `* scale`. It can ride on any later commit of theirs.
 2. **`GetLineIntersectObjects`** (`planet.py:470`) and `_is_proximity_participant` (`:246`) need **no edit**. The reach becomes the scaled value automatically, which is intended. The participation sign test is unchanged.
 3. **The size-rule task (their Task 7)** can read `GetRadius()` as BC's bounding radius once this branch merges. The open question on whether "bounding radius" includes scale (`open-questions-by-reading.md` Q3(c); NMP spec §8 item 2) is answered **yes**, and the ruling is made. Request: record that in their docs, which are theirs.
-4. If D1 is ruled yes later, the near rule's radius changes value again with no edit on their side.
+4. D1 was ruled (a): the corner rule stays for now. If a later change adopts the sphere rule, the near rule's radius changes value again with no edit on their side.
 
 5. **Notice, not a request:** phase 2 ("motion takes over the tractor force step") will move or wrap `tractor_force.cc`. This branch changes one function there, `Step::standoff`. Whichever lands second rebases a one-line change.
 
@@ -82,7 +82,7 @@ No change is needed in `proximity_cache.py`, `proximity_table.py`, `sets.py`, `t
 
 ## 8. Decisions
 
-**D1 — for Mark: which bounding radius?** Ours is the AABB corner distance from the origin. BC's is the merged world bound sphere.
+**D1 — which bounding radius? Ruled (a) by Mark, 2026-11-03: keep the corner rule on this branch; the sphere rule is decided later as its own change.** Ours is the AABB corner distance from the origin. BC's is the merged world bound sphere.
 - **Evidence** (derived, audit §2.3): merging the NIF's stored shape spheres gives the Galaxy 4.366, exactly BC's live value, and the Sovereign 3.866 against BC's 3.929.
 - **Size of the difference:** across 39 stock models, merged ÷ ours runs from 0.61 (FedStarbase 296 → 181) to 1.35 (DryDock 9.0 → 12.2). Most hulls are 5-30% smaller under BC's rule.
 - **Effect:** switching would change every hull's chase distance, splash radius, collision body, avoidance, line-query reach and Intercept stand-off. That is far wider than the scale change.
@@ -91,6 +91,11 @@ Options:
 - **(a) Recommended: keep the corner rule on this branch.** Ship the scale change alone. Decide the sphere rule later as its own change, with the merged-sphere computation in the NIF loader, its own sweep, goldens and live check.
 - (b) Add the sphere rule to this branch as a second behaviour commit after the scale flip.
 - (c) Never: keep the corner rule as a deliberate departure.
+
+Carried to the later decision (raised when Mark asked for the downside of (b)):
+- **Tuning on top of the corner rule.** `collisions.COLLISION_RADIUS_SCALE` (0.8) exists to offset the corner rule's overestimate; under a tighter sphere it would over-correct. Hand-tuned values (tractor margin, the Tau Ceti shuttle detour around Starbase 12's radius) need a fresh look too.
+- **Sphere centre.** BC's bound sphere has its own centre; every consumer of ours treats the radius as centred on the object's origin. A merged-sphere radius used about the origin need not enclose the hull. The centre offsets have not been measured: a read-only measurement across stock models is the cheap first step.
+- **Headless blindness.** Headless runs never seed a radius from the mesh (golden scenes set theirs; headless ships report 0), so goldens and the sweep cannot see the change; it is live-verified only.
 
 **D2 — my call, flagged:** `GetRadius()` keeps `world_radius`'s guard, so a non-positive or non-finite scale returns the base. One rule in Python and C++, and K4 can call `world_radius`. BC's answer at scale 0 is unknown; presumably 0 (**inferred**: bound × 0). No stock path sets a scale ≤ 0.
 

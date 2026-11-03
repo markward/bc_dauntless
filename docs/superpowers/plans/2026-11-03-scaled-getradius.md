@@ -350,9 +350,9 @@ Message: `refactor(radius): world_radius is GetRadius(); docs no longer call Get
 
 ---
 
-## Conditional: D1 (merged bounding sphere)
+## D1 (merged bounding sphere): not on this branch
 
-There is no task until Mark rules on design D1. If he picks (b), a fifth task follows Task 3:
+Mark ruled (a) on 2026-11-03: the corner rule stays, and this plan has no D1 task. The sphere rule is a later, separate change; had (b) been chosen, a fifth task would have followed Task 3:
 - the merged world-bound sphere is computed in the NIF loader from `NiTriShapeData` bounds and node transforms;
 - `_seed_ship_radius` uses it;
 - it lands as its own behaviour commit, with its own sweep, goldens and live check.
