@@ -395,6 +395,67 @@ TEST(K1, StopGatesRunBeforeTheWalkOnlyPrescan) {
     }
 }
 
+TEST(K1, TargetWithNoRealIsDeadReadsAsDead) {
+    // `hasattr(x, "IsDead") and x.IsDead()` on an object whose class has no
+    // IsDead (a planet: AI or a script can SetTarget one) is a truthy _Stub:
+    // dead. Held, the pump's IsDead gate stops the system; listed, the
+    // walk's prune drops it. Neither is a no-fire.
+    for (const int64_t kind : {int64_t{1}, int64_t{4}}) {
+        World w;
+        const int64_t ship = w.ship("ship");
+        const int64_t planet = w.object("planet", 0.0, 50.0, 0.0);
+        w.m.set_i(planet, Field::has_real_is_dead, 0);
+        const int64_t sys = w.system("sys", ship, kind, {planet});
+        w.bank("b0", sys);
+        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+        const K1Record r = w.step();
+        EXPECT_EQ(w.brief(r), "DONE") << kind;
+        EXPECT_EQ(w.m.get_i(sys, Field::_fire_held), 0) << kind;
+        EXPECT_EQ(w.k.counts().logged_system_stop, 1) << kind;
+        EXPECT_EQ(w.no_fires(), 0) << kind;
+        w.k.end();
+    }
+    // Listed behind a live held target: pruned, the walk goes on.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t planet = w.object("planet", 0.0, 60.0, 0.0);
+    w.m.set_i(planet, Field::has_real_is_dead, 0);
+    const int64_t sys = w.system("sys", ship, 1, {planet, t});
+    w.m.set_ref(sys, Field::_held_target, t);
+    w.bank("b0", sys);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record r = w.step();
+    EXPECT_EQ(w.k.counts().logged_walk_start, 1);
+    EXPECT_EQ(w.m.get_ids(sys, Field::_target_list), std::vector<int64_t>{t});
+    EXPECT_EQ(w.no_fires(), 0);
+    (void)r;
+    w.k.end();
+}
+
+TEST(K1, TractorOnATargetWithNoRealIsDeadStops) {
+    // A tractor engaged on a planet-like object: the update's IsDead gate
+    // reads it as dead and stops the system (its projectors stop, the drain
+    // ends) -- not a throw rolled back every tick with the beam held.
+    World w;
+    w.m.set_global_f(Global::TRACTOR_MAX_RANGE_GU, 120.0);
+    const int64_t ship = w.ship("ship");
+    const int64_t planet = w.object("planet", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("tr", ship, 3, {planet});
+    const int64_t beam = w.bank("beam", sys);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    w.step();                                   // gripped
+    w.k.end();
+    ASSERT_EQ(w.m.get_i(beam, Field::_firing), 1);
+    w.m.set_i(planet, Field::has_real_is_dead, 0);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    w.step();
+    EXPECT_EQ(w.m.get_i(sys, Field::_fire_held), 0);
+    EXPECT_EQ(w.m.get_i(beam, Field::_firing), 0);
+    EXPECT_EQ(w.no_fires(), 0);
+    w.k.end();
+}
+
 TEST(K1, TimerGateAndForceUpdate) {
     {   // Below the 0.33 s threshold: no attempt, the timer only accumulates.
         World w;
@@ -810,8 +871,10 @@ TEST(K1, NoFireBeforeAnyWrite) {
     no_fire([](World& w, I, I t, I sys, I) {
         w.m.set_ids(sys, Field::_target_list, {t, kRefUnrepresentable});
     }, K1NoFire::StaleRow);
-    no_fire([](World& w, I, I t, I, I) {
-        w.m.set_i(t, Field::has_real_is_dead, 0);
+    // The FIRING ship with no real IsDead (a target with none reads as
+    // dead: TargetWithNoRealIsDeadReadsAsDead).
+    no_fire([](World& w, I ship, I, I, I) {
+        w.m.set_i(ship, Field::has_real_is_dead, 0);
     }, K1NoFire::StubOrUnplaced);
     {   // A ship with no row: none of its systems fires (counted once).
         World w;
@@ -1022,8 +1085,8 @@ TEST(K1, NoFireReasonsAreCounted) {
     pump(1, [](World& w, I ship, I, I, I) {
         w.m.set_i(ship, Field::has_posed_parts, 1);
     }, K1NoFire::PartStale);
-    pump(1, [](World& w, I, I t, I, I) {
-        w.m.set_i(t, Field::has_real_is_dead, 0);
+    pump(1, [](World& w, I ship, I, I, I) {
+        w.m.set_i(ship, Field::has_real_is_dead, 0);   // the firing ship's
     }, K1NoFire::StubOrUnplaced);
     pump(1, [](World& w, I, I t, I sys, I) {
         w.m.set_ids(sys, Field::_target_list, {t, kRefUnrepresentable});
@@ -2097,8 +2160,8 @@ TEST(K1, TractorWalkTheMirrorCannotReadDoesNotFire) {
     const int64_t ship = w.ship("ship");
     const int64_t t = w.object("t", 0.0, 50.0, 0.0);
     const int64_t sys = w.system("tr", ship, 3, {t});
-    w.bank("beam", sys);
-    w.m.set_i(t, Field::has_real_is_dead, 0);   // a stub IsDead
+    const int64_t beam = w.bank("beam", sys);
+    w.m.set_i(beam, Field::weapon_kind, 1);     // a projector it cannot name
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     const K1Record r = w.step();
     EXPECT_EQ(w.brief(r), "DONE");

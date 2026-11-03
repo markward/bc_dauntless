@@ -78,6 +78,19 @@ bool xform_ok(const Mirror& m, const ObjectRow& o) {
                            static_cast<uint32_t>(o.xform_gen));
 }
 
+// A TARGET's `hasattr(x, "IsDead") and x.IsDead()`: on an object whose class
+// has no IsDead (a planet: AI or a script can SetTarget one) both are
+// TGObject.__getattr__'s truthy _Stub, so it reads as dead -- held, the
+// system stops; listed, it is pruned. Else ship_dead (a row it cannot read
+// throws: a no-fire). Never for the firing ship, whose real IsDead the
+// pre-scan requires.
+bool object_dead(const Mirror& m, int64_t h) {
+    if (h >= 0)
+        if (const ObjectRow* o = m.object(h); o && !o->has_real_is_dead)
+            return true;
+    return ship_dead(m, h);
+}
+
 }  // namespace
 
 const char* k1_kind_name(K1Kind k) {
@@ -684,11 +697,12 @@ std::optional<K1NoFire> Walker::gate_prescan(int64_t sys,
         if (!po) return K1NoFire::StaleRow;
         if (!xform_ok(m_, *po)) return K1NoFire::StubOrUnplaced;
         const int64_t held = s->_held_target;
-        if (held != -1) {
-            const ObjectRow* ho = objrow(held);
-            if (!ho) return K1NoFire::StaleRow;
-            if (!ho->has_real_is_dead || !xform_ok(m_, *ho))
-                return K1NoFire::StubOrUnplaced;
+        const ObjectRow* ho = held == -1 ? nullptr : objrow(held);
+        if (held != -1 && !ho) return K1NoFire::StaleRow;
+        // No real IsDead: the IsDead gate reads it as dead (object_dead) and
+        // stops the system before anything else of it is read.
+        if (ho && ho->has_real_is_dead) {
+            if (!xform_ok(m_, *ho)) return K1NoFire::StubOrUnplaced;
             // The phaser range gate runs AFTER can_detect (which writes its
             // memo and latch): everything it reads must be answerable here,
             // so no gate can throw once a side-effecting one has run.
@@ -727,8 +741,8 @@ std::optional<K1NoFire> Walker::walk_prescan(int64_t sys) const {
     for (const int64_t t : s->_target_list) {
         const ObjectRow* to = objrow(t);
         if (!to) return K1NoFire::StaleRow;
-        if (!to->has_real_is_dead || !xform_ok(m_, *to))
-            return K1NoFire::StubOrUnplaced;
+        if (!to->has_real_is_dead) continue;   // pruned: dead (object_dead)
+        if (!xform_ok(m_, *to)) return K1NoFire::StubOrUnplaced;
         if (!to->_dead) any_alive = true;
     }
     // PulseWeapon.Fire(None) falls back to ship.GetTarget(), not mirrored.
@@ -786,7 +800,7 @@ bool Walker::pump_stops(int64_t sys, int64_t pump_ship) {
     if (weapon_system_offline(m_, sys) || !s._is_on) return true;
     const int64_t held = s._held_target;
     // if held is not None and (hasattr(held, "IsDead") and held.IsDead())
-    if (held != -1 && ship_dead(m_, held)) return true;
+    if (held != -1 && object_dead(m_, held)) return true;
     // if held is not None and _target_undetectable(sys_, held): the firing
     // ship is sys_.GetParentShip(); can_detect's drift clock is drift_now,
     // its occlusion clock the Utopia game time (the weapons' `now`).
@@ -1007,7 +1021,7 @@ void Walker::tractor_update(int64_t sys) {
     }
     const int64_t ship = climb_to_ship_of(m_, sys);
     // if hasattr(target, "IsDead") and target.IsDead(): self.StopFiring()
-    if (ship_dead(m_, target)) {
+    if (object_dead(m_, target)) {
         tractor_stop(sys);
         return;
     }
@@ -1110,7 +1124,7 @@ Walker::Outcome Walker::decide_pulse(int64_t bank, int64_t target) {
             throw std::invalid_argument("combat K1: ship target unnamed");
     }
     // if target is not None and hasattr(target, "IsDead") and target.IsDead()
-    if (t != -1 && ship_dead(m_, t)) t = -1;
+    if (t != -1 && object_dead(m_, t)) t = -1;
     if (t != -1) {
         // self._target = target; self._target_offset = offset if
         // isinstance(offset, TGPoint3) else None -- BEFORE the arc test.
@@ -1283,7 +1297,7 @@ void Walker::launch_reads(K1Spawn& s, int64_t launcher, int64_t target,
     // target_ship = emitter._target (the stamp): alive -> its homing, then
     // SetTargetOffset(emitter._target_offset), the walk's offset (a TGPoint3
     // copy, else None), steered at as it is (no bake: M5).
-    if (target != -1 && !ship_dead(m_, target)) {
+    if (target != -1 && !object_dead(m_, target)) {
         s.target = target;
         if (s_.offset) {
             s.has_offset = true;
@@ -1638,7 +1652,7 @@ K1Record Walker::run() {
             // self._prune_targets(): a NEW list of the live entries.
             std::vector<int64_t> kept;
             for (const int64_t t : sysrow()._target_list)
-                if (!ship_dead(m_, t)) kept.push_back(t);
+                if (!object_dead(m_, t)) kept.push_back(t);
             // target = self._target_list[0] if self._target_list else None
             s_.target = kept.empty() ? -1 : kept.front();
             // Logged on EVERY walk, unchanged or not: Python's list is a NEW
@@ -1889,7 +1903,7 @@ K1Record Walker::run() {
             bool unread = false;
             for (const int64_t e : sysrow()._target_list) {
                 const ObjectRow* eo = objrow(e);
-                if (!eo || !eo->has_real_is_dead)
+                if (!eo)
                     unread = true;
                 else
                     snap.push_back(e);
@@ -1912,7 +1926,7 @@ K1Record Walker::run() {
             // answer is treated as gone (NO FIRE, after a shot).
             bool dead;
             try {
-                dead = ship_dead(m_, e);
+                dead = object_dead(m_, e);
             } catch (const std::invalid_argument&) {
                 count_no_fire(K1NoFire::IsDead);
                 dead = true;

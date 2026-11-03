@@ -174,6 +174,9 @@ _REQUIRED_BINDINGS = (
     "combat_compute_take",
     # Tractors native (fire control native only, M4).
     "combat_k1_begin_tractor", "combat_tractor_force_step",
+    # The SDK routes and the walk offset (fire control native only, M8).
+    "combat_k1_begin_dumb", "combat_k1_begin_fire", "combat_k1_result",
+    "combat_k1_can_fire", "combat_k1_walk_manual_offset",
 )
 
 
@@ -500,6 +503,13 @@ def _self_check():
     if not available():
         return _disable("native combat bindings missing: %s"
                         % ", ".join(missing_bindings()))
+    # The kernel's record shape: one record per session, DONE (fire control
+    # native only, M3). A kernel with any other kind (RUN_PYTHON, ASK, ...)
+    # is a build from before the Python copy was deleted.
+    kinds = dict(_h.combat_k1_kinds())
+    if kinds != {"DONE": 0}:
+        return _disable("K1 record kinds %r, not {'DONE': 0} (a stale "
+                        "build)" % (sorted(kinds.items()),))
     from engine.appc import nebula_density as nd
     from engine.appc.nebula import DEFAULT_FBM_DIALS
     rng = random.Random(20261031)
@@ -577,10 +587,12 @@ def _drop(obj) -> None:
     members, which are mirror pushes. The finalizer's later unregister of
     the same handle fails quietly.
 
-    A dropped weapon, system or ship never fires again -- fire control has
-    no Python copy to take it over (M3) -- and the other kernels take their
-    Python paths for it: counted as fire control's no-fire "dropped" and
-    logged once (fire control native only, R3)."""
+    What a drop costs fire control (M3: no Python copy takes over): a
+    dropped weapon, system or ship never fires again, and -- the larger
+    effect -- every system holding or listing the dropped object no longer
+    fires either (k1_no_fire stale_row each tick) until it lets it go. The
+    other kernels take their Python paths for it. Counted as fire control's
+    no-fire "dropped" and logged once (fire control native only, R3)."""
     h = obj.__dict__.get("_nslot")
     if h is None:
         return
@@ -588,7 +600,9 @@ def _drop(obj) -> None:
         _queue_push(obj, _drop_queued, None, "_drop")
         return
     _k1_no_fire("dropped", "a %s row was dropped (a value the mirror "
-                "cannot encode, or a stale handle): it never fires again"
+                "cannot encode, or a stale handle): every weapon system "
+                "holding or listing it stalls (no_fire stale_row) until it "
+                "lets it go, and it never fires itself"
                 % type(obj).__name__)
     global _k2_drop_epoch
     _k2_drop_epoch += 1         # K2's cached ship -> iid table names handles
@@ -3962,7 +3976,10 @@ def _k1_entry(ships) -> tuple:
     launch cache re-pushed (M8.3: a mission swap's reset, a re-imported
     cannon module), and every part slot the walk reads fresh (a step
     boundary: hits, deaths and damage may have bumped the generation; a
-    resolution that raised is retried, M8.4). Returns the clocks."""
+    resolution that raised is retried, M8.4). Returns the clocks. The
+    mirror is made live first (fire_control_native: a call before
+    configure(), or a loud failure)."""
+    fire_control_native()
     drain()
     _refresh_stale_launches()
     resolve_stale_part_slots(ships)
@@ -3973,7 +3990,7 @@ def k1_pump(ships, dt) -> None:
     """host_loop._pump_held_weapons(ships, dt): one native session (fire
     control native only, M3). `ships` is a list; a ship with no Object row
     is passed as -1 and does not fire (k1_no_fire unslotted_ship)."""
-    t, use_memo, drift = _k1_entry(ships)
+    t, use_memo, drift = _k1_entry(ships)   # live before reading slots
     handles = []
     for ship in ships:
         h = slot(ship)
@@ -3986,6 +4003,7 @@ def k1_system(system, dt) -> None:
     """WeaponSystem.StartFiring's immediate update (dt 0) as one native
     session. A system with no Subsystem row does not fire (k1_no_fire
     no_row, logged once)."""
+    fire_control_native()       # live before reading the row (a resync)
     h = system.__dict__.get("_nslot")
     if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
         _k1_no_fire("no_row", "a weapon system with no mirror row")

@@ -374,7 +374,7 @@ self.GetParentShip()`: `PowerDisplay.py:1013` casts `GetDestination()` to
 `ShipClass`, and `ConditionFiringTractorBeam.py:26-27` register broadcast
 METHOD handlers filtered to the watched ship, which filters on the event's
 destination. Called from `StartFiring`, every state-changing exit of
-`update_weapons`, and `StopFiring`. The first pass missed one exit — the
+the per-tick update, and `StopFiring`. The first pass missed one exit — the
 `not self.IsOn()` bail — and that was a real, live latch bug, not a
 theoretical gap: `TractorBeam.UpdateCharge` stops the emitter behind the
 system's back whenever the parent loses power (the host loop pumps
@@ -385,6 +385,18 @@ the HUD latched "Tractor: On" permanently, and the next re-engage's
 drop. Fixed in a follow-up review pass (`f47033d8`). Pinned by
 `tests/unit/test_tier_bc_event_emitters.py`, including the power-loss latch
 and out-of-arc regression cases.
+
+**Where it is posted now (fire control native only, 2026-11-03).** The
+Python update loop and `_engage_beam` above are deleted. The tractor walk is
+native: `native/src/combat/src/k1_fire_control.cc`, `Walker::tractor_sync`
+(called from the engage, every state-changing exit of the update, and the
+stop) does the same edge-detect on `_was_firing` and appends a
+`TRACTOR_STARTED`/`TRACTOR_STOPPED(system, ship)` effect-queue entry.
+`engine/appc/effect_queue.py` `_tractor_started`/`_tractor_stopped`
+(`_tractor_event`) post the event when the entry is delivered, one tick
+later (ruling R8; `docs/reference/engine/perf-cadences-and-latency.md`).
+`TractorBeamSystem._sync_firing_event` remains as the Python twin for an
+SDK `StopFiring`, queueing the same entry.
 
 ---
 
@@ -402,7 +414,8 @@ again needs the same edge-detect that doesn't exist yet.
 **✅ Landed** alongside #8 — same method, same commits, the opposite
 transition (`ET_TRACTOR_BEAM_STOPPED_FIRING` when `IsFiring()` crosses from
 true to false). See #8 for the shared reasoning, including the power-loss
-latch fix that this direction was the one actually missing.
+latch fix that this direction was the one actually missing. Posted now
+from the same native `tractor_sync`, through the effect queue, as #8.
 
 ---
 
@@ -656,8 +669,15 @@ plain `TGEvent` keeps no object pointer. Phaser (was-not-firing edge), tube (aft
 `ET_TORPEDO_AMMO_CONSUMED`) and pulse (`PulseWeapon._fire_effect`, once per
 shot after the bolt is spawned -- none when no bolt spawned -- with the target
 the shot used) all pass their
-target; tractors still post nothing. It lives in `_fire_effect`, so it holds
-with native combat on and off. Pinned by `tests/unit/test_weapon_fired_event.py`
+target; tractors still post nothing.
+
+**Where it is posted now (fire control native only, 2026-11-03).** The
+Python `_fire_effect`s are deleted. Native fire control (`k1_fire_control.cc`)
+appends a `WEAPON_FIRED(weapon, target)` effect-queue entry for a phaser's
+edge and a tube's launch, and a cannon's shot goes out with its `SPAWN`
+entry; `engine/appc/effect_queue.py` `_weapon_fired` and
+`weapon_subsystems.spawn_launch` (a cannon's, once its bolt exists) post it
+through the same `_post_weapon_fired(weapon, target)`. Pinned by `tests/unit/test_weapon_fired_event.py`
 and `tests/integration/test_weapon_fired_mission_handlers.py`.
 
 
@@ -690,11 +710,11 @@ When BC posts each is not established; no RE read has been done. A fix would add
 | `ET_TARGET_LIST_OBJECT_REMOVED` | `ScienceMenuHandlers.py:93/205` | same as above |
 | `ET_TORPEDO_ENTERED_SET` | `E8M2.py:4511/1643`, `ConditionIncomingTorps.py:180/228` | ✅ **DONE** — `projectiles.register`/`expire`; Torpedo promoted to ObjectClass |
 | `ET_TORPEDO_EXITED_SET` | `E8M2.py:4513/1692`, `ConditionIncomingTorps.py:182/257` | ✅ **DONE** — same pair |
-| `ET_TRACTOR_BEAM_STARTED_FIRING` | `PowerDisplay.py:337/1010`, `ConditionFiringTractorBeam.py:26`, `E7M2.py:341/708`, `E8M2.py:528` | ✅ **DONE** — `weapon_subsystems.py` `TractorBeamSystem._sync_firing_event()`, edge-detect on `IsFiring()` cached in `_was_firing` |
+| `ET_TRACTOR_BEAM_STARTED_FIRING` | `PowerDisplay.py:337/1010`, `ConditionFiringTractorBeam.py:26`, `E7M2.py:341/708`, `E8M2.py:528` | ✅ **DONE** — native `k1_fire_control.cc` `tractor_sync` (Python twin `TractorBeamSystem._sync_firing_event()` for `StopFiring`), edge-detect cached in `_was_firing`; posted one tick later by `effect_queue._tractor_started` |
 | `ET_TRACTOR_BEAM_STOPPED_FIRING` | `PowerDisplay.py:338/1010`, `ConditionFiringTractorBeam.py:27` | same as above, opposite transition — also covers the `not IsOn()` power-loss bail that latched the HUD before the review-pass fix |
 | `ET_RESTORE_PERSISTENT_TARGET` | `TacticalMenuHandlers.py:407/958` | ✅ **DONE** — `target_menu.attempt_persistent_restore`, on the periodic refresh; mechanism recovered by the RE project |
 | `ET_IN_SYSTEM_WARP` | `ScienceMenuHandlers.py:95/515` | ✅ **DONE** — `ships.py` engage + `_end_in_system_warp()` shared by all 4 disengage sites |
 | `ET_SET_WARP_SEQUENCE` | `ConditionWarpingToSet.py:33/69` | ✅ **DONE** — `subsystems.py` `WarpEngineSubsystem.SetWarpSequence`, unguarded ping |
 | `ET_PLANET_COLLISION` | `E1M2.py:1135/1308` | ✅ **DONE** (#13, found after the 12) — `collisions.py` `_emit_planet_collision()`, impact path, source planet / destination body, posted before impact damage |
-| `ET_WEAPON_FIRED` (target + pulse) | `E1M2.py:1139/1384`, `E2M1.py:704/963` | ✅ **DONE** (#14, found 2026-11-02) — `weapon_subsystems.py` `_post_weapon_fired(weapon, target)` sets the object pointer; `PulseWeapon._fire_effect` now posts it |
+| `ET_WEAPON_FIRED` (target + pulse) | `E1M2.py:1139/1384`, `E2M1.py:704/963` | ✅ **DONE** (#14, found 2026-11-02) — `weapon_subsystems.py` `_post_weapon_fired(weapon, target)` sets the object pointer; posted from native fire control's `WEAPON_FIRED` entries (`effect_queue._weapon_fired`) and a cannon's `SPAWN` delivery (`spawn_launch`) |
 | `ET_SUBSYSTEM_COMPLETELY_DESTROYED` / `_DAMAGED` / `_STATE_CHANGED` | `Maelstrom.py:223`, `E8M1.py:889`, `E8M2.py:4723`, `E2M0.py:825`, `E3M4.py:533` | **OPEN** (#15, found 2026-11-02) — never posted |

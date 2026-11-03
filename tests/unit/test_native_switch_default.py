@@ -125,6 +125,52 @@ def test_missing_binding_raises_at_configure(monkeypatch):
         nc.configure({})
 
 
+_K1_BINDINGS = ("combat_k1_begin_dumb", "combat_k1_begin_fire",
+                "combat_k1_result", "combat_k1_can_fire",
+                "combat_k1_walk_manual_offset")
+
+
+@pytest.mark.parametrize("name", _K1_BINDINGS)
+def test_each_k1_binding_is_required(monkeypatch, name):
+    """Final review I1: a .so from before fire control went native only
+    lacks the SDK-route and walk-offset bindings; configure() names it
+    instead of the first shot failing."""
+    nc.reset()
+    monkeypatch.setattr(nc, "_h", _Without(_h, name))
+    assert name in nc.missing_bindings()
+    with pytest.raises(RuntimeError, match="stale build.*" + name):
+        nc.configure({})
+    assert not nc._enabled
+
+
+class _Kinds:
+    """The bindings module whose kernel reports `kinds`."""
+
+    def __init__(self, real, kinds):
+        self._real = real
+        self._kinds = kinds
+
+    def __getattr__(self, name):
+        if name == "combat_k1_kinds":
+            return lambda: dict(self._kinds)
+        return getattr(self._real, name)
+
+
+def test_k1_record_shape_is_checked(monkeypatch):
+    """Final review I1: a kernel with record kinds besides DONE (a build
+    from before the Python copy was deleted: RUN_PYTHON, ASK, ...) fails
+    the self-check, naming the kinds."""
+    nc.reset()
+    monkeypatch.setattr(nc, "_h", _Kinds(_h, {"DONE": 0, "RUN_PYTHON": 1}))
+    with pytest.raises(RuntimeError, match="self-check.*RUN_PYTHON"):
+        nc.configure({})
+    assert not nc._enabled
+    nc.reset()
+    monkeypatch.setattr(nc, "_h", _Kinds(_h, {"DONE": 0}))
+    nc.configure({})
+    assert nc._enabled
+
+
 def test_failed_self_check_raises(monkeypatch):
     nc.reset()
     real = math.dist
@@ -233,6 +279,27 @@ def test_fire_control_before_configure_takes_the_native_path(monkeypatch):
         g.GetPhaserSystem().StartFiring(v)
         assert sessions == [g.GetPhaserSystem()]
         assert nc._enabled and nc.fire_control_native()
+    finally:
+        w.close()
+
+
+def test_torpedo_start_firing_before_configure_fires(monkeypatch):
+    """Final review I2: StartFiring is itself a fire-control entry. A
+    torpedo system's StartFiring(None) before configure() makes the mirror
+    live and launches -- not a session over unpushed rows that loses the
+    shot (k1_no_fire not_k1_system). No sensor query on the way to make the
+    mirror live by a side effect (the phaser case above has can_detect)."""
+    from tests.helpers.k0_fight import World
+    w = World(monkeypatch, False, "before_configure_torp")
+    try:
+        assert not nc._enabled
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        torps.StartFiring(None)
+        assert nc._enabled, "StartFiring ran before the mirror was live"
+        counts = nc.counts()
+        assert not any(counts["k1_no_fire"].values()), counts["k1_no_fire"]
+        logged = counts["k1_logged"]
+        assert logged["dumb_launch"] + logged["tube_launch"] > 0, logged
     finally:
         w.close()
 

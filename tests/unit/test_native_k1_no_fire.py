@@ -335,3 +335,33 @@ def test_walk_offset_object_built_natively(monkeypatch):
         assert not hasattr(type(g), "_live_held_offset")
     finally:
         w.close()
+
+
+def test_held_planet_stops_the_system(monkeypatch):
+    """Final review m1: a planet (ObjectClass: no IsDead) AI or a script
+    can SetTarget. Python's `hasattr(held, "IsDead") and held.IsDead()` was a
+    truthy _Stub -- dead -- so the pump stopped the system; natively it
+    reads as dead too (k1_fire_control.cc object_dead). A phaser system and
+    a tractor held on one stop on the next pump: no stub_or_unplaced every
+    tick, no tractor rolled back with its beam held (draining power)."""
+    w = k1.World(monkeypatch, True, k1._DUEL, "k1_held_planet")
+    try:
+        import App
+        galaxy = w.ships["Galaxy"]
+        planet = App.Planet_Create(20.0, "")
+        planet.SetTranslateXYZ(0.0, 60.0, 0.0)
+        w.set.AddObjectToSet(planet, "Planet")
+        phasers = galaxy.GetPhaserSystem()
+        tractors = galaxy.GetTractorBeamSystem()
+        phasers.StartFiring(planet)
+        tractors.StartFiring(planet)
+        assert phasers._fire_held and tractors._fire_held
+        w.tick()
+        assert phasers._fire_held is False
+        assert tractors._fire_held is False
+        assert not any(b.IsFiring() for b in k1._weapons(tractors))
+        w.tick()
+        c = nc.counts()["k1_no_fire"]
+        assert not any(c.values()), c
+    finally:
+        w.close()
