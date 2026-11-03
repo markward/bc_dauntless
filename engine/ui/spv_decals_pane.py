@@ -301,8 +301,9 @@ class DecalsPaneMixin:
         """The ship's radius in body (NIF) units, the placement frame: the
         model's own bounds (|aabb centre| + |half extents|, host_loop's
         `_model_extent_from_aabb`, the same extent realize derives a missing
-        radius from) when the instance has a model; else GetRadius(), which
-        is UNSCALED GU, over BC_MODEL_SCALE -- never divided by GetScale()."""
+        radius from) when the instance has a model; else GetBaseRadius()
+        (unscaled GU, not GetRadius(), which is base x scale), over
+        BC_MODEL_SCALE -- never divided by GetScale()."""
         from engine import host_io
         from engine.host_loop import BC_MODEL_SCALE, _model_extent_from_aabb
         iid = self._decal_iid()

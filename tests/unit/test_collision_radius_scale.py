@@ -57,6 +57,13 @@ def test_get_radius_is_scaled_and_effective_radius_scales_once():
         rock.GetRadius())
 
 
+def test_world_radius_is_get_radius_for_objects(monkeypatch):
+    from engine.appc.objects import ObjectClass
+    rock = _rock(1.2, 5.0)
+    monkeypatch.setattr(ObjectClass, "GetRadius", lambda self: 42.0)
+    assert collisions.world_radius(rock) == 42.0
+
+
 @pytest.mark.parametrize("gap, collide", [(-1e-3, True), (1e-3, False)])
 def test_two_rocks_collide_exactly_when_they_touch_visually(gap, collide):
     """Rock A draws at 1 x 3 = 3 GU, rock B at 2 x 2 = 4 GU: they touch at 7."""
@@ -192,8 +199,9 @@ def test_hull_chunk_parent_mask_holds_until_clear_of_the_scaled_parent():
 
 
 def test_radius_helpers_never_read_get_radius(monkeypatch):
-    """The two radius x scale helpers read the BASE, so the GetRadius flip
-    cannot double-scale them."""
+    """effective_radius (radius x scale) reads the BASE, so the GetRadius flip
+    cannot double-scale it. world_radius is NOT pinned here: it is
+    GetRadius() (see test_world_radius_is_get_radius_for_objects)."""
     from engine.appc.objects import ObjectClass
     from engine.rocks.rock import effective_radius
     rock = _rock(1.2, 5.0)
@@ -204,6 +212,5 @@ def test_radius_helpers_never_read_get_radius(monkeypatch):
     def _boom(self):
         raise AssertionError("helper read GetRadius()")
     monkeypatch.setattr(ObjectClass, "GetRadius", _boom)
-    assert collisions.world_radius(rock) == 1.2 * 5.0
     assert effective_radius(rock) == 1.2 * 5.0
     assert effective_radius(bare) == 0.8 * 5.0

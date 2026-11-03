@@ -113,9 +113,11 @@ BC_CHASE_DISTANCE_RADII = 4.0               # BC's authored Distance — faithfu
 CHASE_MIN_RADII        =  2.0
 CHASE_MAX_RADII        = 40.0
 # DELIBERATE DEVIATION (2026-09-16 live pass): the authored 4.0 is BC's exact
-# framing — our GetRadius() is within 10% of BC's merged NiBound for every
-# hull measured (Galaxy 4.03 vs 4.46 GU) and our 35° vertical FOV is
-# narrower than Gamebryo's 41° default — but on a widescreen window the same
+# framing — but our GetRadius() is an AABB corner distance, not BC's merged
+# NiBound sphere: BC's live Galaxy reads 4.366 GU, and the corner rule runs
+# -28% to +64% across the fleet (audit radius-scale-audit.md section 2.3; the
+# Galaxy itself is -8%). Our 35° vertical FOV is also narrower than
+# Gamebryo's 41° default — and on a widescreen window the same
 # angular size reads as "too far out" (a Galaxy saucer is ~24% of the frame
 # width vs ~28% at 4:3). Mark asked for it closer. Set back to
 # BC_CHASE_DISTANCE_RADII to restore the original. Min/Max stay authored.

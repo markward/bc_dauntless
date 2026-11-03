@@ -2,8 +2,8 @@
 (sensor continuity/occlusion spec, roadmap decision 7)
 
 A major rock is a RockClass in A's set whose SCALED radius
-(rocks.rock.effective_radius -- never GetRadius() alone, which ignores
-SetScale) is at least the `min_blocker_radius_gu` dial. The test is the
+(rocks.rock.effective_radius, which also falls back to the hull radius
+when a headless rock's base radius is 0) is at least the `min_blocker_radius_gu` dial. The test is the
 segment between the two centres against each rock's sphere; A and B are never
 their own occluders. A rock whose sphere contains the observer's centre or the
 target's centre does not occlude that pair either: that ship is BESIDE the

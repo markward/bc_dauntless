@@ -12,7 +12,7 @@ Orbit command working with zero changes anywhere else.
 
 MUST run before the set is render-realized. ``_RenderState.
 planet_natural_scale`` (engine/host_loop.py) caches
-``GetRadius() / NIF_extent`` once, at load time -- a radius written after
+``GetBaseRadius() / NIF_extent`` once, at load time -- a radius written after
 that cache is populated leaves the body drawn at its old size while every
 other system (physics, hailing, target list, Orbit) already sees the new
 one. Callers must invoke ``apply_to_set`` as part of creating a set, before
