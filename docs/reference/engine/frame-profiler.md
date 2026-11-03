@@ -145,7 +145,8 @@ a one-line insert per boundary instead of re-indenting 1,300 lines into `with`
 blocks, and it cannot mis-nest.
 
 **Underneath those phases it is a tree**, and has been since the `sim.gameloop`
-split: `sim` ⊃ `sim.gameloop` ⊃ `gl.*`, `sim` ⊃ `sim.combat` ⊃ `cb.*`,
+split: `sim` ⊃ `sim.gameloop` ⊃ `gl.*`, `sim` ⊃ `sim.combat` ⊃ `cb.*`, `sim` ⊃ `sim.effects` (the
+end-of-tick effect-queue delivery, native combat on only),
 `ui_panels` ⊃ `ui.render_all` ⊃ `ui.<panel>`. `scope()` records the scope (or
 mark phase) it opened inside and the report indents by that depth. Printed flat
 — which it was — every child appeared *above* its parent with nothing marking
@@ -159,8 +160,11 @@ number and reach a wrong conclusion:
 * **Indented rows are INCLUDED in their parent's total.** `gl.ai` is part of
   `sim.gameloop` is part of `sim`. Do not sum the column.
 * **`*` marks per-tick rows.** `sim.gameloop` and everything inside it is a sum
-  over the frame's N catch-up ticks; its siblings `sim.weapons` / `sim.combat` /
-  `sim.collisions` and everything inside *them* run **once per frame**. With the
+  over the frame's N catch-up ticks, and so are `sim.weapons`, `sim.combat`
+  and (native combat on) `sim.effects`, which run once per catch-up tick too
+  (since 2026-10-30; marked since 2026-11-02, `PER_TICK_ROOTS` in
+  `engine/core/frame_profiler.py`). `sim.collisions` and everything inside it
+  run **once per frame**. With the
   tick count printed above the table and nothing distinguishing the two, the
   natural move — divide everything by N — is wrong for half the rows. The
   `calls` column is the generic backstop: a row entered 4 times says `4`.
@@ -470,6 +474,19 @@ ships at lower frequency; (c) move hot paths to C++.
   `vd.after_carve` ⊃ `hb.split_detached` (the connectivity BFS) /
   `hb.spawn` (chunk spawns); under `sim.debris_chunks`, `dc.tick` and
   `dc.breakup_drain` (the throttled split, ⊃ the same `hb.*`).
+  Native combat compute rows (native combat on only; kernels off the lock,
+  spec `2026-11-03-kernels-off-the-lock-design.md` goal 1): `k0.compute`
+  under `sim.weapons`, `k1.compute` under `cb.held_weapons`, `k2.compute`
+  under `cb.phasers`, `k3.compute` under `cb.projectiles`, `k4.compute` under
+  `cb.eligibility`. Each is ONLY the kernel's compute call, timed by a
+  `steady_clock` span in the binding (`ComputeSpan`, `host_bindings.cc`) and
+  reported once a session through `frame_profiler.record()`, the one way to
+  add a span the Python half did not time itself. Its `calls` is the number
+  of compute calls (records), not sessions. A session run under any other
+  scope reports apart as `k<n>.compute@<scope>` -- chiefly
+  `k1.compute@gl.ai`, the AI's StartFiring sessions -- so no row has two
+  parents. The parent minus its compute row is the Python and binding work
+  around the kernel.
   `planet_detail` (clipmap bake for the planet surface detail pass) is a
   top-level, GPU-timed scope — a sibling of `space`/`bloom`/`post`, not
   nested under any of them.

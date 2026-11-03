@@ -3,6 +3,14 @@ from engine.appc.math import TGPoint3
 from tests.helpers.cloak_geometry import inside_gu, outside_gu
 from tests.helpers.one_set import InSet, share_one_set
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+import pytest  # noqa: E402
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 
 class FakeShip(InSet):
     def __init__(self, pos, vel=(0, 0, 0), dead=False, detectable=True):
@@ -173,6 +181,7 @@ def test_torpedo_coasts_on_last_seen_when_target_cloaks_outside_the_bubble():
     assert t._velocity.x < 0.0
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_torpedo_cloak_cache_is_absolute_with_the_contest_off(monkeypatch):
     """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False: any
     cloak freezes the cache regardless of range, even at the 15 GU that the

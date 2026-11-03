@@ -69,12 +69,13 @@ def _first_step_delay_s() -> float:
 
 
 def _apply_seed():
-    """DAUNTLESS_DAMAGE_PREVIEW_SEED: when set to an integer, seed the game
-    RNG (App.g_kSystemWrapper, whose GetRandomNumber the death cascade rolls
-    through) at mission start, so the death-cascade rolls repeat between captures.
-    Only those wrapper-driven rolls repeat: Python's module random (debris,
-    particles) stays unseeded, so captures are not identical. Returns
-    the seed, or None when unset or not an integer (the RNG is left alone)."""
+    """DAUNTLESS_DAMAGE_PREVIEW_SEED: when set to an integer, seed every
+    stream a death draws at mission start, so captures repeat: the game RNG
+    (App.g_kSystemWrapper, the cascade's throes, plan and damage rolls),
+    Python's module random (a damaging blast's point) and the presentation
+    generator (every other blast's point, its size, its fireball and sparks;
+    engine/appc/presentation_rng.py). Returns the seed, or None when unset or
+    not an integer (the RNGs are left alone)."""
     import os
     raw = os.environ.get("DAUNTLESS_DAMAGE_PREVIEW_SEED")
     if raw is None:
@@ -86,7 +87,11 @@ def _apply_seed():
               "not seeded" % raw)
         return None
     App.g_kSystemWrapper.SetRandomSeed(seed)
-    print("[damage-preview] game RNG seeded with %d" % seed)
+    import random
+    from engine.appc import presentation_rng
+    random.seed(seed)
+    presentation_rng.reset(seed)
+    print("[damage-preview] game RNGs seeded with %d" % seed)
     return seed
 
 

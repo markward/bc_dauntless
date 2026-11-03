@@ -92,8 +92,16 @@ def source_for(leaf, prop):
     return "missing" if is_missing(leaf, name) else "set"
 
 
+def _bump_part_gen():
+    """The overlay is an input of every native part slot (native_combat):
+    a change makes them all read stale."""
+    from engine.appc import native_combat
+    native_combat.bump_part_gen()
+
+
 def set_preview(leaf, overrides):
     _preview[str(leaf).lower()] = dict(overrides)
+    _bump_part_gen()
 
 
 def clear_preview(leaf=None):
@@ -101,8 +109,10 @@ def clear_preview(leaf=None):
         _preview.clear()
     else:
         _preview.pop(str(leaf).lower(), None)
+    _bump_part_gen()
 
 
 def reset():
     _preview.clear()
     _warned.clear()
+    _bump_part_gen()

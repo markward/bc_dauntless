@@ -80,35 +80,29 @@ def test_weapon_system_uses_the_ships_live_offset_while_manual_aim_is_on():
     """StartFiring captures the offset ONCE (_held_offset); with the cursor
     moving every frame, a torpedo fired mid-hold must read the ship's
     CURRENT offset, not the one captured at keydown."""
+    import _dauntless_host as _h
+    from engine.appc import native_combat as nc
     from engine.appc.ships import ShipClass
     from engine.appc.subsystems import TorpedoSystem
+    nc.fire_control_native()            # the mirror live
     ship = ShipClass()
     sys_ = TorpedoSystem("Torpedoes")
     sys_.SetParentShip(ship)
 
+    def walk_offset():
+        # The walk's offset, as the native walk computes it (fire control
+        # native only, M3; the deleted _live_held_offset's rule).
+        return _h.combat_k1_walk_offset(sys_.__dict__["_nslot"])
+
     sys_._held_offset = TGPoint3(0.0, 0.0, 0.0)          # captured at keydown
-    assert sys_._live_held_offset() is sys_._held_offset  # off: held wins
+    assert walk_offset() == (0.0, 0.0, 0.0)               # off: held wins
 
     ship.set_manual_target_offset(TGPoint3(2.0, 0.0, 7.0))
-    live = sys_._live_held_offset()
-    assert (live.x, live.y, live.z) == (2.0, 0.0, 7.0)
+    assert walk_offset() == (2.0, 0.0, 7.0)
 
     ship.UseTargetOffsetTG(0)
-    assert sys_._live_held_offset() is sys_._held_offset
+    assert walk_offset() == (0.0, 0.0, 0.0)
 
-
-def test_live_offset_tolerates_a_parent_without_the_manual_aim_api():
-    """Legacy fakes / no parent: fall back to _held_offset, never raise."""
-    from engine.appc.subsystems import TorpedoSystem
-    sys_ = TorpedoSystem("Torpedoes")
-    sys_._held_offset = "held"
-    assert sys_._live_held_offset() == "held"
-    class _Bare: pass
-    sys_.SetParentShip(_Bare())
-    assert sys_._live_held_offset() == "held"
-
-
-# ── Task 3: phaser aim point ─────────────────────────────────────────────────
 
 def _galaxy_target_at(x, y, z):
     from engine.appc.ships import ShipClass_Create
@@ -321,6 +315,58 @@ def test_update_stores_the_hull_hit_as_a_target_local_unscaled_offset():
     assert abs(o.x - 0.0) < 1e-6
     assert abs(o.y - (-10.0 / scale)) < 1e-6         # 90 - 100, unscaled
     assert abs(o.z - (5.0 / scale)) < 1e-6
+
+
+def test_manual_pick_stored_as_hit_point():
+    """Fire control native only, R5: a pick on a POSED hull is stored as the
+    body point the ray hit -- not pulled back through the wing's hinge to
+    the rest frame -- since aim points no longer follow articulated parts."""
+    import importlib
+    import sys
+    import App
+    from engine import manual_aim
+    from engine.appc import articulation, combat, part_severance
+    from engine.appc.subsystems import body_point_world
+    manual_aim.reset()
+    bop = App.ShipClass_Create("BoP")
+    bop.SetScript("ships.BirdOfPrey")
+    mod_name = "ships.Hardpoints.birdofprey"
+    App.g_kModelPropertyManager.ClearLocalTemplates()
+    if mod_name in sys.modules:
+        importlib.reload(sys.modules[mod_name])
+    else:
+        importlib.import_module(mod_name)
+    sys.modules[mod_name].LoadPropertySet(bop.GetPropertySet())
+    bop.SetupProperties()
+    try:
+        bop.SetTranslateXYZ(0.0, 100.0, 0.0)
+        bop.SetScale(2.0)
+        articulation.force_pose(bop, "cruise")
+        lo, hi = articulation.part_boxes_for("birdofprey")["left wing"]
+        pick = tuple(0.5 * (a + b) for a, b in zip(lo, hi))
+        hit = body_point_world(bop, pick)
+        # The wing is posed, so a pull-back to rest would move the pick.
+        assert part_severance.part_for_point("birdofprey", pick) \
+            == "left wing"
+        assert tuple(articulation.part_transform_point(
+            bop, pick, authored=False)) != pick
+        _m, player, _galaxy, cam = _aim_fixture()
+        player.SetTarget(bop)
+
+        def ray_trace(iid, origin, direction, max_dist):
+            return ((hit.x, hit.y, hit.z), (0.0, -1.0, 0.0), 90.0)
+
+        assert manual_aim.update(player=player, tcw=_Tcw(True),
+                                 ship_instances={bop: 7}, is_exterior=True,
+                                 cursor_fb=(400.0, 300.0),
+                                 viewport_fb=(800, 600), cam=cam,
+                                 ray_trace=ray_trace) is True
+        dx, dy, dz = combat._body_frame_delta(bop, hit)
+        o = player.GetTargetOffsetTG()
+        assert (o.x, o.y, o.z) == (dx / 2.0, dy / 2.0, dz / 2.0)
+        assert all(abs(a - b) < 1e-9 for a, b in zip((o.x, o.y, o.z), pick))
+    finally:
+        App.g_kModelPropertyManager.ClearLocalTemplates()
 
 
 def test_update_reverts_to_the_subsystem_when_the_cursor_leaves_the_hull():

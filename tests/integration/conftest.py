@@ -81,7 +81,7 @@ def galaxy_red(combat_set):
 
 
 @pytest.fixture
-def target_ship_at(combat_set):
+def target_ship_at(combat_set, monkeypatch):
     """Factory: returns a function that creates a stub target ship at a
     given world position with hull + optional shields.
     """
@@ -94,8 +94,11 @@ def target_ship_at(combat_set):
         tgt.SetWorldLocation(TGPoint3(x, y, z))
         tgt._containing_set = combat_set
         tgt._radius = radius
-        # Provide GetRadius accessor (some code paths read it).
-        type(tgt).GetRadius = lambda self: self._radius
+        # Provide GetRadius accessor (some code paths read it). Through
+        # monkeypatch: a bare class assignment outlived the test and made
+        # every later native-combat step see ShipClass as patched.
+        monkeypatch.setattr(type(tgt), "GetRadius",
+                            lambda self: self._radius)
         if shields_strength > 0.0:
             from engine.appc.subsystems import ShieldSubsystem
             from engine.appc.properties import ShieldProperty

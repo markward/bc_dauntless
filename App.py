@@ -990,12 +990,19 @@ g_kVarManager = TGVarManager(event_type_allocator=lambda: Game_GetNextEventType(
 # Headless engine uses Python's random; SetRandomSeed lets tests pin determinism.
 import random as _random
 
+from engine.appc import presentation_rng as _presentation_rng
+
 
 class _SystemWrapper:
     def __init__(self):
         self._rng = _random.Random()
 
     def GetRandomNumber(self, upper_exclusive: int) -> int:
+        # Inside a presentation scope (an SDK script the engine runs only to
+        # present) the draw comes from the presentation generator, so it
+        # never shifts a gameplay roll (engine/appc/presentation_rng.py).
+        if _presentation_rng.in_scope():
+            return _presentation_rng.rand(upper_exclusive)
         if upper_exclusive <= 0:
             return 0
         return self._rng.randrange(int(upper_exclusive))

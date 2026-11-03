@@ -5,6 +5,7 @@
 set(HOST_BINDINGS_SOURCES
     host_bindings.cc
     frame_dump.cc
+    combat_write_apply.cc
 )
 
 # Host logic with C++ tests (native/tests/host): the developer gate and the
@@ -14,6 +15,7 @@ add_library(dauntless_host_core STATIC
     developer_mode.cc
     bridge_highlight.cc
     model_identity_maps.cc
+    combat_effect_queue.cc
 )
 target_compile_features(dauntless_host_core PUBLIC cxx_std_20)
 target_include_directories(dauntless_host_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -23,7 +25,7 @@ set_target_properties(dauntless_host_core PROPERTIES POSITION_INDEPENDENT_CODE O
 # Python extension module (.so / .pyd / .dylib) for pytest.
 pybind11_add_module(_dauntless_host MODULE ${HOST_BINDINGS_SOURCES})
 target_compile_features(_dauntless_host PRIVATE cxx_std_20)
-target_link_libraries(_dauntless_host PRIVATE dauntless_host_core renderer scenegraph assets dauntless_audio dauntless_transforms platform)
+target_link_libraries(_dauntless_host PRIVATE dauntless_host_core renderer scenegraph assets dauntless_audio dauntless_transforms dauntless_combat platform)
 set_target_properties(_dauntless_host PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python"
 )
@@ -47,6 +49,7 @@ target_link_libraries(dauntless
         assets
         dauntless_audio
         dauntless_transforms
+        dauntless_combat
         platform
 )
 

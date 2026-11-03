@@ -13,6 +13,13 @@ from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem, CloakingSubsystem
 from tests.helpers.rocks import occlusion_enabled  # noqa: F401  (fixture)
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 
 def _observer_in_set(base_range=2000.0):
     s = SetClass()
@@ -48,6 +55,7 @@ def _nebulae(monkeypatch, *nebs):
 
 # ── jammed ──────────────────────────────────────────────────────────────────
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_jammed_when_the_target_is_in_a_nebula(monkeypatch):
     s, obs, _ = _observer_in_set()
     tgt = _ship_at(s, "t", 5000.0)
@@ -55,6 +63,7 @@ def test_jammed_when_the_target_is_in_a_nebula(monkeypatch):
     assert sd.jammed(obs, tgt) is True
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_jammed_when_the_observer_is_in_a_nebula(monkeypatch):
     s, obs, _ = _observer_in_set()
     tgt = _ship_at(s, "t", 5000.0)
@@ -112,6 +121,7 @@ def test_unknown_contact_beyond_range_is_not_detected():
     assert sd.can_detect(obs, far) is False
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 @pytest.mark.parametrize("who", ["target", "observer"])
 def test_jam_cancels_memory(monkeypatch, who):
     s, obs, sensors = _observer_in_set(2000.0)
@@ -195,6 +205,7 @@ def test_boost_exactly_at_threshold_does_not():
     assert sd.can_detect(obs, far) is False
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_boost_threshold_is_the_dial(monkeypatch):
     s, obs, sensors = _observer_in_set(2000.0)
     far = _ship_at(s, "far", 500000.0)
@@ -204,6 +215,7 @@ def test_boost_threshold_is_the_dial(monkeypatch):
     assert sd.can_detect(obs, far) is True
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 @pytest.mark.parametrize("who", ["target", "observer"])
 def test_jam_cancels_boost(monkeypatch, who):
     s, obs, sensors = _observer_in_set(2000.0)
@@ -262,6 +274,7 @@ def test_in_reach_ignores_occlusion(occlusion_enabled):
     assert sd.in_reach(obs, near) is True
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_in_reach_uses_the_unshrunk_range(monkeypatch):
     # A ship in the dense nebula core is hidden, but still in reach.
     s, obs, _ = _observer_in_set(2000.0)
@@ -271,6 +284,7 @@ def test_in_reach_uses_the_unshrunk_range(monkeypatch):
     assert sd.in_reach(obs, tgt) is True
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_in_reach_includes_memory_and_respects_the_jam(monkeypatch):
     s, obs, sensors = _observer_in_set(2000.0)
     far = _ship_at(s, "far", 5000.0)

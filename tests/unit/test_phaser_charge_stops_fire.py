@@ -93,11 +93,13 @@ def test_fire_starts_loop_sound_and_stop_silences_it(galaxy_red):
     # mount direction — guaranteed in-arc for any authored bank.
     d = bank.GetDirection()
 
-    class _Tgt:
-        def GetWorldLocation(self):
-            return TGPoint3(d.x * 100.0, d.y * 100.0, d.z * 100.0)
-        def IsDead(self):
-            return 0
+    from tests.helpers.targets import real_target
+    ship = bank._climb_to_ship()
+    p = ship.GetWorldLocation() if ship is not None else TGPoint3(0, 0, 0)
+
+    def _Tgt():
+        return real_target(p.x + d.x * 100.0, p.y + d.y * 100.0,
+                           p.z + d.z * 100.0, like=ship)
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance") as inst:
         mgr = inst.return_value

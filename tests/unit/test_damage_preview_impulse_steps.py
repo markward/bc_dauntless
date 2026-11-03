@@ -1,6 +1,19 @@
 """SPIKE (damage redesign): Damage Preview kills the Akira's impulse system
 in stages -- controller, then port, then starboard engine."""
+import random
+
+import pytest
+
 from engine.dev_missions import damage_preview as dp
+
+
+@pytest.fixture(autouse=True)
+def _keep_the_module_random():
+    """_apply_seed seeds the process-global random: give later tests back
+    the state they would have had."""
+    saved = random.getstate()
+    yield
+    random.setstate(saved)
 
 
 class _Sub:
@@ -109,6 +122,23 @@ def test_seed_makes_the_death_cascade_rolls_repeat(monkeypatch):
     first = [death_cascade._rand(1000) for _ in range(8)]
     dp._apply_seed()
     assert [death_cascade._rand(1000) for _ in range(8)] == first
+
+
+def test_seed_makes_every_stream_repeat(monkeypatch):
+    """The seed reaches the module random (a damaging blast's point) and the
+    presentation generator (every other blast's point, its size, its
+    fireball) too, so two captures with one seed are the same death."""
+    import App
+    from engine.appc import presentation_rng
+    monkeypatch.setattr(App, "g_kSystemWrapper", type(App.g_kSystemWrapper)())
+    monkeypatch.setenv("DAUNTLESS_DAMAGE_PREVIEW_SEED", "77")
+    dp._apply_seed()
+    first = ([random.random() for _ in range(4)],
+             [presentation_rng.rand(1000) for _ in range(4)])
+    dp._apply_seed()
+    again = ([random.random() for _ in range(4)],
+             [presentation_rng.rand(1000) for _ in range(4)])
+    assert again == first
 
 
 def test_seed_test_does_not_leak_the_seeded_wrapper():

@@ -56,6 +56,7 @@ _dials: dict = dict(DEFAULTS)
 def reset() -> None:
     global _dials
     _dials = dict(DEFAULTS)
+    _push_native()
 
 
 def get(name: str) -> float:
@@ -80,6 +81,13 @@ def step(dials: dict, name: str, direction: int) -> dict:
 def _step(name: str, direction: int) -> None:
     global _dials
     _dials = step(_dials, name, direction)
+    _push_native()
+
+
+def _push_native() -> None:
+    """The native combat mirror holds the dials can_detect reads."""
+    from engine.appc import native_combat
+    native_combat.push_globals()
 
 
 def register() -> None:

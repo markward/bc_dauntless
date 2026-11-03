@@ -2,7 +2,7 @@
 """Unit tests for the ship death sequence (engine/appc/ship_death.py)."""
 import pytest
 
-from engine.appc import death_cascade, ship_death
+from engine.appc import death_cascade, effect_queue, ship_death
 
 
 class FakeSet:
@@ -53,13 +53,16 @@ def test_begin_marks_ship_dying():
 
 def test_begin_applies_death_splash(monkeypatch):
     """Every death explosion deals the ship's faithful splash damage to nearby
-    objects (BC m_splashDamage). ship_death.begin is the single fire point."""
+    objects (BC m_splashDamage). ship_death.begin is the single fire point;
+    the splash is queued after its ET_OBJECT_EXPLODING and delivered at the
+    tick boundary (native damage M2)."""
     from engine.appc import splash_damage
     hit = []
     monkeypatch.setattr(splash_damage, "apply",
                         lambda ship, ship_instances=None: hit.append(ship))
     ship = FakeShip()
     ship_death.begin(ship)
+    effect_queue.boundary()             # the tick boundary
     assert hit == [ship]
 
 
@@ -236,6 +239,7 @@ class FakeDamageable(DamageableObject):
 def test_damaging_critical_subsystem_to_zero_triggers_death():
     obj = FakeDamageable()
     obj.DamageSystem(obj.GetHull(), 100.0)  # hull is critical
+    effect_queue.boundary()                      # the tick boundary (ruling M5)
     assert obj.IsDying() == 1
 
 
@@ -243,6 +247,7 @@ def test_damaging_noncritical_subsystem_to_zero_does_not_trigger_death():
     obj = FakeDamageable()
     sensors = FakeSub(critical=0)
     obj.DamageSystem(sensors, 100.0)
+    effect_queue.boundary()
     assert sensors.GetCondition() == 0.0
     assert obj.IsDying() == 0
 
@@ -251,12 +256,14 @@ def test_warp_core_critical_triggers_death():
     obj = FakeDamageable()
     warp_core = FakeSub(critical=1)
     obj.DamageSystem(warp_core, 100.0)
+    effect_queue.boundary()
     assert obj.IsDying() == 1
 
 
 def test_partial_damage_does_not_trigger_death():
     obj = FakeDamageable()
     obj.DamageSystem(obj.GetHull(), 40.0)  # hull still at 60
+    effect_queue.boundary()
     assert obj.IsDying() == 0
 
 
@@ -265,8 +272,10 @@ def test_killing_blow_on_dying_ship_is_no_op():
     must not re-trigger begin (the IsDying guard prevents double-register)."""
     obj = FakeDamageable()
     obj.DamageSystem(obj.GetHull(), 100.0)  # first kill -> dying
+    effect_queue.boundary()
     assert obj.IsDying() == 1
     obj.DamageSystem(obj.GetHull(), 100.0)  # second blow -> still just dying
+    effect_queue.boundary()
     assert obj.IsDying() == 1
     assert len(ship_death._active) == 1
 
@@ -275,6 +284,7 @@ def test_killing_blow_on_dying_ship_is_no_op():
 def test_destroy_system_on_critical_kills():
     obj = FakeDamageable()
     obj.DestroySystem(obj.GetHull())
+    effect_queue.boundary()
     assert obj.GetHull().GetCondition() == 0.0
     assert obj.GetHull().IsDestroyed() == 1
     assert obj.IsDying() == 1
@@ -284,6 +294,7 @@ def test_destroy_system_on_noncritical_zeroes_but_no_death():
     obj = FakeDamageable()
     sensors = FakeSub(critical=0)
     obj.DestroySystem(sensors)
+    effect_queue.boundary()
     assert sensors.GetCondition() == 0.0
     assert sensors.IsDestroyed() == 1
     assert obj.IsDying() == 0
@@ -592,6 +603,28 @@ def test_begin_invokes_run_death_script_once():
     assert ship.ran == 1
 
 
+def test_death_script_runs_in_the_presentation_scope():
+    """Ruling R1 (Mark 2026-11-02): every stock death script draws only for
+    debris, sparks and sounds, so it runs in the presentation scope: its
+    SDK draws come from the presentation generator, never from the gameplay
+    stream (engine/appc/presentation_rng.py)."""
+    import App
+    from engine.appc import presentation_rng
+
+    class DeathScriptShip(FakeShip):
+        def RunDeathScript(self):
+            self.scoped = presentation_rng.in_scope()
+            self.state = App.g_kSystemWrapper._rng.getstate()
+            App.g_kSystemWrapper.GetRandomNumber(8)
+            self.after = App.g_kSystemWrapper._rng.getstate()
+
+    ship = DeathScriptShip(name="Freighter")
+    ship_death.begin(ship)
+    assert ship.scoped is True
+    assert ship.after == ship.state
+    assert not presentation_rng.in_scope()
+
+
 def test_begin_skips_run_death_script_when_absent():
     """A ship without RunDeathScript (e.g. non-ship object) is handled
     gracefully — begin() must not raise."""
@@ -651,8 +684,10 @@ def test_damage_system_threads_killer_into_exploding_event():
     exploding event via the source (firing ship)."""
     target = FakeDamageable()             # critical hull + real lifecycle flags
     attacker = FakeAttacker(7777)
-    evt = _capture_exploding_event(
-        lambda: target.DamageSystem(target.GetHull(), 100.0, attacker))
+    def fatal_hit():
+        target.DamageSystem(target.GetHull(), 100.0, attacker)
+        effect_queue.boundary()                 # the tick boundary (ruling M5)
+    evt = _capture_exploding_event(fatal_hit)
     assert evt is not None
     assert target.IsDying() == 1
     assert evt.GetFiringPlayerID() == 7777

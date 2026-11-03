@@ -8,6 +8,14 @@ from engine.appc.subsystems import SensorSubsystem, CloakingSubsystem
 from engine.appc.sets import SetClass
 from tests.helpers.rocks import occlusion_enabled  # noqa: F401  (fixture)
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+import pytest  # noqa: E402
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 
 def _player_in_set(base_range=2000.0):
     s = SetClass()
@@ -106,6 +114,7 @@ def test_offline_sensors_see_nothing():
     assert sensors.IsObjectVisible(inside) == 0
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_nebula_jam_cancels_memory_and_boost(monkeypatch):
     from engine.appc import contact_index
     s, player, sensors = _player_in_set(2000.0)

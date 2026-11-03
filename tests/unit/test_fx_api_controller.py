@@ -4,6 +4,8 @@ import importlib
 import pytest
 
 import App
+
+from engine.appc import presentation_rng
 from engine.appc import particles as P
 
 NANO = "scripts/Custom/NanoFXv2/"
@@ -16,7 +18,7 @@ def acts():
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
-    monkeypatch.setattr(App.g_kSystemWrapper, "GetRandomNumber", lambda n: 0)
+    monkeypatch.setattr(presentation_rng, "rand", lambda n: 0)
     P.reset()
     yield
     P.reset()

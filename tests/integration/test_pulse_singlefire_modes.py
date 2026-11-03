@@ -11,6 +11,7 @@ warbird.py (SetSingleFire(1)).
 from unittest.mock import patch
 
 import App  # noqa: F401  (installs the SDK import finder via conftest)
+from engine.appc import native_combat
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import PulseWeapon, PulseWeaponSystem
@@ -20,12 +21,11 @@ from engine.appc.projectiles import _active
 _MODULE = "Tactical.Projectiles.PulseDisruptor"
 
 
-class _Target:
-    """A live target at a fixed world location."""
-    def __init__(self, pos):
-        self._pos = pos
-    def GetWorldLocation(self):  return self._pos
-    def IsDead(self):            return 0
+def _Target(pos):
+    """A live target at a fixed world location: a real ship (the mirror
+    must name a target: fire control native only, M3)."""
+    from tests.helpers.targets import real_target
+    return real_target(pos.x, pos.y, pos.z)
 
 
 # BoP StarCannon arc: a ±25° (±0.436 rad) forward cone — see
@@ -142,7 +142,7 @@ def test_held_tick_blocked_during_cooldown_then_refires():
         parent.StartFiring(target, "hit")
         assert len(_active) == 2
         # Both cannons drained + on cooldown. Tick while on cooldown -> nothing.
-        parent.update_weapons(0.34)   # 0.34 > the 0.33 inter-shot threshold
+        native_combat.k1_system(parent, 0.34)   # the native walk, dt 0.34 > 0.33
     assert len(_active) == 2, "tick during cooldown must not spawn new bolts"
 
     # Step enough simulated dt to clear cooldown AND recharge past the
@@ -151,7 +151,7 @@ def test_held_tick_blocked_during_cooldown_then_refires():
         for _ in range(200):
             for i in range(parent.GetNumWeapons()):
                 parent.GetWeapon(i).UpdateCharge(0.1)
-        parent.update_weapons(0.34)
+        native_combat.k1_system(parent, 0.34)
     assert len(_active) == 4, f"tick after recharge should re-fire both, got {len(_active)}"
     _active.clear()
 

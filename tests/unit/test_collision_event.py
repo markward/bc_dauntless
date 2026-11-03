@@ -240,6 +240,8 @@ def test_collision_event_precedes_the_impact_damage():
     full = rock.GetHull().GetCondition()
 
     resolve_collisions([a, rock])
+    from engine.appc import effect_queue
+    effect_queue.boundary()                     # the death check's boundary (M5)
 
     assert order, "no events seen"
     assert order[0] == ("collision", full, False)

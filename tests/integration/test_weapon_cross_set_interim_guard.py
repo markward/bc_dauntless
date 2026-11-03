@@ -14,9 +14,10 @@ from unittest.mock import patch
 
 import App
 from engine.appc.math import TGPoint3
-from engine.appc.weapon_subsystems import PhaserSystem, TractorBeamSystem
+from engine.appc.weapon_subsystems import PhaserSystem
 from engine.host_loop import _advance_combat
 from tests.helpers.beams import prime_lit_banks
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
 
 
 def _target(at_y=50.0):
@@ -76,16 +77,29 @@ def test_phaser_setless_target_is_out_of_range(galaxy_red):
 
 # ── range gate: tractors ─────────────────────────────────────────────────────
 
-def test_tractor_cannot_engage_a_target_in_another_set(galaxy_red):
+# The tractor's engage range is the native K1 tractor walk's (fire control
+# native only, M4): its StartFiring grips, or does not, natively.
+
+def _tractor_grips(ship, target):
+    tractors = ship.GetTractorBeamSystem()
+    tractors.TurnOn()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tractors.StartFiring(target)
+    return bool(tractors.IsFiring())
+
+
+def test_tractor_cannot_engage_a_target_in_another_set(galaxy_red,
+                                                       native_combat_on):
     ship = galaxy_red
     target = _placed_target(ship, App.SetClass_Create())
-    assert TractorBeamSystem("Tractors")._can_engage(ship, target) is False
+    assert _tractor_grips(ship, target) is False
 
 
-def test_tractor_can_engage_the_same_target_in_the_same_set(galaxy_red):
+def test_tractor_can_engage_the_same_target_in_the_same_set(galaxy_red,
+                                                            native_combat_on):
     ship = galaxy_red
     target = _placed_target(ship, ship.GetContainingSet())
-    assert TractorBeamSystem("Tractors")._can_engage(ship, target) is True
+    assert _tractor_grips(ship, target) is True
 
 
 # ── damage tick: a bank LEFT firing across sets ──────────────────────────────

@@ -167,47 +167,10 @@ def test_start_firing_dispatches_when_target_in_range():
 
     sys.StartFiring(target=target)
 
-    assert len(bank.fire_calls) == 1
+    # Engaged: the held trigger latches (the shot itself is the native walk's,
+    # fire control native only, M3: these fake banks have no mirror row).
     assert sys._fire_held is True
 
 
 # ── held-trigger pump gate (host_loop._pump_held_weapons) ─────────────────
 
-def test_pump_stops_when_target_drifts_out_of_range():
-    from engine.host_loop import _pump_held_weapons
-    ship = _Ship(0, 0, 0)
-    bank = _FakeBank(max_damage_distance=60.0, can_fire=False)
-    sys = _build_system([bank], ship)
-    ship.GetPhaserSystem = lambda: sys   # pump walks ship getters
-
-    # Simulate trigger held with target initially in range.
-    in_range = _Target(50, 0, 0)
-    sys.StartFiring(target=in_range)
-    assert sys._fire_held is True
-
-    # Now move the target out of range.
-    sys._held_target = _Target(PHASER_MAX_RANGE_GU + 100.0, 0, 0)
-
-    bank.fire_calls.clear()
-    _pump_held_weapons([ship], 0.34)
-
-    assert bank.fire_calls == []
-    # StopFiring should fire — clears _fire_held + _held_target.
-    assert sys._fire_held is False
-    assert sys._held_target is None
-
-
-def test_held_tick_continues_when_target_in_range():
-    ship = _Ship(0, 0, 0)
-    target = _Target(50, 0, 0)
-    bank = _FakeBank(max_damage_distance=60.0, can_fire=True)
-    sys = _build_system([bank], ship)
-
-    sys.StartFiring(target=target)
-    bank.fire_calls.clear()
-    bank._firing = False   # Simulate bank cycled
-
-    sys.update_weapons(0.34)   # 0.34 > the 0.33 inter-shot threshold
-
-    assert len(bank.fire_calls) == 1
-    assert sys._fire_held is True

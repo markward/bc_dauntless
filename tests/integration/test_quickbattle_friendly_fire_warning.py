@@ -26,6 +26,7 @@ import App
 from engine.appc import combat
 from engine.appc.math import TGPoint3
 from engine.core.loop import GameLoop
+from engine.appc import effect_queue
 
 
 def _boot_quickbattle(monkeypatch):
@@ -50,6 +51,7 @@ def _shoot(player, target, weapon_type="phaser", damage=100.0, shots=1):
         combat.apply_hit(target, damage=damage,
                          hit_point=TGPoint3(0.0, 1.0, 0.0), source=player,
                          weapon_type=weapon_type)
+        effect_queue.boundary()             # the tick boundary
 
 
 @pytest.fixture

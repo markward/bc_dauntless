@@ -11,9 +11,9 @@ Constants are copied verbatim from `sdk/Build/scripts/Effects.py`
 (`CreateWeaponSmoke` -> `CreateSmokeHigh`). See
 docs/superpowers/specs/2026-07-09-hull-hit-smoke-faithful-design.md.
 """
-import App
 from engine import host_io
 from engine.appc import particles
+from engine.appc import presentation_rng
 
 # Stock rolls (Effects.py): torpedo 20% (rand(10) < 2), phaser 30% (rand(10) < 3).
 _HULL_SMOKE_ROLL = {"torpedo": 2, "phaser": 3}
@@ -90,7 +90,9 @@ def maybe_emit(ship, point, normal, weapon_type, ship_instances=None,
         if now - _last_smoke_roll.get(key, -1e9) < SMOKE_EMIT_INTERVAL:
             return
         _last_smoke_roll[key] = now
-    if App.g_kSystemWrapper.GetRandomNumber(10) >= threshold:
+    # Stock rolls GetRandomNumber; ours is the presentation generator, so a
+    # puff rolled or skipped never shifts a gameplay roll (presentation_rng).
+    if presentation_rng.rand(10) >= threshold:
         return
     iid = ship_instances.get(ship) if ship_instances is not None else None
     if iid is None:
@@ -120,8 +122,11 @@ def _emit_smoke(ship, body_point, body_normal) -> None:
     term and pins every puff to the ship's current transform, so override it.
     """
     import Effects
-    fLife = 2.0 + App.g_kSystemWrapper.GetRandomNumber(30) / 10.0
-    action = Effects.CreateSmokeHigh(
-        0.2, fLife, 0.3, ship, body_point, body_normal, ship)
+    fLife = 2.0 + presentation_rng.rand(30) / 10.0
+    # The SDK recipe draws GetRandomNumber too: in the scope, from P. Start()
+    # runs outside it, so nothing it dispatches inline draws from P.
+    with presentation_rng.scope():
+        action = Effects.CreateSmokeHigh(
+            0.2, fLife, 0.3, ship, body_point, body_normal, ship)
     action.GetController().SetInheritsVelocity(0)
     action.Start()

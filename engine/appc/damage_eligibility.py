@@ -98,6 +98,9 @@ def update(ships) -> None:
 
     Called once per combat tick before hits are processed. Safe when no game
     / player is available (falls back to size-only selection).
+
+    With native combat on, the K4 kernel decides the same set
+    (native_combat.k4_update); select_eligible runs whenever it cannot.
     """
     try:
         import App
@@ -105,4 +108,15 @@ def update(ships) -> None:
         player = game.GetPlayer() if game is not None and hasattr(game, "GetPlayer") else None
     except Exception:
         player = None
+    if _native_combat._switch and _native_combat.k4_update(player, ships):
+        return
     set_current(select_eligible(player, ships))
+
+
+# K4 compares select_eligible and _radius (and the frames functions they
+# call) against this snapshot, taken once they are defined.
+import sys as _sys  # noqa: E402
+
+from engine.appc import native_combat as _native_combat  # noqa: E402
+
+_native_combat.k4_snapshot_stock(_sys.modules[__name__])

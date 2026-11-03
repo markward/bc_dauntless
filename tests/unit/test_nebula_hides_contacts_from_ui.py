@@ -34,6 +34,13 @@ from tests.helpers.cloak_geometry import inside_gu, outside_gu
 
 import test_nebula_concealment as _tnc
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 
 def _contact(pSet, name, x, y, z, cloaked=False):
     """A REAL ShipClass contact, placed and indexed. See the module docstring."""
@@ -207,6 +214,7 @@ def _pre_stage_4_rule(observer, ship):
             and dist_sq <= range_sq)
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 @pytest.mark.parametrize("condition", [100.0, 50.0, 20.0])
 def test_toggle_off_agrees_with_the_pre_stage_4_rule_everywhere(monkeypatch,
                                                                 condition):
@@ -279,6 +287,7 @@ def test_a_cloaked_ship_beyond_the_bubble_is_still_hidden():
     assert _record_for(observer, target).perceivable is False
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_toggle_off_restores_absolute_cloak_in_the_ui(monkeypatch):
     """Stock BC: flipping ENHANCED_SENSOR_CONTEST off makes cloak absolute for
     the UI as well as for the weapons — one rule, one toggle."""

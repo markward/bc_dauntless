@@ -54,8 +54,9 @@ def test_gameloop_ticks_time_slice_manager():
     fired = []
     class H:
         def Go(self, _dt=0.0): fired.append(1)
+    h = H()   # the process holds its instance weakly: keep it alive
     proc = PythonMethodProcess()
-    proc.SetFunction(H(), "Go")
+    proc.SetFunction(h, "Go")
     proc.SetDelay(0.05)
     proc.SetDelayUsesGameTime(1)
     g_kAIManager.Add(proc)

@@ -174,6 +174,9 @@ def _step(name: str, direction: int) -> None:
     whichever group is active."""
     global _dials
     _dials = step(_dials, name, direction)
+    # conceal_cap is read by can_detect: the native combat mirror holds it.
+    from engine.appc import native_combat
+    native_combat.push_globals()
     from engine import renderer as r
     r.system_nebula_set_dials(_native(_dials))
 

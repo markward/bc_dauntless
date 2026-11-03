@@ -246,15 +246,44 @@ def _run(cmd, **kw):
     return subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, **kw)
 
 
+def _echo(line):
+    sys.stdout.write(line)
+    sys.stdout.flush()
+
+
+def _stream(cmd, echo=_echo, **kw):
+    """Run cmd with stderr merged into stdout, passing each line to `echo` as
+    it arrives (the gate shows progress instead of 80 minutes of silence) and
+    returning (returncode, all output) for the same parsing as before."""
+    print("  $ " + " ".join(cmd), flush=True)
+    proc = subprocess.Popen(cmd, cwd=ROOT, text=True, errors="replace",
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            bufsize=1, **kw)
+    lines = []
+    for line in proc.stdout:
+        lines.append(line)
+        echo(line)
+    proc.stdout.close()
+    return proc.wait(), "".join(lines)
+
+
 def run_pytest():
-    """Run the full pytest suite under the RSS watchdog; return set of failed ids."""
+    """Run the full pytest suite under the RSS watchdog; return set of failed ids.
+
+    Streamed, verbose (-v: each test's name as it finishes, so a hang shows
+    the last finished test) and with faulthandler_timeout: any single test
+    running past 5 minutes dumps every thread's Python stack into the output.
+    PYTHONUNBUFFERED reaches the watchdog and pytest (the watchdog's child
+    inherits its stdout and env), so lines arrive as written, not in blocks.
+    """
     print("== pytest ==", flush=True)
     cmd = [
         "uv", "run", "python", "tools/pytest_rss_watchdog.py", CEILING_MB, "--",
-        "uv", "run", "pytest", "tests", "-q", "-rfE", "--tb=no", "-p", "no:cacheprovider",
+        "uv", "run", "pytest", "tests", "-v", "-rfE", "--tb=no", "-p", "no:cacheprovider",
+        "-o", "faulthandler_timeout=300",
     ]
-    proc = _run(cmd)
-    out = proc.stdout + proc.stderr
+    env = dict(os.environ, PYTHONUNBUFFERED="1")
+    returncode, out = _stream(cmd, env=env)
     lines = out.splitlines()
     failed = {"pytest:" + m.group(1) for m in map(_PYTEST_FAILED.match, lines) if m}
     # Errors (e.g. fixture/setup errors) fail a test just as surely as an
@@ -265,13 +294,13 @@ def run_pytest():
     # invisible to a gate that only ever looked for "^FAILED ".
     failed |= {"pytest:" + m.group(1) for m in map(_PYTEST_ERRORED.match, lines) if m}
     # rc 99 == watchdog OOM kill; surface it as a harness error, not a clean pass.
-    if proc.returncode == 99:
+    if returncode == 99:
         print("  !! pytest watchdog killed the run (RSS ceiling) — incomplete", flush=True)
         return failed, True
     # A non-zero rc with no parsed failures means something broke (collection error).
-    if proc.returncode not in (0, 1) and not failed:
+    if returncode not in (0, 1) and not failed:
         sys.stdout.write(out[-2000:])
-        print("  !! pytest exited %d with no parseable failures" % proc.returncode, flush=True)
+        print("  !! pytest exited %d with no parseable failures" % returncode, flush=True)
         return failed, True
     # Positive evidence the suite actually ran. rc==1 is pytest's "there were
     # failures", but it is also what a crashed wrapper returns, so rc alone

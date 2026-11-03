@@ -23,6 +23,7 @@ from engine.appc.ships import ShipClass
 from engine.appc.subsystems import ShieldSubsystem
 from tests.helpers.one_set import share_one_set
 from tests.helpers.shielded_ship import DEFAULT_HALF, make_shielded_ship as _ship
+from engine.appc import effect_queue
 
 S3 = math.sqrt(3.0)
 HALF = DEFAULT_HALF
@@ -356,6 +357,7 @@ def test_rock_impact_on_shields_flashes_at_the_rock_seed(monkeypatch):
     share_one_set(ship, rock)
     collisions.resolve_collisions([ship, rock], ship_instances={ship: 7},
                                   dt=1.0 / 60.0)
+    effect_queue.boundary()             # the tick boundary
     assert len(calls) == 1
     c = calls[0]
     assert c["iid"] == 7
@@ -384,6 +386,7 @@ def test_rock_grind_on_shields_keeps_the_per_tick_flash(monkeypatch):
     for _ in range(3):
         collisions.resolve_collisions([ship, rock], ship_instances={ship: 7},
                                       dt=1.0 / 60.0)
+        effect_queue.boundary()             # the tick boundary
     assert len(calls) == 3
     for c in calls:
         assert c["intensity"] == pytest.approx(
@@ -405,6 +408,7 @@ def test_torpedo_and_phaser_shield_flash_unchanged(monkeypatch):
                      weapon_type="torpedo", payload_template=_Photon(),
                      ship_instances={ship: 7},
                      shield_point=TGPoint3(0.0, SEMI[1], 0.0))
+    effect_queue.boundary()             # the tick boundary
     hit_feedback.beam_contact(
         ship=ship, source=src, point=TGPoint3(0.0, 3.0, 0.0), normal=None,
         shield_point=TGPoint3(0.0, SEMI[1], 0.0), tick_damage=1.0,

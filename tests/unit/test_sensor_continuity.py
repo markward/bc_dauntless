@@ -26,6 +26,13 @@ from engine.core.game import Game, _set_current_game
 from engine.rocks import far_tier
 from tests.helpers.rocks import make_major_rock, occlusion_enabled
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 # Several tests here put a bird "behind a rock" and assert the continuity
 # clock runs -- occlusion ships default On (sensor_occlusion.DEFAULT_ENABLED),
 # but it is enabled explicitly so those tests exercise real blocking without
@@ -163,6 +170,7 @@ def test_known_ship_hidden_beyond_range_keeps_running_the_clock(helm):
     assert sensor_detection.can_detect(player, bird) is False
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_hidden_known_ship_that_goes_jammed_beyond_range_stops_the_clock(monkeypatch, helm):
     """Beyond range AND jammed is out of reach: not concealment, identity kept
     (roadmap decision 3)."""
@@ -247,6 +255,7 @@ def test_in_field_for_20s_stays_known_and_displays_unknown(monkeypatch, helm):
     assert c.subsystems_targetable is False
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_in_dense_nebula_core_for_the_window_loses_track(monkeypatch, helm):
     """The dense core HIDES (not can_detect), so it still runs the clock."""
     s, player, sensors = _world()
@@ -369,6 +378,7 @@ def test_scan_glimpse_is_exactly_one_window_from_the_scan(monkeypatch, helm):
     assert helm == []
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_scan_in_dense_core_gives_one_window_then_loses_track(monkeypatch, helm):
     """A HIDDEN contact's clock restarts from the scan: one window, then
     the track is lost (scans see through nebulae, only rocks block them)."""
@@ -465,6 +475,7 @@ def test_list_reticle_and_science_agree_in_field(monkeypatch, helm):
 
 # ── state hygiene ───────────────────────────────────────────────────────────
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_reset_and_exit_clear_continuity_state(monkeypatch, helm):
     s, player, sensors = _world()
     bird = _ship(s, "Bird", 500.0)
@@ -490,6 +501,7 @@ def test_reset_and_exit_clear_continuity_state(monkeypatch, helm):
     assert len(sensor_contacts._shown_real) == 0
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_player_swap_clears_continuity_state(monkeypatch, helm):
     s, player, sensors = _world()
     bird = _ship(s, "Bird", 500.0)
@@ -568,6 +580,7 @@ def _on_identified(dest, event):
     _identified.append(event.GetDestination())
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_rescan_armed_while_known_still_commits_after_the_track_is_lost(monkeypatch, helm):
     """Ruling 2A moved this from a field (which no longer loses the track) to
     the dense nebula core, which HIDES and so still runs the clock."""

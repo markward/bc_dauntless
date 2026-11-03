@@ -20,6 +20,14 @@ from engine.appc.ai_sensor_gate import (
 from engine.appc.objects import ObjectGroup
 from tests.helpers.cloak_geometry import inside_gu, outside_gu
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+import pytest  # noqa: E402
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 
 def _ship_with_sensor(base_range, condition=100.0, max_condition=100.0,
                       at=(0.0, 0.0, 0.0)):
@@ -349,6 +357,7 @@ def test_fire_script_stops_at_a_cloaked_target_outside_the_bubble():
     assert fs.bTargetVisible == 0
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_fire_script_cloak_gate_is_absolute_with_the_contest_off(monkeypatch):
     """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False: cloak is
     absolute, so even the 15 GU target the contest engages stops the AI firing.
@@ -362,3 +371,29 @@ def test_fire_script_cloak_gate_is_absolute_with_the_contest_off(monkeypatch):
     fs, target = _fire_script_at(inside_gu())
     assert fs.TargetVisible(target) == 0
     assert fs.bTargetVisible == 0
+
+
+def test_uninstall_puts_back_every_sdk_original():
+    """The gate is a process-lifetime class patch (the host bootstrap installs
+    it once). A test that boots the host must not leave it on every LATER
+    test's AI: after a host-loop run, a headless fight's SelectTarget filtered
+    its candidates through can_detect and the K1 game-loop differential's AI
+    never fired a torpedo. uninstall_ai_sensor_gate (run by tests/conftest.py
+    between tests) puts back the exact SDK objects install replaced."""
+    import AI.Preprocessors as pp
+    import AI.PlainAI.StarbaseAttack as sba
+    from engine.appc.ai_sensor_gate import uninstall_ai_sensor_gate
+    uninstall_ai_sensor_gate()
+    sites = ((ObjectGroup, "GetActiveObjectTupleInSet"),
+             (pp.SelectTarget, "FindGoodTarget"),
+             (pp.FireScript, "TargetVisible"),
+             (sba.StarbaseAttack, "GetTargets"))
+    before = [owner.__dict__[name] for owner, name in sites]
+    install_ai_sensor_gate()
+    assert all(getattr(owner.__dict__[name], "_sensor_gated", False)
+               for owner, name in sites)
+    uninstall_ai_sensor_gate()
+    after = [owner.__dict__[name] for owner, name in sites]
+    assert all(a is b for a, b in zip(after, before)), (before, after)
+    uninstall_ai_sensor_gate()      # idempotent
+    assert [owner.__dict__[name] for owner, name in sites] == before

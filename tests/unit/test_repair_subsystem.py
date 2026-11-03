@@ -1,5 +1,6 @@
 """RepairSubsystem queue/tick + ShipSubsystem repair surface."""
 import App
+from engine.appc import effect_queue
 from engine.appc.subsystems import ShipSubsystem
 
 
@@ -140,6 +141,7 @@ def test_damage_auto_enqueues_subsystem():
     ship = _damaged_ship()
     sensors = ship.GetSensorSubsystem()
     sensors.SetCondition(4000.0)                      # damage
+    effect_queue.boundary()             # the tick boundary
     assert ship.GetRepairSubsystem().IsBeingRepaired(sensors) == 1
 
 
@@ -149,8 +151,10 @@ def test_raise_that_stays_below_max_rejoins_queue():
     ship = _damaged_ship()
     sensors = ship.GetSensorSubsystem()
     sensors.SetCondition(4000.0)
+    effect_queue.boundary()             # the tick boundary
     ship.GetRepairSubsystem()._queue.clear()
     sensors.Repair(100.0)                             # increase only
+    effect_queue.boundary()             # the tick boundary
     assert ship.GetRepairSubsystem().IsBeingRepaired(sensors) == 1
 
 
@@ -160,7 +164,9 @@ def test_raise_from_destroyed_acts_like_damaged():
     ship = _damaged_ship()
     sensors = ship.GetSensorSubsystem()
     sensors.SetCondition(0.0)                         # destroyed: not queued
+    effect_queue.boundary()             # the tick boundary
     sensors.SetCondition(4000.0)                      # raised to half
+    effect_queue.boundary()             # the tick boundary
     assert ship.GetRepairSubsystem().IsBeingRepaired(sensors) == 1
 
 
@@ -168,8 +174,10 @@ def test_raise_to_max_does_not_enqueue():
     ship = _damaged_ship()
     sensors = ship.GetSensorSubsystem()
     sensors.SetCondition(4000.0)
+    effect_queue.boundary()             # the tick boundary
     ship.GetRepairSubsystem()._queue.clear()
     sensors.SetCondition(sensors.GetMaxCondition())
+    effect_queue.boundary()             # the tick boundary
     assert ship.GetRepairSubsystem()._queue == []
 
 
@@ -177,6 +185,7 @@ def test_destroying_hit_does_not_enqueue():
     ship = _damaged_ship()
     sensors = ship.GetSensorSubsystem()
     sensors.SetCondition(0.0)                         # straight to destroyed
+    effect_queue.boundary()             # the tick boundary
     assert ship.GetRepairSubsystem()._queue == []
 
 
@@ -185,6 +194,7 @@ def test_bay_enqueues_itself_when_damaged():
     bay = ship.GetRepairSubsystem()
     bay.SetMaxCondition(8000.0)
     bay.SetCondition(4000.0)
+    effect_queue.boundary()             # the tick boundary
     assert any(s is bay for s in bay._queue)
 
 
@@ -200,6 +210,7 @@ def test_set_hull_damage_auto_enqueues_hull():
     hull.SetMaxCondition(15000.0)
     ship.SetHull(hull)
     hull.SetCondition(7500.0)
+    effect_queue.boundary()             # the tick boundary
     assert ship.GetRepairSubsystem().IsBeingRepaired(hull) == 1
 
 
@@ -217,6 +228,7 @@ def test_setup_properties_hull_and_its_children_auto_enqueue():
     bridge = hull.GetChildSubsystem("Bridge")
     hull.SetCondition(500.0)
     bridge.SetCondition(500.0)
+    effect_queue.boundary()             # the tick boundary
     bay = ship.GetRepairSubsystem()
     assert bay.IsBeingRepaired(hull) == 1
     assert bay.IsBeingRepaired(bridge) == 1
@@ -395,6 +407,7 @@ def test_repair_ship_fully_restores_everything_and_clears_queue():
     ship = _damaged_ship()
     sensors = ship.GetSensorSubsystem()
     sensors.SetCondition(100.0)              # damaged + auto-enqueued
+    effect_queue.boundary()             # the tick boundary
     bay = ship.GetRepairSubsystem()
     assert bay._queue
     repair_ship_fully(ship)

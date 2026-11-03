@@ -210,6 +210,22 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
     # specs spawned there. Same reset the dev swap does (_drain_pending_swap).
     from engine.rocks import death as rock_death
     rock_death.reset()
+    # Effects held for the tick boundary -- a condition write's or a hit's,
+    # the death check among them -- name the old mission's ships
+    # (engine/appc/effect_queue.py): dropped like the dev swap drops them.
+    # The survivors (the player parked in "warp", the bridge set) lose
+    # theirs too, unfiltered. No hit lands on a ship in transit, but its
+    # repair bay may still raise a subsystem since the last boundary, and
+    # that write's watcher crossing or ET_SUBSYSTEM_OPERATIONAL is dropped
+    # here (unverified whether it matters to any script; native damage
+    # task review M2). Filter the survivors' entries out of this reset if
+    # it does.
+    from engine.appc import effect_queue
+    effect_queue.reset()
+    # The native mirror's pending frees and off-main pushes land before the
+    # next mission builds a row (spec 2026-11-03 ruling R2).
+    from engine.appc import native_combat
+    native_combat.drain()
 
     host_loop._reset_timers(keep=survivors)
     host_loop._reset_action_registry(keep=survivors)

@@ -20,8 +20,12 @@ the report came to print `gl.ai` above `sim` with nothing marking the relation:
     sim                  (mark)
       sim.gameloop       (scope, once per catch-up tick)
         gl.ai gl.motion gl.subsystems ...
-      sim.combat         (scope, once per frame)
+      sim.weapons        (scope, once per catch-up tick)
+      sim.combat         (scope, once per catch-up tick)
         cb.projectiles cb.phasers ...
+      sim.effects        (scope, once per catch-up tick; native combat on)
+      sim.collisions     (scope, once per frame)
+      sim.effects_frame  (scope, once per frame: the frame-end boundary)
     ui_panels            (mark)
       ui.render_all
         ui.<panel>
@@ -106,17 +110,20 @@ _last_raw: dict[str, float] = {}
 _last_total_ms = 0.0
 
 # Rows that are summed over the frame's catch-up ticks rather than measured
-# once per frame. Only the ROOT is named: everything nested inside it inherits
-# the property, which the parent chain already knows. This is host_loop's
+# once per frame. Only the ROOTS are named: everything nested inside one
+# inherits the property, which the parent chain already knows. host_loop runs
 #
 #     for _ in range(_sim_ticks_this_frame):
 #         with frame_profiler.scope("sim.gameloop"):
 #             loop.tick()
 #
-# and its siblings sim.weapons / sim.combat / sim.collisions deliberately sit
-# OUTSIDE that loop. If the scope is ever renamed, rename it here too -- the
-# per-frame `calls` column is the backstop that still tells the truth.
-PER_TICK_ROOTS = frozenset({"sim.gameloop"})
+# then, once per catch-up tick too (since 2026-10-30), sim.weapons and
+# sim.combat, with sim.effects when native combat delivers its effect queue
+# at the tick's end; sim.collisions still runs once per frame. If a scope is
+# renamed or moved, change it here too -- the per-frame `calls` column is the
+# backstop that still tells the truth.
+PER_TICK_ROOTS = frozenset({"sim.gameloop", "sim.weapons", "sim.combat",
+                            "sim.effects"})
 
 
 def is_enabled() -> bool:
@@ -294,6 +301,33 @@ def scope(name: str):
         if _scope_stack:
             _scope_stack.pop()
         _accumulate(name, (_perf() - t0) * 1000.0)
+
+
+def open_scope() -> Optional[str]:
+    """The scope (or mark phase) a scope() opened now would be a child of;
+    None while disabled or outside every phase."""
+    if not _enabled:
+        return None
+    return _scope_stack[-1] if _scope_stack else _open_name
+
+
+def record(name: str, ms: float, calls: int = 1) -> None:
+    """Add `ms` measured ELSEWHERE -- and `calls` entries -- to `name`, as a
+    child of the open scope (see open_scope).
+
+    For spans this module cannot time itself: the native combat kernels'
+    compute-only timers (native_combat's `k*.compute` rows), which run inside
+    a binding and are read once a session. It sums within the frame like a
+    repeated scope(), so a caller that records twice under one parent gets one
+    row. A name recorded under two parents in one frame keeps the LAST one,
+    as scope() does: a caller whose span can run under different parents must
+    name the rows apart.
+    """
+    if not _enabled:
+        return
+    _note(name, _scope_stack[-1] if _scope_stack else _open_name)
+    _frame_acc[name] = _frame_acc.get(name, 0.0) + ms
+    _frame_calls[name] = _frame_calls.get(name, 0) + calls
 
 
 def _note(name: str, parent: Optional[str]) -> None:

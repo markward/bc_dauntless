@@ -28,11 +28,14 @@ def clock():
 def _tube(max_ready: int = 1, reload_delay: float = 40.0,
           immediate_delay: float = 0.0) -> TorpedoTube:
     system = TorpedoSystem("Torpedoes")
+    from tests.helpers.torpedo_fixtures import arm as _arm
+    _arm(system)    # a ship and a slot-0 script: tubes launch
     system.TurnOn()
     tube = TorpedoTube("Forward Torpedo 1")
     tube._reload_delay = reload_delay
     tube._immediate_delay = immediate_delay
     tube._max_ready = max_ready
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = max_ready
     tube._resize_slots()
     system.AddChildSubsystem(tube)
@@ -106,11 +109,14 @@ def test_non_numeric_power_factor_blocks_reload_instead_of_instant_reload(clock)
             return _Stub("GetNormalPowerPercentage", "TorpedoSystem")
 
     parent = _StubPowerParent("Torpedoes")
+    from tests.helpers.torpedo_fixtures import arm as _arm
+    _arm(parent)    # a ship and a slot-0 script: tubes launch
     parent.TurnOn()
     tube = TorpedoTube("Forward Torpedo 1")
     tube._reload_delay = 40.0
     tube._immediate_delay = 0.0
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     tube._resize_slots()
     parent.AddChildSubsystem(tube)

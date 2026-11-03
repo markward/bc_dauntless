@@ -64,6 +64,7 @@ def _armed_tube(script) -> TorpedoTube:
     tube._reload_delay = 40.0
     tube._immediate_delay = 0.25
     tube._max_ready = 1
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = 1
     tube._resize_slots()
     system.AddChildSubsystem(tube)
@@ -162,3 +163,46 @@ def test_sdk_choose_torp_type_survives_two_unimportable_ammo_types():
     P.FireScript.ChooseTorpType(None, system, TGPoint3(40.0, 0.0, 0.0), 2.0)
 
     assert system.GetAmmoTypeNumber() in (0, 1)
+
+
+# ── An ammo slot with no script ──────────────────────────────────────────
+# Fire control has no Python launch any more (fire control native only, M6):
+# an ammo type with no script resolves UNRESOLVED and never launches. The
+# old launch fell back to the property's slot-0 script for it, so the seed
+# gives a script-less slot that script instead (like the unimportable
+# path's stock photon), and the type fires.
+
+PHOTON = "Tactical.Projectiles.PhotonTorpedo"
+
+
+def test_script_less_ammo_slot_seeds_the_slot_0_script():
+    from engine.appc.ships import _resolve_torpedo_ammo
+
+    prop = WeaponSystemProperty("Torpedoes")
+    prop.SetTorpedoScript(0, PHOTON)
+    prop.SetMaxTorpedoes(1, 12)     # slot 1 declared, with no script
+    ammo = _resolve_torpedo_ammo(prop, 1)
+
+    assert ammo.GetTorpedoScript() == PHOTON
+    assert ammo.GetAmmoName() == "Photon"
+    assert ammo.GetMaxTorpedoes() == 12, "the hardpoint's capacity survives"
+
+
+def test_script_less_ammo_type_launches():
+    from engine.appc.ships import _resolve_torpedo_ammo
+    from engine.appc import native_combat as nc
+
+    tube = _armed_tube(PHOTON)
+    system = tube.GetParentSubsystem()
+    prop = system.GetProperty()
+    prop.SetMaxTorpedoes(1, 12)
+    for slot in (0, 1):
+        system.AddAmmoType(_resolve_torpedo_ammo(prop, slot))
+    system.SetAmmoType(1)           # a type switch unloads the tubes
+    assert system.GetCurrentAmmoTypeNumber() == 1
+    tube.SetNumReady(1)             # one round of the script-less type
+
+    assert tube.Fire(target=None, offset=None) is True
+    assert len(projectiles._active) == 1
+    assert not any(nc.counts()["k1_no_fire"].values()), (
+        nc.counts()["k1_no_fire"])

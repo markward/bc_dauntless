@@ -13,6 +13,8 @@ risk. AddEvent dispatches synchronously, so there is no drain step.
 import App
 import pytest
 
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
+
 
 @pytest.fixture
 def posted(monkeypatch):
@@ -152,176 +154,12 @@ def test_the_system_reports_its_own_ready_count():
 # re-reads the system state; ConditionFiringTractorBeam.py:26-27 registers
 # broadcast METHOD handlers filtered to the watched ship. Both need the SHIP
 # as destination, and both need transitions, not per-tick pings.
-
-class _FakeEmitter:
-    """Minimal tractor projector: the system only asks IsFiring/CanFire/Fire.
-
-    IsDisabled/IsDestroyed: once the fake is a real AddChildSubsystem() child
-    (see _tractor_with), TractorBeamSystem.StartFiring's _is_offline() gate
-    walks every child and calls both -- the brief's original docstring
-    predates that walk being reachable (it required TurnOn() first, added
-    below), and without these two the walk raises AttributeError instead of
-    resolving through a stub.
-    """
-
-    def __init__(self):
-        self._firing = False
-
-    def IsFiring(self):
-        return 1 if self._firing else 0
-
-    def CanFire(self):
-        return True
-
-    def IsDisabled(self):
-        return 0
-
-    def IsDestroyed(self):
-        return 0
-
-    def Fire(self, target=None, offset=None):
-        self._firing = True
-
-    def StopFiring(self, *a):
-        self._firing = False
-
-
-def _tractor_with(emitter):
-    """A TractorBeamSystem on a ship, holding one emitter, arc/range checks
-    stubbed out so the test exercises the EDGE-DETECT, not the geometry.
-
-    AddChildSubsystem / SetParentShip, NOT AddWeapon / _parent_ship=:
-    GetWeapon(i) and GetNumWeapons() are thin aliases over the child-subsystem
-    walk (weapon_subsystems.py:1065-1066), and there is no AddWeapon at all --
-    calling one would resolve through TGObject.__getattr__ to a truthy _Stub,
-    attach nothing, and leave every assertion below passing against an empty
-    system.
-
-    TurnOn(): PoweredSubsystem.__init__ defaults _is_on to False (weapons
-    spawn cold, live-verified faithful -- see PhaserBank's
-    `_init_energy_weapon_state`), and TractorBeamSystem.StartFiring's very
-    first line is `if not self.IsOn() or target is None: return`. Without
-    this the whole system is a no-op before the edge-detect is ever reached,
-    which every positive assertion below would happily pass against.
-    """
-    from engine.appc.ships import ShipClass
-    from engine.appc.weapon_subsystems import TractorBeamSystem
-
-    ship = ShipClass()
-    ship.SetName("Player")
-    sys_ = TractorBeamSystem("Tractor Beam System")
-    sys_.SetParentShip(ship)
-    sys_.AddChildSubsystem(emitter)
-    sys_.TurnOn()
-    assert sys_.GetNumWeapons() == 1, "the emitter must really be attached"
-    return ship, sys_
-
-
-def test_engaging_posts_started_once_with_the_ship_as_destination(posted, monkeypatch):
-    from engine.appc.weapon_subsystems import TractorBeamSystem
-
-    em = _FakeEmitter()
-    ship, sys_ = _tractor_with(em)
-    monkeypatch.setattr(TractorBeamSystem, "_can_engage", lambda *a: True)
-    monkeypatch.setattr(TractorBeamSystem, "_engage_beam",
-                        lambda self, *a: (em.Fire(), True)[1])
-
-    sys_.StartFiring(target=ship)
-
-    started = _of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)
-    assert len(started) == 1
-    assert started[0].GetDestination() is ship, (
-        "PowerDisplay.HandleTractor casts GetDestination() to ShipClass")
-
-
-def test_holding_the_beam_does_not_repost_every_tick(posted, monkeypatch):
-    from engine.appc.weapon_subsystems import TractorBeamSystem
-
-    em = _FakeEmitter()
-    ship, sys_ = _tractor_with(em)
-    monkeypatch.setattr(TractorBeamSystem, "_can_engage", lambda *a: True)
-    monkeypatch.setattr(TractorBeamSystem, "_engage_beam",
-                        lambda self, *a: (em.Fire(), True)[1])
-
-    sys_.StartFiring(target=ship)
-    for _ in range(10):
-        sys_.update_weapons(1.0 / 60.0)
-
-    assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)) == 1, (
-        "the beam is re-dispatched every tick while held; the event is not")
-
-
-def test_releasing_posts_stopped_once(posted, monkeypatch):
-    from engine.appc.weapon_subsystems import TractorBeamSystem
-
-    em = _FakeEmitter()
-    ship, sys_ = _tractor_with(em)
-    monkeypatch.setattr(TractorBeamSystem, "_can_engage", lambda *a: True)
-    monkeypatch.setattr(TractorBeamSystem, "_engage_beam",
-                        lambda self, *a: (em.Fire(), True)[1])
-
-    sys_.StartFiring(target=ship)
-    posted.clear()
-    sys_.StopFiring()
-
-    stopped = _of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING)
-    assert len(stopped) == 1
-    assert stopped[0].GetDestination() is ship
-    assert _of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING) == []
-
-
-def test_stopping_a_beam_that_never_gripped_posts_nothing(posted, monkeypatch):
-    """The HUD toggle can be released without the beam ever having gripped
-    (out of range the whole time). No transition, no event."""
-    from engine.appc.weapon_subsystems import TractorBeamSystem
-
-    em = _FakeEmitter()
-    ship, sys_ = _tractor_with(em)
-    monkeypatch.setattr(TractorBeamSystem, "_can_engage", lambda *a: False)
-
-    sys_.StartFiring(target=ship)
-    sys_.StopFiring()
-
-    assert _of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING) == []
-    assert _of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING) == []
-
-
-def test_losing_the_grip_mid_hold_posts_stopped_then_started_on_reacquire(
-        posted, monkeypatch):
-    """A tractor stays ENGAGED while the beam drops in and out (target out of
-    range, shields up, emitter out of arc). Each crossing is a transition
-    PowerDisplay must repaint for."""
-    from engine.appc.weapon_subsystems import TractorBeamSystem
-
-    em = _FakeEmitter()
-    ship, sys_ = _tractor_with(em)
-    engageable = {"v": True}
-    monkeypatch.setattr(TractorBeamSystem, "_can_engage",
-                        lambda *a: engageable["v"])
-    monkeypatch.setattr(TractorBeamSystem, "_engage_beam",
-                        lambda self, *a: (em.Fire(), True)[1])
-
-    sys_.StartFiring(target=ship)
-    posted.clear()
-
-    engageable["v"] = False               # drifts out of range
-    sys_.update_weapons(1.0 / 60.0)
-    assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING)) == 1
-
-    engageable["v"] = True                # back in range
-    sys_.update_weapons(1.0 / 60.0)
-    assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)) == 1
-
-
-# ── Fix round 1, finding 1: power-loss stop bypasses update_weapons ─────────
-# _FakeEmitter above can't reach this bug: it is not a TractorBeam, so
-# TractorBeam.UpdateCharge's parent-power gate (weapon_subsystems.py
-# :2278-2284, "power loss stops the beam") never runs against it. host_loop's
-# per-frame emitter pump calls UpdateCharge on every REAL TractorBeam every
-# tick regardless of the parent system's power state, so a real emitter can
-# stop itself between one update_weapons() call and the next. This exercises
-# that with the real TractorBeam + TractorBeamSystem pair (same construction
-# shape as test_tractor_beam_render_data.py's _ship_with_tractor).
+#
+# Since fire control native only (M4, R8) the edge is the native K1 tractor
+# walk's (and TractorBeamSystem.StopFiring's own), and both events are
+# effect-queue entries: delivered at the next flush -- a StartFiring
+# session's end, the tick scope's exit, effect_queue.boundary() -- so these
+# run with native combat on, on a real ship, target and projector.
 
 def _real_tractor_rig():
     """A ship with a real TractorBeamSystem holding one real, fully-charged
@@ -354,77 +192,159 @@ def _real_tractor_rig():
     return ship, sys_, emitter, target
 
 
-def test_power_loss_stop_is_synced_on_the_very_next_update(posted):
-    """Before the fix: update_weapons's `if not self.IsOn(): return False`
-    bails without calling _sync_firing_event, so a beam the parent's own
-    TurnOff() has already silenced (via TractorBeam.UpdateCharge's
-    parent-power gate) leaves `_was_firing` stuck True forever -- the HUD
-    latches "on" and the STARTED event that follows re-power is swallowed
-    because the cache never saw the drop.
-    """
+def _tick(ship, target, dt=1.0 / 60.0):
+    """One host tick of the weapons: the charging step (K0) and the
+    held-weapon pump (K1's tractor walk), in the tick's effect scope."""
+    from engine import host_loop
+    from engine.appc import effect_queue
+    from engine.core import step_memo
+    with effect_queue.scope():
+        host_loop._advance_weapons([ship, target], dt)
+        with step_memo.combat_step():
+            host_loop._pump_held_weapons([ship, target], dt)
+
+
+def _engage(sys_, target):
     from unittest.mock import patch
-
-    ship, sys_, emitter, target = _real_tractor_rig()
-
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         sys_.StartFiring(target, None)
-    assert emitter.IsFiring() == 1, "precondition: the real beam must actually grip"
+
+
+def test_engaging_posts_started_once_with_the_ship_as_destination(
+        posted, native_combat_on):
+    ship, sys_, emitter, target = _real_tractor_rig()
+    _engage(sys_, target)
+    assert emitter.IsFiring() == 1, "precondition: the real beam must grip"
+
+    started = _of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)
+    assert len(started) == 1
+    assert started[0].GetDestination() is ship, (
+        "PowerDisplay.HandleTractor casts GetDestination() to ShipClass")
+    assert started[0].GetSource() is sys_
+
+
+def test_holding_the_beam_does_not_repost_every_tick(posted,
+                                                     native_combat_on):
+    ship, sys_, emitter, target = _real_tractor_rig()
+    _engage(sys_, target)
+    for _ in range(10):
+        _tick(ship, target)
+    assert emitter.IsFiring() == 1
+    assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)) == 1, (
+        "the beam is sustained every tick while held; the event is not")
+
+
+def test_releasing_posts_stopped_once(posted, native_combat_on):
+    from engine.appc import effect_queue
+
+    ship, sys_, emitter, target = _real_tractor_rig()
+    _engage(sys_, target)
+    posted.clear()
+    sys_.StopFiring()
+    # Queued (ruling R8): delivered at the next flush, not at the call.
+    assert _of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING) == []
+    effect_queue.boundary()
+
+    stopped = _of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING)
+    assert len(stopped) == 1
+    assert stopped[0].GetDestination() is ship
+    assert _of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING) == []
+
+
+def test_stopping_a_beam_that_never_gripped_posts_nothing(posted,
+                                                          native_combat_on):
+    """The HUD toggle can be released without the beam ever having gripped
+    (out of range the whole time). No transition, no event."""
+    from engine.appc import effect_queue
+    from engine.appc.math import TGPoint3
+
+    ship, sys_, emitter, target = _real_tractor_rig()
+    target.SetWorldLocation(TGPoint3(0, 500, 0))    # out of tractor range
+    _engage(sys_, target)
+    assert sys_.IsEngaged() and emitter.IsFiring() == 0
+    sys_.StopFiring()
+    effect_queue.boundary()
+
+    assert _of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING) == []
+    assert _of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING) == []
+
+
+def test_losing_the_grip_mid_hold_posts_stopped_then_started_on_reacquire(
+        posted, native_combat_on):
+    """A tractor stays ENGAGED while the beam drops in and out (target out of
+    range, emitter out of arc). Each crossing is a transition PowerDisplay
+    must repaint for."""
+    from engine.appc.math import TGPoint3
+
+    ship, sys_, emitter, target = _real_tractor_rig()
+    _engage(sys_, target)
+    posted.clear()
+
+    target.SetWorldLocation(TGPoint3(0, 500, 0))    # drifts out of range
+    _tick(ship, target)
+    assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING)) == 1
+    assert sys_.IsEngaged()
+
+    target.SetWorldLocation(TGPoint3(0, 50, 0))     # back in range
+    _tick(ship, target)
+    assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)) == 1
+
+
+def test_power_loss_stop_is_synced_on_the_very_next_update(posted,
+                                                           native_combat_on):
+    """The parent's TurnOff() silences the beam in the charging step (K0's
+    holding branch, TractorBeam.UpdateCharge's parent-power gate), behind
+    the tractor walk's back: the walk's `not IsOn()` branch must still sync
+    the transition, or `_was_firing` stays stuck True -- the HUD latches
+    "on" and the STARTED event that follows re-power is swallowed.
+    """
+    ship, sys_, emitter, target = _real_tractor_rig()
+    _engage(sys_, target)
     assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)) == 1
     posted.clear()
 
     sys_.TurnOff()   # e.g. the power slider dragged to 0 (engineering_power_panel.py:47)
-    emitter.UpdateCharge(1.0 / 60.0)   # host_loop's per-frame emitter pump
-    assert emitter.IsFiring() == 0, "precondition: UpdateCharge's power gate stopped it"
-
-    sys_.update_weapons(1.0 / 60.0)
-
+    _tick(ship, target)
+    assert emitter.IsFiring() == 0, "precondition: the power gate stopped it"
     stopped = _of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING)
     assert len(stopped) == 1, (
-        "the beam already stopped behind update_weapons's back; the "
-        "not-self.IsOn() bail must still sync the transition")
+        "the beam stopped behind the walk's back; the not-self.IsOn() "
+        "branch must still sync the transition")
     assert stopped[0].GetDestination() is ship
 
     # Confirms the cache didn't just happen to still read correctly: restore
-    # power and re-engage, and the STARTED event must be reachable again
-    # (a stuck _was_firing=True would swallow it).
+    # power, and the STARTED event must be reachable again (a stuck
+    # _was_firing=True would swallow it).
     posted.clear()
     sys_.TurnOn()
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        sys_.update_weapons(1.0 / 60.0)
+    _tick(ship, target)
     assert emitter.IsFiring() == 1, "precondition: beam re-acquires once powered"
     assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)) == 1
 
 
-def test_swinging_out_of_arc_stops_and_syncs_even_though_still_engageable(posted):
-    """update_weapons's per-emitter arc re-check (:1959-1961, the only emitter
-    stop in this method that is NOT driven by the `engageable` range/shield
-    flag) is otherwise untested by every _FakeEmitter-based case above: the
-    fake has no GetDirection, so _emitter_in_arc short-circuits True for it
-    unconditionally (finding 2b). A real TractorBeam has a real default
+def test_swinging_out_of_arc_stops_and_syncs_even_though_still_engageable(
+        posted, native_combat_on):
+    """The walk's per-emitter arc re-check, the only emitter stop that is
+    NOT driven by the range gate: a real TractorBeam has a real default
     Direction (0,1,0) and no authored arc bounds, so it falls back to BC's
     bare 90-degree dot-product cone -- swinging the target behind the ship
-    swings it out of that cone while range and shields are untouched.
+    swings it out of that cone while still in range.
     """
-    from unittest.mock import patch
-
     from engine.appc.math import TGPoint3
 
     ship, sys_, emitter, target = _real_tractor_rig()
-
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        sys_.StartFiring(target, None)
+    _engage(sys_, target)
     assert emitter.IsFiring() == 1
     posted.clear()
 
     target.SetWorldLocation(TGPoint3(0, -50, 0))   # swung dead astern: still
-                                                    # in range, still no shields,
-                                                    # but behind the 90-degree cone
-
-    sys_.update_weapons(1.0 / 60.0)
+                                                    # in range, but behind
+                                                    # the 90-degree cone
+    _tick(ship, target)
 
     assert emitter.IsFiring() == 0, (
-        "precondition: the arc re-check, not the engageable gate, must be "
-        "what stopped this emitter")
+        "precondition: the arc re-check, not the range gate, must be what "
+        "stopped this emitter")
     stopped = _of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING)
     assert len(stopped) == 1
     assert stopped[0].GetDestination() is ship

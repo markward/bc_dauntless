@@ -80,6 +80,11 @@ def _snapshot(d: dict) -> dict:
 
 
 def _restore(d: dict, snap: dict) -> None:
+    # Writes the instance dict directly, so a mirrored attribute (a
+    # native_combat NativeField) is restored BEHIND the native combat mirror:
+    # its row keeps the audited step's value. That matters only when this
+    # audit and native combat run together (DAUNTLESS_PASSIVE_AUDIT=1 with
+    # DAUNTLESS_NATIVE_COMBAT=1); native_combat.audit_mirror would flag it.
     for k in [k for k in d if k not in snap]:
         del d[k]
     for k, (orig, copy) in snap.items():

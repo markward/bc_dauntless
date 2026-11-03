@@ -20,6 +20,7 @@ import App
 from engine.appc import combat
 from engine.appc.events import WeaponHitEvent, ET_WEAPON_HIT
 from engine.appc.math import TGPoint3
+from engine.appc import effect_queue
 
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -91,6 +92,7 @@ def hit_events(monkeypatch):
 def _hit(weapon_type):
     combat.apply_hit(_Ship(), damage=50.0, hit_point=TGPoint3(0.0, 1.0, 0.0),
                      source=None, weapon_type=weapon_type)
+    effect_queue.boundary()             # the tick boundary
 
 
 def test_phaser_hit_reports_phaser(hit_events):

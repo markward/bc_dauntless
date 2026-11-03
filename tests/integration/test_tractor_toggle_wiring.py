@@ -8,6 +8,9 @@ TacWeaponsCtrl → StartFiring/StopFiring on the player's WG_TRACTOR system.
 
 Pins both the engine-side handler in isolation and the full SDK chain.
 """
+
+import pytest
+
 from unittest.mock import patch
 
 import App
@@ -19,8 +22,22 @@ from engine.appc.ships import ShipClass_Create
 # (system-frames Plan 2 Ruling 5) puts a target outside the shooter's set --
 # or a setless one -- out of tractor range.
 _SHARED_SET = App.SetClass_Create()
+
 from engine.appc.subsystems import TractorBeam, TractorBeamSystem
 from engine.appc.properties import TractorBeamProperty, WeaponSystemProperty
+
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
+
+# Tractors are native only (fire control native only, M4).
+pytestmark = pytest.mark.usefixtures("native_combat_on")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_shared_set(native_combat_on):
+    """The shared set, made per test: a module-level one loses its mirror
+    row at the per-test reset, and the native tractor walk must name it."""
+    global _SHARED_SET
+    _SHARED_SET = App.SetClass_Create()
 
 
 def _make_emitter(name):

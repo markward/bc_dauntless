@@ -21,6 +21,14 @@ from engine.core.game import Game, _set_current_game
 from tests.helpers.cloak_geometry import inside_gu, outside_gu
 from tests.helpers.sensor_time import settle_identification
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+import pytest  # noqa: E402
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 _identified: list = []
 
 
@@ -126,6 +134,7 @@ def test_cloaked_contact_outside_the_bubble_is_not_identified():
     assert _identified == []
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_cloaked_contact_is_never_identified_with_the_contest_off(monkeypatch):
     """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False: cloak is
     absolute, so even the 15 GU contact the contest identifies stays unknown."""

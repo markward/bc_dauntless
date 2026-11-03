@@ -25,6 +25,14 @@ from engine.appc.perception import perceived_by
 from engine.appc.target_menu import STTargetMenu_CreateW
 from tests.helpers.cloak_geometry import inside_gu, outside_gu, sensorless_gu
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+import pytest  # noqa: E402
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 
 def _pump(menu, player):
     """One frame of the real contact push — perception.perceived_by, exactly
@@ -233,6 +241,7 @@ def test_dispatch_event_subsystem_click_rechecks_cloak_flag():
         restore()
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_enhanced_sensor_contest_off_cloaked_ship_undetected_untouched(monkeypatch):
     """With the stage-4 toggle off, cloak is absolute again — the ship never
     becomes a contact at all, so the subsystem question doesn't arise. Pins

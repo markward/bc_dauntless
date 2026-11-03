@@ -91,7 +91,7 @@ from __future__ import annotations
 
 import math
 
-from engine.appc import part_pose
+from engine.appc import native_combat, part_pose
 
 
 # Multiply a MODEL (raw NIF) unit by this to reach a SHIP (hardpoint-authored)
@@ -470,6 +470,7 @@ def tick_ship(ship, dt: float) -> None:
             ship._articulation_transitions = transitions
         except Exception:  # noqa: BLE001 - test double / prop may reject
             return
+    moved = False
     for part in parts:
         name = _part_name(part)
         current = poses.get(name, part_pose.IDENTITY)
@@ -487,6 +488,7 @@ def tick_ship(ship, dt: float) -> None:
                                                             target))
         pose0, _state, u, duration = tr
         u += float(dt) / max(duration, 1e-6)
+        moved = True
         if u >= 1.0:
             poses[name] = target
             transitions.pop(name, None)
@@ -494,6 +496,10 @@ def tick_ship(ship, dt: float) -> None:
         anchor = part.anchor or (0.0, 0.0, 0.0)
         poses[name] = part_pose.interpolate(pose0, target, anchor, u)
         transitions[name] = (pose0, state, u, duration)
+    if moved:
+        # In-place writes bypass the PosedPartsField rebind push: a part may
+        # just have left, or reached, its NIF pose (the native combat flag).
+        native_combat.push_posed_parts(ship)
 
 
 def time_to_reach(ship, state: str) -> float:
@@ -649,6 +655,9 @@ def _remember_leaf_model(leaf, iid) -> None:
         return
     if handle:
         _leaf_models[leaf] = handle
+        # `part_for_mount` now asks the model instead of the box rule: every
+        # native part slot resolved before reads stale (native_combat).
+        native_combat.bump_part_gen()
 
 
 def leaf_model(leaf):
@@ -695,6 +704,9 @@ def part_boxes_for(leaf, iid=None):
                                tuple(node["bounds_max"]))
     if boxes:                             # do not cache an empty derivation
         _derived_boxes[leaf] = boxes
+        # The box rule and is_missing answer differently now: every native
+        # part slot resolved before reads stale (native_combat).
+        native_combat.bump_part_gen()
     return boxes
 
 
@@ -733,8 +745,9 @@ def part_transform_point(ship, point, part=None, *, authored=True, prop=None):
 
     `authored` (default True) says `point` is an authored mount, attributed
     by the shared `part_severance.part_for_mount`; pass False for an
-    arbitrary point (a Manual Aim pick), which keeps the box rule -- see
-    `subsystems.target_offset_world`.
+    arbitrary point, which keeps the box rule (`part_for_point`). Aiming
+    never does: an aim offset that is no mount is a plain point
+    (`subsystems.target_offset_world`).
 
     `prop` is the authored property the point belongs to, when the caller has
     one: a SET `physical_parent` on it decides the part instead of the
@@ -771,10 +784,8 @@ def _live_part(ship, name, point, authored=True, prop=None):
     posed by name in `ship._articulation_poses` (`posed_part_names`).
 
     `authored` picks the attribution rule for `point`: an AUTHORED point (a
-    hardpoint mount, a light) uses `part_for_mount`; anything else (a Manual
-    Aim pick, a random point on the model) uses the box rule its pull-back
-    (`part_severance.rest_point_for_live_point`) used, so the round trip
-    stays exact."""
+    hardpoint mount, a light) uses `part_for_mount`; anything else (a random
+    point on the model) uses the box rule, `part_for_point`."""
     names = posed_part_names(ship)
     if not names:
         return None

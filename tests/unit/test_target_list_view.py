@@ -2,6 +2,7 @@ import json
 import App
 from engine.appc.ships import ShipClass
 from engine.appc.perception import Contact
+from tests.helpers.native_off import native_switch_zero  # noqa: F401
 
 
 def _listed(*ships):
@@ -754,7 +755,8 @@ def test_destroyed_ship_excluded_from_target_list():
         _set_current_game(None)
 
 
-def test_view_does_not_re_derive_detectability(monkeypatch):
+def test_view_does_not_re_derive_detectability(monkeypatch,
+                                               native_switch_zero):
     """The record is the frame's answer; the view does not second-guess it.
 
     Cloaking a ship without re-pushing must NOT change the listing — the next
@@ -773,6 +775,8 @@ def test_view_does_not_re_derive_detectability(monkeypatch):
     VIEW's non-duplication, not the cloak rule; the flag just restores a
     detectability change for it to not-re-derive.
     """
+    # The monkeypatched flag is a Python-only double (the native globals are
+    # pushed, not read at use): DAUNTLESS_NATIVE_COMBAT=0 (native_switch_zero).
     import engine.appc.sensor_detection as sd
     monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
     from engine.ui.target_list_view import (

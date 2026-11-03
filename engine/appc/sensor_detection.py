@@ -21,6 +21,22 @@ SDK monkey-patches (ObjectGroup / SelectTarget / StarbaseAttack / FireScript)
 and the observer-publication globals they coordinate through; it was split out
 of this file, and nothing here reads back into it.
 
+NATIVE (engine/appc/native_combat.py; Task 6 of the native combat step).
+With the switch on, every public function here -- can_detect,
+concealment_at, effective_sensor_range, in_reach, is_hidden_by_cloak,
+jammed -- is answered by the C++ kernel whenever every object it is asked
+about has a mirror row. The Python bodies are the `_py_<name>` functions,
+unchanged: they answer for unregistered objects (test fakes, plain objects,
+None), for any call the kernel cannot answer (it raises ValueError), and for
+every can_detect / in_reach inside a probe walk (`_walking_probes`: the
+kernel's own probe guard cannot see the Python's). The lock-break latch has
+one owner per pair: the native latch for a registered pair while the mirror
+is live -- whatever the switch says, as K1's native can_detect latches too
+(`_latched` / `_set_latched` read and write it) -- `_broken` otherwise. Under the audit
+(`native_combat.audit_enabled()`) both run, a difference is recorded, and the
+PYTHON answer is returned, with the latch exactly where the Python alone
+leaves it.
+
 See docs/superpowers/specs/2026-06-10-sensor-damage-detection-scaling-design.md
 """
 
@@ -29,6 +45,8 @@ import weakref
 import App
 from engine.appc.subsystems import _is_offline, _get_xyz
 from engine.appc import nebula_density as _nd
+from engine.appc import native_combat as _nc
+from engine.appc import sensor_occlusion as _occ
 from engine.core import step_memo
 from engine.core.ids import implements
 
@@ -147,7 +165,49 @@ CLOAK_DETECTION_BASE_GU = 5.0   # Flat bubble floor, added atop the percentage t
 _broken: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
+def _native_pair(observer, target, *, latch=False):
+    """(observer row, target row) when native answers for the pair, else
+    None. The queries follow the switch (native_combat.enabled); the LATCH
+    (`latch=True`) follows the mirror (native_combat.fire_control_native):
+    K1's native can_detect latches broken locks whatever the switch says,
+    so with DAUNTLESS_NATIVE_COMBAT=0 a registered pair's latch is still
+    the native one (ruling R7: one owner per pair)."""
+    if not (_nc.fire_control_native() if latch else _nc.enabled()):
+        return None
+    a = _nc.slot(observer)
+    if a is None:
+        return None
+    b = _nc.slot(target)
+    if b is None:
+        return None
+    return a, b
+
+
 def _latched(observer, target) -> bool:
+    """True iff this pair's lock is currently broken. A registered pair's
+    latch is the native one (ruling R7: one owner per pair)."""
+    pair = _native_pair(observer, target, latch=True)
+    if pair is not None:
+        try:
+            return _nc._h.combat_latched(*pair)
+        except ValueError:
+            pass                    # a stale row: the pair is the Python's
+    return _py_latched(observer, target)
+
+
+def _set_latched(observer, target, broken: bool) -> None:
+    """Record (or clear) this pair's broken-lock latch."""
+    pair = _native_pair(observer, target, latch=True)
+    if pair is not None:
+        try:
+            _nc._h.combat_set_latched(pair[0], pair[1], bool(broken))
+            return
+        except ValueError:
+            pass
+    _py_set_latched(observer, target, broken)
+
+
+def _py_latched(observer, target) -> bool:
     """True iff this pair's lock is currently broken."""
     try:
         targets = _broken.get(observer)
@@ -158,7 +218,7 @@ def _latched(observer, target) -> bool:
     return targets is not None and target in targets
 
 
-def _set_latched(observer, target, broken: bool) -> None:
+def _py_set_latched(observer, target, broken: bool) -> None:
     """Record (or clear) this pair's broken-lock latch."""
     try:
         targets = _broken.get(observer)
@@ -181,8 +241,10 @@ def reset_concealment_state():
     `_reset_leakable_engine_globals` so one test's broken lock cannot leak into
     the next. Both, not either: the weak keying above stops a DEAD ship's entry
     being inherited, but a test that keeps its ships alive still needs the
-    explicit clear."""
+    explicit clear. The native latch is cleared with it."""
     _broken.clear()
+    if _nc.available():
+        _nc._h.combat_latch_reset()
 
 
 def _cloak_subsystem(target):
@@ -225,6 +287,26 @@ def _sensorless_range() -> float:
 
 
 def effective_sensor_range(ship) -> float:
+    """See _py_effective_sensor_range; native for a registered ship."""
+    if _nc.enabled():
+        a = _nc.slot(ship)
+        if a is not None:
+            if _nc.audit_enabled():
+                return _audited(
+                    "effective_sensor_range", ship, None,
+                    lambda: _nc._h.combat_effective_sensor_range(a),
+                    lambda: _py_effective_sensor_range(ship))
+            try:
+                answer = _nc._h.combat_effective_sensor_range(a)
+            except ValueError:
+                _nc._counts["fallbacks"] += 1
+            else:
+                _nc._counts["native_calls"] += 1
+                return answer
+    return _py_effective_sensor_range(ship)
+
+
+def _py_effective_sensor_range(ship) -> float:
     """Detection range (game units) for *ship* given its sensor condition.
 
     Full BaseSensorRange when undamaged, scaled linearly by condition
@@ -288,6 +370,26 @@ def _local_concealment(ship) -> float:
 
 
 def concealment_at(ship) -> float:
+    """See _py_concealment_at; native for a registered ship."""
+    if _nc.enabled():
+        a = _nc.slot(ship)
+        if a is not None:
+            if _nc.audit_enabled():
+                return _audited(
+                    "concealment_at", ship, None,
+                    lambda: _nc._h.combat_concealment_at(a, _nc.now()),
+                    lambda: _py_concealment_at(ship))
+            try:
+                answer = _nc._h.combat_concealment_at(a, _nc.now())
+            except ValueError:
+                _nc._counts["fallbacks"] += 1
+            else:
+                _nc._counts["native_calls"] += 1
+                return answer
+    return _py_concealment_at(ship)
+
+
+def _py_concealment_at(ship) -> float:
     """Concealment at *ship*: the larger of the local MetaNebula fbm density
     and the radial profile's `sensors` column scaled by its measured full
     concealment (docs/superpowers/specs/2026-09-23-radial-system-profile-design.md),
@@ -313,6 +415,26 @@ def _profile_concealment_cap() -> float:
 
 
 def is_hidden_by_cloak(target) -> bool:
+    """See _py_is_hidden_by_cloak; native for a registered target."""
+    if _nc.enabled():
+        b = _nc.slot(target)
+        if b is not None:
+            if _nc.audit_enabled():
+                return _audited(
+                    "is_hidden_by_cloak", None, target,
+                    lambda: _nc._h.combat_is_hidden_by_cloak(b),
+                    lambda: _py_is_hidden_by_cloak(target))
+            try:
+                answer = _nc._h.combat_is_hidden_by_cloak(b)
+            except ValueError:
+                _nc._counts["fallbacks"] += 1
+            else:
+                _nc._counts["native_calls"] += 1
+                return answer
+    return _py_is_hidden_by_cloak(target)
+
+
+def _py_is_hidden_by_cloak(target) -> bool:
     """True iff *target*'s cloaking subsystem currently reports IsCloaked().
 
     ⚠️ NOT A DETECTABILITY GATE, and its name is now a near-miss for what it's
@@ -353,6 +475,24 @@ def _same_set(observer, target) -> bool:
 
 
 def jammed(observer, target) -> bool:
+    """See _py_jammed; native for a registered pair."""
+    pair = _native_pair(observer, target)
+    if pair is not None:
+        if _nc.audit_enabled():
+            return _audited("jammed", observer, target,
+                            lambda: _nc._h.combat_jammed(*pair),
+                            lambda: _py_jammed(observer, target))
+        try:
+            answer = _nc._h.combat_jammed(*pair)
+        except ValueError:
+            _nc._counts["fallbacks"] += 1
+        else:
+            _nc._counts["native_calls"] += 1
+            return answer
+    return _py_jammed(observer, target)
+
+
+def _py_jammed(observer, target) -> bool:
     """BC's nebula-interference flag (IsObjectVisible @0x005671D0, disassembly
     0x00567245-0x00567282): True iff *observer* OR *target* is inside any
     MetaNebula in the observer's set. A yes/no membership test, distinct from
@@ -376,6 +516,99 @@ def jammed(observer, target) -> bool:
 
 def can_detect(observer, target, *, dist_sq_gu=None,
                apply_concealment=True, concealment=None) -> bool:
+    """See _py_can_detect (the rule, and every keyword's contract).
+
+    Native for a registered pair, outside a probe walk, when the optional
+    numbers are floats (an int or a bool takes the Python's exact compare).
+    The memo condition is the Python's: step_memo.active() and no optional
+    argument given. Two clocks, as in the Python: the nebula drift reads
+    native_combat.now() (_game_time), the occlusion cache
+    sensor_occlusion._now() -- not the same value today."""
+    if not _walking_probes:
+        pair = _native_pair(observer, target)
+        if (pair is not None
+                and (dist_sq_gu is None or type(dist_sq_gu) is float)
+                and (concealment is None or type(concealment) is float)):
+            use_memo = bool(step_memo.active() and dist_sq_gu is None
+                            and apply_concealment and concealment is None)
+            args = (pair[0], pair[1], _nc.now(), use_memo, dist_sq_gu,
+                    bool(apply_concealment), concealment, _occ._now())
+            if _nc.audit_enabled():
+                return _audit_can_detect(observer, target, args,
+                                         dist_sq_gu, apply_concealment,
+                                         concealment)
+            try:
+                answer = _nc._h.combat_can_detect(*args)
+            except ValueError:  # the mirror cannot answer: the Python
+                _nc._counts["fallbacks"] += 1
+            else:
+                _nc._counts["native_calls"] += 1
+                return answer
+    return _py_can_detect(observer, target, dist_sq_gu=dist_sq_gu,
+                          apply_concealment=apply_concealment,
+                          concealment=concealment)
+
+
+_FELL_BACK = object()
+
+
+def _audit_can_detect(observer, target, args, dist_sq_gu, apply_concealment,
+                      concealment) -> bool:
+    """Both paths, the Python's answer. The native run goes first. Every
+    latch pair whose TARGET is `target` -- the asked pair's and each probe
+    pair the native walk wrote; a native run writes no other -- is then put
+    back where it was, so the Python runs from exactly the state a
+    Python-only run would see and leaves the latch where it alone would, even
+    when the two walks differ. The target's whole latch row is compared."""
+    h = _nc._h
+    a, b = args[0], args[1]
+    python_args = dict(dist_sq_gu=dist_sq_gu,
+                       apply_concealment=apply_concealment,
+                       concealment=concealment)
+    before = h.combat_latch_snapshot(b)
+    try:
+        native = h.combat_can_detect(*args)
+    except ValueError:
+        native = _FELL_BACK
+        _nc._counts["fallbacks"] += 1
+    else:
+        _nc._counts["native_calls"] += 1
+    native_latch = h.combat_latch_snapshot(b)
+    h.combat_latch_restore(b, before)
+    python = _py_can_detect(observer, target, **python_args)
+    if native is not _FELL_BACK:
+        python_latch = h.combat_latch_snapshot(b)
+        if native != python or native_latch != python_latch:
+            _nc.record_call_failure("can_detect", observer, target,
+                                    (python, python_latch),
+                                    (native, native_latch))
+    return python
+
+
+def _same(python, native) -> bool:
+    if isinstance(python, float) or isinstance(native, float):
+        return float(python).hex() == float(native).hex()
+    return python == native
+
+
+def _audited(name, observer, target, native_call, python_call):
+    """Under the audit: both answers (floats by hex), a difference
+    recorded, the Python's returned. A native ValueError is the designed
+    fallback, not a difference."""
+    try:
+        native = native_call()
+    except ValueError:
+        _nc._counts["fallbacks"] += 1
+        return python_call()
+    _nc._counts["native_calls"] += 1
+    python = python_call()
+    if not _same(python, native):
+        _nc.record_call_failure(name, observer, target, python, native)
+    return python
+
+
+def _py_can_detect(observer, target, *, dist_sq_gu=None,
+                   apply_concealment=True, concealment=None) -> bool:
     """True iff *observer* can detect *target* within its effective sensor
     range, accounting for nebula tactical concealment and major-rock
     occlusion.
@@ -652,6 +885,26 @@ def _probe_in_reach(observer, target) -> bool:
 
 
 def in_reach(observer, target) -> bool:
+    """See _py_in_reach; native for a registered pair outside a probe
+    walk (the kernel's probe guard cannot see the Python's)."""
+    if not _walking_probes:
+        pair = _native_pair(observer, target)
+        if pair is not None:
+            if _nc.audit_enabled():
+                return _audited("in_reach", observer, target,
+                                lambda: _nc._h.combat_in_reach(*pair),
+                                lambda: _py_in_reach(observer, target))
+            try:
+                answer = _nc._h.combat_in_reach(*pair)
+            except ValueError:
+                _nc._counts["fallbacks"] += 1
+            else:
+                _nc._counts["native_calls"] += 1
+                return answer
+    return _py_in_reach(observer, target)
+
+
+def _py_in_reach(observer, target) -> bool:
     """Would *observer* reach *target* if nothing hid it? The continuity
     clock's "in reach" (sensor_contacts.is_concealed): the UNSHRUNK effective
     range -- no density sample, no latch mutation, so a ship in the dense

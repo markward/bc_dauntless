@@ -16,9 +16,11 @@ from engine.appc.properties import WeaponSystemProperty
 from engine.appc.projectiles import _active
 
 
-class _Target:
-    def GetWorldLocation(self): return TGPoint3(0.0, 100.0, 0.0)
-    def IsDead(self): return 0
+def _Target():
+    """A live target ahead (a real ship: the mirror names it)."""
+    target = ShipClass_Create("Target")
+    target.SetTranslateXYZ(0.0, 100.0, 0.0)
+    return target
 
 
 def _galaxy_tube_with_photon_script(num_ready=2, max_ready=2):
@@ -33,6 +35,7 @@ def _galaxy_tube_with_photon_script(num_ready=2, max_ready=2):
     ship.SetWorldLocation(TGPoint3(0, 0, 0))
     tube = TorpedoTube("Forward Torpedo 1")
     tube._max_ready = max_ready
+    tube._resize_slots()    # as ships.py sizes a hardpoint tube
     tube._num_ready = num_ready
     tube._reload_delay = 40.0
     tube._immediate_delay = 0.0

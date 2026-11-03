@@ -28,6 +28,13 @@ no observable behaviour there -- but tests/integration drive
 see Task 4) with a STATIC App game time while moving rocks or ships between
 ticks, and App time alone would then never invalidate either cache on a move.
 
+NATIVE (engine/appc/native_combat.py): with the switch on, `blocked` for a
+registered pair is answered by the C++ kernel, which owns its own copy of
+both caches with the same signatures; `begin_tick` and `reset` reach both
+copies. A call the kernel cannot answer (ValueError) runs `_py_blocked`,
+which uses the Python caches (accepted divergence R9: a later native query at
+the same game time may recompute where the Python would have hit its cache).
+
 Gated by a module flag, DEFAULT ON: `enabled()`/`set_enabled()`. Shipped Off
 during sub-project 2 and flipped On when it finished -- Mark 2026-10-06. The
 developer-only switch lives at Developer Options -> Combat ->
@@ -38,6 +45,7 @@ import weakref
 
 import App
 import engine.dev_mode as dev_mode
+from engine.appc import native_combat
 from engine.appc import sensor_dials
 
 # On by default since sub-project 2 finished -- Mark 2026-10-06.
@@ -58,6 +66,7 @@ def enabled() -> bool:
 def set_enabled(on: bool) -> None:
     global _enabled
     _enabled = bool(on)
+    _push_native()
 
 
 def reset_enabled() -> None:
@@ -66,6 +75,13 @@ def reset_enabled() -> None:
     never cleared on mission swap; only tests (and a dev re-launch) call this."""
     global _enabled
     _enabled = DEFAULT_ENABLED
+    _push_native()
+
+
+def _push_native() -> None:
+    """The native combat mirror holds the flag can_detect reads."""
+    from engine.appc import native_combat
+    native_combat.push_globals()
 
 
 def begin_tick(now_gt: float) -> None:
@@ -74,6 +90,8 @@ def begin_tick(now_gt: float) -> None:
     relying on App's game time alone."""
     global _tick_time
     _tick_time = float(now_gt)
+    if native_combat.available():
+        native_combat._h.combat_occ_begin_tick(_tick_time)
 
 
 def reset() -> None:
@@ -81,6 +99,8 @@ def reset() -> None:
     _pair_cache.clear()
     _rock_cache.clear()
     _tick_time = None
+    if native_combat.available():
+        native_combat._h.combat_occ_reset()
 
 
 def _now() -> float:
@@ -130,6 +150,38 @@ def _contains(x, y, z, cx, cy, cz, r) -> bool:
 
 
 def blocked(observer, target) -> bool:
+    if native_combat.enabled():
+        a = native_combat.slot(observer)
+        b = native_combat.slot(target) if a is not None else None
+        if b is not None:
+            if native_combat.audit_enabled():
+                return _audit_blocked(observer, target, a, b)
+            try:
+                answer = native_combat._h.combat_occ_blocked(a, b, _now())
+            except ValueError:  # the mirror cannot answer: Python
+                native_combat._counts["fallbacks"] += 1
+            else:
+                native_combat._counts["native_calls"] += 1
+                return answer
+    return _py_blocked(observer, target)
+
+
+def _audit_blocked(observer, target, a, b) -> bool:
+    """Both answers; a difference is recorded; the Python's is returned."""
+    try:
+        native = native_combat._h.combat_occ_blocked(a, b, _now())
+    except ValueError:
+        native_combat._counts["fallbacks"] += 1
+        return _py_blocked(observer, target)
+    native_combat._counts["native_calls"] += 1
+    python = _py_blocked(observer, target)
+    if native != python:
+        native_combat.record_call_failure("blocked", observer, target,
+                                          python, native)
+    return python
+
+
+def _py_blocked(observer, target) -> bool:
     if not _enabled:
         return False
     try:

@@ -428,12 +428,11 @@ def test_audio_edge_trigger_fires_again_after_contact_gap(host, spy, monkeypatch
     """After a gap exceeding _AUDIO_CONTACT_GAP_S, a fresh hit on the
     same (ship, severity) plays audio again — this is what
     distinguishes edge-trigger from rate-limit semantics."""
-    import time
-    from engine.appc import hit_feedback as hf
+    from engine.appc import damage_decals
 
-    # Mock time.monotonic so we can control "now" deterministically.
+    # The contact gap runs on GAME time: control "now" deterministically.
     fake_now = [0.0]
-    monkeypatch.setattr(hf.time, "monotonic", lambda: fake_now[0])
+    monkeypatch.setattr(damage_decals, "_game_time_source", lambda: fake_now[0])
 
     hull = _HullMarker()
     ship = _Ship(hull)
@@ -470,11 +469,10 @@ def test_audio_edge_trigger_fires_again_after_contact_gap(host, spy, monkeypatch
 def test_audio_continuous_dispatch_at_60hz_plays_once(host, spy, monkeypatch):
     """60 dispatches at 60Hz (1 second of continuous fire) produce
     exactly one audio play — the first."""
-    import time
-    from engine.appc import hit_feedback as hf
+    from engine.appc import damage_decals
 
     fake_now = [0.0]
-    monkeypatch.setattr(hf.time, "monotonic", lambda: fake_now[0])
+    monkeypatch.setattr(damage_decals, "_game_time_source", lambda: fake_now[0])
 
     hull = _HullMarker()
     ship = _Ship(hull)
@@ -494,6 +492,65 @@ def test_audio_continuous_dispatch_at_60hz_plays_once(host, spy, monkeypatch):
 
     assert len(spy["audio"]) == 1, \
         f"continuous fire should play once, got {len(spy['audio'])}"
+
+
+def test_audio_contact_gap_runs_on_game_time_not_the_wall_clock(host, spy,
+                                                               monkeypatch):
+    """RM §7.5 test 5: several sim ticks run in one frame, microseconds apart
+    on the wall clock, so a wall-clock gap made a slow frame play fewer hit
+    sounds. The gap is game time: a wall-clock jump with game time held
+    never re-arms the sound, and a game-time gap re-arms it however little
+    wall time passed."""
+    import time as _time
+    from engine.appc import damage_decals
+    game = [10.0]
+    wall = [1000.0]
+    monkeypatch.setattr(damage_decals, "_game_time_source", lambda: game[0])
+    monkeypatch.setattr(_time, "monotonic", lambda: wall[0])
+
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    kwargs = dict(
+        ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
+        normal=None, damage=30.0, subsystem=hull,
+        absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
+        sub_transition=None, ship_instances={ship: 42},
+    )
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 1
+    wall[0] += 5.0                      # a long frame; the same game tick
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 1
+    game[0] += 1.0                      # a second of game time, no wall time
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 2
+
+
+def test_audio_rearms_when_game_time_goes_backwards(host, spy, monkeypatch):
+    """A stamp from a later game time than now means the clock was rewound
+    (a reset, a load): the contact is fresh, so the sound plays. Without
+    this a reused id(ship) stays silent until game time passes the old
+    stamp (presentation RNG final review M3)."""
+    from engine.appc import damage_decals
+    game = [100.0]
+    monkeypatch.setattr(damage_decals, "_game_time_source", lambda: game[0])
+
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    kwargs = dict(
+        ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
+        normal=None, damage=30.0, subsystem=hull,
+        absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
+        sub_transition=None, ship_instances={ship: 42},
+    )
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 1
+    game[0] = 0.0                       # the clock rewound, no reset ran
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 2
+    game[0] = 0.017                     # the same contact, one tick on
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 2
 
 
 # ── Spark burst wiring ─────────────────────────────────────────────────────

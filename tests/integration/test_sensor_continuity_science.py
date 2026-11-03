@@ -25,6 +25,13 @@ from engine.core.game import Game, Episode, Mission, _set_current_game
 from engine.rocks import far_tier
 from tests.helpers.rocks import make_major_rock, occlusion_enabled
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 SCAN_MENU = "Scan Object"
 _exited = []
 
@@ -157,6 +164,7 @@ def test_in_a_field_for_20s_keeps_hail_and_shows_a_placeholder_scan_button(world
     assert _exited == []
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_lost_track_in_the_dense_nebula_core_keeps_a_placeholder_scan_button_and_drops_hail(world, monkeypatch):
     from engine.appc import sensor_detection as sd
     App.g_kEventManager.AddBroadcastPythonFuncHandler(

@@ -14,6 +14,13 @@ from engine.appc.sensor_detection import (
     effective_sensor_range, can_detect,
 )
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 
 def _ship_with_sensor(base_range, condition=100.0, max_condition=100.0,
                       at=(0.0, 0.0, 0.0)):
@@ -83,6 +90,7 @@ def test_zero_base_range_returns_fallback():
     assert effective_sensor_range(ship) == sensor_dials.get("sensorless_range_gu")
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_sensorless_range_is_the_dial_read_at_use(monkeypatch):
     """Rule 2 (spec 2026-10-08-sensor-debts-design.md): a ship with no sensor
     subsystem, and one with BaseSensorRange 0, both see the live dial."""

@@ -61,7 +61,10 @@ def begin(rock, killer=None) -> None:
     pSet = rock.GetContainingSet()
     name = rock.GetName()
     try:
-        rock.RunDeathScript()
+        # In the presentation scope, as a ship's (ship_death.begin; ruling R1).
+        from engine.appc import presentation_rng
+        with presentation_rng.scope():
+            rock.RunDeathScript()
     except Exception as e:
         dev_mode.log_swallowed("rock death script", e)
     from engine.appc import ship_death

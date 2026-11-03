@@ -11,11 +11,12 @@ Severity rule (spec §3.1):
 - SHIELD iff shields absorbed > 0 and nothing else absorbed anything.
 - HULL otherwise.
 
-The WeaponHitEvent broadcast in apply_hit is unchanged; dispatch runs
-before it, and dispatch failures are swallowed so a renderer-binding
-crash never suppresses mission-side event handlers.
+apply_hit queues the dispatch as a HIT_PRESENT effect-queue entry, just
+before its WEAPON_HIT (native damage M2, engine/appc/effect_queue.py), so
+both run at the tick boundary; ``present`` delivers it, and swallows a
+dispatch failure so a renderer-binding crash never reaches the queue's
+error handling (the WeaponHitEvent after it is delivered either way).
 """
-import time
 from enum import IntEnum
 
 from engine import host_io
@@ -169,6 +170,10 @@ def classify(*, absorbed_shields: float, absorbed_subsystem: float,
 # _AUDIO_CONTACT_GAP_S since the previous dispatch on this (ship,
 # severity) marks a fresh contact. Continuous fire updates the timestamp
 # each tick but only plays once at the start of the burst.
+# The gap is GAME time (damage_decals.current_game_time, as the smoke and
+# decal throttles): several sim ticks run in one frame, microseconds apart on
+# the wall clock, so a wall-clock gap made a slow frame play fewer sounds.
+# The clock restarts at a mission swap, which therefore clears the stamps.
 _AUDIO_CONTACT_GAP_S = 0.15
 
 _last_dispatch_time: dict[tuple[int, "Severity"], float] = {}
@@ -176,7 +181,7 @@ _last_dispatch_time: dict[tuple[int, "Severity"], float] = {}
 
 def reset_audio_throttle() -> None:
     """Clear the per-(ship, severity) edge-trigger state. Called by
-    tests and by view-mode transitions.
+    tests, by view-mode transitions and at a mission swap.
 
     Name kept for callers that already imported it; semantics shifted
     from rate-limit to edge-trigger but the reset contract is unchanged.
@@ -191,12 +196,15 @@ def _audio_should_play(ship, severity: Severity) -> bool:
     _AUDIO_CONTACT_GAP_S (continuous fire → silent ticks, burst-start
     → fresh play).
     """
+    from engine.appc import damage_decals
     key = (id(ship), severity)
-    now = time.monotonic()
+    now = damage_decals.current_game_time()
     last = _last_dispatch_time.get(key)
     _last_dispatch_time[key] = now
-    if last is None:
-        return True   # first contact ever for this (ship, severity)
+    if last is None or now < last:
+        # First contact ever for this (ship, severity), or game time went
+        # backwards (a reset, a load): a stamp from the future is stale.
+        return True
     return (now - last) >= _AUDIO_CONTACT_GAP_S
 
 
@@ -216,6 +224,35 @@ def _structural_hit(weapon_type, allow_structural_wear: bool) -> bool:
     case. A future non-phaser "spare the hull" caller that also wants no
     wear must change this predicate deliberately, not rely on the flag."""
     return bool(allow_structural_wear) or weapon_type != "phaser"
+
+
+# The ship -> render instance map HIT_PRESENT's delivery hands dispatch
+# (native damage I4: the entry carries only whether its hit had one). The
+# last map a hit was given -- the host's session.ship_instances in play,
+# which every live caller passes; a native arm's caller sets it before its
+# kernel's hits are delivered.
+_delivery_instances = [None]
+
+
+def use_instances(ship_instances) -> None:
+    """The map in force for HIT_PRESENT's delivery (combat.apply_hit sets
+    the one it was given)."""
+    _delivery_instances[0] = ship_instances
+
+
+def delivery_instances():
+    """The map HIT_PRESENT's delivery uses when its hit had one."""
+    return _delivery_instances[0]
+
+
+def present(**inputs) -> None:
+    """HIT_PRESENT's delivery: ``dispatch(**inputs)`` (the hit's F0-F7, F7
+    severance included), a failure swallowed as it was at the hit."""
+    try:
+        dispatch(**inputs)
+    except Exception as _e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("hit_feedback.dispatch", _e)
 
 
 def dispatch(*, ship, source, point, normal, damage, subsystem,
@@ -464,39 +501,49 @@ def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> No
     mgr = getattr(App, "g_kSoundManager", None)
     if mgr is None:
         return
-
-    if severity == Severity.SHIELD:
-        if weapon_type != "torpedo":
-            return
-        try:
-            import LoadTacticalSounds
-            name = LoadTacticalSounds.GetRandomSound(
-                LoadTacticalSounds.g_lsWeaponExplosions)
-        except Exception:
-            return
-    elif severity == Severity.HULL:
-        try:
-            import LoadTacticalSounds
-            name = LoadTacticalSounds.GetRandomSound(
-                LoadTacticalSounds.g_lsWeaponExplosions)
-        except Exception:
-            return
-    else:  # CRITICAL
-        try:
-            import LoadDamageHitSounds
-            picker = LoadDamageHitSounds.GetRandomSound
-            if picker is None:
-                # LoadSounds() hasn't run yet — fall back to first entry.
-                name = LoadDamageHitSounds.g_lsSubsystemCriticals[0]
-            else:
-                name = picker(LoadDamageHitSounds.g_lsSubsystemCriticals)
-        except Exception:
-            return
+    # The SDK picker draws GetRandomNumber: inside the presentation scope that
+    # is the presentation generator, so a sound played or throttled never
+    # shifts a gameplay roll (engine/appc/presentation_rng.py).
+    from engine.appc import presentation_rng
+    with presentation_rng.scope():
+        name = _pick_sound(severity, weapon_type)
+    if name is None:
+        return
 
     snd = mgr.GetSound(name)
     if snd is None:
         return
     snd.Play(position=(point.x, point.y, point.z))
+
+
+def _pick_sound(severity: Severity, weapon_type: str | None):
+    """The tier's sound name (an SDK random pick), or None for silence."""
+    if severity == Severity.SHIELD:
+        if weapon_type != "torpedo":
+            return None
+        try:
+            import LoadTacticalSounds
+            return LoadTacticalSounds.GetRandomSound(
+                LoadTacticalSounds.g_lsWeaponExplosions)
+        except Exception:
+            return None
+    if severity == Severity.HULL:
+        try:
+            import LoadTacticalSounds
+            return LoadTacticalSounds.GetRandomSound(
+                LoadTacticalSounds.g_lsWeaponExplosions)
+        except Exception:
+            return None
+    # CRITICAL
+    try:
+        import LoadDamageHitSounds
+        picker = LoadDamageHitSounds.GetRandomSound
+        if picker is None:
+            # LoadSounds() hasn't run yet — fall back to first entry.
+            return LoadDamageHitSounds.g_lsSubsystemCriticals[0]
+        return picker(LoadDamageHitSounds.g_lsSubsystemCriticals)
+    except Exception:
+        return None
 
 
 def _hull_impact_visual(*, ship, point, normal, severity, weapon_type,
@@ -558,8 +605,12 @@ def _hull_impact_visual(*, ship, point, normal, severity, weapon_type,
         pSet=frames.containing_set(ship))
 
 
+_EVALUATE = object()
+
+
 def beam_contact(*, ship, source, point, normal, shield_point, tick_damage,
-                 ship_instances, weapon_type="phaser", radius=0.0) -> None:
+                 ship_instances, weapon_type="phaser", radius=0.0,
+                 shields_block=_EVALUATE) -> None:
     """Cosmetic feedback for a beam RESTING on a target this frame.
 
     A beam's DAMAGE arrives in pulses (one flush per 0.53 s of dwell, see
@@ -579,9 +630,15 @@ def beam_contact(*, ship, source, point, normal, shield_point, tick_damage,
     `tick_damage` is what this frame's slice of the beam would deposit. It
     feeds the spark threshold, so the burst behaves exactly as it did when
     damage was applied every tick.
+
+    `shields_block` is combat.shields_block(ship)'s answer when the caller
+    already has it and nothing has run since (the native K2 step passes the
+    loop's own); by default it is evaluated here.
     """
-    from engine.appc.combat import shields_block
-    if shields_block(ship):
+    if shields_block is _EVALUATE:
+        from engine.appc.combat import shields_block as _shields_block
+        shields_block = _shields_block(ship)
+    if shields_block:
         if ship_instances is None:
             return
         iid = ship_instances.get(ship)

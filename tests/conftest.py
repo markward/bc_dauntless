@@ -799,6 +799,11 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
 
 
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "mutates_engine_classes: the test deliberately leaves an engine class "
+        "changed; the engine class guard (_guard_engine_classes) skips it")
+
     # Our App.py must shadow sdk/Build/scripts/App.py
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
@@ -947,6 +952,29 @@ def _reset_leakable_engine_globals():
         _passive_power.reset()
     except Exception:
         pass
+    # Native combat mirror: reset (mirror off), and every C++ row dropped
+    # (process-lifetime state). Objects a previous test left alive would keep
+    # a stale handle; forget_rows() drops them all at once (one at a time is
+    # a quadratic re-push cascade that hung the gate for over an hour).
+    try:
+        from engine.appc import native_combat as _native_combat
+        _native_combat.reset()
+    except Exception:
+        pass
+    try:
+        import _dauntless_host as _host
+        _host.combat_clear()
+        _native_combat.forget_rows()
+    except Exception:
+        pass
+    # Then the mirror live again and the switch where configure() puts it
+    # from the environment (on unless DAUNTLESS_NATIVE_COMBAT=0): fire
+    # control is native in every test, as in the game (fire control native
+    # only, ruling R1). A test needing the Python arm of K0, K2, K3, K4 or
+    # damage pins =0 itself. NOT swallowed: a stale build or a failed
+    # self-check must fail loudly here too (M10).
+    from engine.appc import native_combat as _native_combat
+    _native_combat.configure()
     # Warp-in: radius seeder hook + live dial values are module globals.
     try:
         from engine.appc import warp_in_dials as _warp_in_dials
@@ -1160,6 +1188,24 @@ def _reset_leakable_engine_globals():
     # module sees BC's original CreateAI replaced for the rest of the
     # session. Only touch the module if it is already imported -- importing
     # it here just to reset it would itself be a new leak.
+    # Felix's Tactical orders (Bridge.TacticalMenuHandlers): module globals
+    # that a mission giving Felix an order (E1M2's tactical tutorial, a free
+    # roam fight) or a test setting one by hand leaves set for the whole
+    # session. The next scene's first player target change then ran
+    # UpdateOrders and installed an attack AI on the player (an extra
+    # ET_AI_DONE in the k1_ops goldens). Back to the SDK file's own initial
+    # values (tests/unit/test_conftest_resets_tactical_orders.py); only when
+    # the module is already imported.
+    _tmh = sys.modules.get("Bridge.TacticalMenuHandlers")
+    if _tmh is not None:
+        _tmh.g_bIgnoreNextAIDone = 0
+        _tmh.g_fLastWarnTime = 0
+        _tmh.g_lPlayerFireAIs = []
+        _tmh.g_idCurrentAI = None
+        _tmh.g_iAutoTargetChange = 0
+        _tmh.g_iOrderState = -1
+        _tmh.g_iTacticState = 0
+        _tmh.g_iManeuverState = 0
     _orbit_mod = sys.modules.get("AI.Player.OrbitPlanet")
     if _orbit_mod is not None:
         _orbit_orig = getattr(_orbit_mod.CreateAI,
@@ -1214,6 +1260,9 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc import hit_feedback as _hf
         _hf._last_decal_emit.clear()
+        # HIT_PRESENT's delivery map (the last a hit was given) holds an
+        # earlier test's ships.
+        _hf.use_instances(None)
         from engine.appc import hull_wear as _hw
         _hw.reset()
     except Exception:
@@ -1381,6 +1430,14 @@ def _reset_leakable_engine_globals():
         App.Game_SetDifficulty(1)
     except Exception:
         pass
+    # Difficulty multipliers are global game state a mission sets at init
+    # (E2M2.py:155 defensive 0.75); a mission that sets none (E1M2) built its
+    # player with the last test's (tests/unit/test_conftest_resets_
+    # difficulty_multipliers.py).
+    try:
+        App.Game_SetDefaultDifficultyMultipliers()
+    except Exception:
+        pass
     # Audio singleton: the audio tests' teardown (shutdown_audio_for_tests)
     # leaves TGSoundManager._instance and App.g_kSoundManager as None. A later
     # bridge load then calls App.g_kSoundManager.GetSound(...) -> AttributeError
@@ -1406,32 +1463,10 @@ def _reset_leakable_engine_globals():
         _ai_driver.reset_script_error_log()
     except Exception:
         pass
-    # Accumulator lists drained per mission tick in production.
-    for _mod, _attr in (
-        ("engine.appc.projectiles", "_active"),
-        ("engine.appc.hit_vfx", "_active"),
-        ("engine.appc.ship_death", "_active"),
-        ("engine.appc.object_lifetime", "_timed"),
-        ("engine.appc.visible_damage", "_pending"),
-        ("engine.appc.internal_blast", "_pending"),
-        ("engine.appc.warp_core_breach", "_growing"),
-        # The single-fire guarantee's queue + set: a ship armed or breached
-        # by one test would never detonate (or detonate) in a later one.
-        ("engine.appc.warp_core_breach", "_armed"),
-        ("engine.appc.warp_core_breach", "_breached"),
-        ("engine.audio.attached_sources", "_attached"),
-        ("engine.audio.hum_allocator", "_humming"),
-        # Detached hull chunks + the per-ship breakup throttle: a chunk left
-        # live by one test is yielded by collisions.iter_collidables() in
-        # every later test, and a stale _pending_wear entry re-runs a split
-        # on a ship that no longer exists.
-        ("engine.appc.debris_chunk", "_live"),
-        ("engine.appc.hull_breakup", "_pending_wear"),
-        ("engine.appc.hull_breakup", "_last_wear_check"),
-        ("engine.appc.hull_breakup", "_severed"),
-        ("engine.appc.hull_breakup", "_part_labels"),
-        ("engine.appc.hull_breakup", "_awaiting"),
-    ):
+    # Accumulator lists drained per mission tick in production (one list,
+    # shared with headless_mission.clear_in_flight).
+    from tests.helpers.in_flight import IN_FLIGHT as _in_flight
+    for _mod, _attr in _in_flight:
         try:
             _m = sys.modules.get(_mod)
             if _m is not None:
@@ -1655,6 +1690,13 @@ def _reset_leakable_engine_globals():
         reset_random_unit_vector_rng()
     except Exception:
         pass
+    # The presentation generator (engine/appc/presentation_rng.py): reseeded
+    # at every mission load in play, so per test here, for the same reason.
+    try:
+        from engine.appc import presentation_rng
+        presentation_rng.reset()
+    except Exception:
+        pass
     # Defensive-cloak controller: per-ship DEFENSIVE mode set (mirrors
     # collision_avoidance's per-tick reconciliation) leaks between tests
     # since nothing else clears it. A ship id surviving from a prior test
@@ -1662,6 +1704,18 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc.defensive_cloak import reset_defensive_cloak_state
         reset_defensive_cloak_state()
+    except Exception:
+        pass
+    # The AI sensor gate (engine/appc/ai_sensor_gate.py) is a process-lifetime
+    # CLASS patch the host bootstrap installs (host_loop.run ->
+    # _bootstrap_firing_pipeline). Left on, every later headless fight's
+    # SelectTarget filtered candidates through can_detect: after the native
+    # combat scene audit's host run, the K1 game-loop differential's AI dropped
+    # its targets at the first cloak and never fired a torpedo. Tests that
+    # want the gate install it themselves.
+    try:
+        from engine.appc.ai_sensor_gate import uninstall_ai_sensor_gate
+        uninstall_ai_sensor_gate()
     except Exception:
         pass
     # Warp-state facade: begin_flythrough registers a ship on the module
@@ -2025,6 +2079,41 @@ def bop_fixture_rig():
 def _isolate_engine_globals():
     _reset_leakable_engine_globals()
     yield
+
+
+# ── Fail the test that mutates an engine class and leaves it changed ─────────
+#
+# A bare `ShipClass.GetRadius = lambda ...` in a test outlives it and breaks
+# unrelated files far later in the run (2026-11-01: ~190 native-combat
+# failures an hour after the two polluting tests). This compares every engine
+# class's own methods/descriptors across the test's window and FAILS that test
+# (reported as an ERROR in teardown) naming class and attribute, after
+# restoring the original so one polluter does not cascade. Defined after
+# _isolate_engine_globals so the reset's own changes are part of the baseline;
+# being a root-conftest autouse fixture it is set up before monkeypatch and the
+# test's own fixtures and so torn down AFTER they have undone their changes
+# (pinned by tests/unit/test_engine_class_guard.py). Plain data attributes are
+# ignored. Escape hatch for a test that deliberately leaves a change:
+# @pytest.mark.mutates_engine_classes (none today).
+from tests.helpers.engine_class_guard import (  # noqa: E402
+    EngineClassGuard as _EngineClassGuard,
+    fail_on_mutations as _fail_on_mutations,
+)
+
+_ENGINE_CLASS_GUARD = _EngineClassGuard()
+
+
+@pytest.fixture(autouse=True)
+def _guard_engine_classes(request):
+    _ENGINE_CLASS_GUARD.sync()
+    yield
+    if request.node.get_closest_marker("mutates_engine_classes") is None:
+        # The engine's own boot hooks (ai_sensor_gate wraps
+        # ObjectGroup.GetActiveObjectTupleInSet, ...) are uninstalled by the
+        # reset, which otherwise only runs at the NEXT test's setup: run it
+        # now, so only a change the reset does not undo counts as a leak.
+        _reset_leakable_engine_globals()
+        _fail_on_mutations(_ENGINE_CLASS_GUARD.check())
 
 
 @pytest.fixture(scope="session", autouse=True)

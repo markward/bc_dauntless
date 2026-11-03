@@ -8,16 +8,10 @@ import App
 
 
 def _make_target_ahead(player, distance=100.0):
-    class _Target:
-        def __init__(self, pos):
-            self._pos = pos
-        def GetWorldLocation(self):  return self._pos
-        def IsDead(self):            return 0
-        # The shooter's set (interim cross-set weapon guard, Ruling 5).
-        def GetContainingSet(self):  return player.GetContainingSet()
-    from engine.appc.math import TGPoint3
+    """A real ship ahead of `player`, in its set (tests/helpers/targets)."""
+    from tests.helpers.targets import real_target
     p = player.GetWorldLocation()
-    return _Target(TGPoint3(p.x, p.y + distance, p.z))
+    return real_target(p.x, p.y + distance, p.z, like=player)
 
 
 def test_galaxy_single_fire_engages_one_bank_at_a_time(galaxy_red):

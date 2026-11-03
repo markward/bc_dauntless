@@ -6,8 +6,10 @@ past the hull into the system nebula and dust passes. No NPCs and no
 scripted events: the only rocks are Vesuvi4_S's stock asteroids plus what
 the Vesuvi radial profile adds, far fewer than B1's belt at Haven.
 
-The player is made immune to damage with BC's own SetInvincible. The God
-Mode cheat would not do: the radiation drain and the nebula hits gate on
+The player is made immune to damage with BC's own SetHurtable(0) (since
+native-damage ruling M1, SetInvincible only stops a death and lets damage
+land; ruling R6 keeps this baseline's no-damage player). The God Mode cheat
+would not do: the radiation drain and the nebula hits gate on
 IsImmuneToDamage, not on combat.apply_hit's cheat check.
 
 SETTLE_S after Initialize the run prints a `settled` line (the start of the
@@ -66,7 +68,7 @@ def Initialize(pMission):
 
     pPlayer = MissionLib.CreatePlayerShip(PLAYER_SHIP, pSet, "player",
                                           "Player Start")
-    pPlayer.SetInvincible(1)
+    pPlayer.SetHurtable(0)
 
     pSeq = App.TGSequence_Create()
     pSeq.AppendAction(App.TGScriptAction_Create(__name__, "SettledAction"),

@@ -5,6 +5,8 @@ Testing -- the campaign transitions and the handler sweep).
 fresh world; the warp runs its fallback branch, since the flythrough VFX is
 off headless, but the queues, WaitForQueued and _MissionChangePoint all run.
 """
+import sys
+
 import pytest
 
 import App
@@ -12,6 +14,7 @@ from engine import host_loop
 from engine.appc import dash, warp, warp_button
 from engine.core.loop import GameLoop, TICK_DELTA
 from tests.helpers.fresh_world import _fresh_world
+from tests.helpers.in_flight import IN_FLIGHT
 
 # Bound on one warp, in game time (Task 8 brief). The master dialogue a
 # mission has queued holds the transit (WaitForQueued), so this is long.
@@ -26,6 +29,31 @@ def load(name):
     way the dev picker loads it."""
     _fresh_world()
     return host_loop._init_mission(name)
+
+
+# What a fight leaves in flight (tests/helpers/in_flight.py: the same list
+# tests/conftest.py's _reset_leakable_engine_globals clears between tests). A
+# fresh world does not clear them, so a test loading a mission twice (a
+# differential's arms) would otherwise fly the first arm's torpedoes, debris
+# and death sequences in the second.
+_IN_FLIGHT = IN_FLIGHT
+
+
+def clear_in_flight() -> None:
+    """Drop everything a previous load left in flight (see _IN_FLIGHT) and
+    the explosion lights. Call before load() when one test loads twice."""
+    for mod_name, attr in _IN_FLIGHT:
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            getattr(mod, attr).clear()
+    lights = sys.modules.get("engine.appc.explosion_lights")
+    if lights is not None:
+        lights.reset()
+    # Effects held for the tick boundary (a write zeroing a hull: its death
+    # check) would be delivered into the next load.
+    queue = sys.modules.get("engine.appc.effect_queue")
+    if queue is not None:
+        queue.reset()
 
 
 def the_warp_button():

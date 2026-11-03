@@ -223,12 +223,20 @@ attract, PUSH ≈ repel, DOCK_STAGE_1/2 ≈ progressive position lock. No
 instrumentation needed as a starting point; empirical measurement optional
 if the feel is wrong after initial tuning.
 
-**Audited 2026-08-09 — the prescribed Phase 2 force law is BUILT; fidelity to BC
-remains unverifiable.** `engine/appc/tractor.py` implements a mass-aware,
-reciprocal spring model (`TRACTOR_REFERENCE_SPEED_GUPS = 5.0`; mass-scaled
-engagement speed with an inverse-mass split mirroring `collisions.py`; hulls
-reporting `mass <= 0` fall back to effectively immovable). All six modes are
-present. 93 tractor tests pass (`uv run pytest tests/ -k tractor`).
+**Audited 2026-08-09 — a Phase 2 force law is BUILT; fidelity to BC
+remains unverifiable.** *Corrected 2026-11-03:* what is built is **not** the
+spring-damper prescribed above. It is a mass-capped kinematic displacement.
+Each tick the body moves toward its mode's destination by at most
+`speed · dt`, and snaps to it when within one step. There is no force,
+restoring term or damping. The speed is
+`min(TRACTOR_REFERENCE_SPEED_GUPS · TRACTOR_REFERENCE_MASS / mass,
+TRACTOR_MAX_SPEED_GUPS)` = `min(5 · 100 / mass, 20)` GU/s. A ship reporting
+`mass <= 0` reads `TRACTOR_FALLBACK_MASS` (1e4, effectively immovable), and
+anything not a ShipClass reads 0. PULL, PUSH and TOW also move the source,
+at its own speed. The step runs natively in
+`native/src/combat/src/tractor_force.cc` (fire-control native-only spec
+R7), with its constants still in `engine/appc/tractor.py`. All six modes are
+present.
 
 Stays ⚠️ deliberately. What is built is a *designed approximation*, signed off in
 the design — **not** a reconstruction of BC's law, and nothing available can

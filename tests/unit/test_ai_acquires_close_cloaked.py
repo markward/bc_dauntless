@@ -34,6 +34,13 @@ from engine.appc.subsystems import (
 )
 from tests.helpers.cloak_geometry import inside_gu, outside_gu
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 
 def _reset_app_state():
     App.g_kSetManager._sets.clear()
@@ -153,6 +160,7 @@ def test_dead_cloaked_ship_is_not_acquired():
     assert inst.FindGoodTarget() is None
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_contest_off_restores_absolute_cloak_with_no_flag_check_here(monkeypatch):
     """Stock BC returns WITHOUT this module consulting the flag: can_detect
     rejects the cloaked contact during enumeration, so the fallback sees nothing.

@@ -1,5 +1,9 @@
 """TorpedoTube.FireDumb + CalculateRoughDirection + WeaponSystem.StopFiringAtTarget.
 
+(FireDumb's own route -- a one-tube native session, never an instance-patched
+Fire -- is tests/unit/test_native_sdk_weapon_routes.py's and
+native/tests/combat/k1_fire_control_test.cc's K1Launch.DumbFireIsDecidedNatively.)
+
 SDK Preprocessors.py:454-458 — dumb-fire path picks torp tubes facing
 the target by dot-product with CalculateRoughDirection() > 0."""
 import pytest
@@ -9,21 +13,13 @@ from engine.appc.ships import ShipClass
 from engine.appc.subsystems import TorpedoTube, PhaserSystem, TorpedoSystem
 
 
-def test_fire_dumb_calls_fire():
-    """FireDumb routes through the regular Fire path in Phase 1."""
-    tube = TorpedoTube("Tube")
-    tube.SetMaxCondition(100.0)  # not destroyed
-    fired = []
-    tube.Fire = lambda *a, **kw: fired.append((a, kw))
-    tube.FireDumb(0, 1)
-    assert len(fired) == 1
-
-
 def test_calculate_rough_direction_is_world_space_when_attached():
     """Was: asserted model-forward for every tube. That WAS the dumb-fire bug --
     see tests/unit/test_torpedo_tube_direction.py for the real coverage."""
     ship = ShipClass()
     system = TorpedoSystem("Torpedoes")
+    from tests.helpers.torpedo_fixtures import arm as _arm
+    _arm(system)    # a ship and a slot-0 script: tubes launch
     tube = TorpedoTube("Forward Torpedo 1")
     tube.SetDirection(TGPoint3(0.0, 1.0, 0.0))
     system.AddChildSubsystem(tube)

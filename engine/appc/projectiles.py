@@ -19,6 +19,7 @@ hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
 import math
 import weakref
 
+from engine.appc import native_combat as _nc
 from engine.appc.math import TGPoint3
 from engine.appc.objects import ObjectClass
 from engine.systems.frames import shifted as _shifted
@@ -53,19 +54,21 @@ class Torpedo(ObjectClass):
 
     `__slots__` below is now advisory rather than load-bearing: no class in
     the ObjectClass chain declares slots, so every torpedo carries a __dict__
-    regardless. Kept because the named fields still bind to real descriptors
-    (cheaper than dict lookups on the hot motion path) and because the list
-    documents the projectile's own state. If torpedo count ever becomes a
-    memory problem, this is where it starts. `_position` is deliberately NOT
-    in this list -- it lives in the store, not on the instance.
+    regardless. The fields the native K3 kernel reads (`_age`, `_ttl`,
+    `_guidance_*`, `_max_angular_accel`, `_target_ship`, `_target_offset`,
+    `_last_seen_target_pos`, `_last_target_vel`, `_mount_key`,
+    `_damage`, `_damage_radius_factor`) are NOT slots:
+    they are `native_combat.TorpedoField` descriptors (a slot and a
+    descriptor cannot share a name), so their values live in the instance
+    __dict__ and every write reaches the torpedo's table row. The rest keep
+    their slots, which still bind to real descriptors and document the
+    projectile's own state. If torpedo count ever becomes a memory problem,
+    this is where it starts. `_position` is deliberately NOT in either list
+    -- it lives in the store, not on the instance.
     """
     __slots__ = (
-        "_vel", "_age", "_ttl",
-        "_damage", "_damage_radius_factor",
-        "_target_ship", "_target_offset",
-        "_guidance_lifetime", "_guidance_initial", "_max_angular_accel",
-        "_last_seen_target_pos", "_last_target_vel",
-        "_src", "_cset", "_scan_live", "_rad", "_mount_key",
+        "_vel",
+        "_src", "_cset", "_scan_live", "_rad",
         "_id", "_bubble_entry",
         "_core_texture", "_core_color", "_core_size_a", "_core_size_b",
         "_glow_texture", "_glow_color", "_glow_size_a", "_glow_size_b", "_glow_size_c",
@@ -74,6 +77,25 @@ class Torpedo(ObjectClass):
         "_is_disruptor", "_shell_color", "_bolt_core_color",
         "_bolt_length", "_bolt_width",
     )
+
+    # What the native K3 kernel reads (engine/appc/native_combat.py, the
+    # torpedo table): each write is pushed into the torpedo's table row while
+    # it has one. Not slots: a descriptor and a slot cannot share a name.
+    # `_velocity`, `_source_ship` and `_containing_set` push from their
+    # properties below.
+    _age = _nc.TorpedoField()
+    _ttl = _nc.TorpedoField()
+    _guidance_lifetime = _nc.TorpedoField()
+    _guidance_initial = _nc.TorpedoField()
+    _max_angular_accel = _nc.TorpedoField()
+    _target_ship = _nc.TorpedoField()
+    _target_offset = _nc.TorpedoField()
+    _last_seen_target_pos = _nc.TorpedoField()
+    _last_target_vel = _nc.TorpedoField()
+    _mount_key = _nc.TorpedoField()
+    # The hit K3 applies itself (native damage Task 4).
+    _damage = _nc.TorpedoField()
+    _damage_radius_factor = _nc.TorpedoField()
 
     def __init__(self):
         # Before super(): ObjectClass.__init__ assigns _containing_set, whose
@@ -210,6 +232,12 @@ class Torpedo(ObjectClass):
     def GetTargetOffset(self):
         return self._target_offset
 
+    def _set_launch_offset(self, offset) -> None:
+        """SetTargetOffset at launch: `offset` a TGPoint3 copy (the
+        launcher's, read at fire time) or None
+        (weapon_subsystems._launch_projectile)."""
+        self._target_offset = offset
+
     def SetDamageRadiusFactor(self, v) -> None:   self._damage_radius_factor = float(v)
     def GetDamageRadiusFactor(self) -> float:     return self._damage_radius_factor
     def SetGuidanceLifetime(self, v) -> None:
@@ -242,6 +270,8 @@ class Torpedo(ObjectClass):
         self._vel = v
         if self._scan_live == _scan_gen and not _scan_dirty:
             _scan_table().set_velocity(self.GetObjID(), v.x, v.y, v.z)
+        if _nc._switch:
+            _nc.push_torpedo_field(self, "_velocity", v)
 
     @property
     def _source_ship(self):
@@ -252,6 +282,8 @@ class Torpedo(ObjectClass):
         self._src = src
         if self._scan_live == _scan_gen and not _scan_dirty:
             _scan_table().set_source(self.GetObjID(), *_source_key(src))
+        if _nc._switch:
+            _nc.push_torpedo_field(self, "_source_ship", src)
 
     @property
     def _radius(self):
@@ -278,6 +310,8 @@ class Torpedo(ObjectClass):
         if old is not pSet and self._scan_live == _scan_gen and not _scan_dirty:
             _group_leave(old)
             _scan_table().set_group(self.GetObjID(), _group_join(pSet))
+        if _nc._switch:
+            _nc.push_torpedo_field(self, "_containing_set", pSet)
 
     def GetVelocityTG(self) -> TGPoint3:
         """Current in-flight velocity as a FRESH copy. Mirrors
@@ -318,6 +352,7 @@ class _ActiveList(list):
         super().append(t)
         if isinstance(t, Torpedo):
             _scan_add(t)
+            _nc.torpedo_row_add(t)
 
     def extend(self, items):
         for t in items:
@@ -330,35 +365,44 @@ class _ActiveList(list):
     def remove(self, t):
         super().remove(t)
         _scan_drop(t)
+        _nc.torpedo_row_drop(t)
 
     def pop(self, i=-1):
         t = super().pop(i)
         _scan_drop(t)
+        _nc.torpedo_row_drop(t)
         return t
 
     def clear(self):
         super().clear()
-        _scan_mark_dirty()
+        _list_reshaped()
 
     def insert(self, i, t):
         super().insert(i, t)
-        _scan_mark_dirty()
+        _list_reshaped()
 
     def __setitem__(self, i, v):
         super().__setitem__(i, v)
-        _scan_mark_dirty()
+        _list_reshaped()
 
     def __delitem__(self, i):
         super().__delitem__(i)
-        _scan_mark_dirty()
+        _list_reshaped()
 
     def sort(self, *a, **k):
         super().sort(*a, **k)
-        _scan_mark_dirty()
+        _list_reshaped()
 
     def reverse(self):
         super().reverse()
-        _scan_mark_dirty()
+        _list_reshaped()
+
+
+def _list_reshaped() -> None:
+    """`_active` was reordered or a slice replaced: both tables rebuild from
+    it (the incoming-torpedo scan and native_combat's K3 torpedo table)."""
+    _scan_mark_dirty()
+    _nc.torpedo_table_mark_dirty()
 
 
 _active: list[Torpedo] = _ActiveList()
@@ -475,15 +519,33 @@ def _scan_rebuild(scan) -> None:
             _scan_put(scan, t)
 
 
-def register(torpedo: Torpedo) -> None:
+# register's `kset` default: the source ship's set, read now.
+LIVE_SET = object()
+
+
+def source_set(source):
+    """The set _join_source_set joins a torpedo from `source` to, now: its
+    containing set, or None (no source, a source in no set or without
+    GetContainingSet)."""
+    from engine.core.ids import implements
+    if source is None or not implements(source, "GetContainingSet"):
+        return None
+    return source.GetContainingSet()
+
+
+def register(torpedo: Torpedo, kset=LIVE_SET) -> None:
+    """Number `torpedo`, put it in flight and join it to a set. `kset`: the
+    set to join (None: none), read at fire time for a launch K1 deferred to
+    the tick boundary (weapon_subsystems.spawn_launch); LIVE_SET (default)
+    reads the source ship's containing set now (_join_source_set)."""
     global _next_id
     torpedo._id = _next_id
     _next_id += 1
     _active.append(torpedo)
-    _join_source_set(torpedo)
+    _join_source_set(torpedo, kset)
 
 
-def _join_source_set(torpedo: Torpedo) -> None:
+def _join_source_set(torpedo: Torpedo, kset=LIVE_SET) -> None:
     """Add *torpedo* to its firing ship's set and post ET_TORPEDO_ENTERED_SET.
 
     Emitter gaps #6/#7. Torpedoes used to live only in `_active`, so
@@ -504,17 +566,15 @@ def _join_source_set(torpedo: Torpedo) -> None:
     "entered set" for a set it is not in would make ConditionIncomingTorps
     track a torpedo its PeriodicCheck can never find.
     """
-    source = torpedo._source_ship
-    # `implements`, not hasattr: on a TGObject __getattr__ hands back a truthy
-    # _Stub for any unknown name, so hasattr would be vacuously True and we
-    # would call a stub and get a _Stub "set" back. This also covers the
-    # legitimate case of a source that is not an ObjectClass at all — the
-    # projectile-motion fixtures fire from bare fakes, and BC-side a torpedo
-    # can outlive its shooter. Same degradation as "source is in no set".
-    from engine.core.ids import implements
-    if source is None or not implements(source, "GetContainingSet"):
-        return
-    kset = source.GetContainingSet()
+    if kset is LIVE_SET:
+        # `implements`, not hasattr (source_set): on a TGObject __getattr__
+        # hands back a truthy _Stub for any unknown name, so hasattr would
+        # be vacuously True and we would call a stub and get a _Stub "set"
+        # back. This also covers the legitimate case of a source that is not
+        # an ObjectClass at all — the projectile-motion fixtures fire from
+        # bare fakes, and BC-side a torpedo can outlive its shooter. Same
+        # degradation as "source is in no set".
+        kset = source_set(torpedo._source_ship)
     if kset is None:
         return
     kset.AddObjectToSet(torpedo, "Torpedo %d" % torpedo._id)
@@ -823,6 +883,15 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     if not _active:
         return hits
 
+    # Native combat on: the K3 kernel decides steps 0-3 and native_combat
+    # applies them (engine/appc/native_combat.py, run_k3), its hits included
+    # (native damage Task 4: it returns none for the caller to apply); None
+    # hands this step to the Python below.
+    if _nc._switch:
+        native = _nc.run_k3(dt, all_ships, ship_instances)
+        if native is not None:
+            return native
+
     # Per-ship values resolved ONCE per call, not once per (torpedo, ship)
     # pair. Position, the broadphase bound and liveness depend only on the
     # ship, and nothing inside this function moves a ship or kills one --
@@ -1029,9 +1098,12 @@ def _steer_point(torpedo, target, off=None):
     a steering target: the firing tube's own copy is only a fire-cone gate,
     so this is where it has to be read while the shot is in flight.
 
-    Same transform the tube's gate uses: `subsystems.target_offset_world`,
-    which also carries the offset with an articulated part -- read every
-    tick, so a shot locked on a wing keeps tracking it while it moves.
+    The tube's gate's transform, `subsystems.target_offset_world`, read
+    every tick: a subsystem lock (an offset that IS a mount) is carried with
+    its articulated part, so a shot locked on a wing keeps tracking it while
+    it moves; any other offset (a picked spot) is a plain body-frame point
+    -- the target's position, rotation and scale, never a part pose
+    (fire control native only, M5) -- for the whole flight.
 
     `off` is frames.offset_between(torpedo set, target set): the point is
     returned in the TORPEDO's set-local coordinates. None/zero (same set)

@@ -11,6 +11,14 @@ from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import CloakingSubsystem, SensorSubsystem
 from tests.helpers.cloak_geometry import bubble_gu, inside_gu, outside_gu
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+import pytest  # noqa: E402
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 
 def _observer(base_range=2000.0, condition=100.0, power=1.0):
     """Observer with a REAL sensor subsystem — follows
@@ -143,6 +151,7 @@ def test_offline_sensors_detect_nothing_even_point_blank():
                       _target(1.0, cloaked=True)) is False
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_toggle_off_restores_absolute_cloak(monkeypatch):
     """Flipping the flag must return stock BC exactly: cloak is absolute."""
     monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
@@ -211,6 +220,7 @@ def test_ai_does_not_acquire_a_cloaked_contact_outside_the_bubble():
     assert _candidates(_observer(), [cloaked, plain]) == (plain,)
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_ai_acquires_no_cloaked_contact_at_all_with_the_contest_off(monkeypatch):
     """STOCK BC, held under ENHANCED_SENSOR_CONTEST = False: cloak is absolute
     on the acquisition path too, so even a point-blank contact is dropped."""
@@ -258,6 +268,7 @@ def test_offline_sensors_see_no_cloaked_ship_even_inside_the_cap():
     assert sd.can_detect(obs, _target(cap * 0.1, cloaked=True)) is False
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_the_cap_is_read_at_use(monkeypatch):
     obs = _observer(_STATION_GU)
     t = _target(20.0, cloaked=True)

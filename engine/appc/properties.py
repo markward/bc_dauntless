@@ -29,6 +29,10 @@ class TGModelProperty:
 
     def SetName(self, value: str) -> None:
         self._name = value
+        # The SPV preview overlay (physical_parents.explicit_parent) is keyed
+        # by this name: every native part slot reads stale now.
+        from engine.appc import native_combat
+        native_combat.bump_part_gen()
 
     def __bool__(self) -> bool:
         return True
@@ -75,6 +79,9 @@ class TGModelProperty:
     def SetPhysicalParent(self, name) -> None:
         """Mesh part this mount rides on; ``None`` means Auto (unset)."""
         self._physical_parent = None if name is None else str(name)
+        # An input of the native part slots: they all read stale now.
+        from engine.appc import native_combat
+        native_combat.bump_part_gen()
 
     def GetPhysicalParent(self):
         return self._physical_parent
@@ -90,6 +97,11 @@ class TGModelProperty:
             cls_name = type(self).__name__
             def setter(*args):
                 data[(field, _hashable_key(args[:-1]))] = args[-1]
+                if field == "MaxCondition":
+                    # A shared template's max condition: every subsystem's
+                    # GetMaxCondition reads it, so the native mirror must too.
+                    from engine.appc import native_combat
+                    native_combat.push_property(self)
                 # Empirical consumer tracking: if any arg is a TGColorA, log
                 # which shim setter received it (off unless harness enables).
                 import App as _App
@@ -504,6 +516,8 @@ class WeaponProperty(SubsystemProperty):
         WeaponProperty+0x50). Previously a silent _Stub no-op even though
         every stock hardpoint authors it (galaxy.py:22 etc.)."""
         self._groups = int(mask)
+        from engine.appc import native_combat
+        native_combat.push_property(self)       # K1 reads the mask natively
 
     def GetGroups(self) -> int:
         return int(getattr(self, "_groups", 0))
@@ -900,6 +914,11 @@ class WeaponSystemProperty(PoweredSubsystemProperty):
 
     def SetTorpedoScript(self, slot, module_name) -> None:
         self._torpedo_scripts[int(slot)] = str(module_name)
+        if int(slot) == 0:
+            # The script a tube with no ammo type launches: its launch, read
+            # now (fire control native only, M8.2).
+            from engine.appc import native_combat
+            native_combat.push_slot0_launch(self)
 
     def GetTorpedoScript(self, slot):
         return self._torpedo_scripts.get(int(slot))
@@ -937,6 +956,8 @@ class WeaponSystemProperty(PoweredSubsystemProperty):
                     chains.append((label, indices))
                 i += 2
         self._firing_chains = chains
+        from engine.appc import native_combat
+        native_combat.push_property(self)       # K1 reads the chains natively
 
     def GetFiringChainString(self):
         """Return the raw chain string. The return type is _TGString —

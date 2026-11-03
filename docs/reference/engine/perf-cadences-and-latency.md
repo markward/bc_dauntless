@@ -189,6 +189,24 @@ scene (`DAUNTLESS_MISSION=engine.dev_missions.combat_stress`).
 
 ---
 
+## Not a cadence, same trap: tractor events land one tick later
+
+Since fire control went native only (2026-11-03,
+`docs/superpowers/specs/2026-11-03-fire-control-native-only-design.md`,
+ruling R8), `ET_TRACTOR_BEAM_STARTED_FIRING` and
+`ET_TRACTOR_BEAM_STOPPED_FIRING` are **effect-queue entries**: the native
+tractor walk (`k1_fire_control.cc` `tractor_sync`) queues them on the firing
+edge, and `engine/appc/effect_queue.py` posts them when the queue is
+delivered, **one tick after the beam gripped or dropped**. A handler that
+reacts to the grip therefore acts a tick late. The case that matters is
+E8M2's OD1 handler, which calls `StopFiring` on `STARTED`: the beam pulls for
+one more tick before it lets go, at most about 0.33 GU of extra pull. E7M2's
+tractor win also lands one tick later. That is the design, not a missed
+event. The `tractor_modes` golden records it: the SDK's
+`ConditionFiringTractorBeam` ends the tick at 0 with the beam off.
+
+---
+
 ## Not a cadence, same trap: a long warp tunnel is the preload
 
 Since the warp tunnel became the loading screen (2026-10-16,

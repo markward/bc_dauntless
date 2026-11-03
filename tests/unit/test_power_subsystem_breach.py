@@ -8,7 +8,7 @@ import pytest
 
 from engine.appc.subsystems import PowerSubsystem, PoweredSubsystem
 from engine.appc.properties import PowerProperty
-from engine.appc import warp_core_breach
+from engine.appc import effect_queue, warp_core_breach
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +44,7 @@ def test_destroyed_reactor_arms_breach():
     ship, power, _ = _powered_ship()
     power.SetCondition(0.0)          # makes IsDestroyed() == 1
     power.Update(1.0 / 60.0)
+    effect_queue.boundary()          # the tick boundary (native damage R9)
     # The ship must appear in _armed (not yet detonated — just queued).
     assert ship in warp_core_breach._armed or ship in warp_core_breach._breached, (
         "destroyed warp core must arm the ship in warp_core_breach"
@@ -62,6 +63,7 @@ def test_destroyed_reactor_breaches_ship():
         power.SetCondition(0.0)
         for _ in range(120):
             power.Update(1.0 / 60.0)
+            effect_queue.boundary()  # the tick boundary (native damage R9)
         assert ship.IsDying() or ship.IsDead(), (
             "a destroyed warp core must destroy the ship itself"
         )
@@ -75,6 +77,7 @@ def test_destroyed_reactor_arms_only_once():
     power.SetCondition(0.0)
     for _ in range(120):
         power.Update(1.0 / 60.0)
+        effect_queue.boundary()      # the tick boundary (native damage R9)
     assert warp_core_breach._armed.count(ship) == 1, (
         "_breach_fired guard must prevent double-arming"
     )

@@ -9,6 +9,13 @@ from engine.appc import sensor_occlusion, sensor_dials
 from engine.appc import sensor_detection as sd
 from tests.helpers.rocks import make_major_rock, occlusion_enabled
 
+# A test marked native_switch_zero checks the Python sensor rules with a
+# double only the Python sees (a monkeypatched flag or dial entry, a fake
+# nebula or cache spy): DAUNTLESS_NATIVE_COMBAT=0, now the switch defaults on
+# (fire control native only, R1; tests/helpers/native_off.py). Every other
+# test here runs on the default.
+from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
+
 # This whole module is ABOUT occlusion, so enable it for every test here --
 # it ships default On (DEFAULT_ENABLED), but these tests must not ride on the
 # default. Restored by tests/conftest.py's autouse reset either way; this
@@ -72,6 +79,7 @@ def test_rock_off_the_line_does_not_block():
     assert sd.can_detect(a, b) is True
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_small_rock_never_blocks_and_the_dial_moves_the_line():
     s = SetClass()
     a, b = _ship(s, "A", 0.0), _ship(s, "B", 100.0)
@@ -113,6 +121,7 @@ def test_adding_a_rock_in_the_same_tick_is_seen():
     assert sensor_occlusion.blocked(a, b) is True     # no reset, same game time
 
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_toggle_off_skips_occlusion(monkeypatch):
     s = SetClass()
     a, b = _ship(s, "A", 0.0), _ship(s, "B", 100.0)
@@ -178,6 +187,7 @@ def test_a_rock_between_two_outside_ships_still_blocks_beside_a_hugged_one():
 
 # ── final-review fix 5: the pair cache is per set ───────────────────────────
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_pair_cache_survives_queries_alternating_between_sets(monkeypatch):
     s1, s2 = SetClass(), SetClass()
     a1, b1 = _ship(s1, "A", 0.0), _ship(s1, "B", 100.0)
@@ -209,6 +219,7 @@ def test_pair_cache_survives_queries_alternating_between_sets(monkeypatch):
 
 # ── final-review fix 4: a mission swap clears the occlusion caches ─────────
 
+@pytest.mark.usefixtures("native_switch_zero")
 def test_host_loop_reset_sensor_state_resets_occlusion():
     import engine.host_loop as host_loop
     s = SetClass()

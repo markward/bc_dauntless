@@ -7,10 +7,21 @@ from engine.appc.subsystems import (
     TorpedoSystem, TorpedoTube, PulseWeaponSystem, PulseWeapon,
 )
 import App
+import pytest
 
 # One set for shooter and target: the interim cross-set weapon guard
 # (system-frames Plan 2 Ruling 5) puts a setless target out of phaser range.
-_SHARED_SET = App.SetClass_Create()
+_SHARED_SET = None
+
+
+@pytest.fixture(autouse=True)
+def _fresh_set():
+    """One set per test, made after the per-test mirror reset (a set made
+    at import would name a row the reset forgot: the kernel cannot read it,
+    and the systems in it would not fire -- a counted no-fire)."""
+    global _SHARED_SET
+    _SHARED_SET = App.SetClass_Create()
+    yield
 
 
 def _bank(name, max_charge=5.0, charge=5.0, min_firing=3.0,
@@ -35,13 +46,11 @@ def _target(world_x=0.0, world_y=100.0, world_z=0.0):
     Positioned on +Y so PhaserBank's default emitter direction (model-Y
     via the property pipeline, or the open-arc fallback when GetDirection
     is absent) doesn't reject the aim during arc-gate checks."""
-    class _T:
-        def GetWorldLocation(self):
-            from engine.appc.math import TGPoint3
-            return TGPoint3(world_x, world_y, world_z)
-        def IsDead(self): return False
-        def GetContainingSet(self): return _SHARED_SET
-    return _T()
+    from engine.appc.ships import ShipClass
+    target = ShipClass()        # a real ship: the mirror names it
+    target.SetTranslateXYZ(world_x, world_y, world_z)
+    target._containing_set = _SHARED_SET
+    return target
 
 
 def _firing_phaser_system():

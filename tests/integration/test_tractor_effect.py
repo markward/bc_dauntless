@@ -15,6 +15,9 @@ energy weapon, then drive it through the per-frame combat passes).  The effect
 is exercised both directly (engine.appc.tractor.advance_tractors) and through
 host_loop._advance_combat to confirm the wiring reaches it.
 """
+
+import pytest
+
 from unittest.mock import patch
 
 import App  # noqa: F401  (installs the SDK import finder via conftest)
@@ -26,10 +29,24 @@ from engine.appc.ships import ShipClass_Create
 # (system-frames Plan 2 Ruling 5) puts a target outside the shooter's set --
 # or a setless one -- out of tractor range.
 _SHARED_SET = App.SetClass_Create()
+
 from engine.appc.subsystems import TractorBeam, TractorBeamSystem
 from engine.appc.properties import TractorBeamProperty, WeaponSystemProperty
 from engine.appc.tractor import advance_tractors
 from engine.host_loop import _advance_combat, _advance_weapons
+
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
+
+# Tractors are native only (fire control native only, M4).
+pytestmark = pytest.mark.usefixtures("native_combat_on")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_shared_set(native_combat_on):
+    """The shared set, made per test: a module-level one loses its mirror
+    row at the per-test reset, and the native tractor walk must name it."""
+    global _SHARED_SET
+    _SHARED_SET = App.SetClass_Create()
 
 _DT = 1.0 / 60.0
 

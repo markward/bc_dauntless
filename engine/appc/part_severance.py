@@ -25,7 +25,7 @@ wing across a whole battle and it still comes off.
 from __future__ import annotations
 
 import engine.dev_mode as dev_mode
-from engine.appc import articulation, part_pose
+from engine.appc import articulation, native_combat, part_pose
 
 
 # A point inside exactly one part box resolves to that part. Otherwise the
@@ -226,27 +226,6 @@ def part_for_live_point(ship, point, iid=None):
     return None
 
 
-def rest_point_for_live_point(ship, point, iid=None):
-    """Where a POSED body-frame point (ship units) sits in the REST pose:
-    the inverse of `articulation.part_transform_point`.
-
-    Manual Aim picks off the posed hull, but a target offset is stored REST
-    frame (see `subsystems.target_offset_world`), so its pick is pulled back
-    through this. Identity for a point on no part, a part at its identity pose, and a
-    severed part -- mirroring `part_transform_point`, so the round trip is
-    exact in every case it can arise.
-    """
-    name = part_for_live_point(ship, point, iid)
-    if name is None or is_detached(ship, name):
-        return point
-    if name not in articulation.posed_part_names(ship):
-        return point
-    pose = articulation.pose_for_part(ship, name)
-    if part_pose.is_identity(pose):
-        return point
-    return part_pose.inverse_apply(pose, point)
-
-
 def _totals(ship) -> dict:
     """The ship's per-part damage totals, created on first use."""
     t = getattr(ship, "_part_damage", None)
@@ -268,6 +247,7 @@ def detached_parts(ship) -> set:
             ship._parts_detached = d
         except Exception:  # noqa: BLE001
             return set()
+        native_combat.push_posed_parts(ship)    # the table's detached bits
     return d
 
 
@@ -466,6 +446,9 @@ def sever(ship, iid, part_name):
     if is_detached(ship, part_name):
         return None
     detached_parts(ship).add(part_name)
+    # The native pose table's detached bit, synchronously: a mount on this
+    # part reads its REST point on the very next query (MAP R6).
+    native_combat.push_posed_parts(ship)
     _silence_emitters_on(ship, part_name,
                          _destroy_subsystems_on_part(ship, part_name, iid), iid)
     try:
@@ -476,9 +459,15 @@ def sever(ship, iid, part_name):
     return part_name
 
 
-def _mounted_subsystems(ship):
+def _mounted_subsystems(ship, keep_raising=False):
     """(subsystem, body-frame mount point) for every subsystem of `ship` that
-    has an authored position (`combat._iter_subsystems`: hull excluded)."""
+    has an authored position (`combat._iter_subsystems`: hull excluded).
+
+    `keep_raising`: a subsystem whose GetPosition() raises is kept, in its
+    place, as (subsystem, None) -- combat._apply_hit calls it unguarded, so
+    the native hit's walk (native_combat._mount_order) must hand such a hit
+    back rather than skip it. One with no GetPosition at all (hasattr false)
+    is skipped either way, as _apply_hit skips it."""
     it = getattr(ship, "_iter_subsystems", None)
     try:
         if it is None:
@@ -492,7 +481,20 @@ def _mounted_subsystems(ship):
     out = []
     for sub in subs:
         try:
-            pos = sub.GetPosition()
+            get = sub.GetPosition
+        except AttributeError:
+            continue
+        except Exception:  # noqa: BLE001 - hasattr would raise it too
+            if keep_raising:
+                out.append((sub, None))
+            continue
+        try:
+            pos = get()
+        except Exception:  # noqa: BLE001 - not a mounted subsystem
+            if keep_raising:
+                out.append((sub, None))
+            continue
+        try:
             out.append((sub, (pos.GetX(), pos.GetY(), pos.GetZ())))
         except Exception:  # noqa: BLE001 - not a mounted subsystem
             continue
@@ -504,9 +506,10 @@ def authored_mount_subsystem(ship, point, eps=1e-5):
 
     How `subsystems.target_offset_world` tells a subsystem LOCK's offset (the
     SDK's `SetTargetOffset(pSubsystem.GetPosition())`, the AI's
-    `GetPositionTG()` -- an authored point, attributed by `part_for_mount`)
-    from an arbitrary one (a Manual Aim pick, a random point on the model --
-    box rule, exactly as before the mount rule existed)."""
+    `GetPositionTG()` -- an authored point, posed with its part) from an
+    arbitrary one (a Manual Aim pick, a random point on the model -- a
+    plain body point). Aiming then poses only a point that is bit for bit
+    the mount's own (M8.5)."""
     for _sub, mount in _mounted_subsystems(ship):
         if (abs(mount[0] - point[0]) <= eps and abs(mount[1] - point[1]) <= eps
                 and abs(mount[2] - point[2]) <= eps):
@@ -558,3 +561,4 @@ def reset_ship(ship) -> None:
             setattr(ship, attr, None)
         except Exception:  # noqa: BLE001
             pass
+    native_combat.push_posed_parts(ship)        # the table's detached bits

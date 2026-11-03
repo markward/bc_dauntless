@@ -70,17 +70,11 @@ def galaxy_in_red_alert():
 
 
 def _target_ahead_of(ship, distance=100.0):
-    """Build a fake target placed `distance` units ahead of the ship (+Y)."""
-    from engine.appc.math import TGPoint3
-    class _Target:
-        def __init__(self, pos):
-            self._pos = pos
-        def GetWorldLocation(self):  return self._pos
-        def IsDead(self):            return 0
-        # The shooter's set (interim cross-set weapon guard, Ruling 5).
-        def GetContainingSet(self):  return ship.GetContainingSet()
+    """A real ship placed `distance` units ahead of the ship (+Y), in its
+    set (tests/helpers/targets: the mirror must name a target)."""
+    from tests.helpers.targets import real_target
     p = ship.GetWorldLocation()
-    return _Target(TGPoint3(p.x, p.y + distance, p.z))
+    return real_target(p.x, p.y + distance, p.z, like=ship)
 
 
 def test_holding_left_button_drains_one_phaser_bank(galaxy_in_red_alert):

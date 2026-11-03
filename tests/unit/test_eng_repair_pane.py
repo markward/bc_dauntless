@@ -3,6 +3,7 @@ import App
 from engine.appc.tg_ui.widgets import ensure_widget_id
 from engine.ui import ui_attention
 from engine.ui.eng_repair_pane import repair_pane_snapshot
+from engine.appc import effect_queue
 
 
 def _ship_with_queue():
@@ -37,6 +38,7 @@ def test_snapshot_splits_repair_waiting_destroyed():
     ship.GetImpulseEngineSubsystem().SetCondition(1500.0) # queued (active)
     ship.GetWarpEngineSubsystem().SetCondition(4000.0)    # queued (waiting)
     ship.GetShieldSubsystem().SetCondition(0.0)           # destroyed (stays 0)
+    effect_queue.boundary()             # the tick boundary
     reg = {}
     snap = repair_pane_snapshot(ship, reg.setdefault)
     assert len(snap["repair"]) == 2          # NumRepairTeams = 2
@@ -57,6 +59,7 @@ def test_destroyed_queue_entries_hidden_from_repair_and_waiting():
     ship = _ship_with_queue()
     sensors = ship.GetSensorSubsystem()
     sensors.SetCondition(4000.0)                          # queued
+    effect_queue.boundary()             # the tick boundary
     sensors._condition = 0.0                              # dies while queued
     snap = repair_pane_snapshot(ship, lambda *_: None)
     labels = [r["label"] for r in snap["repair"] + snap["waiting"]]
@@ -72,6 +75,7 @@ def test_click_action_posts_priority_event(monkeypatch):
     ship.GetSensorSubsystem().SetCondition(4000.0)
     ship.GetWarpEngineSubsystem().SetCondition(4000.0)
     ship.GetImpulseEngineSubsystem().SetCondition(1500.0)
+    effect_queue.boundary()             # the tick boundary
 
     game = Game()
     game.SetPlayer(ship)
@@ -100,6 +104,7 @@ def test_snapshot_node_projects_repair_pane_visible_true():
     ship = _ship_with_queue()
     ship.GetSensorSubsystem().SetCondition(4000.0)        # queued (active)
     ship.GetWarpEngineSubsystem().SetCondition(4000.0)    # queued (waiting)
+    effect_queue.boundary()             # the tick boundary
 
     widget = App.EngRepairPane_Create(1.0, 0.4, 3)
     panel = CrewMenuPanel()
@@ -137,6 +142,7 @@ def test_repair_queue_row_highlighted_when_marked():
     ship = _ship_with_queue()
     sensors = ship.GetSensorSubsystem()
     sensors.SetCondition(4000.0)
+    effect_queue.boundary()             # the tick boundary
     wid = ensure_widget_id(sensors)
     ui_attention.hide_pointer_arrows()
     ui_attention.show_pointer_arrow(None, sensors, 0, 0.0, None)
@@ -152,6 +158,7 @@ def test_repair_queue_row_highlighted_when_marked():
 def test_repair_queue_row_unhighlighted_by_default():
     ship = _ship_with_queue()
     ship.GetSensorSubsystem().SetCondition(4000.0)
+    effect_queue.boundary()             # the tick boundary
     ui_attention.hide_pointer_arrows()
     snap = repair_pane_snapshot(ship, lambda *_a: None)
     assert snap["repair"][0]["attention"] is False
