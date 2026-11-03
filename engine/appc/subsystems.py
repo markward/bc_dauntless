@@ -112,11 +112,10 @@ def target_offset_world(target, offset, mount_sub=_RESOLVE):
     within `authored_mount_subsystem`'s 1e-5 of a mount but not on it: M8.5)
     is a plain body-frame xyz, `body_point_world(target, offset)`.
 
-    The ONE copy of this transform: torpedo/pulse tube aim
-    (`weapon_subsystems._resolve_torpedo_aim_point`), in-flight steering
+    The Python copy of this transform: in-flight steering
     (`projectiles._steer_point`) and Manual Aim phasers
-    (`host_loop._phaser_aim_point`) all call it. Its native twin is
-    `weapon_geometry.cc` target_offset_world: CHANGE BOTH.
+    (`host_loop._phaser_aim_point`) call it; a tube's aim is native. Its
+    native twin is `weapon_geometry.cc` target_offset_world: CHANGE BOTH.
 
     `mount_sub`: the caller's own `authored_mount_subsystem(target, offset)`
     answer, when it has one (None: no mount) -- in-flight steering asks
@@ -2081,8 +2080,8 @@ class WarpEngineSubsystem(PoweredSubsystem):
     @staticmethod
     def _stop_ship_weapons(ship) -> None:
         """Stop every weapon system already firing when the slide starts --
-        the fire gate only blocks NEW fire, and update_weapons keeps firing a
-        latched target (same reasoning as CloakingSubsystem._stop_weapons).
+        the fire gate only blocks NEW fire, and the fire control walk keeps
+        firing a latched target (same reasoning as CloakingSubsystem._stop_weapons).
         StopFiring on the system clears the latch and stops each bank."""
         for getter in ("GetPhaserSystem", "GetPulseWeaponSystem",
                        "GetTorpedoSystem", "GetTractorBeamSystem"):

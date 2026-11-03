@@ -280,6 +280,31 @@ def test_part_resolution_error_retries_each_step(monkeypatch):
         w.close()
 
 
+def test_pulse_held_target_dying_stops_the_system(monkeypatch):
+    """The pump's stop gates run before the walk-only pre-scan (fire control
+    native only, fix round 1): a pulse system held on a target that dies is
+    stopped on that tick's pump, as host_loop._pump_held_system's
+    `held.IsDead()` gate did (`_fire_held` False, IsFiring 0) -- not left
+    held for good behind a pulse_ship_target no-fire every tick (its dead
+    target is no live target-list entry, which only the WALK needs)."""
+    w = k1.World(monkeypatch, True, _BOP, "k1_pulse_held_dies")
+    try:
+        bop, v = w.ships["BoP"], w.ships["Vorcha"]
+        cannons = bop.GetPulseWeaponSystem()
+        cannons.StartFiring(v)
+        assert cannons._fire_held and cannons.IsFiring()
+        v.SetDead()
+        w.tick()
+        assert cannons._fire_held is False
+        assert cannons.IsFiring() == 0
+        for _ in range(4):
+            w.tick()
+        c = nc.counts()["k1_no_fire"]
+        assert not any(c.values()), c
+    finally:
+        w.close()
+
+
 def test_walk_offset_object_built_natively(monkeypatch):
     """M8.8: every bank a walk stamps holds ONE offset object (ruling P5),
     made from what the kernel recorded for the walk: the system's own

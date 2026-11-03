@@ -337,6 +337,64 @@ TEST(K1, GateOrderStopsBeforeWalk) {
     EXPECT_EQ(w.k.counts().logged_system_stop, 0);
 }
 
+TEST(K1, StopGatesRunBeforeTheWalkOnlyPrescan) {
+    // A held system the pump's gates stop is stopped even when its WALK
+    // could not be read (host_loop._pump_held_system ran the gates first,
+    // then update_weapons): only what the gates themselves read is checked
+    // ahead of them. A pulse system whose held target died has no live
+    // target-list entry (PulseShipTarget, the walk's), and the held-dead
+    // gate stops it; each walk-only reason under an offline system
+    // likewise.
+    using I = int64_t;
+    struct Case {
+        const char* name;
+        int64_t kind;
+        void (*setup)(World&, I ship, I t, I sys, I b0);
+    };
+    const Case cases[] = {
+        {"pulse held dead", 2,
+         [](World& w, I, I t, I, I) { w.m.set_i(t, Field::_dead, 1); }},
+        {"pulse module, off", 2,
+         [](World& w, I, I, I sys, I b0) {
+             w.m.set_i(b0, Field::module_ok, 0);
+             w.m.set_i(sys, Field::_is_on, 0);
+         }},
+        {"part stale, off", 1,
+         [](World& w, I ship, I, I sys, I) {
+             w.m.set_i(ship, Field::has_posed_parts, 1);
+             w.m.set_i(sys, Field::_is_on, 0);
+         }},
+        {"target list entry, off", 1,
+         [](World& w, I, I t, I sys, I) {
+             w.m.set_ids(sys, Field::_target_list, {t, kRefUnrepresentable});
+             w.m.set_i(sys, Field::_is_on, 0);
+         }},
+        {"ammo row, off", 4,
+         [](World& w, I, I, I sys, I) {
+             const int64_t gone = w.m.register_row(Kind::Ammo);
+             w.m.set_ids(sys, Field::_ammo_by_slot, {0, gone});
+             w.m.unregister_row(gone);
+             w.m.set_i(sys, Field::_is_on, 0);
+         }},
+    };
+    for (const Case& c : cases) {
+        World w;
+        const int64_t ship = w.ship("ship");
+        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+        const int64_t sys = w.system("sys", ship, c.kind, {t});
+        const int64_t b0 = w.bank("b0", sys);
+        c.setup(w, ship, t, sys, b0);
+        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+        const K1Record r = w.step();
+        EXPECT_EQ(w.brief(r), "DONE") << c.name;
+        EXPECT_EQ(w.m.get_i(sys, Field::_fire_held), 0) << c.name;
+        EXPECT_EQ(w.k.counts().logged_system_stop, 1) << c.name;
+        EXPECT_EQ(w.k.counts().logged_walk_start, 0) << c.name;
+        EXPECT_EQ(w.no_fires(), 0) << c.name;
+        w.k.end();
+    }
+}
+
 TEST(K1, TimerGateAndForceUpdate) {
     {   // Below the 0.33 s threshold: no attempt, the timer only accumulates.
         World w;

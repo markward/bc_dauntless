@@ -4358,7 +4358,7 @@ def _k0_watcher_update():
 
 
 def k0_snapshot_ship(ship_class) -> None:
-    """ships.py, as it finishes defining ShipClass (with k1_snapshot_ship)."""
+    """ships.py, as it finishes defining ShipClass."""
     _k0_stock["ship"] = (ship_class, _K0_SHIP_METHODS,
                          _k0_chain(ship_class, _K0_SHIP_METHODS))
     _k0_clear_caches()
@@ -4579,7 +4579,7 @@ def _run_k0(ships, dt) -> None:
 # shield, a cloak, a locked subsystem) -> the whole step (it can be any
 # bank's target). The engine's own classes override one another freely
 # (DamageableObject adds IsDead): the kernel ports those. Flags are cached
-# per class and re-checked at every entry (the K1 watch, _k1_overridden).
+# per class and re-checked at every entry (K2's own watch).
 # An INSTANCE attribute shadowing a method the loop calls by name on the
 # walked ship, its phaser system or a bank (_K2_*_PATCHES) -> that ship runs
 # in Python. (One on a TARGET is not looked for: it would cost a dict probe

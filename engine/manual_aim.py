@@ -143,7 +143,7 @@ def update(*, player, tcw, ship_instances, is_exterior: bool,
     Only the CURRENT target's hull is traced (assumption 2: no retarget on
     hover). The hit is stored target-local and UNSCALED, the same frame the
     SDK's own offset producers use (pSubsystem.GetPosition()), so
-    _resolve_torpedo_aim_point / _phaser_aim_point's pos + R·(o·scale) lands
+    a tube's aim (native fire control) / _phaser_aim_point's pos + R·(o·scale) lands
     back on the picked point."""
     from engine import host_io
     from engine.appc import combat

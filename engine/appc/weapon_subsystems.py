@@ -55,7 +55,7 @@ def _game_time() -> float:
 
     NEVER time.monotonic(): wall time advances while the sim is frozen, which
     made every tube instantly reload on unpause.  Deferred import is the
-    established idiom in this module (see _spawn_torpedo).
+    established idiom in this module (see spawn_launch).
 
     The import lives INSIDE the try: an ImportError here must fall through to
     the same 0.0 sentinel as any other clock failure, not escape uncaught.
@@ -333,7 +333,8 @@ def _init_energy_weapon_state(self):
     self._beam_on_countdown: float = 0.0
     self._dwell: float = 0.0
     # Set when a beam runs dry; a depleted bank does not restart until its
-    # charge is back to MinFiringCharge (see _charge_gate).
+    # charge is back to MinFiringCharge (native fire control's charge gate,
+    # native/src/combat/src/fire_gates.cc).
     self._depleted: bool = False
 
 
@@ -490,11 +491,11 @@ def pulse_module_script(bank) -> str:
 
 def pulse_module_params(script) -> tuple:
     """(module_ok, launch_speed, lifetime) for the pulse projectile `script`,
-    the same values PulseWeapon.Fire and _solve_pulse_launch_direction read
-    from the module (missing GetLaunchSpeed reads 0.0, missing GetLifetime
-    the 8 s default). module_ok is 0 when the script is empty or does not
-    import, exactly when Fire refuses -- the native fire decision then hands
-    the bank to the Python. Cached once per script, with the module itself
+    the values native fire control's pulse decision and launch direction
+    read (pushed to the cannon's row; missing GetLaunchSpeed reads 0.0,
+    missing GetLifetime the 8 s default). module_ok is 0 when the script is
+    empty or does not import: that cannon does not fire (k1_no_fire
+    pulse_module). Cached once per script, with the module itself
     (_pulse_modules)."""
     hit = _pulse_params_cache.get(script)
     if hit is None:
@@ -553,8 +554,8 @@ _PULSE_DEFAULT_LIFETIME = 8.0        # C++ default when the module has no GetLif
 
 
 def _new_projectile(mod, source_ship, x, y, z):
-    """The shared spawn's first half (the reference _spawn_projectile and the
-    SPAWN delivery spawn_launch): a Torpedo from `source_ship` at (x, y, z),
+    """The shared spawn's first half (the SPAWN delivery, spawn_launch): a
+    Torpedo from `source_ship` at (x, y, z),
     then the module's Create (at the boundary for a deferred launch, whatever
     it does: rulings L1, L6)."""
     from engine.appc.projectiles import Torpedo
@@ -651,13 +652,11 @@ def spawn_launch(launcher, kind, ship, kset, mod, target, record):
     combat-launch-deferral §4.1): K1 decided a launch and computed its fire-
     time values -- `record` is (position xyz, has velocity, velocity xyz,
     has offset, offset xyz, drf override, damage scale, fired at) -- so the
-    torpedo is
-    built now, at the boundary, through the reference's own body
-    (_new_projectile, _launch_projectile) with those values for its live
-    reads. `mod` is the module resolved when the launch was decided (the
-    kernel's: the ammo type's cached one, held from fire time; Python's: the
-    one its launch resolved). A tube's launch (kind 0, a dumb one 2) then
-    posts its ET_TORPEDO_FIRED, as _spawn_torpedo does after the spawn.
+    torpedo is built now, at the boundary (_new_projectile,
+    _launch_projectile) with those values for its live reads. `mod` is the
+    module resolved when the launch was decided (the ammo type's cached one,
+    or the cannon's, held from fire time). A tube's launch (kind 0, a dumb
+    one 2) then posts its ET_TORPEDO_FIRED after the spawn.
     Returns the torpedo."""
     from engine.appc.math import TGPoint3
 
@@ -673,7 +672,7 @@ def spawn_launch(launcher, kind, ship, kset, mod, target, record):
         offset = TGPoint3(ox, oy, oz)
     _launch_projectile(torp, mod, drf, velocity, target, offset, kset)
     if int(kind) == SPAWN_PULSE:
-        # PulseWeapon._fire_effect's tail, after the bolt exists: its damage
+        # A cannon shot's tail, after the bolt exists: its damage
         # scaled AFTER register (its set-entry handlers saw the module's:
         # today's order, kept), then the shot's ET_WEAPON_FIRED (M4).
         torp._damage = float(torp._damage) * damage_scale
@@ -1275,12 +1274,14 @@ class WeaponSystem(PoweredSubsystem):
         self._target_list: list = []        # +0xC4: pruned per tick
         self._fire_timer: float = 0.0       # BC Weapon+0x9C: inter-shot delay
         # Held-trigger state (press = StartFiring arms, release = StopFiring
-        # disarms).  host_loop._pump_held_weapons runs update_weapons once per
-        # frame for every system with _fire_held set.
+        # disarms).  host_loop._pump_held_weapons runs native fire control's
+        # walk (native_combat.k1_pump) once per tick for every system with
+        # _fire_held set.
         self._fire_held: bool = False
         self._held_target = None
         self._held_offset = None
-        # Consulted by update_weapons (stop after first success when set).
+        # Read by native fire control's walk (stop after the first success
+        # when set).
         # Copied from the authored WeaponSystemProperty by ships.py's
         # property→system pass via SetSingleFire below.
         self._single_fire: int = 0
@@ -1332,7 +1333,7 @@ class WeaponSystem(PoweredSubsystem):
         """Skew-salvo is a TorpedoTube concept; leaf emitters that are
         WeaponSystem subclasses (PulseWeapon, PhaserBank, TractorBeam) never
         skew. Hoisted here — same hierarchy trap as IsDumbFire/SetSingleFire —
-        so _spawn_projectile's skew probe reaches a real 0 instead of the
+        so a skew probe (the mirror's row push) reaches a real 0 instead of the
         truthy _Stub (stub-heatmap row PulseWeapon.IsSkewFire; harmless today
         only because the isinstance(GetRight(), TGPoint3) guard masks it)."""
         return 0
@@ -1662,8 +1663,8 @@ class TorpedoSystem(WeaponSystem):
 
         A finite ammo type (hardpoint-declared max) with no rounds left cannot
         fire; unlimited/undeclared types never gate.  The per-launch ammo debit
-        lives in TorpedoTube._spawn_torpedo (one round per torpedo actually
-        spawned).  Launches chain across tubes via firing_chain walk-out with
+        is native fire control's launch (k1_fire_control.cc; one round per
+        torpedo actually launched).  Launches chain across tubes via firing_chain walk-out with
         stagger delay, each firing straight out the tube's authored direction
         (BC-faithful per §2.4.1), never aimed at a target."""
         ammo = self.GetCurrentAmmoType()
@@ -2076,8 +2077,8 @@ class _HeldFireWeaponSystem(WeaponSystem):
     """Energy-emitter aggregator base (PhaserSystem, PulseWeaponSystem).
 
     Since the BC tick rewire the shared dispatch lives on WeaponSystem
-    (StartFiring arms the tick, host_loop._pump_held_weapons runs
-    update_weapons per frame).  This class only keeps the _can_engage
+    (StartFiring arms the tick, host_loop._pump_held_weapons runs native
+    fire control's walk per tick).  This class only keeps the _can_engage
     fire-range hook (SingleFire moved to the WeaponSystem base — the
     property→system copy in ships.py hits every system type, and the
     hasattr guard there is always true through the _Stub, so torpedo
@@ -2160,7 +2161,7 @@ class PulseWeaponSystem(_HeldFireWeaponSystem):
     """Pulse-weapon (disruptor/cannon) aggregator.
 
     Rides the shared BC tick (WeaponSystem.StartFiring arms, host_loop's
-    pump runs update_weapons per frame).  Unlike PhaserSystem its emitters
+    pump runs native fire control's walk per tick).  Unlike PhaserSystem its emitters
     fire discrete projectile bolts and it keeps the base's no-op _can_engage
     (no fire-range gate — a bolt's lifetime bounds its range, so the only
     fire gates are arc + charge + cooldown).
@@ -2494,13 +2495,13 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         fSpeed, Preprocessors.py:742). There is no authored per-weapon
         launch-speed field; the real value lives on the bound projectile
         module (e.g. Tactical/Projectiles/PulseDisruptor.py:43
-        GetLaunchSpeed() -> 55.0), same as the launch speed Fire() itself
-        uses via _spawn_projectile (weapon_subsystems.py:308). Resolve it
+        GetLaunchSpeed() -> 55.0), the launch speed native fire control's
+        cannon launch uses (pulse_module_params). Resolve it
         the same way: PulseWeaponProperty.GetModuleName() names the
         projectile script; import it and read its GetLaunchSpeed(). Returns
         0.0 (not a hardcoded default) if the property, module name, module,
-        or attribute is genuinely absent — matching _spawn_projectile's own
-        missing-module fallback rather than inventing a number."""
+        or attribute is genuinely absent — matching pulse_module_params'
+        missing-attribute reading rather than inventing a number."""
         prop = self.GetProperty()
         script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
         if not script:
@@ -2896,8 +2897,8 @@ class TorpedoTube(Weapon):
 
         Because we debit ammo at FIRE (not at reload), GetAvailable() is the
         TOTAL inventory of the type — it still counts chambered-but-unfired
-        rounds, exactly like BC's AmmoCounts.  Checking only ``<= 0`` (as the old
-        _ammo_exhausted did here) let a second empty tube re-chamber a round
+        rounds, exactly like BC's AmmoCounts.  Checking only ``<= 0`` (as an
+        earlier gate did here) let a second empty tube re-chamber a round
         already loaded in another tube, so firing both over-issued.  Finite types
         only; unlimited/undeclared ammo never gates."""
         ammo = self._parent_ammo()
@@ -3110,7 +3111,7 @@ class TorpedoTube(Weapon):
         the decrement (0x0057B4D0) has exactly two callers, both TorpedoTube::Fire
         variants, and TorpedoSystem+0x118 is a loaded-in-tubes count, not a
         total-consumed counter (weapon-firing-mechanics.md §2.1/§2.2). Our fire-
-        time debit (in TorpedoTube._spawn_torpedo) is therefore already aligned
+        time debit (native fire control's launch) is therefore already aligned
         with BC — do NOT move it here; a debit at reload would double-count.
         """
         self._ensure_slots()
@@ -3185,7 +3186,7 @@ class TorpedoTube(Weapon):
         every ET_TORPEDO_FIRED, so the engine does not filter by ammo type. The
         Phased-Plasma check lives in Episode7's HANDLER, not here.
 
-        Only torpedo tubes post this. _spawn_projectile is shared with pulse
+        Only torpedo tubes post this. spawn_launch is shared with pulse
         cannons, hence the call site is here in TorpedoTube, not in that helper.
 
         Inside the effect queue's scope it is queued (TORPEDO_FIRED), ahead

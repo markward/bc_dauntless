@@ -63,18 +63,65 @@ _EVENT_NAMES = {
 
 @pytest.fixture(autouse=True)
 def _switch():
+    recording_setup()
     nc.reset()
     passive_state.reset()
     yield
     nc.reset()
     passive_state.reset()
     App.g_kModelPropertyManager.ClearLocalTemplates()
+    recording_teardown()
 
 
 # ── Recorded expectations (fire control's Python copy, at 9c3db5ec6) ────────
+# Each comparison names its call `kind` and hands over the native run's
+# value (_expect, recorded_side); the recording's next entry of that kind is
+# what it must equal. RE-RECORDING (no Python copy is left to record from):
+# UPDATE_K1_DISPATCH=1 takes the native run as the expectation -- every
+# comparison passes, and at teardown the test's file is written and the
+# test skips, naming it (as UPDATE_COMBAT_GOLDEN does for the goldens). Same
+# rule as the goldens: a re-record goes only in a commit naming the
+# behaviour change it records.
 
 RECORDINGS = Path(__file__).resolve().parents[1] / "fixtures" / "k1_dispatch"
-_CALLS = {}     # (test, call kind) -> the next call index
+UPDATE_ENV = "UPDATE_K1_DISPATCH"
+_CALLS = {}     # call kind -> the next call index, this test
+_LOADED = {}    # recording file -> its calls (each gz read once)
+_PENDING = []   # UPDATE_K1_DISPATCH: this test's calls, in call order
+
+
+def _updating():
+    return os.environ.get(UPDATE_ENV) == "1"
+
+
+def recording_setup():
+    """Per test (the dispatch and SDK-route modules' autouse fixtures)."""
+    _CALLS.clear()
+    del _PENDING[:]
+
+
+def recording_teardown():
+    """UPDATE_K1_DISPATCH: write the test's recording, then skip."""
+    if not (_updating() and _PENDING):
+        return
+    out = write_recording(_recording_key(), list(_PENDING))
+    del _PENDING[:]
+    pytest.skip("k1 dispatch expectation re-recorded: %s" % out)
+
+
+def write_recording(key, calls, root=None):
+    """Write `calls` as test `key`'s recording for this platform: gzip
+    (mtime 0) of {"test": key, "calls": calls}. Returns the path."""
+    out = (RECORDINGS if root is None else root) / (
+        "%s.%s.json.gz" % (key, sys.platform))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps({"test": key, "calls": calls},
+                     separators=(",", ":")).encode()
+    with open(out, "wb") as f:
+        with gzip.GzipFile(fileobj=f, mode="wb", mtime=0) as gz:
+            gz.write(raw)
+    _LOADED.pop(out, None)
+    return out
 
 
 def _norm(v):
@@ -90,34 +137,47 @@ def _recording_key():
 def _recording():
     key = _recording_key()
     f = RECORDINGS / ("%s.%s.json.gz" % (key, sys.platform))
-    if not f.exists():
-        pytest.skip("no recorded expectation for %s on %s: %s is missing "
-                    "(recordings are per platform)" % (key, sys.platform,
-                                                       f.name))
-    with gzip.open(f, "rt") as fh:
-        return json.load(fh)["calls"]
+    calls = _LOADED.get(f)
+    if calls is None:
+        if not f.exists():
+            pytest.skip("no recorded expectation for %s on %s: %s is "
+                        "missing (recordings are per platform; %s=1 "
+                        "records one)" % (key, sys.platform, f.name,
+                                          UPDATE_ENV))
+        with gzip.open(f, "rt") as fh:
+            calls = _LOADED[f] = json.load(fh)["calls"]
+    return calls
 
 
-def _recorded(kind):
-    """The next recorded call of `kind` in this test (in call order)."""
-    calls = [c for c in _recording() if c["kind"] == kind]
-    key = (_recording_key(), kind)
-    i = _CALLS.get(key, 0)
-    _CALLS[key] = i + 1
-    assert i < len(calls), "no recorded %s call #%d" % (kind, i)
+def _next(kind, calls, what):
+    i = _CALLS.get(kind, 0)
+    _CALLS[kind] = i + 1
+    assert i < len(calls), "no recorded %s #%d" % (what, i)
     return calls[i]
 
 
-def recorded_side(name):
-    """A value the test compared between the arms, as the Python recorded
-    it (the recording's "side" entries, by name, in order)."""
-    calls = [c for c in _recording()
-             if c["kind"] == "side" and c["name"] == name]
-    key = (_recording_key(), "side:" + name)
-    i = _CALLS.get(key, 0)
-    _CALLS[key] = i + 1
-    assert i < len(calls), "no recorded side value %r #%d" % (name, i)
-    return calls[i]["value"]
+def _expect(kind, got):
+    """The next recorded call of `kind` in this test (in call order): a
+    dict the native run's `got` (a dict of the same keys) is compared
+    with. Under UPDATE_K1_DISPATCH=1, `got` itself, recorded."""
+    if _updating():
+        entry = dict(_norm(got), kind=kind)
+        _PENDING.append(entry)
+        return entry
+    return _next(kind, [c for c in _recording() if c["kind"] == kind],
+                 "%s call" % kind)
+
+
+def recorded_side(name, got):
+    """A value the test compares with the recording's "side" entries (by
+    name, in order). Under UPDATE_K1_DISPATCH=1, `got`, recorded."""
+    if _updating():
+        _PENDING.append({"kind": "side", "name": name, "value": _norm(got)})
+        return _norm(got)
+    return _next("side:" + name,
+                 [c for c in _recording()
+                  if c["kind"] == "side" and c["name"] == name],
+                 "side value %r" % name)["value"]
 
 
 def _same_log(want, got, what="tick"):
@@ -286,7 +346,6 @@ def _both(monkeypatch, ships, script, ticks, player=None):
     """Run `script(world, tick)` before each of `ticks` ticks natively and
     compare with the recorded Python run. Returns (world, world, counts):
     the native world stands for the reference too, being equal to it."""
-    want = _recorded("both")
     with monkeypatch.context() as mp:
         w = World(mp, True, ships, "k1_1", player=player)
         try:
@@ -299,6 +358,7 @@ def _both(monkeypatch, ships, script, ticks, player=None):
         finally:
             w.close()
     assert len(w.log) >= ticks
+    want = _expect("both", {"log": w.log, "events": w.events})
     _same_log(want["log"], _norm(w.log))
     assert _norm(w.events) == want["events"]
     assert counts["k1_records"] > 0, counts
@@ -308,6 +368,41 @@ def _both(monkeypatch, ships, script, ticks, player=None):
 
 def _kinds(world):
     return {e[0] for e in world.events}
+
+
+def test_update_mode_records_the_native_run(monkeypatch, tmp_path):
+    """UPDATE_K1_DISPATCH=1: each comparison takes the native value as the
+    expectation and records it; teardown writes the test's file and skips,
+    naming it; read back, each gz is opened once and its calls come back by
+    kind in order. (Writes only under tmp_path.)"""
+    monkeypatch.setattr(sys.modules[__name__], "RECORDINGS", tmp_path)
+    monkeypatch.setenv(UPDATE_ENV, "1")
+    try:
+        assert _expect("both", {"log": [(1, 2)], "events": []}) == {
+            "log": [[1, 2]], "events": [], "kind": "both"}
+        assert recorded_side("seen", (3,)) == [3]
+        assert _expect("both", {"log": [], "events": [4]})["events"] == [4]
+        with pytest.raises(pytest.skip.Exception) as skip:
+            recording_teardown()
+    finally:
+        del _PENDING[:]
+    key = _recording_key()
+    out = tmp_path / ("%s.%s.json.gz" % (key, sys.platform))
+    assert str(out) in str(skip.value)
+    monkeypatch.delenv(UPDATE_ENV)
+    opened = []
+    real_open = gzip.open
+    monkeypatch.setattr(gzip, "open",
+                        lambda *a, **kw: opened.append(a[0]) or
+                        real_open(*a, **kw))
+    recording_setup()
+    assert _expect("both", {})["log"] == [[1, 2]]
+    assert recorded_side("seen", None) == [3]
+    assert _expect("both", {})["events"] == [4]
+    assert opened == [out], opened
+    recording_setup()                   # the next test: its own call index
+    assert _expect("both", {})["log"] == [[1, 2]]
+    assert opened == [out], opened      # and no second read
 
 
 # ── Scenarios ────────────────────────────────────────────────────────────────
@@ -625,7 +720,7 @@ def test_unloaded_pulse_module_reimports_like_python(monkeypatch):
             seen.setdefault(w.native, []).append(t)
 
     ref, _nat, counts = _both(monkeypatch, ships, script, 240)
-    assert _norm(seen[True]) == recorded_side("seen")
+    assert _norm(seen[True]) == recorded_side("seen", seen[True])
     leaves = slice(len(ref.systems), None)
     cannons = [i for i, row in enumerate(ref.log[0][leaves])
                if row[0].startswith("Vorcha/") and row[6] is not None]
@@ -692,7 +787,7 @@ def test_pulse_params_refresh_across_a_mission_swap_reset(monkeypatch):
         _ref, _nat, counts = _both(monkeypatch, ships, script, ticks)
     finally:
         ws._reset_projectile_module_cache()
-    assert _norm(bolts[True]) == recorded_side("bolts")
+    assert _norm(bolts[True]) == recorded_side("bolts", bolts[True])
     assert sum(1 for b in bolts[True] if b[0] >= swap_at) > 2, bolts[True]
     _no_fire_free(counts)
 
@@ -1048,7 +1143,7 @@ def test_beam_edge_is_logged_writes_and_entries(monkeypatch):
 
     ref, _nat, counts = _both(monkeypatch, _DUEL, script, 240)
     assert "fired" in _kinds(ref)
-    assert sounds[True] and _norm(sounds[True]) == recorded_side("sounds")
+    assert sounds[True] and _norm(sounds[True]) == recorded_side("sounds", sounds[True])
     assert counts["k1_logged"]["beam_edge"] == len(sounds[True]), counts
     assert counts["k1_entries"]["FIRE_SOUND"] == len(sounds[True]), counts
     assert counts["k1_entries"]["WEAPON_FIRED"] == len(sounds[True]), counts
@@ -1092,7 +1187,7 @@ def test_logged_target_offset_is_the_walk_object(monkeypatch):
         g._held_offset = TGPoint3(0.5, 1.0, -0.25)
 
     _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 700)
-    assert _norm(seen[True]) == recorded_side("seen")
+    assert _norm(seen[True]) == recorded_side("seen", seen[True])
     # Some launch read a stamp made in the same tick's pump.
     assert any(o[2] for o in seen[True] if o[0] > 1), seen[True][:20]
     assert counts["k1_logged"]["beam_sustain"] > 0, counts
@@ -1138,8 +1233,8 @@ def test_idle_bank_stop_wakes_sleeping_bank(monkeypatch):
     bank through apply_writes' quiet setter, exactly as Python's
     `self._firing = False` in StopFiring did. Per tick equal to the
     recorded Python."""
-    want = _recorded("sleepy")
     nat_asleep, nat_log, counts = _sleepy_duel(monkeypatch, 120)
+    want = _expect("sleepy", {"asleep": nat_asleep, "log": nat_log})
     assert False in want["asleep"] and True in want["asleep"], want["asleep"]
     assert nat_asleep == want["asleep"]
     _same_log(want["log"], _norm(nat_log))
@@ -1184,7 +1279,7 @@ def test_firing_bank_stop_is_logged_with_its_loop_stop(monkeypatch):
                                 real)
 
     _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 700)
-    assert stops[True] and _norm(stops[True]) == recorded_side("stops")
+    assert stops[True] and _norm(stops[True]) == recorded_side("stops", stops[True])
     assert counts["k1_logged"]["firing_bank_stop"] > 0, counts
     assert counts["k1_entries"]["LOOP_STOP"] > 0, counts
 
@@ -1260,7 +1355,7 @@ def test_bank_write_order_matches_python(monkeypatch):
         _volleys(w, t)
 
     _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 240)
-    assert _norm(traces[True]) == recorded_side("traces")
+    assert _norm(traces[True]) == recorded_side("traces", traces[True])
     classes = {c for _n, c, _l, _f, _v in traces[True]}
     assert classes == {"PhaserBank", "PulseWeapon", "TorpedoTube"}, classes
     assert any(f == "_beam_on_countdown" for _n, _c, _l, f, _v
@@ -1474,8 +1569,9 @@ def test_ai_session_fire_failed_then_launch_keep_emission_order(monkeypatch):
                 assert _h.combat_effect_take() == []
             finally:
                 w.close()
-    assert _norm(logs[True]) == _recorded("events")["events"]
-    assert _norm(logs[True]) == recorded_side("logs")
+    assert _norm(logs[True]) == _expect(
+        "events", {"events": logs[True]})["events"]
+    assert _norm(logs[True]) == recorded_side("logs", logs[True])
     kinds = [e[0] for e in logs[True]]
     assert "fire_failed" in kinds and "torpedo_fired" in kinds, kinds
     assert kinds.index("fire_failed") < kinds.index("torpedo_fired"), kinds
@@ -1516,8 +1612,9 @@ def test_session_started_by_a_delivery_delivers_nested_in_order(
                 logs[native] = _event_log(w)
             finally:
                 w.close()
-    assert _norm(logs[True]) == _recorded("events")["events"]
-    assert _norm(logs[True]) == recorded_side("logs")
+    assert _norm(logs[True]) == _expect(
+        "events", {"events": logs[True]})["events"]
+    assert _norm(logs[True]) == recorded_side("logs", logs[True])
     srcs = [e[1].split("/")[0] for e in logs[True] if e[0] == "fired"]
     # Galaxy's first edge, the Vor'cha's (nested), then the Galaxy's rest.
     assert srcs[0] == "Galaxy" and srcs[1] == "Vorcha", srcs
@@ -1670,7 +1767,6 @@ def _launch_arms(monkeypatch, script, ticks, *, ships=_LAUNCH_SHIPS,
     it by design (a no-fire, R2, R3) --, and every spawned torpedo.
     `recorded` False: no recording (a scene whose Python is no reference
     any more, the test's own assertions stand alone)."""
-    want = _recorded("launch") if recorded else None
     with monkeypatch.context() as mp:
         w = World(mp, True, ships, "k1_launch_1", player=player)
         launches = _Launches(w)
@@ -1689,6 +1785,11 @@ def _launch_arms(monkeypatch, script, ticks, *, ships=_LAUNCH_SHIPS,
             assert _h.combat_effect_take() == []
         finally:
             w.close()
+    want = _expect("launch", {
+        "log": w.log, "events": launches.events,
+        "spawned": launches.spawned,
+        "pulse_state": getattr(w, "pulse_state", None),
+        "fired": getattr(w, "fired", None)}) if recorded else None
     if want is None:
         w.recorded = None
         return [(w, launches, counts), (w, launches, counts)]
@@ -1829,7 +1930,7 @@ def test_last_round_debits_like_python(monkeypatch):
             _t(torps.__dict__["_last_system_fire_time"]), tube_rows))
 
     (rw, rl, _), (nw, nl, counts) = _launch_arms(monkeypatch, script, 95)
-    assert _norm(state[True]) == recorded_side("state")
+    assert _norm(state[True]) == recorded_side("state", state[True])
     assert state[True][-1][0] == ("int", 0)
     assert len(nl.spawned) == 2 and counts["k1_logged"]["tube_launch"] == 2
     assert [e[0] for e in nl.events].count("ammo_consumed") == 2

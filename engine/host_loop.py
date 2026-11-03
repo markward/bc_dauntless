@@ -118,7 +118,7 @@ from engine.appc.subsystems import (
     _resolve_bank_aim_world,
     impulse_online_fraction,
 )
-from engine.appc.weapon_subsystems import _target_undetectable, _same_set
+from engine.appc.weapon_subsystems import _same_set
 
 
 def _project_root_for_cef():
@@ -1055,7 +1055,7 @@ def _phaser_aim_point(ship, target):
 
     Priority is BC's ShipClass target offset: Manual Aim's cursor pick
     (ship.is_using_target_offset(), target-local & unscaled -> pos +
-    R·(offset·scale), the same transform _resolve_torpedo_aim_point applies),
+    R·(offset·scale), the same transform a tube's aim applies),
     else the locked subsystem's world position, else the target's centre.
     ONE helper for both consumers -- the damage tick and the drawn beam --
     so they can never disagree about where the beam lands."""
@@ -1385,7 +1385,8 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
             internal_blast.advance(dt, ship_instances=ship_instances)
         camera_shake.update(dt)
 
-    # BC WeaponSystem tick: one update_weapons per armed system per frame.
+    # BC WeaponSystem tick: native fire control's walk of every armed
+    # system, once per tick (native_combat.k1_pump).
     step_memo.forget()
     with frame_profiler.scope("cb.held_weapons"):
         _pump_held_weapons(ships_list, dt)

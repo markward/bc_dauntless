@@ -1979,7 +1979,8 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
     FireScript.PredictTargetLocation that a launch_speed of 0 would cause. An
     import failure also names the stock photon module as the type's script, the
     same module the launch substitutes, so FireScript.ChooseTorpType can import
-    it.
+    it. A slot with no script names the property's slot-0 script (the type
+    launches that; with none it never launches).
     """
     from engine.appc.subsystems import TorpedoAmmoType
     # Photon defaults — used for the unbound-slot path and any import failure.
@@ -1996,10 +1997,19 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
             # undeclared slot → unlimited reserve.
             declared_max = ts_prop.GetMaxTorpedoes(slot)
     if not script_name:
+        # A slot with no script launches the property's slot-0 script, as
+        # the deleted Python launch fell back to it (fire control native
+        # only: an ammo type with no script never launches, M6). Named like
+        # the unimportable path's fallback; no slot-0 script, no launch.
+        fallback = None
+        if ts_prop is not None and hasattr(ts_prop, "GetTorpedoScript"):
+            fallback = ts_prop.GetTorpedoScript(0)
         return TorpedoAmmoType("Photon",
                                launch_speed=PHOTON_LAUNCH_SPEED,
                                power_cost=PHOTON_POWER_COST,
-                               max_torpedoes=declared_max)
+                               max_torpedoes=declared_max,
+                               script=fallback if isinstance(fallback, str)
+                               and fallback else None)
     try:
         leaf = script_name.split(".")[-1]
         mod = __import__(script_name, None, None, [leaf])

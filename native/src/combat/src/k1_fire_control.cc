@@ -571,8 +571,19 @@ private:
     }
 
     // ── The pre-scan ────────────────────────────────────────────────────────
-    // nullopt: the walk can run natively; else why it does not fire.
-    std::optional<K1NoFire> prescan(int64_t sys, int64_t pump_ship) const;
+    // nullopt: the walk can run natively; else why it does not fire. Two
+    // halves: what the pump's gates (and the StopFiring they lead to) read,
+    // checked BEFORE the gates, and what only the walk reads, checked after
+    // them -- so a system a gate stops is stopped even when its walk could
+    // not be read (host_loop._pump_held_system ran the gates, then
+    // update_weapons). `prescan` is both, for a walk with no gates.
+    std::optional<K1NoFire> gate_prescan(int64_t sys, int64_t pump_ship) const;
+    std::optional<K1NoFire> walk_prescan(int64_t sys) const;
+    std::optional<K1NoFire> prescan(int64_t sys, int64_t pump_ship) const {
+        if (std::optional<K1NoFire> why = gate_prescan(sys, pump_ship))
+            return why;
+        return walk_prescan(sys);
+    }
     // The pump's gates: true = StopFiring. Throws std::invalid_argument when
     // the mirror cannot answer (a no-fire).
     bool pump_stops(int64_t sys, int64_t pump_ship);
@@ -645,8 +656,12 @@ private:
 // the ammo rows, the pulse module, and the chain table. A posed target's
 // offset aim is decided in the walk (a Decision no-fire if the mirror
 // cannot: its slot went stale, its mount is unknown).
-std::optional<K1NoFire> Walker::prescan(int64_t sys,
-                                        int64_t pump_ship) const {
+//
+// The gates' half: the system and its parent ship, the pump's ship and the
+// held target (the IsDead, can_detect and range gates read them), and every
+// child a row of the system's leaf kind (StopFiring stops each).
+std::optional<K1NoFire> Walker::gate_prescan(int64_t sys,
+                                             int64_t pump_ship) const {
     const SubsystemRow* s = subrow(sys);
     if (!s) return K1NoFire::StaleRow;
     const int64_t kind = s->weapon_kind;
@@ -687,6 +702,25 @@ std::optional<K1NoFire> Walker::prescan(int64_t sys,
         }
     }
 
+    // _children: rows of the system's leaf kind (WeaponSystem.StopFiring
+    // calls each one's StopFiring).
+    const int64_t leaf = leaf_kind_of(kind);
+    for (const int64_t c : s->_children) {
+        const SubsystemRow* w = subrow(c);
+        if (!w) return K1NoFire::StaleRow;
+        if (w->weapon_kind != leaf) return K1NoFire::Structure;
+    }
+    return std::nullopt;
+}
+
+// The walk's half: the target list, the chain table, each child's place,
+// property, part slot and pulse module, and the ammo rows.
+std::optional<K1NoFire> Walker::walk_prescan(int64_t sys) const {
+    const SubsystemRow* s = subrow(sys);
+    const int64_t kind = s->weapon_kind;
+    const int64_t ship = climb_to_ship_of(m_, sys);  // gate_prescan climbed it
+    const ObjectRow* so = objrow(ship);
+
     // _target_list: every entry is a placed Object with a real IsDead. (A
     // pulse or torpedo aim at a posed target's offset is the walk's.)
     bool any_alive = false;
@@ -710,12 +744,11 @@ std::optional<K1NoFire> Walker::prescan(int64_t sys,
                 if (g < 0) return K1NoFire::Structure;
     }
 
-    // _children: rows of the system's leaf kind, under this system and ship.
+    // _children (each a row of the leaf kind: gate_prescan): under this
+    // system and ship.
     const int64_t leaf = leaf_kind_of(kind);
     for (const int64_t c : s->_children) {
         const SubsystemRow* w = subrow(c);
-        if (!w) return K1NoFire::StaleRow;
-        if (w->weapon_kind != leaf) return K1NoFire::Structure;
         if (w->_parent_subsystem != sys) return K1NoFire::Structure;
         try {
             if (climb_to_ship_of(m_, c) != ship) return K1NoFire::Structure;
@@ -1489,8 +1522,8 @@ K1Record Walker::run() {
                 s_.st = St::PUMP_CONTINUE;
                 break;
             }
-            // Anything the walk could not represent: no fire.
-            if (const std::optional<K1NoFire> why = prescan(sys, ship)) {
+            // Anything the gates could not read: no fire.
+            if (const std::optional<K1NoFire> why = gate_prescan(sys, ship)) {
                 count_no_fire(*why);
                 s_.st = St::PUMP_CONTINUE;
                 break;
@@ -1506,6 +1539,12 @@ K1Record Walker::run() {
             if (stop) {
                 // sys_.StopFiring(); continue
                 system_stop(sys);
+                s_.st = St::PUMP_CONTINUE;
+                break;
+            }
+            // Anything the walk could not represent: no fire.
+            if (const std::optional<K1NoFire> why = walk_prescan(sys)) {
+                count_no_fire(*why);
                 s_.st = St::PUMP_CONTINUE;
                 break;
             }

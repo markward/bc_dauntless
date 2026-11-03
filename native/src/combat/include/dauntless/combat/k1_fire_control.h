@@ -122,10 +122,15 @@
 // cannot answer is "does not fire that tick", counted by why
 // (Counts::no_fire) and reported once per why (K1Record::no_fire_new; the
 // driver logs one line per why per session):
-//   - found before a system's walk writes anything (the pre-scan, prescan()
-//     in the .cc: a row it cannot represent, a leaf of a POSED ship whose
-//     part slot is not current -- part_stale, retried at every entry, M8.4
-//     --, a pump gate the mirror cannot answer): the system is skipped;
+//   - found before a system's walk writes anything (the pre-scan in the
+//     .cc: a row it cannot represent, a leaf of a POSED ship whose part slot
+//     is not current -- part_stale, retried at every entry, M8.4 --, a pump
+//     gate the mirror cannot answer): the system is skipped. In the pump the
+//     pre-scan is two halves around the stop gates: what the gates and
+//     their StopFiring read (gate_prescan) before them, what only the walk
+//     reads (walk_prescan) after them, so a system a gate stops -- its held
+//     target died, it went offline -- is stopped even when its walk could
+//     not be read (host_loop._pump_held_system's order);
 //   - found in the walk before its first shot (a CanFire, a Fire decision or
 //     a launch the mirror cannot make, a mid-walk read): the walk's writes
 //     and entries are rolled back (k1_roll_back) and the walk ends, as if it

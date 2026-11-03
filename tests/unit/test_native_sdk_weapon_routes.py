@@ -46,12 +46,14 @@ from tests.unit import test_native_k1_dispatch as k1  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _switch():
+    k1.recording_setup()
     nc.reset()
     passive_state.reset()
     yield
     nc.reset()
     passive_state.reset()
     App.g_kModelPropertyManager.ClearLocalTemplates()
+    k1.recording_teardown()
 
 
 def _t(v):
@@ -135,7 +137,6 @@ def test_can_fire_is_native_and_clears_depleted(monkeypatch):
     `_depleted` cleared, whatever it then answers. Over the sweep every
     answer and every latch equal the recorded Python rule's, the mirror
     agrees, and every call was the native one."""
-    want = k1._recorded("rows")["rows"]
     with monkeypatch.context() as mp:
         w = k1.World(mp, True, k1._PULSE_SHIPS, "k1_canfire_1")
         try:
@@ -146,7 +147,7 @@ def test_can_fire_is_native_and_clears_depleted(monkeypatch):
             assert nc.audit_failures() == [], nc.audit_failures()
         finally:
             w.close()
-    ref = want
+    ref = k1._expect("rows", {"rows": nat})["rows"]
     assert len(ref) == len(nat) > 50
     for a, b in zip(ref, nat):
         assert a == b, "python %r\nnative %r" % (a, b)

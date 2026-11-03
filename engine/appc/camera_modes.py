@@ -792,7 +792,7 @@ class TorpCameraMode(CameraMode):
     Finding the torpedo (INFERRED): the Target is the FIRING ship, so the shot
     to ride is that ship's most recently fired in-flight torpedo — the highest
     _id among engine.appc.projectiles._active whose _source_ship is the Target.
-    _source_ship is what weapon_subsystems._spawn_projectile stamps on every
+    _source_ship is what weapon_subsystems._new_projectile stamps on every
     launch and what projectiles._matches_source already filters on.
 
     Latching (INFERRED): once riding a torpedo the mode keeps riding THAT one

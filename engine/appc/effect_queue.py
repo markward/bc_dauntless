@@ -21,7 +21,8 @@ damage kinds always append (THE DAMAGE KINDS).
 
 THE PRODUCERS (each ``if effect_queue.deferring(): post(...)``, else today's
 code; weapon_subsystems / float_range_watcher):
-  FIRE_SOUND(bank)            _EnergyWeaponFireMixin._fire_effect's edge
+  FIRE_SOUND(bank)            a beam's fire edge (only K1 appends it now:
+                              fire control native only)
   LOOP_STOP(bank)             _EnergyWeaponFireMixin.StopFiring of a firing
                               bank (its loop handle may not exist yet: a
                               FIRE_SOUND queued this tick)
@@ -44,11 +45,8 @@ one kind only a kernel appends (spec 2026-11-02-combat-launch-deferral
                               a launch, its fire-time values read when it
                               was decided: K1's (k1_fire_control.h,
                               LAUNCHES AT THE BOUNDARY: a tube's, a dumb
-                              fire, a cannon's) or Python's own
-                              while this queue defers (E4 for launches,
-                              rulings L5-L6: weapon_subsystems._defer_spawn,
-                              a tube's or a cannon's, whatever its module's
-                              Create does). Delivery builds the torpedo from
+                              fire, a cannon's; whatever its module's
+                              Create does, rulings L5-L6). Delivery builds the torpedo from
                               that record (weapon_subsystems.spawn_launch:
                               Create, register -- ET_TORPEDO_ENTERED_SET, so
                               ruling L2 moves it to the boundary -- and the
