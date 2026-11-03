@@ -3601,57 +3601,23 @@ const K2ScanNames& k2_scan_names() {
     return n;
 }
 
-// 1 clean, 0 not, -1 error: the phaser system `sys` and its banks.
-int k2_clean_system(PyObject* sys, PyObject* seen, PyObject* stock_system,
-                    PyObject* stock_bank, PyObject* sys_names,
-                    PyObject* bank_names) {
-    if (reinterpret_cast<PyObject*>(Py_TYPE(sys)) != stock_system) return 0;
-    PyObject* sd = k2_dict_of(sys);
-    if (sd == nullptr) return 0;
-    int r = k2_holds(sd, PySequence_Fast_ITEMS(sys_names),
-                     PySequence_Fast_GET_SIZE(sys_names));
-    if (r != 0) return r < 0 ? -1 : 0;
-    PyObject* kids = PyDict_GetItemWithError(sd, k2_scan_names().children);
-    if (kids == nullptr) return PyErr_Occurred() ? -1 : 1;
-    PyObject* seq = PySequence_Fast(kids, "");
-    if (seq == nullptr) {
-        PyErr_Clear();
-        return 0;
-    }
-    PyObject* const* banks = PySequence_Fast_ITEMS(seq);
-    const Py_ssize_t nbanks = PySequence_Fast_GET_SIZE(seq);
-    PyObject* const* bn = PySequence_Fast_ITEMS(bank_names);
-    const Py_ssize_t nbn = PySequence_Fast_GET_SIZE(bank_names);
-    PyObject* target_key = k2_scan_names().target;
-    int clean = 1;
-    for (Py_ssize_t i = 0; i < nbanks && clean == 1; ++i) {
-        PyObject* b = banks[i];
-        if (reinterpret_cast<PyObject*>(Py_TYPE(b)) != stock_bank) {
-            clean = 0;
-            break;
-        }
-        PyObject* bd = k2_dict_of(b);
-        if (bd == nullptr) {
-            clean = 0;
-            break;
-        }
-        r = k2_holds(bd, bn, nbn);
-        if (r != 0) {
-            clean = r < 0 ? -1 : 0;
-            break;
-        }
-        PyObject* target = PyDict_GetItemWithError(bd, target_key);
-        if (target == nullptr) {
-            if (PyErr_Occurred()) clean = -1;
-            continue;
-        }
-        if (target == Py_None) continue;
-        r = k2_in_seen(seen, target);
-        if (r != 1) clean = r < 0 ? -1 : 0;
-    }
-    Py_DECREF(seq);
-    return clean;
+// How many systems and banks k2_scan_ships probed (their instance dict
+// against the names) and answered from THE SCAN CACHE.
+struct K2ScanCounts {
+    std::uint64_t probed = 0, cached = 0;
+};
+
+K2ScanCounts& k2_scan_counts() {
+    static K2ScanCounts c;
+    return c;
 }
+
+// 1 clean, 0 not, -1 error: the phaser system `sys` (the scan's ship
+// `pos`) and its banks. Defined below, with THE SCAN CACHE.
+int k2_clean_system(PyObject* sys, size_t pos, PyObject* seen,
+                    PyObject* stock_system, PyObject* stock_bank,
+                    PyObject* sys_names, PyObject* bank_names,
+                    PyObject* sys_patches, PyObject* bank_patches);
 
 // Is `h` an Object handle: Python's `(h >> kind_shift) == obj_kind`.
 // 1 yes, 0 no, -1 error.
@@ -3717,8 +3683,10 @@ PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
                 if (sys == nullptr && PyErr_Occurred())
                     clean = -1;
                 else if (sys != nullptr && sys != Py_None)
-                    clean = k2_clean_system(sys, seen, stock_system,
-                                            stock_bank, sys_n, bank_n);
+                    clean = k2_clean_system(
+                        sys, static_cast<size_t>(i), seen, stock_system,
+                        stock_bank, sys_n, bank_n, system_patches,
+                        bank_patches);
             }
             if (clean < 0) {
                 failed = true;
@@ -4540,110 +4508,6 @@ dauntless::combat::K2PulseCtx k2_pulse_ctx(const py::dict& d) {
     return p;
 }
 
-// ── combat_dmg_clean (native damage Task 4; override-guard gap 1) ────────
-// Which `targets` a kernel may hit natively: a ship whose instance dict
-// holds none of `ship_names` and each of whose subsystems the hit can reach
-// -- its mount order (combat._iter_subsystems: the overlap walk, children
-// included), its hull and its shield generator, by their mirror handles,
-// each object found through `registry_data` (native_combat._registry's
-// handle -> weakref dict) -- holds none of `sub_names` (the methods the
-// hit and the condition chain stand in for: an instance attribute
-// shadowing one must be obeyed, so that ship's hit goes to Python). A ship
-// with no row, a handle the mirror cannot name, a subsystem not in the
-// registry or freed: not clean. Raw CPython calls; no Python code runs.
-// Returns a list of bools, one per target.
-PyObject* dmg_clean(PyObject* targets, PyObject* registry_data,
-                    PyObject* ship_names, PyObject* sub_names) {
-    namespace cb = dauntless::combat;
-    if (!PyDict_Check(registry_data)) {
-        PyErr_SetString(PyExc_TypeError, "registry_data must be a dict");
-        return nullptr;
-    }
-    PyObject* sn = PySequence_Fast(ship_names, "ship_names");
-    PyObject* un = sn ? PySequence_Fast(sub_names, "sub_names") : nullptr;
-    PyObject* seq = un ? PySequence_Fast(targets, "targets") : nullptr;
-    if (seq == nullptr) {
-        Py_XDECREF(un);
-        Py_XDECREF(sn);
-        return nullptr;
-    }
-    const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
-    PyObject* out = PyList_New(n);
-    bool failed = out == nullptr;
-    const cb::Mirror& mi = cb::mirror();
-    PyObject* nslot = k2_scan_names().nslot;
-    // 1 clean, 0 not, -1 error: one subsystem handle.
-    auto sub_clean = [&](std::int64_t h) -> int {
-        if (h == -1) return 1;
-        if (h == cb::kRefUnrepresentable || mi.subsystem(h) == nullptr)
-            return 0;
-        PyObject* key = PyLong_FromLongLong(h);
-        if (key == nullptr) return -1;
-        PyObject* ref = PyDict_GetItemWithError(registry_data, key);
-        Py_DECREF(key);
-        if (ref == nullptr) return PyErr_Occurred() ? -1 : 0;
-        if (!PyWeakref_Check(ref)) return 0;
-        PyObject* obj = PyWeakref_GetObject(ref);  // borrowed
-        if (obj == nullptr) return -1;
-        if (obj == Py_None) return 0;
-        PyObject* d = k2_dict_of(obj);
-        if (d == nullptr) return 0;
-        const int r = k2_holds(d, PySequence_Fast_ITEMS(un),
-                               PySequence_Fast_GET_SIZE(un));
-        return r < 0 ? -1 : (r == 1 ? 0 : 1);
-    };
-    for (Py_ssize_t i = 0; i < n && !failed; ++i) {
-        PyObject* t = PySequence_Fast_GET_ITEM(seq, i);
-        int clean = 0;
-        PyObject* d = t == Py_None ? nullptr : k2_dict_of(t);
-        if (d != nullptr) {
-            const int r = k2_holds(d, PySequence_Fast_ITEMS(sn),
-                                   PySequence_Fast_GET_SIZE(sn));
-            if (r < 0) failed = true;
-            PyObject* h = r == 0 ? PyDict_GetItemWithError(d, nslot) : nullptr;
-            if (h == nullptr && PyErr_Occurred()) failed = true;
-            if (!failed && h != nullptr && PyLong_CheckExact(h)) {
-                const long long hv = PyLong_AsLongLong(h);
-                if (hv == -1 && PyErr_Occurred()) failed = true;
-                const cb::ObjectRow* row =
-                    failed || cb::Mirror::kind_of(hv) != cb::Kind::Object
-                        ? nullptr
-                        : mi.object(hv);
-                if (row != nullptr) {
-                    clean = 1;
-                    for (const std::int64_t sh : row->mount_order) {
-                        const int c = sub_clean(sh);
-                        if (c != 1) {
-                            if (c < 0) failed = true;
-                            clean = 0;
-                            break;
-                        }
-                    }
-                    for (const std::int64_t sh :
-                         {row->_hull, row->_shield_subsystem}) {
-                        if (clean != 1) break;
-                        const int c = sub_clean(sh);
-                        if (c != 1) {
-                            if (c < 0) failed = true;
-                            clean = 0;
-                        }
-                    }
-                }
-            }
-        }
-        PyObject* b = clean == 1 ? Py_True : Py_False;
-        Py_INCREF(b);
-        PyList_SET_ITEM(out, i, b);
-    }
-    Py_DECREF(seq);
-    Py_DECREF(un);
-    Py_DECREF(sn);
-    if (failed) {
-        Py_XDECREF(out);
-        return nullptr;
-    }
-    return out;
-}
 
 // An optional point argument: None, or three floats.
 void damage_point(const py::object& o, bool& has, dauntless::combat::Vec3& v) {
@@ -5737,6 +5601,397 @@ py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
                                   py::none());
     }
     throw std::logic_error("combat K0: a write of no type");
+}
+
+// ── THE SCAN CACHE (k2_scan_ships; native damage perf fix) ────────────────
+// K0's and K1's THE CACHES, keyed the same way (exact, and only where
+// kK0ObjectCache allows): each phaser system's and each bank's "holds one
+// of the names" answer, with what it was computed on -- its type and its
+// dict at the dict's ma_version_tag -- kept by POSITION in the scan (the
+// ship's index, then each child's in "_children"). With the answer the
+// dict's own reads are kept: a system's "_children" and a bank's
+// "_target", borrowed from that same dict state (an unchanged dict still
+// holds them). Read live at every scan: each class check (the stock
+// system and bank classes), the children list (an in-place append changes
+// the list, not the dict) and whether a target's class is seen. So a
+// system or bank not written since the last scan costs a few compares
+// (Task 4's damage-pulse names made each probe 4 names longer), and a
+// patch -- an instance attribute, a `__class__` swap, a new target -- is
+// seen at the next scan. Other name sets drop every answer.
+struct K2ScanBankEntry {
+    K0ObjKey key;
+    int holds = 0;
+    PyObject* target = nullptr;    // borrowed from key.dict; nullptr: none
+};
+
+struct K2ScanSysEntry {
+    K0ObjKey key;
+    int holds = 0;
+    PyObject* children = nullptr;  // borrowed from key.dict; nullptr: none
+    std::vector<K2ScanBankEntry> banks;
+};
+
+struct K2ScanCaches {
+    std::vector<K2ScanSysEntry> systems;
+    PyObject* names[2] = {nullptr, nullptr};  // owned: the patch sets
+    void clear() {
+        systems.clear();
+        PyObject* a = names[0];
+        PyObject* b = names[1];
+        names[0] = names[1] = nullptr;
+        Py_XDECREF(a);
+        Py_XDECREF(b);
+    }
+};
+
+K2ScanCaches& k2_scan_caches() {
+    static K2ScanCaches c;
+    return c;
+}
+
+int k2_clean_system(PyObject* sys, size_t pos, PyObject* seen,
+                    PyObject* stock_system, PyObject* stock_bank,
+                    PyObject* sys_names, PyObject* bank_names,
+                    PyObject* sys_patches, PyObject* bank_patches) {
+    if (reinterpret_cast<PyObject*>(Py_TYPE(sys)) != stock_system) return 0;
+    PyObject* sd = k2_dict_of(sys);
+    if (sd == nullptr) return 0;
+    K2ScanCaches& c = k2_scan_caches();
+    if (c.names[0] != sys_patches || c.names[1] != bank_patches) {
+        c.clear();
+        c.names[0] = Py_NewRef(sys_patches);
+        c.names[1] = Py_NewRef(bank_patches);
+    }
+    K2ScanSysEntry scratch;
+    K2ScanSysEntry* ep = &scratch;
+    if (pos < (1u << 20)) {
+        if (pos >= c.systems.size()) c.systems.resize(pos + 1 + 16);
+        ep = &c.systems[pos];
+    }
+    K2ScanSysEntry& e = *ep;
+    if (k0_same(e.key, sys, sd)) {
+        ++k2_scan_counts().cached;
+    } else {
+        e.key = K0ObjKey{};
+        ++k2_scan_counts().probed;
+        const int r = k2_holds(sd, PySequence_Fast_ITEMS(sys_names),
+                               PySequence_Fast_GET_SIZE(sys_names));
+        if (r < 0) return -1;
+        PyObject* kids = nullptr;
+        if (r == 0) {
+            kids = PyDict_GetItemWithError(sd, k2_scan_names().children);
+            if (kids == nullptr && PyErr_Occurred()) return -1;
+        }
+        e.holds = r;
+        e.children = kids;
+        e.key = K0ObjKey{sys->ob_type, sd, k0_dict_version(sd)};
+    }
+    if (e.holds != 0) return 0;
+    if (e.children == nullptr) return 1;
+    PyObject* seq = PySequence_Fast(e.children, "");
+    if (seq == nullptr) {
+        PyErr_Clear();
+        return 0;
+    }
+    PyObject* const* banks = PySequence_Fast_ITEMS(seq);
+    const Py_ssize_t nbanks = PySequence_Fast_GET_SIZE(seq);
+    PyObject* const* bn = PySequence_Fast_ITEMS(bank_names);
+    const Py_ssize_t nbn = PySequence_Fast_GET_SIZE(bank_names);
+    PyObject* target_key = k2_scan_names().target;
+    if (e.banks.size() < static_cast<size_t>(nbanks))
+        e.banks.resize(static_cast<size_t>(nbanks));
+    int clean = 1;
+    for (Py_ssize_t i = 0; i < nbanks && clean == 1; ++i) {
+        PyObject* b = banks[i];
+        if (reinterpret_cast<PyObject*>(Py_TYPE(b)) != stock_bank) {
+            clean = 0;
+            break;
+        }
+        PyObject* bd = k2_dict_of(b);
+        if (bd == nullptr) {
+            clean = 0;
+            break;
+        }
+        K2ScanBankEntry& be = e.banks[static_cast<size_t>(i)];
+        if (k0_same(be.key, b, bd)) {
+            ++k2_scan_counts().cached;
+        } else {
+            be.key = K0ObjKey{};
+            ++k2_scan_counts().probed;
+            const int r = k2_holds(bd, bn, nbn);
+            if (r < 0) {
+                clean = -1;
+                break;
+            }
+            PyObject* target = nullptr;
+            if (r == 0) {
+                target = PyDict_GetItemWithError(bd, target_key);
+                if (target == nullptr && PyErr_Occurred()) {
+                    clean = -1;
+                    break;
+                }
+            }
+            be.holds = r;
+            be.target = target;
+            be.key = K0ObjKey{b->ob_type, bd, k0_dict_version(bd)};
+        }
+        if (be.holds != 0) {
+            clean = 0;
+            break;
+        }
+        if (be.target == nullptr || be.target == Py_None) continue;
+        const int r = k2_in_seen(seen, be.target);
+        if (r != 1) clean = r < 0 ? -1 : 0;
+    }
+    Py_DECREF(seq);
+    return clean;
+}
+
+// ── combat_dmg_clean (native damage Task 4; override-guard gap 1) ────────
+// Which `targets` a kernel may hit natively: a ship whose instance dict
+// holds none of `ship_names` and each of whose subsystems the hit can reach
+// -- its mount order (combat._iter_subsystems: the overlap walk, children
+// included), its hull and its shield generator, by their mirror handles,
+// each object found through `registry_data` (native_combat._registry's
+// handle -> weakref dict) -- holds none of `sub_names` (the methods the
+// hit and the condition chain stand in for: an instance attribute
+// shadowing one must be obeyed, so that ship's hit goes to Python). A ship
+// with no row, a handle the mirror cannot name, a subsystem not in the
+// registry or freed: not clean. Raw CPython calls; no Python code runs.
+//
+// THE CLEAN CACHE (native damage perf fix; K0's and K1's THE CACHES, keyed
+// the same way, exact, and only where kK0ObjectCache allows): each ship's
+// and each subsystem's "holds one of the names" answer, by its handle's
+// row index (the handle compared), with what it was computed on -- its
+// type and its dict at the dict's ma_version_tag -- so an unchanged
+// object is never probed again; any insert, replace or delete in its dict
+// (a write, a patch, a del) moves the version and it is probed at the
+// next scan. A subsystem's KeyedRef is kept while the registry dict is
+// the same object at the same version (k1_lookup); its referent is read
+// live. Other name tuples drop every answer.
+struct DmgCleanCounts {
+    std::uint64_t probed = 0, cached = 0;
+};
+
+DmgCleanCounts& dmg_clean_counts() {
+    static DmgCleanCounts c;
+    return c;
+}
+
+struct DmgCleanEntry {
+    std::int64_t h = -1;
+    K1RefEntry ref;      // subsystems: the registry's KeyedRef
+    K0ObjKey key;
+    int holds = 0;
+};
+
+struct DmgCleanCaches {
+    std::vector<DmgCleanEntry> ships, subs;
+    PyObject* names[2] = {nullptr, nullptr};  // owned: the tuples answered
+    void clear() {
+        ships.clear();
+        subs.clear();
+        PyObject* a = names[0];
+        PyObject* b = names[1];
+        names[0] = names[1] = nullptr;
+        Py_XDECREF(a);
+        Py_XDECREF(b);
+    }
+};
+
+DmgCleanCaches& dmg_clean_caches() {
+    static DmgCleanCaches c;
+    return c;
+}
+
+// The entry for handle `h` (its row index), reset when it held another.
+DmgCleanEntry& dmg_clean_entry(std::vector<DmgCleanEntry>& v,
+                               std::int64_t h, DmgCleanEntry& scratch) {
+    DmgCleanEntry& e = k1_entry(v, h, scratch);
+    if (e.h != h) {
+        e = DmgCleanEntry{};
+        e.h = h;
+    }
+    return e;
+}
+
+// 1: `o`'s dict `d` holds one of `names`; 0: not; -1: error. Answered
+// from `e` when `o` is in the state it was computed on.
+int dmg_clean_holds(DmgCleanEntry& e, PyObject* o, PyObject* d,
+                    PyObject* names) {
+    if (k0_same(e.key, o, d)) {
+        ++dmg_clean_counts().cached;
+        return e.holds;
+    }
+    e.key = K0ObjKey{};
+    ++dmg_clean_counts().probed;
+    const int r = k2_holds(d, PySequence_Fast_ITEMS(names),
+                           PySequence_Fast_GET_SIZE(names));
+    if (r < 0) return -1;
+    e.holds = r;
+    e.key = K0ObjKey{o->ob_type, d, k0_dict_version(d)};
+    return r;
+}
+
+// One target: 1 clean, 0 not, -1 error (set).
+int dmg_clean_one(PyObject* t, PyObject* registry_data, PyObject* sn,
+                  PyObject* un, DmgCleanCaches& c) {
+    namespace cb = dauntless::combat;
+    const cb::Mirror& mi = cb::mirror();
+    PyObject* nslot = k2_scan_names().nslot;
+    // 1 clean, 0 not, -1 error: one subsystem handle.
+    auto sub_clean = [&](std::int64_t h) -> int {
+        if (h == -1) return 1;
+        if (h == cb::kRefUnrepresentable || mi.subsystem(h) == nullptr)
+            return 0;
+        DmgCleanEntry scratch;
+        DmgCleanEntry& e = dmg_clean_entry(c.subs, h, scratch);
+        PyObject* obj = k1_lookup(e.ref, registry_data, h);  // borrowed
+        if (obj == nullptr) return 0;
+        PyObject* d = k2_dict_of(obj);
+        if (d == nullptr) return 0;
+        const int r = dmg_clean_holds(e, obj, d, un);
+        return r < 0 ? -1 : (r == 1 ? 0 : 1);
+    };
+    PyObject* d = t == Py_None ? nullptr : k2_dict_of(t);
+    if (d == nullptr) return 0;
+    PyObject* h = PyDict_GetItemWithError(d, nslot);
+    if (h == nullptr && PyErr_Occurred()) return -1;
+    long long hv = -1;
+    const bool has_row = h != nullptr && PyLong_CheckExact(h);
+    if (has_row) {
+        hv = PyLong_AsLongLong(h);
+        if (hv == -1 && PyErr_Occurred()) return -1;
+    }
+    int r;
+    if (has_row && hv >= 0) {
+        DmgCleanEntry scratch;
+        r = dmg_clean_holds(dmg_clean_entry(c.ships, hv, scratch), t, d, sn);
+    } else {
+        ++dmg_clean_counts().probed;
+        r = k2_holds(d, PySequence_Fast_ITEMS(sn),
+                     PySequence_Fast_GET_SIZE(sn));
+    }
+    if (r < 0) return -1;
+    if (r != 0 || !has_row) return 0;
+    // mi.object answers nullptr for a handle of another kind, or none.
+    const cb::ObjectRow* row = hv < 0 ? nullptr : mi.object(hv);
+    if (row == nullptr) return 0;
+    for (const std::int64_t sh : row->mount_order) {
+        const int k = sub_clean(sh);
+        if (k != 1) return k;
+    }
+    for (const std::int64_t sh : {row->_hull, row->_shield_subsystem}) {
+        const int k = sub_clean(sh);
+        if (k != 1) return k;
+    }
+    return 1;
+}
+
+// The scan's name tuples (PySequence_Fast of each, new references) and
+// the cache, dropped when they are other tuples than its answers'.
+bool dmg_clean_setup(PyObject* ship_names, PyObject* sub_names,
+                     PyObject** sn, PyObject** un, DmgCleanCaches*& c) {
+    *sn = PySequence_Fast(ship_names, "ship_names");
+    *un = *sn ? PySequence_Fast(sub_names, "sub_names") : nullptr;
+    if (*un == nullptr) {
+        Py_XDECREF(*sn);
+        return false;
+    }
+    c = &dmg_clean_caches();
+    if (c->names[0] != ship_names || c->names[1] != sub_names) {
+        c->clear();
+        c->names[0] = Py_NewRef(ship_names);
+        c->names[1] = Py_NewRef(sub_names);
+    }
+    return true;
+}
+
+// Returns a list of bools, one per target.
+PyObject* dmg_clean(PyObject* targets, PyObject* registry_data,
+                    PyObject* ship_names, PyObject* sub_names) {
+    if (!PyDict_Check(registry_data)) {
+        PyErr_SetString(PyExc_TypeError, "registry_data must be a dict");
+        return nullptr;
+    }
+    PyObject *sn = nullptr, *un = nullptr;
+    DmgCleanCaches* c = nullptr;
+    if (!dmg_clean_setup(ship_names, sub_names, &sn, &un, c)) return nullptr;
+    PyObject* seq = PySequence_Fast(targets, "targets");
+    if (seq == nullptr) {
+        Py_DECREF(un);
+        Py_DECREF(sn);
+        return nullptr;
+    }
+    const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    PyObject* out = PyList_New(n);
+    bool failed = out == nullptr;
+    for (Py_ssize_t i = 0; i < n && !failed; ++i) {
+        const int clean = dmg_clean_one(PySequence_Fast_GET_ITEM(seq, i),
+                                        registry_data, sn, un, *c);
+        if (clean < 0) {
+            failed = true;
+            break;
+        }
+        PyObject* b = clean == 1 ? Py_True : Py_False;
+        Py_INCREF(b);
+        PyList_SET_ITEM(out, i, b);
+    }
+    Py_DECREF(seq);
+    Py_DECREF(un);
+    Py_DECREF(sn);
+    if (failed) {
+        Py_XDECREF(out);
+        return nullptr;
+    }
+    return out;
+}
+
+// dmg_clean over `handles` (Object handles, each resolved as
+// `_registry.get(h)` -- the registry dict's KeyedRef, its referent or
+// None): the list of the clean handles, in order.
+PyObject* dmg_clean_handles(PyObject* handles, PyObject* registry_data,
+                            PyObject* ship_names, PyObject* sub_names) {
+    if (!PyDict_Check(registry_data)) {
+        PyErr_SetString(PyExc_TypeError, "registry_data must be a dict");
+        return nullptr;
+    }
+    PyObject *sn = nullptr, *un = nullptr;
+    DmgCleanCaches* c = nullptr;
+    if (!dmg_clean_setup(ship_names, sub_names, &sn, &un, c)) return nullptr;
+    PyObject* seq = PySequence_Fast(handles, "handles");
+    PyObject* out = seq ? PyList_New(0) : nullptr;
+    bool failed = out == nullptr;
+    for (Py_ssize_t i = 0; !failed && i < PySequence_Fast_GET_SIZE(seq);
+         ++i) {
+        PyObject* key = PySequence_Fast_GET_ITEM(seq, i);
+        PyObject* obj = Py_None;
+        PyObject* ref = PyDict_GetItemWithError(registry_data, key);
+        if (ref == nullptr && PyErr_Occurred()) {
+            failed = true;
+            break;
+        }
+        if (ref != nullptr && PyWeakref_CheckRef(ref)) {
+            obj = PyWeakref_GetObject(ref);   // borrowed; None when dead
+            if (obj == nullptr) {
+                failed = true;
+                break;
+            }
+        }
+        Py_INCREF(obj);   // held for the probe
+        const int clean = dmg_clean_one(obj, registry_data, sn, un, *c);
+        Py_DECREF(obj);
+        if (clean < 0 || (clean == 1 && PyList_Append(out, key) < 0))
+            failed = true;
+    }
+    Py_XDECREF(seq);
+    Py_DECREF(un);
+    Py_DECREF(sn);
+    if (failed) {
+        Py_XDECREF(out);
+        return nullptr;
+    }
+    return out;
 }
 
 // ── THE DAMAGE GUARD CACHE (native damage perf fix) ───────────────────────
@@ -13907,6 +14162,38 @@ PYBIND11_MODULE(_dauntless_host, m) {
             }
             return out;
         });
+        m.def("combat_dmg_clean_handles",
+              [](py::handle handles, py::handle registry_data,
+                 py::handle ship_names, py::handle sub_names) {
+                  PyObject* r = dmg_clean_handles(
+                      handles.ptr(), registry_data.ptr(), ship_names.ptr(),
+                      sub_names.ptr());
+                  if (r == nullptr) throw py::error_already_set();
+                  return py::reinterpret_steal<py::list>(r);
+              },
+              py::arg("handles"), py::arg("registry_data"),
+              py::arg("ship_names"), py::arg("sub_names"),
+              "[handle, ...]: the Object `handles` a kernel may hit "
+              "natively (dmg_clean on each one's registry object).");
+        m.def("combat_dmg_clean_clear", [] { dmg_clean_caches().clear(); });
+        m.def("combat_k2_scan_counts", [] {
+            py::dict d;
+            d["probed"] = k2_scan_counts().probed;
+            d["cached"] = k2_scan_counts().cached;
+            return d;
+        }, "combat_k2_scan_ships' systems and banks probed and answered "
+           "from its cache.");
+        m.def("combat_k2_scan_reset_counts",
+              [] { k2_scan_counts() = K2ScanCounts{}; });
+        m.def("combat_k2_scan_clear", [] { k2_scan_caches().clear(); });
+        m.def("combat_dmg_clean_counts", [] {
+            py::dict d;
+            d["probed"] = dmg_clean_counts().probed;
+            d["cached"] = dmg_clean_counts().cached;
+            return d;
+        }, "combat_dmg_clean's objects probed and answered from its cache.");
+        m.def("combat_dmg_clean_reset_counts",
+              [] { dmg_clean_counts() = DmgCleanCounts{}; });
         m.def("combat_k2_reset_counts", [] {
             cb::k2_kernel().reset_counts();
             k2_present().presented = 0;

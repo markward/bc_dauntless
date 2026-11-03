@@ -141,7 +141,9 @@ def available() -> bool:
             and hasattr(_h, "combat_effect_rebind")
             and hasattr(_h, "combat_apply_hit")
             and hasattr(_h, "combat_dmg_guard_check")
-            and hasattr(_h, "combat_dmg_set_condition"))
+            and hasattr(_h, "combat_dmg_set_condition")
+            and hasattr(_h, "combat_dmg_clean_handles")
+            and hasattr(_h, "combat_k2_scan_clear"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -191,6 +193,8 @@ def reset() -> None:
         _dmg_guard_computed[k] = 0
     if available():
         _h.combat_dmg_guard_clear()
+        _h.combat_dmg_clean_clear()
+        _h.combat_k2_scan_clear()
     _dmg_ctx[0] = None
     _k1_overridden_by_type.clear()
     _k1_watch.clear()
@@ -6250,9 +6254,17 @@ def _kdmg_unchanged_now() -> bool:
 
 
 def _kdmg_clean(objs) -> list:
-    """combat_dmg_clean on `objs` (None reads not clean)."""
+    """combat_dmg_clean on `objs` (None reads not clean). Each object's
+    answer is cached on its dict's version (THE CLEAN CACHE)."""
     return _h.combat_dmg_clean(objs, _registry.data, _DMG_SHIP_NAMES,
                                _KDMG_SUB_NAMES)
+
+
+def _kdmg_clean_handles(handles) -> list:
+    """The clean ones of Object `handles`, in order: _kdmg_clean on each
+    one's `_registry.get(h)`, in the binding."""
+    return _h.combat_dmg_clean_handles(handles, _registry.data,
+                                       _DMG_SHIP_NAMES, _KDMG_SUB_NAMES)
 
 
 def _kdmg_ctx(weapon: str, ship_instances, clean) -> dict:
@@ -6305,9 +6317,7 @@ def _k2_pulse_ctx(handles, ship_instances) -> dict:
     """THE DAMAGE PULSE's context for this step: the targets of the banks
     that can pulse, scanned (combat_dmg_clean)."""
     targets = _h.combat_k2_pulse_targets(handles)
-    objs = [_registry.get(h) for h in targets]
-    clean = [h for h, c in zip(targets, _kdmg_clean(objs)) if c] \
-        if targets else []
+    clean = _kdmg_clean_handles(targets) if targets else []
     return _kdmg_ctx("phaser", ship_instances, clean)
 
 
