@@ -10,7 +10,7 @@ makes a bug report unanswerable: with main moving as fast as it does, "last
 week's build" names nothing. So scripts/package.py records the commit it was
 staged from in the packaged marker, and `banner()` puts it in the log at boot.
 
-The COMMIT matters more than the number. 0.2.0 does not locate code; a hash
+The COMMIT matters more than the number. 0.2.1 does not locate code; a hash
 does. The number is for people, the hash is for us.
 
 A CHECKOUT has no marker and no recorded commit -- it is whatever the working
@@ -23,7 +23,7 @@ import json
 from typing import Any, Dict
 
 #: Semantic version of the engine. Bump on release; keep pyproject.toml in step.
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 #: Marker keys scripts/package.py writes. Read defensively: a marker written by
 #: an older packaging script, or hand-edited, must not stop the game booting.
@@ -57,8 +57,8 @@ def read_build_info() -> Dict[str, Any]:
 def banner() -> str:
     """One line naming this build, for the top of the log.
 
-    Packaged:  BC Dauntless 0.2.0 (b5196e7a2, 2026-10-22T11:18:00Z, windows-x64)
-    Checkout:  BC Dauntless 0.2.0 (checkout)
+    Packaged:  BC Dauntless 0.2.1 (b5196e7a2, 2026-10-22T11:18:00Z, windows-x64)
+    Checkout:  BC Dauntless 0.2.1 (checkout)
     """
     info = read_build_info()
     if not info:
