@@ -1,7 +1,6 @@
 """_pump_letterbox — the one wire from TopWindow's cutscene state to the GL
 letterbox pass. Runs every frame, unconditionally: the bars are not view-gated
 (BC letterboxes bridge cutscenes as well as exterior ones)."""
-import inspect
 
 import pytest
 
@@ -9,6 +8,7 @@ from engine import host_loop
 from engine.appc import top_window
 from engine.host_loop import _pump_letterbox
 from engine.ui.letterbox import LetterboxAnimator
+from tests.helpers import host_frame_source
 
 
 @pytest.fixture(autouse=True)
@@ -106,7 +106,7 @@ def test_mission_swap_mid_cutscene_resets_the_bars():
 
 
 def _run_source() -> str:
-    return inspect.getsource(host_loop.run)
+    return host_frame_source.run_source()
 
 
 def test_pump_letterbox_call_passes_wall_clock_dt_not_a_literal():

@@ -203,7 +203,11 @@ one tick later. That is the design, not a missed event. The `tractor_modes`
 golden records it: the SDK's `ConditionFiringTractorBeam` ends the tick at 0
 with the beam off.
 
-### Since 2026-11-04: the pull itself starts a FRAME later
+### 2026-11-04, briefly: the pull itself started a FRAME later
+
+⚠️ **Superseded the same day by whole ticks** (below, row 14): the pull now
+starts one TICK after the grip, as Mark ruled. The history is kept because
+the two consequences listed here still hold.
 
 The tractor force moved from the combat step (`cb.tractors`) into the motion
 stage (`ship_motion.tick_tractors`, row `motion.tractors` under `gl.motion`;
@@ -227,6 +231,53 @@ Two consequences:
 The ruling assumed a one-tick delay; the one-frame figure comes from the
 phase 2 closing review (reasoned from `host_loop.py`'s frame order, not
 measured live).
+
+---
+
+## Not a cadence, same trap: whole ticks (ruling 2)
+
+Since native motion phase 4 (2026-11-04,
+`docs/superpowers/specs/2026-11-03-native-motion-and-proximity-design.md`
+§5.4, ruling 2), **each sim tick runs whole**: GameLoop tick *i* (AI, motion),
+then weapons and combat tick *i*, then the combat tick boundary, before tick
+*i+1* starts (`_whole_tick` in `engine/host_loop.py:_run_frame_sim`, driven
+by `advance_ticks`). Before, a host frame ran all of its GameLoop ticks, then
+all of its combat ticks. The per-frame input and session stages (the swap
+drain, Quick Battle's preload-done spawn, object deletions, player identity,
+`sim.keys`, `sim.input`, the fire keys and Manual Aim) moved to **frame
+start, before tick 0**. Game time and tick counts are unchanged, so none of
+the four cadences above moved. On a one-tick frame with no input the two
+orders are the same sequence (the `host_frames_tpf1` golden is unchanged);
+every shift shows on multi-tick frames, i.e. below 60 fps.
+
+| # | What changes | Before | After | Pinned by |
+|---|---|---|---|---|
+| 1 | Poses combat reads on a multi-tick frame | every combat tick saw the poses after the frame's last motion tick | combat tick *i* sees motion tick *i* | `host_frames` golden |
+| 2 | Combat results the AI sees | all of the frame's AI ticks ran before any of its combat | AI tick *i+1* sees combat tick *i*'s hits, deaths and events; so do the per-ship subsystem updates in `GameLoop.tick` (shields, power and its passive thaw, cloak, repair), which before saw them next frame | `host_frames` |
+| 3 | GameLoop effect delivery (`owns_boundary=False`) | every GameLoop tick's held effects landed at combat boundary 1 | GameLoop tick *i*'s effects land at combat boundary *i* | `host_frames` |
+| 4 | Fire keys, mouse fire, chords, raw keys, skip-dialogue | after the frame's GameLoop ticks | before tick 0; still before the first combat tick, and this frame's AI sees the firing state | `test_fire_press_reaches_the_frames_first_combat_tick`; ⚠️ Mark's live check |
+| 5 | Manual Aim pick | after this frame's motion, with last frame's camera | at frame start, with last frame's camera: the pick traces the target's sim pose, which is within one tick of the pose last frame drew (before: the frame's n ticks plus that) | live-verified 2026-11-04 (moving target) |
+| 6 | Manual player integrator `_apply_input`, and the manual→AI seed | after the frame's AI ticks | before them: AI, proximity and combat all see this frame's manual pose, and a UI helm order is seeded before the first AI tick | the source guard `tests/host/test_scene_reconcile_ordering.py::test_whole_tick_order_and_frame_start_stages` (`_apply_input(` before `advance_ticks(`: headless has no window, so the integration tests never reach `_apply_input`); ⚠️ Mark's live check |
+| 7 | Mission-swap drain | after the GameLoop ticks, before combat | frame start; a mid-tick request drains next frame, so the old mission finishes the frame's ticks, combat included | `test_swap_requested_during_a_tick_drains_at_next_frame_start` |
+| 8 | Quick Battle preload-done spawn (`_fire_pending_preload_done`) | after the ticks, before the frame's combat | frame start. A spawn the SDK triggers inside a tick (`StartSimulationAction` storing the preload-done event) now fires at the NEXT frame's start: AI first sees the ships at the same tick as before, combat and render one frame later. Only a spawn triggered outside the sim (UI) is seen by this frame's AI | `test_frame_start_stages_run_before_tick_0` (the stage's position) |
+| 9 | `_process_object_deletions` | before the frame's combat | frame start only (Mark's decision 2): a ship flagged mid-frame stays in its set, and in combat, until the next frame starts | `test_ship_flagged_for_deletion_mid_frame_leaves_at_next_frame_start` |
+| 10 | Ship list per combat tick | tick 0's list was built after all GameLoop ticks | built after GameLoop tick *i* | `test_ship_spawned_in_tick_2_reaches_combat_tick_2_only` |
+| 11 | A frame frozen by `sim.keys` (a dev key) | GameLoop ticks ran, combat did not | the frame's whole ticks run (*n* is decided at frame top). So that frame has `_ships_this_tick` set, and the render section applies the render origin and pushes combat feeds for the ticks that ran (a frame frozen from its top still runs none and pushes none) | `test_frame_frozen_mid_frame_still_runs_its_whole_ticks` |
+| 12 | Interpolation re-seat | prev = pose before the last GameLoop tick | prev = pose after whole tick *n−1* | `test_reseat_runs_after_the_penultimate_boundary` |
+| 14 | Tractor pull, HOLD and release latency | one FRAME after the K1 grip (the motion stage ran all of a frame's ticks before any combat) | one TICK, as Mark ruled | `tractor_modes` golden (unchanged: headless, one tick a frame); ⚠️ Mark's live check |
+| 13 | Unchanged | — | collisions, debris, dash, hand-off, the frame-end boundary, nebula and radiation (still batched after all ticks, Mark's decision 3), the cadences above | existing tests |
+
+The tests named are in `tests/integration/test_whole_ticks.py` (real host
+frames through `_run_frame_sim`, headless). Two more pins: a RecreatePlayer
+inside a tick reaches the post-tick pass (sensor contacts, crew prompts,
+dash, hand-off) the same frame through a second player-identity sync after
+the ticks (`test_recreate_player_inside_a_tick_reaches_the_post_tick_pass`),
+and a fire press on a frame that runs no tick reaches the next frame's first
+combat tick (`test_fire_press_on_a_zero_tick_frame_reaches_the_next_combat_tick`).
+The source order is guarded by
+`tests/host/test_scene_reconcile_ordering.py::test_whole_tick_order_and_frame_start_stages`.
+`host_frames` and `k1_ops_tpf6` (now driven in whole ticks) were re-recorded
+once for this ruling; every other golden is unchanged.
 
 ---
 

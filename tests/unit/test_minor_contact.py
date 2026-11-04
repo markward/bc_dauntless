@@ -2,6 +2,7 @@ import pytest
 
 from engine.rocks import minor_contact as mc
 from engine.rocks import minor_dials as md
+from tests.helpers import host_frame_source
 
 # The real one, captured before the autouse fixture stubs it.
 _REAL_PLAY_GRIT = mc._play_grit
@@ -81,7 +82,6 @@ def test_grit_restores_the_sound_volume_even_when_play_raises(monkeypatch):
 def test_a_raising_contact_pump_never_breaks_the_frame(monkeypatch):
     """Final review #3: puff / grit / flicker are cosmetic. The host loop's
     pump site swallows (and dev-logs) anything the pump raises."""
-    import inspect
     from engine import dev_mode, host_loop
 
     def boom(player, session=None):
@@ -93,6 +93,6 @@ def test_a_raising_contact_pump_never_breaks_the_frame(monkeypatch):
                         lambda what, e: logged.append((what, type(e))))
     host_loop._pump_minor_contact(object(), session=None)
     assert logged == [("minor contact pump", RuntimeError)]
-    src = inspect.getsource(host_loop.run)
+    src = host_frame_source.run_source()
     assert "_pump_minor_contact(player, session=session)" in src
     assert "minor_contact.pump(" not in src

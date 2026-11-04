@@ -12,7 +12,6 @@ and the hull (`interp_compose`) read one drawn pose.
 The first tests stub the host_io seam and record the calls in order; the
 `*_native` ones run the real bindings (skipped without `_dauntless_host`).
 """
-import inspect
 import re
 
 import pytest
@@ -22,6 +21,7 @@ from engine.core.native_transform_buffer import NativeTransformBuffer
 from engine.core.transform_buffer import advance_ticks
 from tests.helpers.source_guards import code_only
 from tests.unit.test_render_transform_binding import _FakeRenderer, _Obj
+from tests.helpers import host_frame_source
 
 _RECORDED = ("interp_track", "interp_roll", "interp_reseat", "interp_capture",
              "interp_snap", "interp_reset_all", "interp_set_live",
@@ -154,7 +154,7 @@ def test_prune_untracks_a_dropped_ship(native):
 
 
 def _run_src():
-    return code_only(inspect.getsource(host_loop.run))
+    return code_only(host_frame_source.run_source())
 
 
 def test_capture_runs_before_the_camera_pose_is_resolved():

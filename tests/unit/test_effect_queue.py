@@ -13,6 +13,7 @@ import logging
 import pytest
 
 import App
+from tests.helpers import host_frame_source
 
 try:
     import _dauntless_host as _h
@@ -223,8 +224,7 @@ def test_the_tick_flush_is_its_own_profiler_row(monkeypatch, profiler):
 
 def test_host_loop_tick_runs_weapons_and_combat_inside_the_scope():
     """The sim tick opens the scope around sim.weapons and sim.combat."""
-    import inspect
-    src = inspect.getsource(host_loop.run)
+    src = host_frame_source.run_source()
     at = src.index("with _combat_effect_scope():")
     assert src.index('"sim.weapons"') > at
     assert src.index('"sim.combat"') > at

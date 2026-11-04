@@ -224,13 +224,27 @@ def publish(handles) -> None:
     GameLoop tick, and not comparable with it. The roster is the non-rock
     ships in set-iteration order, read at publish time. -1, stale handles,
     invalid transforms and a non-TGPoint3 ``_velocity`` are skipped
-    natively. Nothing reads it in play yet; it
-    changes no state. Runs on the main thread with the GIL held (one short
-    copy; the mirror is not written), so nothing here needs the off-main
-    queue."""
+    natively. It opens the READ WINDOW (close_published). It changes no
+    state. Runs on the main thread with the GIL held (one short copy; the
+    mirror is not written), so nothing here needs the off-main queue."""
     global _tick
     _tick += 1
     _h.combat_motion_publish(handles, _tick)
+
+
+def close_published() -> None:
+    """Close the published-pose READ WINDOW (phase 4, Task 4;
+    published_poses.h) that publish opened: from here until the next
+    publish the combat kernels and the gameplay hit pose read the live
+    transform store. Called at the top of every ``GameLoop.tick`` (a window
+    a driver left open never reaches the AI stage), in a ``finally`` around
+    ``host_loop._advance_combat``'s body, and in ``GameLoop.tick`` before
+    ``effect_queue.boundary()`` when the loop owns its boundary. So the
+    window is [publish, end of _advance_combat]: AI-stage K1 calls, the
+    frame-start fire keys, effect handlers, collisions and a headless
+    boundary-owning loop's combat read live."""
+    if _h is not None:
+        _h.combat_motion_published_close()
 
 
 def publish_stage() -> None:

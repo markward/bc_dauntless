@@ -7,6 +7,7 @@ The LC Intrepid Pack's Custom/Autoload/ZZ_Intrepid.py is exactly:
 import pytest
 
 from engine import foundation, mods
+from tests.helpers import host_frame_source
 
 
 def _touch(p, body=b"x"):
@@ -81,9 +82,8 @@ def test_run_brings_the_audio_backend_up_before_foundation_plugins_load():
     quantums and photons all silent). Checked on the source, like the
     prebake-order test, so a reorder fails here and not in a live boot."""
     import ast
-    import inspect
     from engine import host_loop
-    tree = ast.parse(inspect.getsource(host_loop.run))
+    tree = ast.parse(host_frame_source.run_source())
     order = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):

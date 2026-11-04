@@ -13,6 +13,7 @@ from engine.appc.sets import SetClass_Create
 from engine.rocks import catalogue, far_tier
 from tests.unit.test_rock_redirect_realise import (
     _FakeRenderer, _GltfFailingRenderer, _stock_asteroid_path)
+from tests.helpers import host_frame_source
 
 
 @pytest.fixture
@@ -156,7 +157,7 @@ def test_a_mission_swap_resets_rock_promotion(monkeypatch):
 
 
 def test_boot_registers_the_far_dial_group_beside_the_minor_dials():
-    src = inspect.getsource(hl.run)
+    src = host_frame_source.run_source()
     mnr = src.find("_minor_dials.register()")
     far = src.find("_far_dials.register()")
     assert mnr >= 0 and far >= 0

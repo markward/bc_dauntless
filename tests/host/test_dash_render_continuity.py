@@ -16,6 +16,7 @@ from engine.appc.math import TGMatrix3, TGPoint3
 from engine.core.native_transform_buffer import NativeTransformBuffer
 from engine.host_loop import (_player_render_interpolated,
                               _rebase_player_render)
+from tests.helpers import host_frame_source
 
 
 class _FakePlayer:
@@ -109,10 +110,9 @@ def test_the_host_loop_rebases_before_it_opens_a_handover_window():
     """The rebase must null last frame's drawn pose BEFORE
     _drive_handover_smoother reads it, or the flip at the drop-out (dash
     ends -> live) opens a window from the old set's pose."""
-    import inspect
     from engine import host_loop
     from tests.helpers.source_guards import code_only
-    src = code_only(inspect.getsource(host_loop.run))
+    src = code_only(host_frame_source.run_source())
     i_interp = src.index("_player_render_interpolated(")
     i_rebase = src.index("_rebase_player_render(")
     i_drive = src.index("_drive_handover_smoother(")

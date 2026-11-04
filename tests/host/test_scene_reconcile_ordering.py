@@ -21,10 +21,11 @@ tests/integration/test_sky_round_trip.py.
 import inspect
 
 from engine import host_loop
+from tests.helpers import host_frame_source
 
 
 def _run_source() -> str:
-    return inspect.getsource(host_loop.run)
+    return host_frame_source.run_source()
 
 
 def _at(src, needle, start=0):
@@ -171,3 +172,27 @@ def test_the_dash_tick_runs_after_collisions_and_before_the_hand_off():
     dash_tick = _at(src, "dash.tick(")
     assert collisions < dash_tick < _at(src, "handoff.tick(") < _at(
         src, "_reconcile_scene(")
+
+
+def test_whole_tick_order_and_frame_start_stages():
+    """Ruling 2 (native motion phase 4): each tick runs whole inside
+    `_whole_tick` -- GameLoop tick, weapons, combat, the tick boundary --
+    and the per-frame input and session stages run at frame start, before
+    advance_ticks drives the ticks. Combat has ONE call site: the old
+    batched per-tick combat loop is gone."""
+    import ast
+    src = _run_source()
+    tree = ast.parse(src)
+    whole = [n for n in ast.walk(tree)
+             if isinstance(n, ast.FunctionDef) and n.name == "_whole_tick"]
+    assert len(whole) == 1, "expected one def _whole_tick in the frame sim"
+    body = ast.get_source_segment(src, whole[0])
+    order = [_at(body, c) for c in ("_tick_gameloop()", "_advance_weapons(",
+                                    "_advance_combat(",
+                                    "_combat_tick_boundary()")]
+    assert order == sorted(order), body
+    ticks = _at(src, "advance_ticks(")
+    for stage in ("_drain_pending_swap()", "_fire_pending_preload_done()",
+                  "_apply_input(", "_poll_fire_keys(", "manual_aim.update("):
+        assert _at(src, stage) < ticks, stage
+    assert src.count("_advance_combat(") == 1

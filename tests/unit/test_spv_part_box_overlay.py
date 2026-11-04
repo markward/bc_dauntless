@@ -20,6 +20,7 @@ import pytest
 
 from engine.appc import articulation, part_pose
 from engine.ui.glow_region_overlay import build_part_box_overlay
+from tests.helpers import host_frame_source
 
 LEAF = "birdofprey"
 # The derived box for the port wing, as host_io.model_nodes reports it.
@@ -132,9 +133,8 @@ def test_the_overlay_MERGES_into_the_one_debug_box_call():
     Checked on run()'s source, because that is where the merge has to happen
     and nothing else can observe it."""
     import ast
-    import inspect
     from engine import host_loop
-    tree = ast.parse(inspect.getsource(host_loop.run))
+    tree = ast.parse(host_frame_source.run_source())
     calls = [n for n in ast.walk(tree)
              if isinstance(n, ast.Call)
              and getattr(n.func, "attr", None) == "set_debug_boxes"]

@@ -21,6 +21,7 @@ import threading
 import types
 
 import pytest
+from tests.helpers import host_frame_source
 
 try:
     import _dauntless_host as _h
@@ -588,9 +589,8 @@ def test_a_paused_frame_drains():
     STRUCTURAL, like tests/unit/test_spv_anchor_pose.py's: run() has no seam
     to execute one frame from a test."""
     import ast
-    import inspect
     from engine import host_loop
-    tree = ast.parse(inspect.getsource(host_loop.run))
+    tree = ast.parse(host_frame_source.run_source())
     found = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.If)

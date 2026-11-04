@@ -17,6 +17,7 @@
 
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
+#include "dauntless/combat/published_poses.h"
 #include "dauntless/combat/py_math.h"
 
 namespace dauntless::combat {
@@ -109,7 +110,8 @@ int64_t GetContainingSet(const Mirror& m, const ObjectRow& o) {
 }
 
 // subsystems._get_xyz (subsystems.py:3332) for an ObjectClass: GetTranslate,
-// the TransformStore slot (GetWorldLocation reads the same one).
+// the TransformStore slot (GetWorldLocation reads the same one); the
+// published pose inside the read window (read_pose).
 std::array<double, 3> _get_xyz(const Mirror& m, const ObjectRow& o) {
     if (o.xform_index < 0 || o.xform_gen < 0 ||
         o.xform_index > std::numeric_limits<uint32_t>::max() ||
@@ -118,7 +120,7 @@ std::array<double, 3> _get_xyz(const Mirror& m, const ObjectRow& o) {
     const auto xi = static_cast<uint32_t>(o.xform_index);
     const auto xg = static_cast<uint32_t>(o.xform_gen);
     if (!m.store().valid(xi, xg)) fall_back("object transform is invalid");
-    const auto& t = m.store().at(xi);
+    const auto& t = read_pose(m.store(), xi, xg);
     return {t.pos[0], t.pos[1], t.pos[2]};
 }
 

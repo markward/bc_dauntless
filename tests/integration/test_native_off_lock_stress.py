@@ -446,7 +446,10 @@ def test_a_churning_thread_during_compute_changes_nothing(monkeypatch):
     assert st.effects["failed"] == 0, st.effects
     # The churn thread ran Python while a kernel computed, GIL released:
     # every compute call was released, and steps arrived inside releases.
-    assert p["calls"][:4] == p["released"][:4] and all(p["calls"]), p
+    # Only the combat kernels K0-K4 (indices 0-4): index 5 is kernel M, the
+    # motion step (native motion phase 2), which this fight never runs (it
+    # drives no GameLoop tick), so its count is 0.
+    assert p["calls"][:4] == p["released"][:4] and all(p["calls"][:5]), p
     assert p["released"][4] == p["calls"][4] > 0, p
     assert sum(p["ran"]) >= TICKS, p
     # ... and stepped across the compute call itself (thousands a run; the

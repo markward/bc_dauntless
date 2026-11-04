@@ -497,12 +497,18 @@ class _Scene:
     # ── Run ──────────────────────────────────────────────────────────────────
 
     def run(self, ticks_per_frame, ops, ticks=TICKS, before_frame=None,
-            scope="tick"):
+            scope="tick", whole_ticks: bool = False):
         """`scope` "tick" runs each tick's weapons and combat inside the
         host's effect scope (open with native on only, as in play). "both"
         opens effect_queue.scope() itself, in BOTH arms, around each tick
         and each op: every weapon event a tick or an op produces is then
-        delivered when it ends, in the Python reference too."""
+        delivered when it ends, in the Python reference too.
+
+        `whole_ticks` drives the host's order since native motion phase 4
+        (ruling 2): per frame, both op draws first (the frame-start input),
+        then each tick whole -- its subsystem update, then its weapons,
+        combat and boundary. Off: the batched order (every tick's subsystem
+        update, then the between-batch ops, then every combat tick)."""
         rng = random.Random(SEED)
 
         def tick_scope():
@@ -519,28 +525,41 @@ class _Scene:
             with op_scope():
                 self.op(rng, ops)
 
+        def combat_tick():
+            self.tick += 1
+            ships = list(iter_ships())
+            with tick_scope():
+                host_loop._advance_weapons(ships, TICK_DELTA)
+                host_loop._advance_combat(ships, TICK_DELTA,
+                                          player=self.player,
+                                          push_render_data=False)
+            host_loop._combat_tick_boundary()   # as the host does (native damage)
+            self.record()
+            if rng.random() < 0.3:
+                op()
+
+        def gameloop_tick():
+            App.g_kTimerManager._time += TICK_DELTA
+            game_loop._update_ship_subsystems()
+
         while self.tick < ticks:
             if before_frame is not None:
                 before_frame(self)
             for _ in range(rng.randint(0, 2)):
                 op()
-            for _ in range(ticks_per_frame):
-                App.g_kTimerManager._time += TICK_DELTA
-                game_loop._update_ship_subsystems()
-            for _ in range(rng.randint(0, 2)):
-                op()
-            for _ in range(ticks_per_frame):
-                self.tick += 1
-                ships = list(iter_ships())
-                with tick_scope():
-                    host_loop._advance_weapons(ships, TICK_DELTA)
-                    host_loop._advance_combat(ships, TICK_DELTA,
-                                              player=self.player,
-                                              push_render_data=False)
-                host_loop._combat_tick_boundary()   # as the host does (native damage)
-                self.record()
-                if rng.random() < 0.3:
+            if whole_ticks:
+                for _ in range(rng.randint(0, 2)):
                     op()
+                for _ in range(ticks_per_frame):
+                    gameloop_tick()
+                    combat_tick()
+            else:
+                for _ in range(ticks_per_frame):
+                    gameloop_tick()
+                for _ in range(rng.randint(0, 2)):
+                    op()
+                for _ in range(ticks_per_frame):
+                    combat_tick()
             sensor_contacts.tick(self.player,
                                  App.g_kUtopiaModule.GetGameTime())
         if self.native:
@@ -755,6 +774,49 @@ def _deterministic_loop(mp):
     mp.setattr(ai_optimized, "_phase_key", phase_key)
 
 
+def _loop_setup(mp, env, owns_boundary=True):
+    """_loop_arm's scene, up to its first tick: a fresh combat_stress, near
+    death, shields down, LOOP_TURNED_AWAY facing away, the counters
+    installed, every RNG seeded. Returns (scene, GameLoop). A host-driven
+    caller passes owns_boundary=False and runs the boundary itself."""
+    scene = _Scene(mp, env)
+    mp.setenv("DAUNTLESS_NATIVE_COMBAT",
+               env["DAUNTLESS_NATIVE_COMBAT"])
+    loop = game_loop.GameLoop(          # configure() reads the env
+        owns_boundary=owns_boundary)
+    assert nc.enabled() is scene.native
+    _deterministic_loop(mp)
+    for ship in scene.ships:
+        hull = ship.GetHull()
+        hull.SetCondition(hull.GetMaxCondition() * LOOP_HULL_FRACTION)
+        shields = ship.GetShields()
+        if shields is not None:
+            for face in range(6):
+                shields.SetCurShields(face, 0.0)
+    turned = [s for s in scene.ships if s.GetName() == LOOP_TURNED_AWAY]
+    assert len(turned) == 1, [s.GetName() for s in scene.ships]
+    half_turn = TGMatrix3()
+    half_turn.MakeZRotation(math.pi)
+    turned[0].SetMatrixRotation(
+        turned[0].GetWorldRotation().MultMatrix(half_turn))
+    scene.starts = 0
+    start_firing = ws.WeaponSystem.StartFiring
+
+    def counting_start(system, *args, _orig=start_firing, **kw):
+        scene.starts += 1
+        return _orig(system, *args, **kw)
+    mp.setattr(ws.WeaponSystem, "StartFiring", counting_start)
+    scene.k1_systems = 0
+    k1_system = nc.k1_system
+
+    def counting_k1_system(system, dt, _orig=k1_system):
+        scene.k1_systems += 1
+        return _orig(system, dt)
+    mp.setattr(nc, "k1_system", counting_k1_system)
+    _seed_every_rng(SEED)       # the AI draws on all of them
+    return scene, loop
+
+
 def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
     """One fresh combat_stress driven the host's way WITH GameLoop.tick: per
     tick the timers, the real AI (QuickBattle's BasicAttack: its FireScript
@@ -764,40 +826,7 @@ def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
     near death with its shields down, and LOOP_TURNED_AWAY with its foe
     astern."""
     with monkeypatch.context() as mp:
-        scene = _Scene(mp, env)
-        mp.setenv("DAUNTLESS_NATIVE_COMBAT",
-                   env["DAUNTLESS_NATIVE_COMBAT"])
-        loop = game_loop.GameLoop()         # configure() reads the env
-        assert nc.enabled() is scene.native
-        _deterministic_loop(mp)
-        for ship in scene.ships:
-            hull = ship.GetHull()
-            hull.SetCondition(hull.GetMaxCondition() * LOOP_HULL_FRACTION)
-            shields = ship.GetShields()
-            if shields is not None:
-                for face in range(6):
-                    shields.SetCurShields(face, 0.0)
-        turned = [s for s in scene.ships if s.GetName() == LOOP_TURNED_AWAY]
-        assert len(turned) == 1, [s.GetName() for s in scene.ships]
-        half_turn = TGMatrix3()
-        half_turn.MakeZRotation(math.pi)
-        turned[0].SetMatrixRotation(
-            turned[0].GetWorldRotation().MultMatrix(half_turn))
-        scene.starts = 0
-        start_firing = ws.WeaponSystem.StartFiring
-
-        def counting_start(system, *args, _orig=start_firing, **kw):
-            scene.starts += 1
-            return _orig(system, *args, **kw)
-        mp.setattr(ws.WeaponSystem, "StartFiring", counting_start)
-        scene.k1_systems = 0
-        k1_system = nc.k1_system
-
-        def counting_k1_system(system, dt, _orig=k1_system):
-            scene.k1_systems += 1
-            return _orig(system, dt)
-        mp.setattr(nc, "k1_system", counting_k1_system)
-        _seed_every_rng(SEED)       # the AI draws on all of them
+        scene, loop = _loop_setup(mp, env)
         while scene.tick < ticks:
             scene.tick += 1
             loop.tick()

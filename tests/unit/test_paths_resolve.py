@@ -12,6 +12,7 @@ from engine import paths
 from engine.settings_store import SettingsStore
 from tests.helpers.source_guards import code_only as _code_only
 from tests.helpers.symlinks import requires_symlinks
+from tests.helpers import host_frame_source
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -383,7 +384,7 @@ def test_boot_resolution_is_wired_before_the_sdk_finder(monkeypatch):
     assert "_paths.configure(" in resolve_source, (
         "_resolve_paths_or_report() must call paths.configure()"
     )
-    run_source = _code_only(inspect.getsource(host_loop.run))
+    run_source = _code_only(host_frame_source.run_source())
     # Not "_resolve_paths_or_report()" -- the call now threads the CEF view
     # dimensions and cef_ready through, so the closing paren no longer
     # follows immediately.
@@ -412,7 +413,7 @@ def test_run_returns_nonzero_when_paths_are_unresolved():
     """
     import inspect
     from engine import host_loop
-    source = _code_only(inspect.getsource(host_loop.run))
+    source = _code_only(host_frame_source.run_source())
     sentinel_at = source.index("_resolution is None")
     return_at = source.index("return 1")
     assert sentinel_at < return_at, (
@@ -437,7 +438,7 @@ def test_the_unresolved_early_return_tears_down_cef_and_the_window():
     """
     import inspect
     from engine import host_loop
-    source = _code_only(inspect.getsource(host_loop.run))
+    source = _code_only(host_frame_source.run_source())
     sentinel_at = source.index("_resolution is None")
     cef_shutdown_at = source.index("r.cef_shutdown()", sentinel_at)
     shutdown_at = source.index("r.shutdown()", sentinel_at)
@@ -455,5 +456,5 @@ def test_boot_sets_the_renderer_game_root(monkeypatch):
     # Comment-stripped like every other source check here: a comment naming
     # set_game_root() reads identically to the call, and that collision has
     # bitten this codebase five times.
-    source = _code_only(inspect.getsource(host_loop.run))
+    source = _code_only(host_frame_source.run_source())
     assert "set_game_root(" in source

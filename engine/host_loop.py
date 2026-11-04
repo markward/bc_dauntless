@@ -10,7 +10,7 @@ import importlib
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, NamedTuple, Optional
 
 import os as _os_mod
 
@@ -97,6 +97,7 @@ from engine.appc import (
 from engine.appc import effect_queue as _effect_queue
 from engine.appc import explosion_lights as _explosion_lights
 from engine.appc import native_combat as _native_combat
+from engine.appc import native_motion as _native_motion
 from engine.appc import target_menu as _target_menu_mod
 from engine.appc import viewscreen_static as _vss
 from engine.appc import bridge_set as _bridge_set
@@ -1283,9 +1284,17 @@ def _advance_combat(*args, **kwargs) -> None:
     The tractor force is not here: it runs in the motion stage
     (ship_motion.tick_tractors, Mark 2026-11-04), so the beam the held-weapon
     pump grips here first pulls in the next tick's motion stage.
+
+    The kernels read the poses the tick's motion stage published (the READ
+    WINDOW, opened by native_motion.publish); it closes when this returns,
+    so the effect delivery at the scope's exit, the boundary and everything
+    until the next publish read the live store.
     """
-    with step_memo.combat_step():
-        _advance_combat_step(*args, **kwargs)
+    try:
+        with step_memo.combat_step():
+            _advance_combat_step(*args, **kwargs)
+    finally:
+        _native_motion.close_published()
 
 
 def _advance_combat_step(ships, dt: float, ship_instances=None,
@@ -7449,10 +7458,17 @@ def _sync_player_identity(session, on_player_change=None) -> None:
     player yet.
 
     The scene reconcile's player tail, split out because the reconcile runs
-    AFTER the sim: the host loop also calls this ahead of the sim, so on a
-    RecreatePlayer tick input, weapons, combat and the warp FSM drive the new
-    ship rather than the destroyed one (system-frames Plan 3, Ruling 11;
-    order guarded by tests/host/test_scene_reconcile_ordering.py)."""
+    AFTER the sim. The host loop also calls it twice before that, in
+    _run_frame_sim (system-frames Plan 3, Ruling 11; native motion phase 4,
+    ruling 2): at frame start, so a frame-start RecreatePlayer (QuickBattle's
+    preload-done spawn) has input, the fire keys and the frame's whole ticks
+    drive the new ship rather than the destroyed one; and after the ticks,
+    so a RecreatePlayer inside a tick (an SDK timer) reaches the post-tick
+    pass (sensor contacts, crew prompts, dash, hand-off) that same frame.
+    Inside the ticks combat keeps the frame-start player, which it uses only
+    for the render push (the host passes push_render_data=False). Order
+    guarded by tests/host/test_scene_reconcile_ordering.py and
+    tests/integration/test_whole_ticks.py."""
     game = Game_GetCurrentGame()
     new_player = game.GetPlayer() if game is not None else None
     if new_player is not None and new_player is not session.player:
@@ -10706,6 +10722,873 @@ def _initial_window_size(environ) -> tuple:
     return 1280, 720
 
 
+@dataclass
+class FrameSimContext:
+    """What the frame's sim section (_run_frame_sim) reads from run().
+
+    The fixed fields are run()'s, built once before the frame loop. The
+    carried fields are the section's state across frames: read at entry and
+    written back at exit."""
+    h: Any
+    controller: Any
+    director: Any
+    view_mode: Any
+    player_control: Any
+    pause: Any
+    input_map: Any
+    xform_buf: Any
+    tick_gameloop: Callable[[], None]
+    snap_scene: Callable[[], None]
+    close_star_map: Callable[[], None]
+    consume_scroll: Optional[Callable[[], float]]
+    cef_send_wheel: Optional[Callable[..., Any]]
+    crew_menu_panel: Any
+    perf_monitor_panel: Any
+    collisions: Any
+    verbose: bool
+    tick_dt: float
+    max_frame_dt: float
+    cutscene: Any
+    bridge_camera: Any
+    char_anim: Any
+    walk_ctrl: Any
+    watch_ctrl: Any
+    idle_gestures: Any
+    node_anim: Any
+    lip_runtime: Any
+    letterbox_anim: Any
+    # Carried across frames.
+    accumulator: float
+    previous_real_time: float
+    bridge_left_pick_active: bool = False
+    z_held_prev: bool = False
+    v_held_prev: bool = False
+    prev_interp_player: Any = None
+    prev_player_set: tuple = (None, None)
+    prev_view_set: Any = None
+    prev_drawn_player_pose: Any = None
+    # The last running frame's player interpolation flag (the motion
+    # trace's; None until a running frame sets it).
+    interp_player: Any = None
+
+
+class FrameSimResult(NamedTuple):
+    """The section's locals run() reads after it (_run_frame_sim)."""
+    now: Any
+    wall_dt: Any
+    frame_dt: Any
+    player_dt: Any
+    frame_game_dt: Any
+    interp_alpha: Any
+    sim_ticks: Any
+    ships_this_tick: Any
+    pose_of: Any
+    player_interp_pose: Any
+    session: Any
+    player: Any
+
+
+def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
+                   cursor_in_panel: bool) -> FrameSimResult:
+    """One frame's sim: the fixed-timestep accumulator; at frame start the
+    swap drain, the session sync, the keys and input; then each tick whole
+    (GameLoop tick, weapons, combat, the tick boundary: native motion phase
+    4, ruling 2); a second player-identity sync; the post-step pass and the
+    scene reconcile. `ctx` carries the state across frames; the result is
+    what run()'s render section reads."""
+    import App
+    from engine.core.timestep import step_accumulator
+    from engine.core.transform_buffer import advance_ticks
+    _h = ctx.h
+    controller = ctx.controller
+    director = ctx.director
+    view_mode = ctx.view_mode
+    player_control = ctx.player_control
+    pause = ctx.pause
+    input_map = ctx.input_map
+    _xform_buf = ctx.xform_buf
+    _tick_gameloop = ctx.tick_gameloop
+    _snap_scene = ctx.snap_scene
+    _close_star_map = ctx.close_star_map
+    _consume_scroll = ctx.consume_scroll
+    _cef_send_wheel = ctx.cef_send_wheel
+    crew_menu_panel = ctx.crew_menu_panel
+    perf_monitor_panel = ctx.perf_monitor_panel
+    collisions = ctx.collisions
+    verbose = ctx.verbose
+    TICK_DT = ctx.tick_dt
+    MAX_FRAME_DT = ctx.max_frame_dt
+    cutscene = ctx.cutscene
+    bridge_camera = ctx.bridge_camera
+    char_anim = ctx.char_anim
+    walk_ctrl = ctx.walk_ctrl
+    watch_ctrl = ctx.watch_ctrl
+    idle_gestures = ctx.idle_gestures
+    node_anim = ctx.node_anim
+    lip_runtime = ctx.lip_runtime
+    _letterbox_anim = ctx.letterbox_anim
+    _accumulator = ctx.accumulator
+    _previous_real_time = ctx.previous_real_time
+    _bridge_left_pick_active = ctx.bridge_left_pick_active
+    z_held_prev = ctx.z_held_prev
+    v_held_prev = ctx.v_held_prev
+    _prev_interp_player = ctx.prev_interp_player
+    _prev_player_set = ctx.prev_player_set
+    _prev_view_set = ctx.prev_view_set
+    _prev_drawn_player_pose = ctx.prev_drawn_player_pose
+    _interp_player = ctx.interp_player
+    _mx, _my, _cursor_in_panel = mx, my, cursor_in_panel
+
+    # --- frame sim: begin ---
+    frame_profiler.mark("sim")
+    # --- Sim advance: fixed-timestep accumulator ---
+    # frame_dt is the real wall-clock since the previous frame.
+    # While frozen we force it to 0 so the accumulator cannot
+    # grow and there is no catch-up burst on resume. The cap
+    # bounds the inner while-loop after a stalled render frame.
+    # Frozen = pause menu OR the DevTools window (which stops the
+    # world so the overlay under inspection holds still).
+    pause.set_external_freeze(_devtools_frozen(_h))
+    _now = _frame_clock()
+    # The raw wall delta, kept apart from _frame_dt (which the freeze
+    # zeroes): the Bridge Editor's preview clock runs while the
+    # (hidden) pause menu freezes the sim (spec 2026-10-08-bridge-emitters §12.2).
+    _wall_dt = _now - _previous_real_time
+    _frame_dt = _wall_dt
+    _previous_real_time = _now
+    if perf_monitor_panel is not None:
+        perf_monitor_panel.tick(_wall_dt)
+    if pause.sim_frozen:
+        _frame_dt = 0.0
+        # No tick runs, so no tick boundary drains: the mirror's
+        # pending frees and off-main pushes are applied here (no
+        # kernel session is open between frames).
+        _native_combat.drain()
+    _accumulator, _sim_ticks_this_frame = step_accumulator(
+        _accumulator, _frame_dt, TICK_DT, MAX_FRAME_DT
+    )
+    frame_profiler.note_sim_ticks(_sim_ticks_this_frame)
+    # Per-render-frame delta for the player input integrator.
+    # _apply_input runs once per render frame, so its dt must
+    # be the wall-clock delta since the last frame — not the
+    # fixed sim TICK_DT. Otherwise at 120 Hz monitor refresh
+    # the player ship rotates / accelerates 2× too fast (BC
+    # Galaxy 360° yaw collapses from 24 s to 12 s). Clamp
+    # matches step_accumulator's spiral-of-death cap so a
+    # stalled frame doesn't teleport the player.
+    _player_dt = 0.0 if pause.sim_frozen else min(max(_frame_dt, 0.0), MAX_FRAME_DT)
+    # The GAME time this frame covers: the GameLoop ticks it runs.
+    # Everything below that steps game state does so once per tick
+    # (inside _whole_tick, or `for _ in range(_sim_ticks_this_frame)`)
+    # or by this -- never by one TICK_DT per frame, which ran combat at
+    # a third of its speed in a 3-tick frame and double speed at 120
+    # fps (tests/host/test_frame_rate_independence.py).
+    _frame_game_dt = _sim_ticks_this_frame * TICK_DT
+    _interp_alpha = _accumulator / TICK_DT  # in [0, 1) after step_accumulator
+
+    # Only snap the camera when a sim tick actually fired —
+    # no tick means no state change to follow.
+    if _sim_ticks_this_frame > 0:
+        had_pending_swap = controller.pending_swap is not None
+        # Clear any stale cutscene from the OUTGOING mission BEFORE the
+        # drain — the drain runs the incoming mission's Initialize()/
+        # Briefing(), which queues that mission's own camera/door
+        # requests. Resetting after the drain would wipe the freshly
+        # queued walk-on (the camera then never moves).
+        if had_pending_swap:
+            cutscene.reset()
+            bridge_camera.reset_cutscene_pose()
+            char_anim.reset()
+            walk_ctrl.reset()
+            watch_ctrl.reset()
+            idle_gestures.reset()
+            node_anim.reset(renderer=r)
+            lip_runtime.clear()
+            _letterbox_anim.reset()
+            _close_star_map()
+        controller._drain_pending_swap()
+        if had_pending_swap:
+            _snap_scene()
+            # Same discontinuity: never blend the player in from a
+            # pose that belonged to the previous scene.
+            host_io.interp_handover_cancel()
+            _prev_interp_player = None
+            _prev_drawn_player_pose = None
+            # Nor re-base across a swap: the old sets are gone.
+            _prev_player_set = (None, None)
+            _prev_view_set = None
+    else:
+        had_pending_swap = False
+
+    session = controller.session
+    with frame_profiler.scope("sim.session_sync"):
+        # Fire QuickBattle's stored preload-done event (if pending) BEFORE
+        # reconciliation. Its handler (StartSimulation2) spawns the player
+        # ship; firing first means the reconciliation pass below realizes
+        # that ship in the same tick. Fire-once and fully guarded — a no-op
+        # for missions that never set a preload-done event.
+        _fire_pending_preload_done()
+        # Remove SetDeleteMe(1)-flagged objects from their set (QuickBattle
+        # "End Combat" clears the battle this way); the reconciliation below
+        # then tears down their render instances.
+        _process_object_deletions()
+        # Mirror the SDK config-dialog flag onto the Quick Battle Setup
+        # panel: opens it when the player clicks the XO menu's config
+        # button, closes it on Close/Start. Boot leaves it closed.
+        _sync_quick_battle_panel(controller)
+    # The camera follows session.player; _sync_player_identity (just
+    # below, again after the ticks, and in the scene reconcile after
+    # the sim) calls this when the player's identity changed
+    # (RecreatePlayer's destroy+recreate). Snap so the new player
+    # doesn't lerp from the destroyed ship's pose, and re-seed the
+    # director's ship-radius distances.
+    def _on_player_change(new_player, _d=director, _xb=_xform_buf):
+        _r = new_player.GetRadius()
+        _d.chase.set_ship_radius(_r)
+        _d.tracking.set_ship_radius(_r)
+        _d.snap()
+        _xb.reset_all()
+    # Sync the player BEFORE the sim reads it: the preload-done event
+    # above may have just run RecreatePlayer, and the scene reconcile
+    # that would otherwise catch it runs after the sim (Ruling 11).
+    if session is not None:
+        _sync_player_identity(session, _on_player_change)
+    player = session.player if session is not None else None
+    if had_pending_swap and player is not None:
+        _r = player.GetRadius()
+        director.chase.set_ship_radius(_r)
+        director.tracking.set_ship_radius(_r)
+
+    # Render-pose interpolation (smooth motion on high-refresh displays).
+    # Populated below when the sim is live; left None while paused, in
+    # which case the camera reads live poses and every hull keeps the
+    # matrix the last compose drew. See _make_render_pose_provider /
+    # _sync_instance_transforms.
+    _pose_of = None
+    _player_interp_pose = None
+
+    # Mouse-wheel routing (runs every frame, paused or not). Scroll
+    # delta is consumed once per tick — the single consumer of the
+    # accumulator. Over a CEF surface (a pause/config modal is open,
+    # or the cursor is over a HUD panel) → scroll that panel; over
+    # open space in exterior view → step the ship throttle. Replaces
+    # the old camera scroll-zoom. Old bindings without the accumulator
+    # return 0.0 via the fallback.
+    with frame_profiler.scope("sim.keys"):
+        scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
+        _route_scroll_wheel(
+            scroll_y,
+            route_to_panel=(pause.is_open or _cursor_in_panel),
+            mx=_mx, my=_my,
+            send_wheel=_cef_send_wheel,
+            player_control=player_control,
+            can_throttle=(player is not None and view_mode.is_exterior),
+        )
+
+        if not pause.is_open:
+            # Dev-mode keybindings (no-op when --developer is not set).
+            # register_for_frame re-binds handlers that close over the
+            # current player/session each tick; dispatch_dev_key reads
+            # _h.key_pressed for every registered key and fires matching
+            # handlers. Skipped silently when dev_mode.is_enabled() is False.
+            if _h is not None and dev_mode.is_enabled():
+                dev_keybindings.register_for_frame(_h, session, player)
+                for key, _desc in dev_mode.keybinding_descriptions():
+                    if host_io.key_pressed(key):
+                        dev_mode.dispatch_dev_key(key)
+
+            # F12: toggle CEF DevTools for the UI overlay.
+            if _h is not None and host_io.key_pressed(_h.keys.KEY_F12):
+                _h.cef_toggle_devtools()
+
+            # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
+            # Reload only when Cmd (macOS) or Ctrl (Linux/Windows) is held;
+            # bare R is reverse-thrust and must not be intercepted.
+            if _h is not None and host_io.key_pressed(_h.keys.KEY_R):
+                _cmd_held = host_io.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
+                _ctrl_held = host_io.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
+                if _cmd_held or _ctrl_held:
+                    _h.cef_reload()
+
+    # This frame's ships: each whole tick rebuilds it (_whole_tick), a
+    # running frame with no tick builds it once after the ticks; None
+    # on a frozen frame (the render section keys the combat feed push
+    # off it).
+    _ships_this_tick = None
+    # The input below is SIMULATION — ship/camera input, firing — so it
+    # gates on sim_frozen, not on the menu, as the post-tick pass does.
+    # The DevTools keys above deliberately sit in the is_open block
+    # instead: DevTools freezes the sim, so gating F12 on sim_frozen
+    # would make it impossible to press F12 a second time to close
+    # DevTools again.
+    if not pause.sim_frozen:
+        # Apply keyboard input to the player ship's transform and to the
+        # orbit camera (see _apply_input below).
+
+        with frame_profiler.scope("sim.input"):
+            if player is not None and _h is not None:
+                # Alert keys (Shift+1/2/3) run before the throttle handler;
+                # _PlayerControl.apply checks _shift_held() to skip digit
+                # throttling on the same press.
+                _apply_alert_keys(_h, player)
+                # C-key: toggle Chase ↔ Tracking (only enters Tracking if
+                # the player has a valid target). key_pressed fires once per
+                # key-down event (not while held). Gate on exterior view so
+                # the mode cannot flip silently while the bridge is active.
+                if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_cycle")):
+                    director.toggle_mode(player=player)
+                # Z-key: ZoomTarget framing while held. Held-state (not
+                # press-edge) so the camera enters/exits as the key state
+                # changes. The `not director.tracking.zoom_target_active`
+                # retry guard lets a Z-held-during-target-acquisition
+                # succeed on whichever frame the target appears.
+                z_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_zoom_target"))
+                if z_held_now and not director.tracking.zoom_target_active:
+                    director.start_zoom_target(player=player)
+                elif z_held_prev and not z_held_now:
+                    director.end_zoom_target()
+                z_held_prev = z_held_now
+                # =/- sticky zoom: press-edge (OS auto-repeat for hold).
+                if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_in")):
+                    director.zoom_in()
+                if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_out")):
+                    director.zoom_out()
+                # V-key: Reverse Chase while held. Same hold-state
+                # edge detection as Z, with a retry guard so a
+                # V-held-during-mode-transition succeeds on the
+                # next eligible frame.
+                v_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_reverse_chase"))
+                if v_held_now and not director.chase.reverse_active:
+                    director.start_reverse()
+                elif v_held_prev and not v_held_now:
+                    director.end_reverse()
+                v_held_prev = v_held_now
+                # Shift+mouse: orbit yaw/pitch additive on top of
+                # arrow keys. Drain the mouse delta unconditionally
+                # in exterior view so non-Shift mouse motion doesn't
+                # accumulate and snap the camera on the next Shift
+                # press.
+                mouse_dx_exterior, mouse_dy_exterior = 0.0, 0.0
+                if view_mode.is_exterior:
+                    mouse_dx_exterior, mouse_dy_exterior = host_io.consume_mouse_delta()
+                shift_held = view_mode.is_exterior and (
+                    host_io.key_state(_h.keys.KEY_LEFT_SHIFT) or
+                    host_io.key_state(_h.keys.KEY_RIGHT_SHIFT)
+                )
+                if shift_held and director.mode is CameraMode.CHASE:
+                    director.chase.apply_mouse_delta(
+                        mouse_dx_exterior, mouse_dy_exterior)
+                # dt = _player_dt (wall-clock frame delta), not TICK_DT —
+                # see comment at the accumulator step. _apply_input fires
+                # once per render frame, so its dt is the wall delta.
+                _apply_input(view_mode, player_control, director,
+                             player=player, dt=_player_dt, h=_h)
+
+            # Bridge crew-menu click. On the bridge the cursor is locked for
+            # mouse-look, so the player AIMS by looking: the reticle is
+            # screen centre.
+            #   - No menu open: centre an officer and left-click → open that
+            #     officer's crew menu (else the click falls through to
+            #     _poll_mouse_buttons and fires phasers).
+            #   - Menu open: the cursor is freed for the CEF menu; a click on
+            #     the menu itself is consumed earlier by the CEF panel
+            #     forwarding, so any left press we still see here is OFF the
+            #     menu → close it.
+            # mouse_button_pressed consumes the edge, so we only call it once
+            # we've decided to intercept — leaving genuine empty-space clicks
+            # to fire phasers.
+            if view_mode.is_bridge and _h is not None:
+                _bridge_left_pick_active = bridge_officer_picking.handle_click(
+                    _h, r, bridge_camera, crew_menu_panel,
+                    _bridge_left_pick_active)
+
+            # Forward mouse button edges into the input manager (fire
+            # events route via g_kKeyboardBinding → TCW handlers).
+            _poll_mouse_buttons(_h)
+            _poll_function_keys(_h, input_map)
+            _poll_fire_keys(_h, input_map)
+            _poll_modifier_chords(_h)
+            # General key stream → BC's raw ET_KEYBOARD window event.
+            # Runs AFTER the three tables above so their _fn_key_prev
+            # entries are already written for this frame (it skips the
+            # keys they own, but the ordering keeps that invariant
+            # obvious).
+            _poll_raw_keyboard(_h, input_map)
+            _poll_skip_dialogue(_h, input_map)
+
+            # Manual Aim (H): re-pick the cursor's hull point on the
+            # player's target, or revert to the subsystem lock. Sim side
+            # on purpose -- it mutates the player's target offset, which
+            # the weapon ticks and the phaser ticks in _advance_combat
+            # (each whole tick below) all read this same frame. At frame
+            # start it picks against last frame's target pose with last
+            # frame's camera, which agree.
+            manual_aim.update(
+                player=player,
+                tcw=TacticalControlWindow.GetInstance(),
+                ship_instances=(session.ship_instances if session is not None else None),
+                is_exterior=view_mode.is_exterior,
+            )
+
+    # --- Each tick runs whole (native motion phase 4, ruling 2) ---
+    # Everything above ran at FRAME START, before tick 0: the swap
+    # drain, the session sync (preload-done spawn, deletions, player
+    # identity), the keys and the input stages (the manual player's
+    # integrator, fire keys, mouse, chords, Manual Aim). So this
+    # frame's first AI tick sees this frame's manual pose and firing
+    # state, and a press reaches the frame's first combat tick.
+    #
+    # One whole tick: GameLoop tick i (timers, the TimeSliceProcess
+    # scheduler, the AI tree-walk, collision avoidance, motion and the
+    # per-ship shield/power/cloak/repair updates), then weapons and
+    # combat tick i on the ships alive after it, then the combat tick
+    # boundary (the tick's held effects, GameLoop's included:
+    # owns_boundary=False). Combat tick i reads motion tick i's poses,
+    # and AI tick i+1 sees combat tick i's hits. Torpedo flight, phaser
+    # dwell, weapon charge and every effect clock step by TICK_DT, once
+    # per GAME TICK, never once per frame (see _frame_game_dt).
+    def _whole_tick():
+        nonlocal _ships_this_tick
+        _tick_gameloop()
+        # The tick may have killed or spawned a ship: the list is
+        # materialized once per tick, after its GameLoop tick, and both
+        # consumers below share it.
+        with frame_profiler.scope("sim.ship_list"):
+            _ships_this_tick = list(_all_ships_for_tick())
+        # Weapon events and sounds both produce are delivered
+        # when this closes (native combat on; _combat_effect_scope).
+        with _combat_effect_scope():
+            with frame_profiler.scope("sim.weapons"):
+                _advance_weapons(_ships_this_tick, TICK_DT)
+            with frame_profiler.scope("sim.combat"):
+                _advance_combat(
+                    _ships_this_tick, TICK_DT,
+                    ship_instances=(session.ship_instances if session is not None else None),
+                    ship_emitters=(session.ship_emitters if session is not None else None),
+                    player=player,
+                    # Pushed after the camera, once the render origin is
+                    # set (_push_combat_render_data below).
+                    push_render_data=False,
+                )
+        _combat_tick_boundary()
+
+    # advance_ticks rolls the interpolation buffer and, on a frame
+    # that runs 2+ ticks, re-seats its prev just before the last one
+    # (after whole tick n-1's boundary), so the drawn pose always
+    # blends across exactly one tick. The tick count was decided at
+    # the frame top: a frame frozen mid-frame (a dev key in sim.keys)
+    # still runs its whole ticks.
+    advance_ticks(_xform_buf, _sim_ticks_this_frame, _whole_tick)
+    # The warp tunnel's destination preload: at most one model load
+    # per frame, so no tunnel frame pays for the whole destination.
+    with frame_profiler.scope("warp.preload"):
+        _step_warp_preload()
+
+    # A tick may have changed the game's player (an SDK timer's
+    # RecreatePlayer): sync again, so the post-tick pass below
+    # (sensor contacts, crew prompts, dash, hand-off) drives the new
+    # ship this frame, as the old post-tick session sync did.
+    if session is not None:
+        _sync_player_identity(session, _on_player_change)
+    player = session.player if session is not None else None
+
+    if not pause.sim_frozen:
+        # A frame that ran no tick still builds the list once, for the
+        # render section's combat feed.
+        if _ships_this_tick is None:
+            with frame_profiler.scope("sim.ship_list"):
+                _ships_this_tick = list(_all_ships_for_tick())
+
+        # Player-only contact manager: bands, proximity events and the
+        # identification dwell (engine/appc/sensor_contacts.py). Sim-gated
+        # by the enclosing `not pause.sim_frozen`; it runs its own 1 s
+        # sweep cadence internally.
+        if player is not None:
+            import App  # deferred: matches host-loop convention
+            from engine.appc import sensor_contacts
+            sensor_contacts.tick(player, App.g_kUtopiaModule.GetGameTime())
+
+        # Crew "raise shields" prompts in asteroids / radiation
+        # (engine/appc/crew_hazard_prompts.py). Sim-gated like the
+        # contact manager above; polls at 1 Hz on game time.
+        if player is not None:
+            global _crew_hazard_prompts
+            if _crew_hazard_prompts is None:
+                from engine.appc.crew_hazard_prompts import CrewHazardPrompts
+                _crew_hazard_prompts = CrewHazardPrompts()
+            _crew_hazard_prompts.update(
+                player, App.g_kUtopiaModule.GetGameTime())
+
+        # Nebula membership → enter/exit events, environmental
+        # damage, sensor scaling. Sim dt (TICK_DT), once per game tick
+        # like combat above; gated by the enclosing
+        # `not pause.sim_frozen` (no effects while frozen); no-op for
+        # sets without a nebula.
+        _neb_set = _resolve_active_set(player)
+        if _neb_set is not None:
+            global _nebula_tracker
+            if _nebula_tracker is None:
+                from engine.appc.nebula_runtime import NebulaTracker
+                _nebula_tracker = NebulaTracker()
+            import App  # deferred: matches host-loop convention
+
+            # Radial-profile radiation (engine/appc/radiation.py):
+            # drain + outages via 16 Hz ET_ENVIRONMENT_DAMAGE. Ships
+            # inside an armed local nebula ride the tracker's events.
+            global _radiation_driver
+            if _radiation_driver is None:
+                from engine.appc.radiation import RadiationDriver
+                from engine.systems import profile as _profile
+                _radiation_driver = RadiationDriver(_profile.sample_for_object)
+                _nebula_tracker.env_listeners.append(
+                    _radiation_driver.on_local_event)
+            for _tick_i in range(_sim_ticks_this_frame):
+                _nebula_tracker.update(
+                    _neb_set,
+                    _neb_set.GetClassObjectList(App.CT_SHIP),
+                    TICK_DT,
+                )
+                _radiation_driver.update(
+                    _neb_set.GetClassObjectList(App.CT_SHIP), TICK_DT,
+                    shared=_nebula_tracker.ships_in_armed_nebula())
+
+            # Shared nebula-state locals used by ALL nebula drivers
+            # (thunder, hull-discharge, wake).  Computed once here so
+            # each per-toggle block can read them without duplication.
+            player_id = id(player) if player is not None else None
+            in_neb = player_id is not None and any(
+                player_id in ships
+                for ships in _nebula_tracker._inside.values()
+            )
+            _gt = App.g_kUtopiaModule.GetGameTime()
+
+            # The radial profile at the player: hull sparks follow its
+            # radiation, the impulse wake its gas (engine/systems/profile_fx).
+            from engine.systems import profile as _profile
+            from engine.systems import profile_fx as _profile_fx
+            from engine.appc import warp_state as _warp_state
+            _prof_sample = (_profile.sample_for_object(player)
+                            if player is not None else _profile.CLEAR)
+            _warping = (player is not None
+                        and _warp_state.is_ship_warping(player))
+
+            # Nebula lightning: tick the thunder driver while the player
+            # is in a clump or the profile's thick cloud
+            # (profile_fx.lightning_active).  Visual/audio only; gated
+            # by the toggle.
+            # Lazy construct (mirrors _nebula_tracker).
+            global _nebula_thunder
+            if r.nebula_lightning_enabled():
+                if _nebula_thunder is None:
+                    from engine.appc.nebula_thunder import NebulaThunderDriver
+                    _nebula_thunder = NebulaThunderDriver()
+                fwd = player.GetWorldForwardTG() if player is not None else None
+                fwd_t = (fwd.x, fwd.y, fwd.z) if fwd is not None else (0.0, 1.0, 0.0)
+                _nebula_thunder.update(
+                    _profile_fx.lightning_active(
+                        in_neb, _prof_sample, _warping),
+                    _frame_game_dt, _gt, fwd_t)
+                for name in _nebula_thunder.pop_due_audio(_gt):
+                    try:
+                        from engine.audio.tg_sound import TGSoundManager
+                        TGSoundManager.instance().PlaySound(name)
+                    except Exception:
+                        pass
+                # Hull electrical discharges: crackle on the hull while
+                # in a nebula, rate ∝ the nebula's damage.  Gated by
+                # the Nebula Lightning toggle (shared with the flashes).
+                # Lazy construct mirrors _nebula_thunder above.
+                global _hull_discharge
+                if _hull_discharge is None:
+                    from engine.appc.hull_discharge import HullDischargeDriver
+                    _hull_discharge = HullDischargeDriver()
+                clump_rate = 0.0
+                hull_pts = []
+                if in_neb and player is not None:
+                    pset = player.GetContainingSet()
+                    if pset is not None:
+                        for obj in pset.GetClassObjectList(App.CT_NEBULA):
+                            neb = App.MetaNebula_Cast(obj)
+                            if neb is not None and neb.IsObjectInNebula(player):
+                                clump_rate = neb.GetDamage()[0]
+                                break
+                sparking, dmg_rate = _profile_fx.discharge_inputs(
+                    in_neb, clump_rate, _prof_sample, _warping)
+                if sparking and player is not None:
+                    pset = player.GetContainingSet()
+                    # Anchor sparks across the WHOLE hull (saucer rim,
+                    # nacelles, pylons) via the model's surface-point
+                    # sample, not just the central subsystem mounts.
+                    _piid = (session.ship_instances.get(player)
+                             if session is not None else None)
+                    # VIEW coordinates, both sources: the discharge
+                    # feed is pushed through frames.view_to_render.
+                    if _piid is not None:
+                        # Drawn pose: sparks are VFX on the hull
+                        # the player sees.
+                        hull_pts = r.instance_surface_points(
+                            _piid, drawn=True)
+                    if not hull_pts:
+                        # Fallback: subsystem mounts (central, but better
+                        # than nothing) when no surface sample is available.
+                        from engine.appc.subsystems import subsystem_world_position
+                        _hview = _frames.viewing_set()
+                        for sub in player.GetSubsystems():
+                            wp = subsystem_world_position(sub, player)
+                            _hp = _frames.in_view(_hview, pset,
+                                                  wp.x, wp.y, wp.z)
+                            hull_pts.append(_hp if _hp is not None
+                                            else (wp.x, wp.y, wp.z))
+                _hull_discharge.update(sparking, dmg_rate, _frame_game_dt, hull_pts, _gt)
+
+            # Nebula ship wake: record the player's path while in a nebula.
+            # Gated by Volumetric Nebulae ONLY (spec §7: "no cloud → no
+            # wake"), independent of the Nebula Lightning toggle.
+            global _nebula_wake
+            if r.volumetric_nebulae_enabled():
+                if _nebula_wake is None:
+                    from engine.appc.nebula_wake import NebulaWakeTracker
+                    _nebula_wake = NebulaWakeTracker()
+                _emitters = []
+                _waking = _profile_fx.wake_active(in_neb, _prof_sample, _warping)
+                if _waking and player is not None:
+                    from engine.appc.subsystems import active_impulse_emitters
+                    _emitters = active_impulse_emitters(player)
+                _nebula_wake.update(_waking, _emitters, _gt)
+
+        # Collision detection + response (ships/asteroids/moons/
+        # planets). Runs once per render frame after motion + player
+        # input, so every body's post-thrust position is current.
+        # Reuses combat.apply_hit for impact damage; injects a
+        # mass-weighted impulse into each body's decaying
+        # _collision_velocity overlay. Spec
+        # docs/superpowers/specs/2026-06-11-collision-response-design.md.
+        # dt = _player_dt (clamped wall-clock frame delta), matching
+        # the player integrator — the collision-velocity overlay is
+        # real-time motion, so it advances/decays on real elapsed time,
+        # not the fixed sim TICK_DT.
+        # BC's warp FSM (dewarp transitions + warp-in slides) advances
+        # on game time inside GameLoop.tick (warp_state.tick_warp_states),
+        # which runs above, before collisions: a ship in warp is
+        # non-collidable (collisions._collisions_enabled), so a dewarp
+        # that completes this frame is collidable THIS frame, not next.
+        # sync_flythrough is the leak guard — once the warp animator is
+        # inactive the flythrough ship cannot still read as warping,
+        # however the sequence ended.
+        from engine.appc import warp_state as _warp_state
+        from engine import warp_vfx as _wv_state
+        _warp_state.sync_flythrough(_wv_state.get().is_active())
+
+        with frame_profiler.scope("sim.debris_chunks"):
+            from engine.appc import debris_chunk as _debris_chunk
+            with frame_profiler.scope("dc.tick"):
+                _debris_chunk.tick(_player_dt, r)
+            from engine.appc import hull_breakup as _hull_breakup
+            with frame_profiler.scope("dc.breakup_drain"):
+                _hull_breakup.drain()
+            from engine.appc import hull_wear as _hull_wear
+            with frame_profiler.scope("dc.wear_drain"):
+                _hull_wear.drain()
+
+        with frame_profiler.scope("sim.collisions"):
+            collisions.tick_collisions(
+                _player_dt,
+                ship_instances=(session.ship_instances if session is not None else None),
+            )
+
+        # Rock breakup, render side (rock-class spec §2): the death
+        # burst (crack flash, dust, light) engine.rocks.death queued
+        # -- this frame's collision kills included. Breakup debris is
+        # a free minor cloud (engine.rocks.minors), not bodies here.
+        with frame_profiler.scope("sim.rock_breakup"):
+            from engine.rocks import vfx as rock_vfx
+            rock_vfx.pump()
+            _pump_minor_contact(player, session=session)
+            _pump_scenery_contact(player, session=session)
+
+        with frame_profiler.scope("sim.rock_promotion"):
+            _pump_rock_promotion(player, session=session)
+
+        # The frame-end boundary (native damage, ruling R8): what the
+        # post-step pass above reported -- radiation, hull breakup,
+        # collisions, scenery contact, rock promotion's restores --
+        # is delivered now, its deaths included, not a frame later.
+        with frame_profiler.scope("sim.effects_frame"):
+            _effect_queue.boundary()
+
+        # The player's dash (engine/appc/dash.py): its align, its
+        # engage, and the drop-out of a flight that ended this frame
+        # -- before the hand-off tick, so a drop-out's own hand-off
+        # lands first.
+        with frame_profiler.scope("sim.travel"):
+            if player is not None:
+                from engine.appc import dash
+                dash.tick(player, _player_dt)
+
+            # The impulse region hand-off (in-system-warp spec section 3,
+            # rule H): the player crosses into another region's sphere
+            # under its own power. Runs after collisions (this frame's
+            # last mover of the player) and before the scene reconcile,
+            # which reads the player's containing set to decide what the
+            # render scope shows this frame. A no-op while the player is
+            # dashing (handoff._is_dashing) -- Task 4's drop-out calls
+            # handoff.hand_off directly once the flight ends.
+            if player is not None:
+                from engine.systems import handoff
+                handoff.tick(player)
+
+        # The scene reconcile (_reconcile_scene): load the player's
+        # system, realize / tear down / cull / hide ships for the
+        # render scope, and diff the viewed frame's map bodies. It
+        # reads frames.viewing_set(), so it runs HERE -- after every
+        # part of the frame's sim that can change the view (the timers
+        # in loop.tick, input and clicks that engage a warp, combat,
+        # the warp FSM, collisions) and immediately before
+        # _sync_instance_transforms, the camera and
+        # _apply_render_origin, which read the same view. Before the
+        # sim, a frame that changed the view drew map bodies in the
+        # OLD view's coordinates. INVARIANT: it is the FIRST visibility
+        # writer of the frame -- warp hide (in _sync_instance_
+        # transforms), SPV, bridge player and cloak all run after it
+        # and AND their conditions with scope_hidden, and the scope
+        # only writes on a change. Order guarded by
+        # tests/host/test_scene_reconcile_ordering.py.
+        with frame_profiler.scope("sim.reconcile"):
+            _reconcile_scene(
+                session, controller.renderer, nif_cache=controller,
+                on_player_change=_on_player_change, verbose=verbose)
+            # It may have retargeted session.player (RecreatePlayer).
+            player = session.player if session is not None else None
+            # The reconcile above may have just realized a player ship
+            # RecreatePlayer created with an unknown (0) radius -- catch
+            # up the cameras now that GetRadius() is real.
+            _reconcile_camera_radius(director, player)
+
+        # Sync transforms for known instances: every ship is drawn
+        # through the native interpolation buffer (phase 3c). The
+        # player is drawn live while manually flown (integrated per
+        # render frame in _PlayerControl, already smooth) and
+        # interpolated otherwise; every other ship is integrated on
+        # the 60 Hz tick and drawn at lerp(prev, cur, _interp_alpha).
+        # advance_ticks rolled the buffer above; the frame-end
+        # capture below records the new current state. This only
+        # affects what is drawn — the ship objects keep live
+        # transforms, so physics/AI/combat are unaffected.
+        with frame_profiler.scope("sim.render_xforms"):
+            if session is not None:
+                # Render-pose provider: the camera (below) and the
+                # renderer must anchor on IDENTICAL per-ship poses: both
+                # read the native drawn pose (interp_sample /
+                # interp_compose).
+                _player_iid_i = (session.ship_instances.get(player)
+                                 if player is not None else None)
+                # Interpolate the player render when it is NOT being flown
+                # per render frame by _PlayerControl: a helm-AI / waypoint
+                # order (GetAI) OR an active in-space cutscene (the player
+                # is scripted, never manually flown then, and a cutscene
+                # camera is commonly locked onto it — so its 60 Hz-stepped
+                # motion must be interpolated or the whole shot judders).
+                # An in-system dash too: its flight steps the ship on the
+                # tick (_player_render_interpolated).
+                _interp_player = _player_render_interpolated(
+                    player, sim_frozen=pause.sim_frozen,
+                    cutscene_active=_active_cutscene_camera() is not None)
+                if _player_iid_i is not None:
+                    _set_interp_mode(session, _xform_buf,
+                                     _player_iid_i, not _interp_player)
+                # The frame-end publish: every tracked ship's current
+                # snapshot from the live store, after every per-frame
+                # pose writer and before the camera samples it.
+                _xform_buf.capture()
+                # A hand-off (the same player, another region set): the
+                # slot and any handover window hold the old set's
+                # coordinates -- re-seed / drop them, and never open a
+                # window from last frame's (old-set) drawn pose.
+                _pset = (player.GetContainingSet()
+                         if player is not None else None)
+                if (player is not None
+                        and _prev_player_set[0] is player
+                        and _prev_player_set[1] is not None
+                        and _pset is not _prev_player_set[1]):
+                    _rebase_player_render(_xform_buf, _player_iid_i)
+                    _prev_drawn_player_pose = None
+                _prev_player_set = (player, _pset)
+                # The viewed set changed within the frame (a hand-off):
+                # re-base the cameras and drop the dust history before
+                # the camera is solved below.
+                _view_now = _frames.viewing_set()
+                _view_off = _view_rebase_offset(_prev_view_set, _view_now)
+                if _view_off is not None:
+                    _rebase_view(r, director, _view_off)
+                _prev_view_set = _view_now
+                # Handover easing: the pipeline the player is drawn from
+                # flips between live (manual) and interpolated (AI /
+                # scripted), and those sit a tick apart. The window is
+                # advanced ONCE a frame, here, ahead of both the
+                # camera's sample and the sync's compose, so the two
+                # see one elapsed time; a flip then opens a window
+                # from the pose the compose drew last frame.
+                host_io.interp_handover_advance(_player_dt)
+                _drive_handover_smoother(
+                    _player_iid_i, _prev_interp_player, _interp_player,
+                    _prev_drawn_player_pose)
+                _pose_of = _make_render_pose_provider(
+                    session, _xform_buf, _interp_alpha)
+                # The camera's player pose (the same native drawn pose
+                # the compose uses); kept as "a drawn pose exists" for
+                # the next frame's handover begin, and for telemetry.
+                _player_interp_pose = (
+                    _pose_of(player) if player is not None else None)
+                _prev_interp_player = _interp_player
+                _prev_drawn_player_pose = _player_interp_pose
+                # Same game clock the decal system ages on
+                # (engine.appc.damage_decals). Read once per frame.
+                _sync_instance_transforms(
+                    r, session, player, _xform_buf, _interp_alpha,
+                    App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE,
+                    player_control=player_control,
+                    player_is_interpolated=_interp_player)
+    else:
+        # Frozen frame (pause, DevTools): no sim ran, so nothing
+        # changed the view; reconcile as every frame always has, still
+        # ahead of the SPV / bridge-player / cloak visibility writers.
+        with frame_profiler.scope("sim.reconcile"):
+            _reconcile_scene(
+                session, controller.renderer, nif_cache=controller,
+                on_player_change=_on_player_change, verbose=verbose)
+            player = session.player if session is not None else None
+            # Same catch-up as the live branch above -- a frozen frame
+            # (e.g. the pause menu opened the same tick RecreatePlayer
+            # ran) must not leave the cameras on an unknown radius.
+            _reconcile_camera_radius(director, player)
+    # --- frame sim: end ---
+
+    ctx.accumulator = _accumulator
+    ctx.previous_real_time = _previous_real_time
+    ctx.bridge_left_pick_active = _bridge_left_pick_active
+    ctx.z_held_prev = z_held_prev
+    ctx.v_held_prev = v_held_prev
+    ctx.prev_interp_player = _prev_interp_player
+    ctx.prev_player_set = _prev_player_set
+    ctx.prev_view_set = _prev_view_set
+    ctx.prev_drawn_player_pose = _prev_drawn_player_pose
+    ctx.interp_player = _interp_player
+    return FrameSimResult(
+        now=_now,
+        wall_dt=_wall_dt,
+        frame_dt=_frame_dt,
+        player_dt=_player_dt,
+        frame_game_dt=_frame_game_dt,
+        interp_alpha=_interp_alpha,
+        sim_ticks=_sim_ticks_this_frame,
+        ships_this_tick=_ships_this_tick,
+        pose_of=_pose_of,
+        player_interp_pose=_player_interp_pose,
+        session=session,
+        player=player,
+    )
+
+
 def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
@@ -11767,14 +12650,12 @@ def run(mission_name: Optional[str] = None,
 
         # Fixed-timestep accumulator state — sim runs at TICK_DT (60 Hz)
         # regardless of render refresh rate. See engine/core/timestep.py.
-        from engine.core.timestep import step_accumulator
         _previous_real_time = _frame_clock()
         _accumulator = 0.0
         # True while a bridge-officer left-click is held (press was intercepted
         # for the crew menu); used to swallow the matching release edge so it
         # never leaks to phaser fire. See the officer-pick block below.
         _bridge_left_pick_active = False
-        from engine.core.transform_buffer import advance_ticks
         from engine.core.native_transform_buffer import NativeTransformBuffer
         # Render interpolation is native (phase 3c): snapshots, the compose
         # and the player's helm-handover blend (engine/core/handover_smoother
@@ -11938,6 +12819,49 @@ def run(mission_name: Optional[str] = None,
                 _cef_set_load_end(_on_cef_load_end)
             _previous_real_time = _frame_clock()
             _notice_ended_at = _previous_real_time
+
+        # The frame sim section's inputs, and the state it carries across
+        # frames (_run_frame_sim). Built once, after the boot notice's
+        # clock restart.
+        _frame_ctx = FrameSimContext(
+            h=_h,
+            controller=controller,
+            director=director,
+            view_mode=view_mode,
+            player_control=player_control,
+            pause=pause,
+            input_map=input_map,
+            xform_buf=_xform_buf,
+            tick_gameloop=_tick_gameloop,
+            snap_scene=_snap_scene,
+            close_star_map=_close_star_map,
+            consume_scroll=_consume_scroll,
+            cef_send_wheel=_cef_send_wheel,
+            crew_menu_panel=crew_menu_panel,
+            perf_monitor_panel=perf_monitor_panel,
+            collisions=collisions,
+            verbose=verbose,
+            tick_dt=TICK_DT,
+            max_frame_dt=MAX_FRAME_DT,
+            cutscene=cutscene,
+            bridge_camera=bridge_camera,
+            char_anim=char_anim,
+            walk_ctrl=walk_ctrl,
+            watch_ctrl=watch_ctrl,
+            idle_gestures=idle_gestures,
+            node_anim=node_anim,
+            lip_runtime=lip_runtime,
+            letterbox_anim=_letterbox_anim,
+            accumulator=_accumulator,
+            previous_real_time=_previous_real_time,
+            bridge_left_pick_active=_bridge_left_pick_active,
+            z_held_prev=z_held_prev,
+            v_held_prev=v_held_prev,
+            prev_interp_player=_prev_interp_player,
+            prev_player_set=_prev_player_set,
+            prev_view_set=_prev_view_set,
+            prev_drawn_player_pose=_prev_drawn_player_pose,
+        )
 
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
@@ -12340,703 +13264,12 @@ def run(mission_name: Optional[str] = None,
                         # the keyboard (abandoning the edit) here.
                         text_capture.release()
 
-            frame_profiler.mark("sim")
-            # --- Sim advance: fixed-timestep accumulator ---
-            # frame_dt is the real wall-clock since the previous frame.
-            # While frozen we force it to 0 so the accumulator cannot
-            # grow and there is no catch-up burst on resume. The cap
-            # bounds the inner while-loop after a stalled render frame.
-            # Frozen = pause menu OR the DevTools window (which stops the
-            # world so the overlay under inspection holds still).
-            pause.set_external_freeze(_devtools_frozen(_h))
-            _now = _frame_clock()
-            # The raw wall delta, kept apart from _frame_dt (which the freeze
-            # zeroes): the Bridge Editor's preview clock runs while the
-            # (hidden) pause menu freezes the sim (spec 2026-10-08-bridge-emitters §12.2).
-            _wall_dt = _now - _previous_real_time
-            _frame_dt = _wall_dt
-            _previous_real_time = _now
-            if perf_monitor_panel is not None:
-                perf_monitor_panel.tick(_wall_dt)
-            if pause.sim_frozen:
-                _frame_dt = 0.0
-                # No tick runs, so no tick boundary drains: the mirror's
-                # pending frees and off-main pushes are applied here (no
-                # kernel session is open between frames).
-                _native_combat.drain()
-            _accumulator, _sim_ticks_this_frame = step_accumulator(
-                _accumulator, _frame_dt, TICK_DT, MAX_FRAME_DT
-            )
-            frame_profiler.note_sim_ticks(_sim_ticks_this_frame)
-            # Per-render-frame delta for the player input integrator.
-            # _apply_input runs once per render frame, so its dt must
-            # be the wall-clock delta since the last frame — not the
-            # fixed sim TICK_DT. Otherwise at 120 Hz monitor refresh
-            # the player ship rotates / accelerates 2× too fast (BC
-            # Galaxy 360° yaw collapses from 24 s to 12 s). Clamp
-            # matches step_accumulator's spiral-of-death cap so a
-            # stalled frame doesn't teleport the player.
-            _player_dt = 0.0 if pause.sim_frozen else min(max(_frame_dt, 0.0), MAX_FRAME_DT)
-            # The GAME time this frame covers: the GameLoop ticks it runs.
-            # Everything below that steps game state does so once per tick
-            # (`for _ in range(_sim_ticks_this_frame)`) or by this -- never by
-            # one TICK_DT per frame, which ran combat at a third of its speed
-            # in a 3-tick frame and double speed at 120 fps
-            # (tests/host/test_frame_rate_independence.py).
-            _frame_game_dt = _sim_ticks_this_frame * TICK_DT
-            _interp_alpha = _accumulator / TICK_DT  # in [0, 1) after step_accumulator
-            # GameLoop = timers, the TimeSliceProcess scheduler, the AI
-            # tree-walk, collision avoidance, motion integration and the
-            # per-ship shield/power/cloak/repair updates. Timed separately
-            # from the weapon/combat pumps below, which it does NOT drive.
-            # advance_ticks rolls the interpolation buffer and, on a frame
-            # that runs 2+ ticks, re-seats its prev just before the last one,
-            # so the drawn pose always blends across exactly one tick.
-            advance_ticks(_xform_buf, _sim_ticks_this_frame, _tick_gameloop)
-            # The warp tunnel's destination preload: at most one model load
-            # per frame, so no tunnel frame pays for the whole destination.
-            with frame_profiler.scope("warp.preload"):
-                _step_warp_preload()
-
-            # Only snap the camera when a sim tick actually fired —
-            # no tick means no state change to follow.
-            if _sim_ticks_this_frame > 0:
-                had_pending_swap = controller.pending_swap is not None
-                # Clear any stale cutscene from the OUTGOING mission BEFORE the
-                # drain — the drain runs the incoming mission's Initialize()/
-                # Briefing(), which queues that mission's own camera/door
-                # requests. Resetting after the drain would wipe the freshly
-                # queued walk-on (the camera then never moves).
-                if had_pending_swap:
-                    cutscene.reset()
-                    bridge_camera.reset_cutscene_pose()
-                    char_anim.reset()
-                    walk_ctrl.reset()
-                    watch_ctrl.reset()
-                    idle_gestures.reset()
-                    node_anim.reset(renderer=r)
-                    lip_runtime.clear()
-                    _letterbox_anim.reset()
-                    _close_star_map()
-                controller._drain_pending_swap()
-                if had_pending_swap:
-                    _snap_scene()
-                    # Same discontinuity: never blend the player in from a
-                    # pose that belonged to the previous scene.
-                    host_io.interp_handover_cancel()
-                    _prev_interp_player = None
-                    _prev_drawn_player_pose = None
-                    # Nor re-base across a swap: the old sets are gone.
-                    _prev_player_set = (None, None)
-                    _prev_view_set = None
-            else:
-                had_pending_swap = False
-
-            session = controller.session
-            with frame_profiler.scope("sim.session_sync"):
-                # Fire QuickBattle's stored preload-done event (if pending) BEFORE
-                # reconciliation. Its handler (StartSimulation2) spawns the player
-                # ship; firing first means the reconciliation pass below realizes
-                # that ship in the same tick. Fire-once and fully guarded — a no-op
-                # for missions that never set a preload-done event.
-                _fire_pending_preload_done()
-                # Remove SetDeleteMe(1)-flagged objects from their set (QuickBattle
-                # "End Combat" clears the battle this way); the reconciliation below
-                # then tears down their render instances.
-                _process_object_deletions()
-                # Mirror the SDK config-dialog flag onto the Quick Battle Setup
-                # panel: opens it when the player clicks the XO menu's config
-                # button, closes it on Close/Start. Boot leaves it closed.
-                _sync_quick_battle_panel(controller)
-            # The camera follows session.player; _sync_player_identity (just
-            # below, and again in the scene reconcile after the sim) calls
-            # this when the player's identity changed
-            # (RecreatePlayer's destroy+recreate). Snap so the new player
-            # doesn't lerp from the destroyed ship's pose, and re-seed the
-            # director's ship-radius distances.
-            def _on_player_change(new_player, _d=director, _xb=_xform_buf):
-                _r = new_player.GetRadius()
-                _d.chase.set_ship_radius(_r)
-                _d.tracking.set_ship_radius(_r)
-                _d.snap()
-                _xb.reset_all()
-            # Sync the player BEFORE the sim reads it: the preload-done event
-            # above may have just run RecreatePlayer, and the scene reconcile
-            # that would otherwise catch it runs after the sim (Ruling 11).
-            if session is not None:
-                _sync_player_identity(session, _on_player_change)
-            player = session.player if session is not None else None
-            if had_pending_swap and player is not None:
-                _r = player.GetRadius()
-                director.chase.set_ship_radius(_r)
-                director.tracking.set_ship_radius(_r)
-
-            # Render-pose interpolation (smooth motion on high-refresh displays).
-            # Populated below when the sim is live; left None while paused, in
-            # which case the camera reads live poses and every hull keeps the
-            # matrix the last compose drew. See _make_render_pose_provider /
-            # _sync_instance_transforms.
-            _pose_of = None
-            _player_interp_pose = None
-
-            # Mouse-wheel routing (runs every frame, paused or not). Scroll
-            # delta is consumed once per tick — the single consumer of the
-            # accumulator. Over a CEF surface (a pause/config modal is open,
-            # or the cursor is over a HUD panel) → scroll that panel; over
-            # open space in exterior view → step the ship throttle. Replaces
-            # the old camera scroll-zoom. Old bindings without the accumulator
-            # return 0.0 via the fallback.
-            with frame_profiler.scope("sim.keys"):
-                scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
-                _route_scroll_wheel(
-                    scroll_y,
-                    route_to_panel=(pause.is_open or _cursor_in_panel),
-                    mx=_mx, my=_my,
-                    send_wheel=_cef_send_wheel,
-                    player_control=player_control,
-                    can_throttle=(player is not None and view_mode.is_exterior),
-                )
-
-                if not pause.is_open:
-                    # Dev-mode keybindings (no-op when --developer is not set).
-                    # register_for_frame re-binds handlers that close over the
-                    # current player/session each tick; dispatch_dev_key reads
-                    # _h.key_pressed for every registered key and fires matching
-                    # handlers. Skipped silently when dev_mode.is_enabled() is False.
-                    if _h is not None and dev_mode.is_enabled():
-                        dev_keybindings.register_for_frame(_h, session, player)
-                        for key, _desc in dev_mode.keybinding_descriptions():
-                            if host_io.key_pressed(key):
-                                dev_mode.dispatch_dev_key(key)
-
-                    # F12: toggle CEF DevTools for the UI overlay.
-                    if _h is not None and host_io.key_pressed(_h.keys.KEY_F12):
-                        _h.cef_toggle_devtools()
-
-                    # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
-                    # Reload only when Cmd (macOS) or Ctrl (Linux/Windows) is held;
-                    # bare R is reverse-thrust and must not be intercepted.
-                    if _h is not None and host_io.key_pressed(_h.keys.KEY_R):
-                        _cmd_held = host_io.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
-                        _ctrl_held = host_io.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
-                        if _cmd_held or _ctrl_held:
-                            _h.cef_reload()
-
-            # This frame's ships, when the sim runs; None on a frozen frame
-            # (the render section keys the combat feed push off it).
-            _ships_this_tick = None
-            # Everything below is SIMULATION — ship/camera input, firing,
-            # weapons, combat, sensors, nebula — so it gates on sim_frozen,
-            # not on the menu. The DevTools keys above deliberately sit in the
-            # is_open block instead: DevTools freezes the sim, so gating F12 on
-            # sim_frozen would make it impossible to press F12 a second time to
-            # close DevTools again.
-            if not pause.sim_frozen:
-                # Apply keyboard input to the player ship's transform and to the
-                # orbit camera (see _apply_input below).
-
-                with frame_profiler.scope("sim.input"):
-                    if player is not None and _h is not None:
-                        # Alert keys (Shift+1/2/3) run before the throttle handler;
-                        # _PlayerControl.apply checks _shift_held() to skip digit
-                        # throttling on the same press.
-                        _apply_alert_keys(_h, player)
-                        # C-key: toggle Chase ↔ Tracking (only enters Tracking if
-                        # the player has a valid target). key_pressed fires once per
-                        # key-down event (not while held). Gate on exterior view so
-                        # the mode cannot flip silently while the bridge is active.
-                        if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_cycle")):
-                            director.toggle_mode(player=player)
-                        # Z-key: ZoomTarget framing while held. Held-state (not
-                        # press-edge) so the camera enters/exits as the key state
-                        # changes. The `not director.tracking.zoom_target_active`
-                        # retry guard lets a Z-held-during-target-acquisition
-                        # succeed on whichever frame the target appears.
-                        z_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_zoom_target"))
-                        if z_held_now and not director.tracking.zoom_target_active:
-                            director.start_zoom_target(player=player)
-                        elif z_held_prev and not z_held_now:
-                            director.end_zoom_target()
-                        z_held_prev = z_held_now
-                        # =/- sticky zoom: press-edge (OS auto-repeat for hold).
-                        if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_in")):
-                            director.zoom_in()
-                        if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_out")):
-                            director.zoom_out()
-                        # V-key: Reverse Chase while held. Same hold-state
-                        # edge detection as Z, with a retry guard so a
-                        # V-held-during-mode-transition succeeds on the
-                        # next eligible frame.
-                        v_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_reverse_chase"))
-                        if v_held_now and not director.chase.reverse_active:
-                            director.start_reverse()
-                        elif v_held_prev and not v_held_now:
-                            director.end_reverse()
-                        v_held_prev = v_held_now
-                        # Shift+mouse: orbit yaw/pitch additive on top of
-                        # arrow keys. Drain the mouse delta unconditionally
-                        # in exterior view so non-Shift mouse motion doesn't
-                        # accumulate and snap the camera on the next Shift
-                        # press.
-                        mouse_dx_exterior, mouse_dy_exterior = 0.0, 0.0
-                        if view_mode.is_exterior:
-                            mouse_dx_exterior, mouse_dy_exterior = host_io.consume_mouse_delta()
-                        shift_held = view_mode.is_exterior and (
-                            host_io.key_state(_h.keys.KEY_LEFT_SHIFT) or
-                            host_io.key_state(_h.keys.KEY_RIGHT_SHIFT)
-                        )
-                        if shift_held and director.mode is CameraMode.CHASE:
-                            director.chase.apply_mouse_delta(
-                                mouse_dx_exterior, mouse_dy_exterior)
-                        # dt = _player_dt (wall-clock frame delta), not TICK_DT —
-                        # see comment at the accumulator step. _apply_input fires
-                        # once per render frame, so its dt is the wall delta.
-                        _apply_input(view_mode, player_control, director,
-                                     player=player, dt=_player_dt, h=_h)
-
-                    # Bridge crew-menu click. On the bridge the cursor is locked for
-                    # mouse-look, so the player AIMS by looking: the reticle is
-                    # screen centre.
-                    #   - No menu open: centre an officer and left-click → open that
-                    #     officer's crew menu (else the click falls through to
-                    #     _poll_mouse_buttons and fires phasers).
-                    #   - Menu open: the cursor is freed for the CEF menu; a click on
-                    #     the menu itself is consumed earlier by the CEF panel
-                    #     forwarding, so any left press we still see here is OFF the
-                    #     menu → close it.
-                    # mouse_button_pressed consumes the edge, so we only call it once
-                    # we've decided to intercept — leaving genuine empty-space clicks
-                    # to fire phasers.
-                    if view_mode.is_bridge and _h is not None:
-                        _bridge_left_pick_active = bridge_officer_picking.handle_click(
-                            _h, r, bridge_camera, crew_menu_panel,
-                            _bridge_left_pick_active)
-
-                    # Forward mouse button edges into the input manager (fire
-                    # events route via g_kKeyboardBinding → TCW handlers).
-                    _poll_mouse_buttons(_h)
-                    _poll_function_keys(_h, input_map)
-                    _poll_fire_keys(_h, input_map)
-                    _poll_modifier_chords(_h)
-                    # General key stream → BC's raw ET_KEYBOARD window event.
-                    # Runs AFTER the three tables above so their _fn_key_prev
-                    # entries are already written for this frame (it skips the
-                    # keys they own, but the ordering keeps that invariant
-                    # obvious).
-                    _poll_raw_keyboard(_h, input_map)
-                    _poll_skip_dialogue(_h, input_map)
-
-                    # Manual Aim (H): re-pick the cursor's hull point on the
-                    # player's target, or revert to the subsystem lock. Sim side
-                    # on purpose -- it mutates the player's target offset, which
-                    # the weapon tick below and the phaser tick in
-                    # _advance_combat both read this same frame.
-                    manual_aim.update(
-                        player=player,
-                        tcw=TacticalControlWindow.GetInstance(),
-                        ship_instances=(session.ship_instances if session is not None else None),
-                        is_exterior=view_mode.is_exterior,
-                    )
-
-                # Advance weapon charge / reload for every ship in every
-                # active set.  Runs after AI/physics (approximate — the host
-                # loop is single-threaded and Python AI runs in the gameloop
-                # tick above) so emitters are ready when AI fire calls land.
-                # Materialize the ship list once per tick — both consumers
-                # re-walked every set independently before.
-                #
-                # Once per GAME TICK, not once per frame: torpedo flight,
-                # phaser dwell, weapon charge and every effect clock in
-                # _advance_combat step by TICK_DT, so a frame that ran three
-                # ticks must step them three times (see _frame_game_dt). A
-                # frame that ran none steps nothing; the list is still built
-                # for the render section's combat feed.
-                with frame_profiler.scope("sim.ship_list"):
-                    _ships_this_tick = list(_all_ships_for_tick())
-                for _tick_i in range(_sim_ticks_this_frame):
-                    if _tick_i:
-                        # The tick before may have killed or spawned a ship.
-                        with frame_profiler.scope("sim.ship_list"):
-                            _ships_this_tick = list(_all_ships_for_tick())
-                    # Weapon events and sounds both produce are delivered
-                    # when this closes (native combat on; _combat_effect_scope).
-                    with _combat_effect_scope():
-                        with frame_profiler.scope("sim.weapons"):
-                            _advance_weapons(_ships_this_tick, TICK_DT)
-                        with frame_profiler.scope("sim.combat"):
-                            _advance_combat(
-                                _ships_this_tick, TICK_DT,
-                                ship_instances=(session.ship_instances if session is not None else None),
-                                ship_emitters=(session.ship_emitters if session is not None else None),
-                                player=player,
-                                # Pushed after the camera, once the render origin is
-                                # set (_push_combat_render_data below).
-                                push_render_data=False,
-                            )
-                    _combat_tick_boundary()
-
-                # Player-only contact manager: bands, proximity events and the
-                # identification dwell (engine/appc/sensor_contacts.py). Sim-gated
-                # by the enclosing `not pause.sim_frozen`; it runs its own 1 s
-                # sweep cadence internally.
-                if player is not None:
-                    import App  # deferred: matches host-loop convention
-                    from engine.appc import sensor_contacts
-                    sensor_contacts.tick(player, App.g_kUtopiaModule.GetGameTime())
-
-                # Crew "raise shields" prompts in asteroids / radiation
-                # (engine/appc/crew_hazard_prompts.py). Sim-gated like the
-                # contact manager above; polls at 1 Hz on game time.
-                if player is not None:
-                    global _crew_hazard_prompts
-                    if _crew_hazard_prompts is None:
-                        from engine.appc.crew_hazard_prompts import CrewHazardPrompts
-                        _crew_hazard_prompts = CrewHazardPrompts()
-                    _crew_hazard_prompts.update(
-                        player, App.g_kUtopiaModule.GetGameTime())
-
-                # Nebula membership → enter/exit events, environmental
-                # damage, sensor scaling. Sim dt (TICK_DT), once per game tick
-                # like combat above; gated by the enclosing
-                # `not pause.sim_frozen` (no effects while frozen); no-op for
-                # sets without a nebula.
-                _neb_set = _resolve_active_set(player)
-                if _neb_set is not None:
-                    global _nebula_tracker
-                    if _nebula_tracker is None:
-                        from engine.appc.nebula_runtime import NebulaTracker
-                        _nebula_tracker = NebulaTracker()
-                    import App  # deferred: matches host-loop convention
-
-                    # Radial-profile radiation (engine/appc/radiation.py):
-                    # drain + outages via 16 Hz ET_ENVIRONMENT_DAMAGE. Ships
-                    # inside an armed local nebula ride the tracker's events.
-                    global _radiation_driver
-                    if _radiation_driver is None:
-                        from engine.appc.radiation import RadiationDriver
-                        from engine.systems import profile as _profile
-                        _radiation_driver = RadiationDriver(_profile.sample_for_object)
-                        _nebula_tracker.env_listeners.append(
-                            _radiation_driver.on_local_event)
-                    for _tick_i in range(_sim_ticks_this_frame):
-                        _nebula_tracker.update(
-                            _neb_set,
-                            _neb_set.GetClassObjectList(App.CT_SHIP),
-                            TICK_DT,
-                        )
-                        _radiation_driver.update(
-                            _neb_set.GetClassObjectList(App.CT_SHIP), TICK_DT,
-                            shared=_nebula_tracker.ships_in_armed_nebula())
-
-                    # Shared nebula-state locals used by ALL nebula drivers
-                    # (thunder, hull-discharge, wake).  Computed once here so
-                    # each per-toggle block can read them without duplication.
-                    player_id = id(player) if player is not None else None
-                    in_neb = player_id is not None and any(
-                        player_id in ships
-                        for ships in _nebula_tracker._inside.values()
-                    )
-                    _gt = App.g_kUtopiaModule.GetGameTime()
-
-                    # The radial profile at the player: hull sparks follow its
-                    # radiation, the impulse wake its gas (engine/systems/profile_fx).
-                    from engine.systems import profile as _profile
-                    from engine.systems import profile_fx as _profile_fx
-                    from engine.appc import warp_state as _warp_state
-                    _prof_sample = (_profile.sample_for_object(player)
-                                    if player is not None else _profile.CLEAR)
-                    _warping = (player is not None
-                                and _warp_state.is_ship_warping(player))
-
-                    # Nebula lightning: tick the thunder driver while the player
-                    # is in a clump or the profile's thick cloud
-                    # (profile_fx.lightning_active).  Visual/audio only; gated
-                    # by the toggle.
-                    # Lazy construct (mirrors _nebula_tracker).
-                    global _nebula_thunder
-                    if r.nebula_lightning_enabled():
-                        if _nebula_thunder is None:
-                            from engine.appc.nebula_thunder import NebulaThunderDriver
-                            _nebula_thunder = NebulaThunderDriver()
-                        fwd = player.GetWorldForwardTG() if player is not None else None
-                        fwd_t = (fwd.x, fwd.y, fwd.z) if fwd is not None else (0.0, 1.0, 0.0)
-                        _nebula_thunder.update(
-                            _profile_fx.lightning_active(
-                                in_neb, _prof_sample, _warping),
-                            _frame_game_dt, _gt, fwd_t)
-                        for name in _nebula_thunder.pop_due_audio(_gt):
-                            try:
-                                from engine.audio.tg_sound import TGSoundManager
-                                TGSoundManager.instance().PlaySound(name)
-                            except Exception:
-                                pass
-                        # Hull electrical discharges: crackle on the hull while
-                        # in a nebula, rate ∝ the nebula's damage.  Gated by
-                        # the Nebula Lightning toggle (shared with the flashes).
-                        # Lazy construct mirrors _nebula_thunder above.
-                        global _hull_discharge
-                        if _hull_discharge is None:
-                            from engine.appc.hull_discharge import HullDischargeDriver
-                            _hull_discharge = HullDischargeDriver()
-                        clump_rate = 0.0
-                        hull_pts = []
-                        if in_neb and player is not None:
-                            pset = player.GetContainingSet()
-                            if pset is not None:
-                                for obj in pset.GetClassObjectList(App.CT_NEBULA):
-                                    neb = App.MetaNebula_Cast(obj)
-                                    if neb is not None and neb.IsObjectInNebula(player):
-                                        clump_rate = neb.GetDamage()[0]
-                                        break
-                        sparking, dmg_rate = _profile_fx.discharge_inputs(
-                            in_neb, clump_rate, _prof_sample, _warping)
-                        if sparking and player is not None:
-                            pset = player.GetContainingSet()
-                            # Anchor sparks across the WHOLE hull (saucer rim,
-                            # nacelles, pylons) via the model's surface-point
-                            # sample, not just the central subsystem mounts.
-                            _piid = (session.ship_instances.get(player)
-                                     if session is not None else None)
-                            # VIEW coordinates, both sources: the discharge
-                            # feed is pushed through frames.view_to_render.
-                            if _piid is not None:
-                                # Drawn pose: sparks are VFX on the hull
-                                # the player sees.
-                                hull_pts = r.instance_surface_points(
-                                    _piid, drawn=True)
-                            if not hull_pts:
-                                # Fallback: subsystem mounts (central, but better
-                                # than nothing) when no surface sample is available.
-                                from engine.appc.subsystems import subsystem_world_position
-                                _hview = _frames.viewing_set()
-                                for sub in player.GetSubsystems():
-                                    wp = subsystem_world_position(sub, player)
-                                    _hp = _frames.in_view(_hview, pset,
-                                                          wp.x, wp.y, wp.z)
-                                    hull_pts.append(_hp if _hp is not None
-                                                    else (wp.x, wp.y, wp.z))
-                        _hull_discharge.update(sparking, dmg_rate, _frame_game_dt, hull_pts, _gt)
-
-                    # Nebula ship wake: record the player's path while in a nebula.
-                    # Gated by Volumetric Nebulae ONLY (spec §7: "no cloud → no
-                    # wake"), independent of the Nebula Lightning toggle.
-                    global _nebula_wake
-                    if r.volumetric_nebulae_enabled():
-                        if _nebula_wake is None:
-                            from engine.appc.nebula_wake import NebulaWakeTracker
-                            _nebula_wake = NebulaWakeTracker()
-                        _emitters = []
-                        _waking = _profile_fx.wake_active(in_neb, _prof_sample, _warping)
-                        if _waking and player is not None:
-                            from engine.appc.subsystems import active_impulse_emitters
-                            _emitters = active_impulse_emitters(player)
-                        _nebula_wake.update(_waking, _emitters, _gt)
-
-                # Collision detection + response (ships/asteroids/moons/
-                # planets). Runs once per render frame after motion + player
-                # input, so every body's post-thrust position is current.
-                # Reuses combat.apply_hit for impact damage; injects a
-                # mass-weighted impulse into each body's decaying
-                # _collision_velocity overlay. Spec
-                # docs/superpowers/specs/2026-06-11-collision-response-design.md.
-                # dt = _player_dt (clamped wall-clock frame delta), matching
-                # the player integrator — the collision-velocity overlay is
-                # real-time motion, so it advances/decays on real elapsed time,
-                # not the fixed sim TICK_DT.
-                # BC's warp FSM (dewarp transitions + warp-in slides) advances
-                # on game time inside GameLoop.tick (warp_state.tick_warp_states),
-                # which runs above, before collisions: a ship in warp is
-                # non-collidable (collisions._collisions_enabled), so a dewarp
-                # that completes this frame is collidable THIS frame, not next.
-                # sync_flythrough is the leak guard — once the warp animator is
-                # inactive the flythrough ship cannot still read as warping,
-                # however the sequence ended.
-                from engine.appc import warp_state as _warp_state
-                from engine import warp_vfx as _wv_state
-                _warp_state.sync_flythrough(_wv_state.get().is_active())
-
-                with frame_profiler.scope("sim.debris_chunks"):
-                    from engine.appc import debris_chunk as _debris_chunk
-                    with frame_profiler.scope("dc.tick"):
-                        _debris_chunk.tick(_player_dt, r)
-                    from engine.appc import hull_breakup as _hull_breakup
-                    with frame_profiler.scope("dc.breakup_drain"):
-                        _hull_breakup.drain()
-                    from engine.appc import hull_wear as _hull_wear
-                    with frame_profiler.scope("dc.wear_drain"):
-                        _hull_wear.drain()
-
-                with frame_profiler.scope("sim.collisions"):
-                    collisions.tick_collisions(
-                        _player_dt,
-                        ship_instances=(session.ship_instances if session is not None else None),
-                    )
-
-                # Rock breakup, render side (rock-class spec §2): the death
-                # burst (crack flash, dust, light) engine.rocks.death queued
-                # -- this frame's collision kills included. Breakup debris is
-                # a free minor cloud (engine.rocks.minors), not bodies here.
-                with frame_profiler.scope("sim.rock_breakup"):
-                    from engine.rocks import vfx as rock_vfx
-                    rock_vfx.pump()
-                    _pump_minor_contact(player, session=session)
-                    _pump_scenery_contact(player, session=session)
-
-                with frame_profiler.scope("sim.rock_promotion"):
-                    _pump_rock_promotion(player, session=session)
-
-                # The frame-end boundary (native damage, ruling R8): what the
-                # post-step pass above reported -- radiation, hull breakup,
-                # collisions, scenery contact, rock promotion's restores --
-                # is delivered now, its deaths included, not a frame later.
-                with frame_profiler.scope("sim.effects_frame"):
-                    _effect_queue.boundary()
-
-                # The player's dash (engine/appc/dash.py): its align, its
-                # engage, and the drop-out of a flight that ended this frame
-                # -- before the hand-off tick, so a drop-out's own hand-off
-                # lands first.
-                with frame_profiler.scope("sim.travel"):
-                    if player is not None:
-                        from engine.appc import dash
-                        dash.tick(player, _player_dt)
-
-                    # The impulse region hand-off (in-system-warp spec section 3,
-                    # rule H): the player crosses into another region's sphere
-                    # under its own power. Runs after collisions (this frame's
-                    # last mover of the player) and before the scene reconcile,
-                    # which reads the player's containing set to decide what the
-                    # render scope shows this frame. A no-op while the player is
-                    # dashing (handoff._is_dashing) -- Task 4's drop-out calls
-                    # handoff.hand_off directly once the flight ends.
-                    if player is not None:
-                        from engine.systems import handoff
-                        handoff.tick(player)
-
-                # The scene reconcile (_reconcile_scene): load the player's
-                # system, realize / tear down / cull / hide ships for the
-                # render scope, and diff the viewed frame's map bodies. It
-                # reads frames.viewing_set(), so it runs HERE -- after every
-                # part of the frame's sim that can change the view (the timers
-                # in loop.tick, input and clicks that engage a warp, combat,
-                # the warp FSM, collisions) and immediately before
-                # _sync_instance_transforms, the camera and
-                # _apply_render_origin, which read the same view. Before the
-                # sim, a frame that changed the view drew map bodies in the
-                # OLD view's coordinates. INVARIANT: it is the FIRST visibility
-                # writer of the frame -- warp hide (in _sync_instance_
-                # transforms), SPV, bridge player and cloak all run after it
-                # and AND their conditions with scope_hidden, and the scope
-                # only writes on a change. Order guarded by
-                # tests/host/test_scene_reconcile_ordering.py.
-                with frame_profiler.scope("sim.reconcile"):
-                    _reconcile_scene(
-                        session, controller.renderer, nif_cache=controller,
-                        on_player_change=_on_player_change, verbose=verbose)
-                    # It may have retargeted session.player (RecreatePlayer).
-                    player = session.player if session is not None else None
-                    # The reconcile above may have just realized a player ship
-                    # RecreatePlayer created with an unknown (0) radius -- catch
-                    # up the cameras now that GetRadius() is real.
-                    _reconcile_camera_radius(director, player)
-
-                # Sync transforms for known instances: every ship is drawn
-                # through the native interpolation buffer (phase 3c). The
-                # player is drawn live while manually flown (integrated per
-                # render frame in _PlayerControl, already smooth) and
-                # interpolated otherwise; every other ship is integrated on
-                # the 60 Hz tick and drawn at lerp(prev, cur, _interp_alpha).
-                # advance_ticks rolled the buffer above; the frame-end
-                # capture below records the new current state. This only
-                # affects what is drawn — the ship objects keep live
-                # transforms, so physics/AI/combat are unaffected.
-                with frame_profiler.scope("sim.render_xforms"):
-                    if session is not None:
-                        # Render-pose provider: the camera (below) and the
-                        # renderer must anchor on IDENTICAL per-ship poses: both
-                        # read the native drawn pose (interp_sample /
-                        # interp_compose).
-                        _player_iid_i = (session.ship_instances.get(player)
-                                         if player is not None else None)
-                        # Interpolate the player render when it is NOT being flown
-                        # per render frame by _PlayerControl: a helm-AI / waypoint
-                        # order (GetAI) OR an active in-space cutscene (the player
-                        # is scripted, never manually flown then, and a cutscene
-                        # camera is commonly locked onto it — so its 60 Hz-stepped
-                        # motion must be interpolated or the whole shot judders).
-                        # An in-system dash too: its flight steps the ship on the
-                        # tick (_player_render_interpolated).
-                        _interp_player = _player_render_interpolated(
-                            player, sim_frozen=pause.sim_frozen,
-                            cutscene_active=_active_cutscene_camera() is not None)
-                        if _player_iid_i is not None:
-                            _set_interp_mode(session, _xform_buf,
-                                             _player_iid_i, not _interp_player)
-                        # The frame-end publish: every tracked ship's current
-                        # snapshot from the live store, after every per-frame
-                        # pose writer and before the camera samples it.
-                        _xform_buf.capture()
-                        # A hand-off (the same player, another region set): the
-                        # slot and any handover window hold the old set's
-                        # coordinates -- re-seed / drop them, and never open a
-                        # window from last frame's (old-set) drawn pose.
-                        _pset = (player.GetContainingSet()
-                                 if player is not None else None)
-                        if (player is not None
-                                and _prev_player_set[0] is player
-                                and _prev_player_set[1] is not None
-                                and _pset is not _prev_player_set[1]):
-                            _rebase_player_render(_xform_buf, _player_iid_i)
-                            _prev_drawn_player_pose = None
-                        _prev_player_set = (player, _pset)
-                        # The viewed set changed within the frame (a hand-off):
-                        # re-base the cameras and drop the dust history before
-                        # the camera is solved below.
-                        _view_now = _frames.viewing_set()
-                        _view_off = _view_rebase_offset(_prev_view_set, _view_now)
-                        if _view_off is not None:
-                            _rebase_view(r, director, _view_off)
-                        _prev_view_set = _view_now
-                        # Handover easing: the pipeline the player is drawn from
-                        # flips between live (manual) and interpolated (AI /
-                        # scripted), and those sit a tick apart. The window is
-                        # advanced ONCE a frame, here, ahead of both the
-                        # camera's sample and the sync's compose, so the two
-                        # see one elapsed time; a flip then opens a window
-                        # from the pose the compose drew last frame.
-                        host_io.interp_handover_advance(_player_dt)
-                        _drive_handover_smoother(
-                            _player_iid_i, _prev_interp_player, _interp_player,
-                            _prev_drawn_player_pose)
-                        _pose_of = _make_render_pose_provider(
-                            session, _xform_buf, _interp_alpha)
-                        # The camera's player pose (the same native drawn pose
-                        # the compose uses); kept as "a drawn pose exists" for
-                        # the next frame's handover begin, and for telemetry.
-                        _player_interp_pose = (
-                            _pose_of(player) if player is not None else None)
-                        _prev_interp_player = _interp_player
-                        _prev_drawn_player_pose = _player_interp_pose
-                        # Same game clock the decal system ages on
-                        # (engine.appc.damage_decals). Read once per frame.
-                        _sync_instance_transforms(
-                            r, session, player, _xform_buf, _interp_alpha,
-                            App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE,
-                            player_control=player_control,
-                            player_is_interpolated=_interp_player)
-            else:
-                # Frozen frame (pause, DevTools): no sim ran, so nothing
-                # changed the view; reconcile as every frame always has, still
-                # ahead of the SPV / bridge-player / cloak visibility writers.
-                with frame_profiler.scope("sim.reconcile"):
-                    _reconcile_scene(
-                        session, controller.renderer, nif_cache=controller,
-                        on_player_change=_on_player_change, verbose=verbose)
-                    player = session.player if session is not None else None
-                    # Same catch-up as the live branch above -- a frozen frame
-                    # (e.g. the pause menu opened the same tick RecreatePlayer
-                    # ran) must not leave the cameras on an unknown radius.
-                    _reconcile_camera_radius(director, player)
+            # --- frame sim: call ---
+            (_now, _wall_dt, _frame_dt, _player_dt, _frame_game_dt,
+             _interp_alpha, _sim_ticks_this_frame, _ships_this_tick, _pose_of,
+             _player_interp_pose, session, player) = _run_frame_sim(
+                _frame_ctx, mx=_mx, my=_my, cursor_in_panel=_cursor_in_panel)
+            # --- frame sim: call end ---
 
             # --- Ship Property Viewer's FORCED articulation pose ---
             # DELIBERATELY OUTSIDE the `if not pause.sim_frozen:` above. The
@@ -13253,8 +13486,11 @@ def run(mission_name: Optional[str] = None,
             # The exterior eye, in the VIEWED set's coordinates, set once per
             # running frame now that the camera is solved and BEFORE any
             # Space-pass feed is built; the combat feeds the sim produced
-            # above are built here for that reason. A frozen frame keeps the
-            # last origin and pushes no new combat feeds (as before).
+            # above are built here for that reason. A frame frozen from its
+            # top (pause, DevTools) ran no tick: it keeps the last origin and
+            # pushes no new combat feeds. A frame frozen mid-frame by a dev
+            # key in sim.keys still ran its whole ticks (ruling 2), so it has
+            # a ship list and applies the origin and pushes their feeds.
             if _ships_this_tick is not None:
                 with frame_profiler.scope("prep.origin"):
                     _apply_render_origin(r, eye)
@@ -13782,7 +14018,7 @@ def run(mission_name: Optional[str] = None,
                       file=sys.stderr, flush=True)
                 _notice_ended_at = None
             if motion_trace.enabled():
-                _mt_interp = locals().get("_interp_player")
+                _mt_interp = _frame_ctx.interp_player
                 motion_trace.record(
                     t_start=_now, frame_dt=_frame_dt,
                     ticks=_sim_ticks_this_frame, alpha=_interp_alpha,
