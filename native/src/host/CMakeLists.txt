@@ -64,6 +64,28 @@ endif()
 target_compile_features(dauntless PRIVATE cxx_std_20)
 target_include_directories(dauntless PRIVATE .)
 
+# /bigobj: host_bindings.cc is past MSVC's object-file section limit.
+#
+# A COFF object may hold 65,279 sections, and cl emits several per function.
+# host_bindings.cc is ~15k lines of pybind11 lambdas -- each one a function,
+# each template instantiation more -- and it crossed the limit when the
+# native combat and motion kernels added their bindings. The build then dies
+# with "fatal error C1128: number of sections exceeded object file format
+# limit: compile with /bigobj", which names the fix but not where to put it.
+#
+# Windows-only by nature: the limit is a COFF property, so ELF and Mach-O
+# never hit it and this never surfaces on macOS or Linux. pybind11 recommends
+# /bigobj for exactly this reason.
+#
+# On both targets, because both compile HOST_BINDINGS_SOURCES -- the exe
+# statically links the same translation unit the module builds. Target-wide
+# rather than per-source: the cost is a larger .obj and nothing at runtime,
+# and the next file to grow should not have to rediscover this error.
+if(MSVC)
+    target_compile_options(_dauntless_host PRIVATE /bigobj)
+    target_compile_options(dauntless       PRIVATE /bigobj)
+endif()
+
 set_target_properties(dauntless PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
