@@ -43,6 +43,9 @@ FAR = 135.0             # GU: past it
 
 @pytest.fixture(autouse=True)
 def _clean():
+    # The order test pins the WHOLE iter_ships() roster, so a set an earlier
+    # test left behind (test_trace_accel_prewarm's "S2"/"hull2") must go.
+    App.g_kSetManager._sets.clear()
     _set_current_game(None)
     nc.reset()
     passive_state.reset()
@@ -50,6 +53,7 @@ def _clean():
     nc.reset()
     passive_state.reset()
     _set_current_game(None)
+    App.g_kSetManager._sets.clear()
     App.g_kModelPropertyManager.ClearLocalTemplates()
 
 
