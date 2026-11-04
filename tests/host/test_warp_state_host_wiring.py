@@ -40,7 +40,7 @@ def test_warp_state_is_ticked_before_collisions_in_the_host_loop():
     import engine.host_loop as hl
     src = inspect.getsource(hl.run)
     assert "tick_warp_states(" not in src
-    i_ticks = src.index("_tick_gameloop, _interp_live_poses)")
+    i_ticks = src.index("_sim_ticks_this_frame, _tick_gameloop)")
     i_coll = src.index("collisions.tick_collisions(")
     assert i_ticks < i_coll, (
         "warp state must be advanced before collision resolution, or a ship "

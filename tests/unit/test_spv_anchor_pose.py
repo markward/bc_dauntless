@@ -215,8 +215,9 @@ def _guarded_and_free_articulation_calls():
                 for inner in ast.walk(body_stmt):
                     guarded_nodes.add(id(inner))
 
-    reaching = {"_sync_ship_articulation", "_sync_instance_transforms",
-                "_sync_spv_articulation"}
+    # `_sync_instance_transforms` no longer reaches it (phase 3a: the push
+    # follows the sim tick through `pose_sink`).
+    reaching = {"_sync_ship_articulation", "_sync_spv_articulation"}
     guarded, free = [], []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):

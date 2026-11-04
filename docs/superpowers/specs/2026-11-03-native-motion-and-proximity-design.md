@@ -181,6 +181,8 @@ Instead:
 
 ### 5.3 Phase 3 — sim-pose hit tests, glow, native interpolation
 
+**Done 2026-11-04** (`ws/motion-phase3`, tip `21672a1f6`): SIG-188, `sim.render_xforms` 1.96 → 0.69 ms a frame. Mark's decisions: no A/B switches; the player and its handover smoother go native. Live-verified by Mark the same day (64 ships > 25 fps through the battle, 30 before damage).
+
 **3a. Hit tests on sim poses (ruling 3).**
 - The trace hooks compose the ship's world matrix from the transform store, and from the published buffer once phase 4 lands, plus the **sim** articulation poses, instead of `g_world`'s instance matrix and float32 `node_overrides`.
 - Applies to K2 beam traces and part attribution, Manual Aim's `ray_trace_mesh` and `GetRandomPointOnModel`.

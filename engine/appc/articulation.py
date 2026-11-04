@@ -91,7 +91,7 @@ from __future__ import annotations
 
 import math
 
-from engine.appc import native_combat, part_pose
+from engine.appc import native_combat, part_pose, pose_sink
 
 
 # Multiply a MODEL (raw NIF) unit by this to reach a SHIP (hardpoint-authored)
@@ -376,7 +376,8 @@ def _store_forced(ship, poses) -> None:
         ship._articulation_poses = poses
         ship._articulation_transitions = {}
     except Exception:  # noqa: BLE001 - a prop / test double may reject it
-        pass
+        return
+    pose_sink.notify(ship)
 
 
 def reset() -> None:
@@ -500,6 +501,9 @@ def tick_ship(ship, dt: float) -> None:
         # In-place writes bypass the PosedPartsField rebind push: a part may
         # just have left, or reached, its NIF pose (the native combat flag).
         native_combat.push_posed_parts(ship)
+        # The render instance's node overrides (what the mesh trace reads)
+        # follow the sim pose per change, not per frame (phase 3a).
+        pose_sink.notify(ship)
 
 
 def time_to_reach(ship, state: str) -> float:

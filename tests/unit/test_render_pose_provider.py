@@ -1,11 +1,14 @@
-"""The render-pose provider feeds the camera and the renderer the SAME
-per-ship pose, so both draw/track identical positions (smooth-motion fix).
+"""The render-pose provider feeds the camera the SAME per-ship pose the
+renderer draws (smooth-motion fix).
 
-Policy:
-- Non-player ships integrate on the 60 Hz sim tick → always render-interpolated.
-- The player ship renders LIVE while manually flown (integrated per render
-  frame, already smooth), but must be interpolated when a helm-AI / waypoint
-  order drives it (then it too moves on the 60 Hz tick).
+Every ship the native buffer tracks, the player included, is read from its
+`sample`: the drawn pose `interp_compose` draws (the lerp for a ship on the
+60 Hz tick, the live store pose for the manually flown player, then the
+player's handover blend; pinned natively by
+tests/host/test_native_interp_bindings.py and
+tests/host/test_handover_continuity.py). Anything untracked, or tracked with
+nothing to draw, falls back to its live pose. A recording double stands in
+for NativeTransformBuffer here.
 """
 import pytest
 
@@ -28,59 +31,64 @@ class _FakeSession:
         self.ship_instances = mapping
 
 
-def _buffer_with(iid, prev_xyz, cur_xyz):
-    from engine.core.transform_buffer import TransformBuffer
+class _Buf:
+    """NativeTransformBuffer's has/sample surface, recording each sample."""
+
+    def __init__(self, poses):
+        self.poses = poses          # iid -> (loc, rot) | None
+        self.sampled = []
+
+    def has(self, iid):
+        return iid in self.poses
+
+    def sample(self, iid, alpha):
+        self.sampled.append((iid, alpha))
+        return self.poses[iid]
+
+
+def _pose(x):
     from engine.appc.math import TGPoint3, TGMatrix3
-    buf = TransformBuffer()
-    buf.set_current(iid, TGPoint3(*prev_xyz), TGMatrix3())  # seeds prev=cur
-    buf.roll()                                              # prev = first
-    buf.set_current(iid, TGPoint3(*cur_xyz), TGMatrix3())  # cur = second
-    return buf
+    return TGPoint3(x, 0.0, 0.0), TGMatrix3()
 
 
-def test_non_player_ship_is_interpolated():
+def test_a_tracked_ship_reads_the_native_drawn_pose():
     from engine.host_loop import _make_render_pose_provider
-    target = _FakeShip((0.0, 0.0, 0.0))
-    buf = _buffer_with(7, (0.0, 0.0, 0.0), (10.0, 0.0, 0.0))
-    session = _FakeSession({target: 7})
-
-    pose_of = _make_render_pose_provider(
-        session, buf, 0.5, interpolate_player=False, player_iid=99)
-    loc, rot = pose_of(target)
-    assert loc.x == pytest.approx(5.0)  # midpoint of prev(0) and cur(10)
+    ship = _FakeShip((0.0, 0.0, 0.0))
+    buf = _Buf({7: _pose(5.0)})
+    pose_of = _make_render_pose_provider(_FakeSession({ship: 7}), buf, 0.5)
+    loc, _rot = pose_of(ship)
+    assert loc.x == pytest.approx(5.0)
+    assert buf.sampled == [(7, 0.5)]
 
 
-def test_player_is_live_when_manually_flown():
+def test_the_player_reads_the_same_sample_as_any_ship():
+    """No player special case left in Python: its live mode and handover
+    blend are already in the native sample."""
     from engine.host_loop import _make_render_pose_provider
     player = _FakeShip((3.0, 0.0, 0.0))
-    buf = _buffer_with(1, (0.0, 0.0, 0.0), (10.0, 0.0, 0.0))
-    session = _FakeSession({player: 1})
-
-    pose_of = _make_render_pose_provider(
-        session, buf, 0.5, interpolate_player=False, player_iid=1)
-    loc, rot = pose_of(player)
-    assert loc.x == pytest.approx(3.0)  # LIVE pose, not the buffer midpoint
+    buf = _Buf({1: _pose(9.0)})
+    pose_of = _make_render_pose_provider(_FakeSession({player: 1}), buf, 0.25)
+    assert pose_of(player)[0].x == pytest.approx(9.0)
 
 
-def test_player_is_interpolated_when_ai_owned():
+def test_tracked_with_nothing_to_draw_falls_back_to_live():
     from engine.host_loop import _make_render_pose_provider
-    player = _FakeShip((3.0, 0.0, 0.0))
-    buf = _buffer_with(1, (0.0, 0.0, 0.0), (10.0, 0.0, 0.0))
-    session = _FakeSession({player: 1})
-
-    pose_of = _make_render_pose_provider(
-        session, buf, 0.5, interpolate_player=True, player_iid=1)
-    loc, rot = pose_of(player)
-    assert loc.x == pytest.approx(5.0)  # interpolated midpoint, not live 3.0
+    ship = _FakeShip((2.0, 4.0, 6.0))
+    buf = _Buf({7: None})
+    pose_of = _make_render_pose_provider(_FakeSession({ship: 7}), buf, 0.5)
+    loc, _rot = pose_of(ship)
+    assert (loc.x, loc.y, loc.z) == pytest.approx((2.0, 4.0, 6.0))
 
 
-def test_unknown_object_falls_back_to_live():
+def test_unknown_object_falls_back_to_live_without_sampling():
     from engine.host_loop import _make_render_pose_provider
     stray = _FakeShip((2.0, 4.0, 6.0))
-    buf = _buffer_with(1, (0.0, 0.0, 0.0), (10.0, 0.0, 0.0))
-    session = _FakeSession({})  # stray not in the mapping
-
+    untracked = _FakeShip((1.0, 1.0, 1.0))
+    buf = _Buf({1: _pose(10.0)})
     pose_of = _make_render_pose_provider(
-        session, buf, 0.5, interpolate_player=True, player_iid=1)
-    loc, rot = pose_of(stray)
+        _FakeSession({untracked: 3}), buf, 0.5)
+    loc, _rot = pose_of(stray)
     assert (loc.x, loc.y, loc.z) == pytest.approx((2.0, 4.0, 6.0))
+    loc, _rot = pose_of(untracked)
+    assert (loc.x, loc.y, loc.z) == pytest.approx((1.0, 1.0, 1.0))
+    assert buf.sampled == []

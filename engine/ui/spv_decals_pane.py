@@ -616,7 +616,8 @@ class DecalsPaneMixin:
             hit, mesh = hit[:3], hit[3]
         else:
             try:
-                hit = host_io.ray_trace_mesh(iid, (o.x, o.y, o.z), direction, cam.far)
+                hit = host_io.ray_trace_mesh(iid, (o.x, o.y, o.z), direction,
+                                             cam.far, drawn=True)
             except Exception:
                 hit = None
         if hit is None:
@@ -625,8 +626,10 @@ class DecalsPaneMixin:
         # The hit is in VIEW coordinates, which is what world_to_body takes
         # (the host_io Python wrapper subtracts the instance translation,
         # then the native call inverts the instance's own world_linear).
+        # Both ask for the DRAWN pose: the author clicks what is drawn.
         try:
-            body = host_io.world_to_body(iid, (px, py, pz), tuple(normal))
+            body = host_io.world_to_body(iid, (px, py, pz), tuple(normal),
+                                         drawn=True)
         except Exception:
             body = None
         if body is None:

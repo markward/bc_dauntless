@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. In this repo: one `tdd-engineer` subagent per task, in order, focused tests only, commit between tasks, stop on any BLOCKED (CLAUDE.md "Executing plans").
 
-**Status:** LOOK-AHEAD DRAFT, written 2026-11-04 on `ws/motion-kernel` (`87401fe33`) while phase 2 is being planned. No phase 2 plan existed when this was written (`docs/superpowers/plans/2026-11-04-native-motion-phase2.md` absent), so phase 2 is taken from spec §5.2 as written. Before Task 1: re-check the "Assumes from phase 2" list against what phase 2 actually built, and re-check every line reference below (they are against `87401fe33`).
+**Status:** APPROVED by Mark 2026-11-04 (decisions below). Refreshed 2026-11-04 against phase 2 as merged (`6fe9eaec4`). Every "Assumes from phase 2" item holds; corrections are inline. Line references were written against `87401fe33`: since then `host_loop.py` moved by about −5 after line 1405 and `host_bindings.cc` by +4 to +10, so find each site by name.
 
 **Goal:** Take gameplay off the drawn pose (hit tests read the simulation pose), stop resending unchanged glow state every frame, and move render interpolation into C++, cutting `sim.render_xforms` from ≈ 1.9–2.0 ms a frame by ≈ 1.3–1.5 ms (64-ship Debug fight).
 
@@ -16,19 +16,19 @@
 
 1. **P2-1** Motion kernel M is the only writer of ship poses inside a tick, and writes the **live** `TransformStore` slots that `ObjectClass._xform` (index, generation) names (spec §5.2). Phase 3 reads only the live store.
 2. **P2-2** The tractor force step now runs inside the motion stage (Mark 2026-11-04), so by the time combat runs in a tick, the live store already holds the tractor's pull. Phase 3 does not call or move it.
-3. **P2-3** The motion-end published buffer exists: 64 × 15 doubles, tick-tagged, written at the end of the motion stage. **Phase 3 reads nothing from it.** 3a reads the live store (spec: "from the published buffer once phase 4 lands"), and `hit_pose_of` is the one place phase 4 switches. 3c's frame-end snapshot is its own per-instance capture (contradiction 7). If phase 2 names the buffer, only the comment on `hit_pose_of` cites it.
+3. **P2-3** The motion-end published buffer exists: 15 doubles per non-rock ship (sized to the roster), tagged with a per-publish counter (not the GameLoop tick), written at the end of the motion stage. **Phase 3 reads nothing from it.** 3a reads the live store (spec: "from the published buffer once phase 4 lands"), and `hit_pose_of` is the one place phase 4 switches. 3c's frame-end snapshot is its own per-instance capture (contradiction 7). If phase 2 names the buffer, only the comment on `hit_pose_of` cites it.
 4. **P2-4** `TransformStore::Transform` (`pos[3]`, row-major `rot[9]`), `compose_world_linear_translation`, `TransformStore::valid/at` and the `_xform` handle shape are unchanged by phase 2.
 5. **P2-5** Phase 2 does not touch `_sync_instance_transforms`, `TransformBuffer`, `advance_ticks`, `articulation.tick_ship` (still called per ship per tick from `loop.py:177`) or `native_combat.push_posed_parts`.
 6. **P2-6** The manually flown player stays on `_PlayerControl` (spec non-goal), so its render instance stays store-bound (`_apply_live_world_transform`).
 7. **P2-7** Phase 2 adds no per-frame pose writer. The per-frame writers 3c's frame-end capture must follow are still collisions, debris, dash, the hand-off rebase (spec §5.3 3c).
 
-### Open questions for Mark
+### Mark's decisions (2026-11-04)
 
-1. **Scope of 3a.** Should every gameplay point query move to the sim pose, not just the three the spec names? That means collisions, splash, internal blast, visible damage, the starbase gate, and the world→body / decal / hull-damage / shield-splash conversions. The plan assumes yes (contradiction 3).
-2. **A/B switches.** Keep `DAUNTLESS_HIT_POSE=drawn` and `DAUNTLESS_NATIVE_INTERP=0` until your live look, then retire them (Task 9)?
-3. **Interpolated player.** It keeps its Python push, because the handover smoother blends its pose in Python (contradiction 6). OK?
-4. **Glow tail.** The plan snaps the eased impulse throttle to exactly 0 below `1e-3` so its gain push can stop, a brightness change of ≤ 0.2% at the end of a slow-down. OK?
-5. **Measurement.** Task 8 launches `./build/dauntless` headless four times. Go-ahead needed when it is reached.
+1. **3a scope:** every gameplay point query moves to the sim pose (contradiction 3). Default taken.
+2. **No A/B switches.** No `DAUNTLESS_HIT_POSE`, no `DAUNTLESS_NATIVE_INTERP`: each change replaces the old path outright. The Python `TransformBuffer`, `interpolate.py` and `HandoverSmoother` stay only as test oracles for the C++ twins. (The old Task 9, retiring the switches, is gone: Task 7 deletes the Python render path itself.)
+3. **The player goes native too**, interpolated or live, including the handover smoother (overrides contradiction 6). The native buffer owns a per-instance handover blend, and one native function gives the drawn pose to both `pose_of` (the camera) and the compose (the renderer), so they cannot disagree.
+4. **Glow tail:** snap below `1e-3`. Default taken.
+5. **Measurement** (Task 8): cleared; run it when reached, on an idle machine.
 
 ### Where the code contradicts or goes past the spec
 
@@ -37,7 +37,7 @@
 3. **Part attribution and hit anchoring are not traces.** `hit_feedback.py:481` → `host_io.world_to_body` → `part_severance.record_hit`. Decals, hull damage and the shield splash all invert the drawn `world_linear` (`host_bindings.cc:702-713`, `:3537-3543`, `:11231`). If only the trace moves, a sim-pose hit goes through a drawn-pose inverse and lands off the hull by the lag.
 4. **Manual Aim already mixes poses.** It traces the drawn hull but takes the offset against the live pose (`manual_aim.py:192-197`, `combat._body_frame_delta`). 3a fixes this without touching `manual_aim.py`.
 5. **`GetRandomPointOnModel` does not trace.** It reads `instance_surface_points`, which uses the render-space `in->world` plus the render origin (`host_bindings.cc:7056-7071`), so it needs its own switch.
-6. **The interpolated player cannot be composed natively as the spec says.** Spec 3c: "frame() composes `inst->world` for every bound ship". The interpolated player is drawn from `pose_of` with the Python handover smoother (`host_loop.py:9903-9932`, `:12996-13010`). So it is tracked natively but still pushed from Python.
+6. **The player's handover smoother moves to C++ with it** (Mark's decision 3). It is drawn from `pose_of` with the Python handover smoother today (`host_loop.py:9898-9932`, `:12990-13011`). Natively, the player is a composed instance with a mode (live: the store pose; interpolated: the lerp) plus an optional handover blend that starts from the pose the compose last drew.
 7. **Render does not read "published poses at tick ends".** That is spec §6's render row; §5.3 3c says the renderer reads a frame-end publish. The plan follows 3c. The snapshot is per **instance**, not per motion row, because it must also cover rocks (`rocks.motion`) and immobile stations.
 8. **`set_current` runs at two sites today:** `host_loop.py:12970` (the interpolated player) and `:10214` (all others). Both run after every per-frame writer. The native capture runs once, at the first.
 9. **The view offset moves from 3c into 3a.** Mesh queries speak VIEW coordinates (`host_io.py:361-366`, `frames.view_offset`). A store pose is set-local, so the per-set view offset must reach the native side in 3a, not 3c.
@@ -45,14 +45,14 @@
 
 ## Global Constraints
 
-- **Worktree only.** Phase 3 runs on its own branch (Mark: one branch per phase), `ws/motion-phase3` (name to confirm), forked from `project/native-motion-and-proximity` after phase 2 has merged back. **Never commit to `main`.**
+- **Worktree only.** Phase 3 runs on its own branch (Mark: one branch per phase), `ws/motion-phase3`, forked from `project/native-motion-and-proximity` after phase 2 has merged back. **Never commit to `main`.**
 - **Banned git commands:** `git checkout -- <path>`, `git checkout .`, `git restore`, `git stash`, `git clean`, `git reset --hard`, `git add -A`, `git add .`. Stage with explicit pathspecs. To mutate a file temporarily: `cp` to `/tmp`, mutate, `cp` back, `diff`.
 - **Focused test files only:** `uv run pytest <file> [<file> ...] -q`, never an empty file list, never a directory, never `scripts/check_tests.sh` or a whole suite.
 - **Build:** `cmake --build build -j` from the worktree root only. Never reconfigure, never run cmake inside `native/`.
 - **No benchmarks** except Task 8, on an idle machine, with Mark's go-ahead. **Game launches (headless included) only with Mark's say-so.**
 - **Goldens:** re-record only with `UPDATE_COMBAT_GOLDEN=1 COMBAT_GOLDEN_REASON="<why>"`, in their own commit. Phase 3 expects none (contradiction 2): a changed golden is a stop-and-report.
 - **Anti-goal (spec §4):** gameplay never reads presentation state. After Task 3 no gameplay caller may pass `drawn=True`; only pick tools (`ray_trace_mesh_pick`, the SPV decals pane), `bridge_mesh_geometry` and the hull-discharge VFX do.
-- **Visual changes need Mark's live look** (Task 8). Beam ends and Manual Aim picks move by at most the interpolation lag. Task 3 bounds this headless, and Mark A/Bs it with `DAUNTLESS_HIT_POSE=drawn`.
+- **Visual changes need Mark's live look** (Task 8). Beam ends and Manual Aim picks move by at most the interpolation lag. Task 3 bounds this headless.
 - **Pose rules (CLAUDE.md):** never rebuild a world position in Python from `GetWorldLocation/Rotation` for anything the renderer draws through `inst->world`. Attached lights keep resolving in `frame()` after the store sweep.
 
 ## Review Focus
@@ -108,7 +108,7 @@ def test_emissive_scale_pushed_on_change_only(): ...
 **Files:**
 - Modify: `native/src/scenegraph/include/scenegraph/instance.h` (new fields after `xform_scale`; `World::create_instance` already resets the whole `Instance`, `world.cc:18`)
 - Modify: `native/src/host/host_bindings.cc`:
-  - new `hit_pose_of` + `g_hit_pose_drawn` beside `instance_translation_for_python` (:686);
+  - new `hit_pose_of` beside `instance_translation_for_python` (:686);
   - switch `instance_translation_for_python` (:686), `push_shield_hit` (:702), `trace_instance_for_python` (:721), `to_body_frame` / `radius_to_model` (:3533-3543), `world_to_body` (:11217) and `instance_surface_points` (:7056) to it;
   - new bindings beside `set_instance_transform_slot` (:6483);
   - `drawn` kwargs on `instance_translation` (:6471), `ray_trace_mesh` (:10409), `world_to_body` and `instance_surface_points`.
@@ -117,15 +117,15 @@ def test_emissive_scale_pushed_on_change_only(): ...
 
 **Interfaces:**
 - Produces (C++, `instance.h`): `int sim_xform_index = -1; std::uint32_t sim_xform_generation = 0; double sim_scale = 1.0; glm::dvec3 sim_view_offset{0.0};`
-- Produces (C++, host_bindings.cc file scope): `struct HitPose { glm::mat3 linear; glm::dvec3 translation; };` and `HitPose hit_pose_of(const scenegraph::Instance& inst, bool drawn);`. The rule: when `!drawn && !g_hit_pose_drawn && inst.sim_xform_index >= 0` and the store slot is valid, `compose_world_linear_translation(store.at(i), inst.sim_scale, linear, translation)` then `translation += inst.sim_view_offset`. Otherwise `{inst.world_linear, inst.world_translation_d}`. The comment states that phase 4 switches its store read to the published buffer.
-- Produces (bindings): `set_instance_sim_source(iid, index: int, generation: int, scale: float, view_offset: tuple[float, float, float]) -> None` (`index < 0` clears) and `set_hit_pose_drawn(flag: bool) -> None`, plus `instance_translation(iid, drawn=False)`, `ray_trace_mesh(iid, origin, direction, max_dist, rest_pose=False, drawn=False)`, `world_to_body(iid, point, normal, drawn=False)` and `instance_surface_points(iid, drawn=False)`. `shield_hit`, `damage_decal_add`, `hull_damage_add` and `hull_damage_add_body`'s radius take no flag: they always use the sim pose, because their points are gameplay hit points.
-- Produces (Python, `host_io`): `set_instance_sim_source(iid, index, generation, scale, view_offset) -> bool` (False headless or for a non-`InstanceId`, as `set_instance_transform_slot`), `set_hit_pose_drawn(flag) -> None`, `ray_trace_mesh(..., rest_pose=False, drawn=False)`, `world_to_body(..., drawn=False)`. Both new names go in `_REQUIRED_BINDINGS`.
+- Produces (C++, host_bindings.cc file scope): `struct HitPose { glm::mat3 linear; glm::dvec3 translation; };` and `HitPose hit_pose_of(const scenegraph::Instance& inst, bool drawn);`. The rule: when `!drawn && inst.sim_xform_index >= 0` and the store slot is valid, `compose_world_linear_translation(store.at(i), inst.sim_scale, linear, translation)` then `translation += inst.sim_view_offset`. Otherwise `{inst.world_linear, inst.world_translation_d}`. The comment states that phase 4 switches its store read to the published buffer.
+- Produces (bindings): `set_instance_sim_source(iid, index: int, generation: int, scale: float, view_offset: tuple[float, float, float]) -> None` (`index < 0` clears), plus `instance_translation(iid, drawn=False)`, `ray_trace_mesh(iid, origin, direction, max_dist, rest_pose=False, drawn=False)`, `world_to_body(iid, point, normal, drawn=False)` and `instance_surface_points(iid, drawn=False)`. `shield_hit`, `damage_decal_add`, `hull_damage_add` and `hull_damage_add_body`'s radius take no flag: they always use the sim pose, because their points are gameplay hit points.
+- Produces (Python, `host_io`): `set_instance_sim_source(iid, index, generation, scale, view_offset) -> bool` (False headless or for a non-`InstanceId`, as `set_instance_transform_slot`), `ray_trace_mesh(..., rest_pose=False, drawn=False)`, `world_to_body(..., drawn=False)`. The new name goes in `_REQUIRED_BINDINGS`.
 - K2/K3's `combat_trace_hooks()` (:758) need no change: they call the two switched functions with `drawn=false`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/host/test_sim_pose_hit_tests.py`. Use a model-0 instance for the pose tests and the Galaxy fixture pattern of `tests/host/test_mesh_ray_trace.py` (skip without BC assets) for traces. An `ObjectClass` supplies the store slot.
 
 ```python
-def test_bindings_present(): assert hasattr(_h, "set_instance_sim_source") and hasattr(_h, "set_hit_pose_drawn")
+def test_binding_present(): assert hasattr(_h, "set_instance_sim_source")
 def test_translation_is_the_store_pose_plus_view_offset():
     # obj at (100, 50, -7); drawn pushed at identity; source (idx, gen, 2.0, (10, 0, 0))
     # instance_translation(iid) == (110.0, 50.0, -7.0); instance_translation(iid, drawn=True) == (0, 0, 0)
@@ -143,7 +143,6 @@ def test_hull_damage_and_decal_record_the_sim_body_point(galaxy):
     # body point == host_io.world_to_body(iid, p, n)[0] within 1e-4
 def test_surface_points_follow_the_sim_pose(galaxy):
     # identity rotations: each instance_surface_points(iid)[k] == drawn point + (sim - drawn translation) within 1e-3
-def test_hit_pose_drawn_switch_restores_the_drawn_pose(): ...  # set_hit_pose_drawn(True) then False
 ```
 
 - [ ] **Step 2:** Run `cmake --build build -j`, then `uv run pytest tests/host/test_sim_pose_hit_tests.py -q`. Expected: FAIL (no binding).
@@ -157,16 +156,14 @@ def test_hit_pose_drawn_switch_restores_the_drawn_pose(): ...  # set_hit_pose_dr
 - Modify: `engine/host_loop.py`:
   - new `_mark_sim_source(session, ship, iid, model_scale)` beside `_mark_rigged` (:6849), called right after `_mark_rigged` at both realize sites (:7063, :8368);
   - `_sync_instance_transforms` (:10155-10219) pushes each ship's source on change (`MissionSession.sim_sources: dict`, pruned with the glow controllers);
-  - `run()` setup reads `DAUNTLESS_HIT_POSE` once (`_apply_hit_pose_switch()`);
   - the hull-discharge sample (:12795) passes `drawn=True`.
 - Modify: `engine/ui/spv_decals_pane.py` (:619 fallback trace and :629 `world_to_body` pass `drawn=True`)
 - Modify: `docs/reference/engine/native-combat/lock-map.md` (:278-280, :329: the trace hooks read the store plus the per-change node overrides, no longer the render sync)
 - Test: `tests/unit/test_sim_source_push.py` (new), `tests/host/test_sim_pose_consumers.py` (new), `tests/host/test_native_beam_trace.py` (one new test); re-run `tests/unit/test_render_transform_binding.py tests/unit/test_manual_aim.py tests/unit/test_object_random_point_on_model.py tests/host/test_spv_decals_e2e.py tests/unit/test_combat_hit_resolution.py tests/integration/test_golden_fights.py`
 
 **Interfaces:**
-- Consumes: Task 2's `host_io.set_instance_sim_source`, `set_hit_pose_drawn`, the `drawn=` kwargs.
+- Consumes: Task 2's `host_io.set_instance_sim_source` and the `drawn=` kwargs.
 - Produces: `_push_sim_source(session, ship, iid, scale: float, view_offset: tuple | None) -> None`, guarded on `session.sim_sources.get(iid) == (index, gen, scale, off)`. `view_offset` is the same `_view_offset(ship)` value the drawn push uses today (`None` → `(0.0, 0.0, 0.0)`), and `scale` is `model_scale * GetScale()`. Task 7 reuses this helper.
-- Produces: `_apply_hit_pose_switch() -> None`, which calls `host_io.set_hit_pose_drawn(os.environ.get("DAUNTLESS_HIT_POSE") == "drawn")`.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -178,7 +175,6 @@ def test_sim_source_is_pushed_only_on_change(): ...      # second sync adds noth
 def test_a_sibling_region_ship_gets_frames_view_offset(monkeypatch): ...
     # frames.viewing_set / offset_between patched: pushed offset == frames.view_offset(frames.containing_set(ship))
 def test_both_realize_sites_mark_the_sim_source(): ...   # source parse: `_mark_sim_source(` follows `_mark_rigged(` in both
-def test_hit_pose_switch_reads_the_env(monkeypatch): ... # DAUNTLESS_HIT_POSE=drawn -> set_hit_pose_drawn(True); unset -> False
 def test_spv_decal_pick_asks_for_the_drawn_pose(monkeypatch): ...  # recorded kwargs carry drawn=True
 
 # tests/host/test_native_beam_trace.py
@@ -200,7 +196,7 @@ def test_sim_and_drawn_hits_differ_by_at_most_the_interpolation_lag(): ...
 - [ ] **Step 2:** Run `uv run pytest tests/unit/test_sim_source_push.py tests/host/test_sim_pose_consumers.py tests/host/test_native_beam_trace.py -q`. Expected: the new tests FAIL.
 - [ ] **Step 3:** Implement the interfaces. In `_sync_instance_transforms`, call `_push_sim_source` for every ship, the player included, before the existing branches, reusing `_off` and `_ps`. The manual player's offset is None, so its source matches its store binding.
 - [ ] **Step 4:** Run every file under Test. Expected: PASS, and `test_golden_fights.py` **unchanged** (contradiction 2). If a golden differs, stop and report BLOCKED with the diff.
-- [ ] **Step 5: Commit** the source files, `lock-map.md` and the tests: `feat(combat): hit tests read the sim pose (phase 3a, ruling 3)`. The message states that beam ends and Manual Aim picks move by at most one tick's lag, A/B with `DAUNTLESS_HIT_POSE=drawn`, and that the goldens are unchanged.
+- [ ] **Step 5: Commit** the source files, `lock-map.md` and the tests: `feat(combat): hit tests read the sim pose (phase 3a, ruling 3)`. The message states that beam ends and Manual Aim picks move by at most one tick's lag and that the goldens are unchanged.
 
 ### Task 4: Articulated part overrides pushed when the sim pose changes, not per frame (3a)
 
@@ -267,10 +263,19 @@ public:
     void clear();
     bool sample(Key k, double alpha, Pose& out) const;  // false for an unknown key
 };
+// HandoverSmoother's twin (engine/core/handover_smoother.py): blend from a
+// frozen pose to the true one over kHandoverSeconds = 0.36, same weights.
+struct HandoverBlend {
+    bool active() const;
+    void begin(const Pose& frozen);                // re-freezes when already active
+    void advance(double dt);
+    void cancel();
+    Pose blend(const Pose& truth) const;           // truth itself when inactive
+};
 }
 ```
 
-- Produces (binding): `_test_only_interp_lerp(prev_pos, prev_rot9, cur_pos, cur_rot9, alpha) -> (pos3, rot9)`.
+- Produces (bindings): `_test_only_interp_lerp(prev_pos, prev_rot9, cur_pos, cur_rot9, alpha) -> (pos3, rot9)` and `_test_only_handover_blend(frozen_pos, frozen_rot9, truth_pos, truth_rot9, elapsed) -> (pos3, rot9)`.
 
 - [ ] **Step 1: Write the failing tests.** gtest: `InterpBuffer.NewKeySeedsPrevEqualCur`, `RollThenCaptureBlendsAcrossTheLastTick`, `CaptureWithoutRollMovesOnlyCur`, `SetPreviousIgnoresUntracked`, `SnapSetsBoth`, `EraseAndClear`, `SampleUnknownIsFalse`, `LerpPose.OrthonormalRightHanded` (det = +1 within 1e-12), `LerpPose.ZeroMatrixDoesNotCrash`, `LerpPose.DegenerateForwardFallsBackToEndpoint`, `LerpPose.ZeroUpColumnOnly`. These are the degenerate cases of `tests/unit/test_interpolate.py:88-106`. Python:
 
@@ -279,11 +284,12 @@ def test_twin_matches_interpolate_on_random_poses(): ...
     # seeded random.Random(20261104), 2,000 (prev, cur, alpha) with rotations from MakeRotation:
     # every element |native - python| <= 1e-12
 def test_twin_matches_every_degenerate_case(): ...   # the four test_interpolate.py degenerate inputs, element for element
+def test_handover_twin_matches_the_python_smoother(): ...  # seeded poses, elapsed in (0, 0.09, 0.18, 0.36, 0.5): |native - python| <= 1e-12
 ```
 
 - [ ] **Step 2:** Run `cmake --build build -j`. Expected: build fails or `ctest --test-dir build -R "InterpBuffer|LerpPose"` FAILS.
 - [ ] **Step 3:** Implement. Read columns as `rot[r*3 + c]`, column c = body axis, as in `interpolate.py`'s `GetCol`.
-- [ ] **Step 4:** Rebuild, then run `ctest --test-dir build -R "InterpBuffer|LerpPose"` and `uv run pytest tests/host/test_native_interp_twin.py tests/unit/test_interpolate.py -q`. Expected: PASS.
+- [ ] **Step 4:** Rebuild, then run `ctest --test-dir build -R "InterpBuffer|LerpPose"` and `uv run pytest tests/host/test_native_interp_twin.py tests/unit/test_interpolate.py tests/unit/test_handover_smoother.py -q`. Expected: PASS.
 - [ ] **Step 5: Commit** the six files: `feat(transforms): native render interpolation buffer (phase 3c)`.
 
 ### Task 6: Host interpolation bindings (3c, host half)
@@ -302,8 +308,10 @@ def test_twin_matches_every_degenerate_case(): ...   # the four test_interpolate
   - `interp_capture() -> None`: the **frame-end publish**, `capture` from the live store for every tracked instance with a valid source; a stale source is skipped.
   - `interp_snap(iid) -> None`: snap to the live store.
   - `interp_reset_all() -> None`: `g_interp.clear()`. Tracked flags stay, and the next capture re-seeds.
-  - `interp_sample(iid, alpha) -> tuple[tuple3, tuple9] | None`: set-local, no scale, no view offset (what `TransformBuffer.sample` returns).
-  - `interp_compose(alpha) -> None`: for every alive instance with `interp_compose`, `lerp_pose` → `compose_world_linear_translation(pose, sim_scale)` → `+ sim_view_offset` → `World::set_world_transform_d`, then the compose flag is restored. Compose reads only snapshots, never the live store, except a tracked instance with no snapshot yet, which seeds from the store first.
+  - `interp_set_live(iid, live: bool) -> None`: a live instance is drawn from its sim source's store pose instead of the lerp (the manually flown player).
+  - `interp_handover_begin(iid) -> None` (freezes the pose the compose last drew for `iid`; no-op if it has none), `interp_handover_advance(dt) -> None`, `interp_handover_cancel() -> None`, `interp_handover_active() -> bool`. One blend, for one instance at a time (the player).
+  - `interp_sample(iid, alpha)` returns the **drawn** pose: live or lerp, then the handover blend for the blended instance. Set-local, no scale, no view offset.
+  - `interp_compose(alpha) -> None`: for every alive instance with `interp_compose`, the same drawn pose as `interp_sample` → `compose_world_linear_translation(pose, sim_scale)` → `+ sim_view_offset` → `World::set_world_transform_d`, then the compose flag is restored and the pose kept as that instance's last drawn pose. Compose reads only snapshots (and, for a live instance, the store), except a tracked instance with no snapshot yet, which seeds from the store first.
 
 - [ ] **Step 1: Write the failing tests** (model-0 instances, `ObjectClass` slots, read back via `instance_translation(iid, drawn=True)` and `world_to_body(..., drawn=True)`):
 
@@ -314,7 +322,10 @@ def test_compose_draws_the_lerp_with_scale_and_view_offset(): ...
 def test_capture_without_roll_moves_only_cur(): ...        # Review Focus 1
 def test_reseat_puts_prev_one_tick_behind(): ...
 def test_capture_skips_a_stale_source(): ...               # Review Focus 3: transform_free -> last snapshot kept, no raise
-def test_track_only_is_never_composed(): ...               # the interpolated player: pushed matrix survives interp_compose
+def test_track_only_is_never_composed(): ...               # pushed matrix survives interp_compose
+def test_live_instance_draws_the_store_pose(): ...
+def test_handover_blends_from_the_last_drawn_pose(): ...    # live -> interp flip: first composed frame == last drawn pose; after 0.36 s == the lerp
+def test_handover_cancel_snaps_to_truth(): ...
 def test_a_push_clears_compose(): ...                      # set_world_transform after tracking -> compose skips it
 def test_binding_to_a_slot_clears_compose(): ...
 def test_destroy_erases_the_snapshot(): ...                # recycled slot never inherits it
@@ -334,10 +345,12 @@ def test_sample_matches_compose_before_scale_and_offset(): ...
 - Create: `engine/core/native_transform_buffer.py`
 - Modify: `engine/core/transform_buffer.py` (`advance_ticks` :66: when `buf` has `reseat_from_live`, call it in place of the `live_poses()` loop)
 - Modify: `engine/host_loop.py`:
-  - `run()` :11758-11760 builds `NativeTransformBuffer()` unless `DAUNTLESS_NATIVE_INTERP=0` or the bindings are absent;
-  - the player capture site :12966-12973 becomes `track(player_iid, compose=False)` / `untrack` + `capture()` under the native buffer;
-  - `_rebase_player_render` :9892 calls `snap(iid)`;
-  - `_sync_instance_transforms` :10200-10222: when `isinstance(xform_buf, NativeTransformBuffer)`, non-player ships get `track(iid, compose=True)` (guarded in `session.interp_modes`), no per-ship `set_current` / `sample` / `set_world_transform`, then `host_io.interp_compose(interp_alpha)` after the loop, and `prune` untracks dropped iids. The player path is unchanged except `_set_interp_mode(..., compose=False)` before its push.
+  - `run()` builds `NativeTransformBuffer()` (no switch; the Python `TransformBuffer` branch and `_interp_live_poses` are deleted);
+  - the player capture site (≈ :12960-12968) becomes `track(player_iid, compose=True)` + `set_live(player_iid, not _interp_player)`, and the frame-end `capture()`;
+  - `_drive_handover_smoother` calls `interp_handover_begin(player_iid)` on a flip; `_handover.advance` / `.cancel()` become `interp_handover_advance` / `interp_handover_cancel`; the Python `HandoverSmoother` instance is gone from `run()` (the module stays as the twin oracle);
+  - `_rebase_player_render` calls `snap(iid)` and `interp_handover_cancel()`;
+  - `_make_render_pose_provider` reads `xform_buf.sample(iid, alpha)` for every tracked ship, the player included (the blend is already in it), and falls back to the live pose only for an untracked object;
+  - `_sync_instance_transforms`: every ship, the player included, gets `track(iid, compose=True)` (guarded in `session.interp_modes`); no per-ship `set_current` / `sample` / `set_world_transform` and no player store binding for drawing; then `host_io.interp_compose(interp_alpha)` after the loop, and `prune` untracks dropped iids.
 - Modify: `engine/host_io.py` (wrappers for Task 6's bindings, in `_REQUIRED_BINDINGS`)
 - Modify: `CLAUDE.md` ("Ship-attached dynamic lights" row: interpolated hulls are composed natively from the frame-end capture; a ⚠️ that gameplay point queries read `hit_pose_of`, pick tools pass `drawn=True`)
 - Test: `tests/unit/test_native_interp_host_loop.py` (new), `tests/unit/test_transform_buffer.py` (two new tests); re-run `tests/unit/test_render_transform_binding.py tests/unit/test_interpolate.py tests/host/test_handover_continuity.py tests/unit/test_running_lights_host_push.py tests/host/test_scene_reconcile_ordering.py tests/host/test_frame_rate_independence.py tests/host/test_instance_transform_slots.py tests/unit/test_spv_anchor_pose.py`
@@ -345,7 +358,7 @@ def test_sample_matches_compose_before_scale_and_offset(): ...
 **Interfaces:**
 - Consumes: Task 6's bindings through `host_io`, Task 3's `_push_sim_source`.
 - Produces: `class NativeTransformBuffer` with `has(iid) -> bool`, `roll()`, `reseat_from_live()`, `capture()`, `track(iid, compose: bool)`, `untrack(iid)`, `snap(iid, *_ignored)`, `reset_all()`, `prune(live_iids)`, and `sample(iid, alpha) -> tuple[TGPoint3, TGMatrix3] | None`. It keeps the Python-side set of tracked iids. `sample` has the same return shape as `TransformBuffer.sample`, so `_make_render_pose_provider` (:9903) is unchanged.
-- The Python `TransformBuffer` path stays whole behind `DAUNTLESS_NATIVE_INTERP=0`. Every existing test that passes a `TransformBuffer` exercises it unchanged.
+- No Python render path remains. Tests that drove `_sync_instance_transforms` with a Python `TransformBuffer` (`tests/unit/test_render_transform_binding.py`, `tests/host/test_handover_continuity.py`) are repointed to the native buffer (or a recording double of `NativeTransformBuffer`) in this commit.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -357,12 +370,11 @@ def test_advance_ticks_never_reseats_a_one_tick_frame(): ...
 # tests/unit/test_native_interp_host_loop.py  (host_io interp_* and set_instance_sim_source stubbed, recorded in order)
 def test_non_player_ships_are_tracked_and_composed_never_pushed(): ...  # r.pushed == []; track(2, compose=True) once over 3 frames
 def test_compose_runs_once_after_the_ship_loop_with_this_frames_alpha(): ...
-def test_interpolated_player_is_tracked_without_compose_and_pushed(): ... # r.pushed == [player_iid]
-def test_manual_player_is_bound_and_untracked(): ...
+def test_player_is_composed_natively_in_both_modes(): ...   # r.pushed == []; set_live follows _player_render_interpolated
+def test_pose_of_player_equals_the_composed_pose(): ...      # camera and hull agree, during a handover window too
 def test_capture_runs_before_the_camera_pose_is_resolved(): ...           # source order in run(): capture( before _pose_of(
 def test_player_hand_off_snaps_native_slot(): ...                         # Review Focus 4
 def test_reset_all_reseeds_without_smear(): ...                           # _snap_scene / _on_player_change -> interp_reset_all
-def test_switch_off_keeps_the_python_path(monkeypatch): ...               # DAUNTLESS_NATIVE_INTERP=0 -> TransformBuffer, ships pushed
 def test_drawn_motion_is_even_across_mixed_tick_frames_native(): ...
     # host test variant (skip without _dauntless_host): the native twin of test_transform_buffer.py:125 through the real bindings
 ```
@@ -374,19 +386,11 @@ def test_drawn_motion_is_even_across_mixed_tick_frames_native(): ...
 
 ### Task 8: Measure, record, live check (idle machine, Mark's go-ahead)
 
-- [ ] Ask Mark before launching. Then run `docs/reference/engine/native-motion/phase0-runbook.md` §1's command twice on the phase tip, and twice more with `DAUNTLESS_NATIVE_INTERP=0` on the same build (a drift-free A/B for 3c; 3b has no switch, so it is judged against the latest signal, SIG-185's `sim.render_xforms` 2.04 a frame, minding its drift caveat).
+- [ ] Cleared by Mark (2026-11-04); idle machine. Run `docs/reference/engine/native-motion/phase0-runbook.md` §1's command twice on the phase tip. No switch, so it is judged against the latest signal, SIG-187 / C-295's `sim.render_xforms` 1.96 a frame, minding run-to-run drift.
 - [ ] Record capture rows and one new signal in `docs/reference/engine/perf-register.md`: `sim.render_xforms` per frame for both conditions, plus `sim`, `sim.combat` and ticks per frame. Never edit an old signal. If `sim.render_xforms` stays above ≈ 0.6 ms a frame, note it, and add one cProfile run (runbook §4 method) only if Mark asks.
 - [ ] Update the spec's §5.3 with a "Done" line (commit IDs, signal ID).
 - [ ] Commit `docs/reference/engine/perf-register.md` and the spec: `docs(perf): phase 3 measured`.
-- [ ] Ask Mark for the live look: a 64-ship fight, chase and tactical views, watching hull motion smoothness at < 60 fps, beam ends and impact sparks on hulls, and BoP wings shot while raised. Then a Felix torpedo run with Manual Aim on a moving target. A/B: `DAUNTLESS_HIT_POSE=drawn` (3a) and `DAUNTLESS_NATIVE_INTERP=0` (3c). Record his verdict in the spec the same day.
-
-### Task 9: Retire the switches (only after Mark's live check, and only if he says so)
-
-**Files:** `engine/host_loop.py` (the `TransformBuffer` branch of `_sync_instance_transforms` and `run()`, `_interp_live_poses`, `_apply_hit_pose_switch`), `native/src/host/host_bindings.cc` (`g_hit_pose_drawn`, `set_hit_pose_drawn`), `engine/host_io.py`, the tests that drive the Python path through `_sync_instance_transforms` (`tests/unit/test_render_transform_binding.py`: repoint to the native buffer double).
-
-- [ ] Delete the switches and the Python render path. `engine/core/transform_buffer.py` and `interpolate.py` stay: they are the twin oracle for `tests/host/test_native_interp_twin.py`.
-- [ ] Run the Task 7 test list plus `tests/host/test_sim_pose_hit_tests.py tests/host/test_native_interp_bindings.py`. Expected: PASS.
-- [ ] Commit: `refactor(render): retire the Python interpolation path and the hit-pose switch (phase 3)`.
+- [ ] Ask Mark for the live look: a 64-ship fight, chase and tactical views, watching hull motion smoothness at < 60 fps, beam ends and impact sparks on hulls, and BoP wings shot while raised. Then a Felix torpedo run with Manual Aim on a moving target, and a helm handover both ways (manual → Intercept → take the conn back) on the chase camera. Record his verdict in the spec the same day.
 
 ---
 
@@ -398,7 +402,7 @@ def test_drawn_motion_is_even_across_mixed_tick_frames_native(): ...
   - 3c: Tasks 5–7, covering TransformBuffer in C++ with the re-seat (Tasks 5–6), the frame-end publish (Task 6 `interp_capture`), native compose (Task 6), Python keeping the view offset, smoother, warp hide and `pose_of` (Task 7), tolerance twin plus pinned degenerate cases (Task 5), and the ordering guards (Tasks 6–7).
   - §7's render test list: run in Tasks 1, 3, 4 and 7.
   - Measurement and live checks: Task 8.
-- **Deliberate departures**, each listed under "Where the code contradicts or goes past the spec": 3a covers every gameplay point query (3, 5); the goldens stay unchanged (2); the view offset moves to 3a (9); the player keeps its Python push (6); compose runs at the sync site, not in `frame()` (10).
+- **Deliberate departures**, each listed under "Where the code contradicts or goes past the spec": 3a covers every gameplay point query (3, 5); the goldens stay unchanged (2); the view offset moves to 3a (9); the player and its handover smoother go native (6, Mark's decision 3); compose runs at the sync site, not in `frame()` (10).
 - **Types:**
   - `set_instance_sim_source(iid, index, generation, scale, view_offset)` and `hit_pose_of(inst, drawn)` are used the same way in Tasks 2, 3, 6 and 7.
   - `interp_*` names match between Task 6 (bindings) and Task 7 (wrappers and adapter).

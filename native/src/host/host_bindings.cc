@@ -41,6 +41,7 @@
 #include "dauntless/combat/published_poses.h"
 #include "dauntless/combat/tractor_force.h"
 #include "dauntless/combat/weapon_geometry.h"
+#include "dauntless/interp_buffer.h"
 #include "dauntless/transform_store.h"
 #include "platform/relaunch.h"
 
@@ -684,14 +685,96 @@ const assets::Model* resolve_model(scenegraph::ModelHandle h) {
     return g_loaded_models[h - 1].handle.get();
 }
 
+// The pose every gameplay point query reads (native motion phase 3a): the
+// SIM pose, composed from the live transform store through the instance's
+// sim source plus its per-set VIEW offset -- never the drawn (possibly
+// interpolated) world_linear/world_translation_d. drawn=true, no source, or
+// a stale source (the object was collected; a recycled slot is never read)
+// gives the drawn pose. Phase 4 switches the store read here to the
+// motion-end published buffer; this is the one place that changes.
+struct HitPose {
+    glm::mat3 linear;
+    glm::dvec3 translation;
+};
+HitPose hit_pose_of(const scenegraph::Instance& inst, bool drawn) {
+    if (!drawn && inst.sim_xform_index >= 0) {
+        const auto& store = dauntless::transform_store();
+        const auto i = static_cast<std::uint32_t>(inst.sim_xform_index);
+        if (store.valid(i, inst.sim_xform_generation)) {
+            HitPose p;
+            dauntless::compose_world_linear_translation(
+                store.at(i), inst.sim_scale, p.linear, p.translation);
+            p.translation += inst.sim_view_offset;
+            return p;
+        }
+    }
+    return {inst.world_linear, inst.world_translation_d};
+}
+
+// Native render interpolation (phase 3c). Snapshots are keyed by the render
+// instance's id (index << 32 | generation), so a recycled instance slot never
+// inherits one; the poses are set-local and unscaled (the sim source's scale
+// and view offset are applied at compose). Cleared by reset_frame_state().
+dauntless::InterpBuffer g_interp;
+// The pose interp_compose last drew for each instance: what a handover freezes.
+std::unordered_map<dauntless::InterpBuffer::Key, dauntless::Pose> g_interp_drawn;
+// The one handover blend (the player's) and the instance it eases.
+dauntless::HandoverBlend g_handover;
+dauntless::InterpBuffer::Key g_handover_key = 0;
+
+dauntless::InterpBuffer::Key interp_key(scenegraph::InstanceId id) {
+    return (static_cast<std::uint64_t>(id.index) << 32) | id.generation;
+}
+
+// The instance's live sim-source pose; false for no source or a stale one.
+bool sim_source_pose(const scenegraph::Instance& inst, dauntless::Pose& out) {
+    if (inst.sim_xform_index < 0) return false;
+    const auto& store = dauntless::transform_store();
+    const auto i = static_cast<std::uint32_t>(inst.sim_xform_index);
+    if (!store.valid(i, inst.sim_xform_generation)) return false;
+    out = store.at(i);
+    return true;
+}
+
+// Drop an instance's snapshots, last drawn pose and (if it is the eased one)
+// the handover.
+void interp_forget(dauntless::InterpBuffer::Key k) {
+    g_interp.erase(k);
+    g_interp_drawn.erase(k);
+    if (k == g_handover_key) g_handover.cancel();
+}
+
+// The DRAWN pose of a tracked instance, the one interp_sample returns and
+// interp_compose draws: the live store pose for an interp_live instance (when
+// its source is valid), else lerp(prev, cur, alpha), then the handover blend
+// for the eased instance. A tracked instance with no snapshot yet seeds from
+// its source first. False when there is nothing to draw.
+bool interp_drawn_pose(const scenegraph::Instance& inst, double alpha,
+                       dauntless::Pose& out) {
+    if (!inst.interp_track) return false;
+    const auto k = interp_key(inst.id);
+    dauntless::Pose truth{};
+    if (!(inst.interp_live && sim_source_pose(inst, truth))) {
+        if (!g_interp.has(k)) {
+            dauntless::Pose seed{};
+            if (!sim_source_pose(inst, seed)) return false;
+            g_interp.capture(k, seed);
+        }
+        g_interp.sample(k, alpha, truth);
+    }
+    out = (k == g_handover_key && g_handover.active()) ? g_handover.blend(truth)
+                                                       : truth;
+    return true;
+}
+
 // The instance_translation binding's body: the instance's double VIEW-space
-// translation, or nullopt for a stale id. Shared with K2's trace hooks
-// (install_combat_trace_hooks).
+// hit-pose translation, or nullopt for a stale id. Shared with K2's trace
+// hooks (install_combat_trace_hooks).
 std::optional<glm::dvec3> instance_translation_for_python(
-    scenegraph::InstanceId id) {
+    scenegraph::InstanceId id, bool drawn = false) {
     const auto* inst = g_world.get(id);
     if (inst == nullptr) return std::nullopt;
-    return inst->world_translation_d;
+    return hit_pose_of(*inst, drawn).translation;
 }
 
 // The shield_hit binding's body: ONE implementation, two callers -- the
@@ -708,8 +791,8 @@ void push_shield_hit(scenegraph::InstanceId id, const glm::vec3& point,
     if (!g_shield_pass) return;
     const auto* inst = g_world.get(id);
     if (inst == nullptr) return;
-    const glm::vec3 body = scenegraph::relative_to_body(inst->world_linear,
-                                                        point);
+    const glm::vec3 body = scenegraph::relative_to_body(
+        hit_pose_of(*inst, /*drawn=*/false).linear, point);
     g_shield_pass->shield_hit(id, body, rgba, intensity, glfwGetTime(),
                               radius);
 }
@@ -724,7 +807,7 @@ void push_shield_hit(scenegraph::InstanceId id, const glm::vec3& point,
 // message) for a stale id, std::runtime_error for no model handle.
 std::optional<renderer::RayHit> trace_instance_for_python(
     scenegraph::InstanceId id, const glm::vec3& o, glm::vec3 d, float max_dist,
-    bool rest_pose) {
+    bool rest_pose, bool drawn = false) {
     auto* inst = g_world.get(id);
     if (inst == nullptr) {
         throw dauntless::combat::StaleInstance(
@@ -751,9 +834,10 @@ std::optional<renderer::RayHit> trace_instance_for_python(
     // traces with the precision of one at the origin. rest_pose: the NIF's
     // rest geometry instead (authored, rest-frame content such as DamageTool
     // volumes). The pose is whatever g_world was last synced to; nothing
-    // here re-syncs it (K2 map 8.3.9).
+    // here re-syncs it (K2 map 8.3.9). The pose is the hit pose (sim unless
+    // drawn), whose translation instance_translation_for_python returns.
     return renderer::ray_trace_instance_linear(
-        *model, inst->world_linear, o, d, max_dist,
+        *model, hit_pose_of(*inst, drawn).linear, o, d, max_dist,
         rest_pose ? nullptr : &inst->node_overrides);
 }
 
@@ -1105,6 +1189,9 @@ void far_zero_fades(const std::vector<std::uint64_t>& keys) {
 }
 
 void reset_frame_state() {
+    g_interp.clear();
+    g_interp_drawn.clear();
+    g_handover.cancel();
     g_viewscreen_target.reset();
     g_viewscreen_aabb.reset();
     g_lighting = renderer::Lighting{};
@@ -3534,15 +3621,17 @@ struct BodyFramePoint {
 };
 // Game units -> model units; also used by hull_damage_add_body, whose point is
 // already in the body frame but whose radius is still game units.
+// Both read the SIM hit pose: their points are gameplay hit points.
 float radius_to_model(const scenegraph::Instance& inst, float radius) {
-    const float s = glm::length(glm::vec3(inst.world[0]));
+    const float s = glm::length(hit_pose_of(inst, /*drawn=*/false).linear[0]);
     return (s > 0.0f) ? radius / s : radius;
 }
 BodyFramePoint to_body_frame(const scenegraph::Instance& inst,
                              const glm::vec3& world_point,
                              const glm::vec3& world_normal, float radius) {
-    return {scenegraph::relative_to_body(inst.world_linear, world_point),
-            scenegraph::dir_to_body(inst.world_linear, world_normal),
+    const glm::mat3 linear = hit_pose_of(inst, /*drawn=*/false).linear;
+    return {scenegraph::relative_to_body(linear, world_point),
+            scenegraph::dir_to_body(linear, world_normal),
             radius_to_model(inst, radius)};
 }
 }  // namespace
@@ -6419,6 +6508,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (was_valid) {
                   g_running_lights.erase(id);
                   g_severance_jobs.forget(id);   // its result is never applied
+                  interp_forget(interp_key(id));  // never inherited
                   // Purge any bridge node-anim state keyed on this index BEFORE
                   // it can be recycled by a new instance in the same Python step
                   // (the lazy per-frame sweep in update_bridge_node_anims runs
@@ -6477,17 +6567,40 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "drop the origin-dependent history of the dust, volumetric-nebula "
           "and motion-blur passes. Use set_render_origin for per-frame moves.");
     m.def("instance_translation",
-          [](scenegraph::InstanceId id) -> py::object {
-              const auto t = instance_translation_for_python(id);
+          [](scenegraph::InstanceId id, bool drawn) -> py::object {
+              const auto t = instance_translation_for_python(id, drawn);
               if (!t) return py::none();
               return py::make_tuple(t->x, t->y, t->z);
           },
-          py::arg("iid"),
-          "The instance's VIEW-space translation (x, y, z) in double, or None "
-          "for a stale id. Subtract it (in double) from a world point to form "
-          "the INSTANCE-RELATIVE points the mesh queries take (ray_trace_mesh, "
-          "shield_hit, hull_damage_add, world_to_body, "
-          "damage_decal_add), and add it back to ray_trace_mesh's hit.");
+          py::arg("iid"), py::arg("drawn") = false,
+          "The instance's VIEW-space hit-pose translation (x, y, z) in double, "
+          "or None for a stale id: the SIM pose when a sim source is set "
+          "(set_instance_sim_source), else -- or with drawn=True -- the drawn "
+          "pose. Subtract it (in double) from a world point to form the "
+          "INSTANCE-RELATIVE points the mesh queries take (ray_trace_mesh, "
+          "shield_hit, hull_damage_add, world_to_body, damage_decal_add), "
+          "and add it back to ray_trace_mesh's hit; pass the same drawn flag "
+          "to both.");
+    m.def("set_instance_sim_source",
+          [](scenegraph::InstanceId id, int index, std::uint32_t generation,
+             double scale, std::tuple<double, double, double> view_offset) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              inst->sim_xform_index = index < 0 ? -1 : index;
+              inst->sim_xform_generation = generation;
+              inst->sim_scale = scale;
+              inst->sim_view_offset = glm::dvec3(std::get<0>(view_offset),
+                                                 std::get<1>(view_offset),
+                                                 std::get<2>(view_offset));
+          },
+          py::arg("iid"), py::arg("index"), py::arg("generation"),
+          py::arg("scale"), py::arg("view_offset"),
+          "Give a render instance its SIM pose source: a transform-store slot, "
+          "uniform scale and per-set VIEW offset. Gameplay point queries "
+          "(instance_translation, ray_trace_mesh, world_to_body, shield_hit, "
+          "damage_decal_add, hull_damage_add, instance_surface_points) then "
+          "compose the pose from the live store instead of the drawn matrix. "
+          "index < 0 clears; a stale handle reads the drawn pose.");
     m.def("set_instance_transform_slot",
           [](scenegraph::InstanceId id, int index, std::uint32_t generation,
              double scale) {
@@ -6522,6 +6635,146 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "frame, so the transform never crosses into Python. index < 0 "
           "unbinds and restores the explicit set_world_transform path.");
 
+    // Native render interpolation (phase 3c): the frame-end capture, the
+    // compose and the player's live mode + handover. All no-ops on a stale
+    // iid. Composed from Python at the end of _sync_instance_transforms,
+    // never inside frame() (tests/host/test_attached_lights_resolve_ordering).
+    m.def("interp_track",
+          [](scenegraph::InstanceId id, bool track, bool compose) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              const auto k = interp_key(id);
+              if (!track) {
+                  inst->interp_track = false;
+                  inst->interp_compose = false;
+                  inst->interp_live = false;
+                  interp_forget(k);
+                  return;
+              }
+              inst->interp_track = true;
+              inst->interp_compose = compose;
+              dauntless::Pose p{};
+              if (!g_interp.has(k) && sim_source_pose(*inst, p)) {
+                  g_interp.capture(k, p);  // new: prev = cur = live
+              }
+          },
+          py::arg("iid"), py::arg("track"), py::arg("compose"),
+          "Track a render instance in the native interpolation buffer (its "
+          "sim source is snapshotted by interp_capture); compose=True also "
+          "draws it in interp_compose. A newly tracked instance captures at "
+          "once (prev = cur = live). track=False erases it.");
+    m.def("interp_roll", []() { g_interp.roll(); },
+          "Start a tick batch: prev = cur for every tracked instance.");
+    m.def("interp_reseat",
+          []() {
+              g_world.for_each_alive([](scenegraph::Instance& inst) {
+                  dauntless::Pose p{};
+                  if (inst.interp_track && sim_source_pose(inst, p)) {
+                      g_interp.set_previous(interp_key(inst.id), p);
+                  }
+              });
+          },
+          "prev = the live store pose for every tracked instance with a "
+          "valid sim source (a multi-tick frame, before its last tick).");
+    m.def("interp_capture",
+          []() {
+              g_world.for_each_alive([](scenegraph::Instance& inst) {
+                  dauntless::Pose p{};
+                  if (inst.interp_track && sim_source_pose(inst, p)) {
+                      g_interp.capture(interp_key(inst.id), p);
+                  }
+              });
+          },
+          "The frame-end publish: cur = the live store pose for every tracked "
+          "instance with a valid sim source; a stale source is skipped (its "
+          "last snapshot is kept).");
+    m.def("interp_snap",
+          [](scenegraph::InstanceId id) {
+              const auto* inst = g_world.get(id);
+              dauntless::Pose p{};
+              if (inst != nullptr && inst->interp_track &&
+                  sim_source_pose(*inst, p)) {
+                  g_interp.snap(interp_key(id), p);
+              }
+          },
+          py::arg("iid"),
+          "prev = cur = the live store pose: a discontinuity for one instance.");
+    m.def("interp_reset_all",
+          []() {
+              g_interp.clear();
+              g_interp_drawn.clear();
+              g_handover.cancel();
+          },
+          "Drop every snapshot, last drawn pose and the handover (scene "
+          "discontinuity). Tracked flags stay; the next capture re-seeds.");
+    m.def("interp_set_live",
+          [](scenegraph::InstanceId id, bool live) {
+              if (auto* inst = g_world.get(id)) inst->interp_live = live;
+          },
+          py::arg("iid"), py::arg("live"),
+          "A live instance is drawn from its sim source's store pose instead "
+          "of the lerp (the manually flown player).");
+    m.def("interp_handover_begin",
+          [](scenegraph::InstanceId id) {
+              if (!g_world.is_valid(id)) return;
+              const auto k = interp_key(id);
+              const auto it = g_interp_drawn.find(k);
+              if (it == g_interp_drawn.end()) return;
+              g_handover.begin(it->second);
+              g_handover_key = k;
+          },
+          py::arg("iid"),
+          "Freeze the pose interp_compose last drew for iid and ease from it "
+          "to the true drawn pose over 0.36 s (re-freezes when active). One "
+          "blend, one instance; a no-op when iid was never composed.");
+    m.def("interp_handover_advance",
+          [](double dt) { g_handover.advance(dt); }, py::arg("dt"),
+          "Move the handover window on by dt seconds.");
+    m.def("interp_handover_cancel", []() { g_handover.cancel(); },
+          "Drop the handover: the eased instance is drawn at its true pose.");
+    m.def("interp_handover_active", []() { return g_handover.active(); },
+          "True while a handover is still being eased out.");
+    m.def("interp_sample",
+          [](scenegraph::InstanceId id, double alpha) -> py::object {
+              const auto* inst = g_world.get(id);
+              dauntless::Pose p{};
+              if (inst == nullptr || !interp_drawn_pose(*inst, alpha, p)) {
+                  return py::none();
+              }
+              return py::make_tuple(
+                  py::make_tuple(p.pos[0], p.pos[1], p.pos[2]),
+                  py::make_tuple(p.rot[0], p.rot[1], p.rot[2], p.rot[3],
+                                 p.rot[4], p.rot[5], p.rot[6], p.rot[7],
+                                 p.rot[8]));
+          },
+          py::arg("iid"), py::arg("alpha"),
+          "The DRAWN pose interp_compose draws: live or lerp, then the "
+          "handover blend. Set-local, no scale, no view offset: "
+          "((x, y, z), row-major rot9), or None for an untracked or stale "
+          "iid or one with nothing to draw.");
+    m.def("interp_compose",
+          [](double alpha) {
+              g_world.for_each_alive([alpha](scenegraph::Instance& inst) {
+                  if (!inst.interp_compose) return;
+                  dauntless::Pose p{};
+                  if (!interp_drawn_pose(inst, alpha, p)) return;
+                  glm::mat3 linear;
+                  glm::dvec3 translation;
+                  dauntless::compose_world_linear_translation(
+                      p, inst.sim_scale, linear, translation);
+                  // The push clears interp_compose (a push wins); restore it.
+                  g_world.set_world_transform_d(
+                      inst.id, linear, translation + inst.sim_view_offset);
+                  inst.interp_compose = true;
+                  g_interp_drawn[interp_key(inst.id)] = p;
+              });
+          },
+          py::arg("alpha"),
+          "Draw every compose-tracked instance at its drawn pose "
+          "(interp_sample) times its sim scale plus its view offset, and keep "
+          "that pose as its last drawn one (what a handover freezes). Call "
+          "before frame(), never from it.");
+
     // TEST-ONLY: runs the exact per-frame store->instance sweep frame() runs,
     // without needing a GL context. Named _test_only_ (not just _debug_) so
     // its status is unmistakable at every call site — this is production
@@ -6537,6 +6790,55 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           "Test hook: run the per-frame store->instance sweep (and the render "
           "origin resolve) that frame() runs, without needing a GL context.");
+
+    // TEST-ONLY: the render interpolation twins (dauntless/interp_buffer.h),
+    // so tests/host/test_native_interp_twin.py can pin them against
+    // engine/core/interpolate.py and handover_smoother.py element for element.
+    m.def("_test_only_interp_lerp",
+          [](const std::array<double, 3>& prev_pos,
+             const std::array<double, 9>& prev_rot,
+             const std::array<double, 3>& cur_pos,
+             const std::array<double, 9>& cur_rot, double alpha) {
+              dauntless::Pose prev{}, cur{};
+              std::copy(prev_pos.begin(), prev_pos.end(), prev.pos);
+              std::copy(prev_rot.begin(), prev_rot.end(), prev.rot);
+              std::copy(cur_pos.begin(), cur_pos.end(), cur.pos);
+              std::copy(cur_rot.begin(), cur_rot.end(), cur.rot);
+              const dauntless::Pose out = dauntless::lerp_pose(prev, cur, alpha);
+              std::array<double, 3> pos{};
+              std::array<double, 9> rot{};
+              std::copy(out.pos, out.pos + 3, pos.begin());
+              std::copy(out.rot, out.rot + 9, rot.begin());
+              return std::make_pair(pos, rot);
+          },
+          py::arg("prev_pos"), py::arg("prev_rot9"), py::arg("cur_pos"),
+          py::arg("cur_rot9"), py::arg("alpha"),
+          "TEST ONLY: dauntless::lerp_pose, interpolate.lerp_transform's twin. "
+          "Rotations are row-major nine doubles. Returns (pos3, rot9).");
+    m.def("_test_only_handover_blend",
+          [](const std::array<double, 3>& frozen_pos,
+             const std::array<double, 9>& frozen_rot,
+             const std::array<double, 3>& truth_pos,
+             const std::array<double, 9>& truth_rot, double elapsed) {
+              dauntless::Pose frozen{}, truth{};
+              std::copy(frozen_pos.begin(), frozen_pos.end(), frozen.pos);
+              std::copy(frozen_rot.begin(), frozen_rot.end(), frozen.rot);
+              std::copy(truth_pos.begin(), truth_pos.end(), truth.pos);
+              std::copy(truth_rot.begin(), truth_rot.end(), truth.rot);
+              dauntless::HandoverBlend blend;
+              blend.begin(frozen);
+              blend.advance(elapsed);
+              const dauntless::Pose out = blend.blend(truth);
+              std::array<double, 3> pos{};
+              std::array<double, 9> rot{};
+              std::copy(out.pos, out.pos + 3, pos.begin());
+              std::copy(out.rot, out.rot + 9, rot.begin());
+              return std::make_pair(pos, rot);
+          },
+          py::arg("frozen_pos"), py::arg("frozen_rot9"), py::arg("truth_pos"),
+          py::arg("truth_rot9"), py::arg("elapsed"),
+          "TEST ONLY: dauntless::HandoverBlend after begin(frozen) and "
+          "advance(elapsed), blended toward truth. Returns (pos3, rot9).");
 
     m.def("set_instance_bone_palette",
           [](scenegraph::InstanceId id,
@@ -7062,13 +7364,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "pose). False when the instance is absent.");
 
     m.def("instance_surface_points",
-          [](scenegraph::InstanceId id) -> py::object {
+          [](scenegraph::InstanceId id, bool drawn) -> py::object {
               auto* in = g_world.get(id);
               if (!in) return py::none();
               const assets::Model* mdl = resolve_model(in->model_handle);
               if (!mdl) return py::none();
               std::vector<std::tuple<double, double, double>> out;
               out.reserve(mdl->surface_points.size());
+              if (!drawn && in->sim_xform_index >= 0) {
+                  // The hit pose (sim unless its source is stale): its
+                  // translation is already VIEW space, in double.
+                  const HitPose hp = hit_pose_of(*in, false);
+                  for (const glm::vec3& p : mdl->surface_points) {
+                      const glm::dvec3 w =
+                          glm::dvec3(hp.linear * p) + hp.translation;
+                      out.emplace_back(w.x, w.y, w.z);
+                  }
+                  return py::cast(out);
+              }
               const glm::dvec3 o = view_offset_of(*in);
               for (const glm::vec3& p : mdl->surface_points) {
                   glm::vec4 w = in->world * glm::vec4(p, 1.0f);  // model -> render
@@ -7076,9 +7389,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               }
               return py::cast(out);
           },
-          py::arg("iid"),
+          py::arg("iid"), py::arg("drawn") = false,
           "VIEW-space sample of the instance model's hull surface points "
-          "(spread across the hull) for VFX anchoring.");
+          "(spread across the hull) for VFX anchoring and "
+          "GetRandomPointOnModel: on the SIM pose when a sim source is set, "
+          "else -- or with drawn=True -- on the drawn pose.");
 
     m.def("load_animation_clips",
           [](const std::string& path) {
@@ -10418,7 +10733,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> origin,
              std::tuple<float, float, float> direction,
-             float max_dist, bool rest_pose) -> py::object {
+             float max_dist, bool rest_pose, bool drawn) -> py::object {
               // The body is trace_instance_for_python, shared with K2.
               const auto hit = trace_instance_for_python(
                   id,
@@ -10426,7 +10741,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                             std::get<2>(origin)),
                   glm::vec3(std::get<0>(direction), std::get<1>(direction),
                             std::get<2>(direction)),
-                  max_dist, rest_pose);
+                  max_dist, rest_pose, drawn);
               if (!hit) return py::none();
               return py::make_tuple(
                   py::make_tuple(hit->point.x, hit->point.y, hit->point.z),
@@ -10438,8 +10753,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("direction"),
           py::arg("max_dist"),
           py::arg("rest_pose") = false,
-          "Ray-cast a ray against an instance's loaded mesh, at "
-          "the pose it is DRAWN at -- the instance's node overrides "
+          py::arg("drawn") = false,
+          "Ray-cast a ray against an instance's loaded mesh, at its hit pose "
+          "(the SIM pose when a sim source is set; drawn=True or no source: "
+          "the drawn pose; pass the same flag to instance_translation) -- "
+          "the instance's node overrides "
           "(articulation / severance) are applied, so a moved part is hit "
           "where it appears and a severed one cannot be hit at all "
           "(rest_pose=True: the rest geometry, overrides ignored). origin "
@@ -10804,7 +11122,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(world_tangent));
               // Zero stays zero (dir_to_body returns a length-0 input
               // unchanged); the ring then derives a perpendicular.
-              const glm::vec3 tb = scenegraph::dir_to_body(inst->world_linear, tw);
+              const glm::vec3 tb = scenegraph::dir_to_body(
+                  hit_pose_of(*inst, /*drawn=*/false).linear, tw);
               // Convert radius game-units -> NIF/model units here (the same
               // space as pb), so the ring's merge test and the shader both work
               // in model units. s = |world's X column| = the uniform NIF->world
@@ -11225,7 +11544,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("world_to_body",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> world_point,
-             std::tuple<float, float, float> world_normal)
+             std::tuple<float, float, float> world_normal, bool drawn)
               -> py::object {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return py::none();  // stale id
@@ -11236,16 +11555,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<1>(world_normal),
                                  std::get<2>(world_normal));
               // pw is INSTANCE-RELATIVE (floating render origin).
-              const glm::vec3 pb = scenegraph::relative_to_body(inst->world_linear, pw);
-              const glm::vec3 nb = scenegraph::dir_to_body(inst->world_linear, nw);
+              const glm::mat3 linear = hit_pose_of(*inst, drawn).linear;
+              const glm::vec3 pb = scenegraph::relative_to_body(linear, pw);
+              const glm::vec3 nb = scenegraph::dir_to_body(linear, nw);
               return py::make_tuple(
                   py::make_tuple(pb.x, pb.y, pb.z),
                   py::make_tuple(nb.x, nb.y, nb.z));
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
+          py::arg("drawn") = false,
           "Convert an INSTANCE-RELATIVE hit point (world point minus "
-          "instance_translation) + world normal into the ship instance's "
-          "body frame (model units). Returns ((bx,by,bz),(nx,ny,nz)) or None "
+          "instance_translation, same drawn flag) + world normal into the "
+          "ship instance's body frame (model units), inverting the hit pose "
+          "(sim unless drawn=True). Returns ((bx,by,bz),(nx,ny,nz)) or None "
           "if the instance id is stale.");
 
     m.def("damage_decals_tick",

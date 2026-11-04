@@ -15,7 +15,9 @@ one map star and its own mapped Planet. From the viewed set:
   * the hum roster drops ships beyond the hum's audible range.
 
 Fake renderer mirrors tests/unit/test_realize_set.py (realize) and
-tests/unit/test_render_transform_binding.py (sync).
+tests/unit/test_render_transform_binding.py (sync). The sync tests draw real
+model-0 render instances, because ships are composed natively (phase 3c):
+the drawn position is read back from the instance.
 """
 import pytest
 
@@ -25,7 +27,7 @@ from engine import host_io
 from engine.appc.math import TGPoint3
 from engine.appc.sets import SetClass_Create
 from engine.core.game import Game, _set_current_game
-from engine.core.transform_buffer import TransformBuffer
+from engine.core.native_transform_buffer import NativeTransformBuffer
 from engine.systems import celestial, frames, region_hooks, render_scope
 from tests.helpers.mapped_regions import load_region
 
@@ -139,14 +141,29 @@ def _at_view(view, pSet, view_xyz):
     return tuple(v - o for v, o in zip(view_xyz, off))
 
 
-def _translation(m):
-    return (m[3], m[7], m[11])
-
-
 def _sync(r, session, player):
     host_loop._sync_instance_transforms(
-        r, session, player, TransformBuffer(), 1.0,
+        r, session, player, NativeTransformBuffer(), 1.0,
         game_time=1.0, model_scale=1.0)
+
+
+@pytest.fixture
+def native_iid():
+    """Make real model-0 render instances (destroyed after the test)."""
+    h = pytest.importorskip("_dauntless_host")
+    made = []
+
+    def _make():
+        made.append(h.create_instance(0))
+        return made[-1]
+    yield _make
+    for iid in made:
+        h.destroy_instance(iid)
+
+
+def _drawn(iid):
+    import _dauntless_host as h
+    return h.instance_translation(iid, drawn=True)
 
 
 # ── planets ─────────────────────────────────────────────────────────────────
@@ -369,32 +386,35 @@ def test_the_player_is_never_culled_by_distance(ona):
     assert r.visible.get(sess.ship_instances[player], True) is True
 
 
-def test_a_sibling_ship_is_pushed_at_its_view_position(ona):
+def test_a_sibling_ship_is_drawn_at_its_view_position(ona, native_iid):
     ona1, ona2, _ona3 = ona
     player = _make_player(ona1)
     sib = _ship(ona2, "Sibling", (0.0, 0.0, 0.0))
     r = _FakeRenderer()
     sess = host_loop.MissionSession(mission_name="t")
-    sess.ship_instances[player] = 1
-    sess.ship_instances[sib] = 2
+    sess.ship_instances[player] = native_iid()
+    sess.ship_instances[sib] = native_iid()
     sess.player = player
     _sync(r, sess, player)
-    assert _translation(r.pushed[2]) == pytest.approx(
+    assert r.pushed == {}, "ships are composed natively, never pushed"
+    assert _drawn(sess.ship_instances[sib]) == pytest.approx(
         frames.offset_between(ona1, ona2))
 
 
-def test_a_same_set_ship_is_pushed_at_its_raw_position(ona):
+def test_a_same_set_ship_is_drawn_at_its_raw_position(ona, native_iid):
     ona1, *_ = ona
-    player = _make_player(ona1)
+    player = _make_player(ona1, (4.0, 5.0, 6.0))
     other = _ship(ona1, "Other", (1.0, 2.0, 3.0))
     r = _FakeRenderer()
     sess = host_loop.MissionSession(mission_name="t")
-    sess.ship_instances[player] = 1
-    sess.ship_instances[other] = 2
+    sess.ship_instances[player] = native_iid()
+    sess.ship_instances[other] = native_iid()
     sess.player = player
     _sync(r, sess, player)
-    assert _translation(r.pushed[2]) == (1.0, 2.0, 3.0)
-    assert 1 not in r.pushed, "the player in the viewed set stays store-bound"
+    assert r.pushed == {}
+    assert _drawn(sess.ship_instances[other]) == pytest.approx((1.0, 2.0, 3.0))
+    assert _drawn(sess.ship_instances[player]) == pytest.approx(
+        (4.0, 5.0, 6.0))
 
 
 # ── suns and flares ─────────────────────────────────────────────────────────
@@ -421,7 +441,8 @@ def test_only_the_viewed_sets_lens_flare_is_drawn(ona):
     assert flares[0]["source_world_pos"] == pytest.approx((sun.x, sun.y, sun.z))
 
 
-def test_a_sibling_region_cutscene_draws_one_consistent_scene(ona):
+def test_a_sibling_region_cutscene_draws_one_consistent_scene(ona,
+                                                             native_iid):
     """Review Focus 4: a cutscene rendered at Ona2 while the player stays in
     Ona1 -- one sun (Ona2's) and the player in Ona2's coordinates."""
     ona1, ona2, _ona3 = ona
@@ -435,11 +456,11 @@ def test_a_sibling_region_cutscene_draws_one_consistent_scene(ona):
 
     r = _FakeRenderer()
     sess = host_loop.MissionSession(mission_name="t")
-    sess.ship_instances[player] = 1
+    sess.ship_instances[player] = native_iid()
     sess.player = player
     _sync(r, sess, player)
     off = frames.offset_between(ona2, ona1)
-    assert _translation(r.pushed[1]) == pytest.approx(
+    assert _drawn(sess.ship_instances[player]) == pytest.approx(
         (5.0 + off[0], 6.0 + off[1], 7.0 + off[2]))
 
 

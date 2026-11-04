@@ -62,6 +62,26 @@ struct Instance {
     // round the scale before the multiply instead of after.
     double        xform_scale = 1.0;
 
+    /// SIM source (native motion phase 3a): the store slot, uniform scale and
+    /// per-set VIEW offset of the object's simulation pose. Gameplay point
+    /// queries (host_bindings.cc hit_pose_of) compose from it instead of the
+    /// drawn world_linear/world_translation_d, which may be interpolated.
+    /// sim_xform_index < 0 = none: those queries read the drawn pose.
+    int           sim_xform_index = -1;
+    std::uint32_t sim_xform_generation = 0;
+    double        sim_scale = 1.0;
+    glm::dvec3    sim_view_offset{0.0};
+
+    /// Native render interpolation (phase 3c, host_bindings.cc g_interp).
+    /// interp_track: the frame-end capture snapshots this instance's sim
+    /// source. interp_compose: interp_compose(alpha) draws it at its drawn
+    /// pose (cleared by any explicit push or store binding: they win).
+    /// interp_live: drawn from the live store pose instead of the lerp (the
+    /// manually flown player).
+    bool interp_track = false;
+    bool interp_compose = false;
+    bool interp_live = false;
+
     bool visible = true;
     Pass pass = Pass::Space;
 

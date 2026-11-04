@@ -11,9 +11,9 @@ slot and drops the window when the player's set changes.
 """
 import pytest
 
+from engine import host_io
 from engine.appc.math import TGMatrix3, TGPoint3
-from engine.core.handover_smoother import HandoverSmoother
-from engine.core.transform_buffer import TransformBuffer
+from engine.core.native_transform_buffer import NativeTransformBuffer
 from engine.host_loop import (_player_render_interpolated,
                               _rebase_player_render)
 
@@ -64,24 +64,43 @@ def test_no_player_is_not_interpolated():
 
 # ── a hand-off never blends set A's pose with set B's ──────────────────────
 
-def test_a_hand_off_reseeds_the_players_slot_at_its_new_pose():
-    buf = TransformBuffer()
-    buf.set_current(7, TGPoint3(0.0, 0.0, 0.0), TGMatrix3())    # set A
+@pytest.fixture
+def native_player():
+    """A store-backed player with a model-0 render instance, tracked and
+    composed by the native buffer."""
+    h = pytest.importorskip("_dauntless_host")
+    from engine.appc.objects import ObjectClass
+    o = ObjectClass()
+    iid = h.create_instance(0)
+    h.set_instance_sim_source(iid, *o._xform, 1.0, (0.0, 0.0, 0.0))
+    buf = NativeTransformBuffer()
+    buf.track(iid, compose=True)
+    try:
+        yield o, iid, buf
+    finally:
+        h.interp_handover_cancel()
+        h.destroy_instance(iid)
+
+
+def test_a_hand_off_reseeds_the_players_slot_at_its_new_pose(native_player):
+    o, iid, buf = native_player
+    o.SetTranslateXYZ(0.0, 0.0, 0.0)                             # set A
+    buf.capture()
     buf.roll()
-    player = _FakePlayer((-100000.0, 5.0, 0.0))                  # set B coords
-    buf.set_current(7, player.GetWorldLocation(), TGMatrix3())
-    s = HandoverSmoother()
-    _rebase_player_render(buf, s, 7, player)
-    loc, _ = buf.sample(7, 0.5)
+    o.SetTranslateXYZ(-100000.0, 5.0, 0.0)                       # set B coords
+    buf.capture()
+    _rebase_player_render(buf, iid)
+    loc, _ = buf.sample(iid, 0.5)
     assert (loc.x, loc.y, loc.z) == pytest.approx((-100000.0, 5.0, 0.0))
 
 
-def test_a_hand_off_drops_a_handover_window_from_the_old_set():
-    s = HandoverSmoother()
-    s.begin(TGPoint3(0.0, 0.0, 0.0), TGMatrix3())
-    assert s.active
-    _rebase_player_render(TransformBuffer(), s, None, _FakePlayer())
-    assert not s.active
+def test_a_hand_off_drops_a_handover_window_from_the_old_set(native_player):
+    _o, iid, buf = native_player
+    host_io.interp_compose(0.0)
+    host_io.interp_handover_begin(iid)
+    assert host_io.interp_handover_active()
+    _rebase_player_render(buf, None)
+    assert not host_io.interp_handover_active()
 
 
 # ── the host loop wires both, in order ─────────────────────────────────────
