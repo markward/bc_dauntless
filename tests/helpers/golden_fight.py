@@ -129,6 +129,12 @@ FIELDS = {
     "tractor": ("label", "_mode", "_engage_state", "_was_firing",
                 "_next_emitter_index", "IsEngaged"),
     "tube": ("label", "_reload_timers", "_last_fire_time"),
+    # tests/helpers/motion_fight.py (the motion_branches scene only)
+    "motion": ("name", "_current_speed", "_current_angular_velocity",
+               "_drift_velocity", "_speed_setpoint",
+               "_target_angular_velocity_setpoint", "_angular_velocity",
+               "_angular_space", "warp_flight", "_warp_consumed", "arriving",
+               "impulse_fractions", "effective_motion"),
 }
 
 EVENT_FIELDS = ("type", "source", "destination", "tick", "payload")
@@ -599,6 +605,17 @@ def _sdk_dumb_fire(mp, env, spec):
     return _k1_take(scene)
 
 
+# ── Scene 7: every motion branch ─────────────────────────────────────────────
+
+def _motion_branches(mp, env, spec):
+    """tests/helpers/motion_fight.py: the scripted cast, recorded from the
+    Python motion (native motion phase 2, Task 1). Its rows are `pose` then
+    `motion`; no weapon rows."""
+    from tests.helpers import motion_fight
+    state, events, queued = motion_fight.run(mp, env, spec.ticks)
+    return _Take(state, events, queued, [], [])
+
+
 # ── The scene table ──────────────────────────────────────────────────────────
 
 SCENES = {s.name: s for s in (
@@ -612,6 +629,8 @@ SCENES = {s.name: s for s in (
           1, _posed),
     Scene("tractor_modes", "native", 0, "2", 870, 1, _tractor_modes),
     Scene("sdk_dumb_fire", "native", k1d.SEED, "8", 900, 1, _sdk_dumb_fire),
+    Scene("motion_branches", "native", 20261110, "2", 700, 1,
+          _motion_branches),
 )}
 
 _LAST_ARM = {}

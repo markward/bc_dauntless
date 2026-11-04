@@ -200,3 +200,7 @@ def test_golden_schema_2_reads_without_baked_offset(monkeypatch, tmp_path):
            (1, [torp(baked=False, damage="0x1p+1")], [], [], [], [], [])]
     with pytest.raises(AssertionError, match="field 5 _damage"):
         golden_fight.check("tiny", bad)
+
+
+def test_motion_branches():
+    _golden("motion_branches")
