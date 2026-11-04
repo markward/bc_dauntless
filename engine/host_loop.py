@@ -6628,19 +6628,6 @@ def _bind_store_transform(session, obj, iid, scale: float) -> bool:
     return True
 
 
-def _unbind_store_transform(session, obj, iid) -> None:
-    """Restore the explicit-matrix path for `iid`. No-op when unbound.
-
-    Needed whenever an object's rendered pose stops being its live store pose
-    — the player handing the helm to an AI (rendered interpolated), for
-    instance. Leaving it bound would let the per-frame store sweep overwrite
-    the pushed matrix.
-    """
-    if session.slot_bindings.pop(obj, None) is None:
-        return
-    host_io.set_instance_transform_slot(iid, -1, 0, 1.0)
-
-
 def _apply_live_world_transform(renderer_, session, obj, iid,
                                 natural_scale: float) -> None:
     """Point `iid` at `obj`'s LIVE world transform (no render interpolation).
@@ -6706,6 +6693,10 @@ class MissionSession:
     # Last SIM source sent per ship instance id -- (index, generation, scale,
     # view_offset) -- a re-push guard like slot_bindings (_push_sim_source).
     sim_sources: dict[Any, tuple] = field(default_factory=dict)
+    # Ship instance ids tracked + composed by the native interpolation buffer
+    # -> whether each is drawn live (the manually flown player) -- a guard
+    # like sim_sources (_set_interp_mode).
+    interp_modes: dict[Any, bool] = field(default_factory=dict)
     # Last articulation pose PUSHED per render instance id -- a tuple of
     # per-part pose 6-tuples, one per rigged part -- a re-push guard only,
     # exactly like slot_bindings. The authoritative pose lives on the ship
@@ -6764,6 +6755,7 @@ class MissionSession:
         self.slot_bindings.clear()
         self.emissive_scales.clear()
         self.sim_sources.clear()
+        self.interp_modes.clear()
         self.player = None
 
 
@@ -6873,10 +6865,16 @@ def _push_sim_source(session, ship, iid, scale: float, view_offset) -> None:
         return
     off = (0.0, 0.0, 0.0) if view_offset is None else tuple(view_offset)
     want = (handle[0], handle[1], scale, off)
-    if session.sim_sources.get(iid) == want:
+    last = session.sim_sources.get(iid)
+    if last == want:
         return
     if host_io.set_instance_sim_source(iid, handle[0], handle[1], scale, off):
         session.sim_sources[iid] = want
+        # Snapshots are keyed by iid: a new slot under a tracked iid must not
+        # blend across the two objects' poses.
+        if (last is not None and last[:2] != want[:2]
+                and iid in session.interp_modes):
+            host_io.interp_snap(iid)
 
 
 def _mark_sim_source(session, ship, iid, model_scale: float) -> None:
@@ -9864,15 +9862,19 @@ def resolve_officer_menu_layout() -> None:
         )
 
 
-def _drive_handover_smoother(smoother, prev_interp, cur_interp,
+def _drive_handover_smoother(player_iid, prev_interp, cur_interp,
                              prev_drawn) -> None:
     """Open a smoothing window when the player's render pipeline flips.
 
     The player is drawn live while manually flown and interpolated while an AI
     or script drives it, and those two pipelines sit a tick apart (see
-    engine/core/handover_smoother). Crossing between them without easing jumps
-    the drawn pose by that offset. `prev_drawn` is the pose that was actually
-    on screen last frame — the thing the new window must continue from.
+    engine/core/handover_smoother, the Python twin of the native blend).
+    Crossing between them without easing jumps the drawn pose by that offset.
+    The native window starts from the pose the compose last drew for the
+    player (`interp_handover_begin`), which is what was on screen last frame.
+    `prev_drawn` is that frame's drawn pose, or None when there is none to
+    continue from (the first frame, a mission swap, a hand-off into another
+    set's coordinates).
 
     A no-op on the first frame (`prev_interp is None`), when nothing flipped,
     or when there is no previous drawn pose to blend out of.
@@ -9881,7 +9883,7 @@ def _drive_handover_smoother(smoother, prev_interp, cur_interp,
         return
     if bool(cur_interp) == bool(prev_interp):
         return
-    smoother.begin(prev_drawn[0], prev_drawn[1])
+    host_io.interp_handover_begin(player_iid)
 
 
 def _player_render_interpolated(player, *, sim_frozen,
@@ -9926,47 +9928,49 @@ def _rebase_view(r, director, offset) -> None:
         dev_mode.log_swallowed("reset_render_origin on a view rebase", _e)
 
 
-def _rebase_player_render(xform_buf, smoother, player_iid, player) -> None:
+def _rebase_player_render(xform_buf, player_iid) -> None:
     """The player changed region set (a dash hand-off): its set-local
-    coordinates jumped by the anchor difference. Re-seed its interpolation
-    slot at the new pose and drop any handover window, so no frame blends a
-    set-A pose with a set-B one."""
-    smoother.cancel()
-    if player_iid is not None and player is not None:
-        xform_buf.snap(player_iid, player.GetWorldLocation(),
-                       player.GetWorldRotation())
+    coordinates jumped by the anchor difference. Re-seed its native
+    interpolation slot at the live pose and drop any handover window, so no
+    frame blends a set-A pose with a set-B one."""
+    host_io.interp_handover_cancel()
+    if player_iid is not None:
+        xform_buf.snap(player_iid)
 
 
-def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
-                               interpolate_player, player_iid,
-                               smoother=None):
-    """Build `pose_of(obj) -> (loc, rot)` returning the render-interpolated
-    pose for a ship so the camera and the renderer anchor on identical poses
-    (smooth-motion fix).
+def _make_render_pose_provider(session, xform_buf, interp_alpha):
+    """Build `pose_of(obj) -> (loc, rot)` returning a ship's DRAWN pose so the
+    camera and the renderer anchor on identical poses (smooth-motion fix).
 
-    Non-player ships integrate on the fixed 60 Hz sim tick, so they are always
-    interpolated. The player renders LIVE while manually flown (it is
-    integrated per render frame in `_PlayerControl`, already smooth), so
-    `interpolate_player` is False then and `pose_of(player)` returns its live
-    pose. When a helm-AI / waypoint order drives the player it moves on the
-    60 Hz tick like any AI ship, so `interpolate_player` is True and the player
-    is interpolated too. Any object not in the buffer falls back to live."""
+    Every tracked ship, the player included, reads the native buffer's
+    `sample`: the same pose `interp_compose` draws for it (the lerp for a ship
+    on the 60 Hz tick, the live store pose for the manually flown player, then
+    the player's handover blend). Any object the buffer does not track, or one
+    with nothing to draw, falls back to its live pose."""
     def pose_of(obj):
         iid = session.ship_instances.get(obj)
-        is_player = iid is not None and iid == player_iid
-        sampled = None
-        if iid is not None and (interpolate_player or not is_player):
-            sampled = xform_buf.sample(iid, interp_alpha)
+        sampled = (xform_buf.sample(iid, interp_alpha)
+                   if iid is not None and xform_buf.has(iid) else None)
         if sampled is None:
             sampled = (obj.GetWorldLocation(), obj.GetWorldRotation())
-        # Handover easing is player-only, and applied HERE so the camera and
-        # the renderer -- which both read pose_of -- cannot disagree about
-        # where the ship is. Inactive smoother (or none) returns `sampled`
-        # untouched, so the ordinary path is unchanged.
-        if is_player and smoother is not None and smoother.active:
-            return smoother.blend(sampled[0], sampled[1])
         return sampled
     return pose_of
+
+
+def _set_interp_mode(session, xform_buf, iid, live: bool) -> None:
+    """Track `iid` in the native buffer, composed (once), and draw it live
+    (from its store pose: the manually flown player) or interpolated. Both
+    are guarded in `session.interp_modes` (iid -> live), so a steady ship
+    costs one dict lookup."""
+    mode = session.interp_modes.get(iid)
+    if mode is None:
+        xform_buf.track(iid, compose=True)
+    if mode is None and not live:
+        session.interp_modes[iid] = False   # the native default
+        return
+    if mode != live:
+        host_io.interp_set_live(iid, live)
+        session.interp_modes[iid] = live
 
 
 def _sync_ship_articulation(session, ship, iid) -> None:
@@ -10098,34 +10102,24 @@ def _emissive_scale_for(ship, is_player: bool, hd_boost: float) -> float:
 
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                               game_time, model_scale, player_control=None,
-                              player_interp_pose=None,
                               player_is_interpolated=None) -> None:
-    """Push ship + planet world transforms to the renderer for one frame.
+    """Draw ship + planet world transforms for one frame.
 
-    Player ship: rendered at its LIVE pose (it is integrated per render frame
-    on wall-clock dt in _PlayerControl, so it is already smooth in world
-    space), which means its instance is BOUND to its transform-store slot and
-    nothing is pushed — the renderer composes the matrix in C++ each frame.
-    UNLESS a helm-AI / waypoint order drives it, in which case it moves on the
-    60 Hz tick and `player_interp_pose` carries its render-interpolated
-    (loc, rot); the instance is then unbound and that pose is pushed (and its
-    iid kept in the buffer across frames), which makes it smooth on
-    high-refresh displays. Kept in lock-step with the camera, which anchors on
-    the same interpolated pose.
+    Ships (phase 3c): no matrix is built or pushed here. Every ship's render
+    instance, the player included, is tracked by the NATIVE interpolation
+    buffer (`xform_buf`, engine.core.native_transform_buffer) and drawn by ONE
+    `host_io.interp_compose(interp_alpha)` after the ship loop, from the
+    frame-end capture of the live store (run() captured it before the
+    camera): lerp(prev, cur, interp_alpha) x its sim scale + its view offset.
+    The player is drawn LIVE (its store pose) while manually flown
+    (`player_is_interpolated` False or None: `_PlayerControl` integrates it
+    per render frame, already smooth) and interpolated while a helm-AI,
+    waypoint order, cutscene or dash moves it on the tick; the native handover
+    blend eases the flip, and the camera samples that same drawn pose
+    (`_make_render_pose_provider`), so the two cannot disagree. The ship
+    objects keep live transforms, so physics/AI/combat are unaffected.
 
-    Non-player ships: integrated on the fixed 60 Hz tick, so they are
-    rendered at lerp(prev, cur, interp_alpha) to hide the discrete
-    steps. xform_buf.roll() ran earlier this frame (only when a tick
-    fired); here we capture the new current state and push the
-    interpolated pose. This only affects what is sent to the renderer —
-    the ship objects keep live transforms, so physics/AI/combat (which
-    ran earlier this frame) are unaffected. They therefore CANNOT be bound to
-    the transform store: the store holds one (live) pose, and binding them
-    would render the un-interpolated pose and put the judder back. Moving that
-    two-snapshot buffer native is the follow-up that would let them bind too.
-
-    Planets: rendered at their live pose, so they are bound like the
-    manually-flown player.
+    Planets: rendered at their live pose, so they are bound to the store.
 
     Also ages each ship's glow controller on `game_time` (the same game
     clock the decal system ages on, engine.appc.damage_decals), drops
@@ -10218,63 +10212,25 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
         except Exception:
             _ps = 1.0
         # Every ship, the player included: gameplay point queries read this
-        # sim pose whatever is drawn (phase 3a).
+        # sim pose whatever is drawn (phase 3a), and the native compose draws
+        # from it (phase 3c).
         _push_sim_source(session, ship, iid, model_scale * _ps, _off)
-        if iid == _player_iid and _off is None:
-            if player_interp_pose is not None:
-                # The player is ALWAYS drawn from the pose the camera resolved
-                # (`pose_of`), so the two cannot disagree — that shared pose is
-                # what carries the handover easing. It may be the live pose,
-                # the 60 Hz interpolation, or a blend of the two mid-handover.
-                _iloc, _irot = player_interp_pose
-                # A pushed matrix, not the live store pose, so this instance
-                # must be unbound — otherwise frame()'s store sweep overwrites
-                # what is pushed here and the smoothing is lost. (set_world_
-                # transform also unbinds; this keeps session.slot_bindings in
-                # step with it.)
-                _unbind_store_transform(session, ship, iid)
-                r.set_world_transform(
-                    iid, _world_matrix_from(_iloc, _irot, model_scale * _ps))
-                # Keep the iid in the buffer ONLY while genuinely interpolated,
-                # so prune drops it during manual flight. Retaining it would
-                # leave `prev` stale (set_current runs only when interpolated),
-                # and the next handover would smear from that stale pose
-                # instead of seeding prev=cur.
-                _is_interp = (player_is_interpolated
-                              if player_is_interpolated is not None
-                              else True)
-                if _is_interp:
-                    _live_ship_iids.append(iid)
-            else:
-                # Player under manual control integrates per RENDER frame, so
-                # its live store pose is already the pose to draw: bind the
-                # instance and let the renderer compose the matrix in C++.
-                _apply_live_world_transform(r, session, ship, iid, model_scale)
-            continue
+        _set_interp_mode(session, xform_buf, iid,
+                         iid == _player_iid and not player_is_interpolated)
         _live_ship_iids.append(iid)
-        # A ship that was the player (bound) and is no longer one renders
-        # interpolated from here on; drop any binding before pushing below.
-        if session.slot_bindings:
-            _unbind_store_transform(session, ship, iid)
+        if iid == _player_iid and _off is None:
+            continue
         if _warp_apply_vis:
             r.set_visible(iid, not _warp_hide
                           and iid not in session.scope_hidden)
             if _warp_hide:
                 _warp_hid_iids.add(iid)
-        xform_buf.set_current(
-            iid, ship.GetWorldLocation(), ship.GetWorldRotation())
-        _sampled = xform_buf.sample(iid, interp_alpha)
-        _iloc, _irot = _sampled
-        if _off is not None:
-            _iloc = _frames.shifted(_iloc, _off)
-        r.set_world_transform(
-            iid, _world_matrix_from(_iloc, _irot, model_scale * _ps))
+    # One native call draws every tracked ship (contradiction 10: here, not
+    # inside frame(), so every reader before frame() sees this frame's pose).
+    host_io.interp_compose(interp_alpha)
     xform_buf.prune(_live_ship_iids)
     session.warp_hidden_iids = _warp_hid_iids
-    # Drop controllers for instances no longer present. The
-    # player iid is excluded from _live_ship_iids (handled by
-    # the continue above), so key the keep-set on the full
-    # live ship_instances values, not _live_ship_iids.
+    # Drop controllers for instances no longer present.
     _wg_live_iids = set(session.ship_instances.values())
     for _dead in list(session.ship_glow_controllers.keys()):
         if _dead not in _wg_live_iids:
@@ -10285,6 +10241,9 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     for _dead in list(session.sim_sources.keys()):
         if _dead not in _wg_live_iids:
             del session.sim_sources[_dead]
+    for _dead in list(session.interp_modes.keys()):
+        if _dead not in _wg_live_iids:
+            del session.interp_modes[_dead]
     for planet, iid in session.planet_instances.items():
         ns = session.planet_natural_scale.get(planet, 1.0)
         # Planets render at their live pose (no interpolation), so the store
@@ -11816,26 +11775,16 @@ def run(mission_name: Optional[str] = None,
         # for the crew menu); used to swallow the matching release edge so it
         # never leaks to phaser fire. See the officer-pick block below.
         _bridge_left_pick_active = False
-        from engine.core.transform_buffer import TransformBuffer, advance_ticks
-        from engine.core.handover_smoother import HandoverSmoother
-        _xform_buf = TransformBuffer()
+        from engine.core.transform_buffer import advance_ticks
+        from engine.core.native_transform_buffer import NativeTransformBuffer
+        # Render interpolation is native (phase 3c): snapshots, the compose
+        # and the player's helm-handover blend (engine/core/handover_smoother
+        # is its Python twin) all live behind host_io's interp_* bindings.
+        _xform_buf = NativeTransformBuffer()
 
         def _tick_gameloop():
             with frame_profiler.scope("sim.gameloop"):
                 loop.tick()
-
-        def _interp_live_poses():
-            """Live poses of every realised ship the buffer may track, for
-            advance_ticks' pre-last-tick re-seat (multi-tick frames only)."""
-            _s = controller.session
-            if _s is None:
-                return ()
-            return [(iid, obj.GetWorldLocation(), obj.GetWorldRotation())
-                    for obj, iid in list(_s.ship_instances.items())
-                    if _xform_buf.has(iid)]
-        # Eases the player's drawn pose across a helm handover; see
-        # engine/core/handover_smoother. Inert except during a handover window.
-        _handover = HandoverSmoother()
         _prev_interp_player = None      # None until the first frame completes
         # (player, its containing set) last running frame: a hand-off is the
         # same player in another set (_rebase_player_render).
@@ -12444,8 +12393,7 @@ def run(mission_name: Optional[str] = None,
             # advance_ticks rolls the interpolation buffer and, on a frame
             # that runs 2+ ticks, re-seats its prev just before the last one,
             # so the drawn pose always blends across exactly one tick.
-            advance_ticks(_xform_buf, _sim_ticks_this_frame,
-                          _tick_gameloop, _interp_live_poses)
+            advance_ticks(_xform_buf, _sim_ticks_this_frame, _tick_gameloop)
             # The warp tunnel's destination preload: at most one model load
             # per frame, so no tunnel frame pays for the whole destination.
             with frame_profiler.scope("warp.preload"):
@@ -12476,7 +12424,7 @@ def run(mission_name: Optional[str] = None,
                     _snap_scene()
                     # Same discontinuity: never blend the player in from a
                     # pose that belonged to the previous scene.
-                    _handover.cancel()
+                    host_io.interp_handover_cancel()
                     _prev_interp_player = None
                     _prev_drawn_player_pose = None
                     # Nor re-base across a swap: the old sets are gone.
@@ -12525,10 +12473,10 @@ def run(mission_name: Optional[str] = None,
                 director.tracking.set_ship_radius(_r)
 
             # Render-pose interpolation (smooth motion on high-refresh displays).
-            # Populated below when the sim is live; left None while paused (and
-            # for the manually-flown player), in which case the camera and
-            # renderer read live poses exactly as before. See
-            # _make_render_pose_provider / _sync_instance_transforms.
+            # Populated below when the sim is live; left None while paused, in
+            # which case the camera reads live poses and every hull keeps the
+            # matrix the last compose drew. See _make_render_pose_provider /
+            # _sync_instance_transforms.
             _pose_of = None
             _player_interp_pose = None
 
@@ -12993,30 +12941,22 @@ def run(mission_name: Optional[str] = None,
                     # up the cameras now that GetRadius() is real.
                     _reconcile_camera_radius(director, player)
 
-                # Sync transforms for known instances.
-                #
-                # Player ship: pushed live (it is integrated per render
-                # frame on wall-clock dt in _PlayerControl, so it is
-                # already smooth in world space).
-                #
-                # Non-player ships: integrated on the fixed 60 Hz tick,
-                # so they are rendered at lerp(prev, cur, _interp_alpha)
-                # to hide the discrete steps. _xform_buf.roll() ran above
-                # before this frame's ticks (only when a tick fired); here
-                # we capture the new current state and push the interpolated
-                # pose. This only affects what is sent to the renderer — the
-                # ship objects keep live transforms, so physics/AI/combat
-                # (which ran earlier this frame) are unaffected.
+                # Sync transforms for known instances: every ship is drawn
+                # through the native interpolation buffer (phase 3c). The
+                # player is drawn live while manually flown (integrated per
+                # render frame in _PlayerControl, already smooth) and
+                # interpolated otherwise; every other ship is integrated on
+                # the 60 Hz tick and drawn at lerp(prev, cur, _interp_alpha).
+                # advance_ticks rolled the buffer above; the frame-end
+                # capture below records the new current state. This only
+                # affects what is drawn — the ship objects keep live
+                # transforms, so physics/AI/combat are unaffected.
                 with frame_profiler.scope("sim.render_xforms"):
                     if session is not None:
-                        # Render-pose provider: the camera (below) and the renderer
-                        # must anchor on IDENTICAL per-ship poses. Non-player ships
-                        # are captured into _xform_buf by _sync_instance_transforms
-                        # (which runs before the camera this frame). The player is
-                        # captured here, but ONLY when a helm-AI / waypoint order
-                        # drives it (then it moves on the 60 Hz tick and needs
-                        # interpolation) — a manually-flown player keeps its live,
-                        # already-smooth per-frame pose.
+                        # Render-pose provider: the camera (below) and the
+                        # renderer must anchor on IDENTICAL per-ship poses: both
+                        # read the native drawn pose (interp_sample /
+                        # interp_compose).
                         _player_iid_i = (session.ship_instances.get(player)
                                          if player is not None else None)
                         # Interpolate the player render when it is NOT being flown
@@ -13030,11 +12970,13 @@ def run(mission_name: Optional[str] = None,
                         _interp_player = _player_render_interpolated(
                             player, sim_frozen=pause.sim_frozen,
                             cutscene_active=_active_cutscene_camera() is not None)
-                        if _interp_player and _player_iid_i is not None:
-                            _xform_buf.set_current(
-                                _player_iid_i,
-                                player.GetWorldLocation(),
-                                player.GetWorldRotation())
+                        if _player_iid_i is not None:
+                            _set_interp_mode(session, _xform_buf,
+                                             _player_iid_i, not _interp_player)
+                        # The frame-end publish: every tracked ship's current
+                        # snapshot from the live store, after every per-frame
+                        # pose writer and before the camera samples it.
+                        _xform_buf.capture()
                         # A hand-off (the same player, another region set): the
                         # slot and any handover window hold the old set's
                         # coordinates -- re-seed / drop them, and never open a
@@ -13045,8 +12987,7 @@ def run(mission_name: Optional[str] = None,
                                 and _prev_player_set[0] is player
                                 and _prev_player_set[1] is not None
                                 and _pset is not _prev_player_set[1]):
-                            _rebase_player_render(_xform_buf, _handover,
-                                                  _player_iid_i, player)
+                            _rebase_player_render(_xform_buf, _player_iid_i)
                             _prev_drawn_player_pose = None
                         _prev_player_set = (player, _pset)
                         # The viewed set changed within the frame (a hand-off):
@@ -13059,32 +13000,28 @@ def run(mission_name: Optional[str] = None,
                         _prev_view_set = _view_now
                         # Handover easing: the pipeline the player is drawn from
                         # flips between live (manual) and interpolated (AI /
-                        # scripted), and those sit a tick apart. Open a smoothing
-                        # window on the flip, starting from the pose that was
-                        # actually on screen last frame.
+                        # scripted), and those sit a tick apart. The window is
+                        # advanced ONCE a frame, here, ahead of both the
+                        # camera's sample and the sync's compose, so the two
+                        # see one elapsed time; a flip then opens a window
+                        # from the pose the compose drew last frame.
+                        host_io.interp_handover_advance(_player_dt)
                         _drive_handover_smoother(
-                            _handover, _prev_interp_player, _interp_player,
+                            _player_iid_i, _prev_interp_player, _interp_player,
                             _prev_drawn_player_pose)
                         _pose_of = _make_render_pose_provider(
-                            session, _xform_buf, _interp_alpha,
-                            interpolate_player=_interp_player,
-                            player_iid=_player_iid_i,
-                            smoother=_handover)
-                        # ALWAYS resolved now, not just when interpolated: the
-                        # renderer draws the player from this same pose, so the
-                        # camera and the hull cannot disagree during the window.
+                            session, _xform_buf, _interp_alpha)
+                        # The pose the compose below draws the player at.
                         _player_interp_pose = (
                             _pose_of(player) if player is not None else None)
                         _prev_interp_player = _interp_player
                         _prev_drawn_player_pose = _player_interp_pose
-                        _handover.advance(_player_dt)
                         # Same game clock the decal system ages on
                         # (engine.appc.damage_decals). Read once per frame.
                         _sync_instance_transforms(
                             r, session, player, _xform_buf, _interp_alpha,
                             App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE,
                             player_control=player_control,
-                            player_interp_pose=_player_interp_pose,
                             player_is_interpolated=_interp_player)
             else:
                 # Frozen frame (pause, DevTools): no sim ran, so nothing
@@ -13851,7 +13788,8 @@ def run(mission_name: Optional[str] = None,
                     ticks=_sim_ticks_this_frame, alpha=_interp_alpha,
                     interp=_mt_interp,
                     ai=(player is not None and player.GetAI() is not None),
-                    cutscene=_cc is not None, handover=_handover.active,
+                    cutscene=_cc is not None,
+                    handover=host_io.interp_handover_active(),
                     live=(player.GetWorldLocation()
                           if player is not None else None),
                     drawn=(_player_interp_pose[0]

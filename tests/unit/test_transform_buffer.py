@@ -146,3 +146,37 @@ def test_untracked_live_poses_are_ignored():
     advance_ticks(buf, 2, lambda: None,
                   lambda: [(9, TGPoint3(1.0, 0.0, 0.0), _ident())])
     assert not buf.has(9)
+
+
+# --- a native buffer re-seats itself from the live store ---------------------
+
+class _ReseatBuf:
+    """Records the calls advance_ticks makes on a buffer that re-seats from
+    the live store itself (NativeTransformBuffer): no live_poses() walk."""
+
+    def __init__(self, log):
+        self._log = log
+
+    def roll(self):
+        self._log.append("roll")
+
+    def reseat_from_live(self):
+        self._log.append("reseat")
+
+    def set_previous(self, *_a):
+        raise AssertionError("a reseating buffer must not be fed live poses")
+
+
+def test_advance_ticks_reseats_from_live_once_on_multi_tick_frames():
+    log = []
+
+    def live_poses():
+        raise AssertionError("live_poses must not be walked")
+    advance_ticks(_ReseatBuf(log), 3, lambda: log.append("tick"), live_poses)
+    assert log == ["roll", "tick", "tick", "reseat", "tick"]
+
+
+def test_advance_ticks_never_reseats_a_one_tick_frame():
+    log = []
+    advance_ticks(_ReseatBuf(log), 1, lambda: log.append("tick"), None)
+    assert log == ["roll", "tick"]

@@ -62,7 +62,7 @@ class TransformBuffer:
         return lerp_transform(prev[0], prev[1], cur[0], cur[1], alpha)
 
 
-def advance_ticks(buf, n, tick, live_poses) -> None:
+def advance_ticks(buf, n, tick, live_poses=None) -> None:
     """Run `n` sim ticks (`tick()`), keeping `buf`'s prev snapshots exactly
     ONE tick behind the cur the caller records afterwards.
 
@@ -76,12 +76,19 @@ def advance_ticks(buf, n, tick, live_poses) -> None:
 
     `live_poses()` -> iterable of (iid, loc, rot) for the objects the buffer
     may track; called only on multi-tick frames, just before the last tick,
-    and only iids already tracked are re-seated. 0 ticks: nothing runs."""
+    and only iids already tracked are re-seated. A buffer with
+    `reseat_from_live()` (engine.core.native_transform_buffer: the host's
+    native buffer) re-seats itself from the live store there instead, and
+    `live_poses` is never called. 0 ticks: nothing runs."""
     if n <= 0:
         return
     buf.roll()
+    reseat = getattr(buf, "reseat_from_live", None)
     for i in range(n):
         if i == n - 1 and n > 1:
-            for iid, loc, rot in live_poses():
-                buf.set_previous(iid, loc, rot)
+            if reseat is not None:
+                reseat()
+            else:
+                for iid, loc, rot in live_poses():
+                    buf.set_previous(iid, loc, rot)
         tick()

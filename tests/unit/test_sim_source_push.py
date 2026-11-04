@@ -16,7 +16,7 @@ import re
 import pytest
 
 from engine import host_io, host_loop
-from engine.core.transform_buffer import TransformBuffer
+from engine.core.native_transform_buffer import NativeTransformBuffer
 from engine.systems import frames
 from tests.unit.test_render_transform_binding import _FakeRenderer, _Obj
 
@@ -49,7 +49,7 @@ def _scene():
 
 def _sync(session, player):
     host_loop._sync_instance_transforms(
-        _FakeRenderer(), session, player, TransformBuffer(), 0.5,
+        _FakeRenderer(), session, player, NativeTransformBuffer(), 0.5,
         game_time=1.0, model_scale=2.0)
 
 

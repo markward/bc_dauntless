@@ -205,10 +205,10 @@ class _StreakingWarp:
 
 def _sync_with_warp(monkeypatch, r, session, streak):
     from engine import warp_vfx
-    from engine.core.transform_buffer import TransformBuffer
+    from engine.core.native_transform_buffer import NativeTransformBuffer
     monkeypatch.setattr(warp_vfx, "get", lambda: _StreakingWarp(streak))
     host_loop._sync_instance_transforms(
-        r, session, None, TransformBuffer(), 1.0,
+        r, session, None, NativeTransformBuffer(), 1.0,
         game_time=1.0, model_scale=1.0)
 
 

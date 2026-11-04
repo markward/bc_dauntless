@@ -328,7 +328,7 @@ def test_map_bodies_hide_during_the_warp_streak_and_return_on_the_stop_frame(
     """Exactly as session.planet_instances: hidden while the streak runs,
     restored on the single frame it stops."""
     from engine import warp_vfx
-    from engine.core.transform_buffer import TransformBuffer
+    from engine.core.native_transform_buffer import NativeTransformBuffer
     ona1, *_ = ona
     player = _make_player(ona1)
     sess = host_loop.MissionSession(mission_name="t")
@@ -342,7 +342,7 @@ def test_map_bodies_hide_during_the_warp_streak_and_return_on_the_stop_frame(
 
     def _sync():
         host_loop._sync_instance_transforms(
-            r, sess, player, TransformBuffer(), 1.0,
+            r, sess, player, NativeTransformBuffer(), 1.0,
             game_time=1.0, model_scale=1.0)
 
     monkeypatch.setattr(warp_vfx, "get", lambda: _Warp(1.0))

@@ -58,6 +58,11 @@ _REQUIRED_BINDINGS = frozenset({
     "transform_get_rotation_col", "transform_get_positions",
     "transform_live_count", "transform_capacity",
     "set_instance_transform_slot", "set_instance_sim_source",
+    "interp_track", "interp_roll", "interp_reseat", "interp_capture",
+    "interp_snap", "interp_reset_all", "interp_set_live",
+    "interp_handover_begin", "interp_handover_advance",
+    "interp_handover_cancel", "interp_handover_active", "interp_sample",
+    "interp_compose",
     "set_instance_node_transform",
     "clear_instance_node_overrides",
     "set_instance_node_hidden", "instance_model",
@@ -1196,6 +1201,82 @@ def set_instance_sim_source(iid, index: int, generation: int, scale: float,
     _h.set_instance_sim_source(iid, int(index), int(generation), float(scale),
                                (float(ox), float(oy), float(oz)))
     return True
+
+
+# ── Native render interpolation (phase 3c) ──────────────────────────────────
+# The host's render interpolation buffer (engine.core.native_transform_buffer
+# drives these). Per-iid calls no-op headless and on a non-InstanceId (a test
+# double's plain int), as set_instance_sim_source.
+
+def _is_instance(iid) -> bool:
+    return _h is not None and isinstance(iid, _h.InstanceId)
+
+
+def interp_track(iid, track: bool, compose: bool) -> None:
+    if _is_instance(iid):
+        _h.interp_track(iid, bool(track), bool(compose))
+
+
+def interp_roll() -> None:
+    if _h is not None:
+        _h.interp_roll()
+
+
+def interp_reseat() -> None:
+    if _h is not None:
+        _h.interp_reseat()
+
+
+def interp_capture() -> None:
+    if _h is not None:
+        _h.interp_capture()
+
+
+def interp_snap(iid) -> None:
+    if _is_instance(iid):
+        _h.interp_snap(iid)
+
+
+def interp_reset_all() -> None:
+    if _h is not None:
+        _h.interp_reset_all()
+
+
+def interp_set_live(iid, live: bool) -> None:
+    if _is_instance(iid):
+        _h.interp_set_live(iid, bool(live))
+
+
+def interp_handover_begin(iid) -> None:
+    if _is_instance(iid):
+        _h.interp_handover_begin(iid)
+
+
+def interp_handover_advance(dt: float) -> None:
+    if _h is not None:
+        _h.interp_handover_advance(float(dt))
+
+
+def interp_handover_cancel() -> None:
+    if _h is not None:
+        _h.interp_handover_cancel()
+
+
+def interp_handover_active() -> bool:
+    return bool(_h is not None and _h.interp_handover_active())
+
+
+def interp_sample(iid, alpha: float):
+    """((x, y, z), row-major rot9) -- the DRAWN pose, set-local, unscaled --
+    or None (untracked, stale, headless, a non-InstanceId)."""
+    if not _is_instance(iid):
+        return None
+    return _h.interp_sample(iid, float(alpha))
+
+
+def interp_compose(alpha: float) -> None:
+    if _h is not None:
+        _h.interp_compose(float(alpha))
 
 
 def set_instance_node_transform(iid, node_name: str, m16) -> bool:

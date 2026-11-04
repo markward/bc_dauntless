@@ -8,7 +8,7 @@ glow state, a moving impulse pulse, or a ship going dark when it dies.
 """
 from engine import dev_light_preview, host_io, host_loop
 from engine.appc import subsystem_glow as sg
-from engine.core.transform_buffer import TransformBuffer
+from engine.core.native_transform_buffer import NativeTransformBuffer
 
 from tests.unit.test_render_transform_binding import _Obj
 from tests.unit.test_subsystem_glow import (
@@ -153,7 +153,7 @@ def test_emissive_scale_pushed_on_change_only(monkeypatch):
     session.ship_instances[player] = 1
     session.ship_instances[other] = 2
     session.player = player
-    buf = TransformBuffer()
+    buf = NativeTransformBuffer()
 
     def _sync():
         host_loop._sync_instance_transforms(
@@ -180,10 +180,10 @@ def test_emissive_scale_guard_is_pruned_with_the_ship(monkeypatch):
     session.ship_instances[other] = 2
     session.player = player
     host_loop._sync_instance_transforms(
-        r, session, player, TransformBuffer(), 0.5,
+        r, session, player, NativeTransformBuffer(), 0.5,
         game_time=1.0, model_scale=2.0)
     del session.ship_instances[other]
     host_loop._sync_instance_transforms(
-        r, session, player, TransformBuffer(), 0.5,
+        r, session, player, NativeTransformBuffer(), 0.5,
         game_time=1.0, model_scale=2.0)
     assert set(session.emissive_scales) == {1}

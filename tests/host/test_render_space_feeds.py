@@ -26,7 +26,7 @@ from engine.appc import explosion_lights, hit_vfx, projectiles
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.sets import SetClass_Create
 from engine.core.game import Game, _set_current_game
-from engine.core.transform_buffer import TransformBuffer
+from engine.core.native_transform_buffer import NativeTransformBuffer
 from engine.systems import frames
 from tests.helpers.mapped_regions import load_region
 
@@ -366,28 +366,37 @@ class _ShipRenderer:
         return lambda *a, **k: None
 
 
-def test_pushed_ship_matrices_are_view_space(far_scene, monkeypatch):
+def test_drawn_ship_matrices_are_view_space(far_scene, monkeypatch):
+    """Ships are composed natively (phase 3c): the drawn translation the
+    compose writes is VIEW space; the renderer subtracts the origin."""
+    h = pytest.importorskip("_dauntless_host")
     pSet, player = far_scene
     npc = _ship(pSet, "NPC", _plus(P, (100.0, 0.0, 0.0)))
     frames.set_render_origin(EYE)
+    iid = h.create_instance(0)
 
     class _Session:
-        ship_instances = {npc: 5}
+        ship_instances = {npc: iid}
         ship_glow_controllers = {}
         slot_bindings = {}
         emissive_scales = {}
         sim_sources = {}
+        interp_modes = {}
         scope_hidden = set()
         planet_instances = {}
         celestial_instances = {}
 
     monkeypatch.setattr(host_loop, "_sync_ship_articulation", lambda *a: None)
     r = _ShipRenderer()
-    host_loop._sync_instance_transforms(
-        r, _Session(), player, TransformBuffer(), 1.0,
-        game_time=1.0, model_scale=1.0)
-    m = r.pushed[5]
-    assert (m[3], m[7], m[11]) == pytest.approx((FAR + 100.0, 0.0, 0.0))
+    try:
+        host_loop._sync_instance_transforms(
+            r, _Session(), player, NativeTransformBuffer(), 1.0,
+            game_time=1.0, model_scale=1.0)
+        assert r.pushed == {}
+        assert h.instance_translation(iid, drawn=True) == pytest.approx(
+            (FAR + 100.0, 0.0, 0.0))
+    finally:
+        h.destroy_instance(iid)
 
 
 # ── a sibling-region cutscene: the camera is solved in the VIEWED set ──────

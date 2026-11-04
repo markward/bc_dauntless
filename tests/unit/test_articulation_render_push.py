@@ -16,7 +16,7 @@ import pytest
 from engine import host_io, host_loop
 from engine.appc import articulated_part as ap
 from engine.appc import articulation, part_pose, part_severance, pose_sink
-from engine.core.transform_buffer import TransformBuffer
+from engine.core.native_transform_buffer import NativeTransformBuffer
 from tests.unit.test_render_transform_binding import _FakeRenderer, _Obj
 
 LEAF = "renderpushtest"
@@ -149,7 +149,7 @@ def test_render_sync_no_longer_pushes_articulation(rig, pushes, monkeypatch):
     articulation.force_part_pose(
         player, "left wing", part_pose.pose_from6((0, 0, 0, 0, 45.0, 0)))
     host_loop._sync_instance_transforms(
-        _FakeRenderer(), session, player, TransformBuffer(), 0.5,
+        _FakeRenderer(), session, player, NativeTransformBuffer(), 0.5,
         game_time=1.0, model_scale=2.0)
     assert pushes == []
 
