@@ -59,20 +59,21 @@ UploadStats      g_upload_stats;
 
 // On macOS without a .app bundle, CEF's NSBundle-based path discovery
 // fails. We must tell CEF where its framework, locales, resources, and
-// helper subprocess binary live. Helpers re-use this binary's argv0
-// (multi-role dispatch).
+// helper subprocess binary live. A checkout's helpers re-use this binary's
+// argv0 (multi-role dispatch); the packaged .app's use its Helper apps.
+// platform::cef_bundle_paths tells the layouts apart.
 #ifdef __APPLE__
-std::string framework_dir(const std::string& exec_dir) {
-    return exec_dir + "/Frameworks/Chromium Embedded Framework.framework";
+std::string framework_dir(const std::filesystem::path& exec_path) {
+    return dauntless::platform::cef_bundle_paths(exec_path).framework_dir.string();
 }
-std::string main_bundle_dir(const std::string& exec_dir) {
-    return exec_dir;
+std::string main_bundle_dir(const std::filesystem::path& exec_path) {
+    return dauntless::platform::cef_bundle_paths(exec_path).main_bundle.string();
 }
-std::string resources_dir(const std::string& exec_dir) {
-    return framework_dir(exec_dir) + "/Resources";
+std::string resources_dir(const std::filesystem::path& exec_path) {
+    return framework_dir(exec_path) + "/Resources";
 }
-std::string locales_dir(const std::string& exec_dir) {
-    return resources_dir(exec_dir);
+std::string locales_dir(const std::filesystem::path& exec_path) {
+    return resources_dir(exec_path);
 }
 #endif
 
@@ -101,8 +102,8 @@ int dispatch_subprocess(int argc, char* argv[]) {
 
 #ifdef __APPLE__
     // On macOS the default LoadInMain() looks at <exec-dir>/../Frameworks/,
-    // which assumes an .app bundle layout we don't use. Compute the
-    // explicit path that matches Task 8's symlink at build/Frameworks/.
+    // which fits neither a checkout (Task 8's symlink at build/Frameworks/)
+    // nor a Helper app inside the packaged bundle, so compute the path.
     //
     // Ask the OS for the image path rather than canonical(argv[0]): the latter
     // resolves against the cwd, so it threw on a bare-name launch through PATH
@@ -118,9 +119,7 @@ int dispatch_subprocess(int argc, char* argv[]) {
         return 1;
     }
     const std::string framework_lib =
-        exec_path.parent_path().string() +
-        "/Frameworks/Chromium Embedded Framework.framework/"
-        "Chromium Embedded Framework";
+        framework_dir(exec_path) + "/Chromium Embedded Framework";
     if (!cef_load_library(framework_lib.c_str())) {
         std::fprintf(stderr,
                      "dauntless: cef_load_library failed for %s\n",
@@ -257,13 +256,12 @@ bool initialize(int view_width, int view_height,
             return false;
         }
     }
-    const std::string exec_dir = exec_path.parent_path().string();
-
-    CefString(&settings.framework_dir_path)     = framework_dir(exec_dir);
-    CefString(&settings.main_bundle_path)       = main_bundle_dir(exec_dir);
-    CefString(&settings.resources_dir_path)     = resources_dir(exec_dir);
-    CefString(&settings.locales_dir_path)       = locales_dir(exec_dir);
-    CefString(&settings.browser_subprocess_path) = exec_path.string();
+    CefString(&settings.framework_dir_path)     = framework_dir(exec_path);
+    CefString(&settings.main_bundle_path)       = main_bundle_dir(exec_path);
+    CefString(&settings.resources_dir_path)     = resources_dir(exec_path);
+    CefString(&settings.locales_dir_path)       = locales_dir(exec_path);
+    CefString(&settings.browser_subprocess_path) =
+        dauntless::platform::cef_bundle_paths(exec_path).subprocess.string();
 #endif
 
     if (!CefInitialize(main_args, settings, g_app, nullptr)) {

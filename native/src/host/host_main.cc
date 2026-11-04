@@ -57,6 +57,18 @@ std::filesystem::path discover_project_root(const char* argv0,
         dauntless::platform::executable_path(argv0, error);
     if (bin_path.empty()) return {};
 
+    // The packaged macOS app keeps its root in Contents/Resources, which is
+    // not an ancestor of Contents/MacOS/<binary>, so the upward search below
+    // cannot reach it. A checkout's build/dauntless is never inside a bundle.
+    const std::filesystem::path resources =
+        dauntless::platform::app_bundle_resources(bin_path);
+    if (!resources.empty()) {
+        std::error_code ec;
+        if (std::filesystem::exists(resources / kPackagedMarker, ec) && !ec) {
+            return resources;
+        }
+    }
+
     std::filesystem::path dir = bin_path.parent_path();
     for (int depth = 0; depth <= kMarkerSearchDepth; ++depth) {
         std::error_code ec;  // exists() must not throw on an odd path

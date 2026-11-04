@@ -122,4 +122,49 @@ std::filesystem::path cef_cache_dir(const std::filesystem::path& base,
     return base / (std::string("dauntless-cef-cache-") + hex);
 }
 
+namespace {
+
+// <app>.app when `exec_path` is <app>.app/Contents/MacOS/<name>, else empty.
+std::filesystem::path enclosing_app(const std::filesystem::path& exec_path) {
+    const std::filesystem::path macos = exec_path.parent_path();
+    const std::filesystem::path contents = macos.parent_path();
+    const std::filesystem::path app = contents.parent_path();
+    if (macos.filename() == "MacOS" && contents.filename() == "Contents" &&
+        app.extension() == ".app") {
+        return app;
+    }
+    return {};
+}
+
+constexpr const char* kCefFramework = "Chromium Embedded Framework.framework";
+
+}  // namespace
+
+CefBundlePaths cef_bundle_paths(const std::filesystem::path& exec_path) {
+    const std::filesystem::path app = enclosing_app(exec_path);
+    if (app.empty()) {
+        // A checkout: build/Frameworks/ is the build's symlink to CEF.
+        const std::filesystem::path dir = exec_path.parent_path();
+        return {dir / "Frameworks" / kCefFramework, dir, exec_path};
+    }
+    const std::filesystem::path frameworks = app.parent_path();
+    const std::filesystem::path outer = frameworks.parent_path().parent_path();
+    if (frameworks.filename() == "Frameworks" &&
+        frameworks.parent_path().filename() == "Contents" &&
+        outer.extension() == ".app") {
+        // A helper app inside the outer app's Contents/Frameworks/.
+        return {frameworks / kCefFramework, outer, exec_path};
+    }
+    const std::filesystem::path contents = app / "Contents";
+    const std::string helper = exec_path.filename().string() + " Helper";
+    return {contents / "Frameworks" / kCefFramework, app,
+            contents / "Frameworks" / (helper + ".app") / "Contents" / "MacOS" /
+                helper};
+}
+
+std::filesystem::path app_bundle_resources(const std::filesystem::path& exec_path) {
+    const std::filesystem::path app = enclosing_app(exec_path);
+    return app.empty() ? std::filesystem::path() : app / "Contents" / "Resources";
+}
+
 }  // namespace dauntless::platform

@@ -112,4 +112,59 @@ TEST(CanonicalOrError, ResolvesAnExistingPath) {
         << root.string();
 }
 
+// --- The macOS .app layout (scripts/package.py stages it) ----------------
+//
+// A checkout runs build/dauntless with the CEF framework symlinked at
+// build/Frameworks/. A packaged build runs from inside a real bundle:
+//   BC Dauntless.app/Contents/MacOS/BC Dauntless           the game
+//   .../Contents/Frameworks/Chromium Embedded Framework.framework
+//   .../Contents/Frameworks/BC Dauntless Helper (GPU).app/Contents/MacOS/...
+// Chromium, once it sees it is bundled, derives each helper variant's path
+// from browser_subprocess_path by going up four levels and appending
+// " (GPU)" etc., so the subprocess must be the plain Helper app's binary.
+
+using dauntless::platform::app_bundle_resources;
+using dauntless::platform::cef_bundle_paths;
+
+constexpr const char* kCef = "Chromium Embedded Framework.framework";
+
+TEST(CefBundlePaths, ACheckoutKeepsTheFrameworkBesideTheBinary) {
+    const auto p = cef_bundle_paths("/proj/build/dauntless");
+    EXPECT_EQ(p.framework_dir, std::filesystem::path("/proj/build/Frameworks") / kCef);
+    EXPECT_EQ(p.main_bundle, std::filesystem::path("/proj/build"));
+    EXPECT_EQ(p.subprocess, std::filesystem::path("/proj/build/dauntless"));
+}
+
+TEST(CefBundlePaths, TheAppUsesContentsFrameworksAndTheHelperApp) {
+    const std::filesystem::path app = "/Apps/BC Dauntless.app";
+    const auto p = cef_bundle_paths(app / "Contents/MacOS/BC Dauntless");
+    EXPECT_EQ(p.framework_dir, app / "Contents/Frameworks" / kCef);
+    EXPECT_EQ(p.main_bundle, app);
+    EXPECT_EQ(p.subprocess,
+              app / "Contents/Frameworks/BC Dauntless Helper.app/Contents/MacOS"
+                    "/BC Dauntless Helper");
+}
+
+TEST(CefBundlePaths, AHelperFindsTheFrameworkOfItsOuterApp) {
+    const std::filesystem::path app = "/Apps/BC Dauntless.app";
+    const std::filesystem::path helper =
+        app / "Contents/Frameworks/BC Dauntless Helper (GPU).app/Contents/MacOS"
+              "/BC Dauntless Helper (GPU)";
+    const auto p = cef_bundle_paths(helper);
+    EXPECT_EQ(p.framework_dir, app / "Contents/Frameworks" / kCef);
+    EXPECT_EQ(p.main_bundle, app);
+    EXPECT_EQ(p.subprocess, helper);
+}
+
+TEST(AppBundleResources, IsContentsResourcesInsideAnApp) {
+    EXPECT_EQ(app_bundle_resources("/Apps/BC Dauntless.app/Contents/MacOS/BC Dauntless"),
+              std::filesystem::path("/Apps/BC Dauntless.app/Contents/Resources"));
+}
+
+TEST(AppBundleResources, IsEmptyForACheckout) {
+    EXPECT_TRUE(app_bundle_resources("/proj/build/dauntless").empty());
+    // A folder that merely happens to be called MacOS is not a bundle.
+    EXPECT_TRUE(app_bundle_resources("/proj/MacOS/dauntless").empty());
+}
+
 }  // namespace

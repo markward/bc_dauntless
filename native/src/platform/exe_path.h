@@ -53,4 +53,29 @@ std::filesystem::path canonical_or_error(const std::filesystem::path& path,
 std::filesystem::path cef_cache_dir(const std::filesystem::path& base,
                                     const std::filesystem::path& exec_path);
 
+/// Where CEF's pieces live for the binary at `exec_path`, on macOS.
+///
+/// Three layouts, told apart LEXICALLY (nothing here touches the disk):
+///  - a checkout, build/dauntless: the framework is symlinked into
+///    build/Frameworks/, the "main bundle" is build/, helpers re-run this binary;
+///  - the packaged app, X.app/Contents/MacOS/X: the framework is in
+///    Contents/Frameworks/, helpers are "X Helper.app" beside it;
+///  - one of those helpers, X.app/Contents/Frameworks/X Helper*.app/...: the
+///    framework and main bundle are its OUTER app's.
+/// The helper app matters: once Chromium knows it is bundled it builds the
+/// GPU/renderer helper paths from browser_subprocess_path by going up four
+/// levels and appending " (GPU)" etc., which only lands on a real file when
+/// the subprocess is the plain Helper app's binary.
+struct CefBundlePaths {
+    std::filesystem::path framework_dir;  // .../Chromium Embedded Framework.framework
+    std::filesystem::path main_bundle;
+    std::filesystem::path subprocess;
+};
+CefBundlePaths cef_bundle_paths(const std::filesystem::path& exec_path);
+
+/// <app>/Contents/Resources when `exec_path` is an app bundle's main
+/// executable (<app>.app/Contents/MacOS/<name>), else an empty path. The
+/// packaged macOS build keeps its marker and its Python there.
+std::filesystem::path app_bundle_resources(const std::filesystem::path& exec_path);
+
 }  // namespace dauntless::platform
