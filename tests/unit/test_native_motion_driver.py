@@ -1020,3 +1020,42 @@ def test_roster_matches_iter_non_rock_ships():
     roster = [s for pSet in nm._sets_now()
               for s in nm._ships_of(nm._set_objects(pSet))]
     assert roster == list(iter_non_rock_ships())
+
+
+def test_stage_rows_split_the_driver_cost():
+    """gl.motion's children name where the driver's time goes: the stock
+    check, the prep walk, the binding (motion.step), the kernel's compute,
+    the tractor step and the publish."""
+    from engine.core import frame_profiler as fp
+    _warp_scene()[1]._insystem_warp_transit = None
+    _arm({})
+    fp.set_enabled(True, native=False)
+    try:
+        fp.begin_frame()
+        fp.mark("sim")
+        with fp.scope("gl.motion"):
+            ship_motion.tick_all_ship_motion(DT)
+        fp.end_frame()
+        parents = fp.parents()
+    finally:
+        fp.set_enabled(False, native=False)
+        fp.reset()
+    for row in ("motion.check", "motion.prep", "motion.step",
+                "motion.kernel", "motion.tractors", "motion.publish"):
+        assert parents.get(row) == "gl.motion", (row, parents)
+
+
+def test_a_patched_stage_says_so_once(monkeypatch, capsys):
+    """The first stage a patch sends to Python logs the patched name once;
+    later stages stay quiet."""
+    _mixed_scene()
+    _arm({})
+    orig = ship_motion._cap_keep
+    monkeypatch.setattr(ship_motion, "_cap_keep",
+                        lambda *a, **kw: orig(*a, **kw))
+    capsys.readouterr()
+    for _ in range(3):
+        ship_motion.tick_all_ship_motion(DT)
+    err = capsys.readouterr().err
+    assert err.count("kernel M: engine.appc.ship_motion._cap_keep is patched") == 1, err
+    assert nm.counts()["patched_stages"] == 3

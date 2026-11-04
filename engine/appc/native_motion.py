@@ -174,9 +174,20 @@ def enabled() -> bool:
     if not isinstance(get_store(), NativeTransformStore):
         return False
     if not _stock_holds():
-        _counts["patched_stages"] += 1
+        _note_patched()
         return False
     return True
+
+
+def _note_patched() -> None:
+    """A stage runs in Python because the motion surface is patched: count
+    it, and say so once per patched name on stderr."""
+    _counts["patched_stages"] += 1
+    name = _patched_name()
+    native_combat._log_once(
+        ("motion-patched", name),
+        "kernel M: %s is patched; the motion stage runs in Python while it "
+        "is" % name)
 
 
 def reset() -> None:
@@ -305,6 +316,16 @@ def _stock_holds() -> bool:
         except AttributeError:              # a name was deleted
             return False
     return True
+
+
+def _patched_name() -> str:
+    """The first surface name that is not what it was at import."""
+    for owner, _get, values in _SNAPSHOT:
+        names = next(n for o, n in _SURFACE if o is owner)
+        for name, value in zip(names, values):
+            if getattr(owner, name, _GONE) is not value:
+                return "%s.%s" % (getattr(owner, "__name__", owner), name)
+    return "?"
 
 
 # ── The class watch: subclasses of the motion roles ──────────────────────────
@@ -479,8 +500,9 @@ def _player_handle() -> int:
 def step_all(dt: float) -> None:
     """One motion stage by kernel M (module docstring)."""
     try:
-        _watch_classes()
-        sets = _sets_now()
+        with _prof.scope("motion.prep"):
+            _watch_classes()
+            sets = _sets_now()
         for k, pSet in enumerate(sets):
             if not _step_set(_set_objects(pSet), dt):
                 # The surface changed mid-stage: the rest is Python's.
@@ -505,13 +527,17 @@ def _step_set(objs, dt) -> bool:
         return True
     ships = [objs[i] for i in pos]
     forced: set = set()
-    handles = [_handle(s, i, forced) for i, s in enumerate(ships)]
+    with _prof.scope("motion.prep"):
+        handles = [_handle(s, i, forced) for i, s in enumerate(ships)]
     begin, resume = 0, False
     step = _h.combat_motion_step
     while True:
         try:
-            stop, at, reason = step(ships, handles, _player_handle(), dt,
-                                    begin, resume)
+            # Includes the kernel's compute (motion.kernel) and the C
+            # write-back into each ship's __dict__.
+            with _prof.scope("motion.step"):
+                stop, at, reason = step(ships, handles, _player_handle(), dt,
+                                        begin, resume)
         except BaseException:
             _counts["raised"] += 1
             _resync(ships[begin:])
@@ -538,7 +564,7 @@ def _step_set(objs, dt) -> bool:
         # surface, the classes, and the rest of this set from its object
         # snapshot (each object's class, handle and instance attributes).
         if not _stock_holds():
-            _counts["patched_stages"] += 1
+            _note_patched()
             if resume:
                 ship_motion._step_after_warp(ship, dt)
             _python_rest(objs, pos[at] + 1, dt)

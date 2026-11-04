@@ -166,7 +166,9 @@ def tick_all_ship_motion(dt: float) -> None:
 
     Then the tractor force (tick_tractors), then the publish.
     """
-    if native_motion.enabled():
+    with _prof.scope("motion.check"):
+        native = native_motion.enabled()
+    if native:
         native_motion.step_all(dt)
     else:
         from engine.appc.ship_iter import iter_non_rock_ships
@@ -176,7 +178,8 @@ def tick_all_ship_motion(dt: float) -> None:
     # other pose writer (Mark 2026-11-04), so the published poses hold it.
     tick_tractors(dt)
     # Last, in both switch states: the tick's poses, for later phases.
-    native_motion.publish_stage()
+    with _prof.scope("motion.publish"):
+        native_motion.publish_stage()
 
 
 def tick_tractors(dt: float) -> None:
