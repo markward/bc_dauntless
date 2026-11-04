@@ -42,7 +42,7 @@ from engine.appc.math import TGMatrix3, TGPoint3  # noqa: E402
 from engine.appc.objects import PhysicsObjectClass  # noqa: E402
 from engine.appc.ships import ShipClass  # noqa: E402
 from engine.appc.subsystems import (  # noqa: E402
-    ImpulseEngineSubsystem, ShipSubsystem,
+    ImpulseEngineSubsystem, ShipSubsystem, WarpEngineSubsystem,
 )
 from engine.core.game import _set_current_game  # noqa: E402
 
@@ -265,6 +265,15 @@ class _ModPod(ShipSubsystem):
         return ShipSubsystem.GetConditionPercentage(self)
 
 
+class _DyingShip(ShipClass):
+    """A mod ship that reads dying: Python's _out_of_action asks IsDying, so
+    its engines read offline and it drifts on inertia."""
+
+    def IsDying(self):
+        _calls.append("mod IsDying")
+        return 1
+
+
 class _LaterShip(ShipClass):
     """Stock until a test patches it, after its ships registered."""
 
@@ -306,6 +315,11 @@ _PATCHES = {
     "mod_ship_subclass": (dict(cls=_ModShip), None, "row"),
     "mod_engine_subclass": (dict(ies_cls=_ModEngine), None, "row"),
     "mod_pod_subclass": (dict(pod_cls=_ModPod), None, "row"),
+    "mod_ship_subclass_IsDying": (dict(cls=_DyingShip), None, "row"),
+    "base_ShipClass_IsDying": (
+        {}, lambda s, mp: _wrap(ShipClass, "IsDying", mp), "stage"),
+    "instance_ship_IsDead": (
+        {}, lambda s, mp: _wrap(_odd(s), "IsDead", mp), "row"),
     "base_ShipClass_SetVelocity": (
         {}, lambda s, mp: _wrap(ShipClass, "SetVelocity", mp), "stage"),
     "base_PhysicsObjectClass_SetVelocity": (
@@ -383,6 +397,106 @@ def test_subclass_row_runs_python(monkeypatch, case):
         assert counts["patched_stages"] == 0, counts
     else:
         assert counts["patched_stages"] == 4, counts
+
+
+class _HoldingWarp(WarpEngineSubsystem):
+    """A mod warp engine that always reads as sliding in: Python's
+    warp_state.is_arriving asks it, so the ship is passed over."""
+
+    def is_dewarp_driving(self):
+        _calls.append("mod is_dewarp_driving")
+        return True
+
+
+@pytest.mark.parametrize("how", ["subclass", "instance", "base_patch"])
+def test_warp_engine_is_dewarp_driving_override_runs(monkeypatch, how):
+    """The kernel answers warp_state.is_arriving from the row's `arriving`;
+    a warp engine whose is_dewarp_driving is not the stock one (its class,
+    an instance attribute, or a patch of WarpEngineSubsystem itself) sends
+    the row, or the stage, to Python, where it is asked."""
+    results = {}
+    for arm, env in (("native", {}), ("python", OFF)):
+        with monkeypatch.context() as mp:
+            App.g_kSetManager._sets.clear()
+            ships = _surface_scene()
+            odd = _odd(ships)
+            if how == "subclass":
+                odd.SetWarpEngineSubsystem(_HoldingWarp("Warp Engines"))
+            else:
+                odd.SetWarpEngineSubsystem(WarpEngineSubsystem("Warp Engines"))
+                we = odd.GetWarpEngineSubsystem()
+                if how == "instance":
+                    def holding():
+                        _calls.append("instance is_dewarp_driving")
+                        return True
+                    mp.setattr(we, "is_dewarp_driving", holding)
+                else:
+                    def holding_all(self):
+                        _calls.append("base is_dewarp_driving")
+                        return self is we
+                    mp.setattr(WarpEngineSubsystem, "is_dewarp_driving",
+                               holding_all)
+            _arm(env)
+            del _calls[:]
+            rows = []
+            for _ in range(3):
+                ship_motion.tick_all_ship_motion(DT)
+                rows.append([_state(s) for s in ships])
+            results[arm] = (rows, list(_calls), nm.counts())
+    (n_rows, n_calls, counts), (p_rows, p_calls, _p) = (results["native"],
+                                                         results["python"])
+    assert p_calls and n_calls == p_calls
+    assert n_rows == p_rows
+    # The odd ship was passed over (arriving) in both arms.
+    assert n_rows[0][1][1] == n_rows[-1][1][1]
+    if how == "base_patch":
+        assert counts["patched_stages"] == 3, counts
+    else:
+        assert counts["python_rows"] == {"Instance": 3}, counts
+
+
+class _WatchA(ShipClass):
+    pass
+
+
+class _WatchC(ShipClass):
+    pass
+
+
+def test_class_watch_restarts_on_a_new_seen_generation(monkeypatch):
+    """forget_rows clears native_combat._k2_seen and bumps its generation;
+    the class watch then starts again, even when the rebuilt list has the
+    same length and first class as before (here forced so), so a class
+    first seen after the rebuild is watched and a later patch of it is
+    obeyed."""
+    pSet = _set("S")
+    a = _ship("A", pSet, (0.01, 0.0, 0.0), cls=_WatchA)
+    _fly(a)
+    _arm({})
+    ship_motion.tick_all_ship_motion(DT)
+    seen = nc._k2_seen
+    assert _WatchA in seen
+    c = _ship("C", pSet, (0.0, 0.01, 0.0), cls=_WatchC)
+    _fly(c)
+    # The rebuilt list: the same length and first class, _WatchA's place
+    # now _WatchC's (as after forget_rows and a different registration
+    # order), and the generation forget_rows bumps.
+    rebuilt = [_WatchC if k is _WatchA else k for k in seen
+               if k is not _WatchC]
+    assert len(rebuilt) == nm._watch_seen[0] and rebuilt[0] is seen[0]
+    monkeypatch.setattr(nc, "_k2_seen", rebuilt)
+    monkeypatch.setattr(nc, "_seen_gen", nc._seen_gen + 1)
+    ship_motion.tick_all_ship_motion(DT)
+    calls = []
+    real = _WatchC.SetVelocity
+
+    def spy(self, v):
+        calls.append(self.GetName())
+        return real(self, v)
+
+    monkeypatch.setattr(_WatchC, "SetVelocity", spy)
+    ship_motion.tick_all_ship_motion(DT)
+    assert calls == ["C"]
 
 
 _FUNCTIONS = (

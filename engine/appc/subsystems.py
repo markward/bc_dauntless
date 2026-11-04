@@ -1829,7 +1829,10 @@ class ImpulseEngineSubsystem(PoweredSubsystem):
     matching ImpulseEngineProperty template via ShipClass.SetupProperties()."""
 
     # The authored limits, mirrored for the motion kernel (native motion
-    # phase 2): always rebound by the setters below, never mutated.
+    # phase 2): always rebound by the setters below, never mutated. KNOWN,
+    # NOT GUARDED: the mirror float()s them, so a string written straight
+    # into one mirrors as a number where Python would raise; no engine
+    # writer does this (the setters store floats).
     _max_speed = NativeField(float)
     _max_accel = NativeField(float)
     _max_angular_velocity = NativeField(float)

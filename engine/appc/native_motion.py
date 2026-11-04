@@ -63,7 +63,8 @@ from engine.appc import drift, native_combat, ship_death, ship_iter
 from engine.appc import ship_motion, subsystems, warp_flight, warp_state
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.ships import ShipClass
-from engine.appc.subsystems import ImpulseEngineSubsystem, ShipSubsystem
+from engine.appc.subsystems import (ImpulseEngineSubsystem, ShipSubsystem,
+                                    WarpEngineSubsystem)
 from engine.appc.transform_store import NativeTransformStore, get_store
 from engine.core import frame_profiler as _prof
 
@@ -187,7 +188,7 @@ def reset() -> None:
         _counts[k] = 0
     _python_rows.clear()
     _watch.clear()
-    _watch_seen[:] = [0, None]
+    _watch_seen[:] = [0, -1]
     if _h is not None and hasattr(_h, "combat_compute_take"):
         _h.combat_compute_take(_KERNEL_M)
 
@@ -213,7 +214,7 @@ def _getter(names):
     return get
 
 
-_SHIP_NAMES = native_combat._MOTION_SHIP_NAMES + ("IsDying", "IsDead")
+_SHIP_NAMES = native_combat._MOTION_SHIP_NAMES
 _IES_NAMES = native_combat._MOTION_IES_NAMES
 _POD_NAMES = native_combat._MOTION_POD_NAMES
 
@@ -234,6 +235,7 @@ _SURFACE = (
     (ShipClass, _SHIP_NAMES),
     (ImpulseEngineSubsystem, _IES_NAMES),
     (ShipSubsystem, _POD_NAMES),
+    (WarpEngineSubsystem, ("is_dewarp_driving",)),
     (TGMatrix3, ("MakeRotation", "MultMatrix")),
     (TGPoint3, ("MultMatrixLeft", "Unitize", "Length")),
 )
@@ -274,8 +276,8 @@ _ROLES = (
 )
 #: [cls, getter, the resolution its rows' flags were last pushed from]
 _watch: list = []
-#: [len(native_combat._k2_seen) watched, its first class]
-_watch_seen = [0, None]
+#: [len(native_combat._k2_seen) watched, native_combat._seen_gen it was]
+_watch_seen = [0, -1]
 _GONE = object()
 
 
@@ -294,7 +296,8 @@ def _watch_classes() -> None:
     n = len(seen)
     fresh = set()
     start = _watch_seen[0]
-    if n < start or (n and seen[0] is not _watch_seen[1]):
+    gen = native_combat._seen_gen
+    if gen != _watch_seen[1] or n < start:
         _watch.clear()          # the seen list was rebuilt (forget_rows)
         start = 0
     for cls in seen[start:n]:
@@ -302,7 +305,7 @@ def _watch_classes() -> None:
             if cls is not base and issubclass(cls, base):
                 _watch.append([cls, get, _resolve(get, cls)])
                 fresh.add(cls)
-    _watch_seen[:] = [n, seen[0] if n else None]
+    _watch_seen[:] = [n, gen]
     for entry in _watch:
         now = _resolve(entry[1], entry[0])
         if now != entry[2]:
@@ -370,13 +373,30 @@ def _ships_of(objs) -> list:
 _SHIP_SET = frozenset(_SHIP_NAMES)
 _IES_SET = frozenset(_IES_NAMES)
 _POD_SET = frozenset(_POD_NAMES)
+#: warp_state.is_arriving's last call, as WarpEngineSubsystem resolves it
+#: (the snapshot holds it too: a patch of the base sends the stage).
+_DEWARP = "is_dewarp_driving"
+_STOCK_DEWARP = WarpEngineSubsystem.is_dewarp_driving
 
 
 def _overridden(d) -> bool:
-    """An instance attribute shadows a motion method: on the ship (its
-    __dict__ `d`), its impulse engine or one of the engine's pods."""
+    """The row's motion surface is not stock where the class flags cannot
+    see it: an instance attribute shadowing a motion method on the ship (its
+    __dict__ `d`), its impulse engine or one of the engine's pods; or a warp
+    engine whose ``is_dewarp_driving`` (warp_state.is_arriving's question,
+    which the kernel answers from the row's `arriving`) is not the stock one,
+    by its class or by an instance attribute."""
     if not d.keys().isdisjoint(_SHIP_SET):
         return True
+    we = d.get("_warp_engine_subsystem")
+    if we is not None:
+        t = type(we)
+        if t is not WarpEngineSubsystem and \
+                getattr(t, _DEWARP, None) is not _STOCK_DEWARP:
+            return True
+        wd = getattr(we, "__dict__", None)
+        if wd is not None and _DEWARP in wd:
+            return True
     ies = d.get("_impulse_engine_subsystem")
     if ies is None:
         return False

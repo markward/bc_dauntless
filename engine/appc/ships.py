@@ -55,6 +55,11 @@ class ShipClass(DamageableObject):
     # stays the authority. `_current_angular_velocity` is ramped IN PLACE
     # (ship_motion, host_loop._PlayerControl): each such writer pushes
     # (native_combat.push_field) after its component writes.
+    # KNOWN, NOT GUARDED: the mirror float()s what it is given, so a string
+    # written straight into `_current_speed` (or into a component of one of
+    # the points below) mirrors as a number the kernel flies, where Python
+    # would raise in the ramp. No engine writer does this (every setter
+    # stores a float); no behaviour change is made for it.
     _current_speed = native_combat.NativeField(float)
     _current_angular_velocity = native_combat.NativeField(
         native_combat.POINT_OR_NONE)

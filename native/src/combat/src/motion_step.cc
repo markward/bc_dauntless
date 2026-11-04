@@ -367,6 +367,10 @@ MotionResult motion_step(Mirror& m, dauntless::TransformStore& store,
                                     std::to_string(begin) + " outside the " +
                                     std::to_string(n) + " rows");
     MotionResult r{MotionStop::Done, n, MotionReason::None, {}};
+    // At most one write per row: reserved up front, so commit's append
+    // never allocates (and never throws) after a row's store and mirror
+    // writes.
+    r.writes.reserve(static_cast<size_t>(n - begin));
     for (int64_t i = begin; i < n; ++i) {
         Plan p;
         try {

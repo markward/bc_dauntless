@@ -139,6 +139,10 @@ SPHERES = "spheres"
 #: None pushes [] (state 0), a TGPoint3 [x, y, z] (state 1), anything else
 #: [0.0] * 4 (state 2: unrepresentable, the kernel takes the Python path).
 #: Never drops the row. The row keeps ``<name>_state`` beside the vector.
+#: KNOWN, NOT GUARDED: a TGPoint3's components are float()ed, so a string
+#: written straight into one (``p.x = "1"``) mirrors as a number where
+#: Python would raise; TGPoint3's own setters store floats, and no engine
+#: writer does this.
 POINT_OR_NONE = "point or none"
 #: NativeField type for an int-or-None (``TorpedoSystem._selected_slot``):
 #: None pushes -1 (slots are never negative).
@@ -1797,6 +1801,10 @@ def forget_rows() -> None:
     _k2_seen.clear()
     _k2_seen_set.clear()
     _k2_watch_seen[0] = -1
+    # Kernel M's class watch reads _k2_seen too: it rebuilds on a new
+    # generation (native_motion._watch_classes).
+    global _seen_gen
+    _seen_gen += 1
 
 
 # ── Deferred frees and off-main pushes (spec 2026-11-03-kernels-off-the-lock
@@ -2120,11 +2128,16 @@ def _posed_flag(ship) -> int:
 #: Kernel M's class flags (native motion phase 2): the methods motion calls on
 #: a ship, on its impulse engine and on the engine's pods. A class whose
 #: method is not the stock class's own function object reads 0, and the
-#: kernel hands that row to Python, where the override runs.
+#: kernel hands that row to Python, where the override runs. IsDying /
+#: IsDead: subsystems._is_offline(ies) -> ship_death._out_of_action(ship)
+#: asks them (the kernel reads the row's dying / dead state instead);
+#: GetWarpEngineSubsystem: warp_state.is_arriving asks it (the kernel reads
+#: the row's `arriving`).
 _MOTION_SHIP_NAMES = ("IsImmobile", "IsStatic", "IsStationary",
                       "GetImpulseEngineSubsystem", "GetTranslate",
                       "SetTranslateXYZ", "GetWorldRotation",
-                      "SetMatrixRotation", "SetVelocity")
+                      "SetMatrixRotation", "SetVelocity", "IsDying",
+                      "IsDead", "GetWarpEngineSubsystem")
 _MOTION_IES_NAMES = ("IsDisabled", "IsDestroyed", "IsOn",
                      "GetNumChildSubsystems", "GetChildSubsystem",
                      "GetPowerPercentageWanted", "GetParentShip",
@@ -4930,6 +4943,9 @@ _k2_flags: dict = {}
 # _k2_seen grows: _k2_watch_seen[0] is the length it was built at).
 _k2_seen: list = []
 _k2_seen_set: set = set()
+# Bumped whenever _k2_seen is cleared (forget_rows): a reader that keeps a
+# position in it (native_motion's class watch) starts again.
+_seen_gen = 0
 _k2_watch: list = []
 _k2_watch_seen = [-1]
 # [ship_instances, its version, _k2_drop_epoch, the iids table built on them]
