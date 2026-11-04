@@ -156,7 +156,15 @@ def tick_all_ship_motion(dt: float) -> None:
 
     Rocks are excluded — a rock's motion is never AI-driven (rock-class
     spec §1).
+
+    While native_motion.enabled() (DAUNTLESS_NATIVE_MOTION, on unless =0;
+    the mirror live; the motion surface stock) kernel M flies the stage
+    instead (native_motion.step_all), bit-exact with the loop below, which
+    stays the reference.
     """
+    if native_motion.enabled():
+        native_motion.step_all(dt)
+        return
     from engine.appc.ship_iter import iter_non_rock_ships
     for ship in iter_non_rock_ships():
         _step_ship_motion(ship, dt)
@@ -205,7 +213,14 @@ def _step_ship_motion(ship, dt: float) -> None:
     if getattr(ship, "_insystem_warp_transit", None) is not None:
         if warp_flight.step(ship, dt):
             return
+    _step_after_warp(ship, dt)
 
+
+def _step_after_warp(ship, dt: float) -> None:
+    """The rest of `_step_ship_motion`, past its in-system warp check: what a
+    row runs once warp_flight.step returned False (native_motion's driver
+    calls it for that row when the kernel hands it back), and what every
+    other mobile row runs."""
     # A warp-in arrival is flown by its warp engine's dewarp drive
     # (WarpEngineSubsystem.step_dewarp_drive): it holds its heading and
     # slides onto its placement whatever setpoint its AI writes meanwhile.
@@ -338,3 +353,9 @@ def _integrate_rotation(ship, dt: float) -> None:
         delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
         R = R.MultMatrix(delta)
         ship.SetMatrixRotation(R)
+
+
+# At the bottom, not with the imports above: native_motion snapshots this
+# module's functions at its own import (the stock surface kernel M stands
+# in for), so they must exist by then whichever module is imported first.
+from engine.appc import native_motion  # noqa: E402

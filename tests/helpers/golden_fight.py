@@ -91,9 +91,13 @@ from tests.helpers import k1_fight as k1d
 SCHEMA = 3     # the file format; bump it on any change to it or to the rows
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "golden_fights"
 UPDATE_ENV = "UPDATE_COMBAT_GOLDEN"
-#: The arms a scene can run as: native only (fire control has no Python
-#: copy, M3; a re-record is labelled with the arm it ran).
-ARMS = {"native": k1d.ON}
+#: The arms a scene can run as: native fire control always (it has no
+#: Python copy, M3; a re-record is labelled with the arm it ran).
+#: "python_motion" is the native arm with the motion stage in Python
+#: (DAUNTLESS_NATIVE_MOTION=0, native motion phase 2): the reference kernel
+#: M is checked against, on the one Python recording.
+ARMS = {"native": k1d.ON,
+        "python_motion": {**k1d.ON, "DAUNTLESS_NATIVE_MOTION": "0"}}
 
 #: The tick tuple's components, in order.
 COMPONENTS = ("tick", "state", "events", "queued", "calls", "presented",
@@ -702,6 +706,8 @@ def run_scene(name: str, arm: str) -> list:
     env = ARMS[arm]
     gc.collect()
     with pytest.MonkeyPatch.context() as mp:
+        # The motion switch is the arm's, never the caller's shell's.
+        mp.delenv("DAUNTLESS_NATIVE_MOTION", raising=False)
         _patch_records(mp)
         random.seed(spec.seed)
         take = spec.run(mp, env, spec)

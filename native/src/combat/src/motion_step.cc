@@ -135,6 +135,12 @@ void drift_step(const ObjectRow& o, const Vec3& pos, const Mat3& R, double dt,
     if (rate == 0.0) to_python(MotionReason::FallBack);
     const Vec3 axis{w[0] / rate, w[1] / rate, w[2] / rate};
     const Mat3 D = make_rotation(rate * dt, axis);
+    // `getattr(obj, "_angular_space", WORLD) == MODEL_SPACE`: the row holds
+    // that test's answer for an int or a bool (0 model, 1 world); any other
+    // value (0.5, "0") is 2, Python's to compare (native_combat
+    // AngularSpaceField).
+    if (o._angular_space != 0 && o._angular_space != 1)
+        to_python(MotionReason::Unrepresentable);
     p.rot = o._angular_space == kModelSpaceI ? mult(R, D) : mult(D, R);
     p.rot_set = true;
 }

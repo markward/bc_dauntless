@@ -684,8 +684,7 @@ class PhysicsObjectClass(ObjectClass):
     # DIRECTION_WORLD_SPACE, getattr's default in drift.step) and
     # SetStatic's flag.
     _angular_velocity = native_combat.NativeField(native_combat.POINT_OR_NONE)
-    _angular_space = native_combat.NativeOptionalField(
-        int, absent=DIRECTION_WORLD_SPACE)
+    _angular_space = native_combat.AngularSpaceField()
     _static = native_combat.NativeField(bool)
 
     def __init__(self):

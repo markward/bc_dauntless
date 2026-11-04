@@ -204,6 +204,23 @@ TEST(MotionStep, DriftWritesOnlyPose) {
     EXPECT_EQ(r2.reason, MotionReason::FallBack);
 }
 
+TEST(MotionStep, UnrepresentableAngularSpace) {
+    // _angular_space is pushed as Python's own test, `value == 0` (0 model,
+    // 1 world), for an int or a bool; anything else (0.5, "0") is 2, and a
+    // spinning drifter with it is Python's (Task 5, Review Focus 4).
+    World w;
+    const int64_t a = w.ship();
+    w.m.set_fv(a, Field::_angular_velocity, {0.0, 0.0, 0.5});
+    w.m.set_i(a, Field::_angular_space, 2);
+    const MotionResult r = w.step({a});
+    EXPECT_EQ(r.stop, MotionStop::PythonRow);
+    EXPECT_EQ(r.reason, MotionReason::Unrepresentable);
+    EXPECT_EQ(w.rot(0)[0], 1.0);         // nothing written
+    // Not spinning: the frame is never read, so the row is ours.
+    w.m.set_fv(a, Field::_angular_velocity, {0.0, 0.0, 0.0});
+    EXPECT_EQ(w.step({a}).stop, MotionStop::Done);
+}
+
 TEST(MotionStep, SignedZeroRotation) {
     World w;
     const int64_t a = w.ship();

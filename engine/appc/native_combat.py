@@ -371,6 +371,10 @@ def reset() -> None:
     # off now).
     drain()
     _k1_compute.clear()
+    # Kernel M's driver (its switch, counts and class watch). Imported here,
+    # not at module scope: native_motion imports this module.
+    from engine.appc import native_motion
+    native_motion.reset()
 
 
 def counts() -> dict:
@@ -1068,7 +1072,16 @@ class SpeedSetpointField(NativeField):
             return []
         try:
             speed, d, frame = value
-            return [float(speed), float(d.x), float(d.y), float(d.z),
+            # Python uses the speed AS IS (compares and ramps it: a str
+            # raises there, an int is compared exactly and can come back as
+            # the new _current_speed), and compares the frame with
+            # ``frame == DIRECTION_MODEL_SPACE`` ("0" is not 0): only a
+            # float speed and a number frame (whose float() compares the
+            # same) are the kernel's. The direction is float()ed by Python
+            # itself (TGPoint3(direction.x, ...)), as here.
+            if type(speed) is not float or type(frame) not in _NUMBERS:
+                return [0.0] * 6
+            return [speed, float(d.x), float(d.y), float(d.z),
                     float(frame)]
         except (TypeError, ValueError, AttributeError, OverflowError):
             return [0.0] * 6
@@ -1079,6 +1092,28 @@ class SpeedSetpointField(NativeField):
 
     def _matches(self, value, mirrored) -> bool:
         return _hexes(self._encode(value)) == _hexes(mirrored)
+
+
+_NUMBERS = (int, float, bool)
+
+
+class AngularSpaceField(NativeOptionalField):
+    """PhysicsObjectClass._angular_space, the frame a drifter's spin was set
+    in. Its one reader, drift.step, tests ``getattr(obj, "_angular_space",
+    DIRECTION_WORLD_SPACE) == DIRECTION_MODEL_SPACE``, so the row holds that
+    test's answer: 0 (model) or 1 (world) for an int or a bool, exact for
+    any size. Anything else (0.5, "0": an int() would read model where
+    Python's == reads world) is 2, unrepresentable: the kernel hands the
+    row to Python (native motion phase 2, Task 5, Review Focus 4). Never
+    drops the row."""
+
+    def __init__(self) -> None:
+        super().__init__(int, absent=1)
+
+    def _encode(self, value):
+        if type(value) is int or type(value) is bool:
+            return 0 if value == 0 else 1
+        return 2
 
 
 class PresenceField(NativeField):
