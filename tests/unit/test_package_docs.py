@@ -1,6 +1,6 @@
 """The player documents and license texts scripts/package.py ships.
 
-package.py itself only runs on Windows, after a build, so these pin the parts
+package.py itself only runs on Windows or macOS, after a build, so these pin the parts
 that can drift on any machine: every source exists, THIRD_PARTY_NOTICES names
 exactly the license files that ship, and an unfilled placeholder is caught.
 """

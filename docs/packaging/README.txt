@@ -35,6 +35,9 @@ Recommended (smooth at high settings and high resolutions):
 Fast single-core CPU speed matters more than core count: much of the game
 runs on one core.
 
+On a Mac: Apple Silicon (M1 or later) with macOS 12 or later. See "On a
+Mac" below.
+
 And two things from Bridge Commander itself:
   - A retail copy of Star Trek: Bridge Commander, installed
   - The Bridge Commander SDK, version 1.1. It's free and widely mirrored
@@ -56,7 +59,8 @@ GETTING STARTED
    Unzip it anywhere you like, for example your Documents folder. Do NOT
    unzip it into your Bridge Commander folder.
 
-4. Run "BC Dauntless.exe".
+4. Run "BC Dauntless.exe" (on a Mac, "BC Dauntless.app": see "On a Mac"
+   below for the first launch).
 
 5. The first time you start it, a "Select Bridge Commander Install" screen
    asks for two folders:
@@ -72,6 +76,27 @@ BC Dauntless folder:
   - Log file:                  %LOCALAPPDATA%\Dauntless\Logs\dauntless.log
 
 (Paste either path into the File Explorer address bar to open it.)
+
+
+ON A MAC
+--------
+
+The Mac build is for Apple Silicon. It is not signed with an Apple
+Developer ID, so the first time you open it macOS says it "cannot be
+opened" or "cannot be verified". To open it anyway:
+
+  - Right-click (or Control-click) "BC Dauntless.app", choose Open, then
+    Open again in the dialog. On newer macOS versions, if there is no Open
+    button, go to System Settings > Privacy & Security and press
+    "Open Anyway" near the bottom.
+  - Or, in Terminal:
+        xattr -dr com.apple.quarantine "BC Dauntless.app"
+
+You only need to do this once. Your settings and files on a Mac:
+  - Settings, saves and mods:  ~/Library/Application Support/Dauntless
+  - Log file:                  ~/Library/Logs/Dauntless/dauntless.log
+
+(In Finder, press Shift-Command-G and paste either path to open it.)
 
 
 USE A CLEAN COPY OF BRIDGE COMMANDER
