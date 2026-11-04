@@ -13,7 +13,8 @@ mode-correct direction:
 Mirrors tests/integration/test_disruptor_fire_and_damage.py (build a firing
 energy weapon, then drive it through the per-frame combat passes).  The effect
 is exercised both directly (engine.appc.tractor.advance_tractors) and through
-host_loop._advance_combat to confirm the wiring reaches it.
+the motion stage (ship_motion.tick_all_ship_motion) to confirm the wiring
+reaches it.
 """
 
 import pytest
@@ -32,6 +33,7 @@ _SHARED_SET = App.SetClass_Create()
 
 from engine.appc.subsystems import TractorBeam, TractorBeamSystem
 from engine.appc.properties import TractorBeamProperty, WeaponSystemProperty
+from engine.appc.ship_motion import tick_all_ship_motion
 from engine.appc.tractor import advance_tractors
 from engine.host_loop import _advance_combat, _advance_weapons
 
@@ -210,18 +212,28 @@ def test_tow_target_follows_source():
     assert target.GetWorldLocation().x > 1.0
 
 
-# ── Wiring: the effect is reached through host_loop._advance_combat ──────────
+# ── Wiring: the effect is reached through the motion stage ───────────────────
 
-def test_effect_runs_through_advance_combat():
+def test_effect_runs_through_the_motion_stage():
+    """The force runs in ship_motion.tick_all_ship_motion (GameLoop's motion
+    stage, Mark 2026-11-04), over the iter_ships() roster, so the ships are
+    in a registered set; _advance_combat no longer runs it."""
     ship, parent = _source_with_tractor()
     target = _target((0, 50, 0))
-    _engage(parent, target, TractorBeamSystem.TBS_PULL)
-    start = _dist(ship, target)
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        for _ in range(120):
-            _advance_weapons([ship, target], _DT)
-            _advance_combat([ship, target], dt=_DT, ship_instances=None)
-    assert _dist(ship, target) < start - 1.0
+    App.g_kSetManager.AddSet(_SHARED_SET, "tractor_effect")
+    try:
+        _SHARED_SET.AddObjectToSet(ship, "Source")
+        _SHARED_SET.AddObjectToSet(target, "Target")
+        _engage(parent, target, TractorBeamSystem.TBS_PULL)
+        start = _dist(ship, target)
+        with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+            for _ in range(120):
+                tick_all_ship_motion(_DT)
+                _advance_weapons([ship, target], _DT)
+                _advance_combat([ship, target], dt=_DT, ship_instances=None)
+        assert _dist(ship, target) < start - 1.0
+    finally:
+        App.g_kSetManager.DeleteSet("tractor_effect")
 
 
 def test_non_tractor_ship_is_untouched():

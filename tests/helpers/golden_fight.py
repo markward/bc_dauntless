@@ -80,6 +80,7 @@ import App
 from engine import host_loop
 from engine.appc import native_combat as nc
 from engine.appc import sensor_contacts
+from engine.appc import ship_motion
 from engine.appc import weapon_subsystems as ws
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.ship_iter import iter_ships
@@ -348,7 +349,10 @@ def _posed(mp, env, spec):
 # broadcast handler on ET_TRACTOR_BEAM_STARTED_FIRING stops the beam once
 # (E8M2's OD1 TractorHandler, E8M2.py:1010-1034), and the SDK's own
 # ConditionFiringTractorBeam watches the ship (E1M2/E2M1's intercept AI).
-# The force runs host-style, in _advance_combat's cb.tractors. Native only
+# The force runs where GameLoop's motion stage sits (ship_motion.tick_tractors,
+# after the timer bump and before the subsystem updates: Mark 2026-11-04),
+# never the whole tick_all_ship_motion, which would start integrating the
+# scene's ships too. Native only
 # since tractors went native (fire control native only, Task 3): its
 # STARTED / STOPPED are effect-queue entries (ruling R8), so the handler's
 # StopFiring no longer nests a STOPPED inside the STARTED it handles.
@@ -518,6 +522,7 @@ def _tractor_modes(mp, env, spec):
             if STARVE[0] <= t < STARVE[1]:
                 power.SetMainBatteryPower(0.0)
             App.g_kTimerManager._time += TICK_DELTA
+            ship_motion.tick_tractors(TICK_DELTA)
             game_loop._update_ship_subsystems()
             ships = list(iter_ships())
             with host_loop._combat_effect_scope():

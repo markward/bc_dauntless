@@ -51,10 +51,11 @@ from dataclasses import dataclass
 # applied to subsystems._is_offline, which was costing 115,279 importlib
 # lookups over 150 ticks at 100 ships.
 import App
-from engine.appc import drift, native_combat, warp_flight, warp_state
+from engine.appc import drift, native_combat, tractor, warp_flight, warp_state
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
 from engine.appc.subsystems import impulse_fractions, impulse_output_fraction
+from engine.core import frame_profiler as _prof
 from engine.core.ids import implements
 
 # Match _PlayerControl.FALLBACK_MAX_ACCEL in engine/host_loop.py:613.
@@ -161,6 +162,8 @@ def tick_all_ship_motion(dt: float) -> None:
     the mirror live; the motion surface stock) kernel M flies the stage
     instead (native_motion.step_all), bit-exact with the loop below, which
     stays the reference.
+
+    Then the tractor force (tick_tractors), then the publish.
     """
     if native_motion.enabled():
         native_motion.step_all(dt)
@@ -168,8 +171,25 @@ def tick_all_ship_motion(dt: float) -> None:
         from engine.appc.ship_iter import iter_non_rock_ships
         for ship in iter_non_rock_ships():
             _step_ship_motion(ship, dt)
+    # After every row, before the publish: the tractor force is the stage's
+    # other pose writer (Mark 2026-11-04), so the published poses hold it.
+    tick_tractors(dt)
     # Last, in both switch states: the tick's poses, for later phases.
     native_motion.publish_stage()
+
+
+def tick_tractors(dt: float) -> None:
+    """The tractor force step for one tick (``tractor.advance_tractors``:
+    the native step, tractor_force.h), over the whole ``iter_ships()``
+    roster, rocks included -- the roster the host's combat step passed when
+    the force ran there (``cb.tractors``, after K2). It runs here, in the
+    motion stage, so motion is the only ship-pose writer (Mark 2026-11-04):
+    a beam the K1 tractor walk grips in a tick's combat step first pulls in
+    the next tick's motion stage, and a headless GameLoop moves tractored
+    ships too. No-op for ships without a firing tractor."""
+    from engine.appc.ship_iter import iter_ships
+    with _prof.scope("motion.tractors"):
+        tractor.advance_tractors(list(iter_ships()), dt)
 
 
 def _ramp_toward(current: float, target: float, step: float) -> float:

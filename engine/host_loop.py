@@ -1278,8 +1278,11 @@ def _advance_combat(*args, **kwargs) -> None:
     can_detect pair (a ship's phaser tick after its held-weapon check, every
     torpedo it fired at that target), a mount's world position -- is answered
     once. The answers are dropped wherever an input can change: every hit
-    (combat.apply_hit), and around deaths, subsystem damage and tractors
-    (which move ships).
+    (combat.apply_hit), and around deaths and subsystem damage.
+
+    The tractor force is not here: it runs in the motion stage
+    (ship_motion.tick_tractors, Mark 2026-11-04), so the beam the held-weapon
+    pump grips here first pulls in the next tick's motion stage.
     """
     with step_memo.combat_step():
         _advance_combat_step(*args, **kwargs)
@@ -1356,7 +1359,7 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
         from engine.appc import shockwaves
         shockwaves.advance(dt)
         particles.advance(dt)
-    # Deaths, subsystem damage and tractors change what sensors see and
+    # Deaths and subsystem damage change what sensors see and
     # where mounts are; every hit forgets on its own (combat.apply_hit).
     # See _advance_combat.
     step_memo.forget()
@@ -1401,18 +1404,6 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
                 and _native_combat.k2_phasers(ships_list, dt, ship_instances)):
             for ship in ships_list:
                 _phaser_step_ship(ship, dt, ship_instances)
-
-    # Tractor beams (hold/tow/pull/push/dock): the weapon tick above sustains
-    # the held grab beam (K1's tractor walk re-acquires while engaged);
-    # advance_tractors applies the mode's physics -- the native force step
-    # (tractor_force.h), which moves the target (and reciprocally the source)
-    # by direct position displacement in the transform store. No-op for
-    # ships without a firing tractor (production stays identical).
-    step_memo.forget()
-    with frame_profiler.scope("cb.tractors"):
-        from engine.appc import tractor as _tractor
-        _tractor.advance_tractors(ships_list, dt)
-    step_memo.forget()
 
     if push_render_data:
         _push_combat_render_data(ships_list, ship_instances=ship_instances,

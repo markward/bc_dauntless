@@ -34,8 +34,10 @@ mass-capped KINEMATIC displacement written straight into the transform store
     opposite-direction, at speed(m_source) — momentum-consistent because
     speed(m)∝1/m. HOLD anchors the target only (no source reaction).
 
-Run once per tick from host_loop._advance_combat_step (`cb.tractors`), after
-the weapon tick and the phaser step and before collisions. No-op for ships
+Run once per tick from the motion stage (ship_motion.tick_tractors,
+`motion.tractors` under `gl.motion`: Mark 2026-11-04), after every motion
+row and before the stage's publish, so a beam the held-weapon pump grips in
+a tick's combat step first pulls in the next tick. No-op for ships
 without a firing tractor, so production combat for non-tractor ships stays
 byte-identical.
 

@@ -4369,7 +4369,7 @@ def k1_can_fire(weapon) -> int:
 def tractor_force_step(ships, dt) -> None:
     """engine.appc.tractor.advance_tractors(ships, dt): one native step of
     the tractor force (tractor_force.h; fire control native only, R7), in
-    `cb.tractors`. The kernel writes the transform store itself; Python then
+    the motion stage (`motion.tractors`, ship_motion.tick_tractors). The kernel writes the transform store itself; Python then
     applies what it hands back: HOLD's damped targets (SetVelocity(0)) and
     the engage geometry it captured (`_engage_state`, stored quietly: the
     mirror already holds it). A ship with no Object row does nothing
