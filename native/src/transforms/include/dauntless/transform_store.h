@@ -85,6 +85,16 @@ public:
                       const double point[3], double r2,
                       std::vector<std::uint32_t>& out) const;
 
+    // BC's size rule (ProximityManager.GetNearObjects, ruling 4): the
+    // positions k (ascending) of the handles whose SURFACE is within or on
+    // the sphere of radius `r` -- `dx*dx + dy*dy + dz*dz <= reach*reach`,
+    // reach = r + max(radii[k], 0) (a radius that is not > 0, NaN included,
+    // counts as 0), unfused like within_radius. `radii` has `n` entries.
+    // Appended to `out`. Throws on a stale handle.
+    void near_indices_sized(const std::uint32_t* handles, std::size_t n,
+                            const double* radii, const double point[3],
+                            double r, std::vector<std::uint32_t>& out) const;
+
     // The proximity pairs Python must look at, appended to `out` in order from
     // `start`. Pair k is anchor handle anchors[2k..2k+1], object handle
     // objects[2k..2k+1], radius squared r2[k] and want[k]: 0 reports when the

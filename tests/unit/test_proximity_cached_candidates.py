@@ -3,9 +3,11 @@
 Each AvoidObstacles query used to rebuild a ~337-entry candidate list in
 Python and filter it. The manager now keeps one per membership generation
 (engine/appc/proximity_cache.py), rebuilt only when membership changes, and
-does the radius test as one native ``near_indices`` call. The answer must be
-exactly today's: tests/helpers/proximity_oracle.py is a verbatim copy of the
-queries before the cache, and the differentials compare by identity and order.
+does the radius test as one native ``near_indices_sized`` call (BC's size
+rule, Task 7). The answer must be exactly the reference's:
+tests/helpers/proximity_oracle.py is a copy of the queries before the cache
+(its near query carrying the size rule), and the differentials compare by
+identity and order.
 
 Review Focus (plan docs/superpowers/plans/2026-11-03-native-proximity-phase1.md):
 1 same-tick removal, 2 sized torpedo, 3 radius read at query time,
@@ -150,7 +152,7 @@ class _Scene:
     def mutate(self):
         rng = self.rng
         pSet, pm = self.pSet, self.pm
-        op = rng.randrange(12)
+        op = rng.randrange(13)
         if op <= 2 and pSet is not None:                 # add to the set
             o = self._new()
             name = self._name()
@@ -197,6 +199,10 @@ class _Scene:
             o = self._new()
             pSet.AddObjectToSet(o, name)
             self.names[name] = o
+        elif op == 12 and self.objs:                     # scale change, no bump
+            o = rng.choice(self.objs)
+            if not isinstance(o, (_Bare, _RadiusRaises)):
+                o.SetScale(rng.choice([1.0, 0.5, 3.0, 0.0, -2.0]))
 
     def query_point_and_radius(self):
         rng = self.rng
@@ -204,11 +210,20 @@ class _Scene:
         if located and rng.random() < 0.4:
             # Exactly on the boundary: an integer offset along one axis from
             # an object's (integer) position.
-            loc = rng.choice(located).GetWorldLocation()
+            o = rng.choice(located)
+            loc = o.GetWorldLocation()
             r = float(rng.randint(0, 15))
             axis = rng.randrange(3)
             p = [loc.x, loc.y, loc.z]
             p[axis] -= r
+            # Half the time, the radius that puts its SURFACE on the
+            # boundary (BC's size rule, ruling 4).
+            try:
+                size = float(o.GetRadius())
+            except Exception:
+                size = 0.0
+            if 0.0 < size <= r and rng.random() < 0.5:
+                return TGPoint3(*p), r - size
             return TGPoint3(*p), r
         return TGPoint3(*_grid(rng)), rng.choice([0.0, 1.0, 5.0, 12.5, 30.0, 1e4])
 
@@ -266,19 +281,23 @@ def test_sized_torpedo_set_takes_python_path_and_matches_oracle(monkeypatch):
     b = _ship(pSet, "B")
     pm = pSet.GetProximityManager()
     cls = type(get_store())
-    calls = []
-    real = cls.near_indices
-    monkeypatch.setattr(cls, "near_indices",
-                        lambda self, *a: calls.append(1) or real(self, *a))
+    calls = []          # per near_indices_sized call: was it the cache's?
+    real = cls.near_indices_sized
+
+    def spy(self, packed, *a):
+        calls.append(pm._cand is not None and packed is pm._cand.packed)
+        return real(self, packed, *a)
+
+    monkeypatch.setattr(cls, "near_indices_sized", spy)
     t.SetRadius(0.5)
     try:
         got = _near(pm)
         assert got == [a, t, b]
         assert _ids(got) == _ids(oracle.near_objects(pm, _origin(), 1000.0))
-        assert calls == []                  # today's Python path, uncached
+        assert calls == [False]             # today's Python path, uncached
         t.SetRadius(0.0)
         assert _near(pm) == [a, b]
-        assert calls == [1]                 # back on the cache
+        assert calls == [False, True]       # back on the cache
     finally:
         projectiles._active.clear()
 

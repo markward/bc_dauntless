@@ -129,3 +129,85 @@ def test_near_indices_stale_handle_raises(store):
 def test_near_indices_empty_buffer(store):
     s, made = store
     assert list(s.near_indices(array("I"), 0.0, 0.0, 0.0, 1.0)) == []
+
+
+# ── near_indices_sized: BC's size rule (native proximity phase 1, Task 7) ────
+# Position k is kept when its centre lies within r + max(radii[k], 0) of the
+# point: `dx*dx + dy*dy + dz*dz <= reach*reach`, rounded as CPython rounds it.
+
+def _sized_reference(xyz, p, r, rad):
+    reach = r + (rad if rad > 0.0 else 0.0)
+    dx, dy, dz = xyz[0] - p[0], xyz[1] - p[1], xyz[2] - p[2]
+    return dx * dx + dy * dy + dz * dz <= reach * reach
+
+
+def test_near_indices_sized_matches_brute_force(store):
+    s, made = store
+    rng = random.Random(23)
+    p = (0.1, -0.7, 0.3)
+    pts = [tuple(rng.uniform(-100, 100) for _ in range(3)) for _ in range(200)]
+    hs = [_put(s, made, xyz) for xyz in pts]
+    packed = _pack(hs)
+    radii = array("d", [rng.choice([0.0, -3.0, rng.uniform(0, 60)])
+                        for _ in pts])
+    rs = [0.0, 1.0, 12.5, 40.0, 150.0]
+    for k, xyz in enumerate(pts[:40]):
+        # The boundary itself: the query radius that puts k's surface on it.
+        dx, dy, dz = xyz[0] - p[0], xyz[1] - p[1], xyz[2] - p[2]
+        rs.append((dx * dx + dy * dy + dz * dz) ** 0.5
+                  - (radii[k] if radii[k] > 0.0 else 0.0))
+    for r in rs:
+        want = [k for k, xyz in enumerate(pts)
+                if _sized_reference(xyz, p, r, radii[k])]
+        assert list(s.near_indices_sized(packed, radii, *p, r)) == want, r
+
+
+def test_near_indices_sized_reach_adds_the_radius(store):
+    s, made = store
+    hs = [_put(s, made, (x, 0.0, 0.0)) for x in (350.0, 350.0, 35.0, 8.0)]
+    packed = _pack(hs)
+    radii = array("d", [296.0, 0.0, 30.0, -10.0])
+
+    def near(r):
+        return list(s.near_indices_sized(packed, radii, 0.0, 0.0, 0.0, r))
+
+    assert near(54.0) == [0, 2, 3]    # 350 - 296 == 54: on the boundary
+    assert near(53.0) == [2, 3]
+    assert near(5.0) == [2]           # 35 - 30 == 5: on the boundary
+    assert near(10.0) == [2, 3]       # a negative radius counts as 0
+
+
+def test_near_indices_sized_with_zero_radii_equals_near_indices(store):
+    s, made = store
+    rng = random.Random(5)
+    pts = [tuple(float(rng.randint(-20, 20)) for _ in range(3))
+           for _ in range(100)]
+    hs = [_put(s, made, xyz) for xyz in pts]
+    packed = _pack(hs)
+    zeros = array("d", [0.0] * len(pts))
+    for r in (0.0, 1.0, 3.0, 7.5, 20.0):
+        assert list(s.near_indices_sized(packed, zeros, 0.0, 0.0, 0.0, r)) == \
+            list(s.near_indices(packed, 0.0, 0.0, 0.0, r * r))
+
+
+def test_near_indices_sized_stale_handle_raises(store):
+    s, made = store
+    h = s.alloc()
+    s.free(*h)
+    with pytest.raises(StaleHandleError):
+        s.near_indices_sized(_pack([h]), array("d", [1.0]),
+                             0.0, 0.0, 0.0, 1.0)
+
+
+def test_near_indices_sized_empty_buffer(store):
+    s, made = store
+    assert list(s.near_indices_sized(array("I"), array("d"),
+                                     0.0, 0.0, 0.0, 1.0)) == []
+
+
+def test_near_indices_sized_radii_length_mismatch_raises(store):
+    s, made = store
+    hs = [_put(s, made, (0.0, 0.0, 0.0)) for _ in range(3)]
+    with pytest.raises(ValueError):
+        s.near_indices_sized(_pack(hs), array("d", [1.0, 2.0]),
+                             0.0, 0.0, 0.0, 1.0)

@@ -160,6 +160,38 @@ class PythonTransformStore:
                 out.append(k)
         return out
 
+    def near_indices_sized(self, packed, radii, x: float, y: float, z: float,
+                           r: float) -> list:
+        """BC's size rule (ProximityManager.GetNearObjects, ruling 4):
+        ascending positions k of the handles whose SURFACE lies within or on
+        the sphere, `dx*dx + dy*dy + dz*dz <= reach*reach` with
+        reach = r + max(radii[k], 0) (a radius that is not > 0 counts as 0).
+        `packed` is flat (index, generation) pairs, `radii` (e.g. array("d"))
+        one per pair; a length mismatch raises ValueError, a stale handle
+        StaleHandleError."""
+        count = len(packed) // 2
+        if len(radii) != count:
+            raise ValueError("radii: one per handle pair")
+        d = self._data
+        gens = self._generations
+        n = len(gens)
+        out = []
+        for k in range(count):
+            index = packed[2 * k]
+            generation = packed[2 * k + 1]
+            if index < 0 or index >= n or gens[index] != generation:
+                raise StaleHandleError(
+                    "transform handle (%r, %r) is stale" % (index, generation))
+            size = radii[k]
+            reach = r + (size if size > 0.0 else 0.0)
+            base = index * _STRIDE
+            dx = d[base] - x
+            dy = d[base + 1] - y
+            dz = d[base + 2] - z
+            if dx * dx + dy * dy + dz * dz <= reach * reach:
+                out.append(k)
+        return out
+
     def proximity_report(self, anchors, objects, r2, want, start: int) -> list:
         """Indices from `start` of the proximity pairs Python must look at.
 
@@ -324,6 +356,16 @@ class NativeTransformStore:
         try:
             return self._h.transform_near_indices(
                 packed, float(x), float(y), float(z), float(r2))
+        except (RuntimeError, TypeError) as exc:
+            raise StaleHandleError(str(exc)) from exc
+
+    def near_indices_sized(self, packed, radii, x: float, y: float, z: float,
+                           r: float) -> list:
+        """See PythonTransformStore.near_indices_sized. `packed` (array("I"))
+        and `radii` (array("d")) cross as they are."""
+        try:
+            return self._h.transform_near_indices_sized(
+                packed, radii, float(x), float(y), float(z), float(r))
         except (RuntimeError, TypeError) as exc:
             raise StaleHandleError(str(exc)) from exc
 

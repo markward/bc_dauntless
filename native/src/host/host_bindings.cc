@@ -11872,6 +11872,36 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("handles"), py::arg("x"), py::arg("y"), py::arg("z"),
           py::arg("r2"));
 
+    // BC's size rule (ruling 4): hit positions (ascending) of the packed
+    // handles whose surface is within or on the sphere, reach = r +
+    // max(radii[k], 0). `radii` is a float64 buffer, one per handle pair.
+    // Holds the GIL, as transform_near_indices does (ruling R3).
+    m.def("transform_near_indices_sized",
+          [](py::buffer handles, py::buffer radii, double x, double y,
+             double z, double r) {
+              const py::buffer_info info = handles.request();
+              if (info.itemsize != sizeof(std::uint32_t) || info.ndim != 1 ||
+                  info.shape[0] % 2 != 0)
+                  throw py::value_error("handles: flat uint32 (index, generation) pairs");
+              const std::size_t n = static_cast<std::size_t>(info.shape[0]) / 2;
+              const py::buffer_info rinfo = radii.request();
+              if (rinfo.itemsize != sizeof(double) || rinfo.ndim != 1 ||
+                  rinfo.format != py::format_descriptor<double>::format())
+                  throw py::value_error("radii: flat float64 buffer");
+              if (static_cast<std::size_t>(rinfo.shape[0]) != n)
+                  throw py::value_error("radii: one per handle pair");
+              std::vector<std::uint32_t> hits;
+              const double p[3] = {x, y, z};
+              dauntless::transform_store().near_indices_sized(
+                  static_cast<const std::uint32_t*>(info.ptr), n,
+                  static_cast<const double*>(rinfo.ptr), p, r, hits);
+              py::list out;
+              for (std::uint32_t k : hits) out.append(k);
+              return out;
+          },
+          py::arg("handles"), py::arg("radii"), py::arg("x"), py::arg("y"),
+          py::arg("z"), py::arg("r"));
+
     // Backs engine/appc/proximity_table.py: the per-tick ProximityCheck pass
     // keeps its pairs packed between ticks and asks once which few need
     // Python. Returns a list because it is nearly always empty.

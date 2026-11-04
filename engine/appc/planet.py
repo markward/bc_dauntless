@@ -328,6 +328,22 @@ def _radius_participates(obj) -> bool:
         return False
 
 
+def _size(obj) -> float:
+    """BC's size rule (ruling 4): the bounding radius a near query adds to its
+    reach, read live: GetRadius() (the scaled world radius); one that raises
+    counts as 0. A value that is not > 0 is made 0 by the compare itself."""
+    try:
+        return float(obj.GetRadius())
+    except Exception:
+        return 0.0
+
+
+def _within_reach(dx, dy, dz, r, size) -> bool:
+    """The size rule's compare, rounded as near_indices_sized rounds it."""
+    reach = r + (size if size > 0.0 else 0.0)
+    return dx * dx + dy * dy + dz * dz <= reach * reach
+
+
 def _reports(cand, i) -> bool:
     """Whether entry `i` is a candidate THIS query (the uncached walk's
     rule): a set member when it participates now; a manager entry unless its
@@ -515,7 +531,11 @@ class ProximityManager:
         return cand
 
     def GetNearObjects(self, point, radius, eType=None):
-        """Objects within `radius` world-space units of `point`.
+        """Objects whose surface is within `radius` world-space units of
+        `point`: BC's size rule (ruling 4), `|location - point| <= radius +
+        max(GetRadius(), 0)`, boundary included. GetRadius() is the scaled
+        world radius, read live on every query; one that raises counts as 0,
+        so a radius-0 object (every headless ship) keeps the centre rule.
 
         Returns an iteration handle (also a plain sequence — see
         _ProximityIteration). SDK callers walk it with GetNextObject and
@@ -523,14 +543,14 @@ class ProximityManager:
         read it directly.
 
         SDK call sites pass an optional third arg (MissionLib.py:5035 passes
-        ``1`` — a type filter / encompassing-volume flag in the real engine);
-        accepted and ignored so those call sites round-trip.
+        ``1`` — BC's includeSize flag, which in the near query only widens the
+        axis prune and so cannot change the answer); accepted and ignored.
 
         Timed as `prox.near` (native motion + proximity phase 0).
 
         Answered from the cached candidate list (_cached) with one native
-        `near_indices` call for every store-backed entry; same objects, same
-        order as the uncached walk (tests/helpers/proximity_oracle.py).
+        `near_indices_sized` call for every store-backed entry; same objects,
+        same order as the uncached walk (tests/helpers/proximity_oracle.py).
         """
         with frame_profiler.scope("prox.near"):
             return self._near_objects(point, radius)
@@ -539,13 +559,15 @@ class ProximityManager:
         cand = self._cached()
         if cand is None:
             return self._near_objects_python(point, radius)
-        r2 = float(radius) * float(radius)
+        r = float(radius)
         px, py, pz = point.x, point.y, point.z
         objs = cand.objs
         keep = []
         if cand.packed:
             pos = cand.packed_pos
-            for k in get_store().near_indices(cand.packed, px, py, pz, r2):
+            radii = array("d", [_size(objs[i]) for i in pos])
+            for k in get_store().near_indices_sized(cand.packed, radii,
+                                                    px, py, pz, r):
                 i = pos[k]
                 if _reports(cand, i):
                     keep.append(i)
@@ -561,10 +583,8 @@ class ProximityManager:
                        else None)
                 if loc is None:
                     continue
-                dx = loc.x - px
-                dy = loc.y - py
-                dz = loc.z - pz
-                if dx * dx + dy * dy + dz * dz <= r2:
+                if _within_reach(loc.x - px, loc.y - py, loc.z - pz, r,
+                                 _size(obj)):
                     more.append(i)
             if more:
                 keep = sorted(keep + more) if keep else more
@@ -572,7 +592,7 @@ class ProximityManager:
 
     def _near_objects_python(self, point, radius):
         """The uncached query: a set holding a sized torpedo, or no SetClass."""
-        r2 = float(radius) * float(radius)
+        r = float(radius)
         px, py, pz = point.x, point.y, point.z
         ProximityCheck = _query_deps()[0]
         candidates = [o for o in self._candidates()
@@ -581,16 +601,21 @@ class ProximityManager:
         # 64-ship fight walks ~337 candidates per AvoidObstacles query; one
         # store crossing each was 40% of all AI time. Objects whose location
         # IS their transform-store slot are tested in ONE store call
-        # (within_radius: the compare below, rounded the same way). One that
-        # answers GetWorldLocation itself (DebrisChunk, subsystems, ...) is
-        # still asked.
+        # (near_indices_sized: the compare below, rounded the same way). One
+        # that answers GetWorldLocation itself (DebrisChunk, subsystems, ...)
+        # is still asked.
         stored = [obj for obj in candidates
                   if proximity_table.location_is_stored(obj)]
         inside = {}
         if stored:
-            flags = get_store().within_radius(
-                [obj._xform for obj in stored], px, py, pz, r2)
-            inside = {id(obj): f for obj, f in zip(stored, flags)}
+            packed = array("I")
+            for obj in stored:
+                packed.extend(obj._xform)
+            radii = array("d", [_size(obj) for obj in stored])
+            inside = dict.fromkeys(map(id, stored), False)
+            for k in get_store().near_indices_sized(packed, radii,
+                                                    px, py, pz, r):
+                inside[id(stored[k])] = True
         result = []
         for obj in candidates:
             f = inside.get(id(obj))
@@ -601,10 +626,7 @@ class ProximityManager:
             loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
             if loc is None:
                 continue
-            dx = loc.x - px
-            dy = loc.y - py
-            dz = loc.z - pz
-            if dx * dx + dy * dy + dz * dz <= r2:
+            if _within_reach(loc.x - px, loc.y - py, loc.z - pz, r, _size(obj)):
                 result.append(obj)
         return _ProximityIteration(result)
 

@@ -6,6 +6,14 @@ skipping) and ``_line_objects`` from engine/appc/planet.py at that commit,
 adapted only to be free functions over a manager (``self`` -> ``pm``) and
 without the profiler scope. Do not "fix" anything here: it is the reference
 the cached queries must equal by identity and order.
+
+One deliberate change since (Task 7, ruling 4): ``near_objects`` uses BC's
+size rule, keeping an object when its SURFACE is within the radius
+(`|location - point| <= radius + max(GetRadius(), 0)`, a GetRadius() that
+raises counting as 0). Its store-backed entries are still tested through
+``within_radius``, now one call per entry with that entry's reach squared, so
+it stays a different code path from the kernel the manager uses
+(``near_indices_sized``). ``line_objects`` is unchanged.
 """
 from engine.appc import proximity_table
 from engine.appc.planet import _is_proximity_participant, _ProximityIteration
@@ -40,8 +48,16 @@ def candidates(pm):
     return out
 
 
+def _reach(r, obj):
+    try:
+        rad = float(obj.GetRadius())
+    except Exception:
+        rad = 0.0
+    return r + (rad if rad > 0.0 else 0.0)
+
+
 def near_objects(pm, point, radius):
-    r2 = float(radius) * float(radius)
+    r = float(radius)
     px, py, pz = point.x, point.y, point.z
     from engine.appc.ai import ProximityCheck
     candidates_ = [o for o in candidates(pm)
@@ -50,10 +66,10 @@ def near_objects(pm, point, radius):
     stored = [obj for obj in candidates_
               if proximity_table.location_is_stored(obj)]
     inside = {}
-    if stored:
-        flags = get_store().within_radius(
-            [obj._xform for obj in stored], px, py, pz, r2)
-        inside = {id(obj): f for obj, f in zip(stored, flags)}
+    for obj in stored:
+        reach = _reach(r, obj)
+        f = get_store().within_radius([obj._xform], px, py, pz, reach * reach)
+        inside[id(obj)] = f[0]
     result = []
     for obj in candidates_:
         f = inside.get(id(obj))
@@ -67,7 +83,8 @@ def near_objects(pm, point, radius):
         dx = loc.x - px
         dy = loc.y - py
         dz = loc.z - pz
-        if dx * dx + dy * dy + dz * dz <= r2:
+        reach = _reach(r, obj)
+        if dx * dx + dy * dy + dz * dz <= reach * reach:
             result.append(obj)
     return _ProximityIteration(result)
 

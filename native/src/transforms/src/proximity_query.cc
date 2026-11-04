@@ -1,4 +1,5 @@
-// TransformStore::within_radius, ::proximity_report and sweep_candidates --
+// TransformStore::within_radius, ::near_indices(_sized), ::proximity_report
+// and sweep_candidates --
 // see transform_store.h.
 //
 // Their own translation unit so they can be compiled with -ffp-contract=off
@@ -40,6 +41,24 @@ void TransformStore::near_indices(const std::uint32_t* handles, std::size_t n,
         const double dy = t.pos[1] - point[1];
         const double dz = t.pos[2] - point[2];
         if (dx * dx + dy * dy + dz * dz <= r2)
+            out.push_back(static_cast<std::uint32_t>(k));
+    }
+}
+
+void TransformStore::near_indices_sized(const std::uint32_t* handles,
+                                        std::size_t n, const double* radii,
+                                        const double point[3], double r,
+                                        std::vector<std::uint32_t>& out) const {
+    for (std::size_t k = 0; k < n; ++k) {
+        const std::uint32_t index = handles[2 * k];
+        check(index, handles[2 * k + 1]);
+        const Transform& t = slots_[index];
+        const double size = radii[k] > 0.0 ? radii[k] : 0.0;
+        const double reach = r + size;
+        const double dx = t.pos[0] - point[0];
+        const double dy = t.pos[1] - point[1];
+        const double dz = t.pos[2] - point[2];
+        if (dx * dx + dy * dy + dz * dz <= reach * reach)
             out.push_back(static_cast<std::uint32_t>(k));
     }
 }

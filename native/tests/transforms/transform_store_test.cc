@@ -324,6 +324,94 @@ TEST(TransformStoreTest, NearIndicesBoundaryInclusive) {
     }()));
 }
 
+// near_indices_sized: BC's size rule (native proximity phase 1, Task 7).
+// Position k is kept when its centre lies within r + max(radii[k], 0) of the
+// point, compared as `dx*dx + dy*dy + dz*dz <= reach*reach`, unfused.
+TEST(TransformStoreTest, NearIndicesSizedMatchesBruteForce) {
+    TransformStore s;
+    std::vector<std::uint32_t> flat;
+    std::vector<double> xs, ys, zs, radii;
+    std::uint64_t seed = 4242;
+    auto next = [&] {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<double>(seed >> 11) / 9007199254740992.0;
+    };
+    for (int n = 0; n < 300; ++n) {
+        auto h = s.alloc();
+        const double x = next() * 200.0 - 100.0;
+        const double y = next() * 200.0 - 100.0;
+        const double z = next() * 200.0 - 100.0;
+        s.set_position(h.first, h.second, x, y, z);
+        flat.push_back(h.first);
+        flat.push_back(h.second);
+        xs.push_back(x);
+        ys.push_back(y);
+        zs.push_back(z);
+        const double pick = next();
+        radii.push_back(pick < 0.3 ? 0.0 : (pick < 0.4 ? -3.0 : next() * 60.0));
+    }
+    const double px = 0.1, py = -0.7, pz = 0.3;
+    const double p[3] = {px, py, pz};
+    std::vector<double> rs = {0.0, 1.0, 12.5, 40.0, 150.0};
+    for (std::size_t k = 0; k < 40; ++k) {
+        // The boundary itself: the query radius that puts k's surface on it.
+        volatile double dx = xs[k] - px, dy = ys[k] - py, dz = zs[k] - pz;
+        volatile double a = dx * dx, b = dy * dy, c = dz * dz;
+        volatile double ab = a + b;
+        volatile double d2 = ab + c;
+        rs.push_back(std::sqrt(d2) - (radii[k] > 0.0 ? radii[k] : 0.0));
+    }
+    for (double r : rs) {
+        std::vector<std::uint32_t> want;
+        for (std::uint32_t k = 0; k < 300; ++k) {
+            volatile double reach = r + (radii[k] > 0.0 ? radii[k] : 0.0);
+            volatile double reach2 = reach * reach;
+            volatile double dx = xs[k] - px, dy = ys[k] - py, dz = zs[k] - pz;
+            volatile double a = dx * dx, b = dy * dy, c = dz * dz;
+            volatile double ab = a + b;
+            volatile double d2 = ab + c;
+            if (d2 <= reach2) want.push_back(k);
+        }
+        std::vector<std::uint32_t> got;
+        s.near_indices_sized(flat.data(), 300, radii.data(), p, r, got);
+        EXPECT_EQ(got, want) << r;
+    }
+}
+
+TEST(TransformStoreTest, NearIndicesSizedReachAddsTheRadius) {
+    TransformStore s;
+    std::vector<std::uint32_t> flat;
+    const double xs[] = {350.0, 350.0, 35.0, 8.0};
+    const double radii[] = {296.0, 0.0, 30.0, -10.0};
+    for (double x : xs) {
+        auto h = s.alloc();
+        s.set_position(h.first, h.second, x, 0.0, 0.0);
+        flat.push_back(h.first);
+        flat.push_back(h.second);
+    }
+    const double p[3] = {0.0, 0.0, 0.0};
+    auto near = [&](double r) {
+        std::vector<std::uint32_t> got;
+        s.near_indices_sized(flat.data(), 4, radii, p, r, got);
+        return got;
+    };
+    EXPECT_EQ(near(54.0), (std::vector<std::uint32_t>{0, 2, 3}));  // boundary
+    EXPECT_EQ(near(53.0), (std::vector<std::uint32_t>{2, 3}));
+    EXPECT_EQ(near(5.0), (std::vector<std::uint32_t>{2}));         // boundary
+    EXPECT_EQ(near(10.0), (std::vector<std::uint32_t>{2, 3}));     // -10 -> 0
+    // Appends, as near_indices does.
+    std::vector<std::uint32_t> got = {77};
+    s.near_indices_sized(flat.data(), 4, radii, p, 5.0, got);
+    EXPECT_EQ(got, (std::vector<std::uint32_t>{77, 2}));
+    EXPECT_ANY_THROW(([&] {
+        auto h = s.alloc();
+        s.free(h.first, h.second);
+        std::uint32_t bad[2] = {h.first, h.second};
+        const double one[1] = {1.0};
+        s.near_indices_sized(bad, 1, one, p, 1.0, got);
+    }()));
+}
+
 TEST(TransformStoreTest, WithinRadiusRejectsAStaleHandle) {
     TransformStore s;
     auto h = s.alloc();
