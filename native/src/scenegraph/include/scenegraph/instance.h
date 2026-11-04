@@ -62,6 +62,16 @@ struct Instance {
     // round the scale before the multiply instead of after.
     double        xform_scale = 1.0;
 
+    /// SIM source (native motion phase 3a): the store slot, uniform scale and
+    /// per-set VIEW offset of the object's simulation pose. Gameplay point
+    /// queries (host_bindings.cc hit_pose_of) compose from it instead of the
+    /// drawn world_linear/world_translation_d, which may be interpolated.
+    /// sim_xform_index < 0 = none: those queries read the drawn pose.
+    int           sim_xform_index = -1;
+    std::uint32_t sim_xform_generation = 0;
+    double        sim_scale = 1.0;
+    glm::dvec3    sim_view_offset{0.0};
+
     bool visible = true;
     Pass pass = Pass::Space;
 

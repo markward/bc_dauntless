@@ -684,14 +684,40 @@ const assets::Model* resolve_model(scenegraph::ModelHandle h) {
     return g_loaded_models[h - 1].handle.get();
 }
 
+// The pose every gameplay point query reads (native motion phase 3a): the
+// SIM pose, composed from the live transform store through the instance's
+// sim source plus its per-set VIEW offset -- never the drawn (possibly
+// interpolated) world_linear/world_translation_d. drawn=true, no source, or
+// a stale source (the object was collected; a recycled slot is never read)
+// gives the drawn pose. Phase 4 switches the store read here to the
+// motion-end published buffer; this is the one place that changes.
+struct HitPose {
+    glm::mat3 linear;
+    glm::dvec3 translation;
+};
+HitPose hit_pose_of(const scenegraph::Instance& inst, bool drawn) {
+    if (!drawn && inst.sim_xform_index >= 0) {
+        const auto& store = dauntless::transform_store();
+        const auto i = static_cast<std::uint32_t>(inst.sim_xform_index);
+        if (store.valid(i, inst.sim_xform_generation)) {
+            HitPose p;
+            dauntless::compose_world_linear_translation(
+                store.at(i), inst.sim_scale, p.linear, p.translation);
+            p.translation += inst.sim_view_offset;
+            return p;
+        }
+    }
+    return {inst.world_linear, inst.world_translation_d};
+}
+
 // The instance_translation binding's body: the instance's double VIEW-space
-// translation, or nullopt for a stale id. Shared with K2's trace hooks
-// (install_combat_trace_hooks).
+// hit-pose translation, or nullopt for a stale id. Shared with K2's trace
+// hooks (install_combat_trace_hooks).
 std::optional<glm::dvec3> instance_translation_for_python(
-    scenegraph::InstanceId id) {
+    scenegraph::InstanceId id, bool drawn = false) {
     const auto* inst = g_world.get(id);
     if (inst == nullptr) return std::nullopt;
-    return inst->world_translation_d;
+    return hit_pose_of(*inst, drawn).translation;
 }
 
 // The shield_hit binding's body: ONE implementation, two callers -- the
@@ -708,8 +734,8 @@ void push_shield_hit(scenegraph::InstanceId id, const glm::vec3& point,
     if (!g_shield_pass) return;
     const auto* inst = g_world.get(id);
     if (inst == nullptr) return;
-    const glm::vec3 body = scenegraph::relative_to_body(inst->world_linear,
-                                                        point);
+    const glm::vec3 body = scenegraph::relative_to_body(
+        hit_pose_of(*inst, /*drawn=*/false).linear, point);
     g_shield_pass->shield_hit(id, body, rgba, intensity, glfwGetTime(),
                               radius);
 }
@@ -724,7 +750,7 @@ void push_shield_hit(scenegraph::InstanceId id, const glm::vec3& point,
 // message) for a stale id, std::runtime_error for no model handle.
 std::optional<renderer::RayHit> trace_instance_for_python(
     scenegraph::InstanceId id, const glm::vec3& o, glm::vec3 d, float max_dist,
-    bool rest_pose) {
+    bool rest_pose, bool drawn = false) {
     auto* inst = g_world.get(id);
     if (inst == nullptr) {
         throw dauntless::combat::StaleInstance(
@@ -751,9 +777,10 @@ std::optional<renderer::RayHit> trace_instance_for_python(
     // traces with the precision of one at the origin. rest_pose: the NIF's
     // rest geometry instead (authored, rest-frame content such as DamageTool
     // volumes). The pose is whatever g_world was last synced to; nothing
-    // here re-syncs it (K2 map 8.3.9).
+    // here re-syncs it (K2 map 8.3.9). The pose is the hit pose (sim unless
+    // drawn), whose translation instance_translation_for_python returns.
     return renderer::ray_trace_instance_linear(
-        *model, inst->world_linear, o, d, max_dist,
+        *model, hit_pose_of(*inst, drawn).linear, o, d, max_dist,
         rest_pose ? nullptr : &inst->node_overrides);
 }
 
@@ -3534,15 +3561,17 @@ struct BodyFramePoint {
 };
 // Game units -> model units; also used by hull_damage_add_body, whose point is
 // already in the body frame but whose radius is still game units.
+// Both read the SIM hit pose: their points are gameplay hit points.
 float radius_to_model(const scenegraph::Instance& inst, float radius) {
-    const float s = glm::length(glm::vec3(inst.world[0]));
+    const float s = glm::length(hit_pose_of(inst, /*drawn=*/false).linear[0]);
     return (s > 0.0f) ? radius / s : radius;
 }
 BodyFramePoint to_body_frame(const scenegraph::Instance& inst,
                              const glm::vec3& world_point,
                              const glm::vec3& world_normal, float radius) {
-    return {scenegraph::relative_to_body(inst.world_linear, world_point),
-            scenegraph::dir_to_body(inst.world_linear, world_normal),
+    const glm::mat3 linear = hit_pose_of(inst, /*drawn=*/false).linear;
+    return {scenegraph::relative_to_body(linear, world_point),
+            scenegraph::dir_to_body(linear, world_normal),
             radius_to_model(inst, radius)};
 }
 }  // namespace
@@ -6477,17 +6506,40 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "drop the origin-dependent history of the dust, volumetric-nebula "
           "and motion-blur passes. Use set_render_origin for per-frame moves.");
     m.def("instance_translation",
-          [](scenegraph::InstanceId id) -> py::object {
-              const auto t = instance_translation_for_python(id);
+          [](scenegraph::InstanceId id, bool drawn) -> py::object {
+              const auto t = instance_translation_for_python(id, drawn);
               if (!t) return py::none();
               return py::make_tuple(t->x, t->y, t->z);
           },
-          py::arg("iid"),
-          "The instance's VIEW-space translation (x, y, z) in double, or None "
-          "for a stale id. Subtract it (in double) from a world point to form "
-          "the INSTANCE-RELATIVE points the mesh queries take (ray_trace_mesh, "
-          "shield_hit, hull_damage_add, world_to_body, "
-          "damage_decal_add), and add it back to ray_trace_mesh's hit.");
+          py::arg("iid"), py::arg("drawn") = false,
+          "The instance's VIEW-space hit-pose translation (x, y, z) in double, "
+          "or None for a stale id: the SIM pose when a sim source is set "
+          "(set_instance_sim_source), else -- or with drawn=True -- the drawn "
+          "pose. Subtract it (in double) from a world point to form the "
+          "INSTANCE-RELATIVE points the mesh queries take (ray_trace_mesh, "
+          "shield_hit, hull_damage_add, world_to_body, damage_decal_add), "
+          "and add it back to ray_trace_mesh's hit; pass the same drawn flag "
+          "to both.");
+    m.def("set_instance_sim_source",
+          [](scenegraph::InstanceId id, int index, std::uint32_t generation,
+             double scale, std::tuple<double, double, double> view_offset) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              inst->sim_xform_index = index < 0 ? -1 : index;
+              inst->sim_xform_generation = generation;
+              inst->sim_scale = scale;
+              inst->sim_view_offset = glm::dvec3(std::get<0>(view_offset),
+                                                 std::get<1>(view_offset),
+                                                 std::get<2>(view_offset));
+          },
+          py::arg("iid"), py::arg("index"), py::arg("generation"),
+          py::arg("scale"), py::arg("view_offset"),
+          "Give a render instance its SIM pose source: a transform-store slot, "
+          "uniform scale and per-set VIEW offset. Gameplay point queries "
+          "(instance_translation, ray_trace_mesh, world_to_body, shield_hit, "
+          "damage_decal_add, hull_damage_add, instance_surface_points) then "
+          "compose the pose from the live store instead of the drawn matrix. "
+          "index < 0 clears; a stale handle reads the drawn pose.");
     m.def("set_instance_transform_slot",
           [](scenegraph::InstanceId id, int index, std::uint32_t generation,
              double scale) {
@@ -7062,13 +7114,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "pose). False when the instance is absent.");
 
     m.def("instance_surface_points",
-          [](scenegraph::InstanceId id) -> py::object {
+          [](scenegraph::InstanceId id, bool drawn) -> py::object {
               auto* in = g_world.get(id);
               if (!in) return py::none();
               const assets::Model* mdl = resolve_model(in->model_handle);
               if (!mdl) return py::none();
               std::vector<std::tuple<double, double, double>> out;
               out.reserve(mdl->surface_points.size());
+              if (!drawn && in->sim_xform_index >= 0) {
+                  // The hit pose (sim unless its source is stale): its
+                  // translation is already VIEW space, in double.
+                  const HitPose hp = hit_pose_of(*in, false);
+                  for (const glm::vec3& p : mdl->surface_points) {
+                      const glm::dvec3 w =
+                          glm::dvec3(hp.linear * p) + hp.translation;
+                      out.emplace_back(w.x, w.y, w.z);
+                  }
+                  return py::cast(out);
+              }
               const glm::dvec3 o = view_offset_of(*in);
               for (const glm::vec3& p : mdl->surface_points) {
                   glm::vec4 w = in->world * glm::vec4(p, 1.0f);  // model -> render
@@ -7076,9 +7139,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               }
               return py::cast(out);
           },
-          py::arg("iid"),
+          py::arg("iid"), py::arg("drawn") = false,
           "VIEW-space sample of the instance model's hull surface points "
-          "(spread across the hull) for VFX anchoring.");
+          "(spread across the hull) for VFX anchoring and "
+          "GetRandomPointOnModel: on the SIM pose when a sim source is set, "
+          "else -- or with drawn=True -- on the drawn pose.");
 
     m.def("load_animation_clips",
           [](const std::string& path) {
@@ -10418,7 +10483,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> origin,
              std::tuple<float, float, float> direction,
-             float max_dist, bool rest_pose) -> py::object {
+             float max_dist, bool rest_pose, bool drawn) -> py::object {
               // The body is trace_instance_for_python, shared with K2.
               const auto hit = trace_instance_for_python(
                   id,
@@ -10426,7 +10491,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                             std::get<2>(origin)),
                   glm::vec3(std::get<0>(direction), std::get<1>(direction),
                             std::get<2>(direction)),
-                  max_dist, rest_pose);
+                  max_dist, rest_pose, drawn);
               if (!hit) return py::none();
               return py::make_tuple(
                   py::make_tuple(hit->point.x, hit->point.y, hit->point.z),
@@ -10438,8 +10503,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("direction"),
           py::arg("max_dist"),
           py::arg("rest_pose") = false,
-          "Ray-cast a ray against an instance's loaded mesh, at "
-          "the pose it is DRAWN at -- the instance's node overrides "
+          py::arg("drawn") = false,
+          "Ray-cast a ray against an instance's loaded mesh, at its hit pose "
+          "(the SIM pose when a sim source is set; drawn=True or no source: "
+          "the drawn pose; pass the same flag to instance_translation) -- "
+          "the instance's node overrides "
           "(articulation / severance) are applied, so a moved part is hit "
           "where it appears and a severed one cannot be hit at all "
           "(rest_pose=True: the rest geometry, overrides ignored). origin "
@@ -10804,7 +10872,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(world_tangent));
               // Zero stays zero (dir_to_body returns a length-0 input
               // unchanged); the ring then derives a perpendicular.
-              const glm::vec3 tb = scenegraph::dir_to_body(inst->world_linear, tw);
+              const glm::vec3 tb = scenegraph::dir_to_body(
+                  hit_pose_of(*inst, /*drawn=*/false).linear, tw);
               // Convert radius game-units -> NIF/model units here (the same
               // space as pb), so the ring's merge test and the shader both work
               // in model units. s = |world's X column| = the uniform NIF->world
@@ -11225,7 +11294,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("world_to_body",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> world_point,
-             std::tuple<float, float, float> world_normal)
+             std::tuple<float, float, float> world_normal, bool drawn)
               -> py::object {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return py::none();  // stale id
@@ -11236,16 +11305,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<1>(world_normal),
                                  std::get<2>(world_normal));
               // pw is INSTANCE-RELATIVE (floating render origin).
-              const glm::vec3 pb = scenegraph::relative_to_body(inst->world_linear, pw);
-              const glm::vec3 nb = scenegraph::dir_to_body(inst->world_linear, nw);
+              const glm::mat3 linear = hit_pose_of(*inst, drawn).linear;
+              const glm::vec3 pb = scenegraph::relative_to_body(linear, pw);
+              const glm::vec3 nb = scenegraph::dir_to_body(linear, nw);
               return py::make_tuple(
                   py::make_tuple(pb.x, pb.y, pb.z),
                   py::make_tuple(nb.x, nb.y, nb.z));
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
+          py::arg("drawn") = false,
           "Convert an INSTANCE-RELATIVE hit point (world point minus "
-          "instance_translation) + world normal into the ship instance's "
-          "body frame (model units). Returns ((bx,by,bz),(nx,ny,nz)) or None "
+          "instance_translation, same drawn flag) + world normal into the "
+          "ship instance's body frame (model units), inverting the hit pose "
+          "(sim unless drawn=True). Returns ((bx,by,bz),(nx,ny,nz)) or None "
           "if the instance id is stale.");
 
     m.def("damage_decals_tick",

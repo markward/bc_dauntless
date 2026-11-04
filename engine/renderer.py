@@ -1408,11 +1408,12 @@ def instance_node_world(iid: InstanceId, node_name: str,
     return fn(iid, node_name, animated) if fn is not None else None
 
 
-def instance_surface_points(iid: InstanceId):
+def instance_surface_points(iid: InstanceId, drawn: bool = False):
     """World-space sample of the instance model's hull surface points (spread
-    across the hull) for VFX anchoring. Returns a list of (x,y,z), or []."""
+    across the hull) for VFX anchoring. Returns a list of (x,y,z), or [].
+    On the SIM pose (phase 3a); `drawn=True` samples the drawn hull."""
     fn = getattr(_h, "instance_surface_points", None)
-    r = fn(iid) if fn is not None else None
+    r = fn(iid, drawn=drawn) if fn is not None else None
     return r if r else []
 
 
