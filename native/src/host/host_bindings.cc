@@ -35,6 +35,7 @@
 #include "dauntless/combat/projectile_geometry.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/impulse.h"
 #include "dauntless/combat/tractor_force.h"
 #include "dauntless/combat/weapon_geometry.h"
 #include "dauntless/transform_store.h"
@@ -12474,6 +12475,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 return d;
             });
         }
+
+        // subsystems.impulse_fractions from the mirror (impulse.h). Used by
+        // tests and by nothing in play (kernel M calls the C++ directly).
+        // ValueError means "ask the Python".
+        m.def("combat_impulse_fractions",
+              [](std::int64_t ies) {
+                  const cb::ImpulseFractions f =
+                      cb::impulse_fractions(cb::mirror(), ies);
+                  return py::make_tuple(f.online, f.output);
+              },
+              py::arg("ies_handle"),
+              "(online, output) of subsystems.impulse_fractions; -1 is no IES.");
 
         // ── The detection kernel (sensor_detect.h) ───────────────────────
         // Each answers from the mirror exactly as the Python function of the
