@@ -72,6 +72,16 @@ struct Instance {
     double        sim_scale = 1.0;
     glm::dvec3    sim_view_offset{0.0};
 
+    /// Native render interpolation (phase 3c, host_bindings.cc g_interp).
+    /// interp_track: the frame-end capture snapshots this instance's sim
+    /// source. interp_compose: interp_compose(alpha) draws it at its drawn
+    /// pose (cleared by any explicit push or store binding: they win).
+    /// interp_live: drawn from the live store pose instead of the lerp (the
+    /// manually flown player).
+    bool interp_track = false;
+    bool interp_compose = false;
+    bool interp_live = false;
+
     bool visible = true;
     Pass pass = Pass::Space;
 

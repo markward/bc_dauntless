@@ -53,3 +53,16 @@ def test_resolve_is_not_called_from_the_set_dynamic_lights_binding():
     end = src.find("m.def(", start + 1)
     binding = src[start:end]
     assert "resolve_attached_dynamic_lights" not in binding
+
+
+def test_interp_compose_is_not_called_inside_frame():
+    """Interpolated hulls are composed by interp_compose, run from Python at
+    the end of _sync_instance_transforms, BEFORE frame() (native motion phase
+    3c, contradiction 10). frame() must never compose them itself: every
+    Python reader between the sync and frame() would then see a different
+    pose from the one drawn, and the store sweep would race the compose."""
+    body = _frame_body()
+    assert "interp_compose" not in body
+    assert "g_interp" not in body
+    src = _SRC.read_text(encoding="utf-8")
+    assert 'm.def("interp_compose"' in src, "interp_compose binding missing"

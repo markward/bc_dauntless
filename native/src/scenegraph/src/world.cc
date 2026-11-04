@@ -56,6 +56,7 @@ void World::set_world_transform_d(InstanceId id, const glm::mat3& linear,
         inst->world_linear = linear;
         inst->world_translation_d = translation;
         inst->xform_index = -1;
+        inst->interp_compose = false;  // and over the native compose
         resolve_instance(*inst, render_origin_);
     }
 }
@@ -71,6 +72,7 @@ void World::set_transform_slot(InstanceId id, int index,
         inst->xform_index = index;
         inst->xform_generation = generation;
         inst->xform_scale = scale;
+        if (index >= 0) inst->interp_compose = false;  // a binding wins too
     }
 }
 
