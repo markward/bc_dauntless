@@ -305,3 +305,55 @@ def test_empty_space_click_fires_phasers(monkeypatch):
     host.set_down(0, False)
     flag = _run_frame(host, panel, flag, None, monkeypatch)
     assert host.fire_up == 1
+
+
+# --- pick cost: only a press frame pays for the projection (SIG-183) ---------
+
+def _counting_pick(monkeypatch, aimed):
+    calls = []
+
+    def _pick(h, r, cam):
+        calls.append(1)
+        return aimed
+    monkeypatch.setattr(bop, "pick", _pick)
+    monkeypatch.setattr(crew_menu_hotkeys, "open_menu_for_character",
+                        lambda p, ch: setattr(p, "open_label", ch) or True)
+    return calls
+
+
+def test_no_press_frame_never_picks(monkeypatch):
+    """pick() skins every candidate's head natively; a frame with no left
+    press cannot open a menu, so it must not pay for one."""
+    calls = _counting_pick(monkeypatch, {"officer": "Helm"})
+    host = _EdgeHost()
+    panel = _OpenClosePanel()
+
+    flag = bop.handle_click(host, None, None, panel, False)   # button up
+    host.poll()
+    host.set_down(0, True)
+    flag = bop.handle_click(host, None, None, panel, flag)    # press: opens
+    host.poll()
+    assert panel.open_label == "Helm"
+    host.set_down(0, False)
+    panel.open_label = None
+    flag = bop.handle_click(host, None, None, panel, flag)    # release frame
+    host.poll()
+
+    assert len(calls) == 1
+
+
+def test_held_button_never_picks(monkeypatch):
+    """A button held down over empty space (phasers firing) is a press only on
+    its first frame; the held frames must not pick."""
+    calls = _counting_pick(monkeypatch, None)
+    host = _EdgeHost()
+    panel = _OpenClosePanel()
+
+    host.set_down(0, True)
+    flag = False
+    for _ in range(5):
+        flag = bop.handle_click(host, None, None, panel, flag)
+        host.poll()
+
+    assert len(calls) == 1
+    assert host.fire_down == 1

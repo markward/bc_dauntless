@@ -55,6 +55,7 @@
 #include <renderer/part_severance_jobs.h>
 #include <renderer/structure_parts_cache.h>
 #include <renderer/bone_palette.h>
+#include <renderer/head_center.h>
 #include <renderer/animation_update.h>
 #include <renderer/channel_binder.h>
 #include <renderer/frame.h>
@@ -677,6 +678,10 @@ renderer::BridgeNodeAnimStore g_bridge_node_anims;
 // The store is keyed by InstanceId::index (it must not depend on scenegraph, so it
 // stays GL-free and unit-testable). World lookups need the full id, so keep it here.
 std::unordered_map<std::uint32_t, scenegraph::InstanceId> g_bridge_node_ids;
+
+// get_instance_head_center's memo. Keyed by model handle, which init() and
+// shutdown() reissue, so both clear it beside g_loaded_models.
+renderer::HeadCenterCache g_head_center_cache;
 
 // Resolve a model handle to its loaded asset (or nullptr). File-scope so both
 // frame()'s draw lookup and the get_instance_bounds binding share one path.
@@ -1357,6 +1362,7 @@ void init(int width, int height, const std::string& title) {
     // drop the renderer's per-handle bounding-radius cache in lockstep or a
     // new model recycled onto an old handle inherits the old model's radius.
     renderer::reset_model_radius_cache();
+    g_head_center_cache.clear();
     g_bridge_node_anims.clear();
     g_bridge_node_ids.clear();
     // Everything frame() consumes and Python can push: see reset_frame_state().
@@ -1450,6 +1456,7 @@ void shutdown() {
     // Handle-recycling hazard: see the matching call in init(). Pure CPU
     // state (no GL), safe regardless of context currency.
     renderer::reset_model_radius_cache();
+    g_head_center_cache.clear();
     g_bridge_node_anims.clear();
     g_bridge_node_ids.clear();
     g_cache.reset();
@@ -9944,23 +9951,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "instance's model, or None if the instance/model is not resolvable.");
     m.def("get_instance_head_center",
           [](scenegraph::InstanceId iid) -> py::object {
-              // World-space centre of a posed character's HEAD — the officer
-              // zoom look-at point. Skins every vertex exactly as
-              // skinned_bridge.vert does (skin = sum w_k * palette[idx_k];
-              // world = u_model * skin * v), then takes the AABB centre of
-              // ONLY the vertices that belong to the grafted head mesh range
-              // [model->head_mesh_begin, meshes.size()) — the canonical
-              // head/body partition set up by graft_head_cpu (see
-              // model_compose.h). The weld remaps grafted head vertices onto
-              // ALIAS bones (name = body bone + "@head-bind") on bind-pose-
-              // mismatched pairs, so those vertices are no longer bound to
-              // the body's own "Bip01 Head" bone index; classifying by mesh
-              // range instead of bone index is robust to that. Falls back to
-              // the "Bip01 Head" bone-index test only when the model has no
-              // head_mesh_begin (head_mesh_begin < 0, e.g. non-composed
-              // models), then to the full-body skinned centre when there is
-              // no head bone either. Returns None for an unskinned / not-yet-
-              // posed instance (caller -> captain view).
+              // World-space centre of a posed character's HEAD -- the officer
+              // zoom look-at point. The skinning and the head/body partition
+              // live in renderer::skinned_head_center (renderer/head_center.h);
+              // this adds inst.world and the view offset. Returns None for an
+              // unskinned / not-yet-posed instance (caller -> captain view).
               //
               // Unlike get_instance_bounds (static AABB * inst.world), this
               // uses the bone palette: a bridge officer sits at inst.world ==
@@ -9972,79 +9967,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (inst == nullptr) return py::none();
               const assets::Model* model = resolve_model(inst->model_handle);
               if (model == nullptr || inst->bone_palette.empty()) return py::none();
-              const auto& palette = inst->bone_palette;
-
-              const bool use_mesh_range = model->head_mesh_begin >= 0;
-
-              int head_bi = -1;
-              if (!use_mesh_range) {
-                  for (std::size_t i = 0; i < model->skeleton.bones.size(); ++i) {
-                      if (model->skeleton.bones[i].name == "Bip01 Head") {
-                          head_bi = static_cast<int>(i);
-                          break;
-                      }
-                  }
-              }
-
-              glm::vec3 head_lo(1e30f), head_hi(-1e30f);
-              glm::vec3 body_lo(1e30f), body_hi(-1e30f);
-              bool any_head = false, any_body = false;
-              // Skinning is per vertex on the CPU and this runs every frame
-              // for each officer (the tooltip pick), so with a mesh-range head
-              // only the head meshes are skinned; the whole body is skinned
-              // only for the fallback centre when the head range has no
-              // skinned vertex (perf-register SIG-136).
-              auto scan = [&](std::size_t first_mesh) {
-                  for (std::size_t mesh_idx = first_mesh; mesh_idx < model->meshes.size();
-                       ++mesh_idx) {
-                      const auto& mesh = model->meshes[mesh_idx];
-                      const bool mesh_is_head =
-                          use_mesh_range &&
-                          static_cast<int>(mesh_idx) >= model->head_mesh_begin;
-                      const auto& cd = mesh.cpu_data();
-                      if (!cd) continue;
-                      for (const auto& v : cd->vertices) {
-                          const glm::vec4 p(v.position, 1.0f);
-                          glm::vec4 skinned(0.0f);
-                          float wsum = 0.0f;
-                          bool on_head = mesh_is_head;
-                          for (int k = 0; k < 4; ++k) {
-                              const float w = static_cast<float>(v.bone_weights[k]) / 255.0f;
-                              if (w <= 0.0f) continue;
-                              const std::size_t bi =
-                                  static_cast<std::size_t>(v.bone_indices[k]);
-                              if (bi >= palette.size()) continue;   // GPU-safe guard
-                              skinned += w * (palette[bi] * p);
-                              wsum += w;
-                              if (!use_mesh_range && static_cast<int>(bi) == head_bi) {
-                                  on_head = true;
-                              }
-                          }
-                          if (wsum <= 0.0f) continue;
-                          const glm::vec3 s(skinned);
-                          body_lo = glm::min(body_lo, s);
-                          body_hi = glm::max(body_hi, s);
-                          any_body = true;
-                          if (on_head) {
-                              head_lo = glm::min(head_lo, s);
-                              head_hi = glm::max(head_hi, s);
-                              any_head = true;
-                          }
-                      }
-                  }
-              };
-              if (use_mesh_range)
-                  scan(static_cast<std::size_t>(model->head_mesh_begin));
-              if (!any_head) {
-                  body_lo = glm::vec3(1e30f);
-                  body_hi = glm::vec3(-1e30f);
-                  any_body = false;
-                  scan(0);
-              }
-              glm::vec3 center;
-              if (any_head)      center = 0.5f * (head_lo + head_hi);
-              else if (any_body) center = 0.5f * (body_lo + body_hi);
-              else               return py::none();
+              // Memoised on its exact inputs (renderer/head_center.h): the
+              // tooltip pick, the zoom look-at and the watch all ask for the
+              // same officer in one frame (perf-register SIG-183).
+              const std::optional<glm::vec3> local = g_head_center_cache.get(
+                  iid, inst->model_handle, *model, inst->bone_palette);
+              if (!local) return py::none();
+              const glm::vec3 center = *local;
               const glm::vec4 c = inst->world * glm::vec4(center, 1.0f);
               const glm::dvec3 o = view_offset_of(*inst);
               return py::make_tuple(c.x + o.x, c.y + o.y, c.z + o.z);

@@ -198,8 +198,8 @@ def handle_click(h, r, bridge_camera, crew_menu_panel, pick_active: bool) -> boo
         consumed earlier by the panel mouse-forwarding, so a press still seen
         here is off-menu.
 
-    The press is intercepted with the edge-consuming mouse_button_pressed only
-    once we've decided to act, so empty-space clicks (no menu, no officer) keep
+    The press is intercepted (the latch below swallows its release) only once
+    we've decided to act, so empty-space clicks (no menu, no officer) keep
     firing phasers. `pick_active` records that an intercepted press is in flight
     so its matching release is swallowed (never split a real phaser press/release
     pair, never leak a stray OnKeyUp)."""
@@ -210,9 +210,13 @@ def handle_click(h, r, bridge_camera, crew_menu_panel, pick_active: bool) -> boo
         if h.mouse_button_pressed(left):
             pick_active = True
             crew_menu_panel.close_open_menu()
-    else:
+    elif h.mouse_button_pressed(left):
+        # Press first, pick second: pick() skins every candidate's head
+        # natively (perf-register SIG-183), and only a press frame can use
+        # it. mouse_button_pressed is read-only (the release advances the
+        # edge), so the order changes nothing but the cost.
         aimed = pick(h, r, bridge_camera)
-        if aimed is not None and h.mouse_button_pressed(left):
+        if aimed is not None:
             pick_active = True
             crew_menu_hotkeys.open_menu_for_character(
                 crew_menu_panel, aimed["officer"])

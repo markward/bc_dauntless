@@ -259,12 +259,25 @@ add_library(renderer STATIC
     viewscreen_rtt_size.cc
     light_matrix.cc
     shadow_map_target.cc
+    head_center.cc
 )
 target_include_directories(renderer
     PUBLIC include
     PRIVATE "${CMAKE_CURRENT_BINARY_DIR}"
 )
 target_compile_features(renderer PUBLIC cxx_std_20)
+# head_center.cc runs per bridge officer per frame (perf-register SIG-183), so
+# it is optimised in Debug too, and never contracts a multiply-add, so its
+# answer keeps the bits of the -O0 code it came from (head_center_test.cc).
+# MSVC rejects /O2 beside this directory's Debug /RTC1, so there it keeps
+# only the exact-float flag.
+if(MSVC)
+    set_source_files_properties(head_center.cc PROPERTIES
+        COMPILE_OPTIONS "/fp:precise")
+else()
+    set_source_files_properties(head_center.cc PROPERTIES
+        COMPILE_OPTIONS "-ffp-contract=off;$<$<CONFIG:Debug>:-O2>")
+endif()
 target_link_libraries(renderer PUBLIC assets scenegraph voxel glad glfw glm)
 # Bridge Lottie panels: BridgePass holds a lottie::PanelWorker (bridge_panels.h).
 target_link_libraries(renderer PUBLIC lottie)
