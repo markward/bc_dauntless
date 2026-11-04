@@ -187,10 +187,49 @@ def reset() -> None:
     for k in _counts:
         _counts[k] = 0
     _python_rows.clear()
+    _tick_reset()
     _watch.clear()
     _watch_seen[:] = [0, -1]
     if _h is not None and hasattr(_h, "combat_compute_take"):
         _h.combat_compute_take(_KERNEL_M)
+
+
+# ── The published-pose buffer (Task 6) ───────────────────────────────────────
+
+_tick = 0
+
+
+def _tick_reset() -> None:
+    global _tick
+    _tick = 0
+    if _h is not None and hasattr(_h, "combat_motion_published_clear"):
+        _h.combat_motion_published_clear()
+
+
+def publish(handles) -> None:
+    """Copy each ship row's pose and ``_velocity`` into the native
+    published-pose buffer (published_poses.h), tagged with a per-process
+    tick that increments once per call (once per motion stage). -1 and
+    stale handles are skipped natively. Nothing reads it in play yet; it
+    changes no state. Runs on the main thread with the GIL held (one short
+    copy; the mirror is not written), so nothing here needs the off-main
+    queue."""
+    global _tick
+    _tick += 1
+    _h.combat_motion_publish([h for h in handles], _tick)
+
+
+def publish_stage() -> None:
+    """The end of ``ship_motion.tick_all_ship_motion``, in both switch
+    states, whenever the mirror is live: publish the roster's ships."""
+    if not native_combat._enabled or _h is None:
+        return
+    handles = []
+    for ship in ship_iter.iter_non_rock_ships():
+        d = getattr(ship, "__dict__", None)
+        h = -1 if d is None else d.get("_nslot", -1)
+        handles.append(h if type(h) is int else -1)
+    publish(handles)
 
 
 def counts() -> dict:

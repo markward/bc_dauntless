@@ -164,10 +164,12 @@ def tick_all_ship_motion(dt: float) -> None:
     """
     if native_motion.enabled():
         native_motion.step_all(dt)
-        return
-    from engine.appc.ship_iter import iter_non_rock_ships
-    for ship in iter_non_rock_ships():
-        _step_ship_motion(ship, dt)
+    else:
+        from engine.appc.ship_iter import iter_non_rock_ships
+        for ship in iter_non_rock_ships():
+            _step_ship_motion(ship, dt)
+    # Last, in both switch states: the tick's poses, for later phases.
+    native_motion.publish_stage()
 
 
 def _ramp_toward(current: float, target: float, step: float) -> float:

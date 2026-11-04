@@ -30,6 +30,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/tractor_force.cc
     src/impulse.cc
     src/motion_step.cc
+    src/published_poses.cc
 )
 
 add_library(dauntless_combat STATIC ${DAUNTLESS_COMBAT_SOURCES})

@@ -38,6 +38,7 @@
 #include "dauntless/combat/sensor_detect.h"
 #include "dauntless/combat/impulse.h"
 #include "dauntless/combat/motion_step.h"
+#include "dauntless/combat/published_poses.h"
 #include "dauntless/combat/tractor_force.h"
 #include "dauntless/combat/weapon_geometry.h"
 #include "dauntless/transform_store.h"
@@ -12566,6 +12567,37 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "Kernel M from rows[begin], its writes applied into `ships` by "
               "C: (stop, at, reason) (native_motion.DONE / WARP_ROW / "
               "PYTHON_ROW, native_motion.REASONS).");
+        // The published-pose buffer (published_poses.h): the motion stage's
+        // last act copies each ship row's pose and velocity here, tagged
+        // with the tick. GIL held: one short copy, mirror unwritten.
+        m.def("combat_motion_publish",
+              [](const std::vector<std::int64_t>& handles,
+                 std::int64_t tick) {
+                  cb::published_poses().publish(
+                      cb::mirror(), dauntless::transform_store(), handles,
+                      tick);
+              },
+              py::arg("handles"), py::arg("tick"),
+              "Replace the published-pose buffer with these Object handles' "
+              "poses, tagged `tick` (-1 and stale handles skipped).");
+        m.def("combat_motion_published",
+              [] {
+                  const cb::PublishedPoses& pp = cb::published_poses();
+                  py::list out;
+                  for (const cb::PublishedPose& p : pp.all())
+                      out.append(py::make_tuple(
+                          p.object,
+                          py::make_tuple(p.pos[0], p.pos[1], p.pos[2]),
+                          py::make_tuple(p.rot[0], p.rot[1], p.rot[2],
+                                         p.rot[3], p.rot[4], p.rot[5],
+                                         p.rot[6], p.rot[7], p.rot[8]),
+                          py::make_tuple(p.vel[0], p.vel[1], p.vel[2])));
+                  return py::make_tuple(pp.tick(), out);
+              },
+              "(tick, [(handle, pos3, rot9, vel3), ...]): the published "
+              "buffer (tests).");
+        m.def("combat_motion_published_clear",
+              [] { cb::published_poses().clear(); });
         // Test only: the C applier alone on a Python-encoded log
         // (combat_motion_compute's: [(row, what, speed, cav3, vel3,
         // drift3), ...]), for tests/unit/test_native_motion_apply.py.
