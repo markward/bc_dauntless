@@ -747,3 +747,152 @@ TEST(MirrorTest, FloatListElementInPlace) {
     EXPECT_THROW(f.m.set_float_at(s, Field::_reload_timers, 0, 1.0),
                  std::invalid_argument);
 }
+
+// Kernel M's inputs (native motion phase 2, Task 2): every field round-trips
+// through its typed setter into the row the kernel reads, with its default
+// before any push.
+TEST(Mirror, MotionFieldsRoundTrip) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object);
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    const ObjectRow* r = f.m.object(o);
+    // Defaults: _angular_space is DIRECTION_WORLD_SPACE (getattr's default),
+    // the vectors are unset, the setpoint empty, the ref none.
+    EXPECT_EQ(r->_angular_space, 1);
+    EXPECT_EQ(r->_current_angular_velocity_state, 0);
+    EXPECT_TRUE(r->_speed_setpoint.empty());
+    EXPECT_EQ(f.m.get_ref(o, Field::_impulse_engine_subsystem), -1);
+    EXPECT_EQ(r->motion_stock, 0);
+
+    f.m.set_f(o, Field::_current_speed, -0.0);
+    f.m.set_fv(o, Field::_current_angular_velocity, {0.1, -0.2, 0.3});
+    f.m.set_fv(o, Field::_target_angular_velocity_setpoint, {1.0, 2.0, 3.0});
+    f.m.set_fv(o, Field::_drift_velocity, {4.0, 5.0, 6.0});
+    f.m.set_fv(o, Field::_angular_velocity, {7.0, 8.0, 9.0});
+    const std::vector<double> sp{3.5, 0.25, 1.0, -0.5, 1.0};
+    f.m.set_floats(o, Field::_speed_setpoint, sp);
+    f.m.set_i(o, Field::_angular_space, 0);
+    f.m.set_i(o, Field::_static, 1);
+    f.m.set_i(o, Field::_stationary, 1);
+    f.m.set_i(o, Field::_insystem_warp_transit, 1);
+    f.m.set_ref(o, Field::_impulse_engine_subsystem, s);
+    f.m.set_i(o, Field::motion_stock, 1);
+    EXPECT_TRUE(std::signbit(r->_current_speed));
+    EXPECT_EQ(r->_current_angular_velocity, (Vec3{0.1, -0.2, 0.3}));
+    EXPECT_EQ(r->_current_angular_velocity_state, 1);
+    EXPECT_EQ(r->_target_angular_velocity_setpoint, (Vec3{1.0, 2.0, 3.0}));
+    EXPECT_EQ(r->_target_angular_velocity_setpoint_state, 1);
+    EXPECT_EQ(r->_drift_velocity, (Vec3{4.0, 5.0, 6.0}));
+    EXPECT_EQ(r->_drift_velocity_state, 1);
+    EXPECT_EQ(r->_angular_velocity, (Vec3{7.0, 8.0, 9.0}));
+    EXPECT_EQ(r->_angular_velocity_state, 1);
+    EXPECT_TRUE(same_bits(r->_speed_setpoint, sp));
+    EXPECT_TRUE(same_bits(f.m.get_floats(o, Field::_speed_setpoint), sp));
+    EXPECT_EQ(r->_angular_space, 0);
+    EXPECT_EQ(r->_static, 1);
+    EXPECT_EQ(r->_stationary, 1);
+    EXPECT_EQ(r->_insystem_warp_transit, 1);
+    EXPECT_EQ(r->_impulse_engine_subsystem, s);
+    EXPECT_EQ(f.m.get_ref(o, Field::_impulse_engine_subsystem), s);
+    EXPECT_EQ(r->motion_stock, 1);
+    // The ref checks its target kind and reads a freed IES as none.
+    EXPECT_THROW(f.m.set_ref(o, Field::_impulse_engine_subsystem, o),
+                 std::invalid_argument);
+    f.m.unregister_row(s);
+    EXPECT_EQ(f.m.get_ref(o, Field::_impulse_engine_subsystem), -1);
+
+    int64_t ies = f.m.register_row(Kind::Subsystem);
+    f.m.set_f(ies, Field::_power_percentage_wanted, 1.25);
+    f.m.set_f(ies, Field::_max_speed, 6.3);
+    f.m.set_f(ies, Field::_max_accel, 1.7);
+    f.m.set_f(ies, Field::_max_angular_velocity, 0.31);
+    f.m.set_f(ies, Field::_max_angular_accel, 0.11);
+    f.m.set_i(ies, Field::motion_ies_stock, 1);
+    f.m.set_i(ies, Field::motion_pod_stock, 1);
+    const SubsystemRow* q = f.m.subsystem(ies);
+    EXPECT_EQ(q->_power_percentage_wanted, 1.25);
+    EXPECT_EQ(q->_max_speed, 6.3);
+    EXPECT_EQ(q->_max_accel, 1.7);
+    EXPECT_EQ(q->_max_angular_velocity, 0.31);
+    EXPECT_EQ(q->_max_angular_accel, 0.11);
+    EXPECT_EQ(q->motion_ies_stock, 1);
+    EXPECT_EQ(q->motion_pod_stock, 1);
+
+    // Typed and kinded: an Object field on a Subsystem row, a scalar setter
+    // on the setpoint list, and the other way round, all throw.
+    EXPECT_THROW(f.m.set_f(ies, Field::_current_speed, 1.0),
+                 std::invalid_argument);
+    EXPECT_THROW(f.m.set_f(o, Field::_max_speed, 1.0), std::invalid_argument);
+    EXPECT_THROW(f.m.set_f(o, Field::_speed_setpoint, 1.0),
+                 std::invalid_argument);
+    EXPECT_THROW(f.m.set_floats(o, Field::_current_speed, {1.0}),
+                 std::invalid_argument);
+    EXPECT_STREQ(field_name(Field::_impulse_engine_subsystem),
+                 "_impulse_engine_subsystem");
+    EXPECT_EQ(field_kind(Field::_max_speed), Kind::Subsystem);
+    EXPECT_EQ(field_type(Field::_speed_setpoint), FieldType::FloatList);
+    EXPECT_EQ(field_type(Field::_drift_velocity), FieldType::Vec3);
+
+    // A cleared row reads its defaults again.
+    f.m.clear();
+    int64_t o2 = f.m.register_row(Kind::Object);
+    EXPECT_EQ(f.m.object(o2)->_angular_space, 1);
+    EXPECT_EQ(f.m.object(o2)->_static, 0);
+    EXPECT_TRUE(f.m.object(o2)->_speed_setpoint.empty());
+}
+
+// A point-or-none vector: 0 doubles is None (state 0), 3 a TGPoint3 (1), 4
+// a value the mirror cannot hold (2, the vector zero). get_fv reads back what
+// was set; the state is read-only except through set_fv.
+TEST(Mirror, PointOrNoneState) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object);
+    const ObjectRow* r = f.m.object(o);
+    for (Field v : {Field::_current_angular_velocity, Field::_drift_velocity,
+                    Field::_target_angular_velocity_setpoint,
+                    Field::_angular_velocity}) {
+        EXPECT_TRUE(f.m.get_fv(o, v).empty());
+        f.m.set_fv(o, v, {1.0, -0.0, 2.0});
+        EXPECT_TRUE(same_bits(f.m.get_fv(o, v), {1.0, -0.0, 2.0}));
+        f.m.set_fv(o, v, {0.0, 0.0, 0.0, 0.0});
+        EXPECT_EQ(f.m.get_fv(o, v), (std::vector<double>{0, 0, 0, 0}));
+        f.m.set_fv(o, v, {});
+        EXPECT_TRUE(f.m.get_fv(o, v).empty());
+        EXPECT_THROW(f.m.set_fv(o, v, {1.0, 2.0}), std::invalid_argument);
+    }
+    f.m.set_fv(o, Field::_drift_velocity, {3.0, 4.0, 5.0});
+    EXPECT_EQ(r->_drift_velocity_state, 1);
+    EXPECT_EQ(f.m.get_i(o, Field::_drift_velocity_state), 1);
+    f.m.set_fv(o, Field::_drift_velocity, {9.0, 9.0, 9.0, 9.0});
+    EXPECT_EQ(r->_drift_velocity_state, 2);
+    EXPECT_EQ(r->_drift_velocity, (Vec3{0, 0, 0}));
+    f.m.set_fv(o, Field::_drift_velocity, {});
+    EXPECT_EQ(r->_drift_velocity_state, 0);
+    EXPECT_EQ(r->_drift_velocity, (Vec3{0, 0, 0}));
+    // The other vectors are untouched by it.
+    EXPECT_EQ(r->_angular_velocity_state, 0);
+    // The state is written only with its vector.
+    EXPECT_THROW(f.m.set_i(o, Field::_drift_velocity_state, 1),
+                 std::invalid_argument);
+    // A non-nullable vector still takes exactly 3 doubles.
+    EXPECT_THROW(f.m.set_fv(o, Field::_velocity, {1.0, 2.0, 3.0, 4.0}),
+                 std::invalid_argument);
+    EXPECT_THROW(f.m.set_fv(o, Field::_velocity, {}), std::invalid_argument);
+}
+
+// _velocity keeps its Vec3 for every kernel; _velocity_state beside it is 0
+// until a push, 1 after any 3-double set_fv (a TGPoint3 is what every
+// native writer stores), and Python sets 2 for a non-TGPoint3 value.
+TEST(Mirror, VelocityState) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object, 3, 4, 77);
+    EXPECT_EQ(f.m.get_i(o, Field::_velocity_state), 0);
+    f.m.set_fv(o, Field::_velocity, {1.0, 2.0, 3.0});
+    EXPECT_EQ(f.m.get_i(o, Field::_velocity_state), 1);
+    f.m.set_i(o, Field::_velocity_state, 2);
+    EXPECT_EQ(f.m.get_i(o, Field::_velocity_state), 2);
+    EXPECT_EQ(f.m.get_fv(o, Field::_velocity),
+              (std::vector<double>{1.0, 2.0, 3.0}));
+    f.m.set_fv(o, Field::_velocity, {4.0, 5.0, 6.0});
+    EXPECT_EQ(f.m.get_i(o, Field::_velocity_state), 1);
+}

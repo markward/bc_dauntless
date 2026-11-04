@@ -975,6 +975,11 @@ def _reset_leakable_engine_globals():
     # self-check must fail loudly here too (M10).
     from engine.appc import native_combat as _native_combat
     _native_combat.configure()
+    # Native motion likewise (on unless DAUNTLESS_NATIVE_MOTION=0), so a test
+    # calling tick_all_ship_motion directly flies kernel M as the game does;
+    # reset() above turned it off. A test needing the Python arm pins =0.
+    from engine.appc import native_motion as _native_motion
+    _native_motion.configure()
     # Warp-in: radius seeder hook + live dial values are module globals.
     try:
         from engine.appc import warp_in_dials as _warp_in_dials

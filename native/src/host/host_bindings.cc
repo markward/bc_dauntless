@@ -12,6 +12,7 @@
 #include "host_bindings.h"
 #include "combat_effect_queue.h"
 #include "combat_write_apply.h"
+#include "motion_write_apply.h"
 
 #include <algorithm>
 #include <cstring>
@@ -35,6 +36,9 @@
 #include "dauntless/combat/projectile_geometry.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/impulse.h"
+#include "dauntless/combat/motion_step.h"
+#include "dauntless/combat/published_poses.h"
 #include "dauntless/combat/tractor_force.h"
 #include "dauntless/combat/weapon_geometry.h"
 #include "dauntless/transform_store.h"
@@ -4018,14 +4022,15 @@ struct K2Delivering {
 // 2026-11-03-kernels-off-the-lock-design.md goal 1): a steady_clock span
 // around exactly each kernel's compute call -- K0-K3's next(), K3's
 // apply_hits (counted as K3's) and K4's k4_eligible -- accumulated per
-// kernel (index 0-4) and read-and-reset by combat_compute_take. Pure C++
+// kernel (index 0-4; 5 is kernel M, the motion step) and read-and-reset by
+// combat_compute_take. Pure C++
 // inside the span (no CPython): the GIL release (THE GIL RELEASE, below)
 // encloses it. A throwing compute still closes its span (RAII) and counts.
 struct ComputeTimer {
     std::int64_t ns = 0;
     std::int64_t calls = 0;
 };
-constexpr int kComputeKernels = 5;
+constexpr int kComputeKernels = 6;
 
 std::array<ComputeTimer, kComputeKernels>& compute_timers() {
     static std::array<ComputeTimer, kComputeKernels> t;
@@ -4072,11 +4077,14 @@ private:
 // re-acquires the GIL as it unwinds (the release's destructor), before
 // pybind translates it; the driver then abandons its session as for any
 // exception.
-enum class ComputeSite : int { K0, K1, K2, K3, K3Hits, kCount };
+enum class ComputeSite : int { K0, K1, K2, K3, K3Hits, Motion, kCount };
 constexpr int kComputeSites = static_cast<int>(ComputeSite::kCount);
 
+// The timer index: K0-K3 0-3 (K3Hits is K3's), K4 4, kernel M 5.
 constexpr int compute_kernel(ComputeSite s) {
-    return s == ComputeSite::K3Hits ? 3 : static_cast<int>(s);
+    if (s == ComputeSite::K3Hits) return 3;
+    if (s == ComputeSite::Motion) return 5;
+    return static_cast<int>(s);
 }
 
 // THE GIL PROBE (test only; tests/unit/test_native_gil_release.py,
@@ -12350,6 +12358,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     case cb::FieldType::Vec3: {
                         auto v = mi.get_fv(h, f);
                         if (v.empty()) d[n] = py::none();
+                        else if (v.size() == 4)  // point-or-none, state 2
+                            d[n] = py::make_tuple(v[0], v[1], v[2], v[3]);
                         else d[n] = py::make_tuple(v[0], v[1], v[2]);
                         break;
                     }
@@ -12472,6 +12482,154 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 return d;
             });
         }
+
+        // subsystems.impulse_fractions from the mirror (impulse.h). Used by
+        // tests and by nothing in play (kernel M calls the C++ directly).
+        // ValueError means "ask the Python".
+        m.def("combat_impulse_fractions",
+              [](std::int64_t ies) {
+                  const cb::ImpulseFractions f =
+                      cb::impulse_fractions(cb::mirror(), ies);
+                  return py::make_tuple(f.online, f.output);
+              },
+              py::arg("ies_handle"),
+              "(online, output) of subsystems.impulse_fractions; -1 is no IES.");
+
+        // Kernel M, the ship-motion step (motion_step.h): one
+        // released_compute around motion_step alone; the write tuples are
+        // built after it, with the GIL held. ValueError: `begin` out of
+        // range.
+        m.def("combat_motion_constants",
+              [] {
+                  return py::make_tuple(cb::kFallbackMaxAccel,
+                                        cb::kBcImpulseTau);
+              },
+              "(kFallbackMaxAccel, kBcImpulseTau): motion_step.h's twins of "
+              "ship_motion.FALLBACK_MAX_ACCEL and BC_IMPULSE_TAU (pinned "
+              "equal by tests/unit/test_native_motion_kernel.py).");
+        m.def("combat_motion_compute",
+              [](const std::vector<std::int64_t>& rows, std::int64_t player,
+                 double dt, std::int64_t begin, bool resume) {
+                  cb::MotionResult r =
+                      released_compute(ComputeSite::Motion, [&] {
+                          return cb::motion_step(cb::mirror(), dauntless::transform_store(), rows, player, dt, begin, resume);
+                      });
+                  py::list writes;
+                  for (const cb::MotionWrite& w : r.writes) {
+                      auto v3 = [](const cb::Vec3& v) {
+                          return py::make_tuple(v[0], v[1], v[2]);
+                      };
+                      writes.append(py::make_tuple(
+                          w.row, static_cast<int>(w.what), w.speed, v3(w.cav),
+                          v3(w.velocity), v3(w.drift)));
+                  }
+                  return py::make_tuple(static_cast<int>(r.stop), r.at,
+                                        static_cast<int>(r.reason), writes);
+              },
+              py::arg("handles"), py::arg("player"), py::arg("dt"),
+              py::arg("begin"), py::arg("resume_past_warp"),
+              "Kernel M from rows[begin]: (stop, at, reason, writes), writes "
+              "[(row, what, speed, cav, velocity, drift), ...] for "
+              "native_motion's applier. stop 0 done, 1 a warp row, 2 a "
+              "Python row (native_motion.DONE / WARP_ROW / PYTHON_ROW).");
+
+        // Kernel M driven (native motion phase 2, Task 5): the compute
+        // released, as combat_motion_compute's, then the write log applied
+        // by C under the GIL (motion_write_apply.h), so no write tuple is
+        // ever built. `ships` is the Python list the handles were read from
+        // (ships[i] is rows[i]'s object). ValueError: `begin` out of range,
+        // or `ships` and `handles` of different lengths (checked before the
+        // kernel runs). A store that raised: every other store applied, the
+        // first exception raised (native_motion's driver resyncs then).
+        m.def("combat_motion_step",
+              [](py::object ships, const std::vector<std::int64_t>& rows,
+                 std::int64_t player, double dt, std::int64_t begin,
+                 bool resume) {
+                  const Py_ssize_t n = PySequence_Size(ships.ptr());
+                  if (n < 0) throw py::error_already_set();
+                  if (static_cast<std::size_t>(n) != rows.size())
+                      throw py::value_error(
+                          "combat_motion_step: " + std::to_string(n) +
+                          " ships for " + std::to_string(rows.size()) +
+                          " handles");
+                  cb::MotionResult r =
+                      released_compute(ComputeSite::Motion, [&] {
+                          return cb::motion_step(cb::mirror(), dauntless::transform_store(), rows, player, dt, begin, resume);
+                      });
+                  if (!dauntless::host::apply_motion_writes(ships.ptr(),
+                                                            r.writes))
+                      throw py::error_already_set();
+                  return py::make_tuple(static_cast<int>(r.stop), r.at,
+                                        static_cast<int>(r.reason));
+              },
+              py::arg("ships"), py::arg("handles"), py::arg("player"),
+              py::arg("dt"), py::arg("begin"), py::arg("resume_past_warp"),
+              "Kernel M from rows[begin], its writes applied into `ships` by "
+              "C: (stop, at, reason) (native_motion.DONE / WARP_ROW / "
+              "PYTHON_ROW, native_motion.REASONS).");
+        // The published-pose buffer (published_poses.h): the motion stage's
+        // last act copies each ship row's pose and velocity here, tagged
+        // with the tick. GIL held: one short copy, mirror unwritten.
+        m.def("combat_motion_publish",
+              [](const std::vector<std::int64_t>& handles,
+                 std::int64_t tick) {
+                  cb::published_poses().publish(
+                      cb::mirror(), dauntless::transform_store(), handles,
+                      tick);
+              },
+              py::arg("handles"), py::arg("tick"),
+              "Replace the published-pose buffer with these Object handles' "
+              "poses, tagged `tick` (-1 and stale handles skipped).");
+        m.def("combat_motion_published",
+              [] {
+                  const cb::PublishedPoses& pp = cb::published_poses();
+                  py::list out;
+                  for (const cb::PublishedPose& p : pp.all())
+                      out.append(py::make_tuple(
+                          p.object,
+                          py::make_tuple(p.pos[0], p.pos[1], p.pos[2]),
+                          py::make_tuple(p.rot[0], p.rot[1], p.rot[2],
+                                         p.rot[3], p.rot[4], p.rot[5],
+                                         p.rot[6], p.rot[7], p.rot[8]),
+                          py::make_tuple(p.vel[0], p.vel[1], p.vel[2])));
+                  return py::make_tuple(pp.tick(), out);
+              },
+              "(tick, [(handle, pos3, rot9, vel3), ...]): the published "
+              "buffer (tests).");
+        m.def("combat_motion_published_clear",
+              [] { cb::published_poses().clear(); });
+        // Test only: the C applier alone on a Python-encoded log
+        // (combat_motion_compute's: [(row, what, speed, cav3, vel3,
+        // drift3), ...]), for tests/unit/test_native_motion_apply.py.
+        m.def("combat_motion_apply",
+              [](py::object ships, py::list log) {
+                  std::vector<cb::MotionWrite> w;
+                  w.reserve(log.size());
+                  for (py::handle e : log) {
+                      auto t = e.cast<py::tuple>();
+                      if (t.size() != 6)
+                          throw py::value_error(
+                              "combat_motion_apply: a write is a 6-tuple");
+                      auto v3 = [](py::handle o) {
+                          auto v = o.cast<py::tuple>();
+                          return cb::Vec3{v[0].cast<double>(),
+                                          v[1].cast<double>(),
+                                          v[2].cast<double>()};
+                      };
+                      cb::MotionWrite x{};
+                      x.row = t[0].cast<std::uint32_t>();
+                      x.what = t[1].cast<std::uint8_t>();
+                      x.speed = t[2].cast<double>();
+                      x.cav = v3(t[3]);
+                      x.velocity = v3(t[4]);
+                      x.drift = v3(t[5]);
+                      w.push_back(x);
+                  }
+                  if (!dauntless::host::apply_motion_writes(ships.ptr(), w))
+                      throw py::error_already_set();
+              },
+              py::arg("ships"), py::arg("writes"),
+              "Test only: apply a kernel M write log by the C path.");
 
         // ── The detection kernel (sensor_detect.h) ───────────────────────
         // Each answers from the mirror exactly as the Python function of the
@@ -13343,7 +13501,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                         r.skipped);
               },
               py::arg("ship_handles"), py::arg("dt"),
-              "One tractor force step (cb.tractors).");
+              "One tractor force step (motion.tractors).");
         m.def("combat_k0_reset_counts",
               [] { cb::k0_session().reset_counts(); });
         m.def("combat_k0_clear_caches", [] { k0_caches().clear(); },
@@ -14592,7 +14750,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               [](int kernel) {
                   if (kernel < 0 || kernel >= kComputeKernels)
                       throw py::value_error(
-                          "combat_compute_take: kernel 0-4 (K0-K4)");
+                          "combat_compute_take: kernel 0-5 (K0-K4, M)");
                   ComputeTimer& t =
                       compute_timers()[static_cast<size_t>(kernel)];
                   const ComputeTimer taken = t;
@@ -14609,7 +14767,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               [](bool armed, int holds, double hold_ms, int throw_site) {
                   if (throw_site < -1 || throw_site >= kComputeSites)
                       throw py::value_error(
-                          "combat_gil_probe_arm: throw_site -1 or 0-4");
+                          "combat_gil_probe_arm: throw_site -1 or 0-5");
                   GilProbe& p = gil_probe();
                   p.holds = holds;
                   p.hold_ns = static_cast<std::int64_t>(hold_ms * 1e6);

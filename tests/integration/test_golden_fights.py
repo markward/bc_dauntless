@@ -34,6 +34,7 @@ except ImportError:
     _h = None
 
 from engine.appc import native_combat as nc
+from engine.appc import native_motion
 from tests.helpers import bc_assets
 from tests.helpers import golden_fight
 
@@ -93,10 +94,15 @@ def test_sdk_dumb_fire():
 # ── The recorder itself ──────────────────────────────────────────────────────
 
 def test_golden_arm_is_native_only():
-    """A re-record is labelled with the arm it ran, and the only arm is
-    native (fire control native only, M3): asking for "python" fails
-    loudly instead of recording native rows as Python's."""
-    assert golden_fight.ARMS == {"native": golden_fight.k1d.ON}
+    """A re-record is labelled with the arm it ran, and fire control is
+    native in every arm (fire control native only, M3): asking for "python"
+    fails loudly instead of recording native rows as Python's. The one
+    other arm is the native arm with the motion stage in Python (native
+    motion phase 2)."""
+    on = golden_fight.k1d.ON
+    assert golden_fight.ARMS == {
+        "native": on,
+        "python_motion": dict(on, DAUNTLESS_NATIVE_MOTION="0")}
     with pytest.raises(ValueError, match="native only"):
         golden_fight.run_scene("k1_ops_tpf1", "python")
 
@@ -200,3 +206,20 @@ def test_golden_schema_2_reads_without_baked_offset(monkeypatch, tmp_path):
            (1, [torp(baked=False, damage="0x1p+1")], [], [], [], [], [])]
     with pytest.raises(AssertionError, match="field 5 _damage"):
         golden_fight.check("tiny", bad)
+
+
+def test_motion_branches():
+    """Native motion (the switch's default): kernel M flew the stage."""
+    _golden("motion_branches")
+    counts = native_motion.counts()
+    assert counts["native_calls"] > 0, counts
+    assert counts["patched_stages"] == 0, counts
+
+
+def test_motion_branches_python_motion_arm():
+    """The same scene with the motion stage in Python
+    (DAUNTLESS_NATIVE_MOTION=0), against the one Python recording: both
+    arms equal it (native motion phase 2, Task 5)."""
+    rows = golden_fight.run_scene("motion_branches", "python_motion")
+    assert native_motion.counts()["native_calls"] == 0
+    golden_fight.check("motion_branches", rows)

@@ -8,7 +8,8 @@
 
 // The tractor force (fire control native only, M4, ruling R7): a port of
 // engine/appc/tractor.py's force, which it replaces. One step per sim tick,
-// in the combat step's `cb.tractors`, after K2.
+// in the motion stage (`ship_motion.tick_tractors`, profiler row
+// `motion.tractors`), after the motion rows and before the publish.
 //
 // THE LAW. Not a spring-damper: a mass-capped KINEMATIC displacement,
 // written straight into the transform store. Each object's engagement speed

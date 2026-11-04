@@ -198,12 +198,35 @@ ruling R8), `ET_TRACTOR_BEAM_STARTED_FIRING` and
 tractor walk (`k1_fire_control.cc` `tractor_sync`) queues them on the firing
 edge, and `engine/appc/effect_queue.py` posts them when the queue is
 delivered, **one tick after the beam gripped or dropped**. A handler that
-reacts to the grip therefore acts a tick late. The case that matters is
-E8M2's OD1 handler, which calls `StopFiring` on `STARTED`: the beam pulls for
-one more tick before it lets go, at most about 0.33 GU of extra pull. E7M2's
-tractor win also lands one tick later. That is the design, not a missed
-event. The `tractor_modes` golden records it: the SDK's
-`ConditionFiringTractorBeam` ends the tick at 0 with the beam off.
+reacts to the grip therefore acts a tick late. E7M2's tractor win also lands
+one tick later. That is the design, not a missed event. The `tractor_modes`
+golden records it: the SDK's `ConditionFiringTractorBeam` ends the tick at 0
+with the beam off.
+
+### Since 2026-11-04: the pull itself starts a FRAME later
+
+The tractor force moved from the combat step (`cb.tractors`) into the motion
+stage (`ship_motion.tick_tractors`, row `motion.tractors` under `gl.motion`;
+Mark's ruling, native motion phase 2 Task 7). Headless, where a frame is one
+tick, the pull starts one tick after the K1 tractor walk grips. **In the host
+it starts one frame later**: a host frame runs all N `GameLoop` ticks first,
+then N weapon and combat steps, so a beam gripped in frame k's combat steps
+first pulls in frame k+1's game ticks. That is up to N ticks later (about 3 at
+64 ships in a Debug build; the catch-up cap is 15). HOLD, release and dock
+react on the same one-frame delay.
+
+Two consequences:
+
+- **E8M2's OD1** (`StopFiring` on `STARTED`): the queued event now stops the
+  beam **before any pull**. Under `cb.tractors` it pulled for one tick first
+  (≤ 0.33 GU).
+- **Smoother tows**: the displacement now lands per tick, inside the
+  interpolation buffer's prev→cur span. Before, a multi-tick frame's N pulls
+  all landed after the buffer had recorded the frame's poses.
+
+The ruling assumed a one-tick delay; the one-frame figure comes from the
+phase 2 closing review (reasoned from `host_loop.py`'s frame order, not
+measured live).
 
 ---
 

@@ -28,7 +28,9 @@ class ShipClass(DamageableObject):
     _pulse_weapon_system = native_combat.NativeMountRefField("Subsystem")
     _tractor_beam_system = native_combat.NativeMountRefField("Subsystem")
     _torpedo_system = native_combat.NativeMountRefField("Subsystem")
-    _impulse_engine_subsystem = native_combat.MountSlotField()
+    # Mirrored for the motion kernel; a NativeMountRefField re-pushes the
+    # mount order on a change, as the MountSlotField it replaced did.
+    _impulse_engine_subsystem = native_combat.NativeMountRefField("Subsystem")
     _warp_engine_subsystem = native_combat.WarpSlotField()
     _power_subsystem = native_combat.MountSlotField()
     _repair_subsystem = native_combat.MountSlotField()
@@ -49,6 +51,25 @@ class ShipClass(DamageableObject):
     _invincible = native_combat.NativeField(bool, key="Object._invincible")
     # A rebind may change has_posed_parts (native_combat.PosedPartsField).
     _articulation_poses = native_combat.PosedPartsField()
+    # The native motion kernel's inputs (native motion phase 2). Python
+    # stays the authority. `_current_angular_velocity` is ramped IN PLACE
+    # (ship_motion, host_loop._PlayerControl): each such writer pushes
+    # (native_combat.push_field) after its component writes.
+    # KNOWN, NOT GUARDED: the mirror float()s what it is given, so a string
+    # written straight into `_current_speed` (or into a component of one of
+    # the points below) mirrors as a number the kernel flies, where Python
+    # would raise in the ramp. No engine writer does this (every setter
+    # stores a float); no behaviour change is made for it.
+    _current_speed = native_combat.NativeField(float)
+    _current_angular_velocity = native_combat.NativeField(
+        native_combat.POINT_OR_NONE)
+    _drift_velocity = native_combat.NativeOptionalField(
+        native_combat.POINT_OR_NONE, absent=None)
+    _target_angular_velocity_setpoint = native_combat.NativeField(
+        native_combat.POINT_OR_NONE)
+    _speed_setpoint = native_combat.SpeedSetpointField()
+    _stationary = native_combat.NativeField(bool)
+    _insystem_warp_transit = native_combat.PresenceField()
 
     def __init__(self):
         super().__init__()

@@ -166,7 +166,7 @@ Instead:
   - Inputs that are not yet mirrored (setpoints, authored limits, flags) get pushes on write. `_power_percentage_wanted` is a FrozenField, so it becomes a `NativeFrozenField`.
   - Expected saving falls a little against a row-authoritative design, because the write-back costs about 64 × 4 attribute sets per tick in C. It stays well inside ≈ 1.1 ms.
 - **Python-owned is not "skip natively".** While an in-system warp flight holds for its parts, `warp_flight.step` returns False and that row runs normal motion. So the segment boundary runs `warp_flight.step` in Python first, and then, only if it returned False, the row's native step.
-- **Tractor (fire-control R7, built):** the native tractor force step runs after K2 in the combat step. This phase records it as a pose-writer stage the motion stage can own. Moving it into the motion stage shifts its pull by one tick relative to the K1 tractor walk; see open question 1.
+- **Tractor (fire-control R7; moved by Mark's ruling, 2026-11-04):** the native tractor force step runs in the motion stage, `ship_motion.tick_tractors(dt)` (profiler row `motion.tractors` under `gl.motion`), after every motion row and before the publish, over the whole `iter_ships()` roster. `cb.tractors` is gone from the combat step, so motion is the only ship-pose writer and the published buffer holds the tractor's moves. Its pull now starts one tick after the K1 tractor walk engages (accepted), and headless `GameLoop` runs move tractored ships too. The law is unchanged. Open question 1 is answered; the `tractor_modes` golden was re-recorded for it in its own commit.
 - **Published poses:** at the end of the motion stage, copy each ship row's position, rotation and velocity into a native published buffer tagged with the tick number (64 × 15 doubles). Nothing reads it until phases 3 and 4.
 - **Tests:**
   - **The goldens alone do not pin motion** (`docs/reference/engine/native-motion/golden-fights-for-motion.md`).
@@ -224,7 +224,8 @@ Instead:
 
 - An overlap saves at most the smaller of the two jobs (roadmap §6). After phases 1–3 the native work per tick is ≈ 0.9 ms (combat compute 0.59 from SIG-177, motion ≈ 0.2, queries ≈ 0.1) against ≈ 5.5 ms of Python. That is the same bound that parked J.
 - Splitting motion across cores saves under ≈ 0.2 ms: rows are independent, so it is easy, but small.
-- **Measure:** `combat_stress` at 64, 128 and 256 ships (`DAUNTLESS_COMBAT_SHIPS`), recording the native stages against the Python stages per tick.
+- **Target (Mark, 2026-11-04):** 64 ships at **60 fps**, up from about 6 fps before the combat work and 18-20 fps (floor) after phase 1. 128 ships are measured as a **scaling probe** only, to see where costs grow badly; 256 is dropped.
+- **Measure:** `combat_stress` at 64 and 128 ships (`DAUNTLESS_COMBAT_SHIPS`), recording the native stages against the Python stages per tick, and the frame time against the 16.7 ms budget. All captures so far are **Debug**; phase 5 adds one **Release** capture at 64 ships, because the 60 fps target is about the shipped build.
 - **Threshold:** threads are built only if native stage time passes ≈ 2 ms per tick, or ≈ 25% of the tick, at a battle size Mark wants to support. Then the first candidate is motion rows across workers, and the second motion plus combat compute on a native thread beside Python. The second needs J's snapshot and outbox, and the unguarded push paths in the off-lock spec §10.
 
 ## 6. Kernel contracts (the threading seams)
@@ -234,7 +235,7 @@ Instead:
 | AI (Python) | published poses (via queries), mirrors | setpoints, orders | held |
 | Proximity query (native `near_indices_sized`; `near_indices` has no engine caller, kept as a test reference until phase 5) | a packed handle array cached in Python, live poses (ruling 5) | ascending hit indices | released |
 | Motion M (native) | motion rows, impulse mirrors, live poses of its own rows | live poses of its rows, velocity mirror, motion state; published buffer at the end | released |
-| Tractor force (native, fire-control R7) | tractor state, masses, poses | poses of the target and the source | released |
+| Tractor force (native, fire-control R7; inside the motion stage, after M's rows, before the publish) | tractor state, masses, poses | poses of the target and the source | released |
 | Combat K0–K4 (native) | published poses (phase 4), mirrors | weapon state, effect queue, damage | released (K4 held) |
 | Hit traces (native) | published poses, sim part poses, `Model::trace_accel` | — | as caller |
 | Render interpolation (native) | published poses at tick ends | `g_world` instance matrices | main thread, in `frame()` |
@@ -259,7 +260,7 @@ Rules:
 
 ## 8. Open questions
 
-1. **Tractor stage.** Under ruling 2, does the native tractor force (R7) stay in the combat stage, after K2 as built, or move into the motion stage? In the motion stage its pull starts one tick after the K1 tractor walk engages it. Decide when phase 2 starts; until then it stays as R7 builds it.
+1. ~~**Tractor stage.** Under ruling 2, does the native tractor force (R7) stay in the combat stage, after K2 as built, or move into the motion stage?~~ Answered by Mark, 2026-11-04: it moves into the motion stage (phase 2 Task 7, §5.2). Its pull starts one tick after the K1 tractor walk engages it; accepted. In the host that tick is in the next frame (a frame runs its GameLoop ticks before its combat steps), so pull, HOLD and release react one frame later, up to the catch-up cap of ticks (phase 2 closing review I2; `docs/reference/engine/perf-cadences-and-latency.md`).
 2. **BC size rule details** (§5.1 step 1d). Partly settled by reading (`docs/reference/engine/native-motion/open-questions-by-reading.md` Q3):
    - the near test is centre distance minus bounding radius, within the query radius;
    - for the near query, `includeSize` only widens the axis prune, so it should not change results (derived); for the line query it is part of the exact test;
@@ -268,8 +269,8 @@ Rules:
    - **Ruling needed from Mark before 1d:** scale the radius inside the proximity query only, or make `GetRadius` itself scaled as BC's is (wider than this project).
 3. **Attached ProximityChecks sit at the set origin**, not their anchor: confirmed by reading (open-questions-by-reading Q2). `AttachObject` records the anchor only; BC parents the check's node. Firing is unaffected, because evaluation centres on the anchor. After ruling 1 nothing reads a check's own position, so it is left as is.
 4. ~~**`sim.input`'s missing ≈ 1 ms per frame** (phase 0).~~ Answered by SIG-183: the bridge officer pick's per-frame head skinning. Outside this project.
-5. **Headless runs never move tractored ships** (`GameLoop` does not run `cb.tractors`). Still true after the merge: only `host_loop._advance_combat_step` calls `advance_tractors`.
-6. **Battle sizes to support** for phase 5's threshold (128? 256?), for Mark.
+5. ~~**Headless runs never move tractored ships**~~ No longer true (phase 2 Task 7): the tractor force runs in the motion stage, so headless `GameLoop.tick` moves tractored ships, and `host_loop._advance_combat` alone no longer does.
+6. ~~**Battle sizes to support** for phase 5's threshold (128? 256?), for Mark.~~ Answered 2026-11-04: target 64 ships at 60 fps; 128 as a scaling probe (§5.5).
 7. ~~Quick Battle ghosts~~: ruled, see ruling 6.
 8. **Side findings from the motion audit** (inferred, not checked live):
    - a manually flown player's `_current_speed` is stale, so `GetImpulse` and `IsReverse` read it wrong;

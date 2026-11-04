@@ -133,6 +133,17 @@ VEC3 = "vec3"
 OFFSET = "offset"
 #: NativeField type for MetaNebula ``_spheres``: a list of (x, y, z, r).
 SPHERES = "spheres"
+#: NativeField type for a TGPoint3-or-None the motion kernel reads (kernel M:
+#: ShipClass._current_angular_velocity, _drift_velocity,
+#: _target_angular_velocity_setpoint; PhysicsObjectClass._angular_velocity).
+#: None pushes [] (state 0), a TGPoint3 [x, y, z] (state 1), anything else
+#: [0.0] * 4 (state 2: unrepresentable, the kernel takes the Python path).
+#: Never drops the row. The row keeps ``<name>_state`` beside the vector.
+#: KNOWN, NOT GUARDED: a TGPoint3's components are float()ed, so a string
+#: written straight into one (``p.x = "1"``) mirrors as a number where
+#: Python would raise; TGPoint3's own setters store floats, and no engine
+#: writer does this.
+POINT_OR_NONE = "point or none"
 #: NativeField type for an int-or-None (``TorpedoSystem._selected_slot``):
 #: None pushes -1 (slots are never negative).
 OPT_INT = "opt int"
@@ -364,6 +375,10 @@ def reset() -> None:
     # off now).
     drain()
     _k1_compute.clear()
+    # Kernel M's driver (its switch, counts and class watch). Imported here,
+    # not at module scope: native_motion imports this module.
+    from engine.appc import native_motion
+    native_motion.reset()
 
 
 def counts() -> dict:
@@ -797,6 +812,15 @@ class NativeField:
             if isinstance(value, TGPoint3):
                 return [float(value.x), float(value.y), float(value.z)]
             return []
+        if t is POINT_OR_NONE:
+            if value is None:
+                return []
+            if isinstance(value, TGPoint3):
+                try:
+                    return [float(value.x), float(value.y), float(value.z)]
+                except (TypeError, ValueError, OverflowError):
+                    pass
+            return [0.0, 0.0, 0.0, 0.0]
         if t is VEC3:
             if value is None:
                 return []
@@ -824,7 +848,7 @@ class NativeField:
             fn = _h.combat_set_f
         elif t is list or t is set:
             fn = _h.combat_set_ids
-        elif t is VEC3 or t is OFFSET:
+        elif t is VEC3 or t is OFFSET or t is POINT_OR_NONE:
             fn = _h.combat_set_fv
         else:
             fn = _h.combat_set_i
@@ -839,7 +863,10 @@ class NativeField:
             return v.hex() == float(mirrored).hex()
         if self._type is set:
             return sorted(set(v)) == mirrored
-        if self._type is VEC3 or self._type is OFFSET:
+        if self._type is VEC3 or self._type is OFFSET \
+                or self._type is POINT_OR_NONE:
+            # A point-or-none dumps by its state: None, its 3 doubles, or 4
+            # zeros (combat_dump), so the vector alone decides the state.
             if mirrored is None:
                 return v == []
             return _hexes(v) == _hexes(mirrored)
@@ -963,6 +990,146 @@ class NativeFloatList(NativeField):
         except (TypeError, ValueError, OverflowError):
             return False
         return _hexes(v) == _hexes(mirrored)
+
+
+class VelocityField(NativeField):
+    """PhysicsObjectClass._velocity: the VEC3 every kernel reads, unchanged
+    (a TGPoint3 or anything unpacking to x, y, z; None still drops the
+    row), plus ``_velocity_state`` beside it for kernel M (native motion
+    phase 2): 1 for a TGPoint3, 2 for anything else. The VEC3 push itself
+    marks 1 (set_fv); a non-TGPoint3 value is re-marked 2 after it, so
+    kernel M hands a drifter whose `_velocity` is, say, a tuple to Python,
+    which raises reading v.x there. The audit checks both."""
+
+    def __init__(self) -> None:
+        super().__init__(VEC3)
+
+    @staticmethod
+    def _state(value) -> int:
+        return 1 if isinstance(value, TGPoint3) else 2
+
+    def _push(self, obj, h, value) -> None:
+        super()._push(obj, h, value)
+        if self._state(value) != 1 and obj.__dict__.get("_nslot") == h:
+            _call(obj, _h.combat_set_i, h, _fid("_velocity_state"), 2)
+
+    def audit(self, value, row) -> bool:
+        return (self._matches(value, row[self._dump_key])
+                and row["_velocity_state"] == self._state(value))
+
+
+class NativeOptionalField(NativeField):
+    """A mirrored attribute that may be ABSENT from the instance (its readers
+    use ``getattr(obj, name, default)``: ShipClass._drift_velocity,
+    PhysicsObjectClass._angular_space). Without a __get__ the class's
+    descriptor itself would answer such a read, so this one reads the
+    instance dict and raises AttributeError when the name is absent, as a
+    plain attribute would. `absent` is the value the row holds meanwhile
+    (the readers' default); ``del`` pushes it again."""
+
+    def __init__(self, type_, absent) -> None:
+        super().__init__(type_)
+        self._absent = absent
+
+    def __get__(self, obj, owner=None):
+        if obj is None:
+            return self
+        try:
+            return obj.__dict__[self._name]
+        except KeyError:
+            raise AttributeError(self._name) from None
+
+    def __delete__(self, obj) -> None:
+        try:
+            del obj.__dict__[self._name]
+        except KeyError:
+            raise AttributeError(self._name) from None
+        if _enabled:
+            h = obj.__dict__.get("_nslot")
+            if h is not None:
+                if _get_ident() != _MAIN_IDENT:
+                    _queue_push(obj, _repush_absent, self, self._name)
+                else:
+                    self._push(obj, h, self._absent)
+
+
+def _repush_absent(obj, field) -> None:
+    h = obj.__dict__.get("_nslot")
+    if _enabled and h is not None and field._name not in obj.__dict__:
+        field._push(obj, h, field._absent)
+
+
+class SpeedSetpointField(NativeField):
+    """ShipClass._speed_setpoint, kernel M's commanded speed: None, or
+    SetSpeed's ``(speed, direction, frame)``. Pushed as a float list in one
+    ``combat_set_floats`` call: None is [], the tuple
+    [float(speed), float(d.x), float(d.y), float(d.z), float(frame)], and
+    anything that does not unpack and convert so is [0.0] * 6
+    (unrepresentable: the kernel takes the Python path, which raises there
+    as today). Never drops the row. Always rebound, never mutated."""
+
+    def __init__(self) -> None:
+        super().__init__(list)
+
+    def _encode(self, value):
+        if value is None:
+            return []
+        try:
+            speed, d, frame = value
+            # Python uses the speed AS IS (compares and ramps it: a str
+            # raises there, an int is compared exactly and can come back as
+            # the new _current_speed), and compares the frame with
+            # ``frame == DIRECTION_MODEL_SPACE`` ("0" is not 0): only a
+            # float speed and a number frame (whose float() compares the
+            # same) are the kernel's. The direction is float()ed by Python
+            # itself (TGPoint3(direction.x, ...)), as here.
+            if type(speed) is not float or type(frame) not in _NUMBERS:
+                return [0.0] * 6
+            return [speed, float(d.x), float(d.y), float(d.z),
+                    float(frame)]
+        except (TypeError, ValueError, AttributeError, OverflowError):
+            return [0.0] * 6
+
+    def _push(self, obj, h, value) -> None:
+        _call(obj, _h.combat_set_floats, h, _fid(self._key),
+              self._encode(value))
+
+    def _matches(self, value, mirrored) -> bool:
+        return _hexes(self._encode(value)) == _hexes(mirrored)
+
+
+_NUMBERS = (int, float, bool)
+
+
+class AngularSpaceField(NativeOptionalField):
+    """PhysicsObjectClass._angular_space, the frame a drifter's spin was set
+    in. Its one reader, drift.step, tests ``getattr(obj, "_angular_space",
+    DIRECTION_WORLD_SPACE) == DIRECTION_MODEL_SPACE``, so the row holds that
+    test's answer: 0 (model) or 1 (world) for an int or a bool, exact for
+    any size. Anything else (0.5, "0": an int() would read model where
+    Python's == reads world) is 2, unrepresentable: the kernel hands the
+    row to Python (native motion phase 2, Task 5, Review Focus 4). Never
+    drops the row."""
+
+    def __init__(self) -> None:
+        super().__init__(int, absent=1)
+
+    def _encode(self, value):
+        if type(value) is int or type(value) is bool:
+            return 0 if value == 0 else 1
+        return 2
+
+
+class PresenceField(NativeField):
+    """An attribute the kernel reads only as ``is not None``
+    (ShipClass._insystem_warp_transit, the in-system warp flight): pushes
+    ``0 if value is None else 1``."""
+
+    def __init__(self) -> None:
+        super().__init__(int)
+
+    def _encode(self, value):
+        return 0 if value is None else 1
 
 
 class NativeSlotMap(NativeRefList):
@@ -1634,6 +1801,10 @@ def forget_rows() -> None:
     _k2_seen.clear()
     _k2_seen_set.clear()
     _k2_watch_seen[0] = -1
+    # Kernel M's class watch reads _k2_seen too: it rebuilds on a new
+    # generation (native_motion._watch_classes).
+    global _seen_gen
+    _seen_gen += 1
 
 
 # ── Deferred frees and off-main pushes (spec 2026-11-03-kernels-off-the-lock
@@ -1954,6 +2125,42 @@ def _posed_flag(ship) -> int:
     return 0
 
 
+#: Kernel M's class flags (native motion phase 2): the methods motion calls on
+#: a ship, on its impulse engine and on the engine's pods. A class whose
+#: method is not the stock class's own function object reads 0, and the
+#: kernel hands that row to Python, where the override runs. IsDying /
+#: IsDead: subsystems._is_offline(ies) -> ship_death._out_of_action(ship)
+#: asks them (the kernel reads the row's dying / dead state instead);
+#: GetWarpEngineSubsystem: warp_state.is_arriving asks it (the kernel reads
+#: the row's `arriving`).
+_MOTION_SHIP_NAMES = ("IsImmobile", "IsStatic", "IsStationary",
+                      "GetImpulseEngineSubsystem", "GetTranslate",
+                      "SetTranslateXYZ", "GetWorldRotation",
+                      "SetMatrixRotation", "SetVelocity", "IsDying",
+                      "IsDead", "GetWarpEngineSubsystem")
+_MOTION_IES_NAMES = ("IsDisabled", "IsDestroyed", "IsOn",
+                     "GetNumChildSubsystems", "GetChildSubsystem",
+                     "GetPowerPercentageWanted", "GetParentShip",
+                     "GetAuthoredMaxSpeed", "GetAuthoredMaxAccel",
+                     "GetAuthoredMaxAngularVelocity",
+                     "GetAuthoredMaxAngularAccel")
+_MOTION_POD_NAMES = ("IsDisabled", "IsDestroyed", "GetConditionPercentage",
+                     "GetMaxCondition")
+_NO_ATTR = object()
+
+
+def _stock_surface(cls, base, names) -> int:
+    """1 when `cls` is `base` or a subclass whose every name in `names` is
+    `base`'s own attribute (the same function object), else 0. Computed at
+    every call (never cached), so the audit sees a class patched since."""
+    if not issubclass(cls, base):
+        return 0
+    for name in names:
+        if getattr(cls, name, _NO_ATTR) is not getattr(base, name, None):
+            return 0
+    return 1
+
+
 def _flags(obj, h) -> dict:
     k = h >> _KIND_SHIFT
     if k == _kind("Object"):
@@ -1979,14 +2186,24 @@ def _flags(obj, h) -> dict:
             "arriving": _arriving_flag(obj),
             # The native hit stands in for this ship class's (damage).
             "dmg_ship": _dmg_ship(type(obj)),
+            # Kernel M flies this class's ships (native motion phase 2).
+            "motion_stock": _stock_surface(type(obj), ShipClass,
+                                           _MOTION_SHIP_NAMES),
         }
     if k == _kind("Subsystem"):
+        from engine.appc.subsystems import ImpulseEngineSubsystem, \
+            ShipSubsystem
         return {"has_parent_ship_getter": int(implements(obj,
                                                          "GetParentShip")),
                 "weapon_kind": _weapon_kind(obj),
                 "has_shields": _has_shields_flag(obj),
                 # The condition chain's rules for this class (damage).
-                "dmg_class": _dmg_class(type(obj))}
+                "dmg_class": _dmg_class(type(obj)),
+                # Kernel M reads this impulse engine, or this pod, natively.
+                "motion_ies_stock": _stock_surface(
+                    type(obj), ImpulseEngineSubsystem, _MOTION_IES_NAMES),
+                "motion_pod_stock": _stock_surface(
+                    type(obj), ShipSubsystem, _MOTION_POD_NAMES)}
     return {}
 
 
@@ -2600,6 +2817,8 @@ def _push_all(obj, h) -> None:
             return              # dropped by a stale push
         if name in d:
             field._push(obj, h, d[name])
+        elif isinstance(field, NativeOptionalField):
+            field._push(obj, h, field._absent)  # a resync: the absent value
     for name, field in _hidden_fields(type(obj))[0]:
         if "_nslot" not in d:
             return
@@ -3332,13 +3551,17 @@ def audit_mirror() -> None:
             if not ok:
                 _failures.append((name, field))
         for attr, field in _fields_of(type(obj)):
-            if attr not in d:
+            if attr in d:
+                value = d[attr]
+            elif isinstance(field, NativeOptionalField):
+                value = field._absent           # the row holds the default
+            else:
                 continue
             audit = getattr(field, "audit", None)   # a field of several rows
             if audit is not None:
-                ok = audit(d[attr], row)
+                ok = audit(value, row)
             else:
-                ok = field._matches(d[attr], row[field._dump_key])
+                ok = field._matches(value, row[field._dump_key])
             if not ok:
                 _failures.append((name, attr))
         for attr, field in _hidden_fields(type(obj))[0]:
@@ -4146,7 +4369,7 @@ def k1_can_fire(weapon) -> int:
 def tractor_force_step(ships, dt) -> None:
     """engine.appc.tractor.advance_tractors(ships, dt): one native step of
     the tractor force (tractor_force.h; fire control native only, R7), in
-    `cb.tractors`. The kernel writes the transform store itself; Python then
+    the motion stage (`motion.tractors`, ship_motion.tick_tractors). The kernel writes the transform store itself; Python then
     applies what it hands back: HOLD's damped targets (SetVelocity(0)) and
     the engage geometry it captured (`_engage_state`, stored quietly: the
     mirror already holds it). A ship with no Object row does nothing
@@ -4720,6 +4943,9 @@ _k2_flags: dict = {}
 # _k2_seen grows: _k2_watch_seen[0] is the length it was built at).
 _k2_seen: list = []
 _k2_seen_set: set = set()
+# Bumped whenever _k2_seen is cleared (forget_rows): a reader that keeps a
+# position in it (native_motion's class watch) starts again.
+_seen_gen = 0
 _k2_watch: list = []
 _k2_watch_seen = [-1]
 # [ship_instances, its version, _k2_drop_epoch, the iids table built on them]

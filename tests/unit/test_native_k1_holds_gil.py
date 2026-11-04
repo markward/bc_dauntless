@@ -41,6 +41,12 @@ RELEASED = {
     "combat_k3_next": ("K3", "cb::k3_kernel().next()"),
     "combat_k3_apply_hits": (
         "K3Hits", "cb::k3_kernel().apply_hits(start, p, py_hits, out)"),
+    "combat_motion_compute": (
+        "Motion", "cb::motion_step(cb::mirror(), dauntless::transform_store(), "
+                  "rows, player, dt, begin, resume)"),
+    "combat_motion_step": (
+        "Motion", "cb::motion_step(cb::mirror(), dauntless::transform_store(), "
+                  "rows, player, dt, begin, resume)"),
 }
 
 # Any of these inside a binding would release (or let pybind release) the
@@ -155,8 +161,18 @@ def test_k2_and_k3_cpython_stays_outside_the_release(source):
         assert code.index(after) > at, after
 
 
+def test_motion_step_applies_after_the_release(source):
+    """Kernel M driven (native motion phase 2, Task 5): the C applier
+    (apply_motion_writes, CPython) runs after the released compute, and the
+    ships/handles length check before it."""
+    code, _raw = _bindings(source)["combat_motion_step"]
+    at = code.index("released_compute(")
+    assert code.index("PySequence_Size(") < at
+    assert code.index("apply_motion_writes(") > at
+
+
 def test_no_other_combat_binding_releases_the_gil(source):
-    """Only the five compute sites release, and only through the helper.
+    """Only the compute sites (RELEASED) release, and only through the helper.
     K4 and can_detect keep the GIL."""
     bindings = _bindings(source)
     for name in ("combat_k0_begin", "combat_k1_begin_pump", "combat_k2_begin",

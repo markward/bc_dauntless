@@ -31,6 +31,10 @@ class GameLoop:
         end (host_loop)."""
         passive_state.configure()
         native_combat.configure()
+        # Kernel M flies the motion stage (DAUNTLESS_NATIVE_MOTION, on
+        # unless =0): after the mirror is live, which it needs.
+        from engine.appc import native_motion
+        native_motion.configure()
         self.owns_boundary = owns_boundary
 
     def tick(self) -> None:

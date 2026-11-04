@@ -78,16 +78,18 @@ def test_k4_eligible_is_timed_and_take_resets():
 
 
 def test_each_kernel_has_its_own_accumulator():
-    for k in range(5):
+    for k in range(6):
         _h.combat_compute_take(k)
     with pytest.raises(Exception):
         _h.combat_k2_next()
-    assert [_h.combat_compute_take(k)[1] for k in range(5)] == [0, 0, 1, 0, 0]
+    # Kernel M (5, native motion phase 2) has its own accumulator too.
+    assert [_h.combat_compute_take(k)[1] for k in range(6)] == \
+        [0, 0, 1, 0, 0, 0]
 
 
 def test_take_rejects_an_unknown_kernel():
     with pytest.raises(ValueError):
-        _h.combat_compute_take(5)
+        _h.combat_compute_take(6)
     with pytest.raises(ValueError):
         _h.combat_compute_take(-1)
 
@@ -199,7 +201,7 @@ def test_compute_rows_nest_under_their_parents_with_the_switch_on(
     # ...and the AI-started K1 sessions (StartFiring in gl.ai) are apart.
     assert "k1.compute@gl.ai" in seen, sorted(seen)
     # Every session drained its kernel's accumulator into the profiler.
-    assert [_h.combat_compute_take(k) for k in range(5)] == [(0.0, 0)] * 5
+    assert [_h.combat_compute_take(k) for k in range(6)] == [(0.0, 0)] * 6
 
 
 def test_only_k1_compute_rows_with_the_switch_off(monkeypatch, _assets):
@@ -214,4 +216,4 @@ def test_only_k1_compute_rows_with_the_switch_off(monkeypatch, _assets):
     assert frames and seen, seen
     assert all(name.partition("@")[0] == "k1.compute" for name in seen), \
         sorted(seen)
-    assert [_h.combat_compute_take(k) for k in range(5)] == [(0.0, 0)] * 5
+    assert [_h.combat_compute_take(k) for k in range(6)] == [(0.0, 0)] * 6

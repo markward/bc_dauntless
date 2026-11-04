@@ -32,7 +32,7 @@ Paths are relative to the worktree root. `WS` = `engine/appc/weapon_subsystems.p
 | Frame: N GameLoop ticks (`advance_ticks` → `loop.tick()`, which advances `g_kTimerManager` by `TICK_DELTA` and runs AI, power and subsystems) | HL:11729-11731, 12350; loop.py:29-39, 112 |
 | Then, for each of the N ticks: `_ships_this_tick = list(_all_ships_for_tick())`, rebuilt after the first tick | HL:12608-12615 |
 | `with scope("sim.weapons"): _advance_weapons(_ships_this_tick, TICK_DT)`, `TICK_DT = 1.0 / 60.0` | HL:12616-12617, 11708 |
-| `with scope("sim.combat"): _advance_combat(...)`: K4, K3, …, `cb.held_weapons` (K1 pump), `cb.phasers` (K2), `cb.tractors` | HL:12618-12626, 1266-1401 |
+| `with scope("sim.combat"): _advance_combat(...)`: K4, K3, …, `cb.held_weapons` (K1 pump), `cb.phasers` (K2), `cb.tractors` (moved to the motion stage's `motion.tractors`, 2026-11-04) | HL:12618-12626, 1266-1401 |
 | Ship order: `iter_ships()` walks `App.g_kSetManager._sets` and yields ShipClass instances | HL:2562-2572 |
 | The headless harness (`headless_mission._sim_tick`) runs GameLoop.tick only. Tests call `_advance_weapons` directly. | passive spec §5; test_passive_weapons_differential.py |
 

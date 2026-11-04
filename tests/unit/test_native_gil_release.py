@@ -3,8 +3,10 @@ spec docs/superpowers/specs/2026-11-03-kernels-off-the-lock-design.md goal 3,
 plan Review Focus 3).
 
 host_bindings.cc's released_compute releases the GIL around exactly each
-compute call -- K0-K3's next() and K3's apply_hits (the native damage of its
-hits) -- and its source guard is tests/unit/test_native_k1_holds_gil.py. This
+compute call -- K0-K3's next(), K3's apply_hits (the native damage of its
+hits) and kernel M's motion step (native motion phase 2: the fight runs the
+motion stage too) -- and its source guard is
+tests/unit/test_native_k1_holds_gil.py. This
 file is the behavioural half, through the test-only GIL probe
 (combat_gil_probe_*): armed, each released compute call records whether
 PyGILState_Check() read 0 inside it, and can be made to throw from inside
@@ -33,6 +35,8 @@ except ImportError:
 from engine import host_loop
 from engine.appc import effect_queue
 from engine.appc import native_combat as nc
+from engine.appc import native_motion as nm
+from engine.appc import ship_motion
 from engine.appc.ship_iter import iter_ships
 from engine.core import frame_profiler as fp
 from engine.core import loop as game_loop
@@ -43,9 +47,10 @@ pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "combat_k0_next"),
     reason="native combat bindings not built")
 
-# The probe's sites (host_bindings.cc ComputeSite), in order.
-SITES = ("k0", "k1", "k2", "k3", "k3_hits")
-K0, K1, K2, K3, K3_HITS = range(5)
+# The probe's sites (host_bindings.cc ComputeSite), in order; "motion" is
+# kernel M's (native motion phase 2), driven by the motion stage.
+SITES = ("k0", "k1", "k2", "k3", "k3_hits", "motion")
+K0, K1, K2, K3, K3_HITS, MOTION = range(6)
 RADIUS = 4.0
 
 
@@ -78,6 +83,8 @@ class _Fight:
         # apply_hits computes.
         for s in self.scene.ships:
             s.SetRadius(RADIUS)
+        # Kernel M flies the motion stage (GameLoop.__init__ would).
+        nm.configure({})
 
     def tick(self):
         """One frame of one tick. An exception (the probe's throw) still
@@ -86,6 +93,7 @@ class _Fight:
             for _ in range(self.rng.randint(0, 2)):
                 self.scene.op(self.rng, self.k1d.OPS)
             App.g_kTimerManager._time += TICK_DELTA
+            ship_motion.tick_all_ship_motion(TICK_DELTA)
             game_loop._update_ship_subsystems()
             ships = list(iter_ships())
             with host_loop._combat_effect_scope():
@@ -122,10 +130,11 @@ def test_every_compute_call_runs_with_the_gil_released(monkeypatch):
         for _ in range(10):                 # unarmed: the probe is idle
             fight.tick()
         idle = _h.combat_gil_probe_take()
-        assert idle["calls"] == [0] * 5, idle
+        assert idle["calls"] == [0] * 6, idle
         spied = _spy_calls(mp, ("combat_k0_next", "combat_k1_next",
                                 "combat_k2_next", "combat_k3_next",
-                                "combat_k3_apply_hits"))
+                                "combat_k3_apply_hits",
+                                "combat_motion_step"))
         _h.combat_gil_probe_arm(True)
         for _ in range(240):
             fight.tick()
@@ -135,7 +144,8 @@ def test_every_compute_call_runs_with_the_gil_released(monkeypatch):
     # Every binding call made one compute call, and each ran released.
     assert got["calls"] == [spied["combat_k0_next"], spied["combat_k1_next"],
                             spied["combat_k2_next"], spied["combat_k3_next"],
-                            spied["combat_k3_apply_hits"]], (got, spied)
+                            spied["combat_k3_apply_hits"],
+                            spied["combat_motion_step"]], (got, spied)
     assert all(n > 0 for n in got["calls"]), got
     assert got["released"] == got["calls"], got
 
@@ -155,7 +165,7 @@ def _throw_arm(fight, site, ticks=400):
                          % (SITES[site], ticks))
 
 
-@pytest.mark.parametrize("site", range(5), ids=SITES)
+@pytest.mark.parametrize("site", range(len(SITES)), ids=SITES)
 def test_a_throw_in_compute_reacquires_and_abandons(monkeypatch, site):
     """Review Focus 3: compute throws with the GIL released. The release's
     destructor re-acquires the GIL as the throw unwinds (pybind translates

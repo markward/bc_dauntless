@@ -174,6 +174,30 @@ constexpr FieldInfo kInfo[] = {
     {"_normal_power", Kind::Subsystem, FieldType::F},
     {"slot0_launch_state", Kind::Property, FieldType::I},
     {"slot0_launch_speed", Kind::Property, FieldType::F},
+    {"_current_speed", Kind::Object, FieldType::F},
+    {"_current_angular_velocity", Kind::Object, FieldType::Vec3},
+    {"_drift_velocity", Kind::Object, FieldType::Vec3},
+    {"_target_angular_velocity_setpoint", Kind::Object, FieldType::Vec3},
+    {"_angular_velocity", Kind::Object, FieldType::Vec3},
+    {"_current_angular_velocity_state", Kind::Object, FieldType::I},
+    {"_drift_velocity_state", Kind::Object, FieldType::I},
+    {"_target_angular_velocity_setpoint_state", Kind::Object, FieldType::I},
+    {"_angular_velocity_state", Kind::Object, FieldType::I},
+    {"_speed_setpoint", Kind::Object, FieldType::FloatList},
+    {"_angular_space", Kind::Object, FieldType::I},
+    {"_static", Kind::Object, FieldType::I},
+    {"_stationary", Kind::Object, FieldType::I},
+    {"_insystem_warp_transit", Kind::Object, FieldType::I},
+    {"_impulse_engine_subsystem", Kind::Object, FieldType::Ref},
+    {"motion_stock", Kind::Object, FieldType::I},
+    {"_power_percentage_wanted", Kind::Subsystem, FieldType::F},
+    {"_max_speed", Kind::Subsystem, FieldType::F},
+    {"_max_accel", Kind::Subsystem, FieldType::F},
+    {"_max_angular_velocity", Kind::Subsystem, FieldType::F},
+    {"_max_angular_accel", Kind::Subsystem, FieldType::F},
+    {"motion_ies_stock", Kind::Subsystem, FieldType::I},
+    {"motion_pod_stock", Kind::Subsystem, FieldType::I},
+    {"_velocity_state", Kind::Object, FieldType::I},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -272,7 +296,8 @@ Kind ref_target_kind(Field f) {
         case Field::_tractor_beam_system:
         case Field::_torpedo_system:
         case Field::_target_subsystem:
-        case Field::_shield_subsystem: return Kind::Subsystem;
+        case Field::_shield_subsystem:
+        case Field::_impulse_engine_subsystem: return Kind::Subsystem;
         case Field::_parent_ship:
         case Field::_held_target:
         case Field::_target: return Kind::Object;
@@ -282,9 +307,33 @@ Kind ref_target_kind(Field f) {
     }
 }
 
+// Kernel M's point-or-none vectors: set_fv also sets their <name>_state.
+bool point_or_none(Field f) {
+    return f == Field::_current_angular_velocity ||
+           f == Field::_drift_velocity ||
+           f == Field::_target_angular_velocity_setpoint ||
+           f == Field::_angular_velocity;
+}
+
+int64_t* point_state(ObjectRow& r, Field f) {
+    switch (f) {
+        case Field::_current_angular_velocity:
+            return &r._current_angular_velocity_state;
+        case Field::_drift_velocity: return &r._drift_velocity_state;
+        case Field::_target_angular_velocity_setpoint:
+            return &r._target_angular_velocity_setpoint_state;
+        case Field::_angular_velocity: return &r._angular_velocity_state;
+        default: return nullptr;
+    }
+}
+
 bool read_only(Field f) {
+    // A point-or-none field's state is written by set_fv with its vector.
     return f == Field::xform_index || f == Field::xform_gen ||
-           f == Field::obj_id;
+           f == Field::obj_id || f == Field::_current_angular_velocity_state ||
+           f == Field::_drift_velocity_state ||
+           f == Field::_target_angular_velocity_setpoint_state ||
+           f == Field::_angular_velocity_state;
 }
 
 // Per-row-type field lookups; the generic overloads find nothing.
@@ -303,6 +352,7 @@ double* fptr(ObjectRow& r, Field f) {
         case Field::_splash_damage: return &r._splash_damage;
         case Field::_splash_damage_radius: return &r._splash_damage_radius;
         case Field::_mass: return &r._mass;
+        case Field::_current_speed: return &r._current_speed;
         default: return nullptr;
     }
 }
@@ -327,6 +377,19 @@ int64_t* iptr(ObjectRow& r, Field f) {
         case Field::_hurtable: return &r._hurtable;
         case Field::dmg_ship: return &r.dmg_ship;
         case Field::o_invincible: return &r._invincible;
+        case Field::_current_angular_velocity_state:
+            return &r._current_angular_velocity_state;
+        case Field::_drift_velocity_state: return &r._drift_velocity_state;
+        case Field::_target_angular_velocity_setpoint_state:
+            return &r._target_angular_velocity_setpoint_state;
+        case Field::_angular_velocity_state:
+            return &r._angular_velocity_state;
+        case Field::_angular_space: return &r._angular_space;
+        case Field::_static: return &r._static;
+        case Field::_stationary: return &r._stationary;
+        case Field::_insystem_warp_transit: return &r._insystem_warp_transit;
+        case Field::motion_stock: return &r.motion_stock;
+        case Field::_velocity_state: return &r._velocity_state;
         default: return nullptr;
     }
 }
@@ -342,6 +405,8 @@ int64_t* rptr(ObjectRow& r, Field f) {
         case Field::_torpedo_system: return &r._torpedo_system;
         case Field::_target_subsystem: return &r._target_subsystem;
         case Field::_shield_subsystem: return &r._shield_subsystem;
+        case Field::_impulse_engine_subsystem:
+            return &r._impulse_engine_subsystem;
         default: return nullptr;
     }
 }
@@ -353,8 +418,17 @@ Vec3* vptr(ObjectRow& r, Field f) {
         case Field::_shield_hull_box_half: return &r._shield_hull_box_half;
         case Field::_fbm: return &r._fbm;
         case Field::_seed: return &r._seed;
+        case Field::_current_angular_velocity:
+            return &r._current_angular_velocity;
+        case Field::_drift_velocity: return &r._drift_velocity;
+        case Field::_target_angular_velocity_setpoint:
+            return &r._target_angular_velocity_setpoint;
+        case Field::_angular_velocity: return &r._angular_velocity;
         default: return nullptr;
     }
+}
+std::vector<double>* flptr(ObjectRow& r, Field f) {
+    return f == Field::_speed_setpoint ? &r._speed_setpoint : nullptr;
 }
 
 double* fptr(SubsystemRow& r, Field f) {
@@ -394,6 +468,12 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_max_damage_distance: return &r._max_damage_distance;
         case Field::_efficiency: return &r._efficiency;
         case Field::_normal_power: return &r._normal_power;
+        case Field::_power_percentage_wanted:
+            return &r._power_percentage_wanted;
+        case Field::_max_speed: return &r._max_speed;
+        case Field::_max_accel: return &r._max_accel;
+        case Field::_max_angular_velocity: return &r._max_angular_velocity;
+        case Field::_max_angular_accel: return &r._max_angular_accel;
         default: return nullptr;
     }
 }
@@ -435,6 +515,8 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::_was_firing: return &r._was_firing;
         case Field::_next_emitter_index: return &r._next_emitter_index;
         case Field::engage_kind: return &r.engage_kind;
+        case Field::motion_ies_stock: return &r.motion_ies_stock;
+        case Field::motion_pod_stock: return &r.motion_pod_stock;
         default: return nullptr;
     }
 }
@@ -826,6 +908,18 @@ void Mirror::set_fv(int64_t h, Field f, const std::vector<double>& v) {
     bool nullable = (f == Field::_fbm || f == Field::_seed ||
                      f == Field::_held_offset || f == Field::_target_offset ||
                      f == Field::_manual_target_offset);
+    if (point_or_none(f)) {
+        // 0 doubles: None (state 0); 3: a TGPoint3 (1); 4: unrepresentable
+        // (2), the vector reads zero.
+        if (!(v.empty() || v.size() == 3 || v.size() == 4))
+            bad("expected 0, 3 or 4 doubles", f);
+        ObjectRow& row = checked(objects_, h, Kind::Object);
+        Vec3* p = vptr(row, f);
+        *p = v.size() == 3 ? Vec3{v[0], v[1], v[2]} : Vec3{0, 0, 0};
+        *point_state(row, f) = v.empty() ? 0 : (v.size() == 3 ? 1 : 2);
+        ++epoch_;
+        return;
+    }
     if (!(v.size() == 3 || (nullable && v.empty())))
         bad("expected 3 doubles", f);
     visit(h, info(f).kind, [&](auto& row) {
@@ -837,6 +931,9 @@ void Mirror::set_fv(int64_t h, Field f, const std::vector<double>& v) {
             if (f == Field::_seed) row.seed_set = !v.empty();
             if (f == Field::_manual_target_offset)
                 row.manual_offset_set = !v.empty();
+            // A TGPoint3 is what every native writer stores; Python
+            // re-marks a non-TGPoint3 value 2 (VelocityField).
+            if (f == Field::_velocity) row._velocity_state = 1;
         }
         if constexpr (std::is_same_v<std::decay_t<decltype(row)>, SubsystemRow>) {
             if (f == Field::_held_offset) row.held_offset_set = !v.empty();
@@ -1048,6 +1145,11 @@ std::vector<double> Mirror::get_fv(int64_t h, Field f) const {
                 (f == Field::_seed && !row.seed_set) ||
                 (f == Field::_manual_target_offset && !row.manual_offset_set))
                 return {};
+            if (point_or_none(f)) {
+                int64_t state = *point_state(row, f);
+                if (state == 0) return {};
+                if (state == 2) return {0.0, 0.0, 0.0, 0.0};
+            }
         }
         if constexpr (std::is_same_v<std::decay_t<decltype(row)>, SubsystemRow>) {
             if ((f == Field::_held_offset && !row.held_offset_set) ||

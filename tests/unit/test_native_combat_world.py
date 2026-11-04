@@ -295,7 +295,7 @@ _REF_FIELDS = {"_containing_set", "_sensor_subsystem", "_cloaking_subsystem",
                "_hull", "_parent_subsystem", "_parent_ship", "_property",
                "ships", "nebulae", "_target", "_held_target", "_target_list",
                "_children", "_target_subsystem", "_shield_subsystem",
-               "mount_order", *_SYSTEM_FIELDS}
+               "_impulse_engine_subsystem", "mount_order", *_SYSTEM_FIELDS}
 _PER_PROCESS = {"obj_id", "xform_index", "xform_gen", "py_id"}
 
 

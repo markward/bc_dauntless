@@ -80,6 +80,7 @@ import App
 from engine import host_loop
 from engine.appc import native_combat as nc
 from engine.appc import sensor_contacts
+from engine.appc import ship_motion
 from engine.appc import weapon_subsystems as ws
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.ship_iter import iter_ships
@@ -91,9 +92,13 @@ from tests.helpers import k1_fight as k1d
 SCHEMA = 3     # the file format; bump it on any change to it or to the rows
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "golden_fights"
 UPDATE_ENV = "UPDATE_COMBAT_GOLDEN"
-#: The arms a scene can run as: native only (fire control has no Python
-#: copy, M3; a re-record is labelled with the arm it ran).
-ARMS = {"native": k1d.ON}
+#: The arms a scene can run as: native fire control always (it has no
+#: Python copy, M3; a re-record is labelled with the arm it ran).
+#: "python_motion" is the native arm with the motion stage in Python
+#: (DAUNTLESS_NATIVE_MOTION=0, native motion phase 2): the reference kernel
+#: M is checked against, on the one Python recording.
+ARMS = {"native": k1d.ON,
+        "python_motion": {**k1d.ON, "DAUNTLESS_NATIVE_MOTION": "0"}}
 
 #: The tick tuple's components, in order.
 COMPONENTS = ("tick", "state", "events", "queued", "calls", "presented",
@@ -129,6 +134,12 @@ FIELDS = {
     "tractor": ("label", "_mode", "_engage_state", "_was_firing",
                 "_next_emitter_index", "IsEngaged"),
     "tube": ("label", "_reload_timers", "_last_fire_time"),
+    # tests/helpers/motion_fight.py (the motion_branches scene only)
+    "motion": ("name", "_current_speed", "_current_angular_velocity",
+               "_drift_velocity", "_speed_setpoint",
+               "_target_angular_velocity_setpoint", "_angular_velocity",
+               "_angular_space", "warp_flight", "_warp_consumed", "arriving",
+               "impulse_fractions", "effective_motion"),
 }
 
 EVENT_FIELDS = ("type", "source", "destination", "tick", "payload")
@@ -338,7 +349,10 @@ def _posed(mp, env, spec):
 # broadcast handler on ET_TRACTOR_BEAM_STARTED_FIRING stops the beam once
 # (E8M2's OD1 TractorHandler, E8M2.py:1010-1034), and the SDK's own
 # ConditionFiringTractorBeam watches the ship (E1M2/E2M1's intercept AI).
-# The force runs host-style, in _advance_combat's cb.tractors. Native only
+# The force runs where GameLoop's motion stage sits (ship_motion.tick_tractors,
+# after the timer bump and before the subsystem updates: Mark 2026-11-04),
+# never the whole tick_all_ship_motion, which would start integrating the
+# scene's ships too. Native only
 # since tractors went native (fire control native only, Task 3): its
 # STARTED / STOPPED are effect-queue entries (ruling R8), so the handler's
 # StopFiring no longer nests a STOPPED inside the STARTED it handles.
@@ -508,6 +522,7 @@ def _tractor_modes(mp, env, spec):
             if STARVE[0] <= t < STARVE[1]:
                 power.SetMainBatteryPower(0.0)
             App.g_kTimerManager._time += TICK_DELTA
+            ship_motion.tick_tractors(TICK_DELTA)
             game_loop._update_ship_subsystems()
             ships = list(iter_ships())
             with host_loop._combat_effect_scope():
@@ -599,6 +614,17 @@ def _sdk_dumb_fire(mp, env, spec):
     return _k1_take(scene)
 
 
+# ── Scene 7: every motion branch ─────────────────────────────────────────────
+
+def _motion_branches(mp, env, spec):
+    """tests/helpers/motion_fight.py: the scripted cast, recorded from the
+    Python motion (native motion phase 2, Task 1). Its rows are `pose` then
+    `motion`; no weapon rows."""
+    from tests.helpers import motion_fight
+    state, events, queued = motion_fight.run(mp, env, spec.ticks)
+    return _Take(state, events, queued, [], [])
+
+
 # ── The scene table ──────────────────────────────────────────────────────────
 
 SCENES = {s.name: s for s in (
@@ -612,6 +638,8 @@ SCENES = {s.name: s for s in (
           1, _posed),
     Scene("tractor_modes", "native", 0, "2", 870, 1, _tractor_modes),
     Scene("sdk_dumb_fire", "native", k1d.SEED, "8", 900, 1, _sdk_dumb_fire),
+    Scene("motion_branches", "native", 20261110, "2", 1250, 1,
+          _motion_branches),
 )}
 
 _LAST_ARM = {}
@@ -683,6 +711,8 @@ def run_scene(name: str, arm: str) -> list:
     env = ARMS[arm]
     gc.collect()
     with pytest.MonkeyPatch.context() as mp:
+        # The motion switch is the arm's, never the caller's shell's.
+        mp.delenv("DAUNTLESS_NATIVE_MOTION", raising=False)
         _patch_records(mp)
         random.seed(spec.seed)
         take = spec.run(mp, env, spec)

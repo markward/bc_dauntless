@@ -169,6 +169,36 @@ enum class Field : int32_t {
     // ammo type launches (_spawn_torpedo's `GetTorpedoScript(0)` fallback),
     // 0 not cached yet, 1 cached, 2 no module (or no script); its speed.
     slot0_launch_state, slot0_launch_speed,
+    // Kernel M's inputs (native motion phase 2, Task 2), all pushed by
+    // Python, which stays the authority. Object: ShipClass._current_speed;
+    // four TGPoint3-or-None vectors (ShipClass._current_angular_velocity,
+    // _drift_velocity, _target_angular_velocity_setpoint and
+    // PhysicsObjectClass._angular_velocity), each with its read-only
+    // <name>_state beside it (0 None or absent, 1 a TGPoint3, 2 anything
+    // else: unrepresentable, the kernel takes the Python path), written by
+    // set_fv from 0, 3 or 4 doubles; _speed_setpoint as a FloatList
+    // ([] None, [speed, dx, dy, dz, frame], or 6 zeros: unrepresentable);
+    // _angular_space (row default 1, DIRECTION_WORLD_SPACE); _static,
+    // _stationary; _insystem_warp_transit (1 while a flight is set);
+    // _impulse_engine_subsystem; and motion_stock, a class flag (1: a
+    // ShipClass whose motion surface is ShipClass's own). Subsystem:
+    // PoweredSubsystem._power_percentage_wanted, ImpulseEngineSubsystem's
+    // authored limits, and the class flags motion_ies_stock and
+    // motion_pod_stock (native_combat._flags).
+    _current_speed, _current_angular_velocity, _drift_velocity,
+    _target_angular_velocity_setpoint, _angular_velocity,
+    _current_angular_velocity_state, _drift_velocity_state,
+    _target_angular_velocity_setpoint_state, _angular_velocity_state,
+    _speed_setpoint, _angular_space, _static, _stationary,
+    _insystem_warp_transit, _impulse_engine_subsystem, motion_stock,
+    _power_percentage_wanted, _max_speed, _max_accel, _max_angular_velocity,
+    _max_angular_accel, motion_ies_stock, motion_pod_stock,
+    // Object: what PhysicsObjectClass._velocity holds, beside its Vec3 (which
+    // every kernel reads, unchanged): 0 never pushed, 1 a TGPoint3 (any
+    // 3-double set_fv of _velocity sets it), 2 anything else the Vec3
+    // encoding accepts (a tuple; native_combat.VelocityField pushes it).
+    // Kernel M's drift reads `v.x` only on a 1.
+    _velocity_state,
     kCount
 };
 
@@ -231,6 +261,20 @@ struct ObjectRow {
     int64_t _invincible = 0;
     double _splash_damage = 0.0, _splash_damage_radius = 0.0;
     double _mass = 0.0;  // Tractors native (Field comment above)
+    // Kernel M's inputs (Field comment above). A *_state of 0 or 2 leaves
+    // its vector zero.
+    double _current_speed = 0.0;
+    Vec3 _current_angular_velocity{0, 0, 0}, _drift_velocity{0, 0, 0},
+        _target_angular_velocity_setpoint{0, 0, 0}, _angular_velocity{0, 0, 0};
+    int64_t _current_angular_velocity_state = 0, _drift_velocity_state = 0,
+            _target_angular_velocity_setpoint_state = 0,
+            _angular_velocity_state = 0;
+    std::vector<double> _speed_setpoint;
+    int64_t _angular_space = 1, _static = 0, _stationary = 0,
+            _insystem_warp_transit = 0;
+    int64_t _impulse_engine_subsystem = -1;
+    int64_t motion_stock = 0;
+    int64_t _velocity_state = 0;
     // Posed parts: the pose table (empty while has_posed_parts is 0) and the
     // ship's subsystems in combat._iter_subsystems order (Subsystem handles;
     // kRefUnrepresentable for one the mirror cannot name). Not Fields: set
@@ -299,6 +343,10 @@ struct SubsystemRow {
             engage_kind = 0;
     Vec3 engage_point{0, 0, 0};
     double _efficiency = 0.0, _normal_power = 0.0;
+    // Kernel M's inputs (Field comment above).
+    double _power_percentage_wanted = 0.0, _max_speed = 0.0, _max_accel = 0.0,
+           _max_angular_velocity = 0.0, _max_angular_accel = 0.0;
+    int64_t motion_ies_stock = 0, motion_pod_stock = 0;
     // Posed parts: the index into the owning ship's part_poses of the part
     // Python resolved for this subsystem's own mount (detachment ignored;
     // -1 = no posable part), stamped with the global part_gen at
@@ -459,7 +507,9 @@ public:
     void set_ref(int64_t handle, Field f, int64_t target_or_minus1);
     void set_ids(int64_t handle, Field f, const std::vector<int64_t>& ids);
     // 3 doubles; an empty vector clears _fbm / _seed / _held_offset /
-    // _target_offset to "unset".
+    // _target_offset to "unset". A point-or-none field (kernel M's four
+    // vectors) takes 0 (state 0), 3 (state 1) or 4 (state 2, the vector
+    // reads zero) doubles and sets its <name>_state.
     void set_fv(int64_t handle, Field f, const std::vector<double>& v);
     void set_id_lists(int64_t handle, Field f,
                       const std::vector<std::vector<int64_t>>& lists);
@@ -501,7 +551,8 @@ public:
     int64_t get_i(int64_t handle, Field f) const;
     int64_t get_ref(int64_t handle, Field f) const;
     std::vector<int64_t> get_ids(int64_t handle, Field f) const;
-    // Empty for an unset _fbm / _seed.
+    // Empty for an unset _fbm / _seed. A point-or-none field reads by its
+    // state: empty (0), its 3 doubles (1), or 4 zeros (2) -- what was set.
     std::vector<double> get_fv(int64_t handle, Field f) const;
     std::vector<std::vector<int64_t>> get_id_lists(int64_t handle,
                                                    Field f) const;

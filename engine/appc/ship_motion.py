@@ -51,10 +51,11 @@ from dataclasses import dataclass
 # applied to subsystems._is_offline, which was costing 115,279 importlib
 # lookups over 150 ticks at 100 ships.
 import App
-from engine.appc import drift, warp_flight, warp_state
+from engine.appc import drift, native_combat, tractor, warp_flight, warp_state
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
 from engine.appc.subsystems import impulse_fractions, impulse_output_fraction
+from engine.core import frame_profiler as _prof
 from engine.core.ids import implements
 
 # Match _PlayerControl.FALLBACK_MAX_ACCEL in engine/host_loop.py:613.
@@ -154,12 +155,44 @@ def _asymptote_step(accel: float, gap: float, dt: float) -> float:
 def tick_all_ship_motion(dt: float) -> None:
     """Iterate every live ship and advance its motion by `dt` seconds.
 
-    Rocks are excluded — a rock's motion is never AI-driven (rock-class
-    spec §1).
+    Rocks are excluded from the motion rows — a rock's motion is never
+    AI-driven (rock-class spec §1) — but the tractor step's roster includes
+    them.
+
+    While native_motion.enabled() (DAUNTLESS_NATIVE_MOTION, on unless =0;
+    the mirror live; the motion surface stock) kernel M flies the stage
+    instead (native_motion.step_all), bit-exact with the loop below, which
+    stays the reference.
+
+    Then the tractor force (tick_tractors), then the publish.
     """
-    from engine.appc.ship_iter import iter_non_rock_ships
-    for ship in iter_non_rock_ships():
-        _step_ship_motion(ship, dt)
+    if native_motion.enabled():
+        native_motion.step_all(dt)
+    else:
+        from engine.appc.ship_iter import iter_non_rock_ships
+        for ship in iter_non_rock_ships():
+            _step_ship_motion(ship, dt)
+    # After every row, before the publish: the tractor force is the stage's
+    # other pose writer (Mark 2026-11-04), so the published poses hold it.
+    tick_tractors(dt)
+    # Last, in both switch states: the tick's poses, for later phases.
+    native_motion.publish_stage()
+
+
+def tick_tractors(dt: float) -> None:
+    """The tractor force step for one tick (``tractor.advance_tractors``:
+    the native step, tractor_force.h), over the whole ``iter_ships()``
+    roster, rocks included -- the roster the host's combat step passed when
+    the force ran there (``cb.tractors``, after K2). It runs here, in the
+    motion stage, so motion is the only ship-pose writer (Mark 2026-11-04):
+    a beam the K1 tractor walk grips in a tick's combat step first pulls in
+    the next tick's motion stage, and a headless GameLoop moves tractored
+    ships too. In the host that is the NEXT FRAME: a frame runs all its
+    GameLoop ticks before its combat steps (perf-cadences-and-latency.md).
+    No-op for ships without a firing tractor."""
+    from engine.appc.ship_iter import iter_ships
+    with _prof.scope("motion.tractors"):
+        tractor.advance_tractors(list(iter_ships()), dt)
 
 
 def _ramp_toward(current: float, target: float, step: float) -> float:
@@ -205,7 +238,14 @@ def _step_ship_motion(ship, dt: float) -> None:
     if getattr(ship, "_insystem_warp_transit", None) is not None:
         if warp_flight.step(ship, dt):
             return
+    _step_after_warp(ship, dt)
 
+
+def _step_after_warp(ship, dt: float) -> None:
+    """The rest of `_step_ship_motion`, past its in-system warp check: what a
+    row runs once warp_flight.step returned False (native_motion's driver
+    calls it for that row when the kernel hands it back), and what every
+    other mobile row runs."""
     # A warp-in arrival is flown by its warp engine's dewarp drive
     # (WarpEngineSubsystem.step_dewarp_drive): it holds its heading and
     # slides onto its placement whatever setpoint its AI writes meanwhile.
@@ -318,6 +358,8 @@ def _step_ship_motion(ship, dt: float) -> None:
     cav.x = _ramp_toward(cav.x, tx, ang_step)
     cav.y = _ramp_toward(cav.y, ty, ang_step)
     cav.z = _ramp_toward(cav.z, tz, ang_step)
+    # In place, so the descriptor never saw it: the mirror is a copy.
+    native_combat.push_field(ship, "_current_angular_velocity")
 
     _integrate_rotation(ship, dt)
 
@@ -336,3 +378,9 @@ def _integrate_rotation(ship, dt: float) -> None:
         delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
         R = R.MultMatrix(delta)
         ship.SetMatrixRotation(R)
+
+
+# At the bottom, not with the imports above: native_motion snapshots this
+# module's functions at its own import (the stock surface kernel M stands
+# in for), so they must exist by then whichever module is imported first.
+from engine.appc import native_motion  # noqa: E402

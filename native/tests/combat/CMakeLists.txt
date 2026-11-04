@@ -15,6 +15,9 @@ add_executable(combat_tests
     k4_eligibility_test.cc
     damage_test.cc
     tractor_force_test.cc
+    impulse_test.cc
+    motion_step_test.cc
+    published_poses_test.cc
 )
 target_link_libraries(combat_tests
     PRIVATE

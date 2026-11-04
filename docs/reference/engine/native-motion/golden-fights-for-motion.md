@@ -193,7 +193,7 @@ while scene.tick < spec.ticks:
 ```
 
 - This runs whole ticks at tpf 1, with no motion.
-- Poses move by the **tractor force** in `cb.tractors` (Enemy-1 moves on 641 ticks, the Player on 510) and by the scripted turns. This is the pose writer of NMP open question 1.
+- Poses move by the **tractor force**, then in `cb.tractors`; since phase 2 Task 7 in the motion stage's `motion.tractors`, called here as `ship_motion.tick_tractors` (Enemy-1 moves on 641 ticks, the Player on 510) and by the scripted turns. This is the pose writer of NMP open question 1.
 
 ### 2.4 Whole ticks through GameLoop: `k1_gameloop_ai`, `sdk_dumb_fire`
 
