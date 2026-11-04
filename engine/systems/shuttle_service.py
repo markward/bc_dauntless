@@ -138,7 +138,8 @@ _ENTRY = "Docking Entry"
 _ENTRY_END = "Docking Entry End"
 # An ENTERING shuttle farther than this from "Docking Entry" was moved off the
 # bay path (BC's player docking clears 300 GU round it): it approaches again.
-# The approach ends within _POINT_GU of a ring point ~158 GU from it.
+# The approach ends within _POINT_GU of a ring point ~158 GU from it (~244 GU
+# with Starbase 12's live 296 GU radius: _approach_clear_gu).
 _PUSHED_GU = 275.0
 # A shuttle leaving the bay early (pushed, or the player took the bay) keeps
 # collisions with Starbase 12 off until this far from its centre: clear of
@@ -865,8 +866,9 @@ def _entry_points(station) -> None:
     _place_from_hardpoint(start, station, "Docking Entry Start")
     _place_from_hardpoint(end, station, "Docking Entry End")
     centre = _placement(pSet, _APPROACH_POINT, 4.0)
-    _place_from_hardpoint(centre, station, "Docking Entry Start", _CLEAR_GU)
     _pos, fwd, up = _hardpoint_world(station, "Docking Entry Start")
+    _place_from_hardpoint(centre, station, "Docking Entry Start",
+                          _approach_clear_gu(station, _pos))
     f, u = _xyz(fwd), _xyz(up)
     side = (f[1] * u[2] - f[2] * u[1], f[2] * u[0] - f[0] * u[2],
             f[0] * u[1] - f[1] * u[0])
@@ -877,6 +879,19 @@ def _entry_points(station) -> None:
         wp.SetTranslateXYZ(c[0] + off[0], c[1] + off[1], c[2] + off[2])
         wp.AlignToVectors(fwd, up)
         wp.UpdateNodeOnly()
+
+
+def _approach_clear_gu(station, mouth) -> float:
+    """How far out along the (radial) bay axis the approach point sits:
+    _CLEAR_GU, or farther so it is _ROUND_MARGIN_GU outside the station's
+    radius. The approach and its hold run inside AvoidObstacles, whose SDK
+    scan finds the station by its surface (BC's size rule for near queries)
+    and steers away from anything within its radius: an approach point inside
+    Starbase 12's 296 GU sphere (~262 GU at _CLEAR_GU) is never reached. A
+    radius-0 station (headless) keeps _CLEAR_GU."""
+    c = _xyz(station.GetWorldLocation())
+    out = math.dist(_xyz(mouth), c)
+    return max(_CLEAR_GU, station.GetRadius() + _ROUND_MARGIN_GU - out)
 
 
 def _exit_point(station) -> None:
