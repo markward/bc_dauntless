@@ -260,7 +260,7 @@ Rules:
 
 ## 8. Open questions
 
-1. ~~**Tractor stage.** Under ruling 2, does the native tractor force (R7) stay in the combat stage, after K2 as built, or move into the motion stage?~~ Answered by Mark, 2026-11-04: it moves into the motion stage (phase 2 Task 7, §5.2). Its pull starts one tick after the K1 tractor walk engages it; accepted.
+1. ~~**Tractor stage.** Under ruling 2, does the native tractor force (R7) stay in the combat stage, after K2 as built, or move into the motion stage?~~ Answered by Mark, 2026-11-04: it moves into the motion stage (phase 2 Task 7, §5.2). Its pull starts one tick after the K1 tractor walk engages it; accepted. In the host that tick is in the next frame (a frame runs its GameLoop ticks before its combat steps), so pull, HOLD and release react one frame later, up to the catch-up cap of ticks (phase 2 closing review I2; `docs/reference/engine/perf-cadences-and-latency.md`).
 2. **BC size rule details** (§5.1 step 1d). Partly settled by reading (`docs/reference/engine/native-motion/open-questions-by-reading.md` Q3):
    - the near test is centre distance minus bounding radius, within the query radius;
    - for the near query, `includeSize` only widens the axis prune, so it should not change results (derived); for the line query it is part of the exact test;

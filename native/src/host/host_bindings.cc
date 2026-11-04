@@ -13501,7 +13501,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                         r.skipped);
               },
               py::arg("ship_handles"), py::arg("dt"),
-              "One tractor force step (cb.tractors).");
+              "One tractor force step (motion.tractors).");
         m.def("combat_k0_reset_counts",
               [] { cb::k0_session().reset_counts(); });
         m.def("combat_k0_clear_caches", [] { k0_caches().clear(); },

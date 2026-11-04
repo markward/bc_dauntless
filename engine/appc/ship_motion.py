@@ -155,8 +155,9 @@ def _asymptote_step(accel: float, gap: float, dt: float) -> float:
 def tick_all_ship_motion(dt: float) -> None:
     """Iterate every live ship and advance its motion by `dt` seconds.
 
-    Rocks are excluded — a rock's motion is never AI-driven (rock-class
-    spec §1).
+    Rocks are excluded from the motion rows — a rock's motion is never
+    AI-driven (rock-class spec §1) — but the tractor step's roster includes
+    them.
 
     While native_motion.enabled() (DAUNTLESS_NATIVE_MOTION, on unless =0;
     the mirror live; the motion surface stock) kernel M flies the stage
@@ -186,7 +187,9 @@ def tick_tractors(dt: float) -> None:
     motion stage, so motion is the only ship-pose writer (Mark 2026-11-04):
     a beam the K1 tractor walk grips in a tick's combat step first pulls in
     the next tick's motion stage, and a headless GameLoop moves tractored
-    ships too. No-op for ships without a firing tractor."""
+    ships too. In the host that is the NEXT FRAME: a frame runs all its
+    GameLoop ticks before its combat steps (perf-cadences-and-latency.md).
+    No-op for ships without a firing tractor."""
     from engine.appc.ship_iter import iter_ships
     with _prof.scope("motion.tractors"):
         tractor.advance_tractors(list(iter_ships()), dt)
