@@ -344,7 +344,7 @@ Only objects with scale ≠ 1 change (§5.3). Headless, an SDK hardpoint rock ha
 - Focused tests at `f3ec124a5`: 779 pytest passed; ctest `-R combat_` 354/354.
 - Tractor stand-off test geometry: the target sits 10 GU from the source. The plan's 33 GU never engaged the stand-off, so it could not fail.
 - D1 (merged bounding sphere): ruled (a) by Mark 2026-11-03, not on this branch.
-- Live check: owed (Mark), before the merge into `project/native-motion-and-proximity`.
+- Live check: **verified by Mark 2026-11-04** ("I am seeing the changes you described"), at 41f1f55bf.
 
 ## Annex A. Engine `GetRadius()` calls in `engine/appc/`, `App.py`, `tools/`
 
