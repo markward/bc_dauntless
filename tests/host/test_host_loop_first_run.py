@@ -12,6 +12,7 @@ import pytest
 from engine import first_run, host_loop, paths
 from engine import settings_store as _settings_store_mod
 from tests.helpers.source_guards import code_only as _code_only
+from tests.helpers import host_frame_source
 
 # Captured before any fixture gets a chance to monkeypatch paths.persist /
 # paths.resolve, so a test can reinstate the REAL implementation (pointed at
@@ -395,7 +396,7 @@ def test_cef_comes_up_before_the_sdk_finder_is_installed():
     """
     import inspect
     from engine import host_loop
-    source = _code_only(inspect.getsource(host_loop.run))
+    source = _code_only(host_frame_source.run_source())
     init_at = source.index("r.init(")
     cef_at = source.index("r.cef_initialize(")
     resolve_at = source.index("_resolve_paths_or_report(")

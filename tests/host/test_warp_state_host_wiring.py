@@ -8,6 +8,7 @@ import pytest
 from engine.appc import warp_state
 from engine.appc.ships import ShipClass
 from engine.appc.subsystems import WarpEngineSubsystem
+from tests.helpers import host_frame_source
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +39,7 @@ def test_warp_state_is_ticked_before_collisions_in_the_host_loop():
     # non-collidable for one extra frame. It must not tick warp states a
     # second time on its own (that was the old wall-clock _player_dt call).
     import engine.host_loop as hl
-    src = inspect.getsource(hl.run)
+    src = host_frame_source.run_source()
     assert "tick_warp_states(" not in src
     i_ticks = src.index("_sim_ticks_this_frame, _tick_gameloop)")
     i_coll = src.index("collisions.tick_collisions(")

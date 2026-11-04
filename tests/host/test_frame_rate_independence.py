@@ -18,12 +18,11 @@ Two guards:
     reintroduce the bug.
 """
 import ast
-import inspect
 import os
 
 import pytest
 
-from tests.helpers import bc_assets
+from tests.helpers import bc_assets, host_frame_source
 
 TICK_DT = 1.0 / 60.0
 _MISSION = "Custom.Tutorial.Episode.M1Basic.M1Basic"
@@ -136,8 +135,10 @@ def test_every_consumer_gets_the_game_time_the_loop_advanced(monkeypatch, fps):
 # --- structural guard ---------------------------------------------------------
 
 # Calls that legitimately take TICK_DT outside the per-tick loop: the
-# accumulator that DECIDES how many ticks a frame runs.
-_ALLOWED = {"step_accumulator"}
+# accumulator that DECIDES how many ticks a frame runs, and the frame sim's
+# context, which only hands it on to the section this guard reads inline
+# (host_frame_source.run_tree()).
+_ALLOWED = {"step_accumulator", "FrameSimContext"}
 
 
 def _callee(call):
@@ -155,11 +156,7 @@ def _is_per_tick_loop(node):
 
 
 def test_tick_dt_is_only_handed_to_per_tick_calls():
-    import engine.host_loop as hl
-
-    tree = ast.parse(inspect.getsource(hl))
-    run_fn = next(n for n in ast.walk(tree)
-                  if isinstance(n, ast.FunctionDef) and n.name == "run")
+    run_fn = host_frame_source.run_tree()
     parent = {}
     for node in ast.walk(run_fn):
         for child in ast.iter_child_nodes(node):

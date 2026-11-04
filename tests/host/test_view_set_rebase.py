@@ -22,6 +22,7 @@ import pytest
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.cameras.chase import _ChaseCamera as ChaseCamera
 from engine.cameras.director import _CameraDirector
+from tests.helpers import host_frame_source
 
 
 def _settled_chase(loc):
@@ -129,10 +130,9 @@ def test_a_view_rebase_shifts_the_cameras_and_drops_the_dust_history():
 
 
 def test_the_host_loop_rebases_the_view_before_it_solves_the_camera():
-    import inspect
     from engine import host_loop
     from tests.helpers.source_guards import code_only
-    src = code_only(inspect.getsource(host_loop.run))
+    src = code_only(host_frame_source.run_source())
     i_rebase = src.index("_rebase_view(")
     assert i_rebase < src.index("_compute_camera(")
     assert i_rebase < src.index("_apply_render_origin(")

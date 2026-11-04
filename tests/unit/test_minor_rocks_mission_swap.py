@@ -3,9 +3,9 @@ forgets its clouds AND native is cleared, so the next mission's reconcile
 re-adds from nothing (and re-pushes the fragment tables minors_clear wiped).
 Drives the REAL HostController._drain_pending_swap
 (tests/unit/test_dash_mission_swap.py's pattern)."""
-import inspect
 
 from engine.rocks import minors
+from tests.helpers import host_frame_source
 
 
 def _swap(renderer):
@@ -43,7 +43,7 @@ def test_a_mission_swap_clears_the_minor_registry_and_native():
 
 def test_boot_registers_the_minor_dial_group_beside_the_nebula_dials():
     from engine import host_loop
-    src = inspect.getsource(host_loop.run)
+    src = host_frame_source.run_source()
     neb = src.find("dev_nebula_dials.register(_h)")
     mnr = src.find("_minor_dials.register()")
     assert neb >= 0 and mnr >= 0

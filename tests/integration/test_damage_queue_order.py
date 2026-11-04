@@ -15,7 +15,6 @@ and the real collision path:
 * The host's frame-end boundary runs after the post-step pass (source
   order).
 """
-import inspect
 
 import App
 
@@ -24,6 +23,7 @@ from engine.appc import combat, effect_queue
 from engine.appc.math import TGPoint3
 from tests.helpers import headless_mission
 from tests.helpers.one_set import share_one_set
+from tests.helpers import host_frame_source
 
 E2M2 = "Maelstrom.Episode2.E2M2.E2M2"
 E3M5 = "Maelstrom.Episode3.E3M5.E3M5"
@@ -141,7 +141,7 @@ def test_the_frame_end_boundary_follows_the_post_step_pass():
     """R8: what radiation, hull breakup, collisions, scenery contact and rock
     promotion report is delivered that frame, after all of them, and before
     the scene reconcile reads the frame's result."""
-    src = inspect.getsource(host_loop.run)
+    src = host_frame_source.run_source()
     frame_boundary = _at(src, "_effect_queue.boundary()")
     for call in ("_combat_tick_boundary()", "_radiation_driver.update(",
                  "_hull_breakup.drain()", "collisions.tick_collisions(",

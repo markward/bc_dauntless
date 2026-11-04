@@ -5,14 +5,14 @@ target only when the source is "scene" -- a comm or off feed gets None, so
 no bars are drawn over a hail.
 """
 import ast
-import inspect
 import textwrap
 
 import engine.host_loop as host_loop
+from tests.helpers import host_frame_source
 
 
 def _run_tree():
-    return ast.parse(textwrap.dedent(inspect.getsource(host_loop.run)))
+    return ast.parse(textwrap.dedent(host_frame_source.run_source()))
 
 
 def _calls(tree, name):

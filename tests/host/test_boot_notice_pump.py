@@ -18,6 +18,7 @@ import pytest
 from engine import host_loop
 from tests.helpers.source_guards import code_only
 from tests.host.test_first_run_pump_loop import _FakeCefState
+from tests.helpers import host_frame_source
 
 FRAME_S = 1.0 / 60.0
 
@@ -212,8 +213,7 @@ def test_run_loads_the_game_behind_the_notice():
     The pump loop replaces run()'s CEF handlers, so both are put back after
     the fade-out, and the frame clock restarts so the fade is not replayed
     as up to MAX_FRAME_DT of sim time on the first frame."""
-    import inspect
-    source = code_only(inspect.getsource(host_loop.run))
+    source = code_only(host_frame_source.run_source())
     resolve_at = source.index("_resolve_paths_or_report(")
     mods_at = source.index("run_mods_screen(")
     begin_at = source.index("_begin_boot_notice(")
@@ -261,8 +261,7 @@ def test_boot_audio_mute_without_audio_is_a_no_op(monkeypatch):
 
 
 def test_run_mutes_the_load_and_unmutes_at_the_fade_out():
-    import inspect
-    source = code_only(inspect.getsource(host_loop.run))
+    source = code_only(host_frame_source.run_source())
     begin_at = source.index("_begin_boot_notice(")
     mute_at = source.index("_set_boot_audio_muted(True)")
     mission_at = source.index("controller.loader.load")

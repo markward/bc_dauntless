@@ -29,6 +29,7 @@ from engine.core.game import Game, _set_current_game
 from engine.core.native_transform_buffer import NativeTransformBuffer
 from engine.systems import frames
 from tests.helpers.mapped_regions import load_region
+from tests.helpers import host_frame_source
 
 FAR = 450000.0
 P = (FAR, 0.0, 0.0)              # the player, set-local == view
@@ -480,7 +481,7 @@ def test_a_mesh_query_is_instance_relative_and_hands_back_the_targets_set(monkey
 # ── the frame order, and the passes that are NOT Space ─────────────────────
 
 def _run_source():
-    return textwrap.dedent(inspect.getsource(host_loop.run))
+    return textwrap.dedent(host_frame_source.run_source())
 
 
 def test_the_origin_is_set_before_any_feed_is_pushed():

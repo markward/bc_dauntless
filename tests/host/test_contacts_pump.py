@@ -7,7 +7,6 @@ helper calls this exact function. What lives here is the call-site guard —
 without it, deleting the push from run() leaves the whole suite green while the
 bug this task fixed (contacts bound to a departed system) silently returns.
 """
-import inspect
 
 import App
 from engine import host_loop
@@ -15,6 +14,7 @@ from engine.appc import contact_index
 from engine.appc.sets import SetClass
 from engine.appc.ships import ShipClass
 from engine.host_loop import _pump_contacts
+from tests.helpers import host_frame_source
 
 
 def _ship(name):
@@ -82,7 +82,7 @@ def test_run_calls_pump_contacts_every_frame():
     again, or drops the affiliation recompute by open-coding only part of the
     helper, this string disappears from run()'s source and this fails.
     """
-    src = inspect.getsource(host_loop.run)
+    src = host_frame_source.run_source()
     assert "_pump_contacts(_menu, _player)" in src, (
         "the per-frame contact push must read exactly "
         "'_pump_contacts(_menu, _player)' in run() -- without it the target "

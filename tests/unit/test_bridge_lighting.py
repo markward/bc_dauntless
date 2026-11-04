@@ -1,5 +1,6 @@
 import pytest
 from engine import bridge_lighting as bl
+from tests.helpers import host_frame_source
 
 
 @pytest.mark.parametrize("level,scale", [(0, 1.5), (1, 1.0), (2, 1.0), (3, 0.4), (4, 1.0), (9, 1.0), (-1, 1.0)])
@@ -58,14 +59,8 @@ def test_probe_scales_has_five_states():
 
 def test_host_loop_feeds_probe_state_and_gates_on_alert_on_change():
     import ast
-    import inspect
 
-    import engine.host_loop as hl
-
-    tree = ast.parse(inspect.getsource(hl))
-    run_fn = next(
-        n for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef) and n.name == "run")
+    run_fn = host_frame_source.run_tree()
 
     update_call = None
     on_alert_calls_with_guard = []
@@ -146,13 +141,8 @@ def test_host_loop_feeds_probe_state_and_gates_on_alert_on_change():
 # pick it up on the next frame).
 def test_host_loop_pushes_the_alert_level_every_frame():
     import ast
-    import inspect
 
-    import engine.host_loop as hl
-
-    tree = ast.parse(inspect.getsource(hl))
-    run_fn = next(n for n in ast.walk(tree)
-                  if isinstance(n, ast.FunctionDef) and n.name == "run")
+    run_fn = host_frame_source.run_tree()
     calls = [n for n in ast.walk(run_fn)
              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
     update = next(c for c in calls if c.func.attr == "set_bridge_probe_state")

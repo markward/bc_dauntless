@@ -21,10 +21,11 @@ tests/integration/test_sky_round_trip.py.
 import inspect
 
 from engine import host_loop
+from tests.helpers import host_frame_source
 
 
 def _run_source() -> str:
-    return inspect.getsource(host_loop.run)
+    return host_frame_source.run_source()
 
 
 def _at(src, needle, start=0):

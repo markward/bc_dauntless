@@ -11,14 +11,14 @@ unit-test in isolation, so this is a source-level guard: the
 `dt=_player_dt`. If someone reverts it to `dt=TICK_DT`, this fails.
 """
 
-import inspect
 import re
 
 from engine import host_loop
+from tests.helpers import host_frame_source
 
 
 def _run_source() -> str:
-    return inspect.getsource(host_loop.run)
+    return host_frame_source.run_source()
 
 
 def test_compute_camera_fed_wall_clock_dt():

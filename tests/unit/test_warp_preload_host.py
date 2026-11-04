@@ -2,7 +2,6 @@
 the Preload deps it builds (each the SAME call realization makes, so the
 arrival hits what the tunnel loaded), and the guarded per-frame step."""
 import ast
-import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +10,7 @@ import App
 from engine import dev_mode, host_loop, warp_preload
 from engine import dev_nebula_dials as D
 from engine.appc.sets import SetClass_Create
+from tests.helpers import host_frame_source
 
 
 class _R:
@@ -187,7 +187,7 @@ def test_preload_haze_dict_equals_the_arrival_push(monkeypatch):
 # -- run() wiring ------------------------------------------------------------
 
 def _run_tree():
-    return ast.parse(inspect.getsource(host_loop.run))
+    return ast.parse(host_frame_source.run_source())
 
 
 def _call_name(node):

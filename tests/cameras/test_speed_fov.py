@@ -1,13 +1,13 @@
 """Speed-linked FOV: the exterior FOV widens with the player's speed, +4 deg
 at 4000 kph and above, linearly below. Additive on the user's FOV setting and
 never written back to the persisted base."""
-import inspect
 import math
 import re
 
 import pytest
 
 from engine.units import GUPS_TO_KPH
+from tests.helpers import host_frame_source
 
 
 def _gups(kph: float) -> float:
@@ -126,7 +126,7 @@ def test_exterior_render_and_unproject_paths_use_the_effective_fov():
     r.set_camera, the manual-aim camera note and the reticle projection
     must all read director.effective_fov_y_rad, or the drawn frame and the
     cursor/reticle math disagree by up to 4 deg at speed."""
-    src = re.sub(r"\s+", " ", inspect.getsource(__import__("engine.host_loop").host_loop.run))
+    src = re.sub(r"\s+", " ", host_frame_source.run_source())
     # The exterior camera reaches the renderer through _push_space_camera
     # (render space, system-frames Plan 3 Task 6); same fov argument.
     assert "_push_space_camera(r, eye, target, up_vec, director.effective_fov_y_rad" in src

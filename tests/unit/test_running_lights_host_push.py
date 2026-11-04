@@ -7,6 +7,7 @@ from engine.appc import running_light_dials
 from engine.appc.math import TGPoint3
 from engine.appc.properties import TGModelPropertySet
 from engine.appc.subsystems import CloakingSubsystem
+from tests.helpers import host_frame_source
 
 
 class _FakeRenderer:
@@ -242,8 +243,7 @@ def test_run_feeds_both_hull_hides_to_the_running_light_push():
     tests/host/test_scene_reconcile_ordering.py): the bridge-view hide's
     result reaches _push_running_lights, and the warp hide (inside
     _sync_instance_transforms) has run before it."""
-    import inspect
-    src = inspect.getsource(host_loop.run)
+    src = host_frame_source.run_source()
     push = src.find("_push_running_lights(r, session, "
                     "hidden_iids=_bridge_hidden_iids,")
     bridge = src.find("_bridge_hidden_iids = _apply_bridge_player_visibility(")
@@ -411,7 +411,6 @@ def test_without_a_preview_a_pose_change_still_resends():
 def test_run_feeds_the_spv_preview_iid_only_while_open():
     """Source guard: run() passes the SPV's previewed iid(s), gated on the
     dev-only `_spv_open`, so production sends ()."""
-    import inspect
-    src = inspect.getsource(host_loop.run)
+    src = host_frame_source.run_source()
     assert ("preview_iids=(ship_property_viewer.running_light_preview_iids()"
             "\n                          if _spv_open else ())") in src
