@@ -10131,12 +10131,11 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     View coordinates (system-frames Plan 3 Task 3): ships of every set in the
     viewed frame are realized, so a ship's pushed position is its set-local
     position plus offset_between(view, its set) -- zero in the viewed set, so
-    those numbers are untouched. The player is store-bound only when its set
-    IS the viewed set; in a sibling region (a cutscene rendered at Ona2 while
-    the player is in Ona1) the store's set-local pose would be in the wrong
-    coordinates, so it is pushed like any other ship, with its offset. An
-    object with no offset (no view, no set, another frame) is drawn exactly
-    as before.
+    those numbers are untouched. Every ship, the player included, is drawn
+    by the native compose (interp_compose) from its sim source, which
+    carries that offset, so a player in a sibling region (a cutscene
+    rendered at Ona2 while the player is in Ona1) is drawn in the viewed
+    coordinates too.
 
     Articulation is NOT pushed here (phase 3a): the node overrides follow
     the sim pose per change, through `pose_sink` -> `_push_articulation`.
@@ -13011,7 +13010,9 @@ def run(mission_name: Optional[str] = None,
                             _prev_drawn_player_pose)
                         _pose_of = _make_render_pose_provider(
                             session, _xform_buf, _interp_alpha)
-                        # The pose the compose below draws the player at.
+                        # The camera's player pose (the same native drawn pose
+                        # the compose uses); kept as "a drawn pose exists" for
+                        # the next frame's handover begin, and for telemetry.
                         _player_interp_pose = (
                             _pose_of(player) if player is not None else None)
                         _prev_interp_player = _interp_player
@@ -13040,9 +13041,8 @@ def run(mission_name: Optional[str] = None,
             # --- Ship Property Viewer's FORCED articulation pose ---
             # DELIBERATELY OUTSIDE the `if not pause.sim_frozen:` above. The
             # SPV opens the pause menu, which freezes the sim, so everything
-            # in that block -- including the articulation push inside
-            # _sync_instance_transforms -- is skipped on every frame the
-            # viewer is open. Leaving the forced pose in there made it dead
+            # in that block -- the render sync included -- is skipped on
+            # every frame the viewer is open. Leaving the forced pose in there made it dead
             # code: the hologram kept whatever pose was last pushed before
             # the pause, and no forced pose could move a wing.
             # Dev-only and SPV-only inside the helper, so a production paused
