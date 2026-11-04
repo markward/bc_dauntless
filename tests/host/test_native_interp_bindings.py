@@ -197,6 +197,19 @@ def test_live_instance_draws_the_store_pose(ship):
     assert _drawn_x(iid) == pytest.approx(1.5, abs=1e-12)
 
 
+def test_untrack_clears_the_live_flag(ship):
+    """A re-tracked instance starts interpolated, as a new one does."""
+    o, iid = ship
+    _h.interp_track(iid, True, True)
+    _h.interp_set_live(iid, True)
+    _h.interp_track(iid, False, False)
+    _h.interp_track(iid, True, True)
+    _h.interp_roll()
+    o.SetTranslateXYZ(6.0, 0.0, 0.0)
+    _h.interp_capture()
+    _h.interp_compose(0.25)
+    assert _drawn_x(iid) == pytest.approx(1.5, abs=1e-12)
+
 def test_handover_blends_from_the_last_drawn_pose(ship):
     o, iid = ship
     _h.interp_track(iid, True, True)

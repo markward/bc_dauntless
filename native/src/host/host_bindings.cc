@@ -6647,6 +6647,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (!track) {
                   inst->interp_track = false;
                   inst->interp_compose = false;
+                  inst->interp_live = false;
                   interp_forget(k);
                   return;
               }
