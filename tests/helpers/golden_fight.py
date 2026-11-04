@@ -629,7 +629,7 @@ SCENES = {s.name: s for s in (
           1, _posed),
     Scene("tractor_modes", "native", 0, "2", 870, 1, _tractor_modes),
     Scene("sdk_dumb_fire", "native", k1d.SEED, "8", 900, 1, _sdk_dumb_fire),
-    Scene("motion_branches", "native", 20261110, "2", 700, 1,
+    Scene("motion_branches", "native", 20261110, "2", 1250, 1,
           _motion_branches),
 )}
 

@@ -68,10 +68,12 @@ TICK_BARE = 100             # Bare's setpoint is written
 
 #: Ramp's beats: (tick, name).
 RAMP_BEATS = (
-    (10, "over_max"), (150, "pods_half"), (250, "reverse"),
-    (330, "ang_over_max"), (380, "power_half"), (430, "off"), (460, "on"),
-    (490, "world_dir"), (560, "no_speed"),
+    (10, "over_max"), (400, "pods_half"), (430, "pods_full"),
+    (450, "reverse"), (950, "ang_over_max"), (1000, "power_half"),
+    (1050, "off"), (1080, "on"), (1110, "world_dir"), (1180, "no_speed"),
 )
+TICK_ARRIVER_FLY = 200      # Arriver: setpoints, after the 2 s slide
+RAD_IES = (600, 650)        # ZeroLimits: its IES _radiation_out is set
 
 
 # ── the record ───────────────────────────────────────────────────────────────
@@ -260,8 +262,11 @@ def _ramp_beat(ship, beat):
     elif beat == "pods_half":
         for pod in _pods(ship):
             pod.SetCondition(pod.GetMaxCondition() * 0.5)
+    elif beat == "pods_full":
+        for pod in _pods(ship):
+            pod.SetCondition(pod.GetMaxCondition())
     elif beat == "reverse":
-        ship.SetSpeed(-4.0, _fwd(), MODEL)
+        ship.SetSpeed(-20.0, _fwd(), MODEL)     # past the reverse cap
     elif beat == "ang_over_max":
         ship.SetTargetAngularVelocityDirect(TGPoint3(5.0, 5.0, 5.0))
     elif beat == "power_half":
@@ -292,7 +297,7 @@ def _beats(t, cast, player, placement):
         sub.SetPlacement(placement)
         sub.SetWarpState(sub.WES_WARPING)
         sub.TransitionToState(sub.WES_DEWARP_INITIATED)
-    if t == 200:        # past the 2 s slide: it flies its setpoints now
+    if t == TICK_ARRIVER_FLY:
         arr = cast["Arriver"]
         arr.SetSpeed(3.0, _fwd(), MODEL)
         arr.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.3))
@@ -305,6 +310,9 @@ def _beats(t, cast, player, placement):
     if t == TICK_REPAIR:
         pod = _pods(cast["Cripple"])[1]
         pod.SetCondition(pod.GetMaxCondition())
+    if t in RAD_IES:
+        cast["ZeroLimits"].GetImpulseEngineSubsystem()._radiation_out = (
+            t == RAD_IES[0])
     if t == TICK_PLAYER:
         player.SetSpeed(3.0, _fwd(), MODEL)
 
@@ -389,6 +397,15 @@ def run(mp, env, ticks):
             cast["Cripple"].__dict__.get("_drift_velocity") is not None)
         (player_before if t < TICK_PLAYER else player_after).add(
             _pos(player))
+        ramp = cast["Ramp"]
+        cap = _effective_motion(ramp).max_speed
+        if abs(ramp._current_speed - cap) < 0.1 and "cap" not in seen:
+            seen["cap"] = t
+        if ramp._current_speed < 0.0 and "neg" not in seen:
+            seen["neg"] = t
+        if t == RAD_IES[0] + 1 or t == RAD_IES[1] - 1:
+            seen.setdefault("rad", []).append(subsystems.impulse_fractions(
+                cast["ZeroLimits"].GetImpulseEngineSubsystem()))
         if t == TICK_BARE:      # written at the start of this very tick
             bare = cast["Bare"]
             seen["bare"] = (bare._current_speed,
@@ -411,5 +428,11 @@ def run(mp, env, ticks):
     assert player_before == {player_start}, "the player moved before 500"
     assert len(player_after) > 1 and player_after != {player_start}, \
         "the player never moved after 500"
+    assert seen.get("cap"), "Ramp never reached its effective max speed"
+    assert seen.get("neg"), "Ramp never reversed"
+    assert seen["neg"] > seen["cap"]
+    assert seen["rad"] == [(0.0, 0.0)] * 2, seen["rad"]
+    print("[motion_branches] Ramp at cap from tick %d, negative from %d"
+          % (seen["cap"], seen["neg"]))
     assert 1 in posts and 0 in posts, posts     # ET_IN_SYSTEM_WARP both ways
     return state, events, queued.rows
