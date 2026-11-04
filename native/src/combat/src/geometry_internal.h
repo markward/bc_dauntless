@@ -14,6 +14,7 @@
 #include <string>
 
 #include "dauntless/combat/mirror.h"
+#include "dauntless/combat/published_poses.h"
 
 namespace dauntless::combat::detail {
 
@@ -45,7 +46,10 @@ inline const SubsystemRow& sub(const Mirror& m, int64_t h) {
     return *r;
 }
 
-// The ObjectClass transform slot (GetWorldLocation / GetWorldRotation).
+// The ObjectClass transform slot (GetWorldLocation / GetWorldRotation):
+// inside the published-pose read window, the pose the tick's motion stage
+// published for the slot; else (window closed, or the slot not published)
+// the live store slot (published_poses.h, THE READ WINDOW).
 inline const TransformStore::Transform& xform(const Mirror& m,
                                               const ObjectRow& o) {
     if (o.xform_index < 0 || o.xform_gen < 0 ||
@@ -55,6 +59,7 @@ inline const TransformStore::Transform& xform(const Mirror& m,
     const auto xi = static_cast<uint32_t>(o.xform_index);
     const auto xg = static_cast<uint32_t>(o.xform_gen);
     if (!m.store().valid(xi, xg)) fall_back("object transform is invalid");
+    if (const auto* p = published_poses().pose_for(xi, xg)) return *p;
     return m.store().at(xi);
 }
 

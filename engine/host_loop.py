@@ -97,6 +97,7 @@ from engine.appc import (
 from engine.appc import effect_queue as _effect_queue
 from engine.appc import explosion_lights as _explosion_lights
 from engine.appc import native_combat as _native_combat
+from engine.appc import native_motion as _native_motion
 from engine.appc import target_menu as _target_menu_mod
 from engine.appc import viewscreen_static as _vss
 from engine.appc import bridge_set as _bridge_set
@@ -1283,9 +1284,17 @@ def _advance_combat(*args, **kwargs) -> None:
     The tractor force is not here: it runs in the motion stage
     (ship_motion.tick_tractors, Mark 2026-11-04), so the beam the held-weapon
     pump grips here first pulls in the next tick's motion stage.
+
+    The kernels read the poses the tick's motion stage published (the READ
+    WINDOW, opened by native_motion.publish); it closes when this returns,
+    so the effect delivery at the scope's exit, the boundary and everything
+    until the next publish read the live store.
     """
-    with step_memo.combat_step():
-        _advance_combat_step(*args, **kwargs)
+    try:
+        with step_memo.combat_step():
+            _advance_combat_step(*args, **kwargs)
+    finally:
+        _native_motion.close_published()
 
 
 def _advance_combat_step(ships, dt: float, ship_instances=None,

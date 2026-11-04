@@ -690,8 +690,9 @@ const assets::Model* resolve_model(scenegraph::ModelHandle h) {
 // sim source plus its per-set VIEW offset -- never the drawn (possibly
 // interpolated) world_linear/world_translation_d. drawn=true, no source, or
 // a stale source (the object was collected; a recycled slot is never read)
-// gives the drawn pose. Phase 4 switches the store read here to the
-// motion-end published buffer; this is the one place that changes.
+// gives the drawn pose. Inside the published-pose read window (phase 4,
+// published_poses.h) the slot's published pose stands in for the store
+// read, the rule detail::xform follows; a slot not published reads live.
 struct HitPose {
     glm::mat3 linear;
     glm::dvec3 translation;
@@ -701,9 +702,13 @@ HitPose hit_pose_of(const scenegraph::Instance& inst, bool drawn) {
         const auto& store = dauntless::transform_store();
         const auto i = static_cast<std::uint32_t>(inst.sim_xform_index);
         if (store.valid(i, inst.sim_xform_generation)) {
+            const auto* published =
+                dauntless::combat::published_poses().pose_for(
+                    i, inst.sim_xform_generation);
             HitPose p;
             dauntless::compose_world_linear_translation(
-                store.at(i), inst.sim_scale, p.linear, p.translation);
+                published ? *published : store.at(i), inst.sim_scale,
+                p.linear, p.translation);
             p.translation += inst.sim_view_offset;
             return p;
         }
@@ -12920,6 +12925,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "buffer (tests).");
         m.def("combat_motion_published_clear",
               [] { cb::published_poses().clear(); });
+        // The read window (published_poses.h): publish opens it, this
+        // closes it (native_motion.close_published).
+        m.def("combat_motion_published_close",
+              [] { cb::published_poses().close(); });
+        m.def("combat_motion_published_open",
+              [] { return cb::published_poses().is_open(); });
+        m.def("combat_pose_read",
+              [](std::int64_t h) {
+                  const auto& t = cb::combat_pose(cb::mirror(), h);
+                  return py::make_tuple(
+                      py::make_tuple(t.pos[0], t.pos[1], t.pos[2]),
+                      py::make_tuple(t.rot[0], t.rot[1], t.rot[2], t.rot[3],
+                                     t.rot[4], t.rot[5], t.rot[6], t.rot[7],
+                                     t.rot[8]));
+              },
+              py::arg("h"),
+              "(pos3, rot9): the pose the combat kernels read for Object "
+              "handle h right now -- published inside the read window, "
+              "else live (tests).");
         // Test only: the C applier alone on a Python-encoded log
         // (combat_motion_compute's: [(row, what, speed, cav3, vel3,
         // drift3), ...]), for tests/unit/test_native_motion_apply.py.

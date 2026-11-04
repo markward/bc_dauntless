@@ -133,7 +133,11 @@ class GameLoop:
         # effects are delivered, the death check among them (native damage
         # M2, M5; engine/appc/effect_queue.py).
         if self.owns_boundary:
-            from engine.appc import effect_queue
+            # The published-pose read window closes first: a combat step a
+            # boundary-owning driver runs after this tick reads live
+            # (native_motion.close_published).
+            from engine.appc import effect_queue, native_motion
+            native_motion.close_published()
             effect_queue.boundary()
             # The mirror's pending frees and off-main pushes (spec
             # 2026-11-03 ruling R2): host_loop's tick boundary otherwise.
