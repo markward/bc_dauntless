@@ -356,6 +356,36 @@ def test_view_shift_of_a_real_sibling_region(scene):
         App.g_kSetManager.DeleteSet("Ona2")
 
 
+def test_trace_uses_the_sim_pose_when_a_source_is_set(scene):
+    """Phase 3a: with the ship's sim source set the way production sets it
+    (host_loop._mark_sim_source), the instance DRAWN 2000 GU off its store
+    pose, Python and the K2/K3 hooks both trace the SIM hull, and agree."""
+    _need_native()
+    from engine import host_loop
+    s, rng = scene, random.Random(SEED + 5)
+    _c, half = _h.model_aabb(s.model)
+    reach = math.sqrt(sum(h * h for h in half)) + math.sqrt(
+        sum(c * c for c in _c))
+    meshes = 0
+    try:
+        for i in range(500):
+            centre = _pose(rng, s, view_shift=(2000.0, 0.0, 0.0))
+            host_loop._mark_sim_source(host_loop.MissionSession("t"), s.ship,
+                                       s.iid, MODEL_SCALE)
+            origin, d, max_dist, aim = _ray(rng, centre)
+            want = _python({s.ship: s.iid}, s.ship, origin, d, max_dist, aim)
+            got = _native(s.ship, s.iid, origin, d, max_dist, aim, None)
+            assert got == want, (i, want, got)
+            if want[2] == "mesh":
+                meshes += 1
+                p = [float.fromhex(c) for c in want[0]]
+                hull = reach * MODEL_SCALE * s.ship.GetScale()
+                assert math.dist(p, centre) <= hull + 1e-6, (i, p, centre)
+        assert meshes >= 50
+    finally:
+        _h.set_instance_sim_source(s.iid, -1, 0, 1.0, (0.0, 0.0, 0.0))
+
+
 # ── pybind's narrowing, reproduced ───────────────────────────────────────────
 
 def _bits(x):

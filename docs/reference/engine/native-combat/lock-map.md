@@ -115,7 +115,7 @@ The "compute" below is the one C++ call a release would bracket. Everything else
 - `can_detect` (`k2_beams.cc:814`), which reaches `SensorState`;
 - the mount memo;
 - the context's `iids` table and `python_ships`;
-- the **TraceHooks** (`beam_trace.h:54-62`, used via `resolve_hit_point`): `hooks.translation` and `hooks.trace`. These are HB's `combat_trace_hooks()` (HB:752-772) → `instance_translation_for_python` and `trace_instance_for_python` (HB:715-750). They read `g_world.get(id)` (HB:260), `inst->world_linear`, `inst->node_overrides` and `g_loaded_models[h-1]` (HB:661). That is **renderer state, no Python**;
+- the **TraceHooks** (`beam_trace.h:54-62`, used via `resolve_hit_point`): `hooks.translation` and `hooks.trace`. These are HB's `combat_trace_hooks()` (HB:752-772) → `instance_translation_for_python` and `trace_instance_for_python` (HB:715-750). They read `g_world.get(id)` (HB:260), `inst->node_overrides` and `g_loaded_models[h-1]` (HB:661), and the pose through `hit_pose_of` (HB, beside `instance_translation_for_python`). **Since native motion phase 3a** that pose is the **TransformStore** slot named by the instance's sim source (`set_instance_sim_source`, pushed by `host_loop._push_sim_source`), composed with its scale and view offset, not the drawn `inst->world_linear` (read only for an instance with no source or a stale one). So the hooks, which run with the **GIL released** inside K2/K3 compute, now read the store as well as `g_world`. That is **native state, no Python**;
 - the kernel's rest queue (`take_rests`);
 - counts.
 
@@ -276,7 +276,7 @@ Every main-thread writer races.
 - `step_scan()` rebuilds;
 - **TransformStore** writes from motion (`objects.py:335-428`, `gl.motion`) and alloc growth;
 - **`g_world` / `g_loaded_models`**, which the trace hooks read:
-  - render transform sync (`sim.render_xforms`);
+  - render transform sync (`sim.render_xforms`): since phase 3a it no longer feeds the hooks' pose (that comes from the store through `hit_pose_of`), only each instance's sim source (on change) and its `node_overrides` (`_sync_ship_articulation`, per frame until phase 3 Task 4 pushes them on change);
   - `frame()`'s `propagate` / `update_animations` / `resolve_render_space` (HB:1613-1662);
   - world resets (HB:1255-1258, 1351-1358);
   - model loads (`push_back`, HB:1056);
@@ -326,7 +326,7 @@ This is J's snapshot and outbox problem (RM decision 4). It is listed here, not 
 | K0/K1/K2/K3 kernel singletons (sessions, counts, K2's persistent `iids` table) | `k0_charging.cc:841`, `k1_fire_control.cc:1839`, `k2_beams.cc:1164`, `k3_projectiles.cc:949` | their own `begin`/`next`/`set_ctx` | their own | C: counts, and a session per thread would be needed (**inferred**). K1 sessions **nest** (KW §4.1 point 2) |
 | `k4_counts()` | `k4_eligibility.cc:59` | the binding | n/a | trivial |
 | TraceHooks slot | `beam_trace.cc:27-30` (static), installed at module load | `install_trace_hooks` | copied into each K2/K3 context (HB:12688, 13266) | none after install |
-| `g_world`, `g_loaded_models` | HB:260, 661 | render sync, `frame()`, resets, loads: all Python-driven, main thread | trace hooks (K2, K3) | A: none (**inferred**: no native worker writes them). B and K: all |
+| `g_world`, `g_loaded_models` | HB:260, 661 | render sync (sim source on change, node overrides), `frame()`, resets, loads: all Python-driven, main thread | trace hooks (K2, K3), GIL released; their pose is read from the TransformStore via `hit_pose_of` (phase 3a) | A: none (**inferred**: no native worker writes them). B and K: all |
 | Effect queue | `effect_queue()` | bindings after compute; Python | Python at the boundary | B. C if workers append directly |
 | `WriteApplier` context, K0/K1 object, type and registry caches (PyObject*), `k1_launch_modules`, `K1WalkCheckRefs`, `k2_present()` | HB statics | the binding | the binding | binding-only; never in compute |
 | K0 static reason strings | HB:12537-12545 | once | the binding | none |
@@ -379,7 +379,7 @@ Everything before and after stays under the GIL, because it is CPython: the scan
 |---|---|---|
 | K0 | mirror rows (own weapons) | No `can_detect`, no hooks. After the common change it is the least exposed (**inferred**). |
 | K1 | rows, `SensorState`, mount memo | `k1_launch_recheck` writes globals **before** compute: it stays outside the window. |
-| K2 | rows, `SensorState`, mount memo; reads `g_world`/`g_loaded_models` | Hooks are safe in A (render is on the main thread). After D, it writes target rows and (§1.7) must clear the memo at every hit. |
+| K2 | rows, `SensorState`, mount memo; reads `g_world`/`g_loaded_models` and, through `hit_pose_of`, TransformStore poses | Hooks are safe in A (render is on the main thread). After D, it writes target rows and (§1.7) must clear the memo at every hit. |
 | K3 | torpedo table, **TransformStore** `set_position`, `SensorState` | `step_scan` is read-only in compute. |
 | K4 | none | Read-only; a single, short call. |
 | `can_detect` | `SensorState` | One call per query, microseconds. A release would cost about what it saves (**inferred**). |

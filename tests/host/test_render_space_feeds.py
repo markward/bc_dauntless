@@ -376,6 +376,7 @@ def test_pushed_ship_matrices_are_view_space(far_scene, monkeypatch):
         ship_glow_controllers = {}
         slot_bindings = {}
         emissive_scales = {}
+        sim_sources = {}
         scope_hidden = set()
         planet_instances = {}
         celestial_instances = {}

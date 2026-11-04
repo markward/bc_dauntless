@@ -6703,6 +6703,9 @@ class MissionSession:
     # Last self-illumination scale sent per ship instance id -- a re-push
     # guard like slot_bindings, so a steady hull costs no boundary crossing.
     emissive_scales: dict[Any, float] = field(default_factory=dict)
+    # Last SIM source sent per ship instance id -- (index, generation, scale,
+    # view_offset) -- a re-push guard like slot_bindings (_push_sim_source).
+    sim_sources: dict[Any, tuple] = field(default_factory=dict)
     # Last articulation pose PUSHED per render instance id -- a tuple of
     # per-part pose 6-tuples, one per rigged part -- a re-push guard only,
     # exactly like slot_bindings. The authoritative pose lives on the ship
@@ -6760,6 +6763,7 @@ class MissionSession:
         # re-bind guard so a recycled object cannot look already-bound.
         self.slot_bindings.clear()
         self.emissive_scales.clear()
+        self.sim_sources.clear()
         self.player = None
 
 
@@ -6856,6 +6860,36 @@ def _mark_rigged(r_, iid, ship) -> None:
             r_.set_instance_rigged(iid, True)
     except Exception as _e:
         dev_mode.log_swallowed("flag rigged instance", _e)
+
+
+def _push_sim_source(session, ship, iid, scale: float, view_offset) -> None:
+    """Give `iid` its SIM source (phase 3a): `ship`'s transform-store slot,
+    uniform `scale` (model scale x GetScale()) and VIEW offset (None = the
+    viewed set). Gameplay point queries then read the simulation pose, not
+    the drawn one. Sent only when the value changes; a ship with no store
+    slot, or no native instance (headless, a plain-int iid), sends nothing."""
+    handle = getattr(ship, "_xform", None)
+    if handle is None:
+        return
+    off = (0.0, 0.0, 0.0) if view_offset is None else tuple(view_offset)
+    want = (handle[0], handle[1], scale, off)
+    if session.sim_sources.get(iid) == want:
+        return
+    if host_io.set_instance_sim_source(iid, handle[0], handle[1], scale, off):
+        session.sim_sources[iid] = want
+
+
+def _mark_sim_source(session, ship, iid, model_scale: float) -> None:
+    """Realize-time sim source for a new ship instance, so its first hit test
+    already reads the sim pose. ONE helper for BOTH realize sites, right
+    after _mark_rigged. Always pushes: a recycled iid must not look sourced."""
+    session.sim_sources.pop(iid, None)
+    try:
+        _ps = float(ship.GetScale())
+    except Exception:
+        _ps = 1.0
+    _push_sim_source(session, ship, iid, model_scale * _ps,
+                     _frames.view_offset(_frames.containing_set(ship)))
 
 
 def _runtime_ship_model_source(ship, *, verbose: bool = False):
@@ -7060,6 +7094,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         _prefetch_hull_damage_state(r_, handle)
         _prewarm_trace_accel(r_, handle)
         _mark_rigged(r_, iid, ship)
+        _mark_sim_source(session, ship, iid, BC_MODEL_SCALE)
         render_instances.register(ship, iid)
         # Fresnel rim applies to ship hulls only — planets share the opaque
         # shader and must stay rim-free (default ineligible).
@@ -8365,6 +8400,7 @@ class _MissionLoader:
             _prefetch_hull_damage_state(r_, handle)
             _prewarm_trace_accel(r_, handle)
             _mark_rigged(r_, iid, ship)
+            _mark_sim_source(sess, ship, iid, BC_MODEL_SCALE)
             render_instances.register(ship, iid)
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).
@@ -10160,6 +10196,17 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
             r.set_emissive_scale(iid, _es)
             session.emissive_scales[iid] = _es
         _off = _view_offset(ship)
+        # NOTE: scale is read live, not interpolated — the buffer only
+        # stores loc+rot. Fine for steady scale; a mid-animation GetScale()
+        # change applies the current scale to the blended pose
+        # (imperceptible).
+        try:
+            _ps = float(ship.GetScale())
+        except Exception:
+            _ps = 1.0
+        # Every ship, the player included: gameplay point queries read this
+        # sim pose whatever is drawn (phase 3a).
+        _push_sim_source(session, ship, iid, model_scale * _ps, _off)
         if iid == _player_iid and _off is None:
             if player_interp_pose is not None:
                 # The player is ALWAYS drawn from the pose the camera resolved
@@ -10167,10 +10214,6 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                 # what carries the handover easing. It may be the live pose,
                 # the 60 Hz interpolation, or a blend of the two mid-handover.
                 _iloc, _irot = player_interp_pose
-                try:
-                    _ps = float(ship.GetScale())
-                except Exception:
-                    _ps = 1.0
                 # A pushed matrix, not the live store pose, so this instance
                 # must be unbound — otherwise frame()'s store sweep overwrites
                 # what is pushed here and the smoothing is lost. (set_world_
@@ -10205,14 +10248,6 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                           and iid not in session.scope_hidden)
             if _warp_hide:
                 _warp_hid_iids.add(iid)
-        # NOTE: scale is read live, not interpolated — the
-        # buffer only stores loc+rot. Fine for steady scale;
-        # a mid-animation GetScale() change applies the
-        # current scale to the blended pose (imperceptible).
-        try:
-            _ps = float(ship.GetScale())
-        except Exception:
-            _ps = 1.0
         xform_buf.set_current(
             iid, ship.GetWorldLocation(), ship.GetWorldRotation())
         _sampled = xform_buf.sample(iid, interp_alpha)
@@ -10234,6 +10269,9 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     for _dead in list(session.emissive_scales.keys()):
         if _dead not in _wg_live_iids:
             del session.emissive_scales[_dead]
+    for _dead in list(session.sim_sources.keys()):
+        if _dead not in _wg_live_iids:
+            del session.sim_sources[_dead]
     for planet, iid in session.planet_instances.items():
         ns = session.planet_natural_scale.get(planet, 1.0)
         # Planets render at their live pose (no interpolation), so the store
@@ -12797,7 +12835,10 @@ def run(mission_name: Optional[str] = None,
                             # VIEW coordinates, both sources: the discharge
                             # feed is pushed through frames.view_to_render.
                             if _piid is not None:
-                                hull_pts = r.instance_surface_points(_piid)
+                                # Drawn pose: sparks are VFX on the hull
+                                # the player sees.
+                                hull_pts = r.instance_surface_points(
+                                    _piid, drawn=True)
                             if not hull_pts:
                                 # Fallback: subsystem mounts (central, but better
                                 # than nothing) when no surface sample is available.
