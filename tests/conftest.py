@@ -1081,6 +1081,13 @@ def _reset_leakable_engine_globals():
         _articulation.reset()
     except Exception:
         pass
+    # The articulation pose sink: a test that installs one must not leave it
+    # pushing (through a fake session) for every later test's ticks.
+    try:
+        from engine.appc import pose_sink as _pose_sink
+        _pose_sink.reset()
+    except Exception:
+        pass
     # Physical-parent preview overlay + one-time missing-part warnings.
     try:
         from engine.appc import physical_parents as _physical_parents

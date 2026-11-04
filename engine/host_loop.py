@@ -1866,7 +1866,7 @@ def _part_pose_at(ship, iid, position, prop=None, severed_mask=None):
     at its identity pose), or `_PART_SEVERED` when its part has been shot
     off. Shared by every per-frame attached effect -- the subsystem emitter
     lights and the running lights -- so they follow exactly the pose
-    `_sync_ship_articulation` pushes to the renderer this frame.
+    `_sync_ship_articulation` has pushed to the renderer.
 
     A STRUCTURE part (unrigged hulls, `hull_breakup`) that has broken off
     also answers `_PART_SEVERED`: the point's `structure_part_at` label has
@@ -1912,7 +1912,7 @@ def _articulate_emitter_light(ship, iid, spec, d, severed_mask=None):
 
     Still body frame out: the renderer places it through the hull's matrix
     as before. The pose is the same `_articulation_poses` value
-    `_sync_ship_articulation` pushes to the renderer this frame, so the light
+    `_sync_ship_articulation` has pushed to the renderer, so the light
     and the drawn part cannot disagree. Decided per frame rather than cached
     at spawn: the boxes derive from `model_nodes(iid)`, which a spawn-time
     tag could run before, silently tagging every light None forever.
@@ -7095,6 +7095,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         _prewarm_trace_accel(r_, handle)
         _mark_rigged(r_, iid, ship)
         _mark_sim_source(session, ship, iid, BC_MODEL_SCALE)
+        _sync_ship_articulation(session, ship, iid)
         render_instances.register(ship, iid)
         # Fresnel rim applies to ship hulls only — planets share the opaque
         # shader and must stay rim-free (default ineligible).
@@ -8401,6 +8402,7 @@ class _MissionLoader:
             _prewarm_trace_accel(r_, handle)
             _mark_rigged(r_, iid, ship)
             _mark_sim_source(sess, ship, iid, BC_MODEL_SCALE)
+            _sync_ship_articulation(sess, ship, iid)
             render_instances.register(ship, iid)
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).
@@ -9972,14 +9974,19 @@ def _sync_ship_articulation(session, ship, iid) -> None:
 
     READ-ONLY on game state: each part's pose is advanced on the sim tick by
     engine.appc.articulation.tick_ship and read back here via
-    `articulation.pose_for_part`. Nothing here mutates the ship — a
-    game-state mutation in the render path is exactly the class of bug that
-    gave the player's phasers a half-second of aiming at a destroyed subsystem.
+    `articulation.pose_for_part`. Called when the pose CHANGES (phase 3a):
+    articulation notifies `pose_sink`, whose live sink is
+    `_push_articulation`, plus once at realize and by the SPV sweep -- never
+    per frame from `_sync_instance_transforms`, so the node overrides the
+    mesh trace reads are the sim pose, not a frame behind it. Nothing here
+    mutates the ship — a game-state mutation in the render path is exactly
+    the class of bug that gave the player's phasers a half-second of aiming
+    at a destroyed subsystem.
 
     Guarded on CHANGE: the pose (a TUPLE of (name, 6-tuple), one per posable
     part) is re-pushed only when it actually moved, so a settled ship (which
     is nearly all of them, nearly always) costs one dict lookup and a tuple
-    compare rather than a boundary crossing per node per frame.
+    compare rather than a boundary crossing per node.
 
     Posable = the rig's parts plus any part the Ship Property Viewer has
     posed by NAME (`articulation.posed_part_names`) -- a part authored fresh
@@ -10034,13 +10041,22 @@ def _sync_ship_articulation(session, ship, iid) -> None:
     session.ship_articulation[iid] = pose
 
 
+def _push_articulation(session, ship) -> None:
+    """The live `pose_sink`: push `ship`'s part poses to its render instance
+    when articulation reports a change. A ship with no session or no
+    instance (not realized yet) is skipped; realize pushes its pose then."""
+    iid = session.ship_instances.get(ship) if session is not None else None
+    if iid is not None:
+        _sync_ship_articulation(session, ship, iid)
+
+
 def _sync_spv_articulation(session, spv_panel) -> None:
     """Push the Ship Property Viewer's FORCED articulation pose, every frame
     the viewer is open -- INCLUDING the frozen ones, which is all of them.
 
     This exists as its own sweep, called from `run()` OUTSIDE
-    `if not pause.sim_frozen:`, because the ordinary articulation push rides
-    inside `_sync_instance_transforms`, which that guard skips. Opening the
+    `if not pause.sim_frozen:`. The ordinary articulation push follows the
+    sim tick (`pose_sink`), which a frozen sim never runs. Opening the
     SPV opens the pause menu, which sets `sim_frozen` -- so the one state in
     which the forced pose matters was exactly the state in which it never
     ran. The hologram kept drawing whatever pose was last pushed before the
@@ -10128,11 +10144,9 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     object with no offset (no view, no set, another frame) is drawn exactly
     as before.
 
-    Articulation is pushed here at the ship's LIVE pose only. The Ship
-    Property Viewer's FORCED pose is NOT applied from here: this whole
-    function sits under `run()`'s `if not pause.sim_frozen:`, and the SPV
-    freezes the sim, so it would never run on a frame the SPV cares about.
-    `_sync_spv_articulation` is the sweep for that, called unguarded.
+    Articulation is NOT pushed here (phase 3a): the node overrides follow
+    the sim pose per change, through `pose_sink` -> `_push_articulation`.
+    `_sync_spv_articulation` is the SPV's unguarded per-frame sweep.
     """
     # player is always set when a session exists, so _player_iid is a
     # real iid (never None) at runtime.
@@ -10183,7 +10197,6 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # volumes and cast light spool up and burst together.
     _player_warp_glow = _warp_glow_envelope(player)
     for ship, iid in session.ship_instances.items():
-        _sync_ship_articulation(session, ship, iid)
         _wg = session.ship_glow_controllers.get(iid)
         if _wg is not None:
             _wg.update(game_time,
@@ -10976,6 +10989,11 @@ def run(mission_name: Optional[str] = None,
         # teardown beside spawn.set_radius_fn(None).
         from engine.appc import warp_state as _warp_state
         _warp_state.set_radius_seeder(controller.loader._seed_quickbattle_ship_radius)
+        # Articulated part poses reach the render instance (and the mesh
+        # trace) when they change on the sim side, not per frame (phase 3a).
+        # Reads the session at call time, so a mission swap needs no reset.
+        from engine.appc import pose_sink as _pose_sink
+        _pose_sink.set(lambda ship: _push_articulation(controller.session, ship))
 
         # Warp spine render hooks (Stage 1 hard cut): the warp sequence loads
         # the destination set then calls realize; on arrival it tears down the
@@ -13912,6 +13930,8 @@ def run(mission_name: Optional[str] = None,
         _target_markers.clear()
         from engine.appc import warp_state as _warp_state
         _warp_state.set_radius_seeder(None)
+        from engine.appc import pose_sink as _pose_sink
+        _pose_sink.reset()
         from engine import bridge_selection as _bs
         _bs.set_player_type_resolver(None)
         shutdown_audio()

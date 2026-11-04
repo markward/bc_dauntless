@@ -276,7 +276,8 @@ Every main-thread writer races.
 - `step_scan()` rebuilds;
 - **TransformStore** writes from motion (`objects.py:335-428`, `gl.motion`) and alloc growth;
 - **`g_world` / `g_loaded_models`**, which the trace hooks read:
-  - render transform sync (`sim.render_xforms`): since phase 3a it no longer feeds the hooks' pose (that comes from the store through `hit_pose_of`), only each instance's sim source (on change) and its `node_overrides` (`_sync_ship_articulation`, per frame until phase 3 Task 4 pushes them on change);
+  - render transform sync (`sim.render_xforms`): since phase 3a it no longer feeds the hooks' pose (that comes from the store through `hit_pose_of`), only each instance's sim source (on change);
+  - articulated part `node_overrides` (`_sync_ship_articulation`): since phase 3a pushed when the pose CHANGES, from inside the sim tick (`articulation.tick_ship` and the SPV's `_store_forced` edges → `pose_sink.notify` → `host_loop._push_articulation`), once at realize, and every frame by the dev-only SPV sweep while the viewer is open; no longer from the render transform sync;
   - `frame()`'s `propagate` / `update_animations` / `resolve_render_space` (HB:1613-1662);
   - world resets (HB:1255-1258, 1351-1358);
   - model loads (`push_back`, HB:1056);
