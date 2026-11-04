@@ -190,7 +190,7 @@ Legend for the "Changes" column: **T** = per tick (or per frame), **R** = rarely
 | 37 | profile | `pSet.GetName()` → `resolve.anchor_of(name)`, `resolve.system_of(name)` | str → tuple / str | `_index()` is an `functools.lru_cache`; `reset_cache` is tests-only. ⚠️ QuickBattle renames sets in place ("…Dupe"), which makes the name lookup miss, so the set reads as unmapped. | – | C per process |
 | 38 | profile | `resolve.map_of(system)` → `SystemMap.profile` (`Profile(rows, color, full_concealment)`), `SystemMap.bodies[*].orbits`, `.position_gu` | dataclasses from JSON `engine/systems/maps/*.json` (33 maps) | `map._profile_from_json` map.py:143 (no float coercion on `ProfileRow(**row)`: JSON ints stay ints); loaded once per process | **mutating is forbidden by contract** (map_of docstring) | C |
 | 39 | profile | `Profile.full_concealment` | float: 0.392642591908 in all 33 maps | – | – | C |
-| 40 | rocks (occ) | `isinstance(s, RockClass)` (engine/rocks/rock.py:15); `effective_radius(s)` = `float(GetRadius())`, or if ≤ 0 `float(GetHull().GetRadius())` (or 0.0), times `float(GetScale())` (objects.py:203 `_radius`, :209 `_scale`) | float | SetRadius / SetScale (missions, e.g. E1M2 `SetScale(3..8.5)`), `maybe_become_rock` (class swap) | – | R |
+| 40 | rocks (occ) | `isinstance(s, RockClass)` (engine/rocks/rock.py:15); `effective_radius(s)` = `float(GetBaseRadius())`, or if ≤ 0 `float(GetHull().GetRadius())` (or 0.0), times `float(GetScale())` (objects.py:203 `_radius`, :209 `_scale`) | float | SetRadius / SetScale (missions, e.g. E1M2 `SetScale(3..8.5)`), `maybe_become_rock` (class swap) | – | R |
 | 41 | `step_memo` | `active()` → `_depth > 0` | int | `combat_step()` engine/core/step_memo.py:40 | – | T |
 
 ### Positions used, by step

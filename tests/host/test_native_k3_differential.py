@@ -193,7 +193,7 @@ class _Scene:
             return
         here = xyz(src.GetWorldLocation())
         there = xyz(target.GetWorldLocation())
-        r = target.GetRadius() * target.GetScale()
+        r = target.GetRadius()
         point = tuple(c + rng.uniform(-0.9, 0.9) * r for c in there)
         start = [here[i] + c for i, c in enumerate(
             aim_velocity(here, there, src.GetRadius() + 1.0))]
@@ -218,7 +218,7 @@ class _Scene:
         if t == NEB_FROM:
             target = self.by_name[NEB_SHIP]
             nebula_around(target, NEB_NAME,
-                          2.0 * target.GetRadius() * target.GetScale())
+                          2.0 * target.GetRadius())
         elif NEB_FROM < t < NEB_TO and t % 20 == 0:
             target = self.by_name[NEB_SHIP]
             for src in self.foes(target)[:2]:

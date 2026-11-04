@@ -347,11 +347,12 @@
 //       CloakingSubsystem: IsCloaking, IsDecloaking;
 //       ShipSubsystem: the subsystem names;
 //       ShipClass: IsDead, GetWorldLocation, GetWorldRotation,
-//         GetContainingSet, GetScale, GetRadius, GetShields,
-//         GetPhaserSystem, GetTargetSubsystem, is_using_target_offset,
+//         GetContainingSet, GetScale, GetRadius, GetBaseRadius,
+//         GetShields, GetPhaserSystem, GetTargetSubsystem, is_using_target_offset,
 //         GetTargetOffsetTG, GetCloakingSubsystem;
 //       ObjectClass: IsDead, GetWorldLocation, GetWorldRotation,
-//         GetContainingSet, GetScale, GetRadius, GetShields;
+//         GetContainingSet, GetScale, GetRadius, GetBaseRadius,
+//         GetShields;
 //   - any class with a row resolves a name of its role to a method defined
 //     outside the engine package (a mod's subclass, a test's patch) or to
 //     anything other than what it resolved to when the driver first saw it

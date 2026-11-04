@@ -680,7 +680,7 @@ def test_scaled_obstacle_is_avoided_at_its_drawn_size():
     """A rock-sized obstacle with GetRadius() 1.0 and SetScale(8.0), placed so
     that a 1 GU sphere would be missed but an 8 GU sphere is on the ship's
     path. Pins avoidance reading world_radius (the DRAWN size) rather than
-    the unscaled GetRadius()."""
+    the unscaled GetBaseRadius()."""
     from engine.appc import collision_avoidance
 
     collision_avoidance.reset_avoidance_state()

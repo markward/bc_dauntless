@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 
+#include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/py_math.h"
 
 namespace dauntless::combat {
@@ -77,16 +78,21 @@ K4Result k4_eligible(const Mirror& m, const StepScan& s, int64_t player,
         pset = p->_containing_set;
     }
 
-    // E1: max((_radius(s) for s in ships), default=0.0) or 1.0 -- builtin
-    // max keeps the first maximum (py_max folded left from the first item).
+    // E1: max((world_radius(s) for s in ships), default=0.0) or 1.0.
+    // world_radius is GetRadius(), base x guarded scale (the C++ twin reads
+    // the mirror rows). The builtin max keeps the first maximum (py_max
+    // folded left from the first item).
     std::vector<const ObjectRow*> rows(n);
+    std::vector<double> radii(n);
     double max_r = 0.0;
     for (size_t i = 0; i < n; ++i) {
         const ObjectRow* r = m.object(s.ships[i]);
         if (r == nullptr) return fail(K4Why::scan);
-        if (!std::isfinite(r->_radius)) return fail(K4Why::nonfinite);
+        const double wr = world_radius(m, s.ships[i]);
+        if (!std::isfinite(wr)) return fail(K4Why::nonfinite);
         rows[i] = r;
-        max_r = (i == 0) ? r->_radius : py_max(max_r, r->_radius);
+        radii[i] = wr;
+        max_r = (i == 0) ? wr : py_max(max_r, wr);
     }
     if (max_r == 0.0) max_r = 1.0;  // `or 1.0`: 0.0 and -0.0 are falsy
 
@@ -101,7 +107,7 @@ K4Result k4_eligible(const Mirror& m, const StepScan& s, int64_t player,
         // id(player)]: one row per object, so the handle is the identity.
         if (has_player && s.ships[i] == player) continue;
         // E2 (damage_eligibility.py score()).
-        const double size = r._radius / max_r;
+        const double size = radii[i] / max_r;
         double score;
         if (!has_player) {
             score = size_w * size;

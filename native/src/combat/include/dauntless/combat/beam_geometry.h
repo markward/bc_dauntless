@@ -73,7 +73,8 @@ SphereEntry ray_sphere_entry(const Vec3& origin, const Vec3& dir,
                              double max_dist, const Vec3& center,
                              double radius);
 
-// collisions.world_radius for an Object row: GetRadius() x GetScale().
+// collisions.world_radius for an Object row: GetRadius(), i.e. the base radius
+// x the guarded scale (non-positive or non-finite scale counts as 1).
 double world_radius(const Mirror& m, int64_t object);
 
 // combat.shields_block (map 1.5). `npc_shields_off` is the dev cheat

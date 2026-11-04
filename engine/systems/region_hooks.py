@@ -13,7 +13,7 @@ Not at AddObjectToSet: BC's <Region>_S.py adds a body THEN calls
 PlaceObjectByName, which would overwrite a position applied at the add.
 
 Ordering is load-bearing: the map must be applied before anything realizes the
-set, because host_loop's planet_natural_scale caches GetRadius() at realize --
+set, because host_loop's planet_natural_scale caches GetBaseRadius() at realize --
 applied after, a body is DRAWN at BC's radius and TARGETED at the map's.
 check_realized() is the alarm for that: a set whose name resolves to a system
 but which apply_to_set never marked.

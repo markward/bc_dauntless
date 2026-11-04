@@ -70,6 +70,24 @@ TEST(K4, TieBreak) {
     EXPECT_EQ(np.indices, (std::vector<int64_t>{4, 7, 2, 8, 3, 6}));
 }
 
+// The size term reads the SCALED radius (world_radius): a base-1.0 ship at
+// scale 3 outsizes a base-2.0 one; a NaN scale falls back to the base.
+TEST(K4, SizeUsesScaledRadius) {
+    World w;
+    const int64_t s = w.set();
+    const int64_t a = w.ship(s, 1.0, 1.0, 1);
+    const int64_t b = w.ship(s, 1.0, 2.0, 2);
+    ASSERT_EQ(w.scan_ships({a, b}), ScanWhy::ok);
+    w.m.set_f(a, Field::_scale, 3.0);
+    K4Result r = k4_eligible(w.m, w.scan, -1, 1, 0.0, 1.0);
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.indices, (std::vector<int64_t>{0}));
+    w.m.set_f(a, Field::_scale, std::numeric_limits<double>::quiet_NaN());
+    r = k4_eligible(w.m, w.scan, -1, 1, 0.0, 1.0);
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.indices, (std::vector<int64_t>{1}));
+}
+
 // E1: max(radii, default=0.0) or 1.0 -- all-zero radii (either sign) and
 // an empty list divide by 1.0; a negative maximum stays.
 TEST(K4, MaxROrOne) {

@@ -431,7 +431,7 @@ bool same_tick(const SensorState& st, bool tick_set, double tick) {
 
 // rocks.rock.effective_radius (rock.py:59)
 double effective_radius(const Mirror& m, const ObjectRow& rock) {
-    double base = rock._radius;  // float(rock.GetRadius())
+    double base = rock._radius;  // float(rock.GetBaseRadius()); GetRadius() is base x scale
     if (base <= 0.0) {
         const SubsystemRow* hull = sub_ref(m, rock._hull, "_hull");
         base = hull ? hull->_radius : 0.0;

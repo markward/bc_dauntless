@@ -33,7 +33,7 @@ BOP_DIR = "data/Models/Ships/BirdOfPrey"
 BOP_MODEL = f"{BOP_DIR}/BirdOfPrey.nif"
 IID = 7
 SCALE = 2.0               # GetScale(); the instance scale is BC_MODEL_SCALE * this
-RADIUS_GU = 10.0          # GetRadius(): UNSCALED GU => 1000 NIF units
+RADIUS_GU = 10.0          # GetBaseRadius(): UNSCALED GU => 1000 NIF units
 AMB_COMMITTED = (Path(__file__).resolve().parents[2] / "native" / "assets"
                  / "replacements" / AMB_DIR / "Masks" / "decals.json")
 
@@ -67,6 +67,9 @@ class _FakeShip:
         return SCALE
 
     def GetRadius(self):
+        return RADIUS_GU
+
+    def GetBaseRadius(self):
         return RADIUS_GU
 
 
@@ -246,7 +249,7 @@ def test_add_then_a_hull_click_places_a_chirality_ok_decal(env):
     assert decal_editor.chirality_ok(bottom)
     assert _close(decal_editor.centre(bottom), (50.0, -100.0, -20.0), 1e-6)
     assert _close(bottom.normal, (0.0, 0.0, -1.0))
-    # Width is 25% of the NIF-unit radius: GetRadius() is UNSCALED GU, so
+    # Width is 25% of the NIF-unit radius: GetBaseRadius() is UNSCALED GU, so
     # 10 GU / BC_MODEL_SCALE = 1000 units, whatever GetScale() says.
     assert decal_editor.width(bottom) == pytest.approx(250.0)
     # Zhukov/bottom.png is 200x50: height = width / 4.

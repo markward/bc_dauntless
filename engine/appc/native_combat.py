@@ -4641,7 +4641,8 @@ _K2_FUNCTIONS = (
 
 _K2_SUBSYSTEM_NAMES = ("GetWorldLocation", "GetPosition", "_climb_to_ship")
 _K2_OBJECT_NAMES = ("IsDead", "GetWorldLocation", "GetWorldRotation",
-                    "GetContainingSet", "GetScale", "GetRadius", "GetShields")
+                    "GetContainingSet", "GetScale", "GetRadius", "GetBaseRadius",
+                    "GetShields")
 #: role -> (module, stock class name, the names it stands in for), in
 #: isinstance order (a bank is a WeaponSystem, not a PhaserSystem).
 _K2_ROLES = (
@@ -5420,7 +5421,8 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
 #: in for on a ship (spec §7's override list).
 _STEP_SHIP_PATCHES = (
     "GetContainingSet", "GetTranslate", "SetTranslateXYZ", "GetVelocityTG",
-    "IsDead", "GetWorldLocation", "GetRadius", "GetScale")
+    "IsDead", "GetWorldLocation", "GetRadius", "GetBaseRadius",
+    "GetScale")
 
 
 class _StepScan:

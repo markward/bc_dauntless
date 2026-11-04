@@ -53,12 +53,13 @@ ROLES = (
     ("engine.appc.subsystems", "ShipSubsystem", ()),
     ("engine.appc.ships", "ShipClass", (
         "IsDead", "GetWorldLocation", "GetWorldRotation", "GetContainingSet",
-        "GetScale", "GetRadius", "GetShields", "GetPhaserSystem",
+        "GetScale", "GetRadius", "GetBaseRadius", "GetShields",
+        "GetPhaserSystem",
         "GetTargetSubsystem", "is_using_target_offset", "GetTargetOffsetTG",
         "GetCloakingSubsystem")),
     ("engine.appc.objects", "ObjectClass", (
         "IsDead", "GetWorldLocation", "GetWorldRotation", "GetContainingSet",
-        "GetScale", "GetRadius", "GetShields")),
+        "GetScale", "GetRadius", "GetBaseRadius", "GetShields")),
 )
 
 # "<defining module>.<defining class>.<name>" -> why the kernel's stock

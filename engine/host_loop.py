@@ -6492,10 +6492,11 @@ def _model_sphere_radius_from_aabb(center: tuple, half_extents: tuple) -> float:
     radius (and the NIF's authored bound_radius).
 
     This is the correct divisor for planet/moon render scaling: BC computes
-    render_scale = GetRadius() / NIF_bound_radius, so the model draws at
-    exactly GetRadius() game units. `_model_extent_from_aabb` returns the AABB
+    render_scale = base radius / NIF_bound_radius, so the model draws at
+    exactly the base radius in game units (GetBaseRadius(); GetRadius() is
+    that times GetScale(), 1 for a planet). `_model_extent_from_aabb` returns the AABB
     *corner* distance instead (|half| = R·√3 for a sphere), which is ~1.73×
-    too large and shrinks the planet to GetRadius()/√3. See
+    too large and shrinks the planet to its base radius/√3. See
     docs/reference/instrumented_experiments/2026-07-07-planet-render-scale.md.
 
     All stock planet/moon NIFs are origin-centred spheres, so max-half-extent
@@ -6514,9 +6515,10 @@ def _seed_ship_radius(ship, extent: float, sphere_radius: float) -> None:
     gets its bounding-sphere radius (`sphere_radius`, the planets' divisor,
     _model_sphere_radius_from_aabb): its sphere IS its surface, collisions
     apply no shrink to it, and the corner distance is ~1.7x too big for a
-    roughly spherical mesh. Both are unscaled: the collision and hit code
-    multiply by GetScale() (collisions.world_radius)."""
-    if ship.GetRadius() > 0.0:
+    roughly spherical mesh. Both are written as the BASE radius (SetRadius /
+    GetBaseRadius()), at GetScale() == 1; GetRadius() is that times the live
+    scale (collisions.world_radius)."""
+    if ship.GetBaseRadius() > 0.0:
         return
     from engine.rocks.rock import is_rock
     r = sphere_radius if is_rock(ship) else extent
@@ -6575,8 +6577,8 @@ def _ship_world_matrix(ship, natural_scale: float) -> list:
     """Row-major TRS mat4 for a ship.
 
     Two-layer scaling:
-      natural_scale  — load-time GetRadius() / NIF_extent, makes the rendered
-                       outer radius match BC's GetRadius() reading by default.
+      natural_scale  — load-time base radius / NIF_extent, makes the rendered
+                       outer radius match the base radius by default.
       ship.GetScale()— per-frame multiplier applied by SDK scripts
                        (DockWithStarbase, asteroid systems, etc.).
 
@@ -6692,7 +6694,8 @@ class MissionSession:
     ship_running_light_specs: dict[object, tuple] = field(default_factory=dict)
     ship_emitters: dict[object, list] = field(default_factory=dict)  # keyed by the renderer InstanceId (not int): the value is passed straight through as each light's instance_id
     planet_instances: dict[Any, int] = field(default_factory=dict)
-    # Per-planet natural_scale = GetRadius() / NIF_extent, cached at load.
+    # Per-planet natural_scale = base radius (GetBaseRadius()) / NIF_extent,
+    # cached at load.
     # Ships share a single flat NIF→world scale (BC_MODEL_SCALE) so they
     # need no per-object cache; planets vary in size class and still use
     # the GetRadius-derived per-object scale.
@@ -7118,14 +7121,14 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         if loaded is None:
             continue
         handle, extent, sphere_radius = loaded
-        if planet.GetRadius() <= 0.0:
+        if planet.GetBaseRadius() <= 0.0:
             try:
                 planet.SetRadius(extent * BC_MODEL_SCALE)
             except Exception as _e:
                 dev_mode.log_swallowed("realize planet.SetRadius fallback", _e)
-        radius = planet.GetRadius()
+        radius = planet.GetBaseRadius()
         # Divide by the bound-sphere radius (BC's render_scale divisor), not the
-        # AABB corner, so the planet draws at exactly GetRadius() game units.
+        # AABB corner, so the planet draws at exactly its radius in game units.
         natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
         iid = r_.create_instance(handle)
         _apply_planet_atmosphere(r_, iid, pSet.GetName(), planet.GetName(),
@@ -8266,7 +8269,7 @@ class _MissionLoader:
             the next ship of the class.
 
         Rocks take the sphere radius, via _seed_ship_radius's own rule."""
-        if ship is None or ship.GetRadius() > 0.0:
+        if ship is None or ship.GetBaseRadius() > 0.0:
             return
         src = _runtime_ship_model_source(ship, verbose=self._verbose)
         if src is None:
@@ -8434,14 +8437,14 @@ class _MissionLoader:
             if loaded is None:
                 continue
             handle, extent, sphere_radius = loaded
-            if planet.GetRadius() <= 0.0:
+            if planet.GetBaseRadius() <= 0.0:
                 try:
                     planet.SetRadius(extent * BC_MODEL_SCALE)
                 except Exception as _e:
                     dev_mode.log_swallowed("planet.SetRadius fallback", _e)
-            radius = planet.GetRadius()
+            radius = planet.GetBaseRadius()
             # Divide by the bound-sphere radius (BC's render_scale divisor), not
-            # the AABB corner, so the planet draws at exactly GetRadius() GU.
+            # the AABB corner, so the planet draws at exactly its base radius in GU.
             natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
             iid = r_.create_instance(handle)
             _apply_planet_atmosphere(r_, iid, planet.GetContainingSetName(),

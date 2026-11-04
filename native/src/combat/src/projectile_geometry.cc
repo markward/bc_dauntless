@@ -136,8 +136,9 @@ double bubble_bound_radius(const Mirror& m, int64_t ship) {
     // world_radius's DebrisChunk rule and a stub GetScale are not mirrored:
     // only a ShipClass row (what the step scan admits) is answered.
     if (!o.is_ship_class) fall_back("bound of an object that is not a ShipClass");
-    // try: radius = world_radius(ship) -- a row exists only while GetRadius
-    // and GetScale read as numbers, so the `except` (inf) is never taken.
+    // try: radius = world_radius(ship) (= GetRadius(), base x guarded scale)
+    // -- a row exists only while the base radius and scale read as numbers,
+    // so the `except` (inf) is never taken.
     const double radius = world_radius(m, ship);
     const double k = m.globals().SHIELD_ELLIPSOID_AXIS_SCALE;
 

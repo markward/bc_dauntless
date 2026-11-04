@@ -181,9 +181,9 @@ def _arc_fallback_radius(ship) -> float:
     """Envelope radius for Length-0 weapons: a fraction of the ship's
     bounding radius, floored at ARC_FALLBACK_MIN game units."""
     r = 0.0
-    if hasattr(ship, "GetRadius"):
+    if hasattr(ship, "GetBaseRadius"):
         try:
-            r = float(ship.GetRadius() or 0.0)
+            r = float(ship.GetBaseRadius() or 0.0)
         except (TypeError, ValueError):
             r = 0.0
     return max(ARC_FALLBACK_MIN, r * ARC_FALLBACK_FRAC)

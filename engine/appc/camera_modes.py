@@ -268,9 +268,9 @@ CHASE_DEFAULT_DISTANCE = 4.0
 
 def _target_radius(obj, default=1.0):
     """Target's DRAWN radius in game units, or `default` when the object has no
-    real GetRadius. GetRadius() is unscaled SDK surface, but a ship draws at
-    GetRadius() x GetScale() (E1M2 scales its asteroids to 3x and more), so a
-    camera standing off the raw radius sits inside the drawn hull. A rock uses
+    real GetRadius. GetRadius() is base x scale (E1M2 scales its asteroids to
+    3x and more), the radius the ship draws at, so a camera standing off the
+    unscaled base radius would sit inside the drawn hull. A rock uses
     its effective radius (hull-radius fallback). That BC's own camera includes
     the scale is INFERRED, not RE'd (spec 2026-10-20-target-zoom-fit §6).
     Asks the MRO — a TGObject's __getattr__ hands back a truthy recursive

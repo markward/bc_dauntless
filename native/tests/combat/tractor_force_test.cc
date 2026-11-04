@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -346,5 +348,27 @@ TEST(TractorForce, OneBadTargetSkipsOnlyItself) {
                   "{0x1.7b70dc496deb7p+0, -0x1.288837dcfb6fap+1, "
                   "0x1.8409c08bc336dp-1}")
             << stub;
+    }
+}
+
+// The stand-off is the SCALED radii (world_radius): a target of base 2.5 at
+// scale 2.0 tows exactly like one of base 5.0; a NaN scale is the base.
+TEST(TractorForce, StandoffUsesScaledRadius) {
+    for (const TractorMode mode : {TractorMode::Pull, TractorMode::DockStage1}) {
+        auto run = [&](double base, bool set_scale, double scale) {
+            World w;
+            const int64_t s = w.object(kSource, 120.0, 4.0, true, kRot);
+            const int64_t t = w.object({11.5, -2.25, 0.75}, 37.5, base);
+            if (set_scale) w.m.set_f(t, Field::_scale, scale);
+            w.tractor(s, t, mode);
+            tractor_force_step(w.m, w.store, {s, t}, kDt);
+            return std::make_pair(w.at(s), w.at(t));
+        };
+        const auto a = run(2.5, true, 2.0);
+        const auto b = run(5.0, false, 0.0);
+        const auto c = run(2.5, true, std::numeric_limits<double>::quiet_NaN());
+        const auto d = run(2.5, false, 0.0);
+        EXPECT_EQ(a, b);
+        EXPECT_EQ(c, d);
     }
 }

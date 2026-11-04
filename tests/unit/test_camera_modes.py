@@ -1255,7 +1255,7 @@ def test_torp_cam_does_not_probe_stub_surface_on_the_torpedo(
     assert not hits, hits
 
 
-# -- _target_radius: the DRAWN radius (GetRadius x GetScale) -----------------
+# -- _target_radius: the DRAWN radius (GetRadius() = base x GetScale) ------
 
 def _scaled_ship(radius, scale):
     from engine.appc.ships import ShipClass_Create

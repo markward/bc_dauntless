@@ -115,20 +115,25 @@ def _trace_own_hull(ship_instances, body: "_Body", boundary, n_out, reach: float
 
 
 def world_radius(obj) -> float:
-    """An object's bounding radius as DRAWN, in GU: GetRadius() x GetScale().
+    """An object's bounding radius as DRAWN, in GU.
 
-    GetRadius() is SDK surface and stays UNSCALED -- missions read it, and
-    the host sets it from the model at GetScale() == 1 -- but every ship and
-    planet draws at GetRadius() x GetScale() (_ship_world_matrix /
+    For an ObjectClass this IS GetRadius(), which is the base radius times
+    the guarded scale (a non-positive or non-finite scale counts as 1) -- the
+    same quantity every ship and planet draws at (_ship_world_matrix /
     _apply_live_world_transform). E1M2 scales its asteroids 3-8.5x, so a raw
-    GetRadius() collision let the player fly most of the way into a rock.
+    base-radius collision let the player fly most of the way into a rock.
+    An object that overrides GetRadius (a ProximityCheck's trigger radius) is
+    honoured.
 
     A DebrisChunk is the exception: its GetRadius() is already its world size,
     and its GetScale() is the render scale of a SHARED model, not a size
-    factor. The scale is read through the class (TGObject.__getattr__ vends a
-    truthy _Stub for any unknown name) and a non-positive or unreadable scale
-    counts as 1."""
+    factor. Other duck-typed objects get radius x scale, the scale read
+    through the class (TGObject.__getattr__ vends a truthy _Stub for any
+    unknown name), with the same guard."""
     from engine.appc.debris_chunk import DebrisChunk
+    from engine.appc.objects import ObjectClass
+    if isinstance(obj, ObjectClass):
+        return float(obj.GetRadius())
     r = float(obj.GetRadius())
     if isinstance(obj, DebrisChunk):
         return r
@@ -195,7 +200,7 @@ def spheres_clear(a, b, margin: float) -> bool:
 class _Body:
     obj: object
     center: TGPoint3
-    radius: float        # world_radius: GetRadius() x GetScale(). The
+    radius: float        # world_radius: the drawn radius. The
                          # broadphase buckets on this (never smaller than
                          # the contact radius, so it stays conservative).
     inv_mass: float
@@ -366,8 +371,8 @@ def _deepest_piece_overlap(obj_a, obj_b, b_offset=_NO_OFFSET):
     if not has_hull_bounds(obj_a) or not has_hull_bounds(obj_b):
         return None
     # Each side is culled against the other's model-wide bound before anything
-    # is transformed into world space. world_radius (GetRadius x GetScale) is
-    # the scaled AABB corner distance, comfortably larger than any real
+    # is transformed into world space. world_radius (GetRadius(), already
+    # scaled) is the scaled AABB corner distance, comfortably larger than any real
     # reach, so the cull cannot drop a pair the loop below would have found.
     # The pieces themselves are cached at GetScale() == 1 and hull_bounds
     # multiplies centre and radius by the live GetScale(), so they are
@@ -1063,8 +1068,8 @@ def _candidate_pairs(positions, radii, sets):
     pair that can overlap is at most ``ra + rb <= 2 * rmax`` apart (rmax the
     largest radius in the set), so such a pair's cells differ by at most one
     step on each axis and the 3x3x3 neighbourhood always covers it. `radii`
-    here is each body's whole-model bounding radius as drawn (world_radius:
-    GetRadius() x GetScale()), the same quantity _respond_pair's broad phase
+    here is each body's whole-model bounding radius as drawn (world_radius,
+    i.e. GetRadius()), the same quantity _respond_pair's broad phase
     and _deepest_piece_overlap's culls both key off (the per-body boundary
     shrink is <= 1, so it only ever SHRINKS the effective reach from there),
     so bucketing on it stays conservative.

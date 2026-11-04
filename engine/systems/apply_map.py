@@ -12,7 +12,7 @@ Orbit command working with zero changes anywhere else.
 
 MUST run before the set is render-realized. ``_RenderState.
 planet_natural_scale`` (engine/host_loop.py) caches
-``GetRadius() / NIF_extent`` once, at load time -- a radius written after
+``GetBaseRadius() / NIF_extent`` once, at load time -- a radius written after
 that cache is populated leaves the body drawn at its old size while every
 other system (physics, hailing, target list, Orbit) already sees the new
 one. Callers must invoke ``apply_to_set`` as part of creating a set, before
@@ -192,7 +192,7 @@ def _rescale_sun(sun, radius_gu: float) -> None:
     values, they are already correct, and rescaling geometry is no reason to
     restate them -- OmegaDraconis1_S's 360/sec stays 360/sec.
     """
-    old_radius = float(sun.GetRadius())
+    old_radius = float(sun.GetBaseRadius())
     ratio = (float(sun.GetAtmosphereRadius()) / old_radius
              if old_radius > 0.0 else STAR_ATMOSPHERE_RATIO)
     sun.SetRadius(radius_gu)

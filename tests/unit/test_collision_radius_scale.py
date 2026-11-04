@@ -1,11 +1,11 @@
 """Collision and hit radii follow GetScale().
 
-GetRadius() is SDK surface and stays UNSCALED (missions read it; the host
-sets it from the model at GetScale() == 1), but every object DRAWS at
-GetRadius() x GetScale(). E1M2 scales its asteroids 3-8.5x, so a collision
-radius of raw GetRadius() let the player fly most of the way into a rock
+GetBaseRadius() is the UNSCALED radius (SetRadius sets it; the host sets it
+from the model at GetScale() == 1); GetRadius() is base x GetScale(), the
+size every object DRAWS at. E1M2 scales its asteroids 3-8.5x, so a collision
+radius of the raw base let the player fly most of the way into a rock
 before contact (Mark, live). The collision broad phase, projectile sphere
-hits and the death-splash reach now all use GetRadius() x GetScale().
+hits and the death-splash reach all use the scaled GetRadius().
 
 Rocks are also exempt from COLLISION_RADIUS_SCALE (0.8): that shrink
 compensates for a SHIP hull sitting well inside its generous bounding sphere,
@@ -45,15 +45,23 @@ def test_a_scaled_rocks_collision_body_is_scale_times_base():
     assert abs(collisions._resolve_body(rock).radius - 6.0) < 1e-9
 
 
-def test_get_radius_stays_unscaled_and_effective_radius_scales_once():
-    """Guard: if GetRadius() ever starts including the scale, effective_radius
-    (base x GetScale) and the collision body would both double-scale."""
+def test_get_radius_is_scaled_and_effective_radius_scales_once():
+    """Guard: GetRadius() is base x scale, and the helpers read the base, so
+    nothing scales twice."""
     from engine.rocks.rock import effective_radius
     rock = _rock(1.2, 5.0)
-    assert rock.GetRadius() == pytest.approx(1.2)
+    assert rock.GetRadius() == pytest.approx(6.0)
+    assert rock.GetBaseRadius() == pytest.approx(1.2)
     assert effective_radius(rock) == pytest.approx(6.0)
     assert collisions._resolve_body(rock).radius == pytest.approx(
-        effective_radius(rock))
+        rock.GetRadius())
+
+
+def test_world_radius_is_get_radius_for_objects(monkeypatch):
+    from engine.appc.objects import ObjectClass
+    rock = _rock(1.2, 5.0)
+    monkeypatch.setattr(ObjectClass, "GetRadius", lambda self: 42.0)
+    assert collisions.world_radius(rock) == 42.0
 
 
 @pytest.mark.parametrize("gap, collide", [(-1e-3, True), (1e-3, False)])
@@ -179,7 +187,7 @@ def test_hull_chunk_parent_mask_holds_until_clear_of_the_scaled_parent():
     c = dc.spawn(5, parent, 200, (1.0, 0.0, 0.0), 0.5,
                  parent_mass=120.0, parent_occupied_cells=1000)
     p = parent.GetWorldLocation()
-    unscaled = (c.GetRadius() + parent.GetRadius()) * collisions.COLLISION_RADIUS_SCALE
+    unscaled = (c.GetRadius() + parent.GetBaseRadius()) * collisions.COLLISION_RADIUS_SCALE
     c._loc = TGPoint3(p.x + unscaled + 0.01, p.y, p.z)   # clear only of the raw sphere
     dc.tick(0.0, r)
     assert parent.GetObjID() in collisions._collision_disabled_ids(c)
@@ -188,3 +196,21 @@ def test_hull_chunk_parent_mask_holds_until_clear_of_the_scaled_parent():
     c._loc = TGPoint3(p.x + clear + 0.01, p.y, p.z)
     dc.tick(0.0, r)
     assert collisions._collision_disabled_ids(c) == frozenset()
+
+
+def test_radius_helpers_never_read_get_radius(monkeypatch):
+    """effective_radius (radius x scale) reads the BASE, so the GetRadius flip
+    cannot double-scale it. world_radius is NOT pinned here: it is
+    GetRadius() (see test_world_radius_is_get_radius_for_objects)."""
+    from engine.appc.objects import ObjectClass
+    from engine.rocks.rock import effective_radius
+    rock = _rock(1.2, 5.0)
+    bare = _rock(1.0, 5.0)
+    bare.SetRadius(0.0)                  # headless hardpoint rock: hull only
+    bare.GetHull().SetRadius(0.8)
+
+    def _boom(self):
+        raise AssertionError("helper read GetRadius()")
+    monkeypatch.setattr(ObjectClass, "GetRadius", _boom)
+    assert effective_radius(rock) == 1.2 * 5.0
+    assert effective_radius(bare) == 0.8 * 5.0

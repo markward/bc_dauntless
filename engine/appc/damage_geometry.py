@@ -57,8 +57,10 @@ __all__ = [
 # Re-derive this if kHullCarveRadiusMaxGu moves.
 #
 # How GetRadius should be derived is itself an open question against the
-# clean-room reference, so tests/unit/test_damage_geometry_flags.py pins the
-# whole stock fleet either side of this line. Change the constant and that test
+# clean-room reference (BC's is the world-scaled merged bound sphere; ours is
+# the AABB corner distance, audit radius-scale-audit.md section 2.3), so
+# tests/unit/test_damage_geometry_flags.py pins the whole stock fleet either
+# side of this line. Change the constant and that test
 # tells you exactly which ships changed sides.
 BREAKABLE_MIN_RADIUS_GU = 0.6
 

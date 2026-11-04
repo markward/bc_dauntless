@@ -206,3 +206,37 @@ def test_damageable_object_is_physics_object():
 def test_app_physicsobj_direction_constants():
     assert App.PhysicsObjectClass.DIRECTION_MODEL_SPACE == 0
     assert App.PhysicsObjectClass.DIRECTION_WORLD_SPACE == 1
+
+
+def test_base_radius_is_the_set_radius_at_any_scale():
+    obj = ObjectClass()
+    obj.SetRadius(500.0)
+    obj.SetScale(2.5)
+    assert obj.GetBaseRadius() == 500.0
+
+
+def test_get_radius_is_base_times_scale():
+    obj = ObjectClass()
+    obj.SetRadius(2.0)
+    obj.SetScale(3.0)
+    assert obj.GetRadius() == 6.0
+    assert obj.GetBaseRadius() == 2.0
+
+
+@pytest.mark.parametrize("bad", [0.0, -2.0, math.nan, math.inf, -math.inf])
+def test_get_radius_ignores_a_bad_scale(bad):
+    obj = ObjectClass()
+    obj.SetRadius(2.0)
+    obj.SetScale(bad)
+    assert obj.GetRadius() == 2.0
+
+
+def test_dock_shrink_lands_at_four_and_is_idempotent():
+    """AI/Compound/DockWithStarbase.py:47-50, verbatim arithmetic."""
+    ship = ObjectClass()
+    ship.SetRadius(4.4)
+    for _ in range(2):
+        if ship.GetRadius() > 4.0:
+            ship.SetScale(ship.GetScale() * 4.0 / ship.GetRadius())
+    assert ship.GetRadius() == pytest.approx(4.0)
+    assert ship.GetScale() == pytest.approx(4.0 / 4.4)
