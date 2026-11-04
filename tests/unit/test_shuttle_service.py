@@ -40,7 +40,13 @@ def _place_player(set_name):
 
 
 @pytest.fixture
-def world():
+def world(monkeypatch):
+    # Object ids come off a process-wide counter, and the AI's update phase
+    # is derived from them (ai_optimized._phase_factor), so without a fixed
+    # start the result depends on how many objects earlier tests made.
+    import itertools
+    from engine.core import ids as _ids
+    monkeypatch.setattr(_ids, "_counter", itertools.count(900_000_000))
     _build_world()
     # The dock choice is random: a fixed seed keeps every run the same. So
     # are the AI's own draws (update cadences, avoidance and warp-direction
