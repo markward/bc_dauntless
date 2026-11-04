@@ -237,3 +237,99 @@ def test_owns_boundary_loop_closes_before_combat(fight, monkeypatch):
     GameLoop().tick()
     assert seen[:2] == [("rocks", True), ("boundary", False)]
     assert not _h.combat_motion_published_open()
+
+
+def test_tick_start_closes_a_window_left_open(fight, monkeypatch):
+    """GameLoop.tick closes the window before anything else (fix round 1):
+    a driver that ran no _advance_combat after the last tick (or one whose
+    _advance_weapons raised) cannot leave the next tick's AI-stage K1 calls
+    reading the previous tick's published poses."""
+    fight.tick()                    # owns_boundary=False, no combat step
+    assert _h.combat_motion_published_open()
+    seen = []
+    _spy(monkeypatch, ai_driver, "tick_all_ai",
+         before=lambda: seen.append(_h.combat_motion_published_open()))
+    fight.tick()
+    assert seen == [False]
+
+
+# ── K4 and native can_detect read through the same rule (fix round 1) ──────
+# Small synthetic scenes (combat_stress's headless sensors read 0 range):
+# the poses are published by hand, a ship is teleported inside the window,
+# and the kernel answers from the published pose until the window closes.
+
+@pytest.fixture
+def synthetic():
+    from engine.appc import native_combat as nc
+    from engine.core import step_memo
+    nc.reset()
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
+    step_memo.forget()
+    App.g_kTimerManager._time = 0.0
+    yield nc
+    App.g_kSetManager._sets.pop("WindowSet", None)
+    nc.reset()
+
+
+def _publish(nc, *ships):
+    _h.combat_motion_publish([nc.slot(s) for s in ships], 1)
+    assert _h.combat_motion_published_open()
+
+
+def test_mid_combat_teleport_k4_reads_published(synthetic):
+    from engine.appc import damage_eligibility as de
+    from engine.appc.sets import SetClass
+    nc = synthetic
+    pSet = SetClass()
+    pSet.SetName("WindowSet")
+    App.g_kSetManager._sets["WindowSet"] = pSet
+    ships = []
+    for name, x in (("P", 0.0), ("Near", 10.0), ("Far", 50.0)):
+        s = ShipClass()
+        s.SetName(name)
+        s.SetTranslateXYZ(x, 0.0, 0.0)
+        s.SetRadius(1.0)
+        pSet.AddObjectToSet(s, name)
+        ships.append(s)
+    player, near, _far = ships
+
+    def eligible():
+        scan = nc.step_scan(ships)
+        assert scan.ok, scan.reason
+        # max_count 2: the player's slot and the nearest other ship's.
+        return _h.combat_k4_eligible(nc.slot(player), 2, de.PROX_WEIGHT,
+                                     de.SIZE_WEIGHT)
+    assert eligible() == [1]        # the nearest of the others: Near
+    _publish(nc, *ships)
+    near.SetTranslateXYZ(1.0e5, 0.0, 0.0)
+    assert eligible() == [1]        # the published Near is still nearest
+    _h.combat_motion_published_close()
+    assert eligible() == [2]        # live: Far is nearer now
+
+
+def test_mid_combat_teleport_can_detect_reads_published(synthetic):
+    from engine.appc.subsystems import SensorSubsystem
+    nc = synthetic
+    pSet = App.SetClass_Create()
+    ships = []
+    for name, x in (("Obs", 0.0), ("Tgt", 100.0)):
+        s = App.ShipClass_Create("Galaxy")
+        s.SetTranslateXYZ(x, 0.0, 0.0)
+        sensors = SensorSubsystem("Sensors")
+        sensors._max_condition = 100.0
+        sensors._condition = 100.0
+        sensors.SetBaseSensorRange(2000.0)
+        s.SetSensorSubsystem(sensors)
+        pSet.AddObjectToSet(s, name)
+        ships.append(s)
+    obs, tgt = ships
+
+    def detects():
+        return _h.combat_can_detect(nc.slot(obs), nc.slot(tgt), 0.0, False,
+                                    apply_concealment=False)
+    assert detects()                # the scene detects at 100 GU
+    _publish(nc, *ships)
+    tgt.SetTranslateXYZ(1.0e7, 0.0, 0.0)
+    assert detects()                # the published target is in range
+    _h.combat_motion_published_close()
+    assert not detects()            # live: far out of range

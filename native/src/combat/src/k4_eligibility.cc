@@ -9,6 +9,7 @@
 #include <limits>
 
 #include "dauntless/combat/beam_geometry.h"
+#include "dauntless/combat/published_poses.h"
 #include "dauntless/combat/py_math.h"
 
 namespace dauntless::combat {
@@ -28,8 +29,9 @@ K4Result fail(K4Why why) {
     return r;
 }
 
-// frames._xyz(obj): obj.GetWorldLocation(), the transform slot's position.
-// False when the row has no valid slot.
+// frames._xyz(obj): obj.GetWorldLocation(), the transform slot's position
+// (the published pose inside the read window: read_pose). False when the
+// row has no valid slot.
 bool position(const Mirror& m, const ObjectRow& o, Vec3& out) {
     if (o.xform_index < 0 || o.xform_gen < 0 ||
         o.xform_index > std::numeric_limits<uint32_t>::max() ||
@@ -38,7 +40,7 @@ bool position(const Mirror& m, const ObjectRow& o, Vec3& out) {
     const auto xi = static_cast<uint32_t>(o.xform_index);
     const auto xg = static_cast<uint32_t>(o.xform_gen);
     if (!m.store().valid(xi, xg)) return false;
-    const auto& t = m.store().at(xi);
+    const auto& t = read_pose(m.store(), xi, xg);
     out = {t.pos[0], t.pos[1], t.pos[2]};
     return true;
 }

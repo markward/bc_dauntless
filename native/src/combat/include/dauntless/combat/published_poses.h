@@ -15,11 +15,12 @@
 // the contents.
 //
 // THE READ WINDOW (phase 4, Task 4): publish opens it; close() (Python:
-// native_motion.close_published, at the end of host_loop._advance_combat and
-// before a boundary-owning GameLoop's effect_queue.boundary()) and clear()
-// close it. While it is open the combat kernels' pose accessor
-// (geometry_internal.h detail::xform) and the host's gameplay hit pose
-// (host_bindings.cc hit_pose_of) answer from pose_for, keyed by the
+// native_motion.close_published, at the top of every GameLoop.tick, at the
+// end of host_loop._advance_combat and before a boundary-owning GameLoop's
+// effect_queue.boundary()) and clear() close it. While it is open the combat
+// kernels' pose reads (read_pose below: detail::xform, K4's position, native
+// can_detect's _get_xyz) and the host's gameplay hit pose (host_bindings.cc
+// hit_pose_of) answer from pose_for, keyed by the
 // published row's store slot; a slot not published (a ship spawned after the
 // publish, a freed and reused slot) and every read outside the window take
 // the live store. Inside the window the two agree (spec 2026-11-03 §6: no
@@ -74,6 +75,21 @@ private:
 };
 
 PublishedPoses& published_poses();  // process-wide
+
+// THE pose a gameplay read takes for store slot (index, gen), which the
+// caller has already checked valid: the published pose inside the read
+// window, else the live slot. detail::xform, K4's position, native
+// can_detect's _get_xyz and the host's hit_pose_of all read through it.
+// It consults the PROCESS-WIDE published_poses() singleton whatever store or
+// Mirror the caller holds: a gtest building its own Mirror must never
+// publish into the singleton (it would answer that test's slot numbers for
+// every later case in the binary); publish into a local PublishedPoses.
+inline const TransformStore::Transform& read_pose(const TransformStore& store,
+                                                  uint32_t index,
+                                                  uint32_t gen) {
+    if (const auto* p = published_poses().pose_for(index, gen)) return *p;
+    return store.at(index);
+}
 
 // What detail::xform answers for Object handle `h` right now (the
 // combat_pose_read test binding): the published pose inside the window, else

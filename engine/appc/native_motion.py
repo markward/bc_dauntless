@@ -236,7 +236,8 @@ def close_published() -> None:
     """Close the published-pose READ WINDOW (phase 4, Task 4;
     published_poses.h) that publish opened: from here until the next
     publish the combat kernels and the gameplay hit pose read the live
-    transform store. Called in a ``finally`` around
+    transform store. Called at the top of every ``GameLoop.tick`` (a window
+    a driver left open never reaches the AI stage), in a ``finally`` around
     ``host_loop._advance_combat``'s body, and in ``GameLoop.tick`` before
     ``effect_queue.boundary()`` when the loop owns its boundary. So the
     window is [publish, end of _advance_combat]: AI-stage K1 calls, the

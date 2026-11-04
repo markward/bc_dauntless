@@ -702,13 +702,11 @@ HitPose hit_pose_of(const scenegraph::Instance& inst, bool drawn) {
         const auto& store = dauntless::transform_store();
         const auto i = static_cast<std::uint32_t>(inst.sim_xform_index);
         if (store.valid(i, inst.sim_xform_generation)) {
-            const auto* published =
-                dauntless::combat::published_poses().pose_for(
-                    i, inst.sim_xform_generation);
             HitPose p;
             dauntless::compose_world_linear_translation(
-                published ? *published : store.at(i), inst.sim_scale,
-                p.linear, p.translation);
+                dauntless::combat::read_pose(store, i,
+                                             inst.sim_xform_generation),
+                inst.sim_scale, p.linear, p.translation);
             p.translation += inst.sim_view_offset;
             return p;
         }

@@ -38,6 +38,12 @@ class GameLoop:
         self.owns_boundary = owns_boundary
 
     def tick(self) -> None:
+        # The published-pose read window opens at this tick's publish
+        # (native_motion.close_published): close one a driver left open
+        # (no _advance_combat after the last tick, or one that raised
+        # before it), so this tick's AI-stage K1 calls read live.
+        from engine.appc import native_motion
+        native_motion.close_published()
         # Drop the avoidance obstacle snapshot: a new tick means the world has
         # moved. Explicit rather than inferred from the clock -- see
         # collision_avoidance.invalidate_obstacle_snapshot.
@@ -136,7 +142,7 @@ class GameLoop:
             # The published-pose read window closes first: a combat step a
             # boundary-owning driver runs after this tick reads live
             # (native_motion.close_published).
-            from engine.appc import effect_queue, native_motion
+            from engine.appc import effect_queue
             native_motion.close_published()
             effect_queue.boundary()
             # The mirror's pending frees and off-main pushes (spec
