@@ -259,6 +259,11 @@ def test_collision_with_planet_does_not_fire_cloaked_event():
     import engine.appc.collisions as collisions
     from engine.appc.planet import Planet
 
+    class _Cap:
+        pass
+    cap = _Cap()
+    App.g_kEventManager.AddBroadcastPythonFuncHandler(
+        App.ET_CLOAKED_COLLISION, cap, __name__ + "._on_cloaked_collision")
     _COLLISION_SINK.clear()
     ship = ShipClass_Create("Galaxy")
     planet = Planet(150.0, "planet.nif")
