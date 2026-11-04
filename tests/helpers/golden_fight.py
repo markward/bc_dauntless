@@ -22,7 +22,11 @@ are those fights themselves, imported, not copied:
 * ``tractor_modes``: a tractor scene (``_tractor_modes`` below);
 * ``sdk_dumb_fire``: the GameLoop fight with every AI's BasicAttack at
   Difficulty 0.0, so its FireScript dumb-fires torpedoes
-  (``_sdk_dumb_fire``).
+  (``_sdk_dumb_fire``);
+* ``host_frames`` / ``host_frames_tpf1``: the same GameLoop fight through
+  real host frames (``host_loop._run_frame_sim``, headless;
+  tests/helpers/host_frame_fight.py), a tick-count cycle with ops, and one
+  tick per frame.
 
 ``run_scene(name, arm)`` returns one canonical tuple per tick, tick 0 first
 (what happened before the first tick):
@@ -625,6 +629,22 @@ def _motion_branches(mp, env, spec):
     return _Take(state, events, queued, [], [])
 
 
+# ── Scenes 8-9: real host frames ────────────────────────────────────────────
+
+def _host_frames(mp, env, spec):
+    """tests/helpers/host_frame_fight.py: the GameLoop fight through
+    host_loop._run_frame_sim, FRAME_TICKS ticks per frame, with ops (native
+    motion phase 4, Task 2: recorded in the batched order)."""
+    from tests.helpers import host_frame_fight as hff
+    return hff.run(mp, env, spec, hff.FRAME_TICKS, 300, hff.HOST_FRAME_OPS)
+
+
+def _host_frames_tpf1(mp, env, spec):
+    """The same, one tick per frame and no ops."""
+    from tests.helpers import host_frame_fight as hff
+    return hff.run(mp, env, spec, (1,), 300, ())
+
+
 # ── The scene table ──────────────────────────────────────────────────────────
 
 SCENES = {s.name: s for s in (
@@ -640,6 +660,9 @@ SCENES = {s.name: s for s in (
     Scene("sdk_dumb_fire", "native", k1d.SEED, "8", 900, 1, _sdk_dumb_fire),
     Scene("motion_branches", "native", 20261110, "2", 1250, 1,
           _motion_branches),
+    Scene("host_frames", "native", k1d.SEED, "8", 720, 0, _host_frames),
+    Scene("host_frames_tpf1", "native", k1d.SEED, "8", 300, 1,
+          _host_frames_tpf1),
 )}
 
 _LAST_ARM = {}

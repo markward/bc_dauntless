@@ -183,3 +183,92 @@ def drive(ctx, frame_ticks: Sequence[int], frames: int, on_frame=None):
         if on_frame is not None:
             on_frame(f, result)
     return results
+
+
+# ── The golden scenes: a combat_stress fight through real host frames ───────
+
+# Ticks per frame, cycled (a frame of 0 is a real host frame with no tick).
+FRAME_TICKS = (3, 1, 6, 0, 2)
+
+# The ops each frame draws from (k1_fight's _Scene.op kinds).
+HOST_FRAME_OPS = ("fire",) * 4 + ("retarget",) * 2 + ("stop",)
+
+
+def run(mp, env, spec, frame_ticks, frames, ops):
+    """The GameLoop fight (k1_fight._loop_setup, host-owned boundary) driven
+    by `frames` host frames through host_loop._run_frame_sim. Each tick is
+    attributed by its index within its frame (GameLoop tick k and combat tick
+    j of a frame starting at tick `first` are both `first + k`), so the
+    batched and the whole-tick orders compare tick for tick. With `ops`,
+    each frame's ops run inside the patched _poll_fire_keys, attributed to
+    the tick before the frame. Returns the golden _Take."""
+    import gc
+    from tests.helpers import golden_fight as gf
+    from tests.helpers import k1_fight as k1d
+
+    k1d._loop_arm(mp, k1d.OFF, ticks=gf.WARM_UP_TICKS)
+    gc.collect()
+    scene, loop = k1d._loop_setup(mp, env, owns_boundary=False)
+    frame = {"first": 1, "gameloop": 0, "combat": 0, "ops": 0}
+    ran = {"ops": 0}
+    notes = []
+
+    def tick_hook():
+        scene.tick = frame["first"] + frame["gameloop"]
+        frame["gameloop"] += 1
+
+    ctx = headless_context(mp, scene, loop, tick_hook=tick_hook)
+    rng = random.Random(k1d.SEED)
+
+    def poll_fire_keys(_h, _input_map):
+        scene.tick = frame["first"] - 1
+        for _ in range(rng.randint(0, 2)):
+            scene.op(rng, ops)
+            ran["ops"] += 1
+
+    if ops:
+        mp.setattr(host_loop, "_poll_fire_keys", poll_fire_keys)
+
+    advance_weapons = host_loop._advance_weapons
+
+    def counting_advance_weapons(ships, dt):
+        scene.tick = frame["first"] + frame["combat"]
+        frame["combat"] += 1
+        return advance_weapons(ships, dt)
+
+    boundary = host_loop._combat_tick_boundary
+
+    def recording_boundary():
+        result = boundary()
+        scene.record()
+        return result
+
+    mp.setattr(host_loop, "_advance_weapons", counting_advance_weapons)
+    mp.setattr(host_loop, "_combat_tick_boundary", recording_boundary)
+
+    def begin(first):
+        frame.update(first=first, gameloop=0, combat=0)
+
+    def end(f, result):
+        n = frame_ticks[f % len(frame_ticks)]
+        assert result.sim_ticks == n, (f, result.sim_ticks, n)
+        assert frame["gameloop"] == n and frame["combat"] == n, (f, n, frame)
+        notes.append(("frame", frame["first"] - 1, n))
+        scene.tick = frame["first"] - 1 + n
+        begin(scene.tick + 1)
+
+    begin(1)
+    drive(ctx, frame_ticks, frames, on_frame=end)
+
+    if ops:
+        assert ran["ops"] > 0, "no op ran"
+    assert scene.starts > 0
+    if scene.native:
+        gf.nc.audit_mirror()
+        scene.audit = list(gf.nc.audit_failures())
+        assert gf.nc._h.combat_k1_depth() == 0
+    else:
+        scene.audit = []
+    scene.counts = gf.nc.counts()
+    gf._check_native(scene)
+    return gf._k1_take(scene, notes)

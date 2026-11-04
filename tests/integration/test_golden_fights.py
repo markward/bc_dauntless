@@ -22,7 +22,9 @@ native. Each scene also asserts it had no no-fire and dropped no row
 native (fire control native only, Task 3) and was re-recorded once for
 ruling R8 (its events queued). ``sdk_dumb_fire`` runs native since the SDK's
 FireDumb went native (Task 4, M8.1), against its Python recording,
-unchanged.
+unchanged. ``host_frames`` and ``host_frames_tpf1`` run real host frames
+(``_run_frame_sim``), recorded in the batched order before native motion
+phase 4 reorders the frame into whole ticks.
 """
 import os
 
@@ -89,6 +91,18 @@ def test_tractor_modes():
 
 def test_sdk_dumb_fire():
     _golden("sdk_dumb_fire")
+
+
+def test_host_frames():
+    """Real host frames (host_loop._run_frame_sim, headless) in today's
+    batched order: n GameLoop ticks, then n combat ticks, per frame; the op
+    stream through the patched _poll_fire_keys (native motion phase 4)."""
+    _golden("host_frames")
+
+
+def test_host_frames_tpf1():
+    """The same frame path at one tick per frame, no ops."""
+    _golden("host_frames_tpf1")
 
 
 # ── The recorder itself ──────────────────────────────────────────────────────

@@ -755,6 +755,49 @@ def _deterministic_loop(mp):
     mp.setattr(ai_optimized, "_phase_key", phase_key)
 
 
+def _loop_setup(mp, env, owns_boundary=True):
+    """_loop_arm's scene, up to its first tick: a fresh combat_stress, near
+    death, shields down, LOOP_TURNED_AWAY facing away, the counters
+    installed, every RNG seeded. Returns (scene, GameLoop). A host-driven
+    caller passes owns_boundary=False and runs the boundary itself."""
+    scene = _Scene(mp, env)
+    mp.setenv("DAUNTLESS_NATIVE_COMBAT",
+               env["DAUNTLESS_NATIVE_COMBAT"])
+    loop = game_loop.GameLoop(          # configure() reads the env
+        owns_boundary=owns_boundary)
+    assert nc.enabled() is scene.native
+    _deterministic_loop(mp)
+    for ship in scene.ships:
+        hull = ship.GetHull()
+        hull.SetCondition(hull.GetMaxCondition() * LOOP_HULL_FRACTION)
+        shields = ship.GetShields()
+        if shields is not None:
+            for face in range(6):
+                shields.SetCurShields(face, 0.0)
+    turned = [s for s in scene.ships if s.GetName() == LOOP_TURNED_AWAY]
+    assert len(turned) == 1, [s.GetName() for s in scene.ships]
+    half_turn = TGMatrix3()
+    half_turn.MakeZRotation(math.pi)
+    turned[0].SetMatrixRotation(
+        turned[0].GetWorldRotation().MultMatrix(half_turn))
+    scene.starts = 0
+    start_firing = ws.WeaponSystem.StartFiring
+
+    def counting_start(system, *args, _orig=start_firing, **kw):
+        scene.starts += 1
+        return _orig(system, *args, **kw)
+    mp.setattr(ws.WeaponSystem, "StartFiring", counting_start)
+    scene.k1_systems = 0
+    k1_system = nc.k1_system
+
+    def counting_k1_system(system, dt, _orig=k1_system):
+        scene.k1_systems += 1
+        return _orig(system, dt)
+    mp.setattr(nc, "k1_system", counting_k1_system)
+    _seed_every_rng(SEED)       # the AI draws on all of them
+    return scene, loop
+
+
 def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
     """One fresh combat_stress driven the host's way WITH GameLoop.tick: per
     tick the timers, the real AI (QuickBattle's BasicAttack: its FireScript
@@ -764,40 +807,7 @@ def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
     near death with its shields down, and LOOP_TURNED_AWAY with its foe
     astern."""
     with monkeypatch.context() as mp:
-        scene = _Scene(mp, env)
-        mp.setenv("DAUNTLESS_NATIVE_COMBAT",
-                   env["DAUNTLESS_NATIVE_COMBAT"])
-        loop = game_loop.GameLoop()         # configure() reads the env
-        assert nc.enabled() is scene.native
-        _deterministic_loop(mp)
-        for ship in scene.ships:
-            hull = ship.GetHull()
-            hull.SetCondition(hull.GetMaxCondition() * LOOP_HULL_FRACTION)
-            shields = ship.GetShields()
-            if shields is not None:
-                for face in range(6):
-                    shields.SetCurShields(face, 0.0)
-        turned = [s for s in scene.ships if s.GetName() == LOOP_TURNED_AWAY]
-        assert len(turned) == 1, [s.GetName() for s in scene.ships]
-        half_turn = TGMatrix3()
-        half_turn.MakeZRotation(math.pi)
-        turned[0].SetMatrixRotation(
-            turned[0].GetWorldRotation().MultMatrix(half_turn))
-        scene.starts = 0
-        start_firing = ws.WeaponSystem.StartFiring
-
-        def counting_start(system, *args, _orig=start_firing, **kw):
-            scene.starts += 1
-            return _orig(system, *args, **kw)
-        mp.setattr(ws.WeaponSystem, "StartFiring", counting_start)
-        scene.k1_systems = 0
-        k1_system = nc.k1_system
-
-        def counting_k1_system(system, dt, _orig=k1_system):
-            scene.k1_systems += 1
-            return _orig(system, dt)
-        mp.setattr(nc, "k1_system", counting_k1_system)
-        _seed_every_rng(SEED)       # the AI draws on all of them
+        scene, loop = _loop_setup(mp, env)
         while scene.tick < ticks:
             scene.tick += 1
             loop.tick()
