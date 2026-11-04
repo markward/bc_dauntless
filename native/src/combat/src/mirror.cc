@@ -197,6 +197,7 @@ constexpr FieldInfo kInfo[] = {
     {"_max_angular_accel", Kind::Subsystem, FieldType::F},
     {"motion_ies_stock", Kind::Subsystem, FieldType::I},
     {"motion_pod_stock", Kind::Subsystem, FieldType::I},
+    {"_velocity_state", Kind::Object, FieldType::I},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -388,6 +389,7 @@ int64_t* iptr(ObjectRow& r, Field f) {
         case Field::_stationary: return &r._stationary;
         case Field::_insystem_warp_transit: return &r._insystem_warp_transit;
         case Field::motion_stock: return &r.motion_stock;
+        case Field::_velocity_state: return &r._velocity_state;
         default: return nullptr;
     }
 }
@@ -929,6 +931,9 @@ void Mirror::set_fv(int64_t h, Field f, const std::vector<double>& v) {
             if (f == Field::_seed) row.seed_set = !v.empty();
             if (f == Field::_manual_target_offset)
                 row.manual_offset_set = !v.empty();
+            // A TGPoint3 is what every native writer stores; Python
+            // re-marks a non-TGPoint3 value 2 (VelocityField).
+            if (f == Field::_velocity) row._velocity_state = 1;
         }
         if constexpr (std::is_same_v<std::decay_t<decltype(row)>, SubsystemRow>) {
             if (f == Field::_held_offset) row.held_offset_set = !v.empty();

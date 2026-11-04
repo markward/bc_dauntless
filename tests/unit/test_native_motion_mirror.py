@@ -420,3 +420,29 @@ def test_audit_clean_after_a_headless_fight(monkeypatch, tmp_path):
     assert nc.audit_failures() == [], nc.audit_failures()
     # The fight moved ships: the audit saw motion inputs change.
     assert any(s.__dict__["_current_speed"] != speeds[id(s)] for s in ships)
+
+
+def test_velocity_state_beside_the_vec3():
+    """`_velocity` keeps its VEC3 encoding (the other kernels read the
+    vector) and gains `_velocity_state` beside it for kernel M: 1 for a
+    TGPoint3, 2 for anything else the VEC3 accepts (a tuple). The row is
+    kept, and the audit checks both."""
+    ship = App.ShipClass_Create("Vel")
+    assert _dump(ship)["_velocity_state"] == 1
+    ship.SetVelocity(TGPoint3(1.5, -2.5, 3.5))
+    row = _dump(ship)
+    assert (_hex(row["_velocity"]), row["_velocity_state"]) == (
+        _hex((1.5, -2.5, 3.5)), 1)
+    ship._velocity = (4.0, 5.0, 6.0)
+    row = _dump(ship)
+    assert "_nslot" in ship.__dict__
+    assert (_hex(row["_velocity"]), row["_velocity_state"]) == (
+        _hex((4.0, 5.0, 6.0)), 2)
+    nc.audit_mirror()
+    assert list(nc.audit_failures()) == []
+    ship.SetVelocity(TGPoint3(0.0, 1.0, 0.0))
+    assert _dump(ship)["_velocity_state"] == 1
+    # A row whose state disagrees is an audit failure.
+    _h.combat_set_i(_slot(ship), nc._fid("_velocity_state"), 2)
+    nc.audit_mirror()
+    assert ("ShipClass", "_velocity") in list(nc.audit_failures())

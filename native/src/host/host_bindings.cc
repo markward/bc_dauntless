@@ -12497,6 +12497,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // released_compute around motion_step alone; the write tuples are
         // built after it, with the GIL held. ValueError: `begin` out of
         // range.
+        m.def("combat_motion_constants",
+              [] {
+                  return py::make_tuple(cb::kFallbackMaxAccel,
+                                        cb::kBcImpulseTau);
+              },
+              "(kFallbackMaxAccel, kBcImpulseTau): motion_step.h's twins of "
+              "ship_motion.FALLBACK_MAX_ACCEL and BC_IMPULSE_TAU (pinned "
+              "equal by tests/unit/test_native_motion_kernel.py).");
         m.def("combat_motion_compute",
               [](const std::vector<std::int64_t>& rows, std::int64_t player,
                  double dt, std::int64_t begin, bool resume) {

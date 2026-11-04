@@ -550,3 +550,78 @@ def test_compute_runs_with_the_gil_released_and_is_timed_as_kernel_m():
     assert got["calls"] == [0, 0, 0, 0, 0, 1], got
     assert got["released"] == got["calls"], got
     assert _h.combat_compute_take(5)[1] == 1
+
+
+# ── Review fix round 1 ───────────────────────────────────────────────────────
+
+def test_tuple_velocity_takes_pythons_path_and_raises():
+    """Review Focus 4: `_velocity` holding a tuple mirrors its vector for
+    the other kernels (VEC3 is unchanged) with `_velocity_state` 2, so a
+    drifter -- the one branch that READS `_velocity` -- is Python's, where
+    `v.x` raises as today. A powered ship only rebinds `_velocity`, so the
+    kernel flies it and leaves a TGPoint3 (state 1), as Python does."""
+    drifter = App.ShipClass_Create("TupleV")
+    drifter._velocity = (1.0, 2.0, 3.0)
+    row = _h.combat_dump(_slot(drifter))
+    assert row["_velocity_state"] == 2
+    assert row["_velocity"] == (1.0, 2.0, 3.0)
+    before = _state(drifter)
+    assert _native([drifter]) == (nm.PYTHON_ROW, 0, "Unrepresentable", [])
+    assert _state(drifter) == before
+    assert _h.combat_dump(_slot(drifter)) == row
+    with pytest.raises(AttributeError):
+        ship_motion._step_ship_motion(drifter, DT)
+    powered, _ = _ship("TupleP")
+    powered.SetSpeed(2.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    powered._velocity = (1.0, 2.0, 3.0)
+    _differential([powered], ticks=1)
+    assert isinstance(powered._velocity, TGPoint3)
+    assert _h.combat_dump(_slot(powered))["_velocity_state"] == 1
+
+
+def test_large_angle_drift_differential():
+    """Big per-tick angles about an axis on no coordinate axis, in both
+    frames: every Rodrigues term (t*x*y, s*z, ...) carries its own bits.
+    The small-rate tests cannot see an association change there."""
+    for space in (MODEL, WORLD):
+        for dt, w in ((0.7, (1.1, -0.6, 0.45)), (0.85, (-2.3, 1.7, 0.9)),
+                      (0.9, (0.31, 2.6, -1.4))):
+            ship = App.ShipClass_Create("Big%d" % space)
+            _rotate(ship, 1.3, (0.6, -0.2, 0.77))
+            ship.SetVelocity(TGPoint3(0.4, -0.3, 0.2))
+            ship.SetAngularVelocity(TGPoint3(*w), space)
+            _differential([ship], ticks=6, dt=dt)
+
+
+def test_far_out_high_speed_powered_with_large_rates():
+    ship, _ = _ship("Far", max_speed=60.0, accel=25.0, ang=2.5,
+                    ang_accel=1.9)
+    ship.SetTranslateXYZ(5012.375, -4987.25, 3001.0625)
+    ship.SetSpeed(55.0, TGPoint3(0.31, 1.0, -0.47), MODEL)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(2.2, -1.6, 2.4))
+    before = _state(ship)
+    _differential([ship], ticks=30, dt=0.25)
+    assert _moved(before, ship) == (True, True)
+
+
+def test_setpointless_drift_with_angular_space_absent():
+    """No SetAngularVelocity ever ran, so `_angular_space` is absent:
+    drift.step's getattr default (world space) and the row's default (1)
+    agree."""
+    ship = App.ShipClass_Create("NoSpace")
+    _rotate(ship)
+    ship._angular_velocity = TGPoint3(0.4, -0.2, 0.9)
+    ship.SetVelocity(TGPoint3(0.1, 0.0, -0.3))
+    assert "_angular_space" not in ship.__dict__
+    assert _h.combat_dump(_slot(ship))["_angular_space"] == 1
+    before = _state(ship)
+    _differential([ship], ticks=4, dt=0.5)
+    assert _moved(before, ship) == (True, True)
+
+
+def test_twin_constants_equal_pythons():
+    """motion_step.h's kFallbackMaxAccel / kBcImpulseTau are twins of
+    ship_motion's FALLBACK_MAX_ACCEL / BC_IMPULSE_TAU: pinned by value."""
+    fallback, tau = _h.combat_motion_constants()
+    assert _hx(fallback) == _hx(ship_motion.FALLBACK_MAX_ACCEL)
+    assert _hx(tau) == _hx(ship_motion.BC_IMPULSE_TAU)

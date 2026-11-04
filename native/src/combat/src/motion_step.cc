@@ -116,6 +116,9 @@ void integrate_rotation(const Vec3& cav, double dt, const Mat3& R, Plan& p) {
 // ShipClass row, already known mobile). Writes only the pose.
 void drift_step(const ObjectRow& o, const Vec3& pos, const Mat3& R, double dt,
                 Plan& p) {
+    // `v = obj._velocity`: a value that is not a TGPoint3 (a tuple) is
+    // Python's, which raises reading v.x.
+    if (o._velocity_state != 1) to_python(MotionReason::Unrepresentable);
     const Vec3& v = o._velocity;
     if (truthy(v)) {
         p.pos = {pos[0] + v[0] * dt, pos[1] + v[1] * dt, pos[2] + v[2] * dt};

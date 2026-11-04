@@ -984,6 +984,32 @@ class NativeFloatList(NativeField):
         return _hexes(v) == _hexes(mirrored)
 
 
+class VelocityField(NativeField):
+    """PhysicsObjectClass._velocity: the VEC3 every kernel reads, unchanged
+    (a TGPoint3 or anything unpacking to x, y, z; None still drops the
+    row), plus ``_velocity_state`` beside it for kernel M (native motion
+    phase 2): 1 for a TGPoint3, 2 for anything else. The VEC3 push itself
+    marks 1 (set_fv); a non-TGPoint3 value is re-marked 2 after it, so
+    kernel M hands a drifter whose `_velocity` is, say, a tuple to Python,
+    which raises reading v.x there. The audit checks both."""
+
+    def __init__(self) -> None:
+        super().__init__(VEC3)
+
+    @staticmethod
+    def _state(value) -> int:
+        return 1 if isinstance(value, TGPoint3) else 2
+
+    def _push(self, obj, h, value) -> None:
+        super()._push(obj, h, value)
+        if self._state(value) != 1 and obj.__dict__.get("_nslot") == h:
+            _call(obj, _h.combat_set_i, h, _fid("_velocity_state"), 2)
+
+    def audit(self, value, row) -> bool:
+        return (self._matches(value, row[self._dump_key])
+                and row["_velocity_state"] == self._state(value))
+
+
 class NativeOptionalField(NativeField):
     """A mirrored attribute that may be ABSENT from the instance (its readers
     use ``getattr(obj, name, default)``: ShipClass._drift_velocity,

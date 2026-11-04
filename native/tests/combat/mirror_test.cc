@@ -879,3 +879,20 @@ TEST(Mirror, PointOrNoneState) {
                  std::invalid_argument);
     EXPECT_THROW(f.m.set_fv(o, Field::_velocity, {}), std::invalid_argument);
 }
+
+// _velocity keeps its Vec3 for every kernel; _velocity_state beside it is 0
+// until a push, 1 after any 3-double set_fv (a TGPoint3 is what every
+// native writer stores), and Python sets 2 for a non-TGPoint3 value.
+TEST(Mirror, VelocityState) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object, 3, 4, 77);
+    EXPECT_EQ(f.m.get_i(o, Field::_velocity_state), 0);
+    f.m.set_fv(o, Field::_velocity, {1.0, 2.0, 3.0});
+    EXPECT_EQ(f.m.get_i(o, Field::_velocity_state), 1);
+    f.m.set_i(o, Field::_velocity_state, 2);
+    EXPECT_EQ(f.m.get_i(o, Field::_velocity_state), 2);
+    EXPECT_EQ(f.m.get_fv(o, Field::_velocity),
+              (std::vector<double>{1.0, 2.0, 3.0}));
+    f.m.set_fv(o, Field::_velocity, {4.0, 5.0, 6.0});
+    EXPECT_EQ(f.m.get_i(o, Field::_velocity_state), 1);
+}

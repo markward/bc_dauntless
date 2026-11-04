@@ -193,6 +193,12 @@ enum class Field : int32_t {
     _insystem_warp_transit, _impulse_engine_subsystem, motion_stock,
     _power_percentage_wanted, _max_speed, _max_accel, _max_angular_velocity,
     _max_angular_accel, motion_ies_stock, motion_pod_stock,
+    // Object: what PhysicsObjectClass._velocity holds, beside its Vec3 (which
+    // every kernel reads, unchanged): 0 never pushed, 1 a TGPoint3 (any
+    // 3-double set_fv of _velocity sets it), 2 anything else the Vec3
+    // encoding accepts (a tuple; native_combat.VelocityField pushes it).
+    // Kernel M's drift reads `v.x` only on a 1.
+    _velocity_state,
     kCount
 };
 
@@ -268,6 +274,7 @@ struct ObjectRow {
             _insystem_warp_transit = 0;
     int64_t _impulse_engine_subsystem = -1;
     int64_t motion_stock = 0;
+    int64_t _velocity_state = 0;
     // Posed parts: the pose table (empty while has_posed_parts is 0) and the
     // ship's subsystems in combat._iter_subsystems order (Subsystem handles;
     // kRefUnrepresentable for one the mirror cannot name). Not Fields: set

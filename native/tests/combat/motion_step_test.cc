@@ -40,6 +40,7 @@ struct World {
         m.set_i(h, Field::is_ship_class, 1);
         m.set_fv(h, Field::_current_angular_velocity, {0.0, 0.0, 0.0});
         m.set_fv(h, Field::_angular_velocity, {0.0, 0.0, 0.0});
+        m.set_fv(h, Field::_velocity, {0.0, 0.0, 0.0});
         return h;
     }
     // _speed_setpoint = (speed, (0, 1, 0), MODEL) and a zero angular one.
@@ -189,6 +190,13 @@ TEST(MotionStep, DriftWritesOnlyPose) {
     EXPECT_EQ(o->_current_speed, 0.25);
     EXPECT_EQ(o->_velocity, (Vec3{1.0, 2.0, 3.0}));
     EXPECT_EQ(o->_drift_velocity_state, 0);
+    // A `_velocity` that is not a TGPoint3 (state 2) is Python's: drift.step
+    // reads v.x there and raises.
+    w.m.set_i(a, Field::_velocity_state, 2);
+    const MotionResult rv = w.step({a});
+    EXPECT_EQ(rv.stop, MotionStop::PythonRow);
+    EXPECT_EQ(rv.reason, MotionReason::Unrepresentable);
+    w.m.set_fv(a, Field::_velocity, {1.0, 2.0, 3.0});
     // A spin whose rate underflows to zero is Python's ZeroDivisionError.
     w.m.set_fv(a, Field::_angular_velocity, {1e-200, 0.0, 0.0});
     const MotionResult r2 = w.step({a});
