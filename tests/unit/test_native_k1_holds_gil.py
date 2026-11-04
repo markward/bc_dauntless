@@ -44,6 +44,9 @@ RELEASED = {
     "combat_motion_compute": (
         "Motion", "cb::motion_step(cb::mirror(), dauntless::transform_store(), "
                   "rows, player, dt, begin, resume)"),
+    "combat_motion_step": (
+        "Motion", "cb::motion_step(cb::mirror(), dauntless::transform_store(), "
+                  "rows, player, dt, begin, resume)"),
 }
 
 # Any of these inside a binding would release (or let pybind release) the
@@ -156,6 +159,16 @@ def test_k2_and_k3_cpython_stays_outside_the_release(source):
     assert code.index("k2_pulse_ctx(") < at
     for after in ("applier.apply(", "damage_append_held("):
         assert code.index(after) > at, after
+
+
+def test_motion_step_applies_after_the_release(source):
+    """Kernel M driven (native motion phase 2, Task 5): the C applier
+    (apply_motion_writes, CPython) runs after the released compute, and the
+    ships/handles length check before it."""
+    code, _raw = _bindings(source)["combat_motion_step"]
+    at = code.index("released_compute(")
+    assert code.index("PySequence_Size(") < at
+    assert code.index("apply_motion_writes(") > at
 
 
 def test_no_other_combat_binding_releases_the_gil(source):

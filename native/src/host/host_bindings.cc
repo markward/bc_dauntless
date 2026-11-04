@@ -12,6 +12,7 @@
 #include "host_bindings.h"
 #include "combat_effect_queue.h"
 #include "combat_write_apply.h"
+#include "motion_write_apply.h"
 
 #include <algorithm>
 #include <cstring>
@@ -12530,6 +12531,73 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "[(row, what, speed, cav, velocity, drift), ...] for "
               "native_motion's applier. stop 0 done, 1 a warp row, 2 a "
               "Python row (native_motion.DONE / WARP_ROW / PYTHON_ROW).");
+
+        // Kernel M driven (native motion phase 2, Task 5): the compute
+        // released, as combat_motion_compute's, then the write log applied
+        // by C under the GIL (motion_write_apply.h), so no write tuple is
+        // ever built. `ships` is the Python list the handles were read from
+        // (ships[i] is rows[i]'s object). ValueError: `begin` out of range,
+        // or `ships` and `handles` of different lengths (checked before the
+        // kernel runs). A store that raised: every other store applied, the
+        // first exception raised (native_motion's driver resyncs then).
+        m.def("combat_motion_step",
+              [](py::object ships, const std::vector<std::int64_t>& rows,
+                 std::int64_t player, double dt, std::int64_t begin,
+                 bool resume) {
+                  const Py_ssize_t n = PySequence_Size(ships.ptr());
+                  if (n < 0) throw py::error_already_set();
+                  if (static_cast<std::size_t>(n) != rows.size())
+                      throw py::value_error(
+                          "combat_motion_step: " + std::to_string(n) +
+                          " ships for " + std::to_string(rows.size()) +
+                          " handles");
+                  cb::MotionResult r =
+                      released_compute(ComputeSite::Motion, [&] {
+                          return cb::motion_step(cb::mirror(), dauntless::transform_store(), rows, player, dt, begin, resume);
+                      });
+                  if (!dauntless::host::apply_motion_writes(ships.ptr(),
+                                                            r.writes))
+                      throw py::error_already_set();
+                  return py::make_tuple(static_cast<int>(r.stop), r.at,
+                                        static_cast<int>(r.reason));
+              },
+              py::arg("ships"), py::arg("handles"), py::arg("player"),
+              py::arg("dt"), py::arg("begin"), py::arg("resume_past_warp"),
+              "Kernel M from rows[begin], its writes applied into `ships` by "
+              "C: (stop, at, reason) (native_motion.DONE / WARP_ROW / "
+              "PYTHON_ROW, native_motion.REASONS).");
+        // Test only: the C applier alone on a Python-encoded log
+        // (combat_motion_compute's: [(row, what, speed, cav3, vel3,
+        // drift3), ...]), for tests/unit/test_native_motion_apply.py.
+        m.def("combat_motion_apply",
+              [](py::object ships, py::list log) {
+                  std::vector<cb::MotionWrite> w;
+                  w.reserve(log.size());
+                  for (py::handle e : log) {
+                      auto t = e.cast<py::tuple>();
+                      if (t.size() != 6)
+                          throw py::value_error(
+                              "combat_motion_apply: a write is a 6-tuple");
+                      auto v3 = [](py::handle o) {
+                          auto v = o.cast<py::tuple>();
+                          return cb::Vec3{v[0].cast<double>(),
+                                          v[1].cast<double>(),
+                                          v[2].cast<double>()};
+                      };
+                      cb::MotionWrite x{};
+                      x.row = t[0].cast<std::uint32_t>();
+                      x.what = t[1].cast<std::uint8_t>();
+                      x.speed = t[2].cast<double>();
+                      x.cav = v3(t[3]);
+                      x.velocity = v3(t[4]);
+                      x.drift = v3(t[5]);
+                      w.push_back(x);
+                  }
+                  if (!dauntless::host::apply_motion_writes(ships.ptr(), w))
+                      throw py::error_already_set();
+              },
+              py::arg("ships"), py::arg("writes"),
+              "Test only: apply a kernel M write log by the C path.");
 
         // ── The detection kernel (sensor_detect.h) ───────────────────────
         // Each answers from the mirror exactly as the Python function of the
