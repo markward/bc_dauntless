@@ -36,8 +36,9 @@ def test_warp_state_is_ticked_before_collisions_in_the_host_loop():
     # The host reaches tick_warp_states only through its sim ticks
     # (advance_ticks -> _whole_tick -> _tick_gameloop -> loop.tick()), which
     # must run before collision resolution, or a ship that leaves warp this
-    # frame stays non-collidable for one extra frame. It must not tick warp states a
-    # second time on its own (that was the old wall-clock _player_dt call).
+    # frame stays non-collidable for one extra frame. It must not tick warp
+    # states a second time on its own (that was the old wall-clock
+    # _player_dt call).
     import engine.host_loop as hl
     src = host_frame_source.run_source()
     assert "tick_warp_states(" not in src

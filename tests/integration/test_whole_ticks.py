@@ -86,6 +86,19 @@ def _ship(name):
     return None
 
 
+def _assert_world_stayed_live(fight, session, capfd):
+    """The swap tests' pending swap drains through host_frame_fight's
+    controller stand-in, whose _drain_pending_swap only clears the request:
+    no mission load, no teardown. So the ordering is asserted against the
+    live world: the same session and player, Enemy-1 still in its set, and
+    nothing printed a traceback."""
+    assert fight.ctx.controller.session is session
+    assert App.Game_GetCurrentPlayer() is fight.scene.player
+    assert _ship("Enemy-1") is not None
+    out, err = capfd.readouterr()
+    assert "Traceback" not in out + err, out + err
+
+
 def _frame(order, f):
     """The entries of frame `f` (0-based) in `order`."""
     out, cur = [], 0
@@ -106,8 +119,9 @@ def test_each_tick_runs_whole(fight):
                                       "boundary"] * 3
 
 
-def test_frame_start_stages_run_before_tick_0(fight):
+def test_frame_start_stages_run_before_tick_0(fight, capfd):
     ctrl = fight.ctx.controller
+    session = ctrl.session
     real_drain = ctrl._drain_pending_swap
 
     def drain():
@@ -129,6 +143,7 @@ def test_frame_start_stages_run_before_tick_0(fight):
                   "manual_aim"):
         assert stage in frame, stage
         assert frame.index(stage) < first_gl, (stage, frame)
+    _assert_world_stayed_live(fight, session, capfd)
 
 
 def _phasers_and_target(fight):
@@ -179,8 +194,10 @@ def test_fire_press_on_a_zero_tick_frame_reaches_the_next_combat_tick(fight):
     assert calls[1] >= 1 and seen[0], seen
 
 
-def test_swap_requested_during_a_tick_drains_at_next_frame_start(fight):
+def test_swap_requested_during_a_tick_drains_at_next_frame_start(fight,
+                                                                 capfd):
     ctrl = fight.ctx.controller
+    session = ctrl.session
     real_drain = ctrl._drain_pending_swap
 
     def drain():
@@ -202,6 +219,7 @@ def test_swap_requested_during_a_tick_drains_at_next_frame_start(fight):
     second = _frame(fight.order, 1)
     assert "drain" in second, second
     assert second.index("drain") < second.index("gl"), second
+    _assert_world_stayed_live(fight, session, capfd)
 
 
 def test_recreate_player_inside_a_tick_reaches_the_post_tick_pass(fight):

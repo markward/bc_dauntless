@@ -10781,11 +10781,12 @@ class FrameSimResult(NamedTuple):
 
 def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
                    cursor_in_panel: bool) -> FrameSimResult:
-    """One frame's sim: the fixed-timestep accumulator, the GameLoop ticks,
-    the session sync, input, the per-tick weapons and combat, the post-step
-    pass and the scene reconcile, as run() ran them inline. `ctx` carries
-    the state across frames; the result is what run()'s render section
-    reads."""
+    """One frame's sim: the fixed-timestep accumulator; at frame start the
+    swap drain, the session sync, the keys and input; then each tick whole
+    (GameLoop tick, weapons, combat, the tick boundary: native motion phase
+    4, ruling 2); a second player-identity sync; the post-step pass and the
+    scene reconcile. `ctx` carries the state across frames; the result is
+    what run()'s render section reads."""
     import App
     from engine.core.timestep import step_accumulator
     from engine.core.transform_buffer import advance_ticks
@@ -10927,8 +10928,8 @@ def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
         # button, closes it on Close/Start. Boot leaves it closed.
         _sync_quick_battle_panel(controller)
     # The camera follows session.player; _sync_player_identity (just
-    # below, and again in the scene reconcile after the sim) calls
-    # this when the player's identity changed
+    # below, again after the ticks, and in the scene reconcile after
+    # the sim) calls this when the player's identity changed
     # (RecreatePlayer's destroy+recreate). Snap so the new player
     # doesn't lerp from the destroyed ship's pose, and re-seed the
     # director's ship-radius distances.
@@ -13476,8 +13477,11 @@ def run(mission_name: Optional[str] = None,
             # The exterior eye, in the VIEWED set's coordinates, set once per
             # running frame now that the camera is solved and BEFORE any
             # Space-pass feed is built; the combat feeds the sim produced
-            # above are built here for that reason. A frozen frame keeps the
-            # last origin and pushes no new combat feeds (as before).
+            # above are built here for that reason. A frame frozen from its
+            # top (pause, DevTools) ran no tick: it keeps the last origin and
+            # pushes no new combat feeds. A frame frozen mid-frame by a dev
+            # key in sim.keys still ran its whole ticks (ruling 2), so it has
+            # a ship list and applies the origin and pushes their feeds.
             if _ships_this_tick is not None:
                 with frame_profiler.scope("prep.origin"):
                     _apply_render_origin(r, eye)
