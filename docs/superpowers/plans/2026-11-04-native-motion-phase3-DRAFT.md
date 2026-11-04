@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. In this repo: one `tdd-engineer` subagent per task, in order, focused tests only, commit between tasks, stop on any BLOCKED (CLAUDE.md "Executing plans").
 
-**Status:** LOOK-AHEAD DRAFT, written 2026-11-04 on `ws/motion-kernel` (`87401fe33`) while phase 2 is being planned. No phase 2 plan existed when this was written (`docs/superpowers/plans/2026-11-04-native-motion-phase2.md` absent), so phase 2 is taken from spec §5.2 as written. Before Task 1: re-check the "Assumes from phase 2" list against what phase 2 actually built, and re-check every line reference below (they are against `87401fe33`).
+**Status:** refreshed 2026-11-04 against phase 2 as merged (`6fe9eaec4`). Every "Assumes from phase 2" item holds; corrections are inline. Line references were written against `87401fe33`: since then `host_loop.py` moved by about −5 after line 1405 and `host_bindings.cc` by +4 to +10, so find each site by name.
 
 **Goal:** Take gameplay off the drawn pose (hit tests read the simulation pose), stop resending unchanged glow state every frame, and move render interpolation into C++, cutting `sim.render_xforms` from ≈ 1.9–2.0 ms a frame by ≈ 1.3–1.5 ms (64-ship Debug fight).
 
@@ -16,7 +16,7 @@
 
 1. **P2-1** Motion kernel M is the only writer of ship poses inside a tick, and writes the **live** `TransformStore` slots that `ObjectClass._xform` (index, generation) names (spec §5.2). Phase 3 reads only the live store.
 2. **P2-2** The tractor force step now runs inside the motion stage (Mark 2026-11-04), so by the time combat runs in a tick, the live store already holds the tractor's pull. Phase 3 does not call or move it.
-3. **P2-3** The motion-end published buffer exists: 64 × 15 doubles, tick-tagged, written at the end of the motion stage. **Phase 3 reads nothing from it.** 3a reads the live store (spec: "from the published buffer once phase 4 lands"), and `hit_pose_of` is the one place phase 4 switches. 3c's frame-end snapshot is its own per-instance capture (contradiction 7). If phase 2 names the buffer, only the comment on `hit_pose_of` cites it.
+3. **P2-3** The motion-end published buffer exists: 15 doubles per non-rock ship (sized to the roster), tagged with a per-publish counter (not the GameLoop tick), written at the end of the motion stage. **Phase 3 reads nothing from it.** 3a reads the live store (spec: "from the published buffer once phase 4 lands"), and `hit_pose_of` is the one place phase 4 switches. 3c's frame-end snapshot is its own per-instance capture (contradiction 7). If phase 2 names the buffer, only the comment on `hit_pose_of` cites it.
 4. **P2-4** `TransformStore::Transform` (`pos[3]`, row-major `rot[9]`), `compose_world_linear_translation`, `TransformStore::valid/at` and the `_xform` handle shape are unchanged by phase 2.
 5. **P2-5** Phase 2 does not touch `_sync_instance_transforms`, `TransformBuffer`, `advance_ticks`, `articulation.tick_ship` (still called per ship per tick from `loop.py:177`) or `native_combat.push_posed_parts`.
 6. **P2-6** The manually flown player stays on `_PlayerControl` (spec non-goal), so its render instance stays store-bound (`_apply_live_world_transform`).
@@ -45,7 +45,7 @@
 
 ## Global Constraints
 
-- **Worktree only.** Phase 3 runs on its own branch (Mark: one branch per phase), `ws/motion-phase3` (name to confirm), forked from `project/native-motion-and-proximity` after phase 2 has merged back. **Never commit to `main`.**
+- **Worktree only.** Phase 3 runs on its own branch (Mark: one branch per phase), `ws/motion-phase3`, forked from `project/native-motion-and-proximity` after phase 2 has merged back. **Never commit to `main`.**
 - **Banned git commands:** `git checkout -- <path>`, `git checkout .`, `git restore`, `git stash`, `git clean`, `git reset --hard`, `git add -A`, `git add .`. Stage with explicit pathspecs. To mutate a file temporarily: `cp` to `/tmp`, mutate, `cp` back, `diff`.
 - **Focused test files only:** `uv run pytest <file> [<file> ...] -q`, never an empty file list, never a directory, never `scripts/check_tests.sh` or a whole suite.
 - **Build:** `cmake --build build -j` from the worktree root only. Never reconfigure, never run cmake inside `native/`.
