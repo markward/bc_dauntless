@@ -677,6 +677,15 @@ class PhysicsObjectClass(ObjectClass):
     _velocity = native_combat.NativeField(native_combat.VEC3)
     # GetMass: the native tractor force's input (tractor_force.h).
     _mass = native_combat.NativeField(float)
+    # The native motion kernel's inputs (native motion phase 2): the
+    # scripted spin a drifter flies (rebound by SetAngularVelocity), the
+    # frame it was set in (absent until then: the row's default is
+    # DIRECTION_WORLD_SPACE, getattr's default in drift.step) and
+    # SetStatic's flag.
+    _angular_velocity = native_combat.NativeField(native_combat.POINT_OR_NONE)
+    _angular_space = native_combat.NativeOptionalField(
+        int, absent=DIRECTION_WORLD_SPACE)
+    _static = native_combat.NativeField(bool)
 
     def __init__(self):
         super().__init__()

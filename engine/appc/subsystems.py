@@ -1407,7 +1407,9 @@ class PoweredSubsystem(ShipSubsystem):
     # Mirrored too: K0's holding tractor reads GetNormalPowerWanted() and
     # GetPowerPercentage() (its starvation stop; fire control native only).
     _normal_power = native_combat.NativeFrozenField(float)
-    _power_percentage_wanted = FrozenField()
+    # Mirrored for the motion kernel (impulse_output_fraction's slider);
+    # still a FrozenField, so a write thaws a frozen consumer.
+    _power_percentage_wanted = native_combat.NativeFrozenField(float)
     _power_wanted = FrozenField()
     _power_received = FrozenField()
     _efficiency = native_combat.NativeFrozenField(float)
@@ -1825,6 +1827,13 @@ class SensorSubsystem(PoweredSubsystem):
 class ImpulseEngineSubsystem(PoweredSubsystem):
     """Live impulse-engine state.  Speed/accel limits come from the
     matching ImpulseEngineProperty template via ShipClass.SetupProperties()."""
+
+    # The authored limits, mirrored for the motion kernel (native motion
+    # phase 2): always rebound by the setters below, never mutated.
+    _max_speed = NativeField(float)
+    _max_accel = NativeField(float)
+    _max_angular_velocity = NativeField(float)
+    _max_angular_accel = NativeField(float)
 
     def __init__(self, name: str = ""):
         super().__init__(name)

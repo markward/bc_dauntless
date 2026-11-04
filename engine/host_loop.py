@@ -3169,6 +3169,8 @@ class _PlayerControl:
             cav.x = pitch_rate
             cav.z = -yaw_rate
             cav.y = -roll_rate
+            # In place: re-push the native combat mirror's copy.
+            _native_combat.push_field(player, "_current_angular_velocity")
         if not (pitch_rate or yaw_rate or roll_rate):
             return
         R = player.GetWorldRotation()
@@ -3236,6 +3238,8 @@ class _PlayerControl:
             cav.x = self._current_pitch_rate
             cav.z = -self._current_yaw_rate
             cav.y = -self._current_roll_rate
+            # In place: re-push the native combat mirror's copy.
+            _native_combat.push_field(player, "_current_angular_velocity")
 
     def _sync_control_from_ship(self, player) -> None:
         """AI → manual handoff: resume player control from the ship's actual

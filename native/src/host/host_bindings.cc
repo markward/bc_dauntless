@@ -12350,6 +12350,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     case cb::FieldType::Vec3: {
                         auto v = mi.get_fv(h, f);
                         if (v.empty()) d[n] = py::none();
+                        else if (v.size() == 4)  // point-or-none, state 2
+                            d[n] = py::make_tuple(v[0], v[1], v[2], v[3]);
                         else d[n] = py::make_tuple(v[0], v[1], v[2]);
                         break;
                     }

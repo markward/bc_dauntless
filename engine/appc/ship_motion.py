@@ -51,7 +51,7 @@ from dataclasses import dataclass
 # applied to subsystems._is_offline, which was costing 115,279 importlib
 # lookups over 150 ticks at 100 ships.
 import App
-from engine.appc import drift, warp_flight, warp_state
+from engine.appc import drift, native_combat, warp_flight, warp_state
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
 from engine.appc.subsystems import impulse_fractions, impulse_output_fraction
@@ -318,6 +318,8 @@ def _step_ship_motion(ship, dt: float) -> None:
     cav.x = _ramp_toward(cav.x, tx, ang_step)
     cav.y = _ramp_toward(cav.y, ty, ang_step)
     cav.z = _ramp_toward(cav.z, tz, ang_step)
+    # In place, so the descriptor never saw it: the mirror is a copy.
+    native_combat.push_field(ship, "_current_angular_velocity")
 
     _integrate_rotation(ship, dt)
 
