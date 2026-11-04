@@ -35,7 +35,7 @@ Recommended (smooth at high settings and high resolutions):
 Fast single-core CPU speed matters more than core count: much of the game
 runs on one core.
 
-On a Mac: Apple Silicon (M1 or later) with macOS 12 or later. See "On a
+On a Mac: Apple Silicon (M1 or later) with macOS 26 or later. See "On a
 Mac" below.
 
 And two things from Bridge Commander itself:

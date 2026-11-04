@@ -513,6 +513,20 @@ def macos_min_version(otool_load_commands: str) -> str:
     raise SystemExit("[package] no LC_BUILD_VERSION minos in the binary")
 
 
+# The oldest macOS the app declares. The binary's own deployment target is
+# CEF's 12.0, but the statically linked OpenAL was built against the macOS 26
+# SDK (the linker warns), so nothing older is known to run it. Ruled 2026-11-04:
+# 0.2.x requires macOS 26. Lower this only after building OpenAL for an older
+# target and launching the app on that macOS.
+MACOS_FLOOR = "26.0"
+
+
+def declared_min_macos(binary_minos: str) -> str:
+    """LSMinimumSystemVersion: the higher of the binary's minos and the floor."""
+    key = lambda v: tuple(int(p) for p in v.split("."))
+    return max(binary_minos, MACOS_FLOOR, key=key)
+
+
 def _run(*cmd: str) -> str:
     proc = subprocess.run(list(cmd), capture_output=True, text=True)
     if proc.returncode != 0:
@@ -623,7 +637,7 @@ def stage_macos(dest: Path) -> Path:
     if not exe_src.is_file():
         raise SystemExit("[package] build/dauntless is missing -- build first:\n"
                          "  cmake --build build -j")
-    min_os = macos_min_version(_run("otool", "-l", str(exe_src)))
+    min_os = declared_min_macos(macos_min_version(_run("otool", "-l", str(exe_src))))
 
     # 1. The binary and the interpreter it links.
     exe = macos_dir / APP_NAME

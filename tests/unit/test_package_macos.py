@@ -61,6 +61,12 @@ def test_min_macos_is_the_binarys_deployment_target():
     assert package.macos_min_version(OTOOL_LOAD_COMMANDS) == "12.0"
 
 
+def test_declared_min_macos_is_never_below_the_floor():
+    assert package.declared_min_macos("12.0") == package.MACOS_FLOOR == "26.0"
+    assert package.declared_min_macos("26.1") == "26.1"
+    assert package.declared_min_macos("100.0") == "100.0"
+
+
 def test_app_binary_per_platform():
     app = Path("/d/BC Dauntless.app")
     assert package.app_binary(app, "darwin") == app / "Contents" / "MacOS" / "BC Dauntless"
