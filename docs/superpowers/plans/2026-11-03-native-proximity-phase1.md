@@ -185,13 +185,42 @@ def test_object_types_generation_increases_on_register(): ...
 - [ ] **Step 5:** Goldens: run `tests/integration/test_golden_fights.py`. A golden that changes is re-recorded in this commit with the reason (ruling 6), with Mark asked first whether the radius session is mid-re-record.
 - [ ] **Step 6: Commit** `fix(proximity): departed objects leave the manager list (ruling 6)`.
 
-### Task 7: BC's size rule (ruling 4) — after the scaled-GetRadius work merges
+### Task 7: BC's size rule (ruling 4)
 
-Depends on `ws/scaled-getradius` (a parallel session) having merged into the project branch, so that `GetRadius()` is BC's scaled world radius. Write this task's steps after that merge, from its design doc. Its shape:
-- the near test becomes `distance − GetRadius() ≤ query radius`, with `≤` vs `<` settled from the reference first;
-- the line query already adds `GetRadius()`, so it needs no change;
-- a campaign sweep (26 missions, headless);
-- goldens re-recorded in its own commit, with the reason.
+Written 2026-11-04, after `ws/scaled-getradius` merged (`1fd782393`): `GetRadius()` is now BC's scaled world bound.
+
+**Evidence** (`docs/reference/engine/native-motion/open-questions-by-reading.md` Q3, from the clean-room `ProximityManager.md` §8.1, graded faithful):
+- BC's near test is `|position − centre| − bounding radius` within the query radius.
+- In the near query the `includeSize` flag only widens the axis prune, so it cannot change results; it stays accepted and ignored.
+- The line query already adds `GetRadius()` to its reach, so it needs no change.
+
+**Ruling (controller, 2026-11-04):** the boundary is inclusive (`≤`), matching every other compare here. The reference does not say, and its server was down; re-check when it is back.
+
+**Files:**
+- Modify: `native/src/transforms/include/dauntless/transform_store.h`, `native/src/transforms/src/proximity_query.cc`, `native/src/host/host_bindings.cc` (beside `transform_near_indices`), `engine/appc/transform_store.py` (both backends), `engine/appc/planet.py` (`_near_objects`'s cached and uncached paths, and the unstored compare), `tests/helpers/proximity_oracle.py` (the near query only: the same size rule, in this commit)
+- Test: `tests/unit/test_proximity_size_rule.py` (new), `tests/unit/test_transform_within_radius.py` (extend), `native/tests/transforms/transform_store_test.cc` (extend)
+
+**Interfaces:**
+- C++: `void TransformStore::near_indices_sized(const std::uint32_t* handles, std::size_t n, const double* radii, const double point[3], double r, std::vector<std::uint32_t>& out) const;` keeps position k when `dx*dx + dy*dy + dz*dz <= reach*reach`, where `reach = r + max(radii[k], 0)`. It lives in `proximity_query.cc` (`-ffp-contract=off`) and appends, like `near_indices`.
+- Binding: `transform_near_indices_sized(handles, radii, x, y, z, r) -> list[int]`. `radii` is a float64 buffer of the same length as the handle pairs; a length mismatch raises `ValueError`. It holds the GIL (ruling R3).
+- Python: `store.near_indices_sized(packed: array('I'), radii: array('d'), x, y, z, r) -> list[int]` on both backends, with the same stale-handle behaviour as `near_indices`.
+- `ProximityManager.GetNearObjects(point, radius, eType=None)`: an entry is within range when `|location − point| ≤ radius + max(GetRadius(), 0)`. `GetRadius()` is read live on every query for every stored entry, with no new invalidation hook; one that raises counts as 0, as the line query treats it. Participation, dedupe and order are unchanged.
+
+- [ ] **Step 1: Write the failing tests:**
+  - `test_station_surface_in_range_is_returned`: a ship with radius 296 whose centre is 350 from the query point is returned at r = 60 and not at r = 50;
+  - `test_boundary_is_inclusive`: `distance − R == r` exactly is returned;
+  - `test_scaled_rock_reach_uses_scaled_radius`: base 10, `SetScale(3)`, centre 35 away, r = 10: returned (reach 40);
+  - `test_radius_change_between_queries_is_seen`: a cached entry whose `SetRadius` or `SetScale` changes between two queries, with no membership change;
+  - `test_zero_radius_objects_keep_the_centre_rule`;
+  - `test_radius_that_raises_counts_as_zero`;
+  - the existing differential, now against the size-rule oracle (identity and order);
+  - native and Python `near_indices_sized` against a brute-force reference, plus a radii length mismatch.
+- [ ] **Step 2:** Run the new tests. Expected: FAIL.
+- [ ] **Step 3:** Implement the interfaces above. `cmake --build build -j`.
+- [ ] **Step 4:** Run the new and extended files, `ctest --test-dir build -R TransformStore`, and the proximity files from Tasks 1–6. Expected: PASS.
+- [ ] **Step 5: Goldens.** Run `tests/integration/test_golden_fights.py`. If any scene changes, STOP and report the scenes and the size of the change; the controller decides on the re-record, which goes in its own commit with the reason "ruling 4: BC's size rule".
+- [ ] **Step 6: Campaign sweep.** Run `tests/integration/test_warp_button_handler_sweep.py`. Expected: PASS. Headless runs leave radii at 0 (no models), so this checks for crashes and stopped missions, not behaviour.
+- [ ] **Step 7: Commit** `feat(proximity): BC's size rule for near queries (ruling 4)`.
 
 ### Task 8: Measure and record (idle machine only)
 
