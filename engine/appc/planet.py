@@ -653,8 +653,12 @@ class ProximityManager:
         four of these dead, which is why an earlier commit message overstated
         what it revived.
 
-        The trailing flag is accepted and ignored, as on GetNearObjects (a type
-        filter / encompassing-volume flag in the real engine).
+        The trailing flag is accepted and ignored, as on GetNearObjects: it is
+        BC's ``includeSize`` flag. In BC it does reach the line query's exact
+        test as an object "own size" term whose meaning is still open
+        (docs/reference/engine/native-motion/open-questions-by-reading.md
+        Q3(d)). Two SDK callers pass it (AI/PlainAI/Intercept.py:269,
+        MissionLib.py:4930).
 
         Timed as `prox.line` (native motion + proximity phase 0). Walks the
         cached candidate list (_cached), reading each participant's radius at

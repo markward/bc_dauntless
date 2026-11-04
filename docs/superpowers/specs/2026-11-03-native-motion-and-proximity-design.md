@@ -109,7 +109,7 @@ Steps 1a–1c keep today's answers exactly apart from ruling 1. Step 1d is rulin
 Instead:
 - **A cache per manager.** Each `ProximityManager` caches its candidate list in today's order, plus per-entry flags (physics, stored, set twin) and a packed handle array of the stored entries.
 - **Invalidation by a generation counter**, bumped at every membership mutation (the map's hook list) and at every sized-torpedo transition.
-- **The radius test** is one new call, `near_indices`, on both transform-store backends. It returns the hit positions in ascending order, as indices into the Python-held list. So results come back as the same objects in the same order by construction, with no id mapping, and on both backends.
+- **The radius test** is one new call, `near_indices_sized` (handles plus a float64 radii buffer; reach = r + max(R, 0), since Task 7), on both transform-store backends. It returns the hit positions in ascending order, as indices into the Python-held list. So results come back as the same objects in the same order by construction, with no id mapping, and on both backends.
 - **Participation** (`GetRadius() > 0` for non-physics entries) and the line query's reach are still read at query time.
 - **A set holding a sized torpedo** runs today's Python path whole (torpedoes have no mirror row).
 - **Poses** are read through the store, i.e. the live store (ruling 5).
@@ -232,7 +232,7 @@ Instead:
 | Stage | Reads | Writes | GIL during compute |
 |---|---|---|---|
 | AI (Python) | published poses (via queries), mirrors | setpoints, orders | held |
-| Proximity query (native `near_indices`) | a packed handle array cached in Python, live poses (ruling 5) | ascending hit indices | released |
+| Proximity query (native `near_indices_sized`; `near_indices` has no engine caller, kept as a test reference until phase 5) | a packed handle array cached in Python, live poses (ruling 5) | ascending hit indices | released |
 | Motion M (native) | motion rows, impulse mirrors, live poses of its own rows | live poses of its rows, velocity mirror, motion state; published buffer at the end | released |
 | Tractor force (native, fire-control R7) | tractor state, masses, poses | poses of the target and the source | released |
 | Combat K0–K4 (native) | published poses (phase 4), mirrors | weapon state, effect queue, damage | released (K4 held) |

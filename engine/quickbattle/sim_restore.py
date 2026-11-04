@@ -154,9 +154,12 @@ def _proximity(pSet):
 
 
 def _leave(obj, now, name) -> None:
-    """Take `obj` out of `now` and out of its proximity index: BC's loop
-    UpdateObject'ed it into the battle set's manager, and leaving the set
-    does not drop that entry."""
+    """Take `obj` out of `now` and out of its proximity index.
+
+    `RemoveObjectFromSet` already forgets the manager entry (ruling 6), but
+    it is skipped when the ship was renamed (`now.GetObject(name) is not
+    obj`). Then `pm.RemoveObject` is the only thing that takes it out of the
+    manager, so it is not redundant."""
     if now.GetObject(name) is obj:
         now.RemoveObjectFromSet(name)
     pm = _proximity(now)
