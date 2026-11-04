@@ -224,7 +224,8 @@ Instead:
 
 - An overlap saves at most the smaller of the two jobs (roadmap §6). After phases 1–3 the native work per tick is ≈ 0.9 ms (combat compute 0.59 from SIG-177, motion ≈ 0.2, queries ≈ 0.1) against ≈ 5.5 ms of Python. That is the same bound that parked J.
 - Splitting motion across cores saves under ≈ 0.2 ms: rows are independent, so it is easy, but small.
-- **Measure:** `combat_stress` at 64, 128 and 256 ships (`DAUNTLESS_COMBAT_SHIPS`), recording the native stages against the Python stages per tick.
+- **Target (Mark, 2026-11-04):** 64 ships at **60 fps**, up from about 6 fps before the combat work and 18-20 fps (floor) after phase 1. 128 ships are measured as a **scaling probe** only, to see where costs grow badly; 256 is dropped.
+- **Measure:** `combat_stress` at 64 and 128 ships (`DAUNTLESS_COMBAT_SHIPS`), recording the native stages against the Python stages per tick, and the frame time against the 16.7 ms budget. All captures so far are **Debug**; phase 5 adds one **Release** capture at 64 ships, because the 60 fps target is about the shipped build.
 - **Threshold:** threads are built only if native stage time passes ≈ 2 ms per tick, or ≈ 25% of the tick, at a battle size Mark wants to support. Then the first candidate is motion rows across workers, and the second motion plus combat compute on a native thread beside Python. The second needs J's snapshot and outbox, and the unguarded push paths in the off-lock spec §10.
 
 ## 6. Kernel contracts (the threading seams)
@@ -269,7 +270,7 @@ Rules:
 3. **Attached ProximityChecks sit at the set origin**, not their anchor: confirmed by reading (open-questions-by-reading Q2). `AttachObject` records the anchor only; BC parents the check's node. Firing is unaffected, because evaluation centres on the anchor. After ruling 1 nothing reads a check's own position, so it is left as is.
 4. ~~**`sim.input`'s missing ≈ 1 ms per frame** (phase 0).~~ Answered by SIG-183: the bridge officer pick's per-frame head skinning. Outside this project.
 5. **Headless runs never move tractored ships** (`GameLoop` does not run `cb.tractors`). Still true after the merge: only `host_loop._advance_combat_step` calls `advance_tractors`.
-6. **Battle sizes to support** for phase 5's threshold (128? 256?), for Mark.
+6. ~~**Battle sizes to support** for phase 5's threshold (128? 256?), for Mark.~~ Answered 2026-11-04: target 64 ships at 60 fps; 128 as a scaling probe (§5.5).
 7. ~~Quick Battle ghosts~~: ruled, see ruling 6.
 8. **Side findings from the motion audit** (inferred, not checked live):
    - a manually flown player's `_current_speed` is stale, so `GetImpulse` and `IsReverse` read it wrong;
