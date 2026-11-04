@@ -361,7 +361,9 @@ def test_controller_pushes_no_warp_gain_while_not_warping():
     ctrl.update(now=0.0)
     ctrl.update(now=1.0)
     assert _gains_for(rend, 0) == []          # warp region untouched
-    assert len(_gains_for(rend, 1)) == 2      # impulse region drives as always
+    # The impulse region drives as always, but an idle (unchanged) gain is
+    # pushed once, not every update (phase 3b change guard).
+    assert len(_gains_for(rend, 1)) == 1
 
 
 def test_controller_pushes_warp_gain_over_the_whole_volume():

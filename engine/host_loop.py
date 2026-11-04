@@ -6700,6 +6700,9 @@ class MissionSession:
     # re-bind guard — the binding itself lives on the native instance — so the
     # per-frame path can skip the boundary crossing when nothing changed.
     slot_bindings: dict[Any, tuple] = field(default_factory=dict)
+    # Last self-illumination scale sent per ship instance id -- a re-push
+    # guard like slot_bindings, so a steady hull costs no boundary crossing.
+    emissive_scales: dict[Any, float] = field(default_factory=dict)
     # Last articulation pose PUSHED per render instance id -- a tuple of
     # per-part pose 6-tuples, one per rigged part -- a re-push guard only,
     # exactly like slot_bindings. The authoritative pose lives on the ship
@@ -6756,6 +6759,7 @@ class MissionSession:
         # The bindings themselves died with the instances above; drop the
         # re-bind guard so a recycled object cannot look already-bound.
         self.slot_bindings.clear()
+        self.emissive_scales.clear()
         self.player = None
 
 
@@ -10151,7 +10155,10 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                        _player_warp_glow if ship is player else None)
         # Destroyed (dying/dead) ships lose self-illumination —
         # a dark hulk in space. Hull stays lit by external light.
-        r.set_emissive_scale(iid, _emissive_scale_for(ship, ship is player, _hd_boost))
+        _es = _emissive_scale_for(ship, ship is player, _hd_boost)
+        if session.emissive_scales.get(iid) != _es:
+            r.set_emissive_scale(iid, _es)
+            session.emissive_scales[iid] = _es
         _off = _view_offset(ship)
         if iid == _player_iid and _off is None:
             if player_interp_pose is not None:
@@ -10224,6 +10231,9 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     for _dead in list(session.ship_glow_controllers.keys()):
         if _dead not in _wg_live_iids:
             del session.ship_glow_controllers[_dead]
+    for _dead in list(session.emissive_scales.keys()):
+        if _dead not in _wg_live_iids:
+            del session.emissive_scales[_dead]
     for planet, iid in session.planet_instances.items():
         ns = session.planet_natural_scale.get(planet, 1.0)
         # Planets render at their live pose (no interpolation), so the store
