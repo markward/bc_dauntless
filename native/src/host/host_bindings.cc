@@ -41,6 +41,7 @@
 #include "dauntless/combat/published_poses.h"
 #include "dauntless/combat/tractor_force.h"
 #include "dauntless/combat/weapon_geometry.h"
+#include "dauntless/interp_buffer.h"
 #include "dauntless/transform_store.h"
 #include "platform/relaunch.h"
 
@@ -6589,6 +6590,55 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           "Test hook: run the per-frame store->instance sweep (and the render "
           "origin resolve) that frame() runs, without needing a GL context.");
+
+    // TEST-ONLY: the render interpolation twins (dauntless/interp_buffer.h),
+    // so tests/host/test_native_interp_twin.py can pin them against
+    // engine/core/interpolate.py and handover_smoother.py element for element.
+    m.def("_test_only_interp_lerp",
+          [](const std::array<double, 3>& prev_pos,
+             const std::array<double, 9>& prev_rot,
+             const std::array<double, 3>& cur_pos,
+             const std::array<double, 9>& cur_rot, double alpha) {
+              dauntless::Pose prev{}, cur{};
+              std::copy(prev_pos.begin(), prev_pos.end(), prev.pos);
+              std::copy(prev_rot.begin(), prev_rot.end(), prev.rot);
+              std::copy(cur_pos.begin(), cur_pos.end(), cur.pos);
+              std::copy(cur_rot.begin(), cur_rot.end(), cur.rot);
+              const dauntless::Pose out = dauntless::lerp_pose(prev, cur, alpha);
+              std::array<double, 3> pos{};
+              std::array<double, 9> rot{};
+              std::copy(out.pos, out.pos + 3, pos.begin());
+              std::copy(out.rot, out.rot + 9, rot.begin());
+              return std::make_pair(pos, rot);
+          },
+          py::arg("prev_pos"), py::arg("prev_rot9"), py::arg("cur_pos"),
+          py::arg("cur_rot9"), py::arg("alpha"),
+          "TEST ONLY: dauntless::lerp_pose, interpolate.lerp_transform's twin. "
+          "Rotations are row-major nine doubles. Returns (pos3, rot9).");
+    m.def("_test_only_handover_blend",
+          [](const std::array<double, 3>& frozen_pos,
+             const std::array<double, 9>& frozen_rot,
+             const std::array<double, 3>& truth_pos,
+             const std::array<double, 9>& truth_rot, double elapsed) {
+              dauntless::Pose frozen{}, truth{};
+              std::copy(frozen_pos.begin(), frozen_pos.end(), frozen.pos);
+              std::copy(frozen_rot.begin(), frozen_rot.end(), frozen.rot);
+              std::copy(truth_pos.begin(), truth_pos.end(), truth.pos);
+              std::copy(truth_rot.begin(), truth_rot.end(), truth.rot);
+              dauntless::HandoverBlend blend;
+              blend.begin(frozen);
+              blend.advance(elapsed);
+              const dauntless::Pose out = blend.blend(truth);
+              std::array<double, 3> pos{};
+              std::array<double, 9> rot{};
+              std::copy(out.pos, out.pos + 3, pos.begin());
+              std::copy(out.rot, out.rot + 9, rot.begin());
+              return std::make_pair(pos, rot);
+          },
+          py::arg("frozen_pos"), py::arg("frozen_rot9"), py::arg("truth_pos"),
+          py::arg("truth_rot9"), py::arg("elapsed"),
+          "TEST ONLY: dauntless::HandoverBlend after begin(frozen) and "
+          "advance(elapsed), blended toward truth. Returns (pos3, rot9).");
 
     m.def("set_instance_bone_palette",
           [](scenegraph::InstanceId id,

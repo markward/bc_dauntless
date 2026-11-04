@@ -1,6 +1,7 @@
 add_executable(transform_store_tests
     transform_store_test.cc
     torpedo_scan_test.cc
+    interp_buffer_test.cc
 )
 target_link_libraries(transform_store_tests
     PRIVATE
