@@ -86,6 +86,7 @@ add_executable(renderer_tests
     bridge_probe_content_test.cc
     skinned_bridge_test.cc
     head_weld_seam_test.cc
+    head_center_test.cc
     officer_jaw_test.cc
     hdr_msaa_target_test.cc
     hdr_msaa_resolve_test.cc
