@@ -24,7 +24,8 @@ from engine.appc.math import TGPoint3  # noqa: E402
 from engine.appc.ships import ShipClass  # noqa: E402
 from engine.core.game import _set_current_game  # noqa: E402
 from tests.unit.test_native_motion_driver import (  # noqa: E402
-    DT, OFF, _drifting, _engine, _fly, _set, _ship)
+    DT, OFF, _Flight, _ModShip, _drifting, _engine, _fly, _set, _ship)
+from engine.appc import warp_flight  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -114,6 +115,17 @@ def test_ship_spawned_mid_tick_appears_after_the_next_motion_stage():
     assert c.__dict__["_nslot"] in _published()[1]
 
 
+def _assert_all_fields(ship, buf):
+    got = buf[ship.__dict__["_nslot"]]
+    p = ship.GetWorldLocation()
+    v = ship.GetVelocityTG()
+    want = ((p.x, p.y, p.z), tuple(ship.GetWorldRotation().as_tuple()),
+            (v.x, v.y, v.z))
+    for g, w in zip(got, want):
+        assert len(g) == len(w)
+        assert [x.hex() for x in g] == [x.hex() for x in w]
+
+
 def test_published_with_the_switch_off_too():
     _, a, b = _scene()
     nm.reset()
@@ -121,8 +133,61 @@ def test_published_with_the_switch_off_too():
     ship_motion.tick_all_ship_motion(DT)
     tick, buf = _published()
     assert tick == 1
-    got = buf[a.__dict__["_nslot"]]
-    assert [x.hex() for x in got[0]] == [x.hex() for x in _expect(a)[0]]
+    assert nm.counts()["native_calls"] == 0
+    assert len(buf) == 2
+    for s in (a, b):
+        _assert_all_fields(s, buf)
+
+
+def test_python_owned_warp_row_publishes_its_python_pose(monkeypatch):
+    pSet = _set("S")
+    a = _ship("A", pSet, (0.01, 0.02, -0.005))
+    w = _ship("W", pSet, (0.3, -0.1, 0.05))
+    c = _ship("C", pSet, (-0.02, 0.01, 0.03))
+    for s in (a, w, c):
+        _fly(s)
+    w._insystem_warp_transit = _Flight()
+
+    def step(ship, dt):          # a Python-owned segment row
+        ship.SetTranslateXYZ(7.25, -3.5, 1.125)
+        ship.SetVelocity(TGPoint3(0.75, 0.5, -0.25))
+        return True
+
+    monkeypatch.setattr(warp_flight, "step", step)
+    ship_motion.tick_all_ship_motion(DT)
+    assert nm.counts()["warp_rows"] == 1
+    _, buf = _published()
+    assert len(buf) == 3
+    assert buf[w.__dict__["_nslot"]][0] == (7.25, -3.5, 1.125)
+    assert buf[w.__dict__["_nslot"]][2] == (0.75, 0.5, -0.25)
+    for s in (a, w, c):
+        _assert_all_fields(s, buf)
+
+
+def test_row_handed_back_to_python_publishes_its_python_pose():
+    pSet = _set("S")
+    a = _ship("A", pSet, (0.01, 0.02, -0.005))
+    m = _ship("M", pSet, (0.3, -0.1, 0.05), cls=_ModShip)
+    _fly(a)
+    _drifting(m)
+    ship_motion.tick_all_ship_motion(DT)
+    assert nm.counts()["python_rows"]       # M ran in Python
+    _, buf = _published()
+    assert len(buf) == 2
+    for s in (a, m):
+        _assert_all_fields(s, buf)
+
+
+def test_a_non_tgpoint3_velocity_row_is_skipped():
+    """A row whose _velocity is not a TGPoint3 (state 2: a tuple) has no
+    velocity the buffer can hold, so it is left out; its neighbours stay."""
+    pSet, a, b = _scene()
+    b._stationary = True        # immobile: motion passes it over untouched
+    b._velocity = (1.0, 2.0, 3.0)
+    ship_motion.tick_all_ship_motion(DT)
+    _, buf = _published()
+    assert b.__dict__["_nslot"] not in buf
+    assert a.__dict__["_nslot"] in buf
 
 
 def test_reset_clears_the_buffer():

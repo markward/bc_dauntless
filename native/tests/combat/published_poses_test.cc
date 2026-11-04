@@ -57,3 +57,15 @@ TEST(PublishedPoses, ReplacesNotAppends) {
     p.clear();
     EXPECT_TRUE(p.all().empty());
 }
+
+TEST(PublishedPoses, SkipsANonPointVelocity) {
+    World w;
+    const int64_t a = w.ship(1.0, 0.0);
+    const int64_t b = w.ship(2.0, 0.0);
+    w.m.set_i(b, Field::_velocity_state, 2);
+    PublishedPoses p;
+    p.publish(w.m, w.store, {a, b}, 1);
+    ASSERT_EQ(p.all().size(), 1u);
+    EXPECT_NE(p.find(a), nullptr);
+    EXPECT_EQ(p.find(b), nullptr);
+}

@@ -14,6 +14,9 @@ void PublishedPoses::publish(const Mirror& m,
         if (h < 0) continue;
         const ObjectRow* o = m.object(h);
         if (!o) continue;
+        // A _velocity that is not a TGPoint3 (state 2: a tuple) has no
+        // velocity to hold: the row is left out.
+        if (o->_velocity_state == 2) continue;
         constexpr int64_t kMax = std::numeric_limits<uint32_t>::max();
         if (o->xform_index < 0 || o->xform_gen < 0 || o->xform_index > kMax ||
             o->xform_gen > kMax)

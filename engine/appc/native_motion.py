@@ -209,14 +209,17 @@ def _tick_reset() -> None:
 def publish(handles) -> None:
     """Copy each ship row's pose and ``_velocity`` into the native
     published-pose buffer (published_poses.h), tagged with a per-process
-    tick that increments once per call (once per motion stage). -1 and
-    stale handles are skipped natively. Nothing reads it in play yet; it
+    counter that increments once per call (once per motion stage): NOT the
+    GameLoop tick, and not comparable with it. The roster is the non-rock
+    ships in set-iteration order, read at publish time. -1, stale handles,
+    invalid transforms and a non-TGPoint3 ``_velocity`` are skipped
+    natively. Nothing reads it in play yet; it
     changes no state. Runs on the main thread with the GIL held (one short
     copy; the mirror is not written), so nothing here needs the off-main
     queue."""
     global _tick
     _tick += 1
-    _h.combat_motion_publish([h for h in handles], _tick)
+    _h.combat_motion_publish(handles, _tick)
 
 
 def publish_stage() -> None:
