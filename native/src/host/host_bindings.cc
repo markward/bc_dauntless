@@ -36,6 +36,7 @@
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
 #include "dauntless/combat/impulse.h"
+#include "dauntless/combat/motion_step.h"
 #include "dauntless/combat/tractor_force.h"
 #include "dauntless/combat/weapon_geometry.h"
 #include "dauntless/transform_store.h"
@@ -4019,14 +4020,15 @@ struct K2Delivering {
 // 2026-11-03-kernels-off-the-lock-design.md goal 1): a steady_clock span
 // around exactly each kernel's compute call -- K0-K3's next(), K3's
 // apply_hits (counted as K3's) and K4's k4_eligible -- accumulated per
-// kernel (index 0-4) and read-and-reset by combat_compute_take. Pure C++
+// kernel (index 0-4; 5 is kernel M, the motion step) and read-and-reset by
+// combat_compute_take. Pure C++
 // inside the span (no CPython): the GIL release (THE GIL RELEASE, below)
 // encloses it. A throwing compute still closes its span (RAII) and counts.
 struct ComputeTimer {
     std::int64_t ns = 0;
     std::int64_t calls = 0;
 };
-constexpr int kComputeKernels = 5;
+constexpr int kComputeKernels = 6;
 
 std::array<ComputeTimer, kComputeKernels>& compute_timers() {
     static std::array<ComputeTimer, kComputeKernels> t;
@@ -4073,11 +4075,14 @@ private:
 // re-acquires the GIL as it unwinds (the release's destructor), before
 // pybind translates it; the driver then abandons its session as for any
 // exception.
-enum class ComputeSite : int { K0, K1, K2, K3, K3Hits, kCount };
+enum class ComputeSite : int { K0, K1, K2, K3, K3Hits, Motion, kCount };
 constexpr int kComputeSites = static_cast<int>(ComputeSite::kCount);
 
+// The timer index: K0-K3 0-3 (K3Hits is K3's), K4 4, kernel M 5.
 constexpr int compute_kernel(ComputeSite s) {
-    return s == ComputeSite::K3Hits ? 3 : static_cast<int>(s);
+    if (s == ComputeSite::K3Hits) return 3;
+    if (s == ComputeSite::Motion) return 5;
+    return static_cast<int>(s);
 }
 
 // THE GIL PROBE (test only; tests/unit/test_native_gil_release.py,
@@ -12488,6 +12493,36 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("ies_handle"),
               "(online, output) of subsystems.impulse_fractions; -1 is no IES.");
 
+        // Kernel M, the ship-motion step (motion_step.h): one
+        // released_compute around motion_step alone; the write tuples are
+        // built after it, with the GIL held. ValueError: `begin` out of
+        // range.
+        m.def("combat_motion_compute",
+              [](const std::vector<std::int64_t>& rows, std::int64_t player,
+                 double dt, std::int64_t begin, bool resume) {
+                  cb::MotionResult r =
+                      released_compute(ComputeSite::Motion, [&] {
+                          return cb::motion_step(cb::mirror(), dauntless::transform_store(), rows, player, dt, begin, resume);
+                      });
+                  py::list writes;
+                  for (const cb::MotionWrite& w : r.writes) {
+                      auto v3 = [](const cb::Vec3& v) {
+                          return py::make_tuple(v[0], v[1], v[2]);
+                      };
+                      writes.append(py::make_tuple(
+                          w.row, static_cast<int>(w.what), w.speed, v3(w.cav),
+                          v3(w.velocity), v3(w.drift)));
+                  }
+                  return py::make_tuple(static_cast<int>(r.stop), r.at,
+                                        static_cast<int>(r.reason), writes);
+              },
+              py::arg("handles"), py::arg("player"), py::arg("dt"),
+              py::arg("begin"), py::arg("resume_past_warp"),
+              "Kernel M from rows[begin]: (stop, at, reason, writes), writes "
+              "[(row, what, speed, cav, velocity, drift), ...] for "
+              "native_motion's applier. stop 0 done, 1 a warp row, 2 a "
+              "Python row (native_motion.DONE / WARP_ROW / PYTHON_ROW).");
+
         // ── The detection kernel (sensor_detect.h) ───────────────────────
         // Each answers from the mirror exactly as the Python function of the
         // same name would. ValueError means "ask the Python": a ref the
@@ -14607,7 +14642,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               [](int kernel) {
                   if (kernel < 0 || kernel >= kComputeKernels)
                       throw py::value_error(
-                          "combat_compute_take: kernel 0-4 (K0-K4)");
+                          "combat_compute_take: kernel 0-5 (K0-K4, M)");
                   ComputeTimer& t =
                       compute_timers()[static_cast<size_t>(kernel)];
                   const ComputeTimer taken = t;
@@ -14624,7 +14659,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               [](bool armed, int holds, double hold_ms, int throw_site) {
                   if (throw_site < -1 || throw_site >= kComputeSites)
                       throw py::value_error(
-                          "combat_gil_probe_arm: throw_site -1 or 0-4");
+                          "combat_gil_probe_arm: throw_site -1 or 0-5");
                   GilProbe& p = gil_probe();
                   p.holds = holds;
                   p.hold_ns = static_cast<std::int64_t>(hold_ms * 1e6);

@@ -1,0 +1,552 @@
+"""Kernel M (native motion phase 2, Task 4) against Python's
+``ship_motion._step_ship_motion``, one branch per test.
+
+Each differential takes a snapshot of the ships (pose, `_current_speed`,
+`_current_angular_velocity`'s components, `_velocity`, `_drift_velocity`),
+runs the kernel through its binding (``combat_motion_compute``) and the
+reference applier (``native_motion._apply_writes_py``), reads the result,
+restores the snapshot through the real setters (so the mirror is restored
+too), runs the Python step, and compares. Every float compares by
+``float.hex()``, never a tolerance: a mismatch is a bug in the port. Which
+attributes were REBOUND (a new `_velocity` / `_drift_velocity` object) is
+compared too, and `_current_angular_velocity` must keep its object.
+
+The kernel is not wired into the game loop yet (Task 5), so these call the
+binding directly.
+"""
+import pytest
+
+import App
+
+try:
+    import _dauntless_host as _h
+except ImportError:
+    _h = None
+
+pytestmark = pytest.mark.skipif(
+    _h is None or not hasattr(_h, "combat_register"),
+    reason="native combat bindings not built")
+
+from engine.appc import native_combat as nc  # noqa: E402
+from engine.appc import native_motion as nm  # noqa: E402
+from engine.appc import ship_motion  # noqa: E402
+from engine.appc import warp_flight  # noqa: E402
+from engine.appc.math import TGMatrix3, TGPoint3  # noqa: E402
+from engine.appc.ships import ShipClass  # noqa: E402
+from engine.appc.subsystems import (  # noqa: E402
+    ImpulseEngineSubsystem, ShipSubsystem, WarpEngineSubsystem,
+)
+from engine.core.game import Game, _set_current_game  # noqa: E402
+
+DT = 1.0 / 60.0
+MODEL, WORLD = 0, 1
+NAN = float("nan")
+
+
+@pytest.fixture(autouse=True)
+def _switch():
+    _set_current_game(None)
+    nc.reset()
+    nc.configure({})
+    assert nc.enabled()
+    yield
+    nc.reset()
+    _set_current_game(None)
+
+
+# ── Building ships ───────────────────────────────────────────────────────────
+
+def _slot(obj):
+    return obj.__dict__["_nslot"]
+
+
+def _rotate(ship, angle=0.7, axis=(0.267, 0.534, 0.801)):
+    R = TGMatrix3()
+    R.MakeRotation(angle, TGPoint3(*axis))
+    ship.SetMatrixRotation(R)
+
+
+def _ship(name="Ship", pods=2, max_speed=6.3, accel=1.7, ang=0.31,
+          ang_accel=0.11, on=True, slider=1.0):
+    """A ShipClass with a healthy impulse engine of `pods` pods, rotated
+    off the identity and placed just off the origin: a position of the
+    same magnitude as a tick's step, so the step's last bits survive the
+    add (at 10 GU they would round away and hide a mis-ordered product)."""
+    ship = App.ShipClass_Create(name)
+    ies = ImpulseEngineSubsystem("Impulse")
+    ship.SetImpulseEngineSubsystem(ies)
+    ies._max_condition = 100.0
+    ies._condition = 100.0
+    ies._disabled_percentage = 0.25
+    ies.SetMaxSpeed(max_speed)
+    ies.SetMaxAccel(accel)
+    ies.SetMaxAngularVelocity(ang)
+    ies.SetMaxAngularAccel(ang_accel)
+    if on:
+        ies.TurnOn()
+    else:
+        ies.TurnOff()
+    ies.SetPowerPercentageWanted(slider)
+    for i in range(pods):
+        pod = ShipSubsystem("Pod%d" % i)
+        pod._max_condition = 100.0
+        pod._condition = 100.0
+        pod._disabled_percentage = 0.25
+        ies.AddChildSubsystem(pod)
+    ship.SetTranslateXYZ(0.01, -0.02, 0.005)
+    _rotate(ship)
+    return ship, ies
+
+
+def _kill_pods(ies):
+    for i in range(ies.GetNumChildSubsystems()):
+        ies.GetChildSubsystem(i)._condition = 0.0
+
+
+# ── Snapshot, state, the two runs ────────────────────────────────────────────
+
+def _hx(v):
+    return float(v).hex()
+
+
+def _vec(p):
+    if p is None:
+        return None
+    if isinstance(p, TGPoint3):
+        return (_hx(p.x), _hx(p.y), _hx(p.z))
+    return ("unrepresentable", repr(p))
+
+
+def _state(ship):
+    d = ship.__dict__
+    p = ship.GetTranslate()
+    return {
+        "pos": (_hx(p.x), _hx(p.y), _hx(p.z)),
+        "rot": tuple(_hx(v) for v in ship.GetWorldRotation().as_tuple()),
+        "_current_speed": _hx(d["_current_speed"]),
+        "_current_angular_velocity": _vec(d["_current_angular_velocity"]),
+        "_velocity": _vec(d["_velocity"]),
+        "has_drift": "_drift_velocity" in d,
+        "_drift_velocity": _vec(d.get("_drift_velocity")),
+    }
+
+
+class _Snap:
+    """A ship's motion state, restorable through the real setters (each
+    pushes, so the mirror is restored with it)."""
+
+    def __init__(self, ship):
+        d = ship.__dict__
+        self.ship = ship
+        p = ship.GetTranslate()
+        self.pos = (p.x, p.y, p.z)
+        self.rot = ship.GetWorldRotation()
+        self.speed = d["_current_speed"]
+        self.cav = d["_current_angular_velocity"]
+        self.cav_xyz = ((self.cav.x, self.cav.y, self.cav.z)
+                        if isinstance(self.cav, TGPoint3) else None)
+        self.vel = d["_velocity"]
+        self.has_drift = "_drift_velocity" in d
+        self.drift = d.get("_drift_velocity")
+        self.state = _state(ship)
+
+    def objects(self):
+        d = self.ship.__dict__
+        return (d["_current_angular_velocity"] is self.cav,
+                d["_velocity"] is self.vel,
+                d.get("_drift_velocity") is self.drift)
+
+    def restore(self):
+        s = self.ship
+        s.SetTranslateXYZ(*self.pos)
+        s.SetMatrixRotation(self.rot)
+        s._current_speed = self.speed
+        if self.cav_xyz is not None:
+            self.cav.x, self.cav.y, self.cav.z = self.cav_xyz
+        s._current_angular_velocity = self.cav
+        s._velocity = self.vel
+        if self.has_drift:
+            s._drift_velocity = self.drift
+        elif "_drift_velocity" in s.__dict__:
+            del s._drift_velocity
+        assert _state(s) == self.state
+
+
+def _native(ships, player=None, dt=DT, begin=0, resume=False):
+    handles = [_slot(s) for s in ships]
+    ph = -1 if player is None else _slot(player)
+    stop, at, reason, writes = _h.combat_motion_compute(
+        handles, ph, dt, begin, resume)
+    nm._apply_writes_py(ships, writes)
+    return stop, at, nm.REASONS[reason], writes
+
+
+def _assert_mirror(ship):
+    """The row agrees with the Python attributes the kernel writes (a
+    value the mirror cannot represent dumps as four zeros)."""
+    row = _h.combat_dump(_slot(ship))
+    d = ship.__dict__
+    assert _hx(row["_current_speed"]) == _hx(d["_current_speed"])
+    for name in ("_current_angular_velocity", "_velocity",
+                 "_drift_velocity"):
+        got = row[name]
+        got = None if got is None else tuple(_hx(v) for v in got)
+        want = d.get(name)
+        if want is None or isinstance(want, TGPoint3):
+            want = _vec(want)
+        else:
+            want = (_hx(0.0),) * 4
+        assert got == want, name
+
+
+def _differential(ships, ticks=1, player=None, dt=DT, begin=0, resume=False,
+                  python=None):
+    """Run the kernel and the Python step from the same snapshot for
+    `ticks` ticks (continuing from the Python result, which equals the
+    kernel's) and compare. Returns the kernel's writes per tick."""
+    python = python or ship_motion._step_ship_motion
+    log = []
+    for t in range(ticks):
+        snaps = [_Snap(s) for s in ships]
+        stop, at, reason, writes = _native(ships, player, dt, begin, resume)
+        assert (stop, at, reason) == (nm.DONE, len(ships), "None"), t
+        got = [(_state(s), sn.objects()) for s, sn in zip(ships, snaps)]
+        for s in ships:
+            _assert_mirror(s)
+        for sn in reversed(snaps):
+            sn.restore()
+        for s in ships[begin:]:
+            python(s, dt)
+        want = [(_state(s), sn.objects()) for s, sn in zip(ships, snaps)]
+        assert got == want, "tick %d" % t
+        log.append(writes)
+    return log
+
+
+def _moved(before, ship):
+    now = _state(ship)
+    return now["pos"] != before["pos"], now["rot"] != before["rot"]
+
+
+# ── Powered flight ───────────────────────────────────────────────────────────
+
+def test_powered_ramp_model_space():
+    ship, _ies = _ship()
+    ship.SetSpeed(5.0, TGPoint3(0.3, 1.0, -0.2), MODEL)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.05, -0.1, 0.2))
+    before = _state(ship)
+    _differential([ship], ticks=40)
+    assert _moved(before, ship) == (True, True)
+
+
+def test_powered_ramp_world_space():
+    ship, _ies = _ship()
+    ship.SetSpeed(4.0, TGPoint3(1.0, 2.0, -0.5), WORLD)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(-0.07, 0.02, 0.11))
+    before = _state(ship)
+    _differential([ship], ticks=40)
+    assert _moved(before, ship) == (True, True)
+
+
+def test_cap_keep_does_not_brake():
+    ship, _ies = _ship()
+    ship._current_speed = 9.0           # above max 6.3
+    ship.SetSpeed(12.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    _differential([ship], ticks=5)
+    assert ship._current_speed == 9.0
+
+
+def test_reverse():
+    ship, _ies = _ship()
+    ship.SetSpeed(-3.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    _differential([ship], ticks=30)
+    assert ship._current_speed < 0.0
+
+
+def test_switched_off_engine_snaps_down():
+    ship, ies = _ship()
+    ship._current_speed = 4.0
+    ies.TurnOff()
+    ship.SetSpeed(2.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    # Output 0: the cap keeps 4.0 (it does not brake), the commanded 2.0
+    # is under it, and the zeroed accel falls back to FALLBACK_MAX_ACCEL,
+    # so the closure rate alone brings the speed down toward 2.0.
+    _differential([ship], ticks=3)
+    assert 2.0 < ship._current_speed < 4.0
+
+
+def test_angular_caps():
+    ship, _ies = _ship()
+    ship.SetSpeed(1.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(1.0, -2.0, 3.0))
+    _differential([ship], ticks=200)    # 0.31 at 0.11/s: ~2.8 s
+    cav = ship._current_angular_velocity
+    assert (cav.x, cav.y, cav.z) == (0.31, -0.31, 0.31)
+
+
+# ── Every pod out: inertial drift ────────────────────────────────────────────
+
+def test_total_loss_snapshot_then_hold():
+    ship, ies = _ship()
+    ship.SetSpeed(3.0, TGPoint3(0.2, 1.0, 0.1), MODEL)
+    ship._current_speed = 3.0
+    ship._current_angular_velocity = TGPoint3(0.01, 0.02, -0.03)
+    _kill_pods(ies)
+    assert "_drift_velocity" not in ship.__dict__
+    log = _differential([ship], ticks=3)
+    kinds = [[w[1] for w in writes] for writes in log]
+    snap = nm.K_DRIFT_SET | nm.K_VELOCITY
+    assert kinds == [[snap], [nm.K_VELOCITY], [nm.K_VELOCITY]]
+    assert isinstance(ship._drift_velocity, TGPoint3)
+
+
+def test_total_loss_with_no_speed_setpoint_drifts_world_y():
+    ship, ies = _ship()
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.1))
+    assert ship._speed_setpoint is None
+    ship._current_speed = 2.5
+    _kill_pods(ies)
+    _differential([ship], ticks=2)
+    d = ship._drift_velocity
+    assert (d.x, d.y, d.z) == (0.0, 2.5, 0.0)
+
+
+def test_repair_reseeds_speed_from_drift_length():
+    ship, _ies = _ship()
+    ship.SetSpeed(5.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    ship._drift_velocity = TGPoint3(1.0, 2.0, 2.0)      # length 3
+    log = _differential([ship], ticks=2)
+    first = log[0][0][1]
+    assert first & nm.K_DRIFT_CLEAR and first & nm.K_SPEED
+    assert "_drift_velocity" in ship.__dict__
+    assert ship._drift_velocity is None
+    assert not log[1][0][1] & nm.K_DRIFT_CLEAR
+
+
+# ── No real limits: the FALLBACK_MAX_ACCEL snap ──────────────────────────────
+
+def test_fallback_limits_bare_ship():
+    # ShipClass_Create attaches an empty impulse engine (authored limits
+    # 0, no pods); a ShipClass built bare has none at all.
+    ship = ShipClass()
+    assert ship.GetImpulseEngineSubsystem() is None
+    _rotate(ship)
+    ship.SetSpeed(7.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.5, 0.0, -0.25))
+    _differential([ship], ticks=3)
+    assert ship._current_speed == 7.0
+    cav = ship._current_angular_velocity
+    assert (cav.x, cav.y, cav.z) == (0.5, 0.0, -0.25)
+
+
+def test_fallback_limits_zero_authored():
+    # Every authored limit 0: no real limits at all.
+    ship, _ies = _ship(max_speed=0.0, accel=0.0, ang=0.0, ang_accel=0.0)
+    ship.SetSpeed(7.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.5, 0.0, -0.25))
+    _differential([ship], ticks=3)
+    assert ship._current_speed == 7.0
+    # Real speed and rate caps, but accelerations 0: each falls back to
+    # FALLBACK_MAX_ACCEL.
+    ship2, _ies2 = _ship("Ship2", accel=0.0, ang_accel=0.0)
+    ship2.SetSpeed(5.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    ship2.SetTargetAngularVelocityDirect(TGPoint3(0.5, 0.0, -0.25))
+    _differential([ship2], ticks=3)
+    assert ship2._current_angular_velocity.x == 0.31
+
+
+# ── No setpoints ─────────────────────────────────────────────────────────────
+
+def test_setpointless_drift_model_and_world_spin():
+    for space in (MODEL, WORLD):
+        ship = App.ShipClass_Create("Drifter%d" % space)
+        _rotate(ship)
+        ship.SetVelocity(TGPoint3(1.0, 2.0, -3.0))
+        ship.SetAngularVelocity(TGPoint3(0.1, 0.2, 0.3), space)
+        before = _state(ship)
+        log = _differential([ship], ticks=5)
+        assert log == [[]] * 5          # drift.step sets no attribute
+        assert _moved(before, ship) == (True, True)
+
+
+def test_setpointless_player_is_untouched():
+    g = Game()
+    _set_current_game(g)
+    player = App.ShipClass_Create("Player")
+    App.Game_SetCurrentPlayer(player)
+    assert App.Game_GetCurrentPlayer() is player
+    player.SetVelocity(TGPoint3(0.0, 10.0, 0.0))
+    player.SetAngularVelocity(TGPoint3(0.0, 0.0, 1.0), WORLD)
+    before = _state(player)
+    log = _differential([player], ticks=2, player=player)
+    assert log == [[], []]
+    assert _state(player) == before
+
+
+# ── Rows the kernel passes over ──────────────────────────────────────────────
+
+def test_immobile_skips():
+    a, _ = _ship("Static")
+    a.SetStatic(1)
+    b, _ = _ship("Stationary")
+    b.SetStationary(1)
+    for s in (a, b):
+        s.SetSpeed(5.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+        s.SetTargetAngularVelocityDirect(TGPoint3(0.1, 0.0, 0.0))
+        s.SetVelocity(TGPoint3(1.0, 0.0, 0.0))
+    before = [_state(a), _state(b)]
+    log = _differential([a, b], ticks=2)
+    assert log == [[], []]
+    assert [_state(a), _state(b)] == before
+
+
+def test_arriving_skips():
+    ship, _ = _ship("Arriver")
+    wes = WarpEngineSubsystem("Warp")
+    ship.SetWarpEngineSubsystem(wes)
+    wes._dewarp_drive = object()        # the slide is in progress
+    nc.push_arriving(ship)
+    assert _h.combat_dump(_slot(ship))["arriving"] == 1
+    ship.SetSpeed(5.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    before = _state(ship)
+    log = _differential([ship], ticks=2)
+    assert log == [[], []]
+    assert _state(ship) == before
+
+
+# ── Odd values ───────────────────────────────────────────────────────────────
+
+def test_nan_setpoint_takes_pythons_branch():
+    """Review Focus 4: a NaN commanded speed, direction component or
+    angular setpoint takes the branch Python's comparisons take (a NaN
+    compares False everywhere) and gives the same bits."""
+    cases = (
+        lambda s: s.SetSpeed(NAN, TGPoint3(0.0, 1.0, 0.0), MODEL),
+        lambda s: s.SetSpeed(2.0, TGPoint3(NAN, 1.0, 0.0), MODEL),
+        lambda s: s.SetSpeed(2.0, TGPoint3(0.0, NAN, 0.0), WORLD),
+        lambda s: s.SetTargetAngularVelocityDirect(TGPoint3(NAN, 0.1, 0.0)),
+        lambda s: setattr(s, "_current_speed", NAN),
+    )
+    for i, case in enumerate(cases):
+        ship, _ = _ship("Nan%d" % i)
+        ship.SetSpeed(2.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+        ship.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.05))
+        case(ship)
+        _differential([ship], ticks=3)
+
+
+def test_rows_python_raises_on_are_handed_back_untouched():
+    """Review Focus 4: math.cos(inf) raises ValueError (an infinite spin
+    angle), and a spin whose squares underflow divides by a zero rate
+    (ZeroDivisionError). The kernel hands each such row to Python with
+    nothing written, so Python raises there as it does today."""
+    spinner, _ = _ship("Inf")
+    spinner.SetSpeed(1.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    spinner._current_angular_velocity = TGPoint3(float("inf"), 0.0, 0.0)
+    drifter = App.ShipClass_Create("Tiny")
+    drifter.SetAngularVelocity(TGPoint3(1e-200, 0.0, 0.0), WORLD)
+    for ship, exc in ((spinner, ValueError), (drifter, ZeroDivisionError)):
+        before = _state(ship)
+        row = _h.combat_dump(_slot(ship))
+        assert _native([ship]) == (nm.PYTHON_ROW, 0, "FallBack", [])
+        assert _state(ship) == before
+        assert _h.combat_dump(_slot(ship)) == row
+        with pytest.raises(exc):
+            ship_motion._step_ship_motion(ship, DT)
+
+
+def test_unrepresentable_angular_velocity_stops_python_row_and_writes_nothing():
+    ship, _ = _ship()
+    ship.SetSpeed(5.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    ship._current_angular_velocity = (0.1, 0.2, 0.3)   # not a TGPoint3
+    assert _h.combat_dump(_slot(ship))[
+        "_current_angular_velocity_state"] == 2
+    before = _state(ship)
+    row = _h.combat_dump(_slot(ship))
+    stop, at, reason, writes = _native([ship])
+    assert (stop, at, reason, writes) == (
+        nm.PYTHON_ROW, 0, "Unrepresentable", [])
+    assert _state(ship) == before
+    assert _h.combat_dump(_slot(ship)) == row
+
+
+def test_warp_row_stops_and_resume_past_warp_runs_it(monkeypatch):
+    ship, _ = _ship("Warper")
+    ship.SetSpeed(5.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.05))
+    ship.begin_warp_flight(warp_flight.WarpFlight(
+        heading=(0.0, 1.0, 0.0), speed_policy="heading"))
+    assert _h.combat_dump(_slot(ship))["_insystem_warp_transit"] == 1
+    before = _state(ship)
+    assert _native([ship]) == (nm.WARP_ROW, 0, "None", [])
+    assert _state(ship) == before
+    # Resumed past the warp check (Python's warp_flight.step returned
+    # False): the rest of the row is the ordinary step.
+    monkeypatch.setattr(warp_flight, "step", lambda s, dt: False)
+    _differential([ship], ticks=3, resume=True)
+    assert _moved(before, ship)[0]
+    # resume_past_warp covers only the row it resumes at.
+    other, _ = _ship("Warper2")
+    other.SetSpeed(5.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    other.begin_warp_flight(warp_flight.WarpFlight(
+        heading=(0.0, 1.0, 0.0), speed_policy="heading"))
+    stop, at, reason, writes = _native([ship, other], resume=True)
+    assert (stop, at, reason) == (nm.WARP_ROW, 1, "None")
+    assert [w[0] for w in writes] == [0]
+
+
+def test_rows_before_a_stop_are_committed_and_after_untouched():
+    a, _ = _ship("A")
+    b, _ = _ship("B")
+    c, _ = _ship("C")
+    for s in (a, b, c):
+        s.SetSpeed(5.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+        s.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.05))
+    b._current_angular_velocity = (0.0, 0.0, 0.0)   # unrepresentable
+    snap_a = _Snap(a)
+    before_b, before_c = _state(b), _state(c)
+    stop, at, reason, writes = _native([a, b, c])
+    assert (stop, at, reason) == (nm.PYTHON_ROW, 1, "Unrepresentable")
+    assert [w[0] for w in writes] == [0]
+    got_a = _state(a)
+    assert _state(b) == before_b and _state(c) == before_c
+    snap_a.restore()
+    ship_motion._step_ship_motion(a, DT)
+    assert got_a == _state(a)
+    # The driver resumes past Python's row: C alone is the kernel's.
+    _differential([a, b, c], begin=2)
+
+
+def test_handles_out_of_range_begin_raises():
+    ship, _ = _ship()
+    with pytest.raises(ValueError):
+        _h.combat_motion_compute([_slot(ship)], -1, DT, 2, False)
+
+
+def test_constants():
+    assert (nm.DONE, nm.WARP_ROW, nm.PYTHON_ROW) == (0, 1, 2)
+    assert nm.REASONS == ("None", "NoRow", "NotStock", "Unrepresentable",
+                          "FallBack", "BadTransform")
+    assert (nm.K_SPEED, nm.K_ANG_VEL, nm.K_VELOCITY, nm.K_DRIFT_SET,
+            nm.K_DRIFT_CLEAR) == (1, 2, 4, 8, 16)
+
+
+def test_compute_runs_with_the_gil_released_and_is_timed_as_kernel_m():
+    """The binding's one released_compute (its source is guarded by
+    test_native_k1_holds_gil.py): the probe sees the call at the Motion
+    site (index 5) with the GIL released, and the compute timer counts it
+    as kernel 5."""
+    ship, _ = _ship()
+    ship.SetSpeed(1.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    _h.combat_gil_probe_arm(False)
+    _h.combat_gil_probe_take()
+    _h.combat_compute_take(5)
+    _h.combat_gil_probe_arm(True)
+    try:
+        _native([ship])
+    finally:
+        _h.combat_gil_probe_arm(False)
+    got = _h.combat_gil_probe_take()
+    assert got["calls"] == [0, 0, 0, 0, 0, 1], got
+    assert got["released"] == got["calls"], got
+    assert _h.combat_compute_take(5)[1] == 1

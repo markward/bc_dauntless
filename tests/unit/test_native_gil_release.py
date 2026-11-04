@@ -46,6 +46,9 @@ pytestmark = pytest.mark.skipif(
 # The probe's sites (host_bindings.cc ComputeSite), in order.
 SITES = ("k0", "k1", "k2", "k3", "k3_hits")
 K0, K1, K2, K3, K3_HITS = range(5)
+# Kernel M's site (native motion phase 2), after the five above. Not wired
+# into the loop until that plan's Task 5, so this fight never computes it.
+MOTION = 5
 RADIUS = 4.0
 
 
@@ -122,7 +125,7 @@ def test_every_compute_call_runs_with_the_gil_released(monkeypatch):
         for _ in range(10):                 # unarmed: the probe is idle
             fight.tick()
         idle = _h.combat_gil_probe_take()
-        assert idle["calls"] == [0] * 5, idle
+        assert idle["calls"] == [0] * 6, idle
         spied = _spy_calls(mp, ("combat_k0_next", "combat_k1_next",
                                 "combat_k2_next", "combat_k3_next",
                                 "combat_k3_apply_hits"))
@@ -135,8 +138,8 @@ def test_every_compute_call_runs_with_the_gil_released(monkeypatch):
     # Every binding call made one compute call, and each ran released.
     assert got["calls"] == [spied["combat_k0_next"], spied["combat_k1_next"],
                             spied["combat_k2_next"], spied["combat_k3_next"],
-                            spied["combat_k3_apply_hits"]], (got, spied)
-    assert all(n > 0 for n in got["calls"]), got
+                            spied["combat_k3_apply_hits"], 0], (got, spied)
+    assert all(n > 0 for n in got["calls"][:MOTION]), got
     assert got["released"] == got["calls"], got
 
 
