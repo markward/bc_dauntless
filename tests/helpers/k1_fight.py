@@ -497,12 +497,18 @@ class _Scene:
     # ── Run ──────────────────────────────────────────────────────────────────
 
     def run(self, ticks_per_frame, ops, ticks=TICKS, before_frame=None,
-            scope="tick"):
+            scope="tick", whole_ticks: bool = False):
         """`scope` "tick" runs each tick's weapons and combat inside the
         host's effect scope (open with native on only, as in play). "both"
         opens effect_queue.scope() itself, in BOTH arms, around each tick
         and each op: every weapon event a tick or an op produces is then
-        delivered when it ends, in the Python reference too."""
+        delivered when it ends, in the Python reference too.
+
+        `whole_ticks` drives the host's order since native motion phase 4
+        (ruling 2): per frame, both op draws first (the frame-start input),
+        then each tick whole -- its subsystem update, then its weapons,
+        combat and boundary. Off: the batched order (every tick's subsystem
+        update, then the between-batch ops, then every combat tick)."""
         rng = random.Random(SEED)
 
         def tick_scope():
@@ -519,28 +525,41 @@ class _Scene:
             with op_scope():
                 self.op(rng, ops)
 
+        def combat_tick():
+            self.tick += 1
+            ships = list(iter_ships())
+            with tick_scope():
+                host_loop._advance_weapons(ships, TICK_DELTA)
+                host_loop._advance_combat(ships, TICK_DELTA,
+                                          player=self.player,
+                                          push_render_data=False)
+            host_loop._combat_tick_boundary()   # as the host does (native damage)
+            self.record()
+            if rng.random() < 0.3:
+                op()
+
+        def gameloop_tick():
+            App.g_kTimerManager._time += TICK_DELTA
+            game_loop._update_ship_subsystems()
+
         while self.tick < ticks:
             if before_frame is not None:
                 before_frame(self)
             for _ in range(rng.randint(0, 2)):
                 op()
-            for _ in range(ticks_per_frame):
-                App.g_kTimerManager._time += TICK_DELTA
-                game_loop._update_ship_subsystems()
-            for _ in range(rng.randint(0, 2)):
-                op()
-            for _ in range(ticks_per_frame):
-                self.tick += 1
-                ships = list(iter_ships())
-                with tick_scope():
-                    host_loop._advance_weapons(ships, TICK_DELTA)
-                    host_loop._advance_combat(ships, TICK_DELTA,
-                                              player=self.player,
-                                              push_render_data=False)
-                host_loop._combat_tick_boundary()   # as the host does (native damage)
-                self.record()
-                if rng.random() < 0.3:
+            if whole_ticks:
+                for _ in range(rng.randint(0, 2)):
                     op()
+                for _ in range(ticks_per_frame):
+                    gameloop_tick()
+                    combat_tick()
+            else:
+                for _ in range(ticks_per_frame):
+                    gameloop_tick()
+                for _ in range(rng.randint(0, 2)):
+                    op()
+                for _ in range(ticks_per_frame):
+                    combat_tick()
             sensor_contacts.tick(self.player,
                                  App.g_kUtopiaModule.GetGameTime())
         if self.native:

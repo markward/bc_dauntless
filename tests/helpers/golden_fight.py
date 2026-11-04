@@ -14,7 +14,8 @@ are those fights themselves, imported, not copied:
 
 * ``k1_ops_tpf1`` / ``k1_ops_tpf6``: the K1 differential's combat_stress op
   stream (tests/helpers/k1_fight.py ``_Scene``,
-  ``OPS``), 1 and 6 ticks per frame;
+  ``OPS``), 1 and 6 ticks per frame; ``tpf6`` in the host's whole-tick
+  order (``whole_ticks=True``, native motion phase 4, ruling 2);
 * ``k1_gameloop_ai``: the same fight under GameLoop's real AI (its
   ``_loop_arm``, after a discarded warm-up arm, as the differential runs);
 * ``k1_midwalk_handler``: its mid-walk handler scene (``handler_arm``);
@@ -286,6 +287,16 @@ def _check_native(scene):
 def _k1_ops(mp, env, spec):
     scene = k1d._Scene(mp, env, ships=spec.ships)
     scene.run(spec.tpf, k1d.OPS, ticks=spec.ticks)
+    _check_native(scene)
+    return _k1_take(scene)
+
+
+def _k1_ops_whole_ticks(mp, env, spec):
+    """_k1_ops in the host's whole-tick order (native motion phase 4,
+    ruling 2): each tick's subsystem update, weapons, combat and boundary
+    together, the frame's ops at frame start."""
+    scene = k1d._Scene(mp, env, ships=spec.ships)
+    scene.run(spec.tpf, k1d.OPS, ticks=spec.ticks, whole_ticks=True)
     _check_native(scene)
     return _k1_take(scene)
 
@@ -634,7 +645,8 @@ def _motion_branches(mp, env, spec):
 def _host_frames(mp, env, spec):
     """tests/helpers/host_frame_fight.py: the GameLoop fight through
     host_loop._run_frame_sim, FRAME_TICKS ticks per frame, with ops (native
-    motion phase 4, Task 2: recorded in the batched order)."""
+    motion phase 4: recorded in the batched order in Task 2, re-recorded in
+    whole ticks for ruling 2 in Task 3)."""
     from tests.helpers import host_frame_fight as hff
     return hff.run(mp, env, spec, hff.FRAME_TICKS, 300, hff.HOST_FRAME_OPS)
 
@@ -649,7 +661,8 @@ def _host_frames_tpf1(mp, env, spec):
 
 SCENES = {s.name: s for s in (
     Scene("k1_ops_tpf1", "native", k1d.SEED, "8", k1d.TICKS, 1, _k1_ops),
-    Scene("k1_ops_tpf6", "native", k1d.SEED, "8", k1d.TICKS, 6, _k1_ops),
+    Scene("k1_ops_tpf6", "native", k1d.SEED, "8", k1d.TICKS, 6,
+          _k1_ops_whole_ticks),
     Scene("k1_gameloop_ai", "native", k1d.SEED, "8", k1d.LOOP_TICKS, 1,
           _k1_gameloop_ai),
     Scene("k1_midwalk_handler", "native", k1d.SEED, "8", k1d.HANDLER_TICKS,

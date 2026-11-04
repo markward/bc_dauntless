@@ -23,8 +23,10 @@ native (fire control native only, Task 3) and was re-recorded once for
 ruling R8 (its events queued). ``sdk_dumb_fire`` runs native since the SDK's
 FireDumb went native (Task 4, M8.1), against its Python recording,
 unchanged. ``host_frames`` and ``host_frames_tpf1`` run real host frames
-(``_run_frame_sim``), recorded in the batched order before native motion
-phase 4 reorders the frame into whole ticks.
+(``_run_frame_sim``), recorded in the batched order, then ``host_frames`` and
+``k1_ops_tpf6`` re-recorded once for native motion phase 4's whole ticks
+(ruling 2); ``host_frames_tpf1`` (one tick a frame, no ops) is the same
+sequence in both orders, unchanged.
 """
 import os
 
@@ -94,9 +96,10 @@ def test_sdk_dumb_fire():
 
 
 def test_host_frames():
-    """Real host frames (host_loop._run_frame_sim, headless) in today's
-    batched order: n GameLoop ticks, then n combat ticks, per frame; the op
-    stream through the patched _poll_fire_keys (native motion phase 4)."""
+    """Real host frames (host_loop._run_frame_sim, headless) in whole
+    ticks (ruling 2): each GameLoop tick, then its combat tick and boundary;
+    the op stream through the patched _poll_fire_keys at frame start (native
+    motion phase 4)."""
     _golden("host_frames")
 
 

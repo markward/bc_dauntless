@@ -167,7 +167,11 @@ def test_tick_dt_is_only_handed_to_per_tick_calls():
             node = parent[node]
             if _is_per_tick_loop(node):
                 return True
-            if isinstance(node, ast.FunctionDef) and node.name == "_tick_gameloop":
+            # The GameLoop tick, and the whole tick (ruling 2) that runs
+            # it, weapons, combat and the boundary: advance_ticks calls
+            # each once per tick.
+            if (isinstance(node, ast.FunctionDef)
+                    and node.name in ("_tick_gameloop", "_whole_tick")):
                 return True
         return False
 

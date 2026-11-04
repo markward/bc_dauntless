@@ -7449,10 +7449,17 @@ def _sync_player_identity(session, on_player_change=None) -> None:
     player yet.
 
     The scene reconcile's player tail, split out because the reconcile runs
-    AFTER the sim: the host loop also calls this ahead of the sim, so on a
-    RecreatePlayer tick input, weapons, combat and the warp FSM drive the new
-    ship rather than the destroyed one (system-frames Plan 3, Ruling 11;
-    order guarded by tests/host/test_scene_reconcile_ordering.py)."""
+    AFTER the sim. The host loop also calls it twice before that, in
+    _run_frame_sim (system-frames Plan 3, Ruling 11; native motion phase 4,
+    ruling 2): at frame start, so a frame-start RecreatePlayer (QuickBattle's
+    preload-done spawn) has input, the fire keys and the frame's whole ticks
+    drive the new ship rather than the destroyed one; and after the ticks,
+    so a RecreatePlayer inside a tick (an SDK timer) reaches the post-tick
+    pass (sensor contacts, crew prompts, dash, hand-off) that same frame.
+    Inside the ticks combat keeps the frame-start player, which it uses only
+    for the render push (the host passes push_render_data=False). Order
+    guarded by tests/host/test_scene_reconcile_ordering.py and
+    tests/integration/test_whole_ticks.py."""
     game = Game_GetCurrentGame()
     new_player = game.GetPlayer() if game is not None else None
     if new_player is not None and new_player is not session.player:
@@ -10862,24 +10869,12 @@ def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
     _player_dt = 0.0 if pause.sim_frozen else min(max(_frame_dt, 0.0), MAX_FRAME_DT)
     # The GAME time this frame covers: the GameLoop ticks it runs.
     # Everything below that steps game state does so once per tick
-    # (`for _ in range(_sim_ticks_this_frame)`) or by this -- never by
-    # one TICK_DT per frame, which ran combat at a third of its speed
-    # in a 3-tick frame and double speed at 120 fps
-    # (tests/host/test_frame_rate_independence.py).
+    # (inside _whole_tick, or `for _ in range(_sim_ticks_this_frame)`)
+    # or by this -- never by one TICK_DT per frame, which ran combat at
+    # a third of its speed in a 3-tick frame and double speed at 120
+    # fps (tests/host/test_frame_rate_independence.py).
     _frame_game_dt = _sim_ticks_this_frame * TICK_DT
     _interp_alpha = _accumulator / TICK_DT  # in [0, 1) after step_accumulator
-    # GameLoop = timers, the TimeSliceProcess scheduler, the AI
-    # tree-walk, collision avoidance, motion integration and the
-    # per-ship shield/power/cloak/repair updates. Timed separately
-    # from the weapon/combat pumps below, which it does NOT drive.
-    # advance_ticks rolls the interpolation buffer and, on a frame
-    # that runs 2+ ticks, re-seats its prev just before the last one,
-    # so the drawn pose always blends across exactly one tick.
-    advance_ticks(_xform_buf, _sim_ticks_this_frame, _tick_gameloop)
-    # The warp tunnel's destination preload: at most one model load
-    # per frame, so no tunnel frame pays for the whole destination.
-    with frame_profiler.scope("warp.preload"):
-        _step_warp_preload()
 
     # Only snap the camera when a sim tick actually fired —
     # no tick means no state change to follow.
@@ -11005,15 +11000,17 @@ def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
                 if _cmd_held or _ctrl_held:
                     _h.cef_reload()
 
-    # This frame's ships, when the sim runs; None on a frozen frame
-    # (the render section keys the combat feed push off it).
+    # This frame's ships: each whole tick rebuilds it (_whole_tick), a
+    # running frame with no tick builds it once after the ticks; None
+    # on a frozen frame (the render section keys the combat feed push
+    # off it).
     _ships_this_tick = None
-    # Everything below is SIMULATION — ship/camera input, firing,
-    # weapons, combat, sensors, nebula — so it gates on sim_frozen,
-    # not on the menu. The DevTools keys above deliberately sit in the
-    # is_open block instead: DevTools freezes the sim, so gating F12 on
-    # sim_frozen would make it impossible to press F12 a second time to
-    # close DevTools again.
+    # The input below is SIMULATION — ship/camera input, firing — so it
+    # gates on sim_frozen, not on the menu, as the post-tick pass does.
+    # The DevTools keys above deliberately sit in the is_open block
+    # instead: DevTools freezes the sim, so gating F12 on sim_frozen
+    # would make it impossible to press F12 a second time to close
+    # DevTools again.
     if not pause.sim_frozen:
         # Apply keyboard input to the player ship's transform and to the
         # orbit camera (see _apply_input below).
@@ -11112,8 +11109,10 @@ def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
             # Manual Aim (H): re-pick the cursor's hull point on the
             # player's target, or revert to the subsystem lock. Sim side
             # on purpose -- it mutates the player's target offset, which
-            # the weapon tick below and the phaser tick in
-            # _advance_combat both read this same frame.
+            # the weapon ticks and the phaser ticks in _advance_combat
+            # (each whole tick below) all read this same frame. At frame
+            # start it picks against last frame's target pose with last
+            # frame's camera, which agree.
             manual_aim.update(
                 player=player,
                 tcw=TacticalControlWindow.GetInstance(),
@@ -11121,42 +11120,74 @@ def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
                 is_exterior=view_mode.is_exterior,
             )
 
-        # Advance weapon charge / reload for every ship in every
-        # active set.  Runs after AI/physics (approximate — the host
-        # loop is single-threaded and Python AI runs in the gameloop
-        # tick above) so emitters are ready when AI fire calls land.
-        # Materialize the ship list once per tick — both consumers
-        # re-walked every set independently before.
-        #
-        # Once per GAME TICK, not once per frame: torpedo flight,
-        # phaser dwell, weapon charge and every effect clock in
-        # _advance_combat step by TICK_DT, so a frame that ran three
-        # ticks must step them three times (see _frame_game_dt). A
-        # frame that ran none steps nothing; the list is still built
-        # for the render section's combat feed.
+    # --- Each tick runs whole (native motion phase 4, ruling 2) ---
+    # Everything above ran at FRAME START, before tick 0: the swap
+    # drain, the session sync (preload-done spawn, deletions, player
+    # identity), the keys and the input stages (the manual player's
+    # integrator, fire keys, mouse, chords, Manual Aim). So this
+    # frame's first AI tick sees this frame's manual pose and firing
+    # state, and a press reaches the frame's first combat tick.
+    #
+    # One whole tick: GameLoop tick i (timers, the TimeSliceProcess
+    # scheduler, the AI tree-walk, collision avoidance, motion and the
+    # per-ship shield/power/cloak/repair updates), then weapons and
+    # combat tick i on the ships alive after it, then the combat tick
+    # boundary (the tick's held effects, GameLoop's included:
+    # owns_boundary=False). Combat tick i reads motion tick i's poses,
+    # and AI tick i+1 sees combat tick i's hits. Torpedo flight, phaser
+    # dwell, weapon charge and every effect clock step by TICK_DT, once
+    # per GAME TICK, never once per frame (see _frame_game_dt).
+    def _whole_tick():
+        nonlocal _ships_this_tick
+        _tick_gameloop()
+        # The tick may have killed or spawned a ship: the list is
+        # materialized once per tick, after its GameLoop tick, and both
+        # consumers below share it.
         with frame_profiler.scope("sim.ship_list"):
             _ships_this_tick = list(_all_ships_for_tick())
-        for _tick_i in range(_sim_ticks_this_frame):
-            if _tick_i:
-                # The tick before may have killed or spawned a ship.
-                with frame_profiler.scope("sim.ship_list"):
-                    _ships_this_tick = list(_all_ships_for_tick())
-            # Weapon events and sounds both produce are delivered
-            # when this closes (native combat on; _combat_effect_scope).
-            with _combat_effect_scope():
-                with frame_profiler.scope("sim.weapons"):
-                    _advance_weapons(_ships_this_tick, TICK_DT)
-                with frame_profiler.scope("sim.combat"):
-                    _advance_combat(
-                        _ships_this_tick, TICK_DT,
-                        ship_instances=(session.ship_instances if session is not None else None),
-                        ship_emitters=(session.ship_emitters if session is not None else None),
-                        player=player,
-                        # Pushed after the camera, once the render origin is
-                        # set (_push_combat_render_data below).
-                        push_render_data=False,
-                    )
-            _combat_tick_boundary()
+        # Weapon events and sounds both produce are delivered
+        # when this closes (native combat on; _combat_effect_scope).
+        with _combat_effect_scope():
+            with frame_profiler.scope("sim.weapons"):
+                _advance_weapons(_ships_this_tick, TICK_DT)
+            with frame_profiler.scope("sim.combat"):
+                _advance_combat(
+                    _ships_this_tick, TICK_DT,
+                    ship_instances=(session.ship_instances if session is not None else None),
+                    ship_emitters=(session.ship_emitters if session is not None else None),
+                    player=player,
+                    # Pushed after the camera, once the render origin is
+                    # set (_push_combat_render_data below).
+                    push_render_data=False,
+                )
+        _combat_tick_boundary()
+
+    # advance_ticks rolls the interpolation buffer and, on a frame
+    # that runs 2+ ticks, re-seats its prev just before the last one
+    # (after whole tick n-1's boundary), so the drawn pose always
+    # blends across exactly one tick. The tick count was decided at
+    # the frame top: a frame frozen mid-frame (a dev key in sim.keys)
+    # still runs its whole ticks.
+    advance_ticks(_xform_buf, _sim_ticks_this_frame, _whole_tick)
+    # The warp tunnel's destination preload: at most one model load
+    # per frame, so no tunnel frame pays for the whole destination.
+    with frame_profiler.scope("warp.preload"):
+        _step_warp_preload()
+
+    # A tick may have changed the game's player (an SDK timer's
+    # RecreatePlayer): sync again, so the post-tick pass below
+    # (sensor contacts, crew prompts, dash, hand-off) drives the new
+    # ship this frame, as the old post-tick session sync did.
+    if session is not None:
+        _sync_player_identity(session, _on_player_change)
+    player = session.player if session is not None else None
+
+    if not pause.sim_frozen:
+        # A frame that ran no tick still builds the list once, for the
+        # render section's combat feed.
+        if _ships_this_tick is None:
+            with frame_profiler.scope("sim.ship_list"):
+                _ships_this_tick = list(_all_ships_for_tick())
 
         # Player-only contact manager: bands, proximity events and the
         # identification dwell (engine/appc/sensor_contacts.py). Sim-gated

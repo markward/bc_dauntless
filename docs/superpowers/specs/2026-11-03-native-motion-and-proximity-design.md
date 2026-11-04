@@ -204,6 +204,8 @@ Instead:
 
 ### 5.4 Phase 4 — whole ticks (ruling 2)
 
+**Status 2026-11-04** (`ws/motion-phase4`): whole ticks landed (Task 3): `_whole_tick` in `host_loop._run_frame_sim`, the frame-start stages moved, a second player-identity sync after the ticks, `host_frames` and `k1_ops_tpf6` re-recorded once; the behaviour shifts and their pins are in `docs/reference/engine/perf-cadences-and-latency.md`, "Whole ticks (ruling 2)". Still open: combat reading the published poses (Task 4), the measurement and Mark's live check (Task 5).
+
 - `advance_ticks` drives one complete tick at a time: GameLoop tick *i* (AI, motion, publish, subsystems), then combat tick *i*, then the combat tick boundary.
 - The interpolation re-seat moves with it.
 - **The per-frame stages that sit between the ticks and the combat ticks today (my call):** the mission-swap drain, `sim.session_sync` (Quick Battle's preload spawn, object deletions, player identity), `sim.input` (the manual player's integrator, fire keys, mouse, chords) and `manual_aim.update` move to **frame start, before tick 0**.
