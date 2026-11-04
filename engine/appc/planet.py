@@ -388,6 +388,22 @@ class ProximityManager:
             if not isinstance(obj, _query_deps()[0]):     # see AddObject
                 proximity_cache.bump()
 
+    def _forget(self, obj) -> None:
+        """`obj` has left this manager's set: drop every occurrence of it from
+        the list (ruling 6, native-motion design s3), so a ship Quick Battle
+        UpdateObject'd in is not returned after it is evicted, deleted or
+        warps away. Also drops the cached candidates, which hold it strongly,
+        so a manager never queried again does not keep it alive. Checks are
+        left alone: their lifetime is RemoveAndDelete / _proximity_checks."""
+        if not self._holds(obj) or isinstance(obj, _query_deps()[0]):
+            return
+        self._objects = [o for o in self._objects if o is not obj]
+        self._cand = None
+        proximity_cache.bump()
+
+    def _holds(self, obj) -> bool:
+        return any(o is obj for o in self._objects)
+
     def GetNumObjects(self) -> int:
         return len(self._objects)
 

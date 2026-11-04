@@ -299,6 +299,7 @@ class SetClass(TGEventHandlerObject):
         if self._non_torpedo.pop(name, None) is not None:
             proximity_cache.bump()  # after the handlers, at the index pop
         removed = self._objects.pop(name, None)
+        self._forget_in_proximity(removed)
         return removed
 
     def DeleteObjectFromSet(self, name: str) -> None:
@@ -319,7 +320,21 @@ class SetClass(TGEventHandlerObject):
             self._clear_containing_set(obj)
         if self._non_torpedo.pop(name, None) is not None:
             proximity_cache.bump()  # after the handlers, at the index pop
-        self._objects.pop(name, None)
+        self._forget_in_proximity(self._objects.pop(name, None))
+
+    def _forget_in_proximity(self, obj) -> None:
+        """An object that left this set leaves its manager list too (ruling
+        6): Quick Battle UpdateObject's every ship in and never RemoveObject's
+        one, so an evicted hulk, a ship deleted at End Combat or one that
+        warped away was still returned by AvoidObstacles' queries. Not while
+        it is still a member under another name (including one a handler on
+        the removal broadcast re-added it under)."""
+        pm = self.__dict__.get("_proximity_manager")
+        if obj is None or pm is None or not pm._holds(obj):
+            return
+        if any(o is obj for o in self._objects.values()):
+            return
+        pm._forget(obj)
 
     def _clear_containing_set(self, obj) -> None:
         """Stop `obj` reporting THIS set once it has left it, so
