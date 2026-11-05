@@ -7,6 +7,8 @@
 #include "renderer/hull_fill_cache.h"
 #include "renderer/dynamic_lights.h"
 #include "renderer/aabb.h"
+#include "renderer/hull_cull.h"
+#include <cfloat>
 #include "renderer/part_severance_check.h"
 #include <renderer/atmosphere_math.h>
 #include <renderer/asset_path.h>
@@ -450,19 +452,39 @@ int bind_hull_decal_list(const Shader& prog,
 // model silently inherits the old model's bounding radius.
 // The box centre is cached beside the radius: a sphere of that radius bounds
 // the model only around the centre (interior_is_near), not the origin.
+// `cullable` (phase 5a hull cull): every mesh has a finite rest-pose box, so
+// the sphere really bounds what draw_model draws. A mesh with no CPU data, no
+// drawing node or a parentless non-root node (mesh_body_aabbs' unbounded box),
+// or a skinned model (bones deform past the bind pose), is never culled.
 struct ModelBounds {
     glm::vec3 centre{0.0f};
     float radius = 0.0f;
+    bool cullable = false;
 };
 std::unordered_map<scenegraph::ModelHandle, ModelBounds> g_model_radius_cache;
+
+const std::vector<Aabb>& model_mesh_boxes(scenegraph::ModelHandle handle,
+                                          const assets::Model& model);
 
 const ModelBounds& model_bounds(scenegraph::ModelHandle handle, const assets::Model& model) {
     auto it = g_model_radius_cache.find(handle);
     if (it != g_model_radius_cache.end()) return it->second;
     const Aabb box = compute_model_aabb(model);
+    const std::vector<Aabb>& boxes = model_mesh_boxes(handle, model);
+    bool cullable = !boxes.empty() && model.skeleton.bones.empty();
+    for (const Aabb& b : boxes)
+        if (b.half_extents.x == FLT_MAX || b.half_extents.y == FLT_MAX ||
+            b.half_extents.z == FLT_MAX)
+            cullable = false;
     return g_model_radius_cache
-        .emplace(handle, ModelBounds{box.center, glm::length(box.half_extents)})
+        .emplace(handle, ModelBounds{box.center, glm::length(box.half_extents), cullable})
         .first->second;
+}
+
+// A hull's moving parts may leave its rest-pose bound: rigged (articulation)
+// or posed right now.
+bool hull_moves_parts(const scenegraph::Instance& inst) {
+    return inst.rigged || !inst.node_overrides.empty();
 }
 
 float model_bounding_radius(scenegraph::ModelHandle handle,
@@ -1580,12 +1602,25 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     static const std::vector<SunDescriptor> kNoSuns;
 
     const int mesh_draws_before = g_draw_model_mesh_draws;
+    const bool cull = hull_cull_enabled();
+    const Frustum frustum(camera.proj_matrix() * camera.view_matrix());
     world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
         // Far tier (far-tier spec §3): a mesh fully handed to its impostor is
         // not drawn at all.
         if (inst.far_fade >= 1.0f) return;
-        ++opaque_stats_.instances;
         const assets::Model* m = lookup(inst.model_handle);
+        // Phase 5a: a hull wholly outside THIS camera's frustum is skipped
+        // before any per-instance work (the viewscreen feed culls against its
+        // own camera, the main view against its).
+        if (cull && m) {
+            const ModelBounds& b = model_bounds(inst.model_handle, *m);
+            if (!hull_visible(frustum, inst.world, b.centre, b.radius, b.cullable,
+                              hull_moves_parts(inst))) {
+                ++opaque_stats_.culled;
+                return;
+            }
+        }
+        ++opaque_stats_.instances;
         const float rim_strength =
             (dauntless_rim::enabled() && inst.rim_eligible)
                 ? inst.rim_strength * dauntless_rim::kStrengthScale : 0.0f;
@@ -2035,11 +2070,23 @@ void submit_shadow_depth(const scenegraph::World& world,
     // lives in the bind-pose VAOs that draw_model renders. (A skinned model
     // handed here would draw in bind pose, but no rim_eligible Space
     // instance is skinned, so it never is.)
+    // Phase 5a: casters are culled against the LIGHT's box, never a view
+    // camera -- a hull the player cannot see still shadows the player.
+    const bool cull = hull_cull_enabled();
+    const Frustum frustum(light.view_proj);
     world.for_each_visible_in_pass(
         scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
             if (!inst.rim_eligible) return;  // ships + stations only
             const assets::Model* m = lookup(inst.model_handle);
             if (!m) return;
+            if (cull) {
+                const ModelBounds& b = model_bounds(inst.model_handle, *m);
+                if (!hull_visible(frustum, inst.world, b.centre, b.radius, b.cullable,
+                                  hull_moves_parts(inst))) {
+                    ++st.culled;
+                    return;
+                }
+            }
             ++st.instances;
             if (inst.severed_parts == 0 && inst.shown_parts == 0) {
                 st.mesh_draws +=

@@ -627,7 +627,11 @@ TEST_F(HullInteriorTest, NearSphereIsCentredOnTheModelBoxNotItsOrigin) {
     EXPECT_EQ(near.far_draws, 0);
 
     cam.eye = glm::vec3(0.0f, 0.0f, 15.0f);
-    cam.target = glm::vec3(0.0f);
+    // Looking AT the quad (600 GU out along +X): it must be on screen to be
+    // drawn at all -- the hull frustum cull (phase 5a) skips an off-screen
+    // hull, which draws no pixels either way. The camera is still 15 GU from
+    // the model origin, which is the point of this half.
+    cam.target = glm::vec3(600.0f, 0.0f, 0.0f);
     const glm::mat4 world = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
     const auto far = render({Placed{world, ring}}, empty.get(), false, off.get());
     EXPECT_EQ(far.marks, 0) << "a hull 570 GU from the camera was judged near";

@@ -1903,9 +1903,10 @@ void frame() {
             g_sun_pass->render(g_suns, cam, *g_pipeline, now);
         }
         {
-            // The hull draw. No frustum or distance cull runs ahead of this —
-            // every visible Space instance is submitted — so this scope is the
-            // one to watch as ship counts grow.
+            // The hull draw. Hulls wholly outside THIS camera's frustum are
+            // skipped (phase 5a, renderer/hull_cull.h; DAUNTLESS_HULL_CULL=0
+            // submits every one); no distance cull. The profiler's `hulls:`
+            // line shows drawn vs culled against this scope's cost.
             DAUNTLESS_FRAME_SCOPE("space.opaque");
             g_submitter->submit_opaque_in_pass(
                 g_world, cam, *g_pipeline, lookup, g_lighting,

@@ -210,6 +210,7 @@ add_library(renderer STATIC
     warp_in_flash_shape.cc
     warp_in_flash_pass.cc
     aabb.cc
+    hull_cull.cc
     model_parts.cc
     glow_region.cc
     dynamic_lights.cc
