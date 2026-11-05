@@ -67,12 +67,13 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
     glfwMakeContextCurrent(handle_);
 
 #ifdef __APPLE__
-    // Phase 5a experiment: Apple's multithreaded GL engine moves driver work
-    // (the per-draw validation that dominates space.opaque) onto a driver
-    // thread. Off unless DAUNTLESS_GL_MP_ENGINE is exactly "1"; measured in
-    // the phase 5a plan's Task 5 before anyone makes it a default.
-    if (const char* mp = std::getenv("DAUNTLESS_GL_MP_ENGINE");
-        mp != nullptr && std::strcmp(mp, "1") == 0) {
+    // Apple's multithreaded GL engine moves driver work (the per-draw
+    // validation behind space.opaque, and the swap) onto a driver thread:
+    // ≈ 1 ms of main-thread render at 64 ships (perf register SIG-194).
+    // ON by default since 2026-11-05 at Mark's call, after his live check of
+    // the phase 5a build; DAUNTLESS_GL_MP_ENGINE=0 turns it off.
+    const char* mp = std::getenv("DAUNTLESS_GL_MP_ENGINE");
+    if (!(mp != nullptr && std::strcmp(mp, "0") == 0)) {
         const CGLError err = CGLEnable(CGLGetCurrentContext(), kCGLCEMPEngine);
         if (err == kCGLNoError)
             std::fprintf(stderr, "[gl] multithreaded engine: on\n");
