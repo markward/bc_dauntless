@@ -678,6 +678,9 @@ int g_plating_mesh_subset_computations = 0;
 int g_plating_record_uploads = 0;
 int g_draw_model_program_binds = 0;
 int g_draw_model_plating_mesh_draws = 0;
+// Every mesh glDrawElements draw_model_pass issues; submit_opaque_in_pass
+// reads the delta into opaque_stats().mesh_draws.
+int g_draw_model_mesh_draws = 0;
 
 class MeshRecordUploader {
 public:
@@ -1240,6 +1243,7 @@ static void draw_model_pass(const assets::Model& model,
 
             glBindVertexArray(draw_mesh.vao());
             glDrawElements(GL_TRIANGLES, draw_mesh.index_count(), GL_UNSIGNED_INT, nullptr);
+            ++g_draw_model_mesh_draws;
             if (plating_list != nullptr) ++g_draw_model_plating_mesh_draws;
         }
     }
@@ -1575,10 +1579,12 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     const GLuint black = ensure_black_texture();
     static const std::vector<SunDescriptor> kNoSuns;
 
+    const int mesh_draws_before = g_draw_model_mesh_draws;
     world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
         // Far tier (far-tier spec §3): a mesh fully handed to its impostor is
         // not drawn at all.
         if (inst.far_fade >= 1.0f) return;
+        ++opaque_stats_.instances;
         const assets::Model* m = lookup(inst.model_handle);
         const float rim_strength =
             (dauntless_rim::enabled() && inst.rim_eligible)
@@ -1722,6 +1728,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             }
         }
     });
+    opaque_stats_.mesh_draws += g_draw_model_mesh_draws - mesh_draws_before;
 }
 
 FrameSubmitter::PlatingListCacheEntry& FrameSubmitter::plating_entry_for(
@@ -1993,7 +2000,10 @@ bool          g_active_shadow_enabled = false;
 void submit_shadow_depth(const scenegraph::World& world,
                          const ShadowLight& light,
                          Pipeline& pipeline,
-                         const FrameSubmitter::ModelLookup& lookup) {
+                         const FrameSubmitter::ModelLookup& lookup,
+                         HullDrawStats* stats) {
+    HullDrawStats local;
+    HullDrawStats& st = stats != nullptr ? *stats : local;
     // Depth-only state. Color writes off (FBO also has no color attachment).
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
@@ -2030,8 +2040,10 @@ void submit_shadow_depth(const scenegraph::World& world,
             if (!inst.rim_eligible) return;  // ships + stations only
             const assets::Model* m = lookup(inst.model_handle);
             if (!m) return;
+            ++st.instances;
             if (inst.severed_parts == 0 && inst.shown_parts == 0) {
-                draw_model_positions_only(*m, inst.world, prog, &inst.node_overrides);
+                st.mesh_draws +=
+                    draw_model_positions_only(*m, inst.world, prog, &inst.node_overrides);
                 return;
             }
             // A hull that has lost a part casts no shadow from it, and a
@@ -2047,8 +2059,9 @@ void submit_shadow_depth(const scenegraph::World& world,
             upload_structure_parts(parts_prog, renderer::structure_parts_for(m->source),
                                    inst.severed_parts, inst.shown_parts);
             parts_prog.set_mat4("u_ship_world_inv", glm::inverse(inst.world));
-            draw_model_positions_only(*m, inst.world, parts_prog, &inst.node_overrides,
-                                      /*mesh_mask=*/nullptr, /*rest_fix=*/true);
+            st.mesh_draws +=
+                draw_model_positions_only(*m, inst.world, parts_prog, &inst.node_overrides,
+                                          /*mesh_mask=*/nullptr, /*rest_fix=*/true);
             prog.use();
         });
 

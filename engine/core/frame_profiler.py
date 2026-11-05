@@ -559,6 +559,7 @@ def report_lines() -> list[str]:
                  % (_frames, EMA_ALPHA, cap))
     lines.append(scene_summary())
     lines.append(rock_summary())
+    lines.append(hull_summary())
     # Both numbers, each labelled: the costs beside them are EMA-smoothed, so
     # dividing one of those by a single frame's raw tick count mixes an
     # instantaneous value into an average.
@@ -905,6 +906,25 @@ def scene_summary() -> str:
     if projectiles == 0 and damaged == 0:
         line += "   <- IDLE: no combat in this capture"
     return line
+
+
+# ── Hull load ────────────────────────────────────────────────────────────────
+# Phase 5a: how many hulls the LAST frame drew, culled and how many mesh draws
+# that cost, for the opaque submit (summed over every drawn camera) and the
+# shadow casters, so space.opaque / shadow read against their load.
+
+def hull_summary() -> str:
+    """One line: opaque and shadow hulls drawn / culled / mesh draws.
+    Never raises."""
+    try:
+        from engine import renderer
+        h = renderer.hull_stats()
+        return ("  hulls: opaque %d drawn, %d culled, %d mesh draws | "
+                "shadow %d drawn, %d culled, %d mesh draws"
+                % (h["opaque_instances"], h["opaque_culled"], h["opaque_mesh_draws"],
+                   h["shadow_instances"], h["shadow_culled"], h["shadow_mesh_draws"]))
+    except Exception:
+        return "  hulls: unavailable"
 
 
 # ── Rock load ────────────────────────────────────────────────────────────────

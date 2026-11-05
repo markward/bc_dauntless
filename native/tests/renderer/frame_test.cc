@@ -3807,3 +3807,75 @@ TEST_F(FrameTest, RunningLightFlooredSpriteOnAPixelCornerLightsItsNeighbours) {
     for (int i = 0; i < 4; ++i)
         EXPECT_GT(px[i * 4 + 0], 0.1f) << "neighbour pixel " << i << " went dark";
 }
+
+// ── Hull draw counters (phase 5a Task 1) ──────────────────────────────────
+// The frame profiler's `hulls:` line reads these. The opaque stats sum every
+// call until reset, so one frame's main view and viewscreen feed add up.
+namespace {
+scenegraph::Camera hull_stats_camera() {
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 1500.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+    return cam;
+}
+}  // namespace
+
+TEST_F(FrameTest, OpaqueStatsCountInstancesAndMeshDraws) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    const auto handle = reinterpret_cast<scenegraph::ModelHandle>(model_h.get());
+    const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    scenegraph::World world;
+    world.set_world_transform(world.create_instance(handle), glm::mat4(1.0f));
+    const auto cam = hull_stats_camera();
+    renderer::Lighting lighting;
+    glViewport(0, 0, 256, 256);
+
+    renderer::FrameSubmitter one;
+    one.submit_opaque_in_pass(world, cam, *p, lookup, lighting, scenegraph::Pass::Space);
+    const int per_hull = one.opaque_stats().mesh_draws;
+    ASSERT_GT(per_hull, 0);
+
+    world.set_world_transform(world.create_instance(handle),
+                              glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -200.0f)));
+    renderer::FrameSubmitter s;
+    s.submit_opaque_in_pass(world, cam, *p, lookup, lighting, scenegraph::Pass::Space);
+    EXPECT_EQ(s.opaque_stats().instances, 2);
+    EXPECT_EQ(s.opaque_stats().culled, 0);
+    EXPECT_EQ(s.opaque_stats().mesh_draws, 2 * per_hull);
+
+    s.submit_opaque_in_pass(world, cam, *p, lookup, lighting, scenegraph::Pass::Space);
+    EXPECT_EQ(s.opaque_stats().instances, 4);
+    EXPECT_EQ(s.opaque_stats().mesh_draws, 4 * per_hull);
+
+    s.reset_opaque_stats();
+    EXPECT_EQ(s.opaque_stats().instances, 0);
+    EXPECT_EQ(s.opaque_stats().culled, 0);
+    EXPECT_EQ(s.opaque_stats().mesh_draws, 0);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(FrameTest, ShadowStatsCountCasters) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    const auto handle = reinterpret_cast<scenegraph::ModelHandle>(model_h.get());
+    const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    scenegraph::World world;
+    for (int i = 0; i < 2; ++i) {
+        const auto iid = world.create_instance(handle);
+        world.set_rim_eligible(iid, true);
+        world.set_world_transform(iid, glm::mat4(1.0f));
+    }
+    renderer::ShadowLight light;
+    light.view_proj = glm::ortho(-800.0f, 800.0f, -800.0f, 800.0f, -800.0f, 800.0f);
+    renderer::HullDrawStats stats;
+    renderer::submit_shadow_depth(world, light, *p, lookup, &stats);
+    EXPECT_EQ(stats.instances, 2);
+    EXPECT_EQ(stats.culled, 0);
+    EXPECT_GT(stats.mesh_draws, 0);
+    EXPECT_EQ(stats.mesh_draws % 2, 0);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}

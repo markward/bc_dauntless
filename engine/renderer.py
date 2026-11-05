@@ -95,7 +95,7 @@ _REQUIRED_BINDINGS = frozenset({
     "minors_drain_contacts", "minors_stats", "minors_clear",
     "far_set_catalogue", "far_set_rocks", "far_set_sources",
     "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
-    "far_stats", "far_clear", "far_prefetch_atlases", "far_pump_atlas_uploads",
+    "far_stats", "hull_stats", "far_clear", "far_prefetch_atlases", "far_pump_atlas_uploads",
     "rock_specks_set_enabled", "rock_specks_enabled",
     "rock_puffs_set_enabled", "rock_puffs_enabled",
     "rockfield_drain_contacts", "rockfield_set_shield_inflate",
@@ -748,6 +748,13 @@ def rock_puffs_set_enabled(enabled: bool) -> None:
 def rock_puffs_enabled() -> bool:
     """Whether the rock-fields puffs draw."""
     return _h.rock_puffs_enabled()
+
+
+def hull_stats() -> dict:
+    """{"opaque_instances", "opaque_culled", "opaque_mesh_draws",
+    "shadow_instances", "shadow_culled", "shadow_mesh_draws"} for the last
+    frame; the opaque half is summed over every camera that frame drew."""
+    return _h.hull_stats()
 
 
 def far_stats() -> dict:

@@ -466,6 +466,15 @@ const assets::DecalOverride* instance_decal_override(scenegraph::InstanceId id);
 /// Number of instances with an override (host introspection / tests).
 std::size_t instance_decal_override_count();
 
+/// One pass's hull load (frame profiler `hulls:` line). `instances` reached
+/// the draw (after the far-tier skip), `culled` were dropped by the frustum
+/// test before any per-instance work, `mesh_draws` counts glDrawElements.
+struct HullDrawStats {
+    int instances = 0;
+    int culled = 0;
+    int mesh_draws = 0;
+};
+
 class FrameSubmitter {
 public:
     using ModelLookup = std::function<const assets::Model*(unsigned long long)>;
@@ -578,6 +587,12 @@ public:
     /// as far wreckage (u_plating_far = 1) instead of cut for rooms.
     int plating_far_draws_last_frame() const { return plating_far_draws_last_frame_; }
 
+    /// submit_opaque_in_pass's hull load, summed over every call since the
+    /// last reset_opaque_stats(): the host resets once per frame, so one
+    /// frame's main view and viewscreen feed add up.
+    const HullDrawStats& opaque_stats() const { return opaque_stats_; }
+    void reset_opaque_stats() { opaque_stats_ = HullDrawStats{}; }
+
     /// Draw a SINGLE instance (by id) through the full opaque lighting/texture
     /// path, ignoring its visibility flag. Used by the Ship Property Viewer's
     /// hull-texture mode to render just the inspected ship on the isolated
@@ -651,6 +666,7 @@ private:
     int plating_interior_mesh_draws_ = 0;
     int plating_interiors_last_frame_ = 0;
     int plating_far_draws_last_frame_ = 0;
+    HullDrawStats opaque_stats_;
     InteriorPolicy interior_policy_;
     HullInteriorPass hull_interior_;
 };
@@ -664,10 +680,13 @@ private:
 /// caller must bind the shadow FBO and clear depth first, and restore the
 /// previous framebuffer afterward. GL state changed here (cull face, polygon
 /// offset, color mask) is restored to the opaque-pass defaults on exit.
+///
+/// `stats`, when given, accumulates this pass's caster load into it.
 void submit_shadow_depth(const scenegraph::World& world,
                          const ShadowLight& light,
                          Pipeline& pipeline,
-                         const FrameSubmitter::ModelLookup& lookup);
+                         const FrameSubmitter::ModelLookup& lookup,
+                         HullDrawStats* stats = nullptr);
 
 /// Stash the frame's active shadow (light matrix + depth texture id + on/off)
 /// for the opaque pass (Task 6) to sample. Passing `enabled=false` makes the

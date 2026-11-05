@@ -407,6 +407,9 @@ std::vector<std::uint64_t> g_far_flagged_keys;
 int g_far_impostors = 0;
 int g_far_specks = 0;
 int g_far_draw_calls = 0;
+// The last frame's shadow-caster load (frame profiler `hulls:` line); the
+// opaque half lives on g_submitter (opaque_stats), reset beside this.
+renderer::HullDrawStats g_shadow_hull_stats;
 // Rock fields near band (docs/superpowers/specs/2026-10-02-rock-fields-design.md).
 // Pure CPU state streamed + stepped in frame()'s xform_sync block around the
 // player (or the main camera), built per DRAWN camera in render_space_geometry
@@ -1728,6 +1731,8 @@ void frame() {
         g_far_impostors = 0;      // likewise the far tier's per-camera builds
         g_far_specks = 0;
         g_far_draw_calls = 0;
+        g_shadow_hull_stats = renderer::HullDrawStats{};
+        if (g_submitter) g_submitter->reset_opaque_stats();
         g_near_meshes = 0;
         g_near_billboards = 0;
         g_near_fading = 0;
@@ -2252,7 +2257,8 @@ void frame() {
             glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
             g_shadow_target->bind();   // sets the 2048² viewport
             glClear(GL_DEPTH_BUFFER_BIT);
-            renderer::submit_shadow_depth(g_world, sl, *g_pipeline, lookup);
+            renderer::submit_shadow_depth(g_world, sl, *g_pipeline, lookup,
+                                          &g_shadow_hull_stats);
             glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prev_fbo));
 
             renderer::set_active_shadow(sl, g_shadow_target->depth_texture(), true);
@@ -8994,6 +9000,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("rock_puffs_set_enabled", [](bool on) { g_rock_puffs_enabled = on; },
           py::arg("enabled"), "The rock-field puffs on or off.");
     m.def("rock_puffs_enabled", []() { return g_rock_puffs_enabled; });
+    m.def("hull_stats",
+          []() {
+              // The last frame's hull load: the opaque submit summed over
+              // every camera it drew (main view + viewscreen feed), and the
+              // shadow casters. Read by frame_profiler.hull_summary.
+              py::dict d;
+              const renderer::HullDrawStats none;
+              const renderer::HullDrawStats& o = g_submitter ? g_submitter->opaque_stats() : none;
+              d["opaque_instances"] = o.instances;
+              d["opaque_culled"] = o.culled;
+              d["opaque_mesh_draws"] = o.mesh_draws;
+              d["shadow_instances"] = g_shadow_hull_stats.instances;
+              d["shadow_culled"] = g_shadow_hull_stats.culled;
+              d["shadow_mesh_draws"] = g_shadow_hull_stats.mesh_draws;
+              return d;
+          });
     m.def("far_stats",
           []() {
               py::dict d;

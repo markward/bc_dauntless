@@ -873,3 +873,26 @@ def test_the_report_names_the_focus_scopes(monkeypatch):
                                                        "2.500"]
     assert _row(lines, "space.shield").split()[:3] == ["space.shield", "0.500",
                                                        "-"]
+
+
+_HULLS = {"opaque_instances": 40, "opaque_culled": 24, "opaque_mesh_draws": 410,
+          "shadow_instances": 9, "shadow_culled": 55, "shadow_mesh_draws": 80}
+
+
+def test_hull_summary_states_both_passes(monkeypatch):
+    """Phase 5a: the hull pass and the shadow pass, each as drawn / culled /
+    mesh draws, so a slow space.opaque or shadow scope reads against its load."""
+    from engine import renderer
+    monkeypatch.setattr(renderer, "hull_stats", lambda: dict(_HULLS), raising=False)
+    line = fp.hull_summary()
+    assert "opaque 40 drawn, 24 culled, 410 mesh draws" in line, line
+    assert "shadow 9 drawn, 55 culled, 80 mesh draws" in line, line
+
+
+def test_hull_summary_never_raises(monkeypatch):
+    from engine import renderer
+
+    def boom():
+        raise RuntimeError("no native module")
+    monkeypatch.setattr(renderer, "hull_stats", boom, raising=False)
+    assert fp.hull_summary() == "  hulls: unavailable"
