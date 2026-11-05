@@ -355,6 +355,15 @@ struct SubsystemRecord {
     int64_t sub = -1;
 };
 
+// THE ARTICULATION PIECE (Task 6): articulation.tick_ship's `_rigless_key`
+// early-out, decided here. tick_ship records `_rigless_gen` = the
+// articulated-part generation + 1 on a ship it finds rigless (its first call
+// still runs in Python: it caches the leaf and the key); the piece is
+// skipped, with no record, iff that equals Global ARTICULATION_GEN + 1 (the
+// generation, re-pushed on every bump) and python_pieces does not name
+// ARTICULATION, the ship's row is live. Anything else (rigged, never
+// ticked, generation moved, row gone) is RUN_PYTHON{ship, ARTICULATION}.
+
 // A bit per piece (SubsystemSession::python_pieces): 1 << SubsystemPiece.
 constexpr uint32_t piece_bit(SubsystemPiece p) {
     return 1u << static_cast<uint32_t>(p);
