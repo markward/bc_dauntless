@@ -3254,10 +3254,3 @@ class TorpedoTube(Weapon):
     def IsSkewFire(self) -> int:
         """Return 1 if skew-fire is enabled on this tube, else 0."""
         return 1 if self._skew_fire else 0
-
-
-# The stock methods K0 stands in for (the charging walk; WSM §7(a) A6).
-native_combat.k0_snapshot_stock({
-    1: PhaserSystem, 2: PulseWeaponSystem, 3: TractorBeamSystem,
-    4: TorpedoSystem, 5: PhaserBank, 6: PulseWeapon, 7: TractorBeam,
-    8: TorpedoTube, "ammo": TorpedoAmmoType})

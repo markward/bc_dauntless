@@ -1987,10 +1987,6 @@ class ShipClass(DamageableObject):
             dev_mode.log_swallowed("run death script " + name, _e)
 
 
-# The weapon-group getters the charging walk calls (K0's override guard).
-native_combat.k0_snapshot_ship(ShipClass)
-
-
 def _resolve_torpedo_ammo(ts_prop, slot: int):
     """Build the TorpedoAmmoType for declared ammo ``slot`` from the hardpoint's
     TorpedoSystemProperty.

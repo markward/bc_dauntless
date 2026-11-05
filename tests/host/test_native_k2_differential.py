@@ -486,13 +486,8 @@ class _Scene:
 
         mp.setattr(ws.PhaserBank, "StopFiring", bank_spy)
         mp.setattr(ws.PhaserSystem, "StopFiring", sys_spy)
-        # ... and in K0's (combat fire events Task 4: K0 logs a drained
-        # bank's StopFiring; a system's is not in its guard): the spy only
-        # wraps the stock method.
-        stock, names, _snap = nc._k0_stock[5]
-        mp.setitem(nc._k0_stock, 5,
-                   (stock, names, nc._k0_chain(stock, names)))
-        nc._k0_clear_caches()
+        # (K0 has no override guard, phase 6 A2: the bank spy does not make
+        # it stand down; a drained bank's stop is logged natively.)
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
         # Every hit as its HIT_PRESENT delivers it (native damage Task 4:
         # K2 applies a pulse in its walk, with no combat.apply_hit call --

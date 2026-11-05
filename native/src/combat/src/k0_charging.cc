@@ -10,6 +10,7 @@
 #include "dauntless/combat/k0_charging.h"
 
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -641,15 +642,24 @@ private:
                                     w.d);
                     break;
                 }
-                case K0FieldWrite::Type::Watcher:
+                case K0FieldWrite::Type::Watcher: {
                     // The watcher is not mirrored; its value is, on the
                     // weapon's row (`_watch_value`, WATCH's old value).
+                    // The same bits are not logged (Counts::
+                    // identical_writes): the owned watcher already holds
+                    // that float. The step's WATCH entry is queued anyway.
+                    const double was = m_.get_f(h, Field::_watch_value);
+                    if (std::memcmp(&was, &w.d, sizeof was) == 0) {
+                        ++c_.identical_writes;
+                        continue;
+                    }
                     u.type = K0Undo::Type::F;
                     u.f = Field::_watch_value;
-                    u.d = m_.get_f(h, Field::_watch_value);
+                    u.d = was;
                     m_.set_f(h, Field::_watch_value, w.d);
                     log_.undo.push_back(u);
                     break;
+                }
                 case K0FieldWrite::Type::Ref:
                     u.type = K0Undo::Type::Ref;
                     u.i = m_.get_ref(h, w.field);

@@ -525,6 +525,9 @@ TEST(K0Charging, PulseDepleteStopsThenWatcherLine) {
     q.w.m.set_ref(q.p, Field::_target, q.ship);
     q.w.m.set_fv(q.p, Field::_target_offset, {1.0, 2.0, 3.0});
     q.w.m.set_f(q.p, Field::_charge_level, 0.001);  // - 1.0 * dt -> 0.0
+    // The watcher holds the last commit, 0.001 / 2.0 (a mirror at 0.0 would
+    // make the line identical, not logged: AnIdenticalWatcherValue...).
+    q.w.m.set_f(q.p, Field::_watch_value, 0.0005);
     q.w.k.begin({q.ship}, kDt, kNow);
     const K0Record r = q.w.k.next();
     EXPECT_EQ(q.w.rec(r), "DONE");
@@ -553,6 +556,59 @@ TEST(K0Charging, PulseWatcherNotOwnedHandsBack) {
     EXPECT_EQ(q.w.run(), (V{"RUN_PYTHON p watcher", "DONE"}));
     EXPECT_EQ(q.w.m.get_f(q.p, Field::_cooldown_remaining), 0.5);
     EXPECT_STREQ(k0_reason_name(K0Reason::Watcher), "watcher");
+}
+
+TEST(K0Charging, AnIdenticalWatcherValueIsNotLogged) {
+    // Phase 6 A2: an idle full cannon's watcher line commits the value the
+    // watcher already holds (`_watch_value` mirrors the owned watcher's
+    // `_value`, always a float: FloatRangeWatcher stores float(new_value)),
+    // so it is not logged; the walk still counts it as identical.
+    Pulse q(0.0);
+    q.w.m.set_f(q.p, Field::_charge_level, 2.0);
+    q.w.m.set_f(q.p, Field::_watch_value, 1.0);
+    q.w.k.reset_counts();
+    q.w.k.begin({q.ship}, kDt, kNow);
+    const K0Record r = q.w.k.next();
+    EXPECT_EQ(q.w.rec(r), "DONE");
+    EXPECT_TRUE(r.writes.empty());
+    EXPECT_TRUE(r.entries.empty());
+    EXPECT_EQ(q.w.k.counts().steps, 1);
+    EXPECT_EQ(q.w.k.counts().identical_writes, 1);
+    EXPECT_EQ(q.w.k.counts().logged_writes, 0);
+    q.w.k.end();
+}
+
+TEST(K0Charging, AnIdenticalWatcherValueStillQueuesWatchWithChecks) {
+    // With checks the WATCH entry is Python's `_update` posting
+    // WATCH(old, new) inside the deferral, equal values or not: it is still
+    // queued (old == new), only the store is skipped.
+    Pulse q(0.0);
+    q.w.m.set_f(q.p, Field::_charge_level, 2.0);
+    q.w.m.set_f(q.p, Field::_watch_value, 1.0);
+    q.w.m.set_i(q.p, Field::_watch_checks, 1);
+    q.w.k.begin({q.ship}, kDt, kNow);
+    const K0Record r = q.w.k.next();
+    EXPECT_EQ(q.w.rec(r), "DONE");
+    EXPECT_TRUE(r.writes.empty());
+    EXPECT_EQ(q.w.entries(r),
+              (V{"WATCH p 0x1.0000000000000p+0->0x1.0000000000000p+0@0"}));
+    q.w.k.end();
+}
+
+TEST(K0Charging, ANegativeZeroWatcherValueIsNotIdenticalToZero) {
+    // An empty cannon with no recharge: the new value +0.0 against the
+    // mirror's -0.0 differs bit for bit, so it is logged (the scalar
+    // charge write is never skipped by the kernel: Python may hold an int).
+    Pulse z(0.0);
+    z.w.m.set_f(z.p, Field::_charge_level, 0.0);
+    z.w.m.set_f(z.p, Field::_recharge_rate, 0.0);
+    z.w.m.set_f(z.p, Field::_watch_value, -0.0);
+    z.w.k.begin({z.ship}, kDt, kNow);
+    const K0Record s = z.w.k.next();
+    EXPECT_EQ(z.w.writes(s), (V{"p._charge_level=0x0.0p+0",
+                                "p._charge_watcher._value=0x0.0p+0"}));
+    EXPECT_FALSE(std::signbit(z.w.m.get_f(z.p, Field::_watch_value)));
+    z.w.k.end();
 }
 
 // ── TorpedoTube.UpdateReload / ReloadTorpedo ───────────────────────────────

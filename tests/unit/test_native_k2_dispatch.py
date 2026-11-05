@@ -270,14 +270,8 @@ class World:
 
         mp.setattr(ws.PhaserBank, "StopFiring", bank_spy)
         mp.setattr(ws.PhaserSystem, "StopFiring", sys_spy)
-        # ... and in K0's: K0 logs a drained bank's StopFiring (combat fire
-        # events Task 4), so its guard looks for a bank's (not a system's):
-        # the spy only wraps the stock method, and K0 must not stand down
-        # wherever this world runs the weapons step through it.
-        stock, names, _snap = nc._k0_stock[5]
-        mp.setitem(nc._k0_stock, 5,
-                   (stock, names, nc._k0_chain(stock, names)))
-        nc._k0_clear_caches()
+        # (K0 has no override guard, phase 6 A2: the bank spy does not make
+        # it stand down; a drained bank's stop is logged natively.)
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
         mp.setattr(host_io, "shield_hit", shield_spy)
         capture_native_shield_hits(mp, native_hit)

@@ -4891,12 +4891,6 @@ PyObject* k1_built_dict(PyObject* o) {
     return k2_dict_of(o);  // a tp_dictoffset slot: read, never built
 }
 
-// 1: `d` holds one of the str in tuple `names`; 0: none; -1: error.
-int k1_holds(PyObject* d, PyObject* names) {
-    return k2_holds(d, PySequence_Fast_ITEMS(names),
-                    PySequence_Fast_GET_SIZE(names));
-}
-
 // The scan reads PyDictObject::ma_version_tag, and only where kK0ObjectCache
 // allows (CPython 3.11, the one version verified; see below): elsewhere it
 // is never read. The pragmas keep the field's deprecation quiet.
@@ -4907,76 +4901,21 @@ int k1_holds(PyObject* d, PyObject* names) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
-// ── The K0 session's begin scan (combat_k0_begin; k0_charging.h) ───────────
+// ── The K0 session's begin (combat_k0_begin; k0_charging.h) ───────────────
 // One pass over the Python ship list, made before the kernel's begin: each
-// ship's Object handle (its "_nslot"; -1 without one) and, with a guard
-// context, the override guard (native_combat, "THE OVERRIDE GUARD"): which
-// ships the kernel must hand back whole (reason override) and which weapons
-// it must hand to Python at their turn (the weapon check). No Python code
-// runs and nothing GC-tracked is allocated, so the borrowed references it
-// walks cannot change under it.
-//   ship      its class verdict, or an instance attribute in `ship_names`
-//             -> the ship whole;
-//   system    each group the ship's dict holds ("_phaser_system", ...):
-//             its class verdict, or an instance attribute in
-//             `system_names` -> the ship whole;
-//   weapon    each child in the system's "_children": its class verdict,
-//             or an instance attribute in `weapon_names` -> that weapon. In
-//             the torpedo system any marked tube, or a magazine (a value of
-//             "_ammo_by_slot") whose class is flagged, marks every tube:
-//             each tube's reload gate reads its siblings' GetNumReady and
-//             the magazine's GetAvailable.
-// Anything unexpected (an instance dict not built, a "_children" that is not
-// a list or tuple) answers "Python".
+// ship's Object handle (its "_nslot"; -1 without one). There is no override
+// guard (phase 6 A2; spec 2026-11-05-phase6-engine-stages-native-design.md
+// §3, Part A: a stage never falls back to Python because an App method was
+// patched), so nothing else is read. No Python code runs and nothing
+// GC-tracked is allocated.
 //
-// THE CACHES (ruling W7: the scan ran every weapon's dict probes every tick,
-// ~53 us at 65 ships). Both are exact, not heuristics:
-//   class     a verdict per type, valid while the type's version tag is
-//             (CPython's tp_version_tag: any attribute assignment on the
-//             class or a base invalidates it, PyType_Modified). A type with
-//             no valid entry is looked up in `fresh` (the verdicts Python
-//             just computed for this begin); not there -> `missing` (the
-//             caller computes it in Python and begins again).
-//   object    each ship, system slot and weapon's whole answer (its class
-//             verdict OR an instance attribute), kept by POSITION in the
-//             scan (ship i, then its 4 group slots, then each child in
-//             order) with what it was computed on: the object's type and
-//             its dict STATE, (the dict, its ma_version_tag). The version
-//             is a process-wide counter bumped by every insert, replace
-//             and delete, so an unchanged (dict, version) is an unchanged
-//             dict -- the same keys, the same references (a cached ship's
-//             group systems, a system's "_children" list and
-//             "_ammo_by_slot" dict are still the ones it holds; the list
-//             and the magazine dict are read live, as they change in place).
-//             A `__class__` assignment changes the type, not the dict: the
-//             type is compared too. The class verdicts the entries used are
-//             re-validated once per scan (every cached type's tag); any
-//             change drops every entry for that scan.
-// So an idle weapon costs a handful of pointer compares (no dict probe), a
-// weapon written this tick pays its probes, and a class patch or an
-// instance attribute made between two sessions is seen at the next one (one
-// made by a handler during a session, at the next session).
-struct K0Guard {
-    PyObject* fresh = nullptr;          // {type: int}, may be empty
-    PyObject* ship_names = nullptr;     // tuples of str
-    PyObject* system_names = nullptr;
-    PyObject* weapon_names = nullptr;
-};
-
-struct K0Scan {
-    std::vector<std::int64_t> handles;
-    std::vector<std::optional<dauntless::combat::K0Reason>> handback;
-    std::unordered_set<std::int64_t> python_weapons;
-    std::vector<PyObject*> missing;     // borrowed: types with no verdict
-    bool any_handback = false;
-    size_t sys_pos = 0, weapon_pos = 0;  // positional cache cursors
-};
-
-struct K0TypeEntry {
-    PyTypeObject* type;  // owned in K0Caches::types (see clear())
-    unsigned int tag;
-    int flag;
-};
+// What follows is also K1's, K2's and native damage's: the instance-dict
+// read (k0_dict_of), the exact per-object caches' key (K0ObjKey, k0_same:
+// an object's type and its dict STATE, the dict and its PEP 509
+// ma_version_tag -- a process-wide counter bumped by every insert, replace
+// and delete, so an unchanged (dict, version) is an unchanged dict; a
+// `__class__` assignment changes the type, which is compared too) and a
+// type's version tag (k0_type_tag).
 
 // What one object's answer was computed on (type == nullptr: nothing).
 struct K0ObjKey {
@@ -4985,110 +4924,26 @@ struct K0ObjKey {
     std::uint64_t version = 0;
 };
 
-struct K0ShipEntry {
-    K0ObjKey key;
-    std::int64_t handle = -1;
-    int verdict = 0;                    // the ship whole
-    PyObject* groups[4] = {nullptr, nullptr, nullptr, nullptr};
-};
-
-struct K0SysEntry {
-    K0ObjKey key;
-    int verdict = 0;                    // the ship whole
-    PyObject* children = nullptr;       // borrowed from key.dict
-    PyObject* ammo = nullptr;
-};
-
-struct K0WeaponEntry {
-    K0ObjKey key;
-    int verdict = 0;                    // Python steps it
-};
-
-struct K0Caches {
-    // Every type's verdict, and a direct-mapped table in front of it.
-    std::vector<K0TypeEntry> types;
-    static constexpr size_t kTable = 64;  // the hash's top 6 bits
-    K0TypeEntry table[kTable] = {};
-    std::vector<K0ShipEntry> ships;
-    std::vector<K0SysEntry> systems;
-    std::vector<K0WeaponEntry> weapons;
-    // `systems`' data and size (a Debug build calls the vector's accessors).
-    K0SysEntry* systems_p = nullptr;
-    size_t systems_n = 0;
-    void grow_systems(size_t n) {
-        if (systems.size() < n) systems.resize(n);
-        systems_p = systems.data();
-        systems_n = systems.size();
-    }
-    // The name tuples the answers were made with: other tuples, other
-    // answers (forget them).
-    PyObject* names[3] = {nullptr, nullptr, nullptr};
-    void forget_objects() {
-        ships.clear();
-        systems.clear();
-        weapons.clear();
-        systems_p = nullptr;
-        systems_n = 0;
-    }
-    // `types` OWNS a reference to each type (taken in k0_flagged): every
-    // scan re-validates them by reading the type (k0_types_unchanged), so
-    // a type it keeps must not be freed under it. The table's entries are
-    // copies of `types`' entries.
-    void clear() {
-        // Moved out first: a release may run Python (a type's dealloc),
-        // which must find the caches already empty.
-        std::vector<K0TypeEntry> old = std::move(types);
-        types.clear();
-        for (K0TypeEntry& e : table) e = K0TypeEntry{};
-        forget_objects();
-        names[0] = names[1] = names[2] = nullptr;
-        for (K0TypeEntry& e : old)
-            Py_DECREF(reinterpret_cast<PyObject*>(e.type));
-    }
-};
-
-K0Caches& k0_caches() {
-    static K0Caches c;
-    return c;
-}
-
 struct K0ScanNames {
     PyObject* nslot;
-    PyObject* groups[4];
-    PyObject* children;
-    PyObject* ammo_by_slot;
     PyObject* tag_probe;  // any interned name: _PyType_Lookup assigns a tag
 };
 
 const K0ScanNames& k0_scan_names() {
-    static const K0ScanNames n{
-        PyUnicode_InternFromString("_nslot"),
-        {PyUnicode_InternFromString("_phaser_system"),
-         PyUnicode_InternFromString("_pulse_weapon_system"),
-         PyUnicode_InternFromString("_tractor_beam_system"),
-         PyUnicode_InternFromString("_torpedo_system")},
-        PyUnicode_InternFromString("_children"),
-        PyUnicode_InternFromString("_ammo_by_slot"),
-        PyUnicode_InternFromString("__init__")};
+    static const K0ScanNames n{PyUnicode_InternFromString("_nslot"),
+                               PyUnicode_InternFromString("__init__")};
     return n;
 }
 
-// The scan's per-object helpers are forced inline: it runs every tick over
-// every weapon, and a Debug (-O0) build otherwise pays a call for each
+
+// The per-object helpers are forced inline: the scans run every tick over
+// every object, and a Debug (-O0) build otherwise pays a call for each
 // helper and each CPython accessor (Py_TYPE, PyType_HasFeature are calls
 // there too, so fields are read directly).
 #if defined(__clang__) || defined(__GNUC__)
 #define K0_INLINE inline __attribute__((always_inline))
 #else
 #define K0_INLINE inline
-#endif
-
-// Whether the managed dict sits in the slot three pointers before the
-// object (3.11-3.13; k1_built_dict).
-#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030E0000
-constexpr bool kK0ManagedSlot = true;
-#else
-constexpr bool kK0ManagedSlot = false;
 #endif
 
 // k1_built_dict, the managed-dict case read in place (3.11-3.13).
@@ -5104,11 +4959,11 @@ K0_INLINE PyObject* k0_dict_of(PyObject* o) {
     return k1_built_dict(o);
 }
 
-// The per-object answer cache (THE CACHES, "object") rests on PEP 509's
-// ma_version_tag changing on every insert, replace and delete. Verified on
-// CPython 3.11 only (3.12 repurposes its low bits for dict watchers, 3.14
-// drops the field): any other version takes the uncached path -- every
-// object's answer computed at every scan, the same verdicts, slower.
+// The per-object answer caches rest on PEP 509's ma_version_tag changing on
+// every insert, replace and delete. Verified on CPython 3.11 only (3.12
+// repurposes its low bits for dict watchers, 3.14 drops the field): any
+// other version takes the uncached path -- every object's answer computed
+// at every scan, the same answers, slower.
 #if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030C0000
 constexpr bool kK0ObjectCache = true;
 #else
@@ -5133,22 +4988,6 @@ K0_INLINE bool k0_same(const K0ObjKey& k, PyObject* o, PyObject* d) {
            d == k.dict && k0_dict_version(d) == k.version;
 }
 
-// The table entry `t` hashes to (Fibonacci hashing of its address: heap
-// types sit at allocator-aligned addresses, whose low bits alone collide).
-K0_INLINE K0TypeEntry& k0_slot(K0Caches& c, PyTypeObject* t) {
-    return c.table[(static_cast<std::uint64_t>(
-                        reinterpret_cast<std::uintptr_t>(t)) *
-                    0x9E3779B97F4A7C15ull) >>
-                   58];
-}
-
-// `e` is `t`'s verdict and `t` is unchanged since (its version tag).
-K0_INLINE bool k0_type_valid(const K0TypeEntry& e, PyTypeObject* t) {
-    return e.type == t && e.tag != 0 &&
-           (t->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) != 0 &&
-           t->tp_version_tag == e.tag;
-}
-
 // `t`'s version tag, assigned if it has none (0: none can be).
 unsigned int k0_type_tag(PyTypeObject* t) {
     if ((t->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) == 0)
@@ -5156,63 +4995,6 @@ unsigned int k0_type_tag(PyTypeObject* t) {
     return (t->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) != 0
                ? t->tp_version_tag
                : 0u;
-}
-
-int k0_flagged(const K0Guard& g, PyObject* o, K0Scan& s, K0Caches& c);
-
-// k0_flagged when `o`'s class verdict is in the table (the common case).
-K0_INLINE int k0_flagged_fast(const K0Guard& g, PyObject* o, K0Scan& s,
-                              K0Caches& c) {
-    PyTypeObject* t = o->ob_type;
-    const K0TypeEntry& slot = k0_slot(c, t);
-    if (k0_type_valid(slot, t)) return slot.flag;
-    return k0_flagged(g, o, s, c);
-}
-
-// 1: type(o) is flagged; 0: not, or no verdict yet (noted in s.missing:
-// the session will not begin, so the scan goes on to find every missing
-// type in one pass); -1: error.
-int k0_flagged(const K0Guard& g, PyObject* o, K0Scan& s, K0Caches& c) {
-    PyTypeObject* t = o->ob_type;
-    K0TypeEntry& slot = k0_slot(c, t);
-    if (k0_type_valid(slot, t)) return slot.flag;
-    K0TypeEntry* hit = nullptr;
-    for (K0TypeEntry& e : c.types)
-        if (e.type == t) {
-            hit = &e;
-            break;
-        }
-    if (hit != nullptr && k0_type_valid(*hit, t)) {
-        slot = *hit;
-        return hit->flag;
-    }
-    PyObject* v =
-        PyDict_GetItemWithError(g.fresh, reinterpret_cast<PyObject*>(t));
-    if (v == nullptr) {
-        if (PyErr_Occurred()) return -1;
-        if (std::find(s.missing.begin(), s.missing.end(),
-                      reinterpret_cast<PyObject*>(t)) == s.missing.end())
-            s.missing.push_back(reinterpret_cast<PyObject*>(t));
-        return 0;
-    }
-    const int flag = PyObject_IsTrue(v);  // an int: no Python runs
-    if (flag < 0) return -1;
-    const K0TypeEntry e{t, k0_type_tag(t), flag};
-    if (hit != nullptr) {
-        *hit = e;  // the same type: its reference is already held
-    } else {
-        Py_INCREF(reinterpret_cast<PyObject*>(t));  // released by clear()
-        c.types.push_back(e);
-    }
-    slot = e;
-    return flag;
-}
-
-// Every cached type verdict still valid (no class patched since).
-bool k0_types_unchanged(const K0Caches& c) {
-    for (const K0TypeEntry& e : c.types)
-        if (!k0_type_valid(e, e.type)) return false;
-    return true;
 }
 
 // `d`'s "_nslot" as a handle of `kind`, or -1.
@@ -5230,192 +5012,27 @@ std::int64_t k0_handle(PyObject* d, std::int64_t kind) {
     return (v >= 0 && (v >> 60) == kind) ? v : -1;
 }
 
-// Mark child `c` (its handle, when it has one: one without is the
-// kernel's unrepresentable hand-back anyway).
-void k0_mark(PyObject* c, K0Scan& s) {
-    PyObject* cd = k0_dict_of(c);
-    if (cd == nullptr) return;
-    const std::int64_t h = k0_handle(
-        cd, static_cast<std::int64_t>(dauntless::combat::Kind::Subsystem));
-    if (h >= 0) s.python_weapons.insert(h);
-}
-
-// A child's answer, computed (the cache missed): 1 Python, 0 native, -1
-// error.
-int k0_weapon_slow(const K0Guard& g, PyObject* c, PyObject* cd, K0Scan& s,
-                   K0Caches& cc, size_t pos) {
-    if (cd == nullptr) return 1;
-    int v = k0_flagged(g, c, s, cc);
-    if (v == 0) v = k1_holds(cd, g.weapon_names);
-    if (v < 0) return -1;
-    if (pos >= cc.weapons.size()) cc.weapons.resize(pos + 1);
-    cc.weapons[pos] = K0WeaponEntry{
-        K0ObjKey{c->ob_type, cd, k0_dict_version(cd)}, v};
-    return v;
-}
-
-// One group slot of a ship: 1 the ship whole, 0 no, -1 error.
-K0_INLINE int k0_guard_system(const K0Guard& g, PyObject* sys, int gi, K0Scan& s,
-                    K0Caches& cc) {
-    const K0ScanNames& n = k0_scan_names();
-    const size_t pos = s.sys_pos++;
-    if (sys == Py_None) return 0;
-    PyObject* sd = k0_dict_of(sys);
-    if (sd == nullptr) return 1;
-    if (pos >= cc.systems_n) cc.grow_systems(pos + 1 + 16);
-    K0SysEntry* e = cc.systems_p + pos;
-    if (!k0_same(e->key, sys, sd)) {
-        int v = k0_flagged(g, sys, s, cc);
-        if (v == 0) v = k1_holds(sd, g.system_names);
-        if (v < 0) return -1;
-        PyObject* kids = PyDict_GetItemWithError(sd, n.children);
-        if (kids == nullptr && PyErr_Occurred()) return -1;
-        PyObject* ammo = PyDict_GetItemWithError(sd, n.ammo_by_slot);
-        if (ammo == nullptr && PyErr_Occurred()) return -1;
-        *e = K0SysEntry{K0ObjKey{sys->ob_type, sd, k0_dict_version(sd)}, v,
-                        kids, ammo};
-    }
-    if (e->verdict != 0) return 1;
-    PyObject* kids = e->children;
-    PyObject* ammo = e->ammo;
-    if (kids == nullptr) return 0;
-    // Read live: an in-place append changes the list, not the dict.
-    PyObject* const* items;
-    if (kids->ob_type == &PyList_Type)
-        items = reinterpret_cast<PyListObject*>(kids)->ob_item;
-    else if (kids->ob_type == &PyTuple_Type)
-        items = reinterpret_cast<PyTupleObject*>(kids)->ob_item;
-    else
-        return 1;
-    const Py_ssize_t nk = reinterpret_cast<PyVarObject*>(kids)->ob_size;
-    const bool torpedo = gi == 3;
-    bool all = false;
-    size_t wpos = s.weapon_pos;
-    const K0WeaponEntry* wdata = cc.weapons.data();
-    size_t wsize = cc.weapons.size();
-    for (Py_ssize_t i = 0; i < nk && !all; ++i) {
-        PyObject* c = items[i];
-        if (c == Py_None) continue;
-        const size_t pos_c = wpos++;
-        int m;
-        // The fast path, field by field: the same type, its dict (the
-        // managed slot, as k0_dict_of reads it) the same object in the same
-        // state.
-        // (Short-circuit order matters: the slot before the object is read
-        // only for a type with a managed dict.)
-        const K0WeaponEntry* we = pos_c < wsize ? wdata + pos_c : nullptr;
-        if (we != nullptr && kK0ObjectCache && kK0ManagedSlot &&
-            c->ob_type == we->key.type &&
-            (c->ob_type->tp_flags & Py_TPFLAGS_MANAGED_DICT) != 0 &&
-            reinterpret_cast<std::uintptr_t*>(c)[-3] ==
-                reinterpret_cast<std::uintptr_t>(we->key.dict) &&
-            k0_dict_version(we->key.dict) == we->key.version) {
-            m = we->verdict;
-        } else {
-            m = k0_weapon_slow(g, c, k0_dict_of(c), s, cc, pos_c);
-            if (m < 0) return -1;
-            wdata = cc.weapons.data();
-            wsize = cc.weapons.size();
-        }
-        if (m == 0) continue;
-        if (torpedo) all = true;
-        else k0_mark(c, s);
-    }
-    s.weapon_pos = wpos;
-    if (!torpedo) return 0;
-    if (ammo != nullptr && ammo->ob_type == &PyDict_Type) {
-        Py_ssize_t p = 0;
-        PyObject *k, *v;
-        while (!all && PyDict_Next(ammo, &p, &k, &v)) {
-            if (v == Py_None) continue;
-            const int f = k0_flagged_fast(g, v, s, cc);
-            if (f < 0) return -1;
-            all = f != 0;
-        }
-    } else if (ammo != nullptr) {
-        all = true;
-    }
-    if (all)
-        for (Py_ssize_t i = 0; i < nk; ++i)
-            if (items[i] != Py_None) k0_mark(items[i], s);
-    return 0;
-}
-
-// The scan over `ships` (a list or tuple). False: a Python error is set.
-bool k0_scan(PyObject* ships, const K0Guard* g, K0Scan& s) {
+// The begin's ship handles: each ship's "_nslot" as an Object handle, -1
+// for a ship with no built dict or no row (the kernel's no_row). `ships` a
+// list or tuple; false: a Python error is set.
+bool k0_ship_handles(PyObject* ships, std::vector<std::int64_t>& out) {
     namespace cb = dauntless::combat;
-    const K0ScanNames& n = k0_scan_names();
     if (!PyList_CheckExact(ships) && !PyTuple_CheckExact(ships)) {
         PyErr_SetString(PyExc_TypeError, "combat_k0_begin: ships: a list");
         return false;
     }
-    K0Caches& cc = k0_caches();
-    if (g != nullptr &&
-        (cc.names[0] != g->ship_names || cc.names[1] != g->system_names ||
-         cc.names[2] != g->weapon_names)) {
-        // Compared by identity only (never dereferenced): the driver passes
-        // the same module-level tuples every session.
-        cc.forget_objects();
-        cc.names[0] = g->ship_names;
-        cc.names[1] = g->system_names;
-        cc.names[2] = g->weapon_names;
-    }
-    // A class patched since: every cached object answer may rest on it.
-    if (g != nullptr && !k0_types_unchanged(cc)) cc.forget_objects();
     PyObject* const* items =
         ships->ob_type == &PyList_Type
             ? reinterpret_cast<PyListObject*>(ships)->ob_item
             : reinterpret_cast<PyTupleObject*>(ships)->ob_item;
     const Py_ssize_t count = reinterpret_cast<PyVarObject*>(ships)->ob_size;
-    if (cc.ships.size() < static_cast<size_t>(count))
-        cc.ships.resize(static_cast<size_t>(count));
-    s.handles.assign(static_cast<size_t>(count), -1);
-    s.handback.assign(static_cast<size_t>(count), std::nullopt);
-    std::int64_t* handles = s.handles.data();
-    K0ShipEntry* entries = cc.ships.data();
+    out.assign(static_cast<size_t>(count), -1);
     for (Py_ssize_t i = 0; i < count; ++i) {
-        PyObject* ship = items[i];
-        PyObject* d = k0_dict_of(ship);
-        if (d == nullptr) continue;
-        K0ShipEntry& e = entries[i];
-        if (!k0_same(e.key, ship, d)) {
-            e = K0ShipEntry{};
-            e.handle =
+        PyObject* d = k0_dict_of(items[i]);
+        if (d != nullptr)
+            out[static_cast<size_t>(i)] =
                 k0_handle(d, static_cast<std::int64_t>(cb::Kind::Object));
-            if (g != nullptr && e.handle >= 0) {
-                int v = k0_flagged(*g, ship, s, cc);
-                if (v == 0) v = k1_holds(d, g->ship_names);
-                if (v < 0) return false;
-                e.verdict = v;
-                for (int gi = 0; gi < 4; ++gi) {
-                    e.groups[gi] = PyDict_GetItemWithError(d, n.groups[gi]);
-                    if (e.groups[gi] == nullptr && PyErr_Occurred())
-                        return false;
-                }
-            }
-            // Keyed only once complete (a guard-less scan leaves it unkeyed).
-            if (g != nullptr)
-                e.key = K0ObjKey{ship->ob_type, d, k0_dict_version(d)};
-        }
-        handles[i] = e.handle;
-        if (g == nullptr || e.handle < 0) continue;  // no row: no_row
-        int r = e.verdict;
-        for (int gi = 0; gi < 4 && r == 0; ++gi) {
-            PyObject* sys = e.groups[gi];
-            if (sys == nullptr) {
-                ++s.sys_pos;
-                continue;
-            }
-            r = k0_guard_system(*g, sys, gi, s, cc);
-        }
-        if (r < 0) return false;
-        if (r != 0) {
-            s.handback[static_cast<size_t>(i)] = cb::K0Reason::Override;
-            s.any_handback = true;
-        }
     }
-    // Answers resting on a type with no verdict yet are provisional.
-    if (!s.missing.empty()) cc.forget_objects();
     return true;
 }
 
@@ -5425,8 +5042,8 @@ bool k0_scan(PyObject* ships, const K0Guard* g, K0Scan& s) {
 #pragma GCC diagnostic pop
 #endif
 
-// A handle's registry entry, cached (K0's THE CACHES, keyed the same way;
-// exact, and only where kK0ObjectCache allows): its KeyedRef, while the
+// A handle's registry entry, cached (keyed as K0ObjKey, above; exact,
+// and only where kK0ObjectCache allows): its KeyedRef, while the
 // registry dict is the same object at the same ma_version_tag (it then
 // still holds the ref); the referent is read live. Kept by the handle's row
 // index; the handle is compared.
@@ -5497,7 +5114,7 @@ py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
 }
 
 // ── THE SCAN CACHE (k2_scan_ships; native damage perf fix) ────────────────
-// K0's and K1's THE CACHES, keyed the same way (exact, and only where
+// K1's THE CACHES, keyed as K0ObjKey (above; exact, and only where
 // kK0ObjectCache allows): each phaser system's and each bank's "holds one
 // of the names" answer, with what it was computed on -- its type and its
 // dict at the dict's ma_version_tag -- kept by POSITION in the scan (the
@@ -5652,8 +5269,8 @@ int k2_clean_system(PyObject* sys, size_t pos, PyObject* seen,
 // with no row, a handle the mirror cannot name, a subsystem not in the
 // registry or freed: not clean. Raw CPython calls; no Python code runs.
 //
-// THE CLEAN CACHE (native damage perf fix; K0's and K1's THE CACHES, keyed
-// the same way, exact, and only where kK0ObjectCache allows): each ship's
+// THE CLEAN CACHE (native damage perf fix; K1's THE CACHES, keyed as
+// K0ObjKey, exact, and only where kK0ObjectCache allows): each ship's
 // and each subsystem's "holds one of the names" answer, by its handle's
 // row index (the handle compared), with what it was computed on -- its
 // type and its dict at the dict's ma_version_tag -- so an unchanged
@@ -13686,71 +13303,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
             return d;
         });
         m.def("combat_k0_begin",
-              [](py::handle ships, double dt, double now,
-                 py::handle ctx) -> py::object {
-                  // ctx: None (no guard: every ship and weapon native) or
-                  // (fresh, ship_names, system_names, weapon_names); see
-                  // k0_scan. Returns None (the session is open) or the list
-                  // of types with no valid class verdict (nothing begun:
-                  // the caller computes them and calls again with them in
-                  // `fresh`).
-                  K0Guard g;
-                  const K0Guard* gp = nullptr;
-                  if (!ctx.is_none()) {
-                      if (!PyTuple_Check(ctx.ptr()) ||
-                          PyTuple_GET_SIZE(ctx.ptr()) != 4)
-                          throw py::type_error(
-                              "combat_k0_begin: ctx (fresh, ship_names, "
-                              "system_names, weapon_names) or None");
-                      g.fresh = PyTuple_GET_ITEM(ctx.ptr(), 0);
-                      g.ship_names = PyTuple_GET_ITEM(ctx.ptr(), 1);
-                      g.system_names = PyTuple_GET_ITEM(ctx.ptr(), 2);
-                      g.weapon_names = PyTuple_GET_ITEM(ctx.ptr(), 3);
-                      if (!PyDict_Check(g.fresh))
-                          throw py::type_error("fresh: a dict");
-                      for (PyObject* t :
-                           {g.ship_names, g.system_names, g.weapon_names})
-                          if (!PyTuple_Check(t))
-                              throw py::type_error("names: tuples of str");
-                      gp = &g;
-                  }
-                  K0Scan s;
-                  if (!k0_scan(ships.ptr(), gp, s))
+              [](py::handle ships, double dt, double now) {
+                  // No override guard (phase 6 A2, Part A): each ship's
+                  // Object handle, then the kernel's plan.
+                  std::vector<std::int64_t> handles;
+                  if (!k0_ship_handles(ships.ptr(), handles))
                       throw py::error_already_set();
-                  if (!s.missing.empty()) {
-                      py::list out;
-                      for (PyObject* t : s.missing)
-                          out.append(py::reinterpret_borrow<py::object>(t));
-                      return out;
-                  }
                   cb::K0Session& k = cb::k0_session();
                   if (k.open())
                       throw std::logic_error(
                           "combat K0: a session is already open");
-                  if (s.python_weapons.empty()) {
-                      k.set_weapon_check(nullptr);
-                  } else {
-                      auto marked =
-                          std::make_shared<const std::unordered_set<
-                              std::int64_t>>(std::move(s.python_weapons));
-                      k.set_weapon_check([marked](std::int64_t w) {
-                          return marked->count(w) != 0;
-                      });
-                  }
-                  if (s.any_handback)
-                      k.begin(std::move(s.handles), dt, now,
-                              std::move(s.handback));
-                  else
-                      k.begin(std::move(s.handles), dt, now);
-                  return py::none();
+                  k.begin(std::move(handles), dt, now);
               },
               py::arg("ships"), py::arg("dt"), py::arg("now"),
-              py::arg("ctx"),
               "Begin _advance_weapons(ships, dt) for one tick: `ships` the "
               "Python ship list (each one's Object handle read from its "
-              "_nslot), `now` weapon_subsystems._game_time(), `ctx` the "
-              "override guard or None. None: begun; else the types whose "
-              "guard flag is missing (nothing begun).");
+              "_nslot), `now` weapon_subsystems._game_time(). Every ship and "
+              "weapon is native; only the kernel's representability reasons "
+              "hand back (no override guard).");
         m.def("combat_k0_next", [] {
             // Compute with the GIL released (THE GIL RELEASE), as
             // combat_k1_next. The weapon check is a set lookup made at
@@ -13817,6 +13387,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k0_records"] = rec;
             d["k0_python_reasons"] = why;
             d["k0_logged_writes"] = c.logged_writes;
+            // Watcher lines the mirror already held (phase 6 A2).
+            d["k0_identical_writes"] = c.identical_writes;
             // Records K0 no longer returns (combat fire events §4.3): a firing
             // bank drained dry, a reload, a watcher line with checks -- and
             // the queue entries they produced, by kind.
@@ -14000,19 +13572,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
               },
               py::arg("ship_handles"), py::arg("dt"),
               "One tractor force step (motion.tractors).");
-        m.def("combat_k0_reset_counts",
-              [] { cb::k0_session().reset_counts(); });
-        m.def("combat_k0_clear_caches", [] { k0_caches().clear(); },
-              "Forget the begin scan's class verdicts and dict states "
-              "(native_combat.reset, a re-taken stock snapshot).");
-        m.def("combat_k0_object_cache", [] { return kK0ObjectCache; },
-              "Whether the begin scan caches each object's answer by its "
-              "dict's ma_version_tag (CPython 3.11 only; else uncached).");
-        m.def("combat_k0_cache_sizes", [] {
-            const K0Caches& c = k0_caches();
-            return py::make_tuple(c.types.size(), c.ships.size(),
-                                  c.systems.size(), c.weapons.size());
+        m.def("combat_k0_reset_counts", [] {
+            cb::k0_session().reset_counts();
+            dauntless::host::k0_apply_stats() = {};
         });
+        m.def("combat_k0_apply_stats", [] {
+            const dauntless::host::K0ApplyStats& s =
+                dauntless::host::k0_apply_stats();
+            py::dict d;
+            d["writes"] = s.writes;
+            d["runs"] = s.runs;
+            d["identical"] = s.identical;
+            d["general"] = s.general;
+            return d;
+        }, "The lean K0 apply's tallies since combat_k0_reset_counts "
+           "(combat_write_apply.h THE LEAN K0 APPLY).");
 
         // ── The K2 beam kernel (k2_beams.h) ──────────────────────────────
         // One resumable session over the mirror: the `cb.phasers` loop. Each

@@ -310,6 +310,14 @@ public:
         std::array<int64_t, static_cast<size_t>(K0Reason::kCount)>
             python_reasons{};
         int64_t logged_writes = 0;  // writes returned in records
+        // Writes not logged because the mirror already held the value bit
+        // for bit (phase 6 A2): only a pulse cannon's watcher line, whose
+        // Python value is always a float (FloatRangeWatcher stores
+        // float(new_value)) and mirrored on every commit (`_watch_value`).
+        // A scalar field is never skipped here: Python may hold an int
+        // where the kernel's write would store a float (the applier skips
+        // those against Python's own value, combat_write_apply.h).
+        int64_t identical_writes = 0;
         // Records not returned because their Python is field writes plus
         // queue entries (THE EFFECT QUEUE): a firing bank drained dry
         // (k0_logged.deplete_stop), a reload (k0_logged.reload), a watcher

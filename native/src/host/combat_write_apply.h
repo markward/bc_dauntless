@@ -73,6 +73,33 @@
 //
 // The GIL is held throughout; Python runs inside (materialise, the PYTHON
 // setters, wake's hook), exactly the Python the reference runs.
+//
+// THE LEAN K0 APPLY (phase 6 A2). A K0 record's log is applied by its own
+// path, write for write what the general one does, in the style of the
+// subsystem stage's applier (subsystem_write_apply.h):
+//   - one registry lookup per run of consecutive writes to one handle: the
+//     live object carrying the handle as its `_nslot`, and its __dict__,
+//     held for the run. No pins dict (the objects are held by the run, and
+//     a RUN_PYTHON record's weapon is found through the registry anyway);
+//   - the field's apply kind asked once per (type, field) and kept by type,
+//     not looked up per write; PLAIN and WAKE stores go straight into the
+//     dict, a slot into its list, a watcher value into its `_value`;
+//   - a WAKE field's wake check (`_passive_asleep`) always made: K0 never
+//     puts a weapon to sleep, but one the Python walk put to sleep (an
+//     audit tick, a whole-ship hand-back) may still be asleep. Within a run
+//     a falsy answer is kept until Python next runs (a wake, a general-path
+//     write);
+//   - a write whose value Python already holds -- an exact float with the
+//     same bits (-0.0 is not 0.0), the same bool, the same exact int -- is
+//     not stored (K0ApplyStats::identical); a WAKE field's wake check still
+//     runs (WakeField.__set__ wakes on an equal value too). Python's object
+//     is the reference, not the mirror: an int equal to the float is
+//     replaced by the float, as Python's arithmetic replaces it.
+// Anything else -- a run whose handle the registry does not answer with a
+// live, matching object, a REF / REFS / PYTHON kind, a stop's Ref or Null
+// write, a slot list or watcher of an unexpected shape -- takes the general
+// path for that write (walk.obj with its pins, its exceptions). A raise
+// stops the lean loop and the rest is applied as EXCEPTIONS says.
 #pragma once
 
 #include <Python.h>
@@ -163,6 +190,17 @@ WriteApplier& write_applier();
 // or nullptr with a Python error set. Shared with the subsystem stage's
 // applier (subsystem_write_apply.h).
 PyObject* registry_lookup(PyObject* registry, PyObject* h);
+
+// The lean K0 apply's tallies (combat_k0_apply_stats), since the last
+// reset: K0 writes applied, runs (registry lookups), writes not stored
+// because Python already held the value, writes taken by the general path.
+struct K0ApplyStats {
+    std::uint64_t writes = 0;
+    std::uint64_t runs = 0;
+    std::uint64_t identical = 0;
+    std::uint64_t general = 0;
+};
+K0ApplyStats& k0_apply_stats();
 
 // The attribute a K0 write stores into: its Field's name (interned, never
 // freed: a borrowed reference), or "_charge_watcher" for a watcher write.

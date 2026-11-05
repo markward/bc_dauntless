@@ -563,12 +563,17 @@ def test_nested_k0_runs_python(monkeypatch):
         try:
             _galaxy_tubes_reload_together(w)
             bank = w.weapons("Galaxy", PHASER)[0]
+            # A weapon the mirror cannot name (its row dropped) is a
+            # RUN_PYTHON record (unrepresentable): Python's own UpdateCharge
+            # runs for it, the instance patch included (K0 has no override
+            # guard: a patch alone hands nothing back, phase 6 A2).
+            nc._drop(bank)
             real = bank.UpdateCharge
 
             def patched(dt):
                 answers.append(nc.k0_weapons([], DT))
                 real(dt)
-            bank.UpdateCharge = patched     # RUN_PYTHON override
+            bank.UpdateCharge = patched
 
             def hook(evt):
                 if evt.GetEventType() == App.ET_TORPEDO_RELOAD:
@@ -584,8 +589,9 @@ def test_nested_k0_runs_python(monkeypatch):
 
 
 def test_exception_in_a_record_abandons_the_session(monkeypatch):
-    """A record's Python raises (a RUN_PYTHON weapon's patched
-    UpdateCharge): the session is abandoned and the exception propagates;
+    """A record's Python raises (a RUN_PYTHON weapon -- its row dropped,
+    unrepresentable -- with a patched UpdateCharge): the session is
+    abandoned and the exception propagates;
     the entries queued before it (a depleted bank's LOOP_STOP) are still
     delivered (ruling F5), the mirror still equals the Python and the next
     tick runs."""
@@ -607,6 +613,7 @@ def test_exception_in_a_record_abandons_the_session(monkeypatch):
             bank._charge_level = 0.01
             bank._loop_handle = Handle()
             later = w.weapons("Vorcha", PHASER)[0]
+            nc._drop(later)                 # RUN_PYTHON (unrepresentable)
 
             def boom(dt):
                 raise Boom()

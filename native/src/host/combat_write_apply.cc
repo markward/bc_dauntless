@@ -987,6 +987,316 @@ bool apply_log(const Ctx& c, const W* w, size_t from, size_t to,
     return true;
 }
 
+// ── THE LEAN K0 APPLY (phase 6 A2; combat_write_apply.h) ─────────────────
+
+// A run's per-type kinds: kind_of's answer for (type, field), kept by the
+// type so a run asks it once per field, not per write. An entry is valid
+// while the kind cache's epoch and mapping are the ones it was filled
+// under (a reset empties the map that owns the type; the epoch then
+// changes). kUnknown: not asked yet; kGeneral: a kind the lean path does
+// not store itself (REF, REFS, PYTHON).
+constexpr std::int8_t kUnknown = -1;
+constexpr std::int8_t kGeneral = -2;
+constexpr size_t kK0Fields = static_cast<size_t>(cb::Field::kCount);
+
+struct K0TypeKinds {
+    PyObject* type = nullptr;   // borrowed: kind_cache().map owns it
+    PyObject* kinds = nullptr;  // the mapping it was filled from
+    std::uint64_t epoch = 0;
+    std::int8_t kind[kK0Fields];
+};
+
+K0TypeKinds& k0_type_kinds(PyObject* type, PyObject* kinds) {
+    static auto* table = new K0TypeKinds[32];
+    K0TypeKinds& e = table[(static_cast<std::uint64_t>(
+                                reinterpret_cast<std::uintptr_t>(type)) *
+                            0x9E3779B97F4A7C15ull) >>
+                           59];
+    const KindCache& cache = kind_cache();
+    if (e.type != type || e.kinds != kinds || e.epoch != cache.epoch) {
+        e.type = type;
+        e.kinds = kinds;
+        e.epoch = cache.epoch;
+        std::memset(e.kind, kUnknown, sizeof e.kind);
+    }
+    return e;
+}
+
+// One run of consecutive writes to one handle: its object and its dict,
+// looked up once (the registry's live object carrying the handle as its
+// `_nslot`, as walk.obj answers it -- no pins dict: K0's apply runs no
+// Python between the kernel's write and this store but the wake hook,
+// which cannot free a row), or `slow`: the run takes apply_k0's path
+// (walk.obj with its pins, its errors).
+struct K0Run {
+    std::int64_t h = -1;
+    bool open = false;
+    bool slow = false;
+    // `_passive_asleep` read falsy and no Python run since (a wake, a
+    // general-path write): a later WAKE write of the run needs no probe.
+    bool awake = false;
+    Ref obj;
+    Ref dict;
+    K0TypeKinds* kinds = nullptr;
+};
+
+// The run's object's dict again, after Python ran (it may have replaced
+// it): false with nothing set and the run slow when it is no exact dict.
+void k0_refresh_dict(K0Run& r) {
+    r.awake = false;
+    Ref d(PyObject_GetAttr(r.obj.get(), names()->dict));
+    if (!d || !PyDict_CheckExact(d.get())) {
+        PyErr_Clear();
+        r.slow = true;
+        r.dict = Ref();
+        return;
+    }
+    r.dict = std::move(d);
+}
+
+void k0_open_run(const Ctx& c, std::int64_t h, K0Run& r, K0ApplyStats& st) {
+    r.obj = Ref();
+    r.dict = Ref();
+    r.kinds = nullptr;
+    r.awake = false;
+    r.h = h;
+    r.open = true;
+    ++st.runs;
+    const Names* n = names();
+    r.slow = true;
+    if (h < 0) return;
+    Ref key(PyLong_FromLongLong(h));
+    if (!key) {
+        PyErr_Clear();
+        return;
+    }
+    Ref o(registry_get(c.registry, key.get()));
+    if (!o || o.get() == Py_None) {
+        PyErr_Clear();
+        return;
+    }
+    Ref d(PyObject_GetAttr(o.get(), n->dict));
+    if (!d || !PyDict_CheckExact(d.get())) {
+        PyErr_Clear();
+        return;
+    }
+    PyObject* s = PyDict_GetItemWithError(d.get(), n->nslot);
+    if (s == nullptr || !PyLong_CheckExact(s)) {
+        PyErr_Clear();
+        return;
+    }
+    int overflow = 0;
+    const long long v = PyLong_AsLongLongAndOverflow(s, &overflow);
+    if (overflow != 0 || v != h) {
+        PyErr_Clear();
+        return;
+    }
+    r.slow = false;
+    r.obj = std::move(o);
+    r.dict = std::move(d);
+    r.kinds = &k0_type_kinds(reinterpret_cast<PyObject*>(Py_TYPE(r.obj.get())),
+                             c.kinds);
+}
+
+APPLY_INLINE bool k0_same_float(PyObject* cur, double d) {
+    if (cur == nullptr || !PyFloat_CheckExact(cur)) return false;
+    const double v = PyFloat_AS_DOUBLE(cur);
+    return std::memcmp(&v, &d, sizeof v) == 0;
+}
+
+// The write's field kind for the run's type (asked once per type and
+// field): kPlain, kWake or kGeneral. False: a Python error is set.
+bool k0_run_kind(const Ctx& c, K0Run& r, PyObject* field, cb::Field f,
+                 int* out) {
+    const size_t i = static_cast<size_t>(f);
+    std::int8_t k = r.kinds->kind[i];
+    if (k == kUnknown) {
+        KindEntry e;
+        if (!kind_of(c, reinterpret_cast<PyObject*>(Py_TYPE(r.obj.get())),
+                     field, &e))
+            return false;
+        Py_XDECREF(e.setter);
+        k = (e.kind == kPlain || e.kind == kWake)
+                ? static_cast<std::int8_t>(e.kind)
+                : kGeneral;
+        // Kept only while the cache owns the type (its mapping is this one).
+        if (kind_cache().kinds == c.kinds) r.kinds->kind[i] = k;
+    }
+    *out = k;
+    return true;
+}
+
+// WakeField.__set__'s `if obj.__dict__.get("_passive_asleep", False):
+// wake(obj)`, on the run's dict.
+bool k0_wake(const Ctx& c, K0Run& r) {
+    if (r.awake) return true;
+    PyObject* a = PyDict_GetItemWithError(r.dict.get(), names()->asleep);
+    if (a == nullptr) {
+        if (PyErr_Occurred()) return false;
+        r.awake = true;
+        return true;
+    }
+    if (a == Py_False) {
+        r.awake = true;
+        return true;
+    }
+    Ref held(Py_NewRef(a));  // the truth test can run Python
+    const bool exact = PyBool_Check(a);
+    const int truth = PyObject_IsTrue(a);
+    if (truth < 0) return false;
+    if (!truth) {
+        if (exact) r.awake = true;
+        else k0_refresh_dict(r);
+        return true;
+    }
+    Ref res(PyObject_CallOneArg(c.wake, r.obj.get()));
+    if (!res) return false;
+    k0_refresh_dict(r);
+    return true;
+}
+
+bool apply_k0_lean(const Ctx& c, const cb::K0Write& kw, K0Run& r,
+                   KeyCache& kc, K0ApplyStats& st) {
+    ++st.writes;
+    const cb::K0FieldWrite& w = kw.w;
+    if (names() == nullptr) return false;
+    PyObject* field = k0_field(w);
+    if (field == nullptr) return false;
+    if (!r.open || kw.handle != r.h) k0_open_run(c, kw.handle, r, st);
+    // apply_k0 itself: walk.obj (pins, registry), the field's kind, its
+    // store -- for a run the lean path cannot name, a kind it does not
+    // store (REF, REFS, PYTHON), a stop's Ref / Null write, and any shape
+    // it does not expect (that path raises what the reference raises).
+    auto general = [&]() {
+        ++st.general;
+        const bool ok = apply_k0(c, kw, kc);
+        if (ok && !r.slow) k0_refresh_dict(r);  // its Python may have run
+        return ok;
+    };
+    if (r.slow) return general();
+    PyObject* d = r.dict.get();
+    switch (w.type) {
+        case cb::K0FieldWrite::Type::Slot: {
+            PyObject* list = PyDict_GetItemWithError(d, field);
+            if (list == nullptr || !PyList_CheckExact(list) || w.index < 0 ||
+                w.index >= PyList_GET_SIZE(list)) {
+                PyErr_Clear();
+                return general();  // slot_store's own errors
+            }
+            const Py_ssize_t i = static_cast<Py_ssize_t>(w.index);
+            if (k0_same_float(PyList_GET_ITEM(list, i), w.d)) {
+                ++st.identical;
+                return true;
+            }
+            PyObject* v = PyFloat_FromDouble(w.d);
+            if (v == nullptr) return false;
+            Ref held(Py_NewRef(list));
+            const bool ok = PyList_SetItem(list, i, v) == 0;  // steals v
+            r.awake = false;  // the old element's release could run Python
+            return ok;
+        }
+        case cb::K0FieldWrite::Type::Watcher: {
+            PyObject* watcher = PyDict_GetItemWithError(d, field);
+            Ref wd;
+            if (watcher != nullptr) {
+                Ref held(Py_NewRef(watcher));
+                wd = Ref(PyObject_GetAttr(watcher, names()->dict));
+            }
+            if (!wd || !PyDict_CheckExact(wd.get())) {
+                PyErr_Clear();
+                return general();  // watcher_store's own errors
+            }
+            if (k0_same_float(
+                    PyDict_GetItemWithError(wd.get(), names()->value), w.d)) {
+                ++st.identical;
+                return true;
+            }
+            if (PyErr_Occurred()) return false;
+            Ref v(PyFloat_FromDouble(w.d));
+            if (!v) return false;
+            r.awake = false;
+            return PyDict_SetItem(wd.get(), names()->value, v.get()) == 0;
+        }
+        case cb::K0FieldWrite::Type::Float:
+        case cb::K0FieldWrite::Type::Flag:
+        case cb::K0FieldWrite::Type::Int:
+            break;
+        default:
+            return general();  // a stop's Ref / Null write
+    }
+    int kind;
+    if (!k0_run_kind(c, r, field, w.field, &kind)) return false;
+    if (kind == kGeneral) return general();
+    PyObject* cur = PyDict_GetItemWithError(d, field);
+    if (cur == nullptr && PyErr_Occurred()) return false;
+    bool same;
+    switch (w.type) {
+        case cb::K0FieldWrite::Type::Float:
+            same = k0_same_float(cur, w.d);
+            break;
+        case cb::K0FieldWrite::Type::Flag:
+            same = cur == (w.i != 0 ? Py_True : Py_False);
+            break;
+        default: {
+            same = false;
+            if (cur != nullptr && PyLong_CheckExact(cur)) {
+                int overflow = 0;
+                const long long v = PyLong_AsLongLongAndOverflow(cur, &overflow);
+                if (v == -1 && PyErr_Occurred()) return false;
+                same = overflow == 0 && v == w.i;
+            }
+            break;
+        }
+    }
+    if (same) {
+        ++st.identical;
+    } else {
+        PyObject* v = w.type == cb::K0FieldWrite::Type::Float
+                          ? PyFloat_FromDouble(w.d)
+                      : w.type == cb::K0FieldWrite::Type::Flag
+                          ? PyBool_FromLong(w.i != 0 ? 1 : 0)
+                          : PyLong_FromLongLong(w.i);
+        if (v == nullptr) return false;
+        // A scalar's release runs no Python; anything else's may.
+        const bool plain = cur == nullptr || PyFloat_CheckExact(cur) ||
+                           PyLong_CheckExact(cur) || PyBool_Check(cur);
+        const bool ok = PyDict_SetItem(d, field, v) == 0;
+        Py_DECREF(v);
+        if (!ok) return false;
+        if (!plain) r.awake = false;
+    }
+    if (kind == kWake) return k0_wake(c, r);
+    return true;
+}
+
+// apply_log for a K0 record's writes, through the lean path; a raise is
+// handled exactly as apply_log handles it (the rest by the general path).
+bool apply_k0_log(const Ctx& c, const cb::K0Write* w, size_t from, size_t to,
+                  std::uint64_t* applied) {
+    KeyCache kc;
+    K0Run run;
+    K0ApplyStats& st = k0_apply_stats();
+    for (size_t i = from; i < to; ++i) {
+        if (apply_k0_lean(c, w[i], run, kc, st)) {
+            ++*applied;
+            continue;
+        }
+        if (!PyErr_Occurred())
+            PyErr_SetString(PyExc_SystemError,
+                            "combat apply: a write failed with no error");
+        Raised e;
+        std::vector<std::int64_t> failed;
+        bool ok;
+        {
+            HandledAs handling(e.value);
+            ok = apply_rest(c, w, i + 1, to, failed, e.value, applied, kc);
+        }
+        if (ok) e.restore();
+        return false;
+    }
+    return true;
+}
+
 // ── The Python encoding (combat_apply_log) ───────────────────────────────
 
 bool parse_scalar(PyObject* o, ApplyScalar* out) {
@@ -1154,7 +1464,21 @@ bool WriteApplier::apply(const std::vector<ApplyWrite>& w, size_t from,
 }
 
 bool WriteApplier::apply(std::span<const cb::K0Write> w) {
-    return apply_range(w.data(), w.size(), 0, w.size());
+    if (ctx_ == nullptr) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "combat apply: no applier context "
+                        "(combat_set_applier)");
+        return false;
+    }
+    if (w.empty()) return true;
+    // Held for the apply: Python run inside may install another context.
+    Ref ctx(Py_NewRef(ctx_));
+    return apply_k0_log(unpack(ctx.get()), w.data(), 0, w.size(), &applied_);
+}
+
+K0ApplyStats& k0_apply_stats() {
+    static K0ApplyStats s;
+    return s;
 }
 
 bool WriteApplier::parse_log(PyObject* log, std::vector<ApplyWrite>* out) {

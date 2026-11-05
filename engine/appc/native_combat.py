@@ -178,7 +178,8 @@ _REQUIRED_BINDINGS = (
     # the K3 kernel).
     "combat_torp_add", "combat_step_scan", "combat_step_serial",
     "combat_k4_eligible", "combat_k3_begin", "combat_set_part_poses",
-    "combat_k0_begin", "combat_effect_take", "combat_effect_rebind",
+    "combat_k0_begin", "combat_k0_apply_stats", "combat_effect_take",
+    "combat_effect_rebind",
     "combat_apply_hit", "combat_dmg_guard_check",
     "combat_dmg_guard_invalidate", "combat_dmg_set_condition",
     "combat_dmg_clean_handles", "combat_k2_scan_clear",
@@ -355,7 +356,6 @@ def reset() -> None:
     _apply_kinds = None
     for k in _K0_STEP_REASONS:
         _k0_step_reasons[k] = 0
-    _k0_clear_caches()
     # Entries a previous test left queued, and a scope it left open, go
     # undelivered (tests/conftest.py resets between tests; nothing in the
     # engine calls reset()).
@@ -4896,195 +4896,25 @@ def _k1_system_ships(system) -> list:
 # mid-walk (no live trigger does; the passive walk's stale-registry rule has
 # the same blind spot).
 #
-# THE OVERRIDE GUARD. K0 computes what the walk's methods would; a test,
-# tool or mod replacing one must still be obeyed (WSM §7(a) A6):
-#   class     _K0_METHODS (A6, plus the walk's GetNumWeapons / GetWeapon /
-#             GetNumChildSubsystems / GetChildSubsystem; and on a bank,
-#             cannon or tube the stop / reload names _K0_LEAF_METHODS) on a
-#             weapon-kind class, _K0_SHIP_METHODS on a ShipClass, _K0_AMMO_METHODS on a
-#             TorpedoAmmoType: every entry the names have anywhere in the
-#             class's MRO (_k0_chain: a super() call reaches the entries
-#             below the first) against the stock class of its role's
-#             import-time snapshot (k0_snapshot_stock, k0_snapshot_ship).
-#             The binding keeps each
-#             class's verdict while CPython's version tag of the class is
-#             unchanged (an attribute assignment on it or a base changes
-#             it); a class with no valid verdict comes back from begin and
-#             _k0_flag computes it here;
-#   instance  an instance attribute named in _K0_SHIP_PATCHES /
-#             _K0_SYSTEM_PATCHES / _K0_WEAPON_PATCHES: the cheap subset of
-#             A6 that tests, tools and SWIG patch -- the update entry points
-#             on a weapon (UpdateCharge / UpdateReload; SWIG's
-#             ReloadTorpedo; and, since K0 stands in for them, StopFiring
-#             and _broadcast_reload), the power reads on a system (tests
-#             patch `system.IsOn`), the group getters on a ship. An instance
-#             patch of the rest is NOT looked for: every name is a dict
-#             probe of every weapon, every tick (~20 ns each; 630 weapons at
-#             64 ships), for names nothing patches. The binding re-probes a
-#             dict only when it changed (its PEP 509 version), so an idle
-#             weapon costs no probe;
-#   watcher   FloatRangeWatcher._update, which K0 stands in for on a pulse
-#             cannon's owned watcher (THE EFFECT QUEUE): it is not in any
-#             weapon class's MRO, so its stock entry is snapshotted
-#             beside them (_k0_watcher_stock) and a change flags the pulse
-#             cannon role (_k0_flag); k0_weapons drops the binding's cached
-#             verdicts whenever it sees `_update` change. A watcher that is
-#             not a plain FloatRangeWatcher the weapon owns is handed back
-#             by the kernel itself (reason `watcher`). An `_update` set on
-#             one watcher INSTANCE is not looked for (a probe of every
-#             cannon's watcher, every tick).
-# The binding's begin scan applies them (host_bindings.cc, k0_scan): a
-# flagged or patched ship or weapon system -> the ship whole (override); a
-# flagged or patched weapon -> that weapon at its turn (override); in a
-# torpedo system one such tube, or a flagged magazine, sends every tube.
-#
-# THE BEGIN-SNAPSHOT BOUNDARY. Both checks are decided once, at begin, for
-# the whole session: a patch a record's handler makes DURING a session (a
-# class attribute, an instance attribute on a weapon later in the walk)
-# takes effect at the next session, one tick later; the rest of this walk
-# steps from the begin verdicts. K1 is stricter only in where it looks
-# again: its verdicts are re-scanned before each of its records, so a
-# handler's patch is seen by the next walk of the same tick.
+# NO OVERRIDE GUARD (phase 6 A2; spec
+# 2026-11-05-phase6-engine-stages-native-design.md §3, Part A: a stage never
+# falls back to Python because an App method was patched). K0 steps every
+# weapon from the mirror: a class or instance patch of a method the walk
+# calls (UpdateCharge, UpdateReload, StopFiring, _broadcast_reload, a
+# system's IsOn, a ship's group getters, FloatRangeWatcher._update, ...) is
+# not called while K0 runs; only the Python walk (k0_weapons' stand-downs
+# below, DAUNTLESS_NATIVE_COMBAT=0) and a RUN_PYTHON record's own Python
+# honour one. The hand-backs left are the kernel's representability reasons
+# (k0_charging.h K0Reason): no_row, not_weapon_system, stale_row,
+# slot_heal, power_level, parent, unrepresentable, unknown_kind, watcher.
 
-# WSM §7(a) A6, every role; plus, on the LEAVES K0 stands in for them on
-# (_K0_LEAF_METHODS, since combat fire events Task 4), StopFiring and
-# _broadcast_reload: K0 logs a drained bank's or cannon's stop and queues a
-# reload's event instead of calling them in Python, so a class patch of
-# either -- a mod's, a test's spy -- hands that weapon back and the patch
-# runs where the Python reference runs it. A holding tractor beam's stop is
-# K0's too (fire control native only, M4). A weapon system's StopFiring is
-# never stood in for, so its role does not look for it. A tube's StopFiring is in the shared stop
-# encoding but never called by the walk: a tube overriding it is handed
-# back needlessly (conservative).
-_K0_METHODS = (
-    # WSM §7(a) A6.
-    "UpdateCharge", "UpdateReload", "_discharge_rate_per_second",
-    "GetParentSubsystem", "IsOn", "GetNormalPowerPercentage",
-    "GetPowerPercentage", "GetNormalPowerWanted", "GetConditionPercentage",
-    "GetMaxCondition", "GetPowerLevel", "GetChargePercentage",
-    "_passive_at_rest", "_ensure_slots", "ReloadTorpedo",
-    "_reload_denied_by_ammo", "_parent_ammo", "GetCurrentAmmoType",
-    "GetCurrentAmmoSlot", "GetAvailable", "_rounds_loaded_systemwide",
-    "GetNumReady",
-    # The walk's own (passive_weapons._groups' systems).
-    "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
-    "GetChildSubsystem")
-_K0_LEAF_METHODS = {
-    5: ("StopFiring",),                         # PhaserBank
-    6: ("StopFiring",),                         # PulseWeapon
-    7: ("StopFiring",),                         # TractorBeam (its hold)
-    8: ("StopFiring", "_broadcast_reload"),     # TorpedoTube
-}
-_K0_SHIP_METHODS = ("GetPhaserSystem", "GetPulseWeaponSystem",
-                    "GetTractorBeamSystem", "GetTorpedoSystem")
-_K0_AMMO_METHODS = ("GetAvailable",)
-_K0_SHIP_PATCHES = _K0_SHIP_METHODS
-_K0_SYSTEM_PATCHES = ("IsOn", "GetNormalPowerPercentage", "GetPowerLevel")
-_K0_WEAPON_PATCHES = ("UpdateCharge", "UpdateReload", "ReloadTorpedo",
-                      "StopFiring", "_broadcast_reload")
-# FloatRangeWatcher and its `_update` as the engine defined them
-# (k0_snapshot_stock), and the `_update` the binding's cached verdicts were
-# computed with (k0_weapons drops them when it changes).
-_k0_watcher_stock = None
-_k0_watcher_seen = [None]
 # k0_weapons' own stand-downs: "off" (native off), "nested" (a K0 session is
 # already open: a record's handler re-entered the weapons step), "audit"
 # (DAUNTLESS_NATIVE_AUDIT or DAUNTLESS_PASSIVE_AUDIT: the audits compare the
 # Python walk, which K0 would bypass).
 _K0_STEP_REASONS = ("off", "nested", "audit")
 _k0_step_reasons = dict.fromkeys(_K0_STEP_REASONS, 0)
-# role -> (stock class, names, the stock class's resolution of them); role
-# is a weapon kind 1..8, "ship" or "ammo".
-_k0_stock: dict = {}
 _k0_kind_ids = None
-# begin's ctx with no fresh verdicts (the common case: every class seen).
-_K0_NO_FRESH: dict = {}
-_k0_ctx = (_K0_NO_FRESH, _K0_SHIP_PATCHES, _K0_SYSTEM_PATCHES,
-           _K0_WEAPON_PATCHES)
-
-
-def _k0_clear_caches() -> None:
-    if _h is not None and hasattr(_h, "combat_k0_clear_caches"):
-        _h.combat_k0_clear_caches()
-
-
-def _k0_chain(cls, names) -> tuple:
-    """Every entry `names` have in `cls`'s MRO, class by class: (name, the
-    class's own attribute), in MRO order. Not only the first one each name
-    resolves to: a method can reach the entries below it through super()
-    (PulseWeapon.UpdateCharge and TractorBeam.UpdateCharge call
-    `super().UpdateCharge`, so a patch of _EnergyWeaponFireMixin's changes
-    what they do while their own entries stay the same)."""
-    return tuple((n, d[n]) for klass in cls.__mro__ for d in (vars(klass),)
-                 for n in names if n in d)
-
-
-def _k0_names(role) -> tuple:
-    """The K0 names of a weapon-kind or "ammo" role (THE OVERRIDE GUARD)."""
-    if role == "ammo":
-        return _K0_AMMO_METHODS
-    return _K0_LEAF_METHODS.get(role, ()) + _K0_METHODS
-
-
-def k0_snapshot_stock(classes) -> None:
-    """weapon_subsystems, as it finishes defining its classes, passes
-    {weapon_kind: stock class, "ammo": TorpedoAmmoType}: snapshot every
-    entry the K0 names have in each one's MRO (_k0_chain), before any test,
-    tool or mod can patch one."""
-    global _k0_watcher_stock
-    for role, cls in classes.items():
-        names = _k0_names(role)
-        _k0_stock[role] = (cls, names, _k0_chain(cls, names))
-    from engine.appc.float_range_watcher import FloatRangeWatcher
-    _k0_watcher_stock = (FloatRangeWatcher,
-                         vars(FloatRangeWatcher).get("_update"))
-    _k0_watcher_seen[0] = _k0_watcher_stock[1]
-    _k0_clear_caches()
-
-
-def _k0_watcher_update():
-    """FloatRangeWatcher's `_update` entry as it is now (None before the
-    snapshot)."""
-    if _k0_watcher_stock is None:
-        return None
-    return vars(_k0_watcher_stock[0]).get("_update")
-
-
-def k0_snapshot_ship(ship_class) -> None:
-    """ships.py, as it finishes defining ShipClass."""
-    _k0_stock["ship"] = (ship_class, _K0_SHIP_METHODS,
-                         _k0_chain(ship_class, _K0_SHIP_METHODS))
-    _k0_clear_caches()
-
-
-def _k0_role(cls):
-    kind = _weapon_kind_of_class(cls)
-    if kind:
-        return kind
-    for role in ("ship", "ammo"):
-        stock = _k0_stock.get(role)
-        if stock is not None and issubclass(cls, stock[0]):
-            return role
-    return None
-
-
-def _k0_flag(cls) -> int:
-    """1 when any class in `cls`'s MRO holds a K0 name of its role that the
-    stock class's import-time snapshot does not hold, or holds it with
-    another value (_k0_chain: an override in a subclass, a patch of the
-    stock class or of a base a super() call reaches); 0 otherwise (a class
-    of no role: the kernel decides it, a ship of another class is
-    not_weapon_system). Computed afresh: the binding caches it per class
-    version tag (a patch of a base changes every subclass's tag too)."""
-    role = _k0_role(cls)
-    stock = _k0_stock.get(role)
-    if stock is None:
-        return 0
-    _stock_cls, names, snapshot = stock
-    if role == 6 and _k0_watcher_stock is not None \
-            and _k0_watcher_update() is not _k0_watcher_stock[1]:
-        return 1        # the watcher line K0 stands in for is patched
-    return int(_k0_chain(cls, names) != snapshot)
 
 
 def _k0_kinds() -> tuple:
@@ -5112,39 +4942,16 @@ def k0_weapons(ships, dt) -> bool:
     if _h.combat_k0_open():
         return _k0_python("nested")
     drain()                     # a session start (ruling R2)
-    global _ws, _step_memo, _k0_ctx
+    global _ws, _step_memo
     if _ws is None:
         from engine.appc import weapon_subsystems
         from engine.core import step_memo
         _ws, _step_memo = weapon_subsystems, step_memo
     if type(ships) is not list:
         ships = list(ships)
-    # FloatRangeWatcher._update changed since the cached verdicts were made:
-    # the pulse cannon class's verdict rests on it (THE OVERRIDE GUARD).
-    update = _k0_watcher_update()
-    if update is not _k0_watcher_seen[0]:
-        _k0_watcher_seen[0] = update
-        _k0_clear_caches()
     # The clock every tube of this step reads (WSM D5): one read, Python's
     # own _game_time (its failure is its 0.0 and its log, WSM A10).
-    now_ = _ws._game_time()
-    # A class with no valid verdict (new, or patched since): computed here,
-    # and the scan runs again with it (a flagged ship or system is not
-    # looked into, so a class below it can surface only on a later pass;
-    # bounded by the class depth).
-    ctx = _k0_ctx
-    fresh = None
-    for _attempt in range(8):
-        missing = _h.combat_k0_begin(ships, dt, now_, ctx)
-        if missing is None:
-            break
-        if fresh is None:
-            fresh = {}
-            ctx = (fresh,) + _k0_ctx[1:]
-        for cls in missing:
-            fresh[cls] = _k0_flag(cls)
-    else:
-        raise RuntimeError("combat K0: no guard flag for %r" % (missing,))
+    _h.combat_k0_begin(ships, dt, _ws._game_time())
     run_k0(ships, dt)
     return True
 
