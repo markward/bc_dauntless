@@ -12,6 +12,7 @@ from engine.appc.constants_generated import CLASS_CONSTANTS
 from engine.ui.panel import Panel
 from engine.ui import ship_icons
 from engine.ui.species_icons import stem_for_ship
+from engine.ui.subsystem_tree import build_families, subsystem_state
 import engine.dev_mode as dev_mode
 
 
@@ -125,6 +126,9 @@ class ShipDisplayPanel(Panel):
         self._minimizable: bool = True
         self._minimized: bool = False
         self._visible: bool = True
+        # Target role: the family the player opened, scoped to one ship.
+        self._open_family: Optional[str] = None
+        self._open_ship_id: int = 0
         self._shields = _ShieldsSubview(parent=self)
         self._damage  = _DamageSubview(parent=self)
         self._gauge   = _HullGaugeSubview(parent=self)
@@ -248,12 +252,16 @@ class ShipDisplayPanel(Panel):
         # False while in bridge view, True in exterior/tactical. When
         # False, the JS payload's visible=False hides the panel entirely.
         if not self._visible:
+            self._open_family, self._open_ship_id = None, 0
             return (None, "", "NONE", "", 0.0, (0.0,) * 6, (),
-                    None, None, self._minimized, False, (False, False))
+                    None, None, self._minimized, False, _NO_TREE,
+                    (False, False))
         ship = _resolve_ship_for_role(self._role)
         if ship is None:
+            self._open_family, self._open_ship_id = None, 0
             return (None, "", "NONE", "", 0.0, (0.0,) * 6, (),
-                    None, None, self._minimized, False, (False, False))
+                    None, None, self._minimized, False, _NO_TREE,
+                    (False, False))
         player       = _get_player()
         ship_id      = ship.GetObjID() if hasattr(ship, "GetObjID") else 0
         name         = ship.GetName() if hasattr(ship, "GetName") else ""
@@ -276,9 +284,36 @@ class ShipDisplayPanel(Panel):
         # so the target arcs never hide whatever its panes say.
         shields_hidden = (self._shields.hidden_panes()
                           if self._role == ROLE_PLAYER else (False, False))
+        tree = (self._tree_state(ship, ship_id, player)
+                if self._role == ROLE_TARGET else _NO_TREE)
         return (ship_id, name, affiliation, species_key, hull_pct,
                 shields_pct, damage_frozen, range_km, speed_kph,
-                self._minimized, True, shields_hidden)
+                self._minimized, True, tree, shields_hidden)
+
+    def _tree_state(self, ship, ship_id: int, player) -> tuple:
+        """(families, open_family, locked) for the target role. Frozen
+        dataclasses only: no SVG text here, the snapshot is built every
+        frame."""
+        contact = None
+        try:
+            import App
+            menu = App.STTargetMenu_GetTargetMenu()
+            contact = menu.contact_for(ship) if menu is not None else None
+        except Exception as _e:
+            dev_mode.log_swallowed("target panel contact lookup", _e)
+        # A cloaked contact is targetable at ship level only.
+        targetable = contact is None or contact.subsystems_targetable
+        families = build_families(ship) if targetable else ()
+        if (ship_id != self._open_ship_id
+                or self._open_family not in {f.name for f in families}):
+            self._open_family = None
+        self._open_ship_id = ship_id
+        locked = None
+        if targetable and player is not None and player.GetTarget() is ship:
+            sub = player.GetTargetSubsystem()
+            if sub is not None:
+                locked = sub.GetName()
+        return (families, self._open_family, locked)
 
     # Panel framework ---------------------------------------------------
     def render_payload(self) -> Optional[str]:
@@ -288,7 +323,7 @@ class ShipDisplayPanel(Panel):
         self._last_snapshot = snap
         (ship_id, name, affiliation, species, hull_pct,
          shields, damage_frozen, range_km, speed_kph,
-         minimized, visible, (top_hidden, bottom_hidden)) = snap
+         minimized, visible, tree, (top_hidden, bottom_hidden)) = snap
         ship_now = _resolve_ship_for_role(self._role) if visible else None
         damage_icons_list = _damage_icon_descriptors(ship_now) if ship_now else []
         payload = {
@@ -304,6 +339,9 @@ class ShipDisplayPanel(Panel):
             "minimized":    minimized,
             "shields_hidden": {"top_pane": top_hidden,
                                "bottom_pane": bottom_hidden},
+            "families":     [_family_json(f) for f in tree[0]],
+            "open_family":  tree[1],
+            "locked":       tree[2],
         }
         payload["silhouette_url"] = ship_icons.icon_path_for_species(payload["species"])
         return ("setShipDisplay(" + json.dumps(self._role) + ", " +
@@ -314,10 +352,38 @@ class ShipDisplayPanel(Panel):
             self._minimized = not self._minimized
             self._last_snapshot = None
             return True
+        if self._role == ROLE_TARGET:
+            verb, _, family = action.partition("/")
+            if verb == "open" and family:
+                self._open_family = (None if self._open_family == family
+                                     else family)
+                self._last_snapshot = None
+                return True
+            if verb == "show" and family:
+                self._open_family = family
+                self._last_snapshot = None
+                return True
         return False
 
     def invalidate(self) -> None:
         self._last_snapshot = None
+
+
+_NO_TREE = ((), None, None)
+
+
+def _family_json(fam) -> dict:
+    from engine.ui import subsystem_icons
+    return {
+        "name": fam.name, "state": fam.state, "icon_key": fam.icon_key,
+        "icon_svg": subsystem_icons.svg_for_key(fam.icon_key),
+        "lockable": fam.lockable, "x_px": fam.x_px, "y_px": fam.y_px,
+        "members": [{
+            "name": m.name, "state": m.state, "icon_key": m.icon_key,
+            "icon_svg": subsystem_icons.svg_for_key(m.icon_key),
+            "x_px": m.x_px, "y_px": m.y_px,
+        } for m in fam.members],
+    }
 
 
 # ---------------------------------------------------------------------
@@ -583,20 +649,8 @@ def _damage_icon_descriptors(ship):
     return out
 
 
-def _row_state(sub) -> str:
-    """Predicate ladder — "healthy" instead of None so the panel always
-    has a class to apply. Healthy → default colour; damaged/disabled/
-    destroyed → --bc-damage-* CSS tokens."""
-    try:
-        if hasattr(sub, "IsDestroyed") and sub.IsDestroyed():
-            return "destroyed"
-        if hasattr(sub, "IsDisabled") and sub.IsDisabled():
-            return "disabled"
-        if hasattr(sub, "IsDamaged") and sub.IsDamaged():
-            return "damaged"
-    except Exception as _e:
-        dev_mode.log_swallowed("subsystem health state", _e)
-    return "healthy"
+# Moved to engine.ui.subsystem_tree; kept as a name for the damage descriptors.
+_row_state = subsystem_state
 
 
 def _range_and_speed_to(ship, player):

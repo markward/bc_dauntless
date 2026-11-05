@@ -703,3 +703,184 @@ def test_sdk_flicker_shields_hides_then_restores_the_shield_arcs(monkeypatch):
         assert panel._snapshot()[-1] == (False, True)
     finally:
         _teardown_game()
+
+
+# ---------------------------------------------------------------------------
+# Target panel: family tree, open family, locked (Task 5)
+# ---------------------------------------------------------------------------
+
+def _foe_with_phasers(name="Foe", n=2):
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import (
+        HullSubsystem, ShieldSubsystem, ShipSubsystem,
+    )
+    from engine.appc.weapon_subsystems import PhaserSystem
+    foe = ShipClass(); foe.SetName(name)
+    foe.SetShieldSubsystem(ShieldSubsystem())
+    foe.SetHull(HullSubsystem())
+    ph = PhaserSystem("Phasers")
+    ph.SetMaxCondition(100.0); ph.SetCondition(100.0)
+    for i in range(n):
+        c = ShipSubsystem("Bank %d" % i)
+        c.SetMaxCondition(100.0); c.SetCondition(100.0)
+        c._position_2d = (10.0 + i, 20.0)
+        ph.AddChildSubsystem(c)
+    foe.SetPhaserSystem(ph)
+    return foe
+
+
+def _target_panel_on(foe, player):
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_TARGET
+    player.SetTarget(foe)
+    player.GetSensorSubsystem().AddKnownObject(foe)
+    return ShipDisplayPanel(ROLE_TARGET)
+
+
+def _payload(panel):
+    import json
+    script = panel.render_payload()
+    assert script is not None
+    prefix = 'setShipDisplay("target", '
+    assert script.startswith(prefix)
+    return json.loads(script[len(prefix):-2])
+
+
+def test_target_payload_carries_families_open_family_and_locked():
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers()
+        panel = _target_panel_on(foe, player)
+        p = _payload(panel)
+        assert p["open_family"] is None and p["locked"] is None
+        fam = next(f for f in p["families"] if f["name"] == "Phasers")
+        assert fam["name"] == "Phasers" and fam["lockable"] is True
+        assert fam["state"] == "healthy" and fam["icon_key"] == "laser"
+        assert "<svg" in fam["icon_svg"]
+        assert [m["name"] for m in fam["members"]] == ["Bank 0", "Bank 1"]
+        m0 = fam["members"][0]
+        assert (m0["x_px"], m0["y_px"]) == (10.0, 20.0)
+        assert set(m0) == {"name", "state", "icon_key", "icon_svg",
+                           "x_px", "y_px"}
+        player.SetTargetSubsystem(foe.GetPhaserSystem().GetChildSubsystem(1))
+        assert _payload(panel)["locked"] == "Bank 1"
+    finally:
+        _teardown_game()
+
+
+def test_player_payload_has_no_families():
+    import json
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    _setup_game_with_player()
+    try:
+        panel = ShipDisplayPanel(ROLE_PLAYER)
+        script = panel.render_payload()
+        p = json.loads(script[len('setShipDisplay("player", '):-2])
+        assert p["families"] == []
+        assert p["open_family"] is None and p["locked"] is None
+    finally:
+        _teardown_game()
+
+
+def test_open_event_toggles_and_show_event_only_opens():
+    _, player, _ = _setup_game_with_player()
+    try:
+        panel = _target_panel_on(_foe_with_phasers(), player)
+        _payload(panel)
+        assert panel.dispatch_event("open/Phasers") is True
+        assert _payload(panel)["open_family"] == "Phasers"
+        panel.dispatch_event("show/Phasers")
+        assert _payload(panel)["open_family"] == "Phasers"
+        panel.dispatch_event("open/Phasers")
+        assert _payload(panel)["open_family"] is None
+        panel.dispatch_event("show/Phasers")
+        assert _payload(panel)["open_family"] == "Phasers"
+    finally:
+        _teardown_game()
+
+
+def test_open_event_is_ignored_by_the_player_panel():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    _setup_game_with_player()
+    try:
+        assert ShipDisplayPanel(ROLE_PLAYER).dispatch_event("open/X") is False
+    finally:
+        _teardown_game()
+
+
+def test_retarget_clears_the_open_family():
+    _, player, _ = _setup_game_with_player()
+    try:
+        a = _foe_with_phasers("A")
+        b = _foe_with_phasers("B")  # same family name on purpose
+        panel = _target_panel_on(a, player)
+        _payload(panel)
+        panel.dispatch_event("show/Phasers")
+        assert _payload(panel)["open_family"] == "Phasers"
+        player.SetTarget(b)
+        player.GetSensorSubsystem().AddKnownObject(b)
+        p = _payload(panel)
+        assert p["ship_name"] == "B" and p["open_family"] is None
+    finally:
+        _teardown_game()
+
+
+def test_open_family_clears_when_the_family_disappears():
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers(n=1)
+        panel = _target_panel_on(foe, player)
+        _payload(panel)
+        panel.dispatch_event("show/Phasers")
+        _payload(panel)
+        foe.GetPhaserSystem().GetChildSubsystem(0).SetCondition(0.0)
+        p = _payload(panel)
+        assert "Phasers" not in [f["name"] for f in p["families"]]
+        assert p["open_family"] is None
+    finally:
+        _teardown_game()
+
+
+def test_cloaked_target_has_no_families_and_no_lock():
+    import App
+    from engine.appc.target_menu import STTargetMenu_GetTargetMenu
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers()
+        panel = _target_panel_on(foe, player)
+        player.SetTargetSubsystem(foe.GetPhaserSystem())
+        _payload(panel)
+
+        class _Contact:
+            ship = foe
+            subsystems_targetable = False
+
+        menu = STTargetMenu_GetTargetMenu()
+        if menu is None:
+            from engine.appc.target_menu import STTargetMenu_CreateW
+            menu = STTargetMenu_CreateW("Targets")
+        saved = menu._contacts
+        menu._contacts = [_Contact()]
+        try:
+            p = _payload(panel)
+        finally:
+            menu._contacts = saved
+        assert p["families"] == []
+        assert p["locked"] is None
+        assert p["open_family"] is None
+    finally:
+        _teardown_game()
+
+
+def test_family_change_reemits():
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers()
+        panel = _target_panel_on(foe, player)
+        assert panel.render_payload() is not None
+        assert panel.render_payload() is None
+        foe.GetPhaserSystem().GetChildSubsystem(0).SetCondition(10.0)
+        p = _payload(panel)
+        fam = next(f for f in p["families"] if f["name"] == "Phasers")
+        assert fam["members"][0]["state"] == "disabled"
+    finally:
+        _teardown_game()

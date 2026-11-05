@@ -1,6 +1,6 @@
 """End-to-end: load Bridge.TacticalMenuHandlers.CreateTargetList,
 populate a real ship with subsystems via the bridge set, and verify
-the rendered payload contains nested subsystems + health bars."""
+the list row is flat and the target panel carries its subsystem families."""
 import json
 import App
 from engine.appc.ships import ShipClass_Create
@@ -48,29 +48,29 @@ def test_full_pipeline_real_sdk_real_ship_real_subsystems():
         assert row.GetAffiliation() == "ENEMY"
         assert len(row._children) > 0  # subsystems populated
 
-        # Render the view payload and verify the shape.  The subsystem tree is
-        # an EXPANDED-row property now -- a collapsed row ships only the caret
-        # flag, because target_list.js draws child rows only when expanded.
+        # The list is flat now: a row carries no subsystem tree. The ship's
+        # subsystems are the target panel's `families`.
         view = TargetListView()
-        collapsed = json.loads(view.render_payload()[len("setTargetList("):-2])
-        collapsed_row = next(r for r in collapsed["rows"] if r["name"] == "Kor")
-        assert collapsed_row["subsystems"] == []
-        assert collapsed_row["has_subsystems"] is True
-
-        view._expanded_ships.add("Kor")
-        view.invalidate()
-        script = view.render_payload()
-        body = script[len("setTargetList("):-2]
-        state = json.loads(body)
+        state = json.loads(view.render_payload()[len("setTargetList("):-2])
         kor_row = next(r for r in state["rows"] if r["name"] == "Kor")
         assert kor_row["affiliation"] == "ENEMY"
-        assert "hull" in kor_row and 0 <= kor_row["hull"] <= 100
-        assert "shields" in kor_row and 0 <= kor_row["shields"] <= 100
-        assert isinstance(kor_row["subsystems"], list)
-        assert len(kor_row["subsystems"]) > 0
-        subsystem_names = [s["name"] for s in kor_row["subsystems"]]
-        # All names are non-empty strings.
-        for n in subsystem_names:
-            assert isinstance(n, str) and n
+        assert "subsystems" not in kor_row
+
+        from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_TARGET
+        player.SetTarget(kor)
+        player.GetSensorSubsystem().AddKnownObject(kor)
+        panel = ShipDisplayPanel(ROLE_TARGET)
+        script = panel.render_payload()
+        payload = json.loads(script[len('setShipDisplay("target", '):-2])
+        assert payload["ship_name"] == "Kor"
+        assert len(payload["families"]) > 0
+        names = [f["name"] for f in payload["families"]]
+        assert "Hull" not in names
+        for fam in payload["families"]:
+            assert isinstance(fam["name"], str) and fam["name"]
+            assert fam["state"] in ("healthy", "damaged", "disabled",
+                                    "destroyed")
+            for m in fam["members"]:
+                assert isinstance(m["name"], str) and m["name"]
     finally:
         _set_current_game(None)
