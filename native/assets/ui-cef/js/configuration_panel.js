@@ -33,7 +33,7 @@ const CP_MASTERS = [
 
 // Graphics-tab controls in rendered order: the standalone rows, then the
 // masters. Single source for both the focusable list and the rendered rows.
-const CP_GRAPHICS_STANDALONE = ['aa_mode', 'dust', 'fov'];
+const CP_GRAPHICS_STANDALONE = ['aa_mode', 'dust', 'fullscreen', 'fov'];
 // Plain rows that sit INSIDE the Modern VFX group, after the masters.
 const CP_GRAPHICS_TRAILING = [['camera_shake', 'Camera Shake']];
 // Segmented selectors that end the Modern VFX group, after the trailing rows.
@@ -162,6 +162,7 @@ function _cpRenderGraphicsBody(state, focusables) {
     html += '</div></div>';
 
     html += _cpToggleRow('Space Dust', 'dust', s.dust_on, isFoc);
+    html += _cpToggleRow('Full Screen', 'fullscreen', s.fullscreen_on, isFoc);
 
     // FOV slider — listen on 'change' (released), not 'input' (every
     // pixel), so dragging doesn't flood the CEF event channel.

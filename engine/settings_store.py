@@ -279,6 +279,13 @@ SETTINGS: tuple = (
             lo=0, hi=2, reset_default=1),
     Setting("dust", "graphics", "dust_on", bool, True,
             lambda c, v: c.r.set_dust_enabled(v)),
+    # Off by default: a first launch that seizes the whole screen, before the
+    # player has agreed to anything, is a worse first impression than a window
+    # they can maximise. Once set it persists, so "start full screen" is one
+    # toggle away and survives the next launch -- which is the thing players
+    # actually asked for.
+    Setting("fullscreen", "graphics", "fullscreen_on", bool, False,
+            lambda c, v: c.r.set_fullscreen(v)),
     Setting("fov_deg", "graphics", "fov_deg", int,
             lambda c: int(round(math.degrees(c.director.fov_y_rad))),
             lambda c, v: c.director.set_fov(math.radians(v)),

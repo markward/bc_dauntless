@@ -12496,6 +12496,7 @@ def run(mission_name: Optional[str] = None,
             on_reset=lambda section: _settings.reset_and_apply_section(
                 _store, _settings_ctx, section),
             set_dust=r.set_dust_enabled,
+            set_fullscreen=r.set_fullscreen,
             set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,
             # Routed through the settings row, not straight at the renderer:

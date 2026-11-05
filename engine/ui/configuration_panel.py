@@ -93,6 +93,9 @@ class SettingsSnapshot:
     disable_annoying_dialogue_on: bool = True
     ai_difficulty: int = 1
     dust_on: bool = True
+    # Whether the window starts (and currently sits) full-screen. Persisted,
+    # so the answer to "can it launch full screen?" is this toggle.
+    fullscreen_on: bool = False
     # Bridge rendering quality (Low/Medium/High), driven by r.set_bridge_quality.
     bridge_quality: int = 1
     # One master toggle over the volumetric nebulae and the procedural sky.
@@ -138,6 +141,10 @@ class ConfigurationPanel(Panel):
                  set_ship_light_emitters: Callable[[bool], None],
                  set_camera_shake: Callable[[bool], None],
                  set_ambient_gradient: Callable[[bool], None],
+                 # Display: full screen on the monitor the window occupies.
+                 # Optional so construction sites and tests that predate the
+                 # row keep working; without it the toggle is inert.
+                 set_fullscreen: Optional[Callable[[bool], None]] = None,
                  input_map=None,
                  # Bridges tab: the ship->bridge matrix (engine.bridge_selection.
                  # BridgePins). Optional so existing construction/tests without
@@ -185,6 +192,10 @@ class ConfigurationPanel(Panel):
         }
         # Standalone rows keep their own attribute.
         self._set_dust = set_dust
+        # Defaulted to a no-op: the panel is constructed headless in tests and
+        # by callers that predate this row, and a missing display control must
+        # not be an AttributeError mid-click.
+        self._set_fullscreen = set_fullscreen or (lambda _on: None)
         self._set_camera_shake = set_camera_shake
         self._set_aa_mode = set_aa_mode
         self._set_bridge_quality = set_bridge_quality
@@ -420,6 +431,12 @@ class ConfigurationPanel(Panel):
             self._set_camera_shake(new_val)
             self._settings.camera_shake_on = new_val
             self._on_change("camera_shake", new_val)
+            return True
+        if action == "toggle:fullscreen":
+            new_val = not self._settings.fullscreen_on
+            self._set_fullscreen(new_val)
+            self._settings.fullscreen_on = new_val
+            self._on_change("fullscreen", new_val)
             return True
         if action == "toggle:dust":
             new_val = not self._settings.dust_on
@@ -663,6 +680,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:camera_shake")
         elif activate and kind == "ctrl" and target == "dust":
             self.dispatch_event("toggle:dust")
+        elif activate and kind == "ctrl" and target == "fullscreen":
+            self.dispatch_event("toggle:fullscreen")
         # aa_mode has no activate branch: it is a multi-value selector driven
         # by left/right below, like ai_difficulty, not a toggle.
         elif activate and kind == "ctrl" and target == "subtitles":
@@ -732,7 +751,7 @@ class ConfigurationPanel(Panel):
         standalone controls, then the 'Modern VFX' group (master toggles,
         Camera Shake, Bridge Rendering), then the per-tab Reset row:
         [('tab','graphics'), ('ctrl','aa_mode'),
-         ('ctrl','dust'), ('ctrl','fov'),
+         ('ctrl','dust'), ('ctrl','fullscreen'), ('ctrl','fov'),
          ('ctrl','improved_space'), ('ctrl','camera_realism'),
          ('ctrl','realistic_lighting'), ('ctrl','camera_shake'),
          ('ctrl','bridge_quality'), ('ctrl','reset_graphics')].
@@ -741,7 +760,8 @@ class ConfigurationPanel(Panel):
         together by test_js_graphics_focusables_match_python."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "aa_mode"), ("ctrl", "dust"), ("ctrl", "fov")]
+            out += [("ctrl", "aa_mode"), ("ctrl", "dust"),
+                    ("ctrl", "fullscreen"), ("ctrl", "fov")]
             out += [("ctrl", k) for k in MASTER_KEYS]
             out += [("ctrl", "camera_shake"), ("ctrl", "bridge_quality")]
             out += [("ctrl", "reset_graphics")]

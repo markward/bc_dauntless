@@ -27,6 +27,7 @@ def _make(**overrides):
             fov_deg=70,
         ),
         set_dust=Mock(),
+        set_fullscreen=Mock(),
         set_hdr=Mock(),
         set_rim=Mock(),
         set_aa_mode=Mock(),
@@ -732,8 +733,54 @@ def test_graphics_control_order_is_standalones_masters_then_trailing():
     standalones-then-masters test, which camera shake made incomplete."""
     p, _ = _make()
     ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
-    assert ctrls == (["aa_mode", "dust", "fov"] + list(MASTER_KEYS)
+    assert ctrls == (["aa_mode", "dust", "fullscreen", "fov"]
+                      + list(MASTER_KEYS)
                       + ["camera_shake", "bridge_quality", "reset_graphics"])
+
+
+def test_full_screen_row_toggles_the_window_and_persists():
+    """The row the player uses to start full screen.
+
+    It must do three things at once, which is why they are asserted
+    together: drive the window NOW, update the snapshot the page re-renders
+    from, and report the change so settings_store writes it to disk. Miss
+    the last and the toggle works until you quit, which is precisely the
+    thing it exists to survive.
+    """
+    changes = []
+    p, kw = _make(on_change=lambda k, v: changes.append((k, v)))
+    p.open()
+    assert p._settings.fullscreen_on is False
+
+    assert p.dispatch_event("toggle:fullscreen") is True
+    kw["set_fullscreen"].assert_called_once_with(True)
+    assert p._settings.fullscreen_on is True
+    assert ("fullscreen", True) in changes
+
+    assert p.dispatch_event("toggle:fullscreen") is True
+    assert p._settings.fullscreen_on is False
+    assert changes[-1] == ("fullscreen", False)
+
+
+def test_space_on_full_screen_row_toggles():
+    """Keyboard reaches the row too -- it is in the focus order, so arrowing
+    onto it and pressing Space must act, like every other toggle."""
+    p, kw = _make()
+    p.open()
+    p._focused = p._focusables().index(("ctrl", "fullscreen"))
+    r = _FakeReader()
+    r.press(r.keys.KEY_SPACE)
+    p.handle_input(r)
+    kw["set_fullscreen"].assert_called_once_with(True)
+
+
+def test_a_panel_built_without_a_fullscreen_setter_still_toggles():
+    """set_fullscreen is optional, so older construction sites keep working.
+    The row must then update state rather than raising AttributeError."""
+    p, _ = _make(set_fullscreen=None)
+    p.open()
+    assert p.dispatch_event("toggle:fullscreen") is True
+    assert p._settings.fullscreen_on is True
 
 
 def test_space_on_camera_shake_row_toggles():
