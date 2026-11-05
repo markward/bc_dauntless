@@ -40,6 +40,10 @@ class ShipClass(DamageableObject):
     _powered_consumers = native_combat.NativeRefList("Subsystem")
     # The native repair piece's bay (subsystem_step.h THE REPAIR PIECE).
     _repair_subsystem = native_combat.NativeMountRefField("Subsystem")
+    # articulation.tick_ship's rigless early-out, as generation + 1 (0:
+    # not known rigless); the native ARTICULATION piece skips a ship whose
+    # value equals the pushed ARTICULATION_GEN + 1.
+    _rigless_gen = native_combat.NativeField(int)
     # What the K2 beam kernel reads: the lock, the Manual Aim offset, the
     # shield generator and the cached hull box (all rebound, never mutated).
     _target_subsystem = native_combat.NativeRefField("Subsystem")
@@ -106,6 +110,7 @@ class ShipClass(DamageableObject):
         self._shield_subsystem = None
         self._power_subsystem = None
         self._repair_subsystem = None
+        self._rigless_gen = 0
         # Powered consumers in attach order — this list IS the BC draw priority
         # (mirrors BC's linked list of powered subsystems).  PowerSubsystem's
         # per-interval pump walks it in order so earlier-attached systems get

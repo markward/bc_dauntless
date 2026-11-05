@@ -54,9 +54,10 @@ def _faces(ship):
 
 def _shield_records_python(counts, ships, stages):
     """How many SHIELD pieces ran as RUN_PYTHON records: articulation is
-    always RUN_PYTHON (Task 6), one record per ship; power, cloak and
-    repair are native too (Tasks 4-5)."""
-    return counts["run_python"] - 1 * ships * stages
+    RUN_PYTHON once per rigless ship (tick_ship finds it rigless on its
+    first call; Task 6); power, cloak and repair are native too (Tasks
+    4-5). `stages` is kept for the callers."""
+    return counts["run_python"] - ships
 
 
 def test_sdk_set_charge_per_second_reaches_the_native_step():

@@ -267,6 +267,12 @@ enum class Field : int32_t {
     _repair_subsystem, _transition_elapsed, _transition_duration,
     _repair_complexity, _queue, _cannot_complete_notified, is_repair_bay,
     MaxRepairPoints, NumRepairTeams, repair_props_ok,
+    // Articulation native (phase 6 A1, Task 6; subsystem_step.h THE
+    // ARTICULATION PIECE). Object: the articulated-part generation plus one
+    // at which articulation.tick_ship found this ship rigless (its
+    // `_rigless_key` early-out), 0 until it did. The piece is skipped iff it
+    // equals Global ARTICULATION_GEN + 1.
+    _rigless_gen,
     kCount
 };
 
@@ -354,6 +360,8 @@ struct ObjectRow {
     std::vector<int64_t> _powered_consumers;
     // Cloak and repair native (Field comment above).
     int64_t _repair_subsystem = -1;
+    // Articulation native (Field comment above).
+    int64_t _rigless_gen = 0;
 };
 
 struct SubsystemRow {
@@ -542,6 +550,9 @@ enum class Global : int32_t {
     // MIN_RESERVE_TO_HOLD_CLOAK, the reserve at or below which a cloak
     // trying to cloak is forced off.
     MIN_RESERVE_TO_HOLD_CLOAK,
+    // Articulation native (phase 6 A1, Task 6): articulated_part.generation(),
+    // pushed on every bump, so a rig change wakes every ship's tick_ship.
+    ARTICULATION_GEN,
     kCount
 };
 
@@ -556,6 +567,7 @@ struct Globals {
            overboost_threshold = 0.0, min_blocker_radius_gu = 0.0,
            conceal_cap = 0.0;
     int64_t dev_mode = 0, occ_enabled = 0, enhanced_sensor_contest = 0;
+    int64_t ARTICULATION_GEN = 0;
     double CONCEAL_K = 0.0, LOCK_BREAK_T = 0.0, HYSTERESIS = 0.0,
            PROFILE_CONCEALMENT_CAP = 0.0, CLOAK_RANGE_FACTOR = 0.0,
            CLOAK_DETECTION_BASE_GU = 0.0;

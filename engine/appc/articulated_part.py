@@ -153,6 +153,8 @@ def _bump_part_gen() -> None:
     (native_combat) reads stale."""
     from engine.appc import native_combat
     native_combat.bump_part_gen()
+    # Every ship's native "rigless" mark (_rigless_gen) is now stale.
+    native_combat.push_globals()
 
 
 def snapshot_for_leaf(leaf) -> None:

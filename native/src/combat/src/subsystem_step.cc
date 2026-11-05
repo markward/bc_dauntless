@@ -977,8 +977,19 @@ SubsystemRecord next(SubsystemSession& s, Mirror& m) {
             if (stopped) return r;
             continue;
         }
-        // ARTICULATION is Python's (Task 6 makes it native for rigless
-        // ships).
+        // ARTICULATION (THE ARTICULATION PIECE): tick_ship's `_rigless_key`
+        // early-out, decided here. A ship tick_ship has found rigless at the
+        // current articulated-part generation does nothing; every other ship
+        // (rigged, never ticked, generation bumped since, row gone, the
+        // hook) is Python's.
+        if (s.had_row[i] && !s.lost_row[i] && m.valid(h) &&
+            !(s.python_pieces & piece_bit(SubsystemPiece::ARTICULATION))) {
+            const int64_t g = m.object(h)->_rigless_gen;
+            if (g != 0 && g == m.globals().ARTICULATION_GEN + 1) {
+                end_piece(s);
+                continue;
+            }
+        }
         SubsystemRecord r;
         r.type = SubsystemRecordType::RUN_PYTHON;
         r.ship_pos = static_cast<int64_t>(i);

@@ -109,8 +109,8 @@ def _cloak_state(cloak):
 
 def _pieces_in_python(counts, stages, ships=SHIPS):
     """How many CLOAK and REPAIR pieces ran as RUN_PYTHON records: the
-    articulation piece is one record per ship per stage."""
-    return counts["run_python"] - ships * stages
+    articulation piece is one record per rigless ship, once (Task 6)."""
+    return counts["run_python"] - ships
 
 
 def _damage(sub, fraction):
@@ -156,7 +156,7 @@ def test_mission_set_max_repair_points_reaches_the_native_step():
     assert row["MaxRepairPoints"] == 50.0 and row["repair_props_ok"] == 1
     assert native != na_still, "the restored points repaired nothing"
     assert counts["stages"] == 121
-    assert _pieces_in_python(counts, 121) == 0, counts
+    assert _pieces_in_python(counts, 121, ships=0) == 0, counts
 
 
 def test_handler_editing_the_queue_mid_walk():

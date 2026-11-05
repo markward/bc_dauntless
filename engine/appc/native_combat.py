@@ -3531,6 +3531,9 @@ def _globals() -> dict:
     # The native cloak piece's starvation threshold (phase 6 A1, Task 5).
     g["MIN_RESERVE_TO_HOLD_CLOAK"] = float(
         subsystems.CloakingSubsystem.MIN_RESERVE_TO_HOLD_CLOAK)
+    # The native articulation piece's rigless key (phase 6 A1, Task 6).
+    from engine.appc import articulated_part
+    g["ARTICULATION_GEN"] = int(articulated_part.generation())
     return g
 
 

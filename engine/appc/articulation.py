@@ -450,6 +450,12 @@ def tick_ship(ship, dt: float) -> None:
     if not parts:
         try:
             ship._rigless_key = key
+            # The native subsystem stage skips this call while the key
+            # holds: generation + 1 (0 = not known rigless), compared with
+            # the pushed ARTICULATION_GEN (subsystem_step.h THE
+            # ARTICULATION PIECE). The first call for a ship, and every
+            # call after a generation bump, still comes here.
+            ship._rigless_gen = key[1] + 1
         except Exception:  # noqa: BLE001 - test doubles may reject attribute set
             pass
         return

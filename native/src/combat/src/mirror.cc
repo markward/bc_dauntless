@@ -240,6 +240,7 @@ constexpr FieldInfo kInfo[] = {
     {"MaxRepairPoints", Kind::Property, FieldType::F},
     {"NumRepairTeams", Kind::Property, FieldType::I},
     {"repair_props_ok", Kind::Property, FieldType::I},
+    {"_rigless_gen", Kind::Object, FieldType::I},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -311,6 +312,7 @@ constexpr GlobalInfo kGlobals[] = {
     {"POWER_INTERVAL", false, &Globals::POWER_INTERVAL, nullptr},
     {"MIN_RESERVE_TO_HOLD_CLOAK", false, &Globals::MIN_RESERVE_TO_HOLD_CLOAK,
      nullptr},
+    {"ARTICULATION_GEN", true, nullptr, &Globals::ARTICULATION_GEN},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));
@@ -408,6 +410,7 @@ double* fptr(ObjectRow& r, Field f) {
 int64_t* iptr(ObjectRow& r, Field f) {
     switch (f) {
         case Field::has_posed_parts: return &r.has_posed_parts;
+        case Field::_rigless_gen: return &r._rigless_gen;
         case Field::has_real_is_dead: return &r.has_real_is_dead;
         case Field::has_real_get_shields: return &r.has_real_get_shields;
         case Field::is_ship_class: return &r.is_ship_class;

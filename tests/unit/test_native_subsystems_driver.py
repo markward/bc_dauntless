@@ -19,7 +19,9 @@ from engine.appc import native_subsystems
 from engine.appc.subsystems import (CloakingSubsystem, PowerSubsystem,
                                     RepairSubsystem)
 from engine.core import loop as game_loop
+from engine.appc import articulated_part
 from tests.helpers import bc_assets, headless_mission
+from tests.helpers.rig_all_ships import rig_all_ships
 
 TICKS = 40      # past the first shield charge (tick 30 or 31)
 
@@ -30,6 +32,7 @@ def _clean():
     nc.reset()
     yield
     nc.reset()
+    articulated_part.reset()
 
 
 def _world(mp, native):
@@ -41,6 +44,10 @@ def _world(mp, native):
     nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1",
                   "DAUNTLESS_NATIVE_SUBSYSTEMS": "1" if native else "0"})
     assert native_subsystems.enabled() is native
+    # Every ship rigged: its ARTICULATION piece is Python's every tick, so
+    # these call-for-call tests keep their meaning (a rigless ship's is
+    # skipped natively: test_native_subsystems_articulation.py).
+    rig_all_ships()
 
 
 def _spy(mp, calls, pieces=False):

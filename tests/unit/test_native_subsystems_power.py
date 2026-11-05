@@ -81,8 +81,8 @@ def _state(ships):
 
 def _power_records_python(counts, stages):
     """How many POWER pieces ran as RUN_PYTHON records: the other Python
-    pieces are one record each per ship per stage."""
-    return counts["run_python"] - PIECES_IN_PYTHON * SHIPS * stages
+    piece, articulation, is one record per rigless ship, once (Task 6)."""
+    return counts["run_python"] - PIECES_IN_PYTHON * SHIPS
 
 
 def test_sdk_set_main_battery_power_reaches_the_native_step():

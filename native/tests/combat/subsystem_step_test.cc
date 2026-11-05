@@ -1305,3 +1305,37 @@ TEST(RepairStep, AnUnanswerableRepairUndoesAndHandsTheItemsToPython) {
     EXPECT_TRUE(s.dmg.entries.empty());
     EXPECT_TRUE(is_articulation(subsystems::next(s, w.m)));
 }
+
+// ── The articulation piece (Task 6; subsystem_step.h THE ARTICULATION PIECE)
+
+TEST(ArticulationStep, RiglessShipsAreSkipped) {
+    World w;
+    const int64_t rigged = w.stage_ship();
+    const int64_t rigless = w.stage_ship();
+    const int64_t unknown = w.stage_ship();
+    w.m.set_global_i(Global::ARTICULATION_GEN, 4);
+    w.m.set_i(rigless, Field::_rigless_gen, 5);   // found rigless at gen 4
+    // `rigged` and `unknown`: tick_ship has not found them rigless (0).
+    const auto recs = stage(w, rigged, kHalf);
+    ASSERT_EQ(recs.size(), 1u);
+    EXPECT_TRUE(is_articulation(recs[0]));
+    EXPECT_TRUE(stage(w, rigless, kHalf).empty());
+    const auto u = stage(w, unknown, kHalf);
+    ASSERT_EQ(u.size(), 1u);
+    EXPECT_TRUE(is_articulation(u[0]));
+    // A generation bump wakes the rigless ship: its key is stale.
+    w.m.set_global_i(Global::ARTICULATION_GEN, 5);
+    const auto after = stage(w, rigless, kHalf);
+    ASSERT_EQ(after.size(), 1u);
+    EXPECT_TRUE(is_articulation(after[0]));
+}
+
+TEST(ArticulationStep, PythonPiecesHookStillWins) {
+    World w;
+    const int64_t ship = w.stage_ship();
+    w.m.set_global_i(Global::ARTICULATION_GEN, 0);
+    w.m.set_i(ship, Field::_rigless_gen, 1);
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    s.python_pieces = 1u << static_cast<int>(SubsystemPiece::ARTICULATION);
+    EXPECT_TRUE(is_articulation(subsystems::next(s, w.m)));
+}

@@ -39,7 +39,7 @@ import random
 import App
 import pytest
 
-from engine.appc import effect_queue
+from engine.appc import articulation, effect_queue
 from engine.appc import native_combat as nc
 from engine.appc import native_subsystems, passive_state
 from engine.appc.ship_iter import iter_non_rock_ships
@@ -132,6 +132,10 @@ class _World:
         self.events = []
         self.dynamic = {}
         self.ships = list(iter_non_rock_ships())
+        # Rigged ships run tick_ship every tick; a rigless ship's is found
+        # rigless once and then skipped natively (Task 6).
+        self.rigged = sum(1 for s in self.ships
+                          if articulation.rig_for(articulation.leaf_for(s)))
         assert len(self.ships) == int(SHIPS) + 1
         self.cloaked = [s for s in self.ships
                         if s.GetCloakingSubsystem() is not None]
@@ -398,6 +402,9 @@ class _World:
         return log
 
 
+_RIGGED = {}
+
+
 def _arm(native):
     with pytest.MonkeyPatch.context() as mp:
         world = _World(mp, native)
@@ -408,6 +415,7 @@ def _arm(native):
         assert world.seen == set(TRACKED), (
             "tracked fields never seen holding a value (renamed?): %s"
             % sorted(set(TRACKED) - world.seen))
+        _RIGGED[native] = world.rigged
         return (log, dict(world.handled), native_subsystems.counts(),
                 native_subsystems.event_counts())
 
@@ -444,12 +452,16 @@ def test_differential_combat_scene_bit_exact():
             pytest.fail("tick %d: events differ at %d\n python %r\n native %r"
                         % (tick, i, x, y))
     # Tasks 3-5: every shield, power, cloak and repair piece ran natively
-    # (articulation is one RUN_PYTHON record per ship per stage), and their
+    # (articulation: one RUN_PYTHON record per rigged ship per stage, one per
+    # rigless ship in all), and their
     # SDK events -- the handler's mid-stage writes among them -- came back
     # as EVENTs: the cloak's completions and forced decloaks, the bay's
     # cannot-complete and completions.
     ships = int(SHIPS) + 1
-    assert na_counts["run_python"] == 1 * ships * TICKS, na_counts
+    rigged = _RIGGED[True]
+    assert rigged < ships, "the scene needs rigless ships too"
+    assert na_counts["run_python"] == (ships - rigged) + rigged * TICKS, \
+        (na_counts, rigged)
     assert na_counts["events"] > 0, na_counts
     for kind in ("CLOAK_DONE", "FORCE_DECLOAK", "REPAIR_CANNOT",
                  "REPAIR_DONE"):
