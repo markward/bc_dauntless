@@ -28,8 +28,12 @@ global.document = {};
 (0, eval)(fs.readFileSync(process.argv[1], "utf8"));
 function fakeEl() {
   const handlers = {};
-  return {innerHTML: "", textContent: "", handlers,
+  let inner = "";
+  const el = {textContent: "", handlers, sets: 0,
+    get innerHTML() { return inner; },
+    set innerHTML(v) { inner = v; el.sets++; },
     addEventListener(t, f) { handlers[t] = f; }};
+  return el;
 }
 function fakeRoot() {
   const host = fakeEl(), layer = fakeEl();
@@ -231,3 +235,45 @@ def test_quotes_in_names_survive():
     assert "O&#39;Brien &quot;X&quot;" in r[0] or "O&#x27;Brien" in r[0]
     assert "'" not in r[0].split('data-btn="')[1].split('"')[0]
     assert r[1] == ['target/Ship\'s "Name"/Q\'1']
+
+
+def test_identical_picker_fields_skip_rebuild_and_keep_hover():
+    r = _render("""
+      var s = akira({speed_kph: 100});
+      renderSubsystemPicker(root, s);
+      var capEl = {textContent:''};
+      root.host.querySelector = function(){ return capEl; };
+      root.host.handlers.mouseover({target: tgt({'data-btn':'Phasers'})});
+      var sets = [root.host.sets, root.layer.sets];
+      renderSubsystemPicker(root, akira({speed_kph: 250, range_km: 3}));
+      return [sets, [root.host.sets, root.layer.sets], root.host._pickerHover, capEl.textContent];""")
+    assert r[0] == r[1]
+    assert r[2] == "Phasers" and r[3] == "Phasers"
+
+
+def test_changed_locked_rebuilds():
+    r = _render("""
+      renderSubsystemPicker(root, akira());
+      var before = [root.host.sets, root.layer.sets];
+      renderSubsystemPicker(root, akira({locked:'Dorsal Phaser 2'}));
+      return [before, [root.host.sets, root.layer.sets]];""")
+    assert r[1][0] == r[0][0] + 1 and r[1][1] == r[0][1] + 1
+
+
+def test_ship_change_resets_double_click_memory():
+    r = _render("""
+      renderSubsystemPicker(root, akira({ship_name:'A'}));
+      root.host.handlers.click({target: tgt({'data-btn':'Phasers'})});
+      renderSubsystemPicker(root, akira({ship_name:'B'}));
+      root.host.handlers.click({target: tgt({'data-btn':'Phasers'})});
+      return events.slice();""")
+    assert r == ["ship-target/open/Phasers", "ship-target/open/Phasers"]
+
+
+def test_hover_rules_keep_gradients_and_tints():
+    css = (ROOT / "native/assets/ui-cef/panels/ship_display/ship_display.css").read_text()
+    import re
+    for sel in (".subsys-btn:hover", ".subsys-block:hover"):
+        m = re.search(re.escape(sel) + r"\s*\{([^}]*)\}", css)
+        assert m, sel
+        assert "background:" not in m.group(1).replace("background-color:", ""), sel

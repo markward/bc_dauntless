@@ -159,9 +159,18 @@
         for (var k in state) { st[k] = state[k]; }
         st.ship = state.ship != null ? state.ship : state.ship_name;
         host._pickerState = st;
-        host._pickerHover = null;
-        host.innerHTML = _subsystemsHtml(st);
-        if (layer) { layer.innerHTML = _lockMarkerHtml(st); }
+        // The panel is re-pushed nearly every frame (speed, range). Rebuild
+        // only when a picker field changed, so hover and in-flight clicks
+        // survive.
+        var sig = JSON.stringify([st.ship, st.families, st.open_family, st.locked]);
+        if (sig !== host._pickerSig) {
+            if (host._pickerShip !== st.ship) { host._pickerLast = {name: null, t: 0}; }
+            host._pickerShip = st.ship;
+            host._pickerSig = sig;
+            host._pickerHover = null;
+            host.innerHTML = _subsystemsHtml(st);
+            if (layer) { layer.innerHTML = _lockMarkerHtml(st); }
+        }
 
         if (host._pickerWired) { return; }
         host._pickerWired = true;
