@@ -43,6 +43,7 @@ These are the stages our own loop drives, so we choose how often they cross into
 | Subsystems (`_update_ship_subsystems`) | `PowerSubsystem.Update` (passive power pump, battery-limit property reads): 50% of the stage. `RepairSubsystem.Update`: 18%, including one native `SetCondition` push per repaired subsystem per tick. `articulation.tick_ship` on every ship every tick: 15%. `ShieldSubsystem.Update`: 4%. | Passive-state contracts (`WakeField` / `FrozenField`, the `_POWER_FREEZABLE` comment) become the C++ stage's own dirty tracking. Python field writes push to it, as `Native*` descriptors already do. Articulation: a ship with no rig does no work. |
 | Weapons (`_advance_weapons`, K0) | The mirror becomes persistent, so `combat_k0_begin` / `combat_k0_next` no longer pack every tick. | Today it is about 96% native marshalling, not compute. |
 | Combat glue (`_advance_combat`: K1 39%, K2 25%, K3 23%) | The Python around each kernel: handle lists, ship scans, cleanup, effect-queue drains. | About half of this stage's time is in Python. |
+| AI tree engine (`engine/appc/ai.py`, `ai_driver.py`: the container nodes, condition evaluation, sleeping-tree scheduling) — **A5** | Our tree walker and container nodes: most of SIG-197's 77-78% "ours" share of AI that is not a Part B method | Agreed by Mark 2026-11-05. It was C++ in BC too. It comes after A1-A4 and after B0, because it calls SDK PlainAI scripts, conditions and the non-native preprocessors at their nodes, so B0's numbers decide how those calls are made. |
 | Combat render data (`_push_combat_render_data`, per frame) | Phaser beam descriptors (49% of it, one Python call per beam) and torpedo descriptors (23%), built natively from state C++ already holds. | Runs per frame, so it is outside the spiral's multiplier, but it is 3–4 ms at 128 ships. |
 
 **Python copies.** Migrated stages keep no permanent Python copy. That follows Mark's earlier ruling on render transforms ("no, all to C++") and fire control being native-only. The golden fights (`tests/integration/test_golden_fights.py`) and the focused unit tests are the reference. A stage may keep its Python path behind an env switch only while it is being built; the switch and the copy are deleted when the stage is done.
@@ -110,7 +111,7 @@ Any further divergence (cadence changes, approximations in conditions) needs Mar
 ## 6. Order and phase shape
 
 1. **B0, the boundary benchmark,** runs alongside A1.
-2. **A1 Subsystems**, then **A2 Weapons (K0 persistent mirror)**, then **A3 Combat glue**, then **A4 Combat render data**. Each is its own measured step with a perf-register signal.
+2. **A1 Subsystems**, then **A2 Weapons (K0 persistent mirror)**, then **A3 Combat glue**, then **A4 Combat render data**, then **A5 the AI tree engine**. Each is its own measured step with a perf-register signal.
 3. **B, the SDK-facing methods,** in the order B0 recommends.
 4. **C, the divergences.**
 5. Mark's live check after each part, not only at the end.
