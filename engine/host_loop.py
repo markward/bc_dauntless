@@ -12754,6 +12754,11 @@ def run(mission_name: Optional[str] = None,
         # DAUNTLESS_PROFILE_SPIKES=<path>: write every frame over the
         # threshold (DAUNTLESS_PROFILE_SPIKE_MS, default 100) to a file, raw.
         # Works without --developer; vsync is left as it is.
+        # DAUNTLESS_PROFILE_PY=<path>: a cProfile window over whole frames
+        # (engine/core/py_profile.py) for splitting AI / subsystems / combat
+        # by class. Read relative splits only: cProfile inflates the frame.
+        from engine.core import py_profile as _py_profile_mod
+        _py_profile = _py_profile_mod.Window.from_env()
         if frame_profiler.configure_spike_log_from_env():
             print("[host_loop] spike capture -> %s (>= %.0f ms)"
                   % (frame_profiler.spike_log_path(),
@@ -12870,6 +12875,8 @@ def run(mission_name: Optional[str] = None,
             # Frame profiler: phase timeline for the Python half of the frame.
             # No-op (one global read + branch) unless a developer enabled it
             # with the ` key. See engine/core/frame_profiler.py.
+            if _py_profile is not None:
+                _py_profile.frame_tick()
             frame_profiler.begin_frame()
             frame_profiler.mark("cef_resize")
             # --- Track window resizes: re-lay-out the CEF overlay at the new
