@@ -5,8 +5,15 @@
 #include <GLFW/glfw3.h>
 
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
+
+#ifdef __APPLE__
+#include <OpenGL/OpenGL.h>   // CGLEnable / kCGLCEMPEngine (phase 5a experiment)
+#endif
 
 namespace renderer {
 
@@ -58,6 +65,22 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
     }
 
     glfwMakeContextCurrent(handle_);
+
+#ifdef __APPLE__
+    // Phase 5a experiment: Apple's multithreaded GL engine moves driver work
+    // (the per-draw validation that dominates space.opaque) onto a driver
+    // thread. Off unless DAUNTLESS_GL_MP_ENGINE is exactly "1"; measured in
+    // the phase 5a plan's Task 5 before anyone makes it a default.
+    if (const char* mp = std::getenv("DAUNTLESS_GL_MP_ENGINE");
+        mp != nullptr && std::strcmp(mp, "1") == 0) {
+        const CGLError err = CGLEnable(CGLGetCurrentContext(), kCGLCEMPEngine);
+        if (err == kCGLNoError)
+            std::fprintf(stderr, "[gl] multithreaded engine: on\n");
+        else
+            std::fprintf(stderr, "[gl] multithreaded engine: failed (%d)\n",
+                         static_cast<int>(err));
+    }
+#endif
 
     // The user pointer lets per-window callbacks (cursor, etc.) dispatch
     // back to this Window instance.

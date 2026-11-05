@@ -282,5 +282,9 @@ endif()
 target_link_libraries(renderer PUBLIC assets scenegraph voxel glad glfw glm)
 # Bridge Lottie panels: BridgePass holds a lottie::PanelWorker (bridge_panels.h).
 target_link_libraries(renderer PUBLIC lottie)
+# Phase 5a: window.cc's DAUNTLESS_GL_MP_ENGINE experiment calls CGLEnable.
+if(APPLE)
+    target_link_libraries(renderer PRIVATE "-framework OpenGL")
+endif()
 # nlohmann/json reads the viewscreen bars font metrics (viewscreen_bars_pass.cc).
 target_link_libraries(renderer PRIVATE nlohmann_json::nlohmann_json)
