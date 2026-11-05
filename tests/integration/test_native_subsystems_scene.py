@@ -14,8 +14,13 @@ combat_stress at 16 ships gets the seeded op stream below, and the stage:
   crossings;
 * leaves the mirror agreeing with every Python object (the audit).
 
-The bit-exact pin is the goldens (test_golden_fights.py), which record the
-stage's own state.
+* and reproduces, tick for tick, every field it writes and every event it
+  posts: the whole per-tick log is pinned as a golden
+  (tests/fixtures/golden_fights/native_subsystems_scene.<platform>.json.gz,
+  through tests/helpers/golden_fight.py's record/check; re-record only with
+  UPDATE_COMBAT_GOLDEN=1 and a COMBAT_GOLDEN_REASON). It covers what the
+  fight goldens do not: every consumer's draw fields, the cloak's reserve,
+  the watchers and the repair queue under the op stream.
 
 Review Focus 1 is pinned by a handler on shield watchers: a range check on
 each face of the first few ships, fired mid-stage by the shield regen's
@@ -27,6 +32,7 @@ fired mid-stage by a drain or a recharge crossing half charge.
 Deterministic by construction: no GameLoop tick (AI draws on the unseeded module ``random``), the clock and
 ``random`` reset before each load, the ops from their own seeded Random.
 """
+import os
 import random
 
 import App
@@ -40,7 +46,7 @@ from engine.appc.subsystems import (ShipSubsystem, _notify_key,
                                     iter_subsystems)
 from engine.core import loop as game_loop
 from engine.core.loop import TICK_DELTA
-from tests.helpers import bc_assets, headless_mission
+from tests.helpers import bc_assets, golden_fight, headless_mission
 
 SHIPS = "16"
 TICKS = 600
@@ -418,8 +424,27 @@ def _clean():
     nc.reset()
 
 
-def test_combat_scene_runs_every_piece_natively():
+GOLDEN = "native_subsystems_scene"
+
+
+def _golden_rows(log):
+    """The log in golden_fight's canonical tick shape (tick, state, events,
+    queued, calls, presented, notes); tick 0 is the scene before its first
+    stage."""
+    rows = [(0, [], [], [], [], [], [])]
+    for t, (snap, evs) in enumerate(log, 1):
+        rows.append((t, snap, evs, [], [], [], []))
+    return [tuple(r) for r in golden_fight._norm(rows)]
+
+
+def test_combat_scene_runs_every_piece_natively(monkeypatch):
     log, handled, counts, events, skips, rigged, audit = _run()
+    monkeypatch.setitem(golden_fight.SCENES, GOLDEN, golden_fight.Scene(
+        name=GOLDEN, arm="native", seed=SEED, ships=SHIPS, ticks=TICKS,
+        tpf=1, run=None))
+    rows = _golden_rows(log)
+    golden_fight.record(GOLDEN, rows, os.environ.get("COMBAT_GOLDEN_REASON"))
+    golden_fight.check(GOLDEN, rows)
     assert counts["stages"] == TICKS, counts
     assert len(log) == TICKS
     assert skips == {}, skips
