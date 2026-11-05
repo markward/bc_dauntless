@@ -391,4 +391,15 @@ Added with `docs/superpowers/specs/2026-11-02-native-weapon-state-design.md` (§
 - `GameLoop.__init__` is the only place the passive switch is read. In `host_loop` there is also the mission-init path (`_init_mission`) that builds the GameLoop, so the env switch is read after the mission loads.
 - CMake `COMPILE_OPTIONS` source property is replaced, not appended, per `set_source_files_properties` call.
 - `host_io` manifest test: only add to `host_io.py` if you want the manifest. The transform and torpedo_scan precedent bypasses host_io.
-- **A method a kernel replaces must join the override guard while the Python copies exist.** K1: `_K1_LEAF_METHODS` / `_K1_SYSTEM_METHODS`; K2: `_K2_NAMES` roles; K3/K4: `_K3_FUNCTIONS` / the K4 snapshot (`engine/appc/native_combat.py`). Otherwise a subclass or patch of that method is silently skipped by the native path. (Moved here from CLAUDE.md's native-combat row, 2026-11-01, for the length budget.)
+- **Part A rule (phase 6; spec `docs/superpowers/specs/2026-11-05-phase6-engine-stages-native-design.md` §3 "Mods and patches"): a Part A stage does not fall back to Python when a script patches an App method it stands in for.** That matches BC, whose per-tick updates were internal C++ no script could override; a patch of an accessor changes what Python callers see, as in BC. The kernel-M fallback stays the rule for SDK script classes (Part C preprocessors), and our OWN hooks into a stage must be carried into the native stage explicitly. This replaces the old "a method a kernel replaces must join the override guard" rule. What each kernel still honours today (verified against `engine/appc/native_combat.py`):
+
+  | Kernel | Still honours |
+  |---|---|
+  | K0 (charge/reload) | nothing: its override guard was removed (a static test, `tests/unit/test_native_k0_override_guard.py`, keeps engine classes from overriding what it stands in for) |
+    | K1 (fire control) | nothing: native only, no Python copy |
+  | K2 (beams) | instance patches (`_K2_SHIP_PATCHES`, `_K2_SYSTEM_PATCHES`, `_K2_BANK_PATCHES`) and class flags for foreign / non-stock classes (`_k2_flag`, `_k2_foreign`) |
+  | K3 (torpedoes) | instance patches only (`_STEP_SHIP_PATCHES`) |
+  | K4 (eligibility) | still snapshots module functions (`_K4_FUNCTIONS`, `_k4_unchanged`) |
+  | damage | instance patches (`combat_dmg_clean`) and class flags (`dmg_class`), plus the kept `combat.apply_hit` identity check (`_kdmg_apply_hit_stock`), kept because 7 golden fights record hits through an `apply_hit` spy |
+
+  (Moved here from CLAUDE.md's native-combat row, 2026-11-01, for the length budget; rewritten 2026-11-05.)

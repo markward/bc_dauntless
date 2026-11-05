@@ -22,6 +22,10 @@
 // may do -- an SDK event, articulation -- and returns it, and the following
 // next resumes exactly after it.
 //
+// IDENTICAL WRITES ARE SKIPPED. A Python write the mirror missed (an in-place
+// mutation with no push) now persists until the native value differs, rather
+// than being overwritten each tick; DAUNTLESS_NATIVE_AUDIT=1 is the net.
+//
 // THE RECORDS.
 //   RUN_PYTHON{ship, kind}  Python runs that piece of that ship (`kind` a
 //                           SubsystemPiece). Only ARTICULATION is ever
