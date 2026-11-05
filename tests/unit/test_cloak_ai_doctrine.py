@@ -18,6 +18,7 @@ from engine.appc.ai import PreprocessingAI_Create
 from engine.appc.ai_driver import tick_ai
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import CloakingSubsystem
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def _wire_cloakship(bCloakOn):
@@ -47,7 +48,7 @@ def test_cloak_completes_and_holds_under_driver():
     inst, pp, ship = _wire_cloakship(bCloakOn=1)
     cloak = ship.GetCloakingSubsystem()
     tick_ai(pp, game_time=0.0)
-    cloak.Update(cloak._transition_duration + 0.01)
+    tick_subsystem(cloak, cloak._transition_duration + 0.01)
     assert cloak.IsCloaked() == 1
     tick_ai(pp, game_time=1.0)
     assert cloak.IsCloaked() == 1
@@ -59,7 +60,7 @@ def test_lost_focus_force_decloaks():
     inst, pp, ship = _wire_cloakship(bCloakOn=1)
     cloak = ship.GetCloakingSubsystem()
     tick_ai(pp, game_time=0.0)
-    cloak.Update(cloak._transition_duration + 0.01)
+    tick_subsystem(cloak, cloak._transition_duration + 0.01)
     assert cloak.IsCloaked() == 1
     inst.LostFocus()
     assert cloak.IsDecloaking() == 1

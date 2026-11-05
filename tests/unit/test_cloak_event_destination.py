@@ -16,6 +16,7 @@ import App
 
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import CloakingSubsystem
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def _reset_handlers():
@@ -71,7 +72,7 @@ def test_transition_completion_reaches_handler():
     sink = _register_target_scoped(App.ET_CLOAK_COMPLETED, ship)
 
     cloak.StartCloaking()
-    cloak.Update(cloak._transition_duration + 0.01)
+    tick_subsystem(cloak, cloak._transition_duration + 0.01)
 
     assert len(sink.events) == 1
     assert sink.events[0].GetDestination() is ship

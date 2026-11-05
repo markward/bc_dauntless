@@ -20,6 +20,7 @@ the ET_CLOAK_COMPLETED / ET_DECLOAK_COMPLETED completion events.
 import App
 
 from engine.appc.subsystems import CloakingSubsystem
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 class _CapturedEvents:
@@ -92,18 +93,20 @@ def test_cloaking_completes_after_duration_and_fires_event_once():
     cloak = CloakingSubsystem("Cloak")
     cloak.StartCloaking()
     # Advance just short of the duration: still in transition.
-    cloak.Update(cloak._transition_duration - 0.01)
+    tick_subsystem(cloak, cloak._transition_duration - 0.01)
     assert cloak.IsCloaking() == 1
     assert cloak.IsCloaked() == 0
     assert cap.cloak == []
     # Advance past the duration: now cloaked, event fired once.
-    cloak.Update(0.02)
+    tick_subsystem(cloak, 0.02)
     assert cloak.IsCloaked() == 1
     assert cloak.IsCloaking() == 0
     assert len(cap.cloak) == 1
-    assert cap.cloak[0] is cloak
+    # The ship is the event's source (its destination too): the stage only
+    # ticks a cloak on a ship.
+    assert cap.cloak[0] is cloak.GetParentShip()
     # Further ticks do not re-fire.
-    cloak.Update(1.0)
+    tick_subsystem(cloak, 1.0)
     assert len(cap.cloak) == 1
 
 
@@ -118,11 +121,11 @@ def test_stop_cloaking_from_cloaked_decloaks_after_duration():
     assert cloak.IsDecloaking() == 1
     assert cloak.IsCloaked() == 0
     assert cloak.IsTryingToCloak() == 0
-    cloak.Update(cloak._transition_duration + 0.01)
+    tick_subsystem(cloak, cloak._transition_duration + 0.01)
     assert cloak.IsCloaked() == 0
     assert cloak.IsDecloaking() == 0
     assert len(cap.decloak) == 1
-    assert cap.decloak[0] is cloak
+    assert cap.decloak[0] is cloak.GetParentShip()
 
 
 # ── Instant transitions ───────────────────────────────────────────────────────
@@ -159,10 +162,10 @@ def test_start_cloaking_is_noop_when_already_cloaked():
 def test_start_cloaking_is_noop_when_already_cloaking():
     cloak = CloakingSubsystem("Cloak")
     cloak.StartCloaking()
-    cloak.Update(cloak._transition_duration * 0.5)
+    tick_subsystem(cloak, cloak._transition_duration * 0.5)
     cloak.StartCloaking()   # second call must not reset the transition
     # Finishing the remaining half should complete the (un-reset) cloak.
-    cloak.Update(cloak._transition_duration * 0.5 + 0.01)
+    tick_subsystem(cloak, cloak._transition_duration * 0.5 + 0.01)
     assert cloak.IsCloaked() == 1
 
 
@@ -186,7 +189,7 @@ def test_disabled_subsystem_does_not_complete_cloak_and_forces_decloak():
     cloak.SetCondition(0.0)
     assert cloak.IsDisabled() == 1
     # The pending cloak must not complete; instead it is forced toward decloak.
-    cloak.Update(cloak._transition_duration + 0.01)
+    tick_subsystem(cloak, cloak._transition_duration + 0.01)
     assert cloak.IsCloaked() == 0
     assert cap.cloak == []
 
@@ -200,7 +203,7 @@ def test_start_cloaking_fires_beginning_once():
     assert len(cap.cloak_begin) == 1
     assert cap.cloak_begin[0] is cloak
     # Still mid-transition: no COMPLETED yet, and BEGINNING does not re-fire.
-    cloak.Update(cloak._transition_duration * 0.5)
+    tick_subsystem(cloak, cloak._transition_duration * 0.5)
     assert len(cap.cloak_begin) == 1
     assert cap.cloak == []
 

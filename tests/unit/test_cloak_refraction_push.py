@@ -13,6 +13,7 @@ import App  # noqa: F401  (loads the engine shim)
 
 from engine.host_loop import _push_cloak_refraction
 from engine.appc.subsystems import CloakingSubsystem
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 class _FakeRenderer:
@@ -47,7 +48,7 @@ def _decloaked():
 def _cloaking_half():
     c = CloakingSubsystem("Cloak")
     c.StartCloaking()
-    c.Update(c._transition_duration * 0.5)
+    tick_subsystem(c, c._transition_duration * 0.5)
     return c
 
 

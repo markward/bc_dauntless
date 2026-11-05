@@ -8,6 +8,7 @@ from engine.appc.math import TGPoint3
 from engine.appc.properties import TGModelPropertySet
 from engine.appc.subsystems import CloakingSubsystem
 from tests.helpers import host_frame_source
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 class _FakeRenderer:
@@ -93,7 +94,7 @@ def test_push_scope_hidden_ship_is_dark():
 def test_push_reads_cloak_fraction():
     c = CloakingSubsystem("Cloak")
     c.StartCloaking()
-    c.Update(c._transition_duration * 0.5)
+    tick_subsystem(c, c._transition_duration * 0.5)
     frac = c.GetTransitionFraction()
     r = _FakeRenderer()
     ship = _Ship(2, cloak=c)

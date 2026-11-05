@@ -6,6 +6,7 @@ docs/superpowers/specs/2026-07-07-cloak-survival-resource-design.md."""
 import App
 from engine.appc.subsystems import CloakingSubsystem, PowerSubsystem
 from engine.appc.properties import PowerProperty
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def _powered_ship(output=1500.0):
@@ -25,7 +26,7 @@ def _powered_ship(output=1500.0):
 def _cloak_on(ship, drain=1000.0):
     cloak = CloakingSubsystem("Cloaking Device")
     cloak.CLOAK_RESERVE_DRAIN_PER_SECOND = drain
-    ship.AddPoweredConsumer(cloak)
+    ship.SetCloakingSubsystem(cloak)   # the ship's cloak (also a consumer)
     return cloak
 
 
@@ -37,7 +38,7 @@ def test_cloak_drains_reserve_at_full_rate_not_conduit_throttled():
     power.SetBackupBatteryPower(50000.0)
     cloak.InstantCloak()
     for _ in range(60):                       # 1 s at 60 Hz
-        power.Update(1.0 / 60.0)
+        tick_subsystem(power, 1.0 / 60.0)
     drained = 50000.0 - power.GetBackupBatteryPower()
     assert 950.0 <= drained <= 1050.0         # ~1000/s, not ~300/s
 
@@ -54,8 +55,7 @@ def test_healthy_reactor_sustains_cloak():
     power.SetBackupBatteryPower(3000.0)   # low reserve: would drain dry in 3s without refill
     cloak.StartCloaking()
     for _ in range(600):                      # 10 s
-        power.Update(1.0 / 60.0)
-        cloak.Update(1.0 / 60.0)
+        tick_subsystem(power, 1.0 / 60.0)  # the whole ship: power, then cloak
     assert cloak.IsTryingToCloak() == 1, (
         "healthy reactor (1500/s) out-refills the 1000/s drain and must sustain cloak"
     )
@@ -89,8 +89,7 @@ def test_damaged_reactor_depletes_reserve_and_forces_decloak():
     cloak.StartCloaking()
     decloak_tick = None
     for tick in range(600):                             # up to 10 s
-        power.Update(1.0 / 60.0)
-        cloak.Update(1.0 / 60.0)
+        tick_subsystem(power, 1.0 / 60.0)  # the whole ship: power, then cloak
         if cloak.IsTryingToCloak() == 0:
             decloak_tick = tick
             break                                        # stop as soon as it decloaks

@@ -13,6 +13,7 @@ from engine.appc.subsystems import (
     CloakingSubsystem, PowerSubsystem, PoweredSubsystem, PSM_BACKUP_ONLY,
 )
 from engine.appc.properties import PowerProperty
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def _powered_ship():
@@ -51,7 +52,7 @@ def test_cloak_drops_when_backup_battery_empties():
     ship, power = _powered_ship()
     cloak = CloakingSubsystem("Cloaking Device")
     cloak.SetNormalPowerPerSecond(1000.0)
-    ship.AddPoweredConsumer(cloak)
+    ship.SetCloakingSubsystem(cloak)   # the ship's cloak (also a consumer)
     # Nearly-dry backup; no recharge.
     power.SetBackupBatteryPower(10.0)
     power.GetProperty().SetPowerOutput(0.0)
@@ -60,8 +61,7 @@ def test_cloak_drops_when_backup_battery_empties():
     assert cloak.IsTryingToCloak() == 1   # sanity: we are trying
 
     for _ in range(600):          # 10 s at 60 Hz
-        power.Update(1.0 / 60.0)
-        cloak.Update(1.0 / 60.0)
+        tick_subsystem(power, 1.0 / 60.0)  # the whole ship: power, then cloak
 
     assert cloak.IsTryingToCloak() == 0, (
         "cloak must auto-decloak when backup battery is exhausted"
@@ -79,7 +79,7 @@ def test_free_cloak_is_never_force_decloaked():
     cloak = CloakingSubsystem("Free Cloak")
     cloak.CLOAK_RESERVE_DRAIN_PER_SECOND = 0.0   # free (no direct-from-reserve draw)
     cloak.SetNormalPowerPerSecond(0.0)   # legacy field; no longer read by the B-path
-    ship.AddPoweredConsumer(cloak)
+    ship.SetCloakingSubsystem(cloak)   # the ship's cloak (also a consumer)
     power.SetBackupBatteryPower(0.0)
     power.SetMainBatteryPower(0.0)
     power.GetProperty().SetPowerOutput(0.0)
@@ -87,8 +87,7 @@ def test_free_cloak_is_never_force_decloaked():
     cloak.InstantCloak()
 
     for _ in range(600):
-        power.Update(1.0 / 60.0)
-        cloak.Update(1.0 / 60.0)
+        tick_subsystem(power, 1.0 / 60.0)  # the whole ship: power, then cloak
 
     assert cloak.IsTryingToCloak() == 1, (
         "zero-draw (free) cloak must NOT be force-decloaked by the starvation guard"
@@ -110,7 +109,7 @@ def test_full_backup_battery_does_not_decloak():
     # Actual draw is CLOAK_RESERVE_DRAIN_PER_SECOND (default 1000/s), taken
     # directly from the reserve -- not this field or the backup conduit. A
     # full backup battery + reactor output (1000/s) comfortably covers it.
-    ship.AddPoweredConsumer(cloak)
+    ship.SetCloakingSubsystem(cloak)   # the ship's cloak (also a consumer)
     # Full batteries, normal output
     power.SetBackupBatteryPower(80000.0)
 
@@ -118,13 +117,12 @@ def test_full_backup_battery_does_not_decloak():
     # so the first starvation check sees a real conduit budget rather than
     # the zero-budget warm-up window.
     for _ in range(120):
-        power.Update(1.0 / 60.0)
+        tick_subsystem(power, 1.0 / 60.0)
 
     cloak.StartCloaking()
 
     for _ in range(600):
-        power.Update(1.0 / 60.0)
-        cloak.Update(1.0 / 60.0)
+        tick_subsystem(power, 1.0 / 60.0)  # the whole ship: power, then cloak
 
     assert cloak.IsTryingToCloak() == 1, (
         "well-fed cloak (full backup battery) must NOT be force-decloaked"
@@ -147,14 +145,13 @@ def test_high_draw_cloak_with_full_reserve_stays_cloaked():
     ship, power = _powered_ship()
     cloak = CloakingSubsystem("Cloaking Device")
     cloak.SetNormalPowerPerSecond(1000.0)   # >> backup conduit 200 → eff oscillates to 0
-    ship.AddPoweredConsumer(cloak)
+    ship.SetCloakingSubsystem(cloak)   # the ship's cloak (also a consumer)
     power.SetBackupBatteryPower(80000.0)     # full reserve, reactor refills it
 
     cloak.StartCloaking()
 
     for _ in range(600):                     # 10 s from a cold start
-        power.Update(1.0 / 60.0)
-        cloak.Update(1.0 / 60.0)
+        tick_subsystem(power, 1.0 / 60.0)  # the whole ship: power, then cloak
 
     assert cloak.IsTryingToCloak() == 1, (
         "full-reserve cloak must stay cloaked despite conduit-throttled efficiency"
@@ -192,15 +189,14 @@ def test_force_decloak_fires_decloak_completed_event():
     ship, power = _powered_ship()
     cloak = CloakingSubsystem("Cloaking Device")
     cloak.SetNormalPowerPerSecond(500.0)
-    ship.AddPoweredConsumer(cloak)
+    ship.SetCloakingSubsystem(cloak)   # the ship's cloak (also a consumer)
     power.SetBackupBatteryPower(5.0)
     power.GetProperty().SetPowerOutput(0.0)
 
     cloak.InstantCloak()   # jump straight to CLOAKED (was_cloaked=True path)
 
     for _ in range(600):
-        power.Update(1.0 / 60.0)
-        cloak.Update(1.0 / 60.0)
+        tick_subsystem(power, 1.0 / 60.0)  # the whole ship: power, then cloak
 
     assert cloak.IsCloaked() == 0, "starvation must drop out of CLOAKED"
     # The event should have fired at least once.
