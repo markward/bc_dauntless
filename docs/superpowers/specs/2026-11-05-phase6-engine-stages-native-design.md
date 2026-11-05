@@ -119,6 +119,15 @@ So this part restores BC's architecture; it is not a divergence. What BC's nativ
 
 Any further divergence (cadence changes, approximations in conditions) needs Mark's explicit ruling. It is not covered by this design.
 
+### 5.1 Seams for later (built now, used later)
+
+Mark's direction for AI gameplay, not part of this phase: Quick Battle groups pick a **wing leader** who chooses priority targets, and the rest of the group picks from those by proximity; species get **instincts** (Klingons take the weakest first, Romulans protect the wing commander, a weakened Federation ship closes on friends, a Klingon may ram). When that is built it is a deliberate gameplay departure, applied where the engine chooses the AI (Quick Battle, free roam, the living galaxy), never silently to campaign missions that build their own trees.
+
+Part C builds three seams for it at no behaviour cost:
+1. **The weights are data.** The native `SelectTarget` reads its nine weights from the instance, as set by the SDK's `SetRelativeImportance` (stock defaults when nothing sets them), never from constants. An instinct can then be a weight profile.
+2. **The candidate list is its own step.** Building it (target group, in this set, alive or wreck as stock allows, detectable through the sensor gate) is a separate stage from rating, so a group shortlist can replace or narrow it later.
+3. **"Who targets X" is a query.** The set index exposes the ships in a set targeting a given object, not only the count, so "the biggest threat to the wing leader" needs no new bookkeeping.
+
 ## 6. Order and phase shape
 
 1. **B0, the boundary benchmark,** runs alongside A1.
