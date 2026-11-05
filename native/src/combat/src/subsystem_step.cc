@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstring>
 #include <stdexcept>
 
 #include "dauntless/combat/py_math.h"
@@ -154,9 +155,47 @@ bool any_check_crossed(const std::vector<double>& c, size_t at, double old_v,
     return false;
 }
 
+uint64_t g_logged = 0;     // writes logged, process-wide (write_stats)
+
 void log(SubsystemSession& s, int64_t sub, SubsystemWriteKind what,
          int32_t index, double v) {
+    ++g_logged;
     s.writes.push_back(SubsystemWrite{sub, what, index, v});
+}
+
+// THE IDENTICAL WRITES. Python's __dict__ == the mirror for every mirrored
+// field (audit_mirror), so a value bit-identical to the mirror's is already
+// in Python: neither the mirror write nor the log (a Python store) is made.
+// Bits, not ==: -0.0 differs from 0.0, a NaN equals itself.
+inline bool same_bits(double a, double b) {
+    return std::memcmp(&a, &b, sizeof a) == 0;
+}
+
+uint64_t g_identical = 0;  // writes skipped as identical
+
+// A float field `f` of `sub`, now holding `cur`, to become `v`; logged as
+// `what`. True when written.
+bool put_f(SubsystemSession& s, Mirror& m, int64_t sub, Field f,
+           SubsystemWriteKind what, double cur, double v) {
+    if (same_bits(cur, v)) {
+        ++g_identical;
+        return false;
+    }
+    m.set_f(sub, f, v);
+    log(s, sub, what, 0, v);
+    return true;
+}
+
+// One element of a FloatList field, the same.
+bool put_at(SubsystemSession& s, Mirror& m, int64_t sub, Field f,
+            SubsystemWriteKind what, size_t index, double cur, double v) {
+    if (same_bits(cur, v)) {
+        ++g_identical;
+        return false;
+    }
+    m.set_float_at(sub, f, index, v);
+    log(s, sub, what, static_cast<int32_t>(index), v);
+    return true;
 }
 
 SubsystemRecord event(const SubsystemSession& s, size_t i, SubsystemEvent e,
@@ -219,9 +258,8 @@ bool shield_watchers(SubsystemSession& s, Mirror& m, size_t i,
             out = event(s, i, SubsystemEvent::SHIELD_WATCHER, sh, w, v);
             return true;
         }
-        m.set_float_at(sh, Field::shield_watch_values, static_cast<size_t>(w),
-                       v);
-        log(s, sh, SubsystemWriteKind::SHIELD_WATCH, w, v);
+        put_at(s, m, sh, Field::shield_watch_values, SubsystemWriteKind::SHIELD_WATCH,
+               static_cast<size_t>(w), old_v, v);
     }
     return false;
 }
@@ -252,8 +290,8 @@ bool shield_piece(SubsystemSession& s, Mirror& m, size_t i,
     // self._charge_accum = self._charge_accum + float(dt)
     const double accum = row->_charge_accum + s.dt;
     if (accum < period) {
-        m.set_f(sh, Field::_charge_accum, accum);
-        log(s, sh, SubsystemWriteKind::CHARGE_ACCUM, 0, accum);
+        put_f(s, m, sh, Field::_charge_accum, SubsystemWriteKind::CHARGE_ACCUM,
+              row->_charge_accum, accum);
         return false;
     }
     // _is_offline(self) is asked after the ramp refresh, which none of its
@@ -266,23 +304,25 @@ bool shield_piece(SubsystemSession& s, Mirror& m, size_t i,
         return skip(s, i, kP, SubsystemSkip::OFFLINE, sh);
     }
     const double dt = accum;
-    m.set_f(sh, Field::_charge_accum, 0.0);
-    log(s, sh, SubsystemWriteKind::CHARGE_ACCUM, 0, 0.0);
+    put_f(s, m, sh, Field::_charge_accum, SubsystemWriteKind::CHARGE_ACCUM,
+          row->_charge_accum, 0.0);
     for (size_t f = 0; f < kFaces; ++f) {
         const double mx = row->_max_shields[f];
         const double ramp = mx > 0.0 ? row->_current_shields[f] / mx : 0.0;
-        m.set_float_at(sh, Field::_ramp_fraction, f, ramp);
-        m.set_float_at(sh, Field::_ramp_set, f, 1.0);
-        log(s, sh, SubsystemWriteKind::RAMP, static_cast<int32_t>(f), ramp);
+        // _ramp_set is mirror-only (the applier sets the fraction alone): it
+        // is written whenever it is not already 1.0, the fraction as usual.
+        if (!same_bits(row->_ramp_set[f], 1.0))
+            m.set_float_at(sh, Field::_ramp_set, f, 1.0);
+        put_at(s, m, sh, Field::_ramp_fraction, SubsystemWriteKind::RAMP, f,
+               row->_ramp_fraction[f], ramp);
     }
     if (offline) {
         bool any = false;
         for (double x : row->_current_shields) any = any || x != 0.0;
         if (!any) return false;
         for (size_t f = 0; f < kFaces; ++f) {
-            m.set_float_at(sh, Field::_current_shields, f, 0.0);
-            log(s, sh, SubsystemWriteKind::FACE, static_cast<int32_t>(f),
-                0.0);
+            put_at(s, m, sh, Field::_current_shields, SubsystemWriteKind::FACE,
+                   f, row->_current_shields[f], 0.0);
         }
     } else {
         for (size_t f = 0; f < kFaces; ++f) {
@@ -290,8 +330,8 @@ bool shield_piece(SubsystemSession& s, Mirror& m, size_t i,
             if (mx == 0.0) continue;
             double v = row->_current_shields[f] + row->_charge_per_second[f] * dt;
             if (v > mx) v = mx;
-            m.set_float_at(sh, Field::_current_shields, f, v);
-            log(s, sh, SubsystemWriteKind::FACE, static_cast<int32_t>(f), v);
+            put_at(s, m, sh, Field::_current_shields, SubsystemWriteKind::FACE,
+                   f, row->_current_shields[f], v);
         }
     }
     s.shield_phase = 1;
@@ -437,14 +477,17 @@ double draw(Plant& p, double amount, int64_t mode) {
 
 void write_consumer(SubsystemSession& s, Mirror& m, int64_t c, double wanted,
                     double received, double eff, double factor) {
-    m.set_f(c, Field::_power_wanted, wanted);
-    m.set_f(c, Field::_power_received, received);
-    m.set_f(c, Field::_efficiency, eff);
-    m.set_f(c, Field::_power_factor, factor);
-    log(s, c, SubsystemWriteKind::POWER_WANTED, 0, wanted);
-    log(s, c, SubsystemWriteKind::POWER_RECEIVED, 0, received);
-    log(s, c, SubsystemWriteKind::EFFICIENCY, 0, eff);
-    log(s, c, SubsystemWriteKind::POWER_FACTOR, 0, factor);
+    const SubsystemRow& r = *m.subsystem(c);
+    const double w0 = r._power_wanted, r0 = r._power_received,
+                 e0 = r._efficiency, f0 = r._power_factor;
+    put_f(s, m, c, Field::_power_wanted, SubsystemWriteKind::POWER_WANTED, w0,
+          wanted);
+    put_f(s, m, c, Field::_power_received, SubsystemWriteKind::POWER_RECEIVED,
+          r0, received);
+    put_f(s, m, c, Field::_efficiency, SubsystemWriteKind::EFFICIENCY, e0,
+          eff);
+    put_f(s, m, c, Field::_power_factor, SubsystemWriteKind::POWER_FACTOR, f0,
+          factor);
 }
 
 // One consumer's per-tick draw by its power_kind (the former
@@ -473,8 +516,8 @@ void update_power(SubsystemSession& s, Mirror& m, int64_t h, Plant& p) {
             const double eff = base > 0.0 ? received / base : 1.0;
             write_consumer(s, m, h, base, received, eff, eff);
         }
-        m.set_f(h, Field::_backup_reserve, p.backup);
-        log(s, h, SubsystemWriteKind::BACKUP_RESERVE, 0, p.backup);
+        put_f(s, m, h, Field::_backup_reserve,
+              SubsystemWriteKind::BACKUP_RESERVE, c._backup_reserve, p.backup);
         return;
     }
     // PoweredSubsystem's rules; the tractor's _wants_power also needs
@@ -531,8 +574,8 @@ bool battery_watcher(SubsystemSession& s, Mirror& m, size_t i, int64_t ph,
                     static_cast<int64_t>(w), v);
         return true;
     }
-    m.set_float_at(ph, Field::power_watch_values, w, v);
-    log(s, ph, SubsystemWriteKind::BATTERY_WATCH, static_cast<int32_t>(w), v);
+    put_at(s, m, ph, Field::power_watch_values,
+           SubsystemWriteKind::BATTERY_WATCH, w, p.power_watch_values[w], v);
     return false;
 }
 
@@ -616,32 +659,35 @@ bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
         for (int64_t c : ready) total += m.subsystem(c)->_power_wanted;
         wrote_total = true;
     }
-    m.set_f(ph, Field::_interval_elapsed, interval);
-    log(s, ph, SubsystemWriteKind::INTERVAL_ELAPSED, 0, interval);
-    if (p.wrote_dispensed) {
-        m.set_f(ph, Field::_power_dispensed, p.dispensed);
-        log(s, ph, SubsystemWriteKind::POWER_DISPENSED, 0, p.dispensed);
-    }
-    if (p.wrote_main) {
-        m.set_f(ph, Field::_main_battery_power, p.main);
-        log(s, ph, SubsystemWriteKind::MAIN_BATTERY, 0, p.main);
-    }
-    if (p.wrote_backup) {
-        m.set_f(ph, Field::_backup_battery_power, p.backup);
-        log(s, ph, SubsystemWriteKind::BACKUP_BATTERY, 0, p.backup);
-    }
+    const SubsystemRow& pr = *m.subsystem(ph);
+    put_f(s, m, ph, Field::_interval_elapsed,
+          SubsystemWriteKind::INTERVAL_ELAPSED, pr._interval_elapsed, interval);
+    if (p.wrote_dispensed)
+        put_f(s, m, ph, Field::_power_dispensed,
+              SubsystemWriteKind::POWER_DISPENSED, pr._power_dispensed,
+              p.dispensed);
+    if (p.wrote_main)
+        put_f(s, m, ph, Field::_main_battery_power,
+              SubsystemWriteKind::MAIN_BATTERY, pr._main_battery_power, p.main);
+    if (p.wrote_backup)
+        put_f(s, m, ph, Field::_backup_battery_power,
+              SubsystemWriteKind::BACKUP_BATTERY, pr._backup_battery_power,
+              p.backup);
     if (p.wrote_budgets) {
-        m.set_f(ph, Field::_main_conduit_current, p.main_conduit);
-        m.set_f(ph, Field::_backup_conduit_current, p.backup_conduit);
-        m.set_f(ph, Field::_available_power, p.available);
-        log(s, ph, SubsystemWriteKind::MAIN_CONDUIT, 0, p.main_conduit);
-        log(s, ph, SubsystemWriteKind::BACKUP_CONDUIT, 0, p.backup_conduit);
-        log(s, ph, SubsystemWriteKind::AVAILABLE_POWER, 0, p.available);
+        put_f(s, m, ph, Field::_main_conduit_current,
+              SubsystemWriteKind::MAIN_CONDUIT, pr._main_conduit_current,
+              p.main_conduit);
+        put_f(s, m, ph, Field::_backup_conduit_current,
+              SubsystemWriteKind::BACKUP_CONDUIT, pr._backup_conduit_current,
+              p.backup_conduit);
+        put_f(s, m, ph, Field::_available_power,
+              SubsystemWriteKind::AVAILABLE_POWER, pr._available_power,
+              p.available);
     }
-    if (wrote_total) {
-        m.set_f(ph, Field::_power_wanted_total, total);
-        log(s, ph, SubsystemWriteKind::POWER_WANTED_TOTAL, 0, total);
-    }
+    if (wrote_total)
+        put_f(s, m, ph, Field::_power_wanted_total,
+              SubsystemWriteKind::POWER_WANTED_TOTAL, pr._power_wanted_total,
+              total);
     // The watchers: both limits read now, the backup battery after the main
     // watcher's update.
     const double main_cap = prop.MainBatteryLimit;
@@ -734,14 +780,16 @@ bool cloak_piece(SubsystemSession& s, Mirror& m, size_t i,
     if (state != kCloaking && state != kDecloaking) return false;
     // self._transition_elapsed += float(dt)
     const double elapsed = row->_transition_elapsed + s.dt;
-    m.set_f(ch, Field::_transition_elapsed, elapsed);
-    log(s, ch, SubsystemWriteKind::TRANSITION_ELAPSED, 0, elapsed);
+    put_f(s, m, ch, Field::_transition_elapsed,
+          SubsystemWriteKind::TRANSITION_ELAPSED, row->_transition_elapsed,
+          elapsed);
     if (elapsed < row->_transition_duration) return false;
     const int64_t done = state == kCloaking ? kCloaked : kDecloaked;
     m.set_i(ch, Field::_cloak_state, done);
     log(s, ch, SubsystemWriteKind::CLOAK_STATE, 0, static_cast<double>(done));
-    m.set_f(ch, Field::_transition_elapsed, 0.0);
-    log(s, ch, SubsystemWriteKind::TRANSITION_ELAPSED, 0, 0.0);
+    put_f(s, m, ch, Field::_transition_elapsed,
+          SubsystemWriteKind::TRANSITION_ELAPSED, row->_transition_elapsed,
+          0.0);
     out = event(s, i, SubsystemEvent::CLOAK_DONE, ch,
                 done == kCloaked ? 1 : 0, 0.0);
     return true;
@@ -1059,6 +1107,10 @@ void repair_complete(SubsystemSession& s, int64_t h) {
 uint64_t skip_count(SubsystemPiece p, SubsystemSkip why) {
     return g_skips[static_cast<size_t>(p)][static_cast<size_t>(why)];
 }
+
+SubsystemWriteStats write_stats() { return {g_logged, g_identical}; }
+
+void reset_write_stats() { g_logged = g_identical = 0; }
 
 void reset_skip_counts() {
     for (auto& row : g_skips)

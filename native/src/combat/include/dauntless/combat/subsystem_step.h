@@ -494,6 +494,16 @@ void repair_complete(SubsystemSession& s, int64_t h);
 uint64_t skip_count(SubsystemPiece p, SubsystemSkip why);
 void reset_skip_counts();
 
+// THE IDENTICAL WRITES, process-wide: every write the stage logged for the
+// applier, and every write it skipped because the mirror (so Python) already
+// held the value bit for bit. Zeroed by reset_write_stats().
+struct SubsystemWriteStats {
+    uint64_t logged;
+    uint64_t identical;
+};
+SubsystemWriteStats write_stats();
+void reset_write_stats();
+
 }  // namespace subsystems
 
 }  // namespace dauntless::combat

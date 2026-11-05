@@ -476,3 +476,21 @@ def test_combat_scene_runs_every_piece_natively(monkeypatch):
     assert any(e[1] and e[2] == "handler" for e in evs)
     assert any(e[1] and e[2] not in ("handler", "watcher")
                for e in evs), "no stage-posted event besides ours"
+
+
+def test_scene_skips_identical_writes_and_audit_is_clean(monkeypatch):
+    """The stage does not log a write the mirror already holds bit for bit:
+    Python holds it too (the audit proves the two agree at the end), and the
+    golden of the test above is unchanged by the skipping."""
+    monkeypatch.setenv("DAUNTLESS_NATIVE_AUDIT", "1")
+    log, _handled, _counts, _events, skips, _rigged, audit = _run()
+    stats = native_subsystems.write_stats()
+    print("subsystem write stats:", stats)
+    assert stats["identical"] > 0, stats
+    assert stats["logged"] > 0, stats
+    assert skips == {}, skips
+    assert audit == [], audit
+    monkeypatch.setitem(golden_fight.SCENES, GOLDEN, golden_fight.Scene(
+        name=GOLDEN, arm="native", seed=SEED, ships=SHIPS, ticks=TICKS,
+        tpf=1, run=None))
+    golden_fight.check(GOLDEN, _golden_rows(log))

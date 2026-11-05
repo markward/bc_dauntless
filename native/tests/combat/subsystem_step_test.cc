@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <utility>
@@ -492,17 +493,19 @@ TEST(ShieldStep, OfflineZeroesAllFaces) {
         faces += x.what == SubsystemWriteKind::FACE;
         watchers += x.what == SubsystemWriteKind::SHIELD_WATCH;
     }
-    EXPECT_EQ(faces, 6u);
+    // Face 3 already held 0.0: that write is identical, so not logged.
+    EXPECT_EQ(faces, 5u);
     EXPECT_EQ(watchers, 7u);
     const std::vector<double> v =
         w.m.get_floats(sh, Field::shield_watch_values);
     for (int f = 0; f < 7; ++f) EXPECT_EQ(v[f], 0.0) << f;
 
-    // Already all zero: nothing but the accumulator and the ramp.
+    // Already all zero: nothing but the accumulator and the ramp of the four
+    // faces whose fraction moves (faces 1 and 3 already read 0.0).
     w.m.set_f(sh, Field::_charge_accum, 0.49);
     SubsystemSession again = subsystems::begin(w.m, std::vector{ship}, kDt);
     subsystems::next(again, w.m);
-    ASSERT_EQ(again.writes.size(), 1u + 6u);
+    ASSERT_EQ(again.writes.size(), 1u + 4u);
     for (size_t k = 1; k < again.writes.size(); ++k)
         EXPECT_EQ(again.writes[k].what, SubsystemWriteKind::RAMP);
 }
@@ -862,7 +865,8 @@ TEST(PowerStep, TractorAndCloakStealsNotDispensed) {
         EXPECT_EQ(w.m.get_f(c, Field::_power_factor), 0.0);
     }
     EXPECT_EQ(w.m.get_f(cloak, Field::_backup_reserve), 100.0);
-    EXPECT_TRUE(logged(t, SubsystemWriteKind::BACKUP_RESERVE, cloak));
+    // The snapshot is unchanged (100.0 again): identical, so not logged.
+    EXPECT_FALSE(logged(t, SubsystemWriteKind::BACKUP_RESERVE, cloak));
 }
 
 TEST(PowerStep, BatteryWatcherCrossingYieldsAnEvent) {
@@ -1531,4 +1535,73 @@ TEST(ArticulationStep, ANoRowShipStillTicksInPython) {
                                            kHalf);
     EXPECT_TRUE(is_articulation(subsystems::next(s, w.m)));
     EXPECT_EQ(s.skips.size(), 4u);
+}
+
+// THE IDENTICAL WRITES (subsystem_step.cc put_f/put_at).
+namespace {
+
+int consumer_writes(const SubsystemSession& s, int64_t c) {
+    int n = 0;
+    for (const SubsystemWrite& x : s.writes)
+        if (x.sub == c && (x.what == SubsystemWriteKind::POWER_WANTED ||
+                           x.what == SubsystemWriteKind::POWER_RECEIVED ||
+                           x.what == SubsystemWriteKind::EFFICIENCY ||
+                           x.what == SubsystemWriteKind::POWER_FACTOR))
+            ++n;
+    return n;
+}
+
+}  // namespace
+
+TEST(SubsystemStep, SteadyPowerLogsNoWritesOnTheSecondTick) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    w.plant(ship, prop, 500.0, 500.0, 0.0);
+    const int64_t c = w.consumer(ship, 0, 60.0);
+    SubsystemSession a = subsystems::begin(w.m, std::vector{ship}, 0.25);
+    after_power(w, a);
+    EXPECT_GT(consumer_writes(a, c), 0);   // the first tick changes them
+    SubsystemSession b = subsystems::begin(w.m, std::vector{ship}, 0.25);
+    after_power(w, b);
+    EXPECT_EQ(consumer_writes(b, c), 0);
+    EXPECT_GE(subsystems::write_stats().identical, 4u);
+}
+
+TEST(SubsystemStep, AChangedValueIsStillWritten) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    w.plant(ship, prop, 500.0, 500.0, 0.0);
+    const int64_t c = w.consumer(ship, 0, 60.0);
+    SubsystemSession a = subsystems::begin(w.m, std::vector{ship}, 0.25);
+    after_power(w, a);
+    w.m.set_f(c, Field::_normal_power, 120.0);   // wants more: 30, not 15
+    SubsystemSession b = subsystems::begin(w.m, std::vector{ship}, 0.25);
+    after_power(w, b);
+    EXPECT_GT(consumer_writes(b, c), 0);
+    EXPECT_EQ(w.m.get_f(c, Field::_power_wanted), 30.0);
+}
+
+TEST(SubsystemStep, NegativeZeroIsNotIdenticalToZero) {
+    // A consumer that wants nothing (off) writes 0.0 to every field; a row
+    // holding -0.0 there is NOT identical, so Python is told.
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    w.plant(ship, prop, 500.0, 500.0, 0.0);
+    const int64_t c = w.consumer(ship, 0, 60.0);
+    w.m.set_i(c, Field::_is_on, 0);
+    w.m.set_f(c, Field::_power_wanted, 0.0);
+    w.m.set_f(c, Field::_power_received, -0.0);
+    w.m.set_f(c, Field::_efficiency, 0.0);
+    w.m.set_f(c, Field::_power_factor, 0.0);
+    SubsystemSession a = subsystems::begin(w.m, std::vector{ship}, 0.25);
+    after_power(w, a);
+    bool received = false;
+    for (const SubsystemWrite& x : a.writes)
+        if (x.sub == c && x.what == SubsystemWriteKind::POWER_RECEIVED)
+            received = true;
+    EXPECT_TRUE(received);
+    EXPECT_FALSE(std::signbit(w.m.get_f(c, Field::_power_received)));
 }

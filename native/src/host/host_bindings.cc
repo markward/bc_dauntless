@@ -13963,6 +13963,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
             return out;
         }, "THE SKIPS, process-wide: {(piece, reason): count}, the non-zero "
            "ones, since the last combat_subsys_skip_counts_reset().");
+        m.def("combat_subsys_write_stats", [] {
+            const auto w = cb::subsystems::write_stats();
+            py::dict out;
+            out["logged"] = w.logged;
+            out["identical"] = w.identical;
+            return out;
+        }, "Writes the subsystem stage logged and writes it skipped as "
+           "bit-identical to the mirror, since the last "
+           "combat_subsys_write_stats_reset().");
+        m.def("combat_subsys_write_stats_reset",
+              [] { cb::subsystems::reset_write_stats(); },
+              "Zero the subsystem stage's write stats.");
         m.def("combat_subsys_skip_counts_reset",
               [] { cb::subsystems::reset_skip_counts(); },
               "Zero THE SKIPS' process-wide counts.");

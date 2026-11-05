@@ -114,6 +114,8 @@ def reset() -> None:
     reset_counts()
     if _h is not None and hasattr(_h, "combat_subsys_skip_counts_reset"):
         _h.combat_subsys_skip_counts_reset()
+    if _h is not None and hasattr(_h, "combat_subsys_write_stats_reset"):
+        _h.combat_subsys_write_stats_reset()
 
 
 def reset_counts() -> None:
@@ -135,6 +137,13 @@ def skip_counts() -> dict:
     """THE SKIPS since the last reset (subsystem_step.h), counted natively:
     {(piece name, reason name): count}, the non-zero ones."""
     return dict(_h.combat_subsys_skip_counts())
+
+
+def write_stats() -> dict:
+    """{"logged": n, "identical": n} since the last reset: the writes the
+    stage logged for the applier, and the ones it skipped because the mirror
+    (so Python) already held the value bit for bit (subsystem_step.cc)."""
+    return dict(_h.combat_subsys_write_stats())
 
 
 # ── The records ──────────────────────────────────────────────────────────────
