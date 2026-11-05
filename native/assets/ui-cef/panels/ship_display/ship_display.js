@@ -11,7 +11,7 @@
 //     species:      str | null,       // e.g. "galaxy", "warbird"
 //     hull_pct:     float,            // 0.0 – 1.0
 //     shields_pct:  [float x 6],      // FRONT, REAR, TOP, BOTTOM, LEFT, RIGHT
-//     damage_icons: [{icon_num, icon_svg, x_px, y_px, state}],
+//     damage_icons: [{icon_key, icon_svg, x_px, y_px, state}],
 //     minimized:    bool,
 //     range_km:     float | null,     // target role only — already km
 //     speed_kph:    float | null,     // target role only
@@ -59,12 +59,10 @@
         return "healthy";
     }
 
-    // SDK reference panel size at 640x480: 128 wide x 120 tall.
-    // Hardpoint Position2D coords are pixel-space against this frame;
-    // the overlay covers the silhouette stack at 100% / 100%, so we
-    // map x_px → percent by dividing by these constants.
-    var SDK_PANE_WIDTH_PX  = 128;
-    var SDK_PANE_HEIGHT_PX = 120;
+    // Hardpoint Position2D coords are pixel-space against a 128 x 128 frame.
+    // The overlay fills .ship-display__icon-frame, the drawn square of the
+    // silhouette, so x_px / y_px map to percent by dividing by this constant.
+    var SDK_FRAME_PX = 128;
 
     function rebuildDamageOverlay(overlay, rows) {
         overlay.innerHTML = "";
@@ -75,9 +73,9 @@
             var el = document.createElement("div");
             el.className = "damage-icon";
             el.dataset.state = row.state || "healthy";
-            el.dataset.iconNum = String(row.icon_num);
-            el.style.left = (row.x_px / SDK_PANE_WIDTH_PX  * 100).toFixed(2) + "%";
-            el.style.top  = (row.y_px / SDK_PANE_HEIGHT_PX * 100).toFixed(2) + "%";
+            el.dataset.iconKey = String(row.icon_key);
+            el.style.left = (row.x_px / SDK_FRAME_PX * 100).toFixed(2) + "%";
+            el.style.top  = (row.y_px / SDK_FRAME_PX * 100).toFixed(2) + "%";
             el.innerHTML = row.icon_svg;  // potrace-traced, deterministic; safe
             overlay.appendChild(el);
         }

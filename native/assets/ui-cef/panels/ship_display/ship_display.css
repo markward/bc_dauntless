@@ -248,11 +248,21 @@
 
 /* ── Damage icon overlay ───────────────────────────────────────────── */
 
-/* Overlay covers the silhouette stack; per-icon left/top use the
-   SDK 640x480 hardpoint pixel coords expressed as percentages of
-   the canonical SHIELDS_DISPLAY pane (128 × 120 px at 640×480 mode):
-   x_pct = x_px / 128 * 100, y_pct = y_px / 120 * 100. The JS does
-   the conversion when setting style.left / style.top. */
+/* The frame is the drawn square of the object-fit: contain silhouette;
+   the overlay fills it. Per-icon left/top are hardpoint pixel coords as
+   percentages of a 128 x 128 frame (the JS does the conversion). */
+.ship-display__icon-frame {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    height: 100%;
+    aspect-ratio: 1 / 1;
+    transform: translateX(-50%);
+    pointer-events: none;
+    z-index: 5;
+}
+
 .ship-display__damage-overlay {
     position: absolute;
     inset: 0;

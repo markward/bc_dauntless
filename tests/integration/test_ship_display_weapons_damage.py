@@ -7,11 +7,9 @@ Position2D. The Galaxy hardpoint sets a Position2D on both
 ``Phasers`` (the parent system, at 64,94) and every individual bank
 (DorsalPhaser1..4, VentralPhaser1..4). So the panel renders:
 
-    * one icon_num=2 (Phaser) row per individual PhaserBank child,
+    * one icon_key="laser" row per individual PhaserBank child,
       at each bank's own hardpoint coord, and
-    * one icon_num=6 (System fallback) row for the parent
-      PhaserSystem at (64, 94) — the parent is not in the icon
-      class table so it falls through to "System".
+    * one icon_key="laser" row for the parent PhaserSystem at (64, 94).
 
 Damaging a single bank flips that bank's row to "damaged" and the
 parent system's IsDamaged() predicate true. Disabling/destroying
@@ -25,8 +23,7 @@ import loadspacehelper
 
 from engine.ui.ship_display_panel import _damage_icon_descriptors
 
-PHASER_ICON_NUM = 2   # DamageIcons enum: Phaser (individual bank)
-SYSTEM_ICON_NUM = 6   # DamageIcons enum: System (PhaserSystem parent fallback)
+PHASER_ICON_KEY = "laser"   # bank and PhaserSystem parent share the key
 
 
 def _build_galaxy():
@@ -46,7 +43,8 @@ def _phaser_banks(ship):
 
 def _phaser_rows(ship):
     return [r for r in _damage_icon_descriptors(ship)
-            if r["icon_num"] == PHASER_ICON_NUM]
+            if r["icon_key"] == PHASER_ICON_KEY
+            and (r["x_px"], r["y_px"]) != (64.0, 94.0)]
 
 
 def _parent_phaser_row(ship):
@@ -54,7 +52,7 @@ def _parent_phaser_row(ship):
     hardpoint's Position2D for ``Phasers`` (64, 94). Returns None if
     no such row is present."""
     for r in _damage_icon_descriptors(ship):
-        if r["icon_num"] == SYSTEM_ICON_NUM and r["x_px"] == 64.0 and r["y_px"] == 94.0:
+        if r["icon_key"] == PHASER_ICON_KEY and r["x_px"] == 64.0 and r["y_px"] == 94.0:
             return r
     return None
 

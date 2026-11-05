@@ -262,11 +262,11 @@ class ShipDisplayPanel(Panel):
         hull_pct     = _hull_pct(ship)
         shields_pct  = _shields_tuple(ship)
         damage_icons_list = _damage_icon_descriptors(ship)
-        # Frozen form for snapshot equality. Position2D / icon_num
+        # Frozen form for snapshot equality. Position2D / icon_key
         # don't change at runtime, so bucket state only — that's the
         # field that actually flips frame-to-frame.
         damage_frozen = tuple(
-            (d["icon_num"], d["x_px"], d["y_px"], d["state"])
+            (d["icon_key"], d["x_px"], d["y_px"], d["state"])
             for d in damage_icons_list
         )
         range_km, speed_kph = (None, None)
@@ -553,14 +553,14 @@ def _damage_icon_descriptors(ship):
     mean "don't display." Each descriptor:
 
         {
-          "icon_num": int,        # DamageIcons enum value
+          "icon_key": str,        # engine.ui.subsystem_icons key
           "icon_svg": str | None, # inline SVG, or None if no glyph available
           "x_px":    float,       # hardpoint pixel coord, SDK 640x480 frame
           "y_px":    float,
           "state":   "healthy" | "damaged" | "disabled" | "destroyed",
         }
     """
-    from engine.ui import damage_icons
+    from engine.ui import subsystem_icons
     out: list[dict] = []
     for sub in _iter_damage_subsystems(ship):
         try:
@@ -572,10 +572,10 @@ def _damage_icon_descriptors(ship):
         x_px, y_px = float(pos[0]), float(pos[1])
         if x_px == 0.0 and y_px == 0.0:
             continue
-        icon_num = damage_icons.icon_num_for_subsystem(sub)
+        icon_key = subsystem_icons.icon_key_for(sub)
         out.append({
-            "icon_num": icon_num,
-            "icon_svg": damage_icons.icon_svg_for_num(icon_num),
+            "icon_key": icon_key,
+            "icon_svg": subsystem_icons.svg_for_key(icon_key),
             "x_px":     x_px,
             "y_px":     y_px,
             "state":    _row_state(sub),

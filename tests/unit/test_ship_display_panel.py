@@ -328,8 +328,8 @@ def test_shield_face_indices_match_subsystem_constants():
 
 def test_damage_states_filter_to_positioned_subsystems_only():
     """Damage rows only surface for subsystems with a non-zero
-    Position2D; the descriptor tuple is (icon_num, x_px, y_px, state).
-    Impulse = icon_num 1; damaging it should flip state to 'damaged'."""
+    Position2D; the descriptor tuple is (icon_key, x_px, y_px, state).
+    Impulse = icon_key "chevrons-up"; damaging it should flip state to 'damaged'."""
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     _, player, _ = _setup_game_with_player()
     try:
@@ -341,10 +341,10 @@ def test_damage_states_filter_to_positioned_subsystems_only():
         panel = ShipDisplayPanel(ROLE_PLAYER)
         snap = panel._snapshot()
         damage_frozen = snap[6]
-        # Tuple shape: (icon_num, x_px, y_px, state)
-        impulse_rows = [r for r in damage_frozen if r[0] == 1]
+        # Tuple shape: (icon_key, x_px, y_px, state)
+        impulse_rows = [r for r in damage_frozen if r[0] == "chevrons-up"]
         assert len(impulse_rows) == 1
-        assert impulse_rows[0] == (1, 50.0, 30.0, "damaged")
+        assert impulse_rows[0] == ("chevrons-up", 50.0, 30.0, "damaged")
     finally:
         _teardown_game()
 
@@ -382,8 +382,8 @@ def test_render_payload_emits_setshipdisplay_call():
 
 
 def test_render_payload_damage_icons_descriptor_shape():
-    """damage_icons rows expose icon_num/icon_svg/x_px/y_px/state. Sensor
-    icon_num is 4 (per damage_icons.ICON_REGISTRY)."""
+    """damage_icons rows expose icon_key/icon_svg/x_px/y_px/state. Sensor
+    icon_key is "radar"."""
     import json
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     _, player, _ = _setup_game_with_player()
@@ -397,7 +397,7 @@ def test_render_payload_damage_icons_descriptor_shape():
         body = script[len("setShipDisplay(\"player\", "):-2]
         state = json.loads(body)
         icons = state["damage_icons"]
-        sensor_rows = [r for r in icons if r["icon_num"] == 4]
+        sensor_rows = [r for r in icons if r["icon_key"] == "radar"]
         assert len(sensor_rows) == 1
         row = sensor_rows[0]
         assert row["x_px"] == 64.0
@@ -405,6 +405,7 @@ def test_render_payload_damage_icons_descriptor_shape():
         assert row["state"] == "damaged"
         # icon_svg is optional (None when no glyph cached); presence required.
         assert "icon_svg" in row
+        assert set(row) == {"icon_key", "icon_svg", "x_px", "y_px", "state"}
     finally:
         _teardown_game()
 
