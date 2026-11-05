@@ -22,11 +22,9 @@ import threading
 
 
 def _inject(thread_id, exc_type):
-    """Raise exc_type in the given thread. Pass None to cancel a pending raise."""
+    """Raise exc_type in the given thread (never cancel with NULL: _drain)."""
     ctypes.pythonapi.PyThreadState_SetAsyncExc(
-        ctypes.c_ulong(thread_id),
-        ctypes.py_object(exc_type) if exc_type is not None else ctypes.c_void_p(0),
-    )
+        ctypes.c_ulong(thread_id), ctypes.py_object(exc_type))
 
 
 @contextlib.contextmanager
@@ -76,4 +74,21 @@ def raise_after(seconds, message):
         with lock:
             done = True
             if fired:
-                _inject(target, None)
+                _drain(timeout_exc)
+
+
+def _drain(exc_type):
+    """Take delivery of a pending injection of exc_type here, and drop it.
+
+    Not PyThreadState_SetAsyncExc(tid, NULL): that clears the pending
+    exception but re-signals the interpreter's async-exception flag, and only
+    a DELIVERED async exception clears that flag. Left set, it breaks the
+    interpreter for everything after (CPython 3.11: a profiler enabled later
+    spins forever on its next frame). If the exception already landed (raised
+    out of the block, or caught inside it) nothing is pending and the loop
+    just runs out; a pending one lands at the loop's first backward jump."""
+    try:
+        for _ in range(10000):
+            pass
+    except exc_type:
+        pass

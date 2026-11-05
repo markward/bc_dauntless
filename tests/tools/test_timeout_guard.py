@@ -96,3 +96,40 @@ def test_a_timer_firing_during_the_block_still_raises_inside_it(monkeypatch):
             fire.join(5.0)
             for _ in range(2000000):   # bytecode boundaries for delivery
                 pass
+
+
+_PROFILE_AFTER_TIMEOUT = r"""
+import cProfile, time
+import tools.timeout_guard as timeout_guard
+try:
+    with timeout_guard.raise_after(0.05, "boom"):
+        time.sleep(2.0)
+except TimeoutError:
+    pass
+def work():
+    return sum(i * i for i in range(200))
+p = cProfile.Profile()
+p.enable()
+work()
+p.disable()
+print("finished")
+"""
+
+
+def test_a_fired_timeout_leaves_the_interpreter_able_to_profile():
+    """A timeout that fired must not leave the interpreter's async-exception
+    signal raised. Cancelling with PyThreadState_SetAsyncExc(tid, NULL)
+    re-signals it with nothing to deliver, and only a delivered async
+    exception clears it; on CPython 3.11 a profiler enabled after that spins
+    forever on the next frame (it hung the whole gate, in
+    tests/unit/test_py_profile.py). Run in a child so a regression times out
+    here instead of hanging the suite."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    proc = subprocess.run([sys.executable, "-c", _PROFILE_AFTER_TIMEOUT],
+                          cwd=str(root), capture_output=True, text=True,
+                          timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "finished"
