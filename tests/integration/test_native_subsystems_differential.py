@@ -27,7 +27,8 @@ Review Focus 1 is pinned by a handler on shield watchers: a range check on
 each face of the first few ships, fired mid-stage by the shield regen's
 upward crossing, writes to the NEXT ship in the walk (its shields off or
 on, a sensor slider, its main battery), which the walk then reaches the
-same tick.
+same tick. The same handler is on those ships' battery watchers (Task 4),
+fired mid-stage by a drain or a recharge crossing half charge.
 
 Deterministic by construction, as test_passive_power_differential.py: no
 GameLoop tick (AI draws on the unseeded module ``random``), the clock and
@@ -163,6 +164,8 @@ class _World:
     def _etype(self, et):
         if et == getattr(self, "et", None):
             return "watcher"            # our range checks' type
+        if et == getattr(self, "bet", None):
+            return "battery"            # ... on the battery watchers
         if isinstance(et, int) and 1200 <= et < 0x10000:
             return self.dynamic.setdefault(et, "dyn#%d" % len(self.dynamic))
         return et
@@ -205,12 +208,28 @@ class _World:
                 shields.GetShieldWatcher(face).AddRangeCheck(
                     THRESHOLD, App.FloatRangeWatcher.FRW_BOTH, evt)
         assert len(self.registered) >= 3, self.registered
+        # The battery watchers (Task 4: the power piece's EVENTs): both of
+        # each source's plant, at half charge, either way.
+        self.bet = App.Game_GetNextEventType()
+        App.g_kEventManager.AddBroadcastPythonFuncHandler(
+            self.bet, self.ships[0], self.handler)
+        for ship in self.ships[:SOURCES]:
+            plant = ship.GetPowerSubsystem()
+            for watcher in (plant.GetMainBatteryWatcher(),
+                            plant.GetBackupBatteryWatcher()):
+                evt = App.TGFloatEvent_Create()
+                evt.SetEventType(self.bet)
+                evt.SetSource(plant)
+                watcher.AddRangeCheck(THRESHOLD,
+                                      App.FloatRangeWatcher.FRW_BOTH, evt)
         _HANDLER["world"] = self
 
     def close(self):
         _HANDLER.clear()
         App.g_kEventManager.RemoveBroadcastHandler(
             self.et, self.ships[0], self.handler)
+        App.g_kEventManager.RemoveBroadcastHandler(
+            self.bet, self.ships[0], self.handler)
 
     def on_crossing(self, evt):
         source = evt.GetSource().GetParentShip()
@@ -415,11 +434,12 @@ def test_differential_combat_scene_bit_exact():
             i, x, y = _first_difference(pe, ne)
             pytest.fail("tick %d: events differ at %d\n python %r\n native %r"
                         % (tick, i, x, y))
-    # Task 3: every shield piece ran natively (the other four pieces are one
-    # RUN_PYTHON record per ship per stage), and its watcher crossings --
-    # the handler's mid-stage writes among them -- came back as EVENTs.
+    # Tasks 3-4: every shield and power piece ran natively (the other three
+    # pieces are one RUN_PYTHON record per ship per stage), and their
+    # watcher crossings -- the handler's mid-stage writes among them -- came
+    # back as EVENTs.
     ships = int(SHIPS) + 1
-    assert na_counts["run_python"] == 4 * ships * TICKS, na_counts
+    assert na_counts["run_python"] == 3 * ships * TICKS, na_counts
     assert na_counts["events"] > 0, na_counts
     # The scene is what it claims: the handler wrote mid-stage, and the
     # stage had work of every kind to do.
@@ -432,6 +452,8 @@ def test_differential_combat_scene_bit_exact():
     assert {r[2] for r in rows if r[0] == "cloak"} == {0, 1, 2, 3}
     events = [e for _, evs in python for e in evs]
     assert any(e[1] and e[2] == "watcher" for e in events)
+    assert any(e[1] and e[2] == "battery" for e in events), \
+        "no battery crossing in the stage"
     assert any(e[1] and e[2] == "handler" for e in events)
     assert any(e[1] and e[2] not in ("handler", "watcher")
                for e in events), "no stage-posted event besides ours"

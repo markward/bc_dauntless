@@ -1061,6 +1061,27 @@ class NativeOptionalField(NativeField):
                     self._push(obj, h, self._absent)
 
 
+class NativeClassDefault(NativeOptionalField):
+    """A class constant an instance may override (PoweredSubsystem.
+    POWER_MODE, DRAWS_DIRECT_FROM_MAIN, the cloak's
+    CLOAK_RESERVE_DRAIN_PER_SECOND: the native power piece reads them per
+    consumer, subsystem_step.h THE POWER PIECE). A read answers the
+    instance's own value, else `default` (on the class too: ``PoweredSubsystem
+    .POWER_MODE`` is the constant); an instance write pushes it, and the row
+    holds `default` while there is none (NativeOptionalField's absent). A
+    subclass with its own default declares its own NativeClassDefault: a
+    plain class attribute would hide this one (and the object would get no
+    row at all, _hidden_fields)."""
+
+    def __init__(self, type_, default) -> None:
+        super().__init__(type_, default)
+
+    def __get__(self, obj, owner=None):
+        if obj is None:
+            return self._absent
+        return obj.__dict__.get(self._name, self._absent)
+
+
 def _repush_absent(obj, field) -> None:
     h = obj.__dict__.get("_nslot")
     if _enabled and h is not None and field._name not in obj.__dict__:
@@ -1684,18 +1705,20 @@ def _push_has_shields_arg(sub, _arg) -> None:
     push_has_shields(sub)
 
 
-# ── Shields native: the generator's seven watchers (phase 6 A1, Task 3) ─────
-# The native shield piece (subsystem_step.h THE SHIELD PIECE) decides each
-# watcher's crossing itself, so it needs every watcher's committed `_value`
-# and its checks. ShieldSubsystem._shield_watchers is a ShieldWatchersField:
-# each plain FloatRangeWatcher in the list is ADOPTED (its `_shield_owner`
-# is the generator, `_shield_index` its place), and an adopted watcher
-# pushes the generator's row on every value it commits (`_update`) and every
-# check it adds or removes. shield_watch_ok is 1 only for seven
-# FloatRangeWatchers, each adopted by this generator at its index, with no
-# owner of another kind; anything else is 0 and the piece is Python's. A
-# script patching the watcher's methods is not honoured (spec §3 "Mods and
-# patches (Part A)").
+# ── Owned watchers: the generator's seven, the plant's two (phase 6 A1) ────
+# The native shield and power pieces (subsystem_step.h THE SHIELD PIECE,
+# THE POWER PIECE) decide each watcher's crossing themselves, so they need
+# every watcher's committed `_value` and its checks. An owning subsystem
+# ADOPTS each plain FloatRangeWatcher it holds (the watcher's `_watch_owner`
+# is the subsystem, `_watch_index` its place: a generator's
+# `_shield_watchers[i]` through ShieldWatchersField, a plant's main (0) and
+# backup (1) battery watcher through PowerWatcherField), and an adopted
+# watcher pushes its owner's row on every value it commits (`_update`) and
+# every check it adds or removes (push_owned_watch). The owner's "ok" flag
+# is 1 only when every watcher is a FloatRangeWatcher adopted by it at its
+# index, with no owner of another kind; anything else is 0 and the piece is
+# Python's. A script patching the watcher's methods is not honoured (spec §3
+# "Mods and patches (Part A)").
 
 _SHIELD_WATCHERS = 7
 _NOT_READY = (0, [], [])
@@ -1707,18 +1730,24 @@ def _shield_watch_state(sub):
     count then (threshold, direction code) per check -- 2 for FRW_BELOW,
     1 for FRW_ABOVE, 3 for anything else, in FloatRangeWatcher._crossed's
     order of tests."""
-    from engine.appc.float_range_watcher import FloatRangeWatcher
     ws = sub.__dict__.get("_shield_watchers")
     if type(ws) is not list or len(ws) != _SHIELD_WATCHERS:
         return _NOT_READY
+    return _owned_watch_state(sub, ws)
+
+
+def _owned_watch_state(sub, ws):
+    """(ok, values, checks) of the watchers `ws` (a list, in index order)
+    that `sub` owns: the shield generator's and the plant's encoding."""
+    from engine.appc.float_range_watcher import FloatRangeWatcher
     below, above = FloatRangeWatcher.FRW_BELOW, FloatRangeWatcher.FRW_ABOVE
     values, checks = [], []
     for i, w in enumerate(ws):
         if type(w) is not FloatRangeWatcher:
             return _NOT_READY
         wd = w.__dict__
-        if (wd.get("_shield_owner") is not sub
-                or wd.get("_shield_index") != i
+        if (wd.get("_watch_owner") is not sub
+                or wd.get("_watch_index") != i
                 or wd.get("_owner") is not None
                 or wd.get("_cond_owner") is not None):
             return _NOT_READY
@@ -1797,10 +1826,10 @@ def _adopt_watchers(sub, ws) -> None:
         if type(w) is not FloatRangeWatcher:
             continue
         wd = w.__dict__
-        owner = wd.get("_shield_owner")
+        owner = wd.get("_watch_owner")
         if owner is None or owner is sub:
-            wd["_shield_owner"] = sub
-            wd["_shield_index"] = i
+            wd["_watch_owner"] = sub
+            wd["_watch_index"] = i
 
 
 def _release_watchers(sub, old, new) -> None:
@@ -1811,10 +1840,111 @@ def _release_watchers(sub, old, new) -> None:
     keep = {id(w) for w in new} if type(new) is list else set()
     for w in old:
         wd = getattr(w, "__dict__", None)
-        if (wd is not None and wd.get("_shield_owner") is sub
+        if (wd is not None and wd.get("_watch_owner") is sub
                 and id(w) not in keep):
-            del wd["_shield_owner"]
-            wd.pop("_shield_index", None)
+            del wd["_watch_owner"]
+            wd.pop("_watch_index", None)
+
+
+# The plant's two (THE POWER PIECE): `_main_battery_watcher` is index 0,
+# `_backup_battery_watcher` index 1, encoded as power_watch_*.
+_BATTERY_WATCHERS = ("_main_battery_watcher", "_backup_battery_watcher")
+
+
+def _power_watch_state(plant):
+    """(ok, values, checks) of the plant's battery watchers (mirror.h
+    power_watch_*), as _shield_watch_state's."""
+    d = plant.__dict__
+    ws = [d.get(name) for name in _BATTERY_WATCHERS]
+    return _owned_watch_state(plant, ws)
+
+
+def push_power_watch(plant) -> None:
+    """The plant's whole battery-watcher state: a watcher adopted or
+    released, a check added or removed, a value committed."""
+    if not _enabled:
+        return
+    h = plant.__dict__.get("_nslot")
+    if h is None:
+        return
+    if _off_main():
+        _queue_push(plant, _push_power_watch_arg, None, "power_watch")
+        return
+    ok, values, checks = _power_watch_state(plant)
+    _call(plant, _h.combat_set_i, h, _fid("power_watch_ok"), ok)
+    if ok and "_nslot" in plant.__dict__:
+        _call(plant, _h.combat_set_floats, h, _fid("power_watch_values"),
+              values)
+        if "_nslot" in plant.__dict__:
+            _call(plant, _h.combat_set_floats, h, _fid("power_watch_checks"),
+                  checks)
+
+
+def _push_power_watch_arg(plant, _arg) -> None:
+    push_power_watch(plant)
+
+
+def push_owned_watch(owner, values_only: bool) -> None:
+    """An adopted watcher's owner (FloatRangeWatcher._watch_owner): it
+    committed a value (`values_only`) or its checks changed. A shield
+    generator's seven or a plant's two."""
+    if "_shield_watchers" in owner.__dict__:
+        if values_only:
+            push_shield_watch_values(owner)
+        else:
+            push_shield_watch(owner)
+    else:
+        push_power_watch(owner)
+
+
+class PowerWatcherField(NativeField):
+    """``PowerSubsystem._main_battery_watcher`` (index 0) /
+    ``_backup_battery_watcher`` (1): adopts the watcher (releasing the one it
+    replaces) and pushes the plant's battery-watcher state."""
+
+    def __init__(self, index: int) -> None:
+        super().__init__(list, key="power_watch_ok")
+        self._index = index
+
+    def __set__(self, obj, value) -> None:
+        d = obj.__dict__
+        old = d.get(self._name)
+        d[self._name] = value
+        if old is not value:
+            wd = getattr(old, "__dict__", None)
+            if wd is not None and wd.get("_watch_owner") is obj:
+                del wd["_watch_owner"]
+                wd.pop("_watch_index", None)
+        self._adopt(obj, value)
+        push_power_watch(obj)
+
+    def _adopt(self, obj, w) -> None:
+        from engine.appc.float_range_watcher import FloatRangeWatcher
+        if type(w) is FloatRangeWatcher:
+            wd = w.__dict__
+            owner = wd.get("_watch_owner")
+            if owner is None or owner is obj:
+                wd["_watch_owner"] = obj
+                wd["_watch_index"] = self._index
+
+    def _push(self, obj, h, value) -> None:      # _push_all / resync
+        self._adopt(obj, value)
+        push_power_watch(obj)
+
+    def audit(self, value, row) -> bool:
+        return True     # _audit_power_watch, which needs the plant
+
+
+def _audit_power_watch(plant, row, name) -> None:
+    """The battery-watcher state as the watchers hold it NOW."""
+    ok, values, checks = _power_watch_state(plant)
+    if row["power_watch_ok"] != ok:
+        _failures.append((name, "power_watch_ok"))
+    elif ok:
+        if _hexes(values) != _hexes(row["power_watch_values"]):
+            _failures.append((name, "power_watch_values"))
+        if _hexes(checks) != _hexes(row["power_watch_checks"]):
+            _failures.append((name, "power_watch_checks"))
 
 
 class ShieldWatchersField(NativeField):
@@ -2381,8 +2511,40 @@ def _flags(obj, h) -> dict:
                 "motion_ies_stock": _stock_surface(
                     type(obj), ImpulseEngineSubsystem, _MOTION_IES_NAMES),
                 "motion_pod_stock": _stock_surface(
-                    type(obj), ShipSubsystem, _MOTION_POD_NAMES)}
+                    type(obj), ShipSubsystem, _MOTION_POD_NAMES),
+                # The native power piece's rules for this class.
+                "power_kind": _power_kind(type(obj))}
     return {}
+
+
+_POWER_KINDS = None
+_power_kind_by_type: dict = {}
+
+
+def _power_kind(cls) -> int:
+    """Which power rules a subsystem class has, for the native power piece
+    (subsystem_step.h THE POWER PIECE): 3 a plant (PowerSubsystem.Update),
+    2 CloakingSubsystem's _update_power / _wants_power, 1 TractorBeamSystem's
+    _wants_power (PoweredSubsystem's _update_power), 0 PoweredSubsystem's,
+    -1 none (not a consumer: the pump hands such a ship's piece to Python).
+    By what the class IS: a subclass's own override of those methods is not
+    honoured (spec §3 "Mods and patches (Part A)")."""
+    global _POWER_KINDS
+    k = _power_kind_by_type.get(cls)
+    if k is None:
+        if _POWER_KINDS is None:
+            from engine.appc import subsystems as ss
+            from engine.appc import weapon_subsystems as ws
+            _POWER_KINDS = ((ss.PowerSubsystem, 3), (ss.CloakingSubsystem, 2),
+                            (ws.TractorBeamSystem, 1),
+                            (ss.PoweredSubsystem, 0))
+        k = -1
+        for klass, kind in _POWER_KINDS:
+            if issubclass(cls, klass):
+                k = kind
+                break
+        _power_kind_by_type[cls] = k
+    return k
 
 
 def push_posed_parts(ship) -> None:
@@ -2940,6 +3102,39 @@ def refresh_pulse_params() -> None:
                 push_slot0_launch(obj)
 
 
+#: The PowerProperty values PowerSubsystem._prop_f reads every tick (its
+#: getter names less "Get"), mirrored on every Property row (mirror.h).
+POWER_PROPERTY_FIELDS = ("PowerOutput", "MainBatteryLimit",
+                         "BackupBatteryLimit", "MainConduitCapacity",
+                         "BackupConduitCapacity")
+#: Every data-bag field a Property row mirrors: their setters push
+#: (properties.TGModelProperty.__getattr__).
+MIRRORED_PROPERTY_FIELDS = frozenset(("MaxCondition",)
+                                     + POWER_PROPERTY_FIELDS)
+
+
+def _power_property_values(prop) -> dict:
+    """The five values as _prop_f reads them, `float(value or 0.0)` from the
+    data bag, and power_props_ok: 1 only when every one is read that way
+    (no class getter of its name: _prop_f's own probe) and is a float."""
+    vals = {}
+    cls = type(prop)
+    ok = 1
+    for name in POWER_PROPERTY_FIELDS:
+        v = 0.0
+        if getattr(cls, "Get" + name, None) is not None:
+            ok = 0
+        else:
+            try:
+                v = float(prop._data.get((name, ()), None) or 0.0)
+            except (TypeError, ValueError, OverflowError):
+                ok = 0
+                v = 0.0
+        vals[name] = v
+    vals["power_props_ok"] = ok
+    return vals
+
+
 def _property_values(prop) -> dict:
     pm = prop._data.get(("MaxCondition", ()))
     d = prop.__dict__
@@ -2953,6 +3148,7 @@ def _property_values(prop) -> dict:
         vals.update(MaxCondition_set=0, MaxCondition=0.0)
     else:
         vals.update(MaxCondition_set=1, MaxCondition=float(pm))
+    vals.update(_power_property_values(prop))
     return vals
 
 
@@ -3033,8 +3229,9 @@ def push_ids(obj, field: str, ids) -> None:
 
 
 def push_property(prop) -> None:
-    """A property value the mirror holds was written: the MaxCondition
-    data-bag entry, SetGroups or SetFiringChainString."""
+    """A property value the mirror holds was written: a data-bag entry of
+    MIRRORED_PROPERTY_FIELDS (MaxCondition, the five power values), SetGroups
+    or SetFiringChainString."""
     if _enabled:
         h = prop.__dict__.get("_nslot")
         if h is None:
@@ -3054,6 +3251,12 @@ def push_property(prop) -> None:
         if "_nslot" in prop.__dict__:
             _call(prop, _h.combat_set_id_lists, h, _fid("_firing_chains"),
                   vals["_firing_chains"])
+        for name in POWER_PROPERTY_FIELDS:
+            if "_nslot" in prop.__dict__:
+                _call(prop, _h.combat_set_f, h, _fid(name), vals[name])
+        if "_nslot" in prop.__dict__:
+            _call(prop, _h.combat_set_i, h, _fid("power_props_ok"),
+                  vals["power_props_ok"])
 
 
 # ── Sets, profiles and globals ───────────────────────────────────────────────
@@ -3245,6 +3448,8 @@ def _globals() -> dict:
     # The native shield piece's 0.5 s cadence (phase 6 A1, Task 3).
     from engine.appc import subsystems
     g["SHIELD_CHARGE_PERIOD_S"] = float(subsystems.SHIELD_CHARGE_PERIOD_S)
+    # The native power piece's 1.0 s interval (phase 6 A1, Task 4).
+    g["POWER_INTERVAL"] = float(subsystems.PowerSubsystem.POWER_INTERVAL)
     return g
 
 
@@ -3760,6 +3965,8 @@ def audit_mirror() -> None:
             _audit_cond_watch(obj, row, name)
             if "_shield_watchers" in d:
                 _audit_shield_watch(obj, row, name)
+            if "_main_battery_watcher" in d:
+                _audit_power_watch(obj, row, name)
     _audit_torpedoes()
     _audit_globals()
     if _h.combat_part_gen() != _part_gen:

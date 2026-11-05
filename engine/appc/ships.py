@@ -32,7 +32,11 @@ class ShipClass(DamageableObject):
     # mount order on a change, as the MountSlotField it replaced did.
     _impulse_engine_subsystem = native_combat.NativeMountRefField("Subsystem")
     _warp_engine_subsystem = native_combat.WarpSlotField()
-    _power_subsystem = native_combat.MountSlotField()
+    # The native power piece's plant and its pump's consumers, in attach
+    # order (subsystem_step.h THE POWER PIECE). _powered_consumers is
+    # appended in place by _attach_subsystem, which pushes it.
+    _power_subsystem = native_combat.NativeMountRefField("Subsystem")
+    _powered_consumers = native_combat.NativeRefList("Subsystem")
     _repair_subsystem = native_combat.MountSlotField()
     # What the K2 beam kernel reads: the lock, the Manual Aim offset, the
     # shield generator and the cached hull box (all rebound, never mutated).
@@ -1112,6 +1116,7 @@ class ShipClass(DamageableObject):
             s.SetParentShip(self)
         if isinstance(s, PoweredSubsystem) and s not in self._powered_consumers:
             self._powered_consumers.append(s)   # attach order = BC draw priority
+            native_combat.push_field(self, "_powered_consumers")
         return s
 
     def AddPoweredConsumer(self, subsystem) -> None:

@@ -2198,7 +2198,9 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     # This supersedes the spec's "tractor = conduit mode 0" decision; the manual
     # was right that it draws from Main, the RE doc's mode-1 (backup-first) row
     # is wrong-in-effect. _update_power branches on this flag instead of _draw.
-    DRAWS_DIRECT_FROM_MAIN = True
+    # Mirrored (the native power piece's direct steal, subsystem_step.h THE
+    # POWER PIECE): its own NativeClassDefault, never a plain attribute.
+    DRAWS_DIRECT_FROM_MAIN = native_combat.NativeClassDefault(bool, True)
     # Idle, _wants_power reads only _is_on (watched) and its beams' _firing
     # (ThawParentWakeField): the power draw program may freeze it as a no-op.
     _POWER_FREEZABLE = True

@@ -11,13 +11,18 @@ plant and consumer, plus both battery watchers.
 Deterministic by construction: no GameLoop tick (AI draws on the unseeded
 module `random`), the game clock and the module `random` reset before each
 load, and the op stream comes from its own seeded Random.
+
+The program is the Python stage's (the native power piece never uses it:
+subsystem_step.h THE POWER PIECE), so both loads run the Python stage
+(DAUNTLESS_NATIVE_SUBSYSTEMS=0), the reference path until phase 6 Task 8
+deletes it and this test with it.
 """
 import random
 
 import App
 import pytest
 
-from engine.appc import passive_power, passive_state
+from engine.appc import native_subsystems, passive_power, passive_state
 from engine.appc.ship_iter import iter_ships
 from engine.appc.subsystems import SensorSubsystem
 from engine.core import loop as game_loop
@@ -44,6 +49,10 @@ class _Scene:
         App.g_kTimerManager._time = 0.0
         random.seed(0)
         headless_mission.load("engine.dev_missions.combat_stress")
+        # The Python stage (module docstring): the switch the per-test
+        # configure set, off for this load.
+        native_subsystems.configure({"DAUNTLESS_NATIVE_SUBSYSTEMS": "0"})
+        assert not native_subsystems.enabled()
         # After the load: constructing a GameLoop re-reads the environment.
         passive_state.configure(
             ({"DAUNTLESS_PASSIVE_AUDIT": "1"} if audit else {}) if passive

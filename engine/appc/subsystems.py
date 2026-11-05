@@ -1383,12 +1383,16 @@ PSM_DIRECT_MAIN = 3
 class PoweredSubsystem(ShipSubsystem):
     """Powered subsystem — consumes power, has a target power level."""
 
-    POWER_MODE = PSM_MAIN_FIRST
+    # Class constants an instance may override, mirrored for the native
+    # power piece (subsystem_step.h THE POWER PIECE; NativeClassDefault: a
+    # subclass with its own value declares its own, never a plain attribute).
+    POWER_MODE = native_combat.NativeClassDefault(native_combat.INDEX,
+                                                  PSM_MAIN_FIRST)
     # q10 (tools/probes/results/q10_battery_drain.txt): a subsystem whose draw
     # is a DIRECT main-battery steal — bypasses the conduit budget and is NOT
     # scaled by _power_percentage_wanted. Only TractorBeamSystem sets this True;
     # every conduit-routed consumer leaves it False and uses power._draw().
-    DRAWS_DIRECT_FROM_MAIN = False
+    DRAWS_DIRECT_FROM_MAIN = native_combat.NativeClassDefault(bool, False)
 
     # The power draw program (engine/appc/passive_power.py) may freeze this
     # consumer while its demand is steady and met: the inputs and outputs of
@@ -1410,8 +1414,9 @@ class PoweredSubsystem(ShipSubsystem):
     # Mirrored for the motion kernel (impulse_output_fraction's slider);
     # still a FrozenField, so a write thaws a frozen consumer.
     _power_percentage_wanted = native_combat.NativeFrozenField(float)
-    _power_wanted = FrozenField()
-    _power_received = FrozenField()
+    # The native power piece writes and reads them (THE POWER PIECE).
+    _power_wanted = native_combat.NativeFrozenField(float)
+    _power_received = native_combat.NativeFrozenField(float)
     _efficiency = native_combat.NativeFrozenField(float)
     _power_factor = native_combat.NativeFrozenField(float)
     # The audit compares a program tick with the full pump; the frozen flag is
@@ -2563,6 +2568,20 @@ class PowerSubsystem(ShipSubsystem):
     # The power draw program's slot (engine/appc/passive_power.py): its
     # bookkeeping, which the audit's full-pump reference run drops.
     _passive_audit_ignore = ("_passive_power",)
+    # Mirrored for the native power piece (subsystem_step.h THE POWER
+    # PIECE), which writes them back through its C applier.
+    _available_power = NativeField(float)
+    _main_battery_power = NativeField(float)
+    _backup_battery_power = NativeField(float)
+    _main_conduit_current = NativeField(float)
+    _backup_conduit_current = NativeField(float)
+    _interval_elapsed = NativeField(float)
+    _power_dispensed = NativeField(float)
+    _power_wanted_total = NativeField(float)
+    _breach_fired = NativeField(bool)
+    # Adopted, pushing the plant's watcher state (native_combat).
+    _main_battery_watcher = native_combat.PowerWatcherField(0)
+    _backup_battery_watcher = native_combat.PowerWatcherField(1)
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -2788,6 +2807,10 @@ class PowerSubsystem(ShipSubsystem):
             dev_mode.log_swallowed("warp core breach trigger", _e)
 
     def Update(self, dt: float) -> None:
+        """The plant's tick. The native power piece stands in for it
+        (native/src/combat/include/dauntless/combat/subsystem_step.h THE
+        POWER PIECE: this, _update_flow and the consumers' _update_power, bit
+        for bit): change both."""
         # Task 5: on the first tick after the reactor is destroyed, arm the
         # warp-core breach (manual p.16: "Reaching 0% causes a warp-core
         # breach and destroys the ship").  _breach_fired is a single-fire
@@ -2795,6 +2818,12 @@ class PowerSubsystem(ShipSubsystem):
         if self.IsDestroyed() and not self._breach_fired:
             self._breach_fired = True
             self._trigger_breach()
+        self._update_flow(dt)
+
+    def _update_flow(self, dt: float) -> None:
+        """Update after the breach check: the interval, the pump and the
+        battery watchers (the native piece's POWER_TAIL runs it on a plant
+        it could not finish)."""
         prop = self.GetProperty()
         if prop is None:
             return
@@ -3259,7 +3288,8 @@ class CloakingSubsystem(PoweredSubsystem):
     # Cloak runs off the backup grid only — it is locked off the main conduit
     # so cloaking never starves the ship's other systems of main-battery power
     # (docs/reference/gameplay/ship-subsystems.md:185).
-    POWER_MODE = PSM_BACKUP_ONLY
+    POWER_MODE = native_combat.NativeClassDefault(native_combat.INDEX,
+                                                  PSM_BACKUP_ONLY)
     # Its _update_power snapshots the plant's backup reserve every tick and
     # steals from it directly: a call op in the power draw program, never
     # frozen (engine/appc/passive_power.py).
@@ -3281,7 +3311,10 @@ class CloakingSubsystem(PoweredSubsystem):
     # edit). Biased to the crossover: a healthy reactor out-refills this and
     # sustains cloak; a damaged one falls behind and the reserve empties, tripping
     # the MIN_RESERVE_TO_HOLD_CLOAK guard. Mark tunes by eye.
-    CLOAK_RESERVE_DRAIN_PER_SECOND: float = 1000.0
+    CLOAK_RESERVE_DRAIN_PER_SECOND = native_combat.NativeClassDefault(
+        float, 1000.0)
+    # The native power piece's reserve snapshot (THE POWER PIECE).
+    _backup_reserve = NativeField(float)
 
     def __init__(self, name: str = ""):
         super().__init__(name)

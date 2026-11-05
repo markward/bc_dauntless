@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <stdexcept>
 
+#include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
 
 namespace dauntless::combat {
@@ -39,6 +40,9 @@ const char* subsystem_event_name(SubsystemEvent e) {
     switch (e) {
         case SubsystemEvent::SHIELD_WATCHER: return "SHIELD_WATCHER";
         case SubsystemEvent::SHIELD_WATCHER_TAIL: return "SHIELD_WATCHER_TAIL";
+        case SubsystemEvent::BREACH: return "BREACH";
+        case SubsystemEvent::BATTERY_WATCHER: return "BATTERY_WATCHER";
+        case SubsystemEvent::POWER_TAIL: return "POWER_TAIL";
         case SubsystemEvent::kCount: break;
     }
     return "?";
@@ -54,15 +58,15 @@ constexpr int32_t kWatchers = 7; // the faces, then the combined watcher
 
 // ── The shield piece (subsystem_step.h THE SHIELD PIECE) ─────────────────
 
-// Where each watcher's checks start in shield_watch_checks (its count
-// there, then its (threshold, code) pairs). False: the list is malformed.
-bool check_offsets(const SubsystemRow& s,
-                   std::array<size_t, kWatchers>& at) {
-    const std::vector<double>& c = s.shield_watch_checks;
+// Where each of `n` watchers' checks start in an encoded checks list
+// (shield_watch_checks, power_watch_checks: per watcher its count, then its
+// (threshold, code) pairs). False: the list is malformed.
+bool check_offsets(const std::vector<double>& c, size_t n_watchers,
+                   size_t* at) {
     size_t i = 0;
-    for (int32_t w = 0; w < kWatchers; ++w) {
+    for (size_t w = 0; w < n_watchers; ++w) {
         if (i >= c.size()) return false;
-        at[static_cast<size_t>(w)] = i;
+        at[w] = i;
         const double n = c[i];
         if (!(n >= 0.0) || n != static_cast<double>(static_cast<size_t>(n)))
             return false;
@@ -80,7 +84,7 @@ bool shield_ready(const SubsystemRow& s, std::array<size_t, kWatchers>& at) {
            s._ramp_fraction.size() == kFaces &&
            s._ramp_set.size() == kFaces &&
            s.shield_watch_values.size() == static_cast<size_t>(kWatchers) &&
-           check_offsets(s, at);
+           check_offsets(s.shield_watch_checks, kWatchers, at.data());
 }
 
 // ShieldSubsystem.GetSingleShieldPercentage(f) for f in 0..5, and
@@ -116,9 +120,8 @@ bool crossed(double old_v, double new_v, double threshold, double code) {
     return downward || upward;
 }
 
-bool any_check_crossed(const SubsystemRow& s, size_t at, double old_v,
+bool any_check_crossed(const std::vector<double>& c, size_t at, double old_v,
                        double new_v) {
-    const std::vector<double>& c = s.shield_watch_checks;
     const size_t n = static_cast<size_t>(c[at]);
     for (size_t k = 0; k < n; ++k)
         if (crossed(old_v, new_v, c[at + 1 + 2 * k], c[at + 2 + 2 * k]))
@@ -131,17 +134,18 @@ void log(SubsystemSession& s, int64_t sub, SubsystemWriteKind what,
     s.writes.push_back(SubsystemWrite{sub, what, index, v});
 }
 
-SubsystemRecord python_piece(const SubsystemSession& s, size_t i) {
+SubsystemRecord python_piece(const SubsystemSession& s, size_t i,
+                             SubsystemPiece p = SubsystemPiece::SHIELD) {
     SubsystemRecord r;
     r.type = SubsystemRecordType::RUN_PYTHON;
     r.ship_pos = static_cast<int64_t>(i);
     r.ship = s.ships[i];
-    r.kind = static_cast<int32_t>(SubsystemPiece::SHIELD);
+    r.kind = static_cast<int32_t>(p);
     return r;
 }
 
 SubsystemRecord event(const SubsystemSession& s, size_t i, SubsystemEvent e,
-                      int64_t sub, int64_t code, double a) {
+                      int64_t sub, int64_t code, double a, double b = 0.0) {
     SubsystemRecord r;
     r.type = SubsystemRecordType::EVENT;
     r.ship_pos = static_cast<int64_t>(i);
@@ -149,6 +153,7 @@ SubsystemRecord event(const SubsystemSession& s, size_t i, SubsystemEvent e,
     r.kind = static_cast<int32_t>(e);
     r.code = code;
     r.a = a;
+    r.b = b;
     r.sub = sub;
     return r;
 }
@@ -173,7 +178,8 @@ bool shield_watchers(SubsystemSession& s, Mirror& m, size_t i,
         const double v = watched_value(*row, w);
         const double old_v = row->shield_watch_values[static_cast<size_t>(w)];
         ++s.shield_watcher;
-        if (any_check_crossed(*row, at[static_cast<size_t>(w)], old_v, v)) {
+        if (any_check_crossed(row->shield_watch_checks,
+                              at[static_cast<size_t>(w)], old_v, v)) {
             out = event(s, i, SubsystemEvent::SHIELD_WATCHER, sh, w, v);
             return true;
         }
@@ -265,11 +271,384 @@ bool shield_piece(SubsystemSession& s, Mirror& m, size_t i,
     return shield_watchers(s, m, i, out);
 }
 
+// ── The power piece (subsystem_step.h THE POWER PIECE) ───────────────────
+
+constexpr int64_t kPlant = 3;          // native_combat._power_kind
+constexpr int64_t kConsumerBase = 0;   // PoweredSubsystem's rules
+constexpr int64_t kConsumerTractor = 1;
+constexpr int64_t kConsumerCloak = 2;
+constexpr int64_t kTractorBeam = 7;    // weapon_kind
+constexpr size_t kBatteryWatchers = 2; // main, backup
+constexpr int64_t kPsmMainFirst = 0;   // subsystems.PSM_*
+constexpr int64_t kPsmBackupFirst = 1;
+
+// The plant's two watchers are adopted stock watchers with well-formed
+// checks.
+bool battery_watch_ready(const SubsystemRow& p, size_t* at) {
+    return p.power_watch_ok == 1 &&
+           p.power_watch_values.size() == kBatteryWatchers &&
+           check_offsets(p.power_watch_checks, kBatteryWatchers, at);
+}
+
+// A consumer the pump can run natively: a live row of a known kind (a
+// tractor system's children all live tractor beams, as _any_child_firing
+// walks them).
+bool consumer_ready(const Mirror& m, int64_t h) {
+    if (h < 0) return false;
+    const SubsystemRow* c = m.subsystem(h);
+    if (c == nullptr) return false;
+    if (c->power_kind == kConsumerBase || c->power_kind == kConsumerCloak)
+        return true;
+    if (c->power_kind != kConsumerTractor) return false;
+    for (int64_t ch : c->_children) {
+        if (ch < 0) return false;
+        const SubsystemRow* b = m.subsystem(ch);
+        if (b == nullptr || b->weapon_kind != kTractorBeam) return false;
+    }
+    return true;
+}
+
+// Everything the rest of Update (after the breach) reads is one the mirror
+// answers. Asks nothing that writes; a throw of the offline question or the
+// condition percentage is "not ready".
+bool power_flow_ready(const Mirror& m, const SubsystemRow& p, double dt) {
+    if (p._property == -1) return true;     // the flow is `return`
+    if (p._property == kRefUnrepresentable) return false;
+    const PropertyRow* prop = m.property(p._property);
+    if (prop == nullptr || prop->power_props_ok != 1) return false;
+    size_t at[kBatteryWatchers];
+    if (!battery_watch_ready(p, at)) return false;
+    // GetParentShip(): `_parent_ship` itself (a ref of -1 climbs: Python's).
+    if (p._parent_ship < 0) return false;
+    const ObjectRow* ship = m.object(p._parent_ship);
+    if (ship == nullptr || !ship->is_ship_class) return false;
+    for (int64_t c : ship->_powered_consumers)
+        if (!consumer_ready(m, c)) return false;
+    if (p._interval_elapsed + dt >= m.globals().POWER_INTERVAL) {
+        try {
+            (void)subsystem_is_offline(m, p);
+            (void)condition_percentage(m, p);
+        } catch (const std::invalid_argument&) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The plant's pools and budgets while the piece runs; `wrote_*`: the
+// Python piece assigned that attribute this tick (only those are logged).
+struct Plant {
+    double main, backup, main_conduit, backup_conduit, available, dispensed;
+    bool wrote_main = false, wrote_backup = false, wrote_budgets = false,
+         wrote_dispensed = false;
+};
+
+// PowerSubsystem._draw_main / _draw_backup (min of three, Python's fold).
+double draw_main(Plant& p, double amount) {
+    const double take = py_min(py_min(amount, p.main_conduit), p.main);
+    if (take <= 0.0) return 0.0;
+    p.main_conduit -= take;
+    p.main -= take;
+    p.wrote_main = p.wrote_budgets = true;
+    return take;
+}
+double draw_backup(Plant& p, double amount) {
+    const double take = py_min(py_min(amount, p.backup_conduit), p.backup);
+    if (take <= 0.0) return 0.0;
+    p.backup_conduit -= take;
+    p.backup -= take;
+    p.wrote_backup = p.wrote_budgets = true;
+    return take;
+}
+
+// PowerSubsystem._draw (`amount` > 0 here, as every caller guards).
+double draw(Plant& p, double amount, int64_t mode) {
+    if (amount <= 0.0) return 0.0;
+    double got = 0.0;
+    if (mode == kPsmMainFirst) {
+        double take = amount;
+        if (take > p.main_conduit) take = p.main_conduit;
+        if (take > p.main) take = p.main;
+        if (take > 0.0) {
+            p.main_conduit -= take;
+            p.main -= take;
+            p.wrote_main = p.wrote_budgets = true;
+            got = take;
+        }
+        const double rest = amount - got;
+        if (rest > 0.0) {
+            take = rest;
+            if (take > p.backup_conduit) take = p.backup_conduit;
+            if (take > p.backup) take = p.backup;
+            if (take > 0.0) {
+                p.backup_conduit -= take;
+                p.backup -= take;
+                p.wrote_backup = p.wrote_budgets = true;
+                got += take;
+            }
+        }
+    } else if (mode == kPsmBackupFirst) {
+        got += draw_backup(p, amount);
+        got += draw_main(p, amount - got);
+    } else {  // PSM_BACKUP_ONLY, and PSM_DIRECT_MAIN (3): the final else
+        got += draw_backup(p, amount);
+    }
+    p.dispensed += got;
+    p.wrote_dispensed = true;
+    return got;
+}
+
+void write_consumer(SubsystemSession& s, Mirror& m, int64_t c, double wanted,
+                    double received, double eff, double factor) {
+    m.set_f(c, Field::_power_wanted, wanted);
+    m.set_f(c, Field::_power_received, received);
+    m.set_f(c, Field::_efficiency, eff);
+    m.set_f(c, Field::_power_factor, factor);
+    log(s, c, SubsystemWriteKind::POWER_WANTED, 0, wanted);
+    log(s, c, SubsystemWriteKind::POWER_RECEIVED, 0, received);
+    log(s, c, SubsystemWriteKind::EFFICIENCY, 0, eff);
+    log(s, c, SubsystemWriteKind::POWER_FACTOR, 0, factor);
+}
+
+// One consumer's _update_power(dt, plant) by its power_kind.
+void update_power(SubsystemSession& s, Mirror& m, int64_t h, Plant& p) {
+    const double dt = s.dt;
+    if (dt <= 0.0) return;
+    // Every input is read before this consumer's own row is written (the
+    // rows never move: a write reallocates nothing).
+    const SubsystemRow& c = *m.subsystem(h);
+    if (c.power_kind == kConsumerCloak) {
+        // CloakingSubsystem._update_power; _wants_power is IsTryingToCloak.
+        const bool wants = c._cloak_state == 1 || c._cloak_state == 2;
+        if (!wants) {
+            write_consumer(s, m, h, 0.0, 0.0, 0.0, 0.0);
+        } else {
+            const double base = c.CLOAK_RESERVE_DRAIN_PER_SECOND * dt;
+            double received = 0.0;
+            if (base > 0.0) {
+                // StealPowerFromReserve: take = min(amount, backup).
+                received = py_min(base, p.backup);
+                p.backup -= received;
+                p.wrote_backup = true;
+            }
+            const double eff = base > 0.0 ? received / base : 1.0;
+            write_consumer(s, m, h, base, received, eff, eff);
+        }
+        m.set_f(h, Field::_backup_reserve, p.backup);
+        log(s, h, SubsystemWriteKind::BACKUP_RESERVE, 0, p.backup);
+        return;
+    }
+    // PoweredSubsystem._update_power; the tractor's _wants_power also needs
+    // a firing child (IsOn() and _any_child_firing()).
+    bool wants = c._is_on != 0;
+    if (wants && c.power_kind == kConsumerTractor) {
+        bool firing = false;
+        for (int64_t ch : c._children)
+            if (m.subsystem(ch)->_firing) {
+                firing = true;
+                break;
+            }
+        wants = firing;
+    }
+    if (!wants) {
+        write_consumer(s, m, h, 0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+    const double base = c._normal_power * dt;
+    if (base <= 0.0) {  // a free consumer: full function
+        write_consumer(s, m, h, 0.0, 0.0, 1.0, 1.0);
+        return;
+    }
+    if (c.DRAWS_DIRECT_FROM_MAIN) {
+        // StealPower(base): take = min(amount, main); not dispensed.
+        const double wanted = base * c._power_percentage_wanted;
+        const double received = py_min(base, p.main);
+        p.main -= received;
+        p.wrote_main = true;
+        write_consumer(s, m, h, wanted, received, received / base,
+                       received / base);
+        return;
+    }
+    const double wanted = base * c._power_percentage_wanted;
+    const double received =
+        wanted > 0.0 ? draw(p, wanted, c.POWER_MODE) : 0.0;
+    write_consumer(s, m, h, wanted, received,
+                   wanted > 0.0 ? received / wanted : 1.0, received / base);
+}
+
+// The battery watcher `w` (0 main, 1 backup) of plant `ph` fed `v`: no check
+// crossed writes it (false); a crossing returns its EVENT (true).
+bool battery_watcher(SubsystemSession& s, Mirror& m, size_t i, int64_t ph,
+                     size_t w, double v, SubsystemRecord& out) {
+    const SubsystemRow& p = *m.subsystem(ph);
+    size_t at[kBatteryWatchers];
+    check_offsets(p.power_watch_checks, kBatteryWatchers, at);
+    if (any_check_crossed(p.power_watch_checks, at[w],
+                          p.power_watch_values[w], v)) {
+        out = event(s, i, SubsystemEvent::BATTERY_WATCHER, ph,
+                    static_cast<int64_t>(w), v);
+        return true;
+    }
+    m.set_float_at(ph, Field::power_watch_values, w, v);
+    log(s, ph, SubsystemWriteKind::BATTERY_WATCH, static_cast<int32_t>(w), v);
+    return false;
+}
+
+// The backup watcher's line, its limit read before the main watcher. The
+// piece is over after it (phase 3), whatever it returns.
+bool backup_watcher(SubsystemSession& s, Mirror& m, size_t i,
+                    SubsystemRecord& out) {
+    const int64_t ph = s.power;
+    s.power_phase = 3;
+    const SubsystemRow* p = m.subsystem(ph);
+    size_t at[kBatteryWatchers];
+    const double cap = s.power_backup_cap;
+    if (p == nullptr || !battery_watch_ready(*p, at) ||
+        (s.python_pieces & piece_bit(SubsystemPiece::POWER))) {
+        out = event(s, i, SubsystemEvent::POWER_TAIL, ph, 1, cap);
+        return true;
+    }
+    const double v = cap > 0.0 ? p->_backup_battery_power / cap : 0.0;
+    return battery_watcher(s, m, i, ph, 1, v, out);
+}
+
+// Update's lines after the breach, on a ready plant `ph`. True with `out`
+// set when it stops for a record.
+bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
+                SubsystemRecord& out) {
+    const int64_t ph = s.power;
+    const SubsystemRow& row = *m.subsystem(ph);
+    if (row._property == -1) return false;  // `if prop is None: return`
+    const PropertyRow& prop = *m.property(row._property);
+    const double dt = s.dt;
+    Plant p{row._main_battery_power,    row._backup_battery_power,
+            row._main_conduit_current,  row._backup_conduit_current,
+            row._available_power,       row._power_dispensed};
+    double interval = row._interval_elapsed + dt;
+    if (interval >= m.globals().POWER_INTERVAL) {
+        const double elapsed = interval;
+        interval = 0.0;     // reset, not subtracted
+        p.dispensed = 0.0;
+        p.wrote_dispensed = true;
+        const double cond = condition_percentage(m, row);
+        if (!subsystem_is_offline(m, row)) {
+            // _add_power_to_batteries(GetPowerOutput() * elapsed)
+            const double amount = (prop.PowerOutput * cond) * elapsed;
+            const double main_cap = prop.MainBatteryLimit;
+            const double backup_cap = prop.BackupBatteryLimit;
+            double room = main_cap - p.main;
+            const double take = py_min(amount, py_max(room, 0.0));
+            p.main += take;
+            const double spill = amount - take;
+            room = backup_cap - p.backup;
+            p.backup += py_min(spill, py_max(room, 0.0));
+            p.wrote_main = p.wrote_backup = true;
+        }
+        const double main_max = (prop.MainConduitCapacity * cond) * elapsed;
+        const double backup_max = prop.BackupConduitCapacity * elapsed;
+        p.main_conduit = py_min(p.main, main_max);
+        p.backup_conduit = py_min(p.backup, backup_max);
+        p.available = p.main_conduit + p.backup_conduit;
+        p.wrote_budgets = true;
+    }
+    // The pump (PowerSubsystem._pump_consumers): the parent ship's list.
+    const std::vector<int64_t>& consumers =
+        m.object(row._parent_ship)->_powered_consumers;
+    bool wrote_total = false;
+    double total = 0.0;
+    if (!consumers.empty()) {
+        for (int64_t c : consumers) update_power(s, m, c, p);
+        for (int64_t c : consumers) total += m.subsystem(c)->_power_wanted;
+        wrote_total = true;
+    }
+    m.set_f(ph, Field::_interval_elapsed, interval);
+    log(s, ph, SubsystemWriteKind::INTERVAL_ELAPSED, 0, interval);
+    if (p.wrote_dispensed) {
+        m.set_f(ph, Field::_power_dispensed, p.dispensed);
+        log(s, ph, SubsystemWriteKind::POWER_DISPENSED, 0, p.dispensed);
+    }
+    if (p.wrote_main) {
+        m.set_f(ph, Field::_main_battery_power, p.main);
+        log(s, ph, SubsystemWriteKind::MAIN_BATTERY, 0, p.main);
+    }
+    if (p.wrote_backup) {
+        m.set_f(ph, Field::_backup_battery_power, p.backup);
+        log(s, ph, SubsystemWriteKind::BACKUP_BATTERY, 0, p.backup);
+    }
+    if (p.wrote_budgets) {
+        m.set_f(ph, Field::_main_conduit_current, p.main_conduit);
+        m.set_f(ph, Field::_backup_conduit_current, p.backup_conduit);
+        m.set_f(ph, Field::_available_power, p.available);
+        log(s, ph, SubsystemWriteKind::MAIN_CONDUIT, 0, p.main_conduit);
+        log(s, ph, SubsystemWriteKind::BACKUP_CONDUIT, 0, p.backup_conduit);
+        log(s, ph, SubsystemWriteKind::AVAILABLE_POWER, 0, p.available);
+    }
+    if (wrote_total) {
+        m.set_f(ph, Field::_power_wanted_total, total);
+        log(s, ph, SubsystemWriteKind::POWER_WANTED_TOTAL, 0, total);
+    }
+    log(s, ph, SubsystemWriteKind::PASSIVE_POWER_DROP, 0, 0.0);
+    // The watchers: both limits read now, the backup battery after the main
+    // watcher's update.
+    const double main_cap = prop.MainBatteryLimit;
+    s.power_backup_cap = prop.BackupBatteryLimit;
+    const double v = main_cap > 0.0 ? p.main / main_cap : 0.0;
+    s.power_phase = 2;
+    if (battery_watcher(s, m, i, ph, 0, v, out)) return true;
+    return backup_watcher(s, m, i, out);
+}
+
+// THE POWER PIECE for ship i (as shield_piece).
+bool power_piece(SubsystemSession& s, Mirror& m, size_t i,
+                 SubsystemRecord& out) {
+    const bool hooked =
+        (s.python_pieces & piece_bit(SubsystemPiece::POWER)) != 0;
+    if (s.power_phase == 1) {
+        // Resumed after the breach's handlers.
+        const SubsystemRow* row = m.subsystem(s.power);
+        if (row == nullptr || hooked || !power_flow_ready(m, *row, s.dt)) {
+            s.power_phase = 3;
+            out = event(s, i, SubsystemEvent::POWER_TAIL, s.power, 0, 0.0,
+                        s.dt);
+            return true;
+        }
+        return power_flow(s, m, i, out);
+    }
+    if (s.power_phase == 2) return backup_watcher(s, m, i, out);
+    if (s.power_phase == 3) return false;   // over (its last EVENT ran)
+    if (!s.had_row[i] || s.lost_row[i] || hooked) {
+        out = python_piece(s, i, SubsystemPiece::POWER);
+        return true;
+    }
+    const ObjectRow* o = m.object(s.ships[i]);
+    const int64_t ph = o->_power_subsystem;
+    if (ph == -1) return false;     // GetPowerSubsystem() is None: no call
+    const SubsystemRow* row =
+        ph == kRefUnrepresentable ? nullptr : m.subsystem(ph);
+    if (row == nullptr || row->power_kind != kPlant ||
+        !power_flow_ready(m, *row, s.dt)) {
+        out = python_piece(s, i, SubsystemPiece::POWER);
+        return true;
+    }
+    s.power = ph;
+    if (subsystem_is_destroyed(*row) && !row->_breach_fired) {
+        m.set_i(ph, Field::_breach_fired, 1);
+        log(s, ph, SubsystemWriteKind::BREACH_FIRED, 0, 1.0);
+        s.power_phase = 1;
+        out = event(s, i, SubsystemEvent::BREACH, ph, 0, 0.0);
+        return true;
+    }
+    return power_flow(s, m, i, out);
+}
+
 void end_piece(SubsystemSession& s) {
     ++s.piece;
     s.shield_phase = 0;
     s.shield_watcher = 0;
     s.shield = -1;
+    s.power_phase = 0;
+    s.power = -1;
+    s.power_backup_cap = 0.0;
 }
 
 }  // namespace
@@ -314,7 +693,17 @@ SubsystemRecord next(SubsystemSession& s, Mirror& m) {
             if (stopped) return r;
             continue;
         }
-        // The other pieces are Python's (Tasks 4-6 make them native); a
+        if (s.piece == static_cast<int32_t>(SubsystemPiece::POWER)) {
+            SubsystemRecord r;
+            const bool stopped = power_piece(s, m, i, r);
+            // As the shield's: an EVENT stops inside the piece (the next
+            // next() resumes there, phase 3 once its last line ran).
+            if (!stopped || r.type == SubsystemRecordType::RUN_PYTHON)
+                end_piece(s);
+            if (stopped) return r;
+            continue;
+        }
+        // The other pieces are Python's (Tasks 5-6 make them native); a
         // ship with no row, or one that lost it, stays Python's.
         SubsystemRecord r;
         r.type = SubsystemRecordType::RUN_PYTHON;

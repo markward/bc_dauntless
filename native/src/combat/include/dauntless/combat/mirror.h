@@ -212,6 +212,41 @@ enum class Field : int32_t {
     // upward check (FRW_ABOVE), 2 a downward one (FRW_BELOW), 3 either).
     _charge_per_second, _charge_accum, shield_watch_ok, shield_watch_values,
     shield_watch_checks,
+    // Power native (phase 6 A1, Task 4; subsystem_step.h THE POWER PIECE).
+    // Object: ShipClass._power_subsystem (the plant whose Update the stage
+    // runs) and ShipClass._powered_consumers, the pump's consumers in attach
+    // order (Subsystem handles; kRefUnrepresentable for one the mirror
+    // cannot name; ShipClass._attach_subsystem pushes it after its append).
+    // Subsystem, a plant (PowerSubsystem): its pools, conduit budgets,
+    // interval clock, dispensed and wanted totals and breach latch, and
+    // its two FloatRangeWatchers (_main_battery_watcher, then
+    // _backup_battery_watcher) as power_watch_ok / power_watch_values /
+    // power_watch_checks, encoded as the shield generator's seven are.
+    // Subsystem, a consumer (PoweredSubsystem): its per-tick demand and
+    // receipt (_power_wanted, _power_received), the cloak's reserve
+    // snapshot (_backup_reserve), and the class values its draw reads
+    // (POWER_MODE, DRAWS_DIRECT_FROM_MAIN, the cloak's
+    // CLOAK_RESERVE_DRAIN_PER_SECOND; an instance write pushes, an absent
+    // one reads the class's: native_combat.NativeClassDefault). power_kind
+    // is a class flag: which Update / _update_power rules the class has
+    // (native_combat._power_kind: 0 PoweredSubsystem's, 1 TractorBeamSystem's
+    // _wants_power, 2 CloakingSubsystem's, 3 a plant, -1 none of these).
+    // Property: the five PowerProperty values PowerSubsystem._prop_f reads
+    // every tick, each `float(data-bag value or 0.0)`, and power_props_ok
+    // (1: all five read through the data bag, every value a float; 0: the
+    // plant's piece is Python's). Pushed on every setter of the five
+    // (properties.py), so a shared template's write reaches every plant
+    // whose _property names it.
+    _power_subsystem, _powered_consumers,
+    _available_power, _main_battery_power, _backup_battery_power,
+    _main_conduit_current, _backup_conduit_current, _interval_elapsed,
+    _power_dispensed, _power_wanted_total, _breach_fired,
+    power_watch_ok, power_watch_values, power_watch_checks,
+    _power_wanted, _power_received, _backup_reserve,
+    POWER_MODE, DRAWS_DIRECT_FROM_MAIN, CLOAK_RESERVE_DRAIN_PER_SECOND,
+    power_kind,
+    PowerOutput, MainBatteryLimit, BackupBatteryLimit, MainConduitCapacity,
+    BackupConduitCapacity, power_props_ok,
     kCount
 };
 
@@ -294,6 +329,9 @@ struct ObjectRow {
     // by set_part_poses / set_mount_order, shown by combat_dump.
     std::vector<PartPose> part_poses;
     std::vector<int64_t> mount_order;
+    // Power native (Field comment above).
+    int64_t _power_subsystem = -1;
+    std::vector<int64_t> _powered_consumers;
 };
 
 struct SubsystemRow {
@@ -371,6 +409,18 @@ struct SubsystemRow {
         shield_watch_checks;
     double _charge_accum = 0.0;
     int64_t shield_watch_ok = 0;
+    // Power native (Field comment above).
+    double _available_power = 0.0, _main_battery_power = 0.0,
+           _backup_battery_power = 0.0, _main_conduit_current = 0.0,
+           _backup_conduit_current = 0.0, _interval_elapsed = 0.0,
+           _power_dispensed = 0.0, _power_wanted_total = 0.0;
+    int64_t _breach_fired = 0;
+    int64_t power_watch_ok = 0;
+    std::vector<double> power_watch_values, power_watch_checks;
+    double _power_wanted = 0.0, _power_received = 0.0, _backup_reserve = 0.0;
+    int64_t POWER_MODE = 0, DRAWS_DIRECT_FROM_MAIN = 0;
+    double CLOAK_RESERVE_DRAIN_PER_SECOND = 0.0;
+    int64_t power_kind = -1;
 };
 
 struct PropertyRow {
@@ -382,6 +432,10 @@ struct PropertyRow {
     int64_t _groups = 0;
     int64_t slot0_launch_state = 0;
     double slot0_launch_speed = 0.0;
+    // Power native (Field comment above).
+    double PowerOutput = 0.0, MainBatteryLimit = 0.0, BackupBatteryLimit = 0.0,
+           MainConduitCapacity = 0.0, BackupConduitCapacity = 0.0;
+    int64_t power_props_ok = 0;
 };
 
 struct AmmoRow {
@@ -451,6 +505,9 @@ enum class Global : int32_t {
     // Shields native (phase 6 A1, Task 3): subsystems.SHIELD_CHARGE_PERIOD_S,
     // the 0.5 s charge cadence.
     SHIELD_CHARGE_PERIOD_S,
+    // Power native (phase 6 A1, Task 4): PowerSubsystem.POWER_INTERVAL, the
+    // plant's 1.0 s recharge interval.
+    POWER_INTERVAL,
     kCount
 };
 
@@ -486,6 +543,7 @@ struct Globals {
            TRACTOR_STANDOFF_MARGIN_GU = 0.0, TRACTOR_EPS = 0.0,
            TRACTOR_MAX_RANGE_GU = 0.0;
     double SHIELD_CHARGE_PERIOD_S = 0.0;
+    double POWER_INTERVAL = 0.0;
 };
 
 struct ProfileRowSet {

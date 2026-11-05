@@ -97,9 +97,13 @@ class TGModelProperty:
             cls_name = type(self).__name__
             def setter(*args):
                 data[(field, _hashable_key(args[:-1]))] = args[-1]
-                if field == "MaxCondition":
-                    # A shared template's max condition: every subsystem's
-                    # GetMaxCondition reads it, so the native mirror must too.
+                if field in _MIRRORED_FIELDS:
+                    # A shared template's max condition or per-tick power
+                    # value: every subsystem whose _property names it reads
+                    # it (GetMaxCondition; the native power piece, THE POWER
+                    # PIECE in subsystem_step.h), so the mirror's one
+                    # Property row must hold it: every ship using the
+                    # template sees the write.
                     from engine.appc import native_combat
                     native_combat.push_property(self)
                 # Empirical consumer tracking: if any arg is a TGColorA, log
@@ -122,6 +126,13 @@ class TGModelProperty:
                 return self._field_value(field, args)
             return getter
         raise AttributeError(attr)
+
+
+#: The data-bag fields a native Property row mirrors (native_combat.
+#: MIRRORED_PROPERTY_FIELDS, spelled here so a setter needs no import).
+_MIRRORED_FIELDS = frozenset(("MaxCondition", "PowerOutput",
+                              "MainBatteryLimit", "BackupBatteryLimit",
+                              "MainConduitCapacity", "BackupConduitCapacity"))
 
 
 def _copy_point(p):

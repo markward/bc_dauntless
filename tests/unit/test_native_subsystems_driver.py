@@ -1,7 +1,8 @@
 """The native subsystem stage's driver (phase 6 A1, Task 2;
-engine/appc/native_subsystems.py): every piece is still Python, handed back
-by the native session one RUN_PYTHON record at a time, so the stage makes
-exactly the calls the Python loop makes, in its order.
+engine/appc/native_subsystems.py): every piece not yet native (cloak,
+repair, articulation; shields are native since Task 3, power since Task 4)
+is handed back by the native session one RUN_PYTHON record at a time, so
+the stage makes exactly the calls the Python loop makes, in its order.
 
 The per-tick state differential is
 tests/integration/test_native_subsystems_differential.py.
@@ -41,12 +42,13 @@ def _world(mp, native):
     assert native_subsystems.enabled() is native
 
 
-def _spy(mp, calls):
+def _spy(mp, calls, power=False):
     """Every Python call of the stage, logged (method, ship name) and then
-    run: power, cloak, repair and articulation. The shield piece is native
-    (Task 3) and a patched ShieldSubsystem.Update is not honoured (spec §3
-    "Mods and patches (Part A)"), so it is not spied on: the counts and the
-    differential cover it."""
+    run: cloak, repair and articulation (and the plant's Update with
+    `power`). The shield and power pieces are native (Tasks 3, 4) and a
+    patched ShieldSubsystem / PowerSubsystem.Update is not honoured (spec §3
+    "Mods and patches (Part A)"), so they are not spied on by default: the
+    counts and the differential cover them."""
     def method(cls, label):
         orig = cls.Update
 
@@ -55,7 +57,8 @@ def _spy(mp, calls):
             return _orig(self, dt)
         mp.setattr(cls, "Update", update)
 
-    method(PowerSubsystem, "power")
+    if power:
+        method(PowerSubsystem, "power")
     method(CloakingSubsystem, "cloak")
     method(RepairSubsystem, "repair")
     orig_tick = articulation.tick_ship
@@ -87,35 +90,38 @@ def test_step_all_matches_the_python_stage_call_for_call():
     ships = {name for _, name, _ in python}
     assert len(ships) == 3, ships
     kinds = {k for k, _, _ in python}
-    # A Warbird is in the cast: all four Python pieces run.
-    assert kinds == {"power", "cloak", "repair", "articulation"}
-    # ... and every shield piece was native: four records per ship per stage.
-    assert on["run_python"] == 4 * 3 * TICKS, on
+    # A Warbird is in the cast: all three Python pieces run.
+    assert kinds == {"cloak", "repair", "articulation"}
+    # ... and every shield and power piece was native: three records per
+    # ship per stage.
+    assert on["run_python"] == 3 * 3 * TICKS, on
     assert native == python
 
 
 def test_a_ship_that_loses_a_subsystem_mid_walk(monkeypatch):
     """The driver asks the ship for each piece when its record comes, as the
-    Python loop does: a handler (here, the power Update) that detaches a
+    Python loop does: a handler (here, the cloak's Update) that detaches a
     LATER piece of the same ship removes that call, in both stages."""
     def run(native):
         calls = []
         with pytest.MonkeyPatch.context() as mp:
             _world(mp, native)
             _spy(mp, calls)
-            orig = PowerSubsystem.Update
+            orig = CloakingSubsystem.Update
 
             def update(self, dt, _orig=orig):
                 _orig(self, dt)
                 ship = self.GetParentShip()
-                if ship.GetCloakingSubsystem() is not None:
-                    ship._cloaking_subsystem = None
-            mp.setattr(PowerSubsystem, "Update", update)
+                if ship.GetRepairSubsystem() is not None:
+                    ship._repair_subsystem = None
+            mp.setattr(CloakingSubsystem, "Update", update)
             game_loop._update_ship_subsystems()
         return calls
 
     python = run(False)
-    assert "cloak" not in {k for k, _, _ in python}
+    cloaked = {n for k, n, _ in python if k == "cloak"}
+    assert cloaked
+    assert not cloaked & {n for k, n, _ in python if k == "repair"}
     assert run(True) == python
 
 
@@ -123,9 +129,9 @@ def test_a_row_dropped_mid_walk_is_still_updated():
     """A row freed mid-walk while its ship lives on (native_combat._drop: a
     value the mirror cannot hold) is not skipped: the Python stage still
     runs that ship's remaining pieces, so the native stage hands them back
-    too (controller ruling, Task 2 fix round 1). Ship 0's power Update
+    too (controller ruling, Task 2 fix round 1). Ship 0's repair Update
     drops ship 0's own row (between its pieces) and a LATER ship's, whose
-    SHIELD piece then comes back to Python too."""
+    SHIELD and POWER pieces then come back to Python too."""
     from engine.appc.ship_iter import iter_non_rock_ships
 
     def run(native):
@@ -135,8 +141,8 @@ def test_a_row_dropped_mid_walk_is_still_updated():
             ships = list(iter_non_rock_ships())
             assert all(isinstance(s.__dict__.get("_nslot"), int)
                        for s in ships)
-            _spy(mp, calls)
-            orig = PowerSubsystem.Update
+            _spy(mp, calls, power=True)
+            orig = RepairSubsystem.Update
             dropped = []
 
             def update(self, dt, _orig=orig):
@@ -145,7 +151,7 @@ def test_a_row_dropped_mid_walk_is_still_updated():
                     for ship in (ships[0], ships[2]):
                         nc._drop(ship)
                         dropped.append(ship.__dict__.get("_nslot"))
-            mp.setattr(PowerSubsystem, "Update", update)
+            mp.setattr(RepairSubsystem, "Update", update)
             for _ in range(2):
                 game_loop._update_ship_subsystems()
             assert dropped == [None, None]      # the rows are gone
@@ -156,13 +162,21 @@ def test_a_row_dropped_mid_walk_is_still_updated():
 
     python, names = run(False)
     # The dropped ships kept running: power, repair and articulation, both
-    # ticks (ship 0's power call is the one that drops).
+    # ticks (ship 0's repair call is the one that drops).
     for name in names:
         kinds = [k for k, n, _ in python if n == name]
         assert kinds.count("power") == kinds.count("repair") == \
             kinds.count("articulation") == 2, (name, kinds)
     native, _ = run(True)
-    assert native == python
+    # Natively, the power pieces of rows still live are native: Python runs
+    # only ship 2's, both ticks (its row was gone when the walk reached it),
+    # and ship 0's on the second (no row at begin).
+    py_power = [c for c in python if c[0] == "power"]
+    na_power = [c for c in native if c[0] == "power"]
+    assert [n for _, n, _ in na_power] == [names[1], names[0], names[1]]
+    assert all(c in py_power for c in na_power)
+    strip = [c for c in python if c[0] != "power"]
+    assert [c for c in native if c[0] != "power"] == strip
 
 
 def test_the_switch(monkeypatch):
@@ -182,9 +196,11 @@ def test_the_switch(monkeypatch):
 
 def test_the_event_table_holds_the_native_pieces_events():
     """Each native piece's event kinds have a handler (Task 3: the shield
-    watchers); every kind the native session names has one."""
+    watchers; Task 4: the plant's breach, battery watchers and tail); every
+    kind the native session names has one."""
     events = native_subsystems._EVENTS
-    assert set(events) == {"SHIELD_WATCHER", "SHIELD_WATCHER_TAIL"}
+    assert set(events) == {"SHIELD_WATCHER", "SHIELD_WATCHER_TAIL", "BREACH",
+                           "BATTERY_WATCHER", "POWER_TAIL"}
     assert set(native_subsystems._EVENT_HANDLERS) == set(events.values())
 
 

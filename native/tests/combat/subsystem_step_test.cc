@@ -37,10 +37,79 @@ struct World {
         return h;
     }
 
-    // A ship with no shield generator (`_shield_subsystem` None).
+    // A ship with no shield generator (`_shield_subsystem` None) and a power
+    // plant the mirror cannot name (kRefUnrepresentable): its POWER piece
+    // is Python's.
     int64_t bare_ship() {
         auto [xi, xg] = store.alloc();
-        return m.register_row(Kind::Object, xi, xg);
+        const int64_t h = m.register_row(Kind::Object, xi, xg);
+        m.set_ref(h, Field::_power_subsystem, kRefUnrepresentable);
+        return h;
+    }
+
+    // A ShipClass row with no shield generator and no plant yet: plant()
+    // gives it one, consumer() its consumers.
+    int64_t power_ship() {
+        auto [xi, xg] = store.alloc();
+        const int64_t h = m.register_row(Kind::Object, xi, xg);
+        m.set_i(h, Field::is_ship_class, 1);
+        return h;
+    }
+
+    // A PowerProperty: the five per-tick values, all read through the data
+    // bag (power_props_ok), MaxCondition unset.
+    int64_t power_prop(double output, double main_limit, double backup_limit,
+                       double main_cap, double backup_cap) {
+        const int64_t p = m.register_row(Kind::Property);
+        m.set_f(p, Field::PowerOutput, output);
+        m.set_f(p, Field::MainBatteryLimit, main_limit);
+        m.set_f(p, Field::BackupBatteryLimit, backup_limit);
+        m.set_f(p, Field::MainConduitCapacity, main_cap);
+        m.set_f(p, Field::BackupConduitCapacity, backup_cap);
+        m.set_i(p, Field::power_props_ok, 1);
+        return p;
+    }
+
+    // A native-ready plant on `ship` (its parent ship, whose consumers the
+    // pump walks), healthy, interval clock at `interval`, both battery
+    // watchers adopted with no checks; the 1.0 s interval pushed. `prop`
+    // -1: no property.
+    int64_t plant(int64_t ship, int64_t prop, double main, double backup,
+                  double interval) {
+        const int64_t h = m.register_row(Kind::Subsystem);
+        m.set_i(h, Field::power_kind, 3);
+        m.set_f(h, Field::_max_condition, 1000.0);
+        m.set_f(h, Field::_condition, 1000.0);
+        m.set_f(h, Field::_disabled_percentage, 0.5);
+        m.set_ref(h, Field::_property, prop);
+        m.set_ref(h, Field::_parent_ship, ship);
+        m.set_f(h, Field::_main_battery_power, main);
+        m.set_f(h, Field::_backup_battery_power, backup);
+        m.set_f(h, Field::_interval_elapsed, interval);
+        m.set_i(h, Field::power_watch_ok, 1);
+        m.set_floats(h, Field::power_watch_values, {1.0, 1.0});
+        m.set_floats(h, Field::power_watch_checks, {0.0, 0.0});
+        m.set_global_f(Global::POWER_INTERVAL, 1.0);
+        m.set_ref(ship, Field::_power_subsystem, h);
+        return h;
+    }
+
+    // A consumer of `kind` (native_combat._power_kind) appended to `ship`'s
+    // consumers: on, `normal` per second, slider 1.0, draw mode `mode`.
+    int64_t consumer(int64_t ship, int64_t kind, double normal,
+                     int64_t mode = 0) {
+        const int64_t h = m.register_row(Kind::Subsystem);
+        m.set_i(h, Field::power_kind, kind);
+        m.set_i(h, Field::POWER_MODE, mode);
+        m.set_i(h, Field::_is_on, 1);
+        m.set_f(h, Field::_normal_power, normal);
+        m.set_f(h, Field::_power_percentage_wanted, 1.0);
+        m.set_f(h, Field::_efficiency, 1.0);
+        m.set_f(h, Field::_power_factor, 1.0);
+        std::vector<int64_t> list = m.get_ids(ship, Field::_powered_consumers);
+        list.push_back(h);
+        m.set_ids(ship, Field::_powered_consumers, list);
+        return h;
     }
 
     // A native-ready shield generator on `ship`: every face max 100,
@@ -481,4 +550,303 @@ TEST(ShieldStep, AnUnanswerableOfflineQuestionWritesNothing) {
     EXPECT_EQ(r.kind, static_cast<int32_t>(SubsystemPiece::SHIELD));
     EXPECT_TRUE(s.writes.empty());
     EXPECT_EQ(w.m.get_f(sh, Field::_charge_accum), 0.49);
+}
+
+// ── The power piece (subsystem_step.h THE POWER PIECE) ───────────────────
+// Ticks of 0.5 s against the 1.0 s interval keep every sum exact: a clock
+// at 0.5 reaches the interval with elapsed exactly 1.0.
+
+namespace {
+
+constexpr double kHalf = 0.5;
+
+// One stage over `ship` (no shield generator): runs the POWER piece and
+// returns the first record after it (CLOAK's RUN_PYTHON when it ran
+// natively to the end).
+SubsystemRecord after_power(World& w, SubsystemSession& s) {
+    return subsystems::next(s, w.m);
+}
+
+bool logged(const SubsystemSession& s, SubsystemWriteKind k, int64_t sub) {
+    for (const SubsystemWrite& x : s.writes)
+        if (x.what == k && x.sub == sub) return true;
+    return false;
+}
+
+}  // namespace
+
+TEST(PowerStep, IntervalResetNotSubtract) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(100.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    const int64_t ps = w.plant(ship, prop, 500.0, 500.0, 0.75);
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    const SubsystemRecord r = after_power(w, s);
+    ASSERT_EQ(r.type, SubsystemRecordType::RUN_PYTHON);
+    EXPECT_EQ(static_cast<SubsystemPiece>(r.kind), SubsystemPiece::CLOAK);
+    // 0.75 + 0.5 = 1.25 >= 1.0: elapsed 1.25, the clock RESET to 0 (a
+    // subtract would leave 0.25).
+    EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.0);
+    // Recharge 100 * 1.0 * 1.25 into main; budgets min(battery, cap*1.25).
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_battery_power), 625.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_backup_battery_power), 500.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_conduit_current), 625.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_backup_conduit_current), 500.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_available_power), 1125.0);
+    EXPECT_TRUE(logged(s, SubsystemWriteKind::INTERVAL_ELAPSED, ps));
+    EXPECT_TRUE(logged(s, SubsystemWriteKind::AVAILABLE_POWER, ps));
+    // Both watchers took their fractions, 625/1000 and 500/1000.
+    EXPECT_EQ(w.m.get_floats(ps, Field::power_watch_values),
+              (std::vector<double>{0.625, 0.5}));
+
+    // The next tick is inside the interval: only the clock moves.
+    SubsystemSession t = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    after_power(w, t);
+    EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.5);
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_battery_power), 625.0);
+    EXPECT_FALSE(logged(t, SubsystemWriteKind::AVAILABLE_POWER, ps));
+}
+
+TEST(PowerStep, MainSpillsToBackup) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(300.0, 1000.0, 200.0, 1000.0, 1000.0);
+    const int64_t ps = w.plant(ship, prop, 900.0, 150.0, 0.5);
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    after_power(w, s);
+    // 300 generated: 100 fills main, 50 of the 200 spilled fills backup,
+    // the other 150 is discarded.
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_battery_power), 1000.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_backup_battery_power), 200.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_available_power), 1200.0);
+}
+
+TEST(PowerStep, OfflineSkipsTheRechargeNotTheBudgets) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(300.0, 1000.0, 1000.0, 1000.0, 50.0);
+    const int64_t ps = w.plant(ship, prop, 900.0, 150.0, 0.5);
+    w.m.set_f(ps, Field::_condition, 400.0);    // disabled: <= 0.5 * 1000
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    after_power(w, s);
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_battery_power), 900.0);
+    // main budget health-scaled: min(900, 1000 * 0.4 * 1.0); backup not.
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_conduit_current), 400.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_backup_conduit_current), 50.0);
+}
+
+TEST(PowerStep, NoPropertySkipsPump) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t ps = w.plant(ship, -1, 500.0, 500.0, 0.5);
+    const int64_t c = w.consumer(ship, 0, 60.0);
+    w.m.set_f(c, Field::_power_wanted, 7.0);
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    const SubsystemRecord r = after_power(w, s);
+    EXPECT_EQ(static_cast<SubsystemPiece>(r.kind), SubsystemPiece::CLOAK);
+    // Update returned at `prop is None`: no clock, no pump, no watchers.
+    EXPECT_TRUE(s.writes.empty());
+    EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.5);
+    EXPECT_EQ(w.m.get_f(c, Field::_power_wanted), 7.0);
+    EXPECT_EQ(w.m.get_floats(ps, Field::power_watch_values),
+              (std::vector<double>{1.0, 1.0}));
+}
+
+TEST(PowerStep, DirectMainFallsToElseBranch) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    const int64_t ps = w.plant(ship, prop, 500.0, 500.0, 0.5);
+    // PSM_DIRECT_MAIN (3) on a conduit consumer: _draw's final else, i.e.
+    // backup only. Then a main-first one, which takes main.
+    const int64_t direct = w.consumer(ship, 0, 60.0, 3);
+    const int64_t main = w.consumer(ship, 0, 20.0, 0);
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    after_power(w, s);
+    EXPECT_EQ(w.m.get_f(ps, Field::_backup_battery_power), 470.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_backup_conduit_current), 470.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_battery_power), 490.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_conduit_current), 490.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_power_dispensed), 40.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_power_wanted_total), 40.0);
+    EXPECT_EQ(w.m.get_f(direct, Field::_power_wanted), 30.0);
+    EXPECT_EQ(w.m.get_f(direct, Field::_power_received), 30.0);
+    EXPECT_EQ(w.m.get_f(direct, Field::_efficiency), 1.0);
+    EXPECT_EQ(w.m.get_f(direct, Field::_power_factor), 1.0);
+    EXPECT_EQ(w.m.get_f(main, Field::_power_received), 10.0);
+
+    // A backup-only draw with backup empty starves: main is never touched.
+    w.m.set_f(ps, Field::_backup_battery_power, 0.0);
+    w.m.set_f(ps, Field::_interval_elapsed, 0.5);
+    SubsystemSession t = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    after_power(w, t);
+    EXPECT_EQ(w.m.get_f(direct, Field::_power_received), 0.0);
+    EXPECT_EQ(w.m.get_f(direct, Field::_efficiency), 0.0);
+    EXPECT_EQ(w.m.get_f(direct, Field::_power_factor), 0.0);
+}
+
+TEST(PowerStep, TractorAndCloakStealsNotDispensed) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    const int64_t ps = w.plant(ship, prop, 500.0, 600.0, 0.5);
+    // A tractor system holding a beam: a flat StealPower(normal*dt) from
+    // main, unscaled by the slider (its wanted IS scaled).
+    const int64_t tractor = w.consumer(ship, 1, 100.0);
+    w.m.set_i(tractor, Field::DRAWS_DIRECT_FROM_MAIN, 1);
+    w.m.set_f(tractor, Field::_power_percentage_wanted, 1.25);
+    const int64_t beam = w.m.register_row(Kind::Subsystem);
+    w.m.set_i(beam, Field::weapon_kind, 7);
+    w.m.set_i(beam, Field::_firing, 1);
+    w.m.set_ids(tractor, Field::_children, {beam});
+    // A cloak trying to cloak: StealPowerFromReserve(1000 * dt).
+    const int64_t cloak = w.consumer(ship, 2, 0.0, 2);
+    w.m.set_i(cloak, Field::_cloak_state, 2);
+    w.m.set_f(cloak, Field::CLOAK_RESERVE_DRAIN_PER_SECOND, 1000.0);
+    // ... and a conduit consumer, the only one dispensed.
+    const int64_t sensors = w.consumer(ship, 0, 40.0);
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    after_power(w, s);
+    EXPECT_EQ(w.m.get_f(tractor, Field::_power_wanted), 62.5);
+    EXPECT_EQ(w.m.get_f(tractor, Field::_power_received), 50.0);
+    EXPECT_EQ(w.m.get_f(tractor, Field::_efficiency), 1.0);
+    EXPECT_EQ(w.m.get_f(cloak, Field::_power_wanted), 500.0);
+    EXPECT_EQ(w.m.get_f(cloak, Field::_power_received), 500.0);
+    EXPECT_EQ(w.m.get_f(cloak, Field::_backup_reserve), 100.0);
+    EXPECT_EQ(w.m.get_f(sensors, Field::_power_received), 20.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_battery_power), 430.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_backup_battery_power), 100.0);
+    // The steals bypass the conduits and the dispensed total.
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_conduit_current), 480.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_backup_conduit_current), 600.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_power_dispensed), 20.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_power_wanted_total), 582.5);
+
+    // Idle (no beam firing, cloak decloaked): both zeroed, the cloak's
+    // reserve snapshot still taken.
+    w.m.set_i(beam, Field::_firing, 0);
+    w.m.set_i(cloak, Field::_cloak_state, 0);
+    SubsystemSession t = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    after_power(w, t);
+    for (int64_t c : {tractor, cloak}) {
+        EXPECT_EQ(w.m.get_f(c, Field::_power_wanted), 0.0);
+        EXPECT_EQ(w.m.get_f(c, Field::_power_received), 0.0);
+        EXPECT_EQ(w.m.get_f(c, Field::_efficiency), 0.0);
+        EXPECT_EQ(w.m.get_f(c, Field::_power_factor), 0.0);
+    }
+    EXPECT_EQ(w.m.get_f(cloak, Field::_backup_reserve), 100.0);
+    EXPECT_TRUE(logged(t, SubsystemWriteKind::BACKUP_RESERVE, cloak));
+}
+
+TEST(PowerStep, BatteryWatcherCrossingYieldsAnEvent) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    const int64_t ps = w.plant(ship, prop, 510.0, 500.0, 0.0);
+    w.m.set_floats(ps, Field::power_watch_values, {0.51, 0.5});
+    // Main: a downward check at 0.5 (code 2); backup: none.
+    w.m.set_floats(ps, Field::power_watch_checks, {1.0, 0.5, 2.0, 0.0});
+    w.m.set_f(ps, Field::_main_conduit_current, 1000.0);
+    w.consumer(ship, 0, 60.0);              // takes 30 from main
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    const SubsystemRecord r = after_power(w, s);
+    ASSERT_EQ(r.type, SubsystemRecordType::EVENT);
+    EXPECT_EQ(static_cast<SubsystemEvent>(r.kind),
+              SubsystemEvent::BATTERY_WATCHER);
+    EXPECT_EQ(r.code, 0);
+    EXPECT_EQ(r.sub, ps);
+    EXPECT_EQ(r.a, 480.0 / 1000.0);
+    // Everything before it is written; the watcher's value is Python's.
+    EXPECT_TRUE(logged(s, SubsystemWriteKind::MAIN_BATTERY, ps));
+    EXPECT_EQ(w.m.get_floats(ps, Field::power_watch_values)[0], 0.51);
+    // The handler halved the backup battery: the backup watcher reads it
+    // as it is now.
+    w.m.set_f(ps, Field::_backup_battery_power, 250.0);
+    const SubsystemRecord n = subsystems::next(s, w.m);
+    EXPECT_EQ(static_cast<SubsystemPiece>(n.kind), SubsystemPiece::CLOAK);
+    ASSERT_EQ(s.writes.size(), 1u);
+    EXPECT_EQ(s.writes[0].what, SubsystemWriteKind::BATTERY_WATCH);
+    EXPECT_EQ(s.writes[0].index, 1);
+    EXPECT_EQ(s.writes[0].value, 0.25);
+
+    // A row gone between the two: the backup line is Python's (the tail),
+    // fed the backup limit read before the main watcher.
+    w.m.set_floats(ps, Field::power_watch_values, {0.51, 0.25});
+    w.m.set_f(ps, Field::_main_battery_power, 510.0);
+    SubsystemSession u = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    ASSERT_EQ(subsystems::next(u, w.m).type, SubsystemRecordType::EVENT);
+    w.m.unregister_row(ps);
+    const SubsystemRecord tail = subsystems::next(u, w.m);
+    ASSERT_EQ(tail.type, SubsystemRecordType::EVENT);
+    EXPECT_EQ(static_cast<SubsystemEvent>(tail.kind),
+              SubsystemEvent::POWER_TAIL);
+    EXPECT_EQ(tail.code, 1);
+    EXPECT_EQ(tail.a, 1000.0);
+    EXPECT_EQ(tail.sub, ps);
+}
+
+TEST(PowerStep, BreachIsAnEventBeforeTheRest) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    const int64_t ps = w.plant(ship, prop, 500.0, 500.0, 0.0);
+    w.m.set_f(ps, Field::_condition, 0.0);      // destroyed
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    const SubsystemRecord r = after_power(w, s);
+    ASSERT_EQ(r.type, SubsystemRecordType::EVENT);
+    EXPECT_EQ(static_cast<SubsystemEvent>(r.kind), SubsystemEvent::BREACH);
+    EXPECT_EQ(r.sub, ps);
+    ASSERT_EQ(s.writes.size(), 1u);
+    EXPECT_EQ(s.writes[0].what, SubsystemWriteKind::BREACH_FIRED);
+    EXPECT_EQ(w.m.get_i(ps, Field::_breach_fired), 1);
+    EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.0);
+    // The rest of Update after it.
+    EXPECT_EQ(static_cast<SubsystemPiece>(subsystems::next(s, w.m).kind),
+              SubsystemPiece::CLOAK);
+    EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.5);
+    // Latched: never again.
+    SubsystemSession t = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    EXPECT_EQ(subsystems::next(t, w.m).kind,
+              static_cast<int32_t>(SubsystemPiece::CLOAK));
+}
+
+TEST(PowerStep, AnUnreadyPlantIsPythonsWithNothingWritten) {
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(100.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    const int64_t ps = w.plant(ship, prop, 500.0, 500.0, 0.5);
+    w.m.set_f(ps, Field::_condition, 0.0);      // a breach is due
+    w.consumer(ship, 0, 60.0);
+    std::vector<int64_t> list = w.m.get_ids(ship, Field::_powered_consumers);
+    list.push_back(kRefUnrepresentable);        // a consumer with no row
+    w.m.set_ids(ship, Field::_powered_consumers, list);
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    const SubsystemRecord r = after_power(w, s);
+    EXPECT_EQ(r.type, SubsystemRecordType::RUN_PYTHON);
+    EXPECT_EQ(static_cast<SubsystemPiece>(r.kind), SubsystemPiece::POWER);
+    EXPECT_TRUE(s.writes.empty());
+    EXPECT_EQ(w.m.get_i(ps, Field::_breach_fired), 0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.5);
+
+    // A property whose values are not all read through its data bag.
+    list.pop_back();
+    w.m.set_ids(ship, Field::_powered_consumers, list);
+    w.m.set_i(prop, Field::power_props_ok, 0);
+    SubsystemSession t = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    EXPECT_EQ(subsystems::next(t, w.m).kind,
+              static_cast<int32_t>(SubsystemPiece::POWER));
+    EXPECT_TRUE(t.writes.empty());
+
+    // python_pieces (the test-facing hook).
+    w.m.set_i(prop, Field::power_props_ok, 1);
+    SubsystemSession p = subsystems::begin(
+        w.m, std::vector{ship}, kHalf, piece_bit(SubsystemPiece::POWER));
+    EXPECT_EQ(subsystems::next(p, w.m).kind,
+              static_cast<int32_t>(SubsystemPiece::POWER));
+    EXPECT_TRUE(p.writes.empty());
+    // No plant at all: no call, no record.
+    w.m.set_ref(ship, Field::_power_subsystem, -1);
+    SubsystemSession none = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    EXPECT_EQ(subsystems::next(none, w.m).kind,
+              static_cast<int32_t>(SubsystemPiece::CLOAK));
 }

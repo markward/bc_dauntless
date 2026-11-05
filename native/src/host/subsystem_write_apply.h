@@ -11,6 +11,10 @@
 //   FACE          sub.__dict__["_current_shields"][index] = value
 //   SHIELD_WATCH  sub.__dict__["_shield_watchers"][index]
 //                    .__dict__["_value"] = value
+//   the power piece's (subsystem_step.h THE WRITE LOG): a float into its
+//   attribute; BREACH_FIRED True; BATTERY_WATCH into the main (index 0) or
+//   backup (1) battery watcher's `_value`; PASSIVE_POWER_DROP None into
+//   `_passive_power` when it holds anything else.
 //
 // The lists are the subsystem's own, written in place (the attribute
 // lookups the Python piece makes resolve to the instance dict: these

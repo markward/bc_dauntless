@@ -203,6 +203,33 @@ constexpr FieldInfo kInfo[] = {
     {"shield_watch_ok", Kind::Subsystem, FieldType::I},
     {"shield_watch_values", Kind::Subsystem, FieldType::FloatList},
     {"shield_watch_checks", Kind::Subsystem, FieldType::FloatList},
+    {"_power_subsystem", Kind::Object, FieldType::Ref},
+    {"_powered_consumers", Kind::Object, FieldType::Ids},
+    {"_available_power", Kind::Subsystem, FieldType::F},
+    {"_main_battery_power", Kind::Subsystem, FieldType::F},
+    {"_backup_battery_power", Kind::Subsystem, FieldType::F},
+    {"_main_conduit_current", Kind::Subsystem, FieldType::F},
+    {"_backup_conduit_current", Kind::Subsystem, FieldType::F},
+    {"_interval_elapsed", Kind::Subsystem, FieldType::F},
+    {"_power_dispensed", Kind::Subsystem, FieldType::F},
+    {"_power_wanted_total", Kind::Subsystem, FieldType::F},
+    {"_breach_fired", Kind::Subsystem, FieldType::I},
+    {"power_watch_ok", Kind::Subsystem, FieldType::I},
+    {"power_watch_values", Kind::Subsystem, FieldType::FloatList},
+    {"power_watch_checks", Kind::Subsystem, FieldType::FloatList},
+    {"_power_wanted", Kind::Subsystem, FieldType::F},
+    {"_power_received", Kind::Subsystem, FieldType::F},
+    {"_backup_reserve", Kind::Subsystem, FieldType::F},
+    {"POWER_MODE", Kind::Subsystem, FieldType::I},
+    {"DRAWS_DIRECT_FROM_MAIN", Kind::Subsystem, FieldType::I},
+    {"CLOAK_RESERVE_DRAIN_PER_SECOND", Kind::Subsystem, FieldType::F},
+    {"power_kind", Kind::Subsystem, FieldType::I},
+    {"PowerOutput", Kind::Property, FieldType::F},
+    {"MainBatteryLimit", Kind::Property, FieldType::F},
+    {"BackupBatteryLimit", Kind::Property, FieldType::F},
+    {"MainConduitCapacity", Kind::Property, FieldType::F},
+    {"BackupConduitCapacity", Kind::Property, FieldType::F},
+    {"power_props_ok", Kind::Property, FieldType::I},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -271,6 +298,7 @@ constexpr GlobalInfo kGlobals[] = {
     {"TRACTOR_MAX_RANGE_GU", false, &Globals::TRACTOR_MAX_RANGE_GU, nullptr},
     {"SHIELD_CHARGE_PERIOD_S", false, &Globals::SHIELD_CHARGE_PERIOD_S,
      nullptr},
+    {"POWER_INTERVAL", false, &Globals::POWER_INTERVAL, nullptr},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));
@@ -304,6 +332,7 @@ Kind ref_target_kind(Field f) {
         case Field::_torpedo_system:
         case Field::_target_subsystem:
         case Field::_shield_subsystem:
+        case Field::_power_subsystem:
         case Field::_impulse_engine_subsystem: return Kind::Subsystem;
         case Field::_parent_ship:
         case Field::_held_target:
@@ -414,6 +443,7 @@ int64_t* rptr(ObjectRow& r, Field f) {
         case Field::_shield_subsystem: return &r._shield_subsystem;
         case Field::_impulse_engine_subsystem:
             return &r._impulse_engine_subsystem;
+        case Field::_power_subsystem: return &r._power_subsystem;
         default: return nullptr;
     }
 }
@@ -436,6 +466,9 @@ Vec3* vptr(ObjectRow& r, Field f) {
 }
 std::vector<double>* flptr(ObjectRow& r, Field f) {
     return f == Field::_speed_setpoint ? &r._speed_setpoint : nullptr;
+}
+std::vector<int64_t>* idptr(ObjectRow& r, Field f) {
+    return f == Field::_powered_consumers ? &r._powered_consumers : nullptr;
 }
 
 double* fptr(SubsystemRow& r, Field f) {
@@ -482,6 +515,20 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_max_angular_velocity: return &r._max_angular_velocity;
         case Field::_max_angular_accel: return &r._max_angular_accel;
         case Field::_charge_accum: return &r._charge_accum;
+        case Field::_available_power: return &r._available_power;
+        case Field::_main_battery_power: return &r._main_battery_power;
+        case Field::_backup_battery_power: return &r._backup_battery_power;
+        case Field::_main_conduit_current: return &r._main_conduit_current;
+        case Field::_backup_conduit_current:
+            return &r._backup_conduit_current;
+        case Field::_interval_elapsed: return &r._interval_elapsed;
+        case Field::_power_dispensed: return &r._power_dispensed;
+        case Field::_power_wanted_total: return &r._power_wanted_total;
+        case Field::_power_wanted: return &r._power_wanted;
+        case Field::_power_received: return &r._power_received;
+        case Field::_backup_reserve: return &r._backup_reserve;
+        case Field::CLOAK_RESERVE_DRAIN_PER_SECOND:
+            return &r.CLOAK_RESERVE_DRAIN_PER_SECOND;
         default: return nullptr;
     }
 }
@@ -526,6 +573,11 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::motion_ies_stock: return &r.motion_ies_stock;
         case Field::motion_pod_stock: return &r.motion_pod_stock;
         case Field::shield_watch_ok: return &r.shield_watch_ok;
+        case Field::_breach_fired: return &r._breach_fired;
+        case Field::power_watch_ok: return &r.power_watch_ok;
+        case Field::POWER_MODE: return &r.POWER_MODE;
+        case Field::DRAWS_DIRECT_FROM_MAIN: return &r.DRAWS_DIRECT_FROM_MAIN;
+        case Field::power_kind: return &r.power_kind;
         default: return nullptr;
     }
 }
@@ -560,6 +612,8 @@ std::vector<double>* flptr(SubsystemRow& r, Field f) {
         case Field::_charge_per_second: return &r._charge_per_second;
         case Field::shield_watch_values: return &r.shield_watch_values;
         case Field::shield_watch_checks: return &r.shield_watch_checks;
+        case Field::power_watch_values: return &r.power_watch_values;
+        case Field::power_watch_checks: return &r.power_watch_checks;
         default: return nullptr;
     }
 }
@@ -580,6 +634,11 @@ double* fptr(PropertyRow& r, Field f) {
     switch (f) {
         case Field::MaxCondition: return &r.MaxCondition;
         case Field::slot0_launch_speed: return &r.slot0_launch_speed;
+        case Field::PowerOutput: return &r.PowerOutput;
+        case Field::MainBatteryLimit: return &r.MainBatteryLimit;
+        case Field::BackupBatteryLimit: return &r.BackupBatteryLimit;
+        case Field::MainConduitCapacity: return &r.MainConduitCapacity;
+        case Field::BackupConduitCapacity: return &r.BackupConduitCapacity;
         default: return nullptr;
     }
 }
@@ -588,6 +647,7 @@ int64_t* iptr(PropertyRow& r, Field f) {
         case Field::MaxCondition_set: return &r.MaxCondition_set;
         case Field::_groups: return &r._groups;
         case Field::slot0_launch_state: return &r.slot0_launch_state;
+        case Field::power_props_ok: return &r.power_props_ok;
         default: return nullptr;
     }
 }
@@ -893,7 +953,7 @@ void Mirror::set_ids(int64_t h, Field f, const std::vector<int64_t>& ids) {
     };
     if (f == Field::ships || f == Field::nebulae || f == Field::_target_list) {
         entries_are(Kind::Object);
-    } else if (f == Field::_children) {
+    } else if (f == Field::_children || f == Field::_powered_consumers) {
         entries_are(Kind::Subsystem);
     } else if (f == Field::_ammo_by_slot) {
         // [slot, Ammo handle] pairs, in dict order; -1 is a slot holding

@@ -42,9 +42,19 @@ stands in for is NOT honoured, and there is no per-ship check for one (spec
 ignored such patches). ``python_pieces`` (a piece mask, 0 in production) is
 the test-facing hook that hands every ship's piece to Python. The
 watcher-crossing protocol (``SHIELD_WATCHER``, ``SHIELD_WATCHER_TAIL``) is
-the one Task 4's battery watchers reuse.
+the one the battery watchers reuse.
 
-Every piece but the shield is still RUN_PYTHON (Tasks 4-6).
+THE POWER PIECE (Task 4) is native too: ``PowerSubsystem.Update`` with its
+consumer pump, bit for bit (subsystem_step.h THE POWER PIECE), under the
+same Part A rule. Its events: ``BREACH`` (the plant's ``_trigger_breach``,
+after the native piece latched ``_breach_fired``), ``BATTERY_WATCHER`` (a
+battery watcher's ``_update`` with the value it crossed to) and
+``POWER_TAIL`` (the rest of Update in Python, on a plant the piece could
+not finish). The power draw program (engine/appc/passive_power.py) is not
+used here: every native run drops the plant's program, and the Python
+path's next pump rebuilds one.
+
+Cloak, repair and articulation are still RUN_PYTHON (Tasks 5-6).
 """
 import os
 import sys
@@ -159,6 +169,9 @@ REPAIR = _PIECES.get("REPAIR", 3)
 ARTICULATION = _PIECES.get("ARTICULATION", 4)
 SHIELD_WATCHER = _EVENTS.get("SHIELD_WATCHER", 0)
 SHIELD_WATCHER_TAIL = _EVENTS.get("SHIELD_WATCHER_TAIL", 1)
+BREACH = _EVENTS.get("BREACH", 2)
+BATTERY_WATCHER = _EVENTS.get("BATTERY_WATCHER", 3)
+POWER_TAIL = _EVENTS.get("POWER_TAIL", 4)
 
 # ── The event handlers ───────────────────────────────────────────────────────
 
@@ -197,10 +210,41 @@ def _shield_watcher_tail(ship, code, a, b, h, pins) -> None:
     sub._shield_watchers[sub.NUM_SHIELDS]._update(sub.GetShieldPercentage())
 
 
+def _breach(ship, code, a, b, h, pins) -> None:
+    """BREACH: the Python piece's own line after it latched _breach_fired
+    (the native piece did): ``self._trigger_breach()``."""
+    _event_object(h, pins)._trigger_breach()
+
+
+def _battery_watcher(ship, code, a, b, h, pins) -> None:
+    """BATTERY_WATCHER: battery watcher `code` (0 main, 1 backup) of plant
+    `h`, with the value the native piece computed for it --
+    ``self._main_battery_watcher._update(value)`` (or the backup's)."""
+    plant = _event_object(h, pins)
+    w = (plant._main_battery_watcher if code == 0
+         else plant._backup_battery_watcher)
+    w._update(a)
+
+
+def _power_tail(ship, code, a, b, h, pins) -> None:
+    """POWER_TAIL: the rest of plant `h`'s Update, in Python, on that same
+    plant: code 0 everything after the breach (``_update_flow(dt)``, dt in
+    `b`), code 1 the backup watcher's line (the backup limit in `a`, as
+    Update read it before the main watcher)."""
+    plant = _event_object(h, pins)
+    if code == 0:
+        plant._update_flow(b)
+    else:
+        plant._backup_battery_watcher._update(
+            plant._backup_battery_power / a if a > 0.0 else 0.0)
+
+
 #: EVENT kind -> handler(ship, code, a, b, sub, pins), posting that
 #: record's SDK event.
 _EVENT_HANDLERS: dict = {SHIELD_WATCHER: _shield_watcher,
-                         SHIELD_WATCHER_TAIL: _shield_watcher_tail}
+                         SHIELD_WATCHER_TAIL: _shield_watcher_tail,
+                         BREACH: _breach, BATTERY_WATCHER: _battery_watcher,
+                         POWER_TAIL: _power_tail}
 
 
 def _run_shield(ship, dt):
@@ -277,19 +321,23 @@ def _step_set(ships, dt) -> None:
 
 def _resync(ships) -> None:
     """A raise out of combat_subsys_next (a broken invariant: its write log
-    could not be applied): every generator of `ships` pushed again from its
+    could not be applied): every row a native piece of `ships` writes -- the
+    generator, the plant and the plant's consumers -- pushed again from its
     Python object, so no row keeps a write Python never got."""
     nc = native_combat
     for ship in ships:
-        sh = ship.__dict__.get("_shield_subsystem")
-        if sh is None:
-            continue
-        h = sh.__dict__.get("_nslot")
-        if h is None or nc._registry.get(h) is not sh:
-            continue
-        try:
-            nc._push_all(sh, h)
-        except Exception as e:      # noqa: BLE001 -- the raise in flight wins
-            nc._log_once(("subsystems-resync", type(e)),
-                         "native subsystems: a resync after a raise raised "
-                         "%r" % (e,))
+        d = ship.__dict__
+        objs = [d.get("_shield_subsystem"), d.get("_power_subsystem")]
+        objs += list(d.get("_powered_consumers") or ())
+        for sub in objs:
+            if sub is None:
+                continue
+            h = getattr(sub, "__dict__", {}).get("_nslot")
+            if h is None or nc._registry.get(h) is not sub:
+                continue
+            try:
+                nc._push_all(sub, h)
+            except Exception as e:  # noqa: BLE001 -- the raise in flight wins
+                nc._log_once(("subsystems-resync", type(e)),
+                             "native subsystems: a resync after a raise "
+                             "raised %r" % (e,))

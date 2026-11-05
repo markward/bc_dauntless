@@ -18,7 +18,35 @@ struct Names {
     PyObject* nslot;
     PyObject* value;
     PyObject* by_kind[static_cast<int>(cb::SubsystemWriteKind::kCount)];
+    PyObject* backup_watcher;   // BATTERY_WATCH index 1 (by_kind: index 0)
 };
+
+// Each kind's attribute (BATTERY_WATCH: the main watcher's; index 1 names
+// the backup's).
+constexpr const char* kAttr[] = {
+    "_charge_accum",          // CHARGE_ACCUM
+    "_ramp_fraction",         // RAMP
+    "_current_shields",       // FACE
+    "_shield_watchers",       // SHIELD_WATCH
+    "_available_power",       // AVAILABLE_POWER
+    "_main_battery_power",    // MAIN_BATTERY
+    "_backup_battery_power",  // BACKUP_BATTERY
+    "_main_conduit_current",  // MAIN_CONDUIT
+    "_backup_conduit_current",  // BACKUP_CONDUIT
+    "_interval_elapsed",      // INTERVAL_ELAPSED
+    "_power_dispensed",       // POWER_DISPENSED
+    "_power_wanted_total",    // POWER_WANTED_TOTAL
+    "_power_wanted",          // POWER_WANTED
+    "_power_received",        // POWER_RECEIVED
+    "_efficiency",            // EFFICIENCY
+    "_power_factor",          // POWER_FACTOR
+    "_backup_reserve",        // BACKUP_RESERVE
+    "_breach_fired",          // BREACH_FIRED
+    "_main_battery_watcher",  // BATTERY_WATCH
+    "_passive_power",         // PASSIVE_POWER_DROP
+};
+static_assert(sizeof(kAttr) / sizeof(kAttr[0]) ==
+              static_cast<size_t>(cb::SubsystemWriteKind::kCount));
 
 Names* g_names = nullptr;
 
@@ -28,15 +56,11 @@ const Names* names() {
     t->dict = PyUnicode_InternFromString("__dict__");
     t->nslot = PyUnicode_InternFromString("_nslot");
     t->value = PyUnicode_InternFromString("_value");
-    t->by_kind[static_cast<int>(cb::SubsystemWriteKind::CHARGE_ACCUM)] =
-        PyUnicode_InternFromString("_charge_accum");
-    t->by_kind[static_cast<int>(cb::SubsystemWriteKind::RAMP)] =
-        PyUnicode_InternFromString("_ramp_fraction");
-    t->by_kind[static_cast<int>(cb::SubsystemWriteKind::FACE)] =
-        PyUnicode_InternFromString("_current_shields");
-    t->by_kind[static_cast<int>(cb::SubsystemWriteKind::SHIELD_WATCH)] =
-        PyUnicode_InternFromString("_shield_watchers");
-    if (t->dict == nullptr || t->nslot == nullptr || t->value == nullptr) {
+    for (size_t k = 0; k < sizeof(kAttr) / sizeof(kAttr[0]); ++k)
+        t->by_kind[k] = PyUnicode_InternFromString(kAttr[k]);
+    t->backup_watcher = PyUnicode_InternFromString("_backup_battery_watcher");
+    if (t->dict == nullptr || t->nslot == nullptr || t->value == nullptr ||
+        t->backup_watcher == nullptr) {
         delete t;  // the interned strings are immortal enough: leaked
         return nullptr;
     }
@@ -102,12 +126,31 @@ bool store(const Names* n, PyObject* d, const cb::SubsystemWrite& w) {
                         "subsystem stage: unknown write kind");
         return false;
     }
+    PyObject* name = n->by_kind[k];
+    using K = cb::SubsystemWriteKind;
+    if (w.what == K::PASSIVE_POWER_DROP) {
+        // The power draw program, dropped (when there is one to drop).
+        PyObject* prog = PyDict_GetItemWithError(d, name);
+        if (prog == nullptr) return !PyErr_Occurred();
+        if (prog == Py_None) return true;
+        return PyDict_SetItem(d, name, Py_None) == 0;
+    }
+    if (w.what == K::BREACH_FIRED)
+        return PyObject_SetItem(d, name, Py_True) == 0;
     PyObject* v = PyFloat_FromDouble(w.value);
     if (v == nullptr) return false;
-    PyObject* name = n->by_kind[k];
     bool ok;
-    if (w.what == cb::SubsystemWriteKind::CHARGE_ACCUM) {
-        ok = PyObject_SetItem(d, name, v) == 0;
+    if (w.what == K::BATTERY_WATCH) {
+        PyObject* watcher = PyObject_GetItem(
+            d, w.index == 1 ? n->backup_watcher : name);
+        PyObject* wd = watcher != nullptr ? PyObject_GetAttr(watcher, n->dict)
+                                          : nullptr;
+        ok = wd != nullptr && PyObject_SetItem(wd, n->value, v) == 0;
+        Py_XDECREF(wd);
+        Py_XDECREF(watcher);
+    } else if (w.what != K::RAMP && w.what != K::FACE &&
+               w.what != K::SHIELD_WATCH) {
+        ok = PyObject_SetItem(d, name, v) == 0;   // a float attribute
     } else {
         PyObject* lst = PyObject_GetItem(d, name);
         if (lst == nullptr) {

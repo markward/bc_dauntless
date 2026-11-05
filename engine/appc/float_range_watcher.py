@@ -66,20 +66,17 @@ def _push_cond_value(sub, which, value: float) -> None:
         _native_combat.push_cond_watch_value(sub, which, value)
 
 
-def _push_shield(sub, values_only: bool) -> None:
-    """An adopted shield watcher's generator (native_combat.
-    ShieldWatchersField): its committed value (`values_only`) or its checks
-    changed, so the generator's row is pushed. Nothing with native combat
-    off."""
+def _push_owner(sub, values_only: bool) -> None:
+    """An adopted watcher's owner (a shield generator through native_combat.
+    ShieldWatchersField, a power plant through PowerWatcherField): its
+    committed value (`values_only`) or its checks changed, so the owner's
+    row is pushed. Nothing with native combat off."""
     global _native_combat
     if _native_combat is None:
         from engine.appc import native_combat
         _native_combat = native_combat
     if _native_combat._enabled:
-        if values_only:
-            _native_combat.push_shield_watch_values(sub)
-        else:
-            _native_combat.push_shield_watch(sub)
+        _native_combat.push_owned_watch(sub, values_only)
 
 
 class FloatRangeWatcher:
@@ -116,14 +113,16 @@ class FloatRangeWatcher:
     # defaults, so an unowned watcher's instance dict is unchanged.
     _cond_owner = None
     _cond_which = None
-    # The ShieldSubsystem whose `_shield_watchers[_shield_index]` this is,
-    # when it adopted it (native_combat.ShieldWatchersField): each value
-    # committed and each check added or removed pushes the generator's row,
-    # so the native shield piece (subsystem_step.h) decides this watcher's
-    # crossings from the values and checks Python holds. None: nobody.
-    # Class defaults, so an unowned watcher's instance dict is unchanged.
-    _shield_owner = None
-    _shield_index = None
+    # The subsystem that adopted this watcher, and its place there: a
+    # ShieldSubsystem's `_shield_watchers[_watch_index]` (native_combat.
+    # ShieldWatchersField), a PowerSubsystem's main (0) or backup (1)
+    # battery watcher (PowerWatcherField). Each value committed and each
+    # check added or removed pushes the owner's row, so the native shield
+    # and power pieces (subsystem_step.h) decide this watcher's crossings
+    # from the values and checks Python holds. None: nobody. Class
+    # defaults, so an unowned watcher's instance dict is unchanged.
+    _watch_owner = None
+    _watch_index = None
 
     def __init__(self, initial_value: float = 0.0, event_manager=None,
                  owner=None) -> None:
@@ -150,8 +149,8 @@ class FloatRangeWatcher:
             self._owner._watch_checks = len(self._checks)
         if self._cond_owner is not None:
             _push_cond(self._cond_owner, self._cond_which)
-        if self._shield_owner is not None:
-            _push_shield(self._shield_owner, False)
+        if self._watch_owner is not None:
+            _push_owner(self._watch_owner, False)
         return check_id
 
     def RemoveRangeCheck(self, check_id: int) -> None:
@@ -161,8 +160,8 @@ class FloatRangeWatcher:
             self._owner._watch_checks = len(self._checks)
         if self._cond_owner is not None:
             _push_cond(self._cond_owner, self._cond_which)
-        if self._shield_owner is not None:
-            _push_shield(self._shield_owner, False)
+        if self._watch_owner is not None:
+            _push_owner(self._watch_owner, False)
 
     def GetWatchedVariable(self) -> float:
         """Return the latest watched value."""
@@ -186,9 +185,10 @@ class FloatRangeWatcher:
         owned watcher (k0_charging.h, THE EFFECT QUEUE: the committed value
         as a logged write, then WATCH with the old value it mirrors as
         `_watch_value`, which every commit here pushes): change both. The
-        native shield piece stands in for it on an adopted shield watcher
-        with no check crossed (subsystem_step.h THE WATCHERS: it writes the
-        value; a crossing comes back here): change both.
+        native shield and power pieces stand in for it on an adopted shield
+        or battery watcher with no check crossed (subsystem_step.h THE
+        WATCHERS, THE POWER PIECE: they write the value; a crossing comes
+        back here): change both.
         """
         new_value = float(new_value)
         owner = self._owner
@@ -196,8 +196,8 @@ class FloatRangeWatcher:
             self._value = new_value
             if owner is not None:
                 _push_value(owner, new_value)
-            if self._shield_owner is not None:
-                _push_shield(self._shield_owner, True)
+            if self._watch_owner is not None:
+                _push_owner(self._watch_owner, True)
             return
         old_value = self._value
         if owner is not None:
@@ -212,8 +212,8 @@ class FloatRangeWatcher:
         self._value = new_value
         if owner is not None:
             _push_value(owner, new_value)
-        if self._shield_owner is not None:
-            _push_shield(self._shield_owner, True)
+        if self._watch_owner is not None:
+            _push_owner(self._watch_owner, True)
 
     def _update_queued(self, new_value: float, subsystem, which: int) -> None:
         """A subsystem's condition watcher's _update (native damage M2): it

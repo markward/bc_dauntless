@@ -74,6 +74,68 @@
 // the rest of the loop is EVENT{SHIELD_WATCHER_TAIL, code = first index}:
 // Python runs the Python loop's remaining lines on that same generator.
 //
+// THE POWER PIECE (Task 4): PowerSubsystem.Update (engine/appc/
+// subsystems.py) with its consumer pump, bit for bit, on the plant the
+// ship's `_power_subsystem` names. The ship's row ref decides as the
+// shield's does: -1 (None) is no call; kRefUnrepresentable, a since-freed
+// row or a row whose power_kind is not a plant's is RUN_PYTHON. A live
+// plant is native unless something the piece will read is one the mirror
+// cannot answer -- then RUN_PYTHON with NOTHING written (power_ready):
+// its `_property` unrepresentable or not power_props_ok; its battery
+// watchers not power_watch_ok; its `_parent_ship` (whose
+// `_powered_consumers` the pump walks) not a live ShipClass row; a
+// consumer not a live row of a known power_kind (a tractor system's
+// children not all live tractor beams); the interval's `_is_offline`
+// question or condition percentage unanswerable; or python_pieces names
+// POWER. A script patching PowerSubsystem's, a consumer's or a property's
+// methods is not honoured (spec §3 "Mods and patches (Part A)"), and
+// neither is a consumer class's own GetPowerWanted: the wanted total is
+// the attach-order sum of `_power_wanted`, which is what
+// PowerSubsystem._sum_wanted's _BASE_GET_POWER_WANTED guard reads for
+// every consumer class the engine has. Then, in Python's order:
+//   breach: IsDestroyed() and not _breach_fired -> _breach_fired = True,
+//           then EVENT{BREACH}: Python runs plant._trigger_breach() (its
+//           targetable gate and death_check.note_breach), and the next
+//           next() resumes after it;
+//   no property: done (no interval, no pump, no watchers);
+//   interval = interval + dt; at >= POWER_INTERVAL: elapsed = interval,
+//           interval = 0 (RESET, not subtracted), dispensed = 0; unless
+//           offline the recharge (PowerOutput * condPct * elapsed) fills
+//           main up to MainBatteryLimit, spills to backup up to
+//           BackupBatteryLimit, discards the rest; the conduit budgets,
+//           UNCONDITIONALLY: main = min(main battery, MainConduitCapacity *
+//           condPct * elapsed), backup = min(backup battery,
+//           BackupConduitCapacity * elapsed); available = their sum;
+//   the pump, when the parent ship has consumers: each consumer in attach
+//           order, by its power_kind (PoweredSubsystem._update_power, the
+//           tractor's _wants_power, CloakingSubsystem._update_power):
+//           not wanting power zeroes its four draw fields (the cloak also
+//           snapshots the backup battery into _backup_reserve); a free
+//           consumer (normal*dt <= 0) is 0/0/1/1; DRAWS_DIRECT_FROM_MAIN
+//           steals normal*dt from the main battery (StealPower) and the
+//           cloak CLOAK_RESERVE_DRAIN_PER_SECOND*dt from the backup
+//           (StealPowerFromReserve), NEITHER counted in _power_dispensed;
+//           every other consumer draws normal*dt*slider through _draw by
+//           its POWER_MODE (0 main first, 1 backup first, anything else
+//           -- PSM_DIRECT_MAIN (3) included -- the final else, backup
+//           only), counted in _power_dispensed; then _power_wanted_total
+//           is the attach-order sum. Nothing in the pump posts an event;
+//   the battery watchers, main then backup, each fed `battery / limit`
+//           (0 when the limit is not > 0; both limits read BEFORE the main
+//           watcher's update, the backup battery read after it), as the
+//           shield watchers are: no check crossed writes the value, any
+//           check crossed is EVENT{BATTERY_WATCHER, code = 0 main / 1
+//           backup, a = the value}, and Python calls that watcher's
+//           `_update(a)`. The next next() resumes with the backup watcher.
+// A resume on a plant whose row is gone or no longer native-ready, or with
+// python_pieces now naming POWER, hands the rest of the piece to Python on
+// that same plant: EVENT{POWER_TAIL, code 0 (everything after the breach;
+// b = dt), code 1 (the backup watcher's line; a = the backup limit read
+// before the main watcher)}.
+// Every native run of the piece also drops the plant's power draw program
+// (PASSIVE_POWER_DROP): it described draws the native pump has since
+// changed, and the Python path rebuilds one from a full pump.
+//
 // THE CURSOR. (ship position, piece): the next record is the first cell at
 // or after it. Python runs between records (a RUN_PYTHON piece, an EVENT's
 // handlers), and what it changes is read again by the next next(): the
@@ -89,9 +151,9 @@
 // with no row at begin (-1, or a handle already stale) is all RUN_PYTHON
 // too: the Python stage updates it.
 //
-// Task 3 made the SHIELD piece native (THE SHIELD PIECE); every other cell
-// is still RUN_PYTHON. Tasks 4-6 make the rest native one kind at a time;
-// Task 8 deletes the Python stage.
+// Task 3 made the SHIELD piece native (THE SHIELD PIECE), Task 4 the POWER
+// piece (THE POWER PIECE); every other cell is still RUN_PYTHON. Tasks 5-6
+// make the rest native one kind at a time; Task 8 deletes the Python stage.
 
 namespace dauntless::combat {
 
@@ -118,9 +180,18 @@ enum class SubsystemPiece : int32_t {
 //   SHIELD_WATCHER       sub's _shield_watchers[code]._update(a)
 //   SHIELD_WATCHER_TAIL  sub's watcher lines from index `code` on, in
 //                        Python: faces code..5, then the combined watcher
+//   BREACH               plant sub's _trigger_breach() (THE POWER PIECE)
+//   BATTERY_WATCHER      plant sub's battery watcher `code` (0 main, 1
+//                        backup) ._update(a)
+//   POWER_TAIL           the rest of plant sub's Update in Python: code 0
+//                        everything after the breach (b = dt), code 1 the
+//                        backup watcher's line (a = the backup limit)
 enum class SubsystemEvent : int32_t {
     SHIELD_WATCHER = 0,
     SHIELD_WATCHER_TAIL = 1,
+    BREACH = 2,
+    BATTERY_WATCHER = 3,
+    POWER_TAIL = 4,
     kCount
 };
 
@@ -134,12 +205,38 @@ const char* subsystem_event_name(SubsystemEvent e);
 //   FACE          sub.__dict__["_current_shields"][index] = value
 //   SHIELD_WATCH  sub.__dict__["_shield_watchers"][index]
 //                    .__dict__["_value"] = value
-// (in place for the three lists, as the Python piece writes them).
+// (in place for the three lists, as the Python piece writes them); the
+// power piece's (THE POWER PIECE):
+//   AVAILABLE_POWER .. POWER_WANTED_TOTAL, POWER_WANTED .. BACKUP_RESERVE
+//                 sub.__dict__["<the attribute>"] = value (a float)
+//   BREACH_FIRED  sub.__dict__["_breach_fired"] = True
+//   BATTERY_WATCH sub.__dict__["_main_battery_watcher" (index 0) /
+//                    "_backup_battery_watcher" (1)].__dict__["_value"]
+//                    = value
+//   PASSIVE_POWER_DROP
+//                 sub.__dict__["_passive_power"] = None, when it holds
+//                    anything else (the power draw program, dropped)
 enum class SubsystemWriteKind : int32_t {
     CHARGE_ACCUM = 0,
     RAMP,
     FACE,
     SHIELD_WATCH,
+    AVAILABLE_POWER,       // _available_power
+    MAIN_BATTERY,          // _main_battery_power
+    BACKUP_BATTERY,        // _backup_battery_power
+    MAIN_CONDUIT,          // _main_conduit_current
+    BACKUP_CONDUIT,        // _backup_conduit_current
+    INTERVAL_ELAPSED,      // _interval_elapsed
+    POWER_DISPENSED,       // _power_dispensed
+    POWER_WANTED_TOTAL,    // _power_wanted_total
+    POWER_WANTED,          // a consumer's _power_wanted
+    POWER_RECEIVED,        // _power_received
+    EFFICIENCY,            // _efficiency
+    POWER_FACTOR,          // _power_factor
+    BACKUP_RESERVE,        // the cloak's _backup_reserve
+    BREACH_FIRED,
+    BATTERY_WATCH,
+    PASSIVE_POWER_DROP,
     kCount
 };
 
@@ -166,7 +263,7 @@ struct SubsystemRecord {
     int64_t sub = -1;
 };
 
-// A bit per piece (python_pieces, forced): 1 << SubsystemPiece.
+// A bit per piece (SubsystemSession::python_pieces): 1 << SubsystemPiece.
 constexpr uint32_t piece_bit(SubsystemPiece p) {
     return 1u << static_cast<uint32_t>(p);
 }
@@ -178,10 +275,11 @@ struct SubsystemSession {
     double dt = 0.0;
     // THE CURSOR: the next cell to consider, (ship position, piece). A
     // native piece's EVENT is raised PARTWAY through it -- after one shield
-    // watcher (Task 3); Tasks 4-5: one consumer of the power pump, one
-    // repair-queue item -- and the next next() resumes inside that piece:
-    // its sub-piece position and partial state are kept here (the shield's
-    // below), never re-derived.
+    // watcher (Task 3), the plant's breach or main battery watcher (Task 4:
+    // the pump itself posts nothing, so no consumer position is needed);
+    // Task 5: one repair-queue item -- and the next next() resumes inside
+    // that piece: its sub-piece position and partial state are kept here
+    // (the shield's and the plant's below), never re-derived.
     size_t ship_pos = 0;
     int32_t piece = 0;
     bool done = false;               // DONE was returned
@@ -194,6 +292,14 @@ struct SubsystemSession {
     int32_t shield_phase = 0;
     int32_t shield_watcher = 0;
     int64_t shield = -1;
+    // The power piece's sub-piece position (THE POWER PIECE): 0 not begun;
+    // 1 after plant `power`'s BREACH (next: the rest of Update); 2 after
+    // its main battery watcher's EVENT (next: the backup watcher, fed
+    // against `power_backup_cap`, the backup limit Python read before the
+    // main watcher's update).
+    int32_t power_phase = 0;
+    int64_t power = -1;
+    double power_backup_cap = 0.0;
     std::vector<SubsystemWrite> writes;  // THE WRITE LOG (last next())
 };
 
