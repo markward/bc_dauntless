@@ -222,7 +222,7 @@ Python handles the record and resumes the session. This is K0's begin/next sessi
 - [ ] **Step 4: Run the new tests, the Task 2 differential, `test_golden_fights.py` (posed_fight is in it), and the `tests/unit/test_articulation*.py` files.** Expect PASS.
 - [ ] **Step 5: Commit** `perf(native): articulation skips rigless ships natively`.
 
-### Task 7: Measure, record, ask for the live check
+### Task 7: Measure and record
 
 **Files:**
 - Modify: `docs/reference/engine/perf-register.md`; `docs/reference/engine/perf-cadences-and-latency.md` (fix the stale `subsystems.py:115` pointer for `SHIELD_CHARGE_PERIOD_S` and add a row for `DAUNTLESS_NATIVE_SUBSYSTEMS`); `CLAUDE.md` (add one sentence to the Native ship motion row naming the subsystem stage and its switch, within the row budget `tests/docs/test_doc_consistency.py` enforces)
@@ -231,7 +231,7 @@ Python handles the record and resumes the session. This is K0's begin/next sessi
 - [ ] **Step 2: Capture** with the spec §7 protocol: 64 and 128 ships, exterior and bridge, two runs each, switch on; one 128-ship exterior run with `DAUNTLESS_NATIVE_SUBSYSTEMS=0`; one `DAUNTLESS_PROFILE_PY` run at 128 ships.
 - [ ] **Step 3: Score** `gl.subsystems` per tick, per-tick `sim`, frame time and ticks per frame, against SIG-196 and SIG-197.
 - [ ] **Step 4: Record** the captures plus a signal, and fix the docs. Run `uv run pytest -q tests/docs`. Commit `docs(perf): native subsystem stage (SIG-…)`.
-- [ ] **Step 5: Ask Mark for a live check:** a 64-ship fight; a cloaking Warbird; a repair after damage (engineering repairs the hull); a power-starved ship; E2M0 (a mission changing repair points); the LC Intrepid's moving parts. Then decide R2, whether to delete the Python reference.
+- [ ] **Step 5: Write the live-check list into the ledger** for the final message: a 64-ship fight; a cloaking Warbird; a repair after damage (engineering repairs the hull); a power-starved ship; E2M0 (a mission changing repair points); the LC Intrepid's moving parts. Mark is asked AFTER Task 8, so he checks the final, native-only code.
 
 ### Task 8: Delete the Python stage (R2)
 
