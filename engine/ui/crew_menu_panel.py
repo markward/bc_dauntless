@@ -125,7 +125,7 @@ class CrewMenuPanel(Panel):
         self._logged_unrecognised: set = set()
         self._open_menu_id: Optional[int] = None
         # Inline accordion expand-state for submenu rows — Python-owned,
-        # mirroring TargetListView's per-row `expanded` flag. Cleared
+        # as an accordion state kept in Python (the target list no longer expands rows). Cleared
         # whenever the open menu changes (a reopened menu starts collapsed,
         # matching BC).
         self._expanded_ids: set[int] = set()

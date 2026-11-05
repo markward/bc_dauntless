@@ -162,7 +162,9 @@ text.
 ### Lucide
 
 Icon set (pinned `lucide-static@1.69.0`), used for the subsystem icons in the
-target panel (`native/assets/ui-cef/icons/subsystems/`).
+target panel (`native/assets/ui-cef/icons/subsystems/`) and for the inline
+icons in the target list's filter tabs and sort strip
+(`native/assets/ui-cef/index.html`).
 
 - Upstream: https://lucide.dev
 - License: ISC

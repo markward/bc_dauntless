@@ -237,7 +237,7 @@
 
 /* ── NEW (v6): distance in each list row ───────────────────────────
    Right-aligned against the bars so the numbers line up in a column.
-   Size and colour copied from .ship-display__target-extras. */
+   Size and colour match the target panel's readout text. */
 .target-list__dist {
   flex: 0 0 auto;
   margin: 0 8px 0 6px;
