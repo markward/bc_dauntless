@@ -107,3 +107,15 @@ def test_targetable_subsystem_with_only_untargetable_children_is_a_lockable_leaf
     assert _names(fams) == ["Phasers"]
     assert fams[0].lockable is True
     assert fams[0].members == ()
+
+
+def test_grandchild_only_family_lists_its_targetable_descendants():
+    ph = _sub(PhaserSystem, "Phasers", targetable=0)
+    mid = _sub(ShipSubsystem, "Ring", targetable=0)
+    mid.AddChildSubsystem(_sub(ShipSubsystem, "Bank A", pos=(1.0, 2.0)))
+    mid.AddChildSubsystem(_sub(ShipSubsystem, "Bank B", cond=0.0))
+    ph.AddChildSubsystem(mid)
+    ph.AddChildSubsystem(_sub(ShipSubsystem, "Bank C"))
+    fams = st.build_families(_ship(phaser=ph))
+    assert _names(fams) == ["Phasers"]
+    assert [m.name for m in fams[0].members] == ["Bank A", "Bank C"]

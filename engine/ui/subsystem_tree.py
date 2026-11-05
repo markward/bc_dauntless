@@ -1,7 +1,7 @@
 """The target panel's subsystem family tree.
 
 A *family* is a top-level ship subsystem the player can lock or open;
-its *members* are its direct targetable, living children (each phaser
+its *members* are its targetable, living descendants (each phaser
 bank, each torpedo tube). The hull is never a family. A family's `state`
 is its OWN condition, not an aggregate of its members (spec §4.3).
 
@@ -89,19 +89,32 @@ def _alive(sub) -> bool:
     return not (hasattr(sub, "IsDestroyed") and sub.IsDestroyed())
 
 
-def _family_for(sub) -> Optional[Family]:
+def _targetable_descendants(sub) -> list:
+    """Every targetable descendant of ``sub`` (living or not), depth-first in
+    child order; non-targetable levels are walked through."""
+    out = []
     n = sub.GetNumChildSubsystems() if hasattr(sub, "GetNumChildSubsystems") else 0
-    children = [sub.GetChildSubsystem(i) for i in range(n)]
-    children = [c for c in children if c is not None and _is_targetable(c)]
+    for i in range(n):
+        child = sub.GetChildSubsystem(i)
+        if child is None:
+            continue
+        if _is_targetable(child):
+            out.append(child)
+        out.extend(_targetable_descendants(child))
+    return out
+
+
+def _family_for(sub) -> Optional[Family]:
+    descendants = _targetable_descendants(sub)
     members = []
-    if children:
-        # A group: kept only while a targetable child survives.
-        for child in children:
-            if not _alive(child):
+    if descendants:
+        # A group: kept only while a targetable descendant survives.
+        for d in descendants:
+            if not _alive(d):
                 continue
-            x, y = _pos(child)
-            members.append(Member(_name(child), subsystem_state(child),
-                                  subsystem_icons.icon_key_for(child), x, y))
+            x, y = _pos(d)
+            members.append(Member(_name(d), subsystem_state(d),
+                                  subsystem_icons.icon_key_for(d), x, y))
         if not members:
             return None
     elif not _is_targetable(sub) or not _alive(sub):

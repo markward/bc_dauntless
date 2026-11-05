@@ -315,3 +315,16 @@ def test_member_at_origin_still_locks_without_marker():
       return [ev, root.layer.innerHTML];""")
     assert r[0] == ["target/Akira 1/Zero"]
     assert "lock-marker" not in r[1]
+
+
+def test_open_and_locked_tint_survives_hover():
+    css = (ROOT / "native/assets/ui-cef/panels/ship_display/ship_display.css").read_text()
+    import re
+    for sel in (".subsys-btn--open:hover", ".subsys-block--locked:hover"):
+        m = re.search(re.escape(sel) + r"\s*\{([^}]*)\}", css)
+        assert m, sel
+        assert "background-color: rgba(216, 43, 43, 0.35)" in m.group(1), sel
+        assert "background:" not in m.group(1).replace("background-color:", ""), sel
+    # Disabled still wins: its hover rule is more specific than the tints.
+    assert '.subsys-btn[data-state="disabled"]:hover' in css
+    assert '.subsys-block[data-state="disabled"]:hover' in css

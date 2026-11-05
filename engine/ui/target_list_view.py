@@ -156,13 +156,22 @@ SORTS = ("name", "distance", "health")
 FILTERABLE = ("FRIENDLY", "NEUTRAL", "ENEMY")
 
 
+def _natural(label: str) -> tuple:
+    """Casefolded label with digit runs as ints, so "Unknown 2" < "Unknown 10".
+    Parts alternate text, number, text, ... so tuples always compare like
+    with like."""
+    import re
+    parts = re.split(r"(\d+)", label.casefold())
+    return tuple(int(p) if i % 2 else p for i, p in enumerate(parts))
+
+
 def sort_key(row: dict, sort: str) -> tuple:
     """Ordering key for one payload row under *sort*.
 
-    name: label, case-insensitive. distance: surface km, ties by name.
+    name: label, case-insensitive and natural (digit runs compare as numbers). distance: surface km, ties by name.
     health: hull, then shields (a shieldless ship counts as 0), then name.
     """
-    label = row["label"].casefold()
+    label = _natural(row["label"])
     if sort == "distance":
         return (row["dist_km"], label)
     if sort == "health":

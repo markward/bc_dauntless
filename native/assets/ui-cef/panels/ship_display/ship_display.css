@@ -399,6 +399,8 @@
 }
 .subsys-btn:hover { background-color: rgba(216, 43, 43, 0.15); }
 .subsys-btn--open { background: rgba(216, 43, 43, 0.35); }
+/* Hover must not fade an open family's tint (0,2,0 ties .subsys-btn:hover). */
+.subsys-btn--open:hover { background-color: rgba(216, 43, 43, 0.35); }
 .subsys-btn__icon { width: 60%; height: 60%; max-width: 20px; max-height: 20px; }
 .subsys-btn__icon svg { width: 100%; height: 100%; display: block; }
 .subsys-btn[data-state="healthy"]       { color: rgba(235, 225, 255, 0.75); }
@@ -461,6 +463,7 @@
 .subsys-block__name { text-wrap: balance; }
 .subsys-block:hover { background-color: rgba(216, 43, 43, 0.15); color: var(--bc-label-text); }
 .subsys-block--locked { color: var(--bc-label-text); background: rgba(216, 43, 43, 0.35); }
+.subsys-block--locked:hover { background-color: rgba(216, 43, 43, 0.35); }
 /* Full-width white underline, pulled left under the 3px state edge. */
 .subsys-block--locked::after {
     content: "";

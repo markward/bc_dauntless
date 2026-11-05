@@ -182,6 +182,17 @@ def test_sort_key_shapes():
     assert FILTERABLE == ("FRIENDLY", "NEUTRAL", "ENEMY")
     row = {"label": "Zed", "dist_km": 4.0, "hull": 50, "shields": 70,
            "has_shields": False}
-    assert sort_key(row, "name") == ("zed",)
-    assert sort_key(row, "distance") == (4.0, "zed")
-    assert sort_key(row, "health") == (50, 0, "zed")
+    assert sort_key(row, "name") == (("zed",),)
+    assert sort_key(row, "distance") == (4.0, ("zed",))
+    assert sort_key(row, "health") == (50, 0, ("zed",))
+
+
+def test_sort_key_orders_names_naturally():
+    from engine.ui.target_list_view import sort_key
+    def row(label):
+        return {"label": label, "dist_km": 0.0, "hull": 1.0,
+                "shields": 0.0, "has_shields": False}
+    names = ["Unknown 10", "unknown 2", "Unknown 1", "Alpha"]
+    for sort in ("name", "distance", "health"):
+        got = sorted(names, key=lambda n: sort_key(row(n), sort))
+        assert got == ["Alpha", "Unknown 1", "unknown 2", "Unknown 10"], sort
