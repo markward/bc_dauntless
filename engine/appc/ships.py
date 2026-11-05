@@ -36,8 +36,10 @@ class ShipClass(DamageableObject):
     # order (subsystem_step.h THE POWER PIECE). _powered_consumers is
     # appended in place by _attach_subsystem, which pushes it.
     _power_subsystem = native_combat.NativeMountRefField("Subsystem")
+    # Rebind, or push_field after an in-place edit.
     _powered_consumers = native_combat.NativeRefList("Subsystem")
-    _repair_subsystem = native_combat.MountSlotField()
+    # The native repair piece's bay (subsystem_step.h THE REPAIR PIECE).
+    _repair_subsystem = native_combat.NativeMountRefField("Subsystem")
     # What the K2 beam kernel reads: the lock, the Manual Aim offset, the
     # shield generator and the cached hull box (all rebound, never mutated).
     _target_subsystem = native_combat.NativeRefField("Subsystem")

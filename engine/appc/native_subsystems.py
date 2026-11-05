@@ -54,7 +54,25 @@ not finish). The power draw program (engine/appc/passive_power.py) is not
 used here: every native run drops the plant's program, and the Python
 path's next pump rebuilds one.
 
-Cloak, repair and articulation are still RUN_PYTHON (Tasks 5-6).
+THE CLOAK AND REPAIR PIECES (Task 5) are native too:
+``CloakingSubsystem.Update`` and ``RepairSubsystem.Update`` bit for bit
+(subsystem_step.h THE CLOAK PIECE, THE REPAIR PIECE), under the same Part A
+rule. The cloak's events: ``FORCE_DECLOAK`` (the cloak's own
+``_force_decloak``, so its state change, log and event stay Python's) and
+``CLOAK_DONE`` (``_fire`` of the completion event, after the native piece
+wrote the state). The bay's: ``REPAIR_CANNOT`` (ET_REPAIR_CANNOT_BE_COMPLETED
+mid-walk, after the native piece added the member to the notified set),
+``REPAIR_DONE`` (Update's last loop, one item per record: the queue discard,
+then ET_REPAIR_COMPLETED) and ``REPAIR_TAIL`` (the rest of Update in Python,
+``_repair_walk`` or ``_repair_worked``, on a bay the piece could not
+finish). The bay's condition writes are damage.h's set_condition, applied
+by ``combat_subsys_next`` under ``native_combat._dmg_context()`` exactly as
+SetCondition's native chain applies its own: the same writes, the same
+effect-queue entries, held to the boundary. The repair piece's locals
+(teams, points, the queue index, the worked and completed items) are read
+back with ``combat_subsys_repair_state``.
+
+Articulation is still RUN_PYTHON (Task 6).
 """
 import os
 import sys
@@ -74,6 +92,8 @@ except ImportError:     # pragma: no cover -- a build without the module
 _switch = False
 _counts = {"stages": 0, "sessions": 0, "run_python": 0, "events": 0,
            "patched_stages": 0}
+#: EVENT records by kind name (event_counts()).
+_event_counts: dict = {}
 
 #: The test-facing hook: a mask of (1 << piece) the native session hands to
 #: Python for every ship (combat_subsys_begin's python_pieces). 0 in
@@ -145,10 +165,16 @@ def reset() -> None:
 def reset_counts() -> None:
     for k in _counts:
         _counts[k] = 0
+    _event_counts.clear()
 
 
 def counts() -> dict:
     return dict(_counts)
+
+
+def event_counts() -> dict:
+    """EVENT records handled since the last reset, by kind name."""
+    return dict(_event_counts)
 
 
 # ── The records ──────────────────────────────────────────────────────────────
@@ -172,6 +198,16 @@ SHIELD_WATCHER_TAIL = _EVENTS.get("SHIELD_WATCHER_TAIL", 1)
 BREACH = _EVENTS.get("BREACH", 2)
 BATTERY_WATCHER = _EVENTS.get("BATTERY_WATCHER", 3)
 POWER_TAIL = _EVENTS.get("POWER_TAIL", 4)
+FORCE_DECLOAK = _EVENTS.get("FORCE_DECLOAK", 5)
+CLOAK_DONE = _EVENTS.get("CLOAK_DONE", 6)
+REPAIR_CANNOT = _EVENTS.get("REPAIR_CANNOT", 7)
+REPAIR_DONE = _EVENTS.get("REPAIR_DONE", 8)
+REPAIR_TAIL = _EVENTS.get("REPAIR_TAIL", 9)
+_EVENT_NAMES = {v: k for k, v in _EVENTS.items()}
+
+#: The pins key of the session a handler's record came from (pins are
+#: otherwise keyed by row handle).
+_SESSION = "session"
 
 # ── The event handlers ───────────────────────────────────────────────────────
 
@@ -239,12 +275,76 @@ def _power_tail(ship, code, a, b, h, pins) -> None:
             plant._backup_battery_power / a if a > 0.0 else 0.0)
 
 
+def _force_decloak(ship, code, a, b, h, pins) -> None:
+    """FORCE_DECLOAK: the Python piece's ``self._force_decloak()`` (the
+    native piece wrote nothing: the state change, the dev log and
+    ET_DECLOAK_COMPLETED are all that method's)."""
+    _event_object(h, pins)._force_decloak()
+
+
+def _cloak_done(ship, code, a, b, h, pins) -> None:
+    """CLOAK_DONE: the completion event after the native piece snapped the
+    state and reset the clock -- ``self._fire("ET_CLOAK_COMPLETED")`` (code
+    1) or ``"ET_DECLOAK_COMPLETED"`` (code 0)."""
+    _event_object(h, pins)._fire(
+        "ET_CLOAK_COMPLETED" if code == 1 else "ET_DECLOAK_COMPLETED")
+
+
+def _repair_state(pins):
+    return _h.combat_subsys_repair_state(pins[_SESSION])
+
+
+def _repair_cannot(ship, code, a, b, h, pins) -> None:
+    """REPAIR_CANNOT: bay `code`'s ET_REPAIR_CANNOT_BE_COMPLETED for member
+    `h`, mid-walk (the native piece already added it to the notified set).
+    The bay and the items worked so far are pinned first: a handler may
+    drop their rows, and a REPAIR_TAIL then still names them."""
+    bay = _event_object(code, pins)
+    sub = _event_object(h, pins)
+    for w in _repair_state(pins)[3]:
+        _event_object(w, pins)
+    bay._fire_repair_event("ET_REPAIR_CANNOT_BE_COMPLETED", sub)
+
+
+def _repair_done(ship, code, a, b, h, pins) -> None:
+    """REPAIR_DONE: one turn of Update's last loop for completed item `h`
+    of bay `code` -- ``self._queue.discard(sub)`` then
+    ET_REPAIR_COMPLETED. The first (a == 0) pins every completed item: a
+    handler may drop a later one's row."""
+    bay = _event_object(code, pins)
+    if a == 0.0:
+        for c in _repair_state(pins)[4]:
+            _event_object(c, pins)
+    sub = _event_object(h, pins)
+    bay._queue.discard(sub)
+    bay._fire_repair_event("ET_REPAIR_COMPLETED", sub)
+
+
+def _repair_tail(ship, code, a, b, h, pins) -> None:
+    """REPAIR_TAIL: the rest of bay `code`'s Update, in Python, with the
+    native piece's locals: a 0 the walk from its queue index
+    (``_repair_walk``), a 1 the worked items' repair (``_repair_worked``);
+    dt in `b`."""
+    bay = _event_object(code, pins)
+    teams, points, index, worked, _completed = _repair_state(pins)
+    items = [_event_object(w, pins) for w in worked]
+    if a == 0.0:
+        bay._repair_walk(b, teams, points, index, items)
+    else:
+        bay._repair_worked(b, points, items)
+
+
 #: EVENT kind -> handler(ship, code, a, b, sub, pins), posting that
 #: record's SDK event.
 _EVENT_HANDLERS: dict = {SHIELD_WATCHER: _shield_watcher,
                          SHIELD_WATCHER_TAIL: _shield_watcher_tail,
                          BREACH: _breach, BATTERY_WATCHER: _battery_watcher,
-                         POWER_TAIL: _power_tail}
+                         POWER_TAIL: _power_tail,
+                         FORCE_DECLOAK: _force_decloak,
+                         CLOAK_DONE: _cloak_done,
+                         REPAIR_CANNOT: _repair_cannot,
+                         REPAIR_DONE: _repair_done,
+                         REPAIR_TAIL: _repair_tail}
 
 
 def _run_shield(ship, dt):
@@ -301,10 +401,12 @@ def _step_set(ships, dt) -> None:
     nxt = _h.combat_subsys_next
     run = _RUN
     registry = native_combat._registry
-    pins: dict = {}
+    dmg_context = native_combat._dmg_context
+    pins: dict = {_SESSION: session}
     while True:
         try:
-            rtype, pos, _ship_h, kind, code, a, b, sub = nxt(session, registry)
+            rtype, pos, _ship_h, kind, code, a, b, sub = nxt(
+                session, registry, dmg_context())
         except BaseException:
             _resync(ships)
             raise
@@ -316,19 +418,26 @@ def _step_set(ships, dt) -> None:
             run[kind](ship, dt)
         else:
             _counts["events"] += 1
+            name = _EVENT_NAMES.get(kind, kind)
+            _event_counts[name] = _event_counts.get(name, 0) + 1
             _EVENT_HANDLERS[kind](ship, code, a, b, sub, pins)
 
 
 def _resync(ships) -> None:
     """A raise out of combat_subsys_next (a broken invariant: its write log
     could not be applied): every row a native piece of `ships` writes -- the
-    generator, the plant and the plant's consumers -- pushed again from its
-    Python object, so no row keeps a write Python never got."""
+    generator, the plant and the plant's consumers (the cloak and the bay
+    among them), the bay's queued items -- pushed again from its Python
+    object, so no row keeps a write Python never got."""
     nc = native_combat
     for ship in ships:
         d = ship.__dict__
-        objs = [d.get("_shield_subsystem"), d.get("_power_subsystem")]
+        objs = [d.get("_shield_subsystem"), d.get("_power_subsystem"),
+                d.get("_cloaking_subsystem"), d.get("_repair_subsystem")]
         objs += list(d.get("_powered_consumers") or ())
+        bay = d.get("_repair_subsystem")
+        if bay is not None:
+            objs += list(getattr(bay, "__dict__", {}).get("_queue") or ())
         for sub in objs:
             if sub is None:
                 continue

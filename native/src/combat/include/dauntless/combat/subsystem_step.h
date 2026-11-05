@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include "dauntless/combat/damage.h"
 #include "dauntless/combat/mirror.h"
 
 // The subsystem stage, native (phase 6 A1; plan
@@ -136,6 +137,66 @@
 // (PASSIVE_POWER_DROP): it described draws the native pump has since
 // changed, and the Python path rebuilds one from a full pump.
 //
+// THE CLOAK PIECE (Task 5): CloakingSubsystem.Update (engine/appc/
+// subsystems.py), bit for bit, on the cloak the ship's `_cloaking_subsystem`
+// names (decided as the shield's ref is; a live row whose power_kind is not
+// a cloak's is RUN_PYTHON). Its offline test is IsDisabled() or
+// IsDestroyed() only (not _is_offline). Then, in Python's order:
+//   offline: trying to cloak (CLOAKING or CLOAKED) -> EVENT{FORCE_DECLOAK},
+//           else nothing;
+//   trying to cloak, CLOAK_RESERVE_DRAIN_PER_SECOND > 0 and _backup_reserve
+//           (the power piece's snapshot, this tick's) <= MIN_RESERVE_TO_
+//           HOLD_CLOAK -> EVENT{FORCE_DECLOAK};
+//   CLOAKING or DECLOAKING: _transition_elapsed += dt; at >= its
+//           _transition_duration the state snaps (CLOAKED / DECLOAKED) and
+//           the clock resets to 0, both written, then EVENT{CLOAK_DONE,
+//           code 1 cloaked / 0 decloaked}.
+// FORCE_DECLOAK writes nothing first: Python calls the cloak's own
+// _force_decloak(), which snaps the state, resets the clock, logs and fires
+// ET_DECLOAK_COMPLETED when it was CLOAKED. CLOAK_DONE's state is written
+// first, as Update writes it before _fire: Python then calls _fire with the
+// completion event. Either EVENT is the piece's last line.
+//
+// THE REPAIR PIECE (Task 5): RepairSubsystem.Update (engine/appc/
+// subsystems.py; its _repair_walk and _repair_worked), bit for bit, on the
+// bay the ship's `_repair_subsystem` names (decided as the shield's ref is;
+// a live row that is not is_repair_bay is RUN_PYTHON). Its gates are the
+// bay's own condition > 0 only (not _is_offline, dying or radiation).
+//   dt <= 0, an empty queue, the bay's condition <= 0: done. Its
+//           `_property` -1 is no teams: done; unrepresentable, stale or not
+//           repair_props_ok: RUN_PYTHON. NumRepairTeams <= 0 or
+//           MaxRepairPoints <= 0: done;
+//   THE WALK, over the queue as the mirror holds it now, from the cursor
+//           (Python's list iterator: the next index of the list as it is):
+//           stop when it is past the end or the worked list holds `teams`;
+//           a member whose condition is <= 0 is added to
+//           _cannot_complete_notified (written) and is EVENT{REPAIR_CANNOT,
+//           code = the bay, sub = the member} the first time, and skipped;
+//           any other member leaves the notified set (written) and is
+//           worked. The next next() resumes the walk at the next index,
+//           re-reading the queue (a handler may have changed it: Review
+//           Focus 5). A member, or the bay, with no live row, or
+//           python_pieces naming REPAIR, at its turn: EVENT{REPAIR_TAIL,
+//           code = the bay, a = 0}: Python runs the walk from that index on
+//           (`_repair_walk`, the state from combat_subsys_repair_state);
+//   none worked: done. Else raw = (points * bayCondPct) * dt, per_item =
+//           raw / len(worked); per item gain = per_item / complexity
+//           (complexity <= 0 is 1.0), and ShipSubsystem.Repair(gain): gain
+//           <= 0 is nothing, else the condition write
+//           min(GetMaxCondition(), condition + gain) through damage.h's
+//           set_condition (its writes and effect-queue entries in `dmg`,
+//           the same as SetCondition's native chain makes); completed when
+//           the condition is then >= GetMaxCondition(). Anything in it the
+//           mirror cannot answer (a set_condition fallback, a max
+//           condition it cannot read, a row gone) undoes every write of the
+//           items worked so far and is EVENT{REPAIR_TAIL, code = the bay,
+//           a = 1}: Python runs `_repair_worked` on the same items;
+//   the completions, in order: EVENT{REPAIR_DONE, code = the bay, sub = the
+//           item, a = its index}: Python discards it from the queue and
+//           fires ET_REPAIR_COMPLETED (Update's last loop, one item per
+//           record). Each item's row was live when the first was returned
+//           (the driver pins them all then).
+//
 // THE CURSOR. (ship position, piece): the next record is the first cell at
 // or after it. Python runs between records (a RUN_PYTHON piece, an EVENT's
 // handlers), and what it changes is read again by the next next(): the
@@ -152,8 +213,9 @@
 // too: the Python stage updates it.
 //
 // Task 3 made the SHIELD piece native (THE SHIELD PIECE), Task 4 the POWER
-// piece (THE POWER PIECE); every other cell is still RUN_PYTHON. Tasks 5-6
-// make the rest native one kind at a time; Task 8 deletes the Python stage.
+// piece (THE POWER PIECE), Task 5 the CLOAK and REPAIR pieces (THE CLOAK
+// PIECE, THE REPAIR PIECE); ARTICULATION is still RUN_PYTHON. Task 6 makes
+// it native for rigless ships; Task 8 deletes the Python stage.
 
 namespace dauntless::combat {
 
@@ -186,12 +248,27 @@ enum class SubsystemPiece : int32_t {
 //   POWER_TAIL           the rest of plant sub's Update in Python: code 0
 //                        everything after the breach (b = dt), code 1 the
 //                        backup watcher's line (a = the backup limit)
+//   FORCE_DECLOAK        cloak sub's _force_decloak() (THE CLOAK PIECE)
+//   CLOAK_DONE           cloak sub's _fire(ET_CLOAK_COMPLETED) (code 1) or
+//                        _fire(ET_DECLOAK_COMPLETED) (code 0)
+//   REPAIR_CANNOT        bay `code`'s ET_REPAIR_CANNOT_BE_COMPLETED for its
+//                        member sub (THE REPAIR PIECE)
+//   REPAIR_DONE          bay `code`'s completion of item sub (index a):
+//                        queue discard, then ET_REPAIR_COMPLETED
+//   REPAIR_TAIL          the rest of bay `code`'s Update in Python: a 0 the
+//                        walk from the cursor, a 1 the worked items' repair
+//                        (b = dt)
 enum class SubsystemEvent : int32_t {
     SHIELD_WATCHER = 0,
     SHIELD_WATCHER_TAIL = 1,
     BREACH = 2,
     BATTERY_WATCHER = 3,
     POWER_TAIL = 4,
+    FORCE_DECLOAK = 5,
+    CLOAK_DONE = 6,
+    REPAIR_CANNOT = 7,
+    REPAIR_DONE = 8,
+    REPAIR_TAIL = 9,
     kCount
 };
 
@@ -216,6 +293,13 @@ const char* subsystem_event_name(SubsystemEvent e);
 //   PASSIVE_POWER_DROP
 //                 sub.__dict__["_passive_power"] = None, when it holds
 //                    anything else (the power draw program, dropped)
+// the cloak's and the bay's (THE CLOAK PIECE, THE REPAIR PIECE):
+//   TRANSITION_ELAPSED sub.__dict__["_transition_elapsed"] = value
+//   CLOAK_STATE   sub.__dict__["_cloak_state"] = int(value)
+//   REPAIR_NOTIFIED sub.__dict__["_cannot_complete_notified"].add(ref)
+//                    (index 1) / .discard(ref) (index 0), `ref` a member's
+//                    Subsystem handle (the set's key, subsystems.
+//                    _notify_key)
 enum class SubsystemWriteKind : int32_t {
     CHARGE_ACCUM = 0,
     RAMP,
@@ -237,6 +321,9 @@ enum class SubsystemWriteKind : int32_t {
     BREACH_FIRED,
     BATTERY_WATCH,
     PASSIVE_POWER_DROP,
+    TRANSITION_ELAPSED,
+    CLOAK_STATE,
+    REPAIR_NOTIFIED,
     kCount
 };
 
@@ -245,6 +332,7 @@ struct SubsystemWrite {
     SubsystemWriteKind what = SubsystemWriteKind::CHARGE_ACCUM;
     int32_t index = 0;
     double value = 0.0;
+    int64_t ref = -1;   // REPAIR_NOTIFIED's member handle
 };
 
 struct SubsystemRecord {
@@ -300,7 +388,23 @@ struct SubsystemSession {
     int32_t power_phase = 0;
     int64_t power = -1;
     double power_backup_cap = 0.0;
+    // The repair piece's sub-piece position (THE REPAIR PIECE): 0 not
+    // begun; 1 inside the walk of bay `repair` (a REPAIR_CANNOT stopped
+    // it; next: queue index `repair_index`); 2 reporting completions (next:
+    // repair_completed[repair_done]); 3 over. Update's locals: the teams
+    // and points read before the walk, the items worked and completed.
+    int32_t repair_phase = 0;
+    int64_t repair = -1;
+    size_t repair_index = 0;
+    int64_t repair_teams = 0;
+    double repair_points = 0.0;
+    std::vector<int64_t> repair_worked, repair_completed;
+    size_t repair_done = 0;
     std::vector<SubsystemWrite> writes;  // THE WRITE LOG (last next())
+    // The repair piece's condition writes (damage.h set_condition): their
+    // Python writes and effect-queue entries, cleared by next() on entry
+    // and applied by the binding after THE WRITE LOG.
+    DamageOut dmg;
 };
 
 namespace subsystems {

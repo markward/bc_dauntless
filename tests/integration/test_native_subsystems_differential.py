@@ -43,7 +43,8 @@ from engine.appc import effect_queue
 from engine.appc import native_combat as nc
 from engine.appc import native_subsystems, passive_state
 from engine.appc.ship_iter import iter_non_rock_ships
-from engine.appc.subsystems import ShipSubsystem, iter_subsystems
+from engine.appc.subsystems import (ShipSubsystem, _notify_key,
+                                    iter_subsystems)
 from engine.core import loop as game_loop
 from engine.core.loop import TICK_DELTA
 from tests.helpers import bc_assets, headless_mission
@@ -56,7 +57,7 @@ SOURCES = 5             # ships whose shield watchers carry the handler
 THRESHOLD = 0.5
 KINDS = ("shield_dip", "shield_dip", "damage", "destroy", "repair_full",
          "slider", "turn_off", "turn_on", "drain", "cloak", "decloak",
-         "target", "alert")
+         "target", "alert", "nick", "starve")
 
 _HANDLER = {}
 
@@ -271,7 +272,11 @@ class _World:
             face = rng.randrange(6)
             shields.SetCurShields(face, shields.GetMaxShields(face)
                                   * rng.choice((0.3, 0.45, 0.49)))
-        elif kind in ("damage", "destroy", "repair_full"):
+        elif kind == "starve":
+            # A cloaked ship's reserve dry: the cloak is forced off.
+            ship = self.cloaked[rng.randrange(len(self.cloaked))]
+            ship.GetPowerSubsystem().SetBackupBatteryPower(0.0)
+        elif kind in ("damage", "destroy", "repair_full", "nick"):
             subs = self._damageable(ship)
             bay = ship.GetRepairSubsystem()
             queued = [] if bay is None else [s for s in bay._queue
@@ -283,6 +288,9 @@ class _World:
             top = sub.GetMaxCondition()
             if kind == "damage":
                 sub.SetCondition(top * rng.choice((0.2, 0.5, 0.8)))
+            elif kind == "nick":
+                # Barely damaged: the bay completes it within the run.
+                sub.SetCondition(top * 0.9995)
             elif kind == "destroy":
                 sub.SetCondition(0.0)
             else:
@@ -339,7 +347,7 @@ class _World:
             name = ship.GetName()
             rows.append(["ship", name] + self._fields(ship, _SHIP))
             subs = list(iter_subsystems(ship))
-            labels = {id(s): self.label(s) for s in subs}
+            labels = {_notify_key(s): self.label(s) for s in subs}
             for sub in subs:
                 rows.append(["sub", self.label(sub)]
                             + self._fields(sub, _SUBSYSTEM)
@@ -400,7 +408,8 @@ def _arm(native):
         assert world.seen == set(TRACKED), (
             "tracked fields never seen holding a value (renamed?): %s"
             % sorted(set(TRACKED) - world.seen))
-        return log, dict(world.handled), native_subsystems.counts()
+        return (log, dict(world.handled), native_subsystems.counts(),
+                native_subsystems.event_counts())
 
 
 def _first_difference(a, b):
@@ -419,8 +428,8 @@ def _clean():
 
 
 def test_differential_combat_scene_bit_exact():
-    python, py_handled, py_counts = _arm(native=False)
-    native, na_handled, na_counts = _arm(native=True)
+    python, py_handled, py_counts, _ = _arm(native=False)
+    native, na_handled, na_counts, na_events = _arm(native=True)
     assert py_counts["stages"] == 0, py_counts
     assert na_counts["stages"] == TICKS, na_counts
     assert na_counts["run_python"] > 0, na_counts
@@ -434,13 +443,17 @@ def test_differential_combat_scene_bit_exact():
             i, x, y = _first_difference(pe, ne)
             pytest.fail("tick %d: events differ at %d\n python %r\n native %r"
                         % (tick, i, x, y))
-    # Tasks 3-4: every shield and power piece ran natively (the other three
-    # pieces are one RUN_PYTHON record per ship per stage), and their
-    # watcher crossings -- the handler's mid-stage writes among them -- came
-    # back as EVENTs.
+    # Tasks 3-5: every shield, power, cloak and repair piece ran natively
+    # (articulation is one RUN_PYTHON record per ship per stage), and their
+    # SDK events -- the handler's mid-stage writes among them -- came back
+    # as EVENTs: the cloak's completions and forced decloaks, the bay's
+    # cannot-complete and completions.
     ships = int(SHIPS) + 1
-    assert na_counts["run_python"] == 3 * ships * TICKS, na_counts
+    assert na_counts["run_python"] == 1 * ships * TICKS, na_counts
     assert na_counts["events"] > 0, na_counts
+    for kind in ("CLOAK_DONE", "FORCE_DECLOAK", "REPAIR_CANNOT",
+                 "REPAIR_DONE"):
+        assert na_events.get(kind, 0) > 0, (kind, na_events)
     # The scene is what it claims: the handler wrote mid-stage, and the
     # stage had work of every kind to do.
     assert na_handled == py_handled

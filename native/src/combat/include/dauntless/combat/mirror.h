@@ -247,6 +247,26 @@ enum class Field : int32_t {
     power_kind,
     PowerOutput, MainBatteryLimit, BackupBatteryLimit, MainConduitCapacity,
     BackupConduitCapacity, power_props_ok,
+    // Cloak and repair native (phase 6 A1, Task 5; subsystem_step.h THE
+    // CLOAK PIECE, THE REPAIR PIECE). Object: ShipClass._repair_subsystem
+    // (the bay whose Update the stage runs). Subsystem, a cloak
+    // (CloakingSubsystem): its transition clock and length. Subsystem, every
+    // one: ShipSubsystem._repair_complexity (GetRepairComplexity). Subsystem,
+    // a bay (RepairSubsystem): its queue in order (_queue, Subsystem handles,
+    // kRefUnrepresentable for a member the mirror cannot name; pushed by
+    // subsystems._RepairQueue on every change), the members already told
+    // ET_REPAIR_CANNOT_BE_COMPLETED (_cannot_complete_notified, a set of
+    // Subsystem handles, sorted and unique), and is_repair_bay, a class
+    // flag (1: a RepairSubsystem). Property: the RepairSubsystemProperty
+    // values RepairSubsystem reads every tick, as GetMaxRepairPoints
+    // (`float(v)`) and GetNumRepairTeams (`int(v)`) answer them (0.0 / 0 for
+    // None), and repair_props_ok (1: both read through the data bag, each
+    // converted; 0: the bay's piece is Python's). Pushed on every setter of
+    // the two (properties.py), so a shared template's write reaches every
+    // bay whose _property names it.
+    _repair_subsystem, _transition_elapsed, _transition_duration,
+    _repair_complexity, _queue, _cannot_complete_notified, is_repair_bay,
+    MaxRepairPoints, NumRepairTeams, repair_props_ok,
     kCount
 };
 
@@ -332,6 +352,8 @@ struct ObjectRow {
     // Power native (Field comment above).
     int64_t _power_subsystem = -1;
     std::vector<int64_t> _powered_consumers;
+    // Cloak and repair native (Field comment above).
+    int64_t _repair_subsystem = -1;
 };
 
 struct SubsystemRow {
@@ -421,6 +443,11 @@ struct SubsystemRow {
     int64_t POWER_MODE = 0, DRAWS_DIRECT_FROM_MAIN = 0;
     double CLOAK_RESERVE_DRAIN_PER_SECOND = 0.0;
     int64_t power_kind = -1;
+    // Cloak and repair native (Field comment above).
+    double _transition_elapsed = 0.0, _transition_duration = 0.0,
+           _repair_complexity = 0.0;
+    std::vector<int64_t> _queue, _cannot_complete_notified;
+    int64_t is_repair_bay = 0;
 };
 
 struct PropertyRow {
@@ -436,6 +463,9 @@ struct PropertyRow {
     double PowerOutput = 0.0, MainBatteryLimit = 0.0, BackupBatteryLimit = 0.0,
            MainConduitCapacity = 0.0, BackupConduitCapacity = 0.0;
     int64_t power_props_ok = 0;
+    // Cloak and repair native (Field comment above).
+    double MaxRepairPoints = 0.0;
+    int64_t NumRepairTeams = 0, repair_props_ok = 0;
 };
 
 struct AmmoRow {
@@ -508,6 +538,10 @@ enum class Global : int32_t {
     // Power native (phase 6 A1, Task 4): PowerSubsystem.POWER_INTERVAL, the
     // plant's 1.0 s recharge interval.
     POWER_INTERVAL,
+    // Cloak native (phase 6 A1, Task 5): CloakingSubsystem.
+    // MIN_RESERVE_TO_HOLD_CLOAK, the reserve at or below which a cloak
+    // trying to cloak is forced off.
+    MIN_RESERVE_TO_HOLD_CLOAK,
     kCount
 };
 
@@ -544,6 +578,7 @@ struct Globals {
            TRACTOR_MAX_RANGE_GU = 0.0;
     double SHIELD_CHARGE_PERIOD_S = 0.0;
     double POWER_INTERVAL = 0.0;
+    double MIN_RESERVE_TO_HOLD_CLOAK = 0.0;
 };
 
 struct ProfileRowSet {

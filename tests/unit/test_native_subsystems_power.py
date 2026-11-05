@@ -22,7 +22,7 @@ from engine.core import loop as game_loop
 from tests.helpers import bc_assets, headless_mission
 
 SHIPS = 3               # the player and two combat ships
-PIECES_IN_PYTHON = 3    # cloak, repair, articulation (Tasks 5-6)
+PIECES_IN_PYTHON = 1    # articulation (Task 6)
 _PLANT = ("_available_power", "_main_battery_power", "_backup_battery_power",
           "_main_conduit_current", "_backup_conduit_current",
           "_interval_elapsed", "_power_dispensed", "_power_wanted_total",

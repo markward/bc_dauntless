@@ -66,6 +66,10 @@ double condition_percentage(const Mirror& m, const SubsystemRow& sub);
 bool subsystem_is_disabled(const SubsystemRow& s);
 bool subsystem_is_destroyed(const SubsystemRow& s);
 bool subsystem_is_offline(const Mirror& m, const SubsystemRow& s);
+// ShipSubsystem.GetMaxCondition: the property template's MaxCondition when
+// set and > 0, else _max_condition. Throws std::invalid_argument for a
+// `_property` the mirror cannot name (the subsystem stage's repair piece).
+double subsystem_max_condition(const Mirror& m, const SubsystemRow& s);
 
 // sensor_detection.effective_sensor_range
 double effective_sensor_range(const Mirror& m, int64_t ship);

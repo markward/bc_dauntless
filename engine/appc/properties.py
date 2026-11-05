@@ -98,10 +98,10 @@ class TGModelProperty:
             def setter(*args):
                 data[(field, _hashable_key(args[:-1]))] = args[-1]
                 if field in _MIRRORED_FIELDS:
-                    # A shared template's max condition or per-tick power
-                    # value: every subsystem whose _property names it reads
-                    # it (GetMaxCondition; the native power piece, THE POWER
-                    # PIECE in subsystem_step.h), so the mirror's one
+                    # A shared template's max condition or per-tick power or
+                    # repair value: every subsystem whose _property names it
+                    # reads it (GetMaxCondition; the native power and repair
+                    # pieces in subsystem_step.h), so the mirror's one
                     # Property row must hold it: every ship using the
                     # template sees the write.
                     from engine.appc import native_combat
@@ -132,7 +132,8 @@ class TGModelProperty:
 #: MIRRORED_PROPERTY_FIELDS, spelled here so a setter needs no import).
 _MIRRORED_FIELDS = frozenset(("MaxCondition", "PowerOutput",
                               "MainBatteryLimit", "BackupBatteryLimit",
-                              "MainConduitCapacity", "BackupConduitCapacity"))
+                              "MainConduitCapacity", "BackupConduitCapacity",
+                              "MaxRepairPoints", "NumRepairTeams"))
 
 
 def _copy_point(p):

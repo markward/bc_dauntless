@@ -963,6 +963,24 @@ class NativeRefList(NativeField):
             return False
 
 
+class NotifiedSetField(NativeField):
+    """``RepairSubsystem._cannot_complete_notified``: a set of
+    subsystems._notify_key keys -- Subsystem handles, or the id() of a
+    member the mirror has no row for -- mirrored as the set of its
+    Subsystem handles (the native repair piece's own keys; an id() key is
+    none of its members). The set is edited IN PLACE: each writer calls
+    ``push_field`` after (RepairSubsystem._repair_walk)."""
+
+    def __init__(self) -> None:
+        super().__init__(set)
+
+    def _encode(self, value):
+        sub = _kind("Subsystem")
+        return sorted({k for k in value
+                       if type(k) is int and k >= 0
+                       and (k >> _KIND_SHIFT) == sub})
+
+
 class NativeFloatList(NativeField):
     """An ordered list of floats (TorpedoTube._reload_timers /
     _reload_advanced_at), pushed whole, every bit kept. The value must be a
@@ -2513,8 +2531,24 @@ def _flags(obj, h) -> dict:
                 "motion_pod_stock": _stock_surface(
                     type(obj), ShipSubsystem, _MOTION_POD_NAMES),
                 # The native power piece's rules for this class.
-                "power_kind": _power_kind(type(obj))}
+                "power_kind": _power_kind(type(obj)),
+                # The native repair piece runs this class's Update.
+                "is_repair_bay": _is_repair_bay(type(obj))}
     return {}
+
+
+_repair_bay_by_type: dict = {}
+
+
+def _is_repair_bay(cls) -> int:
+    """1 for a RepairSubsystem class (the native repair piece,
+    subsystem_step.h THE REPAIR PIECE), by what the class IS: a subclass's
+    own override is not honoured (spec §3 "Mods and patches (Part A)")."""
+    k = _repair_bay_by_type.get(cls)
+    if k is None:
+        from engine.appc.subsystems import RepairSubsystem
+        k = _repair_bay_by_type[cls] = int(issubclass(cls, RepairSubsystem))
+    return k
 
 
 _POWER_KINDS = None
@@ -3107,10 +3141,43 @@ def refresh_pulse_params() -> None:
 POWER_PROPERTY_FIELDS = ("PowerOutput", "MainBatteryLimit",
                          "BackupBatteryLimit", "MainConduitCapacity",
                          "BackupConduitCapacity")
+#: The RepairSubsystemProperty values RepairSubsystem reads every tick
+#: (GetMaxRepairPoints, GetNumRepairTeams), mirrored on every Property row.
+REPAIR_PROPERTY_FIELDS = ("MaxRepairPoints", "NumRepairTeams")
 #: Every data-bag field a Property row mirrors: their setters push
 #: (properties.TGModelProperty.__getattr__).
 MIRRORED_PROPERTY_FIELDS = frozenset(("MaxCondition",)
-                                     + POWER_PROPERTY_FIELDS)
+                                     + POWER_PROPERTY_FIELDS
+                                     + REPAIR_PROPERTY_FIELDS)
+
+_INT64_MAX = (1 << 63) - 1
+
+
+def _repair_property_values(prop) -> dict:
+    """The two values as RepairSubsystem's getters read them --
+    ``float(v)`` / ``int(v)`` of the data-bag value, 0.0 / 0 for None --
+    and repair_props_ok: 1 only when both are read that way (no class
+    getter of the name) and convert without raising (an int that fits the
+    row)."""
+    cls = type(prop)
+    ok = 1
+    for name in REPAIR_PROPERTY_FIELDS:
+        if getattr(cls, "Get" + name, None) is not None:
+            ok = 0
+    points, teams = 0.0, 0
+    try:
+        v = prop._data.get(("MaxRepairPoints", ()), None)
+        if v is not None:
+            points = float(v)
+        v = prop._data.get(("NumRepairTeams", ()), None)
+        if v is not None:
+            teams = int(v)
+        if not -_INT64_MAX <= teams <= _INT64_MAX:
+            raise OverflowError(teams)
+    except (TypeError, ValueError, OverflowError):
+        ok, points, teams = 0, 0.0, 0
+    return {"MaxRepairPoints": points, "NumRepairTeams": teams,
+            "repair_props_ok": ok}
 
 
 def _power_property_values(prop) -> dict:
@@ -3149,6 +3216,7 @@ def _property_values(prop) -> dict:
     else:
         vals.update(MaxCondition_set=1, MaxCondition=float(pm))
     vals.update(_power_property_values(prop))
+    vals.update(_repair_property_values(prop))
     return vals
 
 
@@ -3230,8 +3298,8 @@ def push_ids(obj, field: str, ids) -> None:
 
 def push_property(prop) -> None:
     """A property value the mirror holds was written: a data-bag entry of
-    MIRRORED_PROPERTY_FIELDS (MaxCondition, the five power values), SetGroups
-    or SetFiringChainString."""
+    MIRRORED_PROPERTY_FIELDS (MaxCondition, the five power values, the two
+    repair values), SetGroups or SetFiringChainString."""
     if _enabled:
         h = prop.__dict__.get("_nslot")
         if h is None:
@@ -3257,6 +3325,11 @@ def push_property(prop) -> None:
         if "_nslot" in prop.__dict__:
             _call(prop, _h.combat_set_i, h, _fid("power_props_ok"),
                   vals["power_props_ok"])
+        for name, setter in (("MaxRepairPoints", _h.combat_set_f),
+                             ("NumRepairTeams", _h.combat_set_i),
+                             ("repair_props_ok", _h.combat_set_i)):
+            if "_nslot" in prop.__dict__:
+                _call(prop, setter, h, _fid(name), vals[name])
 
 
 # ── Sets, profiles and globals ───────────────────────────────────────────────
@@ -3450,6 +3523,9 @@ def _globals() -> dict:
     g["SHIELD_CHARGE_PERIOD_S"] = float(subsystems.SHIELD_CHARGE_PERIOD_S)
     # The native power piece's 1.0 s interval (phase 6 A1, Task 4).
     g["POWER_INTERVAL"] = float(subsystems.PowerSubsystem.POWER_INTERVAL)
+    # The native cloak piece's starvation threshold (phase 6 A1, Task 5).
+    g["MIN_RESERVE_TO_HOLD_CLOAK"] = float(
+        subsystems.CloakingSubsystem.MIN_RESERVE_TO_HOLD_CLOAK)
     return g
 
 

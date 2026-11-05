@@ -746,5 +746,8 @@ bool subsystem_is_destroyed(const SubsystemRow& s) { return IsDestroyed(s); }
 bool subsystem_is_offline(const Mirror& m, const SubsystemRow& s) {
     return _is_offline(m, &s);
 }
+double subsystem_max_condition(const Mirror& m, const SubsystemRow& s) {
+    return GetMaxCondition(m, s);
+}
 
 }  // namespace dauntless::combat

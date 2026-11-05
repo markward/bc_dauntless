@@ -38,23 +38,101 @@ struct World {
     }
 
     // A ship with no shield generator (`_shield_subsystem` None) and a power
-    // plant the mirror cannot name (kRefUnrepresentable): its POWER piece
-    // is Python's.
+    // plant, cloak and repair bay the mirror cannot name
+    // (kRefUnrepresentable): its POWER, CLOAK and REPAIR pieces are
+    // Python's.
     int64_t bare_ship() {
         auto [xi, xg] = store.alloc();
         const int64_t h = m.register_row(Kind::Object, xi, xg);
         m.set_ref(h, Field::_power_subsystem, kRefUnrepresentable);
+        python_cloak_and_bay(h);
         return h;
     }
 
     // A ShipClass row with no shield generator and no plant yet: plant()
-    // gives it one, consumer() its consumers.
+    // gives it one, consumer() its consumers. Its cloak and bay are
+    // Python's (RUN_PYTHON records after the power piece).
     int64_t power_ship() {
+        auto [xi, xg] = store.alloc();
+        const int64_t h = m.register_row(Kind::Object, xi, xg);
+        m.set_i(h, Field::is_ship_class, 1);
+        python_cloak_and_bay(h);
+        return h;
+    }
+
+    void python_cloak_and_bay(int64_t ship) {
+        m.set_ref(ship, Field::_cloaking_subsystem, kRefUnrepresentable);
+        m.set_ref(ship, Field::_repair_subsystem, kRefUnrepresentable);
+    }
+
+    // A ShipClass row with no shield generator, plant, cloak or bay (all
+    // None: no call); cloak() and bay() give it the last two. Its walk
+    // ends with ARTICULATION's RUN_PYTHON.
+    int64_t stage_ship() {
         auto [xi, xg] = store.alloc();
         const int64_t h = m.register_row(Kind::Object, xi, xg);
         m.set_i(h, Field::is_ship_class, 1);
         return h;
     }
+
+    // A healthy leaf subsystem: condition 1000 of 1000, disabled at half.
+    int64_t healthy() {
+        const int64_t h = m.register_row(Kind::Subsystem);
+        m.set_f(h, Field::_max_condition, 1000.0);
+        m.set_f(h, Field::_condition, 1000.0);
+        m.set_f(h, Field::_disabled_percentage, 0.5);
+        m.set_f(h, Field::_repair_complexity, 1.0);
+        return h;
+    }
+
+    // A healthy cloak on `ship` in `state` (0 DECLOAKED, 1 CLOAKING, 2
+    // CLOAKED, 3 DECLOAKING), its clock at `elapsed` of `duration`, the
+    // stock 1000/s drain and a full reserve; MIN_RESERVE_TO_HOLD_CLOAK 0.
+    int64_t cloak(int64_t ship, int64_t state, double elapsed,
+                  double duration) {
+        const int64_t h = healthy();
+        m.set_i(h, Field::power_kind, 2);
+        m.set_i(h, Field::_cloak_state, state);
+        m.set_f(h, Field::_transition_elapsed, elapsed);
+        m.set_f(h, Field::_transition_duration, duration);
+        m.set_f(h, Field::CLOAK_RESERVE_DRAIN_PER_SECOND, 1000.0);
+        m.set_f(h, Field::_backup_reserve, 5000.0);
+        m.set_global_f(Global::MIN_RESERVE_TO_HOLD_CLOAK, 0.0);
+        m.set_ref(ship, Field::_cloaking_subsystem, h);
+        return h;
+    }
+
+    // A RepairSubsystemProperty read through its data bag.
+    int64_t repair_prop(double points, int64_t teams) {
+        const int64_t p = m.register_row(Kind::Property);
+        m.set_f(p, Field::MaxRepairPoints, points);
+        m.set_i(p, Field::NumRepairTeams, teams);
+        m.set_i(p, Field::repair_props_ok, 1);
+        return p;
+    }
+
+    // A repair bay on `ship`, at half condition (its percentage 0.5).
+    int64_t bay(int64_t ship, int64_t prop) {
+        const int64_t h = healthy();
+        m.set_i(h, Field::is_repair_bay, 1);
+        m.set_f(h, Field::_condition, 500.0);
+        m.set_ref(h, Field::_property, prop);
+        m.set_ref(ship, Field::_repair_subsystem, h);
+        return h;
+    }
+
+    // A queued subsystem at `cond` of 1000 (its threshold state as the
+    // state machine left it), `complexity` its GetRepairComplexity.
+    int64_t item(double cond, double complexity = 1.0) {
+        const int64_t h = healthy();
+        m.set_f(h, Field::_condition, cond);
+        m.set_f(h, Field::_repair_complexity, complexity);
+        m.set_i(h, Field::_in_repair_queue, 1);
+        m.set_i(h, Field::_threshold_state,
+                cond <= 0.0 ? 2 : (cond <= 500.0 ? 1 : 0));
+        return h;
+    }
+
 
     // A PowerProperty: the five per-tick values, all read through the data
     // bag (power_props_ok), MaxCondition unset.
@@ -849,4 +927,381 @@ TEST(PowerStep, AnUnreadyPlantIsPythonsWithNothingWritten) {
     SubsystemSession none = subsystems::begin(w.m, std::vector{ship}, kHalf);
     EXPECT_EQ(subsystems::next(none, w.m).kind,
               static_cast<int32_t>(SubsystemPiece::CLOAK));
+}
+
+// ── The cloak piece (Task 5; subsystem_step.h THE CLOAK PIECE) ───────────
+
+namespace {
+
+// The records of one stage over `ship`, to DONE; `writes` (when given)
+// collects every next()'s write log.
+std::vector<SubsystemRecord> stage(World& w, int64_t ship, double dt,
+                                   std::vector<SubsystemWrite>* writes =
+                                       nullptr) {
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, dt);
+    std::vector<SubsystemRecord> out;
+    for (int guard = 0; guard < 1000; ++guard) {
+        const SubsystemRecord r = subsystems::next(s, w.m);
+        if (writes != nullptr)
+            writes->insert(writes->end(), s.writes.begin(), s.writes.end());
+        if (r.type == SubsystemRecordType::DONE) return out;
+        out.push_back(r);
+    }
+    ADD_FAILURE() << "the session never returned DONE";
+    return out;
+}
+
+bool is_articulation(const SubsystemRecord& r) {
+    return r.type == SubsystemRecordType::RUN_PYTHON &&
+           static_cast<SubsystemPiece>(r.kind) == SubsystemPiece::ARTICULATION;
+}
+
+bool is_event(const SubsystemRecord& r, SubsystemEvent e) {
+    return r.type == SubsystemRecordType::EVENT &&
+           static_cast<SubsystemEvent>(r.kind) == e;
+}
+
+}  // namespace
+
+TEST(CloakStep, CompletesAtDuration) {
+    World w;
+    const int64_t ship = w.stage_ship();
+    const int64_t cl = w.cloak(ship, 1, 0.0, 1.0);
+    // 0.5 s ticks against a 1.0 s transition: exact sums.
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    ASSERT_TRUE(is_articulation(subsystems::next(s, w.m)));
+    EXPECT_EQ(w.m.get_f(cl, Field::_transition_elapsed), 0.5);
+    EXPECT_EQ(w.m.get_i(cl, Field::_cloak_state), 1);
+    ASSERT_EQ(s.writes.size(), 1u);
+    EXPECT_EQ(s.writes[0].what, SubsystemWriteKind::TRANSITION_ELAPSED);
+    EXPECT_EQ(s.writes[0].value, 0.5);
+
+    // At the duration: the state snaps and the clock resets, written in
+    // Update's order, BEFORE the completion event Python fires.
+    SubsystemSession t = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    const SubsystemRecord r = subsystems::next(t, w.m);
+    ASSERT_TRUE(is_event(r, SubsystemEvent::CLOAK_DONE));
+    EXPECT_EQ(r.code, 1);          // cloaked
+    EXPECT_EQ(r.sub, cl);
+    EXPECT_EQ(w.m.get_i(cl, Field::_cloak_state), 2);
+    EXPECT_EQ(w.m.get_f(cl, Field::_transition_elapsed), 0.0);
+    ASSERT_EQ(t.writes.size(), 3u);
+    EXPECT_EQ(t.writes[0].what, SubsystemWriteKind::TRANSITION_ELAPSED);
+    EXPECT_EQ(t.writes[0].value, 1.0);
+    EXPECT_EQ(t.writes[1].what, SubsystemWriteKind::CLOAK_STATE);
+    EXPECT_EQ(t.writes[1].value, 2.0);
+    EXPECT_EQ(t.writes[2].what, SubsystemWriteKind::TRANSITION_ELAPSED);
+    EXPECT_EQ(t.writes[2].value, 0.0);
+    // The event is the piece's last line: the walk goes on.
+    EXPECT_TRUE(is_articulation(subsystems::next(t, w.m)));
+
+    // CLOAKED holds: nothing moves.
+    std::vector<SubsystemWrite> u;
+    const auto held = stage(w, ship, kHalf, &u);
+    ASSERT_EQ(held.size(), 1u);
+    EXPECT_TRUE(is_articulation(held[0]));
+    EXPECT_TRUE(u.empty());
+
+    // DECLOAKING completes to DECLOAKED.
+    w.m.set_i(cl, Field::_cloak_state, 3);
+    w.m.set_f(cl, Field::_transition_elapsed, 0.75);
+    const auto done = stage(w, ship, kHalf);
+    ASSERT_EQ(done.size(), 2u);
+    ASSERT_TRUE(is_event(done[0], SubsystemEvent::CLOAK_DONE));
+    EXPECT_EQ(done[0].code, 0);    // decloaked
+    EXPECT_EQ(w.m.get_i(cl, Field::_cloak_state), 0);
+
+    // At 1/60 s against the stock 4.5 s: the tick Python's own
+    // `e += 1/60` first reaches 4.5 on (the same additions here).
+    w.m.set_i(cl, Field::_cloak_state, 1);
+    w.m.set_f(cl, Field::_transition_elapsed, 0.0);
+    w.m.set_f(cl, Field::_transition_duration, 4.5);
+    double e = 0.0;
+    int want = 0;
+    while (true) {
+        ++want;
+        e = e + kDt;
+        if (!(e < 4.5)) break;
+    }
+    int tick = 0;
+    for (; tick < 1000; ++tick) {
+        const auto recs = stage(w, ship, kDt);
+        if (is_event(recs[0], SubsystemEvent::CLOAK_DONE)) break;
+    }
+    EXPECT_EQ(tick + 1, want);
+}
+
+TEST(CloakStep, ReserveOutForcesDecloak) {
+    World w;
+    const int64_t ship = w.stage_ship();
+    const int64_t cl = w.cloak(ship, 2, 0.0, 4.5);
+    // CLOAKED with the reserve dry: FORCE_DECLOAK, NOTHING written first
+    // (Python's _force_decloak snaps the state itself).
+    w.m.set_f(cl, Field::_backup_reserve, 0.0);
+    std::vector<SubsystemWrite> s;
+    auto recs = stage(w, ship, kDt, &s);
+    ASSERT_EQ(recs.size(), 2u);
+    ASSERT_TRUE(is_event(recs[0], SubsystemEvent::FORCE_DECLOAK));
+    EXPECT_EQ(recs[0].sub, cl);
+    EXPECT_TRUE(s.empty());
+    EXPECT_EQ(w.m.get_i(cl, Field::_cloak_state), 2);
+    EXPECT_TRUE(is_articulation(recs[1]));
+    // CLOAKING too.
+    w.m.set_i(cl, Field::_cloak_state, 1);
+    EXPECT_TRUE(is_event(stage(w, ship, kDt)[0],
+                         SubsystemEvent::FORCE_DECLOAK));
+    // A free cloak (no drain) is never starved: the clock runs.
+    w.m.set_f(cl, Field::CLOAK_RESERVE_DRAIN_PER_SECOND, 0.0);
+    EXPECT_TRUE(is_articulation(stage(w, ship, kDt)[0]));
+    EXPECT_EQ(w.m.get_f(cl, Field::_transition_elapsed), kDt);
+    // Not trying to cloak (DECLOAKING): the dry reserve is no matter.
+    w.m.set_f(cl, Field::CLOAK_RESERVE_DRAIN_PER_SECOND, 1000.0);
+    w.m.set_i(cl, Field::_cloak_state, 3);
+    w.m.set_f(cl, Field::_transition_elapsed, 0.0);
+    EXPECT_TRUE(is_articulation(stage(w, ship, kDt)[0]));
+    EXPECT_EQ(w.m.get_f(cl, Field::_transition_elapsed), kDt);
+
+    // Disabled (IsDisabled: condition <= half of max): CLOAKING is forced
+    // off; DECLOAKING and DECLOAKED do nothing at all, the clock included.
+    w.m.set_f(cl, Field::_backup_reserve, 5000.0);
+    w.m.set_f(cl, Field::_condition, 400.0);
+    w.m.set_i(cl, Field::_cloak_state, 1);
+    EXPECT_TRUE(is_event(stage(w, ship, kDt)[0],
+                         SubsystemEvent::FORCE_DECLOAK));
+    for (int64_t st : {0, 3}) {
+        w.m.set_i(cl, Field::_cloak_state, st);
+        w.m.set_f(cl, Field::_transition_elapsed, 0.25);
+        std::vector<SubsystemWrite> q;
+        EXPECT_TRUE(is_articulation(stage(w, ship, kDt, &q)[0]));
+        EXPECT_TRUE(q.empty());
+        EXPECT_EQ(w.m.get_f(cl, Field::_transition_elapsed), 0.25);
+    }
+    // Destroyed (the explicit flag) is offline too.
+    w.m.set_f(cl, Field::_condition, 1000.0);
+    w.m.set_i(cl, Field::_destroyed, 1);
+    w.m.set_i(cl, Field::_cloak_state, 2);
+    EXPECT_TRUE(is_event(stage(w, ship, kDt)[0],
+                         SubsystemEvent::FORCE_DECLOAK));
+    // A radiation outage is NOT the cloak's offline test (asymmetric
+    // gates): the transition runs.
+    w.m.set_i(cl, Field::_destroyed, 0);
+    w.m.set_i(cl, Field::_radiation_out, 1);
+    w.m.set_i(cl, Field::_cloak_state, 1);
+    w.m.set_f(cl, Field::_transition_elapsed, 0.0);
+    EXPECT_TRUE(is_articulation(stage(w, ship, kDt)[0]));
+    EXPECT_EQ(w.m.get_f(cl, Field::_transition_elapsed), kDt);
+
+    // A cloak the mirror cannot name, or a row that is not a cloak's:
+    // Python's. No cloak: no call, no record.
+    w.m.set_ref(ship, Field::_cloaking_subsystem, kRefUnrepresentable);
+    auto py = stage(w, ship, kDt);
+    EXPECT_EQ(py[0].type, SubsystemRecordType::RUN_PYTHON);
+    EXPECT_EQ(static_cast<SubsystemPiece>(py[0].kind), SubsystemPiece::CLOAK);
+    w.m.set_ref(ship, Field::_cloaking_subsystem, cl);
+    w.m.set_i(cl, Field::power_kind, 0);
+    EXPECT_EQ(static_cast<SubsystemPiece>(stage(w, ship, kDt)[0].kind),
+              SubsystemPiece::CLOAK);
+    w.m.set_ref(ship, Field::_cloaking_subsystem, -1);
+    EXPECT_TRUE(is_articulation(stage(w, ship, kDt)[0]));
+}
+
+// ── The repair piece (Task 5; subsystem_step.h THE REPAIR PIECE) ─────────
+
+namespace {
+
+double cond(World& w, int64_t h) { return w.m.get_f(h, Field::_condition); }
+
+}  // namespace
+
+TEST(RepairStep, SplitsPointsAcrossWorkedItems) {
+    World w;
+    const int64_t ship = w.stage_ship();
+    const int64_t bay = w.bay(ship, w.repair_prop(60.0, 2));
+    const int64_t a = w.item(100.0);
+    const int64_t gone = w.item(0.0);           // destroyed: skipped
+    const int64_t c = w.item(200.0, 2.0);       // twice as hard
+    const int64_t d = w.item(300.0);            // no team left for it
+    w.m.set_ids(bay, Field::_queue, {a, gone, c, d});
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    // The destroyed member is told once, mid-walk.
+    const SubsystemRecord r = subsystems::next(s, w.m);
+    ASSERT_TRUE(is_event(r, SubsystemEvent::REPAIR_CANNOT));
+    EXPECT_EQ(r.code, bay);
+    EXPECT_EQ(r.sub, gone);
+    ASSERT_EQ(s.writes.size(), 1u);
+    EXPECT_EQ(s.writes[0].what, SubsystemWriteKind::REPAIR_NOTIFIED);
+    EXPECT_EQ(s.writes[0].index, 1);
+    EXPECT_EQ(s.writes[0].ref, gone);
+    EXPECT_EQ(w.m.get_ids(bay, Field::_cannot_complete_notified),
+              std::vector<int64_t>{gone});
+    EXPECT_EQ(cond(w, a), 100.0);               // nothing repaired yet
+    // raw = 60 * 0.5 * 0.5 = 15 over the two worked: 7.5 each, c's halved.
+    EXPECT_TRUE(is_articulation(subsystems::next(s, w.m)));
+    EXPECT_EQ(cond(w, a), 107.5);
+    EXPECT_EQ(cond(w, c), 203.75);
+    EXPECT_EQ(cond(w, d), 300.0);
+    EXPECT_EQ(cond(w, gone), 0.0);
+    // The condition writes are set_condition's (damage.h), in item order.
+    ASSERT_EQ(s.dmg.writes.size(), 2u);
+    EXPECT_EQ(s.dmg.writes[0].handle, a);
+    EXPECT_EQ(s.dmg.writes[1].handle, c);
+    EXPECT_TRUE(s.dmg.entries.empty());   // no threshold crossed, queued
+
+    // Told once: the next tick only repairs.
+    std::vector<SubsystemWrite> t;
+    const auto again = stage(w, ship, kHalf, &t);
+    ASSERT_EQ(again.size(), 1u);
+    EXPECT_TRUE(t.empty());
+    EXPECT_EQ(cond(w, a), 115.0);
+
+    // Brought back from destroyed (a script's SetCondition): it leaves the
+    // notified set the first time the walk works it.
+    w.m.set_f(gone, Field::_condition, 50.0);
+    w.m.set_ids(bay, Field::_queue, {gone});
+    std::vector<SubsystemWrite> u;
+    stage(w, ship, kHalf, &u);
+    ASSERT_EQ(u.size(), 1u);
+    EXPECT_EQ(u[0].what, SubsystemWriteKind::REPAIR_NOTIFIED);
+    EXPECT_EQ(u[0].index, 0);
+    EXPECT_EQ(u[0].ref, gone);
+    EXPECT_TRUE(w.m.get_ids(bay, Field::_cannot_complete_notified).empty());
+    EXPECT_EQ(cond(w, gone), 65.0);             // the whole 15 on one item
+
+    // Completion: clamped to max, then REPAIR_DONE (Python discards it and
+    // fires ET_REPAIR_COMPLETED); the threshold machine's OPERATIONAL is an
+    // effect-queue entry, as SetCondition's native chain queues it.
+    const int64_t e = w.item(499.0);
+    const int64_t f = w.item(990.0);
+    w.m.set_ids(bay, Field::_queue, {e, f});
+    w.m.set_f(bay, Field::_condition, 1000.0);  // raw 30: 15 each
+    w.m.set_f(w.m.get_ref(bay, Field::_property), Field::MaxRepairPoints,
+              60.0);
+    SubsystemSession v = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    const SubsystemRecord done = subsystems::next(v, w.m);
+    ASSERT_TRUE(is_event(done, SubsystemEvent::REPAIR_DONE));
+    EXPECT_EQ(done.code, bay);
+    EXPECT_EQ(done.sub, f);
+    EXPECT_EQ(done.a, 0.0);
+    EXPECT_EQ(cond(w, f), 1000.0);
+    EXPECT_EQ(cond(w, e), 514.0);
+    ASSERT_EQ(v.dmg.entries.size(), 1u);        // e: disabled -> operational
+    EXPECT_EQ(v.dmg.entries[0].kind, DamageKind::SUBSYS_EVENT);
+    EXPECT_TRUE(is_articulation(subsystems::next(v, w.m)));
+
+    // Complexity <= 0 is 1.0; a property not read through its data bag, or
+    // python_pieces, is Python's with nothing written; no teams or points
+    // is no work.
+    const int64_t g = w.item(100.0, 0.0);
+    w.m.set_ids(bay, Field::_queue, {g});
+    stage(w, ship, kHalf);
+    EXPECT_EQ(cond(w, g), 130.0);
+    const int64_t prop = w.m.get_ref(bay, Field::_property);
+    w.m.set_i(prop, Field::repair_props_ok, 0);
+    std::vector<SubsystemWrite> p;
+    auto py = stage(w, ship, kHalf, &p);
+    EXPECT_EQ(static_cast<SubsystemPiece>(py[0].kind), SubsystemPiece::REPAIR);
+    EXPECT_TRUE(p.empty());
+    EXPECT_EQ(cond(w, g), 130.0);
+    w.m.set_i(prop, Field::repair_props_ok, 1);
+    SubsystemSession hooked = subsystems::begin(
+        w.m, std::vector{ship}, kHalf, piece_bit(SubsystemPiece::REPAIR));
+    EXPECT_EQ(static_cast<SubsystemPiece>(subsystems::next(hooked, w.m).kind),
+              SubsystemPiece::REPAIR);
+    w.m.set_i(prop, Field::NumRepairTeams, 0);
+    EXPECT_TRUE(is_articulation(stage(w, ship, kHalf)[0]));
+    EXPECT_EQ(cond(w, g), 130.0);
+    w.m.set_ref(bay, Field::_property, -1);     // no property: no teams
+    EXPECT_TRUE(is_articulation(stage(w, ship, kHalf)[0]));
+}
+
+TEST(RepairStep, CannotCompleteYieldsMidWalkAndResumes) {
+    World w;
+    const int64_t ship = w.stage_ship();
+    const int64_t bay = w.bay(ship, w.repair_prop(60.0, 2));
+    const int64_t x = w.item(0.0);
+    const int64_t y = w.item(100.0);
+    const int64_t z = w.item(200.0);
+    w.m.set_ids(bay, Field::_queue, {x, y, z});
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    ASSERT_TRUE(is_event(subsystems::next(s, w.m),
+                         SubsystemEvent::REPAIR_CANNOT));
+    // The handler removed x from the queue: Python's list iterator goes on
+    // at index 1 of the list as it is NOW, so y is passed over this tick.
+    w.m.set_ids(bay, Field::_queue, {y, z});
+    EXPECT_TRUE(is_articulation(subsystems::next(s, w.m)));
+    EXPECT_EQ(cond(w, y), 100.0);
+    EXPECT_EQ(cond(w, z), 215.0);               // the whole 15
+
+    // A handler that puts a fresh item at the head: the walk re-reads the
+    // queue, meets x again at index 1 (told already: skipped, no event).
+    const int64_t x2 = w.item(0.0);
+    const int64_t head = w.item(300.0);
+    w.m.set_ids(bay, Field::_queue, {x2, x, y, z});
+    SubsystemSession t = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    const SubsystemRecord r = subsystems::next(t, w.m);
+    ASSERT_TRUE(is_event(r, SubsystemEvent::REPAIR_CANNOT));
+    EXPECT_EQ(r.sub, x2);
+    w.m.set_ids(bay, Field::_queue, {head, x2, x, y, z});
+    EXPECT_TRUE(is_articulation(subsystems::next(t, w.m)));
+    // index 1 on: x2 (told), x (told), y, z -- teams 2: y and z.
+    EXPECT_EQ(cond(w, head), 300.0);
+    EXPECT_EQ(cond(w, y), 107.5);
+    EXPECT_EQ(cond(w, z), 222.5);
+
+    // A handler that dropped the bay's row, or the member at the cursor's:
+    // the rest is Python's (REPAIR_TAIL a 0: the walk from the cursor).
+    const int64_t x3 = w.item(0.0);
+    w.m.set_ids(bay, Field::_queue, {x3, y, z});
+    SubsystemSession u = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    ASSERT_TRUE(is_event(subsystems::next(u, w.m),
+                         SubsystemEvent::REPAIR_CANNOT));
+    w.m.unregister_row(y);
+    const SubsystemRecord tail = subsystems::next(u, w.m);
+    ASSERT_TRUE(is_event(tail, SubsystemEvent::REPAIR_TAIL));
+    EXPECT_EQ(tail.code, bay);
+    EXPECT_EQ(tail.a, 0.0);
+    EXPECT_EQ(tail.b, kHalf);
+    EXPECT_EQ(u.repair_index, 1u);              // y's turn: Python's
+    EXPECT_EQ(u.repair_teams, 2);
+    EXPECT_EQ(u.repair_points, 60.0);
+    EXPECT_TRUE(u.repair_worked.empty());
+    EXPECT_TRUE(is_articulation(subsystems::next(u, w.m)));
+    EXPECT_EQ(cond(w, z), 222.5);               // untouched natively
+
+    const int64_t x4 = w.item(0.0);
+    w.m.set_ids(bay, Field::_queue, {z, x4});
+    SubsystemSession v = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    ASSERT_TRUE(is_event(subsystems::next(v, w.m),
+                         SubsystemEvent::REPAIR_CANNOT));
+    w.m.unregister_row(bay);
+    const SubsystemRecord tail2 = subsystems::next(v, w.m);
+    ASSERT_TRUE(is_event(tail2, SubsystemEvent::REPAIR_TAIL));
+    EXPECT_EQ(tail2.code, bay);
+    EXPECT_EQ(tail2.a, 0.0);
+    EXPECT_EQ(v.repair_worked, std::vector<int64_t>{z});
+    EXPECT_EQ(cond(w, z), 222.5);
+}
+
+TEST(RepairStep, AnUnanswerableRepairUndoesAndHandsTheItemsToPython) {
+    World w;
+    const int64_t ship = w.stage_ship();
+    const int64_t bay = w.bay(ship, w.repair_prop(60.0, 2));
+    const int64_t a = w.item(100.0);
+    const int64_t b = w.item(200.0);
+    // b holds a condition watcher the native chain cannot stand in for:
+    // its set_condition falls back, after a's was made.
+    w.m.set_i(b, Field::cond_watch_checks, -1);
+    w.m.set_ids(bay, Field::_queue, {a, b});
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    const SubsystemRecord r = subsystems::next(s, w.m);
+    ASSERT_TRUE(is_event(r, SubsystemEvent::REPAIR_TAIL));
+    EXPECT_EQ(r.code, bay);
+    EXPECT_EQ(r.a, 1.0);
+    EXPECT_EQ(s.repair_worked, (std::vector<int64_t>{a, b}));
+    // a's write undone: Python repairs both.
+    EXPECT_EQ(cond(w, a), 100.0);
+    EXPECT_EQ(cond(w, b), 200.0);
+    EXPECT_TRUE(s.dmg.writes.empty());
+    EXPECT_TRUE(s.dmg.entries.empty());
+    EXPECT_TRUE(is_articulation(subsystems::next(s, w.m)));
 }

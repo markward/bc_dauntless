@@ -230,6 +230,16 @@ constexpr FieldInfo kInfo[] = {
     {"MainConduitCapacity", Kind::Property, FieldType::F},
     {"BackupConduitCapacity", Kind::Property, FieldType::F},
     {"power_props_ok", Kind::Property, FieldType::I},
+    {"_repair_subsystem", Kind::Object, FieldType::Ref},
+    {"_transition_elapsed", Kind::Subsystem, FieldType::F},
+    {"_transition_duration", Kind::Subsystem, FieldType::F},
+    {"_repair_complexity", Kind::Subsystem, FieldType::F},
+    {"_queue", Kind::Subsystem, FieldType::Ids},
+    {"_cannot_complete_notified", Kind::Subsystem, FieldType::Ids},
+    {"is_repair_bay", Kind::Subsystem, FieldType::I},
+    {"MaxRepairPoints", Kind::Property, FieldType::F},
+    {"NumRepairTeams", Kind::Property, FieldType::I},
+    {"repair_props_ok", Kind::Property, FieldType::I},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -299,6 +309,8 @@ constexpr GlobalInfo kGlobals[] = {
     {"SHIELD_CHARGE_PERIOD_S", false, &Globals::SHIELD_CHARGE_PERIOD_S,
      nullptr},
     {"POWER_INTERVAL", false, &Globals::POWER_INTERVAL, nullptr},
+    {"MIN_RESERVE_TO_HOLD_CLOAK", false, &Globals::MIN_RESERVE_TO_HOLD_CLOAK,
+     nullptr},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));
@@ -333,6 +345,7 @@ Kind ref_target_kind(Field f) {
         case Field::_target_subsystem:
         case Field::_shield_subsystem:
         case Field::_power_subsystem:
+        case Field::_repair_subsystem:
         case Field::_impulse_engine_subsystem: return Kind::Subsystem;
         case Field::_parent_ship:
         case Field::_held_target:
@@ -444,6 +457,7 @@ int64_t* rptr(ObjectRow& r, Field f) {
         case Field::_impulse_engine_subsystem:
             return &r._impulse_engine_subsystem;
         case Field::_power_subsystem: return &r._power_subsystem;
+        case Field::_repair_subsystem: return &r._repair_subsystem;
         default: return nullptr;
     }
 }
@@ -529,6 +543,9 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_backup_reserve: return &r._backup_reserve;
         case Field::CLOAK_RESERVE_DRAIN_PER_SECOND:
             return &r.CLOAK_RESERVE_DRAIN_PER_SECOND;
+        case Field::_transition_elapsed: return &r._transition_elapsed;
+        case Field::_transition_duration: return &r._transition_duration;
+        case Field::_repair_complexity: return &r._repair_complexity;
         default: return nullptr;
     }
 }
@@ -578,6 +595,7 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::POWER_MODE: return &r.POWER_MODE;
         case Field::DRAWS_DIRECT_FROM_MAIN: return &r.DRAWS_DIRECT_FROM_MAIN;
         case Field::power_kind: return &r.power_kind;
+        case Field::is_repair_bay: return &r.is_repair_bay;
         default: return nullptr;
     }
 }
@@ -595,6 +613,9 @@ std::vector<int64_t>* idptr(SubsystemRow& r, Field f) {
     switch (f) {
         case Field::_known_objects: return &r._known_objects;
         case Field::_probe_ids: return &r._probe_ids;
+        case Field::_queue: return &r._queue;
+        case Field::_cannot_complete_notified:
+            return &r._cannot_complete_notified;
         case Field::_target_list: return &r._target_list;
         case Field::_children: return &r._children;
         case Field::_ammo_by_slot: return &r._ammo_by_slot;
@@ -639,6 +660,7 @@ double* fptr(PropertyRow& r, Field f) {
         case Field::BackupBatteryLimit: return &r.BackupBatteryLimit;
         case Field::MainConduitCapacity: return &r.MainConduitCapacity;
         case Field::BackupConduitCapacity: return &r.BackupConduitCapacity;
+        case Field::MaxRepairPoints: return &r.MaxRepairPoints;
         default: return nullptr;
     }
 }
@@ -648,6 +670,8 @@ int64_t* iptr(PropertyRow& r, Field f) {
         case Field::_groups: return &r._groups;
         case Field::slot0_launch_state: return &r.slot0_launch_state;
         case Field::power_props_ok: return &r.power_props_ok;
+        case Field::NumRepairTeams: return &r.NumRepairTeams;
+        case Field::repair_props_ok: return &r.repair_props_ok;
         default: return nullptr;
     }
 }
@@ -953,7 +977,8 @@ void Mirror::set_ids(int64_t h, Field f, const std::vector<int64_t>& ids) {
     };
     if (f == Field::ships || f == Field::nebulae || f == Field::_target_list) {
         entries_are(Kind::Object);
-    } else if (f == Field::_children || f == Field::_powered_consumers) {
+    } else if (f == Field::_children || f == Field::_powered_consumers ||
+               f == Field::_queue) {
         entries_are(Kind::Subsystem);
     } else if (f == Field::_ammo_by_slot) {
         // [slot, Ammo handle] pairs, in dict order; -1 is a slot holding
@@ -963,6 +988,10 @@ void Mirror::set_ids(int64_t h, Field f, const std::vector<int64_t>& ids) {
             if (v[i] != kRefUnrepresentable && v[i] != -1 &&
                 (v[i] < 0 || static_cast<Kind>((v[i] >> 60) & 7) != Kind::Ammo))
                 bad("list entry is not an Ammo handle", f);
+    } else if (f == Field::_cannot_complete_notified) {
+        entries_are(Kind::Subsystem);
+        std::sort(v.begin(), v.end());
+        v.erase(std::unique(v.begin(), v.end()), v.end());
     } else if (f == Field::_known_objects) {
         std::sort(v.begin(), v.end());
         v.erase(std::unique(v.begin(), v.end()), v.end());

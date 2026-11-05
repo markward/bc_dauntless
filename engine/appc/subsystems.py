@@ -380,6 +380,9 @@ class ShipSubsystem(TGEventHandlerObject):
     _in_repair_queue = NativeField(bool)
     _threshold_state = NativeField(int)
     _invincible = NativeField(bool)
+    # GetRepairComplexity, which the native repair piece reads per worked
+    # item (subsystem_step.h THE REPAIR PIECE).
+    _repair_complexity = NativeField(float)
     _critical = NativeField(bool)
     _combined_watcher = native_combat.CondWatcherField(
         _effect_queue.WATCH_COMBINED)
@@ -2990,21 +2993,39 @@ class _RepairQueue(list):
     ``_in_repair_queue`` true exactly while it is a member (ruling I3), on
     every mutation -- the bay's own (add, completion, the priority toggle)
     and a caller's (``repair_ship_fully``'s ``clear``, a test's). A plain
-    list member that is not a subsystem is carried unmarked."""
+    list member that is not a subsystem is carried unmarked.
+
+    Its owning bay (``_owner``, set by RepairSubsystem) mirrors the queue's
+    order and membership (the native repair piece walks it,
+    subsystem_step.h THE REPAIR PIECE): every mutation below pushes the
+    bay's ``_queue`` again. A queue rebound with some other list is pushed
+    by the bay's descriptor, but its own in-place edits are not."""
+
+    def __init__(self, owner=None):
+        super().__init__()
+        self._owner = owner
+
+    def _pushed(self) -> None:
+        owner = self.__dict__.get("_owner")
+        if owner is not None:
+            native_combat.push_field(owner, "_queue")
 
     def append(self, sub):
         list.append(self, sub)
         _mark_queued(sub, True)
+        self._pushed()
 
     def insert(self, index, sub):
         list.insert(self, index, sub)
         _mark_queued(sub, True)
+        self._pushed()
 
     def extend(self, subs):
         subs = list(subs)
         list.extend(self, subs)
         for sub in subs:
             _mark_queued(sub, True)
+        self._pushed()
 
     def __iadd__(self, subs):
         self.extend(subs)
@@ -3014,20 +3035,24 @@ class _RepairQueue(list):
         gone = list(self)
         list.clear(self)
         self._unmark(gone)
+        self._pushed()
 
     def pop(self, index=-1):
         sub = list.pop(self, index)
         self._unmark((sub,))
+        self._pushed()
         return sub
 
     def remove(self, sub):
         list.remove(self, sub)
         self._unmark((sub,))
+        self._pushed()
 
     def __delitem__(self, index):
         gone = self[index] if isinstance(index, slice) else (self[index],)
         list.__delitem__(self, index)
         self._unmark(gone)
+        self._pushed()
 
     def __setitem__(self, index, value):
         if isinstance(index, slice):
@@ -3039,6 +3064,7 @@ class _RepairQueue(list):
         self._unmark(gone)
         for sub in new:
             _mark_queued(sub, True)
+        self._pushed()
 
     def discard(self, sub):
         """Remove `sub` by identity, if queued."""
@@ -3058,6 +3084,15 @@ def _mark_queued(sub, queued: bool) -> None:
         sub._in_repair_queue = queued
 
 
+def _notify_key(sub):
+    """A queued subsystem's key in its bay's ``_cannot_complete_notified``:
+    its mirror handle (``_nslot``), which the native repair piece keys the
+    set by too (subsystem_step.h THE REPAIR PIECE), else -- an object the
+    mirror has no row for -- its id()."""
+    h = sub.__dict__.get("_nslot") if hasattr(sub, "__dict__") else None
+    return h if type(h) is int else id(sub)
+
+
 class RepairSubsystem(PoweredSubsystem):
     """Engineering / damage-control subsystem — the per-ship repair queue.
 
@@ -3070,6 +3105,13 @@ class RepairSubsystem(PoweredSubsystem):
     "being repaired".
     """
 
+    # Mirrored for the native repair piece (subsystem_step.h THE REPAIR
+    # PIECE): the queue's order and membership (pushed by _RepairQueue on
+    # every change) and the notified set (pushed by _repair_walk on every
+    # change; the native piece writes it back through its C applier).
+    _queue = native_combat.NativeRefList("Subsystem")
+    _cannot_complete_notified = native_combat.NotifiedSetField()
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         # RE layout: +0x9C (isOn) inits to 1 — the bay ticks and draws
@@ -3078,9 +3120,10 @@ class RepairSubsystem(PoweredSubsystem):
         # Ordered repair queue (head = active). A list of subsystem refs that
         # keeps each member's _in_repair_queue (_RepairQueue); identity
         # comparisons throughout (TGObject __eq__ is not trusted).
-        self._queue: list = _RepairQueue()
-        # id(sub) values already notified ET_REPAIR_CANNOT_BE_COMPLETED
-        # (destroyed-while-queued fires once, not per tick).
+        self._queue: list = _RepairQueue(self)
+        # _notify_key(sub) of each member already notified
+        # ET_REPAIR_CANNOT_BE_COMPLETED (destroyed-while-queued fires once,
+        # not per tick): its mirror handle.
         self._cannot_complete_notified: set = set()
         # ET_REPAIR_INCREASE_PRIORITY posted with destination=this bay
         # (EngRepairPane click) routes to the toggle via the instance-
@@ -3170,20 +3213,43 @@ class RepairSubsystem(PoweredSubsystem):
         points = self.GetMaxRepairPoints()
         if teams <= 0 or points <= 0.0:
             return
-        worked = []
-        for sub in self._queue:
+        self._repair_walk(dt, teams, points, 0, [])
+
+    def _repair_walk(self, dt, teams, points, start, worked) -> None:
+        """Update from the walk over the queue on, at queue index `start`
+        with `worked` the items chosen before it (Update: 0, []; the native
+        repair piece's REPAIR_TAIL hands its own over). The index loop is
+        ``for sub in self._queue``'s list iterator: the next index of the
+        list as it is NOW, so a handler of the event below that edits the
+        queue moves the walk exactly as it moved the iterator. The native
+        piece (subsystem_step.h THE REPAIR PIECE) stands in for this and
+        _repair_worked, bit for bit: change both."""
+        queue = self._queue
+        i = start
+        while i < len(queue):
+            sub = queue[i]
+            i += 1
             if len(worked) >= teams:
                 break
+            key = _notify_key(sub)
             if sub.GetCondition() <= 0.0:
-                if id(sub) not in self._cannot_complete_notified:
-                    self._cannot_complete_notified.add(id(sub))
+                if key not in self._cannot_complete_notified:
+                    self._cannot_complete_notified.add(key)
+                    native_combat.push_field(self, "_cannot_complete_notified")
                     self._fire_repair_event(
                         "ET_REPAIR_CANNOT_BE_COMPLETED", sub)
                 continue
-            self._cannot_complete_notified.discard(id(sub))
+            if key in self._cannot_complete_notified:
+                self._cannot_complete_notified.discard(key)
+                native_combat.push_field(self, "_cannot_complete_notified")
             worked.append(sub)
         if not worked:
             return
+        self._repair_worked(dt, points, worked)
+
+    def _repair_worked(self, dt, points, worked) -> None:
+        """Update after the walk: each worked item's gain, then the
+        completions (the native piece's REPAIR_TAIL a 1 runs it)."""
         raw = points * self.GetConditionPercentage() * float(dt)
         per_item = raw / len(worked)
         completed = []
@@ -3284,6 +3350,10 @@ class CloakingSubsystem(PoweredSubsystem):
 
     # Mirrored into the native combat row on every write (native_combat).
     _cloak_state = NativeField(int)
+    # The native cloak piece's transition clock (subsystem_step.h THE CLOAK
+    # PIECE), written back through its C applier.
+    _transition_elapsed = NativeField(float)
+    _transition_duration = NativeField(float)
 
     # Cloak runs off the backup grid only — it is locked off the main conduit
     # so cloaking never starves the ship's other systems of main-battery power
@@ -3475,7 +3545,9 @@ class CloakingSubsystem(PoweredSubsystem):
     # ── Per-tick transition advance (game-loop subsystem update pass) ────────
 
     def Update(self, dt: float) -> None:
-        """Advance an in-progress cloak/decloak transition.
+        """Advance an in-progress cloak/decloak transition. The native cloak
+        piece stands in for it (native/src/combat/include/dauntless/combat/
+        subsystem_step.h THE CLOAK PIECE), bit for bit: change both.
 
         A disabled / destroyed device cannot complete or hold a cloak: when
         offline it is forced back toward DECLOAKED (a pending CLOAKING is

@@ -5,6 +5,7 @@
 
 #include "dauntless/combat/subsystem_step.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <stdexcept>
@@ -43,6 +44,11 @@ const char* subsystem_event_name(SubsystemEvent e) {
         case SubsystemEvent::BREACH: return "BREACH";
         case SubsystemEvent::BATTERY_WATCHER: return "BATTERY_WATCHER";
         case SubsystemEvent::POWER_TAIL: return "POWER_TAIL";
+        case SubsystemEvent::FORCE_DECLOAK: return "FORCE_DECLOAK";
+        case SubsystemEvent::CLOAK_DONE: return "CLOAK_DONE";
+        case SubsystemEvent::REPAIR_CANNOT: return "REPAIR_CANNOT";
+        case SubsystemEvent::REPAIR_DONE: return "REPAIR_DONE";
+        case SubsystemEvent::REPAIR_TAIL: return "REPAIR_TAIL";
         case SubsystemEvent::kCount: break;
     }
     return "?";
@@ -482,6 +488,9 @@ bool battery_watcher(SubsystemSession& s, Mirror& m, size_t i, int64_t ph,
                      size_t w, double v, SubsystemRecord& out) {
     const SubsystemRow& p = *m.subsystem(ph);
     size_t at[kBatteryWatchers];
+    // Its result is safe to ignore: every caller checked battery_watch_ready
+    // (which runs this same check_offsets) earlier in the same next(), with
+    // no Python in between, so the checks list cannot have changed.
     check_offsets(p.power_watch_checks, kBatteryWatchers, at);
     if (any_check_crossed(p.power_watch_checks, at[w],
                           p.power_watch_values[w], v)) {
@@ -641,6 +650,244 @@ bool power_piece(SubsystemSession& s, Mirror& m, size_t i,
     return power_flow(s, m, i, out);
 }
 
+// ── The cloak piece (subsystem_step.h THE CLOAK PIECE) ───────────────────
+
+constexpr int64_t kDecloaked = 0, kCloaking = 1, kCloaked = 2,
+                  kDecloaking = 3;   // CloakingSubsystem.CLOAK_*
+
+// THE CLOAK PIECE for ship i. Returns true with `out` set when it stops for
+// a record (RUN_PYTHON, or its last line's EVENT); false when it is over.
+bool cloak_piece(SubsystemSession& s, Mirror& m, size_t i,
+                 SubsystemRecord& out) {
+    if (!s.had_row[i] || s.lost_row[i] ||
+        (s.python_pieces & piece_bit(SubsystemPiece::CLOAK))) {
+        out = python_piece(s, i, SubsystemPiece::CLOAK);
+        return true;
+    }
+    const int64_t ch = m.object(s.ships[i])->_cloaking_subsystem;
+    if (ch == -1) return false;     // GetCloakingSubsystem() is None
+    const SubsystemRow* row =
+        ch == kRefUnrepresentable ? nullptr : m.subsystem(ch);
+    if (row == nullptr || row->power_kind != kConsumerCloak) {
+        out = python_piece(s, i, SubsystemPiece::CLOAK);
+        return true;
+    }
+    const int64_t state = row->_cloak_state;
+    const bool trying = state == kCloaking || state == kCloaked;
+    // offline = IsDisabled() or IsDestroyed(): _force_decloak, a no-op
+    // unless trying to cloak.
+    if (subsystem_is_disabled(*row) || subsystem_is_destroyed(*row)) {
+        if (!trying) return false;
+        out = event(s, i, SubsystemEvent::FORCE_DECLOAK, ch, 0, 0.0);
+        return true;
+    }
+    if (trying && row->CLOAK_RESERVE_DRAIN_PER_SECOND > 0.0 &&
+        row->_backup_reserve <= m.globals().MIN_RESERVE_TO_HOLD_CLOAK) {
+        out = event(s, i, SubsystemEvent::FORCE_DECLOAK, ch, 0, 0.0);
+        return true;
+    }
+    if (state != kCloaking && state != kDecloaking) return false;
+    // self._transition_elapsed += float(dt)
+    const double elapsed = row->_transition_elapsed + s.dt;
+    m.set_f(ch, Field::_transition_elapsed, elapsed);
+    log(s, ch, SubsystemWriteKind::TRANSITION_ELAPSED, 0, elapsed);
+    if (elapsed < row->_transition_duration) return false;
+    const int64_t done = state == kCloaking ? kCloaked : kDecloaked;
+    m.set_i(ch, Field::_cloak_state, done);
+    log(s, ch, SubsystemWriteKind::CLOAK_STATE, 0, static_cast<double>(done));
+    m.set_f(ch, Field::_transition_elapsed, 0.0);
+    log(s, ch, SubsystemWriteKind::TRANSITION_ELAPSED, 0, 0.0);
+    out = event(s, i, SubsystemEvent::CLOAK_DONE, ch,
+                done == kCloaked ? 1 : 0, 0.0);
+    return true;
+}
+
+// ── The repair piece (subsystem_step.h THE REPAIR PIECE) ─────────────────
+
+bool notified(const SubsystemRow& bay, int64_t h) {
+    const std::vector<int64_t>& n = bay._cannot_complete_notified;
+    return std::binary_search(n.begin(), n.end(), h);
+}
+
+// `h` into (add) or out of the bay's notified set: the mirror (set_ids
+// keeps it sorted and unique) and the log.
+void set_notified(SubsystemSession& s, Mirror& m, int64_t bay, int64_t h,
+                  bool add) {
+    std::vector<int64_t> n = m.subsystem(bay)->_cannot_complete_notified;
+    if (add) {
+        n.push_back(h);
+    } else {
+        n.erase(std::remove(n.begin(), n.end(), h), n.end());
+    }
+    m.set_ids(bay, Field::_cannot_complete_notified, n);
+    SubsystemWrite w{bay, SubsystemWriteKind::REPAIR_NOTIFIED, add ? 1 : 0,
+                     0.0, h};
+    s.writes.push_back(w);
+}
+
+// The rest of the piece in Python (EVENT{REPAIR_TAIL}): `what` 0 the walk
+// from the cursor, 1 the worked items' repair. The piece is over after it.
+SubsystemRecord repair_tail(SubsystemSession& s, size_t i, int what) {
+    s.repair_phase = 3;
+    return event(s, i, SubsystemEvent::REPAIR_TAIL, -1, s.repair,
+                 static_cast<double>(what), s.dt);
+}
+
+// The completions from s.repair_done on, one EVENT each.
+bool repair_completions(SubsystemSession& s, size_t i, SubsystemRecord& out) {
+    if (s.repair_done >= s.repair_completed.size()) {
+        s.repair_phase = 3;
+        return false;
+    }
+    const size_t k = s.repair_done++;
+    out = event(s, i, SubsystemEvent::REPAIR_DONE, s.repair_completed[k],
+                s.repair, static_cast<double>(k));
+    s.repair_phase = 2;
+    return true;
+}
+
+// Update after the walk (_repair_worked): the gains, then the completions.
+bool repair_worked(SubsystemSession& s, Mirror& m, size_t i,
+                   SubsystemRecord& out) {
+    const SubsystemRow* bay = m.subsystem(s.repair);
+    if (bay == nullptr ||
+        (s.python_pieces & piece_bit(SubsystemPiece::REPAIR))) {
+        out = repair_tail(s, i, 1);
+        return true;
+    }
+    double pct;
+    try {
+        pct = condition_percentage(m, *bay);
+    } catch (const std::invalid_argument&) {
+        out = repair_tail(s, i, 1);
+        return true;
+    }
+    // raw = points * self.GetConditionPercentage() * float(dt)
+    const double raw = s.repair_points * pct * s.dt;
+    const double per_item = raw / static_cast<double>(s.repair_worked.size());
+    const size_t writes0 = s.dmg.writes.size(),
+                 entries0 = s.dmg.entries.size(), undo0 = s.dmg.undo.size();
+    s.repair_completed.clear();
+    try {
+        for (int64_t h : s.repair_worked) {
+            const SubsystemRow* it = m.subsystem(h);
+            if (it == nullptr)
+                throw std::invalid_argument("a worked item's row is gone");
+            double complexity = it->_repair_complexity;
+            if (complexity <= 0.0) complexity = 1.0;
+            // sub.Repair(per_item / complexity): ShipSubsystem.Repair.
+            const double points = per_item / complexity;
+            if (!(points <= 0.0)) {
+                const double mx = subsystem_max_condition(m, *it);
+                set_condition(m, h, py_min(mx, it->_condition + points), -1,
+                              -1, s.dmg);
+            }
+            it = m.subsystem(h);
+            if (it->_condition >= subsystem_max_condition(m, *it))
+                s.repair_completed.push_back(h);
+        }
+    } catch (const std::invalid_argument&) {
+        // Every item's write undone: Python repairs them all.
+        undo_damage(m, s.dmg.undo, undo0);
+        s.dmg.undo.resize(undo0);
+        s.dmg.writes.resize(writes0);
+        s.dmg.entries.resize(entries0);
+        s.repair_completed.clear();
+        out = repair_tail(s, i, 1);
+        return true;
+    }
+    s.repair_done = 0;
+    return repair_completions(s, i, out);
+}
+
+// THE WALK from s.repair_index on.
+bool repair_walk(SubsystemSession& s, Mirror& m, size_t i,
+                 SubsystemRecord& out) {
+    const int64_t bh = s.repair;
+    for (;;) {
+        const SubsystemRow* bay = m.subsystem(bh);
+        if (bay == nullptr ||
+            (s.python_pieces & piece_bit(SubsystemPiece::REPAIR))) {
+            out = repair_tail(s, i, 0);
+            return true;
+        }
+        // `for sub in self._queue`: the list as it is now, at the index the
+        // iterator holds.
+        if (s.repair_index >= bay->_queue.size()) break;
+        if (static_cast<int64_t>(s.repair_worked.size()) >= s.repair_teams)
+            break;
+        const int64_t h = bay->_queue[s.repair_index];
+        const SubsystemRow* it =
+            h < 0 ? nullptr : m.subsystem(h);
+        if (it == nullptr) {     // the member at the cursor: Python's
+            out = repair_tail(s, i, 0);
+            return true;
+        }
+        ++s.repair_index;
+        if (it->_condition <= 0.0) {
+            if (!notified(*bay, h)) {
+                set_notified(s, m, bh, h, true);
+                s.repair_phase = 1;
+                out = event(s, i, SubsystemEvent::REPAIR_CANNOT, h, bh, 0.0);
+                return true;
+            }
+            continue;
+        }
+        if (notified(*bay, h)) set_notified(s, m, bh, h, false);
+        s.repair_worked.push_back(h);
+    }
+    if (s.repair_worked.empty()) {
+        s.repair_phase = 3;
+        return false;
+    }
+    return repair_worked(s, m, i, out);
+}
+
+// THE REPAIR PIECE for ship i (as shield_piece).
+bool repair_piece(SubsystemSession& s, Mirror& m, size_t i,
+                  SubsystemRecord& out) {
+    if (s.repair_phase == 1) return repair_walk(s, m, i, out);
+    if (s.repair_phase == 2) return repair_completions(s, i, out);
+    if (s.repair_phase == 3) return false;
+    if (!s.had_row[i] || s.lost_row[i] ||
+        (s.python_pieces & piece_bit(SubsystemPiece::REPAIR))) {
+        out = python_piece(s, i, SubsystemPiece::REPAIR);
+        return true;
+    }
+    const int64_t bh = m.object(s.ships[i])->_repair_subsystem;
+    if (bh == -1) return false;     // GetRepairSubsystem() is None
+    const SubsystemRow* bay =
+        bh == kRefUnrepresentable ? nullptr : m.subsystem(bh);
+    if (bay == nullptr || bay->is_repair_bay != 1) {
+        out = python_piece(s, i, SubsystemPiece::REPAIR);
+        return true;
+    }
+    // `if dt is None or dt <= 0.0 or not self._queue: return`
+    if (s.dt <= 0.0 || bay->_queue.empty()) return false;
+    if (bay->_condition <= 0.0) return false;
+    // GetNumRepairTeams() / GetMaxRepairPoints(): 0 / 0.0 with no property.
+    if (bay->_property == -1) return false;
+    const PropertyRow* prop = bay->_property == kRefUnrepresentable
+                                  ? nullptr
+                                  : m.property(bay->_property);
+    if (prop == nullptr || prop->repair_props_ok != 1) {
+        out = python_piece(s, i, SubsystemPiece::REPAIR);
+        return true;
+    }
+    const int64_t teams = prop->NumRepairTeams;
+    const double points = prop->MaxRepairPoints;
+    if (teams <= 0 || points <= 0.0) return false;
+    s.repair = bh;
+    s.repair_teams = teams;
+    s.repair_points = points;
+    s.repair_index = 0;
+    s.repair_worked.clear();
+    s.repair_completed.clear();
+    s.repair_done = 0;
+    s.repair_phase = 1;
+    return repair_walk(s, m, i, out);
+}
+
 void end_piece(SubsystemSession& s) {
     ++s.piece;
     s.shield_phase = 0;
@@ -649,6 +896,10 @@ void end_piece(SubsystemSession& s) {
     s.power_phase = 0;
     s.power = -1;
     s.power_backup_cap = 0.0;
+    // repair_worked / repair_completed are kept: REPAIR_TAIL's and
+    // REPAIR_DONE's handlers read them (combat_subsys_repair_state) after
+    // the record that ended the piece.
+    s.repair_phase = 0;
 }
 
 }  // namespace
@@ -671,6 +922,7 @@ SubsystemRecord next(SubsystemSession& s, Mirror& m) {
         throw std::logic_error(
             "subsystem stage: next() after the session returned DONE");
     s.writes.clear();
+    s.dmg.clear();
     while (s.ship_pos < s.ships.size()) {
         const size_t i = s.ship_pos;
         const int64_t h = s.ships[i];
@@ -703,8 +955,26 @@ SubsystemRecord next(SubsystemSession& s, Mirror& m) {
             if (stopped) return r;
             continue;
         }
-        // The other pieces are Python's (Tasks 5-6 make them native); a
-        // ship with no row, or one that lost it, stays Python's.
+        if (s.piece == static_cast<int32_t>(SubsystemPiece::CLOAK)) {
+            SubsystemRecord r;
+            // Every record of the cloak piece is its last line.
+            const bool stopped = cloak_piece(s, m, i, r);
+            end_piece(s);
+            if (stopped) return r;
+            continue;
+        }
+        if (s.piece == static_cast<int32_t>(SubsystemPiece::REPAIR)) {
+            SubsystemRecord r;
+            const bool stopped = repair_piece(s, m, i, r);
+            // As the shield's: an EVENT stops inside the piece (phase 3 once
+            // its last line ran); a RUN_PYTHON is the whole piece.
+            if (!stopped || r.type == SubsystemRecordType::RUN_PYTHON)
+                end_piece(s);
+            if (stopped) return r;
+            continue;
+        }
+        // ARTICULATION is Python's (Task 6 makes it native for rigless
+        // ships).
         SubsystemRecord r;
         r.type = SubsystemRecordType::RUN_PYTHON;
         r.ship_pos = static_cast<int64_t>(i);

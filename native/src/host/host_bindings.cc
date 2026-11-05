@@ -13872,7 +13872,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "python_pieces: a mask (1 << piece) Python runs for every "
               "ship (a test-facing hook).");
         m.def("combat_subsys_next",
-              [](cb::SubsystemSession& s, py::object registry) {
+              [](cb::SubsystemSession& s, py::object registry,
+                 py::object dmg_ctx) {
                   const cb::SubsystemRecord r =
                       cb::subsystems::next(s, cb::mirror());
                   // THE WRITE LOG: into the Python objects before Python
@@ -13881,14 +13882,51 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                                                s.writes))
                       throw py::error_already_set();
                   s.writes.clear();
+                  // The repair piece's condition writes (damage.h
+                  // set_condition, killer None): applied and their entries
+                  // queued as combat_dmg_set_condition applies its own,
+                  // under native_combat's damage applier context.
+                  if (!s.dmg.writes.empty() || !s.dmg.entries.empty()) {
+                      PyObject* ctx = dmg_ctx.ptr();
+                      if (!dmg_fast_ctx_ok(ctx)) {
+                          s.dmg.clear();
+                          throw std::runtime_error(
+                              "subsystem stage: the damage applier context "
+                              "is not usable (in use, or malformed)");
+                      }
+                      PyObject* done = dmg_fast_run(ctx, [&] {
+                          if (!s.dmg.writes.empty() &&
+                              !dauntless::host::write_applier().apply(
+                                  s.dmg.writes, 0, s.dmg.writes.size()))
+                              throw py::error_already_set();
+                          damage_append_entries(s.dmg.entries, nullptr);
+                          return true;
+                      });
+                      s.dmg.clear();
+                      if (done == nullptr) throw py::error_already_set();
+                      Py_DECREF(done);
+                  }
                   return py::make_tuple(static_cast<int>(r.type), r.ship_pos,
                                         r.ship, r.kind, r.code, r.a, r.b,
                                         r.sub);
               },
-              py::arg("session"), py::arg("registry"),
+              py::arg("session"), py::arg("registry"), py::arg("dmg_ctx"),
               "The session's next record (see combat_subsys_kinds), its "
               "write log applied first through `registry` "
-              "(native_combat._registry).");
+              "(native_combat._registry), then the repair piece's condition "
+              "writes and effect-queue entries under `dmg_ctx` "
+              "(native_combat._dmg_context()).");
+        m.def("combat_subsys_repair_state",
+              [](const cb::SubsystemSession& s) {
+                  return py::make_tuple(s.repair_teams, s.repair_points,
+                                        s.repair_index, s.repair_worked,
+                                        s.repair_completed);
+              },
+              py::arg("session"),
+              "The repair piece's locals (subsystem_step.h THE REPAIR "
+              "PIECE): (teams, points, queue index, worked item handles, "
+              "completed item handles), for REPAIR_TAIL's and "
+              "REPAIR_DONE's handlers.");
         // ── The tractor force (tractor_force.h) ──────────────────────────
         // One step over Object handles (host order, -1 for a ship with no
         // row), writing the transform store. Returns (zero_velocity,

@@ -44,6 +44,9 @@ constexpr const char* kAttr[] = {
     "_breach_fired",          // BREACH_FIRED
     "_main_battery_watcher",  // BATTERY_WATCH
     "_passive_power",         // PASSIVE_POWER_DROP
+    "_transition_elapsed",    // TRANSITION_ELAPSED
+    "_cloak_state",           // CLOAK_STATE
+    "_cannot_complete_notified",  // REPAIR_NOTIFIED
 };
 static_assert(sizeof(kAttr) / sizeof(kAttr[0]) ==
               static_cast<size_t>(cb::SubsystemWriteKind::kCount));
@@ -137,6 +140,34 @@ bool store(const Names* n, PyObject* d, const cb::SubsystemWrite& w) {
     }
     if (w.what == K::BREACH_FIRED)
         return PyObject_SetItem(d, name, Py_True) == 0;
+    if (w.what == K::CLOAK_STATE) {
+        PyObject* v = PyLong_FromLongLong(static_cast<long long>(w.value));
+        if (v == nullptr) return false;
+        const bool ok = PyObject_SetItem(d, name, v) == 0;
+        Py_DECREF(v);
+        return ok;
+    }
+    if (w.what == K::REPAIR_NOTIFIED) {
+        // The bay's set, in place: add (index 1) or discard (0) the
+        // member's handle, as _repair_walk's statements do.
+        PyObject* set = PyObject_GetItem(d, name);
+        if (set == nullptr) return false;
+        if (!PySet_Check(set)) {
+            Py_DECREF(set);
+            PyErr_SetString(PyExc_TypeError,
+                            "subsystem stage: _cannot_complete_notified is "
+                            "not a set");
+            return false;
+        }
+        PyObject* key = PyLong_FromLongLong(w.ref);
+        bool ok = key != nullptr;
+        if (ok)
+            ok = (w.index == 1 ? PySet_Add(set, key)
+                               : PySet_Discard(set, key)) >= 0;
+        Py_XDECREF(key);
+        Py_DECREF(set);
+        return ok;
+    }
     PyObject* v = PyFloat_FromDouble(w.value);
     if (v == nullptr) return false;
     bool ok;
