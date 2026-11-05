@@ -553,3 +553,228 @@ def test_audit_mirror_compares_slots_and_mount_order(scene):
     failures = nc.audit_failures()
     assert (type(sub).__name__, "part_slot") in failures
     assert ("ShipClass", "mount_order") in failures
+
+
+# ── The pending set (phase 6 A3): resolve_stale_part_slots is O(1) when no
+# ship is stale. Every way a ship's slots go stale lands it in the pending
+# state (nc._part_pending, or every leafed handle while the generation moved
+# since the last sweep); a sweep is today's full scan of `ships`, then a
+# prune by state. One test per way.
+
+class _CountingShips(list):
+    iterations = 0
+
+    def __iter__(self):
+        type(self).iterations += 1
+        return super().__iter__()
+
+
+@pytest.fixture
+def resolved(monkeypatch, scene):
+    """The ships resolve_part_slots is called for, in order, that it can
+    resolve (a known leaf: for one without, the call is a no-op). The
+    scene's Galaxy has its leaf learned too."""
+    assert articulation.leaf_for(scene[1]) == "galaxy"
+    calls = []
+    real = nc.resolve_part_slots
+
+    def spy(ship, drop=True):
+        if nc._leaf_known(ship) is not None:
+            calls.append(ship)
+        return real(ship, drop)
+    monkeypatch.setattr(nc, "resolve_part_slots", spy)
+    return calls
+
+
+def _settle(*ships):
+    """Resolve everything stale (two passes: a resolution may bump)."""
+    nc.resolve_stale_part_slots(list(ships))
+    nc.resolve_stale_part_slots(list(ships))
+
+
+def test_nothing_stale_scans_no_ship(scene, resolved):
+    bop, galaxy = scene
+    _settle(bop, galaxy)
+    ships = _CountingShips([bop, galaxy])
+    _CountingShips.iterations = 0
+    for _ in range(4):
+        nc.resolve_stale_part_slots(ships)
+    assert _CountingShips.iterations == 0
+
+
+def test_a_generation_bump_resolves_every_ship_once(scene, resolved):
+    bop, galaxy = scene
+    _settle(bop, galaxy)
+    resolved.clear()
+    nc.bump_part_gen()
+    nc.resolve_stale_part_slots([bop, galaxy])
+    nc.resolve_stale_part_slots([bop, galaxy])
+    assert resolved == [bop, galaxy]
+
+
+def test_a_ship_left_out_of_a_sweep_stays_pending(scene, resolved):
+    bop, galaxy = scene
+    _settle(bop, galaxy)
+    resolved.clear()
+    nc.bump_part_gen()
+    nc.resolve_stale_part_slots([galaxy])
+    nc.resolve_stale_part_slots([galaxy])
+    nc.resolve_stale_part_slots([bop])
+    assert resolved == [galaxy, bop]
+
+
+def test_a_bump_during_a_sweep_leaves_the_earlier_ships_pending(
+        scene, resolved, monkeypatch):
+    bop, galaxy = scene
+    _settle(bop, galaxy)
+    resolved.clear()
+    real = nc.resolve_part_slots       # the spy
+    bumped = []
+
+    def bump_on_galaxy(ship, drop=True):
+        real(ship, drop)        # the spy, recording
+        if ship is galaxy and not bumped:
+            bumped.append(1)
+            nc.bump_part_gen()
+    monkeypatch.setattr(nc, "resolve_part_slots", bump_on_galaxy)
+    nc.bump_part_gen()
+    nc.resolve_stale_part_slots([bop, galaxy])   # bop fresh, then a bump
+    nc.resolve_stale_part_slots([bop, galaxy])   # both again
+    nc.resolve_stale_part_slots([bop, galaxy])   # nothing
+    assert resolved == [bop, galaxy, bop, galaxy]
+
+
+def test_a_leaf_learned_after_register_is_resolved(scene, resolved):
+    bop, galaxy = scene
+    _settle(bop, galaxy)
+    late = _ship("BoP2", "birdofprey", "ships.BirdOfPrey",
+                 at=(0.0, -300.0, 0.0))
+    assert late.__dict__.get("_articulation_leaf") is None
+    _settle(bop, galaxy, late)          # no leaf: nothing to resolve yet
+    resolved.clear()
+    assert articulation.leaf_for(late) == LEAF
+    nc.resolve_stale_part_slots([bop, galaxy, late])
+    nc.resolve_stale_part_slots([bop, galaxy, late])
+    assert resolved == [late]
+    assert nc._resolved_gen[late.__dict__["_nslot"]] == nc.part_gen()
+
+
+def test_a_leaf_assigned_directly_is_resolved(scene, resolved):
+    bop, galaxy = scene
+    _settle(bop, galaxy)
+    late = _ship("BoP3", "birdofprey", "ships.BirdOfPrey",
+                 at=(0.0, -300.0, 0.0))
+    _settle(bop, galaxy, late)
+    resolved.clear()
+    late._articulation_leaf = LEAF
+    nc.resolve_stale_part_slots([bop, galaxy, late])
+    assert resolved == [late]
+
+
+def test_a_leaf_on_a_class_without_the_descriptor_is_polled(
+        scene, resolved):
+    """A class shadowing the leaf descriptor (a test double's class
+    attribute): its instance write is not seen, so its row is polled."""
+    from engine.appc.ships import ShipClass
+
+    class Shadowed(ShipClass):
+        _articulation_leaf = None
+
+    bop, galaxy = scene
+    _settle(bop, galaxy)
+    odd = Shadowed()
+    odd.SetName("Odd")
+    _settle(bop, galaxy, odd)
+    resolved.clear()
+    odd._articulation_leaf = "galaxy"
+    assert odd.__dict__["_articulation_leaf"] == "galaxy"
+    nc.resolve_stale_part_slots([bop, galaxy, odd])
+    nc.resolve_stale_part_slots([bop, galaxy, odd])
+    assert resolved == [odd]
+
+
+def test_a_re_registered_ship_is_resolved(scene, resolved):
+    bop, galaxy = scene
+    _settle(bop, galaxy)
+    resolved.clear()
+    nc._drop(galaxy)
+    nc.drain()
+    nc.register(galaxy, "Object")
+    assert "_nslot" in galaxy.__dict__
+    nc.resolve_stale_part_slots([bop, galaxy])
+    assert galaxy in resolved
+
+
+def _late_bop(name, *settled):
+    """A Bird of Prey added after the scene, everything settled, then its
+    leaf learned: its row alone is pending, at the current generation (no
+    bump involved)."""
+    late = _ship(name, "birdofprey", "ships.BirdOfPrey",
+                 at=(0.0, -300.0, 0.0))
+    _settle(*settled, late)
+    gen = nc.part_gen()
+    assert articulation.leaf_for(late) == LEAF
+    assert nc.part_gen() == gen
+    return late
+
+
+def test_a_resolution_that_raised_is_retried_without_a_bump(
+        scene, resolved, monkeypatch):
+    bop, galaxy = scene
+    late = _late_bop("BoP5", bop, galaxy)
+    sub, _names = _wing_cannon(late)
+    gen = nc.part_gen()
+    real = part_severance.part_for_mount
+
+    def boom(leaf, point):
+        raise RuntimeError("probe")
+    monkeypatch.setattr(part_severance, "part_for_mount", boom)
+    monkeypatch.setattr(physical_parents, "property_of", lambda s: None)
+    nc.resolve_stale_part_slots([bop, galaxy, late])
+    assert _row(sub)["part_gen"] != _h.combat_part_gen()     # left stale
+    monkeypatch.setattr(part_severance, "part_for_mount", real)
+    resolved.clear()
+    nc.resolve_stale_part_slots([bop, galaxy, late])
+    assert nc.part_gen() == gen         # no bump in between
+    assert resolved == [late]
+    assert _row(sub)["part_gen"] == _h.combat_part_gen()
+
+
+def test_a_pose_table_that_cannot_be_pushed_is_retried(
+        scene, resolved, monkeypatch):
+    """The mid-walk heal (drop=False) leaves an unencodable table's ship
+    stale, row kept: the next sweep retries it."""
+    bop, galaxy = scene
+    late = _late_bop("BoP6", bop, galaxy)
+    _cruise(late)
+    gen = nc.part_gen()
+    real = nc._pose_table
+
+    def bad(ship, names):
+        raise TypeError("probe")
+    monkeypatch.setattr(nc, "_pose_table", bad)
+    nc._heal_part_slots([bop, galaxy, late], gen - 1)
+    assert "_nslot" in late.__dict__
+    monkeypatch.setattr(nc, "_pose_table", real)
+    resolved.clear()
+    nc.resolve_stale_part_slots([bop, galaxy, late])
+    assert nc.part_gen() == gen
+    assert resolved == [late]
+
+
+def test_forgotten_caches_resolve_every_ship(scene, resolved):
+    bop, galaxy = scene
+    _settle(bop, galaxy)
+    resolved.clear()
+    nc._forget_part_caches()
+    nc.resolve_stale_part_slots([bop, galaxy])
+    assert resolved == [bop, galaxy]
+
+
+def test_a_mount_order_push_resolves_its_ship(scene, resolved):
+    bop, galaxy = scene
+    _settle(bop, galaxy)
+    resolved.clear()
+    nc.push_mount_order(galaxy)
+    nc.resolve_stale_part_slots([bop, galaxy])
+    assert galaxy in resolved

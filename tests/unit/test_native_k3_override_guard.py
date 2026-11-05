@@ -3,12 +3,10 @@ kernel ports that override (native combat phase 3, Task 5; spec
 docs/superpowers/specs/2026-11-01-native-combat-k3-k4-design.md §7; the K2
 twin is test_native_k2_override_guard.py, controller Ruling C2).
 
-At run time native_combat.run_k3 sends the step to Python when a stood-in
-name resolves to NON-engine code, or to anything other than what it resolved
-to when first seen ("patched" / "guard"). An ENGINE class overriding one is
-trusted, so the kernel would compute the stock answer from the mirror and
-nothing would notice the engine's own override. This guard closes that hole
-statically, for every class the kernel reads natively:
+At run time no patch or override sends the step to Python (spec Part A,
+phase 6 A3): the kernel computes the stock answer from the mirror. So an
+ENGINE class overriding a stood-in method would go unnoticed. This guard
+closes that hole statically, for every class the kernel reads natively:
 
 - SHIPS: the step scan admits only ShipClass rows (step_scan.h, `not_ship`),
   and a torpedo's target or source outside the scan is an ASK guide (Python's
@@ -108,16 +106,6 @@ def test_no_engine_class_overrides_a_stood_in_method():
 def test_every_allowance_is_still_needed():
     used = {owner for _cls, _name, owner in _overrides()}
     assert set(ALLOWED) <= used, sorted(set(ALLOWED) - used)
-
-
-def test_lists_are_the_drivers():
-    """The driver checks the same names at run time: the torpedo names, and
-    the ship names K2's ship role does not already watch (the step scan
-    re-checks K2's)."""
-    from engine.appc import native_combat as nc
-    assert nc._K3_TORPEDO_NAMES == TORPEDO_NAMES
-    k2_ship = set(nc._K2_NAMES["ship"])
-    assert set(SHIP_NAMES) - k2_ship == set(nc._K3_SHIP_NAMES)
 
 
 def test_step_scan_admits_only_ships():

@@ -91,7 +91,9 @@ def test_on_every_entry_point_runs_native():
     assert ship.GetSensorSubsystem().GetCondition() == 50.0
 
 
-def test_a_patched_function_runs_the_reference(monkeypatch):
+def test_a_patched_function_is_not_honoured(monkeypatch):
+    """A module function the native hit stands in for, patched: the hit
+    stays native (spec Part A, phase 6 A3) and the patch is not called."""
     ship = _ship()
     nc.configure(ON)
     seen = []
@@ -102,11 +104,13 @@ def test_a_patched_function_runs_the_reference(monkeypatch):
         return weight(*a)
     monkeypatch.setattr(combat, "_splash_weight", spy)
     _hit(ship)
-    assert seen and nc.damage_counts()["hits"] == 0
-    assert nc.damage_counts()["fallbacks"] >= 1
+    assert not seen and nc.damage_counts()["hits"] == 1
+    assert nc.damage_counts()["fallbacks"] == 0
 
 
-def test_a_patched_stock_method_runs_the_reference(monkeypatch):
+def test_a_patched_stock_method_is_not_honoured(monkeypatch):
+    """A stock-class method the condition chain stands in for, patched: the
+    write stays native (Part A, phase 6 A3)."""
     sensor = _ship().GetSensorSubsystem()
     nc.configure(ON)
     calls = []
@@ -117,7 +121,8 @@ def test_a_patched_stock_method_runs_the_reference(monkeypatch):
         return orig(self)
     monkeypatch.setattr(ShipSubsystem, "GetMaxCondition", spy)
     sensor.SetCondition(20.0)
-    assert calls and nc.damage_counts()["conditions"] == 0
+    assert nc.damage_counts()["conditions"] == 1
+    assert sensor.GetCondition() == 20.0
 
 
 def test_an_instance_patch_runs_the_reference():
@@ -251,12 +256,13 @@ def _shield_faces(ship):
             for f in range(ShieldSubsystem.NUM_SHIELDS)]
 
 
-def test_a_subclass_predicate_patched_after_its_rows_runs_the_reference(
+def test_a_subclass_predicate_patched_after_its_rows_is_not_honoured(
         monkeypatch):
-    """The probe of the final review: SensorSubsystem's rows were flagged
-    with the leaf rules; IsDisabled replaced on the class afterwards. The
-    reference calls the patched method (a sensor at full health reads
-    disabled), so the hit's subsystem transition is the reference's."""
+    """SensorSubsystem's rows were flagged with the leaf rules; IsDisabled
+    replaced on the class afterwards. The class flags are first-sight (the
+    mirror's), so the hit stays native and never calls the patch (spec Part
+    A, phase 6 A3; the final review's probe asked for the opposite while a
+    guard existed)."""
     ship = _ship()
     nc.configure(ON)
     _hit(ship, 1.0)
@@ -268,15 +274,12 @@ def test_a_subclass_predicate_patched_after_its_rows_runs_the_reference(
         return 1
     monkeypatch.setattr(SensorSubsystem, "IsDisabled", disabled)
     _hit(ship, 1.0)
-    assert nc.damage_counts()["hits"] == 1         # handed back
-    assert nc.damage_counts()["fallbacks"] >= 1
-    assert calls
-    monkeypatch.undo()
-    _hit(ship, 1.0)
-    assert nc.damage_counts()["hits"] == 2         # restored: native again
+    assert nc.damage_counts()["hits"] == 2         # native
+    assert nc.damage_counts()["fallbacks"] == 0
+    assert not calls
 
 
-def test_a_condition_write_obeys_a_subclass_patched_after_its_rows(
+def test_a_condition_write_ignores_a_subclass_patched_after_its_rows(
         monkeypatch):
     sensor = _ship().GetSensorSubsystem()
     nc.configure(ON)
@@ -284,8 +287,8 @@ def test_a_condition_write_obeys_a_subclass_patched_after_its_rows(
     assert nc.damage_counts()["conditions"] == 1
     monkeypatch.setattr(SensorSubsystem, "IsDisabled", lambda self: 1)
     sensor.SetCondition(80.0)
-    assert nc.damage_counts()["conditions"] == 1
-    assert sensor.GetCondition() == 80.0           # the reference did it
+    assert nc.damage_counts()["conditions"] == 2   # native (Part A)
+    assert sensor.GetCondition() == 80.0
 
 
 def _cloaked_ship(cloak):
@@ -294,11 +297,11 @@ def _cloaked_ship(cloak):
     return ship
 
 
-def test_the_cloak_class_patched_after_the_first_hit_runs_the_reference(
+def test_the_cloak_class_patched_after_the_first_hit_is_not_honoured(
         monkeypatch):
     """cloak_shields_suspended reads IsCloaking / IsDecloaking: replaced on
-    CloakingSubsystem, a fading ship's shields are down in the reference,
-    and the hit reaches the hull untouched by the faces."""
+    CloakingSubsystem after the first hit, the hit stays native and reads
+    the mirrored cloak state (Part A, phase 6 A3): the shields still bite."""
     from engine.appc.subsystems import CloakingSubsystem
     ship = _cloaked_ship(CloakingSubsystem("Cloak"))
     nc.configure(ON)
@@ -307,8 +310,7 @@ def test_the_cloak_class_patched_after_the_first_hit_runs_the_reference(
     faces = _shield_faces(ship)
     monkeypatch.setattr(CloakingSubsystem, "IsCloaking", lambda self: 1)
     combat.apply_hit(ship, 10.0, TGPoint3(0.0, 1.0, 0.0), None)
-    assert nc.damage_counts()["hits"] == 1
-    assert _shield_faces(ship) == faces            # shields down: no bite
+    assert nc.damage_counts()["hits"] == 2
 
 
 def test_a_cloak_subclass_with_its_own_predicate_runs_the_reference():

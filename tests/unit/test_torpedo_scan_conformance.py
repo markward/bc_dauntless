@@ -284,3 +284,12 @@ def test_the_backend_follows_the_transform_store():
         assert isinstance(scan, torpedo_scan.PythonTorpedoScan)
     else:
         assert isinstance(scan, torpedo_scan.NativeTorpedoScan)
+
+
+def test_scan_table_does_no_import_per_call():
+    """projectiles._scan_table runs per torpedo velocity write: its
+    torpedo_scan import is hoisted to module level (phase 6 A3)."""
+    import dis
+    from engine.appc import projectiles
+    ops = {i.opname for i in dis.get_instructions(projectiles._scan_table)}
+    assert "IMPORT_NAME" not in ops

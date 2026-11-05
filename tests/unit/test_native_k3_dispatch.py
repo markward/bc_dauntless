@@ -488,9 +488,9 @@ def _patched_fn(module, name):
     return setup
 
 
-def test_patched_target_visible_runs_python(monkeypatch):
-    """projectiles._target_visible patched (a test seam): the whole step is
-    Python's, so the patch is obeyed."""
+def test_a_patched_target_visible_is_not_honoured(monkeypatch):
+    """projectiles._target_visible patched (a spy): the step stays native
+    (spec Part A, phase 6 A3), so only the Python arm calls it."""
     seen = []
     real = projectiles._target_visible
 
@@ -501,11 +501,12 @@ def test_patched_target_visible_runs_python(monkeypatch):
         mp.setattr(projectiles, "_target_visible", spy)
 
     _ref, _nat, counts = _both(monkeypatch, _volley, 40, setup=setup)
-    assert True in seen and False in seen
-    _k3_stood_down(counts, "patched", 40)
+    assert False in seen and True not in seen
+    _k3_ran(counts)
 
 
-# Every other function (and constant) K3 stands in for (map §A8.3.9).
+# Every other function (and constant) K3 stands in for (map §A8.3.9): a
+# patch of one leaves the step native (Part A, phase 6 A3).
 _SNAPSHOT_FUNCTIONS = (
     (projectiles, "_guide"), (projectiles, "_steer_point"),
     (projectiles, "_broadphase"), (projectiles, "_shifted"),
@@ -527,10 +528,11 @@ _SNAPSHOT_FUNCTIONS = (
 @pytest.mark.parametrize("module, name", _SNAPSHOT_FUNCTIONS,
                          ids=["%s.%s" % (m.__name__, n)
                               for m, n in _SNAPSHOT_FUNCTIONS])
-def test_patched_snapshot_function_runs_python(monkeypatch, module, name):
+def test_a_patched_stood_in_function_is_not_honoured(
+        monkeypatch, module, name):
     _ref, _nat, counts = _both(monkeypatch, _volley, 12,
                                setup=_patched_fn(module, name))
-    _k3_stood_down(counts, "patched", 12)
+    _k3_ran(counts)
 
 
 @pytest.mark.parametrize("module, name, value", (
@@ -538,23 +540,25 @@ def test_patched_snapshot_function_runs_python(monkeypatch, module, name):
     (sensor_detection, "ENHANCED_SENSOR_CONTEST",
      not sensor_detection.ENHANCED_SENSOR_CONTEST),
 ), ids=["_LEAD_ACCEL_K", "ENHANCED_SENSOR_CONTEST"])
-def test_changed_constant_runs_python(monkeypatch, module, name, value):
-    """A constant the kernel was pushed at resync, changed since: Python.
-    (Re-pushed here so the arm's mirror audit holds: the snapshot compare
-    sends the step to Python whether or not anything re-pushed it.)"""
+def test_a_changed_constant_reaches_the_kernel_when_pushed(
+        monkeypatch, module, name, value):
+    """A constant the kernel was pushed at resync, changed since and
+    re-pushed (push_globals): the step stays native and matches Python's
+    with the new value. (Changed and NOT pushed, the kernel keeps the old
+    one: Part A, phase 6 A3, there is no snapshot compare.)"""
 
     def setup(w, mp):
         mp.setattr(module, name, value)
         nc.push_globals()
 
     _ref, _nat, counts = _both(monkeypatch, _volley, 12, setup=setup)
-    _k3_stood_down(counts, "patched", 12)
+    _k3_ran(counts)
 
 
-def test_foreign_ship_velocity_getter_runs_python(monkeypatch):
+def test_a_foreign_ship_velocity_getter_is_not_honoured(monkeypatch):
     """GetVelocityTG (the target's lead) is read from the mirror: a ship
-    class resolving it to non-engine code sends the step to Python
-    ("guard", the runtime twin of the static override guard)."""
+    class resolving it to non-engine code leaves the step native (Part A,
+    phase 6 A3; the static override guard still covers ENGINE classes)."""
 
     def setup(w, mp):
         real = ShipClass.GetVelocityTG
@@ -562,12 +566,14 @@ def test_foreign_ship_velocity_getter_runs_python(monkeypatch):
                    lambda self: real(self))
 
     _ref, _nat, counts = _both(monkeypatch, _volley, 12, setup=setup)
-    _k3_stood_down(counts, "guard", 12)
+    _k3_ran(counts)
 
 
-def test_torpedo_subclass_overriding_translate_runs_python(monkeypatch):
-    """A torpedo whose class overrides GetTranslate (a mod's subclass): its
-    position is not the store's, so the step is Python's ("guard")."""
+def test_a_torpedo_subclass_overriding_translate_is_not_honoured(
+        monkeypatch):
+    """A torpedo whose class overrides GetTranslate (a mod's subclass): the
+    kernel reads the store's position regardless (Part A, phase 6 A3), so
+    the step stays native (the override here returns the store's)."""
 
     class OddTorpedo(Torpedo):
         def GetTranslate(self):
@@ -586,7 +592,7 @@ def test_torpedo_subclass_overriding_translate_runs_python(monkeypatch):
             w.by_objid[odd.GetObjID()] = "T1"
 
     _ref, _nat, counts = _both(monkeypatch, script, 10)
-    _k3_stood_down(counts, "guard", 10)
+    _k3_ran(counts)
 
 
 def test_forced_part_pose_target_steers_natively(monkeypatch):
@@ -955,30 +961,6 @@ def test_reset_clears_step_and_k3_state(monkeypatch):
         finally:
             w.close()
 
-
-def test_reset_rebaselines_the_k3_class_watch(monkeypatch):
-    """reset() re-baselines K3's class watch, as it does K2's: a watch built
-    while a ship class was patched (a class first seen mid-patch) must not
-    outlive the patch and send every later step to Python ("guard")."""
-    with monkeypatch.context() as mp:
-        w = World(mp, True, GALAXY_VORCHA, "k3_rewatch")
-        try:
-            w.tick(before=lambda w: _volley(w, 0))
-            _k3_ran(nc.counts())
-            with monkeypatch.context() as inner:
-                real = ShipClass.GetVelocityTG
-                inner.setattr(ShipClass, "GetVelocityTG",
-                              lambda self: real(self))
-                nc._k3_rebuild_watch()          # built under the patch
-            nc.reset()
-            nc.configure(ON)
-            for t in range(1, 4):
-                w.tick(before=lambda w, t=t: _volley(w, t))
-            c = nc.counts()
-            assert c["k3_python_reasons"]["guard"] == 0, c
-            _k3_ran(c)
-        finally:
-            w.close()
 
 def test_available_needs_the_k3_and_step_bindings(monkeypatch):
     for name in ("combat_step_scan", "combat_k4_eligible", "combat_k3_begin",

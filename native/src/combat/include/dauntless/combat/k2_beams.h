@@ -306,35 +306,26 @@
 // changed since it last did (a begin without it keeps the table).
 //
 // WHAT THE DRIVER CHECKS BEFORE begin (engine/appc/native_combat.py,
-// k2_phasers; Task 5). The kernel computes, from the mirror, what these
-// Python functions and methods would answer, so a replaced one must send the
-// step back to Python. The driver runs the WHOLE `cb.phasers` step in Python
-// (no session) when:
+// k2_phasers; Task 5, phase 6 A3). The kernel computes, from the mirror,
+// what host_loop's loop body and the functions and methods it calls would
+// answer. A module function or stock-class method replaced since is NOT
+// obeyed (spec Part A: a stage never falls back to Python because a method
+// was patched; the snapshot compare of _K2_FUNCTIONS and the stock classes
+// is deleted). The driver runs the WHOLE `cb.phasers` step in Python (no
+// session) only for representability:
 //   - a K2 session is already open;
 //   - `ship_instances` is neither None nor a TrackedInstances (a test's
 //     plain dict);
-//   - a MODULE FUNCTION is not the object snapshotted when host_loop defined
-//     the loop (native_combat._K2_FUNCTIONS):
-//       host_io.ray_trace_mesh;
-//       combat._resolve_hit_point, ray_sphere_entry, shields_block,
-//         shield_bubble_entry, cloak_shields_suspended, _hull_box_for,
-//         _body_frame_delta;
-//       collisions.world_radius;
-//       host_loop._phaser_aim_point, _phaser_step_ship, _phaser_step_bank,
-//         and its own imports can_detect, _same_set, _emitter_in_arc,
-//         _resolve_bank_aim_world, _is_offline;
-//       frames.view_offset, shifted, containing_set;
-//       subsystems.subsystem_world_position, target_offset_world,
-//         _is_offline;
-//       weapon_subsystems._resolve_bank_aim_world, _emitter_in_arc,
-//         _same_set;
-//       sensor_detection.can_detect;
-//     or host_io._h is neither None nor the bindings it snapshotted;
-//   - a STOCK CLASS resolves one of its role's names to anything but its
-//     snapshot (native_combat._K2_ROLES; every SUBSYSTEM role -- the
-//     first five -- also watches the subsystem names GetWorldLocation,
-//     GetPosition, _climb_to_ship; the override guard test parses this
-//     list):
+//   - the native audit is on (DAUNTLESS_NATIVE_AUDIT=1, below);
+//   - a ship's (or a bank's target's) class K2 never saw, flagged "whole"
+//     by the class flags below.
+// THE CLASS FLAGS read a class's role (native_combat._K2_ROLES) when it is
+// not the stock class (a walked ship's phaser system or bank of another
+// class, or a class K2 never saw). The role's names, as
+//   - a STOCK CLASS resolves them (native_combat._K2_ROLES; every
+//     SUBSYSTEM role -- the first five -- also watches the subsystem names
+//     GetWorldLocation, GetPosition, _climb_to_ship; the override guard
+//     test parses this list):
 //       PhaserBank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
 //         _strip_emit_position, _emitter_world_position, GetLength,
 //         GetDirection, GetUp, GetArcWidthAngles, GetArcHeightAngles,
@@ -353,13 +344,15 @@
 //       ObjectClass: IsDead, GetWorldLocation, GetWorldRotation,
 //         GetContainingSet, GetScale, GetRadius, GetBaseRadius,
 //         GetShields;
-//   - any class with a row resolves a name of its role to a method defined
-//     outside the engine package (a mod's subclass, a test's patch) or to
+//   - any class with a row (of those) resolving a name of its role to a
+//     method defined outside the engine package (a mod's subclass, a
+//     test's) or to
 //     anything other than what it resolved to when the driver first saw it
-//     -- unless it is a bank or phaser system class overriding only its own
-//     (non-subsystem) names, which sends only its ship to Python;
-//   - the native audit is on (DAUNTLESS_NATIVE_AUDIT=1): the kernel's own
-//     can_detect would bypass sensor_detection's per-call audit.
+//     is flagged: a bank or phaser system class overriding only its own
+//     (non-subsystem) names sends only its ship to Python; any other sends
+//     the whole step ("whole").
+// The audit: the kernel's own can_detect would bypass sensor_detection's
+// per-call audit.
 // It lists a ship in `python_ships` (RUN_PYTHON "overridden") when its bank
 // or system class overrides one of its own names, or it has an INSTANCE
 // attribute shadowing a method the loop calls on it by name:

@@ -579,13 +579,34 @@ def _tracked(w):
     return TrackedInstances({w.ships["Vorcha"]: _h.InstanceId()})
 
 
-def test_patched_trace_runs_python_step(monkeypatch):
-    """A test's patched host_io.ray_trace_mesh is a function K2 stands in
-    for: with it patched, the whole `cb.phasers` step runs in Python, so the
-    patched hit point is the one damaged."""
+def _native_only(monkeypatch, ships, script, ticks, instances=None,
+                 setup=None):
+    """`script` under native on only (a patch the two arms would disagree
+    on: Part A, it is not obeyed natively). Returns (world, counts)."""
+    with monkeypatch.context() as mp:
+        w = World(mp, True, ships, "k2_native_only", instances=instances)
+        try:
+            if setup is not None:
+                setup(w, mp)
+            for t in range(ticks):
+                w.tick(before=lambda w, t=t: script(w, t))
+            counts = nc.counts()
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+        finally:
+            w.close()
+    return w, counts
+
+
+def test_a_patched_trace_is_not_honoured(monkeypatch):
+    """A test's patched host_io.ray_trace_mesh, a function K2 stands in
+    for, does not send the step to Python (spec Part A, phase 6 A3): the
+    kernel traces the real mesh, and the patch is never called for it."""
+    called = []
 
     def setup(w, mp):
         def fake_trace(iid, origin, direction, max_dist, rest_pose=False):
+            called.append(iid)
             p = w.ships["Vorcha"].GetWorldLocation()
             return (p.x + 0.25, p.y - 1.0, p.z + 0.125), (0.0, -1.0, 0.0), 1.0
         mp.setattr(host_io, "ray_trace_mesh", fake_trace)
@@ -594,13 +615,12 @@ def test_patched_trace_runs_python_step(monkeypatch):
         if t == 0:
             w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["Vorcha"])
 
-    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 90,
-                              instances=_tracked, setup=setup)
-    normals = {c[5] for c in _calls(ref, "beam_contact")}
-    assert normals == {_hx(TGPoint3(0.0, -1.0, 0.0))}, normals
-    assert counts.get("k2_records", 0) == 0, counts
-    assert counts.get("k2_python_steps", 0) == 90, counts
-    assert counts["k2_python_step_reasons"]["patched"] == 90, counts
+    nat, counts = _native_only(monkeypatch, GALAXY_VORCHA, script, 90,
+                               instances=_tracked, setup=setup)
+    _native_ran(counts)
+    assert counts["k2_python_step_reasons"]["patched"] == 0, counts
+    assert _calls(nat, "apply_hit")         # the beam bit
+    assert called == []
 
 
 def test_sentinel_instances_dict_runs_python_step(monkeypatch):
@@ -949,10 +969,10 @@ def test_dropped_row_mid_walk_asks_bank_step(monkeypatch):
     assert counts["k2_python_ships"] > 0, counts
 
 
-# ── Every stood-in function is watched ──────────────────────────────────────
+# ── A stood-in function or method patched is not honoured (Part A) ───────
 
-# Listed HERE, independently of native_combat's own list: dropping one from
-# the module's snapshot fails its case.
+# What K2 stands in for (the snapshot these were once watched against is
+# gone, phase 6 A3): patching one leaves the step native.
 STOOD_IN = [
     ("engine.host_io", "ray_trace_mesh"),
     ("engine.appc.combat", "_resolve_hit_point"),
@@ -1052,20 +1072,26 @@ def _one_native_step(monkeypatch, patch):
 
 @pytest.mark.parametrize("module,name", STOOD_IN,
                          ids=["%s.%s" % mn for mn in STOOD_IN])
-def test_every_stood_in_function_is_watched(monkeypatch, module, name):
+def test_a_patched_stood_in_function_is_not_honoured(
+        monkeypatch, module, name):
+    """Patching a function K2 stands in for leaves the step native (spec
+    Part A, phase 6 A3: no module-patch fallback)."""
     mod = importlib.import_module(module)
     orig = getattr(mod, name)
 
     def patch(mp, _w):
         mp.setattr(mod, name, lambda *a, **k: orig(*a, **k))
     counts = _one_native_step(monkeypatch, patch)
-    assert counts.get("k2_records", 0) == 0, counts
-    assert counts["k2_python_step_reasons"]["patched"] == 1, counts
+    _native_ran(counts)
+    assert counts["k2_python_step_reasons"]["patched"] == 0, counts
 
 
 @pytest.mark.parametrize("cls,name", STOOD_IN_METHODS,
                          ids=["%s.%s" % cn for cn in STOOD_IN_METHODS])
-def test_every_stood_in_method_is_watched(monkeypatch, cls, name):
+def test_a_patched_stood_in_method_is_not_honoured(monkeypatch, cls, name):
+    """Patching a stock-class method K2 stands in for (or making one
+    appear) leaves the step native (spec Part A, phase 6 A3: no class-patch
+    fallback)."""
     klass = _class(cls)
     orig = getattr(klass, name, None)
 
@@ -1079,8 +1105,8 @@ def test_every_stood_in_method_is_watched(monkeypatch, cls, name):
             mp.setattr(klass, name,
                        lambda self, *a, **k: orig(self, *a, **k))
     counts = _one_native_step(monkeypatch, patch)
-    assert counts.get("k2_records", 0) == 0, counts
-    assert counts["k2_python_step_reasons"]["patched"] == 1, counts
+    _native_ran(counts)
+    assert counts["k2_python_step_reasons"]["patched"] == 0, counts
 
 
 def test_instance_patch_sends_its_ship_to_python(monkeypatch):
@@ -1341,11 +1367,11 @@ def test_no_host_bindings_traces_nothing(monkeypatch):
     assert counts["k2_ask_queries"]["resolve_hit"] == 0, counts
 
 
-def test_host_bindings_test_double_runs_python_step(monkeypatch):
+def test_a_host_bindings_test_double_is_not_honoured(monkeypatch):
     """host_io._h replaced by a test double (its own instance_translation
-    and ray_trace_mesh): the kernel's installed trace is the REAL renderer's,
-    not the double's, so the whole step runs in Python ("patched") and the
-    double's hit is the one damaged."""
+    and ray_trace_mesh): the kernel's installed trace is the REAL
+    renderer's, and the double does not send the step to Python (spec Part
+    A, phase 6 A3): its hit is never the one damaged."""
 
     class FakeHost:
         """The real bindings, but for the two calls the trace makes."""
@@ -1357,7 +1383,10 @@ def test_host_bindings_test_double_runs_python_step(monkeypatch):
             return (0.0, 0.0, 0.0)
 
         def ray_trace_mesh(self, iid, origin, direction, max_dist):
+            traced.append(iid)
             return (20.0, 255.0, 15.0), (0.0, 1.0, 0.0), 1.0
+
+    traced = []
 
     def setup(w, mp):
         mp.setattr(host_io, "_h", FakeHost())
@@ -1366,22 +1395,20 @@ def test_host_bindings_test_double_runs_python_step(monkeypatch):
         if t == 0:
             w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["Vorcha"])
 
-    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 60,
-                              instances=_tracked, setup=setup)
+    nat, counts = _native_only(monkeypatch, GALAXY_VORCHA, script, 90,
+                               instances=_tracked, setup=setup)
     hit = _hx(TGPoint3(20.0, 255.0, 15.0))
-    assert {c[4] for c in _calls(ref, "beam_contact")
-            if c[2] == "Vorcha"} == {hit}
-    assert counts.get("k2_records", 0) == 0, counts
-    assert counts["k2_python_steps"] == 60, counts
-    assert counts["k2_python_step_reasons"]["patched"] == 60, counts
+    points = {c[4] for c in _calls(nat, "apply_hit") if c[2] == "Vorcha"}
+    assert points and hit not in points, points
+    assert traced == []
+    _native_ran(counts)
+    assert counts["k2_python_step_reasons"]["patched"] == 0, counts
 
 
 def test_forget_rows_forgets_the_seen_classes():
-    """A test-defined ShipClass subclass is non-engine code, so K2 flags it
-    "whole" and every later step runs in Python ("patched"). The conftest's
-    mirror wipe (combat_clear + forget_rows) must forget the classes seen
-    before it, or one such class (tests/host/test_alert_keys.py's _FakeShip)
-    turned the rest of a full suite's native steps into Python steps."""
+    """The conftest's mirror wipe (combat_clear + forget_rows) forgets the
+    classes seen before it: with no row left, none has been seen (a test's
+    class, here, must not outlive its test in _k2_seen)."""
     from engine.appc.ships import ShipClass
 
     class _TestOnlyShip(ShipClass):
@@ -1391,11 +1418,11 @@ def test_forget_rows_forgets_the_seen_classes():
     nc.configure(ON)
     _TestOnlyShip()
     assert _TestOnlyShip in nc._k2_seen
-    assert not nc._k2_classes_unchanged()
+    assert _TestOnlyShip in nc._k2_seen_set
     _h.combat_clear()
     nc.forget_rows()
     assert _TestOnlyShip not in nc._k2_seen
-    assert nc._k2_classes_unchanged()
+    assert _TestOnlyShip not in nc._k2_seen_set
 
 
 # ── Posed parts (native-combat posed parts, Task 4) ─────────────────────────

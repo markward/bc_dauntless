@@ -5504,207 +5504,19 @@ PyObject* dmg_clean_handles(PyObject* handles, PyObject* registry_data,
     return out;
 }
 
-// ── THE DAMAGE GUARD CACHE (native damage perf fix) ───────────────────────
-// native_combat's two whole-call override guards -- _dmg_unchanged (every
-// function and stock-class method the native hit and condition chain stand
-// in for is the one snapshotted, none foreign) and _kdmg_unchanged (the
-// kernels' own) -- computed in Python, their verdicts kept here with what
-// they were computed on, so an unchanged world is answered with a few
-// compares (the guard ran ~70 attribute resolutions at every native call):
-//   module  each watched module's dict at its ma_version_tag (where
-//           kK0ObjectCache allows), and every watched name's value at the
-//           fill (borrowing nothing: owned). A dict that moved -- any
-//           global rebound, e.g. effect_queue's scope depth -- is
-//           re-checked name by name: each still bound to the SAME object
-//           keeps the verdict (the guard reads nothing else of a module:
-//           an attrgetter of those names), and the new version is kept.
-//           The module's type is compared too (a __class__ swap could add
-//           a __getattr__).
-//   class   each watched class at its tp_version_tag (CPython's: any
-//           attribute assignment on the class or a base invalidates it,
-//           PyType_Modified), its metaclass plain `type`.
-// Anything else (an unfilled slot, a tag gone, a name rebound, a name
-// that cannot be read) is stale: Python computes the guard again and
-// refills. Exact, not a heuristic: an identical object answers the
-// guard's compares identically. (The one read it does not see is a
-// function object's own `__module__` reassigned, which _k2_foreign reads:
-// no code does that.)
-struct DmgGuardModule {
-    PyObject* module = nullptr;      // owned
-    PyTypeObject* module_type = nullptr;
-    PyObject* dict = nullptr;        // owned (the module's)
-    std::uint64_t version = 0;
-    std::vector<PyObject*> names;    // owned, exact str
-    std::vector<PyObject*> values;   // owned; nullptr: absent at the fill
-};
-
-struct DmgGuardType {
-    PyTypeObject* type = nullptr;    // owned
-    unsigned int tag = 0;
-};
-
-struct DmgGuard {
-    bool filled = false;
-    bool verdict = false;
-    std::vector<DmgGuardModule> modules;
-    std::vector<DmgGuardType> types;
-    std::uint64_t fills = 0, hits = 0, stale = 0;
-    void clear() {
-        // Moved out first: a release may run Python, which must find the
-        // slot already empty.
-        std::vector<DmgGuardModule> mods = std::move(modules);
-        std::vector<DmgGuardType> ts = std::move(types);
-        modules.clear();
-        types.clear();
-        filled = false;
-        verdict = false;
-        for (DmgGuardModule& m : mods) {
-            for (PyObject* o : m.names) Py_XDECREF(o);
-            for (PyObject* o : m.values) Py_XDECREF(o);
-            Py_XDECREF(m.dict);
-            Py_XDECREF(m.module);
-        }
-        for (DmgGuardType& t : ts)
-            Py_XDECREF(reinterpret_cast<PyObject*>(t.type));
-    }
-};
-
-constexpr int kDmgGuards = 2;  // 0: _dmg_unchanged, 1: _kdmg_unchanged
-
-DmgGuard* dmg_guards() {
-    static DmgGuard g[kDmgGuards];
-    return g;
-}
-
-// The slot's cached verdict (0 or 1), or -1: stale (Python computes and
-// fills). No Python runs and no error is left set.
-int dmg_guard_state(int slot) {
-    DmgGuard& g = dmg_guards()[slot];
-    if (!g.filled) {
-        ++g.stale;
-        return -1;
-    }
-    for (const DmgGuardType& t : g.types) {
-        if (Py_TYPE(reinterpret_cast<PyObject*>(t.type)) != &PyType_Type ||
-            (t.type->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) == 0 ||
-            t.type->tp_version_tag != t.tag) {
-            ++g.stale;
-            return -1;
-        }
-    }
-    for (DmgGuardModule& m : g.modules) {
-        if (Py_TYPE(m.module) != m.module_type) {
-            ++g.stale;
-            return -1;
-        }
-        if (kK0ObjectCache && k0_dict_version(m.dict) == m.version) continue;
-        for (size_t i = 0; i < m.names.size(); ++i) {
-            PyObject* v = PyDict_GetItemWithError(m.dict, m.names[i]);
-            if (v == nullptr && PyErr_Occurred()) {
-                PyErr_Clear();
-                ++g.stale;
-                return -1;
-            }
-            if (v != m.values[i]) {
-                ++g.stale;
-                return -1;
-            }
-        }
-        m.version = k0_dict_version(m.dict);
-    }
-    ++g.hits;
-    return g.verdict ? 1 : 0;
-}
-
-// Fill `slot` with `verdict`, computed in Python just now on `modules` (a
-// sequence of (module, names tuple)) and `types` (a sequence of classes).
-// False (the slot left unfilled: every call computes) when something is
-// not of a shape the cache can watch exactly. nullptr: a Python error.
-PyObject* dmg_guard_fill(int slot, bool verdict, PyObject* modules,
-                         PyObject* types) {
-    DmgGuard& g = dmg_guards()[slot];
-    g.clear();
-    PyObject* ms = PySequence_Fast(modules, "modules");
-    if (ms == nullptr) return nullptr;
-    PyObject* ts = PySequence_Fast(types, "types");
-    if (ts == nullptr) {
-        Py_DECREF(ms);
-        return nullptr;
-    }
-    bool ok = true;
-    for (Py_ssize_t i = 0; ok && i < PySequence_Fast_GET_SIZE(ms); ++i) {
-        PyObject* item = PySequence_Fast_GET_ITEM(ms, i);
-        if (!PyTuple_Check(item) || PyTuple_GET_SIZE(item) != 2 ||
-            !PyModule_CheckExact(PyTuple_GET_ITEM(item, 0)) ||
-            !PyTuple_Check(PyTuple_GET_ITEM(item, 1))) {
-            ok = false;
-            break;
-        }
-        PyObject* mod = PyTuple_GET_ITEM(item, 0);
-        PyObject* names = PyTuple_GET_ITEM(item, 1);
-        DmgGuardModule m;
-        m.module = Py_NewRef(mod);
-        m.module_type = Py_TYPE(mod);
-        m.dict = Py_NewRef(PyModule_GetDict(mod));
-        m.version = k0_dict_version(m.dict);
-        g.modules.push_back(m);   // owned from here (clear() releases)
-        DmgGuardModule& gm = g.modules.back();
-        for (Py_ssize_t k = 0; k < PyTuple_GET_SIZE(names); ++k) {
-            PyObject* name = PyTuple_GET_ITEM(names, k);
-            if (!PyUnicode_CheckExact(name)) {
-                ok = false;
-                break;
-            }
-            PyObject* v = PyDict_GetItemWithError(gm.dict, name);
-            if (v == nullptr && PyErr_Occurred()) {
-                PyErr_Clear();
-                ok = false;
-                break;
-            }
-            gm.names.push_back(Py_NewRef(name));
-            gm.values.push_back(Py_XNewRef(v));
-        }
-    }
-    for (Py_ssize_t i = 0; ok && i < PySequence_Fast_GET_SIZE(ts); ++i) {
-        PyObject* t = PySequence_Fast_GET_ITEM(ts, i);
-        if (!PyType_Check(t) || Py_TYPE(t) != &PyType_Type) {
-            ok = false;
-            break;
-        }
-        PyTypeObject* tt = reinterpret_cast<PyTypeObject*>(t);
-        const unsigned int tag = k0_type_tag(tt);
-        if (tag == 0) {
-            ok = false;
-            break;
-        }
-        g.types.push_back(DmgGuardType{
-            reinterpret_cast<PyTypeObject*>(Py_NewRef(t)), tag});
-    }
-    Py_DECREF(ts);
-    Py_DECREF(ms);
-    if (!ok) {
-        g.clear();
-        Py_RETURN_FALSE;
-    }
-    g.filled = true;
-    g.verdict = verdict;
-    ++g.fills;
-    Py_RETURN_TRUE;
-}
-
 // ── THE FAST DAMAGE ENTRIES (native damage perf fix) ─────────────────────
 // native_combat.set_condition / damage_system's whole common case in one
 // raw METH_FASTCALL call (pybind11's dispatch, at -O0, cost more than the
-// native condition write itself): the cached guard (THE DAMAGE GUARD
-// CACHE), the instance-patch check, the handles, float(value), the
-// applier context and the native chain. Exactly the Python wrapper's
+// native condition write itself): the instance-patch check, the handles,
+// float(value), the applier context and the native chain (no module or
+// class patch guard: spec Part A, phase 6 A3). Exactly the Python wrapper's
 // steps, in its order. Answers True (done natively), False (hand back to
-// the reference: the guard says no, a patch, an object the mirror cannot
-// name, a value float() refuses, the native chain fell back -- nothing
-// changed) or None: anything this path does not decide exactly (a stale
-// guard, an object with no plain instance dict, a non-int `_nslot`, the
-// reused context already in use by an enclosing call), for the Python
-// wrapper's own path, which then decides as before.
+// the reference: an instance patch, an object the mirror cannot name, a
+// value float() refuses, the native chain fell back -- nothing changed) or
+// None: anything this path does not decide exactly (an object with no
+// plain instance dict, a non-int `_nslot`, the reused context already in
+// use by an enclosing call), for the Python wrapper's own path, which then
+// decides as before.
 //
 // THE REUSED CONTEXT. `ctx` is native_combat's one damage applier context
 // (_dmg_context: a _K1Walk's pins, the registry, the kinds), installed for
@@ -5870,9 +5682,6 @@ PyObject* combat_dmg_set_condition(PyObject*, PyObject* const* args,
     PyObject *sub = args[0], *value = args[1], *killer = args[2],
              *ship = args[3], *ctx = args[4], *names = args[5];
     if (!dmg_fast_ctx_ok(ctx)) Py_RETURN_NONE;
-    const int g = dmg_guard_state(0);
-    if (g < 0) Py_RETURN_NONE;
-    if (g == 0) Py_RETURN_FALSE;
     const int p = dmg_fast_patched(sub, names);
     if (p < 0) Py_RETURN_NONE;
     if (p > 0) Py_RETURN_FALSE;
@@ -5924,9 +5733,6 @@ PyObject* combat_dmg_damage_system(PyObject*, PyObject* const* args,
     if (!dmg_fast_ctx_ok(ctx) || !PyFloat_CheckExact(amount) ||
         !PyType_Check(ship_subsystem))
         Py_RETURN_NONE;
-    const int g = dmg_guard_state(0);
-    if (g < 0) Py_RETURN_NONE;
-    if (g == 0) Py_RETURN_FALSE;
     // isinstance(sub, ShipSubsystem): decided here only when it is.
     if (!PyObject_TypeCheck(sub,
                             reinterpret_cast<PyTypeObject*>(ship_subsystem)))
@@ -14066,34 +13872,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("ship_names"), py::arg("sub_names"),
               "[bool, ...]: which targets a kernel may hit natively (see "
               "dmg_clean).");
-        auto guard_slot = [](int slot) {
-            if (slot < 0 || slot >= kDmgGuards)
-                throw py::value_error("combat damage guard: no such slot");
-            return slot;
-        };
-        m.def("combat_dmg_guard_check",
-              [guard_slot](int slot) -> py::object {
-                  const int s = dmg_guard_state(guard_slot(slot));
-                  if (s < 0) return py::none();
-                  return py::bool_(s != 0);
-              },
-              py::arg("slot"),
-              "THE DAMAGE GUARD CACHE: guard `slot`'s cached verdict, or "
-              "None when stale (compute it in Python, then "
-              "combat_dmg_guard_fill).");
-        m.def("combat_dmg_guard_fill",
-              [guard_slot](int slot, bool verdict, py::handle modules,
-                           py::handle types) {
-                  PyObject* r = dmg_guard_fill(guard_slot(slot), verdict,
-                                               modules.ptr(), types.ptr());
-                  if (r == nullptr) throw py::error_already_set();
-                  return py::reinterpret_steal<py::object>(r);
-              },
-              py::arg("slot"), py::arg("verdict"), py::arg("modules"),
-              py::arg("types"),
-              "Keep guard `slot`'s `verdict`, computed just now on "
-              "`modules` ((module, names), ...) and `types`. False: not a "
-              "shape the cache can watch (left unfilled).");
         m.add_object("combat_dmg_set_condition",
                      py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                          &g_dmg_set_condition_def, nullptr,
@@ -14102,30 +13880,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
                      py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                          &g_dmg_damage_system_def, nullptr,
                          m.attr("__name__").ptr())));
-        m.def("combat_dmg_guard_invalidate",
-              [guard_slot](int slot) { dmg_guards()[guard_slot(slot)].clear(); },
-              py::arg("slot"),
-              "Empty guard `slot` (its counters kept): the next check is "
-              "stale, and Python fills it again (native_combat."
-              "_dmg_watch_grew: a class was flagged that it must watch).");
-        m.def("combat_dmg_guard_clear", [] {
-            for (int i = 0; i < kDmgGuards; ++i) {
-                dmg_guards()[i].clear();
-                dmg_guards()[i].fills = dmg_guards()[i].hits =
-                    dmg_guards()[i].stale = 0;
-            }
-        });
-        m.def("combat_dmg_guard_counts", [] {
-            py::list out;
-            for (int i = 0; i < kDmgGuards; ++i) {
-                py::dict d;
-                d["fills"] = dmg_guards()[i].fills;
-                d["hits"] = dmg_guards()[i].hits;
-                d["stale"] = dmg_guards()[i].stale;
-                out.append(d);
-            }
-            return out;
-        });
         m.def("combat_dmg_clean_handles",
               [](py::handle handles, py::handle registry_data,
                  py::handle ship_names, py::handle sub_names) {

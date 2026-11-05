@@ -20,6 +20,7 @@ import math
 import weakref
 
 from engine.appc import proximity_cache
+from engine.appc import torpedo_scan as _torpedo_scan
 from engine.appc import native_combat as _nc
 from engine.appc.math import TGPoint3
 from engine.appc.objects import ObjectClass
@@ -442,8 +443,7 @@ _groups: dict = {}
 
 
 def _scan_table():
-    from engine.appc import torpedo_scan
-    return torpedo_scan.get_scan()
+    return _torpedo_scan.get_scan()
 
 
 def _scan_reset() -> None:

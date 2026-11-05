@@ -165,3 +165,108 @@ def test_set_event_flag_re_registers_a_group_dropped_from_live():
     pSet = App.SetClass_Create(); pSet.SetName("S"); App.g_kSetManager._sets["S"] = pSet
     ship = _ship(); pSet.AddObjectToSet(ship, "Bart")
     assert ("in", ship, grp) in rec.events
+
+
+# ── The name index (phase 6 A3): broadcast_membership finds the groups
+# watching a name through ObjectGroup._by_name, kept on AddName / RemoveName /
+# RemoveAllNames and weak, so it never scans every live group for a name no
+# group holds (every expiring torpedo's). When some group may match it runs
+# the full scan over `_live`, so the delivery order is today's.
+
+class _CountingLive(type(ObjectGroup._live)):
+    """ObjectGroup._live that counts full iterations (the scan)."""
+    iterations = 0
+
+    def __iter__(self):
+        type(self).iterations += 1
+        return super().__iter__()
+
+
+@pytest.fixture
+def counting_live(monkeypatch):
+    live = _CountingLive()
+    for g in list(ObjectGroup._live):
+        live.add(g)
+    _CountingLive.iterations = 0
+    monkeypatch.setattr(ObjectGroup, "_live", live)
+    return _CountingLive
+
+
+def _set(name="S"):
+    pSet = App.SetClass_Create(); pSet.SetName(name)
+    App.g_kSetManager._sets[name] = pSet
+    return pSet
+
+
+def test_a_name_no_group_holds_scans_no_group(counting_live):
+    grps = [ObjectGroup() for _ in range(5)]
+    for i, g in enumerate(grps):
+        g.AddName("Ship %d" % i)
+        _subscribe(g)
+    pSet = _set()
+    pSet.AddObjectToSet(_ship(), "Torpedo 1")
+    pSet.RemoveObjectFromSet("Torpedo 1")
+    assert counting_live.iterations == 0
+
+
+def test_a_watched_name_still_reaches_its_group(counting_live):
+    grp = ObjectGroup(); grp.AddName("Bart")
+    rec = _subscribe(grp)
+    ship = _ship(); _set().AddObjectToSet(ship, "Bart")
+    assert rec.events == [("in", ship, grp)]
+
+
+def test_removed_names_are_not_delivered_and_re_added_ones_are():
+    grp = ObjectGroup(); grp.AddName("Bart"); grp.AddName("Lisa")
+    rec = _subscribe(grp)
+    pSet = _set()
+    grp.RemoveName("Bart")
+    pSet.AddObjectToSet(_ship(), "Bart")
+    grp.RemoveAllNames()
+    pSet.AddObjectToSet(_ship(), "Lisa")
+    assert rec.events == []
+    grp.AddName("Maggie")
+    ship = _ship(); pSet.AddObjectToSet(ship, "Maggie")
+    assert rec.events == [("in", ship, grp)]
+
+
+def test_a_dead_group_leaves_the_index():
+    import gc
+    from engine.core import ids
+    grp = ObjectGroup(); grp.AddName("Unique Name 7")
+    assert grp in ObjectGroup._by_name["Unique Name 7"]
+    ids.unregister(grp.GetObjID())     # the id registry holds it strongly
+    del grp
+    gc.collect()
+    assert not ObjectGroup._by_name.get("Unique Name 7")
+
+
+def test_a_group_dropped_from_live_is_not_delivered_until_re_armed():
+    grp = ObjectGroup(); grp.AddName("Bart")
+    rec = _subscribe(grp)
+    ObjectGroup._live.clear()
+    pSet = _set()
+    pSet.AddObjectToSet(_ship(), "Bart")
+    assert rec.events == []
+    pSet.RemoveObjectFromSet("Bart")
+    grp.SetEventFlag(App.ObjectGroup.ENTERED_SET)
+    ship = _ship(); pSet.AddObjectToSet(ship, "Bart")
+    assert rec.events == [("in", ship, grp)]
+
+
+def test_several_watching_groups_hear_it_in_live_order():
+    grps = [ObjectGroup() for _ in range(6)]
+    seen = []
+    for g in grps:
+        g.AddName("Bart")
+        g.SetEventFlag(App.ObjectGroup.ENTERED_SET)
+    order = [g for g in list(ObjectGroup._live) if g in grps]
+    for g in grps:
+        rec = _Recorder()
+        rec.Entered = lambda evt, _g=g: seen.append(_g)
+        w = App.TGPythonInstanceWrapper(); w.SetPyWrapper(rec)
+        App.g_kEventManager.AddBroadcastPythonMethodHandler(
+            App.ET_OBJECT_GROUP_OBJECT_ENTERED_SET, w, "Entered", g)
+        g._keep = w
+    _set().AddObjectToSet(_ship(), "Bart")
+    assert seen == order

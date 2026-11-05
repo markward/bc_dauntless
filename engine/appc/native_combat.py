@@ -180,8 +180,7 @@ _REQUIRED_BINDINGS = (
     "combat_k4_eligible", "combat_k3_begin", "combat_set_part_poses",
     "combat_k0_begin", "combat_k0_apply_stats", "combat_effect_take",
     "combat_effect_rebind",
-    "combat_apply_hit", "combat_dmg_guard_check",
-    "combat_dmg_guard_invalidate", "combat_dmg_set_condition",
+    "combat_apply_hit", "combat_dmg_set_condition",
     "combat_dmg_clean_handles", "combat_k2_scan_clear",
     "combat_compute_take",
     # Tractors native (fire control native only, M4).
@@ -317,10 +316,7 @@ def reset() -> None:
     _dmg_classes.clear()
     for k in _dmg_counts:
         _dmg_counts[k] = 0
-    for k in _dmg_guard_computed:
-        _dmg_guard_computed[k] = 0
     if available():
-        _h.combat_dmg_guard_clear()
         _h.combat_dmg_clean_clear()
         _h.combat_k2_scan_clear()
     _dmg_ctx[0] = None
@@ -333,7 +329,6 @@ def reset() -> None:
     for k in _K2_STEP_REASONS:
         _k2_step_reasons[k] = 0
     _k2_flags.clear()
-    _k2_watch_seen[0] = -1
     _k2_iids_cache[:] = [None, -1, -1, None]
     _k2_iids_sent[:] = [_K2_UNSENT, -1, -1]
     _k2_present_sent[0] = None
@@ -348,10 +343,6 @@ def reset() -> None:
         _k3_reasons[k] = 0
     _k3_hit_python[0] = 0
     _k3_iids_sent[:] = [_K2_UNSENT, -1, -1]
-    # K3's class watch re-baselines with K2's (a watch built while a class
-    # was patched must not outlive the patch).
-    _k3_watch.clear()
-    _k3_watch_seen[0] = -1
     global _apply_kinds
     _apply_kinds = None
     for k in _K0_STEP_REASONS:
@@ -2074,6 +2065,8 @@ def register(obj, kind: str, finalize: bool = True) -> None:
         h = _h.combat_register(_kind(kind))
     d["_nslot"] = h
     _registry[h] = obj
+    if kind == "Object":
+        _part_registered(obj, h)
     cls = type(obj)
     if cls not in _k2_seen_set:
         _k2_seen_set.add(cls)
@@ -2094,19 +2087,20 @@ def forget_rows() -> None:
     is the same: every such object takes the Python path. Generations bump on
     clear, so their finalizers cannot free a later row.
 
-    The classes K2 has seen go too: with no row left, none has been seen. A
-    test-defined class (non-engine code, flagged "whole") kept there sent
-    every later test's K2/K3/K4 steps to Python as "patched"."""
+    The classes K2 has seen go too: with no row left, none has been seen
+    (its class flags are pushed with the next row of it)."""
     for obj in list(_registry.values()):
         obj.__dict__.pop("_nslot", None)
     _registry.clear()
     _discard_pending_rows()
     _forget_part_caches()
+    _part_pending.clear()
+    _part_leafed.clear()
+    _part_polled.clear()
     bump_part_gen()     # the cleared mirror's generation is back at 1
     torpedo_table_mark_dirty()
     _k2_seen.clear()
     _k2_seen_set.clear()
-    _k2_watch_seen[0] = -1
     # Kernel M's class watch reads _k2_seen too: it rebuilds on a new
     # generation (native_motion._watch_classes).
     global _seen_gen
@@ -2604,6 +2598,37 @@ _slot_names: dict = {}
 # ship handle -> the _part_gen its slots were last resolved at
 _resolved_gen: dict = {}
 
+# THE PENDING SET (phase 6 A3): resolve_stale_part_slots runs ~4x a tick, and
+# almost always finds nothing stale, so it skips its scan of `ships` unless a
+# ship may be. A ship is stale (today's test) when its handle's _resolved_gen
+# is not _part_gen; resolving it does anything only once its leaf is known
+# (_leaf_known). So the scan is needed only while some LEAFED handle may be
+# stale, and every way one becomes so is an event:
+#   * the generation moves (bump_part_gen): every leafed handle, until a
+#     sweep at that generation: `_part_swept != _part_gen`;
+#   * a leafed handle appears: register (a leaf already known), or the leaf
+#     becomes known on a registered row -- the PartLeafField on ObjectClass,
+#     or for a class shadowing it, the row polled (_part_polled);
+#   * a _resolved_gen entry goes: _forget_part_caches() (every handle:
+#     `_part_swept = 0`), push_mount_order (bumps too), a freed row (dead).
+# A handle leaves the pending set only when its resolution stamps it fresh
+# (resolve_part_slots) or it can do nothing (its leaf is unknown again; its
+# row is freed). A resolution that does not stamp (it raised, its table
+# could not be pushed, the row changed, the generation moved under it)
+# leaves it pending, as does a ship absent from this sweep's `ships`: a
+# later sweep of another list still finds it. When the generation moved, a
+# sweep ends by making "every leafed handle" explicit: the ones still stale,
+# by state (_part_prune). The sweep itself is the old scan, unchanged (same
+# ships, same order, same test), so it resolves exactly what it did; while
+# some pending ship is in no list (a dead ship a script still holds, say)
+# every call sweeps, at the old cost.
+_part_pending: dict = {}        # leafed handle -> None, maybe stale
+_part_leafed: "weakref.WeakValueDictionary[int, object]" = \
+    weakref.WeakValueDictionary()
+_part_polled: "weakref.WeakValueDictionary[int, object]" = \
+    weakref.WeakValueDictionary()
+_part_swept = 0                 # the _part_gen the last prune ran at
+
 
 def part_gen() -> int:
     """The current part-map generation (what a fresh slot is stamped with)."""
@@ -2637,12 +2662,94 @@ def _push_part_gen(_owner, _arg) -> None:
 
 
 def _forget_part_caches(h=None) -> None:
+    global _part_swept
     if h is None:
         _slot_names.clear()
         _resolved_gen.clear()
+        _part_swept = 0         # every leafed handle is stale
     else:
         _slot_names.pop(h, None)
         _resolved_gen.pop(h, None)
+        # A freed row: its handle names no object any more.
+        _part_pending.pop(h, None)
+        _part_leafed.pop(h, None)
+        _part_polled.pop(h, None)
+
+
+def _part_mark(obj) -> None:
+    """`obj`'s row may have stale slots it can now resolve: its leaf became
+    known (PartLeafField), or it registered with one (THE PENDING SET)."""
+    h = obj.__dict__.get("_nslot")
+    if h is not None and _leaf_known(obj) is not None:
+        _part_leafed[h] = obj
+        _part_pending[h] = None
+
+
+def _part_registered(obj, h) -> None:
+    """register: a new Object row. Pending if its leaf is known already;
+    polled if its class shadows the leaf descriptor (a write to the leaf
+    would not be seen)."""
+    if not isinstance(getattr(type(obj), "_articulation_leaf", None),
+                      PartLeafField):
+        _part_polled[h] = obj
+    _part_mark(obj)
+
+
+def _part_poll() -> None:
+    """Rows whose class shadows PartLeafField: one whose leaf is known now
+    is pending (and polled no longer: a known leaf only changes what a
+    resolution finds, never whether the slots are stale)."""
+    for h, obj in list(_part_polled.items()):
+        if obj.__dict__.get("_nslot") != h:
+            _part_polled.pop(h, None)
+        elif _leaf_known(obj) is not None:
+            _part_polled.pop(h, None)
+            _part_leafed[h] = obj
+            _part_pending[h] = None
+
+
+def _part_prune() -> None:
+    """After a sweep at a generation not swept before: "every leafed handle
+    is pending" becomes explicit -- the ones still stale, by state, join the
+    pending set (whose own members stay: each leaves only as THE PENDING
+    SET says)."""
+    global _part_swept
+    gen = _part_gen
+    resolved = _resolved_gen
+    for h, obj in list(_part_leafed.items()):
+        if (obj.__dict__.get("_nslot") == h and resolved.get(h) != gen
+                and _leaf_known(obj) is not None):
+            _part_pending[h] = None
+    _part_swept = gen
+
+
+class PartLeafField:
+    """``ObjectClass._articulation_leaf`` (ShipClass sets it; None until
+    articulation.leaf_for caches it): a write marks the row pending for the
+    part-slot resolution (THE PENDING SET), since a ship whose leaf was
+    unknown was never resolved. ABSENT until first written (the readers use
+    getattr(..., None) and the instance dict), as PosedPartsField."""
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
+
+    def __get__(self, obj, owner=None):
+        if obj is None:
+            return self
+        try:
+            return obj.__dict__[self._name]
+        except KeyError:
+            raise AttributeError(self._name) from None
+
+    def __set__(self, obj, value) -> None:
+        obj.__dict__[self._name] = value
+        _part_mark(obj)
+
+    def __delete__(self, obj) -> None:
+        try:
+            del obj.__dict__[self._name]
+        except KeyError:
+            raise AttributeError(self._name) from None
 
 
 def _leaf_known(ship):
@@ -2770,6 +2877,8 @@ def resolve_part_slots(ship, drop=True) -> None:
     h = ship.__dict__.get("_nslot")
     leaf = _leaf_known(ship)
     if h is None or leaf is None:
+        if h is not None:       # nothing to do until a leaf is written
+            _part_pending.pop(h, None)
         return
     from engine.appc import articulation
     gen = _part_gen
@@ -2804,13 +2913,19 @@ def resolve_part_slots(ship, drop=True) -> None:
                   "step)" % type(ship).__name__)
     elif _part_gen == gen:  # nothing bumped while resolving
         _resolved_gen[h] = gen
+        _part_pending.pop(h, None)
 
 
 def resolve_stale_part_slots(ships, drop=True) -> None:
     """At a step boundary: resolve every ship of `ships` whose slots were
     resolved at an older generation (or never). `drop`: see
-    resolve_part_slots."""
+    resolve_part_slots. Nothing to do -- no leafed handle maybe stale (THE
+    PENDING SET) -- costs no scan of `ships`."""
     if not _enabled:
+        return
+    if _part_polled:
+        _part_poll()
+    if _part_swept == _part_gen and not _part_pending:
         return
     for ship in ships:
         d = ship.__dict__
@@ -2819,6 +2934,8 @@ def resolve_stale_part_slots(ships, drop=True) -> None:
             continue
         if _resolved_gen.get(h) != _part_gen:
             resolve_part_slots(ship, drop)
+    if _part_swept != _part_gen:
+        _part_prune()
 
 
 def _heal_part_slots(ships, gen) -> None:
@@ -3564,10 +3681,6 @@ def resync() -> None:
 _k3_dirty = True
 # handle -> torpedo, for every row in the table.
 _k3_rows: dict = {}
-# handle -> class, for every row whose torpedo is not of the stock Torpedo
-# class (a mod's subclass): run_k3 checks those classes ("guard").
-_k3_odd_rows: dict = {}
-_k3_torpedo_cls = None
 _torp_fids: dict = {}
 
 
@@ -3705,7 +3818,6 @@ def _torp_lost(t) -> None:
     h = t.__dict__.pop("_k3_row", None)
     if _k3_rows.get(h) is t:
         del _k3_rows[h]
-        _k3_odd_rows.pop(h, None)
     torpedo_table_mark_dirty()
 
 
@@ -3798,8 +3910,6 @@ def _torp_put(t) -> None:
     h = _h.combat_torp_add(xi, xg)
     t.__dict__["_k3_row"] = h
     _k3_rows[h] = t
-    if type(t) is not _k3_torpedo_cls:
-        _k3_odd_rows[h] = type(t)
     for name in _TORP_FIELDS:
         value = _torp_value(t, name)
         if value is not _UNSET_FIELD and t.__dict__.get("_k3_row") == h:
@@ -3829,7 +3939,6 @@ def torpedo_row_drop(t) -> None:
         return
     if _k3_rows.get(h) is t:
         del _k3_rows[h]
-        _k3_odd_rows.pop(h, None)
         _h.combat_torp_drop(h)
 
 
@@ -3843,7 +3952,6 @@ def torpedo_table_mark_dirty() -> None:
     for t in _k3_rows.values():
         t.__dict__.pop("_k3_row", None)
     _k3_rows.clear()
-    _k3_odd_rows.clear()
     if available():
         _h.combat_torp_clear()
 
@@ -5064,65 +5172,38 @@ def _run_k0(ships, dt) -> None:
 # _k2_send_present_constants sent) and returns the rest, which run_k2
 # presents in one batch (_k2_present_batch).
 #
-# WHAT K2 STANDS IN FOR. The kernel computes, from the mirror, what these
-# Python functions and methods would answer. A test, tool or mod that
-# replaces one must still be obeyed, so the entry (k2_phasers) compares each
-# against its import-time snapshot (k2_snapshot_stock, taken when host_loop
-# finishes defining the loop) and runs the WHOLE step in Python on any
-# difference:
-#   module functions  _K2_FUNCTIONS (and host_io._h: the real bindings or
-#                     None; anything else is a test double the trace must
-#                     go through);
-#   stock classes     _K2_ROLES: every name of a role, resolved on its stock
-#                     class (a patch on PhaserBank, ShipClass, ... itself or
-#                     a base).
+# WHAT K2 STANDS IN FOR. The kernel computes, from the mirror, what
+# host_loop's loop body and the functions and methods it calls would answer
+# (k2_beams.h). A module function or stock-class method patched since is NOT
+# obeyed (spec Part A, phase 6 A3: a stage never falls back to Python
+# because a method was patched); the walk's only whole-step fallbacks are
+# representability (nested, instances, audit) and a ship's own:
 # A CLASS WITH A ROW whose role name resolves to a method defined outside the
-# engine package (a mod's subclass, a test's patch), or to anything but what
-# it resolved to when K2 first saw the class (_k2_flag): a bank or phaser
-# system class overriding only its own names -> its ship runs in Python (ctx
-# python_ships, RUN_PYTHON "overridden"); anything else (a ship, a target, a
-# shield, a cloak, a locked subsystem) -> the whole step (it can be any
-# bank's target). The engine's own classes override one another freely
-# (DamageableObject adds IsDead): the kernel ports those. Flags are cached
-# per class and re-checked at every entry (K2's own watch).
+# engine package (a mod's subclass, a test's), or to anything but what it
+# resolved to when K2 first saw the class (_k2_flag), read when the ship's
+# phaser system or banks are not of the stock class (_k2_python_ship): a
+# bank or phaser system class overriding only its own names -> its ship
+# runs in Python (ctx python_ships, RUN_PYTHON "overridden"); one
+# overriding a subsystem name, or an unseen target or walked-ship class
+# flagged "whole" -> the whole step ("patched"). The engine's own classes
+# override one another freely (DamageableObject adds IsDead): the kernel
+# ports those (tests/unit/test_native_k2_override_guard.py, statically).
 # An INSTANCE attribute shadowing a method the loop calls by name on the
 # walked ship, its phaser system or a bank (_K2_*_PATCHES) -> that ship runs
 # in Python. (One on a TARGET is not looked for: it would cost a dict probe
 # of every target, every tick.)
-# NOT WATCHED, deliberately (ruling Q5, spec 2026-11-02-combat-effect-queue;
-# roadmap decision 2: presentation internals are not a mod surface):
-# hit_feedback.beam_contact, hit_feedback._mesh_xyz, host_io.shield_hit and
-# combat.weapon_splash_radius. The drain's native shield splash stands in
-# for them, so a patch of one is NOT obeyed for a splash the drain presents
-# (it still is for every entry the drain returns to the Python batch). The
+# Presentation internals are not a mod surface either (ruling Q5, spec
+# 2026-11-02-combat-effect-queue; roadmap decision 2): hit_feedback.
+# beam_contact, hit_feedback._mesh_xyz, host_io.shield_hit and combat.
+# weapon_splash_radius. The drain's native shield splash stands in for
+# them, so a patch of one is not obeyed for a splash the drain presents (it
+# still is for every entry the drain returns to the Python batch). The
 # differentials spy them and compare the native splashes through
-# combat_present_capture. What the splash's point depends on IS watched:
-# frames.view_offset, shifted and containing_set are in _K2_FUNCTIONS.
+# combat_present_capture.
 
 _k2_kind_ids = None
 _k2_hl = None
 _k2_cheats = None
-
-#: (module, names) the kernel stands in for; host_loop's are the names its
-#: loop body calls (its own imports of the helpers included).
-_K2_FUNCTIONS = (
-    ("engine.host_io", ("ray_trace_mesh",)),
-    ("engine.appc.combat", ("_resolve_hit_point", "ray_sphere_entry",
-                            "shields_block", "shield_bubble_entry",
-                            "cloak_shields_suspended", "_hull_box_for",
-                            "_body_frame_delta")),
-    ("engine.appc.collisions", ("world_radius",)),
-    ("engine.host_loop", ("_phaser_aim_point", "_phaser_step_ship",
-                          "_phaser_step_bank", "can_detect", "_same_set",
-                          "_emitter_in_arc", "_resolve_bank_aim_world",
-                          "_is_offline")),
-    ("engine.systems.frames", ("view_offset", "shifted", "containing_set")),
-    ("engine.appc.subsystems", ("subsystem_world_position",
-                                "target_offset_world", "_is_offline")),
-    ("engine.appc.weapon_subsystems", ("_resolve_bank_aim_world",
-                                       "_emitter_in_arc", "_same_set")),
-    ("engine.appc.sensor_detection", ("can_detect",)),
-)
 
 _K2_SUBSYSTEM_NAMES = ("GetWorldLocation", "GetPosition", "_climb_to_ship")
 _K2_OBJECT_NAMES = ("IsDead", "GetWorldLocation", "GetWorldRotation",
@@ -5187,29 +5268,25 @@ _K2_BANK_PULSE_PATCHES = frozenset((
     "GetMaxDamage", "GetMaxDamageDistance", "GetDamageRadiusFactor"))
 _K2_BANK_WALK_PATCHES = _K2_BANK_PATCHES - _K2_BANK_PULSE_PATCHES
 
-# The snapshot (k2_snapshot_stock): [(module, getter, values), ...] for the
-# functions; [(role, stock class, resolution), ...] for the classes; the
-# host_io._h it saw. None until taken: K2 never runs before it.
-_k2_fn_snapshot = None
+# The snapshot (k2_snapshot_stock): [(role, stock class, resolution), ...]
+# for the role classes (the stock classes _k2_flag and the scans compare a
+# class against), and host_io. None until taken: K2 never runs before it.
 _k2_role_snapshot = None
 _k2_stock_by_role = {}
-_k2_host = None
 _k2_host_io = None
 _k2_stock_bank = None
 _k2_stock_system = None
 # class -> (overridden, whole, resolution): a class's flags (_k2_flag) and
 # its role's names as K2 first saw them resolve (re-checked at every entry).
 _k2_flags: dict = {}
-# Classes with a row, in first-registration order (register, reclassify),
-# and the ones with a role as _k2_unchanged re-checks them (rebuilt when
-# _k2_seen grows: _k2_watch_seen[0] is the length it was built at).
+# Classes with a row, in first-registration order (register, reclassify):
+# the classes whose flags the mirror holds (representability: a row of a
+# class not in _k2_seen_set has stale class flags).
 _k2_seen: list = []
 _k2_seen_set: set = set()
 # Bumped whenever _k2_seen is cleared (forget_rows): a reader that keeps a
 # position in it (native_motion's class watch) starts again.
 _seen_gen = 0
-_k2_watch: list = []
-_k2_watch_seen = [-1]
 # [ship_instances, its version, _k2_drop_epoch, the iids table built on them]
 _k2_iids_cache = [None, -1, -1, None]
 _k2_drop_epoch = 0
@@ -5252,21 +5329,11 @@ def _k2_same(cls, res) -> bool:
 
 def k2_snapshot_stock(host_loop_module) -> None:
     """Called by host_loop once it has defined the `cb.phasers` loop body:
-    snapshot every function and stock-class method K2 stands in for, before
-    any test, tool or mod can replace one."""
-    global _k2_fn_snapshot, _k2_role_snapshot, _k2_host, _k2_host_io
+    the stock role classes (_k2_flag's and the scans' reference), before
+    any test, tool or mod can replace a method."""
+    global _k2_role_snapshot, _k2_host_io
     global _k2_hl, _k2_cheats, _k2_stock_bank, _k2_stock_system
     import importlib
-    snap = []
-    for module, names in _K2_FUNCTIONS:
-        mod = (host_loop_module if module == "engine.host_loop"
-               else importlib.import_module(module))
-        getter = operator.attrgetter(*names)
-        values = getter(mod)
-        if len(names) == 1:
-            values = (values,)
-        snap.append((mod, names, values))
-    _k2_fn_snapshot = snap
     roles = []
     _k2_stock_by_role.clear()
     for role, module, clsname, names in _K2_ROLES:
@@ -5278,10 +5345,9 @@ def k2_snapshot_stock(host_loop_module) -> None:
     _k2_stock_system = _k2_stock_by_role["system"][0]
     from engine import host_io
     import engine.dev_combat_cheats as cheats
-    _k2_host_io, _k2_host = host_io, host_io._h
+    _k2_host_io = host_io
     _k2_hl, _k2_cheats = host_loop_module, cheats
     _k2_flags.clear()
-    _k2_watch_seen[0] = -1
 
 
 def _k2_role_of(cls):
@@ -5335,54 +5401,6 @@ def _k2_flag(cls) -> tuple:
     return hit[0], hit[1]
 
 
-def _k2_unchanged() -> bool:
-    """Every stood-in function and every stock class as snapshotted, no
-    class seen with a row flagged "whole" or patched since K2 first saw it
-    (_k2_flag), and host_io._h the bindings or None. The whole-step check:
-    one attrgetter per module and per class with a role."""
-    for mod, names, values in _k2_fn_snapshot:
-        try:
-            now = operator.attrgetter(*names)(mod)
-        except AttributeError:
-            return False
-        if len(names) == 1:
-            now = (now,)
-        if now != values:
-            return False
-    if not _k2_classes_unchanged():
-        return False
-    h = _k2_host_io._h
-    return h is None or h is _k2_host
-
-
-def _k2_classes_unchanged() -> bool:
-    """The class half of _k2_unchanged (the K3/K4 step scan shares it):
-    every stock role class as snapshotted, and no class seen with a row
-    flagged "whole" or patched since K2 first saw it."""
-    for _role, cls, res in _k2_role_snapshot:
-        if not _k2_same(cls, res):
-            return False
-    if len(_k2_seen) != _k2_watch_seen[0]:
-        _k2_rebuild_watch()
-    for cls, res, whole in _k2_watch:
-        if whole or not _k2_same(cls, res):
-            return False
-    return True
-
-
-def _k2_rebuild_watch() -> None:
-    """The seen classes with a role, with their first-sight resolution and
-    whole flag (a new class registered since the last entry)."""
-    watch = []
-    for cls in _k2_seen:
-        _k2_flag(cls)
-        _over, whole, res = _k2_flags[cls]
-        if res is not None:
-            watch.append((cls, res, whole))
-    _k2_watch[:] = watch
-    _k2_watch_seen[0] = len(_k2_seen)
-
-
 def _k2_kinds() -> tuple:
     global _k2_kind_ids
     if _k2_kind_ids is None:
@@ -5395,7 +5413,7 @@ def _k2_kinds() -> tuple:
 
 def _k2_unseen(cls) -> int:
     """0 when K2 has seen `cls` (some object of it registered or was
-    reclassified, so _k2_unchanged watches the class); else 2 when it is
+    reclassified, so the mirror holds its class flags); else 2 when it is
     flagged "whole" (_k2_flag), else 1: a class swapped in under a row
     (`obj.__class__ = ...` without reclassify) left that row's class flags
     stale.
@@ -5819,14 +5837,14 @@ def _run_k2(ships, dt, ship_instances, cx) -> None:
 
 
 def _k2_step_fallback(ship_instances):
-    """Why this `cb.phasers` step must run whole in Python, or None."""
-    if _k2_fn_snapshot is None or _h.combat_k2_open():
+    """Why this `cb.phasers` step must run whole in Python, or None. Only
+    representability: a patched function or stock-class method is not a
+    reason (Part A)."""
+    if _k2_role_snapshot is None or _h.combat_k2_open():
         return "nested"
     if ship_instances is not None \
             and type(ship_instances) is not _tracked_instances():
         return "instances"
-    if not _k2_unchanged():
-        return "patched"
     # The audit compares every can_detect's native and Python answers
     # (sensor_detection._audit_can_detect); the kernel's own can_detect would
     # bypass it, so the audited step is Python's.
@@ -5902,8 +5920,8 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
 # row of a class K2 has seen, no instance attribute shadowing one of
 # _STEP_SHIP_PATCHES, a real IsDead, is a ShipClass (an engine ObjectClass
 # subclass may override a read method: ProximityCheck.GetRadius) and has a
-# representable set; no ship is listed twice; and no class K2 watches is
-# patched (_k2_classes_unchanged, ruling C2).
+# representable set; and no ship is listed twice. A class method patched
+# since is not a reason (spec Part A, phase 6 A3).
 
 #: Instance attributes that send the step to Python: the methods K3/K4 stand
 #: in for on a ship (spec §7's override list).
@@ -5986,8 +6004,6 @@ def step_scan(ships) -> _StepScan:
         torpedo_table_rebuild(proj._active)
     if _k2_role_snapshot is None:
         why = "unsnapped"
-    elif not _k2_classes_unchanged():
-        why = "patched"
     else:
         ok, why, sets = _h.combat_step_scan(
             ships, _kind("Object"), _KIND_SHIFT, _k2_seen_set,
@@ -6174,132 +6190,31 @@ def k4_update(player, ships) -> bool:
 # Python attributes (not pushed back: the row already holds every value), the
 # hits built with Python's object identities, expire() in the kernel's order.
 #
-# WHAT K3 STANDS IN FOR, checked before begin (a difference sends the WHOLE
-# step to Python, so a test's, tool's or mod's replacement is obeyed):
-#   module functions and constants  _K3_FUNCTIONS (map §A8.3.9's patch points
-#                     and the functions the kernel replaces), against
-#                     k3_snapshot_stock's identity snapshot, plus host_io._h
-#                     the real bindings or None              -> "patched";
-#   classes           the stock Torpedo's _K3_TORPEDO_NAMES, any odd torpedo
-#                     class (a subclass) resolving one differently, and every
-#                     ship/object class K2 has seen resolving _K3_SHIP_NAMES
-#                     to non-engine code or to anything other than at first
-#                     sight (K2's ruling C2)                  -> "guard".
-# The ship methods K2 already watches (IsDead, GetWorldLocation,
-# GetContainingSet, GetRadius, GetScale, GetShields, GetCloakingSubsystem) are
-# re-checked by the step scan (_k2_classes_unchanged) earlier in this step.
-# The static twin is tests/unit/test_native_k3_override_guard.py.
+# WHAT K3 STANDS IN FOR: update_all's decision steps and the module
+# functions, constants and Torpedo / ship methods they call, computed from
+# the mirror. A module function, constant or class method patched since is
+# NOT obeyed (spec Part A, phase 6 A3); a constant reaches the kernel when it
+# is pushed (push_globals, resync). The whole-step fallbacks left are
+# representability (off, audit, plain_active, instances, scan, row; "patched"
+# now only before the snapshot). The static guard that no ENGINE class
+# overrides a stood-in method is tests/unit/test_native_k3_override_guard.py.
 
-#: (module, names) K3 stands in for. Constants compare by value (the kernel
-#: was pushed them at resync: a change since is not in the mirror).
-_K3_FUNCTIONS = (
-    ("engine.appc.projectiles", ("_guide", "_steer_point", "_target_visible",
-                                 "_broadphase", "_shifted", "_LEAD_ACCEL_K")),
-    ("engine.appc.combat", ("sphere_hit", "_resolve_hit_point",
-                            "shield_bubble_entry", "shields_block",
-                            "bubble_bound_radius", "ray_sphere_entry",
-                            "cloak_shields_suspended", "_hull_box_for",
-                            "_body_frame_delta")),
-    ("engine.appc.collisions", ("world_radius",)),
-    ("engine.systems.frames", ("offset_between", "containing_set",
-                               "shifted")),
-    ("engine.appc.subsystems", ("target_offset_world", "_is_offline")),
-    ("engine.appc.part_severance", ("authored_mount_subsystem",
-                                    "_mounted_subsystems")),
-    ("engine.appc.sensor_detection", ("can_detect",
-                                      "ENHANCED_SENSOR_CONTEST")),
-    ("engine.host_io", ("ray_trace_mesh",)),
-    ("engine.core.ids", ("implements",)),
-)
-#: Torpedo methods the kernel stands in for: the store read and write of the
-#: position, and frames.containing_set's GetContainingSet.
-_K3_TORPEDO_NAMES = ("GetTranslate", "SetTranslateXYZ", "GetContainingSet")
-#: Ship methods K3 reads that K2's roles do not list: the target's lead.
-_K3_SHIP_NAMES = ("GetVelocityTG",)
+# "guard" is no longer emitted (the class watch is gone): kept as a key.
 _K3_REASONS = ("off", "audit", "plain_active", "scan", "patched", "row",
                "guard", "instances")
 _k3_reasons = dict.fromkeys(_K3_REASONS, 0)
 # The key of the iids table the K3 kernel holds (it keeps its own, apart from
 # K2's): as _k2_iids_sent.
 _k3_iids_sent = [_K2_UNSENT, -1, -1]
-_k3_snapshot = None
 _k3_proj = None
-_k3_torp_res = None
-# [(cls, resolution, foreign)] for the seen ship/object classes, rebuilt when
-# _k2_seen grows (_k3_watch_seen[0] is the length it was built at).
-_k3_watch: list = []
-_k3_watch_seen = [-1]
 _k3_ask = None
 
 
 def k3_snapshot_stock() -> None:
-    """Called by host_loop right after k2_snapshot_stock (projectiles and
-    every module K3 stands in for are imported by then): the identity
-    snapshot run_k3 compares against, before any test, tool or mod can
-    replace a function."""
-    global _k3_snapshot, _k3_proj, _k3_torp_res, _k3_torpedo_cls
-    snap = []
-    for name, names in _K3_FUNCTIONS:
-        mod = importlib.import_module(name)
-        get = operator.attrgetter(*names)
-        values = get(mod)
-        if len(names) == 1:
-            values = (values,)
-        snap.append((mod, get, len(names) == 1, values))
-    _k3_snapshot = snap
+    """Called by host_loop right after k2_snapshot_stock (projectiles is
+    imported by then): the module run_k3 drives."""
+    global _k3_proj
     _k3_proj = importlib.import_module("engine.appc.projectiles")
-    _k3_torpedo_cls = _k3_proj.Torpedo
-    _k3_torp_res = _k2_resolution(_k3_torpedo_cls, _K3_TORPEDO_NAMES)
-    # Rows made before the snapshot were filed against no stock class.
-    for h, t in _k3_rows.items():
-        if type(t) is _k3_torpedo_cls:
-            _k3_odd_rows.pop(h, None)
-    _k3_watch_seen[0] = -1
-
-
-def _k3_unchanged() -> bool:
-    for mod, get, one, values in _k3_snapshot:
-        try:
-            now = get(mod)
-        except AttributeError:
-            return False
-        if one:
-            now = (now,)
-        if now != values:
-            return False
-    h = _k2_host_io._h
-    return h is None or h is _k2_host
-
-
-def _k3_rebuild_watch() -> None:
-    watch = []
-    for cls in _k2_seen:
-        if _k2_role_of(cls) in ("ship", "object"):
-            foreign = any(_k2_foreign(getattr(cls, n, None))
-                          for n in _K3_SHIP_NAMES)
-            watch.append((cls, _k2_resolution(cls, _K3_SHIP_NAMES), foreign))
-    _k3_watch[:] = watch
-    _k3_watch_seen[0] = len(_k2_seen)
-
-
-def _k3_classes_ok() -> bool:
-    """The class half: the stock Torpedo, and every odd torpedo class (a
-    subclass with a row), resolving _K3_TORPEDO_NAMES to what the stock
-    Torpedo did at the snapshot; and no seen ship/object class resolving
-    _K3_SHIP_NAMES to non-engine code or to anything other than at first
-    sight."""
-    if not _k2_same(_k3_torpedo_cls, _k3_torp_res):
-        return False
-    if _k3_odd_rows:
-        for cls in set(_k3_odd_rows.values()):
-            if not _k2_same(cls, _k3_torp_res):
-                return False
-    if len(_k2_seen) != _k3_watch_seen[0]:
-        _k3_rebuild_watch()
-    for cls, res, foreign in _k3_watch:
-        if foreign or not _k2_same(cls, res):
-            return False
-    return True
 
 
 def _k3_python(why: str):
@@ -6325,17 +6240,12 @@ def _k3_fallback(all_ships, ship_instances):
     st = _step
     if st is None or st.ships is not all_ships or not st.ok:
         return "scan"
-    if not _k3_unchanged():
-        return "patched"
     if _k3_dirty:
         # A list mutation the rows could not follow (a reorder, a slice, a
-        # clear): never hand the kernel a stale table. Before the class
-        # check, which reads the rows' classes.
+        # clear): never hand the kernel a stale table.
         torpedo_table_rebuild(proj._active)
         if _k3_dirty:
             return "row"        # a torpedo listed twice: no row can hold it
-    if not _k3_classes_ok():
-        return "guard"
     return None
 
 
@@ -6500,9 +6410,10 @@ def _k3_answer(rec, walk, dt, ship_instances, st):
 # class's did at the snapshot (_dmg_snapshot) and none to code outside the
 # engine package (_k2_foreign: a test's, a tool's, a mod's); its rows then
 # carry dmg_class / dmg_ship, which the native chain reads, and a class that
-# does not is handed to Python. A stock class patched after the snapshot,
-# and any class patched after its rows were flagged, is caught at every
-# native call (_dmg_unchanged: it re-derives every flagged class's rules).
+# does not is handed to Python: the class mirror flags, computed at a
+# class's first sight. A class (stock or flagged) patched after that is NOT
+# obeyed (spec Part A, phase 6 A3), nor is a module function the chain
+# stands in for.
 
 #: ShipSubsystem methods the condition chain stands in for.
 _DMG_SUB_NAMES = ("GetCondition", "SetCondition", "SetConditionPercentage",
@@ -6557,31 +6468,20 @@ def _dmg_snapshot() -> dict:
 
 
 def damage_snapshot_stock() -> None:
-    """host_loop, beside k3_snapshot_stock: take the snapshots now (the
-    classes' and the functions', the kernels' damage's included), before
-    any test, tool or mod can replace one."""
+    """host_loop, beside k3_snapshot_stock: take the stock classes' rules
+    and the stock combat.apply_hit now, before any test, tool or mod can
+    replace one."""
     _dmg_snapshot()
-    _dmg_functions()
-    _kdmg_functions()
+    _kdmg_apply_hit_stock()
 
 
 def _dmg_class(cls) -> int:
     """dmg_class for a subsystem class: DMG_LEAF, DMG_AGGREGATE or
-    DMG_PYTHON (cached per class until reset(); _dmg_unchanged re-derives
-    every cached one whenever one of these classes changes)."""
+    DMG_PYTHON (cached per class until reset())."""
     hit = _dmg_classes.get(("sub", cls))
     if hit is None:
         hit = _dmg_classes[("sub", cls)] = _dmg_class_of(cls)
-        _dmg_watch_grew()
     return hit
-
-
-def _dmg_watch_grew() -> None:
-    """A class was flagged for the first time: the guard's cache (which
-    watches every flagged class, _dmg_unchanged) must be filled again with
-    it among the watched."""
-    if available():
-        _h.combat_dmg_guard_invalidate(_DMG_GUARD)
 
 
 def _dmg_class_of(cls) -> int:
@@ -6618,7 +6518,6 @@ def _dmg_ship(cls) -> int:
     hit = _dmg_classes.get(("ship", cls))
     if hit is None:
         hit = _dmg_classes[("ship", cls)] = _dmg_ship_of(cls)
-        _dmg_watch_grew()
     return hit
 
 
@@ -6640,35 +6539,13 @@ def _dmg_ship_of(cls) -> int:
 # DamageSystem (radiation, the SDK), the condition write (SetCondition,
 # SetConditionPercentage, DestroySystem, repairs, severance). Each returns
 # True when the native chain did it, False when the caller must run the
-# Python reference (a patched function or class, an object the mirror
-# cannot name, a value it cannot hold -- the native call then changed
-# nothing). The binding applies the writes through an applier context
-# installed here, and queues the entries holding their objects (damage.h,
-# Held; the bindings' damage_append_entries).
+# Python reference (a class flagged DMG_PYTHON, an instance attribute
+# shadowing a method the chain stands in for, an object the mirror cannot
+# name, a value it cannot hold -- the native call then changed nothing).
+# The binding applies the writes through an applier context installed here,
+# and queues the entries holding their objects (damage.h, Held; the
+# bindings' damage_append_entries).
 
-#: Module functions the native chain stands in for (identity-checked at
-#: every native call against the snapshot, and never foreign).
-_DMG_FUNCTIONS = (
-    ("engine.appc.combat", ("_apply_hit", "_shield_face_from_hit_point",
-                            "_body_frame_delta", "_hull_box_for",
-                            "shields_block", "cloak_shields_suspended",
-                            "_iter_subsystems", "_subsystem_world_position",
-                            "_splash_weight",
-                            "_pick_primary_subsystem_for_dispatch",
-                            "_subsystem_state_flags", "_diff_state")),
-    ("engine.appc.subsystems", ("subsystem_world_position",)),
-    ("engine.appc.objects", ("write_condition", "_is_critical")),
-    ("engine.appc.death_check", ("note_write",)),
-    ("engine.appc.effect_queue", ("emit", "hit_present_operands",
-                                  "weapon_hit_operands")),
-    ("engine.dev_combat_cheats", ("god_mode_active",
-                                  "double_player_weapons_active",
-                                  "disable_npc_shields_active")),
-    ("engine.core.ids", ("implements",)),
-)
-#: The stock-class methods re-checked at every native call: the snapshot's,
-#: plus FloatRangeWatcher._update_queued (COND_WATCH's producer).
-_dmg_fn_snapshot = None
 _dmg_counts = {"hits": 0, "conditions": 0, "damage_systems": 0,
                "fallbacks": 0}
 
@@ -6676,105 +6553,11 @@ _dmg_counts = {"hits": 0, "conditions": 0, "damage_systems": 0,
 def damage_counts() -> dict:
     """Since the last reset(): the native hits, condition writes and
     DamageSystem calls, and the calls handed back to Python (a native
-    call's fallback or the guard's). `conditions` counts the condition
-    writes made through set_condition (a SetCondition from Python); the
+    call's fallback). `conditions` counts the condition writes made
+    through set_condition (a SetCondition from Python); the
     native subsystem stage's repair writes (subsystem_step.h THE REPAIR
     PIECE) call damage.h's set_condition directly and are not counted."""
     return dict(_dmg_counts)
-
-
-def _dmg_functions() -> list:
-    global _dmg_fn_snapshot
-    if _dmg_fn_snapshot is None:
-        from engine.appc.float_range_watcher import FloatRangeWatcher
-        snap = []
-        for name, names in _DMG_FUNCTIONS:
-            mod = importlib.import_module(name)
-            snap.append((mod, operator.attrgetter(*names),
-                         operator.attrgetter(*names)(mod), names))
-        snap.append((FloatRangeWatcher, operator.attrgetter("_update_queued"),
-                     FloatRangeWatcher._update_queued, ("_update_queued",)))
-        _dmg_fn_snapshot = snap
-    return _dmg_fn_snapshot
-
-
-#: How often each guard was computed in Python (damage_guard_counts).
-_dmg_guard_computed = {"dmg": 0, "kdmg": 0}
-
-
-def damage_guard_counts() -> dict:
-    """Since the last reset(): how often _dmg_unchanged and _kdmg_unchanged
-    were computed in Python (not answered from the binding's cache)."""
-    return dict(_dmg_guard_computed)
-
-
-#: The binding's guard cache slots (THE DAMAGE GUARD CACHE, host_bindings).
-_DMG_GUARD, _KDMG_GUARD = 0, 1
-
-
-def _guard_watch(snapshot, classes=()) -> tuple:
-    """What a guard reads, for combat_dmg_guard_fill: ((module, names), ...)
-    and the classes (a class owner of the snapshot's, and `classes`)."""
-    modules, types = [], list(classes)
-    for owner, get, _values, names in snapshot:
-        if isinstance(owner, type):
-            types.append(owner)
-        else:
-            modules.append((owner, names))
-    return modules, types
-
-
-def _dmg_unchanged() -> bool:
-    """_dmg_unchanged_now, answered from the binding's cache while nothing
-    it reads has changed (THE DAMAGE GUARD CACHE): a patch since the fill
-    makes it stale, and it is computed again. It watches the stock classes
-    and every class rows have been flagged with -- a ship's cloak's among
-    them, whose IsCloaking / IsDecloaking are part of its rules -- and a
-    class first flagged later invalidates the fill (_dmg_watch_grew)."""
-    r = _h.combat_dmg_guard_check(_DMG_GUARD)
-    if r is None:
-        r = _dmg_unchanged_now()
-        st = _dmg_snapshot()
-        modules, types = _guard_watch(
-            _dmg_functions(), dict.fromkeys(
-                st["classes"] + tuple(cls for _kind, cls in _dmg_classes)))
-        _h.combat_dmg_guard_fill(_DMG_GUARD, r, modules, types)
-    return r
-
-
-def _dmg_unchanged_now() -> bool:
-    """Every function and stock-class method the native chain stands in for
-    is the one snapshotted, and none is foreign (a test's patch made before
-    the snapshot); and every class rows have been flagged with still has
-    the rules its rows carry (final review I-1: a subclass patched after its
-    rows were flagged)."""
-    _dmg_guard_computed["dmg"] += 1
-    for owner, get, values, _names in _dmg_functions():
-        try:
-            now = get(owner)
-        except AttributeError:
-            return False
-        if now != values:
-            return False
-        if type(now) is tuple:
-            if any(_k2_foreign(v) for v in now):
-                return False
-        elif _k2_foreign(now):
-            return False
-    st = _dmg_snapshot()
-    ship_subsystem, weapon_system, shield, ship = st["classes"]
-    if not (_dmg_resolve(ship_subsystem, _DMG_SUB_NAMES) == st["sub"]
-            and _dmg_resolve(ship_subsystem, _DMG_PREDICATES) == st["leaf"]
-            and _dmg_resolve(weapon_system, _DMG_PREDICATES)
-            == st["aggregate"]
-            and _dmg_resolve(shield, _DMG_SHIELD_NAMES) == st["shield"]
-            and _dmg_resolve(ship, _DMG_SHIP_NAMES) == st["ship"]):
-        return False
-    for (kind, cls), verdict in _dmg_classes.items():
-        now = _dmg_class_of(cls) if kind == "sub" else _dmg_ship_of(cls)
-        if now != verdict:
-            return False
-    return True
 
 
 def _dmg_handle(obj, kind: str):
@@ -6863,8 +6646,7 @@ def apply_hit(ship, damage, hit_point, source, *, normal=None,
     the native hit takes as given are computed here exactly as the
     reference computes them: R_hit (weapon_splash_radius, the splash_radius
     override), the player, the cheats, each operand's float()/bool()."""
-    if (hit_point is None or not _dmg_unchanged()
-            or _dmg_patched(ship, _DMG_SHIP_NAMES)):
+    if hit_point is None or _dmg_patched(ship, _DMG_SHIP_NAMES):
         _dmg_counts["fallbacks"] += 1
         return False
     ship_h = _dmg_handle(ship, "Object")
@@ -6947,8 +6729,7 @@ def set_condition(sub, value, killer=None, ship=None) -> bool:
 
 def _set_condition_py(sub, value, killer=None, ship=None) -> bool:
     """set_condition's steps in Python."""
-    if (not _dmg_unchanged()
-            or _dmg_patched(sub, _DMG_SUB_PATCHES)):
+    if _dmg_patched(sub, _DMG_SUB_PATCHES):
         _dmg_counts["fallbacks"] += 1
         return False
     sub_h = _dmg_handle(sub, "Subsystem")
@@ -6986,7 +6767,7 @@ def damage_system(ship, sub, amount: float, source=None) -> bool:
 def _damage_system_py(ship, sub, amount: float, source=None) -> bool:
     """damage_system's steps in Python."""
     from engine.appc.subsystems import ShipSubsystem
-    if (not _dmg_unchanged() or not isinstance(sub, ShipSubsystem)
+    if (not isinstance(sub, ShipSubsystem)
             or _dmg_patched(sub, _DMG_SUB_PATCHES)):
         _dmg_counts["fallbacks"] += 1
         return False
@@ -7013,26 +6794,21 @@ def _damage_system_py(ship, sub, amount: float, source=None) -> bool:
 # (counted by why: k2_pulse_python_reasons, k3_hit_python_reasons) goes to
 # Python as before -- K2's CONTACT record, K3's hand-back here.
 #
-# THE OVERRIDE GUARD. The context is "not ok" -- every pulse and hit to
-# Python -- when a function or stock-class method the native hit stands in
-# for is replaced (_dmg_unchanged), or one the kernels' damage stands in for
-# (_KDMG_FUNCTIONS: host_loop's pulse arithmetic and the two entry points,
-# so a test's spy on combat.apply_hit is obeyed), or the player is an object
-# the mirror cannot name. A target is "clean" when neither it nor any
-# subsystem its hit can reach (its mount order, hull, shield generator) has
+# NOT OK. The context is "not ok" -- every pulse and hit to Python -- when
+# combat.apply_hit is not the engine's own (_kdmg_apply_hit_stock), or the
+# player is an object the mirror cannot name. A patch of anything else the
+# hit stands in for is NOT obeyed (spec Part A, phase 6 A3). combat.apply_hit
+# is kept on purpose: it is the hit's OBSERVATION seam -- the golden fights'
+# and the dispatch tests' spy records every hit through it (their "calls"),
+# so a kernel that applied a hit past the spy would change a recorded golden.
+# A target is "clean" when neither it nor any subsystem its hit can reach
+# (its mount order, hull, shield generator) has
 # an instance attribute shadowing a method the hit stands in for
 # (combat_dmg_clean; override-guard gap 1, Task 3's report §8.3, closed the
 # K1 way: scanned at the entry point -- K2's begin, K3's apply, the
 # non-kernel apply_hit -- ruling L8). A patch made later in the step is seen
 # at the next entry.
 
-#: (module, names) the kernels' damage stands in for beyond the native hit's
-#: own (_DMG_FUNCTIONS), identity-checked at every entry, never foreign.
-_KDMG_FUNCTIONS = (
-    ("engine.host_loop", ("_phaser_contact", "_phaser_damage_for_tick",
-                          "_phaser_level")),
-    ("engine.appc.combat", ("apply_hit", "weapon_splash_radius")),
-)
 #: The instance attributes combat_dmg_clean looks for: on the target ship
 #: (_DMG_SHIP_NAMES) and on each subsystem its hit can reach (the condition
 #: chain's names, the predicates, the shield names).
@@ -7041,47 +6817,22 @@ _KDMG_SUB_NAMES = tuple(dict.fromkeys(_DMG_SUB_NAMES + _DMG_PREDICATES
                                       + _DMG_CLOAK_NAMES))
 #: A torpedo's: weapon_splash_radius reads GetDamageRadiusFactor on it.
 _KDMG_TORP_NAMES = ("GetDamageRadiusFactor",)
-_kdmg_fn_snapshot = None
+_kdmg_apply_hit = [None]
 
 
-def _kdmg_functions() -> list:
-    global _kdmg_fn_snapshot
-    if _kdmg_fn_snapshot is None:
-        from engine.appc.projectiles import Torpedo
-        snap = []
-        for name, names in _KDMG_FUNCTIONS:
-            mod = importlib.import_module(name)
-            snap.append((mod, operator.attrgetter(*names),
-                         operator.attrgetter(*names)(mod), names))
-        snap.append((Torpedo, operator.attrgetter(*_KDMG_TORP_NAMES),
-                     (operator.attrgetter(*_KDMG_TORP_NAMES)(Torpedo),),
-                     _KDMG_TORP_NAMES))
-        _kdmg_fn_snapshot = snap
-    return _kdmg_fn_snapshot
-
-
-def _kdmg_unchanged() -> bool:
-    """_kdmg_unchanged_now, from the binding's cache (as _dmg_unchanged)."""
-    r = _h.combat_dmg_guard_check(_KDMG_GUARD)
-    if r is None:
-        r = _kdmg_unchanged_now()
-        modules, types = _guard_watch(_kdmg_functions())
-        _h.combat_dmg_guard_fill(_KDMG_GUARD, r, modules, types)
-    return r
-
-
-def _kdmg_unchanged_now() -> bool:
-    _dmg_guard_computed["kdmg"] += 1
-    for owner, get, values, _names in _kdmg_functions():
-        try:
-            now = get(owner)
-        except AttributeError:
+def _kdmg_apply_hit_stock() -> bool:
+    """combat.apply_hit is the engine's own, as the first call saw it
+    (damage_snapshot_stock takes it at host_loop's start): False for a
+    test's spy, which the kernels then obey by handing every hit back (NOT
+    OK above)."""
+    from engine.appc import combat
+    now = combat.apply_hit
+    stock = _kdmg_apply_hit[0]
+    if stock is None:
+        if _k2_foreign(now):
             return False
-        if type(now) is not tuple:
-            now = (now,)
-        if now != values or any(_k2_foreign(v) for v in now):
-            return False
-    return True
+        stock = _kdmg_apply_hit[0] = now
+    return now is stock
 
 
 def _kdmg_clean(objs) -> list:
@@ -7106,7 +6857,7 @@ def _kdmg_ctx(weapon: str, ship_instances, clean) -> dict:
     from engine.appc import combat
     from engine.appc.weapon_subsystems import PhaserSystem
     import engine.dev_combat_cheats as cheats
-    ok = _dmg_unchanged() and _kdmg_unchanged()
+    ok = _kdmg_apply_hit_stock()
     try:
         game = (App.Game_GetCurrentGame()
                 if hasattr(App, "Game_GetCurrentGame") else None)

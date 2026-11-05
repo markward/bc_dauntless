@@ -85,6 +85,10 @@ class ObjectClass(TGEventHandlerObject):
     _radius = native_combat.NativeField(float)
     _scale = native_combat.NativeField(float)
     _containing_set = native_combat.NativeRefField("Set")
+    # The hardpoint leaf (ShipClass sets it; articulation.leaf_for caches
+    # it): a write marks the row for the part-slot resolution (native_combat
+    # THE PENDING SET). Absent until written.
+    _articulation_leaf = native_combat.PartLeafField()
 
     def __init__(self):
         super().__init__()
@@ -1223,6 +1227,14 @@ class ObjectGroup(TGEventHandlerObject):
     # object's name. Weak: a mission's condition drops its group when the
     # condition dies, and the registry must not keep it (or its handlers) alive.
     _live: "weakref.WeakSet" = weakref.WeakSet()
+    # name -> the groups that may hold it (a superset: every group whose
+    # AddName added it and whose RemoveName / RemoveAllNames has not dropped
+    # it since). Weak, like _live: a dead group leaves by itself.
+    # broadcast_membership reads it to skip the scan of `_live` when no
+    # live group can watch the name (phase 6 A3: every expiring torpedo's).
+    # `_names` is written ONLY by AddName, RemoveName and RemoveAllNames;
+    # a new writer must keep this index too.
+    _by_name: "dict[str, weakref.WeakSet]" = {}
 
     def __init__(self):
         super().__init__()
@@ -1239,14 +1251,21 @@ class ObjectGroup(TGEventHandlerObject):
     def AddName(self, name: str) -> None:
         if name not in self._names:
             self._names.append(name)
+            groups = ObjectGroup._by_name.get(name)
+            if groups is None:
+                groups = ObjectGroup._by_name[name] = weakref.WeakSet()
+            groups.add(self)
         self._event_flags.setdefault(name, set()).update(self._default_flags)
 
     def RemoveName(self, name: str) -> None:
         if name in self._names:
             self._names.remove(name)
+            _unindex_name(name, self)
         self._event_flags.pop(name, None)
 
     def RemoveAllNames(self) -> None:
+        for name in self._names:
+            _unindex_name(name, self)
         self._names.clear()
         self._event_flags.clear()
 
@@ -1362,8 +1381,26 @@ class ObjectGroup(TGEventHandlerObject):
         name = obj.GetName() if hasattr(obj, "GetName") else None
         if not name:
             return
-        import App
         flag = cls.ENTERED_SET if entered else cls.EXITED_SET
+        # The name index (_by_name): when no live group holding the name has
+        # the flag, the scan below would post nothing (and no handler could
+        # run to change that), so it is skipped. Otherwise the scan runs
+        # exactly as before, over `_live` in its own order: the delivery
+        # order, and a handler's mid-broadcast AddName / RemoveName on a
+        # later group, are what they were.
+        groups = ObjectGroup._by_name.get(name)
+        if not groups:
+            if groups is not None:      # every group holding it died
+                del ObjectGroup._by_name[name]
+            return
+        live = cls._live
+        for group in list(groups):
+            if (group in live and name in group._names
+                    and flag in group._event_flags.get(name, ())):
+                break
+        else:
+            return
+        import App
         et = (App.ET_OBJECT_GROUP_OBJECT_ENTERED_SET if entered
               else App.ET_OBJECT_GROUP_OBJECT_EXITED_SET)
         for group in list(cls._live):
@@ -1381,6 +1418,16 @@ class ObjectGroup(TGEventHandlerObject):
             except Exception:
                 App.g_kEventManager._log_broadcast_failure(
                     "ObjectGroup membership -> %s" % type(group).__name__, evt)
+
+
+def _unindex_name(name, group) -> None:
+    """`group` no longer holds `name`: drop it from ObjectGroup._by_name
+    (and the name's entry once no group is left in it)."""
+    groups = ObjectGroup._by_name.get(name)
+    if groups is not None:
+        groups.discard(group)
+        if not groups:
+            del ObjectGroup._by_name[name]
 
 
 class ObjectGroupWithInfo(ObjectGroup):
