@@ -16,6 +16,7 @@ test_interval_budget_still_uses_raw_capacity.
 """
 from engine.appc.subsystems import PowerSubsystem
 from engine.appc.properties import PowerProperty
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def _bind(ps, output=1000.0, main=250000.0, backup=80000.0,
@@ -84,7 +85,7 @@ def test_interval_budget_still_uses_raw_capacity():
     seeded conduit budget is the full rated capacity for a 1s interval."""
     ps = PowerSubsystem("Warp Core")
     _bind(ps)
-    ps.Update(1.0)                          # one interval fires
+    tick_subsystem(ps, 1.0)                          # one interval fires
     # Full battery -> conduit budget = rated capacity * 1s (no shrink).
     assert ps._main_conduit_current == 1200.0
     assert ps._backup_conduit_current == 200.0

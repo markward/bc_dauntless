@@ -13,6 +13,7 @@ from engine.appc.subsystems import (
 )
 from engine.appc.properties import PowerProperty
 from engine.appc.ships import ShipClass_Create
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def _bind_property(ps, *, output, main_cap, backup_cap=0.0, main_conduit=1200.0,
@@ -32,7 +33,7 @@ def test_update_with_no_parent_ship_grows_battery_by_generation():
     ps = PowerSubsystem("WarpCore")
     _bind_property(ps, output=1000.0, main_cap=10000.0)
     ps.SetMainBatteryPower(0.0)
-    ps.Update(1.0)
+    tick_subsystem(ps, 1.0)
     assert ps.GetMainBatteryPower() == 1000.0
     # Available = conduit budget: min(1000, 1200 * 1.0) = 1000
     assert ps.GetAvailablePower() == 1000.0
@@ -43,7 +44,7 @@ def test_update_caps_main_battery_at_limit():
     ps = PowerSubsystem("WarpCore")
     _bind_property(ps, output=1000.0, main_cap=500.0)
     ps.SetMainBatteryPower(400.0)
-    ps.Update(1.0)
+    tick_subsystem(ps, 1.0)
     # 1000 generated → room=100 → main capped at 500
     assert ps.GetMainBatteryPower() == 500.0
 
@@ -55,7 +56,7 @@ def test_update_generation_spills_to_backup():
                    main_conduit=9999.0, backup_conduit=9999.0)
     ps.SetMainBatteryPower(0.0)
     ps.SetBackupBatteryPower(0.0)
-    ps.Update(1.0)
+    tick_subsystem(ps, 1.0)
     # 1500 generated → 500 fills main, 1000 spills to backup
     assert ps.GetMainBatteryPower() == 500.0
     assert ps.GetBackupBatteryPower() == 1000.0
@@ -68,7 +69,7 @@ def test_update_generation_overflow_discarded():
                    main_conduit=9999.0, backup_conduit=9999.0)
     ps.SetMainBatteryPower(0.0)
     ps.SetBackupBatteryPower(0.0)
-    ps.Update(1.0)
+    tick_subsystem(ps, 1.0)
     # 2000 → main capped at 500, backup capped at 300, 1200 discarded
     assert ps.GetMainBatteryPower() == 500.0
     assert ps.GetBackupBatteryPower() == 300.0
@@ -79,7 +80,7 @@ def test_update_conduit_budget_limits_available():
     ps = PowerSubsystem("WarpCore")
     _bind_property(ps, output=5000.0, main_cap=50000.0, main_conduit=300.0)
     ps.SetMainBatteryPower(0.0)
-    ps.Update(1.0)
+    tick_subsystem(ps, 1.0)
     # Battery = 5000; conduit can only pass 300/s; available = 300
     assert ps.GetAvailablePower() == 300.0
 
@@ -90,7 +91,7 @@ def test_update_no_recharge_when_destroyed():
     _bind_property(ps, output=1000.0, main_cap=10000.0)
     ps.SetMainBatteryPower(0.0)
     ps.SetCondition(0.0)   # triggers IsDestroyed() == 1
-    ps.Update(1.0)
+    tick_subsystem(ps, 1.0)
     assert ps.GetMainBatteryPower() == 0.0
 
 
@@ -98,5 +99,5 @@ def test_update_no_property_is_a_noop():
     """A ship without a wired PowerProperty gracefully skips Update."""
     ps = PowerSubsystem("WarpCore")
     ps.SetMainBatteryPower(500.0)
-    ps.Update(1.0)
+    tick_subsystem(ps, 1.0)
     assert ps.GetMainBatteryPower() == 500.0

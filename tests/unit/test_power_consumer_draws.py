@@ -11,6 +11,7 @@ from engine.appc.subsystems import (
     PowerSubsystem, PoweredSubsystem, PSM_BACKUP_ONLY, CloakingSubsystem,
 )
 from engine.appc.properties import PowerProperty
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def _powered_ship():
@@ -35,7 +36,7 @@ def _powered_ship():
 
 def _tick(power, seconds, dt=1.0 / 60.0):
     for _ in range(int(seconds / dt)):
-        power.Update(dt)
+        tick_subsystem(power, dt)
 
 
 def test_full_power_consumer_gets_factor_one():

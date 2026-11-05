@@ -243,22 +243,31 @@ def test_boost_does_not_identify():
 
 
 def test_boost_through_the_real_power_path():
+    """The boost as the (native) power pump feeds it: the observer's plant
+    has no output and a main conduit of `cap` per second, so the sensors --
+    the one consumer drawing anything -- get min(wanted, cap) each interval."""
+    from engine.appc.properties import PowerProperty
+    from tests.helpers.subsystem_stage import tick_subsystems
     s, obs, sensors = _observer_in_set(2000.0)
     far = _ship_at(s, "far", 500000.0)
     sensors._normal_power = 1.0
-
-    class _Grid:
-        def __init__(self, cap):
-            self.cap = cap
-
-        def _draw(self, wanted, mode):
-            return min(wanted, self.cap)
+    plant = obs.GetPowerSubsystem()
+    plant._max_condition = 100.0
+    plant._condition = 100.0
+    prop = PowerProperty("Warp Core")
+    prop.SetPowerOutput(0.0)
+    prop.SetMainBatteryLimit(1.0e6)
+    prop.SetMainConduitCapacity(10.0)
+    plant.SetProperty(prop)
+    plant.SetMainBatteryPower(1.0e6)
+    plant.SetBackupBatteryPower(0.0)
 
     sensors.SetPowerPercentageWanted(1.25)
-    sensors._update_power(1.0, _Grid(cap=10.0))           # fully fed: 1.25
+    tick_subsystems([obs], 1.0)                           # fully fed: 1.25
     assert sensors.GetNormalPowerPercentage() == pytest.approx(1.25)
     assert sd.can_detect(obs, far) is True
-    sensors._update_power(1.0, _Grid(cap=1.2))            # under-fed: exactly 1.2
+    prop.SetMainConduitCapacity(1.2)
+    tick_subsystems([obs], 1.0)                           # under-fed: exactly 1.2
     assert sensors.GetNormalPowerPercentage() == pytest.approx(1.2)
     assert sd.can_detect(obs, far) is False
 

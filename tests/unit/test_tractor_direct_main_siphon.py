@@ -10,17 +10,22 @@ Decomposition (see the keystone integration test for the full derivation):
 the tractor's per-second draw comes DIRECTLY from the main battery, bypassing
 the conduit budget and UNSCALED by the power-percentage slider (measured 600
 flat with sliders at 1.25, NOT 600*1.25=750). This module pins the mechanism
-in isolation; test_power_reference_values.py pins the full split.
+in isolation, through the native power pump (the stage is native only);
+test_power_reference_values.py pins the full split.
 """
+from engine.appc.ships import ShipClass
 from engine.appc.subsystems import PowerSubsystem
-from engine.appc.weapon_subsystems import TractorBeamSystem
+from engine.appc.weapon_subsystems import TractorBeam, TractorBeamSystem
 from engine.appc.properties import PowerProperty
+from tests.helpers.subsystem_stage import tick_subsystems
 
 
 def _power():
+    """A plant with no output, so a tick's interval recharges nothing and
+    only the tractor moves the batteries."""
     ps = PowerSubsystem("Warp Core")
     prop = PowerProperty("Warp Core")
-    prop.SetPowerOutput(1000.0)
+    prop.SetPowerOutput(0.0)
     prop.SetMainBatteryLimit(250000.0)
     prop.SetBackupBatteryLimit(80000.0)
     prop.SetMainConduitCapacity(1200.0)
@@ -29,14 +34,30 @@ def _power():
     return ps
 
 
-def _firing_tractor(normal_power=600.0):
-    """A TractorBeamSystem that reports a held beam (so _wants_power is True)
-    without wiring a full emitter — patch _any_child_firing directly."""
+def _tractor(firing, normal_power=600.0):
+    """A TractorBeamSystem with one beam, held (`firing`) or not: the pump's
+    _wants_power reads the beams' _firing."""
     t = TractorBeamSystem("Tractor Beam")
     t.SetNormalPowerPerSecond(normal_power)
     t.TurnOn()
-    t._any_child_firing = lambda: True
+    beam = TractorBeam("Tractor Beam 1")
+    t.AddChildSubsystem(beam)
+    beam._firing = firing
     return t
+
+
+def _firing_tractor(normal_power=600.0):
+    return _tractor(True, normal_power)
+
+
+def _pump(ps, t, dt=1.0):
+    """One stage of `dt` over a ship holding the plant and the tractor (its
+    only consumer)."""
+    ship = ShipClass()
+    ship.SetName("Tug")
+    ship.SetPowerSubsystem(ps)
+    ship.SetTractorBeamSystem(t)
+    tick_subsystems([ship], dt)
 
 
 def test_tractor_draws_direct_from_main_battery_bypassing_conduit():
@@ -45,9 +66,10 @@ def test_tractor_draws_direct_from_main_battery_bypassing_conduit():
     ps = _power()
     t = _firing_tractor()
     main_before = ps.GetMainBatteryPower()
-    # dt of 1s: the conduit budget for this frame is still zero (Update hasn't
-    # seeded it via the interval tick), yet the direct siphon still pulls.
-    t._update_power(1.0, ps)
+    # dt of 1s: the direct siphon pulls whatever the conduit budget is (the
+    # plant's backup conduit capacity is 200/s, the main battery's 1200/s:
+    # the siphon takes 600 from main regardless).
+    _pump(ps, t)
     assert ps.GetMainBatteryPower() == main_before - 600.0
 
 
@@ -59,7 +81,7 @@ def test_tractor_draw_is_unscaled_by_power_percentage():
     t = _firing_tractor()
     t.SetPowerPercentageWanted(1.25)
     main_before = ps.GetMainBatteryPower()
-    t._update_power(1.0, ps)
+    _pump(ps, t)
     assert ps.GetMainBatteryPower() == main_before - 600.0  # flat, not 750
 
 
@@ -71,7 +93,7 @@ def test_tractor_never_touches_backup_battery():
     backup_before = ps.GetBackupBatteryPower()
     # Drain main dry, then keep drawing: backup must never move.
     ps.SetMainBatteryPower(100.0)
-    t._update_power(1.0, ps)   # wants 600, only 100 in main
+    _pump(ps, t)   # wants 600, only 100 in main
     assert ps.GetMainBatteryPower() == 0.0
     assert ps.GetBackupBatteryPower() == backup_before
 
@@ -82,7 +104,7 @@ def test_tractor_efficiency_reports_starvation():
     ps = _power()
     t = _firing_tractor()
     ps.SetMainBatteryPower(0.0)
-    t._update_power(1.0, ps)
+    _pump(ps, t)
     assert t.GetPowerPercentage() == 0.0        # received/wanted
     assert t.GetNormalPowerWanted() == 600.0    # still wants power (gate input)
 
@@ -92,18 +114,15 @@ def test_tractor_reports_full_demand_for_powerdisplay():
     though the draw path is the direct steal."""
     ps = _power()
     t = _firing_tractor()
-    t._update_power(1.0, ps)
+    _pump(ps, t)
     assert t.GetPowerWanted() == 600.0
 
 
 def test_idle_tractor_draws_nothing():
     """A powered-but-not-firing tractor siphons nothing (siphon-while-held)."""
     ps = _power()
-    t = TractorBeamSystem("Tractor Beam")
-    t.SetNormalPowerPerSecond(600.0)
-    t.TurnOn()
-    t._any_child_firing = lambda: False
+    t = _tractor(False)
     main_before = ps.GetMainBatteryPower()
-    t._update_power(1.0, ps)
+    _pump(ps, t)
     assert ps.GetMainBatteryPower() == main_before
     assert t.GetPowerWanted() == 0.0
