@@ -494,3 +494,35 @@ def test_scene_skips_identical_writes_and_audit_is_clean(monkeypatch):
         name=GOLDEN, arm="native", seed=SEED, ships=SHIPS, ticks=TICKS,
         tpf=1, run=None))
     golden_fight.check(GOLDEN, _golden_rows(log))
+
+
+def test_a_ship_whose_shields_start_at_zero_gets_float_ramps():
+    """A face never ramped holds None in Python; its first ramp must land as
+    a float even when it is 0.0 (the native stage must not skip it as
+    identical to the mirror's encoded 0.0)."""
+    with pytest.MonkeyPatch.context() as mp:
+        world = _World(mp)
+        try:
+            gens = []
+            for ship in world.ships:
+                gen = ship.GetShields()
+                if gen is None:
+                    continue
+                gen._current_shields = [0.0] * 6
+                gen._ramp_fraction = [None] * 6
+                gens.append(gen)
+            assert gens
+            for _ in range(60):
+                world.tick += 1
+                App.g_kTimerManager._time += TICK_DELTA
+                game_loop._update_ship_subsystems()
+                effect_queue.boundary()
+                nc.drain(boundary=True)
+            for gen in gens:
+                assert all(isinstance(r, float) for r in gen._ramp_fraction), \
+                    gen._ramp_fraction
+            nc._failures.clear()
+            nc.audit_mirror()
+            assert list(nc._failures) == [], nc._failures
+        finally:
+            world.close()

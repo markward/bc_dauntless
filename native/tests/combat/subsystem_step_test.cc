@@ -496,12 +496,17 @@ TEST(ShieldStep, OfflineZeroesAllFaces) {
     // Face 3 already held 0.0: that write is identical, so not logged.
     EXPECT_EQ(faces, 5u);
     EXPECT_EQ(watchers, 7u);
+    size_t ramps = 0;   // a first ramp is always logged, faces 1 and 3 too
+    for (const SubsystemWrite& x : s.writes)
+        ramps += x.what == SubsystemWriteKind::RAMP;
+    EXPECT_EQ(ramps, 6u);
     const std::vector<double> v =
         w.m.get_floats(sh, Field::shield_watch_values);
     for (int f = 0; f < 7; ++f) EXPECT_EQ(v[f], 0.0) << f;
 
-    // Already all zero: nothing but the accumulator and the ramp of the four
-    // faces whose fraction moves (faces 1 and 3 already read 0.0).
+    // Already all zero, every face ramped once: nothing but the accumulator
+    // and the ramp of the four faces whose fraction moves (faces 1 and 3 are
+    // set and already read 0.0: identical).
     w.m.set_f(sh, Field::_charge_accum, 0.49);
     SubsystemSession again = subsystems::begin(w.m, std::vector{ship}, kDt);
     subsystems::next(again, w.m);
@@ -1554,6 +1559,7 @@ int consumer_writes(const SubsystemSession& s, int64_t c) {
 }  // namespace
 
 TEST(SubsystemStep, SteadyPowerLogsNoWritesOnTheSecondTick) {
+    subsystems::reset_write_stats();
     World w;
     const int64_t ship = w.power_ship();
     const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
@@ -1569,6 +1575,7 @@ TEST(SubsystemStep, SteadyPowerLogsNoWritesOnTheSecondTick) {
 }
 
 TEST(SubsystemStep, AChangedValueIsStillWritten) {
+    subsystems::reset_write_stats();
     World w;
     const int64_t ship = w.power_ship();
     const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
@@ -1584,8 +1591,10 @@ TEST(SubsystemStep, AChangedValueIsStillWritten) {
 }
 
 TEST(SubsystemStep, NegativeZeroIsNotIdenticalToZero) {
+    subsystems::reset_write_stats();
     // A consumer that wants nothing (off) writes 0.0 to every field; a row
     // holding -0.0 there is NOT identical, so Python is told.
+    subsystems::reset_write_stats();
     World w;
     const int64_t ship = w.power_ship();
     const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
@@ -1604,4 +1613,32 @@ TEST(SubsystemStep, NegativeZeroIsNotIdenticalToZero) {
             received = true;
     EXPECT_TRUE(received);
     EXPECT_FALSE(std::signbit(w.m.get_f(c, Field::_power_received)));
+}
+
+TEST(SubsystemStep, ANeverRampedFaceAtZeroLogsItsFirstRamp) {
+    // Python's _ramp_fraction[f] starts None; the push encodes that as
+    // fraction 0.0 with _ramp_set 0.0. A first ramp of 0.0 must still be
+    // logged (None -> 0.0 float), then later identical ramps are skipped.
+    subsystems::reset_write_stats();
+    World w;
+    const int64_t ship = w.bare_ship();
+    const int64_t sh = w.shield(ship);
+    w.m.set_floats(sh, Field::_current_shields, std::vector<double>(6, 0.0));
+    w.m.set_floats(sh, Field::_charge_per_second, std::vector<double>(6, 0.0));
+    w.m.set_f(sh, Field::_charge_accum, 0.49);
+    auto ramps = [](const SubsystemSession& s) {
+        int n = 0;
+        for (const SubsystemWrite& x : s.writes)
+            n += x.what == SubsystemWriteKind::RAMP;
+        return n;
+    };
+    SubsystemSession a = subsystems::begin(w.m, std::vector{ship}, kDt);
+    subsystems::next(a, w.m);
+    EXPECT_EQ(ramps(a), 6);
+    EXPECT_EQ(w.m.get_floats(sh, Field::_ramp_set),
+              std::vector<double>(6, 1.0));
+    w.m.set_f(sh, Field::_charge_accum, 0.49);
+    SubsystemSession b = subsystems::begin(w.m, std::vector{ship}, kDt);
+    subsystems::next(b, w.m);
+    EXPECT_EQ(ramps(b), 0);
 }

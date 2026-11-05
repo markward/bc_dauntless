@@ -309,12 +309,20 @@ bool shield_piece(SubsystemSession& s, Mirror& m, size_t i,
     for (size_t f = 0; f < kFaces; ++f) {
         const double mx = row->_max_shields[f];
         const double ramp = mx > 0.0 ? row->_current_shields[f] / mx : 0.0;
-        // _ramp_set is mirror-only (the applier sets the fraction alone): it
-        // is written whenever it is not already 1.0, the fraction as usual.
-        if (!same_bits(row->_ramp_set[f], 1.0))
+        // _ramp_set is mirror-only (the applier sets the fraction alone). A
+        // face never ramped (_ramp_set 0.0) holds None in Python, which the
+        // push encodes as fraction 0.0: its first ramp is ALWAYS logged, so
+        // Python's None becomes a float even when the value is 0.0.
+        const bool was_set = same_bits(row->_ramp_set[f], 1.0);
+        if (!was_set) {
             m.set_float_at(sh, Field::_ramp_set, f, 1.0);
-        put_at(s, m, sh, Field::_ramp_fraction, SubsystemWriteKind::RAMP, f,
-               row->_ramp_fraction[f], ramp);
+            m.set_float_at(sh, Field::_ramp_fraction, f, ramp);
+            log(s, sh, SubsystemWriteKind::RAMP, static_cast<int32_t>(f),
+                ramp);
+        } else {
+            put_at(s, m, sh, Field::_ramp_fraction, SubsystemWriteKind::RAMP,
+                   f, row->_ramp_fraction[f], ramp);
+        }
     }
     if (offline) {
         bool any = false;
