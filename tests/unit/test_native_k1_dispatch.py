@@ -1298,6 +1298,41 @@ def _trace_value(w, name, value):
     return _t(value)
 
 
+#: The beam sustain's stamps K1 skips when they change nothing (phase 6
+#: A3: `_firing` already True, `_target` the same object, `_target_offset`
+#: the same held-offset object).
+_NO_OP_SKIPPABLE = ("_firing", "_target", "_target_offset")
+
+
+def _without_no_op_stamps(want, got, starts):
+    """Check the native trace `got` is the recorded Python trace `want`
+    with only no-op stamps left out, and return how many were: walking
+    `want` in order, each entry is either the next native entry (equal) or
+    a stamp of a _NO_OP_SKIPPABLE field whose value is the one the leaf
+    already holds natively at that point (its pump-start value, `starts`,
+    then each matched native write of that tick). By traced value, so an
+    offset by .hex() and held-object identity; the goldens pin the offset
+    OBJECT."""
+    got = _norm(got)
+    i = skipped = 0
+    tick, cur = None, {}
+    for r in want:
+        n, _cls, label, name, val = r
+        if n != tick:
+            tick = n
+            cur = {k: _norm(v) for k, v in starts.get(n, {}).items()}
+        if i < len(got) and got[i] == r:
+            cur[(label, name)] = val
+            i += 1
+            continue
+        assert name in _NO_OP_SKIPPABLE and cur.get((label, name)) == val, \
+            ("a Python write K1 did not make, and not a no-op", r,
+             cur.get((label, name)), got[i] if i < len(got) else None)
+        skipped += 1
+    assert i == len(got), ("native writes Python did not make", got[i:i + 5])
+    return skipped
+
+
 def test_bank_write_order_matches_python(monkeypatch):
     """Per bank class (a disabled phaser bank among them), the pump's writes of _firing, _beam_on_countdown,
     _target and _target_offset on every leaf, in order, with their values
@@ -1324,7 +1359,16 @@ def test_bank_write_order_matches_python(monkeypatch):
             return _s(obj, value)
         return traced, kind
 
+    starts = {}     # tick -> {(label, field): traced value at pump start}
+
     def pump(ships, dt):
+        w = state["w"]
+        if w is not None and w.native:
+            assert w.n not in starts, "one pump a tick"
+            starts[w.n] = {
+                (w.label(leaf), name): _trace_value(
+                    w, name, leaf.__dict__.get(name))
+                for leaf in w.leaves for name in _NO_OP_SKIPPABLE}
         state["on"] = True
         try:
             return real_pump(ships, dt)
@@ -1354,7 +1398,13 @@ def test_bank_write_order_matches_python(monkeypatch):
         _volleys(w, t)
 
     _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 240)
-    assert _norm(traces[True]) == recorded_side("traces", traces[True])
+    want = recorded_side("traces", traces[True])
+    skipped = _without_no_op_stamps(want, traces[True], starts)
+    # Phase 6 A3: the sustain's stamps that change nothing are not written;
+    # every one the recorded Python wrote and K1 did not is such a stamp.
+    assert skipped > 0
+    assert skipped == counts["k1_logged"]["beam_sustain_skips"], \
+        (skipped, counts["k1_logged"])
     classes = {c for _n, c, _l, _f, _v in traces[True]}
     assert classes == {"PhaserBank", "PulseWeapon", "TorpedoTube"}, classes
     assert any(f == "_beam_on_countdown" for _n, _c, _l, f, _v
@@ -1407,6 +1457,9 @@ def test_materialise_raise_applies_later_writes(monkeypatch):
             for _ in range(5):
                 w.tick()
             phasers.SetForceUpdate(1)
+            # A lit bank's stamp is logged only when its held-offset object
+            # is new (phase 6 A3): re-assigning it (a push) stamps them all.
+            phasers._held_offset = phasers.__dict__.get("_held_offset")
             armed.append(True)
             with pytest.raises(_OffsetBoom):
                 w.tick()
@@ -1415,6 +1468,15 @@ def test_materialise_raise_applies_later_writes(monkeypatch):
             assert _h.combat_k1_depth() == 0
             nc.audit_mirror()
             assert nc.audit_failures() == [], nc.audit_failures()
+            # The raise left the banks without what K1 stamped, so no
+            # offset source is trusted: the next tick stamps them again.
+            seen = []
+            mp.setattr(nc._K1Walk, "materialise",
+                       lambda walk, n, h: (seen.append(h) if walk.walk != n
+                                           else None,
+                                           real_mat(walk, n, h))[1])
+            w.tick()
+            assert phasers.__dict__["_nslot"] in seen, seen
         finally:
             w.close()
 

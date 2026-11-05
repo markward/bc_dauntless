@@ -4353,7 +4353,12 @@ class _K1Walk:
 
     def pin_system(self, system) -> None:
         """The walked system, its children and its target list as they are
-        now (materialise, and after each later record)."""
+        now (materialise, and after each later record). A walk that logs
+        no stamp (phase 6 A3: a sustained beam already holding its held
+        offset object) is never materialised, so nothing pins its system:
+        every object its other writes name is found live through the
+        registry (`live`), held by the system's own lists, and no Python
+        runs between the kernel's walk and the apply to release one."""
         self.pin(system)
         d = system.__dict__
         for child in d.get("_children", ()):

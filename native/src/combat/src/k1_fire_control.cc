@@ -241,6 +241,17 @@ struct K1Kernel::Session {
     // WALK OFFSET), index walk - 1.
     int64_t walk_no = 0;
     std::vector<std::optional<Vec3>> walk_manual;
+    // THE OFFSET SOURCE (mirror.h; phase 6 A3). Whether the walk's offset
+    // OBJECT is the walked system's own `_held_offset` (a walk start_walk
+    // began with no Manual Aim pick: materialise reads it; never a
+    // begin_tractor / begin_fire walk, whose object is the driver's), and,
+    // once a stamp naming the walk is logged, the system's
+    // held_offset_stamp then -- the object materialise makes at that first
+    // logged stamp and hands every later one -- with the stamp's log index
+    // (a rollback past it forgets it).
+    bool walk_from_held = false;
+    std::optional<uint64_t> walk_stamp;
+    size_t walk_stamp_pos = 0;
     // The walk being walked: where its writes and entries begin (its
     // rollback mark) and whether it has shot yet (NO FIRE).
     size_t walk_mark = 0, walk_entry_mark = 0;
@@ -287,6 +298,8 @@ static void k1_roll_back(Mirror& m, K1Kernel::Session& s, size_t mark) {
         s.undo.pop_back();
     }
     s.writes.resize(mark);
+    // The walk's first logged stamp is gone: materialise runs at its next.
+    if (s.walk_stamp && s.walk_stamp_pos >= mark) s.walk_stamp.reset();
 }
 
 namespace {
@@ -397,10 +410,38 @@ private:
                 m_.set_fv(h, Field::_target_offset, {});
             }
             log(h, "_target_offset", K1WalkOffset{s_.walk_no, s_.sys});
+            // THE OFFSET SOURCE: the bank now holds the walk's object (the
+            // set_fv above made its source unknown).
+            if (s_.walk_from_held) {
+                if (const SubsystemRow* sr = subrow(s_.sys)) {
+                    if (!s_.walk_stamp) {
+                        s_.walk_stamp = sr->held_offset_stamp;
+                        s_.walk_stamp_pos = s_.writes.size() - 1;
+                    }
+                    m_.set_target_offset_source(h, s_.sys, *s_.walk_stamp);
+                }
+            }
         } else {
             m_.set_fv(h, Field::_target_offset, {});
             log(h, "_target_offset", std::monostate{});
         }
+    }
+
+    // Whether `_target_offset = <the walk's offset object>` on bank `h`
+    // would change nothing in Python (THE OFFSET SOURCE): the walk's object
+    // is the walked system's `_held_offset` -- the one its first logged
+    // stamp made, else the one materialise would make now -- and the bank
+    // already holds that very object (its source: this system, at that
+    // object's stamp). Identity, never a value: a new TGPoint3 of the same
+    // value is a new stamp.
+    bool holds_walk_offset(int64_t h) const {
+        if (!s_.walk_from_held) return false;
+        const SubsystemRow* b = subrow(h);
+        const SubsystemRow* sr = subrow(s_.sys);
+        if (!b || !sr || b->target_offset_src != s_.sys) return false;
+        const uint64_t stamp =
+            s_.walk_stamp ? *s_.walk_stamp : sr->held_offset_stamp;
+        return b->target_offset_src_stamp == stamp;
     }
 
     // `sys_.StopFiring()`'s `_held_target = None` and `_held_offset = None`
@@ -866,6 +907,8 @@ void Walker::start_walk(int64_t sys, int64_t ship) {
     s_.offset = k1_live_held_offset(m_, sys, ship);
     s_.walk_manual.resize(static_cast<size_t>(s_.walk_no));
     s_.walk_manual.back() = k1_manual_offset(m_, ship);
+    s_.walk_from_held = !s_.walk_manual.back().has_value();
+    s_.walk_stamp.reset();
     s_.walk_shot = false;
 }
 
@@ -1430,10 +1473,26 @@ Walker::FireEnd Walker::fire_effect_of(int64_t w, int64_t target,
         case Outcome::What::Fire: {
             if (o.d.shape == K1Decision::Shape::Beam && o.d.was_firing) {
                 // _fire_effect on a beam already firing: three writes, no
-                // sound, no event (WS:895-898).
-                write_flag(w, Field::_firing, "_firing", true);
-                write_target(w, target);
-                write_target_offset(w, true);
+                // sound, no event (WS:895-898). Each is logged only when it
+                // changes something in Python (phase 6 A3): `_firing` not
+                // already True (a bank that is firing is never asleep --
+                // passive sleep needs `not _firing`, and any `_firing`
+                // write wakes it -- so the WakeField's wake is a no-op),
+                // `_target` not this live handle (one object per row), the
+                // offset not the very object the bank holds.
+                const SubsystemRow* br = subrow(w);
+                if (br && br->_firing == 1)
+                    ++c_.logged_beam_sustain_skips;
+                else
+                    write_flag(w, Field::_firing, "_firing", true);
+                if (target >= 0 && br && m_.get_ref(w, Field::_target) == target)
+                    ++c_.logged_beam_sustain_skips;
+                else
+                    write_target(w, target);
+                if (holds_walk_offset(w))
+                    ++c_.logged_beam_sustain_skips;
+                else
+                    write_target_offset(w, true);
                 ++c_.logged_beam_sustain;
                 return FireEnd::Fired;
             }

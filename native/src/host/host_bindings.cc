@@ -13153,6 +13153,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 // returned (combat_write_apply.h); `writes` stays [].
                 if (!applier.apply(r.writes, 0, r.writes.size())) {
                     k1_apply_raised() = true;
+                    // A write that raised (or a walk-offset marker skipped
+                    // after its materialise raised) left Python without
+                    // what K1 stamped: no offset source can be trusted
+                    // (mirror.h, THE OFFSET SOURCE).
+                    cb::mirror().forget_offset_sources();
                     throw py::error_already_set();
                 }
             } else for (const cb::K1Write& w : r.writes) {
@@ -13213,7 +13218,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "_live_held_offset() from the mirror): (x, y, z) or None.");
         m.def("combat_k1_end", [] { cb::k1_kernel().end(); },
               "Pop the top session (it must have returned DONE).");
-        m.def("combat_k1_abandon", [] { cb::k1_kernel().abandon(); },
+        m.def("combat_k1_abandon", [] {
+                  cb::k1_kernel().abandon();
+                  // The exception path: whatever Python made of the
+                  // session's record, trust no offset source.
+                  cb::mirror().forget_offset_sources();
+              },
               "Pop the top session whatever its state (exception path).");
         m.def("combat_k1_depth",
               [] { return cb::k1_kernel().depth(); });
@@ -13231,6 +13241,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
             py::dict logged;
             logged["walk_start"] = c.logged_walk_start;
             logged["beam_sustain"] = c.logged_beam_sustain;
+            // ... and the sustain stamps it skipped as changing nothing
+            // (phase 6 A3).
+            logged["beam_sustain_skips"] = c.logged_beam_sustain_skips;
             logged["idle_bank_stop"] = c.logged_idle_bank_stop;
             // ... and, as writes plus queue entries (spec 2026-11-02-combat-
             // fire-events §4.3): beam edges, failed aims, firing banks'

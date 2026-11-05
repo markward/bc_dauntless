@@ -48,7 +48,11 @@
 // applies them, in order, with no push (the mirror already holds them).
 // Effects that are pure field writes are logged the same way: a Fire on a
 // beam ALREADY firing (`_firing = True; _target = target; _target_offset =
-// <the walk's offset object>`), and a StopFiring on a bank that is NOT firing
+// <the walk's offset object>`, each stamp logged only when it changes
+// something in Python -- phase 6 A3: `_firing` already True, `_target` the
+// same live handle, or the bank already holding the walk's held-offset
+// OBJECT (THE OFFSET SOURCE, mirror.h) is not logged; Manual Aim's new
+// TGPoint3 always is), and a StopFiring on a bank that is NOT firing
 // (its class's writes: energy bank `_firing = False; _beam_on_countdown =
 // 0.0`; tube `_firing = False`; pulse `_firing = False; _target = None;
 // _target_offset = None`). `_firing` is a WakeField: the driver's quiet
@@ -414,6 +418,12 @@ public:
         // already firing (k1_logged.beam_sustain) and a StopFiring on a bank
         // that is not firing (k1_logged.idle_bank_stop).
         int64_t logged_beam_sustain = 0, logged_idle_bank_stop = 0;
+        // A sustain's stamps not logged because they change nothing in
+        // Python (phase 6 A3: `_firing` already True, `_target` the same
+        // live handle, `_target_offset` the same held-offset object; THE
+        // OFFSET SOURCE, mirror.h), each counted (k1_logged.
+        // beam_sustain_skips).
+        int64_t logged_beam_sustain_skips = 0;
         // Field writes plus queue entries (spec 2026-11-02-combat-fire-events
         // §4.3): a beam's was-not-firing edge (k1_logged.beam_edge), a
         // failed aim (k1_logged.fire_failed), a firing bank's StopFiring

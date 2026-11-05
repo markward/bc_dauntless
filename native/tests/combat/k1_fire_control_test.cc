@@ -516,13 +516,14 @@ TEST(K1, TimerGateAndForceUpdate) {
         const K1Record f = w.step();
         EXPECT_EQ(w.brief(f), "DONE");
         const auto b0w = writes_on(w, f, "b0");
-        ASSERT_EQ(b0w.size(), 5u);
+        ASSERT_EQ(b0w.size(), 4u);
         EXPECT_EQ(b0w[1], "b0._fire_timer=0");
-        // The sustain's three stamps, in _fire_effect's order (WS:895-898):
-        // the target, then the walk's offset OBJECT (the marker).
-        EXPECT_EQ(b0w[2], "b0._firing=True");
-        EXPECT_EQ(b0w[3], "b0._target=t");
-        EXPECT_EQ(b0w[4], "b0._target_offset=walk_offset");
+        // The sustain's stamps, in _fire_effect's order (WS:895-898): the
+        // target, then the walk's offset OBJECT (the marker). `_firing` is
+        // already True: not logged (phase 6 A3).
+        EXPECT_EQ(b0w[2], "b0._target=t");
+        EXPECT_EQ(b0w[3], "b0._target_offset=walk_offset");
+        EXPECT_EQ(w.k.counts().logged_beam_sustain_skips, 1);
         EXPECT_EQ(w.m.get_ref(b0, Field::_target), t);
         EXPECT_EQ(w.k.counts().logged_beam_sustain, 1);
     }
@@ -642,8 +643,7 @@ TEST(K1, SingleFireReseedsTimers) {
     EXPECT_EQ(v.writes(vdone), (std::vector<std::string>{
                                    "sys._target_list=[t]",
                                    "b1._fire_timer=0.016666666666666666",
-                                   "b1._fire_timer=0", "b1._firing=True",
-                                   "b1._target=t",
+                                   "b1._fire_timer=0", "b1._target=t",
                                    "b1._target_offset=walk_offset",
                                    "sys._force_update=False"}));
 }
@@ -1345,9 +1345,10 @@ TEST(K1Native, WalkOffsetMarkerNamesItsWalk) {
 TEST(K1Native, BeamSustainIsLoggedWrites) {
     // A Fire on a beam already firing: _EnergyWeaponFireMixin._fire_effect
     // with was_firing -- `_firing = True; _target = target; _target_offset =
-    // offset`, nothing else -- logged in that order, no FIRE record. The
-    // stamp is the walk's offset OBJECT (the marker), whatever it is: with
-    // no TGPoint3 offset the mirror reads unset.
+    // offset`, nothing else -- logged in that order, no FIRE record, each
+    // only when it changes something (phase 6 A3: `_firing` is already
+    // True here). The stamp is the walk's offset OBJECT (the marker),
+    // whatever it is: with no TGPoint3 offset the mirror reads unset.
     for (const bool with_offset : {true, false}) {
         World w;
         const int64_t ship = w.ship("ship");
@@ -1364,9 +1365,8 @@ TEST(K1Native, BeamSustainIsLoggedWrites) {
         EXPECT_EQ(writes_on(w, done, "b0"),
                   (std::vector<std::string>{
                       std::string("b0._fire_timer=") + dt, "b0._fire_timer=0",
-                      "b0._firing=True", "b0._target=t",
-                      "b0._target_offset=walk_offset"}))
-            << with_offset;
+                      "b0._target=t", "b0._target_offset=walk_offset"}))
+            << with_offset;  // `_firing` already True (phase 6 A3)
         const K1Write& stamp = done.writes[std::distance(
             done.writes.begin(),
             std::find_if(done.writes.begin(), done.writes.end(),
@@ -2294,4 +2294,166 @@ TEST(K1, TractorDropOutOfRangeResolvesNoAim) {
     EXPECT_EQ(w.k.counts().no_fire[static_cast<size_t>(K1NoFire::TractorRow)],
               0);
     w.k.end();
+}
+
+// ── Phase 6 A3: a beam already firing logs only what changes ─────────────────
+//
+// The sustain's three stamps (`_firing = True; _target = target;
+// _target_offset = <the walk's offset object>`) are skipped when they
+// change nothing in Python: `_firing` already True (a firing bank is never
+// asleep, so the WakeField's wake is a no-op), `_target` the same live
+// handle, and `_target_offset` the very OBJECT the bank already holds -- the
+// same system's `_held_offset`, unchanged since K1 stamped it (the mirror's
+// offset source: never a value comparison).
+
+namespace {
+
+// The bank's sustain stamps in the record, as "field=value".
+std::vector<std::string> stamps(const World& w, const K1Record& r,
+                                const std::string& bank) {
+    std::vector<std::string> out;
+    for (const std::string& s : writes_on(w, r, bank)) {
+        const std::string f = s.substr(s.find('.') + 1);
+        if (f.rfind("_firing=", 0) == 0 || f.rfind("_target=", 0) == 0 ||
+            f.rfind("_target_offset=", 0) == 0)
+            out.push_back(s);
+    }
+    return out;
+}
+
+// One pump tick of `ship`, its session ended.
+K1Record pump_tick(World& w, int64_t ship) {
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    K1Record r = w.step();
+    w.k.end();
+    return r;
+}
+
+// A phaser system held on `t` (its _held_offset a TGPoint3) with one bank,
+// lit on the first tick (its edge).
+struct Lit {
+    int64_t ship, t, sys, b0;
+};
+Lit lit_beam(World& w) {
+    Lit l;
+    l.ship = w.ship("ship");
+    l.t = w.object("t", 0.0, 50.0, 0.0);
+    l.sys = w.system("sys", l.ship, 1, {l.t});
+    l.b0 = w.bank("b0", l.sys);
+    w.m.set_fv(l.sys, Field::_held_offset, {0.25, 0.5, -0.125});
+    w.m.set_f(l.b0, Field::_fire_timer, 0.33);
+    const K1Record edge = pump_tick(w, l.ship);
+    EXPECT_EQ(stamps(w, edge, "b0"),
+              (std::vector<std::string>{"b0._firing=True", "b0._target=t",
+                                        "b0._target_offset=walk_offset"}));
+    EXPECT_EQ(w.k.counts().logged_beam_edge, 1);
+    return l;
+}
+
+}  // namespace
+
+TEST(K1, ASustainedHeldOffsetBeamLogsNoSustainWritesOnItsSecondTick) {
+    World w;
+    const Lit l = lit_beam(w);
+    for (int tick = 2; tick <= 4; ++tick) {
+        const K1Record r = pump_tick(w, l.ship);
+        EXPECT_TRUE(stamps(w, r, "b0").empty()) << "tick " << tick;
+        EXPECT_EQ(w.k.counts().logged_beam_sustain, tick - 1);
+        EXPECT_EQ(w.k.counts().logged_beam_sustain_skips, 3 * (tick - 1));
+    }
+    // The mirror still holds what Python holds.
+    EXPECT_EQ(w.m.get_i(l.b0, Field::_firing), 1);
+    EXPECT_EQ(w.m.get_ref(l.b0, Field::_target), l.t);
+}
+
+TEST(K1, ASustainedBeamWithNoHeldOffsetObjectStillSkips) {
+    // `_held_offset` None: the walk's object is None, which the bank holds.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t b0 = w.bank("b0", sys);
+    w.m.set_f(b0, Field::_fire_timer, 0.33);
+    EXPECT_EQ(stamps(w, pump_tick(w, ship), "b0").size(), 3u);
+    EXPECT_TRUE(stamps(w, pump_tick(w, ship), "b0").empty());
+}
+
+TEST(K1, AManualAimBeamStillWritesItsOffsetEveryTick) {
+    // Manual Aim: every walk's object is a NEW TGPoint3 of the pick.
+    World w;
+    const Lit l = lit_beam(w);
+    w.m.set_i(l.ship, Field::is_ship_class, 1);
+    w.m.set_i(l.ship, Field::_use_target_offset, 1);
+    w.m.set_fv(l.ship, Field::_manual_target_offset, {0.0, 0.5, 0.0});
+    for (int tick = 2; tick <= 3; ++tick) {
+        const K1Record r = pump_tick(w, l.ship);
+        EXPECT_EQ(stamps(w, r, "b0"), (std::vector<std::string>{
+                                          "b0._target_offset=walk_offset"}))
+            << "tick " << tick;
+    }
+    // Back from Manual Aim: the bank holds the last pick's object, so the
+    // held offset is stamped again, once.
+    w.m.set_i(l.ship, Field::_use_target_offset, 0);
+    EXPECT_EQ(stamps(w, pump_tick(w, l.ship), "b0"),
+              (std::vector<std::string>{"b0._target_offset=walk_offset"}));
+    EXPECT_TRUE(stamps(w, pump_tick(w, l.ship), "b0").empty());
+}
+
+TEST(K1, ARetargetStillWritesTheTarget) {
+    World w;
+    const Lit l = lit_beam(w);
+    const int64_t t2 = w.object("t2", 0.0, 60.0, 0.0);
+    w.m.set_ids(l.sys, Field::_target_list, {t2});
+    w.m.set_ref(l.sys, Field::_held_target, t2);
+    EXPECT_EQ(stamps(w, pump_tick(w, l.ship), "b0"),
+              (std::vector<std::string>{"b0._target=t2"}));
+    EXPECT_EQ(w.m.get_ref(l.b0, Field::_target), t2);
+    EXPECT_TRUE(stamps(w, pump_tick(w, l.ship), "b0").empty());
+}
+
+TEST(K1, ANewHeldOffsetObjectIsStampedAgain) {
+    // Python's `_held_offset = TGPoint3(...)` (a push, even of the same
+    // value) is a new object: the bank must be given it.
+    World w;
+    const Lit l = lit_beam(w);
+    w.m.set_fv(l.sys, Field::_held_offset, {0.25, 0.5, -0.125});
+    EXPECT_EQ(stamps(w, pump_tick(w, l.ship), "b0"),
+              (std::vector<std::string>{"b0._target_offset=walk_offset"}));
+    EXPECT_TRUE(stamps(w, pump_tick(w, l.ship), "b0").empty());
+}
+
+TEST(K1, AnotherTargetOffsetOnTheBankIsStampedAgain) {
+    // Anything else writing the bank's `_target_offset` (a push, another
+    // kernel's write) leaves its source unknown.
+    World w;
+    const Lit l = lit_beam(w);
+    w.m.set_fv(l.b0, Field::_target_offset, {0.25, 0.5, -0.125});
+    EXPECT_EQ(stamps(w, pump_tick(w, l.ship), "b0"),
+              (std::vector<std::string>{"b0._target_offset=walk_offset"}));
+    EXPECT_TRUE(stamps(w, pump_tick(w, l.ship), "b0").empty());
+}
+
+TEST(K1, ForgottenOffsetSourcesAreStampedAgain) {
+    // An apply that raised (the binding): Python may not hold what K1
+    // stamped, so every source is forgotten.
+    World w;
+    const Lit l = lit_beam(w);
+    w.m.forget_offset_sources();
+    EXPECT_EQ(stamps(w, pump_tick(w, l.ship), "b0"),
+              (std::vector<std::string>{"b0._target_offset=walk_offset"}));
+}
+
+TEST(K1, AnotherSystemsHeldOffsetIsNotTheSameObject) {
+    // A Fire session's walk object is Fire's own offset, not the held one:
+    // it never records a source, and a later held walk stamps again.
+    World w;
+    const Lit l = lit_beam(w);
+    w.k.begin_fire(l.b0, l.t, Vec3{0.25, 0.5, -0.125}, std::nullopt, 10.0,
+                   false, 0.0);
+    const K1Record f = w.step();
+    w.k.end();
+    EXPECT_EQ(stamps(w, f, "b0"),
+              (std::vector<std::string>{"b0._target_offset=walk_offset"}));
+    EXPECT_EQ(stamps(w, pump_tick(w, l.ship), "b0"),
+              (std::vector<std::string>{"b0._target_offset=walk_offset"}));
 }

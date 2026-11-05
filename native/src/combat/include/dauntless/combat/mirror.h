@@ -393,6 +393,22 @@ struct SubsystemRow {
     int64_t _target = -1;
     Vec3 _target_offset{0, 0, 0};
     bool target_offset_set = false;
+    // THE OFFSET SOURCE (phase 6 A3; k1_fire_control.h, THE WALK OFFSET).
+    // Not a mirror of a Python value: which Python OBJECT a field holds.
+    //   held_offset_stamp: a mirror-wide stamp, new on EVERY set_fv of this
+    //     row's _held_offset (each Python push -- even of the same value, a
+    //     new TGPoint3 -- and each kernel write or undo). 0 for a row whose
+    //     _held_offset was never set since it was allocated.
+    //   target_offset_src / _stamp: the system whose _held_offset OBJECT
+    //     this row's _target_offset holds, and that system's stamp when K1
+    //     stamped it (set_target_offset_source); -1: not known. Every
+    //     set_fv of _target_offset (a push, any kernel's write or undo)
+    //     makes it -1 first.
+    // A K1 held walk's stamp is skipped only when the bank's source is the
+    // walked system at the stamp its walk object has: the same object.
+    uint64_t held_offset_stamp = 0;
+    int64_t target_offset_src = -1;
+    uint64_t target_offset_src_stamp = 0;
     int64_t _num_ready = 0, _max_ready = 0;
     double _last_fire_time = 0.0, _immediate_delay = 0.0;
     int64_t _skew_fire = 0;
@@ -638,6 +654,13 @@ public:
     // vectors) takes 0 (state 0), 3 (state 1) or 4 (state 2, the vector
     // reads zero) doubles and sets its <name>_state.
     void set_fv(int64_t handle, Field f, const std::vector<double>& v);
+    // THE OFFSET SOURCE (SubsystemRow): `bank`'s _target_offset now holds
+    // system `sys`'s _held_offset object as of `stamp`. Throws
+    // std::invalid_argument for a stale or non-Subsystem `bank`.
+    void set_target_offset_source(int64_t bank, int64_t sys, uint64_t stamp);
+    // Every row's source forgotten (-1): Python may not hold what a kernel
+    // stamped (a K1 apply that raised).
+    void forget_offset_sources();
     void set_id_lists(int64_t handle, Field f,
                       const std::vector<std::vector<int64_t>>& lists);
     // A FloatList field: the whole list, every bit kept.
@@ -753,6 +776,9 @@ private:
     SensorState sensor_;
     uint64_t epoch_ = 0;
     uint64_t part_gen_ = 1;
+    // SubsystemRow::held_offset_stamp's source: never reused, clear()
+    // included.
+    uint64_t offset_stamp_ = 0;
 };
 
 Mirror& mirror();  // process-wide; reads positions from transform_store()

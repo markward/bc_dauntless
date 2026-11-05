@@ -1040,11 +1040,28 @@ void Mirror::set_fv(int64_t h, Field f, const std::vector<double>& v) {
             if (f == Field::_velocity) row._velocity_state = 1;
         }
         if constexpr (std::is_same_v<std::decay_t<decltype(row)>, SubsystemRow>) {
-            if (f == Field::_held_offset) row.held_offset_set = !v.empty();
-            if (f == Field::_target_offset) row.target_offset_set = !v.empty();
+            if (f == Field::_held_offset) {
+                row.held_offset_set = !v.empty();
+                row.held_offset_stamp = ++offset_stamp_;  // a new object
+            }
+            if (f == Field::_target_offset) {
+                row.target_offset_set = !v.empty();
+                row.target_offset_src = -1;  // its object no longer known
+            }
         }
     });
     ++epoch_;
+}
+
+void Mirror::set_target_offset_source(int64_t bank, int64_t sys,
+                                      uint64_t stamp) {
+    SubsystemRow& row = checked(subsystems_, bank, Kind::Subsystem);
+    row.target_offset_src = sys;
+    row.target_offset_src_stamp = stamp;
+}
+
+void Mirror::forget_offset_sources() {
+    for (SubsystemRow& row : subsystems_.rows) row.target_offset_src = -1;
 }
 
 void Mirror::set_id_lists(int64_t h, Field f,
