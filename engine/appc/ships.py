@@ -42,7 +42,11 @@ class ShipClass(DamageableObject):
     _repair_subsystem = native_combat.NativeMountRefField("Subsystem")
     # articulation.tick_ship's rigless early-out, as generation + 1 (0:
     # not known rigless); the native ARTICULATION piece skips a ship whose
-    # value equals the pushed ARTICULATION_GEN + 1.
+    # value equals the pushed ARTICULATION_GEN + 1. ⚠️ The native skip never
+    # re-reads the ship's rig: code that changes what tick_ship would find
+    # (reassigning `_articulation_leaf`, a new rig) after a rigless verdict
+    # must bump the articulated-part generation (native_combat.
+    # bump_part_gen) or set `_rigless_gen = 0`, or the ship stays skipped.
     _rigless_gen = native_combat.NativeField(int)
     # What the K2 beam kernel reads: the lock, the Manual Aim offset, the
     # shield generator and the cached hull box (all rebound, never mutated).
