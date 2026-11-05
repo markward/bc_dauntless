@@ -13,7 +13,6 @@
 //     shields_pct:  [float x 6],      // FRONT, REAR, TOP, BOTTOM, LEFT, RIGHT
 //     damage_icons: [{icon_key, icon_svg, x_px, y_px, state}],
 //     minimized:    bool,
-//     range_km:     float | null,     // target role only — already km
 //     speed_kph:    float | null,     // target role only
 //     shields_hidden: {top_pane: bool, bottom_pane: bool},
 //                                     // BC ShieldsDisplay panes hidden by
@@ -135,17 +134,14 @@
         if (sil) { setSilhouette(sil, state.silhouette_url || null); }
 
         if (role === "target") {
-            var rng = root.querySelector('[data-bind="range"]');
             var spd = root.querySelector('[data-bind="speed"]');
-            if (rng) {
-                rng.textContent = (state.range_km == null)
-                    ? "— km"
-                    : state.range_km.toFixed(2) + " km";
-            }
             if (spd) {
                 spd.textContent = (state.speed_kph == null)
-                    ? "— kph"
+                    ? "\u2014 kph"
                     : Math.round(state.speed_kph) + " kph";
+            }
+            if (typeof renderSubsystemPicker === "function") {
+                renderSubsystemPicker(root, state);
             }
         }
     };

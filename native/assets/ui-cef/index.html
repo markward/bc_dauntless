@@ -1016,16 +1016,15 @@
                   <div class="ship-display__shield shield--right"  data-bind="shield-right"  data-integrity="down"></div>
                   <div class="ship-display__icon-frame">
                     <div class="ship-display__damage-overlay" data-bind="damage-overlay"></div>
+                    <div class="ship-display__lock-layer" data-bind="lock-layer"></div>
                   </div>
+                  <span class="ship-display__speed" data-bind="speed">&#8212; kph</span>
                 </div>
                 <div class="ship-display__hull-bar">
                   <div class="ship-display__hull-fill" data-bind="hull-fill"></div>
                   <span class="ship-display__hull-pct" data-bind="hull-pct">0%</span>
                 </div>
-                <div class="ship-display__target-extras" data-bind="target-extras">
-                  <span data-bind="range">&#8212; km</span>
-                  <span data-bind="speed">&#8212; kph</span>
-                </div>
+                <div class="ship-display__subsystems" data-bind="subsystems"></div>
               </div>
             </section>
 
@@ -1221,6 +1220,7 @@
     <script src="js/sensors.js"></script>
     <script src="js/reticle_text.js"></script>
     <script src="panels/ship_display/ship_display.js"></script>
+    <script src="panels/ship_display/subsystem_picker.js"></script>
     <script src="panels/weapons_display/weapons_display.js"></script>
     <script src="js/sdk_mirror.js"></script>
     <script src="js/crew_menus.js"></script>
