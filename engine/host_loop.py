@@ -9822,9 +9822,12 @@ def _pump_contacts(menu, player) -> tuple:
     Spec: docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md
     """
     from engine.appc.perception import perceived_by
-    contacts = perceived_by(player)
-    menu.set_contacts(contacts)
-    menu.ResetAffiliationColors()
+    with frame_profiler.scope("contacts.perceive"):
+        contacts = perceived_by(player)
+    with frame_profiler.scope("contacts.push"):
+        menu.set_contacts(contacts)
+    with frame_profiler.scope("contacts.colors"):
+        menu.ResetAffiliationColors()
     return contacts
 
 
@@ -13061,8 +13064,9 @@ def run(mission_name: Optional[str] = None,
                         # was our own earlier guess and would restore and
                         # clear at the wrong moments.
                         try:
-                            _target_menu_mod.remember_player_target(_player)
-                            _target_menu_mod.attempt_persistent_restore(_player)
+                            with frame_profiler.scope("contacts.persist"):
+                                _target_menu_mod.remember_player_target(_player)
+                                _target_menu_mod.attempt_persistent_restore(_player)
                         except Exception as _e:
                             dev_mode.log_swallowed("persistent target", _e)
 
