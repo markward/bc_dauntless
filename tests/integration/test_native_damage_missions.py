@@ -39,8 +39,12 @@ E8M2 = "Maelstrom.Episode8.E8M2.E8M2"
 @pytest.fixture(autouse=True, params=("off", "on"))
 def switch(request, monkeypatch):
     """The native-combat switch, off and on. Each headless GameLoop re-reads
-    it (engine/core/loop.py); _load turns it on before the mission's first
-    script write. On, the native chain must have done some of the work."""
+    it (engine/core/loop.py). _load's nc.configure() runs AFTER the mission's
+    own creation-time script writes (they happen inside headless_mission.load,
+    with native still off), so those are never counted; a beat that wants the
+    native chain counted must write after _load. Repairs run in the native
+    subsystem stage and are deliberately not counted either. On, the native
+    chain must have done some of the work."""
     on = request.param == "on"
     if on and not nc.available():
         pytest.skip("native combat bindings not built")
@@ -126,6 +130,16 @@ def test_e3m5_gondev_survives_creation_at_hull_zero():
     gondev = _ship("Belaruz4", "Derelict Bird of Prey")
     assert gondev is not None
     assert gondev.GetHull().GetCondition() == 0.0      # KillGonDev's hull 0
+    assert gondev.IsInvincible()
+    assert _alive(gondev)
+    # KillGonDev's creation-time write ran before native was configured. Refill
+    # the hull and run it again, now through the native condition chain, so the
+    # [on] arm genuinely exercises (and counts) native damage.
+    gondev.GetHull().SetCondition(gondev.GetHull().GetMaxCondition())
+    assert gondev.GetHull().GetCondition() > 0.0
+    mod.KillGonDev(gondev)
+    headless_mission.tick(1.0 / 60.0)
+    assert gondev.GetHull().GetCondition() == 0.0
     assert gondev.IsInvincible()
     assert _alive(gondev)
     # R5: an invincible hulk keeps its systems (no hull cascade).
