@@ -1,6 +1,6 @@
 # Phase 6 — Our engine stages in C++, then the SDK boundary, then BC's native preprocessors
 
-**Status:** DRAFT for Mark, 2026-11-05.
+**Status:** APPROVED by Mark 2026-11-05 ("approved. write the plan then execute subagent driven").
 **Project:** native motion + proximity (`project/native-motion-and-proximity`). Phase 5a (hull cull, Mac multithreaded GL) is merged and live.
 **Evidence:** perf register SIG-196 (128-ship Release probe) and SIG-197 (cProfile splits, re-split by SDK versus ours on 2026-11-05).
 
