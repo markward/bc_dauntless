@@ -6344,6 +6344,12 @@ PyMethodDef g_dmg_damage_system_def = {
 
 }  // namespace
 
+// benchmark-only (phase 6 B0): the TGPoint3 class bench_new_point builds.
+static py::object& bench_point_class() {
+    static py::object* cls = new py::object();
+    return *cls;
+}
+
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "dauntless renderer + sim host bindings";
 
@@ -12114,6 +12120,51 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("handles"),
           "Bulk position read: one crossing instead of N.");
+
+    // ── benchmark-only (phase 6 B0) ─────────────────────────────────────────
+    // Bindings for tools/bench/boundary_bench.py (SIG-198): each crosses the
+    // Python/C++ boundary a different way for the same three doubles. Nothing
+    // in the game calls them.
+    m.def("bench_noop", []() {});
+    m.def("bench_get_pos_tuple",
+          [](std::uint32_t i, std::uint32_t g) {
+              const auto p = dauntless::transform_store().position(i, g);
+              return py::make_tuple(p[0], p[1], p[2]);
+          });
+    m.def("bench_set_point_class",
+          [](py::object cls) { bench_point_class() = std::move(cls); });
+    m.def("bench_new_point",
+          [](std::uint32_t i, std::uint32_t g) {
+              const auto p = dauntless::transform_store().position(i, g);
+              return bench_point_class()(p[0], p[1], p[2]);
+          });
+    m.def("bench_fill_point",
+          [](std::uint32_t i, std::uint32_t g, py::object pt) {
+              const auto p = dauntless::transform_store().position(i, g);
+              pt.attr("x") = p[0];
+              pt.attr("y") = p[1];
+              pt.attr("z") = p[2];
+          });
+    struct BenchPoint {
+        double x, y, z;
+    };
+    py::class_<BenchPoint>(m, "bench_NativePoint")
+        .def_readonly("x", &BenchPoint::x)
+        .def_readonly("y", &BenchPoint::y)
+        .def_readonly("z", &BenchPoint::z);
+    m.def("bench_native_point",
+          [](std::uint32_t i, std::uint32_t g) {
+              const auto p = dauntless::transform_store().position(i, g);
+              return BenchPoint{p[0], p[1], p[2]};
+          });
+    m.def("bench_position_view",
+          [](std::uint32_t i, std::uint32_t g) {
+              dauntless::transform_store().position(i, g);  // validates
+              double* pos = dauntless::transform_store().at(i).pos;
+              return py::memoryview::from_memory(
+                  pos, static_cast<py::ssize_t>(3 * sizeof(double)), true);
+          });
+    // ── end benchmark-only ──────────────────────────────────────────────────
 
     // ProximityManager.GetNearObjects: `handles` is a buffer of uint32
     // (index, generation) pairs; returns one byte per handle, 1 inside or on
