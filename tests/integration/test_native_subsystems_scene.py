@@ -1,27 +1,21 @@
-"""The native subsystem stage against the Python stage, tick for tick (phase
-6 A1, Task 2; plan docs/superpowers/plans/2026-11-05-phase6-b0-a1-
-subsystems.md, ruling R2: the Python ``Update`` methods are the bit-exact
-oracle until Task 8 deletes them).
+"""The native subsystem stage over a busy combat scene (phase 6 A1). This
+was Task 2's differential against the Python stage; Task 8 deleted the
+Python stage (ruling R2), so no second implementation is left to compare
+with: the scene now holds the native stage to what it must still do.
 
-Two fresh loads of combat_stress at 16 ships, one with
-``DAUNTLESS_NATIVE_SUBSYSTEMS=0`` (the Python loop in
-engine/core/loop.py) and one with the switch on (the native session and its
-driver, engine/appc/native_subsystems.py), get the same seeded op stream
-and are compared after EVERY tick for exact equality (floats by
-``.hex()``):
+combat_stress at 16 ships gets the seeded op stream below, and the stage:
 
-* every field the stage writes (the stage map's §2,
-  docs/superpowers/plans/2026-11-05-phase6-a1-subsystem-stage-map.md): the
-  shield generator's charge accumulator, ramp and faces; the plant's
-  batteries, conduits, interval, dispensed and wanted totals and breach
-  latch; every consumer's draw fields; the cloak's state, transition and
-  reserve; the repair queue and its cannot-complete set; every subsystem's
-  condition, threshold state and queue flag; the articulation poses and
-  transitions;
-* every watcher's value (seven shield watchers, both battery watchers,
-  each subsystem's condition watchers);
-* every event posted (type, source, destination, payload), in order, and
-  whether it was posted inside the stage.
+* skips nothing (subsystem_step.h THE SKIPS; ruling R8-1: every skip count
+  is 0 at the end);
+* ran every shield, power, cloak and repair piece natively (articulation:
+  one RUN_PYTHON record per rigged ship per stage, one per rigless ship in
+  all) and handed back the SDK events -- the cloak's completions and forced
+  decloaks, the bay's cannot-complete and completions, the watchers'
+  crossings;
+* leaves the mirror agreeing with every Python object (the audit).
+
+The bit-exact pin is the goldens (test_golden_fights.py), which record the
+stage's own state.
 
 Review Focus 1 is pinned by a handler on shield watchers: a range check on
 each face of the first few ships, fired mid-stage by the shield regen's
@@ -30,8 +24,7 @@ on, a sensor slider, its main battery), which the walk then reaches the
 same tick. The same handler is on those ships' battery watchers (Task 4),
 fired mid-stage by a drain or a recharge crossing half charge.
 
-Deterministic by construction, as test_passive_power_differential.py: no
-GameLoop tick (AI draws on the unseeded module ``random``), the clock and
+Deterministic by construction: no GameLoop tick (AI draws on the unseeded module ``random``), the clock and
 ``random`` reset before each load, the ops from their own seeded Random.
 """
 import random
@@ -113,7 +106,7 @@ TRACKED = (_SHIELD + _PLANT + _CONSUMER + _CLOAK + _SUBSYSTEM + _SHIP
 
 
 class _World:
-    def __init__(self, mp, native):
+    def __init__(self, mp):
         mp.setenv("DAUNTLESS_COMBAT_SHIPS", SHIPS)
         mp.delenv("DAUNTLESS_PASSIVE_STATE", raising=False)
         mp.delenv("DAUNTLESS_PASSIVE_AUDIT", raising=False)
@@ -122,10 +115,7 @@ class _World:
         headless_mission.clear_in_flight()
         headless_mission.load("engine.dev_missions.combat_stress")
         passive_state.configure({})
-        nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1",
-                      "DAUNTLESS_NATIVE_SUBSYSTEMS": "1" if native else "0"})
-        assert native_subsystems.enabled() is native
-        self.native = native
+        nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
         self.tick = 0
         self.in_stage = False
         self.handled = {"in_stage": 0, "outside": 0}
@@ -402,29 +392,22 @@ class _World:
         return log
 
 
-_RIGGED = {}
-
-
-def _arm(native):
+def _run():
     with pytest.MonkeyPatch.context() as mp:
-        world = _World(mp, native)
+        world = _World(mp)
         try:
             log = world.run()
+            nc._failures.clear()
+            nc.audit_mirror()
+            audit = list(nc._failures)
         finally:
             world.close()
         assert world.seen == set(TRACKED), (
             "tracked fields never seen holding a value (renamed?): %s"
             % sorted(set(TRACKED) - world.seen))
-        _RIGGED[native] = world.rigged
         return (log, dict(world.handled), native_subsystems.counts(),
-                native_subsystems.event_counts())
-
-
-def _first_difference(a, b):
-    for i, (x, y) in enumerate(zip(a, b)):
-        if x != y:
-            return i, x, y
-    return len(a), a[len(b):], b[len(a):]
+                native_subsystems.event_counts(),
+                native_subsystems.skip_counts(), world.rigged, audit)
 
 
 @pytest.fixture(autouse=True)
@@ -435,50 +418,36 @@ def _clean():
     nc.reset()
 
 
-def test_differential_combat_scene_bit_exact():
-    python, py_handled, py_counts, _ = _arm(native=False)
-    native, na_handled, na_counts, na_events = _arm(native=True)
-    assert py_counts["stages"] == 0, py_counts
-    assert na_counts["stages"] == TICKS, na_counts
-    assert na_counts["run_python"] > 0, na_counts
-    assert len(python) == len(native) == TICKS
-    for tick, ((ps, pe), (ns, ne)) in enumerate(zip(python, native), 1):
-        if ps != ns:
-            i, x, y = _first_difference(ps, ns)
-            pytest.fail("tick %d: stage state differs at row %d\n python %r\n"
-                        " native %r" % (tick, i, x, y))
-        if pe != ne:
-            i, x, y = _first_difference(pe, ne)
-            pytest.fail("tick %d: events differ at %d\n python %r\n native %r"
-                        % (tick, i, x, y))
-    # Tasks 3-5: every shield, power, cloak and repair piece ran natively
+def test_combat_scene_runs_every_piece_natively():
+    log, handled, counts, events, skips, rigged, audit = _run()
+    assert counts["stages"] == TICKS, counts
+    assert len(log) == TICKS
+    assert skips == {}, skips
+    assert audit == [], audit
+    # Every shield, power, cloak and repair piece ran natively
     # (articulation: one RUN_PYTHON record per rigged ship per stage, one per
-    # rigless ship in all), and their
-    # SDK events -- the handler's mid-stage writes among them -- came back
-    # as EVENTs: the cloak's completions and forced decloaks, the bay's
-    # cannot-complete and completions.
+    # rigless ship in all), and their SDK events -- the handler's mid-stage
+    # writes among them -- came back as EVENTs.
     ships = int(SHIPS) + 1
-    rigged = _RIGGED[True]
     assert rigged < ships, "the scene needs rigless ships too"
-    assert na_counts["run_python"] == (ships - rigged) + rigged * TICKS, \
-        (na_counts, rigged)
-    assert na_counts["events"] > 0, na_counts
+    assert counts["run_python"] == (ships - rigged) + rigged * TICKS, \
+        (counts, rigged)
+    assert counts["events"] > 0, counts
     for kind in ("CLOAK_DONE", "FORCE_DECLOAK", "REPAIR_CANNOT",
-                 "REPAIR_DONE"):
-        assert na_events.get(kind, 0) > 0, (kind, na_events)
+                 "REPAIR_DONE", "SHIELD_WATCHER", "BATTERY_WATCHER"):
+        assert events.get(kind, 0) > 0, (kind, events)
     # The scene is what it claims: the handler wrote mid-stage, and the
     # stage had work of every kind to do.
-    assert na_handled == py_handled
-    assert py_handled["in_stage"] > 0, py_handled
-    rows = [r for snap, _ in python for r in snap]
+    assert handled["in_stage"] > 0, handled
+    rows = [r for snap, _ in log for r in snap]
     assert any(r[0] == "repair" and r[2] for r in rows), "no repair queued"
     assert any(r[0] == "repair" and r[3] for r in rows), \
         "no repair could not be completed"
     assert {r[2] for r in rows if r[0] == "cloak"} == {0, 1, 2, 3}
-    events = [e for _, evs in python for e in evs]
-    assert any(e[1] and e[2] == "watcher" for e in events)
-    assert any(e[1] and e[2] == "battery" for e in events), \
+    evs = [e for _, es in log for e in es]
+    assert any(e[1] and e[2] == "watcher" for e in evs)
+    assert any(e[1] and e[2] == "battery" for e in evs), \
         "no battery crossing in the stage"
-    assert any(e[1] and e[2] == "handler" for e in events)
+    assert any(e[1] and e[2] == "handler" for e in evs)
     assert any(e[1] and e[2] not in ("handler", "watcher")
-               for e in events), "no stage-posted event besides ours"
+               for e in evs), "no stage-posted event besides ours"

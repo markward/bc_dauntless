@@ -13840,7 +13840,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // with type and kind ints named by combat_subsys_kinds() (kind a
         // piece for RUN_PYTHON, an event kind for EVENT, -1 for DONE).
         m.def("combat_subsys_kinds", [] {
-            py::dict types, pieces, events;
+            py::dict types, pieces, events, skips;
             for (int i = 0;
                  i < static_cast<int>(cb::SubsystemRecordType::kCount); ++i)
                 types[cb::subsystem_record_type_name(
@@ -13853,24 +13853,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
                  ++i)
                 events[cb::subsystem_event_name(
                     static_cast<cb::SubsystemEvent>(i))] = i;
-            return py::make_tuple(types, pieces, events);
-        }, "(record types, pieces, event kinds): name -> int.");
+            for (int i = 0; i < static_cast<int>(cb::SubsystemSkip::kCount);
+                 ++i)
+                skips[cb::subsystem_skip_name(
+                    static_cast<cb::SubsystemSkip>(i))] = i;
+            return py::make_tuple(types, pieces, events, skips);
+        }, "(record types, pieces, event kinds, skip reasons): name -> int.");
         py::class_<cb::SubsystemSession>(m, "combat_SubsystemSession")
             .def_readonly("dt", &cb::SubsystemSession::dt)
-            .def_readonly("done", &cb::SubsystemSession::done)
-            .def_readwrite("python_pieces",
-                           &cb::SubsystemSession::python_pieces);
+            .def_readonly("done", &cb::SubsystemSession::done);
         m.def("combat_subsys_begin",
-              [](const std::vector<std::int64_t>& ships, double dt,
-                 std::uint32_t python_pieces) {
-                  return cb::subsystems::begin(cb::mirror(), ships, dt,
-                                               python_pieces);
+              [](const std::vector<std::int64_t>& ships, double dt) {
+                  return cb::subsystems::begin(cb::mirror(), ships, dt);
               },
-              py::arg("ships"), py::arg("dt"), py::arg("python_pieces") = 0,
+              py::arg("ships"), py::arg("dt"),
               "Begin one subsystem stage over `ships` (Object handles in "
-              "roster order, -1 for a ship with no row) for a tick of `dt`. "
-              "python_pieces: a mask (1 << piece) Python runs for every "
-              "ship (a test-facing hook).");
+              "roster order, -1 for a ship with no row) for a tick of `dt`.");
         m.def("combat_subsys_next",
               [](cb::SubsystemSession& s, py::object registry,
                  py::object dmg_ctx) {
@@ -13925,8 +13923,49 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("session"),
               "The repair piece's locals (subsystem_step.h THE REPAIR "
               "PIECE): (teams, points, queue index, worked item handles, "
-              "completed item handles), for REPAIR_TAIL's and "
-              "REPAIR_DONE's handlers.");
+              "completed item handles), for REPAIR_CANNOT's, REPAIR_SET's "
+              "and REPAIR_DONE's handlers.");
+        m.def("combat_subsys_repair_complete",
+              [](cb::SubsystemSession& s, std::int64_t h) {
+                  cb::subsystems::repair_complete(s, h);
+              },
+              py::arg("session"), py::arg("item"),
+              "REPAIR_SET's answer: the item Python just repaired is "
+              "complete (it joins the completions in item order).");
+        m.def("combat_subsys_skips",
+              [](const cb::SubsystemSession& s) {
+                  py::list out;
+                  for (const cb::SubsystemSkipRecord& k : s.skips)
+                      out.append(py::make_tuple(
+                          k.ship_pos, static_cast<int>(k.piece),
+                          static_cast<int>(k.why), k.sub));
+                  return out;
+              },
+              py::arg("session"),
+              "The session's skips (subsystem_step.h THE SKIPS), in walk "
+              "order: (ship_pos, piece, reason, subsystem handle or -1).");
+        m.def("combat_subsys_skip_counts", [] {
+            py::dict out;
+            for (int p = 0; p < static_cast<int>(cb::SubsystemPiece::kCount);
+                 ++p)
+                for (int k = 0;
+                     k < static_cast<int>(cb::SubsystemSkip::kCount); ++k) {
+                    const auto n = cb::subsystems::skip_count(
+                        static_cast<cb::SubsystemPiece>(p),
+                        static_cast<cb::SubsystemSkip>(k));
+                    if (n != 0)
+                        out[py::make_tuple(
+                            cb::subsystem_piece_name(
+                                static_cast<cb::SubsystemPiece>(p)),
+                            cb::subsystem_skip_name(
+                                static_cast<cb::SubsystemSkip>(k)))] = n;
+                }
+            return out;
+        }, "THE SKIPS, process-wide: {(piece, reason): count}, the non-zero "
+           "ones, since the last combat_subsys_skip_counts_reset().");
+        m.def("combat_subsys_skip_counts_reset",
+              [] { cb::subsystems::reset_skip_counts(); },
+              "Zero THE SKIPS' process-wide counts.");
         // ── The tractor force (tractor_force.h) ──────────────────────────
         // One step over Object handles (host order, -1 for a ship with no
         // row), writing the transform store. Returns (zero_velocity,

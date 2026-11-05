@@ -13,8 +13,7 @@
 //                    .__dict__["_value"] = value
 //   the power piece's (subsystem_step.h THE WRITE LOG): a float into its
 //   attribute; BREACH_FIRED True; BATTERY_WATCH into the main (index 0) or
-//   backup (1) battery watcher's `_value`; PASSIVE_POWER_DROP None into
-//   `_passive_power` when it holds anything else; the cloak's and the
+//   backup (1) battery watcher's `_value`; the cloak's and the
 //   bay's: TRANSITION_ELAPSED a float, CLOAK_STATE an int, REPAIR_NOTIFIED
 //   an add (index 1) / discard (0) of the member's handle on the bay's
 //   `_cannot_complete_notified` set, in place.

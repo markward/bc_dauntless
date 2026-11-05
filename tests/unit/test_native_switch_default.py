@@ -127,7 +127,11 @@ def test_missing_binding_raises_at_configure(monkeypatch):
 
 @pytest.mark.parametrize("name", ("combat_subsys_begin", "combat_subsys_next",
                                   "combat_subsys_kinds",
-                                  "combat_subsys_repair_state"))
+                                  "combat_subsys_repair_state",
+                                  "combat_subsys_skips",
+                                  "combat_subsys_skip_counts",
+                                  "combat_subsys_skip_counts_reset",
+                                  "combat_subsys_repair_complete"))
 def test_each_subsystem_stage_binding_is_required(monkeypatch, name):
     """A .so from before the cloak and repair pieces (Task 5) lacks
     combat_subsys_repair_state -- and has combat_subsys_next's old arity:

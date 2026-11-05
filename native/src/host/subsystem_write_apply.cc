@@ -43,7 +43,6 @@ constexpr const char* kAttr[] = {
     "_backup_reserve",        // BACKUP_RESERVE
     "_breach_fired",          // BREACH_FIRED
     "_main_battery_watcher",  // BATTERY_WATCH
-    "_passive_power",         // PASSIVE_POWER_DROP
     "_transition_elapsed",    // TRANSITION_ELAPSED
     "_cloak_state",           // CLOAK_STATE
     "_cannot_complete_notified",  // REPAIR_NOTIFIED
@@ -131,13 +130,6 @@ bool store(const Names* n, PyObject* d, const cb::SubsystemWrite& w) {
     }
     PyObject* name = n->by_kind[k];
     using K = cb::SubsystemWriteKind;
-    if (w.what == K::PASSIVE_POWER_DROP) {
-        // The power draw program, dropped (when there is one to drop).
-        PyObject* prog = PyDict_GetItemWithError(d, name);
-        if (prog == nullptr) return !PyErr_Occurred();
-        if (prog == Py_None) return true;
-        return PyDict_SetItem(d, name, Py_None) == 0;
-    }
     if (w.what == K::BREACH_FIRED)
         return PyObject_SetItem(d, name, Py_True) == 0;
     if (w.what == K::CLOAK_STATE) {

@@ -1,13 +1,9 @@
 """The native cloak and repair pieces (phase 6 A1, Task 5; subsystem_step.h
-THE CLOAK PIECE, THE REPAIR PIECE): ``CloakingSubsystem.Update`` and
-``RepairSubsystem.Update`` run natively by the subsystem stage, bit for bit,
-their SDK events handed back to Python as EVENT records at the point the
-Python pieces post them.
-
-The per-tick state differential against the Python stage is
-tests/integration/test_native_subsystems_differential.py; these pin the
-pieces of the contract one at a time, each against the Python stage
-(``DAUNTLESS_NATIVE_SUBSYSTEMS=0``) on the same scene.
+THE CLOAK PIECE, THE REPAIR PIECE): the cloak's transition and the repair
+bay's tick, native only since Task 8 (there is no Python copy), their SDK
+events handed back to Python as EVENT records at the point BC posts them.
+The goldens pin them bit for bit; these pin the contract one piece at a
+time.
 """
 import random
 
@@ -46,15 +42,13 @@ def _clean():
     nc.reset()
 
 
-def _world(mp, native):
+def _world(mp):
     mp.setenv("DAUNTLESS_COMBAT_SHIPS", "2")
     App.g_kTimerManager._time = 0.0
     random.seed(0)
     headless_mission.clear_in_flight()
     headless_mission.load("engine.dev_missions.combat_stress")
-    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1",
-                  "DAUNTLESS_NATIVE_SUBSYSTEMS": "1" if native else "0"})
-    assert native_subsystems.enabled() is native
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
     ships = list(iter_non_rock_ships())
     assert len(ships) == SHIPS
     return ships
@@ -107,10 +101,9 @@ def _cloak_state(cloak):
     return [_hex(cloak.__dict__[n]) for n in _CLOAK]
 
 
-def _pieces_in_python(counts, stages, ships=SHIPS):
-    """How many CLOAK and REPAIR pieces ran as RUN_PYTHON records: the
-    articulation piece is one record per rigless ship, once (Task 6)."""
-    return counts["run_python"] - ships
+def _no_skips():
+    """Every piece ran: none was skipped (subsystem_step.h THE SKIPS)."""
+    assert native_subsystems.skip_counts() == {}
 
 
 def _damage(sub, fraction):
@@ -124,39 +117,36 @@ def test_mission_set_max_repair_points_reaches_the_native_step():
     RepairSubsystemProperty template changed at runtime is what the next
     native repair tick reads, for every bay using it -- the setter pushes
     the template's one mirror row."""
-    def run(native):
-        with pytest.MonkeyPatch.context() as mp:
-            ships = _world(mp, native)
-            a, b = (s.GetRepairSubsystem() for s in ships[1:])
-            prop = a.GetProperty()
-            b.SetProperty(prop)             # the two now share a template
-            for ship in ships[1:]:
-                for sub in list(iter_subsystems(ship))[2:5]:
-                    _damage(sub, 0.4)
-            _tick(1)                        # REPAIR_ADD delivered: queued
-            native_subsystems.reset_counts()
-            _tick(30)
-            prop.SetMaxRepairPoints(0.0)    # E2M0:754, the template once
-            _tick(1)
-            frozen = _repair_state(ships)
-            _tick(30)
-            still = _repair_state(ships)
-            prop.SetMaxRepairPoints(50.0)   # E2M0:2935
-            _tick(60)
-            row = (nc._h.combat_dump(prop.__dict__["_nslot"])
-                   if native else None)
-            return (_repair_state(ships), frozen, still, row,
-                    native_subsystems.counts())
-
-    python, py_frozen, py_still, _, _ = run(False)
-    native, na_frozen, na_still, row, counts = run(True)
-    assert native == python
+    with pytest.MonkeyPatch.context() as mp:
+        ships = _world(mp)
+        a, b = (s.GetRepairSubsystem() for s in ships[1:])
+        prop = a.GetProperty()
+        b.SetProperty(prop)             # the two now share a template
+        for ship in ships[1:]:
+            for sub in list(iter_subsystems(ship))[2:5]:
+                _damage(sub, 0.4)
+        _tick(1)                        # REPAIR_ADD delivered: queued
+        native_subsystems.reset_counts()
+        before = _repair_state(ships)
+        _tick(30)
+        moving = _repair_state(ships)
+        prop.SetMaxRepairPoints(0.0)    # E2M0:754, the template once
+        _tick(1)
+        frozen = _repair_state(ships)
+        _tick(30)
+        still = _repair_state(ships)
+        prop.SetMaxRepairPoints(50.0)   # E2M0:2935
+        _tick(60)
+        row = nc._h.combat_dump(prop.__dict__["_nslot"])
+        after = _repair_state(ships)
+        counts = native_subsystems.counts()
+    assert moving != before, "nothing was repaired before the change"
     # Repair stopped for both bays the tick after the template went to 0.
-    assert na_frozen == na_still == py_frozen == py_still
+    assert frozen == still
     assert row["MaxRepairPoints"] == 50.0 and row["repair_props_ok"] == 1
-    assert native != na_still, "the restored points repaired nothing"
+    assert after != still, "the restored points repaired nothing"
     assert counts["stages"] == 121
-    assert _pieces_in_python(counts, 121, ships=0) == 0, counts
+    _no_skips()
 
 
 def test_handler_editing_the_queue_mid_walk():
@@ -167,9 +157,9 @@ def test_handler_editing_the_queue_mid_walk():
     (the next index of the list as it is now): the native piece re-reads
     the queue from the mirror, which every edit pushed. A walk over the
     queue as it was at begin would still repair the removed member."""
-    def run(native):
+    def run():
         with pytest.MonkeyPatch.context() as mp:
-            ships = _world(mp, native)
+            ships = _world(mp)
             ship = ships[1]
             bay = ship.GetRepairSubsystem()
             subs = [s for s in iter_subsystems(ship)
@@ -205,26 +195,22 @@ def test_handler_editing_the_queue_mid_walk():
             return (states, list(log), native_subsystems.counts(),
                     native_subsystems.event_counts())
 
-    python, py_log, _, _ = run(False)
-    native, na_log, counts, events = run(True)
-    assert any(t == App.ET_REPAIR_CANNOT_BE_COMPLETED for t, _ in py_log)
-    assert any(t == App.ET_REPAIR_COMPLETED for t, _ in py_log)
-    assert na_log == py_log
-    for tick, (p, n) in enumerate(zip(python, native), 1):
-        assert n == p, "tick %d" % tick
+    _states, log, counts, events = run()
+    # CANNOT once (x is told once), then the completion of z.
+    assert [t for t, _ in log].count(App.ET_REPAIR_CANNOT_BE_COMPLETED) == 1
+    assert any(t == App.ET_REPAIR_COMPLETED for t, _ in log)
     assert events.get("REPAIR_CANNOT", 0) >= 1, events
     assert events.get("REPAIR_DONE", 0) >= 1, events
-    assert _pieces_in_python(counts, 90) == 0, counts
+    _no_skips()
 
 
-def test_cloak_completion_and_forced_decloak_match_python():
+def test_cloak_completion_and_forced_decloak():
     """The cloak's transition completes natively (CLOAK_DONE: the state
     written, then Python's _fire), and a dry reserve forces it off
-    (FORCE_DECLOAK: Python's _force_decloak), on the ticks and in the order
-    the Python stage does."""
-    def run(native):
+    (FORCE_DECLOAK: Python's _force_decloak), in that order."""
+    def run():
         with pytest.MonkeyPatch.context() as mp:
-            ships = _world(mp, native)
+            ships = _world(mp)
             ship = next(s for s in ships
                         if s.GetCloakingSubsystem() is not None)
             cloak = ship.GetCloakingSubsystem()
@@ -246,46 +232,17 @@ def test_cloak_completion_and_forced_decloak_match_python():
                 _tick(1)
                 states.append(_cloak_state(cloak))
             return (states, list(log), native_subsystems.counts(),
-                    native_subsystems.event_counts())
+                    native_subsystems.event_counts(), cloak)
 
-    python, py_log, _, _ = run(False)
-    native, na_log, counts, events = run(True)
-    assert [t for t, _ in py_log] == [App.ET_CLOAK_COMPLETED,
-                                      App.ET_DECLOAK_COMPLETED]
-    assert na_log == py_log
-    assert native == python
+    states, log, counts, events, cloak = run()
+    assert [t for t, _ in log] == [App.ET_CLOAK_COMPLETED,
+                                   App.ET_DECLOAK_COMPLETED]
     assert events.get("CLOAK_DONE", 0) == 1, events
     assert events.get("FORCE_DECLOAK", 0) >= 1, events
-    assert _pieces_in_python(counts, 345) == 0, counts
-
-
-def test_python_pieces_hands_cloak_and_repair_to_python():
-    """The test-facing hook: with CLOAK and REPAIR in python_pieces every
-    cloak's and bay's Update is Python's, and the state is the native
-    run's, bit for bit."""
-    def run(hooked):
-        with pytest.MonkeyPatch.context() as mp:
-            ships = _world(mp, True)
-            native_subsystems.python_pieces = (
-                (1 << native_subsystems.CLOAK)
-                | (1 << native_subsystems.REPAIR)) if hooked else 0
-            for ship in ships[1:]:
-                for sub in list(iter_subsystems(ship))[2:4]:
-                    _damage(sub, 0.4)
-                cl = ship.GetCloakingSubsystem()
-                if cl is not None:
-                    cl.StartCloaking()
-            native_subsystems.reset_counts()
-            _tick(60)
-            cloaks = [_cloak_state(s.GetCloakingSubsystem()) for s in ships
-                      if s.GetCloakingSubsystem() is not None]
-            return (_repair_state(ships), cloaks,
-                    native_subsystems.counts())
-
-    native, na_cloaks, _ = run(False)
-    hooked, hk_cloaks, counts = run(True)
-    assert hooked == native and hk_cloaks == na_cloaks
-    assert _pieces_in_python(counts, 60) == 2 * SHIPS * 60, counts
+    # Cloaked, then forced off by the dry reserve, then held off by it.
+    assert [cloak.CLOAK_CLOAKED] in [[st[0]] for st in states[:300]]
+    assert states[-1][0] == cloak.CLOAK_DECLOAKED
+    _no_skips()
 
 
 def test_the_mirror_agrees_after_native_repairs_and_cloaks():
@@ -293,7 +250,7 @@ def test_the_mirror_agrees_after_native_repairs_and_cloaks():
     clock and state, the bay's notified set, the items' conditions -- and
     every queue change pushed is what the mirror holds."""
     with pytest.MonkeyPatch.context() as mp:
-        ships = _world(mp, True)
+        ships = _world(mp)
         for ship in ships[1:]:
             subs = list(iter_subsystems(ship))[2:6]
             for sub in subs:
@@ -336,3 +293,43 @@ def test_every_queue_reordering_pushes_the_mirrored_order():
     assert all(s._in_repair_queue for s in subs)
     bay._queue *= 0
     assert mirrored() == [] and not any(s._in_repair_queue for s in subs)
+
+
+def test_an_item_the_native_chain_cannot_repair_is_repaired_alone_in_python():
+    """Ruling R8-3: a worked item whose condition write the native damage
+    chain hands back (here a condition watcher it cannot stand in for) is
+    repaired by itself through its SDK-facing ``Repair`` (REPAIR_SET), with
+    the same share as every other worked item; the items before and after
+    it stay native, and nothing is skipped."""
+    from engine.appc.float_range_watcher import FloatRangeWatcher
+
+    class _Foreign(FloatRangeWatcher):
+        pass
+
+    with pytest.MonkeyPatch.context() as mp:
+        ships = _world(mp)
+        ship = ships[1]
+        bay = ship.GetRepairSubsystem()
+        subs = [s for s in iter_subsystems(ship)
+                if s is not bay and s is not ship.GetHull()
+                and s is not ship.GetPowerSubsystem()]
+        a, b, c = subs[:3]
+        for sub in (a, b, c):
+            _damage(sub, 0.5)
+        b._condition_watcher = _Foreign()
+        effect_queue.boundary()
+        bay._queue.clear()
+        bay._queue.extend([a, b, c])
+        bay.GetProperty().SetNumRepairTeams(3)
+        before = [s._condition for s in (a, b, c)]
+        native_subsystems.reset_counts()
+        _tick(1)
+        events = native_subsystems.event_counts()
+        after = [s._condition for s in (a, b, c)]
+    assert events.get("REPAIR_SET") == 1, events
+    shares = [(y - x) * s.GetRepairComplexity()
+              for x, y, s in zip(before, after, (a, b, c))]
+    assert shares[0] > 0.0
+    assert shares[1] == pytest.approx(shares[0])
+    assert shares[2] == pytest.approx(shares[0])
+    _no_skips()

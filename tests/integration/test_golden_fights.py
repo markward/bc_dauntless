@@ -38,7 +38,7 @@ except ImportError:
     _h = None
 
 from engine.appc import native_combat as nc
-from engine.appc import native_motion
+from engine.appc import native_motion, native_subsystems
 from tests.helpers import bc_assets
 from tests.helpers import golden_fight
 
@@ -65,6 +65,14 @@ def _golden(name):
     rows = golden_fight.run_scene(name, arm)
     golden_fight.record(name, rows, os.environ.get("COMBAT_GOLDEN_REASON"))
     golden_fight.check(name, rows)
+    _no_subsystem_skips()
+
+
+def _no_subsystem_skips():
+    """The native subsystem stage ran every piece of the scene: nothing was
+    skipped (subsystem_step.h THE SKIPS; Task 8 ruling R8-1)."""
+    assert native_subsystems.counts()["stages"] > 0
+    assert native_subsystems.skip_counts() == {}
 
 
 def test_k1_ops_tpf1():
@@ -240,3 +248,4 @@ def test_motion_branches_python_motion_arm():
     rows = golden_fight.run_scene("motion_branches", "python_motion")
     assert native_motion.counts()["native_calls"] == 0
     golden_fight.check("motion_branches", rows)
+    _no_subsystem_skips()

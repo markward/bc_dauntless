@@ -1,7 +1,7 @@
 // The subsystem stage session (subsystem_step.h) on hand-built mirror rows:
-// its walk order and its skip of a row freed mid-walk. The native-vs-Python
-// per-tick differential is
-// tests/integration/test_native_subsystems_differential.py.
+// its walk order, its pieces, and THE SKIPS (a piece the mirror cannot run,
+// a row freed mid-walk). The Python side is
+// tests/unit/test_native_subsystems_*.py and the goldens.
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
@@ -23,46 +23,39 @@ using dauntless::TransformStore;
 namespace {
 
 constexpr double kDt = 1.0 / 60.0;
+constexpr double kHalf = 0.5;  // exact against the 1.0 s power interval
 
 struct World {
     TransformStore store;
     Mirror m{store};
 
-    // A ship whose `_shield_subsystem` the mirror cannot name
-    // (kRefUnrepresentable): its SHIELD piece is Python's, so every piece
-    // of it is a RUN_PYTHON record (the walk-order tests below).
+    // A ship whose four subsystems the mirror cannot name
+    // (kRefUnrepresentable): each of its SHIELD, POWER, CLOAK and REPAIR
+    // pieces is a REF skip, and its walk is ARTICULATION's RUN_PYTHON alone
+    // (the walk-order tests below).
     int64_t ship() {
         const int64_t h = bare_ship();
         m.set_ref(h, Field::_shield_subsystem, kRefUnrepresentable);
+        m.set_ref(h, Field::_power_subsystem, kRefUnrepresentable);
+        m.set_ref(h, Field::_cloaking_subsystem, kRefUnrepresentable);
+        m.set_ref(h, Field::_repair_subsystem, kRefUnrepresentable);
         return h;
     }
 
-    // A ship with no shield generator (`_shield_subsystem` None) and a power
-    // plant, cloak and repair bay the mirror cannot name
-    // (kRefUnrepresentable): its POWER, CLOAK and REPAIR pieces are
-    // Python's.
+    // A ship with no subsystems at all (every ref None: no call); shield()
+    // gives it a generator. Its walk ends with ARTICULATION's RUN_PYTHON.
     int64_t bare_ship() {
         auto [xi, xg] = store.alloc();
-        const int64_t h = m.register_row(Kind::Object, xi, xg);
-        m.set_ref(h, Field::_power_subsystem, kRefUnrepresentable);
-        python_cloak_and_bay(h);
-        return h;
+        return m.register_row(Kind::Object, xi, xg);
     }
 
     // A ShipClass row with no shield generator and no plant yet: plant()
-    // gives it one, consumer() its consumers. Its cloak and bay are
-    // Python's (RUN_PYTHON records after the power piece).
+    // gives it one, consumer() its consumers.
     int64_t power_ship() {
         auto [xi, xg] = store.alloc();
         const int64_t h = m.register_row(Kind::Object, xi, xg);
         m.set_i(h, Field::is_ship_class, 1);
-        python_cloak_and_bay(h);
         return h;
-    }
-
-    void python_cloak_and_bay(int64_t ship) {
-        m.set_ref(ship, Field::_cloaking_subsystem, kRefUnrepresentable);
-        m.set_ref(ship, Field::_repair_subsystem, kRefUnrepresentable);
     }
 
     // A ShipClass row with no shield generator, plant, cloak or bay (all
@@ -215,124 +208,163 @@ struct World {
     }
 };
 
-// Runs the session to DONE, applying nothing; the records, in order.
-std::vector<SubsystemRecord> drain(SubsystemSession& s, Mirror& m) {
-    std::vector<SubsystemRecord> out;
+// The ship position of every record up to DONE, which must come last;
+// each must be ARTICULATION's RUN_PYTHON.
+std::vector<int64_t> walk(SubsystemSession& s, Mirror& m) {
+    std::vector<int64_t> out;
     for (int guard = 0; guard < 1000; ++guard) {
         const SubsystemRecord r = subsystems::next(s, m);
-        if (r.type == SubsystemRecordType::DONE) return out;
-        out.push_back(r);
-    }
-    ADD_FAILURE() << "the session never returned DONE";
-    return out;
-}
-
-// (ship_pos, piece) of every record up to DONE, which must come last.
-std::vector<std::pair<int64_t, SubsystemPiece>> walk(
-        SubsystemSession& s, Mirror& m) {
-    std::vector<std::pair<int64_t, SubsystemPiece>> out;
-    for (int guard = 0; guard < 1000; ++guard) {
-        const SubsystemRecord r = subsystems::next(s, m);
-        if (r.type == SubsystemRecordType::DONE) return out;
+        if (r.type == SubsystemRecordType::DONE) {
+            EXPECT_EQ(r.code, static_cast<int64_t>(s.skips.size()));
+            return out;
+        }
         EXPECT_EQ(r.type, SubsystemRecordType::RUN_PYTHON);
-        out.emplace_back(r.ship_pos, static_cast<SubsystemPiece>(r.kind));
+        EXPECT_EQ(static_cast<SubsystemPiece>(r.kind),
+                  SubsystemPiece::ARTICULATION);
+        out.push_back(r.ship_pos);
     }
     ADD_FAILURE() << "the session never returned DONE";
     return out;
 }
 
-constexpr SubsystemPiece kOrder[] = {
+constexpr SubsystemPiece kSkippable[] = {
     SubsystemPiece::SHIELD, SubsystemPiece::POWER, SubsystemPiece::CLOAK,
-    SubsystemPiece::REPAIR, SubsystemPiece::ARTICULATION};
+    SubsystemPiece::REPAIR};
+
+// The session's skips from `from` on are `ship_pos`'s four pieces, `why`.
+void expect_four_skips(const SubsystemSession& s, size_t from,
+                       int64_t ship_pos, SubsystemSkip why) {
+    ASSERT_GE(s.skips.size(), from + 4);
+    for (size_t k = 0; k < 4; ++k) {
+        const SubsystemSkipRecord& r = s.skips[from + k];
+        EXPECT_EQ(r.ship_pos, ship_pos) << k;
+        EXPECT_EQ(r.piece, kSkippable[k]) << k;
+        EXPECT_EQ(r.why, why) << k;
+    }
+}
 
 }  // namespace
 
-TEST(SubsystemStep, AllPythonOrderIsShipThenKind) {
+TEST(SubsystemStep, UnnamedSubsystemsAreSkippedShipThenPiece) {
     World w;
+    subsystems::reset_skip_counts();
     const std::vector<int64_t> ships = {w.ship(), w.ship(), w.ship()};
     SubsystemSession s = subsystems::begin(w.m, ships, kDt);
     EXPECT_EQ(s.dt, kDt);
-
-    std::vector<std::pair<int64_t, SubsystemPiece>> want;
-    for (int64_t i = 0; i < 3; ++i)
-        for (SubsystemPiece p : kOrder) want.emplace_back(i, p);
-
-    // Each record names its ship's handle too.
+    // Each record names its ship's handle too: only ARTICULATION comes back.
     std::vector<SubsystemRecord> records;
     for (;;) {
         const SubsystemRecord r = subsystems::next(s, w.m);
-        if (r.type == SubsystemRecordType::DONE) break;
+        if (r.type == SubsystemRecordType::DONE) {
+            EXPECT_EQ(r.code, 12);      // the session's skips
+            break;
+        }
         records.push_back(r);
         ASSERT_LT(records.size(), 100u);
     }
-    ASSERT_EQ(records.size(), 15u);
+    ASSERT_EQ(records.size(), 3u);
     for (size_t k = 0; k < records.size(); ++k) {
         EXPECT_EQ(records[k].type, SubsystemRecordType::RUN_PYTHON);
-        EXPECT_EQ(records[k].ship_pos, want[k].first) << k;
+        EXPECT_EQ(records[k].ship_pos, static_cast<int64_t>(k));
         EXPECT_EQ(static_cast<SubsystemPiece>(records[k].kind),
-                  want[k].second) << k;
-        EXPECT_EQ(records[k].ship,
-                  ships[static_cast<size_t>(want[k].first)]) << k;
+                  SubsystemPiece::ARTICULATION);
+        EXPECT_EQ(records[k].ship, ships[k]);
     }
+    // THE SKIPS: in walk order, each with the ref it could not name.
+    ASSERT_EQ(s.skips.size(), 12u);
+    for (int64_t i = 0; i < 3; ++i)
+        expect_four_skips(s, static_cast<size_t>(4 * i), i, SubsystemSkip::REF);
+    EXPECT_EQ(s.skips[0].sub, kRefUnrepresentable);
+    // ... and counted process-wide, per (piece, reason).
+    for (SubsystemPiece p : kSkippable)
+        EXPECT_EQ(subsystems::skip_count(p, SubsystemSkip::REF), 3u);
+    EXPECT_EQ(subsystems::skip_count(SubsystemPiece::SHIELD,
+                                     SubsystemSkip::NO_ROW), 0u);
+    subsystems::reset_skip_counts();
+    EXPECT_EQ(subsystems::skip_count(SubsystemPiece::SHIELD,
+                                     SubsystemSkip::REF), 0u);
     // DONE is the end: asking again is a protocol error.
     EXPECT_THROW(subsystems::next(s, w.m), std::logic_error);
 }
 
-TEST(SubsystemStep, FreedRowHandsTheRestToPython) {
+TEST(SubsystemStep, AFreedRowSkipsTheRestOfThatShip) {
     // A row freed mid-walk while its object lives on (native_combat._drop):
-    // the Python stage still runs every piece of that ship, so the session
-    // hands them all back, in order, and never skips it.
+    // there is no Python stage to hand its pieces to, so they are skipped
+    // (LOST_ROW, ruling R8-2); its ARTICULATION, whose Python is kept, still
+    // comes back.
     World w;
-    const std::vector<int64_t> ships = {w.ship(), w.ship(), w.ship()};
+    const std::vector<int64_t> ships = {w.bare_ship(), w.bare_ship(),
+                                        w.bare_ship()};
     SubsystemSession s = subsystems::begin(w.m, ships, kDt);
     const SubsystemRecord first = subsystems::next(s, w.m);
     ASSERT_EQ(first.type, SubsystemRecordType::RUN_PYTHON);
     EXPECT_EQ(first.ship_pos, 0);
     // A handler run for that record dropped the second ship's row.
     w.m.unregister_row(ships[1]);
-    const auto rest = walk(s, w.m);
-    ASSERT_EQ(rest.size(), 4u + 5u + 5u);
-    for (size_t k = 0; k < rest.size(); ++k) {
-        EXPECT_EQ(rest[k].first, static_cast<int64_t>((k + 1) / 5)) << k;
-        EXPECT_EQ(rest[k].second, kOrder[(k + 1) % 5]) << k;
-    }
+    EXPECT_EQ(walk(s, w.m), (std::vector<int64_t>{1, 2}));
+    ASSERT_EQ(s.skips.size(), 4u);
+    expect_four_skips(s, 0, 1, SubsystemSkip::LOST_ROW);
+    EXPECT_EQ(s.lost_row[1], 1);
 }
 
-TEST(SubsystemStep, FreedBetweenPiecesHandsTheRestOfThatShipToPython) {
+TEST(SubsystemStep, FreedBetweenPiecesSkipsTheRestOfThatShip) {
     World w;
-    const std::vector<int64_t> ships = {w.ship(), w.ship()};
+    const int64_t ship = w.power_ship();
+    const int64_t ps = w.plant(
+        ship, w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0), 500.0,
+        500.0, 0.0);
+    w.m.set_f(ps, Field::_condition, 0.0);      // a breach is due
+    const std::vector<int64_t> ships = {ship, w.bare_ship()};
     SubsystemSession s = subsystems::begin(w.m, ships, kDt);
-    for (int k = 0; k < 2; ++k)
-        ASSERT_EQ(subsystems::next(s, w.m).ship_pos, 0);
-    w.m.unregister_row(ships[0]);       // its POWER handler dropped it
-    // A new row may reuse the slot: the lost row stays Python's.
-    w.ship();
-    const auto rest = walk(s, w.m);
-    ASSERT_EQ(rest.size(), 3u + 5u);
-    for (size_t k = 0; k < 3; ++k) {
-        EXPECT_EQ(rest[k].first, 0);
-        EXPECT_EQ(rest[k].second, kOrder[k + 2]);
+    const SubsystemRecord breach = subsystems::next(s, w.m);
+    ASSERT_EQ(breach.type, SubsystemRecordType::EVENT);
+    EXPECT_EQ(breach.ship_pos, 0);
+    // The BREACH handler cannot drop rows (it queues a deferred entry);
+    // were the plant's row gone, the resume is a broken invariant.
+    w.m.unregister_row(ps);
+    EXPECT_THROW(subsystems::next(s, w.m), std::logic_error);
+
+    // Between pieces: ship 0's POWER piece ended with an EVENT; its handler
+    // dropped the ship's row. CLOAK and REPAIR are skipped, LOST_ROW; a new
+    // row reusing the slot does not revive it.
+    World v;
+    const int64_t ship0 = v.power_ship();
+    const int64_t p0 = v.plant(
+        ship0, v.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0), 510.0,
+        500.0, 0.0);
+    v.m.set_floats(p0, Field::power_watch_values, {0.51, 0.5});
+    v.m.set_floats(p0, Field::power_watch_checks, {1.0, 0.5, 2.0, 0.0});
+    v.m.set_f(p0, Field::_main_conduit_current, 1000.0);
+    v.consumer(ship0, 0, 60.0);
+    const std::vector<int64_t> both = {ship0, v.bare_ship()};
+    SubsystemSession t = subsystems::begin(v.m, both, kHalf);
+    ASSERT_EQ(subsystems::next(t, v.m).type, SubsystemRecordType::EVENT);
+    v.m.unregister_row(ship0);
+    v.bare_ship();
+    EXPECT_EQ(walk(t, v.m), (std::vector<int64_t>{0, 1}));
+    ASSERT_EQ(t.skips.size(), 2u);
+    EXPECT_EQ(t.skips[0].piece, SubsystemPiece::CLOAK);
+    EXPECT_EQ(t.skips[1].piece, SubsystemPiece::REPAIR);
+    for (const SubsystemSkipRecord& k : t.skips) {
+        EXPECT_EQ(k.why, SubsystemSkip::LOST_ROW);
+        EXPECT_EQ(k.ship_pos, 0);
     }
-    for (size_t k = 0; k < 5; ++k) EXPECT_EQ(rest[3 + k].first, 1);
-    EXPECT_EQ(s.lost_row[0], 1);
-    EXPECT_EQ(s.lost_row[1], 0);
+    EXPECT_EQ(t.lost_row[0], 1);
+    EXPECT_EQ(t.lost_row[1], 0);
 }
 
-TEST(SubsystemStep, AShipWithNoRowIsStillPythons) {
+TEST(SubsystemStep, AShipWithNoRowIsSkipped) {
     // A ship the mirror has no row for (-1 or a handle already stale at
-    // begin) is not a freed row: the Python stage updates it, so every piece
-    // is handed back.
+    // begin): its four pieces are NO_ROW skips; ARTICULATION comes back.
     World w;
     const int64_t gone = w.ship();
     w.m.unregister_row(gone);
     const std::vector<int64_t> ships = {-1, gone};
     SubsystemSession s = subsystems::begin(w.m, ships, kDt);
-    const auto all = walk(s, w.m);
-    ASSERT_EQ(all.size(), 10u);
-    for (size_t k = 0; k < all.size(); ++k) {
-        EXPECT_EQ(all[k].first, static_cast<int64_t>(k / 5));
-        EXPECT_EQ(all[k].second, kOrder[k % 5]);
-    }
+    EXPECT_EQ(walk(s, w.m), (std::vector<int64_t>{0, 1}));
+    ASSERT_EQ(s.skips.size(), 8u);
+    expect_four_skips(s, 0, 0, SubsystemSkip::NO_ROW);
+    expect_four_skips(s, 4, 1, SubsystemSkip::NO_ROW);
 }
 
 TEST(SubsystemStep, AnEmptyListIsDone) {
@@ -357,9 +389,10 @@ TEST(ShieldStep, ChargesOnTheThirtiethOrThirtyFirstTick) {
     for (int tick = 1; tick <= kChargeTick; ++tick) {
         SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kDt);
         const SubsystemRecord r = subsystems::next(s, w.m);
-        // The shield piece is native; the rest of the ship is Python's.
+        // The shield piece is native; then ARTICULATION, Python's.
         ASSERT_EQ(r.type, SubsystemRecordType::RUN_PYTHON);
-        EXPECT_EQ(static_cast<SubsystemPiece>(r.kind), SubsystemPiece::POWER);
+        EXPECT_EQ(static_cast<SubsystemPiece>(r.kind),
+                  SubsystemPiece::ARTICULATION);
         accum = accum + kDt;
         if (tick < kChargeTick) {
             ASSERT_LT(accum, 0.5) << tick;
@@ -520,7 +553,8 @@ TEST(ShieldStep, CrossingYieldsAnEvent) {
     w.m.set_i(sh, Field::_is_on, 0);
     const SubsystemRecord next = subsystems::next(s, w.m);
     ASSERT_EQ(next.type, SubsystemRecordType::RUN_PYTHON);
-    EXPECT_EQ(static_cast<SubsystemPiece>(next.kind), SubsystemPiece::POWER);
+    EXPECT_EQ(static_cast<SubsystemPiece>(next.kind),
+              SubsystemPiece::ARTICULATION);
     ASSERT_EQ(s.writes.size(), 4u);     // watchers 3..6, nothing else
     for (int k = 0; k < 4; ++k) {
         EXPECT_EQ(s.writes[k].what, SubsystemWriteKind::SHIELD_WATCH);
@@ -585,32 +619,39 @@ TEST(ShieldStep, ARowGoneMidLoopHandsTheTailToPython) {
     EXPECT_EQ(t.sub, sh);
     EXPECT_TRUE(t.ship == ship);
     EXPECT_EQ(subsystems::next(s, w.m).kind,
-              static_cast<int32_t>(SubsystemPiece::POWER));
+              static_cast<int32_t>(SubsystemPiece::ARTICULATION));
 }
 
-TEST(ShieldStep, NoShieldIsNoRecordAndUnreadyIsPythons) {
+TEST(ShieldStep, NoShieldIsNoRecordAndUnreadyIsSkipped) {
     World w;
     const int64_t none = w.bare_ship();
     const int64_t foreign = w.bare_ship();
     const int64_t sh = w.shield(foreign);
     w.m.set_i(sh, Field::shield_watch_ok, 0);   // a watcher not adopted
+    w.m.set_f(sh, Field::_charge_accum, 0.49);
     const std::vector<int64_t> ships = {none, foreign};
     SubsystemSession s = subsystems::begin(w.m, ships, kDt);
-    const auto all = drain(s, w.m);
-    ASSERT_EQ(all.size(), 4u + 5u);
-    EXPECT_EQ(all[0].kind, static_cast<int32_t>(SubsystemPiece::POWER));
-    EXPECT_EQ(all[4].ship_pos, 1);
-    EXPECT_EQ(all[4].kind, static_cast<int32_t>(SubsystemPiece::SHIELD));
+    EXPECT_EQ(walk(s, w.m), (std::vector<int64_t>{0, 1}));
     EXPECT_TRUE(s.writes.empty());
-
-    // python_pieces (the test-facing hook): every ship's SHIELD is Python's.
-    const int64_t ready = w.bare_ship();
-    w.shield(ready);
-    SubsystemSession p = subsystems::begin(
-        w.m, std::vector{ready}, kDt, piece_bit(SubsystemPiece::SHIELD));
-    EXPECT_EQ(subsystems::next(p, w.m).kind,
-              static_cast<int32_t>(SubsystemPiece::SHIELD));
-    EXPECT_TRUE(p.writes.empty());
+    ASSERT_EQ(s.skips.size(), 1u);
+    EXPECT_EQ(s.skips[0].ship_pos, 1);
+    EXPECT_EQ(s.skips[0].piece, SubsystemPiece::SHIELD);
+    EXPECT_EQ(s.skips[0].why, SubsystemSkip::SHIELD_UNREADY);
+    EXPECT_EQ(s.skips[0].sub, sh);
+    EXPECT_EQ(w.m.get_f(sh, Field::_charge_accum), 0.49);
+    // A face list not six long is not ready either.
+    w.m.set_i(sh, Field::shield_watch_ok, 1);
+    w.m.set_floats(sh, Field::_current_shields, {5.0});
+    SubsystemSession t = subsystems::begin(w.m, std::vector{foreign}, kDt);
+    walk(t, w.m);
+    ASSERT_EQ(t.skips.size(), 1u);
+    EXPECT_EQ(t.skips[0].why, SubsystemSkip::SHIELD_UNREADY);
+    // A generator the mirror cannot name, or one freed: REF.
+    w.m.set_ref(foreign, Field::_shield_subsystem, kRefUnrepresentable);
+    SubsystemSession u = subsystems::begin(w.m, std::vector{foreign}, kDt);
+    walk(u, w.m);
+    ASSERT_EQ(u.skips.size(), 1u);
+    EXPECT_EQ(u.skips[0].why, SubsystemSkip::REF);
 }
 
 TEST(ShieldStep, AnUnanswerableOfflineQuestionWritesNothing) {
@@ -625,9 +666,12 @@ TEST(ShieldStep, AnUnanswerableOfflineQuestionWritesNothing) {
     SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kDt);
     const SubsystemRecord r = subsystems::next(s, w.m);
     EXPECT_EQ(r.type, SubsystemRecordType::RUN_PYTHON);
-    EXPECT_EQ(r.kind, static_cast<int32_t>(SubsystemPiece::SHIELD));
+    EXPECT_EQ(r.kind, static_cast<int32_t>(SubsystemPiece::ARTICULATION));
     EXPECT_TRUE(s.writes.empty());
     EXPECT_EQ(w.m.get_f(sh, Field::_charge_accum), 0.49);
+    ASSERT_EQ(s.skips.size(), 1u);
+    EXPECT_EQ(s.skips[0].piece, SubsystemPiece::SHIELD);
+    EXPECT_EQ(s.skips[0].why, SubsystemSkip::OFFLINE);
 }
 
 // ── The power piece (subsystem_step.h THE POWER PIECE) ───────────────────
@@ -636,10 +680,8 @@ TEST(ShieldStep, AnUnanswerableOfflineQuestionWritesNothing) {
 
 namespace {
 
-constexpr double kHalf = 0.5;
-
 // One stage over `ship` (no shield generator): runs the POWER piece and
-// returns the first record after it (CLOAK's RUN_PYTHON when it ran
+// returns the first record after it (ARTICULATION's RUN_PYTHON when it ran
 // natively to the end).
 SubsystemRecord after_power(World& w, SubsystemSession& s) {
     return subsystems::next(s, w.m);
@@ -661,7 +703,8 @@ TEST(PowerStep, IntervalResetNotSubtract) {
     SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
     const SubsystemRecord r = after_power(w, s);
     ASSERT_EQ(r.type, SubsystemRecordType::RUN_PYTHON);
-    EXPECT_EQ(static_cast<SubsystemPiece>(r.kind), SubsystemPiece::CLOAK);
+    EXPECT_EQ(static_cast<SubsystemPiece>(r.kind),
+              SubsystemPiece::ARTICULATION);
     // 0.75 + 0.5 = 1.25 >= 1.0: elapsed 1.25, the clock RESET to 0 (a
     // subtract would leave 0.25).
     EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.0);
@@ -721,7 +764,8 @@ TEST(PowerStep, NoPropertySkipsPump) {
     w.m.set_f(c, Field::_power_wanted, 7.0);
     SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
     const SubsystemRecord r = after_power(w, s);
-    EXPECT_EQ(static_cast<SubsystemPiece>(r.kind), SubsystemPiece::CLOAK);
+    EXPECT_EQ(static_cast<SubsystemPiece>(r.kind),
+              SubsystemPiece::ARTICULATION);
     // Update returned at `prop is None`: no clock, no pump, no watchers.
     EXPECT_TRUE(s.writes.empty());
     EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.5);
@@ -841,7 +885,8 @@ TEST(PowerStep, BatteryWatcherCrossingYieldsAnEvent) {
     // as it is now.
     w.m.set_f(ps, Field::_backup_battery_power, 250.0);
     const SubsystemRecord n = subsystems::next(s, w.m);
-    EXPECT_EQ(static_cast<SubsystemPiece>(n.kind), SubsystemPiece::CLOAK);
+    EXPECT_EQ(static_cast<SubsystemPiece>(n.kind),
+              SubsystemPiece::ARTICULATION);
     ASSERT_EQ(s.writes.size(), 1u);
     EXPECT_EQ(s.writes[0].what, SubsystemWriteKind::BATTERY_WATCH);
     EXPECT_EQ(s.writes[0].index, 1);
@@ -880,15 +925,15 @@ TEST(PowerStep, BreachIsAnEventBeforeTheRest) {
     EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.0);
     // The rest of Update after it.
     EXPECT_EQ(static_cast<SubsystemPiece>(subsystems::next(s, w.m).kind),
-              SubsystemPiece::CLOAK);
+              SubsystemPiece::ARTICULATION);
     EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.5);
     // Latched: never again.
     SubsystemSession t = subsystems::begin(w.m, std::vector{ship}, kHalf);
     EXPECT_EQ(subsystems::next(t, w.m).kind,
-              static_cast<int32_t>(SubsystemPiece::CLOAK));
+              static_cast<int32_t>(SubsystemPiece::ARTICULATION));
 }
 
-TEST(PowerStep, AnUnreadyPlantIsPythonsWithNothingWritten) {
+TEST(PowerStep, AnUnreadyPlantIsSkippedWithNothingWritten) {
     World w;
     const int64_t ship = w.power_ship();
     const int64_t prop = w.power_prop(100.0, 1000.0, 1000.0, 1000.0, 1000.0);
@@ -898,35 +943,50 @@ TEST(PowerStep, AnUnreadyPlantIsPythonsWithNothingWritten) {
     std::vector<int64_t> list = w.m.get_ids(ship, Field::_powered_consumers);
     list.push_back(kRefUnrepresentable);        // a consumer with no row
     w.m.set_ids(ship, Field::_powered_consumers, list);
-    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
-    const SubsystemRecord r = after_power(w, s);
-    EXPECT_EQ(r.type, SubsystemRecordType::RUN_PYTHON);
-    EXPECT_EQ(static_cast<SubsystemPiece>(r.kind), SubsystemPiece::POWER);
-    EXPECT_TRUE(s.writes.empty());
-    EXPECT_EQ(w.m.get_i(ps, Field::_breach_fired), 0);
-    EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.5);
-
-    // A property whose values are not all read through its data bag.
+    // Each unready reason in turn: skipped, nothing written (not even the
+    // breach latch), counted under its reason.
+    const auto skipped = [&](SubsystemSkip why) {
+        SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+        EXPECT_EQ(walk(s, w.m), std::vector<int64_t>{0});
+        EXPECT_TRUE(s.writes.empty());
+        ASSERT_EQ(s.skips.size(), 1u);
+        EXPECT_EQ(s.skips[0].piece, SubsystemPiece::POWER);
+        EXPECT_EQ(s.skips[0].why, why);
+        EXPECT_EQ(s.skips[0].sub, ps);
+        EXPECT_EQ(w.m.get_i(ps, Field::_breach_fired), 0);
+        EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.5);
+    };
+    skipped(SubsystemSkip::CONSUMER);
     list.pop_back();
     w.m.set_ids(ship, Field::_powered_consumers, list);
+    // A property whose values are not all read through its data bag.
     w.m.set_i(prop, Field::power_props_ok, 0);
-    SubsystemSession t = subsystems::begin(w.m, std::vector{ship}, kHalf);
-    EXPECT_EQ(subsystems::next(t, w.m).kind,
-              static_cast<int32_t>(SubsystemPiece::POWER));
-    EXPECT_TRUE(t.writes.empty());
-
-    // python_pieces (the test-facing hook).
+    skipped(SubsystemSkip::PROPERTY);
     w.m.set_i(prop, Field::power_props_ok, 1);
-    SubsystemSession p = subsystems::begin(
-        w.m, std::vector{ship}, kHalf, piece_bit(SubsystemPiece::POWER));
-    EXPECT_EQ(subsystems::next(p, w.m).kind,
-              static_cast<int32_t>(SubsystemPiece::POWER));
-    EXPECT_TRUE(p.writes.empty());
-    // No plant at all: no call, no record.
+    // Battery watchers not adopted.
+    w.m.set_i(ps, Field::power_watch_ok, 0);
+    skipped(SubsystemSkip::BATTERY_WATCH);
+    w.m.set_i(ps, Field::power_watch_ok, 1);
+    // A parent ship that is not a ShipClass row.
+    w.m.set_i(ship, Field::is_ship_class, 0);
+    skipped(SubsystemSkip::PARENT_SHIP);
+    w.m.set_i(ship, Field::is_ship_class, 1);
+    // The interval's offline question unanswerable: a healthy plant (so
+    // IsDisabled / IsDestroyed do not answer it first) whose parent
+    // subsystem the mirror cannot name.
+    w.m.set_f(ps, Field::_condition, 1000.0);
+    w.m.set_ref(ps, Field::_parent_subsystem, kRefUnrepresentable);
+    skipped(SubsystemSkip::OFFLINE);
+    w.m.set_ref(ps, Field::_parent_subsystem, -1);
+    // A plant the mirror cannot name, or a row that is not a plant: REF.
+    w.m.set_i(ps, Field::power_kind, 0);
+    skipped(SubsystemSkip::REF);
+    w.m.set_i(ps, Field::power_kind, 3);
+    // No plant at all: no call, no record, no skip.
     w.m.set_ref(ship, Field::_power_subsystem, -1);
     SubsystemSession none = subsystems::begin(w.m, std::vector{ship}, kHalf);
-    EXPECT_EQ(subsystems::next(none, w.m).kind,
-              static_cast<int32_t>(SubsystemPiece::CLOAK));
+    EXPECT_EQ(walk(none, w.m), std::vector<int64_t>{0});
+    EXPECT_TRUE(none.skips.empty());
 }
 
 // ── The cloak piece (Task 5; subsystem_step.h THE CLOAK PIECE) ───────────
@@ -1091,18 +1151,21 @@ TEST(CloakStep, ReserveOutForcesDecloak) {
     EXPECT_TRUE(is_articulation(stage(w, ship, kDt)[0]));
     EXPECT_EQ(w.m.get_f(cl, Field::_transition_elapsed), kDt);
 
-    // A cloak the mirror cannot name, or a row that is not a cloak's:
-    // Python's. No cloak: no call, no record.
-    w.m.set_ref(ship, Field::_cloaking_subsystem, kRefUnrepresentable);
-    auto py = stage(w, ship, kDt);
-    EXPECT_EQ(py[0].type, SubsystemRecordType::RUN_PYTHON);
-    EXPECT_EQ(static_cast<SubsystemPiece>(py[0].kind), SubsystemPiece::CLOAK);
-    w.m.set_ref(ship, Field::_cloaking_subsystem, cl);
-    w.m.set_i(cl, Field::power_kind, 0);
-    EXPECT_EQ(static_cast<SubsystemPiece>(stage(w, ship, kDt)[0].kind),
-              SubsystemPiece::CLOAK);
+    // A cloak the mirror cannot name, or a row that is not a cloak's: a
+    // REF skip. No cloak: no call, no record, no skip.
+    for (int64_t ref : {kRefUnrepresentable, cl}) {
+        w.m.set_ref(ship, Field::_cloaking_subsystem, ref);
+        if (ref == cl) w.m.set_i(cl, Field::power_kind, 0);
+        SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kDt);
+        EXPECT_EQ(walk(s, w.m), std::vector<int64_t>{0});
+        ASSERT_EQ(s.skips.size(), 1u);
+        EXPECT_EQ(s.skips[0].piece, SubsystemPiece::CLOAK);
+        EXPECT_EQ(s.skips[0].why, SubsystemSkip::REF);
+    }
     w.m.set_ref(ship, Field::_cloaking_subsystem, -1);
-    EXPECT_TRUE(is_articulation(stage(w, ship, kDt)[0]));
+    SubsystemSession none = subsystems::begin(w.m, std::vector{ship}, kDt);
+    EXPECT_EQ(walk(none, w.m), std::vector<int64_t>{0});
+    EXPECT_TRUE(none.skips.empty());
 }
 
 // ── The repair piece (Task 5; subsystem_step.h THE REPAIR PIECE) ─────────
@@ -1188,25 +1251,29 @@ TEST(RepairStep, SplitsPointsAcrossWorkedItems) {
     EXPECT_EQ(v.dmg.entries[0].kind, DamageKind::SUBSYS_EVENT);
     EXPECT_TRUE(is_articulation(subsystems::next(v, w.m)));
 
-    // Complexity <= 0 is 1.0; a property not read through its data bag, or
-    // python_pieces, is Python's with nothing written; no teams or points
-    // is no work.
+    // Complexity <= 0 is 1.0; a property not read through its data bag is
+    // a PROPERTY skip with nothing written, a bay row that is not a bay's a
+    // REF skip; no teams or points is no work.
     const int64_t g = w.item(100.0, 0.0);
     w.m.set_ids(bay, Field::_queue, {g});
     stage(w, ship, kHalf);
     EXPECT_EQ(cond(w, g), 130.0);
     const int64_t prop = w.m.get_ref(bay, Field::_property);
     w.m.set_i(prop, Field::repair_props_ok, 0);
-    std::vector<SubsystemWrite> p;
-    auto py = stage(w, ship, kHalf, &p);
-    EXPECT_EQ(static_cast<SubsystemPiece>(py[0].kind), SubsystemPiece::REPAIR);
-    EXPECT_TRUE(p.empty());
+    SubsystemSession p = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    EXPECT_EQ(walk(p, w.m), std::vector<int64_t>{0});
+    EXPECT_TRUE(p.writes.empty());
+    ASSERT_EQ(p.skips.size(), 1u);
+    EXPECT_EQ(p.skips[0].piece, SubsystemPiece::REPAIR);
+    EXPECT_EQ(p.skips[0].why, SubsystemSkip::PROPERTY);
     EXPECT_EQ(cond(w, g), 130.0);
     w.m.set_i(prop, Field::repair_props_ok, 1);
-    SubsystemSession hooked = subsystems::begin(
-        w.m, std::vector{ship}, kHalf, piece_bit(SubsystemPiece::REPAIR));
-    EXPECT_EQ(static_cast<SubsystemPiece>(subsystems::next(hooked, w.m).kind),
-              SubsystemPiece::REPAIR);
+    w.m.set_i(bay, Field::is_repair_bay, 0);
+    SubsystemSession q = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    walk(q, w.m);
+    ASSERT_EQ(q.skips.size(), 1u);
+    EXPECT_EQ(q.skips[0].why, SubsystemSkip::REF);
+    w.m.set_i(bay, Field::is_repair_bay, 1);
     w.m.set_i(prop, Field::NumRepairTeams, 0);
     EXPECT_TRUE(is_articulation(stage(w, ship, kHalf)[0]));
     EXPECT_EQ(cond(w, g), 130.0);
@@ -1248,62 +1315,108 @@ TEST(RepairStep, CannotCompleteYieldsMidWalkAndResumes) {
     EXPECT_EQ(cond(w, y), 107.5);
     EXPECT_EQ(cond(w, z), 222.5);
 
-    // A handler that dropped the bay's row, or the member at the cursor's:
-    // the rest is Python's (REPAIR_TAIL a 0: the walk from the cursor).
+    // A handler that dropped the member at the cursor's row: that member
+    // is passed over (a QUEUE_MEMBER skip, ruling R8-4) and the walk goes
+    // on natively -- z takes the whole 15.
     const int64_t x3 = w.item(0.0);
     w.m.set_ids(bay, Field::_queue, {x3, y, z});
     SubsystemSession u = subsystems::begin(w.m, std::vector{ship}, kHalf);
     ASSERT_TRUE(is_event(subsystems::next(u, w.m),
                          SubsystemEvent::REPAIR_CANNOT));
     w.m.unregister_row(y);
-    const SubsystemRecord tail = subsystems::next(u, w.m);
-    ASSERT_TRUE(is_event(tail, SubsystemEvent::REPAIR_TAIL));
-    EXPECT_EQ(tail.code, bay);
-    EXPECT_EQ(tail.a, 0.0);
-    EXPECT_EQ(tail.b, kHalf);
-    EXPECT_EQ(u.repair_index, 1u);              // y's turn: Python's
-    EXPECT_EQ(u.repair_teams, 2);
-    EXPECT_EQ(u.repair_points, 60.0);
-    EXPECT_TRUE(u.repair_worked.empty());
     EXPECT_TRUE(is_articulation(subsystems::next(u, w.m)));
-    EXPECT_EQ(cond(w, z), 222.5);               // untouched natively
+    EXPECT_EQ(cond(w, z), 237.5);
+    ASSERT_EQ(u.skips.size(), 1u);
+    EXPECT_EQ(u.skips[0].piece, SubsystemPiece::REPAIR);
+    EXPECT_EQ(u.skips[0].why, SubsystemSkip::QUEUE_MEMBER);
+    EXPECT_EQ(u.skips[0].sub, y);
+    // An entry the mirror cannot name at all is passed over the same way.
+    w.m.set_ids(bay, Field::_queue, {kRefUnrepresentable, z});
+    SubsystemSession u2 = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    EXPECT_EQ(walk(u2, w.m), std::vector<int64_t>{0});
+    EXPECT_EQ(cond(w, z), 252.5);
+    ASSERT_EQ(u2.skips.size(), 1u);
+    EXPECT_EQ(u2.skips[0].why, SubsystemSkip::QUEUE_MEMBER);
 
+    // A handler that dropped the bay's row: the rest of the piece is a
+    // BAY_GONE skip; nothing is repaired.
     const int64_t x4 = w.item(0.0);
     w.m.set_ids(bay, Field::_queue, {z, x4});
     SubsystemSession v = subsystems::begin(w.m, std::vector{ship}, kHalf);
     ASSERT_TRUE(is_event(subsystems::next(v, w.m),
                          SubsystemEvent::REPAIR_CANNOT));
     w.m.unregister_row(bay);
-    const SubsystemRecord tail2 = subsystems::next(v, w.m);
-    ASSERT_TRUE(is_event(tail2, SubsystemEvent::REPAIR_TAIL));
-    EXPECT_EQ(tail2.code, bay);
-    EXPECT_EQ(tail2.a, 0.0);
-    EXPECT_EQ(v.repair_worked, std::vector<int64_t>{z});
-    EXPECT_EQ(cond(w, z), 222.5);
+    EXPECT_TRUE(is_articulation(subsystems::next(v, w.m)));
+    ASSERT_EQ(v.skips.size(), 1u);
+    EXPECT_EQ(v.skips[0].why, SubsystemSkip::BAY_GONE);
+    EXPECT_EQ(v.skips[0].sub, bay);
+    EXPECT_EQ(cond(w, z), 252.5);
 }
 
-TEST(RepairStep, AnUnanswerableRepairUndoesAndHandsTheItemsToPython) {
+TEST(RepairStep, AnItemTheMirrorCannotRepairIsHandedOverAlone) {
     World w;
     const int64_t ship = w.stage_ship();
-    const int64_t bay = w.bay(ship, w.repair_prop(60.0, 2));
+    const int64_t bay = w.bay(ship, w.repair_prop(60.0, 3));
     const int64_t a = w.item(100.0);
     const int64_t b = w.item(200.0);
+    const int64_t c = w.item(300.0);
     // b holds a condition watcher the native chain cannot stand in for:
     // its set_condition falls back, after a's was made.
     w.m.set_i(b, Field::cond_watch_checks, -1);
-    w.m.set_ids(bay, Field::_queue, {a, b});
+    w.m.set_ids(bay, Field::_queue, {a, b, c});
     SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
     const SubsystemRecord r = subsystems::next(s, w.m);
-    ASSERT_TRUE(is_event(r, SubsystemEvent::REPAIR_TAIL));
+    // raw 15 over three: 5 each. a is repaired natively (its write kept,
+    // applied before Python runs b); b alone is Python's (ruling R8-3).
+    ASSERT_TRUE(is_event(r, SubsystemEvent::REPAIR_SET));
     EXPECT_EQ(r.code, bay);
-    EXPECT_EQ(r.a, 1.0);
-    EXPECT_EQ(s.repair_worked, (std::vector<int64_t>{a, b}));
-    // a's write undone: Python repairs both.
-    EXPECT_EQ(cond(w, a), 100.0);
+    EXPECT_EQ(r.sub, b);
+    EXPECT_EQ(r.a, 5.0);
+    EXPECT_EQ(cond(w, a), 105.0);
     EXPECT_EQ(cond(w, b), 200.0);
-    EXPECT_TRUE(s.dmg.writes.empty());
-    EXPECT_TRUE(s.dmg.entries.empty());
+    ASSERT_EQ(s.dmg.writes.size(), 1u);
+    EXPECT_EQ(s.dmg.writes[0].handle, a);
+    // Python repaired b and found it complete (a script's max); the walk
+    // resumes at c, natively.
+    w.m.set_f(b, Field::_condition, 1000.0);
+    subsystems::repair_complete(s, b);
+    EXPECT_THROW(subsystems::repair_complete(s, a), std::logic_error);
+    const SubsystemRecord done = subsystems::next(s, w.m);
+    ASSERT_TRUE(is_event(done, SubsystemEvent::REPAIR_DONE));
+    EXPECT_EQ(done.sub, b);
+    EXPECT_EQ(cond(w, c), 305.0);
+    ASSERT_EQ(s.dmg.writes.size(), 1u);
+    EXPECT_EQ(s.dmg.writes[0].handle, c);
     EXPECT_TRUE(is_articulation(subsystems::next(s, w.m)));
+    EXPECT_TRUE(s.skips.empty());
+
+    // An item whose row a handler dropped is handed over by itself too.
+    const int64_t d = w.item(400.0);
+    const int64_t x = w.item(0.0);
+    w.m.set_i(b, Field::cond_watch_checks, 0);
+    w.m.set_ids(bay, Field::_queue, {d, x, c});
+    w.m.set_i(w.m.get_ref(bay, Field::_property), Field::NumRepairTeams, 2);
+    SubsystemSession t = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    ASSERT_TRUE(is_event(subsystems::next(t, w.m),
+                         SubsystemEvent::REPAIR_CANNOT));
+    w.m.unregister_row(d);      // the handler dropped a worked item's row
+    const SubsystemRecord set = subsystems::next(t, w.m);
+    ASSERT_TRUE(is_event(set, SubsystemEvent::REPAIR_SET));
+    EXPECT_EQ(set.sub, d);
+    EXPECT_EQ(set.a, 7.5);
+    EXPECT_TRUE(is_articulation(subsystems::next(t, w.m)));
+    EXPECT_EQ(cond(w, c), 312.5);
+
+    // The bay's property freed: a PROPERTY skip, before any write (the
+    // same read the condition percentage would need).
+    w.m.set_ids(bay, Field::_queue, {c});
+    const int64_t rp = w.m.get_ref(bay, Field::_property);
+    w.m.set_i(rp, Field::MaxCondition_set, 1);
+    w.m.unregister_row(rp);
+    SubsystemSession u = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    walk(u, w.m);
+    ASSERT_EQ(u.skips.size(), 1u);
+    EXPECT_EQ(u.skips[0].why, SubsystemSkip::PROPERTY);
 }
 
 // ── The articulation piece (Task 6; subsystem_step.h THE ARTICULATION PIECE)
@@ -1330,12 +1443,12 @@ TEST(ArticulationStep, RiglessShipsAreSkipped) {
     EXPECT_TRUE(is_articulation(after[0]));
 }
 
-TEST(ArticulationStep, PythonPiecesHookStillWins) {
+TEST(ArticulationStep, ANoRowShipStillTicksInPython) {
+    // articulation.tick_ship is kept: a ship with no row (or a lost one)
+    // still gets its RUN_PYTHON, while its other four pieces are skipped.
     World w;
-    const int64_t ship = w.stage_ship();
-    w.m.set_global_i(Global::ARTICULATION_GEN, 0);
-    w.m.set_i(ship, Field::_rigless_gen, 1);
-    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
-    s.python_pieces = 1u << static_cast<int>(SubsystemPiece::ARTICULATION);
+    SubsystemSession s = subsystems::begin(w.m, std::vector<int64_t>{-1},
+                                           kHalf);
     EXPECT_TRUE(is_articulation(subsystems::next(s, w.m)));
+    EXPECT_EQ(s.skips.size(), 4u);
 }

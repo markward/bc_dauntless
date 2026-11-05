@@ -1,12 +1,8 @@
-"""The native subsystem stage's driver (phase 6 A1, Task 2;
-engine/appc/native_subsystems.py): every piece not yet native
-(articulation; shields are native since Task 3, power since Task 4, cloak
-and repair since Task 5) is handed back by the native session one
-RUN_PYTHON record at a time, so the stage makes exactly the calls the
-Python loop makes, in its order.
-
-The per-tick state differential is
-tests/integration/test_native_subsystems_differential.py.
+"""The native subsystem stage's driver (phase 6 A1; engine/appc/
+native_subsystems.py): the shield, power, cloak and repair pieces are
+native only (Task 8), articulation is handed back as one RUN_PYTHON record
+per rigged ship, and a piece the mirror cannot run is skipped, counted and
+logged once (subsystem_step.h THE SKIPS; rulings R8-1, R8-2).
 """
 import random
 
@@ -16,8 +12,6 @@ import pytest
 from engine.appc import articulation
 from engine.appc import native_combat as nc
 from engine.appc import native_subsystems
-from engine.appc.subsystems import (CloakingSubsystem, PowerSubsystem,
-                                    RepairSubsystem)
 from engine.core import loop as game_loop
 from engine.appc import articulated_part
 from tests.helpers import bc_assets, headless_mission
@@ -35,40 +29,25 @@ def _clean():
     articulated_part.reset()
 
 
-def _world(mp, native):
+def _world(mp, audit=False):
     mp.setenv("DAUNTLESS_COMBAT_SHIPS", "2")
     App.g_kTimerManager._time = 0.0
     random.seed(0)
     headless_mission.clear_in_flight()
     headless_mission.load("engine.dev_missions.combat_stress")
-    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1",
-                  "DAUNTLESS_NATIVE_SUBSYSTEMS": "1" if native else "0"})
-    assert native_subsystems.enabled() is native
-    # Every ship rigged: its ARTICULATION piece is Python's every tick, so
-    # these call-for-call tests keep their meaning (a rigless ship's is
-    # skipped natively: test_native_subsystems_articulation.py).
+    env = {"DAUNTLESS_NATIVE_COMBAT": "1"}
+    if audit:
+        env["DAUNTLESS_NATIVE_AUDIT"] = "1"
+    nc.configure(env)
+    # Every ship rigged: its ARTICULATION piece is Python's every tick (a
+    # rigless ship's is skipped natively: test_native_subsystems_
+    # articulation.py).
     rig_all_ships()
 
 
-def _spy(mp, calls, pieces=False):
-    """Every Python call of the stage, logged (method, ship name) and then
-    run: articulation (and, with `pieces`, the plant's, the cloak's and the
-    bay's Update). The shield, power, cloak and repair pieces are native
-    (Tasks 3-5) and a patched Update of theirs is not honoured (spec §3
-    "Mods and patches (Part A)"), so they are not spied on by default: the
-    counts and the differential cover them."""
-    def method(cls, label):
-        orig = cls.Update
-
-        def update(self, dt, _orig=orig):
-            calls.append((label, self.GetParentShip().GetName(), dt))
-            return _orig(self, dt)
-        mp.setattr(cls, "Update", update)
-
-    if pieces:
-        method(PowerSubsystem, "power")
-        method(CloakingSubsystem, "cloak")
-        method(RepairSubsystem, "repair")
+def _spy(mp, calls):
+    """Every Python call of the stage: articulation.tick_ship, logged
+    (ship name, dt) and then run."""
     orig_tick = articulation.tick_ship
 
     def tick_ship(ship, dt, _orig=orig_tick):
@@ -77,135 +56,130 @@ def _spy(mp, calls, pieces=False):
     mp.setattr(articulation, "tick_ship", tick_ship)
 
 
-def _run(native):
+def test_only_articulation_comes_back_to_python():
+    """Every shield, power, cloak and repair piece is native: one record
+    (articulation's) per rigged ship per stage, in roster order, and no
+    skip."""
+    from engine.appc.ship_iter import iter_non_rock_ships
     calls = []
     with pytest.MonkeyPatch.context() as mp:
-        _world(mp, native)
+        _world(mp)
+        names = [s.GetName() for s in iter_non_rock_ships()]
         _spy(mp, calls)
         native_subsystems.reset_counts()
         for _ in range(TICKS):
             App.g_kTimerManager._time += game_loop.TICK_DELTA
             game_loop._update_ship_subsystems()
         counts = native_subsystems.counts()
-    return calls, counts
-
-
-def test_step_all_matches_the_python_stage_call_for_call():
-    python, off = _run(native=False)
-    native, on = _run(native=True)
-    assert off["stages"] == 0, off
-    assert on["stages"] == TICKS, on
-    ships = {name for _, name, _ in python}
-    assert len(ships) == 3, ships
-    kinds = {k for k, _, _ in python}
-    assert kinds == {"articulation"}
-    # ... and every shield, power, cloak and repair piece was native: one
-    # record (articulation's) per ship per stage.
-    assert on["run_python"] == 1 * 3 * TICKS, on
-    assert native == python
+    assert len(names) == 3, names
+    assert counts["stages"] == TICKS, counts
+    assert counts["run_python"] == 3 * TICKS, counts
+    assert calls == [("articulation", n, game_loop.TICK_DELTA)
+                     for _ in range(TICKS) for n in names]
+    assert native_subsystems.skip_counts() == {}
 
 
 def test_a_ship_that_loses_a_subsystem_mid_walk(monkeypatch):
-    """A handler that detaches a LATER piece removes that piece, in both
-    stages: the Python loop asks the ship's getter when it gets there, the
-    native walk reads the ship's ref then (the detach pushed it). Here the
-    first ship's articulation detaches the next ship's cloak and bay while
-    the cloak is mid-transition and the bay has work: neither moves that
-    tick."""
+    """A handler that detaches a LATER piece removes that piece: the native
+    walk reads the ship's ref when it gets there (the detach pushed it).
+    Here the first ship's articulation detaches the next ship's cloak and
+    bay while the cloak is mid-transition and the bay has work: neither
+    moves that tick, and nothing is skipped (a None ref is no call)."""
     from engine.appc.ship_iter import iter_non_rock_ships
+    with pytest.MonkeyPatch.context() as mp:
+        _world(mp)
+        ships = list(iter_non_rock_ships())
+        victim = next(s for s in ships[1:]
+                      if s.GetCloakingSubsystem() is not None)
+        cloak = victim.GetCloakingSubsystem()
+        bay = victim.GetRepairSubsystem()
+        sub = victim.GetSensorSubsystem()
+        sub.SetCondition(sub.GetMaxCondition() * 0.5)
+        bay._queue.append(sub)
+        cloak.StartCloaking()
+        game_loop._update_ship_subsystems()
+        before = (cloak._transition_elapsed, sub._condition)
+        orig_tick = articulation.tick_ship
 
-    def run(native):
-        with pytest.MonkeyPatch.context() as mp:
-            _world(mp, native)
-            ships = list(iter_non_rock_ships())
-            victim = next(s for s in ships[1:]
-                          if s.GetCloakingSubsystem() is not None)
-            cloak = victim.GetCloakingSubsystem()
-            bay = victim.GetRepairSubsystem()
-            sub = victim.GetSensorSubsystem()
-            sub.SetCondition(sub.GetMaxCondition() * 0.5)
-            bay._queue.append(sub)
-            cloak.StartCloaking()
-            game_loop._update_ship_subsystems()
-            before = (cloak._transition_elapsed, sub._condition)
-            orig_tick = articulation.tick_ship
-
-            def tick_ship(ship, dt, _orig=orig_tick):
-                _orig(ship, dt)
-                if ship is ships[0]:
-                    victim._cloaking_subsystem = None
-                    victim._repair_subsystem = None
-            mp.setattr(articulation, "tick_ship", tick_ship)
-            game_loop._update_ship_subsystems()
-            return before, (cloak._transition_elapsed, sub._condition)
-
-    py_before, python = run(False)
-    assert python == py_before          # neither piece ran
-    assert run(True) == (py_before, python)
+        def tick_ship(ship, dt, _orig=orig_tick):
+            _orig(ship, dt)
+            if ship is ships[0]:
+                victim._cloaking_subsystem = None
+                victim._repair_subsystem = None
+        mp.setattr(articulation, "tick_ship", tick_ship)
+        game_loop._update_ship_subsystems()
+        after = (cloak._transition_elapsed, sub._condition)
+    assert before[0] > 0.0          # the cloak was moving
+    assert after == before          # neither piece ran
+    assert native_subsystems.skip_counts() == {}
 
 
-def test_a_row_dropped_mid_walk_is_still_updated():
-    """A row freed mid-walk while its ship lives on (native_combat._drop: a
-    value the mirror cannot hold) is not skipped: the Python stage still
-    runs that ship's remaining pieces, so the native stage hands them back
-    too (controller ruling, Task 2 fix round 1). Ship 0's articulation (its
-    last piece) drops ship 0's own row and a LATER ship's, whose every
-    piece then comes back to Python too; ship 0's, the next tick (no row
-    at begin)."""
+def test_a_row_dropped_mid_walk_skips_its_pieces(capsys):
+    """Ruling R8-2: a row freed mid-walk while its ship lives on
+    (native_combat._drop: a value the mirror cannot hold) has no Python
+    stage to go to: its remaining shield, power, cloak and repair pieces
+    are SKIPPED, counted and logged once; its articulation, whose Python is
+    kept, still runs. Ship 0's articulation (its last piece) drops ship 0's
+    own row and a LATER ship's: ship 2 is skipped as LOST_ROW that tick,
+    and both as NO_ROW the next."""
     from engine.appc.ship_iter import iter_non_rock_ships
+    calls = []
+    with pytest.MonkeyPatch.context() as mp:
+        _world(mp)
+        ships = list(iter_non_rock_ships())
+        assert all(isinstance(s.__dict__.get("_nslot"), int) for s in ships)
+        _spy(mp, calls)
+        spied = articulation.tick_ship
+        dropped = []
 
-    def run(native):
-        calls = []
-        with pytest.MonkeyPatch.context() as mp:
-            _world(mp, native)
-            ships = list(iter_non_rock_ships())
-            assert all(isinstance(s.__dict__.get("_nslot"), int)
-                       for s in ships)
-            _spy(mp, calls, pieces=True)
-            spied = articulation.tick_ship
-            dropped = []
+        def tick_ship(ship, dt, _orig=spied):
+            _orig(ship, dt)
+            if ship is ships[0] and not dropped:
+                for s in (ships[0], ships[2]):
+                    nc._drop(s)
+                    dropped.append(s.__dict__.get("_nslot"))
+        mp.setattr(articulation, "tick_ship", tick_ship)
+        native_subsystems.reset_counts()
+        for _ in range(2):
+            game_loop._update_ship_subsystems()
+        skips = native_subsystems.skip_counts()
+    assert dropped == [None, None]      # the rows are gone
+    four = ("SHIELD", "POWER", "CLOAK", "REPAIR")
+    # Ship 2's four pieces on tick 0 (LOST_ROW); ships 0 and 2 on tick 1
+    # (NO_ROW). A piece the ship lacks entirely (no cloak) is still one
+    # skip: the ship's row is what the session could not read.
+    assert skips == dict([((p, "LOST_ROW"), 1) for p in four]
+                         + [((p, "NO_ROW"), 2) for p in four]), skips
+    # Articulation still ran for every ship on both ticks.
+    assert len(calls) == 2 * len(ships)
+    err = capsys.readouterr().err
+    for p in four:
+        for why in ("LOST_ROW", "NO_ROW"):
+            assert err.count("skip %s)" % why) >= 1
+    # Logged ONCE per (piece, reason), however often it recurs.
+    assert err.count("SHIELD skipped") == 2, err
 
-            def tick_ship(ship, dt, _orig=spied):
-                _orig(ship, dt)
-                if ship is ships[0] and not dropped:
-                    for s in (ships[0], ships[2]):
-                        nc._drop(s)
-                        dropped.append(s.__dict__.get("_nslot"))
-            mp.setattr(articulation, "tick_ship", tick_ship)
-            for tick in range(2):
-                calls.append(("tick", tick, None))
-                game_loop._update_ship_subsystems()
-            assert dropped == [None, None]      # the rows are gone
-            assert native_subsystems.counts()["stages"] == (2 if native
-                                                            else 0)
-            names = [ships[0].GetName(), ships[2].GetName()]
-        return calls, names
 
-    def by_tick(calls):
-        out, tick = [], None
-        for c in calls:
-            if c[0] == "tick":
-                tick = c[1]
-            else:
-                out.append((tick,) + c)
-        return out
-
-    python, names = run(False)
-    # The dropped ships kept running: power, cloak, repair and
-    # articulation, both ticks.
-    for name in names:
-        kinds = [k for k, n, _ in python if n == name]
-        assert kinds.count("power") == kinds.count("repair") == \
-            kinds.count("articulation") == 2, (name, kinds)
-    native, _ = run(True)
-    # Natively, the pieces of rows still live are native: Python runs ship
-    # 2's both ticks (its row was gone when the walk reached it) and ship
-    # 0's on the second (no row at begin) -- the same calls, in order.
-    want = [c for c in by_tick(python)
-            if c[1] == "articulation" or c[2] == names[1]
-            or (c[2] == names[0] and c[0] == 1)]
-    assert by_tick(native) == want
-    assert any(c[1] == "repair" for c in want)
+def test_a_skip_is_an_audit_failure():
+    """Under DAUNTLESS_NATIVE_AUDIT=1 every skip is an audit failure (ruling
+    R8-1): a generator whose row was dropped reads unrepresentable from its
+    ship (a REF skip) and from the plant's consumer list (the whole plant
+    is a CONSUMER skip), and the stage never calls a Python copy for
+    either."""
+    from engine.appc.ship_iter import iter_non_rock_ships
+    with pytest.MonkeyPatch.context() as mp:
+        _world(mp, audit=True)
+        ship = list(iter_non_rock_ships())[1]
+        gen = ship.GetShields()
+        nc._drop(gen)
+        nc._failures.clear()
+        native_subsystems.reset_counts()
+        game_loop._update_ship_subsystems()
+        failures = list(nc._failures)
+        skips = native_subsystems.skip_counts()
+    assert skips == {("SHIELD", "REF"): 1, ("POWER", "CONSUMER"): 1}, skips
+    assert ("subsystem stage", "skip SHIELD REF") in failures, failures
+    assert ("subsystem stage", "skip POWER CONSUMER") in failures, failures
 
 
 def test_the_switch(monkeypatch):
@@ -227,12 +201,13 @@ def test_the_event_table_holds_the_native_pieces_events():
     """Each native piece's event kinds have a handler (Task 3: the shield
     watchers; Task 4: the plant's breach, battery watchers and tail; Task 5:
     the cloak's forced decloak and completion, the bay's cannot-complete,
-    completion and tail); every kind the native session names has one."""
+    completion and per-item hand-over); every kind the native session names
+    has one."""
     events = native_subsystems._EVENTS
     assert set(events) == {"SHIELD_WATCHER", "SHIELD_WATCHER_TAIL", "BREACH",
                            "BATTERY_WATCHER", "POWER_TAIL", "FORCE_DECLOAK",
                            "CLOAK_DONE", "REPAIR_CANNOT", "REPAIR_DONE",
-                           "REPAIR_TAIL"}
+                           "REPAIR_SET"}
     assert set(native_subsystems._EVENT_HANDLERS) == set(events.values())
 
 

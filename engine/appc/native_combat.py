@@ -196,6 +196,10 @@ _REQUIRED_BINDINGS = (
     # first stage failing on the arity.
     "combat_subsys_begin", "combat_subsys_next", "combat_subsys_kinds",
     "combat_subsys_repair_state",
+    # The skips and per-item repair delegation (Task 8: the four pieces are
+    # native only).
+    "combat_subsys_skips", "combat_subsys_skip_counts",
+    "combat_subsys_skip_counts_reset", "combat_subsys_repair_complete",
 )
 
 

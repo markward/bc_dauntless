@@ -23,9 +23,11 @@
 //
 // THE RECORDS.
 //   RUN_PYTHON{ship, kind}  Python runs that piece of that ship (`kind` a
-//                           SubsystemPiece), as the Python loop does: the
-//                           piece's getter asked at that moment, its call
-//                           made only when it returns a subsystem.
+//                           SubsystemPiece). Only ARTICULATION is ever
+//                           handed back: the other four pieces are native
+//                           only (phase 6 Task 8: there is no Python copy
+//                           of them), and a piece the mirror cannot run is
+//                           SKIPPED (THE SKIPS).
 //   EVENT{ship, kind, code, a, b, sub}
 //                           an SDK-visible event a native piece must post
 //                           before the walk goes on (plan ruling R3: stop
@@ -35,8 +37,21 @@
 //                           `code`, `a`, `b` its payload; `sub` the
 //                           Subsystem handle the event is about (its row is
 //                           live when the record is returned).
-//   DONE                    the walk is over. Asking again is a protocol
-//                           error (std::logic_error).
+//   DONE{code}              the walk is over; `code` = the session's skips
+//                           (THE SKIPS). Asking again is a protocol error
+//                           (std::logic_error).
+//
+// THE SKIPS (Task 8 rulings R8-1, R8-2, R8-4). A SHIELD, POWER, CLOAK or
+// REPAIR piece the mirror cannot run -- a ship with no row (NO_ROW) or a
+// row freed mid-walk (LOST_ROW), a subsystem ref the mirror cannot name,
+// a row not ready, an offline question it cannot answer -- is not run at
+// all: no record, nothing written. Each skip is logged in the session
+// (SubsystemSession::skips) and counted per (piece, reason) process-wide
+// (skip_count); the driver logs each reason once, and the goldens and the
+// audit hold every count at 0. These are defensive: no stock code path
+// leads to one (an object the mirror cannot encode, a non-engine class).
+// The one per-member skip is the repair walk's QUEUE_MEMBER: an entry the
+// mirror cannot name is passed over and the walk goes on.
 //
 // THE WRITE LOG. A native piece writes the mirror itself and logs, in
 // order, each Python attribute the Python piece would have written
@@ -48,11 +63,11 @@
 // THE SHIELD PIECE (Task 3): ShieldSubsystem.Update (engine/appc/
 // subsystems.py), bit for bit, on the generator the ship's
 // `_shield_subsystem` names. The ship's row ref decides: -1 (None) is no
-// call at all; kRefUnrepresentable, or a since-freed row, is RUN_PYTHON;
+// call at all; kRefUnrepresentable, or a since-freed row, is a skip (REF);
 // a live row is native unless its shield_watch_ok is 0, a face list is not
-// six long, its `_is_offline` question is one the mirror cannot answer
-// (subsystem_is_offline throws), or python_pieces names SHIELD (a
-// test-facing hook). A script that patches ShieldSubsystem's methods is
+// six long, or its `_is_offline` question is one the mirror cannot answer
+// (subsystem_is_offline throws): then the piece is SKIPPED (THE SKIPS).
+// A script that patches ShieldSubsystem's methods is
 // NOT honoured (spec §3 "Mods and patches (Part A)": BC's per-tick update
 // was internal C++ that ignored such patches). Then:
 //   accum = accum + dt; below SHIELD_CHARGE_PERIOD_S: write accum, done.
@@ -70,25 +85,25 @@
 // watcher's `_update(a)`, which fires the checks and commits the value
 // exactly as the Python piece does, and the next next() resumes with the
 // next index. When it resumes on a generator whose row is gone or no
-// longer native-ready (its handler dropped it, replaced a watcher, ...)
-// or python_pieces now names SHIELD,
+// longer native-ready (its handler dropped it, replaced a watcher, ...),
 // the rest of the loop is EVENT{SHIELD_WATCHER_TAIL, code = first index}:
-// Python runs the Python loop's remaining lines on that same generator.
+// Python runs the remaining watcher lines (FloatRangeWatcher._update with
+// the SDK getters' values) on that same generator.
 //
 // THE POWER PIECE (Task 4): PowerSubsystem.Update (engine/appc/
 // subsystems.py) with its consumer pump, bit for bit, on the plant the
 // ship's `_power_subsystem` names. The ship's row ref decides as the
 // shield's does: -1 (None) is no call; kRefUnrepresentable, a since-freed
-// row or a row whose power_kind is not a plant's is RUN_PYTHON. A live
+// row or a row whose power_kind is not a plant's is a skip (REF). A live
 // plant is native unless something the piece will read is one the mirror
-// cannot answer -- then RUN_PYTHON with NOTHING written (power_ready):
-// its `_property` unrepresentable or not power_props_ok; its battery
-// watchers not power_watch_ok; its `_parent_ship` (whose
-// `_powered_consumers` the pump walks) not a live ShipClass row; a
-// consumer not a live row of a known power_kind (a tractor system's
-// children not all live tractor beams); the interval's `_is_offline`
-// question or condition percentage unanswerable; or python_pieces names
-// POWER. A script patching PowerSubsystem's, a consumer's or a property's
+// cannot answer -- then a skip with NOTHING written (power_unready): its
+// `_property` unrepresentable or not power_props_ok (PROPERTY); its battery
+// watchers not power_watch_ok (BATTERY_WATCH); its `_parent_ship` (whose
+// `_powered_consumers` the pump walks) not a live ShipClass row
+// (PARENT_SHIP); a consumer not a live row of a known power_kind, or a
+// tractor system's children not all live tractor beams (CONSUMER); the
+// interval's `_is_offline` question or condition percentage unanswerable
+// (OFFLINE). A script patching PowerSubsystem's, a consumer's or a property's
 // methods is not honoured (spec §3 "Mods and patches (Part A)"), and
 // neither is a consumer class's own GetPowerWanted: the wanted total is
 // the attach-order sum of `_power_wanted`, which is what
@@ -128,19 +143,18 @@
 //           check crossed is EVENT{BATTERY_WATCHER, code = 0 main / 1
 //           backup, a = the value}, and Python calls that watcher's
 //           `_update(a)`. The next next() resumes with the backup watcher.
-// A resume on a plant whose row is gone or no longer native-ready, or with
-// python_pieces now naming POWER, hands the rest of the piece to Python on
-// that same plant: EVENT{POWER_TAIL, code 0 (everything after the breach;
-// b = dt), code 1 (the backup watcher's line; a = the backup limit read
-// before the main watcher)}.
-// Every native run of the piece also drops the plant's power draw program
-// (PASSIVE_POWER_DROP): it described draws the native pump has since
-// changed, and the Python path rebuilds one from a full pump.
+// The resume after BREACH needs the plant still ready: BREACH's handler
+// (_trigger_breach) only reads and queues a deferred effect-queue entry, so
+// readiness cannot change there; a plant that is not is a broken invariant
+// (std::logic_error). A resume at the backup watcher on a plant whose row
+// is gone or whose watchers are no longer ready hands that one line to
+// Python: EVENT{POWER_TAIL, code 1, a = the backup limit read before the
+// main watcher} (the backup watcher's own _update).
 //
 // THE CLOAK PIECE (Task 5): CloakingSubsystem.Update (engine/appc/
 // subsystems.py), bit for bit, on the cloak the ship's `_cloaking_subsystem`
 // names (decided as the shield's ref is; a live row whose power_kind is not
-// a cloak's is RUN_PYTHON). Its offline test is IsDisabled() or
+// a cloak's is a skip, REF). Its offline test is IsDisabled() or
 // IsDestroyed() only (not _is_offline). Then, in Python's order:
 //   offline: trying to cloak (CLOAKING or CLOAKED) -> EVENT{FORCE_DECLOAK},
 //           else nothing;
@@ -160,12 +174,13 @@
 // THE REPAIR PIECE (Task 5): RepairSubsystem.Update (engine/appc/
 // subsystems.py; its _repair_walk and _repair_worked), bit for bit, on the
 // bay the ship's `_repair_subsystem` names (decided as the shield's ref is;
-// a live row that is not is_repair_bay is RUN_PYTHON). Its gates are the
+// a live row that is not is_repair_bay is a skip, REF). Its gates are the
 // bay's own condition > 0 only (not _is_offline, dying or radiation).
 //   dt <= 0, an empty queue, the bay's condition <= 0: done. Its
 //           `_property` -1 is no teams: done; unrepresentable, stale or not
-//           repair_props_ok: RUN_PYTHON. NumRepairTeams <= 0 or
-//           MaxRepairPoints <= 0: done;
+//           repair_props_ok: a skip (PROPERTY). NumRepairTeams <= 0 or
+//           MaxRepairPoints <= 0: done. The bay's condition percentage must
+//           be answerable (else a skip, OFFLINE, before any write);
 //   THE WALK, over the queue as the mirror holds it now, from the cursor
 //           (Python's list iterator: the next index of the list as it is):
 //           stop when it is past the end or the worked list holds `teams`;
@@ -175,12 +190,13 @@
 //           any other member leaves the notified set (written) and is
 //           worked. The next next() resumes the walk at the next index,
 //           re-reading the queue (a handler may have changed it: Review
-//           Focus 5). A member, or the bay, with no live row, or
-//           python_pieces naming REPAIR, at its turn: EVENT{REPAIR_TAIL,
-//           code = the bay, a = 0}: Python runs the walk from that index on
-//           (`_repair_walk`, the state from combat_subsys_repair_state);
-//   none worked: done. Else raw = (points * bayCondPct) * dt, per_item =
-//           raw / len(worked); per item gain = per_item / complexity
+//           Focus 5). A member with no live row (kRefUnrepresentable or
+//           freed) is passed over, counted (a QUEUE_MEMBER skip), and the
+//           walk goes on (ruling R8-4); the bay's row gone is a BAY_GONE
+//           skip, the rest of the piece with it;
+//   none worked: done. Else raw = (points * bayCondPct) * dt (the
+//           percentage read again now; unanswerable: an OFFLINE skip),
+//           per_item = raw / len(worked); per item gain = per_item / complexity
 //           (complexity <= 0 is 1.0), and ShipSubsystem.Repair(gain): gain
 //           <= 0 is nothing, else the condition write
 //           min(GetMaxCondition(), condition + gain) through damage.h's
@@ -190,11 +206,14 @@
 //           dmg_fast_patched checks: by Part A a patched damage function or
 //           an instance patch on the item is not honoured here);
 //           completed when the condition is then >= GetMaxCondition().
-//           Anything in it the
-//           mirror cannot answer (a set_condition fallback, a max
-//           condition it cannot read, a row gone) undoes every write of the
-//           items worked so far and is EVENT{REPAIR_TAIL, code = the bay,
-//           a = 1}: Python runs `_repair_worked` on the same items;
+//           An item the mirror cannot finish (a set_condition fallback, a
+//           max condition it cannot read, its row gone) has ITS writes
+//           undone and is EVENT{REPAIR_SET, code = the bay, sub = the item,
+//           a = per_item} (ruling R8-3): Python runs that one item's lines
+//           -- GetRepairComplexity, the SDK's Repair(per_item / complexity)
+//           (its SetCondition), the completion test, reported back with
+//           combat_subsys_repair_complete -- and the next next() resumes
+//           with the next item. Earlier items keep their native writes;
 //   the completions, in order: EVENT{REPAIR_DONE, code = the bay, sub = the
 //           item, a = its index}: Python discards it from the queue and
 //           fires ET_REPAIR_COMPLETED (Update's last loop, one item per
@@ -208,18 +227,19 @@
 //
 // FREED ROWS (Review Focus 3). A row can vanish mid-walk while its Python
 // object stays alive and in the walk: native_combat._drop(obj) frees it (a
-// pose-table or has_shields push that cannot be represented, ...), and the
-// Python stage still runs that ship's remaining pieces. So a ship whose row
-// was live at begin and is gone at its turn is NOT skipped: from then on its
-// remaining pieces, in the normal order, are RUN_PYTHON, and its row is
-// never read again (`lost_row`; the handle may name a reused slot). A ship
-// with no row at begin (-1, or a handle already stale) is all RUN_PYTHON
-// too: the Python stage updates it.
+// pose-table or has_shields push that cannot be represented, ...). From
+// then on its row is never read again (`lost_row`; the handle may name a
+// reused slot), and its remaining pieces are skipped (THE SKIPS).
+//
+// A ship whose row was live at begin and is gone at a piece's start has that
+// piece skipped (LOST_ROW, ruling R8-2: there is no Python stage to hand it
+// to); a ship with no row at begin, NO_ROW. ARTICULATION, whose Python
+// (articulation.tick_ship) is kept, is still RUN_PYTHON for both.
 //
 // Task 3 made the SHIELD piece native (THE SHIELD PIECE), Task 4 the POWER
 // piece (THE POWER PIECE), Task 5 the CLOAK and REPAIR pieces (THE CLOAK
-// PIECE, THE REPAIR PIECE); ARTICULATION is still RUN_PYTHON. Task 6 makes
-// it native for rigless ships; Task 8 deletes the Python stage.
+// PIECE, THE REPAIR PIECE), Task 6 ARTICULATION's rigless skip; Task 8
+// deleted the Python stage: the four pieces are native only.
 
 namespace dauntless::combat {
 
@@ -249,9 +269,8 @@ enum class SubsystemPiece : int32_t {
 //   BREACH               plant sub's _trigger_breach() (THE POWER PIECE)
 //   BATTERY_WATCHER      plant sub's battery watcher `code` (0 main, 1
 //                        backup) ._update(a)
-//   POWER_TAIL           the rest of plant sub's Update in Python: code 0
-//                        everything after the breach (b = dt), code 1 the
-//                        backup watcher's line (a = the backup limit)
+//   POWER_TAIL           plant sub's backup watcher line in Python (code 1;
+//                        a = the backup limit)
 //   FORCE_DECLOAK        cloak sub's _force_decloak() (THE CLOAK PIECE)
 //   CLOAK_DONE           cloak sub's _fire(ET_CLOAK_COMPLETED) (code 1) or
 //                        _fire(ET_DECLOAK_COMPLETED) (code 0)
@@ -259,9 +278,9 @@ enum class SubsystemPiece : int32_t {
 //                        member sub (THE REPAIR PIECE)
 //   REPAIR_DONE          bay `code`'s completion of item sub (index a):
 //                        queue discard, then ET_REPAIR_COMPLETED
-//   REPAIR_TAIL          the rest of bay `code`'s Update in Python: a 0 the
-//                        walk from the cursor, a 1 the worked items' repair
-//                        (b = dt)
+//   REPAIR_SET           worked item sub of bay `code`, repaired in Python
+//                        (a = per_item: the item's complexity, the SDK's
+//                        Repair and the completion test; THE REPAIR PIECE)
 enum class SubsystemEvent : int32_t {
     SHIELD_WATCHER = 0,
     SHIELD_WATCHER_TAIL = 1,
@@ -272,13 +291,40 @@ enum class SubsystemEvent : int32_t {
     CLOAK_DONE = 6,
     REPAIR_CANNOT = 7,
     REPAIR_DONE = 8,
-    REPAIR_TAIL = 9,
+    REPAIR_SET = 9,
     kCount
 };
 
 const char* subsystem_record_type_name(SubsystemRecordType t);
 const char* subsystem_piece_name(SubsystemPiece p);
 const char* subsystem_event_name(SubsystemEvent e);
+
+// Why a piece was skipped (THE SKIPS; combat_subsys_kinds() names them).
+enum class SubsystemSkip : int32_t {
+    NO_ROW = 0,       // the ship had no row at begin
+    LOST_ROW,         // the ship's row was freed mid-walk
+    REF,              // the piece's subsystem unnamed, freed or of another kind
+    SHIELD_UNREADY,   // the generator's lists or watchers not native-ready
+    OFFLINE,          // an offline / condition question the mirror can't answer
+    PROPERTY,         // the subsystem's property unnamed, freed or not *_ok
+    BATTERY_WATCH,    // the plant's battery watchers not native-ready
+    PARENT_SHIP,      // the plant's parent ship not a live ShipClass row
+    CONSUMER,         // a consumer the pump cannot run
+    QUEUE_MEMBER,     // a repair-queue entry unnamed or freed (that member)
+    BAY_GONE,         // the repair bay's row freed mid-piece
+    kCount
+};
+
+const char* subsystem_skip_name(SubsystemSkip k);
+
+// One skip: the ship's position, the piece, why, and the subsystem it was
+// about (-1 when none).
+struct SubsystemSkipRecord {
+    int64_t ship_pos = -1;
+    SubsystemPiece piece = SubsystemPiece::SHIELD;
+    SubsystemSkip why = SubsystemSkip::NO_ROW;
+    int64_t sub = -1;
+};
 
 // One logged write (THE WRITE LOG): Subsystem row `sub`'s Python attribute
 //   CHARGE_ACCUM  sub.__dict__["_charge_accum"] = value
@@ -294,9 +340,6 @@ const char* subsystem_event_name(SubsystemEvent e);
 //   BATTERY_WATCH sub.__dict__["_main_battery_watcher" (index 0) /
 //                    "_backup_battery_watcher" (1)].__dict__["_value"]
 //                    = value
-//   PASSIVE_POWER_DROP
-//                 sub.__dict__["_passive_power"] = None, when it holds
-//                    anything else (the power draw program, dropped)
 // the cloak's and the bay's (THE CLOAK PIECE, THE REPAIR PIECE):
 //   TRANSITION_ELAPSED sub.__dict__["_transition_elapsed"] = value
 //   CLOAK_STATE   sub.__dict__["_cloak_state"] = int(value)
@@ -324,7 +367,6 @@ enum class SubsystemWriteKind : int32_t {
     BACKUP_RESERVE,        // the cloak's _backup_reserve
     BREACH_FIRED,
     BATTERY_WATCH,
-    PASSIVE_POWER_DROP,
     TRANSITION_ELAPSED,
     CLOAK_STATE,
     REPAIR_NOTIFIED,
@@ -360,14 +402,9 @@ struct SubsystemRecord {
 // articulated-part generation + 1 on a ship it finds rigless (its first call
 // still runs in Python: it caches the leaf and the key); the piece is
 // skipped, with no record, iff that equals Global ARTICULATION_GEN + 1 (the
-// generation, re-pushed on every bump) and python_pieces does not name
-// ARTICULATION, the ship's row is live. Anything else (rigged, never
-// ticked, generation moved, row gone) is RUN_PYTHON{ship, ARTICULATION}.
-
-// A bit per piece (SubsystemSession::python_pieces): 1 << SubsystemPiece.
-constexpr uint32_t piece_bit(SubsystemPiece p) {
-    return 1u << static_cast<uint32_t>(p);
-}
+// generation, re-pushed on every bump) and the ship's row is live.
+// Anything else (rigged, never ticked, generation moved, row gone) is
+// RUN_PYTHON{ship, ARTICULATION}.
 
 struct SubsystemSession {
     std::vector<int64_t> ships;      // Object handles, roster order
@@ -384,9 +421,8 @@ struct SubsystemSession {
     size_t ship_pos = 0;
     int32_t piece = 0;
     bool done = false;               // DONE was returned
-    // Pieces Python runs for every ship: piece_bit()s. A test-facing hook
-    // (native_subsystems.python_pieces), never set in production.
-    uint32_t python_pieces = 0;
+    // THE SKIPS of this session, in walk order.
+    std::vector<SubsystemSkipRecord> skips;
     // The shield piece's sub-piece position: 0 not begun; 1 inside the
     // watcher loop of generator `shield`, next watcher `watcher` (THE
     // WATCHERS: an EVENT stopped it there).
@@ -403,7 +439,9 @@ struct SubsystemSession {
     double power_backup_cap = 0.0;
     // The repair piece's sub-piece position (THE REPAIR PIECE): 0 not
     // begun; 1 inside the walk of bay `repair` (a REPAIR_CANNOT stopped
-    // it; next: queue index `repair_index`); 2 reporting completions (next:
+    // it; next: queue index `repair_index`); 4 repairing the worked items
+    // (a REPAIR_SET stopped it; next: repair_worked[repair_item], each
+    // given `repair_per_item`); 2 reporting completions (next:
     // repair_completed[repair_done]); 3 over. Update's locals: the teams
     // and points read before the walk, the items worked and completed.
     int32_t repair_phase = 0;
@@ -412,6 +450,8 @@ struct SubsystemSession {
     int64_t repair_teams = 0;
     double repair_points = 0.0;
     std::vector<int64_t> repair_worked, repair_completed;
+    size_t repair_item = 0;
+    double repair_per_item = 0.0;
     size_t repair_done = 0;
     std::vector<SubsystemWrite> writes;  // THE WRITE LOG (last next())
     // The repair piece's condition writes (damage.h set_condition): their
@@ -423,13 +463,22 @@ struct SubsystemSession {
 namespace subsystems {
 
 // One stage over `ship_handles` (roster order; -1: a ship with no row) for
-// a tick of `dt`. `python_pieces`: piece_bit()s Python runs for every
-// ship (a test-facing hook). Reads which handles are live; writes nothing.
+// a tick of `dt`. Reads which handles are live; writes nothing.
 SubsystemSession begin(const Mirror& m, std::span<const int64_t> ship_handles,
-                       double dt, uint32_t python_pieces = 0);
+                       double dt);
 
 // The next record (THE RECORDS). Throws std::logic_error after DONE.
 SubsystemRecord next(SubsystemSession& s, Mirror& m);
+
+// REPAIR_SET's answer: Python found item `h` completed (THE REPAIR PIECE);
+// it joins the completions in item order. A protocol error (logic_error)
+// unless the session is repairing items and `h` is the item just handed.
+void repair_complete(SubsystemSession& s, int64_t h);
+
+// THE SKIPS, process-wide: how many of (piece, reason) since the last
+// reset_skip_counts().
+uint64_t skip_count(SubsystemPiece p, SubsystemSkip why);
+void reset_skip_counts();
 
 }  // namespace subsystems
 

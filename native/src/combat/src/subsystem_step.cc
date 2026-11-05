@@ -48,8 +48,26 @@ const char* subsystem_event_name(SubsystemEvent e) {
         case SubsystemEvent::CLOAK_DONE: return "CLOAK_DONE";
         case SubsystemEvent::REPAIR_CANNOT: return "REPAIR_CANNOT";
         case SubsystemEvent::REPAIR_DONE: return "REPAIR_DONE";
-        case SubsystemEvent::REPAIR_TAIL: return "REPAIR_TAIL";
+        case SubsystemEvent::REPAIR_SET: return "REPAIR_SET";
         case SubsystemEvent::kCount: break;
+    }
+    return "?";
+}
+
+const char* subsystem_skip_name(SubsystemSkip k) {
+    switch (k) {
+        case SubsystemSkip::NO_ROW: return "NO_ROW";
+        case SubsystemSkip::LOST_ROW: return "LOST_ROW";
+        case SubsystemSkip::REF: return "REF";
+        case SubsystemSkip::SHIELD_UNREADY: return "SHIELD_UNREADY";
+        case SubsystemSkip::OFFLINE: return "OFFLINE";
+        case SubsystemSkip::PROPERTY: return "PROPERTY";
+        case SubsystemSkip::BATTERY_WATCH: return "BATTERY_WATCH";
+        case SubsystemSkip::PARENT_SHIP: return "PARENT_SHIP";
+        case SubsystemSkip::CONSUMER: return "CONSUMER";
+        case SubsystemSkip::QUEUE_MEMBER: return "QUEUE_MEMBER";
+        case SubsystemSkip::BAY_GONE: return "BAY_GONE";
+        case SubsystemSkip::kCount: break;
     }
     return "?";
 }
@@ -140,16 +158,6 @@ void log(SubsystemSession& s, int64_t sub, SubsystemWriteKind what,
     s.writes.push_back(SubsystemWrite{sub, what, index, v});
 }
 
-SubsystemRecord python_piece(const SubsystemSession& s, size_t i,
-                             SubsystemPiece p = SubsystemPiece::SHIELD) {
-    SubsystemRecord r;
-    r.type = SubsystemRecordType::RUN_PYTHON;
-    r.ship_pos = static_cast<int64_t>(i);
-    r.ship = s.ships[i];
-    r.kind = static_cast<int32_t>(p);
-    return r;
-}
-
 SubsystemRecord event(const SubsystemSession& s, size_t i, SubsystemEvent e,
                       int64_t sub, int64_t code, double a, double b = 0.0) {
     SubsystemRecord r;
@@ -164,6 +172,28 @@ SubsystemRecord event(const SubsystemSession& s, size_t i, SubsystemEvent e,
     return r;
 }
 
+// THE SKIPS, process-wide (skip_count). Main-thread only, as the stage is.
+uint64_t g_skips[static_cast<size_t>(SubsystemPiece::kCount)]
+                [static_cast<size_t>(SubsystemSkip::kCount)] = {};
+
+// Piece `p` of ship i skipped (THE SKIPS): logged in the session, counted.
+// Returns false (the piece is over, no record) for the callers' `return`.
+bool skip(SubsystemSession& s, size_t i, SubsystemPiece p, SubsystemSkip why,
+          int64_t sub = -1) {
+    s.skips.push_back(
+        SubsystemSkipRecord{static_cast<int64_t>(i), p, why, sub});
+    ++g_skips[static_cast<size_t>(p)][static_cast<size_t>(why)];
+    return false;
+}
+
+// The ship-level skips at a piece's start: no row at begin, or freed since.
+// True when the piece was skipped.
+bool ship_skipped(SubsystemSession& s, size_t i, SubsystemPiece p) {
+    if (!s.had_row[i]) return !skip(s, i, p, SubsystemSkip::NO_ROW);
+    if (s.lost_row[i]) return !skip(s, i, p, SubsystemSkip::LOST_ROW);
+    return false;
+}
+
 // The watcher loop of generator `sh` from watcher s.shield_watcher on.
 // Returns true with `out` set when it stopped for a record (the cursor then
 // names the next watcher); false when the loop is over.
@@ -174,8 +204,7 @@ bool shield_watchers(SubsystemSession& s, Mirror& m, size_t i,
         const int32_t w = s.shield_watcher;
         const SubsystemRow* row = m.subsystem(sh);
         std::array<size_t, kWatchers> at{};
-        if (row == nullptr || !shield_ready(*row, at) ||
-            (s.python_pieces & piece_bit(SubsystemPiece::SHIELD))) {
+        if (row == nullptr || !shield_ready(*row, at)) {
             // The rest of the loop is Python's, on the same generator.
             out = event(s, i, SubsystemEvent::SHIELD_WATCHER_TAIL, sh, w, 0.0);
             s.shield_watcher = kWatchers;
@@ -197,33 +226,27 @@ bool shield_watchers(SubsystemSession& s, Mirror& m, size_t i,
 }
 
 // THE SHIELD PIECE for ship i. Returns true with `out` set when the piece
-// stops for a record (RUN_PYTHON, or an EVENT inside it); false when it
-// is over (natively, or with nothing to do).
+// stops for a record (an EVENT inside it); false when it is over
+// (natively, skipped, or with nothing to do).
 bool shield_piece(SubsystemSession& s, Mirror& m, size_t i,
                   SubsystemRecord& out) {
     if (s.shield_phase == 1) {
         if (shield_watchers(s, m, i, out)) return true;
         return false;
     }
-    const bool python =
-        !s.had_row[i] || s.lost_row[i] ||
-        (s.python_pieces & piece_bit(SubsystemPiece::SHIELD));
-    if (python) {
-        out = python_piece(s, i);
-        return true;
-    }
+    constexpr SubsystemPiece kP = SubsystemPiece::SHIELD;
+    if (ship_skipped(s, i, kP)) return false;
     const ObjectRow* o = m.object(s.ships[i]);
     // The ship's raw ref: -1 is `_shield_subsystem is None` (no call), a
-    // stale handle a row dropped since (the generator lives on: Python's).
+    // stale handle a row dropped since (the generator lives on: skipped).
     const int64_t sh = o->_shield_subsystem;
     if (sh == -1) return false;
     const SubsystemRow* row =
         sh == kRefUnrepresentable ? nullptr : m.subsystem(sh);
+    if (row == nullptr) return skip(s, i, kP, SubsystemSkip::REF, sh);
     std::array<size_t, kWatchers> at{};
-    if (row == nullptr || !shield_ready(*row, at)) {
-        out = python_piece(s, i);
-        return true;
-    }
+    if (!shield_ready(*row, at))
+        return skip(s, i, kP, SubsystemSkip::SHIELD_UNREADY, sh);
     const double period = m.globals().SHIELD_CHARGE_PERIOD_S;
     // self._charge_accum = self._charge_accum + float(dt)
     const double accum = row->_charge_accum + s.dt;
@@ -234,13 +257,12 @@ bool shield_piece(SubsystemSession& s, Mirror& m, size_t i,
     }
     // _is_offline(self) is asked after the ramp refresh, which none of its
     // inputs read: asked first, so a question the mirror cannot answer
-    // hands the whole piece back with nothing written.
+    // skips the whole piece with nothing written.
     bool offline;
     try {
         offline = subsystem_is_offline(m, *row);
     } catch (const std::invalid_argument&) {
-        out = python_piece(s, i);
-        return true;
+        return skip(s, i, kP, SubsystemSkip::OFFLINE, sh);
     }
     const double dt = accum;
     m.set_f(sh, Field::_charge_accum, 0.0);
@@ -315,30 +337,35 @@ bool consumer_ready(const Mirror& m, int64_t h) {
 }
 
 // Everything the rest of Update (after the breach) reads is one the mirror
-// answers. Asks nothing that writes; a throw of the offline question or the
-// condition percentage is "not ready".
-bool power_flow_ready(const Mirror& m, const SubsystemRow& p, double dt) {
-    if (p._property == -1) return true;     // the flow is `return`
-    if (p._property == kRefUnrepresentable) return false;
+// answers: kCount when it is, else the skip's reason. Asks nothing that
+// writes; a throw of the offline question or the condition percentage is
+// OFFLINE.
+SubsystemSkip power_unready(const Mirror& m, const SubsystemRow& p,
+                            double dt) {
+    constexpr SubsystemSkip kReady = SubsystemSkip::kCount;
+    if (p._property == -1) return kReady;     // the flow is `return`
+    if (p._property == kRefUnrepresentable) return SubsystemSkip::PROPERTY;
     const PropertyRow* prop = m.property(p._property);
-    if (prop == nullptr || prop->power_props_ok != 1) return false;
+    if (prop == nullptr || prop->power_props_ok != 1)
+        return SubsystemSkip::PROPERTY;
     size_t at[kBatteryWatchers];
-    if (!battery_watch_ready(p, at)) return false;
-    // GetParentShip(): `_parent_ship` itself (a ref of -1 climbs: Python's).
-    if (p._parent_ship < 0) return false;
+    if (!battery_watch_ready(p, at)) return SubsystemSkip::BATTERY_WATCH;
+    // GetParentShip(): `_parent_ship` itself (a ref of -1 would climb).
+    if (p._parent_ship < 0) return SubsystemSkip::PARENT_SHIP;
     const ObjectRow* ship = m.object(p._parent_ship);
-    if (ship == nullptr || !ship->is_ship_class) return false;
+    if (ship == nullptr || !ship->is_ship_class)
+        return SubsystemSkip::PARENT_SHIP;
     for (int64_t c : ship->_powered_consumers)
-        if (!consumer_ready(m, c)) return false;
+        if (!consumer_ready(m, c)) return SubsystemSkip::CONSUMER;
     if (p._interval_elapsed + dt >= m.globals().POWER_INTERVAL) {
         try {
             (void)subsystem_is_offline(m, p);
             (void)condition_percentage(m, p);
         } catch (const std::invalid_argument&) {
-            return false;
+            return SubsystemSkip::OFFLINE;
         }
     }
-    return true;
+    return kReady;
 }
 
 // The plant's pools and budgets while the piece runs; `wrote_*`: the
@@ -512,8 +539,7 @@ bool backup_watcher(SubsystemSession& s, Mirror& m, size_t i,
     const SubsystemRow* p = m.subsystem(ph);
     size_t at[kBatteryWatchers];
     const double cap = s.power_backup_cap;
-    if (p == nullptr || !battery_watch_ready(*p, at) ||
-        (s.python_pieces & piece_bit(SubsystemPiece::POWER))) {
+    if (p == nullptr || !battery_watch_ready(*p, at)) {
         out = event(s, i, SubsystemEvent::POWER_TAIL, ph, 1, cap);
         return true;
     }
@@ -596,7 +622,6 @@ bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
         m.set_f(ph, Field::_power_wanted_total, total);
         log(s, ph, SubsystemWriteKind::POWER_WANTED_TOTAL, 0, total);
     }
-    log(s, ph, SubsystemWriteKind::PASSIVE_POWER_DROP, 0, 0.0);
     // The watchers: both limits read now, the backup battery after the main
     // watcher's update.
     const double main_cap = prop.MainBatteryLimit;
@@ -610,35 +635,31 @@ bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
 // THE POWER PIECE for ship i (as shield_piece).
 bool power_piece(SubsystemSession& s, Mirror& m, size_t i,
                  SubsystemRecord& out) {
-    const bool hooked =
-        (s.python_pieces & piece_bit(SubsystemPiece::POWER)) != 0;
+    constexpr SubsystemPiece kP = SubsystemPiece::POWER;
     if (s.power_phase == 1) {
-        // Resumed after the breach's handlers.
+        // Resumed after the breach's handler, _trigger_breach: it reads and
+        // queues a deferred effect-queue entry, nothing else, so the plant
+        // it was ready before is ready now (ruling R8-5, B13).
         const SubsystemRow* row = m.subsystem(s.power);
-        if (row == nullptr || hooked || !power_flow_ready(m, *row, s.dt)) {
-            s.power_phase = 3;
-            out = event(s, i, SubsystemEvent::POWER_TAIL, s.power, 0, 0.0,
-                        s.dt);
-            return true;
-        }
+        if (row == nullptr ||
+            power_unready(m, *row, s.dt) != SubsystemSkip::kCount)
+            throw std::logic_error(
+                "subsystem stage: the plant is no longer ready after its "
+                "BREACH (its handler changed what the power piece reads)");
         return power_flow(s, m, i, out);
     }
     if (s.power_phase == 2) return backup_watcher(s, m, i, out);
     if (s.power_phase == 3) return false;   // over (its last EVENT ran)
-    if (!s.had_row[i] || s.lost_row[i] || hooked) {
-        out = python_piece(s, i, SubsystemPiece::POWER);
-        return true;
-    }
+    if (ship_skipped(s, i, kP)) return false;
     const ObjectRow* o = m.object(s.ships[i]);
     const int64_t ph = o->_power_subsystem;
     if (ph == -1) return false;     // GetPowerSubsystem() is None: no call
     const SubsystemRow* row =
         ph == kRefUnrepresentable ? nullptr : m.subsystem(ph);
-    if (row == nullptr || row->power_kind != kPlant ||
-        !power_flow_ready(m, *row, s.dt)) {
-        out = python_piece(s, i, SubsystemPiece::POWER);
-        return true;
-    }
+    if (row == nullptr || row->power_kind != kPlant)
+        return skip(s, i, kP, SubsystemSkip::REF, ph);
+    const SubsystemSkip why = power_unready(m, *row, s.dt);
+    if (why != SubsystemSkip::kCount) return skip(s, i, kP, why, ph);
     s.power = ph;
     if (subsystem_is_destroyed(*row) && !row->_breach_fired) {
         m.set_i(ph, Field::_breach_fired, 1);
@@ -656,22 +677,17 @@ constexpr int64_t kDecloaked = 0, kCloaking = 1, kCloaked = 2,
                   kDecloaking = 3;   // CloakingSubsystem.CLOAK_*
 
 // THE CLOAK PIECE for ship i. Returns true with `out` set when it stops for
-// a record (RUN_PYTHON, or its last line's EVENT); false when it is over.
+// a record (its last line's EVENT); false when it is over.
 bool cloak_piece(SubsystemSession& s, Mirror& m, size_t i,
                  SubsystemRecord& out) {
-    if (!s.had_row[i] || s.lost_row[i] ||
-        (s.python_pieces & piece_bit(SubsystemPiece::CLOAK))) {
-        out = python_piece(s, i, SubsystemPiece::CLOAK);
-        return true;
-    }
+    constexpr SubsystemPiece kP = SubsystemPiece::CLOAK;
+    if (ship_skipped(s, i, kP)) return false;
     const int64_t ch = m.object(s.ships[i])->_cloaking_subsystem;
     if (ch == -1) return false;     // GetCloakingSubsystem() is None
     const SubsystemRow* row =
         ch == kRefUnrepresentable ? nullptr : m.subsystem(ch);
-    if (row == nullptr || row->power_kind != kConsumerCloak) {
-        out = python_piece(s, i, SubsystemPiece::CLOAK);
-        return true;
-    }
+    if (row == nullptr || row->power_kind != kConsumerCloak)
+        return skip(s, i, kP, SubsystemSkip::REF, ch);
     const int64_t state = row->_cloak_state;
     const bool trying = state == kCloaking || state == kCloaked;
     // offline = IsDisabled() or IsDestroyed(): _force_decloak, a no-op
@@ -704,6 +720,8 @@ bool cloak_piece(SubsystemSession& s, Mirror& m, size_t i,
 
 // ── The repair piece (subsystem_step.h THE REPAIR PIECE) ─────────────────
 
+constexpr SubsystemPiece kRepair = SubsystemPiece::REPAIR;
+
 bool notified(const SubsystemRow& bay, int64_t h) {
     const std::vector<int64_t>& n = bay._cannot_complete_notified;
     return std::binary_search(n.begin(), n.end(), h);
@@ -725,12 +743,11 @@ void set_notified(SubsystemSession& s, Mirror& m, int64_t bay, int64_t h,
     s.writes.push_back(w);
 }
 
-// The rest of the piece in Python (EVENT{REPAIR_TAIL}): `what` 0 the walk
-// from the cursor, 1 the worked items' repair. The piece is over after it.
-SubsystemRecord repair_tail(SubsystemSession& s, size_t i, int what) {
+// The piece skipped from here on (THE SKIPS): over, nothing further written.
+bool repair_skip(SubsystemSession& s, size_t i, SubsystemSkip why,
+                 int64_t sub) {
     s.repair_phase = 3;
-    return event(s, i, SubsystemEvent::REPAIR_TAIL, -1, s.repair,
-                 static_cast<double>(what), s.dt);
+    return skip(s, i, kRepair, why, sub);
 }
 
 // The completions from s.repair_done on, one EVENT each.
@@ -746,41 +763,29 @@ bool repair_completions(SubsystemSession& s, size_t i, SubsystemRecord& out) {
     return true;
 }
 
-// Update after the walk (_repair_worked): the gains, then the completions.
-// Each gain is damage.h's set_condition, called directly: not
-// combat_dmg_set_condition, so neither its dmg_guard_state nor its
-// dmg_fast_patched check runs (spec §3 Part A: a patched damage function,
-// or an instance patch on the item, is not honoured by the native stage).
-bool repair_worked(SubsystemSession& s, Mirror& m, size_t i,
-                   SubsystemRecord& out) {
-    const SubsystemRow* bay = m.subsystem(s.repair);
-    if (bay == nullptr ||
-        (s.python_pieces & piece_bit(SubsystemPiece::REPAIR))) {
-        out = repair_tail(s, i, 1);
-        return true;
-    }
-    double pct;
-    try {
-        pct = condition_percentage(m, *bay);
-    } catch (const std::invalid_argument&) {
-        out = repair_tail(s, i, 1);
-        return true;
-    }
-    // raw = points * self.GetConditionPercentage() * float(dt)
-    const double raw = s.repair_points * pct * s.dt;
-    const double per_item = raw / static_cast<double>(s.repair_worked.size());
-    const size_t writes0 = s.dmg.writes.size(),
-                 entries0 = s.dmg.entries.size(), undo0 = s.dmg.undo.size();
-    s.repair_completed.clear();
-    try {
-        for (int64_t h : s.repair_worked) {
+// The worked items from s.repair_item on (_repair_worked's loop), each
+// given s.repair_per_item. Each gain is damage.h's set_condition, called
+// directly: not combat_dmg_set_condition, so neither its dmg_guard_state
+// nor its dmg_fast_patched check runs (spec §3 Part A: a patched damage
+// function, or an instance patch on the item, is not honoured by the
+// native stage). An item the mirror cannot finish has its own writes
+// undone and is handed to Python by itself (REPAIR_SET, ruling R8-3).
+bool repair_items(SubsystemSession& s, Mirror& m, size_t i,
+                  SubsystemRecord& out) {
+    s.repair_phase = 4;
+    while (s.repair_item < s.repair_worked.size()) {
+        const int64_t h = s.repair_worked[s.repair_item++];
+        const size_t writes0 = s.dmg.writes.size(),
+                     entries0 = s.dmg.entries.size(),
+                     undo0 = s.dmg.undo.size();
+        try {
             const SubsystemRow* it = m.subsystem(h);
             if (it == nullptr)
                 throw std::invalid_argument("a worked item's row is gone");
             double complexity = it->_repair_complexity;
             if (complexity <= 0.0) complexity = 1.0;
             // sub.Repair(per_item / complexity): ShipSubsystem.Repair.
-            const double points = per_item / complexity;
+            const double points = s.repair_per_item / complexity;
             if (!(points <= 0.0)) {
                 const double mx = subsystem_max_condition(m, *it);
                 set_condition(m, h, py_min(mx, it->_condition + points), -1,
@@ -789,19 +794,39 @@ bool repair_worked(SubsystemSession& s, Mirror& m, size_t i,
             it = m.subsystem(h);
             if (it->_condition >= subsystem_max_condition(m, *it))
                 s.repair_completed.push_back(h);
+        } catch (const std::invalid_argument&) {
+            undo_damage(m, s.dmg.undo, undo0);
+            s.dmg.undo.resize(undo0);
+            s.dmg.writes.resize(writes0);
+            s.dmg.entries.resize(entries0);
+            out = event(s, i, SubsystemEvent::REPAIR_SET, h, s.repair,
+                        s.repair_per_item);
+            return true;
         }
-    } catch (const std::invalid_argument&) {
-        // Every item's write undone: Python repairs them all.
-        undo_damage(m, s.dmg.undo, undo0);
-        s.dmg.undo.resize(undo0);
-        s.dmg.writes.resize(writes0);
-        s.dmg.entries.resize(entries0);
-        s.repair_completed.clear();
-        out = repair_tail(s, i, 1);
-        return true;
     }
     s.repair_done = 0;
     return repair_completions(s, i, out);
+}
+
+// Update after the walk (_repair_worked): the per-item share, then the
+// items.
+bool repair_worked(SubsystemSession& s, Mirror& m, size_t i,
+                   SubsystemRecord& out) {
+    const SubsystemRow* bay = m.subsystem(s.repair);
+    if (bay == nullptr)
+        return repair_skip(s, i, SubsystemSkip::BAY_GONE, s.repair);
+    double pct;
+    try {
+        pct = condition_percentage(m, *bay);
+    } catch (const std::invalid_argument&) {
+        return repair_skip(s, i, SubsystemSkip::OFFLINE, s.repair);
+    }
+    // raw = points * self.GetConditionPercentage() * float(dt)
+    const double raw = s.repair_points * pct * s.dt;
+    s.repair_per_item = raw / static_cast<double>(s.repair_worked.size());
+    s.repair_completed.clear();
+    s.repair_item = 0;
+    return repair_items(s, m, i, out);
 }
 
 // THE WALK from s.repair_index on.
@@ -810,11 +835,8 @@ bool repair_walk(SubsystemSession& s, Mirror& m, size_t i,
     const int64_t bh = s.repair;
     for (;;) {
         const SubsystemRow* bay = m.subsystem(bh);
-        if (bay == nullptr ||
-            (s.python_pieces & piece_bit(SubsystemPiece::REPAIR))) {
-            out = repair_tail(s, i, 0);
-            return true;
-        }
+        if (bay == nullptr)
+            return repair_skip(s, i, SubsystemSkip::BAY_GONE, bh);
         // `for sub in self._queue`: the list as it is now, at the index the
         // iterator holds.
         if (s.repair_index >= bay->_queue.size()) break;
@@ -823,11 +845,12 @@ bool repair_walk(SubsystemSession& s, Mirror& m, size_t i,
         const int64_t h = bay->_queue[s.repair_index];
         const SubsystemRow* it =
             h < 0 ? nullptr : m.subsystem(h);
-        if (it == nullptr) {     // the member at the cursor: Python's
-            out = repair_tail(s, i, 0);
-            return true;
-        }
         ++s.repair_index;
+        if (it == nullptr) {
+            // A member the mirror cannot name: passed over (ruling R8-4).
+            skip(s, i, kRepair, SubsystemSkip::QUEUE_MEMBER, h);
+            continue;
+        }
         if (it->_condition <= 0.0) {
             if (!notified(*bay, h)) {
                 set_notified(s, m, bh, h, true);
@@ -851,21 +874,16 @@ bool repair_walk(SubsystemSession& s, Mirror& m, size_t i,
 bool repair_piece(SubsystemSession& s, Mirror& m, size_t i,
                   SubsystemRecord& out) {
     if (s.repair_phase == 1) return repair_walk(s, m, i, out);
+    if (s.repair_phase == 4) return repair_items(s, m, i, out);
     if (s.repair_phase == 2) return repair_completions(s, i, out);
     if (s.repair_phase == 3) return false;
-    if (!s.had_row[i] || s.lost_row[i] ||
-        (s.python_pieces & piece_bit(SubsystemPiece::REPAIR))) {
-        out = python_piece(s, i, SubsystemPiece::REPAIR);
-        return true;
-    }
+    if (ship_skipped(s, i, kRepair)) return false;
     const int64_t bh = m.object(s.ships[i])->_repair_subsystem;
     if (bh == -1) return false;     // GetRepairSubsystem() is None
     const SubsystemRow* bay =
         bh == kRefUnrepresentable ? nullptr : m.subsystem(bh);
-    if (bay == nullptr || bay->is_repair_bay != 1) {
-        out = python_piece(s, i, SubsystemPiece::REPAIR);
-        return true;
-    }
+    if (bay == nullptr || bay->is_repair_bay != 1)
+        return skip(s, i, kRepair, SubsystemSkip::REF, bh);
     // `if dt is None or dt <= 0.0 or not self._queue: return`
     if (s.dt <= 0.0 || bay->_queue.empty()) return false;
     if (bay->_condition <= 0.0) return false;
@@ -874,19 +892,26 @@ bool repair_piece(SubsystemSession& s, Mirror& m, size_t i,
     const PropertyRow* prop = bay->_property == kRefUnrepresentable
                                   ? nullptr
                                   : m.property(bay->_property);
-    if (prop == nullptr || prop->repair_props_ok != 1) {
-        out = python_piece(s, i, SubsystemPiece::REPAIR);
-        return true;
-    }
+    if (prop == nullptr || prop->repair_props_ok != 1)
+        return skip(s, i, kRepair, SubsystemSkip::PROPERTY, bh);
     const int64_t teams = prop->NumRepairTeams;
     const double points = prop->MaxRepairPoints;
     if (teams <= 0 || points <= 0.0) return false;
+    // The percentage the gains need, answerable before any write (it is
+    // read again after the walk, as Update reads it there).
+    try {
+        (void)condition_percentage(m, *bay);
+    } catch (const std::invalid_argument&) {
+        return skip(s, i, kRepair, SubsystemSkip::OFFLINE, bh);
+    }
     s.repair = bh;
     s.repair_teams = teams;
     s.repair_points = points;
     s.repair_index = 0;
     s.repair_worked.clear();
     s.repair_completed.clear();
+    s.repair_item = 0;
+    s.repair_per_item = 0.0;
     s.repair_done = 0;
     s.repair_phase = 1;
     return repair_walk(s, m, i, out);
@@ -900,16 +925,16 @@ void end_piece(SubsystemSession& s) {
     s.power_phase = 0;
     s.power = -1;
     s.power_backup_cap = 0.0;
-    // repair_worked / repair_completed are kept: REPAIR_TAIL's and
-    // REPAIR_DONE's handlers read them (combat_subsys_repair_state) after
-    // the record that ended the piece.
+    // repair_worked / repair_completed are kept: REPAIR_DONE's handlers read
+    // them (combat_subsys_repair_state) after the record that ended the
+    // piece.
     s.repair_phase = 0;
 }
 
 }  // namespace
 
 SubsystemSession begin(const Mirror& m, std::span<const int64_t> ship_handles,
-                       double dt, uint32_t python_pieces) {
+                       double dt) {
     SubsystemSession s;
     s.ships.assign(ship_handles.begin(), ship_handles.end());
     s.had_row.reserve(s.ships.size());
@@ -917,7 +942,6 @@ SubsystemSession begin(const Mirror& m, std::span<const int64_t> ship_handles,
         s.had_row.push_back(h >= 0 && m.valid(h) ? 1 : 0);
     s.lost_row.assign(s.ships.size(), 0);
     s.dt = dt;
-    s.python_pieces = python_pieces;
     return s;
 }
 
@@ -935,55 +959,43 @@ SubsystemRecord next(SubsystemSession& s, Mirror& m) {
             s.piece = 0;
             continue;
         }
-        // FREED ROWS: live at begin, gone now -- the rest of this ship is
-        // Python's, and its row (the handle may name a reused slot) is
-        // never read again.
+        // FREED ROWS: live at begin, gone now -- the rest of this ship's
+        // pieces are skipped (LOST_ROW), and its row (the handle may name a
+        // reused slot) is never read again.
         if (s.had_row[i] && !s.lost_row[i] && !m.valid(h)) s.lost_row[i] = 1;
-        if (s.piece == static_cast<int32_t>(SubsystemPiece::SHIELD)) {
+        if (s.piece < static_cast<int32_t>(SubsystemPiece::ARTICULATION)) {
             SubsystemRecord r;
-            const bool stopped = shield_piece(s, m, i, r);
-            // A RUN_PYTHON is the whole piece; an EVENT stops inside it
-            // (the cursor stays on SHIELD, the watcher loop's position kept).
-            if (!stopped || r.type == SubsystemRecordType::RUN_PYTHON)
+            bool stopped;
+            switch (static_cast<SubsystemPiece>(s.piece)) {
+                case SubsystemPiece::SHIELD:
+                    stopped = shield_piece(s, m, i, r);
+                    break;
+                case SubsystemPiece::POWER:
+                    stopped = power_piece(s, m, i, r);
+                    break;
+                case SubsystemPiece::CLOAK:
+                    // Every record of the cloak piece is its last line.
+                    stopped = cloak_piece(s, m, i, r);
+                    if (stopped) end_piece(s);
+                    break;
+                default:
+                    stopped = repair_piece(s, m, i, r);
+                    break;
+            }
+            // An EVENT stops inside a piece (the cursor stays on it, its
+            // sub-piece position kept; phase 3 once its last line ran).
+            if (!stopped) {
                 end_piece(s);
-            if (stopped) return r;
-            continue;
-        }
-        if (s.piece == static_cast<int32_t>(SubsystemPiece::POWER)) {
-            SubsystemRecord r;
-            const bool stopped = power_piece(s, m, i, r);
-            // As the shield's: an EVENT stops inside the piece (the next
-            // next() resumes there, phase 3 once its last line ran).
-            if (!stopped || r.type == SubsystemRecordType::RUN_PYTHON)
-                end_piece(s);
-            if (stopped) return r;
-            continue;
-        }
-        if (s.piece == static_cast<int32_t>(SubsystemPiece::CLOAK)) {
-            SubsystemRecord r;
-            // Every record of the cloak piece is its last line.
-            const bool stopped = cloak_piece(s, m, i, r);
-            end_piece(s);
-            if (stopped) return r;
-            continue;
-        }
-        if (s.piece == static_cast<int32_t>(SubsystemPiece::REPAIR)) {
-            SubsystemRecord r;
-            const bool stopped = repair_piece(s, m, i, r);
-            // As the shield's: an EVENT stops inside the piece (phase 3 once
-            // its last line ran); a RUN_PYTHON is the whole piece.
-            if (!stopped || r.type == SubsystemRecordType::RUN_PYTHON)
-                end_piece(s);
-            if (stopped) return r;
-            continue;
+                continue;
+            }
+            return r;
         }
         // ARTICULATION (THE ARTICULATION PIECE): tick_ship's `_rigless_key`
         // early-out, decided here. A ship tick_ship has found rigless at the
         // current articulated-part generation does nothing; every other ship
-        // (rigged, never ticked, generation bumped since, row gone, the
-        // hook) is Python's.
-        if (s.had_row[i] && !s.lost_row[i] && m.valid(h) &&
-            !(s.python_pieces & piece_bit(SubsystemPiece::ARTICULATION))) {
+        // (rigged, never ticked, generation bumped since, row gone) is
+        // Python's: articulation.tick_ship is kept.
+        if (s.had_row[i] && !s.lost_row[i] && m.valid(h)) {
             const int64_t g = m.object(h)->_rigless_gen;
             if (g != 0 && g == m.globals().ARTICULATION_GEN + 1) {
                 end_piece(s);
@@ -999,7 +1011,27 @@ SubsystemRecord next(SubsystemSession& s, Mirror& m) {
         return r;
     }
     s.done = true;
-    return SubsystemRecord{};
+    SubsystemRecord done;
+    done.code = static_cast<int64_t>(s.skips.size());
+    return done;
+}
+
+void repair_complete(SubsystemSession& s, int64_t h) {
+    if (s.repair_phase != 4 || s.repair_item == 0 ||
+        s.repair_worked[s.repair_item - 1] != h)
+        throw std::logic_error(
+            "subsystem stage: repair_complete for an item the session did "
+            "not hand to Python (REPAIR_SET)");
+    s.repair_completed.push_back(h);
+}
+
+uint64_t skip_count(SubsystemPiece p, SubsystemSkip why) {
+    return g_skips[static_cast<size_t>(p)][static_cast<size_t>(why)];
+}
+
+void reset_skip_counts() {
+    for (auto& row : g_skips)
+        for (auto& n : row) n = 0;
 }
 
 }  // namespace subsystems

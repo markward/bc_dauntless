@@ -18,12 +18,14 @@ it. Each set's ships open one native session (``combat_subsys_begin``, the handl
 the mirror registers them under: ``_nslot``), and the driver loops
 ``combat_subsys_next`` to DONE:
 
-* ``RUN_PYTHON(ship, piece)``: that piece of that ship, exactly as the
-  Python loop runs it -- the getter asked NOW (a handler may have detached
-  the subsystem since the ship's last record), the call made only when it
-  returns one: ``GetShieldSubsystem().Update(dt)``,
-  ``GetPowerSubsystem().Update(dt)``, ``GetCloakingSubsystem().Update(dt)``,
-  ``GetRepairSubsystem().Update(dt)``, ``articulation.tick_ship(ship, dt)``.
+* ``RUN_PYTHON(ship, ARTICULATION)``: ``articulation.tick_ship(ship, dt)``,
+  the one piece whose Python is kept. The other four pieces are native only
+  (phase 6 Task 8): a RUN_PYTHON naming one is a protocol error. A piece
+  the mirror cannot run is SKIPPED instead (subsystem_step.h THE SKIPS):
+  DONE's code says how many; each (piece, reason) is logged once
+  (``_log_once``, as fire control's no-fire is) and counted natively
+  (``skip_counts()``), and under DAUNTLESS_NATIVE_AUDIT=1 each is an audit
+  failure. The goldens hold every count at 0.
 * ``EVENT(ship, kind, code, a, b, sub)``: ``_EVENT_HANDLERS[kind](ship,
   code, a, b, sub, pins)`` posts the SDK event a native piece stopped for
   (ruling R3: stop and resume, never batched); `sub` is the Subsystem
@@ -39,8 +41,7 @@ THE SHIELD PIECE (Task 3) is native: ``ShieldSubsystem.Update`` bit for bit
 (subsystem_step.h THE SHIELD PIECE). A script that patches the methods it
 stands in for is NOT honoured, and there is no per-ship check for one (spec
 §3 "Mods and patches (Part A)": BC's per-tick update was internal C++ that
-ignored such patches). ``python_pieces`` (a piece mask, 0 in production) is
-the test-facing hook that hands every ship's piece to Python. The
+ignored such patches). The
 watcher-crossing protocol (``SHIELD_WATCHER``, ``SHIELD_WATCHER_TAIL``) is
 the one the battery watchers reuse.
 
@@ -49,10 +50,8 @@ consumer pump, bit for bit (subsystem_step.h THE POWER PIECE), under the
 same Part A rule. Its events: ``BREACH`` (the plant's ``_trigger_breach``,
 after the native piece latched ``_breach_fired``), ``BATTERY_WATCHER`` (a
 battery watcher's ``_update`` with the value it crossed to) and
-``POWER_TAIL`` (the rest of Update in Python, on a plant the piece could
-not finish). The power draw program (engine/appc/passive_power.py) is not
-used here: every native run drops the plant's program, and the Python
-path's next pump rebuilds one.
+``POWER_TAIL`` (the backup watcher's line, on a plant whose watchers a
+handler of the main one's crossing made unreadable).
 
 THE CLOAK AND REPAIR PIECES (Task 5) are native too:
 ``CloakingSubsystem.Update`` and ``RepairSubsystem.Update`` bit for bit
@@ -63,16 +62,17 @@ rule. The cloak's events: ``FORCE_DECLOAK`` (the cloak's own
 wrote the state). The bay's: ``REPAIR_CANNOT`` (ET_REPAIR_CANNOT_BE_COMPLETED
 mid-walk, after the native piece added the member to the notified set),
 ``REPAIR_DONE`` (Update's last loop, one item per record: the queue discard,
-then ET_REPAIR_COMPLETED) and ``REPAIR_TAIL`` (the rest of Update in Python,
-``_repair_walk`` or ``_repair_worked``, on a bay the piece could not
-finish). The bay's condition writes are damage.h's set_condition, applied
+then ET_REPAIR_COMPLETED) and ``REPAIR_SET`` (one worked item the native
+condition chain cannot repair, repaired here through the SDK's own
+``Repair``, ruling R8-3). The bay's condition writes are damage.h's set_condition, applied
 by ``combat_subsys_next`` under ``native_combat._dmg_context()`` exactly as
 SetCondition's native chain applies its own: the same writes, the same
 effect-queue entries, held to the boundary. The repair piece's locals
 (teams, points, the queue index, the worked and completed items) are read
 back with ``combat_subsys_repair_state``.
 
-Articulation is still RUN_PYTHON (Task 6).
+Articulation is RUN_PYTHON for rigged ships (Task 6 skips rigless ones
+natively).
 """
 import os
 import sys
@@ -94,11 +94,6 @@ _counts = {"stages": 0, "sessions": 0, "run_python": 0, "events": 0,
            "patched_stages": 0}
 #: EVENT records by kind name (event_counts()).
 _event_counts: dict = {}
-
-#: The test-facing hook: a mask of (1 << piece) the native session hands to
-#: Python for every ship (combat_subsys_begin's python_pieces). 0 in
-#: production; tests set it (and reset() clears it).
-python_pieces = 0
 
 #: The roster as the Python stage takes it, stock (taken at import): the
 #: driver walks the sets itself (iter_non_rock_ship_sets), so a patched
@@ -156,10 +151,11 @@ def _roster_is_stock() -> bool:
 def reset() -> None:
     """The switch off and the counts zeroed (native_combat.reset calls
     this)."""
-    global _switch, python_pieces
+    global _switch
     _switch = False
-    python_pieces = 0
     reset_counts()
+    if _h is not None and hasattr(_h, "combat_subsys_skip_counts_reset"):
+        _h.combat_subsys_skip_counts_reset()
 
 
 def reset_counts() -> None:
@@ -177,14 +173,20 @@ def event_counts() -> dict:
     return dict(_event_counts)
 
 
+def skip_counts() -> dict:
+    """THE SKIPS since the last reset (subsystem_step.h), counted natively:
+    {(piece name, reason name): count}, the non-zero ones."""
+    return dict(_h.combat_subsys_skip_counts())
+
+
 # ── The records ──────────────────────────────────────────────────────────────
 
 def _kinds():
     return _h.combat_subsys_kinds()
 
 
-_TYPES, _PIECES, _EVENTS = _kinds() if _h is not None and hasattr(
-    _h, "combat_subsys_kinds") else ({}, {}, {})
+_TYPES, _PIECES, _EVENTS, _SKIPS = _kinds() if _h is not None and hasattr(
+    _h, "combat_subsys_kinds") else ({}, {}, {}, {})
 DONE = _TYPES.get("DONE", 0)
 RUN_PYTHON = _TYPES.get("RUN_PYTHON", 1)
 EVENT = _TYPES.get("EVENT", 2)
@@ -202,8 +204,27 @@ FORCE_DECLOAK = _EVENTS.get("FORCE_DECLOAK", 5)
 CLOAK_DONE = _EVENTS.get("CLOAK_DONE", 6)
 REPAIR_CANNOT = _EVENTS.get("REPAIR_CANNOT", 7)
 REPAIR_DONE = _EVENTS.get("REPAIR_DONE", 8)
-REPAIR_TAIL = _EVENTS.get("REPAIR_TAIL", 9)
+REPAIR_SET = _EVENTS.get("REPAIR_SET", 9)
 _EVENT_NAMES = {v: k for k, v in _EVENTS.items()}
+_PIECE_NAMES = {v: k for k, v in _PIECES.items()}
+_SKIP_NAMES = {v: k for k, v in _SKIPS.items()}
+#: What each skip reason means, for its one log line.
+_SKIP_TEXT = {
+    "NO_ROW": "a ship the mirror has no row for",
+    "LOST_ROW": "a ship whose row was dropped mid-stage",
+    "REF": "a subsystem the mirror cannot name (unregistered, dropped, or "
+           "of another kind)",
+    "SHIELD_UNREADY": "a shield generator whose faces or watchers the "
+                      "mirror cannot read",
+    "OFFLINE": "an offline or condition question the mirror cannot answer",
+    "PROPERTY": "a property the mirror cannot read",
+    "BATTERY_WATCH": "battery watchers the mirror cannot read",
+    "PARENT_SHIP": "a power plant whose parent ship is not a ShipClass row",
+    "CONSUMER": "a power consumer the pump cannot run",
+    "QUEUE_MEMBER": "a repair-queue entry the mirror cannot name (that "
+                    "member is passed over)",
+    "BAY_GONE": "a repair bay whose row was dropped mid-stage",
+}
 
 #: The pins key of the session a handler's record came from (pins are
 #: otherwise keyed by row handle).
@@ -263,16 +284,15 @@ def _battery_watcher(ship, code, a, b, h, pins) -> None:
 
 
 def _power_tail(ship, code, a, b, h, pins) -> None:
-    """POWER_TAIL: the rest of plant `h`'s Update, in Python, on that same
-    plant: code 0 everything after the breach (``_update_flow(dt)``, dt in
-    `b`), code 1 the backup watcher's line (the backup limit in `a`, as
-    Update read it before the main watcher)."""
+    """POWER_TAIL (code 1): plant `h`'s backup watcher line, in Python, the
+    backup limit in `a` as the piece read it before the main watcher."""
+    if code != 1:
+        raise RuntimeError("native subsystems: POWER_TAIL code %r (only "
+                           "the backup watcher's line, code 1, exists)"
+                           % (code,))
     plant = _event_object(h, pins)
-    if code == 0:
-        plant._update_flow(b)
-    else:
-        plant._backup_battery_watcher._update(
-            plant._backup_battery_power / a if a > 0.0 else 0.0)
+    plant._backup_battery_watcher._update(
+        plant._backup_battery_power / a if a > 0.0 else 0.0)
 
 
 def _force_decloak(ship, code, a, b, h, pins) -> None:
@@ -298,7 +318,7 @@ def _repair_cannot(ship, code, a, b, h, pins) -> None:
     """REPAIR_CANNOT: bay `code`'s ET_REPAIR_CANNOT_BE_COMPLETED for member
     `h`, mid-walk (the native piece already added it to the notified set).
     The bay and the items worked so far are pinned first: a handler may
-    drop their rows, and a REPAIR_TAIL then still names them."""
+    drop their rows, and a REPAIR_SET then still names them."""
     bay = _event_object(code, pins)
     sub = _event_object(h, pins)
     for w in _repair_state(pins)[3]:
@@ -320,18 +340,24 @@ def _repair_done(ship, code, a, b, h, pins) -> None:
     bay._fire_repair_event("ET_REPAIR_COMPLETED", sub)
 
 
-def _repair_tail(ship, code, a, b, h, pins) -> None:
-    """REPAIR_TAIL: the rest of bay `code`'s Update, in Python, with the
-    native piece's locals: a 0 the walk from its queue index
-    (``_repair_walk``), a 1 the worked items' repair (``_repair_worked``);
-    dt in `b`."""
-    bay = _event_object(code, pins)
-    teams, points, index, worked, _completed = _repair_state(pins)
-    items = [_event_object(w, pins) for w in worked]
-    if a == 0.0:
-        bay._repair_walk(b, teams, points, index, items)
-    else:
-        bay._repair_worked(b, points, items)
+def _repair_set(ship, code, a, b, h, pins) -> None:
+    """REPAIR_SET: worked item `h` of bay `code`, which the native condition
+    chain could not repair (ruling R8-3): that one item's lines of the
+    repair tick, through the SDK-facing surface -- its complexity, ``Repair
+    (per_item / complexity)`` (SetCondition of min(max, condition + gain)),
+    then the completion test, reported back so the item joins the
+    completions in order. per_item in `a`. The bay and every worked item
+    are pinned first: a handler may drop a later item's row."""
+    _event_object(code, pins)
+    for w in _repair_state(pins)[3]:
+        _event_object(w, pins)
+    sub = _event_object(h, pins)
+    complexity = sub.GetRepairComplexity()
+    if complexity <= 0.0:
+        complexity = 1.0
+    sub.Repair(a / complexity)
+    if sub.GetCondition() >= sub.GetMaxCondition():
+        _h.combat_subsys_repair_complete(pins[_SESSION], h)
 
 
 #: EVENT kind -> handler(ship, code, a, b, sub, pins), posting that
@@ -344,40 +370,7 @@ _EVENT_HANDLERS: dict = {SHIELD_WATCHER: _shield_watcher,
                          CLOAK_DONE: _cloak_done,
                          REPAIR_CANNOT: _repair_cannot,
                          REPAIR_DONE: _repair_done,
-                         REPAIR_TAIL: _repair_tail}
-
-
-def _run_shield(ship, dt):
-    ss = ship.GetShieldSubsystem()
-    if ss is not None:
-        ss.Update(dt)
-
-
-def _run_power(ship, dt):
-    ps = ship.GetPowerSubsystem()
-    if ps is not None:
-        ps.Update(dt)
-
-
-def _run_cloak(ship, dt):
-    cl = ship.GetCloakingSubsystem()
-    if cl is not None:
-        cl.Update(dt)
-
-
-def _run_repair(ship, dt):
-    rs = ship.GetRepairSubsystem()
-    if rs is not None:
-        rs.Update(dt)
-
-
-def _run_articulation(ship, dt):
-    articulation.tick_ship(ship, dt)
-
-
-#: RUN_PYTHON piece -> the Python loop's own line for it (loop.py).
-_RUN = {SHIELD: _run_shield, POWER: _run_power, CLOAK: _run_cloak,
-        REPAIR: _run_repair, ARTICULATION: _run_articulation}
+                         REPAIR_SET: _repair_set}
 
 
 # ── The stage ────────────────────────────────────────────────────────────────
@@ -395,11 +388,9 @@ def step_all(dt: float) -> None:
 
 
 def _step_set(ships, dt) -> None:
-    session = _h.combat_subsys_begin([_handle(s) for s in ships], dt,
-                                     python_pieces)
+    session = _h.combat_subsys_begin([_handle(s) for s in ships], dt)
     _counts["sessions"] += 1
     nxt = _h.combat_subsys_next
-    run = _RUN
     registry = native_combat._registry
     dmg_context = native_combat._dmg_context
     pins: dict = {_SESSION: session}
@@ -411,16 +402,41 @@ def _step_set(ships, dt) -> None:
             _resync(ships)
             raise
         if rtype == DONE:
+            if code:
+                _skipped(session, ships)
             return
         ship = ships[pos]
         if rtype == RUN_PYTHON:
+            if kind != ARTICULATION:
+                raise RuntimeError(
+                    "native subsystems: a RUN_PYTHON for piece %r -- only "
+                    "ARTICULATION has a Python copy (stale build?)"
+                    % (_PIECE_NAMES.get(kind, kind),))
             _counts["run_python"] += 1
-            run[kind](ship, dt)
+            articulation.tick_ship(ship, dt)
         else:
             _counts["events"] += 1
             name = _EVENT_NAMES.get(kind, kind)
             _event_counts[name] = _event_counts.get(name, 0) + 1
             _EVENT_HANDLERS[kind](ship, code, a, b, sub, pins)
+
+
+def _skipped(session, ships) -> None:
+    """The session's skips (DONE's code): each (piece, reason) logged once,
+    and, under the audit, recorded as a failure (subsystem_step.h THE
+    SKIPS; the native counts are skip_counts())."""
+    audit = native_combat.audit_enabled()
+    for pos, piece, why, _sub in _h.combat_subsys_skips(session):
+        pname = _PIECE_NAMES.get(piece, piece)
+        wname = _SKIP_NAMES.get(why, why)
+        native_combat._log_once(
+            ("subsystems-skip", pname, wname),
+            "native subsystems: %s skipped for %s (%s) -- not run "
+            "(skip %s)" % (pname, type(ships[pos]).__name__,
+                           _SKIP_TEXT.get(wname, wname), wname))
+        if audit:
+            native_combat._failures.append(
+                ("subsystem stage", "skip %s %s" % (pname, wname)))
 
 
 def _resync(ships) -> None:

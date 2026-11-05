@@ -33,9 +33,7 @@ def _world(mp):
     random.seed(0)
     headless_mission.clear_in_flight()
     headless_mission.load("engine.dev_missions.combat_stress")
-    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1",
-                  "DAUNTLESS_NATIVE_SUBSYSTEMS": "1"})
-    assert native_subsystems.enabled()
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
     ships = list(iter_non_rock_ships())
     assert len(ships) == SHIPS
     return ships
