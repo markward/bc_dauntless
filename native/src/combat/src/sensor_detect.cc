@@ -739,4 +739,12 @@ void memo_clear(Mirror& m) {
     m.sensor_state().mounts.clear();
 }
 
+// The shared leaf predicates (sensor_detect.h): the ones the detection
+// kernel itself asks, so every native caller asks the same lines.
+bool subsystem_is_disabled(const SubsystemRow& s) { return IsDisabled(s); }
+bool subsystem_is_destroyed(const SubsystemRow& s) { return IsDestroyed(s); }
+bool subsystem_is_offline(const Mirror& m, const SubsystemRow& s) {
+    return _is_offline(m, &s);
+}
+
 }  // namespace dauntless::combat

@@ -447,26 +447,23 @@ TEST(ShieldStep, NoShieldIsNoRecordAndUnreadyIsPythons) {
     const int64_t foreign = w.bare_ship();
     const int64_t sh = w.shield(foreign);
     w.m.set_i(sh, Field::shield_watch_ok, 0);   // a watcher not adopted
-    const int64_t forced = w.bare_ship();
-    w.shield(forced);
-    const std::vector<int64_t> ships = {none, foreign, forced};
-    const std::vector<uint8_t> masks = {
-        0, 0, static_cast<uint8_t>(piece_bit(SubsystemPiece::SHIELD))};
-    SubsystemSession s = subsystems::begin(w.m, ships, kDt, 0, masks);
+    const std::vector<int64_t> ships = {none, foreign};
+    SubsystemSession s = subsystems::begin(w.m, ships, kDt);
     const auto all = drain(s, w.m);
-    ASSERT_EQ(all.size(), 4u + 5u + 5u);
+    ASSERT_EQ(all.size(), 4u + 5u);
     EXPECT_EQ(all[0].kind, static_cast<int32_t>(SubsystemPiece::POWER));
     EXPECT_EQ(all[4].ship_pos, 1);
     EXPECT_EQ(all[4].kind, static_cast<int32_t>(SubsystemPiece::SHIELD));
-    EXPECT_EQ(all[9].ship_pos, 2);
-    EXPECT_EQ(all[9].kind, static_cast<int32_t>(SubsystemPiece::SHIELD));
     EXPECT_TRUE(s.writes.empty());
 
-    // python_pieces: every ship's SHIELD is Python's.
+    // python_pieces (the test-facing hook): every ship's SHIELD is Python's.
+    const int64_t ready = w.bare_ship();
+    w.shield(ready);
     SubsystemSession p = subsystems::begin(
-        w.m, std::vector{foreign}, kDt, piece_bit(SubsystemPiece::SHIELD));
+        w.m, std::vector{ready}, kDt, piece_bit(SubsystemPiece::SHIELD));
     EXPECT_EQ(subsystems::next(p, w.m).kind,
               static_cast<int32_t>(SubsystemPiece::SHIELD));
+    EXPECT_TRUE(p.writes.empty());
 }
 
 TEST(ShieldStep, AnUnanswerableOfflineQuestionWritesNothing) {

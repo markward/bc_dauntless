@@ -13862,17 +13862,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                            &cb::SubsystemSession::python_pieces);
         m.def("combat_subsys_begin",
               [](const std::vector<std::int64_t>& ships, double dt,
-                 std::uint32_t python_pieces,
-                 const std::vector<std::uint8_t>& forced) {
+                 std::uint32_t python_pieces) {
                   return cb::subsystems::begin(cb::mirror(), ships, dt,
-                                               python_pieces, forced);
+                                               python_pieces);
               },
               py::arg("ships"), py::arg("dt"), py::arg("python_pieces") = 0,
-              py::arg("forced") = std::vector<std::uint8_t>{},
               "Begin one subsystem stage over `ships` (Object handles in "
               "roster order, -1 for a ship with no row) for a tick of `dt`. "
               "python_pieces: a mask (1 << piece) Python runs for every "
-              "ship; forced: [] or one such mask per ship.");
+              "ship (a test-facing hook).");
         m.def("combat_subsys_next",
               [](cb::SubsystemSession& s, py::object registry) {
                   const cb::SubsystemRecord r =

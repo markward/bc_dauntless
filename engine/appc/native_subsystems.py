@@ -36,38 +36,22 @@ the Python objects by ``combat_subsys_next`` before the record comes back
 (subsystem_write_apply.h), so the Python a record runs sees it.
 
 THE SHIELD PIECE (Task 3) is native: ``ShieldSubsystem.Update`` bit for bit
-(subsystem_step.h THE SHIELD PIECE). It needs the surface it stands in for
-to be stock, checked here: ``_SHIELD_SURFACE`` as taken at import (else
-``python_pieces`` hands every ship's shield piece to Python, counted in
-``shield_patched_stages``, and logged once), and per ship the ship's class
-and its generator's class resolving ``_SHIP_SHIELD_NAMES`` /
-``_SHIELD_NAMES`` to the stock functions with no instance attribute
-shadowing one (else that ship's piece is forced to Python). The surface is
-checked again after every EVENT (its handlers are SDK code); a change there
-hands the rest of the stage's shield pieces, and the rest of a watcher loop
-in progress, to Python. A ship's own overrides are read when the set's
-session begins. The watcher-crossing protocol (``SHIELD_WATCHER``,
-``SHIELD_WATCHER_TAIL``) is the one Task 4's battery watchers reuse.
-
-A ship whose mirror row is freed mid-walk while it lives on
-(``native_combat._drop``) is NOT skipped: the Python stage still updates
-it, so its remaining pieces come back as RUN_PYTHON and its row is never
-read again (Review Focus 3; subsystem_step.h FREED ROWS). A ship with no
-row is all Python.
+(subsystem_step.h THE SHIELD PIECE). A script that patches the methods it
+stands in for is NOT honoured, and there is no per-ship check for one (spec
+§3 "Mods and patches (Part A)": BC's per-tick update was internal C++ that
+ignored such patches). ``python_pieces`` (a piece mask, 0 in production) is
+the test-facing hook that hands every ship's piece to Python. The
+watcher-crossing protocol (``SHIELD_WATCHER``, ``SHIELD_WATCHER_TAIL``) is
+the one Task 4's battery watchers reuse.
 
 Every piece but the shield is still RUN_PYTHON (Tasks 4-6).
 """
-import operator
 import os
 import sys
 from typing import Mapping
 
-from engine.appc import (articulation, native_combat, ship_death, ship_iter,
-                         subsystems)
-from engine.appc.float_range_watcher import FloatRangeWatcher
+from engine.appc import articulation, native_combat, ship_iter
 from engine.appc.ship_iter import iter_non_rock_ship_sets
-from engine.appc.ships import ShipClass
-from engine.appc.subsystems import ShieldSubsystem
 
 try:
     import _dauntless_host as _h
@@ -79,8 +63,12 @@ except ImportError:     # pragma: no cover -- a build without the module
 
 _switch = False
 _counts = {"stages": 0, "sessions": 0, "run_python": 0, "events": 0,
-           "patched_stages": 0, "shield_patched_stages": 0,
-           "shield_forced": 0}
+           "patched_stages": 0}
+
+#: The test-facing hook: a mask of (1 << piece) the native session hands to
+#: Python for every ship (combat_subsys_begin's python_pieces). 0 in
+#: production; tests set it (and reset() clears it).
+python_pieces = 0
 
 #: The roster as the Python stage takes it, stock (taken at import): the
 #: driver walks the sets itself (iter_non_rock_ship_sets), so a patched
@@ -138,8 +126,9 @@ def _roster_is_stock() -> bool:
 def reset() -> None:
     """The switch off and the counts zeroed (native_combat.reset calls
     this)."""
-    global _switch
+    global _switch, python_pieces
     _switch = False
+    python_pieces = 0
     reset_counts()
 
 
@@ -171,89 +160,6 @@ ARTICULATION = _PIECES.get("ARTICULATION", 4)
 SHIELD_WATCHER = _EVENTS.get("SHIELD_WATCHER", 0)
 SHIELD_WATCHER_TAIL = _EVENTS.get("SHIELD_WATCHER_TAIL", 1)
 
-_SHIELD_BIT = 1 << SHIELD
-
-
-# ── The shield piece's stock surface ─────────────────────────────────────────
-
-#: What the native piece stands in for on the generator (its class's
-#: resolution) and on the ship whose `_shield_subsystem` it is.
-_SHIELD_NAMES = ("Update", "IsOn", "GetSingleShieldPercentage",
-                 "GetShieldPercentage", "IsDisabled", "IsDestroyed",
-                 "GetParentShip", "NUM_SHIELDS")
-_SHIP_SHIELD_NAMES = ("GetShieldSubsystem", "IsDying", "IsDead")
-_SHIELD_SET = frozenset(_SHIELD_NAMES)
-_SHIP_SHIELD_SET = frozenset(_SHIP_SHIELD_NAMES)
-
-#: (owner, names): the functions and constants the piece stands in for, as
-#: the stock classes resolve them (through their MRO).
-_SHIELD_SURFACE = (
-    (subsystems, ("_is_offline", "SHIELD_CHARGE_PERIOD_S")),
-    (ship_death, ("_out_of_action",)),
-    (ShieldSubsystem, _SHIELD_NAMES),
-    (ShipClass, _SHIP_SHIELD_NAMES),
-    (FloatRangeWatcher, ("_update", "_fire_crossed", "_crossed",
-                         "FRW_BELOW", "FRW_ABOVE")),
-)
-
-
-def _take_snapshot():
-    return [(owner, operator.attrgetter(*names),
-             operator.attrgetter(*names)(owner))
-            for owner, names in _SHIELD_SURFACE]
-
-
-#: Taken at import, before any test, tool or mod can replace a name.
-_SHIELD_SNAPSHOT = _take_snapshot()
-
-
-def _shield_stock_holds() -> bool:
-    for owner, get, values in _SHIELD_SNAPSHOT:
-        try:
-            if get(owner) != values:
-                return False
-        except AttributeError:
-            return False
-    return True
-
-
-def _python_pieces() -> int:
-    """The pieces Python runs for every ship this stage."""
-    if _shield_stock_holds():
-        return 0
-    _counts["shield_patched_stages"] += 1
-    native_combat._log_once(
-        ("subsystems-shield-patched",),
-        "native subsystems: the shield piece's surface is patched; shields "
-        "regenerate in Python while it is")
-    return _SHIELD_BIT
-
-
-def _shield_native(ship, d, cache) -> bool:
-    """`ship`'s shield piece may be native: its class and its generator's
-    resolve the piece's names to the stock functions, and no instance
-    attribute shadows one. `cache`: class -> verdict, for this session."""
-    t = type(ship)
-    ok = cache.get(t)
-    if ok is None:
-        ok = cache[t] = native_combat._stock_surface(t, ShipClass,
-                                                     _SHIP_SHIELD_NAMES)
-    if not ok or not d.keys().isdisjoint(_SHIP_SHIELD_SET):
-        return False
-    sh = d.get("_shield_subsystem")
-    if sh is None:
-        return True
-    st = type(sh)
-    ok = cache.get(st)
-    if ok is None:
-        ok = cache[st] = native_combat._stock_surface(st, ShieldSubsystem,
-                                                      _SHIELD_NAMES)
-    if not ok:
-        return False
-    sd = getattr(sh, "__dict__", None)
-    return sd is not None and sd.keys().isdisjoint(_SHIELD_SET)
-
-
 # ── The event handlers ───────────────────────────────────────────────────────
 
 def _event_object(h, pins):
@@ -281,7 +187,11 @@ def _shield_watcher(ship, code, a, b, h, pins) -> None:
 def _shield_watcher_tail(ship, code, a, b, h, pins) -> None:
     """SHIELD_WATCHER_TAIL: the rest of the Python piece's watcher loop on
     generator `h`, from watcher `code` on, as Update's own lines run it."""
-    sub = pins[h]
+    sub = pins.get(h)
+    if sub is None:
+        raise RuntimeError(
+            "native subsystems: SHIELD_WATCHER_TAIL for generator row %r, "
+            "which no SHIELD_WATCHER of this session pinned" % (h,))
     for f in range(code, sub.NUM_SHIELDS):
         sub._shield_watchers[f]._update(sub.GetSingleShieldPercentage(f))
     sub._shield_watchers[sub.NUM_SHIELDS]._update(sub.GetShieldPercentage())
@@ -328,33 +238,21 @@ _RUN = {SHIELD: _run_shield, POWER: _run_power, CLOAK: _run_cloak,
 
 # ── The stage ────────────────────────────────────────────────────────────────
 
+def _handle(ship) -> int:
+    h = ship.__dict__.get("_nslot", -1)
+    return h if type(h) is int else -1
+
+
 def step_all(dt: float) -> None:
     """One subsystem stage, natively driven (module docstring)."""
     _counts["stages"] += 1
-    state = [_python_pieces()]
     for ships in iter_non_rock_ship_sets():
-        _step_set(ships, dt, state)
+        _step_set(ships, dt)
 
 
-def _entries(ships):
-    """Each ship's row handle (-1: none) and its forced-piece mask."""
-    handles, forced = [], []
-    cache: dict = {}
-    for ship in ships:
-        d = ship.__dict__
-        h = d.get("_nslot", -1)
-        handles.append(h if type(h) is int else -1)
-        if _shield_native(ship, d, cache):
-            forced.append(0)
-        else:
-            _counts["shield_forced"] += 1
-            forced.append(_SHIELD_BIT)
-    return handles, forced
-
-
-def _step_set(ships, dt, state) -> None:
-    handles, forced = _entries(ships)
-    session = _h.combat_subsys_begin(handles, dt, state[0], forced)
+def _step_set(ships, dt) -> None:
+    session = _h.combat_subsys_begin([_handle(s) for s in ships], dt,
+                                     python_pieces)
     _counts["sessions"] += 1
     nxt = _h.combat_subsys_next
     run = _RUN
@@ -375,10 +273,6 @@ def _step_set(ships, dt, state) -> None:
         else:
             _counts["events"] += 1
             _EVENT_HANDLERS[kind](ship, code, a, b, sub, pins)
-            # Its handlers were SDK code: the surface is asked again.
-            if not state[0] and _python_pieces():
-                state[0] = _SHIELD_BIT
-                session.python_pieces = state[0]
 
 
 def _resync(ships) -> None:

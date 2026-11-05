@@ -92,8 +92,6 @@ def test_sdk_set_charge_per_second_reaches_the_native_step():
     # ... and the native piece did it: no shield piece came back to Python.
     assert counts["stages"] == CHARGE_TICK
     assert _shield_records_python(counts, 3, CHARGE_TICK) == 0, counts
-    assert counts["shield_patched_stages"] == 0
-    assert counts["shield_forced"] == 0
 
 
 def test_a_crossing_fires_mid_stage_through_the_watchers_own_update():
@@ -140,39 +138,52 @@ def test_a_crossing_fires_mid_stage_through_the_watchers_own_update():
     assert counts["events"] == 2, counts
 
 
-def test_a_patched_surface_runs_the_shield_piece_in_python(monkeypatch):
-    """The piece stands in for `_is_offline`, Update, the watcher methods:
-    any of them replaced sends every shield piece to Python."""
+def test_python_pieces_hands_every_shield_piece_to_python():
+    """The test-facing hook: with SHIELD in ``python_pieces`` every ship's
+    shield piece comes back as a RUN_PYTHON record (ShieldSubsystem.Update
+    runs), and the state is bit for bit the native piece's."""
+    def run(hook):
+        with pytest.MonkeyPatch.context() as mp:
+            ships = _world(mp, True)
+            mp.setattr(native_subsystems, "python_pieces",
+                       (1 << native_subsystems.SHIELD) if hook else 0)
+            native_subsystems.reset_counts()
+            for f in range(6):
+                ships[0].GetShields().SetCurShields(f, 100.0)
+            _tick(CHARGE_TICK + 31)
+            return ([_faces(s) for s in ships],
+                    [s.GetShields()._charge_accum.hex() for s in ships],
+                    native_subsystems.counts())
+
+    na_faces, na_accum, na_counts = run(False)
+    py_faces, py_accum, py_counts = run(True)
+    ticks = CHARGE_TICK + 31
+    assert _shield_records_python(na_counts, 3, ticks) == 0, na_counts
+    assert _shield_records_python(py_counts, 3, ticks) == 3 * ticks
+    assert (py_faces, py_accum) == (na_faces, na_accum)
+
+
+def test_a_patched_method_is_not_honoured():
+    """Spec §3 "Mods and patches (Part A)": BC's per-tick update was
+    internal C++ that ignored a script's patch of an App method, and so is
+    the native piece -- a patched `_is_offline` or Update is never called
+    by the stage."""
     with pytest.MonkeyPatch.context() as mp:
         _world(mp, True)
         calls = []
-        orig = subsystems._is_offline
-
-        def offline(sub, _orig=orig):
-            calls.append(sub)
-            return _orig(sub)
-        mp.setattr(subsystems, "_is_offline", offline)
+        mp.setattr(subsystems, "_is_offline",
+                   lambda sub: calls.append(("offline", sub)) or True)
+        mp.setattr(subsystems.ShieldSubsystem, "Update",
+                   lambda self, dt: calls.append(("update", self)))
         native_subsystems.reset_counts()
         _tick(CHARGE_TICK)
         counts = native_subsystems.counts()
-    assert counts["shield_patched_stages"] == CHARGE_TICK, counts
-    assert _shield_records_python(counts, 3, CHARGE_TICK) == 3 * CHARGE_TICK
-    assert calls, "the Python Update never asked _is_offline"
-
-
-def test_an_instance_override_forces_that_ships_piece():
-    with pytest.MonkeyPatch.context() as mp:
-        ships = _world(mp, True)
-        seen = []
-        shields = ships[2].GetShields()
-        orig = shields.Update
-        shields.Update = lambda dt: (seen.append(dt), orig(dt))
-        native_subsystems.reset_counts()
-        _tick(3)
-        counts = native_subsystems.counts()
-    assert seen == [game_loop.TICK_DELTA] * 3
-    assert counts["shield_forced"] == 3, counts
-    assert _shield_records_python(counts, 3, 3) == 3
+    # The power plant's Python Update still asks _is_offline; no shield
+    # generator is ever asked, and no Update was called.
+    from engine.appc.subsystems import ShieldSubsystem
+    assert [c for c in calls if c[0] == "update"
+            or isinstance(c[1], ShieldSubsystem)] == []
+    assert _shield_records_python(counts, 3, CHARGE_TICK) == 0, counts
 
 
 def test_the_mirror_agrees_after_native_charges():

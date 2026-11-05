@@ -50,8 +50,10 @@
 // call at all; kRefUnrepresentable, or a since-freed row, is RUN_PYTHON;
 // a live row is native unless its shield_watch_ok is 0, a face list is not
 // six long, its `_is_offline` question is one the mirror cannot answer
-// (is_offline_after_condition throws), or the driver forced the piece to
-// Python (python_pieces, forced: an overridden or patched surface). Then:
+// (subsystem_is_offline throws), or python_pieces names SHIELD (a
+// test-facing hook). A script that patches ShieldSubsystem's methods is
+// NOT honoured (spec §3 "Mods and patches (Part A)": BC's per-tick update
+// was internal C++ that ignored such patches). Then:
 //   accum = accum + dt; below SHIELD_CHARGE_PERIOD_S: write accum, done.
 //   accum = 0; ramp[f] = cur[f]/max[f] (0 where max <= 0, NaN too);
 //   offline: if any face is non-zero, every face 0, then the watchers;
@@ -67,7 +69,8 @@
 // watcher's `_update(a)`, which fires the checks and commits the value
 // exactly as the Python piece does, and the next next() resumes with the
 // next index. When it resumes on a generator whose row is gone or no
-// longer native-ready (its handler dropped it, replaced a watcher, ...),
+// longer native-ready (its handler dropped it, replaced a watcher, ...)
+// or python_pieces now names SHIELD,
 // the rest of the loop is EVENT{SHIELD_WATCHER_TAIL, code = first index}:
 // Python runs the Python loop's remaining lines on that same generator.
 //
@@ -182,10 +185,9 @@ struct SubsystemSession {
     size_t ship_pos = 0;
     int32_t piece = 0;
     bool done = false;               // DONE was returned
-    // Pieces Python runs for every ship (the driver: a patched surface),
-    // and per ship (an overridden class or instance). piece_bit()s.
+    // Pieces Python runs for every ship: piece_bit()s. A test-facing hook
+    // (native_subsystems.python_pieces), never set in production.
     uint32_t python_pieces = 0;
-    std::vector<uint8_t> forced;     // empty, or one mask per ship
     // The shield piece's sub-piece position: 0 not begun; 1 inside the
     // watcher loop of generator `shield`, next watcher `watcher` (THE
     // WATCHERS: an EVENT stopped it there).
@@ -199,11 +201,9 @@ namespace subsystems {
 
 // One stage over `ship_handles` (roster order; -1: a ship with no row) for
 // a tick of `dt`. `python_pieces`: piece_bit()s Python runs for every
-// ship; `forced`: empty, or one piece mask per ship. Reads which handles
-// are live; writes nothing.
+// ship (a test-facing hook). Reads which handles are live; writes nothing.
 SubsystemSession begin(const Mirror& m, std::span<const int64_t> ship_handles,
-                       double dt, uint32_t python_pieces = 0,
-                       std::span<const uint8_t> forced = {});
+                       double dt, uint32_t python_pieces = 0);
 
 // The next record (THE RECORDS). Throws std::logic_error after DONE.
 SubsystemRecord next(SubsystemSession& s, Mirror& m);

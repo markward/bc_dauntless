@@ -56,6 +56,17 @@ namespace dauntless::combat {
 bool is_offline_after_condition(const Mirror& m, const SubsystemRow& sub);
 double condition_percentage(const Mirror& m, const SubsystemRow& sub);
 
+// ShipSubsystem.IsDisabled / IsDestroyed (reading _max_condition, not the
+// property max) and subsystems._is_offline on a leaf subsystem, as the
+// detection kernel asks them. subsystem_is_offline throws
+// std::invalid_argument where the mirror cannot answer (an unrepresentable
+// parent, a parent ship that is not a ShipClass row): the caller hands that
+// question to Python. Shared with the subsystem stage (subsystem_step.cc:
+// the shield piece; the power plant's recharge gate).
+bool subsystem_is_disabled(const SubsystemRow& s);
+bool subsystem_is_destroyed(const SubsystemRow& s);
+bool subsystem_is_offline(const Mirror& m, const SubsystemRow& s);
+
 // sensor_detection.effective_sensor_range
 double effective_sensor_range(const Mirror& m, int64_t ship);
 

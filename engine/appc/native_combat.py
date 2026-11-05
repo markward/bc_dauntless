@@ -1691,14 +1691,13 @@ def _push_has_shields_arg(sub, _arg) -> None:
 # each plain FloatRangeWatcher in the list is ADOPTED (its `_shield_owner`
 # is the generator, `_shield_index` its place), and an adopted watcher
 # pushes the generator's row on every value it commits (`_update`) and every
-# check it adds or removes. shield_watch_ok is 1 only for seven stock
-# watchers, each adopted by this generator at its index, with no owner of
-# another kind and no instance override of the methods the piece stands in
-# for; anything else is 0 and the piece is Python's.
+# check it adds or removes. shield_watch_ok is 1 only for seven
+# FloatRangeWatchers, each adopted by this generator at its index, with no
+# owner of another kind; anything else is 0 and the piece is Python's. A
+# script patching the watcher's methods is not honoured (spec §3 "Mods and
+# patches (Part A)").
 
 _SHIELD_WATCHERS = 7
-_WATCHER_OVERRIDES = frozenset(("_update", "_fire_crossed", "_crossed",
-                                "_fire"))
 _NOT_READY = (0, [], [])
 
 
@@ -1721,8 +1720,7 @@ def _shield_watch_state(sub):
         if (wd.get("_shield_owner") is not sub
                 or wd.get("_shield_index") != i
                 or wd.get("_owner") is not None
-                or wd.get("_cond_owner") is not None
-                or not _WATCHER_OVERRIDES.isdisjoint(wd)):
+                or wd.get("_cond_owner") is not None):
             return _NOT_READY
         v = wd.get("_value")
         cd = wd.get("_checks")

@@ -54,27 +54,6 @@ constexpr int32_t kWatchers = 7; // the faces, then the combined watcher
 
 // ── The shield piece (subsystem_step.h THE SHIELD PIECE) ─────────────────
 
-// ShipSubsystem.IsDisabled (subsystems.py): reads _max_condition.
-bool is_disabled(const SubsystemRow& s) {
-    if (s._max_condition <= 0.0) return false;
-    const double threshold = s._disabled_percentage * s._max_condition;
-    return s._condition <= threshold;
-}
-
-// ShipSubsystem.IsDestroyed.
-bool is_destroyed(const SubsystemRow& s) {
-    if (s._destroyed) return true;
-    if (s._max_condition > 0.0 && s._condition <= 0.0) return true;
-    return false;
-}
-
-// subsystems._is_offline(sub). Throws std::invalid_argument where the
-// mirror cannot answer (is_offline_after_condition).
-bool is_offline(const Mirror& m, const SubsystemRow& s) {
-    if (is_disabled(s) || is_destroyed(s)) return true;
-    return is_offline_after_condition(m, s);
-}
-
 // Where each watcher's checks start in shield_watch_checks (its count
 // there, then its (threshold, code) pairs). False: the list is malformed.
 bool check_offsets(const SubsystemRow& s,
@@ -105,8 +84,11 @@ bool shield_ready(const SubsystemRow& s, std::array<size_t, kWatchers>& at) {
 }
 
 // ShieldSubsystem.GetSingleShieldPercentage(f) for f in 0..5, and
-// GetShieldPercentage() for the combined watcher (6): `sum` is Python's
-// left-to-right float sum from 0.
+// GetShieldPercentage() for the combined watcher (6). Its two `sum()`s are
+// CPython 3.11's: a plain left-to-right double sum from 0 (int 0 + the
+// first float is that float, -0.0 reading 0.0, as 0.0 + -0.0 does here).
+// CPython 3.12+ sums floats with compensated (Neumaier) summation, which
+// this loop does NOT reproduce: moving the engine past 3.11 changes this.
 double watched_value(const SubsystemRow& s, int32_t w) {
     if (w < static_cast<int32_t>(kFaces)) {
         const size_t f = static_cast<size_t>(w);
@@ -213,9 +195,7 @@ bool shield_piece(SubsystemSession& s, Mirror& m, size_t i,
     }
     const bool python =
         !s.had_row[i] || s.lost_row[i] ||
-        (s.python_pieces & piece_bit(SubsystemPiece::SHIELD)) ||
-        (!s.forced.empty() &&
-         (s.forced[i] & piece_bit(SubsystemPiece::SHIELD)));
+        (s.python_pieces & piece_bit(SubsystemPiece::SHIELD));
     if (python) {
         out = python_piece(s, i);
         return true;
@@ -245,7 +225,7 @@ bool shield_piece(SubsystemSession& s, Mirror& m, size_t i,
     // hands the whole piece back with nothing written.
     bool offline;
     try {
-        offline = is_offline(m, *row);
+        offline = subsystem_is_offline(m, *row);
     } catch (const std::invalid_argument&) {
         out = python_piece(s, i);
         return true;
@@ -295,8 +275,7 @@ void end_piece(SubsystemSession& s) {
 }  // namespace
 
 SubsystemSession begin(const Mirror& m, std::span<const int64_t> ship_handles,
-                       double dt, uint32_t python_pieces,
-                       std::span<const uint8_t> forced) {
+                       double dt, uint32_t python_pieces) {
     SubsystemSession s;
     s.ships.assign(ship_handles.begin(), ship_handles.end());
     s.had_row.reserve(s.ships.size());
@@ -305,12 +284,6 @@ SubsystemSession begin(const Mirror& m, std::span<const int64_t> ship_handles,
     s.lost_row.assign(s.ships.size(), 0);
     s.dt = dt;
     s.python_pieces = python_pieces;
-    if (!forced.empty()) {
-        if (forced.size() != s.ships.size())
-            throw std::invalid_argument(
-                "subsystem stage: one forced mask per ship");
-        s.forced.assign(forced.begin(), forced.end());
-    }
     return s;
 }
 

@@ -15,7 +15,7 @@ from engine.appc import articulation
 from engine.appc import native_combat as nc
 from engine.appc import native_subsystems
 from engine.appc.subsystems import (CloakingSubsystem, PowerSubsystem,
-                                    RepairSubsystem, ShieldSubsystem)
+                                    RepairSubsystem)
 from engine.core import loop as game_loop
 from tests.helpers import bc_assets, headless_mission
 
@@ -42,8 +42,11 @@ def _world(mp, native):
 
 
 def _spy(mp, calls):
-    """Every one of the stage's five calls, logged (method, ship name) and
-    then run."""
+    """Every Python call of the stage, logged (method, ship name) and then
+    run: power, cloak, repair and articulation. The shield piece is native
+    (Task 3) and a patched ShieldSubsystem.Update is not honoured (spec §3
+    "Mods and patches (Part A)"), so it is not spied on: the counts and the
+    differential cover it."""
     def method(cls, label):
         orig = cls.Update
 
@@ -52,7 +55,6 @@ def _spy(mp, calls):
             return _orig(self, dt)
         mp.setattr(cls, "Update", update)
 
-    method(ShieldSubsystem, "shield")
     method(PowerSubsystem, "power")
     method(CloakingSubsystem, "cloak")
     method(RepairSubsystem, "repair")
@@ -85,29 +87,30 @@ def test_step_all_matches_the_python_stage_call_for_call():
     ships = {name for _, name, _ in python}
     assert len(ships) == 3, ships
     kinds = {k for k, _, _ in python}
-    # A Warbird is in the cast: all five pieces run.
-    assert kinds == {"shield", "power", "cloak", "repair", "articulation"}
-    assert on["run_python"] > 0 and on["events"] == 0, on
+    # A Warbird is in the cast: all four Python pieces run.
+    assert kinds == {"power", "cloak", "repair", "articulation"}
+    # ... and every shield piece was native: four records per ship per stage.
+    assert on["run_python"] == 4 * 3 * TICKS, on
     assert native == python
 
 
 def test_a_ship_that_loses_a_subsystem_mid_walk(monkeypatch):
     """The driver asks the ship for each piece when its record comes, as the
-    Python loop does: a handler (here, the shield Update) that detaches a
+    Python loop does: a handler (here, the power Update) that detaches a
     LATER piece of the same ship removes that call, in both stages."""
     def run(native):
         calls = []
         with pytest.MonkeyPatch.context() as mp:
             _world(mp, native)
             _spy(mp, calls)
-            orig = ShieldSubsystem.Update
+            orig = PowerSubsystem.Update
 
             def update(self, dt, _orig=orig):
                 _orig(self, dt)
                 ship = self.GetParentShip()
                 if ship.GetCloakingSubsystem() is not None:
                     ship._cloaking_subsystem = None
-            mp.setattr(ShieldSubsystem, "Update", update)
+            mp.setattr(PowerSubsystem, "Update", update)
             game_loop._update_ship_subsystems()
         return calls
 
@@ -120,8 +123,9 @@ def test_a_row_dropped_mid_walk_is_still_updated():
     """A row freed mid-walk while its ship lives on (native_combat._drop: a
     value the mirror cannot hold) is not skipped: the Python stage still
     runs that ship's remaining pieces, so the native stage hands them back
-    too (controller ruling, Task 2 fix round 1). Ship 0's shield Update
-    drops ship 0's own row (between its pieces) and a LATER ship's."""
+    too (controller ruling, Task 2 fix round 1). Ship 0's power Update
+    drops ship 0's own row (between its pieces) and a LATER ship's, whose
+    SHIELD piece then comes back to Python too."""
     from engine.appc.ship_iter import iter_non_rock_ships
 
     def run(native):
@@ -132,7 +136,7 @@ def test_a_row_dropped_mid_walk_is_still_updated():
             assert all(isinstance(s.__dict__.get("_nslot"), int)
                        for s in ships)
             _spy(mp, calls)
-            orig = ShieldSubsystem.Update
+            orig = PowerSubsystem.Update
             dropped = []
 
             def update(self, dt, _orig=orig):
@@ -141,7 +145,7 @@ def test_a_row_dropped_mid_walk_is_still_updated():
                     for ship in (ships[0], ships[2]):
                         nc._drop(ship)
                         dropped.append(ship.__dict__.get("_nslot"))
-            mp.setattr(ShieldSubsystem, "Update", update)
+            mp.setattr(PowerSubsystem, "Update", update)
             for _ in range(2):
                 game_loop._update_ship_subsystems()
             assert dropped == [None, None]      # the rows are gone
@@ -152,7 +156,7 @@ def test_a_row_dropped_mid_walk_is_still_updated():
 
     python, names = run(False)
     # The dropped ships kept running: power, repair and articulation, both
-    # ticks (the shield's own call is before the drop).
+    # ticks (ship 0's power call is the one that drops).
     for name in names:
         kinds = [k for k, n, _ in python if n == name]
         assert kinds.count("power") == kinds.count("repair") == \
