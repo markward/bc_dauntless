@@ -159,7 +159,7 @@ def test_cloaked_ship_dropped_from_target_list_view(monkeypatch):
         from engine.ui.target_list_view import TargetListView
         view = TargetListView()
         _pump(menu, player)
-        rows_before = view._snapshot()[3]
+        rows_before = view._snapshot()[5]
         names_before = {r[0] for r in rows_before}
         assert "Enemy" in names_before
 
@@ -168,7 +168,7 @@ def test_cloaked_ship_dropped_from_target_list_view(monkeypatch):
         # drops the row -- which is the production path, run every frame.
         enemy.GetCloakingSubsystem().InstantCloak()
         _pump(menu, player)
-        rows_after = view._snapshot()[3]
+        rows_after = view._snapshot()[5]
         names_after = {r[0] for r in rows_after}
         assert "Enemy" not in names_after
     finally:
@@ -194,11 +194,11 @@ def test_cloaked_ship_stays_in_target_list_view_inside_the_bubble():
         view = TargetListView()
         enemy.GetCloakingSubsystem().InstantCloak()
         _pump(menu, player)
-        assert "Enemy" in {r[0] for r in view._snapshot()[3]}
+        assert "Enemy" in {r[0] for r in view._snapshot()[5]}
 
         enemy.SetTranslateXYZ(0, outside_gu(sensorless_gu()), 0)
         _pump(menu, player)
-        assert "Enemy" not in {r[0] for r in view._snapshot()[3]}
+        assert "Enemy" not in {r[0] for r in view._snapshot()[5]}
     finally:
         _gmod._current_game = saved
 

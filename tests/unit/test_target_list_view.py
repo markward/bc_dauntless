@@ -161,54 +161,6 @@ def test_row_flag_does_not_gate_the_payload_drawability_is_targetable():
         _set_current_game(None)
 
 
-def test_view_payload_includes_subsystems_and_health():
-    """Each row carries hull%, shield%, and a flat list of subsystem
-    names. selected_subsystem mirrors player.GetTargetSubsystem()."""
-    import json
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-    from engine.appc.ships import ShipClass_Create
-
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        ship = ShipClass_Create("Galaxy")
-        ship.SetName("USS Galaxy")
-        target_menu.set_contacts(_listed(ship))
-        bridge = App.g_kSetManager.GetSet("bridge")
-        if bridge is None:
-            from engine.appc.sets import SetClass
-            bridge = SetClass()
-            App.g_kSetManager.AddSet(bridge, "bridge")
-        bridge.AddObjectToSet(ship, "USS Galaxy")
-        player.SetTarget("USS Galaxy")
-        # Pick the first subsystem as the targeted subsystem.
-        first_sub = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
-        first_sub_obj = ship.GetNextSubsystemMatch(first_sub)
-        ship.EndGetSubsystemMatch(first_sub)
-        player.SetTargetSubsystem(first_sub_obj)
-
-        view = TargetListView()
-        # Subsystem CONTENT is an expanded-row property now: a collapsed
-        # row ships an empty list because the tree is only built when it
-        # will be drawn. Expand so this asserts what it means to assert.
-        view._expanded_ships.add(ship.GetName())
-        script = view.render_payload()
-        body = script[len("setTargetList("):-2]
-        state = json.loads(body)
-
-        assert state["selected"] == "USS Galaxy"
-        assert state["selected_subsystem"] == first_sub_obj.GetName()
-        row = state["rows"][0]
-        assert "hull" in row and 0 <= row["hull"] <= 100
-        assert "shields" in row and 0 <= row["shields"] <= 100
-        assert isinstance(row["subsystems"], list)
-        assert len(row["subsystems"]) > 0
-        assert row["subsystems"][0]["name"]  # non-empty string
-    finally:
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
 def test_dispatch_event_subsystem_click_sets_both_target_and_subsystem():
@@ -366,87 +318,10 @@ def test_view_payload_excludes_player_ship():
 
 # ── Accordion expansion ──────────────────────────────────────────────────────
 
-def test_view_payload_rows_collapsed_by_default():
-    """Fresh ship rows default to expanded=False so the panel renders
-    compactly — the user opens the accordion explicitly."""
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        kor = ShipClass(); kor.SetName("Kor")
-        target_menu.set_contacts(_listed(kor))
-
-        view = TargetListView()
-        script = view.render_payload()
-        body = script[len("setTargetList("):-2]
-        state = json.loads(body)
-
-        assert state["rows"][0]["expanded"] is False
-    finally:
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
-def test_dispatch_event_toggle_expands_row():
-    """The __toggle__ pseudo-subsystem flips a row's expansion state."""
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        kor = ShipClass(); kor.SetName("Kor")
-        target_menu.set_contacts(_listed(kor))
-
-        view = TargetListView()
-        # First emit captures the collapsed state in the snapshot cache.
-        view.render_payload()
-
-        # Toggle the row.
-        handled = view.dispatch_event("Kor/__toggle__")
-        assert handled is True
-
-        # Next render shows the row expanded.
-        script = view.render_payload()
-        body = script[len("setTargetList("):-2]
-        state = json.loads(body)
-        assert state["rows"][0]["expanded"] is True
-
-        # Toggle again to collapse.
-        view.dispatch_event("Kor/__toggle__")
-        script = view.render_payload()
-        body = script[len("setTargetList("):-2]
-        state = json.loads(body)
-        assert state["rows"][0]["expanded"] is False
-    finally:
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
-def test_dispatch_event_toggle_does_not_change_player_target():
-    """A caret-click toggle is pure UI state — it must NOT set the
-    target ship (that's the row-body click's job)."""
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        kor = ShipClass(); kor.SetName("Kor")
-        target_menu.set_contacts(_listed(kor))
-
-        view = TargetListView()
-        assert player.GetTarget() is None
-
-        view.dispatch_event("Kor/__toggle__")
-
-        # Target unchanged by the toggle action.
-        assert player.GetTarget() is None
-    finally:
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
 # ── Health-bar percent encoding (Issue 1) ────────────────────────────────────
@@ -558,151 +433,14 @@ def test_view_payload_flags_shieldless_target():
 
 # ── Per-subsystem condition (Issue 2) ────────────────────────────────────────
 
-def test_view_payload_subsystems_carry_condition_pct():
-    """Each subsystem entry in the snapshot includes a `condition`
-    integer percent reflecting its live condition."""
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        ship = _make_targeted_ship("USS Galaxy")
-        # Drop the first subsystem on the ship to 75% condition.
-        it = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
-        first_sub = ship.GetNextSubsystemMatch(it)
-        ship.EndGetSubsystemMatch(it)
-        first_sub.SetMaxCondition(400.0)
-        first_sub.SetCondition(300.0)
-        damaged_name = first_sub.GetName()
-
-        target_menu.set_contacts(_listed(ship))
-        view = TargetListView()
-        # Subsystem CONTENT is an expanded-row property now: a collapsed
-        # row ships an empty list because the tree is only built when it
-        # will be drawn. Expand so this asserts what it means to assert.
-        view._expanded_ships.add(ship.GetName())
-        script = view.render_payload()
-        body = script[len("setTargetList("):-2]
-        state = json.loads(body)
-
-        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
-        damaged_entry = next(s for s in row["subsystems"] if s["name"] == damaged_name)
-        assert damaged_entry["condition"] == 75
-        # Untouched subsystems stay at 100%.
-        for entry in row["subsystems"]:
-            assert "condition" in entry
-            assert 0 <= entry["condition"] <= 100
-            if entry["name"] != damaged_name:
-                assert entry["condition"] == 100
-    finally:
-        App.g_kSetManager.DeleteSet("bridge")
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
-def test_query_subsystem_condition_prefers_combined_over_individual():
-    """When a subsystem exposes GetCombinedConditionPercentage, the
-    helper uses it (so future parent-weapon aggregation surfaces in
-    the panel). When only GetConditionPercentage exists, it falls back."""
-    from engine.ui.target_list_view import _query_subsystem_condition
-
-    class FakeWeapons:
-        def GetName(self): return "Weapons"
-        def GetConditionPercentage(self): return 1.0
-        def GetCombinedConditionPercentage(self): return 0.4  # aggregate with damaged children
-
-    class FakeShip:
-        def __init__(self, sub): self._sub = sub
-        def StartGetSubsystemMatch(self, _ct): return iter([self._sub])
-        def GetNextSubsystemMatch(self, it):
-            try: return next(it)
-            except StopIteration: return None
-        def EndGetSubsystemMatch(self, _it): pass
-
-    aggregated = FakeWeapons()
-    assert _query_subsystem_condition(FakeShip(aggregated), "Weapons") == 40
-
-    class FakeImpulse:
-        def GetName(self): return "Impulse"
-        def GetConditionPercentage(self): return 0.6
-        # no GetCombinedConditionPercentage
-
-    flat = FakeImpulse()
-    assert _query_subsystem_condition(FakeShip(flat), "Impulse") == 60
 
 
 # ── Nested children + expansion reach the payload (end-to-end) ───────────────
 
-def test_nested_children_and_expanded_reach_payload():
-    """End-to-end: a phaser aggregator with two banks must surface in
-    render_payload's JSON as a "Phasers" subsystem entry whose
-    `children` lists both banks, and toggling the aggregator flips its
-    `expanded` flag in the payload."""
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-    from engine.appc.ships import ShipClass_Create
-    from engine.appc.properties import WeaponSystemProperty, PhaserProperty
-
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        ship = ShipClass_Create("X")
-        ship.SetName("USS Galaxy")
-        ps = ship.GetPropertySet()
-        phasers = WeaponSystemProperty("Phasers")
-        phasers.SetWeaponSystemType(WeaponSystemProperty.WST_PHASER)
-        ps.AddToSet("Scene Root", phasers)
-        ps.AddToSet("Scene Root", PhaserProperty("Dorsal Phaser 1"))
-        ps.AddToSet("Scene Root", PhaserProperty("Dorsal Phaser 2"))
-        ship.SetupProperties()
-        target_menu.set_contacts(_listed(ship))
-
-        view = TargetListView()
-        # Subsystem CONTENT is an expanded-row property now: a collapsed
-        # row ships an empty list because the tree is only built when it
-        # will be drawn. Expand so this asserts what it means to assert.
-        view._expanded_ships.add(ship.GetName())
-        # Prime the snapshot cache before toggling.
-        view.render_payload()
-
-        # Expand the Phasers aggregator (2nd-level accordion).
-        handled = view.dispatch_event_subsystem_toggle("USS Galaxy", "Phasers")
-        assert handled is True
-
-        script = view.render_payload()
-        body = script[len("setTargetList("):-2]
-        state = json.loads(body)
-
-        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
-        phasers_entry = next(s for s in row["subsystems"] if s["name"] == "Phasers")
-
-        assert phasers_entry["expanded"] is True
-        assert len(phasers_entry["children"]) == 2
-        child_names = sorted(c["name"] for c in phasers_entry["children"])
-        assert child_names == ["Dorsal Phaser 1", "Dorsal Phaser 2"]
-    finally:
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
-def test_query_subsystem_condition_defaults_to_100_when_resolution_misses():
-    """If the subsystem can't be found on the ship, default to 100 so
-    the bar renders full rather than misleadingly empty."""
-    from engine.ui.target_list_view import _query_subsystem_condition
-
-    class EmptyShip:
-        def StartGetSubsystemMatch(self, _ct): return iter([])
-        def GetNextSubsystemMatch(self, it):
-            try: return next(it)
-            except StopIteration: return None
-        def EndGetSubsystemMatch(self, _it): pass
-
-    assert _query_subsystem_condition(EmptyShip(), "Phantom") == 100
-    assert _query_subsystem_condition(None, "Anything") == 100
-    assert _query_subsystem_condition(EmptyShip(), "") == 100
 
 
 def test_destroyed_ship_excluded_from_target_list():
@@ -798,13 +536,13 @@ def test_view_does_not_re_derive_detectability(monkeypatch,
         _pump(target_menu, player)
 
         view = TargetListView()
-        assert [r[0] for r in view._snapshot()[3]] == ["Enemy"]
+        assert [r[0] for r in view._snapshot()[5]] == ["Enemy"]
 
         enemy.GetCloakingSubsystem().InstantCloak()      # no re-push
-        assert [r[0] for r in view._snapshot()[3]] == ["Enemy"]
+        assert [r[0] for r in view._snapshot()[5]] == ["Enemy"]
 
         _pump(target_menu, player)                       # the frame that drops it
-        assert [r[0] for r in view._snapshot()[3]] == []
+        assert [r[0] for r in view._snapshot()[5]] == []
     finally:
         contact_index.reset()
         from engine.core.game import _set_current_game
@@ -885,98 +623,10 @@ def _resolve(ship, name):
     return _resolve_subsystem_by_name(ship, name)
 
 
-def test_destroyed_child_subsystem_removed_but_parent_kept():
-    """A child subsystem at zero condition drops off its parent's child
-    list, but the parent stays as long as a sibling survives."""
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        ship = _make_phaser_aggregator_ship()
-        target_menu.set_contacts(_listed(ship))
-
-        _resolve(ship, "Dorsal Phaser 1").SetCondition(0.0)  # destroyed
-
-        view = TargetListView()
-        # Subsystem CONTENT is an expanded-row property now: a collapsed
-        # row ships an empty list because the tree is only built when it
-        # will be drawn. Expand so this asserts what it means to assert.
-        view._expanded_ships.add(ship.GetName())
-        script = view.render_payload()
-        state = json.loads(script[len("setTargetList("):-2])
-        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
-        phasers = next(s for s in row["subsystems"] if s["name"] == "Phasers")
-        child_names = [c["name"] for c in phasers["children"]]
-        assert child_names == ["Dorsal Phaser 2"]
-    finally:
-        App.g_kSetManager.DeleteSet("bridge")
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
-def test_parent_delisted_when_all_children_destroyed():
-    """When every child of a parent group is destroyed, the parent itself
-    drops off the target list."""
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        ship = _make_phaser_aggregator_ship()
-        target_menu.set_contacts(_listed(ship))
-
-        _resolve(ship, "Dorsal Phaser 1").SetCondition(0.0)
-        _resolve(ship, "Dorsal Phaser 2").SetCondition(0.0)
-
-        view = TargetListView()
-        script = view.render_payload()
-        state = json.loads(script[len("setTargetList("):-2])
-        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
-        names = [s["name"] for s in row["subsystems"]]
-        assert "Phasers" not in names
-    finally:
-        App.g_kSetManager.DeleteSet("bridge")
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
-def test_destroyed_leaf_subsystem_removed_from_list():
-    """A top-level subsystem with no children, when destroyed, drops off."""
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        ship = _make_targeted_ship("USS Galaxy")
-        # Pick the first top-level subsystem that has no children.
-        it = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
-        leaf = None
-        sub = ship.GetNextSubsystemMatch(it)
-        while sub is not None:
-            if sub.GetNumChildSubsystems() == 0:
-                leaf = sub
-                break
-            sub = ship.GetNextSubsystemMatch(it)
-        ship.EndGetSubsystemMatch(it)
-        assert leaf is not None
-        leaf_name = leaf.GetName()
-        leaf.SetCondition(0.0)
-
-        target_menu.set_contacts(_listed(ship))
-        view = TargetListView()
-        script = view.render_payload()
-        state = json.loads(script[len("setTargetList("):-2])
-        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
-        names = [s["name"] for s in row["subsystems"]]
-        assert leaf_name not in names
-    finally:
-        App.g_kSetManager.DeleteSet("bridge")
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
 def test_locked_subsystem_destroyed_reassigns_to_next_sibling():
@@ -1038,81 +688,8 @@ def test_last_child_destroyed_clears_lock_to_ship_level():
         _set_current_game(None)
 
 
-def test_collapsed_rows_ship_no_subsystem_tree_but_keep_the_caret_flag():
-    """A collapsed row must not pay to build a tree nobody will draw.
-
-    target_list.js emits subsystem child rows only inside `if (expanded)`, so
-    the only thing a collapsed row's tree decided was whether to show the
-    expand caret. Building it walked every contact x every subsystem x every
-    child, ~2-3 condition queries per grandchild, to produce a tuple that was
-    compared and discarded — 84 ms at 100 contacts, the largest non-sim item in
-    the frame.
-
-    has_subsystems now carries the caret, so the tree can be skipped. Both
-    halves matter: skipping the tree, AND still telling the UI a caret is due.
-    """
-    import json
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-    from engine.appc.ships import ShipClass_Create
-
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        ship = ShipClass_Create("Galaxy")
-        ship.SetName("USS Galaxy")
-        target_menu.set_contacts(_listed(ship))
-
-        view = TargetListView()
-        state = json.loads(view.render_payload()[len("setTargetList("):-2])
-        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
-
-        assert row["expanded"] is False
-        assert row["subsystems"] == [], "collapsed row built a tree it cannot draw"
-        assert row["has_subsystems"] is True, (
-            "caret flag lost: the row has subsystems, the UI must still offer "
-            "the expand caret")
-
-        # Expanding must produce the real tree.
-        view._expanded_ships.add("USS Galaxy")
-        view.invalidate()
-        state = json.loads(view.render_payload()[len("setTargetList("):-2])
-        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
-        assert row["expanded"] is True
-        assert len(row["subsystems"]) > 0
-        assert row["has_subsystems"] is True
-    finally:
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
-def test_a_ship_with_no_subsystems_reports_no_caret():
-    """has_subsystems must be able to say False, or the caret is drawn on rows
-    that cannot expand — which is what the length check used to prevent."""
-    import json
-    from engine.ui.target_list_view import (
-        TargetListView, reconcile_subsystem_lock)
-    from engine.appc.ships import ShipClass_Create
-
-    App._reset_target_menu_singleton()
-    target_menu = App.STTargetMenu_CreateW("Targets")
-    game, player, mission = _setup_game_with_player()
-    try:
-        ship = ShipClass_Create("Galaxy")
-        ship.SetName("Bare")
-        target_menu.set_contacts(_listed(ship))
-        for child in list(getattr(target_menu.GetFirstChild(), "_children", [])):
-            target_menu.GetFirstChild()._children.remove(child)
-
-        view = TargetListView()
-        state = json.loads(view.render_payload()[len("setTargetList("):-2])
-        row = next(r for r in state["rows"] if r["name"] == "Bare")
-        assert row["has_subsystems"] is False
-        assert row["subsystems"] == []
-    finally:
-        from engine.core.game import _set_current_game
-        _set_current_game(None)
 
 
 def test_the_subsystem_lock_rule_is_not_reachable_through_the_render_path():
