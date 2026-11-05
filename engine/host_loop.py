@@ -1442,10 +1442,11 @@ def _push_combat_render_data(ships_list, *, ship_instances=None,
         host_io.set_warp_in_flash_params(_warp_in_flash_params())
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
         host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
+        memo = _ViewMemo()      # one in-view sweep for both beam feeds
         host_io.set_phaser_beams(_build_phaser_beam_render_data(
-            ships_list, ship_instances=ship_instances))
+            ships_list, ship_instances=ship_instances, memo=memo))
         host_io.set_tractor_beams(_build_tractor_beam_render_data(
-            ships_list, ship_instances=ship_instances))
+            ships_list, ship_instances=ship_instances, memo=memo))
 
 
 def _color_tuple(color):
@@ -1493,6 +1494,31 @@ def _torpedo_forward(t) -> tuple:
     return (v.x / mag, v.y / mag, v.z / mag)
 
 
+def _torpedo_colors(t):
+    """(brightness, core, glow, flares) dimmed by TORPEDO_BRIGHTNESS, the bolt
+    shell and core colours, and the glow RGB for the torpedo's light -- built
+    ONCE per model (CreateTorpedoModel / CreateDisruptorModel drop
+    `_vis_colors`), not per frame: the five _color_tuple reads were 224k calls
+    per 400 frames. Nothing else changes a torpedo's colours after creation
+    (SDK projectile scripts build their TGColorA locals, pass them in once and
+    never touch them again). The brightness knob is part of the entry, so a
+    changed TORPEDO_BRIGHTNESS rebuilds it."""
+    d = t.__dict__
+    c = d.get("_vis_colors")
+    if c is not None and c[0] == TORPEDO_BRIGHTNESS:
+        return c
+    glow = _color_tuple(t._glow_color)
+    c = d["_vis_colors"] = (
+        TORPEDO_BRIGHTNESS,
+        _dim_color(_color_tuple(t._core_color), TORPEDO_BRIGHTNESS),
+        _dim_color(glow, TORPEDO_BRIGHTNESS),
+        _dim_color(_color_tuple(t._flares_color), TORPEDO_BRIGHTNESS),
+        _color_tuple(t._shell_color),
+        _color_tuple(t._bolt_core_color),
+        glow[:3])
+    return c
+
+
 def _build_torpedo_render_data():
     """Convert projectiles._active into the dict shape set_torpedoes expects.
 
@@ -1530,22 +1556,20 @@ def _build_torpedo_render_data():
         pos = _frames.to_render(view, _frames.containing_set(t), p.x, p.y, p.z)
         if pos is None:
             continue
+        _b, core_c, glow_c, flares_c, shell_c, bolt_c, _g = _torpedo_colors(t)
         out.append({
             "position":      pos,
             "core_texture":  texture(t._core_texture),
-            "core_color":    _dim_color(_color_tuple(t._core_color),
-                                        TORPEDO_BRIGHTNESS),
+            "core_color":    core_c,
             "core_size_a":   t._core_size_a,
             "core_size_b":   t._core_size_b,
             "glow_texture":  texture(t._glow_texture),
-            "glow_color":    _dim_color(_color_tuple(t._glow_color),
-                                        TORPEDO_BRIGHTNESS),
+            "glow_color":    glow_c,
             "glow_size_a":   t._glow_size_a,
             "glow_size_b":   t._glow_size_b,
             "glow_size_c":   t._glow_size_c,
             "flares_texture": texture(t._flares_texture),
-            "flares_color":  _dim_color(_color_tuple(t._flares_color),
-                                        TORPEDO_BRIGHTNESS),
+            "flares_color":  flares_c,
             "num_flares":    t._num_flares,
             "flares_size_a": t._flares_size_a,
             "flares_size_b": t._flares_size_b,
@@ -1555,8 +1579,8 @@ def _build_torpedo_render_data():
             "forward":         _torpedo_forward(t),
             # Disruptor bolt colors are audit-authentic already — no
             # TORPEDO_BRIGHTNESS dimming (that knob is for the quad layers).
-            "shell_color":     _color_tuple(t._shell_color),
-            "bolt_core_color": _color_tuple(t._bolt_core_color),
+            "shell_color":     shell_c,
+            "bolt_core_color": bolt_c,
             "bolt_length":     float(t._bolt_length),
             "bolt_width":      float(t._bolt_width),
         })
@@ -1601,7 +1625,7 @@ def _build_dynamic_light_render_data():
             # The fade judged the VIEW position (the eye is in view
             # coordinates); the renderer takes it in render space.
             "position":  _frames.view_to_render(pos),
-            "color":     _color_tuple(t._glow_color)[:3],
+            "color":     _torpedo_colors(t)[6],
             "radius":    radius,
             "intensity": _TORPEDO_LIGHT_INTENSITY * fade,
         })
@@ -2466,17 +2490,63 @@ def _beam_descriptor_pair(ship, bank, ship_instances):
     ]
 
 
-def _ships_in_view(ships):
-    """(ship, its set, view) for each ship in the viewed frame -- the beam
-    builders' scope. A left-behind set's ships keep firing off-screen; their
-    beams stay out of the scene you are in. Nothing viewed: nothing yields."""
-    view = _frames.viewing_set()
-    if view is None:
-        return
-    for ship in ships:
-        pSet = _frames.containing_set(ship)
-        if _frames.offset_between(view, pSet) is not None:
-            yield ship, pSet, view
+class _ViewMemo:
+    """Which ships are in the viewed frame, answered once per ship per frame
+    and shared by the phaser and tractor builders (the old `_ships_in_view` ran its
+    containing_set + offset_between sweep over every ship twice a frame).
+    `view` is None when nothing is viewed; then no ship is in view."""
+
+    __slots__ = ("view", "_sets")
+
+    def __init__(self):
+        self.view = _frames.viewing_set()
+        self._sets = {}
+
+    def set_of(self, ship):
+        """The ship's set when it is in the viewed frame, else None."""
+        sets = self._sets
+        try:
+            return sets[ship]
+        except KeyError:
+            pass
+        r = None
+        if self.view is not None:
+            pSet = _frames.containing_set(ship)
+            if _frames.offset_between(self.view, pSet) is not None:
+                r = pSet
+        sets[ship] = r
+        return r
+
+
+def _firing_banks(sys_):
+    """The banks of `sys_` that are firing, in bank order -- what
+    `GetWeapon(i)` + `IsFiring()` over every bank yielded, read off the
+    authoritative `_firing` in the bank's own dict (where the native applier
+    and every Python writer put it) instead of two calls per bank. A bank
+    class or system that overrides those accessors takes the original calls."""
+    from engine.appc.weapon_subsystems import (
+        WeaponSystem, _EnergyWeaponFireMixin)
+    children = sys_.__dict__.get("_children")
+    if (type(children) is not list
+            or type(sys_).GetWeapon is not WeaponSystem.GetWeapon
+            or type(sys_).GetNumWeapons is not WeaponSystem.GetNumWeapons
+            or "GetWeapon" in sys_.__dict__
+            or "GetNumWeapons" in sys_.__dict__):
+        out = []
+        for i in range(sys_.GetNumWeapons()):
+            bank = sys_.GetWeapon(i)
+            if bank is not None and bank.IsFiring():
+                out.append(bank)
+        return out
+    stock = _EnergyWeaponFireMixin.IsFiring
+    out = []
+    for bank in children:
+        if type(bank).IsFiring is stock and "IsFiring" not in bank.__dict__:
+            if bank.__dict__.get("_firing"):
+                out.append(bank)
+        elif bank.IsFiring():
+            out.append(bank)
+    return out
 
 
 def _beam_pair_in_view(pair, view, ship_set, target):
@@ -2495,22 +2565,31 @@ def _beam_pair_in_view(pair, view, ship_set, target):
     return pair
 
 
-def _build_phaser_beam_render_data(ships, ship_instances=None):
+def _build_phaser_beam_render_data(ships, ship_instances=None, memo=None):
     """Snapshot active phaser beams for the renderer.
 
     Walks the PhaserSystem of every ship in the viewed frame; for each bank
     IsFiring()=1, yields the outer-shell + inner-core descriptor pair via
     _beam_descriptor_pair, endpoints in the viewed set's coordinates.
+    `memo` is the frame's shared _ViewMemo (made here when not given).
     """
     out = []
-    for ship, pSet, view in _ships_in_view(ships):
+    if memo is None:
+        memo = _ViewMemo()
+    if memo.view is None:
+        return out
+    view = memo.view
+    for ship in ships:
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
         if sys_ is None:
             continue
-        for i in range(sys_.GetNumWeapons()):
-            bank = sys_.GetWeapon(i)
-            if bank is None or not bank.IsFiring():
-                continue
+        banks = _firing_banks(sys_)
+        if not banks:
+            continue
+        pSet = memo.set_of(ship)
+        if pSet is None:
+            continue
+        for bank in banks:
             for d in _beam_pair_in_view(
                     _beam_descriptor_pair(ship, bank, ship_instances),
                     view, pSet, bank._target):
@@ -2533,7 +2612,7 @@ TRACTOR_BEAM_END_WIDTH_SCALE = 1.25
 TRACTOR_BEAM_BRIGHTNESS = 0.5
 
 
-def _build_tractor_beam_render_data(ships, ship_instances=None):
+def _build_tractor_beam_render_data(ships, ship_instances=None, memo=None):
     """Snapshot active tractor beams for the renderer.
 
     Mirrors _build_phaser_beam_render_data but walks each ship's
@@ -2547,18 +2626,26 @@ def _build_tractor_beam_render_data(ships, ship_instances=None):
     Tractor beams keep the emitter taper-in and normal body width, but flare the
     TARGET end out to TRACTOR_BEAM_END_WIDTH_SCALE × the body radius (the shader
     reads end_width_scale to make the target-end taper widen instead of pinch).
-    Frame-scoped exactly like the phaser builder (_ships_in_view).
+    Frame-scoped exactly like the phaser builder (_ViewMemo).
     """
     out = []
-    for ship, pSet, view in _ships_in_view(ships):
+    if memo is None:
+        memo = _ViewMemo()
+    if memo.view is None:
+        return out
+    view = memo.view
+    for ship in ships:
         sys_ = (ship.GetTractorBeamSystem()
                 if hasattr(ship, "GetTractorBeamSystem") else None)
         if sys_ is None:
             continue
-        for i in range(sys_.GetNumWeapons()):
-            bank = sys_.GetWeapon(i)
-            if bank is None or not bank.IsFiring():
-                continue
+        banks = _firing_banks(sys_)
+        if not banks:
+            continue
+        pSet = memo.set_of(ship)
+        if pSet is None:
+            continue
+        for bank in banks:
             for d in _beam_pair_in_view(
                     _beam_descriptor_pair(ship, bank, ship_instances),
                     view, pSet, bank._target):
