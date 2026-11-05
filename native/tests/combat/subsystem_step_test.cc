@@ -320,9 +320,14 @@ TEST(SubsystemStep, FreedBetweenPiecesSkipsTheRestOfThatShip) {
     ASSERT_EQ(breach.type, SubsystemRecordType::EVENT);
     EXPECT_EQ(breach.ship_pos, 0);
     // The BREACH handler cannot drop rows (it queues a deferred entry);
-    // were the plant's row gone, the resume is a broken invariant.
+    // were the plant's row gone, the rest of the piece is a skip
+    // (POST_BREACH_UNREADY), never a throw out of the stage.
     w.m.unregister_row(ps);
-    EXPECT_THROW(subsystems::next(s, w.m), std::logic_error);
+    EXPECT_EQ(walk(s, w.m), (std::vector<int64_t>{0, 1}));
+    ASSERT_EQ(s.skips.size(), 1u);
+    EXPECT_EQ(s.skips[0].piece, SubsystemPiece::POWER);
+    EXPECT_EQ(s.skips[0].why, SubsystemSkip::POST_BREACH_UNREADY);
+    EXPECT_EQ(s.skips[0].sub, ps);
 
     // Between pieces: ship 0's POWER piece ended with an EVENT; its handler
     // dropped the ship's row. CLOAK and REPAIR are skipped, LOST_ROW; a new
@@ -938,13 +943,9 @@ TEST(PowerStep, AnUnreadyPlantIsSkippedWithNothingWritten) {
     const int64_t ship = w.power_ship();
     const int64_t prop = w.power_prop(100.0, 1000.0, 1000.0, 1000.0, 1000.0);
     const int64_t ps = w.plant(ship, prop, 500.0, 500.0, 0.5);
-    w.m.set_f(ps, Field::_condition, 0.0);      // a breach is due
     w.consumer(ship, 0, 60.0);
-    std::vector<int64_t> list = w.m.get_ids(ship, Field::_powered_consumers);
-    list.push_back(kRefUnrepresentable);        // a consumer with no row
-    w.m.set_ids(ship, Field::_powered_consumers, list);
-    // Each unready reason in turn: skipped, nothing written (not even the
-    // breach latch), counted under its reason.
+    // Each unready reason in turn: skipped, nothing written, counted under
+    // its reason (a healthy plant: no breach due).
     const auto skipped = [&](SubsystemSkip why) {
         SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
         EXPECT_EQ(walk(s, w.m), std::vector<int64_t>{0});
@@ -956,9 +957,6 @@ TEST(PowerStep, AnUnreadyPlantIsSkippedWithNothingWritten) {
         EXPECT_EQ(w.m.get_i(ps, Field::_breach_fired), 0);
         EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.5);
     };
-    skipped(SubsystemSkip::CONSUMER);
-    list.pop_back();
-    w.m.set_ids(ship, Field::_powered_consumers, list);
     // A property whose values are not all read through its data bag.
     w.m.set_i(prop, Field::power_props_ok, 0);
     skipped(SubsystemSkip::PROPERTY);
@@ -974,7 +972,6 @@ TEST(PowerStep, AnUnreadyPlantIsSkippedWithNothingWritten) {
     // The interval's offline question unanswerable: a healthy plant (so
     // IsDisabled / IsDestroyed do not answer it first) whose parent
     // subsystem the mirror cannot name.
-    w.m.set_f(ps, Field::_condition, 1000.0);
     w.m.set_ref(ps, Field::_parent_subsystem, kRefUnrepresentable);
     skipped(SubsystemSkip::OFFLINE);
     w.m.set_ref(ps, Field::_parent_subsystem, -1);
@@ -987,6 +984,89 @@ TEST(PowerStep, AnUnreadyPlantIsSkippedWithNothingWritten) {
     SubsystemSession none = subsystems::begin(w.m, std::vector{ship}, kHalf);
     EXPECT_EQ(walk(none, w.m), std::vector<int64_t>{0});
     EXPECT_TRUE(none.skips.empty());
+}
+
+TEST(PowerStep, AnUnreadyConsumerIsSkippedAloneAndThePlantStillRuns) {
+    // A consumer the pump cannot run is passed over and counted (CONSUMER,
+    // that consumer only); the plant still recharges, sets its budgets,
+    // feeds every other consumer and its watchers.
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(100.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    const int64_t ps = w.plant(ship, prop, 500.0, 500.0, 0.5);
+    const int64_t ok = w.consumer(ship, 0, 60.0);
+    std::vector<int64_t> list = w.m.get_ids(ship, Field::_powered_consumers);
+    list.insert(list.begin(), kRefUnrepresentable);   // first in the order
+    w.m.set_ids(ship, Field::_powered_consumers, list);
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    EXPECT_EQ(walk(s, w.m), std::vector<int64_t>{0});
+    ASSERT_EQ(s.skips.size(), 1u);
+    EXPECT_EQ(s.skips[0].piece, SubsystemPiece::POWER);
+    EXPECT_EQ(s.skips[0].why, SubsystemSkip::CONSUMER);
+    EXPECT_EQ(s.skips[0].sub, kRefUnrepresentable);
+    // 0.5 + 0.5 reaches the interval: recharged 100 into main, the clock
+    // reset; the ready consumer drew its 30 (60/s x 0.5 s) from main.
+    EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_main_battery_power), 570.0);
+    EXPECT_EQ(w.m.get_f(ok, Field::_power_received), 30.0);
+    EXPECT_EQ(w.m.get_f(ps, Field::_power_wanted_total), 30.0);
+    EXPECT_EQ(w.m.get_floats(ps, Field::power_watch_values),
+              (std::vector<double>{0.57, 0.5}));
+}
+
+TEST(PowerStep, ADestroyedPlantWithAnUnreadyConsumerStillBreaches) {
+    // The breach check runs before readiness: an unready consumer cannot
+    // keep a destroyed plant from latching its breach.
+    World w;
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    const int64_t ps = w.plant(ship, prop, 500.0, 500.0, 0.0);
+    w.m.set_f(ps, Field::_condition, 0.0);      // destroyed
+    w.m.set_ids(ship, Field::_powered_consumers, {kRefUnrepresentable});
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    const SubsystemRecord r = subsystems::next(s, w.m);
+    ASSERT_EQ(r.type, SubsystemRecordType::EVENT);
+    EXPECT_EQ(static_cast<SubsystemEvent>(r.kind), SubsystemEvent::BREACH);
+    EXPECT_EQ(w.m.get_i(ps, Field::_breach_fired), 1);
+    EXPECT_EQ(walk(s, w.m), std::vector<int64_t>{0});
+    ASSERT_EQ(s.skips.size(), 1u);
+    EXPECT_EQ(s.skips[0].why, SubsystemSkip::CONSUMER);
+    // And a plant otherwise unready (its property) still breaches; the rest
+    // of its tick is then that reason's skip.
+    World v;
+    const int64_t ship2 = v.power_ship();
+    const int64_t prop2 = v.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    const int64_t ps2 = v.plant(ship2, prop2, 500.0, 500.0, 0.0);
+    v.m.set_f(ps2, Field::_condition, 0.0);
+    v.m.set_i(prop2, Field::power_props_ok, 0);
+    SubsystemSession t = subsystems::begin(v.m, std::vector{ship2}, kHalf);
+    ASSERT_EQ(static_cast<SubsystemEvent>(subsystems::next(t, v.m).kind),
+              SubsystemEvent::BREACH);
+    walk(t, v.m);
+    ASSERT_EQ(t.skips.size(), 1u);
+    EXPECT_EQ(t.skips[0].why, SubsystemSkip::PROPERTY);
+    EXPECT_EQ(v.m.get_f(ps2, Field::_interval_elapsed), 0.0);
+}
+
+TEST(PowerStep, APlantNoLongerReadyAfterItsBreachIsSkipped) {
+    // Ready before the breach, unready after its handler (a property it
+    // swapped): a POST_BREACH_UNREADY skip, counted; never a throw.
+    World w;
+    subsystems::reset_skip_counts();
+    const int64_t ship = w.power_ship();
+    const int64_t prop = w.power_prop(0.0, 1000.0, 1000.0, 1000.0, 1000.0);
+    const int64_t ps = w.plant(ship, prop, 500.0, 500.0, 0.0);
+    w.m.set_f(ps, Field::_condition, 0.0);
+    SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kHalf);
+    ASSERT_EQ(static_cast<SubsystemEvent>(subsystems::next(s, w.m).kind),
+              SubsystemEvent::BREACH);
+    w.m.set_i(prop, Field::power_props_ok, 0);
+    EXPECT_EQ(walk(s, w.m), std::vector<int64_t>{0});
+    ASSERT_EQ(s.skips.size(), 1u);
+    EXPECT_EQ(s.skips[0].why, SubsystemSkip::POST_BREACH_UNREADY);
+    EXPECT_EQ(subsystems::skip_count(SubsystemPiece::POWER,
+                                     SubsystemSkip::POST_BREACH_UNREADY), 1u);
+    EXPECT_EQ(w.m.get_f(ps, Field::_interval_elapsed), 0.0);
 }
 
 // ── The cloak piece (Task 5; subsystem_step.h THE CLOAK PIECE) ───────────

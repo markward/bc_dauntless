@@ -168,8 +168,10 @@ _PIECE_NAMES = {v: k for k, v in _PIECES.items()}
 _SKIP_NAMES = {v: k for k, v in _SKIPS.items()}
 #: What each skip reason means, for its one log line.
 _SKIP_TEXT = {
-    "NO_ROW": "a ship the mirror has no row for",
-    "LOST_ROW": "a ship whose row was dropped mid-stage",
+    "NO_ROW": "a ship the mirror has no row for -- the freeze persists for "
+              "that ship: it is skipped every stage until it has a row",
+    "LOST_ROW": "a ship whose row was dropped mid-stage -- the freeze "
+                "persists for that ship: it has no row from now on",
     "REF": "a subsystem the mirror cannot name (unregistered, dropped, or "
            "of another kind)",
     "SHIELD_UNREADY": "a shield generator whose faces or watchers the "
@@ -178,10 +180,13 @@ _SKIP_TEXT = {
     "PROPERTY": "a property the mirror cannot read",
     "BATTERY_WATCH": "battery watchers the mirror cannot read",
     "PARENT_SHIP": "a power plant whose parent ship is not a ShipClass row",
-    "CONSUMER": "a power consumer the pump cannot run",
+    "CONSUMER": "a power consumer the pump cannot run (that consumer is "
+                "passed over; the plant still runs)",
     "QUEUE_MEMBER": "a repair-queue entry the mirror cannot name (that "
                     "member is passed over)",
     "BAY_GONE": "a repair bay whose row was dropped mid-stage",
+    "POST_BREACH_UNREADY": "a power plant its BREACH handler left "
+                           "unreadable (the rest of its tick)",
 }
 
 #: The pins key of the session a handler's record came from (pins are

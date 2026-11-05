@@ -156,8 +156,12 @@ def test_a_row_dropped_mid_walk_skips_its_pieces(capsys):
     for p in four:
         for why in ("LOST_ROW", "NO_ROW"):
             assert err.count("skip %s)" % why) >= 1
-    # Logged ONCE per (piece, reason), however often it recurs.
+    # Logged ONCE per (piece, reason), however often it recurs -- and the
+    # line says the freeze lasts: a ship without its row is never run again.
     assert err.count("SHIELD skipped") == 2, err
+    for line in err.splitlines():
+        if "skip NO_ROW" in line or "skip LOST_ROW" in line:
+            assert "persists" in line, line
 
 
 def test_a_skip_is_an_audit_failure():

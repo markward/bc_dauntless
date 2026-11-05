@@ -100,14 +100,16 @@
 // shield's does: -1 (None) is no call; kRefUnrepresentable, a since-freed
 // row or a row whose power_kind is not a plant's is a skip (REF). A live
 // plant is native unless something the piece will read is one the mirror
-// cannot answer -- then a skip with NOTHING written (power_unready): its
+// cannot answer -- then, after the breach (which reads only the plant's
+// own row), a skip with nothing else written (power_unready): its
 // `_property` unrepresentable or not power_props_ok (PROPERTY); its battery
 // watchers not power_watch_ok (BATTERY_WATCH); its `_parent_ship` (whose
 // `_powered_consumers` the pump walks) not a live ShipClass row
-// (PARENT_SHIP); a consumer not a live row of a known power_kind, or a
-// tractor system's children not all live tractor beams (CONSUMER); the
-// interval's `_is_offline` question or condition percentage unanswerable
-// (OFFLINE). A script patching PowerSubsystem's, a consumer's or a property's
+// (PARENT_SHIP); the interval's `_is_offline` question or condition
+// percentage unanswerable (OFFLINE). A consumer not a live row of a known
+// power_kind, or a tractor system whose children are not all live tractor
+// beams, is passed over by the pump alone (CONSUMER, that consumer only;
+// the rest of the plant runs). A script patching PowerSubsystem's, a consumer's or a property's
 // methods is not honoured (spec §3 "Mods and patches (Part A)"), and
 // neither is a consumer class's own GetPowerWanted: the wanted total is
 // the attach-order sum of `_power_wanted` (what the former Python pump's
@@ -148,10 +150,10 @@
 //           check crossed is EVENT{BATTERY_WATCHER, code = 0 main / 1
 //           backup, a = the value}, and Python calls that watcher's
 //           `_update(a)`. The next next() resumes with the backup watcher.
-// The resume after BREACH needs the plant still ready: BREACH's handler
-// (_trigger_breach) only reads and queues a deferred effect-queue entry, so
-// readiness cannot change there; a plant that is not is a broken invariant
-// (std::logic_error). A resume at the backup watcher on a plant whose row
+// The resume after BREACH asks readiness: a plant unready before its
+// breach is that reason's skip; one ready then and not now (BREACH's
+// handler only reads and queues a deferred entry, so this is defensive) is
+// a POST_BREACH_UNREADY skip. A resume at the backup watcher on a plant whose row
 // is gone or whose watchers are no longer ready hands that one line to
 // Python: EVENT{POWER_TAIL, code 1, a = the backup limit read before the
 // main watcher} (the backup watcher's own _update).
@@ -316,9 +318,10 @@ enum class SubsystemSkip : int32_t {
     PROPERTY,         // the subsystem's property unnamed, freed or not *_ok
     BATTERY_WATCH,    // the plant's battery watchers not native-ready
     PARENT_SHIP,      // the plant's parent ship not a live ShipClass row
-    CONSUMER,         // a consumer the pump cannot run
+    CONSUMER,         // a consumer the pump cannot run (that consumer)
     QUEUE_MEMBER,     // a repair-queue entry unnamed or freed (that member)
     BAY_GONE,         // the repair bay's row freed mid-piece
+    POST_BREACH_UNREADY,  // a plant no longer ready after its BREACH
     kCount
 };
 
@@ -445,6 +448,9 @@ struct SubsystemSession {
     int32_t power_phase = 0;
     int64_t power = -1;
     double power_backup_cap = 0.0;
+    // Phase 1: whether the plant was ready when its BREACH was returned
+    // (unready after it then is POST_BREACH_UNREADY).
+    bool power_ready_before = false;
     // The repair piece's sub-piece position (THE REPAIR PIECE): 0 not
     // begun; 1 inside the walk of bay `repair` (a REPAIR_CANNOT stopped
     // it; next: queue index `repair_index`); 4 repairing the worked items

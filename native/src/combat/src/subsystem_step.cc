@@ -67,6 +67,7 @@ const char* subsystem_skip_name(SubsystemSkip k) {
         case SubsystemSkip::CONSUMER: return "CONSUMER";
         case SubsystemSkip::QUEUE_MEMBER: return "QUEUE_MEMBER";
         case SubsystemSkip::BAY_GONE: return "BAY_GONE";
+        case SubsystemSkip::POST_BREACH_UNREADY: return "POST_BREACH_UNREADY";
         case SubsystemSkip::kCount: break;
     }
     return "?";
@@ -355,8 +356,8 @@ SubsystemSkip power_unready(const Mirror& m, const SubsystemRow& p,
     const ObjectRow* ship = m.object(p._parent_ship);
     if (ship == nullptr || !ship->is_ship_class)
         return SubsystemSkip::PARENT_SHIP;
-    for (int64_t c : ship->_powered_consumers)
-        if (!consumer_ready(m, c)) return SubsystemSkip::CONSUMER;
+    // A consumer the pump cannot run is not the plant's readiness: the pump
+    // passes over that one consumer (a CONSUMER skip, power_flow).
     if (p._interval_elapsed + dt >= m.globals().POWER_INTERVAL) {
         try {
             (void)subsystem_is_offline(m, p);
@@ -592,14 +593,27 @@ bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
         p.available = p.main_conduit + p.backup_conduit;
         p.wrote_budgets = true;
     }
-    // The pump: the parent ship's consumers, in attach order.
+    // The pump: the parent ship's consumers, in attach order. A consumer
+    // the pump cannot run (its row unnamed or freed, an unknown kind, a
+    // tractor's beams unreadable) is passed over and counted -- a CONSUMER
+    // skip, that consumer only, as the repair walk's QUEUE_MEMBER -- and
+    // left out of the wanted total; every other consumer still draws.
     const std::vector<int64_t>& consumers =
         m.object(row._parent_ship)->_powered_consumers;
     bool wrote_total = false;
     double total = 0.0;
     if (!consumers.empty()) {
-        for (int64_t c : consumers) update_power(s, m, c, p);
-        for (int64_t c : consumers) total += m.subsystem(c)->_power_wanted;
+        std::vector<int64_t> ready;
+        ready.reserve(consumers.size());
+        for (int64_t c : consumers) {
+            if (consumer_ready(m, c)) {
+                ready.push_back(c);
+            } else {
+                skip(s, i, SubsystemPiece::POWER, SubsystemSkip::CONSUMER, c);
+            }
+        }
+        for (int64_t c : ready) update_power(s, m, c, p);
+        for (int64_t c : ready) total += m.subsystem(c)->_power_wanted;
         wrote_total = true;
     }
     m.set_f(ph, Field::_interval_elapsed, interval);
@@ -643,15 +657,20 @@ bool power_piece(SubsystemSession& s, Mirror& m, size_t i,
                  SubsystemRecord& out) {
     constexpr SubsystemPiece kP = SubsystemPiece::POWER;
     if (s.power_phase == 1) {
-        // Resumed after the breach's handler, _trigger_breach: it reads and
-        // queues a deferred effect-queue entry, nothing else, so the plant
-        // it was ready before is ready now (ruling R8-5, B13).
+        // Resumed after the breach's handler (_trigger_breach: it reads and
+        // queues a deferred effect-queue entry). The readiness asked now: a
+        // plant unready before its breach is that reason's skip; one ready
+        // then and not now (a handler changed what the piece reads) is a
+        // POST_BREACH_UNREADY skip -- counted, never a throw (R8-1).
         const SubsystemRow* row = m.subsystem(s.power);
-        if (row == nullptr ||
-            power_unready(m, *row, s.dt) != SubsystemSkip::kCount)
-            throw std::logic_error(
-                "subsystem stage: the plant is no longer ready after its "
-                "BREACH (its handler changed what the power piece reads)");
+        const SubsystemSkip why =
+            row == nullptr ? SubsystemSkip::POST_BREACH_UNREADY
+                           : power_unready(m, *row, s.dt);
+        if (why != SubsystemSkip::kCount)
+            return skip(s, i, kP,
+                        s.power_ready_before ? SubsystemSkip::POST_BREACH_UNREADY
+                                             : why,
+                        s.power);
         return power_flow(s, m, i, out);
     }
     if (s.power_phase == 2) return backup_watcher(s, m, i, out);
@@ -665,15 +684,19 @@ bool power_piece(SubsystemSession& s, Mirror& m, size_t i,
     if (row == nullptr || row->power_kind != kPlant)
         return skip(s, i, kP, SubsystemSkip::REF, ph);
     const SubsystemSkip why = power_unready(m, *row, s.dt);
-    if (why != SubsystemSkip::kCount) return skip(s, i, kP, why, ph);
     s.power = ph;
+    // The breach first (Update's first line): it reads only the plant's
+    // own row, so an unready rest of the plant cannot keep a destroyed one
+    // from latching it.
     if (subsystem_is_destroyed(*row) && !row->_breach_fired) {
         m.set_i(ph, Field::_breach_fired, 1);
         log(s, ph, SubsystemWriteKind::BREACH_FIRED, 0, 1.0);
         s.power_phase = 1;
+        s.power_ready_before = why == SubsystemSkip::kCount;
         out = event(s, i, SubsystemEvent::BREACH, ph, 0, 0.0);
         return true;
     }
+    if (why != SubsystemSkip::kCount) return skip(s, i, kP, why, ph);
     return power_flow(s, m, i, out);
 }
 
@@ -932,6 +955,7 @@ void end_piece(SubsystemSession& s) {
     s.power_phase = 0;
     s.power = -1;
     s.power_backup_cap = 0.0;
+    s.power_ready_before = false;
     // repair_worked / repair_completed are kept: REPAIR_DONE's handlers read
     // them (combat_subsys_repair_state) after the record that ended the
     // piece.
