@@ -622,32 +622,31 @@ def test_unimportable_pulse_module_does_not_fire(monkeypatch):
         w.close()
 
 
-def test_apply_writes_thaws_frozen_consumers(monkeypatch):
-    """A NativeFrozenField write (`_is_on`) thaws its frozen consumer, and a
-    NativeThawParentWakeField write (a tractor beam's `_firing`) thaws the
-    frozen parent system -- without pushing either value."""
-    from engine.appc import passive_power
+def test_apply_writes_store_quietly(monkeypatch):
+    """A logged write of a plain NativeField (`_is_on`) and of a
+    NativeWakeField (a tractor beam's `_firing`, which wakes the sleeping
+    weapon) land on the object without pushing either value (the kernel
+    already holds it)."""
+    from engine.appc import passive_state
     ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),)
-    w = World(monkeypatch, True, ships, "k1_thaw")
+    w = World(monkeypatch, True, ships, "k1_quiet")
     try:
         galaxy = w.ships["Galaxy"]
         phasers = galaxy.GetPhaserSystem()
         h = phasers.__dict__["_nslot"]
-        phasers.__dict__["_power_frozen"] = True
         before = _h.combat_dump(h)["_is_on"]
         nc.apply_writes([(h, "_is_on", 0 if before else 1)])
-        assert phasers.__dict__["_power_frozen"] is False
+        assert bool(phasers.__dict__["_is_on"]) is (not before)
         assert _h.combat_dump(h)["_is_on"] == before          # not pushed
 
         tractors = galaxy.GetTractorBeamSystem()
         beam = tractors.GetWeapon(0)
         bh = beam.__dict__["_nslot"]
         assert not beam._firing
-        tractors.__dict__["_power_frozen"] = True
-        thawed = passive_power.counts()["thawed"]
+        beam.__dict__["_passive_asleep"] = True
         nc.apply_writes([(bh, "_firing", True)])
-        assert tractors.__dict__["_power_frozen"] is False
-        assert passive_power.counts()["thawed"] == thawed + 1
+        assert beam.__dict__["_firing"] is True
+        assert not passive_state.is_asleep(beam)              # woken
         assert _h.combat_dump(bh)["_firing"] == 0              # not pushed
     finally:
         w.close()

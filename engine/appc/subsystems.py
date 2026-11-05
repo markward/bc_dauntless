@@ -23,8 +23,6 @@ from engine.core.ids import implements
 import engine.dev_mode as dev_mode
 from engine.appc import ship_death as _ship_death
 from engine.appc import passive_weapons
-from engine.appc import passive_power, passive_state
-from engine.appc.passive_power import FrozenField
 from engine.appc import native_combat
 from engine.appc import death_check as _death_check
 from engine.appc import effect_queue as _effect_queue
@@ -1263,7 +1261,6 @@ class ShipSubsystem(TGEventHandlerObject):
         ship = self._climb_to_ship()
         if ship is not None:
             passive_weapons.invalidate(ship)
-            passive_power.invalidate(ship)
             native_combat.push_mount_order(ship)     # combat._iter_subsystems
 
     def GetCritical(self) -> int:                       return self._critical
@@ -1379,7 +1376,7 @@ PSM_BACKUP_ONLY = 2
 # bypassing the per-interval conduit budget and UNSCALED by the power-slider
 # percentage (measured 600 flat with sliders 1.25, not 600*1.25). Used by
 # TractorBeamSystem via the DRAWS_DIRECT_FROM_MAIN class flag, which is what
-# _update_power actually branches on.
+# the native pump actually branches on (subsystem_step.h THE POWER PIECE).
 PSM_DIRECT_MAIN = 3
 
 
@@ -1394,37 +1391,20 @@ class PoweredSubsystem(ShipSubsystem):
     # q10 (tools/probes/results/q10_battery_drain.txt): a subsystem whose draw
     # is a DIRECT main-battery steal — bypasses the conduit budget and is NOT
     # scaled by _power_percentage_wanted. Only TractorBeamSystem sets this True;
-    # every conduit-routed consumer leaves it False and uses power._draw().
+    # every conduit-routed consumer leaves it False and draws by POWER_MODE.
     DRAWS_DIRECT_FROM_MAIN = native_combat.NativeClassDefault(bool, False)
 
-    # The power draw program (engine/appc/passive_power.py) may freeze this
-    # consumer while its demand is steady and met: the inputs and outputs of
-    # _update_power below are watched, and any write thaws it. A class that
-    # overrides _update_power / _wants_power / GetPowerWanted is a call op
-    # unless its OWN class sets _POWER_FREEZABLE = True (an inherited opt-in
-    # does not count). An opted-in rule must have EVERY input watched,
-    # including inputs on other objects (those need a thaw descriptor like
-    # ThawParentWakeField, as the tractor's beams use). passive_power._build
-    # mirrors _update_power's branches (not wanting / free / slider 0 / met):
-    # a change to those branches must change _build too. Residual risk: an
-    # inherited opt-in hides a subclass override of IsOn / GetNumWeapons /
-    # GetWeapon / a beam's IsFiring / _any_child_firing. The cloak sets False.
-    _POWER_FREEZABLE = True
-    _is_on = native_combat.NativeFrozenField(bool)
-    # Mirrored too: K0's holding tractor reads GetNormalPowerWanted() and
-    # GetPowerPercentage() (its starvation stop; fire control native only).
-    _normal_power = native_combat.NativeFrozenField(float)
-    # Mirrored for the motion kernel (impulse_output_fraction's slider);
-    # still a FrozenField, so a write thaws a frozen consumer.
-    _power_percentage_wanted = native_combat.NativeFrozenField(float)
-    # The native power piece writes and reads them (THE POWER PIECE).
-    _power_wanted = native_combat.NativeFrozenField(float)
-    _power_received = native_combat.NativeFrozenField(float)
-    _efficiency = native_combat.NativeFrozenField(float)
-    _power_factor = native_combat.NativeFrozenField(float)
-    # The audit compares a program tick with the full pump; the frozen flag is
-    # the program's bookkeeping, not consumer state.
-    _passive_audit_ignore = ("_power_frozen",)
+    # Mirrored: the native power piece reads and writes them (subsystem_
+    # step.h THE POWER PIECE); K0's holding tractor reads _normal_power and
+    # _efficiency (its starvation stop); the motion kernel reads the slider
+    # (impulse_output_fraction).
+    _is_on = native_combat.NativeField(bool)
+    _normal_power = native_combat.NativeField(float)
+    _power_percentage_wanted = native_combat.NativeField(float)
+    _power_wanted = native_combat.NativeField(float)
+    _power_received = native_combat.NativeField(float)
+    _efficiency = native_combat.NativeField(float)
+    _power_factor = native_combat.NativeField(float)
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -1498,60 +1478,12 @@ class PoweredSubsystem(ShipSubsystem):
     def _wants_power(self) -> bool:
         return bool(self._is_on)
 
-    def _update_power(self, dt: float, power) -> None:
-        """Draw this consumer's per-tick demand from ``power`` and record the
-        fed state.  Writes _power_wanted / _power_received / _efficiency
-        (received/wanted → GetPowerPercentage) and _power_factor
-        (received/normal → GetNormalPowerPercentage).
+    # The per-tick draw (the pump's rules for this consumer: not wanting
+    # power zeroes it, a free consumer is full function, DRAWS_DIRECT_FROM_
+    # MAIN steals, every other draws by its POWER_MODE) is NATIVE ONLY:
+    # subsystem_step.h THE POWER PIECE (phase 6 Task 8).
 
-        A consumer that doesn't want power (off / not engaged) is fully zeroed.
-        A "free" consumer (authored 0 pw/s — e.g. warp engines) wants nothing
-        yet runs at full function (efficiency 1.0, factor 1.0)."""
-        dt = float(dt)
-        if dt <= 0.0:
-            return
-        if not self._wants_power():
-            self._power_wanted = 0.0
-            self._power_received = 0.0
-            self._efficiency = 0.0
-            self._power_factor = 0.0
-            return
-        base = self._normal_power * dt
-        if base <= 0.0:
-            # Free consumer (authored 0 pw/s, e.g. warp engines): full function.
-            self._power_wanted = 0.0
-            self._power_received = 0.0
-            self._efficiency = 1.0
-            self._power_factor = 1.0
-            return
-        if self.DRAWS_DIRECT_FROM_MAIN:
-            # q10 direct siphon: the demand reported to PowerDisplay is still the
-            # slider-scaled figure (so the readout math is unchanged), but the
-            # ACTUAL draw is a flat StealPower(base) from the main battery —
-            # bypassing the conduit budget and unscaled by the slider (measured
-            # 600 flat with sliders 1.25). efficiency/factor come from
-            # received/base so the StopFiring starvation gate still engages when
-            # the main battery runs dry.
-            self._power_wanted = base * self._power_percentage_wanted
-            received = power.StealPower(base) if base > 0.0 else 0.0
-            self._power_received = received
-            self._efficiency = received / base if base > 0.0 else 1.0
-            self._power_factor = received / base
-            return
-        wanted = base * self._power_percentage_wanted
-        received = power._draw(wanted, self.POWER_MODE) if wanted > 0.0 else 0.0
-        self._record_draw(wanted, received, base)
 
-    def _record_draw(self, wanted: float, received: float, base: float) -> None:
-        """Record a conduit draw: the one copy of these four rules. Shared by
-        _update_power and the power draw program's short-draw path."""
-        self._power_wanted = wanted
-        self._power_received = received
-        self._efficiency = received / wanted if wanted > 0.0 else 1.0
-        self._power_factor = received / base
-
-    def _passive_power_thaw(self) -> None:
-        passive_power.thaw(self)
 
     # ── Subsystem event emission ─────────────────────────────────────────────
 
@@ -1575,11 +1507,6 @@ class PoweredSubsystem(ShipSubsystem):
         except Exception as _e:
             dev_mode.log_swallowed("subsystem event broadcast", _e)
 
-
-# The one getter whose body PowerSubsystem._pump_consumers is allowed to inline
-# as a raw `_power_wanted` read. Anything that overrides GetPowerWanted (as
-# PowerSubsystem itself does) fails the identity test there and gets called.
-_BASE_GET_POWER_WANTED = PoweredSubsystem.GetPowerWanted
 
 
 class HullSubsystem(ShipSubsystem):
@@ -2314,8 +2241,9 @@ class ShieldSubsystem(PoweredSubsystem):
     # expressed by short-circuiting the QUERIES — see GetSingleShieldPercentage
     # — rather than by destroying the state.
     #
-    # Regen is already gated on IsOn in Update(), so a powered-down generator
-    # holds its charge frozen rather than creeping back up.
+    # Regen is NOT gated on IsOn (stbc-oracle bible §5.3 S5; the native
+    # shield piece, subsystem_step.h THE SHIELD PIECE): a powered-down
+    # generator keeps regenerating the charge it is preserving.
 
     def TurnOff(self) -> None:
         """Power down the generator. Face charge is PRESERVED, not drained —
@@ -2402,98 +2330,22 @@ class ShieldSubsystem(PoweredSubsystem):
         self._charge_per_second[int(face)] = float(value)
         native_combat.push_field(self, "_charge_per_second")   # in place
 
-    def Update(self, dt: float) -> None:
-        """Per-tick regen: current += charge_per_second * dt, clamped to max.
-
-        The native subsystem stage stands in for this method, bit for bit
-        (native/src/combat/src/subsystem_step.cc, THE SHIELD PIECE in
-        subsystem_step.h), on a stock generator: change both.
-
-        Faces with max==0 are skipped so unshielded faces never accumulate.
-
-        Disabled-generator gate (Project 5 §4.4): when _is_offline(self),
-        skip the whole loop. _charge_per_second values are NOT mutated;
-        repair restores regen at the original rates on the next call.
-
-        Neither the alert level nor the generator's power setting gates or
-        scales regen. Measured on the original exe (stbc-oracle bible §5.3,
-        S5): a face preset to 50 % climbs at 9.2–9.5/s at red, yellow AND
-        green alert (`regen_{red,yellow,green}_face50`), and at 50 %
-        generator power wanted (`regen_power50_face50`). So a powered-down
-        (green) generator keeps regenerating the charge it is preserving,
-        and the power factor does not enter the rate. What a reactor that
-        cannot supply NormalPowerPerSecond does is bible §10 open — not
-        modelled here either way.
-        """
-        # ── BC's 0.5 s charge cadence ────────────────────────────────────
-        # ShieldClass's tick (0x0056A230, vtable slot 25) accumulates elapsed
-        # time into +0x154 and, while that accumulator is BELOW 0.5 (threshold
-        # at 0x008E529C), delegates to the PoweredSubsystem update and returns.
-        # The per-facing charge work happens once per 0.5 s of accumulated
-        # time, NOT per frame -- stbc-reference spec/ShieldFacingDamage.md
-        # section 6.1. We were running the whole per-facing loop at 60 Hz, i.e.
-        # 30x more often than the original.
-        #
-        # The accumulator is reset unconditionally once the threshold is
-        # crossed (BC step 3, before the disabled/off branch at step 5), so a
-        # ship that is offline or powered down for a while cannot bank time and
-        # then apply it as a burst when it comes back.
-        #
-        # Charge RATE is unchanged: the same per-second maths runs against the
-        # accumulated dt, so the total charge over any interval is what it was.
-        # Only the granularity changes -- regen now steps every 0.5 s, which is
-        # what the original did.
-        self._charge_accum = self._charge_accum + float(dt)
-        if self._charge_accum < SHIELD_CHARGE_PERIOD_S:
-            return
-        dt = self._charge_accum
-        self._charge_accum = 0.0
-        # The charge tick is where the ramp's fraction is refreshed.
-        for f in range(self.NUM_SHIELDS):
-            mx = self._max_shields[f]
-            self._ramp_fraction[f] = (self._current_shields[f] / mx) if mx > 0.0 else 0.0
-        native_combat.push_field(self, "_ramp_fraction")     # in place
-
-        if _is_offline(self):
-            # A disabled (or destroyed) generator does not merely stop
-            # regenerating — every face drops to zero and stays there.
-            # Measured on the original exe (stbc-oracle bible §5.3 S6,
-            # `regen_gen{50,20}_face50`): with the generator's condition
-            # below its DisabledPercentage, all six faces read 0 at once and
-            # nothing comes back until it is repaired; then regen refills
-            # them from zero. The generator is binary: healthy ⇒ shields,
-            # disabled ⇒ none.
-            if any(self._current_shields):
-                for f in range(self.NUM_SHIELDS):
-                    self._current_shields[f] = 0.0
-                native_combat.push_field(self, "_current_shields")
-                for f in range(self.NUM_SHIELDS):
-                    self._shield_watchers[f]._update(self.GetSingleShieldPercentage(f))
-                self._shield_watchers[self.NUM_SHIELDS]._update(
-                    self.GetShieldPercentage())
-            return
-        # No IsOn gate: a lowered (green-alert) or cloaked ship's hidden
-        # charge keeps regenerating — the cloak case was a 2026-07-08 live
-        # fix, the green case is the S5 capture above; they are the same rule.
-        dt = float(dt)
-        for f in range(self.NUM_SHIELDS):
-            mx = self._max_shields[f]
-            if mx == 0.0:
-                continue
-            new = self._current_shields[f] + self._charge_per_second[f] * dt
-            if new > mx:
-                new = mx
-            self._current_shields[f] = new
-        native_combat.push_field(self, "_current_shields")   # in place
-        # Drive each face watcher with its FRACTION so
-        # Conditions/ConditionSingleShieldBelow.py fires its
-        # ET_AI_SHIELD_WATCHER crossing event; the combined watcher (index
-        # NUM_SHIELDS) follows with the overall fraction — this is also where
-        # both catch up after direct ApplyDamage face mutations.
-        for f in range(self.NUM_SHIELDS):
-            self._shield_watchers[f]._update(self.GetSingleShieldPercentage(f))
-        self._shield_watchers[self.NUM_SHIELDS]._update(
-            self.GetShieldPercentage())
+    # ── The per-tick regen is NATIVE ONLY (phase 6 Task 8) ──────────────
+    # native/src/combat/include/dauntless/combat/subsystem_step.h THE SHIELD
+    # PIECE is the one implementation (the Python Update was deleted). What
+    # it does, and the evidence for it:
+    # * BC's 0.5 s charge cadence: ShieldClass's tick (0x0056A230, vtable
+    #   slot 25) accumulates elapsed time into +0x154 and does the per-face
+    #   charge work once the accumulator reaches 0.5 (0x008E529C), resetting
+    #   it unconditionally (stbc-reference spec/ShieldFacingDamage.md §6.1);
+    #   the rate is per second against the accumulated dt.
+    # * The charge tick refreshes `_ramp_fraction` (ApplyDamage's fraction).
+    # * Disabled or destroyed (_is_offline): every face drops to zero and
+    #   stays there until repaired (stbc-oracle bible §5.3 S6).
+    # * No alert-level, IsOn or power-setting gate on regen (bible §5.3 S5:
+    #   9.2-9.5/s at red, yellow and green alike, and at 50 % power).
+    # * Each face watcher is fed its fraction, then the combined watcher
+    #   (Conditions/ConditionSingleShieldBelow.py's crossings).
 
     def ApplyDamage(self, face: int, amount: float) -> float:
         """Absorb a hit on the face; return what reaches the hull.
@@ -2568,9 +2420,6 @@ class PowerSubsystem(ShipSubsystem):
     reservoir drains (main-only / backup-only, return amount taken, float
     0.0 falsy).  Engine has no callers — SDK scripts and tests only.
     """
-    # The power draw program's slot (engine/appc/passive_power.py): its
-    # bookkeeping, which the audit's full-pump reference run drops.
-    _passive_audit_ignore = ("_passive_power",)
     # Mirrored for the native power piece (subsystem_step.h THE POWER
     # PIECE), which writes them back through its C applier.
     _available_power = NativeField(float)
@@ -2742,27 +2591,14 @@ class PowerSubsystem(ShipSubsystem):
         self._backup_battery_power -= take
         return take
 
-    # ── Per-tick flow ─────────────────────────────────────────────────────
-    # BC uses a 1-second interval tick (FUN_005636D0 / 0x892E20 constant).
-    # Elapsed game-time accumulates each call; when it crosses POWER_INTERVAL
-    # the reactor fires: generate output*elapsed into batteries (main first,
-    # spill to backup, discard), then compute conduit budgets from the new
-    # battery levels and health-scaled capacity.  Between intervals the conduit
-    # budgets are unchanged; the watcher fractions are updated every call so
-    # the FloatRangeWatcher fires promptly on StealPower drains between ticks.
+    # ── Per-tick flow (native: THE POWER PIECE, below) ───────────────────
+    # The interval the native piece reads (pushed as the POWER_INTERVAL
+    # global). Between intervals the conduit budgets are unchanged; the
+    # watcher fractions are updated every tick so the FloatRangeWatcher fires
+    # promptly on StealPower drains between ticks.
 
     POWER_INTERVAL: float = 1.0   # seconds of game time; BC constant 0x892E20
 
-    def _add_power_to_batteries(self, amount: float) -> None:
-        """Main first (capped), spill to backup (capped), discard the rest."""
-        main_cap = self.GetMainBatteryLimit()
-        backup_cap = self.GetBackupBatteryLimit()
-        room = main_cap - self._main_battery_power
-        take = min(amount, max(room, 0.0))
-        self._main_battery_power += take
-        spill = amount - take
-        room = backup_cap - self._backup_battery_power
-        self._backup_battery_power += min(spill, max(room, 0.0))
 
     def _trigger_breach(self) -> None:
         """Called once when the reactor is destroyed (Task 5 — manual p.16:
@@ -2809,183 +2645,24 @@ class PowerSubsystem(ShipSubsystem):
             import engine.dev_mode as dev_mode
             dev_mode.log_swallowed("warp core breach trigger", _e)
 
-    def Update(self, dt: float) -> None:
-        """The plant's tick. The native power piece stands in for it
-        (native/src/combat/include/dauntless/combat/subsystem_step.h THE
-        POWER PIECE: this, _update_flow and the consumers' _update_power, bit
-        for bit): change both."""
-        # Task 5: on the first tick after the reactor is destroyed, arm the
-        # warp-core breach (manual p.16: "Reaching 0% causes a warp-core
-        # breach and destroys the ship").  _breach_fired is a single-fire
-        # guard so that a destroyed-but-still-ticked subsystem only arms once.
-        if self.IsDestroyed() and not self._breach_fired:
-            self._breach_fired = True
-            self._trigger_breach()
-        self._update_flow(dt)
+    # ── The plant's tick is NATIVE ONLY (phase 6 Task 8) ────────────────
+    # subsystem_step.h THE POWER PIECE is the one implementation of the
+    # plant's Update and its consumer pump (the Python Update, _update_flow,
+    # _pump_consumers, _draw and each consumer's _update_power were
+    # deleted). BC's 1 s interval (FUN_005636D0 / 0x892E20): elapsed time
+    # accumulates; at POWER_INTERVAL the clock RESETS to 0, the reactor (if
+    # not offline) fills main, spills to backup, discards the rest, and the
+    # conduit budgets are recomputed UNCONDITIONALLY from the RATED
+    # capacities (docs/reference/gameplay/ship-subsystems.md:122-127). The
+    # pump runs every tick in attach order (BC draw priority); the battery
+    # watchers are fed each tick (Conditions/ConditionPowerBelow.py). A
+    # destroyed plant latches _breach_fired and runs _trigger_breach once.
 
-    def _update_flow(self, dt: float) -> None:
-        """Update after the breach check: the interval, the pump and the
-        battery watchers (the native piece's POWER_TAIL runs it on a plant
-        it could not finish)."""
-        prop = self.GetProperty()
-        if prop is None:
-            return
-        dt = float(dt)
-        self._interval_elapsed += dt
-        if self._interval_elapsed >= self.POWER_INTERVAL:
-            elapsed = self._interval_elapsed
-            # Reset to zero (not -= POWER_INTERVAL) so every interval window
-            # accumulates the identical IEEE-754 tick sum: [0, POWER_INTERVAL).
-            # Tests mirror this exact float path via _accum_elapsed() arithmetic.
-            self._interval_elapsed = 0.0
-            self._power_dispensed = 0.0
-            if not _is_offline(self):
-                self._add_power_to_batteries(self.GetPowerOutput() * elapsed)
-            # Deliberate asymmetry: recharge is gated on reactor-offline, but
-            # conduit budgets (capacity*elapsed) are computed UNCONDITIONALLY.
-            # BC-faithful per docs/reference/gameplay/ship-subsystems.md:122-127
-            # (ComputeAvailablePower is an unconditional sibling step; batteries
-            # still deliver through conduits even when the reactor is down).
-            # Per-interval budget = min(battery, rated*condPct*elapsed). Use the
-            # RATED (un-clamped) capacity here so the battery clamp is applied
-            # exactly once (in the min below), not double-applied via the
-            # battery-limited SDK getters. See the two-views comment above.
-            main_max = self._rated_main_conduit_capacity() * elapsed
-            backup_max = self._rated_backup_conduit_capacity() * elapsed
-            self._main_conduit_current = min(self._main_battery_power, main_max)
-            self._backup_conduit_current = min(self._backup_battery_power, backup_max)
-            self._available_power = (self._main_conduit_current
-                                     + self._backup_conduit_current)
-        if passive_state.enabled():
-            passive_power.pump(self, dt)
-        else:
-            self._pump_consumers(dt)
-        main_cap = self.GetMainBatteryLimit()
-        backup_cap = self.GetBackupBatteryLimit()
-        # Drive the FloatRangeWatchers with each battery's FRACTION so
-        # Conditions/ConditionPowerBelow.py fires its ET_POWER_FRACTION_CHANGED
-        # crossing event (guard divide-by-zero → 0.0).
-        self._main_battery_watcher._update(
-            self._main_battery_power / main_cap if main_cap > 0.0 else 0.0
-        )
-        self._backup_battery_watcher._update(
-            self._backup_battery_power / backup_cap if backup_cap > 0.0 else 0.0
-        )
 
-    def _pump_consumers(self, dt: float) -> None:
-        """Per-frame consumer draw pass.  Walks the ship's powered consumers in
-        attach order (= BC draw priority) and lets each draw its per-tick demand
-        from the conduit budget + battery via _draw.  _power_wanted_total sums
-        the demand for the WeaponsDisplay / diagnostics readout.
 
-        Called every Update (not just on the interval tick) so between-interval
-        frames still deplete the seeded conduit budget smoothly."""
-        ship = self.GetParentShip()
-        consumers = getattr(ship, "_powered_consumers", None) if ship is not None else None
-        if not consumers:
-            return
-        for consumer in consumers:
-            consumer._update_power(dt, self)
-        self._power_wanted_total = self._sum_wanted(consumers)
 
-    def _sum_wanted(self, consumers) -> float:
-        """Sum of the consumers' per-tick demand, in attach order: the
-        _power_wanted_total readout. Shared by _pump_consumers and the power
-        draw program (engine/appc/passive_power.py)."""
-        total = 0.0
-        for consumer in consumers:
-            # _power_wanted, not GetPowerWanted(): the attribute holds this
-            # tick's demand, and PoweredSubsystem's getter is a bare
-            # `return self._power_wanted`. At 9.4 consumers x 101 ships x 15
-            # ticks that accessor alone was ~14,000 calls per frame for no
-            # information.
-            #
-            # But "the getter is that bare return" is a property of ONE class,
-            # not of the interface: PowerSubsystem.GetPowerWanted returns
-            # _power_wanted_total, an entirely different field. It cannot reach
-            # this list today (PowerSubsystem derives from ShipSubsystem, so
-            # ShipClass.AddPoweredConsumer's isinstance(PoweredSubsystem) gate
-            # rejects it), but an unguarded inline turns any future
-            # getter-overriding consumer from a working case into a silently
-            # wrong total.
-            #
-            # Measured, not asserted (2M-iteration timeit, this interpreter):
-            # bare field 20 ns, guard + field 47 ns, method call 53 ns. So the
-            # guard is still cheaper than the call it avoids, and its 27 ns
-            # premium over the naked read is 6.7% of the 404 ns _update_power
-            # that shares the loop body -- about 26 us/frame at 9.4 consumers
-            # x 101 ships. That buys back correctness for every future
-            # consumer shape at a cost the profile cannot see.
-            if type(consumer).GetPowerWanted is _BASE_GET_POWER_WANTED:
-                total += consumer._power_wanted
-            else:
-                total += consumer.GetPowerWanted()
-        return total
 
-    def _draw(self, amount: float, mode: int) -> float:
-        """Depletes conduit budget AND battery to satisfy up to ``amount``,
-        honouring the consumer's draw mode.  Returns the amount actually drawn.
 
-        * PSM_MAIN_FIRST — main conduit/battery first, backup for the shortfall.
-        * PSM_BACKUP_FIRST — backup first, main for the shortfall.
-        * PSM_BACKUP_ONLY — backup only, no fallback (cloak: off the main grid).
-
-        Accumulates into _power_dispensed for GetPowerDispensed()."""
-        if amount <= 0.0:
-            return 0.0
-        # Inlined _draw_main / _draw_backup. They remain as methods (public
-        # surface, and the unit tests drive them directly) but the hot path no
-        # longer pays two extra Python calls per drawing consumer -- ~6.3
-        # consumers x 101 ships x 15 ticks is ~19,000 calls a frame.
-        got = 0.0
-        # `== PSM_MAIN_FIRST`, NOT `!= the other two`. PSM_DIRECT_MAIN (3) is a
-        # fourth mode and the original chain sent it to the final else, i.e.
-        # BACKUP-ONLY. Spelling this as a negative silently re-routed it to
-        # main-first -- a behaviour change smuggled in as an optimisation.
-        if mode == PSM_MAIN_FIRST:
-            take = amount
-            if take > self._main_conduit_current:
-                take = self._main_conduit_current
-            if take > self._main_battery_power:
-                take = self._main_battery_power
-            if take > 0.0:
-                self._main_conduit_current -= take
-                self._main_battery_power -= take
-                got = take
-            rest = amount - got
-            if rest > 0.0:
-                take = rest
-                if take > self._backup_conduit_current:
-                    take = self._backup_conduit_current
-                if take > self._backup_battery_power:
-                    take = self._backup_battery_power
-                if take > 0.0:
-                    self._backup_conduit_current -= take
-                    self._backup_battery_power -= take
-                    got += take
-        elif mode == PSM_BACKUP_FIRST:
-            got += self._draw_backup(amount)
-            got += self._draw_main(amount - got)
-        else:  # PSM_BACKUP_ONLY — no fallback
-            got += self._draw_backup(amount)
-        self._power_dispensed += got
-        return got
-
-    def _draw_main(self, amount: float) -> float:
-        take = min(amount, self._main_conduit_current, self._main_battery_power)
-        if take <= 0.0:
-            return 0.0
-        self._main_conduit_current -= take
-        self._main_battery_power -= take
-        return take
-
-    def _draw_backup(self, amount: float) -> float:
-        take = min(amount, self._backup_conduit_current, self._backup_battery_power)
-        if take <= 0.0:
-            return 0.0
-        self._backup_conduit_current -= take
-        self._backup_battery_power -= take
-        return take
 
 
 class _RepairQueue(list):
@@ -3129,8 +2806,8 @@ class RepairSubsystem(PoweredSubsystem):
 
     # Mirrored for the native repair piece (subsystem_step.h THE REPAIR
     # PIECE): the queue's order and membership (pushed by _RepairQueue on
-    # every change) and the notified set (pushed by _repair_walk on every
-    # change; the native piece writes it back through its C applier).
+    # every change) and the notified set (the native piece writes it back
+    # through its C applier).
     _queue = native_combat.NativeRefList("Subsystem")
     _cannot_complete_notified = native_combat.NotifiedSetField()
 
@@ -3212,79 +2889,18 @@ class RepairSubsystem(PoweredSubsystem):
         """True iff sub holds a repair team (see _worked)."""
         return 1 if any(s is sub for s in self._worked()) else 0
 
-    def Update(self, dt) -> None:
-        """The repair tick (ship-subsystems.md §Repair):
+    # ── The repair tick is NATIVE ONLY (phase 6 Task 8) ─────────────────
+    # subsystem_step.h THE REPAIR PIECE is the one implementation
+    # (ship-subsystems.md §Repair; stbc-oracle bible §16, R1-R5 within 3 %):
+    #     raw     = MaxRepairPoints * bayConditionPct * dt
+    #     perItem = raw / min(liveQueueCount, NumRepairTeams)
+    #     gain_i  = perItem / target_i.RepairComplexity
+    # Destroyed entries stay queued, fire ET_REPAIR_CANNOT_BE_COMPLETED
+    # once, hold no team and are left out of the divisor; completion
+    # removes the entry and fires ET_REPAIR_COMPLETED. No power-efficiency
+    # term (Mark, 2026-10-23; a starved reactor is unmeasured, bible R6).
 
-            raw     = MaxRepairPoints * bayConditionPct * dt
-            perItem = raw / min(liveQueueCount, NumRepairTeams)
-            gain_i  = perItem / target_i.RepairComplexity
 
-        Measured on the original (stbc-oracle bible §16, R1-R5: within 3 %
-        in every run). The items worked are the ones _worked() names
-        (inlined here for the notifications): destroyed entries
-        stay queued, fire ET_REPAIR_CANNOT_BE_COMPLETED once, hold no team
-        and are left out of the divisor. Completion removes the entry and
-        fires ET_REPAIR_COMPLETED. NO power-efficiency term — the player has
-        no power setting for repair (Mark, 2026-10-23); whether a starved
-        reactor slows it is unmeasured (bible R6)."""
-        if dt is None or dt <= 0.0 or not self._queue:
-            return
-        if self.GetCondition() <= 0.0:
-            return
-        teams = self.GetNumRepairTeams()
-        points = self.GetMaxRepairPoints()
-        if teams <= 0 or points <= 0.0:
-            return
-        self._repair_walk(dt, teams, points, 0, [])
-
-    def _repair_walk(self, dt, teams, points, start, worked) -> None:
-        """Update from the walk over the queue on, at queue index `start`
-        with `worked` the items chosen before it (Update: 0, []; the native
-        repair piece's REPAIR_TAIL hands its own over). The index loop is
-        ``for sub in self._queue``'s list iterator: the next index of the
-        list as it is NOW, so a handler of the event below that edits the
-        queue moves the walk exactly as it moved the iterator. The native
-        piece (subsystem_step.h THE REPAIR PIECE) stands in for this and
-        _repair_worked, bit for bit: change both."""
-        queue = self._queue
-        i = start
-        while i < len(queue):
-            sub = queue[i]
-            i += 1
-            if len(worked) >= teams:
-                break
-            key = _notify_key(sub)
-            if sub.GetCondition() <= 0.0:
-                if key not in self._cannot_complete_notified:
-                    self._cannot_complete_notified.add(key)
-                    native_combat.push_field(self, "_cannot_complete_notified")
-                    self._fire_repair_event(
-                        "ET_REPAIR_CANNOT_BE_COMPLETED", sub)
-                continue
-            if key in self._cannot_complete_notified:
-                self._cannot_complete_notified.discard(key)
-                native_combat.push_field(self, "_cannot_complete_notified")
-            worked.append(sub)
-        if not worked:
-            return
-        self._repair_worked(dt, points, worked)
-
-    def _repair_worked(self, dt, points, worked) -> None:
-        """Update after the walk: each worked item's gain, then the
-        completions (the native piece's REPAIR_TAIL a 1 runs it)."""
-        raw = points * self.GetConditionPercentage() * float(dt)
-        per_item = raw / len(worked)
-        completed = []
-        for sub in worked:
-            complexity = sub.GetRepairComplexity()
-            if complexity <= 0.0:
-                complexity = 1.0
-            sub.Repair(per_item / complexity)
-            if sub.GetCondition() >= sub.GetMaxCondition():
-                completed.append(sub)
-        for sub in completed:
-            self._queue.discard(sub)
-            self._fire_repair_event("ET_REPAIR_COMPLETED", sub)
 
     # ── Event emission ──────────────────────────────────────────────────────
     def _fire_repair_event(self, event_attr: str, sub, dest=None) -> None:
@@ -3351,9 +2967,10 @@ class CloakingSubsystem(PoweredSubsystem):
     * ``CLOAK_CLOAKED``    — fully invisible.
     * ``CLOAK_DECLOAKING`` — fading back in; transition in progress.
 
-    The transition timer (``_transition_elapsed``) is advanced from the
-    per-tick ``Update(dt)`` (the same hook ShieldSubsystem / PowerSubsystem use,
-    walked from the game loop's subsystem update pass).  On crossing
+    The transition timer (``_transition_elapsed``) is advanced by the native
+    subsystem stage (subsystem_step.h THE CLOAK PIECE, walked from the game
+    loop's subsystem update pass, after the shield and power pieces).  On
+    crossing
     ``_transition_duration`` the machine snaps to CLOAKED / DECLOAKED and
     broadcasts the matching completion event (ET_CLOAK_COMPLETED /
     ET_DECLOAK_COMPLETED) via ``App.g_kEventManager`` — the same emission path
@@ -3382,10 +2999,6 @@ class CloakingSubsystem(PoweredSubsystem):
     # (docs/reference/gameplay/ship-subsystems.md:185).
     POWER_MODE = native_combat.NativeClassDefault(native_combat.INDEX,
                                                   PSM_BACKUP_ONLY)
-    # Its _update_power snapshots the plant's backup reserve every tick and
-    # steals from it directly: a call op in the power draw program, never
-    # frozen (engine/appc/passive_power.py).
-    _POWER_FREEZABLE = False
 
     # Power starvation: the cloak runs off the BACKUP battery; when that reserve
     # is exhausted the device can no longer hold the cloak (ship-subsystems.md:
@@ -3415,9 +3028,10 @@ class CloakingSubsystem(PoweredSubsystem):
         # Per-instance so W5.T2 can set it from CloakStrength; defaults to the
         # module constant.
         self._transition_duration: float = CLOAK_TRANSITION_DURATION
-        # Backup-battery level snapshotted each frame in _update_power (which has
-        # the PowerSubsystem in hand). Update()'s starvation guard reads this so
-        # it keys on true reserve depletion, not per-frame conduit efficiency.
+        # Backup-battery level snapshotted each frame by the native pump (THE
+        # POWER PIECE). The native cloak piece's starvation guard reads this
+        # so it keys on true reserve depletion, not per-frame conduit
+        # efficiency.
         # inf until the first power pump, so a cold-started cloak is never
         # decloaked before its reserve has even been sampled.
         self._backup_reserve: float = float("inf")
@@ -3487,30 +3101,6 @@ class CloakingSubsystem(PoweredSubsystem):
         return 1 if self._cloak_state in (self.CLOAK_CLOAKING,
                                           self.CLOAK_CLOAKED) else 0
 
-    def _update_power(self, dt: float, power) -> None:
-        """Direct-from-reserve draw. While trying to cloak, drain
-        CLOAK_RESERVE_DRAIN_PER_SECOND straight from the backup battery
-        (StealPowerFromReserve), bypassing the conduit throttle so the reserve
-        genuinely depletes. Snapshots the post-draw reserve for the Step 0
-        starvation guard in Update() (the loop ticks power before cloak, so the
-        snapshot is fresh when Update reads it). Not trying to cloak -> no draw."""
-        dt = float(dt)
-        if dt <= 0.0:
-            return
-        if not self._wants_power():
-            self._power_wanted = 0.0
-            self._power_received = 0.0
-            self._efficiency = 0.0
-            self._power_factor = 0.0
-            self._backup_reserve = power.GetBackupBatteryPower()
-            return
-        base = self.CLOAK_RESERVE_DRAIN_PER_SECOND * dt
-        received = power.StealPowerFromReserve(base) if base > 0.0 else 0.0
-        self._power_wanted = base
-        self._power_received = received
-        self._efficiency = received / base if base > 0.0 else 1.0
-        self._power_factor = self._efficiency
-        self._backup_reserve = power.GetBackupBatteryPower()
 
     def _wants_power(self) -> bool:
         """The cloak draws power only while the ship is trying to stay hidden
@@ -3566,53 +3156,13 @@ class CloakingSubsystem(PoweredSubsystem):
 
     # ── Per-tick transition advance (game-loop subsystem update pass) ────────
 
-    def Update(self, dt: float) -> None:
-        """Advance an in-progress cloak/decloak transition. The native cloak
-        piece stands in for it (native/src/combat/include/dauntless/combat/
-        subsystem_step.h THE CLOAK PIECE), bit for bit: change both.
-
-        A disabled / destroyed device cannot complete or hold a cloak: when
-        offline it is forced back toward DECLOAKED (a pending CLOAKING is
-        abandoned, a finished CLOAKED snaps off).  Power starvation (backup
-        reserve battery exhausted) also forces decloak.  Otherwise, when the
-        elapsed transition time reaches ``_transition_duration`` the machine
-        snaps to the terminal state and broadcasts its completion event.
-        """
-        offline = bool(self.IsDisabled()) or bool(self.IsDestroyed())
-        if offline:
-            # Forced decloak: a disabled cloak cannot keep the ship hidden.
-            self._force_decloak()
-            return
-
-        # Power starvation: the backup RESERVE battery is dry → the device can
-        # no longer hold the cloak.  Keyed on the reserve level (snapshotted in
-        # _update_power), NOT per-frame conduit efficiency — see
-        # MIN_RESERVE_TO_HOLD_CLOAK for why efficiency was the wrong signal.
-        # Gated on CLOAK_RESERVE_DRAIN_PER_SECOND (the ACTUAL direct-from-reserve
-        # draw amount used by _update_power), not GetNormalPowerWanted() — the
-        # latter is a legacy PoweredSubsystem field the cloak's B-path no longer
-        # reads, so a "free cloak" set via CLOAK_RESERVE_DRAIN_PER_SECOND = 0
-        # must disarm this guard regardless of _normal_power.
-        if (self.IsTryingToCloak() and self.CLOAK_RESERVE_DRAIN_PER_SECOND > 0.0
-                and self._backup_reserve <= self.MIN_RESERVE_TO_HOLD_CLOAK):
-            self._force_decloak()
-            return
-
-        if self._cloak_state not in (self.CLOAK_CLOAKING, self.CLOAK_DECLOAKING):
-            return
-
-        self._transition_elapsed += float(dt)
-        if self._transition_elapsed < self._transition_duration:
-            return
-
-        if self._cloak_state == self.CLOAK_CLOAKING:
-            self._cloak_state = self.CLOAK_CLOAKED
-            self._transition_elapsed = 0.0
-            self._fire("ET_CLOAK_COMPLETED")
-        else:  # CLOAK_DECLOAKING
-            self._cloak_state = self.CLOAK_DECLOAKED
-            self._transition_elapsed = 0.0
-            self._fire("ET_DECLOAK_COMPLETED")
+    # ── The transition tick is NATIVE ONLY (phase 6 Task 8) ─────────────
+    # subsystem_step.h THE CLOAK PIECE is the one implementation: a disabled
+    # or destroyed device (IsDisabled / IsDestroyed) cannot hold a cloak and
+    # is forced off (_force_decloak); a dry backup reserve (the pump's
+    # _backup_reserve snapshot, keyed on CLOAK_RESERVE_DRAIN_PER_SECOND > 0)
+    # forces it off too (MIN_RESERVE_TO_HOLD_CLOAK); otherwise the
+    # transition completes at _transition_duration and fires its event.
 
     # ── Weapon coupling ───────────────────────────────────────────────────────
 

@@ -182,21 +182,6 @@ def test_a_skip_is_an_audit_failure():
     assert ("subsystem stage", "skip POWER CONSUMER") in failures, failures
 
 
-def test_the_switch(monkeypatch):
-    """DAUNTLESS_NATIVE_SUBSYSTEMS: on unless exactly "0"; off without the
-    live mirror."""
-    monkeypatch.delenv("DAUNTLESS_NATIVE_SUBSYSTEMS", raising=False)
-    for value, want in ((None, True), ("1", True), ("", True), ("0", False),
-                        ("00", True)):
-        env = {"DAUNTLESS_NATIVE_COMBAT": "1"}
-        if value is not None:
-            env["DAUNTLESS_NATIVE_SUBSYSTEMS"] = value
-        nc.configure(env)
-        assert native_subsystems.enabled() is want, value
-    nc.reset()
-    assert native_subsystems.enabled() is False
-
-
 def test_the_event_table_holds_the_native_pieces_events():
     """Each native piece's event kinds have a handler (Task 3: the shield
     watchers; Task 4: the plant's breach, battery watchers and tail; Task 5:
@@ -212,61 +197,20 @@ def test_the_event_table_holds_the_native_pieces_events():
 
 
 @pytest.mark.parametrize("target", [
-    "engine.core.loop.iter_non_rock_ships",
     "engine.appc.ship_iter.iter_ships",
     "engine.appc.ship_iter.iter_non_rock_ships",
     "engine.appc.ship_iter.iter_set_objects"])
-def test_a_patched_roster_runs_the_python_stage(monkeypatch, target):
-    """The driver walks the sets itself, so a roster a caller patched (a
-    test feeding the stage its own ships) sends the whole stage to the
-    Python loop, which honours the patch."""
-    ticked = []
-
-    class _Bay:
-        def Update(self, dt):
-            ticked.append(dt)
-
-    class _Ship:
-        _bay = _Bay()
-
-        def GetShieldSubsystem(self): return None
-        def GetPowerSubsystem(self): return None
-        def GetCloakingSubsystem(self): return None
-        def GetRepairSubsystem(self): return self._bay
-
+def test_a_patched_roster_raises(monkeypatch, target):
+    """Ruling R8-5 (A4): the driver walks the sets itself, so a roster a
+    caller patched (a test feeding the stage its own ships) would be
+    ignored -- the stage raises instead of silently running none of them.
+    tests/helpers/subsystem_stage.py is how a test ticks its own ships."""
     nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
-    assert native_subsystems.enabled()
     native_subsystems.reset_counts()
-    if target == "engine.core.loop.iter_non_rock_ships":
-        monkeypatch.setattr(target, lambda: [_Ship()])
-    else:
-        monkeypatch.setattr(target, lambda *a, **k: iter(()))
-    monkeypatch.setattr(articulation, "tick_ship", lambda ship, dt: None)
-    game_loop._update_ship_subsystems()
-    counts = native_subsystems.counts()
-    assert counts["stages"] == 0 and counts["patched_stages"] == 1, counts
-    if target == "engine.core.loop.iter_non_rock_ships":
-        assert ticked == [game_loop.TICK_DELTA]
+    monkeypatch.setattr(target, lambda *a, **k: iter(()))
+    with pytest.raises(RuntimeError, match="roster .* is patched"):
+        game_loop._update_ship_subsystems()
+    assert native_subsystems.counts()["stages"] == 0
     monkeypatch.undo()
-    assert native_subsystems.enabled()
-
-
-def test_a_callers_env_dict_without_the_switch_falls_back_to_the_process_env(
-        monkeypatch):
-    """native_combat.configure(env) with a caller's own dict: the dict's
-    DAUNTLESS_NATIVE_SUBSYSTEMS wins when it names it; else the process
-    environment's (fix round 1, Minor 1)."""
-    combat = {"DAUNTLESS_NATIVE_COMBAT": "1"}
-    monkeypatch.setenv("DAUNTLESS_NATIVE_SUBSYSTEMS", "0")
-    nc.configure(combat)
-    assert native_subsystems.enabled() is False
-    nc.configure(dict(combat, DAUNTLESS_NATIVE_SUBSYSTEMS="1"))
-    assert native_subsystems.enabled() is True
-    monkeypatch.setenv("DAUNTLESS_NATIVE_SUBSYSTEMS", "1")
-    nc.configure(dict(combat, DAUNTLESS_NATIVE_SUBSYSTEMS="0"))
-    assert native_subsystems.enabled() is False
-    nc.configure(combat)
-    assert native_subsystems.enabled() is True
-    monkeypatch.delenv("DAUNTLESS_NATIVE_SUBSYSTEMS")
-    nc.configure(combat)
-    assert native_subsystems.enabled() is True
+    game_loop._update_ship_subsystems()         # stock again: runs
+    assert native_subsystems.counts()["stages"] == 1

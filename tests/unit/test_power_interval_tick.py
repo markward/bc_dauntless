@@ -1,4 +1,4 @@
-"""PowerSubsystem.Update — BC interval-tick semantics (Task 3).
+"""The plant's native tick (THE POWER PIECE) — BC interval-tick semantics (Task 3).
 
 BC's power plant accumulates elapsed game time and fires a 1-second
 interval tick: generate output*elapsed into batteries (main first, spill

@@ -60,10 +60,35 @@ class _Offset:
         self.idx = idx
 
 
+class _Thawing:
+    """A plain store, then Python: the shape the deleted passive-power
+    FrozenField had (its thaw), kept here as the Python-setter apply kind's
+    fixture -- a write whose setter runs Python at its place in the log."""
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
+
+    def __set__(self, obj, value) -> None:
+        obj.__dict__[self._name] = value
+        if obj.__dict__.get("_power_frozen"):
+            obj._passive_power_thaw()
+
+
+class _PySetField(nc.NativeWrapped, _Thawing):
+    """_Thawing's store and Python, then the push (NativeWrapped)."""
+
+    def __init__(self, type_=float, key=None) -> None:
+        self._init_native(type_, key)
+
+    def __set__(self, obj, value) -> None:
+        _Thawing.__set__(self, obj, value)
+        self._after_set(obj, value)
+
+
 class Leaf:
     """Every apply kind the reference knows, on one class: NativeFields
-    (plain), a ref, a ref list, a wake field, a Python-setter field (a
-    FrozenField: its thaw runs Python) and a field with no quiet write."""
+    (plain), a ref, a ref list, a wake field, a Python-setter field
+    (_PySetField: its setter runs Python) and a field with no quiet write."""
 
     _f = nc.NativeField(float)
     _i = nc.NativeField(int)
@@ -72,7 +97,7 @@ class Leaf:
     _ref = nc.NativeRefField("Object")
     _target_list = nc.NativeRefList("Object")
     _wake = nc.NativeWakeField(bool)
-    _frozen = nc.NativeFrozenField(float)
+    _frozen = _PySetField(float)
     _slots = nc.NativeSlotMap()
 
     def __init__(self, arm, idx, h):
@@ -340,11 +365,13 @@ def test_wake_kind_wakes_sleeping_bank(monkeypatch):
     """A WakeField write (a bank's `_firing`) stores, then wakes a sleeping
     owner through passive_state.wake (its hook runs); an awake one is only
     stored. The real bank classes classify as the reference writes them:
-    a phaser bank's `_firing` WAKE, a tractor's PYTHON (its thaw), a
-    tube's PLAIN, a system's `_target` REF and `_target_list` REFS."""
+    a phaser bank's `_firing` WAKE, a tractor's WAKE too (the mixin's wake
+    field: its parent power thaw went with the power draw program, phase 6
+    Task 8), a tube's PLAIN, a system's `_target` REF and `_target_list`
+    REFS."""
     kinds = nc._applier_context(nc._K1Walk())[3]
     assert kinds[(ws.PhaserBank, "_firing")] == nc.APPLY_WAKE
-    assert kinds[(ws.TractorBeam, "_firing")] == nc.APPLY_PYTHON
+    assert kinds[(ws.TractorBeam, "_firing")] == nc.APPLY_WAKE
     assert kinds[(ws.TorpedoTube, "_firing")] == nc.APPLY_PLAIN
     assert kinds[(ws.PhaserSystem, "_target")] == nc.APPLY_REF
     assert kinds[(ws.PhaserSystem, "_target_list")] == nc.APPLY_REFS
@@ -418,7 +445,7 @@ def test_materialise_raise_applies_rest_then_reraises(monkeypatch):
 
 def test_python_kind_setter_called_in_order(monkeypatch):
     """A PYTHON-kind write calls the reference's quiet setter (here a
-    FrozenField's: store, then the thaw) at its place in the log: it sees
+    _PySetField's: store, then the thaw) at its place in the log: it sees
     the writes before it and none after."""
     py, c = _twins()
     h0 = _handle(0)

@@ -120,7 +120,7 @@ def test_a_hit_with_no_weapon_radius_still_pushes_a_splash(monkeypatch):
 # Reported live: "shield impacts are still showing up when a particular shield
 # arc is fully drained -- they don't show up when shields are fully offline."
 #
-# A drained arc is never actually at zero. ShieldSubsystem.Update regenerates
+# A drained arc is never actually at zero. The native shield piece regenerates
 # every face every frame while the generator is on (subsystems.py:1699), so an
 # arc the HUD draws as empty regains charge_per_second * power * dt each frame.
 # A 60Hz phaser tick then absorbs that trickle, absorbed_shields comes out just

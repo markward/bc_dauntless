@@ -1,7 +1,7 @@
 from engine.appc.objects import DamageableObject
 from engine.appc.math import TGPoint3
 from engine.appc.subsystems import PoweredSubsystem, impulse_output_fraction
-from engine.appc import native_combat, passive_power, passive_weapons
+from engine.appc import native_combat, passive_weapons
 import engine.dev_mode as dev_mode
 
 
@@ -1119,10 +1119,8 @@ class ShipClass(DamageableObject):
 
         Every Set*System comes through here, so this is also where the
         passive weapons walk learns its cached weapon list is stale
-        (engine/appc/passive_weapons.py), and where the power draw program
-        learns the consumer list changed (engine/appc/passive_power.py)."""
+        (engine/appc/passive_weapons.py)."""
         passive_weapons.invalidate(self)
-        passive_power.invalidate(self)
         if s is not None and hasattr(s, "SetParentShip"):
             s.SetParentShip(self)
         if isinstance(s, PoweredSubsystem) and s not in self._powered_consumers:

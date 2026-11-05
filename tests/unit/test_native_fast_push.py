@@ -73,7 +73,7 @@ class Waker:
 
     _c = nc.NativeWakeField(float, key="_charge_level")
     _n = nc.NativeWakeField(int, key="_power_setting")
-    _p = nc.NativeFrozenField(float, key="_condition")
+    _p = nc.NativeWakeField(float, key="_condition")
 
     def __init__(self):
         h = _h.combat_register(nc._kind("Subsystem"))
@@ -84,8 +84,6 @@ class Waker:
     def _passive_on_wake(self):
         self.events.append("wake")
 
-    def _passive_power_thaw(self):
-        self.events.append("thaw")
 
 
 # ── Inputs ───────────────────────────────────────────────────────────────────
@@ -322,7 +320,6 @@ def test_wake_field_push_uses_fast_path(monkeypatch):
     monkeypatch.setattr(_h, "combat_set_f", _old)
     monkeypatch.setattr(_h, "combat_set_i", _old)
     w.__dict__["_passive_asleep"] = True
-    w.__dict__["_power_frozen"] = True
     before = _fast_pushes()
     w._c = -0.0
     w._n = True
@@ -332,7 +329,7 @@ def test_wake_field_push_uses_fast_path(monkeypatch):
     assert _bits(row["_charge_level"]) == _bits(-0.0)
     assert row["_power_setting"] == 1
     assert row["_condition"] == 0.75
-    assert w.events == ["wake", "thaw"]
+    assert w.events == ["wake"]         # woken once, by the first write
     # Unencodable through a wrapped field: the wake ran, then the drop.
     w._c = "x"
     assert "_nslot" not in w.__dict__

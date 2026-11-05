@@ -128,7 +128,7 @@ def test_galaxy_drain_time_matches_bc():
     """Galaxy with PSM_MAIN_FIRST consumers only (total draw 1051 pw/s,
     deficit 51 pw/s) drains the main battery in 250000/51 ≈ 4902 s.
 
-    The test runs at dt=1.0 (one simulation second per tick) so each Update()
+    The test runs at dt=1.0 (one simulation second per tick) so each stage tick
     fires exactly one power interval.  This keeps the iteration count to ~4902
     (< 5000) and eliminates floating-point accumulation skew from sub-second
     ticks.

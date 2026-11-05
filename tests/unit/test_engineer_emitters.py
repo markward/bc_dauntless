@@ -114,7 +114,7 @@ def engineer_world(monkeypatch):
     hull._parent_ship = player
     player.SetHull(hull)
 
-    # Repair bay: seed teams + points so RepairSubsystem.Update actually runs
+    # Repair bay: seed teams + points so the native repair piece actually runs
     # (a bare bay has 0 teams / 0 points and no-ops) — the repair-completed
     # emitter needs a real completion to fire ET_REPAIR_COMPLETED.
     from engine.appc.properties import RepairSubsystemProperty
@@ -268,7 +268,7 @@ def test_repair_completed_event_runs_stock_handler_cleanly(engineer_world):
     before = list(spoken)
 
     # Integration: driving the repair bay to completion fires ET_REPAIR_COMPLETED
-    # through the live broadcast path (RepairSubsystem.Update -> AddEvent).
+    # through the live broadcast path (the native repair piece -> AddEvent).
     tick_subsystems([ship], 10.0)
     _advance(0.2)
 

@@ -63,7 +63,6 @@ from engine.appc import proximity_cache
 from engine.appc import effect_queue as _effect_queue
 from engine.appc import passive_state as _passive_state
 from engine.appc.math import TGPoint3
-from engine.appc.passive_power import FrozenField, ThawParentWakeField
 from engine.appc.passive_state import WakeField
 from engine.core import frame_profiler as _prof
 from engine.core import ids as _ids
@@ -235,10 +234,6 @@ def configure(environ: Mapping[str, str] = os.environ) -> None:
         torpedo_table_mark_dirty()  # K3's table, unpushed from here on
     _switch = switch
     _audit = audit
-    # The native subsystem stage's switch, from the same environment (not
-    # at module scope: native_subsystems imports this module).
-    from engine.appc import native_subsystems
-    native_subsystems.configure(environ)
 
 
 def _go_live() -> None:
@@ -978,7 +973,8 @@ class NotifiedSetField(NativeField):
     member the mirror has no row for -- mirrored as the set of its
     Subsystem handles (the native repair piece's own keys; an id() key is
     none of its members). The set is edited IN PLACE: each writer calls
-    ``push_field`` after (RepairSubsystem._repair_walk)."""
+    ``push_field`` after; the native repair piece writes it back through its
+    C applier (REPAIR_NOTIFIED)."""
 
     def __init__(self) -> None:
         super().__init__(set)
@@ -1100,9 +1096,6 @@ class NativeClassDefault(NativeOptionalField):
     plain class attribute would hide this one (and the object would get no
     row at all, _hidden_fields)."""
 
-    def __init__(self, type_, default) -> None:
-        super().__init__(type_, default)
-
     def __get__(self, obj, owner=None):
         if obj is None:
             return self._absent
@@ -1208,9 +1201,9 @@ class NativeSlotMap(NativeRefList):
 
 
 class NativeWrapped:
-    """Mixin for a passive_state / passive_power descriptor that also pushes:
-    the base descriptor's wake or thaw first, then the push. ``_native`` is
-    the NativeField that knows the type and the row key."""
+    """Mixin for a passive_state descriptor that also pushes: the base
+    descriptor's wake first, then the push. ``_native`` is the NativeField
+    that knows the type and the row key."""
 
     def _init_native(self, type_, key) -> None:
         self._native = NativeField(type_, key)
@@ -1232,17 +1225,6 @@ class NativeWrapped:
                     native._push_scalar(obj, h, value)
 
 
-class NativeFrozenField(NativeWrapped, FrozenField):
-    """FrozenField's thaw (passive_power), then the push."""
-
-    def __init__(self, type_=float, key=None) -> None:
-        self._init_native(type_, key)
-
-    def __set__(self, obj, value) -> None:
-        FrozenField.__set__(self, obj, value)
-        self._after_set(obj, value)
-
-
 class NativeWakeField(NativeWrapped, WakeField):
     """WakeField's wake (passive_state), then the push."""
 
@@ -1251,17 +1233,6 @@ class NativeWakeField(NativeWrapped, WakeField):
 
     def __set__(self, obj, value) -> None:
         WakeField.__set__(self, obj, value)
-        self._after_set(obj, value)
-
-
-class NativeThawParentWakeField(NativeWrapped, ThawParentWakeField):
-    """ThawParentWakeField's wake and parent thaw, then the push."""
-
-    def __init__(self, type_=float, key=None) -> None:
-        self._init_native(type_, key)
-
-    def __set__(self, obj, value) -> None:
-        ThawParentWakeField.__set__(self, obj, value)
         self._after_set(obj, value)
 
 
@@ -2567,8 +2538,9 @@ _power_kind_by_type: dict = {}
 def _power_kind(cls) -> int:
     """Which power rules a subsystem class has, for the native power piece
     (subsystem_step.h THE POWER PIECE): 3 a plant (PowerSubsystem.Update),
-    2 CloakingSubsystem's _update_power / _wants_power, 1 TractorBeamSystem's
-    _wants_power (PoweredSubsystem's _update_power), 0 PoweredSubsystem's,
+    2 the cloak's rules (draw from the reserve while trying to cloak), 1 the
+    tractor's (a firing beam wanted, then PoweredSubsystem's draw), 0
+    PoweredSubsystem's draw,
     -1 none (not a consumer: the pump hands such a ship's piece to Python).
     By what the class IS: a subclass's own override of those methods is not
     honoured (spec §3 "Mods and patches (Part A)")."""
@@ -4727,7 +4699,7 @@ def k1_tractor_start(system, target, offset) -> None:
     native system session: the range check, the engage at `offset`, the
     firing edge's event (an effect-queue entry, ruling R8). Every write the
     kernel logs lands on the live objects (a projector's `_firing` through
-    its NativeThawParentWakeField setter: the power thaw). A system with no
+    its NativeWakeField setter: the passive weapons wake). A system with no
     mirror row engages nothing (k1_no_fire tractor_row, logged once)."""
     system._add_target(target)
     system._fire_held = True

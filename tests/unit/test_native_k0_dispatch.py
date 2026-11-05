@@ -352,7 +352,7 @@ def test_idle_tractors_step_natively(monkeypatch):
 
 
 def test_tractor_firing_is_mirrored(monkeypatch):
-    """K0 reads a tractor's `_firing` (NativeThawParentWakeField) from the
+    """K0 reads a tractor's `_firing` (NativeWakeField) from the
     mirror: every write pushes it."""
     with monkeypatch.context() as mp:
         w = World(mp, True, "k0_tractor_mirror")

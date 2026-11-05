@@ -135,7 +135,7 @@ def test_setup_properties_no_cloak_property_leaves_none():
 
 def test_game_loop_advances_cloak_transition():
     """The game loop's subsystem update pass (engine/core/loop.py) must call
-    CloakingSubsystem.Update(dt) each tick alongside Shield/Power, so an
+    the native cloak piece each tick alongside Shield/Power, so an
     in-progress cloak actually completes."""
     from engine.appc.sets import SetClass
     from engine.core.loop import GameLoop, TICK_DELTA

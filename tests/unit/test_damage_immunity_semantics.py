@@ -117,7 +117,7 @@ def test_invincible_ship_reactor_at_zero_does_not_arm_a_breach(monkeypatch):
 
 
 def test_invincible_ship_destroyed_reactor_does_not_breach_on_update(monkeypatch):
-    """The plant's own destroyed-reactor trigger (PowerSubsystem.Update ->
+    """The plant's own destroyed-reactor trigger (the plant's native tick, THE POWER PIECE ->
     _trigger_breach) honours invincibility too: no breach, no death."""
     armed = []
     monkeypatch.setattr(warp_core_breach, "arm", lambda s: armed.append(s))

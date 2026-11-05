@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
     reason="native combat bindings not built")
 
 from engine.appc import native_combat as nc  # noqa: E402
-from engine.appc import passive_power, passive_state  # noqa: E402
+from engine.appc import passive_state  # noqa: E402
 from engine.appc.math import TGPoint3  # noqa: E402
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
@@ -492,16 +492,11 @@ def test_wake_and_thaw_unchanged(arena):
     assert not passive_state.is_asleep(tube)
     _assert_field(tube, "_num_ready")
 
-    # A frozen power consumer still thaws on _is_on.
+    # A consumer's _is_on pushes.
     phasers = galaxy.GetPhaserSystem()
-    phasers.__dict__["_power_frozen"] = True
     phasers.TurnOn()
-    assert phasers.__dict__["_power_frozen"] is False
-    phasers.__dict__["_power_frozen"] = True
     phasers.TurnOff()
-    assert phasers.__dict__["_power_frozen"] is False
     _assert_field(phasers, "_is_on")
-    passive_power.reset()
     passive_state.reset()
 
 

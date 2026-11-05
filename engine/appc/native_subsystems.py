@@ -2,13 +2,12 @@
 docs/superpowers/plans/2026-11-05-phase6-b0-a1-subsystems.md, stage map
 docs/superpowers/plans/2026-11-05-phase6-a1-subsystem-stage-map.md).
 
-``engine.core.loop._update_ship_subsystems`` calls ``step_all(dt)`` while
-``enabled()``: the switch (``DAUNTLESS_NATIVE_SUBSYSTEMS``, on unless
-exactly ``"0"``, set by ``configure``, which ``native_combat.configure``
-calls) and the mirror live (``native_combat._enabled``). Off, the stage is
-the Python loop in loop.py, unchanged -- the bit-exact reference the
-per-tick differential (tests/integration/test_native_subsystems_
-differential.py) compares this driver against, until Task 8 deletes it.
+``engine.core.loop._update_ship_subsystems`` calls ``step_all(dt)``: the
+only subsystem stage there is (phase 6 A1 Task 8 deleted the Python one,
+ruling R2, and its switch). It needs the live mirror and the native module,
+and raises without them (as fire control does, M10); it walks the sets
+itself, so a caller that patches the roster iterators to feed it its own
+ships gets a RuntimeError, not a stage that silently ignores the patch.
 
 THE DRIVER. The roster is ``iter_non_rock_ships``' own, one set at a time
 (``ship_iter.iter_non_rock_ship_sets``: the sets as the stage begins, each
@@ -37,35 +36,34 @@ Each record's write log -- what the native piece wrote -- is applied into
 the Python objects by ``combat_subsys_next`` before the record comes back
 (subsystem_write_apply.h), so the Python a record runs sees it.
 
-THE SHIELD PIECE (Task 3) is native: ``ShieldSubsystem.Update`` bit for bit
-(subsystem_step.h THE SHIELD PIECE). A script that patches the methods it
+THE SHIELD PIECE (Task 3): the generator's regen (subsystem_step.h THE
+SHIELD PIECE; the deleted ShieldSubsystem.Update's, bit for bit, as the
+goldens pin). A script that patches the methods it
 stands in for is NOT honoured, and there is no per-ship check for one (spec
 §3 "Mods and patches (Part A)": BC's per-tick update was internal C++ that
 ignored such patches). The
 watcher-crossing protocol (``SHIELD_WATCHER``, ``SHIELD_WATCHER_TAIL``) is
 the one the battery watchers reuse.
 
-THE POWER PIECE (Task 4) is native too: ``PowerSubsystem.Update`` with its
-consumer pump, bit for bit (subsystem_step.h THE POWER PIECE), under the
-same Part A rule. Its events: ``BREACH`` (the plant's ``_trigger_breach``,
+THE POWER PIECE (Task 4): the plant's tick with its consumer pump
+(subsystem_step.h THE POWER PIECE), under the same Part A rule. Its events: ``BREACH`` (the plant's ``_trigger_breach``,
 after the native piece latched ``_breach_fired``), ``BATTERY_WATCHER`` (a
 battery watcher's ``_update`` with the value it crossed to) and
 ``POWER_TAIL`` (the backup watcher's line, on a plant whose watchers a
 handler of the main one's crossing made unreadable).
 
-THE CLOAK AND REPAIR PIECES (Task 5) are native too:
-``CloakingSubsystem.Update`` and ``RepairSubsystem.Update`` bit for bit
-(subsystem_step.h THE CLOAK PIECE, THE REPAIR PIECE), under the same Part A
-rule. The cloak's events: ``FORCE_DECLOAK`` (the cloak's own
+THE CLOAK AND REPAIR PIECES (Task 5): the cloak's transition and the bay's
+repair tick (subsystem_step.h THE CLOAK PIECE, THE REPAIR PIECE), under the
+same Part A rule. The cloak's events: ``FORCE_DECLOAK`` (the cloak's own
 ``_force_decloak``, so its state change, log and event stay Python's) and
 ``CLOAK_DONE`` (``_fire`` of the completion event, after the native piece
 wrote the state). The bay's: ``REPAIR_CANNOT`` (ET_REPAIR_CANNOT_BE_COMPLETED
 mid-walk, after the native piece added the member to the notified set),
-``REPAIR_DONE`` (Update's last loop, one item per record: the queue discard,
-then ET_REPAIR_COMPLETED) and ``REPAIR_SET`` (one worked item the native
+``REPAIR_DONE`` (one completed item per record: the queue discard, then
+ET_REPAIR_COMPLETED) and ``REPAIR_SET`` (one worked item the native
 condition chain cannot repair, repaired here through the SDK's own
-``Repair``, ruling R8-3). The bay's condition writes are damage.h's set_condition, applied
-by ``combat_subsys_next`` under ``native_combat._dmg_context()`` exactly as
+``Repair``, ruling R8-3). The bay's condition writes are damage.h's
+set_condition, applied by ``combat_subsys_next`` under ``native_combat._dmg_context()`` exactly as
 SetCondition's native chain applies its own: the same writes, the same
 effect-queue entries, held to the boundary. The repair piece's locals
 (teams, points, the queue index, the worked and completed items) are read
@@ -74,9 +72,7 @@ back with ``combat_subsys_repair_state``.
 Articulation is RUN_PYTHON for rigged ships (Task 6 skips rigless ones
 natively).
 """
-import os
 import sys
-from typing import Mapping
 
 from engine.appc import articulation, native_combat, ship_iter
 from engine.appc.ship_iter import iter_non_rock_ship_sets
@@ -87,55 +83,19 @@ except ImportError:     # pragma: no cover -- a build without the module
     _h = None
 
 
-# ── The switch and the counts ────────────────────────────────────────────────
+# ── The counts ───────────────────────────────────────────────────────────────
 
-_switch = False
-_counts = {"stages": 0, "sessions": 0, "run_python": 0, "events": 0,
-           "patched_stages": 0}
+_counts = {"stages": 0, "sessions": 0, "run_python": 0, "events": 0}
 #: EVENT records by kind name (event_counts()).
 _event_counts: dict = {}
 
-#: The roster as the Python stage takes it, stock (taken at import): the
-#: driver walks the sets itself (iter_non_rock_ship_sets), so a patched
-#: iterator -- a test feeding the stage its own ships -- sends the whole
-#: stage to the Python loop, which honours it (native_motion's _SURFACE
-#: does the same for kernel M).
+#: The roster as the game takes it, stock (taken at import). The driver
+#: walks the sets itself (iter_non_rock_ship_sets), so a patched iterator --
+#: a test feeding the stage its own ships -- would be silently ignored: the
+#: stage raises instead (ruling R8-5, A4). Feed a test's own ships through
+#: tests/helpers/subsystem_stage.py (tick_subsystems).
 _STOCK_ROSTER = (ship_iter.iter_ships, ship_iter.iter_non_rock_ships,
                  ship_iter.iter_set_objects)
-
-
-_SWITCH_ENV = "DAUNTLESS_NATIVE_SUBSYSTEMS"
-
-
-def configure(environ: Mapping[str, str] = os.environ) -> None:
-    """The switch from `environ`: DAUNTLESS_NATIVE_SUBSYSTEMS, on unless
-    exactly "0". Called by native_combat.configure (the mirror's own
-    configure, which every caller that makes the mirror live runs). A
-    caller's own env dict (a test scene's ``{"DAUNTLESS_NATIVE_COMBAT":
-    "1"}``) that does not name the switch falls back to the process
-    environment, so a shell's ``DAUNTLESS_NATIVE_SUBSYSTEMS=0`` reaches
-    every stage."""
-    global _switch
-    value = environ.get(_SWITCH_ENV)
-    if value is None and environ is not os.environ:
-        value = os.environ.get(_SWITCH_ENV)
-    _switch = value != "0"
-
-
-def enabled() -> bool:
-    """The native stage runs: the switch is on, the mirror is live, and the
-    roster is stock (_STOCK_ROSTER, and loop.py's own iter_non_rock_ships;
-    else ``patched_stages`` counts the stage, which runs in Python)."""
-    if not _switch or not native_combat._enabled or _h is None:
-        return False
-    if not _roster_is_stock():
-        _counts["patched_stages"] += 1
-        native_combat._log_once(
-            ("subsystems-patched",),
-            "native subsystems: the ship roster is patched; the subsystem "
-            "stage runs in Python while it is")
-        return False
-    return True
 
 
 def _roster_is_stock() -> bool:
@@ -144,15 +104,13 @@ def _roster_is_stock() -> bool:
             or ship_iter.iter_set_objects is not _STOCK_ROSTER[2]):
         return False
     loop = sys.modules.get("engine.core.loop")
-    return loop is None or getattr(
-        loop, "iter_non_rock_ships", None) is _STOCK_ROSTER[1]
+    patched = getattr(loop, "iter_non_rock_ships", None) if loop else None
+    return patched is None or patched is _STOCK_ROSTER[1]
 
 
 def reset() -> None:
-    """The switch off and the counts zeroed (native_combat.reset calls
-    this)."""
-    global _switch
-    _switch = False
+    """The counts zeroed, the native skip counts too (native_combat.reset
+    calls this)."""
     reset_counts()
     if _h is not None and hasattr(_h, "combat_subsys_skip_counts_reset"):
         _h.combat_subsys_skip_counts_reset()
@@ -381,7 +339,25 @@ def _handle(ship) -> int:
 
 
 def step_all(dt: float) -> None:
-    """One subsystem stage, natively driven (module docstring)."""
+    """One subsystem stage, natively driven (module docstring). Raises
+    RuntimeError without the native module or the live mirror, or with a
+    patched roster."""
+    if _h is None:
+        raise RuntimeError(
+            "native subsystems: the _dauntless_host module did not import; "
+            "the subsystem stage is native only -- build it "
+            "(cmake --build build -j)")
+    if not native_combat._enabled:
+        raise RuntimeError(
+            "native subsystems: the native mirror is not live "
+            "(native_combat.configure() first); the subsystem stage is "
+            "native only")
+    if not _roster_is_stock():
+        raise RuntimeError(
+            "native subsystems: the ship roster (ship_iter.iter_ships / "
+            "iter_non_rock_ships / iter_set_objects) is patched; the native "
+            "stage walks the sets itself and would ignore the patch -- tick "
+            "a test's own ships with tests/helpers/subsystem_stage.py")
     _counts["stages"] += 1
     for ships in iter_non_rock_ship_sets():
         _step_set(ships, dt)

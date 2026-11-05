@@ -13,7 +13,7 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 | What | Constant | Period | Where |
 |---|---|---|---|
 | Shield charging | `SHIELD_CHARGE_PERIOD_S` | 0.5 s | `engine/appc/subsystems.py:232` |
-| Native subsystem stage (switch, not a cadence) | `DAUNTLESS_NATIVE_SUBSYSTEMS` | on unless `=0`; every tick | `engine/appc/native_subsystems.py` (`enabled()`), `native/src/combat/` (`subsystem_step.cc`) |
+| Native subsystem stage (native only, not a cadence) | none (no switch) | every tick | `engine/appc/native_subsystems.py` (`step_all`), `native/src/combat/` (`subsystem_step.cc`) |
 | Target-list poll | (panel throttle) | 0.5 s / 2 Hz | `engine/ui/panel_registry.py` |
 | Avoidance re-decision | `AVOID_EVADING_UPDATE_DELAY_S` | 0.25 s / 4 Hz | `engine/appc/ai_optimized.py:138` |
 | AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py:1548` |
@@ -298,12 +298,18 @@ NPC warps never wait.
 
 ---
 
-## The native subsystem stage switch
+## The native subsystem stage (native only)
 
-`DAUNTLESS_NATIVE_SUBSYSTEMS` is not a cadence and changes no timing: the
-per-tick subsystem stage (shields, power plant and consumers, cloak, repair,
-rigless-ship articulation skip) runs in C++ (`engine/appc/native_subsystems.py`
-driving `native/src/combat/` `subsystem_step.cc`) unless the variable is exactly
-`0`, which restores the Python loop in `engine/core/loop.py`. Use it to test
-whether a suspected subsystem fault is the native stage; the shield cadence above
-is unchanged either way.
+The per-tick subsystem stage (shields, power plant and consumers, cloak,
+repair, rigless-ship articulation skip) runs in C++ only
+(`engine/appc/native_subsystems.py` driving `native/src/combat/`
+`subsystem_step.cc`). It is not a cadence and changes no timing. Phase 6 Task 8
+deleted the Python loop and its `DAUNTLESS_NATIVE_SUBSYSTEMS` switch, so a
+suspected subsystem fault can no longer be A/B'd against a Python copy. Look
+instead at `native_subsystems.skip_counts()` and the stderr `native subsystems:
+... skipped` lines. A piece the mirror cannot run (a dropped row, an unnamed
+subsystem) is skipped, not run, and is counted and logged once per (piece,
+reason). Under `DAUNTLESS_NATIVE_AUDIT=1` a skip is an audit failure. The
+goldens pin the stage bit for bit and assert zero skips; a unit test ticks
+its own ships through `tests/helpers/subsystem_stage.py`, which fails on any
+skip. The shield cadence above is unchanged.

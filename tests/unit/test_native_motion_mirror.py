@@ -309,50 +309,6 @@ def test_in_place_angular_velocity_writes_are_pushed():
     assert nc.audit_failures() == [], nc.audit_failures()
 
 
-# ── The passive-power contract ───────────────────────────────────────────────
-
-def test_power_percentage_wanted_still_thaws_a_frozen_consumer():
-    """`_power_percentage_wanted` is an input of _update_power: it must stay
-    a FrozenField (CLAUDE.md, passive power), and mirroring it must not lose
-    the thaw."""
-    from engine.appc import passive_state
-    from engine.appc.passive_power import FrozenField
-    from engine.appc.properties import PowerProperty
-    from engine.appc.subsystems import PowerSubsystem
-    from engine.core.loop import TICK_DELTA
-    desc = next(vars(k)["_power_percentage_wanted"]
-                for k in ImpulseEngineSubsystem.__mro__
-                if "_power_percentage_wanted" in vars(k))
-    assert isinstance(desc, FrozenField)
-    assert isinstance(desc, nc.NativeFrozenField)
-
-    ship = App.ShipClass_Create("Thaw")
-    plant = PowerSubsystem("Warp Core")
-    prop = PowerProperty("Warp Core")
-    prop.SetPowerOutput(300.0)
-    prop.SetMainBatteryLimit(1000.0)
-    prop.SetBackupBatteryLimit(500.0)
-    prop.SetMainConduitCapacity(1200.0)
-    prop.SetBackupConduitCapacity(200.0)
-    plant.SetProperty(prop)
-    plant._interval_elapsed = plant.POWER_INTERVAL
-    ship.SetPowerSubsystem(plant)
-    ies = ImpulseEngineSubsystem("Impulse")
-    ies.SetNormalPowerPerSecond(150.0)
-    ies.TurnOn()
-    ship.SetImpulseEngineSubsystem(ies)
-    # From 0%: the rescale of _power_wanted is skipped (old is 0), so only
-    # the slider field itself can thaw the consumer.
-    ies.SetPowerPercentageWanted(0.0)
-    passive_state.configure({})
-    for _ in range(3):
-        plant.Update(TICK_DELTA)
-    assert ies.__dict__["_power_frozen"] is True
-    ies.SetPowerPercentageWanted(1.25)
-    assert ies.__dict__["_power_frozen"] is False
-    assert float(_dump(ies)["_power_percentage_wanted"]).hex() == (1.25).hex()
-
-
 # ── Class flags ──────────────────────────────────────────────────────────────
 
 class _ModShip(ShipClass):

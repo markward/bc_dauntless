@@ -12,14 +12,15 @@
 // docs/superpowers/plans/2026-11-05-phase6-b0-a1-subsystems.md, stage map
 // docs/superpowers/plans/2026-11-05-phase6-a1-subsystem-stage-map.md).
 //
-// engine/core/loop.py's _update_ship_subsystems walks each ship in roster
-// order and runs, per ship, five pieces in this order: the shield
-// generator's Update, the power plant's Update (with the consumer pump), the
-// cloak's Update, the repair bay's Update, and articulation.tick_ship. This
-// session walks the same (ship, piece) grid and hands each cell back to
-// Python as a record, in the K0 session's shape (k0_charging.h): begin
+// The subsystem stage (engine/core/loop.py's _update_ship_subsystems, driven
+// by engine/appc/native_subsystems.py) walks each ship in roster order and
+// runs, per ship, five pieces in this order: the shield generator's regen,
+// the power plant's tick (with the consumer pump), the cloak's transition,
+// the repair bay's tick, and articulation.tick_ship. This session walks that
+// (ship, piece) grid in the K0 session's shape (k0_charging.h): begin
 // snapshots the ship list, next runs the walk to the first thing only Python
-// may do and returns it, and the following next resumes exactly after it.
+// may do -- an SDK event, articulation -- and returns it, and the following
+// next resumes exactly after it.
 //
 // THE RECORDS.
 //   RUN_PYTHON{ship, kind}  Python runs that piece of that ship (`kind` a
@@ -60,8 +61,9 @@
 // it returns the record, so the Python a record runs -- a RUN_PYTHON piece,
 // an EVENT's handlers -- sees every write the walk made before it.
 //
-// THE SHIELD PIECE (Task 3): ShieldSubsystem.Update (engine/appc/
-// subsystems.py), bit for bit, on the generator the ship's
+// THE SHIELD PIECE (Task 3): the generator's regen (the deleted Python
+// ShieldSubsystem.Update's, bit for bit; native only since Task 8), on the
+// generator the ship's
 // `_shield_subsystem` names. The ship's row ref decides: -1 (None) is no
 // call at all; kRefUnrepresentable, or a since-freed row, is a skip (REF);
 // a live row is native unless its shield_watch_ok is 0, a face list is not
@@ -90,8 +92,8 @@
 // Python runs the remaining watcher lines (FloatRangeWatcher._update with
 // the SDK getters' values) on that same generator.
 //
-// THE POWER PIECE (Task 4): PowerSubsystem.Update (engine/appc/
-// subsystems.py) with its consumer pump, bit for bit, on the plant the
+// THE POWER PIECE (Task 4): the plant's tick with its consumer pump (the
+// deleted Python PowerSubsystem.Update's, bit for bit), on the plant the
 // ship's `_power_subsystem` names. The ship's row ref decides as the
 // shield's does: -1 (None) is no call; kRefUnrepresentable, a since-freed
 // row or a row whose power_kind is not a plant's is a skip (REF). A live
@@ -151,8 +153,9 @@
 // Python: EVENT{POWER_TAIL, code 1, a = the backup limit read before the
 // main watcher} (the backup watcher's own _update).
 //
-// THE CLOAK PIECE (Task 5): CloakingSubsystem.Update (engine/appc/
-// subsystems.py), bit for bit, on the cloak the ship's `_cloaking_subsystem`
+// THE CLOAK PIECE (Task 5): the cloak's transition (the deleted Python
+// CloakingSubsystem.Update's, bit for bit), on the cloak the ship's
+// `_cloaking_subsystem`
 // names (decided as the shield's ref is; a live row whose power_kind is not
 // a cloak's is a skip, REF). Its offline test is IsDisabled() or
 // IsDestroyed() only (not _is_offline). Then, in Python's order:
@@ -171,8 +174,8 @@
 // first, as Update writes it before _fire: Python then calls _fire with the
 // completion event. Either EVENT is the piece's last line.
 //
-// THE REPAIR PIECE (Task 5): RepairSubsystem.Update (engine/appc/
-// subsystems.py; its _repair_walk and _repair_worked), bit for bit, on the
+// THE REPAIR PIECE (Task 5): the bay's repair tick (the deleted Python
+// RepairSubsystem.Update's, bit for bit), on the
 // bay the ship's `_repair_subsystem` names (decided as the shield's ref is;
 // a live row that is not is_repair_bay is a skip, REF). Its gates are the
 // bay's own condition > 0 only (not _is_offline, dying or radiation).

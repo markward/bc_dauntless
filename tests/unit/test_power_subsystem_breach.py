@@ -1,7 +1,7 @@
 """Task 5: destroyed warp core triggers ship death (warp-core breach).
 
-PowerSubsystem.Update must arm a warp-core breach for the parent ship on the
-first Update() tick after the subsystem becomes Destroyed (condition == 0),
+The plant's native tick (THE POWER PIECE) must arm a warp-core breach for the parent ship on the
+first stage tick after the subsystem becomes Destroyed (condition == 0),
 and must do so at most once (_breach_fired guard).
 """
 import pytest
@@ -73,7 +73,7 @@ def test_destroyed_reactor_breaches_ship():
 
 
 def test_destroyed_reactor_arms_only_once():
-    """_breach_fired guard: repeated Update() calls arm the ship exactly once."""
+    """_breach_fired guard: repeated stage ticks arm the ship exactly once."""
     ship, power, _ = _powered_ship()
     power.SetCondition(0.0)
     for _ in range(120):
@@ -130,7 +130,7 @@ def test_no_parent_ship_does_not_raise():
 
 def test_non_targetable_power_plant_does_not_arm_breach():
     """An asteroid carries a hidden Power Plant with SetTargetable(0). When
-    the death cascade zeroes it, PowerSubsystem.Update must NOT arm a
+    the death cascade zeroes it, the plant's native tick must NOT arm a
     warp-core breach (and must NOT start ship death).  This mirrors the
     identical gate in objects.py:_route_zero_crossing.
 

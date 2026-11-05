@@ -4,10 +4,10 @@ With DAUNTLESS_PASSIVE_AUDIT=1 every sleeping weapon is also stepped the old
 way each tick; any state change the sleep missed is recorded. A clean run that
 still slept and woke things proves the watched fields cover a whole fight.
 
-The power draw program is the Python subsystem stage's (the native power
-piece never uses it: subsystem_step.h THE POWER PIECE), so this run takes
-the Python stage (DAUNTLESS_NATIVE_SUBSYSTEMS=0) until phase 6 Task 8
-deletes the program.
+The subsystem stage is the native one (phase 6 Task 8 deleted the Python
+stage and its power draw program): the run also holds it to skipping
+nothing (subsystem_step.h THE SKIPS), the audit treating a skip as a
+failure.
 """
 import pytest
 
@@ -29,10 +29,9 @@ def test_combat_stress_runs_clean_under_the_audit(monkeypatch):
     monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
     monkeypatch.setenv("DAUNTLESS_COMBAT_SHIPS", "16")
     monkeypatch.setenv("DAUNTLESS_PASSIVE_AUDIT", "1")
-    monkeypatch.setenv("DAUNTLESS_NATIVE_SUBSYSTEMS", "0")
 
     from engine import host_loop as hl
-    from engine.appc import passive_power, passive_state
+    from engine.appc import native_subsystems, passive_state
 
     now = [1000.0]
 
@@ -47,6 +46,5 @@ def test_combat_stress_runs_clean_under_the_audit(monkeypatch):
     counts = passive_state.counts()
     assert counts["slept"] > 0, counts
     assert counts["woke"] > 0, counts
-    power = passive_power.counts()
-    assert power["program_ticks"] > 0, power
-    assert power["frozen"] > 0, power
+    assert native_subsystems.counts()["stages"] > 0
+    assert native_subsystems.skip_counts() == {}

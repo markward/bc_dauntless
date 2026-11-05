@@ -47,7 +47,7 @@ def test_healthy_reactor_sustains_cloak():
     # Reactor 1500/s > drain 1000/s: refill exceeds drain, so a reserve that
     # would otherwise empty within the run must instead hold (and even climb).
     # Main battery is seeded FULL so every watt of reactor output spills
-    # straight into the backup reserve (_add_power_to_batteries fills main
+    # straight into the backup reserve (the native recharge fills main
     # first) -- otherwise "reactor health" would be inert to the reserve.
     ship, power = _powered_ship(output=1500.0)
     cloak = _cloak_on(ship, drain=1000.0)

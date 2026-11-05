@@ -1,6 +1,6 @@
 """Per-frame consumer draws — three modes, efficiency, registration (Task 4).
 
-PowerSubsystem._pump_consumers walks the ship's registered powered consumers
+The native pump (subsystem_step.h THE POWER PIECE) walks the ship's registered powered consumers
 (attach order = BC draw priority), each drawing its per-tick demand from the
 conduit budget + battery via PowerSubsystem._draw(amount, mode).  Efficiency
 (received/wanted) and power-factor (received/normal) are written back onto

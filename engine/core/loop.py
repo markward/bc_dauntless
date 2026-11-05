@@ -1,8 +1,6 @@
 import App
 
-from engine.appc import (articulation, native_combat, native_subsystems,
-                         passive_state)
-from engine.appc.ship_iter import iter_non_rock_ships
+from engine.appc import native_combat, native_subsystems, passive_state
 from engine.core import frame_profiler as _prof
 
 TICK_RATE = 60
@@ -160,44 +158,17 @@ class GameLoop:
 
 
 def _update_ship_subsystems() -> None:
-    """Advance every live ship's shield / power / cloak / repair subsystem.
+    """Advance every live ship's shield / power / cloak / repair subsystem
+    and articulation: the native subsystem stage
+    (engine/appc/native_subsystems.py; native/src/combat/src/
+    subsystem_step.cc), the only one (phase 6 A1 Task 8 deleted the Python
+    stage). Rocks are excluded -- a rock's shield/power/cloak/repair/
+    articulation never ticks (rock-class spec §1).
 
     Extracted from GameLoop.tick so the profiler can scope it without
-    re-indenting the body (and so the scope covers the whole walk, including
-    iter_ships itself, rather than only the per-ship work). Rocks are
-    excluded — a rock's shield/power/cloak/repair/articulation never ticks
-    (rock-class spec §1).
-
-    With the native subsystem stage enabled (DAUNTLESS_NATIVE_SUBSYSTEMS,
-    on unless "0", and the mirror live) the walk is the native session's
-    (engine/appc/native_subsystems.py); the loop below is the Python stage,
-    its bit-exact reference until phase 6 A1 Task 8 deletes it.
+    re-indenting the body (and so the scope covers the whole walk).
     """
-    if native_subsystems.enabled():
-        native_subsystems.step_all(TICK_DELTA)
-        return
-    for ship in iter_non_rock_ships():
-        ss = ship.GetShieldSubsystem()
-        if ss is not None:
-            ss.Update(TICK_DELTA)
-        ps = ship.GetPowerSubsystem()
-        if ps is not None:
-            ps.Update(TICK_DELTA)
-        # Advance any in-progress cloak/decloak transition so it completes
-        # (CloakShip preprocessor sets the intent; the timer lives here).
-        cl = ship.GetCloakingSubsystem()
-        if cl is not None:
-            cl.Update(TICK_DELTA)
-        # Repair bay: advance the repair queue (RE tick — see
-        # RepairSubsystem.Update). AI ships repair themselves too.
-        rs = ship.GetRepairSubsystem()
-        if rs is not None:
-            rs.Update(TICK_DELTA)
-        # Part articulation (BoP wings). Sim-side deliberately: the renderer
-        # reads the eased pose, it does not animate on its own clock, so the
-        # later collision/damage integration consumes the same value. Ships
-        # without a rig return on a cached attribute read.
-        articulation.tick_ship(ship, TICK_DELTA)
+    native_subsystems.step_all(TICK_DELTA)
 
 
 def _pump_bridge_character_queues() -> None:

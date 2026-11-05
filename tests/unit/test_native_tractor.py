@@ -319,28 +319,23 @@ def test_tractor_events_are_queue_entries(world):
     assert c["k1_entries"]["TRACTOR_STOPPED"] >= 1
 
 
-# ── The power program ────────────────────────────────────────────────────────
+# ── The power starvation stop ────────────────────────────────────────────────
 
-def test_power_thaw_on_firing_write(world):
-    """A `_firing` write the kernels log still goes through the beam's
-    NativeThawParentWakeField setter, so a frozen tractor power program
-    thaws: K1's grip and K0's power-starvation stop alike."""
+def test_firing_write_and_the_starvation_stop(world):
+    """A `_firing` write the kernels log goes through the beam's own setter
+    (NativeWakeField): K1's grip lights the beam, and K0's power-starvation
+    stop puts it out natively."""
     g, v = world.ships["Galaxy"], world.ships["Vorcha"]
     tractors = g.GetTractorBeamSystem()
-    tractors.__dict__["_power_frozen"] = True
     tractors.StartFiring(v)
     assert _lit(g)
-    assert tractors.__dict__["_power_frozen"] is False
     # Starved: GetPowerPercentage() 0 while it wants power. K0 stops it.
-    # (Those writes thaw on their own: frozen again after them.)
     tractors._normal_power = 600.0
     tractors._efficiency = 0.0
-    tractors.__dict__["_power_frozen"] = True
     with effect_queue.scope():
         from engine import host_loop
         host_loop._advance_weapons(list(world.order), DT)
     assert _lit(g) == []
-    assert tractors.__dict__["_power_frozen"] is False
     assert nc.counts()["k0_python_reasons"].get("tractor", 0) == 0
 
 

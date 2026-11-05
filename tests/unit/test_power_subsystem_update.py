@@ -1,4 +1,4 @@
-"""PowerSubsystem.Update — interval-tick semantics (generation + caps).
+"""The plant's native tick (THE POWER PIECE) — interval-tick semantics (generation + caps).
 
 Rewritten in Task 3 to match BC's 1-second interval model.  Drain was part
 of the old per-dt net-energy model; Task 4 introduces the consumer pump that
