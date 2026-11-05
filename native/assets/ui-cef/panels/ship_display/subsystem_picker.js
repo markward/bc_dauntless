@@ -3,7 +3,7 @@
 // The target panel's subsystem picker: one square button per family, a name
 // bar, the open family's members as blocks, and the lock marker on the ship
 // icon. State is the `setShipDisplay("target", ...)` payload (families,
-// open_family, locked). Loaded after ship_display.js; ship_display.js calls
+// icons, open_family, locked). Loaded after ship_display.js; ship_display.js calls
 // renderSubsystemPicker(root, state) for the target role.
 //
 // Pure functions first (pickerFamilyColumns, pickerMemberColumns,
@@ -108,13 +108,20 @@
 
     function _pct(px) { return (px / PICKER_FRAME_PX * 100).toFixed(2) + "%"; }
 
+    // Glyph for an icon key from the payload's `icons` table; a missing key
+    // or table is an empty glyph.
+    function _glyph(state, key) {
+        var icons = state.icons || {};
+        return icons[key] || "";
+    }
+
     function _lockMarkerHtml(state) {
         var sub = _findLocked(state);
         if (!sub || (!sub.x_px && !sub.y_px)) { return ""; }
         return '<div class="lock-marker" data-state="' + escapeHtml(sub.state || "healthy") + '"'
             + ' style="left:' + _pct(sub.x_px) + ';top:' + _pct(sub.y_px) + '">'
             + '<span class="lock-marker__frame"></span>'
-            + '<span class="lock-marker__icon">' + (sub.icon_svg || "") + '</span></div>';
+            + '<span class="lock-marker__icon">' + _glyph(state, sub.icon_key) + '</span></div>';
     }
 
     function _subsystemsHtml(state) {
@@ -131,7 +138,7 @@
                 + (_holdsLock(f, state.locked) ? ' subsys-btn--locked' : '') + '"'
                 + ' data-btn="' + escapeHtml(f.name) + '"'
                 + ' data-state="' + escapeHtml(f.state || "healthy") + '">'
-                + '<span class="subsys-btn__icon">' + (f.icon_svg || "") + '</span></button>';
+                + '<span class="subsys-btn__icon">' + _glyph(state, f.icon_key) + '</span></button>';
         }
         html += '</div>';
         // The bar is always present (no layout shift), empty when idle.
@@ -162,7 +169,7 @@
         // The panel is re-pushed nearly every frame (speed, range). Rebuild
         // only when a picker field changed, so hover and in-flight clicks
         // survive.
-        var sig = JSON.stringify([st.ship, st.families, st.open_family, st.locked]);
+        var sig = JSON.stringify([st.ship, st.families, st.open_family, st.locked, st.icons]);
         if (sig !== host._pickerSig) {
             if (host._pickerShip !== st.ship) { host._pickerLast = {name: null, t: 0}; }
             host._pickerShip = st.ship;

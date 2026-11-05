@@ -197,7 +197,7 @@ def test_player_snapshot_with_full_hull_and_shields():
         assert snap[2] == "FRIENDLY"      # affiliation — player is in friendly group
         assert snap[4] == 1.0             # hull_pct
         assert snap[5] == (1.0,) * 6      # shields_pct
-        assert snap[10] is True           # visible
+        assert snap[9] is True           # visible
     finally:
         _teardown_game()
 
@@ -220,7 +220,7 @@ def test_target_snapshot_with_enemy_affiliation():
         player.GetSensorSubsystem().AddKnownObject(foe)
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
-        assert snap[10] is True, "expected visible target"
+        assert snap[9] is True, "expected visible target"
         assert snap[2] == "ENEMY"
     finally:
         _teardown_game()
@@ -232,7 +232,7 @@ def test_target_role_returns_invisible_when_no_target():
     try:
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
-        assert snap[10] is False          # visible
+        assert snap[9] is False          # visible
         assert snap[1] == ""              # ship_name
         assert snap[2] == "NONE"
     finally:
@@ -248,7 +248,7 @@ def test_target_role_no_target_returns_invisible():
         assert player.GetTarget() is None
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
-        assert snap[10] is False
+        assert snap[9] is False
     finally:
         _teardown_game()
 
@@ -268,7 +268,7 @@ def test_target_role_planet_target_renders_empty():
         assert _resolve_ship_for_role(ROLE_TARGET) is None
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
-        assert snap[10] is False          # visible
+        assert snap[9] is False          # visible
         assert snap[1] == ""              # ship_name
         assert snap[2] == "NONE"          # affiliation
     finally:
@@ -285,7 +285,7 @@ def test_target_role_sun_target_renders_empty():
         player.SetTarget(Sun())
         assert _resolve_ship_for_role(ROLE_TARGET) is None
         snap = ShipDisplayPanel(ROLE_TARGET)._snapshot()
-        assert snap[10] is False
+        assert snap[9] is False
     finally:
         _teardown_game()
 
@@ -481,7 +481,7 @@ def test_invisible_panel_emits_visible_false():
         panel = ShipDisplayPanel(ROLE_PLAYER)
         panel.visible = False
         snap = panel._snapshot()
-        assert snap[10] is False  # visible position
+        assert snap[9] is False  # visible position
     finally:
         _teardown_game()
 
@@ -755,14 +755,51 @@ def test_target_payload_carries_families_open_family_and_locked():
         fam = next(f for f in p["families"] if f["name"] == "Phasers")
         assert fam["name"] == "Phasers" and fam["lockable"] is True
         assert fam["state"] == "healthy" and fam["icon_key"] == "laser"
-        assert "<svg" in fam["icon_svg"]
+        assert "icon_svg" not in fam
+        assert "<svg" in p["icons"][fam["icon_key"]]
         assert [m["name"] for m in fam["members"]] == ["Bank 0", "Bank 1"]
         m0 = fam["members"][0]
         assert (m0["x_px"], m0["y_px"]) == (10.0, 20.0)
-        assert set(m0) == {"name", "state", "icon_key", "icon_svg",
-                           "x_px", "y_px"}
+        assert set(m0) == {"name", "state", "icon_key", "x_px", "y_px"}
         player.SetTargetSubsystem(foe.GetPhaserSystem().GetChildSubsystem(1))
         assert _payload(panel)["locked"] == "Bank 1"
+    finally:
+        _teardown_game()
+
+
+def test_payload_icons_table_has_one_entry_per_distinct_key():
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers()
+        p = _payload(_target_panel_on(foe, player))
+        keys = set()
+        for f in p["families"]:
+            keys.add(f["icon_key"])
+            keys.update(m["icon_key"] for m in f["members"])
+        assert set(p["icons"]) == keys
+        assert all("<svg" in v for v in p["icons"].values())
+        assert len(keys) < 1 + sum(1 + len(f["members"]) for f in p["families"])
+        for f in p["families"]:
+            assert "icon_svg" not in f
+            assert all("icon_svg" not in m for m in f["members"])
+    finally:
+        _teardown_game()
+
+
+def test_snapshot_ignores_range_and_sub_integer_speed_changes():
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers()
+        foe.SetTranslate(TGPoint3(100.0, 0.0, 0.0))
+        foe.SetVelocity(TGPoint3(1.0, 0.0, 0.0))
+        panel = _target_panel_on(foe, player)
+        base = panel._snapshot()
+        foe.SetTranslate(TGPoint3(150.0, 0.0, 0.0))     # range only
+        assert panel._snapshot() == base
+        foe.SetVelocity(TGPoint3(1.0001, 0.0, 0.0))     # same rounded kph
+        assert panel._snapshot() == base
+        foe.SetVelocity(TGPoint3(2.0, 0.0, 0.0))        # rounded kph moves
+        assert panel._snapshot() != base
     finally:
         _teardown_game()
 
@@ -776,6 +813,7 @@ def test_player_payload_has_no_families():
         script = panel.render_payload()
         p = json.loads(script[len('setShipDisplay("player", '):-2])
         assert p["families"] == []
+        assert p["icons"] == {}
         assert p["open_family"] is None and p["locked"] is None
     finally:
         _teardown_game()

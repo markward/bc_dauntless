@@ -254,13 +254,13 @@ class ShipDisplayPanel(Panel):
         if not self._visible:
             self._open_family, self._open_ship_id = None, 0
             return (None, "", "NONE", "", 0.0, (0.0,) * 6, (),
-                    None, None, self._minimized, False, _NO_TREE,
+                    None, self._minimized, False, _NO_TREE,
                     (False, False))
         ship = _resolve_ship_for_role(self._role)
         if ship is None:
             self._open_family, self._open_ship_id = None, 0
             return (None, "", "NONE", "", 0.0, (0.0,) * 6, (),
-                    None, None, self._minimized, False, _NO_TREE,
+                    None, self._minimized, False, _NO_TREE,
                     (False, False))
         player       = _get_player()
         ship_id      = ship.GetObjID() if hasattr(ship, "GetObjID") else 0
@@ -277,9 +277,12 @@ class ShipDisplayPanel(Panel):
             (d["icon_key"], d["x_px"], d["y_px"], d["state"])
             for d in damage_icons_list
         )
-        range_km, speed_kph = (None, None)
+        # Range is not in the snapshot (nothing displays it, and it changes
+        # every frame); speed is rounded to what the page shows.
+        speed_kph = None
         if self._role == ROLE_TARGET:
-            range_km, speed_kph = _range_and_speed_to(ship, player)
+            _range, speed = _range_and_speed_to(ship, player)
+            speed_kph = None if speed is None else int(round(speed))
         # FlickerShields only ever walks the player display (pTCW.GetShipDisplay),
         # so the target arcs never hide whatever its panes say.
         shields_hidden = (self._shields.hidden_panes()
@@ -287,7 +290,7 @@ class ShipDisplayPanel(Panel):
         tree = (self._tree_state(ship, ship_id, player)
                 if self._role == ROLE_TARGET else _NO_TREE)
         return (ship_id, name, affiliation, species_key, hull_pct,
-                shields_pct, damage_frozen, range_km, speed_kph,
+                shields_pct, damage_frozen, speed_kph,
                 self._minimized, True, tree, shields_hidden)
 
     def _tree_state(self, ship, ship_id: int, player) -> tuple:
@@ -322,10 +325,13 @@ class ShipDisplayPanel(Panel):
             return None
         self._last_snapshot = snap
         (ship_id, name, affiliation, species, hull_pct,
-         shields, damage_frozen, range_km, speed_kph,
+         shields, damage_frozen, speed_kph,
          minimized, visible, tree, (top_hidden, bottom_hidden)) = snap
         ship_now = _resolve_ship_for_role(self._role) if visible else None
         damage_icons_list = _damage_icon_descriptors(ship_now) if ship_now else []
+        range_km = None
+        if ship_now is not None and self._role == ROLE_TARGET:
+            range_km, _speed = _range_and_speed_to(ship_now, _get_player())
         payload = {
             "visible":      visible,
             "ship_name":    name,
@@ -340,6 +346,7 @@ class ShipDisplayPanel(Panel):
             "shields_hidden": {"top_pane": top_hidden,
                                "bottom_pane": bottom_hidden},
             "families":     [_family_json(f) for f in tree[0]],
+            "icons":        _icons_json(tree[0]),
             "open_family":  tree[1],
             "locked":       tree[2],
         }
@@ -372,15 +379,23 @@ class ShipDisplayPanel(Panel):
 _NO_TREE = ((), None, None)
 
 
-def _family_json(fam) -> dict:
+def _icons_json(families) -> dict:
+    """{icon_key: svg} for every distinct key the families and members use,
+    so each glyph crosses the wire once."""
     from engine.ui import subsystem_icons
+    keys = []
+    for fam in families:
+        keys.append(fam.icon_key)
+        keys.extend(m.icon_key for m in fam.members)
+    return {k: subsystem_icons.svg_for_key(k) for k in dict.fromkeys(keys)}
+
+
+def _family_json(fam) -> dict:
     return {
         "name": fam.name, "state": fam.state, "icon_key": fam.icon_key,
-        "icon_svg": subsystem_icons.svg_for_key(fam.icon_key),
         "lockable": fam.lockable, "x_px": fam.x_px, "y_px": fam.y_px,
         "members": [{
             "name": m.name, "state": m.state, "icon_key": m.icon_key,
-            "icon_svg": subsystem_icons.svg_for_key(m.icon_key),
             "x_px": m.x_px, "y_px": m.y_px,
         } for m in fam.members],
     }

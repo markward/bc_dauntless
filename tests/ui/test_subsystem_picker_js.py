@@ -83,7 +83,7 @@ def test_caption_priority():
 
 
 _STATE = """
-var cannons = {name:'Disruptor Cannons', lockable:false, state:'healthy', icon_svg:'<svg/>',
+var cannons = {name:'Disruptor Cannons', lockable:false, state:'healthy', 
   x_px:0, y_px:0, members:[{name:'Port Cannon 2', state:'healthy'},
   {name:'Star Cannon 1', state:'healthy'}, {name:'Star Cannon 2', state:'healthy'}]};
 var beam = {name:'Disruptor Beam', lockable:false, state:'healthy', members:[{name:'Disruptor', state:'healthy'}]};
@@ -155,13 +155,13 @@ def test_constant():
 
 
 _AKIRA = """
-function fam(n, st, ms, x, y) { return {name:n, state:st||'healthy', icon_key:1, icon_svg:'<svg/>',
+function fam(n, st, ms, x, y) { return {name:n, state:st||'healthy', icon_key:'k1',
   lockable:false, x_px:x||0, y_px:y||0, members:ms||[]}; }
-function mem(n, st, x, y) { return {name:n, state:st||'healthy', icon_key:1, icon_svg:'<svg/>', x_px:x||0, y_px:y||0}; }
+function mem(n, st, x, y) { return {name:n, state:st||'healthy', icon_key:'k1', x_px:x||0, y_px:y||0}; }
 function akira(extra) {
   var fams = [fam('Phasers','healthy',[mem('Dorsal Phaser 2','healthy',54,30), mem('Dorsal Phaser 1','damaged',60,30)]),
     fam('Impulse','disabled'), fam('Warp'), fam('Sensors'), fam('Shields'), fam('Hull'), fam('Cloak'), fam('Tractors')];
-  var s = Object.assign({ship_name:'Akira 1', families:fams, open_family:null, locked:null}, extra||{});
+  var s = Object.assign({ship_name:'Akira 1', families:fams, icons:{k1:'<svg id="G"/>'}, open_family:null, locked:null}, extra||{});
   return s;
 }
 """
@@ -277,3 +277,41 @@ def test_hover_rules_keep_gradients_and_tints():
         m = re.search(re.escape(sel) + r"\s*\{([^}]*)\}", css)
         assert m, sel
         assert "background:" not in m.group(1).replace("background-color:", ""), sel
+
+
+def test_buttons_and_marker_render_glyphs_from_icons_table():
+    r = _render("renderSubsystemPicker(root, akira({locked:'Dorsal Phaser 2'}));"
+                "return [root.host.innerHTML, root.layer.innerHTML];")
+    assert r[0].count('<svg id="G"/>') == 8
+    assert '<svg id="G"/>' in r[1]
+
+
+def test_missing_icon_key_renders_empty_glyph():
+    r = _render("renderSubsystemPicker(root, akira({locked:'Dorsal Phaser 2', icons:{}}));"
+                "return [root.host.innerHTML, root.layer.innerHTML];")
+    assert '<span class="subsys-btn__icon"></span>' in r[0]
+    assert "lock-marker" in r[1]
+    r = _render("var s = akira({locked:'Dorsal Phaser 2'}); delete s.icons;"
+                "renderSubsystemPicker(root, s); return root.host.innerHTML;")
+    assert "subsys-btn__icon" in r
+
+
+def test_icons_change_rebuilds():
+    r = _render("""
+      renderSubsystemPicker(root, akira());
+      var n = root.host.sets;
+      renderSubsystemPicker(root, akira({icons:{k1:'<svg id="H"/>'}}));
+      return [n, root.host.sets, root.host.innerHTML.indexOf('id="H"') >= 0];""")
+    assert r[1] == r[0] + 1 and r[2] is True
+
+
+def test_member_at_origin_still_locks_without_marker():
+    r = _render("""
+      var s = akira({families:[fam('Phasers','healthy',[mem('Zero')])]});
+      renderSubsystemPicker(root, s);
+      root.host.handlers.click({target: tgt({'data-member': 'Zero'})});
+      var ev = events.slice();
+      renderSubsystemPicker(root, Object.assign({}, s, {locked:'Zero'}));
+      return [ev, root.layer.innerHTML];""")
+    assert r[0] == ["target/Akira 1/Zero"]
+    assert "lock-marker" not in r[1]
