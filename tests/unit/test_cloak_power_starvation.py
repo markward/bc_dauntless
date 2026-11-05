@@ -70,7 +70,8 @@ def test_cloak_drops_when_backup_battery_empties():
 
 def test_free_cloak_is_never_force_decloaked():
     """A cloak with CLOAK_RESERVE_DRAIN_PER_SECOND == 0.0 is 'free' — it makes
-    no direct-from-reserve draw at all (see CloakingSubsystem._update_power).
+    no direct-from-reserve draw at all (the native pump's cloak rule,
+    subsystem_step.h THE POWER PIECE).
     The starvation guard must NOT trigger for free cloaks even when the
     backup battery is completely empty, because a zero-drain cloak can never
     be supply-starved by definition.

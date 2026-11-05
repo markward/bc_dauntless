@@ -179,7 +179,16 @@ Binding styles to copy:
 - The test binaries build with `-O0` (Debug), without `-ffp-contract=off`. Kernel sources compiled into a library get their own per-source flags, so tests of the kernel through the library are fine. A test that includes kernel code inline would not get them.
 - The gate (`scripts/check_tests.sh`) runs ctest plus an in-process pass of each gtest binary. Do not run it during development.
 
-## 5. WakeField, FrozenField, switch and audit
+## 5. WakeField, switch and audit
+
+> **Power is native only now** (phase 6 A1 Task 8, 2026-11-05). The
+> passive-power half this section used to describe -- `FrozenField`,
+> `engine/appc/passive_power.py`, the per-plant draw program, its thaw and its
+> `audit_compare` reference run -- is deleted, with the Python subsystem
+> stage it optimised (subsystem_step.h THE POWER PIECE is the one
+> implementation). What remains is the weapons half: `WakeField` and the
+> sleep audit, K0's Python reference path. Quotes below of deleted code are
+> marked as history.
 
 WakeField, verbatim from `engine/appc/passive_state.py:51-63`:
 ```python
@@ -196,7 +205,8 @@ class WakeField:
             wake(obj)
 ```
 
-FrozenField, verbatim from `engine/appc/passive_power.py:38-48`:
+FrozenField (HISTORY: deleted in phase 6 Task 8), as it was in
+`engine/appc/passive_power.py:38-48`:
 ```python
 class FrozenField:
     def __set_name__(self, owner, name) -> None:
@@ -207,23 +217,20 @@ class FrozenField:
         if obj.__dict__.get("_power_frozen"):
             obj._passive_power_thaw()
 ```
-- Usage: `_charge_level = WakeField()` (weapon_subsystems.py:685); `_is_on = FrozenField()` and six more (subsystems.py:1270-1276).
+- Usage: `_charge_level = WakeField()` (weapon_subsystems.py:685). The seven PoweredSubsystem fields that were FrozenFields (`_is_on` and six more) are plain `NativeField`s since Task 8.
 - Key design point: no `__get__`, so the value lives in `obj.__dict__[name]` and reads are plain dict reads. It is a data descriptor (`__set__` defined), so it intercepts writes. `__init__`'s first assignment also goes through `__set__`.
-- Instances need no registration. State is a flag in `obj.__dict__` (`_passive_asleep`, `_power_frozen`). Hooks are the optional `_passive_on_sleep/_passive_on_wake` methods.
+- Instances need no registration. State is a flag in `obj.__dict__` (`_passive_asleep`; `_power_frozen` was the deleted power half's). Hooks are the optional `_passive_on_sleep/_passive_on_wake` methods.
 - For a `NativeField` the per-instance mirror slot index could be kept in `obj.__dict__` the same way.
 - Bypass trap (spec §7.1): in-place mutation such as `_current_shields[f] = v` does not trigger `__set__`.
 
 Registry reset:
 - Module-level state in passive_state.py: `_enabled`, `_audit`, `_failures`, `_counts`. `reset()` at :28-35 restores the defaults (enabled True, audit False) and clears failures.
-- `passive_power.reset()` at passive_power.py:66 clears `_in_reference` and counts.
-- Test reset: `tests/conftest.py:942-947` (in `_reset_leakable_engine_globals`):
+- Test reset: `tests/conftest.py` (in `_reset_leakable_engine_globals`):
   ```python
   from engine.appc import passive_state as _passive_state
   _passive_state.reset()
-  from engine.appc import passive_power as _passive_power
-  _passive_power.reset()
   ```
-- Per-plant programs live in `plant.__dict__["_passive_power"]` and are dropped via `passive_power.drop(plant)`.
+  (It also reset `passive_power` until Task 8 deleted it.)
 
 How the env switch is read once per GameLoop start:
 - `engine/core/loop.py:25-26`:
@@ -245,8 +252,8 @@ Audit pattern:
 - `audit_step(obj, step)` (passive_state.py:~112) snapshots `vars(obj)` (and `_passive_audit_children`), runs the step, diffs, appends `(TypeName, field)` to `_failures`, then RESTORES the state.
 - `audit_compare(objs, reference, step)` (~:131) snapshots, runs `reference()`, snapshots `after`, restores, runs `step()`, diffs against `after`. It skips fields in the object's `_passive_audit_ignore` and leaves the state `step` produced.
 - Scalar comparison `_unchanged` (:~96-104) compares floats by `.hex()`, so -0.0 is distinct from 0.0. Containers compare by identity.
-- Call sites: `passive_weapons.py:147` (`audit = passive_state.audit_enabled()`, then `audit_step(weapon, lambda: update(dt))` at :175) and `passive_power.py:236` (`audit_compare([plant, *consumers], lambda: _reference(plant, dt), lambda: _run(...))`).
-- Surfaced via `passive_state.audit_failures()`, asserted `== []` in tests (`tests/host/test_passive_state_scene_audit.py:40`, `tests/unit/test_passive_state.py`, `test_passive_power.py:301-343`). `counts()` proves the mechanism actually ran (slept/woke > 0).
+- Call sites: `passive_weapons.py:147` (`audit = passive_state.audit_enabled()`, then `audit_step(weapon, lambda: update(dt))` at :175). The power draw program's `audit_compare` call site went with `passive_power.py` (Task 8); `audit_compare` itself remains in passive_state.py.
+- Surfaced via `passive_state.audit_failures()`, asserted `== []` in tests (`tests/host/test_passive_state_scene_audit.py`, `tests/unit/test_passive_state.py`). `counts()` proves the mechanism actually ran (slept/woke > 0).
 - Audit failures are only recorded; nothing is logged to stderr or raised at runtime.
 
 ## 6. engine/core/step_memo.py (verbatim) and forget() call sites
@@ -311,9 +318,9 @@ All `forget()` call sites (7):
 - Env: `OPEN_STBC_HOST_HEADLESS=1`, `DAUNTLESS_COMBAT_SHIPS=16`, `DAUNTLESS_PASSIVE_AUDIT=1`, and delenv of `DAUNTLESS_PASSIVE_STATE`.
 - Fake clock: `monkeypatch.setattr(hl, "_frame_clock", clock)` with `now[0] += 0.1`, so 6 ticks per frame.
 - Run: `assert hl.run("engine.dev_missions.combat_stress", max_ticks=120) == 0`.
-- Assertions: `passive_state.enabled()`, `audit_failures() == []`, and `counts()["slept"] > 0 and ["woke"] > 0`, so the audit provably exercised the mechanism. Also `passive_power.counts()` has `program_ticks > 0` and `frozen > 0`.
+- Assertions: `passive_state.enabled()`, `audit_failures() == []`, and `counts()["slept"] > 0 and ["woke"] > 0`, so the audit provably exercised the mechanism. Since Task 8 it also runs the native subsystem stage and asserts `native_subsystems.skip_counts() == {}` (the `passive_power.counts()` asserts went with the module).
 
-### `tests/integration/test_passive_power_differential.py` (153 lines) and `test_passive_weapons_differential.py`
+### `test_passive_weapons_differential.py` (and, until Task 8 deleted it, `tests/integration/test_passive_power_differential.py`)
 - Constants: `SHIPS="6"`, `TICKS=600`, `SEED=20261030`, `OP_CHANCE=0.08`, `KINDS=(...)`.
 - Helper `_hex(v) = float(v).hex()`: bitwise float compare.
 - `_Scene(monkeypatch, passive, audit=True)` per run:

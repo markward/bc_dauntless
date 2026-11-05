@@ -2252,8 +2252,9 @@ class ShieldSubsystem(PoweredSubsystem):
 
     def TurnOn(self) -> None:
         """Power up the generator. Face charge is RESTORED as it was, not
-        snapped to max. Refilling is regen's job (Update), and waiting for it
-        is the only way to get shields back."""
+        snapped to max. Refilling is regen's job (the native shield piece,
+        subsystem_step.h THE SHIELD PIECE), and waiting for it is the only
+        way to get shields back."""
         super().TurnOn()
 
     def GetNumShields(self) -> int:

@@ -19,7 +19,7 @@
 //   `_cannot_complete_notified` set, in place.
 //
 // The lists are the subsystem's own, written in place (the attribute
-// lookups the Python piece makes resolve to the instance dict: these
+// lookups Python code makes resolve to the instance dict: these
 // descriptors have no __get__). `sub` is a Subsystem handle; its object is
 // `registry.get(sub)` (native_combat._registry, read as the K1 applier
 // reads it), which must be live and carry that handle as its `_nslot`: the

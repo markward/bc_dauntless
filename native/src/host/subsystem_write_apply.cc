@@ -141,7 +141,7 @@ bool store(const Names* n, PyObject* d, const cb::SubsystemWrite& w) {
     }
     if (w.what == K::REPAIR_NOTIFIED) {
         // The bay's set, in place: add (index 1) or discard (0) the
-        // member's handle, as _repair_walk's statements do.
+        // member's handle (the set's key, subsystems._notify_key).
         PyObject* set = PyObject_GetItem(d, name);
         if (set == nullptr) return false;
         if (!PySet_Check(set)) {

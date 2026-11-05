@@ -369,14 +369,16 @@ SubsystemSkip power_unready(const Mirror& m, const SubsystemRow& p,
 }
 
 // The plant's pools and budgets while the piece runs; `wrote_*`: the
-// Python piece assigned that attribute this tick (only those are logged).
+// piece assigns that attribute this tick (only those are logged: the
+// former Python plant's assignments, deleted in phase 6 Task 8).
 struct Plant {
     double main, backup, main_conduit, backup_conduit, available, dispensed;
     bool wrote_main = false, wrote_backup = false, wrote_budgets = false,
          wrote_dispensed = false;
 };
 
-// PowerSubsystem._draw_main / _draw_backup (min of three, Python's fold).
+// One pool's conduit draw: min of three, Python's fold (the former
+// PowerSubsystem._draw_main / _draw_backup, deleted in phase 6 Task 8).
 double draw_main(Plant& p, double amount) {
     const double take = py_min(py_min(amount, p.main_conduit), p.main);
     if (take <= 0.0) return 0.0;
@@ -394,7 +396,8 @@ double draw_backup(Plant& p, double amount) {
     return take;
 }
 
-// PowerSubsystem._draw (`amount` > 0 here, as every caller guards).
+// A conduit draw by POWER_MODE (the former PowerSubsystem._draw, deleted in
+// phase 6 Task 8; `amount` > 0 here, as every caller guards).
 double draw(Plant& p, double amount, int64_t mode) {
     if (amount <= 0.0) return 0.0;
     double got = 0.0;
@@ -443,7 +446,8 @@ void write_consumer(SubsystemSession& s, Mirror& m, int64_t c, double wanted,
     log(s, c, SubsystemWriteKind::POWER_FACTOR, 0, factor);
 }
 
-// One consumer's _update_power(dt, plant) by its power_kind.
+// One consumer's per-tick draw by its power_kind (the former
+// _update_power rules, deleted in phase 6 Task 8).
 void update_power(SubsystemSession& s, Mirror& m, int64_t h, Plant& p) {
     const double dt = s.dt;
     if (dt <= 0.0) return;
@@ -451,7 +455,8 @@ void update_power(SubsystemSession& s, Mirror& m, int64_t h, Plant& p) {
     // rows never move: a write reallocates nothing).
     const SubsystemRow& c = *m.subsystem(h);
     if (c.power_kind == kConsumerCloak) {
-        // CloakingSubsystem._update_power; _wants_power is IsTryingToCloak.
+        // The cloak's rules (draws from the reserve while IsTryingToCloak:
+        // its _wants_power).
         const bool wants = c._cloak_state == 1 || c._cloak_state == 2;
         if (!wants) {
             write_consumer(s, m, h, 0.0, 0.0, 0.0, 0.0);
@@ -471,7 +476,7 @@ void update_power(SubsystemSession& s, Mirror& m, int64_t h, Plant& p) {
         log(s, h, SubsystemWriteKind::BACKUP_RESERVE, 0, p.backup);
         return;
     }
-    // PoweredSubsystem._update_power; the tractor's _wants_power also needs
+    // PoweredSubsystem's rules; the tractor's _wants_power also needs
     // a firing child (IsOn() and _any_child_firing()).
     bool wants = c._is_on != 0;
     if (wants && c.power_kind == kConsumerTractor) {
@@ -547,7 +552,7 @@ bool backup_watcher(SubsystemSession& s, Mirror& m, size_t i,
     return battery_watcher(s, m, i, ph, 1, v, out);
 }
 
-// Update's lines after the breach, on a ready plant `ph`. True with `out`
+// The plant's tick after the breach, on a ready plant `ph`. True with `out`
 // set when it stops for a record.
 bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
                 SubsystemRecord& out) {
@@ -567,7 +572,8 @@ bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
         p.wrote_dispensed = true;
         const double cond = condition_percentage(m, row);
         if (!subsystem_is_offline(m, row)) {
-            // _add_power_to_batteries(GetPowerOutput() * elapsed)
+            // The recharge: GetPowerOutput() * elapsed, main first, spill to
+            // backup, discard the rest.
             const double amount = (prop.PowerOutput * cond) * elapsed;
             const double main_cap = prop.MainBatteryLimit;
             const double backup_cap = prop.BackupBatteryLimit;
@@ -586,7 +592,7 @@ bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
         p.available = p.main_conduit + p.backup_conduit;
         p.wrote_budgets = true;
     }
-    // The pump (PowerSubsystem._pump_consumers): the parent ship's list.
+    // The pump: the parent ship's consumers, in attach order.
     const std::vector<int64_t>& consumers =
         m.object(row._parent_ship)->_powered_consumers;
     bool wrote_total = false;
@@ -763,7 +769,8 @@ bool repair_completions(SubsystemSession& s, size_t i, SubsystemRecord& out) {
     return true;
 }
 
-// The worked items from s.repair_item on (_repair_worked's loop), each
+// The worked items from s.repair_item on (the repair tick's per-item
+// loop), each
 // given s.repair_per_item. Each gain is damage.h's set_condition, called
 // directly: not combat_dmg_set_condition, so neither its dmg_guard_state
 // nor its dmg_fast_patched check runs (spec §3 Part A: a patched damage
@@ -808,7 +815,7 @@ bool repair_items(SubsystemSession& s, Mirror& m, size_t i,
     return repair_completions(s, i, out);
 }
 
-// Update after the walk (_repair_worked): the per-item share, then the
+// The repair tick after the walk: the per-item share, then the
 // items.
 bool repair_worked(SubsystemSession& s, Mirror& m, size_t i,
                    SubsystemRecord& out) {
@@ -898,7 +905,7 @@ bool repair_piece(SubsystemSession& s, Mirror& m, size_t i,
     const double points = prop->MaxRepairPoints;
     if (teams <= 0 || points <= 0.0) return false;
     // The percentage the gains need, answerable before any write (it is
-    // read again after the walk, as Update reads it there).
+    // read again after the walk, as BC's tick reads it there).
     try {
         (void)condition_percentage(m, *bay);
     } catch (const std::invalid_argument&) {

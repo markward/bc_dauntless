@@ -228,7 +228,7 @@ enum class Field : int32_t {
     // (POWER_MODE, DRAWS_DIRECT_FROM_MAIN, the cloak's
     // CLOAK_RESERVE_DRAIN_PER_SECOND; an instance write pushes, an absent
     // one reads the class's: native_combat.NativeClassDefault). power_kind
-    // is a class flag: which Update / _update_power rules the class has
+    // is a class flag: which power rules the native pump applies to the class
     // (native_combat._power_kind: 0 PoweredSubsystem's, 1 TractorBeamSystem's
     // _wants_power, 2 CloakingSubsystem's, 3 a plant, -1 none of these).
     // Property: the five PowerProperty values PowerSubsystem._prop_f reads

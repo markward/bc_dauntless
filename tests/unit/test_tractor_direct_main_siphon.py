@@ -61,16 +61,20 @@ def _pump(ps, t, dt=1.0):
 
 
 def test_tractor_draws_direct_from_main_battery_bypassing_conduit():
-    """A held tractor drains the main battery even before the conduit budget is
-    seeded (direct StealPower path, not the per-interval conduit budget)."""
+    """A held tractor drains the main battery straight past the conduit
+    budget (direct StealPower path): the main conduit is capped far below
+    the draw, yet the full 600 leaves main, the conduit budget is untouched
+    and nothing is counted as dispensed through it."""
     ps = _power()
+    ps.GetProperty().SetMainConduitCapacity(10.0)     # far below 600/s
     t = _firing_tractor()
     main_before = ps.GetMainBatteryPower()
-    # dt of 1s: the direct siphon pulls whatever the conduit budget is (the
-    # plant's backup conduit capacity is 200/s, the main battery's 1200/s:
-    # the siphon takes 600 from main regardless).
     _pump(ps, t)
     assert ps.GetMainBatteryPower() == main_before - 600.0
+    # The interval seeded the budget from the capped capacity; the steal
+    # did not spend it.
+    assert ps._main_conduit_current == 10.0
+    assert ps.GetPowerDispensed() == 0.0
 
 
 def test_tractor_draw_is_unscaled_by_power_percentage():

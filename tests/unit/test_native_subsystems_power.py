@@ -130,7 +130,7 @@ def test_template_set_power_output_pushes_to_every_ship_using_it():
     # Each plant recharged 7/s x its condition x the interval (full health
     # here) and nothing more: what it holds plus what it dispensed since.
     for held, out in zip(batteries, dispensed):
-        assert held + out <= 7.0 * elapsed + 1e-9
+        assert 0.0 < held + out <= 7.0 * elapsed + 1e-9
     _no_skips()
 
 
@@ -200,16 +200,44 @@ def test_an_instance_power_mode_reaches_the_native_step():
     """POWER_MODE (and the other class constants the pump reads) may be
     overridden per instance: the write pushes (NativeClassDefault), so the
     native draw takes the instance's mode -- a backup-only consumer never
-    touches the main battery's conduit."""
-    with pytest.MonkeyPatch.context() as mp:
-        ships = _world(mp)
-        native_subsystems.reset_counts()
-        _tick(10)
-        sensors = ships[1].GetSensorSubsystem()
-        sensors.POWER_MODE = PSM_BACKUP_ONLY
-        row = nc._h.combat_dump(sensors.__dict__["_nslot"])
-        _tick(70)
+    touches the main battery or its conduit. Alone on its ship (the other
+    consumers off or free), its draw shows as the backup's whole movement
+    and none of the main's."""
+    from engine.appc.properties import PowerProperty
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import PowerSubsystem, SensorSubsystem
+    from tests.helpers.subsystem_stage import tick_subsystems
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
+    ship = ShipClass()
+    ship.SetName("Backup Only")
+    plant = PowerSubsystem("Warp Core")
+    prop = PowerProperty("Warp Core")
+    prop.SetPowerOutput(0.0)                # no recharge: pure draws
+    prop.SetMainBatteryLimit(10000.0)
+    prop.SetBackupBatteryLimit(10000.0)
+    prop.SetMainConduitCapacity(1000.0)
+    prop.SetBackupConduitCapacity(1000.0)
+    plant.SetProperty(prop)
+    plant.SetMainBatteryPower(5000.0)
+    plant.SetBackupBatteryPower(5000.0)
+    ship.SetPowerSubsystem(plant)
+    sensors = SensorSubsystem("Sensors")
+    sensors.SetNormalPowerPerSecond(60.0)
+    sensors.TurnOn()
+    ship.SetSensorSubsystem(sensors)
+    sensors.POWER_MODE = PSM_BACKUP_ONLY
+    row = nc._h.combat_dump(sensors.__dict__["_nslot"])
     assert row["POWER_MODE"] == PSM_BACKUP_ONLY
+    tick_subsystems([ship], game_loop.TICK_DELTA, ticks=60)   # budgets seeded
+    main0, main_conduit0 = (plant._main_battery_power,
+                            plant._main_conduit_current)
+    backup0 = plant._backup_battery_power
+    for _ in range(70):
+        tick_subsystems([ship], game_loop.TICK_DELTA)
+        assert plant._main_battery_power == main0
+        assert plant._main_conduit_current == main_conduit0
+    assert plant._backup_battery_power < backup0     # it drew from backup
+    assert sensors.GetPowerPercentage() > 0.0
     _no_skips()
 
 

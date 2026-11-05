@@ -55,7 +55,8 @@
 // mirror cannot name is passed over and the walk goes on.
 //
 // THE WRITE LOG. A native piece writes the mirror itself and logs, in
-// order, each Python attribute the Python piece would have written
+// order, each Python attribute the piece writes (the ones the former
+// Python piece, deleted in phase 6 Task 8, wrote)
 // (SubsystemWrite). next() clears the log on entry; the binding applies it
 // into the Python objects (native/src/host/subsystem_write_apply.h) before
 // it returns the record, so the Python a record runs -- a RUN_PYTHON piece,
@@ -85,7 +86,8 @@
 // _crossed, every check) has the value written; one that crosses any check
 // is EVENT{SHIELD_WATCHER, code = index, a = the value}: Python calls that
 // watcher's `_update(a)`, which fires the checks and commits the value
-// exactly as the Python piece does, and the next next() resumes with the
+// exactly as the former Python piece did, and the next next() resumes
+// with the
 // next index. When it resumes on a generator whose row is gone or no
 // longer native-ready (its handler dropped it, replaced a watcher, ...),
 // the rest of the loop is EVENT{SHIELD_WATCHER_TAIL, code = first index}:
@@ -108,9 +110,9 @@
 // (OFFLINE). A script patching PowerSubsystem's, a consumer's or a property's
 // methods is not honoured (spec §3 "Mods and patches (Part A)"), and
 // neither is a consumer class's own GetPowerWanted: the wanted total is
-// the attach-order sum of `_power_wanted`, which is what
-// PowerSubsystem._sum_wanted's _BASE_GET_POWER_WANTED guard reads for
-// every consumer class the engine has. Then, in Python's order:
+// the attach-order sum of `_power_wanted` (what the former Python pump's
+// guard read for every consumer class the engine has; deleted in phase 6
+// Task 8). Then, in order:
 //   breach: IsDestroyed() and not _breach_fired -> _breach_fired = True,
 //           then EVENT{BREACH}: Python runs plant._trigger_breach() (its
 //           targetable gate and death_check.note_breach), and the next
@@ -125,15 +127,16 @@
 //           condPct * elapsed), backup = min(backup battery,
 //           BackupConduitCapacity * elapsed); available = their sum;
 //   the pump, when the parent ship has consumers: each consumer in attach
-//           order, by its power_kind (PoweredSubsystem._update_power, the
-//           tractor's _wants_power, CloakingSubsystem._update_power):
+//           order, by its power_kind (PoweredSubsystem's rules, the
+//           tractor's _wants_power, the cloak's; the former Python
+//           _update_power methods, deleted in phase 6 Task 8):
 //           not wanting power zeroes its four draw fields (the cloak also
 //           snapshots the backup battery into _backup_reserve); a free
 //           consumer (normal*dt <= 0) is 0/0/1/1; DRAWS_DIRECT_FROM_MAIN
 //           steals normal*dt from the main battery (StealPower) and the
 //           cloak CLOAK_RESERVE_DRAIN_PER_SECOND*dt from the backup
 //           (StealPowerFromReserve), NEITHER counted in _power_dispensed;
-//           every other consumer draws normal*dt*slider through _draw by
+//           every other consumer draws normal*dt*slider through the conduits by
 //           its POWER_MODE (0 main first, 1 backup first, anything else
 //           -- PSM_DIRECT_MAIN (3) included -- the final else, backup
 //           only), counted in _power_dispensed; then _power_wanted_total
@@ -171,7 +174,8 @@
 // FORCE_DECLOAK writes nothing first: Python calls the cloak's own
 // _force_decloak(), which snaps the state, resets the clock, logs and fires
 // ET_DECLOAK_COMPLETED when it was CLOAKED. CLOAK_DONE's state is written
-// first, as Update writes it before _fire: Python then calls _fire with the
+// first, as BC (and the former Python Update) writes it before the event:
+// Python then calls _fire with the
 // completion event. Either EVENT is the piece's last line.
 //
 // THE REPAIR PIECE (Task 5): the bay's repair tick (the deleted Python
@@ -219,7 +223,7 @@
 //           with the next item. Earlier items keep their native writes;
 //   the completions, in order: EVENT{REPAIR_DONE, code = the bay, sub = the
 //           item, a = its index}: Python discards it from the queue and
-//           fires ET_REPAIR_COMPLETED (Update's last loop, one item per
+//           fires ET_REPAIR_COMPLETED (the tick's last loop, one item per
 //           record). Each item's row was live when the first was returned
 //           (the driver pins them all then).
 //
@@ -335,7 +339,8 @@ struct SubsystemSkipRecord {
 //   FACE          sub.__dict__["_current_shields"][index] = value
 //   SHIELD_WATCH  sub.__dict__["_shield_watchers"][index]
 //                    .__dict__["_value"] = value
-// (in place for the three lists, as the Python piece writes them); the
+// (in place for the three lists, as the former Python piece wrote them);
+// the
 // power piece's (THE POWER PIECE):
 //   AVAILABLE_POWER .. POWER_WANTED_TOTAL, POWER_WANTED .. BACKUP_RESERVE
 //                 sub.__dict__["<the attribute>"] = value (a float)
@@ -445,7 +450,7 @@ struct SubsystemSession {
     // it; next: queue index `repair_index`); 4 repairing the worked items
     // (a REPAIR_SET stopped it; next: repair_worked[repair_item], each
     // given `repair_per_item`); 2 reporting completions (next:
-    // repair_completed[repair_done]); 3 over. Update's locals: the teams
+    // repair_completed[repair_done]); 3 over. The tick's locals: the teams
     // and points read before the walk, the items worked and completed.
     int32_t repair_phase = 0;
     int64_t repair = -1;
