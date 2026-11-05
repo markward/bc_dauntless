@@ -54,6 +54,7 @@ def test_setup_properties_seeds_repair_complexity():
 # ── Task 4: RepairSubsystem queue core ──────────────────────────────────────
 
 from engine.appc.subsystems import RepairSubsystem
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def _bay(points=50.0, teams=3):
@@ -246,7 +247,7 @@ def test_tick_formula_matches_re_worked_example():
                    complexity=7.0)
     bay.AddToRepairList(phaser)
     bay.AddToRepairList(tractor)
-    bay.Update(0.033)
+    tick_subsystem(bay, 0.033)
     assert abs(phaser.GetCondition()  - 500.275) < 1e-6
     assert abs(tractor.GetCondition() - (500.0 + 0.825 / 7.0)) < 1e-6
 
@@ -256,7 +257,7 @@ def test_bay_health_scales_output():
     bay.SetCondition(4000.0)                    # 50% bay health
     target = _sub(condition=500.0, complexity=1.0)
     bay.AddToRepairList(target)
-    bay.Update(1.0)
+    tick_subsystem(bay, 1.0)
     # raw = 50 * 0.5 * 1.0 = 25, one item -> +25
     assert abs(target.GetCondition() - 525.0) < 1e-6
 
@@ -266,7 +267,7 @@ def test_destroyed_bay_repairs_nothing():
     target = _sub(condition=500.0)
     bay.AddToRepairList(target)
     bay.SetCondition(0.0)
-    bay.Update(1.0)
+    tick_subsystem(bay, 1.0)
     assert target.GetCondition() == 500.0
 
 
@@ -276,7 +277,7 @@ def test_team_cap_and_divisor_with_queue_longer_than_teams():
             for i in range(3)]
     for s in subs:
         bay.AddToRepairList(s)
-    bay.Update(1.0)
+    tick_subsystem(bay, 1.0)
     # raw=60, divisor=min(3,2)=2, perItem=30: first two get +30, third waits
     assert abs(subs[0].GetCondition() - 130.0) < 1e-6
     assert abs(subs[1].GetCondition() - 130.0) < 1e-6
@@ -291,7 +292,7 @@ def test_completion_removes_and_fires(monkeypatch):
     bay = _bay(points=50.0, teams=3)
     nearly = _sub(condition=999.9, complexity=1.0)
     bay.AddToRepairList(nearly)
-    bay.Update(1.0)
+    tick_subsystem(bay, 1.0)
     assert nearly.GetCondition() == 1000.0
     assert not any(s is nearly for s in bay._queue)
     assert App.ET_REPAIR_COMPLETED in [e.GetEventType() for e in fired]
@@ -308,8 +309,8 @@ def test_destroyed_while_queued_skipped_notified_once(monkeypatch):
     bay.AddToRepairList(doomed)
     bay.AddToRepairList(other)
     doomed._condition = 0.0                     # destroyed in place, bypass hooks
-    bay.Update(1.0)
-    bay.Update(1.0)
+    tick_subsystem(bay, 1.0)
+    tick_subsystem(bay, 1.0)
     cannot = [e for e in fired
               if e.GetEventType() == App.ET_REPAIR_CANNOT_BE_COMPLETED]
     assert len(cannot) == 1                     # once, not per tick
@@ -332,7 +333,7 @@ def test_destroyed_head_holds_no_team():
     doomed._condition = 0.0                     # destroyed in place, bypass hooks
     assert bay.IsBeingRepaired(doomed) == 0
     assert bay.IsBeingRepaired(other) == 1
-    bay.Update(1.0)
+    tick_subsystem(bay, 1.0)
     assert abs(other.GetCondition() - 550.0) < 1e-6
 
 
@@ -356,7 +357,7 @@ def test_self_repair_bay_queued_on_itself():
     bay.SetCondition(4000.0)                    # auto-enqueue needs a ship; add manually
     bay.AddToRepairList(bay)
     before = bay.GetCondition()
-    bay.Update(1.0)
+    tick_subsystem(bay, 1.0)
     assert bay.GetCondition() > before
 
 
