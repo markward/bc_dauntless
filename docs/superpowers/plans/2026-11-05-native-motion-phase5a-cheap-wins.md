@@ -114,7 +114,7 @@ Decisions:
 
 **Files:**
 - Modify: `engine/host_loop.py` (`_pump_contacts`, and the `ui.contacts` block that calls it)
-- Modify: whichever of `engine/appc/perception.py`, `engine/appc/target_menu.py` or `engine/appc/objects.py` Step 2's split names
+- Modify: whichever of `engine/appc/perception.py`, `engine/appc/target_menu.py`, `engine/appc/objects.py` (and new `engine/appc/affiliation.py`) Step 2's split names
 - Test: `tests/unit/test_target_menu_shim.py` or a new `tests/unit/test_contacts_pump_cost.py`
 
 **Interfaces:**
@@ -131,12 +131,12 @@ Decisions:
 
   | Biggest | Fix |
   |---|---|
-  | `contacts.colors` | `ObjectGroup` gains `_generation: int`, bumped by EVERY method that changes its names (find all of them; each one gets a test). `STTargetMenu` keeps `_color_key = (id(mission), friendly, enemy and neutral generations, the frozenset of (row ship, ship.GetName()) pairs)`. The per-frame `ResetAffiliationColors` call in `_pump_contacts` becomes `menu.refresh_affiliation_colors()`, which recolours only when the key changed. The SDK-facing `ResetAffiliationColors()` always recolours. |
-  | `contacts.push` | `set_contacts` skips a row's label write when that row's `(identified, targetable, placeholder)` equals the last frame's. `SetVisible()` and `_post_membership_changes()` still run every push, as their docstrings require. |
+  | `contacts.colors` | Affiliation moves ONTO the contact record, so the row colour today and a future filtered view (Mark, 2026-11-05: filter out friendlies/neutrals, sort by name/distance/health — not in this phase) read one value. `ObjectGroup` gains `_generation: int`, bumped by EVERY method that changes its names (`AddName`, `RemoveName`, `RemoveAllNames`, `ObjectGroupWithInfo.AddNameAndInfo`, and any other writer of `_names` — find them all; each gets a test). New `engine/appc/affiliation.py`: `affiliation_of(ship) -> str` answers `resolve_affiliation(ship, current mission)`, memoised by ship name under a cache key `(id(mission), id + _generation of each of the friendly / enemy / neutral groups)` that empties the memo when it changes. `Contact` gains `affiliation: str`, filled in `perceived_by` from `affiliation_of`. The per-frame `ResetAffiliationColors` call in `_pump_contacts` becomes `menu.apply_contact_affiliations()`: for each pushed contact with a row, `SetAffiliation(c.affiliation)` only when it differs from the row's stored token. The SDK-facing `ResetAffiliationColors()` is unchanged: it always recomputes every row through `resolve_affiliation`. |
+  | `contacts.push` | `set_contacts` skips a label write only when the label it would write is ALREADY the row's label (compare against the row's current caption state, not last frame's inputs), so an SDK relabel is overwritten exactly as today and nothing assumes a name-only or name-ordered list. `SetVisible()` and `_post_membership_changes()` still run every push, as their docstrings require. |
   | `contacts.perceive` or `contacts.persist` | No fix in this phase. Record the numbers in the ledger as a C++ candidate and go straight to Step 5. |
 
   For whichever row applies, first write a failing test that proves the skipped work comes back when its input changes:
-  - colours: each `ObjectGroup` mutator recolours the next frame, a ship rename recolours, a new row is coloured, and an unchanged frame calls `resolve_affiliation` zero times;
+  - colours: each `ObjectGroup` mutator changes the next frame's `Contact.affiliation` and the row's token; a ship rename does; a new row is coloured on its first push; a mission swap re-resolves; an SDK `ResetAffiliationColors()` still recomputes every row; an unchanged frame calls `resolve_affiliation` zero times;
   - push: an identify, a lost track and an Unknown-number change each rewrite the label.
 - [ ] **Step 4: Run the new test plus `uv run pytest -q tests/unit/test_target_menu_shim.py tests/unit/test_target_menu_visibility_derived.py tests/unit/test_target_menu_derived_children.py tests/unit/test_target_menu_nested.py`.** Expect PASS.
 - [ ] **Step 5: Commit** `perf(ui): <what was cut>` (or no commit, if the table says there is no fix).
