@@ -84,7 +84,15 @@ These are the methods SDK scripts call directly. The scripts decide how often, s
 
 Measure per-call cost, plus the allocation cost for point-returning methods. The result picks one approach per method family: "port the method", "thin Python over native data", or "make the point type native". Each choice is recorded in the plan, with its numbers, before any method moves. B0 writes its numbers into the perf register.
 
-## 5. Part C — the divergences (SDK script code)
+## 5. Part C — native stock preprocessors (BC's own design) and one divergence
+
+**BC compiled these preprocessors into C++ itself.** The binary research recorded in `engine/appc/ai_optimized.py`'s docstring (2026-07-14) shows what `PreprocessingAI::SetContainedAI` does. It asks the bound Python preprocessor for its "optimized version", looks its class name up in a native registry, and on a hit replaces the node with a native one.
+- Four classes are registered: `AvoidObstacles`, `FireScript`, `ManagePower`, `SelectTarget`.
+- **In shipped BC their Python `Update` bodies are dead code.** The SDK says so itself above `FireScript`, `SelectTarget` and `AvoidObstacles`: "replaced with an optimized version in the code".
+- We run those Python bodies only because we had no native versions. Three of them are SIG-197's top AI hotspots.
+
+So item 1 below restores BC's architecture; it is not a divergence. What BC's native versions decide differently from the SDK bodies is unknown: the RE project has not reconstructed them. Our native versions reproduce the SDK bodies we run today, and any difference is recorded.
+
 
 What is left after A and B is SDK script code: about 10% of the tick today, a larger share once A and B land. Mark allowed divergence from BC's behaviour in AI, subsystems and combat (2026-11-05). Two divergences are decided here.
 
