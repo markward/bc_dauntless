@@ -176,9 +176,12 @@ def test_the_switch(monkeypatch):
     assert native_subsystems.enabled() is False
 
 
-def test_the_event_table_is_empty_in_task_2():
-    """Tasks 3-5 fill it; no native piece posts an event yet."""
-    assert native_subsystems._EVENT_HANDLERS == {}
+def test_the_event_table_holds_the_native_pieces_events():
+    """Each native piece's event kinds have a handler (Task 3: the shield
+    watchers); every kind the native session names has one."""
+    events = native_subsystems._EVENTS
+    assert set(events) == {"SHIELD_WATCHER", "SHIELD_WATCHER_TAIL"}
+    assert set(native_subsystems._EVENT_HANDLERS) == set(events.values())
 
 
 @pytest.mark.parametrize("target", [

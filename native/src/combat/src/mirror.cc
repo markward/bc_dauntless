@@ -198,6 +198,11 @@ constexpr FieldInfo kInfo[] = {
     {"motion_ies_stock", Kind::Subsystem, FieldType::I},
     {"motion_pod_stock", Kind::Subsystem, FieldType::I},
     {"_velocity_state", Kind::Object, FieldType::I},
+    {"_charge_per_second", Kind::Subsystem, FieldType::FloatList},
+    {"_charge_accum", Kind::Subsystem, FieldType::F},
+    {"shield_watch_ok", Kind::Subsystem, FieldType::I},
+    {"shield_watch_values", Kind::Subsystem, FieldType::FloatList},
+    {"shield_watch_checks", Kind::Subsystem, FieldType::FloatList},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -264,6 +269,8 @@ constexpr GlobalInfo kGlobals[] = {
      &Globals::TRACTOR_STANDOFF_MARGIN_GU, nullptr},
     {"TRACTOR_EPS", false, &Globals::TRACTOR_EPS, nullptr},
     {"TRACTOR_MAX_RANGE_GU", false, &Globals::TRACTOR_MAX_RANGE_GU, nullptr},
+    {"SHIELD_CHARGE_PERIOD_S", false, &Globals::SHIELD_CHARGE_PERIOD_S,
+     nullptr},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));
@@ -474,6 +481,7 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_max_accel: return &r._max_accel;
         case Field::_max_angular_velocity: return &r._max_angular_velocity;
         case Field::_max_angular_accel: return &r._max_angular_accel;
+        case Field::_charge_accum: return &r._charge_accum;
         default: return nullptr;
     }
 }
@@ -517,6 +525,7 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::engage_kind: return &r.engage_kind;
         case Field::motion_ies_stock: return &r.motion_ies_stock;
         case Field::motion_pod_stock: return &r.motion_pod_stock;
+        case Field::shield_watch_ok: return &r.shield_watch_ok;
         default: return nullptr;
     }
 }
@@ -548,6 +557,9 @@ std::vector<double>* flptr(SubsystemRow& r, Field f) {
         case Field::_max_shields: return &r._max_shields;
         case Field::_ramp_fraction: return &r._ramp_fraction;
         case Field::_ramp_set: return &r._ramp_set;
+        case Field::_charge_per_second: return &r._charge_per_second;
+        case Field::shield_watch_values: return &r.shield_watch_values;
+        case Field::shield_watch_checks: return &r.shield_watch_checks;
         default: return nullptr;
     }
 }

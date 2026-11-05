@@ -2178,6 +2178,14 @@ class ShieldSubsystem(PoweredSubsystem):
     _max_shields = native_combat.HasShieldsField()
     _current_shields = native_combat.NativeFloatList()
     _ramp_fraction = native_combat.RampField()
+    # Mirrored for the native shield piece (phase 6 A1, Task 3;
+    # native/src/combat/include/dauntless/combat/subsystem_step.h THE SHIELD
+    # PIECE): the regen rates (SetShieldChargePerSecond writes in place and
+    # pushes), the cadence carry, and the seven watchers (adopted, so each
+    # value and check they take reaches the row).
+    _charge_per_second = native_combat.NativeFloatList()
+    _charge_accum = NativeField(float)
+    _shield_watchers = native_combat.ShieldWatchersField()
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -2384,9 +2392,14 @@ class ShieldSubsystem(PoweredSubsystem):
 
     def SetShieldChargePerSecond(self, face: int, value: float) -> None:
         self._charge_per_second[int(face)] = float(value)
+        native_combat.push_field(self, "_charge_per_second")   # in place
 
     def Update(self, dt: float) -> None:
         """Per-tick regen: current += charge_per_second * dt, clamped to max.
+
+        The native subsystem stage stands in for this method, bit for bit
+        (native/src/combat/src/subsystem_step.cc, THE SHIELD PIECE in
+        subsystem_step.h), on a stock generator: change both.
 
         Faces with max==0 are skipped so unshielded faces never accumulate.
 

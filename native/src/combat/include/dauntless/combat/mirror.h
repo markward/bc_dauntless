@@ -199,6 +199,19 @@ enum class Field : int32_t {
     // encoding accepts (a tuple; native_combat.VelocityField pushes it).
     // Kernel M's drift reads `v.x` only on a 1.
     _velocity_state,
+    // Shields native (phase 6 A1, Task 3; subsystem_step.h THE SHIELD
+    // PIECE). Subsystem: ShieldSubsystem._charge_per_second (written IN
+    // PLACE by SetShieldChargePerSecond, which pushes the whole list) and
+    // _charge_accum; its seven FloatRangeWatchers (_shield_watchers, pushed
+    // by native_combat.ShieldWatchersField and by every watcher it adopted:
+    // each value committed, each check added or removed) as shield_watch_ok
+    // (1: seven stock watchers, each adopted by this generator at its index;
+    // 0: anything else, the piece is Python's), shield_watch_values (each
+    // watcher's `_value`) and shield_watch_checks (per watcher in order: its
+    // check count, then (threshold, direction code) per check; code 1 an
+    // upward check (FRW_ABOVE), 2 a downward one (FRW_BELOW), 3 either).
+    _charge_per_second, _charge_accum, shield_watch_ok, shield_watch_values,
+    shield_watch_checks,
     kCount
 };
 
@@ -353,6 +366,11 @@ struct SubsystemRow {
     // resolution. A stamp != Mirror::part_gen() is stale: not resolved.
     int32_t part_slot = -1;
     uint64_t part_gen = 0;
+    // Shields native (Field comment above).
+    std::vector<double> _charge_per_second, shield_watch_values,
+        shield_watch_checks;
+    double _charge_accum = 0.0;
+    int64_t shield_watch_ok = 0;
 };
 
 struct PropertyRow {
@@ -430,6 +448,9 @@ enum class Global : int32_t {
     TRACTOR_MAX_SPEED_GUPS, TRACTOR_FALLBACK_MASS, TRACTOR_TOW_DRAG_FRACTION,
     TRACTOR_DOCK_GENTLE_FRACTION, TRACTOR_STANDOFF_MARGIN_GU, TRACTOR_EPS,
     TRACTOR_MAX_RANGE_GU,
+    // Shields native (phase 6 A1, Task 3): subsystems.SHIELD_CHARGE_PERIOD_S,
+    // the 0.5 s charge cadence.
+    SHIELD_CHARGE_PERIOD_S,
     kCount
 };
 
@@ -464,6 +485,7 @@ struct Globals {
            TRACTOR_TOW_DRAG_FRACTION = 0.0, TRACTOR_DOCK_GENTLE_FRACTION = 0.0,
            TRACTOR_STANDOFF_MARGIN_GU = 0.0, TRACTOR_EPS = 0.0,
            TRACTOR_MAX_RANGE_GU = 0.0;
+    double SHIELD_CHARGE_PERIOD_S = 0.0;
 };
 
 struct ProfileRowSet {

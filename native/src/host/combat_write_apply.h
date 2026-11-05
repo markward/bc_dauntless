@@ -158,6 +158,12 @@ private:
 // The process-wide applier (never destroyed: it owns Python references).
 WriteApplier& write_applier();
 
+// `registry.get(h)` (native_combat._registry, keyed by int handle `h`), as
+// THE REGISTRY above reads it: a new reference (None when absent or dead),
+// or nullptr with a Python error set. Shared with the subsystem stage's
+// applier (subsystem_write_apply.h).
+PyObject* registry_lookup(PyObject* registry, PyObject* h);
+
 // The attribute a K0 write stores into: its Field's name (interned, never
 // freed: a borrowed reference), or "_charge_watcher" for a watcher write.
 // nullptr with SystemError for a Field id out of range.

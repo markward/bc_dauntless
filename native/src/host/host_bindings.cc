@@ -13,6 +13,7 @@
 #include "combat_effect_queue.h"
 #include "combat_write_apply.h"
 #include "motion_write_apply.h"
+#include "subsystem_write_apply.h"
 
 #include <algorithm>
 #include <cstring>
@@ -13835,11 +13836,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // ── The subsystem stage session (subsystem_step.h) ──────────────
         // One session object per stage (no process-wide session: a stage
         // nested in a handler gets its own). Records are tuples
-        //   (type, ship_pos, ship, kind, code, a, b)
+        //   (type, ship_pos, ship, kind, code, a, b, sub)
         // with type and kind ints named by combat_subsys_kinds() (kind a
         // piece for RUN_PYTHON, an event kind for EVENT, -1 for DONE).
         m.def("combat_subsys_kinds", [] {
-            py::dict types, pieces;
+            py::dict types, pieces, events;
             for (int i = 0;
                  i < static_cast<int>(cb::SubsystemRecordType::kCount); ++i)
                 types[cb::subsystem_record_type_name(
@@ -13848,27 +13849,48 @@ PYBIND11_MODULE(_dauntless_host, m) {
                  ++i)
                 pieces[cb::subsystem_piece_name(
                     static_cast<cb::SubsystemPiece>(i))] = i;
-            return py::make_tuple(types, pieces);
-        }, "(record types, pieces): name -> int.");
+            for (int i = 0; i < static_cast<int>(cb::SubsystemEvent::kCount);
+                 ++i)
+                events[cb::subsystem_event_name(
+                    static_cast<cb::SubsystemEvent>(i))] = i;
+            return py::make_tuple(types, pieces, events);
+        }, "(record types, pieces, event kinds): name -> int.");
         py::class_<cb::SubsystemSession>(m, "combat_SubsystemSession")
             .def_readonly("dt", &cb::SubsystemSession::dt)
-            .def_readonly("done", &cb::SubsystemSession::done);
+            .def_readonly("done", &cb::SubsystemSession::done)
+            .def_readwrite("python_pieces",
+                           &cb::SubsystemSession::python_pieces);
         m.def("combat_subsys_begin",
-              [](const std::vector<std::int64_t>& ships, double dt) {
-                  return cb::subsystems::begin(cb::mirror(), ships, dt);
+              [](const std::vector<std::int64_t>& ships, double dt,
+                 std::uint32_t python_pieces,
+                 const std::vector<std::uint8_t>& forced) {
+                  return cb::subsystems::begin(cb::mirror(), ships, dt,
+                                               python_pieces, forced);
               },
-              py::arg("ships"), py::arg("dt"),
+              py::arg("ships"), py::arg("dt"), py::arg("python_pieces") = 0,
+              py::arg("forced") = std::vector<std::uint8_t>{},
               "Begin one subsystem stage over `ships` (Object handles in "
-              "roster order, -1 for a ship with no row) for a tick of `dt`.");
+              "roster order, -1 for a ship with no row) for a tick of `dt`. "
+              "python_pieces: a mask (1 << piece) Python runs for every "
+              "ship; forced: [] or one such mask per ship.");
         m.def("combat_subsys_next",
-              [](cb::SubsystemSession& s) {
+              [](cb::SubsystemSession& s, py::object registry) {
                   const cb::SubsystemRecord r =
                       cb::subsystems::next(s, cb::mirror());
+                  // THE WRITE LOG: into the Python objects before Python
+                  // runs the record (subsystem_write_apply.h).
+                  if (!dauntless::host::apply_subsystem_writes(registry.ptr(),
+                                                               s.writes))
+                      throw py::error_already_set();
+                  s.writes.clear();
                   return py::make_tuple(static_cast<int>(r.type), r.ship_pos,
-                                        r.ship, r.kind, r.code, r.a, r.b);
+                                        r.ship, r.kind, r.code, r.a, r.b,
+                                        r.sub);
               },
-              py::arg("session"),
-              "The session's next record (see combat_subsys_kinds).");
+              py::arg("session"), py::arg("registry"),
+              "The session's next record (see combat_subsys_kinds), its "
+              "write log applied first through `registry` "
+              "(native_combat._registry).");
         // ── The tractor force (tractor_force.h) ──────────────────────────
         // One step over Object handles (host order, -1 for a ship with no
         // row), writing the transform store. Returns (zero_velocity,

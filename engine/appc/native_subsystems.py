@@ -24,10 +24,30 @@ the mirror registers them under: ``_nslot``), and the driver loops
   returns one: ``GetShieldSubsystem().Update(dt)``,
   ``GetPowerSubsystem().Update(dt)``, ``GetCloakingSubsystem().Update(dt)``,
   ``GetRepairSubsystem().Update(dt)``, ``articulation.tick_ship(ship, dt)``.
-* ``EVENT(ship, kind, code, a, b)``: ``_EVENT_HANDLERS[kind](ship, code, a,
-  b)`` posts the SDK event a native piece stopped for (ruling R3: stop and
-  resume, never batched). No piece is native yet, so the table is empty:
-  Tasks 3-5 fill it.
+* ``EVENT(ship, kind, code, a, b, sub)``: ``_EVENT_HANDLERS[kind](ship,
+  code, a, b, sub, pins)`` posts the SDK event a native piece stopped for
+  (ruling R3: stop and resume, never batched); `sub` is the Subsystem
+  handle it is about, `pins` the session's handle -> object dict (an object
+  an event named stays reachable for the rest of its piece, even if its
+  row is dropped or its ship lets it go).
+
+Each record's write log -- what the native piece wrote -- is applied into
+the Python objects by ``combat_subsys_next`` before the record comes back
+(subsystem_write_apply.h), so the Python a record runs sees it.
+
+THE SHIELD PIECE (Task 3) is native: ``ShieldSubsystem.Update`` bit for bit
+(subsystem_step.h THE SHIELD PIECE). It needs the surface it stands in for
+to be stock, checked here: ``_SHIELD_SURFACE`` as taken at import (else
+``python_pieces`` hands every ship's shield piece to Python, counted in
+``shield_patched_stages``, and logged once), and per ship the ship's class
+and its generator's class resolving ``_SHIP_SHIELD_NAMES`` /
+``_SHIELD_NAMES`` to the stock functions with no instance attribute
+shadowing one (else that ship's piece is forced to Python). The surface is
+checked again after every EVENT (its handlers are SDK code); a change there
+hands the rest of the stage's shield pieces, and the rest of a watcher loop
+in progress, to Python. A ship's own overrides are read when the set's
+session begins. The watcher-crossing protocol (``SHIELD_WATCHER``,
+``SHIELD_WATCHER_TAIL``) is the one Task 4's battery watchers reuse.
 
 A ship whose mirror row is freed mid-walk while it lives on
 (``native_combat._drop``) is NOT skipped: the Python stage still updates
@@ -35,15 +55,19 @@ it, so its remaining pieces come back as RUN_PYTHON and its row is never
 read again (Review Focus 3; subsystem_step.h FREED ROWS). A ship with no
 row is all Python.
 
-In this task every piece is RUN_PYTHON, so the stage makes the Python loop's
-calls, in its order, by construction.
+Every piece but the shield is still RUN_PYTHON (Tasks 4-6).
 """
+import operator
 import os
 import sys
 from typing import Mapping
 
-from engine.appc import articulation, native_combat, ship_iter
+from engine.appc import (articulation, native_combat, ship_death, ship_iter,
+                         subsystems)
+from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.ship_iter import iter_non_rock_ship_sets
+from engine.appc.ships import ShipClass
+from engine.appc.subsystems import ShieldSubsystem
 
 try:
     import _dauntless_host as _h
@@ -55,7 +79,8 @@ except ImportError:     # pragma: no cover -- a build without the module
 
 _switch = False
 _counts = {"stages": 0, "sessions": 0, "run_python": 0, "events": 0,
-           "patched_stages": 0}
+           "patched_stages": 0, "shield_patched_stages": 0,
+           "shield_forced": 0}
 
 #: The roster as the Python stage takes it, stock (taken at import): the
 #: driver walks the sets itself (iter_non_rock_ship_sets), so a patched
@@ -130,12 +155,11 @@ def counts() -> dict:
 # ── The records ──────────────────────────────────────────────────────────────
 
 def _kinds():
-    types, pieces = _h.combat_subsys_kinds()
-    return types, pieces
+    return _h.combat_subsys_kinds()
 
 
-_TYPES, _PIECES = _kinds() if _h is not None and hasattr(
-    _h, "combat_subsys_kinds") else ({}, {})
+_TYPES, _PIECES, _EVENTS = _kinds() if _h is not None and hasattr(
+    _h, "combat_subsys_kinds") else ({}, {}, {})
 DONE = _TYPES.get("DONE", 0)
 RUN_PYTHON = _TYPES.get("RUN_PYTHON", 1)
 EVENT = _TYPES.get("EVENT", 2)
@@ -144,10 +168,129 @@ POWER = _PIECES.get("POWER", 1)
 CLOAK = _PIECES.get("CLOAK", 2)
 REPAIR = _PIECES.get("REPAIR", 3)
 ARTICULATION = _PIECES.get("ARTICULATION", 4)
+SHIELD_WATCHER = _EVENTS.get("SHIELD_WATCHER", 0)
+SHIELD_WATCHER_TAIL = _EVENTS.get("SHIELD_WATCHER_TAIL", 1)
 
-#: EVENT kind -> handler(ship, code, a, b), posting that record's SDK event.
-#: Empty until a piece is native (Tasks 3-5).
-_EVENT_HANDLERS: dict = {}
+_SHIELD_BIT = 1 << SHIELD
+
+
+# ── The shield piece's stock surface ─────────────────────────────────────────
+
+#: What the native piece stands in for on the generator (its class's
+#: resolution) and on the ship whose `_shield_subsystem` it is.
+_SHIELD_NAMES = ("Update", "IsOn", "GetSingleShieldPercentage",
+                 "GetShieldPercentage", "IsDisabled", "IsDestroyed",
+                 "GetParentShip", "NUM_SHIELDS")
+_SHIP_SHIELD_NAMES = ("GetShieldSubsystem", "IsDying", "IsDead")
+_SHIELD_SET = frozenset(_SHIELD_NAMES)
+_SHIP_SHIELD_SET = frozenset(_SHIP_SHIELD_NAMES)
+
+#: (owner, names): the functions and constants the piece stands in for, as
+#: the stock classes resolve them (through their MRO).
+_SHIELD_SURFACE = (
+    (subsystems, ("_is_offline", "SHIELD_CHARGE_PERIOD_S")),
+    (ship_death, ("_out_of_action",)),
+    (ShieldSubsystem, _SHIELD_NAMES),
+    (ShipClass, _SHIP_SHIELD_NAMES),
+    (FloatRangeWatcher, ("_update", "_fire_crossed", "_crossed",
+                         "FRW_BELOW", "FRW_ABOVE")),
+)
+
+
+def _take_snapshot():
+    return [(owner, operator.attrgetter(*names),
+             operator.attrgetter(*names)(owner))
+            for owner, names in _SHIELD_SURFACE]
+
+
+#: Taken at import, before any test, tool or mod can replace a name.
+_SHIELD_SNAPSHOT = _take_snapshot()
+
+
+def _shield_stock_holds() -> bool:
+    for owner, get, values in _SHIELD_SNAPSHOT:
+        try:
+            if get(owner) != values:
+                return False
+        except AttributeError:
+            return False
+    return True
+
+
+def _python_pieces() -> int:
+    """The pieces Python runs for every ship this stage."""
+    if _shield_stock_holds():
+        return 0
+    _counts["shield_patched_stages"] += 1
+    native_combat._log_once(
+        ("subsystems-shield-patched",),
+        "native subsystems: the shield piece's surface is patched; shields "
+        "regenerate in Python while it is")
+    return _SHIELD_BIT
+
+
+def _shield_native(ship, d, cache) -> bool:
+    """`ship`'s shield piece may be native: its class and its generator's
+    resolve the piece's names to the stock functions, and no instance
+    attribute shadows one. `cache`: class -> verdict, for this session."""
+    t = type(ship)
+    ok = cache.get(t)
+    if ok is None:
+        ok = cache[t] = native_combat._stock_surface(t, ShipClass,
+                                                     _SHIP_SHIELD_NAMES)
+    if not ok or not d.keys().isdisjoint(_SHIP_SHIELD_SET):
+        return False
+    sh = d.get("_shield_subsystem")
+    if sh is None:
+        return True
+    st = type(sh)
+    ok = cache.get(st)
+    if ok is None:
+        ok = cache[st] = native_combat._stock_surface(st, ShieldSubsystem,
+                                                      _SHIELD_NAMES)
+    if not ok:
+        return False
+    sd = getattr(sh, "__dict__", None)
+    return sd is not None and sd.keys().isdisjoint(_SHIELD_SET)
+
+
+# ── The event handlers ───────────────────────────────────────────────────────
+
+def _event_object(h, pins):
+    """The object Subsystem row `h` names: pinned for the rest of the
+    session (the record's row is live when it is returned)."""
+    obj = pins.get(h)
+    if obj is None:
+        obj = native_combat._registry.get(h)
+        if obj is None or obj.__dict__.get("_nslot") != h:
+            raise RuntimeError("native subsystems: an EVENT names row %r, "
+                               "which no live object holds" % (h,))
+        pins[h] = obj
+    return obj
+
+
+def _shield_watcher(ship, code, a, b, h, pins) -> None:
+    """SHIELD_WATCHER: the Python piece's own line for watcher `code` of
+    generator `h`, with the value the native piece computed for it --
+    ``self._shield_watchers[code]._update(value)``, which fires the checks
+    it crosses and commits the value (pushing it)."""
+    sub = _event_object(h, pins)
+    sub._shield_watchers[code]._update(a)
+
+
+def _shield_watcher_tail(ship, code, a, b, h, pins) -> None:
+    """SHIELD_WATCHER_TAIL: the rest of the Python piece's watcher loop on
+    generator `h`, from watcher `code` on, as Update's own lines run it."""
+    sub = pins[h]
+    for f in range(code, sub.NUM_SHIELDS):
+        sub._shield_watchers[f]._update(sub.GetSingleShieldPercentage(f))
+    sub._shield_watchers[sub.NUM_SHIELDS]._update(sub.GetShieldPercentage())
+
+
+#: EVENT kind -> handler(ship, code, a, b, sub, pins), posting that
+#: record's SDK event.
+_EVENT_HANDLERS: dict = {SHIELD_WATCHER: _shield_watcher,
+                         SHIELD_WATCHER_TAIL: _shield_watcher_tail}
 
 
 def _run_shield(ship, dt):
@@ -185,25 +328,44 @@ _RUN = {SHIELD: _run_shield, POWER: _run_power, CLOAK: _run_cloak,
 
 # ── The stage ────────────────────────────────────────────────────────────────
 
-def _handle(ship) -> int:
-    h = ship.__dict__.get("_nslot", -1)
-    return h if type(h) is int else -1
-
-
 def step_all(dt: float) -> None:
     """One subsystem stage, natively driven (module docstring)."""
     _counts["stages"] += 1
+    state = [_python_pieces()]
     for ships in iter_non_rock_ship_sets():
-        _step_set(ships, dt)
+        _step_set(ships, dt, state)
 
 
-def _step_set(ships, dt) -> None:
-    session = _h.combat_subsys_begin([_handle(s) for s in ships], dt)
+def _entries(ships):
+    """Each ship's row handle (-1: none) and its forced-piece mask."""
+    handles, forced = [], []
+    cache: dict = {}
+    for ship in ships:
+        d = ship.__dict__
+        h = d.get("_nslot", -1)
+        handles.append(h if type(h) is int else -1)
+        if _shield_native(ship, d, cache):
+            forced.append(0)
+        else:
+            _counts["shield_forced"] += 1
+            forced.append(_SHIELD_BIT)
+    return handles, forced
+
+
+def _step_set(ships, dt, state) -> None:
+    handles, forced = _entries(ships)
+    session = _h.combat_subsys_begin(handles, dt, state[0], forced)
     _counts["sessions"] += 1
     nxt = _h.combat_subsys_next
     run = _RUN
+    registry = native_combat._registry
+    pins: dict = {}
     while True:
-        rtype, pos, _ship_h, kind, code, a, b = nxt(session)
+        try:
+            rtype, pos, _ship_h, kind, code, a, b, sub = nxt(session, registry)
+        except BaseException:
+            _resync(ships)
+            raise
         if rtype == DONE:
             return
         ship = ships[pos]
@@ -212,4 +374,28 @@ def _step_set(ships, dt) -> None:
             run[kind](ship, dt)
         else:
             _counts["events"] += 1
-            _EVENT_HANDLERS[kind](ship, code, a, b)
+            _EVENT_HANDLERS[kind](ship, code, a, b, sub, pins)
+            # Its handlers were SDK code: the surface is asked again.
+            if not state[0] and _python_pieces():
+                state[0] = _SHIELD_BIT
+                session.python_pieces = state[0]
+
+
+def _resync(ships) -> None:
+    """A raise out of combat_subsys_next (a broken invariant: its write log
+    could not be applied): every generator of `ships` pushed again from its
+    Python object, so no row keeps a write Python never got."""
+    nc = native_combat
+    for ship in ships:
+        sh = ship.__dict__.get("_shield_subsystem")
+        if sh is None:
+            continue
+        h = sh.__dict__.get("_nslot")
+        if h is None or nc._registry.get(h) is not sh:
+            continue
+        try:
+            nc._push_all(sh, h)
+        except Exception as e:      # noqa: BLE001 -- the raise in flight wins
+            nc._log_once(("subsystems-resync", type(e)),
+                         "native subsystems: a resync after a raise raised "
+                         "%r" % (e,))

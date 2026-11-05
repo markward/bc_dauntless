@@ -1684,6 +1684,178 @@ def _push_has_shields_arg(sub, _arg) -> None:
     push_has_shields(sub)
 
 
+# ── Shields native: the generator's seven watchers (phase 6 A1, Task 3) ─────
+# The native shield piece (subsystem_step.h THE SHIELD PIECE) decides each
+# watcher's crossing itself, so it needs every watcher's committed `_value`
+# and its checks. ShieldSubsystem._shield_watchers is a ShieldWatchersField:
+# each plain FloatRangeWatcher in the list is ADOPTED (its `_shield_owner`
+# is the generator, `_shield_index` its place), and an adopted watcher
+# pushes the generator's row on every value it commits (`_update`) and every
+# check it adds or removes. shield_watch_ok is 1 only for seven stock
+# watchers, each adopted by this generator at its index, with no owner of
+# another kind and no instance override of the methods the piece stands in
+# for; anything else is 0 and the piece is Python's.
+
+_SHIELD_WATCHERS = 7
+_WATCHER_OVERRIDES = frozenset(("_update", "_fire_crossed", "_crossed",
+                                "_fire"))
+_NOT_READY = (0, [], [])
+
+
+def _shield_watch_state(sub):
+    """(ok, values, checks) as the mirror holds them (mirror.h
+    shield_watch_*): each watcher's `_value`, and per watcher its check
+    count then (threshold, direction code) per check -- 2 for FRW_BELOW,
+    1 for FRW_ABOVE, 3 for anything else, in FloatRangeWatcher._crossed's
+    order of tests."""
+    from engine.appc.float_range_watcher import FloatRangeWatcher
+    ws = sub.__dict__.get("_shield_watchers")
+    if type(ws) is not list or len(ws) != _SHIELD_WATCHERS:
+        return _NOT_READY
+    below, above = FloatRangeWatcher.FRW_BELOW, FloatRangeWatcher.FRW_ABOVE
+    values, checks = [], []
+    for i, w in enumerate(ws):
+        if type(w) is not FloatRangeWatcher:
+            return _NOT_READY
+        wd = w.__dict__
+        if (wd.get("_shield_owner") is not sub
+                or wd.get("_shield_index") != i
+                or wd.get("_owner") is not None
+                or wd.get("_cond_owner") is not None
+                or not _WATCHER_OVERRIDES.isdisjoint(wd)):
+            return _NOT_READY
+        v = wd.get("_value")
+        cd = wd.get("_checks")
+        if type(v) is not float or type(cd) is not dict:
+            return _NOT_READY
+        values.append(v)
+        checks.append(float(len(cd)))
+        for entry in cd.values():
+            if type(entry) is not tuple or len(entry) != 3:
+                return _NOT_READY
+            t, d = entry[0], entry[1]
+            if type(t) is not float or type(d) is not int:
+                return _NOT_READY
+            checks.append(t)
+            checks.append(2.0 if d == below else 1.0 if d == above else 3.0)
+    return 1, values, checks
+
+
+def push_shield_watch(sub) -> None:
+    """The generator's whole watcher state (_shield_watch_state): a watcher
+    adopted or released, a check added or removed."""
+    if not _enabled:
+        return
+    h = sub.__dict__.get("_nslot")
+    if h is None:
+        return
+    if _off_main():
+        _queue_push(sub, _push_shield_watch_arg, None, "shield_watch")
+        return
+    ok, values, checks = _shield_watch_state(sub)
+    _call(sub, _h.combat_set_i, h, _fid("shield_watch_ok"), ok)
+    if ok and "_nslot" in sub.__dict__:
+        _call(sub, _h.combat_set_floats, h, _fid("shield_watch_values"),
+              values)
+        if "_nslot" in sub.__dict__:
+            _call(sub, _h.combat_set_floats, h, _fid("shield_watch_checks"),
+                  checks)
+
+
+def _push_shield_watch_arg(sub, _arg) -> None:
+    push_shield_watch(sub)
+
+
+def push_shield_watch_values(sub) -> None:
+    """An adopted watcher committed a value (FloatRangeWatcher._update):
+    the seven values. Anything unexpected takes the whole push."""
+    if not _enabled:
+        return
+    d = sub.__dict__
+    h = d.get("_nslot")
+    if h is None:
+        return
+    if _off_main():
+        _queue_push(sub, _push_shield_watch_arg, None, "shield_watch")
+        return
+    try:
+        values = [float(w.__dict__["_value"]) for w in d["_shield_watchers"]]
+    except Exception:       # noqa: BLE001 -- the whole push decides
+        push_shield_watch(sub)
+        return
+    if len(values) != _SHIELD_WATCHERS:
+        push_shield_watch(sub)
+        return
+    _call(sub, _h.combat_set_floats, h, _fid("shield_watch_values"), values)
+
+
+def _adopt_watchers(sub, ws) -> None:
+    """Each plain FloatRangeWatcher of `ws` nobody adopted: `sub`'s, at its
+    index (an adopted one moved in the list takes its new index)."""
+    from engine.appc.float_range_watcher import FloatRangeWatcher
+    if type(ws) is not list:
+        return
+    for i, w in enumerate(ws):
+        if type(w) is not FloatRangeWatcher:
+            continue
+        wd = w.__dict__
+        owner = wd.get("_shield_owner")
+        if owner is None or owner is sub:
+            wd["_shield_owner"] = sub
+            wd["_shield_index"] = i
+
+
+def _release_watchers(sub, old, new) -> None:
+    """The watchers of the `old` list that `sub` adopted and `new` no longer
+    holds: released."""
+    if type(old) is not list:
+        return
+    keep = {id(w) for w in new} if type(new) is list else set()
+    for w in old:
+        wd = getattr(w, "__dict__", None)
+        if (wd is not None and wd.get("_shield_owner") is sub
+                and id(w) not in keep):
+            del wd["_shield_owner"]
+            wd.pop("_shield_index", None)
+
+
+class ShieldWatchersField(NativeField):
+    """``ShieldSubsystem._shield_watchers``: adopts its watchers and pushes
+    the generator's watcher state (the section comment above). An in-place
+    ``_shield_watchers[i] = w`` is invisible to it; nothing writes one."""
+
+    def __init__(self) -> None:
+        super().__init__(list, key="shield_watch_ok")
+
+    def __set__(self, obj, value) -> None:
+        d = obj.__dict__
+        old = d.get(self._name)
+        d[self._name] = value
+        _release_watchers(obj, old, value)
+        _adopt_watchers(obj, value)
+        push_shield_watch(obj)
+
+    def _push(self, obj, h, value) -> None:      # _push_all / resync
+        _adopt_watchers(obj, value)
+        push_shield_watch(obj)
+
+    def audit(self, value, row) -> bool:
+        return True     # _audit_shield_watch, which needs the generator
+
+
+def _audit_shield_watch(sub, row, name) -> None:
+    """The watcher state as the watchers hold it NOW (a check added behind
+    their methods is caught, not only a missed push)."""
+    ok, values, checks = _shield_watch_state(sub)
+    if row["shield_watch_ok"] != ok:
+        _failures.append((name, "shield_watch_ok"))
+    elif ok:
+        if _hexes(values) != _hexes(row["shield_watch_values"]):
+            _failures.append((name, "shield_watch_values"))
+        if _hexes(checks) != _hexes(row["shield_watch_checks"]):
+            _failures.append((name, "shield_watch_checks"))
+
+
 def _has_shields_flag(sub) -> int:
     """The flag for a row being (re)built. 0 for any subsystem that is not a
     ShieldSubsystem, and before the subsystem has its ``_max_shields`` (a
@@ -3072,6 +3244,9 @@ def _globals() -> dict:
         g[name] = float(getattr(tractor, name))
     g["TRACTOR_EPS"] = float(tractor._EPS)
     g["TRACTOR_MAX_RANGE_GU"] = float(ws.TRACTOR_MAX_RANGE_GU)
+    # The native shield piece's 0.5 s cadence (phase 6 A1, Task 3).
+    from engine.appc import subsystems
+    g["SHIELD_CHARGE_PERIOD_S"] = float(subsystems.SHIELD_CHARGE_PERIOD_S)
     return g
 
 
@@ -3585,6 +3760,8 @@ def audit_mirror() -> None:
             if "_watch_checks" in d:
                 _audit_watch_checks(obj, row, name)
             _audit_cond_watch(obj, row, name)
+            if "_shield_watchers" in d:
+                _audit_shield_watch(obj, row, name)
     _audit_torpedoes()
     _audit_globals()
     if _h.combat_part_gen() != _part_gen:

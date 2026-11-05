@@ -415,6 +415,14 @@ def test_differential_combat_scene_bit_exact():
             i, x, y = _first_difference(pe, ne)
             pytest.fail("tick %d: events differ at %d\n python %r\n native %r"
                         % (tick, i, x, y))
+    # Task 3: every shield piece ran natively (the other four pieces are one
+    # RUN_PYTHON record per ship per stage), and its watcher crossings --
+    # the handler's mid-stage writes among them -- came back as EVENTs.
+    ships = int(SHIPS) + 1
+    assert na_counts["run_python"] == 4 * ships * TICKS, na_counts
+    assert na_counts["shield_patched_stages"] == 0, na_counts
+    assert na_counts["shield_forced"] == 0, na_counts
+    assert na_counts["events"] > 0, na_counts
     # The scene is what it claims: the handler wrote mid-stage, and the
     # stage had work of every kind to do.
     assert na_handled == py_handled

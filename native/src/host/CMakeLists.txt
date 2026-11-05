@@ -7,6 +7,7 @@ set(HOST_BINDINGS_SOURCES
     frame_dump.cc
     combat_write_apply.cc
     motion_write_apply.cc
+    subsystem_write_apply.cc
 )
 
 # Host logic with C++ tests (native/tests/host): the developer gate and the

@@ -1073,6 +1073,10 @@ bool parse_value(PyObject* o, ApplyValue* out) {
 
 }  // namespace
 
+PyObject* registry_lookup(PyObject* registry, PyObject* h) {
+    return registry_get(registry, h);
+}
+
 // ── WriteApplier ─────────────────────────────────────────────────────────
 
 PyObject* WriteApplier::set_context(PyObject* ctx) {
