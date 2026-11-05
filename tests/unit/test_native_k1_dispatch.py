@@ -802,7 +802,8 @@ def test_reset_clears_the_per_class_caches(monkeypatch):
 
 def test_reset_lets_go_of_a_class_the_field_caches_saw():
     """nc.reset() drops the class-keyed field caches (`_class_fields`,
-    `_class_hidden`, `_quiet_setters`) too, so a class a test defined
+    `_class_hidden`, `_quiet_setters`, `_repair_bay_by_type`,
+    `_power_kind_by_type`) too, so a class a test defined
     is freed once the test is done with it. A strong key there kept a
     test-local PhaserSystem subclass alive for the rest of the process,
     where every later `WeaponSystem.__subclasses__()` walk saw it
@@ -816,6 +817,9 @@ def test_reset_lets_go_of_a_class_the_field_caches_saw():
     nc._fields_of(Local)
     nc._hidden_fields(Local)
     nc._quiet_setter(Local, "_target_list")
+    # The subsystem stage's per-class answers (phase 6 A1) key it too.
+    nc._is_repair_bay(Local)
+    nc._power_kind(Local)
     gone = weakref.ref(Local)
     del Local
     nc.reset()

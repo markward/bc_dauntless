@@ -313,6 +313,8 @@ def reset() -> None:
     _class_fields.clear()
     _class_hidden.clear()
     _quiet_setters.clear()
+    _repair_bay_by_type.clear()
+    _power_kind_by_type.clear()
     _dmg_classes.clear()
     for k in _dmg_counts:
         _dmg_counts[k] = 0
