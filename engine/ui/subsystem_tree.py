@@ -76,8 +76,8 @@ def _pos(sub) -> tuple:
         pos = sub.GetPosition2D()
         if isinstance(pos, tuple) and len(pos) == 2:
             return float(pos[0]), float(pos[1])
-    except Exception:
-        pass
+    except Exception as _e:
+        dev_mode.log_swallowed("subsystem position", _e)
     return 0.0, 0.0
 
 
@@ -91,21 +91,21 @@ def _alive(sub) -> bool:
 
 def _family_for(sub) -> Optional[Family]:
     n = sub.GetNumChildSubsystems() if hasattr(sub, "GetNumChildSubsystems") else 0
-    if n:
-        members = []
-        for i in range(n):
-            child = sub.GetChildSubsystem(i)
-            if child is None or not _is_targetable(child) or not _alive(child):
+    children = [sub.GetChildSubsystem(i) for i in range(n)]
+    children = [c for c in children if c is not None and _is_targetable(c)]
+    members = []
+    if children:
+        # A group: kept only while a targetable child survives.
+        for child in children:
+            if not _alive(child):
                 continue
             x, y = _pos(child)
             members.append(Member(_name(child), subsystem_state(child),
                                   subsystem_icons.icon_key_for(child), x, y))
         if not members:
             return None
-    else:
-        if not _is_targetable(sub) or not _alive(sub):
-            return None
-        members = []
+    elif not _is_targetable(sub) or not _alive(sub):
+        return None
     x, y = _pos(sub)
     return Family(_name(sub), _own_state(sub),
                   subsystem_icons.icon_key_for(sub), bool(_is_targetable(sub)),

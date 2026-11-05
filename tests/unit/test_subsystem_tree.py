@@ -98,3 +98,12 @@ def test_position_and_order_follow_the_ship():
     assert (fams[1].x_px, fams[1].y_px) == (10.0, 20.0)
     assert [(m.name, m.x_px, m.y_px) for m in fams[1].members] == [
         ("A", 1.0, 2.0), ("B", 3.0, 4.0)]
+
+
+def test_targetable_subsystem_with_only_untargetable_children_is_a_lockable_leaf():
+    ph = _sub(PhaserSystem, "Phasers")
+    ph.AddChildSubsystem(_sub(ShipSubsystem, "Hidden", targetable=0))
+    fams = st.build_families(_ship(phaser=ph))
+    assert _names(fams) == ["Phasers"]
+    assert fams[0].lockable is True
+    assert fams[0].members == ()
