@@ -26,6 +26,7 @@ import pytest
 
 from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import HullSubsystem, ShieldSubsystem
+from tests.helpers.subsystem_stage import tick_subsystem
 
 FRONT = 0
 
@@ -129,6 +130,6 @@ def test_regen_still_refills_over_time_while_raised():
     gen.SetCurrentShields(FRONT, 100.0)
     gen.SetShieldChargePerSecond(FRONT, 50.0)
 
-    gen.Update(2.0)
+    tick_subsystem(gen, 2.0)
 
     assert gen.GetCurrentShields(FRONT) > 100.0

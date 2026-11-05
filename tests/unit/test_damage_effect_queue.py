@@ -34,6 +34,7 @@ from engine.appc.ships import ShipClass, ShipClass_Create  # noqa: E402
 from engine.appc.subsystems import (HullSubsystem, PowerSubsystem,  # noqa: E402
                                     RepairSubsystem, SensorSubsystem,
                                     ShieldSubsystem)
+from tests.helpers.subsystem_stage import tick_subsystem
 
 DAMAGE_KINDS = ("COND_WATCH", "SUBSYS_EVENT", "REPAIR_ADD", "ZERO_CROSS",
                 "SPLASH", "HIT_PRESENT", "WEAPON_HIT")
@@ -371,7 +372,7 @@ def test_a_repair_bay_tick_emits_no_repair_add():
     hull.SetCondition(500.0)
     eq.boundary()
     assert bay._queue == [hull] and hull._in_repair_queue is True
-    bay.Update(1.0)
+    tick_subsystem(bay, 1.0)
     assert 500.0 < hull.GetCondition() < 1000.0      # repaired, still below
     assert "REPAIR_ADD" not in [k for k, _ in _queued()]
     hull.SetCondition(400.0)                          # damaged again, queued
@@ -386,7 +387,7 @@ def test_leaving_the_repair_queue_clears_the_membership():
     bay = ship.GetRepairSubsystem()
     hull.SetCondition(999.0)
     eq.boundary()
-    bay.Update(1.0)                                   # completes it
+    tick_subsystem(bay, 1.0)                                   # completes it
     assert bay._queue == [] and hull._in_repair_queue is False
     hull.SetCondition(500.0)
     assert [k for k, _ in _queued()].count("REPAIR_ADD") == 1
@@ -628,7 +629,7 @@ def test_a_destroyed_plant_kills_at_the_boundary_through_the_seam():
     plant (a breach destroys the ship)."""
     ship, plant = _plant_ship(critical=False)
     plant._condition = 0.0                       # destroyed, unannounced
-    plant.Update(0.1)
+    tick_subsystem(plant, 0.1)
     assert not ship.IsDying()
     assert warp_core_breach._armed == []
     eq.boundary()
@@ -639,7 +640,7 @@ def test_a_destroyed_plant_kills_at_the_boundary_through_the_seam():
 def test_a_destroyed_plant_on_a_ship_invincible_by_the_boundary_does_nothing():
     ship, plant = _plant_ship(critical=False)
     plant._condition = 0.0
-    plant.Update(0.1)
+    tick_subsystem(plant, 0.1)
     ship.SetInvincible(1)
     eq.boundary()
     assert not ship.IsDying()

@@ -62,6 +62,7 @@ from engine.appc.subsystems import (HullSubsystem, ImpulseEngineSubsystem,
                                     PowerSubsystem, RepairSubsystem,
                                     SensorSubsystem, ShieldSubsystem)
 from tests.helpers.fresh_world import _fresh_world
+from tests.helpers.subsystem_stage import tick_subsystem, tick_subsystems
 
 pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "combat_effect_post_typed"),
@@ -341,7 +342,7 @@ def _faces(ship_name, values):
 
 def _charge(ship_name, dt=0.5):
     def step(w):
-        w.ships[ship_name].GetShields().Update(dt)  # writers W4 + W5/W6
+        tick_subsystem(w.ships[ship_name].GetShields(), dt)  # writers W4 + W5/W6
     return step
 
 
@@ -388,7 +389,7 @@ def _scripted(w):
 
 def _repair_back(w):
     _sub(w, "Alpha", "Impulse").SetCondition(150.0)           # operational
-    w.ships["Alpha"].GetRepairSubsystem().Update(1.0)
+    tick_subsystems([w.ships["Alpha"]], 1.0)
 
 
 def _radiation(w):
@@ -426,7 +427,7 @@ def _set_max(w):
 def _offline(w):
     gen = w.ships["Alpha"].GetShields()
     gen.SetCondition(10.0)              # disabled generator
-    gen.Update(0.5)                     # writer W5: every face to zero
+    tick_subsystem(gen, 0.5)                     # writer W5: every face to zero
 
 
 def _repair_generator(w):

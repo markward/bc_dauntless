@@ -6,6 +6,7 @@ generator's DisabledPercentage all six faces read 0 immediately."""
 import pytest
 
 from engine.appc.subsystems import ShieldSubsystem
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def _generator(condition=100.0, max_condition=100.0, disabled_percentage=0.75):
@@ -30,7 +31,7 @@ def _generator(condition=100.0, max_condition=100.0, disabled_percentage=0.75):
 
 def test_healthy_generator_regens():
     s = _generator()
-    s.Update(dt=1.0)
+    tick_subsystem(s, dt=1.0)
     # 500 + 50*1 = 550, clamped to 1000 max
     assert s.GetCurrentShields(s.FRONT_SHIELDS) == 550.0
 
@@ -39,9 +40,9 @@ def test_disabled_generator_drops_every_face_and_skips_regen():
     s = _generator()
     s.SetCondition(10.0)  # 10 <= 0.75 * 100 = 75 -> disabled
     assert s.IsDisabled() == 1
-    s.Update(dt=1.0)
+    tick_subsystem(s, dt=1.0)
     assert [s.GetCurrentShields(f) for f in range(s.NUM_SHIELDS)] == [0.0] * 6
-    s.Update(dt=1.0)
+    tick_subsystem(s, dt=1.0)
     assert s.GetCurrentShields(s.FRONT_SHIELDS) == 0.0
 
 
@@ -49,7 +50,7 @@ def test_destroyed_generator_drops_every_face_and_skips_regen():
     s = _generator()
     s.SetCondition(0.0)
     assert s.IsDestroyed() == 1
-    s.Update(dt=1.0)
+    tick_subsystem(s, dt=1.0)
     assert [s.GetCurrentShields(f) for f in range(s.NUM_SHIELDS)] == [0.0] * 6
 
 
@@ -58,12 +59,12 @@ def test_disabled_generator_preserves_charge_per_second():
     Repair restores regen at the original values, refilling from zero."""
     s = _generator()
     s.SetCondition(10.0)
-    s.Update(dt=1.0)
+    tick_subsystem(s, dt=1.0)
     assert s.GetShieldChargePerSecond(s.FRONT_SHIELDS) == 50.0
     # Repair.
     s.SetCondition(100.0)
     assert s.IsDisabled() == 0
-    s.Update(dt=1.0)
+    tick_subsystem(s, dt=1.0)
     assert s.GetCurrentShields(s.FRONT_SHIELDS) == 50.0
 
 

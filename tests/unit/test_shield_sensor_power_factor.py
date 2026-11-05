@@ -1,5 +1,6 @@
 """Sensor range scales by GetNormalPowerPercentage (power factor); shield regen does not."""
 from engine.appc.subsystems import ShieldSubsystem, SensorSubsystem
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def test_shield_regen_ignores_power_factor():
@@ -13,10 +14,10 @@ def test_shield_regen_ignores_power_factor():
     ss.SetCurShields(ss.FRONT_SHIELDS, 0.0)
     ss.SetShieldChargePerSecond(ss.FRONT_SHIELDS, 10.0)
     ss._power_factor = 0.5
-    ss.Update(1.0)
+    tick_subsystem(ss, 1.0)
     assert abs(ss.GetCurShields(ss.FRONT_SHIELDS) - 10.0) < 1e-9
     ss._power_factor = 1.25
-    ss.Update(1.0)
+    tick_subsystem(ss, 1.0)
     assert abs(ss.GetCurShields(ss.FRONT_SHIELDS) - 20.0) < 1e-9
 
 
@@ -42,7 +43,7 @@ def test_shield_regen_at_full_power_unchanged():
     ss.SetCurShields(ss.FRONT_SHIELDS, 0.0)
     ss.SetShieldChargePerSecond(ss.FRONT_SHIELDS, 10.0)
     # _power_factor defaults to 1.0 — do not set it explicitly
-    ss.Update(1.0)
+    tick_subsystem(ss, 1.0)
     assert abs(ss.GetCurShields(ss.FRONT_SHIELDS) - 10.0) < 1e-9
 
 

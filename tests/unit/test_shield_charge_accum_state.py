@@ -10,6 +10,7 @@ carry instead of preserving it. Per CLAUDE.md 39 SDK classes round-trip through
 property, not a stylistic one.
 """
 from engine.appc.subsystems import ShieldSubsystem, SHIELD_CHARGE_PERIOD_S
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def test_charge_accum_exists_on_a_fresh_instance():
@@ -42,8 +43,8 @@ def test_the_carry_is_what_crosses_the_cadence_threshold():
     s.SetShieldChargePerSecond(0, 10.0)
 
     half = SHIELD_CHARGE_PERIOD_S * 0.5
-    s.Update(half)
+    tick_subsystem(s, half)
     assert s.GetCurrentShields(0) == 0.0        # still banking
-    s.Update(half)
+    tick_subsystem(s, half)
     assert s.GetCurrentShields(0) > 0.0         # threshold crossed
     assert s._charge_accum == 0.0               # and the carry was consumed

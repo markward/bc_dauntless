@@ -20,6 +20,7 @@ _SHARED_SET = App.SetClass_Create()
 from engine.appc.subsystems import (
     PhaserSystem, PhaserBank, ShieldSubsystem, CloakingSubsystem,
 )
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 # ── shared setup (mirrors test_weapons_disabled_blocks_fire) ──────────────────
@@ -149,7 +150,7 @@ def test_shields_recharge_while_cloaked():
     for f in range(ShieldSubsystem.NUM_SHIELDS):
         shields.SetCurrentShields(f, 500.0)             # partially drained
     ship.GetCloakingSubsystem().InstantCloak()          # fully cloaked
-    shields.Update(1.0)                                  # 100/s * 1s
+    tick_subsystem(shields, 1.0)                                  # 100/s * 1s
     for f in range(ShieldSubsystem.NUM_SHIELDS):
         assert shields.GetCurrentShields(f) == 600.0     # recharged, not suppressed
 
@@ -163,7 +164,7 @@ def test_shields_recharge_while_cloaked_even_if_not_up():
     for f in range(ShieldSubsystem.NUM_SHIELDS):
         shields.SetCurrentShields(f, 200.0)             # residual charge
     ship.GetCloakingSubsystem().InstantCloak()
-    shields.Update(1.0)
+    tick_subsystem(shields, 1.0)
     for f in range(ShieldSubsystem.NUM_SHIELDS):
         assert shields.GetCurrentShields(f) == 300.0     # recharged despite IsOn False
 
@@ -177,7 +178,7 @@ def test_shields_drop_and_do_not_recharge_when_generator_offline():
         shields.SetCurrentShields(f, 200.0)
     shields.SetCondition(0.0)                             # destroyed generator -> offline
     ship.GetCloakingSubsystem().InstantCloak()
-    shields.Update(1.0)
+    tick_subsystem(shields, 1.0)
     for f in range(ShieldSubsystem.NUM_SHIELDS):
         assert shields.GetCurrentShields(f) == 0.0       # dropped, and no regen while offline
 

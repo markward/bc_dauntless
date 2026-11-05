@@ -25,6 +25,7 @@ pytestmark = pytest.mark.skipif(
     reason="native combat bindings not built")
 
 from engine.appc import native_combat as nc  # noqa: E402
+from tests.helpers.subsystem_stage import tick_subsystem
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
 
@@ -181,7 +182,7 @@ def test_every_sensor_field_writes_through():
     sensors.SetPowerPercentageWanted(0.5)
     plant = ship.GetPowerSubsystem()
     for _ in range(3):
-        plant.Update(TICK_DELTA)
+        tick_subsystem(plant, TICK_DELTA)
     _assert_mirrored(sensors, "_power_factor")
 
     # Base range (SetupProperties and the nebula runtime both use the setter).
@@ -209,7 +210,7 @@ def test_every_sensor_field_writes_through():
     cloak.StartCloaking()
     _assert_mirrored(cloak, "_cloak_state")
     for _ in range(int(cloak._transition_duration / TICK_DELTA) + 2):
-        cloak.Update(TICK_DELTA)
+        tick_subsystem(cloak, TICK_DELTA)
     assert cloak.IsCloaked()
     _assert_mirrored(cloak, "_cloak_state")
 

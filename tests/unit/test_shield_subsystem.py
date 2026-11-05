@@ -2,6 +2,7 @@ import pytest
 """ShieldSubsystem: six-face shield slots with seed-on-max behavior."""
 from engine.appc.subsystems import ShieldSubsystem, PoweredSubsystem
 from engine.appc.properties import ShieldProperty
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 def test_is_powered_subsystem():
@@ -98,7 +99,7 @@ def test_update_regenerates_face():
     s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
     s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 50.0)
     s.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 10.0)
-    s.Update(1.0)
+    tick_subsystem(s, 1.0)
     assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 60.0
 
 
@@ -108,7 +109,7 @@ def test_update_clamps_at_max():
     s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
     s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 95.0)
     s.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 100.0)
-    s.Update(1.0)
+    tick_subsystem(s, 1.0)
     assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 100.0
 
 
@@ -118,7 +119,7 @@ def test_update_zero_charge_rate_noop():
     s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
     s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 50.0)
     # charge_per_second defaults to 0
-    s.Update(1.0)
+    tick_subsystem(s, 1.0)
     assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 50.0
 
 
@@ -128,7 +129,7 @@ def test_update_skips_unshielded_face():
     s = ShieldSubsystem("Shield Generator")
     s.TurnOn()
     s.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 100.0)
-    s.Update(1.0)
+    tick_subsystem(s, 1.0)
     assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 0.0
 
 
@@ -144,7 +145,7 @@ def test_update_powered_down_still_regenerates():
     s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
     s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 50.0)
     s.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 10.0)
-    s.Update(1.0)
+    tick_subsystem(s, 1.0)
     assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 60.0
 
 
@@ -157,7 +158,7 @@ def test_update_independent_per_face():
     s.SetCurShields(ShieldProperty.REAR_SHIELDS, 0.0)
     s.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 10.0)
     s.SetShieldChargePerSecond(ShieldProperty.REAR_SHIELDS, 20.0)
-    s.Update(2.0)
+    tick_subsystem(s, 2.0)
     assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 20.0
     assert s.GetCurrentShields(ShieldProperty.REAR_SHIELDS) == 40.0
 

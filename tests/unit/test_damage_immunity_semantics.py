@@ -21,6 +21,7 @@ from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import (HullSubsystem, PowerSubsystem,
                                     SensorSubsystem, ShieldSubsystem)
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 @pytest.fixture(autouse=True)
@@ -126,7 +127,7 @@ def test_invincible_ship_destroyed_reactor_does_not_breach_on_update(monkeypatch
     ship.SetPowerSubsystem(core)
     ship.SetInvincible(1)
     core._condition = 0.0                 # destroyed, by whatever path
-    core.Update(1.0 / 60.0)
+    tick_subsystem(core, 1.0 / 60.0)
     effect_queue.boundary()
     assert armed == []
     assert ship.IsDying() == 0

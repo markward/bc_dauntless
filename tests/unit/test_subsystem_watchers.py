@@ -23,6 +23,7 @@ from engine.appc.weapon_subsystems import PulseWeapon
 from engine.appc.properties import PowerProperty
 from engine.appc.ships import ShipClass_Create
 from engine.appc import effect_queue
+from tests.helpers.subsystem_stage import tick_subsystem
 
 
 class _RecordingEvent:
@@ -98,7 +99,7 @@ def test_power_update_drives_main_battery_fraction_into_watcher():
     _bind_power_property(ps, output=0.0, main_cap=1000.0)
     ps.SetMainBatteryPower(1000.0)
     # Seed the watcher's prior value at the full fraction (1.0).
-    ps.Update(1.0)
+    tick_subsystem(ps, 1.0)
     assert ps.GetMainBatteryWatcher().GetWatchedVariable() == 1.0
 
     mgr = _FiringManager()
@@ -110,7 +111,7 @@ def test_power_update_drives_main_battery_fraction_into_watcher():
     # Drain directly to 200 so fraction becomes 0.2 < 0.5.
     ps.StealPower(800.0)
     assert ps.GetMainBatteryPower() == 200.0
-    ps.Update(1.0)  # pushes fraction 0.2 into watcher
+    tick_subsystem(ps, 1.0)  # pushes fraction 0.2 into watcher
 
     assert ps.GetMainBatteryWatcher().GetWatchedVariable() == 0.2
     assert mgr.fired, "main battery watcher did not fire on downward crossing"
@@ -122,7 +123,7 @@ def test_power_update_zero_main_cap_pushes_zero_fraction():
     ship = ShipClass_Create("Test")
     ps = ship.GetPowerSubsystem()
     _bind_power_property(ps, output=0.0, main_cap=0.0)
-    ps.Update(1.0)
+    tick_subsystem(ps, 1.0)
     assert ps.GetMainBatteryWatcher().GetWatchedVariable() == 0.0
 
 
@@ -131,7 +132,7 @@ def test_power_update_drives_backup_battery_fraction_into_watcher():
     ps = ship.GetPowerSubsystem()
     _bind_power_property(ps, output=0.0, main_cap=1000.0, backup_cap=2000.0)
     ps.SetBackupBatteryPower(2000.0)
-    ps.Update(1.0)
+    tick_subsystem(ps, 1.0)
     assert ps.GetBackupBatteryWatcher().GetWatchedVariable() == 1.0
 
 
@@ -143,7 +144,7 @@ def test_shield_update_drives_face_fraction_into_watcher():
     sh.SetCurrentShields(ShieldSubsystem.FRONT_SHIELDS, 100.0)
     sh.TurnOn()
     # Seed prior value (fraction 1.0).
-    sh.Update(0.0)
+    tick_subsystem(sh, 0.0)
     w = sh.GetShieldWatcher(ShieldSubsystem.FRONT_SHIELDS)
     assert w.GetWatchedVariable() == 1.0
 
@@ -153,7 +154,7 @@ def test_shield_update_drives_face_fraction_into_watcher():
     w.AddRangeCheck(0.5, FloatRangeWatcher.FRW_BELOW, ev)
 
     sh.SetCurrentShields(ShieldSubsystem.FRONT_SHIELDS, 30.0)
-    sh.Update(0.0)  # fraction 0.3 < 0.5
+    tick_subsystem(sh, 0.0)  # fraction 0.3 < 0.5
 
     assert w.GetWatchedVariable() == 0.3
     assert mgr.fired, "shield watcher did not fire on downward crossing"
@@ -226,9 +227,9 @@ def test_combined_shield_watcher_catches_up_on_update_after_apply_damage():
     # BC steps the watchers inside the 0.5 s charge block (spec
     # ShieldFacingDamage.md section 6.1 step 4.3), so an Update that does not
     # cross the accumulator threshold leaves the watcher stale by design.
-    sh.Update(0.0)
+    tick_subsystem(sh, 0.0)
     assert w.GetWatchedVariable() == 1.0
-    sh.Update(SHIELD_CHARGE_PERIOD_S)
+    tick_subsystem(sh, SHIELD_CHARGE_PERIOD_S)
     assert w.GetWatchedVariable() == 0.5
 
 
@@ -323,7 +324,7 @@ def test_condition_power_below_flips_status_on_drain():
     ps = ship.GetPowerSubsystem()
     _bind_power_property(ps, output=0.0, main_cap=1000.0)
     ps.SetMainBatteryPower(1000.0)
-    ps.Update(1.0)  # seed watcher at fraction 1.0
+    tick_subsystem(ps, 1.0)  # seed watcher at fraction 1.0
 
     # ConditionPowerBelow(pCodeCondition, pObject, bReserveOnly, fPowerFraction)
     cs = ConditionScript_Create(
@@ -335,6 +336,6 @@ def test_condition_power_below_flips_status_on_drain():
 
     # Drain directly to 200 (fraction 0.2 < 0.5) then let Update push the watcher.
     ps.StealPower(800.0)
-    ps.Update(1.0)  # fraction -> 0.2, crosses below 0.5
+    tick_subsystem(ps, 1.0)  # fraction -> 0.2, crosses below 0.5
 
     assert cs.GetStatus() == 1

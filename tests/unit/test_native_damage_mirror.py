@@ -37,6 +37,7 @@ from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import (HullSubsystem, RepairSubsystem,
                                     SensorSubsystem, ShieldSubsystem,
                                     ShipSubsystem)
+from tests.helpers.subsystem_stage import tick_subsystem
 
 pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "combat_effect_post_typed"),
@@ -133,7 +134,7 @@ def test_the_charge_tick_pushes_the_ramp_refresh():            # W4
     sh = _ship().GetShields()
     sh.SetCurrentShields(0, 450.0)
     assert _faces(sh)[3] == [0] * 6     # no tick yet: every ramp unset
-    sh.Update(0.5)
+    tick_subsystem(sh, 0.5)
     cur, _mx, ramp, rset = _faces(sh)
     assert rset == [1] * 6 and ramp[0] == 0.45
     _same(sh)
@@ -142,7 +143,7 @@ def test_the_charge_tick_pushes_the_ramp_refresh():            # W4
 def test_the_offline_drain_pushes_every_face():                # W5
     sh = _ship().GetShields()
     sh.SetCondition(10.0)               # disabled generator
-    sh.Update(0.5)
+    tick_subsystem(sh, 0.5)
     assert _faces(sh)[0] == [0.0] * 6
     _same(sh)
 
@@ -150,7 +151,7 @@ def test_the_offline_drain_pushes_every_face():                # W5
 def test_the_regen_pushes_every_face():                        # W6
     sh = _ship().GetShields()
     sh.SetCurrentShields(3, 100.0)
-    sh.Update(0.5)
+    tick_subsystem(sh, 0.5)
     assert _faces(sh)[0][3] == 120.0
     _same(sh)
 
