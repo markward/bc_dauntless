@@ -15,6 +15,7 @@ def test_boundary_bench_runs_every_variant():
         [sys.executable, str(PROJECT_ROOT / "tools" / "bench" /
                              "boundary_bench.py"), "--calls", "1000"],
         capture_output=True, text=True, cwd=PROJECT_ROOT, check=True).stdout
+    assert "verified: every variant reads (1.5, -2.25, 3.125)" in out, out
     rows = {}
     for line in out.splitlines():
         parts = line.split()

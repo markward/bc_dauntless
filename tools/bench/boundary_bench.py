@@ -131,6 +131,30 @@ def main() -> int:
         ("noop", "noop()", "keep.append(noop())"),
     ]
 
+    expected = tuple(store.get_position(i, g))
+    assert expected == (1.5, -2.25, 3.125), expected
+    checks = {
+        "py_method": "(lambda p: (p.x, p.y, p.z))(TGPoint3(*get_store().get_position(*xform)))",
+        "bind_tuple": "tuple(tuple_fn(i, g))",
+        "bind_new_obj": "(lambda p: (p.x, p.y, p.z))(new_fn(i, g))",
+        "bind_fill": "(fill_fn(i, g, sink), (sink.x, sink.y, sink.z))[1]",
+        "native_point": "(lambda p: (p.x, p.y, p.z))(nat_fn(i, g))",
+        "buffer_view": "tuple(view_fn(i, g))",
+        "buffer_view_cached": "tuple(view)",
+    }
+    for name, expr in checks.items():
+        got = eval(expr, dict(env))
+        if got != expected:
+            print("boundary_bench: variant %s read %r, expected %r"
+                  % (name, got, expected), file=sys.stderr)
+            return 3
+    mv = _h.bench_position_view(i, g)
+    if mv.format != "d" or len(mv) != 3:
+        print("boundary_bench: buffer view is format %r len %d, want 'd' 3"
+              % (mv.format, len(mv)), file=sys.stderr)
+        return 3
+    print("verified: every variant reads %r" % (expected,))
+
     print("%-20s %10s %12s" % ("variant", "ns/call", "allocs/call"))
     for name, body, alloc_body in variants:
         run = _make(body, env)

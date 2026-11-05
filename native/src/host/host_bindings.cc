@@ -6345,6 +6345,8 @@ PyMethodDef g_dmg_damage_system_def = {
 }  // namespace
 
 // benchmark-only (phase 6 B0): the TGPoint3 class bench_new_point builds.
+// Intentionally leaked (never destroyed): a static py::object destructing at
+// interpreter shutdown would touch a finalized interpreter.
 static py::object& bench_point_class() {
     static py::object* cls = new py::object();
     return *cls;
@@ -12161,8 +12163,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](std::uint32_t i, std::uint32_t g) {
               dauntless::transform_store().position(i, g);  // validates
               double* pos = dauntless::transform_store().at(i).pos;
-              return py::memoryview::from_memory(
-                  pos, static_cast<py::ssize_t>(3 * sizeof(double)), true);
+              // A typed view (format 'd', 3 items), not raw bytes.
+              return py::memoryview::from_buffer(
+                  pos, {3},
+                  {static_cast<py::ssize_t>(sizeof(double))}, true);
           });
     // ── end benchmark-only ──────────────────────────────────────────────────
 
