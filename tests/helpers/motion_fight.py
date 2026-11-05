@@ -379,7 +379,7 @@ def run(mp, env, ticks):
         host_loop._combat_tick_boundary()
         ships = list(iter_ships())
         state.append(golden_fight._pose_rows(ships)
-                     + motion_rows(ships))
+                     + motion_rows(ships) + golden_fight._stage_rows(ships))
         # ── the scene's own evidence
         seen["anchor"].add(_pos(cast["Anchor"]))
         w = cast["Warper"].__dict__.get("_insystem_warp_transit")

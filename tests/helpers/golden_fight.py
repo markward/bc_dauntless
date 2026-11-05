@@ -38,8 +38,11 @@ are those fights themselves, imported, not copied:
   ships' hull and shields, torpedoes; the posed fight's whole Recorder row),
   then every ship's pose (position, rotation, velocity), every tractor
   system's ``_mode``, ``_engage_state``, ``_was_firing``,
-  ``_next_emitter_index`` and IsEngaged, and every torpedo tube's
-  ``_reload_timers`` and ``_last_fire_time``. Each row is ``[kind, label, ...]``;
+  ``_next_emitter_index`` and IsEngaged, every torpedo tube's
+  ``_reload_timers`` and ``_last_fire_time``, and last every ship's
+  subsystem-stage state (``stage``: batteries, available power, every
+  subsystem's condition, the repair queue, the cloak, the shield charge
+  accumulator; schema 4, phase 6 A1). Each row is ``[kind, label, ...]``;
   ``FIELDS[kind]`` names its fields. Floats by ``.hex()``; objects by ship
   name, ``ship/subsystem`` name, or numbered by first sight (never ``id()``
   or a mirror handle);
@@ -94,7 +97,7 @@ from engine.core.loop import TICK_DELTA
 from tests.helpers import k3_fight, posed_fight
 from tests.helpers import k1_fight as k1d
 
-SCHEMA = 3     # the file format; bump it on any change to it or to the rows
+SCHEMA = 4     # the file format; bump it on any change to it or to the rows
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "golden_fights"
 UPDATE_ENV = "UPDATE_COMBAT_GOLDEN"
 #: The arms a scene can run as: native fire control always (it has no
@@ -139,6 +142,10 @@ FIELDS = {
     "tractor": ("label", "_mode", "_engage_state", "_was_firing",
                 "_next_emitter_index", "IsEngaged"),
     "tube": ("label", "_reload_timers", "_last_fire_time"),
+    # the subsystem stage's own state (_stage_rows), every scene, last
+    "stage": ("name", "_main_battery_power", "_backup_battery_power",
+              "_available_power", "conditions", "repair_queue",
+              "_cloak_state", "_transition_elapsed", "_charge_accum"),
     # tests/helpers/motion_fight.py (the motion_branches scene only)
     "motion": ("name", "_current_speed", "_current_angular_velocity",
                "_drift_velocity", "_speed_setpoint",
@@ -233,10 +240,57 @@ def _tube_rows(ships, label):
     return rows
 
 
+def _stage_value(v):
+    """A stage field as the file holds it: a float by .hex(), else as is
+    (None for a field the object does not hold)."""
+    return v.hex() if isinstance(v, float) else v
+
+
+def _stage_rows(ships):
+    """The subsystem stage's own state, one row per ship (phase 6 A1, Task 2:
+    the plan's ruling R2 makes the goldens the stage's oracle once the Python
+    stage is gone): the power plant's main and backup battery and available
+    power, every subsystem's condition (subsystems.iter_subsystems' order:
+    the hull, then each top-level subsystem followed by its children), the
+    repair queue by name in order, the cloak's state and transition elapsed,
+    and the shield generator's charge accumulator. Read straight from each
+    object's ``__dict__`` (no getter, no stub), so recording changes nothing
+    it records. Appended after every other row of a tick, so the rows before
+    it keep their indices."""
+    from engine.appc import subsystems as subs
+    rows = []
+    for s in ships:
+        name = s.GetName()
+
+        def field(sub, attr):
+            return None if sub is None else _stage_value(
+                sub.__dict__.get(attr))
+
+        power = s.GetPowerSubsystem()
+        repair = s.GetRepairSubsystem()
+        cloak = s.GetCloakingSubsystem()
+        shields = s.GetShieldSubsystem()
+        conditions = [["%s/%s" % (name, sub.GetName()),
+                       _stage_value(sub.__dict__.get("_condition"))]
+                      for sub in subs.iter_subsystems(s)]
+        queue = None if repair is None else [
+            "%s/%s" % (name, q.GetName()) if hasattr(q, "GetName")
+            else repr(q) for q in repair.__dict__.get("_queue", ())]
+        rows.append(["stage", name,
+                     field(power, "_main_battery_power"),
+                     field(power, "_backup_battery_power"),
+                     field(power, "_available_power"),
+                     conditions, queue,
+                     field(cloak, "_cloak_state"),
+                     field(cloak, "_transition_elapsed"),
+                     field(shields, "_charge_accum")])
+    return rows
+
+
 def _extras(scene_like, ships, label):
     scene_like.__dict__.setdefault("golden_extra", []).append(
         _pose_rows(ships) + _tractor_rows(ships, label)
-        + _tube_rows(ships, label))
+        + _tube_rows(ships, label) + _stage_rows(ships))
 
 
 def _patch_records(mp):
