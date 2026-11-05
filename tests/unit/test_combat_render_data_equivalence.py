@@ -338,3 +338,52 @@ def test_beams_follow_firing_state(scene):
     a.GetPhaserSystem().GetWeapon(0)._firing = False
     assert repr(hl._build_phaser_beam_render_data(scene)) == \
         repr(_old_phasers(scene))
+
+
+# ── firing ships outside the viewed set, and in another region ─────────────
+
+def _region_scene():
+    """A viewed REAL region (Ona1) with a firing ship, a firing ship in the
+    same system's other region (Ona2: another anchor, same frame), and a
+    firing ship in a plain set (another frame: out of view)."""
+    from engine.appc.sets import SetClass_Create
+    from tests.helpers.mapped_regions import load_region
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    other = SetClass_Create()
+    App.g_kSetManager.AddSet(other, "ElsewhereFrame")
+
+    def ship(pSet, name, at, banks):
+        s = _phaser_ship(name, at, banks)    # born in the "Viewed" test set
+        s.GetContainingSet().RemoveObjectFromSet("obj_%d" % id(s))
+        pSet.AddObjectToSet(s, name)
+        s.SetTranslateXYZ(*at)
+        return s
+
+    tgt = ship(ona1, "RTarget", (0.0, 600.0, 0.0), [])
+    here = ship(ona1, "Here", (0.0, 0.0, 0.0), [
+        _phaser_bank("h1", (1.0, 0.5, 0.1), True, tgt)])
+    cross = ship(ona2, "Cross", (50.0, 10.0, 0.0), [
+        _phaser_bank("c1", (0.2, 0.8, 0.3), True, tgt)])
+    away = ship(other, "Away", (5.0, 5.0, 5.0), [
+        _phaser_bank("a1", (0.9, 0.2, 0.2), True, tgt)])
+    App.g_kSetManager.MakeRenderedSet("Ona1")
+    return [here, tgt, cross, away]
+
+
+def test_beams_identical_for_out_of_view_and_cross_region_firing_ships():
+    projectiles._active.clear()
+    App.g_kSetManager._sets.clear()
+    App.g_kSetManager.ClearRenderedSet()
+    try:
+        ships = _region_scene()
+        ph = hl._build_phaser_beam_render_data(ships)
+        old = _old_phasers(ships)
+        assert ph, "the in-view ship fires"
+        assert repr(ph) == repr(old)
+        # Only ships whose set shares the viewed frame draw: Here + Cross.
+        assert len(old) == 4          # two banks' descriptor pairs
+        assert repr(hl._build_phaser_beam_render_data(ships)) == repr(old)
+    finally:
+        App.g_kSetManager.ClearRenderedSet()
+        App.g_kSetManager._sets.clear()
