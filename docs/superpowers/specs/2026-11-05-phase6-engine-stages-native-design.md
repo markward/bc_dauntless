@@ -1,4 +1,4 @@
-# Phase 6 — Our engine stages in C++, then the SDK boundary, then the divergences
+# Phase 6 — Our engine stages in C++, then the SDK boundary, then BC's native preprocessors
 
 **Status:** DRAFT for Mark, 2026-11-05.
 **Project:** native motion + proximity (`project/native-motion-and-proximity`). Phase 5a (hull cull, Mac multithreaded GL) is merged and live.
@@ -26,7 +26,7 @@ At 128 ships in Release the frame is 54–78 ms, and nearly all of it is Python.
 - A render thread. Phase 5a cut the native render to about 5 ms, so it is now the smaller cost. Revisit after this phase.
 - GPU work.
 - 256 ships.
-- Changing what SDK scripts or missions do, except for the divergences listed in §5.
+- Changing what SDK scripts or missions do.
 
 **Anti-goals (a failure even if it gets faster):**
 - **Breaking a mod or mission script.** A mod's own AI classes, a mission that patches a method, or a script that overrides a preprocessor must keep working. The kernel-M pattern is mandatory: native for stock code, Python as soon as a script overrides or patches something.
@@ -85,26 +85,37 @@ These are the methods SDK scripts call directly. The scripts decide how often, s
 
 Measure per-call cost, plus the allocation cost for point-returning methods. The result picks one approach per method family: "port the method", "thin Python over native data", or "make the point type native". Each choice is recorded in the plan, with its numbers, before any method moves. B0 writes its numbers into the perf register.
 
-## 5. Part C — native stock preprocessors (BC's own design) and one divergence
+### 4.1 The native set index (shared infrastructure)
+
+Set boundaries scope almost every lookup in this game, so the set is the primary key (Mark, 2026-11-05). One native index, keyed by the set OBJECT, holds:
+- **Members by class.** It answers `GetClassObjectList` (167 k calls, 5.6% of AI, plus the same per-call list-building in subsystems and weapons), the contact model's per-set ship list, and the candidate lists for `GetNearObjects` and target selection.
+- **"Targeted by" counts, keyed by (set, target).** These are the ships in that set whose `GetTarget()` is that object. They feed `SelectTarget`'s popularity factor (§5), and later the planned "who is targeting me" target-list UI.
+
+It is maintained at two kinds of door only:
+1. **Membership:** `SetClass.AddObjectToSet` / `RemoveObjectFromSet` / `DeleteObjectFromSet`, the single door `engine/appc/contact_index.py` already relies on. A ship leaving a set takes its own targeting with it, and its entry as a target.
+2. **Targeting:** every place a ship's `GetTarget()` result changes. That is `SetTarget` from SDK, player and AI, and the clears when a target is destroyed or removed from its set. The plan lists each site, and a test pins each one.
+
+Like `contact_index`, it is keyed by the set object, never its name: Quick Battle renames sets in place. `contact_index` moves onto it, so there is one set index, not two.
+
+## 5. Part C — native stock preprocessors (BC's own design)
 
 **BC compiled these preprocessors into C++ itself.** The binary research recorded in `engine/appc/ai_optimized.py`'s docstring (2026-07-14) shows what `PreprocessingAI::SetContainedAI` does. It asks the bound Python preprocessor for its "optimized version", looks its class name up in a native registry, and on a hit replaces the node with a native one.
 - Four classes are registered: `AvoidObstacles`, `FireScript`, `ManagePower`, `SelectTarget`.
 - **In shipped BC their Python `Update` bodies are dead code.** The SDK says so itself above `FireScript`, `SelectTarget` and `AvoidObstacles`: "replaced with an optimized version in the code".
 - We run those Python bodies only because we had no native versions. Three of them are SIG-197's top AI hotspots.
 
-So item 1 below restores BC's architecture; it is not a divergence. What BC's native versions decide differently from the SDK bodies is unknown: the RE project has not reconstructed them. Our native versions reproduce the SDK bodies we run today, and any difference is recorded.
-
-
-What is left after A and B is SDK script code: about 10% of the tick today, a larger share once A and B land. Mark allowed divergence from BC's behaviour in AI, subsystems and combat (2026-11-05). Two divergences are decided here.
+So this part restores BC's architecture; it is not a divergence. What BC's native versions decide differently from the SDK bodies is unknown: the RE project has not reconstructed them. Our native versions reproduce the SDK bodies we run today, and any difference is recorded.
 
 1. **Native stock preprocessors.** A ship whose tree uses the *stock* `AvoidObstacles`, `SelectTarget` or `FireScript` class, unpatched, runs a C++ implementation of that preprocessor. Any subclass, monkeypatch or mod replacement runs the SDK Python, as kernel M does.
    - "Unpatched" means three things: the instance's class IS the stock class object (not a subclass), each method it would call is the stock function object (an identity check against a snapshot taken at SDK load, as in kernel M's stock snapshot), and the instance has no instance-level overrides.
    - The C++ version reproduces the stock script's decisions as closely as is cheap. Where it differs, it is a recorded divergence, not a bug.
-2. **Target selection rates only the nearest candidates.** Stock `FindGoodTarget` rates every enemy, so the cost grows with the square of the ship count (10% of AI at 64 ships, 25% at 128). Instead, rate only the nearest **8** candidates, using the native proximity query, plus the current target and any target the mission has forced.
-   - The sensor gate (`ai_sensor_gate`) filters FIRST. The nearest 8 are chosen among candidates the ship can detect, so the gate never leaves it with fewer than 8 when more are detectable.
-   - "Forced" means whatever inputs the stock `SelectTarget` script itself treats as priority targets (its constructor and setter arguments). Part C's plan names them from the SDK source; every one stays in the candidate set.
-   - *(The 8 is my call; it should become a dial.)*
-   - Off switch: an env var, named in the plan.
+2. **`SelectTarget` without the cubic popularity loop.** Stock `GetTargetRating` scores nine weighted factors. One of them, popularity (weight −1.1, "how many other ships already target it"), loops over every ship in the set FOR EVERY CANDIDATE. So one search is candidates × ships, and every ship searches, which makes it cubic in the ship count. That is SIG-197's 167 k `GetClassObjectList` calls and 21 M `GetTarget` calls.
+   - The native `SelectTarget` reads popularity from the set index's (set, target) count, minus one if the rater itself targets that ship. The result is identical to the stock loop, with no loop.
+   - Every other factor and weight, the 5 s re-pick cadence and the forced re-picks follow the stock script exactly. Our sensor gate (`ai_sensor_gate`) still applies.
+   - What remains is every ship rating every candidate every 5 s: squared, and at 128 ships ≈ 3,300 ratings a second, cheap in C++.
+   - **Rejected: rating only the nearest N candidates.** It would cut the squared part, but ships would ignore a distant attacker or a high-priority mission target ("damage dealt to me" and "mission priority" weigh as much as distance), and it isn't needed once the cubic loop is gone. It may return as an off-by-default dial only if a measurement past 128 ships shows the squared part matters.
+
+**This phase contains no divergences from BC.** Mark allowed divergence in AI, subsystems and combat (2026-11-05); none turned out to be needed.
 
 Any further divergence (cadence changes, approximations in conditions) needs Mark's explicit ruling. It is not covered by this design.
 
@@ -113,10 +124,10 @@ Any further divergence (cadence changes, approximations in conditions) needs Mar
 1. **B0, the boundary benchmark,** runs alongside A1.
 2. **A1 Subsystems**, then **A2 Weapons (K0 persistent mirror)**, then **A3 Combat glue**, then **A4 Combat render data**, then **A5 the AI tree engine**. Each is its own measured step with a perf-register signal.
 3. **B, the SDK-facing methods,** in the order B0 recommends.
-4. **C, the divergences.**
+4. **C, the native stock preprocessors.**
 5. Mark's live check after each part, not only at the end.
 
-**Pass and fail.** Measured on `combat_stress`, Release, in both views. The 64-ship goal is the primary gate. The 128-ship per-tick goal is a target, not a gate. Part C goes ahead whether or not A and B reach it, because its target-selection change fixes the cost growing with the square of the ship count, which A and B can only make cheaper. *(My call.)*
+**Pass and fail.** Measured on `combat_stress`, Release, in both views. The 64-ship goal is the primary gate. The 128-ship per-tick goal is a target, not a gate. Part C goes ahead whether or not A and B reach it: it is BC's own design, and its `SelectTarget` removes the cubic popularity loop, which A and B can only make cheaper. *(My call.)*
 
 Each part is its own plan and its own phase branch, cut from the project branch and merged back after its live check, as phases 2–5a were.
 
