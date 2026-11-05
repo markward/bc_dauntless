@@ -20,8 +20,6 @@ def _listed(*ships):
                     perceivable=True, targetable=True) for s in ships]
 
 
-
-
 def _pump(target_menu, player):
     """One frame of the host loop's contact push (host_loop._pump_contacts).
 
@@ -159,8 +157,6 @@ def test_row_flag_does_not_gate_the_payload_drawability_is_targetable():
     finally:
         from engine.core.game import _set_current_game
         _set_current_game(None)
-
-
 
 
 def test_dispatch_event_subsystem_click_sets_both_target_and_subsystem():
@@ -316,14 +312,6 @@ def test_view_payload_excludes_player_ship():
         _set_current_game(None)
 
 
-# ── Accordion expansion ──────────────────────────────────────────────────────
-
-
-
-
-
-
-
 # ── Health-bar percent encoding (Issue 1) ────────────────────────────────────
 
 def _make_targeted_ship(name="USS Galaxy"):
@@ -429,18 +417,6 @@ def test_view_payload_flags_shieldless_target():
         App.g_kSetManager.DeleteSet("bridge")
         from engine.core.game import _set_current_game
         _set_current_game(None)
-
-
-# ── Per-subsystem condition (Issue 2) ────────────────────────────────────────
-
-
-
-
-
-# ── Nested children + expansion reach the payload (end-to-end) ───────────────
-
-
-
 
 
 def test_destroyed_ship_excluded_from_target_list():
@@ -623,12 +599,6 @@ def _resolve(ship, name):
     return _resolve_subsystem_by_name(ship, name)
 
 
-
-
-
-
-
-
 def test_locked_subsystem_destroyed_reassigns_to_next_sibling():
     """When the locked subsystem is destroyed, the lock moves to the next
     surviving sibling in the same group."""
@@ -686,10 +656,6 @@ def test_last_child_destroyed_clears_lock_to_ship_level():
         App.g_kSetManager.DeleteSet("bridge")
         from engine.core.game import _set_current_game
         _set_current_game(None)
-
-
-
-
 
 
 def test_the_subsystem_lock_rule_is_not_reachable_through_the_render_path():

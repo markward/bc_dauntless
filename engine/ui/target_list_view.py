@@ -359,18 +359,18 @@ class TargetListView(Panel):
     def poll_interval_s(self) -> float:
         """Polled at 2 Hz, not per frame.
 
-        This panel's _snapshot walks every contact x every subsystem x every
-        child subsystem, querying condition on each, purely to compare against
-        last frame's tuple. Measured at 33 contacts it is 26.0 ms of a 26.7 ms
-        UI phase -- 97.5% of all panel cost, and every other panel returns in
-        ~10 us.
+        The per-subsystem condition walk that once made this panel the
+        costliest in the UI phase was removed when the subsystem tree moved to
+        the target panel; the rows now carry only hull, shields and distance.
 
-        2 Hz is matched to the data, not just cheaper: the shield percentages
-        it displays only CHANGE at 2 Hz (BC's 0.5 s shield charge tick, see
-        subsystems.SHIELD_CHARGE_PERIOD_S), so polling at 60 Hz read the same
-        value thirty times over. Hull condition is event-driven and bursty, so
-        a row can lag a hit by up to half a second -- accepted, and the reason
-        this is a named constant rather than a magic number.
+        2 Hz still fits the data: the shield percentages only CHANGE at 2 Hz
+        (BC's 0.5 s shield charge tick, see subsystems.SHIELD_CHARGE_PERIOD_S),
+        so polling faster re-reads the same value. Hull condition is
+        event-driven and bursty, so a row can lag a hit by up to half a
+        second -- accepted, and the reason this is a named constant rather
+        than a magic number. The list also re-sorts live at this cadence
+        (distance and health order follow the data), so a row can take up to
+        half a second to move.
 
         Interaction is unaffected: selection changes go through dispatch_event
         and visibility flips through the visible setter, both of which mark the
