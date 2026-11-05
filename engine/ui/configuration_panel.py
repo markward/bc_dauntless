@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, List, Optional, Tuple
 
 from engine.ui.panel import Panel
@@ -160,18 +160,19 @@ class ConfigurationPanel(Panel):
         super().__init__()
         self._tabs = list(tabs)
         self._selected_tab = tabs[0][0]
-        self._settings = SettingsSnapshot(
+        # `replace`, not a field-by-field rebuild: this copy exists only to
+        # clamp the four range-bearing fields and to avoid aliasing the
+        # caller's object, and a rebuild silently DROPPED any field someone
+        # forgot to list -- the stored value was then replaced by the
+        # dataclass default. fullscreen_on shipped that way and launched the
+        # game full screen while the panel's own row read "Off". Listing the
+        # clamps alone means a new row cannot be forgotten.
+        self._settings = replace(
+            initial_settings,
             aa_mode=max(AA_OFF, min(AA_MSAA_8X, int(initial_settings.aa_mode))),
             fov_deg=int(initial_settings.fov_deg),
-            subtitles_on=initial_settings.subtitles_on,
-            disable_annoying_dialogue_on=initial_settings.disable_annoying_dialogue_on,
             ai_difficulty=max(0, min(2, int(initial_settings.ai_difficulty))),
-            dust_on=initial_settings.dust_on,
             bridge_quality=max(0, min(2, int(initial_settings.bridge_quality))),
-            improved_space_on=initial_settings.improved_space_on,
-            camera_realism_on=initial_settings.camera_realism_on,
-            realistic_lighting_on=initial_settings.realistic_lighting_on,
-            camera_shake_on=initial_settings.camera_shake_on,
         )
         # Master-member appliers, addressed by the names in MASTER_TOGGLES.
         # Kept as explicit constructor params (not **kwargs) so a missing one
@@ -319,6 +320,7 @@ class ConfigurationPanel(Panel):
             self._settings.dust_on,
             self._settings.bridge_quality,
             self._settings.camera_shake_on,
+            self._settings.fullscreen_on,
             tuple(getattr(self._settings, k + "_on") for k in MASTER_KEYS),
             self._settings.fov_deg,
             json.dumps(bridges, sort_keys=True) if bridges is not None else None,
@@ -350,6 +352,11 @@ class ConfigurationPanel(Panel):
                 "dust_on": self._settings.dust_on,
                 "bridge_quality": self._settings.bridge_quality,
                 "camera_shake_on": self._settings.camera_shake_on,
+                # Must be BOTH here and in the dirty tuple above. Alt+Enter
+                # toggles full screen from outside the panel, so this row's
+                # value changes while the panel is closed -- and a value the
+                # dirty tuple does not watch is a row that never repushes.
+                "fullscreen_on": self._settings.fullscreen_on,
                 "fov_deg": self._settings.fov_deg,
                 **{k + "_on": getattr(self._settings, k + "_on")
                    for k in MASTER_KEYS},

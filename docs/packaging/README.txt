@@ -70,6 +70,19 @@ GETTING STARTED
    Pick each with Browse. Each says "Bridge Commander install found" when
    it's right; then press Continue. You only do this once.
 
+FULL SCREEN
+-----------
+
+Press Alt+Enter at any time to switch between full screen and a window.
+
+There's also a Full Screen switch in Configuration (press Esc, then
+Configuration, then the Graphics tab). Whichever way you set it, BC
+Dauntless remembers it and starts the same way next time.
+
+
+WHERE YOUR FILES GO
+-------------------
+
 Your settings, saves and mods are kept in your own user folders, not in the
 BC Dauntless folder:
   - Settings, saves and mods:  %APPDATA%\Dauntless
