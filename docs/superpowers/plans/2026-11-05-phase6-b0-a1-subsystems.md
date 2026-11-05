@@ -20,18 +20,19 @@ Python handles the record and resumes the session. This is K0's begin/next sessi
 - **R1 — state of record.** Spec §3 says "native-authoritative, Python reads through `Native*` descriptors". The codebase has no such pattern (stage map §4): every `Native*` field is Python-authoritative. A write pushes to the mirror, a read is a plain `__dict__` read, and kernels write back into `__dict__` through C appliers.
   - A1 follows the existing pattern. It meets the spec's intent: no per-tick repack, because the mirror is persistent and only writes push. It is also cheaper for Part B, because SDK reads stay plain attribute reads.
   - Cost if wrong: Part B revisits it.
-- **R2 — the Python reference stays for A1.** Spec §3 says migrated stages keep no permanent Python copy. The Python `Update` methods are driven directly by about 60 unit tests, the golden-fight harness and 17 differential drivers (stage map §5–§6). They are also the only bit-exact oracle a native port can be checked against.
-  - So, as kernel M did, they stay as the reference behind `DAUNTLESS_NATIVE_SUBSYSTEMS=0`, with a per-tick differential test. Deleting them is revisited after Mark's live check.
-  - Cost if wrong: a later clean-up task.
+- **R2 — the Python reference is scaffolding, deleted in the last task** (Mark, 2026-11-05: "why dont we remove it as the last task?"). This matches spec §3.
+  - While the port is built, the Python `Update` methods are the bit-exact oracle, behind `DAUNTLESS_NATIVE_SUBSYSTEMS=0` with a per-tick differential test.
+  - Task 2 extends the golden fights to record the stage's own state (batteries, the repair queue, every subsystem's condition, the cloak state), recorded from the Python path. Today those are covered only by the differential (stage map §6). Once extended, the goldens stay the oracle after the Python path is gone.
+  - Task 8 deletes the Python stage and its switch, and moves the tests that drive the old methods onto the native stage.
 - **R3 — event order.** SDK handlers run synchronously in the middle of the stage today (stage map §2 and §8). The native stage keeps exact order by stopping at each event and resuming after Python dispatches it, never by batching events to the end.
 
 ## Global Constraints
 
 - Branch: `ws/motion-phase6-a1` in `.claude/worktrees/native-motion`, cut from `ws/motion-phase6-measure` (tip `4dd135379` or later). Merge into `project/native-motion-and-proximity` only after Mark's live check.
 - **Never run the gate or a whole pytest or ctest suite.** Focused test files only (CLAUDE.md "Test gate"). Never run destructive git; stage with explicit paths.
-- Golden fights (`tests/integration/test_golden_fights.py`) must stay unchanged. Never set `UPDATE_COMBAT_GOLDEN`.
+- Golden fights (`tests/integration/test_golden_fights.py`) must stay unchanged. Never set `UPDATE_COMBAT_GOLDEN`, with ONE exception: Task 2's row extension, recorded from the Python path (`DAUNTLESS_NATIVE_SUBSYSTEMS=0`) with `COMBAT_GOLDEN_REASON` naming it. That adds rows and changes no existing value.
 - Bit-exact with Python doubles: same operation order, `-ffp-contract=off` (already set for `native/src/combat`), no reassociation, Python's `min`/`max`/comparison semantics. Accumulators are reset, not subtracted, as Python does.
-- Switch: `DAUNTLESS_NATIVE_SUBSYSTEMS`, on unless `=0`. Off = today's Python stage, byte-identical.
+- Switch: `DAUNTLESS_NATIVE_SUBSYSTEMS`, on unless `=0`. Off = today's Python stage, byte-identical. The switch exists only until Task 8 deletes it.
 - C++ builds from the worktree root (`cmake --build build -j`). Never run cmake in `native/`, and never change `CMAKE_BUILD_TYPE`. Renderer and combat gtests need `DAUNTLESS_GAME_DIR="/Users/mward/Documents/Star Trek Bridge Commander/game"` or they SKIP.
 - Benchmarks (B0 and Task 7) only on an otherwise idle machine; Mark has cleared it for benchmarking.
 
@@ -77,6 +78,7 @@ Python handles the record and resumes the session. This is K0's begin/next sessi
 - Create: `engine/appc/native_subsystems.py`
 - Modify: `engine/core/loop.py` (`_update_ship_subsystems` calls `native_subsystems.step_all(TICK_DELTA)` when enabled)
 - Modify: `native/src/host/host_bindings.cc` (session bindings), `native/src/combat/CMakeLists.txt`, `native/tests/combat/CMakeLists.txt`
+- Modify: `tests/helpers/golden_fight.py` (and `k1_fight.py` / `posed_fight.py` if they own the state rows) to record the stage's state; re-record `tests/fixtures/golden_fights/*.json.gz` from the Python path
 - Test: `native/tests/combat/subsystem_step_test.cc`, `tests/integration/test_native_subsystems_differential.py`, `tests/unit/test_native_subsystems_driver.py`
 
 **Interfaces:**
@@ -94,6 +96,11 @@ Python handles the record and resumes the session. This is K0's begin/next sessi
   - On `EVENT` it dispatches through `native_subsystems._EVENT_HANDLERS[kind]`. That table is empty in this task; Tasks 3–5 fill it.
 - A ship removed or freed mid-walk (its mirror row gone) is skipped by `next`: Review Focus 3.
 
+- [ ] **Step 0: Extend the goldens first, before anything native exists.**
+  - Add, per ship per recorded tick: main and backup battery power, available power, every subsystem's condition (not only the hull), the repair queue (subsystem names in order), the cloak state and transition elapsed, and the shield charge accumulator.
+  - Check that the extended recorder reproduces every EXISTING row byte for byte against the current fixtures.
+  - Then re-record with `DAUNTLESS_NATIVE_SUBSYSTEMS=0 UPDATE_COMBAT_GOLDEN=1 COMBAT_GOLDEN_REASON="phase 6 A1: record the subsystem stage's own state"`.
+  - Commit on its own: `test(golden): record the subsystem stage's state`.
 - [ ] **Step 1: Write the failing tests.**
   - ctest `combat_SubsystemStep.AllPythonOrderIsShipThenKind`: three ships produce 15 `RUN_PYTHON` records in the order (ship0: SHIELD, POWER, CLOAK, REPAIR, ARTICULATION), (ship1: …), then `DONE`.
   - ctest `combat_SubsystemStep.SkipsAFreedRow`: the second ship's row is freed after the first record, and its records never appear.
@@ -225,3 +232,28 @@ Python handles the record and resumes the session. This is K0's begin/next sessi
 - [ ] **Step 3: Score** `gl.subsystems` per tick, per-tick `sim`, frame time and ticks per frame, against SIG-196 and SIG-197.
 - [ ] **Step 4: Record** the captures plus a signal, and fix the docs. Run `uv run pytest -q tests/docs`. Commit `docs(perf): native subsystem stage (SIG-…)`.
 - [ ] **Step 5: Ask Mark for a live check:** a 64-ship fight; a cloaking Warbird; a repair after damage (engineering repairs the hull); a power-starved ship; E2M0 (a mission changing repair points); the LC Intrepid's moving parts. Then decide R2, whether to delete the Python reference.
+
+### Task 8: Delete the Python stage (R2)
+
+**Files:**
+- Modify: `engine/core/loop.py` (`_update_ship_subsystems` is only the native stage); `engine/appc/native_subsystems.py` (no switch; `enabled()` gone; a missing native module raises, like fire control, M10)
+- Modify: `engine/appc/subsystems.py`:
+  - delete `ShieldSubsystem.Update`, `PowerSubsystem.Update` and its pump helpers (`_pump_consumers`, `_interval` recharge), `CloakingSubsystem.Update`, `RepairSubsystem.Update`;
+  - delete each consumer's `_update_power` / `_draw` / `_record_draw` where the native stage replaced it;
+  - keep every SDK-facing method (getters, setters, `Repair`, `SetCondition`, `StartCloaking`/`StopCloaking`, the watchers).
+- Delete: `engine/appc/passive_power.py`, and the power half of `passive_state.py` (the `FrozenField` / thaw descriptors that only power used, and `DAUNTLESS_PASSIVE_STATE` / `DAUNTLESS_PASSIVE_AUDIT` power paths). Keep what passive WEAPONS still needs, because K0's reference path is not part of this phase.
+- Modify: the tests that drive the deleted methods directly (stage map §5–§6, about 60 unit tests and the differential drivers):
+  - each moves onto a test helper, `tests/helpers/subsystem_stage.py: tick_subsystems(ships, dt, ticks=1)`, that runs the real native stage;
+  - a test that only re-checked the Python implementation against itself, now covered by a ctest or a golden, is deleted and listed in the commit message;
+  - the Task 2 differential and `test_passive_power_differential.py` are deleted (no second implementation is left to compare).
+- Modify: `docs/reference/engine/perf-cadences-and-latency.md`, CLAUDE.md's Passive subsystem state row (power is now native; the WakeField / FrozenField rule remains for weapons only).
+
+**Interfaces:**
+- Consumes: Tasks 2–6.
+- Produces: no Python per-tick subsystem path. `rg -n "def Update" engine/appc/subsystems.py` shows none of the five deleted methods.
+
+- [ ] **Step 1: Write `test_no_python_subsystem_stage_remains`.** It asserts those methods are gone, `DAUNTLESS_NATIVE_SUBSYSTEMS` has no effect, and `engine.appc.passive_power` cannot be imported. See it fail.
+- [ ] **Step 2: Move the tests onto `tick_subsystems`.** One commit per test file group (power / shields / repair / cloak / articulation). Run each group's files before committing it.
+- [ ] **Step 3: Delete the Python stage and the power passive-state machinery.** Run Step 1's test (PASS).
+- [ ] **Step 4: Run** `test_golden_fights.py` (unchanged, including Task 2's extended rows), the moved test files, `tests/host/test_passive_state_scene_audit.py` (weapons half only; adjust it if it asserted power), `tests/docs`, and `ctest --test-dir build -R combat_`. Expect PASS.
+- [ ] **Step 5: Commit** `refactor(native): the subsystem stage is native only; Python stage deleted`.
