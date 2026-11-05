@@ -169,8 +169,10 @@ def test_phaser_aim_point_uses_the_manual_offset_rotated_and_scaled():
 
 
 def test_advance_combat_routes_phaser_damage_at_the_manual_offset(monkeypatch):
-    """End-to-end through the damage tick: the fallback point handed to
-    combat._resolve_hit_point is the manual offset's world position."""
+    """End-to-end through the damage tick: the hit lands at the manual
+    offset's world position. Observed through combat.apply_hit (the kernels
+    hand a patched apply_hit's hits back); a patched _resolve_hit_point is
+    not honoured (spec Part A, phase 6 A3), so it cannot be spied on."""
     from engine import host_loop
     import engine.appc.combat as combat_mod
     from engine.appc.ships import ShipClass
@@ -201,17 +203,15 @@ def test_advance_combat_routes_phaser_damage_at_the_manual_offset(monkeypatch):
     prime_lit_banks(sys_)
 
     seen = []
-    real = combat_mod._resolve_hit_point
-    def spy(*a, **kw):
-        seen.append(kw["fallback_point"])
-        return real(*a, **kw)
-    monkeypatch.setattr(combat_mod, "_resolve_hit_point", spy)
-    monkeypatch.setattr(combat_mod, "apply_hit", lambda *a, **kw: None)
+    def hit_spy(tgt, damage, point, *a, **kw):
+        seen.append((tgt, point))
+    monkeypatch.setattr(combat_mod, "apply_hit", hit_spy)
 
     host_loop._advance_combat([ship, target], dt=1.0 / 60, ship_instances=None)
 
-    assert seen, "damage tick never resolved a hit point"
-    fp = seen[0]
+    assert seen, "damage tick never landed a hit"
+    assert seen[0][0] is target
+    fp = seen[0][1]
     scale = float(target.GetScale())
     assert abs(fp.x) < 1e-6 and abs(fp.y - 100.0) < 1e-6
     assert abs(fp.z - 5.0 * scale) < 1e-6
