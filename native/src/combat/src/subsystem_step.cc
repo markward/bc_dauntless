@@ -747,6 +747,10 @@ bool repair_completions(SubsystemSession& s, size_t i, SubsystemRecord& out) {
 }
 
 // Update after the walk (_repair_worked): the gains, then the completions.
+// Each gain is damage.h's set_condition, called directly: not
+// combat_dmg_set_condition, so neither its dmg_guard_state nor its
+// dmg_fast_patched check runs (spec §3 Part A: a patched damage function,
+// or an instance patch on the item, is not honoured by the native stage).
 bool repair_worked(SubsystemSession& s, Mirror& m, size_t i,
                    SubsystemRecord& out) {
     const SubsystemRow* bay = m.subsystem(s.repair);

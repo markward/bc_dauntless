@@ -189,8 +189,13 @@ _REQUIRED_BINDINGS = (
     # The SDK routes and the walk offset (fire control native only, M8).
     "combat_k1_begin_dumb", "combat_k1_begin_fire", "combat_k1_result",
     "combat_k1_can_fire", "combat_k1_walk_manual_offset",
-    # The subsystem stage session (phase 6 A1).
+    # The subsystem stage session (phase 6 A1). combat_subsys_repair_state
+    # came with the cloak and repair pieces (Task 5), in the same build as
+    # combat_subsys_next's third argument (dmg_ctx): a .so from before it
+    # lacks the name, so the stale build is named here rather than the
+    # first stage failing on the arity.
     "combat_subsys_begin", "combat_subsys_next", "combat_subsys_kinds",
+    "combat_subsys_repair_state",
 )
 
 
@@ -6880,7 +6885,10 @@ _dmg_counts = {"hits": 0, "conditions": 0, "damage_systems": 0,
 def damage_counts() -> dict:
     """Since the last reset(): the native hits, condition writes and
     DamageSystem calls, and the calls handed back to Python (a native
-    call's fallback or the guard's)."""
+    call's fallback or the guard's). `conditions` counts the condition
+    writes made through set_condition (a SetCondition from Python); the
+    native subsystem stage's repair writes (subsystem_step.h THE REPAIR
+    PIECE) call damage.h's set_condition directly and are not counted."""
     return dict(_dmg_counts)
 
 

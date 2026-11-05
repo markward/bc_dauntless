@@ -161,11 +161,12 @@ def test_mission_set_max_repair_points_reaches_the_native_step():
 
 def test_handler_editing_the_queue_mid_walk():
     """Review Focus 5: ET_REPAIR_CANNOT_BE_COMPLETED fires while the bay
-    walks its queue, and its handler edits the queue -- the destroyed
-    member out, a fresh damaged one in at the head. The walk goes on as
-    Python's list iterator does (the next index of the list as it is now):
-    the native piece re-reads the queue from the mirror, which every edit
-    pushed."""
+    walks its queue, and its handler edits the queue -- a damaged member
+    the walk has NOT reached yet is removed, which shifts every later
+    member down one index. The walk goes on as Python's list iterator does
+    (the next index of the list as it is now): the native piece re-reads
+    the queue from the mirror, which every edit pushed. A walk over the
+    queue as it was at begin would still repair the removed member."""
     def run(native):
         with pytest.MonkeyPatch.context() as mp:
             ships = _world(mp, native)
@@ -174,24 +175,23 @@ def test_handler_editing_the_queue_mid_walk():
             subs = [s for s in iter_subsystems(ship)
                     if s is not bay and s is not ship.GetHull()
                     and s is not ship.GetPowerSubsystem()]
-            x, y, z, fresh = subs[:4]
+            x, y, z, w = subs[:4]
             log = _events(mp, (App.ET_REPAIR_CANNOT_BE_COMPLETED,
                                App.ET_REPAIR_COMPLETED))
 
             def edit(evt):
-                sub = evt.GetObjPtr()
-                if sub is x and any(s is x for s in bay._queue):
-                    bay._queue.remove(x)
-                    bay._queue.insert(0, fresh)
-                    _damage(fresh, 0.5)
+                if evt.GetObjPtr() is x and any(s is y for s in bay._queue):
+                    bay._queue.remove(y)        # not reached yet
             _HANDLER["edit"] = edit
             App.g_kEventManager.AddBroadcastPythonFuncHandler(
                 App.ET_REPAIR_CANNOT_BE_COMPLETED, ship,
                 __name__ + ".RepairCannotHandler")
-            bay._queue.extend([x, y, z])
+            bay._queue.extend([x, y, z, w])
             x.SetCondition(0.0)
             _damage(y, 0.5)
             _damage(z, 0.9995)          # completes within the run
+            _damage(w, 0.5)
+            y_before = y._condition
             effect_queue.boundary()
             native_subsystems.reset_counts()
             states = []
@@ -201,6 +201,7 @@ def test_handler_editing_the_queue_mid_walk():
             App.g_kEventManager.RemoveBroadcastHandler(
                 App.ET_REPAIR_CANNOT_BE_COMPLETED, ship,
                 __name__ + ".RepairCannotHandler")
+            assert y._condition == y_before     # removed before its turn
             return (states, list(log), native_subsystems.counts(),
                     native_subsystems.event_counts())
 
@@ -308,3 +309,30 @@ def test_the_mirror_agrees_after_native_repairs_and_cloaks():
         nc._failures.clear()
         nc.audit_mirror()
         assert nc._failures == []
+
+
+def test_every_queue_reordering_pushes_the_mirrored_order():
+    """The mirror holds the queue's ORDER (the native walk's): the in-place
+    reorderings list inherits -- sort, reverse, *= -- push it like every
+    other mutator, and keep each member's _in_repair_queue."""
+    from engine.appc.subsystems import RepairSubsystem, ShipSubsystem
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
+    bay = RepairSubsystem("Repair")
+    subs = [ShipSubsystem("S%d" % i) for i in range(3)]
+    bay._queue.extend(subs)
+
+    def mirrored():
+        return nc._h.combat_dump(bay.__dict__["_nslot"])["_queue"]
+
+    def handles():
+        return [s.__dict__["_nslot"] for s in bay._queue]
+    bay._queue.reverse()
+    assert mirrored() == handles() == [s.__dict__["_nslot"]
+                                       for s in reversed(subs)]
+    bay._queue.sort(key=lambda s: s.GetName())
+    assert mirrored() == handles() == [s.__dict__["_nslot"] for s in subs]
+    bay._queue *= 2
+    assert mirrored() == handles() and len(handles()) == 6
+    assert all(s._in_repair_queue for s in subs)
+    bay._queue *= 0
+    assert mirrored() == [] and not any(s._in_repair_queue for s in subs)

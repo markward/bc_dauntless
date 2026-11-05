@@ -185,8 +185,12 @@
 //           <= 0 is nothing, else the condition write
 //           min(GetMaxCondition(), condition + gain) through damage.h's
 //           set_condition (its writes and effect-queue entries in `dmg`,
-//           the same as SetCondition's native chain makes); completed when
-//           the condition is then >= GetMaxCondition(). Anything in it the
+//           the same as SetCondition's native chain makes; called
+//           directly, WITHOUT combat_dmg_set_condition's dmg_guard_state /
+//           dmg_fast_patched checks: by Part A a patched damage function or
+//           an instance patch on the item is not honoured here);
+//           completed when the condition is then >= GetMaxCondition().
+//           Anything in it the
 //           mirror cannot answer (a set_condition fallback, a max
 //           condition it cannot read, a row gone) undoes every write of the
 //           items worked so far and is EVENT{REPAIR_TAIL, code = the bay,

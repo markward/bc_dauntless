@@ -3031,6 +3031,25 @@ class _RepairQueue(list):
         self.extend(subs)
         return self
 
+    # The in-place reorderings: membership is unchanged (sort, reverse) or
+    # only repeated / emptied (*=), but the mirrored ORDER moves.
+    def sort(self, *args, **kwargs):
+        try:
+            list.sort(self, *args, **kwargs)
+        finally:
+            self._pushed()
+
+    def reverse(self):
+        list.reverse(self)
+        self._pushed()
+
+    def __imul__(self, n):
+        gone = list(self)
+        list.__imul__(self, n)
+        self._unmark(gone)
+        self._pushed()
+        return self
+
     def clear(self):
         gone = list(self)
         list.clear(self)
@@ -3088,7 +3107,10 @@ def _notify_key(sub):
     """A queued subsystem's key in its bay's ``_cannot_complete_notified``:
     its mirror handle (``_nslot``), which the native repair piece keys the
     set by too (subsystem_step.h THE REPAIR PIECE), else -- an object the
-    mirror has no row for -- its id()."""
+    mirror has no row for -- its id(). A member whose row is dropped (or
+    forgotten) changes key to its id(), so it can be told
+    ET_REPAIR_CANNOT_BE_COMPLETED once more (accepted: rare, and both
+    stages do the same)."""
     h = sub.__dict__.get("_nslot") if hasattr(sub, "__dict__") else None
     return h if type(h) is int else id(sub)
 

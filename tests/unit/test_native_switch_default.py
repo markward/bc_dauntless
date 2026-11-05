@@ -125,6 +125,21 @@ def test_missing_binding_raises_at_configure(monkeypatch):
         nc.configure({})
 
 
+@pytest.mark.parametrize("name", ("combat_subsys_begin", "combat_subsys_next",
+                                  "combat_subsys_kinds",
+                                  "combat_subsys_repair_state"))
+def test_each_subsystem_stage_binding_is_required(monkeypatch, name):
+    """A .so from before the cloak and repair pieces (Task 5) lacks
+    combat_subsys_repair_state -- and has combat_subsys_next's old arity:
+    configure() names the stale build instead of the first stage failing."""
+    nc.reset()
+    monkeypatch.setattr(nc, "_h", _Without(_h, name))
+    assert name in nc.missing_bindings()
+    with pytest.raises(RuntimeError, match="stale build.*" + name):
+        nc.configure({})
+    assert not nc._enabled
+
+
 _K1_BINDINGS = ("combat_k1_begin_dumb", "combat_k1_begin_fire",
                 "combat_k1_result", "combat_k1_can_fire",
                 "combat_k1_walk_manual_offset")
