@@ -12,7 +12,8 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 
 | What | Constant | Period | Where |
 |---|---|---|---|
-| Shield charging | `SHIELD_CHARGE_PERIOD_S` | 0.5 s | `engine/appc/subsystems.py:115` |
+| Shield charging | `SHIELD_CHARGE_PERIOD_S` | 0.5 s | `engine/appc/subsystems.py:232` |
+| Native subsystem stage (switch, not a cadence) | `DAUNTLESS_NATIVE_SUBSYSTEMS` | on unless `=0`; every tick | `engine/appc/native_subsystems.py` (`enabled()`), `native/src/combat/` (`subsystem_step.cc`) |
 | Target-list poll | (panel throttle) | 0.5 s / 2 Hz | `engine/ui/panel_registry.py` |
 | Avoidance re-decision | `AVOID_EVADING_UPDATE_DELAY_S` | 0.25 s / 4 Hz | `engine/appc/ai_optimized.py:138` |
 | AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py:1548` |
@@ -294,3 +295,15 @@ render frame), so wall clock can be longer still. That is the preload, not a
 hang. At the cap the warp releases anyway and prints
 `[warp-preload] late: <items>` to stderr, naming what was still loading.
 NPC warps never wait.
+
+---
+
+## The native subsystem stage switch
+
+`DAUNTLESS_NATIVE_SUBSYSTEMS` is not a cadence and changes no timing: the
+per-tick subsystem stage (shields, power plant and consumers, cloak, repair,
+rigless-ship articulation skip) runs in C++ (`engine/appc/native_subsystems.py`
+driving `native/src/combat/` `subsystem_step.cc`) unless the variable is exactly
+`0`, which restores the Python loop in `engine/core/loop.py`. Use it to test
+whether a suspected subsystem fault is the native stage; the shield cadence above
+is unchanged either way.
