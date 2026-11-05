@@ -118,3 +118,22 @@ def iter_active_ships(*, verbose: bool = False) -> Iterable:
         for obj in iter_set_objects(pSet):
             if isinstance(obj, ShipClass):
                 yield obj
+
+
+def iter_non_rock_ship_sets() -> Iterable:
+    """iter_non_rock_ships() one set at a time: a list of each set's ships
+    (sets with none skipped), with the same snapshot points -- the sets when
+    the walk begins, each set's objects when the walk reaches that set. The
+    native subsystem stage opens one session per list
+    (engine/appc/native_subsystems.py), so a ship a mid-stage handler adds
+    to, or removes from, a set the walk has not reached is seen exactly as
+    iter_non_rock_ships sees it. Each object's class is tested when its set
+    is reached rather than when the object is: keep the two filters equal."""
+    from engine.appc.ships import ShipClass
+    from engine.rocks.rock import RockClass
+    for _set_name, pSet in list(App.g_kSetManager._sets.items()):
+        ships = [obj for obj in iter_set_objects(pSet)
+                 if isinstance(obj, ShipClass)
+                 and not isinstance(obj, RockClass)]
+        if ships:
+            yield ships

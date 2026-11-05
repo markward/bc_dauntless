@@ -1,6 +1,7 @@
 import App
 
-from engine.appc import articulation, native_combat, passive_state
+from engine.appc import (articulation, native_combat, native_subsystems,
+                         passive_state)
 from engine.appc.ship_iter import iter_non_rock_ships
 from engine.core import frame_profiler as _prof
 
@@ -166,7 +167,15 @@ def _update_ship_subsystems() -> None:
     iter_ships itself, rather than only the per-ship work). Rocks are
     excluded — a rock's shield/power/cloak/repair/articulation never ticks
     (rock-class spec §1).
+
+    With the native subsystem stage enabled (DAUNTLESS_NATIVE_SUBSYSTEMS,
+    on unless "0", and the mirror live) the walk is the native session's
+    (engine/appc/native_subsystems.py); the loop below is the Python stage,
+    its bit-exact reference until phase 6 A1 Task 8 deletes it.
     """
+    if native_subsystems.enabled():
+        native_subsystems.step_all(TICK_DELTA)
+        return
     for ship in iter_non_rock_ships():
         ss = ship.GetShieldSubsystem()
         if ss is not None:

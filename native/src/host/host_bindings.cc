@@ -39,6 +39,7 @@
 #include "dauntless/combat/impulse.h"
 #include "dauntless/combat/motion_step.h"
 #include "dauntless/combat/published_poses.h"
+#include "dauntless/combat/subsystem_step.h"
 #include "dauntless/combat/tractor_force.h"
 #include "dauntless/combat/weapon_geometry.h"
 #include "dauntless/interp_buffer.h"
@@ -13831,6 +13832,43 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k0_entries"] = entries;
             return d;
         });
+        // ── The subsystem stage session (subsystem_step.h) ──────────────
+        // One session object per stage (no process-wide session: a stage
+        // nested in a handler gets its own). Records are tuples
+        //   (type, ship_pos, ship, kind, code, a, b)
+        // with type and kind ints named by combat_subsys_kinds() (kind a
+        // piece for RUN_PYTHON, an event kind for EVENT, -1 for DONE).
+        m.def("combat_subsys_kinds", [] {
+            py::dict types, pieces;
+            for (int i = 0;
+                 i < static_cast<int>(cb::SubsystemRecordType::kCount); ++i)
+                types[cb::subsystem_record_type_name(
+                    static_cast<cb::SubsystemRecordType>(i))] = i;
+            for (int i = 0; i < static_cast<int>(cb::SubsystemPiece::kCount);
+                 ++i)
+                pieces[cb::subsystem_piece_name(
+                    static_cast<cb::SubsystemPiece>(i))] = i;
+            return py::make_tuple(types, pieces);
+        }, "(record types, pieces): name -> int.");
+        py::class_<cb::SubsystemSession>(m, "combat_SubsystemSession")
+            .def_readonly("dt", &cb::SubsystemSession::dt)
+            .def_readonly("done", &cb::SubsystemSession::done);
+        m.def("combat_subsys_begin",
+              [](const std::vector<std::int64_t>& ships, double dt) {
+                  return cb::subsystems::begin(cb::mirror(), ships, dt);
+              },
+              py::arg("ships"), py::arg("dt"),
+              "Begin one subsystem stage over `ships` (Object handles in "
+              "roster order, -1 for a ship with no row) for a tick of `dt`.");
+        m.def("combat_subsys_next",
+              [](cb::SubsystemSession& s) {
+                  const cb::SubsystemRecord r =
+                      cb::subsystems::next(s, cb::mirror());
+                  return py::make_tuple(static_cast<int>(r.type), r.ship_pos,
+                                        r.ship, r.kind, r.code, r.a, r.b);
+              },
+              py::arg("session"),
+              "The session's next record (see combat_subsys_kinds).");
         // ── The tractor force (tractor_force.h) ──────────────────────────
         // One step over Object handles (host order, -1 for a ship with no
         // row), writing the transform store. Returns (zero_velocity,

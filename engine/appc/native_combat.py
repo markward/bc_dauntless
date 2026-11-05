@@ -189,6 +189,8 @@ _REQUIRED_BINDINGS = (
     # The SDK routes and the walk offset (fire control native only, M8).
     "combat_k1_begin_dumb", "combat_k1_begin_fire", "combat_k1_result",
     "combat_k1_can_fire", "combat_k1_walk_manual_offset",
+    # The subsystem stage session (phase 6 A1).
+    "combat_subsys_begin", "combat_subsys_next", "combat_subsys_kinds",
 )
 
 
@@ -224,6 +226,10 @@ def configure(environ: Mapping[str, str] = os.environ) -> None:
         torpedo_table_mark_dirty()  # K3's table, unpushed from here on
     _switch = switch
     _audit = audit
+    # The native subsystem stage's switch, from the same environment (not
+    # at module scope: native_subsystems imports this module).
+    from engine.appc import native_subsystems
+    native_subsystems.configure(environ)
 
 
 def _go_live() -> None:
@@ -379,6 +385,8 @@ def reset() -> None:
     # not at module scope: native_motion imports this module.
     from engine.appc import native_motion
     native_motion.reset()
+    from engine.appc import native_subsystems
+    native_subsystems.reset()
 
 
 def counts() -> dict:
