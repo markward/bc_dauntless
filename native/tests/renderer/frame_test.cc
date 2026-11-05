@@ -3987,3 +3987,59 @@ TEST_F(FrameTest, ShadowCullsCastersOutsideTheLight) {
     EXPECT_EQ(stats.culled, 1);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
+
+// Final review (Important 1): a posed part is a full rigid transform -- a
+// mod rig may translate it arbitrarily far from the rest-pose sphere -- so no
+// slack on that sphere bounds it. A hull with node overrides is never culled,
+// however far outside the frustum its rest sphere lies.
+TEST_F(FrameTest, OpaqueNeverCullsAPosedHull) {
+    auto cpu_cache = production_like_cache();
+    auto model_h = cpu_cache->load(kGalaxyNif, kGalaxyTex);
+    const auto handle = reinterpret_cast<scenegraph::ModelHandle>(model_h.get());
+    const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    scenegraph::World world;
+    const auto iid = world.create_instance(handle);
+    world.set_world_transform(iid,
+                              glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 3000.0f)));
+    world.get(iid)->node_overrides[0] = glm::mat4(1.0f);
+    renderer::Lighting lighting;
+    glViewport(0, 0, 256, 256);
+    renderer::FrameSubmitter s;
+    s.submit_opaque_in_pass(world, hull_stats_camera(), *p, lookup, lighting,
+                            scenegraph::Pass::Space);
+    EXPECT_EQ(s.opaque_stats().instances, 1);
+    EXPECT_EQ(s.opaque_stats().culled, 0);
+
+    // The shadow casters follow the same rule.
+    world.set_rim_eligible(iid, true);
+    renderer::ShadowLight light;
+    light.view_proj = glm::ortho(-800.0f, 800.0f, -800.0f, 800.0f, -800.0f, 800.0f);
+    renderer::HullDrawStats stats;
+    renderer::submit_shadow_depth(world, light, *p, lookup, &stats);
+    EXPECT_EQ(stats.instances, 1);
+    EXPECT_EQ(stats.culled, 0);
+}
+
+// A rigged hull AT REST (identity pose clears node_overrides) draws its rest
+// pose exactly, so it culls like any other hull.
+TEST_F(FrameTest, OpaqueCullsARiggedHullAtRest) {
+    auto cpu_cache = production_like_cache();
+    auto model_h = cpu_cache->load(kGalaxyNif, kGalaxyTex);
+    const auto handle = reinterpret_cast<scenegraph::ModelHandle>(model_h.get());
+    const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    scenegraph::World world;
+    const auto iid = world.create_instance(handle);
+    world.set_world_transform(iid,
+                              glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 3000.0f)));
+    world.get(iid)->rigged = true;
+    renderer::Lighting lighting;
+    glViewport(0, 0, 256, 256);
+    renderer::FrameSubmitter s;
+    s.submit_opaque_in_pass(world, hull_stats_camera(), *p, lookup, lighting,
+                            scenegraph::Pass::Space);
+    EXPECT_EQ(s.opaque_stats().culled, 1);
+}

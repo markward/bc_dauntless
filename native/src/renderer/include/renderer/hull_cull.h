@@ -9,11 +9,10 @@
 namespace renderer {
 
 /// Radius multiplier on the rest-pose bound. A small margin for rounding.
+/// A POSED hull (node overrides) is never culled at all -- the caller passes
+/// cullable=false: a posed part is a full rigid transform that may move
+/// arbitrarily far from the rest-pose sphere, so no slack on it is a bound.
 inline constexpr float kHullCullSlack = 1.05f;
-/// A rigged hull's parts move (articulation) and may leave the rest-pose
-/// bound, so its sphere is doubled: drawing a few off-screen hulls is cheap,
-/// popping a swung nacelle at the screen edge is not.
-inline constexpr float kHullCullSlackRigged = 2.0f;
 
 /// DAUNTLESS_HULL_CULL, read once: on unless it is exactly "0" (the A/B
 /// switch; off = every hull is submitted, as before phase 5a).
@@ -21,10 +20,10 @@ bool hull_cull_enabled();
 
 /// False only when the hull's bounding sphere -- `center_body` / `radius_body`
 /// in the model frame, through `world` (uniform scale from column 0), times
-/// the slack -- lies wholly outside a plane of `frustum`. An uncullable model
-/// (a mesh with no bound) is always visible.
+/// kHullCullSlack -- lies wholly outside a plane of `frustum`. Uncullable (a
+/// mesh with no bound, a skinned model, a posed hull) is always visible.
 bool hull_visible(const Frustum& frustum, const glm::mat4& world,
                   const glm::vec3& center_body, float radius_body,
-                  bool cullable, bool rigged);
+                  bool cullable);
 
 }  // namespace renderer

@@ -481,10 +481,13 @@ const ModelBounds& model_bounds(scenegraph::ModelHandle handle, const assets::Mo
         .first->second;
 }
 
-// A hull's moving parts may leave its rest-pose bound: rigged (articulation)
-// or posed right now.
-bool hull_moves_parts(const scenegraph::Instance& inst) {
-    return inst.rigged || !inst.node_overrides.empty();
+// Whether the hull may be frustum-culled: its model has a real rest-pose
+// bound AND it is not posed. A posed part (node override) is a full rigid
+// transform that can sit anywhere, so a posed hull is always submitted. A
+// rigged hull AT REST has no overrides (the identity pose clears them) and
+// draws its rest pose exactly, so it culls like any other.
+bool hull_cullable(const ModelBounds& b, const scenegraph::Instance& inst) {
+    return b.cullable && inst.node_overrides.empty();
 }
 
 float model_bounding_radius(scenegraph::ModelHandle handle,
@@ -1614,8 +1617,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         // own camera, the main view against its).
         if (cull && m) {
             const ModelBounds& b = model_bounds(inst.model_handle, *m);
-            if (!hull_visible(frustum, inst.world, b.centre, b.radius, b.cullable,
-                              hull_moves_parts(inst))) {
+            if (!hull_visible(frustum, inst.world, b.centre, b.radius,
+                              hull_cullable(b, inst))) {
                 ++opaque_stats_.culled;
                 return;
             }
@@ -2081,8 +2084,8 @@ void submit_shadow_depth(const scenegraph::World& world,
             if (!m) return;
             if (cull) {
                 const ModelBounds& b = model_bounds(inst.model_handle, *m);
-                if (!hull_visible(frustum, inst.world, b.centre, b.radius, b.cullable,
-                                  hull_moves_parts(inst))) {
+                if (!hull_visible(frustum, inst.world, b.centre, b.radius,
+                                  hull_cullable(b, inst))) {
                     ++st.culled;
                     return;
                 }
