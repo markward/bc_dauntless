@@ -116,9 +116,55 @@ def test_a_ship_that_loses_a_subsystem_mid_walk(monkeypatch):
     assert run(True) == python
 
 
+def test_a_row_dropped_mid_walk_is_still_updated():
+    """A row freed mid-walk while its ship lives on (native_combat._drop: a
+    value the mirror cannot hold) is not skipped: the Python stage still
+    runs that ship's remaining pieces, so the native stage hands them back
+    too (controller ruling, Task 2 fix round 1). Ship 0's shield Update
+    drops ship 0's own row (between its pieces) and a LATER ship's."""
+    from engine.appc.ship_iter import iter_non_rock_ships
+
+    def run(native):
+        calls = []
+        with pytest.MonkeyPatch.context() as mp:
+            _world(mp, native)
+            ships = list(iter_non_rock_ships())
+            assert all(isinstance(s.__dict__.get("_nslot"), int)
+                       for s in ships)
+            _spy(mp, calls)
+            orig = ShieldSubsystem.Update
+            dropped = []
+
+            def update(self, dt, _orig=orig):
+                _orig(self, dt)
+                if self.GetParentShip() is ships[0] and not dropped:
+                    for ship in (ships[0], ships[2]):
+                        nc._drop(ship)
+                        dropped.append(ship.__dict__.get("_nslot"))
+            mp.setattr(ShieldSubsystem, "Update", update)
+            for _ in range(2):
+                game_loop._update_ship_subsystems()
+            assert dropped == [None, None]      # the rows are gone
+            assert native_subsystems.counts()["stages"] == (2 if native
+                                                            else 0)
+            names = [ships[0].GetName(), ships[2].GetName()]
+        return calls, names
+
+    python, names = run(False)
+    # The dropped ships kept running: power, repair and articulation, both
+    # ticks (the shield's own call is before the drop).
+    for name in names:
+        kinds = [k for k, n, _ in python if n == name]
+        assert kinds.count("power") == kinds.count("repair") == \
+            kinds.count("articulation") == 2, (name, kinds)
+    native, _ = run(True)
+    assert native == python
+
+
 def test_the_switch(monkeypatch):
     """DAUNTLESS_NATIVE_SUBSYSTEMS: on unless exactly "0"; off without the
     live mirror."""
+    monkeypatch.delenv("DAUNTLESS_NATIVE_SUBSYSTEMS", raising=False)
     for value, want in ((None, True), ("1", True), ("", True), ("0", False),
                         ("00", True)):
         env = {"DAUNTLESS_NATIVE_COMBAT": "1"}
@@ -173,3 +219,24 @@ def test_a_patched_roster_runs_the_python_stage(monkeypatch, target):
         assert ticked == [game_loop.TICK_DELTA]
     monkeypatch.undo()
     assert native_subsystems.enabled()
+
+
+def test_a_callers_env_dict_without_the_switch_falls_back_to_the_process_env(
+        monkeypatch):
+    """native_combat.configure(env) with a caller's own dict: the dict's
+    DAUNTLESS_NATIVE_SUBSYSTEMS wins when it names it; else the process
+    environment's (fix round 1, Minor 1)."""
+    combat = {"DAUNTLESS_NATIVE_COMBAT": "1"}
+    monkeypatch.setenv("DAUNTLESS_NATIVE_SUBSYSTEMS", "0")
+    nc.configure(combat)
+    assert native_subsystems.enabled() is False
+    nc.configure(dict(combat, DAUNTLESS_NATIVE_SUBSYSTEMS="1"))
+    assert native_subsystems.enabled() is True
+    monkeypatch.setenv("DAUNTLESS_NATIVE_SUBSYSTEMS", "1")
+    nc.configure(dict(combat, DAUNTLESS_NATIVE_SUBSYSTEMS="0"))
+    assert native_subsystems.enabled() is False
+    nc.configure(combat)
+    assert native_subsystems.enabled() is True
+    monkeypatch.delenv("DAUNTLESS_NATIVE_SUBSYSTEMS")
+    nc.configure(combat)
+    assert native_subsystems.enabled() is True

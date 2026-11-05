@@ -85,37 +85,44 @@ TEST(SubsystemStep, AllPythonOrderIsShipThenKind) {
     EXPECT_THROW(subsystems::next(s, w.m), std::logic_error);
 }
 
-TEST(SubsystemStep, SkipsAFreedRow) {
+TEST(SubsystemStep, FreedRowHandsTheRestToPython) {
+    // A row freed mid-walk while its object lives on (native_combat._drop):
+    // the Python stage still runs every piece of that ship, so the session
+    // hands them all back, in order, and never skips it.
     World w;
     const std::vector<int64_t> ships = {w.ship(), w.ship(), w.ship()};
     SubsystemSession s = subsystems::begin(w.m, ships, kDt);
     const SubsystemRecord first = subsystems::next(s, w.m);
     ASSERT_EQ(first.type, SubsystemRecordType::RUN_PYTHON);
     EXPECT_EQ(first.ship_pos, 0);
-    // A handler run for that record destroyed the second ship.
+    // A handler run for that record dropped the second ship's row.
     w.m.unregister_row(ships[1]);
     const auto rest = walk(s, w.m);
-    ASSERT_EQ(rest.size(), 4u + 5u);
-    for (size_t k = 0; k < 4; ++k) {
-        EXPECT_EQ(rest[k].first, 0);
-        EXPECT_EQ(rest[k].second, kOrder[k + 1]);
-    }
-    for (size_t k = 0; k < 5; ++k) {
-        EXPECT_EQ(rest[4 + k].first, 2);
-        EXPECT_EQ(rest[4 + k].second, kOrder[k]);
+    ASSERT_EQ(rest.size(), 4u + 5u + 5u);
+    for (size_t k = 0; k < rest.size(); ++k) {
+        EXPECT_EQ(rest[k].first, static_cast<int64_t>((k + 1) / 5)) << k;
+        EXPECT_EQ(rest[k].second, kOrder[(k + 1) % 5]) << k;
     }
 }
 
-TEST(SubsystemStep, FreedBetweenPiecesSkipsTheRestOfThatShip) {
+TEST(SubsystemStep, FreedBetweenPiecesHandsTheRestOfThatShipToPython) {
     World w;
     const std::vector<int64_t> ships = {w.ship(), w.ship()};
     SubsystemSession s = subsystems::begin(w.m, ships, kDt);
     for (int k = 0; k < 2; ++k)
         ASSERT_EQ(subsystems::next(s, w.m).ship_pos, 0);
-    w.m.unregister_row(ships[0]);       // its POWER handler destroyed it
+    w.m.unregister_row(ships[0]);       // its POWER handler dropped it
+    // A new row may reuse the slot: the lost row stays Python's.
+    w.ship();
     const auto rest = walk(s, w.m);
-    ASSERT_EQ(rest.size(), 5u);
-    for (const auto& r : rest) EXPECT_EQ(r.first, 1);
+    ASSERT_EQ(rest.size(), 3u + 5u);
+    for (size_t k = 0; k < 3; ++k) {
+        EXPECT_EQ(rest[k].first, 0);
+        EXPECT_EQ(rest[k].second, kOrder[k + 2]);
+    }
+    for (size_t k = 0; k < 5; ++k) EXPECT_EQ(rest[3 + k].first, 1);
+    EXPECT_EQ(s.lost_row[0], 1);
+    EXPECT_EQ(s.lost_row[1], 0);
 }
 
 TEST(SubsystemStep, AShipWithNoRowIsStillPythons) {

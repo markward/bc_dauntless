@@ -246,6 +246,16 @@ def _stage_value(v):
     return v.hex() if isinstance(v, float) else v
 
 
+def _queued_label(ship_name, sub):
+    """A repair-queue member by name. Anything else raises: no repr (and so
+    no memory address) may ever reach a fixture."""
+    from engine.appc.subsystems import ShipSubsystem
+    if not isinstance(sub, ShipSubsystem):
+        raise TypeError("golden stage row: %s's repair queue holds a %s, "
+                        "not a subsystem" % (ship_name, type(sub).__name__))
+    return "%s/%s" % (ship_name, sub.GetName())
+
+
 def _stage_rows(ships):
     """The subsystem stage's own state, one row per ship (phase 6 A1, Task 2:
     the plan's ruling R2 makes the goldens the stage's oracle once the Python
@@ -274,8 +284,7 @@ def _stage_rows(ships):
                        _stage_value(sub.__dict__.get("_condition"))]
                       for sub in subs.iter_subsystems(s)]
         queue = None if repair is None else [
-            "%s/%s" % (name, q.GetName()) if hasattr(q, "GetName")
-            else repr(q) for q in repair.__dict__.get("_queue", ())]
+            _queued_label(name, q) for q in repair.__dict__.get("_queue", ())]
         rows.append(["stage", name,
                      field(power, "_main_battery_power"),
                      field(power, "_backup_battery_power"),

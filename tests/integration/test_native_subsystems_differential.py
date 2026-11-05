@@ -105,6 +105,9 @@ _CLOAK = ("_cloak_state", "_transition_elapsed", "_transition_duration",
           "_backup_reserve")
 _SUBSYSTEM = ("_condition", "_threshold_state", "_in_repair_queue")
 _SHIP = ("_articulation_poses", "_articulation_transitions")
+_WATCHERS = ("_condition_watcher", "_combined_watcher")
+TRACKED = (_SHIELD + _PLANT + _CONSUMER + _CLOAK + _SUBSYSTEM + _SHIP
+           + _WATCHERS)
 
 
 class _World:
@@ -132,8 +135,17 @@ class _World:
                         if s.GetCloakingSubsystem() is not None]
         assert self.cloaked, "no cloak in the cast"
         self.next_ship = {}
+        # Every tracked field name, once it has been seen holding a value:
+        # a renamed field would otherwise compare None with None forever.
+        self.seen = set()
         self._install_events(mp)
         self._install_handler()
+        # Condition watchers exist once an SDK condition asks for one
+        # (Conditions/ConditionSystemBelow.py): asked for here on the
+        # sources' subsystems, so repair's condition writes feed them.
+        for ship in self.ships[:SOURCES]:
+            for sub in iter_subsystems(ship):
+                sub.GetConditionWatcher()
 
     # ── Labels ───────────────────────────────────────────────────────────────
 
@@ -285,12 +297,20 @@ class _World:
 
     def _fields(self, obj, names):
         d = obj.__dict__
-        return [_ser(d.get(n), self.label) for n in names]
+        out = []
+        for n in names:
+            v = d.get(n)
+            if v is not None:
+                self.seen.add(n)
+            out.append(_ser(v, self.label))
+        return out
 
     def _watchers(self, sub):
         out = []
-        for attr in ("_condition_watcher", "_combined_watcher"):
+        for attr in _WATCHERS:
             w = sub.__dict__.get(attr)
+            if w is not None:
+                self.seen.add(attr)
             out.append(None if w is None else _hex(w._value))
         return out
 
@@ -358,6 +378,9 @@ def _arm(native):
             log = world.run()
         finally:
             world.close()
+        assert world.seen == set(TRACKED), (
+            "tracked fields never seen holding a value (renamed?): %s"
+            % sorted(set(TRACKED) - world.seen))
         return log, dict(world.handled), native_subsystems.counts()
 
 

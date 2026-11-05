@@ -29,8 +29,11 @@ the mirror registers them under: ``_nslot``), and the driver loops
   resume, never batched). No piece is native yet, so the table is empty:
   Tasks 3-5 fill it.
 
-A ship whose mirror row is freed mid-walk is skipped by the session (Review
-Focus 3; subsystem_step.h FREED ROWS); a ship with no row is all Python.
+A ship whose mirror row is freed mid-walk while it lives on
+(``native_combat._drop``) is NOT skipped: the Python stage still updates
+it, so its remaining pieces come back as RUN_PYTHON and its row is never
+read again (Review Focus 3; subsystem_step.h FREED ROWS). A ship with no
+row is all Python.
 
 In this task every piece is RUN_PYTHON, so the stage makes the Python loop's
 calls, in its order, by construction.
@@ -63,12 +66,22 @@ _STOCK_ROSTER = (ship_iter.iter_ships, ship_iter.iter_non_rock_ships,
                  ship_iter.iter_set_objects)
 
 
+_SWITCH_ENV = "DAUNTLESS_NATIVE_SUBSYSTEMS"
+
+
 def configure(environ: Mapping[str, str] = os.environ) -> None:
     """The switch from `environ`: DAUNTLESS_NATIVE_SUBSYSTEMS, on unless
     exactly "0". Called by native_combat.configure (the mirror's own
-    configure, which every caller that makes the mirror live runs)."""
+    configure, which every caller that makes the mirror live runs). A
+    caller's own env dict (a test scene's ``{"DAUNTLESS_NATIVE_COMBAT":
+    "1"}``) that does not name the switch falls back to the process
+    environment, so a shell's ``DAUNTLESS_NATIVE_SUBSYSTEMS=0`` reaches
+    every stage."""
     global _switch
-    _switch = environ.get("DAUNTLESS_NATIVE_SUBSYSTEMS") != "0"
+    value = environ.get(_SWITCH_ENV)
+    if value is None and environ is not os.environ:
+        value = os.environ.get(_SWITCH_ENV)
+    _switch = value != "0"
 
 
 def enabled() -> bool:

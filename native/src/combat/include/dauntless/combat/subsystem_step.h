@@ -41,11 +41,15 @@
 // handlers), and what it changes is read again by the next next(): the
 // mirror is live, every Native* write pushes to it (plan ruling R1).
 //
-// FREED ROWS (Review Focus 3). A ship whose row was live at begin and is not
-// any more (a handler destroyed it and its row was freed) is skipped from
-// that point: no record of it is returned again, and no row of it is read.
-// A ship with no row at begin (-1, or a handle already stale) is not one:
-// the Python stage updates it, so every piece of it is RUN_PYTHON.
+// FREED ROWS (Review Focus 3). A row can vanish mid-walk while its Python
+// object stays alive and in the walk: native_combat._drop(obj) frees it (a
+// pose-table or has_shields push that cannot be represented, ...), and the
+// Python stage still runs that ship's remaining pieces. So a ship whose row
+// was live at begin and is gone at its turn is NOT skipped: from then on its
+// remaining pieces, in the normal order, are RUN_PYTHON, and its row is
+// never read again (`lost_row`; the handle may name a reused slot). A ship
+// with no row at begin (-1, or a handle already stale) is all RUN_PYTHON
+// too: the Python stage updates it.
 //
 // In Task 2 every cell is RUN_PYTHON, so the stage's behaviour is the Python
 // loop's by construction. Tasks 3-6 make pieces native one kind at a time;
@@ -91,8 +95,15 @@ struct SubsystemRecord {
 struct SubsystemSession {
     std::vector<int64_t> ships;      // Object handles, roster order
     std::vector<uint8_t> had_row;    // live at begin (FREED ROWS)
+    std::vector<uint8_t> lost_row;   // gone since: the rest is Python's
     double dt = 0.0;
-    // THE CURSOR: the next cell to consider.
+    // THE CURSOR: the next cell to consider, (ship position, piece). A
+    // record is a whole piece today. Once a piece is native (Tasks 3-5) an
+    // EVENT can be raised PARTWAY through it -- after one shield face's
+    // watcher, one consumer of the power pump, one repair-queue item -- and
+    // the next next() must resume inside that piece: the cursor will then
+    // need a sub-piece position (face / consumer index / queue index) and
+    // the piece's partial state, kept here, not re-derived.
     size_t ship_pos = 0;
     int32_t piece = 0;
     bool done = false;               // DONE was returned
