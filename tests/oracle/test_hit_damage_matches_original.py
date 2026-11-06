@@ -39,9 +39,12 @@ def _subs(ship):
 
 
 def _no_repair(ship):
+    # The repair rate is read from the bay's property (RepairSubsystem.
+    # GetMaxRepairPoints); the subsystem itself has no setter.
     bay = ship.GetRepairSubsystem()
     if bay is not None:
-        bay.SetMaxRepairPoints(0.0)
+        bay.GetProperty().SetMaxRepairPoints(0.0)
+        assert bay.GetMaxRepairPoints() == 0.0
 
 
 def _hit(s, ship, damage, point, radius=0.13):
