@@ -106,6 +106,14 @@ struct PanelWorker::Impl {
     std::unordered_set<std::string> warned;
 
     std::atomic<std::int64_t> delay_ms{0};
+    // Tests only (set_test_raster_hold): a raster parks here until released.
+    // Its own lock, never `mu`: the caller's update() takes `mu`, and the
+    // whole point is to prove it never waits for a parked raster.
+    std::mutex hold_mu;
+    std::condition_variable hold_cv;
+    bool hold = false;
+    bool hold_stop = false;
+    std::atomic<int> parked{0};
     std::thread thread;
 
     // Caller holds `mu`.
@@ -263,6 +271,14 @@ void PanelWorker::Impl::raster(const PanelJob& job,
     }
     if (const auto d = delay_ms.load(); d > 0)
         std::this_thread::sleep_for(std::chrono::milliseconds(d));
+    {
+        std::unique_lock<std::mutex> lk(hold_mu);
+        if (hold) {
+            parked.fetch_add(1);
+            hold_cv.wait(lk, [&] { return !hold || hold_stop; });
+            parked.fetch_sub(1);
+        }
+    }
 
     Loaded& p = it->second;
     const auto t0 = std::chrono::steady_clock::now();
@@ -335,6 +351,11 @@ PanelWorker::~PanelWorker() {
         impl_->stop = true;
         impl_->queue.clear();
     }
+    {
+        std::lock_guard<std::mutex> lk(impl_->hold_mu);
+        impl_->hold_stop = true;     // a parked raster must not stall the join
+    }
+    impl_->hold_cv.notify_all();
     impl_->cv.notify_one();
     impl_->thread.join();
 }
@@ -395,5 +416,15 @@ void PanelWorker::clear_warnings() {
 void PanelWorker::set_test_raster_delay(std::chrono::milliseconds d) {
     impl_->delay_ms.store(d.count());
 }
+
+void PanelWorker::set_test_raster_hold(bool on) {
+    {
+        std::lock_guard<std::mutex> lk(impl_->hold_mu);
+        impl_->hold = on;
+    }
+    impl_->hold_cv.notify_all();
+}
+
+int PanelWorker::test_parked_rasters() const { return impl_->parked.load(); }
 
 }  // namespace lottie
