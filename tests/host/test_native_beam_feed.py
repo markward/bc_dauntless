@@ -202,3 +202,269 @@ def test_scene_feeds_phaser_and_tractor_pairs(beam_scene):
     assert set(after.values()) == {True, False}, after
     assert seen[True] > 0 and seen[False] > 0, (
         "phasers must land on a shields-up and a shields-down foe: %r" % seen)
+
+
+# ── Task 4: the native feed, frame by frame, against the Python builders ────
+
+import random  # noqa: E402
+
+from engine.appc import native_combat as nc  # noqa: E402
+
+
+def _native_feed(ships, ship_instances):
+    """native_combat.beam_feed, then what it pushed: (ok, phaser bytes,
+    tractor bytes)."""
+    ok = nc.beam_feed(ships, ship_instances)
+    return ok, _beams("phaser"), _beams("tractor")
+
+
+class _Coverage:
+    """Spies on the Python builders' endpoint and pair helpers while armed,
+    so each compared frame says which beam cases it held: a pair ended on
+    the shield bubble, one ended on the hull mesh trace, a tractor pair, a
+    Manual Aim pair, and a lock on the posed ship."""
+
+    def __init__(self, monkeypatch):
+        from engine import host_loop
+        from engine.appc import combat
+        self.armed = False
+        self.frame = set()
+        self.counts = dict.fromkeys(
+            ("bubble", "hull_trace", "tractor", "manual_aim", "posed_lock",
+             "frames", "phaser_beams", "tractor_beams"), 0)
+        bubble = combat.shield_bubble_entry
+        resolve = combat._resolve_hit_point
+        pair = host_loop._beam_descriptor_pair
+
+        def bubble_spy(*a, **k):
+            r = bubble(*a, **k)
+            if self.armed and r is not None:
+                self.frame.add("bubble")
+            return r
+
+        def resolve_spy(*a, **k):
+            r = resolve(*a, **k)
+            if self.armed and r[1] is not None:
+                self.frame.add("hull_trace")
+            return r
+
+        def pair_spy(ship, bank, ship_instances):
+            r = pair(ship, bank, ship_instances)
+            if self.armed and r:
+                tractor = bank.GetParentSubsystem() is \
+                    ship.GetTractorBeamSystem()
+                if tractor:
+                    self.frame.add("tractor")
+                elif ship.is_using_target_offset():
+                    self.frame.add("manual_aim")
+                lock = ship.__dict__.get("_target_subsystem")
+                if (not tractor and lock is not None
+                        and self.posed is not None
+                        and lock.GetParentShip() is self.posed):
+                    self.frame.add("posed_lock")
+            return r
+
+        self.posed = None
+        monkeypatch.setattr(combat, "shield_bubble_entry", bubble_spy)
+        monkeypatch.setattr(combat, "_resolve_hit_point", resolve_spy)
+        monkeypatch.setattr(host_loop, "_beam_descriptor_pair", pair_spy)
+
+    def python_feed(self, ships, ship_instances):
+        self.frame = set()
+        self.armed = True
+        try:
+            got = _python_feed(ships, ship_instances)
+        finally:
+            self.armed = False
+        for k in self.frame:
+            self.counts[k] += 1
+        self.counts["frames"] += 1
+        self.counts["phaser_beams"] += len(got[0])
+        self.counts["tractor_beams"] += len(got[1])
+        return got
+
+
+def test_native_feed_equals_python_every_frame(beam_scene, monkeypatch):
+    from engine.appc.ship_iter import iter_ships
+    from tests.host.test_native_k2_differential import (
+        OPS, POSE_FROM, POSE_TO, POSED)
+    bs = beam_scene
+    sc = bs.scene
+    start = sc.tick
+    assert start < POSE_FROM, start
+    cov = _Coverage(monkeypatch)
+    manual = random.Random(20261106)
+
+    def frame(scene):
+        k = scene.tick - start
+        # Manual Aim on, moved, off: a scripted beat on top of the stream.
+        if k in (20, 160):
+            scene.op(manual, "manual_on")
+        elif k % 7 == 0 and k < 240:
+            scene.op(manual, "manual_move")
+        elif k == 250:
+            scene.op(manual, "manual_off")
+        cov.posed = (scene.ship(POSED)
+                     if POSE_FROM <= scene.tick < POSE_TO else None)
+        ships = list(iter_ships())
+        want = cov.python_feed(ships, bs.ship_instances)
+        ok, phasers, tractors = _native_feed(ships, bs.ship_instances)
+        assert ok, "tick %d: the native feed fell back" % scene.tick
+        assert phasers == want[0], "tick %d: phasers differ" % scene.tick
+        assert tractors == want[1], "tick %d: tractors differ" % scene.tick
+
+    sc.run(OPS, 1, ticks=start + 300, before_tick=frame)
+    c = cov.counts
+    print("\nbeam feed coverage over %d frames: %r" % (c["frames"], c))
+    assert c["frames"] == 300, c
+    assert nc.beam_feed_fallbacks == 0
+    for case in ("bubble", "hull_trace", "tractor", "manual_aim"):
+        assert c[case] > 0, "no frame had a %s pair: %r" % (case, c)
+
+
+from tests.host.test_render_space_feeds import far_scene  # noqa: E402,F401
+from tests.helpers.native_on import native_combat_on  # noqa: E402,F401
+
+
+@pytest.fixture
+def regions():
+    """A clean set manager, game and render origin around a test that builds
+    its own sets (test_render_space_feeds' _isolate, which is autouse there
+    and so is not imported here)."""
+    import App
+    from engine import host_loop
+    from engine.core.game import _set_current_game
+    from engine.systems import frames
+
+    def clear():
+        App.g_kSetManager._sets.clear()
+        App.g_kSetManager.ClearRenderedSet()
+        _set_current_game(None)
+        host_loop._note_camera_eye(None)
+        frames.reset_render_origin()
+
+    clear()
+    try:
+        yield clear
+    finally:
+        clear()
+
+
+def _tow(shooter_set, sname, sxyz, target_set, tname, txyz):
+    """A tractor lit from `shooter_set` at a target that then moves to
+    `target_set` (test_render_feeds_by_frame's _tractor_pair, named)."""
+    from unittest.mock import patch
+    from tests.unit.test_tractor_beam_render_data import (
+        _ship_with_tractor, _target)
+    ship, parent = _ship_with_tractor()
+    target = _target()
+    shooter_set.AddObjectToSet(ship, sname)
+    shooter_set.AddObjectToSet(target, tname)
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        parent.StartFiring(target, None)
+    assert parent.IsFiring()
+    if target_set is not shooter_set:
+        shooter_set.RemoveObjectFromSet(tname)
+        target_set.AddObjectToSet(target, tname)
+    ship.SetTranslateXYZ(*sxyz)
+    target.SetTranslateXYZ(*txyz)
+    return ship, target
+
+
+def test_native_feed_equals_python_across_regions(native_combat_on, regions,
+                                                  far_scene):
+    """far_scene's player 450,000 GU out in an unmapped set (another frame),
+    viewed instead from Ona1 at a non-zero render origin: one tow split
+    from Ona1 to Ona2, one from Ona2 back to Ona1, one into the far set.
+    (native_combat_on: the K2 differential's autouse _hermetic, imported
+    here, resets the switch off.)"""
+    import App
+    from engine.systems import frames
+    from tests.helpers.mapped_regions import load_region
+    far, player = far_scene
+    ona1 = load_region("Ona", "Ona1")
+    ona2 = load_region("Ona", "Ona2")
+    App.g_kSetManager.MakeRenderedSet("Ona1")
+    assert frames.viewing_set() is ona1
+    off = frames.offset_between(ona1, ona2)
+    assert off is not None and off != (0.0, 0.0, 0.0)
+    assert frames.offset_between(ona1, far) is None
+    frames.set_render_origin((12.5, -30.25, 4.0))
+    a, _ = _tow(ona1, "A", (0.0, 0.0, 0.0), ona2, "At", (0.0, 50.0, 0.0))
+    b, _ = _tow(ona2, "B", (3.0, 1.0, 0.0), ona1, "Bt", (1.0, 40.0, 2.0))
+    c, _ = _tow(ona1, "C", (5.0, 0.0, 0.0), far, "Ct", (0.0, 50.0, 0.0))
+    ships = [player, a, b, c]
+    want = _python_feed(ships, None)
+    # The two pairs in the viewed frame draw; the one in another frame not.
+    assert len(want[1]) == 4, want
+    ok, phasers, tractors = _native_feed(ships, None)
+    assert ok
+    assert (phasers, tractors) == want
+    assert nc.beam_feed_fallbacks == 0
+
+
+def test_a_throw_leaves_no_partial_feed_and_python_fills_the_frame(
+        beam_scene, monkeypatch):
+    import App
+    from engine import host_loop
+    from engine.appc.sets import SetClass_Create
+    bs = beam_scene
+    # A firing ship moved to a set of its own frame: Python draws none of
+    # its beams; the native feed must look that set's frame up -- and it is
+    # left out of the frames table, so the feed throws.
+    shooter = next(s for s in bs.ships if s is not bs.player
+                   and host_loop._firing_banks(s.GetPhaserSystem()))
+    elsewhere = SetClass_Create()
+    App.g_kSetManager.AddSet(elsewhere, "Elsewhere")
+    name = shooter.GetName()
+    shooter.GetContainingSet().RemoveObjectFromSet(name)
+    elsewhere.AddObjectToSet(shooter, name)
+    gone = nc._slot_of(elsewhere)
+    assert gone is not None
+    table = nc._beam_frames
+
+    def without(*a, **k):
+        t = table(*a, **k)
+        assert gone in t, "premise: the set is in the table"
+        del t[gone]
+        return t
+
+    monkeypatch.setattr(nc, "_beam_frames", without)
+    ships = [s for s in bs.ships if s.GetContainingSet() is not None]
+    _h.set_phaser_beams([FULL])
+    _h.set_tractor_beams([MINIMAL, FULL])
+    try:
+        assert nc.beam_feed(ships, bs.ship_instances) is False
+        assert nc.beam_feed_fallbacks == 1
+        # Neither vector was touched: no partial frame.
+        assert _beams("phaser") == [packed(FULL)]
+        assert _beams("tractor") == [packed(MINIMAL), packed(FULL)]
+        # host_loop's frame: the native feed falls back, Python fills it.
+        host_loop._push_combat_render_data(
+            ships, ship_instances=bs.ship_instances, player=bs.player)
+        assert nc.beam_feed_fallbacks == 2
+        pushed = (_beams("phaser"), _beams("tractor"))
+        want = _python_feed(ships, bs.ship_instances)
+        assert want[0], "premise: other ships' phasers still draw"
+        assert pushed == want
+    finally:
+        _h.set_phaser_beams([])
+        _h.set_tractor_beams([])
+
+
+def test_a_patched_getter_is_not_honoured(beam_scene, monkeypatch):
+    from engine.appc import weapon_subsystems as ws
+    bs = beam_scene
+    want = _python_feed(bs.ships, bs.ship_instances)
+    assert want[0], "premise: phasers draw"
+    monkeypatch.setattr(ws.PhaserBank, "GetPhaserWidth", lambda self: 9.0)
+    patched = _python_feed(bs.ships, bs.ship_instances)
+    width = 10          # emitter 3, target 3, colour 4, then the width
+    outer = [struct.unpack(PACK, d)[width] for d in patched[0][0::2]]
+    assert outer and all(w == f32(9.0 * 3.0) for w in outer), \
+        "premise: the Python builder honours the patch"
+    ok, phasers, tractors = _native_feed(bs.ships, bs.ship_instances)
+    assert ok
+    assert nc.beam_feed_fallbacks == 0
+    # The mirrored widths, not the patched getter's.
+    assert (phasers, tractors) == want

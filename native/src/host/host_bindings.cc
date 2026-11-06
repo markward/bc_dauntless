@@ -22,6 +22,7 @@
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
+#include "dauntless/combat/beam_feed.h"
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/beam_trace.h"
 #include "dauntless/combat/damage.h"
@@ -13583,6 +13584,104 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   cb::k2_kernel().set_context(std::move(c));
               },
               py::arg("ctx"), "Replace the given context keys (on resume).");
+        // The native per-frame beam feed (beam_feed.h; native_combat.
+        // beam_feed). ctx: "view" (Set handle, -1 none), "origin" (x, y, z),
+        // "frames" {Set handle: (frame id, ax, ay, az)}, "use_memo", the
+        // four host_loop constants ("width_mutator", "phaser_brightness",
+        // "tractor_brightness", "tractor_end_width_scale"), and K2's
+        // "npc_shields_off" / "player" / "iids" / "trace" (k2_apply_ctx). The
+        // iid table persists here across calls, replaced only when ctx
+        // carries "iids", as K2's does. Both beam vectors are assigned only
+        // once the whole feed is built; a throw raises ValueError and leaves
+        // both untouched.
+        m.def("combat_beam_feed",
+              [k2_apply_ctx](py::handle ships, const py::dict& ctx) {
+                  static std::unordered_map<std::int64_t,
+                                            cb::K2Context::Iid> iids;
+                  std::vector<std::int64_t> handles;
+                  if (!k0_ship_handles(ships.ptr(), handles))
+                      throw py::error_already_set();
+                  cb::K2Context k2;
+                  k2.hooks = cb::installed_trace_hooks();
+                  k2_apply_ctx(k2, ctx);
+                  if (ctx.contains("iids")) iids = std::move(k2.iids);
+                  cb::BeamFeedCtx c;
+                  c.view = ctx["view"].cast<std::int64_t>();
+                  c.origin = ctx["origin"].cast<std::array<double, 3>>();
+                  for (auto kv : ctx["frames"].cast<py::dict>()) {
+                      const auto f = kv.second.cast<
+                          std::tuple<std::int64_t, double, double, double>>();
+                      c.frames[kv.first.cast<std::int64_t>()] = cb::BeamFrame{
+                          std::get<0>(f),
+                          {std::get<1>(f), std::get<2>(f), std::get<3>(f)}};
+                  }
+                  c.hooks = k2.hooks;
+                  c.npc_shields_off = k2.npc_shields_off;
+                  c.player = k2.player;
+                  c.use_memo = ctx["use_memo"].cast<bool>();
+                  c.width_mutator = ctx["width_mutator"].cast<double>();
+                  c.phaser_brightness = ctx["phaser_brightness"].cast<double>();
+                  c.tractor_brightness =
+                      ctx["tractor_brightness"].cast<double>();
+                  c.tractor_end_width_scale =
+                      ctx["tractor_end_width_scale"].cast<double>();
+                  // The table is lent to the call and handed back, thrown
+                  // or not.
+                  std::vector<cb::BeamOut> phasers, tractors;
+                  c.iids.swap(iids);
+                  try {
+                      cb::build_beam_feed(cb::mirror(), handles, c, phasers,
+                                          tractors);
+                  } catch (const std::invalid_argument& e) {
+                      c.iids.swap(iids);
+                      throw py::value_error(e.what());
+                  } catch (...) {
+                      c.iids.swap(iids);
+                      throw;
+                  }
+                  c.iids.swap(iids);
+                  // beam_from_dict's conversions: every double through
+                  // float (pybind's float caster), num_sides an int.
+                  auto convert = [](const std::vector<cb::BeamOut>& in) {
+                      std::vector<renderer::PhaserBeamDescriptor> out;
+                      out.reserve(in.size());
+                      for (const cb::BeamOut& o : in) {
+                          renderer::PhaserBeamDescriptor b;
+                          auto f = [](double x) {
+                              return static_cast<float>(x);
+                          };
+                          b.emitter_world = {f(o.emitter[0]), f(o.emitter[1]),
+                                             f(o.emitter[2])};
+                          b.target_world = {f(o.target[0]), f(o.target[1]),
+                                            f(o.target[2])};
+                          b.color = {f(o.color[0]), f(o.color[1]),
+                                     f(o.color[2]), f(o.color[3])};
+                          b.width = f(o.width);
+                          b.u_tiles = f(o.u_tiles);
+                          b.num_sides = static_cast<int>(o.num_sides);
+                          b.taper_radius = f(o.taper_radius);
+                          b.taper_ratio = f(o.taper_ratio);
+                          b.taper_min_length = f(o.taper_min_length);
+                          b.taper_max_length = f(o.taper_max_length);
+                          b.perimeter_tile = f(o.perimeter_tile);
+                          b.texture_speed = f(o.texture_speed);
+                          b.end_width_scale = f(o.end_width_scale);
+                          out.push_back(b);
+                      }
+                      return out;
+                  };
+                  auto p = convert(phasers);
+                  auto t = convert(tractors);
+                  g_phaser_beams = std::move(p);
+                  g_tractor_beams = std::move(t);
+                  return py::make_tuple(g_phaser_beams.size(),
+                                        g_tractor_beams.size());
+              },
+              py::arg("ships"), py::arg("ctx"),
+              "Build this frame's phaser and tractor beam descriptors from "
+              "the mirror into the render feeds (each ship's Object handle "
+              "read from its _nslot); returns (phasers, tractors). ValueError "
+              "where the mirror cannot answer: neither feed is touched.");
         // The driver's per-ship, per-bank clean check (k2_scan_ships).
         m.def("combat_k2_scan_ships",
               [](py::handle ships, py::handle obj_kind, py::handle kind_shift,

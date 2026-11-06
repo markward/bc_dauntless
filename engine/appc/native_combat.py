@@ -375,6 +375,9 @@ def reset() -> None:
         _k3_reasons[k] = 0
     _k3_hit_python[0] = 0
     _k3_iids_sent[:] = [_K2_UNSENT, -1, -1]
+    _beam_iids_sent[:] = [_K2_UNSENT, -1, -1]
+    global beam_feed_fallbacks
+    beam_feed_fallbacks = 0
     global _apply_kinds
     _apply_kinds = None
     for k in _K0_STEP_REASONS:
@@ -6066,6 +6069,102 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     _h.combat_k2_begin(handles, dt, t, use_memo, drift, ctx)
     cx.commit()
     run_k2(ships, dt, ship_instances, cx)
+    return True
+
+
+# ── The beam render feed (phase 6 follow-up 1) ──────────────────────────────
+#
+# native/src/combat/include/dauntless/combat/beam_feed.h is the contract.
+# host_loop._push_combat_render_data calls beam_feed once a frame: both beam
+# render feeds built from the mirror. The Python builders
+# (_build_phaser_beam_render_data, _build_tractor_beam_render_data) stay the
+# representability fallback and the test oracle; a patched getter or helper
+# is NOT obeyed (spec Part A). The stand-downs are K2's: the switch off, the
+# audit, a ship_instances that is not the session's TrackedInstances. A
+# ValueError (the mirror cannot answer: a ship with no row, a set missing
+# from the frames table, an unset colour, ...) leaves both feeds untouched:
+# it is counted in beam_feed_fallbacks, its first reason logged once, and
+# the frame is Python's.
+
+beam_feed_fallbacks = 0
+# The key of the iids table combat_beam_feed holds (it keeps its own, apart
+# from K2's and K3's): as _k2_iids_sent.
+_beam_iids_sent = [_K2_UNSENT, -1, -1]
+_beam_step_memo = None
+
+
+def _beam_frames() -> dict:
+    """{Set handle: (frame id, ax, ay, az)}: frames.frame_of for every set
+    in the set manager with a Set row. Two sets share a frame id exactly
+    when their frame keys are equal; the ids are this call's."""
+    import App
+    frame_of = _frames().frame_of
+    set_kind = _kind("Set")
+    keys = {}
+    table = {}
+    for pSet in App.g_kSetManager._sets.values():
+        h = _slot_of(pSet)
+        if type(h) is not int or (h >> _KIND_SHIFT) != set_kind:
+            continue
+        f = frame_of(pSet)
+        if f is None:
+            continue
+        k = keys.get(f.key)
+        if k is None:
+            k = keys[f.key] = len(keys)
+        a = f.anchor_gu
+        table[h] = (k, a[0], a[1], a[2])
+    return table
+
+
+def beam_feed(ships, ship_instances) -> bool:
+    """This frame's phaser and tractor beam feeds, built natively from the
+    mirror and pushed: True. False: nothing was pushed and the caller runs
+    the Python builders (a stand-down, or a ValueError, counted in
+    beam_feed_fallbacks)."""
+    global beam_feed_fallbacks, _beam_step_memo
+    if not _switch or _audit or _k2_role_snapshot is None:
+        return False
+    if ship_instances is not None \
+            and type(ship_instances) is not _tracked_instances():
+        return False
+    if _k2_host_io._h is None:
+        return False                # host_io pushes nothing: nor do we
+    if type(ships) is not list:
+        ships = list(ships)
+    if _beam_step_memo is None:
+        from engine.core import step_memo
+        _beam_step_memo = step_memo
+    fr = _frames()
+    hl = _k2_hl
+    try:
+        view = fr.viewing_set()
+        vh = -1
+        if view is not None:
+            vh = _slot_of(view)
+            if type(vh) is not int or (vh >> _KIND_SHIFT) != _kind("Set"):
+                raise ValueError("the viewed set has no Set row")
+        cx = _K2Context(ship_instances, sent=_beam_iids_sent)
+        ctx = cx.delta()
+        ctx.pop("view_offsets", None)       # K2's; the feed has the frames
+        ctx["view"] = vh
+        ctx["origin"] = fr.render_origin()
+        ctx["frames"] = _beam_frames()
+        ctx["use_memo"] = _beam_step_memo.active()
+        ctx["width_mutator"] = hl.PHASER_BEAM_WIDTH_MUTATOR
+        ctx["phaser_brightness"] = hl.PHASER_BEAM_BRIGHTNESS
+        ctx["tractor_brightness"] = hl.TRACTOR_BEAM_BRIGHTNESS
+        ctx["tractor_end_width_scale"] = hl.TRACTOR_BEAM_END_WIDTH_SCALE
+        try:
+            _h.combat_beam_feed(ships, ctx)
+        except ValueError:
+            cx.commit()     # the binding takes "iids" before it builds
+            raise
+        cx.commit()
+    except ValueError as e:
+        beam_feed_fallbacks += 1
+        _log_once("beam_feed", "beam feed: %s" % e)
+        return False
     return True
 
 
