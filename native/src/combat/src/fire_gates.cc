@@ -64,7 +64,7 @@ bool aggregates_children(int64_t kind) {
 bool leaf_is_disabled(const SubsystemRow& s) {
     if (s._max_condition <= 0.0) return false;
     const double threshold = s._disabled_percentage * s._max_condition;
-    return s._condition <= threshold;
+    return s._condition < threshold;  // strict, as ShipSubsystem.IsDisabled
 }
 
 // ShipSubsystem.IsDestroyed (subsystems.py:1226).
@@ -151,7 +151,8 @@ CanFireResult energy_can_fire(const Mirror& m, int64_t h, bool pulse) {
     }
     const double combined =
         condition_percentage(m, self) * condition_percentage(m, *parent);
-    if (self._disabled_percentage >= combined) return r;
+    // Strict, like IsDisabled: a bank at exactly its threshold still fires.
+    if (combined < self._disabled_percentage) return r;
     r.ok = true;
     return r;
 }

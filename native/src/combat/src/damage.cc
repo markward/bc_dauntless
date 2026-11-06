@@ -168,11 +168,12 @@ double condition_percentage(const Mirror& m, const SubsystemRow& s) {
 }
 
 // ShipSubsystem.IsDisabled / IsDestroyed (reading _max_condition, not
-// GetMaxCondition).
+// GetMaxCondition). Strict below the threshold: at exactly it the subsystem
+// still works, as on the original.
 bool leaf_disabled(const SubsystemRow& s) {
     if (s._max_condition <= 0.0) return false;
     const double threshold = s._disabled_percentage * s._max_condition;
-    return s._condition <= threshold;
+    return s._condition < threshold;
 }
 bool leaf_destroyed(const SubsystemRow& s) {
     if (s._destroyed) return true;
@@ -446,9 +447,48 @@ void set_condition(Mirror& m, int64_t subsystem, double value, int64_t killer,
 
 // ── combat.py _apply_hit (DM §2) ────────────────────────────────────────────
 
+namespace {
+
+// combat._apply_hit's overflow guard (`_overflow_depth < 3`).
+constexpr int kMaxOverflowDepth = 3;
+
+// The walk of combat._weapon_damageable_subsystems: mount order (combat.
+// _iter_subsystems), then the hull's `_children`, each only when
+// IsTargetable (`_targetable`).
+std::vector<int64_t> damageable_order(const Mirror& m, int64_t ship,
+                                      int64_t hull) {
+    std::vector<int64_t> walk;
+    for (const int64_t h : obj(m, ship).mount_order) {
+        if (h == kRefUnrepresentable || !m.subsystem(h))
+            fall_back("mount order");
+        if (stock(m, h)._targetable) walk.push_back(h);
+    }
+    if (hull != -1) {
+        for (const int64_t c : sub(m, hull)._children) {
+            if (c == -1) continue;
+            if (c == kRefUnrepresentable || !m.subsystem(c))
+                fall_back("hull _children");
+            if (stock(m, c)._targetable) walk.push_back(c);
+        }
+    }
+    return walk;
+}
+
+void apply_hit_in(Mirror& m, Session& S, const HitInput& in,
+                  const DamageContext& ctx, int overflow_depth);
+
+}  // namespace
+
 void apply_hit(Mirror& m, const HitInput& in, const DamageContext& ctx,
                DamageOut& out) {
-    run(m, out, [&](Session& S) {
+    run(m, out, [&](Session& S) { apply_hit_in(m, S, in, ctx, 0); });
+}
+
+namespace {
+
+void apply_hit_in(Mirror& m, Session& S, const HitInput& in,
+                  const DamageContext& ctx, int overflow_depth) {
+    {
         const int64_t ship = in.ship;
         const ObjectRow& o = obj(m, ship);
         if (!o.dmg_ship) fall_back("ship class not stood in for (dmg_ship)");
@@ -496,9 +536,11 @@ void apply_hit(Mirror& m, const HitInput& in, const DamageContext& ctx,
         const double post_shield = remaining;
         double absorbed_hull = 0.0;
         double absorbed_subsystem_total = 0.0;
+        double overflow = 0.0;  // left over after destroying subsystems
         int64_t primary = -1;
         double best = 0.0;
         int64_t primary_transition = kTransitionNone;
+        bool in_footprint = false;  // a subsystem took this hit (step 3b)
         const int64_t hull = o._hull;
         if (hull == kRefUnrepresentable || (hull != -1 && !m.subsystem(hull)))
             fall_back("_hull");
@@ -510,14 +552,13 @@ void apply_hit(Mirror& m, const HitInput& in, const DamageContext& ctx,
                     damage_system_in(S, ship, hull, post_shield, in.source);
                 absorbed_hull = post_shield;
             }
-            // 3. Every overlapping subsystem is offered the full post-shield
-            // damage, in combat._iter_subsystems order (mount_order).
-            const std::vector<int64_t> order = obj(m, ship).mount_order;
+            // 3. Every overlapping TARGETABLE subsystem, measured from its
+            // damage point, is offered the full post-shield damage, in
+            // combat._weapon_damageable_subsystems order.
+            const std::vector<int64_t> order = damageable_order(m, ship, hull);
             for (const int64_t h : order) {
-                if (h == kRefUnrepresentable || !m.subsystem(h))
-                    fall_back("mount order");
                 const double r_sub = stock(m, h)._radius;
-                const Vec3 hw = subsystem_world_position(m, h, ship, false);
+                const Vec3 hw = damage_world_position(m, h, ship);
                 const double dx = in.point[0] - hw[0];
                 const double dy = in.point[1] - hw[1];
                 const double dz = in.point[2] - hw[2];
@@ -525,6 +566,7 @@ void apply_hit(Mirror& m, const HitInput& in, const DamageContext& ctx,
                 if (d >= r_sub + r_hit) continue;
                 const double w = splash_weight(r_sub, r_hit, d);
                 if (w <= 0.0) continue;
+                in_footprint = true;
                 if (w > best) {  // _pick_primary_subsystem_for_dispatch
                     best = w;
                     primary = h;
@@ -532,8 +574,13 @@ void apply_hit(Mirror& m, const HitInput& in, const DamageContext& ctx,
                 const double amount = post_shield;
                 const bool sub_immune = sub(m, h)._invincible != 0;
                 const StateFlags before = state_flags(m, h);
-                if (commit && !sub_immune)
+                if (commit && !sub_immune) {
+                    const double cond_before = sub(m, h)._condition;
                     damage_system_in(S, ship, h, amount, in.source);
+                    // The overflow (step 7).
+                    if (0.0 < cond_before && cond_before < amount)
+                        overflow += amount - cond_before;
+                }
                 absorbed_subsystem_total += amount;
                 const StateFlags after = state_flags(m, h);
                 const int64_t transition = diff_state(before, after);
@@ -541,9 +588,18 @@ void apply_hit(Mirror& m, const HitInput& in, const DamageContext& ctx,
                     primary_transition == kTransitionNone)
                     primary_transition = transition;
             }
+            // 3b. A LOW-intensity hit (damage_hull false) spares the hull
+            // only when its footprint held a targetable subsystem; with none
+            // in reach the hull takes the damage (combat._apply_hit step 3b,
+            // measured on the original). Condition only: HIT_PRESENT still
+            // carries damage_hull, so no plating wear or severance share.
+            if (!in.damage_hull && !in_footprint && hull != -1 && commit)
+                damage_system_in(S, ship, hull, post_shield, in.source);
         }
 
-        // 4. HIT_PRESENT (effect_queue.hit_present_operands).
+        // 4. HIT_PRESENT (effect_queue.hit_present_operands), but not for an
+        // overflow re-hit: the parent hit presented the impact.
+        if (overflow_depth == 0) {
         DamageEntry p;
         p.kind = DamageKind::HIT_PRESENT;
         p.ops[p.count++] = handle_op(ship);
@@ -577,6 +633,7 @@ void apply_hit(Mirror& m, const HitInput& in, const DamageContext& ctx,
         p.ops[p.count++] =
             num_op(in.has_shield_radius ? in.shield_radius : 0.0);
         S.emit(p);
+        }
 
         // 5. WEAPON_HIT (effect_queue.weapon_hit_operands).
         DamageEntry h;
@@ -592,7 +649,31 @@ void apply_hit(Mirror& m, const HitInput& in, const DamageContext& ctx,
         h.ops[h.count++] = int_op(in.weapon_hit_type);
         h.ops[h.count++] = bool_op(post_shield > 0.0);
         S.emit(h);
-    });
+
+        // 7. The overflow: a NEW hit from the same source at the same point,
+        // the excess as its damage, R_hit x min(1, excess / damage), shields
+        // skipped; none for a collision (combat._apply_hit step 7).
+        if (commit && overflow > 0.01 && damage > 0.0 &&
+            overflow_depth < kMaxOverflowDepth &&
+            in.hit_weapon != kHitWeaponCollision) {
+            HitInput re = in;
+            re.damage = overflow;
+            re.r_hit = r_hit * py_min(1.0, overflow / damage);
+            re.bypass_shields = true;
+            re.single_impact = true;
+            // Python's re-hit passes only normal, ship_instances, weapon_type,
+            // splash_radius, damage_hull, bypass_shields and single_impact.
+            re.has_shield_point = false;
+            re.shield_point_is_point = false;
+            re.has_tangent = false;
+            re.has_decal_radius = false;
+            re.decal_dent = 0.0;
+            re.has_shield_radius = false;
+            apply_hit_in(m, S, re, ctx, overflow_depth + 1);
+        }
+    }
 }
+
+}  // namespace
 
 }  // namespace dauntless::combat

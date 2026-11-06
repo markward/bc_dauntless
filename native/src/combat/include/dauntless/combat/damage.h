@@ -14,9 +14,11 @@
 //
 //   apply_hit      combat._apply_hit: the shield face (the hull-box rule),
 //                  the absorption ramp (ShieldSubsystem.ApplyDamage), the hull
-//                  and every overlapping subsystem (_splash_weight, mount
-//                  order), the immunity flags and the dev cheats, then the
-//                  hit's HIT_PRESENT and WEAPON_HIT;
+//                  and every overlapping targetable subsystem from its damage
+//                  point (_weapon_damageable_subsystems: mount order, then
+//                  the hull's children), the immunity flags and the dev
+//                  cheats, then the hit's HIT_PRESENT and WEAPON_HIT, then
+//                  the overflow re-hit (no HIT_PRESENT of its own);
 //   damage_system  DamageableObject.DamageSystem;
 //   set_condition  ShipSubsystem._set_condition: the condition write, the
 //                  condition watchers (COND_WATCH), the threshold state
@@ -77,6 +79,9 @@ constexpr int64_t kSubsysDestroyed = 0, kSubsysDisabled = 1,
                   kSubsysOperational = 2;
 constexpr int64_t kTransitionNone = 0, kTransitionDisabled = 1,
                   kTransitionDestroyed = 2;
+// effect_queue.HIT_WEAPON_COLLISION: HitInput::hit_weapon for a collision,
+// which carries no overflow re-hit (combat._apply_hit step 7).
+constexpr int64_t kHitWeaponCollision = 4;
 
 // dmg_class (native_combat.DMG_*).
 constexpr int64_t kDmgPython = -1, kDmgLeaf = 0, kDmgAggregate = 1;
