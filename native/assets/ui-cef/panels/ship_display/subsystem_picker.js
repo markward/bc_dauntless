@@ -8,8 +8,8 @@
 //
 // Pure functions first (pickerFamilyColumns, pickerMemberColumns,
 // pickerCaption, pickerClick), DOM last. Events go out through
-// dauntlessEvent: ship-target/open|show/<family> to the panel, and
-// target/<ship>[/<subsystem>] to the target list.
+// dauntlessEvent: ship-target/open|show/<family> and ship-target/close to
+// the panel, and target/<ship>[/<subsystem>] to the target list.
 
 (function () {
     "use strict";
@@ -63,7 +63,8 @@
                 return {events: ["ship-target/show/" + name,
                                  base + "/" + members[0].name], last: next};
             }
-            return {events: [base + "/" + name], last: next};
+            return {events: ["ship-target/close", base + "/" + name],
+                    last: next};
         }
         if (fam && fam.lockable && members.length) {
             return {events: locked === name
@@ -79,7 +80,11 @@
         if (members.length >= 2) {
             return {events: ["ship-target/open/" + name], last: next};
         }
-        return {events: [locked === name ? base : base + "/" + name], last: next};
+        // A single subsystem: lock or unlock it, and close the open family,
+        // whose member blocks the lock has just left (mockup v54).
+        return {events: ["ship-target/close",
+                         locked === name ? base : base + "/" + name],
+                last: next};
     }
 
     function _holdsLock(fam, locked) {

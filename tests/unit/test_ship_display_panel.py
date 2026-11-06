@@ -836,11 +836,28 @@ def test_open_event_toggles_and_show_event_only_opens():
         _teardown_game()
 
 
+def test_close_event_clears_the_open_family():
+    _, player, _ = _setup_game_with_player()
+    try:
+        panel = _target_panel_on(_foe_with_phasers(), player)
+        _payload(panel)
+        panel.dispatch_event("show/Phasers")
+        assert _payload(panel)["open_family"] == "Phasers"
+        assert panel.dispatch_event("close") is True
+        assert _payload(panel)["open_family"] is None
+        # closing with nothing open is harmless
+        assert panel.dispatch_event("close") is True
+        assert _payload(panel)["open_family"] is None
+    finally:
+        _teardown_game()
+
+
 def test_open_event_is_ignored_by_the_player_panel():
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     _setup_game_with_player()
     try:
         assert ShipDisplayPanel(ROLE_PLAYER).dispatch_event("open/X") is False
+        assert ShipDisplayPanel(ROLE_PLAYER).dispatch_event("close") is False
     finally:
         _teardown_game()
 

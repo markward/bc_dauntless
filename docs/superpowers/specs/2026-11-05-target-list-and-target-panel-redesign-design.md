@@ -210,8 +210,8 @@ subsystem shown only as a group header over targetable members; see
 
 | Click | On a family with 2+ members | On a family with exactly 1 remaining member | On a single subsystem (Sensor Array, Shield Generator, Warp Core...) |
 |---|---|---|---|
-| single | open it (close any other); click again to close | lock that member and open the family; click again to unlock | lock it; click again to unlock |
-| double | open it and lock its **first remaining member** | same as single (lock) | lock it |
+| single | open it (close any other); click again to close | lock that member and open the family; click again to unlock | lock it and close any open family; click again to unlock (also closes) |
+| double | open it and lock its **first remaining member** | same as single (lock) | lock it and close any open family |
 
 - Double-click = two clicks on the same button within **350 ms**, detected
   by the page, not the browser's `dblclick` (each click redraws the

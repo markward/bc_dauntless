@@ -111,7 +111,8 @@ def test_double_click_family_with_members():
 def test_double_click_no_members():
     r = _click("var a=pickerClick(st(),'family','Hull',1000,{name:null,t:0});"
                "return pickerClick(st(),'family','Hull',1100,a.last).events;")
-    assert r == ["target/Warbird 1/Hull"]
+    # a single subsystem closes whatever family was open (mockup v54)
+    assert r == ["ship-target/close", "target/Warbird 1/Hull"]
 
 
 def test_single_click_lockable_with_members():
@@ -135,7 +136,10 @@ def test_single_click_two_plus_members_opens():
 def test_single_click_no_members():
     r = _click("return [pickerClick(st(),'family','Hull',0,{name:null,t:0}).events,"
                "pickerClick(st('Hull'),'family','Hull',0,{name:null,t:0}).events];")
-    assert r == [["target/Warbird 1/Hull"], ["target/Warbird 1"]]
+    # locking or unlocking a single subsystem closes the open family: the
+    # member blocks of a family the lock has left must not stay on screen
+    assert r == [["ship-target/close", "target/Warbird 1/Hull"],
+                 ["ship-target/close", "target/Warbird 1"]]
 
 
 def test_member_click_toggles():

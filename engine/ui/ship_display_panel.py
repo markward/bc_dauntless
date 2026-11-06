@@ -370,6 +370,10 @@ class ShipDisplayPanel(Panel):
                 self._open_family = family
                 self._last_snapshot = None
                 return True
+            if verb == "close" and not family:
+                self._open_family = None
+                self._last_snapshot = None
+                return True
         return False
 
     def invalidate(self) -> None:
