@@ -277,3 +277,23 @@ def test_close_open_menu_dispatches_character_menu_close(monkeypatch):
     panel.close_open_menu()       # close -> [1, 0]
 
     assert officer.menu_events == [1, 0]
+
+
+def test_a_click_on_the_page_background_closes_the_open_menu(monkeypatch):
+    """crew_menus.js reports a left press that lands on no element (inside one
+    of host_loop's click-forwarding boxes, so handle_click never sees it) as
+    crew-menu/click-off: the open officer's menu goes down, as a click outside
+    the boxes does. With nothing open it is a harmless no-op."""
+    helm = _make_menu("Helm")
+    panel = _make_panel()
+    officer = _Officer("Helm", panel=panel, menu=helm)
+    _patch_panel(monkeypatch, panel, officers_by_menu={helm: officer})
+
+    panel.toggle_menu(helm)
+    assert panel.dispatch_event("click-off") is True
+    assert not officer.is_up
+    assert officer.down_calls == 1
+    assert panel._open_menu_id is None
+
+    assert panel.dispatch_event("click-off") is True
+    assert officer.down_calls == 1

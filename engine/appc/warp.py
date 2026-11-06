@@ -10,6 +10,7 @@ still runs). See docs/superpowers/specs/2026-06-22-warp-stage1-hard-cut-design.m
 """
 import functools
 import math
+import weakref
 
 from engine.appc.actions import TGAction, TGSequence
 from engine.core.ids import implements
@@ -90,6 +91,35 @@ def reset_preload_state():
     or Abort; the caller ends the preload itself (warp_preload.end())."""
     global _preload_owner
     _preload_owner = None
+
+
+# NPCs parked in the warp set by a blind warp (no destination: AI Warp's
+# WarpBlindly). BC's sequence moves them there and hides them (SDK
+# WarpSequence.SetupSequence: HideShip, MOVE_ACTION_1) and nothing brings them
+# back. The warp set outlives a mission change, so engine/core/mission_change
+# drops these at the change rather than carrying every retreat into every
+# later mission. CHOSEN behaviour: what BC does with them is unknown. Weak, so
+# a ship deleted some other way leaves on its own.
+_parked_blind = weakref.WeakSet()
+
+
+def parked_blind_warpers(transit_set):
+    """The NPCs in `transit_set` that a blind warp parked there and that have
+    not left since. Never the current player."""
+    if transit_set is None:
+        return []
+    objects = getattr(transit_set, "_objects", {})
+    return [o for o in list(objects.values())
+            if o in _parked_blind and not _is_current_player(o)]
+
+
+def forget_parked_blind(ship=None):
+    """Drop `ship`'s parked mark; every mark with no argument (mission swap /
+    test isolation)."""
+    if ship is None:
+        _parked_blind.clear()
+    else:
+        _parked_blind.discard(ship)
 
 
 # ── Warp-VFX flythrough (Stage 2) ────────────────────────────────────────────
@@ -897,12 +927,14 @@ class _WarpDepartAction(TGAction):
     departure touches nothing the player sees (no rendered-set change, no
     teardown, no silencing of other ships)."""
 
-    def __init__(self, source_set, ship, seq=None, hard_cut=False):
+    def __init__(self, source_set, ship, seq=None, hard_cut=False,
+                 blind=False):
         super().__init__()
         self._source = source_set
         self._ship = ship
         self._seq = seq     # records whether we took the WarpVFX hold
         self._hard_cut = hard_cut
+        self._blind = blind  # no destination: the ship stays parked
 
     @_profiled("warp.depart")
     def _do_play(self):
@@ -944,6 +976,11 @@ class _WarpDepartAction(TGAction):
                     if s.GetObject(ship.GetName()) is ship:
                         s.RemoveObjectFromSet(ship.GetName())
                 transit.AddObjectToSet(ship, ship.GetName())
+                # Parked for good (blind) or only passing through.
+                if self._blind and not scene:
+                    _parked_blind.add(ship)
+                else:
+                    _parked_blind.discard(ship)
             if scene:
                 App.g_kSetManager.MakeRenderedSet(_WARP_TRANSIT_SET_NAME)
         except Exception:
@@ -1264,11 +1301,12 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         _append_after_queue(seq)
         return seq
 
-    # Falsy destination => no set change/placement/teardown: the whole warp
-    # degrades to "nothing happened" (BC's `if pcDestModule != None:` guard).
-    # The per-action _do_play guards are the robust floor; skipping placement
-    # and source teardown here keeps the player in its current set. Targets are
-    # only cleared when a real warp actually happens (real destination).
+    # Falsy destination => no arrival: no placement, no destination swap (BC's
+    # `if pcDestModule != None:` guard covers only the arrival half). The
+    # PLAYER's warp then degrades to "nothing happened" and it stays in its
+    # current set; an NPC's still departs into the warp set (the `elif`
+    # below). Targets are only cleared when a real warp actually happens (real
+    # destination). The per-action _do_play guards are the robust floor.
     if not _module_is_empty(dest_module):
         seq.AddAction(_ClearTargetsAction(ship))
     # Same queue order as the flythrough, with no tunnel to hold: the SDK's
@@ -1278,6 +1316,22 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     prev = None
     if not _module_is_empty(dest_module):
         prev = _WarpDepartAction(source, ship, hard_cut=True)
+        seq.AddAction(prev)
+    elif (ship is not None and not _is_current_player(ship)
+          and getattr(ship, "GetName", lambda: "")() != "player"):
+        # An NPC warping "blindly" (no destination: AI Warp with
+        # WarpBlindly / WarpBlindlyNoCollisionsIfImpulseDisabled) still LEAVES.
+        # BC's WarpSequence.SetupSequence builds the flash, HideShip and
+        # MOVE_ACTION_1 ("Place the ship in the warp set") whatever the
+        # destination; only the arrival half sits under its
+        # `if pcDestModule != None`. Leaving is what posts ET_EXITED_SET,
+        # which missions wait on: E2M0 moves on only once both retreating
+        # Warbirds have exited Tevron2 (user report 2026-11-03: they turned
+        # away and the campaign never progressed). The player's own
+        # destination-less warp (the current player, or BC's "player" by
+        # name) stays a no-op. The NPC stays parked in the warp set until the
+        # mission change drops it (_parked_blind).
+        prev = _WarpDepartAction(source, ship, hard_cut=True, blind=True)
         seq.AddAction(prev)
     if _is_current_player(ship):
         wait = App.TGScriptAction_Create("WarpSequence", "WaitForQueued")

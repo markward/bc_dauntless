@@ -268,6 +268,16 @@ class CrewMenuPanel(Panel):
         return node
 
     def dispatch_event(self, action: str) -> bool:
+        if action == "click-off":
+            # A left press on the page background while a menu is open
+            # (crew_menus.js): it landed in one of the fixed click-forwarding
+            # boxes host_loop routes to CEF (the full-height left column, the
+            # bottom-right cluster, the Tactical orders band, the Engineering
+            # box) but on no element, so it is off the menu. Outside those
+            # boxes bridge_officer_picking.handle_click closes the menu; this
+            # is the same rule inside them, where the press never reaches it.
+            self.close_open_menu()
+            return True
         if action.startswith("expand:"):
             try:
                 wid = int(action[len("expand:"):])

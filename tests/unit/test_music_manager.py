@@ -205,3 +205,54 @@ def test_fade_passed_to_the_backend_is_the_OUTGOING_tracks_grid():
 
     m.StartMusic("B")
     assert b.fades[1] == 2.0, "A's grid (2.0), not B's (5.0)"
+
+
+def test_a_track_started_before_the_player_arrives_plays_when_it_does():
+    """The SDK starts its opening track during the load; the host wires the
+    player on its first audio tick. That track must start then, at full
+    volume (nothing to fade from), with its own looping flag."""
+    from engine.appc.music_manager import MusicManager
+
+    class _Player:
+        def __init__(self):
+            self.calls = []
+
+        def play(self, path, looping, fade):
+            self.calls.append((path, looping, fade))
+
+        def stop(self):
+            self.calls.append("stop")
+
+    mgr = MusicManager()
+    mgr.LoadMusic("sfx/Music/EpisGen2.mp3", "Starting Ambient", 2.0)
+    assert mgr.StartMusic("Starting Ambient", 0) == 1
+    player = _Player()
+    mgr.set_backend(player)
+    assert player.calls == [("sfx/Music/EpisGen2.mp3", False, 0.0)]
+
+
+def test_no_track_or_muted_starts_nothing_when_the_player_arrives():
+    from engine.appc.music_manager import MusicManager
+
+    class _Player:
+        def __init__(self):
+            self.calls = []
+
+        def play(self, *a, **k):
+            self.calls.append("play")
+
+        def stop(self):
+            self.calls.append("stop")
+
+    idle = MusicManager()
+    p1 = _Player()
+    idle.set_backend(p1)
+    assert p1.calls == []
+
+    muted = MusicManager()
+    muted.LoadMusic("a.mp3", "A", 2.0)
+    muted.StartMusic("A")
+    muted.SetEnabled(0)
+    p2 = _Player()
+    muted.set_backend(p2)
+    assert "play" not in p2.calls

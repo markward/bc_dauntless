@@ -38,13 +38,25 @@ class MusicManager:
         self._paths: dict[str, str] = {}   # music NAME -> file path
         self._fades: dict[str, float] = {}  # music NAME -> fade grid (seconds)
         self._current: "str | None" = None
+        self._current_looping: bool = True
         self._enabled: bool = True
         self._backend = None               # injected by the host, see set_backend
 
     def set_backend(self, backend) -> None:
         """Host-injected player. None means 'no audio' — the manager still
-        tracks state so mission logic and tests behave identically."""
+        tracks state so mission logic and tests behave identically.
+
+        A track started before the player arrived starts now. The host wires
+        the player on its first audio tick (host_loop._pump_music), and the
+        SDK starts its opening track during the load before that
+        (DynamicMusic.Initialize -> the state machine's first StartMusic):
+        without this the manager reported "Starting Ambient" as current while
+        nothing played, and music began only at the next state change."""
         self._backend = backend
+        if backend is not None and self._current is not None and self._enabled:
+            path = self._paths.get(self._current)
+            if path is not None:
+                backend.play(path, looping=self._current_looping, fade=0.0)
 
     # ── SDK surface ──────────────────────────────────────────────────────────
 
@@ -90,6 +102,7 @@ class MusicManager:
         # fading out then in).
         fade = self._fades.get(self._current, 0.0) if self._current else 0.0
         self._current = key
+        self._current_looping = bool(looping)
         if self._backend is not None:
             self._backend.play(path, looping=bool(looping), fade=fade)
         return 1

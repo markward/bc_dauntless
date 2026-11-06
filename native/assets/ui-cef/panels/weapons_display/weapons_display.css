@@ -90,6 +90,7 @@
        g_kSubsystemFillColor (100 % stop) so the panel reads as a
        superset of the SDK subsystem gauge palette. */
     --weapons-icon-offline:        rgb(153, 153, 153); /* g_kSubsystemDisabledColor */
+    --weapons-icon-destroyed:      rgb(  0,   0,   0);
     --weapons-icon-charge-0:       rgb(  0,   0,   0);
     --weapons-icon-charge-10:      rgb( 50,   5,   5);
     --weapons-icon-charge-20:      rgb(110,  15,  15);
@@ -185,9 +186,15 @@
     color: var(--weapons-icon-offline);
 }
 
+/* Disabled (damaged past its DisabledPercentage) and unpowered both draw
+   in BC's disabled grey -- the default colour above; the JS sets no inline
+   charge colour for a mount that is not online. Destroyed draws black. */
+.weapons-display .weapon-icon.is-disabled {
+    color: var(--weapons-icon-offline);
+}
+
 .weapons-display .weapon-icon.is-destroyed {
-    opacity: 0.35;
-    filter: saturate(0.2);
+    color: var(--weapons-icon-destroyed);
 }
 
 /* Strip the surrounding inline box so SVGs sit at their natural
