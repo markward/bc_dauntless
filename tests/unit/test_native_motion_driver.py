@@ -502,8 +502,9 @@ def test_class_watch_restarts_on_a_new_seen_generation(monkeypatch):
 _FUNCTIONS = (
     (drift, "step"), (ship_motion, "impulse_fractions"),
     (ship_motion, "_integrate_rotation"), (ship_motion, "_effective_motion"),
-    (ship_motion, "_cap_keep"), (ship_motion, "_ramp_toward"),
-    (ship_motion, "_asymptote_step"), (ship_motion, "_step_after_warp"),
+    (ship_motion, "_cap_keep"), (ship_motion, "step_vector_velocity"),
+    (ship_motion, "law_step_vector"), (ship_motion, "_record_acceleration"),
+    (ship_motion, "_step_after_warp"),
     (subsystems, "_is_offline"), (ship_death, "_out_of_action"),
     (warp_state, "is_arriving"),
 )

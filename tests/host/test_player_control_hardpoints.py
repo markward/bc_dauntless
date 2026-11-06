@@ -139,13 +139,14 @@ def test_throttle_level_5_targets_five_ninths_max_speed():
     assert abs(pc.GetTargetSpeed(ship) - (5.0 / 9.0) * 6.3) < 1e-9
 
 
-def test_reverse_targets_negative_quarter_max_speed():
+def test_reverse_targets_negative_two_ninths_max_speed():
+    """R = impulse 2 of 9 backwards (measured on stbc.exe; was 1/4)."""
     pc = _PlayerControl()
     ship = _galaxy_like_ship()
     reader = _Reader()
     reader.pressed_once.add(reader.keys.KEY_R)
     pc.apply(ship, dt=1.0/60, h=reader)
-    assert abs(pc.GetTargetSpeed(ship) - (-0.25 * 6.3)) < 1e-9
+    assert abs(pc.GetTargetSpeed(ship) - (-2.0 / 9.0 * 6.3)) < 1e-9
 
 
 def test_zero_targets_zero():
@@ -302,13 +303,14 @@ def test_pitch_rate_ramps_positive_for_S():
 
 def test_angular_rate_decelerates_on_key_release():
     """Spin up yaw rate (negative under A; see test_yaw_rate_ramps_*),
-    release A — yaw rate ramps back toward 0 at MaxAngularAccel.
-    Halfway through the decel ramp, magnitude has dropped by 0.12."""
+    release A — yaw rate falls at MaxAngularAccel while the gap exceeds
+    MaxAngularAccel x 1 s, then eases out (BC's turn law; the stop mirrors the
+    start, 99% at 5.1 s). After 1 s, magnitude has dropped by 0.12."""
     pc = _PlayerControl()
     ship = _galaxy_like_ship()
     reader = _Reader()
     reader.held.add(reader.keys.KEY_A)
-    for _ in range(60 * 5):  # 5 s — well past the cap
+    for _ in range(60 * 10):  # 10 s — the eased approach is at the cap by then
         pc.apply(ship, dt=1.0/60, h=reader)
     rate_before = pc.GetCurrentYawRate()
     assert abs(rate_before - (-0.28)) < 1e-3

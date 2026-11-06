@@ -65,7 +65,8 @@ struct World {
 
 TEST(MotionStep, BranchOrder) {
     World w;
-    // Immobile beats a warp and an arrival: passed over, nothing written.
+    // Immobile beats a warp and an arrival: passed over, nothing written
+    // but its (zero) acceleration.
     const int64_t a = w.ship();
     w.setpoints(a, 5.0);
     w.m.set_i(a, Field::_static, 1);
@@ -74,7 +75,9 @@ TEST(MotionStep, BranchOrder) {
     MotionResult r = w.step({a});
     EXPECT_EQ(r.stop, MotionStop::Done);
     EXPECT_EQ(r.at, 1);
-    EXPECT_TRUE(r.writes.empty());
+    ASSERT_EQ(r.writes.size(), 1u);
+    EXPECT_EQ(r.writes[0].what, kAccel);
+    EXPECT_EQ(r.writes[0].accel, (Vec3{0.0, 0.0, 0.0}));
     // ... but the stock check comes first of all.
     w.m.set_i(a, Field::motion_stock, 0);
     r = w.step({a});
@@ -181,7 +184,11 @@ TEST(MotionStep, DriftWritesOnlyPose) {
     w.m.set_f(a, Field::_current_speed, 0.25);
     const MotionResult r = w.step({a});
     EXPECT_EQ(r.stop, MotionStop::Done);
-    EXPECT_TRUE(r.writes.empty());
+    // drift.step sets no attribute: the row logs only its acceleration,
+    // zero (the velocity is unchanged).
+    ASSERT_EQ(r.writes.size(), 1u);
+    EXPECT_EQ(r.writes[0].what, kAccel);
+    EXPECT_EQ(r.writes[0].accel, (Vec3{0.0, 0.0, 0.0}));
     EXPECT_EQ(w.pos(0)[0], 0.0 + 1.0 * kDt);
     EXPECT_EQ(w.pos(0)[1], 0.0 + 2.0 * kDt);
     EXPECT_EQ(w.pos(0)[2], 0.0 + 3.0 * kDt);
@@ -277,4 +284,49 @@ TEST(MotionStep, FallbackAccelOnZeroLimits) {
     EXPECT_EQ(r.writes[0].speed, 5.0 * kDt);
     EXPECT_EQ(r.writes[0].cav[0], 0.3);
     EXPECT_EQ(w.m.object(a)->_current_speed, 5.0 * kDt);
+}
+
+// The motion law: the velocity vector moves toward forward x target by
+// min(accel, |gap| / tau) * dt, its speed is the vector's length, and the
+// tick's dv / dt is logged.
+TEST(MotionStep, VelocityVectorLaw) {
+    World w;
+    const int64_t a = w.ship();
+    // A bare ship's limits are the snap; give it a real engine.
+    const int64_t ies = w.m.register_row(Kind::Subsystem);
+    w.m.set_i(ies, Field::motion_ies_stock, 1);
+    w.m.set_i(ies, Field::_is_on, 1);
+    w.m.set_f(ies, Field::_power_percentage_wanted, 1.0);
+    w.m.set_f(ies, Field::_max_condition, 100.0);
+    w.m.set_f(ies, Field::_condition, 100.0);
+    w.m.set_f(ies, Field::_max_speed, 6.0);
+    w.m.set_f(ies, Field::_max_accel, 1.5);
+    w.m.set_ref(a, Field::_impulse_engine_subsystem, ies);
+    w.setpoints(a, 6.0);
+    // Moving sideways at 2 GU/s, nose along +y: the vector bends toward
+    // the nose, it does not snap round.
+    w.m.set_f(a, Field::_current_speed, 2.0);
+    w.m.set_floats(a, Field::_motion_vel, {2.0, 0.0, 0.0, 2.0});
+    w.m.set_fv(a, Field::_velocity, {2.0, 0.0, 0.0});
+    const MotionResult r = w.step({a});
+    ASSERT_EQ(r.stop, MotionStop::Done);
+    ASSERT_EQ(r.writes.size(), 1u);
+    const MotionWrite& x = r.writes[0];
+    EXPECT_TRUE(x.what & kMotionVel);
+    EXPECT_TRUE(x.what & kAccel);
+    const double ex = 0.0 - 2.0, ey = 6.0 - 0.0;
+    const double e = std::sqrt(ex * ex + ey * ey);
+    const double k = 1.5 * kDt / e;       // min(1.5, e / 1) = 1.5
+    EXPECT_EQ(x.velocity, (Vec3{2.0 + ex * k, 0.0 + ey * k, 0.0}));
+    EXPECT_EQ(x.motion_vel[3], x.speed);
+    EXPECT_EQ(x.accel[0], (x.velocity[0] - 2.0) / kDt);
+    const std::vector<double> mv = w.m.get_floats(a, Field::_motion_vel);
+    ASSERT_EQ(mv.size(), 4u);
+    EXPECT_EQ(mv[0], x.velocity[0]);
+    // A turn goal steering the setpoint is Python's, nothing written.
+    w.m.set_i(a, Field::_turn_goal, 1);
+    const MotionResult g = w.step({a});
+    EXPECT_EQ(g.stop, MotionStop::PythonRow);
+    EXPECT_EQ(g.reason, MotionReason::TurnGoal);
+    EXPECT_TRUE(g.writes.empty());
 }

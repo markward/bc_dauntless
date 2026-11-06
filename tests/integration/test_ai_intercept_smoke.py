@@ -145,30 +145,39 @@ def test_intercept_hostile_faces_player_at_completion():
 
 def test_intercept_speed_ramps_up_then_back_toward_zero():
     """Sanity that brake-aware control engaged after the warp: the
-    hostile's _current_speed must climb above zero at some point and
-    then return near zero by the time the AI completes."""
+    hostile's _current_speed must climb above zero at some point, and once
+    out of its warp it must slow down (Intercept's brake-aware fSpeed)
+    before the AI completes.
+
+    Under the motion law on the velocity vector the hostile about-faces at
+    speed and bleeds speed doing it, so it can finish its approach still
+    picking speed up again after that slowdown; the slowdown, not the final
+    speed, is the brake's evidence."""
     player, hostile, pai = _setup_intercept_scene()
     loop = GameLoop()
     peak_speed = 0.0
-    final_speed = 0.0
+    after_warp = []
     for _ in range(TICK_RATE * 60):
         loop.tick()
         if pai._status == ArtificialIntelligence.US_DONE:
-            final_speed = hostile._current_speed
             break
-        # Track peak BEFORE the next tick so that the completing tick
-        # does not get folded into peak_speed (otherwise final < peak
-        # collapses to final < final and the assertion fails).
         peak_speed = max(peak_speed, hostile._current_speed)
+        warped = getattr(hostile, "_insystem_warp_transit", None) is not None
+        if warped:
+            after_warp = []
+        elif peak_speed > 0.0:
+            after_warp.append(hostile._current_speed)
+    assert pai._status == ArtificialIntelligence.US_DONE
     assert peak_speed > 10.0, (
         f"hostile never accelerated meaningfully; peak={peak_speed}"
     )
-    # On completion the brake-aware code should have driven speed
-    # toward 0 (within the same tick when fSpeed = 0 is set, since
-    # FALLBACK_MAX_ACCEL snaps).
-    assert final_speed < peak_speed, (
-        "hostile did not decelerate before completion"
-    )
+    # After the warp: some speed, then less of it (the brake).
+    assert after_warp, "the hostile never left its warp"
+    drop, high = 0.0, after_warp[0]
+    for v in after_warp:
+        high = max(high, v)
+        drop = max(drop, high - v)
+    assert drop > 1.0, "hostile did not decelerate before completion"
 
 
 def test_intercept_returns_us_active_while_still_approaching():

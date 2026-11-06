@@ -11,10 +11,12 @@
 //   reference's unguarded index does), then in the reference's order:
 //     kDriftClear  ship.__dict__["_drift_velocity"] = None
 //     kDriftSet    ship.__dict__["_drift_velocity"] = TGPoint3(dx, dy, dz)
+//     kMotionVel   ship.__dict__["_motion_vel"] = (vx, vy, vz, speed)
 //     kSpeed       ship.__dict__["_current_speed"] = speed
 //     kVelocity    ship.__dict__["_velocity"] = TGPoint3(vx, vy, vz)
 //     kAngVel      c = ship.__dict__["_current_angular_velocity"]
 //                  c.x, c.y, c.z = cav      (in place, on its own object)
+//     kAccel       ship.__dict__["_acceleration"] = (ax, ay, az)
 //
 // The TGPoint3 class is imported once from engine.appc.math and cached.
 //
