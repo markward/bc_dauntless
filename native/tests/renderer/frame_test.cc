@@ -2599,6 +2599,67 @@ TEST_F(FrameTest, ScorchFlickerBlacksOutThenRestoresForLongDurations) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
+// The random hit blackout never reaches inside a light volume (glow region):
+// a volume's lights belong to its subsystem and go out only with it, so one
+// hit can't black out PART of a warp nacelle and leave the rest lit. Same
+// geometry as the blackout test above, plus a HEALTHY box volume over the
+// right sample block: there the hit must leave the glow alone, while the
+// left block, sitting under the same decal but outside the volume, still
+// blacks out.
+TEST_F(FrameTest, ScorchBlackoutSkipsLightVolumes) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    // Healthy (never disabled) volume over body +X, i.e. the right block.
+    scenegraph::Instance::GlowRegion vol = dark_right_half_region();
+    vol.dim_target   = 1.0f;
+    vol.disable_time = -1.0f;
+
+    struct Blocks { double left, right; };
+    auto sample = [&](float birth, float decal_time, bool with_decal,
+                      bool with_volume) -> Blocks {
+        scenegraph::World w;
+        auto iid = w.create_instance(
+            reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+        w.set_world_transform(iid, glm::mat4(1.0f));
+        if (with_decal) {
+            // Centred on the volume's inner face (x = 10) and wide enough to
+            // cover both sample blocks.
+            w.get(iid)->decals.add(glm::vec3(10.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
+                                   200.0f, 0.25f, scenegraph::WeaponClass::Scorch, birth);
+        }
+        if (with_volume) w.get(iid)->glow_regions[0] = vol;
+        render_galaxy_zero_ambient(w, *p, lut, decal_time);
+        return {block_mean(93, 100, 25, 50), block_mean(130, 100, 25, 50)};
+    };
+
+    const Blocks B = sample(0.0f, 0.0f, false, true);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    ASSERT_GT(B.left, 0.0)  << "left block has no glow; test would be vacuous";
+    ASSERT_GT(B.right, 0.0) << "right block has no glow; test would be vacuous";
+
+    // A birth whose blackout darkens the right block WITHOUT the volume, so
+    // the decal demonstrably reaches it; the left block must go dark too.
+    float found = -1.0f;
+    for (int b = 0; b < 16 && found < 0.0f; ++b) {
+        const Blocks d = sample(static_cast<float>(b), static_cast<float>(b) + 14.0f,
+                                true, false);
+        if (d.right < B.right * 0.4 && d.left < B.left * 0.4)
+            found = static_cast<float>(b);
+    }
+    ASSERT_GE(found, 0.0f)
+        << "no probed birth_time blacked out both blocks at age 14 s without "
+           "a volume; the decal does not cover the sample geometry";
+
+    const Blocks V = sample(found, found + 14.0f, true, true);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_GT(V.right, B.right * 0.7)
+        << "the hit blackout reached inside a light volume";
+    EXPECT_LT(V.left, B.left * 0.4)
+        << "the blackout stopped outside the light volume too";
+}
+
 // Test 2: A HeatGlow (phaser, weapon_class == 0) decal's glow region is
 // MONOTONIC across the SAME in-window ages where a SCORCH oscillates.
 //
