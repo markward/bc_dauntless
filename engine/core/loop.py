@@ -73,6 +73,10 @@ class GameLoop:
         # the AI window, where BC drained its event queue (ShipClass.ProcessEvent).
         from engine.appc.ships import apply_pending_alert_levels
         apply_pending_alert_levels()
+        # ET_OBJECT_GROUP_CHANGED for groups edited since the last tick, one
+        # each, at the same boundary (ObjectGroup.deliver_changes).
+        from engine.appc.objects import ObjectGroup
+        ObjectGroup.deliver_changes()
         # Drive each bridge officer's CharacterClass animation queue one step --
         # the headless equivalent of host_loop._pump_character_queues. A
         # re-pointed CharacterAction (turn / glance / gesture / breathe / menu)

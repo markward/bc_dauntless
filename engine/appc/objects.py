@@ -1263,25 +1263,78 @@ class ObjectGroup(TGEventHandlerObject):
         ObjectGroup._live.add(self)
 
     def AddName(self, name: str) -> None:
-        if name not in self._names:
+        added = name not in self._names
+        if added:
             self._names.append(name)
             groups = ObjectGroup._by_name.get(name)
             if groups is None:
                 groups = ObjectGroup._by_name[name] = weakref.WeakSet()
             groups.add(self)
         self._event_flags.setdefault(name, set()).update(self._default_flags)
+        if added:
+            self._mark_changed(name)
 
     def RemoveName(self, name: str) -> None:
         if name in self._names:
             self._names.remove(name)
             _unindex_name(name, self)
-        self._event_flags.pop(name, None)
+        flags = self._event_flags.pop(name, None)
+        # Measured on the original: a remove posts even for a name that was
+        # not in the group (stbc-oracle music probe, ev_removename_absent).
+        self._mark_changed(name, flags)
 
     def RemoveAllNames(self) -> None:
         for name in self._names:
             _unindex_name(name, self)
+        old = self._event_flags
         self._names.clear()
-        self._event_flags.clear()
+        self._event_flags = {}
+        self._mark_changed(None, set().union(*old.values()) if old else None)
+
+    # ── ET_OBJECT_GROUP_CHANGED ──────────────────────────────────────────────
+    # Groups changed since the last tick boundary, in first-change order.
+    _changed: "list" = []
+
+    def _mark_changed(self, name, flags=None) -> None:
+        """Queue this group's ET_OBJECT_GROUP_CHANGED for the tick boundary
+        when GROUP_CHANGED is set for the name or group-wide.
+
+        Measured on the original (stbc-oracle music probe, Windows): the event
+        reaches a handler after the edit returns, not inside it; two AddName
+        calls in one frame post ONE event; adding a name already in the group
+        posts nothing; a group without GROUP_CHANGED posts nothing. The SDK's
+        range, set and existence conditions arm it and rebuild what they watch
+        on it (Conditions/ConditionInRange.py GroupChanged): without it,
+        enemies added after DynamicMusic's "enemies within 400" condition was
+        built (Quick Battle late groups, stations turned hostile, campaign
+        spawns) never brought in the combat music."""
+        if flags is None:
+            flags = self._event_flags.get(name, ()) if name is not None else ()
+        if self.GROUP_CHANGED not in flags and self.GROUP_CHANGED not in self._default_flags:
+            return
+        if not any(g is self for g in ObjectGroup._changed):
+            ObjectGroup._changed.append(self)
+
+    @classmethod
+    def deliver_changes(cls) -> None:
+        """Post one ET_OBJECT_GROUP_CHANGED per group changed since the last
+        call (GameLoop.tick, after the AI window, where BC drained its event
+        queue). Destination = the group, as broadcast_membership. A handler's
+        own edits queue for the next boundary. Each post is isolated: a
+        handler failure must not stop the next group's event."""
+        if not cls._changed:
+            return
+        groups, cls._changed = cls._changed, []
+        import App
+        for group in groups:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_OBJECT_GROUP_CHANGED)
+            evt.SetDestination(group)
+            try:
+                App.g_kEventManager.AddEvent(evt)
+            except Exception:
+                App.g_kEventManager._log_broadcast_failure(
+                    "ObjectGroup changed -> %s" % type(group).__name__, evt)
 
     def IsNameInGroup(self, name: str) -> int:
         return 1 if name in self._names else 0
@@ -1457,8 +1510,9 @@ class ObjectGroupWithInfo(ObjectGroup):
         self._info: dict[str, object] = {}
 
     def AddNameAndInfo(self, name: str, info) -> None:
-        self.AddName(name)
+        # Info first: a GROUP_CHANGED handler may read it.
         self._info[name] = info
+        self.AddName(name)
 
     def GetInfo(self, name: str):
         return self._info.get(name)
