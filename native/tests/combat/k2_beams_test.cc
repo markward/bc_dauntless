@@ -1571,7 +1571,11 @@ TEST(K2Pulse, ADamagePulseIsAppliedInTheWalk) {
     w.k.end();
 }
 
-TEST(K2Pulse, BeyondItsDistanceItFallsOffAndLowPowerSparesTheHull) {
+TEST(K2Pulse, BeyondItsDistanceItFallsOffAndLowPowerOnABareHullDamagesIt) {
+    // PP_LOW sends damage_hull False. The target has no subsystem in the
+    // footprint, so the hull takes the pulse (damage.cc step 3b, measured on
+    // the original: Low spares the hull only over a subsystem); the entry
+    // still carries damage_hull False, so the hit stays cosmetic for plating.
     World w;
     const auto s = w.scene(true, 0.6);
     const int64_t hull = damageable(w, s.target);
@@ -1582,12 +1586,12 @@ TEST(K2Pulse, BeyondItsDistanceItFallsOffAndLowPowerSparesTheHull) {
     ASSERT_EQ(r.kind, K2Kind::DONE);
     ASSERT_EQ(r.hits.size(), 1u);
     const double damage = 100.0 * (25.0 / 50.0) * (0.6 + kDt) * 0.25;
-    EXPECT_EQ(cond(w, hull), 1000.0);    // damage_hull False
+    EXPECT_EQ(cond(w, hull), 1000.0 - damage);  // nothing in reach
     const DamageEntry& p = entry(r.hits[0], DamageKind::HIT_PRESENT);
     EXPECT_EQ(p.ops[10].number, damage);
-    EXPECT_EQ(p.ops[14].number, damage);  // absorbed_hull, unwritten
+    EXPECT_EQ(p.ops[14].number, damage);  // absorbed_hull
     EXPECT_EQ(p.ops[17].number, 0.375);   // the bank's DRF
-    EXPECT_FALSE(p.ops[19].boolean);
+    EXPECT_FALSE(p.ops[19].boolean);      // damage_hull False: no wear
     w.k.end();
 }
 

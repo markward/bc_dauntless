@@ -710,14 +710,17 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
                               supersedes the (hardpoint_weapon, payload_template)
                               resolution. Used by the warp-core breach to force a
                               1.3 GU blast. None for all weapon callers.
-        damage_hull         — when False, the hull takes NO condition damage
-                              (subsystems still take their weighted share). This
-                              is the LIGHT (PP_LOW) phaser "disable, don't
-                              destroy" mode verified by dev-console probe. The
+        damage_hull         — when False, the hull takes no condition damage
+                              while the hit's footprint holds a targetable
+                              subsystem (subsystems still take their share);
+                              with none in reach the hull takes it (step 3b,
+                              measured on the original). This is the LIGHT
+                              (PP_LOW) phaser "disable, don't destroy" mode. The
                               hull is still flagged as struck for cosmetic
                               feedback (scorch decal, severity, audio), but the
-                              structural plating wear is suppressed. Defaults True
-                              (FULL / torpedo / collision / explosion).
+                              structural plating wear is suppressed either way.
+                              Defaults True (FULL / torpedo / collision /
+                              explosion).
         bypass_shields      — when True, skip the shield cascade entirely and
                               route full damage to hull/subsystems. This is the
                               `AddDamage` explosion/collision primitive verified
@@ -931,6 +934,21 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
                 transition = _diff_state(before_flags, after_flags)
                 if transition is not None and primary_transition is None:
                     primary_transition = transition
+
+        # 3b. A LOW-intensity hit (damage_hull False) spares the hull only when
+        #     its footprint held a targetable subsystem; with none in reach the
+        #     hull takes the damage. Measured on the original (stbc-oracle
+        #     mechanics reference §1.5, 6 samples): Galaxy -> Sovereign front
+        #     with no subsystem in the footprint, the hull took the half-strength
+        #     hits (-317, and -225 / -224 on two more); footprints holding the
+        #     sensor array, tubes or a tractor projector left it untouched.
+        #     Condition only: the hit stays cosmetic for plating wear and
+        #     severance (allow_structural_wear below keeps damage_hull,
+        #     hit_feedback._structural_hit). The native twin is damage.cc
+        #     apply_hit's step 3b.
+        if (not damage_hull and not allocations and hull is not None
+                and hasattr(ship, "DamageSystem") and _commit):
+            ship.DamageSystem(hull, post_shield, source)
 
     primary_subsystem = _pick_primary_subsystem_for_dispatch(allocations)
 

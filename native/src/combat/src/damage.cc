@@ -540,6 +540,7 @@ void apply_hit_in(Mirror& m, Session& S, const HitInput& in,
         int64_t primary = -1;
         double best = 0.0;
         int64_t primary_transition = kTransitionNone;
+        bool in_footprint = false;  // a subsystem took this hit (step 3b)
         const int64_t hull = o._hull;
         if (hull == kRefUnrepresentable || (hull != -1 && !m.subsystem(hull)))
             fall_back("_hull");
@@ -565,6 +566,7 @@ void apply_hit_in(Mirror& m, Session& S, const HitInput& in,
                 if (d >= r_sub + r_hit) continue;
                 const double w = splash_weight(r_sub, r_hit, d);
                 if (w <= 0.0) continue;
+                in_footprint = true;
                 if (w > best) {  // _pick_primary_subsystem_for_dispatch
                     best = w;
                     primary = h;
@@ -586,6 +588,13 @@ void apply_hit_in(Mirror& m, Session& S, const HitInput& in,
                     primary_transition == kTransitionNone)
                     primary_transition = transition;
             }
+            // 3b. A LOW-intensity hit (damage_hull false) spares the hull
+            // only when its footprint held a targetable subsystem; with none
+            // in reach the hull takes the damage (combat._apply_hit step 3b,
+            // measured on the original). Condition only: HIT_PRESENT still
+            // carries damage_hull, so no plating wear or severance share.
+            if (!in.damage_hull && !in_footprint && hull != -1 && commit)
+                damage_system_in(S, ship, hull, post_shield, in.source);
         }
 
         // 4. HIT_PRESENT (effect_queue.hit_present_operands), but not for an

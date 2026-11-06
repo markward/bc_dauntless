@@ -4,7 +4,9 @@ Verified against the real BC engine via dev-console probe q05/q07: a LIGHT
 phaser hit on an unshielded target deals 0% hull / 100% subsystem damage.
 We model that with apply_hit(damage_hull=False):
 
-- the hull takes NO condition damage (can never destroy via hull),
+- the hull takes NO condition damage while the footprint holds a subsystem
+  (a Low hit with no subsystem in reach does damage the hull, as in the
+  original: tests/oracle/test_low_phaser_hull_matches_original.py),
 - subsystems still take their weighted splash share,
 - the hull still reads as struck cosmetically — a scorch decal still fires —
   but the structural plating wear is suppressed (per user: scorching is
