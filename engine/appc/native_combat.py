@@ -186,6 +186,9 @@ _REQUIRED_BINDINGS = (
     "combat_effect_rebind",
     "combat_apply_hit", "combat_dmg_set_condition",
     "combat_compute_take",
+    # K2's ship scan reads classes and handles only (phase 6 follow-up 3):
+    # combat_k2_scan_ships kept its name, so its version marks the build.
+    "combat_k2_scan_version",
     # Tractors native (fire control native only, M4).
     "combat_k1_begin_tractor", "combat_tractor_force_step",
     # The native beam render feed (phase 6 follow-up 1, beam_feed).

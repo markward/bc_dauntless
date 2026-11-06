@@ -13213,6 +13213,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("ships"), py::arg("obj_kind"), py::arg("kind_shift"),
               py::arg("seen"), py::arg("stock_system"), py::arg("stock_bank"),
               "(handles, [(ship, handle), ...]): see k2_scan_ships.");
+        // 2: the scan reads classes and handles only (phase 6 follow-up 3,
+        // Task 2; the signature lost its patch sets under the same name).
+        // native_combat._REQUIRED_BINDINGS' stale-build marker.
+        m.def("combat_k2_scan_version", [] { return 2; },
+              "combat_k2_scan_ships' version (2: classes and handles).");
         m.def("combat_k2_next", [vec] {
             // Compute with the GIL released (THE GIL RELEASE), as
             // combat_k1_next: the kernel and the trace hooks touch no Python

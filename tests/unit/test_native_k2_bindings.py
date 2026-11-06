@@ -293,3 +293,11 @@ def test_system_stop_and_run_python(scene):
     _h.combat_k2_end()
     reasons = _h.combat_k2_counts()["k2_python_reasons"]
     assert reasons["unslotted_ship"] >= 1 and reasons["overridden"] >= 1
+
+
+def test_a_build_without_the_class_only_scan_is_stale():
+    """combat_k2_scan_ships lost its patch-set arguments (phase 6 follow-up
+    3, Task 2) under the same name, so the scan's version is the stale-build
+    marker: configure names a .so without it (M10)."""
+    assert "combat_k2_scan_version" in nc._REQUIRED_BINDINGS
+    assert _h.combat_k2_scan_version() == 2
