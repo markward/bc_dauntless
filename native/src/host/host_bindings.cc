@@ -25,6 +25,7 @@
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/beam_trace.h"
 #include "dauntless/combat/damage.h"
+#include "dauntless/combat/hull_trace.h"
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/k0_charging.h"
 #include "dauntless/combat/k1_fire_control.h"
@@ -12559,6 +12560,43 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("sub"), py::arg("ship"), py::arg("use_memo"));
         // subsystem_world_position(sub, ship) on GetPosition (a phaser
         // bank's is the middle of its arc; the call above is mount=True).
+        // The CPU hull trace (hull_trace.h): damage_point._Bvh handed over
+        // as it stands -- `tris` [(v0, e1, e2)] and `nodes` [(lo, hi, left,
+        // right, idx | None)] -- and its first_hit.
+        m.def("hull_trace_register",
+              [](const std::vector<std::array<std::array<double, 3>, 3>>& tris,
+                 const py::list& nodes) {
+                  cb::HullMesh mesh;
+                  mesh.tris.reserve(tris.size() * 9);
+                  for (const auto& t : tris)
+                      for (const auto& v : t)
+                          for (double c : v) mesh.tris.push_back(c);
+                  mesh.nodes.reserve(nodes.size());
+                  for (const auto& item : nodes) {
+                      const py::tuple n = item.cast<py::tuple>();
+                      cb::HullBvhNode out;
+                      const auto lo = n[0].cast<std::array<double, 3>>();
+                      const auto hi = n[1].cast<std::array<double, 3>>();
+                      for (int k = 0; k < 3; ++k) {
+                          out.lo[k] = lo[k];
+                          out.hi[k] = hi[k];
+                      }
+                      out.left = n[2].cast<std::int64_t>();
+                      out.right = n[3].cast<std::int64_t>();
+                      if (!n[4].is_none())
+                          out.tris = n[4].cast<std::vector<std::int64_t>>();
+                      mesh.nodes.push_back(std::move(out));
+                  }
+                  return cb::hull_trace_register(std::move(mesh));
+              },
+              py::arg("tris"), py::arg("nodes"));
+        m.def("hull_trace_first_hit",
+              [](std::int64_t h, std::array<double, 3> o,
+                 std::array<double, 3> d) -> py::object {
+                  const auto t = cb::hull_trace_first_hit(h, o.data(), d.data());
+                  return t ? py::object(py::float_(*t)) : py::none();
+              },
+              py::arg("mesh"), py::arg("origin"), py::arg("direction"));
         m.def("combat_test_position_world",
               [vec](std::int64_t sub, std::int64_t ship) {
                   return vec(cb::position_world(cb::mirror(), sub, ship, false));

@@ -1422,12 +1422,12 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def IsHittableFromLocation(self, vWorldLoc) -> float:
         """SDK Preprocessors.py:980 — `fHittable = pSubsystem.IsHittableFromLocation(pOurShip.GetWorldLocation())`.
-        Native Appc returns a scalar (0.0..1.0) reflecting LOS / occlusion
-        from the firing ship's location to the subsystem position. Phase 1
-        treats every subsystem as fully hittable (no occlusion model);
-        real geometry support lands when the renderer carries collision
-        meshes."""
-        return 1.0
+        The original answers 0 or 1: a line of sight through the hull mesh
+        toward this subsystem's position (engine/appc/hull_line_of_sight.py
+        has the rule and its measurement). 1.0 for a ship with no model."""
+        from engine.appc import hull_line_of_sight
+        ship = self._climb_to_ship()
+        return hull_line_of_sight.hittable_from(self, ship, vWorldLoc)
 
 
 # BC draw modes (ship-subsystems.md:164-189).  Per-class assignment below.

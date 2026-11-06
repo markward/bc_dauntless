@@ -132,6 +132,40 @@ class _Bvh:
         return found
 
 
+    def first_hit(self, o, d):
+        """The nearest crossing of the ray o + t*d (t > 1e-6), or None: the
+        smallest t of `hits`. Its native copy (hull_trace.cc, the same boxes,
+        triangles and arithmetic) answers when the module is built."""
+        h = self.native_handle()
+        if h is not None:
+            return _host().hull_trace_first_hit(h, tuple(o), tuple(d))
+        return self.first_hit_python(o, d)
+
+    def first_hit_python(self, o, d):
+        found = self.hits(o, d)
+        return min(t for t, _entry in found) if found else None
+
+    def native_handle(self):
+        """This mesh registered with the native hull trace (once), or None
+        with no native module."""
+        h = getattr(self, "_native", False)
+        if h is False:
+            host = _host()
+            h = None
+            if host is not None and hasattr(host, "hull_trace_register"):
+                h = host.hull_trace_register(self.tris, self.nodes)
+            self._native = h
+        return h
+
+
+def _host():
+    try:
+        import _dauntless_host as h
+    except ImportError:
+        return None
+    return h
+
+
 def _mesh(path):
     if path not in _meshes:
         bvh = None
