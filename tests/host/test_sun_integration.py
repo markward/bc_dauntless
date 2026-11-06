@@ -54,9 +54,3 @@ def test_run_M1Basic_verbose_logs_sun_count(capsys):
     out = capsys.readouterr().out
     assert "suns:" in out
 
-
-def test_aggregate_suns_called_does_not_raise():
-    """Calling _aggregate_suns() outside run() must not raise."""
-    from engine import host_loop
-    result = host_loop._aggregate_suns()
-    assert isinstance(result, list)

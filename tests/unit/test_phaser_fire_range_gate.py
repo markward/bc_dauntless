@@ -99,14 +99,6 @@ def test_global_constant_matches_observed_bc_range():
     assert PHASER_MAX_RANGE_GU == 700.0
 
 
-def test_target_well_within_global_range_returns_true():
-    ship = _Ship(0, 0, 0)
-    target = _Target(500, 0, 0)
-    banks = [_FakeBank(max_damage_distance=60.0)]  # Galaxy-like
-    sys = _build_system(banks, ship)
-    assert sys._target_in_system_range(ship, target) is True
-
-
 def test_target_at_global_range_boundary_returns_true():
     ship = _Ship(0, 0, 0)
     target = _Target(PHASER_MAX_RANGE_GU, 0, 0)

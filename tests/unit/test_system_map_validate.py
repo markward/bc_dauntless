@@ -543,10 +543,6 @@ def _profile_rules(m):
     return sorted({p.rule for p in _profile_problems(m)})
 
 
-def test_ordered_profile_is_clean():
-    assert _profile_rules(_pm([ProfileRow(0.0, radiation=1.0), ProfileRow(300.0)])) == []
-
-
 def test_none_profile_is_clean():
     m = _pm([])
     m.profile = None

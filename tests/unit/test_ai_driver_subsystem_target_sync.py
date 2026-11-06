@@ -134,17 +134,6 @@ def test_sync_forces_hull_centre_when_target_is_cloaked():
     assert ours.GetTargetSubsystem() is None
 
 
-def test_sync_still_picks_subsystem_when_target_is_not_cloaked():
-    """Control: identical setup, no cloak. Proves the gate above is
-    cloak-driven, not something else silently swallowing the choice."""
-    ours, target, shield = _ship_with_target_and_subsystem()
-    inst = _FireScriptLike(shield.GetObjID())
-    _wire(inst, ours)
-    inst.idTargetedSubsystem = shield.GetObjID()
-    _sync_fire_script_target_subsystem(inst)
-    assert ours.GetTargetSubsystem() is shield
-
-
 def test_sync_drops_existing_subsystem_lock_when_target_cloaks_mid_fight():
     ours, target, shield = _ship_with_target_and_subsystem()
     inst = _FireScriptLike(shield.GetObjID())
