@@ -6573,7 +6573,8 @@ _DMG_SUB_NAMES = ("GetCondition", "SetCondition", "SetConditionPercentage",
                   "_set_condition", "_condition_changed",
                   "_threshold_state_now", "GetConditionPercentage",
                   "GetMaxCondition", "IsCritical", "IsInvincible",
-                  "_owning_ship", "GetPosition", "GetRadius")
+                  "_owning_ship", "GetPosition", "GetRadius",
+                  "IsTargetable", "GetDamagePoint")
 #: The state predicates: ShipSubsystem's leaf rules or WeaponSystem's
 #: aggregate ones (dmg_class), nothing else.
 _DMG_PREDICATES = ("IsDamaged", "IsDisabled", "IsDestroyed")

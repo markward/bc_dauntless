@@ -155,8 +155,91 @@ TEST(Damage, AnOverdrawEmptiesTheFaceAndBleedsTheRest) {
     apply_hit(w.m, w.hit(900.0, {0.0, 2.0, 0.0}), {}, out);
     const double b = 0.6 * (1.0 - 2.0 * (0.4 - 0.1));
     const double nw = 400.0 - (1.0 - b) * 900.0;
+    const double post = b * 900.0 - nw;
     EXPECT_EQ(w.face(0), 0.0);
-    EXPECT_EQ(w.cond(w.hull), 1000.0 - (b * 900.0 - nw));
+    // The leak destroys the 200-HP sensor beside the point; its excess lands
+    // again as the overflow re-hit (combat._apply_hit step 7).
+    EXPECT_EQ(w.cond(w.sensor), 0.0);
+    EXPECT_EQ(w.cond(w.hull), 1000.0 - post - (post - 200.0));
+}
+
+// ── The footprint (combat._weapon_damageable_subsystems) ────────────────────
+
+TEST(Damage, AnUntargetableSubsystemIsNeverHit) {
+    World w;
+    w.m.set_i(w.sensor, Field::_targetable, 0);
+    DamageOut out;
+    HitInput in = w.hit(50.0, {0.0, 1.5, 0.0});
+    in.bypass_shields = true;
+    apply_hit(w.m, in, {}, out);
+    EXPECT_EQ(w.cond(w.sensor), 200.0);
+    EXPECT_EQ(w.cond(w.hull), 950.0);
+}
+
+TEST(Damage, TheFootprintIsMeasuredFromTheDamagePoint) {
+    World w;
+    // The sensor's damage point (model frame) 1.0 below its position.
+    w.m.set_fv(w.sensor, Field::_damage_point, {0.0, 1.5, -1.0});
+    w.m.set_i(w.sensor, Field::_damage_point_set, 1);
+    DamageOut out;
+    HitInput in = w.hit(50.0, {0.0, 1.5, 0.0});
+    in.bypass_shields = true;
+    apply_hit(w.m, in, {}, out);
+    EXPECT_EQ(w.cond(w.sensor), 200.0);  // at its position: missed
+    in.point = {0.0, 1.5, -1.0};
+    apply_hit(w.m, in, {}, out);
+    EXPECT_EQ(w.cond(w.sensor), 150.0);  // at its damage point: hit
+}
+
+TEST(Damage, AHullChildIsHit) {
+    World w;
+    const int64_t bridge = w.subsystem(120.0, {0.0, -1.0, 0.0}, 0.3);
+    w.m.set_ref(bridge, Field::_parent_ship, -1);
+    w.m.set_ref(bridge, Field::_parent_subsystem, w.hull);
+    w.m.set_ids(w.hull, Field::_children, {bridge});
+    DamageOut out;
+    HitInput in = w.hit(40.0, {0.0, -1.0, 0.0});
+    in.bypass_shields = true;
+    apply_hit(w.m, in, {}, out);
+    EXPECT_EQ(w.cond(bridge), 80.0);
+}
+
+TEST(Damage, OverflowIsANewHitWithoutAPresentation) {
+    World w;
+    w.m.set_f(w.sensor, Field::_condition, 30.0);
+    DamageOut out;
+    HitInput in = w.hit(100.0, {0.0, 1.5, 0.0});
+    in.bypass_shields = true;
+    apply_hit(w.m, in, {}, out);
+    EXPECT_EQ(w.cond(w.sensor), 0.0);
+    EXPECT_EQ(w.cond(w.hull), 1000.0 - 100.0 - 70.0);
+    size_t present = 0, weapon_hits = 0;
+    for (const DamageEntry& e : out.entries) {
+        present += e.kind == K::HIT_PRESENT;
+        weapon_hits += e.kind == K::WEAPON_HIT;
+    }
+    EXPECT_EQ(present, 1u);
+    EXPECT_EQ(weapon_hits, 2u);
+}
+
+TEST(Damage, ACollisionHasNoOverflow) {
+    World w;
+    w.m.set_f(w.sensor, Field::_condition, 30.0);
+    DamageOut out;
+    HitInput in = w.hit(100.0, {0.0, 1.5, 0.0});
+    in.bypass_shields = true;
+    in.hit_weapon = kHitWeaponCollision;
+    apply_hit(w.m, in, {}, out);
+    EXPECT_EQ(w.cond(w.hull), 900.0);
+}
+
+TEST(Damage, ExactlyAtItsThresholdASubsystemStillWorks) {
+    World w;
+    DamageOut out;
+    set_condition(w.m, w.sensor, 50.0, -1, -1, out);  // 0.25 x 200
+    EXPECT_EQ(w.m.get_i(w.sensor, Field::_threshold_state), 0);
+    set_condition(w.m, w.sensor, 49.9, -1, -1, out);
+    EXPECT_EQ(w.m.get_i(w.sensor, Field::_threshold_state), 1);
 }
 
 TEST(Damage, TheFaceIsTheHullBoxsDominantAxis) {

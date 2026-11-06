@@ -83,7 +83,7 @@ def test_state_ladder():
     def state(cond):
         return st.subsystem_state(_sub(ShipSubsystem, "X", cond=cond))
     assert state(0.0) == "destroyed"
-    assert state(50.0) == "disabled"
+    assert state(49.0) == "disabled"     # below the 50% limit (strict: at 50% it still works)
     assert state(75.0) == "damaged"
     assert state(100.0) == "healthy"
 

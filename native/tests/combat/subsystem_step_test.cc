@@ -478,8 +478,9 @@ TEST(ShieldStep, OfflineZeroesAllFaces) {
                    {100.0, 0.0, 100.0, 100.0, 100.0, 100.0});
     w.m.set_floats(sh, Field::_current_shields,
                    {40.0, 3.0, 5.0, 0.0, 5.0, 5.0});
-    // Disabled: condition at or below DisabledPercentage x MaxCondition.
-    w.m.set_f(sh, Field::_condition, 500.0);
+    // Disabled: condition below DisabledPercentage x MaxCondition (strict,
+    // as ShipSubsystem.IsDisabled: at exactly the limit it still works).
+    w.m.set_f(sh, Field::_condition, 499.0);
     w.m.set_f(sh, Field::_charge_accum, 0.49);
     SubsystemSession s = subsystems::begin(w.m, std::vector{ship}, kDt);
     subsystems::next(s, w.m);
