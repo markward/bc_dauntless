@@ -335,9 +335,14 @@ vec3 hue_rotate(vec3 c, float ang) {
     return c * cs + cross(k, c) * sn + k * dot(k, c) * (1.0 - cs);
 }
 
-float glow_region_mult(vec3 p_body, vec3 n_body, float now, out float gain) {
+// `inside` is set to 1 when the fragment lies in ANY region, healthy or not:
+// a light volume's lights belong to its subsystem, so the random hit
+// disruption (apply_damage_decals' glow_flicker) is skipped there.
+float glow_region_mult(vec3 p_body, vec3 n_body, float now, out float gain,
+                       out float inside) {
     float mult = 1.0;
     gain = 1.0;   // >1 inside a powered impulse region; healthy engines still brighten
+    inside = 0.0;
     for (int i = 0; i < u_glow_region_count; ++i) {
         vec3  center = u_glow_region_a[i].xyz;
         float radius = u_glow_region_a[i].w;
@@ -371,6 +376,7 @@ float glow_region_mult(vec3 p_body, vec3 n_body, float now, out float gain) {
             if (dot(perp, perp) > radius * radius) continue;
             if (t < aft || t > fore) continue;
         }
+        inside = 1.0;
         // Gain applies regardless of health — a moving healthy engine is exactly
         // the case we brighten — so read it before the healthy short-circuit.
         // gate_axis (u_glow_region_d.yzw) restricts the boost to aft-facing
@@ -2097,6 +2103,7 @@ void main() {
 
     float nac = 1.0;
     float region_gain = 1.0;
+    float in_light_volume = 0.0;
     if (u_glow_region_count > 0) {
         // REST-frame position + normal: a region authored on a part keeps
         // covering that part's surface while the part is rotated.
@@ -2108,8 +2115,13 @@ void main() {
         // render byte-identically to before this correction existed.
         vec3 p_glow = (u_node_rest_fix * vec4(p_body, 1.0)).xyz;
         vec3 n_glow = mat3(u_node_rest_fix) * n_body;
-        nac = glow_region_mult(p_glow, n_glow, u_decal_time, region_gain);
+        nac = glow_region_mult(p_glow, n_glow, u_decal_time, region_gain,
+                               in_light_volume);
     }
+    // The random hit disruption (stutter + blackout) only touches lights
+    // OUTSIDE every light volume. Inside one, the lights follow the
+    // subsystem's own state (nac), so a hit can't put out part of a nacelle.
+    if (in_light_volume > 0.5) gf = 1.0;
 
     // Self-illumination (material emissive + window/light glow map) scales by
     // u_emissive_scale so a destroyed ship goes dark; diffuse-lit, specular,
