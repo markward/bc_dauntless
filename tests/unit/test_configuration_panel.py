@@ -27,6 +27,7 @@ def _make(**overrides):
             fov_deg=70,
         ),
         set_dust=Mock(),
+        set_fullscreen=Mock(),
         set_hdr=Mock(),
         set_rim=Mock(),
         set_aa_mode=Mock(),
@@ -79,6 +80,7 @@ def test_initial_settings_round_trip_to_render_payload():
     assert body["settings"] == {
         "aa_mode": AA_SMAA, "max_msaa_samples": 8,
         "dust_on": True, "camera_shake_on": True,
+        "fullscreen_on": False,
         "subtitles_on": True, "improved_space_on": True,
         "camera_realism_on": True, "realistic_lighting_on": True,
         "disable_annoying_dialogue_on": True,
@@ -732,8 +734,103 @@ def test_graphics_control_order_is_standalones_masters_then_trailing():
     standalones-then-masters test, which camera shake made incomplete."""
     p, _ = _make()
     ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
-    assert ctrls == (["aa_mode", "dust", "fov"] + list(MASTER_KEYS)
+    assert ctrls == (["aa_mode", "dust", "fullscreen", "fov"]
+                      + list(MASTER_KEYS)
                       + ["camera_shake", "bridge_quality", "reset_graphics"])
+
+
+def test_full_screen_row_toggles_the_window_and_persists():
+    """The row the player uses to start full screen.
+
+    It must do three things at once, which is why they are asserted
+    together: drive the window NOW, update the snapshot the page re-renders
+    from, and report the change so settings_store writes it to disk. Miss
+    the last and the toggle works until you quit, which is precisely the
+    thing it exists to survive.
+    """
+    changes = []
+    p, kw = _make(on_change=lambda k, v: changes.append((k, v)))
+    p.open()
+    assert p._settings.fullscreen_on is False
+
+    assert p.dispatch_event("toggle:fullscreen") is True
+    kw["set_fullscreen"].assert_called_once_with(True)
+    assert p._settings.fullscreen_on is True
+    assert ("fullscreen", True) in changes
+
+    assert p.dispatch_event("toggle:fullscreen") is True
+    assert p._settings.fullscreen_on is False
+    assert changes[-1] == ("fullscreen", False)
+
+
+def test_space_on_full_screen_row_toggles():
+    """Keyboard reaches the row too -- it is in the focus order, so arrowing
+    onto it and pressing Space must act, like every other toggle."""
+    p, kw = _make()
+    p.open()
+    p._focused = p._focusables().index(("ctrl", "fullscreen"))
+    r = _FakeReader()
+    r.press(r.keys.KEY_SPACE)
+    p.handle_input(r)
+    kw["set_fullscreen"].assert_called_once_with(True)
+
+
+def test_a_panel_built_without_a_fullscreen_setter_still_toggles():
+    """set_fullscreen is optional, so older construction sites keep working.
+    The row must then update state rather than raising AttributeError."""
+    p, _ = _make(set_fullscreen=None)
+    p.open()
+    assert p.dispatch_event("toggle:fullscreen") is True
+    assert p._settings.fullscreen_on is True
+
+
+def test_every_stored_field_survives_construction():
+    """The panel copies the snapshot to clamp four fields and to avoid
+    aliasing the caller's object. A field-by-field rebuild dropped whatever
+    nobody remembered to list, substituting the dataclass default -- which is
+    how the game came up full screen while the panel's row read "Off". One
+    assertion over EVERY field, so the next new row cannot repeat it."""
+    from dataclasses import fields
+    # Non-default values for every field, with the clamped ones in range.
+    stored = SettingsSnapshot(
+        fov_deg=62, aa_mode=AA_OFF, ai_difficulty=2, bridge_quality=0,
+        subtitles_on=False, disable_annoying_dialogue_on=False,
+        dust_on=False, fullscreen_on=True, improved_space_on=False,
+        camera_realism_on=False, realistic_lighting_on=False,
+        camera_shake_on=False,
+    )
+    names = [f.name for f in fields(SettingsSnapshot)]
+    assert len(names) == 12, "new field: give it a non-default value above"
+    p, _ = _make(initial_settings=stored)
+    for name in names:
+        assert getattr(p._settings, name) == getattr(stored, name), name
+    assert p._settings is not stored, "must not alias the caller's snapshot"
+
+
+def test_clamped_fields_are_still_clamped():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        fov_deg=62, aa_mode=99, ai_difficulty=-5, bridge_quality=7))
+    assert p._settings.aa_mode == AA_MSAA_8X
+    assert p._settings.ai_difficulty == 0   # clamped to the floor, not the top
+    assert p._settings.bridge_quality == 2
+
+
+def test_full_screen_reaches_the_page_and_repushes_when_it_changes():
+    """The page renders this row from the payload, and Alt+Enter can flip it
+    while the panel is CLOSED. So the value has to be in two places: the
+    payload (or the row draws from `undefined` and reads as Off over a
+    full-screen window) and the dirty tuple (or the corrected value never
+    gets pushed). Both halves shipped missing once."""
+    p, _ = _make()
+    p.open()
+    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["fullscreen_on"] is False
+
+    p.dispatch_event("toggle:fullscreen")
+    script = p.render_payload()
+    assert script is not None, "a changed fullscreen value must repush"
+    body = json.loads(script[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["fullscreen_on"] is True
 
 
 def test_space_on_camera_shake_row_toggles():

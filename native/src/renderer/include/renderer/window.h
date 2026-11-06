@@ -51,6 +51,19 @@ public:
     void set_key_capture(bool on);
     bool key_capture_active() const noexcept { return key_gate_.captured(); }
 
+    /// Put the window full-screen on the monitor it currently sits on, or
+    /// restore it to the position and size it had before.
+    ///
+    /// Full screen here means the monitor's CURRENT video mode -- no
+    /// resolution change. That keeps alt-tab fast and leaves the desktop
+    /// layout alone, at the cost of not being able to render below native
+    /// resolution for speed, which nothing asks for yet.
+    ///
+    /// Idempotent: setting the state it is already in does nothing, so a
+    /// settings pass that re-applies every value cannot flicker the window.
+    void set_fullscreen(bool on);
+    bool is_fullscreen() const noexcept;
+
     /// Cached state of a GLFW mouse button (GLFW_MOUSE_BUTTON_*). Returns
     /// true while the button is held. State is updated by poll_events().
     bool mouse_button_state(int glfw_button) const noexcept;
@@ -127,6 +140,12 @@ private:
     TextEventQueue text_events_;
     KeyGate key_gate_;
     std::unordered_set<int> polled_keys_;   // every key key_state was asked about
+    // The windowed rectangle to restore when leaving full screen. GLFW does
+    // not remember it: glfwSetWindowMonitor(nullptr, ...) demands an explicit
+    // position and size, and without these the window would come back at
+    // whatever the caller guessed.
+    int windowed_x_ = 0, windowed_y_ = 0;
+    int windowed_w_ = 0, windowed_h_ = 0;
 };
 
 }  // namespace renderer

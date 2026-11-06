@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, List, Optional, Tuple
 
 from engine.ui.panel import Panel
@@ -93,6 +93,9 @@ class SettingsSnapshot:
     disable_annoying_dialogue_on: bool = True
     ai_difficulty: int = 1
     dust_on: bool = True
+    # Whether the window starts (and currently sits) full-screen. Persisted,
+    # so the answer to "can it launch full screen?" is this toggle.
+    fullscreen_on: bool = False
     # Bridge rendering quality (Low/Medium/High), driven by r.set_bridge_quality.
     bridge_quality: int = 1
     # One master toggle over the volumetric nebulae and the procedural sky.
@@ -138,6 +141,10 @@ class ConfigurationPanel(Panel):
                  set_ship_light_emitters: Callable[[bool], None],
                  set_camera_shake: Callable[[bool], None],
                  set_ambient_gradient: Callable[[bool], None],
+                 # Display: full screen on the monitor the window occupies.
+                 # Optional so construction sites and tests that predate the
+                 # row keep working; without it the toggle is inert.
+                 set_fullscreen: Optional[Callable[[bool], None]] = None,
                  input_map=None,
                  # Bridges tab: the ship->bridge matrix (engine.bridge_selection.
                  # BridgePins). Optional so existing construction/tests without
@@ -153,18 +160,19 @@ class ConfigurationPanel(Panel):
         super().__init__()
         self._tabs = list(tabs)
         self._selected_tab = tabs[0][0]
-        self._settings = SettingsSnapshot(
+        # `replace`, not a field-by-field rebuild: this copy exists only to
+        # clamp the four range-bearing fields and to avoid aliasing the
+        # caller's object, and a rebuild silently DROPPED any field someone
+        # forgot to list -- the stored value was then replaced by the
+        # dataclass default. fullscreen_on shipped that way and launched the
+        # game full screen while the panel's own row read "Off". Listing the
+        # clamps alone means a new row cannot be forgotten.
+        self._settings = replace(
+            initial_settings,
             aa_mode=max(AA_OFF, min(AA_MSAA_8X, int(initial_settings.aa_mode))),
             fov_deg=int(initial_settings.fov_deg),
-            subtitles_on=initial_settings.subtitles_on,
-            disable_annoying_dialogue_on=initial_settings.disable_annoying_dialogue_on,
             ai_difficulty=max(0, min(2, int(initial_settings.ai_difficulty))),
-            dust_on=initial_settings.dust_on,
             bridge_quality=max(0, min(2, int(initial_settings.bridge_quality))),
-            improved_space_on=initial_settings.improved_space_on,
-            camera_realism_on=initial_settings.camera_realism_on,
-            realistic_lighting_on=initial_settings.realistic_lighting_on,
-            camera_shake_on=initial_settings.camera_shake_on,
         )
         # Master-member appliers, addressed by the names in MASTER_TOGGLES.
         # Kept as explicit constructor params (not **kwargs) so a missing one
@@ -185,6 +193,10 @@ class ConfigurationPanel(Panel):
         }
         # Standalone rows keep their own attribute.
         self._set_dust = set_dust
+        # Defaulted to a no-op: the panel is constructed headless in tests and
+        # by callers that predate this row, and a missing display control must
+        # not be an AttributeError mid-click.
+        self._set_fullscreen = set_fullscreen or (lambda _on: None)
         self._set_camera_shake = set_camera_shake
         self._set_aa_mode = set_aa_mode
         self._set_bridge_quality = set_bridge_quality
@@ -308,6 +320,7 @@ class ConfigurationPanel(Panel):
             self._settings.dust_on,
             self._settings.bridge_quality,
             self._settings.camera_shake_on,
+            self._settings.fullscreen_on,
             tuple(getattr(self._settings, k + "_on") for k in MASTER_KEYS),
             self._settings.fov_deg,
             json.dumps(bridges, sort_keys=True) if bridges is not None else None,
@@ -339,6 +352,11 @@ class ConfigurationPanel(Panel):
                 "dust_on": self._settings.dust_on,
                 "bridge_quality": self._settings.bridge_quality,
                 "camera_shake_on": self._settings.camera_shake_on,
+                # Must be BOTH here and in the dirty tuple above. Alt+Enter
+                # toggles full screen from outside the panel, so this row's
+                # value changes while the panel is closed -- and a value the
+                # dirty tuple does not watch is a row that never repushes.
+                "fullscreen_on": self._settings.fullscreen_on,
                 "fov_deg": self._settings.fov_deg,
                 **{k + "_on": getattr(self._settings, k + "_on")
                    for k in MASTER_KEYS},
@@ -420,6 +438,12 @@ class ConfigurationPanel(Panel):
             self._set_camera_shake(new_val)
             self._settings.camera_shake_on = new_val
             self._on_change("camera_shake", new_val)
+            return True
+        if action == "toggle:fullscreen":
+            new_val = not self._settings.fullscreen_on
+            self._set_fullscreen(new_val)
+            self._settings.fullscreen_on = new_val
+            self._on_change("fullscreen", new_val)
             return True
         if action == "toggle:dust":
             new_val = not self._settings.dust_on
@@ -663,6 +687,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:camera_shake")
         elif activate and kind == "ctrl" and target == "dust":
             self.dispatch_event("toggle:dust")
+        elif activate and kind == "ctrl" and target == "fullscreen":
+            self.dispatch_event("toggle:fullscreen")
         # aa_mode has no activate branch: it is a multi-value selector driven
         # by left/right below, like ai_difficulty, not a toggle.
         elif activate and kind == "ctrl" and target == "subtitles":
@@ -732,7 +758,7 @@ class ConfigurationPanel(Panel):
         standalone controls, then the 'Modern VFX' group (master toggles,
         Camera Shake, Bridge Rendering), then the per-tab Reset row:
         [('tab','graphics'), ('ctrl','aa_mode'),
-         ('ctrl','dust'), ('ctrl','fov'),
+         ('ctrl','dust'), ('ctrl','fullscreen'), ('ctrl','fov'),
          ('ctrl','improved_space'), ('ctrl','camera_realism'),
          ('ctrl','realistic_lighting'), ('ctrl','camera_shake'),
          ('ctrl','bridge_quality'), ('ctrl','reset_graphics')].
@@ -741,7 +767,8 @@ class ConfigurationPanel(Panel):
         together by test_js_graphics_focusables_match_python."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "aa_mode"), ("ctrl", "dust"), ("ctrl", "fov")]
+            out += [("ctrl", "aa_mode"), ("ctrl", "dust"),
+                    ("ctrl", "fullscreen"), ("ctrl", "fov")]
             out += [("ctrl", k) for k in MASTER_KEYS]
             out += [("ctrl", "camera_shake"), ("ctrl", "bridge_quality")]
             out += [("ctrl", "reset_graphics")]

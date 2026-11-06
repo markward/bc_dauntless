@@ -11066,6 +11066,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("key"),
           "Returns true while the key is held.");
 
+    m.def("set_fullscreen",
+          [](bool on) {
+              if (!g_window) {
+                  throw std::runtime_error("set_fullscreen: init must be called first");
+              }
+              g_window->set_fullscreen(on);
+          },
+          py::arg("on"),
+          "Put the window full-screen on the monitor it currently occupies, "
+          "or restore its previous position and size. Full screen uses that "
+          "monitor's CURRENT video mode, so no resolution change. Idempotent.");
+
+    m.def("fullscreen",
+          []() {
+              return g_window ? g_window->is_fullscreen() : false;
+          },
+          "True while the window is full-screen. False before init, so a "
+          "caller polling this during boot reads 'windowed' rather than "
+          "raising.");
+
     m.def("set_key_capture",
           [](bool on) {
               if (!g_window) {

@@ -4,9 +4,10 @@ Task 1).
 
 `headless_context` builds the context run() builds, with no window and no GL:
 the REAL camera director, view mode, pause menu, player control and native
-interpolation buffer; `h`, `perf_monitor_panel` and `crew_menu_panel` None; a
-controller stand-in with exactly CONTROLLER_SURFACE; and the GL- or
-window-bound calls in HEADLESS_STANDINS patched out. The frame clock is
+interpolation buffer; `h`, `perf_monitor_panel`, `crew_menu_panel` and
+`configuration_panel` None; a controller stand-in with exactly
+CONTROLLER_SURFACE; and the GL- or window-bound calls in HEADLESS_STANDINS
+patched out. The frame clock is
 scripted: `drive` picks each frame's wall delta so frame f runs exactly
 `frame_ticks[f % len(frame_ticks)]` ticks.
 """
@@ -149,6 +150,7 @@ def headless_context(mp, scene, loop, *, tick_hook=None):
         cef_send_wheel=None,
         crew_menu_panel=None,
         perf_monitor_panel=None,
+        configuration_panel=None,
         collisions=collisions,
         verbose=False,
         tick_dt=TICK_DELTA,

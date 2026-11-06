@@ -30,6 +30,7 @@ InstanceId = _h.InstanceId
 #   resolved at the import above) is deliberately excluded: its absence already
 #   hard-fails `import`, so it needs no manifest entry.
 _REQUIRED_BINDINGS = frozenset({
+    "set_fullscreen", "fullscreen",
     "add_box_region", "add_cylinder_region", "add_sphere_region",
     "running_light_count", "running_lights_enabled", "running_lights_set_enabled",
     "set_running_light_dials", "set_running_light_levels", "set_running_lights",
@@ -187,6 +188,21 @@ def init(width: int, height: int, title: str) -> None:
 
 def shutdown() -> None:
     _h.shutdown()
+
+
+def set_fullscreen(on: bool) -> None:
+    """Full-screen the window on the monitor it occupies, or restore it.
+
+    The monitor's CURRENT video mode is used, so nothing changes resolution
+    and alt-tab stays quick. Idempotent, which matters because the settings
+    pass re-applies every value at boot.
+    """
+    _h.set_fullscreen(bool(on))
+
+
+def fullscreen() -> bool:
+    """True while the window is full-screen."""
+    return bool(_h.fullscreen())
 
 
 def should_close() -> bool:

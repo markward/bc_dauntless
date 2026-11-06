@@ -715,6 +715,58 @@ def _poll_raw_keyboard(host, input_map) -> None:
         suppress=(alt or ctrl or shift), raw_only=True)
 
 
+_fullscreen_chord_prev: bool = False
+
+
+def _poll_fullscreen_chord(host, panel) -> None:
+    """Alt+Enter toggles full screen — production, not a dev keybinding.
+
+    Routed through the Configuration panel's own `toggle:fullscreen` branch
+    rather than calling the renderer directly, so one code path moves all
+    three pieces of state together: the window, the row the player sees, and
+    the persisted value.  A hotkey that changed the window without the other
+    two would leave the panel claiming "Off" over a full-screen window, and
+    the next launch would disagree with the screen the player left.
+
+    NOT a BC binding and not in MODIFIER_CHORDS (which covers ALT/CTRL/Shift
+    × letters, digits and F-keys only), so Enter carries no WC_ALT_ENTER code
+    to collide with.  _poll_raw_keyboard suppresses itself while Alt is held,
+    so this press never also reaches SDK ET_KEYBOARD handlers.
+
+    Enter's code comes from engine.input_map's table, NOT from `host.keys`:
+    the native keys submodule does not export KEY_ENTER (67 names, Enter not
+    among them), so reading it from there is a guaranteed silent no-op — as
+    the first live test of this hotkey proved.  input_map already carries
+    "Enter": 257, host_io.verify_keys pins that table against the host's, and
+    _handle_controls_capture reads its codes the same way.
+
+    Own rising edge off `key_state`, deliberately not `host.key_pressed`:
+    that edge cache is only correct for a key polled every frame, and this
+    one is read only while Alt is down.  The first poll after Alt went down
+    would otherwise report an Enter pressed long before it.
+
+    Two things suppress it, both of which would be stolen keystrokes:
+    _handle_controls_capture is documented as the SOLE consumer of a press
+    while the Controls tab awaits a key, and KeyGate already makes every
+    key_state read False while a CEF text field holds the keyboard.
+
+    A suppressed frame still RECORDS the level.  Clearing it instead would
+    make a chord held across the end of a capture fire the instant capture
+    ended, so one keystroke would both bind a key and toggle the window —
+    the player released nothing, so there is no second press to honour.
+    """
+    global _fullscreen_chord_prev
+    from engine.input_map import GLFW_KEYS
+    enter = GLFW_KEYS["Enter"]
+    alt, _ctrl, _shift = _modifier_state(host)
+    down = alt and bool(host_io.key_state(enter))
+    suppressed = (panel is None
+                  or getattr(panel, "capturing_action", None) is not None)
+    if down and not _fullscreen_chord_prev and not suppressed:
+        panel.dispatch_event("toggle:fullscreen")
+    _fullscreen_chord_prev = down
+
+
 _skip_dialogue_prev: bool = False
 
 
@@ -10851,6 +10903,9 @@ class FrameSimContext:
     cef_send_wheel: Optional[Callable[..., Any]]
     crew_menu_panel: Any
     perf_monitor_panel: Any
+    # Carried only so Alt+Enter can dispatch the Configuration panel's own
+    # toggle:fullscreen branch -- see _poll_fullscreen_chord.
+    configuration_panel: Any
     collisions: Any
     verbose: bool
     tick_dt: float
@@ -11091,6 +11146,12 @@ def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
             player_control=player_control,
             can_throttle=(player is not None and view_mode.is_exterior),
         )
+
+        # Alt+Enter: full screen. Outside the `not pause.is_open` block
+        # below on purpose -- the pause menu is exactly where a player who
+        # just discovered the setting will try the shortcut, and the window
+        # is a host concern, not a simulation one.
+        _poll_fullscreen_chord(_h, ctx.configuration_panel)
 
         if not pause.is_open:
             # Dev-mode keybindings (no-op when --developer is not set).
@@ -12496,6 +12557,7 @@ def run(mission_name: Optional[str] = None,
             on_reset=lambda section: _settings.reset_and_apply_section(
                 _store, _settings_ctx, section),
             set_dust=r.set_dust_enabled,
+            set_fullscreen=r.set_fullscreen,
             set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,
             # Routed through the settings row, not straight at the renderer:
@@ -12951,6 +13013,7 @@ def run(mission_name: Optional[str] = None,
             cef_send_wheel=_cef_send_wheel,
             crew_menu_panel=crew_menu_panel,
             perf_monitor_panel=perf_monitor_panel,
+            configuration_panel=configuration_panel,
             collisions=collisions,
             verbose=verbose,
             tick_dt=TICK_DT,
