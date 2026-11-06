@@ -1,0 +1,2408 @@
+{
+ "frames": [
+  {
+   "frame": 0,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "9425dfef5e9d13c695c003362ca2b754b964d1156f702d48628e68d86ba499b3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 1,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "9425dfef5e9d13c695c003362ca2b754b964d1156f702d48628e68d86ba499b3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 2,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "9425dfef5e9d13c695c003362ca2b754b964d1156f702d48628e68d86ba499b3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 3,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "9425dfef5e9d13c695c003362ca2b754b964d1156f702d48628e68d86ba499b3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 4,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "9425dfef5e9d13c695c003362ca2b754b964d1156f702d48628e68d86ba499b3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 5,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "9425dfef5e9d13c695c003362ca2b754b964d1156f702d48628e68d86ba499b3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 6,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "9425dfef5e9d13c695c003362ca2b754b964d1156f702d48628e68d86ba499b3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 7,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "9425dfef5e9d13c695c003362ca2b754b964d1156f702d48628e68d86ba499b3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 8,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "9425dfef5e9d13c695c003362ca2b754b964d1156f702d48628e68d86ba499b3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 9,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "9425dfef5e9d13c695c003362ca2b754b964d1156f702d48628e68d86ba499b3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 10,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "202aa5c579c7e7aaa546076dc678c9afb224aa30decd1486d6c90917214705dd",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 11,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "202aa5c579c7e7aaa546076dc678c9afb224aa30decd1486d6c90917214705dd",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 12,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "202aa5c579c7e7aaa546076dc678c9afb224aa30decd1486d6c90917214705dd",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 13,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "202aa5c579c7e7aaa546076dc678c9afb224aa30decd1486d6c90917214705dd",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 14,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "202aa5c579c7e7aaa546076dc678c9afb224aa30decd1486d6c90917214705dd",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 15,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "202aa5c579c7e7aaa546076dc678c9afb224aa30decd1486d6c90917214705dd",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 16,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "202aa5c579c7e7aaa546076dc678c9afb224aa30decd1486d6c90917214705dd",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 17,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "202aa5c579c7e7aaa546076dc678c9afb224aa30decd1486d6c90917214705dd",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 18,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "202aa5c579c7e7aaa546076dc678c9afb224aa30decd1486d6c90917214705dd",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 19,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "626df8d9b9e516802539e508e2364542fcfe30803cfb58ef87e7c6396f0438be",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 20,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "83d01ef4f4353d1830c3e8eca750e348d41e5ab8887999e5e89c89255a17103d",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 21,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "83d01ef4f4353d1830c3e8eca750e348d41e5ab8887999e5e89c89255a17103d",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 22,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "2cdced89096ed25b94513bcc078c078ffc0a4255682a8a08765c0055cc8e5fd1",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 23,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "83d01ef4f4353d1830c3e8eca750e348d41e5ab8887999e5e89c89255a17103d",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 24,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "83d01ef4f4353d1830c3e8eca750e348d41e5ab8887999e5e89c89255a17103d",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 25,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "83d01ef4f4353d1830c3e8eca750e348d41e5ab8887999e5e89c89255a17103d",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 26,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "83d01ef4f4353d1830c3e8eca750e348d41e5ab8887999e5e89c89255a17103d",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 27,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "4c21c211238c4f44995610f23316abf705b28e9a285a8249ce330b434942362f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 28,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "4c21c211238c4f44995610f23316abf705b28e9a285a8249ce330b434942362f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 29,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "4c21c211238c4f44995610f23316abf705b28e9a285a8249ce330b434942362f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 30,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "4c21c211238c4f44995610f23316abf705b28e9a285a8249ce330b434942362f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 31,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "4c21c211238c4f44995610f23316abf705b28e9a285a8249ce330b434942362f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 32,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "4c21c211238c4f44995610f23316abf705b28e9a285a8249ce330b434942362f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 33,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "4c21c211238c4f44995610f23316abf705b28e9a285a8249ce330b434942362f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 34,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "d64c974bc18aa517d261aca6582741892a166a179acacda6bc07018e56db142b",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 35,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "d64c974bc18aa517d261aca6582741892a166a179acacda6bc07018e56db142b",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 36,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "d64c974bc18aa517d261aca6582741892a166a179acacda6bc07018e56db142b",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 37,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "d64c974bc18aa517d261aca6582741892a166a179acacda6bc07018e56db142b",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 38,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "d64c974bc18aa517d261aca6582741892a166a179acacda6bc07018e56db142b",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 39,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "d64c974bc18aa517d261aca6582741892a166a179acacda6bc07018e56db142b",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 40,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "d64c974bc18aa517d261aca6582741892a166a179acacda6bc07018e56db142b",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 41,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "3aa11f7b9cb491d1e16699ac25ce390cc1737df7493c6c796dc2051a2ef331bc",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 42,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "3aa11f7b9cb491d1e16699ac25ce390cc1737df7493c6c796dc2051a2ef331bc",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 43,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "3aa11f7b9cb491d1e16699ac25ce390cc1737df7493c6c796dc2051a2ef331bc",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 44,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "3aa11f7b9cb491d1e16699ac25ce390cc1737df7493c6c796dc2051a2ef331bc",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 45,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "3aa11f7b9cb491d1e16699ac25ce390cc1737df7493c6c796dc2051a2ef331bc",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 46,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "3aa11f7b9cb491d1e16699ac25ce390cc1737df7493c6c796dc2051a2ef331bc",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 47,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "3aa11f7b9cb491d1e16699ac25ce390cc1737df7493c6c796dc2051a2ef331bc",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 48,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "a08860ac097591d9a477e260b34636ee6edaf159061ad7f8c7d917139c1938d5",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 49,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "a08860ac097591d9a477e260b34636ee6edaf159061ad7f8c7d917139c1938d5",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 50,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "a08860ac097591d9a477e260b34636ee6edaf159061ad7f8c7d917139c1938d5",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 51,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "a08860ac097591d9a477e260b34636ee6edaf159061ad7f8c7d917139c1938d5",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 52,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "a08860ac097591d9a477e260b34636ee6edaf159061ad7f8c7d917139c1938d5",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 53,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "a08860ac097591d9a477e260b34636ee6edaf159061ad7f8c7d917139c1938d5",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 54,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "a08860ac097591d9a477e260b34636ee6edaf159061ad7f8c7d917139c1938d5",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 55,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "13afcff29269765e2d43497ec21bd6bf4d452c3139a223da7725de6fcea5b78c",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 56,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "13afcff29269765e2d43497ec21bd6bf4d452c3139a223da7725de6fcea5b78c",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 57,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "6e2c8f32ce049c9e5f5c565f9ee9a85840b99102a419a86eb040eeb40ff102ac",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 58,
+   "lights": 0,
+   "phasers": 22,
+   "sha": "a9cd1982090f960c56ef5a72aa4c39e025d9367d1ce42c9729651c18afdf0b3c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 59,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "85c3132936cc3975b48ebe6a455abddaa185da2c5fff0261b975fe393ad4a95a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 60,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "85c3132936cc3975b48ebe6a455abddaa185da2c5fff0261b975fe393ad4a95a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 61,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "85c3132936cc3975b48ebe6a455abddaa185da2c5fff0261b975fe393ad4a95a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 62,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 63,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 64,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 65,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 66,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 67,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 68,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "7dce385aa02497196892f216c7e753b6fa677902370f153b4c21447945ea1e7b",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 69,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 70,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 71,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 72,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 73,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 74,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 75,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "c04a2599abec24dfff117c9b4c42336ea9f28e1592e8ad3884fac3f8e436c5b7",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 76,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 77,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 78,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 79,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 80,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 81,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "df69ff0058c4b58e4bc4b9cf666a759e83f0f4423043cb0a1bfd76fa013c6d5b",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 82,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "03d63312eddfbceac5e18b1d87c122e9d4e963c9b52b9c1b0a2185ae4a543eb6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 83,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "5881d725486aa065efa05aa0f30f166c2ff5650f25b10dfd5c67cf199bdde039",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 84,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "5881d725486aa065efa05aa0f30f166c2ff5650f25b10dfd5c67cf199bdde039",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 85,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "97be8794dbe2adcbefff825aacae9ec57bb8d2c5d9fa4219c0e42d6d4618058e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 86,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "97be8794dbe2adcbefff825aacae9ec57bb8d2c5d9fa4219c0e42d6d4618058e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 87,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "97be8794dbe2adcbefff825aacae9ec57bb8d2c5d9fa4219c0e42d6d4618058e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 88,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "4bf2f50c1ff04eb57db0b517e97e48a2374f0707146c12d773ba78553e9827ba",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 89,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "70d89105bf1525720cd55f215953a13cde06886350e9e6c110151a7440ad56d3",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 90,
+   "lights": 0,
+   "phasers": 20,
+   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 91,
+   "lights": 0,
+   "phasers": 20,
+   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 92,
+   "lights": 0,
+   "phasers": 20,
+   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 93,
+   "lights": 0,
+   "phasers": 20,
+   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 94,
+   "lights": 0,
+   "phasers": 20,
+   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 95,
+   "lights": 0,
+   "phasers": 20,
+   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 96,
+   "lights": 0,
+   "phasers": 20,
+   "sha": "c83674f1350540a5d95ba97efa2a0e361defff259276718af713bc24b8955a40",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 97,
+   "lights": 0,
+   "phasers": 20,
+   "sha": "d98de2e27ee3fa95b7a2ac3a48b1e9676ab052a678a3e66eeaf5965a4e0e1d6a",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 98,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "7fe891b22e35e8f721fd963a5b383cc4bb374edd62f1d68b6403074242368f9e",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 99,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "ce12a74f3ec6d87b03126ea588ce0ba897fe8513950442ffe0444d8c2bccca9f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 100,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "ce12a74f3ec6d87b03126ea588ce0ba897fe8513950442ffe0444d8c2bccca9f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 101,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "ce12a74f3ec6d87b03126ea588ce0ba897fe8513950442ffe0444d8c2bccca9f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 102,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "ce12a74f3ec6d87b03126ea588ce0ba897fe8513950442ffe0444d8c2bccca9f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 103,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "ce12a74f3ec6d87b03126ea588ce0ba897fe8513950442ffe0444d8c2bccca9f",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 104,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "349ee6071a055bd5306923f1f45744a5f769cd5e918dc3d189ed6454f661bfe3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 105,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "349ee6071a055bd5306923f1f45744a5f769cd5e918dc3d189ed6454f661bfe3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 106,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "349ee6071a055bd5306923f1f45744a5f769cd5e918dc3d189ed6454f661bfe3",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 107,
+   "lights": 0,
+   "phasers": 32,
+   "sha": "af9f06b99378ea474369c12ea6f7338c2fc222a851e63e50533012b4f836507a",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 108,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "1ab518282739a683470639058dde969409c5c36813a4ed68d51ded549ea1abec",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 109,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "ea576a655401fd26c2927293cd7cde5c9f3ba171242906952c9bbce0fa268dac",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 110,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "ea576a655401fd26c2927293cd7cde5c9f3ba171242906952c9bbce0fa268dac",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 111,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "e4f463406123193a9b72bce41a6e37f73d29a648ee06dde8998ffc2e21e86375",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 112,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "e4f463406123193a9b72bce41a6e37f73d29a648ee06dde8998ffc2e21e86375",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 113,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "e4f463406123193a9b72bce41a6e37f73d29a648ee06dde8998ffc2e21e86375",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 114,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "e4f463406123193a9b72bce41a6e37f73d29a648ee06dde8998ffc2e21e86375",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 115,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "f59ec067cc602a2b3fb712d434a89ef8640d9344d1f776a9f4c35e025261b58e",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 116,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "f59ec067cc602a2b3fb712d434a89ef8640d9344d1f776a9f4c35e025261b58e",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 117,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "f59ec067cc602a2b3fb712d434a89ef8640d9344d1f776a9f4c35e025261b58e",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 118,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 119,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 120,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 121,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 122,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 123,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 124,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "753372b15a588685450b1df2e978905f41922f6b7eca6bdf42f566c41ad95122",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 125,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 126,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 127,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 128,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 129,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 130,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 131,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "a29e5fdc4e31a62797f0b4b0fa7c328a3135fa996bb556d34b12aabc48a5e954",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 132,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 133,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 134,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 135,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 136,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 137,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 138,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "bf9c205627dba5921105b48ed61be91b65cdfb433108bc13634ae5c8991e82ae",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 139,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 140,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 141,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 142,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 143,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 144,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 145,
+   "lights": 0,
+   "phasers": 34,
+   "sha": "909eb1c225c8b34cf1eb9361901ddc1de875ec336872f22be615cb88af891a83",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 146,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 147,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 148,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 149,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 150,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 151,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 152,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "91c8443c0c0b265d40b27aca2236ce361d3c893d92475c2421e7f1817eaab462",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 153,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "9b019e10aa541062f5c612191626ca82436b5b07de319fbb76c7ec21ccdd16f8",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 154,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "9b019e10aa541062f5c612191626ca82436b5b07de319fbb76c7ec21ccdd16f8",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 155,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "2d0c0b98c7b1bc586051ad0f7253601b180efbdbd472807768f2d3d1acc5c78e",
+   "torps": 0,
+   "tractors": 2
+  },
+  {
+   "frame": 156,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "153bdfb2e808209e4f7d05a8d4530019a003cfbb8658fe869c440634fc439e0a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 157,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "153bdfb2e808209e4f7d05a8d4530019a003cfbb8658fe869c440634fc439e0a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 158,
+   "lights": 0,
+   "phasers": 24,
+   "sha": "153bdfb2e808209e4f7d05a8d4530019a003cfbb8658fe869c440634fc439e0a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 159,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "ccdc20a67b6e5f39a7f6426f4a06d8eb4ab5be24b843a2d028edf028bf137406",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 160,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 161,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 162,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 163,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 164,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 165,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "19e444cf9387afd814e57e62610274fc4ebce4d33e094744e83e7ae66c07d9db",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 166,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "0b8cef27265eddb9f2f7ec50ba059d90f27f71bd1d6b08699a7d79e71cb9b79c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 167,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 168,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 169,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 170,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 171,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 172,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 173,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "e7f54393449ed7e9de64c65a3b696f39686a4ee600aecb12fd686e1c5396139a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 174,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 175,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 176,
+   "lights": 0,
+   "phasers": 30,
+   "sha": "359a8c1c559c03353e60d8777ffc4b12c0856b79120bf94571c9afdc8edccddf",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 177,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 178,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 179,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 180,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "f249cdc443f99143cfecea5e7bae23ed2d00588a26fbeca3df41ff5c598b6a42",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 181,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "c6457f87adbf577c39828375cf5f1f832eb722e012ac3ef4b6cfe3a072b9fb7e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 182,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "c6457f87adbf577c39828375cf5f1f832eb722e012ac3ef4b6cfe3a072b9fb7e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 183,
+   "lights": 0,
+   "phasers": 28,
+   "sha": "82fd6bf6683948beea7d2f6ef9e130bd8708dc7c30c680349ce922df96c9df39",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 184,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "6f6b1c5433a50b59a6c34a6461b446c5277500760ba8ff3e652b7560e02dfd40",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 185,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "6f6b1c5433a50b59a6c34a6461b446c5277500760ba8ff3e652b7560e02dfd40",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 186,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "6f6b1c5433a50b59a6c34a6461b446c5277500760ba8ff3e652b7560e02dfd40",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 187,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "6f6b1c5433a50b59a6c34a6461b446c5277500760ba8ff3e652b7560e02dfd40",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 188,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 189,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 190,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 191,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 192,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 193,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 194,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "4347985424533818586544ff47b918115f86db5cc8ae94ddc5d43d6be582c796",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 195,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "5436556562e6655756e648bee19108ed405495e3046d7c4094271d2f9eb4649e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 196,
+   "lights": 0,
+   "phasers": 26,
+   "sha": "5061326d773b6cdb29b6c98887eab96d8ae85363f6731e17037f508ed08ab634",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 197,
+   "lights": 0,
+   "phasers": 18,
+   "sha": "1639d8cf40f6ce48cdcaa886977f2c941b7af18fd4486b4fe8bfc3955931097c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 198,
+   "lights": 0,
+   "phasers": 18,
+   "sha": "1639d8cf40f6ce48cdcaa886977f2c941b7af18fd4486b4fe8bfc3955931097c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 199,
+   "lights": 0,
+   "phasers": 20,
+   "sha": "0e1b28990f3035382dd2cca7c46db7bddb110ad4a62857e4fdc5912215886c35",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 200,
+   "lights": 0,
+   "phasers": 16,
+   "sha": "c19d97f7736288589f7e1356cd238a2c4694fa68da944bccb6e606c2eb2fda18",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 201,
+   "lights": 0,
+   "phasers": 16,
+   "sha": "c19d97f7736288589f7e1356cd238a2c4694fa68da944bccb6e606c2eb2fda18",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 202,
+   "lights": 0,
+   "phasers": 16,
+   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 203,
+   "lights": 0,
+   "phasers": 16,
+   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 204,
+   "lights": 0,
+   "phasers": 16,
+   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 205,
+   "lights": 0,
+   "phasers": 16,
+   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 206,
+   "lights": 0,
+   "phasers": 16,
+   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 207,
+   "lights": 0,
+   "phasers": 16,
+   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 208,
+   "lights": 0,
+   "phasers": 16,
+   "sha": "42d074fe1d3fcb43457f0e6f9f380a3dd7b44f8d5e2456a451ef66eb3c6f0866",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 209,
+   "lights": 0,
+   "phasers": 16,
+   "sha": "71a5f79c57b50e5453c79b45ff717a4311189f3ce773e7d9ec55a704a3c382e5",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 210,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "1e7dfe4f56d254ea39177440087b080d409b6913f03ca9fce1d514f093ed49cb",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 211,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "1e7dfe4f56d254ea39177440087b080d409b6913f03ca9fce1d514f093ed49cb",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 212,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "1e7dfe4f56d254ea39177440087b080d409b6913f03ca9fce1d514f093ed49cb",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 213,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "1e7dfe4f56d254ea39177440087b080d409b6913f03ca9fce1d514f093ed49cb",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 214,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "1e7dfe4f56d254ea39177440087b080d409b6913f03ca9fce1d514f093ed49cb",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 215,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "1e7dfe4f56d254ea39177440087b080d409b6913f03ca9fce1d514f093ed49cb",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 216,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "ffd8c302aa4d9301d1753503ba8985e24e3f2061d01f8ce70d7347785949ebd6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 217,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "ffd8c302aa4d9301d1753503ba8985e24e3f2061d01f8ce70d7347785949ebd6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 218,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "ffd8c302aa4d9301d1753503ba8985e24e3f2061d01f8ce70d7347785949ebd6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 219,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "ffd8c302aa4d9301d1753503ba8985e24e3f2061d01f8ce70d7347785949ebd6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 220,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "ffd8c302aa4d9301d1753503ba8985e24e3f2061d01f8ce70d7347785949ebd6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 221,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "ffd8c302aa4d9301d1753503ba8985e24e3f2061d01f8ce70d7347785949ebd6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 222,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "ffd8c302aa4d9301d1753503ba8985e24e3f2061d01f8ce70d7347785949ebd6",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 223,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "d7c2c48a2c57be32fc16145cc99bf8b1d83d6a1ec7c73807a8ffaff50a57335a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 224,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "d7c2c48a2c57be32fc16145cc99bf8b1d83d6a1ec7c73807a8ffaff50a57335a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 225,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "d7c2c48a2c57be32fc16145cc99bf8b1d83d6a1ec7c73807a8ffaff50a57335a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 226,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "d7c2c48a2c57be32fc16145cc99bf8b1d83d6a1ec7c73807a8ffaff50a57335a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 227,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "d7c2c48a2c57be32fc16145cc99bf8b1d83d6a1ec7c73807a8ffaff50a57335a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 228,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "d7c2c48a2c57be32fc16145cc99bf8b1d83d6a1ec7c73807a8ffaff50a57335a",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 229,
+   "lights": 0,
+   "phasers": 12,
+   "sha": "ffcd4b1995a8a60d6bc88a4395f621f2f115f2fae1c79d2c2f30ecbce3daa13d",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 230,
+   "lights": 0,
+   "phasers": 12,
+   "sha": "9a4ae27bdd75cb2b25270d535f2efcb4ae7ebc2976a8b0a3f992b3b5ea260515",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 231,
+   "lights": 0,
+   "phasers": 12,
+   "sha": "9a4ae27bdd75cb2b25270d535f2efcb4ae7ebc2976a8b0a3f992b3b5ea260515",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 232,
+   "lights": 0,
+   "phasers": 12,
+   "sha": "9a4ae27bdd75cb2b25270d535f2efcb4ae7ebc2976a8b0a3f992b3b5ea260515",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 233,
+   "lights": 0,
+   "phasers": 12,
+   "sha": "9a4ae27bdd75cb2b25270d535f2efcb4ae7ebc2976a8b0a3f992b3b5ea260515",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 234,
+   "lights": 0,
+   "phasers": 12,
+   "sha": "9a4ae27bdd75cb2b25270d535f2efcb4ae7ebc2976a8b0a3f992b3b5ea260515",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 235,
+   "lights": 0,
+   "phasers": 12,
+   "sha": "9a4ae27bdd75cb2b25270d535f2efcb4ae7ebc2976a8b0a3f992b3b5ea260515",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 236,
+   "lights": 0,
+   "phasers": 12,
+   "sha": "9a4ae27bdd75cb2b25270d535f2efcb4ae7ebc2976a8b0a3f992b3b5ea260515",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 237,
+   "lights": 0,
+   "phasers": 12,
+   "sha": "8dfa02286cf83f00c7960cc0f88f521d07c918e223c5ffee67d72b9d8087398e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 238,
+   "lights": 0,
+   "phasers": 12,
+   "sha": "8dfa02286cf83f00c7960cc0f88f521d07c918e223c5ffee67d72b9d8087398e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 239,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "02d41a67186679434f8b1ae7ac0c0cc53f046330bfbf9156885ae32f792a80a5",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 240,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 241,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 242,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 243,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 244,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 245,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 246,
+   "lights": 0,
+   "phasers": 14,
+   "sha": "5e7b83f5338cfd964e171e8881727a71847712302e5db03d581b12cf22b496f9",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 247,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "2ebca430d72ff0ff7a5461f33e25df5f89a9a8502b12241bbeb51ba7fcbac838",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 248,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "2ebca430d72ff0ff7a5461f33e25df5f89a9a8502b12241bbeb51ba7fcbac838",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 249,
+   "lights": 0,
+   "phasers": 8,
+   "sha": "2218c46f4e7af3dfb8a6c7b4be6a82382e33a7bab80f2e1eecee96d7fd52e9a0",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 250,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 251,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 252,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 253,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 254,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 255,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 256,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 257,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 258,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "e610bf0613983e3347accd0a08d70ccd757c840fcda569c27d78a98006e6f07e",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 259,
+   "lights": 0,
+   "phasers": 10,
+   "sha": "72192abd8ca42391a8beba6823f214e1263b37665ffc8f49f1ee016177f34c44",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 260,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 261,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 262,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 263,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 264,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 265,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 266,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 267,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 268,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 269,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 270,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 271,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 272,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 273,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 274,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 275,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 276,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 277,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 278,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 279,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 280,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 281,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 282,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 283,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 284,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 285,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 286,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 287,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 288,
+   "lights": 0,
+   "phasers": 6,
+   "sha": "0759af0f9ff81755f66b3f9b76ad119a7ccabbd3f25fe7fa5986fe7468f5c66c",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 289,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 290,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 291,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 292,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 293,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 294,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 295,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 296,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 297,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 298,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  },
+  {
+   "frame": 299,
+   "lights": 0,
+   "phasers": 2,
+   "sha": "8c32bf4e79b766b6cc1ed20d036ccf4b01fe97bb1ce9654de71585f2bbac7758",
+   "torps": 0,
+   "tractors": 0
+  }
+ ],
+ "platform": "darwin",
+ "scene": "beam_scene",
+ "schema": 1,
+ "source": "python builders"
+}

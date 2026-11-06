@@ -1,0 +1,16 @@
+{
+ "frames": [
+  {
+   "frame": 0,
+   "lights": 0,
+   "phasers": 0,
+   "sha": "5ab03a57d930356eae84ef09639ab61b5f6bd6d86f0ebe4ce29d707eccdff99a",
+   "torps": 0,
+   "tractors": 4
+  }
+ ],
+ "platform": "darwin",
+ "scene": "beam_regions",
+ "schema": 1,
+ "source": "python builders"
+}

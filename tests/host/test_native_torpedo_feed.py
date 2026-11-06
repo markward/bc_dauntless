@@ -322,7 +322,16 @@ class TorpedoScene(BeamScene):
         frames.reset_render_origin()
 
 
+def _first_torpedo_id(monkeypatch):
+    """Number this scene's torpedoes from 1: `projectiles._next_id` is a
+    process-wide counter, so a torpedo's drawn `id` would otherwise depend
+    on the tests run before (the render goldens record it)."""
+    from engine.appc import projectiles
+    monkeypatch.setattr(projectiles, "_next_id", 1)
+
+
 def _scene_fixture(monkeypatch, host, extended):
+    _first_torpedo_id(monkeypatch)
     scene = _Scene(monkeypatch, host, ON)
     ts = None
     try:
@@ -653,3 +662,212 @@ def test_the_knobs_are_read_per_call(busy_torpedo_scene, monkeypatch):
     assert n1 < n0                       # the shorter cull drops lights
     assert len(l1) <= 40
     assert nc.torpedo_feed_fallbacks == 0
+
+
+# ── Render goldens (phase 6 follow-up 4, Task 1) ────────────────────────────
+#
+# The same scenes as the equality tests above, checked against goldens
+# recorded from the Python builders (tests/helpers/render_golden.py): under
+# UPDATE_RENDER_GOLDEN=1 the frames are the Python builders' and are
+# recorded; otherwise they are the native feeds' and are checked.
+
+from tests.helpers import render_golden  # noqa: E402
+from tests.host.test_native_beam_feed import (  # noqa: E402
+    _record_or_check, golden_beam_frame)
+
+
+def _golden_lights(scene):
+    """The pushed dynamic lights packed as `_lights()` packs them, but an
+    attached light's instance id (index, generation) -- which depends on the
+    instances the host made before this scene -- given as the name of the
+    scene's ship it is (an unattached light: "")."""
+    names = {(iid.index, iid.generation): ship.GetName()
+             for ship, iid in scene.ship_instances.items()}
+    out = []
+    for r in _h.dynamic_lights_debug():
+        iid = (r[9], r[10])
+        if iid == (0, 0):
+            name = ""
+        else:
+            assert iid in names, "a light on no scene ship's instance: %r" % (
+                iid,)
+            name = names[iid]
+        out.append(_pack_light_row(r[:9] + (0, 0)) + _s(name))
+    return out
+
+
+def golden_torpedo_frame(scene):
+    """This frame's torpedoes and lights as a render_golden frame: the
+    Python builders' while recording, else the native feed's (a feed that
+    fell back leaves its sentinels, so the frame differs from the golden)."""
+    if render_golden.recording():
+        torps, _lights_ = _python_feed(scene)
+    else:
+        _ok, torps, _lights_ = _native_feed(scene)
+    return render_golden.frame(torps=torps, lights=_golden_lights(scene))
+
+
+def test_torpedo_scene_matches_the_golden(busy_torpedo_scene):
+    """test_native_torpedo_feed_equals_python_every_frame's 300 frames: the
+    camera eye on 40 frames, off 20, and the reorders at 150, 151 and 220
+    that leave the torpedo table dirty at render time."""
+    from engine import host_loop
+    from engine.appc import projectiles
+    ts = busy_torpedo_scene
+    frames = []
+    for k in range(300):
+        ts.advance()
+        host_loop._note_camera_eye(ts.eye if k % 60 < 40 else None)
+        if k in (150, 151, 220):
+            projectiles._active.reverse()
+        frames.append(golden_torpedo_frame(ts))
+    assert all(t not in projectiles._active for t in ts.expiring)
+    assert sum(len(f["lights"]) for f in frames) > 0
+    _record_or_check("torpedo_scene", frames)
+
+
+def test_torpedo_knobs_match_the_golden(busy_torpedo_scene, monkeypatch):
+    """test_the_knobs_are_read_per_call's two frames: every per-frame knob
+    changed between them."""
+    from engine import host_loop
+    ts = busy_torpedo_scene
+    host_loop._note_camera_eye(ts.eye)
+    frames = []
+    for knobs in ({}, KNOBS):
+        for name, value in knobs.items():
+            monkeypatch.setattr(host_loop, name, value)
+        ts.advance()
+        frames.append(golden_torpedo_frame(ts))
+    assert frames[0] != frames[1]
+    _record_or_check("torpedo_knobs", frames)
+
+
+KNOBS = {"TORPEDO_BRIGHTNESS": 0.7, "_TORPEDO_LIGHT_RADIUS_SCALE": 20.0,
+         "_TORPEDO_LIGHT_INTENSITY": 2.5, "DYN_LIGHT_FADE_START_GU": 10.0,
+         "DYN_LIGHT_CULL_GU": 30.0, "_LIGHT_BUDGET_TORPEDOES": 3,
+         "_LIGHT_CAP": 40}
+
+
+# ── The edge cases: what today's native feeds hand back to Python ───────────
+#
+# One scene, 60 frames: torpedo_scene's projectiles plus beam_scene's opening
+# volley, then three cases, each in its own stretch of frames:
+#
+#   NON_SHIP (frames 10-29): a ship's phasers and tractor lit at a plain
+#     DamageableObject (App.DamageableObject_Create on a model name that is
+#     not a stock asteroid: a DamageableObject, not a ShipClass), through the
+#     real StartFiring. Stopped, and the object removed, at frame 30.
+#   LATE_BUMP (frame 40): a foe's phasers locked on a subsystem of a posed
+#     ship (the K2 differential's posed beat, from frame 30), and the part
+#     generation bumped after the frame's ticks, before the feeds.
+#   BARE (frames 50-59): a torpedo registered without CreateTorpedoModel /
+#     CreateDisruptorModel.
+
+NON_SHIP = range(10, 30)
+LATE_BUMP = 40
+POSE_AT = 30
+BARE_FROM = 50
+EDGE_FRAMES = 60
+
+
+@pytest.fixture
+def edge_scene(monkeypatch, host):
+    _first_torpedo_id(monkeypatch)
+    scene = _Scene(monkeypatch, host, ON)
+    ts = None
+    try:
+        ts = TorpedoScene(scene)
+        ts._open_fire()
+        for _ in range(30):
+            ts.advance()
+        yield ts
+    finally:
+        if ts is not None:
+            ts.close()
+        scene.close()
+
+
+def _lit_at(system, target):
+    return [b for b in system._children
+            if b.__dict__.get("_firing") and b._target is target]
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "today's native feeds hand these cases back to Python: a beam at a "
+    "non-ShipClass target, a part slot stale after a late part-gen bump, a "
+    "torpedo with no visual record (phase 6 follow-up 4 Task 2 answers "
+    "them natively and removes this marker)"))
+def test_edge_cases_match_the_golden(edge_scene):
+    import App
+    from engine.appc import articulation, part_pose, projectiles
+    from engine.appc.objects import DamageableObject
+    from engine.appc.ships import ShipClass
+    from engine.appc.ship_iter import iter_ships
+    from tests.host.test_native_k2_differential import POSED, POSER
+    ts = edge_scene
+    sc = ts.scene
+    shooter = next(s for s in ts.ships if s is not ts.player
+                   and s.GetTractorBeamSystem() is not None
+                   and s.GetPhaserSystem() is not None)
+    posed, poser = sc.ship(POSED), sc.ship(POSER)
+    probe = bare = None
+    seen = {"non_ship_phaser": 0, "non_ship_tractor": 0, "posed_lock": 0,
+            "bare": 0}
+    frames = []
+    for k in range(EDGE_FRAMES):
+        if k == NON_SHIP.start:
+            probe = App.DamageableObject_Create("RenderGoldenProbe")
+            assert type(probe) is DamageableObject
+            assert not isinstance(probe, ShipClass)
+            p = shooter.GetWorldLocation()
+            f = shooter.GetWorldRotation().GetCol(1)
+            sc.set.AddObjectToSet(probe, "RenderGoldenProbe")
+            probe.SetTranslateXYZ(p.x + 5.0 * f.x, p.y + 5.0 * f.y,
+                                  p.z + 5.0 * f.z)
+            tb, ph = shooter.GetTractorBeamSystem(), shooter.GetPhaserSystem()
+            tb.TurnOn()
+            tb.StartFiring(probe, None)
+            ph.TurnOn()
+            ph.SetSingleFire(0)
+            ph.StartFiring(probe)
+        elif k == NON_SHIP.stop:
+            shooter.GetTractorBeamSystem().StopFiring()
+            shooter.GetPhaserSystem().StopFiring()
+            sc.set.RemoveObjectFromSet("RenderGoldenProbe")
+        if k == POSE_AT:
+            articulation.force_part_pose(
+                posed, "probe part",
+                part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0))
+            sc.face(poser, posed)
+            poser.SetTarget(posed)
+            poser.SetTargetSubsystem(posed.GetShields())
+            poser.GetPhaserSystem().StartFiring(posed)
+        if k == BARE_FROM:
+            here = ts.player.GetWorldLocation()
+            bare = TorpedoScene._launch(projectiles.Torpedo(), "Bare",
+                                        (here.x, here.y, here.z + 30.0),
+                                        (0.0, 0.0, 0.0), sc.set)
+            assert bare.__dict__.get("_vis_native") is None
+        ts.advance()
+        if k in NON_SHIP:
+            seen["non_ship_phaser"] += bool(
+                _lit_at(shooter.GetPhaserSystem(), probe))
+            seen["non_ship_tractor"] += bool(
+                _lit_at(shooter.GetTractorBeamSystem(), probe))
+        if k == LATE_BUMP:
+            assert _lit_at(poser.GetPhaserSystem(), posed), \
+                "premise: the poser's phasers are lit at the posed ship"
+            assert poser.GetTargetSubsystem() is posed.GetShields()
+            assert articulation.posed_part_names(posed)
+            seen["posed_lock"] += 1
+            nc.bump_part_gen()
+        if k >= BARE_FROM:
+            seen["bare"] += bare in projectiles._active
+        f = golden_beam_frame(list(iter_ships()), ts.ship_instances)
+        f.update((key, v) for key, v in golden_torpedo_frame(ts).items()
+                 if key in ("torps", "lights"))
+        frames.append(f)
+    assert seen == {"non_ship_phaser": len(NON_SHIP),
+                    "non_ship_tractor": len(NON_SHIP), "posed_lock": 1,
+                    "bare": EDGE_FRAMES - BARE_FROM}, seen
+    _record_or_check("edge_cases", frames)

@@ -1,0 +1,24 @@
+{
+ "frames": [
+  {
+   "frame": 0,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "762eef5a4d6af48a6d6c3cfe17211550bca91ba009c5b3e1e17c3d00e8ca9aed",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 1,
+   "lights": 40,
+   "phasers": 0,
+   "sha": "b7ff25e7a514969a70c29734e0b3737b5c09bcbbe63586a2a46f376f8013188b",
+   "torps": 66,
+   "tractors": 0
+  }
+ ],
+ "platform": "darwin",
+ "scene": "torpedo_knobs",
+ "schema": 1,
+ "source": "python builders"
+}

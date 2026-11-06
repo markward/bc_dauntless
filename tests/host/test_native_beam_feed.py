@@ -307,6 +307,20 @@ class _Coverage:
         return got
 
 
+MANUAL_SEED = 20261106
+
+
+def _manual_aim_beat(scene, k, rng):
+    """Manual Aim on, moved, off: a scripted beat on top of the op stream,
+    `k` ticks into the run."""
+    if k in (20, 160):
+        scene.op(rng, "manual_on")
+    elif k % 7 == 0 and k < 240:
+        scene.op(rng, "manual_move")
+    elif k == 250:
+        scene.op(rng, "manual_off")
+
+
 def test_native_feed_equals_python_every_frame(beam_scene, monkeypatch):
     from engine.appc.ship_iter import iter_ships
     from tests.host.test_native_k2_differential import (
@@ -316,17 +330,10 @@ def test_native_feed_equals_python_every_frame(beam_scene, monkeypatch):
     start = sc.tick
     assert start < POSE_FROM, start
     cov = _Coverage(monkeypatch)
-    manual = random.Random(20261106)
+    manual = random.Random(MANUAL_SEED)
 
     def frame(scene):
-        k = scene.tick - start
-        # Manual Aim on, moved, off: a scripted beat on top of the stream.
-        if k in (20, 160):
-            scene.op(manual, "manual_on")
-        elif k % 7 == 0 and k < 240:
-            scene.op(manual, "manual_move")
-        elif k == 250:
-            scene.op(manual, "manual_off")
+        _manual_aim_beat(scene, scene.tick - start, manual)
         cov.posed = (scene.ship(POSED)
                      if POSE_FROM <= scene.tick < POSE_TO else None)
         ships = list(iter_ships())
@@ -394,13 +401,10 @@ def _tow(shooter_set, sname, sxyz, target_set, tname, txyz):
     return ship, target
 
 
-def test_native_feed_equals_python_across_regions(native_combat_on, regions,
-                                                  far_scene):
-    """far_scene's player 450,000 GU out in an unmapped set (another frame),
-    viewed instead from Ona1 at a non-zero render origin: one tow split
-    from Ona1 to Ona2, one from Ona2 back to Ona1, one into the far set.
-    (native_combat_on: the K2 differential's autouse _hermetic, imported
-    here, resets the switch off.)"""
+def _regions_ships(far_scene):
+    """The across-regions scene: far_scene's player 450,000 GU out in an
+    unmapped set, viewed from Ona1 at a non-zero render origin, and three
+    tows (Ona1 -> Ona2, Ona2 -> Ona1, Ona1 -> the far set). The ships."""
     import App
     from engine.systems import frames
     from tests.helpers.mapped_regions import load_region
@@ -416,7 +420,17 @@ def test_native_feed_equals_python_across_regions(native_combat_on, regions,
     a, _ = _tow(ona1, "A", (0.0, 0.0, 0.0), ona2, "At", (0.0, 50.0, 0.0))
     b, _ = _tow(ona2, "B", (3.0, 1.0, 0.0), ona1, "Bt", (1.0, 40.0, 2.0))
     c, _ = _tow(ona1, "C", (5.0, 0.0, 0.0), far, "Ct", (0.0, 50.0, 0.0))
-    ships = [player, a, b, c]
+    return [player, a, b, c]
+
+
+def test_native_feed_equals_python_across_regions(native_combat_on, regions,
+                                                  far_scene):
+    """far_scene's player 450,000 GU out in an unmapped set (another frame),
+    viewed instead from Ona1 at a non-zero render origin: one tow split
+    from Ona1 to Ona2, one from Ona2 back to Ona1, one into the far set.
+    (native_combat_on: the K2 differential's autouse _hermetic, imported
+    here, resets the switch off.)"""
+    ships = _regions_ships(far_scene)
     want = _python_feed(ships, None)
     # The two pairs in the viewed frame draw; the one in another frame not.
     assert len(want[1]) == 4, want
@@ -534,3 +548,61 @@ def test_the_feed_counts_native_frames_fallbacks_and_stand_downs(
         "stand_downs": dict.fromkeys(
             ("off", "audit", "unsnapped", "instances", "no_host"), 0)}
     assert nc.beam_feed_fallbacks == 0
+
+
+# ── Render goldens (phase 6 follow-up 4, Task 1) ────────────────────────────
+#
+# The same scenes as the equality tests above, checked against goldens
+# recorded from the Python builders (tests/helpers/render_golden.py): under
+# UPDATE_RENDER_GOLDEN=1 the frames are the Python builders' and are
+# recorded; otherwise they are the native feed's and are checked.
+
+from tests.helpers import render_golden  # noqa: E402
+
+
+def golden_beam_frame(ships, ship_instances):
+    """This frame's beams as a render_golden frame: the Python builders'
+    while recording, else the native feed's (a feed that fell back leaves
+    its sentinels, so the frame differs from the golden)."""
+    if render_golden.recording():
+        phasers, tractors = _python_feed(ships, ship_instances)
+    else:
+        _ok, phasers, tractors = _native_feed(ships, ship_instances)
+    return render_golden.frame(phasers=phasers, tractors=tractors)
+
+
+def _record_or_check(scene_name, frames):
+    if render_golden.recording():
+        render_golden.record(scene_name, frames)
+    render_golden.check(scene_name, frames)
+
+
+def test_beam_scene_matches_the_golden(beam_scene):
+    """test_native_feed_equals_python_every_frame's 300 frames: the K2
+    differential's seeded op stream, its posed beat and the Manual Aim
+    beat."""
+    from engine.appc.ship_iter import iter_ships
+    from tests.host.test_native_k2_differential import OPS
+    bs = beam_scene
+    sc = bs.scene
+    start = sc.tick
+    manual = random.Random(MANUAL_SEED)
+    frames = []
+
+    def frame(scene):
+        _manual_aim_beat(scene, scene.tick - start, manual)
+        frames.append(golden_beam_frame(list(iter_ships()),
+                                        bs.ship_instances))
+
+    sc.run(OPS, 1, ticks=start + 300, before_tick=frame)
+    assert len(frames) == 300
+    assert sum(len(f["phasers"]) for f in frames) > 0
+    assert sum(len(f["tractors"]) for f in frames) > 0
+    _record_or_check("beam_scene", frames)
+
+
+def test_beam_regions_match_the_golden(native_combat_on, regions, far_scene):
+    """test_native_feed_equals_python_across_regions' one frame."""
+    ships = _regions_ships(far_scene)
+    frames = [golden_beam_frame(ships, None)]
+    _record_or_check("beam_regions", frames)

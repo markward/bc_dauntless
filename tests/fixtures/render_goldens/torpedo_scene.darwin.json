@@ -1,0 +1,2408 @@
+{
+ "frames": [
+  {
+   "frame": 0,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "762eef5a4d6af48a6d6c3cfe17211550bca91ba009c5b3e1e17c3d00e8ca9aed",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 1,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "21506ef8878ae3ca65ea508aebd16c7d5c57e226342e10ba267a93c194719573",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 2,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "a38db89d5b2697f0dad3019d766e448d378320759feabf6ea1f832cb005d3a9d",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 3,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "b34cce27827519bc06520feed29c714510ea08a85b0e88116004bdca29159daf",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 4,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "05e67e532b632426e621c729858f66ecdbedb158dcaaddaf9f0cec2abc788dd4",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 5,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "0165472d75e8de53e364b917a163efcc70699a263642d69e94659c43d359c26e",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 6,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "01e505e9f16748a98b5b5e93e278bca6b8a6e0feaeae40952af4ffce70d40484",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 7,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "2b31b477f94455522d4efef3d7f0aa439b34fb743c1367b3947b582a47e2f7aa",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 8,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "f7ed2f702ab683aea57d0e45bd7905e15722da5bebc612e8437f1d961e2076e4",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 9,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "c8f7f8ae4c8e5ddf2bb7233649e48ee18b506a39bc0b3960ec3d6410944a00a1",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 10,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "cad02a0a34fb7d5b6830d479be6bc95f5c087b69981aba7b0b322c971baf38c4",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 11,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "897e7d125a81818147ed79194f77a26430e080351f8e96137bdc29871388b421",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 12,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "63da7f4cc7fcf58c9bf622320b41f2a51c219b938e618e0bc2416570061bb468",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 13,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "2612792ea95803fa916b9a656ef04be5b2bfd439320c43e7db2e407713fce7dd",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 14,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "bde76d9bbf49318a4c3a34bf3675aa0076d27fe2898711bfc1bbafe492216393",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 15,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "2066dfb1e532db05b3af95fd87fe245f8b0291e5f96951dd4080562057e15ce0",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 16,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "db7db5d8da518d504c95c88b634a12cb25439ec5364867ee22f260fe056c6fc4",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 17,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "f9906e389258ed10b31cc9751357625642393d11478ffa99ecd2a2e3a3259b06",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 18,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "bce7e79767eca3f339e7c1a4f14eba70f4124029a5b4d32903dda6ed6cfa2d3e",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 19,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "31cd3a5bcd836a1b65bb02305c54cfa80322a66e24cecc891961f63f8aa3aa4c",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 20,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "befd7060c0c91fe8bd7957a9d571d0da7575d9491135bc244aea8c6d33efc4af",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 21,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "c8306666bd7d525589081b318cf206587014731f89b63ecca1c831253e9beff2",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 22,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "499c72cce2dda473d984ab3a1069684673358bf0914d1d3281fcf2e07b974402",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 23,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "1b2b6f28961181b0b280e9d032d0bd34655da2fdd0ed16a7a13abba52cf430af",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 24,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "294188a972a861b16cf5a586de52405061f404c8cb2edcf6f7e4c5ec30bba334",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 25,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "f59d005abfcfc8ef1e398543d3416726296a65a080305ba00cc7c9a51e992501",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 26,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "47962306615fd95a3e4eb103fd91a4d24541fc64ddb9a990917a131b38a7a8a4",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 27,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "f6c1f0a9d9c8985305f1b37b2b07b160607da0ac79e2daa96308d813d7159b70",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 28,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "a6c37592459775dc20a03851800b3f2c187be25de25239b53be776e7cf4d6ae8",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 29,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "07bd7e46d59d4a97b74d3998894b96b814888ea9b32d23d45c135f9b1b2c1826",
+   "torps": 66,
+   "tractors": 0
+  },
+  {
+   "frame": 30,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "f35e5581e304e4969baf0b68de9a1fe4d40ddba7fdaad235db324e92951b1a29",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 31,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "ac64947ccaaad78b5282e03e4bb0bff4f9c2635208a729158295a6b2050c6f57",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 32,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "1a93f5e4ba5e2b3e00a3a41f1f8f7bbef256e4b91be628bb2113380c5640d9e1",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 33,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "eb33c32cd6f5724653195cd6b3c69a2e6cb5fa12c391b9bd41fbd5acd23afcb2",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 34,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "096fda368d9c7b2fc2bc7b699a3def6f5e8db25c166b5572aa452b8ad7d03505",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 35,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "6a7a06d44b1f21099b7dddc389c762bc45396c58f913cbba6aaa92ba34af568a",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 36,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "a8707af5b25187ae163e4224b84591f85cad2c98af25704874bf10ce392396ab",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 37,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "bc02e9836ba812b20746be157df4deb9b313d4407fdf4b54159a381daf02ab2e",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 38,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "61e98ece7094308719dbdbebc61df17e49f5da331656b25a4c1c7da24083866f",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 39,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "1ea3df605f68ce4ccfefb70f58e90be3c6423c8e4dd5bfc122871b4cc6abf816",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 40,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "167f5c4adfe6d8a7642ccafe390ca2100a0adda549dac2adcc85f38e8d210a40",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 41,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "dbeb531641835b81bad4f58dc2c70eb5cd5fa7327f0fe1e76f0bb2454467a3bc",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 42,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "25028c86b1a7af525b470f1730eeaa882e5e67e2deaeb0575b073ecccb4a6cd2",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 43,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "5ce86bc44c11d74d00e573147f2423adb7b584adaf3206f9961a138e9709b6d3",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 44,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "2c68ab930ffbc5cd7d95bee07ad0b757f8b3ab27b8b4bb8bbc4f63285b2e0108",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 45,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "4c76ed04fd0648416253bde2e28895873b28163e2827270c7075233ea407e4ff",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 46,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "dfb5bbc6b6cb4e26d36dc09e6519f25a91a422ca925ee1bc6c58171f44da3ca6",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 47,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "b4d4b6f21ece8ae4f73840b9e9b23fc5f32d69f5f6e473f5bd23b69281a4d33c",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 48,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "101332ddb3a2a27bdbab7ce4244aacb0461989a426cb9c4e52f40870c9698eb7",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 49,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "7e3786d819b314ffcc898b53ead7e1493d7b25dc9e576a1db3ce93e0d156a64e",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 50,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "c2bfd9e1ab579de68fe6a577d654b1adb31a3c7c14b83f2fffca2be27416d483",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 51,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "d9329f0fdbc43350e7251db43e2559dbd74de042d4934f207d7f5d3d8b510693",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 52,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "41519ce20e89fdae9df187ff92d5885175b88e1be2d307e48159cd8cb9b0d15a",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 53,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "7c6255c575345dfbe61220e80af3faa18d5452c9b63bd1a149501946a3c9c954",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 54,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "861def973366320dcc70500e1b05b2b6529c38206ea0e1b65c7a32322aa78b5d",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 55,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "f9523a0842b39ae2f1e5f2466f3e6af56bfec65d3b172311ccc120c189c9df19",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 56,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "a171a3165be4c4f6f82fd00f1515df6c5c01ee9687855f01792a4540d4b2d2c1",
+   "torps": 65,
+   "tractors": 0
+  },
+  {
+   "frame": 57,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "1f7aafbb7ccc9df50bb4c960903fe9fba606b5bcc60ee10cab232facc3bdaa32",
+   "torps": 63,
+   "tractors": 0
+  },
+  {
+   "frame": 58,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "304ff2f53cabbe85d0d3d080a69dc74c264cc7a10ab889949cab0bb82050e8d4",
+   "torps": 62,
+   "tractors": 0
+  },
+  {
+   "frame": 59,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "693138f7ecd8b9ee1027f75d346110e901bf449f781777a3596ee05b1d86dd1c",
+   "torps": 60,
+   "tractors": 0
+  },
+  {
+   "frame": 60,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "cc36e47dfd4fcbfdbc8b8b0816ec33bac82e9056ed49cf3c7502f7fc015c92fb",
+   "torps": 58,
+   "tractors": 0
+  },
+  {
+   "frame": 61,
+   "lights": 64,
+   "phasers": 0,
+   "sha": "dec9fba3e1a0ba487772287ee013911c6774f0a3012f32a6e37bedd1979e42bc",
+   "torps": 57,
+   "tractors": 0
+  },
+  {
+   "frame": 62,
+   "lights": 63,
+   "phasers": 0,
+   "sha": "817edec61acb12298b1e8daa0d976f119fc7f22017bc1f5e302166423080e81b",
+   "torps": 55,
+   "tractors": 0
+  },
+  {
+   "frame": 63,
+   "lights": 61,
+   "phasers": 0,
+   "sha": "7951ff34e8baa5addf181e777143a9480db438c4df0e2a2ad482ea1b82dfaaa9",
+   "torps": 53,
+   "tractors": 0
+  },
+  {
+   "frame": 64,
+   "lights": 60,
+   "phasers": 0,
+   "sha": "0b6ad4127b63e04fc5646442be42dcfda4d5af9e2f9fc0bdb44c5f34ae271158",
+   "torps": 52,
+   "tractors": 0
+  },
+  {
+   "frame": 65,
+   "lights": 58,
+   "phasers": 0,
+   "sha": "0ba3936b959e6fe2f2b37d57f223d8c76d8eaed516d722c817420d8fbca176cb",
+   "torps": 50,
+   "tractors": 0
+  },
+  {
+   "frame": 66,
+   "lights": 56,
+   "phasers": 0,
+   "sha": "21134b7adb074859561c8de8a9e47fcb65c4b41580f92296e4a847cb5219f991",
+   "torps": 48,
+   "tractors": 0
+  },
+  {
+   "frame": 67,
+   "lights": 55,
+   "phasers": 0,
+   "sha": "cec57edf7c5bf8bb98e181becc29f2d70826ac144e419c4e1d9ff321730a27a4",
+   "torps": 47,
+   "tractors": 0
+  },
+  {
+   "frame": 68,
+   "lights": 53,
+   "phasers": 0,
+   "sha": "9d0b7505adb8c4dbbc001ce4e615c8f7b6e67f0229f08cb117691ce2d6c186fe",
+   "torps": 45,
+   "tractors": 0
+  },
+  {
+   "frame": 69,
+   "lights": 51,
+   "phasers": 0,
+   "sha": "08bdac469f2818b29099eb2b36d3700a1d7a2759cce288dbe3c1ff9d6cb60540",
+   "torps": 43,
+   "tractors": 0
+  },
+  {
+   "frame": 70,
+   "lights": 50,
+   "phasers": 0,
+   "sha": "b20fd708bb28a5caf34b2ce5f021704f517ed7e8ec3350e42d36d876db126f50",
+   "torps": 42,
+   "tractors": 0
+  },
+  {
+   "frame": 71,
+   "lights": 48,
+   "phasers": 0,
+   "sha": "0b2d407cd5fb28b0c1aefbdcdccb240e8a298b7b63487296214a5e13cc61a8e9",
+   "torps": 40,
+   "tractors": 0
+  },
+  {
+   "frame": 72,
+   "lights": 46,
+   "phasers": 0,
+   "sha": "c46ff267155f37d8b92263dbf35c13a2be9ffd01bd146cb3ae212c587059157f",
+   "torps": 38,
+   "tractors": 0
+  },
+  {
+   "frame": 73,
+   "lights": 45,
+   "phasers": 0,
+   "sha": "7e395d60b6b6cd4c98b12cdbe9a4075f994a9b4c5eaf3e687901cbf8486b5f87",
+   "torps": 37,
+   "tractors": 0
+  },
+  {
+   "frame": 74,
+   "lights": 43,
+   "phasers": 0,
+   "sha": "db279491c566c08f8a727534fbdac1d36b224ceee3defe8b81767a59c5da0806",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 75,
+   "lights": 43,
+   "phasers": 0,
+   "sha": "ed75dc56c9fdd5cc9837864614a1b9cb48889ee3922e2512c3e9414cd7bb8849",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 76,
+   "lights": 43,
+   "phasers": 0,
+   "sha": "8972d8e3a9dbdaaaadca9b9c1b0b8657db607adce581c0e997b9ad6e4acbeddb",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 77,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "8f882ebd673aa5e7006e42ac754cc0f885f093776848216914f602732e30dc4b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 78,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "588d636412a71339e921e886b90f70f17d6a1e05398ed90366b1a4a9dcbac1fc",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 79,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "e6ebf4e17b1a2c7d1fb0d5e69cfa2870b368b3c8b0dff9beb83a26edcf88327f",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 80,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "10caffe612e64069cd68b253b47cb80fb9749e638a8705b5c11205321f39796c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 81,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "ef4d1b48436fb6c3cfd803700933cb0b0bb6abb85f2bdb8415e855b3392808fb",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 82,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "b3af48548aa12ef8f524d8126d3578875fa5e868d06ae799d63ec7566e5f5b99",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 83,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "d8829b6f2a57b60a881fcb3e9add7a66d3ee2eecc0d180f69999cd6b7a18fc29",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 84,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "01a0520f6cabeda4b21ead3b25bcc25985cb0af7a539d7fcb2b5999873a920a4",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 85,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "79fa9bf8f25e83529a878e2cd85d663916b37b37839d3dfcf0bbf3d288f55ca7",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 86,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "d176d89230f540be82fe75286267f216c408758a3942f3f0720e3a59e21a09bc",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 87,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "ee5c0d7f4d14105fe5ac35bcd18150c7e909ef206fbd280a8166543bdb62cd0a",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 88,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "c503968958cbe9cd870f05b41b45086f8a90e2a25d4a4fc1954bcd82cb8dedf9",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 89,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "5ce5d9fc672a601c92082dc87c684ed2ce3722196eebf9939a8fed030b401742",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 90,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "dd249c25c6bd31127747d9b727ac8ed3cf3e06b88ed33038ca5e5de01d15a58a",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 91,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "e8bb58caa62942b4b260e25761f95824d9a8f48b5e4101fb20779eee2a0313d1",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 92,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "ea4f3da03c9e345e0969aebd9ed7edf0723e74cfd36748de3a513ab682102c2c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 93,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "41fcde9baf23aad0de61c0b960824acf6c1f6effca91cef1082a5c6709363f16",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 94,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "c63d5b9f8a98f2157ae113183f2a36fa334e2c4470eaf5d18a4ce2d1bc97f9ec",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 95,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "b1016fa3ead9d959f0a2bbec4322d540e499cdfc2fabc407a54514b14e6cf9bc",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 96,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "907451c635ee28072b0a2d30a8dc020e55904887eaceb353962a975701227c07",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 97,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "31fc5e9a7e39388db1459fd03b848ecd31f9aa7ad75928b69e4532ef813e0c49",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 98,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "78f0e3c32c26170aa105da4871fdcb519eb1173b32bd6c088db113166917148c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 99,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "fd179ae28e7897a4ce14617dcf6a1883d259cc00e782e131da65197fd6c3b10a",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 100,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "06fa2d96d98138a3d97eaa4bd10b1747f90cdff559b6ac25b4a884fcf2f09b94",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 101,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "be1907d20e54bebe03838af7f3bdc90272f950b3e1de061b184c60b8330ed200",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 102,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "0112a7042072026364c52e53db71b04ce59e2450a9b5df480d3b142357c3d76b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 103,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "88981610656bc1e113096febcae4ce8c5fc857fbb95a1fcab583d0db4fe8c147",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 104,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "8aeefd9ae1e9a8233235dcecf7faf2334208b49f72e27d6387a3a1adec0948ea",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 105,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "0786ad7fceda48e6cb32c893363db1fbe22e4f00ee09437a3fb7114cbd962729",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 106,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "71435980c8dfa7ecebbc7a4611eaffc9b2bfb8a31a359ff8ea64498871129ffe",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 107,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "64f21759c4cd4c68e9801d199f76c053c3dcfc09806cd8312086f93f41242f4a",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 108,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "f89fd60a7dad9ef2d00161414130a1b437f7465e4c87ba1a7f3ee7b61cf1bad1",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 109,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "9b5dff52631d467d62f50a89cedbafac7716e1f2619e2e2fb762b02fdc68acd5",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 110,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "7aab9394c2be2017d3efc7885ae39e61b7f8f3e708f1aa2d8b55b41d3d7176a8",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 111,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "b28fc5690df05eababe59fcce33f13b95532313138f67bbc1d28b558b0943aae",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 112,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "b1935570e622cca27ed384fa15e893a87ee7cd82aa64c6d85b573e7b8d1d533b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 113,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "e310cac61181bd2d59a60598723aec3130e4135e22de2576a33990ecb0b5ce24",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 114,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "3df2300c512052c005c93d4e258147daaeec0b4b0472772febc6b652e8341c5d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 115,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "f742935da133194066a109ca6cb27a32abff18a2b954def2219c33cd63d2e289",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 116,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "5f21d77658e6e84af524e82398e625bb15b31949901c5f02a67ad9a30ce213f4",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 117,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "045d628f5192f677af67268a8462388835eea6083a25f0ba0e7a64159050fc32",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 118,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "9dc92d3e2ce9ae7dcd950e645da08adc0d070c07ff876a1b5acb45b84aa78bb0",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 119,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "1ef05ede8b9c4422e03c216cdd995801a7b43581ff2ad4f2c3e8ee2520d393b3",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 120,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "cb9349a05e1bfb3e77ba61d209543efc72bc6e98d9bf9ba329d48e15d1b7623b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 121,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "d3769caeaa6d3b107c05c098e5591d7171dfa378a25a125b1378949d82ea0b90",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 122,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "01d2645dc02229eb2f5d9e577e15e422702ac5a512be611c4f8d22986c3607b8",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 123,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "ced1aa19a7c350855e23a966281aa3fdc62fa7105e65db7b1d06c22032cb9f59",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 124,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "9cf2a4520d0327807735e58e7e1f89641b745961978cb01f2c24e26f218b240a",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 125,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "08dc64287bca1f009a728722d65cbc116bdd50c9aa7115273e02d8a080e206db",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 126,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "76c1d6f6e3dfc4786a0942ba84c1d67e00134fded87d09f7b76896371ad7edba",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 127,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "c3fb699a001f9e3edabfbc417b5fe6a57b4dd8dafca5aed6eb03fb36222d6052",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 128,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "a9eaf6cea8f3e728dd0fd6633bf1a30ec9b95d13c8596b2164ccafa4f2063b07",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 129,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "bad6019bd1d72e7df5c53f59713d21ed838c2f537b4641593542dd6e8349ae2e",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 130,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "475c9563974d3460b01cc68552cc779954b5c808f760b7710482425f96c9e62b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 131,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "0724bc84823018f208ac9969be0f5af4eacf4f09a61c6d863135fd349045ebd6",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 132,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "a6320f3b4b79ef387fa6273b26c0a83e76a986a0bc517e8062b3fa69cfdfeef8",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 133,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "68a5db77bb40b48989983d053c26429d6a7db540a657883d912d2f3be8dfe2ce",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 134,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "2d3b5551c5157dd2a8f9b9b968717d51be2f7d27f6bc2ed78a8c64a748e47e0d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 135,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "8c06bf7d41674aa49d514e615baae447bc40c2fc1ec1efe40cbcb697f04e6366",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 136,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "a30fc73ca35cbb77a34f467c2e4b1380b437bc243f6f3c5e5b0ab8c64bd485c3",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 137,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "f12667681f58d95c2e071304888971f29622767bc9607988956f6b2d16fa9aab",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 138,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "ed380c41f0a33748c3cd2b95bd3d373c9a16f1296435995db6c93d2f07b4ed08",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 139,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "a6c75705fc519ca76e587a910b271133b91453132a723f857df5c0daebd6caae",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 140,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "55c281f8d354fce81f155693d30906d0e20ad48d1dc258354c5984309153291b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 141,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "b6a9edf84463bbff54a0be1e24657e05f5fc4341d20679c281863490fff6d3a5",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 142,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "b97b4aa5b7ed5246bd5404d6632a5200b008ded720705742fecbcd22b4732f57",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 143,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "464824ac6d2597928f7a849088372c4a59cb5e2eb1901108d5eb0cd59dd1de3a",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 144,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "9bec92ba870f64b82a009a7faf56cf886bce2339ce8ef670ef362f39d6e5f30d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 145,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "3b31596b5c12843ec6bb939acf2d40b6ea791f708667d40850667f7da5cce078",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 146,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "48eb23750936cc41058d5164562fab01a90ac50a62cedaf68655fb103e431d99",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 147,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "75b6729e63834f414522151b7e81492fa38c989b60983e5260f3bcefe609e5a8",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 148,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "84008c39d75f4c6e17a9cca0e9318e9cfedcf9c4c1ccc00801ec6743c42ecc24",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 149,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "9cb6ca6b9f419dad19334933e51d42b5e52fa97e4602c824c62fafef0d483ce8",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 150,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "08e4daf5970a33d0d7489e64e9a9319b1fec4ea8e4e8957788db48f9185caa6c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 151,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "5f2934fd416b537323806720292f060f4e663cb88ffbe56c95c7ef50415aa7b7",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 152,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "288fb36462710aa53f304c8030f97609c631df82ca31393c0b02bab485f4318d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 153,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "8475952066d76c063b33157e291b246c9ad8062aed4201da535a8377c7d4314c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 154,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "ece39967fbcde283c59e0dca1f2abafa399e4c180d7d8e74a527970beb641947",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 155,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "c886457030a7b13f3d540de75f8334f776d8ce190f6e87174f29e0f96e8d989c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 156,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "6ba48aed731dd4ddc302d512e0935bca5b9f944650d95e9087daae9c98b0572c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 157,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "6547c1696f79fe968d7db0757079d2e8b4f5d1360f3f8ca155d0af06dc2aed81",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 158,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "316744fc52f8396e536211e5258a06c34b68ceb7d7d179413a81950f7e6d6d2f",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 159,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "fbd22d5e41897049074094f0a158a1b60a72d2bb80c4d5377260473eeb106771",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 160,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "0dc859c0c80c8d8baf511573856002c9bf70c172b3589f5bc6ce0889698e26f9",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 161,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "db49c416925975555e75d3413f70e2ae5f277be988f204522baf91f07e28a2f1",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 162,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "be19984ff4eab7fcd7e44991bee9e651a9c82083da9e3aa819bd01acb021b207",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 163,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "44e8a8f3a3d3c4582bb6a0473defe5bcbfa62fb3a74d049d190d875e07e110c9",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 164,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "262d9b1520cccce9ee8f0b07bf6a8f4884b95f6fcf0423ba21fa7d2437271a13",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 165,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "c8fdfe7799e7396a9b0f6f1d502b8d3c2f2c7a253b95e8d606c71da78a9264b4",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 166,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "22f01968f02618166af0e1aeebf89d559f617396f11914306019e40cd3d71f0e",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 167,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "f72f7ea1f1df7ea91d4a783187594bbe186e2a861508e4c822ed06dbdf2c030b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 168,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "767de996de31c74733e7580f100266109207f7d97ee639ee0c5eb0b6ca1beef5",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 169,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "01c18d23f19442d35805dfc228cd72f273279ed4500329fa749d5a46702465d3",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 170,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "6c421802109b38431693c9f00e9cbcc368bbe6da3aeb8bfca57312dde964f2be",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 171,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "810caf0d8b4ced0871dfc64cbbe170dc7ff9bb73a61db60ed660b74eb8fc7f54",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 172,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "a74190009eb75d31b69bc2696294cdce77fd74fb713fce0c01b65494749833d9",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 173,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "da0007073bebe928ddd4192783fb14be6d41f65b02db9fcf2d43675295fd4e80",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 174,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "d89d3d378b73c6f5ca3db2b102f6196b4ad499a5032209584bf9f9de87fdb627",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 175,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "76dae6be76d238f96d9b5655fcecfc283ce91377176c665bde55a95b8015789d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 176,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "6ffe90d86f002a40bda7ea399d28383a9b2d93e8ee42b85382185514401473bd",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 177,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "2fbeda25cd863eb313f59c5ab725d248c15d39d67c4a5bed55314a95912e512b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 178,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "22c9e866eb4d9d1c2cb519047503f723cedea1668a5b42cdeda8c18535053d87",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 179,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "6446b2e8112a3e99fad69ee857fd9805e063a07d706871ddbf48a9cb46700553",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 180,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "f44c2866e07833a4ee3ca9e0ac994552357e0795e446d713b9fd9f68287bf1cc",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 181,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "3edf0f00dea6366ad6350b4242cd8fe2dc2d945e711d0edc81add7f884874074",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 182,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "8a9b996abdd6530f6884ec71a1da25c07fc71cc63199a635b466a6578b9cb554",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 183,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "9e0d5e078db4cfc515ed95d7cfd0653b52bdaa8993d68534088f389465d3e27b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 184,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "2378d91eeeb42af20c134a14b19aae3a1f077ba338aa3f268f565369c49c5faf",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 185,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "aed54c79ec206bb56752dcfd96fb92246c8209618d6092fa6a1c2a561aec362f",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 186,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "6ecd59218af8eb1e7a31e9ee21f03c2f5483e04cd812f5037723e3221927805a",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 187,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "a81e9906552aca8384fb8853ab2211f28851406dcd38880b0de332eb337a7468",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 188,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "047e3fbcbe7990620c78cce7dd80336cb430fc424ef1ad269c45007b5716aff4",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 189,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "fa15c06c975d1336dad29e39c32b26c7cbc5d7fe85bfc59f24a6ebd2f1ca7938",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 190,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "6c24937ae66b66f261ed96008b5772341ee0b79ef581969fb82c40d32399f933",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 191,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "d521f2ab547dfb097de01a0d14e969a7d76d01a726ece1c37215f9a545c9db0c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 192,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "04a446de35643ce6e374852e8a6dc2deb6903aed589150da0c2577dd8eb35680",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 193,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "ba7ce187c96305e6317da7a54ccab206d6d780fe7958f219c4fe8abfe2ec9047",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 194,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "6c11026ab6a8d938b63f6739b6c2b18e721e08e4b51cbea7eabb980309d76b59",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 195,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "a4491a4c8be8faef87f97ebe123555566c0eab198513ef7a061600e4739d4b5d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 196,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "f9171f6e9f9a402ef88193440459b5385e6c488e86562526e9cc79b46768efb0",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 197,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "7268b8a66ed5991cc99e01878a42c13d68f835e72287062b37d7b36ffa1d0164",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 198,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "a4fb7c6eb89132b3c17a58ab2bacbf18ff4163035c48c8a3c1fad55779e6af3e",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 199,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "cf03baaa275926e7b6187a4403c76022bbaedc30f8275e8caa2fe9084020edbe",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 200,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "54039529cad3d5ac639d7d080cb836fad3a6275eb0ab443f4297a3603e0207d7",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 201,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "262c3ab16c852f9949df019b4eb05fe99a14d7f61642bd541c6b75cfdc885462",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 202,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "0fffcf392e3d400ddf1a3e028dd44728992450d9bb8106d8a6e31093d67b2751",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 203,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "04d2914dcd442a330938607753a97a4d3b45bbc7bc08a91007c0789e18e17c79",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 204,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "6fe38eb7ad042dc0af91036fd6e0dd19f61a83fcdff21c8c2a58329cf5b237b9",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 205,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "f575d73d78fba7c75b1d69367788903d776255f8db8747cc1f135505e2b449c4",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 206,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "4b017d935ca4d7e025e157614eb076ce97d9381bcf8a8329633812aca8a41d38",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 207,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "c0475feab946ad3319b0560c7be6c21da06b67453bc2d12ddccf0884c5ce6c5d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 208,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "39bb0e53677613a3bf10cd449223ec0d3c5b3171386f8da1bbf5c5256ebc513d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 209,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "a986441d3ae3fcee889b851755ef7ef4a8030022662a3a30b1d5709356716fd3",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 210,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "55b0c556efa8fa149ba6a9e22d931cd7175a116befc2eed5cefc946c04b0a5ac",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 211,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "7a5cb857ed36a0f957d1be3d86b039a9e70aa8e66e620e3ef4d121977b24935c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 212,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "8c1370b779efd7195ee4e85512adf17be96b6e03ba04b74221063b30afe552ea",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 213,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "3df8fcfc30579f391ab8e185250b6b66a15ecb474c9467cbcc3c83a45e603731",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 214,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "c596d49aa4dcff535e9820fc63c08594a1fe8ae217beed318143c926caca50da",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 215,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "8071b75bca85a5b0f893f9335b44318df31209e51a2dfe5db95539aedc131373",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 216,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "cb89c0e6fb01cc15c935e77e82a6689e02d4192716cf9297e65c59cee3cb379e",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 217,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "ff2d36ebc8d56d1fb076c6cb8f0bb075d9cd27f19f5f12e1fff0d9fdde6a11f0",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 218,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "131d62f3a68971e5f9086f18ee109c560e3a9f701d68b84855794f90603eff7b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 219,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "b83888761269f200968938dbdd69ae7ad6f3899763aa6a2e2a7c1e75c208fa47",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 220,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "78942ec2741f54283e19c1f8534a45467529ea6ec8980afb6a82c852e1deda39",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 221,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "419d0fa10039ad3a7c2bdc97f33c2fd7ca13864343566b00d189d28ccc2d8cec",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 222,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "d1c730ae32b3728abdb37d950752a86429bc0e5bd0ae67d994f812c06f2f23fd",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 223,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "21b59033f00f42b0833727639a7c330cb976e9669e60f743db4b62d26eaf312a",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 224,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "630d30df6e332f38d25440b9abf980aabdd9b33c3ce13ecd10859008e66bf364",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 225,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "c83d87b5731fdde290aabc3ebeb533908e64675813c802aab3c07569c2505fad",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 226,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "8ab2c0b33709645f1a779cb13d18ad9600dec563a04493ba3789605db777f388",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 227,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "7ae8b7477245d10e2e6d9620e07a4ecd7442b60f31a15c99063c58b314b19089",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 228,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "6b7f5720b02b5a16b35ec312e823109446daa9d4e3052bfb398d86c1f9d4e237",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 229,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "e8104dd89d7109ba1a7e7d36ad48ef23c253efd0a6d7c74eeda39b085865e815",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 230,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "3f591941be96af267fec531d5572b4b390c286433fe97ec2565fae17f1fc92b6",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 231,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "cb4eb16540a7b308bcd2d4e307d15551d336f1ce4abd64c58d5a8ba7bf37557d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 232,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "53a107de5be8f42370d70fda73b78589b83b6362a2aac9c2e6997e52d3d3265d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 233,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "3b18a4913bde5130eea3612744a0a4d183bf0b1aedf0d1624db2a1b1fd421b67",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 234,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "ab2b07a1d66eb9a470d3a71c4beb6d47a325e996087fe1592452b0cd4415bc11",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 235,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "3b607089498ba792dbd31258432484fa27bb0abf7609c26bc742ae92df593bdd",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 236,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "9b0e41ad46ddbda9fd6354ed4690750071d859eca6f61126d0d7b3acc741f5a6",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 237,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "3a342f8cdc535d40d2dc9af10dd9bc772f4141c06867959ce3f7558ef00d74a5",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 238,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "c0163a85b15c6b652b8e4aa6d61711efcd9bf0a8b328d01b0676c468d8e080b0",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 239,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "d9f3590dbe37d4f81418cf2cc2ce710509951bc6740cd84eec85ea58c2dad40d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 240,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "303df2756b2cb02463b405f1dd5092f593b9dbf77de8aa8ff1842eddcad7af34",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 241,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "a63989ff2978076562048891fc5fd525840856a50fac96c5484c527fcaad0f79",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 242,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "3453b80dece58d7b067ae4b33e6a4b7a157219c3d300d959b1d320c3aa829f71",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 243,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "08ce9f7dcf005e045597eed5ecdf36a8aa1e6a7968a3db6b84729b89e1ec5a05",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 244,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "2606bac104d2265adb083c86c730eda07541ee991cdd60a42a90bcf085db026e",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 245,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "061feda85cc2ca22b439b59bb0b2e261ad13d93e90882a8a742f35a1cbbd20d9",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 246,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "4d4ae1ff7e9cc305bab84a5ec96aecf5c6757cf900312e98caca2561f935c111",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 247,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "284b4badd222c382f4e99b5e4601827f2fd4c6357a6d4e43f5760ff4e51a9174",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 248,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "8f6c9ae015a805dee7e98063a7b318d130a3963deab580fafc4d24a3f67b6650",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 249,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "fa3b71c8224228091aff406d31f248a3587551dec834518628d09883495ccdad",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 250,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "3e8376046e54d3c4696f750611d3a5d2260ef457c27eaea7d4cf6518b13fed72",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 251,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "8c75b6dc8d3e901460eef85a5d82b6a015707cf8c75fb7efd8894ee68c47f899",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 252,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "7e3a9b516b82c798b4036e734a165427c658997d2bc83073bf1c090f4c934802",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 253,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "93122f8b83219a1dbdfa8a8a94ce78f47f49df4f8b9f65d40ee31462808ebc7a",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 254,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "6751f74333190fc2f61129f3bd1945765692900bb74dc5e3f36722421cc85f12",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 255,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "05f03403cb307f7af0ca2d3aa2a45d07e788e37db14a6e8dae90afce6735d901",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 256,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "843734185189a82e4c4e8a508236fe8a218c666550a0aa6ab5f2ef327432e00e",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 257,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "977393afcb26fafa28fc9a2e7c29fbc71a0cacb179991a322aa8bb8b012c1e42",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 258,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "8efbe38838a0491aedfde82aa315a620631135910f260b45409ba9f7f0a8044a",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 259,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "794e8313f0d9e5059c1b31b1bdfd6a0c0ae84df564e3a1ebe9cce62e1f5c7cec",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 260,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "e5be6d4403d852402e0007cc3db9332108cb26cd16a27f8c79781789a7ffc5c0",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 261,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "b0bed1b3b083916b7601c65e269394c4c8aedbdd0725245459566e9df0b47df9",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 262,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "68a1862955b27714c2690de19e890b212796b837a8a3b74e990bef08438a37b5",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 263,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "6975d41e53bee3e3d507290b9753b225f6f00576a0720dae792f11322e04bb1d",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 264,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "6eaa798d03ebd7bc50c193b5d79c2a7ceb1a6021a1b6d0ba93903c8e3d73c541",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 265,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "96e0ab3ba35c3eb2e55518e613b1b0f242f2a9f3d92eed47f25b2208e300e846",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 266,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "92ee8acf5543ba5b8cc71426f38e3536de7061df54634acb32713d42588b5b71",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 267,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "ae42a39bc7667d84b09607e2c2397d0f610a6125f8a030e01d0f9cd1979d35ab",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 268,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "d4868ad1789501401aadb4fc156befd27555580af8ddba2123915cb6119037df",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 269,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "66fffa05129017aa8f09666568a4616cc0fc486e16033a84b98fb8829ed1a687",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 270,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "7351055f4184a84a46776f99376b457cd077f70f5773cbfc2825c69ec0936510",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 271,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "d1ccbf2e24dc7a81384ccb12800cc7524a99ecbfddb0b59812931ad0bf987932",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 272,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "91f9c221b08059191a8a2f434ce7752fc7cd775d8081916c6156d303b4ac154f",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 273,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "f1dc18b1fbc9bebc4a03f32c1a8ff8887743e819874442fe2a41537851d66265",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 274,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "0e20f871ca3342f36ac74bff3094147a9b75ea3c53437652265b44160cf03027",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 275,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "359042dd08474d3c4e686b49b8d210911d775dd59a4b593ac309f74e9f47fc82",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 276,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "7f4f1e9d2ebd2efde31392c27a435af178a6590d318f0caa65973f61d0c31bed",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 277,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "c40324b1f73577a110fd32209b670b42ebd21a20d094b44b63e5ef2acfd62b32",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 278,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "e08f9831ca2c03d5b009336667b2cebfac1a21bbbad513c560ecb7d0204a4f43",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 279,
+   "lights": 42,
+   "phasers": 0,
+   "sha": "3026c3a4fd7bcf28d144605de192c5a3d1f2eef3c7e2f0a6b40a3d0b697c7763",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 280,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "87e23978bb07269f6c499e2503b35671d2a2032babf88ac692a3133d40b81ed8",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 281,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "45bf57646114e31e08a3aa3e493bdb99eb9a647b7ebca46806300314dae44fbb",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 282,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "3d96bbeb2047a52793854ba5a0042ba5fd2a203b185a4690c200b144b6f474c1",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 283,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "7f4723906fa2350bee47b7364aff66fcab291400d735d419b3fc07b235b9c36c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 284,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "8f816ef7f5b832605097bf6e500c70adf13c8021f02998bbff5e823385880e1f",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 285,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "5acba58b947ac88a95230d909db8419ce26664b731d49c8ffa870fb35c7d9332",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 286,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "38f8f6219f3c9d8ac79645f9fb14f6dd31af190bfcac30c671c175592c9bebb7",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 287,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "3573eeed4ef8c8485d35f0b9d4f6d6551862b513dca0f39fb2d2394c6738128f",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 288,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "00f46d2ba62944fd9ad77e22819b2e36a071d4551bbf2a5591bbce17c0dbbf92",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 289,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "882309f1b41d96fd3d9e90b392079995f615e7d7dce9f54aacf872d66bf40291",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 290,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "c4776717852f91a2b5c67003d2fb601b1473f6432b74f17f9cdfb13e3c3d8c5c",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 291,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "0195b092ebcd853af37398f8508b12ab7e983f0c9b741c68ffb27c8bfea05851",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 292,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "c89eda884e3d48ff625af9d04ac0d1c6a6260671a1e88601fda113d88d8ccf54",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 293,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "26c3cfe6b71b3f2baba33b3d8e4709e5a29fc08f514e269b68ab5f43e9ede828",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 294,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "5def93fbe28b7a12e06d0fef35bcbc3361a7ccaded2f6c5edd2657cfbcbe647b",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 295,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "f7eb175c556a1cb2958b33ca0883182895cc2b5d9a3b7f9bf768715ac72ea71e",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 296,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "80d934a24e46a8cb690181b31964a58e5bd02b14cc763848c67a0e77f87c3edb",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 297,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "bcc6fbae8928d0216770da97d0437ae32a741ddbefdbff2ca12fdb24fb803cd5",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 298,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "889d29f3a639de97414a52d769f52705db031c3fbd262cdbd07591befdaf819f",
+   "torps": 35,
+   "tractors": 0
+  },
+  {
+   "frame": 299,
+   "lights": 44,
+   "phasers": 0,
+   "sha": "96ccc9e535e0ba90ed04aa19853786bf00e12f68f5bc100abacb28bb4ce22b80",
+   "torps": 35,
+   "tractors": 0
+  }
+ ],
+ "platform": "darwin",
+ "scene": "torpedo_scene",
+ "schema": 1,
+ "source": "python builders"
+}
