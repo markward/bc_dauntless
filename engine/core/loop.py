@@ -88,6 +88,9 @@ class GameLoop:
         # fires on_complete on the next drain. AI/Python-first ordering.
         with _prof.scope("gl.bridge_chars"):
             _pump_bridge_character_queues()
+        # An officer's waiting line starts as his previous one ends.
+        from engine.appc import crew_speech
+        crew_speech.bus().pump()
         # Per-tick proximity evaluation.  SDK conditions like
         # ConditionInRange register ProximityChecks; the per-tick sweep
         # fires events when objects cross the radius boundary.
