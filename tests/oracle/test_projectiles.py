@@ -319,6 +319,73 @@ def test_t4_reselecting_the_loaded_type_empties_the_tubes(oracle, monkeypatch):
     assert [(k, n) for k, _, n in seen] == [("FIRED", t.GetName()) for t in tubes]
 
 
+def _player_switch(s):
+    """The player's own type switch: the weapons panel's cycle-type button and
+    the tactical command both call weapon_config.cycle_torpedo_type."""
+    from engine.appc import weapon_config
+    weapon_config.cycle_torpedo_type(s.atk)
+
+
+def _stock(ts):
+    return [ts.GetNumAvailableTorpsToType(i) for i in range(ts.GetNumAmmoTypes())]
+
+
+def test_t6_player_switch_empties_every_tube_and_keeps_the_counts(oracle, monkeypatch):
+    """`human_ammoswitch_v2` (a human-flown Sovereign on the original, three
+    switches): the player's switch changes the type, every tube's ready count
+    drops to 0 in the same sample, and the torpedo counts are untouched (200/60
+    before and after; only a launch lowers them). Each emptied round posts its
+    ET_TORPEDO_FIRED with no source, as SetAmmoType's switch does: the capture
+    shows one such row per switch, but OracleHuman drops repeats with the same
+    time, type and source, so it can't count them (the loadout at t=5.04 shows
+    one row for six loaded tubes too)."""
+    s = oracle(attacker="Sovereign", range_gu=100)
+    ts, tubes = _tubes(s)
+    before_type, before_stock = ts.GetAmmoTypeNumber(), _stock(ts)
+    seen = _tube_events(monkeypatch)
+    _player_switch(s)
+    assert ts.GetAmmoTypeNumber() != before_type
+    assert [t.GetNumReady() for t in tubes] == [0] * len(tubes)
+    assert _stock(ts) == before_stock
+    assert [(k, n) for k, _, n in seen] == [("FIRED", t.GetName()) for t in tubes]
+    assert all(src is None for _, src, _ in seen)
+
+
+def test_t6_player_switch_reloads_every_tube_together(oracle, monkeypatch):
+    """`human_ammoswitch_v2` switch 3: the aft tubes were still reloading from
+    their last launch (fired at 252.70 / 253.23, due back about 285), and all
+    six came back together one full reload after the switch (305.85, +32.35 s
+    at the player's power), not at their own time. Here at full normal power
+    the reload is the Sovereign's 40 s."""
+    s = oracle(attacker="Sovereign", range_gu=100)
+    ts, tubes = _tubes(s)
+    tubes[-1].UnloadTorpedo()            # one tube already reloading
+    for _ in s.sample_until(20.0):
+        pass
+    assert tubes[-1].GetNumReady() == 0
+    t0 = s.t
+    _player_switch(s)
+    seen = _tube_events(monkeypatch)
+    back = {}
+    for t, _ in s.sample_until(45.0):
+        for k, _, n in seen:
+            if k == "RELOAD":
+                back.setdefault(n, t - t0)
+    assert sorted(back) == sorted(t.GetName() for t in tubes)
+    for name, dt in back.items():
+        assert dt == pytest.approx(40.0, abs=0.2), name
+
+
+def test_t6_fire_input_while_the_tubes_are_empty_does_nothing(oracle):
+    """`human_ammoswitch_v2` switch 1: eight fire presses between 41.6 and
+    62.2 s, while the new type was still loading, launched nothing; the next
+    launches came once the tubes were back."""
+    s = oracle(attacker="Sovereign", range_gu=57)
+    _player_switch(s)
+    s.fire("torpedo")
+    assert _launches(s, 30.0) == []
+
+
 @pytest.mark.parametrize("attacker", ["Sovereign", "Galaxy"])
 @pytest.mark.parametrize("mode, want", [
     (0, [0.0, 0.667, 1.333, 2.0]),     # Single: one tube at a time

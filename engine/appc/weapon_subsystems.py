@@ -1879,12 +1879,23 @@ class TorpedoSystem(WeaponSystem):
         """Every ready round of every tube out through TorpedoTube.UnloadTorpedo
         (each posts its ET_TORPEDO_FIRED); with `reload_at_once`, the tube is
         then refilled round by round through ReloadTorpedo (each posts its
-        ET_TORPEDO_RELOAD) before the next tube. See SetAmmoType."""
+        ET_TORPEDO_RELOAD) before the next tube. See SetAmmoType.
+
+        A delayed switch also restarts every slot that was already reloading:
+        the new type is ready in all tubes together, one full reload after the
+        switch. Measured on the original with the player's own switch
+        (stbc-oracle human_ammoswitch_v2.json, a human-flown Sovereign): at
+        t=273.50 the aft tubes were 20 s into reloading a photon, and they came
+        back with the four forward tubes at 305.85, not at their own 285."""
         for i in range(self.GetNumWeapons()):
             tube = self.GetWeapon(i)
             unload = getattr(tube, "UnloadTorpedo", None)
             if not callable(unload):
                 continue
+            if not reload_at_once:
+                restart = getattr(tube, "_restart_reloading_slots", None)
+                if callable(restart):
+                    restart(_game_time())
             ready = getattr(tube, "GetNumReady", None)
             n = int(ready()) if callable(ready) else 0
             for _ in range(n):
@@ -1942,6 +1953,15 @@ class TorpedoSystem(WeaponSystem):
             idx = 0
         self._selected_slot = slots[(idx + 1) % len(slots)]
         self._announce_player_type_change(current)
+        # The player's switch (weapons panel, tactical command) unloads like
+        # SetAmmoType's delayed switch. Measured on the original with a
+        # human-flown Sovereign (stbc-oracle human_ammoswitch_v2.json, three
+        # switches): every tube empties, loaded or reloading; the torpedo
+        # counts are untouched (only a launch lowers them); fire input does
+        # nothing until the new type is ready in all tubes together, one full
+        # reload later (32.1-34.3 s there, the tubes' own reload at that
+        # power).
+        self._unload_all_tubes(reload_at_once=False)
 
     def _announce_player_type_change(self, previous_slot) -> None:
         """Post ET_PLAYER_TORPEDO_TYPE_CHANGED so Felix speaks the switch.
@@ -2801,6 +2821,19 @@ class TorpedoTube(Weapon):
                 if native_combat._enabled:
                     self._push_slots()
                 return
+
+    def _restart_reloading_slots(self, now: float) -> None:
+        """Every slot already reloading starts again from zero at `now` (an
+        ammo switch: TorpedoSystem._unload_all_tubes)."""
+        self._ensure_slots()
+        changed = False
+        for i in range(len(self._reload_timers)):
+            if self._reload_timers[i] != _SLOT_LOADED:
+                self._reload_timers[i] = 0.0
+                self._reload_advanced_at[i] = now
+                changed = True
+        if changed and native_combat._enabled:
+            self._push_slots()
 
     def _push_slots(self) -> None:
         """Both slot lists were written in place: push them to the native
