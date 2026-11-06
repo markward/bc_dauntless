@@ -219,6 +219,64 @@ def test_player_helm_records_controller_acceleration():
     assert _accel(player) == want
 
 
+def _helm_after_powered_tick(monkeypatch=None):
+    """A manually flown player after one powered helm tick from rest: its
+    acceleration is the helm's (nonzero)."""
+    from engine.host_loop import _PlayerControl
+    _set_current_game(Game())
+    player = _ship("Player", _set())
+    App.Game_SetCurrentPlayer(player)
+    _arm(ON)
+    pc = _PlayerControl()
+    reader = _Reader()
+    reader.pressed_once.add(reader.keys.KEY_9)
+    pc.apply(player, dt=DT, h=reader)
+    assert _norm(_accel(player)) > 1.0
+    return player, pc, reader
+
+
+def _then_stage_stays_zero(player):
+    """The motion stage (kernel M on) passes the setpoint-less player over:
+    the helm's zero stands."""
+    assert _accel(player) == (0.0, 0.0, 0.0)
+    ship_motion.tick_all_ship_motion(DT)
+    assert _accel(player) == (0.0, 0.0, 0.0)
+
+
+def test_player_helm_engines_out_drift_reports_zero():
+    """The player's pods die mid-acceleration: the helm drifts it on
+    inertia (no law), so its acceleration is zero, not the last thrust."""
+    player, pc, reader = _helm_after_powered_tick()
+    ies = player.GetImpulseEngineSubsystem()
+    for i in range(ies.GetNumChildSubsystems()):
+        ies.GetChildSubsystem(i)._condition = 0.0
+    before = player.GetTranslate()
+    pc.apply(player, dt=DT, h=reader)
+    assert pc._drift_velocity is not None           # really drifting
+    assert player.GetTranslate().x != before.x
+    _then_stage_stays_zero(player)
+
+
+def test_player_helm_warp_override_reports_zero():
+    """The set-to-set warp burst (WarpVFX's speed override) moves the
+    player without the law: zero."""
+    player, pc, reader = _helm_after_powered_tick()
+    pc._warp_speed_override = 5.0
+    pc.apply(player, dt=DT, h=reader)
+    _then_stage_stays_zero(player)
+
+
+def test_player_helm_dash_reports_zero(monkeypatch):
+    """A dash owns the ship (dash.tick flies it): the helm's own frame
+    applies no law, so zero."""
+    from engine.appc import dash
+    player, pc, reader = _helm_after_powered_tick()
+    monkeypatch.setattr(dash, "is_dashing", lambda s: s is player)
+    pc.apply(player, dt=DT, h=reader)
+    assert pc._dash_owned
+    _then_stage_stays_zero(player)
+
+
 # ── No zero write-backs ──────────────────────────────────────────────────────
 
 def test_zero_acceleration_rows_append_no_write():

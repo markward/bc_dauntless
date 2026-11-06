@@ -112,7 +112,7 @@ from engine.appc.ships import ShipClass
 from engine.appc.ship_death import _out_of_action as _oa
 from engine.appc import glow_maps as _glow_maps
 from engine.appc import passive_state, passive_weapons
-from engine.appc.ship_motion import _effective_motion, _cap_keep, _asymptote_step, step_vector_velocity, law_step_vector
+from engine.appc.ship_motion import _effective_motion, _cap_keep, _asymptote_step, step_vector_velocity, law_step_vector, _no_thrust
 from engine.appc.subsystems import (
     _emitter_in_arc,
     _is_offline,
@@ -3434,7 +3434,14 @@ class _PlayerControl:
         # speed (or hold at 0 during align) along the current warp-aligned
         # heading, ignoring throttle/input so the ship can't be steered mid-warp
         # and there's a single motion path (no double-translate).
+        #
+        # Every exit below that moves (or leaves) the player without the
+        # motion law (step_vector_velocity) records no thrust
+        # (ship_motion._no_thrust): the motion stage writes nothing for the
+        # setpoint-less player, so the helm's last law step would otherwise
+        # stand in GetAccelerationTG (FireScript's 0.5*a*t^2 lead).
         if self._warp_speed_override is not None:
+            _no_thrust(player)
             s = float(self._warp_speed_override)
             self._current_speed = s
             if s != 0.0:
@@ -3450,6 +3457,7 @@ class _PlayerControl:
         # nothing -- except full stop, which drops out at rest.
         from engine.appc import dash
         if dash.is_dashing(player):
+            _no_thrust(player)
             self._dash_owned = True
             self._manual_throttle_nudge = False
             if h.key_pressed(self._input_map.code("full_stop")):
@@ -3562,6 +3570,7 @@ class _PlayerControl:
             p = player.GetTranslate()
             player.SetTranslateXYZ(p.x + d.x * dt, p.y + d.y * dt, p.z + d.z * dt)
             player.SetVelocity(TGPoint3(d.x, d.y, d.z))
+            _no_thrust(player)
             return
 
         # ── Powered flight: clear drift, re-seed speed ──────────────────
