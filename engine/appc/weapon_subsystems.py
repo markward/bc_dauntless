@@ -1655,7 +1655,8 @@ class TorpedoSystem(WeaponSystem):
         # torpedo launched by ANY tube on this system.  A fresh system inits
         # to -1000.0 (same convention as TorpedoTube._last_fire_time) so the
         # first shot always passes the 0.5s stagger gate.  Skew-fire tubes
-        # are exempt (TorpedoTube.CanFire checks IsSkewFire() first).
+        # pass it only in the tick of the stamp (the salvo's partners; see
+        # TorpedoTube.CanFire).
         self._last_system_fire_time: float = -1000.0
 
     def StartFiring(self, target=None, offset=None) -> None:
@@ -1991,10 +1992,11 @@ class TorpedoSystem(WeaponSystem):
         disconnected: the intended hook is a vtable-only salvo setter
         (0x0057B1F0) with zero callers anywhere in stbc.exe. Dauntless
         deliberately wires the intended design over the shipped bug: a
-        non-Single chain fans a true simultaneous salvo (skew tubes are
-        exempt from the 0.5s ship-wide stagger — see TorpedoTube.CanFire —
-        so every member of the active chain group launches in the same
-        tick, geometry from each tube's authored Right vector); Single
+        non-Single chain fans a true simultaneous salvo (skew tubes pass
+        the 0.5s ship-wide stagger in the stamping tick — see
+        TorpedoTube.CanFire — so every member of the active chain group
+        launches in the same tick and the next group waits the gate,
+        geometry from each tube's authored Right vector); Single
         restores BC's shipped walk-out.
 
         [0] is BOTH the chainless fallback and the SDK-documented "group of
@@ -2921,8 +2923,11 @@ class TorpedoTube(Weapon):
         every ready tube in the working group in the same tick now only
         launches the first one (it stamps parent._last_system_fire_time; the
         rest fail this gate within the same tick since gameTime delta is 0).
-        Skew-fire tubes are exempt — they're the deliberately-desynced spread
-        pattern, not the ship-wide volley.
+        Skew-fire tubes pass the gate only in the tick of the stamp, so a
+        spread salvo (the active group's skew tubes) launches together and
+        the next salvo waits the gate: measured on the original, Dual fires
+        its pairs 0.65-0.67 s apart and Quad all four at once
+        (stbc-oracle sweep/torp_spread*.json).
 
         The native rule (fire_gates.cc can_fire, M8.6): fire control has no
         Python copy (M3).

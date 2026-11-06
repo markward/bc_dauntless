@@ -213,3 +213,22 @@ def test_t4_ammo_switch_unloads_tubes(oracle):
     s.fire("torpedo")
     launches = _launches(s, 30.0)
     assert launches == [], launches
+
+
+@pytest.mark.parametrize("attacker", ["Sovereign", "Galaxy"])
+@pytest.mark.parametrize("mode, want", [
+    (0, [0.0, 0.667, 1.333, 2.0]),     # Single: one tube at a time
+    (1, [0.0, 0.0, 0.667, 0.667]),     # Dual: a pair together, the next pair later
+    (2, [0.0, 0.0, 0.0, 0.0]),         # Quad: all four together
+])
+def test_t5_spread_salvos_fire_group_by_group(oracle, attacker, mode, want):
+    """`sweep/torp_spread*.json` (Sovereign and Galaxy, chain
+    `0;Single;123;Dual;53;Quad`): the forward tubes' fire times. Single
+    16.13 / 16.78 / 17.45 / 18.12; Dual 28.33 28.33 / 29.00 29.00; Quad 40.22
+    x4 -- a spread salvo launches in one tick and the next waits the
+    ship-wide gate like a single shot."""
+    s = oracle(attacker=attacker, range_gu=120)
+    s.weapon_system("torpedo").SetFiringChainMode(mode)
+    s.fire("torpedo")
+    launches = _launches(s, 3.0)[:4]
+    assert [round(t - launches[0], 3) for t in launches] == pytest.approx(want, abs=0.02)
