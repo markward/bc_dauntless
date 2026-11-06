@@ -60,12 +60,29 @@ class Frames:
         if self.player.finished():
             self.mgr.notify_track_finished()
 
+    def paused_frame(self):
+        """A frame with the sim frozen (the pause menu): no tick, game time
+        stands still, the streams play on and the host pumps the music on
+        real time (host_loop._pump_music_paused)."""
+        from engine import host_loop
+        self._streams(DT)
+        saved = host_loop._music_player
+        host_loop._music_player = self.player
+        try:
+            host_loop._pump_music_paused(DT)
+        finally:
+            host_loop._music_player = saved
+
     def _streams(self, dt):
         self.t += dt
         for key, (s, end) in list(self._ends.items()):
             if self.t >= end and s.playing:
                 s.playing = False
                 del self._ends[key]
+
+    def run_paused(self, seconds):
+        for _ in range(int(round(seconds / DT))):
+            self.paused_frame()
 
     def run(self, seconds, until=None):
         n = int(round(seconds / DT))
