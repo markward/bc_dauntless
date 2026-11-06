@@ -102,6 +102,275 @@ Vec3 law_step_vector(const Vec3& cur, const Vec3& target, double accel,
     return {cur[0] + ex * k, cur[1] + ey * k, cur[2] + ez * k};
 }
 
+// ── The stored turn goal: ShipClass._steer_turn_goal and its helpers ────
+// (engine/appc/ships.py: _frame_rotation, _to_body, _turn_goal_vectors,
+// _turn_rotation, _steer_turn_goal), operation for operation.
+
+// TGPoint3.Cross (math.py:50).
+Vec3 cross(const Vec3& a, const Vec3& b) {
+    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0]};
+}
+
+// TGPoint3.Unitize (math.py:98): in place, the length before; a length of
+// 1e-12 or less leaves the vector as it is.
+double unitize(Vec3& v) {
+    const double n = detail::length(v);
+    if (n > 1e-12) {
+        v[0] /= n;
+        v[1] /= n;
+        v[2] /= n;
+    }
+    return n;
+}
+
+// TGMatrix3.GetCol(i) (math.py:269), R row-major m00..m22.
+Vec3 col(const Mat3& R, int i) { return {R[i], R[3 + i], R[6 + i]}; }
+
+// ships._to_body: R^T . v, each component c.x * v.x + c.y * v.y + c.z * v.z
+// for the column c.
+Vec3 to_body(const Mat3& R, const Vec3& v) {
+    const Vec3 c0 = col(R, 0), c1 = col(R, 1), c2 = col(R, 2);
+    return {c0[0] * v[0] + c0[1] * v[1] + c0[2] * v[2],
+            c1[0] * v[0] + c1[1] * v[1] + c1[2] * v[2],
+            c2[0] * v[0] + c2[1] * v[1] + c2[2] * v[2]};
+}
+
+// `if c > 1.0: c = 1.0 elif c < -1.0: c = -1.0; math.acos(c)` (a NaN passes
+// both compares and acos returns it).
+double clamped_acos(double c) {
+    if (c > 1.0)
+        c = 1.0;
+    else if (c < -1.0)
+        c = -1.0;
+    return std::acos(c);
+}
+
+// Python `a / b` on floats: ZeroDivisionError when b == 0.0 (-0.0 too,
+// whatever a is), which is Python's row to raise.
+double py_div(double a, double b) {
+    if (b == 0.0) to_python(MotionReason::FallBack);
+    return a / b;
+}
+
+// Python `x ** 2` on a float (CPython 3.11 float_pow): a NaN is returned
+// as it is, an infinity as its magnitude, a zero as 0.0, a magnitude of 1
+// as 1.0; otherwise libm pow(|x|, 2.0) (the even exponent drops the sign),
+// and a finite x whose square overflows raises OverflowError: Python's
+// row.
+double py_square(double x) {
+    if (std::isnan(x)) return x;
+    if (std::isinf(x)) return std::fabs(x);
+    if (x == 0.0) return 0.0;
+    const double a = std::fabs(x);
+    if (a == 1.0) return 1.0;
+    const double r = py_pow(a, 2.0);
+    if (std::isinf(r)) to_python(MotionReason::FallBack);
+    return r;
+}
+
+// ships._frame_rotation: the world rotation vector taking the frame
+// (f0, u0) onto (f1, u1). Each m[i][j] is `sum(...)` from the int 0:
+// 0.0 + p0 + p1 + p2, k ascending (a -0.0 first product becomes 0.0).
+Vec3 frame_rotation(const Vec3& f0, const Vec3& u0, const Vec3& f1,
+                    const Vec3& u1) {
+    const Vec3 r0 = cross(f0, u0), r1 = cross(f1, u1);
+    const Vec3* const a0[3] = {&r0, &f0, &u0};
+    const Vec3* const a1[3] = {&r1, &f1, &u1};
+    double m[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            m[i][j] = 0.0 + (*a1[0])[i] * (*a0[0])[j] +
+                      (*a1[1])[i] * (*a0[1])[j] + (*a1[2])[i] * (*a0[2])[j];
+    const double angle =
+        clamped_acos((m[0][0] + m[1][1] + m[2][2] - 1.0) * 0.5);
+    if (angle < 1e-9) return {0.0, 0.0, 0.0};
+    double x = m[2][1] - m[1][2], y = m[0][2] - m[2][0],
+           z = m[1][0] - m[0][1];
+    double n = std::sqrt(x * x + y * y + z * z);
+    if (n < 1e-6) {
+        // angle ~ pi: the axis from the symmetric part, signs from the
+        // largest diagonal. `d.index(max(d))`: the first strict maximum.
+        double d[3];
+        for (int i = 0; i < 3; ++i) d[i] = py_max(0.0, (m[i][i] + 1.0) * 0.5);
+        int i = 0;
+        for (int j = 1; j < 3; ++j)
+            if (d[j] > d[i]) i = j;
+        double ax[3] = {0.0, 0.0, 0.0};
+        ax[i] = std::sqrt(d[i]);
+        for (int j = 0; j < 3; ++j)
+            if (j != i) ax[j] = py_div((m[i][j] + m[j][i]) * 0.25, ax[i]);
+        x = ax[0];
+        y = ax[1];
+        z = ax[2];
+        n = std::sqrt(x * x + y * y + z * z);
+    }
+    const double k = py_div(angle, n);
+    return {x * k, y * k, z * k};
+}
+
+// ShipClass._turn_rotation's world axis-angle vector (av_x, av_y, av_z);
+// its primary and roll angles are not read by the motion step. `R` is the
+// rotation before this tick's spin (GetWorldRotation, for an about-face).
+Vec3 turn_rotation(const Vec3& primary_from, const Vec3& primary_to,
+                   bool has_secondary, const Vec3& secondary_from,
+                   const Vec3& secondary_to, const Mat3& R) {
+    Vec3 pf = primary_from;
+    unitize(pf);
+    Vec3 pt = primary_to;
+    unitize(pt);
+    // 1. Primary alignment.
+    const double primary_angle = clamped_acos(detail::dot(pf, pt));
+    Vec3 axis = cross(pf, pt);
+    const double axis_len = detail::length(axis);
+    if (axis_len < 1e-9) {
+        if (primary_angle < 1e-6) {
+            axis = {0.0, 0.0, 0.0};
+        } else {
+            // About the ship's own up projected off pf, else the world
+            // axes.
+            const Vec3 cu = col(R, 2);
+            const double k = detail::dot(cu, pf);
+            Vec3 candidate{cu[0] - pf[0] * k, cu[1] - pf[1] * k,
+                           cu[2] - pf[2] * k};
+            if (detail::length(candidate) < 1e-6)
+                candidate = cross(pf, {0.0, 0.0, 1.0});
+            if (detail::length(candidate) < 1e-6)
+                candidate = cross(pf, {1.0, 0.0, 0.0});
+            unitize(candidate);
+            axis = candidate;
+        }
+    } else {
+        // axis.Scale(1.0 / axis_len)
+        const double factor = 1.0 / axis_len;
+        axis[0] *= factor;
+        axis[1] *= factor;
+        axis[2] *= factor;
+    }
+    Vec3 av{axis[0] * primary_angle, axis[1] * primary_angle,
+            axis[2] * primary_angle};
+    // 2. Secondary constraint.
+    double sf_len = 0.0, st_len = 0.0;
+    if (has_secondary) {
+        const Vec3& a = secondary_from;
+        const Vec3& b = secondary_to;
+        sf_len = py_pow(py_square(a[0]) + py_square(a[1]) + py_square(a[2]),
+                        0.5);
+        st_len = py_pow(py_square(b[0]) + py_square(b[1]) + py_square(b[2]),
+                        0.5);
+    }
+    if (sf_len > 1e-9 && st_len > 1e-9) {
+        const Vec3& sf = secondary_from;
+        const Vec3& st = secondary_to;
+        const double sk = detail::dot(sf, pt), tk = detail::dot(st, pt);
+        Vec3 sf_proj{sf[0] - pt[0] * sk, sf[1] - pt[1] * sk,
+                     sf[2] - pt[2] * sk};
+        Vec3 st_proj{st[0] - pt[0] * tk, st[1] - pt[1] * tk,
+                     st[2] - pt[2] * tk};
+        const double sf_proj_len = unitize(sf_proj);
+        const double st_proj_len = unitize(st_proj);
+        if (sf_proj_len > 1e-9 && st_proj_len > 1e-9) {
+            double roll_angle = clamped_acos(detail::dot(sf_proj, st_proj));
+            if (detail::dot(cross(sf_proj, st_proj), pt) < 0.0)
+                roll_angle = -roll_angle;
+            const double k0 = detail::dot(sf, pf);
+            Vec3 u0{sf[0] - pf[0] * k0, sf[1] - pf[1] * k0,
+                    sf[2] - pf[2] * k0};
+            if (unitize(u0) > 1e-9) {
+                av = frame_rotation(pf, u0, pt, st_proj);
+            } else {
+                av[0] += pt[0] * roll_angle;
+                av[1] += pt[1] * roll_angle;
+                av[2] += pt[2] * roll_angle;
+            }
+        }
+    }
+    return av;
+}
+
+// The row's goal spec (native_combat.TurnGoalField) is one the kernel
+// steers: [1, p(3)], [2, pf(3), pt(3), 0] or [2, pf(3), pt(3), 1, sf(3),
+// st(3)].
+bool goal_representable(const std::vector<double>& g) {
+    if (g.size() == 4) return g[0] == 1.0;
+    if (g.size() == 8) return g[0] == 2.0 && g[7] == 0.0;
+    if (g.size() == 14) return g[0] == 2.0 && g[7] == 1.0;
+    return false;
+}
+
+// ShipClass._steer_turn_goal(dt, max_aa) for the goal spec `g`: the new
+// angular setpoint (body frame) in `out`, or false when the goal has no
+// vectors left (a "loc" point the ship sits on: Python writes nothing).
+// `here` is GetWorldLocation as Python's step reads it there: after this
+// tick's translate. `R` is the rotation before this tick's spin, `cav` the
+// body rate before this tick's angular law.
+bool steer_turn_goal(const std::vector<double>& g, const Vec3& here,
+                     const Mat3& R, const Vec3& cav, double dt, double max_aa,
+                     Vec3& out) {
+    // _turn_goal_vectors(spec)
+    Vec3 pf, pt, sf{0.0, 0.0, 0.0}, st{0.0, 0.0, 0.0};
+    bool has_secondary = false;
+    if (g[0] == 1.0) {
+        Vec3 d{g[1] - here[0], g[2] - here[1], g[3] - here[2]};
+        if (detail::length(d) < 1e-9) return false;
+        unitize(d);
+        pf = col(R, 1);
+        pt = d;
+    } else {
+        pf = detail::mult_matrix_left(R.data(), {g[1], g[2], g[3]});
+        pt = {g[4], g[5], g[6]};
+        if (g[7] == 1.0) {
+            has_secondary = true;
+            sf = detail::mult_matrix_left(R.data(), {g[8], g[9], g[10]});
+            st = {g[11], g[12], g[13]};
+        }
+    }
+    const Vec3 av = turn_rotation(pf, pt, has_secondary, sf, st, R);
+    // w = R . cav, world
+    const Vec3 w = detail::mult_matrix_left(R.data(), cav);
+    const double theta =
+        py_pow(av[0] * av[0] + av[1] * av[1] + av[2] * av[2], 0.5);
+    double ax, ay, az;
+    if (max_aa == 0.0 || max_aa <= 0.0) {
+        // `not max_aa or max_aa <= 0.0`: the remaining angle per second.
+        ax = av[0] - w[0];
+        ay = av[1] - w[1];
+        az = av[2] - w[2];
+    } else {
+        double ux = 0.0, uy = 0.0, uz = 0.0;
+        if (theta > 1e-9) {
+            ux = av[0] / theta;
+            uy = av[1] / theta;
+            uz = av[2] / theta;
+        }
+        const double w_along = w[0] * ux + w[1] * uy + w[2] * uz;
+        const double tau =
+            (std::sqrt(py_max(0.0, w_along * w_along + 6.0 * max_aa * theta)) -
+             w_along) /
+            max_aa;
+        if (theta < 1e-6 || tau <= dt) {
+            // land: shed what is left
+            ax = py_div(-w[0], dt);
+            ay = py_div(-w[1], dt);
+            az = py_div(-w[2], dt);
+        } else {
+            const double k = py_div(6.0 * theta, tau * tau);
+            ax = k * ux - py_div(4.0 * w[0], tau);
+            ay = k * uy - py_div(4.0 * w[1], tau);
+            az = k * uz - py_div(4.0 * w[2], tau);
+        }
+        const double a = py_pow(ax * ax + ay * ay + az * az, 0.5);
+        if (a > max_aa) {
+            ax = ax * max_aa / a;
+            ay = ay * max_aa / a;
+            az = az * max_aa / a;
+        }
+    }
+    out = to_body(R, {w[0] + ax * kBcImpulseTau, w[1] + ay * kBcImpulseTau,
+                      w[2] + az * kBcImpulseTau});
+    return true;
+}
+
 // One row, computed into locals (commit() writes them).
 struct Plan {
     bool commit = false;  // false: passed over, nothing to write
@@ -391,24 +660,46 @@ Plan plan_step(const Mirror& m, const TransformStore& store, int64_t h,
     w.what |= kVelocity;
 
     // -- Angular: the law on the rate vector --
-    // `steering = goal is not None and av is not None and goal[1] is av`:
-    // a stored turn goal with a setpoint may be steering, which is
-    // ShipClass._steer_turn_goal's to answer (Python).
-    if (o._turn_goal && av_state == 1) to_python(MotionReason::TurnGoal);
-    const int64_t frac_state = o._target_angular_velocity_fraction_state;
+    // `steering = goal is not None and av is not None and goal[1] is av`.
+    // The mirror holds the goal's spec, not whose setpoint goal[1] is: a
+    // stored goal with a setpoint steers, which agrees with Python because
+    // every other writer that rebinds the setpoint to an object clears the
+    // goal (native_combat.TurnGoalField). The steering runs after the
+    // translate (a "loc" goal reads the moved position) and before the
+    // spin, and its setpoint is not capped at MaxAngularVelocity.
+    const std::vector<double>& goal = o._turn_goal;
+    const bool steering = !goal.empty() && av_state == 1;
+    Vec3 av = o._target_angular_velocity_setpoint;
+    int64_t frac_state = o._target_angular_velocity_fraction_state;
+    if (steering) {
+        if (!goal_representable(goal)) to_python(MotionReason::TurnGoal);
+        Vec3 sp;
+        if (steer_turn_goal(goal, p.pos_set ? p.pos : pos, R,
+                            o._current_angular_velocity, dt, max_ang_accel,
+                            sp)) {
+            // `_target_angular_velocity_setpoint = target`, the fraction
+            // None, `goal[1] = target`.
+            av = sp;
+            frac_state = 0;
+            w.setpoint = sp;
+            w.what |= kSteer;
+        }
+    }
     if (frac_state == 2) to_python(MotionReason::Unrepresentable);
     Vec3 tg{0.0, 0.0, 0.0};
     if (frac_state == 1 && has_ang) {
         const Vec3& fr3 = o._target_angular_velocity_fraction;
         tg = {fr3[0] * max_ang_vel, fr3[1] * max_ang_vel, fr3[2] * max_ang_vel};
     } else if (av_state == 1) {
-        tg = o._target_angular_velocity_setpoint;
+        tg = av;
     }
     Vec3 cav = o._current_angular_velocity;
     if (has_ang) {
-        tg[0] = cap_keep(tg[0], cav[0], max_ang_vel);
-        tg[1] = cap_keep(tg[1], cav[1], max_ang_vel);
-        tg[2] = cap_keep(tg[2], cav[2], max_ang_vel);
+        if (!steering) {
+            tg[0] = cap_keep(tg[0], cav[0], max_ang_vel);
+            tg[1] = cap_keep(tg[1], cav[1], max_ang_vel);
+            tg[2] = cap_keep(tg[2], cav[2], max_ang_vel);
+        }
         const double aa =
             max_ang_accel > 0.0 ? max_ang_accel : kFallbackMaxAccel;
         cav = law_step_vector(cav, tg, aa, dt);
@@ -455,6 +746,11 @@ void commit(Mirror& m, TransformStore& store, int64_t h, uint32_t row,
     if (w.what & kAccel)
         m.set_floats(h, Field::_acceleration,
                      {w.accel[0], w.accel[1], w.accel[2]});
+    if (w.what & kSteer) {
+        m.set_fv(h, Field::_target_angular_velocity_setpoint,
+                 {w.setpoint[0], w.setpoint[1], w.setpoint[2]});
+        m.set_fv(h, Field::_target_angular_velocity_fraction, {});
+    }
     writes.push_back(w);
     writes.back().row = row;
 }

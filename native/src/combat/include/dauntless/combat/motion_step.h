@@ -26,9 +26,14 @@
 //   6. else impulse fractions, then every pod out (online <= 0): inertial
 //      drift; else the powered step -- the motion law on the velocity vector
 //      (step_vector_velocity) and on the angular velocity vector
-//      (law_step_vector) -- then the rotation. A row whose stored turn goal
-//      may own its angular setpoint (_turn_goal with a setpoint) stops
-//      PythonRow (TurnGoal): ShipClass._steer_turn_goal is Python's;
+//      (law_step_vector) -- then the rotation. A stored turn goal with a
+//      setpoint (_turn_goal non-empty, the setpoint a point) is steered
+//      between the two, as ShipClass._steer_turn_goal steers it (ported
+//      with _turn_goal_vectors, _turn_rotation, _frame_rotation and
+//      _to_body): a "loc" goal reads the position after this tick's
+//      translate, the rotation before this tick's spin; the new setpoint is
+//      logged (kSteer) and feeds the angular law uncapped. A goal the
+//      mirror cannot represent ([0]) stops PythonRow (TurnGoal);
 //   7. the acceleration is the law's own output (Mark 2026-11-06), not
 //      dv/dt: step_vector_velocity's (v - v0) / dt on the powered step,
 //      zero (_no_thrust) on every other exit but the setpoint-less player
@@ -40,11 +45,13 @@
 // Each row is computed into locals and committed at its end. Anything the
 // kernel cannot answer as Python would -- an unrepresentable input (a
 // point-or-none state 2, a -2 ref, a 6-float setpoint), a Python exception
-// it would raise (math.cos of an infinity, a zero spin rate), a throw from
+// it would raise (math.cos of an infinity, a zero spin rate, the steering's
+// float division by zero or `x ** 2` overflow), a throw from
 // a helper (std::invalid_argument, "answer in Python") -- stops PythonRow at
 // that row with NOTHING of it written. A commit writes the store pose, the
 // mirror's _current_speed, _current_angular_velocity, _velocity,
-// _drift_velocity, _motion_vel and _acceleration, and appends one
+// _drift_velocity, _motion_vel, _acceleration and (steering)
+// _target_angular_velocity_setpoint and _fraction, and appends one
 // MotionWrite carrying exactly the attributes Python would have written
 // (`what`), less an unchanged acceleration; a row with nothing to log
 // (a drifter or an immobile ship whose zero acceleration is held already)
@@ -62,7 +69,7 @@ enum class MotionReason : int32_t {
 };
 enum MotionWhat : uint8_t {
     kSpeed = 1, kAngVel = 2, kVelocity = 4, kDriftSet = 8, kDriftClear = 16,
-    kMotionVel = 32, kAccel = 64
+    kMotionVel = 32, kAccel = 64, kSteer = 128
 };
 
 struct MotionWrite {
@@ -74,6 +81,9 @@ struct MotionWrite {
     Vec3 drift;          // _drift_velocity = TGPoint3(...) (kDriftSet)
     std::array<double, 4> motion_vel;  // _motion_vel = (vx, vy, vz, speed)
     Vec3 accel;          // _acceleration = (ax, ay, az) (kAccel)
+    // _target_angular_velocity_setpoint = TGPoint3(...), the fraction None,
+    // _turn_goal[1] = that same point (kSteer)
+    Vec3 setpoint;
 };
 
 struct MotionResult {

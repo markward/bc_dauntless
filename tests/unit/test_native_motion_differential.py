@@ -10,17 +10,20 @@ SetCondition and SetDisabledPercentage, the engine's TurnOff / TurnOn and
 SetPowerPercentageWanted, SetStatic, SetStationary, SetVelocity and
 SetAngularVelocity in both spaces, a pod's and the engine's `_radiation_out`,
 SetDying, the current player moved between ships, and the motion law's own
-inputs: SetTargetAngularVelocityFraction (the keyboard turn) and
-TurnTowardLocation (a stored turn goal: its rows are Python's, reason
-TurnGoal, until another angular command replaces it). Ships sit both near the
+inputs: SetTargetAngularVelocityFraction (the keyboard turn) and the stored
+turn goals kernel M steers itself (ShipClass._steer_turn_goal):
+TurnTowardLocation (a random point, and one exactly astern: the about-face),
+TurnTowardOrientation (a roll constraint), and TurnDirectionsToDirections
+with and without secondaries. Ships sit both near the
 origin (where a mis-ordered product in the translate survives the add) and
 thousands of GU out; rates are large and small, and the stage's dt is long or
 short, tick by tick, all in the same scene.
 
 Each seed runs fresh with the switch on, then off; the per-tick
 golden_fight._pose_rows + motion_fight.motion_rows, plus each ship's
-`_motion_vel` and commanded `_acceleration`, must be equal, and the native
-arm hands no row to Python but those steering a turn goal.
+`_motion_vel`, commanded `_acceleration`, angular setpoint and whether its
+turn goal still owns it, must be equal, and the native arm hands no row to
+Python at all.
 """
 import random
 
@@ -154,7 +157,7 @@ def _beat(rng, ships, nan_left):
     ship = rng.choice(ships)
     ies = ship.GetImpulseEngineSubsystem()
     pods = _pods(ship)
-    op = rng.randrange(21)
+    op = rng.randrange(25)
     if op in (0, 1, 2):
         ship.SetSpeed(_speed(rng, nan_left), _vec(rng, 2.0),
                       rng.choice((MODEL, WORLD)))
@@ -200,6 +203,20 @@ def _beat(rng, ships, nan_left):
             TGPoint3(frac.x * k, frac.y * k, frac.z * k))
     elif op == 20:
         ship.TurnTowardLocation(_vec(rng, 6000.0))
+    elif op == 21:
+        # Exactly astern: the about-face (the collinear-opposite branch).
+        R = ship.GetWorldRotation()
+        f, p = R.GetCol(1), ship.GetWorldLocation()
+        d = rng.uniform(5.0, 500.0)
+        ship.TurnTowardLocation(TGPoint3(p.x - f.x * d, p.y - f.y * d,
+                                         p.z - f.z * d))
+    elif op == 22:
+        ship.TurnTowardOrientation(_unit(rng), _unit(rng))
+    elif op == 23:
+        ship.TurnDirectionsToDirections(_unit(rng), _unit(rng))
+    elif op == 24:
+        ship.TurnDirectionsToDirections(_unit(rng), _unit(rng),
+                                        _vec(rng, 1.0), _vec(rng, 1.0))
 
 
 def _run(seed, env):
@@ -224,10 +241,23 @@ def _hexes(t):
     return None if t is None else tuple(float(v).hex() for v in t)
 
 
+def _point(p):
+    return None if p is None else _hexes((p.x, p.y, p.z))
+
+
 def _law_rows(ships):
-    """The motion law's state the motion rows do not carry."""
-    return [["law", s.GetName(), _hexes(s.__dict__.get("_motion_vel")),
-             _hexes(s.__dict__.get("_acceleration"))] for s in ships]
+    """The motion law's state the motion rows do not carry: the velocity
+    vector, the commanded acceleration, the angular setpoint, and whether
+    the stored turn goal still owns it (``goal[1] is setpoint``)."""
+    rows = []
+    for s in ships:
+        d = s.__dict__
+        av = d.get("_target_angular_velocity_setpoint")
+        goal = d.get("_turn_goal")
+        rows.append(["law", s.GetName(), _hexes(d.get("_motion_vel")),
+                     _hexes(d.get("_acceleration")), _point(av),
+                     goal is not None, goal is not None and goal[1] is av])
+    return rows
 
 
 def _first_difference(a, b):
@@ -240,13 +270,14 @@ def _first_difference(a, b):
 
 
 def test_native_equals_python_on_random_scripted_ships():
-    totals = {"native_calls": 0, "warp_rows": 0, "turn_goal_rows": 0}
+    totals = {"native_calls": 0, "warp_rows": 0, "turn_goal_rows": 0,
+              "steered": 0}
     for seed in SEEDS:
         native, counts = _run(seed, {})
         python, p_counts = _run(seed, {"DAUNTLESS_NATIVE_MOTION": "0"})
         assert p_counts["native_calls"] == 0
         assert native == python, (seed, _first_difference(native, python))
-        assert set(counts["python_rows"]) <= {"TurnGoal"}, (seed, counts)
+        assert counts["python_rows"] == {}, (seed, counts)
         assert counts["patched_stages"] == 0, (seed, counts)
         # One call a tick, and one more after each row handed to Python.
         assert counts["native_calls"] == TICKS + sum(
@@ -256,7 +287,12 @@ def test_native_equals_python_on_random_scripted_ships():
         totals["native_calls"] += counts["native_calls"]
         totals["warp_rows"] += counts["warp_rows"]
         totals["turn_goal_rows"] += counts["python_rows"].get("TurnGoal", 0)
+        # Ship-ticks a turn goal owned the setpoint at the end of.
+        totals["steered"] += sum(1 for tick in native for r in tick
+                                 if r[0] == "law" and r[-1])
     print("differential:", len(SEEDS), "seeds x", TICKS, "ticks x", SHIPS,
           "ships;", totals)
-    # Both kinds of row ran: kernel M's and the turn goals handed back.
-    assert totals["turn_goal_rows"] > 0
+    # Kernel M steered the turn goals itself: none was handed back, and
+    # plenty were steered.
+    assert totals["turn_goal_rows"] == 0
+    assert totals["steered"] > 0

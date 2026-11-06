@@ -123,13 +123,13 @@ class ShipClass(DamageableObject):
     # The motion law's state (ship_motion.step_vector_velocity, the angular
     # law): the velocity vector, `(vx, vy, vz, speed)` or None; its
     # commanded acceleration, `(ax, ay, az)` or None (GetAccelerationTG);
-    # the keyboard turn fraction; and whether a turn goal is stored (kernel
-    # M hands a row steering one to Python).
+    # the keyboard turn fraction; and the stored turn goal's spec (kernel M
+    # steers it: native_combat.TurnGoalField).
     _motion_vel = native_combat.MotionVelField()
     _acceleration = native_combat.AccelerationField()
     _target_angular_velocity_fraction = native_combat.NativeField(
         native_combat.POINT_OR_NONE)
-    _turn_goal = native_combat.PresenceField()
+    _turn_goal = native_combat.TurnGoalField()
     _stationary = native_combat.NativeField(bool)
     _insystem_warp_transit = native_combat.PresenceField()
 
@@ -518,6 +518,11 @@ class ShipClass(DamageableObject):
         # Zero-speed setpoint (model-forward dir) so the integrator holds at 0.
         self._speed_setpoint = (0.0, TGPoint3(0.0, 1.0, 0.0), 0)
         self._target_angular_velocity_setpoint = TGPoint3(0.0, 0.0, 0.0)
+        # The fresh setpoint is no goal's: a stored turn goal can never own
+        # it again (ship_motion steers only while `goal[1] is` the setpoint),
+        # so it ends here, as every other angular command ends it -- and
+        # kernel M, which steers any stored goal with a setpoint, agrees.
+        self._turn_goal = None
         self._end_in_system_warp("stopped")     # see SetAI
 
     # ── Pure-math kinematic helpers ──────────────────────────────────────────

@@ -22,6 +22,10 @@ struct Names {
     PyObject* cav;
     PyObject* motion_vel;
     PyObject* accel;
+    PyObject* setpoint;
+    PyObject* fraction;
+    PyObject* turn_goal;
+    PyObject* one;
     PyObject* x;
     PyObject* y;
     PyObject* z;
@@ -45,12 +49,19 @@ const Names* names() {
     t->cav = PyUnicode_InternFromString("_current_angular_velocity");
     t->motion_vel = PyUnicode_InternFromString("_motion_vel");
     t->accel = PyUnicode_InternFromString("_acceleration");
+    t->setpoint =
+        PyUnicode_InternFromString("_target_angular_velocity_setpoint");
+    t->fraction =
+        PyUnicode_InternFromString("_target_angular_velocity_fraction");
+    t->turn_goal = PyUnicode_InternFromString("_turn_goal");
+    t->one = PyLong_FromLong(1);
     t->x = PyUnicode_InternFromString("x");
     t->y = PyUnicode_InternFromString("y");
     t->z = PyUnicode_InternFromString("z");
     t->tgpoint3 = cls;
     for (PyObject* o : {t->dict, t->drift, t->speed, t->velocity, t->cav,
-                        t->motion_vel, t->accel, t->x, t->y, t->z}) {
+                        t->motion_vel, t->accel, t->setpoint, t->fraction,
+                        t->turn_goal, t->one, t->x, t->y, t->z}) {
         if (o == nullptr) {
             Py_DECREF(cls);
             delete t;  // the interned strings are immortal enough: leaked
@@ -108,6 +119,26 @@ bool store_cav(const Names* n, PyObject* ship, const cb::Vec3& cav) {
     return ok;
 }
 
+// native_motion._store_steer: `sp = TGPoint3(*setpoint)`, then
+// `__dict__["_target_angular_velocity_setpoint"] = sp`,
+// `__dict__["_target_angular_velocity_fraction"] = None` and
+// `__dict__["_turn_goal"][1] = sp`, stopping at the first that raises.
+bool store_steer(const Names* n, PyObject* ship, const cb::Vec3& setpoint) {
+    PyObject* sp = point(n, setpoint);
+    if (sp == nullptr) return false;
+    PyObject* d = PyObject_GetAttr(ship, n->dict);
+    bool ok = d != nullptr && PyObject_SetItem(d, n->setpoint, sp) == 0 &&
+              PyObject_SetItem(d, n->fraction, Py_None) == 0;
+    if (ok) {
+        PyObject* goal = PyObject_GetItem(d, n->turn_goal);
+        ok = goal != nullptr && PyObject_SetItem(goal, n->one, sp) == 0;
+        Py_XDECREF(goal);
+    }
+    Py_XDECREF(d);
+    Py_DECREF(sp);
+    return ok;
+}
+
 }  // namespace
 
 bool apply_motion_writes(PyObject* ships,
@@ -154,6 +185,8 @@ bool apply_motion_writes(PyObject* ships,
                 failed();
         if (x.what & cb::kVelocity)
             if (!store(n, ship, n->velocity, point(n, x.velocity))) failed();
+        if (x.what & cb::kSteer)
+            if (!store_steer(n, ship, x.setpoint)) failed();
         if (x.what & cb::kAngVel)
             if (!store_cav(n, ship, x.cav)) failed();
         if (x.what & cb::kAccel)

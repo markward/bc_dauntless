@@ -325,12 +325,60 @@ TEST(MotionStep, VelocityVectorLaw) {
     const std::vector<double> mv = w.m.get_floats(a, Field::_motion_vel);
     ASSERT_EQ(mv.size(), 4u);
     EXPECT_EQ(mv[0], x.velocity[0]);
-    // A turn goal steering the setpoint is Python's, nothing written.
-    w.m.set_i(a, Field::_turn_goal, 1);
+    // A turn goal the mirror cannot represent is Python's, nothing written.
+    w.m.set_floats(a, Field::_turn_goal, {0.0});
     const MotionResult g = w.step({a});
     EXPECT_EQ(g.stop, MotionStop::PythonRow);
     EXPECT_EQ(g.reason, MotionReason::TurnGoal);
     EXPECT_TRUE(g.writes.empty());
+}
+
+// A stored TurnTowardLocation goal is steered natively (ShipClass.
+// _steer_turn_goal): a Galaxy-like row (MaxAngularAccel 0.12) at rest at the
+// origin, nose +y, the point 90 degrees to starboard. The committed setpoint
+// is Python's for the same inputs, produced by (one-off, 2026-11-06):
+//   ship = ShipClass(); ship.SetTranslateXYZ(0, 0, 0)
+//   ies = ImpulseEngineSubsystem("IES"); ies.SetMaxSpeed(6.3)
+//   ies.SetMaxAccel(1.5); ies.SetMaxAngularVelocity(0.28)
+//   ies.SetMaxAngularAccel(0.12); ship.SetImpulseEngineSubsystem(ies)
+//   ship._speed_setpoint = (0.0, TGPoint3(0, 1, 0), 0)
+//   ship.TurnTowardLocation(TGPoint3(100, 0, 0))
+//   ship_motion._step_ship_motion(ship, 1 / 60)
+//   [v.hex() for v in (sp.x, sp.y, sp.z)]   # sp: the setpoint after
+// -> 0x0.0p+0 0x0.0p+0 -0x1.eb851eb851eb6p-4 (a yaw to starboard: w + a *
+// BC_IMPULSE_TAU with the planned acceleration held at MaxAngularAccel).
+TEST(MotionStep, SteersLocGoalFromRest) {
+    World w;
+    const int64_t a = w.ship();
+    const int64_t ies = w.m.register_row(Kind::Subsystem);
+    w.m.set_i(ies, Field::motion_ies_stock, 1);
+    w.m.set_i(ies, Field::_is_on, 1);
+    w.m.set_f(ies, Field::_power_percentage_wanted, 1.0);
+    w.m.set_f(ies, Field::_max_condition, 100.0);
+    w.m.set_f(ies, Field::_condition, 100.0);
+    w.m.set_f(ies, Field::_max_speed, 6.3);
+    w.m.set_f(ies, Field::_max_accel, 1.5);
+    w.m.set_f(ies, Field::_max_angular_velocity, 0.28);
+    w.m.set_f(ies, Field::_max_angular_accel, 0.12);
+    w.m.set_ref(a, Field::_impulse_engine_subsystem, ies);
+    w.setpoints(a, 0.0);
+    w.m.set_floats(a, Field::_turn_goal, {1.0, 100.0, 0.0, 0.0});
+    const MotionResult r = w.step({a});
+    ASSERT_EQ(r.stop, MotionStop::Done);
+    ASSERT_EQ(r.writes.size(), 1u);
+    const MotionWrite& x = r.writes[0];
+    EXPECT_TRUE(x.what & kSteer);
+    const Vec3 want{0.0, 0.0, -0x1.eb851eb851eb6p-4};
+    EXPECT_EQ(x.setpoint, want);
+    const ObjectRow& o = *w.m.object(a);
+    EXPECT_EQ(o._target_angular_velocity_setpoint, want);
+    EXPECT_EQ(o._target_angular_velocity_setpoint_state, 1);
+    EXPECT_EQ(o._target_angular_velocity_fraction_state, 0);
+    // The angular law steps toward it uncapped: -0.12 * dt this tick.
+    EXPECT_EQ(x.cav[2], -0x1.0624dd2f1a9fbp-9);
+    // The goal itself is unchanged (it is the spec, not its setpoint).
+    EXPECT_EQ(w.m.get_floats(a, Field::_turn_goal),
+              (std::vector<double>{1.0, 100.0, 0.0, 0.0}));
 }
 
 // The acceleration is the law's own step / dt, written back only when it

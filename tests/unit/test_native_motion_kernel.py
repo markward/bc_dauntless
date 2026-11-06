@@ -132,7 +132,21 @@ def _state(ship):
         "_drift_velocity": _vec(d.get("_drift_velocity")),
         "_motion_vel": _floats(d.get("_motion_vel")),
         "_acceleration": _floats(d.get("_acceleration")),
+        "_target_angular_velocity_setpoint": _vec(
+            d.get("_target_angular_velocity_setpoint")),
+        "_target_angular_velocity_fraction": _vec(
+            d.get("_target_angular_velocity_fraction")),
+        "goal_owns_setpoint": _goal_owns(d),
     }
+
+
+def _goal_owns(d):
+    """`goal[1] is av`: the stored turn goal still owns the setpoint (it
+    steers it), or None with no goal."""
+    goal = d.get("_turn_goal")
+    if goal is None:
+        return None
+    return goal[1] is d.get("_target_angular_velocity_setpoint")
 
 
 def _floats(t):
@@ -159,13 +173,18 @@ class _Snap:
         self.motion_vel = d.get("_motion_vel")
         self.has_accel = "_acceleration" in d
         self.accel = d.get("_acceleration")
+        self.av = d.get("_target_angular_velocity_setpoint")
+        self.frac = d.get("_target_angular_velocity_fraction")
+        self.goal = d.get("_turn_goal")
+        self.goal_owner = None if self.goal is None else self.goal[1]
         self.state = _state(ship)
 
     def objects(self):
         d = self.ship.__dict__
         return (d["_current_angular_velocity"] is self.cav,
                 d["_velocity"] is self.vel,
-                d.get("_drift_velocity") is self.drift)
+                d.get("_drift_velocity") is self.drift,
+                d.get("_target_angular_velocity_setpoint") is self.av)
 
     def restore(self):
         s = self.ship
@@ -185,6 +204,13 @@ class _Snap:
             s._acceleration = self.accel
         else:
             s.__dict__.pop("_acceleration", None)
+        # The goal list itself is the same object; its owned setpoint is
+        # put back in place (a steer rebinds only goal[1]).
+        s._target_angular_velocity_setpoint = self.av
+        s._target_angular_velocity_fraction = self.frac
+        if self.goal is not None:
+            self.goal[1] = self.goal_owner
+        s._turn_goal = self.goal
         assert _state(s) == self.state
 
 
@@ -209,8 +235,12 @@ def _assert_mirror(ship):
     want_acc = d.get("_acceleration")
     assert [_hx(v) for v in row["_acceleration"]] == (
         [] if want_acc is None else [_hx(v) for v in want_acc])
+    goal = [_hx(v) for v in row["_turn_goal"]]
+    assert goal == [_hx(v) for v in vars(ShipClass)["_turn_goal"]._encode(
+        d.get("_turn_goal"))]
     for name in ("_current_angular_velocity", "_velocity",
-                 "_drift_velocity"):
+                 "_drift_velocity", "_target_angular_velocity_setpoint",
+                 "_target_angular_velocity_fraction"):
         got = row[name]
         got = None if got is None else tuple(_hx(v) for v in got)
         want = d.get(name)
@@ -362,22 +392,142 @@ def test_keyboard_turn_fraction_of_the_live_rate():
     assert cav.x > 0.0 > cav.z
 
 
-def test_a_turn_goal_row_is_pythons():
-    """A stored turn goal steers in Python (ShipClass._steer_turn_goal):
-    the row stops TurnGoal with nothing written; another angular command
-    ends the goal and the kernel flies the row again."""
+def _steering(ship):
+    """The kernel steers this row's goal: every tick logs K_STEER."""
+    return ship.__dict__["_turn_goal"][1] is \
+        ship.__dict__["_target_angular_velocity_setpoint"]
+
+
+def test_a_loc_goal_is_steered_natively():
+    """A stored TurnTowardLocation goal is the kernel's (kernel M ports
+    ShipClass._steer_turn_goal): each tick re-plans the setpoint, written
+    as K_STEER, bit-exact with Python's step -- at speed, so the direction
+    to the point is re-taken from the moved ship."""
     ship, _ies = _ship()
     ship.SetSpeed(3.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
     ship.TurnTowardLocation(TGPoint3(100.0, 0.0, 0.0))
-    assert _h.combat_dump(_slot(ship))["_turn_goal"] == 1
+    assert _h.combat_dump(_slot(ship))["_turn_goal"] == [1.0, 100.0, 0.0,
+                                                         0.0]
+    log = _differential([ship], ticks=240)
+    assert all(w[1] & nm.K_STEER for writes in log for w in writes)
+    assert _steering(ship)
+    # Another angular command ends the goal: no more K_STEER.
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.1))
+    assert _h.combat_dump(_slot(ship))["_turn_goal"] == []
+    log = _differential([ship], ticks=3)
+    assert not any(w[1] & nm.K_STEER for writes in log for w in writes)
+
+
+def test_an_about_face_is_steered_natively():
+    """A point exactly astern: the collinear-opposite branch turns about
+    the ship's own up."""
+    ship, _ies = _ship()
+    R = ship.GetWorldRotation()
+    f, p = R.GetCol(1), ship.GetWorldLocation()
+    ship.SetSpeed(0.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    ship.TurnTowardLocation(TGPoint3(p.x - 50.0 * f.x, p.y - 50.0 * f.y,
+                                     p.z - 50.0 * f.z))
+    log = _differential([ship], ticks=120)
+    assert all(w[1] & nm.K_STEER for writes in log for w in writes)
+
+
+def test_dirs_goals_are_steered_natively():
+    """TurnDirectionsToDirections without and with secondaries (the
+    TurnTowardOrientation roll constraint, and TurnTowardDirection's zero
+    secondaries), and the bare ship's no-accel branch."""
+    cases = (
+        lambda s: s.TurnDirectionsToDirections(
+            TGPoint3(0.0, 1.0, 0.0), TGPoint3(0.3, -0.2, 0.9)),
+        lambda s: s.TurnTowardOrientation(TGPoint3(-0.6, 0.7, 0.1),
+                                          TGPoint3(0.1, 0.0, 1.0)),
+        lambda s: s.TurnTowardDirection(TGPoint3(1.0, 1.0, -1.0)),
+        lambda s: s.TurnDirectionsToDirections(
+            TGPoint3(1.0, 0.0, 0.0), TGPoint3(0.0, 0.0, 1.0),
+            TGPoint3(0.0, 1.0, 0.0), TGPoint3(-1.0, 0.0, 0.0)),
+    )
+    for k, turn in enumerate(cases):
+        ship, _ies = _ship("Dirs%d" % k)
+        ship.SetSpeed(2.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+        turn(ship)
+        assert _h.combat_dump(_slot(ship))["_turn_goal"][0] == 2.0, k
+        log = _differential([ship], ticks=150)
+        assert all(w[1] & nm.K_STEER for writes in log for w in writes), k
+    bare = App.ShipClass_Create("Bare")
+    bare.SetTranslateXYZ(0.01, -0.02, 0.005)
+    _rotate(bare)
+    bare.TurnTowardOrientation(TGPoint3(-0.6, 0.7, 0.1),
+                               TGPoint3(0.1, 0.0, 1.0))
+    _differential([bare], ticks=20)
+
+
+def test_a_half_turn_frame_is_steered_natively():
+    """TurnTowardOrientation onto the frame turned 180 degrees about the
+    ship's up: _frame_rotation's angle-pi branch (the axis from the
+    symmetric part), then the turn as it eases off pi."""
+    ship, _ies = _ship()
+    # An orthonormal rotation (a unit axis), so the goal frame is the
+    # half turn to rounding: _ship's own axis is not quite unit.
+    axis = TGPoint3(0.267, 0.534, 0.801)
+    axis.Unitize()
+    _rotate(ship, 0.7, (axis.x, axis.y, axis.z))
+    R = ship.GetWorldRotation()
+    f, u = R.GetCol(1), R.GetCol(2)
+    ship.TurnTowardOrientation(TGPoint3(-f.x, -f.y, -f.z), u)
+    log = _differential([ship], ticks=60)
+    assert all(w[1] & nm.K_STEER for writes in log for w in writes)
+
+
+def test_patched_steering_hands_back(monkeypatch):
+    """A patch of the steering the kernel stands in for: the stage runs
+    Python, so the patch is called for the steering row, and every row is
+    Python's."""
+    saved = dict(App.g_kSetManager._sets)
+    App.g_kSetManager._sets.clear()
+    pSet = App.SetClass_Create()
+    pSet.SetName("Steer")
+    App.g_kSetManager._sets["Steer"] = pSet
+    try:
+        ship, _ies = _ship("Steerer")
+        other, _ = _ship("Other")
+        pSet.AddObjectToSet(ship, "Steerer")
+        pSet.AddObjectToSet(other, "Other")
+        ship.SetSpeed(3.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+        other.SetSpeed(3.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+        ship.TurnTowardLocation(TGPoint3(100.0, 0.0, 0.0))
+        nm.reset()
+        nm.configure({})
+        real = ShipClass._steer_turn_goal
+        calls = []
+
+        def wrapper(self, dt, max_aa):
+            calls.append(self.GetName())
+            return real(self, dt, max_aa)
+
+        monkeypatch.setattr(ShipClass, "_steer_turn_goal", wrapper)
+        for _ in range(3):
+            ship_motion.tick_all_ship_motion(DT)
+        assert calls == ["Steerer"] * 3
+        counts = nm.counts()
+        assert counts["patched_stages"] == 3, counts
+        assert counts["native_calls"] == 0, counts
+    finally:
+        App.g_kSetManager._sets.clear()
+        App.g_kSetManager._sets.update(saved)
+
+
+def test_unrepresentable_goal_hands_back():
+    """A goal the mirror cannot represent is Python's (TurnGoal), with
+    nothing written."""
+    ship, _ies = _ship()
+    ship.SetSpeed(3.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.1))
+    ship._turn_goal = [("loc", "not a point"), None]
+    assert _h.combat_dump(_slot(ship))["_turn_goal"] == [0.0]
     before = _state(ship)
     row = _h.combat_dump(_slot(ship))
     assert _native([ship]) == (nm.PYTHON_ROW, 0, "TurnGoal", [])
     assert _state(ship) == before
     assert _h.combat_dump(_slot(ship)) == row
-    ship.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.1))
-    assert _h.combat_dump(_slot(ship))["_turn_goal"] == 0
-    _differential([ship], ticks=3)
 
 
 def test_a_turn_goal_without_a_setpoint_is_flown():
@@ -667,8 +817,8 @@ def test_constants():
     assert nm.REASONS == ("None", "NoRow", "NotStock", "Unrepresentable",
                           "FallBack", "BadTransform", "TurnGoal")
     assert (nm.K_SPEED, nm.K_ANG_VEL, nm.K_VELOCITY, nm.K_DRIFT_SET,
-            nm.K_DRIFT_CLEAR, nm.K_MOTION_VEL, nm.K_ACCEL) == (
-                1, 2, 4, 8, 16, 32, 64)
+            nm.K_DRIFT_CLEAR, nm.K_MOTION_VEL, nm.K_ACCEL, nm.K_STEER) == (
+                1, 2, 4, 8, 16, 32, 64, 128)
 
 
 def test_compute_runs_with_the_gil_released_and_is_timed_as_kernel_m():

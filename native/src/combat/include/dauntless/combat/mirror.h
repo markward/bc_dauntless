@@ -278,8 +278,11 @@ enum class Field : int32_t {
     // as a FloatList ([] None, [vx, vy, vz, speed], or 5 zeros:
     // unrepresentable); _target_angular_velocity_fraction, a point-or-none
     // with its _state as the others above (the keyboard turn fraction); and
-    // _turn_goal, 1 while a turn goal is stored (ShipClass._turn_goal: the
-    // kernel hands a row it may steer to Python). _acceleration, the
+    // _turn_goal, the stored turn goal's spec (ShipClass._turn_goal,
+    // native_combat.TurnGoalField), as a FloatList: [] None; [1, px, py, pz]
+    // a "loc" goal; [2, pf(3), pt(3), 0] a "dirs" goal, or [2, pf(3), pt(3),
+    // 1, sf(3), st(3)] with its secondaries; [0] unrepresentable (the
+    // kernel hands the row to Python). _acceleration, the
     // acceleration the law last commanded (ShipClass._acceleration,
     // GetAccelerationTG), as a FloatList ([] None, [ax, ay, az], or 4
     // zeros: unrepresentable); kernel M writes it back only when its new
@@ -365,7 +368,8 @@ struct ObjectRow {
     // The motion law's inputs (Field comment above).
     std::vector<double> _motion_vel;
     Vec3 _target_angular_velocity_fraction{0, 0, 0};
-    int64_t _target_angular_velocity_fraction_state = 0, _turn_goal = 0;
+    int64_t _target_angular_velocity_fraction_state = 0;
+    std::vector<double> _turn_goal;
     std::vector<double> _acceleration;
     // Posed parts: the pose table (empty while has_posed_parts is 0) and the
     // ship's subsystems in combat._iter_subsystems order (Subsystem handles;

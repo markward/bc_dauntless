@@ -2,7 +2,8 @@
 
 The kernel (native/src/combat/src/motion_step.cc) is a bit-exact port of
 ``ship_motion._step_ship_motion`` (the motion law's acceleration included:
-``step_vector_velocity``, ``_no_thrust``) and ``drift.step``; it writes the
+``step_vector_velocity``, ``_no_thrust``; a stored turn goal's steering:
+``ShipClass._steer_turn_goal``) and ``drift.step``; it writes the
 transform store and the mirror itself, and logs the Python attributes the
 step would have written -- an acceleration only when it differs from the
 one the ship holds, so a drifting or immobile row logs nothing. Its two bindings: ``combat_motion_compute`` returns that log
@@ -28,7 +29,8 @@ loop the reference.
       acceleration.
     - ``PYTHON_ROW``: ``_step_after_warp`` for the resumed row, else
       ``_step_ship_motion``; resume at the next row. ``TurnGoal``: the row's
-      stored turn goal may be steering (ShipClass._steer_turn_goal, Python).
+      stored turn goal is one the mirror cannot represent
+      (native_combat.TurnGoalField); a representable one the kernel steers.
   The player's handle is read before every call. After any Python ran
   (either stop), the rest of the set is re-read from that set's object
   snapshot (class, handle, per-instance scan) and the stage guards are
@@ -68,6 +70,7 @@ import App
 from engine.appc import drift, native_combat, ship_death, ship_iter
 from engine.appc import ship_motion, subsystems, warp_flight, warp_state
 from engine.appc.math import TGMatrix3, TGPoint3
+from engine.appc import ships as ships_module
 from engine.appc.ships import ShipClass
 from engine.appc.subsystems import (ImpulseEngineSubsystem, ShipSubsystem,
                                     WarpEngineSubsystem)
@@ -90,7 +93,7 @@ INSTANCE = "Instance"
 
 # MotionWrite.what bits (motion_step.h MotionWhat)
 K_SPEED, K_ANG_VEL, K_VELOCITY, K_DRIFT_SET, K_DRIFT_CLEAR = 1, 2, 4, 8, 16
-K_MOTION_VEL, K_ACCEL = 32, 64
+K_MOTION_VEL, K_ACCEL, K_STEER = 32, 64, 128
 
 # The compute timer's kernel index (host_bindings.cc compute_kernel).
 _KERNEL_M = 5
@@ -98,57 +101,80 @@ _KERNEL_M = 5
 
 # ── The reference applier (Task 4) ───────────────────────────────────────────
 
-def _store_speed(ship, speed, _cav, _vel, _drift, _mv, _acc) -> None:
+def _store_speed(ship, speed, _cav, _vel, _drift, _mv, _acc, _sp) -> None:
     ship.__dict__["_current_speed"] = speed
 
 
-def _store_motion_vel(ship, _speed, _cav, _vel, _drift, mv, _acc) -> None:
+def _store_motion_vel(ship, _speed, _cav, _vel, _drift, mv, _acc,
+                      _sp) -> None:
     ship.__dict__["_motion_vel"] = tuple(mv)
 
 
-def _store_accel(ship, _speed, _cav, _vel, _drift, _mv, acc) -> None:
+def _store_accel(ship, _speed, _cav, _vel, _drift, _mv, acc, _sp) -> None:
     ship.__dict__["_acceleration"] = tuple(acc)
 
 
-def _store_cav(ship, _speed, cav, _vel, _drift, _mv, _acc) -> None:
+def _store_cav(ship, _speed, cav, _vel, _drift, _mv, _acc, _sp) -> None:
     # In place, on the existing object: Python's step ramps it in place, and
     # anything holding it (host_loop._PlayerControl's seed) must see it.
     c = ship.__dict__["_current_angular_velocity"]
     c.x, c.y, c.z = cav
 
 
-def _store_velocity(ship, _speed, _cav, vel, _drift, _mv, _acc) -> None:
+def _store_velocity(ship, _speed, _cav, vel, _drift, _mv, _acc,
+                    _sp) -> None:
     ship.__dict__["_velocity"] = TGPoint3(*vel)
 
 
-def _store_drift_set(ship, _speed, _cav, _vel, drift, _mv, _acc) -> None:
+def _store_drift_set(ship, _speed, _cav, _vel, drift, _mv, _acc,
+                     _sp) -> None:
     ship.__dict__["_drift_velocity"] = TGPoint3(*drift)
 
 
-def _store_drift_clear(ship, _speed, _cav, _vel, _drift, _mv, _acc) -> None:
+def _store_drift_clear(ship, _speed, _cav, _vel, _drift, _mv, _acc,
+                       _sp) -> None:
     ship.__dict__["_drift_velocity"] = None
 
 
-# (bit, store), in the order Python's step writes them.
+def _store_steer(ship, _speed, _cav, _vel, _drift, _mv, _acc,
+                 setpoint) -> None:
+    # ShipClass._steer_turn_goal's three writes: the setpoint, a new point
+    # the goal owns (goal[1] is it, so Python's next step steers it too),
+    # and the keyboard turn fraction cleared.
+    sp = TGPoint3(*setpoint)
+    ship.__dict__["_target_angular_velocity_setpoint"] = sp
+    ship.__dict__["_target_angular_velocity_fraction"] = None
+    ship.__dict__["_turn_goal"][1] = sp
+
+
+# (bit, store), in the order Python's step writes them -- near enough: Python
+# writes `_acceleration` inside step_vector_velocity, before the speed, and
+# the steered setpoint after the velocity, as here. The order decides only
+# which exception surfaces first when a store raises (every store is
+# applied either way); the final state is identical.
 _STORES = ((K_DRIFT_CLEAR, _store_drift_clear), (K_DRIFT_SET, _store_drift_set),
            (K_MOTION_VEL, _store_motion_vel), (K_SPEED, _store_speed),
-           (K_VELOCITY, _store_velocity), (K_ANG_VEL, _store_cav),
-           (K_ACCEL, _store_accel))
+           (K_VELOCITY, _store_velocity), (K_STEER, _store_steer),
+           (K_ANG_VEL, _store_cav), (K_ACCEL, _store_accel))
 _NO_VALUES = ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+_NO_SETPOINT = (0.0, 0.0, 0.0)
 
 
 def _apply_writes_py(ships, writes) -> None:
     """Store the kernel's writes into the Python objects, THE REFERENCE.
 
     `writes` is combat_motion_compute's log, [(row, what, speed, (cx, cy,
-    cz), (vx, vy, vz), (dx, dy, dz), (mx, my, mz, mspeed), (ax, ay, az)),
-    ...] (a 6-tuple leaves the last two zero); `ships[row]` is the ship.
-    Each store is a quiet ``__dict__`` write (no push: the kernel already
-    wrote the mirror, and the pose is in the transform store):
-    ``_motion_vel = (mx, my, mz, mspeed)``; ``_current_speed``;
-    ``_current_angular_velocity``'s x/y/z set in place on its existing
-    object; ``_velocity = TGPoint3(...)``; ``_drift_velocity =
-    TGPoint3(...)`` or ``None``; ``_acceleration = (ax, ay, az)``.
+    cz), (vx, vy, vz), (dx, dy, dz), (mx, my, mz, mspeed), (ax, ay, az),
+    (sx, sy, sz)), ...] (a 6-tuple leaves the last three zero, an 8-tuple
+    the setpoint); `ships[row]` is the ship. Each store is a quiet
+    ``__dict__`` write (no push: the kernel already wrote the mirror, and
+    the pose is in the transform store): ``_motion_vel = (mx, my, mz,
+    mspeed)``; ``_current_speed``; ``_current_angular_velocity``'s x/y/z
+    set in place on its existing object; ``_velocity = TGPoint3(...)``;
+    ``_drift_velocity = TGPoint3(...)`` or ``None``; the steered setpoint
+    (``_target_angular_velocity_setpoint = sp = TGPoint3(sx, sy, sz)``,
+    the fraction ``None``, ``_turn_goal[1] = sp``); ``_acceleration = (ax,
+    ay, az)``.
 
     A RAISE PART-WAY (as native_combat.apply_writes): the kernel has
     already written every value to the mirror, so when one store raises the
@@ -158,12 +184,13 @@ def _apply_writes_py(ships, writes) -> None:
     first = None
     for entry in writes:
         row, what, speed, cav, vel, drift = entry[:6]
-        mv, acc = entry[6:] if len(entry) == 8 else _NO_VALUES
+        mv, acc = entry[6:8] if len(entry) >= 8 else _NO_VALUES
+        sp = entry[8] if len(entry) == 9 else _NO_SETPOINT
         ship = ships[row]
         for bit, store in _STORES:
             if what & bit:
                 try:
-                    store(ship, speed, cav, vel, drift, mv, acc)
+                    store(ship, speed, cav, vel, drift, mv, acc, sp)
                 except BaseException as e:       # noqa: BLE001 -- re-raised
                     if first is None:
                         first = e
@@ -321,12 +348,18 @@ _SURFACE = (
     (subsystems, ("_is_offline",)),
     (ship_death, ("_out_of_action",)),
     (ship_iter, ("iter_ships", "iter_non_rock_ships", "iter_set_objects")),
+    # The steering's methods (_steer_turn_goal, _turn_goal_vectors,
+    # _turn_rotation, GetWorldLocation) are among _SHIP_NAMES, so a
+    # subclass or an instance overriding one is seen too (_ROLES,
+    # _overridden); its module functions are ships_module's below.
     (ShipClass, _SHIP_NAMES),
     (ImpulseEngineSubsystem, _IES_NAMES),
     (ShipSubsystem, _POD_NAMES),
     (WarpEngineSubsystem, ("is_dewarp_driving",)),
-    (TGMatrix3, ("MakeRotation", "MultMatrix")),
-    (TGPoint3, ("MultMatrixLeft", "Unitize", "Length")),
+    (ships_module, ("_frame_rotation", "_to_body")),
+    (TGMatrix3, ("MakeRotation", "MultMatrix", "GetCol")),
+    (TGPoint3, ("MultMatrixLeft", "Unitize", "Length", "Cross", "Dot",
+                "Scale")),
 )
 
 

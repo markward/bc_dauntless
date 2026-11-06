@@ -92,3 +92,22 @@ def test_another_angular_command_replaces_the_goal():
     w = ship._current_angular_velocity
     assert abs(w.z) < 1e-3
     assert _angle(ship, pt) > 45.0          # stopped short: the goal no longer steers
+
+
+def test_complete_stop_ends_the_goal():
+    """CompleteStop replaces the angular setpoint with a fresh zero, so the
+    goal no longer owns it and never steers again: it is cleared, as every
+    other angular command clears it (kernel M, which cannot see `goal[1] is
+    setpoint`, would otherwise steer it)."""
+    ship = _galaxy()
+    pt = _point(90)
+    ship.TurnTowardLocation(pt)
+    for _ in range(30):
+        _step_ship_motion(ship, _DT)
+    ship.CompleteStop()
+    assert ship._turn_goal is None
+    for _ in range(600):
+        _step_ship_motion(ship, _DT)
+    w = ship._current_angular_velocity
+    assert (w.x, w.y, w.z) == (0.0, 0.0, 0.0)
+    assert _angle(ship, pt) > 45.0
