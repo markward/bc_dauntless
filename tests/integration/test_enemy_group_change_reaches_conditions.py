@@ -134,3 +134,45 @@ def test_a_repeated_registration_is_called_twice():
     g.AddName("A")
     _tick(0.1)
     assert c.n == 2
+
+
+def test_group_changed_doubles_per_event_and_coalesces_per_tick(monkeypatch):
+    """The original, measured (stbc-oracle music probe A1, native Windows):
+    ConditionInRange.GroupChanged runs SetObjects, which registers the group
+    handlers again, and a repeated registration is called again, so one
+    name added per frame gives GroupChanged calls 1, 2, 4, 8, 16, 32
+    (cumulative 63, SetObjects 64 with the constructor's), the condition
+    still watching the same group. Edits within one tick post one event."""
+    headless_mission.load("Maelstrom.Episode1.E1M1.E1M1")
+    import Conditions.ConditionInRange as CIR
+    C = CIR.ConditionInRange
+    calls = {"gc": 0, "so": 0}
+    real_gc, real_so = C.GroupChanged, C.SetObjects
+
+    def gc(self, ev):
+        calls["gc"] += 1
+        return real_gc(self, ev)
+
+    def so(self, *a):
+        calls["so"] += 1
+        return real_so(self, *a)
+
+    monkeypatch.setattr(C, "GroupChanged", gc)
+    monkeypatch.setattr(C, "SetObjects", so)
+    player = App.Game_GetCurrentPlayer()
+    group = App.ObjectGroup()
+    App.ConditionScript_Create("Conditions.ConditionInRange", "ConditionInRange",
+                               400, player.GetName(), group)
+    assert calls == {"gc": 0, "so": 1}
+    seen = []
+    for i in range(6):
+        group.AddName("Zed %d" % i)
+        _tick(0.1)
+        seen.append(calls["gc"])
+    assert seen == [1, 3, 7, 15, 31, 63]
+    assert calls["so"] == 64
+    before = calls["gc"]
+    group.AddName("Pair A")
+    group.AddName("Pair B")                 # same tick: one event
+    _tick(0.1)
+    assert calls["gc"] - before == 64       # one event, called once per registration (64)
