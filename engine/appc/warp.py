@@ -1264,11 +1264,12 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         _append_after_queue(seq)
         return seq
 
-    # Falsy destination => no set change/placement/teardown: the whole warp
-    # degrades to "nothing happened" (BC's `if pcDestModule != None:` guard).
-    # The per-action _do_play guards are the robust floor; skipping placement
-    # and source teardown here keeps the player in its current set. Targets are
-    # only cleared when a real warp actually happens (real destination).
+    # Falsy destination => no arrival: no placement, no destination swap (BC's
+    # `if pcDestModule != None:` guard covers only the arrival half). The
+    # PLAYER's warp then degrades to "nothing happened" and it stays in its
+    # current set; an NPC's still departs into the warp set (the `elif`
+    # below). Targets are only cleared when a real warp actually happens (real
+    # destination). The per-action _do_play guards are the robust floor.
     if not _module_is_empty(dest_module):
         seq.AddAction(_ClearTargetsAction(ship))
     # Same queue order as the flythrough, with no tunnel to hold: the SDK's
