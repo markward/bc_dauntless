@@ -254,13 +254,39 @@ def _go_live() -> None:
             "is native only -- rebuild (cmake --build build -j)"
             % ", ".join(missing))
     if not _enabled:
-        reason = _self_check()
-        if reason is not None:
-            raise RuntimeError(
-                "native combat: self-check failed: %s; fire control is "
-                "native only" % reason)
+        key = _self_check_key()
+        if not _self_check_passed_for(key):
+            reason = _self_check()
+            if reason is not None:
+                raise RuntimeError(
+                    "native combat: self-check failed: %s; fire control is "
+                    "native only" % reason)
+            _self_check_passed[:] = key
         _enabled = True
         resync()
+
+
+# The self-check's verdict for the exact objects it compared: the bindings
+# module, its three test bindings, math.dist and the Python density. Its
+# answer is a pure function of those, so a repeat _go_live after reset() --
+# the per-test reset runs one before every test, ~2 ms of seeded math each
+# time, ~70 s over the full suite -- skips it while every one is the SAME
+# object (`is`, never id(): the list holds them, so none can be recycled).
+# Swapping any of them (a test patching math.dist, or nc._h) re-checks.
+_self_check_passed: list = []
+
+
+def _self_check_key() -> list:
+    from engine.appc import nebula_density as nd
+    h = _h
+    return [h, getattr(h, "combat_k1_kinds", None),
+            getattr(h, "combat_test_dist3", None),
+            getattr(h, "combat_test_density", None), math.dist, nd.density]
+
+
+def _self_check_passed_for(key) -> bool:
+    return (len(_self_check_passed) == len(key)
+            and all(a is b for a, b in zip(_self_check_passed, key)))
 
 
 def enabled() -> bool:
