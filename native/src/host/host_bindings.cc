@@ -3675,22 +3675,25 @@ namespace {
 
 // ── combat_k2_scan_ships ─────────────────────────────────────────────────────
 // The K2 driver's per-ship, per-bank clean check before begin
-// (native_combat._k2_ship_handles), a C loop over the instance dicts: it runs
-// every tick over every bank. Raw CPython calls only, so it stays cheap in a
-// Debug build too.
+// (native_combat._k2_ship_handles), a C loop: it runs every tick over every
+// bank. Raw CPython calls only, so it stays cheap in a Debug build too.
+//
+// It reads classes and handles, never an instance attribute shadowing a
+// method (spec Part A, phase 6 follow-up 3: a patch is not obeyed, so no
+// dict is probed for one). The dict reads are the object graph's own:
+// "_nslot", "_phaser_system", "_children" and "_target".
 //
 // Returns (handles, unclean). Each ship's handle is its __dict__["_nslot"]
 // when that is an Object handle (`(h >> kind_shift) == obj_kind`), else -1
 // (no row, never checked). A ship with a row is CLEAN when its class is in
-// `seen`, its dict holds none of `ship_patches`, and, when it has a
-// "_phaser_system" that is not None, that system's class is exactly
-// `stock_system` and its dict holds none of `system_patches`, and every bank
-// in its "_children" has exactly `stock_bank` as class, holds none of
-// `bank_patches`, and has a "_target" that is None or of a class in `seen`.
-// Every other ship is in `unclean` as (ship, handle), in order, for
-// _k2_python_ship to decide. Anything unexpected (no __dict__, a non-dict
-// one, a "_children" that is not a sequence) is "not clean": the Python check
-// is the authority, this is its fast path.
+// `seen` and, when it has a "_phaser_system" that is not None, that
+// system's class is exactly `stock_system` and every bank in its
+// "_children" has exactly `stock_bank` as class, a "_nslot" that is an int
+// Subsystem handle (the mirror can name it), and a "_target" that is None
+// or of a class in `seen`. Every other ship is in `unclean` as (ship,
+// handle), in order, for _k2_python_ship to decide. Anything unexpected (no
+// __dict__, a non-dict one, a "_children" that is not a sequence) is "not
+// clean": the Python check is the authority, this is its fast path.
 
 // The object's instance dict, borrowed, or nullptr (no error set) when it
 // has none. The materialized dict the Python driver's `obj.__dict__` reads.
@@ -3732,51 +3735,87 @@ const K2ScanNames& k2_scan_names() {
     return n;
 }
 
-// How many systems and banks k2_scan_ships probed (their instance dict
-// against the names) and answered from THE SCAN CACHE.
-struct K2ScanCounts {
-    std::uint64_t probed = 0, cached = 0;
-};
-
-K2ScanCounts& k2_scan_counts() {
-    static K2ScanCounts c;
-    return c;
-}
-
-// 1 clean, 0 not, -1 error: the phaser system `sys` (the scan's ship
-// `pos`) and its banks. Defined below, with THE SCAN CACHE.
-int k2_clean_system(PyObject* sys, size_t pos, PyObject* seen,
-                    PyObject* stock_system, PyObject* stock_bank,
-                    PyObject* sys_names, PyObject* bank_names,
-                    PyObject* sys_patches, PyObject* bank_patches);
-
-// Is `h` an Object handle: Python's `(h >> kind_shift) == obj_kind`.
+// Is `h` a handle of `kind`: Python's `(h >> kind_shift) == kind`.
 // 1 yes, 0 no, -1 error.
-int k2_is_object_handle(PyObject* h, PyObject* obj_kind,
-                        PyObject* kind_shift) {
+int k2_is_kind_handle(PyObject* h, PyObject* kind, PyObject* kind_shift) {
     PyObject* s = PyNumber_Rshift(h, kind_shift);
     if (s == nullptr) return -1;
-    const int eq = PyObject_RichCompareBool(s, obj_kind, Py_EQ);
+    const int eq = PyObject_RichCompareBool(s, kind, Py_EQ);
     Py_DECREF(s);
     return eq;
 }
 
+// 1 clean, 0 not, -1 error: the phaser system `sys` and its banks (see
+// above). `sub_kind` is the Subsystem kind, as an int.
+int k2_clean_system(PyObject* sys, PyObject* seen, PyObject* stock_system,
+                    PyObject* stock_bank, PyObject* sub_kind,
+                    PyObject* kind_shift) {
+    if (reinterpret_cast<PyObject*>(Py_TYPE(sys)) != stock_system) return 0;
+    PyObject* sd = k2_dict_of(sys);
+    if (sd == nullptr) return 0;
+    const K2ScanNames& names = k2_scan_names();
+    PyObject* kids = PyDict_GetItemWithError(sd, names.children);
+    if (kids == nullptr) return PyErr_Occurred() ? -1 : 1;
+    PyObject* seq = PySequence_Fast(kids, "");
+    if (seq == nullptr) {
+        PyErr_Clear();
+        return 0;
+    }
+    PyObject* const* banks = PySequence_Fast_ITEMS(seq);
+    const Py_ssize_t nbanks = PySequence_Fast_GET_SIZE(seq);
+    int clean = 1;
+    for (Py_ssize_t i = 0; i < nbanks && clean == 1; ++i) {
+        PyObject* b = banks[i];
+        if (reinterpret_cast<PyObject*>(Py_TYPE(b)) != stock_bank) {
+            clean = 0;
+            break;
+        }
+        PyObject* bd = k2_dict_of(b);
+        if (bd == nullptr) {
+            clean = 0;
+            break;
+        }
+        // The mirror must name the bank: an int Subsystem handle.
+        PyObject* h = PyDict_GetItemWithError(bd, names.nslot);
+        if (h == nullptr) {
+            clean = PyErr_Occurred() ? -1 : 0;
+            break;
+        }
+        if (!PyLong_CheckExact(h)) {
+            clean = 0;
+            break;
+        }
+        const int sub = k2_is_kind_handle(h, sub_kind, kind_shift);
+        if (sub != 1) {
+            clean = sub < 0 ? -1 : 0;
+            break;
+        }
+        PyObject* target = PyDict_GetItemWithError(bd, names.target);
+        if (target == nullptr) {
+            if (PyErr_Occurred()) clean = -1;
+            continue;
+        }
+        if (target == Py_None) continue;
+        const int r = k2_in_seen(seen, target);
+        if (r != 1) clean = r < 0 ? -1 : 0;
+    }
+    Py_DECREF(seq);
+    return clean;
+}
+
 PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
                         PyObject* kind_shift, PyObject* seen,
-                        PyObject* stock_system, PyObject* stock_bank,
-                        PyObject* ship_patches, PyObject* system_patches,
-                        PyObject* bank_patches) {
+                        PyObject* stock_system, PyObject* stock_bank) {
     const K2ScanNames& names = k2_scan_names();
-    PyObject* ship_n = PySequence_List(ship_patches);
-    PyObject* sys_n = PySequence_List(system_patches);
-    PyObject* bank_n = PySequence_List(bank_patches);
     PyObject* seq = PySequence_Fast(ships, "ships must be iterable");
     PyObject* handles = seq ? PyList_New(PySequence_Fast_GET_SIZE(seq))
                             : nullptr;
     PyObject* unclean = PyList_New(0);
     PyObject* none_ref = PyLong_FromLong(-1);
+    PyObject* sub_kind = PyLong_FromLong(
+        static_cast<long>(dauntless::combat::Kind::Subsystem));
     PyObject* result = nullptr;
-    if (ship_n && sys_n && bank_n && seq && handles && unclean && none_ref) {
+    if (seq && handles && unclean && none_ref && sub_kind) {
         const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
         PyObject* const* items = PySequence_Fast_ITEMS(seq);
         bool failed = false;
@@ -3790,7 +3829,7 @@ PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
             }
             int obj = 0;
             if (h != nullptr && h != Py_None) {
-                obj = k2_is_object_handle(h, obj_kind, kind_shift);
+                obj = k2_is_kind_handle(h, obj_kind, kind_shift);
                 if (obj < 0) {
                     failed = true;
                     break;
@@ -3805,19 +3844,12 @@ PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
             PyList_SET_ITEM(handles, i, h);
             int clean = k2_in_seen(seen, ship);
             if (clean == 1) {
-                const int r = k2_holds(d, PySequence_Fast_ITEMS(ship_n),
-                                       PySequence_Fast_GET_SIZE(ship_n));
-                clean = r != 0 ? (r < 0 ? -1 : 0) : 1;
-            }
-            if (clean == 1) {
                 PyObject* sys = PyDict_GetItemWithError(d, names.system);
                 if (sys == nullptr && PyErr_Occurred())
                     clean = -1;
                 else if (sys != nullptr && sys != Py_None)
-                    clean = k2_clean_system(
-                        sys, static_cast<size_t>(i), seen, stock_system,
-                        stock_bank, sys_n, bank_n, system_patches,
-                        bank_patches);
+                    clean = k2_clean_system(sys, seen, stock_system,
+                                            stock_bank, sub_kind, kind_shift);
             }
             if (clean < 0) {
                 failed = true;
@@ -3832,13 +3864,11 @@ PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
         }
         if (!failed) result = PyTuple_Pack(2, handles, unclean);
     }
+    Py_XDECREF(sub_kind);
     Py_XDECREF(none_ref);
     Py_XDECREF(unclean);
     Py_XDECREF(handles);
     Py_XDECREF(seq);
-    Py_XDECREF(bank_n);
-    Py_XDECREF(sys_n);
-    Py_XDECREF(ship_n);
     return result;
 }
 
@@ -4696,10 +4726,10 @@ void damage_append_held(const std::vector<dauntless::combat::DamageEntry>& entri
 // THE HITS), from the driver's dict: "ok", "player", "god_mode",
 // "double_damage", "npc_shields_off", "intensity" (3 floats),
 // "default_radius", "pp_low", "hit_weapon", "weapon_hit_type",
-// "has_instances"; K2's also "python_banks" (Subsystem handles whose
-// pulses are Python's; absent: none). No target list: the kernels ask the
-// mirror whether a target is representable (damage.h
-// dmg_target_representable).
+// "has_instances". No target list and no hand-back list: the kernels ask
+// the mirror whether a target is representable (damage.h
+// dmg_target_representable), and a patched method is not obeyed (spec
+// Part A).
 dauntless::combat::K2PulseCtx k2_pulse_ctx(const py::dict& d) {
     dauntless::combat::K2PulseCtx p;
     p.ok = d["ok"].cast<bool>();
@@ -4713,9 +4743,6 @@ dauntless::combat::K2PulseCtx k2_pulse_ctx(const py::dict& d) {
     p.hit_weapon = d["hit_weapon"].cast<std::int64_t>();
     p.weapon_hit_type = d["weapon_hit_type"].cast<std::int64_t>();
     p.has_instances = d["has_instances"].cast<bool>();
-    if (d.contains("python_banks"))
-        for (auto h : d["python_banks"])
-            p.python_banks.insert(h.cast<std::int64_t>());
     return p;
 }
 
@@ -4889,16 +4916,6 @@ PyObject* k1_built_dict(PyObject* o) {
     return k2_dict_of(o);  // a tp_dictoffset slot: read, never built
 }
 
-// The scan reads PyDictObject::ma_version_tag, and only where kK0ObjectCache
-// allows (CPython 3.11, the one version verified; see below): elsewhere it
-// is never read. The pragmas keep the field's deprecation quiet.
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#elif defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
 // ── The K0 session's begin (combat_k0_begin; k0_charging.h) ───────────────
 // One pass over the Python ship list, made before the kernel's begin: each
 // ship's Object handle (its "_nslot"; -1 without one). There is no override
@@ -4908,19 +4925,7 @@ PyObject* k1_built_dict(PyObject* o) {
 // GC-tracked is allocated.
 //
 // What follows is also K1's, K2's and native damage's: the instance-dict
-// read (k0_dict_of), the exact per-object caches' key (K0ObjKey, k0_same:
-// an object's type and its dict STATE, the dict and its PEP 509
-// ma_version_tag -- a process-wide counter bumped by every insert, replace
-// and delete, so an unchanged (dict, version) is an unchanged dict; a
-// `__class__` assignment changes the type, which is compared too) and a
-// type's version tag (k0_type_tag).
-
-// What one object's answer was computed on (type == nullptr: nothing).
-struct K0ObjKey {
-    PyTypeObject* type = nullptr;
-    PyObject* dict = nullptr;
-    std::uint64_t version = 0;
-};
+// read (k0_dict_of) and a type's version tag (k0_type_tag).
 
 struct K0ScanNames {
     PyObject* nslot;
@@ -4955,35 +4960,6 @@ K0_INLINE PyObject* k0_dict_of(PyObject* o) {
     }
 #endif
     return k1_built_dict(o);
-}
-
-// The per-object answer caches rest on PEP 509's ma_version_tag changing on
-// every insert, replace and delete. Verified on CPython 3.11 only (3.12
-// repurposes its low bits for dict watchers, 3.14 drops the field): any
-// other version takes the uncached path -- every object's answer computed
-// at every scan, the same answers, slower.
-#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030C0000
-constexpr bool kK0ObjectCache = true;
-#else
-constexpr bool kK0ObjectCache = false;
-#endif
-
-// The dict's mutation version (PEP 509): every insert, replace and delete
-// takes a new value from a process-wide counter, so it never repeats.
-K0_INLINE std::uint64_t k0_dict_version(PyObject* d) {
-#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030C0000
-    return reinterpret_cast<PyDictObject*>(d)->ma_version_tag;
-#else
-    (void)d;
-    return 0;
-#endif
-}
-
-// `o` is in the state `k` was computed on (`d` its dict, or nullptr). Never
-// on an unverified Python (kK0ObjectCache).
-K0_INLINE bool k0_same(const K0ObjKey& k, PyObject* o, PyObject* d) {
-    return kK0ObjectCache && d != nullptr && o->ob_type == k.type &&
-           d == k.dict && k0_dict_version(d) == k.version;
 }
 
 // `t`'s version tag, assigned if it has none (0: none can be).
@@ -5034,12 +5010,6 @@ bool k0_ship_handles(PyObject* ships, std::vector<std::int64_t>& out) {
     return true;
 }
 
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#elif defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
-
 py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
     namespace cb = dauntless::combat;
     using T = cb::K0FieldWrite::Type;
@@ -5065,150 +5035,6 @@ py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
                                   py::none());
     }
     throw std::logic_error("combat K0: a write of no type");
-}
-
-// ── THE SCAN CACHE (k2_scan_ships; native damage perf fix) ────────────────
-// K1's THE CACHES, keyed as K0ObjKey (above; exact, and only where
-// kK0ObjectCache allows): each phaser system's and each bank's "holds one
-// of the names" answer, with what it was computed on -- its type and its
-// dict at the dict's ma_version_tag -- kept by POSITION in the scan (the
-// ship's index, then each child's in "_children"). With the answer the
-// dict's own reads are kept: a system's "_children" and a bank's
-// "_target", borrowed from that same dict state (an unchanged dict still
-// holds them). Read live at every scan: each class check (the stock
-// system and bank classes), the children list (an in-place append changes
-// the list, not the dict) and whether a target's class is seen. So a
-// system or bank not written since the last scan costs a few compares
-// (Task 4's damage-pulse names made each probe 4 names longer), and a
-// patch -- an instance attribute, a `__class__` swap, a new target -- is
-// seen at the next scan. Other name sets drop every answer.
-struct K2ScanBankEntry {
-    K0ObjKey key;
-    int holds = 0;
-    PyObject* target = nullptr;    // borrowed from key.dict; nullptr: none
-};
-
-struct K2ScanSysEntry {
-    K0ObjKey key;
-    int holds = 0;
-    PyObject* children = nullptr;  // borrowed from key.dict; nullptr: none
-    std::vector<K2ScanBankEntry> banks;
-};
-
-struct K2ScanCaches {
-    std::vector<K2ScanSysEntry> systems;
-    PyObject* names[2] = {nullptr, nullptr};  // owned: the patch sets
-    void clear() {
-        systems.clear();
-        PyObject* a = names[0];
-        PyObject* b = names[1];
-        names[0] = names[1] = nullptr;
-        Py_XDECREF(a);
-        Py_XDECREF(b);
-    }
-};
-
-K2ScanCaches& k2_scan_caches() {
-    static K2ScanCaches c;
-    return c;
-}
-
-int k2_clean_system(PyObject* sys, size_t pos, PyObject* seen,
-                    PyObject* stock_system, PyObject* stock_bank,
-                    PyObject* sys_names, PyObject* bank_names,
-                    PyObject* sys_patches, PyObject* bank_patches) {
-    if (reinterpret_cast<PyObject*>(Py_TYPE(sys)) != stock_system) return 0;
-    PyObject* sd = k2_dict_of(sys);
-    if (sd == nullptr) return 0;
-    K2ScanCaches& c = k2_scan_caches();
-    if (c.names[0] != sys_patches || c.names[1] != bank_patches) {
-        c.clear();
-        c.names[0] = Py_NewRef(sys_patches);
-        c.names[1] = Py_NewRef(bank_patches);
-    }
-    K2ScanSysEntry scratch;
-    K2ScanSysEntry* ep = &scratch;
-    if (pos < (1u << 20)) {
-        if (pos >= c.systems.size()) c.systems.resize(pos + 1 + 16);
-        ep = &c.systems[pos];
-    }
-    K2ScanSysEntry& e = *ep;
-    if (k0_same(e.key, sys, sd)) {
-        ++k2_scan_counts().cached;
-    } else {
-        e.key = K0ObjKey{};
-        ++k2_scan_counts().probed;
-        const int r = k2_holds(sd, PySequence_Fast_ITEMS(sys_names),
-                               PySequence_Fast_GET_SIZE(sys_names));
-        if (r < 0) return -1;
-        PyObject* kids = nullptr;
-        if (r == 0) {
-            kids = PyDict_GetItemWithError(sd, k2_scan_names().children);
-            if (kids == nullptr && PyErr_Occurred()) return -1;
-        }
-        e.holds = r;
-        e.children = kids;
-        e.key = K0ObjKey{sys->ob_type, sd, k0_dict_version(sd)};
-    }
-    if (e.holds != 0) return 0;
-    if (e.children == nullptr) return 1;
-    PyObject* seq = PySequence_Fast(e.children, "");
-    if (seq == nullptr) {
-        PyErr_Clear();
-        return 0;
-    }
-    PyObject* const* banks = PySequence_Fast_ITEMS(seq);
-    const Py_ssize_t nbanks = PySequence_Fast_GET_SIZE(seq);
-    PyObject* const* bn = PySequence_Fast_ITEMS(bank_names);
-    const Py_ssize_t nbn = PySequence_Fast_GET_SIZE(bank_names);
-    PyObject* target_key = k2_scan_names().target;
-    if (e.banks.size() < static_cast<size_t>(nbanks))
-        e.banks.resize(static_cast<size_t>(nbanks));
-    int clean = 1;
-    for (Py_ssize_t i = 0; i < nbanks && clean == 1; ++i) {
-        PyObject* b = banks[i];
-        if (reinterpret_cast<PyObject*>(Py_TYPE(b)) != stock_bank) {
-            clean = 0;
-            break;
-        }
-        PyObject* bd = k2_dict_of(b);
-        if (bd == nullptr) {
-            clean = 0;
-            break;
-        }
-        K2ScanBankEntry& be = e.banks[static_cast<size_t>(i)];
-        if (k0_same(be.key, b, bd)) {
-            ++k2_scan_counts().cached;
-        } else {
-            be.key = K0ObjKey{};
-            ++k2_scan_counts().probed;
-            const int r = k2_holds(bd, bn, nbn);
-            if (r < 0) {
-                clean = -1;
-                break;
-            }
-            PyObject* target = nullptr;
-            if (r == 0) {
-                target = PyDict_GetItemWithError(bd, target_key);
-                if (target == nullptr && PyErr_Occurred()) {
-                    clean = -1;
-                    break;
-                }
-            }
-            be.holds = r;
-            be.target = target;
-            be.key = K0ObjKey{b->ob_type, bd, k0_dict_version(bd)};
-        }
-        if (be.holds != 0) {
-            clean = 0;
-            break;
-        }
-        if (be.target == nullptr || be.target == Py_None) continue;
-        const int r = k2_in_seen(seen, be.target);
-        if (r != 1) clean = r < 0 ? -1 : 0;
-    }
-    Py_DECREF(seq);
-    return clean;
 }
 
 // ── THE FAST DAMAGE ENTRIES (native damage perf fix) ─────────────────────
@@ -13377,20 +13203,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k2_scan_ships",
               [](py::handle ships, py::handle obj_kind, py::handle kind_shift,
                  py::handle seen, py::handle stock_system,
-                 py::handle stock_bank, py::handle ship_patches,
-                 py::handle system_patches, py::handle bank_patches) {
+                 py::handle stock_bank) {
                   PyObject* r = k2_scan_ships(
                       ships.ptr(), obj_kind.ptr(), kind_shift.ptr(),
-                      seen.ptr(), stock_system.ptr(), stock_bank.ptr(),
-                      ship_patches.ptr(), system_patches.ptr(),
-                      bank_patches.ptr());
+                      seen.ptr(), stock_system.ptr(), stock_bank.ptr());
                   if (r == nullptr) throw py::error_already_set();
                   return py::reinterpret_steal<py::tuple>(r);
               },
               py::arg("ships"), py::arg("obj_kind"), py::arg("kind_shift"),
               py::arg("seen"), py::arg("stock_system"), py::arg("stock_bank"),
-              py::arg("ship_patches"), py::arg("system_patches"),
-              py::arg("bank_patches"),
               "(handles, [(ship, handle), ...]): see k2_scan_ships.");
         m.def("combat_k2_next", [vec] {
             // Compute with the GIL released (THE GIL RELEASE), as
@@ -13667,37 +13488,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k2_pulse_python"] = pulse_python;
             return d;
         });
-        m.def("combat_k2_pulse_targets",
-              [](const std::vector<std::int64_t>& ships) {
-                  // The targets a damage pulse may land on this step (THE
-                  // DAMAGE PULSE):
-                  // each distinct `_target` of a bank of a listed ship's
-                  // phaser system that fires or holds a dwell -- the only
-                  // banks whose walk can flush one -- in first-seen order.
-                  // Mirror reads only.
-                  const cb::Mirror& mi = cb::mirror();
-                  std::vector<std::int64_t> out;
-                  std::unordered_set<std::int64_t> seen;
-                  for (const std::int64_t sh : ships) {
-                      const cb::ObjectRow* o =
-                          sh < 0 ? nullptr : mi.object(sh);
-                      if (o == nullptr || o->_phaser_system < 0) continue;
-                      const cb::SubsystemRow* y =
-                          mi.subsystem(o->_phaser_system);
-                      if (y == nullptr) continue;
-                      for (const std::int64_t b : y->_children) {
-                          const cb::SubsystemRow* r =
-                              b < 0 ? nullptr : mi.subsystem(b);
-                          if (r == nullptr || r->_target < 0) continue;
-                          if (!r->_firing && !(r->_dwell > 0.0)) continue;
-                          if (seen.insert(r->_target).second)
-                              out.push_back(r->_target);
-                      }
-                  }
-                  return out;
-              },
-              py::arg("ships"),
-              "Object handles a damage pulse may land on this step.");
         m.def("combat_k2_last_hits",
               [] {
                   py::list out;
@@ -13718,16 +13508,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
                      py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                          &g_dmg_damage_system_def, nullptr,
                          m.attr("__name__").ptr())));
-        m.def("combat_k2_scan_counts", [] {
-            py::dict d;
-            d["probed"] = k2_scan_counts().probed;
-            d["cached"] = k2_scan_counts().cached;
-            return d;
-        }, "combat_k2_scan_ships' systems and banks probed and answered "
-           "from its cache.");
-        m.def("combat_k2_scan_reset_counts",
-              [] { k2_scan_counts() = K2ScanCounts{}; });
-        m.def("combat_k2_scan_clear", [] { k2_scan_caches().clear(); });
         m.def("combat_k2_reset_counts", [] {
             cb::k2_kernel().reset_counts();
             k2_present().presented = 0;
@@ -14252,22 +14032,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k3_end", [] { cb::k3_kernel().end(); },
               "End the session (it must have returned DONE).");
         m.def("combat_k3_apply_hits",
-              [](std::size_t start, const py::dict& pulse,
-                 const std::vector<std::size_t>& python) {
+              [](std::size_t start, const py::dict& pulse) {
                   // THE HITS (k3_projectiles.h): the last DONE's hits from
                   // `start`, applied natively until one the kernel cannot
                   // apply; each one's writes applied by the session's
                   // applier and its entries queued, in order. Returns the
                   // index of the hit handed back (len(hits) when none).
                   cb::K2PulseCtx p = k2_pulse_ctx(pulse);
-                  const std::unordered_set<std::size_t> py_hits(
-                      python.begin(), python.end());
                   std::vector<cb::K3Applied> out;
                   // Its compute released and timed as K3's (k3.compute).
                   const std::size_t k = released_compute(
                       ComputeSite::K3Hits, [&] {
-                          return cb::k3_kernel().apply_hits(start, p, py_hits,
-                                                            out);
+                          return cb::k3_kernel().apply_hits(start, p, out);
                       });
                   auto& applier = dauntless::host::write_applier();
                   if (!out.empty() && !applier.has_context())
@@ -14282,7 +14058,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   }
                   return k;
               },
-              py::arg("start"), py::arg("pulse"), py::arg("python"),
+              py::arg("start"), py::arg("pulse"),
               "Apply the last DONE's hits from `start` (THE HITS); the index "
               "of the first one handed back, or len(hits).");
         m.def("combat_k3_abandon", [] { cb::k3_kernel().abandon(); },
@@ -14312,7 +14088,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k3_posed_steers"] = c.posed_steers;
             d["k3_native_attributions"] = c.native_attributions;
             // THE HITS: hits applied natively, and those the kernel handed
-            // back, by why (the driver adds its own).
+            // back, by why.
             d["k3_native_hits"] = c.native_hits;
             py::dict hit_why;
             std::int64_t hit_python = 0;

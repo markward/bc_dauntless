@@ -40,7 +40,7 @@ RELEASED = {
     "combat_k2_next": ("K2", "cb::k2_kernel().next()"),
     "combat_k3_next": ("K3", "cb::k3_kernel().next()"),
     "combat_k3_apply_hits": (
-        "K3Hits", "cb::k3_kernel().apply_hits(start, p, py_hits, out)"),
+        "K3Hits", "cb::k3_kernel().apply_hits(start, p, out)"),
     "combat_motion_compute": (
         "Motion", "cb::motion_step(cb::mirror(), dauntless::transform_store(), "
                   "rows, player, dt, begin, resume)"),

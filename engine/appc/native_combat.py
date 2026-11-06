@@ -185,7 +185,6 @@ _REQUIRED_BINDINGS = (
     "combat_k0_begin", "combat_k0_apply_stats", "combat_effect_take",
     "combat_effect_rebind",
     "combat_apply_hit", "combat_dmg_set_condition",
-    "combat_k2_scan_clear",
     "combat_compute_take",
     # Tractors native (fire control native only, M4).
     "combat_k1_begin_tractor", "combat_tractor_force_step",
@@ -350,8 +349,6 @@ def reset() -> None:
     _dmg_classes.clear()
     for k in _dmg_counts:
         _dmg_counts[k] = 0
-    if available():
-        _h.combat_k2_scan_clear()
     _dmg_ctx[0] = None
     global _pulse_stale
     _pulse_stale = False
@@ -374,7 +371,6 @@ def reset() -> None:
         _k4_reasons[k] = 0
     for k in _K3_REASONS:
         _k3_reasons[k] = 0
-    _k3_hit_python[0] = 0
     _k3_iids_sent[:] = [_K2_UNSENT, -1, -1]
     _beam_iids_sent[:] = [_K2_UNSENT, -1, -1]
     global beam_feed_fallbacks, beam_feed_native
@@ -534,12 +530,6 @@ def counts() -> dict:
         for k, n in _k3_reasons.items():
             why[k] = why.get(k, 0) + n
             k3["k3_python_steps"] += n
-        # Every hit handed back ran in _k3_apply_hits; those the kernel did
-        # not name a reason for are the driver's own (a torpedo instance
-        # patch): "python".
-        k3["k3_hit_python_reasons"]["python"] = (
-            _k3_hit_python[0] - k3["k3_hit_python"])
-        k3["k3_hit_python"] = _k3_hit_python[0]
         c.update(k3)
     return c
 
@@ -5357,10 +5347,11 @@ def _run_k0(ships, dt) -> None:
 # flagged "whole" -> the whole step ("patched"). The engine's own classes
 # override one another freely (DamageableObject adds IsDead): the kernel
 # ports those (tests/unit/test_native_k2_override_guard.py, statically).
-# An INSTANCE attribute shadowing a method the loop calls by name on the
-# walked ship, its phaser system or a bank (_K2_*_PATCHES) -> that ship runs
-# in Python. (One on a TARGET is not looked for: it would cost a dict probe
-# of every target, every tick.)
+# A BANK THE MIRROR CANNOT NAME (its `_nslot` not an int Subsystem handle)
+# -> its ship runs in Python. An INSTANCE attribute shadowing a method the
+# loop calls by name -- on the walked ship, its phaser system, a bank or a
+# target -- is not looked for and NOT obeyed (spec Part A, phase 6 follow-up
+# 3: no per-tick dict probe); the kernel reads the mirrored values.
 # Presentation internals are not a mod surface either (ruling Q5, spec
 # 2026-11-02-combat-effect-queue; roadmap decision 2): hit_feedback.
 # beam_contact, hit_feedback._mesh_xyz, host_io.shield_hit and combat.
@@ -5408,34 +5399,6 @@ _K2_ROLES = (
     ("object", "engine.appc.objects", "ObjectClass", _K2_OBJECT_NAMES),
 )
 _K2_NAMES = {role: names for role, _m, _c, names in _K2_ROLES}
-# The INSTANCE attributes looked for on the walked ship, its phaser system and
-# each bank: the methods the loop calls on them by name. A narrower set than
-# the class check's (a dict probe per name per bank per tick, in the binding:
-# combat_k2_scan_ships, ~85 ns a bank in a Debug build).
-_K2_SHIP_PATCHES = frozenset((
-    "GetPhaserSystem", "GetTargetSubsystem", "is_using_target_offset",
-    "GetTargetOffsetTG", "GetShields", "IsDead", "GetWorldLocation",
-    "GetWorldRotation"))
-# StopFiring (system and bank): an offline system's stop is logged writes
-# when its banks are idle (round trips Task 3). GetPowerLevel: a resting
-# contact carries the mirror's `_power_level` (spec 2026-11-02 §4.3).
-# PP_LOW, and a bank's GetMaxDamage, GetMaxDamageDistance and
-# GetDamageRadiusFactor: THE DAMAGE PULSE reads the mirrored values (native
-# damage Task 4). The bank's three (_K2_BANK_PULSE_PATCHES) are read by the
-# pulse alone, so one on a bank's instance hands THAT bank's pulses to
-# Python (pulse "python_banks"), not its ship: the walk and the drain, which
-# calls the bank's own GetDamageRadiusFactor, stay native.
-_K2_SYSTEM_PATCHES = frozenset((
-    "GetNumWeapons", "GetWeapon", "IsOn", "IsDisabled", "IsDestroyed",
-    "StopFiring", "GetPowerLevel", "PP_LOW"))
-_K2_BANK_PATCHES = frozenset((
-    "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
-    "_strip_emit_position", "_emitter_world_position", "GetLength",
-    "StopFiring", "GetMaxDamage", "GetMaxDamageDistance",
-    "GetDamageRadiusFactor"))
-_K2_BANK_PULSE_PATCHES = frozenset((
-    "GetMaxDamage", "GetMaxDamageDistance", "GetDamageRadiusFactor"))
-_K2_BANK_WALK_PATCHES = _K2_BANK_PATCHES - _K2_BANK_PULSE_PATCHES
 
 # The snapshot (k2_snapshot_stock): [(role, stock class, resolution), ...]
 # for the role classes (the stock classes _k2_flag and the scans compare a
@@ -5596,24 +5559,19 @@ def _k2_unseen(cls) -> int:
     return 2 if _k2_flag(cls)[1] else 1
 
 
-def _k2_python_ship(ship, pulse_banks=None) -> int:
+def _k2_python_ship(ship) -> int:
     """0: K2 may walk `ship`'s phaser step; 1: its ship must run in Python
-    (an instance attribute shadowing a stood-in name on it, its phaser
-    system or a bank, a bank or system class overriding one of its own
-    names, or the ship's class or a bank's target's class one K2 never
-    saw); 2: the whole step must (a bank or system class overriding a
-    subsystem name, or a never-seen class flagged "whole"). k2_phasers
-    inlines the common case (stock classes, no instance attribute, seen
-    classes) and calls this for the rest. A bank whose instance shadows
-    only names the pulse reads (_K2_BANK_PULSE_PATCHES) leaves the ship
-    walkable: its handle is appended to `pulse_banks` (its pulses are
-    Python's); a bank with no Subsystem handle sends the ship instead."""
+    (a bank or system class overriding one of its own names, a bank the
+    mirror cannot name -- its `_nslot` not an int Subsystem handle -- or
+    the ship's class or a bank's target's class one K2 never saw); 2: the
+    whole step must (a bank or system class overriding a subsystem name,
+    or a never-seen class flagged "whole"). Classes and handles only: an
+    instance attribute is not looked for (spec Part A). k2_phasers inlines
+    the common case (combat_k2_scan_ships) and calls this for the rest."""
     d = ship.__dict__
     why = _k2_unseen(type(ship))
     if why == 2:
         return 2
-    if not d.keys().isdisjoint(_K2_SHIP_PATCHES):
-        why = 1
     sys_ = d.get("_phaser_system")
     if sys_ is None:
         return why
@@ -5626,8 +5584,7 @@ def _k2_python_ship(ship, pulse_banks=None) -> int:
     sd = getattr(sys_, "__dict__", None)
     if sd is None:
         return why
-    if not sd.keys().isdisjoint(_K2_SYSTEM_PATCHES):
-        why = 1
+    sub = _kind("Subsystem")
     for b in sd.get("_children", ()):
         if type(b) is not _k2_stock_bank:
             over, whole = _k2_flag(type(b))
@@ -5636,17 +5593,11 @@ def _k2_python_ship(ship, pulse_banks=None) -> int:
             if over:
                 why = 1
         bd = getattr(b, "__dict__", None)
+        h = bd.get("_nslot") if bd is not None else None
+        if type(h) is not int or (h >> _KIND_SHIFT) != sub:
+            why = 1
         if bd is None:
             continue
-        keys = bd.keys()
-        if not keys.isdisjoint(_K2_BANK_PATCHES):
-            h = bd.get("_nslot")
-            if (not keys.isdisjoint(_K2_BANK_WALK_PATCHES)
-                    or pulse_banks is None or type(h) is not int
-                    or (h >> _KIND_SHIFT) != _kind("Subsystem")):
-                why = 1
-            else:
-                pulse_banks.append(h)
         target = bd.get("_target")
         if target is not None:
             unseen = _k2_unseen(type(target))
@@ -5657,30 +5608,24 @@ def _k2_python_ship(ship, pulse_banks=None) -> int:
 
 
 def _k2_ship_handles(ships):
-    """(handles, python_ships, whole, pulse_banks) for begin: each ship's
-    Object handle (-1: no row), the ships _k2_python_ship sends to Python,
-    whether one sends the whole step, and the banks of walked ships whose
-    pulses are Python's. The common case -- a stock phaser system of stock
-    banks, no instance attribute, seen classes -- is decided in the binding
-    (combat_k2_scan_ships, a C loop over the instance dicts: this runs every
-    tick over every bank); only the ships it could not call clean come back
-    here, in order, for _k2_python_ship."""
+    """(handles, python_ships, whole) for begin: each ship's Object handle
+    (-1: no row), the ships _k2_python_ship sends to Python, and whether one
+    sends the whole step. The common case -- a stock phaser system of stock
+    banks the mirror names, seen classes -- is decided in the binding
+    (combat_k2_scan_ships, a C loop: this runs every tick over every bank);
+    only the ships it could not call clean come back here, in order, for
+    _k2_python_ship."""
     handles, unclean = _h.combat_k2_scan_ships(
         ships, _kind("Object"), _KIND_SHIFT, _k2_seen_set,
-        _k2_stock_system, _k2_stock_bank, _K2_SHIP_PATCHES,
-        _K2_SYSTEM_PATCHES, _K2_BANK_PATCHES)
+        _k2_stock_system, _k2_stock_bank)
     python_ships = []
-    pulse_banks = []
     for ship, h in unclean:
-        banks = []
-        why = _k2_python_ship(ship, banks)
+        why = _k2_python_ship(ship)
         if why == 2:
-            return handles, python_ships, True, []
+            return handles, python_ships, True
         if why == 1:
             python_ships.append(h)
-        else:
-            pulse_banks.extend(banks)
-    return handles, python_ships, False, pulse_banks
+    return handles, python_ships, False
 
 
 class _K2Walk(_K1Walk):
@@ -6052,7 +5997,7 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     drain()                     # a session start (ruling R2)
     why = _k2_step_fallback(ship_instances)
     if why is None:
-        handles, python_ships, whole, pulse_banks = _k2_ship_handles(ships)
+        handles, python_ships, whole = _k2_ship_handles(ships)
         if whole:
             why = "patched"
     if why is not None:
@@ -6068,7 +6013,7 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     ctx = cx.delta()
     ctx["python_ships"] = python_ships
     ctx["trace"] = _k2_host_io._h is not None
-    ctx["pulse"] = _k2_pulse_ctx(ship_instances, pulse_banks)
+    ctx["pulse"] = _k2_pulse_ctx(ship_instances)
     t, use_memo, drift = _k1_clocks()
     _h.combat_k2_begin(handles, dt, t, use_memo, drift, ctx)
     cx.commit()
@@ -7165,13 +7110,11 @@ def _kdmg_ctx(weapon: str, ship_instances) -> dict:
     }
 
 
-def _k2_pulse_ctx(ship_instances, python_banks=()) -> dict:
-    """THE DAMAGE PULSE's context for this step, and the banks whose pulses
-    are Python's (_k2_ship_handles' pulse_banks). No target list: the
-    kernel asks the mirror about each target (REPRESENTABLE)."""
-    ctx = _kdmg_ctx("phaser", ship_instances)
-    ctx["python_banks"] = list(python_banks)
-    return ctx
+def _k2_pulse_ctx(ship_instances) -> dict:
+    """THE DAMAGE PULSE's context for this step. No target list and no
+    hand-back list: the kernel asks the mirror about each target
+    (REPRESENTABLE), and an instance attribute on a bank is not obeyed."""
+    return _kdmg_ctx("phaser", ship_instances)
 
 
 def _kernel_hits_landed(ship_instances) -> None:
@@ -7190,19 +7133,19 @@ def _k3_apply_hits(hits, ship_instances, walk) -> None:
     """THE HITS (k3_projectiles.h): host_loop's hit loop, natively, after
     the step's expiries. `hits` is _k3_walk's list of (torpedo, ship,
     hit_point, hit_normal); a hit the kernel hands back runs here, in its
-    place, exactly as host_loop runs it (counted "k3_hit_python")."""
+    place, exactly as host_loop runs it (the kernel counts it,
+    "k3_hit_python")."""
     from engine.appc import combat
     pulse = _kdmg_ctx("torpedo", ship_instances)
     prev = _h.combat_set_applier(_applier_context(walk))
     try:
         i = 0
         while i < len(hits):
-            k = _h.combat_k3_apply_hits(i, pulse, ())
+            k = _h.combat_k3_apply_hits(i, pulse)
             if k > i:
                 _kernel_hits_landed(ship_instances)
             if k >= len(hits):
                 break
-            _k3_hit_python[0] += 1
             t, ship, point, normal = hits[k]
             combat.apply_hit(ship, t._damage, point,
                              source=t._source_ship, normal=normal,
@@ -7215,10 +7158,6 @@ def _k3_apply_hits(hits, ship_instances, walk) -> None:
         # apply_hits' compute is K3's (released and timed with next()'s):
         # into k3.compute, beside the walk's, never the next session's.
         _compute_taken(3)
-
-
-#: K3 hits run here in Python (_k3_apply_hits' hand-backs).
-_k3_hit_python = [0]
 
 
 if available():

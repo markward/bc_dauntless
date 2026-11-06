@@ -967,7 +967,6 @@ void K3Kernel::abandon() {
 //           hardpoint_weapon=torpedo, shield_point=torpedo._bubble_entry)
 // from hit `from`, until one the kernel cannot apply.
 size_t K3Kernel::apply_hits(size_t from, const K2PulseCtx& p,
-                            const std::unordered_set<size_t>& python,
                             std::vector<K3Applied>& out) {
     auto handed = [this](K2PulseWhy why, size_t i) {
         ++counts_.hit_why[static_cast<size_t>(why)];
@@ -978,7 +977,6 @@ size_t K3Kernel::apply_hits(size_t from, const K2PulseCtx& p,
         if (!p.ok) return handed(K2PulseWhy::not_ok, i);
         if (!dmg_target_representable(m_, h.ship))
             return handed(K2PulseWhy::unrepresentable, i);
-        if (python.count(i)) return i;  // the driver's own reason
         HitInput in;
         in.ship = h.ship;
         in.source = h.source;

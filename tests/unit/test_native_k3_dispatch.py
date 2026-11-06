@@ -1355,23 +1355,23 @@ def test_a_spy_on_apply_hit_hands_every_hit_back(monkeypatch):
 def test_a_patched_damage_method_on_the_target_is_not_honoured(monkeypatch):
     """Spec Part A (phase 6 follow-up 3: no per-tick patch scan): the
     Galaxy shadows IsImmuneToDamage (a ShipClass method the hit stands in
-    for) on its instance, and its shield generator IsInvincible (a
-    ShipSubsystem one). Neither is obeyed natively: every hit lands
-    natively (no hand-back) and the native arm never calls either; the
-    reference arm does. Both spies return the stock answer, so the arms
-    still agree."""
+    for) on its instance, and its shield generator ApplyDamage (a
+    ShieldSubsystem one: the shielded hit drains a face through it).
+    Neither is obeyed natively: every hit lands natively (no hand-back) and
+    the native arm never calls either; the reference arm calls both. Both
+    spies return the stock answer, so the arms still agree."""
     seen = []
 
     def setup(w, mp):
         ship = w.ships["Galaxy"]
         shields = ship.GetShields()
         for obj, name in ((ship, "IsImmuneToDamage"),
-                          (shields, "IsInvincible")):
+                          (shields, "ApplyDamage")):
             stock = getattr(type(obj), name)
 
-            def patched(_o=obj, _stock=stock, _w=w, _n=name):
+            def patched(*a, _o=obj, _stock=stock, _w=w, _n=name):
                 seen.append((_n, _w.native))
-                return _stock(_o)
+                return _stock(_o, *a)
             mp.setattr(obj, name, patched, raising=False)
 
     _ref, _nat, counts = _both(monkeypatch, _volley, 200,
@@ -1379,6 +1379,7 @@ def test_a_patched_damage_method_on_the_target_is_not_honoured(monkeypatch):
     _k3_ran(counts)
     assert counts["k3_native_hits"] > 0, counts
     assert ("IsImmuneToDamage", False) in seen, seen  # the reference's
+    assert ("ApplyDamage", False) in seen, seen
     assert all(not native for _n, native in seen), seen
 
 

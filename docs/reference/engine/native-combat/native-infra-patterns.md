@@ -397,7 +397,7 @@ Added with `docs/superpowers/specs/2026-11-02-native-weapon-state-design.md` (§
   |---|---|
   | K0 (charge/reload) | nothing: its override guard was removed (a static test, `tests/unit/test_native_k0_override_guard.py`, keeps engine classes from overriding what it stands in for) |
     | K1 (fire control) | nothing: native only, no Python copy |
-  | K2 (beams) | instance patches (`_K2_SHIP_PATCHES`, `_K2_SYSTEM_PATCHES`, `_K2_BANK_PATCHES`) and class flags for foreign / non-stock classes (`_k2_flag`, `_k2_foreign`) |
+  | K2 (beams) | class flags for foreign / non-stock classes (`_k2_flag`, `_k2_foreign`) and unseen classes (`_k2_unseen`), plus a bank the mirror cannot name (no Subsystem `_nslot`). The per-tick instance-dict scan (`_K2_*_PATCHES`, the bank pulse hand-back `python_banks`) was deleted 2026-11-06 |
   | K3 (torpedoes) | instance patches only (`_STEP_SHIP_PATCHES`) |
   | K4 (eligibility) | still snapshots module functions (`_K4_FUNCTIONS`, `_k4_unchanged`) |
   | damage | class flags (`dmg_class`) and, for a condition write or `DamageSystem` only, per-call instance patches (`_DMG_SUB_PATCHES`), plus the kept `combat.apply_hit` identity check (`_kdmg_apply_hit_stock`), kept because 7 golden fights record hits through an `apply_hit` spy. A hit (K2 pulse, K3 hit, `apply_hit`) checks only representability from the mirror (`dmg_target_representable`); the per-tick instance scan (`combat_dmg_clean`) was deleted 2026-11-06 |

@@ -1109,55 +1109,160 @@ def test_a_patched_stood_in_method_is_not_honoured(monkeypatch, cls, name):
     assert counts["k2_python_step_reasons"]["patched"] == 0, counts
 
 
-def test_instance_patch_sends_its_ship_to_python(monkeypatch):
-    """An instance attribute shadowing a stood-in method on a ship, its
-    phaser system or a bank sends THAT ship to Python (python_ships); the
-    rest of the step stays native."""
-    for owner, name in (("ship", "GetTargetSubsystem"), ("system", "IsOn"),
-                        ("system", "GetPowerLevel"), ("bank", "take_dwell")):
-        def patch(mp, w, owner=owner, name=name):
-            g = w.ships["Galaxy"]
-            obj = {"ship": g, "system": g.GetPhaserSystem(),
-                   "bank": g.GetPhaserSystem().GetWeapon(0)}[owner]
-            mp.setattr(obj, name, getattr(obj, name), raising=False)
+# ── K2's ship scan reads classes and handles, not instance dicts (phase 6
+# follow-up 3, Task 2; spec Part A) ─────────────────────────────────────────
+#
+# The driver's per-ship check before begin (_k2_ship_handles: the binding's
+# combat_k2_scan_ships, then _k2_python_ship for what it could not call
+# clean) sends a ship to Python only for a class reason (a class K2 never
+# saw, a non-stock system or bank class _k2_flag flags) or a bank the mirror
+# cannot name (no Subsystem `_nslot`). An instance attribute shadowing a
+# method the loop calls is NOT obeyed: no dict is probed for one.
 
-        counts = _one_native_step(monkeypatch, patch)
-        assert counts["k2_records"] > 0, (owner, counts)
-        assert counts["k2_python_reasons"]["overridden"] == 1, (owner, counts)
+# The methods the loop calls by name on a walked ship, its phaser system and
+# each bank: the instance attributes the scan used to look for. Written out
+# here (the driver no longer has them) so the sentinel test can put every
+# one back.
+_LOOP_NAMES = {
+    "ship": ("GetPhaserSystem", "GetTargetSubsystem",
+             "is_using_target_offset", "GetTargetOffsetTG", "GetShields",
+             "IsDead", "GetWorldLocation", "GetWorldRotation"),
+    "system": ("GetNumWeapons", "GetWeapon", "IsOn", "IsDisabled",
+               "IsDestroyed", "StopFiring", "GetPowerLevel", "PP_LOW"),
+    "bank": ("IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
+             "_strip_emit_position", "_emitter_world_position", "GetLength",
+             "StopFiring", "GetMaxDamage", "GetMaxDamageDistance",
+             "GetDamageRadiusFactor"),
+}
+
+
+def _scan_world(mp, tag):
+    """Both ships firing at each other, one tick run (the stock snapshot is
+    taken, every bank's target set)."""
+    w = World(mp, True, GALAXY_VORCHA, tag)
+    g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+    g.GetPhaserSystem().StartFiring(v)
+    v.GetPhaserSystem().StartFiring(g)
+    w.tick()
+    return w
+
+
+def _verdict(w):
+    """(handles, python_ships, whole): the driver's per-ship check."""
+    return tuple(nc._k2_ship_handles(w.order)[:3])
+
+
+def _owners(w):
+    """[(role, object)]: every walked ship, its phaser system and banks."""
+    out = []
+    for s in w.order:
+        out.append(("ship", s))
+        g = s.GetPhaserSystem()
+        out.append(("system", g))
+        out.extend(("bank", g.GetWeapon(i)) for i in range(g.GetNumWeapons()))
+    return out
+
+
+def test_scan_reads_no_instance_dict_keys(monkeypatch):
+    """Every name the loop calls, and a sentinel, put in every ship's,
+    system's and bank's instance dict: the handles and the ships sent to
+    Python come out exactly as without them."""
+    with monkeypatch.context() as mp:
+        w = _scan_world(mp, "k2_scan_keys")
+        try:
+            base = _verdict(w)
+            assert base == ([nc.slot(s) for s in w.order], [], False), base
+            with monkeypatch.context() as m:
+                for role, obj in _owners(w):
+                    for name in _LOOP_NAMES[role]:
+                        m.setitem(obj.__dict__, name,
+                                  getattr(obj, name, None))
+                    m.setitem(obj.__dict__, "_k2_scan_sentinel", object())
+                assert _verdict(w) == base
+        finally:
+            w.close()
+
+
+def test_a_bank_with_no_subsystem_row_sends_its_ship_to_python(monkeypatch):
+    """A bank the mirror cannot name (its row dropped: no `_nslot`) sends
+    its ship to Python, whatever its dict holds; the other ship stays
+    native."""
+    with monkeypatch.context() as mp:
+        w = _scan_world(mp, "k2_scan_row")
+        try:
+            g = w.ships["Galaxy"]
+            nc._drop(g.GetPhaserSystem().GetWeapon(1))
+            handles, python_ships, whole = _verdict(w)
+            assert handles == [nc.slot(s) for s in w.order], handles
+            assert python_ships == [nc.slot(g)], python_ships
+            assert not whole
+        finally:
+            w.close()
+
+    def patch(mp, w):
+        nc._drop(w.ships["Galaxy"].GetPhaserSystem().GetWeapon(1))
+
+    counts = _one_native_step(monkeypatch, patch)
+    assert counts["k2_records"] > 0, counts             # the Vor'cha's
+    assert counts["k2_python_reasons"]["overridden"] == 1, counts
+
+
+def test_a_subclassed_bank_still_sends_its_ship_to_python(monkeypatch):
+    """A class check stays: a PhaserBank subclass overriding one of its
+    own names (_k2_flag flags it, not "whole") sends its ship to Python."""
+
+    class SlowDwell(ws.PhaserBank):
+        def take_dwell(self):
+            return ws.PhaserBank.take_dwell(self)
+
+    with monkeypatch.context() as mp:
+        w = _scan_world(mp, "k2_scan_class")
+        try:
+            g = w.ships["Galaxy"]
+            mp.setattr(g.GetPhaserSystem().GetWeapon(0), "__class__",
+                       SlowDwell)
+            assert nc._k2_flag(SlowDwell) == (True, False)
+            handles, python_ships, whole = _verdict(w)
+            assert python_ships == [nc.slot(g)], python_ships
+            assert not whole
+        finally:
+            w.close()
 
 
 def _py_clean(ship):
-    """The per-ship clean check as the Python driver made it before it moved
-    into the binding (combat_k2_scan_ships): the reference."""
+    """The binding's clean check, written out in Python (the reference):
+    the ship's class seen; its phaser system, when it has one, exactly the
+    stock class; every bank exactly the stock class, with a Subsystem
+    `_nslot`, and a `_target` that is None or of a seen class."""
     d = ship.__dict__
     seen = nc._k2_seen_set
+    if type(ship) not in seen:
+        return False
     sys_ = d.get("_phaser_system")
-    clean = type(ship) in seen and d.keys().isdisjoint(nc._K2_SHIP_PATCHES)
-    if clean and sys_ is not None:
-        if type(sys_) is nc._k2_stock_system:
-            sd = sys_.__dict__
-            clean = sd.keys().isdisjoint(nc._K2_SYSTEM_PATCHES)
-            if clean:
-                for b in sd.get("_children", ()):
-                    if type(b) is not nc._k2_stock_bank:
-                        return False
-                    bd = b.__dict__
-                    target = bd.get("_target")
-                    if not bd.keys().isdisjoint(nc._K2_BANK_PATCHES) or (
-                            target is not None
-                            and type(target) not in seen):
-                        return False
-        else:
-            clean = False
-    return clean
+    if sys_ is None:
+        return True
+    if type(sys_) is not nc._k2_stock_system:
+        return False
+    for b in sys_.__dict__.get("_children", ()):
+        if type(b) is not nc._k2_stock_bank:
+            return False
+        bd = b.__dict__
+        h = bd.get("_nslot")
+        if type(h) is not int or (h >> nc._KIND_SHIFT) != nc._kind(
+                "Subsystem"):
+            return False
+        target = bd.get("_target")
+        if target is not None and type(target) not in seen:
+            return False
+    return True
 
 
 def test_binding_scan_matches_the_python_clean_check(monkeypatch):
-    """combat_k2_scan_ships (the per-ship, per-bank clean check, a C loop
-    over the dicts): each ship's Object handle (-1: no row), and the ships
-    that are NOT clean -- for _k2_python_ship to decide -- in order, as the
-    Python check decided them. Clean, then each way a ship stops being
-    clean, one at a time."""
+    """combat_k2_scan_ships (the per-ship, per-bank clean check, a C loop):
+    each ship's Object handle (-1: no row), and the ships that are NOT
+    clean -- for _k2_python_ship to decide -- in order, as _py_clean
+    decides them. Clean, then each way a ship stops being clean, one at a
+    time; an instance attribute is not one of them."""
 
     class Unseen:
         pass
@@ -1171,37 +1276,45 @@ def test_binding_scan_matches_the_python_clean_check(monkeypatch):
     def scan(w):
         return _h.combat_k2_scan_ships(
             w.order, nc._kind("Object"), nc._KIND_SHIFT, nc._k2_seen_set,
-            nc._k2_stock_system, nc._k2_stock_bank, nc._K2_SHIP_PATCHES,
-            nc._K2_SYSTEM_PATCHES, nc._K2_BANK_PATCHES)
+            nc._k2_stock_system, nc._k2_stock_bank)
 
     def unclean(w):
         return [(s, nc.slot(s)) for s in w.order if not _py_clean(s)]
 
     with monkeypatch.context() as mp:
-        w = World(mp, True, GALAXY_VORCHA, "k2_scan")
+        w = _scan_world(mp, "k2_scan")
         try:
             g, v = w.ships["Galaxy"], w.ships["Vorcha"]
-            g.GetPhaserSystem().StartFiring(v)
-            v.GetPhaserSystem().StartFiring(g)
-            w.tick()        # the stock snapshot is taken; targets set
             handles, bad = scan(w)
             assert handles == [nc.slot(s) for s in w.order], handles
-            assert all(h is not None for h in handles)
             assert bad == [] == unclean(w)
             bank = g.GetPhaserSystem().GetWeapon(1)
             system = g.GetPhaserSystem()
             # (setitem: an instance attribute must be GONE afterwards; a
             # monkeypatch.setattr would put the bound method back on it.)
-            cases = (
+            clean = (
                 lambda m: m.setitem(v.__dict__, "IsDead", v.IsDead),
                 lambda m: m.setitem(system.__dict__, "IsOn", system.IsOn),
                 lambda m: m.setitem(bank.__dict__, "take_dwell",
                                     bank.take_dwell),
+                lambda m: m.setitem(bank.__dict__, "GetMaxDamage",
+                                    bank.GetMaxDamage),
+            )
+            for i, case in enumerate(clean):
+                with monkeypatch.context() as m:
+                    case(m)
+                    assert scan(w) == (handles, []), i
+                    assert unclean(w) == [], i
+            cases = (
                 lambda m: m.setitem(bank.__dict__, "_target", Unseen()),
                 lambda m: m.setattr(bank, "__class__", SubBank),
                 lambda m: m.setattr(system, "__class__", SubSystem),
                 lambda m: m.setattr(v, "__class__",
                                     type("Unseen", (type(v),), {})),
+                lambda m: m.delitem(bank.__dict__, "_nslot"),
+                lambda m: m.setitem(bank.__dict__, "_nslot", nc.slot(g)),
+                lambda m: m.setitem(bank.__dict__, "_nslot",
+                                    float(bank.__dict__["_nslot"])),
             )
             for i, case in enumerate(cases):
                 with monkeypatch.context() as m:
@@ -1217,7 +1330,7 @@ def test_binding_scan_matches_the_python_clean_check(monkeypatch):
                 handles, bad = scan(w)
                 assert handles == [nc.slot(g), nc.REF_NONE], handles
                 assert bad == [], bad
-            # A ship with no phaser system is clean on its own flags.
+            # A ship with no phaser system is clean on its own class.
             with monkeypatch.context() as m:
                 m.setitem(v.__dict__, "_phaser_system", None)
                 assert scan(w)[1] == [] == unclean(w)
@@ -2284,14 +2397,14 @@ def test_firing_bank_on_offline_system_is_logged_with_loop_stop(
 
 @pytest.mark.parametrize("where", ["system_class", "system_instance",
                                    "bank_class", "bank_instance"])
-def test_system_stop_override_runs_python(monkeypatch, where):
-    """While K2's Python copy exists, the StopFiring an offline stop stands
-    in for -- the phaser system's and each bank's -- patched on an instance
-    (the K2 instance-patch names) is obeyed: Python's own runs, exactly as
-    often ON as OFF. Patched on the CLASS it is not any more: that guard was
-    K1's (k1_overridden), deleted with fire control's Python copy (fire
-    control native only, M8.7) -- K2's native stop logs its writes and
-    never calls it, while the Python reference arm does."""
+def test_a_patched_stop_firing_is_not_honoured(monkeypatch, where):
+    """The StopFiring an offline stop stands in for -- the phaser system's
+    and each bank's -- patched on the class or on an instance is not
+    obeyed: K2's native stop logs its writes and never calls it, while the
+    Python reference arm does. The class guard was K1's (k1_overridden),
+    deleted with fire control's Python copy (fire control native only,
+    M8.7); the instance scan K2's (spec Part A, phase 6 follow-up 3, Task
+    2: K2's ship scan reads no instance dict)."""
     calls = {}
 
     def counting(real, key):
@@ -2326,10 +2439,7 @@ def test_system_stop_override_runs_python(monkeypatch, where):
 
     _both(monkeypatch, GALAXY_VORCHA, script, 30)
     assert len(calls[False]) >= 25, calls
-    if where.endswith("_class"):
-        assert calls[True] == [], calls      # not obeyed (M8.7)
-    else:
-        assert calls[True] == calls[False]
+    assert calls[True] == [], calls          # not obeyed
 
 
 def test_raise_in_a_batch_presentation_presents_the_rest_then_raises(
@@ -2633,11 +2743,12 @@ def test_a_spy_on_apply_hit_hands_every_pulse_back(monkeypatch):
 def test_a_patched_damage_method_on_the_target_is_not_honoured(monkeypatch):
     """Spec Part A (phase 6 follow-up 3: no per-tick patch scan): the
     Vor'cha shadows IsImmuneToDamage (a ShipClass method the hit stands in
-    for) on its instance, and its shield generator IsInvincible (a
-    ShipSubsystem one). Neither is obeyed natively: every pulse lands in
-    the walk (no hand-back) and the native arm never calls either; the
-    reference arm does. Both spies return the stock answer, so the arms
-    still agree."""
+    for) on its instance, and its shield generator ApplyDamage (a
+    ShieldSubsystem one: the shielded hit drains a face through it).
+    Neither is obeyed natively: every pulse lands in the walk (no
+    hand-back) and the native arm never calls either; the reference arm
+    calls both. Both spies return the stock answer, so the arms still
+    agree."""
     seen = []
 
     def setup(w, mp):
@@ -2645,12 +2756,12 @@ def test_a_patched_damage_method_on_the_target_is_not_honoured(monkeypatch):
         ship = w.ships["Vorcha"]
         shields = ship.GetShields()
         for obj, name in ((ship, "IsImmuneToDamage"),
-                          (shields, "IsInvincible")):
+                          (shields, "ApplyDamage")):
             stock = getattr(type(obj), name)
 
-            def patched(_o=obj, _stock=stock, _w=w, _n=name):
+            def patched(*a, _o=obj, _stock=stock, _w=w, _n=name):
                 seen.append((_n, _w.native))
-                return _stock(_o)
+                return _stock(_o, *a)
             mp.setattr(obj, name, patched, raising=False)
 
     _ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, _volley, 240,
@@ -2658,37 +2769,63 @@ def test_a_patched_damage_method_on_the_target_is_not_honoured(monkeypatch):
     assert counts["k2_pulse_python"] == 0, counts["k2_pulse_python_reasons"]
     assert counts["k2_native_pulses"] > 0, counts
     assert ("IsImmuneToDamage", False) in seen, seen  # the reference's
+    assert ("ApplyDamage", False) in seen, seen
     assert all(not native for _n, native in seen), seen
 
 
-@pytest.mark.parametrize("name", ("GetMaxDamage", "GetMaxDamageDistance",
-                                  "GetDamageRadiusFactor"))
-def test_an_instance_patch_on_a_banks_damage_getter_hands_its_pulses_back(
-        monkeypatch, name):
-    """The pulse reads a bank's GetMaxDamage, GetMaxDamageDistance and
-    GetDamageRadiusFactor from the mirror. One shadowed on a Galaxy bank's
-    instance is obeyed by handing THAT bank's pulses to Python (reason
-    `python`), not its ship: the Galaxy is still walked natively (its
-    resting contacts still reach the drain, which calls the bank's own
-    DamageRadiusFactor: spec 2026-11-02 combat-effect-queue §4.4), and the
-    Vor'cha's pulses stay native. The patch returns a different value, so a
-    pulse that ignored it would differ from the reference."""
+def test_a_patched_bank_method_is_not_honoured(monkeypatch):
+    """Spec Part A (phase 6 follow-up 3, Task 2: K2's ship scan reads no
+    instance dict): GetMaxDamage shadowed on the instance of each Galaxy
+    bank that fires. The Galaxy is walked natively (no RUN_PYTHON) and
+    every pulse applied natively, with the mirrored maximum (none comes back
+    as a CONTACT record for _phaser_contact's damage branch, the only damage
+    reader of the patch); the reference arm calls the patch. (The native
+    arm may still call it: a resting contact the drain returns is presented
+    by Python's beam_contact, whose spark size reads GetMaxDamage.) The spy
+    returns the stock answer, so the arms still agree."""
     seen = []
 
     def setup(w, mp):
         _native_hits(w, mp)
         for bank in _banks_in_arc(w.ships["Galaxy"], w.ships["Vorcha"]):
-            stock = getattr(bank, name)
+            stock = type(bank).GetMaxDamage
 
-            def patched(_stock=stock, _w=w):
+            def patched(_b=bank, _w=w):
                 seen.append(_w.native)
-                return _stock() * 1.5 + 0.25
-            mp.setattr(bank, name, patched, raising=False)
+                return stock(_b)
+            mp.setattr(bank, "GetMaxDamage", patched, raising=False)
 
     _ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, _volley, 240,
                                setup=setup)
     _native_ran(counts)
     assert counts["k2_python_reasons"]["overridden"] == 0, counts
-    assert counts["k2_pulse_python_reasons"].get("python", 0) > 0, counts
-    assert counts["k2_native_pulses"] > 0, counts      # the Vor'cha's
-    assert True in seen and False in seen
+    assert counts["k2_pulse_python"] == 0, counts["k2_pulse_python_reasons"]
+    assert counts["k2_native_pulses"] > 0, counts
+    assert False in seen, seen                      # the reference's
+
+
+def test_a_patched_ship_method_is_not_honoured(monkeypatch):
+    """... and the same on the ship: GetTargetSubsystem shadowed on the
+    Galaxy's instance. The Galaxy is walked natively (no RUN_PYTHON) and
+    its pulses applied natively; the native arm never calls the patch, the
+    reference arm does."""
+    seen = []
+
+    def setup(w, mp):
+        _native_hits(w, mp)
+        ship = w.ships["Galaxy"]
+        stock = type(ship).GetTargetSubsystem
+
+        def patched(_s=ship, _w=w):
+            seen.append(_w.native)
+            return stock(_s)
+        mp.setattr(ship, "GetTargetSubsystem", patched, raising=False)
+
+    _ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, _volley, 240,
+                               setup=setup)
+    _native_ran(counts)
+    assert counts["k2_python_reasons"]["overridden"] == 0, counts
+    assert counts["k2_pulse_python"] == 0, counts["k2_pulse_python_reasons"]
+    assert counts["k2_native_pulses"] > 0, counts
+    assert False in seen, seen                      # the reference's
+    assert True not in seen, seen

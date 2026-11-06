@@ -1118,7 +1118,7 @@ TEST(K3Hits, EachHitIsAppliedFullyBeforeTheNextInMovingOrder) {
     w.done();
     w.k.end();
     std::vector<K3Applied> out;
-    EXPECT_EQ(w.k.apply_hits(0, hit_ctx(), {}, out), 2u);
+    EXPECT_EQ(w.k.apply_hits(0, hit_ctx(), out), 2u);
     ASSERT_EQ(out.size(), 2u);
     EXPECT_EQ(out[0].index, 0u);
     EXPECT_EQ(out[1].index, 1u);
@@ -1160,7 +1160,7 @@ TEST(K3Hits, ABubbleHitsShieldPointIsItsHitPoint) {
     w.k.end();
     ASSERT_TRUE(w.k.hits()[0].hit_is_bubble);
     std::vector<K3Applied> out;
-    EXPECT_EQ(w.k.apply_hits(0, hit_ctx(), {}, out), 1u);
+    EXPECT_EQ(w.k.apply_hits(0, hit_ctx(), out), 1u);
     const DamageEntry& p = first(out[0], DamageKind::HIT_PRESENT);
     EXPECT_TRUE(p.ops[20].boolean);   // has_shield_point
     EXPECT_TRUE(p.ops[21].boolean);   // shield_point IS hit_point
@@ -1169,10 +1169,10 @@ TEST(K3Hits, ABubbleHitsShieldPointIsItsHitPoint) {
 TEST(K3Hits, ApplyStopsAtTheFirstHitItCannotApply) {
     struct Case {
         const char* why;
-        int reason;  // K2PulseWhy, or -1: the driver's own `python` index
+        int reason;  // K2PulseWhy
     };
     for (const Case c : {Case{"not_ok", 0}, Case{"unrepresentable", 1},
-                         Case{"fallback", 3}, Case{"python", -1}}) {
+                         Case{"fallback", 3}}) {
         SCOPED_TRACE(c.why);
         World w;
         const int64_t x = w.listed("X", 0, 50, 0);
@@ -1185,28 +1185,25 @@ TEST(K3Hits, ApplyStopsAtTheFirstHitItCannotApply) {
         w.done();
         w.k.end();
         K2PulseCtx p = hit_ctx();
-        std::unordered_set<size_t> python;
         if (c.reason == 0) p.ok = false;
         if (c.reason == 1) w.m.set_mount_order(y, {kRefUnrepresentable});
         if (c.reason == 3) w.m.set_i(y, Field::dmg_ship, 0);
-        if (c.reason == -1) python.insert(1);
         std::vector<K3Applied> out;
         if (c.reason == 0) {
-            EXPECT_EQ(w.k.apply_hits(0, p, python, out), 0u);
+            EXPECT_EQ(w.k.apply_hits(0, p, out), 0u);
             EXPECT_TRUE(out.empty());
             EXPECT_EQ(w.m.get_f(hx, Field::_condition), 500.0);
             continue;
         }
         // A lands; B is handed back with Y untouched; nothing after it.
-        EXPECT_EQ(w.k.apply_hits(0, p, python, out), 1u);
+        EXPECT_EQ(w.k.apply_hits(0, p, out), 1u);
         ASSERT_EQ(out.size(), 1u);
         EXPECT_EQ(w.m.get_f(hx, Field::_condition), 490.0);
         EXPECT_EQ(w.m.get_f(hy, Field::_condition), 500.0);
-        if (c.reason >= 0)
-            EXPECT_EQ(w.k.counts().hit_why[static_cast<size_t>(c.reason)], 1);
+        EXPECT_EQ(w.k.counts().hit_why[static_cast<size_t>(c.reason)], 1);
         // From past it: nothing left.
         out.clear();
-        EXPECT_EQ(w.k.apply_hits(2, p, python, out), 2u);
+        EXPECT_EQ(w.k.apply_hits(2, p, out), 2u);
         EXPECT_TRUE(out.empty());
     }
 }
@@ -1222,7 +1219,7 @@ TEST(K3Projectiles, HitNeedsNoCleanList) {
     w.done();
     w.k.end();
     std::vector<K3Applied> out;
-    EXPECT_EQ(w.k.apply_hits(0, hit_ctx(), {}, out), 1u);
+    EXPECT_EQ(w.k.apply_hits(0, hit_ctx(), out), 1u);
     ASSERT_EQ(out.size(), 1u);
     EXPECT_EQ(w.m.get_f(hull, Field::_condition), 490.0);
     EXPECT_EQ(w.k.counts().native_hits, 1);
@@ -1240,7 +1237,7 @@ TEST(K3Projectiles, HitHandsBackAnUnrepresentableTarget) {
     w.done();
     w.k.end();
     std::vector<K3Applied> out;
-    EXPECT_EQ(w.k.apply_hits(0, hit_ctx(), {}, out), 0u);
+    EXPECT_EQ(w.k.apply_hits(0, hit_ctx(), out), 0u);
     EXPECT_TRUE(out.empty());
     EXPECT_EQ(w.m.get_f(hull, Field::_condition), 500.0);
     EXPECT_EQ(w.k.counts().hit_why[static_cast<size_t>(

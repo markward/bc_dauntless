@@ -127,8 +127,9 @@
 // the hit stands in for replaced, or a player the mirror cannot name), a
 // target the mirror cannot name whole, a level Python would raise on, or
 // damage.h falling back -- keeps the CONTACT record, counted by why
-// (K2PulseWhy):
-// Python then runs _phaser_contact itself.
+// (K2PulseWhy); Python then runs _phaser_contact itself. An instance
+// attribute shadowing a method the pulse reads (a bank's GetMaxDamage) is
+// not obeyed (spec Part A): the pulse reads the mirrored value.
 //
 // RECORDS (K2Kind, in combat_k2_kinds() order). The Python layouts, as the
 // binding builds them (handles are mirror handles, -1 = None; xyz = a
@@ -355,18 +356,14 @@
 // The audit: the kernel's own can_detect would bypass sensor_detection's
 // per-call audit.
 // It lists a ship in `python_ships` (RUN_PYTHON "overridden") when its bank
-// or system class overrides one of its own names, or it has an INSTANCE
-// attribute shadowing a method the loop calls on it by name:
-//   the ship: GetPhaserSystem, GetTargetSubsystem, is_using_target_offset,
-//     GetTargetOffsetTG, GetShields, IsDead, GetWorldLocation,
-//     GetWorldRotation;
-//   its phaser system: GetNumWeapons, GetWeapon, IsOn, IsDisabled,
-//     IsDestroyed, StopFiring, GetPowerLevel, PP_LOW;
-//   a bank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
-//     _strip_emit_position, _emitter_world_position, GetLength, StopFiring,
-//     GetMaxDamage, GetMaxDamageDistance, GetDamageRadiusFactor.
-// (GetMaxDamage, GetMaxDamageDistance, GetDamageRadiusFactor, PP_LOW: THE
-// DAMAGE PULSE reads the bank's and system's mirrored values.)
+// or system class overrides one of its own names, or a bank of its phaser
+// system has no Subsystem row (its "_nslot" is not an int Subsystem handle:
+// the mirror cannot name it). The check reads classes and handles only
+// (combat_k2_scan_ships, then native_combat._k2_python_ship): an INSTANCE
+// attribute shadowing a method the loop calls on the ship, its phaser
+// system or a bank is not looked for and not obeyed (spec Part A, phase 6
+// follow-up 3; THE DAMAGE PULSE reads the bank's and system's mirrored
+// values).
 // (GetPowerLevel: a resting contact carries the system's mirrored
 // `_power_level`, RESTING CONTACTS. StopFiring: THE OFFLINE STOP and the
 // walk's logged bank stops stand in for it. K1's class-override guard,
@@ -460,7 +457,6 @@ enum class K2PulseWhy : int32_t {
                       // (dmg_target_representable, damage.h)
     level,        // the power level is not an index of the 3-tuple
     fallback,     // damage.h fell back (the mirror is as it was)
-    python,       // the bank is in pulse.python_banks (K3: the driver's own)
     kCount
 };
 const char* k2_pulse_why_name(K2PulseWhy w);
@@ -537,10 +533,6 @@ struct K2PulseCtx {
     int64_t hit_weapon = 0, weapon_hit_type = 0;
     // ship_instances is not None.
     bool has_instances = false;
-    // K2: banks (Subsystem handles) whose instance dict shadows a name the
-    // pulse reads from the mirror (GetMaxDamage, GetMaxDamageDistance,
-    // GetDamageRadiusFactor): their pulses are Python's. Unused by K3.
-    std::unordered_set<int64_t> python_banks;
 };
 
 struct K2Context {

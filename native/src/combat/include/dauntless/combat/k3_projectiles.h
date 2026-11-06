@@ -163,12 +163,12 @@
 // `p.has_instances`) with `p.dc`, the step memo cleared before and after
 // each. It stops at the first hit it cannot apply -- `p.ok` false, its
 // ship one the mirror cannot name whole (damage.h dmg_target_representable),
-// its index in `python` (the driver sends none), or damage.h falling back
-// -- and returns that index (hits().size() when every one landed): the
-// driver runs that hit in Python and calls again from the next. Each applied hit's
-// writes and entries (its Held operands: the source ship) go to `out`, in
-// order; the binding applies and appends them before it returns. The hits
-// are kept until the next begin() or clear().
+// or damage.h falling back -- and returns that index (hits().size() when
+// every one landed): the driver runs that hit in Python and calls again
+// from the next. Each applied hit's writes and entries (its Held operands:
+// the source ship) go to `out`, in order; the binding applies and appends
+// them before it returns. The hits are kept until the next begin() or
+// clear().
 
 namespace dauntless::combat {
 
@@ -294,11 +294,9 @@ public:
     void abandon();  // whatever its state (an exception unwound Python)
 
     // THE HITS: the last DONE's hits, and apply_hits (see above). `p`'s
-    // intensity and pp_low are unused (a phaser's). `python`: indices the
-    // driver hands to Python itself.
+    // intensity and pp_low are unused (a phaser's).
     const std::vector<K3Hit>& hits() const { return hits_; }
     size_t apply_hits(size_t from, const K2PulseCtx& p,
-                      const std::unordered_set<size_t>& python,
                       std::vector<K3Applied>& out);
     bool open() const { return static_cast<bool>(session_); }
     void clear();
