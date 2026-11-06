@@ -9,8 +9,10 @@ Module registries that the game clears only on a mission swap held strong
 references, and the per-test reset's hand-kept copy of the swap's reset list
 had drifted 15 entries behind it. Fixed by giving both callers one list,
 `engine.host_loop.reset_mission_state`. After the fix the full suite peaks at
-**2,903 MB**. Most of what remains is one legitimate test's working
-set, and the full gate now fails past a **3,300 MB** budget.
+**2,903 MB** (2,896 MB in the final run). What remains is the working sets
+of a few heavy deep tests, each adding to a high-water mark the process
+never hands back. The full gate now fails past a **3,300 MB** budget and
+names the tests that raised the high-water most.
 
 ## How it was measured (2026-11-06)
 
@@ -91,13 +93,12 @@ GC off for its window.
 
 | Source | Size | Kind |
 |---|---|---|
-| `tests/integration/test_native_off_lock_stress.py` | **1.6 GB peak on its own** (RSS 385 to 1,578 MB in one test) | Working set. The churn thread turns the cyclic collector off process-wide and collects only generations 0/1, so 600 ticks of a 64-ship fight's cyclic garbage pile up until the arm ends. Pymalloc keeps that high-water mark for the rest of the run. |
+| `tests/integration/test_native_off_lock_stress.py` | **1.6 GB peak on its own** (RSS 385 to 1,578 MB in one test) | Working set. The churn thread turns the cyclic collector off process-wide and collects only generations 0/1, so 600 ticks of a 64-ship fight's cyclic garbage pile up until the arm ends. In the suite it does not raise the high-water (see below). |
 | GL init/shutdown cycles | about 1 MB RSS per cycle (12 cycles: 124 to 136 MB) | Small, bounded, mostly the driver; not chased. |
 | Host tests loading real assets (`test_rock_near_host`, `test_frame_rate_independence`) | +240 to +380 MB RSS steps with malloc flat | GL driver / asset memory, freed at shutdown but kept by the process. |
 
-Because RSS keeps its high-water mark, the suite's peak is roughly that
-stress test's working set plus the native floor, wherever it runs in the
-order. Collecting at every file boundary was tried and did not move the peak
+Because RSS keeps its high-water mark, the suite's peak is the sum of the
+largest rises, wherever those tests run in the order. Collecting at every file boundary was tried and did not move the peak
 (2,873 MB vs 2,638 MB on the heavy-40 subset), because the peak forms inside
 one test.
 
@@ -118,15 +119,29 @@ gate when the reported peak exceeds `PYTEST_RSS_BUDGET_MB`** (default in
 `tools/check_test_baseline.py`). The peak is printed every run, so creep
 shows long before the ceiling.
 
-Budget: **3,300 MB**, about 14% over the measured 2,903 MB and 700 MB under
-the 4,000 MB ceiling. Of the 2,903 MB, about 1.2 GB is the off-lock stress
-test's transient (measured: alone it takes RSS from 385 to 1,578 MB). The
-rest is the high-water left by the deep host / GL and differential tests: the
-merge tier, which runs none of them, peaks at 579 MB (measured). The split
-between those deep tests is inferred, not measured. From the next full gate
-on, the gate prints the five tests that raised the high-water most
-(`pytest_durations.json.rss.json` in its artefacts). Lowering it further means shrinking the off-lock stress test's
-working set (audit doc, judgement call 3).
+Budget: **3,300 MB**, about 14% over the measured peaks (2,903 and 2,896 MB
+in two full-gate runs) and 700 MB under the 4,000 MB ceiling.
+
+Where the peak comes from: the full gate's own report of the tests that
+raised the RSS high-water most (final run, 2026-11-06; measured, per-test
+`ru_maxrss` rise):
+
+| Test | High-water rise |
+|---|---|
+| `tests/integration/test_golden_fights.py::test_k1_gameloop_ai` | +658 MB |
+| `tests/host/test_frame_rate_independence.py::test_every_consumer_gets_the_game_time_the_loop_advanced[15]` | +439 MB |
+| `tests/host/test_far_bindings.py::test_near_density_dials_reach_the_near_band` | +271 MB |
+| `tests/host/test_sun_integration.py::test_run_M1Basic_verbose_logs_sun_count` | +250 MB |
+| `tests/host/test_native_combat_scene_audit.py::test_combat_stress_runs_clean_under_the_native_audit` | +214 MB |
+
+So the peak is set by a few heavy deep tests' working sets (a fight
+recorded per tick, real-asset GL host tests), each adding to a high-water
+that pymalloc and the GL driver never hand back. The merge tier runs none of
+them and peaks at 579-686 MB. `test_native_off_lock_stress.py` (1.6 GB on
+its own) does not raise the in-suite high-water at all: by the time it runs,
+the floor is already above its need. Lowering the full-suite peak means
+slimming those tests' working sets, starting with `test_k1_gameloop_ai`; I
+did not, because each is a reference for a native kernel.
 
 ## History: the original >100 GB OOM (2026-06)
 

@@ -35,8 +35,8 @@ timed in-process), kept in the session scratchpad. On top of that:
 | Removed tests | | 15 tests (9.4 s of measured time) |
 | Rewritten tests | | 2 source-text pins become behavioural; `UpdateNeverBlocks` becomes 2 cases |
 | Per-test overhead | 3.55 ms | 1.90 ms (self-check cache, about 28 s per full run) |
-| Full pytest wall time | 26 min measured (about 20 min without the probe) | 19:01 (17,301 passed) |
-| Gate a merge waits for | about 36 min (and it died at 4 GB) | the merge gate: 205 s measured |
+| Full pytest wall time | 26 min measured (about 20 min without the probe) | 18:51 (17,302 passed, final full gate) |
+| Gate a merge waits for | about 36 min (and it died at 4 GB) | the merge gate: 189 s (final run) |
 
 Removing tests is the small part. The time goes to the tiers and the
 per-test overhead fix: the suite is well kept, and its slow tests are slow
@@ -120,11 +120,15 @@ Not duplicates, despite identical bodies: `test_fire_key_input_chain` vs
    `test_host_loop_planets` and `test_host_loop_lighting` each boot M1 Basic
    with `OPEN_STBC_HOST_VERBOSE=1` to check one log line. One boot could
    check all three lines.
-3. **`test_native_off_lock_stress.py` peaks at 1.6 GB on its own.** The
+3. **Heavy working sets set the full-suite RSS peak.** The final full gate
+   names `test_golden_fights::test_k1_gameloop_ai` (+658 MB high-water) and
+   four real-asset host tests (+214 to +439 MB). Slimming them, e.g. comparing
+   per tick instead of recording every tick, would lower the 3,300 MB
+   budget. Separately, **`test_native_off_lock_stress.py` peaks at 1.6 GB on
+   its own** (it does not raise the in-suite high-water). The
    churn thread turns the cyclic collector off process-wide and runs only
    generation-0/1 collections, so the stressed arm's 600 ticks of cyclic
-   garbage pile up until the arm ends. That is the suite's peak-RSS floor
-   (see test-suite-memory.md). A generation-2 collection on the churn thread
+   garbage pile up until the arm ends. A generation-2 collection on the churn thread
    every N ticks would cut it, but it changes what the stress test stresses,
    so it is your call.
 4. **`inspect.getsource` wiring tests (about 24 files)**, e.g.

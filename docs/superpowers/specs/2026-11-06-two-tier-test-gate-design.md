@@ -127,9 +127,10 @@ existing `skip:ctest:` and `optional-mod:ctest:` lines apply unchanged.
    warning. I chose failure because a warning is exactly how a selection
    rots, and the fix is one command plus a commit.
 3. **The RSS budget: 3,300 MB** (`PYTEST_RSS_BUDGET_MB`). Measured peak
-   2,903 MB; about 1.2 GB of it is one stress test's working set (see
-   test-suite-memory.md). Lower it once that test is slimmed; I did not
-   touch the 4,000 MB watchdog ceiling.
+   2,903 / 2,896 MB, set by a few heavy deep tests' working sets (the gate
+   names the top five; the largest is `test_golden_fights::test_k1_gameloop_ai`,
+   +658 MB; see test-suite-memory.md). Lower it once those are slimmed. I
+   did not touch the 4,000 MB watchdog ceiling.
 4. **`UpdateNeverBlocks` tier.** I split it into a deterministic
    never-waits test (~55 ms, merge tier by the rule) and a CPU-bound cost test
    (~1.3 s, deep). See the audit doc.
