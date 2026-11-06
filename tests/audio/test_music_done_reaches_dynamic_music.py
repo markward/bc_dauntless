@@ -37,7 +37,11 @@ def test_a_finished_combat_track_reaches_dynamic_music():
     QBG.SetupMusic(App.Game_GetCurrentGame())
     DynamicMusic.SwitchMusic("Combat Neutral")
     first = DynamicMusic.sCurrentMusicType
-    made[-1].playing = False                    # the 30 s track ends
+    for _ in range(int(5.0 / DT)):              # let any crossfade finish and the track start
+        p.update(DT)
+    path = mgr._paths[mgr.current()]
+    combat = [s for s in made if s.path == path][-1]
+    combat.playing = False                      # the 30 s track ends
     p.update(DT)
     assert p.finished()
     mgr.notify_track_finished()
