@@ -3008,6 +3008,42 @@ static py::list beams_debug(const std::vector<renderer::PhaserBeamDescriptor>& v
     return out;
 }
 
+// Test oracle for the native torpedo feed: one tuple per TorpedoDescriptor,
+// every field in struct order (23), strings as str, floats float32 widened.
+static py::list torpedoes_debug_rows(const std::vector<renderer::TorpedoDescriptor>& v) {
+    auto v3 = [](const glm::vec3& a) { return py::make_tuple(a.x, a.y, a.z); };
+    auto v4 = [](const glm::vec4& a) { return py::make_tuple(a.x, a.y, a.z, a.w); };
+    py::list out;
+    for (const auto& t : v)
+        out.append(py::make_tuple(
+            v3(t.world_pos), t.core_texture, v4(t.core_color),
+            t.core_size_a, t.core_size_b,
+            t.glow_texture, v4(t.glow_color),
+            t.glow_size_a, t.glow_size_b, t.glow_size_c,
+            t.flares_texture, v4(t.flares_color), t.num_flares,
+            t.flares_size_a, t.flares_size_b, t.age, t.id, t.is_disruptor,
+            v3(t.forward), v4(t.shell_color), v4(t.bolt_core_color),
+            t.bolt_length, t.bolt_width));
+    return out;
+}
+
+// Same for DynamicLightDescriptor (11 entries, struct order; the
+// instance id as index, generation).
+static py::list dynamic_lights_debug_rows(const std::vector<renderer::DynamicLightDescriptor>& v) {
+    py::list out;
+    for (const auto& l : v)
+        out.append(py::make_tuple(
+            py::make_tuple(l.pos_a.x, l.pos_a.y, l.pos_a.z),
+            py::make_tuple(l.pos_b.x, l.pos_b.y, l.pos_b.z),
+            py::make_tuple(l.color.x, l.color.y, l.color.z),
+            l.radius, l.intensity,
+            py::make_tuple(l.direction.x, l.direction.y, l.direction.z),
+            l.spot_tan_x,
+            py::make_tuple(l.up.x, l.up.y, l.up.z),
+            l.spot_tan_y, l.instance_id.index, l.instance_id.generation));
+    return out;
+}
+
 // Parse-only: extract the embedded set camera (frustum + world transform)
 // from a NIF without any GL context or asset-cache entry. Feeds
 // MissionLib.SetupBridgeSet's embedded-camera path via ModelManager.CloneCamera.
@@ -8372,6 +8408,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "instance's world transform after the store sweep; absent/None => "
           "world-space, unchanged). "
           "Clamped to kMaxDynamicLightsPerFrame entries.");
+
+    m.def("torpedoes_debug", []() { return torpedoes_debug_rows(g_torpedoes); },
+          "Read back the pushed torpedo descriptors as 23-tuples.");
+    m.def("dynamic_lights_debug",
+          []() { return dynamic_lights_debug_rows(g_dynamic_lights); },
+          "Read back the pushed dynamic lights, one tuple each.");
 
     m.def("set_shockwaves",
           [](const std::vector<py::dict>& descs) {
