@@ -482,6 +482,34 @@ def _invincible_sub(w, on):
     _sub(w, "Alpha", "Sensors").SetInvincible(on)
 
 
+def _footprint_setup(w):
+    """The weapon footprint's inputs (hit damage 1a): Alpha's phaser system
+    parent untargetable (a group parent, as every stock hardpoint has it), a
+    targetable Bridge under Alpha's hull, and a damage point moved off the
+    torpedo tube's position (damage_point.assign's write)."""
+    alpha = w.ships["Alpha"]
+    _sub(w, "Alpha", "Phasers").SetTargetable(0)
+    bridge = HullSubsystem("Bridge")
+    bridge.SetMaxCondition(120.0)
+    _place(bridge, 0.0, 0.8, 0.45, 0.3)
+    alpha.GetHull().AddChildSubsystem(bridge)
+    tube = _sub(w, "Alpha", "Forward Torpedo")
+    tube.SetCondition(tube.GetMaxCondition())
+    tube.SetDamagePoint((0.0, 1.2, -0.6))
+
+
+def _overflow_setup(w):
+    """Low subsystems for the overflow re-hit: one hit destroys two."""
+    _sub(w, "Bravo", "Sensors").SetCondition(30.0)
+    _sub(w, "Bravo", "Shield Generator").SetCondition(20.0)
+
+
+def _exact_threshold(w):
+    """A subsystem exactly at its disabled threshold still works."""
+    s = _sub(w, "Charlie", "Impulse")
+    s.SetCondition(s.GetDisabledPercentage() * s.GetMaxCondition())
+
+
 def _splash_setup(w):
     w.ships["Alpha"].SetSplashDamage(900.0, 8.0)
     w.ships["Bravo"].SetSplashDamage(700.0, 8.0)
@@ -568,6 +596,28 @@ STEPS = [
                               .SetInvincible(1))),
     ("invincible to zero", _hit("Charlie", 5000.0, (0.0, 0.0, 0.0),
                                 shield=False, bypass_shields=True)),
+    ("footprint setup", _call(_footprint_setup)),
+    ("untargetable parent", _hit("Alpha", 45.0, (0.0, 0.0, 0.3),
+                                 splash_radius=0.1, shield=False,
+                                 bypass_shields=True)),
+    ("hull child", _hit("Alpha", 55.0, (0.0, 0.8, 0.45), splash_radius=0.1,
+                        shield=False, bypass_shields=True)),
+    ("at the damage point", _hit("Alpha", 35.0, (0.0, 1.2, -0.6),
+                                 splash_radius=0.1, shield=False,
+                                 bypass_shields=True)),
+    ("not at the old position", _hit("Alpha", 35.0, (0.0, 1.7, -0.2),
+                                     splash_radius=0.05, shield=False,
+                                     bypass_shields=True)),
+    ("overflow setup", _call(_overflow_setup)),
+    ("overflow", _hit("Bravo", 260.0, (0.0, 0.6, 0.0), source="Alpha",
+                      splash_radius=0.6, shield=False, bypass_shields=True,
+                      weapon_type="torpedo")),
+    ("overflow setup again", _call(_overflow_setup)),
+    ("no overflow for a ram", _hit("Bravo", 260.0, (0.0, 0.6, 0.0),
+                                   source="Alpha", splash_radius=0.6,
+                                   shield=False, bypass_shields=True,
+                                   weapon_type="collision")),
+    ("exact threshold", _call(_exact_threshold)),
     ("splash setup", _call(_splash_setup)),
     ("kill and splash chain", _hit("Alpha", 5000.0, (0.0, -0.5, 0.0),
                                    shield=False, bypass_shields=True,
@@ -613,6 +663,34 @@ def test_native_damage_matches_python_for_every_non_kernel_caller(
     collided = [o for s, k, o in ref.entries
                 if s == "collision" and k == "WEAPON_HIT"]
     assert collided, "the collision pass applied a hit"
+    # The footprint steps did what they say (hit damage 1a).
+    def cond(step, label):
+        row = dict(ref.rows)[step]
+        return [r[1] for r in row if r[0] == label][0]
+
+    def entries(step, kind):
+        return [e for e in ref.entries if e[0] == step and e[1] == kind]
+    names = [n for n, _ in ref.rows]
+
+    def before(step):
+        return names[names.index(step) - 1]
+    phasers = "Alpha/Phasers"
+    bridge = "Alpha/Bridge"
+    tube = "Alpha/Forward Torpedo"
+    assert cond("untargetable parent", phasers) == cond(
+        before("untargetable parent"), phasers)
+    assert cond("hull child", bridge) != cond(before("hull child"), bridge)
+    assert cond("at the damage point", tube) != cond(
+        before("at the damage point"), tube)
+    assert cond("not at the old position", tube) == cond(
+        before("not at the old position"), tube)
+    assert len(entries("overflow", "WEAPON_HIT")) == 2
+    assert len(entries("overflow", "HIT_PRESENT")) == 1
+    assert len(entries("no overflow for a ram", "WEAPON_HIT")) == 1
+    impulse = "Charlie/Impulse"
+    state = [r[2] for r in dict(ref.rows)["exact threshold"]
+             if r[0] == impulse][0]
+    assert state == 0, "exactly at its threshold is still operational"
     # The native chain ran, for every caller, and never handed back.
     counts = nat.damage_counts
     assert counts.get("hits", 0) > 0, counts

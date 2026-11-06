@@ -172,7 +172,10 @@ def test_a_hit_emits_its_effects_in_todays_order():
 
     apply_hit(ship, 800.0, _AT, source=killer, weapon_type="phaser")
 
-    assert hull.GetCondition() == 200.0          # the state changed at once
+    # The state changed at once: 1000 - 800, then the 700 overflow re-hit
+    # (the excess over the 100-HP sensor it destroyed: combat._apply_hit
+    # step 7).
+    assert hull.GetCondition() == 0.0
     assert sensor.GetCondition() == 0.0
     got = [(kind, ops[:2]) for kind, ops in _queued()]
     assert got == [
@@ -187,6 +190,16 @@ def test_a_hit_emits_its_effects_in_todays_order():
         ("ZERO_CROSS", (ship, sensor)),
         # then the hit itself: presentation, ET_WEAPON_HIT
         ("HIT_PRESENT", (ship, killer)),
+        ("WEAPON_HIT", (ship, killer)),
+        # the overflow re-hit: the hull 200 -> 0 (destroyed, critical: a
+        # zero crossing), the spent sensor written again, its own
+        # ET_WEAPON_HIT and no presentation of its own
+        ("COND_WATCH", (hull, eq.WATCH_COMBINED)),
+        ("SUBSYS_EVENT", (hull, eq.SUBSYS_DESTROYED)),
+        ("REPAIR_ADD", (hull,)),
+        ("ZERO_CROSS", (ship, hull)),
+        ("COND_WATCH", (sensor, eq.WATCH_CONDITION)),
+        ("REPAIR_ADD", (sensor,)),
         ("WEAPON_HIT", (ship, killer)),
     ]
 
@@ -223,7 +236,7 @@ def test_a_hit_outside_the_scope_reports_nothing_until_the_boundary(events):
     ship = _ship()
     del events[:]                                # the ship's own setup
     apply_hit(ship, 800.0, _AT, source=None)
-    assert ship.GetHull().GetCondition() == 200.0
+    assert ship.GetHull().GetCondition() == 0.0  # 800, then the 700 overflow
     assert events == []
 
     eq.boundary()
@@ -662,7 +675,8 @@ def test_a_raising_delivery_does_not_stop_the_rest_and_is_raised_under_tests(
     with pytest.raises(RuntimeError, match="watcher boom"):
         eq.boundary()
     assert App.ET_WEAPON_HIT in [t for t, _ in events]
-    assert eq.counts()["failed"] == 1
+    # The hull's watcher crosses twice: the hit, then its overflow re-hit.
+    assert eq.counts()["failed"] == 2
 
 
 def test_in_play_a_raising_delivery_is_logged_and_the_rest_delivered(

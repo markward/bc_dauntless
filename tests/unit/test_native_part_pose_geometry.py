@@ -168,7 +168,7 @@ def _pose_wings(rng, bop):
 
 
 def _python_mount(sub, ship):
-    return ss._subsystem_world_position(sub, ship)
+    return ss._subsystem_world_position(sub, ship, mount=True)
 
 
 def _unposed_mount(sub, ship):
@@ -177,7 +177,7 @@ def _unposed_mount(sub, ship):
         ship = sub._climb_to_ship()
     if ship is None:
         return TGPoint3(0.0, 0.0, 0.0)
-    p = sub.GetPosition()
+    p = sub.GetMountPositionTG()
     o = TGPoint3(p.x, p.y, p.z)
     o.MultMatrixLeft(ship.GetWorldRotation())
     pos = ship.GetWorldLocation()

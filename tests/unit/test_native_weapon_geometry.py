@@ -159,9 +159,13 @@ def test_mount_position_matches(world):
         sub = rng.choice(leaves)
         _mount_random(rng, sub)
         arg = rng.choice((None, w.galaxy, w.warbird))
-        want = ss.subsystem_world_position(sub, arg)
+        want = ss.subsystem_world_position(sub, arg, mount=True)
         got = _h.combat_test_subsystem_world_position(
             _slot(sub), _slot(arg), False)
+        assert _hx(got) == _hx(want)
+        # GetPosition's point: a phaser bank's is the middle of its arc.
+        want = ss.subsystem_world_position(sub, arg)
+        got = _h.combat_test_position_world(_slot(sub), _slot(arg))
         assert _hx(got) == _hx(want)
 
 
@@ -172,10 +176,12 @@ def test_mount_position_climbs_the_parent_chain(world):
         saved = bank._parent_ship
         bank._parent_ship = None             # reached through the system
         try:
-            want = ss.subsystem_world_position(bank)
+            want = ss.subsystem_world_position(bank, mount=True)
             got = _h.combat_test_subsystem_world_position(
                 _slot(bank), -1, False)
             assert _hx(got) == _hx(want)
+            want = ss.subsystem_world_position(bank)
+            assert _hx(_h.combat_test_position_world(_slot(bank), -1)) == _hx(want)
         finally:
             bank._parent_ship = saved
     # No ship at all: the origin.
@@ -202,7 +208,7 @@ def test_mount_memo_matches_python_staleness(world):
         for _ in range(200):
             _place(rng, w.galaxy)
             arg = rng.choice((None, w.galaxy))
-            want = ss.subsystem_world_position(bank, arg)
+            want = ss.subsystem_world_position(bank, arg, mount=True)
             got = _h.combat_test_subsystem_world_position(
                 _slot(bank), _slot(arg), True)
             assert _hx(got) == _hx(want)

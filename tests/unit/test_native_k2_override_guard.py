@@ -29,7 +29,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 HEADER = (ROOT / "native" / "src" / "combat" / "include" / "dauntless"
           / "combat" / "k2_beams.h")
 
-SUBSYSTEM_NAMES = ("GetWorldLocation", "GetPosition", "_climb_to_ship")
+SUBSYSTEM_NAMES = ("GetWorldLocation", "GetPosition", "GetPositionTG",
+                   "GetMountPositionTG", "_climb_to_ship")
 
 # (module, role stock class, the names it stands in for besides
 # SUBSYSTEM_NAMES, which every SUBSYSTEM role -- the first five -- also

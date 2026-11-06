@@ -29,8 +29,18 @@ from engine.appc import effect_queue as _effect_queue
 from engine.appc.native_combat import NativeField, NativeRefField
 
 
-def subsystem_world_position(sub, ship=None):
+def subsystem_world_position(sub, ship=None, damage=False, mount=False):
     """World mount point of a subsystem: ship_loc + R · local_mount.
+
+    ``damage=True`` uses the subsystem's DAMAGE point (GetDamagePoint) in
+    place of its position: the centre a weapon hit's footprint is measured
+    from (engine/appc/damage_point.py). Its native twin is weapon_geometry.cc
+    damage_world_position.
+
+    ``mount=True`` uses the hardpoint position (GetMountPositionTG) in place
+    of GetPosition. The two differ only for a phaser bank, whose position is
+    the middle of its firing arc on its strip (PhaserBank.GetPositionTG);
+    its strip, emit point and arc origin are centred on the hardpoint.
 
     Column-vector rotation convention (R · v); NO scale — BC stores mounts
     in world units relative to the ship centre. Returns the ship location if
@@ -46,27 +56,33 @@ def subsystem_world_position(sub, ship=None):
     fresh TGPoint3; whatever moves a ship or a part in the step forgets.
     """
     if step_memo.active():
-        key = (id(sub), id(ship))
+        key = (id(sub), id(ship), damage, mount)
         found = _mounts.get(key)
         if found is None:
-            p = _subsystem_world_position(sub, ship)
+            p = _subsystem_world_position(sub, ship, damage, mount)
             found = _mounts[key] = (p.x, p.y, p.z)
         return TGPoint3(found[0], found[1], found[2])
-    return _subsystem_world_position(sub, ship)
+    return _subsystem_world_position(sub, ship, damage, mount)
 
 
-# (id(sub), id(ship arg)) -> mount (x, y, z), while a step_memo block is open.
+# (id(sub), id(ship arg), damage, mount) -> mount (x, y, z), while a
+# step_memo block is open.
 _mounts = step_memo.table()
 
 
-def _subsystem_world_position(sub, ship):
+def _subsystem_world_position(sub, ship, damage=False, mount=False):
     """The computation itself; see subsystem_world_position."""
     if ship is None:
         ship = sub._climb_to_ship() if hasattr(sub, "_climb_to_ship") else None
     if ship is None or not hasattr(ship, "GetWorldLocation"):
         return TGPoint3(0.0, 0.0, 0.0)
     ship_pos = ship.GetWorldLocation()
-    local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+    if damage and hasattr(sub, "GetDamagePoint"):
+        local = sub.GetDamagePoint()
+    elif mount and hasattr(sub, "GetMountPositionTG"):
+        local = sub.GetMountPositionTG()
+    else:
+        local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
     if not isinstance(local, TGPoint3):
         return TGPoint3(ship_pos.x, ship_pos.y, ship_pos.z)
     # Follow the part this mount sits on, BEFORE rotating into world space:
@@ -75,9 +91,20 @@ def _subsystem_world_position(sub, ship):
     # overwhelming majority of calls are unchanged.
     from engine.appc.articulation import part_transform_point
     from engine.appc import physical_parents
-    px, py, pz = part_transform_point(
-        ship, (local.x, local.y, local.z),
-        prop=physical_parents.property_of(sub))
+    prop = physical_parents.property_of(sub)
+    point = (local.x, local.y, local.z)
+    hard = (sub.GetMountPositionTG()
+            if not (damage or mount) and getattr(type(sub), "GetMountPositionTG", None)
+            else None)
+    if hard is not None and (hard.x, hard.y, hard.z) != point:
+        # A phaser bank's position (the middle of its arc) rides the part its
+        # HARDPOINT is on, as the native slot does (resolved on the mount).
+        from engine.appc.articulation import _live_part
+        part = _live_part(ship, None, (hard.x, hard.y, hard.z), True, prop)
+        px, py, pz = (point if part is None
+                      else part_transform_point(ship, point, part=part))
+    else:
+        px, py, pz = part_transform_point(ship, point, prop=prop)
     offset = TGPoint3(px, py, pz)
     if hasattr(ship, "GetWorldRotation"):
         rot = ship.GetWorldRotation()
@@ -136,7 +163,8 @@ def _is_own_mount(sub, point) -> bool:
     """Is `point` `sub`'s own authored mount, `==` per axis (-0.0 matches
     0.0, a NaN never matches)? M8.5: a point merely within 1e-5 of it is a
     plain point."""
-    mount = sub.GetPosition()
+    mount = (sub.GetMountPositionTG() if getattr(type(sub), "GetMountPositionTG", None)
+             else sub.GetPosition())
     return (mount.GetX() == point[0] and mount.GetY() == point[1]
             and mount.GetZ() == point[2])
 
@@ -362,8 +390,10 @@ class ShipSubsystem(TGEventHandlerObject):
     _arc_height_lo = NativeField(float)
     _arc_height_hi = NativeField(float)
     _arc_set = NativeField(bool)
-    # Phaser-strip length (K2 reads it for the emitter position).
+    # Phaser-strip length (K2 reads it for the emitter position) and width
+    # (with the length, where a bank sits: PhaserBank.GetPositionTG).
     _length = NativeField(float)
+    _width = NativeField(float)
     # A phaser bank's pulse damage and R_hit (K2 applies the pulse in the
     # walk: native damage Task 4), copied from its property.
     _max_damage = NativeField(float)
@@ -382,6 +412,13 @@ class ShipSubsystem(TGEventHandlerObject):
     # item (subsystem_step.h THE REPAIR PIECE).
     _repair_complexity = NativeField(float)
     _critical = NativeField(bool)
+    # A weapon hit's footprint (native damage reads them): which subsystems it
+    # may damage (IsTargetable) and the centre each is measured from, the
+    # damage point (engine/appc/damage_point.py; _damage_point_set False: the
+    # position).
+    _targetable = NativeField(bool)
+    _damage_point = NativeField(native_combat.VEC3)
+    _damage_point_set = NativeField(bool)
     _combined_watcher = native_combat.CondWatcherField(
         _effect_queue.WATCH_COMBINED)
     _condition_watcher = native_combat.CondWatcherField(
@@ -478,6 +515,10 @@ class ShipSubsystem(TGEventHandlerObject):
         # this field — a hardpoint SetTargetable(0) (e.g. an asteroid's Shield
         # Generator / Power Plant) is what hides a subsystem from the menu.
         self._targetable: int = 1
+        # The damage point, model frame (GetDamagePoint): the position until
+        # damage_point.assign sets it from the ship's hull.
+        self._damage_point = TGPoint3(0.0, 0.0, 0.0)
+        self._damage_point_set = False
         self._primary: int = 0
         self._disabled_percentage: float = 0.25
         # Current threshold state; transitions fire ET_SUBSYSTEM_DISABLED /
@@ -953,6 +994,13 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetPosition(self) -> TGPoint3:
         return self.GetPositionTG()
 
+    def GetMountPositionTG(self) -> TGPoint3:
+        """The hardpoint position. GetPositionTG is the same point for
+        every subsystem but a phaser bank (PhaserBank.GetPositionTG: the
+        middle of its firing arc on its strip); which part a subsystem sits
+        on, and a bank's strip, emit point and arc origin, use this one."""
+        return TGPoint3(self._position.x, self._position.y, self._position.z)
+
     def GetDirection(self) -> TGPoint3:
         return TGPoint3(self._direction.x, self._direction.y, self._direction.z)
 
@@ -1052,7 +1100,19 @@ class ShipSubsystem(TGEventHandlerObject):
         return self.GetPositionTG()
 
     def GetDamagePoint(self) -> TGPoint3:
+        """The centre a weapon hit's footprint is measured from, model frame:
+        the position, or -- for a subsystem whose position lies outside the
+        hull -- a point just inside it (engine/appc/damage_point.py, measured
+        on the original)."""
+        if self._damage_point_set:
+            d = self._damage_point
+            return TGPoint3(d.x, d.y, d.z)
         return self.GetPositionTG()
+
+    def SetDamagePoint(self, p) -> None:
+        """damage_point.assign's write: (x, y, z) GU, model frame."""
+        self._damage_point = TGPoint3(float(p[0]), float(p[1]), float(p[2]))
+        self._damage_point_set = True
 
     def _climb_to_ship(self):
         """Walk parent-subsystem chain until a ShipClass is found.  Used
@@ -1077,8 +1137,10 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def _emitter_world_position(self) -> TGPoint3:
         """World position of this emitter mount: ship_loc + R · local.
-        Delegates to the module-level subsystem_world_position helper."""
-        return subsystem_world_position(self)
+        Delegates to the module-level subsystem_world_position helper, on
+        the hardpoint (``mount=True``: a phaser bank's GetPosition is the
+        middle of its arc, not the centre of its strip)."""
+        return subsystem_world_position(self, mount=True)
 
     def _strip_emit_position(self, target_world) -> TGPoint3:
         """Closest point on a phaser-strip arc to ``target_world``.
@@ -1146,6 +1208,12 @@ class ShipSubsystem(TGEventHandlerObject):
             yaw = _math.atan2(right_proj, fwd_proj)
         yaw_lo = getattr(self, "_arc_width_lo", -_math.pi)
         yaw_hi = getattr(self, "_arc_width_hi",  _math.pi)
+        # The arc is the range between its two angles in either order, as
+        # the arc gate reads it: the Akira's ventral banks author their width
+        # descending (0.0, -1.221731), and clamped in authored order every
+        # beam left the strip's forward end.
+        if yaw_hi < yaw_lo:
+            yaw_lo, yaw_hi = yaw_hi, yaw_lo
         yaw = max(yaw_lo, min(yaw_hi, yaw))
 
         # Rotate world_forward toward world_right by yaw, in their (orthonormal)
@@ -1302,14 +1370,17 @@ class ShipSubsystem(TGEventHandlerObject):
         return 1 if self._targetable else 0
 
     def IsDisabled(self) -> int:
-        """SDK Preprocessors.py:823, 974 — condition has fallen at or below
-        DisabledPercentage × MaxCondition. Mirrors the same heuristic the
-        rating loop applies via GetDisabledPercentage() / GetMaxCondition()
-        / GetCondition(); kept consistent so callers and raters agree."""
+        """SDK Preprocessors.py:823, 974 — condition has fallen below
+        DisabledPercentage × MaxCondition. Strict: on the original a
+        subsystem at exactly its threshold still works (stbc-oracle: a bank
+        at 75.0% fires, at 74.9% it does not; a sensor array at 50.0% /
+        49.9% likewise). Its native twins (damage.cc, fire_gates.cc,
+        impulse.cc, beam_geometry.cc, sensor_detect.cc leaf_disabled):
+        change them together."""
         if self._max_condition <= 0.0:
             return 0
         threshold = self._disabled_percentage * self._max_condition
-        return 1 if self._condition <= threshold else 0
+        return 1 if self._condition < threshold else 0
 
     def IsDamaged(self) -> int:
         """Returns 1 if the subsystem has taken any damage (condition below
