@@ -4,8 +4,8 @@ and tick the GameLoop. Check whether the AI subtree actually gets
 attached and whether banks ever enter _firing.
 
 User reports: even after Slices G/H/I/J, the live launch shows no
-weapons fire while our isolated diagnostic
-(test_galaxy_combat_fire_diagnostic) does. This test bridges that
+weapons fire while an isolated Galaxy-vs-Galaxy diagnostic (since
+removed: git log -S test_galaxy_vs_galaxy_fire_trace) did. This test bridges that
 gap by going through the same Initialize() path the live host uses.
 """
 import App

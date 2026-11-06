@@ -7,9 +7,9 @@ initialization in GotFocus, not Update. AlertLevel.Update is a no-op
 returning PS_NORMAL; the SetAlertLevel(RED_ALERT) call lives in
 GotFocus. Without this dispatch, enemy ships running NonFedAttack
 never go to red alert → weapon systems stay TurnOff'd →
-PhaserSystem.StartFiring early-returns silently. See
-tests/integration/test_close_range_combat_diagnostic.py for the
-trail that established this.
+PhaserSystem.StartFiring early-returns silently. A since-removed
+close-range combat diagnostic (git log -S test_close_range_combat_log)
+is the trail that established this.
 
 Other SDK preprocessors that rely on GotFocus: CloakShip (toggles
 the cloaking subsystem), Defensive (resets sub-AI state), and a
