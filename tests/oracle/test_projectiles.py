@@ -376,6 +376,28 @@ def test_t6_player_switch_reloads_every_tube_together(oracle, monkeypatch):
         assert dt == pytest.approx(40.0, abs=0.2), name
 
 
+def test_t6_weapons_display_shows_the_tubes_empty_then_refilled(oracle):
+    """What the player saw in `human_ammoswitch_v2`: every tube empty from the
+    switch until the new type is loaded, then every tube ready. The weapons
+    display draws each tube from GetNumReady (weapons_display_panel.
+    _reload_ratio: 1.0 loaded, 0.3 BC's empty red); the magazine count it
+    shows beside them doesn't move."""
+    from engine.appc import weapon_config
+    from engine.ui.weapons_display_panel import _reload_ratio
+    s = oracle(attacker="Sovereign", range_gu=100)
+    ts, tubes = _tubes(s)
+    assert [_reload_ratio(t) for t in tubes] == [1.0] * len(tubes)
+    _player_switch(s)
+    stock = weapon_config.read_weapon_config(s.atk)["torp_count"]
+    for _ in s.sample_until(35.0):
+        pass
+    assert [_reload_ratio(t) for t in tubes] == [0.3] * len(tubes)
+    for _ in s.sample_until(10.0):
+        pass
+    assert [_reload_ratio(t) for t in tubes] == [1.0] * len(tubes)
+    assert weapon_config.read_weapon_config(s.atk)["torp_count"] == stock
+
+
 def test_t6_fire_input_while_the_tubes_are_empty_does_nothing(oracle):
     """`human_ammoswitch_v2` switch 1: eight fire presses between 41.6 and
     62.2 s, while the new type was still loading, launched nothing; the next
