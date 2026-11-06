@@ -26,7 +26,12 @@ unchanged. ``host_frames`` and ``host_frames_tpf1`` run real host frames
 (``_run_frame_sim``), recorded in the batched order, then ``host_frames`` and
 ``k1_ops_tpf6`` re-recorded once for native motion phase 4's whole ticks
 (ruling 2); ``host_frames_tpf1`` (one tick a frame, no ops) is the same
-sequence in both orders, unchanged.
+sequence in both orders, unchanged. ``motion_branches``, ``k1_gameloop_ai``,
+``host_frames``, ``host_frames_tpf1``, ``sdk_dumb_fire`` and ``posed_fight``
+were re-recorded once for the motion law (the impulse law on the velocity
+and angular-rate vectors, turn-to, the real GetAccelerationTG): every moving
+ship's pose changes from tick 1; ``motion_branches``' Python motion arm
+still matches the native recording bit for bit.
 """
 import os
 
