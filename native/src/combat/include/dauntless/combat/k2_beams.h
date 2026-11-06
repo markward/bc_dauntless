@@ -370,15 +370,17 @@
 // walk's logged bank stops stand in for it. K1's class-override guard,
 // which K2 shared, is deleted with fire control's Python copy (fire control
 // native only, M8.7): a class overriding StopFiring is not obeyed.)
-// It also lists the ship when the class of a bank's `_target` is one K2
-// never saw (no object of that class ever registered or was reclassified:
-// such a target has no row, so the mirror holds -2 for it), and runs the
-// whole step in Python when that class is flagged "whole"
-// (native_combat._k2_unseen). The scan reads each row's class flags as
-// pushed (k2_stock among them), so a `__class__` swapped in under a row
-// WITHOUT reclassify keeps its old class flags, undetected. Code that swaps
-// a class under a row must call reclassify (the rocks do:
-// engine/rocks/rock.py).
+// It also lists the ship when the ship's own LIVE class, or the class of a
+// bank's `_target`, is one K2 never saw (no object of that class ever
+// registered or was reclassified: such a target has no row, so the mirror
+// holds -2 for it), and runs the whole step in Python when that class is
+// flagged "whole" (native_combat._k2_unseen). The ship's class check is
+// PER CLASS: a ship's `__class__` swapped without reclassify is caught only
+// while no object of the new class has been seen. Below the ship the scan
+// reads each row's class flags as pushed (k2_stock among them), so a
+// system's, bank's or target's class swapped WITHOUT reclassify keeps its
+// old class flags, undetected. Code that swaps a class under a row must
+// call reclassify (the rocks do: engine/rocks/rock.py).
 // An instance attribute on a TARGET is not looked for. No ENGINE class may
 // override a stood-in name unless the kernel ports it: the static guard
 // tests/unit/test_native_k2_override_guard.py lists the ported ones.

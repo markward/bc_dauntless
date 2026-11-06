@@ -101,6 +101,8 @@ The "compute" below is the one C++ call a release would bracket. Everything else
 
 **Begin** `combat_k2_begin` (HB:12683-12701). It copies `cb::installed_trace_hooks()` into the session's `K2Context` (HB:12688) and applies the ctx dict (CPython). The driver's `combat_k2_scan_ships` (HB:12710-12727, `k2_scan_ships` HB:3666) is the CPython clean check. Its result, `python_ships`, is a C++ set in the context.
 
+**Superseded 2026-11-06** (phase 6 follow-up 3b): `combat_k2_scan_ships` is gone. `combat_k2_scan_rows` reads each ship's `_nslot` and checks the ship's class live against `_k2_seen_set`; the rest (phaser system, banks, targets, each row's `k2_stock` flag) comes from the mirror (`k2_scan.h`).
+
 **Before compute:** `k2_not_delivering("next()")`.
 
 **Compute** `cb::k2_kernel().next()` (HB:12732).

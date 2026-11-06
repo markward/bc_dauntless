@@ -2684,8 +2684,10 @@ def _k2_stock_flag(cls) -> int:
 
     A class flag: like every other one it is stale once an object's
     `__class__` is swapped WITHOUT reclassify -- the row keeps its old
-    class's flag, undetected (the per-class caveat of _k2_unseen). Code
-    that swaps a class under a row must call reclassify."""
+    class's flag. Unlike a ship's class, which the scan reads live and
+    catches while it is unseen (the per-class check of _k2_unseen), a
+    system's or bank's swap is then not caught at all, seen class or not.
+    Code that swaps a class under a row must call reclassify."""
     return int(cls is _k2_stock_bank or cls is _k2_stock_system)
 
 
@@ -5645,20 +5647,21 @@ def _k2_python_ship(ship) -> int:
 def _k2_ship_handles(ships):
     """(handles, python_ships, whole) for begin: each ship's Object handle
     (-1: no row), the ships _k2_python_ship sends to Python, and whether one
-    sends the whole step. The common case -- a stock phaser system of stock
-    banks the mirror names, targets it names -- is decided in the binding
-    from the mirror (combat_k2_scan_rows: one `_nslot` read per ship, then
-    k2_scan.h over the rows and their k2_stock flags; this runs every
-    tick); only the ships it could not call clean come back here, in order,
-    for _k2_python_ship.
+    sends the whole step. The common case -- a seen ship class, a stock
+    phaser system of stock banks the mirror names, targets it names -- is
+    decided in the binding (combat_k2_scan_rows: one `_nslot` read and one
+    live-class lookup in _k2_seen_set per ship, then k2_scan.h over the
+    rows and their k2_stock flags; this runs every tick); only the ships it
+    could not call clean come back here, in order, for _k2_python_ship.
 
-    It sees what the mirror holds, so not a change made behind it: a bank's
-    `_nslot` deleted or replaced without _drop (every engine path that
-    loses a row drops it, which re-pushes the referrers with -2), or a
-    `__class__` swapped without reclassify (k2_stock stays the old
-    class's)."""
+    Below the ship it sees what the mirror holds, so not a change made
+    behind it: a bank's `_nslot` deleted or replaced without _drop (every
+    engine path that loses a row drops it, which re-pushes the referrers
+    with -2), or a system's, bank's or target's `__class__` swapped without
+    reclassify (its row keeps the old class's flags). The ship's own class
+    is read live, per class as _k2_unseen: caught while unseen."""
     handles, unclean = _h.combat_k2_scan_rows(
-        ships, _kind("Object"), _KIND_SHIFT)
+        ships, _kind("Object"), _KIND_SHIFT, _k2_seen_set)
     python_ships = []
     for ship, h in unclean:
         why = _k2_python_ship(ship)

@@ -1246,7 +1246,8 @@ def test_a_subclassed_bank_still_sends_its_ship_to_python(monkeypatch):
 
 def _scan_rows(ships):
     """combat_k2_scan_rows: (handles, [(ship, handle), ...])."""
-    return _h.combat_k2_scan_rows(ships, nc._kind("Object"), nc._KIND_SHIFT)
+    return _h.combat_k2_scan_rows(ships, nc._kind("Object"), nc._KIND_SHIFT,
+                                  nc._k2_seen_set)
 
 
 def _authority(ships):
@@ -1275,8 +1276,10 @@ def test_scan_rows_matches_the_python_authority(monkeypatch):
     real API: stock ships; a subclassed bank and a subclassed system; a
     bank that never got a row (its system's `_children` keeps a -2 in its
     place); a target that never got a row (the bank's `_target` pushes
-    -2); a ship with no phaser system; and a row dropped through `_drop`
-    (its system's `_children` is re-pushed with -2)."""
+    -2); a ship with no phaser system; a row dropped through `_drop`
+    (its system's `_children` is re-pushed with -2); and a ship whose class
+    was swapped to one K2 never saw without reclassify (its live class is
+    checked)."""
 
     # Each overrides one of its own names (_k2_flag flags it, not
     # "whole"): a subclass overriding nothing is one _k2_python_ship calls
@@ -1298,7 +1301,8 @@ def test_scan_rows_matches_the_python_authority(monkeypatch):
         ("NoRowBank", "galaxy", (0.0, 1200.0, 0.0), 0.0),
         ("NoRowTarget", "galaxy", (0.0, 1600.0, 0.0), 0.0),
         ("Dropped", "galaxy", (0.0, 2000.0, 0.0), 0.0),
-        ("Stock", "galaxy", (0.0, 2400.0, 0.0), 0.0))
+        ("Swapped", "galaxy", (0.0, 2400.0, 0.0), 0.0),
+        ("Stock", "galaxy", (0.0, 2800.0, 0.0), 0.0))
     with monkeypatch.context() as mp:
         w = World(mp, True, fleet, "k2_scan_rows")
         try:
@@ -1330,6 +1334,12 @@ def test_scan_rows_matches_the_python_authority(monkeypatch):
             dsys = w.ships["Dropped"].GetPhaserSystem()
             nc._drop(dsys.GetWeapon(1))
             assert _sub_dump(dsys)["_children"][1] == nc.REF_UNREPRESENTABLE
+            # A ship whose class is swapped, WITHOUT reclassify, to one K2
+            # never saw: the ship's live class is checked (a bank's,
+            # system's or target's is not: those rely on reclassify).
+            from engine.appc.ships import ShipClass
+            mp.setattr(w.ships["Swapped"], "__class__",
+                       type("UnseenShip", (ShipClass,), {}))
             # A ship with no phaser system, and a ship with no row.
             bare = App.ShipClass_Create("Bare")
             w.set.AddObjectToSet(bare, "Bare")
@@ -1344,9 +1354,9 @@ def test_scan_rows_matches_the_python_authority(monkeypatch):
             want = _authority(ships)
             assert [s.GetName() for s, _h in want] == [
                 "SubBank", "SubSystem", "NoRowBank", "NoRowTarget",
-                "Dropped"], want
+                "Dropped", "Swapped"], want
             assert bad == want, (bad, want)
-            # The driver: those five sent to Python, none whole.
+            # The driver: those six sent to Python, none whole.
             got = nc._k2_ship_handles(ships)
             assert got == (handles, [h for _s, h in want], False), got
         finally:
@@ -1525,6 +1535,49 @@ def _aim_galaxy_at_a_rowless(mp, w, cls):
 
 def test_unseen_target_class_with_foreign_override_runs_python_step(
         monkeypatch):
+    """The Vor'cha's class is swapped after it registered (no reclassify)
+    to one overriding GetRadius from outside the engine: K2 never saw the
+    class. The Vor'cha is a walked ship, whose LIVE class the scan checks,
+    so _k2_python_ship flags it "whole" and the whole step runs in
+    Python."""
+    from engine.appc.ships import ShipClass
+
+    class Bigger(ShipClass):
+        def GetRadius(self):
+            return 2.0 * ShipClass.GetRadius(self)
+
+    def patch(mp, w):
+        mp.setattr(w.ships["Vorcha"], "__class__", Bigger)
+
+    counts = _one_native_step(monkeypatch, patch)
+    assert counts.get("k2_records", 0) == 0, counts
+    assert counts["k2_python_step_reasons"]["patched"] == 1, counts
+
+
+def test_unseen_target_class_sends_its_ship_to_python(monkeypatch):
+    """A walked ship's class swapped after it registered (no reclassify)
+    to one K2 never saw but that overrides nothing: the scan checks a
+    ship's LIVE class, so the ship runs in Python; the step stays native.
+    The Galaxy, whose banks aim at it, stays native: a target's class is
+    read from its row, which a swap without reclassify does not change
+    (a target that never got a row: the rowless tests below)."""
+    from engine.appc.ships import ShipClass
+
+    class Unseen(ShipClass):
+        pass
+
+    def patch(mp, w):
+        mp.setattr(w.ships["Vorcha"], "__class__", Unseen)
+
+    counts = _one_native_step(monkeypatch, patch)
+    assert counts["k2_records"] > 0, counts
+    assert counts["k2_python_steps"] == 0, counts
+    # The Vor'cha (walked, its live class unseen).
+    assert counts["k2_python_reasons"]["overridden"] == 1, counts
+
+
+def test_rowless_target_of_unseen_class_with_foreign_override_runs_python_step(
+        monkeypatch):
     """A target of a class K2 never saw (it has no row: no object of it
     registered), overriding GetRadius from outside the engine: it concerns
     every bank aiming at it, so the whole step runs in Python."""
@@ -1542,11 +1595,11 @@ def test_unseen_target_class_with_foreign_override_runs_python_step(
     assert counts["k2_python_step_reasons"]["patched"] == 1, counts
 
 
-def test_unseen_target_class_sends_its_ship_to_python(monkeypatch):
+def test_rowless_target_of_unseen_class_sends_its_ship_to_python(monkeypatch):
     """A target of a class K2 never saw but that overrides nothing (it has
     no row): every ship with a bank aiming at it runs in Python; the step
-    stays native. (A walked ship of such a class has no row either: its
-    handle is -1, never a python ship.)"""
+    stays native. (A walked ship swapped to such a class keeps its row:
+    the swap tests above.)"""
     from engine.appc.ships import ShipClass
 
     class Unseen(ShipClass):

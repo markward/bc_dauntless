@@ -83,10 +83,6 @@ TEST(K2Scan, SubclassedSystemIsUnclean) {
     const int64_t o = f.ship(2, -1, &sys);
     f.m.set_i(sys, Field::k2_stock, 0);
     EXPECT_EQ(k2_unclean_ships(f.m, {o}), Idx{0});
-    // A stock phaser BANK as the ship's phaser system is not its role.
-    f.m.set_i(sys, Field::k2_stock, 1);
-    f.m.set_i(sys, Field::weapon_kind, kPhaserBankKind);
-    EXPECT_EQ(k2_unclean_ships(f.m, {o}), Idx{0});
 }
 
 TEST(K2Scan, SubclassedBankIsUnclean) {
@@ -95,10 +91,25 @@ TEST(K2Scan, SubclassedBankIsUnclean) {
     const int64_t o = f.ship(3, -1, nullptr, &kids);
     f.m.set_i(kids[2], Field::k2_stock, 0);
     EXPECT_EQ(k2_unclean_ships(f.m, {o}), Idx{0});
-    // A stock phaser SYSTEM among the banks is not its role.
-    f.m.set_i(kids[2], Field::k2_stock, 1);
-    f.m.set_i(kids[2], Field::weapon_kind, kPhaserSystemKind);
-    EXPECT_EQ(k2_unclean_ships(f.m, {o}), Idx{0});
+}
+
+TEST(K2Scan, WrongRoleIsUnclean) {
+    // k2_stock says "a stock bank or phaser system class"; weapon_kind says
+    // which. A stock BANK row as the ship's phaser system, or a stock
+    // SYSTEM row among the banks, is not its role: unclean.
+    Fixture f;
+    int64_t sys = -1;
+    const int64_t a = f.ship(2, -1, &sys);
+    const int64_t bank = f.sub(kPhaserBankKind);
+    f.m.set_ref(a, Field::_phaser_system, bank);
+    std::vector<int64_t> kids;
+    const int64_t b = f.ship(2, -1, nullptr, &kids);
+    f.m.set_i(kids[1], Field::weapon_kind, kPhaserSystemKind);
+    const int64_t c = f.ship(2, -1);
+    EXPECT_EQ(k2_unclean_ships(f.m, {a, b, c}), (Idx{0, 1}));
+    // Both rows keep k2_stock 1: the role alone decides.
+    EXPECT_EQ(f.m.get_i(bank, Field::k2_stock), 1);
+    EXPECT_EQ(f.m.get_i(kids[1], Field::k2_stock), 1);
 }
 
 TEST(K2Scan, NoRowChildIsUnclean) {

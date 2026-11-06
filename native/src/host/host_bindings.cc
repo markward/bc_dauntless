@@ -3686,8 +3686,17 @@ namespace {
 //
 // Returns (handles, unclean). Each ship's handle is its __dict__["_nslot"]
 // when that is an Object handle (`(h >> kind_shift) == obj_kind`), else -1
-// (no row, never checked). `unclean` is (ship, handle) for each ship
-// k2_unclean_ships lists, in order, for _k2_python_ship to decide.
+// (no row, never checked). `unclean` is (ship, handle), in order, for each
+// ship with a row whose LIVE class (type(ship)) is not in `seen`
+// (native_combat._k2_seen_set: one set lookup per ship), or that
+// k2_unclean_ships lists, for _k2_python_ship to decide.
+//
+// PER CLASS for the ship (native_combat._k2_unseen): a ship whose
+// `__class__` was swapped without reclassify is caught while its new class
+// is unseen, and not once an object of that class has registered. Its
+// phaser system's, banks' and targets' classes are NOT read live: they are
+// the rows' class flags (k2_stock, weapon_kind) and refs as last pushed, so
+// a class swapped under one of them needs reclassify to be seen at all.
 
 // The object's instance dict, borrowed, or nullptr (no error set) when it
 // has none. The materialized dict the Python driver's `obj.__dict__` reads.
@@ -3734,7 +3743,7 @@ int k2_is_kind_handle(PyObject* h, PyObject* kind, PyObject* kind_shift) {
 }
 
 PyObject* k2_scan_rows(PyObject* ships, PyObject* obj_kind,
-                       PyObject* kind_shift) {
+                       PyObject* kind_shift, PyObject* seen) {
     namespace cb = dauntless::combat;
     const K2ScanNames& names = k2_scan_names();
     PyObject* seq = PySequence_Fast(ships, "ships must be iterable");
@@ -3755,6 +3764,8 @@ PyObject* k2_scan_rows(PyObject* ships, PyObject* obj_kind,
     PyObject* handles = PyList_New(n);
     PyObject* none_ref = PyLong_FromLong(-1);
     std::vector<int64_t> hv(static_cast<size_t>(n), -1);
+    // 1: unclean (its live class unseen, or k2_unclean_ships lists it).
+    std::vector<char> bad(static_cast<size_t>(n), 0);
     bool failed = handles == nullptr || none_ref == nullptr;
     for (Py_ssize_t i = 0; i < n && !failed; ++i) {
         PyObject* d = k2_dict_of(items[i]);
@@ -3785,18 +3796,26 @@ PyObject* k2_scan_rows(PyObject* ships, PyObject* obj_kind,
         Py_INCREF(h);
         PyList_SET_ITEM(handles, i, h);
         hv[static_cast<size_t>(i)] = v;
+        const int in_seen = k2_in_seen(seen, items[i]);
+        if (in_seen < 0) {
+            failed = true;
+            break;
+        }
+        if (in_seen == 0) bad[static_cast<size_t>(i)] = 1;
     }
     PyObject* result = nullptr;
     PyObject* unclean = failed ? nullptr : PyList_New(0);
     if (unclean != nullptr) {
+        for (const size_t i : cb::k2_unclean_ships(cb::mirror(), hv))
+            bad[i] = 1;
         bool ok = true;
-        for (const size_t i : cb::k2_unclean_ships(cb::mirror(), hv)) {
+        for (Py_ssize_t i = 0; i < n && ok; ++i) {
+            if (!bad[static_cast<size_t>(i)]) continue;
             PyObject* pair = PyTuple_Pack(
                 2, items[i], PyList_GET_ITEM(handles, i));
             if (pair == nullptr || PyList_Append(unclean, pair) < 0)
                 ok = false;
             Py_XDECREF(pair);
-            if (!ok) break;
         }
         if (ok) result = PyTuple_Pack(2, handles, unclean);
     }
@@ -13139,13 +13158,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // marker for the mirror scan (phase 6 follow-up 3b).
         m.def("combat_k2_scan_rows",
               [](py::handle ships, py::handle obj_kind,
-                 py::handle kind_shift) {
+                 py::handle kind_shift, py::handle seen) {
                   PyObject* r = k2_scan_rows(ships.ptr(), obj_kind.ptr(),
-                                             kind_shift.ptr());
+                                             kind_shift.ptr(), seen.ptr());
                   if (r == nullptr) throw py::error_already_set();
                   return py::reinterpret_steal<py::tuple>(r);
               },
               py::arg("ships"), py::arg("obj_kind"), py::arg("kind_shift"),
+              py::arg("seen"),
               "(handles, [(ship, handle), ...]): see k2_scan_rows.");
         m.def("combat_k2_next", [vec] {
             // Compute with the GIL released (THE GIL RELEASE), as

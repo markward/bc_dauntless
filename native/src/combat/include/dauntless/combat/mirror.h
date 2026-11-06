@@ -306,8 +306,9 @@ enum class Field : int32_t {
     // at register, at reclassify, and for every row when the snapshot is
     // taken). Like every class flag it goes stale when an object's
     // `__class__` is swapped WITHOUT native_combat.reclassify: the row keeps
-    // its old class's flag, undetected (the per-class caveat of
-    // native_combat._k2_unseen).
+    // its old class's flag. The scan reads only a SHIP's class live (per
+    // class, as native_combat._k2_unseen: caught while the new class is
+    // unseen); a system's or bank's swap without reclassify is not caught.
     k2_stock,
     kCount
 };

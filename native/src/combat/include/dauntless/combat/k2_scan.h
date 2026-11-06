@@ -9,8 +9,9 @@
 // K2's ship scan (phase 6 follow-up 3b): which ships the K2 driver must hand
 // to native_combat._k2_python_ship before begin, answered from the mirror.
 //
-// The binding (combat_k2_scan_rows) reads one `_nslot` per ship; this walks
-// the rows. Ships it calls unclean go to _k2_python_ship, the authority,
+// The binding (combat_k2_scan_rows) reads one `_nslot` per ship and checks
+// the ship's live class against native_combat._k2_seen_set; this walks the
+// rows. Ships it calls unclean go to _k2_python_ship, the authority,
 // which decides each one as before; a clean ship is walked by K2.
 //
 // For each handle >= 0 the ship is UNCLEAN when:
@@ -27,9 +28,10 @@
 //
 // What it cannot see (accepted, plan 2026-11-06-phase6-k2-scan-from-mirror
 // Global Constraints): a change Python makes behind the mirror's back -- a
-// bank's `_nslot` deleted or replaced with no native_combat._drop, or an
-// object's `__class__` swapped with no native_combat.reclassify (its class
-// flags, k2_stock included, stay its old class's).
+// bank's `_nslot` deleted or replaced with no native_combat._drop, or a
+// system's, bank's or target's `__class__` swapped with no
+// native_combat.reclassify (its class flags, k2_stock included, stay its
+// old class's). The ship's own class is the binding's live check.
 
 namespace dauntless::combat {
 

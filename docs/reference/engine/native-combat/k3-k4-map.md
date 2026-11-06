@@ -486,6 +486,8 @@ So the event order of a tick is: all `ET_TORPEDO_EXITED_SET` (TTL first, then hi
 | `_k1_clocks`, resumable session, write log (P7), `ASK` (H), `RUN_PYTHON` (P2), pinning | NC:1585, `_K1Walk`, `run_k1`, `run_k2` | ASK protocol |
 | override snapshot / unseen-class / `combat_k2_scan_ships` | NC:2065-2290 | K3's patch-point check; one shared ships→handles scan per step (K4, K3, K2 all take `ships_list`) |
 
+**Superseded 2026-11-06** (phase 6 follow-up 3b): `combat_k2_scan_ships` is gone. `combat_k2_scan_rows` reads each ship's `_nslot` and checks the ship's class live against `_k2_seen_set`; the rest (phaser system, banks, targets, each row's `k2_stock` flag) comes from the mirror (`k2_scan.h`).
+
 **K3 needs new:** a torpedo row; a set-frame table (A2c); `bubble_bound_radius` (B1); `sphere_hit` (A8); the guide (G1-G10); the advance (A1-A6); the narrow loop's control flow; `_LEAD_ACCEL_K`; an `acos` wrapper (consider a noinline TU next to `py_sin` for symmetry; inferred unnecessary since nothing pairs `acos`).
 
 ---
@@ -498,6 +500,7 @@ Because steps 1-3 post no event (§A1 corrections), K3 can be **one batch call p
 
 - Python, unchanged first line: `if not _active: return []` (zero cost in the quiet scene).
 - `combat_k3_begin(ship_handles, dt, clocks, use_memo, ctx)` where `ship_handles` is the same array K4 and K2 use this step (one `combat_k2_scan_ships`-style scan per step), and `ctx` is the K2 context plus the set-frame table.
+  **Superseded 2026-11-06** (phase 6 follow-up 3b): `combat_k2_scan_ships` is gone. `combat_k2_scan_rows` reads each ship's `_nslot` and checks the ship's class live against `_k2_seen_set`; the rest (phaser system, banks, targets, each row's `k2_stock` flag) comes from the mirror (`k2_scan.h`).
 - The kernel walks: ship cache → per torpedo row (table order = `_active` order) guide/advance/TTL → broadphase → narrow → writes the store positions directly → returns `DONE(writes, expired[], hits[])`, or an `ASK` first.
 - Records:
   - `ASK steer_point(t)` → Python `_steer_point(t, target, off)` (posed target, or `_mount_key` attribution needed). Cheaper alternative for the attribution: `ASK mount_key(t)` once per shot at its first visible tick (0.06/tick in the capture), then native `target_offset_world` when the target is unposed.
@@ -706,6 +709,7 @@ None. `frames` is uncached by design (FR docstring: a set's frame changes once, 
 
 - `dist3` (py_math.h; `combat_test_dist3` self-check at import).
 - The step's ship→handle array (K2's `combat_k2_scan_ships`), shared with K3.
+  **Superseded 2026-11-06** (phase 6 follow-up 3b): `combat_k2_scan_ships` is gone. `combat_k2_scan_rows` reads each ship's `_nslot` and checks the ship's class live against `_k2_seen_set`; the rest (phaser system, banks, targets, each row's `k2_stock` flag) comes from the mirror (`k2_scan.h`).
 - The player handle resolution (`_k2_player_handle`, NC:2335) — but K4's `update` uses the same `hasattr` + swallow chain, so the same function serves.
 - Set-frame table: shared new work with K3 (A2c).
 
