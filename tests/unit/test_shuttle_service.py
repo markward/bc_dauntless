@@ -752,8 +752,10 @@ DOCK_RADIUS = 8.0
 STATION_RADIUS = 11.0
 # CircleObject dips this far inside a band's near edge while it settles
 # and goes this far outside the far edge at most. The dip depends on the
-# AI's random draws (App.g_kSystemWrapper): 1.63 GU with one draw, up to
-# 2.03 GU over 60 seeds (2026-10-26), so the bound is that plus a margin.
+# AI's random draws (App.g_kSystemWrapper): under the vector motion law,
+# with the service's settle speed (_SETTLE_CIRCLE_SPEED), up to 1.63 GU over
+# 30 seeds (2026-11-06; 2.03 GU over 60 under the old scalar ramp,
+# 2026-10-26), so the bound is that plus a margin.
 # It must fit in the service's inset above the floor (_BAND_INSET_GU) and,
 # with the outward slack, in the gap between bands (_BAND_GAP_GU):
 # test_orbit_bands_come_from_the_dock_layout checks both.

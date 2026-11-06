@@ -54,9 +54,10 @@ The Dry Docks legs:
   "Dry Dock3"; the service's own Random) with a free orbit, among those the
   fewest other shuttles are bound for, stopping at the orbit's outer edge.
   No dock with a free orbit: hold at its own Dry Docks lane point.
-- CIRCLING: BC's CircleObject round it, left side in, on its own orbit band,
-  until the dock -> shuttle direction has turned CIRCLES full turns (real
-  motion only) and it is the outermost shuttle there; else whole turns more.
+- CIRCLING: BC's CircleObject round it, left side in, on its own orbit band
+  (at half speed until it is side-on: _SETTLE_CIRCLE_SPEED), until the
+  dock -> shuttle direction has turned CIRCLES full turns (real motion only)
+  and it is the outermost shuttle there; else whole turns more.
 - LEAVING_DOCKS: intercept to its own Dry Docks lane point.
 - WARPING_BACK: BC's Warp to its own Starbase 12 lane point; done once in
   Starbase12 and out of warp, then APPROACHING.
@@ -173,15 +174,26 @@ _DRY_DOCKS = ("Dry Dock", "Dry Dock2", "Dry Dock3")
 # other standing station in DryDock minus _ORBIT_CAP_MARGIN_GU, so orbits
 # round two docks never meet. Bands are _BAND_GU wide, _BAND_GAP_GU apart,
 # the first _BAND_INSET_GU outside the floor: CircleObject dips inside a
-# band's near edge while it spirals in from the far edge (then holds near +
-# 1.0) -- 1.7 GU with one run of the AI's random draws, up to 2.03 GU over
-# 60 seeds (2026-10-26) -- and an intercept stopping at the far edge stops
-# ~0.5 GU inside it (measured).
+# band's near edge while it settles in from the far edge (then holds near +
+# 1.2) -- up to 1.63 GU over 30 seeds of the AI's random draws with the
+# settle speed below (2026-11-06, vector motion law) -- and an intercept
+# stopping at the far edge stops ~0.5 GU inside it (measured).
 _ORBIT_FLOOR_GU = 20.0
 _ORBIT_CAP_MARGIN_GU = 5.0
 _BAND_GU = 7.0
 _BAND_GAP_GU = 3.0
 _BAND_INSET_GU = 2.5
+# CircleObject's entry: the intercept leaves the shuttle at the far edge,
+# nose on the dock, and CircleObject's fuzzy rules (its "buggy code" branch)
+# go fast while it is still turning side-on. Under BC's vector motion law the
+# course lags the nose (tau = 1 s), so at CircleObject's default speed (1.0)
+# it slid in to 18.05 GU on a 22.5-29.5 band, 4.45 GU inside the near edge
+# (2026-11-06). It circles at _SETTLE_CIRCLE_SPEED until its bearing has
+# turned _SETTLE_RAD (side-on by then; the lowest point comes at ~0.25 rad),
+# then at the default speed: the same orbit at the same speed after that.
+# Measured over 30 seeds: 0.5 still dipped 2.36 GU; 0.4 at most 1.63 GU.
+_SETTLE_CIRCLE_SPEED = 0.4
+_SETTLE_RAD = 0.5
 # A shuttle that left a dock is still on its way out (in the corridor towards
 # the lane) this close to it.
 _DOCK_CLEAR_GU = 200.0
@@ -1216,6 +1228,8 @@ def _start_circling(s: Shuttle) -> None:
     # E1M1's shuttles circle with their left side to the station.
     script.SetNearFacingVector(App.TGPoint3_GetModelLeft())
     script.SetRoughDistances(near, far)
+    if s.bearing_accum < _SETTLE_RAD:
+        script.SetCircleSpeed(_SETTLE_CIRCLE_SPEED)
     _give_ai(s, ai)
 
 
@@ -1383,6 +1397,15 @@ def _turned(a, b) -> float:
                       sum(x * y for x, y in zip(a, b)))
 
 
+def _full_circle_speed(s: Shuttle) -> None:
+    """Side-on after _SETTLE_RAD: CircleObject's default speed. Nothing if
+    the leg's AI is not (or no longer) a CircleObject."""
+    script = None if s.ai is None else s.ai.GetScriptInstance()
+    set_speed = getattr(script, "SetCircleSpeed", None)
+    if set_speed is not None:
+        set_speed()
+
+
 def _check_circling(s: Shuttle) -> None:
     dock = _dry_dock(s.dock_name)
     if dock is None or _orbit_gone(s):
@@ -1394,7 +1417,10 @@ def _check_circling(s: Shuttle) -> None:
     # (measured round Dry Dock2), where a planar bearing degenerates.
     radial = _radial(s.ship, dock)
     if s.bearing_prev is not None:
+        settling = s.bearing_accum < _SETTLE_RAD
         s.bearing_accum += _turned(s.bearing_prev, radial)
+        if settling and s.bearing_accum >= _SETTLE_RAD:
+            _full_circle_speed(s)
     s.bearing_prev = radial
     if s.bearing_accum >= s.leave_at:
         # Back where it started circling (on the lane side) after whole
