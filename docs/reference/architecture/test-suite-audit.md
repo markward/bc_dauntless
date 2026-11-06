@@ -150,10 +150,12 @@ Not duplicates, despite identical bodies: `test_fire_key_input_chain` vs
    `tests/tools/test_app_icon_drift.py` is a **drift test** that skips
    because `svglib` is not in the dev extras, so the icon can drift
    unnoticed. Add `svglib` to `[project.optional-dependencies] dev`?
-   `test_blinking_light_property::test_real_lc_intrepid_hardpoint_puts_19_lights_on_the_ship`
-   skips ("LC Intrepid Pack not installed under the mods root") even with
-   the pack in `mods/`; worth a look. The three `test_backdrops_integration`
-   cases skip on macOS by design (hidden GLFW windows do not present).
+   The three `test_backdrops_integration` cases skip on macOS by design
+   (hidden GLFW windows do not present). (Resolved: the LC Intrepid
+   running-lights test skipped in every suite run, because it looked under
+   `<data dir>/mods` and the suite always runs under a temp data dir. At
+   Mark's suggestion it now loads the stock Galaxy, which has running lights:
+   17 lights, mutation-checked; commit `994c24ea5`.)
 9. **Wide sweeps kept:** `test_no_install_writes` (26 campaign missions,
    8.7 s; a protected guard) and `test_warp_button_handler_sweep`
    (26 missions, 8.5 s). Every mission is a real case.
