@@ -26,6 +26,10 @@ inline double py_min(double a, double b) { return (b < a) ? b : a; }
 // Python `max(a, b)`: returns b only if b > a, else a.
 inline double py_max(double a, double b) { return (b > a) ? b : a; }
 
+// Python `x or d` for a float x: x unless it is falsy, and only 0.0 and -0.0
+// are (NaN is truthy, so it is kept).
+inline double py_or(double x, double d) { return (x != 0.0) ? x : d; }
+
 // engine/appc/nebula_density.py `_saturate`: clamp to [0, 1]; NaN passes
 // through (both compares are False).
 inline double saturate(double v) {
