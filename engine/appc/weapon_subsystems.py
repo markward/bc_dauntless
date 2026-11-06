@@ -809,18 +809,19 @@ class _EnergyWeaponFireMixin:
         """Three gates:
 
           * ship alive — a dead ship's weapons never fire.
-          * charge — ``> 0`` to start or sustain, EXCEPT that a bank which
-            has run dry does not restart until it is back to
-            MinFiringCharge.  Measured on the original exe: a Kessok beam
-            preset to charge 3 with MinFiringCharge 4 fires at the full rate
-            (stbc-oracle bible B8, `phaser_high_front_57_charge3`), so
-            MinFiringCharge does not gate a fresh start; but the Galaxy's
-            bank 5, drained to 0 at 6.6 s, had not relit at 0.45 by 12.5 s
-            while the trigger stayed held (`phaser_galaxy_front_57`), so a
-            depleted bank does latch.  The restart threshold itself is only
-            bounded (> 0.45 on a 5-charge bank); MinFiringCharge is the one
-            authored value in range.  Pulse cannons use affordability
-            instead (one shot's cost, PulseWeapon._shot_cost).
+          * charge — a phaser bank lights only at MinFiringCharge, from a
+            fresh start or after running dry, and once lit it fires down to
+            0 (``> 0`` sustains).  Measured on the original exe
+            (stbc-oracle results_win_charge): Galaxy and Sovereign banks
+            (MinFiringCharge 3) preset to 0.1-2.9 never fire, and light the
+            moment they recharge to 3.0; a drained bank relights at 3.01 with
+            the trigger held; and the Kessok beam preset to 3 in
+            `phaser_high_front_57_charge3` (MinFiringCharge 4) lit at 4.01,
+            then fired at the full rate (bible B8).  The depleted latch is
+            kept for its reported clear.  Tractors share the gate but are
+            unmeasured, so they still start on any charge > 0.  Pulse
+            cannons use affordability instead (one shot's cost,
+            PulseWeapon._shot_cost).
           * disabled-product — the bank's own condition times the parent
             system's condition must clear the authored DisabledPercentage
             threshold (``GetOverallConditionPercentage`` in the audit); a

@@ -25,12 +25,17 @@ def test_can_fire_true_when_charged_and_on():
     assert bank.CanFire() == 1
 
 
-def test_can_fire_false_only_when_empty():
-    """A beam fires on any charge at all; MinFiringCharge is not a fire gate
-    (stbc-oracle B8: a Kessok bank preset to 3 with MinFiringCharge 4 fires
-    at the full rate)."""
+def test_an_idle_bank_needs_min_firing_charge_and_a_lit_one_fires_to_empty():
+    """A phaser bank lights only at MinFiringCharge; once lit it fires down to
+    0 (stbc-oracle results_win_charge: Galaxy and Sovereign banks preset to
+    0.1-2.9 never fire, and light on reaching 3.0)."""
     bank = _charged_bank()
-    bank._charge_level = 2.0  # below min_firing_charge — still fires
+    bank._charge_level = 2.0  # below min_firing_charge, idle: cannot start
+    assert bank.CanFire() == 0
+    bank._charge_level = 3.0
+    assert bank.CanFire() == 1
+    bank._firing = 1          # lit: sustains below MinFiringCharge
+    bank._charge_level = 2.0
     assert bank.CanFire() == 1
     bank._charge_level = 0.0
     assert bank.CanFire() == 0
