@@ -398,7 +398,7 @@ class PosedFight:
         """The mount with no part transform (the rest point)."""
         if ship is None:
             ship = sub._climb_to_ship()
-        p = sub.GetPosition()
+        p = sub.GetMountPositionTG()
         o = TGPoint3(p.x, p.y, p.z)
         o.MultMatrixLeft(ship.GetWorldRotation())
         pos = ship.GetWorldLocation()
@@ -717,7 +717,7 @@ class PosedFight:
         kernel's own answer must be the same bits."""
         out = []
         for sub, ship_arg in self.mount_subs(bop):
-            want = ss._subsystem_world_position(sub, ship_arg)
+            want = ss._subsystem_world_position(sub, ship_arg, mount=True)
             out.append(_hexes(want))
             self.stats["mounts_posed"] += _hexes(want) != _hexes(
                 self.unposed_mount(sub, ship_arg))
@@ -737,6 +737,12 @@ class PosedFight:
             assert tuple(c.hex() for c in got) == _hexes(want), (
                 self.tick, sub.GetName(), got, want)
             self.stats["mount_checks"] += 1
+            # Its GetPosition point (a phaser bank's: the middle of its arc,
+            # riding its hardpoint's part).
+            want = ss._subsystem_world_position(sub, ship_arg)
+            got = _h.combat_test_position_world(*args)
+            assert tuple(c.hex() for c in got) == _hexes(want), (
+                self.tick, sub.GetName(), "position", got, want)
         return out
 
     def emitters(self, ship):
@@ -756,7 +762,7 @@ class PosedFight:
                 h = w.__dict__["_nslot"]
                 fwd = tuple(v.hex() for v in
                             _h.combat_test_emitter_forward_world(h, sh))
-                c = xyz(ss._subsystem_world_position(w, None))
+                c = xyz(ss._subsystem_world_position(w, None, mount=True))
                 aims = []
                 for f in foes:
                     d = [f[i] - c[i] for i in range(3)]

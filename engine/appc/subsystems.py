@@ -29,13 +29,18 @@ from engine.appc import effect_queue as _effect_queue
 from engine.appc.native_combat import NativeField, NativeRefField
 
 
-def subsystem_world_position(sub, ship=None, damage=False):
+def subsystem_world_position(sub, ship=None, damage=False, mount=False):
     """World mount point of a subsystem: ship_loc + R · local_mount.
 
     ``damage=True`` uses the subsystem's DAMAGE point (GetDamagePoint) in
     place of its position: the centre a weapon hit's footprint is measured
     from (engine/appc/damage_point.py). Its native twin is weapon_geometry.cc
     damage_world_position.
+
+    ``mount=True`` uses the hardpoint position (GetMountPositionTG) in place
+    of GetPosition. The two differ only for a phaser bank, whose position is
+    the middle of its firing arc on its strip (PhaserBank.GetPositionTG);
+    its strip, emit point and arc origin are centred on the hardpoint.
 
     Column-vector rotation convention (R · v); NO scale — BC stores mounts
     in world units relative to the ship centre. Returns the ship location if
@@ -51,21 +56,21 @@ def subsystem_world_position(sub, ship=None, damage=False):
     fresh TGPoint3; whatever moves a ship or a part in the step forgets.
     """
     if step_memo.active():
-        key = (id(sub), id(ship), damage)
+        key = (id(sub), id(ship), damage, mount)
         found = _mounts.get(key)
         if found is None:
-            p = _subsystem_world_position(sub, ship, damage)
+            p = _subsystem_world_position(sub, ship, damage, mount)
             found = _mounts[key] = (p.x, p.y, p.z)
         return TGPoint3(found[0], found[1], found[2])
-    return _subsystem_world_position(sub, ship, damage)
+    return _subsystem_world_position(sub, ship, damage, mount)
 
 
-# (id(sub), id(ship arg), damage) -> mount (x, y, z), while a step_memo block
-# is open.
+# (id(sub), id(ship arg), damage, mount) -> mount (x, y, z), while a
+# step_memo block is open.
 _mounts = step_memo.table()
 
 
-def _subsystem_world_position(sub, ship, damage=False):
+def _subsystem_world_position(sub, ship, damage=False, mount=False):
     """The computation itself; see subsystem_world_position."""
     if ship is None:
         ship = sub._climb_to_ship() if hasattr(sub, "_climb_to_ship") else None
@@ -74,6 +79,8 @@ def _subsystem_world_position(sub, ship, damage=False):
     ship_pos = ship.GetWorldLocation()
     if damage and hasattr(sub, "GetDamagePoint"):
         local = sub.GetDamagePoint()
+    elif mount and hasattr(sub, "GetMountPositionTG"):
+        local = sub.GetMountPositionTG()
     else:
         local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
     if not isinstance(local, TGPoint3):
@@ -84,9 +91,20 @@ def _subsystem_world_position(sub, ship, damage=False):
     # overwhelming majority of calls are unchanged.
     from engine.appc.articulation import part_transform_point
     from engine.appc import physical_parents
-    px, py, pz = part_transform_point(
-        ship, (local.x, local.y, local.z),
-        prop=physical_parents.property_of(sub))
+    prop = physical_parents.property_of(sub)
+    point = (local.x, local.y, local.z)
+    hard = (sub.GetMountPositionTG()
+            if not (damage or mount) and getattr(type(sub), "GetMountPositionTG", None)
+            else None)
+    if hard is not None and (hard.x, hard.y, hard.z) != point:
+        # A phaser bank's position (the middle of its arc) rides the part its
+        # HARDPOINT is on, as the native slot does (resolved on the mount).
+        from engine.appc.articulation import _live_part
+        part = _live_part(ship, None, (hard.x, hard.y, hard.z), True, prop)
+        px, py, pz = (point if part is None
+                      else part_transform_point(ship, point, part=part))
+    else:
+        px, py, pz = part_transform_point(ship, point, prop=prop)
     offset = TGPoint3(px, py, pz)
     if hasattr(ship, "GetWorldRotation"):
         rot = ship.GetWorldRotation()
@@ -145,7 +163,8 @@ def _is_own_mount(sub, point) -> bool:
     """Is `point` `sub`'s own authored mount, `==` per axis (-0.0 matches
     0.0, a NaN never matches)? M8.5: a point merely within 1e-5 of it is a
     plain point."""
-    mount = sub.GetPosition()
+    mount = (sub.GetMountPositionTG() if getattr(type(sub), "GetMountPositionTG", None)
+             else sub.GetPosition())
     return (mount.GetX() == point[0] and mount.GetY() == point[1]
             and mount.GetZ() == point[2])
 
@@ -371,8 +390,10 @@ class ShipSubsystem(TGEventHandlerObject):
     _arc_height_lo = NativeField(float)
     _arc_height_hi = NativeField(float)
     _arc_set = NativeField(bool)
-    # Phaser-strip length (K2 reads it for the emitter position).
+    # Phaser-strip length (K2 reads it for the emitter position) and width
+    # (with the length, where a bank sits: PhaserBank.GetPositionTG).
     _length = NativeField(float)
+    _width = NativeField(float)
     # A phaser bank's pulse damage and R_hit (K2 applies the pulse in the
     # walk: native damage Task 4), copied from its property.
     _max_damage = NativeField(float)
@@ -973,6 +994,13 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetPosition(self) -> TGPoint3:
         return self.GetPositionTG()
 
+    def GetMountPositionTG(self) -> TGPoint3:
+        """The hardpoint position. GetPositionTG is the same point for
+        every subsystem but a phaser bank (PhaserBank.GetPositionTG: the
+        middle of its firing arc on its strip); which part a subsystem sits
+        on, and a bank's strip, emit point and arc origin, use this one."""
+        return TGPoint3(self._position.x, self._position.y, self._position.z)
+
     def GetDirection(self) -> TGPoint3:
         return TGPoint3(self._direction.x, self._direction.y, self._direction.z)
 
@@ -1109,8 +1137,10 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def _emitter_world_position(self) -> TGPoint3:
         """World position of this emitter mount: ship_loc + R · local.
-        Delegates to the module-level subsystem_world_position helper."""
-        return subsystem_world_position(self)
+        Delegates to the module-level subsystem_world_position helper, on
+        the hardpoint (``mount=True``: a phaser bank's GetPosition is the
+        middle of its arc, not the centre of its strip)."""
+        return subsystem_world_position(self, mount=True)
 
     def _strip_emit_position(self, target_world) -> TGPoint3:
         """Closest point on a phaser-strip arc to ``target_world``.
@@ -1178,6 +1208,12 @@ class ShipSubsystem(TGEventHandlerObject):
             yaw = _math.atan2(right_proj, fwd_proj)
         yaw_lo = getattr(self, "_arc_width_lo", -_math.pi)
         yaw_hi = getattr(self, "_arc_width_hi",  _math.pi)
+        # The arc is the range between its two angles in either order, as
+        # the arc gate reads it: the Akira's ventral banks author their width
+        # descending (0.0, -1.221731), and clamped in authored order every
+        # beam left the strip's forward end.
+        if yaw_hi < yaw_lo:
+            yaw_lo, yaw_hi = yaw_hi, yaw_lo
         yaw = max(yaw_lo, min(yaw_hi, yaw))
 
         # Rotate world_forward toward world_right by yaw, in their (orthonormal)

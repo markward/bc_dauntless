@@ -494,6 +494,13 @@ def _mounted_subsystems(ship, keep_raising=False):
             if keep_raising:
                 out.append((sub, None))
             continue
+        # Which part a subsystem sits on is a question of its hardpoint: a
+        # phaser bank's GetPosition is the middle of its arc on the strip.
+        if getattr(type(sub), "GetMountPositionTG", None) is not None:
+            try:
+                pos = sub.GetMountPositionTG()
+            except Exception:  # noqa: BLE001 - not a mounted subsystem
+                continue
         try:
             out.append((sub, (pos.GetX(), pos.GetY(), pos.GetZ())))
         except Exception:  # noqa: BLE001 - not a mounted subsystem

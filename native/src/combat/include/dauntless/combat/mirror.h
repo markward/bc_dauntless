@@ -295,6 +295,9 @@ enum class Field : int32_t {
     // GetDamagePoint, model frame), read only where _damage_point_set is 1
     // (else the position).
     _targetable, _damage_point, _damage_point_set,
+    // A phaser bank's strip width: with _length and the width arc, where the
+    // bank is (PhaserBank.GetPositionTG; weapon_geometry bank_position_local).
+    _width,
     kCount
 };
 
@@ -448,6 +451,7 @@ struct SubsystemRow {
     double launch_speed = 0.0, lifetime = 0.0;
     int64_t module_ok = 0;
     double _length = 0.0, _beam_on_countdown = 0.0, _dwell = 0.0;
+    double _width = 0.0;   // Field::_width
     int64_t has_shields = 0;
     // K0's inputs (Field comment above).
     double _recharge_rate = 0.0, _reload_delay = 0.0;

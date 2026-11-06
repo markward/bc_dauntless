@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <utility>
 
 #include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/py_math.h"
@@ -79,10 +80,12 @@ AimPoint phaser_aim_point(Mirror& m, int64_t ship, int64_t target,
         // ShipSubsystem.GetWorldLocation (subsystems.py:935): the lock's OWN
         // ship, with that ship's pose flag (mount_position checks it).
         const int64_t lock_ship = climb_to_ship_of(m, lock);
+        // Its GetPosition: a phaser bank's is the middle of its arc.
         if (lock_ship != -1)
-            return {subsystem_world_position(m, lock, lock_ship, use_memo),
-                    lock};
-        return {sub(m, lock)._position, lock};  // GetPositionTG()
+            return {position_world(m, lock, lock_ship, use_memo), lock};
+        const SubsystemRow& ls = sub(m, lock);
+        return {ls.weapon_kind == 5 ? bank_position_local(ls) : ls._position,
+                lock};  // GetPositionTG()
     }
     return {world_location(m, obj(m, target)), -1};
 }
@@ -118,8 +121,12 @@ Vec3 strip_emit_position(Mirror& m, int64_t bank, const Vec3& target_world,
     double yaw = (fwd_proj == 0.0 && right_proj == 0.0)
                      ? 0.0
                      : std::atan2(right_proj, fwd_proj);
-    // F8: AUTHORED order, not sorted: max(lo, min(hi, yaw)).
-    yaw = py_max(b._arc_width_lo, py_min(b._arc_width_hi, yaw));
+    // F8: the arc's two angles in either order (an Akira ventral bank
+    // authors its width descending): swapped only when hi < lo, then
+    // max(lo, min(hi, yaw)).
+    double lo = b._arc_width_lo, hi = b._arc_width_hi;
+    if (hi < lo) std::swap(lo, hi);
+    yaw = py_max(lo, py_min(hi, yaw));
 
     // F9
     const double c = py_cos(yaw), s = py_sin(yaw);

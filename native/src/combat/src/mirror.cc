@@ -249,6 +249,7 @@ constexpr FieldInfo kInfo[] = {
     {"_targetable", Kind::Subsystem, FieldType::I},
     {"_damage_point", Kind::Subsystem, FieldType::Vec3},
     {"_damage_point_set", Kind::Subsystem, FieldType::I},
+    {"_width", Kind::Subsystem, FieldType::F},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -532,6 +533,7 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::launch_speed: return &r.launch_speed;
         case Field::lifetime: return &r.lifetime;
         case Field::_length: return &r._length;
+        case Field::_width: return &r._width;
         case Field::_beam_on_countdown: return &r._beam_on_countdown;
         case Field::_dwell: return &r._dwell;
         case Field::_recharge_rate: return &r._recharge_rate;

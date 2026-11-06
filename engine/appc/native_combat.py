@@ -2999,7 +2999,10 @@ def _part_slot(leaf, names, sub):
     at the next step boundary: resolve_part_slots, M8.4)."""
     from engine.appc import part_severance, physical_parents
     try:
-        local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+        if getattr(type(sub), "GetMountPositionTG", None) is not None:
+            local = sub.GetMountPositionTG()     # the hardpoint (a bank's strip)
+        else:
+            local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
         if not isinstance(local, TGPoint3):
             return -1
         point = (local.x, local.y, local.z)
@@ -5358,7 +5361,8 @@ _k2_kind_ids = None
 _k2_hl = None
 _k2_cheats = None
 
-_K2_SUBSYSTEM_NAMES = ("GetWorldLocation", "GetPosition", "_climb_to_ship")
+_K2_SUBSYSTEM_NAMES = ("GetWorldLocation", "GetPosition", "GetPositionTG",
+                       "GetMountPositionTG", "_climb_to_ship")
 _K2_OBJECT_NAMES = ("IsDead", "GetWorldLocation", "GetWorldRotation",
                     "GetContainingSet", "GetScale", "GetRadius", "GetBaseRadius",
                     "GetShields")

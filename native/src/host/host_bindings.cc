@@ -12557,6 +12557,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                                           ship, use_memo));
               },
               py::arg("sub"), py::arg("ship"), py::arg("use_memo"));
+        // subsystem_world_position(sub, ship) on GetPosition (a phaser
+        // bank's is the middle of its arc; the call above is mount=True).
+        m.def("combat_test_position_world",
+              [vec](std::int64_t sub, std::int64_t ship) {
+                  return vec(cb::position_world(cb::mirror(), sub, ship, false));
+              },
+              py::arg("sub"), py::arg("ship"));
         m.def("combat_test_mount_memo_size", [] {
             return cb::mirror().sensor_state().mounts.size();
         });
