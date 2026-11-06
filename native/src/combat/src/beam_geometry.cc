@@ -32,7 +32,7 @@ using detail::xform;
 bool shield_is_disabled(const SubsystemRow& s) {
     if (s._max_condition <= 0.0) return false;
     const double threshold = s._disabled_percentage * s._max_condition;
-    return s._condition <= threshold;
+    return s._condition < threshold;  // strict, as ShipSubsystem.IsDisabled
 }
 
 // ShipSubsystem.IsDestroyed (subsystems.py:1228).

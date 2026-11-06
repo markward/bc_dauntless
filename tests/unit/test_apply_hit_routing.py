@@ -88,6 +88,8 @@ def test_splash_hit_at_subsystem_centre_damages_it():
     """Splash model: impact directly on the bridge (d=0 → w=1.0).
     Shields absorb 100; post-shield=400. Hull takes 400 unconditionally.
     Bridge (r_sub=2, r_hit=0.15) is within range so it takes 400, capped at 300.
+    The 100 left over after destroying it lands again as the overflow
+    re-hit (combat._apply_hit step 7).
     """
     shields = _FakeShields(current=100.0)
     hull = _FakeSubsystem("Hull", max_cond=1000.0)
@@ -96,8 +98,8 @@ def test_splash_hit_at_subsystem_centre_damages_it():
     apply_hit(ship, 500.0, TGPoint3(0, 5, 0), source=None)
     # Bridge should be destroyed (took full 400, capped at max 300).
     assert bridge.GetCondition() == 0.0
-    # Hull takes full post-shield damage: 1000 - 400 = 600.
-    assert hull.GetCondition() == 600.0
+    # Hull takes full post-shield damage, then the overflow: 1000 - 400 - 100.
+    assert hull.GetCondition() == 500.0
 
 
 def test_hull_zero_marks_ship_dying():

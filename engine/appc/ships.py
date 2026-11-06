@@ -1881,6 +1881,13 @@ class ShipClass(DamageableObject):
         # The script is set by now: tell the native mirror whether this hull
         # has posed parts (native_combat.push_posed_parts; no-op when off).
         native_combat.push_posed_parts(self)
+        # And its model is known: each subsystem's damage point, the centre
+        # a weapon hit's footprint is measured from (engine/appc/
+        # damage_point.py). Rocks have no subsystem footprint to measure.
+        from engine.rocks.rock import RockClass
+        if not isinstance(self, RockClass):
+            from engine.appc import damage_point
+            damage_point.assign(self)
 
     @staticmethod
     def _copy_powered_subsystem_fields(prop, subsystem) -> None:
