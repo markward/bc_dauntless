@@ -502,3 +502,48 @@ def test_speed_label_change_triggers_re_emit():
     pc._current_speed = 3.5
     again = panel.render_payload()
     assert again is not None
+
+
+def test_disabled_torpedo_tube_reads_disabled_not_online():
+    """A tube damaged past its DisabledPercentage stops firing, and its HUD
+    icon must say so: disabled (BC's disabled grey), not online (the charge
+    colour -- a loaded tube drew green). User report: disabled torpedoes
+    stayed green on the HUD."""
+    ship = _build_galaxy_as_player()
+    torps = ship.GetTorpedoSystem()
+    torps.TurnOn()
+    tube = torps._children[0]
+    tube.SetNumReady(tube.GetMaxReady())
+    tube.SetCondition(tube.GetMaxCondition() * 0.1)
+    assert tube.IsDisabled() and not tube.IsDestroyed()
+    d = next(d for d in _resolve_icon_descriptors(ship)
+             if d["icon_num"] == tube.GetIconNum()
+             and d["x_px"] == tube.GetIconPositionX() and d["y_px"] == tube.GetIconPositionY())
+    assert d["disabled"] is True
+    assert d["online"] is False
+    assert d["destroyed"] is False
+
+
+def test_destroyed_tube_reads_destroyed_not_disabled():
+    ship = _build_galaxy_as_player()
+    torps = ship.GetTorpedoSystem()
+    torps.TurnOn()
+    tube = torps._children[0]
+    tube.SetDestroyed(1)
+    d = next(d for d in _resolve_icon_descriptors(ship)
+             if d["icon_num"] == tube.GetIconNum()
+             and d["x_px"] == tube.GetIconPositionX() and d["y_px"] == tube.GetIconPositionY())
+    assert d["destroyed"] is True
+    assert d["disabled"] is False
+    assert d["online"] is False
+
+
+def test_render_payload_re_emits_when_a_tube_becomes_disabled():
+    ship = _build_galaxy_as_player()
+    torps = ship.GetTorpedoSystem()
+    torps.TurnOn()
+    from engine.ui.weapons_display_panel import _frozen_icon_descriptors
+    before = _frozen_icon_descriptors(ship)
+    tube = torps._children[0]
+    tube.SetCondition(tube.GetMaxCondition() * 0.1)
+    assert _frozen_icon_descriptors(ship) != before

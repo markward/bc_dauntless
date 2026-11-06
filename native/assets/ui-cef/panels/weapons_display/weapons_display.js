@@ -18,7 +18,8 @@
 //       y_px:          float,          // SDK's WEAPONS_PANE (~130x110)
 //       above:         bool,           // dorsal = above silhouette
 //       firing:        bool,
-//       destroyed:     bool,
+//       destroyed:     bool,           // drawn black
+//       disabled:      bool,           // damaged past DisabledPercentage: BC disabled grey
 //       online:        bool,           // bank's parent system is powered
 //       charge_ratio:  float,          // 0..1, mixed into the icon colour
 //       in_firing_arc: bool            // target is in arc + in range; adds
@@ -82,6 +83,7 @@
             var w = document.createElement("span");
             w.className = "weapon-icon"
                         + (d.destroyed ? " is-destroyed" : "")
+                        + (d.disabled ? " is-disabled" : "")
                         + (d.online ? " is-online" : "")
                         + (d.in_firing_arc ? " is-in-arc" : "");
             w.style.left = d.x_px + "px";
