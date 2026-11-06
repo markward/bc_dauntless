@@ -9,6 +9,12 @@ import gc
 
 from engine.appc.time_slice import PythonMethodProcess, TimeSliceProcessManager
 
+# One 60 Hz frame. BC runs a process on the first frame PAST its delay since
+# its last run, never on a frame landing exactly on it (stbc-oracle sched
+# probe: 301 frames for a 5 s process at exact 60 Hz), so a tick meant to fire
+# a process sits one frame past the delay.
+F = 1.0 / 60.0
+
 
 class _Counter:
     def __init__(self):
@@ -35,7 +41,7 @@ def test_process_self_registers_and_fires_on_its_delay():
     mgr.tick(game_time=0.4, real_time=0.4)
     assert target.calls == 0
 
-    mgr.tick(game_time=0.5, real_time=0.5)
+    mgr.tick(game_time=0.5 + F, real_time=0.5 + F)
     # Arming happens lazily on the first tick that SEES the process (here
     # t=0.0, same instant as construction, so the two coincide) rather than
     # at construction time itself, because the SDK convention is to call
@@ -43,7 +49,7 @@ def test_process_self_registers_and_fires_on_its_delay():
     # -- arming at construction would capture delay=0.0 and fire immediately.
     assert target.calls == 1, "first fire is at first-tick-that-sees-it + delay"
 
-    mgr.tick(game_time=1.0, real_time=1.0)
+    mgr.tick(game_time=1.0 + 2 * F, real_time=1.0 + 2 * F)
     assert target.calls == 2, "re-arms every delay"
 
 

@@ -329,7 +329,9 @@ def test_condition_event_creator_subscribes_and_fires_event():
     App.g_kEventManager.AddEvent = lambda e: captured.append(e)
     try:
         cond.SetActive()
-        cond.SetStatus(1)  # change → fires
+        cond.SetStatus(1)  # change → queued
+        from engine.appc.ai import deliver_condition_events
+        deliver_condition_events()  # the tick boundary posts it
     finally:
         App.g_kEventManager.AddEvent = real_add
     # cond.SetStatus also broadcasts ET_AI_CONDITION_CHANGED (real Appc posts

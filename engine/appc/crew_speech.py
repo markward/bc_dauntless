@@ -103,8 +103,16 @@ class CrewSpeechBus:
         # CharacterClass.GetLastTalkTime (BC's engine-internal talk-time stamp);
         # only accepted lines write here. See last_talk_time() below.
         self._last_talk: dict = {}
+        # Lines waiting for the same officer's live line to end:
+        # [start_at, speaker, text, wav, priority, lips], in start order.
+        self._queue: list = []
+        # Game time the live line started at (see speak: only a line asked
+        # for in that same tick waits behind it).
+        self._active_started_game = None
 
     def reset(self) -> None:
+        self._queue = []
+        self._active_started_game = None
         self._stop_active_voice()
         self._active_priority = sys.maxsize  # idle: any line outranks silence
         self._active_expiry = 0.0
@@ -160,6 +168,26 @@ class CrewSpeechBus:
         # already talking.  See engine/appc/ai.py CSP_* .
         if line_live and priority > self._active_priority:
             return 0.0  # a higher-priority line is still talking
+        # The same officer, at the same priority, waits for the line he is
+        # speaking. Measured on the original (stbc-oracle line probe, native
+        # Windows): Quick Battle gives Felix his "destroyed" line and
+        # QBFelixWin in two sequences at the same instant, both priority 1;
+        # the second began as the first ended (3.555 s, then 1.640 s -- the
+        # clips are 3.553 and 1.646 s), not cutting it.
+        # Only a line asked for in the tick the live one started waits: that is
+        # the measured case (two sequences started together). A later line,
+        # such as a sequence's next line while the wall clock still counts the
+        # last as live, cuts it as before.
+        if (line_live and str(speaker) == self._active_speaker
+                and priority == self._active_priority
+                and self._active_started_game is not None
+                and _game_time() == self._active_started_game):
+            start_at = self._queue[-1][0] + self._queue[-1][6] if self._queue else self._active_expiry
+            duration = self._voice_length(wav) if wav else 0.0
+            if duration <= 0.0:
+                duration = _estimate_duration(text, wav)
+            self._queue.append([start_at, str(speaker), text, wav, priority, bool(lips), duration])
+            return (start_at - now) + duration
         # If a line is still live, this one preempts it: stop the previous voice
         # so two lines never overlap audibly (BC plays one crew/comm voice at a
         # time — a new equal-or-higher line cuts the old). When the channel is
@@ -168,6 +196,10 @@ class CrewSpeechBus:
         # no real overlap occurs; this only bites when two sequences collide.
         if line_live:
             self._stop_active_voice()
+            self._queue = []                 # the cut officer's waiting lines go with him
+        return self._start(speaker, text, wav, priority, now, lips)
+
+    def _start(self, speaker, text, wav, priority, now, lips) -> float:
         self._active_priority = priority
         self._active_speaker = str(speaker)
         # Real decoded length when the voice is loadable; estimate otherwise.
@@ -183,8 +215,30 @@ class CrewSpeechBus:
         # `now`) so CharacterClass.GetLastTalkTime can gate idle chatter. Only
         # accepted lines reach here — a priority-dropped line (above) must not
         # reset the timestamp.
-        self._last_talk[str(speaker)] = _game_time()
+        self._last_talk[str(speaker)] = self._active_started_game = _game_time()
         return duration
+
+    def pump(self, now=None) -> None:
+        """Start a waiting line once the officer's line before it has ended
+        (GameLoop.tick, every tick)."""
+        if not self._queue:
+            return
+        if now is None:
+            now = time.monotonic()
+        while self._queue and now >= self._queue[0][0] and now >= self._active_expiry - 1e-6:
+            start_at, speaker, text, wav, priority, lips, _duration = self._queue.pop(0)
+            self._start(speaker, text, wav, priority, now, lips)
+
+    def _voice_length(self, wav) -> float:
+        """A voice line's length without playing it (0.0 when unknown)."""
+        try:
+            from engine.audio.tg_sound import TGSoundManager, TGSound
+            mgr = TGSoundManager.instance()
+            if mgr.GetSound(wav) is None:
+                mgr.LoadSound(wav, wav, TGSound.LS_STREAMED)
+            return float(mgr.duration_for(wav) or 0.0)
+        except Exception:
+            return 0.0
 
     # -- Best-effort routing (never raises) ----------------------------------
     def _route_subtitle(self, speaker, text, duration) -> None:
