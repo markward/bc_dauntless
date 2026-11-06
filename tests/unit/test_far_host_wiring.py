@@ -174,9 +174,30 @@ def test_scenery_contact_pumps_beside_the_minor_contact():
     assert 0 < scn - mnr < 200, "pump the scenery contacts beside the minors'"
 
 
-def test_a_mission_swap_resets_the_scenery_contacts():
-    src = inspect.getsource(hl.HostController)
-    mnr = src.find("_minor_contact.reset()")
-    scn = src.find("_scenery_contact.reset()")
-    assert mnr >= 0 and scn >= 0
-    assert 0 < scn - mnr < 200
+def test_a_mission_swap_resets_the_scenery_contacts(monkeypatch):
+    """A real dev-picker swap reaches both contact resets (behaviour, not the
+    source text: the reset list moved into reset_mission_state, 2026-11-06)."""
+    from engine.rocks import minor_contact, scenery_contact
+    calls = []
+    monkeypatch.setattr(minor_contact, "reset", lambda: calls.append("minor"))
+    monkeypatch.setattr(scenery_contact, "reset",
+                        lambda: calls.append("scenery"))
+    _swap_through_the_host_controller()
+    assert calls == ["minor", "scenery"]
+
+
+def _swap_through_the_host_controller():
+    class _StubLoader:
+        def load(self, name):
+            return hl.MissionSession(mission_name=name)
+
+    class _FakeRenderer:
+        def destroy_instance(self, iid):
+            pass
+
+    h = hl.HostController()
+    h.renderer = _FakeRenderer()
+    h.loader = _StubLoader()
+    h.session = hl.MissionSession(mission_name="prev")
+    h.swap_mission("Next.Mission")
+    h._drain_pending_swap()

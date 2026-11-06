@@ -27,6 +27,7 @@ whole-step hand-back) or, for the fallback scenarios, that it did not and
 why -- and its mirror (torpedo rows included) must still equal the Python at
 the end (audit_mirror).
 """
+import gc
 import importlib
 import math
 import sys
@@ -670,11 +671,19 @@ def test_switch_off_unchanged_calls(monkeypatch):
                         raising=False)
     with monkeypatch.context() as mp:
         w = World(mp, False, GALAXY_VORCHA, "k3_off")
+        # The free queue's drain asks combat_k3_open() whether a session is
+        # open -- a status read, not K3 dispatch. Garbage an EARLIER test
+        # left is collected at whatever moment the cyclic GC picks, and its
+        # finalizers queue frees: drain them now and hold the collector off
+        # for the window, so only this test's own switch-off path is seen.
+        nc.drain()
+        gc.disable()
         del called[:]
         try:
             for t in range(40):
                 w.tick(before=lambda w, t=t: _volley(w, t))
         finally:
+            gc.enable()
             w.close()
     assert called == []
 

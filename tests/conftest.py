@@ -950,6 +950,24 @@ def _reset_leakable_engine_globals():
         _passive_state.reset()
     except Exception:
         pass
+    # Mission-scoped module state: the SAME list the game clears on a mission
+    # swap (engine.host_loop.reset_mission_state), so the two cannot drift.
+    # They had: 15 swap-time resets had no counterpart here, and two of them
+    # (ship_lifecycle._live, registry_texture._pending) held a strong
+    # reference to every ship any test built, with its whole subsystem/AI
+    # graph, to the end of the run -- the root of the 4.3 GB full-suite peak
+    # (docs/reference/architecture/test-suite-memory.md). NOT swallowed: a
+    # reset that raises must fail loudly, or the leak returns silently.
+    import engine.host_loop as _hl_mission
+    _hl_mission.reset_mission_state(None)
+    # SDK MissionLib.CallFunctionWhenConditionChanges keeps (trigger, module,
+    # function) per mission id until the SDK's MissionDeleted handler sees the
+    # mission object deleted -- which a test's mission never is, so the
+    # triggers (and the conditions, AIs and ships they reach) outlived it.
+    # Test-only: the game deletes its missions.
+    _ml = sys.modules.get("MissionLib")
+    if _ml is not None and isinstance(getattr(_ml, "g_dConditionEventTriggers", None), dict):
+        _ml.g_dConditionEventTriggers.clear()
     # Native combat mirror: reset (mirror off), and every C++ row dropped
     # (process-lifetime state). Objects a previous test left alive would keep
     # a stale handle; forget_rows() drops them all at once (one at a time is

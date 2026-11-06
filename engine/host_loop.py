@@ -7893,6 +7893,101 @@ def _sync_quick_battle_panel(controller) -> None:
         panel.close()
 
 
+def reset_mission_state(renderer=None) -> None:
+    """Forget the outgoing mission's module-level state: ships, effects,
+    damage records, rocks, Quick Battle bookkeeping, camera-derived state.
+
+    ONE list, shared by the mission swap (HostController._drain_pending_swap,
+    with the live renderer) and the per-test reset in tests/conftest.py
+    (renderer None: nothing is drawn, so only the registries are emptied).
+    Before 2026-11-06 the test reset hand-mirrored this list and had
+    drifted 15 entries behind it; ship_lifecycle._live and
+    registry_texture._pending among them kept every ship any test built
+    alive to the end of the run (the full suite peaked at 4.3 GB; see
+    docs/reference/architecture/test-suite-memory.md). Add a new
+    mission-scoped registry HERE, never in only one of the two callers.
+    """
+    from engine.appc import ship_lifecycle
+    ship_lifecycle.reset()
+    # Effects held for the tick boundary name the old mission's ships.
+    _effect_queue.reset()
+    from engine.appc import ship_death
+    ship_death.reset()
+    from engine.rocks import death as _rock_death
+    _rock_death.reset()
+    from engine.appc import debris_chunk as _debris_chunk
+    _debris_chunk.clear(renderer)
+    from engine.rocks import minors as _minors
+    _minors.reset(renderer)
+    from engine.rocks import promotion as _promotion
+    _promotion.reset(renderer)
+    _far_tier.reset(renderer)
+    from engine.rocks import minor_contact as _minor_contact
+    _minor_contact.reset()
+    from engine.rocks import scenery_contact as _scenery_contact
+    _scenery_contact.reset()
+    from engine.appc import hull_breakup as _hull_breakup
+    _hull_breakup.reset()
+    _explosion_lights.reset()
+    from engine.appc import object_lifetime
+    object_lifetime.reset()
+    from engine.appc import subsystem_cascade
+    subsystem_cascade.reset()
+    from engine.appc import warp_core_breach
+    warp_core_breach.reset()
+    from engine.appc import visible_damage
+    visible_damage.reset()
+    from engine.appc import internal_blast            # SPIKE (damage redesign)
+    internal_blast.reset()
+    from engine.appc import registry_texture
+    registry_texture.reset()
+    from engine.appc import shockwaves
+    shockwaves.reset()
+    from engine.appc import warp_in_flash as _warp_in_flash
+    _warp_in_flash.reset()
+    # Quick Battle late arrivals: pending orders and the cached event
+    # type (the event-type counter restarts at 1200 on a swap).
+    from engine.quickbattle import late_arrivals as _qb_late
+    _qb_late.reset()
+    # The running battle's real-object snapshot: the swap deletes every
+    # region set, so a later EndSimulation must not rebuild them.
+    from engine.quickbattle import sim_restore as _qb_sim_restore
+    _qb_sim_restore.reset()
+    from engine.quickbattle import battle_end as _qb_end
+    _qb_end.reset()
+    from engine.ui import target_markers as _target_markers
+    _target_markers.clear()
+    from engine.appc import particles
+    particles.reset()
+    damage_eligibility.reset()
+    # The decal emission throttle is keyed by id(ship), and id() is a
+    # RECYCLED address: a dead ship's entry is inherited by whatever lands
+    # at that address next, which silently suppresses the new ship's
+    # first decal.
+    hit_feedback._last_decal_emit.clear()
+    from engine.appc import hull_wear
+    hull_wear.reset()
+    from engine.appc import hull_hit_smoke
+    hull_hit_smoke.reset()
+    from engine.appc import damage_geometry
+    damage_geometry.reset()
+    # The dynamic-light distance gate's camera eye belongs to the mission
+    # that solved it. The next mission's ships spawn wherever its sets put
+    # them, so a carried-over eye can cull their lights on the first frame,
+    # before the new camera solves. None reads as "no camera known" — the
+    # gate stays inert until the render path writes a real one.
+    _note_camera_eye(None)
+    # Same hazard, the other camera-derived state: the depth-of-field lens
+    # belongs to the mission that racked it. Swap with a target held and
+    # blend == 1.0, and if the new mission selects a target on load --
+    # common in episode openers -- _inv_focus is still > 0, so the solver
+    # eases rather than snaps: the opening frames render at full blend
+    # focused at the PREVIOUS mission's distance. reset_focus() drops the
+    # rack and the engagement but KEEPS the nudged lens strengths, which
+    # are per-session dev tuning rather than mission state.
+    _focus_solver.reset_focus()
+
+
 class HostController:
     """Per-process state for the running renderer + a single mission.
 
@@ -7984,85 +8079,7 @@ class HostController:
         # Frees and off-main pushes still pending land now, before the next
         # mission builds a row (spec 2026-11-03 ruling R2).
         _native_combat.drain()
-        from engine.appc import ship_lifecycle
-        ship_lifecycle.reset()
-        # Effects held for the tick boundary name the old mission's ships.
-        _effect_queue.reset()
-        from engine.appc import ship_death
-        ship_death.reset()
-        from engine.rocks import death as _rock_death
-        _rock_death.reset()
-        from engine.appc import debris_chunk as _debris_chunk
-        _debris_chunk.clear(self.renderer)
-        from engine.rocks import minors as _minors
-        _minors.reset(self.renderer)
-        from engine.rocks import promotion as _promotion
-        _promotion.reset(self.renderer)
-        _far_tier.reset(self.renderer)
-        from engine.rocks import minor_contact as _minor_contact
-        _minor_contact.reset()
-        from engine.rocks import scenery_contact as _scenery_contact
-        _scenery_contact.reset()
-        from engine.appc import hull_breakup as _hull_breakup
-        _hull_breakup.reset()
-        _explosion_lights.reset()
-        from engine.appc import object_lifetime
-        object_lifetime.reset()
-        from engine.appc import subsystem_cascade
-        subsystem_cascade.reset()
-        from engine.appc import warp_core_breach
-        warp_core_breach.reset()
-        from engine.appc import visible_damage
-        visible_damage.reset()
-        from engine.appc import internal_blast            # SPIKE (damage redesign)
-        internal_blast.reset()
-        from engine.appc import registry_texture
-        registry_texture.reset()
-        from engine.appc import shockwaves
-        shockwaves.reset()
-        from engine.appc import warp_in_flash as _warp_in_flash
-        _warp_in_flash.reset()
-        # Quick Battle late arrivals: pending orders and the cached event
-        # type (the event-type counter restarts at 1200 on a swap).
-        from engine.quickbattle import late_arrivals as _qb_late
-        _qb_late.reset()
-        # The running battle's real-object snapshot: the swap deletes every
-        # region set, so a later EndSimulation must not rebuild them.
-        from engine.quickbattle import sim_restore as _qb_sim_restore
-        _qb_sim_restore.reset()
-        from engine.quickbattle import battle_end as _qb_end
-        _qb_end.reset()
-        from engine.ui import target_markers as _target_markers
-        _target_markers.clear()
-        from engine.appc import particles
-        particles.reset()
-        damage_eligibility.reset()
-        # The decal emission throttle is keyed by id(ship), and id() is a
-        # RECYCLED address: a dead ship's entry is inherited by whatever lands
-        # at that address next, which silently suppresses the new ship's
-        # first decal.
-        hit_feedback._last_decal_emit.clear()
-        from engine.appc import hull_wear
-        hull_wear.reset()
-        from engine.appc import hull_hit_smoke
-        hull_hit_smoke.reset()
-        from engine.appc import damage_geometry
-        damage_geometry.reset()
-        # The dynamic-light distance gate's camera eye belongs to the mission
-        # that solved it. The next mission's ships spawn wherever its sets put
-        # them, so a carried-over eye can cull their lights on the first frame,
-        # before the new camera solves. None reads as "no camera known" — the
-        # gate stays inert until the render path writes a real one.
-        _note_camera_eye(None)
-        # Same hazard, the other camera-derived state: the depth-of-field lens
-        # belongs to the mission that racked it. Swap with a target held and
-        # blend == 1.0, and if the new mission selects a target on load --
-        # common in episode openers -- _inv_focus is still > 0, so the solver
-        # eases rather than snaps: the opening frames render at full blend
-        # focused at the PREVIOUS mission's distance. reset_focus() drops the
-        # rack and the engagement but KEEPS the nudged lens strengths, which
-        # are per-session dev tuning rather than mission state.
-        _focus_solver.reset_focus()
+        reset_mission_state(self.renderer)
         reset_sdk_globals()
         # A mission swap mid-warp would otherwise leak the WarpVFX manager
         # (reset_sdk_globals zeroes the timer manager, cancelling the pending
