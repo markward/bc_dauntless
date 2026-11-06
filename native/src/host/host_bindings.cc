@@ -11794,8 +11794,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // flares, flares a/b, id, is_disruptor, bolt length/width,
             // light base. All-or-nothing: a malformed tuple throws and the
             // row keeps no record.
+            // `t` None: the row keeps no record (clear_visual).
             m.def("combat_torp_set_visual",
-                  [](std::int64_t h, py::tuple t) {
+                  [](std::int64_t h, py::object o) {
+                      if (o.is_none()) {
+                          cb::mirror().torpedoes().clear_visual(h);
+                          return;
+                      }
+                      const py::tuple t = o.cast<py::tuple>();
                       if (t.size() != 21)
                           throw std::invalid_argument(
                               "torpedo visual: expected a 21-tuple");
@@ -13209,9 +13215,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // "tractor_brightness", "tractor_end_width_scale"), and K2's
         // "npc_shields_off" / "player" / "iids" / "trace" (k2_apply_ctx). The
         // iid table persists here across calls, replaced only when ctx
-        // carries "iids", as K2's does. Both beam vectors are assigned only
-        // once the whole feed is built; a throw raises ValueError and leaves
-        // both untouched.
+        // carries "iids", as K2's does. Both beam vectors are assigned once
+        // the whole feed is built. The mirror never makes it raise: an item
+        // it cannot answer is skipped and counted (beam_feed.h, BeamSkip).
+        // Returns (n_phasers, n_tractors, {skip reason: count}), the dict
+        // holding only the reasons counted this frame.
         m.def("combat_beam_feed",
               [k2_apply_ctx](py::handle ships, const py::dict& ctx) {
                   static std::unordered_map<std::int64_t,
@@ -13240,13 +13248,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   // The table is lent to the call and handed back, thrown
                   // or not.
                   std::vector<cb::BeamOut> phasers, tractors;
+                  cb::BeamSkips skips{};
                   c.iids.swap(iids);
                   try {
                       cb::build_beam_feed(cb::mirror(), handles, c, phasers,
-                                          tractors);
-                  } catch (const std::invalid_argument& e) {
-                      c.iids.swap(iids);
-                      throw py::value_error(e.what());
+                                          tractors, skips);
                   } catch (...) {
                       c.iids.swap(iids);
                       throw;
@@ -13286,14 +13292,35 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   auto t = convert(tractors);
                   g_phaser_beams = std::move(p);
                   g_tractor_beams = std::move(t);
+                  py::dict skipped;
+                  for (std::size_t i = 0; i < skips.size(); ++i)
+                      if (skips[i] != 0)
+                          skipped[cb::beam_skip_name(
+                              static_cast<cb::BeamSkip>(i))] = skips[i];
                   return py::make_tuple(g_phaser_beams.size(),
-                                        g_tractor_beams.size());
+                                        g_tractor_beams.size(), skipped);
               },
               py::arg("ships"), py::arg("ctx"),
               "Build this frame's phaser and tractor beam descriptors from "
               "the mirror into the render feeds (each ship's Object handle "
-              "read from its _nslot); returns (phasers, tractors). ValueError "
-              "where the mirror cannot answer: neither feed is touched.");
+              "read from its _nslot); returns (phasers, tractors, {skip "
+              "reason: count}). An item the mirror cannot answer is skipped "
+              "and counted, never raised.");
+        // The feeds' skip reasons, in their enum order: {"beam": [...],
+        // "torpedo": [...]}. Its name is native_combat._REQUIRED_BINDINGS'
+        // stale-build marker for the feeds' (n, n, skips) returns.
+        m.def("combat_feed_skip_reasons", [] {
+            py::list beam, torp;
+            for (int i = 0; i < static_cast<int>(cb::BeamSkip::kCount); ++i)
+                beam.append(cb::beam_skip_name(static_cast<cb::BeamSkip>(i)));
+            for (int i = 0; i < static_cast<int>(cb::TorpedoSkip::kCount); ++i)
+                torp.append(
+                    cb::torpedo_skip_name(static_cast<cb::TorpedoSkip>(i)));
+            py::dict d;
+            d["beam"] = beam;
+            d["torpedo"] = torp;
+            return d;
+        });
         // The native per-frame torpedo feed (torpedo_feed.h; native_combat.
         // torpedo_feed). ctx: "view" (Set handle, -1 none), "origin"
         // (x, y, z), "frames" {Set handle: (frame id, ax, ay, az)}, the
@@ -13301,11 +13328,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // "light_intensity", "fade_start", "cull", "eye" (None or x, y, z)
         // and "expected_rows" (len(projectiles._active)). Writes g_torpedoes
         // and holds the torpedo lights for set_dynamic_lights_budgeted; both
-        // are assigned only once the whole feed is built. A throw raises
-        // ValueError (TorpedoFeedMissingVisual, a ValueError, for a row with
-        // no visual record) and leaves g_torpedoes untouched.
-        py::register_exception<cb::MissingVisual>(
-            m, "TorpedoFeedMissingVisual", PyExc_ValueError);
+        // are assigned once the whole feed is built. The table never makes
+        // it raise: a torpedo it cannot answer is skipped and counted
+        // (torpedo_feed.h, TorpedoSkip).
         m.def("combat_torpedo_feed",
               [](const py::dict& ctx) {
                   g_torpedo_lights_ready = false;
@@ -13325,7 +13350,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   c.expected_rows = ctx["expected_rows"].cast<std::int64_t>();
                   std::vector<cb::TorpedoOut> torps;
                   std::vector<cb::TorpedoLightOut> lights;
-                  cb::build_torpedo_feed(cb::mirror(), c, torps, lights);
+                  cb::TorpedoSkips skips{};
+                  cb::build_torpedo_feed(cb::mirror(), c, torps, lights,
+                                         skips);
                   // set_torpedoes' / set_dynamic_lights' conversions: every
                   // double through float (pybind's float caster), the ints
                   // (range-checked by the feed) and bool as they are.
@@ -13381,14 +13408,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   g_torpedoes = std::move(out);
                   g_torpedo_lights_pending = std::move(lout);
                   g_torpedo_lights_ready = true;
+                  py::dict skipped;
+                  for (std::size_t i = 0; i < skips.size(); ++i)
+                      if (skips[i] != 0)
+                          skipped[cb::torpedo_skip_name(
+                              static_cast<cb::TorpedoSkip>(i))] = skips[i];
                   return py::make_tuple(g_torpedoes.size(),
-                                        g_torpedo_lights_pending.size());
+                                        g_torpedo_lights_pending.size(),
+                                        skipped);
               },
               py::arg("ctx"),
               "Build this frame's torpedo descriptors (into the render feed) "
               "and torpedo lights (held for set_dynamic_lights_budgeted) from "
-              "the torpedo table; returns (n_torpedoes, n_torpedo_lights). "
-              "ValueError where the table cannot answer: nothing is touched.");
+              "the torpedo table; returns (n_torpedoes, n_torpedo_lights, "
+              "{skip reason: count}). A torpedo the table cannot answer is "
+              "skipped and counted, never raised.");
         // host_loop._budgeted_dynamic_lights + set_dynamic_lights, with the
         // torpedo group the lights the combat_torpedo_feed just before this
         // call built. `explosions` / `emitters` are the Python builders'

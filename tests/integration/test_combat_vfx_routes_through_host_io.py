@@ -1,11 +1,12 @@
-"""The combat-advance VFX publish routes the 7 per-frame descriptor-list
-setters through engine.host_io wrappers, not through a raw host= module.
+"""The combat-advance VFX publish: every per-frame descriptor list is pushed.
 
 Task 3 of the host_io façade refactor: _advance_combat used to call
 `host.set_torpedoes(...)` etc. on a raw _dauntless_host module. It now calls
-host_io.set_torpedoes(...) so the manifest-validated façade owns every native
-touch. These tests patch the host_io wrappers and assert the combat step drives
-them (no fake host module needed for the setters)."""
+host_io's wrappers so the manifest-validated façade owns every native touch.
+Since phase 6 follow-up 4 the torpedoes, the dynamic lights and both beam
+feeds are built natively (native_combat.torpedo_feed / beam_feed write their
+vectors themselves, with no Python fallback); the shockwaves, hit VFX and
+particles still go through host_io's setters."""
 from unittest.mock import patch
 
 import pytest
@@ -31,19 +32,26 @@ def _capture_setter(name, calls):
     return _fn
 
 
-def test_advance_combat_routes_all_seven_vfx_setters_through_host_io(
-        monkeypatch):
-    # The Python beam path: the native feed (native_combat.beam_feed) writes
-    # the beam vectors itself and never calls host_io's beam setters.
+def _h():
+    if host_io._h is None:
+        pytest.skip("native host not built")
+    return host_io._h
+
+
+def test_advance_combat_publishes_every_vfx_feed(monkeypatch):
     from engine.appc import native_combat
-    monkeypatch.setattr(native_combat, "beam_feed", lambda *a, **k: False)
-    # Likewise the torpedo feed (native_combat.torpedo_feed writes the
-    # torpedo and light vectors itself).
-    monkeypatch.setattr(native_combat, "torpedo_feed", lambda *a, **k: False)
     calls = {}
-    names = ("set_torpedoes", "set_dynamic_lights", "set_shockwaves",
-             "set_hit_vfx", "set_particle_emitters", "set_phaser_beams",
-             "set_tractor_beams")
+    names = ("set_shockwaves", "set_hit_vfx", "set_particle_emitters")
+    native = []
+    for feed in ("torpedo_feed", "beam_feed"):
+        orig = getattr(native_combat, feed)
+
+        def spy(*a, _orig=orig, _n=feed, **k):
+            native.append(_n)
+            return _orig(*a, **k)
+
+        monkeypatch.setattr(native_combat, feed, spy)
+    _h()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         with patch.multiple(
             host_io,
@@ -55,17 +63,17 @@ def test_advance_combat_routes_all_seven_vfx_setters_through_host_io(
 
     for n in names:
         assert n in calls, f"host_io.{n} was not called by _advance_combat"
+    # Both native feeds ran, and pushed (True: a native host).
+    assert native == ["torpedo_feed", "beam_feed"]
+    assert native_combat.torpedo_feed_counts()["native"] == 1
+    assert native_combat.beam_feed_counts()["native"] == 1
 
 
-def test_advance_combat_publishes_torpedo_descriptors_via_host_io(
-        monkeypatch):
-    from engine.appc import native_combat
+def test_advance_combat_publishes_torpedo_descriptors_natively():
     from engine.appc.projectiles import Torpedo, register
+    h = _h()
 
-    # The Python torpedo path, whose push this test reads (the native feed
-    # writes the vectors itself).
-    monkeypatch.setattr(native_combat, "torpedo_feed", lambda *a, **k: False)
-
+    # No Create*Model: the default visual record (Torpedo.__init__).
     t = Torpedo()
     t.SetTranslateXYZ(1.0, 2.0, 3.0)
     place_in_viewed_set(t)   # the render feeds carry only the viewed frame
@@ -76,36 +84,29 @@ def test_advance_combat_publishes_torpedo_descriptors_via_host_io(
     t._damage = 10.0
     register(t)
 
-    captured = {}
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        with patch.object(host_io, "set_torpedoes",
-                          lambda data: captured.setdefault("torps", list(data))):
+    try:
+        with patch("engine.audio.tg_sound.TGSoundManager.instance"):
             _advance_combat([], dt=0.0, ship_instances=None)
+        rows = h.torpedoes_debug()
+    finally:
+        h.set_torpedoes([])
+        h.set_dynamic_lights([])
 
-    assert "torps" in captured, "host_io.set_torpedoes was never called"
-    assert len(captured["torps"]) == 1
-    entry = captured["torps"][0]
-    assert entry["position"] == pytest.approx((1.0, 2.0, 3.0))
-    # Task 2: every descriptor also carries the disruptor-bolt fields,
-    # unconditionally, alongside the torpedo-quad fields — the C++ parser
-    # (Task 3) reads every key regardless of family.
-    for key in ("id", "is_disruptor", "forward", "shell_color",
-                "bolt_core_color", "bolt_length", "bolt_width"):
-        assert key in entry, f"{key!r} missing from torpedo descriptor"
-    assert entry["id"] == t._id
-    assert entry["is_disruptor"] is False
+    assert len(rows) == 1
+    (pos, *_r) = rows[0]
+    assert tuple(pos) == pytest.approx((1.0, 2.0, 3.0))
+    # The disruptor-bolt fields ride with the torpedo-quad fields (struct
+    # order: ... age 15, id 16, is_disruptor 17, forward 18, ...).
+    assert rows[0][16] == t._id
+    assert rows[0][17] is False
     # t._velocity is (0, 0, 0) above -> zero-velocity fallback.
-    assert entry["forward"] == pytest.approx((0.0, 0.0, 1.0))
+    assert tuple(rows[0][18]) == pytest.approx((0.0, 0.0, 1.0))
 
 
-def test_advance_combat_publishes_dynamic_light_descriptors_via_host_io(
-        monkeypatch):
+def test_advance_combat_publishes_dynamic_light_descriptors_natively():
     import App
-    from engine.appc import native_combat
     from engine.appc.projectiles import Torpedo, register
-
-    # The Python light path, whose push this test reads.
-    monkeypatch.setattr(native_combat, "torpedo_feed", lambda *a, **k: False)
+    h = _h()
 
     def _color(r, g, b, a=1.0):
         c = App.TGColorA()
@@ -125,16 +126,16 @@ def test_advance_combat_publishes_dynamic_light_descriptors_via_host_io(
     t._velocity = TGPoint3(0.0, 0.0, 0.0)
     register(t)
 
-    captured = {}
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        with patch.object(
-            host_io, "set_dynamic_lights",
-            lambda data: captured.setdefault("lights", list(data)),
-        ):
+    try:
+        with patch("engine.audio.tg_sound.TGSoundManager.instance"):
             _advance_combat([], dt=0.0, ship_instances=None)
+        lights = h.dynamic_lights_debug()
+    finally:
+        h.set_torpedoes([])
+        h.set_dynamic_lights([])
 
-    assert "lights" in captured, "host_io.set_dynamic_lights was never called"
-    assert len(captured["lights"]) == 1
-    entry = captured["lights"][0]
-    assert entry["position"] == pytest.approx((1.0, 2.0, 3.0))
-    assert set(entry.keys()) == {"position", "color", "radius", "intensity"}
+    assert len(lights) == 1
+    # A point light (pos_a == pos_b) at the torpedo, the glow's colour.
+    assert tuple(lights[0][0]) == pytest.approx((1.0, 2.0, 3.0))
+    assert tuple(lights[0][1]) == pytest.approx((1.0, 2.0, 3.0))
+    assert tuple(lights[0][2]) == pytest.approx((1.0, 0.25, 0.0))

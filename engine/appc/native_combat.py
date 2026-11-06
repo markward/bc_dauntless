@@ -192,7 +192,7 @@ _REQUIRED_BINDINGS = (
     # Tractors native (fire control native only, M4).
     "combat_k1_begin_tractor", "combat_tractor_force_step",
     # The native beam render feed (phase 6 follow-up 1, beam_feed).
-    "combat_beam_feed",
+    "combat_beam_feed", "combat_feed_skip_reasons",
     # The torpedo visual record and the native torpedo render feed (phase 6
     # follow-up 1b, torpedo_feed).
     "combat_torp_set_visual", "combat_torpedo_feed",
@@ -242,8 +242,6 @@ def configure(environ: Mapping[str, str] = os.environ) -> None:
     # were never pushed would record every field of every row, every tick.
     _audit = False
     _go_live()
-    if _switch and not switch:
-        torpedo_table_mark_dirty()  # K3's table, unpushed from here on
     _switch = switch
     _audit = audit
 
@@ -380,11 +378,7 @@ def reset() -> None:
         _k3_reasons[k] = 0
     _k3_iids_sent[:] = [_K2_UNSENT, -1, -1]
     _beam_iids_sent[:] = [_K2_UNSENT, -1, -1]
-    global beam_feed_fallbacks, beam_feed_native
-    beam_feed_fallbacks = 0
-    beam_feed_native = 0
-    for k in _BEAM_STAND_DOWNS:
-        _beam_stand_downs[k] = 0
+    reset_beam_feed_counts()
     reset_torpedo_feed_counts()
     global _apply_kinds
     _apply_kinds = None
@@ -3856,6 +3850,11 @@ def resync() -> None:
 # list mutation marks the table dirty (torpedo_table_mark_dirty), which
 # EMPTIES it until torpedo_table_rebuild re-reads `_active` from Python.
 #
+# The table follows the MIRROR (`_enabled`), not the switch: the render feed
+# (torpedo_feed) draws from it whatever the switch, so it is kept current
+# with K3 off too (phase 6 follow-up 4); K3 itself still runs only with the
+# switch on.
+#
 # A torpedo's row handle is `_k3_row` in its __dict__. Every field the kernel
 # reads pushes while the torpedo has one: the plain fields through
 # TorpedoField, `_velocity` / `_source_ship` / `_containing_set` from their
@@ -4057,8 +4056,8 @@ def _torp_push_mount(t, h, key, v) -> None:
 class TorpedoField:
     """A Torpedo attribute the K3 kernel reads: like NativeField (no
     __get__, the value lives in the instance dict) but pushed into the
-    torpedo's TABLE row, `_k3_row`. Switch off: one __set__ and a global
-    read.
+    torpedo's TABLE row, `_k3_row`, while the mirror is live (the table
+    follows the mirror, not the switch: the render feed reads it).
 
     With no __get__, reading a field never set on the instance returns
     this descriptor object (the class attribute) instead of raising
@@ -4074,7 +4073,7 @@ class TorpedoField:
     def __set__(self, obj, value) -> None:
         d = obj.__dict__
         d[self._name] = value
-        if _switch:
+        if _enabled:
             h = d.get("_k3_row")
             if h is not None:
                 _torp_push(obj, h, self._name, value)
@@ -4082,8 +4081,8 @@ class TorpedoField:
 
 def push_torpedo_field(t, name: str, value) -> None:
     """A Torpedo property (`_velocity`, `_source_ship`, `_containing_set`)
-    was written: push it if the torpedo has a row. Callers test `_switch`
-    first (K3's table follows the switch), so the switch-off cost is that
+    was written: push it if the torpedo has a row. Callers test `_enabled`
+    first (the table follows the mirror), so the mirror-off cost is that
     read."""
     h = t.__dict__.get("_k3_row")
     if h is not None:
@@ -4117,14 +4116,34 @@ def _torp_visual_tuple(t):
 
 
 def _torp_push_visual(t, h) -> None:
+    """The torpedo's record into row `h`; no record (none cached, or an
+    `_id` that is no int) clears the row's (None)."""
     v = _torp_visual_tuple(t)
-    if v is None:
-        return
     try:
         _h.combat_torp_set_visual(h, v)
     except (TypeError, ValueError, OverflowError, RuntimeError):
         # RuntimeError: pybind's cast_error (an int past int64).
-        pass            # all-or-nothing: the row keeps no record
+        # All-or-nothing: the row keeps NO record, not the one before it
+        # (the default from Torpedo.__init__): the feed skips the torpedo
+        # ("no_visual") rather than draw a stale record.
+        try:
+            _h.combat_torp_set_visual(h, None)
+        except ValueError:
+            pass        # a stale row: nothing to clear
+
+
+# The visual record of a torpedo no Create*Model ran on: what
+# _torp_visual_record makes of Torpedo.__init__'s defaults (no textures, so
+# _resolve_game_texture's "" with no path lookup; every colour None, so
+# _color_tuple's white; every size 0), set by Torpedo.__init__ as its
+# `_vis_native` so every torpedo has a record from birth (pushed at row-add;
+# Create*Model replaces it). Pinned against _torp_visual_record by
+# tests/host/test_native_torpedo_feed.py.
+_WHITE = (1.0, 1.0, 1.0, 1.0)
+DEFAULT_TORPEDO_VISUAL = (
+    "", "", "", _WHITE, _WHITE, _WHITE, _WHITE, _WHITE,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0, 0.0, 0.0,
+    False, 0.0, 0.0, 0.0)
 
 
 def _torp_visual_record(t):
@@ -4157,11 +4176,12 @@ def torpedo_visual_changed(t) -> None:
     """`CreateTorpedoModel` / `CreateDisruptorModel` ran: cache the static
     visual record on `t` (`_vis_native`, _torp_visual_record; textures
     resolved now, a recorded departure: at creation, not per frame) and push
-    it if the torpedo already has a row. Cached whatever the switch, so a
-    switch turned on with the torpedo in flight still finds it (controller
+    it if the torpedo already has a row. Cached whatever the mirror, so a
+    mirror made live with the torpedo in flight still finds it (controller
     ruling, Task 2 review). A torpedo created BEFORE its row exists (the SDK
     order: model, then `register`) is pushed by `_torp_put` at row-add and
-    at every rebuild."""
+    at every rebuild. Before any model the record is DEFAULT_TORPEDO_VISUAL
+    (set by Torpedo.__init__)."""
     d = t.__dict__
     d.pop("_vis_native", None)
     try:
@@ -4169,7 +4189,7 @@ def torpedo_visual_changed(t) -> None:
     except Exception:
         return          # unrepresentable: no record, visual_set stays false
     d["_vis_native"] = rec
-    if not _switch:
+    if not _enabled:
         return
     h = d.get("_k3_row")
     if h is not None and _k3_rows.get(h) is t and available():
@@ -4180,7 +4200,7 @@ def torpedo_row_add(t) -> None:
     """`_active.append(t)`: a row at the end, unless the table is dirty (the
     rebuild will include it) or `t` already has one (appended twice: the
     list now holds it twice, so the table is rebuilt)."""
-    if not _switch or _k3_dirty:
+    if not _enabled or _k3_dirty:
         return
     h = t.__dict__.get("_k3_row")
     if h is not None and _k3_rows.get(h) is t:
@@ -4207,7 +4227,7 @@ def torpedo_table_mark_dirty() -> None:
     empty the table; torpedo_table_rebuild refills it in list order."""
     global _k3_dirty
     if _k3_dirty and not _k3_rows:
-        return          # already empty (always so with the switch off)
+        return          # already empty (always so with the mirror off)
     _k3_dirty = True
     for t in _k3_rows.values():
         t.__dict__.pop("_k3_row", None)
@@ -4216,26 +4236,35 @@ def torpedo_table_mark_dirty() -> None:
         _h.combat_torp_clear()
 
 
-def torpedo_table_rebuild(active) -> None:
+def torpedo_table_rebuild(active, dedupe=False) -> int:
     """Refill the table from `active` (projectiles._active), in list order.
-    A no-op with the switch off. A torpedo in the list TWICE (update_all
+    A no-op with the mirror off. A torpedo in the list TWICE (update_all
     advances it twice a tick) leaves the table dirty and empty: one row
-    cannot stand for it, so K3 hands the step to Python until it is gone."""
+    cannot stand for it, so K3 hands the step to Python until it is gone.
+    `dedupe` (the render feed's): give each torpedo one row, at its first
+    place, and leave the table NOT dirty; the caller marks it dirty again
+    once it has read it, so K3 never reads a table missing an entry.
+    Returns how many entries of `active` were left out as repeats."""
     global _k3_dirty
-    if not _switch:
-        return
+    if not _enabled:
+        return 0
     torpedo_table_mark_dirty()
     from engine.appc.projectiles import Torpedo
     torps, seen = [], set()
+    repeats = 0
     for t in active:
         if isinstance(t, Torpedo):
             if id(t) in seen:
-                return
+                if not dedupe:
+                    return 0
+                repeats += 1
+                continue
             seen.add(id(t))
             torps.append(t)
     _k3_dirty = False
     for t in torps:
         _torp_put(t)
+    return repeats
 
 
 def _audit_torpedoes() -> None:
@@ -6188,30 +6217,35 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
 #
 # native/src/combat/include/dauntless/combat/beam_feed.h is the contract.
 # host_loop._push_combat_render_data calls beam_feed once a frame: both beam
-# render feeds built from the mirror. The Python builders
-# (_build_phaser_beam_render_data, _build_tractor_beam_render_data) stay the
-# representability fallback and the test oracle; a patched getter or helper
-# is NOT obeyed (spec Part A). The stand-downs are K2's: the switch off, the
-# audit, a ship_instances that is not the session's TrackedInstances. A
-# ValueError (the mirror cannot answer: a ship with no row, a set missing
-# from the frames table, an unset colour, ...) leaves both feeds untouched:
-# it is counted in beam_feed_fallbacks, its first reason logged once, and
-# the frame is Python's.
+# render feeds built from the mirror, with no Python fallback and no
+# stand-down (phase 6 follow-up 4) -- the switch off, the audit and a
+# ship_instances that is a plain dict all draw natively; the only early
+# return is host_io with no native module (nothing to draw into). A patched
+# getter or helper is NOT obeyed (spec Part A). An item the mirror cannot
+# answer (a ship with no row, a set missing from the frames table, an unset
+# colour, ...) is skipped, counted by reason (beam_feed_counts, on the frame
+# profiler's report line) and its reason logged once; every other item is
+# drawn.
 
-beam_feed_fallbacks = 0
-# Frames the native feed built, and the frames it stood down for, by why:
-# "off" (the switch), "audit" (DAUNTLESS_NATIVE_AUDIT), "unsnapped" (before
-# host_loop's K2 snapshot), "instances" (ship_instances not the session's
-# TrackedInstances), "no_host" (host_io has no native module). Read by
-# beam_feed_counts(), which the frame profiler's report prints: a capture's
-# log says whether the feed was native every frame.
+# Frames the native feed built, and the items it skipped since the last
+# reset, by reason: the binding's (beam_feed.h, BeamSkip, in its order) and
+# "view_row" (the viewed set has no Set row: nothing is drawn that frame).
 beam_feed_native = 0
-_BEAM_STAND_DOWNS = ("off", "audit", "unsnapped", "instances", "no_host")
-_beam_stand_downs = dict.fromkeys(_BEAM_STAND_DOWNS, 0)
+_BEAM_SKIPS = ("ship_row", "not_ship_class", "target_row", "containing_set",
+               "frames", "part_stale", "mount_unknown", "colour_unset",
+               "shields", "geometry", "error", "view_row")
+_beam_skips = dict.fromkeys(_BEAM_SKIPS, 0)
 # The key of the iids table combat_beam_feed holds (it keeps its own, apart
 # from K2's and K3's): as _k2_iids_sent.
 _beam_iids_sent = [_K2_UNSENT, -1, -1]
 _beam_step_memo = None
+
+
+def reset_beam_feed_counts() -> None:
+    global beam_feed_native
+    beam_feed_native = 0
+    for k in _BEAM_SKIPS:
+        _beam_skips[k] = 0
 
 
 def _beam_frames() -> dict:
@@ -6238,63 +6272,119 @@ def _beam_frames() -> dict:
     return table
 
 
+def _feed_ready():
+    """The host_loop module the feeds read their knobs from, or None when
+    host_io has no native module (nothing to draw into). Imports host_loop
+    if it is not yet (its import takes the K2 snapshot, which _K2Context's
+    cheat read needs), and makes the mirror live if it is not (as
+    fire_control_native does)."""
+    hl = _k2_hl
+    if hl is None:
+        from engine import host_loop as hl
+    hio = _k2_host_io
+    if hio is None:
+        from engine import host_io as hio
+    if hio._h is None:
+        return None
+    if not _enabled:
+        _go_live()
+    return hl
+
+
+def _view_handle(fr, skips, feed):
+    """(the viewed set, its Set handle), -1 for none; a viewed set with no
+    Set row is -1 too (nothing drawn), counted once as "view_row"."""
+    view = fr.viewing_set()
+    if view is None:
+        return view, -1
+    vh = _slot_of(view)
+    if type(vh) is not int or (vh >> _KIND_SHIFT) != _kind("Set"):
+        _count_skips(skips, {"view_row": 1}, feed)
+        return view, -1
+    return view, vh
+
+
+def _count_skips(table, got, feed) -> None:
+    """Add one frame's {reason: n} into `table`, each reason's first
+    occurrence logged once."""
+    for why, n in got.items():
+        table[why] = table.get(why, 0) + n
+        _log_once((feed, why),
+                  "%s: an item the mirror cannot answer was skipped (%s); "
+                  "the rest of the frame is drawn" % (feed, why))
+
+
+def _plain_iids(ship_instances) -> dict:
+    """{Object handle: iid} for any mapping (a plain dict): built every call
+    (a plain dict has no version to key a cache on)."""
+    table = {}
+    for ship, iid in ship_instances.items():
+        h = slot(ship)
+        if h is not None:
+            table[h] = iid
+    return table
+
+
 def beam_feed(ships, ship_instances) -> bool:
     """This frame's phaser and tractor beam feeds, built natively from the
-    mirror and pushed: True. False: nothing was pushed and the caller runs
-    the Python builders (a stand-down, or a ValueError, counted in
-    beam_feed_fallbacks)."""
-    global beam_feed_fallbacks, beam_feed_native, _beam_step_memo
-    if not _switch:
-        return _beam_stand_down("off")
-    if _audit:
-        return _beam_stand_down("audit")
-    if _k2_role_snapshot is None:
-        return _beam_stand_down("unsnapped")
-    if ship_instances is not None \
-            and type(ship_instances) is not _tracked_instances():
-        return _beam_stand_down("instances")
-    if _k2_host_io._h is None:
-        # host_io pushes nothing: nor do we.
-        return _beam_stand_down("no_host")
+    mirror and pushed: True. False only when host_io has no native module
+    (nothing is pushed). Part slots made stale since the last step boundary
+    are resolved first (O(1) when none is), so a late bump cannot reach the
+    aim points."""
+    global beam_feed_native, _beam_step_memo
+    hl = _feed_ready()
+    if hl is None:
+        return False
     if type(ships) is not list:
         ships = list(ships)
+    resolve_stale_part_slots(ships)
     if _beam_step_memo is None:
         from engine.core import step_memo
         _beam_step_memo = step_memo
     fr = _frames()
-    hl = _k2_hl
-    try:
-        view = fr.viewing_set()
-        vh = -1
-        if view is not None:
-            vh = _slot_of(view)
-            if type(vh) is not int or (vh >> _KIND_SHIFT) != _kind("Set"):
-                raise ValueError("the viewed set has no Set row")
+    view, vh = _view_handle(fr, _beam_skips, "beam feed")
+    if ship_instances is None or \
+            type(ship_instances) is _tracked_instances():
         cx = _K2Context(ship_instances, sent=_beam_iids_sent)
-        # The view as already sent: delta() then skips K2's view_offsets,
-        # which the feed does not read (it has the frames table).
-        cx.view = view
-        ctx = cx.delta()
-        ctx["view"] = vh
-        ctx["origin"] = fr.render_origin()
-        ctx["frames"] = _beam_frames()
-        ctx["use_memo"] = _beam_step_memo.active()
-        ctx["width_mutator"] = hl.PHASER_BEAM_WIDTH_MUTATOR
-        ctx["phaser_brightness"] = hl.PHASER_BEAM_BRIGHTNESS
-        ctx["tractor_brightness"] = hl.TRACTOR_BEAM_BRIGHTNESS
-        ctx["tractor_end_width_scale"] = hl.TRACTOR_BEAM_END_WIDTH_SCALE
-        try:
-            _h.combat_beam_feed(ships, ctx)
-        except ValueError:
-            cx.commit()     # the binding takes "iids" before it builds
-            raise
+        plain = False
+    else:
+        # A plain mapping: its table is built and sent every call, and the
+        # key reads unsent, so a TrackedInstances after it is sent again.
+        cx = _K2Context(None, sent=_beam_iids_sent)
+        plain = True
+    # The view as already sent: delta() then skips K2's view_offsets,
+    # which the feed does not read (it has the frames table).
+    cx.view = view
+    ctx = cx.delta()
+    if plain:
+        ctx["iids"] = _plain_iids(ship_instances)
+    ctx["view"] = vh
+    ctx["origin"] = fr.render_origin()
+    ctx["frames"] = _beam_frames()
+    ctx["use_memo"] = _beam_step_memo.active()
+    ctx["width_mutator"] = hl.PHASER_BEAM_WIDTH_MUTATOR
+    ctx["phaser_brightness"] = hl.PHASER_BEAM_BRIGHTNESS
+    ctx["tractor_brightness"] = hl.TRACTOR_BEAM_BRIGHTNESS
+    ctx["tractor_end_width_scale"] = hl.TRACTOR_BEAM_END_WIDTH_SCALE
+    try:
+        _n_p, _n_t, skipped = _h.combat_beam_feed(ships, ctx)
+    except BaseException:
+        _beam_iids_sent[:] = [_K2_UNSENT, -1, -1]   # resend next frame
+        raise
+    if plain:
+        _beam_iids_sent[:] = [_K2_UNSENT, -1, -1]
+    else:
         cx.commit()
-    except ValueError as e:
-        beam_feed_fallbacks += 1
-        _log_once("beam_feed", "beam feed: %s" % e)
-        return False
+    if skipped:
+        _count_skips(_beam_skips, skipped, "beam feed")
     beam_feed_native += 1
     return True
+
+
+def beam_feed_counts() -> dict:
+    """Since the last reset(): {"native": frames built natively,
+    "skips": {reason: items skipped}} (every reason, zeros included)."""
+    return {"native": beam_feed_native, "skips": dict(_beam_skips)}
 
 
 # ── The torpedo render feed (phase 6 follow-up 1b) ──────────────────────────
@@ -6302,86 +6392,82 @@ def beam_feed(ships, ship_instances) -> bool:
 # native/src/combat/include/dauntless/combat/torpedo_feed.h is the contract.
 # host_loop._push_combat_render_data calls torpedo_feed once a frame: the
 # torpedo descriptors and the torpedo lights built from the K3 torpedo table
-# and each row's visual record (pushed once at Create*Model), the lights
-# blended with the Python explosion and emitter lights exactly as
-# _budgeted_dynamic_lights does (set_dynamic_lights_budgeted). The Python
-# builders stay the representability fallback and the test oracle. The
-# stand-downs: the switch off, the audit, host_io with no native module, a
-# `projectiles._active` replaced by a plain list. A dirty table is rebuilt
-# first, as K3 rebuilds it (the rebuild re-pushes every visual record); one
-# that stays dirty (a torpedo listed twice) falls back. A fall-back leaves
-# both feeds untouched, is counted by why, its first reason logged once, and
-# the frame is Python's: "no_visual" (a torpedo with no visual record),
-# "dirty", "unanswerable" (any other ValueError: a set missing from the
-# frames table, a row count that is not the list's, ...).
+# and each row's visual record (Torpedo.__init__'s default, replaced at
+# Create*Model), the lights blended with the Python explosion and emitter
+# lights exactly as _budgeted_dynamic_lights does
+# (set_dynamic_lights_budgeted). No Python fallback and no stand-down (phase
+# 6 follow-up 4): the table follows the mirror, not the switch, so the
+# switch off and the audit draw natively; the only early return is host_io
+# with no native module. A dirty table is rebuilt first, as K3 rebuilds it;
+# a `projectiles._active` replaced by a plain list (no hooks keep the table
+# in step) is rebuilt every frame; a torpedo listed twice gets one row for
+# the frame (its repeats skipped, "duplicate") and the table is left dirty
+# for K3. A torpedo the table cannot answer is skipped, counted by reason
+# (torpedo_feed_counts, on the frame profiler's report line) and its reason
+# logged once; every other torpedo is drawn.
 
 torpedo_feed_native = 0
-torpedo_feed_fallbacks = 0
-_TORP_STAND_DOWNS = ("off", "audit", "no_host", "plain_active")
-_torp_stand_downs = dict.fromkeys(_TORP_STAND_DOWNS, 0)
-_TORP_FALLBACKS = ("no_visual", "dirty", "unanswerable")
-_torp_fallbacks = dict.fromkeys(_TORP_FALLBACKS, 0)
+# The binding's reasons (torpedo_feed.h, TorpedoSkip, in its order), then
+# "duplicate" (a repeat of a torpedo listed twice) and "view_row" (the viewed
+# set has no Set row: nothing is drawn that frame).
+_TORP_SKIPS = ("rows", "unrepresentable", "no_visual", "transform",
+               "containing_set", "frames", "c_int", "error", "duplicate",
+               "view_row")
+_torp_skips = dict.fromkeys(_TORP_SKIPS, 0)
 
 
 def reset_torpedo_feed_counts() -> None:
-    global torpedo_feed_native, torpedo_feed_fallbacks
+    global torpedo_feed_native
     torpedo_feed_native = 0
-    torpedo_feed_fallbacks = 0
-    for k in _TORP_STAND_DOWNS:
-        _torp_stand_downs[k] = 0
-    for k in _TORP_FALLBACKS:
-        _torp_fallbacks[k] = 0
+    for k in _TORP_SKIPS:
+        _torp_skips[k] = 0
 
 
 def torpedo_feed(ship_instances, ship_emitters, player) -> bool:
     """This frame's torpedo descriptors and dynamic lights, built natively
-    and pushed: True. False: nothing was pushed and the caller runs today's
-    Python (set_torpedoes + set_dynamic_lights over the three builders).
-    The explosion and emitter lights are still the Python builders'
-    (`ship_instances`, `ship_emitters`, `player` are theirs)."""
+    and pushed: True. False only when host_io has no native module (nothing
+    is pushed). The explosion and emitter lights are still the Python
+    builders' (`ship_instances`, `ship_emitters`, `player` are theirs)."""
     global torpedo_feed_native
-    if not _switch:
-        return _torp_stand_down("off")
-    if _audit:
-        return _torp_stand_down("audit")
-    if _k2_host_io._h is None:
-        return _torp_stand_down("no_host")
-    proj = _k3_proj or sys.modules.get("engine.appc.projectiles")
-    if proj is None or type(proj._active) is not proj._ActiveList:
-        return _torp_stand_down("plain_active")
-    if _k3_dirty:
-        torpedo_table_rebuild(proj._active)
-        if _k3_dirty:
-            return _torp_fall_back("dirty", "the torpedo table stays dirty")
-    hl = _k2_hl
+    hl = _feed_ready()
     if hl is None:
-        from engine import host_loop as hl
+        return False
+    proj = _k3_proj or sys.modules.get("engine.appc.projectiles")
+    if proj is None:
+        from engine.appc import projectiles as proj
+    active = proj._active
+    if type(active) is not proj._ActiveList:
+        torpedo_table_mark_dirty()      # nothing keeps the rows in step
+    redirty = False
+    repeats = 0
+    if _k3_dirty:
+        torpedo_table_rebuild(active)
+        if _k3_dirty:
+            repeats = torpedo_table_rebuild(active, dedupe=True)
+            redirty = True
     fr = _frames()
+    view, vh = _view_handle(fr, _torp_skips, "torpedo feed")
+    eye = hl._last_camera_eye
     try:
-        view = fr.viewing_set()
-        vh = -1
-        if view is not None:
-            vh = _slot_of(view)
-            if type(vh) is not int or (vh >> _KIND_SHIFT) != _kind("Set"):
-                raise ValueError("the viewed set has no Set row")
-        eye = hl._last_camera_eye
-        _h.combat_torpedo_feed({
+        _n_t, _n_l, skipped = _h.combat_torpedo_feed({
             "view": vh,
             "origin": fr.render_origin(),
-            "frames": _beam_frames() if view is not None else {},
+            "frames": _beam_frames() if vh != -1 else {},
             "brightness": hl.TORPEDO_BRIGHTNESS,
             "light_radius_scale": hl._TORPEDO_LIGHT_RADIUS_SCALE,
             "light_intensity": hl._TORPEDO_LIGHT_INTENSITY,
             "fade_start": hl.DYN_LIGHT_FADE_START_GU,
             "cull": hl.DYN_LIGHT_CULL_GU,
             "eye": None if eye is None else tuple(eye),
-            "expected_rows": len(proj._active),
+            "expected_rows": len(active) - repeats,
         })
-    except ValueError as e:
-        missing = getattr(_h, "TorpedoFeedMissingVisual", None)
-        why = ("no_visual" if missing is not None and isinstance(e, missing)
-               else "unanswerable")
-        return _torp_fall_back(why, str(e))
+    finally:
+        if redirty:
+            torpedo_table_mark_dirty()  # K3 still sees the repeat
+    if repeats and vh != -1:
+        skipped = dict(skipped, duplicate=repeats)
+    if skipped:
+        _count_skips(_torp_skips, skipped, "torpedo feed")
     # The torpedo descriptors are pushed; the lights blend with the Python
     # groups (an error in those is today's, raised as set_dynamic_lights
     # raises it).
@@ -6395,37 +6481,10 @@ def torpedo_feed(ship_instances, ship_emitters, player) -> bool:
     return True
 
 
-def _torp_stand_down(why: str) -> bool:
-    _torp_stand_downs[why] += 1
-    return False
-
-
-def _torp_fall_back(why: str, message: str) -> bool:
-    global torpedo_feed_fallbacks
-    torpedo_feed_fallbacks += 1
-    _torp_fallbacks[why] += 1
-    _log_once(("torpedo_feed", why), "torpedo feed: %s" % message)
-    return False
-
-
 def torpedo_feed_counts() -> dict:
     """Since the last reset(): {"native": frames built natively,
-    "fallbacks": {why: frames}, "stand_downs": {why: frames}}."""
-    return {"native": torpedo_feed_native,
-            "fallbacks": dict(_torp_fallbacks),
-            "stand_downs": dict(_torp_stand_downs)}
-
-
-def _beam_stand_down(why: str) -> bool:
-    _beam_stand_downs[why] += 1
-    return False
-
-
-def beam_feed_counts() -> dict:
-    """Since the last reset(): {"native": frames built natively,
-    "fallbacks": ValueError frames, "stand_downs": {why: frames}}."""
-    return {"native": beam_feed_native, "fallbacks": beam_feed_fallbacks,
-            "stand_downs": dict(_beam_stand_downs)}
+    "skips": {reason: torpedoes skipped}} (every reason, zeros included)."""
+    return {"native": torpedo_feed_native, "skips": dict(_torp_skips)}
 
 
 # ── The per-step scan and frame table (phase 3: shared by K4 and K3) ────────

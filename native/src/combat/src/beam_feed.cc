@@ -7,11 +7,13 @@
 
 #include "dauntless/combat/beam_feed.h"
 
+#include <array>
 #include <optional>
 #include <stdexcept>
 #include <string>
 
 #include "dauntless/combat/beam_geometry.h"
+#include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/py_math.h"
 #include "frames_internal.h"
 #include "geometry_internal.h"
@@ -24,9 +26,41 @@ using detail::sub;
 
 namespace {
 
-[[noreturn]] void fall_back(const std::string& why) {
-    throw std::invalid_argument("combat beam feed: " + why +
-                                " -- answer in Python");
+// The feed's own refusals: the item is skipped, counted under `why`.
+struct Skip : std::invalid_argument {
+    BeamSkip why;
+    Skip(BeamSkip w, const std::string& what)
+        : std::invalid_argument("combat beam feed: " + what), why(w) {}
+};
+
+[[noreturn]] void skip(BeamSkip why, const std::string& what) {
+    throw Skip(why, what);
+}
+
+// Run `f` (one item's build); on any exception count it under its reason
+// and return false. Nothing is appended inside `f`: the caller appends a
+// whole item only when this returns true.
+template <class F>
+bool guarded(BeamSkips& skips, F&& f) {
+    BeamSkip why = BeamSkip::Error;
+    try {
+        f();
+        return true;
+    } catch (const Skip& e) {
+        why = e.why;
+    } catch (const PartStale&) {
+        why = BeamSkip::PartStale;
+    } catch (const MountUnknown&) {
+        why = BeamSkip::MountUnknown;
+    } catch (const detail::FramesUnanswerable&) {
+        why = BeamSkip::Frames;
+    } catch (const std::invalid_argument&) {
+        why = BeamSkip::Geometry;
+    } catch (const std::exception&) {
+        why = BeamSkip::Error;
+    }
+    ++skips[static_cast<size_t>(why)];
+    return false;
 }
 
 // ── engine/systems/frames.py ────────────────────────────────────────────────
@@ -34,7 +68,8 @@ namespace {
 // A `_containing_set` value: -1 (None) or a live Set row.
 int64_t containing_set(const Mirror& m, int64_t object) {
     const int64_t s = obj(m, object)._containing_set;
-    if (s != -1 && (s < 0 || !m.set(s))) fall_back("_containing_set unnamed");
+    if (s != -1 && (s < 0 || !m.set(s)))
+        skip(BeamSkip::ContainingSet, "_containing_set unnamed");
     return s;
 }
 
@@ -54,14 +89,32 @@ std::optional<Vec3> view_offset(const Mirror& m, const BeamFeedCtx& ctx,
     return detail::view_offset(m, ctx.frames, ctx.view, pset);
 }
 
+// ── combat.shields_block, for any target ────────────────────────────────────
+// A target whose GetShields is TGObject's stub (has_real_get_shields 0: a
+// plain DamageableObject, any non-ship) is answered here, as Python answers
+// it: `shields = ship.GetShields()` is a truthy _Stub; HasShields() and
+// IsOn() are truthy _Stubs (no early return); IsDisabled() is a truthy _Stub
+// -> return False. (An object that is no TGObject at all has no GetShields:
+// None -> False too.) A ShipClass is beam_geometry's shields_block; a
+// non-ShipClass with a REAL GetShields has no port and is skipped. The K2
+// kernel keeps beam_geometry's refusal for both: it hands such a target to
+// Python, which this feed cannot.
+bool feed_shields_block(const Mirror& m, const BeamFeedCtx& ctx,
+                        int64_t target) {
+    const ObjectRow& t = obj(m, target);
+    if (!t.has_real_get_shields) return false;
+    if (!t.is_ship_class)
+        skip(BeamSkip::Shields, "a non-ShipClass target with a real GetShields");
+    return shields_block(m, target, ctx.npc_shields_off, ctx.player);
+}
+
 // ── host_loop._beam_endpoint ────────────────────────────────────────────────
 
 Vec3 beam_endpoint(Mirror& m, const BeamFeedCtx& ctx, int64_t target,
                    const Vec3& emitter_pos, const Vec3& aim_unit,
                    double raw_length, const Vec3& fallback) {
     // if raw_length > 1e-6 and combat.shields_block(target):
-    if (raw_length > 1e-6 &&
-        shields_block(m, target, ctx.npc_shields_off, ctx.player)) {
+    if (raw_length > 1e-6 && feed_shields_block(m, ctx, target)) {
         const std::optional<Vec3> entry = shield_bubble_entry(
             m, target, emitter_pos, aim_unit, raw_length * 1.5);
         if (entry) return *entry;
@@ -91,17 +144,20 @@ Vec3 beam_endpoint(Mirror& m, const BeamFeedCtx& ctx, int64_t target,
 }
 
 // ── host_loop._beam_descriptor_pair + _beam_pair_in_view ────────────────────
-// Appends the pair (outer, inner) in RENDER space to `out`, or nothing where
-// either returns []. `ship_set` is the memo's set_of(ship).
+// The pair (outer, inner) in RENDER space, or nullopt where either returns
+// []. `ship_set` is the memo's set_of(ship).
 
-void beam_pair(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
-               int64_t ship_set, int64_t bank, double brightness,
-               double end_width_scale, std::vector<BeamOut>& out) {
+using Pair = std::array<BeamOut, 2>;
+
+std::optional<Pair> beam_pair(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
+                              int64_t ship_set, int64_t bank,
+                              double brightness, double end_width_scale) {
     const SubsystemRow& b = sub(m, bank);
     // target = bank._target; if target is None: return []
     const int64_t target = b._target;
-    if (target == -1) return;
-    if (target < 0 || !m.object(target)) fall_back("bank _target unnamed");
+    if (target == -1) return std::nullopt;
+    if (target < 0 || !m.object(target))
+        skip(BeamSkip::TargetRow, "bank _target unnamed");
     // ship_set / target_set = _frames.containing_set(...)
     const int64_t s_set = containing_set(m, ship);
     const int64_t t_set = containing_set(m, target);
@@ -111,7 +167,7 @@ void beam_pair(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
         to_ship = Vec3{0.0, 0.0, 0.0};
     else
         to_ship = offset_between(m, ctx, s_set, t_set);
-    if (!to_ship) return;
+    if (!to_ship) return std::nullopt;
     // target_pos, target_sub = _phaser_aim_point(ship, target)
     const Vec3 target_pos =
         phaser_aim_point(m, ship, target, ctx.use_memo).point;
@@ -145,8 +201,10 @@ void beam_pair(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
     const double inner_half = py_or(v._main_radius, 0.15) * core_scale * mut;
     const double taper_radius = py_or(v._taper_radius, 0.01) * mut;
     // outer_color = bank.GetOuterShellColor(); ic = bank.GetInnerCoreColor()
-    if (!v.outer_shell_color_set) fall_back("outer shell colour unset");
-    if (!v.inner_core_color_set) fall_back("inner core colour unset");
+    if (!v.outer_shell_color_set)
+        skip(BeamSkip::ColourUnset, "outer shell colour unset");
+    if (!v.inner_core_color_set)
+        skip(BeamSkip::ColourUnset, "inner core colour unset");
     const Vec4& oc = v._outer_shell_color;
     const Vec4& ic = v._inner_core_color;
 
@@ -165,7 +223,7 @@ void beam_pair(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
     // target's; either outside the viewed frame -> [] (both dicts share them).
     const std::optional<Vec3> e = to_render(m, ctx, ctx.view, ship_set, emitter_pos);
     const std::optional<Vec3> t = to_render(m, ctx, ctx.view, t_set, beam_end);
-    if (!e || !t) return;
+    if (!e || !t) return std::nullopt;
     common.emitter = *e;
     common.target = *t;
 
@@ -178,8 +236,7 @@ void beam_pair(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
     inner.color = {ic[0] * brightness, ic[1] * brightness, ic[2] * brightness,
                    0.35};
     inner.width = inner_half;
-    out.push_back(outer);
-    out.push_back(inner);
+    return Pair{outer, inner};
 }
 
 // _ViewMemo.set_of(ship) (view is not None): the ship's set when it is in
@@ -191,47 +248,86 @@ int64_t set_of(const Mirror& m, const BeamFeedCtx& ctx, int64_t ship) {
     return -1;
 }
 
-// _build_phaser_beam_render_data / _build_tractor_beam_render_data.
+// _build_phaser_beam_render_data / _build_tractor_beam_render_data. A ship
+// whose own state the mirror cannot answer is one skip; a bank's pair that
+// cannot be answered is one skip; everything else is drawn.
 void build_one(Mirror& m, const std::vector<int64_t>& ships,
                const BeamFeedCtx& ctx, bool tractor, double brightness,
-               double end_width_scale, std::vector<BeamOut>& out) {
+               double end_width_scale, std::vector<BeamOut>& out,
+               BeamSkips& skips) {
     // if memo.view is None: return out
     if (ctx.view == -1) return;
     for (const int64_t ship : ships) {
-        const ObjectRow& s = obj(m, ship);
-        // hasattr(ship, "GetPhaserSystem"): every ShipClass; anything else
-        // reaches a stub, which only Python can answer.
-        if (!s.is_ship_class) fall_back("ship is not a ShipClass");
-        // sys_ = ship.GetPhaserSystem() / GetTractorBeamSystem()
-        const int64_t sys = tractor ? s._tractor_beam_system : s._phaser_system;
-        if (sys == -1) continue;
-        // banks = _firing_banks(sys_): the stock path, `_children` in order.
-        const std::vector<int64_t> children = sub(m, sys)._children;
         std::vector<int64_t> banks;
-        for (const int64_t child : children)
-            if (sub(m, child)._firing) banks.push_back(child);
-        if (banks.empty()) continue;
-        // pSet = memo.set_of(ship)
-        const int64_t pset = set_of(m, ctx, ship);
-        if (pset == -1) continue;
-        for (const int64_t bank : banks)
-            beam_pair(m, ctx, ship, pset, bank, brightness, end_width_scale,
-                      out);
+        int64_t pset = -1;
+        const bool ok = guarded(skips, [&] {
+            if (ship < 0 || !m.object(ship))
+                skip(BeamSkip::ShipRow, "a ship with no Object row");
+            const ObjectRow& s = obj(m, ship);
+            // hasattr(ship, "GetPhaserSystem"): every ShipClass; anything
+            // else reaches a stub, which the mirror cannot answer.
+            if (!s.is_ship_class)
+                skip(BeamSkip::NotShipClass, "ship is not a ShipClass");
+            // sys_ = ship.GetPhaserSystem() / GetTractorBeamSystem()
+            const int64_t sys =
+                tractor ? s._tractor_beam_system : s._phaser_system;
+            if (sys == -1) return;
+            // banks = _firing_banks(sys_): the stock path, `_children` in
+            // order.
+            const std::vector<int64_t> children = sub(m, sys)._children;
+            for (const int64_t child : children)
+                if (sub(m, child)._firing) banks.push_back(child);
+            if (banks.empty()) return;
+            // pSet = memo.set_of(ship)
+            pset = set_of(m, ctx, ship);
+        });
+        if (!ok || banks.empty() || pset == -1) continue;
+        for (const int64_t bank : banks) {
+            std::optional<Pair> pair;
+            if (!guarded(skips, [&] {
+                    pair = beam_pair(m, ctx, ship, pset, bank, brightness,
+                                     end_width_scale);
+                }))
+                continue;
+            if (!pair) continue;
+            out.reserve(out.size() + 2);  // the pair is appended whole
+            out.push_back((*pair)[0]);
+            out.push_back((*pair)[1]);
+        }
     }
 }
 
 }  // namespace
 
+const char* beam_skip_name(BeamSkip w) {
+    switch (w) {
+        case BeamSkip::ShipRow: return "ship_row";
+        case BeamSkip::NotShipClass: return "not_ship_class";
+        case BeamSkip::TargetRow: return "target_row";
+        case BeamSkip::ContainingSet: return "containing_set";
+        case BeamSkip::Frames: return "frames";
+        case BeamSkip::PartStale: return "part_stale";
+        case BeamSkip::MountUnknown: return "mount_unknown";
+        case BeamSkip::ColourUnset: return "colour_unset";
+        case BeamSkip::Shields: return "shields";
+        case BeamSkip::Geometry: return "geometry";
+        case BeamSkip::Error: return "error";
+        case BeamSkip::kCount: break;
+    }
+    return "?";
+}
+
 void build_beam_feed(Mirror& m, const std::vector<int64_t>& ships,
                      const BeamFeedCtx& ctx, std::vector<BeamOut>& phasers,
-                     std::vector<BeamOut>& tractors) {
+                     std::vector<BeamOut>& tractors, BeamSkips& skips) {
     phasers.clear();
     tractors.clear();
+    skips.fill(0);
     // beam_from_dict's default end_width_scale for a phaser dict: 1.0.
     build_one(m, ships, ctx, /*tractor=*/false, ctx.phaser_brightness, 1.0,
-              phasers);
+              phasers, skips);
     build_one(m, ships, ctx, /*tractor=*/true, ctx.tractor_brightness,
-              ctx.tractor_end_width_scale, tractors);
+              ctx.tractor_end_width_scale, tractors, skips);
 }
 
 }  // namespace dauntless::combat

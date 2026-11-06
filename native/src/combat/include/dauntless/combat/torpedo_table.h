@@ -138,6 +138,9 @@ public:
     void set_unrepresentable(int64_t h, TorpField f);
     // Throws std::invalid_argument for a stale handle.
     void set_visual(int64_t h, const TorpedoVisual& v);
+    // The row holds no visual record (a record the binding could not take
+    // replaces the one before it with none). Throws as set_visual.
+    void clear_visual(int64_t h);
 
 private:
     void compact();

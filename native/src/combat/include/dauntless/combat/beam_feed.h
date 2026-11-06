@@ -58,19 +58,58 @@ struct BeamOut {
         perimeter_tile, texture_speed, end_width_scale;
 };
 
+// Why the feed skipped an item (phase 6 follow-up 4: no Python fallback).
+// An item is one bank's pair, or every pair of one ship's walk where the
+// refusal is the ship's own (its row, class, set or frame): counted once per
+// walk (the phaser walk and the tractor walk each count it). The reasons:
+//   ShipRow        a ship with no live Object row (-1, stale, freed)
+//   NotShipClass   a ship that is not a ShipClass (a stub answers Python's
+//                  hasattr(ship, "GetPhaserSystem"))
+//   TargetRow      a bank's _target that names no live Object
+//   ContainingSet  a _containing_set the mirror cannot name
+//   Frames         a set missing from ctx.frames, or a set handle unnamed
+//   PartStale      a posed mount whose part slot is not current
+//   MountUnknown   a Manual Aim pick on a posed target whose mount the mirror
+//                  cannot tell
+//   ColourUnset    a bank's outer shell or inner core colour unset
+//   Shields        a non-ShipClass target with a REAL GetShields (no port)
+//   Geometry       any other refusal of the geometry (beam_geometry.h)
+//   Error          any other exception (none is known to be reachable)
+enum class BeamSkip : int {
+    ShipRow,
+    NotShipClass,
+    TargetRow,
+    ContainingSet,
+    Frames,
+    PartStale,
+    MountUnknown,
+    ColourUnset,
+    Shields,
+    Geometry,
+    Error,
+    kCount
+};
+const char* beam_skip_name(BeamSkip w);
+using BeamSkips = std::array<int64_t, static_cast<size_t>(BeamSkip::kCount)>;
+
 // The phaser list into `phasers` and the tractor list into `tractors`
 // (both cleared first), in the Python's order: per ship in `ships` order,
 // per firing bank in `_children` order, the outer shell then the inner core.
 // Phasers carry end_width_scale 1.0 (beam_from_dict's default), tractors
 // ctx.tractor_end_width_scale.
 //
-// Throws std::invalid_argument wherever the mirror cannot answer as the
-// Python would: a -1 ship (or one that is not a ShipClass), a set missing
-// from ctx.frames, an unset colour, an unrepresentable or stale ref, and
-// every throw of the geometry it calls. The outputs are then partial: the
-// caller discards both.
+// Never throws for what the mirror holds: wherever it cannot answer as the
+// Python would, that one item is skipped and counted in `skips` (zeroed
+// first) under its BeamSkip, and every other item is built. An item is
+// appended only once it is whole, so a skip leaves no half pair.
+//
+// A target that is not a ShipClass is answered as combat.shields_block
+// answers it when its GetShields is TGObject's stub (has_real_get_shields
+// 0): the stub, HasShields() and IsOn() are truthy, IsDisabled() is truthy,
+// so False -- the beam ends on the hull trace, the sphere or the aim point
+// as for any unshielded target.
 void build_beam_feed(Mirror& m, const std::vector<int64_t>& ships,
                      const BeamFeedCtx& ctx, std::vector<BeamOut>& phasers,
-                     std::vector<BeamOut>& tractors);
+                     std::vector<BeamOut>& tractors, BeamSkips& skips);
 
 }  // namespace dauntless::combat

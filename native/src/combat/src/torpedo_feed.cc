@@ -22,9 +22,15 @@ namespace dauntless::combat {
 
 namespace {
 
-[[noreturn]] void fall_back(const std::string& why) {
-    throw std::invalid_argument("combat torpedo feed: " + why +
-                                " -- answer in Python");
+// The feed's refusals: the torpedo is skipped, counted under `why`.
+struct Skip : std::invalid_argument {
+    TorpedoSkip why;
+    Skip(TorpedoSkip w, const std::string& what)
+        : std::invalid_argument("combat torpedo feed: " + what), why(w) {}
+};
+
+[[noreturn]] void skip(TorpedoSkip why, const std::string& what) {
+    throw Skip(why, what);
 }
 
 constexpr uint32_t bit(TorpField f) { return 1u << static_cast<int>(f); }
@@ -68,73 +74,133 @@ std::optional<double> camera_fade(const TorpedoFeedCtx& ctx, const Vec3& p) {
 
 }  // namespace
 
+namespace {
+
+// One row's descriptor and (optional) light, built whole before either is
+// appended. `has_torp` false: outside the viewed frame (Python builds
+// neither then, the light needing the view position too).
+struct Item {
+    bool has_torp = false, has_light = false;
+    TorpedoOut torp;
+    TorpedoLightOut light;
+};
+
+Item build_item(const Mirror& m, const TorpedoFeedCtx& ctx,
+                const TorpedoRow& r) {
+    Item it;
+    if (r.unrepresentable & kReads)
+        skip(TorpedoSkip::Unrepresentable,
+             "a field the feed reads is unrepresentable");
+    if (!r.visual_set)
+        skip(TorpedoSkip::NoVisual, "a torpedo has no visual record");
+    const TorpedoVisual& v = r.visual;
+    // p = t.GetTranslate(): the live store slot.
+    const TransformStore& store = m.store();
+    if (r.xform_index < 0 || r.xform_gen < 0 ||
+        r.xform_index > std::numeric_limits<uint32_t>::max() ||
+        r.xform_gen > std::numeric_limits<uint32_t>::max())
+        skip(TorpedoSkip::Transform, "a torpedo has no transform");
+    const auto xi = static_cast<uint32_t>(r.xform_index);
+    const auto xg = static_cast<uint32_t>(r.xform_gen);
+    if (!store.valid(xi, xg))
+        skip(TorpedoSkip::Transform, "a torpedo transform is invalid");
+    const Vec3 p = store.position(xi, xg);
+    // _frames.containing_set(t): the row's ref, re-checked live.
+    const int64_t cset = m.torpedo_ref(r, TorpField::_containing_set);
+    if (cset == kRefUnrepresentable)
+        skip(TorpedoSkip::ContainingSet, "_containing_set unnamed");
+    // pos = in_view(...) -- both builders' first step (to_render is
+    // view_to_render of it).
+    const std::optional<Vec3> view_pos =
+        detail::in_view(m, ctx.frames, ctx.view, cset, p);
+    if (!view_pos) return it;
+    if (!fits_c_int(v.num_flares) || !fits_c_int(v.id))
+        skip(TorpedoSkip::CInt, "num_flares or id outside a C int");
+    TorpedoOut& o = it.torp;
+    o.visual = &v;
+    o.position = detail::view_to_render(ctx.origin, *view_pos);
+    // _torpedo_colors: core, glow, flares dimmed by the knob.
+    o.core_color = dim(v.core_color, ctx.brightness);
+    o.glow_color = dim(v.glow_color, ctx.brightness);
+    o.flares_color = dim(v.flares_color, ctx.brightness);
+    o.age = r.age;
+    o.forward = forward(r.vel);
+    it.has_torp = true;
+    // _build_dynamic_light_render_data.
+    if (v.is_disruptor) return it;
+    const double radius = ctx.light_radius_scale * v.light_base;
+    if (radius <= 0) return it;
+    const std::optional<double> fade = camera_fade(ctx, *view_pos);
+    if (!fade) return it;  // beyond the cull distance: not built at all
+    TorpedoLightOut& l = it.light;
+    l.position = detail::view_to_render(ctx.origin, *view_pos);
+    l.color = {v.glow_color[0], v.glow_color[1], v.glow_color[2]};
+    l.radius = radius;
+    l.intensity = ctx.light_intensity * *fade;
+    it.has_light = true;
+    return it;
+}
+
+}  // namespace
+
+const char* torpedo_skip_name(TorpedoSkip w) {
+    switch (w) {
+        case TorpedoSkip::Rows: return "rows";
+        case TorpedoSkip::Unrepresentable: return "unrepresentable";
+        case TorpedoSkip::NoVisual: return "no_visual";
+        case TorpedoSkip::Transform: return "transform";
+        case TorpedoSkip::ContainingSet: return "containing_set";
+        case TorpedoSkip::Frames: return "frames";
+        case TorpedoSkip::CInt: return "c_int";
+        case TorpedoSkip::Error: return "error";
+        case TorpedoSkip::kCount: break;
+    }
+    return "?";
+}
+
 void build_torpedo_feed(const Mirror& m, const TorpedoFeedCtx& ctx,
                         std::vector<TorpedoOut>& torps,
-                        std::vector<TorpedoLightOut>& lights) {
+                        std::vector<TorpedoLightOut>& lights,
+                        TorpedoSkips& skips) {
     torps.clear();
     lights.clear();
+    skips.fill(0);
     // view = _frames.viewing_set(); if view is None: return out (both).
     if (ctx.view == -1) return;
     const TorpedoTable& table = m.torpedoes();
-    if (ctx.expected_rows >= 0 &&
-        static_cast<int64_t>(table.size()) != ctx.expected_rows)
-        fall_back("the table does not hold every projectiles._active entry");
-    const TransformStore& store = m.store();
+    // An entry of projectiles._active with no row (not a Torpedo, or one
+    // the table lost) is not drawn: counted, never fatal.
+    if (ctx.expected_rows >= 0) {
+        const auto live = static_cast<int64_t>(table.size());
+        if (live != ctx.expected_rows) {
+            const int64_t d = ctx.expected_rows - live;
+            skips[static_cast<size_t>(TorpedoSkip::Rows)] += d < 0 ? -d : d;
+        }
+    }
     // `for t in projectiles._active:` -- both builders walk the same list in
     // the same order, and read nothing either changes, so one walk builds
     // both lists.
     for (const TorpedoRow& r : table.rows()) {
         if (!r.alive) continue;
-        if (r.unrepresentable & kReads)
-            fall_back("a field the feed reads is unrepresentable");
-        if (!r.visual_set)
-            throw MissingVisual(
-                "combat torpedo feed: a torpedo has no visual record -- "
-                "answer in Python");
-        const TorpedoVisual& v = r.visual;
-        // p = t.GetTranslate(): the live store slot.
-        if (r.xform_index < 0 || r.xform_gen < 0 ||
-            r.xform_index > std::numeric_limits<uint32_t>::max() ||
-            r.xform_gen > std::numeric_limits<uint32_t>::max())
-            fall_back("a torpedo has no transform");
-        const auto xi = static_cast<uint32_t>(r.xform_index);
-        const auto xg = static_cast<uint32_t>(r.xform_gen);
-        if (!store.valid(xi, xg)) fall_back("a torpedo transform is invalid");
-        const Vec3 p = store.position(xi, xg);
-        // _frames.containing_set(t): the row's ref, re-checked live.
-        const int64_t cset = m.torpedo_ref(r, TorpField::_containing_set);
-        if (cset == kRefUnrepresentable) fall_back("_containing_set unnamed");
-        // pos = in_view(...) -- both builders' first step (to_render is
-        // view_to_render of it).
-        const std::optional<Vec3> view_pos =
-            detail::in_view(m, ctx.frames, ctx.view, cset, p);
-        if (view_pos) {
-            if (!fits_c_int(v.num_flares) || !fits_c_int(v.id))
-                fall_back("num_flares or id outside a C int");
-            TorpedoOut o;
-            o.visual = &v;
-            o.position = detail::view_to_render(ctx.origin, *view_pos);
-            // _torpedo_colors: core, glow, flares dimmed by the knob.
-            o.core_color = dim(v.core_color, ctx.brightness);
-            o.glow_color = dim(v.glow_color, ctx.brightness);
-            o.flares_color = dim(v.flares_color, ctx.brightness);
-            o.age = r.age;
-            o.forward = forward(r.vel);
-            torps.push_back(o);
+        Item it;
+        TorpedoSkip why = TorpedoSkip::Error;
+        bool ok = false;
+        try {
+            it = build_item(m, ctx, r);
+            ok = true;
+        } catch (const Skip& e) {
+            why = e.why;
+        } catch (const detail::FramesUnanswerable&) {
+            why = TorpedoSkip::Frames;
+        } catch (const std::exception&) {
+            why = TorpedoSkip::Error;
         }
-        // _build_dynamic_light_render_data.
-        if (v.is_disruptor) continue;
-        const double radius = ctx.light_radius_scale * v.light_base;
-        if (radius <= 0) continue;
-        if (!view_pos) continue;
-        const std::optional<double> fade = camera_fade(ctx, *view_pos);
-        if (!fade) continue;  // beyond the cull distance: not built at all
-        TorpedoLightOut l;
-        l.position = detail::view_to_render(ctx.origin, *view_pos);
-        l.color = {v.glow_color[0], v.glow_color[1], v.glow_color[2]};
-        l.radius = radius;
-        l.intensity = ctx.light_intensity * *fade;
-        lights.push_back(l);
+        if (!ok) {
+            ++skips[static_cast<size_t>(why)];
+            continue;
+        }
+        if (it.has_torp) torps.push_back(it.torp);
+        if (it.has_light) lights.push_back(it.light);
     }
 }
 

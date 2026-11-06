@@ -1484,30 +1484,19 @@ def _push_combat_render_data(ships_list, *, ship_instances=None,
     # host_io too, so nothing below consumes the raw `host` module.
     with frame_profiler.scope("cb.render_data"):
         # The torpedoes and the torpedo lights natively from the torpedo
-        # table, blended with the explosion and emitter lights; the Python
-        # builders when it stands down or cannot answer
-        # (native_combat.torpedo_feed).
-        if not _native_combat.torpedo_feed(ship_instances, ship_emitters,
-                                           player):
-            host_io.set_torpedoes(_build_torpedo_render_data())
-            host_io.set_dynamic_lights(_budgeted_dynamic_lights(
-                _build_explosion_light_render_data(),
-                _build_dynamic_light_render_data(),
-                _build_emitter_light_render_data(ship_instances, ship_emitters,
-                                                 player=player)))
+        # table, blended with the explosion and emitter lights
+        # (native_combat.torpedo_feed). No Python fallback: an item the
+        # table cannot answer is skipped and counted, and with no native
+        # module there is nothing to draw into.
+        _native_combat.torpedo_feed(ship_instances, ship_emitters, player)
         host_io.set_shockwaves(_build_shockwave_render_data())
         host_io.set_warp_in_flashes(_build_warp_in_flash_render_data())
         host_io.set_warp_in_flash_params(_warp_in_flash_params())
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
         host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
-        # Both beam feeds natively from the mirror; the Python builders when
-        # it stands down or cannot answer (native_combat.beam_feed).
-        if not _native_combat.beam_feed(ships_list, ship_instances):
-            memo = _ViewMemo()  # one in-view sweep for both beam feeds
-            host_io.set_phaser_beams(_build_phaser_beam_render_data(
-                ships_list, ship_instances=ship_instances, memo=memo))
-            host_io.set_tractor_beams(_build_tractor_beam_render_data(
-                ships_list, ship_instances=ship_instances, memo=memo))
+        # Both beam feeds natively from the mirror (native_combat.
+        # beam_feed), as the torpedoes: no Python fallback.
+        _native_combat.beam_feed(ships_list, ship_instances)
 
 
 def _color_tuple(color):

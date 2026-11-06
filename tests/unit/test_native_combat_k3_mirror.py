@@ -380,24 +380,27 @@ def test_lead_accel_k_global_pushed(on):
 
 # ── Switch off ───────────────────────────────────────────────────────────────
 
-def test_switch_off_registers_nothing():
-    """K3's torpedo table follows the switch, not the mirror: with =0 the
-    mirror is live (fire control native only, M9) and no torpedo gets a
-    row."""
+def test_switch_off_still_keeps_the_table():
+    """K3's torpedo table follows the MIRROR, not the switch (phase 6
+    follow-up 4): with =0 the mirror is live (fire control native only, M9)
+    and the native render feed draws from the table, so every torpedo gets
+    a row and its writes reach it -- K3 itself does not run."""
     nc.configure({"DAUNTLESS_NATIVE_COMBAT": "0"})
     assert not nc.enabled() and nc.fire_control_native()
-    before = _h.combat_torp_size()
     nc.torpedo_table_rebuild(projectiles._active)
+    before = _h.combat_torp_size()
     t = _fire()
+    assert "_k3_row" in t.__dict__
+    assert _h.combat_torp_size() == before + 1
     t._age = 1.0
     t.SetLifetime(3.0)
     t._velocity = TGPoint3(1.0, 0.0, 0.0)
-    assert "_k3_row" not in t.__dict__
-    assert _h.combat_torp_size() == before == 0
-    nc.torpedo_table_rebuild(projectiles._active)   # with t in flight
-    assert "_k3_row" not in t.__dict__
-    assert _h.combat_torp_size() == 0
+    row = _row(t)
+    assert row["age"] == 1.0 and row["ttl"] == 3.0
+    assert tuple(row["vel"]) == (1.0, 0.0, 0.0)
     projectiles.expire(t)
+    assert "_k3_row" not in t.__dict__
+    assert _h.combat_torp_size() == before
 
 
 # ── The visual record (native torpedo feed, Task 2) ─────────────────────────
@@ -460,19 +463,25 @@ def test_a_created_torpedo_carries_its_visual_record(on):
     t = _make_photon()
     projectiles.register(t)
     _expect_visual(t, _row(t)["visual"])
-    # Model created AFTER the row exists: pushed at Create.
+    # Model created AFTER the row exists: pushed at Create (the row held
+    # the default record until then).
     u = Torpedo()
     projectiles.register(u)
-    assert _row(u)["visual"] is None
+    _expect_visual(u, _row(u)["visual"])
+    assert _row(u)["visual"]["core_texture"] == ""
     u.CreateTorpedoModel("a.tga", None, 1, 2, "b.tga", None, 7, 5, 1,
                          "c.tga", None, 2, 0.5, 0.25)
     _expect_visual(u, _row(u)["visual"])
     assert float(_row(u)["visual"]["light_base"]).hex() == (7.0).hex()
 
 
-def test_a_torpedo_with_no_model_has_no_visual(on):
+def test_a_torpedo_with_no_model_carries_the_default_record(on):
+    """Torpedo.__init__'s defaults make DEFAULT_TORPEDO_VISUAL, which is
+    what _torp_visual_record reads from them; it is pushed at row-add."""
     t = _fire()
-    assert _row(t)["visual"] is None
+    assert t.__dict__["_vis_native"] == nc.DEFAULT_TORPEDO_VISUAL
+    assert nc._torp_visual_record(Torpedo()) == nc.DEFAULT_TORPEDO_VISUAL
+    _expect_visual(t, _row(t)["visual"])
 
 
 def test_a_rebuilt_table_keeps_visual_records(on):
@@ -487,7 +496,7 @@ def test_a_rebuilt_table_keeps_visual_records(on):
     _expect_visual(a, _row(a)["visual"])
     _expect_visual(b, _row(b)["visual"])
     assert _row(b)["visual"]["num_flares"] == 2
-    assert _row(c)["visual"] is None
+    _expect_visual(c, _row(c)["visual"])      # the default record
 
 
 def test_a_disruptor_record_has_empty_textures(on):
@@ -520,7 +529,8 @@ def test_a_model_made_with_the_switch_off_is_recorded_for_a_switch_on_in_flight(
 
 def test_a_visual_the_binding_cannot_cast_leaves_no_record(on):
     """A Python int past int64 is a pybind cast_error (RuntimeError): the
-    model is still made, the row keeps no record (the feed falls back)."""
+    model is still made, the row keeps no record -- not the default it held
+    before -- so the feed skips the torpedo ("no_visual")."""
     t = Torpedo()
     projectiles.register(t)
     t.CreateTorpedoModel("a.tga", None, 1, 2, "b.tga", None, 7, 5, 1,
@@ -532,7 +542,7 @@ def test_a_visual_the_binding_cannot_cast_leaves_no_record(on):
 def test_audit_compares_the_visual_record(on):
     a = _make_photon()
     projectiles.register(a)
-    b = _fire()                           # no model: no record, no failure
+    b = _fire()                           # no model: the default record
     nc.audit_mirror()
     assert nc.audit_failures() == []
     a._glow_size_a = 9.0                  # after Create: not honoured
@@ -542,4 +552,4 @@ def test_audit_compares_the_visual_record(on):
     a._glow_size_a = 3.0
     nc.audit_mirror()
     assert nc.audit_failures() == []
-    assert b.__dict__.get("_vis_native") is None
+    assert b.__dict__.get("_vis_native") == nc.DEFAULT_TORPEDO_VISUAL

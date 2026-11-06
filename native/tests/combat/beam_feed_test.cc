@@ -1,7 +1,8 @@
 // The native beam descriptor feed (beam_feed.h) on hand-built mirror rows:
 // the Python builders' order, `or` defaults, frame shifts, endpoint tiers and
-// fallbacks. The native-vs-Python differential over real instances runs from
-// tests/host/test_native_beam_feed.py (phase 6 follow-up 1, Task 4).
+// counted skips (no Python fallback). The native-vs-Python differential
+// over real instances runs from tests/host/test_native_beam_feed.py (phase 6
+// follow-up 1, Task 4).
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
@@ -149,11 +150,40 @@ struct World {
     }
 
     std::vector<BeamOut> phasers, tractors;
+    BeamSkips skips{};
     void run(const std::vector<int64_t>& ships) {
         ctx.hooks = host.hooks();
-        build_beam_feed(m, ships, ctx, phasers, tractors);
+        build_beam_feed(m, ships, ctx, phasers, tractors, skips);
+    }
+    int64_t skipped(BeamSkip w) const {
+        return skips[static_cast<size_t>(w)];
+    }
+    int64_t total_skipped() const {
+        int64_t n = 0;
+        for (const int64_t k : skips) n += k;
+        return n;
     }
 };
+
+bool same(const BeamOut& a, const BeamOut& b) {
+    return a.emitter == b.emitter && a.target == b.target &&
+           a.color == b.color && a.width == b.width &&
+           a.u_tiles == b.u_tiles && a.num_sides == b.num_sides &&
+           a.taper_radius == b.taper_radius &&
+           a.taper_ratio == b.taper_ratio &&
+           a.taper_min_length == b.taper_min_length &&
+           a.taper_max_length == b.taper_max_length &&
+           a.perimeter_tile == b.perimeter_tile &&
+           a.texture_speed == b.texture_speed &&
+           a.end_width_scale == b.end_width_scale;
+}
+
+bool same(const std::vector<BeamOut>& a, const std::vector<BeamOut>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (!same(a[i], b[i])) return false;
+    return true;
+}
 
 // A ship at the origin firing one bank at a ship 50 GU ahead (+y).
 struct Scene {
@@ -343,9 +373,15 @@ TEST(BeamFeed, OtherFrameTargetDrawsNothing) {
     w.run({ship});
     EXPECT_TRUE(w.phasers.empty());
     EXPECT_TRUE(w.tractors.empty());
-    // Same frame: the aim point is reached, and throws.
+    EXPECT_EQ(w.total_skipped(), 0);
+    // Same frame: the aim point is reached, and refuses: both pairs are
+    // skipped, counted as geometry.
     w.m.set_ref(t, Field::_containing_set, w.set);
-    EXPECT_THROW(w.run({ship}), std::invalid_argument);
+    w.run({ship});
+    EXPECT_TRUE(w.phasers.empty());
+    EXPECT_TRUE(w.tractors.empty());
+    EXPECT_EQ(w.skipped(BeamSkip::Geometry), 2);
+    EXPECT_EQ(w.total_skipped(), 2);
 }
 
 TEST(BeamFeed, ShipOutOfViewDrawsNothing) {
@@ -533,27 +569,198 @@ TEST(BeamFeed, UTilesIsAtLeastOne) {
     EXPECT_EQ(w.phasers[0].target, (Vec3{0.0, 1e-7, 0.0}));
 }
 
-TEST(BeamFeed, MissingFrameEntryThrows) {
+TEST(BeamFeed, MissingFrameEntrySkipsTheShip) {
     World w;
     const Scene s = scene(w);
     const int64_t unlisted = w.m.register_row(Kind::Set);  // no ctx.frames
     w.m.set_ref(s.ship, Field::_containing_set, unlisted);
     w.m.set_ref(s.target, Field::_containing_set, unlisted);
-    EXPECT_THROW(w.run({s.ship}), std::invalid_argument);
+    w.run({s.ship});
+    EXPECT_TRUE(w.phasers.empty());
+    EXPECT_EQ(w.skipped(BeamSkip::Frames), 1);
+    EXPECT_EQ(w.total_skipped(), 1);
 }
 
-TEST(BeamFeed, UnsetColourThrows) {
+TEST(BeamFeed, UnsetColourSkipsThePair) {
     World w;
     const Scene s = scene(w);
     w.m.set_fv(s.bank, Field::_inner_core_color, {});
-    EXPECT_THROW(w.run({s.ship}), std::invalid_argument);
+    w.run({s.ship});
+    EXPECT_TRUE(w.phasers.empty());
+    EXPECT_EQ(w.skipped(BeamSkip::ColourUnset), 1);
     w.m.set_fv(s.bank, Field::_inner_core_color, {0.2, 0.4, 0.6, 1.0});
     w.m.set_fv(s.bank, Field::_outer_shell_color, {});
-    EXPECT_THROW(w.run({s.ship}), std::invalid_argument);
+    w.run({s.ship});
+    EXPECT_TRUE(w.phasers.empty());
+    EXPECT_EQ(w.skipped(BeamSkip::ColourUnset), 1);
+    EXPECT_EQ(w.total_skipped(), 1);  // reset per build
 }
 
-TEST(BeamFeed, NoRowShipThrows) {
+TEST(BeamFeed, NoRowShipIsSkippedInEachList) {
     World w;
     const Scene s = scene(w);
-    EXPECT_THROW(w.run({s.ship, -1}), std::invalid_argument);
+    w.run({s.ship, -1});
+    EXPECT_EQ(w.phasers.size(), 2u);
+    EXPECT_EQ(w.skipped(BeamSkip::ShipRow), 2);  // the phaser and tractor walks
+    EXPECT_EQ(w.total_skipped(), 2);
+}
+
+TEST(BeamFeed, SkipReasonsHaveNames) {
+    const char* want[] = {"ship_row",   "not_ship_class", "target_row",
+                          "containing_set", "frames",     "part_stale",
+                          "mount_unknown",  "colour_unset", "shields",
+                          "geometry",   "error"};
+    ASSERT_EQ(std::size(want), static_cast<size_t>(BeamSkip::kCount));
+    for (size_t i = 0; i < std::size(want); ++i)
+        EXPECT_STREQ(beam_skip_name(static_cast<BeamSkip>(i)), want[i]);
+}
+
+// combat.shields_block on an object whose GetShields is TGObject's stub (a
+// plain DamageableObject: is_ship_class 0, has_real_get_shields 0): the stub
+// is truthy, so are HasShields() and IsOn(), and IsDisabled() is truthy
+// too -- False. The beam then ends where _resolve_hit_point puts it, the
+// hull trace here, exactly as for an unshielded ship.
+TEST(BeamFeed, NonShipTargetIsUnshieldedAndEndsOnTheHullTrace) {
+    World w;
+    const Scene s = scene(w);
+    w.m.set_i(s.target, Field::is_ship_class, 0);
+    w.m.set_i(s.target, Field::has_real_get_shields, 0);
+    w.m.set_i(s.target, Field::has_cloak_getter, 0);
+    // A hull box and live-looking shield fields the stub never reaches.
+    w.shields(s.target);
+    // The K2 kernel's predicate still hands such a target back.
+    EXPECT_THROW(shields_block(w.m, s.target, false, -1),
+                 std::invalid_argument);
+    w.host.at = {0.0, 50.0, 0.0};
+    w.host.hit = TraceHit{{0.0f, -2.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 48.0f};
+    w.ctx.iids[s.target] = K2Context::Iid{false, {1, 1}};
+    w.bank(w.system(s.ship, /*tractor=*/true), s.target);
+    w.run({s.ship});
+    EXPECT_EQ(w.total_skipped(), 0);
+    ASSERT_EQ(w.phasers.size(), 2u);
+    ASSERT_EQ(w.tractors.size(), 2u);
+    EXPECT_EQ(w.host.calls, 2);
+    for (const auto* v : {&w.phasers, &w.tractors})
+        for (const BeamOut& d : *v) EXPECT_EQ(d.target, (Vec3{0.0, 48.0, 0.0}));
+    // No instance: the aim point (the object's centre).
+    w.ctx.iids.clear();
+    w.run({s.ship});
+    ASSERT_EQ(w.phasers.size(), 2u);
+    EXPECT_EQ(w.phasers[0].target, (Vec3{0.0, 50.0, 0.0}));
+    // The dev cheat is never reached: the stub's IsDisabled answers first.
+    w.ctx.npc_shields_off = true;
+    w.run({s.ship});
+    ASSERT_EQ(w.phasers.size(), 2u);
+    EXPECT_EQ(w.total_skipped(), 0);
+}
+
+// A non-ShipClass with a REAL GetShields (a mod class): the mirror has no
+// port of what it returns, so its pairs are skipped (counted "shields").
+TEST(BeamFeed, NonShipTargetWithARealGetShieldsIsSkipped) {
+    World w;
+    const Scene s = scene(w);
+    w.m.set_i(s.target, Field::is_ship_class, 0);
+    w.run({s.ship});
+    EXPECT_TRUE(w.phasers.empty());
+    EXPECT_EQ(w.skipped(BeamSkip::Shields), 1);
+    EXPECT_EQ(w.total_skipped(), 1);
+}
+
+// Every skip reason the feed can meet on hand-built rows: three shooters
+// (A, B, C) fire one bank each at T; only B is broken, so the frame is A's
+// and C's pairs exactly as drawn without the break, and the one reason is
+// counted. ("error" -- an exception that is not an invalid_argument -- has no
+// mirror state that raises it.)
+TEST(BeamFeed, SkippedItemDropsOnlyItself) {
+    struct Case {
+        const char* name;
+        BeamSkip why;
+        int64_t count;
+    };
+    const Case cases[] = {
+        {"ship_row", BeamSkip::ShipRow, 2},
+        {"not_ship_class", BeamSkip::NotShipClass, 2},
+        {"target_row", BeamSkip::TargetRow, 1},
+        {"containing_set", BeamSkip::ContainingSet, 1},
+        {"frames", BeamSkip::Frames, 1},
+        {"part_stale", BeamSkip::PartStale, 1},
+        {"mount_unknown", BeamSkip::MountUnknown, 1},
+        {"colour_unset", BeamSkip::ColourUnset, 1},
+        {"shields", BeamSkip::Shields, 1},
+        {"geometry", BeamSkip::Geometry, 1},
+    };
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.name);
+        World w;
+        const int64_t t = w.ship(0.0, 50.0, 0.0);
+        const int64_t a = w.ship(-10.0, 0.0, 0.0);
+        const int64_t b = w.ship(0.0, 0.0, 0.0);
+        const int64_t cc = w.ship(10.0, 0.0, 0.0);
+        w.bank(w.system(a), t, true, 1.0);
+        const int64_t bb = w.bank(w.system(b), t, true, 2.0);
+        w.bank(w.system(cc), t, true, 3.0);
+        w.run({a, b, cc, t});
+        ASSERT_EQ(w.phasers.size(), 6u);
+        ASSERT_EQ(w.total_skipped(), 0);
+        const std::vector<BeamOut> want{w.phasers[0], w.phasers[1],
+                                        w.phasers[4], w.phasers[5]};
+        std::vector<int64_t> ships{a, b, cc, t};
+        switch (c.why) {
+            case BeamSkip::ShipRow:
+                ships[1] = -1;
+                break;
+            case BeamSkip::NotShipClass:
+                w.m.set_i(b, Field::is_ship_class, 0);
+                break;
+            case BeamSkip::TargetRow:
+                w.m.set_ref(bb, Field::_target, kRefUnrepresentable);
+                break;
+            case BeamSkip::ContainingSet:
+                w.m.set_ref(b, Field::_containing_set, kRefUnrepresentable);
+                break;
+            case BeamSkip::Frames: {
+                const int64_t unlisted = w.m.register_row(Kind::Set);
+                w.m.set_ref(b, Field::_containing_set, unlisted);
+                break;
+            }
+            case BeamSkip::PartStale: {
+                // B locks a subsystem of T, posed, whose slot is stale.
+                const int64_t lock = w.m.register_row(Kind::Subsystem);
+                w.m.set_i(lock, Field::has_parent_ship_getter, 1);
+                w.m.set_ref(lock, Field::_parent_ship, t);
+                w.m.set_fv(lock, Field::_position, {0.0, 1.0, 0.0});
+                w.m.set_i(t, Field::has_posed_parts, 1);
+                w.m.set_part_poses(t, {});
+                w.m.set_part_gen(w.m.part_gen() + 1);
+                w.m.set_ref(b, Field::_target_subsystem, lock);
+                break;
+            }
+            case BeamSkip::MountUnknown:
+                // B's Manual Aim pick on posed T, whose mount order holds a
+                // row the mirror cannot name.
+                w.m.set_i(b, Field::_use_target_offset, 1);
+                w.m.set_fv(b, Field::_manual_target_offset, {0.0, 1.0, 0.0});
+                w.m.set_i(t, Field::has_posed_parts, 1);
+                w.m.set_mount_order(t, {kRefUnrepresentable});
+                break;
+            case BeamSkip::ColourUnset:
+                w.m.set_fv(bb, Field::_outer_shell_color, {});
+                break;
+            case BeamSkip::Shields: {
+                const int64_t n = w.ship(0.0, 60.0, 0.0);
+                w.m.set_i(n, Field::is_ship_class, 0);
+                w.m.set_ref(bb, Field::_target, n);
+                break;
+            }
+            case BeamSkip::Geometry:
+                w.m.set_ref(b, Field::_target_subsystem, kRefUnrepresentable);
+                break;
+            default:
+                FAIL();
+        }
+        w.run(ships);
+        EXPECT_TRUE(same(w.phasers, want));
+        EXPECT_EQ(w.skipped(c.why), c.count);
+        EXPECT_EQ(w.total_skipped(), c.count);
+    }
 }

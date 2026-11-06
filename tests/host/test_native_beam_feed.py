@@ -216,7 +216,8 @@ def _native_feed(ships, ship_instances, want=None):
     tractor bytes). Both vectors are seeded with a sentinel first, so a
     binding that skipped an assignment reads back the sentinel, never the
     Python frame pushed before it. With `want` (the _python_feed pair), the
-    binding's own (n_phasers, n_tractors) must equal its lengths."""
+    binding's own (n_phasers, n_tractors) must equal its lengths, and it
+    must have skipped nothing."""
     _h.set_phaser_beams([SENTINEL])
     _h.set_tractor_beams([SENTINEL, SENTINEL])
     returned = []
@@ -233,7 +234,8 @@ def _native_feed(ships, ship_instances, want=None):
     finally:
         _h.combat_beam_feed = feed
     if ok and want is not None:
-        assert returned == [(len(want[0]), len(want[1]))], returned
+        # (n_phasers, n_tractors, {skip reason: count}).
+        assert returned == [(len(want[0]), len(want[1]), {})], returned
     return ok, _beams("phaser"), _beams("tractor")
 
 
@@ -339,7 +341,7 @@ def test_native_feed_equals_python_every_frame(beam_scene, monkeypatch):
         ships = list(iter_ships())
         want = cov.python_feed(ships, bs.ship_instances)
         ok, phasers, tractors = _native_feed(ships, bs.ship_instances, want)
-        assert ok, "tick %d: the native feed fell back" % scene.tick
+        assert ok, "tick %d: the native feed pushed nothing" % scene.tick
         assert phasers == want[0], "tick %d: phasers differ" % scene.tick
         assert tractors == want[1], "tick %d: tractors differ" % scene.tick
 
@@ -347,7 +349,7 @@ def test_native_feed_equals_python_every_frame(beam_scene, monkeypatch):
     c = cov.counts
     print("\nbeam feed coverage over %d frames: %r" % (c["frames"], c))
     assert c["frames"] == 300, c
-    assert nc.beam_feed_fallbacks == 0
+    assert not any(nc.beam_feed_counts()["skips"].values())
     for case in ("bubble", "hull_trace", "tractor", "manual_aim"):
         assert c[case] > 0, "no frame had a %s pair: %r" % (case, c)
 
@@ -437,21 +439,20 @@ def test_native_feed_equals_python_across_regions(native_combat_on, regions,
     ok, phasers, tractors = _native_feed(ships, None, want)
     assert ok
     assert (phasers, tractors) == want
-    assert nc.beam_feed_fallbacks == 0
+    assert not any(nc.beam_feed_counts()["skips"].values())
 
 
-def test_a_throw_leaves_no_partial_feed_and_python_fills_the_frame(
-        beam_scene, monkeypatch):
+def test_a_skipped_ship_drops_only_its_own_beams(beam_scene, monkeypatch):
     import App
     from engine import host_loop
     from engine.appc.sets import SetClass_Create
     bs = beam_scene
     # A firing ship moved to a set of its own frame: Python draws none of
-    # its beams; the native feed must look that set's frame up -- and it is
-    # left out of the frames table, so the feed throws.
+    # its beams, nor any beam at it; the native feed must look that set's
+    # frame up -- and it is left out of the frames table, so the feed skips
+    # exactly those items (counted "frames") and draws every other.
     # The LAST firing shooter, so ships before it in list order have drawn
-    # pairs into the native build when it throws: a partial build really is
-    # discarded.
+    # pairs into the native build when it is skipped.
     shooter = [s for s in bs.ships if s is not bs.player
                and s.GetPhaserSystem() is not None
                and host_loop._firing_banks(s.GetPhaserSystem())][-1]
@@ -477,22 +478,23 @@ def test_a_throw_leaves_no_partial_feed_and_python_fills_the_frame(
         [s for s in before if s in ships],
         ship_instances=bs.ship_instances), \
         "premise: a ship before the shooter draws phasers"
-    _h.set_phaser_beams([FULL])
-    _h.set_tractor_beams([MINIMAL, FULL])
+    want = _python_feed(ships, bs.ship_instances)
+    assert want[0], "premise: other ships' phasers still draw"
+    nc.reset_beam_feed_counts()
     try:
-        assert nc.beam_feed(ships, bs.ship_instances) is False
-        assert nc.beam_feed_fallbacks == 1
-        # Neither vector was touched: no partial frame.
-        assert _beams("phaser") == [packed(FULL)]
-        assert _beams("tractor") == [packed(MINIMAL), packed(FULL)]
-        # host_loop's frame: the native feed falls back, Python fills it.
+        ok, phasers, tractors = _native_feed(ships, bs.ship_instances)
+        assert ok
+        assert (phasers, tractors) == want
+        skips = nc.beam_feed_counts()["skips"]
+        assert skips["frames"] >= 1, skips
+        assert sum(skips.values()) == skips["frames"], skips
+        # host_loop's frame is the native one: nothing falls back to Python.
+        _h.set_phaser_beams([FULL])
+        _h.set_tractor_beams([MINIMAL, FULL])
         host_loop._push_combat_render_data(
             ships, ship_instances=bs.ship_instances, player=bs.player)
-        assert nc.beam_feed_fallbacks == 2
-        pushed = (_beams("phaser"), _beams("tractor"))
-        want = _python_feed(ships, bs.ship_instances)
-        assert want[0], "premise: other ships' phasers still draw"
-        assert pushed == want
+        assert (_beams("phaser"), _beams("tractor")) == want
+        assert nc.beam_feed_counts()["native"] == 2
     finally:
         _h.set_phaser_beams([])
         _h.set_tractor_beams([])
@@ -511,43 +513,42 @@ def test_a_patched_getter_is_not_honoured(beam_scene, monkeypatch):
         "premise: the Python builder honours the patch"
     ok, phasers, tractors = _native_feed(bs.ships, bs.ship_instances, want)
     assert ok
-    assert nc.beam_feed_fallbacks == 0
+    assert not any(nc.beam_feed_counts()["skips"].values())
     # The mirrored widths, not the patched getter's.
     assert (phasers, tractors) == want
 
 
 # ── Counters: did the native feed run every frame? ──────────────────────────
 
-def test_the_feed_counts_native_frames_fallbacks_and_stand_downs(
-        beam_scene, monkeypatch):
+def test_the_feed_counts_native_frames_and_skips(beam_scene, monkeypatch):
     import types
     from engine.core.tracked_instances import TrackedInstances
     bs = beam_scene
-    assert nc.beam_feed_counts() == {
-        "native": 0, "fallbacks": 0,
-        "stand_downs": {"off": 0, "audit": 0, "unsnapped": 0,
-                        "instances": 0, "no_host": 0}}
+    zero = dict.fromkeys(nc._BEAM_SKIPS, 0)
+    assert nc.beam_feed_counts() == {"native": 0, "skips": zero}
     assert type(bs.ship_instances) is TrackedInstances
+    want = _python_feed(bs.ships, bs.ship_instances)
+    assert want[0], "premise: phasers draw"
     assert nc.beam_feed(bs.ships, bs.ship_instances) is True
-    assert nc.beam_feed(bs.ships, bs.ship_instances) is True
-    # A ship with no row: the mirror cannot answer.
-    assert nc.beam_feed(bs.ships + [types.SimpleNamespace()],
-                        bs.ship_instances) is False
-    # A plain dict: not the session's TrackedInstances.
-    assert nc.beam_feed(bs.ships, dict(bs.ship_instances.items())) is False
+    # A ship with no row: skipped in each walk, every other pair drawn.
+    ok, phasers, tractors = _native_feed(
+        bs.ships + [types.SimpleNamespace()], bs.ship_instances)
+    assert ok and (phasers, tractors) == want
+    # A plain dict, not the session's TrackedInstances: native, the same.
+    ok, phasers, tractors = _native_feed(
+        bs.ships, dict(bs.ship_instances.items()))
+    assert ok and (phasers, tractors) == want
+    # ... and back to the TrackedInstances: its table is sent again.
+    ok, phasers, tractors = _native_feed(bs.ships, bs.ship_instances)
+    assert ok and (phasers, tractors) == want
+    # The switch off: native too.
     monkeypatch.setattr(nc, "_switch", False)
-    assert nc.beam_feed(bs.ships, bs.ship_instances) is False
-    c = nc.beam_feed_counts()
-    assert c["native"] == 2 and c["fallbacks"] == 1, c
-    assert c["stand_downs"] == {"off": 1, "audit": 0, "unsnapped": 0,
-                                "instances": 1, "no_host": 0}, c
-    assert nc.beam_feed_fallbacks == 1
-    nc.reset()
+    ok, phasers, tractors = _native_feed(bs.ships, bs.ship_instances)
+    assert ok and (phasers, tractors) == want
     assert nc.beam_feed_counts() == {
-        "native": 0, "fallbacks": 0,
-        "stand_downs": dict.fromkeys(
-            ("off", "audit", "unsnapped", "instances", "no_host"), 0)}
-    assert nc.beam_feed_fallbacks == 0
+        "native": 5, "skips": dict(zero, ship_row=2)}
+    nc.reset()
+    assert nc.beam_feed_counts() == {"native": 0, "skips": zero}
 
 
 # ── Render goldens (phase 6 follow-up 4, Task 1) ────────────────────────────

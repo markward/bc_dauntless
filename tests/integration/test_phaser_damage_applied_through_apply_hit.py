@@ -129,6 +129,13 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red, monkeypatch
     assert hp.z == pytest.approx(SURFACE_POINT[2])
 
 
+@pytest.mark.skip(reason=(
+    "phase 6 follow-up 4, Task 3 deletes it: it drives the Python beam "
+    "builder through a patched native_combat.beam_feed and a faked "
+    "host_io.ray_trace_mesh. The beam feed is native only now and traces "
+    "through the renderer itself (a fake trace cannot reach it); the native "
+    "hull-trace endpoint is pinned bit for bit by the beam_scene render "
+    "golden (tests/host/test_native_beam_feed.py)."))
 def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red, monkeypatch):
     """The rendered phaser beam endpoint is clipped to the mesh-trace
     surface point so the visible beam ends on the hull, not at the

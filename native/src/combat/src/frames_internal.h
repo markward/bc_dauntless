@@ -5,9 +5,10 @@
 // library; included only AFTER the including source's
 // `#pragma clang fp contract(off)`.
 //
-// Every helper throws std::invalid_argument ("answer in Python") where the
+// Every helper throws FramesUnanswerable (a std::invalid_argument) where the
 // table cannot answer as frames.py would: a set handle with no live Set row,
-// or a set missing from the table. -1 is Python's None.
+// or a set missing from the table. The feeds skip that item (counted
+// "frames"). -1 is Python's None.
 
 #include <optional>
 #include <stdexcept>
@@ -19,19 +20,22 @@
 
 namespace dauntless::combat::detail {
 
-[[noreturn]] inline void frames_fall_back(const char* why) {
-    throw std::invalid_argument(std::string("combat frames: ") + why +
-                                " -- answer in Python");
+struct FramesUnanswerable : std::invalid_argument {
+    using std::invalid_argument::invalid_argument;
+};
+
+[[noreturn]] inline void frames_unanswerable(const char* why) {
+    throw FramesUnanswerable(std::string("combat frames: ") + why);
 }
 
 // frame_of(pSet): None for a non-set; else the set's entry in the table.
 inline const BeamFrame* frame_of(const Mirror& m, const FrameTable& frames,
                                  int64_t s) {
     if (s == -1) return nullptr;
-    if (s < 0 || !m.set(s)) frames_fall_back("set handle unnamed");
+    if (s < 0 || !m.set(s)) frames_unanswerable("set handle unnamed");
     const auto it = frames.find(s);
     if (it == frames.end())
-        frames_fall_back("set missing from the frames table");
+        frames_unanswerable("set missing from the frames table");
     return &it->second;
 }
 
@@ -43,7 +47,7 @@ inline std::optional<Vec3> offset_between(const Mirror& m,
                                           int64_t b) {
     if (a == b) {
         if (a == -1) return std::nullopt;
-        if (a < 0 || !m.set(a)) frames_fall_back("set handle unnamed");
+        if (a < 0 || !m.set(a)) frames_unanswerable("set handle unnamed");
         return Vec3{0.0, 0.0, 0.0};
     }
     const BeamFrame* fa = frame_of(m, frames, a);

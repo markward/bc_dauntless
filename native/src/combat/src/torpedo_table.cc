@@ -180,4 +180,10 @@ void TorpedoTable::set_visual(int64_t h, const TorpedoVisual& v) {
     r.visual_set = true;
 }
 
+void TorpedoTable::clear_visual(int64_t h) {
+    TorpedoRow& r = checked(h);
+    r.visual = TorpedoVisual{};
+    r.visual_set = false;
+}
+
 }  // namespace dauntless::combat

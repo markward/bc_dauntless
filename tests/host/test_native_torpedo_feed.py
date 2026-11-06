@@ -412,7 +412,7 @@ def _native_feed(scene, want=None, want_torp_lights=None):
     that skipped an assignment reads back the sentinel, never the Python
     frame pushed before it. With `want` (the _python_feed pair) the
     bindings' own counts must equal its lengths, and the torpedo-light count
-    the Python builder's (`want_torp_lights`)."""
+    the Python builder's (`want_torp_lights`), with nothing skipped."""
     _h.set_torpedoes([SENTINEL_T])
     _h.set_dynamic_lights([SENTINEL_L, SENTINEL_L])
     returned = {"feed": [], "lights": []}
@@ -437,7 +437,9 @@ def _native_feed(scene, want=None, want_torp_lights=None):
         _h.combat_torpedo_feed = feed
         _h.set_dynamic_lights_budgeted = budgeted
     if ok and want is not None:
-        assert returned["feed"] == [(len(want[0]), want_torp_lights)], returned
+        # (n_torpedoes, n_torpedo_lights, {skip reason: count}).
+        assert returned["feed"] == [(len(want[0]), want_torp_lights, {})], \
+            returned
         assert returned["lights"] == [len(want[1])], returned
     return ok, _torps(), _lights()
 
@@ -525,80 +527,98 @@ def test_native_torpedo_feed_equals_python_every_frame(busy_torpedo_scene,
             cov.counts["expired"] += 1
         before = len(want[0])
         ok, torps, lights = _native_feed(ts, want, n_torp_lights)
-        assert ok, "frame %d: the native feed fell back" % k
+        assert ok, "frame %d: the native feed pushed nothing" % k
         assert torps == want[0], "frame %d: torpedoes differ" % k
         assert lights == want[1], "frame %d: lights differ" % k
     c = cov.counts
     print("\ntorpedo feed coverage over %d frames: %r" % (c["frames"], c))
     assert c["frames"] == 300, c
     assert nc.torpedo_feed_counts()["native"] == 300
-    assert nc.torpedo_feed_fallbacks == 0
+    assert _no_skips(), nc.torpedo_feed_counts()
     for case in c:
         assert c[case] > 0, "no frame had %s: %r" % (case, c)
     assert c["spill"] > c["capped"], "premise: spill frames below the cap"
     assert all(t not in projectiles._active for t in ts.expiring)
 
 
-def test_a_throw_leaves_no_partial_feed_and_python_fills_the_frame(
-        torpedo_scene):
+def _no_skips():
+    """No torpedo skipped by either feed since the last count reset."""
+    return (not any(nc.torpedo_feed_counts()["skips"].values())
+            and not any(nc.beam_feed_counts()["skips"].values()))
+
+
+def _drop_from_frames(monkeypatch, pset):
+    """`pset` left out of the frames table the feeds are sent."""
+    gone = nc._slot_of(pset)
+    table = nc._beam_frames
+
+    def without(*a, **k):
+        t = table(*a, **k)
+        assert gone in t, "premise: the set is in the table"
+        del t[gone]
+        return t
+
+    monkeypatch.setattr(nc, "_beam_frames", without)
+
+
+def test_a_skipped_torpedo_drops_only_itself_and_its_light(torpedo_scene,
+                                                          monkeypatch):
+    """The far torpedo's set left out of the frames table: the feed cannot
+    tell which frame it is in, so that one torpedo is skipped (counted
+    "frames") and every other torpedo and light is drawn -- here exactly
+    the Python frame, which draws nothing of a set in another frame."""
     from engine import host_loop
-    from engine.appc import projectiles
     ts = torpedo_scene
-    # A torpedo with no model, registered LAST: the rows before it have been
-    # built into the native locals when its missing record throws, so a
-    # partial build really is discarded.
-    here = ts.player.GetWorldLocation()
-    bare = TorpedoScene._launch(projectiles.Torpedo(), "Bare",
-                                (here.x, here.y, here.z + 30.0),
-                                (0.0, 0.0, 0.0), ts.scene.set)
-    assert bare.__dict__.get("_vis_native") is None
-    assert projectiles._active[-1] is bare
+    want = _python_feed(ts)
+    assert len(want[0]) == 3 and want[1], "premise: three in view, lit"
+    _drop_from_frames(monkeypatch, ts.far_set)
+    nc.reset_torpedo_feed_counts()
+    ok, torps, lights = _native_feed(ts)
+    assert ok
+    assert (torps, lights) == want
+    assert nc.torpedo_feed_counts()["skips"] == dict(
+        dict.fromkeys(nc._TORP_SKIPS, 0), frames=1)
+    # host_loop's frame is the native one: nothing falls back to Python.
     _h.set_torpedoes([SENTINEL_T])
     _h.set_dynamic_lights([SENTINEL_L])
-    sentinel = (_torps(), _lights())
     try:
-        assert nc.torpedo_feed(ts.ship_instances, ts.ship_emitters,
-                               ts.player) is False
-        assert nc.torpedo_feed_fallbacks == 1
-        assert nc.torpedo_feed_counts()["fallbacks"]["no_visual"] == 1
-        # Neither vector was touched: no partial frame, and no torpedo light
-        # list is left pending for a later blend.
-        assert (_torps(), _lights()) == sentinel
-        with pytest.raises(ValueError):
-            _h.set_dynamic_lights_budgeted([], [], (64, 10, 10, 40))
-        # host_loop's frame: the native feed falls back, Python fills it.
         host_loop._push_combat_render_data(
             ts.ships, ship_instances=ts.ship_instances,
             ship_emitters=ts.ship_emitters, player=ts.player)
-        assert nc.torpedo_feed_fallbacks == 2
-        pushed = (_torps(), _lights())
-        want = _python_feed(ts)
-        assert len(want[0]) == 4, "premise: the bare torpedo draws in Python"
-        assert pushed == want
+        assert (_torps(), _lights()) == want
+        c = nc.torpedo_feed_counts()
+        assert c["native"] == 2 and c["skips"]["frames"] == 2, c
     finally:
         _h.set_torpedoes([])
         _h.set_dynamic_lights([])
 
 
-def test_torpedo_feed_counts_reach_the_profiler_report(torpedo_scene,
-                                                       monkeypatch):
+def test_skip_counts_reach_the_profiler_line(torpedo_scene, monkeypatch):
+    import types
     from engine import host_io
     from engine.core import frame_profiler as fp
     ts = torpedo_scene
     nc.reset_torpedo_feed_counts()
+    nc.reset_beam_feed_counts()
     args = (ts.ship_instances, ts.ship_emitters, ts.player)
     assert nc.torpedo_feed(*args) is True
-    assert nc.torpedo_feed(*args) is True
+    # The switch off no longer stands the feed down.
     monkeypatch.setattr(nc, "_switch", False)
-    assert nc.torpedo_feed(*args) is False
+    assert nc.torpedo_feed(*args) is True
     monkeypatch.setattr(nc, "_switch", True)
-    monkeypatch.setattr(nc, "_beam_frames", lambda: {})   # no set framed
-    assert nc.torpedo_feed(*args) is False
-    c = nc.torpedo_feed_counts()
-    assert c == {"native": 2,
-                 "fallbacks": {"no_visual": 0, "dirty": 0, "unanswerable": 1},
-                 "stand_downs": {"off": 1, "audit": 0, "no_host": 0,
-                                 "plain_active": 0}}, c
+    # The far set unframed: its torpedo is one skip, the rest is drawn.
+    _drop_from_frames(monkeypatch, ts.far_set)
+    assert nc.torpedo_feed(*args) is True
+    assert len(_torps()) == 3
+    # A "ship" with no row: one skip in each beam walk.
+    assert nc.beam_feed(ts.ships + [types.SimpleNamespace()],
+                        ts.ship_instances) is True
+    assert nc.torpedo_feed_counts() == {
+        "native": 3,
+        "skips": dict(dict.fromkeys(nc._TORP_SKIPS, 0), frames=1)}
+    assert nc.beam_feed_counts() == {
+        "native": 1,
+        "skips": dict(dict.fromkeys(nc._BEAM_SKIPS, 0), ship_row=2)}
     monkeypatch.setattr(host_io, "profiler_scopes", lambda: [])
     monkeypatch.setattr(
         host_io, "profiler_frame",
@@ -606,14 +626,60 @@ def test_torpedo_feed_counts_reach_the_profiler_report(torpedo_scene,
     fp.set_enabled(True, native=False)
     try:
         fp.begin_frame(); fp.mark("p"); fp.end_frame()
-        lines = [ln for ln in fp.report_lines() if "torpedo feed" in ln]
+        lines = [ln for ln in fp.report_lines() if " feed: " in ln]
     finally:
         fp.set_enabled(False)
-    assert lines == ["  torpedo feed: native 2, fallbacks 1 (no_visual 0, "
-                     "dirty 0, unanswerable 1), stand-downs off 1, audit 0, "
-                     "no_host 0, plain_active 0"]
+    assert lines == ["  beam feed: native 1, skipped 2 (ship_row 2)",
+                     "  torpedo feed: native 3, skipped 1 (frames 1)"]
     nc.reset()
     assert nc.torpedo_feed_counts()["native"] == 0
+    assert nc.beam_feed_counts()["native"] == 0
+
+
+def test_a_torpedo_without_create_model_draws_the_default_record(
+        torpedo_scene):
+    """A torpedo no Create*Model ever ran on carries the default visual
+    record from Torpedo.__init__ (the record its own defaults make), pushed
+    at row-add, and draws natively, as Python draws it: white, sizeless,
+    untextured, lit by nothing (a zero glow radius). Create*Model replaces
+    the record."""
+    from engine import host_loop
+    from engine.appc import projectiles
+    ts = torpedo_scene
+    bare = projectiles.Torpedo()
+    default = nc._torp_visual_record(bare)
+    assert bare.__dict__.get("_vis_native") == default
+    here = ts.player.GetWorldLocation()
+    TorpedoScene._launch(bare, "Bare", (here.x, here.y, here.z + 30.0),
+                         (0.0, 0.0, 0.0), ts.scene.set)
+    assert bare.__dict__.get("_k3_row") is not None
+    nc.reset_torpedo_feed_counts()
+    want = _python_feed(ts)
+    assert len(want[0]) == 4
+    ok, torps, lights = _native_feed(ts)
+    assert ok and _no_skips(), nc.torpedo_feed_counts()
+    assert (torps, lights) == want
+    row = next(r for r in _h.torpedoes_debug() if r[16] == bare._id)
+    b = host_loop.TORPEDO_BRIGHTNESS
+    f32 = lambda x: struct.unpack("<f", struct.pack("<f", x))[0]  # noqa: E731
+    assert row[1] == row[5] == row[10] == ""
+    assert tuple(row[2]) == (f32(b), f32(b), f32(b), 1.0)
+    assert (row[3], row[4], row[7], row[8], row[9], row[12]) == (
+        0.0, 0.0, 0.0, 0.0, 0.0, 0)
+    assert row[17] is False
+    # Create*Model replaces the record (and the row's copy).
+    col = __import__("App").TGColorA()
+    col.SetRGBA(0.5, 0.25, 1.0, 1.0)
+    bare.CreateTorpedoModel(
+        "data/Textures/Tactical/PhotonCore.tga", col, 0.2, 1.2,
+        "data/Textures/Tactical/PhotonGlow.tga", col, 3.0, 0.3, 0.6,
+        "data/Textures/Tactical/PhotonFlares.tga", col, 8, 0.7, 0.4)
+    assert bare.__dict__["_vis_native"] != default
+    want = _python_feed(ts)
+    ok, torps, lights = _native_feed(ts)
+    assert (torps, lights) == want
+    row = next(r for r in _h.torpedoes_debug() if r[16] == bare._id)
+    assert row[12] == 8 and row[1].endswith("PhotonCore.tga")
 
 
 def test_a_pending_torpedo_light_list_is_blended_once(torpedo_scene):
@@ -671,7 +737,7 @@ def test_the_knobs_are_read_per_call(busy_torpedo_scene, monkeypatch):
     assert t0 != t1 and l0 != l1
     assert n1 < n0                       # the shorter cull drops lights
     assert len(l1) <= 40
-    assert nc.torpedo_feed_fallbacks == 0
+    assert _no_skips()
 
 
 # ── Render goldens (phase 6 follow-up 4, Task 1) ────────────────────────────
@@ -780,9 +846,11 @@ KNOBS = {"TORPEDO_BRIGHTNESS": 0.7, "_TORPEDO_LIGHT_RADIUS_SCALE": 20.0,
 #   BARE (frames 50-59): a torpedo registered without CreateTorpedoModel /
 #     CreateDisruptorModel.
 #
-# Today's native feeds hand exactly those frames back to Python, so they
-# differ from the golden (EXPECTED_NATIVE_DIFFS); phase 6 follow-up 4 Task 2
-# answers them natively and makes the expectation "no differing frames".
+# Task 1 recorded these frames from the Python builders, while the native
+# feeds of the day handed exactly those frames back to Python. They now
+# answer every case natively: no frame differs, under the switch on, off
+# (DAUNTLESS_NATIVE_COMBAT=0: K2 and K3 run their Python copies, the feeds
+# stay native) and the audit.
 
 NON_SHIP = range(10, 30)
 LATE_BUMP = 40
@@ -790,16 +858,21 @@ POSE_AT = 30
 BARE_FROM = 50
 EDGE_FRAMES = 60
 BOP, BOP_FIRER = "Enemy-4", "Friend-1"
-EXPECTED_NATIVE_DIFFS = (list(NON_SHIP) + [LATE_BUMP]
-                         + list(range(BARE_FROM, EDGE_FRAMES)))
+OFF_ENV = {"DAUNTLESS_NATIVE_COMBAT": "0"}
+AUDIT_ENV = {"DAUNTLESS_NATIVE_AUDIT": "1"}
 
 
-@pytest.fixture
-def edge_scene(monkeypatch, host):
+def _edge_fixture(monkeypatch, host, env=None):
+    """The edge scene, the switch set by `env` (None: on) BEFORE any of the
+    scene's projectiles exist or a shot is fired."""
     _first_torpedo_id(monkeypatch)
     scene = _Scene(monkeypatch, host, ON)
     ts = None
     try:
+        if env is not None:
+            nc.configure(env)
+            assert nc.enabled() is (env is AUDIT_ENV)
+            assert nc.audit_enabled() is (env is AUDIT_ENV)
         ts = TorpedoScene(scene)
         ts._open_fire()
         for _ in range(30):
@@ -811,12 +884,29 @@ def edge_scene(monkeypatch, host):
         scene.close()
 
 
+@pytest.fixture
+def edge_scene(monkeypatch, host):
+    yield from _edge_fixture(monkeypatch, host)
+
+
+@pytest.fixture
+def edge_scene_off(monkeypatch, host):
+    yield from _edge_fixture(monkeypatch, host, OFF_ENV)
+
+
+@pytest.fixture
+def edge_scene_audit(monkeypatch, host):
+    yield from _edge_fixture(monkeypatch, host, AUDIT_ENV)
+
+
 def _lit_at(system, target):
     return [b for b in system._children
             if b.__dict__.get("_firing") and b._target is target]
 
 
-def test_edge_cases_match_the_golden(edge_scene):
+def _edge_frames(ts):
+    """The edge scene's 60 frames (render_golden frames), every premise
+    asserted."""
     import App
     from engine.appc import articulation, part_pose, projectiles
     from engine.appc.objects import DamageableObject
@@ -824,7 +914,6 @@ def test_edge_cases_match_the_golden(edge_scene):
     from engine.appc.ship_iter import iter_ships
     from engine.appc import part_severance, physical_parents
     from engine.appc import subsystems as ss
-    ts = edge_scene
     sc = ts.scene
     shooter = next(s for s in ts.ships if s is not ts.player
                    and s.GetTractorBeamSystem() is not None
@@ -887,7 +976,10 @@ def test_edge_cases_match_the_golden(edge_scene):
             bare = TorpedoScene._launch(projectiles.Torpedo(), "Bare",
                                         (here.x, here.y, here.z + 30.0),
                                         (0.0, 0.0, 0.0), sc.set)
-            assert bare.__dict__.get("_vis_native") is None
+            # No Create*Model ran: the default record (Torpedo.__init__).
+            assert bare._core_texture == "" and bare._core_color is None
+            assert bare.__dict__.get("_vis_native") == \
+                nc._torp_visual_record(bare)
         ts.advance()
         if k in NON_SHIP:
             seen["non_ship_phaser"] += bool(
@@ -916,8 +1008,32 @@ def test_edge_cases_match_the_golden(edge_scene):
     assert seen == {"non_ship_phaser": len(NON_SHIP),
                     "non_ship_tractor": len(NON_SHIP), "posed_lock": 1,
                     "bare": EDGE_FRAMES - BARE_FROM}, seen
+    return frames
+
+
+def _check_edge_frames(ts):
+    nc.reset_torpedo_feed_counts()
+    nc.reset_beam_feed_counts()
+    frames = _edge_frames(ts)
     if render_golden.recording():
         render_golden.record("edge_cases", frames)
-    # Task 2: == [] (the native feeds answer every case).
-    assert render_golden.differing_frames("edge_cases", frames) == \
-        EXPECTED_NATIVE_DIFFS
+    assert render_golden.differing_frames("edge_cases", frames) == []
+    # Every frame built natively, nothing skipped.
+    assert nc.beam_feed_counts()["native"] == EDGE_FRAMES
+    assert nc.torpedo_feed_counts()["native"] == EDGE_FRAMES
+    assert _no_skips(), (nc.beam_feed_counts(), nc.torpedo_feed_counts())
+
+
+def test_edge_cases_match_the_golden(edge_scene):
+    _check_edge_frames(edge_scene)
+
+
+def test_feeds_draw_natively_with_native_combat_off(edge_scene_off):
+    assert not nc.enabled()
+    _check_edge_frames(edge_scene_off)
+
+
+def test_feeds_draw_natively_under_the_audit(edge_scene_audit):
+    assert nc.audit_enabled()
+    _check_edge_frames(edge_scene_audit)
+

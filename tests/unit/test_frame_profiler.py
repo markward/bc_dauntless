@@ -898,9 +898,10 @@ def test_hull_summary_never_raises(monkeypatch):
     assert fp.hull_summary() == "  hulls: unavailable"
 
 
-def test_the_report_says_whether_the_native_beam_feed_ran(monkeypatch):
-    """A perf capture must show from its log that the beam feed was native
-    every frame (and what stood it down when it was not)."""
+def test_the_report_says_whether_the_native_feeds_ran(monkeypatch):
+    """A perf capture must show from its log that the beam and torpedo feeds
+    were native every frame, and every item they skipped, by reason (only
+    the reasons that were counted)."""
     from engine import host_io
     from engine.appc import native_combat as nc
     monkeypatch.setattr(host_io, "profiler_scopes", lambda: [])
@@ -909,12 +910,15 @@ def test_the_report_says_whether_the_native_beam_feed_ran(monkeypatch):
         lambda: {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False},
     )
     monkeypatch.setattr(nc, "beam_feed_counts", lambda: {
-        "native": 118, "fallbacks": 2,
-        "stand_downs": {"off": 0, "audit": 0, "unsnapped": 0,
-                        "instances": 3, "no_host": 0}})
+        "native": 118,
+        "skips": dict(dict.fromkeys(nc._BEAM_SKIPS, 0), frames=2,
+                      part_stale=3)})
+    monkeypatch.setattr(nc, "torpedo_feed_counts", lambda: {
+        "native": 120, "skips": dict.fromkeys(nc._TORP_SKIPS, 0)})
     fp.set_enabled(True, native=False)
     fp.begin_frame(); fp.mark("p"); fp.end_frame()
 
-    lines = [ln for ln in fp.report_lines() if "beam feed" in ln]
-    assert lines == ["  beam feed: native 118, fallbacks 2, stand-downs "
-                     "off 0, audit 0, unsnapped 0, instances 3, no_host 0"]
+    lines = [ln for ln in fp.report_lines() if " feed: " in ln]
+    assert lines == [
+        "  beam feed: native 118, skipped 5 (frames 2, part_stale 3)",
+        "  torpedo feed: native 120, skipped 0"]

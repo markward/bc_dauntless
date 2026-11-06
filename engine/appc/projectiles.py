@@ -155,6 +155,11 @@ class Torpedo(ObjectClass):
         self._bolt_core_color = None
         self._bolt_length    = 0.0
         self._bolt_width     = 0.0
+        # The visual record those defaults make (what host_loop's builders
+        # drew for a torpedo no Create*Model ran on): every torpedo has one,
+        # pushed into its table row at row-add, so the native render feed
+        # always has a record to draw. Create*Model replaces it.
+        self.__dict__["_vis_native"] = _nc.DEFAULT_TORPEDO_VISUAL
 
     def CreateTorpedoModel(self,
             core_tex, core_color, core_a, core_b,
@@ -276,7 +281,7 @@ class Torpedo(ObjectClass):
         self._vel = v
         if self._scan_live == _scan_gen and not _scan_dirty:
             _scan_table().set_velocity(self.GetObjID(), v.x, v.y, v.z)
-        if _nc._switch:
+        if _nc._enabled:
             _nc.push_torpedo_field(self, "_velocity", v)
 
     @property
@@ -288,7 +293,7 @@ class Torpedo(ObjectClass):
         self._src = src
         if self._scan_live == _scan_gen and not _scan_dirty:
             _scan_table().set_source(self.GetObjID(), *_source_key(src))
-        if _nc._switch:
+        if _nc._enabled:
             _nc.push_torpedo_field(self, "_source_ship", src)
 
     @property
@@ -319,7 +324,7 @@ class Torpedo(ObjectClass):
         if old is not pSet and self._scan_live == _scan_gen and not _scan_dirty:
             _group_leave(old)
             _scan_table().set_group(self.GetObjID(), _group_join(pSet))
-        if _nc._switch:
+        if _nc._enabled:
             _nc.push_torpedo_field(self, "_containing_set", pSet)
 
     def GetVelocityTG(self) -> TGPoint3:

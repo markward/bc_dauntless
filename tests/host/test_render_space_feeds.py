@@ -145,29 +145,36 @@ def _torpedo(pSet, name, xyz):
     return t
 
 
-class _Bank:
-    def __init__(self, target):
-        self._target = target
-
-    def IsFiring(self):
-        return True
+def _colour(r, g, b):
+    c = App.TGColorA()
+    c.SetRGBA(r, g, b, 1.0)
+    return c
 
 
-class _System:
-    def __init__(self, ship):
-        self._ship = ship
-
-    def GetNumWeapons(self):
-        return 1
-
-    def GetWeapon(self, i):
-        return _Bank(self._ship)
-
-
-def _fake_pair(ship, bank, ship_instances):
-    p = ship.GetWorldLocation()
-    return [{"emitter": (p.x, p.y, p.z), "target": (p.x, p.y + 50.0, p.z),
-             "color": (1.0, 1.0, 1.0, 1.0), "width": 1.0}]
+def _arm(gunner, target):
+    """A real phaser bank and tractor emitter on `gunner`, both lit at
+    `target`: the native beam feed reads them from the mirror."""
+    from engine.appc.properties import (
+        PhaserProperty, TractorBeamProperty, WeaponSystemProperty)
+    from engine.appc.subsystems import (
+        PhaserBank, PhaserSystem, TractorBeam, TractorBeamSystem)
+    for sys_cls, bank_cls, prop_cls, attr, name in (
+            (PhaserSystem, PhaserBank, PhaserProperty, "_phaser_system",
+             "Phaser"),
+            (TractorBeamSystem, TractorBeam, TractorBeamProperty,
+             "_tractor_beam_system", "Tractor")):
+        bank = bank_cls(name)
+        prop = prop_cls(name)
+        prop.SetOuterShellColor(_colour(1.0, 0.5, 0.25))
+        prop.SetInnerCoreColor(_colour(0.25, 0.5, 1.0))
+        bank.SetProperty(prop)
+        bank._target = target
+        bank._firing = True
+        sys_ = sys_cls(name + "s")
+        sys_.SetProperty(WeaponSystemProperty(name + "s"))
+        sys_._parent_ship = gunner
+        setattr(gunner, attr, sys_)
+        sys_.AddChildSubsystem(bank)
 
 
 def _combat_feeds(pSet, player, monkeypatch):
@@ -188,9 +195,7 @@ def _combat_feeds(pSet, player, monkeypatch):
     c.AttachEffect(pSet.GetEffectRoot())
     particles.EffectAction_Create(c).Start()
     gunner = _ship(pSet, "Gunner", _plus(P, (-20.0, 0.0, 0.0)))
-    gunner.GetPhaserSystem = lambda: _System(gunner)
-    gunner.GetTractorBeamSystem = lambda: _System(gunner)
-    monkeypatch.setattr(host_loop, "_beam_descriptor_pair", _fake_pair)
+    _arm(gunner, player)
     return [player, gunner, dying]
 
 
@@ -198,38 +203,47 @@ def test_every_combat_feed_is_in_render_space(far_scene, monkeypatch):
     from engine.appc import particles, shockwaves
     pSet, player = far_scene
     ships = _combat_feeds(pSet, player, monkeypatch)
-    # The Python beam builders, so the patched _beam_descriptor_pair runs
-    # (the native feed reads the mirror and would not obey it).
+    # The torpedoes, the dynamic lights and both beam feeds are built
+    # natively and written into the render feeds (native_combat.torpedo_feed,
+    # beam_feed): read back from there. The rest goes through host_io.
     from engine.appc import native_combat
-    monkeypatch.setattr(native_combat, "beam_feed", lambda *a, **k: False)
-    # The Python torpedo builders too: this test reads what host_io pushes,
-    # and the native torpedo feed writes its vectors itself.
-    monkeypatch.setattr(native_combat, "torpedo_feed", lambda *a, **k: False)
+    native_combat.reset_torpedo_feed_counts()
+    native_combat.reset_beam_feed_counts()
     pushed = {}
-    for name in ("set_torpedoes", "set_dynamic_lights", "set_shockwaves",
-                 "set_hit_vfx", "set_particle_emitters", "set_phaser_beams",
-                 "set_tractor_beams"):
+    for name in ("set_shockwaves", "set_hit_vfx", "set_particle_emitters"):
         monkeypatch.setattr(host_io, name,
                             lambda lst, _n=name: pushed.__setitem__(_n, lst))
+    h = host_io._h
+    assert h is not None, "premise: the native host module"
     r = _Recorder()
     host_loop._note_camera_eye(EYE)
     host_loop._apply_render_origin(r, EYE)
     try:
         host_loop._push_combat_render_data(ships, ship_instances={},
                                            ship_emitters={}, player=player)
+        torps = h.torpedoes_debug()
+        lights = h.dynamic_lights_debug()
+        phasers = h.phaser_beams_debug()
+        tractors = h.tractor_beams_debug()
     finally:
         shockwaves.reset()
         particles.reset()
+        h.set_torpedoes([])
+        h.set_dynamic_lights([])
+        h.set_phaser_beams([])
+        h.set_tractor_beams([])
+    assert native_combat.torpedo_feed_counts()["native"] == 1
+    assert native_combat.beam_feed_counts()["native"] == 1
+    assert not any(native_combat.beam_feed_counts()["skips"].values())
+    assert not any(native_combat.torpedo_feed_counts()["skips"].values())
     positions = {
-        "set_torpedoes": [d["position"] for d in pushed["set_torpedoes"]],
-        "set_dynamic_lights": [d["position"] for d in pushed["set_dynamic_lights"]],
+        "set_torpedoes": [tuple(t[0]) for t in torps],
+        "set_dynamic_lights": [tuple(l[0]) for l in lights],
         "set_shockwaves": [d["world_center"] for d in pushed["set_shockwaves"]],
         "set_hit_vfx": [d["position"] for d in pushed["set_hit_vfx"]],
         "set_particle_emitters": [d["emit_pos"] for d in pushed["set_particle_emitters"]],
-        "set_phaser_beams": [p for d in pushed["set_phaser_beams"]
-                             for p in (d["emitter"], d["target"])],
-        "set_tractor_beams": [p for d in pushed["set_tractor_beams"]
-                              for p in (d["emitter"], d["target"])],
+        "set_phaser_beams": [p for b in phasers for p in (b[0:3], b[3:6])],
+        "set_tractor_beams": [p for b in tractors for p in (b[0:3], b[3:6])],
     }
     for feed, pts in positions.items():
         assert pts, f"premise: {feed} carried something"

@@ -1,7 +1,7 @@
 // The native torpedo descriptor + torpedo light feed (torpedo_feed.h) on
 // hand-built torpedo rows: the Python builders' dimming, forward, frame
-// shifts, camera fade and fallbacks, and _budgeted_dynamic_lights' slicing.
-// The native-vs-Python differential over a real host runs from
+// shifts, camera fade and counted skips, and _budgeted_dynamic_lights'
+// slicing. The native-vs-Python differential over a real host runs from
 // tests/host/test_native_torpedo_feed.py (phase 6 follow-up 1b, Task 3).
 #if defined(__clang__)
 #pragma clang fp contract(off)
@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -97,8 +98,22 @@ struct World {
         t.set_visual(h, vis ? *vis : pv);
         return h;
     }
-    void run() { build_torpedo_feed(m, ctx, torps, lights); }
+    TorpedoSkips skips{};
+    void run() { build_torpedo_feed(m, ctx, torps, lights, skips); }
+    int64_t skipped(TorpedoSkip w) const {
+        return skips[static_cast<size_t>(w)];
+    }
+    int64_t total_skipped() const {
+        int64_t n = 0;
+        for (const int64_t k : skips) n += k;
+        return n;
+    }
 };
+
+bool same(const TorpedoLightOut& a, const TorpedoLightOut& b) {
+    return a.position == b.position && a.color == b.color &&
+           a.radius == b.radius && a.intensity == b.intensity;
+}
 
 std::array<double, 4> dim(const std::array<double, 4>& c, double s) {
     return {c[0] * s, c[1] * s, c[2] * s, c[3]};
@@ -275,48 +290,106 @@ TEST(TorpedoFeed, NoViewDrawsNothing) {
     EXPECT_TRUE(w.lights.empty());
 }
 
-TEST(TorpedoFeed, MissingVisualThrows) {
-    World w;
-    w.torp({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
-    auto [i, g] = w.store.alloc();
-    const int64_t h = w.m.torpedoes().add(i, g);
-    w.m.torpedoes().set_v(h, TorpField::_velocity, true, {1.0, 0.0, 0.0});
-    w.m.set_torpedo_ref(h, TorpField::_containing_set, w.set);
-    EXPECT_THROW(w.run(), MissingVisual);
+TEST(TorpedoFeed, SkipReasonsHaveNames) {
+    const char* want[] = {"rows",           "unrepresentable", "no_visual",
+                          "transform",      "containing_set",  "frames",
+                          "c_int",          "error"};
+    ASSERT_EQ(std::size(want), static_cast<size_t>(TorpedoSkip::kCount));
+    for (size_t i = 0; i < std::size(want); ++i)
+        EXPECT_STREQ(torpedo_skip_name(static_cast<TorpedoSkip>(i)), want[i]);
 }
 
-TEST(TorpedoFeed, UnrepresentableRowThrows) {
-    for (TorpField f : {TorpField::_age, TorpField::_velocity,
-                        TorpField::_containing_set}) {
-        World w;
-        const int64_t h = w.torp({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
-        w.m.torpedoes().set_unrepresentable(h, f);
-        EXPECT_THROW(w.run(), std::invalid_argument) << torp_field_name(f);
-    }
-}
-
-TEST(TorpedoFeed, RowCountMustMatchTheActiveList) {
+TEST(TorpedoFeed, RowCountMismatchCountsTheEntriesWithNoRow) {
     World w;
     w.torp({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
-    w.ctx.expected_rows = 2;
-    EXPECT_THROW(w.run(), std::invalid_argument);
+    w.ctx.expected_rows = 3;
+    w.run();
+    EXPECT_EQ(w.torps.size(), 1u);  // every row still drawn
+    EXPECT_EQ(w.skipped(TorpedoSkip::Rows), 2);
+    EXPECT_EQ(w.total_skipped(), 2);
     w.ctx.expected_rows = 1;
-    EXPECT_NO_THROW(w.run());
+    w.run();
+    EXPECT_EQ(w.torps.size(), 1u);
+    EXPECT_EQ(w.total_skipped(), 0);  // reset per build
 }
 
-TEST(TorpedoFeed, SetMissingFromTheFramesThrows) {
-    World w;
-    const int64_t s = w.m.register_row(Kind::Set);  // not in ctx.frames
-    w.torp({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, s);
-    EXPECT_THROW(w.run(), std::invalid_argument);
-}
-
-TEST(TorpedoFeed, IdOutsideACIntThrows) {
-    World w;
-    TorpedoVisual pv = photon_visual();
-    pv.id = int64_t{1} << 31;
-    w.torp({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, -3, &pv);
-    EXPECT_THROW(w.run(), std::invalid_argument);
+// Every skip reason on hand-built rows: three torpedoes (A, B, C) in view,
+// each with its light; only B is broken, so the frame is A's and C's
+// descriptors and lights exactly as built without the break, and the one
+// reason is counted. ("error" has no row state that raises it.)
+TEST(TorpedoFeed, SkippedItemDropsOnlyItself) {
+    struct Case {
+        const char* name;
+        TorpedoSkip why;
+        std::optional<TorpField> field;
+    };
+    const Case cases[] = {
+        {"unrepresentable _age", TorpedoSkip::Unrepresentable, TorpField::_age},
+        {"unrepresentable _velocity", TorpedoSkip::Unrepresentable,
+         TorpField::_velocity},
+        {"unrepresentable _containing_set", TorpedoSkip::Unrepresentable,
+         TorpField::_containing_set},
+        {"no_visual", TorpedoSkip::NoVisual, std::nullopt},
+        {"transform", TorpedoSkip::Transform, std::nullopt},
+        {"containing_set", TorpedoSkip::ContainingSet, std::nullopt},
+        {"frames", TorpedoSkip::Frames, std::nullopt},
+        {"c_int", TorpedoSkip::CInt, std::nullopt},
+    };
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.name);
+        World w;
+        w.ctx.expected_rows = 3;
+        TorpedoVisual pv = photon_visual();
+        if (c.why == TorpedoSkip::CInt) pv.id = int64_t{1} << 31;
+        int64_t gone_set = -3;
+        if (c.why == TorpedoSkip::ContainingSet)
+            gone_set = w.add_set(1, {0.0, 0.0, 0.0});
+        if (c.why == TorpedoSkip::Frames)
+            gone_set = w.m.register_row(Kind::Set);  // not in ctx.frames
+        w.torp({1.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
+        int64_t b = -1;
+        if (c.why == TorpedoSkip::NoVisual) {
+            auto [i, g] = w.store.alloc();
+            b = w.m.torpedoes().add(i, g);
+            w.m.torpedoes().set_v(b, TorpField::_velocity, true,
+                                  {1.0, 0.0, 0.0});
+            w.m.set_torpedo_ref(b, TorpField::_containing_set, w.set);
+        } else {
+            b = w.torp({2.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, gone_set, &pv);
+        }
+        w.torp({3.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
+        // The frame without B: A and C built alone.
+        World clean;
+        clean.torp({1.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
+        clean.torp({3.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
+        clean.run();
+        ASSERT_EQ(clean.torps.size(), 2u);
+        ASSERT_EQ(clean.lights.size(), 2u);
+        if (c.field) w.m.torpedoes().set_unrepresentable(b, *c.field);
+        if (c.why == TorpedoSkip::Transform) {
+            // B's store slot freed under it.
+            const auto& rows = w.m.torpedoes().rows();
+            const TorpedoRow& rb = rows[1];
+            w.store.free(static_cast<uint32_t>(rb.xform_index),
+                         static_cast<uint32_t>(rb.xform_gen));
+        }
+        if (c.why == TorpedoSkip::ContainingSet) w.m.unregister_row(gone_set);
+        w.run();
+        ASSERT_EQ(w.torps.size(), 2u);
+        ASSERT_EQ(w.lights.size(), 2u);
+        for (size_t k = 0; k < 2; ++k) {
+            EXPECT_EQ(w.torps[k].position, clean.torps[k].position);
+            EXPECT_EQ(w.torps[k].core_color, clean.torps[k].core_color);
+            EXPECT_EQ(w.torps[k].glow_color, clean.torps[k].glow_color);
+            EXPECT_EQ(w.torps[k].flares_color, clean.torps[k].flares_color);
+            EXPECT_EQ(w.torps[k].forward, clean.torps[k].forward);
+            EXPECT_EQ(w.torps[k].age, clean.torps[k].age);
+            EXPECT_EQ(w.torps[k].visual->id, clean.torps[k].visual->id);
+            EXPECT_TRUE(same(w.lights[k], clean.lights[k]));
+        }
+        EXPECT_EQ(w.skipped(c.why), 1);
+        EXPECT_EQ(w.total_skipped(), 1);
+    }
 }
 
 TEST(TorpedoFeed, DroppedRowsAreSkipped) {

@@ -689,33 +689,37 @@ def report_lines() -> list[str]:
     return lines
 
 
+def _feed_line(name, c) -> str:
+    """`  <name> feed: native N, skipped K (reason n, ...)`: the frames the
+    feed built natively and the items it skipped, with only the reasons
+    that were counted."""
+    skips = c["skips"]
+    line = "  %s feed: native %d, skipped %d" % (name, c["native"],
+                                                 sum(skips.values()))
+    counted = ["%s %d" % kv for kv in skips.items() if kv[1]]
+    if counted:
+        line += " (%s)" % ", ".join(counted)
+    return line
+
+
 def _beam_feed_lines() -> list[str]:
     """Whether the native beam feed built the frames (native_combat.
-    beam_feed_counts, since its last reset): a capture's log must show it ran
-    every frame, or what stood it down. Nothing when the module cannot say."""
+    beam_feed_counts, since its last reset), and every item it skipped, by
+    reason: a capture's log must show it. Nothing when the module cannot
+    say."""
     try:
         from engine.appc import native_combat
-        c = native_combat.beam_feed_counts()
-        sd = c["stand_downs"]
-        return ["  beam feed: native %d, fallbacks %d, stand-downs %s"
-                % (c["native"], c["fallbacks"],
-                   ", ".join("%s %d" % kv for kv in sd.items()))]
+        return [_feed_line("beam", native_combat.beam_feed_counts())]
     except Exception:
         return []
 
 
 def _torpedo_feed_lines() -> list[str]:
-    """Whether the native torpedo feed built the frames (native_combat.
-    torpedo_feed_counts, since its last reset), its fall-backs by why and
-    its stand-downs. Nothing when the module cannot say."""
+    """As _beam_feed_lines, for the native torpedo feed (native_combat.
+    torpedo_feed_counts)."""
     try:
         from engine.appc import native_combat
-        c = native_combat.torpedo_feed_counts()
-        fb, sd = c["fallbacks"], c["stand_downs"]
-        return ["  torpedo feed: native %d, fallbacks %d (%s), stand-downs %s"
-                % (c["native"], sum(fb.values()),
-                   ", ".join("%s %d" % kv for kv in fb.items()),
-                   ", ".join("%s %d" % kv for kv in sd.items()))]
+        return [_feed_line("torpedo", native_combat.torpedo_feed_counts())]
     except Exception:
         return []
 

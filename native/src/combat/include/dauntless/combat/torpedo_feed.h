@@ -18,7 +18,8 @@
 // _build_torpedo_render_data and _build_dynamic_light_render_data (with
 // _torpedo_colors, _dim_color, _torpedo_forward and _camera_distance_fade),
 // reading the K3 torpedo table (torpedo_table.h) and each row's visual record
-// (TorpedoVisual, pushed once at Create*Model). Positions are the rows'
+// (TorpedoVisual: Torpedo.__init__'s default, pushed at row-add, replaced at
+// Create*Model). Positions are the rows'
 // TransformStore slots (GetTranslate: the live store, never a published
 // pose); the frames.py helpers are frames_internal.h's, shared with the beam
 // feed. Every float is the Python's: double, the same operand order, `** 0.5`
@@ -60,25 +61,46 @@ struct TorpedoLightOut {
     double radius = 0.0, intensity = 0.0;
 };
 
-// A live row with no visual record (its model never pushed one): the feed
-// cannot answer. Counted apart from the other fall-backs.
-struct MissingVisual : std::invalid_argument {
-    using std::invalid_argument::invalid_argument;
+// Why the feed skipped an item (phase 6 follow-up 4: no Python fallback).
+// An item is one torpedo: its descriptor AND its light. The reasons:
+//   Rows             entries of projectiles._active with no live row (the
+//                    count is the difference from ctx.expected_rows)
+//   Unrepresentable  a row whose _age / _velocity / _containing_set the row
+//                    could not hold
+//   NoVisual         a row with no visual record (every Torpedo has one
+//                    from Torpedo.__init__; Create*Model replaces it)
+//   Transform        a dead or missing transform slot
+//   ContainingSet    a _containing_set ref whose row is gone
+//   Frames           a set missing from ctx.frames, or a set handle unnamed
+//   CInt             num_flares or id outside a C int (set_torpedoes' cast)
+//   Error            any other exception (none is known to be reachable)
+enum class TorpedoSkip : int {
+    Rows,
+    Unrepresentable,
+    NoVisual,
+    Transform,
+    ContainingSet,
+    Frames,
+    CInt,
+    Error,
+    kCount
 };
+const char* torpedo_skip_name(TorpedoSkip w);
+using TorpedoSkips =
+    std::array<int64_t, static_cast<size_t>(TorpedoSkip::kCount)>;
 
 // The descriptors into `torps` and the torpedo lights into `lights` (both
 // cleared first), each in table (= projectiles._active) order. No view: both
 // empty, nothing checked.
 //
-// Throws std::invalid_argument wherever the table cannot answer as the
-// Python would: a row count that is not ctx.expected_rows, a row with an
-// unrepresentable `_age` / `_velocity` / `_containing_set` (or a stale set
-// ref), a dead transform slot, a set missing from ctx.frames, a num_flares or
-// id outside a C int (set_torpedoes' cast); MissingVisual for a row with no
-// visual record. The outputs are then partial: the caller discards both.
+// Never throws for what the table holds: wherever it cannot answer as the
+// Python would, that one torpedo (descriptor and light) is skipped and
+// counted in `skips` (zeroed first), and every other torpedo is built. A
+// torpedo is appended only once it is whole.
 void build_torpedo_feed(const Mirror& m, const TorpedoFeedCtx& ctx,
                         std::vector<TorpedoOut>& torps,
-                        std::vector<TorpedoLightOut>& lights);
+                        std::vector<TorpedoLightOut>& lights,
+                        TorpedoSkips& skips);
 
 // _budgeted_dynamic_lights' blend: _LIGHT_CAP and the three budgets.
 struct LightBudget {
