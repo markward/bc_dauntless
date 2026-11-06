@@ -3149,6 +3149,16 @@ from engine.cameras.dof import FocusSolver as _DofFocusSolver
 _focus_solver = _DofFocusSolver()
 
 
+def _drop_motion_vel(ship) -> None:
+    """Drop the motion law's velocity vector (``_motion_vel``) of a ship
+    something other than the law is moving, so the law re-seeds it along the
+    nose when it next flies the ship. Through the descriptor, so kernel M's
+    mirror drops it too; written only when one stands, so a long warp burst
+    or dash pushes once."""
+    if ship.__dict__.get("_motion_vel") is not None:
+        ship._motion_vel = None
+
+
 class _PlayerControl:
     """Keyboard-driven ship-transform integrator.
 
@@ -3388,10 +3398,21 @@ class _PlayerControl:
         velocity projected onto ship-forward (manual flight is always along
         facing); angular rates map through the yaw/roll negation (see the
         section comment above). The AI's setpoints are cleared so
-        _step_ship_motion disengages and stops double-driving the ship."""
-        fwd = player.GetWorldRotation().GetCol(1)
-        v = player.GetVelocity()
-        self._current_speed = v.x * fwd.x + v.y * fwd.y + v.z * fwd.z
+        _step_ship_motion disengages and stops double-driving the ship.
+
+        While the motion law's vector (``_motion_vel``) stands, the speed is
+        ITS speed, ``[3]``, so the helm's next step_vector_velocity trusts
+        the vector (the re-seed contract): a ship taken over mid-turn keeps
+        its course lag instead of snapping onto the nose at |v| cos(lag).
+        With no vector (never stepped, or dropped by a warp or a dash) it is
+        the published velocity on the nose, as before the motion law."""
+        mv = player.__dict__.get("_motion_vel")
+        if type(mv) is tuple and len(mv) == 4:
+            self._current_speed = mv[3]
+        else:
+            fwd = player.GetWorldRotation().GetCol(1)
+            v = player.GetVelocity()
+            self._current_speed = v.x * fwd.x + v.y * fwd.y + v.z * fwd.z
         cav = getattr(player, "_current_angular_velocity", None)
         if cav is not None:
             self._current_pitch_rate = cav.x
@@ -3440,8 +3461,14 @@ class _PlayerControl:
         # (ship_motion._no_thrust): the motion stage writes nothing for the
         # setpoint-less player, so the helm's last law step would otherwise
         # stand in GetAccelerationTG (FireScript's 0.5*a*t^2 lead).
+        #
+        # The same exits drop the law's velocity vector (_drop_motion_vel):
+        # the warp burst and a dash move the ship on their own, so the vector
+        # would still hold the course flown before them, at a speed nothing
+        # rewrote (the re-seed contract, ship_motion.step_vector_velocity).
         if self._warp_speed_override is not None:
             _no_thrust(player)
+            _drop_motion_vel(player)
             s = float(self._warp_speed_override)
             self._current_speed = s
             if s != 0.0:
@@ -3458,6 +3485,7 @@ class _PlayerControl:
         from engine.appc import dash
         if dash.is_dashing(player):
             _no_thrust(player)
+            _drop_motion_vel(player)
             self._dash_owned = True
             self._manual_throttle_nudge = False
             if h.key_pressed(self._input_map.code("full_stop")):

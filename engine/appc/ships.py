@@ -1060,6 +1060,14 @@ class ShipClass(DamageableObject):
         that wants a specific exit speed (warp_flight._finish's exit_policy;
         dash.py's "body" drop-out keeping engaged impulse speed) re-seeds
         `_velocity` itself immediately AFTER calling this — never before.
+
+        Also drops the motion law's velocity vector (`_motion_vel`, through
+        its descriptor so kernel M's mirror drops it too): the flight owned
+        the motion, so the vector still holds the PRE-warp course at an
+        unchanged speed, and the re-seed contract
+        (ship_motion.step_vector_velocity) would otherwise resume it while
+        the nose points along the drop-out path. With it gone the law
+        re-seeds along the nose.
         """
         flight = self._insystem_warp_transit
         if flight is None:
@@ -1068,6 +1076,7 @@ class ShipClass(DamageableObject):
             flight.ended_reason = reason
         self._insystem_warp_transit = None
         self.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+        self._motion_vel = None
         from engine.appc import warp_flight
         warp_flight.end_ai_warp(self, flight)   # "ai" flights only
         self._post_in_system_warp(False)

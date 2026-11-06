@@ -856,6 +856,13 @@ class _PlacePlayerAction(TGAction):
         from engine.appc.math import TGPoint3
         if hasattr(ship, "SetVelocity"):
             ship.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+        # The placement turned the ship and nothing wrote its speed, so the
+        # motion law's vector (ship_motion.step_vector_velocity's re-seed
+        # contract) still holds the pre-warp course: drop it, through the
+        # descriptor so kernel M's mirror drops it too, and the law re-seeds
+        # along the new nose.
+        if "_motion_vel" in ship.__dict__:
+            ship._motion_vel = None
 
 
 def _silence_ship_weapons(ship):
