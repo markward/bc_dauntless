@@ -620,8 +620,10 @@ def test_records_return_empty_writes(monkeypatch):
             g.GetPhaserSystem().StartFiring(v)
             v.GetPulseWeaponSystem().StartFiring(g)
             v.GetPhaserSystem().TurnOff()
-            for t in range(60):
-                if t == 30:
+            # Past the 40-tick beam-on delay, so the beams rest on the
+            # Vor'cha (batched contacts) before the stop.
+            for t in range(80):
+                if t == 50:
                     g.GetPhaserSystem().StopFiring()
                 w.tick()
             nc.audit_mirror()
