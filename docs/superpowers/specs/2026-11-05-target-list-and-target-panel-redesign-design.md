@@ -1,6 +1,6 @@
 # Target list and target panel redesign
 
-**Status:** design approved in mockup by Mark, 2026-11-05. Not built.
+**Status:** design approved in mockup by Mark, 2026-11-05. Built and live-verified by Mark 2026-11-06 (one fix from the live check: locking a single subsystem closes the open family).
 **Lands after:** `ws/motion-phase6-a1` (see §8). Build on `main` once that branch is merged.
 **Mockup (the reference for every visual detail):**
 `.superpowers/brainstorm/28763-1793886627/content/target-panel-v54-family-shortcuts.html`
