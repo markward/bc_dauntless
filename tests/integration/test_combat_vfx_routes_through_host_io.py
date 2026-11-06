@@ -31,7 +31,12 @@ def _capture_setter(name, calls):
     return _fn
 
 
-def test_advance_combat_routes_all_seven_vfx_setters_through_host_io():
+def test_advance_combat_routes_all_seven_vfx_setters_through_host_io(
+        monkeypatch):
+    # The Python beam path: the native feed (native_combat.beam_feed) writes
+    # the beam vectors itself and never calls host_io's beam setters.
+    from engine.appc import native_combat
+    monkeypatch.setattr(native_combat, "beam_feed", lambda *a, **k: False)
     calls = {}
     names = ("set_torpedoes", "set_dynamic_lights", "set_shockwaves",
              "set_hit_vfx", "set_particle_emitters", "set_phaser_beams",

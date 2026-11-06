@@ -500,3 +500,37 @@ def test_a_patched_getter_is_not_honoured(beam_scene, monkeypatch):
     assert nc.beam_feed_fallbacks == 0
     # The mirrored widths, not the patched getter's.
     assert (phasers, tractors) == want
+
+
+# ── Counters: did the native feed run every frame? ──────────────────────────
+
+def test_the_feed_counts_native_frames_fallbacks_and_stand_downs(
+        beam_scene, monkeypatch):
+    import types
+    from engine.core.tracked_instances import TrackedInstances
+    bs = beam_scene
+    assert nc.beam_feed_counts() == {
+        "native": 0, "fallbacks": 0,
+        "stand_downs": {"off": 0, "audit": 0, "unsnapped": 0,
+                        "instances": 0, "no_host": 0}}
+    assert type(bs.ship_instances) is TrackedInstances
+    assert nc.beam_feed(bs.ships, bs.ship_instances) is True
+    assert nc.beam_feed(bs.ships, bs.ship_instances) is True
+    # A ship with no row: the mirror cannot answer.
+    assert nc.beam_feed(bs.ships + [types.SimpleNamespace()],
+                        bs.ship_instances) is False
+    # A plain dict: not the session's TrackedInstances.
+    assert nc.beam_feed(bs.ships, dict(bs.ship_instances.items())) is False
+    monkeypatch.setattr(nc, "_switch", False)
+    assert nc.beam_feed(bs.ships, bs.ship_instances) is False
+    c = nc.beam_feed_counts()
+    assert c["native"] == 2 and c["fallbacks"] == 1, c
+    assert c["stand_downs"] == {"off": 1, "audit": 0, "unsnapped": 0,
+                                "instances": 1, "no_host": 0}, c
+    assert nc.beam_feed_fallbacks == 1
+    nc.reset()
+    assert nc.beam_feed_counts() == {
+        "native": 0, "fallbacks": 0,
+        "stand_downs": dict.fromkeys(
+            ("off", "audit", "unsnapped", "instances", "no_host"), 0)}
+    assert nc.beam_feed_fallbacks == 0

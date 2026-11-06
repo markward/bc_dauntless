@@ -129,7 +129,7 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red, monkeypatch
     assert hp.z == pytest.approx(SURFACE_POINT[2])
 
 
-def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):
+def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red, monkeypatch):
     """The rendered phaser beam endpoint is clipped to the mesh-trace
     surface point so the visible beam ends on the hull, not at the
     target's bounding-sphere centre."""
@@ -148,6 +148,11 @@ def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):
     ship.SetTarget(target)
 
     SURFACE_POINT = (1.5, 47.25, -2.0)  # Distinct from target centre.
+    # The Python beam path: it pushes through the host_io.set_phaser_beams
+    # captured below and clips through the faked host_io.ray_trace_mesh;
+    # the native feed (native_combat.beam_feed) uses neither.
+    from engine.appc import native_combat
+    monkeypatch.setattr(native_combat, "beam_feed", lambda *a, **k: False)
 
     from engine import host_io
 

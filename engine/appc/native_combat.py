@@ -378,8 +378,11 @@ def reset() -> None:
     _k3_hit_python[0] = 0
     _k3_iids_sent[:] = [_K2_UNSENT, -1, -1]
     _beam_iids_sent[:] = [_K2_UNSENT, -1, -1]
-    global beam_feed_fallbacks
+    global beam_feed_fallbacks, beam_feed_native
     beam_feed_fallbacks = 0
+    beam_feed_native = 0
+    for k in _BEAM_STAND_DOWNS:
+        _beam_stand_downs[k] = 0
     global _apply_kinds
     _apply_kinds = None
     for k in _K0_STEP_REASONS:
@@ -6089,6 +6092,15 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
 # the frame is Python's.
 
 beam_feed_fallbacks = 0
+# Frames the native feed built, and the frames it stood down for, by why:
+# "off" (the switch), "audit" (DAUNTLESS_NATIVE_AUDIT), "unsnapped" (before
+# host_loop's K2 snapshot), "instances" (ship_instances not the session's
+# TrackedInstances), "no_host" (host_io has no native module). Read by
+# beam_feed_counts(), which the frame profiler's report prints: a capture's
+# log says whether the feed was native every frame.
+beam_feed_native = 0
+_BEAM_STAND_DOWNS = ("off", "audit", "unsnapped", "instances", "no_host")
+_beam_stand_downs = dict.fromkeys(_BEAM_STAND_DOWNS, 0)
 # The key of the iids table combat_beam_feed holds (it keeps its own, apart
 # from K2's and K3's): as _k2_iids_sent.
 _beam_iids_sent = [_K2_UNSENT, -1, -1]
@@ -6124,14 +6136,19 @@ def beam_feed(ships, ship_instances) -> bool:
     mirror and pushed: True. False: nothing was pushed and the caller runs
     the Python builders (a stand-down, or a ValueError, counted in
     beam_feed_fallbacks)."""
-    global beam_feed_fallbacks, _beam_step_memo
-    if not _switch or _audit or _k2_role_snapshot is None:
-        return False
+    global beam_feed_fallbacks, beam_feed_native, _beam_step_memo
+    if not _switch:
+        return _beam_stand_down("off")
+    if _audit:
+        return _beam_stand_down("audit")
+    if _k2_role_snapshot is None:
+        return _beam_stand_down("unsnapped")
     if ship_instances is not None \
             and type(ship_instances) is not _tracked_instances():
-        return False
+        return _beam_stand_down("instances")
     if _k2_host_io._h is None:
-        return False                # host_io pushes nothing: nor do we
+        # host_io pushes nothing: nor do we.
+        return _beam_stand_down("no_host")
     if type(ships) is not list:
         ships = list(ships)
     if _beam_step_memo is None:
@@ -6169,7 +6186,20 @@ def beam_feed(ships, ship_instances) -> bool:
         beam_feed_fallbacks += 1
         _log_once("beam_feed", "beam feed: %s" % e)
         return False
+    beam_feed_native += 1
     return True
+
+
+def _beam_stand_down(why: str) -> bool:
+    _beam_stand_downs[why] += 1
+    return False
+
+
+def beam_feed_counts() -> dict:
+    """Since the last reset(): {"native": frames built natively,
+    "fallbacks": ValueError frames, "stand_downs": {why: frames}}."""
+    return {"native": beam_feed_native, "fallbacks": beam_feed_fallbacks,
+            "stand_downs": dict(_beam_stand_downs)}
 
 
 # ── The per-step scan and frame table (phase 3: shared by K4 and K3) ────────

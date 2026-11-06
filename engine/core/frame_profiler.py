@@ -684,7 +684,23 @@ def report_lines() -> list[str]:
                     else "UNAVAILABLE" if gpu_dead
                     else "%.3f ms" % native.get("gpu_ms", 0.0),
                     native.get("frames", 0)))
+    lines.extend(_beam_feed_lines())
     return lines
+
+
+def _beam_feed_lines() -> list[str]:
+    """Whether the native beam feed built the frames (native_combat.
+    beam_feed_counts, since its last reset): a capture's log must show it ran
+    every frame, or what stood it down. Nothing when the module cannot say."""
+    try:
+        from engine.appc import native_combat
+        c = native_combat.beam_feed_counts()
+        sd = c["stand_downs"]
+        return ["  beam feed: native %d, fallbacks %d, stand-downs %s"
+                % (c["native"], c["fallbacks"],
+                   ", ".join("%s %d" % kv for kv in sd.items()))]
+    except Exception:
+        return []
 
 
 def print_report() -> None:

@@ -915,7 +915,7 @@ No test pins by name: `take_dwell`, `accumulate_dwell` (except via oracle timing
   - the native trace (≈0.17 ms a tick at ~10 µs each in Debug, unless `ray_trace.cc` is optimised, which changes its float results; see the trace paragraph in §8.1).
 - On these shares the "own scope down by at least half" bar (§7.6.6) is plausible but not certain. This is inferred and needs a paired capture.
 
-**Out of scope, but the same cost again.** `_build_phaser_beam_render_data` (HL:2416, `cb.render_data`) recomputes, once per frame, for every firing bank:
+**Since built natively (phase 6 follow-up 1).** The render rebuild below is now `native/src/combat/src/beam_feed.cc`, driven by `native_combat.beam_feed` from `host_loop._push_combat_render_data`; the Python builders remain only as its fallback and test oracle (`tests/host/test_native_beam_feed.py`). `DAUNTLESS_NATIVE_AUDIT=1` stands the beam feed down (the Python builders draw), so that equality test is its only oracle. What it reads, as first mapped: `_build_phaser_beam_render_data` (HL:2416, `cb.render_data`) recomputes, once per frame, for every firing bank:
 
 - the aim point;
 - the strip;

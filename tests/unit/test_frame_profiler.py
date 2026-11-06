@@ -896,3 +896,25 @@ def test_hull_summary_never_raises(monkeypatch):
         raise RuntimeError("no native module")
     monkeypatch.setattr(renderer, "hull_stats", boom, raising=False)
     assert fp.hull_summary() == "  hulls: unavailable"
+
+
+def test_the_report_says_whether_the_native_beam_feed_ran(monkeypatch):
+    """A perf capture must show from its log that the beam feed was native
+    every frame (and what stood it down when it was not)."""
+    from engine import host_io
+    from engine.appc import native_combat as nc
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False},
+    )
+    monkeypatch.setattr(nc, "beam_feed_counts", lambda: {
+        "native": 118, "fallbacks": 2,
+        "stand_downs": {"off": 0, "audit": 0, "unsnapped": 0,
+                        "instances": 3, "no_host": 0}})
+    fp.set_enabled(True, native=False)
+    fp.begin_frame(); fp.mark("p"); fp.end_frame()
+
+    lines = [ln for ln in fp.report_lines() if "beam feed" in ln]
+    assert lines == ["  beam feed: native 118, fallbacks 2, stand-downs "
+                     "off 0, audit 0, unsnapped 0, instances 3, no_host 0"]

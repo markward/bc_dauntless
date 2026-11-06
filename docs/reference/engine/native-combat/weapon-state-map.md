@@ -177,7 +177,7 @@ Engine readers (outside WS/NC):
 
 | Reader | Reads | Frequency |
 |---|---|---|
-| `_build_phaser_beam_render_data` / `_build_tractor_beam_render_data` (HL:2486-2551) → `_beam_descriptor_pair` (HL:2370-2391) | `bank.IsFiring()` on every phaser/tractor bank of every ship in view; `bank._target` | per frame (`cb.render_data`) |
+| Beam render feed: native `beam_feed.cc` (`native_combat.beam_feed`, phase 6 follow-up 1); the Python `_build_phaser_beam_render_data` / `_build_tractor_beam_render_data` → `_beam_descriptor_pair` only as fallback and test oracle | the mirror's `_firing` and `_target` of every phaser/tractor bank (the Python fallback: `_firing` via `_firing_banks`, `bank._target`). `DAUNTLESS_NATIVE_AUDIT=1` stands the native feed down, so `tests/host/test_native_beam_feed.py` is its only oracle | per frame (`cb.render_data`) |
 | `tractor.advance_tractors` (tractor.py:112-133) | `sys_.IsFiring()`, `emitter.IsFiring()`, `getattr(emitter, "_target")` | per tick (`cb.tractors`, HL:1401) |
 | `_spawn_projectile` (WS:575-648) | `getattr(emitter, "_target")`, `getattr(emitter, "_target_offset")` (the torpedo copies it, projectiles.py:238) | per launch |
 | TractorBeamSystem `_wants_power` → `_any_child_firing` (WS:2434-2448) | each beam's `IsFiring()` | power pump per tick, unless frozen (passive_power) |
