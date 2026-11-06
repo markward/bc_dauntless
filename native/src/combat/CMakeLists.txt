@@ -25,6 +25,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/k1_fire_control.cc
     src/k0_charging.cc
     src/k2_beams.cc
+    src/k2_scan.cc
     src/k3_projectiles.cc
     src/damage.cc
     src/tractor_force.cc

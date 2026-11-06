@@ -1113,11 +1113,14 @@ def test_a_patched_stood_in_method_is_not_honoured(monkeypatch, cls, name):
 # follow-up 3, Task 2; spec Part A) ─────────────────────────────────────────
 #
 # The driver's per-ship check before begin (_k2_ship_handles: the binding's
-# combat_k2_scan_ships, then _k2_python_ship for what it could not call
-# clean) sends a ship to Python only for a class reason (a class K2 never
-# saw, a non-stock system or bank class _k2_flag flags) or a bank the mirror
-# cannot name (no Subsystem `_nslot`). An instance attribute shadowing a
-# method the loop calls is NOT obeyed: no dict is probed for one.
+# combat_k2_scan_rows, answered from the mirror since phase 6 follow-up 3b,
+# then _k2_python_ship for what it could not call clean) sends a ship to
+# Python only for a class reason (a class K2 never saw, a non-stock system
+# or bank class _k2_flag flags) or a bank the mirror cannot name (no
+# Subsystem row). An instance attribute shadowing a method the loop calls is
+# NOT obeyed: no dict is probed for one. The tests drive state through the
+# engine's own paths (registration, descriptor pushes, _drop, reclassify),
+# never by editing `_nslot` or `__class__` behind the mirror.
 
 # The methods the loop calls by name on a walked ship, its phaser system and
 # each bank: the instance attributes the scan used to look for. Written out
@@ -1209,7 +1212,9 @@ def test_a_bank_with_no_subsystem_row_sends_its_ship_to_python(monkeypatch):
 
 def test_a_subclassed_bank_still_sends_its_ship_to_python(monkeypatch):
     """A class check stays: a PhaserBank subclass overriding one of its
-    own names (_k2_flag flags it, not "whole") sends its ship to Python."""
+    own names (_k2_flag flags it, not "whole") sends its ship to Python.
+    The swap goes through reclassify, which re-pushes the row's class flags
+    (k2_stock among them): a swap without it is not seen."""
 
     class SlowDwell(ws.PhaserBank):
         def take_dwell(self):
@@ -1219,8 +1224,9 @@ def test_a_subclassed_bank_still_sends_its_ship_to_python(monkeypatch):
         w = _scan_world(mp, "k2_scan_class")
         try:
             g = w.ships["Galaxy"]
-            mp.setattr(g.GetPhaserSystem().GetWeapon(0), "__class__",
-                       SlowDwell)
+            bank = g.GetPhaserSystem().GetWeapon(0)
+            mp.setattr(bank, "__class__", SlowDwell)
+            nc.reclassify(bank)
             assert nc._k2_flag(SlowDwell) == (True, False)
             handles, python_ships, whole = _verdict(w)
             assert python_ships == [nc.slot(g)], python_ships
@@ -1229,129 +1235,203 @@ def test_a_subclassed_bank_still_sends_its_ship_to_python(monkeypatch):
             w.close()
 
     def patch(mp, w):
-        mp.setattr(w.ships["Galaxy"].GetPhaserSystem().GetWeapon(0),
-                   "__class__", SlowDwell)
+        bank = w.ships["Galaxy"].GetPhaserSystem().GetWeapon(0)
+        mp.setattr(bank, "__class__", SlowDwell)
+        nc.reclassify(bank)
 
     counts = _one_native_step(monkeypatch, patch)
     assert counts["k2_records"] > 0, counts             # the Vor'cha's
     assert counts["k2_python_reasons"]["overridden"] == 1, counts
 
 
-def _py_clean(ship):
-    """The binding's clean check, written out in Python (the reference):
-    the ship's class seen; its phaser system, when it has one, exactly the
-    stock class; every bank exactly the stock class, with a Subsystem
-    `_nslot`, and a `_target` that is None or of a seen class."""
-    d = ship.__dict__
-    seen = nc._k2_seen_set
-    if type(ship) not in seen:
-        return False
-    sys_ = d.get("_phaser_system")
-    if sys_ is None:
-        return True
-    if type(sys_) is not nc._k2_stock_system:
-        return False
-    for b in sys_.__dict__.get("_children", ()):
-        if type(b) is not nc._k2_stock_bank:
-            return False
-        bd = b.__dict__
-        h = bd.get("_nslot")
-        if type(h) is not int or (h >> nc._KIND_SHIFT) != nc._kind(
-                "Subsystem"):
-            return False
-        target = bd.get("_target")
-        if target is not None and type(target) not in seen:
-            return False
-    return True
+def _scan_rows(ships):
+    """combat_k2_scan_rows: (handles, [(ship, handle), ...])."""
+    return _h.combat_k2_scan_rows(ships, nc._kind("Object"), nc._KIND_SHIFT)
 
 
-def test_binding_scan_matches_the_python_clean_check(monkeypatch):
-    """combat_k2_scan_ships (the per-ship, per-bank clean check, a C loop):
-    each ship's Object handle (-1: no row), and the ships that are NOT
-    clean -- for _k2_python_ship to decide -- in order, as _py_clean
-    decides them. Clean, then each way a ship stops being clean, one at a
-    time; an instance attribute is not one of them."""
+def _authority(ships):
+    """[(ship, handle)]: the ships _k2_python_ship would not call 0 (the
+    scan's reference: it must list exactly these), in order."""
+    return [(s, nc.slot(s)) for s in ships
+            if nc.slot(s) is not None and nc._k2_python_ship(s) != 0]
+
+
+def _sub_dump(obj):
+    return _h.combat_dump(obj.__dict__["_nslot"])
+
+
+def _unregistered(mp, build):
+    """`build()`'s object, built with registration off (an object that
+    never got a row), registration back on afterwards."""
+    with mp.context() as m:
+        m.setattr(nc, "register", lambda *a, **k: None)
+        return build()
+
+
+def test_scan_rows_matches_the_python_authority(monkeypatch):
+    """combat_k2_scan_rows (one `_nslot` per ship, the rest from the
+    mirror) lists exactly the ships _k2_python_ship would not call 0, in
+    order, with each ship's Object handle. The fleet is built through the
+    real API: stock ships; a subclassed bank and a subclassed system; a
+    bank that never got a row (its system's `_children` keeps a -2 in its
+    place); a target that never got a row (the bank's `_target` pushes
+    -2); a ship with no phaser system; and a row dropped through `_drop`
+    (its system's `_children` is re-pushed with -2)."""
+
+    # Each overrides one of its own names (_k2_flag flags it, not
+    # "whole"): a subclass overriding nothing is one _k2_python_ship calls
+    # 0, after the scan lists it.
+    class SubBank(ws.PhaserBank):
+        def take_dwell(self):
+            return ws.PhaserBank.take_dwell(self)
+
+    class SubSystem(ws.PhaserSystem):
+        def GetPowerLevel(self):
+            return ws.PhaserSystem.GetPowerLevel(self)
 
     class Unseen:
         pass
 
-    class SubBank(ws.PhaserBank):
-        pass
-
-    class SubSystem(ws.PhaserSystem):
-        pass
-
-    def scan(w):
-        return _h.combat_k2_scan_ships(
-            w.order, nc._kind("Object"), nc._KIND_SHIFT, nc._k2_seen_set,
-            nc._k2_stock_system, nc._k2_stock_bank)
-
-    def unclean(w):
-        return [(s, nc.slot(s)) for s in w.order if not _py_clean(s)]
-
+    fleet = GALAXY_VORCHA + (
+        ("SubBank", "galaxy", (0.0, 400.0, 0.0), 0.0),
+        ("SubSystem", "galaxy", (0.0, 800.0, 0.0), 0.0),
+        ("NoRowBank", "galaxy", (0.0, 1200.0, 0.0), 0.0),
+        ("NoRowTarget", "galaxy", (0.0, 1600.0, 0.0), 0.0),
+        ("Dropped", "galaxy", (0.0, 2000.0, 0.0), 0.0),
+        ("Stock", "galaxy", (0.0, 2400.0, 0.0), 0.0))
     with monkeypatch.context() as mp:
-        w = _scan_world(mp, "k2_scan")
+        w = World(mp, True, fleet, "k2_scan_rows")
         try:
             g, v = w.ships["Galaxy"], w.ships["Vorcha"]
-            handles, bad = scan(w)
-            assert handles == [nc.slot(s) for s in w.order], handles
-            assert bad == [] == unclean(w)
-            bank = g.GetPhaserSystem().GetWeapon(1)
+            g.GetPhaserSystem().StartFiring(v)
+            v.GetPhaserSystem().StartFiring(g)
+            w.tick()
+            assert _scan_rows(w.order) == (
+                [nc.slot(s) for s in w.order], []) and _authority(
+                    w.order) == []
+            # A subclassed bank, built and attached.
+            sb = w.ships["SubBank"].GetPhaserSystem()
+            sb.AddChildSubsystem(SubBank("Extra"))
+            # A subclassed system in place of the stock one.
+            w.ships["SubSystem"].SetPhaserSystem(SubSystem("Phasers"))
+            # A stock bank that never got a row.
+            nb = w.ships["NoRowBank"].GetPhaserSystem()
+            ghost = _unregistered(mp, lambda: ws.PhaserBank("Ghost"))
+            assert "_nslot" not in ghost.__dict__
+            nb.AddChildSubsystem(ghost)
+            kids = _sub_dump(nb)["_children"]
+            assert len(kids) == nb.GetNumWeapons()
+            assert kids[-1] == nc.REF_UNREPRESENTABLE, kids
+            # A target that never got a row (of a class K2 never saw).
+            nt = w.ships["NoRowTarget"].GetPhaserSystem().GetWeapon(0)
+            nt._target = Unseen()
+            assert _sub_dump(nt)["_target"] == nc.REF_UNREPRESENTABLE
+            # A bank row dropped mid-mission.
+            dsys = w.ships["Dropped"].GetPhaserSystem()
+            nc._drop(dsys.GetWeapon(1))
+            assert _sub_dump(dsys)["_children"][1] == nc.REF_UNREPRESENTABLE
+            # A ship with no phaser system, and a ship with no row.
+            bare = App.ShipClass_Create("Bare")
+            w.set.AddObjectToSet(bare, "Bare")
+            bare.SetPhaserSystem(None)
+            assert _h.combat_dump(nc.slot(bare))["_phaser_system"] == -1
+            norow = _unregistered(mp, lambda: App.ShipClass_Create("NoRow"))
+            ships = w.order + [bare, norow]
+
+            handles, bad = _scan_rows(ships)
+            assert handles == [nc.slot(s) for s in w.order] + [
+                nc.slot(bare), nc.REF_NONE], handles
+            want = _authority(ships)
+            assert [s.GetName() for s, _h in want] == [
+                "SubBank", "SubSystem", "NoRowBank", "NoRowTarget",
+                "Dropped"], want
+            assert bad == want, (bad, want)
+            # The driver: those five sent to Python, none whole.
+            got = nc._k2_ship_handles(ships)
+            assert got == (handles, [h for _s, h in want], False), got
+        finally:
+            w.close()
+
+
+def test_reclassify_repushes_k2_stock(monkeypatch):
+    """`reclassify` re-pushes k2_stock: a bank's class swapped to a
+    subclass and reclassified sends its ship to Python, and swapped back
+    and reclassified, no longer. A swap WITHOUT reclassify is not seen (the
+    per-class caveat: the row keeps its old class's flag)."""
+
+    class SubBank(ws.PhaserBank):
+        def take_dwell(self):
+            return ws.PhaserBank.take_dwell(self)
+
+    with monkeypatch.context() as mp:
+        w = _scan_world(mp, "k2_scan_reclassify")
+        try:
+            g = w.ships["Galaxy"]
+            bank = g.GetPhaserSystem().GetWeapon(0)
+            assert _sub_dump(bank)["k2_stock"] == 1
+            with monkeypatch.context() as m:
+                m.setattr(bank, "__class__", SubBank)
+                assert _scan_rows(w.order)[1] == []     # not reclassified
+                nc.reclassify(bank)
+                assert _sub_dump(bank)["k2_stock"] == 0
+                assert _scan_rows(w.order)[1] == [(g, nc.slot(g))]
+                assert _verdict(w)[1:] == ([nc.slot(g)], False)
+            nc.reclassify(bank)
+            assert _sub_dump(bank)["k2_stock"] == 1
+            assert _verdict(w) == ([nc.slot(s) for s in w.order], [], False)
+        finally:
+            w.close()
+
+
+def test_a_dropped_bank_row_sends_its_ship_to_python(monkeypatch):
+    """A bank row dropped mid-mission (`_drop`): its system's `_children`
+    is re-pushed with -2 in the bank's place, never shortened, so the scan
+    lists the ship and _k2_python_ship sends it to Python."""
+    with monkeypatch.context() as mp:
+        w = _scan_world(mp, "k2_scan_drop")
+        try:
+            g = w.ships["Galaxy"]
             system = g.GetPhaserSystem()
-            # (setitem: an instance attribute must be GONE afterwards; a
-            # monkeypatch.setattr would put the bound method back on it.)
-            clean = (
-                lambda m: m.setitem(v.__dict__, "IsDead", v.IsDead),
-                lambda m: m.setitem(system.__dict__, "IsOn", system.IsOn),
-                lambda m: m.setitem(bank.__dict__, "take_dwell",
-                                    bank.take_dwell),
-                lambda m: m.setitem(bank.__dict__, "GetMaxDamage",
-                                    bank.GetMaxDamage),
-            )
-            for i, case in enumerate(clean):
-                with monkeypatch.context() as m:
-                    case(m)
-                    assert scan(w) == (handles, []), i
-                    assert unclean(w) == [], i
-            cases = (
-                lambda m: m.setitem(bank.__dict__, "_target", Unseen()),
-                lambda m: m.setattr(bank, "__class__", SubBank),
-                lambda m: m.setattr(system, "__class__", SubSystem),
-                lambda m: m.setattr(v, "__class__",
-                                    type("Unseen", (type(v),), {})),
-                lambda m: m.delitem(bank.__dict__, "_nslot"),
-                lambda m: m.setitem(bank.__dict__, "_nslot", nc.slot(g)),
-                lambda m: m.setitem(bank.__dict__, "_nslot",
-                                    float(bank.__dict__["_nslot"])),
-                # An int past long long (> 2**63): not a Subsystem handle.
-                lambda m: m.setitem(bank.__dict__, "_nslot",
-                                    2**64 + bank.__dict__["_nslot"]),
-            )
-            for i, case in enumerate(cases):
-                with monkeypatch.context() as m:
-                    case(m)
-                    handles, bad = scan(w)
-                    want = unclean(w)
-                    assert want, i
-                    assert bad == want, (i, bad, want)
-                    assert handles == [nc.slot(s) for s in w.order], i
-            # No row: -1, and never handed to the check.
+            before = _sub_dump(system)["_children"]
+            nc._drop(system.GetWeapon(1))
+            after = _sub_dump(system)["_children"]
+            assert len(after) == len(before)
+            assert after[1] == nc.REF_UNREPRESENTABLE
+            assert after[:1] + after[2:] == before[:1] + before[2:]
+            assert _scan_rows(w.order)[1] == [(g, nc.slot(g))]
+            assert _verdict(w)[1:] == ([nc.slot(g)], False)
+        finally:
+            w.close()
+
+
+def test_k2_stock_is_repushed_when_the_snapshot_is_taken(monkeypatch):
+    """A row pushed before the stock snapshot exists reads k2_stock 0; the
+    snapshot re-pushes every row's flag, so stock banks and systems read 1
+    after it."""
+    with monkeypatch.context() as mp:
+        w = _scan_world(mp, "k2_scan_snapshot")
+        try:
+            system = w.ships["Galaxy"].GetPhaserSystem()
+            bank = system.GetWeapon(0)
             with monkeypatch.context() as m:
-                m.delitem(v.__dict__, "_nslot")
-                handles, bad = scan(w)
-                assert handles == [nc.slot(g), nc.REF_NONE], handles
-                assert bad == [], bad
-            # A ship with no phaser system is clean on its own class.
-            with monkeypatch.context() as m:
-                m.setitem(v.__dict__, "_phaser_system", None)
-                assert scan(w)[1] == [] == unclean(w)
+                m.setattr(nc, "_k2_stock_bank", None)
+                m.setattr(nc, "_k2_stock_system", None)
+                nc.reclassify(bank)
+                nc.reclassify(system)
+                assert _sub_dump(bank)["k2_stock"] == 0
+                assert _sub_dump(system)["k2_stock"] == 0
+                nc.k2_snapshot_stock(host_loop)
+                assert _sub_dump(bank)["k2_stock"] == 1
+                assert _sub_dump(system)["k2_stock"] == 1
+            assert _verdict(w) == ([nc.slot(s) for s in w.order], [], False)
         finally:
             w.close()
 
 
 def test_subclass_override_sends_its_ship_to_python(monkeypatch):
     """A PhaserBank subclass overriding a K2-only method (not a K1 one, so
-    the mirror's k1_overridden does not catch it) sends its ship to Python."""
+    the mirror's k1_overridden does not catch it) sends its ship to Python
+    (swapped in through reclassify, as the rocks do)."""
 
     class SlowDwell(ws.PhaserBank):
         def take_dwell(self):
@@ -1360,6 +1440,7 @@ def test_subclass_override_sends_its_ship_to_python(monkeypatch):
     def patch(mp, w):
         bank = w.ships["Galaxy"].GetPhaserSystem().GetWeapon(0)
         mp.setattr(bank, "__class__", SlowDwell)
+        nc.reclassify(bank)
 
     counts = _one_native_step(monkeypatch, patch)
     assert counts["k2_records"] > 0, counts
@@ -1370,7 +1451,8 @@ def test_power_level_override_matches_python(monkeypatch):
     """A PhaserSystem subclass whose GetPowerLevel answers PP_LOW while its
     `_power_level` (the mirror's) stays PP_HIGH: the kernel would carry the
     mirror's level on a resting contact, so the ship goes to Python whole
-    (RUN_PYTHON "overridden") and every rest and pulse matches Python's."""
+    (RUN_PYTHON "overridden") and every rest and pulse matches Python's.
+    The class is swapped in through reclassify (its flags re-pushed)."""
 
     class FixedLevel(ws.PhaserSystem):
         def GetPowerLevel(self):
@@ -1379,6 +1461,7 @@ def test_power_level_override_matches_python(monkeypatch):
     def setup(w, mp):
         g = w.ships["Galaxy"].GetPhaserSystem()
         mp.setattr(g, "__class__", FixedLevel)
+        nc.reclassify(g)
         assert g.__dict__["_power_level"] == g.PP_HIGH
 
     def script(w, t):
@@ -1425,12 +1508,26 @@ def test_contact_points_keep_tier_identity():
 
 # ── A target (or walked ship) whose class K2 never saw (Ruling C2, item 2) ──
 
+def _aim_galaxy_at_a_rowless(mp, w, cls):
+    """Every Galaxy bank's `_target` set to a `cls` ship that never got a
+    row (built with registration off): an object of a class K2 never saw
+    has no row, so its banks' `_target` reads -2 in the mirror."""
+    with mp.context() as m:
+        m.setattr(nc, "register", lambda *a, **k: None)
+        ghost = cls()
+    assert "_nslot" not in ghost.__dict__
+    assert type(ghost) not in nc._k2_seen_set
+    system = w.ships["Galaxy"].GetPhaserSystem()
+    for i in range(system.GetNumWeapons()):
+        system.GetWeapon(i)._target = ghost
+    w.ghost = ghost         # kept alive for the step
+
+
 def test_unseen_target_class_with_foreign_override_runs_python_step(
         monkeypatch):
-    """The Vor'cha's class is swapped after it registered (no reclassify)
-    to one overriding GetRadius from outside the engine: K2 never saw the
-    class, and it concerns every bank aiming at the Vor'cha, so the whole
-    step runs in Python."""
+    """A target of a class K2 never saw (it has no row: no object of it
+    registered), overriding GetRadius from outside the engine: it concerns
+    every bank aiming at it, so the whole step runs in Python."""
     from engine.appc.ships import ShipClass
 
     class Bigger(ShipClass):
@@ -1438,7 +1535,7 @@ def test_unseen_target_class_with_foreign_override_runs_python_step(
             return 2.0 * ShipClass.GetRadius(self)
 
     def patch(mp, w):
-        mp.setattr(w.ships["Vorcha"], "__class__", Bigger)
+        _aim_galaxy_at_a_rowless(mp, w, Bigger)
 
     counts = _one_native_step(monkeypatch, patch)
     assert counts.get("k2_records", 0) == 0, counts
@@ -1446,23 +1543,23 @@ def test_unseen_target_class_with_foreign_override_runs_python_step(
 
 
 def test_unseen_target_class_sends_its_ship_to_python(monkeypatch):
-    """A class K2 never saw but that overrides nothing: every ship with a
-    bank aiming at an object of it runs in Python (its class flags were
-    never pushed), and so does the object itself when it is a walked ship;
-    the step stays native."""
+    """A target of a class K2 never saw but that overrides nothing (it has
+    no row): every ship with a bank aiming at it runs in Python; the step
+    stays native. (A walked ship of such a class has no row either: its
+    handle is -1, never a python ship.)"""
     from engine.appc.ships import ShipClass
 
     class Unseen(ShipClass):
         pass
 
     def patch(mp, w):
-        mp.setattr(w.ships["Vorcha"], "__class__", Unseen)
+        _aim_galaxy_at_a_rowless(mp, w, Unseen)
 
     counts = _one_native_step(monkeypatch, patch)
-    assert counts["k2_records"] > 0, counts
+    assert counts["k2_records"] > 0, counts             # the Vor'cha's
     assert counts["k2_python_steps"] == 0, counts
-    # The Galaxy (its banks aim at the Vor'cha) and the Vor'cha (walked).
-    assert counts["k2_python_reasons"]["overridden"] == 2, counts
+    # The Galaxy (its banks aim at the rowless ship).
+    assert counts["k2_python_reasons"]["overridden"] == 1, counts
 
 
 # ── host_io._h: none (no trace hooks) or a test double (Ruling C2, item 3) ──

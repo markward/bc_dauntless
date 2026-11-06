@@ -186,9 +186,9 @@ _REQUIRED_BINDINGS = (
     "combat_effect_rebind",
     "combat_apply_hit", "combat_dmg_set_condition",
     "combat_compute_take",
-    # K2's ship scan reads classes and handles only (phase 6 follow-up 3):
-    # combat_k2_scan_ships kept its name, so its version marks the build.
-    "combat_k2_scan_version",
+    # K2's ship scan answered from the mirror (phase 6 follow-up 3b): it
+    # replaced combat_k2_scan_ships, and its name marks the build.
+    "combat_k2_scan_rows",
     # Tractors native (fire control native only, M4).
     "combat_k1_begin_tractor", "combat_tractor_force_step",
     # The native beam render feed (phase 6 follow-up 1, beam_feed).
@@ -2669,8 +2669,24 @@ def _flags(obj, h) -> dict:
                 # The native power piece's rules for this class.
                 "power_kind": _power_kind(type(obj)),
                 # The native repair piece runs this class's Update.
-                "is_repair_bay": _is_repair_bay(type(obj))}
+                "is_repair_bay": _is_repair_bay(type(obj)),
+                # K2's ship scan (k2_scan.h): exactly a stock role class.
+                "k2_stock": _k2_stock_flag(type(obj))}
     return {}
+
+
+def _k2_stock_flag(cls) -> int:
+    """k2_stock for a subsystem class: 1 when it is EXACTLY K2's stock bank
+    class or stock phaser system class (k2_snapshot_stock's), else 0 --
+    and 0 before the snapshot is taken, which re-pushes every row's flag
+    (_k2_repush_stock). The scan (k2_scan.h) pairs it with weapon_kind, so
+    a stock system among a system's banks is not taken for a bank.
+
+    A class flag: like every other one it is stale once an object's
+    `__class__` is swapped WITHOUT reclassify -- the row keeps its old
+    class's flag, undetected (the per-class caveat of _k2_unseen). Code
+    that swaps a class under a row must call reclassify."""
+    return int(cls is _k2_stock_bank or cls is _k2_stock_system)
 
 
 _repair_bay_by_type: dict = {}
@@ -5483,6 +5499,20 @@ def k2_snapshot_stock(host_loop_module) -> None:
     _k2_host_io = host_io
     _k2_hl, _k2_cheats = host_loop_module, cheats
     _k2_flags.clear()
+    _k2_repush_stock()
+
+
+def _k2_repush_stock() -> None:
+    """Every Subsystem row's k2_stock, re-pushed: a row registered before
+    the stock snapshot was taken pushed 0 (_k2_stock_flag). Off: nothing to
+    push (configure's resync pushes every flag)."""
+    if not _enabled:
+        return
+    sub = _kind("Subsystem")
+    fid = _fid("k2_stock")
+    for h, obj in list(_registry.items()):
+        if (h >> _KIND_SHIFT) == sub and obj.__dict__.get("_nslot") == h:
+            _call(obj, _h.combat_set_i, h, fid, _k2_stock_flag(type(obj)))
 
 
 def _k2_role_of(cls):
@@ -5570,7 +5600,7 @@ def _k2_python_ship(ship) -> int:
     whole step must (a bank or system class overriding a subsystem name,
     or a never-seen class flagged "whole"). Classes and handles only: an
     instance attribute is not looked for (spec Part A). k2_phasers inlines
-    the common case (combat_k2_scan_ships) and calls this for the rest.
+    the common case (combat_k2_scan_rows) and calls this for the rest.
     A ship sent for a bank with no Subsystem row is counted like any other
     1: RUN_PYTHON "overridden" (k2_python_reasons), not "stale_row"."""
     d = ship.__dict__
@@ -5616,13 +5646,19 @@ def _k2_ship_handles(ships):
     """(handles, python_ships, whole) for begin: each ship's Object handle
     (-1: no row), the ships _k2_python_ship sends to Python, and whether one
     sends the whole step. The common case -- a stock phaser system of stock
-    banks the mirror names, seen classes -- is decided in the binding
-    (combat_k2_scan_ships, a C loop: this runs every tick over every bank);
-    only the ships it could not call clean come back here, in order, for
-    _k2_python_ship."""
-    handles, unclean = _h.combat_k2_scan_ships(
-        ships, _kind("Object"), _KIND_SHIFT, _k2_seen_set,
-        _k2_stock_system, _k2_stock_bank)
+    banks the mirror names, targets it names -- is decided in the binding
+    from the mirror (combat_k2_scan_rows: one `_nslot` read per ship, then
+    k2_scan.h over the rows and their k2_stock flags; this runs every
+    tick); only the ships it could not call clean come back here, in order,
+    for _k2_python_ship.
+
+    It sees what the mirror holds, so not a change made behind it: a bank's
+    `_nslot` deleted or replaced without _drop (every engine path that
+    loses a row drops it, which re-pushes the referrers with -2), or a
+    `__class__` swapped without reclassify (k2_stock stays the old
+    class's)."""
+    handles, unclean = _h.combat_k2_scan_rows(
+        ships, _kind("Object"), _KIND_SHIFT)
     python_ships = []
     for ship, h in unclean:
         why = _k2_python_ship(ship)

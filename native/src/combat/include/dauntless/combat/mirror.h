@@ -298,6 +298,17 @@ enum class Field : int32_t {
     // value differs bitwise.
     _motion_vel, _target_angular_velocity_fraction,
     _target_angular_velocity_fraction_state, _turn_goal, _acceleration,
+    // K2's ship scan (k2_scan.h; phase 6 follow-up 3b). Subsystem: k2_stock,
+    // a class flag: 1 when the row's class is EXACTLY K2's stock bank class
+    // (PhaserBank) or stock phaser system class (PhaserSystem), as
+    // native_combat.k2_snapshot_stock took them; 0 otherwise, and before
+    // the snapshot. Pushed with the other class flags (native_combat._flags:
+    // at register, at reclassify, and for every row when the snapshot is
+    // taken). Like every class flag it goes stale when an object's
+    // `__class__` is swapped WITHOUT native_combat.reclassify: the row keeps
+    // its old class's flag, undetected (the per-class caveat of
+    // native_combat._k2_unseen).
+    k2_stock,
     kCount
 };
 
@@ -514,6 +525,8 @@ struct SubsystemRow {
            _repair_complexity = 0.0;
     std::vector<int64_t> _queue, _cannot_complete_notified;
     int64_t is_repair_bay = 0;
+    // K2's ship scan (Field comment above).
+    int64_t k2_stock = 0;
 };
 
 struct PropertyRow {

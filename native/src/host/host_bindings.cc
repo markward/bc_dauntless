@@ -30,6 +30,7 @@
 #include "dauntless/combat/k0_charging.h"
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/k2_beams.h"
+#include "dauntless/combat/k2_scan.h"
 #include "dauntless/combat/k3_projectiles.h"
 #include "dauntless/combat/k4_eligibility.h"
 #include "dauntless/combat/mirror.h"
@@ -3673,27 +3674,20 @@ BodyFramePoint to_body_frame(const scenegraph::Instance& inst,
 
 namespace {
 
-// ── combat_k2_scan_ships ─────────────────────────────────────────────────────
-// The K2 driver's per-ship, per-bank clean check before begin
-// (native_combat._k2_ship_handles), a C loop: it runs every tick over every
-// bank. Raw CPython calls only, so it stays cheap in a Debug build too.
-//
-// It reads classes and handles, never an instance attribute shadowing a
-// method (spec Part A, phase 6 follow-up 3: a patch is not obeyed, so no
-// dict is probed for one). The dict reads are the object graph's own:
-// "_nslot", "_phaser_system", "_children" and "_target".
+// ── combat_k2_scan_rows ──────────────────────────────────────────────────────
+// The K2 driver's per-ship check before begin (native_combat._k2_ship_handles),
+// a C loop: it runs every tick over every ship. It reads ONE instance-dict
+// entry per ship, its "_nslot" (raw CPython calls, so it stays cheap in a
+// Debug build too); the rest is answered from the mirror by
+// k2_unclean_ships (k2_scan.h: the ship's phaser system, its banks, their
+// targets, each row's k2_stock class flag), never by a bank's dict (phase 6
+// follow-up 3b). An instance attribute shadowing a method is not looked for
+// (spec Part A).
 //
 // Returns (handles, unclean). Each ship's handle is its __dict__["_nslot"]
 // when that is an Object handle (`(h >> kind_shift) == obj_kind`), else -1
-// (no row, never checked). A ship with a row is CLEAN when its class is in
-// `seen` and, when it has a "_phaser_system" that is not None, that
-// system's class is exactly `stock_system` and every bank in its
-// "_children" has exactly `stock_bank` as class, a "_nslot" that is an int
-// Subsystem handle (the mirror can name it), and a "_target" that is None
-// or of a class in `seen`. Every other ship is in `unclean` as (ship,
-// handle), in order, for _k2_python_ship to decide. Anything unexpected (no
-// __dict__, a non-dict one, a "_children" that is not a sequence) is "not
-// clean": the Python check is the authority, this is its fast path.
+// (no row, never checked). `unclean` is (ship, handle) for each ship
+// k2_unclean_ships lists, in order, for _k2_python_ship to decide.
 
 // The object's instance dict, borrowed, or nullptr (no error set) when it
 // has none. The materialized dict the Python driver's `obj.__dict__` reads.
@@ -3722,16 +3716,10 @@ int k2_in_seen(PyObject* seen, PyObject* o) {
 
 struct K2ScanNames {
     PyObject* nslot;
-    PyObject* system;
-    PyObject* children;
-    PyObject* target;
 };
 
 const K2ScanNames& k2_scan_names() {
-    static const K2ScanNames n{PyUnicode_InternFromString("_nslot"),
-                               PyUnicode_InternFromString("_phaser_system"),
-                               PyUnicode_InternFromString("_children"),
-                               PyUnicode_InternFromString("_target")};
+    static const K2ScanNames n{PyUnicode_InternFromString("_nslot")};
     return n;
 }
 
@@ -3745,159 +3733,83 @@ int k2_is_kind_handle(PyObject* h, PyObject* kind, PyObject* kind_shift) {
     return eq;
 }
 
-// 1 clean, 0 not, -1 error: the phaser system `sys` and its banks (see
-// above). `shift` is the kind shift, converted once per scan; a bank's
-// handle is read as a C long long (no temporary int per bank).
-int k2_clean_system(PyObject* sys, PyObject* seen, PyObject* stock_system,
-                    PyObject* stock_bank, int shift) {
-    if (reinterpret_cast<PyObject*>(Py_TYPE(sys)) != stock_system) return 0;
-    PyObject* sd = k2_dict_of(sys);
-    if (sd == nullptr) return 0;
-    const K2ScanNames& names = k2_scan_names();
-    PyObject* kids = PyDict_GetItemWithError(sd, names.children);
-    if (kids == nullptr) return PyErr_Occurred() ? -1 : 1;
-    PyObject* seq = PySequence_Fast(kids, "");
-    if (seq == nullptr) {
-        PyErr_Clear();
-        return 0;
-    }
-    PyObject* const* banks = PySequence_Fast_ITEMS(seq);
-    const Py_ssize_t nbanks = PySequence_Fast_GET_SIZE(seq);
-    int clean = 1;
-    for (Py_ssize_t i = 0; i < nbanks && clean == 1; ++i) {
-        PyObject* b = banks[i];
-        if (reinterpret_cast<PyObject*>(Py_TYPE(b)) != stock_bank) {
-            clean = 0;
-            break;
-        }
-        PyObject* bd = k2_dict_of(b);
-        if (bd == nullptr) {
-            clean = 0;
-            break;
-        }
-        // The mirror must name the bank: an int Subsystem handle.
-        PyObject* h = PyDict_GetItemWithError(bd, names.nslot);
-        if (h == nullptr) {
-            clean = PyErr_Occurred() ? -1 : 0;
-            break;
-        }
-        if (!PyLong_CheckExact(h)) {
-            clean = 0;
-            break;
-        }
-        const long long v = PyLong_AsLongLong(h);
-        if (v == -1 && PyErr_Occurred()) {
-            // Past long long (an OverflowError): Python's `h >> shift` is
-            // then no kind, so not a Subsystem handle.
-            PyErr_Clear();
-            clean = 0;
-            break;
-        }
-        if ((v >> shift) !=
-            static_cast<long long>(dauntless::combat::Kind::Subsystem)) {
-            clean = 0;
-            break;
-        }
-        PyObject* target = PyDict_GetItemWithError(bd, names.target);
-        if (target == nullptr) {
-            if (PyErr_Occurred()) clean = -1;
-            continue;
-        }
-        if (target == Py_None) continue;
-        const int r = k2_in_seen(seen, target);
-        if (r != 1) clean = r < 0 ? -1 : 0;
-    }
-    Py_DECREF(seq);
-    return clean;
-}
-
-PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
-                        PyObject* kind_shift, PyObject* seen,
-                        PyObject* stock_system, PyObject* stock_bank) {
+PyObject* k2_scan_rows(PyObject* ships, PyObject* obj_kind,
+                       PyObject* kind_shift) {
+    namespace cb = dauntless::combat;
     const K2ScanNames& names = k2_scan_names();
     PyObject* seq = PySequence_Fast(ships, "ships must be iterable");
-    PyObject* handles = seq ? PyList_New(PySequence_Fast_GET_SIZE(seq))
-                            : nullptr;
-    PyObject* unclean = PyList_New(0);
-    PyObject* none_ref = PyLong_FromLong(-1);
+    if (seq == nullptr) return nullptr;
     const long shift = PyLong_AsLong(kind_shift);
     if (shift == -1 && PyErr_Occurred()) {
-        Py_XDECREF(none_ref);
-        Py_XDECREF(unclean);
-        Py_XDECREF(handles);
-        Py_XDECREF(seq);
+        Py_DECREF(seq);
         return nullptr;
     }
     if (shift < 0 || shift > 63) {
         PyErr_SetString(PyExc_ValueError,
-                        "combat_k2_scan_ships: kind_shift must be 0..63");
-        Py_XDECREF(none_ref);
-        Py_XDECREF(unclean);
-        Py_XDECREF(handles);
-        Py_XDECREF(seq);
+                        "combat_k2_scan_rows: kind_shift must be 0..63");
+        Py_DECREF(seq);
         return nullptr;
     }
-    PyObject* result = nullptr;
-    if (seq && handles && unclean && none_ref) {
-        const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
-        PyObject* const* items = PySequence_Fast_ITEMS(seq);
-        bool failed = false;
-        for (Py_ssize_t i = 0; i < n && !failed; ++i) {
-            PyObject* ship = items[i];
-            PyObject* d = k2_dict_of(ship);
-            PyObject* h = d ? PyDict_GetItemWithError(d, names.nslot) : nullptr;
-            if (h == nullptr && PyErr_Occurred()) {
+    const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    PyObject* const* items = PySequence_Fast_ITEMS(seq);
+    PyObject* handles = PyList_New(n);
+    PyObject* none_ref = PyLong_FromLong(-1);
+    std::vector<int64_t> hv(static_cast<size_t>(n), -1);
+    bool failed = handles == nullptr || none_ref == nullptr;
+    for (Py_ssize_t i = 0; i < n && !failed; ++i) {
+        PyObject* d = k2_dict_of(items[i]);
+        PyObject* h = d ? PyDict_GetItemWithError(d, names.nslot) : nullptr;
+        if (h == nullptr && PyErr_Occurred()) {
+            failed = true;
+            break;
+        }
+        int obj = 0;
+        if (h != nullptr && h != Py_None) {
+            obj = k2_is_kind_handle(h, obj_kind, kind_shift);
+            if (obj < 0) {
                 failed = true;
                 break;
-            }
-            int obj = 0;
-            if (h != nullptr && h != Py_None) {
-                obj = k2_is_kind_handle(h, obj_kind, kind_shift);
-                if (obj < 0) {
-                    failed = true;
-                    break;
-                }
-            }
-            if (obj == 0) {
-                Py_INCREF(none_ref);
-                PyList_SET_ITEM(handles, i, none_ref);
-                continue;
-            }
-            Py_INCREF(h);
-            PyList_SET_ITEM(handles, i, h);
-            int clean = k2_in_seen(seen, ship);
-            if (clean == 1) {
-                PyObject* sys = PyDict_GetItemWithError(d, names.system);
-                if (sys == nullptr && PyErr_Occurred())
-                    clean = -1;
-                else if (sys != nullptr && sys != Py_None)
-                    clean = k2_clean_system(sys, seen, stock_system,
-                                            stock_bank,
-                                            static_cast<int>(shift));
-            }
-            if (clean < 0) {
-                failed = true;
-                break;
-            }
-            if (clean == 0) {
-                PyObject* pair = PyTuple_Pack(2, ship, h);
-                if (pair == nullptr || PyList_Append(unclean, pair) < 0)
-                    failed = true;
-                Py_XDECREF(pair);
             }
         }
-        if (!failed) result = PyTuple_Pack(2, handles, unclean);
+        if (obj == 0) {
+            Py_INCREF(none_ref);
+            PyList_SET_ITEM(handles, i, none_ref);
+            continue;
+        }
+        // An Object handle is below 2**60 (its kind bits are 0), so it fits.
+        const long long v = PyLong_AsLongLong(h);
+        if (v == -1 && PyErr_Occurred()) {
+            failed = true;
+            break;
+        }
+        Py_INCREF(h);
+        PyList_SET_ITEM(handles, i, h);
+        hv[static_cast<size_t>(i)] = v;
     }
-    Py_XDECREF(none_ref);
+    PyObject* result = nullptr;
+    PyObject* unclean = failed ? nullptr : PyList_New(0);
+    if (unclean != nullptr) {
+        bool ok = true;
+        for (const size_t i : cb::k2_unclean_ships(cb::mirror(), hv)) {
+            PyObject* pair = PyTuple_Pack(
+                2, items[i], PyList_GET_ITEM(handles, i));
+            if (pair == nullptr || PyList_Append(unclean, pair) < 0)
+                ok = false;
+            Py_XDECREF(pair);
+            if (!ok) break;
+        }
+        if (ok) result = PyTuple_Pack(2, handles, unclean);
+    }
     Py_XDECREF(unclean);
+    Py_XDECREF(none_ref);
     Py_XDECREF(handles);
-    Py_XDECREF(seq);
+    Py_DECREF(seq);
     return result;
 }
 
 // ── combat_step_scan ─────────────────────────────────────────────────────────
 // The per-step ship scan K4 and K3 share (step_scan.h; spec 2026-11-01 §4.1),
-// a C loop over the instance dicts like k2_scan_ships (raw CPython calls: a
+// a C loop over the instance dicts like k2_scan_rows (raw CPython calls: a
 // pybind loop was slower than the Python it replaced).
 //
 // Fills cb::step_scan().ships with each entry's __dict__["_nslot"] in list
@@ -13222,26 +13134,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "the mirror into the render feeds (each ship's Object handle "
               "read from its _nslot); returns (phasers, tractors). ValueError "
               "where the mirror cannot answer: neither feed is touched.");
-        // The driver's per-ship, per-bank clean check (k2_scan_ships).
-        m.def("combat_k2_scan_ships",
-              [](py::handle ships, py::handle obj_kind, py::handle kind_shift,
-                 py::handle seen, py::handle stock_system,
-                 py::handle stock_bank) {
-                  PyObject* r = k2_scan_ships(
-                      ships.ptr(), obj_kind.ptr(), kind_shift.ptr(),
-                      seen.ptr(), stock_system.ptr(), stock_bank.ptr());
+        // The driver's per-ship check (k2_scan_rows), answered from the
+        // mirror. Its name is native_combat._REQUIRED_BINDINGS' stale-build
+        // marker for the mirror scan (phase 6 follow-up 3b).
+        m.def("combat_k2_scan_rows",
+              [](py::handle ships, py::handle obj_kind,
+                 py::handle kind_shift) {
+                  PyObject* r = k2_scan_rows(ships.ptr(), obj_kind.ptr(),
+                                             kind_shift.ptr());
                   if (r == nullptr) throw py::error_already_set();
                   return py::reinterpret_steal<py::tuple>(r);
               },
               py::arg("ships"), py::arg("obj_kind"), py::arg("kind_shift"),
-              py::arg("seen"), py::arg("stock_system"), py::arg("stock_bank"),
-              "(handles, [(ship, handle), ...]): see k2_scan_ships.");
-        // 2: the scan reads classes and handles only (phase 6 follow-up 3,
-        // Task 2; the signature lost its patch sets under the same name).
-        // native_combat._REQUIRED_BINDINGS' stale-build marker.
-        // Bump = a new binding name; the value is not compared.
-        m.def("combat_k2_scan_version", [] { return 2; },
-              "combat_k2_scan_ships' version (2: classes and handles).");
+              "(handles, [(ship, handle), ...]): see k2_scan_rows.");
         m.def("combat_k2_next", [vec] {
             // Compute with the GIL released (THE GIL RELEASE), as
             // combat_k1_next: the kernel and the trace hooks touch no Python

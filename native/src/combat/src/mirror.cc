@@ -259,6 +259,7 @@ constexpr FieldInfo kInfo[] = {
     {"_target_angular_velocity_fraction_state", Kind::Object, FieldType::I},
     {"_turn_goal", Kind::Object, FieldType::FloatList},
     {"_acceleration", Kind::Object, FieldType::FloatList},
+    {"k2_stock", Kind::Subsystem, FieldType::I},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -639,6 +640,7 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::DRAWS_DIRECT_FROM_MAIN: return &r.DRAWS_DIRECT_FROM_MAIN;
         case Field::power_kind: return &r.power_kind;
         case Field::is_repair_bay: return &r.is_repair_bay;
+        case Field::k2_stock: return &r.k2_stock;
         default: return nullptr;
     }
 }

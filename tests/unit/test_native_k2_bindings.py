@@ -295,9 +295,13 @@ def test_system_stop_and_run_python(scene):
     assert reasons["unslotted_ship"] >= 1 and reasons["overridden"] >= 1
 
 
-def test_a_build_without_the_class_only_scan_is_stale():
-    """combat_k2_scan_ships lost its patch-set arguments (phase 6 follow-up
-    3, Task 2) under the same name, so the scan's version is the stale-build
-    marker: configure names a .so without it (M10)."""
-    assert "combat_k2_scan_version" in nc._REQUIRED_BINDINGS
-    assert _h.combat_k2_scan_version() == 2
+def test_a_build_without_the_mirror_scan_is_stale():
+    """K2's ship scan is answered from the mirror (phase 6 follow-up 3b):
+    combat_k2_scan_rows replaced combat_k2_scan_ships and its version
+    marker, and its name is the stale-build marker: configure names a .so
+    without it (M10)."""
+    assert "combat_k2_scan_rows" in nc._REQUIRED_BINDINGS
+    assert "combat_k2_scan_version" not in nc._REQUIRED_BINDINGS
+    assert hasattr(_h, "combat_k2_scan_rows")
+    assert not hasattr(_h, "combat_k2_scan_ships")
+    assert not hasattr(_h, "combat_k2_scan_version")

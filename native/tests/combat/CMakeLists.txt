@@ -11,6 +11,7 @@ add_executable(combat_tests
     k1_fire_control_test.cc
     k0_charging_test.cc
     k2_beams_test.cc
+    k2_scan_test.cc
     k3_projectiles_test.cc
     k4_eligibility_test.cc
     damage_test.cc

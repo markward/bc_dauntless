@@ -358,8 +358,9 @@
 // It lists a ship in `python_ships` (RUN_PYTHON "overridden") when its bank
 // or system class overrides one of its own names, or a bank of its phaser
 // system has no Subsystem row (its "_nslot" is not an int Subsystem handle:
-// the mirror cannot name it). The check reads classes and handles only
-// (combat_k2_scan_ships, then native_combat._k2_python_ship): an INSTANCE
+// the mirror cannot name it). The check reads the mirror, then classes and
+// handles (combat_k2_scan_rows and k2_scan.h, then
+// native_combat._k2_python_ship for the ships the scan lists): an INSTANCE
 // attribute shadowing a method the loop calls on the ship, its phaser
 // system or a bank is not looked for and not obeyed (spec Part A, phase 6
 // follow-up 3; THE DAMAGE PULSE reads the bank's and system's mirrored
@@ -369,15 +370,15 @@
 // walk's logged bank stops stand in for it. K1's class-override guard,
 // which K2 shared, is deleted with fire control's Python copy (fire control
 // native only, M8.7): a class overriding StopFiring is not obeyed.)
-// It also lists the ship when the ship's own class, or the class of a bank's
-// `_target`, is one K2 never saw (no object of that class ever registered or
-// was reclassified), and runs the whole step in Python when that class is
-// flagged "whole" (native_combat._k2_unseen). The check is PER CLASS, not per
-// row: it catches a `__class__` swapped in under a row only while no object
-// of the new class has been seen. Once one has, a row whose object's class
-// was swapped to that class WITHOUT reclassify keeps its old class flags,
-// undetected. Code that swaps a class under a row must call reclassify (the
-// rocks do: engine/rocks/rock.py).
+// It also lists the ship when the class of a bank's `_target` is one K2
+// never saw (no object of that class ever registered or was reclassified:
+// such a target has no row, so the mirror holds -2 for it), and runs the
+// whole step in Python when that class is flagged "whole"
+// (native_combat._k2_unseen). The scan reads each row's class flags as
+// pushed (k2_stock among them), so a `__class__` swapped in under a row
+// WITHOUT reclassify keeps its old class flags, undetected. Code that swaps
+// a class under a row must call reclassify (the rocks do:
+// engine/rocks/rock.py).
 // An instance attribute on a TARGET is not looked for. No ENGINE class may
 // override a stood-in name unless the kernel ports it: the static guard
 // tests/unit/test_native_k2_override_guard.py lists the ported ones.
