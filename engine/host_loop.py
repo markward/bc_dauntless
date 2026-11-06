@@ -8033,6 +8033,10 @@ def reset_mission_state(renderer=None) -> None:
     # The Objectives buttons' click event type, cached for the same reason.
     from engine.appc import mission_goals as _mission_goals
     _mission_goals.reset()
+    # Blind-warp parked marks (engine/appc/warp.py): the swap deletes the
+    # warp set with every other set.
+    from engine.appc import warp as _warp_parked
+    _warp_parked.forget_parked_blind()
     # The running battle's real-object snapshot: the swap deletes every
     # region set, so a later EndSimulation must not rebuild them.
     from engine.quickbattle import sim_restore as _qb_sim_restore

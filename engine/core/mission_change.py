@@ -191,6 +191,13 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
     for _name, pSet in doomed:
         gone.add(id(pSet))
         gone.update(id(o) for o in pSet._objects.values())
+    # NPCs a blind warp parked in the kept warp set go with the old mission
+    # (warp._parked_blind: a chosen behaviour, BC's is unknown). Their
+    # handlers are dropped with the mission's; the ships themselves are
+    # deleted below, once no old-mission handler can hear it.
+    warp_set = App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME)
+    parked = warp.parked_blind_warpers(warp_set)
+    gone.update(id(o) for o in parked)
 
     # MissionLib first, as reset_sdk_globals does (CallWaiting sees the bridge).
     host_loop._reset_missionlib_state()
@@ -230,6 +237,12 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
     host_loop._reset_timers(keep=survivors)
     host_loop._reset_action_registry(keep=survivors)
     _drop_event_handlers(gone)
+    for ship in parked:
+        try:
+            warp_set.DeleteObjectFromSet(ship.GetName())
+        except Exception:
+            traceback.print_exc()
+        warp.forget_parked_blind(ship)
     host_loop._reset_session_scratch()
     host_loop._reset_system_loader_state()
     _drop_waypoints_outside(kept_sets)
