@@ -189,6 +189,8 @@ _REQUIRED_BINDINGS = (
     "combat_compute_take",
     # Tractors native (fire control native only, M4).
     "combat_k1_begin_tractor", "combat_tractor_force_step",
+    # The native beam render feed (phase 6 follow-up 1, beam_feed).
+    "combat_beam_feed",
     # The SDK routes and the walk offset (fire control native only, M8).
     "combat_k1_begin_dumb", "combat_k1_begin_fire", "combat_k1_result",
     "combat_k1_can_fire", "combat_k1_walk_manual_offset",
@@ -6145,8 +6147,10 @@ def beam_feed(ships, ship_instances) -> bool:
             if type(vh) is not int or (vh >> _KIND_SHIFT) != _kind("Set"):
                 raise ValueError("the viewed set has no Set row")
         cx = _K2Context(ship_instances, sent=_beam_iids_sent)
+        # The view as already sent: delta() then skips K2's view_offsets,
+        # which the feed does not read (it has the frames table).
+        cx.view = view
         ctx = cx.delta()
-        ctx.pop("view_offsets", None)       # K2's; the feed has the frames
         ctx["view"] = vh
         ctx["origin"] = fr.render_origin()
         ctx["frames"] = _beam_frames()

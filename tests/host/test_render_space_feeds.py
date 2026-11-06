@@ -198,6 +198,10 @@ def test_every_combat_feed_is_in_render_space(far_scene, monkeypatch):
     from engine.appc import particles, shockwaves
     pSet, player = far_scene
     ships = _combat_feeds(pSet, player, monkeypatch)
+    # The Python beam builders, so the patched _beam_descriptor_pair runs
+    # (the native feed reads the mirror and would not obey it).
+    from engine.appc import native_combat
+    monkeypatch.setattr(native_combat, "beam_feed", lambda *a, **k: False)
     pushed = {}
     for name in ("set_torpedoes", "set_dynamic_lights", "set_shockwaves",
                  "set_hit_vfx", "set_particle_emitters", "set_phaser_beams",

@@ -211,11 +211,34 @@ import random  # noqa: E402
 from engine.appc import native_combat as nc  # noqa: E402
 
 
-def _native_feed(ships, ship_instances):
+def _native_feed(ships, ship_instances, want=None):
     """native_combat.beam_feed, then what it pushed: (ok, phaser bytes,
-    tractor bytes)."""
-    ok = nc.beam_feed(ships, ship_instances)
+    tractor bytes). Both vectors are seeded with a sentinel first, so a
+    binding that skipped an assignment reads back the sentinel, never the
+    Python frame pushed before it. With `want` (the _python_feed pair), the
+    binding's own (n_phasers, n_tractors) must equal its lengths."""
+    _h.set_phaser_beams([SENTINEL])
+    _h.set_tractor_beams([SENTINEL, SENTINEL])
+    returned = []
+    feed = _h.combat_beam_feed
+
+    def spy(*a, **k):
+        r = feed(*a, **k)
+        returned.append(r)
+        return r
+
+    _h.combat_beam_feed = spy
+    try:
+        ok = nc.beam_feed(ships, ship_instances)
+    finally:
+        _h.combat_beam_feed = feed
+    if ok and want is not None:
+        assert returned == [(len(want[0]), len(want[1]))], returned
     return ok, _beams("phaser"), _beams("tractor")
+
+
+# Matches no descriptor a builder makes (a width of -1, 3 sides).
+SENTINEL = dict(MINIMAL, width=-1.0, num_sides=3)
 
 
 class _Coverage:
@@ -308,7 +331,7 @@ def test_native_feed_equals_python_every_frame(beam_scene, monkeypatch):
                      if POSE_FROM <= scene.tick < POSE_TO else None)
         ships = list(iter_ships())
         want = cov.python_feed(ships, bs.ship_instances)
-        ok, phasers, tractors = _native_feed(ships, bs.ship_instances)
+        ok, phasers, tractors = _native_feed(ships, bs.ship_instances, want)
         assert ok, "tick %d: the native feed fell back" % scene.tick
         assert phasers == want[0], "tick %d: phasers differ" % scene.tick
         assert tractors == want[1], "tick %d: tractors differ" % scene.tick
@@ -397,7 +420,7 @@ def test_native_feed_equals_python_across_regions(native_combat_on, regions,
     want = _python_feed(ships, None)
     # The two pairs in the viewed frame draw; the one in another frame not.
     assert len(want[1]) == 4, want
-    ok, phasers, tractors = _native_feed(ships, None)
+    ok, phasers, tractors = _native_feed(ships, None, want)
     assert ok
     assert (phasers, tractors) == want
     assert nc.beam_feed_fallbacks == 0
@@ -412,8 +435,13 @@ def test_a_throw_leaves_no_partial_feed_and_python_fills_the_frame(
     # A firing ship moved to a set of its own frame: Python draws none of
     # its beams; the native feed must look that set's frame up -- and it is
     # left out of the frames table, so the feed throws.
-    shooter = next(s for s in bs.ships if s is not bs.player
-                   and host_loop._firing_banks(s.GetPhaserSystem()))
+    # The LAST firing shooter, so ships before it in list order have drawn
+    # pairs into the native build when it throws: a partial build really is
+    # discarded.
+    shooter = [s for s in bs.ships if s is not bs.player
+               and s.GetPhaserSystem() is not None
+               and host_loop._firing_banks(s.GetPhaserSystem())][-1]
+    before = bs.ships[:bs.ships.index(shooter)]
     elsewhere = SetClass_Create()
     App.g_kSetManager.AddSet(elsewhere, "Elsewhere")
     name = shooter.GetName()
@@ -431,6 +459,10 @@ def test_a_throw_leaves_no_partial_feed_and_python_fills_the_frame(
 
     monkeypatch.setattr(nc, "_beam_frames", without)
     ships = [s for s in bs.ships if s.GetContainingSet() is not None]
+    assert host_loop._build_phaser_beam_render_data(
+        [s for s in before if s in ships],
+        ship_instances=bs.ship_instances), \
+        "premise: a ship before the shooter draws phasers"
     _h.set_phaser_beams([FULL])
     _h.set_tractor_beams([MINIMAL, FULL])
     try:
@@ -463,7 +495,7 @@ def test_a_patched_getter_is_not_honoured(beam_scene, monkeypatch):
     outer = [struct.unpack(PACK, d)[width] for d in patched[0][0::2]]
     assert outer and all(w == f32(9.0 * 3.0) for w in outer), \
         "premise: the Python builder honours the patch"
-    ok, phasers, tractors = _native_feed(bs.ships, bs.ship_instances)
+    ok, phasers, tractors = _native_feed(bs.ships, bs.ship_instances, want)
     assert ok
     assert nc.beam_feed_fallbacks == 0
     # The mirrored widths, not the patched getter's.
