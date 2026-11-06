@@ -35,31 +35,30 @@ MINIMAL = {
 }
 
 
-def expected(d):
-    return (tuple(f32(v) for v in d["emitter"])
-            + tuple(f32(v) for v in d["target"])
-            + tuple(f32(v) for v in d["color"])
-            + (f32(d["width"]), f32(d.get("u_tiles", 1.0)),
-               d.get("num_sides", 6),
-               f32(d.get("taper_radius", 0.01)),
-               f32(d.get("taper_ratio", 0.25)),
-               f32(d.get("taper_min_length", 5.0)),
-               f32(d.get("taper_max_length", 30.0)),
-               f32(d.get("perimeter_tile", 1.0)),
-               f32(d.get("texture_speed", 0.0)),
-               f32(d.get("end_width_scale", 1.0))))
+def packed(d):
+    """The descriptor `d` as the native side must hold it: defaults applied,
+    float32-rounded, packed bytes (so -0.0 / NaN cannot hide in a float ==)."""
+    return struct.pack(
+        PACK, *d["emitter"], *d["target"], *d["color"], d["width"],
+        d.get("u_tiles", 1.0), d.get("num_sides", 6),
+        d.get("taper_radius", 0.01), d.get("taper_ratio", 0.25),
+        d.get("taper_min_length", 5.0), d.get("taper_max_length", 30.0),
+        d.get("perimeter_tile", 1.0), d.get("texture_speed", 0.0),
+        d.get("end_width_scale", 1.0))
+
+
+PACK = "<12f i 7f"
 
 
 def test_readback_returns_what_set_phaser_beams_pushed():
     _h.set_phaser_beams([FULL, MINIMAL])
     _h.set_tractor_beams([MINIMAL, FULL])
     try:
-        got = _h.phaser_beams_debug()
-        assert got == [expected(FULL), expected(MINIMAL)]
-        assert got[1][-1] == 1.0
-        assert len(got[0]) == 20
-        assert _h.tractor_beams_debug() == [expected(MINIMAL),
-                                            expected(FULL)]
+        assert _beams("phaser") == [packed(FULL), packed(MINIMAL)]
+        assert _beams("tractor") == [packed(MINIMAL), packed(FULL)]
+        # No end_width_scale given: the native default is 1.0.
+        assert struct.unpack(PACK, _beams("phaser")[1])[-1] == 1.0
+        assert len(_h.phaser_beams_debug()[0]) == 20
     finally:
         _h.set_phaser_beams([])
         _h.set_tractor_beams([])
@@ -67,19 +66,14 @@ def test_readback_returns_what_set_phaser_beams_pushed():
 
 # ── The scene: real instances, phasers firing, a tractor towing ─────────────
 
-import struct as _struct  # noqa: E402
-
 from tests.host.test_native_k2_differential import (  # noqa: E402,F401
     ON, TICKS, _Scene, _hermetic, host)
-
-PACK = "<12f i 7f"
-
 
 def _beams(kind):
     """The pushed descriptors of `kind` ('phaser' | 'tractor') as packed
     bytes, one per beam, so a compare is bitwise."""
     rows = getattr(_h, kind + "_beams_debug")()
-    return [_struct.pack(PACK, *r) for r in rows]
+    return [struct.pack(PACK, *r) for r in rows]
 
 
 def _python_feed(ships, ship_instances):
@@ -131,11 +125,13 @@ class BeamScene:
         sc = self.scene
         # Sensors power up at 1.0 s of game time.
         self.advance(ticks=70)
-        for g in sc.systems:
+        # Spread targets so both shield states, hull traces and bubble
+        # entries are all exercised.
+        for i, g in enumerate(sc.systems):
             g.TurnOn()
             g.SetSingleFire(0)
             foes = sc._foes(g.GetParentShip())
-            g.StartFiring(foes[0] if foes else None)
+            g.StartFiring(foes[i % len(foes)] if foes else None)
         # Shields: one foe up, one down.
         foes = sc._foes(self.player)
         for i, s in enumerate(foes):
@@ -165,17 +161,44 @@ def beam_scene(monkeypatch, host):
         scene.close()
 
 
+def _foe_shield_states(scene):
+    return {s.GetName(): bool(s.GetShieldSubsystem().IsOn())
+            for s in scene._foes(scene.player)
+            if s.GetShieldSubsystem() is not None}
+
+
+def _phaser_targets_by_shield(bs):
+    """{shields_up: count of ships' firing banks aimed at such a target}
+    over ships whose builder output is non-empty."""
+    from engine import host_loop
+    seen = {True: 0, False: 0}
+    for ship in bs.ships:
+        if not host_loop._build_phaser_beam_render_data(
+                [ship], ship_instances=bs.ship_instances):
+            continue
+        for bank in host_loop._firing_banks(ship.GetPhaserSystem()):
+            sh = getattr(bank._target, "GetShieldSubsystem",
+                         lambda: None)()
+            if sh is not None:
+                seen[bool(sh.IsOn())] += 1
+    return seen
+
+
 def test_scene_feeds_phaser_and_tractor_pairs(beam_scene):
-    got = None
+    before = _foe_shield_states(beam_scene.scene)
+    got, seen = None, {True: 0, False: 0}
     for _ in range(60):
         beam_scene.advance()
         got = _python_feed(beam_scene.ships, beam_scene.ship_instances)
-        if got[0] and got[1]:
+        seen = _phaser_targets_by_shield(beam_scene)
+        if got[0] and got[1] and all(seen.values()):
             break
     phasers, tractors = got
+    # Every firing bank emits an outer shell + inner core pair.
     assert len(phasers) > 0 and len(phasers) % 2 == 0
     assert len(tractors) > 0 and len(tractors) % 2 == 0
-    states = {bool(sh.IsOn()) for sh in (
-        t.GetShieldSubsystem() for t in beam_scene.scene._foes(beam_scene.player))
-        if sh is not None}
-    assert states == {True, False}
+    after = _foe_shield_states(beam_scene.scene)
+    assert set(before.values()) == {True, False}, before
+    assert set(after.values()) == {True, False}, after
+    assert seen[True] > 0 and seen[False] > 0, (
+        "phasers must land on a shields-up and a shields-down foe: %r" % seen)
