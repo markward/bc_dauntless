@@ -150,7 +150,13 @@ The kernels then check only representability, answered from the mirror.
   - Two runs each.
   - Plus one cProfile run at 128 on this tip.
 - Score per tick: `cb.phasers`, `cb.projectiles`, `sim.combat` and ticks a frame. Use the median of reports 3–11.
-- From the cProfile, report `k2_phasers` and its pieces against C-341: the 0.40 s `combat_dmg_clean_handles` and the 0.37 s `combat_k2_scan_ships` should be gone.
+- From the cProfile, report `k2_phasers` and its pieces against C-341:
+  - the 0.40 s `combat_dmg_clean_handles` (the clean list) should be gone;
+  - `combat_k2_scan_ships` keeps its name and still runs every tick, now with no dict probes: compare it against C-341's 0.37 s, don't expect it to vanish.
+- The pulse's representability check (`dmg_target_representable`) runs inside the GIL-released K2 compute, so cProfile cannot show it: judge it from `cb.phasers`.
+- Hand-back counter names changed across these commits; any cross-commit comparison needs this map:
+  - `k2_pulse_python_reasons` / `k3_hit_python_reasons`: `unscanned` → `unrepresentable`; `python` is dropped (no producer).
+  - A ship sent to Python for a bank with no Subsystem row counts as RUN_PYTHON `overridden` (`k2_python_reasons`), not `stale_row`.
 - Perf register: the captures and one signal. Say plainly what it bought, including if it is inside the run-to-run spread.
 - Live-check list:
   - a 64-ship fight;

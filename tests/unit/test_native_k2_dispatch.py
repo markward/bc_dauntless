@@ -1228,6 +1228,14 @@ def test_a_subclassed_bank_still_sends_its_ship_to_python(monkeypatch):
         finally:
             w.close()
 
+    def patch(mp, w):
+        mp.setattr(w.ships["Galaxy"].GetPhaserSystem().GetWeapon(0),
+                   "__class__", SlowDwell)
+
+    counts = _one_native_step(monkeypatch, patch)
+    assert counts["k2_records"] > 0, counts             # the Vor'cha's
+    assert counts["k2_python_reasons"]["overridden"] == 1, counts
+
 
 def _py_clean(ship):
     """The binding's clean check, written out in Python (the reference):
@@ -1315,6 +1323,9 @@ def test_binding_scan_matches_the_python_clean_check(monkeypatch):
                 lambda m: m.setitem(bank.__dict__, "_nslot", nc.slot(g)),
                 lambda m: m.setitem(bank.__dict__, "_nslot",
                                     float(bank.__dict__["_nslot"])),
+                # An int past long long (> 2**63): not a Subsystem handle.
+                lambda m: m.setitem(bank.__dict__, "_nslot",
+                                    2**64 + bank.__dict__["_nslot"]),
             )
             for i, case in enumerate(cases):
                 with monkeypatch.context() as m:

@@ -3746,10 +3746,10 @@ int k2_is_kind_handle(PyObject* h, PyObject* kind, PyObject* kind_shift) {
 }
 
 // 1 clean, 0 not, -1 error: the phaser system `sys` and its banks (see
-// above). `sub_kind` is the Subsystem kind, as an int.
+// above). `shift` is the kind shift, converted once per scan; a bank's
+// handle is read as a C long long (no temporary int per bank).
 int k2_clean_system(PyObject* sys, PyObject* seen, PyObject* stock_system,
-                    PyObject* stock_bank, PyObject* sub_kind,
-                    PyObject* kind_shift) {
+                    PyObject* stock_bank, int shift) {
     if (reinterpret_cast<PyObject*>(Py_TYPE(sys)) != stock_system) return 0;
     PyObject* sd = k2_dict_of(sys);
     if (sd == nullptr) return 0;
@@ -3785,9 +3785,17 @@ int k2_clean_system(PyObject* sys, PyObject* seen, PyObject* stock_system,
             clean = 0;
             break;
         }
-        const int sub = k2_is_kind_handle(h, sub_kind, kind_shift);
-        if (sub != 1) {
-            clean = sub < 0 ? -1 : 0;
+        const long long v = PyLong_AsLongLong(h);
+        if (v == -1 && PyErr_Occurred()) {
+            // Past long long (an OverflowError): Python's `h >> shift` is
+            // then no kind, so not a Subsystem handle.
+            PyErr_Clear();
+            clean = 0;
+            break;
+        }
+        if ((v >> shift) !=
+            static_cast<long long>(dauntless::combat::Kind::Subsystem)) {
+            clean = 0;
             break;
         }
         PyObject* target = PyDict_GetItemWithError(bd, names.target);
@@ -3812,10 +3820,25 @@ PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
                             : nullptr;
     PyObject* unclean = PyList_New(0);
     PyObject* none_ref = PyLong_FromLong(-1);
-    PyObject* sub_kind = PyLong_FromLong(
-        static_cast<long>(dauntless::combat::Kind::Subsystem));
+    const long shift = PyLong_AsLong(kind_shift);
+    if (shift == -1 && PyErr_Occurred()) {
+        Py_XDECREF(none_ref);
+        Py_XDECREF(unclean);
+        Py_XDECREF(handles);
+        Py_XDECREF(seq);
+        return nullptr;
+    }
+    if (shift < 0 || shift > 63) {
+        PyErr_SetString(PyExc_ValueError,
+                        "combat_k2_scan_ships: kind_shift must be 0..63");
+        Py_XDECREF(none_ref);
+        Py_XDECREF(unclean);
+        Py_XDECREF(handles);
+        Py_XDECREF(seq);
+        return nullptr;
+    }
     PyObject* result = nullptr;
-    if (seq && handles && unclean && none_ref && sub_kind) {
+    if (seq && handles && unclean && none_ref) {
         const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
         PyObject* const* items = PySequence_Fast_ITEMS(seq);
         bool failed = false;
@@ -3849,7 +3872,8 @@ PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
                     clean = -1;
                 else if (sys != nullptr && sys != Py_None)
                     clean = k2_clean_system(sys, seen, stock_system,
-                                            stock_bank, sub_kind, kind_shift);
+                                            stock_bank,
+                                            static_cast<int>(shift));
             }
             if (clean < 0) {
                 failed = true;
@@ -3864,7 +3888,6 @@ PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
         }
         if (!failed) result = PyTuple_Pack(2, handles, unclean);
     }
-    Py_XDECREF(sub_kind);
     Py_XDECREF(none_ref);
     Py_XDECREF(unclean);
     Py_XDECREF(handles);
@@ -13216,6 +13239,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // 2: the scan reads classes and handles only (phase 6 follow-up 3,
         // Task 2; the signature lost its patch sets under the same name).
         // native_combat._REQUIRED_BINDINGS' stale-build marker.
+        // Bump = a new binding name; the value is not compared.
         m.def("combat_k2_scan_version", [] { return 2; },
               "combat_k2_scan_ships' version (2: classes and handles).");
         m.def("combat_k2_next", [vec] {

@@ -5570,7 +5570,9 @@ def _k2_python_ship(ship) -> int:
     whole step must (a bank or system class overriding a subsystem name,
     or a never-seen class flagged "whole"). Classes and handles only: an
     instance attribute is not looked for (spec Part A). k2_phasers inlines
-    the common case (combat_k2_scan_ships) and calls this for the rest."""
+    the common case (combat_k2_scan_ships) and calls this for the rest.
+    A ship sent for a bank with no Subsystem row is counted like any other
+    1: RUN_PYTHON "overridden" (k2_python_reasons), not "stale_row"."""
     d = ship.__dict__
     why = _k2_unseen(type(ship))
     if why == 2:

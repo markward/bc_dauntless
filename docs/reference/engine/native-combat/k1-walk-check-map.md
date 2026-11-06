@@ -99,6 +99,7 @@ So the list of what still needs the lock *inside the kernel compute* is: **K1's 
 
 ### 3.3 K2: begin-time C scan, no cache (HB:3540-3663; Python NC:4205-4274, entry NC:4634-4660)
 - `combat_k2_scan_ships` runs every tick. It checks the ship's class is in `_k2_seen_set`, and the ship dict for `_K2_SHIP_PATCHES`. It checks that the phaser system's class is exactly the stock class, plus its dict for `_K2_SYSTEM_PATCHES`. For each bank it checks the class is exactly the stock bank, its dict for `_K2_BANK_PATCHES`, and that `_target`'s class is seen. Unclean ships go to `_k2_python_ship` (Python), and the result is the `python_ships` set in the begin context. The class and function checks (`_k2_unchanged`, NC:4131-4146) run once at entry.
+- **Superseded 2026-11-06** (phase 6 follow-up 3, Task 2): the scan reads classes and handles only. It checks the ship's class is seen, the phaser system's and each bank's class is exactly the stock class, each bank's `_nslot` is an int Subsystem handle (else its ship goes to Python, counted `overridden`), and `_target`'s class is seen. No dict is probed for `_K2_*_PATCHES` (deleted): an instance patch is not honoured (spec Part A).
 - **Mid-session patches:** the set is fixed at begin. `cx.resend()` (NC:4393-4397) re-sends only iids, cheat and view. An instance patch made by a damage-pulse handler mid-step is seen next step. The K2 header says a class patch is seen "a tick late" (`k2_beams.h:337-343`).
 - Cost: ~85 ns a bank in a Debug build (NC:3969).
 
