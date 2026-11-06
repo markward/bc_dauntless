@@ -85,3 +85,19 @@ def test_a_player_death_plays_the_lose_fanfare(monkeypatch):
     ambient = [t for n, t, a in log if n == "SwitchMusic" and a == "Starting Ambient"]
     lose = [t for n, t, a in log if n == "PlayFanfare" and a == "Lose"]
     assert ambient and lose and 0.0 < ambient[0] - t_kill < 20.0
+
+
+def test_after_a_loss_the_music_stays_ambient(monkeypatch):
+    """Q9/Q4 on the original: after the Lose fanfare, Starting Ambient for the
+    60 s (Q9) and 555 s (Q4) the runs went on; never combat again.
+    EndSimulation deletes every ship but the player (SetDeleteMe), so the
+    recreated player has no enemy in range."""
+    App, DM, frames, player, enemy, log = _fight(monkeypatch)
+    _kill(App, player)
+    frames.run(20.0)
+    lose = [t for n, t, a in log if n == "PlayFanfare" and a == "Lose"]
+    assert lose
+    frames.run(60.0)
+    assert [a for n, t, a in log if n == "SwitchMusic" and t > lose[0]] == []
+    assert DM.sCurrentMusicType == "Starting Ambient"
+    assert enemy.GetContainingSet() is None

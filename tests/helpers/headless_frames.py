@@ -1,7 +1,9 @@
 """Headless frames that run what the live host runs each frame for a fight's
-end: the GameLoop tick, ship deaths (ship_death.advance -- the host calls it
-from its combat step, so a bare GameLoop leaves a dying ship dying forever) and
-the music pump (MusicPlayer.update, then ET_MUSIC_DONE when a track ends, as
+end: the SetDeleteMe sweep (host_loop._process_object_deletions; EndSimulation
+clears the battle this way, so without it every ship outlives the battle), the
+GameLoop tick, ship deaths (ship_death.advance -- the host calls it from its
+combat step, so a bare GameLoop leaves a dying ship dying forever) and the
+music pump (MusicPlayer.update, then ET_MUSIC_DONE when a track ends, as
 host_loop._pump_music)."""
 from engine.audio.music import MusicPlayer
 
@@ -49,16 +51,21 @@ class Frames:
 
     def frame(self):
         from engine.appc import ship_death
+        from engine.host_loop import _process_object_deletions
+        _process_object_deletions()
         self.loop.tick()
         ship_death.advance(DT)
-        self.t += DT
+        self._streams(DT)
+        self.player.update(DT)
+        if self.player.finished():
+            self.mgr.notify_track_finished()
+
+    def _streams(self, dt):
+        self.t += dt
         for key, (s, end) in list(self._ends.items()):
             if self.t >= end and s.playing:
                 s.playing = False
                 del self._ends[key]
-        self.player.update(DT)
-        if self.player.finished():
-            self.mgr.notify_track_finished()
 
     def run(self, seconds, until=None):
         n = int(round(seconds / DT))
