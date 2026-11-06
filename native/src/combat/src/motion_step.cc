@@ -78,16 +78,27 @@ double cap_keep(double commanded, double current, double cap) {
     return commanded;
 }
 
-// ship_motion._asymptote_step: min(accel, abs(gap) / BC_IMPULSE_TAU) * dt
-double asymptote_step(double accel, double gap, double dt) {
-    return py_min(accel, std::fabs(gap) / kBcImpulseTau) * dt;
-}
-
 // ship_motion._ramp_toward
 double ramp_toward(double current, double target, double step) {
     const double delta = target - current;
     if (std::fabs(delta) <= step) return target;
     return current + (delta > 0 ? step : -step);
+}
+
+// ship_motion.law_step_vector: move `cur` toward `target` by
+// min(accel, |gap| / tau) * dt along the gap; accel >= FALLBACK_MAX_ACCEL
+// snaps (`accel * dt`).
+Vec3 law_step_vector(const Vec3& cur, const Vec3& target, double accel,
+                     double dt) {
+    const double ex = target[0] - cur[0], ey = target[1] - cur[1],
+                 ez = target[2] - cur[2];
+    const double e = std::sqrt(ex * ex + ey * ey + ez * ez);
+    const double step = accel >= kFallbackMaxAccel
+                            ? accel * dt
+                            : py_min(accel, e / kBcImpulseTau) * dt;
+    if (e <= step || e == 0.0) return target;
+    const double k = step / e;
+    return {cur[0] + ex * k, cur[1] + ey * k, cur[2] + ez * k};
 }
 
 // One row, computed into locals (commit() writes them).
@@ -163,8 +174,8 @@ const SubsystemRow* stock_ies(const Mirror& m, const ObjectRow& o) {
     return ies;
 }
 
-Plan plan_row(const Mirror& m, const TransformStore& store, int64_t h,
-              int64_t player, double dt, bool past_warp) {
+Plan plan_step(const Mirror& m, const TransformStore& store, int64_t h,
+               int64_t player, double dt, bool past_warp) {
     Plan p;
     const ObjectRow* row = h < 0 ? nullptr : m.object(h);
     if (!row) to_python(MotionReason::NoRow);
@@ -281,51 +292,114 @@ Plan plan_row(const Mirror& m, const TransformStore& store, int64_t h,
         }
     }
 
-    // -- Linear ramp toward (capped) target --
-    double target, step;
+    // -- Linear: BC's law on the velocity vector (course lags the nose) --
+    double target, accel;
     if (has_lin) {
         target = cap_keep(commanded, speed, max_speed);
-        const double accel = max_accel > 0.0 ? max_accel : kFallbackMaxAccel;
-        step = asymptote_step(accel, target - speed, dt);
+        accel = max_accel > 0.0 ? max_accel : kFallbackMaxAccel;
     } else {
         target = commanded;
-        step = kFallbackMaxAccel * dt;
+        accel = kFallbackMaxAccel;
     }
-    speed = ramp_toward(speed, target, step);
+    // step_vector_velocity(ship, world_dir, speed, target, accel, dt):
+    // `_motion_vel` re-seeded along the direction unless it holds the speed
+    // the ship is at.
+    const std::vector<double>& mv = o._motion_vel;
+    if (!(mv.empty() || mv.size() == 4))
+        to_python(MotionReason::Unrepresentable);
+    Vec3 vel;
+    if (mv.empty() || speed != mv[3])
+        vel = {wd[0] * speed, wd[1] * speed, wd[2] * speed};
+    else
+        vel = {mv[0], mv[1], mv[2]};
+    const Vec3 tv{wd[0] * target, wd[1] * target, wd[2] * target};
+    const double ex = tv[0] - vel[0], ey = tv[1] - vel[1], ez = tv[2] - vel[2];
+    const double e = std::sqrt(ex * ex + ey * ey + ez * ez);
+    // snap=not em.has_linear: the whole gap in one step.
+    const double step =
+        !has_lin ? accel * dt : py_min(accel, e / kBcImpulseTau) * dt;
+    if (e <= step || e == 0.0) {
+        vel = tv;
+        speed = target;
+    } else {
+        const double k = step / e;
+        vel = {vel[0] + ex * k, vel[1] + ey * k, vel[2] + ez * k};
+        speed =
+            std::sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+        if (vel[0] * wd[0] + vel[1] * wd[1] + vel[2] * wd[2] < 0.0)
+            speed = -speed;
+    }
+    w.motion_vel = {vel[0], vel[1], vel[2], speed};
+    w.what |= kMotionVel;
     w.speed = speed;
     w.what |= kSpeed;
 
-    // `if ship._current_speed != 0.0:` guards only the translate.
-    if (speed != 0.0) {
-        p.pos = {pos[0] + wd[0] * speed * dt, pos[1] + wd[1] * speed * dt,
-                 pos[2] + wd[2] * speed * dt};
+    // `if vx or vy or vz:` guards only the translate.
+    if (truthy(vel)) {
+        p.pos = {pos[0] + vel[0] * dt, pos[1] + vel[1] * dt,
+                 pos[2] + vel[2] * dt};
         p.pos_set = true;
     }
-    w.velocity = {wd[0] * speed, wd[1] * speed, wd[2] * speed};
+    w.velocity = vel;
     w.what |= kVelocity;
 
-    // -- Angular ramp toward (capped) target --
+    // -- Angular: the law on the rate vector --
+    // `steering = goal is not None and av is not None and goal[1] is av`:
+    // a stored turn goal with a setpoint may be steering, which is
+    // ShipClass._steer_turn_goal's to answer (Python).
+    if (o._turn_goal && av_state == 1) to_python(MotionReason::TurnGoal);
+    const int64_t frac_state = o._target_angular_velocity_fraction_state;
+    if (frac_state == 2) to_python(MotionReason::Unrepresentable);
     Vec3 tg{0.0, 0.0, 0.0};
-    if (av_state == 1) tg = o._target_angular_velocity_setpoint;
+    if (frac_state == 1 && has_ang) {
+        const Vec3& fr3 = o._target_angular_velocity_fraction;
+        tg = {fr3[0] * max_ang_vel, fr3[1] * max_ang_vel, fr3[2] * max_ang_vel};
+    } else if (av_state == 1) {
+        tg = o._target_angular_velocity_setpoint;
+    }
     Vec3 cav = o._current_angular_velocity;
-    double ang_step;
     if (has_ang) {
         tg[0] = cap_keep(tg[0], cav[0], max_ang_vel);
         tg[1] = cap_keep(tg[1], cav[1], max_ang_vel);
         tg[2] = cap_keep(tg[2], cav[2], max_ang_vel);
         const double aa =
             max_ang_accel > 0.0 ? max_ang_accel : kFallbackMaxAccel;
-        ang_step = aa * dt;
+        cav = law_step_vector(cav, tg, aa, dt);
     } else {
-        ang_step = kFallbackMaxAccel * dt;
+        const double ang_step = kFallbackMaxAccel * dt;
+        cav[0] = ramp_toward(cav[0], tg[0], ang_step);
+        cav[1] = ramp_toward(cav[1], tg[1], ang_step);
+        cav[2] = ramp_toward(cav[2], tg[2], ang_step);
     }
-    cav[0] = ramp_toward(cav[0], tg[0], ang_step);
-    cav[1] = ramp_toward(cav[1], tg[1], ang_step);
-    cav[2] = ramp_toward(cav[2], tg[2], ang_step);
     w.cav = cav;
     w.what |= kAngVel;
 
     integrate_rotation(cav, dt, R, p);
+    p.commit = true;
+    return p;
+}
+
+// One row, as ship_motion.step_and_record: the step (plan_step), then
+// _record_acceleration -- ((v1 - before) / dt, or zeros when either is not
+// a TGPoint3 or dt <= 0) from the `_velocity` the row entered with and the
+// one it leaves with.
+Plan plan_row(const Mirror& m, const TransformStore& store, int64_t h,
+              int64_t player, double dt, bool past_warp) {
+    Plan p = plan_step(m, store, h, player, dt, past_warp);
+    if (p.warp) return p;
+    const ObjectRow& o = *m.object(h);
+    const bool before_ok = o._velocity_state == 1;
+    const Vec3& b = o._velocity;
+    MotionWrite& w = p.w;
+    const bool written = (w.what & kVelocity) != 0;
+    if (!before_ok || dt <= 0.0) {
+        w.accel = {0.0, 0.0, 0.0};
+    } else {
+        const Vec3& v1 = written ? w.velocity : b;
+        w.accel = {(v1[0] - b[0]) / dt, (v1[1] - b[1]) / dt,
+                   (v1[2] - b[2]) / dt};
+    }
+    w.what |= kAccel;
     p.commit = true;
     return p;
 }
@@ -352,6 +426,10 @@ void commit(Mirror& m, TransformStore& store, int64_t h, uint32_t row,
         m.set_fv(h, Field::_drift_velocity,
                  {w.drift[0], w.drift[1], w.drift[2]});
     if (w.what & kDriftClear) m.set_fv(h, Field::_drift_velocity, {});
+    if (w.what & kMotionVel)
+        m.set_floats(h, Field::_motion_vel,
+                     {w.motion_vel[0], w.motion_vel[1], w.motion_vel[2],
+                      w.motion_vel[3]});
     writes.push_back(w);
     writes.back().row = row;
 }

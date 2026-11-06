@@ -12773,9 +12773,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       auto v3 = [](const cb::Vec3& v) {
                           return py::make_tuple(v[0], v[1], v[2]);
                       };
+                      const auto& mv = w.motion_vel;
                       writes.append(py::make_tuple(
                           w.row, static_cast<int>(w.what), w.speed, v3(w.cav),
-                          v3(w.velocity), v3(w.drift)));
+                          v3(w.velocity), v3(w.drift),
+                          py::make_tuple(mv[0], mv[1], mv[2], mv[3]),
+                          v3(w.accel)));
                   }
                   return py::make_tuple(static_cast<int>(r.stop), r.at,
                                         static_cast<int>(r.reason), writes);
@@ -12783,7 +12786,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("handles"), py::arg("player"), py::arg("dt"),
               py::arg("begin"), py::arg("resume_past_warp"),
               "Kernel M from rows[begin]: (stop, at, reason, writes), writes "
-              "[(row, what, speed, cav, velocity, drift), ...] for "
+              "[(row, what, speed, cav, velocity, drift, motion_vel, accel), "
+              "...] for "
               "native_motion's applier. stop 0 done, 1 a warp row, 2 a "
               "Python row (native_motion.DONE / WARP_ROW / PYTHON_ROW).");
 
@@ -12873,16 +12877,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "else live (tests).");
         // Test only: the C applier alone on a Python-encoded log
         // (combat_motion_compute's: [(row, what, speed, cav3, vel3,
-        // drift3), ...]), for tests/unit/test_native_motion_apply.py.
+        // drift3, motion_vel4, accel3), ...]; a 6-tuple leaves the last two
+        // zero), for tests/unit/test_native_motion_apply.py.
         m.def("combat_motion_apply",
               [](py::object ships, py::list log) {
                   std::vector<cb::MotionWrite> w;
                   w.reserve(log.size());
                   for (py::handle e : log) {
                       auto t = e.cast<py::tuple>();
-                      if (t.size() != 6)
+                      if (t.size() != 6 && t.size() != 8)
                           throw py::value_error(
-                              "combat_motion_apply: a write is a 6-tuple");
+                              "combat_motion_apply: a write is a 6- or "
+                              "8-tuple");
                       auto v3 = [](py::handle o) {
                           auto v = o.cast<py::tuple>();
                           return cb::Vec3{v[0].cast<double>(),
@@ -12896,6 +12902,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       x.cav = v3(t[3]);
                       x.velocity = v3(t[4]);
                       x.drift = v3(t[5]);
+                      if (t.size() == 8) {
+                          auto mv = t[6].cast<py::tuple>();
+                          for (std::size_t i = 0; i < 4; ++i)
+                              x.motion_vel[i] = mv[i].cast<double>();
+                          x.accel = v3(t[7]);
+                      }
                       w.push_back(x);
                   }
                   if (!dauntless::host::apply_motion_writes(ships.ptr(), w))

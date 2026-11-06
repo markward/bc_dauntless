@@ -199,6 +199,15 @@ enum class Field : int32_t {
     // encoding accepts (a tuple; native_combat.VelocityField pushes it).
     // Kernel M's drift reads `v.x` only on a 1.
     _velocity_state,
+    // The motion law (kernel M), pushed by Python. Object: ShipClass.
+    // _motion_vel, the velocity vector and the speed it was last stepped to,
+    // as a FloatList ([] None, [vx, vy, vz, speed], or 5 zeros:
+    // unrepresentable); _target_angular_velocity_fraction, a point-or-none
+    // with its _state as the others above (the keyboard turn fraction); and
+    // _turn_goal, 1 while a turn goal is stored (ShipClass._turn_goal: the
+    // kernel hands a row it may steer to Python).
+    _motion_vel, _target_angular_velocity_fraction,
+    _target_angular_velocity_fraction_state, _turn_goal,
     kCount
 };
 
@@ -275,6 +284,10 @@ struct ObjectRow {
     int64_t _impulse_engine_subsystem = -1;
     int64_t motion_stock = 0;
     int64_t _velocity_state = 0;
+    // The motion law's inputs (Field comment above).
+    std::vector<double> _motion_vel;
+    Vec3 _target_angular_velocity_fraction{0, 0, 0};
+    int64_t _target_angular_velocity_fraction_state = 0, _turn_goal = 0;
     // Posed parts: the pose table (empty while has_posed_parts is 0) and the
     // ship's subsystems in combat._iter_subsystems order (Subsystem handles;
     // kRefUnrepresentable for one the mirror cannot name). Not Fields: set

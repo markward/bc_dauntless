@@ -708,13 +708,20 @@ class PhysicsObjectClass(ObjectClass):
         return TGPoint3(self._velocity.x, self._velocity.y, self._velocity.z)
 
     def GetAccelerationTG(self) -> TGPoint3:
-        """Phase 1: kinematic model stores no acceleration on the object —
-        acceleration is the integrator's per-tick ramp. Returns a fresh
-        zero vec so callers can mutate without leaking state. SDK Intercept
-        uses this as the `a` arg to GetPredictedPosition; with a = 0 the
-        prediction degenerates to p + v·t, correct at near-constant
-        velocity."""
-        return TGPoint3(0.0, 0.0, 0.0)
+        """World-space acceleration over the last motion tick (dv/dt, recorded by
+        ship_motion.tick_all_ship_motion); zero for an object never stepped.
+
+        BC returns the real acceleration, sideways components included while
+        turning (stbc-oracle results_mac/probe_accel_gk.json: matches dv/dt, up to
+        ~1.9 GU/s^2). FireScript.PredictTargetLocation feeds it to
+        GetPredictedPosition, so a turning target's predicted point swings off
+        its current one and the AI's 10-degree torpedo window opens less often;
+        a constant zero made the AI fire 21-32% more torpedoes than BC's.
+        Returns a fresh vec so callers can mutate without leaking state."""
+        a = self.__dict__.get("_acceleration")
+        if a is None:
+            return TGPoint3(0.0, 0.0, 0.0)
+        return TGPoint3(a[0], a[1], a[2])
 
     def SetAngularVelocity(self, v: TGPoint3, space: int = DIRECTION_WORLD_SPACE) -> None:
         self._angular_velocity = TGPoint3(v.x, v.y, v.z)

@@ -20,6 +20,8 @@ struct Names {
     PyObject* speed;
     PyObject* velocity;
     PyObject* cav;
+    PyObject* motion_vel;
+    PyObject* accel;
     PyObject* x;
     PyObject* y;
     PyObject* z;
@@ -41,12 +43,14 @@ const Names* names() {
     t->speed = PyUnicode_InternFromString("_current_speed");
     t->velocity = PyUnicode_InternFromString("_velocity");
     t->cav = PyUnicode_InternFromString("_current_angular_velocity");
+    t->motion_vel = PyUnicode_InternFromString("_motion_vel");
+    t->accel = PyUnicode_InternFromString("_acceleration");
     t->x = PyUnicode_InternFromString("x");
     t->y = PyUnicode_InternFromString("y");
     t->z = PyUnicode_InternFromString("z");
     t->tgpoint3 = cls;
     for (PyObject* o : {t->dict, t->drift, t->speed, t->velocity, t->cav,
-                        t->x, t->y, t->z}) {
+                        t->motion_vel, t->accel, t->x, t->y, t->z}) {
         if (o == nullptr) {
             Py_DECREF(cls);
             delete t;  // the interned strings are immortal enough: leaked
@@ -60,6 +64,15 @@ const Names* names() {
 // `TGPoint3(*v)`: a new reference, or nullptr with an error set.
 PyObject* point(const Names* n, const cb::Vec3& v) {
     return PyObject_CallFunction(n->tgpoint3, "ddd", v[0], v[1], v[2]);
+}
+
+// `(v[0], v[1], v[2])` / `(v[0], ..., v[3])`: a new tuple of floats, or
+// nullptr with an error set.
+PyObject* floats3(const cb::Vec3& v) {
+    return Py_BuildValue("(ddd)", v[0], v[1], v[2]);
+}
+PyObject* floats4(const std::array<double, 4>& v) {
+    return Py_BuildValue("(dddd)", v[0], v[1], v[2], v[3]);
 }
 
 // `ship.__dict__[name] = value` (value evaluated first, as Python's
@@ -133,6 +146,9 @@ bool apply_motion_writes(PyObject* ships,
         }
         if (x.what & cb::kDriftSet)
             if (!store(n, ship, n->drift, point(n, x.drift))) failed();
+        if (x.what & cb::kMotionVel)
+            if (!store(n, ship, n->motion_vel, floats4(x.motion_vel)))
+                failed();
         if (x.what & cb::kSpeed)
             if (!store(n, ship, n->speed, PyFloat_FromDouble(x.speed)))
                 failed();
@@ -140,6 +156,8 @@ bool apply_motion_writes(PyObject* ships,
             if (!store(n, ship, n->velocity, point(n, x.velocity))) failed();
         if (x.what & cb::kAngVel)
             if (!store_cav(n, ship, x.cav)) failed();
+        if (x.what & cb::kAccel)
+            if (!store(n, ship, n->accel, floats3(x.accel))) failed();
         Py_DECREF(ship);
     }
     if (raised) {

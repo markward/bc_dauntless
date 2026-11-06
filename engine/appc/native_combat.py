@@ -1098,6 +1098,34 @@ class SpeedSetpointField(NativeField):
         return _hexes(self._encode(value)) == _hexes(mirrored)
 
 
+class MotionVelField(NativeField):
+    """ShipClass._motion_vel, the motion law's velocity vector
+    (ship_motion.step_vector_velocity): None, or ``(vx, vy, vz, speed)``,
+    the vector and the speed it was last stepped to. Pushed as a float list
+    in one ``combat_set_floats`` call: None is [], a tuple of four floats
+    its four values, and anything else [0.0] * 5 (unrepresentable: the
+    kernel takes the Python path). Never drops the row. Always rebound,
+    never mutated."""
+
+    def __init__(self) -> None:
+        super().__init__(list)
+
+    def _encode(self, value):
+        if value is None:
+            return []
+        if type(value) is tuple and len(value) == 4 and \
+                all(type(x) is float for x in value):
+            return list(value)
+        return [0.0] * 5
+
+    def _push(self, obj, h, value) -> None:
+        _call(obj, _h.combat_set_floats, h, _fid(self._key),
+              self._encode(value))
+
+    def _matches(self, value, mirrored) -> bool:
+        return _hexes(self._encode(value)) == _hexes(mirrored)
+
+
 _NUMBERS = (int, float, bool)
 
 

@@ -31,7 +31,7 @@ SEED = 20261104
 NAN, INF = float("nan"), float("inf")
 _SPECIAL = (0.0, -0.0, NAN, INF, -INF, 1e-300, -1e300, 5e-324)
 _ALL_BITS = (nm.K_SPEED | nm.K_ANG_VEL | nm.K_VELOCITY | nm.K_DRIFT_SET
-             | nm.K_DRIFT_CLEAR)
+             | nm.K_DRIFT_CLEAR | nm.K_MOTION_VEL | nm.K_ACCEL)
 
 
 @pytest.fixture(autouse=True)
@@ -76,13 +76,17 @@ def _ships(seed, n=6):
 def _writes(seed, n_ships, n=40):
     """A seeded log in combat_motion_compute's encoding: rows in range,
     any combination of `what` bits (more than the kernel ever logs at once:
-    the applier must not care)."""
+    the applier must not care); a few in the 6-tuple form, which leaves the
+    motion vector and the acceleration zero."""
     rng = random.Random(seed)
     out = []
     for _ in range(n):
         what = rng.randint(0, _ALL_BITS)
-        out.append((rng.randrange(n_ships), what, _float(rng), _v3(rng),
-                    _v3(rng), _v3(rng)))
+        w = (rng.randrange(n_ships), what, _float(rng), _v3(rng),
+             _v3(rng), _v3(rng))
+        if rng.random() < 0.8:
+            w += (_v3(rng) + (_float(rng),), _v3(rng))
+        out.append(w)
     return out
 
 
@@ -94,11 +98,13 @@ def _value(v):
                 type(v.z).__name__, float(v.z).hex())
     if isinstance(v, float):
         return ("float", v.hex())
+    if isinstance(v, tuple):
+        return ("tuple",) + tuple(_value(x) for x in v)
     return (type(v).__name__, repr(v))
 
 
 _ATTRS = ("_current_speed", "_current_angular_velocity", "_velocity",
-          "_drift_velocity")
+          "_drift_velocity", "_motion_vel", "_acceleration")
 
 
 def _state(ship):

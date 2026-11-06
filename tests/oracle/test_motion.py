@@ -57,8 +57,6 @@ def test_m1_impulse_ramp_follows_the_1s_law(oracle, ship, v1, v2, v4, vmax):
     assert s.speed_of(s.atk) == pytest.approx(vmax, rel=0.005)
 
 
-@bible_xfail("M2", "angular rate follows the same law: constant MaxAngularAccel then a 1 s exponential approach (Kessok 0.110 / 0.180 / 0.215)",
-             "linear ramp all the way — reaches the cap at 2 s")
 @pytest.mark.parametrize("ship, w1, w2, w4, wmax", YAW_PROFILES)
 def test_m2_yaw_ramp_follows_the_1s_law(oracle, ship, w1, w2, w4, wmax):
     """M2 — `motion_*_yaw`; identical on yaw/pitch/roll.  Commanded at the
@@ -96,8 +94,6 @@ def test_m5_impulse_fraction_clamps_at_one(oracle):
         assert s.speed_of(s.atk) == pytest.approx(3.700, rel=0.005), f
 
 
-@bible_xfail("M5", "v_target = MaxSpeed × impulse fraction × engine power fraction: at 125 % power the Kessok cruises at 4.625",
-             "the power fraction only widens the cap; SetImpulse(1.0) still targets 1.0 × MaxSpeed = 3.70")
 def test_m5_engine_power_fraction_does_not_clamp(oracle):
     """M5 — `motion_kessok_impulse_power125`: at SetPowerPercentageWanted(1.25)
     the Kessok cruises at 4.625 = 1.25 × 3.7 — how AI ships exceed MaxSpeed."""

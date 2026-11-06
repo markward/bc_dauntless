@@ -198,6 +198,10 @@ constexpr FieldInfo kInfo[] = {
     {"motion_ies_stock", Kind::Subsystem, FieldType::I},
     {"motion_pod_stock", Kind::Subsystem, FieldType::I},
     {"_velocity_state", Kind::Object, FieldType::I},
+    {"_motion_vel", Kind::Object, FieldType::FloatList},
+    {"_target_angular_velocity_fraction", Kind::Object, FieldType::Vec3},
+    {"_target_angular_velocity_fraction_state", Kind::Object, FieldType::I},
+    {"_turn_goal", Kind::Object, FieldType::I},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -312,7 +316,8 @@ bool point_or_none(Field f) {
     return f == Field::_current_angular_velocity ||
            f == Field::_drift_velocity ||
            f == Field::_target_angular_velocity_setpoint ||
-           f == Field::_angular_velocity;
+           f == Field::_angular_velocity ||
+           f == Field::_target_angular_velocity_fraction;
 }
 
 int64_t* point_state(ObjectRow& r, Field f) {
@@ -323,6 +328,8 @@ int64_t* point_state(ObjectRow& r, Field f) {
         case Field::_target_angular_velocity_setpoint:
             return &r._target_angular_velocity_setpoint_state;
         case Field::_angular_velocity: return &r._angular_velocity_state;
+        case Field::_target_angular_velocity_fraction:
+            return &r._target_angular_velocity_fraction_state;
         default: return nullptr;
     }
 }
@@ -333,7 +340,8 @@ bool read_only(Field f) {
            f == Field::obj_id || f == Field::_current_angular_velocity_state ||
            f == Field::_drift_velocity_state ||
            f == Field::_target_angular_velocity_setpoint_state ||
-           f == Field::_angular_velocity_state;
+           f == Field::_angular_velocity_state ||
+           f == Field::_target_angular_velocity_fraction_state;
 }
 
 // Per-row-type field lookups; the generic overloads find nothing.
@@ -390,6 +398,9 @@ int64_t* iptr(ObjectRow& r, Field f) {
         case Field::_insystem_warp_transit: return &r._insystem_warp_transit;
         case Field::motion_stock: return &r.motion_stock;
         case Field::_velocity_state: return &r._velocity_state;
+        case Field::_target_angular_velocity_fraction_state:
+            return &r._target_angular_velocity_fraction_state;
+        case Field::_turn_goal: return &r._turn_goal;
         default: return nullptr;
     }
 }
@@ -424,11 +435,14 @@ Vec3* vptr(ObjectRow& r, Field f) {
         case Field::_target_angular_velocity_setpoint:
             return &r._target_angular_velocity_setpoint;
         case Field::_angular_velocity: return &r._angular_velocity;
+        case Field::_target_angular_velocity_fraction:
+            return &r._target_angular_velocity_fraction;
         default: return nullptr;
     }
 }
 std::vector<double>* flptr(ObjectRow& r, Field f) {
-    return f == Field::_speed_setpoint ? &r._speed_setpoint : nullptr;
+    if (f == Field::_speed_setpoint) return &r._speed_setpoint;
+    return f == Field::_motion_vel ? &r._motion_vel : nullptr;
 }
 
 double* fptr(SubsystemRow& r, Field f) {
