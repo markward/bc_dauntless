@@ -124,10 +124,9 @@ class CrewMenuPanel(Panel):
         self._widgets_by_id: dict = {}
         self._logged_unrecognised: set = set()
         self._open_menu_id: Optional[int] = None
-        # Inline accordion expand-state for submenu rows — Python-owned,
-        # mirroring TargetListView's per-row `expanded` flag. Cleared
-        # whenever the open menu changes (a reopened menu starts collapsed,
-        # matching BC).
+        # Inline accordion expand-state for submenu rows, owned by Python.
+        # Cleared whenever the open menu changes (a reopened menu starts
+        # collapsed, matching BC).
         self._expanded_ids: set[int] = set()
         # Injected by host_loop: opens the star map (Stellar Cartography)
         # with the live Set Course menu. None -> click is a silent no-op

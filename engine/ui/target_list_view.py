@@ -122,48 +122,6 @@ def _query_has_shields(ship) -> bool:
         return False
 
 
-def _query_subsystem_condition(ship, name: str) -> int:
-    """Return the named subsystem's condition as an integer percentage
-    0-100. Prefers GetCombinedConditionPercentage so parent weapon
-    systems reflect aggregated child condition; falls back to
-    GetConditionPercentage when the combined variant is absent.
-
-    Defaults to 100 on any failure (subsystem missing, getter raises)
-    so a transient resolution miss draws a full bar rather than an
-    empty one."""
-    if ship is None or not name:
-        return 100
-    sub = _resolve_subsystem_by_name(ship, name)
-    if sub is None:
-        return 100
-    getter = getattr(sub, "GetCombinedConditionPercentage", None)
-    if getter is None:
-        getter = getattr(sub, "GetConditionPercentage", None)
-    if getter is None:
-        return 100
-    try:
-        return int(round(getter() * 100))
-    except Exception:
-        return 100
-
-
-def _query_subsystem_destroyed(ship, name: str) -> bool:
-    """True when the named subsystem is permanently destroyed (``IsDestroyed``).
-
-    Defaults to False on any resolution/getter failure so a transient lookup
-    miss never wrongly hides a live system — the mirror of
-    ``_query_subsystem_condition`` defaulting to a full bar."""
-    if ship is None or not name:
-        return False
-    sub = _resolve_subsystem_by_name(ship, name)
-    if sub is None or not hasattr(sub, "IsDestroyed"):
-        return False
-    try:
-        return bool(sub.IsDestroyed())
-    except Exception:
-        return False
-
-
 def _next_living_sibling(sub):
     """Return the next non-destroyed sibling of ``sub`` within its parent
     subsystem group, searching cyclically from ``sub``. Returns None when the
@@ -194,34 +152,53 @@ def _next_living_sibling(sub):
 TARGET_LIST_POLL_S = 0.5
 
 
+SORTS = ("name", "distance", "health")
+FILTERABLE = ("FRIENDLY", "NEUTRAL", "ENEMY")
+
+
+def _natural(label: str) -> tuple:
+    """Casefolded label with digit runs as ints, so "Unknown 2" < "Unknown 10".
+    Parts alternate text, number, text, ... so tuples always compare like
+    with like."""
+    import re
+    parts = re.split(r"(\d+)", label.casefold())
+    return tuple(int(p) if i % 2 else p for i, p in enumerate(parts))
+
+
+def sort_key(row: dict, sort: str) -> tuple:
+    """Ordering key for one payload row under *sort*.
+
+    name: label, case-insensitive and natural (digit runs compare as numbers). distance: surface km, ties by name.
+    health: hull, then shields (a shieldless ship counts as 0), then name.
+    """
+    label = _natural(row["label"])
+    if sort == "distance":
+        return (row["dist_km"], label)
+    if sort == "health":
+        return (row["hull"], row["shields"] if row["has_shields"] else 0, label)
+    return (label,)
+
+
 class TargetListView(Panel):
     @property
     def name(self) -> str:
         return "target"
 
-    # Special subsystem-name sentinel for "toggle this row's expansion".
-    # Real subsystem names never start with __, so this can't collide.
-    _TOGGLE_ACTION = "__toggle__"
-
     def __init__(self):
         super().__init__()
         self._last_snapshot: Optional[tuple] = None
-        # Names of ships whose subsystem children are currently expanded
-        # in the panel. Persists across re-renders so a Cmd+R reload
-        # preserves the user's open accordions until something
-        # invalidates explicitly.
-        self._expanded_ships: set = set()
-        # Keys are "<ship-name>/<subsystem-name>" for subsystem (aggregator)
-        # rows whose child leaves are expanded in the panel (2nd accordion
-        # level). Persists across re-renders like _expanded_ships.
-        self._expanded_subsystems: set = set()
+        # Sides whose rows are hidden. UNKNOWN (and anything else) always shows.
+        self._hidden: set = set()
+        self._sort = "name"
 
     def _snapshot(self):
         """Build a hashable snapshot of the rendered state."""
         import App
+        from engine.units import GU_TO_KM
+        hidden = tuple(s for s in FILTERABLE if s in self._hidden)
         target_menu = App.STTargetMenu_GetTargetMenu()
         if target_menu is None:
-            return (self._visible, None, None, ())
+            return (self._visible, None, None, hidden, self._sort, ())
         from engine.appc.target_menu import STSubsystemMenu
         # Resolve the player ship so we can exclude it from the panel —
         # the player's own ship shouldn't be a target.
@@ -237,127 +214,30 @@ class TargetListView(Panel):
                 # The menu's children ARE the frame's targetable contacts
                 # (STTargetMenu._rows filters on Contact.targetable, which
                 # already folds in cloak, death, the wreck-linger window and
-                # IsTargetable). This used to re-run is_hidden_by_cloak and
-                # _out_of_action here on top of that — a second copy of the
-                # rule that could disagree with the record, which is exactly
-                # what got engine.ui.target_list_visibility retired.
+                # IsTargetable). Do not re-derive any of that here.
                 #
                 # The player-identity guard stays: perceived_by never emits a
                 # record for the observer, but STTargetMenu.RebuildShipMenus
                 # (published Appc surface, bulk population from a SET) has no
                 # observer and cannot make that call.
-                if ship is not None and ship is not player:
-                    hull_pct = _query_hull_percentage(ship)
-                    shield_pct = _query_shield_percentage(ship)
-                    has_shields = _query_has_shields(ship)
-                    # sub_child.GetLabel() equals the subsystem's GetName()
-                    # by construction in STSubsystemMenu.RebuildShipMenu, so
-                    # the label is a valid lookup key for the name-based
-                    # _resolve_subsystem_by_name path inside _query_subsystem_condition.
-                    ship_name_for_keys = ship.GetName()
-                    def _sub_entry(sub_child):
-                        label = sub_child.GetLabel()
-                        cond = _query_subsystem_condition(ship, label)
-                        # Destroyed children drop out of the parent's child list.
-                        kids = tuple(
-                            (gc.GetLabel(), _query_subsystem_condition(ship, gc.GetLabel()))
-                            for gc in getattr(sub_child, "_children", ())
-                            if not _query_subsystem_destroyed(ship, gc.GetLabel())
-                        )
-                        expanded = (ship_name_for_keys + "/" + label) in self._expanded_subsystems
-                        return (label, cond, kids, expanded)
-
-                    def _keep(sub_child):
-                        # A parent group stays listed while at least one child
-                        # survives; once every child is destroyed the parent is
-                        # delisted too. A childless (leaf) row is delisted when
-                        # it is itself destroyed.
-                        menu_children = getattr(sub_child, "_children", ())
-                        if menu_children:
-                            return any(
-                                not _query_subsystem_destroyed(ship, gc.GetLabel())
-                                for gc in menu_children
-                            )
-                        return not _query_subsystem_destroyed(ship, sub_child.GetLabel())
-
-                    # A cloaked contact is a fuzzy sensor return: targetable
-                    # at ship level, but its subsystem tree is suppressed
-                    # here at the VIEW layer only. `child._children` (the
-                    # cached STMenu subsystem rows in STTargetMenu._row_cache)
-                    # is deliberately left untouched — it is reused across
-                    # frames and across a contact leaving/re-entering the
-                    # list, so rebuilding or mutating it here would corrupt
-                    # that cache for every other reader. Read from the
-                    # pushed Contact record (the frame's own answer), not a
-                    # second cloak check.
-                    contact = target_menu.contact_for(ship)
-                    subsystems_targetable = (
-                        contact is None or contact.subsystems_targetable)
+                #
+                # NO `IsVisible()` HERE, DELIBERATELY: visibility is
+                # pump-owned (set_contacts asserts SetVisible() on every
+                # listed row); drawability is Contact.targetable. Pinned by
+                # test_row_flag_does_not_gate_the_payload_drawability_is_targetable.
+                aff = child.GetAffiliation()
+                if ship is not None and ship is not player and aff not in self._hidden:
                     name = ship.GetName()
-                    row_expanded = name in self._expanded_ships
-                    # COLLAPSED ROWS DO NOT BUILD THEIR SUBSYSTEM TREE.
-                    #
-                    # The tree is only ever DISPLAYED for an expanded row (see
-                    # target_list.js: child rows are emitted inside
-                    # `if (expanded)`). All a collapsed row needs is whether the
-                    # list is non-empty, which decides the expand caret.
-                    #
-                    # Building it anyway walked every contact x every subsystem
-                    # x every child subsystem, ~2-3 condition queries per
-                    # grandchild, purely to produce a tuple that was compared
-                    # and thrown away. At 100 contacts that made ui.target
-                    # 84 ms -- the largest single non-sim item in the frame,
-                    # bigger than any sim phase.
-                    #
-                    # `any(...)` short-circuits on the first surviving group, so
-                    # a collapsed row costs one _keep instead of all of them.
-                    #
-                    # Dropping the conditions from a collapsed row's snapshot
-                    # also makes change detection LESS twitchy in the right
-                    # direction: damage to a subsystem nobody has expanded no
-                    # longer forces a redraw of the whole list. A change that IS
-                    # visible -- the last subsystem dying, so the caret goes --
-                    # still flips has_subsystems and redraws.
-                    if not subsystems_targetable:
-                        subsystems = ()
-                        has_subsystems = False
-                    elif row_expanded:
-                        subsystems = tuple(
-                            _sub_entry(sub_child)
-                            for sub_child in child._children
-                            if _keep(sub_child)
-                        )
-                        has_subsystems = bool(subsystems)
-                    else:
-                        subsystems = ()
-                        has_subsystems = any(
-                            _keep(sub_child) for sub_child in child._children)
-                    # NO `IsVisible()` HERE, DELIBERATELY — do not re-add it.
-                    # VISIBILITY IS PUMP-OWNED: `STTargetMenu.set_contacts`
-                    # asserts `SetVisible()` on every listed row
-                    # unconditionally, every frame, so the flag carries no
-                    # information this panel wants. Drawability is
-                    # `Contact.targetable`, which the projection (`_rows`) has
-                    # already applied by the time we walk the children.
-                    #
-                    # The filter that used to be here was not merely redundant,
-                    # it was WRONG in the one window where the flag and the
-                    # projection can disagree: an SDK caller clearing a row via
-                    # `SetNotVisible` (real surface — CycleTarget reads it)
-                    # would blank a live contact from the panel until the next
-                    # push re-asserted it. Pinned by
-                    # tests/unit/test_target_list_view.py::
-                    # test_row_flag_does_not_gate_the_payload_drawability_is_targetable.
+                    dist_km = (round(target_menu.surface_gu_to(ship, player) * GU_TO_KM, 2)
+                               if player is not None else 0.0)
                     rows.append((
                         name,
                         child.GetCaption(),
-                        child.GetAffiliation(),
-                        hull_pct,
-                        shield_pct,
-                        has_shields,
-                        subsystems,
-                        row_expanded,
-                        has_subsystems,
+                        aff,
+                        _query_hull_percentage(ship),
+                        _query_shield_percentage(ship),
+                        _query_has_shields(ship),
+                        dist_km,
                         _markers.marker_for(name),
                     ))
             child = target_menu.GetNextChild(child)
@@ -371,63 +251,64 @@ class TargetListView(Panel):
             target_sub = player.GetTargetSubsystem()
             if target_sub is not None and hasattr(target_sub, "GetName"):
                 selected_subsystem = target_sub.GetName()
-        return (self._visible, selected, selected_subsystem, tuple(rows))
-
-
+        return (self._visible, selected, selected_subsystem, hidden,
+                self._sort, tuple(rows))
 
     def render_payload(self) -> Optional[str]:
         snapshot = self._snapshot()
         if snapshot == self._last_snapshot:
             return None
         self._last_snapshot = snapshot
-        visible, selected, selected_subsystem, rows = snapshot
+        visible, selected, selected_subsystem, hidden, sort, rows = snapshot
+        payload_rows = [
+            {
+                "name": name,
+                "label": caption,
+                "affiliation": aff,
+                "hull": hull,
+                "shields": shields,
+                "has_shields": has_shields,
+                "dist_km": dist_km,
+                "marker": marker,
+            }
+            for (name, caption, aff, hull, shields, has_shields, dist_km,
+                 marker) in rows
+        ]
+        payload_rows.sort(key=lambda r: sort_key(r, sort))
         payload = {
             "visible": visible,
             "selected": selected,
             "selected_subsystem": selected_subsystem,
-            "rows": [
-                {
-                    "name": name,
-                    "label": caption,
-                    "affiliation": aff,
-                    "hull": hull,
-                    "shields": shields,
-                    "has_shields": has_shields,
-                    "subsystems": [
-                        {"name": s_name, "condition": s_cond,
-                         "expanded": s_expanded,
-                         "children": [{"name": c_name, "condition": c_cond}
-                                      for (c_name, c_cond) in s_kids]}
-                        for (s_name, s_cond, s_kids, s_expanded) in subs
-                    ],
-                    "expanded": expanded,
-                    # Collapsed rows ship an empty `subsystems`, so the caret
-                    # cannot be derived from its length any more.
-                    "has_subsystems": has_subs,
-                    "marker": marker,
-                }
-                for (name, caption, aff, hull, shields, has_shields, subs,
-                     expanded, has_subs, marker) in rows
-            ],
+            "filters": {s: s not in hidden for s in FILTERABLE},
+            "sort": sort,
+            "rows": payload_rows,
         }
         return "setTargetList(" + json.dumps(payload) + ");"
-
-    def dispatch_event_subsystem_toggle(self, ship_name: str, subsystem_name: str) -> bool:
-        """Toggle the expansion of a subsystem (aggregator) row. Pure UI
-        state, no target change."""
-        key = ship_name + "/" + subsystem_name
-        if key in self._expanded_subsystems:
-            self._expanded_subsystems.discard(key)
-        else:
-            self._expanded_subsystems.add(key)
-        return True
 
     def dispatch_event(self, action: str) -> bool:
         """Action format:
           - ``<ship>``                      — set target ship, clear sub lock
           - ``<ship>/<subsystem>``          — set target + subsystem
-          - ``<ship>/__toggle__``           — toggle row expansion (accordion)
+          - ``__filter__/<SIDE>``           — toggle a side's rows
+          - ``__sort__/<name|distance|health>`` — set the sort
         """
+        # List controls are pure UI state: handled before any SetTarget, and
+        # without a player (a ship can never be named "__filter__").
+        if action.startswith("__filter__/"):
+            side = action[len("__filter__/"):]
+            if side not in FILTERABLE:
+                return False
+            self._hidden.symmetric_difference_update({side})
+            self.mark_due()
+            return True
+        if action.startswith("__sort__/"):
+            sort = action[len("__sort__/"):]
+            if sort not in SORTS:
+                return False
+            self._sort = sort
+            self.mark_due()
+            return True
+
         from engine.core.game import Game_GetCurrentGame
         game = Game_GetCurrentGame()
         if game is None:
@@ -440,19 +321,6 @@ class TargetListView(Panel):
             ship_name, suffix = action.split("/", 1)
         else:
             ship_name, suffix = action, None
-
-        # Accordion toggle — pure UI state, no target change.
-        if suffix == self._TOGGLE_ACTION:
-            if ship_name in self._expanded_ships:
-                self._expanded_ships.discard(ship_name)
-            else:
-                self._expanded_ships.add(ship_name)
-            return True
-
-        # Subsystem-level accordion toggle: "<subsystem>/__toggle__".
-        if suffix is not None and suffix.endswith("/" + self._TOGGLE_ACTION):
-            subsystem_name = suffix[: -(len(self._TOGGLE_ACTION) + 1)]
-            return self.dispatch_event_subsystem_toggle(ship_name, subsystem_name)
 
         player.SetTarget(ship_name)
 
@@ -500,18 +368,18 @@ class TargetListView(Panel):
     def poll_interval_s(self) -> float:
         """Polled at 2 Hz, not per frame.
 
-        This panel's _snapshot walks every contact x every subsystem x every
-        child subsystem, querying condition on each, purely to compare against
-        last frame's tuple. Measured at 33 contacts it is 26.0 ms of a 26.7 ms
-        UI phase -- 97.5% of all panel cost, and every other panel returns in
-        ~10 us.
+        The per-subsystem condition walk that once made this panel the
+        costliest in the UI phase was removed when the subsystem tree moved to
+        the target panel; the rows now carry only hull, shields and distance.
 
-        2 Hz is matched to the data, not just cheaper: the shield percentages
-        it displays only CHANGE at 2 Hz (BC's 0.5 s shield charge tick, see
-        subsystems.SHIELD_CHARGE_PERIOD_S), so polling at 60 Hz read the same
-        value thirty times over. Hull condition is event-driven and bursty, so
-        a row can lag a hit by up to half a second -- accepted, and the reason
-        this is a named constant rather than a magic number.
+        2 Hz still fits the data: the shield percentages only CHANGE at 2 Hz
+        (BC's 0.5 s shield charge tick, see subsystems.SHIELD_CHARGE_PERIOD_S),
+        so polling faster re-reads the same value. Hull condition is
+        event-driven and bursty, so a row can lag a hit by up to half a
+        second -- accepted, and the reason this is a named constant rather
+        than a magic number. The list also re-sorts live at this cadence
+        (distance and health order follow the data), so a row can take up to
+        half a second to move.
 
         Interaction is unaffected: selection changes go through dispatch_event
         and visibility flips through the visible setter, both of which mark the

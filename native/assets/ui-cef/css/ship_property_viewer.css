@@ -189,7 +189,7 @@
 }
 
 /* Child rows (pods / banks / tubes) indent past the category caret and
-   render slightly subordinate, like .target-list__sub. */
+   render slightly subordinate. */
 .spv-sys-row--child {
     padding-left: 30px;
     color: rgba(235, 225, 255, 0.70);
@@ -232,7 +232,7 @@
     white-space: nowrap;
 }
 
-/* Condition bar — mirrors .target-list__sub-bar sizing. */
+/* Condition bar (thin strip under the row name). */
 .spv-sys-row__bar {
     --bar-pct: 0%;
     flex: 0 0 auto;

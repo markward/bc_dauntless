@@ -50,8 +50,8 @@ class TacticalOrdersPanel(Panel):
         super().__init__()
         self._last_snapshot: Optional[tuple] = None
         # UI-only: names of collapsible groups ("maneuvers"/"tactics")
-        # currently expanded. Default empty (both collapsed), mirroring
-        # target_list_view._expanded_ships. Reset on invalidate().
+        # currently expanded. Default empty (both collapsed). Reset on
+        # invalidate().
         self._expanded_groups: set = set()
 
     def _resolve_panes(self):

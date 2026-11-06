@@ -90,55 +90,6 @@
     cursor: pointer;
 }
 
-.target-list__caret {
-    /* Explicit width (was content-driven/shrink-to-fit before this rule
-     * existed): a populated caret's box used to be sized by its glyph
-     * content alone, so a row with NO subsystems (a phantom-chevron fix —
-     * an empty span with no glyph) collapsed to just its padding and the
-     * name column shifted left relative to rows that DO have a caret.
-     * box-sizing: border-box makes 14px the TOTAL box (padding included),
-     * not just the content — without it, content-box (the default, and
-     * nothing in this file or scoped to this class sets border-box) would
-     * add the 8px of horizontal padding on top, inflating to 22px and
-     * shifting every populated-caret row right instead. 14px == font-size,
-     * the standard single-glyph box for a 14px triangle character, so both
-     * the populated and empty states occupy the same footprint. text-align
-     * centres the glyph inside that box (previously it just filled the
-     * shrink-wrapped span). */
-    box-sizing: border-box;
-    width: 14px;
-    text-align: center;
-    margin-right: 8px;
-    font-size: 14px;
-    line-height: 1;
-    /* White across the board — affiliation is already conveyed by
-     * the row's background tint, so the caret can stay neutral. */
-    color: white;
-    /* Independent click target for the accordion toggle. No
-     * transitions, opacity, or transforms here — those promote the
-     * caret to its own compositor layer in CEF and bleed into the
-     * row's text rasterisation. The collapsed/expanded glyph swap
-     * is driven by content replacement (see below) instead. */
-    cursor: pointer;
-    padding: 0 4px;
-}
-
-/* Caret swaps glyph based on expansion state. We rely on the JS to
- * insert the glyph as text content; the CSS just doesn't touch it.
- * (Previous implementation used transform: rotate(90deg) here, but
- * GPU layer promotion from the transform reduced text crispness.) */
-
-/* Childless rows (a cloaked ship's fuzzy return, an inert asteroid) get an
- * empty caret span — same width/margin/padding as above so nothing shifts,
- * but no click target (nothing to toggle) and no pointer cursor (nothing is
- * clickable here). A click in this zone therefore falls through to the
- * row's own onclick and selects the row, same as clicking the name or bars —
- * that is an intentional, if previously undocumented, side effect of
- * dropping the caret's onclick/stopPropagation; see target_list.js. */
-.target-list__caret--empty {
-    cursor: default;
-}
-
 .target-list__marker {
     display: inline-flex;
     align-items: center;
@@ -188,13 +139,6 @@
 
 .target-list__bars {
     display: flex;
-    gap: 4px;
-    align-items: center;
-    /* Fixed width of two bars + gap, right-justified, so a target with no
-       shield bar leaves the hull bar in the far-right slot (nudged right)
-       rather than shifting the whole group. */
-    width: 68px;
-    justify-content: flex-end;
 }
 
 .target-list__bar {
@@ -217,130 +161,126 @@
 .target-list__bar--hull    { --bar-fill: rgb(255, 200, 60); }
 .target-list__bar--shields { --bar-fill: rgb(150, 129, 222); }
 
-/* ── Nested subsystem rows ────────────────────────────────────────── */
-.target-list__sub {
-    display: flex;
-    align-items: center;
-    padding: 3px 12px 3px 28px;   /* indent past the ship row caret */
-    cursor: pointer;
-    font-size: 13px;              /* match ship row name */
-    color: rgba(235, 225, 255, 0.75);
+/* ── Filter tabs and sort strip ──────────────────────────────────── */
+.target-list__tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px 0 8px;
+  background: rgba(10, 10, 16, 0.97);       /* --bc-body-bg */
+  border-left: 4px solid rgb(216, 94, 86);  /* --bc-menu1-base */
+}
+.target-list__tab {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: rgba(40, 40, 40, 0.6);
+  color: rgba(235, 225, 255, 0.30);
+  cursor: pointer;
+}
+.target-list__tab svg { width: 14px; height: 14px; display: block; }
+.target-list__tab:hover { color: rgba(235, 225, 255, 0.55); }
+
+.target-list__tab--FRIENDLY.target-list__tab--on {
+  background: rgba(80, 112, 230, 0.35);
+  border-bottom-color: rgb(80, 112, 230);
+  color: rgb(235, 225, 255);
+}
+.target-list__tab--NEUTRAL.target-list__tab--on {
+  background: rgba(255, 255, 175, 0.30);
+  border-bottom-color: rgb(255, 255, 175);
+  color: rgb(235, 225, 255);
+}
+.target-list__tab--ENEMY.target-list__tab--on {
+  background: rgba(216, 43, 43, 0.35);
+  border-bottom-color: rgb(216, 43, 43);
+  color: rgb(235, 225, 255);
 }
 
-.target-list__sub-bullet {
-    flex: 0 0 auto;
-    display: inline-block;
-    width: 14px;
-    text-align: center;
-    margin-right: 8px;
-    color: white;
+/* ── NEW: sort radio strip (footer) ────────────────────────────────
+   Pinned under the scrolling body (flex 0 0 auto), same left edge.
+   The active sort uses the header's salmon gradient with a black icon,
+   so "one of three" reads differently from the colour-coded filters. */
+.target-list__sort {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  padding: 0 8px 6px 8px;
+  background: rgba(10, 10, 16, 0.97);       /* --bc-body-bg */
+  border-left: 4px solid rgb(216, 94, 86);  /* --bc-menu1-base */
+}
+.target-list__sort-opt {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: rgba(40, 40, 40, 0.6);
+  color: rgba(235, 225, 255, 0.30);
+  cursor: pointer;
+}
+.target-list__sort-opt svg { width: 14px; height: 14px; display: block; }
+.target-list__sort-opt:hover { color: rgba(235, 225, 255, 0.55); }
+.target-list__sort-opt--on,
+.target-list__sort-opt--on:hover {
+  background: linear-gradient(90deg, rgb(216, 94, 86), rgb(216, 132, 80));
+  color: rgb(0, 0, 0);
+  cursor: default;
 }
 
-.target-list__sub-name {
-    flex: 1 1 auto;
+/* ── NEW (v6): distance in each list row ───────────────────────────
+   Right-aligned against the bars so the numbers line up in a column.
+   Size and colour match the target panel's readout text. */
+.target-list__dist {
+  flex: 0 0 auto;
+  margin: 0 8px 0 6px;
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: rgb(220, 210, 225);                /* --bc-row-text-dim */
 }
 
-/* Subsystem hover: same affiliation tint as the parent row, lower
- * baseline alpha. */
-.target-list__sub--FRIENDLY:hover { background: rgba( 80, 112, 230, 0.15); }
-.target-list__sub--ENEMY:hover    { background: rgba(216,  43,  43, 0.15); }
-.target-list__sub--NEUTRAL:hover  { background: rgba(255, 255, 175, 0.10); }
-.target-list__sub--UNKNOWN:hover  { background: rgba(128, 128, 128, 0.15); }
-
-/* Chosen subsystem: a tick brighter than hover so the locked subsystem
- * reads clearly. */
-.target-list__sub--FRIENDLY.target-list__sub--chosen { background: rgba( 80, 112, 230, 0.30); color: rgb(235, 225, 255); }
-.target-list__sub--ENEMY.target-list__sub--chosen    { background: rgba(216,  43,  43, 0.30); color: rgb(235, 225, 255); }
-.target-list__sub--NEUTRAL.target-list__sub--chosen  { background: rgba(255, 255, 175, 0.25); color: rgb(235, 225, 255); }
-.target-list__sub--UNKNOWN.target-list__sub--chosen  { background: rgba(128, 128, 128, 0.30); color: rgb(235, 225, 255); }
-
-/* ── Subsystem health bar (small) ─────────────────────────────────── */
-.target-list__sub-bar {
-    --bar-pct: 0%;
-    --bar-fill: rgb(255, 200, 60);
-    width: 24px;
-    height: 6px;
-    background: rgba(40, 40, 40, 0.6);
-    position: relative;
-    margin-left: 6px;
+/* ── NEW (v6): stacked bars ────────────────────────────────────────
+   Shields sit directly on top of hull, no gap, each half the old 8px.
+   With no shield bar the hull bar is alone and keeps the full 8px. */
+.target-list__bars {
+  width: 32px;
+  flex-direction: column-reverse;           /* DOM is hull, shields */
+  gap: 0;
+  align-items: stretch;
+  justify-content: center;
 }
+.target-list__bars .target-list__bar { width: 32px; height: 4px; }
+.target-list__bars .target-list__bar:only-child { height: 8px; }
 
-.target-list__sub-bar::after {
-    content: "";
-    display: block;
-    height: 100%;
-    width: var(--bar-pct);
-    background: var(--bar-fill);
-    transition: width 120ms linear;
+/* ── Page-drawn tooltips ─────────────────────────────────────────────
+ * CEF OSR renders no native tooltip, so [data-tip] draws its own on hover
+ * (pattern from configuration_panel.css). Scoped to this panel; the tip
+ * sits above the icon so neither strip's edge clips it. */
+#target-list-panel [data-tip] { position: relative; }
+#target-list-panel [data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+    padding: 3px 8px;
+    white-space: nowrap;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: #e6e9ee;
+    background: rgb(28, 31, 38);
+    border: 1px solid rgb(80, 88, 100);
+    pointer-events: none;
+    opacity: 0;
+    z-index: 10;
+    transition: opacity 80ms linear;
 }
-
-/* ── Subsystem caret (aggregator subsystems only) ─────────────────── */
-/* Mirrors .target-list__caret so subsystem carets look consistent
- * with ship-level carets. */
-.target-list__sub-caret {
-    flex: 0 0 auto;
-    display: inline-block;
-    width: 14px;
-    text-align: center;
-    margin-right: 8px;
-    font-size: 14px;
-    line-height: 1;
-    color: white;
-    cursor: pointer;
-}
-
-/* ── Nested leaf rows ─────────────────────────────────────────────── */
-/* One indentation level deeper than .target-list__sub (28px → 44px).
- * Same flex layout, same font size, slightly reduced text opacity to
- * keep leaves visually subordinate to their aggregator subsystem. */
-.target-list__leaf {
-    display: flex;
-    align-items: center;
-    padding: 3px 12px 3px 44px;   /* deeper indent than sub (28px) */
-    cursor: pointer;
-    font-size: 13px;
-    color: rgba(235, 225, 255, 0.60);
-}
-
-.target-list__leaf-bullet {
-    margin-right: 8px;
-    color: white;
-}
-
-.target-list__leaf-name {
-    flex: 1 1 auto;
-}
-
-/* Leaf hover: same affiliation tint, lower baseline alpha than sub. */
-.target-list__leaf--FRIENDLY:hover { background: rgba( 80, 112, 230, 0.10); }
-.target-list__leaf--ENEMY:hover    { background: rgba(216,  43,  43, 0.10); }
-.target-list__leaf--NEUTRAL:hover  { background: rgba(255, 255, 175, 0.07); }
-.target-list__leaf--UNKNOWN:hover  { background: rgba(128, 128, 128, 0.10); }
-
-/* Chosen leaf: a tick brighter than hover so the locked leaf reads
- * clearly. Mirrors .target-list__sub--chosen alpha bumps. */
-.target-list__leaf--FRIENDLY.target-list__leaf--chosen { background: rgba( 80, 112, 230, 0.25); color: rgb(235, 225, 255); }
-.target-list__leaf--ENEMY.target-list__leaf--chosen    { background: rgba(216,  43,  43, 0.25); color: rgb(235, 225, 255); }
-.target-list__leaf--NEUTRAL.target-list__leaf--chosen  { background: rgba(255, 255, 175, 0.20); color: rgb(235, 225, 255); }
-.target-list__leaf--UNKNOWN.target-list__leaf--chosen  { background: rgba(128, 128, 128, 0.25); color: rgb(235, 225, 255); }
-
-/* ── Leaf health bar (small) ──────────────────────────────────────── */
-/* Mirrors .target-list__sub-bar exactly — same size tokens. */
-.target-list__leaf-bar {
-    --bar-pct: 0%;
-    --bar-fill: rgb(255, 200, 60);
-    width: 24px;
-    height: 6px;
-    background: rgba(40, 40, 40, 0.6);
-    position: relative;
-    margin-left: 6px;
-}
-
-.target-list__leaf-bar::after {
-    content: "";
-    display: block;
-    height: 100%;
-    width: var(--bar-pct);
-    background: var(--bar-fill);
-    transition: width 120ms linear;
-}
+#target-list-panel [data-tip]:hover::after { opacity: 1; }

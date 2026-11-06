@@ -248,11 +248,21 @@
 
 /* ── Damage icon overlay ───────────────────────────────────────────── */
 
-/* Overlay covers the silhouette stack; per-icon left/top use the
-   SDK 640x480 hardpoint pixel coords expressed as percentages of
-   the canonical SHIELDS_DISPLAY pane (128 × 120 px at 640×480 mode):
-   x_pct = x_px / 128 * 100, y_pct = y_px / 120 * 100. The JS does
-   the conversion when setting style.left / style.top. */
+/* The frame is the drawn square of the object-fit: contain silhouette;
+   the overlay fills it. Per-icon left/top are hardpoint pixel coords as
+   percentages of a 128 x 128 frame (the JS does the conversion). */
+.ship-display__icon-frame {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    height: 100%;
+    aspect-ratio: 1 / 1;
+    transform: translateX(-50%);
+    pointer-events: none;
+    z-index: 5;
+}
+
 .ship-display__damage-overlay {
     position: absolute;
     inset: 0;
@@ -314,14 +324,167 @@
     color: var(--bc-row-text-bright);
 }
 
-/* ── Target extras (range / speed) ──────────────────────────────────── */
+/* ── Speed, on the icon's top-right corner (target only) ───────────── */
 
-.ship-display__target-extras {
-    display: flex;
-    justify-content: space-between;
+.ship-display__speed {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 7;                                /* above lock layer 6, damage 5, shields 4 */
     font-size: 11px;
+    font-variant-numeric: tabular-nums;
     color: var(--bc-row-text-dim);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+.ship-display[data-role="player"] .ship-display__speed { display: none; }
+
+/* ── Lock marker layer, inside the icon frame ───────────────────────── */
+
+.ship-display__lock-layer { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
+
+.lock-marker {
+    position: absolute;
+    width: 22px; height: 22px;
+    transform: translate(-50%, -50%);   /* Position2D is the centre */
+    --lock: rgb(255, 210, 90);          /* --bc-gold */
+}
+.lock-marker__icon {
+    position: absolute; left: 4px; top: 4px;
+    width: 14px; height: 14px;
+    color: var(--bc-label-text);
+}
+.lock-marker[data-state="damaged"]   .lock-marker__icon { color: var(--bc-damage-damaged); }
+.lock-marker[data-state="disabled"]  .lock-marker__icon { color: var(--bc-damage-disabled); }
+.lock-marker[data-state="destroyed"] .lock-marker__icon { color: var(--bc-damage-destroyed); }
+.lock-marker__icon svg { width: 100%; height: 100%; display: block; }
+.lock-marker__frame {
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(var(--lock), var(--lock)) 0 0 / 6px 2px,
+      linear-gradient(var(--lock), var(--lock)) 0 0 / 2px 6px,
+      linear-gradient(var(--lock), var(--lock)) 100% 0 / 6px 2px,
+      linear-gradient(var(--lock), var(--lock)) 100% 0 / 2px 6px,
+      linear-gradient(var(--lock), var(--lock)) 0 100% / 6px 2px,
+      linear-gradient(var(--lock), var(--lock)) 0 100% / 2px 6px,
+      linear-gradient(var(--lock), var(--lock)) 100% 100% / 6px 2px,
+      linear-gradient(var(--lock), var(--lock)) 100% 100% / 2px 6px,
+      transparent;
+    background-repeat: no-repeat;
+    border-radius: 2px;
 }
 
-/* Target extras are meaningless on the player panel — always hide. */
-.ship-display[data-role="player"] .ship-display__target-extras { display: none; }
+/* ── Subsystem picker: family buttons, name bar, member blocks ──────── */
+
+.ship-display__subsystems {
+    margin: 2px -8px 0 -8px;             /* rows run the panel's full width */
+    padding-top: 4px;
+    border-top: 1px solid rgba(235, 225, 255, 0.12);
+}
+.ship-display__subsystems:empty { display: none; }
+
+.subsys-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 8), 1fr);
+    gap: 3px;
+    padding: 2px 8px 3px 8px;
+}
+.subsys-btn {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; border: 0;
+    background: rgba(40, 40, 40, 0.6);
+    color: rgba(235, 225, 255, 0.75);
+    cursor: pointer;
+}
+.subsys-btn:hover { background-color: rgba(216, 43, 43, 0.15); }
+.subsys-btn--open { background: rgba(216, 43, 43, 0.35); }
+/* Hover must not fade an open family's tint (0,2,0 ties .subsys-btn:hover). */
+.subsys-btn--open:hover { background-color: rgba(216, 43, 43, 0.35); }
+.subsys-btn__icon { width: 60%; height: 60%; max-width: 20px; max-height: 20px; }
+.subsys-btn__icon svg { width: 100%; height: 100%; display: block; }
+.subsys-btn[data-state="healthy"]       { color: rgba(235, 225, 255, 0.75); }
+.subsys-btn[data-state="healthy"]:hover { color: rgb(235, 225, 255); }
+.subsys-btn[data-state="damaged"]       { color: var(--bc-damage-damaged); }
+.subsys-btn[data-state="disabled"]      { color: var(--bc-damage-disabled); }
+.subsys-btn[data-state="destroyed"]     { color: var(--bc-damage-destroyed); }
+/* Holds the lock (itself or one of its members): gold corner brackets. */
+.subsys-btn--locked {
+    --lock: rgb(255, 210, 90);
+    background:
+      linear-gradient(var(--lock), var(--lock)) 0 0 / 5px 2px no-repeat,
+      linear-gradient(var(--lock), var(--lock)) 0 0 / 2px 5px no-repeat,
+      linear-gradient(var(--lock), var(--lock)) 100% 0 / 5px 2px no-repeat,
+      linear-gradient(var(--lock), var(--lock)) 100% 0 / 2px 5px no-repeat,
+      linear-gradient(var(--lock), var(--lock)) 0 100% / 5px 2px no-repeat,
+      linear-gradient(var(--lock), var(--lock)) 0 100% / 2px 5px no-repeat,
+      linear-gradient(var(--lock), var(--lock)) 100% 100% / 5px 2px no-repeat,
+      linear-gradient(var(--lock), var(--lock)) 100% 100% / 2px 5px no-repeat,
+      rgba(40, 40, 40, 0.6);
+}
+.subsys-btn--locked.subsys-btn--open { background-color: rgba(216, 43, 43, 0.35); }
+
+/* Name bar: always present, empty when idle, so nothing shifts. */
+.subsys-caption {
+    margin: 0 8px 4px 8px;
+    padding: 3px 6px;
+    background: rgba(40, 40, 40, 0.6);
+    text-align: center;
+    font-size: 12px;
+    line-height: 14px;
+    letter-spacing: 0.04em;
+    color: var(--bc-label-text);
+    min-height: 14px;
+}
+
+.subsys-blocks {
+    display: grid;
+    grid-template-columns: repeat(var(--member-cols, 3), 1fr);
+    gap: 3px;
+    padding: 0 8px 4px 8px;
+}
+.subsys-block {
+    position: relative;
+    min-height: 30px;
+    padding: 4px 5px;
+    box-sizing: border-box;
+    display: flex; align-items: center;
+    background: rgba(40, 40, 40, 0.6);
+    border-left: 3px solid transparent;   /* state edge; transparent when healthy */
+    font-size: 11px;
+    line-height: 12px;
+    letter-spacing: 0.03em;
+    color: rgba(235, 225, 255, 0.85);
+    cursor: pointer;
+}
+.subsys-block[data-state="healthy"]  { border-left-color: transparent; }
+.subsys-block[data-state="damaged"]  { border-left-color: var(--bc-damage-damaged); }
+.subsys-block[data-state="disabled"] { border-left-color: var(--bc-damage-disabled); }
+.subsys-block__name { text-wrap: balance; }
+.subsys-block:hover { background-color: rgba(216, 43, 43, 0.15); color: var(--bc-label-text); }
+.subsys-block--locked { color: var(--bc-label-text); background: rgba(216, 43, 43, 0.35); }
+.subsys-block--locked:hover { background-color: rgba(216, 43, 43, 0.35); }
+/* Full-width white underline, pulled left under the 3px state edge. */
+.subsys-block--locked::after {
+    content: "";
+    position: absolute;
+    left: -3px; right: 0; bottom: 0;
+    height: 2px;
+    background: rgb(255, 255, 255);
+}
+
+/* Disabled fills the whole button / block with the disabled grey and turns
+   the glyph / name black; it wins over the open / locked tint. */
+.subsys-btn[data-state="disabled"],
+.subsys-btn--open[data-state="disabled"],
+.subsys-btn--locked.subsys-btn--open[data-state="disabled"],
+.subsys-block[data-state="disabled"],
+.subsys-block--locked[data-state="disabled"] {
+    background-color: var(--bc-damage-disabled);
+    color: rgb(0, 0, 0);
+}
+.subsys-btn[data-state="disabled"]:hover,
+.subsys-block[data-state="disabled"]:hover {
+    background-color: rgb(178, 178, 178);
+    color: rgb(0, 0, 0);
+}

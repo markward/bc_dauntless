@@ -197,7 +197,7 @@ def test_player_snapshot_with_full_hull_and_shields():
         assert snap[2] == "FRIENDLY"      # affiliation — player is in friendly group
         assert snap[4] == 1.0             # hull_pct
         assert snap[5] == (1.0,) * 6      # shields_pct
-        assert snap[10] is True           # visible
+        assert snap[9] is True           # visible
     finally:
         _teardown_game()
 
@@ -220,7 +220,7 @@ def test_target_snapshot_with_enemy_affiliation():
         player.GetSensorSubsystem().AddKnownObject(foe)
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
-        assert snap[10] is True, "expected visible target"
+        assert snap[9] is True, "expected visible target"
         assert snap[2] == "ENEMY"
     finally:
         _teardown_game()
@@ -232,7 +232,7 @@ def test_target_role_returns_invisible_when_no_target():
     try:
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
-        assert snap[10] is False          # visible
+        assert snap[9] is False          # visible
         assert snap[1] == ""              # ship_name
         assert snap[2] == "NONE"
     finally:
@@ -248,7 +248,7 @@ def test_target_role_no_target_returns_invisible():
         assert player.GetTarget() is None
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
-        assert snap[10] is False
+        assert snap[9] is False
     finally:
         _teardown_game()
 
@@ -268,7 +268,7 @@ def test_target_role_planet_target_renders_empty():
         assert _resolve_ship_for_role(ROLE_TARGET) is None
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
-        assert snap[10] is False          # visible
+        assert snap[9] is False          # visible
         assert snap[1] == ""              # ship_name
         assert snap[2] == "NONE"          # affiliation
     finally:
@@ -285,7 +285,7 @@ def test_target_role_sun_target_renders_empty():
         player.SetTarget(Sun())
         assert _resolve_ship_for_role(ROLE_TARGET) is None
         snap = ShipDisplayPanel(ROLE_TARGET)._snapshot()
-        assert snap[10] is False
+        assert snap[9] is False
     finally:
         _teardown_game()
 
@@ -328,8 +328,8 @@ def test_shield_face_indices_match_subsystem_constants():
 
 def test_damage_states_filter_to_positioned_subsystems_only():
     """Damage rows only surface for subsystems with a non-zero
-    Position2D; the descriptor tuple is (icon_num, x_px, y_px, state).
-    Impulse = icon_num 1; damaging it should flip state to 'damaged'."""
+    Position2D; the descriptor tuple is (icon_key, x_px, y_px, state).
+    Impulse = icon_key "chevrons-up"; damaging it should flip state to 'damaged'."""
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     _, player, _ = _setup_game_with_player()
     try:
@@ -341,10 +341,10 @@ def test_damage_states_filter_to_positioned_subsystems_only():
         panel = ShipDisplayPanel(ROLE_PLAYER)
         snap = panel._snapshot()
         damage_frozen = snap[6]
-        # Tuple shape: (icon_num, x_px, y_px, state)
-        impulse_rows = [r for r in damage_frozen if r[0] == 1]
+        # Tuple shape: (icon_key, x_px, y_px, state)
+        impulse_rows = [r for r in damage_frozen if r[0] == "chevrons-up"]
         assert len(impulse_rows) == 1
-        assert impulse_rows[0] == (1, 50.0, 30.0, "damaged")
+        assert impulse_rows[0] == ("chevrons-up", 50.0, 30.0, "damaged")
     finally:
         _teardown_game()
 
@@ -382,8 +382,8 @@ def test_render_payload_emits_setshipdisplay_call():
 
 
 def test_render_payload_damage_icons_descriptor_shape():
-    """damage_icons rows expose icon_num/icon_svg/x_px/y_px/state. Sensor
-    icon_num is 4 (per damage_icons.ICON_REGISTRY)."""
+    """damage_icons rows expose icon_key/icon_svg/x_px/y_px/state. Sensor
+    icon_key is "radar"."""
     import json
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     _, player, _ = _setup_game_with_player()
@@ -397,7 +397,7 @@ def test_render_payload_damage_icons_descriptor_shape():
         body = script[len("setShipDisplay(\"player\", "):-2]
         state = json.loads(body)
         icons = state["damage_icons"]
-        sensor_rows = [r for r in icons if r["icon_num"] == 4]
+        sensor_rows = [r for r in icons if r["icon_key"] == "radar"]
         assert len(sensor_rows) == 1
         row = sensor_rows[0]
         assert row["x_px"] == 64.0
@@ -405,6 +405,7 @@ def test_render_payload_damage_icons_descriptor_shape():
         assert row["state"] == "damaged"
         # icon_svg is optional (None when no glyph cached); presence required.
         assert "icon_svg" in row
+        assert set(row) == {"icon_key", "icon_svg", "x_px", "y_px", "state"}
     finally:
         _teardown_game()
 
@@ -480,7 +481,7 @@ def test_invisible_panel_emits_visible_false():
         panel = ShipDisplayPanel(ROLE_PLAYER)
         panel.visible = False
         snap = panel._snapshot()
-        assert snap[10] is False  # visible position
+        assert snap[9] is False  # visible position
     finally:
         _teardown_game()
 
@@ -700,5 +701,241 @@ def test_sdk_flicker_shields_hides_then_restores_the_shield_arcs(monkeypatch):
         pane = App.TGPane_Cast(disp.GetNthChild(disp.DISPLAY_PANE))
         pane.GetNthChild(disp.BOTTOM_PANE).SetNotVisible()
         assert panel._snapshot()[-1] == (False, True)
+    finally:
+        _teardown_game()
+
+
+# ---------------------------------------------------------------------------
+# Target panel: family tree, open family, locked (Task 5)
+# ---------------------------------------------------------------------------
+
+def _foe_with_phasers(name="Foe", n=2):
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import (
+        HullSubsystem, ShieldSubsystem, ShipSubsystem,
+    )
+    from engine.appc.weapon_subsystems import PhaserSystem
+    foe = ShipClass(); foe.SetName(name)
+    foe.SetShieldSubsystem(ShieldSubsystem())
+    foe.SetHull(HullSubsystem())
+    ph = PhaserSystem("Phasers")
+    ph.SetMaxCondition(100.0); ph.SetCondition(100.0)
+    for i in range(n):
+        c = ShipSubsystem("Bank %d" % i)
+        c.SetMaxCondition(100.0); c.SetCondition(100.0)
+        c._position_2d = (10.0 + i, 20.0)
+        ph.AddChildSubsystem(c)
+    foe.SetPhaserSystem(ph)
+    return foe
+
+
+def _target_panel_on(foe, player):
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_TARGET
+    player.SetTarget(foe)
+    player.GetSensorSubsystem().AddKnownObject(foe)
+    return ShipDisplayPanel(ROLE_TARGET)
+
+
+def _payload(panel):
+    import json
+    script = panel.render_payload()
+    assert script is not None
+    prefix = 'setShipDisplay("target", '
+    assert script.startswith(prefix)
+    return json.loads(script[len(prefix):-2])
+
+
+def test_target_payload_carries_families_open_family_and_locked():
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers()
+        panel = _target_panel_on(foe, player)
+        p = _payload(panel)
+        assert p["open_family"] is None and p["locked"] is None
+        fam = next(f for f in p["families"] if f["name"] == "Phasers")
+        assert fam["name"] == "Phasers" and fam["lockable"] is True
+        assert fam["state"] == "healthy" and fam["icon_key"] == "laser"
+        assert "icon_svg" not in fam
+        assert "<svg" in p["icons"][fam["icon_key"]]
+        assert [m["name"] for m in fam["members"]] == ["Bank 0", "Bank 1"]
+        m0 = fam["members"][0]
+        assert (m0["x_px"], m0["y_px"]) == (10.0, 20.0)
+        assert set(m0) == {"name", "state", "icon_key", "x_px", "y_px"}
+        player.SetTargetSubsystem(foe.GetPhaserSystem().GetChildSubsystem(1))
+        assert _payload(panel)["locked"] == "Bank 1"
+    finally:
+        _teardown_game()
+
+
+def test_payload_icons_table_has_one_entry_per_distinct_key():
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers()
+        p = _payload(_target_panel_on(foe, player))
+        keys = set()
+        for f in p["families"]:
+            keys.add(f["icon_key"])
+            keys.update(m["icon_key"] for m in f["members"])
+        assert set(p["icons"]) == keys
+        assert all("<svg" in v for v in p["icons"].values())
+        assert len(keys) < 1 + sum(1 + len(f["members"]) for f in p["families"])
+        for f in p["families"]:
+            assert "icon_svg" not in f
+            assert all("icon_svg" not in m for m in f["members"])
+    finally:
+        _teardown_game()
+
+
+def test_snapshot_ignores_range_and_sub_integer_speed_changes():
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers()
+        foe.SetTranslate(TGPoint3(100.0, 0.0, 0.0))
+        foe.SetVelocity(TGPoint3(1.0, 0.0, 0.0))
+        panel = _target_panel_on(foe, player)
+        base = panel._snapshot()
+        foe.SetTranslate(TGPoint3(150.0, 0.0, 0.0))     # range only
+        assert panel._snapshot() == base
+        foe.SetVelocity(TGPoint3(1.0001, 0.0, 0.0))     # same rounded kph
+        assert panel._snapshot() == base
+        foe.SetVelocity(TGPoint3(2.0, 0.0, 0.0))        # rounded kph moves
+        assert panel._snapshot() != base
+    finally:
+        _teardown_game()
+
+
+def test_player_payload_has_no_families():
+    import json
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    _setup_game_with_player()
+    try:
+        panel = ShipDisplayPanel(ROLE_PLAYER)
+        script = panel.render_payload()
+        p = json.loads(script[len('setShipDisplay("player", '):-2])
+        assert p["families"] == []
+        assert p["icons"] == {}
+        assert p["open_family"] is None and p["locked"] is None
+    finally:
+        _teardown_game()
+
+
+def test_open_event_toggles_and_show_event_only_opens():
+    _, player, _ = _setup_game_with_player()
+    try:
+        panel = _target_panel_on(_foe_with_phasers(), player)
+        _payload(panel)
+        assert panel.dispatch_event("open/Phasers") is True
+        assert _payload(panel)["open_family"] == "Phasers"
+        panel.dispatch_event("show/Phasers")
+        assert _payload(panel)["open_family"] == "Phasers"
+        panel.dispatch_event("open/Phasers")
+        assert _payload(panel)["open_family"] is None
+        panel.dispatch_event("show/Phasers")
+        assert _payload(panel)["open_family"] == "Phasers"
+    finally:
+        _teardown_game()
+
+
+def test_close_event_clears_the_open_family():
+    _, player, _ = _setup_game_with_player()
+    try:
+        panel = _target_panel_on(_foe_with_phasers(), player)
+        _payload(panel)
+        panel.dispatch_event("show/Phasers")
+        assert _payload(panel)["open_family"] == "Phasers"
+        assert panel.dispatch_event("close") is True
+        assert _payload(panel)["open_family"] is None
+        # closing with nothing open is harmless
+        assert panel.dispatch_event("close") is True
+        assert _payload(panel)["open_family"] is None
+    finally:
+        _teardown_game()
+
+
+def test_open_event_is_ignored_by_the_player_panel():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    _setup_game_with_player()
+    try:
+        assert ShipDisplayPanel(ROLE_PLAYER).dispatch_event("open/X") is False
+        assert ShipDisplayPanel(ROLE_PLAYER).dispatch_event("close") is False
+    finally:
+        _teardown_game()
+
+
+def test_retarget_clears_the_open_family():
+    _, player, _ = _setup_game_with_player()
+    try:
+        a = _foe_with_phasers("A")
+        b = _foe_with_phasers("B")  # same family name on purpose
+        panel = _target_panel_on(a, player)
+        _payload(panel)
+        panel.dispatch_event("show/Phasers")
+        assert _payload(panel)["open_family"] == "Phasers"
+        player.SetTarget(b)
+        player.GetSensorSubsystem().AddKnownObject(b)
+        p = _payload(panel)
+        assert p["ship_name"] == "B" and p["open_family"] is None
+    finally:
+        _teardown_game()
+
+
+def test_open_family_clears_when_the_family_disappears():
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers(n=1)
+        panel = _target_panel_on(foe, player)
+        _payload(panel)
+        panel.dispatch_event("show/Phasers")
+        _payload(panel)
+        foe.GetPhaserSystem().GetChildSubsystem(0).SetCondition(0.0)
+        p = _payload(panel)
+        assert "Phasers" not in [f["name"] for f in p["families"]]
+        assert p["open_family"] is None
+    finally:
+        _teardown_game()
+
+
+def test_cloaked_target_has_no_families_and_no_lock():
+    import App
+    from engine.appc.target_menu import STTargetMenu_GetTargetMenu
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers()
+        panel = _target_panel_on(foe, player)
+        player.SetTargetSubsystem(foe.GetPhaserSystem())
+        _payload(panel)
+
+        class _Contact:
+            ship = foe
+            subsystems_targetable = False
+
+        menu = STTargetMenu_GetTargetMenu()
+        if menu is None:
+            from engine.appc.target_menu import STTargetMenu_CreateW
+            menu = STTargetMenu_CreateW("Targets")
+        saved = menu._contacts
+        menu._contacts = [_Contact()]
+        try:
+            p = _payload(panel)
+        finally:
+            menu._contacts = saved
+        assert p["families"] == []
+        assert p["locked"] is None
+        assert p["open_family"] is None
+    finally:
+        _teardown_game()
+
+
+def test_family_change_reemits():
+    _, player, _ = _setup_game_with_player()
+    try:
+        foe = _foe_with_phasers()
+        panel = _target_panel_on(foe, player)
+        assert panel.render_payload() is not None
+        assert panel.render_payload() is None
+        foe.GetPhaserSystem().GetChildSubsystem(0).SetCondition(10.0)
+        p = _payload(panel)
+        fam = next(f for f in p["families"] if f["name"] == "Phasers")
+        assert fam["members"][0]["state"] == "disabled"
     finally:
         _teardown_game()

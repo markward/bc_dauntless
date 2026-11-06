@@ -2,22 +2,23 @@
 //
 // Target-list render fn. Driven by Python via cef_execute_javascript:
 //   setTargetList({visible, selected, selected_subsystem,
+//                  filters: {FRIENDLY, NEUTRAL, ENEMY},
+//                  sort: "name" | "distance" | "health",
 //                  rows: [{name, label, affiliation, hull, shields,
-//                          subsystems: [...], expanded}, ...]});
+//                          has_shields, dist_km, marker}, ...]});
 //
-// `name` is the click/selection key (ship.GetName()) and never displayed;
-// `label` is what's drawn — the ship's display name once identified, else
-// the "Unknown N" placeholder (STSubsystemMenu.GetCaption()).
+// Rows arrive already filtered and in display order: the page never sorts
+// or filters. `name` is the click/selection key (ship.GetName()) and never
+// displayed; `label` is what's drawn (the ship's display name once
+// identified, else the "Unknown N" placeholder).
 //
 // Event protocol (dauntlessEvent passes through PanelRegistry to
 // TargetListView.dispatch_event):
-//   target/<ship>                   — set target ship, clear sub-lock
-//   target/<ship>/<subsystem>       — set target + subsystem
-//   target/<ship>/<leaf>            — set target + nested leaf subsystem (recursive resolve)
-//   target/<ship>/__toggle__        — toggle accordion expansion
-//   target/<ship>/<subsystem>/__toggle__ — toggle subsystem (aggregator) accordion
+//   target/<ship>                   - set target ship, clear sub-lock
+//   target/__filter__/<AFF>         - toggle a FRIENDLY / NEUTRAL / ENEMY tab
+//   target/__sort__/<mode>          - choose name / distance / health order
 //
-// Spec: docs/superpowers/ui_designs/02-tactical-cluster.md
+// Spec: docs/superpowers/specs/2026-11-05-target-list-and-target-panel-redesign-design.md
 
 // ── Escape helpers ───────────────────────────────────────────────────────────
 // Ship and subsystem names land here unsanitised — stock BC names are
@@ -67,7 +68,6 @@ function setTargetList(state) {
 
     const rows = state.rows || [];
     const selected = state.selected || null;
-    const selectedSub = state.selected_subsystem || null;
 
     let html = '';
     for (let i = 0; i < rows.length; i++) {
@@ -76,8 +76,6 @@ function setTargetList(state) {
         const label = String(row.label || row.name || '');
         const aff = String(row.affiliation || 'UNKNOWN');
         const chosen = (selected === name) ? ' target-list__row--chosen' : '';
-        const expanded = !!row.expanded;
-        const expandedCls = expanded ? ' target-list__row--expanded' : '';
         const clampPct = function (v) { return Math.max(0, Math.min(100, v)); };
         const hull = clampPct((typeof row.hull === 'number') ? row.hull : 100);
         const shields = clampPct((typeof row.shields === 'number') ? row.shields : 0);
@@ -86,51 +84,8 @@ function setTargetList(state) {
         // showing the bar when the flag is absent (older payloads).
         const hasShields = (row.has_shields !== false);
         const nameHtml = escapeHtml(label);
-        const toggleAttr = clickAttr('target/' + name + '/__toggle__');
         const targetAttr = clickAttr('target/' + name);
 
-        // Ship row — flat structure: caret with its own onclick
-        // (event.stopPropagation prevents the row's onclick from
-        // firing too); name + bars sit as direct flex children of
-        // the row and inherit the row's set-target onclick.
-        //
-        // Caret glyph swaps between ▸ (collapsed) and ▾ (expanded)
-        // instead of CSS-rotating. CSS rotation promotes the caret
-        // to its own GPU layer in CEF, which reduces text crispness
-        // of the surrounding row.
-        //
-        // Rows with zero subsystem rows (a cloaked contact's fuzzy return,
-        // or an inert object like an asteroid whose hull/shields/power are
-        // non-targetable) have nothing to expand. Emitting a live caret
-        // there is a phantom affordance — it implies children that don't
-        // exist and toggles to nothing when clicked. We still emit the
-        // span (same base class — target_list.css gives .target-list__caret
-        // an explicit `width` + `margin-right`, so both states occupy the
-        // same box; it is NOT flex-sized, and it is NOT content-driven) so
-        // the name column stays aligned with rows that DO have a caret; we
-        // just drop the glyph and the onclick, and add a modifier class
-        // (target_list.css overrides its cursor to `default`) so CSS/tests
-        // can tell the two apart without relying on absence-of-content.
-        //
-        // Side effect, intentional: with no onclick/stopPropagation on the
-        // empty caret, a click there now falls through (normal DOM bubbling)
-        // to the row's own onclick and selects the ship — same as clicking
-        // the name or bars. That's reasonable (there's nothing else to do
-        // in that zone on a childless row) but wasn't true before this fix,
-        // when the caret always intercepted its own clicks.
-        // has_subsystems is authoritative: a COLLAPSED row ships an empty
-        // `subsystems` array (the tree is only built when it will be drawn),
-        // so its length says nothing about whether a caret is warranted.
-        // No `subsystems.length` fallback: this file and the Python that
-        // builds the payload ship in the same binary, so a row without the key
-        // cannot exist (render_payload emits it unconditionally). A fallback
-        // here would be dead code that reads as version-skew defence.
-        const hasSubsystems = !!row.has_subsystems;
-        const caretGlyph = expanded ? '&#9662;' : '&#9656;';  // ▾ / ▸
-        const caretHtml = hasSubsystems
-            ? '<span class="target-list__caret"'
-              + ' onclick="event.stopPropagation();' + toggleAttr + '">' + caretGlyph + '</span>'
-            : '<span class="target-list__caret target-list__caret--empty"></span>';
         // Marker (e.g. "protect"): inline shield in the row's text colour.
         // Only known kinds are emitted, so the class name is never raw input.
         // "target": a crosshair (ring + four ticks), same box and colour.
@@ -146,11 +101,12 @@ function setTargetList(state) {
               + '<circle cx="5" cy="6" r="3"/>'
               + '<path d="M5 0.5 V3 M5 9 V11.5 M0 6 H2 M8 6 H10"/></svg></span>'
             : '';
-        html += '<div class="target-list__row target-list__row--' + aff + chosen + expandedCls + '"'
+        const dist = (typeof row.dist_km === 'number') ? row.dist_km : 0;
+        html += '<div class="target-list__row target-list__row--' + aff + chosen + '"'
               +   ' onclick="' + targetAttr + '">'
-              +   caretHtml
               +   markerHtml
               +   '<span class="target-list__name">' + nameHtml + '</span>'
+              +   '<span class="target-list__dist">' + dist.toFixed(2) + ' km</span>'
               +   '<span class="target-list__bars">'
               +     '<span class="target-list__bar target-list__bar--hull"'
               +     ' style="--bar-pct:' + hull + '%"></span>'
@@ -160,67 +116,52 @@ function setTargetList(state) {
                      : '')
               +   '</span>'
               + '</div>';
-
-        // Subsystem child rows — only emitted when this row is expanded.
-        // Collapsed rows hide their subsystem children entirely.
-        // Aggregator subsystems (those with children) get a caret toggle;
-        // leaf-only subsystems get a bullet. When a subsystem is itself
-        // expanded, its nested leaf rows (banks / tubes / pods / etc.)
-        // are emitted directly after it at a deeper indent level.
-        if (expanded) {
-            const subs = row.subsystems || [];
-            for (let j = 0; j < subs.length; j++) {
-                const sub = subs[j];
-                const subName = String(sub.name || '');
-                const subCondition = (typeof sub.condition === 'number') ? sub.condition : 100;
-                const subExpanded = !!sub.expanded;
-                const subChildren = sub.children || [];
-                const hasChildren = subChildren.length > 0;
-                const subChosen = (selected === name && selectedSub === subName)
-                    ? ' target-list__sub--chosen' : '';
-                const subAttr = clickAttr('target/' + name + '/' + subName);
-                const subToggleAttr = clickAttr('target/' + name + '/' + subName + '/__toggle__');
-                const subCaret = hasChildren
-                    ? '<span class="target-list__sub-caret"'
-                      + ' onclick="event.stopPropagation();' + subToggleAttr + '">'
-                      + (subExpanded ? '&#9662;' : '&#9656;') + '</span>'
-                    : '<span class="target-list__sub-bullet">&#8226;</span>';
-                // A row WITH children is a group header ("Warp Engines",
-                // "Phasers"). BC flags every aggregator SetTargetable(0), so it
-                // is not lockable — its whole row toggles, like the caret.
-                // Only a lockable leaf row sets the subsystem lock. The engine
-                // refuses a non-targetable lock anyway (target_list_view.
-                // dispatch_event), so this keeps the click from quietly
-                // clearing the lock the player already had.
-                const subRowAttr = hasChildren ? subToggleAttr : subAttr;
-                html += '<div class="target-list__sub target-list__sub--' + aff + subChosen + '"'
-                      +   ' onclick="' + subRowAttr + '">'
-                      +   subCaret
-                      +   '<span class="target-list__sub-name">' + escapeHtml(subName) + '</span>'
-                      +   '<span class="target-list__sub-bar"'
-                      +   ' style="--bar-pct:' + subCondition + '%"></span>'
-                      + '</div>';
-
-                // Nested leaf rows (banks / tubes / pods / nacelles / emitters).
-                if (subExpanded && hasChildren) {
-                    for (let k = 0; k < subChildren.length; k++) {
-                        const leaf = subChildren[k];
-                        const leafName = String(leaf.name || '');
-                        const leafCond = (typeof leaf.condition === 'number') ? leaf.condition : 100;
-                        const leafChosen = (selected === name && selectedSub === leafName)
-                            ? ' target-list__leaf--chosen' : '';
-                        const leafAttr = clickAttr('target/' + name + '/' + leafName);
-                        html += '<div class="target-list__leaf target-list__leaf--' + aff + leafChosen + '"'
-                              +   ' onclick="' + leafAttr + '">'
-                              +   '<span class="target-list__leaf-bullet">&#8226;</span>'
-                              +   '<span class="target-list__leaf-name">' + escapeHtml(leafName) + '</span>'
-                              +   '<span class="target-list__leaf-bar"'
-                              +   ' style="--bar-pct:' + leafCond + '%"></span>'
-                              + '</div>';
-                    }
-                }
-            }
-        }
     }
     body.innerHTML = html;
+
+    // The strips are static markup: reflect the payload onto them. They are
+    // drawn even with zero rows, so an emptied filter can be turned back on.
+    const filters = state.filters || {};
+    const tabEls = panel.querySelectorAll('.target-list__tab');
+    for (let i = 0; i < tabEls.length; i++) {
+        const t = tabEls[i];
+        t.classList.toggle('target-list__tab--on',
+                           filters[t.getAttribute('data-aff')] === true);
+    }
+    _targetListSort = state.sort || 'name';
+    const sortEls = panel.querySelectorAll('.target-list__sort-opt');
+    for (let i = 0; i < sortEls.length; i++) {
+        const o = sortEls[i];
+        const on = (o.getAttribute('data-sort') === _targetListSort);
+        o.classList.toggle('target-list__sort-opt--on', on);
+        o.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
 }
+
+// Last sort the payload reported; clicking it again is not an event.
+var _targetListSort = 'name';
+
+// Strip clicks, called with a click-like object ({target}); wired below.
+function targetListTabClick(ev) {
+    const b = ev && ev.target && ev.target.closest
+        ? ev.target.closest('[data-aff]') : null;
+    if (!b) return;
+    dauntlessEvent('target/__filter__/' + b.getAttribute('data-aff'));
+}
+
+function targetListSortClick(ev) {
+    const b = ev && ev.target && ev.target.closest
+        ? ev.target.closest('[data-sort]') : null;
+    if (!b) return;
+    const mode = b.getAttribute('data-sort');
+    if (mode === _targetListSort) return;
+    dauntlessEvent('target/__sort__/' + mode);
+}
+
+(function wireTargetListStrips() {
+    if (typeof document === 'undefined') return;
+    const tabs = document.getElementById('target-list-tabs');
+    const sort = document.getElementById('target-list-sort');
+    if (tabs) tabs.addEventListener('click', targetListTabClick);
+    if (sort) sort.addEventListener('click', targetListSortClick);
+})();

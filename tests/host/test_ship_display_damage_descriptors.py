@@ -40,16 +40,16 @@ def test_damage_descriptors_emit_one_row_per_positioned_subsystem(galaxy_ship):
     assert len(rows) > 0
     for row in rows:
         assert (row["x_px"], row["y_px"]) != (0.0, 0.0)
-        for k in ("x_px", "y_px", "icon_num", "state"):
+        for k in ("x_px", "y_px", "icon_key", "state"):
             assert k in row
 
 
 def test_galaxy_hull_emits_row_at_hardpoint_position(galaxy_ship):
     rows = list(sdp._damage_icon_descriptors(galaxy_ship))
-    hulls = [r for r in rows if r["icon_num"] == 0]
+    hulls = [r for r in rows if r["icon_key"] == "hull"]
     # The Galaxy hardpoint declares two HullProperty subsystems — Hull@(64,40)
     # (Galaxy.py:700) and Bridge@(64,25) (Galaxy.py:1113) — so both surface as
-    # icon_num 0. Assert the Hull's own hardpoint row is present and unique.
+    # icon_key "hull". Assert the Hull's own hardpoint row is present and unique.
     assert len(hulls) >= 1
     hull_at_hp = [r for r in hulls
                   if r["x_px"] == pytest.approx(64.0)
@@ -57,9 +57,9 @@ def test_galaxy_hull_emits_row_at_hardpoint_position(galaxy_ship):
     assert len(hull_at_hp) == 1
 
 
-def test_galaxy_sensor_array_emits_row_with_sensor_icon_num(galaxy_ship):
+def test_galaxy_sensor_array_emits_row_with_radar_icon_key(galaxy_ship):
     rows = list(sdp._damage_icon_descriptors(galaxy_ship))
-    sensors = [r for r in rows if r["icon_num"] == 4]
+    sensors = [r for r in rows if r["icon_key"] == "radar"]
     assert len(sensors) == 1
     assert sensors[0]["x_px"] == pytest.approx(64.0)
     assert sensors[0]["y_px"] == pytest.approx(10.0)
@@ -70,10 +70,10 @@ def test_damage_descriptor_state_reflects_subsystem_condition(galaxy_ship):
     to 'damaged' / 'disabled' / 'destroyed' per IsDamaged/IsDisabled/IsDestroyed."""
     hull = galaxy_ship.GetHull()
     rows = list(sdp._damage_icon_descriptors(galaxy_ship))
-    hull_row = next(r for r in rows if r["icon_num"] == 0)
+    hull_row = next(r for r in rows if r["icon_key"] == "hull")
     assert hull_row["state"] == "healthy"
 
     hull.SetCondition(hull.GetMaxCondition() * 0.5)
     rows = list(sdp._damage_icon_descriptors(galaxy_ship))
-    hull_row = next(r for r in rows if r["icon_num"] == 0)
+    hull_row = next(r for r in rows if r["icon_key"] == "hull")
     assert hull_row["state"] == "damaged"

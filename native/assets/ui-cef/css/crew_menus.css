@@ -48,7 +48,7 @@
    apart from the system list it follows. */
 .crew-menu__row--cartography { border-top: 1px solid rgba(255, 255, 255, 0.18); }
 
-/* Caret matches .target-list__caret — neutral white, glyph swapped in JS
+/* Caret is neutral white, glyph swapped in JS
    (no CSS rotate; rotation promotes the caret to its own GPU layer in CEF
    and blurs adjacent text). */
 .crew-menu__caret {
