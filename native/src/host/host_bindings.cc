@@ -2991,6 +2991,21 @@ static renderer::PhaserBeamDescriptor beam_from_dict(const py::dict& d) {
     return b;
 }
 
+// One 20-tuple per descriptor (test oracle for the native beam feed): every
+// float is the float32 widened to a Python float, so the value is exact.
+static py::list beams_debug(const std::vector<renderer::PhaserBeamDescriptor>& v) {
+    py::list out;
+    for (const auto& b : v)
+        out.append(py::make_tuple(
+            b.emitter_world.x, b.emitter_world.y, b.emitter_world.z,
+            b.target_world.x, b.target_world.y, b.target_world.z,
+            b.color.r, b.color.g, b.color.b, b.color.a,
+            b.width, b.u_tiles, b.num_sides, b.taper_radius, b.taper_ratio,
+            b.taper_min_length, b.taper_max_length, b.perimeter_tile,
+            b.texture_speed, b.end_width_scale));
+    return out;
+}
+
 // Parse-only: extract the embedded set camera (frustum + world transform)
 // from a NIF without any GL context or asset-cache entry. Feeds
 // MissionLib.SetupBridgeSet's embedded-camera path via ModelManager.CloneCamera.
@@ -9089,6 +9104,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("beams"),
           "Set the active tractor-beam list (rendered by the shared beam pass), "
           "applied each frame().");
+
+    m.def("phaser_beams_debug", []() { return beams_debug(g_phaser_beams); },
+          "Read back the pushed phaser-beam descriptors as 20-tuples.");
+    m.def("tractor_beams_debug", []() { return beams_debug(g_tractor_beams); },
+          "Read back the pushed tractor-beam descriptors as 20-tuples.");
 
     m.def("set_spv_overlay_beams",
           [](const std::vector<py::dict>& descs) {
