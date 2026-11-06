@@ -25,20 +25,6 @@ def _mods_scan_is_hermetic(monkeypatch, tmp_path):
     monkeypatch.setenv("DAUNTLESS_MODS_DIR", str(tmp_path / "empty_mods"))
 
 
-def test_run_M1Basic_with_sun_wiring_does_not_crash():
-    """M1Basic/Biranu1 has Sun_Create with no texture; aggregator drops it
-    with a warning. run() must still complete rc=0."""
-    if not GALAXY_NIF.is_file():
-        pytest.skip("BC assets not available")
-    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    try:
-        from engine import host_loop
-        rc = host_loop.run("Custom.Tutorial.Episode.M1Basic.M1Basic", max_ticks=2)
-        assert rc == 0
-    finally:
-        os.environ.pop("OPEN_STBC_HOST_HEADLESS", None)
-
-
 def test_run_M1Basic_verbose_logs_sun_count(capsys):
     """With verbose=1, tick-0 sun log line appears."""
     if not GALAXY_NIF.is_file():
