@@ -141,8 +141,11 @@ TEST(SensorDetect, OfflineSensorsRangeZero) {
     w.m.set_f(s, Field::_condition, 0.5);
     w.m.set_f(s, Field::_power_factor, 0.5);
     EXPECT_EQ(effective_sensor_range(w.m, o), 100.0 * 0.5 * 0.5);
-    // IsDisabled: condition <= DisabledPercentage * _max_condition.
+    // IsDisabled: condition < DisabledPercentage * _max_condition (strict:
+    // exactly at the threshold the sensor still works).
     w.m.set_f(s, Field::_condition, 0.25);
+    EXPECT_EQ(effective_sensor_range(w.m, o), 100.0 * 0.25 * 0.5);
+    w.m.set_f(s, Field::_condition, 0.2499);
     EXPECT_EQ(effective_sensor_range(w.m, o), 0.0);
     w.m.set_f(s, Field::_condition, 1.0);
     w.m.set_f(s, Field::_power_factor, 1.0);

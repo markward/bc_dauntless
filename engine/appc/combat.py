@@ -67,16 +67,20 @@ def weapon_splash_radius(hardpoint_weapon, payload_template) -> float:
     payload_template: projectile-type template (e.g. PhotonTorpedo), or None
                       for phasers / non-projectile weapons.
 
-    Returns the splash radius in game units. Hardpoint DRF overrides payload
-    DRF when both are set and non-zero; falls back to the phaser default
-    (0.15 GU) when neither is available.
+    Returns the splash radius in game units. The PAYLOAD's DRF wins when it
+    has one; the hardpoint's (phaser banks, a torpedo given as the weapon)
+    otherwise; the phaser default (0.15 GU) when neither is set. Measured on
+    the original with stbc-oracle (per-hit capture, 7 duels): every photon
+    hit carried 0.13 (258 hits) and every quantum 0.14 (27), the
+    projectiles' own values -- never the tubes' 0.20. Phaser hits carry the
+    banks' 0.15.
     """
-    if hardpoint_weapon is not None and hasattr(hardpoint_weapon, "GetDamageRadiusFactor"):
-        drf = hardpoint_weapon.GetDamageRadiusFactor()
-        if drf > 0.0:
-            return float(drf)
     if payload_template is not None and hasattr(payload_template, "GetDamageRadiusFactor"):
         drf = payload_template.GetDamageRadiusFactor()
+        if drf > 0.0:
+            return float(drf)
+    if hardpoint_weapon is not None and hasattr(hardpoint_weapon, "GetDamageRadiusFactor"):
+        drf = hardpoint_weapon.GetDamageRadiusFactor()
         if drf > 0.0:
             return float(drf)
     return PHASER_DEFAULT_DAMAGE_RADIUS
@@ -170,9 +174,9 @@ def _body_frame_delta(ship, hit_point):
     )
 
 
-def _subsystem_world_position(ship, subsystem):
-    """Return the world-space position of `subsystem` on `ship` -- the
-    splash catchment centre.
+def _subsystem_world_position(ship, subsystem, damage=False):
+    """Return the world-space position of `subsystem` on `ship` -- with
+    ``damage=True`` its DAMAGE point, the splash catchment centre.
 
     Delegates to `subsystems.subsystem_world_position`, the one mount
     formula. This used to be a private copy of it, and when articulation
@@ -182,7 +186,7 @@ def _subsystem_world_position(ship, subsystem):
     hull, so a direct hit on the drawn gun reached nothing.
     """
     from engine.appc.subsystems import subsystem_world_position
-    return subsystem_world_position(subsystem, ship)
+    return subsystem_world_position(subsystem, ship, damage=damage)
 
 
 def _splash_weight(r_sub: float, r_hit: float, d: float) -> float:
@@ -262,6 +266,32 @@ def _diff_state(before: tuple, after: tuple):
     if a_dis and not b_dis:
         return "disabled"
     return None
+
+
+def _weapon_damageable_subsystems(ship):
+    """The subsystems a weapon hit can damage besides the hull itself, in
+    the order the hit walks them: `_iter_subsystems` order, then the hull's
+    own children (the Galaxy's and Nebula's Bridge), each only when
+    IsTargetable().
+
+    Measured on the original (stbc-oracle per-hit capture over 7 duels, 267
+    hit events, mechanics reference §1.2): every TARGETABLE subsystem inside
+    the footprint takes the full hit, the hull's children included, and the
+    untargetable ones (the group parents Phasers / Torpedoes / Tractors /
+    Impulse Engines / Warp Engines, and Engineering) are never damaged by a
+    weapon. The native walk (damage.cc apply_hit) is mount order, then the
+    hull's `_children`, with the same test on the mirrored `_targetable`.
+    """
+    from engine.appc.objects import _is_targetable
+    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
+    for s in _iter_subsystems(ship):
+        if _is_targetable(s):
+            yield s
+    children = getattr(hull, "_children", None) if hull is not None else None
+    if children:
+        for c in children:
+            if c is not None and _is_targetable(c):
+                yield c
 
 
 def _iter_subsystems(ship):
@@ -397,6 +427,60 @@ the ellipsoid, so the hull is inside by construction. Mirrors
 shield_state.h``, which sizes the rendered bubble; keep the two in step or the
 beam will stop somewhere the splash is not.
 """
+
+
+def has_hull_box(ship) -> bool:
+    """Whether the ship has a usable cached hull box (_hull_box_for)."""
+    return _hull_box_for(ship) is not None
+
+
+def point_in_shield_bubble(ship, point) -> bool:
+    """True if the world point ``point`` lies inside the ship's shield
+    ellipsoid (the hull box's semi-axes x SHIELD_ELLIPSOID_AXIS_SCALE, as
+    :func:`shield_bubble_entry`). A ship with no cached hull box has no
+    bubble to be inside of: False."""
+    box = _hull_box_for(ship)
+    if box is None:
+        return False
+    (cx, cy, cz), (hx, hy, hz) = box
+    ax = hx * SHIELD_ELLIPSOID_AXIS_SCALE
+    ay = hy * SHIELD_ELLIPSOID_AXIS_SCALE
+    az = hz * SHIELD_ELLIPSOID_AXIS_SCALE
+    ox, oy, oz = _body_frame_delta(ship, point)
+    o0 = (ox - cx) / ax
+    o1 = (oy - cy) / ay
+    o2 = (oz - cz) / az
+    return o0 * o0 + o1 * o1 + o2 * o2 <= 1.0
+
+
+def hull_segment_hit(ship, seg_start, seg_end, radius: float) -> bool:
+    """Does the segment ``seg_start`` -> ``seg_end`` (world) touch the
+    ship's hull? The hull box (body frame, slab test) when the ship has one;
+    a sphere of ``radius`` around the ship (``sphere_hit`` at ``seg_end``)
+    only when it has none (rocks, unrealized and headless ships)."""
+    box = _hull_box_for(ship)
+    if box is None:
+        return sphere_hit(seg_end, ship.GetWorldLocation(), radius)
+    (cx, cy, cz), (hx, hy, hz) = box
+    a = _body_frame_delta(ship, seg_start)
+    b = _body_frame_delta(ship, seg_end)
+    p0 = (a[0] - cx, a[1] - cy, a[2] - cz)
+    d = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    t0, t1 = 0.0, 1.0
+    for i, h in enumerate((hx, hy, hz)):
+        if abs(d[i]) < 1e-12:
+            if abs(p0[i]) > h:
+                return False
+            continue
+        ta = (-h - p0[i]) / d[i]
+        tb = (h - p0[i]) / d[i]
+        if ta > tb:
+            ta, tb = tb, ta
+        t0 = max(t0, ta)
+        t1 = min(t1, tb)
+        if t0 > t1:
+            return False
+    return True
 
 
 def shield_bubble_entry(ship, ray_origin, ray_direction, max_dist: float):
@@ -645,20 +729,24 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
               hit_tangent=None, decal_radius: float | None = None,
               decal_dent: float = 0.0,
               single_impact: bool = False,
-              shield_radius: float | None = None) -> None:
+              shield_radius: float | None = None,
+              _overflow_depth: int = 0) -> None:
     """Apply `damage` to `ship` per the spherical-splash attribution model.
 
     Flow:
     1. Resolve splash radius `R_hit` from (hardpoint_weapon, payload_template).
     2. Apply shield attenuation on the impact-direction face.
     3. Damage the hull at full post-shield damage (unconditional).
-    4. Walk every non-hull subsystem; for each whose damage sphere
-       intersects the splash sphere, apply `D · w_i` independently.
+    4. Walk every targetable subsystem (_weapon_damageable_subsystems); each
+       whose sphere, centred on its DAMAGE point, intersects the splash
+       sphere takes the full post-shield damage.
     5. Queue hit_feedback (HIT_PRESENT) with shield / subsystem / hull
        totals and the highest-weight subsystem as the "primary" for
        severity classification.
     6. Queue the WeaponHitEvent (WEAPON_HIT) carrying hit point, normal,
        splash radius, and primary subsystem.
+    7. Overflow: what the hit had left after destroying subsystems lands
+       as a new hit at the same point (`_overflow_depth` counts them).
     The condition writes of 2-4 land at once; every effect they and the hit
     report is delivered at the tick boundary (native damage M2,
     engine/appc/effect_queue.py).
@@ -809,8 +897,20 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
         absorbed_shields = before - remaining
 
     post_shield = remaining
+    # A torpedo that the shields partly stop reaches the hull with its splash
+    # sphere shrunk by the same fraction: R x post_shield / damage. Measured on
+    # the original with stbc-oracle (per-hit capture, 7 duels): 63 of 63
+    # projectile hits scale exactly (a quantum 0.14 that leaks 66.69 of 900
+    # lands with 0.0104), and 800 of 801 phaser hits keep their radius. Only
+    # the subsystem step uses it: the shield step (flash, ET_WEAPON_HIT)
+    # keeps R. An explicit splash_radius (blast, overflow re-hit) is as given.
+    r_hull = r_hit
+    if (weapon_type == "torpedo" and absorbed_shields > 0.0 and damage > 0.0
+            and splash_radius is None):
+        r_hull = r_hit * post_shield / float(damage)
     absorbed_hull = 0.0
     absorbed_subsystem_total = 0.0
+    overflow = 0.0          # damage left over after destroying subsystems
     allocations: list = []  # (subsystem, weight) for primary picking
     primary_transition = None
 
@@ -853,19 +953,27 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
         #
         #    `w` is still recorded in `allocations`: it ranks which subsystem
         #    the impact VFX names as primary, which must stay distance-based.
-        for sub in _iter_subsystems(ship):
+        #
+        #    Measured since (stbc-oracle per-hit capture, 267 hit events over
+        #    7 duels, mechanics reference §1.2): the full damage IS the
+        #    original's rule -- a subsystem 0.09 GU away and one 0.25 GU away
+        #    take the same -- but only TARGETABLE subsystems, the hull's
+        #    children included (_weapon_damageable_subsystems), each measured
+        #    from its DAMAGE point (GetDamagePoint: just inside the hull for
+        #    one mounted on or outside it), not its position.
+        for sub in _weapon_damageable_subsystems(ship):
             pos = sub.GetPosition() if hasattr(sub, "GetPosition") else None
             if pos is None:
                 continue
             r_sub = sub.GetRadius() if hasattr(sub, "GetRadius") else 0.0
-            h_world = _subsystem_world_position(ship, sub)
+            h_world = _subsystem_world_position(ship, sub, damage=True)
             dx = hit_point.x - h_world.x
             dy = hit_point.y - h_world.y
             dz = hit_point.z - h_world.z
             d = (dx * dx + dy * dy + dz * dz) ** 0.5
-            if d >= r_sub + r_hit:
+            if d >= r_sub + r_hull:
                 continue
-            w = _splash_weight(r_sub, r_hit, d)
+            w = _splash_weight(r_sub, r_hull, d)
             if w <= 0.0:
                 continue
             allocations.append((sub, w))
@@ -880,7 +988,13 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
             if hasattr(ship, "DamageSystem"):
                 before_flags = _subsystem_state_flags(sub)
                 if _commit and not sub_immune:
+                    cond_before = (sub.GetCondition()
+                                   if hasattr(sub, "GetCondition") else 0.0)
                     ship.DamageSystem(sub, amount, source)
+                    # Overflow: what this hit had left after destroying the
+                    # subsystem (re-applied after the loop, step 7).
+                    if 0.0 < cond_before < amount:
+                        overflow += amount - cond_before
                 absorbed_subsystem_total += amount
                 after_flags = _subsystem_state_flags(sub)
                 transition = _diff_state(before_flags, after_flags)
@@ -898,22 +1012,26 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
     # The entries are the frozen encoding (effect_queue, THE DAMAGE KINDS):
     # no instances map in the entry -- delivery looks up the map in force
     # (hit_feedback.delivery_instances), which a hit given one sets here.
+    # An overflow re-hit (_overflow_depth > 0) is the same impact carried on:
+    # its damage lands and it posts its own ET_WEAPON_HIT, but it presents
+    # nothing (the parent hit's HIT_PRESENT already reported the impact).
     from engine.appc import effect_queue
     if ship_instances is not None:
         from engine.appc import hit_feedback
         hit_feedback.use_instances(ship_instances)
-    effect_queue.emit(effect_queue.HIT_PRESENT, *effect_queue.hit_present_operands(
-        ship=ship, source=source, point=hit_point, normal=normal,
-        damage=damage, subsystem=primary_subsystem,
-        absorbed_shields=absorbed_shields,
-        absorbed_subsystem=absorbed_subsystem_total,
-        absorbed_hull=absorbed_hull, sub_transition=primary_transition,
-        has_instances=ship_instances is not None, weapon_type=weapon_type,
-        radius=r_hit, persist_decal=_commit,
-        allow_structural_wear=damage_hull, shield_point=shield_point,
-        tangent=hit_tangent, decal_radius=decal_radius,
-        decal_dent=decal_dent, single_impact=single_impact,
-        shield_radius=shield_radius))
+    if _overflow_depth == 0:
+        effect_queue.emit(effect_queue.HIT_PRESENT, *effect_queue.hit_present_operands(
+            ship=ship, source=source, point=hit_point, normal=normal,
+            damage=damage, subsystem=primary_subsystem,
+            absorbed_shields=absorbed_shields,
+            absorbed_subsystem=absorbed_subsystem_total,
+            absorbed_hull=absorbed_hull, sub_transition=primary_transition,
+            has_instances=ship_instances is not None, weapon_type=weapon_type,
+            radius=r_hit, persist_decal=_commit,
+            allow_structural_wear=damage_hull, shield_point=shield_point,
+            tangent=hit_tangent, decal_radius=decal_radius,
+            decal_dent=decal_dent, single_impact=single_impact,
+            shield_radius=shield_radius))
     # The hull-vs-shield flag reuses the `post_shield > 0` branch above: any
     # damage left after the facing absorbed its share reached the hull.
     effect_queue.emit(effect_queue.WEAPON_HIT, *effect_queue.weapon_hit_operands(
@@ -922,6 +1040,26 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
         weapon_type=_WEAPON_TYPE_IDS.get(weapon_type,
                                          WeaponHitEvent.NON_WEAPON),
         is_hull_hit=post_shield > 0.0))
+
+    # 7. Overflow (measured on the original, stbc-oracle mechanics reference
+    #    §1.3): damage beyond a destroyed subsystem's remaining HP, summed
+    #    over every subsystem this hit destroyed, is re-applied as a NEW hit
+    #    from the same source at the same point: damage = the excess, radius
+    #    scaled by excess / damage (a 900 quantum that destroyed 3 subsystems
+    #    put a further 685.33 on the hull, radius 0.14 -> 0.1066). It skips
+    #    the shields (the measured case had them down; shielded is
+    #    unmeasured). Bounded depth as a guard. None for a collision: on the
+    #    original a ram's destroyed subsystems log their excess but nothing
+    #    follows -- the hull takes exactly the impact (a 5504.4 ram took a
+    #    Galaxy from 15000 to 9495.6). The native twin is damage.cc
+    #    apply_hit's step 7.
+    if (_commit and overflow > 0.01 and damage > 0.0 and _overflow_depth < 3
+            and weapon_type != "collision"):
+        _apply_hit(ship, overflow, hit_point, source, normal=normal,
+                   ship_instances=ship_instances, weapon_type=weapon_type,
+                   splash_radius=r_hit * min(1.0, overflow / damage),
+                   damage_hull=damage_hull, bypass_shields=True,
+                   single_impact=True, _overflow_depth=_overflow_depth + 1)
 
 
 def post_weapon_hit(*, ship, source, damage, hit_point, normal, radius,

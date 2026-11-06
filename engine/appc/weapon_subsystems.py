@@ -571,21 +571,19 @@ def _new_projectile(mod, source_ship, x, y, z):
 def _launch_projectile(torp, mod, drf_override, velocity, target, offset,
                        kset):
     """The shared spawn's second half, with the fire-time values given:
-    the launcher's DRF override (> 0), the launch velocity (None: the
+    the launcher's DRF (not applied: the payload's wins), the launch velocity (None: the
     direction had no length, the torpedo keeps its own), the homing target
     (alive at fire time, else None) and its offset (a TGPoint3 copy or
     None); then register (joining `kset`: projectiles.LIVE_SET reads the
     source's set now) -- ET_TORPEDO_ENTERED_SET -- and the launch sound."""
     from engine.appc import projectiles
 
-    # §3.2 DRF override: if the launching tube has a non-zero
-    # DamageRadiusFactor (set by the hardpoint script, e.g.
-    # galaxy.py ForwardTorpedo1.SetDamageRadiusFactor(0.20)),
-    # it overrides the payload value set by mod.Create above.
-    # host_loop passes the torpedo as hardpoint_weapon to apply_hit,
-    # so torp._damage_radius_factor must carry the launcher value.
-    if drf_override > 0.0:
-        torp._damage_radius_factor = drf_override
+    # The torpedo keeps the payload's DamageRadiusFactor from mod.Create; the
+    # launcher's hardpoint value (`drf_override`, still carried in the SPAWN
+    # record) is not applied. Measured on the original with stbc-oracle
+    # (per-hit capture, 7 duels): every torpedo and cannon bolt hit carries
+    # its payload's value (photon 0.13, quantum 0.14, disruptor 0.15,
+    # Romulan 0.2), never the tubes' or cannons' 0.2 / 0.3 / 0.6.
 
     if velocity is not None:
         torp._velocity = velocity

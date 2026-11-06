@@ -1058,6 +1058,14 @@ def _combat_tick_boundary():
 PHASER_INTENSITY_SCALE = (0.25, 0.5, 0.5)
 
 
+def _bank_condition_factor(bank) -> float:
+    """Phaser damage scales with the firing bank's condition fraction,
+    max(0.0, min(1.0, GetConditionPercentage())). Measured on the original
+    with stbc-oracle: 133.4 -> 120.7 -> 106.5 damage per second at a bank
+    condition of 100 / 90 / 80% (mechanics reference §1.5)."""
+    return max(0.0, min(1.0, float(bank.GetConditionPercentage())))
+
+
 def _phaser_damage_for_tick(max_damage: float,
                              max_damage_distance: float,
                              dist: float,
@@ -1282,7 +1290,7 @@ def _phaser_contact(ship, sys_, bank, target, dist: float, dt: float,
                 max_damage=bank.GetMaxDamage(),
                 max_damage_distance=bank.GetMaxDamageDistance(),
                 dist=dist, dt=dt,
-            ) * PHASER_INTENSITY_SCALE[level],
+            ) * PHASER_INTENSITY_SCALE[level] * _bank_condition_factor(bank),
             ship_instances=ship_instances,
             weapon_type="phaser",
             radius=combat.weapon_splash_radius(bank, None),
@@ -1290,13 +1298,15 @@ def _phaser_contact(ship, sys_, bank, target, dist: float, dt: float,
         )
         return
     # One pulse: MaxDamage × intensity × distance factor × dwell
-    # (clean-room 0x00572A50; measured stbc-oracle bible §2.2).
+    # (clean-room 0x00572A50; measured stbc-oracle bible §2.2), × the bank's
+    # own condition (_bank_condition_factor: a bank at 90% / 80% does 0.90 /
+    # 0.80 of full damage).
     damage = _phaser_damage_for_tick(
         max_damage=bank.GetMaxDamage(),
         max_damage_distance=bank.GetMaxDamageDistance(),
         dist=dist,
         dt=flush_dwell,
-    ) * PHASER_INTENSITY_SCALE[level]
+    ) * PHASER_INTENSITY_SCALE[level] * _bank_condition_factor(bank)
     if damage > 0:
         # LIGHT (PP_LOW) phaser power is "disable, don't destroy":
         # damage routes to subsystems only, the hull takes no condition

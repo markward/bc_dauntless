@@ -130,6 +130,32 @@ Vec3 subsystem_world_position(Mirror& m, int64_t sub_h, int64_t ship_arg,
     return mount_position(m, sub_h, ship_arg);
 }
 
+// ── subsystems.py subsystem_world_position(damage=True) ────────────────────
+
+Vec3 damage_world_position(Mirror& m, int64_t sub_h, int64_t ship_arg) {
+    const SubsystemRow& s = sub(m, sub_h);
+    // GetDamagePoint: the position until damage_point.assign set one.
+    if (!s._damage_point_set) return mount_position(m, sub_h, ship_arg);
+    int64_t ship = ship_arg == -1 ? -1 : (obj(m, ship_arg), ship_arg);
+    if (ship == -1) ship = climb_to_ship(m, s);
+    if (ship == -1) return {0.0, 0.0, 0.0};
+    const ObjectRow& o = obj(m, ship);
+    const auto& t = xform(m, o);
+    // part_transform_point on the damage point, by the subsystem's own part
+    // (physical_parents.property_of(sub)): mount_position's rule on another
+    // point.
+    Vec3 local = s._damage_point;
+    if (o.has_posed_parts) {
+        if (ship_arg != -1) check_slot_owner(m, s, ship);
+        const PartPose* pose = nullptr;
+        const SlotState st = slot_pose(m, o, s, &pose);
+        if (st == SlotState::stale) fall_back_as<PartStale>("part_stale");
+        if (st == SlotState::ok) local = apply_part_pose(*pose, local);
+    }
+    const Vec3 offset = mult_matrix_left(t.rot, local);
+    return {t.pos[0] + offset[0], t.pos[1] + offset[1], t.pos[2] + offset[2]};
+}
+
 // ── weapon_subsystems.py:80 _resolve_aim_world ──────────────────────────────
 
 Vec3 _resolve_aim_world(const Mirror& m, int64_t ship, int64_t target) {

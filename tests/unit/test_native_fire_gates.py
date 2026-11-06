@@ -344,8 +344,10 @@ def test_condition_product_nan_passes(world):
         _same(w, bank, 1.0)
 
 
-def test_condition_product_equal_threshold_blocks(world):
-    """`disabled >= combined` is inclusive."""
+def test_condition_product_equal_threshold_fires(world):
+    """Strict: `combined < disabled` blocks, so a bank whose condition
+    product sits exactly at its threshold still fires (measured on the
+    original: a bank at 75.0% fires, at 74.9% it does not)."""
     w = world
     bank = w.phasers[0]
     parent = bank._parent_subsystem
@@ -357,10 +359,10 @@ def test_condition_product_equal_threshold_blocks(world):
     _heal(bank, parent)
     parent._condition = parent.GetMaxCondition() * 0.5   # combined = 1.0 * 0.5
     bank.SetDisabledPercentage(0.5)
-    assert tuple(_native(bank, 1.0)) == (False, False)
-    _same(w, bank, 1.0)
-    bank.SetDisabledPercentage(math.nextafter(0.5, 0.0))
     assert tuple(_native(bank, 1.0)) == (True, False)
+    _same(w, bank, 1.0)
+    bank.SetDisabledPercentage(math.nextafter(0.5, 1.0))
+    assert tuple(_native(bank, 1.0)) == (False, False)
     _same(w, bank, 1.0)
 
 

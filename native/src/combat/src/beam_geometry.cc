@@ -32,7 +32,7 @@ using detail::xform;
 bool shield_is_disabled(const SubsystemRow& s) {
     if (s._max_condition <= 0.0) return false;
     const double threshold = s._disabled_percentage * s._max_condition;
-    return s._condition <= threshold;
+    return s._condition < threshold;  // strict, as ShipSubsystem.IsDisabled
 }
 
 // ShipSubsystem.IsDestroyed (subsystems.py:1228).
@@ -266,6 +266,87 @@ std::optional<Vec3> shield_bubble_entry(const Mirror& m, int64_t target,
                   (o2 + d2 * tt) * az + cz};
     const Vec3 p = mult_matrix_left(R, p0);
     return Vec3{p[0] + tr.pos[0], p[1] + tr.pos[1], p[2] + tr.pos[2]};
+}
+
+// ── combat.has_hull_box / point_in_shield_bubble / hull_segment_hit ──────────
+
+namespace {
+
+// _hull_box_for at the ship's scale: false for no box or a degenerate one.
+bool hull_box(const Mirror& m, int64_t target, Vec3& c, Vec3& h) {
+    const ObjectRow& t = obj(m, target);
+    if (!t.hull_box_set) return false;
+    const Vec3& hc = t._shield_hull_box_center;
+    const Vec3& hh = t._shield_hull_box_half;
+    if (hh[0] <= 0.0 || hh[1] <= 0.0 || hh[2] <= 0.0) return false;
+    double scale = t._scale;
+    if (scale <= 0.0) scale = 1.0;  // NaN passes
+    c = {hc[0] * scale, hc[1] * scale, hc[2] * scale};
+    h = {hh[0] * scale, hh[1] * scale, hh[2] * scale};
+    return true;
+}
+
+// _body_frame_delta (F15)
+Vec3 body_delta(const Mirror& m, int64_t target, const Vec3& p) {
+    const auto& tr = xform(m, obj(m, target));
+    const double* R = tr.rot;
+    const double dxw = p[0] - tr.pos[0];
+    const double dyw = p[1] - tr.pos[1];
+    const double dzw = p[2] - tr.pos[2];
+    return {dxw * R[0] + dyw * R[3] + dzw * R[6],
+            dxw * R[1] + dyw * R[4] + dzw * R[7],
+            dxw * R[2] + dyw * R[5] + dzw * R[8]};
+}
+
+}  // namespace
+
+bool has_hull_box(const Mirror& m, int64_t target) {
+    Vec3 c, h;
+    return hull_box(m, target, c, h);
+}
+
+bool point_in_shield_bubble(const Mirror& m, int64_t target,
+                            const Vec3& point) {
+    Vec3 c, h;
+    if (!hull_box(m, target, c, h)) return false;
+    const double k = m.globals().SHIELD_ELLIPSOID_AXIS_SCALE;
+    const double ax = h[0] * k, ay = h[1] * k, az = h[2] * k;
+    // Python's float division raises ZeroDivisionError on a zero axis.
+    if (ax == 0.0 || ay == 0.0 || az == 0.0)
+        fall_back("zero bubble semi-axis (Python raises)");
+    const Vec3 o = body_delta(m, target, point);
+    const double o0 = (o[0] - c[0]) / ax;
+    const double o1 = (o[1] - c[1]) / ay;
+    const double o2 = (o[2] - c[2]) / az;
+    return o0 * o0 + o1 * o1 + o2 * o2 <= 1.0;
+}
+
+bool hull_box_segment_hit(const Mirror& m, int64_t target, const Vec3& a,
+                          const Vec3& b) {
+    Vec3 c, h;
+    if (!hull_box(m, target, c, h)) fall_back("hull_segment_hit: no hull box");
+    const Vec3 pa = body_delta(m, target, a);
+    const Vec3 pb = body_delta(m, target, b);
+    const Vec3 p0{pa[0] - c[0], pa[1] - c[1], pa[2] - c[2]};
+    const Vec3 d{pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]};
+    double t0 = 0.0, t1 = 1.0;
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs(d[i]) < 1e-12) {
+            if (std::fabs(p0[i]) > h[i]) return false;
+            continue;
+        }
+        double ta = (-h[i] - p0[i]) / d[i];
+        double tb = (h[i] - p0[i]) / d[i];
+        if (ta > tb) {
+            const double sw = ta;
+            ta = tb;
+            tb = sw;
+        }
+        t0 = py_max(t0, ta);
+        t1 = py_min(t1, tb);
+        if (t0 > t1) return false;
+    }
+    return true;
 }
 
 }  // namespace dauntless::combat

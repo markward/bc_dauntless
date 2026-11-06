@@ -909,7 +909,8 @@ def _photon():
 def test_spawn_builds_the_torpedo_from_its_record(events):
     """SPAWN(tube, kind, ship, set, ammo, target, position, velocity,
     offset, drf): the delivery builds the torpedo through the shared
-    spawn path with the RECORD's values (none read live), registers it
+    spawn path with the RECORD's values (none read live; its DRF is not
+    applied, the payload's wins), registers it
     (ET_TORPEDO_ENTERED_SET) and then posts its ET_TORPEDO_FIRED."""
     from engine.appc import projectiles
     kset, ship, target, tube, ammo = _spawn_scene()
@@ -933,7 +934,9 @@ def test_spawn_builds_the_torpedo_from_its_record(events):
         assert torp._target_ship is target
         o = torp._target_offset
         assert (o.x, o.y, o.z) == (0.125, -0.25, 0.5)
-        assert torp._damage_radius_factor == 0.25   # the launcher's override
+        # The record's DRF (0.25, the launcher's) is not applied: a torpedo
+        # keeps its payload's DamageRadiusFactor (PhotonTorpedo.Create 0.13).
+        assert torp._damage_radius_factor == 0.13
         assert torp._damage == 500.0                 # PhotonTorpedo.Create
         assert torp.GetContainingSet() is kset
         assert [(e[0], e[1], e[2]) for e in events] == [

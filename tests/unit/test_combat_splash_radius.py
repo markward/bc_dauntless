@@ -19,10 +19,12 @@ class _FakePayloadTemplate:
         return self._drf
 
 
-def test_hardpoint_drf_overrides_payload_when_set():
+def test_payload_drf_wins_over_the_tube_when_both_set():
+    """Measured on stbc.exe (CombatTap DS r=): photon hits carry the
+    torpedo's 0.13 (258 hits), never the Galaxy/Sovereign tubes' 0.20."""
     hp = _FakeWeaponProperty(0.20)
     payload = _FakePayloadTemplate(0.13)
-    assert weapon_splash_radius(hp, payload) == 0.20
+    assert weapon_splash_radius(hp, payload) == 0.13
 
 
 def test_payload_drf_used_when_hardpoint_zero():
@@ -47,9 +49,10 @@ def test_phaser_default_when_both_zero():
     assert weapon_splash_radius(hp, payload) == PHASER_DEFAULT_DAMAGE_RADIUS
 
 
-def test_akira_torp_uses_large_hardpoint_value():
-    # Akira hardpoint DRF = 0.60, photon payload DRF = 0.13.
-    # Override hypothesis: result is 0.60.
+def test_akira_torp_uses_the_photon_value_not_the_tube():
+    # Akira hardpoint DRF = 0.60, photon payload DRF = 0.13. The old
+    # "hardpoint overrides" hypothesis gave 0.60; the original uses the
+    # projectile's own value (Galaxy/Sovereign photons: 0.13 on every hit).
     hp = _FakeWeaponProperty(0.60)
     payload = _FakePayloadTemplate(0.13)
-    assert weapon_splash_radius(hp, payload) == 0.60
+    assert weapon_splash_radius(hp, payload) == 0.13
