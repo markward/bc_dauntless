@@ -34,6 +34,15 @@ MAX_GLOW_REGIONS = 12
 HEALTHY = "healthy"
 DISABLED = "disabled"
 DESTROYED = "destroyed"
+# Not a subsystem state: a HEALTHY subsystem that just lost condition, shown
+# with the disabled flicker until its damage window runs out. Tracked as the
+# region's previous state so the next real edge still stamps a fresh time.
+DAMAGED = "damaged"
+
+# Damage flicker: seconds of flicker per 1% of max condition lost (1% -> 1 s,
+# 10% -> 10 s). A hit during a flicker ADDS its time to what is left, so the
+# total flicker is the total damage. Tunable here with no rebuild.
+DAMAGE_FLICKER_SECS_PER_PERCENT = 1.0
 
 # Impulse exhaust faces point aft = model -Y. The shader gates the impulse
 # brightening to faces whose normal points this way, so only the aft engine
@@ -190,6 +199,23 @@ def glow_edge(prev_state, cur_state, prev_time, now) -> float:
     if cur_state != prev_state:
         return now
     return prev_time
+
+
+def damage_flicker_secs(lost_frac: float) -> float:
+    """Seconds of damage flicker for losing `lost_frac` (0..1) of max
+    condition."""
+    return max(0.0, lost_frac) * 100.0 * DAMAGE_FLICKER_SECS_PER_PERCENT
+
+
+def _condition_frac(sub):
+    """0..1 condition of `sub`, or None when it has none to read."""
+    fn = getattr(sub, "GetConditionPercentage", None)
+    if fn is None:
+        return None
+    try:
+        return float(fn())
+    except Exception:  # noqa: BLE001 - glow is best-effort VFX
+        return None
 
 
 def warp_pods(warp_subsystem):
@@ -465,7 +491,11 @@ class ShipGlowController:
                  "boost": boost, "warp": warp, "wgain": 1.0,
                  # Last (dim, etime, flick) / impulse gain sent; None until
                  # the first update, which therefore always pushes.
-                 "pushed_dim": None, "pushed_gain": None})
+                 "pushed_dim": None, "pushed_gain": None,
+                 # Damage flicker: last condition seen (None until the first
+                 # update, so damage present at spawn never flickers) and the
+                 # current window [dmg_start, dmg_until) in game time.
+                 "cond": None, "dmg_start": -1.0, "dmg_until": -1.0})
 
     def update(self, now: float, throttle_frac=None, warp_glow=None) -> None:
         """Push dim/edge/flicker on change; brighten the impulse region by the
@@ -497,8 +527,23 @@ class ShipGlowController:
         for reg in self._regions:
             sub = reg["sub"]
             state = glow_state(sub)
-            etime = glow_edge(reg["prev"], state, reg["etime"], now)
-            dim, flick = dim_and_flicker(state)
+            cond = _condition_frac(sub)
+            if cond is not None:
+                last = reg["cond"]
+                if last is not None and cond < last:
+                    if now >= reg["dmg_until"]:   # no flicker running: start one
+                        reg["dmg_start"] = reg["dmg_until"] = now
+                    reg["dmg_until"] += damage_flicker_secs(last - cond)
+                reg["cond"] = cond
+            if state == HEALTHY and now < reg["dmg_until"]:
+                # Recently damaged: the disabled flicker, phased from the
+                # start of this window so a further hit doesn't restart it.
+                state = DAMAGED
+                etime = reg["dmg_start"]
+                dim, flick = dim_and_flicker(DISABLED)
+            else:
+                etime = glow_edge(reg["prev"], state, reg["etime"], now)
+                dim, flick = dim_and_flicker(state)
             if (dim, etime, flick) != reg["pushed_dim"]:
                 self._r.set_glow_region_dim(
                     self._iid, reg["idx"], dim, etime, flick)
