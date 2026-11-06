@@ -21,6 +21,17 @@ bug. So after ctest the gate runs each gtest binary ONCE, whole, from the
 project root, and reports its failures as "inproc:<name>" (baselineable like
 any other id). Skip with --no-inproc.
 
+Tiers (spec docs/superpowers/specs/2026-11-06-two-tier-test-gate-design.md):
+  --tier full   (default; scripts/gate_full.sh): everything below, plus the
+                peak-RSS budget, merge-catchable vs deep-only attribution of
+                each new failure, and the merge tier's projected cost.
+  --tier merge  (scripts/gate_merge.sh): pytest minus the deep list
+                (-m "not deep"), and each gtest binary once in-process minus
+                deep_gtest.txt -- no per-case ctest. In-process skips are
+                gated like ctest skips (mapped to their ctest names).
+Artefacts (logs, per-test durations, each binary's gtest output) go to
+$GATE_ARTEFACT_DIR, else a fresh temp directory; the path is printed.
+
 Usage:
   uv run python tools/check_test_baseline.py            # build C++, run both
   uv run python tools/check_test_baseline.py --no-build # skip cmake build
@@ -41,6 +52,10 @@ import os
 import re
 import subprocess
 import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tests.helpers import gate_tiers as gt  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASELINE = os.path.join(ROOT, "tests", "known_failures.txt")
@@ -71,6 +86,63 @@ _OPTIONAL_MOD_PREFIX = "optional-mod:"
 _GTEST_FAILED = re.compile(r"^\[  FAILED  \] (\S+?)(?:, where GetParam\(\) = .*)? \(\d+ ms\)$")
 _GTEST_DONE = re.compile(r"^\[==========\] \d+ tests? from \d+ test suites? ran\.")
 INPROC_TIMEOUT_S = 900
+# The full gate fails when pytest's peak RSS passes this (the watchdog's
+# CEILING_MB SIGKILL stays as the host's safety net above it). Measured
+# 2026-11-06 after the per-test reset fix: see
+# docs/reference/architecture/test-suite-memory.md.
+RSS_BUDGET_MB = float(os.environ.get("PYTEST_RSS_BUDGET_MB", "2500"))
+MERGE_BUDGET_S = 300.0
+_PEAK_RSS = re.compile(r"WATCHDOG DONE peak_rss=([\d.]+) MB")
+_GTEST_SKIPPED = re.compile(r"^\[  SKIPPED \] (\S+) \(\d+ ms\)$")
+# Filled by the runs, read by main()'s report.
+RUN_INFO = {}
+
+
+def parse_peak_rss(out):
+    m = None
+    for m in _PEAK_RSS.finditer(out):
+        pass
+    return float(m.group(1)) if m else None
+
+
+def parse_gtest_skips(out):
+    return {m.group(1) for m in map(_GTEST_SKIPPED.match, out.splitlines()) if m}
+
+
+def gtest_prefixes(ctest_json):
+    """{executable: ctest TEST_PREFIX} -- ctest names a case prefix + its
+    gtest name (combat_tests: "combat_"), so an in-process skip maps back to
+    the ctest id the ledger's skip:/optional-mod: lines use."""
+    out = {}
+    for t in json.loads(ctest_json).get("tests", []):
+        cmd = t.get("command") or []
+        filt = [a[len("--gtest_filter="):] for a in cmd[1:] if a.startswith("--gtest_filter=")]
+        name = t.get("name", "")
+        if cmd and filt and cmd[0] not in out and name.endswith(filt[0]):
+            out[cmd[0]] = name[:len(name) - len(filt[0])]
+    return out
+
+
+def ctest_to_gtest(ctest_json):
+    """{ctest name: (binary basename, gtest name)}."""
+    out = {}
+    for t in json.loads(ctest_json).get("tests", []):
+        cmd = t.get("command") or []
+        filt = [a[len("--gtest_filter="):] for a in cmd[1:] if a.startswith("--gtest_filter=")]
+        if cmd and filt:
+            out[t.get("name", "")] = (os.path.basename(cmd[0]), filt[0])
+    return out
+
+
+def artefact_dir(tier):
+    d = os.environ.get("GATE_ARTEFACT_DIR", "")
+    if not d:
+        import tempfile
+        import time as _t
+        d = os.path.join(tempfile.gettempdir(), "dauntless-gate",
+                         "%s-%s" % (tier, _t.strftime("%Y%m%d-%H%M%S")))
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 def _load_baseline():
@@ -267,7 +339,7 @@ def _stream(cmd, echo=_echo, **kw):
     return proc.wait(), "".join(lines)
 
 
-def run_pytest():
+def run_pytest(tier="full", artefacts=None):
     """Run the full pytest suite under the RSS watchdog; return set of failed ids.
 
     Streamed, verbose (-v: each test's name as it finishes, so a hang shows
@@ -282,8 +354,15 @@ def run_pytest():
         "uv", "run", "pytest", "tests", "-v", "-rfE", "--tb=no", "-p", "no:cacheprovider",
         "-o", "faulthandler_timeout=300",
     ]
+    if tier == "merge":
+        cmd += ["-m", "not deep"]
     env = dict(os.environ, PYTHONUNBUFFERED="1")
+    if artefacts:
+        cmd += ["-p", "tools.pytest_durations_plugin"]
+        env["GATE_DURATIONS_OUT"] = os.path.join(artefacts, "pytest_durations.json")
+        env["PYTHONPATH"] = ROOT + os.pathsep + env.get("PYTHONPATH", "")
     returncode, out = _stream(cmd, env=env)
+    RUN_INFO["peak_rss_mb"] = parse_peak_rss(out)
     lines = out.splitlines()
     failed = {"pytest:" + m.group(1) for m in map(_PYTEST_FAILED.match, lines) if m}
     # Errors (e.g. fixture/setup errors) fail a test just as surely as an
@@ -337,35 +416,57 @@ def run_ctest(root, mods_root_path=None):
     return failed, skipped, False
 
 
-def run_inproc(root):
-    """Run each gtest binary once, whole, from the project root; return
-    (failed 'inproc:' ids, harness error)."""
+def run_inproc(root, deep=None, artefacts=None):
+    """Run each gtest binary once, whole (minus `deep`: {binary: names}),
+    from the project root; return (failed 'inproc:' ids, skipped ctest ids,
+    harness error). With `deep`, a suite left with no case to run is a
+    harness error: that area lost its merge-tier coverage."""
     print("== in-process (each gtest binary once, CWD = project root) ==", flush=True)
     listing = _run(["ctest", "--test-dir", "build", "--show-only=json-v1"])
     if listing.returncode != 0:
         print("  !! could not list ctest tests", flush=True)
-        return set(), True
-    failed = set()
+        return set(), set(), True
+    prefixes = gtest_prefixes(listing.stdout)
+    failed, skipped, error = set(), set(), False
     for exe, extra in gtest_binaries(listing.stdout):
         env = dict(os.environ)
         env.update(extra)
         if root:
             env["DAUNTLESS_GAME_DIR"] = root
         name = os.path.basename(exe)
+        args = [exe]
+        if deep is not None:
+            names = gt.parse_gtest_list(subprocess.run(
+                [exe, "--gtest_list_tests"], cwd=ROOT, env=env, text=True,
+                capture_output=True).stdout)
+            mine = deep.get(name, set()) & set(names)
+            lost = gt.uncovered_suites(names, mine)
+            if lost:
+                print("  !! %s: suites with no merge-tier case: %s"
+                      % (name, ", ".join(lost)), flush=True)
+                error = True
+            if mine:
+                args.append(gt.gtest_filter(mine))
         try:
-            proc = subprocess.run([exe], cwd=ROOT, env=env, text=True,
+            proc = subprocess.run(args, cwd=ROOT, env=env, text=True,
                                   capture_output=True, timeout=INPROC_TIMEOUT_S)
             out = proc.stdout + proc.stderr
         except subprocess.TimeoutExpired:
             out = ""
+        if artefacts:
+            with open(os.path.join(artefacts, "inproc_%s.log" % name), "w",
+                      encoding="utf-8") as fh:
+                fh.write(out)
         f, completed = parse_gtest(out)
         if not completed:
             # A crash/hang takes every later test with it; name the binary.
             f.add("inproc:%s(did-not-complete)" % name)
-        print("  %-24s %d failure(s)%s" % (name, len(f), "" if completed else "  !! did not complete"),
-              flush=True)
+        sk = {"ctest:" + prefixes.get(exe, "") + n for n in parse_gtest_skips(out)}
+        print("  %-24s %d failure(s), %d skipped%s" % (
+            name, len(f), len(sk), "" if completed else "  !! did not complete"), flush=True)
         failed |= f
-    return failed, False
+        skipped |= sk
+    return failed, skipped, error
 
 
 def build_native():
@@ -379,12 +480,54 @@ def build_native():
     return True
 
 
+def _tier(argv):
+    for i, a in enumerate(argv):
+        if a == "--tier" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--tier="):
+            return a.split("=", 1)[1]
+    return "full"
+
+
+def attribute(failures, deep_pytest, deep_gtest, ctest_map):
+    """Split new failure ids into (merge gate would have caught it, deep-only).
+    pytest: by the deep list. ctest:<name>: its gtest case, by deep_gtest.
+    inproc:<name>: by deep_gtest (any binary). A binary that did not complete
+    is merge-catchable: the merge gate runs every binary."""
+    is_deep = gt.deep_matcher(deep_pytest)
+    all_deep = set().union(*deep_gtest.values()) if deep_gtest else set()
+    merge, deep = [], []
+    for f in failures:
+        suite, _, name = f.partition(":")
+        if suite == "pytest":
+            d = is_deep(name)
+        elif suite == "ctest":
+            b, g = ctest_map.get(name, (None, name))
+            d = g in deep_gtest.get(b, ()) if b else g in all_deep
+        elif suite == "inproc":
+            d = name in all_deep
+        else:
+            d = False
+        (deep if d else merge).append(f)
+    return merge, deep
+
+
 def main():
-    args = set(sys.argv[1:])
+    argv = sys.argv[1:]
+    args = set(argv)
+    tier = _tier(argv)
+    if tier not in ("merge", "full"):
+        print("unknown --tier %r (merge | full)" % tier)
+        return 2
+    merge_tier = tier == "merge"
     do_pytest = "--ctest-only" not in args
-    do_ctest = "--pytest-only" not in args
-    do_build = "--no-build" not in args and do_ctest
-    do_inproc = do_ctest and "--no-inproc" not in args
+    do_ctest = "--pytest-only" not in args and not merge_tier
+    do_build = "--no-build" not in args and "--pytest-only" not in args
+    do_inproc = "--pytest-only" not in args and "--no-inproc" not in args
+    art = artefact_dir(tier)
+    t_start = time.time()
+    phases = []
+    print("gate tier: %s   artefacts: %s" % (tier, art), flush=True)
 
     baseline_raw = _load_baseline()
     known, known_skips = split_baseline(baseline_raw)
@@ -392,28 +535,47 @@ def main():
     current = set()
     skipped = set()
     harness_error = False
-    root = content_root() if do_ctest else None
-    mods_root_path = mods_root() if do_ctest else None
+    root = content_root() if do_inproc or do_ctest else None
+    mods_root_path = mods_root() if do_inproc or do_ctest else None
+    deep_gtest = gt.load_deep_gtest()
 
-    if do_build and not build_native():
-        return 2
+    def _phase(name, t0):
+        phases.append((name, time.time() - t0))
+
+    if do_build:
+        t0 = time.time()
+        if not build_native():
+            return 2
+        _phase("build", t0)
     if do_pytest:
-        f, err = run_pytest()
+        t0 = time.time()
+        f, err = run_pytest(tier, art)
         current |= f
         harness_error = harness_error or err
+        _phase("pytest", t0)
     if do_ctest:
+        t0 = time.time()
         f, skipped, err = run_ctest(root, mods_root_path)
         current |= f
         harness_error = harness_error or err
+        _phase("ctest", t0)
     if do_inproc:
-        f, err = run_inproc(root)
+        t0 = time.time()
+        f, inproc_skips, err = run_inproc(
+            root, deep=deep_gtest if merge_tier else None, artefacts=art)
         current |= f
+        if merge_tier:
+            skipped = inproc_skips      # the merge tier's only C++ skip source
         harness_error = harness_error or err
+        _phase("in-process gtest", t0)
 
     new_failures = sorted(current - known)
     suites_ran = {s for s, on in (("pytest", do_pytest), ("ctest", do_ctest),
                                    ("inproc", do_inproc)) if on}
-    fixed_baseline = [] if harness_error else stale_baseline(known, current, suites_ran)
+    # The merge tier does not run the deep tests, so it cannot say a
+    # baselined failure or skip now passes: only the full gate judges that.
+    fixed_baseline = [] if harness_error or merge_tier else \
+        stale_baseline(known, current, suites_ran)
     # optional-mod ids are judged entirely by diff_optional_mod_skips, never
     # by the generic skip:/delete-me machinery -- pull them out of `skipped`
     # first, or an absent-mod skip (legitimate) reads as an unbaselined new
@@ -423,24 +585,60 @@ def main():
     optional_mod_ids = set(optional_mod_entries)
     new_skips, running_skips = ([], []) if harness_error else \
         diff_skips(skipped - optional_mod_ids, known_skips, root is not None)
+    if merge_tier:
+        running_skips = []
     new_optional_mod_skips = [] if harness_error else \
         diff_optional_mod_skips(skipped, optional_mod_entries, mods_root_path)
     new_skips = sorted(new_skips + new_optional_mod_skips)
     fixed_baseline += ["skip:" + t for t in running_skips]
 
+    # Full gate only: the memory budget and the merge tier's projected cost.
+    budget_failures = []
+    peak = RUN_INFO.get("peak_rss_mb")
+    if not merge_tier and do_pytest and not harness_error:
+        if peak is None:
+            budget_failures.append("pytest peak RSS was not reported by the watchdog")
+        elif peak > RSS_BUDGET_MB:
+            budget_failures.append(
+                "pytest peak RSS %.0f MB is over the %.0f MB budget "
+                "(docs/reference/architecture/test-suite-memory.md)" % (peak, RSS_BUDGET_MB))
+        try:
+            durations, case_ms = gt.load_artefacts(art)
+            py = gt.project_pytest(durations, gt.load_deep_pytest())
+            cc = gt.project_gtest(case_ms, deep_gtest) if do_inproc else 0.0
+            print("merge tier projected from this run: pytest %.0f s (budget %.0f), "
+                  "gtest %.0f s (budget %.0f)" % (py, gt.PYTEST_FAIL_S, cc, gt.GTEST_FAIL_S))
+            if py > gt.PYTEST_FAIL_S or cc > gt.GTEST_FAIL_S:
+                budget_failures.append(
+                    "the merge tier has outgrown its budget: run "
+                    "`uv run python tools/gate_tiers.py generate %s` and commit "
+                    "tests/gate_tiers/" % art)
+        except (OSError, ValueError) as e:
+            budget_failures.append("could not project the merge tier: %r" % (e,))
+
     print("\n" + "=" * 70)
+    total = time.time() - t_start
+    print("%s gate: %s  total %.0f s (%.1f min)%s" % (
+        tier, "  ".join("%s %.0f s" % p for p in phases), total, total / 60.0,
+        "" if peak is None else "  pytest peak RSS %.0f MB" % peak))
+    if merge_tier and total > MERGE_BUDGET_S:
+        print("⚠ the merge gate took over %.0f s: regenerate the tiers from the "
+              "last full gate's artefacts (tools/gate_tiers.py generate)" % MERGE_BUDGET_S)
+    print("artefacts: %s" % art)
+    print("-" * 70)
     if fixed_baseline:
         print("BASELINE NOW PASSING — delete these lines from tests/known_failures.txt:")
         for t in fixed_baseline:
             print("  - " + t)
         print("-" * 70)
-    if do_ctest and not harness_error:
+    if (do_ctest or do_inproc) and not harness_error:
+        src = "in-process gtest" if merge_tier else "ctest"
         if root is None:
-            print("⚠ NO BC CONTENT ROOT — %d ctest test(s) SKIPPED, asset-backed "
-                  "tests did not run." % len(skipped))
+            print("⚠ NO BC CONTENT ROOT — %d %s test(s) SKIPPED, asset-backed "
+                  "tests did not run." % (len(skipped), src))
         else:
-            print("ctest: %d skipped with BC content at %s (%d baselined)."
-                  % (len(skipped), root, len(skipped & known_skips)))
+            print("%s: %d skipped with BC content at %s (%d baselined)."
+                  % (src, len(skipped), root, len(skipped & known_skips)))
         print("-" * 70)
     if new_skips:
         print("NEW SKIPS (BC content IS configured, so these should have run) —")
@@ -449,13 +647,31 @@ def main():
         for t in new_skips:
             print("  ⊘ " + t)
         print("-" * 70)
+    for b in budget_failures:
+        print("BUDGET: " + b)
+    if budget_failures:
+        print("-" * 70)
     if new_failures:
-        print("NEW FAILURES (not in baseline) — these are REGRESSIONS to fix:")
-        for t in new_failures:
-            print("  ✗ " + t)
+        if merge_tier:
+            print("NEW FAILURES (not in baseline) — these are REGRESSIONS to fix:")
+            for t in new_failures:
+                print("  ✗ " + t)
+        else:
+            ctest_map = {}
+            listing = _run(["ctest", "--test-dir", "build", "--show-only=json-v1"])
+            if listing.returncode == 0:
+                ctest_map = ctest_to_gtest(listing.stdout)
+            merge, deep = attribute(new_failures, gt.load_deep_pytest(), deep_gtest, ctest_map)
+            print("NEW FAILURES (not in baseline) — these are REGRESSIONS to fix.")
+            print("The merge gate would ALSO have caught these (%d):" % len(merge))
+            for t in merge:
+                print("  ✗ " + t)
+            print("Deep-only: only the full gate runs these (%d):" % len(deep))
+            for t in deep:
+                print("  ✗ " + t)
         print("=" * 70)
         return 1
-    if new_skips:
+    if new_skips or budget_failures:
         print("=" * 70)
         return 1
     if harness_error:

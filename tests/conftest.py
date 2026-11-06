@@ -803,6 +803,11 @@ def pytest_configure(config):
         "markers",
         "mutates_engine_classes: the test deliberately leaves an engine class "
         "changed; the engine class guard (_guard_engine_classes) skips it")
+    config.addinivalue_line(
+        "markers",
+        "deep: runs only in the full gate (scripts/gate_full.sh); set from "
+        "the GENERATED tests/gate_tiers/deep_pytest.txt, never by hand. The "
+        "merge gate (scripts/gate_merge.sh) runs -m 'not deep'")
 
     # Our App.py must shadow sdk/Build/scripts/App.py
     if str(PROJECT_ROOT) not in sys.path:
@@ -910,6 +915,18 @@ def pytest_configure(config):
             _il.import_module("Maelstrom.Episode7.Episode7")
         except Exception:
             pass
+
+
+def pytest_collection_modifyitems(config, items):
+    """Mark the full-gate-only tests `deep` (spec
+    docs/superpowers/specs/2026-11-06-two-tier-test-gate-design.md).
+    Everything not listed is in the merge tier: a new test is by rule."""
+    from tests.helpers import gate_tiers
+    is_deep = gate_tiers.deep_matcher(gate_tiers.load_deep_pytest())
+    mark = pytest.mark.deep
+    for item in items:
+        if is_deep(item.nodeid):
+            item.add_marker(mark)
 
 
 # ── Per-test isolation of leak-prone engine globals ──────────────────────────
