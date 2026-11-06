@@ -382,3 +382,54 @@ TEST(Damage, ACloakWhoseClassPythonOwnsFallsBack) {
                  std::invalid_argument);
     EXPECT_EQ(w.face(0), before);
 }
+
+// ── Representability (phase 6 follow-up 3: no per-tick patch scan) ──────────
+// What a kernel checks before it applies a hit: answered from the mirror
+// alone. An instance attribute on the ship or its subsystems is not looked
+// for (spec Part A: a stage never falls back because a method was patched).
+
+TEST(Damage, RepresentableTargetWithLiveSubsystems) {
+    World w;
+    EXPECT_TRUE(dmg_target_representable(w.m, w.ship));
+    // None (-1) is representable: no hull, no shield generator, an empty
+    // mount order.
+    w.m.set_ref(w.ship, Field::_hull, -1);
+    w.m.set_ref(w.ship, Field::_shield_subsystem, -1);
+    w.m.set_mount_order(w.ship, {});
+    EXPECT_TRUE(dmg_target_representable(w.m, w.ship));
+}
+
+TEST(Damage, UnrepresentableMountHandsBack) {
+    World w;
+    w.m.set_mount_order(w.ship, {w.sensor, kRefUnrepresentable});
+    EXPECT_FALSE(dmg_target_representable(w.m, w.ship));
+    // A freed row in the mount order: the mirror cannot name it either.
+    World g;
+    g.m.unregister_row(g.sensor);
+    EXPECT_FALSE(dmg_target_representable(g.m, g.ship));
+}
+
+TEST(Damage, GoneHullRowHandsBack) {
+    World w;
+    w.m.unregister_row(w.hull);
+    EXPECT_FALSE(dmg_target_representable(w.m, w.ship));
+    World u;
+    u.m.set_ref(u.ship, Field::_hull, kRefUnrepresentable);
+    EXPECT_FALSE(dmg_target_representable(u.m, u.ship));
+}
+
+TEST(Damage, UnrepresentableShieldHandsBack) {
+    World w;
+    w.m.set_ref(w.ship, Field::_shield_subsystem, kRefUnrepresentable);
+    EXPECT_FALSE(dmg_target_representable(w.m, w.ship));
+}
+
+TEST(Damage, NoObjectRowHandsBack) {
+    World w;
+    EXPECT_FALSE(dmg_target_representable(w.m, -1));
+    EXPECT_FALSE(dmg_target_representable(w.m, kRefUnrepresentable));
+    EXPECT_FALSE(dmg_target_representable(w.m, w.sensor));  // another kind
+    const int64_t ship = w.ship;
+    w.m.unregister_row(ship);                                // freed
+    EXPECT_FALSE(dmg_target_representable(w.m, ship));
+}

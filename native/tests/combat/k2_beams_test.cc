@@ -1486,7 +1486,7 @@ void arm(World& w, int64_t bank, double md, double mdd, double drf = 0.0) {
 
 // What the driver sends (host_loop.PHASER_INTENSITY_SCALE, combat.
 // PHASER_DEFAULT_DAMAGE_RADIUS, PhaserSystem.PP_LOW, the phaser codes).
-K2PulseCtx pulse_ctx(std::initializer_list<int64_t> clean) {
+K2PulseCtx pulse_ctx() {
     K2PulseCtx p;
     p.ok = true;
     p.intensity = {0.25, 0.5, 0.5};
@@ -1494,7 +1494,6 @@ K2PulseCtx pulse_ctx(std::initializer_list<int64_t> clean) {
     p.pp_low = 0;
     p.hit_weapon = 1;
     p.weapon_hit_type = 0;
-    p.clean = clean;
     return p;
 }
 
@@ -1526,7 +1525,8 @@ double cond(const World& w, int64_t s) {
 
 TEST(K2Pulse, NamesItsReasons) {
     EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::not_ok), "not_ok");
-    EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::unscanned), "unscanned");
+    EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::unrepresentable),
+                 "unrepresentable");
     EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::level), "level");
     EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::fallback), "fallback");
     EXPECT_STREQ(k2_pulse_why_name(K2PulseWhy::python), "python");
@@ -1538,7 +1538,7 @@ TEST(K2Pulse, ADamagePulseIsAppliedInTheWalk) {
     const int64_t hull = damageable(w, s.target);
     arm(w, s.bank, 100.0, 60.0);        // dist 50: the plateau
     w.m.set_i(s.sys, Field::_power_level, 1);
-    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    begin_pulse(w, {s.ship}, pulse_ctx());
     const K2Record r = w.k.next();
     ASSERT_EQ(r.kind, K2Kind::DONE);    // no CONTACT record
     EXPECT_EQ(w.writes(r), (World::V{"b0._dwell=0"}));
@@ -1577,7 +1577,7 @@ TEST(K2Pulse, BeyondItsDistanceItFallsOffAndLowPowerSparesTheHull) {
     const int64_t hull = damageable(w, s.target);
     arm(w, s.bank, 100.0, 25.0, 0.375);  // dist 50 > 25: R/d
     w.m.set_i(s.sys, Field::_power_level, 0);  // PP_LOW
-    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    begin_pulse(w, {s.ship}, pulse_ctx());
     const K2Record r = w.k.next();
     ASSERT_EQ(r.kind, K2Kind::DONE);
     ASSERT_EQ(r.hits.size(), 1u);
@@ -1603,7 +1603,7 @@ TEST(K2Pulse, TheNextBankOnTheSameTargetSeesThePulseAndTheTargetLives) {
     arm(w, s.bank, 100.0, 60.0);
     arm(w, b1, 100.0, 60.0);
     w.m.set_i(s.sys, Field::_power_level, 2);
-    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    begin_pulse(w, {s.ship}, pulse_ctx());
     const K2Record r = w.k.next();
     ASSERT_EQ(r.kind, K2Kind::DONE);
     EXPECT_EQ(w.writes(r), (World::V{"b0._dwell=0", "b1._dwell=0"}));
@@ -1629,7 +1629,7 @@ TEST(K2Pulse, AnArcFailPartialPulseLandsAfterItsStop) {
     const int64_t hull = damageable(w, s.target);
     arm(w, s.bank, 100.0, 60.0);
     w.m.set_i(s.sys, Field::_power_level, 1);
-    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    begin_pulse(w, {s.ship}, pulse_ctx());
     const K2Record r = w.k.next();
     ASSERT_EQ(r.kind, K2Kind::DONE);
     EXPECT_EQ(w.writes(r), (World::V{"b0._dwell=0", "b0._firing=False",
@@ -1648,7 +1648,7 @@ TEST(K2Pulse, WhatTheKernelCannotApplyStaysACONTACT) {
         K2PulseWhy reason;
     };
     for (const Case c : {Case{"not_ok", K2PulseWhy::not_ok},
-                         Case{"unscanned", K2PulseWhy::unscanned},
+                         Case{"unrepresentable", K2PulseWhy::unrepresentable},
                          Case{"level", K2PulseWhy::level},
                          Case{"fallback", K2PulseWhy::fallback},
                          Case{"python", K2PulseWhy::python}}) {
@@ -1658,9 +1658,10 @@ TEST(K2Pulse, WhatTheKernelCannotApplyStaysACONTACT) {
         const int64_t hull = damageable(w, s.target);
         arm(w, s.bank, 100.0, 60.0);
         w.m.set_i(s.sys, Field::_power_level, 1);
-        K2PulseCtx p = pulse_ctx({s.target});
+        K2PulseCtx p = pulse_ctx();
         if (c.reason == K2PulseWhy::not_ok) p.ok = false;
-        if (c.reason == K2PulseWhy::unscanned) p.clean.clear();
+        if (c.reason == K2PulseWhy::unrepresentable)
+            w.m.set_mount_order(s.target, {kRefUnrepresentable});
         if (c.reason == K2PulseWhy::level)
             w.m.set_i(s.sys, Field::_power_level, 3);  // IndexError
         if (c.reason == K2PulseWhy::fallback)
@@ -1680,13 +1681,52 @@ TEST(K2Pulse, WhatTheKernelCannotApplyStaysACONTACT) {
     }
 }
 
+// Phase 6 follow-up 3: the driver sends no scanned-clean target list. A
+// target the mirror can name pulses natively (it used to be `unscanned`).
+TEST(K2Beams, PulseNeedsNoCleanList) {
+    World w;
+    const auto s = w.scene(true, 0.6);
+    const int64_t hull = damageable(w, s.target);
+    arm(w, s.bank, 100.0, 60.0);
+    w.m.set_i(s.sys, Field::_power_level, 1);
+    begin_pulse(w, {s.ship}, pulse_ctx());
+    const K2Record r = w.k.next();
+    ASSERT_EQ(r.kind, K2Kind::DONE);    // no CONTACT record
+    ASSERT_EQ(r.hits.size(), 1u);
+    EXPECT_EQ(cond(w, hull), 1000.0 - 100.0 * (0.6 + kDt) * 0.5);
+    EXPECT_EQ(w.k.counts().native_pulses, 1);
+    w.k.end();
+}
+
+// A target the mirror cannot fully name (dmg_target_representable) keeps
+// the CONTACT record, counted under `unrepresentable`, the mirror untouched.
+TEST(K2Beams, PulseHandsBackAnUnrepresentableTarget) {
+    World w;
+    const auto s = w.scene(true, 0.6);
+    const int64_t hull = damageable(w, s.target);
+    arm(w, s.bank, 100.0, 60.0);
+    w.m.set_i(s.sys, Field::_power_level, 1);
+    w.m.set_mount_order(s.target, {kRefUnrepresentable});
+    begin_pulse(w, {s.ship}, pulse_ctx());
+    const K2Record r = w.k.next();
+    EXPECT_EQ(w.brief(r), "CONTACT b0@t flush=" + World::num(0.6 + kDt));
+    EXPECT_TRUE(r.hits.empty());
+    EXPECT_EQ(cond(w, hull), 1000.0);
+    EXPECT_EQ(w.k.counts().pulse_why[static_cast<size_t>(
+                  K2PulseWhy::unrepresentable)],
+              1);
+    EXPECT_EQ(w.k.counts().native_pulses, 0);
+    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    w.k.end();
+}
+
 TEST(K2Pulse, ANegativeLevelIndexesFromTheEndAsPython) {
     World w;
     const auto s = w.scene(true, 0.6);
     const int64_t hull = damageable(w, s.target);
     arm(w, s.bank, 100.0, 60.0);
     w.m.set_i(s.sys, Field::_power_level, -3);  // SCALE[-3] == SCALE[0]
-    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    begin_pulse(w, {s.ship}, pulse_ctx());
     const K2Record r = w.k.next();
     ASSERT_EQ(r.kind, K2Kind::DONE);
     ASSERT_EQ(r.hits.size(), 1u);
@@ -1699,7 +1739,7 @@ TEST(K2Pulse, AZeroDamagePulseDoesNothing) {
     const auto s = w.scene(true, 0.6);
     const int64_t hull = damageable(w, s.target);
     arm(w, s.bank, 100.0, 0.0);  // MaxDamageDistance 0: no damage
-    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    begin_pulse(w, {s.ship}, pulse_ctx());
     const K2Record r = w.k.next();
     ASSERT_EQ(r.kind, K2Kind::DONE);
     EXPECT_TRUE(r.hits.empty());
@@ -1713,7 +1753,7 @@ TEST(K2Pulse, APulseClearsTheStepMemoAroundItsHit) {
     const auto s = w.scene(true, 0.6);
     damageable(w, s.target);
     arm(w, s.bank, 100.0, 60.0);
-    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    begin_pulse(w, {s.ship}, pulse_ctx());
     w.k.next();
     // The walk's can_detect filled the memo before the pulse; the pulse's
     // forget (combat.apply_hit's, DM H13) leaves it empty.
@@ -1737,7 +1777,7 @@ TEST(K2Pulse, AThrowLaterInTheCallUndoesThePulse) {
     ctx.hooks = w.host.hooks();
     ctx.view_offsets[w.set] = std::nullopt;
     ctx.iids[t2] = K2Context::Iid{false, {1, 1}};
-    ctx.pulse = pulse_ctx({s.target});
+    ctx.pulse = pulse_ctx();
     w.host.throw_foreign = true;
     w.k.begin({s.ship, b}, kDt, 10.0, true, 0.0, ctx);
     EXPECT_ANY_THROW(w.k.next());
@@ -1764,7 +1804,7 @@ TEST(K2Pulse, TheNextRecordCarriesThePulse) {
     const int64_t stub = w.ship("stub", 0.0, 80.0, 0.0);
     w.m.set_i(stub, Field::has_real_is_dead, 0);  // is_dead is Python's
     w.bank("b1", s.sys, stub, true);
-    begin_pulse(w, {s.ship}, pulse_ctx({s.target}));
+    begin_pulse(w, {s.ship}, pulse_ctx());
     const K2Record r = w.k.next();
     ASSERT_EQ(w.brief(r), "ASK is_dead");
     ASSERT_EQ(r.hits.size(), 1u);

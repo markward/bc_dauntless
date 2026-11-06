@@ -389,6 +389,24 @@ void undo_damage(Mirror& m, const std::vector<DamageUndo>& undo, size_t from) {
     }
 }
 
+// ── Representability (damage.h dmg_target_representable) ───────────────────
+
+// The conditions host_bindings' per-tick clean scan (dmg_clean_one) used to
+// check, minus its instance-dict probes. A mirror row exists only while its
+// object is registered (native_combat.register / _drop), so a live row also
+// answers the scan's registry lookup.
+bool dmg_target_representable(const Mirror& m, int64_t ship) {
+    // object() answers nullptr for a freed handle or one of another kind.
+    const ObjectRow* row = ship < 0 ? nullptr : m.object(ship);
+    if (row == nullptr) return false;
+    auto live = [&m](int64_t h) {
+        return h == -1 || (h >= 0 && m.subsystem(h) != nullptr);
+    };
+    for (const int64_t h : row->mount_order)
+        if (!live(h)) return false;
+    return live(row->_hull) && live(row->_shield_subsystem);
+}
+
 // ── combat.py _shield_face_from_hit_point (DM H5) ───────────────────────────
 
 int shield_face(const Mirror& m, int64_t ship, const Vec3& p) {

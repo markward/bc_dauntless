@@ -4696,8 +4696,10 @@ void damage_append_held(const std::vector<dauntless::combat::DamageEntry>& entri
 // THE HITS), from the driver's dict: "ok", "player", "god_mode",
 // "double_damage", "npc_shields_off", "intensity" (3 floats),
 // "default_radius", "pp_low", "hit_weapon", "weapon_hit_type",
-// "has_instances", "clean" (Object handles); K2's also "python_banks"
-// (Subsystem handles whose pulses are Python's; absent: none).
+// "has_instances"; K2's also "python_banks" (Subsystem handles whose
+// pulses are Python's; absent: none). No target list: the kernels ask the
+// mirror whether a target is representable (damage.h
+// dmg_target_representable).
 dauntless::combat::K2PulseCtx k2_pulse_ctx(const py::dict& d) {
     dauntless::combat::K2PulseCtx p;
     p.ok = d["ok"].cast<bool>();
@@ -4711,7 +4713,6 @@ dauntless::combat::K2PulseCtx k2_pulse_ctx(const py::dict& d) {
     p.hit_weapon = d["hit_weapon"].cast<std::int64_t>();
     p.weapon_hit_type = d["weapon_hit_type"].cast<std::int64_t>();
     p.has_instances = d["has_instances"].cast<bool>();
-    for (auto h : d["clean"]) p.clean.insert(h.cast<std::int64_t>());
     if (d.contains("python_banks"))
         for (auto h : d["python_banks"])
             p.python_banks.insert(h.cast<std::int64_t>());
@@ -4855,30 +4856,11 @@ PyMethodDef g_push_scalar_def = {
     "count, an unknown code or a field id out of range raises "
     "SystemError."};
 
-// ── Registry lookups (K0's scan, THE CLEAN CACHE) ─────────────────────────
+// ── Instance-dict reads (K0's and K2's scans) ─────────────────────────────
 // These scans run no Python bytecode and allocate nothing GC-tracked (a
 // GC-tracked allocation can run cyclic GC, whose weakref.finalize ->
 // native_combat.unregister_handle frees mirror rows): they never BUILD an
-// instance dict (k1_built_dict); their only allocation is a registry
-// lookup's int key, which is not GC-tracked.
-
-// The registry's KeyedRef for handle `h`, borrowed, or nullptr (no error
-// set): native_combat._registry is a WeakValueDictionary, `data` its dict of
-// KeyedRef.
-PyObject* k1_registry_ref(PyObject* registry, std::int64_t h) {
-    PyObject* key = PyLong_FromLongLong(h);
-    if (key == nullptr) {
-        PyErr_Clear();
-        return nullptr;
-    }
-    PyObject* ref = PyDict_GetItemWithError(registry, key);
-    Py_DECREF(key);
-    if (ref == nullptr || !PyWeakref_Check(ref)) {
-        PyErr_Clear();
-        return nullptr;
-    }
-    return ref;
-}
+// instance dict (k1_built_dict).
 
 // `o`'s instance dict, borrowed, if it already exists as a dict; nullptr
 // (no error set) otherwise -- WITHOUT building one. On CPython 3.11+ an
@@ -5058,50 +5040,6 @@ bool k0_ship_handles(PyObject* ships, std::vector<std::int64_t>& out) {
 #pragma GCC diagnostic pop
 #endif
 
-// A handle's registry entry, cached (keyed as K0ObjKey, above; exact,
-// and only where kK0ObjectCache allows): its KeyedRef, while the
-// registry dict is the same object at the same ma_version_tag (it then
-// still holds the ref); the referent is read live. Kept by the handle's row
-// index; the handle is compared.
-struct K1RefEntry {
-    std::int64_t h = -1;
-    PyObject* registry = nullptr;
-    std::uint64_t version = 0;
-    PyObject* ref = nullptr;  // borrowed from the registry dict
-};
-
-// The cache entry of handle `h` (its row index), or `scratch` past a sane
-// table size.
-template <class E>
-E& k1_entry(std::vector<E>& v, std::int64_t h, E& scratch) {
-    const std::uint64_t i = static_cast<std::uint64_t>(h) & 0xffffffffu;
-    if (i >= (1u << 20)) {
-        scratch = E{};
-        return scratch;
-    }
-    if (i >= v.size()) v.resize(i + 1 + 64);
-    return v[i];
-}
-
-// Handle `h`'s live object in the registry, borrowed, or nullptr (no error
-// set), its KeyedRef (k1_registry_ref) cached in `e`.
-PyObject* k1_lookup(K1RefEntry& e, PyObject* registry, std::int64_t h) {
-    if (!(kK0ObjectCache && e.ref != nullptr && e.h == h &&
-          e.registry == registry &&
-          e.version == k0_dict_version(registry))) {
-        e = K1RefEntry{};
-        PyObject* ref = k1_registry_ref(registry, h);
-        if (ref == nullptr) return nullptr;
-        e = K1RefEntry{h, registry, k0_dict_version(registry), ref};
-    }
-    PyObject* o = PyWeakref_GetObject(e.ref);
-    if (o == nullptr || o == Py_None) {
-        PyErr_Clear();
-        return nullptr;
-    }
-    return o;
-}
-
 py::tuple k0_write_tuple(const dauntless::combat::K0Write& kw) {
     namespace cb = dauntless::combat;
     using T = cb::K0FieldWrite::Type;
@@ -5271,253 +5209,6 @@ int k2_clean_system(PyObject* sys, size_t pos, PyObject* seen,
     }
     Py_DECREF(seq);
     return clean;
-}
-
-// ── combat_dmg_clean (native damage Task 4; override-guard gap 1) ────────
-// Which `targets` a kernel may hit natively: a ship whose instance dict
-// holds none of `ship_names` and each of whose subsystems the hit can reach
-// -- its mount order (combat._iter_subsystems: the overlap walk, children
-// included), its hull and its shield generator, by their mirror handles,
-// each object found through `registry_data` (native_combat._registry's
-// handle -> weakref dict) -- holds none of `sub_names` (the methods the
-// hit and the condition chain stand in for: an instance attribute
-// shadowing one must be obeyed, so that ship's hit goes to Python). A ship
-// with no row, a handle the mirror cannot name, a subsystem not in the
-// registry or freed: not clean. Raw CPython calls; no Python code runs.
-//
-// THE CLEAN CACHE (native damage perf fix; K1's THE CACHES, keyed as
-// K0ObjKey, exact, and only where kK0ObjectCache allows): each ship's
-// and each subsystem's "holds one of the names" answer, by its handle's
-// row index (the handle compared), with what it was computed on -- its
-// type and its dict at the dict's ma_version_tag -- so an unchanged
-// object is never probed again; any insert, replace or delete in its dict
-// (a write, a patch, a del) moves the version and it is probed at the
-// next scan. A subsystem's KeyedRef is kept while the registry dict is
-// the same object at the same version (k1_lookup); its referent is read
-// live. Other name tuples drop every answer.
-struct DmgCleanCounts {
-    std::uint64_t probed = 0, cached = 0;
-};
-
-DmgCleanCounts& dmg_clean_counts() {
-    static DmgCleanCounts c;
-    return c;
-}
-
-struct DmgCleanEntry {
-    std::int64_t h = -1;
-    K1RefEntry ref;      // subsystems: the registry's KeyedRef
-    K0ObjKey key;
-    int holds = 0;
-};
-
-struct DmgCleanCaches {
-    std::vector<DmgCleanEntry> ships, subs;
-    PyObject* names[2] = {nullptr, nullptr};  // owned: the tuples answered
-    void clear() {
-        ships.clear();
-        subs.clear();
-        PyObject* a = names[0];
-        PyObject* b = names[1];
-        names[0] = names[1] = nullptr;
-        Py_XDECREF(a);
-        Py_XDECREF(b);
-    }
-};
-
-DmgCleanCaches& dmg_clean_caches() {
-    static DmgCleanCaches c;
-    return c;
-}
-
-// The entry for handle `h` (its row index), reset when it held another.
-DmgCleanEntry& dmg_clean_entry(std::vector<DmgCleanEntry>& v,
-                               std::int64_t h, DmgCleanEntry& scratch) {
-    DmgCleanEntry& e = k1_entry(v, h, scratch);
-    if (e.h != h) {
-        e = DmgCleanEntry{};
-        e.h = h;
-    }
-    return e;
-}
-
-// 1: `o`'s dict `d` holds one of `names`; 0: not; -1: error. Answered
-// from `e` when `o` is in the state it was computed on.
-int dmg_clean_holds(DmgCleanEntry& e, PyObject* o, PyObject* d,
-                    PyObject* names) {
-    if (k0_same(e.key, o, d)) {
-        ++dmg_clean_counts().cached;
-        return e.holds;
-    }
-    e.key = K0ObjKey{};
-    ++dmg_clean_counts().probed;
-    const int r = k2_holds(d, PySequence_Fast_ITEMS(names),
-                           PySequence_Fast_GET_SIZE(names));
-    if (r < 0) return -1;
-    e.holds = r;
-    e.key = K0ObjKey{o->ob_type, d, k0_dict_version(d)};
-    return r;
-}
-
-// One target: 1 clean, 0 not, -1 error (set).
-int dmg_clean_one(PyObject* t, PyObject* registry_data, PyObject* sn,
-                  PyObject* un, DmgCleanCaches& c) {
-    namespace cb = dauntless::combat;
-    const cb::Mirror& mi = cb::mirror();
-    PyObject* nslot = k2_scan_names().nslot;
-    // 1 clean, 0 not, -1 error: one subsystem handle.
-    auto sub_clean = [&](std::int64_t h) -> int {
-        if (h == -1) return 1;
-        if (h == cb::kRefUnrepresentable || mi.subsystem(h) == nullptr)
-            return 0;
-        DmgCleanEntry scratch;
-        DmgCleanEntry& e = dmg_clean_entry(c.subs, h, scratch);
-        PyObject* obj = k1_lookup(e.ref, registry_data, h);  // borrowed
-        if (obj == nullptr) return 0;
-        PyObject* d = k2_dict_of(obj);
-        if (d == nullptr) return 0;
-        const int r = dmg_clean_holds(e, obj, d, un);
-        return r < 0 ? -1 : (r == 1 ? 0 : 1);
-    };
-    PyObject* d = t == Py_None ? nullptr : k2_dict_of(t);
-    if (d == nullptr) return 0;
-    PyObject* h = PyDict_GetItemWithError(d, nslot);
-    if (h == nullptr && PyErr_Occurred()) return -1;
-    long long hv = -1;
-    const bool has_row = h != nullptr && PyLong_CheckExact(h);
-    if (has_row) {
-        hv = PyLong_AsLongLong(h);
-        if (hv == -1 && PyErr_Occurred()) return -1;
-    }
-    int r;
-    if (has_row && hv >= 0) {
-        DmgCleanEntry scratch;
-        r = dmg_clean_holds(dmg_clean_entry(c.ships, hv, scratch), t, d, sn);
-    } else {
-        ++dmg_clean_counts().probed;
-        r = k2_holds(d, PySequence_Fast_ITEMS(sn),
-                     PySequence_Fast_GET_SIZE(sn));
-    }
-    if (r < 0) return -1;
-    if (r != 0 || !has_row) return 0;
-    // mi.object answers nullptr for a handle of another kind, or none.
-    const cb::ObjectRow* row = hv < 0 ? nullptr : mi.object(hv);
-    if (row == nullptr) return 0;
-    for (const std::int64_t sh : row->mount_order) {
-        const int k = sub_clean(sh);
-        if (k != 1) return k;
-    }
-    for (const std::int64_t sh : {row->_hull, row->_shield_subsystem}) {
-        const int k = sub_clean(sh);
-        if (k != 1) return k;
-    }
-    return 1;
-}
-
-// The scan's name tuples (PySequence_Fast of each, new references) and
-// the cache, dropped when they are other tuples than its answers'.
-bool dmg_clean_setup(PyObject* ship_names, PyObject* sub_names,
-                     PyObject** sn, PyObject** un, DmgCleanCaches*& c) {
-    *sn = PySequence_Fast(ship_names, "ship_names");
-    *un = *sn ? PySequence_Fast(sub_names, "sub_names") : nullptr;
-    if (*un == nullptr) {
-        Py_XDECREF(*sn);
-        return false;
-    }
-    c = &dmg_clean_caches();
-    if (c->names[0] != ship_names || c->names[1] != sub_names) {
-        c->clear();
-        c->names[0] = Py_NewRef(ship_names);
-        c->names[1] = Py_NewRef(sub_names);
-    }
-    return true;
-}
-
-// Returns a list of bools, one per target.
-PyObject* dmg_clean(PyObject* targets, PyObject* registry_data,
-                    PyObject* ship_names, PyObject* sub_names) {
-    if (!PyDict_Check(registry_data)) {
-        PyErr_SetString(PyExc_TypeError, "registry_data must be a dict");
-        return nullptr;
-    }
-    PyObject *sn = nullptr, *un = nullptr;
-    DmgCleanCaches* c = nullptr;
-    if (!dmg_clean_setup(ship_names, sub_names, &sn, &un, c)) return nullptr;
-    PyObject* seq = PySequence_Fast(targets, "targets");
-    if (seq == nullptr) {
-        Py_DECREF(un);
-        Py_DECREF(sn);
-        return nullptr;
-    }
-    const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
-    PyObject* out = PyList_New(n);
-    bool failed = out == nullptr;
-    for (Py_ssize_t i = 0; i < n && !failed; ++i) {
-        const int clean = dmg_clean_one(PySequence_Fast_GET_ITEM(seq, i),
-                                        registry_data, sn, un, *c);
-        if (clean < 0) {
-            failed = true;
-            break;
-        }
-        PyObject* b = clean == 1 ? Py_True : Py_False;
-        Py_INCREF(b);
-        PyList_SET_ITEM(out, i, b);
-    }
-    Py_DECREF(seq);
-    Py_DECREF(un);
-    Py_DECREF(sn);
-    if (failed) {
-        Py_XDECREF(out);
-        return nullptr;
-    }
-    return out;
-}
-
-// dmg_clean over `handles` (Object handles, each resolved as
-// `_registry.get(h)` -- the registry dict's KeyedRef, its referent or
-// None): the list of the clean handles, in order.
-PyObject* dmg_clean_handles(PyObject* handles, PyObject* registry_data,
-                            PyObject* ship_names, PyObject* sub_names) {
-    if (!PyDict_Check(registry_data)) {
-        PyErr_SetString(PyExc_TypeError, "registry_data must be a dict");
-        return nullptr;
-    }
-    PyObject *sn = nullptr, *un = nullptr;
-    DmgCleanCaches* c = nullptr;
-    if (!dmg_clean_setup(ship_names, sub_names, &sn, &un, c)) return nullptr;
-    PyObject* seq = PySequence_Fast(handles, "handles");
-    PyObject* out = seq ? PyList_New(0) : nullptr;
-    bool failed = out == nullptr;
-    for (Py_ssize_t i = 0; !failed && i < PySequence_Fast_GET_SIZE(seq);
-         ++i) {
-        PyObject* key = PySequence_Fast_GET_ITEM(seq, i);
-        PyObject* obj = Py_None;
-        PyObject* ref = PyDict_GetItemWithError(registry_data, key);
-        if (ref == nullptr && PyErr_Occurred()) {
-            failed = true;
-            break;
-        }
-        if (ref != nullptr && PyWeakref_CheckRef(ref)) {
-            obj = PyWeakref_GetObject(ref);   // borrowed; None when dead
-            if (obj == nullptr) {
-                failed = true;
-                break;
-            }
-        }
-        Py_INCREF(obj);   // held for the probe
-        const int clean = dmg_clean_one(obj, registry_data, sn, un, *c);
-        Py_DECREF(obj);
-        if (clean < 0 || (clean == 1 && PyList_Append(out, key) < 0))
-            failed = true;
-    }
-    Py_XDECREF(seq);
-    Py_DECREF(un);
-    Py_DECREF(sn);
-    if (failed) {
-        Py_XDECREF(out);
-        return nullptr;
-    }
-    return out;
 }
 
 // ── THE FAST DAMAGE ENTRIES (native damage perf fix) ─────────────────────
@@ -13979,7 +13670,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k2_pulse_targets",
               [](const std::vector<std::int64_t>& ships) {
                   // The targets a damage pulse may land on this step (THE
-                  // DAMAGE PULSE; the driver scans them, combat_dmg_clean):
+                  // DAMAGE PULSE):
                   // each distinct `_target` of a bank of a listed ship's
                   // phaser system that fires or holds a dwell -- the only
                   // banks whose walk can flush one -- in first-seen order.
@@ -14019,18 +13710,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k2_take_hits", [] { return cb::k2_kernel().take_hits(); },
               "The damage pulses the records returned since the last call "
               "carried (THE DAMAGE PULSE).");
-        m.def("combat_dmg_clean",
-              [](py::handle targets, py::handle registry_data,
-                 py::handle ship_names, py::handle sub_names) {
-                  PyObject* r = dmg_clean(targets.ptr(), registry_data.ptr(),
-                                          ship_names.ptr(), sub_names.ptr());
-                  if (r == nullptr) throw py::error_already_set();
-                  return py::reinterpret_steal<py::list>(r);
-              },
-              py::arg("targets"), py::arg("registry_data"),
-              py::arg("ship_names"), py::arg("sub_names"),
-              "[bool, ...]: which targets a kernel may hit natively (see "
-              "dmg_clean).");
         m.add_object("combat_dmg_set_condition",
                      py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                          &g_dmg_set_condition_def, nullptr,
@@ -14039,20 +13718,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
                      py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                          &g_dmg_damage_system_def, nullptr,
                          m.attr("__name__").ptr())));
-        m.def("combat_dmg_clean_handles",
-              [](py::handle handles, py::handle registry_data,
-                 py::handle ship_names, py::handle sub_names) {
-                  PyObject* r = dmg_clean_handles(
-                      handles.ptr(), registry_data.ptr(), ship_names.ptr(),
-                      sub_names.ptr());
-                  if (r == nullptr) throw py::error_already_set();
-                  return py::reinterpret_steal<py::list>(r);
-              },
-              py::arg("handles"), py::arg("registry_data"),
-              py::arg("ship_names"), py::arg("sub_names"),
-              "[handle, ...]: the Object `handles` a kernel may hit "
-              "natively (dmg_clean on each one's registry object).");
-        m.def("combat_dmg_clean_clear", [] { dmg_clean_caches().clear(); });
         m.def("combat_k2_scan_counts", [] {
             py::dict d;
             d["probed"] = k2_scan_counts().probed;
@@ -14063,14 +13728,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k2_scan_reset_counts",
               [] { k2_scan_counts() = K2ScanCounts{}; });
         m.def("combat_k2_scan_clear", [] { k2_scan_caches().clear(); });
-        m.def("combat_dmg_clean_counts", [] {
-            py::dict d;
-            d["probed"] = dmg_clean_counts().probed;
-            d["cached"] = dmg_clean_counts().cached;
-            return d;
-        }, "combat_dmg_clean's objects probed and answered from its cache.");
-        m.def("combat_dmg_clean_reset_counts",
-              [] { dmg_clean_counts() = DmgCleanCounts{}; });
         m.def("combat_k2_reset_counts", [] {
             cb::k2_kernel().reset_counts();
             k2_present().presented = 0;
@@ -14250,6 +13907,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     ctx.god_mode = god_mode;
                     ctx.double_damage = double_damage;
                     ctx.npc_shields_off = npc_shields_off;
+                    // A target the mirror cannot name whole: hand back
+                    // (no instance attribute is looked for: spec Part A).
+                    if (!cb::dmg_target_representable(cb::mirror(), ship))
+                        return false;
                     return damage_run(
                         [&](cb::DamageOut& out) {
                             cb::apply_hit(cb::mirror(), in, ctx, out);
@@ -14261,8 +13922,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 "-1 None, -2 unnamed), the points as hit_present_operands "
                 "spells them, the weapon type as its two codes, the cheats "
                 "and the player handle. Under an applier context "
-                "(combat_set_applier). False: it fell back, nothing "
-                "changed -- run the Python.");
+                "(combat_set_applier). False: a target the mirror cannot "
+                "name whole (dmg_target_representable) or a fallback, "
+                "nothing changed -- run the Python.");
             m.def(
                 "combat_set_condition",
                 [](std::int64_t sub, double value, std::int64_t killer_h,

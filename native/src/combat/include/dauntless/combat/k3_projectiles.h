@@ -162,9 +162,10 @@
 // fallback-tier bubble hit, `hit_is_bubble`), the torpedo codes,
 // `p.has_instances`) with `p.dc`, the step memo cleared before and after
 // each. It stops at the first hit it cannot apply -- `p.ok` false, its
-// ship not in `p.clean`, its index in `python`, or damage.h falling back --
-// and returns that index (hits().size() when every one landed): the driver
-// runs that hit in Python and calls again from the next. Each applied hit's
+// ship one the mirror cannot name whole (damage.h dmg_target_representable),
+// its index in `python` (the driver sends none), or damage.h falling back
+// -- and returns that index (hits().size() when every one landed): the
+// driver runs that hit in Python and calls again from the next. Each applied hit's
 // writes and entries (its Held operands: the source ship) go to `out`, in
 // order; the binding applies and appends them before it returns. The hits
 // are kept until the next begin() or clear().

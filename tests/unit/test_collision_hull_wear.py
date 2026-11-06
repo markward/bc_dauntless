@@ -16,16 +16,12 @@ import pytest
 
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass
+from engine.appc.subsystems import HullSubsystem
 from engine.appc import effect_queue
 
 # ships/Hardpoints/Galaxy.py: `Galaxy.SetMass(120.0)`. NOT in
 # GlobalPropertyTemplates.py, which carries only 12 masses and no Galaxy.
 GALAXY_MASS = 120.0
-
-
-class _Hull:
-    def IsDestroyed(self):
-        return 0
 
 
 def _ship(x, mass, vx, radius=1.0):
@@ -34,11 +30,15 @@ def _ship(x, mass, vx, radius=1.0):
     s.SetRadius(radius)
     s.SetMass(mass)
     s.SetVelocity(TGPoint3(vx, 0.0, 0.0))
-    # combat.apply_hit only sets absorbed_hull when the ship has a hull AND a
-    # DamageSystem; a bare ShipClass has neither, and a fixture without them
-    # reports absorbed_hull 0.0 and silently proves nothing.
-    s.GetHull = lambda: _Hull()
-    s.DamageSystem = lambda sub, dmg, src=None: None
+    # combat.apply_hit only sets absorbed_hull when the ship has a hull; a
+    # bare ShipClass has none, and a fixture without one reports
+    # absorbed_hull 0.0 and silently proves nothing. A real hull, not an
+    # instance-patched GetHull: the native hit reads the mirror and no
+    # longer obeys instance patches (spec Part A, phase 6 follow-up 3).
+    # Too strong to die here, so the hit never starts a death.
+    hull = HullSubsystem("Hull")
+    hull.SetMaxCondition(1.0e9)
+    s.SetHull(hull)
     return s
 
 

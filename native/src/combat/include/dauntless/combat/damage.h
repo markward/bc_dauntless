@@ -185,6 +185,14 @@ void damage_system(Mirror& m, int64_t ship, int64_t subsystem, double amount,
 void set_condition(Mirror& m, int64_t subsystem, double value,
                    int64_t killer, int64_t ship, DamageOut& out);
 
+// Whether a kernel may apply a hit on `ship` natively (phase 6 follow-up
+// 3; spec 2026-11-05 Part A §3): `ship` names a live Object row, and each
+// handle in its mount order, `_hull` and `_shield_subsystem` is -1 (None)
+// or a live Subsystem row -- never kRefUnrepresentable, never a freed one.
+// Answered from the mirror alone: no instance attribute is looked for (a
+// patched method is not obeyed).
+bool dmg_target_representable(const Mirror& m, int64_t ship);
+
 // combat._shield_face_from_hit_point (the hull-box rule, DM H5): the face
 // index (ShieldSubsystem.FRONT_SHIELDS .. RIGHT_SHIELDS) `point` belongs to.
 // Exposed for the tests (damage_test.cc).

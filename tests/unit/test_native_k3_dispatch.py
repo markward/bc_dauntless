@@ -1352,32 +1352,42 @@ def test_a_spy_on_apply_hit_hands_every_hit_back(monkeypatch):
     assert seen.count(True) == seen.count(False) > 0, seen
 
 
-def test_an_instance_patch_on_a_hit_ships_subsystem_hands_its_hits_back(
-        monkeypatch):
-    """Override-guard gap 1: the Galaxy's shield generator shadows
-    ApplyDamage on the instance: its hits are Python's (the patch obeyed in
-    both arms); the Vor'cha's stay native."""
+def test_a_patched_damage_method_on_the_target_is_not_honoured(monkeypatch):
+    """Spec Part A (phase 6 follow-up 3: no per-tick patch scan): the
+    Galaxy shadows IsImmuneToDamage (a ShipClass method the hit stands in
+    for) on its instance, and its shield generator IsInvincible (a
+    ShipSubsystem one). Neither is obeyed natively: every hit lands
+    natively (no hand-back) and the native arm never calls either; the
+    reference arm does. Both spies return the stock answer, so the arms
+    still agree."""
     seen = []
 
     def setup(w, mp):
-        shields = w.ships["Galaxy"].GetShields()
-        stock = type(shields).ApplyDamage
+        ship = w.ships["Galaxy"]
+        shields = ship.GetShields()
+        for obj, name in ((ship, "IsImmuneToDamage"),
+                          (shields, "IsInvincible")):
+            stock = getattr(type(obj), name)
 
-        def patched(face, amount, _s=shields, _w=w):
-            seen.append(_w.native)
-            return stock(_s, face, amount)
-        mp.setattr(shields, "ApplyDamage", patched, raising=False)
+            def patched(_o=obj, _stock=stock, _w=w, _n=name):
+                seen.append((_n, _w.native))
+                return _stock(_o)
+            mp.setattr(obj, name, patched, raising=False)
 
     _ref, _nat, counts = _both(monkeypatch, _volley, 200,
                                setup=setup)
-    assert counts["k3_hit_python_reasons"]["unscanned"] > 0, counts
+    _k3_ran(counts)
     assert counts["k3_native_hits"] > 0, counts
-    assert True in seen and False in seen, seen
+    assert ("IsImmuneToDamage", False) in seen, seen  # the reference's
+    assert all(not native for _n, native in seen), seen
 
 
-def test_a_torpedo_shadowing_its_drf_is_handed_back(monkeypatch):
-    """weapon_splash_radius reads GetDamageRadiusFactor on the torpedo: an
-    instance attribute there is obeyed (the driver's own reason)."""
+def test_a_patched_torpedo_damage_radius_is_not_honoured(monkeypatch):
+    """weapon_splash_radius reads GetDamageRadiusFactor on the torpedo. An
+    instance attribute there is no longer obeyed natively (spec Part A,
+    phase 6 follow-up 3): the hit lands natively with the mirrored DRF and
+    the native arm never calls it; the reference arm does. The spy returns
+    the stock answer, so the arms still agree."""
     seen = []
 
     def script(w, t):
@@ -1385,11 +1395,15 @@ def test_a_torpedo_shadowing_its_drf_is_handed_back(monkeypatch):
             g, v = w.ships["Galaxy"], w.ships["Vorcha"]
             p = v.GetWorldLocation()
             torp = w.fire(g, (p.x, p.y - 6.0, p.z), (0.0, 60.0, 0.0))
-            torp.GetDamageRadiusFactor = (
-                lambda _w=w: seen.append(_w.native) or 0.75)
+            stock = type(torp).GetDamageRadiusFactor
+
+            def patched(_t=torp, _w=w):
+                seen.append(_w.native)
+                return stock(_t)
+            torp.GetDamageRadiusFactor = patched
 
     ref, _nat, counts = _both(monkeypatch, script, 20)
-    assert counts["k3_hit_python_reasons"]["python"] == 1, counts
-    assert seen == [False, True], seen
-    (hit,) = _calls(ref, "hit_present")
-    assert hit[8] == _hx(0.75), hit      # its R_hit
+    _k3_ran(counts)
+    assert counts["k3_native_hits"] == 1, counts
+    assert seen == [False], seen
+    (_hit,) = _calls(ref, "hit_present")

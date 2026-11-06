@@ -4,8 +4,10 @@ they hand back to the Python reference (native damage Task 3; spec
 
 With the switch on, combat.apply_hit, DamageableObject.DamageSystem and
 ShipSubsystem._set_condition run the native chain (damage.h) unless a
-function or class it stands in for was replaced, an instance attribute
-shadows one, or an input cannot be named natively; then the reference runs,
+class it stands in for was flagged at its first sight (DMG_PYTHON), an
+input cannot be named natively, or -- a condition write or DamageSystem
+only -- an instance attribute shadows a method it stands in for; then the
+reference runs,
 and a fallback leaves nothing changed. With the switch off nothing native
 runs. The bit-exact comparison is
 tests/integration/test_native_damage_differential.py.
@@ -125,23 +127,28 @@ def test_a_patched_stock_method_is_not_honoured(monkeypatch):
     assert sensor.GetCondition() == 20.0
 
 
-def test_an_instance_patch_runs_the_reference():
+def test_an_instance_patch_on_the_ship_is_not_honoured():
+    """Spec Part A (phase 6 follow-up 3): an instance attribute shadowing a
+    ShipClass method the hit stands in for is not obeyed -- the hit stays
+    native and the patch is never called."""
     ship = _ship()
     nc.configure(ON)
     got = []
     ship.DamageSystem = lambda sub, amt, src=None: got.append(amt)
     _hit(ship, 40.0)
-    assert got == [40.0, 40.0]          # the hull, then the sensors
-    assert nc.damage_counts()["hits"] == 0
+    assert got == []
+    assert nc.damage_counts()["hits"] == 1
+    assert nc.damage_counts()["fallbacks"] == 0
+    assert ship.GetHull().GetCondition() == 460.0
 
 
 @pytest.mark.parametrize("where", ("sensors", "hull", "shields"))
-def test_an_instance_patch_on_a_reachable_subsystem_runs_the_reference(
-        where):
-    """Override-guard gap 1 (native damage Task 4): an instance attribute
-    shadowing a method the hit stands in for, on a subsystem the hit can
-    reach -- an overlapped one, the hull, the shield generator -- is obeyed:
-    the hit is the reference's, which calls it."""
+def test_an_instance_patch_on_a_reachable_subsystem_is_not_honoured(where):
+    """Spec Part A (phase 6 follow-up 3; it used to be obeyed, override-
+    guard gap 1): an instance attribute shadowing a method the hit stands
+    in for, on a subsystem the hit can reach -- an overlapped one, the
+    hull, the shield generator -- is not looked for: the hit stays native
+    and never calls it."""
     ship = _ship()
     nc.configure(ON)
     sub = {"sensors": ship.GetSensorSubsystem(), "hull": ship.GetHull(),
@@ -157,15 +164,30 @@ def test_an_instance_patch_on_a_reachable_subsystem_runs_the_reference(
     bypass = where != "shields"
     combat.apply_hit(ship, 50.0, TGPoint3(0.0, 1.0, 0.0), None,
                      bypass_shields=bypass)
-    # (The reference's own DamageSystem / SetCondition calls on the
-    # patched subsystem hand back too: more than one fallback.)
-    assert nc.damage_counts()["hits"] == 0
-    assert nc.damage_counts()["fallbacks"] >= 1
-    assert got, where
-    del sub.IsDestroyed
-    combat.apply_hit(ship, 50.0, TGPoint3(0.0, 1.0, 0.0), None,
-                     bypass_shields=bypass)
     assert nc.damage_counts()["hits"] == 1
+    assert nc.damage_counts()["fallbacks"] == 0
+    assert got == [], where
+
+
+def test_apply_hit_hands_back_an_unrepresentable_target():
+    """Representability, kept and now answered by the binding from the
+    mirror (damage.h dmg_target_representable): a ship one of whose
+    subsystems the mirror cannot name (the sensors' row dropped, so the
+    mount order names a freed row) is handed back, counted as a fallback,
+    and the reference does the hit. The shields absorb it all, so the
+    native hit itself would never walk the mount order: only the
+    representability check hands it back."""
+    ship = _ship()
+    nc.configure(ON)
+    sensor = ship.GetSensorSubsystem()
+    nc._drop(sensor)
+    assert "_nslot" not in sensor.__dict__
+    faces = _shield_faces(ship)
+    combat.apply_hit(ship, 10.0, TGPoint3(0.0, 1.0, 0.0), None)
+    assert nc.damage_counts()["hits"] == 0
+    assert nc.damage_counts()["fallbacks"] == 1
+    assert _shield_faces(ship) != faces             # the reference did it
+    assert ship.GetHull().GetCondition() == 500.0   # all absorbed
 
 
 def test_a_foreign_subsystem_class_runs_the_reference():
@@ -329,20 +351,21 @@ def test_a_cloak_subclass_with_its_own_predicate_runs_the_reference():
     assert _shield_faces(ship) == faces
 
 
-def test_an_instance_patch_on_the_cloak_runs_the_reference():
-    """The clean scan looks for IsCloaking / IsDecloaking on the cloak."""
+def test_an_instance_patch_on_the_cloak_is_not_honoured():
+    """cloak_shields_suspended reads IsCloaking / IsDecloaking; an instance
+    attribute shadowing one on the cloak is not obeyed (spec Part A, phase 6
+    follow-up 3): the hit stays native and reads the mirrored cloak state,
+    so the shields still bite."""
     from engine.appc.subsystems import CloakingSubsystem
     cloak = CloakingSubsystem("Cloak")
     ship = _cloaked_ship(cloak)
     nc.configure(ON)
-    cloak.IsDecloaking = lambda: 1
+    got = []
+    cloak.IsDecloaking = lambda: got.append(1) or 1
     faces = _shield_faces(ship)
     combat.apply_hit(ship, 10.0, TGPoint3(0.0, 1.0, 0.0), None)
-    assert nc.damage_counts()["hits"] == 0
-    assert _shield_faces(ship) == faces
-    del cloak.IsDecloaking
-    combat.apply_hit(ship, 10.0, TGPoint3(0.0, 1.0, 0.0), None)
     assert nc.damage_counts()["hits"] == 1
+    assert got == []
     assert _shield_faces(ship) != faces
 
 

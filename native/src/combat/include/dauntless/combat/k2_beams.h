@@ -99,10 +99,10 @@
 //
 // THE DAMAGE PULSE (native damage, spec 2026-11-02-native-damage §3 goal 2;
 // Task 4). A contact with `flush_dwell > 0.0` is _phaser_contact's damage
-// branch, applied IN THE WALK when the context's `pulse.ok` holds and its
-// target is in `pulse.clean` (the driver's scan found no instance
-// attribute on it or its subsystems shadowing a method the hit stands in
-// for): the damage is `_phaser_damage_for_tick(bank._max_damage,
+// branch, applied IN THE WALK when the context's `pulse.ok` holds and the
+// mirror can name its target whole (damage.h dmg_target_representable: no
+// instance attribute is looked for, spec Part A): the damage is
+// `_phaser_damage_for_tick(bank._max_damage,
 // bank._max_damage_distance, dist, flush_dwell) *
 // PHASER_INTENSITY_SCALE[level]` (level the system's mirrored
 // `_power_level`, indexed as Python indexes a 3-tuple), and when it is > 0
@@ -125,8 +125,9 @@
 // undoes its writes (DamageOut::undo) and drops its entries.
 // Anything else -- `pulse.ok` false (the driver found a function or class
 // the hit stands in for replaced, or a player the mirror cannot name), a
-// target not scanned clean, a level Python would raise on, or damage.h
-// falling back -- keeps the CONTACT record, counted by why (K2PulseWhy):
+// target the mirror cannot name whole, a level Python would raise on, or
+// damage.h falling back -- keeps the CONTACT record, counted by why
+// (K2PulseWhy):
 // Python then runs _phaser_contact itself.
 //
 // RECORDS (K2Kind, in combat_k2_kinds() order). The Python layouts, as the
@@ -455,7 +456,8 @@ struct K2Contact {
 // Why a damage pulse came back as a CONTACT record (THE DAMAGE PULSE).
 enum class K2PulseWhy : int32_t {
     not_ok = 0,   // the context's pulse.ok is false
-    unscanned,    // the target is not in pulse.clean
+    unrepresentable,  // the mirror cannot name the target whole
+                      // (dmg_target_representable, damage.h)
     level,        // the power level is not an index of the 3-tuple
     fallback,     // damage.h fell back (the mirror is as it was)
     python,       // the bank is in pulse.python_banks (K3: the driver's own)
@@ -535,8 +537,6 @@ struct K2PulseCtx {
     int64_t hit_weapon = 0, weapon_hit_type = 0;
     // ship_instances is not None.
     bool has_instances = false;
-    // Targets the driver scanned clean (Object handles).
-    std::unordered_set<int64_t> clean;
     // K2: banks (Subsystem handles) whose instance dict shadows a name the
     // pulse reads from the mirror (GetMaxDamage, GetMaxDamageDistance,
     // GetDamageRadiusFactor): their pulses are Python's. Unused by K3.

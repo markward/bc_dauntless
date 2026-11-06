@@ -2630,29 +2630,35 @@ def test_a_spy_on_apply_hit_hands_every_pulse_back(monkeypatch):
     assert counts["k2_pulse_python_reasons"]["not_ok"] > 0, counts
 
 
-def test_an_instance_patch_on_a_targets_subsystem_hands_its_pulses_back(
-        monkeypatch):
-    """Override-guard gap 1: the Vor'cha's shield generator shadows
-    ApplyDamage on the instance (only a hit calls it). The guard's scan
-    finds it, so every pulse on the Vor'cha is Python's -- the patch is
-    obeyed, in both arms -- and every pulse on the Galaxy native."""
+def test_a_patched_damage_method_on_the_target_is_not_honoured(monkeypatch):
+    """Spec Part A (phase 6 follow-up 3: no per-tick patch scan): the
+    Vor'cha shadows IsImmuneToDamage (a ShipClass method the hit stands in
+    for) on its instance, and its shield generator IsInvincible (a
+    ShipSubsystem one). Neither is obeyed natively: every pulse lands in
+    the walk (no hand-back) and the native arm never calls either; the
+    reference arm does. Both spies return the stock answer, so the arms
+    still agree."""
     seen = []
 
     def setup(w, mp):
         _native_hits(w, mp)
-        shields = w.ships["Vorcha"].GetShields()
-        stock = type(shields).ApplyDamage
+        ship = w.ships["Vorcha"]
+        shields = ship.GetShields()
+        for obj, name in ((ship, "IsImmuneToDamage"),
+                          (shields, "IsInvincible")):
+            stock = getattr(type(obj), name)
 
-        def patched(face, amount, _s=shields, _w=w):
-            seen.append(_w.native)
-            return stock(_s, face, amount)
-        mp.setattr(shields, "ApplyDamage", patched, raising=False)
+            def patched(_o=obj, _stock=stock, _w=w, _n=name):
+                seen.append((_n, _w.native))
+                return _stock(_o)
+            mp.setattr(obj, name, patched, raising=False)
 
     _ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, _volley, 240,
                                setup=setup)
-    assert counts["k2_pulse_python_reasons"]["unscanned"] > 0, counts
-    assert counts["k2_native_pulses"] > 0, counts      # the Galaxy's
-    assert True in seen and False in seen
+    assert counts["k2_pulse_python"] == 0, counts["k2_pulse_python_reasons"]
+    assert counts["k2_native_pulses"] > 0, counts
+    assert ("IsImmuneToDamage", False) in seen, seen  # the reference's
+    assert all(not native for _n, native in seen), seen
 
 
 @pytest.mark.parametrize("name", ("GetMaxDamage", "GetMaxDamageDistance",

@@ -185,7 +185,7 @@ _REQUIRED_BINDINGS = (
     "combat_k0_begin", "combat_k0_apply_stats", "combat_effect_take",
     "combat_effect_rebind",
     "combat_apply_hit", "combat_dmg_set_condition",
-    "combat_dmg_clean_handles", "combat_k2_scan_clear",
+    "combat_k2_scan_clear",
     "combat_compute_take",
     # Tractors native (fire control native only, M4).
     "combat_k1_begin_tractor", "combat_tractor_force_step",
@@ -351,7 +351,6 @@ def reset() -> None:
     for k in _dmg_counts:
         _dmg_counts[k] = 0
     if available():
-        _h.combat_dmg_clean_clear()
         _h.combat_k2_scan_clear()
     _dmg_ctx[0] = None
     global _pulse_stale
@@ -6069,7 +6068,7 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     ctx = cx.delta()
     ctx["python_ships"] = python_ships
     ctx["trace"] = _k2_host_io._h is not None
-    ctx["pulse"] = _k2_pulse_ctx(handles, ship_instances, pulse_banks)
+    ctx["pulse"] = _k2_pulse_ctx(ship_instances, pulse_banks)
     t, use_memo, drift = _k1_clocks()
     _h.combat_k2_begin(handles, dt, t, use_memo, drift, ctx)
     cx.commit()
@@ -6941,16 +6940,13 @@ def apply_hit(ship, damage, hit_point, source, *, normal=None,
     the native hit takes as given are computed here exactly as the
     reference computes them: R_hit (weapon_splash_radius, the splash_radius
     override), the player, the cheats, each operand's float()/bool()."""
-    if hit_point is None or _dmg_patched(ship, _DMG_SHIP_NAMES):
+    if hit_point is None:
         _dmg_counts["fallbacks"] += 1
         return False
+    # No instance attribute is looked for (spec Part A): the binding hands
+    # back a ship the mirror cannot name whole (dmg_target_representable).
     ship_h = _dmg_handle(ship, "Object")
     if ship_h is None or ship_h == REF_NONE:
-        _dmg_counts["fallbacks"] += 1
-        return False
-    # An instance attribute on a subsystem the hit can reach shadowing a
-    # method it stands in for (override-guard gap 1): the reference obeys it.
-    if not _kdmg_clean([ship])[0]:
         _dmg_counts["fallbacks"] += 1
         return False
     import App
@@ -7084,10 +7080,10 @@ def _damage_system_py(ship, sub, amount: float, source=None) -> bool:
 # K3 its hits after the step's expiries (k3_projectiles.h, THE HITS): no
 # record hands the damage to Python. What they read that the mirror does not
 # hold rides a context (_kdmg_ctx): the player and the cheats, the module
-# constants of the arithmetic, the weapon's codes, and the targets the
-# override guard scanned clean. A pulse or hit the kernel cannot apply
-# (counted by why: k2_pulse_python_reasons, k3_hit_python_reasons) goes to
-# Python as before -- K2's CONTACT record, K3's hand-back here.
+# constants of the arithmetic and the weapon's codes. A pulse or hit the
+# kernel cannot apply (counted by why: k2_pulse_python_reasons,
+# k3_hit_python_reasons) goes to Python as before -- K2's CONTACT record,
+# K3's hand-back here.
 #
 # NOT OK. The context is "not ok" -- every pulse and hit to Python -- when
 # combat.apply_hit is not the engine's own (_kdmg_apply_hit_stock), or the
@@ -7096,22 +7092,16 @@ def _damage_system_py(ship, sub, amount: float, source=None) -> bool:
 # is kept on purpose: it is the hit's OBSERVATION seam -- the golden fights'
 # and the dispatch tests' spy records every hit through it (their "calls"),
 # so a kernel that applied a hit past the spy would change a recorded golden.
-# A target is "clean" when neither it nor any subsystem its hit can reach
-# (its mount order, hull, shield generator) has
-# an instance attribute shadowing a method the hit stands in for
-# (combat_dmg_clean; override-guard gap 1, Task 3's report §8.3, closed the
-# K1 way: scanned at the entry point -- K2's begin, K3's apply, the
-# non-kernel apply_hit -- ruling L8). A patch made later in the step is seen
-# at the next entry.
+#
+# REPRESENTABLE. Per pulse and hit the kernel asks the mirror whether it can
+# name the target whole (damage.h dmg_target_representable): a live Object
+# row whose mount order, hull and shield generator are each None or a live
+# Subsystem row. One it cannot is handed back (reason `unrepresentable`);
+# the non-kernel apply_hit's binding asks the same. No instance attribute is
+# looked for -- on the ship, its subsystems or the torpedo -- so a patched
+# method is NOT obeyed (spec Part A; phase 6 follow-up 3 deleted the
+# per-tick scan that looked, combat_dmg_clean).
 
-#: The instance attributes combat_dmg_clean looks for: on the target ship
-#: (_DMG_SHIP_NAMES) and on each subsystem its hit can reach (the condition
-#: chain's names, the predicates, the shield names).
-_KDMG_SUB_NAMES = tuple(dict.fromkeys(_DMG_SUB_NAMES + _DMG_PREDICATES
-                                      + _DMG_SHIELD_NAMES
-                                      + _DMG_CLOAK_NAMES))
-#: A torpedo's: weapon_splash_radius reads GetDamageRadiusFactor on it.
-_KDMG_TORP_NAMES = ("GetDamageRadiusFactor",)
 _kdmg_apply_hit = [None]
 
 
@@ -7130,21 +7120,7 @@ def _kdmg_apply_hit_stock() -> bool:
     return now is stock
 
 
-def _kdmg_clean(objs) -> list:
-    """combat_dmg_clean on `objs` (None reads not clean). Each object's
-    answer is cached on its dict's version (THE CLEAN CACHE)."""
-    return _h.combat_dmg_clean(objs, _registry.data, _DMG_SHIP_NAMES,
-                               _KDMG_SUB_NAMES)
-
-
-def _kdmg_clean_handles(handles) -> list:
-    """The clean ones of Object `handles`, in order: _kdmg_clean on each
-    one's `_registry.get(h)`, in the binding."""
-    return _h.combat_dmg_clean_handles(handles, _registry.data,
-                                       _DMG_SHIP_NAMES, _KDMG_SUB_NAMES)
-
-
-def _kdmg_ctx(weapon: str, ship_instances, clean) -> dict:
+def _kdmg_ctx(weapon: str, ship_instances) -> dict:
     """The kernels' damage context (the binding's k2_pulse_ctx keys) for a
     `weapon` ("phaser" / "torpedo") step: computed exactly as combat.
     apply_hit and host_loop._phaser_contact read them."""
@@ -7186,17 +7162,14 @@ def _kdmg_ctx(weapon: str, ship_instances, clean) -> dict:
         "hit_weapon": _effect_queue._HIT_WEAPON_CODES[weapon],
         "weapon_hit_type": int(combat._WEAPON_TYPE_IDS[weapon]),
         "has_instances": ship_instances is not None,
-        "clean": clean,
     }
 
 
-def _k2_pulse_ctx(handles, ship_instances, python_banks=()) -> dict:
-    """THE DAMAGE PULSE's context for this step: the targets of the banks
-    that can pulse, scanned (combat_dmg_clean), and the banks whose pulses
-    are Python's (_k2_ship_handles' pulse_banks)."""
-    targets = _h.combat_k2_pulse_targets(handles)
-    clean = _kdmg_clean_handles(targets) if targets else []
-    ctx = _kdmg_ctx("phaser", ship_instances, clean)
+def _k2_pulse_ctx(ship_instances, python_banks=()) -> dict:
+    """THE DAMAGE PULSE's context for this step, and the banks whose pulses
+    are Python's (_k2_ship_handles' pulse_banks). No target list: the
+    kernel asks the mirror about each target (REPRESENTABLE)."""
+    ctx = _kdmg_ctx("phaser", ship_instances)
     ctx["python_banks"] = list(python_banks)
     return ctx
 
@@ -7219,18 +7192,12 @@ def _k3_apply_hits(hits, ship_instances, walk) -> None:
     hit_point, hit_normal); a hit the kernel hands back runs here, in its
     place, exactly as host_loop runs it (counted "k3_hit_python")."""
     from engine.appc import combat
-    ships = [h[1] for h in hits]
-    clean = [nc_h for nc_h, c in
-             zip((_slot_of(s) for s in ships), _kdmg_clean(ships)) if c]
-    pulse = _kdmg_ctx("torpedo", ship_instances, clean)
-    # A torpedo shadowing GetDamageRadiusFactor: its hit is Python's.
-    python = [i for i, h in enumerate(hits)
-              if _dmg_patched(h[0], _KDMG_TORP_NAMES)]
+    pulse = _kdmg_ctx("torpedo", ship_instances)
     prev = _h.combat_set_applier(_applier_context(walk))
     try:
         i = 0
         while i < len(hits):
-            k = _h.combat_k3_apply_hits(i, pulse, python)
+            k = _h.combat_k3_apply_hits(i, pulse, ())
             if k > i:
                 _kernel_hits_landed(ship_instances)
             if k >= len(hits):

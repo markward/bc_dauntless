@@ -976,7 +976,8 @@ size_t K3Kernel::apply_hits(size_t from, const K2PulseCtx& p,
     for (size_t i = from; i < hits_.size(); ++i) {
         const K3Hit& h = hits_[i];
         if (!p.ok) return handed(K2PulseWhy::not_ok, i);
-        if (p.clean.count(h.ship) == 0) return handed(K2PulseWhy::unscanned, i);
+        if (!dmg_target_representable(m_, h.ship))
+            return handed(K2PulseWhy::unrepresentable, i);
         if (python.count(i)) return i;  // the driver's own reason
         HitInput in;
         in.ship = h.ship;

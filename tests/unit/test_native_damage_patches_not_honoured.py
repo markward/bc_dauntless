@@ -4,7 +4,8 @@ chain stand in for, patched after a class was first seen, is NOT obeyed --
 the native chain keeps doing the write. What stays is representability: the
 class mirror flags taken at a class's first sight (a class defined with a
 foreign override is DMG_PYTHON and handed back), an instance attribute
-shadowing a stood-in method, and the kernels' observation seam: a spy on
+shadowing a stood-in method on a condition write's subsystem (not on a hit's
+target: phase 6 follow-up 3), and the kernels' observation seam: a spy on
 combat.apply_hit (the golden fights' and dispatch tests' hit log) hands the
 kernels' hits back.
 
@@ -87,24 +88,24 @@ def test_a_class_defined_with_a_foreign_override_is_handed_back():
 
 def test_the_kernels_context_ignores_patched_arithmetic(monkeypatch):
     _sensor()
-    assert nc._kdmg_ctx("phaser", None, [])["ok"]
+    assert nc._kdmg_ctx("phaser", None)["ok"]
     monkeypatch.setattr(host_loop, "_phaser_damage_for_tick",
                         lambda *a: 0.0)
-    assert nc._kdmg_ctx("phaser", None, [])["ok"]
+    assert nc._kdmg_ctx("phaser", None)["ok"]
     monkeypatch.setattr(Torpedo, "GetDamageRadiusFactor",
                         lambda self: 1.0)
-    assert nc._kdmg_ctx("torpedo", None, [])["ok"]
+    assert nc._kdmg_ctx("torpedo", None)["ok"]
 
 
 def test_a_spy_on_apply_hit_hands_the_kernels_hits_back(monkeypatch):
     """The observation seam: a spy on combat.apply_hit makes the kernels'
     context not ok, so every pulse and hit goes through it."""
     _sensor()
-    assert nc._kdmg_ctx("torpedo", None, [])["ok"]
+    assert nc._kdmg_ctx("torpedo", None)["ok"]
     real = combat.apply_hit
     monkeypatch.setattr(combat, "apply_hit",
                         lambda *a, **k: real(*a, **k))
-    assert not nc._kdmg_ctx("torpedo", None, [])["ok"]
-    assert not nc._kdmg_ctx("phaser", None, [])["ok"]
+    assert not nc._kdmg_ctx("torpedo", None)["ok"]
+    assert not nc._kdmg_ctx("phaser", None)["ok"]
     monkeypatch.undo()
-    assert nc._kdmg_ctx("phaser", None, [])["ok"]
+    assert nc._kdmg_ctx("phaser", None)["ok"]
