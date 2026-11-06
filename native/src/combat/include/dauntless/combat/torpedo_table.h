@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -46,6 +47,32 @@ enum class TorpField : int32_t {
 
 const char* torp_field_name(TorpField f);
 
+// A torpedo's static visuals, read once at CreateTorpedoModel /
+// CreateDisruptorModel (engine/appc/native_combat.py torpedo_visual_changed)
+// and held for the native per-frame descriptor feed. Types are exactly what
+// host_loop._build_torpedo_render_data hands set_torpedoes: sizes are Python
+// floats (double here; the feed casts to float32), colours are UNDIMMED
+// `_color_tuple` results (the feed dims core/glow/flares by TORPEDO_BRIGHTNESS
+// per frame), textures are `_resolve_game_texture` strings resolved at
+// creation. `num_flares` and `id` are Python ints. `light_base` is Python's
+// `max(glow_size_a, glow_size_b)` (argument order, so a NaN or tie reads as
+// Python reads it); the raw glow sizes stay in the record.
+struct TorpedoVisual {
+    using Color = std::array<double, 4>;
+    std::string core_texture, glow_texture, flares_texture;
+    Color core_color{1, 1, 1, 1}, glow_color{1, 1, 1, 1},
+          flares_color{1, 1, 1, 1}, shell_color{1, 1, 1, 1},
+          bolt_core_color{1, 1, 1, 1};
+    double core_size_a = 0.0, core_size_b = 0.0;
+    double glow_size_a = 0.0, glow_size_b = 0.0, glow_size_c = 0.0;
+    double flares_size_a = 0.0, flares_size_b = 0.0;
+    int64_t num_flares = 0;
+    int64_t id = 0;
+    bool is_disruptor = false;
+    double bolt_length = 0.0, bolt_width = 0.0;
+    double light_base = 0.0;
+};
+
 struct TorpedoRow {
     using Vec3 = std::array<double, 3>;
     int64_t handle = 0;
@@ -76,6 +103,10 @@ struct TorpedoRow {
     // nor a TGPoint3, ...). The kernel must hand such a torpedo to Python.
     // A later good push of the field clears its bit.
     uint32_t unrepresentable = 0;
+    // False until the visual record is pushed (a torpedo whose model was
+    // never created): the native feed treats that as unrepresentable.
+    bool visual_set = false;
+    TorpedoVisual visual;
 };
 
 class TorpedoTable {
@@ -105,6 +136,8 @@ public:
     void set_ref(int64_t h, TorpField f, int64_t ref);
     void set_mount(int64_t h, bool attributed, int64_t sub, const Vec3& off);
     void set_unrepresentable(int64_t h, TorpField f);
+    // Throws std::invalid_argument for a stale handle.
+    void set_visual(int64_t h, const TorpedoVisual& v);
 
 private:
     void compact();

@@ -169,3 +169,13 @@ void TorpedoTable::set_unrepresentable(int64_t h, TorpField f) {
 }
 
 }  // namespace dauntless::combat
+
+namespace dauntless::combat {
+
+void TorpedoTable::set_visual(int64_t h, const TorpedoVisual& v) {
+    TorpedoRow& r = checked(h);
+    r.visual = v;
+    r.visual_set = true;
+}
+
+}  // namespace dauntless::combat

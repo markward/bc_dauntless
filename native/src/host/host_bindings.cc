@@ -11759,6 +11759,51 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   [tfld](std::int64_t h, int f) {
                       cb::mirror().torpedoes().set_unrepresentable(h, tfld(f));
                   });
+            // The visual record (torpedo_table.h TorpedoVisual) as one
+            // 21-tuple: core/glow/flares texture, core/glow/flares/shell/
+            // bolt-core colour (4 floats each), core a/b, glow a/b/c, num
+            // flares, flares a/b, id, is_disruptor, bolt length/width,
+            // light base. All-or-nothing: a malformed tuple throws and the
+            // row keeps no record.
+            m.def("combat_torp_set_visual",
+                  [](std::int64_t h, py::tuple t) {
+                      if (t.size() != 21)
+                          throw std::invalid_argument(
+                              "torpedo visual: expected a 21-tuple");
+                      auto col = [&](std::size_t i) {
+                          cb::TorpedoVisual::Color c;
+                          py::sequence q = t[i].cast<py::sequence>();
+                          if (q.size() != 4)
+                              throw std::invalid_argument(
+                                  "torpedo visual: colour needs 4 floats");
+                          for (std::size_t k = 0; k < 4; ++k)
+                              c[k] = q[k].cast<double>();
+                          return c;
+                      };
+                      cb::TorpedoVisual v;
+                      v.core_texture = t[0].cast<std::string>();
+                      v.glow_texture = t[1].cast<std::string>();
+                      v.flares_texture = t[2].cast<std::string>();
+                      v.core_color = col(3);
+                      v.glow_color = col(4);
+                      v.flares_color = col(5);
+                      v.shell_color = col(6);
+                      v.bolt_core_color = col(7);
+                      v.core_size_a = t[8].cast<double>();
+                      v.core_size_b = t[9].cast<double>();
+                      v.glow_size_a = t[10].cast<double>();
+                      v.glow_size_b = t[11].cast<double>();
+                      v.glow_size_c = t[12].cast<double>();
+                      v.num_flares = t[13].cast<std::int64_t>();
+                      v.flares_size_a = t[14].cast<double>();
+                      v.flares_size_b = t[15].cast<double>();
+                      v.id = t[16].cast<std::int64_t>();
+                      v.is_disruptor = t[17].cast<bool>();
+                      v.bolt_length = t[18].cast<double>();
+                      v.bolt_width = t[19].cast<double>();
+                      v.light_base = t[20].cast<double>();
+                      cb::mirror().torpedoes().set_visual(h, v);
+                  });
             m.def("combat_torp_dump", [](std::int64_t h) {
                 auto& mi = cb::mirror();
                 const cb::TorpedoRow& r = mi.torpedoes().checked(h);
@@ -11796,6 +11841,37 @@ PYBIND11_MODULE(_dauntless_host, m) {
                         bad.append(py::str(cb::torp_field_name(
                             static_cast<cb::TorpField>(i))));
                 d["unrepresentable"] = bad;
+                if (r.visual_set) {
+                    const cb::TorpedoVisual& v = r.visual;
+                    auto col = [](const cb::TorpedoVisual::Color& c) {
+                        return py::make_tuple(c[0], c[1], c[2], c[3]);
+                    };
+                    py::dict vd;
+                    vd["core_texture"] = v.core_texture;
+                    vd["glow_texture"] = v.glow_texture;
+                    vd["flares_texture"] = v.flares_texture;
+                    vd["core_color"] = col(v.core_color);
+                    vd["glow_color"] = col(v.glow_color);
+                    vd["flares_color"] = col(v.flares_color);
+                    vd["shell_color"] = col(v.shell_color);
+                    vd["bolt_core_color"] = col(v.bolt_core_color);
+                    vd["core_size_a"] = v.core_size_a;
+                    vd["core_size_b"] = v.core_size_b;
+                    vd["glow_size_a"] = v.glow_size_a;
+                    vd["glow_size_b"] = v.glow_size_b;
+                    vd["glow_size_c"] = v.glow_size_c;
+                    vd["num_flares"] = v.num_flares;
+                    vd["flares_size_a"] = v.flares_size_a;
+                    vd["flares_size_b"] = v.flares_size_b;
+                    vd["id"] = v.id;
+                    vd["is_disruptor"] = v.is_disruptor;
+                    vd["bolt_length"] = v.bolt_length;
+                    vd["bolt_width"] = v.bolt_width;
+                    vd["light_base"] = v.light_base;
+                    d["visual"] = vd;
+                } else {
+                    d["visual"] = py::none();
+                }
                 return d;
             });
         }

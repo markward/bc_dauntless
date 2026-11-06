@@ -498,6 +498,40 @@ TEST(TorpedoTable, TombstonesCompact) {
     EXPECT_EQ(t.size(), 0u);
 }
 
+TEST(TorpedoTable, VisualSurvivesCompaction) {
+    TorpedoTable t;
+    std::vector<int64_t> hs;
+    for (int i = 0; i < 200; ++i) hs.push_back(t.add(i, 0));
+    EXPECT_FALSE(t.find(hs[199])->visual_set);   // none until pushed
+    TorpedoVisual v;
+    v.core_texture = "core.tga";
+    v.glow_texture = "glow.tga";
+    v.flares_texture = "";
+    v.core_color = {0.1, 0.2, 0.3, 0.4};
+    v.shell_color = {1.0, 0.5, 0.25, 1.0};
+    v.core_size_a = 0.2; v.glow_size_b = 3.5; v.num_flares = 4;
+    v.id = 77; v.is_disruptor = true; v.bolt_length = 1.5;
+    v.light_base = 3.5;
+    t.set_visual(hs[199], v);
+    EXPECT_TRUE(t.find(hs[199])->visual_set);
+    for (int i = 0; i < 199; ++i) EXPECT_TRUE(t.drop(hs[i]));
+    EXPECT_LT(t.rows().size(), 200u);            // compacted
+    const TorpedoRow* r = t.find(hs[199]);
+    ASSERT_NE(r, nullptr);
+    ASSERT_TRUE(r->visual_set);
+    EXPECT_EQ(r->visual.core_texture, "core.tga");
+    EXPECT_EQ(r->visual.glow_texture, "glow.tga");
+    EXPECT_EQ(r->visual.core_color[2], 0.3);
+    EXPECT_EQ(r->visual.shell_color[1], 0.5);
+    EXPECT_EQ(r->visual.glow_size_b, 3.5);
+    EXPECT_EQ(r->visual.num_flares, 4);
+    EXPECT_EQ(r->visual.id, 77);
+    EXPECT_TRUE(r->visual.is_disruptor);
+    EXPECT_EQ(r->visual.bolt_length, 1.5);
+    EXPECT_EQ(r->visual.light_base, 3.5);
+    EXPECT_THROW(t.set_visual(hs[0], v), std::invalid_argument);
+}
+
 TEST(TorpedoTable, FieldsAndUnrepresentable) {
     TorpedoTable t;
     int64_t h = t.add(5, 6);

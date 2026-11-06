@@ -176,6 +176,7 @@ class Torpedo(ObjectClass):
         self._flares_size_b  = float(flares_b)
         self._is_disruptor   = False   # idempotent-safe if a script calls both
         self.__dict__.pop("_vis_colors", None)   # host_loop._torpedo_colors
+        _nc.torpedo_visual_changed(self)
 
     def CreateDisruptorModel(self, outer_shell_color, outer_core_color,
                              length, width) -> None:
@@ -197,6 +198,7 @@ class Torpedo(ObjectClass):
         self._bolt_core_color = outer_core_color
         self._bolt_length     = float(length)
         self._bolt_width      = float(width)
+        _nc.torpedo_visual_changed(self)
 
     def SetDamage(self, v) -> None:               self._damage = float(v)
 

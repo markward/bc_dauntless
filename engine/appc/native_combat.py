@@ -4094,6 +4094,70 @@ def _torp_put(t) -> None:
         value = _torp_value(t, name)
         if value is not _UNSET_FIELD and t.__dict__.get("_k3_row") == h:
             _torp_push(t, h, name, value)
+    _torp_push_visual(t, h)
+
+
+def _torp_visual_tuple(t):
+    """The 21-tuple `combat_torp_set_visual` takes, from the torpedo's cached
+    static record plus its current `_id` (assigned by `register`, AFTER
+    Create*Model), or None when it has no record or `_id` is no int."""
+    rec = t.__dict__.get("_vis_native")
+    if rec is None:
+        return None
+    try:
+        tid = int(t._id)
+    except Exception:
+        return None
+    return rec[:16] + (tid,) + rec[16:]
+
+
+def _torp_push_visual(t, h) -> None:
+    v = _torp_visual_tuple(t)
+    if v is None:
+        return
+    try:
+        _h.combat_torp_set_visual(h, v)
+    except (TypeError, ValueError, OverflowError):
+        pass            # all-or-nothing: the row keeps no record
+
+
+def torpedo_visual_changed(t) -> None:
+    """`CreateTorpedoModel` / `CreateDisruptorModel` ran: cache the static
+    visual record on `t` (`_vis_native`) -- everything
+    `host_loop._build_torpedo_render_data` and `_torpedo_colors` read from a
+    torpedo, colours UNDIMMED, textures resolved now (a recorded departure:
+    at creation, not per frame) -- and push it if the torpedo already has a
+    row. A torpedo created BEFORE its row exists (the SDK order: model, then
+    `register`) is pushed by `_torp_put` at row-add and at every rebuild."""
+    d = t.__dict__
+    d.pop("_vis_native", None)
+    if not _switch:
+        return
+    try:
+        from engine import host_loop as hl
+        rec = (
+            hl._resolve_game_texture(t._core_texture),
+            hl._resolve_game_texture(t._glow_texture),
+            hl._resolve_game_texture(t._flares_texture),
+            hl._color_tuple(t._core_color),
+            hl._color_tuple(t._glow_color),
+            hl._color_tuple(t._flares_color),
+            hl._color_tuple(t._shell_color),
+            hl._color_tuple(t._bolt_core_color),
+            t._core_size_a, t._core_size_b,
+            t._glow_size_a, t._glow_size_b, t._glow_size_c,
+            t._num_flares, t._flares_size_a, t._flares_size_b,
+            # (id slots in here)
+            bool(t._is_disruptor), float(t._bolt_length),
+            float(t._bolt_width),
+            max(t._glow_size_a, t._glow_size_b),
+        )
+    except Exception:
+        return          # unrepresentable: no record, visual_set stays false
+    d["_vis_native"] = rec
+    h = d.get("_k3_row")
+    if h is not None and _k3_rows.get(h) is t and available():
+        _torp_push_visual(t, h)
 
 
 def torpedo_row_add(t) -> None:

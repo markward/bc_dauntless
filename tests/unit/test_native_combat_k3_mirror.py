@@ -398,3 +398,106 @@ def test_switch_off_registers_nothing():
     assert "_k3_row" not in t.__dict__
     assert _h.combat_torp_size() == 0
     projectiles.expire(t)
+
+
+# ── The visual record (native torpedo feed, Task 2) ─────────────────────────
+
+def TGColorA(r, g, b, a):
+    c = App.TGColorA()
+    c.SetRGBA(r, g, b, a)
+    return c
+
+
+def _col(c):
+    from engine import host_loop
+    return _hex(*host_loop._color_tuple(c))
+
+
+def _make_photon(num_flares=4):
+    t = Torpedo()
+    t.CreateTorpedoModel(
+        "data/Textures/Tactical/TorpedoCore.tga", TGColorA(1.0, 0.5, 0.25, 1.0),
+        0.2, 1.2,
+        "data/Textures/Tactical/TorpedoGlow.tga", TGColorA(0.3, 0.6, 0.9, 0.8),
+        3.0, 4.5, 0.75,
+        "data/Textures/Tactical/TorpedoFlares.tga", TGColorA(0.9, 0.8, 0.7, 0.6),
+        num_flares, 0.4, 0.8)
+    return t
+
+
+def _expect_visual(t, v):
+    from engine import host_loop
+    assert v is not None
+    assert v["core_texture"] == host_loop._resolve_game_texture(t._core_texture)
+    assert v["glow_texture"] == host_loop._resolve_game_texture(t._glow_texture)
+    assert v["flares_texture"] == host_loop._resolve_game_texture(
+        t._flares_texture)
+    for key, c in (("core_color", t._core_color), ("glow_color", t._glow_color),
+                   ("flares_color", t._flares_color),
+                   ("shell_color", t._shell_color),
+                   ("bolt_core_color", t._bolt_core_color)):
+        assert _hex(*v[key]) == _col(c), key
+    for key, attr in (("core_size_a", "_core_size_a"),
+                      ("core_size_b", "_core_size_b"),
+                      ("glow_size_a", "_glow_size_a"),
+                      ("glow_size_b", "_glow_size_b"),
+                      ("glow_size_c", "_glow_size_c"),
+                      ("flares_size_a", "_flares_size_a"),
+                      ("flares_size_b", "_flares_size_b"),
+                      ("bolt_length", "_bolt_length"),
+                      ("bolt_width", "_bolt_width")):
+        assert float(v[key]).hex() == float(getattr(t, attr)).hex(), key
+    assert v["num_flares"] == t._num_flares
+    assert v["id"] == int(t._id)
+    assert v["is_disruptor"] == bool(t._is_disruptor)
+    assert float(v["light_base"]).hex() == float(
+        max(t._glow_size_a, t._glow_size_b)).hex()
+
+
+def test_a_created_torpedo_carries_its_visual_record(on):
+    # Model created BEFORE the row exists (the SDK order: Create*Model, then
+    # register -> _active.append).
+    t = _make_photon()
+    projectiles.register(t)
+    _expect_visual(t, _row(t)["visual"])
+    # Model created AFTER the row exists: pushed at Create.
+    u = Torpedo()
+    projectiles.register(u)
+    assert _row(u)["visual"] is None
+    u.CreateTorpedoModel("a.tga", None, 1, 2, "b.tga", None, 7, 5, 1,
+                         "c.tga", None, 2, 0.5, 0.25)
+    _expect_visual(u, _row(u)["visual"])
+    assert float(_row(u)["visual"]["light_base"]).hex() == (7.0).hex()
+
+
+def test_a_torpedo_with_no_model_has_no_visual(on):
+    t = _fire()
+    assert _row(t)["visual"] is None
+
+
+def test_a_rebuilt_table_keeps_visual_records(on):
+    a, b = _make_photon(), _make_photon(num_flares=2)
+    projectiles.register(a)
+    projectiles.register(b)
+    c = _fire()
+    old = [t.__dict__["_k3_row"] for t in (a, b, c)]
+    nc.torpedo_table_mark_dirty()
+    nc.torpedo_table_rebuild(projectiles._active)
+    assert [t.__dict__["_k3_row"] for t in (a, b, c)] != old   # new handles
+    _expect_visual(a, _row(a)["visual"])
+    _expect_visual(b, _row(b)["visual"])
+    assert _row(b)["visual"]["num_flares"] == 2
+    assert _row(c)["visual"] is None
+
+
+def test_a_disruptor_record_has_empty_textures(on):
+    t = Torpedo()
+    t.CreateDisruptorModel(TGColorA(0.1, 0.9, 0.2, 1.0),
+                           TGColorA(1.0, 1.0, 0.5, 1.0), 2.5, 0.125)
+    projectiles.register(t)
+    v = _row(t)["visual"]
+    assert (v["core_texture"], v["glow_texture"], v["flares_texture"]) == (
+        "", "", "")
+    assert v["is_disruptor"] is True
+    assert float(v["bolt_length"]).hex() == (2.5).hex()
+    _expect_visual(t, v)

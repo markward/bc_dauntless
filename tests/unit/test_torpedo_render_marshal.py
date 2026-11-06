@@ -160,6 +160,9 @@ def test_a_frame_resolves_each_texture_once(monkeypatch):
                         lambda rel: calls.append(rel) or real(rel))
     for _ in range(20):
         _make_photon()
+    # The native torpedo table resolves a torpedo's textures once at creation
+    # (a recorded departure); this test pins the per-FRAME feed only.
+    calls.clear()
     out = _build_torpedo_render_data()
     assert len(out) == 20
     assert sorted(calls) == sorted({
