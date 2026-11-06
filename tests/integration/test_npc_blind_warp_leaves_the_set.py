@@ -22,8 +22,7 @@ def test_retreating_warbird_leaves_tevron2_and_e2m0_hears_it(monkeypatch):
     mod.g_lEnemyShips = ["Warbird 1"]
     pSet = App.g_kSetManager.GetSet("Tevron2")
     warbird = loadspacehelper.CreateShip("E2M0Warbird", pSet, "Warbird 1", "Warbird1Start")
-    sys.path.insert(0, "sdk/Build/scripts/Maelstrom/Episode2/E2M0")
-    import E2M0_AI_WarbirdWarp
+    from Maelstrom.Episode2.E2M0 import E2M0_AI_WarbirdWarp
     warbird.SetAI(E2M0_AI_WarbirdWarp.CreateAI(warbird))
     from engine.core.loop import GameLoop
     loop = GameLoop()
