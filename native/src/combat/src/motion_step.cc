@@ -13,6 +13,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -111,6 +112,24 @@ struct Plan {
     MotionWrite w{};
 };
 
+constexpr Vec3 kNoThrust{0.0, 0.0, 0.0};
+
+// `ship._acceleration = a` (step_vector_velocity, _no_thrust): logged
+// (kAccel) only when `a` differs BITWISE from the mirror's (-0.0 is not
+// 0.0) or the mirror's is None; equal bits leave Python's value as it is,
+// which is what Python's write would store. A value the mirror cannot
+// represent (4 zeros) is Python's.
+void record_accel(const ObjectRow& o, const Vec3& a, MotionWrite& w) {
+    const std::vector<double>& held = o._acceleration;
+    if (!(held.empty() || held.size() == 3))
+        to_python(MotionReason::Unrepresentable);
+    if (held.size() == 3 &&
+        std::memcmp(held.data(), a.data(), sizeof(double) * 3) == 0)
+        return;
+    w.accel = a;
+    w.what |= kAccel;
+}
+
 // ship_motion._integrate_rotation: R . (R_pitch . R_yaw . R_roll), the
 // body-frame delta post-multiplied, pitch (X) -> yaw (Z) -> roll (Y).
 void integrate_rotation(const Vec3& cav, double dt, const Mat3& R, Plan& p) {
@@ -193,15 +212,24 @@ Plan plan_step(const Mirror& m, const TransformStore& store, int64_t h,
     Mat3 R;
     for (int i = 0; i < 9; ++i) R[i] = t.rot[i];
 
-    // `if implements(ship, "IsImmobile") and ship.IsImmobile(): return`
-    if (o._static || o._stationary) return p;
+    // `if implements(ship, "IsImmobile") and ship.IsImmobile():
+    //     _no_thrust(ship); return`
+    if (o._static || o._stationary) {
+        record_accel(o, kNoThrust, p.w);
+        p.commit = p.w.what != 0;
+        return p;
+    }
     // `if getattr(ship, "_insystem_warp_transit", None) is not None:`
     if (o._insystem_warp_transit && !past_warp) {
         p.warp = true;
         return p;
     }
-    // `if warp_state.is_arriving(ship): return`
-    if (o.arriving) return p;
+    // `if warp_state.is_arriving(ship): _no_thrust(ship); return`
+    if (o.arriving) {
+        record_accel(o, kNoThrust, p.w);
+        p.commit = p.w.what != 0;
+        return p;
+    }
 
     const std::vector<double>& sp = o._speed_setpoint;
     if (!(sp.empty() || sp.size() == 5))
@@ -209,9 +237,13 @@ Plan plan_step(const Mirror& m, const TransformStore& store, int64_t h,
     const bool sp_none = sp.empty();
     const int64_t av_state = o._target_angular_velocity_setpoint_state;
     if (sp_none && av_state == 0) {
-        // `if ship is not App.Game_GetCurrentPlayer(): drift.step(ship, dt)`
-        if (h != player) drift_step(o, pos, R, dt, p);
-        p.commit = p.pos_set || p.rot_set;
+        // `if ship is not App.Game_GetCurrentPlayer(): drift.step(ship,
+        // dt); _no_thrust(ship)` -- the player's helm owns its acceleration.
+        if (h != player) {
+            drift_step(o, pos, R, dt, p);
+            record_accel(o, kNoThrust, p.w);
+        }
+        p.commit = p.pos_set || p.rot_set || p.w.what != 0;
         return p;
     }
     if (av_state == 2) to_python(MotionReason::Unrepresentable);
@@ -264,6 +296,7 @@ Plan plan_step(const Mirror& m, const TransformStore& store, int64_t h,
         w.velocity = dv;
         w.what |= kVelocity;
         integrate_rotation(o._current_angular_velocity, dt, R, p);
+        record_accel(o, kNoThrust, w);  // _no_thrust(ship)
         p.commit = true;
         return p;
     }
@@ -301,9 +334,13 @@ Plan plan_step(const Mirror& m, const TransformStore& store, int64_t h,
         target = commanded;
         accel = kFallbackMaxAccel;
     }
-    // step_vector_velocity(ship, world_dir, speed, target, accel, dt):
-    // `_motion_vel` re-seeded along the direction unless it holds the speed
-    // the ship is at.
+    // step_vector_velocity(ship, world_dir, speed, target, accel, dt).
+    // The re-seed contract: the vector is trusted only while `speed`
+    // (_current_speed) is bit-identical to _motion_vel[3], the speed this
+    // step last returned; any writer that sets _current_speed directly
+    // (warp exit, drift re-seed, tests) makes them differ and the vector is
+    // re-seeded along the nose; a writer that must keep the vector (none
+    // today) must write both.
     const std::vector<double>& mv = o._motion_vel;
     if (!(mv.empty() || mv.size() == 4))
         to_python(MotionReason::Unrepresentable);
@@ -312,6 +349,7 @@ Plan plan_step(const Mirror& m, const TransformStore& store, int64_t h,
         vel = {wd[0] * speed, wd[1] * speed, wd[2] * speed};
     else
         vel = {mv[0], mv[1], mv[2]};
+    const Vec3 start = vel;  // `sx, sy, sz = vel`
     const Vec3 tv{wd[0] * target, wd[1] * target, wd[2] * target};
     const double ex = tv[0] - vel[0], ey = tv[1] - vel[1], ez = tv[2] - vel[2];
     const double e = std::sqrt(ex * ex + ey * ey + ez * ez);
@@ -331,6 +369,15 @@ Plan plan_step(const Mirror& m, const TransformStore& store, int64_t h,
     }
     w.motion_vel = {vel[0], vel[1], vel[2], speed};
     w.what |= kMotionVel;
+    // `_acceleration = ((vx - sx) / dt, ...)`, zeros when dt <= 0: the
+    // law's own step, never dv/dt.
+    if (dt <= 0.0)
+        record_accel(o, kNoThrust, w);
+    else
+        record_accel(o,
+                     {(vel[0] - start[0]) / dt, (vel[1] - start[1]) / dt,
+                      (vel[2] - start[2]) / dt},
+                     w);
     w.speed = speed;
     w.what |= kSpeed;
 
@@ -379,31 +426,6 @@ Plan plan_step(const Mirror& m, const TransformStore& store, int64_t h,
     return p;
 }
 
-// One row, as ship_motion.step_and_record: the step (plan_step), then
-// _record_acceleration -- ((v1 - before) / dt, or zeros when either is not
-// a TGPoint3 or dt <= 0) from the `_velocity` the row entered with and the
-// one it leaves with.
-Plan plan_row(const Mirror& m, const TransformStore& store, int64_t h,
-              int64_t player, double dt, bool past_warp) {
-    Plan p = plan_step(m, store, h, player, dt, past_warp);
-    if (p.warp) return p;
-    const ObjectRow& o = *m.object(h);
-    const bool before_ok = o._velocity_state == 1;
-    const Vec3& b = o._velocity;
-    MotionWrite& w = p.w;
-    const bool written = (w.what & kVelocity) != 0;
-    if (!before_ok || dt <= 0.0) {
-        w.accel = {0.0, 0.0, 0.0};
-    } else {
-        const Vec3& v1 = written ? w.velocity : b;
-        w.accel = {(v1[0] - b[0]) / dt, (v1[1] - b[1]) / dt,
-                   (v1[2] - b[2]) / dt};
-    }
-    w.what |= kAccel;
-    p.commit = true;
-    return p;
-}
-
 // Write a computed row: the store pose, the mirror's motion fields, and
 // its log entry.
 void commit(Mirror& m, TransformStore& store, int64_t h, uint32_t row,
@@ -430,6 +452,9 @@ void commit(Mirror& m, TransformStore& store, int64_t h, uint32_t row,
         m.set_floats(h, Field::_motion_vel,
                      {w.motion_vel[0], w.motion_vel[1], w.motion_vel[2],
                       w.motion_vel[3]});
+    if (w.what & kAccel)
+        m.set_floats(h, Field::_acceleration,
+                     {w.accel[0], w.accel[1], w.accel[2]});
     writes.push_back(w);
     writes.back().row = row;
 }
@@ -452,7 +477,7 @@ MotionResult motion_step(Mirror& m, dauntless::TransformStore& store,
     for (int64_t i = begin; i < n; ++i) {
         Plan p;
         try {
-            p = plan_row(m, store, rows[static_cast<size_t>(i)], player, dt,
+            p = plan_step(m, store, rows[static_cast<size_t>(i)], player, dt,
                          resume_past_warp && i == begin);
         } catch (const ToPython& e) {
             r.stop = MotionStop::PythonRow;

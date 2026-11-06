@@ -182,12 +182,23 @@ def step_vector_velocity(ship, forward, current_speed: float, target_speed: floa
 
     The vector lives on the ship, ``_motion_vel = (vx, vy, vz, speed)``
     (mirrored for kernel M), so the AI integrator and the player's helm
-    share it across hand-offs. It is re-seeded along ``forward`` whenever
-    someone set the speed directly since the last step (warp exit, drift
-    re-seed, a test), i.e. ``current_speed`` differs from the speed this
-    function last returned. Returns (vx, vy, vz, speed): speed is the
+    share it across hand-offs. Returns (vx, vy, vz, speed): speed is the
     vector's length, negative when it points behind the nose, or exactly
     ``target_speed`` once the vector lands on its target.
+
+    The re-seed contract: the vector is trusted only while
+    ``current_speed`` is bit-identical to ``_motion_vel[3]``, the speed this
+    function last returned; any writer that sets ``_current_speed`` directly
+    (warp exit, drift re-seed, tests) makes them differ and the vector is
+    re-seeded along the nose; a writer that must keep the vector (none
+    today) must write both.
+
+    It also records the ship's acceleration, the law's own output
+    (Mark 2026-11-06): ``_acceleration = (v - v0) / dt``, where v0 is the
+    vector it stepped FROM (after any re-seed), so a direct velocity write
+    gives no spike; ``(0, 0, 0)`` when ``dt <= 0``. The player's helm runs
+    this outside the motion stage, so the manually flown player reports
+    its helm's acceleration too.
 
     ``snap``: a ship with no authored linear limits takes the whole gap in
     one step (``accel * dt``, accel = FALLBACK_MAX_ACCEL), as the scalar
@@ -197,6 +208,7 @@ def step_vector_velocity(ship, forward, current_speed: float, target_speed: floa
         vel = (forward.x * current_speed, forward.y * current_speed, forward.z * current_speed)
     else:
         vel = (mv[0], mv[1], mv[2])
+    sx, sy, sz = vel
     tx, ty, tz = forward.x * target_speed, forward.y * target_speed, forward.z * target_speed
     ex, ey, ez = tx - vel[0], ty - vel[1], tz - vel[2]
     e = math.sqrt(ex * ex + ey * ey + ez * ez)
@@ -211,7 +223,20 @@ def step_vector_velocity(ship, forward, current_speed: float, target_speed: floa
         if vel[0] * forward.x + vel[1] * forward.y + vel[2] * forward.z < 0.0:
             speed = -speed
     ship._motion_vel = (vel[0], vel[1], vel[2], speed)
+    if dt <= 0.0:
+        ship._acceleration = (0.0, 0.0, 0.0)
+    else:
+        ship._acceleration = ((vel[0] - sx) / dt, (vel[1] - sy) / dt, (vel[2] - sz) / dt)
     return vel[0], vel[1], vel[2], speed
+
+
+def _no_thrust(ship) -> None:
+    """A row the motion law did not fly (immobile, a warp flight that
+    owned the tick, a warp-in arrival, a setpoint-less drifter, engines-out
+    inertial drift): no commanded acceleration, for
+    PhysicsObjectClass.GetAccelerationTG. Not the setpoint-less manually
+    flown player: its helm (host_loop._PlayerControl) owns it."""
+    ship._acceleration = (0.0, 0.0, 0.0)
 
 
 def tick_all_ship_motion(dt: float) -> None:
@@ -235,7 +260,7 @@ def tick_all_ship_motion(dt: float) -> None:
     else:
         from engine.appc.ship_iter import iter_non_rock_ships
         for ship in iter_non_rock_ships():
-            step_and_record(ship, dt)
+            _step_ship_motion(ship, dt)
     # After every row, before the publish: the tractor force is the stage's
     # other pose writer (Mark 2026-11-04), so the published poses hold it.
     tick_tractors(dt)
@@ -258,37 +283,6 @@ def tick_tractors(dt: float) -> None:
     from engine.appc.ship_iter import iter_ships
     with _prof.scope("motion.tractors"):
         tractor.advance_tractors(list(iter_ships()), dt)
-
-
-def step_and_record(ship, dt: float) -> None:
-    """One row of the stage: `_step_ship_motion`, then its acceleration
-    (`_record_acceleration`). The Python loop above and native_motion's
-    Python rows both run this."""
-    before = velocity_before(ship)
-    _step_ship_motion(ship, dt)
-    _record_acceleration(ship, before, dt)
-
-
-def velocity_before(ship):
-    """The row's `_velocity` as it enters the step, for `_record_acceleration`:
-    its (x, y, z), or None when it is not a TGPoint3."""
-    v0 = ship.__dict__.get("_velocity")
-    return (v0.x, v0.y, v0.z) if isinstance(v0, TGPoint3) else None
-
-
-def _record_acceleration(ship, before, dt: float) -> None:
-    """The tick's velocity change over dt, for PhysicsObjectClass.GetAccelerationTG.
-
-    BC returns the ship's real world-space acceleration (dv/dt, sideways while
-    turning; stbc-oracle results_mac/probe_accel_gk.json). FireScript's torpedo
-    lead and the pulse-weapon solver extrapolate the target with it. Written
-    for every row, the immobile and the drifting too (zero unless the step
-    changed `_velocity`); kernel M writes it for the rows it flies."""
-    v1 = ship.__dict__.get("_velocity")
-    if before is None or not isinstance(v1, TGPoint3) or dt <= 0.0:
-        ship._acceleration = (0.0, 0.0, 0.0)
-        return
-    ship._acceleration = ((v1.x - before[0]) / dt, (v1.y - before[1]) / dt, (v1.z - before[2]) / dt)
 
 
 def _ramp_toward(current: float, target: float, step: float) -> float:
@@ -325,6 +319,7 @@ def _step_ship_motion(ship, dt: float) -> None:
     # reaches it via that path; the gate still has to be honest for direct
     # callers (and for the day someone makes _Stub falsy).
     if implements(ship, "IsImmobile") and ship.IsImmobile():
+        _no_thrust(ship)
         return
 
     # An active in-system warp flight overrides normal setpoint motion:
@@ -333,6 +328,7 @@ def _step_ship_motion(ship, dt: float) -> None:
     # its impulse orders below (warp_flight.step returns False).
     if getattr(ship, "_insystem_warp_transit", None) is not None:
         if warp_flight.step(ship, dt):
+            _no_thrust(ship)
             return
     _step_after_warp(ship, dt)
 
@@ -346,6 +342,7 @@ def _step_after_warp(ship, dt: float) -> None:
     # (WarpEngineSubsystem.step_dewarp_drive): it holds its heading and
     # slides onto its placement whatever setpoint its AI writes meanwhile.
     if warp_state.is_arriving(ship):
+        _no_thrust(ship)
         return
 
     sp = getattr(ship, "_speed_setpoint", None)
@@ -364,6 +361,7 @@ def _step_after_warp(ship, dt: float) -> None:
         # setpoint -- see the module docstring's "known gap" paragraph.
         if ship is not App.Game_GetCurrentPlayer():
             drift.step(ship, dt)
+            _no_thrust(ship)
         return
 
     # -- Commanded speed + world-space direction --
@@ -404,6 +402,7 @@ def _step_after_warp(ship, dt: float) -> None:
         )
         ship.SetVelocity(TGPoint3(drift_vec.x, drift_vec.y, drift_vec.z))
         _integrate_rotation(ship, dt)   # residual angular momentum, held
+        _no_thrust(ship)
         return
 
     # -- Powered flight: clear any drift snapshot, re-seed speed --

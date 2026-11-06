@@ -279,9 +279,13 @@ enum class Field : int32_t {
     // unrepresentable); _target_angular_velocity_fraction, a point-or-none
     // with its _state as the others above (the keyboard turn fraction); and
     // _turn_goal, 1 while a turn goal is stored (ShipClass._turn_goal: the
-    // kernel hands a row it may steer to Python).
+    // kernel hands a row it may steer to Python). _acceleration, the
+    // acceleration the law last commanded (ShipClass._acceleration,
+    // GetAccelerationTG), as a FloatList ([] None, [ax, ay, az], or 4
+    // zeros: unrepresentable); kernel M writes it back only when its new
+    // value differs bitwise.
     _motion_vel, _target_angular_velocity_fraction,
-    _target_angular_velocity_fraction_state, _turn_goal,
+    _target_angular_velocity_fraction_state, _turn_goal, _acceleration,
     kCount
 };
 
@@ -362,6 +366,7 @@ struct ObjectRow {
     std::vector<double> _motion_vel;
     Vec3 _target_angular_velocity_fraction{0, 0, 0};
     int64_t _target_angular_velocity_fraction_state = 0, _turn_goal = 0;
+    std::vector<double> _acceleration;
     // Posed parts: the pose table (empty while has_posed_parts is 0) and the
     // ship's subsystems in combat._iter_subsystems order (Subsystem handles;
     // kRefUnrepresentable for one the mirror cannot name). Not Fields: set

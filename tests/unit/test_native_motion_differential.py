@@ -19,7 +19,7 @@ short, tick by tick, all in the same scene.
 
 Each seed runs fresh with the switch on, then off; the per-tick
 golden_fight._pose_rows + motion_fight.motion_rows, plus each ship's
-`_motion_vel` and recorded `_acceleration`, must be equal, and the native
+`_motion_vel` and commanded `_acceleration`, must be equal, and the native
 arm hands no row to Python but those steering a turn goal.
 """
 import random

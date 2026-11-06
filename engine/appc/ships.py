@@ -121,10 +121,12 @@ class ShipClass(DamageableObject):
         native_combat.POINT_OR_NONE)
     _speed_setpoint = native_combat.SpeedSetpointField()
     # The motion law's state (ship_motion.step_vector_velocity, the angular
-    # law): the velocity vector, `(vx, vy, vz, speed)` or None; the keyboard
-    # turn fraction; and whether a turn goal is stored (kernel M hands a row
-    # steering one to Python).
+    # law): the velocity vector, `(vx, vy, vz, speed)` or None; its
+    # commanded acceleration, `(ax, ay, az)` or None (GetAccelerationTG);
+    # the keyboard turn fraction; and whether a turn goal is stored (kernel
+    # M hands a row steering one to Python).
     _motion_vel = native_combat.MotionVelField()
+    _acceleration = native_combat.AccelerationField()
     _target_angular_velocity_fraction = native_combat.NativeField(
         native_combat.POINT_OR_NONE)
     _turn_goal = native_combat.PresenceField()
@@ -249,9 +251,11 @@ class ShipClass(DamageableObject):
         self._speed_setpoint = None
         self._target_angular_velocity_setpoint = None
         # The motion law's state (ship_motion): the velocity vector and the
-        # speed it was last stepped to, the keyboard turn fraction, and a
-        # stored turn goal (TurnToward* / TurnDirectionsToDirections).
+        # speed it was last stepped to, the acceleration it last commanded,
+        # the keyboard turn fraction, and a stored turn goal (TurnToward* /
+        # TurnDirectionsToDirections).
         self._motion_vel = None
+        self._acceleration = None
         self._target_angular_velocity_fraction = None
         self._turn_goal = None
         self._current_speed: float = 0.0

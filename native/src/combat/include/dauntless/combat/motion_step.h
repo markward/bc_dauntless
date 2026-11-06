@@ -8,11 +8,11 @@
 #include "dauntless/transform_store.h"
 
 // Kernel M (native motion phase 2, Task 4): the per-ship motion step,
-// a bit-exact port of engine/appc/ship_motion.py's step_and_record
-// (_step_ship_motion with _integrate_rotation, _effective_motion, _cap_keep,
-// step_vector_velocity, law_step_vector and _ramp_toward, then
-// _record_acceleration) and engine/appc/drift.py's step. It reads only the combat
-// mirror and the transform store, so it runs with the GIL released.
+// a bit-exact port of engine/appc/ship_motion.py's _step_ship_motion (with
+// _integrate_rotation, _effective_motion, _cap_keep, step_vector_velocity,
+// law_step_vector, _ramp_toward and _no_thrust) and engine/appc/drift.py's
+// step. It reads only the combat mirror and the transform store, so it runs
+// with the GIL released.
 //
 // The walk starts at rows[begin] and, per row, in Python's order:
 //   1. no live Object row, motion_stock 0, or an invalid transform: stop
@@ -29,8 +29,13 @@
 //      (law_step_vector) -- then the rotation. A row whose stored turn goal
 //      may own its angular setpoint (_turn_goal with a setpoint) stops
 //      PythonRow (TurnGoal): ShipClass._steer_turn_goal is Python's;
-//   7. every row it finishes also records its acceleration, Python's
-//      _record_acceleration (zero for a row passed over).
+//   7. the acceleration is the law's own output (Mark 2026-11-06), not
+//      dv/dt: step_vector_velocity's (v - v0) / dt on the powered step,
+//      zero (_no_thrust) on every other exit but the setpoint-less player
+//      (its helm owns it: nothing written). It is logged (kAccel) and
+//      written to the mirror only when it differs bitwise from the
+//      mirror's _acceleration (or that is None); one the mirror cannot
+//      represent is Python's (Unrepresentable).
 //
 // Each row is computed into locals and committed at its end. Anything the
 // kernel cannot answer as Python would -- an unrepresentable input (a
@@ -39,9 +44,11 @@
 // a helper (std::invalid_argument, "answer in Python") -- stops PythonRow at
 // that row with NOTHING of it written. A commit writes the store pose, the
 // mirror's _current_speed, _current_angular_velocity, _velocity,
-// _drift_velocity and _motion_vel, and appends one MotionWrite carrying
-// exactly the attributes Python would have written (`what`; every finished
-// row writes at least _acceleration, which only Python reads).
+// _drift_velocity, _motion_vel and _acceleration, and appends one
+// MotionWrite carrying exactly the attributes Python would have written
+// (`what`), less an unchanged acceleration; a row with nothing to log
+// (a drifter or an immobile ship whose zero acceleration is held already)
+// appends none.
 //
 // `rows` are Object handles in the stage's order; MotionWrite::row and
 // MotionResult::at are positions in it (at = rows.size() when Done).

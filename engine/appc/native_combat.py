@@ -1194,6 +1194,35 @@ class MotionVelField(NativeField):
         return _hexes(self._encode(value)) == _hexes(mirrored)
 
 
+class AccelerationField(NativeField):
+    """ShipClass._acceleration, the motion law's commanded acceleration
+    (ship_motion.step_vector_velocity / _no_thrust; GetAccelerationTG):
+    None, or ``(ax, ay, az)``. Pushed as a float list in one
+    ``combat_set_floats`` call: None is [], a tuple of three floats its
+    three values, and anything else [0.0] * 4 (unrepresentable: the kernel
+    takes the Python path). Kernel M writes it back only when its new value
+    differs bitwise from this one. Never drops the row. Always rebound,
+    never mutated."""
+
+    def __init__(self) -> None:
+        super().__init__(list)
+
+    def _encode(self, value):
+        if value is None:
+            return []
+        if type(value) is tuple and len(value) == 3 and \
+                all(type(x) is float for x in value):
+            return list(value)
+        return [0.0] * 4
+
+    def _push(self, obj, h, value) -> None:
+        _call(obj, _h.combat_set_floats, h, _fid(self._key),
+              self._encode(value))
+
+    def _matches(self, value, mirrored) -> bool:
+        return _hexes(self._encode(value)) == _hexes(mirrored)
+
+
 _NUMBERS = (int, float, bool)
 
 

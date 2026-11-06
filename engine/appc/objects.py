@@ -712,12 +712,19 @@ class PhysicsObjectClass(ObjectClass):
         return TGPoint3(self._velocity.x, self._velocity.y, self._velocity.z)
 
     def GetAccelerationTG(self) -> TGPoint3:
-        """World-space acceleration over the last motion tick (dv/dt, recorded by
-        ship_motion.tick_all_ship_motion); zero for an object never stepped.
+        """World-space acceleration the ship's controller commanded on its last
+        motion tick: the motion law's own step / dt (Mark 2026-11-06), recorded
+        by ship_motion.step_vector_velocity -- the AI integrator and the
+        player's helm both run it -- and zero (ship_motion._no_thrust) for a
+        tick the law did not fly (immobile, warp flight, arriving, drifting).
+        Not dv/dt: a direct velocity write (a warp drop-out, a dash stop, a
+        scripted SetVelocity) gives no one-tick spike. Zero for an object
+        never stepped.
 
         BC returns the real acceleration, sideways components included while
-        turning (stbc-oracle results_mac/probe_accel_gk.json: matches dv/dt, up to
-        ~1.9 GU/s^2). FireScript.PredictTargetLocation feeds it to
+        turning (stbc-oracle results_mac/probe_accel_gk.json: measured as dv/dt,
+        up to ~1.9 GU/s^2; while the law alone moves the ship its step IS that
+        dv/dt). FireScript.PredictTargetLocation feeds it to
         GetPredictedPosition, so a turning target's predicted point swings off
         its current one and the AI's 10-degree torpedo window opens less often;
         a constant zero made the AI fire 21-32% more torpedoes than BC's.

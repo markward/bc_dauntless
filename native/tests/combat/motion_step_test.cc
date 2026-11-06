@@ -66,7 +66,7 @@ struct World {
 TEST(MotionStep, BranchOrder) {
     World w;
     // Immobile beats a warp and an arrival: passed over, nothing written
-    // but its (zero) acceleration.
+    // but its zero acceleration (the mirror's is None: it differs).
     const int64_t a = w.ship();
     w.setpoints(a, 5.0);
     w.m.set_i(a, Field::_static, 1);
@@ -184,8 +184,8 @@ TEST(MotionStep, DriftWritesOnlyPose) {
     w.m.set_f(a, Field::_current_speed, 0.25);
     const MotionResult r = w.step({a});
     EXPECT_EQ(r.stop, MotionStop::Done);
-    // drift.step sets no attribute: the row logs only its acceleration,
-    // zero (the velocity is unchanged).
+    // drift.step sets no attribute: the row logs only its zero
+    // acceleration (_no_thrust), and only because the mirror's is None.
     ASSERT_EQ(r.writes.size(), 1u);
     EXPECT_EQ(r.writes[0].what, kAccel);
     EXPECT_EQ(r.writes[0].accel, (Vec3{0.0, 0.0, 0.0}));
@@ -197,6 +197,8 @@ TEST(MotionStep, DriftWritesOnlyPose) {
     EXPECT_EQ(o->_current_speed, 0.25);
     EXPECT_EQ(o->_velocity, (Vec3{1.0, 2.0, 3.0}));
     EXPECT_EQ(o->_drift_velocity_state, 0);
+    // Its zeros now held, the next drift step logs nothing at all.
+    EXPECT_TRUE(w.step({a}).writes.empty());
     // A `_velocity` that is not a TGPoint3 (state 2) is Python's: drift.step
     // reads v.x there and raises.
     w.m.set_i(a, Field::_velocity_state, 2);
@@ -288,7 +290,7 @@ TEST(MotionStep, FallbackAccelOnZeroLimits) {
 
 // The motion law: the velocity vector moves toward forward x target by
 // min(accel, |gap| / tau) * dt, its speed is the vector's length, and the
-// tick's dv / dt is logged.
+// step / dt is logged as the acceleration.
 TEST(MotionStep, VelocityVectorLaw) {
     World w;
     const int64_t a = w.ship();
@@ -329,4 +331,59 @@ TEST(MotionStep, VelocityVectorLaw) {
     EXPECT_EQ(g.stop, MotionStop::PythonRow);
     EXPECT_EQ(g.reason, MotionReason::TurnGoal);
     EXPECT_TRUE(g.writes.empty());
+}
+
+// The acceleration is the law's own step / dt, written back only when it
+// differs (bitwise) from the mirror's: a ship cruising at its target steps
+// by zero, so its first commit writes the zeros (the mirror's is empty,
+// None) and its second appends no kAccel.
+TEST(MotionStep, AccelIsLawStepAndSkipsWhenUnchanged) {
+    World w;
+    const int64_t a = w.ship();
+    const int64_t ies = w.m.register_row(Kind::Subsystem);
+    w.m.set_i(ies, Field::motion_ies_stock, 1);
+    w.m.set_i(ies, Field::_is_on, 1);
+    w.m.set_f(ies, Field::_power_percentage_wanted, 1.0);
+    w.m.set_f(ies, Field::_max_condition, 100.0);
+    w.m.set_f(ies, Field::_condition, 100.0);
+    w.m.set_f(ies, Field::_max_speed, 6.0);
+    w.m.set_f(ies, Field::_max_accel, 1.5);
+    w.m.set_ref(a, Field::_impulse_engine_subsystem, ies);
+    w.setpoints(a, 5.0);
+    w.m.set_f(a, Field::_current_speed, 5.0);
+    w.m.set_floats(a, Field::_motion_vel, {0.0, 5.0, 0.0, 5.0});
+    w.m.set_fv(a, Field::_velocity, {0.0, 5.0, 0.0});
+    MotionResult r = w.step({a});
+    ASSERT_EQ(r.stop, MotionStop::Done);
+    ASSERT_EQ(r.writes.size(), 1u);
+    EXPECT_TRUE(r.writes[0].what & kAccel);
+    EXPECT_EQ(r.writes[0].accel, (Vec3{0.0, 0.0, 0.0}));
+    EXPECT_EQ(w.m.get_floats(a, Field::_acceleration),
+              (std::vector<double>{0.0, 0.0, 0.0}));
+    r = w.step({a});
+    ASSERT_EQ(r.stop, MotionStop::Done);
+    ASSERT_EQ(r.writes.size(), 1u);
+    EXPECT_TRUE(r.writes[0].what & kMotionVel);
+    EXPECT_FALSE(r.writes[0].what & kAccel);
+    // Bitwise: a held -0.0 is not the step's +0.0, so it is written.
+    w.m.set_floats(a, Field::_acceleration, {-0.0, 0.0, 0.0});
+    r = w.step({a});
+    ASSERT_EQ(r.writes.size(), 1u);
+    EXPECT_TRUE(r.writes[0].what & kAccel);
+    EXPECT_FALSE(std::signbit(w.m.get_floats(a, Field::_acceleration)[0]));
+    // Off its target the step is the law's: from rest, min(1.5, 5 / 1) * dt
+    // along +y, over dt.
+    w.m.set_f(a, Field::_current_speed, 0.0);
+    r = w.step({a});
+    ASSERT_EQ(r.writes.size(), 1u);
+    EXPECT_TRUE(r.writes[0].what & kAccel);
+    EXPECT_EQ(r.writes[0].accel[0], 0.0);
+    EXPECT_EQ(r.writes[0].accel[1], r.writes[0].velocity[1] / kDt);
+    EXPECT_EQ(r.writes[0].accel[2], 0.0);
+    // A held acceleration the mirror cannot represent is Python's.
+    w.m.set_floats(a, Field::_acceleration, {0.0, 0.0, 0.0, 0.0});
+    r = w.step({a});
+    EXPECT_EQ(r.stop, MotionStop::PythonRow);
+    EXPECT_EQ(r.reason, MotionReason::Unrepresentable);
+    EXPECT_TRUE(r.writes.empty());
 }

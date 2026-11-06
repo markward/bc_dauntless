@@ -1,10 +1,10 @@
 """Kernel M (native motion phase 2, Task 4) against Python's
-``ship_motion.step_and_record`` (``_step_ship_motion``, then
-``_record_acceleration``), one branch per test.
+``ship_motion._step_ship_motion`` (the law's acceleration included), one
+branch per test.
 
 Each differential takes a snapshot of the ships (pose, `_current_speed`,
 `_current_angular_velocity`'s components, `_velocity`, `_drift_velocity`,
-the motion law's `_motion_vel` and the recorded `_acceleration`),
+the motion law's `_motion_vel` and its commanded `_acceleration`),
 runs the kernel through its binding (``combat_motion_compute``) and the
 reference applier (``native_motion._apply_writes_py``), reads the result,
 restores the snapshot through the real setters (so the mirror is restored
@@ -206,6 +206,9 @@ def _assert_mirror(ship):
     want_mv = d.get("_motion_vel")
     assert [_hx(v) for v in row["_motion_vel"]] == (
         [] if want_mv is None else [_hx(v) for v in want_mv])
+    want_acc = d.get("_acceleration")
+    assert [_hx(v) for v in row["_acceleration"]] == (
+        [] if want_acc is None else [_hx(v) for v in want_acc])
     for name in ("_current_angular_velocity", "_velocity",
                  "_drift_velocity"):
         got = row[name]
@@ -223,7 +226,7 @@ def _differential(ships, ticks=1, player=None, dt=DT, begin=0, resume=False,
     """Run the kernel and the Python step from the same snapshot for
     `ticks` ticks (continuing from the Python result, which equals the
     kernel's) and compare. Returns the kernel's writes per tick."""
-    python = python or ship_motion.step_and_record
+    python = python or ship_motion._step_ship_motion
     log = []
     for t in range(ticks):
         snaps = [_Snap(s) for s in ships]
@@ -243,8 +246,8 @@ def _differential(ships, ticks=1, player=None, dt=DT, begin=0, resume=False,
 
 
 def _motion(ship):
-    """_state without the recorded acceleration: what a row the kernel
-    passes over keeps (it still records a zero acceleration)."""
+    """_state without the acceleration: what a row the kernel passes over
+    keeps (it still records a zero acceleration, _no_thrust)."""
     st = _state(ship)
     del st["_acceleration"]
     return st
@@ -253,14 +256,6 @@ def _motion(ship):
 def _kinds(log):
     """Each tick's writes as their `what` bits."""
     return [[w[1] for w in writes] for writes in log]
-
-
-def _after_warp_and_record(ship, dt):
-    """What the driver runs for a row resumed past its warp check:
-    `_step_after_warp`, then the row's acceleration."""
-    before = ship_motion.velocity_before(ship)
-    ship_motion._step_after_warp(ship, dt)
-    ship_motion._record_acceleration(ship, before, dt)
 
 
 def _moved(before, ship):
@@ -395,6 +390,21 @@ def test_a_turn_goal_without_a_setpoint_is_flown():
     _differential([ship], ticks=3)
 
 
+def test_unrepresentable_acceleration_is_pythons():
+    """A held `_acceleration` the mirror cannot represent (ints, a list):
+    the kernel cannot tell whether Python's write would change it, so the
+    row is Python's."""
+    for odd in ((1, 2, 3), [0.0, 0.0, 0.0]):
+        ship, _ies = _ship()
+        ship.SetSpeed(3.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
+        ship._acceleration = odd
+        assert len(_h.combat_dump(_slot(ship))["_acceleration"]) == 4
+        assert _native([ship]) == (nm.PYTHON_ROW, 0, "Unrepresentable", [])
+        ship_motion._step_ship_motion(ship, DT)
+        assert type(ship._acceleration) is tuple
+        _differential([ship], ticks=2)
+
+
 def test_unrepresentable_motion_vel_is_pythons():
     ship, _ies = _ship()
     ship.SetSpeed(3.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
@@ -414,8 +424,10 @@ def test_total_loss_snapshot_then_hold():
     assert "_drift_velocity" not in ship.__dict__
     log = _differential([ship], ticks=3)
     kinds = [[w[1] for w in writes] for writes in log]
+    # The zero acceleration is written once (the mirror's was None), then
+    # held: never written back again.
     snap = nm.K_DRIFT_SET | nm.K_VELOCITY | nm.K_ACCEL
-    held = nm.K_VELOCITY | nm.K_ACCEL
+    held = nm.K_VELOCITY
     assert kinds == [[snap], [held], [held]]
     assert isinstance(ship._drift_velocity, TGPoint3)
 
@@ -485,8 +497,9 @@ def test_setpointless_drift_model_and_world_spin():
         ship.SetAngularVelocity(TGPoint3(0.1, 0.2, 0.3), space)
         before = _state(ship)
         log = _differential([ship], ticks=5)
-        # drift.step sets no attribute: only the (zero) acceleration.
-        assert _kinds(log) == [[nm.K_ACCEL]] * 5
+        # drift.step sets no attribute: only the zero acceleration, once
+        # (the mirror's was None); then nothing at all.
+        assert _kinds(log) == [[nm.K_ACCEL]] + [[]] * 4
         assert _moved(before, ship) == (True, True)
 
 
@@ -498,11 +511,12 @@ def test_setpointless_player_is_untouched():
     assert App.Game_GetCurrentPlayer() is player
     player.SetVelocity(TGPoint3(0.0, 10.0, 0.0))
     player.SetAngularVelocity(TGPoint3(0.0, 0.0, 1.0), WORLD)
-    before = _motion(player)
+    before = _state(player)
     log = _differential([player], ticks=2, player=player)
-    assert _kinds(log) == [[nm.K_ACCEL]] * 2
-    assert _motion(player) == before
-    assert player._acceleration == (0.0, 0.0, 0.0)
+    # Its helm owns the acceleration: nothing written, not even zeros.
+    assert _kinds(log) == [[]] * 2
+    assert _state(player) == before
+    assert player._acceleration is None
 
 
 # ── Rows the kernel passes over ──────────────────────────────────────────────
@@ -518,7 +532,7 @@ def test_immobile_skips():
         s.SetVelocity(TGPoint3(1.0, 0.0, 0.0))
     before = [_motion(a), _motion(b)]
     log = _differential([a, b], ticks=2)
-    assert _kinds(log) == [[nm.K_ACCEL] * 2] * 2
+    assert _kinds(log) == [[nm.K_ACCEL] * 2, []]
     assert [_motion(a), _motion(b)] == before
 
 
@@ -532,7 +546,7 @@ def test_arriving_skips():
     ship.SetSpeed(5.0, TGPoint3(0.0, 1.0, 0.0), MODEL)
     before = _motion(ship)
     log = _differential([ship], ticks=2)
-    assert _kinds(log) == [[nm.K_ACCEL]] * 2
+    assert _kinds(log) == [[nm.K_ACCEL], []]
     assert _motion(ship) == before
 
 
@@ -608,7 +622,7 @@ def test_warp_row_stops_and_resume_past_warp_runs_it(monkeypatch):
     # False): the rest of the row is the ordinary step.
     monkeypatch.setattr(warp_flight, "step", lambda s, dt: False)
     _differential([ship], ticks=3, resume=True,
-                  python=_after_warp_and_record)
+                  python=ship_motion._step_after_warp)
     assert _moved(before, ship)[0]
     # resume_past_warp covers only the row it resumes at.
     other, _ = _ship("Warper2")
@@ -636,7 +650,7 @@ def test_rows_before_a_stop_are_committed_and_after_untouched():
     got_a = _state(a)
     assert _state(b) == before_b and _state(c) == before_c
     snap_a.restore()
-    ship_motion.step_and_record(a, DT)
+    ship_motion._step_ship_motion(a, DT)
     assert got_a == _state(a)
     # The driver resumes past Python's row: C alone is the kernel's.
     _differential([a, b, c], begin=2)

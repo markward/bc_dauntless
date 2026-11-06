@@ -139,7 +139,14 @@ def _state(ship):
             (type(speed).__name__, repr(speed)),
             _vec(d.get("_current_angular_velocity")),
             _vec(d.get("_velocity")),
-            "_drift_velocity" in d, _vec(d.get("_drift_velocity")))
+            "_drift_velocity" in d, _vec(d.get("_drift_velocity")),
+            _floats(d.get("_motion_vel")), _floats(d.get("_acceleration")))
+
+
+def _floats(t):
+    if t is None or type(t) is not tuple:
+        return repr(t)
+    return tuple(_hx(v) for v in t)
 
 
 def _arm(env):
@@ -503,7 +510,7 @@ _FUNCTIONS = (
     (drift, "step"), (ship_motion, "impulse_fractions"),
     (ship_motion, "_integrate_rotation"), (ship_motion, "_effective_motion"),
     (ship_motion, "_cap_keep"), (ship_motion, "step_vector_velocity"),
-    (ship_motion, "law_step_vector"), (ship_motion, "_record_acceleration"),
+    (ship_motion, "law_step_vector"), (ship_motion, "_no_thrust"),
     (ship_motion, "_step_after_warp"),
     (subsystems, "_is_offline"), (ship_death, "_out_of_action"),
     (warp_state, "is_arriving"),

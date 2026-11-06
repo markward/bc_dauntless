@@ -245,6 +245,7 @@ constexpr FieldInfo kInfo[] = {
     {"_target_angular_velocity_fraction", Kind::Object, FieldType::Vec3},
     {"_target_angular_velocity_fraction_state", Kind::Object, FieldType::I},
     {"_turn_goal", Kind::Object, FieldType::I},
+    {"_acceleration", Kind::Object, FieldType::FloatList},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -496,6 +497,7 @@ Vec3* vptr(ObjectRow& r, Field f) {
 }
 std::vector<double>* flptr(ObjectRow& r, Field f) {
     if (f == Field::_speed_setpoint) return &r._speed_setpoint;
+    if (f == Field::_acceleration) return &r._acceleration;
     return f == Field::_motion_vel ? &r._motion_vel : nullptr;
 }
 std::vector<int64_t>* idptr(ObjectRow& r, Field f) {

@@ -1,10 +1,11 @@
 """Kernel M, the native ship-motion step (native motion phase 2).
 
 The kernel (native/src/combat/src/motion_step.cc) is a bit-exact port of
-``ship_motion.step_and_record`` (``_step_ship_motion``, then
-``_record_acceleration``) and ``drift.step``; it writes the transform
-store and the mirror itself, and logs the Python attributes the step would
-have written. Its two bindings: ``combat_motion_compute`` returns that log
+``ship_motion._step_ship_motion`` (the motion law's acceleration included:
+``step_vector_velocity``, ``_no_thrust``) and ``drift.step``; it writes the
+transform store and the mirror itself, and logs the Python attributes the
+step would have written -- an acceleration only when it differs from the
+one the ship holds, so a drifting or immobile row logs nothing. Its two bindings: ``combat_motion_compute`` returns that log
 (``_apply_writes_py`` below is THE REFERENCE applier), ``combat_motion_step``
 applies it by C (native/src/host/motion_write_apply.cc, store for store the
 reference's).
@@ -19,13 +20,14 @@ loop the reference.
   the stage begins, each set's objects when the stage reaches it, each
   object's class when its row is reached. Kernel M runs one set at a time,
   in segments, from ``begin``:
-    - ``WARP_ROW``: ``warp_flight.step(ship, dt)`` in Python. True: resume at
-      the next row. False (an "ai" flight holding for its parts): resume AT
-      the row, past its warp check (``resume_past_warp``). Either way the
-      row's acceleration is recorded from its ``_velocity`` before the
-      warp step, once the row is done.
+    - ``WARP_ROW``: ``warp_flight.step(ship, dt)`` in Python. True: the
+      flight owned the tick (``ship_motion._no_thrust``, as
+      ``_step_ship_motion``); resume at the next row. False (an "ai" flight
+      holding for its parts): resume AT the row, past its warp check
+      (``resume_past_warp``), where the kernel's law records the
+      acceleration.
     - ``PYTHON_ROW``: ``_step_after_warp`` for the resumed row, else
-      ``step_and_record``; resume at the next row. ``TurnGoal``: the row's
+      ``_step_ship_motion``; resume at the next row. ``TurnGoal``: the row's
       stored turn goal may be steering (ShipClass._steer_turn_goal, Python).
   The player's handle is read before every call. After any Python ran
   (either stop), the rest of the set is re-read from that set's object
@@ -311,8 +313,7 @@ _SURFACE = (
     (ship_motion, ("_step_ship_motion", "_step_after_warp",
                    "_integrate_rotation", "_effective_motion", "_cap_keep",
                    "_ramp_toward", "_asymptote_step", "step_vector_velocity",
-                   "law_step_vector", "step_and_record", "velocity_before",
-                   "_record_acceleration", "impulse_fractions",
+                   "law_step_vector", "_no_thrust", "impulse_fractions",
                    "impulse_output_fraction", "FALLBACK_MAX_ACCEL",
                    "BC_IMPULSE_TAU")),
     (drift, ("step",)),
@@ -565,10 +566,6 @@ def _step_set(objs, dt) -> bool:
     with _prof.scope("motion.prep"):
         handles = [_handle(s, i, forced) for i, s in enumerate(ships)]
     begin, resume = 0, False
-    # The resumed row's `_velocity` as it entered warp_flight.step: its
-    # acceleration is over the whole row (ship_motion.step_and_record), so
-    # it is recorded again once the row is done.
-    warp_before = None
     step = _h.combat_motion_step
     while True:
         try:
@@ -582,16 +579,13 @@ def _step_set(objs, dt) -> bool:
             _resync(ships[begin:])
             raise
         _counts["native_calls"] += 1
-        if resume and (stop == DONE or at > begin):
-            ship_motion._record_acceleration(ships[begin], warp_before, dt)
         if stop == DONE:
             return True
         ship = ships[at]
         if stop == WARP_ROW:
             _counts["warp_rows"] += 1
-            warp_before = ship_motion.velocity_before(ship)
             if warp_flight.step(ship, dt):
-                ship_motion._record_acceleration(ship, warp_before, dt)
+                ship_motion._no_thrust(ship)
                 begin, resume = at + 1, False
             else:
                 begin, resume = at, True
@@ -600,9 +594,8 @@ def _step_set(objs, dt) -> bool:
             _python_rows[why] = _python_rows.get(why, 0) + 1
             if resume and at == begin:
                 ship_motion._step_after_warp(ship, dt)
-                ship_motion._record_acceleration(ship, warp_before, dt)
             else:
-                ship_motion.step_and_record(ship, dt)
+                ship_motion._step_ship_motion(ship, dt)
             begin, resume = at + 1, False
         # Python ran: what it may have changed is read again -- the stock
         # surface, the classes, and the rest of this set from its object
@@ -611,7 +604,6 @@ def _step_set(objs, dt) -> bool:
             _note_patched()
             if resume:
                 ship_motion._step_after_warp(ship, dt)
-                ship_motion._record_acceleration(ship, warp_before, dt)
             _python_rest(objs, pos[at] + 1, dt)
             return False
         _watch_classes()
@@ -634,7 +626,7 @@ def _python_rest(objs, start, dt) -> None:
     rock = _rock_class()
     for i in range(start, len(objs)):
         if _is_motion_ship(objs[i], rock):
-            ship_motion.step_and_record(objs[i], dt)
+            ship_motion._step_ship_motion(objs[i], dt)
 
 
 def _resync(ships) -> None:
