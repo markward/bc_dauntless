@@ -80,20 +80,18 @@ def test_secondary_constraint_adds_roll():
     assert abs(av.z) < 1e-6
 
 
-def test_clamp_to_max_angular_velocity():
-    """If the ship has an ImpulseEngineSubsystem with a small
-    MaxAngularVelocity, the per-axis magnitude must be clamped to
-    that value."""
+def test_planned_turn_is_not_capped_at_max_angular_velocity():
+    """The original's turn-to does not hold the ship to MaxAngularVelocity: a
+    Galaxy (0.28) about-faces at a 0.374 rad/s peak, A * tau / 4 for its planned
+    cubic (stbc-oracle turnto, Galaxy turnloc180_0). The setpoint is the
+    current rate plus one second of the planned acceleration, so from rest it
+    is MaxAngularAccel, here past the 0.5 rate cap, and nothing clamps it."""
     ship = _make_ship()
-    # Fresh ShipClass() has no IES slot — attach one so the clamp
-    # branch can read MaxAngularVelocity. Mirrors test_player's
-    # SetImpulseEngineSubsystem(ImpulseEngineSubsystem(...)) pattern.
     ship.SetImpulseEngineSubsystem(ImpulseEngineSubsystem("Impulse Engines"))
     ies = ship.GetImpulseEngineSubsystem()
-    # Populate so the clamp branch fires.
     ies.SetMaxAngularVelocity(0.5)
     ies.SetMaxAngularAccel(1.0)
-    ies.SetMaxSpeed(100.0)  # non-zero so _max_accel branch is taken
+    ies.SetMaxSpeed(100.0)
     ies.SetMaxAccel(10.0)
 
     pf = TGPoint3(0.0, 1.0, 0.0)
@@ -101,9 +99,7 @@ def test_clamp_to_max_angular_velocity():
     zero = TGPoint3(0.0, 0.0, 0.0)
     ship.TurnDirectionsToDirections(pf, pt, zero, zero)
     av = ship.GetTargetAngularVelocitySetpoint()
-    assert abs(av.x) <= 0.5 + 1e-9
-    assert abs(av.y) <= 0.5 + 1e-9
-    assert abs(av.z) <= 0.5 + 1e-9
+    assert (av.x ** 2 + av.y ** 2 + av.z ** 2) ** 0.5 == pytest.approx(1.0, abs=1e-6)
 
 
 def test_secondary_from_collinear_with_primary_target_adds_no_roll():

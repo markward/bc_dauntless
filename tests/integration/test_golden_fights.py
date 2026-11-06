@@ -26,7 +26,17 @@ unchanged. ``host_frames`` and ``host_frames_tpf1`` run real host frames
 (``_run_frame_sim``), recorded in the batched order, then ``host_frames`` and
 ``k1_ops_tpf6`` re-recorded once for native motion phase 4's whole ticks
 (ruling 2); ``host_frames_tpf1`` (one tick a frame, no ops) is the same
-sequence in both orders, unchanged.
+sequence in both orders, unchanged. ``motion_branches``, ``k1_gameloop_ai``,
+``host_frames``, ``host_frames_tpf1``, ``sdk_dumb_fire`` and ``posed_fight``
+were re-recorded once for the motion law (the impulse law on the velocity
+and angular-rate vectors, turn-to, the real GetAccelerationTG): every moving
+ship's pose changes from tick 1; ``motion_branches``' Python motion arm
+still matches the native recording bit for bit. Those six were re-recorded
+once more on main (schema 4) with kernel M steering the stored turn goals
+and GetAccelerationTG the law's own output (docs/reference/engine/
+motion-law.md); every golden scene asserts no ``TurnGoal`` hand-back.
+The k1_ops, midwalk and tractor scenes run no motion stage (ships are
+placed by ops), so they did not change.
 """
 import os
 
@@ -63,9 +73,21 @@ def _needs_assets_and_hermetic_mods(monkeypatch, tmp_path):
 def _golden(name):
     arm = os.environ.get("COMBAT_GOLDEN_ARM") or golden_fight.SCENES[name].arm
     rows = golden_fight.run_scene(name, arm)
+    # Before record: a scene with a hand-back is never recorded.
+    _no_turn_goal_hand_backs()
     golden_fight.record(name, rows, os.environ.get("COMBAT_GOLDEN_REASON"))
     golden_fight.check(name, rows)
     _no_subsystem_skips()
+
+
+def _no_turn_goal_hand_backs():
+    """Kernel M steers every stored turn goal itself: no row went back to
+    Python for one (PR #14 finish, Task 2). Vacuous for posed_fight:
+    PosedFight resets native_combat (and with it these counters) as it
+    builds the scene and its ticks never run the motion stage, so its counts
+    read zero; the real guards are motion_branches and k1_gameloop_ai."""
+    rows = native_motion.counts()["python_rows"]
+    assert rows.get("TurnGoal", 0) == 0, rows
 
 
 def _no_subsystem_skips():

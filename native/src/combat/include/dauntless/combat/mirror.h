@@ -273,6 +273,22 @@ enum class Field : int32_t {
     // `_rigless_key` early-out), 0 until it did. The piece is skipped iff it
     // equals Global ARTICULATION_GEN + 1.
     _rigless_gen,
+    // The motion law (kernel M), pushed by Python. Object: ShipClass.
+    // _motion_vel, the velocity vector and the speed it was last stepped to,
+    // as a FloatList ([] None, [vx, vy, vz, speed], or 5 zeros:
+    // unrepresentable); _target_angular_velocity_fraction, a point-or-none
+    // with its _state as the others above (the keyboard turn fraction); and
+    // _turn_goal, the stored turn goal's spec (ShipClass._turn_goal,
+    // native_combat.TurnGoalField), as a FloatList: [] None; [1, px, py, pz]
+    // a "loc" goal; [2, pf(3), pt(3), 0] a "dirs" goal, or [2, pf(3), pt(3),
+    // 1, sf(3), st(3)] with its secondaries; [0] unrepresentable (the
+    // kernel hands the row to Python). _acceleration, the
+    // acceleration the law last commanded (ShipClass._acceleration,
+    // GetAccelerationTG), as a FloatList ([] None, [ax, ay, az], or 4
+    // zeros: unrepresentable); kernel M writes it back only when its new
+    // value differs bitwise.
+    _motion_vel, _target_angular_velocity_fraction,
+    _target_angular_velocity_fraction_state, _turn_goal, _acceleration,
     kCount
 };
 
@@ -349,6 +365,12 @@ struct ObjectRow {
     int64_t _impulse_engine_subsystem = -1;
     int64_t motion_stock = 0;
     int64_t _velocity_state = 0;
+    // The motion law's inputs (Field comment above).
+    std::vector<double> _motion_vel;
+    Vec3 _target_angular_velocity_fraction{0, 0, 0};
+    int64_t _target_angular_velocity_fraction_state = 0;
+    std::vector<double> _turn_goal;
+    std::vector<double> _acceleration;
     // Posed parts: the pose table (empty while has_posed_parts is 0) and the
     // ship's subsystems in combat._iter_subsystems order (Subsystem handles;
     // kRefUnrepresentable for one the mirror cannot name). Not Fields: set

@@ -1166,6 +1166,127 @@ class SpeedSetpointField(NativeField):
         return _hexes(self._encode(value)) == _hexes(mirrored)
 
 
+class MotionVelField(NativeField):
+    """ShipClass._motion_vel, the motion law's velocity vector
+    (ship_motion.step_vector_velocity): None, or ``(vx, vy, vz, speed)``,
+    the vector and the speed it was last stepped to. Pushed as a float list
+    in one ``combat_set_floats`` call: None is [], a tuple of four floats
+    its four values, and anything else [0.0] * 5 (unrepresentable: the
+    kernel takes the Python path). Never drops the row. Always rebound,
+    never mutated."""
+
+    def __init__(self) -> None:
+        super().__init__(list)
+
+    def _encode(self, value):
+        if value is None:
+            return []
+        if type(value) is tuple and len(value) == 4 and \
+                all(type(x) is float for x in value):
+            return list(value)
+        return [0.0] * 5
+
+    def _push(self, obj, h, value) -> None:
+        _call(obj, _h.combat_set_floats, h, _fid(self._key),
+              self._encode(value))
+
+    def _matches(self, value, mirrored) -> bool:
+        return _hexes(self._encode(value)) == _hexes(mirrored)
+
+
+class AccelerationField(NativeField):
+    """ShipClass._acceleration, the motion law's commanded acceleration
+    (ship_motion.step_vector_velocity / _no_thrust; GetAccelerationTG):
+    None, or ``(ax, ay, az)``. Pushed as a float list in one
+    ``combat_set_floats`` call: None is [], a tuple of three floats its
+    three values, and anything else [0.0] * 4 (unrepresentable: the kernel
+    takes the Python path). Kernel M writes it back only when its new value
+    differs bitwise from this one. Never drops the row. Always rebound,
+    never mutated."""
+
+    def __init__(self) -> None:
+        super().__init__(list)
+
+    def _encode(self, value):
+        if value is None:
+            return []
+        if type(value) is tuple and len(value) == 3 and \
+                all(type(x) is float for x in value):
+            return list(value)
+        return [0.0] * 4
+
+    def _push(self, obj, h, value) -> None:
+        _call(obj, _h.combat_set_floats, h, _fid(self._key),
+              self._encode(value))
+
+    def _matches(self, value, mirrored) -> bool:
+        return _hexes(self._encode(value)) == _hexes(mirrored)
+
+
+def _goal_point(p) -> bool:
+    """A TGPoint3 whose three components are floats (what kernel M reads)."""
+    return (type(p) is TGPoint3 and type(p.x) is float
+            and type(p.y) is float and type(p.z) is float)
+
+
+class TurnGoalField(NativeField):
+    """ShipClass._turn_goal, the stored turn goal kernel M steers
+    (ShipClass._steer_turn_goal): None, or ``[spec, owned_setpoint]``.
+    Only the SPEC is mirrored, as a float list pushed in one
+    ``combat_set_floats`` call:
+
+      []                                  None
+      [1, px, py, pz]                     ("loc", TGPoint3)
+      [2, pf(3), pt(3), 0]                ("dirs", body_pf, pt, None, None)
+      [2, pf(3), pt(3), 1, sf(3), st(3)]  ("dirs", body_pf, pt, body_sf, st)
+      [0]                                 anything else: unrepresentable,
+                                          the kernel hands the row back
+                                          (reason TurnGoal)
+
+    The goal must be a list of two (Python stores ``goal[1] = target``),
+    the spec a tuple of exactly that shape, every point a TGPoint3 of
+    floats. Pushed on rebind only: the steering's ``goal[1] = target`` is
+    in place and never changes the spec. The kernel steers a goal whenever
+    it is representable and the row has a setpoint, where Python's step
+    asks ``goal[1] is setpoint``; the two agree because every writer that
+    rebinds the setpoint to a non-None object other than the steering
+    itself also clears the goal (ShipClass.SetTargetAngularVelocityDirect,
+    SetTargetAngularVelocityFraction, CompleteStop). Never drops the row."""
+
+    def __init__(self) -> None:
+        super().__init__(list)
+
+    def _encode(self, value):
+        if value is None:
+            return []
+        if type(value) is not list or len(value) != 2:
+            return [0.0]
+        spec = value[0]
+        if type(spec) is not tuple or not spec or type(spec[0]) is not str:
+            return [0.0]
+        if spec[0] == "loc" and len(spec) == 2 and _goal_point(spec[1]):
+            p = spec[1]
+            return [1.0, p.x, p.y, p.z]
+        if spec[0] != "dirs" or len(spec) != 5:
+            return [0.0]
+        _kind, pf, pt, sf, st = spec
+        if not (_goal_point(pf) and _goal_point(pt)):
+            return [0.0]
+        out = [2.0, pf.x, pf.y, pf.z, pt.x, pt.y, pt.z]
+        if sf is None and st is None:
+            return out + [0.0]
+        if _goal_point(sf) and _goal_point(st):
+            return out + [1.0, sf.x, sf.y, sf.z, st.x, st.y, st.z]
+        return [0.0]
+
+    def _push(self, obj, h, value) -> None:
+        _call(obj, _h.combat_set_floats, h, _fid(self._key),
+              self._encode(value))
+
+    def _matches(self, value, mirrored) -> bool:
+        return _hexes(self._encode(value)) == _hexes(mirrored)
+
+
 _NUMBERS = (int, float, bool)
 
 
@@ -2460,12 +2581,16 @@ def _posed_flag(ship) -> int:
 #: IsDead: subsystems._is_offline(ies) -> ship_death._out_of_action(ship)
 #: asks them (the kernel reads the row's dying / dead state instead);
 #: GetWarpEngineSubsystem: warp_state.is_arriving asks it (the kernel reads
-#: the row's `arriving`).
+#: the row's `arriving`). _steer_turn_goal, _turn_goal_vectors,
+#: _turn_rotation, GetWorldLocation: the stored turn goal's steering, which
+#: the kernel ports (a "loc" goal reads GetWorldLocation).
 _MOTION_SHIP_NAMES = ("IsImmobile", "IsStatic", "IsStationary",
                       "GetImpulseEngineSubsystem", "GetTranslate",
                       "SetTranslateXYZ", "GetWorldRotation",
                       "SetMatrixRotation", "SetVelocity", "IsDying",
-                      "IsDead", "GetWarpEngineSubsystem")
+                      "IsDead", "GetWarpEngineSubsystem",
+                      "_steer_turn_goal", "_turn_goal_vectors",
+                      "_turn_rotation", "GetWorldLocation")
 _MOTION_IES_NAMES = ("IsDisabled", "IsDestroyed", "IsOn",
                      "GetNumChildSubsystems", "GetChildSubsystem",
                      "GetPowerPercentageWanted", "GetParentShip",

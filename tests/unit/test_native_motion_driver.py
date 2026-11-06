@@ -139,7 +139,14 @@ def _state(ship):
             (type(speed).__name__, repr(speed)),
             _vec(d.get("_current_angular_velocity")),
             _vec(d.get("_velocity")),
-            "_drift_velocity" in d, _vec(d.get("_drift_velocity")))
+            "_drift_velocity" in d, _vec(d.get("_drift_velocity")),
+            _floats(d.get("_motion_vel")), _floats(d.get("_acceleration")))
+
+
+def _floats(t):
+    if t is None or type(t) is not tuple:
+        return repr(t)
+    return tuple(_hx(v) for v in t)
 
 
 def _arm(env):
@@ -503,7 +510,9 @@ _FUNCTIONS = (
     (drift, "step"), (ship_motion, "impulse_fractions"),
     (ship_motion, "_integrate_rotation"), (ship_motion, "_effective_motion"),
     (ship_motion, "_cap_keep"), (ship_motion, "_ramp_toward"),
-    (ship_motion, "_asymptote_step"), (ship_motion, "_step_after_warp"),
+    (ship_motion, "step_vector_velocity"),
+    (ship_motion, "law_step_vector"), (ship_motion, "_no_thrust"),
+    (ship_motion, "_step_after_warp"),
     (subsystems, "_is_offline"), (ship_death, "_out_of_action"),
     (warp_state, "is_arriving"),
 )
@@ -522,7 +531,10 @@ def test_patched_function_runs_the_stage_in_python(monkeypatch, module,
         _fly(a)
         b = _ship("Drifter", pSet, (0.0, 0.02, 0.0))
         _drifting(b)
-        return [a, b]
+        # No authored limits: its turn is _ramp_toward's, not the law's.
+        c = _ship("Unlimited", pSet, (0.0, 0.0, 0.03), engine=False)
+        _fly(c)
+        return [a, b, c]
 
     ships = build()
     _arm({})

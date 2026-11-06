@@ -115,18 +115,12 @@ def test_quarter_loop_actually_rotates_the_ship():
     assert abs(fwd.x) < 0.1, f"nose drifted out of the turn plane; fwd={fwd}"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Pre-existing, separate from TurnTowardDifference: nothing zeroes an AI's "
-    "angular-velocity setpoint when the AI completes, so a finished turn keeps "
-    "creeping. Measured with a 0.25 loop: 98.9 deg swept at t=10s (a fair ~9 deg "
-    "of overshoot), still creeping to 117.8 deg by t=30s with no AI updates at "
-    "all. The rate IS decaying (19 deg over 20s vs the 16 deg/s setpoint), so "
-    "something damps it, just not to rest. Systemic — it applies to every AI "
-    "that commands a turn and then finishes (TurnToOrientation with "
-    "bDoneOnLineup, FollowWaypoints, ...), so the fix belongs in the AI "
-    "driver/ship_motion seam, not here. Remove this marker when fixed."))
 def test_maneuver_stops_turning_once_it_reports_done():
     """The commanded rotation must not run on past US_DONE.
+
+    Fixed by the stored turn goal (ShipClass._steer_turn_goal): the ship keeps
+    steering to where the last command pointed it and lands there, as the
+    original does, instead of coasting on a stale rate setpoint.
 
     ManeuverLoop stops updating once it reports DONE, so whatever angular
     velocity setpoint was last written is simply left standing — nothing in the

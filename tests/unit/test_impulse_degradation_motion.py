@@ -10,7 +10,7 @@ limits; the drift trigger (every pod out) is still impulse_online_fraction.
 from engine.appc.math import TGPoint3
 from engine.appc.objects import PhysicsObjectClass
 from engine.appc.ship_motion import (
-    _effective_motion, _cap_keep, _asymptote_step, _step_ship_motion,
+    _effective_motion, _cap_keep, _step_ship_motion,
 )
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import ShipSubsystem
@@ -114,16 +114,6 @@ def test_cap_keep_allows_commanded_slowdown_above_cap():
 
 def test_cap_keep_preserves_reverse_sign():
     assert _cap_keep(-10.0, 0.0, 3.0) == -3.0
-
-
-def test_asymptote_step_rate_limited():
-    # large gap → limited by accel
-    assert abs(_asymptote_step(1.5, 100.0, 1.0 / 60) - 1.5 / 60) < 1e-9
-
-
-def test_asymptote_step_closes_small_gap():
-    # small gap (|gap|/tau < accel) → limited by gap/tau (tau == 1.0)
-    assert abs(_asymptote_step(1.5, 0.3, 1.0 / 60) - 0.3 / 60) < 1e-9
 
 
 def _disable_pods(ship, count):

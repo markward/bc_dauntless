@@ -112,7 +112,7 @@ from engine.appc.ships import ShipClass
 from engine.appc.ship_death import _out_of_action as _oa
 from engine.appc import glow_maps as _glow_maps
 from engine.appc import passive_state, passive_weapons
-from engine.appc.ship_motion import _effective_motion, _cap_keep, _asymptote_step
+from engine.appc.ship_motion import _effective_motion, _cap_keep, step_vector_velocity, law_step_vector, _no_thrust
 from engine.appc.subsystems import (
     _emitter_in_arc,
     _is_offline,
@@ -3149,6 +3149,16 @@ from engine.cameras.dof import FocusSolver as _DofFocusSolver
 _focus_solver = _DofFocusSolver()
 
 
+def _drop_motion_vel(ship) -> None:
+    """Drop the motion law's velocity vector (``_motion_vel``) of a ship
+    something other than the law is moving, so the law re-seeds it along the
+    nose when it next flies the ship. Through the descriptor, so kernel M's
+    mirror drops it too; written only when one stands, so a long warp burst
+    or dash pushes once."""
+    if ship.__dict__.get("_motion_vel") is not None:
+        ship._motion_vel = None
+
+
 class _PlayerControl:
     """Keyboard-driven ship-transform integrator.
 
@@ -3171,8 +3181,10 @@ class _PlayerControl:
     FALLBACK_MAX_ACCEL  = 1.0e9  # effectively instant — preserves legacy semantics
     REVERSE_LEVEL       = -2
 
-    # Reverse magnitude as a fraction of MaxSpeed (BC convention: ¼ impulse).
-    REVERSE_FRACTION = 0.25
+    # Reverse magnitude as a fraction of MaxSpeed: 2/9 -- the reverse key is
+    # impulse level 2 of 9 backwards (measured on stbc.exe, stbc-oracle
+    # mechanics reference, Movement / Throttle).
+    REVERSE_FRACTION = 2.0 / 9.0
 
     def __init__(self, input_map=None):
         # Single source of truth for action → physical key.  Defaults to a
@@ -3386,10 +3398,21 @@ class _PlayerControl:
         velocity projected onto ship-forward (manual flight is always along
         facing); angular rates map through the yaw/roll negation (see the
         section comment above). The AI's setpoints are cleared so
-        _step_ship_motion disengages and stops double-driving the ship."""
-        fwd = player.GetWorldRotation().GetCol(1)
-        v = player.GetVelocity()
-        self._current_speed = v.x * fwd.x + v.y * fwd.y + v.z * fwd.z
+        _step_ship_motion disengages and stops double-driving the ship.
+
+        While the motion law's vector (``_motion_vel``) stands, the speed is
+        ITS speed, ``[3]``, so the helm's next step_vector_velocity trusts
+        the vector (the re-seed contract): a ship taken over mid-turn keeps
+        its course lag instead of snapping onto the nose at |v| cos(lag).
+        With no vector (never stepped, or dropped by a warp or a dash) it is
+        the published velocity on the nose, as before the motion law."""
+        mv = player.__dict__.get("_motion_vel")
+        if type(mv) is tuple and len(mv) == 4:
+            self._current_speed = mv[3]
+        else:
+            fwd = player.GetWorldRotation().GetCol(1)
+            v = player.GetVelocity()
+            self._current_speed = v.x * fwd.x + v.y * fwd.y + v.z * fwd.z
         cav = getattr(player, "_current_angular_velocity", None)
         if cav is not None:
             self._current_pitch_rate = cav.x
@@ -3432,7 +3455,20 @@ class _PlayerControl:
         # speed (or hold at 0 during align) along the current warp-aligned
         # heading, ignoring throttle/input so the ship can't be steered mid-warp
         # and there's a single motion path (no double-translate).
+        #
+        # Every exit below that moves (or leaves) the player without the
+        # motion law (step_vector_velocity) records no thrust
+        # (ship_motion._no_thrust): the motion stage writes nothing for the
+        # setpoint-less player, so the helm's last law step would otherwise
+        # stand in GetAccelerationTG (FireScript's 0.5*a*t^2 lead).
+        #
+        # The same exits drop the law's velocity vector (_drop_motion_vel):
+        # the warp burst and a dash move the ship on their own, so the vector
+        # would still hold the course flown before them, at a speed nothing
+        # rewrote (the re-seed contract, ship_motion.step_vector_velocity).
         if self._warp_speed_override is not None:
+            _no_thrust(player)
+            _drop_motion_vel(player)
             s = float(self._warp_speed_override)
             self._current_speed = s
             if s != 0.0:
@@ -3448,6 +3484,8 @@ class _PlayerControl:
         # nothing -- except full stop, which drops out at rest.
         from engine.appc import dash
         if dash.is_dashing(player):
+            _no_thrust(player)
+            _drop_motion_vel(player)
             self._dash_owned = True
             self._manual_throttle_nudge = False
             if h.key_pressed(self._input_map.code("full_stop")):
@@ -3560,6 +3598,7 @@ class _PlayerControl:
             p = player.GetTranslate()
             player.SetTranslateXYZ(p.x + d.x * dt, p.y + d.y * dt, p.z + d.z * dt)
             player.SetVelocity(TGPoint3(d.x, d.y, d.z))
+            _no_thrust(player)
             return
 
         # ── Powered flight: clear drift, re-seed speed ──────────────────
@@ -3569,28 +3608,23 @@ class _PlayerControl:
 
         em = _effective_motion(player)
 
-        # Linear ramp toward (capped) target.
+        # Linear target (capped); integrated below on the velocity vector.
         commanded = self.GetTargetSpeed(player)
         if em.has_linear:
             target_speed = _cap_keep(commanded, self._current_speed, em.max_speed)
             accel = em.max_accel if em.max_accel > 0.0 else self.FALLBACK_MAX_ACCEL
-            linear_step = _asymptote_step(accel, target_speed - self._current_speed, dt)
         else:
             target_speed = commanded
-            linear_step = self.FALLBACK_MAX_ACCEL * dt
-        self._current_speed = self._ramp_toward(
-            self._current_speed, target_speed, linear_step,
-        )
+            accel = self.FALLBACK_MAX_ACCEL
 
         # Angular: held keys → per-axis target rate, capped + ramped.
         # W=nose DOWN S=nose UP A=yaw LEFT D=yaw RIGHT Q=roll LEFT E=roll RIGHT
         if em.has_angular:
             ang_rate = em.max_ang_vel
             aa = em.max_ang_accel if em.max_ang_accel > 0.0 else self.FALLBACK_MAX_ACCEL
-            ang_step = aa * dt
         else:
             ang_rate = self.TURN_RATE_RAD_PER_S
-            ang_step = self.FALLBACK_MAX_ACCEL * dt
+            aa = self.FALLBACK_MAX_ACCEL
         pitch_target = 0.0; yaw_target = 0.0; roll_target = 0.0
         im = self._input_map
         if h.key_state(im.code("pitch_down")): pitch_target -= ang_rate
@@ -3599,28 +3633,46 @@ class _PlayerControl:
         if h.key_state(im.code("yaw_right")):  yaw_target   += ang_rate
         if h.key_state(im.code("roll_left")):  roll_target  += ang_rate
         if h.key_state(im.code("roll_right")): roll_target  -= ang_rate
+        # BC's TurnShip (TacticalInterfaceHandlers) unitizes the sum of the
+        # held keys' axes before SetTargetAngularVelocityFraction: two keys at
+        # once (a diagonal) turn at 1/sqrt(2) of the rate on each axis, three
+        # at 1/sqrt(3) -- the turn's total rate is the ship's max either way.
+        _mag = _math.sqrt(pitch_target * pitch_target + yaw_target * yaw_target
+                         + roll_target * roll_target)
+        if _mag > ang_rate > 0.0:
+            _k = ang_rate / _mag
+            pitch_target *= _k; yaw_target *= _k; roll_target *= _k
         if em.has_angular:
             pitch_target = _cap_keep(pitch_target, self._current_pitch_rate, em.max_ang_vel)
             yaw_target   = _cap_keep(yaw_target,   self._current_yaw_rate,   em.max_ang_vel)
             roll_target  = _cap_keep(roll_target,  self._current_roll_rate,  em.max_ang_vel)
-        self._current_pitch_rate = self._ramp_toward(self._current_pitch_rate, pitch_target, ang_step)
-        self._current_yaw_rate   = self._ramp_toward(self._current_yaw_rate,   yaw_target,   ang_step)
-        self._current_roll_rate  = self._ramp_toward(self._current_roll_rate,  roll_target,  ang_step)
+        # BC eases into and out of turns with the impulse law (capped at
+        # MaxAngularAccel, then tau = 1 s) -- ship_motion's angular ramp. A
+        # ship with no authored limits keeps the legacy instant response.
+        # The law acts on the rate VECTOR: a diagonal's total rate eases in
+        # like a single axis (measured, motion3).
+        (self._current_pitch_rate, self._current_yaw_rate,
+         self._current_roll_rate) = law_step_vector(
+            (self._current_pitch_rate, self._current_yaw_rate, self._current_roll_rate),
+            (pitch_target, yaw_target, roll_target),
+            aa if em.has_angular else self.FALLBACK_MAX_ACCEL, dt)
         # Rotation integration (R · D body-frame delta; see CLAUDE.md).
         self._apply_body_rotation(
             player, self._current_pitch_rate, self._current_yaw_rate,
             self._current_roll_rate, dt,
         )
 
-        # Position integration (powered: velocity follows facing).
-        # Publish world velocity unconditionally so GetVelocity() is
-        # authoritative for the collision system (zero when stationary).
+        # Position integration: BC's impulse law on the velocity VECTOR
+        # (ship_motion.step_vector_velocity), so the course lags the nose in
+        # a turn and the speed bleeds, as measured. Publish world velocity
+        # unconditionally so GetVelocity() is authoritative for the
+        # collision system (zero when stationary).
         forward = player.GetWorldRotation().GetCol(1)
-        vx = forward.x * self._current_speed
-        vy = forward.y * self._current_speed
-        vz = forward.z * self._current_speed
+        vx, vy, vz, self._current_speed = step_vector_velocity(
+            player, forward, self._current_speed, target_speed, accel, dt,
+            snap=not em.has_linear)
         player.SetVelocity(TGPoint3(vx, vy, vz))
-        if self._current_speed != 0.0:
+        if vx or vy or vz:
             p = player.GetTranslate()
             player.SetTranslateXYZ(p.x + vx * dt, p.y + vy * dt, p.z + vz * dt)
 

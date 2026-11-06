@@ -11,9 +11,11 @@ from engine.appc.ships import ShipClass
 
 
 def test_get_acceleration_tg_returns_zero_vector():
-    """Phase 1 kinematic model: acceleration is the integrator's per-tick
-    ramp, not stored on the object. Zero is the right default — degrades
-    GetPredictedPosition(p, v, a, t) gracefully to p + v*t."""
+    """An object the motion integrator has never stepped has no recorded
+    acceleration: zero, so GetPredictedPosition(p, v, a, t) is p + v*t. A
+    stepped ship reports the acceleration its motion law commanded
+    (tests/unit/test_motion_acceleration.py,
+    tests/oracle/test_acceleration_is_measured.py)."""
     obj = PhysicsObjectClass()
     a = obj.GetAccelerationTG()
     assert isinstance(a, TGPoint3)
