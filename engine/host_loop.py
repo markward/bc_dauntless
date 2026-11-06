@@ -8030,6 +8030,9 @@ def reset_mission_state(renderer=None) -> None:
     # type (the event-type counter restarts at 1200 on a swap).
     from engine.quickbattle import late_arrivals as _qb_late
     _qb_late.reset()
+    # The Objectives buttons' click event type, cached for the same reason.
+    from engine.appc import mission_goals as _mission_goals
+    _mission_goals.reset()
     # The running battle's real-object snapshot: the swap deletes every
     # region set, so a later EndSimulation must not rebuild them.
     from engine.quickbattle import sim_restore as _qb_sim_restore

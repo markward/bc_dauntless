@@ -88,7 +88,12 @@ def goal_label(goal_id, *databases):
 # Episode8.Initialize preloads them with LoadDatabaseSound.
 _GOAL_AUDIO_SUFFIX = "Audio"
 _HANDLER = __name__ + ".GoalClicked"
+# Event type, allocated lazily and forgotten by reset(): App._next_event_type_id
+# restarts at 1200 on every mission swap (host_loop.reset_sdk_globals), so a
+# type cached across a swap could be handed to the next mission for its own
+# event, and a goal click would reach that mission's handler.
 _goal_event_type = None
+_xo_registered = None  # (XO object, event type) our handler is registered for
 
 
 def _goal_clicked_type():
@@ -97,6 +102,23 @@ def _goal_clicked_type():
         import App
         _goal_event_type = App.Game_GetNextEventType()
     return _goal_event_type
+
+
+def _register_handler(xo, et) -> None:
+    global _xo_registered
+    if (_xo_registered is not None and _xo_registered[0] is xo
+            and _xo_registered[1] == et):
+        return
+    xo.AddPythonFuncHandlerForInstance(et, _HANDLER)
+    _xo_registered = (xo, et)
+
+
+def reset() -> None:
+    """Mission swap / test isolation: forget the event type and the XO it was
+    registered on (host_loop.reset_mission_state)."""
+    global _goal_event_type, _xo_registered
+    _goal_event_type = None
+    _xo_registered = None
 
 
 def _xo():
@@ -123,9 +145,7 @@ def add_goal_button(label, goal_id=None):
         xo = _xo() if goal_id else None
         if xo is not None:
             et = _goal_clicked_type()
-            if not getattr(xo, "_dauntless_goal_handler", False):
-                xo.AddPythonFuncHandlerForInstance(et, _HANDLER)
-                xo._dauntless_goal_handler = True
+            _register_handler(xo, et)
             event = App.TGStringEvent_Create()
             event.SetEventType(et)
             event.SetDestination(xo)

@@ -35,6 +35,46 @@ def test_clicking_a_goal_has_the_xo_say_its_briefing_line(monkeypatch):
     assert said[before:] == [("XO", "E1HeadToStarbaseGoalAudio", "Captain")]
 
 
+def test_the_goal_event_type_is_forgotten_with_the_mission(monkeypatch):
+    """The event-type counter restarts at 1200 on every mission swap
+    (host_loop.reset_sdk_globals), so a type cached across the swap can be
+    handed to the next mission for its own event, and a goal click would then
+    reach that mission's handler. Here the next mission is given exactly the
+    number the goal buttons were using; the buttons must have moved on, and a
+    click must still speak."""
+    import App
+    from engine import host_loop
+    from engine.appc import ai, mission_goals
+    said = []
+    orig = ai.CharacterAction._queue_say_line
+
+    def record(self):
+        said.append(self._detail)
+        return orig(self)
+
+    monkeypatch.setattr(ai.CharacterAction, "_queue_say_line", record)
+    headless_mission.load(E1M1)
+    stale = mission_goals._goal_clicked_type()
+
+    host_loop.reset_mission_state()
+    App._next_event_type_id = stale
+    the_next_missions_own = App.Mission_GetNextEventType()
+    assert the_next_missions_own == stale
+
+    mission_goals.add_goal_button("Probe Goal", "E1HeadToStarbaseGoal")
+    button = mission_goals.objectives_submenu().GetButtonW("Probe Goal")
+    assert button is not None
+    assert mission_goals._goal_clicked_type() != the_next_missions_own
+
+    from engine.core.loop import GameLoop
+    loop = GameLoop()
+    before = len(said)
+    button.SendActivationEvent()
+    for _ in range(3):
+        loop.tick()
+    assert said[before:] == ["E1HeadToStarbaseGoalAudio"]
+
+
 def test_a_goal_with_no_briefing_line_says_nothing(monkeypatch):
     import App
     from engine.appc import ai, mission_goals
