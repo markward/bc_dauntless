@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "dauntless/combat/beam_trace.h"
+#include "dauntless/combat/frames_table.h"
 #include "dauntless/combat/k2_beams.h"
 #include "dauntless/combat/mirror.h"
 
@@ -19,7 +20,8 @@
 // honoured, spec Part A), _ViewMemo.set_of, _beam_descriptor_pair,
 // _beam_endpoint and _beam_pair_in_view, reading the Mirror. The geometry is
 // beam_geometry.h's and beam_trace.h's (the K2 kernel's own ports); the
-// engine/systems/frames.py helpers it needs are file-local in beam_feed.cc.
+// engine/systems/frames.py helpers it needs are frames_internal.h's (shared
+// with the torpedo feed).
 // Every float is the Python's: double, the same operand order, Python's
 // `x or d` / max / `** 0.5` (py_math.h), -0.0 kept where the Python keeps it.
 //
@@ -28,17 +30,10 @@
 
 namespace dauntless::combat {
 
-// frames.frame_of(set): the frame's key as a small id (two sets share a
-// frame exactly when their ids are equal) and its anchor_gu.
-struct BeamFrame {
-    int64_t id;
-    Vec3 anchor;
-};
-
 struct BeamFeedCtx {
     int64_t view = -1;           // frames.viewing_set() Set handle; -1 none
     Vec3 origin{0, 0, 0};        // frames.render_origin()
-    std::unordered_map<int64_t, BeamFrame> frames;  // every registered Set
+    FrameTable frames;           // every registered Set (frames_table.h)
     // ship_instances by target Object handle (K2's table and meaning).
     std::unordered_map<int64_t, K2Context::Iid> iids;
     TraceHooks hooks;

@@ -685,6 +685,7 @@ def report_lines() -> list[str]:
                     else "%.3f ms" % native.get("gpu_ms", 0.0),
                     native.get("frames", 0)))
     lines.extend(_beam_feed_lines())
+    lines.extend(_torpedo_feed_lines())
     return lines
 
 
@@ -698,6 +699,22 @@ def _beam_feed_lines() -> list[str]:
         sd = c["stand_downs"]
         return ["  beam feed: native %d, fallbacks %d, stand-downs %s"
                 % (c["native"], c["fallbacks"],
+                   ", ".join("%s %d" % kv for kv in sd.items()))]
+    except Exception:
+        return []
+
+
+def _torpedo_feed_lines() -> list[str]:
+    """Whether the native torpedo feed built the frames (native_combat.
+    torpedo_feed_counts, since its last reset), its fall-backs by why and
+    its stand-downs. Nothing when the module cannot say."""
+    try:
+        from engine.appc import native_combat
+        c = native_combat.torpedo_feed_counts()
+        fb, sd = c["fallbacks"], c["stand_downs"]
+        return ["  torpedo feed: native %d, fallbacks %d (%s), stand-downs %s"
+                % (c["native"], sum(fb.values()),
+                   ", ".join("%s %d" % kv for kv in fb.items()),
                    ", ".join("%s %d" % kv for kv in sd.items()))]
     except Exception:
         return []

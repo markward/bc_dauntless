@@ -37,6 +37,9 @@ def test_advance_combat_routes_all_seven_vfx_setters_through_host_io(
     # the beam vectors itself and never calls host_io's beam setters.
     from engine.appc import native_combat
     monkeypatch.setattr(native_combat, "beam_feed", lambda *a, **k: False)
+    # Likewise the torpedo feed (native_combat.torpedo_feed writes the
+    # torpedo and light vectors itself).
+    monkeypatch.setattr(native_combat, "torpedo_feed", lambda *a, **k: False)
     calls = {}
     names = ("set_torpedoes", "set_dynamic_lights", "set_shockwaves",
              "set_hit_vfx", "set_particle_emitters", "set_phaser_beams",
@@ -54,8 +57,14 @@ def test_advance_combat_routes_all_seven_vfx_setters_through_host_io(
         assert n in calls, f"host_io.{n} was not called by _advance_combat"
 
 
-def test_advance_combat_publishes_torpedo_descriptors_via_host_io():
+def test_advance_combat_publishes_torpedo_descriptors_via_host_io(
+        monkeypatch):
+    from engine.appc import native_combat
     from engine.appc.projectiles import Torpedo, register
+
+    # The Python torpedo path, whose push this test reads (the native feed
+    # writes the vectors itself).
+    monkeypatch.setattr(native_combat, "torpedo_feed", lambda *a, **k: False)
 
     t = Torpedo()
     t.SetTranslateXYZ(1.0, 2.0, 3.0)
@@ -89,9 +98,14 @@ def test_advance_combat_publishes_torpedo_descriptors_via_host_io():
     assert entry["forward"] == pytest.approx((0.0, 0.0, 1.0))
 
 
-def test_advance_combat_publishes_dynamic_light_descriptors_via_host_io():
+def test_advance_combat_publishes_dynamic_light_descriptors_via_host_io(
+        monkeypatch):
     import App
+    from engine.appc import native_combat
     from engine.appc.projectiles import Torpedo, register
+
+    # The Python light path, whose push this test reads.
+    monkeypatch.setattr(native_combat, "torpedo_feed", lambda *a, **k: False)
 
     def _color(r, g, b, a=1.0):
         c = App.TGColorA()

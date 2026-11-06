@@ -12,6 +12,8 @@ tests/host/test_camera_dt_wiring.py.
 import re
 from pathlib import Path
 
+import pytest
+
 _SRC = Path(__file__).resolve().parents[2] / "native" / "src" / "host" / "host_bindings.cc"
 
 
@@ -46,13 +48,21 @@ def test_render_origin_resolves_after_the_sweep_and_before_the_lights():
     assert sweep < origin < lights
 
 
-def test_resolve_is_not_called_from_the_set_dynamic_lights_binding():
+@pytest.mark.parametrize("name", ["set_dynamic_lights",
+                                  # the native torpedo feed's pair
+                                  "set_dynamic_lights_budgeted",
+                                  "combat_torpedo_feed"])
+def test_resolve_is_not_called_from_the_set_dynamic_lights_binding(name):
     src = _SRC.read_text(encoding="utf-8")
-    start = src.find('m.def("set_dynamic_lights"')
+    start = src.find('m.def("%s"' % name)
     assert start >= 0
     end = src.find("m.def(", start + 1)
     binding = src[start:end]
     assert "resolve_attached_dynamic_lights" not in binding
+    helper = src.find("dynamic_light_from_dict(const py::dict& d)")
+    assert helper >= 0
+    assert "resolve_attached_dynamic_lights" not in src[
+        helper:src.find("\n}\n", helper)]
 
 
 def test_interp_compose_is_not_called_inside_frame():

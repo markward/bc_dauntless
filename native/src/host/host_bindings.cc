@@ -23,6 +23,7 @@
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
 #include "dauntless/combat/beam_feed.h"
+#include "dauntless/combat/torpedo_feed.h"
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/beam_trace.h"
 #include "dauntless/combat/damage.h"
@@ -456,6 +457,12 @@ std::unique_ptr<renderer::TorpedoPass>     g_torpedo_pass;
 // until Task 11 wires a real emitter (torpedo glow); consumed only by the
 // Space-pass opaque submit below.
 std::vector<renderer::DynamicLightDescriptor> g_dynamic_lights;
+// The torpedo lights the last combat_torpedo_feed built (native torpedo feed,
+// phase 6 follow-up 1b), held for the set_dynamic_lights_budgeted call that
+// follows it in the same frame; `ready` is consumed by that call, so a light
+// list is never blended twice or from a feed that threw.
+std::vector<renderer::DynamicLightDescriptor> g_torpedo_lights_pending;
+bool g_torpedo_lights_ready = false;
 std::vector<renderer::ShockwaveDescriptor> g_shockwaves;
 std::unique_ptr<renderer::ShockwavePass>   g_shockwave_pass;
 // Warp-in flashes (warp-in spec 6.3): full-replace per-frame list and the
@@ -1235,6 +1242,8 @@ void reset_frame_state() {
     g_warp_in_flash_params = renderer::WarpInFlashParams{};
     g_particle_emitters.clear();
     g_dynamic_lights.clear();
+    g_torpedo_lights_pending.clear();
+    g_torpedo_lights_ready = false;
     g_lens_flares.clear();
     g_hull_discharges.clear();
     g_running_lights.clear();
@@ -3006,6 +3015,63 @@ static py::list beams_debug(const std::vector<renderer::PhaserBeamDescriptor>& v
             b.taper_min_length, b.taper_max_length, b.perimeter_tile,
             b.texture_speed, b.end_width_scale));
     return out;
+}
+
+// The render feeds' frames table (frames_table.h) from native_combat.
+// _beam_frames' {Set handle: (frame id, ax, ay, az)}.
+static dauntless::combat::FrameTable frame_table_from_py(py::handle frames) {
+    dauntless::combat::FrameTable out;
+    for (auto kv : frames.cast<py::dict>()) {
+        const auto f = kv.second.cast<
+            std::tuple<std::int64_t, double, double, double>>();
+        out[kv.first.cast<std::int64_t>()] = dauntless::combat::BeamFrame{
+            std::get<0>(f), {std::get<1>(f), std::get<2>(f), std::get<3>(f)}};
+    }
+    return out;
+}
+
+// One set_dynamic_lights dict, parsed (shared by set_dynamic_lights and
+// set_dynamic_lights_budgeted, so the two cannot drift).
+static renderer::DynamicLightDescriptor dynamic_light_from_dict(const py::dict& d) {
+    renderer::DynamicLightDescriptor l;
+    auto pos = d["position"].cast<std::tuple<float, float, float>>();
+    l.pos_a = {std::get<0>(pos), std::get<1>(pos), std::get<2>(pos)};
+    // position_b and instance_id are the two optional keys
+    // parsed unconditionally here: a point light is a
+    // degenerate segment (pos_b == pos_a), so absent/None both
+    // collapse to that same default rather than raising.
+    if (d.contains("position_b") && !d["position_b"].is_none()) {
+        auto pos_b = d["position_b"].cast<std::tuple<float, float, float>>();
+        l.pos_b = {std::get<0>(pos_b), std::get<1>(pos_b), std::get<2>(pos_b)};
+    } else {
+        l.pos_b = l.pos_a;
+    }
+    auto c = d["color"].cast<std::tuple<float, float, float>>();
+    l.color = {std::get<0>(c), std::get<1>(c), std::get<2>(c)};
+    l.radius    = d["radius"].cast<float>();
+    l.intensity = d["intensity"].cast<float>();
+    // Optional cone keys (default: not a cone). Point/strip omit all.
+    if (d.contains("direction") && !d["direction"].is_none()) {
+        auto dir = d["direction"].cast<std::tuple<float, float, float>>();
+        l.direction = {std::get<0>(dir), std::get<1>(dir), std::get<2>(dir)};
+    }
+    if (d.contains("up") && !d["up"].is_none()) {
+        auto up = d["up"].cast<std::tuple<float, float, float>>();
+        l.up = {std::get<0>(up), std::get<1>(up), std::get<2>(up)};
+    }
+    if (d.contains("spot_tan_x") && !d["spot_tan_x"].is_none()) {
+        l.spot_tan_x = d["spot_tan_x"].cast<float>();
+    }
+    if (d.contains("spot_tan_y") && !d["spot_tan_y"].is_none()) {
+        l.spot_tan_y = d["spot_tan_y"].cast<float>();
+    }
+    // Optional attachment (second optional key after position_b).
+    // Set => the geometry above is BODY-frame and frame()
+    // resolves it through inst->world after the store sweep.
+    // Absent/None => world-space, byte-identical to before.
+    if (d.contains("instance_id") && !d["instance_id"].is_none())
+        l.instance_id = d["instance_id"].cast<scenegraph::InstanceId>();
+    return l;
 }
 
 // Test oracle for the native torpedo feed: one tuple per TorpedoDescriptor,
@@ -8352,48 +8418,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   std::min(descs.size(),
                            static_cast<std::size_t>(renderer::kMaxDynamicLightsPerFrame));
               g_dynamic_lights.reserve(n);
-              for (std::size_t i = 0; i < n; ++i) {
-                  const auto& d = descs[i];
-                  renderer::DynamicLightDescriptor l;
-                  auto pos = d["position"].cast<std::tuple<float, float, float>>();
-                  l.pos_a = {std::get<0>(pos), std::get<1>(pos), std::get<2>(pos)};
-                  // position_b and instance_id are the two optional keys
-                  // parsed unconditionally here: a point light is a
-                  // degenerate segment (pos_b == pos_a), so absent/None both
-                  // collapse to that same default rather than raising.
-                  if (d.contains("position_b") && !d["position_b"].is_none()) {
-                      auto pos_b = d["position_b"].cast<std::tuple<float, float, float>>();
-                      l.pos_b = {std::get<0>(pos_b), std::get<1>(pos_b), std::get<2>(pos_b)};
-                  } else {
-                      l.pos_b = l.pos_a;
-                  }
-                  auto c = d["color"].cast<std::tuple<float, float, float>>();
-                  l.color = {std::get<0>(c), std::get<1>(c), std::get<2>(c)};
-                  l.radius    = d["radius"].cast<float>();
-                  l.intensity = d["intensity"].cast<float>();
-                  // Optional cone keys (default: not a cone). Point/strip omit all.
-                  if (d.contains("direction") && !d["direction"].is_none()) {
-                      auto dir = d["direction"].cast<std::tuple<float, float, float>>();
-                      l.direction = {std::get<0>(dir), std::get<1>(dir), std::get<2>(dir)};
-                  }
-                  if (d.contains("up") && !d["up"].is_none()) {
-                      auto up = d["up"].cast<std::tuple<float, float, float>>();
-                      l.up = {std::get<0>(up), std::get<1>(up), std::get<2>(up)};
-                  }
-                  if (d.contains("spot_tan_x") && !d["spot_tan_x"].is_none()) {
-                      l.spot_tan_x = d["spot_tan_x"].cast<float>();
-                  }
-                  if (d.contains("spot_tan_y") && !d["spot_tan_y"].is_none()) {
-                      l.spot_tan_y = d["spot_tan_y"].cast<float>();
-                  }
-                  // Optional attachment (second optional key after position_b).
-                  // Set => the geometry above is BODY-frame and frame()
-                  // resolves it through inst->world after the store sweep.
-                  // Absent/None => world-space, byte-identical to before.
-                  if (d.contains("instance_id") && !d["instance_id"].is_none())
-                      l.instance_id = d["instance_id"].cast<scenegraph::InstanceId>();
-                  g_dynamic_lights.push_back(l);
-              }
+              for (std::size_t i = 0; i < n; ++i)
+                  g_dynamic_lights.push_back(dynamic_light_from_dict(descs[i]));
           },
           py::arg("lights"),
           "Replace the active dynamic-light list, applied each frame(). Each "
@@ -13197,13 +13223,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   cb::BeamFeedCtx c;
                   c.view = ctx["view"].cast<std::int64_t>();
                   c.origin = ctx["origin"].cast<std::array<double, 3>>();
-                  for (auto kv : ctx["frames"].cast<py::dict>()) {
-                      const auto f = kv.second.cast<
-                          std::tuple<std::int64_t, double, double, double>>();
-                      c.frames[kv.first.cast<std::int64_t>()] = cb::BeamFrame{
-                          std::get<0>(f),
-                          {std::get<1>(f), std::get<2>(f), std::get<3>(f)}};
-                  }
+                  c.frames = frame_table_from_py(ctx["frames"]);
                   c.hooks = k2.hooks;
                   c.npc_shields_off = k2.npc_shields_off;
                   c.player = k2.player;
@@ -13271,6 +13291,155 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "the mirror into the render feeds (each ship's Object handle "
               "read from its _nslot); returns (phasers, tractors). ValueError "
               "where the mirror cannot answer: neither feed is touched.");
+        // The native per-frame torpedo feed (torpedo_feed.h; native_combat.
+        // torpedo_feed). ctx: "view" (Set handle, -1 none), "origin"
+        // (x, y, z), "frames" {Set handle: (frame id, ax, ay, az)}, the
+        // host_loop knobs "brightness", "light_radius_scale",
+        // "light_intensity", "fade_start", "cull", "eye" (None or x, y, z)
+        // and "expected_rows" (len(projectiles._active)). Writes g_torpedoes
+        // and holds the torpedo lights for set_dynamic_lights_budgeted; both
+        // are assigned only once the whole feed is built. A throw raises
+        // ValueError (TorpedoFeedMissingVisual, a ValueError, for a row with
+        // no visual record) and leaves g_torpedoes untouched.
+        py::register_exception<cb::MissingVisual>(
+            m, "TorpedoFeedMissingVisual", PyExc_ValueError);
+        m.def("combat_torpedo_feed",
+              [](const py::dict& ctx) {
+                  g_torpedo_lights_ready = false;
+                  cb::TorpedoFeedCtx c;
+                  c.view = ctx["view"].cast<std::int64_t>();
+                  c.origin = ctx["origin"].cast<std::array<double, 3>>();
+                  c.frames = frame_table_from_py(ctx["frames"]);
+                  c.brightness = ctx["brightness"].cast<double>();
+                  c.light_radius_scale =
+                      ctx["light_radius_scale"].cast<double>();
+                  c.light_intensity = ctx["light_intensity"].cast<double>();
+                  c.fade_start = ctx["fade_start"].cast<double>();
+                  c.cull = ctx["cull"].cast<double>();
+                  const py::object eye = ctx["eye"];
+                  if (!eye.is_none())
+                      c.eye = eye.cast<std::array<double, 3>>();
+                  c.expected_rows = ctx["expected_rows"].cast<std::int64_t>();
+                  std::vector<cb::TorpedoOut> torps;
+                  std::vector<cb::TorpedoLightOut> lights;
+                  cb::build_torpedo_feed(cb::mirror(), c, torps, lights);
+                  // set_torpedoes' / set_dynamic_lights' conversions: every
+                  // double through float (pybind's float caster), the ints
+                  // (range-checked by the feed) and bool as they are.
+                  auto f = [](double x) { return static_cast<float>(x); };
+                  auto v3 = [&](const cb::Vec3& a) {
+                      return glm::vec3(f(a[0]), f(a[1]), f(a[2]));
+                  };
+                  auto v4 = [&](const std::array<double, 4>& a) {
+                      return glm::vec4(f(a[0]), f(a[1]), f(a[2]), f(a[3]));
+                  };
+                  std::vector<renderer::TorpedoDescriptor> out;
+                  out.reserve(torps.size());
+                  for (const cb::TorpedoOut& o : torps) {
+                      const cb::TorpedoVisual& v = *o.visual;
+                      renderer::TorpedoDescriptor t;
+                      t.world_pos = v3(o.position);
+                      t.core_texture = v.core_texture;
+                      t.core_color = v4(o.core_color);
+                      t.core_size_a = f(v.core_size_a);
+                      t.core_size_b = f(v.core_size_b);
+                      t.glow_texture = v.glow_texture;
+                      t.glow_color = v4(o.glow_color);
+                      t.glow_size_a = f(v.glow_size_a);
+                      t.glow_size_b = f(v.glow_size_b);
+                      t.glow_size_c = f(v.glow_size_c);
+                      t.flares_texture = v.flares_texture;
+                      t.flares_color = v4(o.flares_color);
+                      t.num_flares = static_cast<int>(v.num_flares);
+                      t.flares_size_a = f(v.flares_size_a);
+                      t.flares_size_b = f(v.flares_size_b);
+                      t.age = f(o.age);
+                      t.id = static_cast<int>(v.id);
+                      t.is_disruptor = v.is_disruptor;
+                      t.forward = v3(o.forward);
+                      t.shell_color = v4(v.shell_color);
+                      t.bolt_core_color = v4(v.bolt_core_color);
+                      t.bolt_length = f(v.bolt_length);
+                      t.bolt_width = f(v.bolt_width);
+                      out.push_back(std::move(t));
+                  }
+                  std::vector<renderer::DynamicLightDescriptor> lout;
+                  lout.reserve(lights.size());
+                  for (const cb::TorpedoLightOut& o : lights) {
+                      renderer::DynamicLightDescriptor l;
+                      l.pos_a = v3(o.position);
+                      l.pos_b = l.pos_a;  // a point light
+                      l.color = glm::vec3(f(o.color[0]), f(o.color[1]),
+                                          f(o.color[2]));
+                      l.radius = f(o.radius);
+                      l.intensity = f(o.intensity);
+                      lout.push_back(l);
+                  }
+                  g_torpedoes = std::move(out);
+                  g_torpedo_lights_pending = std::move(lout);
+                  g_torpedo_lights_ready = true;
+                  return py::make_tuple(g_torpedoes.size(),
+                                        g_torpedo_lights_pending.size());
+              },
+              py::arg("ctx"),
+              "Build this frame's torpedo descriptors (into the render feed) "
+              "and torpedo lights (held for set_dynamic_lights_budgeted) from "
+              "the torpedo table; returns (n_torpedoes, n_torpedo_lights). "
+              "ValueError where the table cannot answer: nothing is touched.");
+        // host_loop._budgeted_dynamic_lights + set_dynamic_lights, with the
+        // torpedo group the lights the combat_torpedo_feed just before this
+        // call built. `explosions` / `emitters` are the Python builders'
+        // lists of set_dynamic_lights dicts; caps (_LIGHT_CAP,
+        // _LIGHT_BUDGET_EXPLOSIONS, _LIGHT_BUDGET_TORPEDOES,
+        // _LIGHT_BUDGET_EMITTERS). Only the dicts the blend keeps are parsed,
+        // in blend order (as set_dynamic_lights parses the blended list),
+        // clamped to kMaxDynamicLightsPerFrame; g_dynamic_lights is assigned
+        // only once all are. ValueError when no feed is pending.
+        m.def("set_dynamic_lights_budgeted",
+              [](const py::list& explosions, const py::list& emitters,
+                 const py::tuple& caps) {
+                  if (!g_torpedo_lights_ready)
+                      throw py::value_error(
+                          "set_dynamic_lights_budgeted: no torpedo feed "
+                          "pending (combat_torpedo_feed first)");
+                  g_torpedo_lights_ready = false;
+                  const auto c = caps.cast<std::tuple<std::int64_t,
+                      std::int64_t, std::int64_t, std::int64_t>>();
+                  const cb::LightBudget b{std::get<0>(c), std::get<1>(c),
+                                          std::get<2>(c), std::get<3>(c)};
+                  const std::vector<cb::LightPick> picks = cb::budget_lights(
+                      explosions.size(), g_torpedo_lights_pending.size(),
+                      emitters.size(), b);
+                  const std::size_t n = std::min(
+                      picks.size(), static_cast<std::size_t>(
+                                        renderer::kMaxDynamicLightsPerFrame));
+                  auto parse = [](const py::list& l, std::size_t i) {
+                      py::handle h = l[i];
+                      if (!py::isinstance<py::dict>(h))
+                          throw py::type_error(
+                              "set_dynamic_lights_budgeted: a light is not a "
+                              "dict");
+                      return dynamic_light_from_dict(
+                          py::reinterpret_borrow<py::dict>(h));
+                  };
+                  std::vector<renderer::DynamicLightDescriptor> out;
+                  out.reserve(n);
+                  for (std::size_t k = 0; k < n; ++k) {
+                      const cb::LightPick& p = picks[k];
+                      if (p.group == 0)
+                          out.push_back(parse(explosions, p.index));
+                      else if (p.group == 1)
+                          out.push_back(g_torpedo_lights_pending[p.index]);
+                      else
+                          out.push_back(parse(emitters, p.index));
+                  }
+                  g_dynamic_lights = std::move(out);
+                  return g_dynamic_lights.size();
+              },
+              py::arg("explosions"), py::arg("emitters"), py::arg("caps"),
+              "Blend the explosion and emitter light dicts with the pending "
+              "native torpedo lights exactly as _budgeted_dynamic_lights, "
+              "into the dynamic-light feed; returns its length.");
         // The driver's per-ship check (k2_scan_rows), answered from the
         // mirror. Its name is native_combat._REQUIRED_BINDINGS' stale-build
         // marker for the mirror scan (phase 6 follow-up 3b).

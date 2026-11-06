@@ -193,6 +193,10 @@ _REQUIRED_BINDINGS = (
     "combat_k1_begin_tractor", "combat_tractor_force_step",
     # The native beam render feed (phase 6 follow-up 1, beam_feed).
     "combat_beam_feed",
+    # The torpedo visual record and the native torpedo render feed (phase 6
+    # follow-up 1b, torpedo_feed).
+    "combat_torp_set_visual", "combat_torpedo_feed",
+    "set_dynamic_lights_budgeted",
     # The SDK routes and the walk offset (fire control native only, M8).
     "combat_k1_begin_dumb", "combat_k1_begin_fire", "combat_k1_result",
     "combat_k1_can_fire", "combat_k1_walk_manual_offset",
@@ -381,6 +385,7 @@ def reset() -> None:
     beam_feed_native = 0
     for k in _BEAM_STAND_DOWNS:
         _beam_stand_downs[k] = 0
+    reset_torpedo_feed_counts()
     global _apply_kinds
     _apply_kinds = None
     for k in _K0_STEP_REASONS:
@@ -4117,44 +4122,55 @@ def _torp_push_visual(t, h) -> None:
         return
     try:
         _h.combat_torp_set_visual(h, v)
-    except (TypeError, ValueError, OverflowError):
+    except (TypeError, ValueError, OverflowError, RuntimeError):
+        # RuntimeError: pybind's cast_error (an int past int64).
         pass            # all-or-nothing: the row keeps no record
+
+
+def _torp_visual_record(t):
+    """The static visual record of `t` (`_vis_native`; the 21-tuple
+    `combat_torp_set_visual` takes, minus `_id`): everything
+    `host_loop._build_torpedo_render_data` and `_torpedo_colors` read from a
+    torpedo, colours UNDIMMED, textures resolved now. Raises whatever those
+    reads raise."""
+    from engine import host_loop as hl
+    return (
+        hl._resolve_game_texture(t._core_texture),
+        hl._resolve_game_texture(t._glow_texture),
+        hl._resolve_game_texture(t._flares_texture),
+        hl._color_tuple(t._core_color),
+        hl._color_tuple(t._glow_color),
+        hl._color_tuple(t._flares_color),
+        hl._color_tuple(t._shell_color),
+        hl._color_tuple(t._bolt_core_color),
+        t._core_size_a, t._core_size_b,
+        t._glow_size_a, t._glow_size_b, t._glow_size_c,
+        t._num_flares, t._flares_size_a, t._flares_size_b,
+        # (id slots in here)
+        bool(t._is_disruptor), float(t._bolt_length),
+        float(t._bolt_width),
+        max(t._glow_size_a, t._glow_size_b),
+    )
 
 
 def torpedo_visual_changed(t) -> None:
     """`CreateTorpedoModel` / `CreateDisruptorModel` ran: cache the static
-    visual record on `t` (`_vis_native`) -- everything
-    `host_loop._build_torpedo_render_data` and `_torpedo_colors` read from a
-    torpedo, colours UNDIMMED, textures resolved now (a recorded departure:
-    at creation, not per frame) -- and push it if the torpedo already has a
-    row. A torpedo created BEFORE its row exists (the SDK order: model, then
-    `register`) is pushed by `_torp_put` at row-add and at every rebuild."""
+    visual record on `t` (`_vis_native`, _torp_visual_record; textures
+    resolved now, a recorded departure: at creation, not per frame) and push
+    it if the torpedo already has a row. Cached whatever the switch, so a
+    switch turned on with the torpedo in flight still finds it (controller
+    ruling, Task 2 review). A torpedo created BEFORE its row exists (the SDK
+    order: model, then `register`) is pushed by `_torp_put` at row-add and
+    at every rebuild."""
     d = t.__dict__
     d.pop("_vis_native", None)
-    if not _switch:
-        return
     try:
-        from engine import host_loop as hl
-        rec = (
-            hl._resolve_game_texture(t._core_texture),
-            hl._resolve_game_texture(t._glow_texture),
-            hl._resolve_game_texture(t._flares_texture),
-            hl._color_tuple(t._core_color),
-            hl._color_tuple(t._glow_color),
-            hl._color_tuple(t._flares_color),
-            hl._color_tuple(t._shell_color),
-            hl._color_tuple(t._bolt_core_color),
-            t._core_size_a, t._core_size_b,
-            t._glow_size_a, t._glow_size_b, t._glow_size_c,
-            t._num_flares, t._flares_size_a, t._flares_size_b,
-            # (id slots in here)
-            bool(t._is_disruptor), float(t._bolt_length),
-            float(t._bolt_width),
-            max(t._glow_size_a, t._glow_size_b),
-        )
+        rec = _torp_visual_record(t)
     except Exception:
         return          # unrepresentable: no record, visual_set stays false
     d["_vis_native"] = rec
+    if not _switch:
+        return
     h = d.get("_k3_row")
     if h is not None and _k3_rows.get(h) is t and available():
         _torp_push_visual(t, h)
@@ -4258,6 +4274,45 @@ def _audit_torpedoes() -> None:
             if name in row["unrepresentable"] or \
                     not _torp_matches(how, key, want, row):
                 _failures.append(("Torpedo", name))
+        if not _torp_visual_matches(t, row["visual"]):
+            _failures.append(("Torpedo", "visual"))
+
+
+# The 21-tuple's keys, in combat_torp_set_visual order (combat_torp_dump's
+# "visual" dict).
+_TORP_VISUAL_KEYS = (
+    "core_texture", "glow_texture", "flares_texture", "core_color",
+    "glow_color", "flares_color", "shell_color", "bolt_core_color",
+    "core_size_a", "core_size_b", "glow_size_a", "glow_size_b", "glow_size_c",
+    "num_flares", "flares_size_a", "flares_size_b", "id", "is_disruptor",
+    "bolt_length", "bolt_width", "light_base")
+
+
+def _torp_visual_matches(t, got) -> bool:
+    """The row's visual record against the torpedo re-read now. No cached
+    record (no model, or one that could not be read): the row holds none.
+    A cached one the binding could not take (an int past int64): none
+    either. Else every field equal, floats by hex -- so a visual changed
+    after Create*Model shows here: the feed reads the record, not the
+    torpedo (spec Part A)."""
+    if "_vis_native" not in t.__dict__:
+        return got is None
+    try:
+        v = _torp_visual_record(t)
+        v = v[:16] + (int(t._id),) + v[16:]
+    except Exception:
+        return False
+    if got is None:
+        return not all(-2 ** 63 <= v[i] < 2 ** 63 for i in (13, 16))
+
+    def same(a, b):
+        if isinstance(a, tuple):
+            return len(a) == len(b) and all(map(same, a, b))
+        if type(a) is float or type(b) is float:
+            return float(a).hex() == float(b).hex()
+        return a == b
+
+    return all(same(w, got[k]) for k, w in zip(_TORP_VISUAL_KEYS, v))
 
 
 def _torp_matches(how, key, want, row) -> bool:
@@ -6240,6 +6295,125 @@ def beam_feed(ships, ship_instances) -> bool:
         return False
     beam_feed_native += 1
     return True
+
+
+# ── The torpedo render feed (phase 6 follow-up 1b) ──────────────────────────
+#
+# native/src/combat/include/dauntless/combat/torpedo_feed.h is the contract.
+# host_loop._push_combat_render_data calls torpedo_feed once a frame: the
+# torpedo descriptors and the torpedo lights built from the K3 torpedo table
+# and each row's visual record (pushed once at Create*Model), the lights
+# blended with the Python explosion and emitter lights exactly as
+# _budgeted_dynamic_lights does (set_dynamic_lights_budgeted). The Python
+# builders stay the representability fallback and the test oracle. The
+# stand-downs: the switch off, the audit, host_io with no native module, a
+# `projectiles._active` replaced by a plain list. A dirty table is rebuilt
+# first, as K3 rebuilds it (the rebuild re-pushes every visual record); one
+# that stays dirty (a torpedo listed twice) falls back. A fall-back leaves
+# both feeds untouched, is counted by why, its first reason logged once, and
+# the frame is Python's: "no_visual" (a torpedo with no visual record),
+# "dirty", "unanswerable" (any other ValueError: a set missing from the
+# frames table, a row count that is not the list's, ...).
+
+torpedo_feed_native = 0
+torpedo_feed_fallbacks = 0
+_TORP_STAND_DOWNS = ("off", "audit", "no_host", "plain_active")
+_torp_stand_downs = dict.fromkeys(_TORP_STAND_DOWNS, 0)
+_TORP_FALLBACKS = ("no_visual", "dirty", "unanswerable")
+_torp_fallbacks = dict.fromkeys(_TORP_FALLBACKS, 0)
+
+
+def reset_torpedo_feed_counts() -> None:
+    global torpedo_feed_native, torpedo_feed_fallbacks
+    torpedo_feed_native = 0
+    torpedo_feed_fallbacks = 0
+    for k in _TORP_STAND_DOWNS:
+        _torp_stand_downs[k] = 0
+    for k in _TORP_FALLBACKS:
+        _torp_fallbacks[k] = 0
+
+
+def torpedo_feed(ship_instances, ship_emitters, player) -> bool:
+    """This frame's torpedo descriptors and dynamic lights, built natively
+    and pushed: True. False: nothing was pushed and the caller runs today's
+    Python (set_torpedoes + set_dynamic_lights over the three builders).
+    The explosion and emitter lights are still the Python builders'
+    (`ship_instances`, `ship_emitters`, `player` are theirs)."""
+    global torpedo_feed_native
+    if not _switch:
+        return _torp_stand_down("off")
+    if _audit:
+        return _torp_stand_down("audit")
+    if _k2_host_io._h is None:
+        return _torp_stand_down("no_host")
+    proj = _k3_proj or sys.modules.get("engine.appc.projectiles")
+    if proj is None or type(proj._active) is not proj._ActiveList:
+        return _torp_stand_down("plain_active")
+    if _k3_dirty:
+        torpedo_table_rebuild(proj._active)
+        if _k3_dirty:
+            return _torp_fall_back("dirty", "the torpedo table stays dirty")
+    hl = _k2_hl
+    if hl is None:
+        from engine import host_loop as hl
+    fr = _frames()
+    try:
+        view = fr.viewing_set()
+        vh = -1
+        if view is not None:
+            vh = _slot_of(view)
+            if type(vh) is not int or (vh >> _KIND_SHIFT) != _kind("Set"):
+                raise ValueError("the viewed set has no Set row")
+        eye = hl._last_camera_eye
+        _h.combat_torpedo_feed({
+            "view": vh,
+            "origin": fr.render_origin(),
+            "frames": _beam_frames() if view is not None else {},
+            "brightness": hl.TORPEDO_BRIGHTNESS,
+            "light_radius_scale": hl._TORPEDO_LIGHT_RADIUS_SCALE,
+            "light_intensity": hl._TORPEDO_LIGHT_INTENSITY,
+            "fade_start": hl.DYN_LIGHT_FADE_START_GU,
+            "cull": hl.DYN_LIGHT_CULL_GU,
+            "eye": None if eye is None else tuple(eye),
+            "expected_rows": len(proj._active),
+        })
+    except ValueError as e:
+        missing = getattr(_h, "TorpedoFeedMissingVisual", None)
+        why = ("no_visual" if missing is not None and isinstance(e, missing)
+               else "unanswerable")
+        return _torp_fall_back(why, str(e))
+    # The torpedo descriptors are pushed; the lights blend with the Python
+    # groups (an error in those is today's, raised as set_dynamic_lights
+    # raises it).
+    _h.set_dynamic_lights_budgeted(
+        hl._build_explosion_light_render_data(),
+        hl._build_emitter_light_render_data(ship_instances, ship_emitters,
+                                            player=player),
+        (hl._LIGHT_CAP, hl._LIGHT_BUDGET_EXPLOSIONS,
+         hl._LIGHT_BUDGET_TORPEDOES, hl._LIGHT_BUDGET_EMITTERS))
+    torpedo_feed_native += 1
+    return True
+
+
+def _torp_stand_down(why: str) -> bool:
+    _torp_stand_downs[why] += 1
+    return False
+
+
+def _torp_fall_back(why: str, message: str) -> bool:
+    global torpedo_feed_fallbacks
+    torpedo_feed_fallbacks += 1
+    _torp_fallbacks[why] += 1
+    _log_once(("torpedo_feed", why), "torpedo feed: %s" % message)
+    return False
+
+
+def torpedo_feed_counts() -> dict:
+    """Since the last reset(): {"native": frames built natively,
+    "fallbacks": {why: frames}, "stand_downs": {why: frames}}."""
+    return {"native": torpedo_feed_native,
+            "fallbacks": dict(_torp_fallbacks),
+            "stand_downs": dict(_torp_stand_downs)}
 
 
 def _beam_stand_down(why: str) -> bool:

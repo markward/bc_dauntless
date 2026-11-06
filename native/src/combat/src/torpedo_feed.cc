@@ -1,0 +1,186 @@
+// build_torpedo_feed / budget_lights (torpedo_feed.h): engine/host_loop.py's
+// torpedo render builders and _budgeted_dynamic_lights over the K3 torpedo
+// table. Each block names the Python line it stands for; the CURRENT Python
+// is the truth.
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
+
+#include "dauntless/combat/torpedo_feed.h"
+
+#include <cmath>
+#include <limits>
+#include <optional>
+#include <stdexcept>
+#include <string>
+
+#include "dauntless/combat/py_math.h"
+#include "frames_internal.h"
+#include "geometry_internal.h"
+
+namespace dauntless::combat {
+
+namespace {
+
+[[noreturn]] void fall_back(const std::string& why) {
+    throw std::invalid_argument("combat torpedo feed: " + why +
+                                " -- answer in Python");
+}
+
+constexpr uint32_t bit(TorpField f) { return 1u << static_cast<int>(f); }
+
+// What the builders read of a row's mirrored fields.
+constexpr uint32_t kReads = bit(TorpField::_age) | bit(TorpField::_velocity) |
+                            bit(TorpField::_containing_set);
+
+// set_torpedoes' `d["num_flares"].cast<int>()` / `d["id"].cast<int>()`.
+bool fits_c_int(int64_t v) {
+    return v >= std::numeric_limits<int>::min() &&
+           v <= std::numeric_limits<int>::max();
+}
+
+// _dim_color(c, scale): (c[0] * scale, c[1] * scale, c[2] * scale, c[3]).
+std::array<double, 4> dim(const TorpedoVisual::Color& c, double s) {
+    return {c[0] * s, c[1] * s, c[2] * s, c[3]};
+}
+
+// _torpedo_forward(t).
+Vec3 forward(const Vec3& v) {
+    const double mag = py_pow(v[0] * v[0] + v[1] * v[1] + v[2] * v[2], 0.5);
+    if (mag < 1e-6) return {0.0, 0.0, 1.0};
+    return {v[0] / mag, v[1] / mag, v[2] / mag};
+}
+
+// _camera_distance_fade(position): nullopt is Python's None (culled).
+std::optional<double> camera_fade(const TorpedoFeedCtx& ctx, const Vec3& p) {
+    if (!ctx.eye) return 1.0;
+    const Vec3& eye = *ctx.eye;
+    const double dx = p[0] - eye[0];
+    const double dy = p[1] - eye[1];
+    const double dz = p[2] - eye[2];
+    const double d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 >= ctx.cull * ctx.cull) return std::nullopt;
+    if (d2 <= ctx.fade_start * ctx.fade_start) return 1.0;
+    const double t =
+        (std::sqrt(d2) - ctx.fade_start) / (ctx.cull - ctx.fade_start);
+    return 1.0 - t * t * (3.0 - 2.0 * t);
+}
+
+}  // namespace
+
+void build_torpedo_feed(const Mirror& m, const TorpedoFeedCtx& ctx,
+                        std::vector<TorpedoOut>& torps,
+                        std::vector<TorpedoLightOut>& lights) {
+    torps.clear();
+    lights.clear();
+    // view = _frames.viewing_set(); if view is None: return out (both).
+    if (ctx.view == -1) return;
+    const TorpedoTable& table = m.torpedoes();
+    if (ctx.expected_rows >= 0 &&
+        static_cast<int64_t>(table.size()) != ctx.expected_rows)
+        fall_back("the table does not hold every projectiles._active entry");
+    const TransformStore& store = m.store();
+    // `for t in projectiles._active:` -- both builders walk the same list in
+    // the same order, and read nothing either changes, so one walk builds
+    // both lists.
+    for (const TorpedoRow& r : table.rows()) {
+        if (!r.alive) continue;
+        if (r.unrepresentable & kReads)
+            fall_back("a field the feed reads is unrepresentable");
+        if (!r.visual_set)
+            throw MissingVisual(
+                "combat torpedo feed: a torpedo has no visual record -- "
+                "answer in Python");
+        const TorpedoVisual& v = r.visual;
+        // p = t.GetTranslate(): the live store slot.
+        if (r.xform_index < 0 || r.xform_gen < 0 ||
+            r.xform_index > std::numeric_limits<uint32_t>::max() ||
+            r.xform_gen > std::numeric_limits<uint32_t>::max())
+            fall_back("a torpedo has no transform");
+        const auto xi = static_cast<uint32_t>(r.xform_index);
+        const auto xg = static_cast<uint32_t>(r.xform_gen);
+        if (!store.valid(xi, xg)) fall_back("a torpedo transform is invalid");
+        const Vec3 p = store.position(xi, xg);
+        // _frames.containing_set(t): the row's ref, re-checked live.
+        const int64_t cset = m.torpedo_ref(r, TorpField::_containing_set);
+        if (cset == kRefUnrepresentable) fall_back("_containing_set unnamed");
+        // pos = in_view(...) -- both builders' first step (to_render is
+        // view_to_render of it).
+        const std::optional<Vec3> view_pos =
+            detail::in_view(m, ctx.frames, ctx.view, cset, p);
+        if (view_pos) {
+            if (!fits_c_int(v.num_flares) || !fits_c_int(v.id))
+                fall_back("num_flares or id outside a C int");
+            TorpedoOut o;
+            o.visual = &v;
+            o.position = detail::view_to_render(ctx.origin, *view_pos);
+            // _torpedo_colors: core, glow, flares dimmed by the knob.
+            o.core_color = dim(v.core_color, ctx.brightness);
+            o.glow_color = dim(v.glow_color, ctx.brightness);
+            o.flares_color = dim(v.flares_color, ctx.brightness);
+            o.age = r.age;
+            o.forward = forward(r.vel);
+            torps.push_back(o);
+        }
+        // _build_dynamic_light_render_data.
+        if (v.is_disruptor) continue;
+        const double radius = ctx.light_radius_scale * v.light_base;
+        if (radius <= 0) continue;
+        if (!view_pos) continue;
+        const std::optional<double> fade = camera_fade(ctx, *view_pos);
+        if (!fade) continue;  // beyond the cull distance: not built at all
+        TorpedoLightOut l;
+        l.position = detail::view_to_render(ctx.origin, *view_pos);
+        l.color = {v.glow_color[0], v.glow_color[1], v.glow_color[2]};
+        l.radius = radius;
+        l.intensity = ctx.light_intensity * *fade;
+        lights.push_back(l);
+    }
+}
+
+namespace {
+
+// items[a:z] for a list of n: Python's slice bounds, clamped into [0, n].
+std::pair<int64_t, int64_t> py_slice(int64_t n, int64_t a, int64_t z) {
+    auto norm = [n](int64_t x) {
+        if (x < 0) {
+            x += n;
+            if (x < 0) x = 0;
+        } else if (x > n) {
+            x = n;
+        }
+        return x;
+    };
+    return {norm(a), norm(z)};
+}
+
+}  // namespace
+
+std::vector<LightPick> budget_lights(std::size_t n_explosions,
+                                     std::size_t n_torpedoes,
+                                     std::size_t n_emitters,
+                                     const LightBudget& b) {
+    const int64_t n[3] = {static_cast<int64_t>(n_explosions),
+                          static_cast<int64_t>(n_torpedoes),
+                          static_cast<int64_t>(n_emitters)};
+    const int64_t budget[3] = {b.explosions, b.torpedoes, b.emitters};
+    std::vector<LightPick> out;
+    // for items, budget in groups: out.extend(items[:budget])
+    for (int g = 0; g < 3; ++g) {
+        const auto [lo, hi] = py_slice(n[g], 0, budget[g]);
+        for (int64_t i = lo; i < hi; ++i)
+            out.push_back({g, static_cast<std::size_t>(i)});
+    }
+    // for items, budget in groups: room = cap - len(out); if room <= 0:
+    // break; out.extend(items[budget:budget + room])
+    for (int g = 0; g < 3; ++g) {
+        const int64_t room = b.cap - static_cast<int64_t>(out.size());
+        if (room <= 0) break;
+        const auto [lo, hi] = py_slice(n[g], budget[g], budget[g] + room);
+        for (int64_t i = lo; i < hi; ++i)
+            out.push_back({g, static_cast<std::size_t>(i)});
+    }
+    return out;
+}
+
+}  // namespace dauntless::combat

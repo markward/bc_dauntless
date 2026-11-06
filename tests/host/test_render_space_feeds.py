@@ -202,6 +202,9 @@ def test_every_combat_feed_is_in_render_space(far_scene, monkeypatch):
     # (the native feed reads the mirror and would not obey it).
     from engine.appc import native_combat
     monkeypatch.setattr(native_combat, "beam_feed", lambda *a, **k: False)
+    # The Python torpedo builders too: this test reads what host_io pushes,
+    # and the native torpedo feed writes its vectors itself.
+    monkeypatch.setattr(native_combat, "torpedo_feed", lambda *a, **k: False)
     pushed = {}
     for name in ("set_torpedoes", "set_dynamic_lights", "set_shockwaves",
                  "set_hit_vfx", "set_particle_emitters", "set_phaser_beams",

@@ -501,3 +501,45 @@ def test_a_disruptor_record_has_empty_textures(on):
     assert v["is_disruptor"] is True
     assert float(v["bolt_length"]).hex() == (2.5).hex()
     _expect_visual(t, v)
+
+
+# ── Task 3 follow-ups: the record's lifetime and its audit ──────────────────
+
+def test_a_model_made_with_the_switch_off_is_recorded_for_a_switch_on_in_flight():
+    """Controller ruling: `_vis_native` is cached at Create*Model whatever
+    the switch, so turning native on with the torpedo in flight finds it."""
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "0"})
+    t = _make_photon()
+    projectiles.register(t)
+    assert "_vis_native" in t.__dict__
+    assert "_k3_row" not in t.__dict__
+    nc.configure(ON)
+    nc.torpedo_table_rebuild(projectiles._active)
+    _expect_visual(t, _row(t)["visual"])
+
+
+def test_a_visual_the_binding_cannot_cast_leaves_no_record(on):
+    """A Python int past int64 is a pybind cast_error (RuntimeError): the
+    model is still made, the row keeps no record (the feed falls back)."""
+    t = Torpedo()
+    projectiles.register(t)
+    t.CreateTorpedoModel("a.tga", None, 1, 2, "b.tga", None, 7, 5, 1,
+                         "c.tga", None, 2 ** 70, 0.5, 0.25)
+    assert t._num_flares == 2 ** 70
+    assert _row(t)["visual"] is None
+
+
+def test_audit_compares_the_visual_record(on):
+    a = _make_photon()
+    projectiles.register(a)
+    b = _fire()                           # no model: no record, no failure
+    nc.audit_mirror()
+    assert nc.audit_failures() == []
+    a._glow_size_a = 9.0                  # after Create: not honoured
+    nc.audit_mirror()
+    assert ("Torpedo", "visual") in nc.audit_failures()
+    nc.audit_failures().clear()
+    a._glow_size_a = 3.0
+    nc.audit_mirror()
+    assert nc.audit_failures() == []
+    assert b.__dict__.get("_vis_native") is None

@@ -6,6 +6,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace dauntless::combat {
 
@@ -40,12 +41,13 @@ const char* torp_field_name(TorpField f) {
 
 int64_t TorpedoTable::add(int64_t xform_index, int64_t xform_gen) {
     TorpedoRow row;
-    row.handle = next_++;
+    const int64_t h = next_++;
+    row.handle = h;
     row.xform_index = xform_index;
     row.xform_gen = xform_gen;
-    index_.emplace(row.handle, rows_.size());
-    rows_.push_back(row);
-    return row.handle;
+    index_.emplace(h, rows_.size());
+    rows_.push_back(std::move(row));
+    return h;
 }
 
 bool TorpedoTable::drop(int64_t h) {
@@ -70,7 +72,7 @@ void TorpedoTable::compact() {
     std::size_t out = 0;
     for (std::size_t i = 0; i < rows_.size(); ++i) {
         if (!rows_[i].alive) continue;
-        if (out != i) rows_[out] = rows_[i];
+        if (out != i) rows_[out] = std::move(rows_[i]);
         index_[rows_[out].handle] = out;
         ++out;
     }

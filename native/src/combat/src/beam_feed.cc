@@ -13,11 +13,11 @@
 
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/py_math.h"
+#include "frames_internal.h"
 #include "geometry_internal.h"
 
 namespace dauntless::combat {
 
-using detail::is_zero_offset;
 using detail::obj;
 using detail::shifted;
 using detail::sub;
@@ -38,54 +38,20 @@ int64_t containing_set(const Mirror& m, int64_t object) {
     return s;
 }
 
-// frame_of(pSet): None for a non-set; else the set's entry in ctx.frames.
-const BeamFrame* frame_of(const Mirror& m, const BeamFeedCtx& ctx, int64_t s) {
-    if (s == -1) return nullptr;
-    if (s < 0 || !m.set(s)) fall_back("set handle unnamed");
-    const auto it = ctx.frames.find(s);
-    if (it == ctx.frames.end()) fall_back("set missing from the frames table");
-    return &it->second;
-}
-
-// offset_between(set_a, set_b): `set_a is set_b` -> _ZERO when it is a Set
-// (without resolving its frame), else None; different frames -> None; else
-// tuple(b - a for a, b in zip(fa.anchor_gu, fb.anchor_gu)).
+// The frames.py helpers over this feed's table (frames_internal.h).
 std::optional<Vec3> offset_between(const Mirror& m, const BeamFeedCtx& ctx,
                                    int64_t a, int64_t b) {
-    if (a == b) {
-        if (a == -1) return std::nullopt;
-        if (a < 0 || !m.set(a)) fall_back("set handle unnamed");
-        return Vec3{0.0, 0.0, 0.0};
-    }
-    const BeamFrame* fa = frame_of(m, ctx, a);
-    const BeamFrame* fb = frame_of(m, ctx, b);
-    if (!fa || !fb || fa->id != fb->id) return std::nullopt;
-    return Vec3{fb->anchor[0] - fa->anchor[0], fb->anchor[1] - fa->anchor[1],
-                fb->anchor[2] - fa->anchor[2]};
+    return detail::offset_between(m, ctx.frames, a, b);
 }
 
-// to_render(view, pSet, x, y, z) = view_to_render(in_view(...)): each step
-// hands the point back untouched for an offset `== _ZERO` (so -0.0 counts).
 std::optional<Vec3> to_render(const Mirror& m, const BeamFeedCtx& ctx,
                               int64_t view, int64_t pset, const Vec3& p) {
-    const std::optional<Vec3> off = offset_between(m, ctx, view, pset);
-    if (!off) return std::nullopt;
-    Vec3 v = p;
-    if (!is_zero_offset(*off))
-        v = Vec3{p[0] + (*off)[0], p[1] + (*off)[1], p[2] + (*off)[2]};
-    const Vec3& o = ctx.origin;
-    if (is_zero_offset(o)) return v;
-    return Vec3{v[0] - o[0], v[1] - o[1], v[2] - o[2]};
+    return detail::to_render(m, ctx.frames, ctx.origin, view, pset, p);
 }
 
-// view_offset(pSet): offset_between(viewing_set(), pSet), None for None or
-// _ZERO (and for pSet None).
 std::optional<Vec3> view_offset(const Mirror& m, const BeamFeedCtx& ctx,
                                 int64_t pset) {
-    if (pset == -1) return std::nullopt;
-    const std::optional<Vec3> off = offset_between(m, ctx, ctx.view, pset);
-    if (!off || is_zero_offset(*off)) return std::nullopt;
-    return off;
+    return detail::view_offset(m, ctx.frames, ctx.view, pset);
 }
 
 // ── host_loop._beam_endpoint ────────────────────────────────────────────────
