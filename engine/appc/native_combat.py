@@ -126,6 +126,10 @@ IS_TRUE = "is True"
 #: NativeField type for an optional 3-tuple of floats (MetaNebula ``_fbm``,
 #: ``_seed``): None pushes "unset".
 VEC3 = "vec3"
+#: NativeField type for an RGBA colour (a beam's shell / core colour): a
+#: 4-tuple of real numbers pushes 4 doubles; anything else (None, a 3-tuple,
+#: a tuple holding a string) pushes "unset" -- unrepresentable, the row stays.
+RGBA = "rgba"
 #: NativeField type for an aim offset (`_target_offset`, `_held_offset`):
 #: every Python reader tests `isinstance(offset, TGPoint3)`, so anything
 #: else -- None, a plain tuple -- pushes "unset", exactly as it reads.
@@ -860,6 +864,11 @@ class NativeField:
             except AttributeError:
                 x, y, z = value
             return [float(x), float(y), float(z)]
+        if t is RGBA:
+            if (isinstance(value, tuple) and len(value) == 4
+                    and all(isinstance(c, (int, float)) for c in value)):
+                return [float(c) for c in value]
+            return []
         if t is SPHERES:
             return [(float(x), float(y), float(z), float(r))
                     for (x, y, z, r) in value]
@@ -879,7 +888,7 @@ class NativeField:
             fn = _h.combat_set_f
         elif t is list or t is set:
             fn = _h.combat_set_ids
-        elif t is VEC3 or t is OFFSET or t is POINT_OR_NONE:
+        elif t is VEC3 or t is OFFSET or t is POINT_OR_NONE or t is RGBA:
             fn = _h.combat_set_fv
         else:
             fn = _h.combat_set_i
@@ -895,7 +904,7 @@ class NativeField:
         if self._type is set:
             return sorted(set(v)) == mirrored
         if self._type is VEC3 or self._type is OFFSET \
-                or self._type is POINT_OR_NONE:
+                or self._type is POINT_OR_NONE or self._type is RGBA:
             # A point-or-none dumps by its state: None, its 3 doubles, or 4
             # zeros (combat_dump), so the vector alone decides the state.
             if mirrored is None:

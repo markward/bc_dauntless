@@ -12160,6 +12160,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                         else d[n] = py::make_tuple(v[0], v[1], v[2]);
                         break;
                     }
+                    case cb::FieldType::Vec4: {
+                        auto v = mi.get_fv(h, f);
+                        if (v.empty()) d[n] = py::none();
+                        else d[n] = py::make_tuple(v[0], v[1], v[2], v[3]);
+                        break;
+                    }
                     case cb::FieldType::Spheres: {
                         py::list l;
                         for (const auto& s : mi.object(h)->spheres)

@@ -118,6 +118,19 @@ constexpr FieldInfo kInfo[] = {
     {"_beam_on_countdown", Kind::Subsystem, FieldType::F},
     {"_dwell", Kind::Subsystem, FieldType::F},
     {"has_shields", Kind::Subsystem, FieldType::I},
+    {"_length_texture_tile_per_unit", Kind::Subsystem, FieldType::F},
+    {"_phaser_width", Kind::Subsystem, FieldType::F},
+    {"_main_radius", Kind::Subsystem, FieldType::F},
+    {"_core_scale", Kind::Subsystem, FieldType::F},
+    {"_taper_radius", Kind::Subsystem, FieldType::F},
+    {"_taper_ratio", Kind::Subsystem, FieldType::F},
+    {"_taper_min_length", Kind::Subsystem, FieldType::F},
+    {"_taper_max_length", Kind::Subsystem, FieldType::F},
+    {"_perimeter_tile", Kind::Subsystem, FieldType::F},
+    {"_texture_speed", Kind::Subsystem, FieldType::F},
+    {"_num_sides", Kind::Subsystem, FieldType::I},
+    {"_outer_shell_color", Kind::Subsystem, FieldType::Vec4},
+    {"_inner_core_color", Kind::Subsystem, FieldType::Vec4},
     {"_recharge_rate", Kind::Subsystem, FieldType::F},
     {"_reload_delay", Kind::Subsystem, FieldType::F},
     {"_reload_timers", Kind::Subsystem, FieldType::FloatList},
@@ -507,6 +520,16 @@ std::vector<int64_t>* idptr(ObjectRow& r, Field f) {
 double* fptr(SubsystemRow& r, Field f) {
     switch (f) {
         case Field::_condition: return &r._condition;
+        case Field::_length_texture_tile_per_unit: return &r._length_texture_tile_per_unit;
+        case Field::_phaser_width: return &r._phaser_width;
+        case Field::_main_radius: return &r._main_radius;
+        case Field::_core_scale: return &r._core_scale;
+        case Field::_taper_radius: return &r._taper_radius;
+        case Field::_taper_ratio: return &r._taper_ratio;
+        case Field::_taper_min_length: return &r._taper_min_length;
+        case Field::_taper_max_length: return &r._taper_max_length;
+        case Field::_perimeter_tile: return &r._perimeter_tile;
+        case Field::_texture_speed: return &r._texture_speed;
         case Field::_max_condition: return &r._max_condition;
         case Field::_disabled_percentage: return &r._disabled_percentage;
         case Field::s_radius: return &r._radius;
@@ -571,6 +594,7 @@ double* fptr(SubsystemRow& r, Field f) {
 int64_t* iptr(SubsystemRow& r, Field f) {
     switch (f) {
         case Field::weapon_kind: return &r.weapon_kind;
+        case Field::_num_sides: return &r._num_sides;
         case Field::_is_on: return &r._is_on;
         case Field::_fire_held: return &r._fire_held;
         case Field::_force_update: return &r._force_update;
@@ -1023,7 +1047,34 @@ void Mirror::set_ids(int64_t h, Field f, const std::vector<int64_t>& ids) {
     ++epoch_;
 }
 
+namespace {
+// A Vec4 field's storage and set-flag (SubsystemRow only).
+Vec4* v4ptr(SubsystemRow& r, Field f, bool** set) {
+    switch (f) {
+        case Field::_outer_shell_color:
+            *set = &r.outer_shell_color_set;
+            return &r._outer_shell_color;
+        case Field::_inner_core_color:
+            *set = &r.inner_core_color_set;
+            return &r._inner_core_color;
+        default: return nullptr;
+    }
+}
+}  // namespace
+
 void Mirror::set_fv(int64_t h, Field f, const std::vector<double>& v) {
+    if (info(f).type == FieldType::Vec4) {
+        // 0 doubles: unset; 4: the colour. Nothing else.
+        if (!(v.empty() || v.size() == 4)) bad("expected 0 or 4 doubles", f);
+        SubsystemRow& row = checked(subsystems_, h, Kind::Subsystem);
+        bool* set = nullptr;
+        Vec4* p = v4ptr(row, f, &set);
+        if (!p) bad("field not on this row", f);
+        *p = v.empty() ? Vec4{0, 0, 0, 0} : Vec4{v[0], v[1], v[2], v[3]};
+        *set = !v.empty();
+        ++epoch_;
+        return;
+    }
     if (info(f).type != FieldType::Vec3) bad("not a 3-vector field", f);
     bool nullable = (f == Field::_fbm || f == Field::_seed ||
                      f == Field::_held_offset || f == Field::_target_offset ||
@@ -1273,6 +1324,19 @@ std::vector<int64_t> Mirror::get_ids(int64_t h, Field f) const {
 }
 
 std::vector<double> Mirror::get_fv(int64_t h, Field f) const {
+    if (info(f).type == FieldType::Vec4) {
+        return visit(h, info(f).kind, [&](auto& row) -> std::vector<double> {
+            if constexpr (std::is_same_v<std::decay_t<decltype(row)>,
+                                         SubsystemRow>) {
+                bool* set = nullptr;
+                Vec4* p = v4ptr(row, f, &set);
+                if (p && *set) return {(*p)[0], (*p)[1], (*p)[2], (*p)[3]};
+                if (p) return {};
+            }
+            bad("field not on this row", f);
+            return {};
+        });
+    }
     if (info(f).type != FieldType::Vec3) bad("not a 3-vector field", f);
     return visit(h, info(f).kind, [&](auto& row) -> std::vector<double> {
         Vec3* p = vptr(row, f);

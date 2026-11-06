@@ -364,6 +364,21 @@ class ShipSubsystem(TGEventHandlerObject):
     _arc_set = NativeField(bool)
     # Phaser-strip length (K2 reads it for the emitter position).
     _length = NativeField(float)
+    # A beam emitter's visuals, copied from its property: what the native
+    # beam feed reads (phase 6 follow-up 1). Only the two colours it uses.
+    _length_texture_tile_per_unit = NativeField(float)
+    _phaser_width = NativeField(float)
+    _main_radius = NativeField(float)
+    _core_scale = NativeField(float)
+    _taper_radius = NativeField(float)
+    _taper_ratio = NativeField(float)
+    _taper_min_length = NativeField(float)
+    _taper_max_length = NativeField(float)
+    _perimeter_tile = NativeField(float)
+    _texture_speed = NativeField(float)
+    _num_sides = NativeField(int)
+    _outer_shell_color = NativeField(native_combat.RGBA)
+    _inner_core_color = NativeField(native_combat.RGBA)
     # A phaser bank's pulse damage and R_hit (K2 applies the pulse in the
     # walk: native damage Task 4), copied from its property.
     _max_damage = NativeField(float)

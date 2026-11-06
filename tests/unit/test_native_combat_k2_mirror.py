@@ -377,3 +377,53 @@ def test_audit_clean_on_combat_stress(monkeypatch, tmp_path):
                for s in ships if s.GetPhaserSystem() is not None
                for b in (s.GetPhaserSystem().GetWeapon(i)
                          for i in range(s.GetPhaserSystem().GetNumWeapons())))
+
+
+_VISUALS_F = ("_length_texture_tile_per_unit", "_phaser_width", "_main_radius",
+              "_core_scale", "_taper_radius", "_taper_ratio",
+              "_taper_min_length", "_taper_max_length", "_perimeter_tile",
+              "_texture_speed")
+
+
+def test_bank_visuals_reach_the_mirror_after_set_property(arena):
+    galaxy, _bop = arena
+    bank = _first_bank(galaxy)
+    d = _dump(bank)
+    for name in _VISUALS_F:
+        assert d[name].hex() == float(getattr(bank, name)).hex(), name
+    assert bank._phaser_width != 0.0 and bank._main_radius != 0.0
+    assert d["_num_sides"] == bank._num_sides
+    for name in ("_outer_shell_color", "_inner_core_color"):
+        assert getattr(bank, name) != (1.0, 1.0, 1.0, 1.0), name
+        assert _hex(*d[name]) == _hex(*getattr(bank, name)), name
+
+
+def test_a_value_written_after_set_property_reaches_the_mirror(arena):
+    galaxy, _bop = arena
+    bank = _first_bank(galaxy)
+    bank._phaser_width = 0.7
+    bank._outer_shell_color = (0.1, 0.2, 0.3, 0.4)
+    assert _dump(bank)["_phaser_width"].hex() == (0.7).hex()
+    assert _hex(*_dump(bank)["_outer_shell_color"]) == _hex(0.1, 0.2, 0.3, 0.4)
+
+
+def test_num_sides_float_truncates_like_python_int(arena):
+    galaxy, _bop = arena
+    bank = _first_bank(galaxy)
+    bank._num_sides = 6.7
+    assert _dump(bank)["_num_sides"] == int(bank.GetNumSides() or 6) == 6
+
+
+@pytest.mark.parametrize("bad", [None, (1.0, 2.0, 3.0), (1.0, 2.0, 3.0, "x"),
+                                 (1, 2, 3, 4, 5), "abcd"])
+def test_a_non_tuple_colour_is_unrepresentable(arena, bad):
+    galaxy, _bop = arena
+    bank = _first_bank(galaxy)
+    bank._outer_shell_color = bad
+    bank._inner_core_color = bad
+    d = _dump(bank)
+    assert d["_outer_shell_color"] is None
+    assert d["_inner_core_color"] is None
+    assert d["_length"].hex() == bank._length.hex()      # row not dropped
+    bank._outer_shell_color = (0.5, 0.5, 0.5, 1.0)
+    assert _hex(*_dump(bank)["_outer_shell_color"]) == _hex(0.5, 0.5, 0.5, 1.0)

@@ -36,7 +36,9 @@ enum class Kind : int32_t {
 enum class FieldType : int32_t {
     F, I, Ref, Ids, Vec3, Spheres, Rows, IdLists,
     // An ordered list of doubles (a tube's per-slot reload lists).
-    FloatList
+    FloatList,
+    // 4 doubles or unset (a beam's RGBA colour); set_fv / get_fv carry it.
+    Vec4
 };
 
 enum class Field : int32_t {
@@ -94,6 +96,13 @@ enum class Field : int32_t {
     // _dwell) and of a ShieldSubsystem (has_shields = sum(_max_shields) > 0,
     // computed by Python's own HasShields expression).
     _length, _beam_on_countdown, _dwell, has_shields,
+    // Subsystem: a beam emitter's visuals (the native beam feed reads them):
+    // ten doubles, the prism side count, and the two RGBA colours the feed
+    // uses (Vec4, unset when Python's value is not a 4-tuple of numbers).
+    _length_texture_tile_per_unit, _phaser_width, _main_radius, _core_scale,
+    _taper_radius, _taper_ratio, _taper_min_length, _taper_max_length,
+    _perimeter_tile, _texture_speed, _num_sides, _outer_shell_color,
+    _inner_core_color,
     // Subsystem: what the K0 charging kernel reads (native weapon state,
     // Task 3). _recharge_rate (energy weapons); _reload_delay and the per-slot
     // lists _reload_timers / _reload_advanced_at (tubes; written IN PLACE by
@@ -298,6 +307,7 @@ Kind field_kind(Field f);
 FieldType field_type(Field f);
 
 using Vec3 = std::array<double, 3>;
+using Vec4 = std::array<double, 4>;
 
 // A ref field's value when the Python referent is not None but the mirror
 // cannot name it (an unregistered object: a test fake, a set before it has a
@@ -442,6 +452,16 @@ struct SubsystemRow {
     double launch_speed = 0.0, lifetime = 0.0;
     int64_t module_ok = 0;
     double _length = 0.0, _beam_on_countdown = 0.0, _dwell = 0.0;
+    // Beam visuals (Field comment above). A colour's *_set is false when
+    // Python's value was not a 4-tuple of real numbers: unrepresentable.
+    double _length_texture_tile_per_unit = 0.0, _phaser_width = 0.0,
+           _main_radius = 0.0, _core_scale = 0.0, _taper_radius = 0.0,
+           _taper_ratio = 0.0, _taper_min_length = 0.0,
+           _taper_max_length = 0.0, _perimeter_tile = 0.0,
+           _texture_speed = 0.0;
+    int64_t _num_sides = 0;
+    Vec4 _outer_shell_color{0, 0, 0, 0}, _inner_core_color{0, 0, 0, 0};
+    bool outer_shell_color_set = false, inner_core_color_set = false;
     int64_t has_shields = 0;
     // K0's inputs (Field comment above).
     double _recharge_rate = 0.0, _reload_delay = 0.0;
