@@ -698,6 +698,15 @@ bool Walker::pulse() {
     else
         damage = md * (mdd / s_.dist) * dt;
     damage = damage * p.intensity[static_cast<size_t>(index)];
+    // * _bank_condition_factor(bank): max(0.0, min(1.0,
+    //     bank.GetConditionPercentage()))
+    double cond;
+    try {
+        cond = condition_percentage(m_, *b);
+    } catch (const std::invalid_argument&) {
+        return python(K2PulseWhy::fallback);
+    }
+    damage = damage * py_max(0.0, py_min(1.0, cond));
     if (damage > 0) {
         // damage_hull = sys_.GetPowerLevel() != sys_.PP_LOW
         // combat.apply_hit(target, damage, impact_point, source=ship,
