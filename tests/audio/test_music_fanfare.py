@@ -65,7 +65,9 @@ def test_a_fanfare_near_the_end_leaves_the_track_to_end_by_itself():
     assert done is not None and abs((28.85 + done) - 30.04) < 2 * DT
 
 
-def test_the_next_track_waits_for_the_fanfare_then_starts_at_full_volume():
+def test_the_next_track_starts_under_the_fanfare_at_full_volume():
+    """The original: the next combat track started 3.1 s into EnemyBlewUp
+    (an 11.47 s fanfare), so a track cued during a fanfare does not wait."""
     p, made = _player()
     p.play("Panic-9a.mp3", looping=False, fade=0.0)
     _run(p, 20.79)
@@ -73,11 +75,29 @@ def test_the_next_track_waits_for_the_fanfare_then_starts_at_full_volume():
     fanfare = made[1]
     _run(p, 4.0)                                # the interrupted track is done
     p.play("Panic-9g.mp3", looping=False, fade=2.0)   # DynamicMusic's next track
-    assert len(made) == 2                       # held while the fanfare plays
-    fanfare.playing = False                     # the fanfare ends
-    p.update(DT)
-    assert len(made) == 3 and made[2].path == "Panic-9g.mp3"
+    assert len(made) == 3 and made[2].path == "Panic-9g.mp3"   # at once
     assert made[2].gain == 1.0                  # nothing to fade from: full at once
+    assert fanfare.playing is not False and fanfare.stopped is False   # the fanfare plays on
+
+
+def test_a_newer_fanfare_fades_out_a_still_playing_one():
+    """Quick Battle's Win can start while EnemyBlewUp still plays: the newer
+    fanfare takes over and the earlier one fades out over 0.5 s (not
+    measured: the original Quick Battle never plays Win)."""
+    from engine.audio.music import FANFARE_HANDOVER_S
+    p, made = _player()
+    p.play("Confident-11a.mp3", looping=False, fade=0.0)
+    _run(p, 3.0)
+    p.play_fanfare("Transition 13.mp3", grid=2.0)
+    first = made[1]
+    _run(p, 5.0)
+    p.play_fanfare("Success-12.mp3", grid=2.0)
+    second = made[-1]
+    _run(p, FANFARE_HANDOVER_S / 2)
+    assert 0.0 < first.gain < 1.0 and not first.stopped   # fading
+    _run(p, FANFARE_HANDOVER_S)
+    assert first.stopped                        # gone
+    assert second.stopped is False and second.gain == 1.0  # the newer one plays on
 
 
 def test_with_no_track_playing_a_fanfare_just_plays():

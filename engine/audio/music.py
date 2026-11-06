@@ -44,6 +44,10 @@ on sample-accurate alignment.
 """
 
 
+# A newer fanfare fades a still-playing earlier one out over this long.
+FANFARE_HANDOVER_S = 0.5
+
+
 class _Ramp:
     """One volume-ramp record. Mirrors the 20-byte on-disk shape."""
 
@@ -77,6 +81,7 @@ class MusicPlayer:
         self._pending = None            # (path, looping, fade) queued mid-transition
         self._elapsed = 0.0             # seconds the current track has played
         self._fanfare = None            # the fanfare stream while it plays
+        self._fanfare_fades = []        # earlier fanfares fading out under a newer one
         self._cut = None                # [seconds until the fade-out starts, fade length] of the interrupted track
         self._cut_done = False          # the interrupted track has faded out: report it finished once
 
@@ -87,12 +92,11 @@ class MusicPlayer:
 
         `fade` is the OUTGOING track's fade grid, not the incoming one's.
         """
-        if self._fanfare is not None:
-            # A track started while a fanfare plays waits for it to end, then
-            # starts from silence (inferred from DynamicMusic.PlayFanfare's
-            # "resuming the current music ... when done"; not measured).
-            self._pending = (path, looping, 0.0)
-            return
+        # A track started while a fanfare plays starts at once, under it.
+        # Measured on the original (stbc-oracle music probe, Quick Battle win
+        # run): the next combat track started 3.1 s into EnemyBlewUp, an
+        # 11.47 s fanfare. Holding it until the fanfare ended made a combat
+        # track start just before Quick Battle's Win fanfare.
         if self._transitioning():
             # A start during a transition is queued by name, not layered on
             # top — otherwise a burst of ChangeMusic calls would stack ramps.
@@ -116,7 +120,16 @@ class MusicPlayer:
         (fade grid 2.0) and the track ended 24.04 s in -- the next 2 s
         boundary (22.0) plus a 2 s fade -- 6 s early; DynamicMusic then cued a
         new track of the same state, not a resume. A fanfare that starts less
-        than a grid before the track's own end leaves it to end naturally."""
+        than a grid before the track's own end leaves it to end naturally.
+
+        A fanfare that starts while an earlier one still plays takes over: the
+        earlier one fades out over FANFARE_HANDOVER_S. Not measured (the
+        original Quick Battle never plays Win, so EnemyBlewUp and Win never
+        meet there); without it Quick Battle's Win played on top of a
+        still-running EnemyBlewUp whenever the dying ship went quickly."""
+        old = self._fanfare
+        if old is not None and getattr(old, "playing", False) is not False:
+            self._fanfare_fades.append(_Ramp(old, FANFARE_HANDOVER_S, self._volume_of_fanfare(old), 0.0))
         self._fanfare = self._factory(path, False)
         if self._current is None:
             return
@@ -129,6 +142,9 @@ class MusicPlayer:
 
     def stop(self) -> None:
         """HARD stop. Does not wait for, or schedule, a ramp."""
+        for ramp in self._fanfare_fades:
+            self._silence(ramp.sound)
+        self._fanfare_fades = []
         for ramp in self._ramps:
             self._silence(ramp.sound)
         self._ramps = []
@@ -168,9 +184,16 @@ class MusicPlayer:
             self._current = None
             self._cut = None
             self._cut_done = True
+        for ramp in self._fanfare_fades:
+            ramp.remaining -= float(dt)
+            if ramp.sound is not None:
+                ramp.sound.SetVolume(ramp.volume())
+        for ramp in [r for r in self._fanfare_fades if r.done()]:
+            self._silence(ramp.sound)
+        self._fanfare_fades = [r for r in self._fanfare_fades if not r.done()]
         if self._fanfare is not None and getattr(self._fanfare, "playing", False) is False:
             self._fanfare = None
-        if self._pending is not None and self._fanfare is None and not self._transitioning():
+        if self._pending is not None and not self._transitioning():
             path, looping, fade = self._pending
             self._pending = None
             self._begin(path, looping, fade)
@@ -244,6 +267,11 @@ class MusicPlayer:
             # is startVolume 1, duration 0 — full volume immediately.
             self._ramps.append(_Ramp(incoming, 0.0, 1.0, 1.0))
             incoming.SetVolume(1.0)
+
+    @staticmethod
+    def _volume_of_fanfare(sound) -> float:
+        g = getattr(sound, "gain", None)
+        return 1.0 if g is None else float(g)
 
     def _volume_of(self, sound) -> float:
         for ramp in self._ramps:

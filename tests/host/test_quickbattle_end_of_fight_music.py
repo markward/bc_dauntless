@@ -18,7 +18,7 @@ from tests.host.test_quickbattle_boot import _fresh_quickbattle_loader
 from tests.helpers.headless_frames import Frames
 
 
-def _fight(monkeypatch):
+def _fight(monkeypatch, lengths=None):
     import App, DynamicMusic
     import QuickBattle.QuickBattle as QB
     hl, controller = _fresh_quickbattle_loader(monkeypatch)
@@ -41,7 +41,7 @@ def _fight(monkeypatch):
     controller.loader.start_quickbattle()
     App.g_kTimerManager.tick(3.0)
     hl._fire_pending_preload_done()
-    frames = Frames(lengths={".mp3": 30.04})
+    frames = Frames(lengths=lengths or {".mp3": 30.04})
     player = App.Game_GetCurrentPlayer()
     enemy = [App.ShipClass_Cast(o) for o in player.GetContainingSet().GetClassObjectList(App.CT_SHIP)
              if App.ShipClass_Cast(o).GetName() != player.GetName()][0]
@@ -104,3 +104,56 @@ def test_after_a_loss_the_music_stays_ambient(monkeypatch):
     assert set(a for n, t, a in log if n == "SwitchMusic" and t > lose[0]) <= {"Starting Ambient"}
     assert DM.sCurrentMusicType == "Starting Ambient"
     assert enemy.GetContainingSet() is None
+
+
+def test_a_won_battle_plays_the_win_cleanly(monkeypatch):
+    """The user heard another track start just before the Win fanfare, or play
+    over it. EnemyBlewUp (Transition 13, 11.47 s) plays at the kill; Quick
+    Battle's Win (engine/quickbattle/battle_end.py, 1 s after ShipDestroyed)
+    comes 7-15 s later depending on how the ship dies.
+    * Every track DynamicMusic asks for starts when asked (the original's next
+      combat track started 3.1 s into EnemyBlewUp): holding one until the
+      fanfare ended started a combat track just before Win.
+    * When Win starts, EnemyBlewUp has ended or fades out within 0.5 s, so the
+      two fanfares never play on top of each other."""
+    App, DM, frames, player, enemy, log = _fight(
+        monkeypatch, lengths={".mp3": 30.04, "Transition 13.mp3": 11.47})
+    import QuickBattle.QuickBattle as QB
+    from engine.quickbattle import battle_end
+    battle_end.install(QB)
+    battle_end.begin(QB, None)
+    starts, asked = [], []
+    real_factory = frames.player._factory
+
+    def factory(path, looping=True):
+        s = real_factory(path, looping)
+        starts.append((frames.t, str(path), s))
+        return s
+    frames.player._factory = factory
+    real_play = frames.player.play
+
+    def play(path, *a, **k):
+        asked.append((frames.t, str(path)))
+        return real_play(path, *a, **k)
+    frames.player.play = play
+    stopped_at = {}
+    real_frame = frames.frame
+
+    def frame():
+        real_frame()
+        for t, p, s in starts:
+            if s.stopped and id(s) not in stopped_at:
+                stopped_at[id(s)] = frames.t
+    frames.frame = frame
+    _kill(App, enemy)
+    frames.run(40.0)
+    blew = [(t, s) for t, p, s in starts if p.endswith("Transition 13.mp3")]
+    win = [t for t, p, _s in starts if p.endswith("Success-12.mp3")]
+    assert blew and win, starts
+    (t_blew, blew_s), t_win = blew[0], win[0]
+    # No track start is held back: each starts in the frame it is asked for.
+    for t, p in asked:
+        assert any(abs(ts - t) < 1e-6 and ps == p for ts, ps, _s in starts), (t, p, starts)
+    # The two fanfares never overlap for more than the 0.5 s hand-over.
+    blew_gone = stopped_at.get(id(blew_s), t_blew + 11.47)
+    assert blew_gone <= t_win + 0.5 + 2.0 / 60.0, (t_blew, t_win, blew_gone)
