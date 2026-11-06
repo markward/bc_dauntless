@@ -363,58 +363,85 @@ uv run pytest
 
 Build the C++ (`cmake -B build -S . && cmake --build build -j`) after `uv sync` and before `uv run pytest`: fire control is native only, so the per-test `configure()` raises without the native module (M2, M10).
 
-## Test gate — both suites, machine-checked baseline
+## Test gate — two tiers, machine-checked baseline
 
-⛔ **The gate runs ONLY when merging into `main`, and only when Mark says so.**
-Never per feature, never per task, never on an integration branch. Features
-merge into an integration branch (`int/<date>-NN`) with **no gate**: that
-branch is a bubble, and the one full gate runs when it merges into main. Never
-run whole pytest suites either (`tests`, `tests/unit`, `tests/ui`: ~15 min of
-CPU). During development run **only the focused test files** for your change,
-and tell every subagent you dispatch the same. **Why:** this machine is shared
-and used for performance testing; every surprise gate or whole-suite run wrecks
-a perf baseline. This overrides any plan, skill or brief step that says "run the
-full suite" or "run the gate".
+There are two gates (spec `docs/superpowers/specs/2026-11-06-two-tier-test-gate-design.md`):
 
-`scripts/run_tests.sh` is **pytest-only** and cannot see C++ regressions. When
-merging into main, run the GATE instead:
+| | Merge gate | Full gate |
+|---|---|---|
+| Command | `scripts/gate_merge.sh` | `scripts/gate_full.sh` (`scripts/check_tests.sh` is an alias) |
+| When | once, right before a branch merges into `main` | periodically, and before every release |
+| Who | whoever does the merge, when Mark says to merge | **Mark, by hand** |
+| What | pytest minus the deep list, each gtest binary in-process minus its deep list | whole pytest suite in ONE process + ctest per case + each gtest binary in-process |
+| Budget | under 5 minutes | ~30 min; pytest peak RSS under `PYTEST_RSS_BUDGET_MB` |
 
-```bash
-scripts/check_tests.sh        # builds C++, runs pytest + ctest, diffs failures
-```
+⛔ **Neither gate runs per feature, per task, or on an integration branch.**
+Features merge into an integration branch (`int/<date>-NN`) with **no gate**:
+that branch is a bubble. Never run whole pytest suites either (`tests`,
+`tests/unit`, `tests/ui`). During development run **only the focused test
+files** for your change, plus the cheap tree guards (`tests/docs`,
+`tests/unit/test_path_indirection.py`, `tests/unit/test_install_write_guard.py`,
+`tests/unit/test_gate_tiers.py`), and tell every subagent you dispatch the
+same. **Why:** this machine is shared and used for performance testing; every
+surprise gate or whole-suite run wrecks a perf baseline. This overrides any
+plan, skill or brief step that says "run the full suite" or "run the gate".
 
-It compares every failure against `tests/known_failures.txt` and **exits
-non-zero, naming any failure not in that list** — that failure is a regression
-this tree introduced, not "pre-existing". When a baselined test starts passing
-the gate tells you to delete its line. **Skips are gated too:** a gtest SKIP exits 0,
-so with a BC content root configured, any ctest skip not baselined as
-`skip:ctest:<name>` fails the gate (asset-backed tests find content through
-`native/tests/support/content_root.h`, never a hard-coded `<project>/game`). **And an in-process pass:** after ctest the gate runs each gtest
-binary once, whole, from the project root (failures report as `inproc:<name>`),
-because ctest's one-process-per-case from the build dir hid a real renderer bug
-and a GL-state leak between fixtures. **Never call a failure "pre-existing" by
-eyeball** — the ledger and the main-merge gate decide that.
+Both gates tee their log and artefacts to a directory they print
+(`$GATE_ARTEFACT_DIR`, else a temp dir): read a failure there, never re-run
+a gate to read it.
 
-**Read the ledger, never a remembered count.** This paragraph used to name "the
-7 headless-GL scorch/heat-glow `FrameTest`s" long after they were fixed
-(`5739e1b5` — they were never a headless-GL artifact; the shader's decal-normal
-gate had been un-negated and the tests kept seeding inward normals). As of
-2026-10-05 the ledger holds **no failure entries at all**, and the rule is to
-keep it that way: fix a failing test, don't baseline it. Prose about the
-baseline drifts, which is the whole reason the machine-checked ledger exists —
-`cat tests/known_failures.txt` instead of trusting any sentence here.
+**Tiers are by rule, not by memory.** Everything is in the merge tier unless
+`tests/gate_tiers/deep_pytest.txt` / `deep_gtest.txt` lists it, so a new test
+is merge-tier the moment it exists. The lists are GENERATED from the full
+gate's measured durations: `uv run python tools/gate_tiers.py generate
+<full-gate artefact dir>`, then commit them; never hand-edit.
+`tests/unit/test_gate_tiers.py` fails on a stale entry, a demoted tree guard
+(path, install-write, raw-key, drift, `tests/docs`), or an area (a `tests/`
+directory, an `engine` package or module a test imports, a gtest suite)
+left without merge-tier coverage. The full gate fails when the merge tier
+has outgrown its budget, and prints the regenerate command.
+
+Both gates compare every failure against `tests/known_failures.txt` and **exit
+non-zero, naming any failure not in that list**. That failure is a
+regression this tree introduced, not "pre-existing". **Skips are gated
+too:** a gtest SKIP exits 0, so with a BC content root configured, any skip
+not baselined as `skip:ctest:<name>` fails the gate (the merge gate maps its
+in-process skips to ctest names). Asset-backed tests find content through
+`native/tests/support/content_root.h`, never a hard-coded `<project>/game`.
+**And an in-process pass:** both gates run each gtest binary once, whole,
+from the project root (failures report as `inproc:<name>`), because ctest's
+one-process-per-case from the build dir hid a real renderer bug and a
+GL-state leak between fixtures. The full gate splits new failures into
+"the merge gate would also have caught it" and "deep-only". **Never call a
+failure "pre-existing" by eyeball**: the ledger and the gates decide that.
+`scripts/run_tests.sh` is pytest-only and cannot see C++ regressions.
+
+**Memory:** the full gate runs pytest in one process under the RSS watchdog
+(4,000 MB SIGKILL ceiling, the host's safety net) and fails past the lower
+peak-RSS budget. Mission-scoped module state goes in
+`engine.host_loop.reset_mission_state`, which BOTH the mission swap and the
+per-test reset call. A second hand-kept list drifted 15 entries and kept
+every ship alive to the end of the run (4.3 GB peak; see
+`docs/reference/architecture/test-suite-memory.md`).
+
+**Read the ledger, never a remembered count.** As of 2026-10-05 the ledger
+holds **no failure entries at all**, and the rule is to keep it that way: fix
+a failing test, don't baseline it. Prose about the baseline drifts, which is
+the whole reason the machine-checked ledger exists. `cat
+tests/known_failures.txt` instead of trusting any sentence here.
 
 A new required arg / changed output shape means you update that
 thing's tests in the same change. Order-flaky? Run it in isolation to separate
 cross-test pollution (reset leaked globals in `tests/conftest.py`'s autouse
-`_reset_leakable_engine_globals`) from a real break.
+`_reset_leakable_engine_globals`, or in `reset_mission_state` when the game
+also needs it cleared on a swap) from a real break.
 
 ## Executing plans
 
 When asked to execute a plan in `docs/superpowers/plans/`, dispatch one `tdd-engineer`
-subagent per task in order, run that task's focused test files (never the full
-suite or the gate — see "Test gate") and commit between tasks, and stop on any
-BLOCKED.
+subagent per task in order, run that task's focused test files (never a whole
+suite or either gate — see "Test gate") and commit between tasks, and stop on
+any BLOCKED.
 
 ## Filing bugs as GitHub issues
 

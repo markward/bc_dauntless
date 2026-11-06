@@ -2,8 +2,10 @@
 crosses a memory ceiling.
 
 Motivation: the bc_dauntless full test suite historically OOM'd the host
-(>100 GB RAM, freezing macOS). The leak that caused it has been fixed and the
-suite now plateaus around ~290 MB (see docs/reference/architecture/test-suite-memory.md), but macOS
+(>100 GB RAM, freezing macOS), and in 2026-11 crept back to a 4.3 GB peak
+(see docs/reference/architecture/test-suite-memory.md). The full gate now
+also fails past a lower peak-RSS budget, read from this watchdog's closing
+"WATCHDOG DONE peak_rss=" line (tools/check_test_baseline.py). But macOS
 does not reliably enforce `ulimit -v` / RLIMIT_AS, so this watchdog is the
 durable safety net for running the full suite or any large batch: it polls the
 child process tree's RSS via `ps` and SIGKILLs the whole process group the
