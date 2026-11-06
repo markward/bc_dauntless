@@ -106,23 +106,21 @@ def test_after_a_loss_the_music_stays_ambient(monkeypatch):
     assert enemy.GetContainingSet() is None
 
 
-def test_a_won_battle_plays_the_win_cleanly(monkeypatch):
-    """The user heard another track start just before the Win fanfare, or play
-    over it. EnemyBlewUp (Transition 13, 11.47 s) plays at the kill; Quick
-    Battle's Win (engine/quickbattle/battle_end.py, 1 s after ShipDestroyed)
-    comes 7-15 s later depending on how the ship dies.
-    * Every track DynamicMusic asks for starts when asked (the original's next
-      combat track started 3.1 s into EnemyBlewUp): holding one until the
-      fanfare ended started a combat track just before Win.
-    * When Win starts, EnemyBlewUp has ended or fades out within 0.5 s, so the
-      two fanfares never play on top of each other."""
+BLEW, WIN = "Transition 13.mp3", "Success-12.mp3"
+BLEW_S, WIN_S = 11.47, 32.34
+
+
+def _armed_kill(monkeypatch, extra_enemies=0):
+    """An armed Quick Battle (battle_end), the enemy killed, music logged as
+    (start time, path, stream) for every stream the player starts."""
     App, DM, frames, player, enemy, log = _fight(
-        monkeypatch, lengths={".mp3": 30.04, "Transition 13.mp3": 11.47})
+        monkeypatch, lengths={".mp3": 30.04, BLEW: BLEW_S, WIN: WIN_S})
     import QuickBattle.QuickBattle as QB
     from engine.quickbattle import battle_end
     battle_end.install(QB)
     battle_end.begin(QB, None)
-    starts, asked = [], []
+    QB.g_iNumEnemies += extra_enemies            # others still alive: not the final kill
+    starts = []
     real_factory = frames.player._factory
 
     def factory(path, looping=True):
@@ -130,30 +128,67 @@ def test_a_won_battle_plays_the_win_cleanly(monkeypatch):
         starts.append((frames.t, str(path), s))
         return s
     frames.player._factory = factory
-    real_play = frames.player.play
-
-    def play(path, *a, **k):
-        asked.append((frames.t, str(path)))
-        return real_play(path, *a, **k)
-    frames.player.play = play
-    stopped_at = {}
-    real_frame = frames.frame
-
-    def frame():
-        real_frame()
-        for t, p, s in starts:
-            if s.stopped and id(s) not in stopped_at:
-                stopped_at[id(s)] = frames.t
-    frames.frame = frame
     _kill(App, enemy)
-    frames.run(40.0)
-    blew = [(t, s) for t, p, s in starts if p.endswith("Transition 13.mp3")]
-    win = [t for t, p, _s in starts if p.endswith("Success-12.mp3")]
-    assert blew and win, starts
-    (t_blew, blew_s), t_win = blew[0], win[0]
-    # No track start is held back: each starts in the frame it is asked for.
-    for t, p in asked:
-        assert any(abs(ts - t) < 1e-6 and ps == p for ts, ps, _s in starts), (t, p, starts)
-    # The two fanfares never overlap for more than the 0.5 s hand-over.
-    blew_gone = stopped_at.get(id(blew_s), t_blew + 11.47)
-    assert blew_gone <= t_win + 0.5 + 2.0 / 60.0, (t_blew, t_win, blew_gone)
+    t_kill = frames.t
+    frames.run(60.0)
+    return App, frames, t_kill, starts
+
+
+def test_a_won_battle_ends_with_enemyblewup_then_win_alone_then_ambient(monkeypatch):
+    """The user's choice for a won Quick Battle (rendered from the game's own
+    files): each destroyed ship has its sound, then straight to the victory.
+    At the final kill EnemyBlewUp plays in full; Win starts the moment it
+    ends and plays alone; Starting Ambient starts when Win ends, fading in.
+    No other track starts, and nothing plays under Win. A suggestion for
+    battle_end's Win fanfare, not BC (the original never plays Win)."""
+    App, frames, t_kill, starts = _armed_kill(monkeypatch)
+    blew = [(t, s) for t, p, s in starts if p.endswith(BLEW)]
+    win = [(t, s) for t, p, s in starts if p.endswith(WIN)]
+    assert len(blew) == 1 and len(win) == 1, [(t, p) for t, p, _s in starts]
+    t_blew, t_win = blew[0][0], win[0][0]
+    assert abs(t_blew - t_kill) < 0.1
+    assert abs(t_win - (t_blew + BLEW_S)) <= 2.0 / 60.0      # at EnemyBlewUp's end
+    tracks = [(t, p, s) for t, p, s in starts if not p.endswith((BLEW, WIN))]
+    after_kill = [(t, p) for t, p, _s in tracks if t > t_kill]
+    assert len(after_kill) == 1, after_kill                  # only the ambient
+    t_amb, p_amb = after_kill[0]
+    assert abs(t_amb - (t_win + WIN_S)) <= 2.0 / 60.0         # at Win's end
+    assert "Ambient" in p_amb or "EpisGen" in p_amb or "Starting" in p_amb, p_amb
+
+
+def test_the_ambient_after_win_fades_in(monkeypatch):
+    from engine.appc.music_manager import END_HOLD_FADE_IN_S
+    App, DM, frames, player, enemy, log = _fight(
+        monkeypatch, lengths={".mp3": 30.04, BLEW: BLEW_S, WIN: WIN_S})
+    import QuickBattle.QuickBattle as QB
+    from engine.quickbattle import battle_end
+    battle_end.install(QB)
+    battle_end.begin(QB, None)
+    made = []
+    real_factory = frames.player._factory
+
+    def factory(path, looping=True):
+        s = real_factory(path, looping)
+        made.append((frames.t, str(path), s))
+        return s
+    frames.player._factory = factory
+    _kill(App, enemy)
+    t_kill = frames.t
+    frames.run(BLEW_S + WIN_S + 1.0)
+    amb = [s for t, p, s in made if t > t_kill and not p.endswith((BLEW, WIN))]
+    assert amb, made
+    assert amb[0].gain < 1.0                     # still fading in
+    frames.run(END_HOLD_FADE_IN_S + 0.1)
+    assert amb[0].gain == 1.0
+
+
+def test_a_kill_that_is_not_the_last_is_unchanged(monkeypatch):
+    """Another enemy still counted: EnemyBlewUp, and the combat track
+    DynamicMusic cues at the cut starts under it, as in the original
+    (3.1 s into EnemyBlewUp)."""
+    App, frames, t_kill, starts = _armed_kill(monkeypatch, extra_enemies=1)
+    blew = [t for t, p, _s in starts if p.endswith(BLEW)]
+    assert blew and not [t for t, p, _s in starts if p.endswith(WIN)]
+    under = [(t, p) for t, p, _s in starts
+             if blew[0] < t < blew[0] + BLEW_S and not p.endswith((BLEW, WIN))]
+    assert under, [(t, p) for t, p, _s in starts]

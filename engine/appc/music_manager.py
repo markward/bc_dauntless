@@ -33,6 +33,10 @@ device present.
 """
 
 
+# The track the end-of-battle hold releases fades in over this long.
+END_HOLD_FADE_IN_S = 2.0
+
+
 class MusicManager:
     def __init__(self) -> None:
         self._paths: dict[str, str] = {}   # music NAME -> file path
@@ -41,6 +45,9 @@ class MusicManager:
         self._current_looping: bool = True
         self._enabled: bool = True
         self._backend = None               # injected by the host, see set_backend
+        # End-of-battle hold (begin_end_hold): while set, state music is
+        # remembered, not played; the end fanfare plays alone.
+        self._hold: "dict | None" = None
 
     def set_backend(self, backend) -> None:
         """Host-injected player. None means 'no audio' — the manager still
@@ -103,11 +110,15 @@ class MusicManager:
         fade = self._fades.get(self._current, 0.0) if self._current else 0.0
         self._current = key
         self._current_looping = bool(looping)
+        if self._hold is not None:
+            self._hold["track"] = (path, bool(looping))   # played on release
+            return 1
         if self._backend is not None:
             self._backend.play(path, looping=bool(looping), fade=fade)
         return 1
 
     def StopMusic(self) -> None:
+        self._hold = None
         self._current = None
         if self._backend is not None:
             self._backend.stop()
@@ -120,6 +131,21 @@ class MusicManager:
         if not self._enabled:
             return
         path = self._paths.get(str(name))
+        hold = self._hold
+        if hold is not None and path is not None and self._backend is not None:
+            if str(name) == hold["win"]:
+                if hold["win_queued"]:
+                    return                      # already queued or playing
+                hold["win_queued"] = True
+                self._backend.play_fanfare(path, 0.0, after_current=True, on_end=self._release_hold)
+                return
+            # Another fanfare (a loss overturning the win) replaces the Win.
+            cancel = getattr(self._backend, "cancel_next_fanfare", None)
+            if cancel is not None:
+                cancel()
+            hold["win_queued"] = True
+            self._backend.play_fanfare(path, 0.0, on_end=self._release_hold)
+            return
         if path is not None and self._backend is not None:
             grid = self._fades.get(self._current, 0.0) if self._current else 0.0
             fanfare = getattr(self._backend, "play_fanfare", None)
@@ -140,6 +166,42 @@ class MusicManager:
         self._enabled = bool(value)
         if not self._enabled:
             self.StopMusic()
+
+    # ── end-of-battle hold (Quick Battle's won battle) ────────────────────────
+
+    def begin_end_hold(self, win_name) -> None:
+        """Hold the state music for the end of a won battle (called by
+        engine/quickbattle/battle_end at the final kill, right after its
+        EnemyBlewUp fanfare starts): DynamicMusic's re-cues and its switch to
+        the ambient are remembered, not played; `win_name` starts the moment
+        the playing fanfare ends, alone; when it ends, the last requested
+        track starts, fading in. Not BC: the original Quick Battle never plays
+        Win. A later PlayFanfare(win_name) (the SDK's EndSimulationEvent) is
+        then a no-op."""
+        if self._backend is None or not self._enabled:
+            return
+        path = self._paths.get(str(win_name))
+        if path is None:
+            return
+        self._hold = {"win": str(win_name), "win_queued": True, "track": None}
+        self._backend.play_fanfare(path, 0.0, after_current=True, on_end=self._release_hold)
+
+    def end_hold(self) -> None:
+        """Release the hold now (a new battle began): play what was asked for."""
+        if self._hold is not None:
+            self._release_hold(fade_in=0.0)
+
+    def holding(self) -> bool:
+        return self._hold is not None
+
+    def _release_hold(self, fade_in=END_HOLD_FADE_IN_S) -> None:
+        hold, self._hold = self._hold, None
+        if hold is None or self._backend is None:
+            return
+        track = hold.get("track")
+        if track is not None:
+            path, looping = track
+            self._backend.play(path, looping=looping, fade=0.0, fade_in=fade_in)
 
     # ── host-facing ──────────────────────────────────────────────────────────
 
