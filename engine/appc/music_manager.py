@@ -158,7 +158,12 @@ class MusicManager:
         evt = App.TGEvent_Create()
         evt.SetEventType(App.ET_MUSIC_DONE)
         evt.SetCString(finished)
-        App.g_kEventManager.BroadcastEvent(evt)
+        # AddEvent with no destination reaches the broadcast handlers
+        # (DynamicMusic registers AddBroadcastPythonFuncHandler). The event
+        # manager has no BroadcastEvent: that name fell through to a no-op
+        # _Stub, so the event never arrived and a combat track (non-looping)
+        # played once with nothing after it.
+        App.g_kEventManager.AddEvent(evt)
 
     def current(self) -> "str | None":
         return self._current
