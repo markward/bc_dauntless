@@ -18,8 +18,12 @@ writes `tests/fixtures/render_goldens/<scene>.<sys.platform>.json` and
 skips. `RENDER_GOLDEN_DIR` (read at use) writes and reads elsewhere: a
 second recording into a temp dir is how a golden is shown deterministic.
 Goldens are per platform, as the combat goldens are (ruling R9: float math
-is not promised bit-equal across libms); a platform with none skips, naming
-the file.
+is not promised bit-equal across libms). On a REQUIRED_PLATFORMS platform a
+missing golden fails, naming the file; elsewhere it skips.
+
+Recording takes only the Python builders' frames: each frame says its
+source (`frame(..., source=)`), and `record` refuses a frame that is not
+"python", or a host_loop without the builders.
 """
 import hashlib
 import json
@@ -35,12 +39,33 @@ DIR_ENV = "RENDER_GOLDEN_DIR"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "render_goldens"
 SCHEMA = 1
 FEEDS = ("phasers", "tractors", "torps", "lights")
+# The platforms whose goldens were recorded: a missing file there fails.
+REQUIRED_PLATFORMS = ("darwin",)
+# What the goldens were recorded from (engine/host_loop.py).
+PYTHON_BUILDERS = ("_build_phaser_beam_render_data",
+                   "_build_tractor_beam_render_data",
+                   "_build_torpedo_render_data",
+                   "_build_dynamic_light_render_data")
 
 
-def frame(phasers=(), tractors=(), torps=(), lights=()):
-    """One frame: each feed's items, one packed `bytes` each."""
+def frame(phasers=(), tractors=(), torps=(), lights=(), *, source):
+    """One frame: each feed's items, one packed `bytes` each, and what built
+    them ("python": the Python builders; "native": the native feeds)."""
     return {"phasers": list(phasers), "tractors": list(tractors),
-            "torps": list(torps), "lights": list(lights)}
+            "torps": list(torps), "lights": list(lights), "source": source}
+
+
+def python_builders_available() -> bool:
+    from engine import host_loop
+    return all(callable(getattr(host_loop, n, None)) for n in PYTHON_BUILDERS)
+
+
+def require_python_builders(scene_name="") -> None:
+    """Fail unless host_loop still has the Python builders: a golden is
+    recorded only from them, never from the native feeds."""
+    if not python_builders_available():
+        pytest.fail("render golden %s: the Python builders are gone; a "
+                    "golden is recorded only from them" % scene_name)
 
 
 def recording() -> bool:
@@ -71,6 +96,12 @@ def record(scene_name, frames, source="python builders") -> None:
     UPDATE_RENDER_GOLDEN=1 (then skip); inert otherwise."""
     if not recording():
         return
+    require_python_builders(scene_name)
+    sources = sorted({f.get("source") for f in frames} - {"python"},
+                     key=repr)
+    if sources:
+        pytest.fail("render golden %s: frames from %r; a golden is recorded "
+                    "only from the Python builders" % (scene_name, sources))
     path = _path(scene_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     recs = [_record_of(i, f) for i, f in enumerate(frames)]
@@ -81,20 +112,34 @@ def record(scene_name, frames, source="python builders") -> None:
                 % (scene_name, len(recs), path))
 
 
-def check(scene_name, frames) -> None:
-    """Assert `frames` equal `scene_name`'s golden for this platform, frame
-    by frame, naming the first that differs (and every one that does)."""
+def _compare(scene_name, frames):
+    """(golden records, `frames`' records, differing frame indices)."""
     path = _path(scene_name)
     if not path.is_file():
-        pytest.skip("no render golden for %s on %s: %s is missing (record "
-                    "one with %s=1, only with Mark's say)"
-                    % (scene_name, sys.platform, path, UPDATE_ENV))
+        msg = ("no render golden for %s on %s: %s is missing (record one "
+               "with %s=1, only with Mark's say)"
+               % (scene_name, sys.platform, path, UPDATE_ENV))
+        if sys.platform in REQUIRED_PLATFORMS:
+            raise AssertionError(msg)
+        pytest.skip(msg)
     want = json.loads(path.read_text())["frames"]
     got = [_record_of(i, f) for i, f in enumerate(frames)]
     assert len(got) == len(want), (
         "render golden %s: %d frames, the golden holds %d frames"
         % (scene_name, len(got), len(want)))
     bad = [i for i, (g, w) in enumerate(zip(got, want)) if g != w]
+    return want, got, bad
+
+
+def differing_frames(scene_name, frames) -> list:
+    """The indices of the frames of `frames` that differ from the golden."""
+    return _compare(scene_name, frames)[2]
+
+
+def check(scene_name, frames) -> None:
+    """Assert `frames` equal `scene_name`'s golden for this platform, frame
+    by frame, naming the first that differs (and every one that does)."""
+    want, got, bad = _compare(scene_name, frames)
     if bad:
         i = bad[0]
         raise AssertionError(

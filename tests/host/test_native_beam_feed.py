@@ -565,10 +565,14 @@ def golden_beam_frame(ships, ship_instances):
     while recording, else the native feed's (a feed that fell back leaves
     its sentinels, so the frame differs from the golden)."""
     if render_golden.recording():
+        render_golden.require_python_builders()
         phasers, tractors = _python_feed(ships, ship_instances)
+        source = "python"
     else:
         _ok, phasers, tractors = _native_feed(ships, ship_instances)
-    return render_golden.frame(phasers=phasers, tractors=tractors)
+        source = "native"
+    return render_golden.frame(phasers=phasers, tractors=tractors,
+                               source=source)
 
 
 def _record_or_check(scene_name, frames):

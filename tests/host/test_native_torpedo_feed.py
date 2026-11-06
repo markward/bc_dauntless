@@ -291,6 +291,16 @@ class TorpedoScene(BeamScene):
         self.viewed += [self.band, self.culled, self.homing] + self.crowd
 
     @staticmethod
+    def _rest_mount(ship, mount):
+        """`mount` (body frame) in world space with no part transform: the
+        ship's location plus its rotation times the mount."""
+        from engine.appc.math import TGPoint3
+        o = TGPoint3(*mount)
+        o.MultMatrixLeft(ship.GetWorldRotation())
+        p = ship.GetWorldLocation()
+        return (p.x + o.x, p.y + o.y, p.z + o.z)
+
+    @staticmethod
     def _launch(t, name, at, vel, kset):
         from engine.appc import projectiles
         from engine.appc.math import TGPoint3
@@ -701,10 +711,14 @@ def golden_torpedo_frame(scene):
     Python builders' while recording, else the native feed's (a feed that
     fell back leaves its sentinels, so the frame differs from the golden)."""
     if render_golden.recording():
+        render_golden.require_python_builders()
         torps, _lights_ = _python_feed(scene)
+        source = "python"
     else:
         _ok, torps, _lights_ = _native_feed(scene)
-    return render_golden.frame(torps=torps, lights=_golden_lights(scene))
+        source = "native"
+    return render_golden.frame(torps=torps, lights=_golden_lights(scene),
+                               source=source)
 
 
 def test_torpedo_scene_matches_the_golden(busy_torpedo_scene):
@@ -757,17 +771,27 @@ KNOBS = {"TORPEDO_BRIGHTNESS": 0.7, "_TORPEDO_LIGHT_RADIUS_SCALE": 20.0,
 #     DamageableObject (App.DamageableObject_Create on a model name that is
 #     not a stock asteroid: a DamageableObject, not a ShipClass), through the
 #     real StartFiring. Stopped, and the object removed, at frame 30.
-#   LATE_BUMP (frame 40): a foe's phasers locked on a subsystem of a posed
-#     ship (the K2 differential's posed beat, from frame 30), and the part
-#     generation bumped after the frame's ticks, before the feeds.
+#   LATE_BUMP (frame 40): from frame 30 a rigged Bird of Prey (Enemy-4) has
+#     one of its real parts (from parts_for_ship) hinged by force_part_pose,
+#     and a Fed ship's phasers are locked on a subsystem whose mount rides
+#     that part (articulation._live_part resolves to it), so the drawn aim
+#     point is the posed mount; at frame 40 the part generation is bumped
+#     after the frame's ticks, before the feeds.
 #   BARE (frames 50-59): a torpedo registered without CreateTorpedoModel /
 #     CreateDisruptorModel.
+#
+# Today's native feeds hand exactly those frames back to Python, so they
+# differ from the golden (EXPECTED_NATIVE_DIFFS); phase 6 follow-up 4 Task 2
+# answers them natively and makes the expectation "no differing frames".
 
 NON_SHIP = range(10, 30)
 LATE_BUMP = 40
 POSE_AT = 30
 BARE_FROM = 50
 EDGE_FRAMES = 60
+BOP, BOP_FIRER = "Enemy-4", "Friend-1"
+EXPECTED_NATIVE_DIFFS = (list(NON_SHIP) + [LATE_BUMP]
+                         + list(range(BARE_FROM, EDGE_FRAMES)))
 
 
 @pytest.fixture
@@ -792,24 +816,33 @@ def _lit_at(system, target):
             if b.__dict__.get("_firing") and b._target is target]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "today's native feeds hand these cases back to Python: a beam at a "
-    "non-ShipClass target, a part slot stale after a late part-gen bump, a "
-    "torpedo with no visual record (phase 6 follow-up 4 Task 2 answers "
-    "them natively and removes this marker)"))
 def test_edge_cases_match_the_golden(edge_scene):
     import App
     from engine.appc import articulation, part_pose, projectiles
     from engine.appc.objects import DamageableObject
     from engine.appc.ships import ShipClass
     from engine.appc.ship_iter import iter_ships
-    from tests.host.test_native_k2_differential import POSED, POSER
+    from engine.appc import part_severance, physical_parents
+    from engine.appc import subsystems as ss
     ts = edge_scene
     sc = ts.scene
     shooter = next(s for s in ts.ships if s is not ts.player
                    and s.GetTractorBeamSystem() is not None
                    and s.GetPhaserSystem() is not None)
-    posed, poser = sc.ship(POSED), sc.ship(POSER)
+    posed, poser = sc.ship(BOP), sc.ship(BOP_FIRER)
+    parts = [p.GetName() for p in articulation.parts_for_ship(posed)]
+    assert parts, "premise: the Bird of Prey is rigged"
+    leaf = articulation.leaf_for(posed)
+    # The first mounted subsystem whose mount rides a rigged part.
+    mounts = [(s, tuple(p))
+              for s, p in part_severance._mounted_subsystems(posed)
+              if p is not None]
+    locked, mount, part = next(
+        (s, p, physical_parents.part_for_property(
+            leaf, physical_parents.property_of(s), p))
+        for s, p in mounts
+        if physical_parents.part_for_property(
+            leaf, physical_parents.property_of(s), p) in parts)
     probe = bare = None
     seen = {"non_ship_phaser": 0, "non_ship_tractor": 0, "posed_lock": 0,
             "bare": 0}
@@ -836,12 +869,19 @@ def test_edge_cases_match_the_golden(edge_scene):
             sc.set.RemoveObjectFromSet("RenderGoldenProbe")
         if k == POSE_AT:
             articulation.force_part_pose(
-                posed, "probe part",
+                posed, part,
                 part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0))
+            assert articulation._live_part(
+                posed, None, mount, True,
+                physical_parents.property_of(locked)) == part, \
+                "premise: the locked mount rides the posed part"
             sc.face(poser, posed)
             poser.SetTarget(posed)
-            poser.SetTargetSubsystem(posed.GetShields())
-            poser.GetPhaserSystem().StartFiring(posed)
+            poser.SetTargetSubsystem(locked)
+            ph = poser.GetPhaserSystem()
+            ph.TurnOn()
+            ph.SetSingleFire(0)
+            ph.StartFiring(posed)
         if k == BARE_FROM:
             here = ts.player.GetWorldLocation()
             bare = TorpedoScene._launch(projectiles.Torpedo(), "Bare",
@@ -855,10 +895,16 @@ def test_edge_cases_match_the_golden(edge_scene):
             seen["non_ship_tractor"] += bool(
                 _lit_at(shooter.GetTractorBeamSystem(), probe))
         if k == LATE_BUMP:
+            assert not posed.IsDead()
             assert _lit_at(poser.GetPhaserSystem(), posed), \
-                "premise: the poser's phasers are lit at the posed ship"
-            assert poser.GetTargetSubsystem() is posed.GetShields()
-            assert articulation.posed_part_names(posed)
+                "premise: the firer's phasers are lit at the posed ship"
+            assert poser.GetTargetSubsystem() is locked
+            assert part in articulation.posed_part_names(posed)
+            # The drawn aim point is the POSED mount, not the rest point.
+            at = ss._subsystem_world_position(locked, None)
+            rest = TorpedoScene._rest_mount(posed, mount)
+            assert (at.x, at.y, at.z) != rest, \
+                "premise: the pose moves the locked mount"
             seen["posed_lock"] += 1
             nc.bump_part_gen()
         if k >= BARE_FROM:
@@ -870,4 +916,8 @@ def test_edge_cases_match_the_golden(edge_scene):
     assert seen == {"non_ship_phaser": len(NON_SHIP),
                     "non_ship_tractor": len(NON_SHIP), "posed_lock": 1,
                     "bare": EDGE_FRAMES - BARE_FROM}, seen
-    _record_or_check("edge_cases", frames)
+    if render_golden.recording():
+        render_golden.record("edge_cases", frames)
+    # Task 2: == [] (the native feeds answer every case).
+    assert render_golden.differing_frames("edge_cases", frames) == \
+        EXPECTED_NATIVE_DIFFS

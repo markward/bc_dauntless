@@ -8,11 +8,12 @@ import pytest
 from tests.helpers import render_golden
 
 
-def _frames():
+def _frames(source="python"):
     return [render_golden.frame(phasers=[b"\x01" * 80, b"\x02" * 80],
-                                tractors=[b"\x03" * 80]),
-            render_golden.frame(torps=[b"torp"], lights=[b"l1", b"l2"]),
-            render_golden.frame()]
+                                tractors=[b"\x03" * 80], source=source),
+            render_golden.frame(torps=[b"torp"], lights=[b"l1", b"l2"],
+                                source=source),
+            render_golden.frame(source=source)]
 
 
 @pytest.fixture
@@ -95,6 +96,71 @@ def test_check_fails_on_a_frame_count(golden_dir, monkeypatch):
         render_golden.check("tiny", _frames()[:2])
 
 
-def test_check_skips_without_a_golden_for_this_platform(golden_dir):
+def test_a_missing_golden_fails_on_a_required_platform(golden_dir,
+                                                        monkeypatch):
+    monkeypatch.setattr(render_golden.sys, "platform", "darwin")
+    assert "darwin" in render_golden.REQUIRED_PLATFORMS
+    with pytest.raises(AssertionError,
+                       match=r"missing\.darwin\.json is missing"):
+        render_golden.check("missing", _frames())
+    with pytest.raises(AssertionError, match="is missing"):
+        render_golden.differing_frames("missing", _frames())
+
+
+def test_a_missing_golden_skips_on_another_platform(golden_dir, monkeypatch):
+    monkeypatch.setattr(render_golden.sys, "platform", "plan9")
+    assert "plan9" not in render_golden.REQUIRED_PLATFORMS
     with pytest.raises(pytest.skip.Exception, match="no render golden"):
         render_golden.check("missing", _frames())
+
+
+def test_differing_frames_lists_every_frame_that_differs(golden_dir,
+                                                         monkeypatch):
+    _record_tiny(monkeypatch)
+    assert render_golden.differing_frames("tiny", _frames()) == []
+    bad = _frames()
+    bad[0]["phasers"][0] = b"\x09" * 80
+    bad[2]["lights"].append(b"x")
+    assert render_golden.differing_frames("tiny", bad) == [0, 2]
+    with pytest.raises(AssertionError, match="3 frames"):
+        render_golden.differing_frames("tiny", _frames()[:2])
+
+
+def test_record_refuses_native_frames(golden_dir, monkeypatch):
+    monkeypatch.setenv("UPDATE_RENDER_GOLDEN", "1")
+    frames = _frames()
+    frames[1] = render_golden.frame(source="native")
+    with pytest.raises(pytest.fail.Exception, match="Python builders"):
+        render_golden.record("tiny", frames)
+    assert not list(golden_dir.iterdir())
+
+
+def test_record_refuses_without_the_python_builders(golden_dir, monkeypatch):
+    from engine import host_loop
+    monkeypatch.setenv("UPDATE_RENDER_GOLDEN", "1")
+    assert render_golden.python_builders_available()
+    monkeypatch.delattr(host_loop, "_build_torpedo_render_data")
+    assert not render_golden.python_builders_available()
+    with pytest.raises(pytest.fail.Exception, match="Python builders"):
+        render_golden.record("tiny", _frames())
+    assert not list(golden_dir.iterdir())
+
+
+@pytest.mark.parametrize("value", [None, "", "0", "true", "yes"])
+def test_the_fixture_dir_is_written_only_under_an_explicit_1(
+        monkeypatch, tmp_path, value):
+    """No RENDER_GOLDEN_DIR: record targets the committed fixture dir (here
+    a stand-in), and writes there only when UPDATE_RENDER_GOLDEN is "1"."""
+    monkeypatch.setattr(render_golden, "FIXTURES", tmp_path)
+    monkeypatch.delenv("RENDER_GOLDEN_DIR", raising=False)
+    if value is None:
+        monkeypatch.delenv("UPDATE_RENDER_GOLDEN", raising=False)
+    else:
+        monkeypatch.setenv("UPDATE_RENDER_GOLDEN", value)
+    render_golden.record("tiny", _frames())
+    assert not list(tmp_path.iterdir())
+    monkeypatch.setenv("UPDATE_RENDER_GOLDEN", "1")
+    with pytest.raises(pytest.skip.Exception):
+        render_golden.record("tiny", _frames())
+    assert [p.name for p in tmp_path.iterdir()] == [
+        "tiny.%s.json" % sys.platform]
