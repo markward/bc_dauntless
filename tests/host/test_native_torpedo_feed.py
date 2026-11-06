@@ -277,7 +277,18 @@ class TorpedoScene(BeamScene):
             (base[0], base[1], base[2] - 30.0), self.scene.set,
             size_gu=4.0, life_s=1000.0)
         explosion_lights._active[-1]["age"] = 50.0
-        self.viewed += [self.band, self.culled] + self.crowd
+        # A homing photon: a `_target_ship`, so K3 steers its velocity (and
+        # its drawn `forward`) every tick. Launched 40 GU above the ring at
+        # 2 GU/s, sideways to its target, with guidance for the whole run.
+        foe = next(s for s in self.ships if s.GetName() == "Enemy-1")
+        self.homing = torp("Quantum", (base[0], base[1], base[2] + 40.0),
+                           (2.0, 0.0, 0.0), (0.3, 0.5, 1), (0.2, 0.4, 1),
+                           (0.8, 0.9, 1), 6,
+                           (0.3, 1.0, 2.0, 0.5, 0.25, 0.5, 0.3),
+                           self.scene.set)
+        self.homing._target_ship = foe
+        self.homing.SetGuidanceLifetime(100.0)
+        self.viewed += [self.band, self.culled, self.homing] + self.crowd
 
     @staticmethod
     def _launch(t, name, at, vel, kset):
@@ -425,7 +436,7 @@ class _Coverage:
         self.counts = dict.fromkeys(
             ("frames", "eye", "no_eye", "disruptors", "torpedo_lights",
              "fade_band", "culled", "explosion_lights", "emitter_lights",
-             "spill", "capped", "expired", "dirty"), 0)
+             "spill", "capped", "expired", "dirty", "steered"), 0)
         blend = host_loop._budgeted_dynamic_lights
 
         def blend_spy(explosions, torpedoes, emitters):
@@ -473,8 +484,15 @@ def test_native_torpedo_feed_equals_python_every_frame(busy_torpedo_scene,
     cov = _Coverage(monkeypatch)
     nc.reset_torpedo_feed_counts()
     before = None
+    last_fwd = None
     for k in range(300):
         ts.advance()
+        # The homing torpedo's drawn forward turned this tick (K3 steered it).
+        if ts.homing in projectiles._active:
+            fwd = host_loop._torpedo_forward(ts.homing)
+            if last_fwd is not None and fwd != last_fwd:
+                cov.counts["steered"] += 1
+            last_fwd = fwd
         # The camera eye on for 40 frames, off for 20.
         host_loop._note_camera_eye(ts.eye if k % 60 < 40 else None)
         # A reorder the rows cannot follow, after the step: the table is
@@ -577,3 +595,61 @@ def test_torpedo_feed_counts_reach_the_profiler_report(torpedo_scene,
                      "no_host 0, plain_active 0"]
     nc.reset()
     assert nc.torpedo_feed_counts()["native"] == 0
+
+
+def test_a_pending_torpedo_light_list_is_blended_once(torpedo_scene):
+    """The pair: one feed, one blend. A second blend raises, and so does a
+    blend after a plain Python light push (set_dynamic_lights invalidates
+    the pending list), so a stale torpedo-light list can never be drawn."""
+    ts = torpedo_scene
+    caps = (64, 10, 10, 40)
+    args = (ts.ship_instances, ts.ship_emitters, ts.player)
+    try:
+        assert nc.torpedo_feed(*args) is True
+        with pytest.raises(ValueError):
+            _h.set_dynamic_lights_budgeted([], [], caps)
+        # A feed straight from the binding, so nothing blends it ...
+        _h.combat_torpedo_feed({
+            "view": -1, "origin": (0.0, 0.0, 0.0), "frames": {},
+            "brightness": 0.25, "light_radius_scale": 50.0,
+            "light_intensity": 1.0, "fade_start": 74.0, "cull": 85.0,
+            "eye": None, "expected_rows": -1})
+        # ... then any Python push of the lights.
+        _h.set_dynamic_lights([POINT])
+        with pytest.raises(ValueError):
+            _h.set_dynamic_lights_budgeted([], [], caps)
+        assert _lights() == [_pack_light_dict(POINT)]
+    finally:
+        _h.set_torpedoes([])
+        _h.set_dynamic_lights([])
+
+
+def test_the_knobs_are_read_per_call(busy_torpedo_scene, monkeypatch):
+    """Two frames, every per-frame knob changed between them: native still
+    equals Python, and the second frame differs from the first."""
+    from engine import host_loop
+    ts = busy_torpedo_scene
+    host_loop._note_camera_eye(ts.eye)
+    frames = []
+    for knobs in ({}, {"TORPEDO_BRIGHTNESS": 0.7,
+                       "_TORPEDO_LIGHT_RADIUS_SCALE": 20.0,
+                       "_TORPEDO_LIGHT_INTENSITY": 2.5,
+                       "DYN_LIGHT_FADE_START_GU": 10.0,
+                       "DYN_LIGHT_CULL_GU": 30.0,
+                       "_LIGHT_BUDGET_TORPEDOES": 3,
+                       "_LIGHT_CAP": 40}):
+        for name, value in knobs.items():
+            monkeypatch.setattr(host_loop, name, value)
+        ts.advance()
+        want = _python_feed(ts)
+        n_torp_lights = len(host_loop._build_dynamic_light_render_data())
+        ok, torps, lights = _native_feed(ts, want, n_torp_lights)
+        assert ok
+        assert (torps, lights) == want
+        frames.append((want, n_torp_lights))
+    (t0, l0), n0 = frames[0]
+    (t1, l1), n1 = frames[1]
+    assert t0 != t1 and l0 != l1
+    assert n1 < n0                       # the shorter cull drops lights
+    assert len(l1) <= 40
+    assert nc.torpedo_feed_fallbacks == 0

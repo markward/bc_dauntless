@@ -8407,6 +8407,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
     m.def("set_dynamic_lights",
           [](const std::vector<py::dict>& descs) {
+              // Any Python light push supersedes a native torpedo-light list
+              // still pending a blend (set_dynamic_lights_budgeted).
+              g_torpedo_lights_ready = false;
               g_dynamic_lights.clear();
               // Hard clamp to the native per-frame cap (64): silently ignore
               // any excess entries rather than raising. There is no shared
