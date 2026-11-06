@@ -82,6 +82,9 @@ constexpr int64_t kTransitionNone = 0, kTransitionDisabled = 1,
 // effect_queue.HIT_WEAPON_COLLISION: HitInput::hit_weapon for a collision,
 // which carries no overflow re-hit (combat._apply_hit step 7).
 constexpr int64_t kHitWeaponCollision = 4;
+// effect_queue.HIT_WEAPON_TORPEDO: a torpedo's splash shrinks with the
+// fraction the shields stop (combat._apply_hit's r_hull).
+constexpr int64_t kHitWeaponTorpedo = 2;
 
 // dmg_class (native_combat.DMG_*).
 constexpr int64_t kDmgPython = -1, kDmgLeaf = 0, kDmgAggregate = 1;
@@ -159,6 +162,7 @@ struct HitInput {
     bool has_normal = false;
     Vec3 normal{0, 0, 0};
     double r_hit = 0.0;     // weapon_splash_radius, or the splash_radius
+    bool has_splash_radius = false;  // splash_radius was given (not None)
     bool damage_hull = true;
     bool bypass_shields = false;
     bool has_shield_point = false;

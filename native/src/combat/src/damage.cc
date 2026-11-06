@@ -534,6 +534,12 @@ void apply_hit_in(Mirror& m, Session& S, const HitInput& in,
         }
 
         const double post_shield = remaining;
+        // A torpedo the shields partly stop reaches the hull with its splash
+        // shrunk by the same fraction: R x post_shield / damage (r_hull).
+        double r_hull = r_hit;
+        if (in.hit_weapon == kHitWeaponTorpedo && absorbed_shields > 0.0 &&
+            damage > 0.0 && !in.has_splash_radius)
+            r_hull = r_hit * post_shield / damage;
         double absorbed_hull = 0.0;
         double absorbed_subsystem_total = 0.0;
         double overflow = 0.0;  // left over after destroying subsystems
@@ -562,8 +568,8 @@ void apply_hit_in(Mirror& m, Session& S, const HitInput& in,
                 const double dy = in.point[1] - hw[1];
                 const double dz = in.point[2] - hw[2];
                 const double d = py_pow(dx * dx + dy * dy + dz * dz, 0.5);
-                if (d >= r_sub + r_hit) continue;
-                const double w = splash_weight(r_sub, r_hit, d);
+                if (d >= r_sub + r_hull) continue;
+                const double w = splash_weight(r_sub, r_hull, d);
                 if (w <= 0.0) continue;
                 if (w > best) {  // _pick_primary_subsystem_for_dispatch
                     best = w;
@@ -650,6 +656,7 @@ void apply_hit_in(Mirror& m, Session& S, const HitInput& in,
             HitInput re = in;
             re.damage = overflow;
             re.r_hit = r_hit * py_min(1.0, overflow / damage);
+            re.has_splash_radius = true;  // splash_radius=... is given
             re.bypass_shields = true;
             re.single_impact = true;
             // Python's re-hit passes only normal, ship_instances, weapon_type,

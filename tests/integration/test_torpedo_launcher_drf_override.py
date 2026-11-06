@@ -1,17 +1,14 @@
-"""Torpedo spawn propagates launcher hardpoint DRF to the torpedo object.
+"""A spawned torpedo keeps its PAYLOAD's DamageRadiusFactor; the launcher's is never used.
 
-Per spec §3.2 the hardpoint DRF takes precedence over the payload DRF.
-In the torpedo path host_loop passes the torpedo itself as
-``hardpoint_weapon`` to ``apply_hit``; therefore the torpedo must carry
-the launcher's DRF after spawn so that ``weapon_splash_radius`` returns
-the correct value.
+Spec §3.2 once had the hardpoint DRF override the payload's. Measured on stbc.exe (CombatTap H rad, 7 duels
+incl. the human run bc_human_1): every torpedo and cannon-bolt hit carries the payload value (photon 0.13,
+quantum 0.14, disruptor 0.15) and never a tube's 0.20 / 0.30 / 0.60. In the torpedo path host_loop passes the
+torpedo itself as ``hardpoint_weapon`` to ``apply_hit``, so the value the torpedo carries is the hit radius.
 
 Scenario:
   - Galaxy ForwardTorpedo1 calls SetDamageRadiusFactor(0.20) in galaxy.py.
-  - PhotonTorpedo.py:48 calls pTorp.SetDamageRadiusFactor(0.13) during
-    mod.Create(torp).
-  - After spawn the torpedo's _damage_radius_factor must be 0.20 (launcher),
-    not 0.13 (payload).
+  - PhotonTorpedo.py:48 calls pTorp.SetDamageRadiusFactor(0.13) during mod.Create(torp).
+  - After spawn the torpedo's _damage_radius_factor is 0.13 (payload), not 0.20 (launcher).
 """
 from unittest.mock import patch
 
@@ -35,10 +32,9 @@ def _find_torpedo_tube(ship):
     return None
 
 
-def test_launcher_drf_overrides_payload_drf_on_spawn(galaxy_red):
+def test_payload_drf_is_kept_over_the_launcher_drf_on_spawn(galaxy_red):
     """After firing from Galaxy ForwardTorpedo1 (DRF=0.20), the spawned
-    torpedo's _damage_radius_factor must equal 0.20, not the PhotonTorpedo
-    payload value of 0.13.
+    torpedo's _damage_radius_factor is the PhotonTorpedo payload value 0.13.
 
     Uses the ``galaxy_red`` fixture (RED alert, hardpoints loaded) so the
     tube is properly configured and CanFire() returns True.
@@ -78,9 +74,9 @@ def test_launcher_drf_overrides_payload_drf_on_spawn(galaxy_red):
     )
     torp = projectiles._active[0]
 
-    assert torp._damage_radius_factor == pytest.approx(0.20), (
-        f"torpedo._damage_radius_factor should be launcher DRF 0.20, "
-        f"not payload DRF 0.13; got {torp._damage_radius_factor}"
+    assert torp._damage_radius_factor == pytest.approx(0.13), (
+        f"torpedo._damage_radius_factor should be the payload DRF 0.13, "
+        f"not the launcher's 0.20; got {torp._damage_radius_factor}"
     )
 
 

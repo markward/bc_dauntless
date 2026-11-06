@@ -67,16 +67,20 @@ def weapon_splash_radius(hardpoint_weapon, payload_template) -> float:
     payload_template: projectile-type template (e.g. PhotonTorpedo), or None
                       for phasers / non-projectile weapons.
 
-    Returns the splash radius in game units. Hardpoint DRF overrides payload
-    DRF when both are set and non-zero; falls back to the phaser default
-    (0.15 GU) when neither is available.
+    Returns the splash radius in game units. The PAYLOAD's DRF wins when it
+    has one; the hardpoint's (phaser banks, a torpedo given as the weapon)
+    otherwise; the phaser default (0.15 GU) when neither is set. Measured on
+    the original with stbc-oracle (per-hit capture, 7 duels): every photon
+    hit carried 0.13 (258 hits) and every quantum 0.14 (27), the
+    projectiles' own values -- never the tubes' 0.20. Phaser hits carry the
+    banks' 0.15.
     """
-    if hardpoint_weapon is not None and hasattr(hardpoint_weapon, "GetDamageRadiusFactor"):
-        drf = hardpoint_weapon.GetDamageRadiusFactor()
-        if drf > 0.0:
-            return float(drf)
     if payload_template is not None and hasattr(payload_template, "GetDamageRadiusFactor"):
         drf = payload_template.GetDamageRadiusFactor()
+        if drf > 0.0:
+            return float(drf)
+    if hardpoint_weapon is not None and hasattr(hardpoint_weapon, "GetDamageRadiusFactor"):
+        drf = hardpoint_weapon.GetDamageRadiusFactor()
         if drf > 0.0:
             return float(drf)
     return PHASER_DEFAULT_DAMAGE_RADIUS
@@ -839,6 +843,17 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
         absorbed_shields = before - remaining
 
     post_shield = remaining
+    # A torpedo that the shields partly stop reaches the hull with its splash
+    # sphere shrunk by the same fraction: R x post_shield / damage. Measured on
+    # the original with stbc-oracle (per-hit capture, 7 duels): 63 of 63
+    # projectile hits scale exactly (a quantum 0.14 that leaks 66.69 of 900
+    # lands with 0.0104), and 800 of 801 phaser hits keep their radius. Only
+    # the subsystem step uses it: the shield step (flash, ET_WEAPON_HIT)
+    # keeps R. An explicit splash_radius (blast, overflow re-hit) is as given.
+    r_hull = r_hit
+    if (weapon_type == "torpedo" and absorbed_shields > 0.0 and damage > 0.0
+            and splash_radius is None):
+        r_hull = r_hit * post_shield / float(damage)
     absorbed_hull = 0.0
     absorbed_subsystem_total = 0.0
     overflow = 0.0          # damage left over after destroying subsystems
@@ -902,9 +917,9 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
             dy = hit_point.y - h_world.y
             dz = hit_point.z - h_world.z
             d = (dx * dx + dy * dy + dz * dz) ** 0.5
-            if d >= r_sub + r_hit:
+            if d >= r_sub + r_hull:
                 continue
-            w = _splash_weight(r_sub, r_hit, d)
+            w = _splash_weight(r_sub, r_hull, d)
             if w <= 0.0:
                 continue
             allocations.append((sub, w))

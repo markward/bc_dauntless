@@ -510,6 +510,18 @@ def _exact_threshold(w):
     s.SetCondition(s.GetDisabledPercentage() * s.GetMaxCondition())
 
 
+class _Payload:
+    """A projectile template with its own splash radius (hit strength 1b)."""
+    def GetDamageRadiusFactor(self):
+        return 0.6
+
+
+_PAYLOAD = _Payload()
+#: Every face of Delta charged so a 900 hit leaks 90: a torpedo's splash
+#: then shrinks 0.6 -> 0.06 and misses the sensors 0.85 above them.
+_LEAK_FACES = {f: 810.0 for f in range(ShieldSubsystem.NUM_SHIELDS)}
+
+
 def _splash_setup(w):
     w.ships["Alpha"].SetSplashDamage(900.0, 8.0)
     w.ships["Bravo"].SetSplashDamage(700.0, 8.0)
@@ -618,6 +630,14 @@ STEPS = [
                                    shield=False, bypass_shields=True,
                                    weapon_type="collision")),
     ("exact threshold", _call(_exact_threshold)),
+    ("leak faces", _faces("Delta", _LEAK_FACES)),
+    ("shielded torpedo, shrunk splash", _hit(
+        "Delta", 900.0, (0.0, 1.0, 0.85), source="Charlie",
+        weapon_type="torpedo", payload_template=_PAYLOAD)),
+    ("leak faces again", _faces("Delta", _LEAK_FACES)),
+    ("shielded phaser keeps its radius", _hit(
+        "Delta", 900.0, (0.0, 1.0, 0.85), source="Charlie",
+        weapon_type="phaser", payload_template=_PAYLOAD)),
     ("splash setup", _call(_splash_setup)),
     ("kill and splash chain", _hit("Alpha", 5000.0, (0.0, -0.5, 0.0),
                                    shield=False, bypass_shields=True,
@@ -691,6 +711,14 @@ def test_native_damage_matches_python_for_every_non_kernel_caller(
     state = [r[2] for r in dict(ref.rows)["exact threshold"]
              if r[0] == impulse][0]
     assert state == 0, "exactly at its threshold is still operational"
+    # The splash steps did what they say (hit strength 1b).
+    sensors = "Delta/Sensors"
+    hull = "Delta/Hull"
+    step = "shielded torpedo, shrunk splash"
+    assert cond(step, hull) != cond(before(step), hull), "the leak reached the hull"
+    assert cond(step, sensors) == cond(before(step), sensors)
+    step = "shielded phaser keeps its radius"
+    assert cond(step, sensors) != cond(before(step), sensors)
     # The native chain ran, for every caller, and never handed back.
     counts = nat.damage_counts
     assert counts.get("hits", 0) > 0, counts

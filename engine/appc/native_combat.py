@@ -6834,7 +6834,8 @@ def apply_hit(ship, damage, hit_point, source, *, normal=None,
             r_hit = float(splash_radius)
         args = (
             ship_h, source, source_h, float(damage), _dmg_point(hit_point),
-            _dmg_point(normal), float(r_hit), bool(damage_hull),
+            _dmg_point(normal), float(r_hit), splash_radius is not None,
+            bool(damage_hull),
             bool(bypass_shields), _dmg_point(shield_point),
             shield_point is not None and shield_point is hit_point,
             _dmg_point(hit_tangent),

@@ -14087,8 +14087,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 "combat_apply_hit",
                 [](std::int64_t ship, py::object source, std::int64_t source_h,
                    double damage, std::array<double, 3> point,
-                   py::object normal, double r_hit, bool damage_hull,
-                   bool bypass_shields, py::object shield_point,
+                   py::object normal, double r_hit, bool has_splash_radius,
+                   bool damage_hull, bool bypass_shields,
+                   py::object shield_point,
                    bool shield_point_is_point, py::object tangent,
                    py::object decal_radius, double decal_dent,
                    bool single_impact, py::object shield_radius,
@@ -14103,6 +14104,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     in.point = {point[0], point[1], point[2]};
                     damage_point(normal, in.has_normal, in.normal);
                     in.r_hit = r_hit;
+                    in.has_splash_radius = has_splash_radius;
                     in.damage_hull = damage_hull;
                     in.bypass_shields = bypass_shields;
                     damage_point(shield_point, in.has_shield_point,
