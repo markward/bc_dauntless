@@ -14,6 +14,12 @@ import pytest
 
 from engine.appc.time_slice import PythonMethodProcess, TimeSliceProcessManager
 
+# One 60 Hz frame. BC runs a process on the first frame PAST its delay since
+# its last run, never on a frame landing exactly on it (stbc-oracle sched
+# probe: 301 frames for a 5 s process at exact 60 Hz), so a tick meant to fire
+# a process sits one frame past the delay.
+F = 1.0 / 60.0
+
 
 @pytest.fixture(autouse=True)
 def _no_gc():
@@ -46,7 +52,7 @@ def _run_drop_test(two_arg):
     assert not gc.isenabled()
     owner = _Wrapper(mgr, calls, two_arg=two_arg)
     mgr.tick(0.0, 0.0)
-    mgr.tick(0.5, 0.5)
+    mgr.tick(0.5 + F, 0.5 + F)
     assert len(calls) == 1
     assert mgr.count() == 1
     del owner
@@ -70,7 +76,7 @@ def test_live_owner_keeps_firing():
     owner = _Wrapper(mgr, calls)
     mgr.tick(0.0, 0.0)
     for i in range(1, 5):
-        mgr.tick(0.5 * i, 0.5 * i)
+        mgr.tick((0.5 + F) * i, (0.5 + F) * i)
     assert len(calls) == 4
     assert owner is not None
 
@@ -92,7 +98,7 @@ def test_non_weakrefable_instance_still_fires():
     p.SetFunction("Fire")
     p.SetDelay(0.5)
     mgr.tick(0.0, 0.0)
-    mgr.tick(0.5, 0.5)
+    mgr.tick(0.5 + F, 0.5 + F)
     assert inst.calls == 1
 
 
@@ -117,7 +123,7 @@ def test_reassigned_instance_releases_the_old_one():
     del a
     assert ref_a() is None
     mgr.tick(0.0, 0.0)
-    mgr.tick(0.5, 0.5)
+    mgr.tick(0.5 + F, 0.5 + F)
     assert b.calls == 1
 
 
@@ -152,7 +158,7 @@ def test_owner_dropped_mid_tick():
     first = First()
     holder["second"] = Second()
     mgr.tick(0.0, 0.0)
-    mgr.tick(0.5, 0.5)
+    mgr.tick(0.5 + F, 0.5 + F)
     assert fired == ["first"]
     assert first is not None
 
@@ -169,7 +175,7 @@ def test_owner_dropping_itself_in_its_callback():
 
     holder["owner"] = SelfDrop(mgr, calls)
     mgr.tick(0.0, 0.0)
-    mgr.tick(0.5, 0.5)
+    mgr.tick(0.5 + F, 0.5 + F)
     assert len(calls) == 1
     assert mgr.count() == 0
     mgr.tick(1.0, 1.0)
