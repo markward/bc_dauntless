@@ -351,16 +351,9 @@ def test_cross_region_depenetration_writes_each_set_local():
 _OFF = (1000.0, -250.0, 37.5)
 
 
-class _Hull:
-    def IsDestroyed(self):
-        return 0
-
-
 def _pair_ship(x, y, vx, vy, radius=1.0, pieces=None, spin=None):
     s = _ship(x, y, 0.0, radius=radius, mass=120.0)
     s.SetVelocity(TGPoint3(vx, vy, 0.0))
-    s.GetHull = lambda: _Hull()
-    s.DamageSystem = lambda sub, dmg, src=None: None
     if pieces is not None:
         from engine.appc.hull_bounds import cache_hull_bound_spheres
         inv = 1.0 / 0.01

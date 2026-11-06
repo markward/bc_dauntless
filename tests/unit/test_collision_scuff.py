@@ -15,19 +15,12 @@ GALAXY_MASS = 120.0
 FRAME = 1.0 / 60.0
 
 
-class _Hull:
-    def IsDestroyed(self):
-        return 0
-
-
 def _ship(x, mass=GALAXY_MASS, vx=0.0, vy=0.0, radius=1.0):
     s = ShipClass()
     s.SetTranslateXYZ(x, 0.0, 0.0)
     s.SetRadius(radius)
     s.SetMass(mass)
     s.SetVelocity(TGPoint3(vx, vy, 0.0))
-    s.GetHull = lambda: _Hull()
-    s.DamageSystem = lambda sub, dmg, src=None: None
     return s
 
 
