@@ -1554,25 +1554,32 @@ def test_unseen_target_class_with_foreign_override_runs_python_step(
     assert counts["k2_python_step_reasons"]["patched"] == 1, counts
 
 
-def test_unseen_target_class_sends_its_ship_to_python(monkeypatch):
+def test_swapped_walked_ship_class_runs_it_in_python_not_its_attackers(
+        monkeypatch):
     """A walked ship's class swapped after it registered (no reclassify)
     to one K2 never saw but that overrides nothing: the scan checks a
-    ship's LIVE class, so the ship runs in Python; the step stays native.
-    The Galaxy, whose banks aim at it, stays native: a target's class is
-    read from its row, which a swap without reclassify does not change
-    (a target that never got a row: the rowless tests below)."""
+    ship's LIVE class, so that ship -- the Vor'cha, and only it -- runs in
+    Python; the step stays native. The Galaxy, whose banks aim at it, stays
+    native: a target's class is read from its row, which a swap without
+    reclassify does not change (a target that never got a row: the rowless
+    tests below)."""
     from engine.appc.ships import ShipClass
 
     class Unseen(ShipClass):
         pass
 
+    seen = []
+
     def patch(mp, w):
         mp.setattr(w.ships["Vorcha"], "__class__", Unseen)
+        seen.append((nc.slot(w.ships["Vorcha"]), _verdict(w)))
 
     counts = _one_native_step(monkeypatch, patch)
-    assert counts["k2_records"] > 0, counts
+    (vorcha, (_handles, python_ships, whole)), = seen
+    assert python_ships == [vorcha], python_ships
+    assert not whole
+    assert counts["k2_records"] > 0, counts             # the Galaxy's
     assert counts["k2_python_steps"] == 0, counts
-    # The Vor'cha (walked, its live class unseen).
     assert counts["k2_python_reasons"]["overridden"] == 1, counts
 
 

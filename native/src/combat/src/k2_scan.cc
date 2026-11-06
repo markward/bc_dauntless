@@ -1,7 +1,3 @@
-#if defined(__clang__)
-#pragma clang fp contract(off)
-#endif
-
 #include "dauntless/combat/k2_scan.h"
 
 namespace dauntless::combat {
