@@ -727,7 +727,9 @@ class _Scene:
             if not bank._firing and not target.IsDead():
                 bank._target = target
                 bank._firing = True
-                bank._beam_on_countdown = ws.BEAM_ON_DELAY_S
+                # Beam on: the rig is about where the strip emits, and its
+                # window is shorter than the beam-on delay (no contact).
+                bank._beam_on_countdown = 0.0
 
     def arc_beat(self):
         """A scripted arc-fail flush (Review Focus 5): the player faces a foe
@@ -816,7 +818,10 @@ class _Scene:
         if not bank._firing:
             bank._target = target
             bank._firing = True
-            bank._beam_on_countdown = ws.BEAM_ON_DELAY_S
+            # Beam already on: the rig is about the point-blank geometry, and
+            # a bank still in its delay has no contact (it is shorter than
+            # the delay).
+            bank._beam_on_countdown = 0.0
 
     # ── Record ───────────────────────────────────────────────────────────────
 
@@ -1005,10 +1010,13 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
     assert nat.counts["k0_python_reasons"]["override"] == 0, nat.counts
     # Every branch the scene is built for happened in the kernel.
     for key in ("tier:mesh", "tier:sphere", "bubble", "pulse",
-                "windup_contact", "arc_fail_pulse", "lock_other_ship",
+                "arc_fail_pulse", "lock_other_ship",
                 "manual_on", "manual_off", "cloaking_target",
                 "shields:True", "shields:False", "queued_contact"):
         assert n.get(key, 0) > 0, (key, n)
+    # A bank still in its beam-on delay has not reached its target: no
+    # contact (the beam lands as the delay ends; stbc-oracle duels).
+    assert n.get("windup_contact", 0) == 0, n
     # A firing bank's stop -- the walk's and an off system's -- is logged
     # writes plus its LOOP_STOP (combat fire events Task 4): no BANK_STOP or
     # SYSTEM_STOP record (both only for a stop the kernel cannot log).

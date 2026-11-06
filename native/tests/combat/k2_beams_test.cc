@@ -439,23 +439,30 @@ TEST(K2, CrossSetStopsOrDropsDwell) {
     w.k.end();
 }
 
-TEST(K2, WindupContactsEveryTick) {
-    // Lit but inside the beam-on delay: the whole geometry runs and contacts
-    // (accumulate_dwell returns 0.0 and writes nothing).
+TEST(K2, WindupHasNoContactUntilTheBeamIsOn) {
+    // Lit but inside the beam-on delay: the beam has not reached its target,
+    // so there is no contact (`if flush_dwell <= 0.0 and not beam_on:
+    // return`) and accumulate_dwell writes nothing; once the delay has run
+    // out the bank rests on its target again.
     World w;
     const auto s = w.scene(true, 0.0);
     w.m.set_f(s.bank, Field::_beam_on_countdown, 0.3);
     for (int tick = 0; tick < 2; ++tick) {
         w.begin({s.ship});
         const K2Record r = w.next();
-        EXPECT_EQ(w.brief(r), "CONTACT b0@t flush=0");
+        EXPECT_EQ(w.brief(r), "DONE");
         EXPECT_TRUE(r.writes.empty());
-        EXPECT_EQ(r.contact.system, s.sys);
-        EXPECT_EQ(r.contact.ship, s.ship);
-        EXPECT_EQ(w.brief(w.next()), "DONE");
         w.k.end();
     }
     EXPECT_EQ(w.m.get_f(s.bank, Field::_dwell), 0.0);
+    w.m.set_f(s.bank, Field::_beam_on_countdown, 0.0);
+    w.begin({s.ship});
+    const K2Record r = w.next();
+    EXPECT_EQ(w.brief(r), "CONTACT b0@t flush=0");
+    EXPECT_EQ(r.contact.system, s.sys);
+    EXPECT_EQ(r.contact.ship, s.ship);
+    EXPECT_EQ(w.brief(w.next()), "DONE");
+    w.k.end();
 }
 
 TEST(K2, BeamOnAccumulatesAndFlushes) {

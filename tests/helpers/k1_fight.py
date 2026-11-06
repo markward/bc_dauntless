@@ -381,8 +381,13 @@ class _Scene:
             rng.choice(self.emitters).SetPowerSetting(rng.randint(0, 2))
         elif kind == "drain":
             # A bank near empty: a held beam runs dry (the depleted latch)
-            # and must climb back before it relights (Review Focus 3).
-            w = rng.choice(self.emitters)
+            # and must climb back before it relights (Review Focus 3). Half
+            # the time a lit bank is picked: an idle phaser bank this low no
+            # longer starts (it lights only at MinFiringCharge), so only a
+            # held beam can run dry.
+            lit = [w for w in self.emitters if w.__dict__.get("_firing")]
+            w = (rng.choice(lit) if lit and rng.random() < 0.5
+                 else rng.choice(self.emitters))
             w.SetChargeLevel(w.GetMaxCharge()
                              * rng.choice((0.0, 0.02, 0.05, 0.1, 0.3)))
         elif kind == "ammo_out":

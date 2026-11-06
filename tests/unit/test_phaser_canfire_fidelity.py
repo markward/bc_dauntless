@@ -63,12 +63,16 @@ def recorded_events():
 
 # ── CanFire start/sustain asymmetry (the hysteresis) ────────────────────────
 
-def test_start_and_sustain_both_need_only_nonzero_charge():
-    """MinFiringCharge does not gate a start: a Kessok bank preset to 3
-    (MinFiringCharge 4) fires at the full rate on the original exe
-    (stbc-oracle B8, `phaser_high_front_57_charge3`)."""
+def test_a_start_needs_min_firing_charge_and_a_sustain_only_nonzero_charge():
+    """A phaser bank lights only at MinFiringCharge; once lit it fires down to
+    0. Measured on the original (stbc-oracle results_win_charge: Galaxy and
+    Sovereign banks preset to 0.1-2.9 never fire and light on reaching 3.0;
+    the Kessok bank preset to 3 in `phaser_high_front_57_charge3`, with
+    MinFiringCharge 4, lit at 4.01)."""
     bank = make_charged_bank(min_firing=2.0, charge=1.0)
-    assert bank.CanFire() == 1            # below MinFiringCharge — still starts
+    assert bank.CanFire() == 0            # below MinFiringCharge — cannot start
+    bank._charge_level = 2.0              # exactly MinFiringCharge — starts
+    assert bank.CanFire() == 1
     bank.Fire(target=make_target())
     bank._charge_level = 0.5              # drained mid-beam
     assert bank.CanFire() == 1            # sustain: > 0 suffices
@@ -79,8 +83,8 @@ def test_start_and_sustain_both_need_only_nonzero_charge():
 def test_restart_after_depletion_needs_min_firing_charge():
     """A bank that ran dry latches until MinFiringCharge (the Galaxy's
     drained bank 5 did not relight at 0.45 of 5 while the trigger was held —
-    stbc-oracle `phaser_galaxy_front_57`); a bank that never ran dry starts
-    on any charge (test above)."""
+    stbc-oracle `phaser_galaxy_front_57`), the same threshold a fresh start
+    needs (test above)."""
     bank = make_charged_bank(min_firing=2.0, charge=2.0, max_charge=10.0)
     bank._beam_on_countdown = 0.0          # past the beam-on delay
     bank.Fire(target=make_target())
