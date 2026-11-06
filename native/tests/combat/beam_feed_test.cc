@@ -37,15 +37,22 @@ struct FakeHost {
     Vec3 at{0.0, 0.0, 0.0};
     std::optional<TraceHit> hit;
     int calls = 0;
+    // The last trace's arguments, as the binding receives them.
+    float origin[3] = {0.0f, 0.0f, 0.0f};
+    float max_dist = 0.0f;
     TraceHooks hooks() {
         TraceHooks h;
         h.translation = [this](InstanceId id) -> std::optional<Vec3> {
             if (id.index != 1 || id.generation != 1) return std::nullopt;
             return at;
         };
-        h.trace = [this](InstanceId id, const float*, const float*,
-                         float) -> std::optional<TraceHit> {
+        h.trace = [this](InstanceId id, const float* o, const float*,
+                         float md) -> std::optional<TraceHit> {
             ++calls;
+            origin[0] = o[0];
+            origin[1] = o[1];
+            origin[2] = o[2];
+            max_dist = md;
             if (id.index != 1 || id.generation != 1)
                 throw StaleInstance("ray_trace_mesh: invalid InstanceId");
             return hit;
@@ -403,6 +410,93 @@ TEST(BeamFeed, ShieldsDownEndsOnTheHullTrace) {
     ASSERT_EQ(e.kind, SphereEntry::Kind::Point);
     EXPECT_EQ(w.phasers[0].target, e.point);
     EXPECT_NEAR(e.point[1], 45.0, 1e-9);
+}
+
+TEST(BeamFeed, HullTraceShiftsIntoTheViewAndBack) {
+    World w;
+    // One frame (7): the ship's region at 0, the target's at +1000 x, the
+    // viewed one at +200 x. view_offset(target's set) = 1000 - 200 = 800;
+    // the ship's set would give -200.
+    const int64_t sa = w.add_set(7, {0.0, 0.0, 0.0});
+    const int64_t sb = w.add_set(7, {1000.0, 0.0, 0.0});
+    const int64_t sv = w.add_set(7, {200.0, 0.0, 0.0});
+    w.ctx.view = sv;
+    const int64_t ship = w.ship(0.0, 0.0, 0.0, sa);
+    const int64_t t = w.ship(-990.0, 50.0, 0.0, sb);
+    w.bank(w.system(ship), t);
+    // The target's instance in VIEW space: (-990 + 800, 50, 0).
+    w.host.at = {-190.0, 50.0, 0.0};
+    w.host.hit = TraceHit{{0.0f, -2.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 48.0f};
+    w.ctx.iids[t] = K2Context::Iid{false, {1, 1}};
+    w.run({ship});
+    ASSERT_EQ(w.phasers.size(), 2u);
+    ASSERT_EQ(w.host.calls, 1);
+    // emitter_t (-1000, 0, 0) in the target's set, +800 into the view
+    // (-200, 0, 0), minus the instance translation: (-10, -50, 0).
+    EXPECT_EQ(w.host.origin[0], -10.0f);
+    EXPECT_EQ(w.host.origin[1], -50.0f);
+    EXPECT_EQ(w.host.origin[2], 0.0f);
+    // max_dist = raw_length * 1.5, narrowed as pybind narrows it.
+    const double raw = py_pow(10.0 * 10.0 + 50.0 * 50.0, 0.5);
+    EXPECT_EQ(w.host.max_dist, narrow_like_pybind(raw * 1.5));
+    // The hit (-190, 48, 0) in view, -800 back into the target's set
+    // (-990, 48, 0), then +800 into the view by _beam_pair_in_view. Not
+    // shifting back would draw it at (610, 48, 0).
+    EXPECT_EQ(w.phasers[0].target, (Vec3{-190.0, 48.0, 0.0}));
+    EXPECT_EQ(w.phasers[0].emitter, (Vec3{-200.0, 0.0, 0.0}));
+    // The length is the target's set's: (10, 48, 0) from emitter_t.
+    EXPECT_EQ(w.phasers[0].u_tiles,
+              py_max(1.0, py_pow(10.0 * 10.0 + 48.0 * 48.0, 0.5) * 0.1));
+}
+
+TEST(BeamFeed, HullTraceMaxDistIsRawLengthTimesOnePointFive) {
+    World w;
+    const Scene s = scene(w);
+    w.host.at = {0.0, 50.0, 0.0};
+    w.host.hit = TraceHit{{0.0f, -2.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 48.0f};
+    w.ctx.iids[s.target] = K2Context::Iid{false, {1, 1}};
+    w.run({s.ship});
+    ASSERT_EQ(w.host.calls, 1);
+    EXPECT_EQ(w.host.max_dist, narrow_like_pybind(50.0 * 1.5));
+    // Same set as the view: no shift, so the origin is (0,0,0) - at.
+    EXPECT_EQ(w.host.origin[1], -50.0f);
+}
+
+TEST(BeamFeed, BadIidTakesTheSphereTierWithoutATrace) {
+    World w;
+    const Scene s = scene(w);
+    w.host.at = {0.0, 50.0, 0.0};
+    w.host.hit = TraceHit{{0.0f, -2.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 48.0f};
+    // Not an InstanceId: host_io raises inside _resolve_hit_point's try.
+    w.ctx.iids[s.target] = K2Context::Iid{true, {1, 1}};
+    w.run({s.ship});
+    ASSERT_EQ(w.phasers.size(), 2u);
+    EXPECT_EQ(w.host.calls, 0);
+    const SphereEntry e = ray_sphere_entry({0.0, 0.0, 0.0}, {0.0, 1.0, 0.0},
+                                           50.0 * 1.5, {0.0, 50.0, 0.0}, 5.0);
+    ASSERT_EQ(e.kind, SphereEntry::Kind::Point);
+    EXPECT_EQ(w.phasers[0].target, e.point);
+}
+
+TEST(BeamFeed, CrossRegionStripBankAimsAtTheShiftedTarget) {
+    World w;
+    const int64_t sa = w.add_set(7, {0.0, 0.0, 0.0});
+    const int64_t sb = w.add_set(7, {1000.0, 0.0, 0.0});
+    w.ctx.view = sa;
+    const int64_t ship = w.ship(0.0, 0.0, 0.0, sa);
+    const int64_t t = w.ship(-990.0, 50.0, 0.0, sb);  // (10, 50, 0) in sa
+    const int64_t b = w.bank(w.system(ship), t);
+    w.m.set_f(b, Field::_length, 2.0);
+    w.m.set_f(b, Field::_arc_width_lo, -3.0);
+    w.m.set_f(b, Field::_arc_width_hi, 3.0);
+    // The strip point for the target in the SHIP's coordinates ...
+    const Vec3 want = strip_emit_position(w.m, b, {10.0, 50.0, 0.0}, false);
+    // ... which the unshifted target-local point would not give.
+    ASSERT_NE(want, strip_emit_position(w.m, b, {-990.0, 50.0, 0.0}, false));
+    w.run({ship});
+    ASSERT_EQ(w.phasers.size(), 2u);
+    EXPECT_EQ(w.phasers[0].emitter, want);  // view == the ship's set
+    EXPECT_EQ(w.phasers[0].target, (Vec3{10.0, 50.0, 0.0}));
 }
 
 TEST(BeamFeed, NoInstanceEndsOnTheAimPoint) {
