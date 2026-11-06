@@ -50,7 +50,8 @@ merge tier the moment it exists. That is safe for coverage and costs time
 only until the next regeneration. The list is **generated**, never
 hand-edited: `tools/gate_tiers.py generate <full-gate artefact dir>` reads the
 per-test durations the full gate writes and demotes the slowest tests until
-the merge tier's measured cost fits its budget. Selection is at function
+the merge tier's measured cost fits its budget. The merge tier holds 15,516 of 17,331 tests after regenerating from the full gate's
+own durations. Selection is at function
 level for pytest (all parametrize cases of a slow function move together, and
 a file whose every function is demoted is listed as the file), and at case
 level for gtest.
@@ -81,6 +82,16 @@ is itself in the merge tier):
   wall time would block merges whenever the machine was busy, which is the
   friction this design removes.
 - The merge gate prints its phase times and total, and warns over 300 s.
+
+Measured (development run, 2026-11-06, this machine, Debug): build 13 s
+(nothing to rebuild), pytest 164 s (15,057 tests, peak RSS 579 MB),
+in-process gtest 27 s, **205 s total**. The build phase is whatever the
+branch left unbuilt. A session that ran its focused tests has already built,
+but a merge that touches widely included C++ headers adds its rebuild (a
+from-scratch build is about 100 s).
+
+Full gate, measured (development run, same day): pytest 1,148 s (17,301
+passed, peak RSS 2,903 MB), ctest 366 s, in-process 219 s, **28.9 min**.
 
 ## Memory guard (full gate)
 
@@ -115,6 +126,10 @@ existing `skip:ctest:` and `optional-mod:ctest:` lines apply unchanged.
 2. **The full gate fails on a tier-budget breach.** The alternative is a loud
    warning. I chose failure because a warning is exactly how a selection
    rots, and the fix is one command plus a commit.
-3. **`UpdateNeverBlocks` tier.** I split it into a deterministic
+3. **The RSS budget: 3,300 MB** (`PYTEST_RSS_BUDGET_MB`). Measured peak
+   2,903 MB; about 1.2 GB of it is one stress test's working set (see
+   test-suite-memory.md). Lower it once that test is slimmed; I did not
+   touch the 4,000 MB watchdog ceiling.
+4. **`UpdateNeverBlocks` tier.** I split it into a deterministic
    never-waits test (~55 ms, merge tier by the rule) and a CPU-bound cost test
    (~1.3 s, deep). See the audit doc.

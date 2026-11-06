@@ -88,9 +88,10 @@ _GTEST_DONE = re.compile(r"^\[==========\] \d+ tests? from \d+ test suites? ran\
 INPROC_TIMEOUT_S = 900
 # The full gate fails when pytest's peak RSS passes this (the watchdog's
 # CEILING_MB SIGKILL stays as the host's safety net above it). Measured
-# 2026-11-06 after the per-test reset fix: see
+# 2026-11-06 after the per-test reset fix: 2,903 MB for the whole suite in
+# one process (was 4,308 MB); 3,300 MB leaves ~14% headroom. See
 # docs/reference/architecture/test-suite-memory.md.
-RSS_BUDGET_MB = float(os.environ.get("PYTEST_RSS_BUDGET_MB", "2500"))
+RSS_BUDGET_MB = float(os.environ.get("PYTEST_RSS_BUDGET_MB", "3300"))
 MERGE_BUDGET_S = 300.0
 _PEAK_RSS = re.compile(r"WATCHDOG DONE peak_rss=([\d.]+) MB")
 _GTEST_SKIPPED = re.compile(r"^\[  SKIPPED \] (\S+) \(\d+ ms\)$")
@@ -596,6 +597,13 @@ def main():
     budget_failures = []
     peak = RUN_INFO.get("peak_rss_mb")
     if not merge_tier and do_pytest and not harness_error:
+        steps = os.path.join(art, "pytest_durations.json.rss.json")
+        if os.path.isfile(steps):
+            with open(steps, encoding="utf-8") as fh:
+                top = list(json.load(fh).items())[:5]
+            print("pytest peak RSS %s MB; largest high-water rises: %s" % (
+                "?" if peak is None else "%.0f" % peak,
+                "; ".join("%s +%.0f MB" % kv for kv in top)))
         if peak is None:
             budget_failures.append("pytest peak RSS was not reported by the watchdog")
         elif peak > RSS_BUDGET_MB:

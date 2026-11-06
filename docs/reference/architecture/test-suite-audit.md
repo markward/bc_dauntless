@@ -31,12 +31,12 @@ timed in-process), kept in the session scratchpad. On top of that:
 
 | | Before (`ecbeec5a0`) | After (this branch) |
 |---|---|---|
-| pytest tests | 17,327 | see the final full-gate log (adds the new guards listed below) |
+| pytest tests | 17,327 | 17,331 (15 removed; new guards and tier-gate cases added, listed below) |
 | Removed tests | | 15 tests (9.4 s of measured time) |
 | Rewritten tests | | 2 source-text pins become behavioural; `UpdateNeverBlocks` becomes 2 cases |
 | Per-test overhead | 3.55 ms | 1.90 ms (self-check cache, about 28 s per full run) |
-| Full pytest wall time | 26 min measured (about 20 min without the probe) | final full-gate log |
-| Gate a merge waits for | about 36 min | the merge gate, under 5 min |
+| Full pytest wall time | 26 min measured (about 20 min without the probe) | 19:01 (17,301 passed) |
+| Gate a merge waits for | about 36 min (and it died at 4 GB) | the merge gate: 205 s measured |
 
 Removing tests is the small part. The time goes to the tiers and the
 per-test overhead fix: the suite is well kept, and its slow tests are slow
