@@ -77,6 +77,10 @@ class GameLoop:
         # each, at the same boundary (ObjectGroup.deliver_changes).
         from engine.appc.objects import ObjectGroup
         ObjectGroup.deliver_changes()
+        # Condition events (ConditionEventCreator) queued since the last tick,
+        # after the group changes that so often cause them.
+        from engine.appc.ai import deliver_condition_events
+        deliver_condition_events()
         # Drive each bridge officer's CharacterClass animation queue one step --
         # the headless equivalent of host_loop._pump_character_queues. A
         # re-pointed CharacterAction (turn / glance / gesture / breathe / menu)

@@ -98,6 +98,9 @@ def test_after_a_loss_the_music_stays_ambient(monkeypatch):
     lose = [t for n, t, a in log if n == "PlayFanfare" and a == "Lose"]
     assert lose
     frames.run(60.0)
-    assert [a for n, t, a in log if n == "SwitchMusic" and t > lose[0]] == []
+    # The switch to the ambient comes with the battle's end (in Dauntless the
+    # dead hull stays in the set until EndSimulation clears it, so one tick
+    # after Lose rather than 1 s before it); nothing but the ambient after.
+    assert set(a for n, t, a in log if n == "SwitchMusic" and t > lose[0]) <= {"Starting Ambient"}
     assert DM.sCurrentMusicType == "Starting Ambient"
     assert enemy.GetContainingSet() is None
