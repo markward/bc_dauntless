@@ -104,6 +104,20 @@ def test_skew_fire_exempt_from_stagger():
     assert t2.GetNumReady() == t2.GetMaxReady() - 1
 
 
+def test_skew_fire_waits_the_stagger_after_the_stamping_tick():
+    """Only the salvo's own tick is exempt: the original fires Dual pairs
+    0.65-0.67 s apart (stbc-oracle sweep/torp_spread*.json)."""
+    ship, sys_, (t1, t2) = make_ship_with_two_tubes()
+    t2.SetSkewFire(1)
+    advance_game_clock_to(100.0)
+    with _patched_sound():
+        t1.Fire(None, None)
+    advance_game_clock_by(0.25)
+    with _patched_sound():
+        t2.Fire(None, None)
+    assert t2.GetNumReady() == t2.GetMaxReady(), "a skew tube 0.25 s later must wait"
+
+
 def test_fresh_system_first_shot_passes_stagger():
     """TorpedoSystem._last_system_fire_time inits to -1000.0 so a fresh
     system's first shot always satisfies the 0.5s gate."""

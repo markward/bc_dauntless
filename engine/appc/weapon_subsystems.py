@@ -1655,7 +1655,8 @@ class TorpedoSystem(WeaponSystem):
         # torpedo launched by ANY tube on this system.  A fresh system inits
         # to -1000.0 (same convention as TorpedoTube._last_fire_time) so the
         # first shot always passes the 0.5s stagger gate.  Skew-fire tubes
-        # are exempt (TorpedoTube.CanFire checks IsSkewFire() first).
+        # pass it only in the tick of the stamp (the salvo's partners; see
+        # TorpedoTube.CanFire).
         self._last_system_fire_time: float = -1000.0
 
     def StartFiring(self, target=None, offset=None) -> None:
@@ -1844,35 +1845,64 @@ class TorpedoSystem(WeaponSystem):
         self._ammo_by_slot[len(self._ammo_by_slot)] = ammo_type
         native_combat.push_field(self, "_ammo_by_slot")       # in-place store
 
-    def SetAmmoType(self, ammo_index, _reload_arg=0) -> None:
+    def SetAmmoType(self, ammo_index, delayed_reload=1) -> None:
         # SDK semantics: SELECT the ammo type at index `ammo_index` (0-based,
         # same domain as GetAmmoTypeNumber / range(GetNumAmmoTypes())).  Never
         # a store — hardpoint setup populates slots via AddAmmoType.  Call
-        # sites: AI/Preprocessors.py:548,640 (int index from ChooseTorpType),
-        # ShipScriptActions.py:400, MissionLib.py:611, E2M0.py:720
-        # (App.AT_TWO = 1).  Second arg is always 0 in the SDK (reload
-        # time/flag) — accepted, ignored.
+        # sites: AI/Preprocessors.py:548,640 (int index from ChooseTorpType,
+        # ONE argument), ShipScriptActions.py:400 (ReloadShip, the type
+        # already loaded, second argument 0), MissionLib.py:611 (0, 0),
+        # E2M0.py:720 and E2M6.py:508,511 (App.AT_TWO = 1, second argument 0).
         #
-        # Switching to a DIFFERENT type unloads every tube: measured on the
-        # original exe (stbc-oracle bible §4 T4, `torpedo_sovereign_quantum_57`)
-        # the Sovereign's first quantum salvo after SetAmmoType(1) needs ~45 s
-        # — its ReloadDelay is 40 s — and BC's decompiled switch path calls the
-        # tube's unload (TorpedoTube.UnloadTorpedo, FUN_0057D9A0). Re-selecting
-        # the type already loaded is left alone: every starbase dock ends with
-        # SetAmmoType(GetAmmoTypeNumber(), 0), and emptying the tubes on that
-        # is not something the capture shows.
-        before = self.GetCurrentAmmoSlot()
+        # The second argument picks the reload. Measured on the original
+        # (stbc-oracle ammo_win_*.json: a Sovereign with every tube loaded,
+        # photon -> quantum, and Forward Torpedo 1 patched to hold two rounds):
+        #
+        #   SetAmmoType(t)        every round of every tube is unloaded, one
+        #                         ET_TORPEDO_FIRED (no source, the tube as
+        #                         destination) per round, and each reloads
+        #                         after its ReloadDelay (40 s on the
+        #                         Sovereign; ET_TORPEDO_RELOAD per round).
+        #   SetAmmoType(t, 0)     every tube unloads and reloads at once:
+        #                         ET_TORPEDO_FIRED then ET_TORPEDO_RELOAD per
+        #                         round, tube by tube, all still ready.
+        #
+        # Both hold whether or not `t` is the type already loaded
+        # (ammo_win_same / ammo_win_same0): a re-selection empties the tubes
+        # like a real switch. The SDK's own callers guard for that -- the AI's
+        # ChooseTorpType only calls it for a different type, and ReloadShip's
+        # re-selection passes 0.
         self.SetCurrentAmmoSlot(int(ammo_index))
-        if self.GetCurrentAmmoSlot() != before:
-            for i in range(self.GetNumWeapons()):
-                tube = self.GetWeapon(i)
-                unload = getattr(tube, "UnloadTorpedo", None)
-                if not callable(unload):
-                    continue
-                ready = getattr(tube, "GetNumReady", None)
-                n = int(ready()) if callable(ready) else 0
-                for _ in range(n):
-                    unload()
+        self._unload_all_tubes(reload_at_once=not delayed_reload)
+
+    def _unload_all_tubes(self, reload_at_once: bool) -> None:
+        """Every ready round of every tube out through TorpedoTube.UnloadTorpedo
+        (each posts its ET_TORPEDO_FIRED); with `reload_at_once`, the tube is
+        then refilled round by round through ReloadTorpedo (each posts its
+        ET_TORPEDO_RELOAD) before the next tube. See SetAmmoType.
+
+        A delayed switch also restarts every slot that was already reloading:
+        the new type is ready in all tubes together, one full reload after the
+        switch. Measured on the original with the player's own switch
+        (stbc-oracle human_ammoswitch_v2.json, a human-flown Sovereign): at
+        t=273.50 the aft tubes were 20 s into reloading a photon, and they came
+        back with the four forward tubes at 305.85, not at their own 285."""
+        for i in range(self.GetNumWeapons()):
+            tube = self.GetWeapon(i)
+            unload = getattr(tube, "UnloadTorpedo", None)
+            if not callable(unload):
+                continue
+            if not reload_at_once:
+                restart = getattr(tube, "_restart_reloading_slots", None)
+                if callable(restart):
+                    restart(_game_time())
+            ready = getattr(tube, "GetNumReady", None)
+            n = int(ready()) if callable(ready) else 0
+            for _ in range(n):
+                unload()
+            if reload_at_once:
+                for _ in range(int(tube.GetMaxReady())):
+                    tube.ReloadTorpedo()
 
     def GetAmmoType(self, slot: int):
         return self._ammo_by_slot.get(int(slot))
@@ -1923,6 +1953,15 @@ class TorpedoSystem(WeaponSystem):
             idx = 0
         self._selected_slot = slots[(idx + 1) % len(slots)]
         self._announce_player_type_change(current)
+        # The player's switch (weapons panel, tactical command) unloads like
+        # SetAmmoType's delayed switch. Measured on the original with a
+        # human-flown Sovereign (stbc-oracle human_ammoswitch_v2.json, three
+        # switches): every tube empties, loaded or reloading; the torpedo
+        # counts are untouched (only a launch lowers them); fire input does
+        # nothing until the new type is ready in all tubes together, one full
+        # reload later (32.1-34.3 s there, the tubes' own reload at that
+        # power).
+        self._unload_all_tubes(reload_at_once=False)
 
     def _announce_player_type_change(self, previous_slot) -> None:
         """Post ET_PLAYER_TORPEDO_TYPE_CHANGED so Felix speaks the switch.
@@ -1991,10 +2030,11 @@ class TorpedoSystem(WeaponSystem):
         disconnected: the intended hook is a vtable-only salvo setter
         (0x0057B1F0) with zero callers anywhere in stbc.exe. Dauntless
         deliberately wires the intended design over the shipped bug: a
-        non-Single chain fans a true simultaneous salvo (skew tubes are
-        exempt from the 0.5s ship-wide stagger — see TorpedoTube.CanFire —
-        so every member of the active chain group launches in the same
-        tick, geometry from each tube's authored Right vector); Single
+        non-Single chain fans a true simultaneous salvo (skew tubes pass
+        the 0.5s ship-wide stagger in the stamping tick — see
+        TorpedoTube.CanFire — so every member of the active chain group
+        launches in the same tick and the next group waits the gate,
+        geometry from each tube's authored Right vector); Single
         restores BC's shipped walk-out.
 
         [0] is BOTH the chainless fallback and the SDK-documented "group of
@@ -2782,6 +2822,19 @@ class TorpedoTube(Weapon):
                     self._push_slots()
                 return
 
+    def _restart_reloading_slots(self, now: float) -> None:
+        """Every slot already reloading starts again from zero at `now` (an
+        ammo switch: TorpedoSystem._unload_all_tubes)."""
+        self._ensure_slots()
+        changed = False
+        for i in range(len(self._reload_timers)):
+            if self._reload_timers[i] != _SLOT_LOADED:
+                self._reload_timers[i] = 0.0
+                self._reload_advanced_at[i] = now
+                changed = True
+        if changed and native_combat._enabled:
+            self._push_slots()
+
     def _push_slots(self) -> None:
         """Both slot lists were written in place: push them to the native
         combat mirror (callers test native_combat._enabled first, so the
@@ -2921,8 +2974,11 @@ class TorpedoTube(Weapon):
         every ready tube in the working group in the same tick now only
         launches the first one (it stamps parent._last_system_fire_time; the
         rest fail this gate within the same tick since gameTime delta is 0).
-        Skew-fire tubes are exempt — they're the deliberately-desynced spread
-        pattern, not the ship-wide volley.
+        Skew-fire tubes pass the gate only in the tick of the stamp, so a
+        spread salvo (the active group's skew tubes) launches together and
+        the next salvo waits the gate: measured on the original, Dual fires
+        its pairs 0.65-0.67 s apart and Quad all four at once
+        (stbc-oracle sweep/torp_spread*.json).
 
         The native rule (fire_gates.cc can_fire, M8.6): fire control has no
         Python copy (M3).

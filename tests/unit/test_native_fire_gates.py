@@ -441,11 +441,15 @@ def test_tube_stagger_exclusive_boundary(world):
     below = math.nextafter(10.5, 0.0)
     assert tuple(_native(tube, below)) == (False, False)
     _same(w, tube, below, "just below")
-    # Skew-fire tubes are exempt, at the boundary and inside it.
+    # Skew-fire tubes pass only in the stamping tick itself (a spread
+    # salvo's partners); later inside the gate they wait like any tube.
     tube._skew_fire = True
-    for now in (10.0, 10.25, 10.5, below):
-        assert tuple(_native(tube, now)) == (True, False)
+    assert tuple(_native(tube, 10.0)) == (True, False)
+    _same(w, tube, 10.0, ("skew", 10.0))
+    for now in (math.nextafter(10.0, 100.0), 10.25, 10.5, below):
+        assert tuple(_native(tube, now)) == (False, False)
         _same(w, tube, now, ("skew", now))
+    assert tuple(_native(tube, above)) == (True, False)
     # A NaN stamp never blocks.
     tube._skew_fire = False
     parent._last_system_fire_time = NAN
