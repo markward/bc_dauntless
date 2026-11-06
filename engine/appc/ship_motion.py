@@ -149,11 +149,6 @@ def _cap_keep(commanded: float, current: float, cap: float) -> float:
     return commanded
 
 
-def _asymptote_step(accel: float, gap: float, dt: float) -> float:
-    """BC rate-limited asymptote step: min(accel, |gap|/tau) · dt."""
-    return min(accel, abs(gap) / BC_IMPULSE_TAU) * dt
-
-
 def law_step_vector(cur, target, accel: float, dt: float):
     """One step of BC's motion law on a 3-vector: move ``cur`` toward
     ``target`` by min(accel, |gap| / tau) * dt along the gap. accel >=
@@ -191,7 +186,10 @@ def step_vector_velocity(ship, forward, current_speed: float, target_speed: floa
     function last returned; any writer that sets ``_current_speed`` directly
     (warp exit, drift re-seed, tests) makes them differ and the vector is
     re-seeded along the nose; a writer that must keep the vector (none
-    today) must write both.
+    today) must write both. Code that moves the ship without the law and
+    without writing ``_current_speed`` (a warp flight's end, a set-to-set
+    arrival, the helm's warp burst and dash) drops the vector instead,
+    ``ship._motion_vel = None`` (docs/reference/engine/motion-law.md).
 
     It also records the ship's acceleration, the law's own output
     (Mark 2026-11-06): ``_acceleration = (v - v0) / dt``, where v0 is the

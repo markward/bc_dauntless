@@ -509,7 +509,8 @@ def test_class_watch_restarts_on_a_new_seen_generation(monkeypatch):
 _FUNCTIONS = (
     (drift, "step"), (ship_motion, "impulse_fractions"),
     (ship_motion, "_integrate_rotation"), (ship_motion, "_effective_motion"),
-    (ship_motion, "_cap_keep"), (ship_motion, "step_vector_velocity"),
+    (ship_motion, "_cap_keep"), (ship_motion, "_ramp_toward"),
+    (ship_motion, "step_vector_velocity"),
     (ship_motion, "law_step_vector"), (ship_motion, "_no_thrust"),
     (ship_motion, "_step_after_warp"),
     (subsystems, "_is_offline"), (ship_death, "_out_of_action"),
@@ -530,7 +531,10 @@ def test_patched_function_runs_the_stage_in_python(monkeypatch, module,
         _fly(a)
         b = _ship("Drifter", pSet, (0.0, 0.02, 0.0))
         _drifting(b)
-        return [a, b]
+        # No authored limits: its turn is _ramp_toward's, not the law's.
+        c = _ship("Unlimited", pSet, (0.0, 0.0, 0.03), engine=False)
+        _fly(c)
+        return [a, b, c]
 
     ships = build()
     _arm({})

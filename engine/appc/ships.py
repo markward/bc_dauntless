@@ -12,6 +12,11 @@ def _frame_rotation(f0, u0, f1, u1):
     r0, r1 = f0.Cross(u0), f1.Cross(u1)
     a0, a1 = (r0, f0, u0), (r1, f1, u1)
     # M = T C^T, with C, T the matrices whose columns are the frame axes.
+    # Bit-exactness with kernel M (motion_step.cc) relies on Python 3.11's
+    # sum() adding floats plainly left to right; 3.12+ sums floats with
+    # compensated (Neumaier) summation, which can differ in the last bit --
+    # the native motion differential (test_native_motion_differential.py)
+    # would catch it.
     m = [[sum((a1[k].x, a1[k].y, a1[k].z)[i] * (a0[k].x, a0[k].y, a0[k].z)[j] for k in range(3))
           for j in range(3)] for i in range(3)]
     c = (m[0][0] + m[1][1] + m[2][2] - 1.0) * 0.5

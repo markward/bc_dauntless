@@ -5,11 +5,13 @@ The kernel (native/src/combat/src/motion_step.cc) is a bit-exact port of
 ``step_vector_velocity``, ``_no_thrust``; a stored turn goal's steering:
 ``ShipClass._steer_turn_goal``) and ``drift.step``; it writes the
 transform store and the mirror itself, and logs the Python attributes the
-step would have written -- an acceleration only when it differs from the
-one the ship holds, so a drifting or immobile row logs nothing. Its two bindings: ``combat_motion_compute`` returns that log
-(``_apply_writes_py`` below is THE REFERENCE applier), ``combat_motion_step``
-applies it by C (native/src/host/motion_write_apply.cc, store for store the
-reference's).
+step would have written -- an acceleration only when it differs bitwise
+from the one the ship holds, so a drifting or immobile row logs nothing
+once it holds its zero (its first tick logs that zero, over the ``None``
+a new ship starts with). Its two bindings: ``combat_motion_compute``
+returns that log (``_apply_writes_py`` below is THE REFERENCE applier),
+``combat_motion_step`` applies it by C
+(native/src/host/motion_write_apply.cc, store for store the reference's).
 
 THE DRIVER (Task 5). ``ship_motion.tick_all_ship_motion`` calls ``step_all``
 while ``enabled()``: the switch (``DAUNTLESS_NATIVE_MOTION``, on unless
@@ -339,7 +341,7 @@ _POD_NAMES = native_combat._MOTION_POD_NAMES
 _SURFACE = (
     (ship_motion, ("_step_ship_motion", "_step_after_warp",
                    "_integrate_rotation", "_effective_motion", "_cap_keep",
-                   "_ramp_toward", "_asymptote_step", "step_vector_velocity",
+                   "_ramp_toward", "step_vector_velocity",
                    "law_step_vector", "_no_thrust", "impulse_fractions",
                    "impulse_output_fraction", "FALLBACK_MAX_ACCEL",
                    "BC_IMPULSE_TAU")),

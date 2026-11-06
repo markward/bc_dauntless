@@ -82,7 +82,10 @@ def _golden(name):
 
 def _no_turn_goal_hand_backs():
     """Kernel M steers every stored turn goal itself: no row went back to
-    Python for one (PR #14 finish, Task 2)."""
+    Python for one (PR #14 finish, Task 2). Vacuous for posed_fight:
+    PosedFight resets native_combat (and with it these counters) as it
+    builds the scene and its ticks never run the motion stage, so its counts
+    read zero; the real guards are motion_branches and k1_gameloop_ai."""
     rows = native_motion.counts()["python_rows"]
     assert rows.get("TurnGoal", 0) == 0, rows
 

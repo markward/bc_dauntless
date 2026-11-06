@@ -112,7 +112,7 @@ from engine.appc.ships import ShipClass
 from engine.appc.ship_death import _out_of_action as _oa
 from engine.appc import glow_maps as _glow_maps
 from engine.appc import passive_state, passive_weapons
-from engine.appc.ship_motion import _effective_motion, _cap_keep, _asymptote_step, step_vector_velocity, law_step_vector, _no_thrust
+from engine.appc.ship_motion import _effective_motion, _cap_keep, step_vector_velocity, law_step_vector, _no_thrust
 from engine.appc.subsystems import (
     _emitter_in_arc,
     _is_offline,
