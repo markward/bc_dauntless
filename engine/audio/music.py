@@ -75,6 +75,10 @@ class MusicPlayer:
         self._current = None            # incoming/settled stream
         self._looping = False
         self._pending = None            # (path, looping, fade) queued mid-transition
+        self._elapsed = 0.0             # seconds the current track has played
+        self._fanfare = None            # the fanfare stream while it plays
+        self._cut = None                # [seconds until the fade-out starts, fade length] of the interrupted track
+        self._cut_done = False          # the interrupted track has faded out: report it finished once
 
     # ── playback ────────────────────────────────────────────────────────────
 
@@ -83,6 +87,12 @@ class MusicPlayer:
 
         `fade` is the OUTGOING track's fade grid, not the incoming one's.
         """
+        if self._fanfare is not None:
+            # A track started while a fanfare plays waits for it to end, then
+            # starts from silence (inferred from DynamicMusic.PlayFanfare's
+            # "resuming the current music ... when done"; not measured).
+            self._pending = (path, looping, 0.0)
+            return
         if self._transitioning():
             # A start during a transition is queued by name, not layered on
             # top — otherwise a burst of ChangeMusic calls would stack ramps.
@@ -91,10 +101,31 @@ class MusicPlayer:
         self._begin(path, looping, fade)
 
     def play_oneshot(self, path) -> None:
-        """Fanfare sting layered over the current track — no ramp, no swap.
-        The underlying track keeps playing underneath and is resumed by the
-        SDK afterwards. Never loops: a looping sting would never stop."""
+        """A one-shot layered over the current track — no ramp, no swap.
+        Never loops: a looping sting would never stop."""
         self._factory(path, False)
+
+    def play_fanfare(self, path, grid=0.0) -> None:
+        """A fanfare (DynamicMusic.PlayFanfare): it plays at once, and the
+        current track fades out from its next `grid` boundary over `grid`
+        seconds, then counts as finished (finished() is True once), so the
+        host posts ET_MUSIC_DONE and DynamicMusic cues its next track.
+
+        Measured on the original (stbc-oracle music probe, native Windows,
+        real time): PlayerBlewUp started 20.79 s into a 30.04 s combat track
+        (fade grid 2.0) and the track ended 24.04 s in -- the next 2 s
+        boundary (22.0) plus a 2 s fade -- 6 s early; DynamicMusic then cued a
+        new track of the same state, not a resume. A fanfare that starts less
+        than a grid before the track's own end leaves it to end naturally."""
+        self._fanfare = self._factory(path, False)
+        if self._current is None:
+            return
+        g = float(grid)
+        if g <= 0.0:
+            self._cut = [0.0, 0.0]
+            return
+        k = int(self._elapsed // g) + 1        # the next boundary strictly after now
+        self._cut = [k * g - self._elapsed, g]
 
     def stop(self) -> None:
         """HARD stop. Does not wait for, or schedule, a ramp."""
@@ -108,6 +139,12 @@ class MusicPlayer:
         self._pending = None
 
     def update(self, dt) -> None:
+        self._elapsed += float(dt)
+        if self._cut is not None and self._current is not None:
+            self._cut[0] -= float(dt)
+            if self._cut[0] <= 0.0 and not self._ramps_on(self._current, 0.0):
+                self._ramps = [r for r in self._ramps if r.sound is not self._current]
+                self._ramps.append(_Ramp(self._current, self._cut[1], self._volume_of(self._current), 0.0))
         for ramp in self._ramps:
             ramp.remaining -= float(dt)
             if ramp.sound is not None:
@@ -124,7 +161,16 @@ class MusicPlayer:
             if ramp.end_volume <= 0.0 and ramp.sound is not self._current:
                 self._silence(ramp.sound)
 
-        if self._pending is not None and not self._transitioning():
+        if self._cut is not None and self._current is not None and self._cut[0] <= 0.0 \
+                and not self._ramps_on(self._current, 0.0):
+            # The interrupted track has faded out: it is finished.
+            self._silence(self._current)
+            self._current = None
+            self._cut = None
+            self._cut_done = True
+        if self._fanfare is not None and getattr(self._fanfare, "playing", False) is False:
+            self._fanfare = None
+        if self._pending is not None and self._fanfare is None and not self._transitioning():
             path, looping, fade = self._pending
             self._pending = None
             self._begin(path, looping, fade)
@@ -144,6 +190,9 @@ class MusicPlayer:
         """True when a NON-looping track has run out, so the host can fire
         ET_MUSIC_DONE and let DynamicMusic advance its queue. A looping track
         never finishes — otherwise the queue would advance every frame."""
+        if self._cut_done:
+            self._cut_done = False
+            return True
         if self._current is None or self._looping:
             return False
         return getattr(self._current, "playing", True) is False
@@ -152,6 +201,10 @@ class MusicPlayer:
 
     def _transitioning(self) -> bool:
         return len(self._ramps) > 1
+
+    def _ramps_on(self, sound, end_volume) -> bool:
+        """A live ramp drives `sound` toward `end_volume`."""
+        return any(r.sound is sound and r.end_volume == end_volume for r in self._ramps)
 
     def _begin(self, path, looping, fade) -> None:
         outgoing = self._current
@@ -171,6 +224,8 @@ class MusicPlayer:
         incoming = self._factory(path, bool(looping))
         self._current = incoming
         self._looping = bool(looping)
+        self._elapsed = 0.0
+        self._cut = None
 
         if incoming is None:
             # Factory could not load the file (missing asset / no backend).

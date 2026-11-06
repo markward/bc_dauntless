@@ -113,14 +113,20 @@ class MusicManager:
             self._backend.stop()
 
     def PlayFanfare(self, name) -> None:
-        """One-shot sting over the current track. Does NOT become `current`:
-        DynamicMusic resumes the queue after it, so the underlying track is
-        still what is playing."""
+        """Play a fanfare. It does not become `current`. The current track
+        fades out on its own fade grid (the player's play_fanfare) and then
+        counts as finished, so ET_MUSIC_DONE reaches DynamicMusic and it cues
+        its next track, as measured on the original."""
         if not self._enabled:
             return
         path = self._paths.get(str(name))
         if path is not None and self._backend is not None:
-            self._backend.play_oneshot(path)
+            grid = self._fades.get(self._current, 0.0) if self._current else 0.0
+            fanfare = getattr(self._backend, "play_fanfare", None)
+            if fanfare is not None:
+                fanfare(path, grid)
+            else:
+                self._backend.play_oneshot(path)
 
     def IsEnabled(self) -> int:
         """1 if music may play. Real int, not bool: E8M2.py:6558 stores this and
