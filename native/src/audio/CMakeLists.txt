@@ -19,3 +19,8 @@ target_link_libraries(dauntless_audio PRIVATE OpenAL)
 target_link_libraries(dauntless_audio PRIVATE dr_mp3)
 target_include_directories(dauntless_audio PRIVATE
     ${openal_soft_SOURCE_DIR}/include)
+if(APPLE)
+    # openal_backend.cc follows the system output device itself (CoreAudio
+    # property listeners on a dispatch queue; see OutputDeviceWatch).
+    target_link_libraries(dauntless_audio PRIVATE "-framework CoreAudio" "-framework CoreFoundation")
+endif()
