@@ -803,6 +803,11 @@ def pytest_configure(config):
         "markers",
         "mutates_engine_classes: the test deliberately leaves an engine class "
         "changed; the engine class guard (_guard_engine_classes) skips it")
+    config.addinivalue_line(
+        "markers",
+        "deep: runs only in the full gate (scripts/gate_full.sh); set from "
+        "the GENERATED tests/gate_tiers/deep_pytest.txt, never by hand. The "
+        "merge gate (scripts/gate_merge.sh) runs -m 'not deep'")
 
     # Our App.py must shadow sdk/Build/scripts/App.py
     if str(PROJECT_ROOT) not in sys.path:
@@ -912,6 +917,18 @@ def pytest_configure(config):
             pass
 
 
+def pytest_collection_modifyitems(config, items):
+    """Mark the full-gate-only tests `deep` (spec
+    docs/superpowers/specs/2026-11-06-two-tier-test-gate-design.md).
+    Everything not listed is in the merge tier: a new test is by rule."""
+    from tests.helpers import gate_tiers
+    is_deep = gate_tiers.deep_matcher(gate_tiers.load_deep_pytest())
+    mark = pytest.mark.deep
+    for item in items:
+        if is_deep(item.nodeid):
+            item.add_marker(mark)
+
+
 # ── Per-test isolation of leak-prone engine globals ──────────────────────────
 #
 # Several engine modules hold module-level mutable state that a mission/bridge
@@ -950,6 +967,24 @@ def _reset_leakable_engine_globals():
         _passive_state.reset()
     except Exception:
         pass
+    # Mission-scoped module state: the SAME list the game clears on a mission
+    # swap (engine.host_loop.reset_mission_state), so the two cannot drift.
+    # They had: 15 swap-time resets had no counterpart here, and two of them
+    # (ship_lifecycle._live, registry_texture._pending) held a strong
+    # reference to every ship any test built, with its whole subsystem/AI
+    # graph, to the end of the run -- the root of the 4.3 GB full-suite peak
+    # (docs/reference/architecture/test-suite-memory.md). NOT swallowed: a
+    # reset that raises must fail loudly, or the leak returns silently.
+    import engine.host_loop as _hl_mission
+    _hl_mission.reset_mission_state(None)
+    # SDK MissionLib.CallFunctionWhenConditionChanges keeps (trigger, module,
+    # function) per mission id until the SDK's MissionDeleted handler sees the
+    # mission object deleted -- which a test's mission never is, so the
+    # triggers (and the conditions, AIs and ships they reach) outlived it.
+    # Test-only: the game deletes its missions.
+    _ml = sys.modules.get("MissionLib")
+    if _ml is not None and isinstance(getattr(_ml, "g_dConditionEventTriggers", None), dict):
+        _ml.g_dConditionEventTriggers.clear()
     # Native combat mirror: reset (mirror off), and every C++ row dropped
     # (process-lifetime state). Objects a previous test left alive would keep
     # a stale handle; forget_rows() drops them all at once (one at a time is

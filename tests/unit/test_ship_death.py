@@ -317,14 +317,30 @@ def test_host_loop_advance_combat_ticks_death():
     assert ship.IsDead() == 1
 
 
-def test_mission_teardown_calls_ship_death_reset():
+def test_mission_teardown_calls_ship_death_reset(monkeypatch):
     """The mission-swap teardown must clear the death registry (no dangling
-    throes). The real teardown lives in _drain_pending_swap, alongside
-    ship_lifecycle.reset()."""
+    throes): a real dev-picker swap reaches ship_death.reset(), by way of
+    host_loop.reset_mission_state (behaviour, not the source text)."""
     import engine.host_loop as host_loop
-    import inspect
-    src = inspect.getsource(host_loop.HostController._drain_pending_swap)
-    assert "ship_death.reset()" in src
+    from engine.appc import ship_death
+    calls = []
+    monkeypatch.setattr(ship_death, "reset", lambda: calls.append(1))
+
+    class _StubLoader:
+        def load(self, name):
+            return host_loop.MissionSession(mission_name=name)
+
+    class _FakeRenderer:
+        def destroy_instance(self, iid):
+            pass
+
+    h = host_loop.HostController()
+    h.renderer = _FakeRenderer()
+    h.loader = _StubLoader()
+    h.session = host_loop.MissionSession(mission_name="prev")
+    h.swap_mission("Next.Mission")
+    h._drain_pending_swap()
+    assert calls == [1]
 
 
 # --- Task 5: AI gate --------------------------------------------------------

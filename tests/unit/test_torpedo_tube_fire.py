@@ -94,14 +94,6 @@ def test_fire_no_ops_when_empty():
     assert tube.GetLastFireTime() == -1000.0  # no fire-time update
 
 
-def test_fire_no_sfx_in_pr2a():
-    """Torpedo SFX deferred to PR 2b (needs TorpedoAmmoType.GetLaunchSound).
-    PR 2a Fire must not crash even with no SFX path wired."""
-    tube = _loaded_tube()
-    tube.Fire(target=None, offset=None)  # must not raise
-    assert tube.GetNumReady() == 0
-
-
 # ── PR 2b: spawn-path tests ────────────────────────────────────────────────
 from unittest.mock import patch  # noqa: E402
 

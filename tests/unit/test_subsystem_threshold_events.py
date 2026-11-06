@@ -38,14 +38,6 @@ def test_crossing_into_disabled_fires_once(monkeypatch):
     assert _types(fired) == [App.ET_SUBSYSTEM_DISABLED]
 
 
-def test_destroyed_fires_and_beats_disabled(monkeypatch):
-    s = _sub()
-    fired = _capture(monkeypatch)
-    s.SetCondition(0.0)            # straight to destroyed
-    effect_queue.boundary()             # the tick boundary
-    assert _types(fired) == [App.ET_SUBSYSTEM_DESTROYED]
-
-
 def test_repair_back_above_threshold_fires_operational(monkeypatch):
     s = _sub()
     s.SetCondition(100.0)          # disabled

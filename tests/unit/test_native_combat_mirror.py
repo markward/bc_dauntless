@@ -608,3 +608,22 @@ def test_forget_rows_drops_every_stale_handle_at_once():
     assert len(nc._registry) == 0
     nc.configure(ON)
     assert nc.enabled()
+
+
+def test_self_check_runs_once_per_set_of_compared_objects(monkeypatch):
+    """The verdict is cached for the exact objects it compared: a repeat
+    configure after reset() (the per-test reset's) skips it, and swapping
+    one of them (math.dist here) runs it again."""
+    nc.configure(ON)                      # passes, and caches the verdict
+    ran = []
+    real_check = nc._self_check
+    monkeypatch.setattr(nc, "_self_check",
+                        lambda: ran.append(1) or real_check())
+    nc.reset()
+    nc.configure(ON)
+    assert ran == []
+    real = math.dist
+    monkeypatch.setattr(math, "dist", lambda a, b: real(a, b))
+    nc.reset()
+    nc.configure(ON)
+    assert ran == [1]

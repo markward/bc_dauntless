@@ -25,6 +25,7 @@
 #include <assets/texture.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -39,7 +40,9 @@
 
 #ifdef _WIN32
 #include <process.h>
+#include <windows.h>
 #else
+#include <time.h>
 #include <unistd.h>
 #endif
 
@@ -248,24 +251,86 @@ TEST_F(BridgePanels, InvalidJsonShowsStill) {
     EXPECT_EQ(live(), 0u);
 }
 
-// With every raster sleeping 300 ms first, no update waits for one, and an
-// update that uploads stays inside the same bound: the result buffer is a
-// plain array, so taking and freeing it is one delete[] (a 2 MB
-// std::vector<uint8_t> took ~5.5 ms to destroy element-wise in the Debug
-// build; task 5 fix report).
-TEST_F(BridgePanels, UpdateNeverBlocks) {
+// The render thread never waits for the raster worker (P-14,
+// docs/reference/engine/perf-register.md). Two properties, each measured so
+// machine load cannot fake a failure (the old single test bounded WALL time at
+// 5 ms and failed once under the test gate's load, passing 5/5 alone):
+//
+// 1. No update waits for a raster: a raster is PARKED by the worker's test
+//    hold, and twenty updates run while it stays parked. An update that
+//    waited for it could only return once the hold were released -- which
+//    only the watchdog does, after 10 s, and then the test fails naming it.
+//    Deterministic: no timing bound at all.
+TEST_F(BridgePanels, UpdateNeverWaitsForAParkedRaster) {
+    place("solid_red.json");
+    panels->worker_for_test().set_test_raster_hold(true);
+    std::atomic<bool> watchdog_released{false};
+    std::atomic<bool> done{false};
+    std::thread watchdog([&] {
+        const auto deadline = std::chrono::steady_clock::now() + 10s;
+        while (!done.load() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(5ms);
+        if (!done.load()) {
+            watchdog_released.store(true);
+            panels->worker_for_test().set_test_raster_hold(false);
+        }
+    });
+    // The first job reaches the worker and parks there.
+    const bool parked = pump(0.0, [&] {
+        return panels->worker_for_test().test_parked_rasters() == 1;
+    }, 5000ms);
+    int frames = 0;
+    for (; parked && frames < 20 && !watchdog_released.load(); ++frames)
+        frame(0.04 * frames);
+    const int still_parked = panels->worker_for_test().test_parked_rasters();
+    done.store(true);
+    watchdog.join();
+    panels->worker_for_test().set_test_raster_hold(false);
+    ASSERT_TRUE(parked) << "the first raster never reached the worker";
+    EXPECT_FALSE(watchdog_released.load())
+        << "an update waited for the parked raster (released by the watchdog)";
+    EXPECT_EQ(frames, 20);
+    EXPECT_EQ(still_parked, 1) << "the raster finished while it was held";
+    // Released, its result lands.
+    EXPECT_TRUE(pump(1.0, [&] { return live() != 0; }));
+}
+
+namespace {
+/// CPU time this thread has used, in ms: unlike wall time, a preempted
+/// thread does not accrue it, so a loaded machine cannot inflate it.
+double thread_cpu_ms() {
+#ifdef _WIN32
+    FILETIME c, e, k, u;
+    GetThreadTimes(GetCurrentThread(), &c, &e, &k, &u);
+    const auto t = [](const FILETIME& f) {
+        return (static_cast<unsigned long long>(f.dwHighDateTime) << 32) | f.dwLowDateTime;
+    };
+    return static_cast<double>(t(k) + t(u)) / 1.0e4;   // 100 ns units
+#else
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec * 1.0e3 + ts.tv_nsec / 1.0e6;
+#endif
+}
+}  // namespace
+
+// 2. An update that uploads stays cheap: with every raster sleeping 300 ms
+//    first, results land between frames, and no update -- the uploading ones
+//    included -- costs the render thread 5 ms of CPU. The result buffer is a
+//    plain array, so taking and freeing it is one delete[] (a 2 MB
+//    std::vector<uint8_t> took ~5.5 ms to destroy element-wise in the Debug
+//    build; task 5 fix report): CPU work on this thread, which this bound
+//    still sees.
+TEST_F(BridgePanels, UpdateThatUploadsStaysCheap) {
     place("solid_red.json");
     panels->worker_for_test().set_test_raster_delay(300ms);
     double worst_ms = 0.0;
     int jobs = 0, uploads = 0;
     const auto deadline = std::chrono::steady_clock::now() + 1000ms;
     for (int i = 0; std::chrono::steady_clock::now() < deadline; ++i) {
-        const auto t0 = std::chrono::steady_clock::now();
+        const double t0 = thread_cpu_ms();
         frame(0.04 * i);
-        const double ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
-                .count();
-        worst_ms = std::max(worst_ms, ms);
+        worst_ms = std::max(worst_ms, thread_cpu_ms() - t0);
         const auto s = panels->take_stats();
         jobs += s.jobs;
         uploads += s.uploads;

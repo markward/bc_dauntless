@@ -261,7 +261,9 @@ def _destroy(chunk, renderer):
 
 def clear(renderer):
     """Mission swap / teardown: destroy every chunk's instance and empty the
-    registry."""
-    for c in _live:
-        _destroy(c, renderer)
+    registry. With no renderer (the per-test reset) only the registry is
+    emptied: there are no instances to destroy."""
+    if renderer is not None:
+        for c in _live:
+            _destroy(c, renderer)
     _live.clear()

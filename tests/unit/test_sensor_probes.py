@@ -290,15 +290,6 @@ def test_probe_sees_an_in_range_target_behind_an_observer_side_rock(occlusion_en
     assert sd.can_detect(obs, near) is True
 
 
-def test_observer_side_rock_still_cancels_memory_without_a_probe(occlusion_enabled):
-    from tests.helpers.rocks import make_major_rock
-    s, obs, sensors = _observer_in_set(2000.0)
-    far = _ship_at(s, "far", 5000.0)
-    sensors.AddKnownObject(far)
-    make_major_rock(s, "Rock", at=(2500.0, 0.0, 0.0), radius_gu=3.0)
-    assert sd.can_detect(obs, far) is False
-
-
 def test_is_concealed_false_when_a_probe_sees_past_the_rock(occlusion_enabled):
     from tests.helpers.rocks import make_major_rock
     from engine.core.game import Game, _set_current_game

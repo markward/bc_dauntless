@@ -102,6 +102,11 @@ public:
     void clear_warnings();
     /// Tests only: sleep this long before each raster.
     void set_test_raster_delay(std::chrono::milliseconds d);
+    /// Tests only: while on, every raster parks before it starts until the
+    /// hold is released (or the worker is destroyed).
+    void set_test_raster_hold(bool on);
+    /// Tests only: how many rasters are parked by the hold right now.
+    int test_parked_rasters() const;
 
 private:
     struct Impl;

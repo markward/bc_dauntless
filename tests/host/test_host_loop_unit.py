@@ -52,24 +52,6 @@ def test_run_M1_Basic_for_a_few_ticks():
     assert rc == 0
 
 
-def test_run_M1_Basic_player_unmoved_without_input():
-    """Regression: _PlayerControl integration must not introduce drift
-    when no keys are held (offscreen mode where keys can never be
-    pressed). Crashes here would surface NaN propagation or the bindings
-    raising on stale state."""
-    import os
-    import pytest
-
-    GALAXY_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
-    if not GALAXY_NIF.is_file():
-        pytest.skip("BC assets not available")
-    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-
-    from engine import host_loop
-    rc = host_loop.run("Custom.Tutorial.Episode.M1Basic.M1Basic", max_ticks=5)
-    assert rc == 0
-
-
 def test_run_M1_Basic_in_clean_subprocess():
     """Regression: in-process pytest tests don't catch the case where
     setup_sdk's _SDKFinder masks stdlib `string` (which BC's

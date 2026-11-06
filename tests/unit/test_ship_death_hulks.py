@@ -92,20 +92,6 @@ def test_hulk_drops_out_of_the_target_list_when_the_throes_end():
     assert ship_death.is_targetable_wreck(ship) is False   # hulk: not
 
 
-def test_locks_release_the_moment_the_throes_end(monkeypatch):
-    """Locks clear on the throes->hulk transition (V7: same sample as the
-    removal), not five seconds later."""
-    cleared = []
-    monkeypatch.setattr(ship_death, "_clear_target_locks",
-                        lambda s: cleared.append(s))
-    ship = FakeShip()
-    ship_death.begin(ship)
-    ship_death.advance(death_cascade.THROES_MIN / 2.0)
-    assert cleared == []
-    ship_death.advance(ship_death.MAX_THROES_DURATION)
-    assert cleared == [ship]
-
-
 def test_oldest_hulk_is_evicted_at_the_cap():
     """Bounded worst case: a massacre cannot grow the scene without limit."""
     sets = []

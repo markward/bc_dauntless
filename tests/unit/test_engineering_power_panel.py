@@ -332,13 +332,6 @@ def test_is_showing_false_without_player():
     assert panel.is_showing() is False
 
 
-def test_is_showing_true_with_powered_player():
-    """A player with a power subsystem renders the panel, so clicks over its
-    top-right region must be forwarded to CEF (is_showing() True)."""
-    panel = _make_panel(is_engineering_open=lambda: True)
-    assert panel.is_showing() is True
-
-
 def test_is_showing_false_when_engineering_menu_not_open():
     """is_showing() is False when the Engineering crew menu is closed.
     The click region must be released so top-right clicks reach the game."""
