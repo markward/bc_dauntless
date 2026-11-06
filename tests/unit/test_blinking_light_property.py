@@ -7,13 +7,11 @@ silently dropped by FindByName.
 """
 import importlib
 import sys
-from pathlib import Path
 
 import pytest
 
 import App
 import tools.mission_harness as mh
-from engine import mods
 from engine.appc.math import TGPoint3
 from engine.appc.properties import (
     BlinkingLightProperty, EffectEmitterProperty, ExplodeEmitterProperty,
@@ -120,26 +118,30 @@ def test_named_template_survives_find_by_name():
     App.g_kModelPropertyManager.ClearLocalTemplates()
 
 
-_LC_HP = "LC Intrepid Pack/scripts/ships/Hardpoints/LCintrepidHP.py"
+def test_real_galaxy_hardpoint_puts_17_lights_on_the_ship():
+    """A real hardpoint's running lights reach the ship's property set: the
+    stock Galaxy, through the SDK loader and the SPV override hook
+    (engine/appc/hardpoint_overrides.py _galaxy: RegisterLocalTemplate +
+    DauntlessAttachTemplate, gated on DAUNTLESS_ENV >= 2). 5 steady lights
+    and 12 blinkers, all on a 3 s period.
 
-
-def test_real_lc_intrepid_hardpoint_puts_19_lights_on_the_ship():
-    """The regression: 0 before this change (FindByName returned None)."""
-    root = Path(mods.mods_root(argv=[], env={}))
-    if not (root / _LC_HP).is_file():
-        pytest.skip("LC Intrepid Pack not installed under the mods root")
-    mods.configure(mods.build_index(root))
+    Replaces a test over the LC Intrepid mod's hardpoint (19 lights) that
+    could never run in a suite: it looked for the pack under
+    mods.mods_root(argv=[], env={}) -- <data dir>/mods, and the suite always
+    runs under a temp DAUNTLESS_DATA_DIR. The mod-style FindByName route it
+    was written for is covered by test_named_template_survives_find_by_name
+    and tests/unit/test_mod_hardpoint_lights.py."""
+    assert App.DAUNTLESS_ENV >= 2
     mh.setup_sdk()
     App.g_kModelPropertyManager.ClearLocalTemplates()
-    sys.modules.pop("ships.Hardpoints.LCintrepidHP", None)
-    hp = importlib.import_module("ships.Hardpoints.LCintrepidHP")
-    assert hp.__spec__.origin.endswith("LCintrepidHP.py")
+    sys.modules.pop("ships.Hardpoints.galaxy", None)
+    hp = importlib.import_module("ships.Hardpoints.galaxy")
     pset = TGModelPropertySet()
     hp.LoadPropertySet(pset)
     lights = list(pset.GetPropertiesByType(App.CT_BLINKING_LIGHT_PROPERTY))
-    assert len(lights) == 19
+    assert len(lights) == 17
     statics = [l for l in lights if l.GetDuration() == 0.0]
-    blinkers = [l for l in lights if l.GetDuration() == 1.0]
-    assert len(statics) + len(blinkers) == 19
+    blinkers = [l for l in lights if l.GetDuration() == 0.5]
+    assert (len(statics), len(blinkers)) == (5, 12)
     assert all(l.GetPeriod() == 3.0 for l in lights)
     App.g_kModelPropertyManager.ClearLocalTemplates()
