@@ -54,6 +54,24 @@ int64_t climb_to_ship_of(const Mirror& m, int64_t subsystem);
 Vec3 subsystem_world_position(Mirror& m, int64_t sub, int64_t ship_arg,
                               bool use_memo);
 
+// subsystems.subsystem_world_position(sub, ship, damage=True): the DAMAGE
+// point (ShipSubsystem.GetDamagePoint: `_damage_point` where
+// `_damage_point_set`, else the position) carried by the subsystem's part,
+// then into world space. Unmemoised (the hit's walk reads it once).
+Vec3 damage_world_position(Mirror& m, int64_t sub, int64_t ship_arg);
+
+// PhaserBank.GetPositionTG: where a bank is, model frame -- the middle of its
+// firing arc on its strip (hardpoint + forward * Length * cos(mid) + right *
+// Width * sin(mid), mid the middle of the width arc). Every other subsystem's
+// position is its `_position`, the hardpoint.
+Vec3 bank_position_local(const SubsystemRow& s);
+
+// subsystems.subsystem_world_position(sub, ship): the subsystem's
+// GetPosition() carried by its part, then into world space. The same as
+// subsystem_world_position (the hardpoint; mount=True in Python) for every
+// subsystem but a phaser bank (bank_position_local).
+Vec3 position_world(Mirror& m, int64_t sub, int64_t ship_arg, bool use_memo);
+
 // weapon_subsystems._resolve_aim_world: unit vector ship -> target, or the
 // ship's forward when there is no target (target -1) or it is degenerate.
 Vec3 _resolve_aim_world(const Mirror& m, int64_t ship, int64_t target);

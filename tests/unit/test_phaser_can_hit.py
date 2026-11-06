@@ -1,4 +1,4 @@
-"""PhaserBank.CanHit — the arc+range test ConditionInPhaserFiringArc relies on.
+"""PhaserBank.CanHit — the arc test ConditionInPhaserFiringArc relies on.
 
 Without this method the SDK call resolves to a truthy _Stub and every target
 reads as 'in arc', so FedAttack fires with no arc discipline at all.
@@ -46,10 +46,13 @@ def test_target_behind_cannot_be_hit():
     assert bank.CanHit(TGPoint3(0.0, -50.0, 0.0)) == 0
 
 
-def test_target_beyond_max_range_cannot_be_hit():
+def test_max_damage_distance_does_not_limit_can_hit():
+    """MaxDamageDistance is where the damage falls off, not a reach: the
+    original's CanHit answers the same arc map at 150 GU as at 50 GU for
+    banks whose MaxDamageDistance is 60-70."""
     bank = _forward_bank(max_range=10.0)
-    # Dead ahead, so in arc — rejected on range alone.
-    assert bank.CanHit(TGPoint3(0.0, 50.0, 0.0)) == 0
+    # Dead ahead, in arc, 5x beyond MaxDamageDistance: still in arc.
+    assert bank.CanHit(TGPoint3(0.0, 50.0, 0.0)) == 1
 
 
 def test_target_outside_width_arc_cannot_be_hit():

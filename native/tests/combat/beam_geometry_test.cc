@@ -67,18 +67,19 @@ TEST(BeamGeometry, StripZeroProjectionsEmitStraightAhead) {
     EXPECT_EQ(p[2], 0.0);
 }
 
-TEST(BeamGeometry, StripReversedWidthAlwaysYieldsLo) {
+TEST(BeamGeometry, StripReversedWidthClampsInEitherOrder) {
     World w;
     const int64_t ship = w.ship(0.0, 0.0, 0.0);
     const int64_t bank = w.bank(ship, 1.0);
     w.m.set_f(bank, Field::_arc_width_lo, 1.0);
     w.m.set_f(bank, Field::_arc_width_hi, -1.0);
-    // Unsorted max(lo, min(hi, yaw)) = lo whatever the yaw. Sorting would
-    // give a yaw of 0.5 here, and a different point.
+    // The arc is -1..1 whichever angle is authored first (an Akira ventral
+    // bank authors its width descending): dead ahead stays at yaw 0, a
+    // target on the beam clamps to the arc's end.
     const Vec3 a = strip_emit_position(w.m, bank, {0.0, 100.0, 0.0}, false);
     const Vec3 b = strip_emit_position(w.m, bank, {100.0, 0.0, 0.0}, false);
-    EXPECT_EQ(a, b);
-    EXPECT_EQ(a[0], std::sin(1.0));  // right = (1, 0, 0), yaw = lo = 1
+    EXPECT_EQ(a[0], 0.0);
+    EXPECT_EQ(b[0], std::sin(1.0));  // right = (1, 0, 0), yaw = 1
 }
 
 TEST(BeamGeometry, StripLengthZeroOrNegativeReturnsCentre) {

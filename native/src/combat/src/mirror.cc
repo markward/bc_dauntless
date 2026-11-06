@@ -246,6 +246,10 @@ constexpr FieldInfo kInfo[] = {
     {"_target_angular_velocity_fraction_state", Kind::Object, FieldType::I},
     {"_turn_goal", Kind::Object, FieldType::FloatList},
     {"_acceleration", Kind::Object, FieldType::FloatList},
+    {"_targetable", Kind::Subsystem, FieldType::I},
+    {"_damage_point", Kind::Subsystem, FieldType::Vec3},
+    {"_damage_point_set", Kind::Subsystem, FieldType::I},
+    {"_width", Kind::Subsystem, FieldType::F},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -529,6 +533,7 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::launch_speed: return &r.launch_speed;
         case Field::lifetime: return &r.lifetime;
         case Field::_length: return &r._length;
+        case Field::_width: return &r._width;
         case Field::_beam_on_countdown: return &r._beam_on_countdown;
         case Field::_dwell: return &r._dwell;
         case Field::_recharge_rate: return &r._recharge_rate;
@@ -598,6 +603,8 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::_threshold_state: return &r._threshold_state;
         case Field::_invincible: return &r._invincible;
         case Field::_critical: return &r._critical;
+        case Field::_targetable: return &r._targetable;
+        case Field::_damage_point_set: return &r._damage_point_set;
         case Field::_in_repair_queue: return &r._in_repair_queue;
         case Field::dmg_class: return &r.dmg_class;
         case Field::cond_watch_checks: return &r.cond_watch_checks;
@@ -666,6 +673,7 @@ Vec3* vptr(SubsystemRow& r, Field f) {
         case Field::_up: return &r._up;
         case Field::_right: return &r._right;
         case Field::engage_point: return &r.engage_point;
+        case Field::_damage_point: return &r._damage_point;
         default: return nullptr;
     }
 }

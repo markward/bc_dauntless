@@ -19,6 +19,7 @@ add_executable(combat_tests
     motion_step_test.cc
     published_poses_test.cc
     subsystem_step_test.cc
+    hull_trace_test.cc
 )
 target_link_libraries(combat_tests
     PRIVATE

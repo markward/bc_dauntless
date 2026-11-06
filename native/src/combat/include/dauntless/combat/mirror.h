@@ -289,6 +289,15 @@ enum class Field : int32_t {
     // value differs bitwise.
     _motion_vel, _target_angular_velocity_fraction,
     _target_angular_velocity_fraction_state, _turn_goal, _acceleration,
+    // A weapon hit's footprint (damage.cc apply_hit; combat.
+    // _weapon_damageable_subsystems): Subsystem IsTargetable's flag, and the
+    // damage point the footprint is measured from (ShipSubsystem.
+    // GetDamagePoint, model frame), read only where _damage_point_set is 1
+    // (else the position).
+    _targetable, _damage_point, _damage_point_set,
+    // A phaser bank's strip width: with _length and the width arc, where the
+    // bank is (PhaserBank.GetPositionTG; weapon_geometry bank_position_local).
+    _width,
     kCount
 };
 
@@ -442,6 +451,7 @@ struct SubsystemRow {
     double launch_speed = 0.0, lifetime = 0.0;
     int64_t module_ok = 0;
     double _length = 0.0, _beam_on_countdown = 0.0, _dwell = 0.0;
+    double _width = 0.0;   // Field::_width
     int64_t has_shields = 0;
     // K0's inputs (Field comment above).
     double _recharge_rate = 0.0, _reload_delay = 0.0;
@@ -452,6 +462,9 @@ struct SubsystemRow {
     // Native damage (Field comment above).
     int64_t _threshold_state = 0, _invincible = 0, _critical = 0,
             _in_repair_queue = 0, dmg_class = 0;
+    // The hit's footprint (Field comment above).
+    int64_t _targetable = 1, _damage_point_set = 0;
+    Vec3 _damage_point{0, 0, 0};
     int64_t cond_watch_checks = -2, comb_watch_checks = -2;
     double cond_watch_value = 0.0, comb_watch_value = 0.0;
     std::vector<double> _current_shields, _max_shields, _ramp_fraction,

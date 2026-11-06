@@ -32,6 +32,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/motion_step.cc
     src/published_poses.cc
     src/subsystem_step.cc
+    src/hull_trace.cc
 )
 
 add_library(dauntless_combat STATIC ${DAUNTLESS_COMBAT_SOURCES})

@@ -324,8 +324,8 @@
 // class, or a class K2 never saw). The role's names, as
 //   - a STOCK CLASS resolves them (native_combat._K2_ROLES; every
 //     SUBSYSTEM role -- the first five -- also watches the subsystem names
-//     GetWorldLocation, GetPosition, _climb_to_ship; the override guard
-//     test parses this list):
+//     GetWorldLocation, GetPosition, GetPositionTG, GetMountPositionTG,
+//     _climb_to_ship; the override guard test parses this list):
 //       PhaserBank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
 //         _strip_emit_position, _emitter_world_position, GetLength,
 //         GetDirection, GetUp, GetArcWidthAngles, GetArcHeightAngles,

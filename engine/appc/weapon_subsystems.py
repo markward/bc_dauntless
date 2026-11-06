@@ -164,6 +164,42 @@ def _emitter_world_direction(emitter, ship) -> TGPoint3:
     return world
 
 
+def _rough_direction(weapon, yaw, pitch):
+    """WORLD direction of the weapon's forward turned by `yaw` toward its
+    right (forward x up) and lifted by `pitch` toward its up: an energy
+    weapon's Weapon.CalculateRoughDirection, given the angles. A weapon with
+    no authored arc points along its mount direction."""
+    if not getattr(weapon, "_arc_set", False):
+        return _emitter_world_direction(weapon, weapon._climb_to_ship())
+    f = weapon.GetDirection()
+    u = weapon.GetUp()
+    rx, ry, rz = f.y * u.z - f.z * u.y, f.z * u.x - f.x * u.z, f.x * u.y - f.y * u.x
+    cy, sy, cp, sp = _math.cos(yaw), _math.sin(yaw), _math.cos(pitch), _math.sin(pitch)
+    d = TGPoint3(cp * (cy * f.x + sy * rx) + sp * u.x,
+                 cp * (cy * f.y + sy * ry) + sp * u.y,
+                 cp * (cy * f.z + sy * rz) + sp * u.z)
+    ship = weapon._climb_to_ship()
+    if ship is not None and hasattr(ship, "GetWorldRotation"):
+        rot = ship.GetWorldRotation()
+        if isinstance(rot, TGMatrix3):
+            d.MultMatrixLeft(rot)
+    return d
+
+
+def _low_half_rough_direction(weapon):
+    """A pulse weapon's or tractor projector's rough direction: on each axis
+    the middle of its arc PLUS half its low end, min/2 + (min + max)/2 --
+    not the middle a phaser bank uses. Measured on the original for every
+    pulse weapon and tractor of the classes measured: a symmetric +-20 deg
+    cannon points at (-10, -10) deg, port and starboard alike; a Galaxy's
+    forward tractor (width +-60, height -5..+70) at (-30, +30)."""
+    def _angle(a, b):
+        lo, hi = min(float(a), float(b)), max(float(a), float(b))
+        return 0.5 * lo + 0.5 * (lo + hi)
+    return _rough_direction(weapon, _angle(weapon._arc_width_lo, weapon._arc_width_hi),
+                            _angle(weapon._arc_height_lo, weapon._arc_height_hi))
+
+
 def _emitter_in_arc(emitter, ship, aim_world):
     """Returns True if `aim_world` (unit vector) lies inside the emitter's
     firing arc, rotated into world space via the ship's rotation.
@@ -246,7 +282,18 @@ def _emitter_in_arc(emitter, ship, aim_world):
         # Arc width set but height missing — allow any pitch.
         return yaw_lo <= yaw <= yaw_hi
     pitch_lo, pitch_hi = sorted(arc_h)
-    return (yaw_lo <= yaw <= yaw_hi) and (pitch_lo <= pitch <= pitch_hi)
+    if (yaw_lo <= yaw <= yaw_hi) and (pitch_lo <= pitch <= pitch_hi):
+        return True
+    # A height arc may run past the vertical (the Kessok and Cardassian dorsal
+    # beams author 0.87..2.79 rad, the Marauder's ventral phaser -2.79..0.02).
+    # The same direction is then also (yaw + pi, pi - pitch), "over the top",
+    # and the original fires there: the Kessok Heavy's Dorsal Beam 1 answers
+    # CanHit behind and above it, azimuth 135-230, elevation 20-80.
+    if pitch_hi <= _math.pi / 2 and pitch_lo >= -_math.pi / 2:
+        return False
+    back = yaw - _math.pi if yaw > 0.0 else yaw + _math.pi
+    over = _math.pi - pitch if pitch >= 0.0 else -_math.pi - pitch
+    return (yaw_lo <= back <= yaw_hi) and (pitch_lo <= over <= pitch_hi)
 
 
 # ── Discharge sources (RE'd from stbc.exe 2026-09-14; experiment doc
@@ -1110,13 +1157,15 @@ class Weapon(ShipSubsystem):
     SetSkewFire, and IsSkewFire are now implemented for the BC-faithful dispatch
     tick (weapon-firing-mechanics.md §3.1/§2.10).  DELIBERATELY ABSENT (verified
     zero SDK call sites on a tube): SetFiring, GetTargetID,
-    GetOverallConditionPercentage, IsInArc, CanHit.
+    GetOverallConditionPercentage.
 
     ⚠ "Zero SDK call sites" above was verified ON A TUBE, and that scoping
     matters: `CanHit` HAS one SDK call site, on a PhaserBank —
     Conditions/ConditionInPhaserFiringArc.py:175, live under FedAttack. It is
-    implemented on PhaserBank (see PhaserBank.CanHit); only the tube lacks it.
-    `IsInArc` genuinely has zero call sites and stays absent.
+    implemented on PhaserBank (see PhaserBank.CanHit). A tube's IsInArc and
+    CanHit (TorpedoTube.IsInArc) have no SDK call site but answer with the
+    targeted-fire cone, which is also the original's answer, so a mod that
+    asks gets that rather than a truthy stub.
 
     The former claim that both were "unspecifiable — their BC signatures cannot
     be recovered from the SDK" is retired (2026-08-09): the clean-room reference
@@ -2384,9 +2433,57 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
         elif v > self._max_charge: self._charge_level = self._max_charge
         else:                      self._charge_level = v
 
+    def GetPositionTG(self) -> TGPoint3:
+        """Where the bank is: the MIDDLE OF ITS FIRING ARC on its strip, not
+        the hardpoint position (that is GetMountPositionTG).
+
+        A bank is an arc of an ellipse centred on the hardpoint: Length along
+        its forward, Width along its right (forward x up). The original's
+        position is the point at the middle of the arc-width range,
+
+            hardpoint + forward * Length * cos(mid) + right * Width * sin(mid),
+            mid = (ArcWidthMin + ArcWidthMax) / 2.
+
+        Measured on the original for every bank of twelve classes: the
+        Galaxy's four ventral banks share the hardpoint (0, 1.3, 0.16) and sit
+        at (-1.33, 1.3), (-0.665, 2.175), (0.665, 2.175) and (1.33, 1.3). Taken
+        at the hardpoint, all four were one point: a lock on one aimed at all
+        of them, and one hit there damaged all four. Its native twin is
+        weapon_geometry.cc bank_position_local."""
+        base = super().GetPositionTG()
+        L = self._length
+        W = self._width
+        if L == 0.0 and W == 0.0:
+            return base
+        f = self._direction
+        u = self._up
+        rx = f.y * u.z - f.z * u.y
+        ry = f.z * u.x - f.x * u.z
+        rz = f.x * u.y - f.y * u.x
+        mid = 0.5 * (self._arc_width_lo + self._arc_width_hi)
+        c, s_ = _math.cos(mid), _math.sin(mid)
+        return TGPoint3(base.x + f.x * L * c + rx * W * s_,
+                        base.y + f.y * L * c + ry * W * s_,
+                        base.z + f.z * L * c + rz * W * s_)
+
+    def CalculateRoughDirection(self) -> TGPoint3:
+        """WORLD-space centre of the bank's firing arc: its forward turned by
+        the middle of its width arc (toward right = forward x up) and lifted
+        by the middle of its height arc (toward up).
+
+        Measured on the original for every phaser bank of the classes
+        measured: a Galaxy's Dorsal Phaser 2 (forward +Y, width -80..+20 deg,
+        height -3..+60 deg) answers (-0.439, 0.761, 0.477), 30 deg to port and
+        28.5 deg up. PhaserSweep turns this direction onto its target and
+        IntelligentCircleObject weighs weapons by it; with the hardpoint's
+        forward a sweeping Federation ship kept its nose on the enemy."""
+        yaw = 0.5 * (self._arc_width_lo + self._arc_width_hi)
+        pitch = 0.5 * (self._arc_height_lo + self._arc_height_hi)
+        return _rough_direction(self, yaw, pitch)
+
     def CanHit(self, target_world_point) -> int:
-        """1 if `target_world_point` lies inside this bank's firing arc and
-        within its maximum range, else 0.
+        """1 if `target_world_point` lies inside this bank's firing arc,
+        else 0.
 
         The sole Python caller is Conditions/ConditionInPhaserFiringArc.py:175
         (`pBank.CanHit(vTargetLocation)`), reached from AI/Compound/FedAttack.py
@@ -2398,14 +2495,16 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
         The gap was latent rather than observed — `CanHit` never appears in
         docs/stub_heatmap.md, so the path did not execute in 201 recorded runs.
 
-        Range semantics: MaxDamageDistance == 0 means UNBOUNDED, not
-        unreachable. Most hardpoints omit the field, and reading 0 as a
-        zero-radius limit would silently disable every such bank.
+        No range limit: the original answers the same arc map at 150 GU as
+        at 50 GU, and its AI fires banks well past MaxDamageDistance (52-64%
+        of its shots in AI duels). MaxDamageDistance is where the beam's
+        damage starts to fall off, not how far it reaches. The arc is measured
+        from the hardpoint, the centre of the strip.
         """
         if not isinstance(target_world_point, TGPoint3):
             return 0
         ship = self.GetParentShip()
-        origin = subsystem_world_position(self, ship)
+        origin = subsystem_world_position(self, ship, mount=True)
         if origin is None:
             return 0
 
@@ -2414,16 +2513,6 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
         dz = target_world_point.z - origin.z
         dist = _math.sqrt(dx * dx + dy * dy + dz * dz)
         if dist <= 0.0:
-            return 0
-
-        max_range = 0.0
-        prop = self.GetProperty() if hasattr(self, "GetProperty") else None
-        if prop is not None and hasattr(prop, "GetMaxDamageDistance"):
-            try:
-                max_range = float(prop.GetMaxDamageDistance())
-            except Exception:
-                max_range = 0.0
-        if max_range > 0.0 and dist > max_range:
             return 0
 
         aim = TGPoint3(dx / dist, dy / dist, dz / dist)
@@ -2481,6 +2570,26 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         # The projectile module is named by the property: resolve it for the
         # native mirror now (no-op with the switch off).
         native_combat.push_pulse_params(self)
+
+    def IsInArc(self, target_world_point) -> int:
+        """1 if `target_world_point` lies inside the weapon's firing arc,
+        measured from its mount (the arc gate, _emitter_in_arc)."""
+        if not isinstance(target_world_point, TGPoint3):
+            return 0
+        ship = self._climb_to_ship()
+        origin = subsystem_world_position(self, ship)
+        dx = target_world_point.x - origin.x
+        dy = target_world_point.y - origin.y
+        dz = target_world_point.z - origin.z
+        dist = _math.sqrt(dx * dx + dy * dy + dz * dz)
+        if dist <= 0.0:
+            return 0
+        return 1 if _emitter_in_arc(self, ship, TGPoint3(dx / dist, dy / dist, dz / dist)) else 0
+
+    def CalculateRoughDirection(self) -> TGPoint3:
+        """WORLD direction: the middle of each arc plus half its low end
+        (_low_half_rough_direction, measured on the original)."""
+        return _low_half_rough_direction(self)
 
     def GetMaxCharge(self) -> float:                return self._max_charge
     def GetMinFiringCharge(self) -> float:          return self._min_firing_charge
@@ -2603,6 +2712,11 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
         self._firing: bool = False
         self._target = None
         self._target_offset = None
+
+    def CalculateRoughDirection(self) -> TGPoint3:
+        """WORLD direction: the middle of each arc plus half its low end
+        (_low_half_rough_direction, measured on the original)."""
+        return _low_half_rough_direction(self)
 
     def GetMaxCharge(self) -> float:                return self._max_charge
     def GetMinFiringCharge(self) -> float:          return self._min_firing_charge
@@ -3204,6 +3318,46 @@ class TorpedoTube(Weapon):
             App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
             dev_mode.log_swallowed("ET_TORPEDO_FIRED broadcast", _e)
+
+    def IsInArc(self, target_world_point) -> int:
+        """1 if `target_world_point` is inside the tube's firing cone: the
+        targeted-fire gate's square +/-30 deg cone about the tube's Direction,
+        yaw and pitch each within _TORPEDO_CONE_HALF_ANGLE, measured from the
+        mount (k1_fire_control's _in_torpedo_cone, weapon_geometry.cc; fire
+        control has no Python copy, so this is that rule written out for the
+        query).
+
+        It is also the original's own answer: its TorpedoTube.IsInArc and
+        CanHit, read on a 5-deg grid of directions at 150 GU around ships of
+        twelve classes (every tube, 165,168 directions), agree with this rule
+        on every one. The SDK's own scripts call neither; before these, both
+        resolved to a truthy stub."""
+        if not isinstance(target_world_point, TGPoint3):
+            return 0
+        ship = self._climb_to_ship()
+        mount = subsystem_world_position(self, ship)
+        vx = target_world_point.x - mount.x
+        vy = target_world_point.y - mount.y
+        vz = target_world_point.z - mount.z
+        if _math.sqrt(vx * vx + vy * vy + vz * vz) < 1e-6:
+            return 0
+        d, r = self._direction, self._right
+        u = TGPoint3(d.y * r.z - d.z * r.y, d.z * r.x - d.x * r.z, d.x * r.y - d.y * r.x)
+        b0, b1 = TGPoint3(d.x, d.y, d.z), TGPoint3(r.x, r.y, r.z)
+        rot = ship.GetWorldRotation() if ship is not None else None
+        if isinstance(rot, TGMatrix3):
+            for b in (b0, b1, u):
+                b.MultMatrixLeft(rot)
+        fwd = b0.x * vx + b0.y * vy + b0.z * vz
+        if fwd <= 0.0:
+            return 0
+        yaw = _math.atan2(abs(b1.x * vx + b1.y * vy + b1.z * vz), fwd)
+        pitch = _math.atan2(abs(u.x * vx + u.y * vy + u.z * vz), fwd)
+        return 1 if (yaw <= _TORPEDO_CONE_HALF_ANGLE and pitch <= _TORPEDO_CONE_HALF_ANGLE) else 0
+
+    def CanHit(self, target_world_point) -> int:
+        """The original's TorpedoTube.CanHit answers exactly as IsInArc."""
+        return self.IsInArc(target_world_point)
 
     def UnloadTorpedo(self) -> None:
         """Remove one ready round; its slot goes back into cooldown.

@@ -102,7 +102,7 @@ def _bank_world_frame(bank, ship):
     fwd_t = _norm((fwd.x, fwd.y, fwd.z))
     up_t = _norm((up.x, up.y, up.z))
     right_t = _norm(_cross(fwd_t, up_t))
-    w = subsystem_world_position(bank, ship)
+    w = subsystem_world_position(bank, ship, mount=True)   # the strip's centre
     return ((w.x, w.y, w.z), fwd_t, up_t, right_t)
 
 

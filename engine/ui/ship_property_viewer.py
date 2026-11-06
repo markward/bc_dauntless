@@ -228,9 +228,13 @@ def build_descriptors(ship) -> List[dict]:
         local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
         if local is None:
             continue
+        # The hardpoint, which is what the viewer edits (a phaser bank's
+        # GetPosition is the middle of its arc on the strip).
+        if hasattr(type(sub), "GetMountPositionTG"):
+            local = sub.GetMountPositionTG()
         # Pass the known ship: the Hull/root subsystem's _climb_to_ship()
         # returns None, which would otherwise place its pin at the origin.
-        w = subsystem_world_position(sub, ship)
+        w = subsystem_world_position(sub, ship, mount=True)
         props = _properties_for(sub, local)
         parent = getattr(sub, "GetParentSubsystem", lambda: None)()
         index_of[id(sub)] = len(out)

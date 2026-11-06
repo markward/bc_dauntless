@@ -130,6 +130,82 @@ Vec3 subsystem_world_position(Mirror& m, int64_t sub_h, int64_t ship_arg,
     return mount_position(m, sub_h, ship_arg);
 }
 
+// ── subsystems.py subsystem_world_position(damage=True) ────────────────────
+
+namespace {
+
+// A subsystem's own body-frame point other than its mount (its damage point,
+// a phaser bank's position) carried by the subsystem's part, then into world
+// space: mount_position's rule on another point.
+Vec3 own_point_world(Mirror& m, const SubsystemRow& s, int64_t ship_arg,
+                     Vec3 local) {
+    int64_t ship = ship_arg == -1 ? -1 : (obj(m, ship_arg), ship_arg);
+    if (ship == -1) ship = climb_to_ship(m, s);
+    if (ship == -1) return {0.0, 0.0, 0.0};
+    const ObjectRow& o = obj(m, ship);
+    const auto& t = xform(m, o);
+    if (o.has_posed_parts) {
+        if (ship_arg != -1) check_slot_owner(m, s, ship);
+        const PartPose* pose = nullptr;
+        const SlotState st = slot_pose(m, o, s, &pose);
+        if (st == SlotState::stale) fall_back_as<PartStale>("part_stale");
+        if (st == SlotState::ok) local = apply_part_pose(*pose, local);
+    }
+    const Vec3 offset = mult_matrix_left(t.rot, local);
+    return {t.pos[0] + offset[0], t.pos[1] + offset[1], t.pos[2] + offset[2]};
+}
+
+constexpr int64_t kPhaserBankKind = 5;   // native_combat._WEAPON_KINDS
+
+}  // namespace
+
+Vec3 damage_world_position(Mirror& m, int64_t sub_h, int64_t ship_arg) {
+    const SubsystemRow& s = sub(m, sub_h);
+    // GetDamagePoint: the position until damage_point.assign set one.
+    if (!s._damage_point_set) return position_world(m, sub_h, ship_arg, false);
+    return own_point_world(m, s, ship_arg, s._damage_point);
+}
+
+// ── weapon_subsystems.py PhaserBank.GetPositionTG ──────────────────────────
+
+Vec3 bank_position_local(const SubsystemRow& s) {
+    const Vec3& base = s._position;
+    const double L = s._length, W = s._width;
+    if (L == 0.0 && W == 0.0) return base;
+    const Vec3& f = s._direction;
+    const Vec3& u = s._up;
+    const double rx = f[1] * u[2] - f[2] * u[1];
+    const double ry = f[2] * u[0] - f[0] * u[2];
+    const double rz = f[0] * u[1] - f[1] * u[0];
+    const double mid = 0.5 * (s._arc_width_lo + s._arc_width_hi);
+    const double c = py_cos(mid), sn = py_sin(mid);
+    return {base[0] + f[0] * L * c + rx * W * sn,
+            base[1] + f[1] * L * c + ry * W * sn,
+            base[2] + f[2] * L * c + rz * W * sn};
+}
+
+// ── subsystems.py subsystem_world_position(sub, ship) on GetPosition ───────
+
+Vec3 position_world(Mirror& m, int64_t sub_h, int64_t ship_arg,
+                    bool use_memo) {
+    const SubsystemRow& s = sub(m, sub_h);
+    if (s.weapon_kind != kPhaserBankKind)
+        return subsystem_world_position(m, sub_h, ship_arg, use_memo);
+    if (use_memo) {
+        // Python memoises the bank's position apart from its hardpoint (the
+        // key carries `mount`): here it is the same table keyed -(sub + 2),
+        // which no handle (>= 0) can be.
+        auto& memo = m.sensor_state().mounts;
+        const HandlePair key{-(sub_h + 2), ship_arg};
+        auto it = memo.find(key);
+        if (it != memo.end()) return it->second;
+        const Vec3 p = own_point_world(m, s, ship_arg, bank_position_local(s));
+        memo[key] = p;
+        return p;
+    }
+    return own_point_world(m, s, ship_arg, bank_position_local(s));
+}
+
 // ── weapon_subsystems.py:80 _resolve_aim_world ──────────────────────────────
 
 Vec3 _resolve_aim_world(const Mirror& m, int64_t ship, int64_t target) {
@@ -217,8 +293,17 @@ bool _emitter_in_arc(const Mirror& m, int64_t emitter, int64_t ship,
     const double yaw_lo = (b < a) ? b : a, yaw_hi = (b < a) ? a : b;
     const double c = e._arc_height_lo, d = e._arc_height_hi;
     const double pitch_lo = (d < c) ? d : c, pitch_hi = (d < c) ? c : d;
-    return (yaw_lo <= yaw && yaw <= yaw_hi) &&
-           (pitch_lo <= pitch && pitch <= pitch_hi);
+    if ((yaw_lo <= yaw && yaw <= yaw_hi) &&
+        (pitch_lo <= pitch && pitch <= pitch_hi))
+        return true;
+    // A height arc past the vertical: the same direction is also
+    // (yaw + pi, pi - pitch), "over the top" (weapon_subsystems.py).
+    constexpr double kPi = 3.141592653589793;   // math.pi
+    if (pitch_hi <= kPi / 2 && pitch_lo >= -kPi / 2) return false;
+    const double back = yaw > 0.0 ? yaw - kPi : yaw + kPi;
+    const double over = pitch >= 0.0 ? kPi - pitch : -kPi - pitch;
+    return (yaw_lo <= back && back <= yaw_hi) &&
+           (pitch_lo <= over && over <= pitch_hi);
 }
 
 // ── weapon_subsystems.py:483 _emitter_forward_world (skew=False) ────────────
