@@ -129,69 +129,6 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red, monkeypatch
     assert hp.z == pytest.approx(SURFACE_POINT[2])
 
 
-@pytest.mark.skip(reason=(
-    "phase 6 follow-up 4, Task 3 deletes it: it drives the Python beam "
-    "builder through a patched native_combat.beam_feed and a faked "
-    "host_io.ray_trace_mesh. The beam feed is native only now and traces "
-    "through the renderer itself (a fake trace cannot reach it); the native "
-    "hull-trace endpoint is pinned bit for bit by the beam_scene render "
-    "golden (tests/host/test_native_beam_feed.py)."))
-def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red, monkeypatch):
-    """The rendered phaser beam endpoint is clipped to the mesh-trace
-    surface point so the visible beam ends on the hull, not at the
-    target's bounding-sphere centre."""
-    ship = galaxy_red
-    sys_ = ship.GetPhaserSystem()
-    for i in range(sys_.GetNumWeapons()):
-        bank = sys_.GetWeapon(i)
-        bank._charge_level = bank._max_charge
-
-    target = _target_with_shields()
-    # In the shooter's (viewed) set, as target_ship_at places its targets: the
-    # beam's target end is drawn from the target's own set.
-    target._containing_set = ship.GetContainingSet()
-    p = ship.GetWorldLocation()
-    target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
-    ship.SetTarget(target)
-
-    SURFACE_POINT = (1.5, 47.25, -2.0)  # Distinct from target centre.
-    # The Python beam path: it pushes through the host_io.set_phaser_beams
-    # captured below and clips through the faked host_io.ray_trace_mesh;
-    # the native feed (native_combat.beam_feed) uses neither.
-    from engine.appc import native_combat
-    monkeypatch.setattr(native_combat, "beam_feed", lambda *a, **k: False)
-
-    from engine import host_io
-
-    beam_data = None
-
-    def _capture_beams(data):
-        nonlocal beam_data
-        beam_data = list(data)
-
-    def _fake_trace(iid, origin, direction, max_dist):
-        return (SURFACE_POINT, (0.0, -1.0, 0.0), 1.0)
-
-    sentinel = object()
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"), \
-         patch.object(host_io, "set_phaser_beams", _capture_beams), \
-         patch.object(host_io, "shield_hit", lambda *a, **k: None), \
-         patch.object(host_io, "ray_trace_mesh", _fake_trace):
-        sys_.StartFiring(target)
-        _advance_combat([ship, target], dt=0.1,
-                        ship_instances={target: sentinel})
-
-    # host_io.set_phaser_beams should have been called with at least one entry.
-    assert beam_data is not None
-    assert len(beam_data) >= 1
-    # Every entry's target must equal SURFACE_POINT (the clipped endpoint).
-    for entry in beam_data:
-        end = entry["target"]
-        assert end[0] == pytest.approx(SURFACE_POINT[0])
-        assert end[1] == pytest.approx(SURFACE_POINT[1])
-        assert end[2] == pytest.approx(SURFACE_POINT[2])
-
-
 # ── Continuous impact feedback while a beam rests on a target ───────────────
 # The DAMAGE is pulsed (one flush per 0.53 s of dwell — bible §2.2), but the
 # impact is not: BC draws its beam glow at the contact point every frame

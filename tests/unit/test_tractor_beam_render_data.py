@@ -1,9 +1,9 @@
-"""_build_tractor_beam_render_data — descriptors for the beam renderer.
+"""The tractor beam render feed (native_combat.beam_feed; no Python copy).
 
 A firing tractor emitter yields the outer-shell + inner-core descriptor pair
-(shared with phasers via _beam_descriptor_pair) with the emitter's own blue
-colour / TractorBeam texture geometry read off the Galaxy-style hardpoint.  A
-non-firing tractor — and a ship with no tractor system — yields nothing.
+(built as the phasers' are) with the emitter's own blue colour / TractorBeam
+texture geometry read off the Galaxy-style hardpoint. A non-firing tractor —
+and a ship with no tractor system — yields nothing.
 """
 
 import pytest
@@ -15,13 +15,23 @@ from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import TractorBeam, TractorBeamSystem
 from engine.appc.properties import TractorBeamProperty, WeaponSystemProperty
-from engine.host_loop import _build_tractor_beam_render_data
+from tests.helpers import native_render_feeds
 from tests.helpers.viewed_set import viewed  # noqa: F401  (fixture)
 
 from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
 
-# Tractors are native only (fire control native only, M4).
+# Tractors are native only (fire control native only, M4), as is the feed.
 pytestmark = pytest.mark.usefixtures("native_combat_on")
+
+
+@pytest.fixture(autouse=True)
+def _clear_feeds():
+    yield
+    native_render_feeds.clear()
+
+
+def _tractor_beams(ships):
+    return native_render_feeds.beams(ships)[1]
 
 
 def _make_emitter(name):
@@ -73,34 +83,28 @@ def test_firing_tractor_yields_beam_pair(viewed):
     viewed.AddObjectToSet(target, "Target")
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         parent.StartFiring(target, None)
-    out = _build_tractor_beam_render_data([ship, target])
+    out = _tractor_beams([ship, target])
     # Outer-shell + inner-core layers.
     assert len(out) == 2
     outer = out[0]
     # Blue tint from the hardpoint, and the tractor geometry came through.
     assert outer["color"][2] > outer["color"][0]   # blue dominates red
     assert outer["num_sides"] == 12
-    # Beam runs from the emitter mount toward the target.
-    assert outer["emitter"] is not None
-    assert outer["target"] is not None
+    # Beam runs from the emitter mount toward the target (50 GU up +Y).
+    assert outer["target"][1] > outer["emitter"][1]
     # Funnel: the target end flares to >1× the body radius (the shader widens the
     # target-end taper instead of pinching it).
     assert outer["end_width_scale"] > 1.0
 
 
-def test_non_firing_tractor_yields_nothing():
+def test_non_firing_tractor_yields_nothing(viewed):
     ship, parent = _ship_with_tractor()
-    out = _build_tractor_beam_render_data([ship])
-    assert out == []
+    viewed.AddObjectToSet(ship, "Source")
+    assert _tractor_beams([ship]) == []
 
 
-def test_ship_without_tractor_yields_nothing():
+def test_ship_without_tractor_yields_nothing(viewed):
     plain = ShipClass_Create("Plain")
     plain.SetWorldLocation(TGPoint3(0, 0, 0))
-    out = _build_tractor_beam_render_data([plain])
-    assert out == []
-
-
-def test_dim_color_scales_rgb_leaves_alpha():
-    from engine.host_loop import _dim_color
-    assert _dim_color((1.0, 0.5, 0.25, 0.35), 0.75) == (0.75, 0.375, 0.1875, 0.35)
+    viewed.AddObjectToSet(plain, "Plain")
+    assert _tractor_beams([plain]) == []

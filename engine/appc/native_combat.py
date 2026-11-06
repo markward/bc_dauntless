@@ -4148,10 +4148,10 @@ DEFAULT_TORPEDO_VISUAL = (
 
 def _torp_visual_record(t):
     """The static visual record of `t` (`_vis_native`; the 21-tuple
-    `combat_torp_set_visual` takes, minus `_id`): everything
-    `host_loop._build_torpedo_render_data` and `_torpedo_colors` read from a
-    torpedo, colours UNDIMMED, textures resolved now. Raises whatever those
-    reads raise."""
+    `combat_torp_set_visual` takes, minus `_id`): everything the native
+    torpedo feed (torpedo_feed.h) draws from a torpedo that is not per-frame
+    state, colours UNDIMMED (the feed dims them by TORPEDO_BRIGHTNESS),
+    textures resolved now. Raises whatever those reads raise."""
     from engine import host_loop as hl
     return (
         hl._resolve_game_texture(t._core_texture),
@@ -4185,10 +4185,9 @@ def torpedo_visual_changed(t) -> None:
     d = t.__dict__
     d.pop("_vis_native", None)
     try:
-        rec = _torp_visual_record(t)
+        d["_vis_native"] = _torp_visual_record(t)
     except Exception:
-        return          # unrepresentable: no record, visual_set stays false
-    d["_vis_native"] = rec
+        pass            # unreadable: no record; the push below clears the row's
     if not _enabled:
         return
     h = d.get("_k3_row")
@@ -5860,12 +5859,20 @@ def _k2_iids(ship_instances) -> dict:
     if c[0] is ship_instances and c[1] == ship_instances.version \
             and c[2] == _k2_drop_epoch:
         return c[3]
+    table = _iids_table(ship_instances)
+    c[:] = [ship_instances, ship_instances.version, _k2_drop_epoch, table]
+    return table
+
+
+def _iids_table(ship_instances) -> dict:
+    """{Object handle: iid} for any mapping of ship -> iid, built now (a
+    ship with no row is left out). _k2_iids caches it per TrackedInstances
+    version; the beam feed builds it every call for a plain mapping."""
     table = {}
     for ship, iid in ship_instances.items():
         h = slot(ship)
         if h is not None:
             table[h] = iid
-    c[:] = [ship_instances, ship_instances.version, _k2_drop_epoch, table]
     return table
 
 
@@ -6314,17 +6321,6 @@ def _count_skips(table, got, feed) -> None:
                   "the rest of the frame is drawn" % (feed, why))
 
 
-def _plain_iids(ship_instances) -> dict:
-    """{Object handle: iid} for any mapping (a plain dict): built every call
-    (a plain dict has no version to key a cache on)."""
-    table = {}
-    for ship, iid in ship_instances.items():
-        h = slot(ship)
-        if h is not None:
-            table[h] = iid
-    return table
-
-
 def beam_feed(ships, ship_instances) -> bool:
     """This frame's phaser and tractor beam feeds, built natively from the
     mirror and pushed: True. False only when host_io has no native module
@@ -6357,7 +6353,7 @@ def beam_feed(ships, ship_instances) -> bool:
     cx.view = view
     ctx = cx.delta()
     if plain:
-        ctx["iids"] = _plain_iids(ship_instances)
+        ctx["iids"] = _iids_table(ship_instances)
     ctx["view"] = vh
     ctx["origin"] = fr.render_origin()
     ctx["frames"] = _beam_frames()
@@ -6394,13 +6390,14 @@ def beam_feed_counts() -> dict:
 # torpedo descriptors and the torpedo lights built from the K3 torpedo table
 # and each row's visual record (Torpedo.__init__'s default, replaced at
 # Create*Model), the lights blended with the Python explosion and emitter
-# lights exactly as _budgeted_dynamic_lights does
-# (set_dynamic_lights_budgeted). No Python fallback and no stand-down (phase
-# 6 follow-up 4): the table follows the mirror, not the switch, so the
-# switch off and the audit draw natively; the only early return is host_io
-# with no native module. A dirty table is rebuilt first, as K3 rebuilds it;
-# a `projectiles._active` replaced by a plain list (no hooks keep the table
-# in step) is rebuilt every frame; a torpedo listed twice gets one row for
+# lights under the per-category budget (set_dynamic_lights_budgeted;
+# torpedo_feed.h budget_lights). There is no Python copy of either feed and
+# no stand-down (phase 6 follow-up 4): the table follows the mirror, not the
+# switch, so the switch off and the audit draw natively; the only early
+# return is host_io with no native module. A dirty table is rebuilt first,
+# as K3 rebuilds it; a `projectiles._active` replaced by a plain list (no
+# hooks keep the table in step) is rebuilt every frame and left dirty for
+# K3; a torpedo listed twice gets one row for
 # the frame (its repeats skipped, "duplicate") and the table is left dirty
 # for K3. A torpedo the table cannot answer is skipped, counted by reason
 # (torpedo_feed_counts, on the frame profiler's report line) and its reason
@@ -6436,9 +6433,10 @@ def torpedo_feed(ship_instances, ship_emitters, player) -> bool:
     if proj is None:
         from engine.appc import projectiles as proj
     active = proj._active
-    if type(active) is not proj._ActiveList:
-        torpedo_table_mark_dirty()      # nothing keeps the rows in step
     redirty = False
+    if type(active) is not proj._ActiveList:
+        torpedo_table_mark_dirty()      # nothing keeps the rows in step,
+        redirty = True                  # so K3 rebuilds them again
     repeats = 0
     if _k3_dirty:
         torpedo_table_rebuild(active)

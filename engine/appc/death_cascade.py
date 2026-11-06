@@ -385,9 +385,9 @@ def _light(ship, size_gu: float) -> None:
 
     Every blast is lit, not just the carving ones: with a 1.5 s light life and
     BC's 0.225 s mean spacing that is only ~7 alive at once per dying ship, and
-    `host_loop._budgeted_dynamic_lights` caps the category regardless. Lighting
-    the 30% subset instead would make whether the first frame of a death is lit
-    a coin flip."""
+    the native light budget (set_dynamic_lights_budgeted) caps the category
+    regardless. Lighting the 30% subset instead would make whether the first
+    frame of a death is lit a coin flip."""
     from engine.appc import explosion_lights
     explosion_lights.register(ship, size_gu=size_gu, count=1,
                               spacing_s=0.0, life_s=PUFF_LIFE)

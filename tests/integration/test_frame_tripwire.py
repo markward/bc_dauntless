@@ -28,9 +28,10 @@ from engine.appc.sets import SetClass_Create
 from engine.appc.ships import ShipClass
 from engine.systems import frames, map as system_map
 import engine.host_loop as host_loop
-from tests.helpers import bc_assets
+from tests.helpers import bc_assets, native_render_feeds
 from tests.helpers.bc_assets import require_game_asset
 from tests.helpers.mapped_regions import load_region
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
 
 ARRIVAL = (0.0, 5236.0, 1.5)   # the measured XiEntrades4 arrival point
 
@@ -301,7 +302,8 @@ def _viewed_torpedo(pSet, name):
     return t
 
 
-def test_render_feeds_exclude_ona_and_starbase_when_xientrades4_viewed(world):
+def test_render_feeds_exclude_ona_and_starbase_when_xientrades4_viewed(
+        world, native_combat_on):
     sets, sentinels, bodies = world
     xi4 = sets["XiEntrades4"]
     App.g_kSetManager.MakeRenderedSet("XiEntrades4")
@@ -314,16 +316,18 @@ def test_render_feeds_exclude_ona_and_starbase_when_xientrades4_viewed(world):
     assert bodies["XiEntrades4"].GetRadius() in radii
     assert bodies["Ona1"].GetRadius() not in radii
 
-    # -- torpedoes and their lights.
+    # -- torpedoes and their lights (the native torpedo feed; no explosion
+    #    or emitter light is live yet, so every light is a torpedo's).
     torps = {name: _viewed_torpedo(pSet, name + "Torp")
             for name, pSet in sets.items()}
-    torp_out = host_loop._build_torpedo_render_data()
+    try:
+        torp_out, light_out = native_render_feeds.torpedoes()
+    finally:
+        native_render_feeds.clear()
     ids_present = {e["id"] for e in torp_out}
     assert int(torps["XiEntrades4"]._id) in ids_present
     for name in ("Ona1", "Ona2", "Ona3", "Starbase12"):
         assert int(torps[name]._id) not in ids_present
-
-    light_out = host_loop._build_dynamic_light_render_data()
     assert len(light_out) == len(ids_present)   # one light per visible torpedo
 
     # -- explosion lights.

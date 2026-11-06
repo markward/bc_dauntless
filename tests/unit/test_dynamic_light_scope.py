@@ -3,8 +3,10 @@
 Both halves guard a seam where a feature dies SILENTLY with every other test
 still green:
 
-* `explosion_lights` can be perfect and, if `host_loop` never concatenates its
-  builder into the `set_dynamic_lights` call, no fireball ever casts.
+* `explosion_lights` can be perfect and, if the light feed
+  (`native_combat.torpedo_feed`, which blends host_loop's explosion and
+  emitter lights with its own torpedo lights) never passes its builder to
+  `set_dynamic_lights_budgeted`, no fireball ever casts.
 * `render_space_geometry` can take a `dyn_lights` parameter and, if a
   viewscreen call site passes the full list anyway, the suppression silently
   does nothing.
@@ -18,6 +20,7 @@ import re
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _HOST_LOOP = _ROOT / "engine" / "host_loop.py"
+_NATIVE_COMBAT = _ROOT / "engine" / "appc" / "native_combat.py"
 _HOST_BINDINGS = _ROOT / "native" / "src" / "host" / "host_bindings.cc"
 
 
@@ -35,30 +38,38 @@ def _calls_named(tree, name):
     return out
 
 
-def test_host_loop_builds_explosion_lights():
-    tree = ast.parse(_HOST_LOOP.read_text(encoding="utf-8"))
-    assert _calls_named(tree, "_build_explosion_light_render_data"), (
-        "host_loop never calls _build_explosion_light_render_data -- death "
-        "fireballs would cast no light"
+def _light_feed_calls():
+    """The `set_dynamic_lights_budgeted` calls in native_combat.torpedo_feed
+    (the frame's one dynamic-light push)."""
+    tree = ast.parse(_NATIVE_COMBAT.read_text(encoding="utf-8"))
+    feed = [n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "torpedo_feed"]
+    assert len(feed) == 1, "native_combat has no single torpedo_feed"
+    return _calls_named(feed[0], "set_dynamic_lights_budgeted")
+
+
+def test_the_light_feed_builds_explosion_lights():
+    calls = _light_feed_calls()
+    assert calls, "torpedo_feed never calls set_dynamic_lights_budgeted"
+    assert any(_calls_named(c, "_build_explosion_light_render_data")
+               for c in calls), (
+        "the light feed never calls _build_explosion_light_render_data -- "
+        "death fireballs would cast no light"
     )
 
 
 def test_explosion_lights_are_concatenated_into_set_dynamic_lights():
-    """The builder existing is not enough; its result must reach the binding."""
-    tree = ast.parse(_HOST_LOOP.read_text(encoding="utf-8"))
-    calls = _calls_named(tree, "set_dynamic_lights")
-    assert calls, "host_loop never calls set_dynamic_lights"
-
+    """The builder existing is not enough; its result must reach the binding
+    (set_dynamic_lights_budgeted, the blend that writes the dynamic-light
+    feed), as an argument of the call itself."""
     reached = False
-    for call in calls:
+    for call in _light_feed_calls():
         for arg in call.args:
-            names = {n.func.id for n in ast.walk(arg)
-                     if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-            if "_build_explosion_light_render_data" in names:
+            if _calls_named(arg, "_build_explosion_light_render_data"):
                 reached = True
     assert reached, (
         "_build_explosion_light_render_data's result is never passed to "
-        "set_dynamic_lights"
+        "set_dynamic_lights_budgeted"
     )
 
 
@@ -136,23 +147,19 @@ def test_main_view_renders_keep_their_dynamic_lights():
 
 def test_the_light_list_goes_through_the_category_budget():
     """Plain concatenation starves whichever category is last, and the native
-    cap truncates rather than prioritising. The budget helper is what stops a
-    busy scene dropping every explosion light, so the binding must be fed from
-    it and not from a raw `a + b + c`."""
-    tree = ast.parse(_HOST_LOOP.read_text(encoding="utf-8"))
-    calls = _calls_named(tree, "set_dynamic_lights")
-    assert calls, "host_loop never calls set_dynamic_lights"
-
-    for call in calls:
-        src = ast.unparse(call)
-        if "_build_explosion_light_render_data" not in src:
-            continue
-        assert "_budgeted_dynamic_lights" in src, (
-            "the light list is built by raw concatenation, so the native "
-            "truncation decides what survives:\n  " + src
-        )
-        return
-    raise AssertionError("no set_dynamic_lights call builds explosion lights")
+    cap truncates rather than prioritising. The budget (native: torpedo_feed.h
+    budget_lights) is what stops a busy scene dropping every explosion light,
+    so explosion lights reach the frame only through
+    set_dynamic_lights_budgeted, never a raw set_dynamic_lights."""
+    assert _light_feed_calls(), "no budgeted light push"
+    for path in (_HOST_LOOP, _NATIVE_COMBAT):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for call in _calls_named(tree, "set_dynamic_lights"):
+            src = ast.unparse(call)
+            assert "_build_explosion_light_render_data" not in src, (
+                "explosion lights pushed unbudgeted, so the native "
+                "truncation decides what survives:\n  " + src
+            )
 
 
 def test_explosion_light_radius_clears_the_ship_scale_ceiling():

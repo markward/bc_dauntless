@@ -553,3 +553,35 @@ def test_audit_compares_the_visual_record(on):
     nc.audit_mirror()
     assert nc.audit_failures() == []
     assert b.__dict__.get("_vis_native") == nc.DEFAULT_TORPEDO_VISUAL
+
+
+def test_a_model_whose_record_cannot_be_read_clears_the_row(
+        on, monkeypatch):
+    """A Create*Model whose record `_torp_visual_record` cannot read (here a
+    texture that does not resolve) leaves `t` with no record, and the row
+    must not keep the default it held: it is cleared, so the feed skips the
+    torpedo ("no_visual") rather than draw a stale record."""
+    from engine import host_loop
+
+    def unresolvable(path):
+        raise OSError("no such texture: %r" % path)
+
+    t = Torpedo()
+    projectiles.register(t)
+    assert _row(t)["visual"] is not None          # the default record
+    monkeypatch.setattr(host_loop, "_resolve_game_texture", unresolvable)
+    t.CreateTorpedoModel("a.tga", None, 1, 2, "b.tga", None, 7, 5, 1,
+                         "c.tga", None, 2, 0.5, 0.25)
+    assert "_vis_native" not in t.__dict__
+    assert _row(t)["visual"] is None
+
+
+def test_a_plain_active_list_leaves_the_table_dirty_after_the_feed(
+        on, monkeypatch):
+    """`projectiles._active` replaced by a plain list: no hook keeps the
+    rows in step, so the feed rebuilds the table for its own read and leaves
+    it dirty, as it does for a torpedo listed twice; K3 rebuilds it again."""
+    _fire()
+    monkeypatch.setattr(projectiles, "_active", list(projectiles._active))
+    assert nc.torpedo_feed({}, {}, None) is True
+    assert nc._k3_dirty

@@ -155,10 +155,11 @@ class Torpedo(ObjectClass):
         self._bolt_core_color = None
         self._bolt_length    = 0.0
         self._bolt_width     = 0.0
-        # The visual record those defaults make (what host_loop's builders
-        # drew for a torpedo no Create*Model ran on): every torpedo has one,
-        # pushed into its table row at row-add, so the native render feed
-        # always has a record to draw. Create*Model replaces it.
+        # The visual record those defaults make (white, sizeless and
+        # untextured: what the native torpedo feed draws for a torpedo no
+        # Create*Model ran on): every torpedo has one, pushed into its table
+        # row at row-add, so the native render feed always has a record to
+        # draw. Create*Model replaces it.
         self.__dict__["_vis_native"] = _nc.DEFAULT_TORPEDO_VISUAL
 
     def CreateTorpedoModel(self,
@@ -180,7 +181,6 @@ class Torpedo(ObjectClass):
         self._flares_size_a  = float(flares_a)
         self._flares_size_b  = float(flares_b)
         self._is_disruptor   = False   # idempotent-safe if a script calls both
-        self.__dict__.pop("_vis_colors", None)   # host_loop._torpedo_colors
         _nc.torpedo_visual_changed(self)
 
     def CreateDisruptorModel(self, outer_shell_color, outer_core_color,
@@ -198,7 +198,6 @@ class Torpedo(ObjectClass):
         — a disruptor bolt never touches them.
         """
         self._is_disruptor    = True
-        self.__dict__.pop("_vis_colors", None)   # host_loop._torpedo_colors
         self._shell_color     = outer_shell_color
         self._bolt_core_color = outer_core_color
         self._bolt_length     = float(length)

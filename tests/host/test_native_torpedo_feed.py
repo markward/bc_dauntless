@@ -1,11 +1,13 @@
-"""Native per-frame torpedo and torpedo-light feed (phase 6 follow-up 1b): the
-oracle.
+"""Native per-frame torpedo and torpedo-light feed (phase 6 follow-ups 1b
+and 4).
 
-Task 1: `_h.torpedoes_debug()` / `dynamic_lights_debug()` read back what
-`set_torpedoes` / `set_dynamic_lights` pushed, and `torpedo_scene` is a real
-host holding torpedoes of two kinds and a disruptor in flight, a non-zero
-render origin and one torpedo in a frame that is not viewed, so a later native
-feed can be compared bit for bit against today's Python builders.
+`_h.torpedoes_debug()` / `dynamic_lights_debug()` read back what the feed
+pushed, and `torpedo_scene` is a real host holding torpedoes of two kinds and
+a disruptor in flight, a non-zero render origin and one torpedo in a frame
+that is not viewed. The feed is compared bit for bit against the render
+goldens recorded from the Python builders before they were deleted
+(tests/helpers/render_golden.py). There is no Python copy of the feed any
+more.
 
 Packing (so a compare is bitwise and -0.0 / NaN cannot hide in a float ==):
 floats are float32 bits ("<f"), ints "<i", a bool one byte ("<B"), a string
@@ -150,19 +152,6 @@ from tests.host.test_native_k2_differential import (  # noqa: E402,F401
 from tests.host.test_native_beam_feed import BeamScene  # noqa: E402
 
 
-def _python_feed(scene):
-    """Today's builders for both feeds, pushed through host_io exactly as
-    `_push_combat_render_data` does; returns (_torps(), _lights())."""
-    from engine import host_io, host_loop
-    host_io.set_torpedoes(host_loop._build_torpedo_render_data())
-    host_io.set_dynamic_lights(host_loop._budgeted_dynamic_lights(
-        host_loop._build_explosion_light_render_data(),
-        host_loop._build_dynamic_light_render_data(),
-        host_loop._build_emitter_light_render_data(
-            scene.ship_instances, scene.ship_emitters, player=scene.player)))
-    return _torps(), _lights()
-
-
 class TorpedoScene(BeamScene):
     """combat_stress on the real host, plus hand-made projectiles: photon and
     quantum torpedoes and a disruptor bolt in the viewed set (a non-zero
@@ -170,7 +159,7 @@ class TorpedoScene(BeamScene):
     `ships`, `ship_instances`, `player`, `ship_emitters`, `viewed` (the
     projectiles in view), `far` (the one that is not) and `advance()`.
 
-    `extended` adds what the 300-frame equality test must cover (the plan's
+    `extended` adds what the 300-frame golden scene covers (the plan's
     Review Focus): `eye` (a fixed camera eye in view coordinates, at the
     player's start) with a photon in its fade band and one beyond its cull
     distance, both crawling so they stay there; a crowd of photons above the
@@ -368,7 +357,8 @@ def busy_torpedo_scene(monkeypatch, host):
 def test_scene_feeds_torpedoes_a_disruptor_and_lights(torpedo_scene):
     import struct as st
     ts = torpedo_scene
-    torps, lights = _python_feed(ts)
+    ok, torps, lights = _native_feed(ts)
+    assert ok
     rows = _h.torpedoes_debug()
     # Two torpedoes and a bolt are in view; the fourth is in another frame.
     assert len(torps) == 3, len(torps)
@@ -397,22 +387,23 @@ def test_scene_feeds_torpedoes_a_disruptor_and_lights(torpedo_scene):
 
 
 
-# ── Task 3: the native feed, frame by frame, against the Python builders ────
+# ── The native feed ─────────────────────────────────────────────────────────
 
 from engine.appc import native_combat as nc  # noqa: E402
 
-# Match nothing a builder makes: a negative core size / a negative radius.
+# Match nothing the feed makes: a negative core size / a negative radius.
 SENTINEL_T = dict(QUAD, core_size_a=-1.0, id=-99)
 SENTINEL_L = dict(POINT, radius=-1.0)
 
 
-def _native_feed(scene, want=None, want_torp_lights=None):
+def _native_feed(scene, spied=None):
     """native_combat.torpedo_feed, then what it pushed: (ok, torpedo bytes,
     light bytes). Both vectors are seeded with sentinels first, so a binding
-    that skipped an assignment reads back the sentinel, never the Python
-    frame pushed before it. With `want` (the _python_feed pair) the
-    bindings' own counts must equal its lengths, and the torpedo-light count
-    the Python builder's (`want_torp_lights`), with nothing skipped."""
+    that skipped an assignment reads back the sentinel, never the frame
+    pushed before it; the bindings' own counts must equal what they pushed.
+    `spied` (a dict), when given, gets "torp_lights": the torpedo lights the
+    feed built (before the blend's budget), and "explosion_lights" /
+    "emitter_lights": the sizes of the two Python light groups it blended."""
     _h.set_torpedoes([SENTINEL_T])
     _h.set_dynamic_lights([SENTINEL_L, SENTINEL_L])
     returned = {"feed": [], "lights": []}
@@ -423,9 +414,10 @@ def _native_feed(scene, want=None, want_torp_lights=None):
         returned["feed"].append(r)
         return r
 
-    def budgeted_spy(*a, **k):
-        r = budgeted(*a, **k)
+    def budgeted_spy(explosions, emitters, caps):
+        r = budgeted(explosions, emitters, caps)
         returned["lights"].append(r)
+        returned["groups"] = (len(explosions), len(emitters))
         return r
 
     _h.combat_torpedo_feed = feed_spy
@@ -436,109 +428,17 @@ def _native_feed(scene, want=None, want_torp_lights=None):
     finally:
         _h.combat_torpedo_feed = feed
         _h.set_dynamic_lights_budgeted = budgeted
-    if ok and want is not None:
+    torps, lights = _torps(), _lights()
+    if ok:
         # (n_torpedoes, n_torpedo_lights, {skip reason: count}).
-        assert returned["feed"] == [(len(want[0]), want_torp_lights, {})], \
-            returned
-        assert returned["lights"] == [len(want[1])], returned
-    return ok, _torps(), _lights()
-
-
-class _Coverage:
-    """Spies on the Python light blend while armed, so each compared frame
-    says what it held: the three light groups' sizes, torpedo lights in the
-    fade band (0 < intensity < the knob), torpedoes culled by the camera
-    distance, and disruptors."""
-
-    def __init__(self, monkeypatch):
-        from engine import host_loop
-        self.armed = False
-        self.groups = None
-        self.counts = dict.fromkeys(
-            ("frames", "eye", "no_eye", "disruptors", "torpedo_lights",
-             "fade_band", "culled", "explosion_lights", "emitter_lights",
-             "spill", "capped", "expired", "dirty", "steered"), 0)
-        blend = host_loop._budgeted_dynamic_lights
-
-        def blend_spy(explosions, torpedoes, emitters):
-            if self.armed:
-                self.groups = (list(explosions), list(torpedoes),
-                               list(emitters))
-            return blend(explosions, torpedoes, emitters)
-
-        monkeypatch.setattr(host_loop, "_budgeted_dynamic_lights", blend_spy)
-
-    def python_feed(self, scene):
-        from engine import host_loop
-        self.groups = None
-        self.armed = True
-        try:
-            got = _python_feed(scene)
-        finally:
-            self.armed = False
-        exp, torp, emit = self.groups
-        c = self.counts
-        c["frames"] += 1
-        c["eye" if host_loop._last_camera_eye is not None else "no_eye"] += 1
-        rows = _h.torpedoes_debug()
-        c["disruptors"] += sum(1 for r in rows if r[17])
-        c["torpedo_lights"] += len(torp)
-        knob = host_loop._TORPEDO_LIGHT_INTENSITY
-        c["fade_band"] += sum(1 for d in torp if 0 < d["intensity"] < knob)
-        # Every in-view non-disruptor torpedo here has a glow radius > 0, so
-        # one with no light was culled by the camera distance.
-        c["culled"] += sum(1 for r in rows if not r[17]) - len(torp)
-        c["explosion_lights"] += len(exp)
-        c["emitter_lights"] += len(emit)
-        if len(torp) > host_loop._LIGHT_BUDGET_TORPEDOES:
-            c["spill"] += 1
-        if len(got[1]) == host_loop._LIGHT_CAP:
-            c["capped"] += 1
-        return got, len(torp)
-
-
-def test_native_torpedo_feed_equals_python_every_frame(busy_torpedo_scene,
-                                                       monkeypatch):
-    from engine import host_loop
-    from engine.appc import projectiles
-    ts = busy_torpedo_scene
-    cov = _Coverage(monkeypatch)
-    nc.reset_torpedo_feed_counts()
-    before = None
-    last_fwd = None
-    for k in range(300):
-        ts.advance()
-        # The homing torpedo's drawn forward turned this tick (K3 steered it).
-        if ts.homing in projectiles._active:
-            fwd = host_loop._torpedo_forward(ts.homing)
-            if last_fwd is not None and fwd != last_fwd:
-                cov.counts["steered"] += 1
-            last_fwd = fwd
-        # The camera eye on for 40 frames, off for 20.
-        host_loop._note_camera_eye(ts.eye if k % 60 < 40 else None)
-        # A reorder the rows cannot follow, after the step: the table is
-        # dirty at render time.
-        if k in (150, 151, 220):
-            projectiles._active.reverse()
-            assert nc._k3_dirty
-            cov.counts["dirty"] += 1
-        want, n_torp_lights = cov.python_feed(ts)
-        if before is not None and len(want[0]) < before:
-            cov.counts["expired"] += 1
-        before = len(want[0])
-        ok, torps, lights = _native_feed(ts, want, n_torp_lights)
-        assert ok, "frame %d: the native feed pushed nothing" % k
-        assert torps == want[0], "frame %d: torpedoes differ" % k
-        assert lights == want[1], "frame %d: lights differ" % k
-    c = cov.counts
-    print("\ntorpedo feed coverage over %d frames: %r" % (c["frames"], c))
-    assert c["frames"] == 300, c
-    assert nc.torpedo_feed_counts()["native"] == 300
-    assert _no_skips(), nc.torpedo_feed_counts()
-    for case in c:
-        assert c[case] > 0, "no frame had %s: %r" % (case, c)
-    assert c["spill"] > c["capped"], "premise: spill frames below the cap"
-    assert all(t not in projectiles._active for t in ts.expiring)
+        ((n_torps, n_torp_lights, _skips),) = returned["feed"]
+        assert n_torps == len(torps), returned
+        assert returned["lights"] == [len(lights)], returned
+        if spied is not None:
+            spied["torp_lights"] = n_torp_lights
+            spied["explosion_lights"], spied["emitter_lights"] = \
+                returned["groups"]
+    return ok, torps, lights
 
 
 def _no_skips():
@@ -566,10 +466,14 @@ def test_a_skipped_torpedo_drops_only_itself_and_its_light(torpedo_scene,
     """The far torpedo's set left out of the frames table: the feed cannot
     tell which frame it is in, so that one torpedo is skipped (counted
     "frames") and every other torpedo and light is drawn -- here exactly
-    the Python frame, which draws nothing of a set in another frame."""
+    the frame drawn with the set in the table, which draws nothing of a set
+    in another frame."""
     from engine import host_loop
     ts = torpedo_scene
-    want = _python_feed(ts)
+    nc.reset_torpedo_feed_counts()
+    ok, *want = _native_feed(ts)
+    assert ok and _no_skips(), nc.torpedo_feed_counts()
+    want = tuple(want)
     assert len(want[0]) == 3 and want[1], "premise: three in view, lit"
     _drop_from_frames(monkeypatch, ts.far_set)
     nc.reset_torpedo_feed_counts()
@@ -578,7 +482,7 @@ def test_a_skipped_torpedo_drops_only_itself_and_its_light(torpedo_scene,
     assert (torps, lights) == want
     assert nc.torpedo_feed_counts()["skips"] == dict(
         dict.fromkeys(nc._TORP_SKIPS, 0), frames=1)
-    # host_loop's frame is the native one: nothing falls back to Python.
+    # host_loop's frame is the native feed's.
     _h.set_torpedoes([SENTINEL_T])
     _h.set_dynamic_lights([SENTINEL_L])
     try:
@@ -636,11 +540,19 @@ def test_skip_counts_reach_the_profiler_line(torpedo_scene, monkeypatch):
     assert nc.beam_feed_counts()["native"] == 0
 
 
+def test_the_skip_reason_lists_are_the_bindings_plus_the_python_ones():
+    native = _h.combat_feed_skip_reasons()
+    assert nc._BEAM_SKIPS == tuple(native["beam"]) + ("view_row",)
+    assert nc._TORP_SKIPS == tuple(native["torpedo"]) + (
+        "duplicate", "view_row")
+
+
 def test_a_torpedo_without_create_model_draws_the_default_record(
         torpedo_scene):
     """A torpedo no Create*Model ever ran on carries the default visual
     record from Torpedo.__init__ (the record its own defaults make), pushed
-    at row-add, and draws natively, as Python draws it: white, sizeless,
+    at row-add, and draws natively as the Python builders drew it (the edge
+    case golden's frames 50-59 pin it bit for bit): white, sizeless,
     untextured, lit by nothing (a zero glow radius). Create*Model replaces
     the record."""
     from engine import host_loop
@@ -654,11 +566,11 @@ def test_a_torpedo_without_create_model_draws_the_default_record(
                          (0.0, 0.0, 0.0), ts.scene.set)
     assert bare.__dict__.get("_k3_row") is not None
     nc.reset_torpedo_feed_counts()
-    want = _python_feed(ts)
-    assert len(want[0]) == 4
-    ok, torps, lights = _native_feed(ts)
+    spied = {}
+    ok, torps, lights = _native_feed(ts, spied)
     assert ok and _no_skips(), nc.torpedo_feed_counts()
-    assert (torps, lights) == want
+    assert len(torps) == 4
+    assert spied["torp_lights"] == 2      # the two lit torpedoes, not the bare
     row = next(r for r in _h.torpedoes_debug() if r[16] == bare._id)
     b = host_loop.TORPEDO_BRIGHTNESS
     f32 = lambda x: struct.unpack("<f", struct.pack("<f", x))[0]  # noqa: E731
@@ -675,9 +587,9 @@ def test_a_torpedo_without_create_model_draws_the_default_record(
         "data/Textures/Tactical/PhotonGlow.tga", col, 3.0, 0.3, 0.6,
         "data/Textures/Tactical/PhotonFlares.tga", col, 8, 0.7, 0.4)
     assert bare.__dict__["_vis_native"] != default
-    want = _python_feed(ts)
-    ok, torps, lights = _native_feed(ts)
-    assert (torps, lights) == want
+    ok, torps, lights = _native_feed(ts, spied)
+    assert ok and _no_skips(), nc.torpedo_feed_counts()
+    assert spied["torp_lights"] == 3      # now lit too
     row = next(r for r in _h.torpedoes_debug() if r[16] == bare._id)
     assert row[12] == 8 and row[1].endswith("PhotonCore.tga")
 
@@ -709,43 +621,12 @@ def test_a_pending_torpedo_light_list_is_blended_once(torpedo_scene):
         _h.set_dynamic_lights([])
 
 
-def test_the_knobs_are_read_per_call(busy_torpedo_scene, monkeypatch):
-    """Two frames, every per-frame knob changed between them: native still
-    equals Python, and the second frame differs from the first."""
-    from engine import host_loop
-    ts = busy_torpedo_scene
-    host_loop._note_camera_eye(ts.eye)
-    frames = []
-    for knobs in ({}, {"TORPEDO_BRIGHTNESS": 0.7,
-                       "_TORPEDO_LIGHT_RADIUS_SCALE": 20.0,
-                       "_TORPEDO_LIGHT_INTENSITY": 2.5,
-                       "DYN_LIGHT_FADE_START_GU": 10.0,
-                       "DYN_LIGHT_CULL_GU": 30.0,
-                       "_LIGHT_BUDGET_TORPEDOES": 3,
-                       "_LIGHT_CAP": 40}):
-        for name, value in knobs.items():
-            monkeypatch.setattr(host_loop, name, value)
-        ts.advance()
-        want = _python_feed(ts)
-        n_torp_lights = len(host_loop._build_dynamic_light_render_data())
-        ok, torps, lights = _native_feed(ts, want, n_torp_lights)
-        assert ok
-        assert (torps, lights) == want
-        frames.append((want, n_torp_lights))
-    (t0, l0), n0 = frames[0]
-    (t1, l1), n1 = frames[1]
-    assert t0 != t1 and l0 != l1
-    assert n1 < n0                       # the shorter cull drops lights
-    assert len(l1) <= 40
-    assert _no_skips()
-
-
-# ── Render goldens (phase 6 follow-up 4, Task 1) ────────────────────────────
+# ── Render goldens (phase 6 follow-up 4) ────────────────────────────────────
 #
-# The same scenes as the equality tests above, checked against goldens
-# recorded from the Python builders (tests/helpers/render_golden.py): under
-# UPDATE_RENDER_GOLDEN=1 the frames are the Python builders' and are
-# recorded; otherwise they are the native feeds' and are checked.
+# Recorded from the Python builders before they were deleted (Task 1), so
+# each golden is what Python drew for the scene; the native feeds' frames
+# are checked against it bit for bit. Recording is refused now
+# (tests/helpers/render_golden.py): UPDATE_RENDER_GOLDEN=1 fails.
 
 from tests.helpers import render_golden  # noqa: E402
 from tests.host.test_native_beam_feed import (  # noqa: E402
@@ -772,53 +653,98 @@ def _golden_lights(scene):
     return out
 
 
-def golden_torpedo_frame(scene):
-    """This frame's torpedoes and lights as a render_golden frame: the
-    Python builders' while recording, else the native feed's (a feed that
-    fell back leaves its sentinels, so the frame differs from the golden)."""
-    if render_golden.recording():
-        render_golden.require_python_builders()
-        torps, _lights_ = _python_feed(scene)
-        source = "python"
-    else:
-        _ok, torps, _lights_ = _native_feed(scene)
-        source = "native"
+def golden_torpedo_frame(scene, spied=None):
+    """This frame's torpedoes and lights, from the native feed, as a
+    render_golden frame (a feed that pushed nothing leaves its sentinels, so
+    the frame differs from the golden). `spied`: as _native_feed's."""
+    _ok, torps, _lights_ = _native_feed(scene, spied)
     return render_golden.frame(torps=torps, lights=_golden_lights(scene),
-                               source=source)
+                               source="native")
 
 
 def test_torpedo_scene_matches_the_golden(busy_torpedo_scene):
-    """test_native_torpedo_feed_equals_python_every_frame's 300 frames: the
-    camera eye on 40 frames, off 20, and the reorders at 150, 151 and 220
-    that leave the torpedo table dirty at render time."""
+    """300 frames: the camera eye on 40 frames, off 20, and the reorders at
+    150, 151 and 220 that leave the torpedo table dirty at render time. The
+    scene covers every case below, each in some frame: the eye known and
+    not, disruptors, torpedo lights in the fade band and culled, explosion
+    and emitter lights, a torpedo-light spill past its budget (below the cap,
+    and at it), torpedoes expiring, a dirty table and a steered torpedo."""
     from engine import host_loop
     from engine.appc import projectiles
     ts = busy_torpedo_scene
+    c = dict.fromkeys(
+        ("eye", "no_eye", "disruptors", "torpedo_lights", "fade_band",
+         "culled", "explosion_lights", "emitter_lights", "spill", "capped",
+         "expired", "dirty", "steered"), 0)
+    nc.reset_torpedo_feed_counts()
     frames = []
+    before = last_fwd = None
     for k in range(300):
         ts.advance()
-        host_loop._note_camera_eye(ts.eye if k % 60 < 40 else None)
+        eye = ts.eye if k % 60 < 40 else None
+        host_loop._note_camera_eye(eye)
+        c["eye" if eye is not None else "no_eye"] += 1
         if k in (150, 151, 220):
             projectiles._active.reverse()
-        frames.append(golden_torpedo_frame(ts))
+            assert nc._k3_dirty
+            c["dirty"] += 1
+        if eye is not None and ts.band in projectiles._active:
+            p = ts.band.GetTranslate()
+            fade = host_loop._camera_distance_fade((p.x, p.y, p.z))
+            c["fade_band"] += fade is not None and 0.0 < fade < 1.0
+        spied = {}
+        frames.append(golden_torpedo_frame(ts, spied))
+        rows = _h.torpedoes_debug()
+        n_torps, n_lit = len(rows), spied["torp_lights"]
+        c["disruptors"] += sum(1 for r in rows if r[17])
+        c["torpedo_lights"] += n_lit
+        # Every in-view non-disruptor torpedo here has a glow radius > 0, so
+        # one with no light was culled by the camera distance.
+        c["culled"] += sum(1 for r in rows if not r[17]) - n_lit
+        c["explosion_lights"] += spied["explosion_lights"]
+        c["emitter_lights"] += spied["emitter_lights"]
+        c["spill"] += n_lit > host_loop._LIGHT_BUDGET_TORPEDOES
+        c["capped"] += len(frames[-1]["lights"]) == host_loop._LIGHT_CAP
+        if before is not None and n_torps < before:
+            c["expired"] += 1
+        before = n_torps
+        # The homing torpedo's drawn forward turned (K3 steered it).
+        fwd = next((tuple(r[18]) for r in rows if r[16] == ts.homing._id),
+                   None)
+        if fwd is not None and last_fwd is not None and fwd != last_fwd:
+            c["steered"] += 1
+        last_fwd = fwd
+    print("\ntorpedo feed coverage over 300 frames: %r" % c)
+    for case, n in c.items():
+        assert n > 0, "no frame had %s: %r" % (case, c)
+    assert c["spill"] > c["capped"], "premise: spill frames below the cap"
     assert all(t not in projectiles._active for t in ts.expiring)
-    assert sum(len(f["lights"]) for f in frames) > 0
+    assert nc.torpedo_feed_counts()["native"] == 300
+    assert _no_skips(), nc.torpedo_feed_counts()
     _record_or_check("torpedo_scene", frames)
 
 
 def test_torpedo_knobs_match_the_golden(busy_torpedo_scene, monkeypatch):
-    """test_the_knobs_are_read_per_call's two frames: every per-frame knob
-    changed between them."""
+    """Two frames, every per-frame knob changed between them: the knobs are
+    read per call, so the second frame differs from the first (and both are
+    the golden's)."""
     from engine import host_loop
     ts = busy_torpedo_scene
     host_loop._note_camera_eye(ts.eye)
-    frames = []
+    nc.reset_torpedo_feed_counts()
+    frames, lit = [], []
     for knobs in ({}, KNOBS):
         for name, value in knobs.items():
             monkeypatch.setattr(host_loop, name, value)
         ts.advance()
-        frames.append(golden_torpedo_frame(ts))
-    assert frames[0] != frames[1]
+        spied = {}
+        frames.append(golden_torpedo_frame(ts, spied))
+        lit.append(spied["torp_lights"])
+    assert frames[0]["torps"] != frames[1]["torps"]
+    assert frames[0]["lights"] != frames[1]["lights"]
+    assert lit[1] < lit[0]               # the shorter cull drops lights
+    assert len(frames[1]["lights"]) <= KNOBS["_LIGHT_CAP"]
+    assert _no_skips()
     _record_or_check("torpedo_knobs", frames)
 
 
@@ -828,7 +754,7 @@ KNOBS = {"TORPEDO_BRIGHTNESS": 0.7, "_TORPEDO_LIGHT_RADIUS_SCALE": 20.0,
          "_LIGHT_CAP": 40}
 
 
-# ── The edge cases: what today's native feeds hand back to Python ───────────
+# ── The edge cases: what the native feeds once handed back to Python ────────
 #
 # One scene, 60 frames: torpedo_scene's projectiles plus beam_scene's opening
 # volley, then three cases, each in its own stretch of frames:
@@ -1015,9 +941,7 @@ def _check_edge_frames(ts):
     nc.reset_torpedo_feed_counts()
     nc.reset_beam_feed_counts()
     frames = _edge_frames(ts)
-    if render_golden.recording():
-        render_golden.record("edge_cases", frames)
-    assert render_golden.differing_frames("edge_cases", frames) == []
+    _record_or_check("edge_cases", frames)
     # Every frame built natively, nothing skipped.
     assert nc.beam_feed_counts()["native"] == EDGE_FRAMES
     assert nc.torpedo_feed_counts()["native"] == EDGE_FRAMES

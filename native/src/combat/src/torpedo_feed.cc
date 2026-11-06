@@ -1,7 +1,9 @@
-// build_torpedo_feed / budget_lights (torpedo_feed.h): engine/host_loop.py's
-// torpedo render builders and _budgeted_dynamic_lights over the K3 torpedo
-// table. Each block names the Python line it stands for; the CURRENT Python
-// is the truth.
+// build_torpedo_feed / budget_lights (torpedo_feed.h): the torpedo render
+// feed and the light budget over the K3 torpedo table. There is no Python
+// copy: the Python builders and blend they were ported from were deleted
+// (phase 6 follow-up 4), and the inline Python quotes below are their lines,
+// kept as the record of what each block reproduces. The render goldens
+// (tests/fixtures/render_goldens/) are the truth.
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
@@ -45,19 +47,21 @@ bool fits_c_int(int64_t v) {
            v <= std::numeric_limits<int>::max();
 }
 
-// _dim_color(c, scale): (c[0] * scale, c[1] * scale, c[2] * scale, c[3]).
+// A colour dimmed: (c[0] * scale, c[1] * scale, c[2] * scale, c[3]).
 std::array<double, 4> dim(const TorpedoVisual::Color& c, double s) {
     return {c[0] * s, c[1] * s, c[2] * s, c[3]};
 }
 
-// _torpedo_forward(t).
+// The drawn forward: the unit velocity, (0, 0, 1) when ~stationary (the
+// disruptor's default velocity, a torpedo not yet advanced).
 Vec3 forward(const Vec3& v) {
     const double mag = py_pow(v[0] * v[0] + v[1] * v[1] + v[2] * v[2], 0.5);
     if (mag < 1e-6) return {0.0, 0.0, 1.0};
     return {v[0] / mag, v[1] / mag, v[2] / mag};
 }
 
-// _camera_distance_fade(position): nullopt is Python's None (culled).
+// host_loop._camera_distance_fade(position) (the emitter lights' Python
+// gate): nullopt is Python's None (culled).
 std::optional<double> camera_fade(const TorpedoFeedCtx& ctx, const Vec3& p) {
     if (!ctx.eye) return 1.0;
     const Vec3& eye = *ctx.eye;
@@ -119,14 +123,14 @@ Item build_item(const Mirror& m, const TorpedoFeedCtx& ctx,
     TorpedoOut& o = it.torp;
     o.visual = &v;
     o.position = detail::view_to_render(ctx.origin, *view_pos);
-    // _torpedo_colors: core, glow, flares dimmed by the knob.
+    // Core, glow, flares dimmed by the knob (the bolt colours are not).
     o.core_color = dim(v.core_color, ctx.brightness);
     o.glow_color = dim(v.glow_color, ctx.brightness);
     o.flares_color = dim(v.flares_color, ctx.brightness);
     o.age = r.age;
     o.forward = forward(r.vel);
     it.has_torp = true;
-    // _build_dynamic_light_render_data.
+    // The torpedo's light: none for a disruptor or a zero glow radius.
     if (v.is_disruptor) return it;
     const double radius = ctx.light_radius_scale * v.light_base;
     if (radius <= 0) return it;

@@ -1,6 +1,8 @@
-// build_beam_feed (beam_feed.h): engine/host_loop.py's beam render builders
-// over the Mirror. Each block names the Python line it stands for; the
-// CURRENT Python is the truth.
+// build_beam_feed (beam_feed.h): the beam render feeds over the Mirror. There
+// is no Python copy: the Python builders it was ported from were deleted
+// (phase 6 follow-up 4), and the inline Python quotes below are their lines,
+// kept as the record of what each block reproduces. The render goldens
+// (tests/fixtures/render_goldens/) are the truth.
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
@@ -108,7 +110,7 @@ bool feed_shields_block(const Mirror& m, const BeamFeedCtx& ctx,
     return shields_block(m, target, ctx.npc_shields_off, ctx.player);
 }
 
-// ── host_loop._beam_endpoint ────────────────────────────────────────────────
+// ── Where the drawn beam stops ──────────────────────────────────────────────
 
 Vec3 beam_endpoint(Mirror& m, const BeamFeedCtx& ctx, int64_t target,
                    const Vec3& emitter_pos, const Vec3& aim_unit,
@@ -143,7 +145,7 @@ Vec3 beam_endpoint(Mirror& m, const BeamFeedCtx& ctx, int64_t target,
     return fallback;
 }
 
-// ── host_loop._beam_descriptor_pair + _beam_pair_in_view ────────────────────
+// ── One bank's descriptor pair, in render space ─────────────────────────────
 // The pair (outer, inner) in RENDER space, or nullopt where either returns
 // []. `ship_set` is the memo's set_of(ship).
 
@@ -219,8 +221,8 @@ std::optional<Pair> beam_pair(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
     common.texture_speed = py_or(v._texture_speed, 0.0);
     common.end_width_scale = end_width_scale;
 
-    // _beam_pair_in_view: "emitter" from the ship's set, "target" from the
-    // target's; either outside the viewed frame -> [] (both dicts share them).
+    // In view: "emitter" from the ship's set, "target" from the target's;
+    // either outside the viewed frame -> [] (both dicts share them).
     const std::optional<Vec3> e = to_render(m, ctx, ctx.view, ship_set, emitter_pos);
     const std::optional<Vec3> t = to_render(m, ctx, ctx.view, t_set, beam_end);
     if (!e || !t) return std::nullopt;
@@ -239,18 +241,18 @@ std::optional<Pair> beam_pair(Mirror& m, const BeamFeedCtx& ctx, int64_t ship,
     return Pair{outer, inner};
 }
 
-// _ViewMemo.set_of(ship) (view is not None): the ship's set when it is in
-// the viewed frame, else None (-1). Uncached: nothing between the two
-// builders' calls changes a `_containing_set`.
+// memo.set_of(ship) (view is not None): the ship's set when it is in the
+// viewed frame, else None (-1). Uncached: nothing between the phaser and
+// tractor walks changes a `_containing_set`.
 int64_t set_of(const Mirror& m, const BeamFeedCtx& ctx, int64_t ship) {
     const int64_t pset = containing_set(m, ship);
     if (offset_between(m, ctx, ctx.view, pset)) return pset;
     return -1;
 }
 
-// _build_phaser_beam_render_data / _build_tractor_beam_render_data. A ship
-// whose own state the mirror cannot answer is one skip; a bank's pair that
-// cannot be answered is one skip; everything else is drawn.
+// One walk: the phaser beams, or the tractor beams. A ship whose own state
+// the mirror cannot answer is one skip; a bank's pair that cannot be
+// answered is one skip; everything else is drawn.
 void build_one(Mirror& m, const std::vector<int64_t>& ships,
                const BeamFeedCtx& ctx, bool tractor, double brightness,
                double end_width_scale, std::vector<BeamOut>& out,
@@ -272,8 +274,8 @@ void build_one(Mirror& m, const std::vector<int64_t>& ships,
             const int64_t sys =
                 tractor ? s._tractor_beam_system : s._phaser_system;
             if (sys == -1) return;
-            // banks = _firing_banks(sys_): the stock path, `_children` in
-            // order.
+            // banks: the system's `_children` in order whose `_firing` is
+            // truthy (a patched GetWeapon / IsFiring is not honoured).
             const std::vector<int64_t> children = sub(m, sys)._children;
             for (const int64_t child : children)
                 if (sub(m, child)._firing) banks.push_back(child);

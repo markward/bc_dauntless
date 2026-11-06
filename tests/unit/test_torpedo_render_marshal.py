@@ -1,11 +1,11 @@
-"""_build_torpedo_render_data() marshals projectiles._active into the dict
-shape host_io.set_torpedoes expects. Task 2 of the authentic-projectile-
-visuals plan adds disruptor-bolt fields (id, is_disruptor, forward,
-shell_color, bolt_core_color, bolt_length, bolt_width) to every descriptor —
-BOTH torpedo-quad and disruptor-bolt families — because the C++ parser (Task
-3) reads every key unconditionally. The audit-authentic colours read too hot on
-screen, so TORPEDO_BRIGHTNESS dims the quad layers' RGB here (alpha untouched);
-disruptor-bolt colours are exempt."""
+"""The torpedo descriptors the native torpedo feed draws (native_combat.
+torpedo_feed; there is no Python copy). Every descriptor carries both the
+torpedo-quad fields and the disruptor-bolt fields (id, is_disruptor, forward,
+shell_color, bolt_core_color, bolt_length, bolt_width), for both projectile
+families. The audit-authentic colours read too hot on screen, so
+TORPEDO_BRIGHTNESS dims the quad layers' RGB (alpha untouched); disruptor-bolt
+colours are exempt. Textures resolve against the game root once, when the
+model is made (a recorded departure: never per frame)."""
 from pathlib import Path
 
 import App
@@ -14,10 +14,12 @@ import pytest
 import engine.host_loop as hl
 from engine.appc.projectiles import Torpedo, register
 from engine.appc import projectiles
+from tests.helpers import native_render_feeds
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
 from tests.helpers.viewed_set import place_in_viewed_set, release_viewed_set
-from engine.host_loop import (
-    _build_torpedo_render_data, _color_tuple, TORPEDO_BRIGHTNESS,
-)
+from engine.host_loop import _color_tuple, TORPEDO_BRIGHTNESS
+
+pytestmark = pytest.mark.usefixtures("native_combat_on")
 
 
 def _color(r, g, b, a=1.0):
@@ -26,22 +28,13 @@ def _color(r, g, b, a=1.0):
     return c
 
 
-FULL_KEYS = {
-    "position", "core_texture", "core_color", "core_size_a", "core_size_b",
-    "glow_texture", "glow_color", "glow_size_a", "glow_size_b", "glow_size_c",
-    "flares_texture", "flares_color", "num_flares", "flares_size_a",
-    "flares_size_b", "age",
-    "id", "is_disruptor", "forward", "shell_color", "bolt_core_color",
-    "bolt_length", "bolt_width",
-}
-
-
 @pytest.fixture(autouse=True)
 def clear_torpedo_registry():
     projectiles._active.clear()
     yield
     projectiles._active.clear()
     release_viewed_set()
+    native_render_feeds.clear()
 
 
 def _make_photon():
@@ -70,17 +63,12 @@ def _make_disruptor():
     return t, shell, core
 
 
+def _torpedoes():
+    return native_render_feeds.torpedoes()[0]
+
+
 def test_torpedo_brightness_dims_the_quad_layers():
     assert TORPEDO_BRIGHTNESS == 0.25
-
-
-def test_all_descriptors_carry_the_full_key_set():
-    _make_photon()
-    _make_disruptor()
-    out = _build_torpedo_render_data()
-    assert len(out) == 2
-    for entry in out:
-        assert set(entry.keys()) == FULL_KEYS
 
 
 def test_photon_entry_fields(monkeypatch):
@@ -93,8 +81,7 @@ def test_photon_entry_fields(monkeypatch):
     monkeypatch.setattr(hl._paths, "game_root", lambda: fixture_root)
 
     t, core_color, glow_color = _make_photon()
-    out = _build_torpedo_render_data()
-    entry = out[0]
+    (entry,) = _torpedoes()
 
     assert entry["is_disruptor"] is False
     assert entry["id"] == t._id
@@ -129,13 +116,12 @@ def test_photon_entry_fields(monkeypatch):
 
 def test_disruptor_entry_fields():
     t, shell, core = _make_disruptor()
-    out = _build_torpedo_render_data()
-    entry = out[0]
+    (entry,) = _torpedoes()
 
     assert entry["is_disruptor"] is True
     assert entry["id"] == t._id
     assert entry["bolt_length"] == 2.0
-    assert entry["bolt_width"] == 0.2
+    assert entry["bolt_width"] == pytest.approx(0.2)
 
     assert entry["shell_color"] == pytest.approx(_color_tuple(shell))
     assert entry["bolt_core_color"] == pytest.approx(_color_tuple(core))
@@ -150,34 +136,30 @@ def test_disruptor_entry_fields():
     assert entry["forward"] == pytest.approx((0.0, 0.0, 1.0))
 
 
-def test_a_frame_resolves_each_texture_once(monkeypatch):
+def test_textures_resolve_when_the_model_is_made_never_per_frame(monkeypatch):
     # 1,440 torpedoes x 3 textures used to mean 4,320 path resolutions a
-    # frame (mods overlay + case-insensitive stat each) for three answers:
-    # 60% of cb.render_data in the 64-ship profile.
+    # frame (mods overlay + case-insensitive stat each) for three answers.
+    # The native table resolves a torpedo's textures once, at Create*Model.
     calls = []
     real = hl._paths.game_asset
     monkeypatch.setattr(hl._paths, "game_asset",
                         lambda rel: calls.append(rel) or real(rel))
     for _ in range(20):
         _make_photon()
-    # The native torpedo table resolves a torpedo's textures once at creation
-    # (a recorded departure); this test pins the per-FRAME feed only.
+    assert len(calls) == 20 * 3
     calls.clear()
-    out = _build_torpedo_render_data()
-    assert len(out) == 20
-    assert sorted(calls) == sorted({
-        "data/Textures/Tactical/TorpedoCore.tga",
-        "data/Textures/Tactical/TorpedoGlow.tga",
-        "data/Textures/Tactical/TorpedoFlares.tga"})
+    assert len(_torpedoes()) == 20
+    assert len(_torpedoes()) == 20
+    assert calls == []
 
 
-def test_a_new_game_root_is_seen_on_the_next_frame(monkeypatch):
-    # Resolve at use: the cache lives for one frame, so a root picked in the
-    # first-run screen (paths.configure) reaches the very next feed.
-    _make_photon()
+def test_a_new_game_root_is_seen_by_the_next_model(monkeypatch):
+    # Resolve at use: a root picked in the first-run screen (paths.configure)
+    # reaches every torpedo made after it.
     monkeypatch.setattr(hl._paths, "game_root", lambda: Path("/first/game"))
-    first = _build_torpedo_render_data()[0]["core_texture"]
+    first, _c, _g = _make_photon()
     monkeypatch.setattr(hl._paths, "game_root", lambda: Path("/second/game"))
-    second = _build_torpedo_render_data()[0]["core_texture"]
-    assert first.startswith(str(Path("/first/game")))
-    assert second.startswith(str(Path("/second/game")))
+    second, _c, _g = _make_photon()
+    by_id = {e["id"]: e["core_texture"] for e in _torpedoes()}
+    assert by_id[first._id].startswith(str(Path("/first/game")))
+    assert by_id[second._id].startswith(str(Path("/second/game")))

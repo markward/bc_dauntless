@@ -217,8 +217,8 @@ def test_colour_is_warm():
 
 
 def test_render_data_carries_the_keys_the_renderer_consumes():
-    """Mirrors _build_dynamic_light_render_data's descriptor shape; a missing
-    key would be a silent no-light at the binding. Plus "set", the blast's
+    """The point-light shape set_dynamic_lights takes; a missing key would be
+    a silent no-light at the binding. Plus "set", the blast's
     birth set, which host_loop's builder consumes and strips before the
     renderer (asserted in tests/unit/test_render_feeds_by_frame.py)."""
     _register(_Ship(), count=1)

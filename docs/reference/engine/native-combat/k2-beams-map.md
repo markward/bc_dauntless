@@ -915,13 +915,13 @@ No test pins by name: `take_dwell`, `accumulate_dwell` (except via oracle timing
   - the native trace (≈0.17 ms a tick at ~10 µs each in Debug, unless `ray_trace.cc` is optimised, which changes its float results; see the trace paragraph in §8.1).
 - On these shares the "own scope down by at least half" bar (§7.6.6) is plausible but not certain. This is inferred and needs a paired capture.
 
-**Since built natively (phase 6 follow-up 1).** The render rebuild below is now `native/src/combat/src/beam_feed.cc`, driven by `native_combat.beam_feed` from `host_loop._push_combat_render_data`; the Python builders remain only as its fallback and test oracle (`tests/host/test_native_beam_feed.py`). `DAUNTLESS_NATIVE_AUDIT=1` stands the beam feed down (the Python builders draw), so that equality test is its only oracle. What it reads, as first mapped: `_build_phaser_beam_render_data` (HL:2416, `cb.render_data`) recomputes, once per frame, for every firing bank:
+**Since built natively (phase 6 follow-ups 1 and 4).** The render rebuild below is `native/src/combat/src/beam_feed.cc`, driven by `native_combat.beam_feed` from `host_loop._push_combat_render_data`. **There is no Python copy:** follow-up 4 recorded the Python builders' output as render goldens (`tests/fixtures/render_goldens/`) and deleted them, so the goldens (`tests/host/test_native_beam_feed.py`, plus the edge cases in `test_native_torpedo_feed.py`) are the feed's oracle; recording is refused now. Nothing stands the feed down: `DAUNTLESS_NATIVE_COMBAT=0` and `DAUNTLESS_NATIVE_AUDIT=1` both draw natively, and the only early return is host_io with no native module. An item the mirror cannot answer is skipped, counted by reason on the frame profiler's `beam feed:` line (`native_combat.beam_feed_counts`), and the rest of the frame drawn. An item is one ship's walk or one bank's pair; the reasons (`beam_feed.h` `BeamSkip`, then Python's own) are: `ship_row` (a ship with no Object row, counted once per walk), `not_ship_class`, `target_row` (a bank target with no row), `containing_set` (an unnamed set), `frames` (a set missing from the frames table), `part_stale` (a part slot stale past the refresh the feed runs first), `mount_unknown`, `colour_unset` (an outer shell / inner core colour unset), `shields` (a non-ShipClass target with a real `GetShields`; one whose `GetShields` is the stub is unshielded, as `combat.shields_block` answers it), `geometry` (any other geometry refusal), `error` (any other exception), and `view_row` (the viewed set has no Set row: nothing drawn that frame). What the render rebuild reads, as first mapped from the deleted Python builder (HL:2416 then, `cb.render_data`), once per frame for every firing bank:
 
 - the aim point;
 - the strip;
 - the distance;
 - `shields_block`;
 - the bubble;
-- the trace (`_beam_endpoint`, HL:2267, bubble first, then the trace);
+- the trace (the endpoint: bubble first, then the trace);
 
 with cross-set shifts (HL:2303-2384). It runs outside the step memo, after tractors and the camera. It cannot reuse K2's records as they stand (different time and frame), but it can reuse K2's kernels (a "K2-render" pass).

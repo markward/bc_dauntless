@@ -1,9 +1,10 @@
 """Camera-distance fade + cull gate on dynamic lights.
 
-Both dynamic-light producers (`_build_dynamic_light_render_data` for in-flight
-torpedoes, `_build_emitter_light_render_data` for authored subsystem emitters)
-walked every candidate every frame with no distance gate at all, and native's
-`set_dynamic_lights` then hard-clamped the result to 64 in insertion order.
+Both dynamic-light producers (the torpedo lights, now built by the native
+torpedo feed, and `_build_emitter_light_render_data` for authored subsystem
+emitters) walked every candidate every frame with no distance gate at all,
+and native's `set_dynamic_lights` then hard-clamped the result to 64 in
+insertion order.
 
 The gate fades a light's intensity 1 -> 0 across a band well outside weapons
 range and drops it entirely beyond the band, keyed on the CAMERA eye (not the
@@ -19,14 +20,15 @@ from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.properties import SubsystemProperty
 from engine.appc import light_emitters
 from engine.appc.projectiles import Torpedo, register
-from engine.appc import projectiles
+from engine.appc import explosion_lights, projectiles
+from tests.helpers import native_render_feeds
+from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
 from tests.helpers.viewed_set import (
     place_in_viewed_set, release_viewed_set, viewed_set)
 from engine.host_loop import (
     DYN_LIGHT_CULL_GU,
     DYN_LIGHT_FADE_START_GU,
     _TORPEDO_LIGHT_INTENSITY,
-    _build_dynamic_light_render_data,
     _build_emitter_light_render_data,
     _camera_distance_fade,
     _note_camera_eye,
@@ -241,8 +243,18 @@ def test_emitter_lights_unaffected_when_no_camera_is_known():
 
 
 # ---------------------------------------------------------------------------
-# Gate applied to the torpedo producer
+# Gate applied to the torpedo lights (the native torpedo feed: the same
+# curve, host_loop's knobs read per frame)
 # ---------------------------------------------------------------------------
+
+@pytest.fixture
+def torpedo_lights(native_combat_on):
+    """The native torpedo feed's lights (no explosion or emitter lights exist
+    here, so every light is a torpedo's)."""
+    explosion_lights.reset()
+    yield lambda: native_render_feeds.torpedoes()[1]
+    native_render_feeds.clear()
+
 
 def _color(r, g, b, a=1.0):
     c = App.TGColorA()
@@ -263,32 +275,32 @@ def _photon_at(position):
     return t
 
 
-def test_torpedo_light_survives_inside_the_fade_band():
+def test_torpedo_light_survives_inside_the_fade_band(torpedo_lights):
     _note_camera_eye((0.0, 0.0, 0.0))
     _photon_at((20.0, 0.0, 0.0))
-    out = _build_dynamic_light_render_data()
+    out = torpedo_lights()
     assert len(out) == 1
     assert out[0]["intensity"] == pytest.approx(_TORPEDO_LIGHT_INTENSITY)
 
 
-def test_torpedo_light_dims_in_the_fade_band():
+def test_torpedo_light_dims_in_the_fade_band(torpedo_lights):
     _note_camera_eye((0.0, 0.0, 0.0))
     _photon_at((_MID_GU, 0.0, 0.0))
-    out = _build_dynamic_light_render_data()
+    out = torpedo_lights()
     assert len(out) == 1
     assert out[0]["intensity"] == pytest.approx(_TORPEDO_LIGHT_INTENSITY * 0.5)
 
 
-def test_torpedo_light_dropped_beyond_the_cull_distance():
+def test_torpedo_light_dropped_beyond_the_cull_distance(torpedo_lights):
     _note_camera_eye((0.0, 0.0, 0.0))
     _photon_at((100.0, 0.0, 0.0))
-    assert _build_dynamic_light_render_data() == []
+    assert torpedo_lights() == []
 
 
-def test_torpedo_light_unaffected_when_no_camera_is_known():
+def test_torpedo_light_unaffected_when_no_camera_is_known(torpedo_lights):
     _note_camera_eye(None)
     _photon_at((1e5, 0.0, 0.0))
-    out = _build_dynamic_light_render_data()
+    out = torpedo_lights()
     assert len(out) == 1
     assert out[0]["intensity"] == pytest.approx(_TORPEDO_LIGHT_INTENSITY)
 

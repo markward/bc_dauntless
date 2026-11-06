@@ -257,9 +257,9 @@ def envelope(t_norm: float) -> float:
 def render_data() -> list:
     """Light descriptors for the current frame.
 
-    Shape mirrors _build_dynamic_light_render_data's torpedo descriptors:
-    position / color / radius / intensity -- plus "set", the set the blast was
-    born in, which host_loop's builder consumes and never sends on.
+    The point-light shape set_dynamic_lights takes: position / color /
+    radius / intensity -- plus "set", the set the blast was born in, which
+    host_loop's builder consumes and never sends on.
     """
     out = []
     for blast in _active:

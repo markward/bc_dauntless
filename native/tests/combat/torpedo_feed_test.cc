@@ -1,8 +1,8 @@
 // The native torpedo descriptor + torpedo light feed (torpedo_feed.h) on
-// hand-built torpedo rows: the Python builders' dimming, forward, frame
-// shifts, camera fade and counted skips, and _budgeted_dynamic_lights'
-// slicing. The native-vs-Python differential over a real host runs from
-// tests/host/test_native_torpedo_feed.py (phase 6 follow-up 1b, Task 3).
+// hand-built torpedo rows: the dimming, forward, frame shifts, camera fade
+// and counted skips, and the light budget's slicing. Over a real host, the
+// feed is checked against the render goldens recorded from the deleted
+// Python builders (tests/host/test_native_torpedo_feed.py).
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
@@ -403,8 +403,9 @@ TEST(TorpedoFeed, DroppedRowsAreSkipped) {
     EXPECT_EQ(w.torps[0].position, (Vec3{2.0, 0.0, 0.0}));
 }
 
-// _budgeted_dynamic_lights, transcribed: the reference the native slicing
-// is pinned against (group, index) for (group, index).
+// host_loop's Python light blend (deleted in phase 6 follow-up 4),
+// transcribed: the reference the native slicing is pinned against (group,
+// index) for (group, index).
 static std::vector<LightPick> python_budget(std::size_t ne, std::size_t nt,
                                             std::size_t nm,
                                             const LightBudget& b) {

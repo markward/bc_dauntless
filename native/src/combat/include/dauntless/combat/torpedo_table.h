@@ -50,7 +50,7 @@ const char* torp_field_name(TorpField f);
 // A torpedo's static visuals, read once at CreateTorpedoModel /
 // CreateDisruptorModel (engine/appc/native_combat.py torpedo_visual_changed)
 // and held for the native per-frame descriptor feed. Types are exactly what
-// host_loop._build_torpedo_render_data hands set_torpedoes: sizes are Python
+// set_torpedoes takes: sizes are Python
 // floats (double here; the feed casts to float32), colours are UNDIMMED
 // `_color_tuple` results (the feed dims core/glow/flares by TORPEDO_BRIGHTNESS
 // per frame), textures are `_resolve_game_texture` strings resolved at

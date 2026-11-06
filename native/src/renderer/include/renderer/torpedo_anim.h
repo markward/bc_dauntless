@@ -42,10 +42,11 @@ struct TorpedoAnimParams {
 // scale lo/hi, +0x48 pulseRate, +0x50 flare period) but NOT which Python float
 // feeds which. This function is the ENTIRE re-pin surface.
 //
-// NOT the only interpreter of these floats: engine/host_loop.py's
-// _build_dynamic_light_render_data ALSO reads glow_size_a/glow_size_b (light
-// radius base = max(glow_size_a, glow_size_b)) to build the torpedo's
-// dynamic-light descriptor. A re-pin from RE Q1/Q2 must update BOTH sites.
+// NOT the only interpreter of these floats: the native torpedo feed
+// (native/src/combat/src/torpedo_feed.cc, with the record's `light_base` from
+// engine/appc/native_combat.py _torp_visual_record) ALSO reads glow_size_a /
+// glow_size_b (light radius base = max(glow_size_a, glow_size_b)) to build
+// the torpedo's dynamic light. A re-pin from RE Q1/Q2 must update BOTH sites.
 inline TorpedoAnimParams map_torpedo_params(const TorpedoDescriptor& d) {
     TorpedoAnimParams p;
     p.core_half_size  = d.core_size_a;    // photon 0.2

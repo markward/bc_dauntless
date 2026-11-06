@@ -1,8 +1,8 @@
 // The native beam descriptor feed (beam_feed.h) on hand-built mirror rows:
-// the Python builders' order, `or` defaults, frame shifts, endpoint tiers and
-// counted skips (no Python fallback). The native-vs-Python differential
-// over real instances runs from tests/host/test_native_beam_feed.py (phase 6
-// follow-up 1, Task 4).
+// the order, `or` defaults, frame shifts, endpoint tiers and counted skips
+// (there is no Python copy). Over real instances, the feed is checked
+// against the render goldens recorded from the deleted Python builders
+// (tests/host/test_native_beam_feed.py).
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
@@ -476,7 +476,7 @@ TEST(BeamFeed, HullTraceShiftsIntoTheViewAndBack) {
     const double raw = py_pow(10.0 * 10.0 + 50.0 * 50.0, 0.5);
     EXPECT_EQ(w.host.max_dist, narrow_like_pybind(raw * 1.5));
     // The hit (-190, 48, 0) in view, -800 back into the target's set
-    // (-990, 48, 0), then +800 into the view by _beam_pair_in_view. Not
+    // (-990, 48, 0), then +800 into the view (the pair in view). Not
     // shifting back would draw it at (610, 48, 0).
     EXPECT_EQ(w.phasers[0].target, (Vec3{-190.0, 48.0, 0.0}));
     EXPECT_EQ(w.phasers[0].emitter, (Vec3{-200.0, 0.0, 0.0}));

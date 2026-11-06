@@ -13,17 +13,23 @@
 // The native per-frame beam descriptor feed (phase 6 follow-up 1, plan
 // docs/superpowers/plans/2026-11-06-phase6-native-beam-feed.md, Task 3).
 //
-// build_beam_feed is a line-for-line port of engine/host_loop.py's
-// _build_phaser_beam_render_data and _build_tractor_beam_render_data, with
-// _firing_banks (the STOCK path only: the system's `_children` in order, the
-// banks whose `_firing` is truthy; a patched GetWeapon / IsFiring is not
-// honoured, spec Part A), _ViewMemo.set_of, _beam_descriptor_pair,
-// _beam_endpoint and _beam_pair_in_view, reading the Mirror. The geometry is
-// beam_geometry.h's and beam_trace.h's (the K2 kernel's own ports); the
-// engine/systems/frames.py helpers it needs are frames_internal.h's (shared
-// with the torpedo feed).
-// Every float is the Python's: double, the same operand order, Python's
-// `x or d` / max / `** 0.5` (py_math.h), -0.0 kept where the Python keeps it.
+// build_beam_feed is the only builder of the phaser and tractor beam render
+// feeds: there is no Python copy. It began as a line-for-line port of
+// engine/host_loop.py's Python beam builders, which phase 6 follow-up 4
+// deleted once their output was recorded as the render goldens
+// (tests/fixtures/render_goldens/, checked by tests/host/
+// test_native_beam_feed.py and test_native_torpedo_feed.py's edge cases).
+// It reads the Mirror: each ship's firing banks (the system's `_children` in
+// order, the banks whose `_firing` is truthy; a patched GetWeapon / IsFiring
+// is not honoured, spec Part A), only ships in the viewed frame, one
+// (outer shell, inner core) pair per bank, each end in its own object's set
+// and then in RENDER space. The beam stops on the shield bubble while a
+// facing holds, else on the hull mesh trace, else the sphere tier, else the
+// aim point. The geometry is beam_geometry.h's and beam_trace.h's (the K2
+// kernel's own ports); the engine/systems/frames.py helpers it needs are
+// frames_internal.h's (shared with the torpedo feed).
+// Every float is as the Python builders made it: double, the same operand
+// order, Python's `x or d` / max / `** 0.5` (py_math.h), -0.0 kept.
 //
 // Handles: ships are Object rows (-1: a ship with no row), sets Set rows,
 // banks and systems Subsystem rows; -1 is Python's None.
@@ -48,7 +54,7 @@ struct BeamFeedCtx {
            tractor_brightness = 0.0, tractor_end_width_scale = 0.0;
 };
 
-// One descriptor dict of the Python builders, before beam_from_dict.
+// One beam descriptor (set_phaser_beams' dict), before beam_from_dict.
 struct BeamOut {
     Vec3 emitter, target;  // RENDER space
     std::array<double, 4> color;

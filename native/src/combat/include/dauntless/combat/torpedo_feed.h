@@ -14,18 +14,25 @@
 // The native per-frame torpedo feed (phase 6 follow-up 1b, plan
 // docs/superpowers/plans/2026-11-06-phase6-native-torpedo-feed.md, Task 3).
 //
-// build_torpedo_feed is a line-for-line port of engine/host_loop.py's
-// _build_torpedo_render_data and _build_dynamic_light_render_data (with
-// _torpedo_colors, _dim_color, _torpedo_forward and _camera_distance_fade),
-// reading the K3 torpedo table (torpedo_table.h) and each row's visual record
-// (TorpedoVisual: Torpedo.__init__'s default, pushed at row-add, replaced at
-// Create*Model). Positions are the rows'
+// build_torpedo_feed is the only builder of the torpedo descriptors and the
+// torpedo lights: there is no Python copy. It began as a line-for-line port
+// of engine/host_loop.py's Python torpedo and torpedo-light builders, which
+// phase 6 follow-up 4 deleted once their output was recorded as the render
+// goldens (tests/fixtures/render_goldens/, checked by tests/host/
+// test_native_torpedo_feed.py). It reads the K3 torpedo table
+// (torpedo_table.h) and each row's visual record (TorpedoVisual:
+// Torpedo.__init__'s default, pushed at row-add, replaced at Create*Model):
+// the quad colours dimmed by the brightness knob, `forward` the unit velocity
+// ((0, 0, 1) when ~stationary), one light per non-disruptor torpedo with a
+// glow radius, faded by camera_fade (host_loop._camera_distance_fade, which
+// the emitter lights still use). Positions are the rows'
 // TransformStore slots (GetTranslate: the live store, never a published
 // pose); the frames.py helpers are frames_internal.h's, shared with the beam
-// feed. Every float is the Python's: double, the same operand order, `** 0.5`
-// through py_pow, math.sqrt as std::sqrt, -0.0 kept where Python keeps it.
+// feed. Every float is as the Python builders made it: double, the same
+// operand order, `** 0.5` through py_pow, math.sqrt as std::sqrt, -0.0 kept.
 //
-// budget_lights is _budgeted_dynamic_lights' slicing, exactly.
+// budget_lights is the per-category light budget; it has no Python copy
+// either (the old host_loop blend was deleted with the builders).
 
 namespace dauntless::combat {
 
@@ -44,7 +51,7 @@ struct TorpedoFeedCtx {
     int64_t expected_rows = -1;
 };
 
-// One _build_torpedo_render_data dict, before set_torpedoes' float casts.
+// One torpedo descriptor (set_torpedoes' dict), before the float casts.
 // `visual` points into the table row: valid until the table next changes.
 struct TorpedoOut {
     const TorpedoVisual* visual = nullptr;
@@ -54,7 +61,7 @@ struct TorpedoOut {
     Vec3 forward{0, 0, 1};
 };
 
-// One _build_dynamic_light_render_data dict.
+// One torpedo light (a set_dynamic_lights point light).
 struct TorpedoLightOut {
     Vec3 position{0, 0, 0};      // RENDER space
     std::array<double, 3> color{};
@@ -102,7 +109,7 @@ void build_torpedo_feed(const Mirror& m, const TorpedoFeedCtx& ctx,
                         std::vector<TorpedoLightOut>& lights,
                         TorpedoSkips& skips);
 
-// _budgeted_dynamic_lights' blend: _LIGHT_CAP and the three budgets.
+// The light blend's caps: host_loop's _LIGHT_CAP and the three budgets.
 struct LightBudget {
     int64_t cap = 64, explosions = 10, torpedoes = 10, emitters = 40;
 };

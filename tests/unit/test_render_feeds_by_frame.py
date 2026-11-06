@@ -21,7 +21,7 @@ from engine.appc.planet import Planet, Sun
 from engine.appc.projectiles import Torpedo, register
 from engine.appc.sets import SetClass_Create
 from engine.systems import frames
-from tests.helpers import bc_assets
+from tests.helpers import bc_assets, native_render_feeds
 from tests.helpers.bc_assets import require_game_asset
 from tests.helpers.mapped_regions import load_region
 from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
@@ -39,6 +39,7 @@ def _isolate():
     _clear()
     yield
     _clear()
+    native_render_feeds.clear()
 
 
 @pytest.fixture
@@ -144,7 +145,17 @@ def test_lens_flares_with_no_view_are_empty(world):
         bc_assets.GAME_ROOT, [ona1], view=None) == []
 
 
-# ── torpedoes and their lights ──────────────────────────────────────────────
+# ── torpedoes and their lights (the native torpedo feed) ────────────────────
+
+def _torps():
+    return native_render_feeds.torpedoes()[0]
+
+
+def _torp_lights():
+    """Every light the torpedo feed drew (no explosion or emitter light is
+    live in these tests, so all are torpedoes')."""
+    return native_render_feeds.torpedoes()[1]
+
 
 def _torpedo(pSet, name, xyz):
     t = Torpedo()
@@ -167,46 +178,49 @@ def _three_torpedoes(world):
             _torpedo(other, "tc", C))
 
 
-def test_torpedo_render_data_by_frame(world):
+def test_torpedo_render_data_by_frame(world, native_combat_on):
     *_, off = world
     ta, tb, tc = _three_torpedoes(world)
-    by_id = {e["id"]: e["position"] for e in host_loop._build_torpedo_render_data()}
-    assert by_id[int(ta._id)] == A
+    by_id = {e["id"]: e["position"] for e in _torps()}
+    assert by_id[int(ta._id)] == pytest.approx(A)
     assert by_id[int(tb._id)] == pytest.approx(_shifted(B, off))
     assert int(tc._id) not in by_id
 
 
-def test_torpedo_lights_by_frame(world):
+def test_torpedo_lights_by_frame(world, native_combat_on):
     *_, off = world
     _three_torpedoes(world)
-    got = [e["position"] for e in host_loop._build_dynamic_light_render_data()]
+    got = [e["position"] for e in _torp_lights()]
     assert len(got) == 2
-    assert A in got
+    assert any(p == pytest.approx(A) for p in got)
     assert any(p == pytest.approx(_shifted(B, off)) for p in got)
 
 
-def test_torpedo_light_fade_judges_the_converted_position(world):
+def test_torpedo_light_fade_judges_the_converted_position(world,
+                                                          native_combat_on):
     """The camera eye is in the viewed set's coordinates; a torpedo that is
     right beside it once converted must not be culled by its raw number."""
     ona1, ona2, _other, off = world
     _torpedo(ona2, "tb", (-off[0], -off[1], -off[2]))   # converts to origin
     host_loop._note_camera_eye((0.0, 0.0, 0.0))
-    (entry,) = host_loop._build_dynamic_light_render_data()
-    assert entry["position"] == pytest.approx((0.0, 0.0, 0.0))
+    (entry,) = _torp_lights()
+    assert entry["position"] == pytest.approx((0.0, 0.0, 0.0), abs=1e-3)
     assert entry["intensity"] == pytest.approx(host_loop._TORPEDO_LIGHT_INTENSITY)
 
 
-def test_torpedo_feeds_are_empty_with_no_viewing_set(world, monkeypatch):
+def test_torpedo_feeds_are_empty_with_no_viewing_set(world, monkeypatch,
+                                                     native_combat_on):
     ona1, *_ = world
     App.g_kSetManager.ClearRenderedSet()
     monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: None)
     assert frames.viewing_set() is None
     _torpedo(ona1, "ta", A)
-    assert host_loop._build_torpedo_render_data() == []
-    assert host_loop._build_dynamic_light_render_data() == []
+    torps, lights = native_render_feeds.torpedoes()
+    assert torps == [] and lights == []
 
 
-def test_render_feeds_follow_the_explicit_rendered_set(monkeypatch):
+def test_render_feeds_follow_the_explicit_rendered_set(monkeypatch,
+                                                       native_combat_on):
     ona1 = load_region("Ona", "Ona1")
     ona2 = load_region("Ona", "Ona2")
     player = App.ShipClass_Create()
@@ -216,7 +230,7 @@ def test_render_feeds_follow_the_explicit_rendered_set(monkeypatch):
     _torpedo(ona1, "t", (0.0, 0.0, 0.0))
     App.g_kSetManager.MakeRenderedSet("Ona2")      # a cutscene looking at Ona2
     off = frames.offset_between(ona2, ona1)
-    (entry,) = host_loop._build_torpedo_render_data()
+    (entry,) = _torps()
     assert entry["position"] == pytest.approx(off)  # expressed in Ona2's frame
 
 
@@ -278,60 +292,26 @@ def test_a_hull_hit_records_the_ships_set(world, monkeypatch):
     assert entry["set"] is ona2
 
 
-# ── beams ───────────────────────────────────────────────────────────────────
+# ── beams (the native beam feed) ────────────────────────────────────────────
 
-class _Bank:
-    """A firing bank aimed at its own ship: both beam ends in one set (the
-    cross-set case runs the real descriptor path, further down)."""
-    def __init__(self, target):
-        self._target = target
-
-    def IsFiring(self):
-        return True
+def _tractor_beams(ships):
+    return native_render_feeds.beams(ships)[1]
 
 
-class _System:
-    def __init__(self, ship):
-        self._ship = ship
-
-    def GetNumWeapons(self):
-        return 1
-
-    def GetWeapon(self, i):
-        return _Bank(self._ship)
-
-
-def _beam_ship(pSet, name, xyz):
-    s = App.ShipClass_Create()
-    s.SetName(name)
-    pSet.AddObjectToSet(s, name)
-    s.SetTranslateXYZ(*xyz)
-    s.GetPhaserSystem = lambda: _System(s)
-    s.GetTractorBeamSystem = lambda: _System(s)
-    return s
-
-
-def _fake_pair(ship, bank, ship_instances):
-    p = ship.GetWorldLocation()
-    return [{"emitter": (p.x, p.y, p.z), "target": (p.x, p.y + 1.0, p.z),
-             "color": (1.0, 1.0, 1.0, 1.0), "width": 1.0}]
-
-
-@pytest.mark.parametrize("builder", [
-    "_build_phaser_beam_render_data", "_build_tractor_beam_render_data"])
-def test_beams_by_frame(world, monkeypatch, builder):
+def test_beams_by_frame(world, native_combat_on):
+    """A tow in each set, each beam's ends in its own set: Ona1's drawn raw,
+    Ona2's shifted into Ona1's coordinates, the other frame's not drawn."""
     ona1, ona2, other, off = world
-    monkeypatch.setattr(host_loop, "_beam_descriptor_pair", _fake_pair)
-    ships = [_beam_ship(ona1, "a", A), _beam_ship(ona2, "b", B),
-             _beam_ship(other, "c", C)]
-    out = getattr(host_loop, builder)(ships)
-    emitters = [d["emitter"] for d in out]
+    up = (0.0, 50.0, 0.0)
+    ships = [_tractor_pair(pSet, at, pSet, _shifted(at, up))
+             for pSet, at in ((ona1, A), (ona2, B), (other, C))]
+    out = _tractor_beams(ships)
     targets = [d["target"] for d in out]
-    assert len(out) == 2
-    assert A in emitters and (A[0], A[1] + 1.0, A[2]) in targets
-    bx = _shifted(B, off)
-    assert any(e == pytest.approx(bx) for e in emitters)
-    assert any(t == pytest.approx((bx[0], bx[1] + 1.0, bx[2])) for t in targets)
+    assert len(out) == 4                  # two pairs, outer + inner each
+    assert any(t == pytest.approx(_shifted(A, up)) for t in targets)
+    bx = _shifted(_shifted(B, up), off)
+    assert any(t == pytest.approx(bx) for t in targets)
+    assert not any(t == pytest.approx(_shifted(C, up)) for t in targets)
 
 
 # ═════ Fix round 1 ═══════════════════════════════════════════════════════════
@@ -345,7 +325,8 @@ def _bridge():
     return b
 
 
-def test_feeds_survive_a_cutscene_that_ends_on_the_bridge(monkeypatch):
+def test_feeds_survive_a_cutscene_that_ends_on_the_bridge(monkeypatch,
+                                                          native_combat_on):
     """E6M1:1651 & co end cutscenes with ChangeRenderedSet("bridge"), and only
     a warp resets it -- the tactical view must keep drawing the player's set."""
     ona1 = load_region("Ona", "Ona1")
@@ -358,11 +339,11 @@ def test_feeds_survive_a_cutscene_that_ends_on_the_bridge(monkeypatch):
     _torpedo(ona1, "t", A)
 
     App.g_kSetManager.MakeRenderedSet("bridge")
-    (entry,) = host_loop._build_torpedo_render_data()
-    assert entry["position"] == A                  # Ona1's own coordinates
+    (entry,) = _torps()
+    assert entry["position"] == pytest.approx(A)   # Ona1's own coordinates
 
     App.g_kSetManager.MakeRenderedSet("Ona2")      # a space cutscene
-    (entry,) = host_loop._build_torpedo_render_data()
+    (entry,) = _torps()
     assert entry["position"] == pytest.approx(
         _shifted(A, frames.offset_between(ona2, ona1)))
 
@@ -400,13 +381,13 @@ def test_a_beam_across_regions_draws_each_end_in_its_own_set(
     # sits in Ona1's coordinates.
     base_ship = _tractor_pair(ona1, (0.0, 0.0, 0.0),
                               ona1, _shifted((0.0, 50.0, 0.0), off))
-    baseline = host_loop._build_tractor_beam_render_data([base_ship])
+    baseline = _tractor_beams([base_ship])
     ona1.RemoveObjectFromSet("Source")
     ona1.RemoveObjectFromSet("Target")
     assert len(baseline) == 2
 
     ship = _tractor_pair(ona1, (0.0, 0.0, 0.0), ona2, (0.0, 50.0, 0.0))
-    out = host_loop._build_tractor_beam_render_data([ship])
+    out = _tractor_beams([ship])
     assert len(out) == 2
     for got, want in zip(out, baseline):
         assert got["emitter"] == pytest.approx(want["emitter"])
@@ -416,7 +397,7 @@ def test_a_beam_across_regions_draws_each_end_in_its_own_set(
     # Viewed from Ona2 the TARGET end is raw and the emitter end shifts.
     App.g_kSetManager.MakeRenderedSet("Ona2")
     back = frames.offset_between(ona2, ona1)
-    out2 = host_loop._build_tractor_beam_render_data([ship])
+    out2 = _tractor_beams([ship])
     assert out2[0]["target"] == pytest.approx((0.0, 50.0, 0.0))
     assert out2[0]["emitter"] == pytest.approx(
         _shifted(baseline[0]["emitter"], back))
@@ -426,7 +407,7 @@ def test_a_beam_at_a_target_in_another_frame_is_not_drawn(
         world, native_combat_on):
     ona1, _ona2, other, _off = world
     ship = _tractor_pair(ona1, (0.0, 0.0, 0.0), other, (0.0, 50.0, 0.0))
-    assert host_loop._build_tractor_beam_render_data([ship]) == []
+    assert _tractor_beams([ship]) == []
 
 
 # ── (3) shockwaves ──────────────────────────────────────────────────────────

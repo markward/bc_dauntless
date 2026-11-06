@@ -3,10 +3,13 @@
 Companion to test_shield_bubble_entry.py, which covers the geometry itself.
 This file covers the wiring:
 
-  * the drawn phaser beam stops at the bubble while a facing is live, and at
-    the hull once it is not, and
   * the shield splash is anchored at the bubble entry point rather than at the
-    hull impact.
+    hull impact (and the predicate both it and the drawn beam use).
+
+The drawn phaser beam stopping at the bubble while a facing is live, and at
+the hull once it is not, is the native beam feed's (no Python copy): ctest
+BeamFeed.ShieldsUpEndsOnTheBubble / ShieldsDownEndsOnTheHullTrace, and the
+beam_scene render golden (tests/host/test_native_beam_feed.py).
 
 Facing SELECTION is deliberately NOT covered — it still reads the hull point.
 Moving it is a gameplay change and lands separately.
@@ -132,35 +135,3 @@ def test_damage_still_lands_on_the_hull_point_not_the_bubble_point():
     combat.apply_hit(ship, 250.0, TGPoint3(0.0, HALF[1], 0.0), source=None,
                      shield_point=TGPoint3(0.0, HALF[1] * SQRT3, 0.0))
     assert ship.GetHull().GetCondition() == before - 250.0
-
-
-# ── the drawn beam stops at the bubble ─────────────────────────────────────
-
-def test_beam_stops_at_the_bubble_while_shields_hold():
-    from engine import host_loop
-    ship = _target()
-    emitter = TGPoint3(0.0, 6000.0, 0.0)
-    aim = TGPoint3(0.0, -1.0, 0.0)
-
-    end = host_loop._beam_endpoint(
-        target=ship, emitter_pos=emitter, aim_unit=aim,
-        raw_length=6000.0, ship_instances=None,
-        fallback=TGPoint3(0.0, 0.0, 0.0))
-
-    assert end.y == pytest.approx(HALF[1] * SQRT3, abs=1.0)
-
-
-def test_beam_reaches_past_the_bubble_once_shields_are_down():
-    from engine import host_loop
-    ship = _target(shields_up=False)
-    emitter = TGPoint3(0.0, 6000.0, 0.0)
-    aim = TGPoint3(0.0, -1.0, 0.0)
-    fallback = TGPoint3(0.0, 0.0, 0.0)
-
-    end = host_loop._beam_endpoint(
-        target=ship, emitter_pos=emitter, aim_unit=aim,
-        raw_length=6000.0, ship_instances=None, fallback=fallback)
-
-    # No renderer instance headless, so it degrades to the caller's fallback —
-    # the point is that it does NOT stop at the bubble.
-    assert end.y < HALF[1] * SQRT3 - 1.0

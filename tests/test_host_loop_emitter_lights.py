@@ -1,7 +1,7 @@
 """Tests for the Task-5 per-frame subsystem-light-emitter producer.
 
-Mirrors the torpedo producer (`_build_dynamic_light_render_data`) in shape,
-but the light stays body-frame: cached per-ship structs (built once at
+Mirrors the torpedo lights (the native torpedo feed's) in shape, but the
+light stays body-frame: cached per-ship structs (built once at
 spawn) are health-gated and tagged with the ship's render `instance_id`,
 and the renderer resolves them to world through the hull's own matrix. See
 `.superpowers/sdd/2026-07-29-subsystem-light-emitters/task-5-brief.md` and

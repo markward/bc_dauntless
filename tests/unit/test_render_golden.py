@@ -1,5 +1,7 @@
-"""tests/helpers/render_golden.py: record only under UPDATE_RENDER_GOLDEN=1,
-check per frame and name the first frame that differs."""
+"""tests/helpers/render_golden.py: record is inert without
+UPDATE_RENDER_GOLDEN=1 and refuses with it (the Python builders the goldens
+were recorded from are gone); the writer counts and digests each frame; check
+compares per frame and names the first frame that differs."""
 import json
 import sys
 
@@ -29,13 +31,9 @@ def test_record_is_inert_without_the_env(golden_dir):
     assert not list(golden_dir.iterdir())
 
 
-def test_record_writes_per_frame_counts_and_digests_then_skips(
-        golden_dir, monkeypatch):
-    monkeypatch.setenv("UPDATE_RENDER_GOLDEN", "1")
-    assert render_golden.recording()
-    with pytest.raises(pytest.skip.Exception, match="recorded"):
-        render_golden.record("tiny", _frames())
-    path = golden_dir / ("tiny.%s.json" % sys.platform)
+def test_the_writer_writes_per_frame_counts_and_digests(golden_dir):
+    path = render_golden._write("tiny", _frames(), "test frames")
+    assert path == golden_dir / ("tiny.%s.json" % sys.platform)
     data = json.loads(path.read_text())
     assert data["scene"] == "tiny" and data["platform"] == sys.platform
     recs = data["frames"]
@@ -48,16 +46,12 @@ def test_record_writes_per_frame_counts_and_digests_then_skips(
     assert len({r["sha"] for r in recs}) == 3
     # The same frames write the same bytes.
     before = path.read_bytes()
-    with pytest.raises(pytest.skip.Exception):
-        render_golden.record("tiny", _frames())
+    render_golden._write("tiny", _frames(), "test frames")
     assert path.read_bytes() == before
 
 
 def _record_tiny(monkeypatch):
-    monkeypatch.setenv("UPDATE_RENDER_GOLDEN", "1")
-    with pytest.raises(pytest.skip.Exception):
-        render_golden.record("tiny", _frames())
-    monkeypatch.delenv("UPDATE_RENDER_GOLDEN")
+    render_golden._write("tiny", _frames(), "test frames")
 
 
 def test_check_passes_the_recorded_frames(golden_dir, monkeypatch):
@@ -126,41 +120,42 @@ def test_differing_frames_lists_every_frame_that_differs(golden_dir,
         render_golden.differing_frames("tiny", _frames()[:2])
 
 
-def test_record_refuses_native_frames(golden_dir, monkeypatch):
-    monkeypatch.setenv("UPDATE_RENDER_GOLDEN", "1")
+def test_the_writer_refuses_native_frames(golden_dir):
     frames = _frames()
     frames[1] = render_golden.frame(source="native")
-    with pytest.raises(pytest.fail.Exception, match="Python builders"):
-        render_golden.record("tiny", frames)
+    with pytest.raises(pytest.fail.Exception, match="never written from the "
+                       "native feeds"):
+        render_golden._write("tiny", frames, "test frames")
     assert not list(golden_dir.iterdir())
 
 
-def test_record_refuses_without_the_python_builders(golden_dir, monkeypatch):
-    from engine import host_loop
+def test_record_always_refuses_now_the_builders_are_gone(golden_dir,
+                                                         monkeypatch):
+    """The Python builders were deleted once the goldens were recorded
+    (phase 6 follow-up 4, Task 3), and a golden is never recorded from the
+    native feeds: under UPDATE_RENDER_GOLDEN=1 record fails, writing
+    nothing, even for frames tagged "python"."""
     monkeypatch.setenv("UPDATE_RENDER_GOLDEN", "1")
-    assert render_golden.python_builders_available()
-    monkeypatch.delattr(host_loop, "_build_torpedo_render_data")
-    assert not render_golden.python_builders_available()
-    with pytest.raises(pytest.fail.Exception, match="Python builders"):
+    with pytest.raises(pytest.fail.Exception,
+                       match="Python builders are gone.*Mark"):
         render_golden.record("tiny", _frames())
     assert not list(golden_dir.iterdir())
 
 
-@pytest.mark.parametrize("value", [None, "", "0", "true", "yes"])
-def test_the_fixture_dir_is_written_only_under_an_explicit_1(
-        monkeypatch, tmp_path, value):
+@pytest.mark.parametrize("value", [None, "", "0", "true", "yes", "1"])
+def test_record_never_writes_the_fixture_dir(monkeypatch, tmp_path, value):
     """No RENDER_GOLDEN_DIR: record targets the committed fixture dir (here
-    a stand-in), and writes there only when UPDATE_RENDER_GOLDEN is "1"."""
+    a stand-in) and writes nothing there, whatever UPDATE_RENDER_GOLDEN is:
+    inert unless it is "1", and then it fails."""
     monkeypatch.setattr(render_golden, "FIXTURES", tmp_path)
     monkeypatch.delenv("RENDER_GOLDEN_DIR", raising=False)
     if value is None:
         monkeypatch.delenv("UPDATE_RENDER_GOLDEN", raising=False)
     else:
         monkeypatch.setenv("UPDATE_RENDER_GOLDEN", value)
-    render_golden.record("tiny", _frames())
-    assert not list(tmp_path.iterdir())
-    monkeypatch.setenv("UPDATE_RENDER_GOLDEN", "1")
-    with pytest.raises(pytest.skip.Exception):
+    if value == "1":
+        with pytest.raises(pytest.fail.Exception, match="are gone"):
+            render_golden.record("tiny", _frames())
+    else:
         render_golden.record("tiny", _frames())
-    assert [p.name for p in tmp_path.iterdir()] == [
-        "tiny.%s.json" % sys.platform]
+    assert not list(tmp_path.iterdir())

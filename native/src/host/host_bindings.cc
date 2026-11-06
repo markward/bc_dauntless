@@ -13423,7 +13423,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "the torpedo table; returns (n_torpedoes, n_torpedo_lights, "
               "{skip reason: count}). A torpedo the table cannot answer is "
               "skipped and counted, never raised.");
-        // host_loop._budgeted_dynamic_lights + set_dynamic_lights, with the
+        // The per-category light budget (torpedo_feed.h budget_lights) +
+        // set_dynamic_lights, with the
         // torpedo group the lights the combat_torpedo_feed just before this
         // call built. `explosions` / `emitters` are the Python builders'
         // lists of set_dynamic_lights dicts; caps (_LIGHT_CAP,
@@ -13475,8 +13476,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               },
               py::arg("explosions"), py::arg("emitters"), py::arg("caps"),
               "Blend the explosion and emitter light dicts with the pending "
-              "native torpedo lights exactly as _budgeted_dynamic_lights, "
-              "into the dynamic-light feed; returns its length.");
+              "native torpedo lights under the per-category budget, into "
+              "the dynamic-light feed; returns its length.");
         // The driver's per-ship check (k2_scan_rows), answered from the
         // mirror. Its name is native_combat._REQUIRED_BINDINGS' stale-build
         // marker for the mirror scan (phase 6 follow-up 3b).
