@@ -1606,10 +1606,23 @@ class ShipClass(DamageableObject):
                 if ps is not None:
                     _copy_name(prop, ps)
                     ps.SetProperty(prop)
-                    mc = prop.GetMaxCondition()
-                    if mc is not None: ps.SetMaxCondition(mc)
-                    tg = prop.GetTargetable()
-                    if tg is not None: ps.SetTargetable(tg)
+                    # The warp core is critical (destroying it kills the ship)
+                    # and has its own radius / threshold / repair complexity
+                    # on every hardpoint; copying only MaxCondition and
+                    # Targetable left it non-critical, radius 0, disabled at
+                    # <=25% (BC: below 50%). Measured on stbc.exe (reference §3, §7).
+                    for src, setter in (
+                        (prop.GetMaxCondition,        ps.SetMaxCondition),
+                        (prop.GetCritical,            ps.SetCritical),
+                        (prop.GetTargetable,          ps.SetTargetable),
+                        (prop.GetPrimary,             ps.SetPrimary),
+                        (prop.GetRadius,              ps.SetRadius),
+                        (prop.GetDisabledPercentage,  ps.SetDisabledPercentage),
+                        (prop.GetRepairComplexity,    ps.SetRepairComplexity),
+                    ):
+                        v = src()
+                        if v is not None:
+                            setter(v)
                     # Seed battery pools to full so a fresh ship can fire
                     # before the first per-tick refill (matches the SDK
                     # WarpCore which the C++ side initialises at full
@@ -1765,10 +1778,24 @@ class ShipClass(DamageableObject):
                     break  # parent scrubbed; orphan property
                 child = child_cls(prop.GetName() or "")
                 child.SetProperty(prop)
-                mc = prop.GetMaxCondition()
-                if mc is not None: child.SetMaxCondition(mc)
-                tg = prop.GetTargetable()
-                if tg is not None: child.SetTargetable(tg)
+                # Same SubsystemProperty fields the hull-child and engine-pod
+                # passes copy. Before this, a weapon leaf kept the class
+                # defaults (radius 0, disabled at <=25%, repair complexity 1),
+                # so hits could never splash a tube, banks fired down to 25%
+                # (BC: 75%) and repaired 3-7x too fast. Measured on stbc.exe:
+                # stbc-oracle docs/mechanics-reference-galaxy-sovereign.md §3.
+                for src, setter in (
+                    (prop.GetMaxCondition,        child.SetMaxCondition),
+                    (prop.GetCritical,            child.SetCritical),
+                    (prop.GetTargetable,          child.SetTargetable),
+                    (prop.GetPrimary,             child.SetPrimary),
+                    (prop.GetRadius,              child.SetRadius),
+                    (prop.GetDisabledPercentage,  child.SetDisabledPercentage),
+                    (prop.GetRepairComplexity,    child.SetRepairComplexity),
+                ):
+                    v = src()
+                    if v is not None:
+                        setter(v)
 
                 if isinstance(child, PhaserBank):
                     _copy_energy_weapon_fields(child, prop)

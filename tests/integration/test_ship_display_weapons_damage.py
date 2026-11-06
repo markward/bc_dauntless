@@ -61,20 +61,14 @@ def test_damaging_one_phaser_bank_surfaces_damaged_phaser_row():
     ship = _build_galaxy()
     banks = _phaser_banks(ship)
     target_bank = banks[0]
-    # Pin the disabled-percentage to the current (default) value. The
-    # Galaxy hardpoint script (sdk/.../Hardpoints/galaxy.py) calls
-    # SetDisabledPercentage(0.75) on every phaser bank property, but
-    # engine/appc/ships.py Pass 4 doesn't copy that field through to
-    # the child PhaserBank — so bank.GetDisabledPercentage() returns
-    # the ShipSubsystem default 0.25 here. If/when that propagation
-    # gap is closed, this assertion fails loudly and the seed value
-    # below needs to be revisited (max_condition * 0.5 would land
-    # below a 0.75 threshold, flipping IsDisabled() to 1).
-    assert target_bank.GetDisabledPercentage() == 0.25
-    # Drop the bank into the damaged band: half of MaxCondition,
-    # comfortably above the disabled threshold (default
-    # DisabledPercentage 0.25).
-    seed = target_bank.GetMaxCondition() * 0.5
+    # The Galaxy hardpoint (sdk/.../Hardpoints/galaxy.py) sets
+    # DisabledPercentage 0.75 on every phaser bank, and ships.py Pass 4 now
+    # copies it through (it used to leave the 0.25 default). On stbc.exe a
+    # bank works at 75.0% and is disabled below it (stbc-oracle reference §3).
+    assert target_bank.GetDisabledPercentage() == 0.75
+    # Drop the bank into the damaged band: 10% of MaxCondition lost leaves
+    # 90%, above the 75% disabled threshold.
+    seed = target_bank.GetMaxCondition() * 0.1
     ship.DamageSystem(target_bank, seed)
 
     rows = _phaser_rows(ship)
