@@ -215,6 +215,110 @@ def test_t4_ammo_switch_unloads_tubes(oracle):
     assert launches == [], launches
 
 
+def _tube_events(monkeypatch):
+    """(kind, source, tube name) for every ET_TORPEDO_FIRED / ET_TORPEDO_RELOAD
+    posted from now on, in order."""
+    import App
+    seen = []
+    orig = App.g_kEventManager.AddEvent
+
+    def add(evt):
+        et = evt.GetEventType()
+        if et in (App.ET_TORPEDO_FIRED, App.ET_TORPEDO_RELOAD):
+            d = evt.GetDestination()
+            seen.append(("FIRED" if et == App.ET_TORPEDO_FIRED else "RELOAD",
+                         evt.GetSource(), d.GetName() if d is not None else None))
+        return orig(evt)
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent", add)
+    return seen
+
+
+def _tubes(s):
+    ts = s.weapon_system("torpedo")
+    return ts, [ts.GetWeapon(i) for i in range(ts.GetNumWeapons())]
+
+
+def _hold_two(tube):
+    """Forward Torpedo 1 patched to hold two rounds, as the captures'
+    `--hp-patch sovereign:ForwardTorpedo1.SetMaxReady=2`."""
+    tube._max_ready = 2
+    tube._resize_slots()
+    tube.SetNumReady(2)
+
+
+def test_t4_ammo_switch_posts_one_unload_per_round(oracle, monkeypatch):
+    """`ammo_win_switch` / `ammo_win_mr2_switch`: SetAmmoType(1) empties every
+    tube with one ET_TORPEDO_FIRED per round (no source, the tube as
+    destination) -- the two-round tube posts twice -- and no reload yet."""
+    s = oracle(attacker="Sovereign", range_gu=100)
+    ts, tubes = _tubes(s)
+    _hold_two(tubes[0])
+    seen = _tube_events(monkeypatch)
+    ts.SetAmmoType(1)
+    assert [t.GetNumReady() for t in tubes] == [0] * len(tubes)
+    fired = [name for kind, src, name in seen if kind == "FIRED"]
+    assert fired == [tubes[0].GetName()] * 2 + [t.GetName() for t in tubes[1:]]
+    assert all(src is None for _, src, _ in seen), "an unload has no projectile source"
+    assert not [e for e in seen if e[0] == "RELOAD"]
+
+
+def test_t4_ammo_switch_reloads_after_the_reload_delay(oracle, monkeypatch):
+    """`ammo_win_switch`: every tube's ET_TORPEDO_RELOAD comes 40.05 s after
+    the switch (Sovereign ReloadDelay 40 s); the two-round tube reloads both
+    (`ammo_win_mr2_switch`, +40.00 s)."""
+    s = oracle(attacker="Sovereign", range_gu=100)
+    ts, tubes = _tubes(s)
+    _hold_two(tubes[0])
+    t0 = s.t
+    ts.SetAmmoType(1)
+    seen = _tube_events(monkeypatch)
+    reloads = []
+    for t, _ in s.sample_until(45.0):
+        while len(reloads) < len(seen):
+            reloads.append((t - t0, seen[len(reloads)]))
+    names = [e[2] for _, e in reloads if e[0] == "RELOAD"]
+    assert sorted(names) == sorted([tubes[0].GetName()] + [t.GetName() for t in tubes])
+    for dt, _ in reloads:
+        assert dt == pytest.approx(40.0, abs=0.2)
+    assert [t.GetNumReady() for t in tubes] == [2] + [1] * (len(tubes) - 1)
+
+
+@pytest.mark.parametrize("same_type", [False, True])
+def test_t4_ammo_switch_with_zero_reloads_at_once(oracle, monkeypatch, same_type):
+    """`ammo_win_switch0` / `ammo_win_same0` (and their two-round `mr2_`
+    runs): SetAmmoType(t, 0) -- mission scripts and the starbase's
+    ReloadShip -- unloads and reloads every tube at once, the selected type
+    changed or not: a tube's ET_TORPEDO_FIRED per round, then its
+    ET_TORPEDO_RELOAD per round, tube by tube, every tube still ready."""
+    s = oracle(attacker="Sovereign", range_gu=100)
+    ts, tubes = _tubes(s)
+    _hold_two(tubes[0])          # `ammo_win_mr2_switch0` / `_mr2_same0`
+    seen = _tube_events(monkeypatch)
+    want_type = ts.GetAmmoTypeNumber() if same_type else 1
+    ts.SetAmmoType(want_type, 0)
+    assert ts.GetAmmoTypeNumber() == want_type
+    assert [t.GetNumReady() for t in tubes] == [2] + [1] * (len(tubes) - 1)
+    t1 = tubes[0].GetName()
+    assert [(k, n) for k, _, n in seen] == (
+        [("FIRED", t1), ("FIRED", t1), ("RELOAD", t1), ("RELOAD", t1)]
+        + [e for t in tubes[1:] for e in (("FIRED", t.GetName()), ("RELOAD", t.GetName()))])
+    assert all(src is None for _, src, _ in seen)
+
+
+def test_t4_reselecting_the_loaded_type_empties_the_tubes(oracle, monkeypatch):
+    """`ammo_win_same`: SetAmmoType(current) with one argument empties every
+    tube exactly like a switch (ET_TORPEDO_FIRED per tube, reload 40 s
+    later); the type is unchanged."""
+    s = oracle(attacker="Sovereign", range_gu=100)
+    ts, tubes = _tubes(s)
+    before = ts.GetAmmoTypeNumber()
+    seen = _tube_events(monkeypatch)
+    ts.SetAmmoType(before)
+    assert ts.GetAmmoTypeNumber() == before
+    assert [t.GetNumReady() for t in tubes] == [0] * len(tubes)
+    assert [(k, n) for k, _, n in seen] == [("FIRED", t.GetName()) for t in tubes]
+
+
 @pytest.mark.parametrize("attacker", ["Sovereign", "Galaxy"])
 @pytest.mark.parametrize("mode, want", [
     (0, [0.0, 0.667, 1.333, 2.0]),     # Single: one tube at a time

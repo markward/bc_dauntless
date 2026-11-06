@@ -1845,35 +1845,53 @@ class TorpedoSystem(WeaponSystem):
         self._ammo_by_slot[len(self._ammo_by_slot)] = ammo_type
         native_combat.push_field(self, "_ammo_by_slot")       # in-place store
 
-    def SetAmmoType(self, ammo_index, _reload_arg=0) -> None:
+    def SetAmmoType(self, ammo_index, delayed_reload=1) -> None:
         # SDK semantics: SELECT the ammo type at index `ammo_index` (0-based,
         # same domain as GetAmmoTypeNumber / range(GetNumAmmoTypes())).  Never
         # a store — hardpoint setup populates slots via AddAmmoType.  Call
-        # sites: AI/Preprocessors.py:548,640 (int index from ChooseTorpType),
-        # ShipScriptActions.py:400, MissionLib.py:611, E2M0.py:720
-        # (App.AT_TWO = 1).  Second arg is always 0 in the SDK (reload
-        # time/flag) — accepted, ignored.
+        # sites: AI/Preprocessors.py:548,640 (int index from ChooseTorpType,
+        # ONE argument), ShipScriptActions.py:400 (ReloadShip, the type
+        # already loaded, second argument 0), MissionLib.py:611 (0, 0),
+        # E2M0.py:720 and E2M6.py:508,511 (App.AT_TWO = 1, second argument 0).
         #
-        # Switching to a DIFFERENT type unloads every tube: measured on the
-        # original exe (stbc-oracle bible §4 T4, `torpedo_sovereign_quantum_57`)
-        # the Sovereign's first quantum salvo after SetAmmoType(1) needs ~45 s
-        # — its ReloadDelay is 40 s — and BC's decompiled switch path calls the
-        # tube's unload (TorpedoTube.UnloadTorpedo, FUN_0057D9A0). Re-selecting
-        # the type already loaded is left alone: every starbase dock ends with
-        # SetAmmoType(GetAmmoTypeNumber(), 0), and emptying the tubes on that
-        # is not something the capture shows.
-        before = self.GetCurrentAmmoSlot()
+        # The second argument picks the reload. Measured on the original
+        # (stbc-oracle ammo_win_*.json: a Sovereign with every tube loaded,
+        # photon -> quantum, and Forward Torpedo 1 patched to hold two rounds):
+        #
+        #   SetAmmoType(t)        every round of every tube is unloaded, one
+        #                         ET_TORPEDO_FIRED (no source, the tube as
+        #                         destination) per round, and each reloads
+        #                         after its ReloadDelay (40 s on the
+        #                         Sovereign; ET_TORPEDO_RELOAD per round).
+        #   SetAmmoType(t, 0)     every tube unloads and reloads at once:
+        #                         ET_TORPEDO_FIRED then ET_TORPEDO_RELOAD per
+        #                         round, tube by tube, all still ready.
+        #
+        # Both hold whether or not `t` is the type already loaded
+        # (ammo_win_same / ammo_win_same0): a re-selection empties the tubes
+        # like a real switch. The SDK's own callers guard for that -- the AI's
+        # ChooseTorpType only calls it for a different type, and ReloadShip's
+        # re-selection passes 0.
         self.SetCurrentAmmoSlot(int(ammo_index))
-        if self.GetCurrentAmmoSlot() != before:
-            for i in range(self.GetNumWeapons()):
-                tube = self.GetWeapon(i)
-                unload = getattr(tube, "UnloadTorpedo", None)
-                if not callable(unload):
-                    continue
-                ready = getattr(tube, "GetNumReady", None)
-                n = int(ready()) if callable(ready) else 0
-                for _ in range(n):
-                    unload()
+        self._unload_all_tubes(reload_at_once=not delayed_reload)
+
+    def _unload_all_tubes(self, reload_at_once: bool) -> None:
+        """Every ready round of every tube out through TorpedoTube.UnloadTorpedo
+        (each posts its ET_TORPEDO_FIRED); with `reload_at_once`, the tube is
+        then refilled round by round through ReloadTorpedo (each posts its
+        ET_TORPEDO_RELOAD) before the next tube. See SetAmmoType."""
+        for i in range(self.GetNumWeapons()):
+            tube = self.GetWeapon(i)
+            unload = getattr(tube, "UnloadTorpedo", None)
+            if not callable(unload):
+                continue
+            ready = getattr(tube, "GetNumReady", None)
+            n = int(ready()) if callable(ready) else 0
+            for _ in range(n):
+                unload()
+            if reload_at_once:
+                for _ in range(int(tube.GetMaxReady())):
+                    tube.ReloadTorpedo()
 
     def GetAmmoType(self, slot: int):
         return self._ammo_by_slot.get(int(slot))
