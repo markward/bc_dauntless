@@ -429,6 +429,60 @@ beam will stop somewhere the splash is not.
 """
 
 
+def has_hull_box(ship) -> bool:
+    """Whether the ship has a usable cached hull box (_hull_box_for)."""
+    return _hull_box_for(ship) is not None
+
+
+def point_in_shield_bubble(ship, point) -> bool:
+    """True if the world point ``point`` lies inside the ship's shield
+    ellipsoid (the hull box's semi-axes x SHIELD_ELLIPSOID_AXIS_SCALE, as
+    :func:`shield_bubble_entry`). A ship with no cached hull box has no
+    bubble to be inside of: False."""
+    box = _hull_box_for(ship)
+    if box is None:
+        return False
+    (cx, cy, cz), (hx, hy, hz) = box
+    ax = hx * SHIELD_ELLIPSOID_AXIS_SCALE
+    ay = hy * SHIELD_ELLIPSOID_AXIS_SCALE
+    az = hz * SHIELD_ELLIPSOID_AXIS_SCALE
+    ox, oy, oz = _body_frame_delta(ship, point)
+    o0 = (ox - cx) / ax
+    o1 = (oy - cy) / ay
+    o2 = (oz - cz) / az
+    return o0 * o0 + o1 * o1 + o2 * o2 <= 1.0
+
+
+def hull_segment_hit(ship, seg_start, seg_end, radius: float) -> bool:
+    """Does the segment ``seg_start`` -> ``seg_end`` (world) touch the
+    ship's hull? The hull box (body frame, slab test) when the ship has one;
+    a sphere of ``radius`` around the ship (``sphere_hit`` at ``seg_end``)
+    only when it has none (rocks, unrealized and headless ships)."""
+    box = _hull_box_for(ship)
+    if box is None:
+        return sphere_hit(seg_end, ship.GetWorldLocation(), radius)
+    (cx, cy, cz), (hx, hy, hz) = box
+    a = _body_frame_delta(ship, seg_start)
+    b = _body_frame_delta(ship, seg_end)
+    p0 = (a[0] - cx, a[1] - cy, a[2] - cz)
+    d = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    t0, t1 = 0.0, 1.0
+    for i, h in enumerate((hx, hy, hz)):
+        if abs(d[i]) < 1e-12:
+            if abs(p0[i]) > h:
+                return False
+            continue
+        ta = (-h - p0[i]) / d[i]
+        tb = (h - p0[i]) / d[i]
+        if ta > tb:
+            ta, tb = tb, ta
+        t0 = max(t0, ta)
+        t1 = min(t1, tb)
+        if t0 > t1:
+            return False
+    return True
+
+
 def shield_bubble_entry(ship, ray_origin, ray_direction, max_dist: float):
     """World-space point where the segment enters ``ship``'s shield bubble, or
     ``None``.

@@ -89,4 +89,17 @@ std::optional<Vec3> shield_bubble_entry(const Mirror& m, int64_t target,
                                         const Vec3& origin, const Vec3& dir,
                                         double max_dist);
 
+// combat.has_hull_box: _hull_box_for(ship) is not None.
+bool has_hull_box(const Mirror& m, int64_t target);
+
+// combat.point_in_shield_bubble: the world `point` inside the ship's shield
+// ellipsoid. No hull box: false.
+bool point_in_shield_bubble(const Mirror& m, int64_t target, const Vec3& point);
+
+// combat.hull_segment_hit's hull-box branch: the world segment `a` -> `b`
+// touches the hull box (body frame, slab test). Only for a ship that
+// has_hull_box; without one the caller runs sphere_hit, as Python does.
+bool hull_box_segment_hit(const Mirror& m, int64_t target, const Vec3& a,
+                          const Vec3& b);
+
 }  // namespace dauntless::combat

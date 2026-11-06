@@ -873,6 +873,8 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     # tick in a 17-ship fight.
     from engine.appc.combat import (sphere_hit, _resolve_hit_point,
                                     shield_bubble_entry, shields_block,
+                                    point_in_shield_bubble, hull_segment_hit,
+                                    has_hull_box,
                                     bubble_bound_radius as _bubble_bound_radius)
     from engine.appc.math import TGPoint3
     from engine.systems import frames
@@ -995,16 +997,33 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             # the sphere test noticed (so its whole segment was already inside
             # and there was no entry point left to find), and a dorsal shot
             # detonated 2.81 GU short of the shield, never reaching it at all.
+            shield_up = aim_unit is not None and shields_block(ship)
             bubble_entry = (
                 shield_bubble_entry(ship, seg_prev, aim_unit, seg_len)
-                if (aim_unit is not None and shields_block(ship)) else None)
+                if shield_up else None)
 
-            # The hull sphere as DRAWN (world_radius = GetRadius(), base x
-            # scale): E1M2's rocks are scaled 3-8.5x, and the unscaled base
-            # radius let a torpedo fly deep into one before it hit.
-            if bubble_entry is None and not sphere_hit(
-                    seg_cur, ship.GetWorldLocation(), world_radius(ship)):
-                continue
+            if bubble_entry is None:
+                # A shot that crosses no bubble while the shields are up hits
+                # nothing: the hull lies inside the bubble (sqrt(3) x the hull
+                # box), so a segment that misses the ellipsoid misses the hull
+                # too. Only a shot that STARTS inside the bubble (point blank)
+                # goes on to the hull test, as in BC's TestHit. And the hull
+                # is the hull box, not a sphere of GetRadius. Measured on the
+                # original with stbc-oracle (AI duels, torpedo tracks against
+                # ship poses): torpedoes that expired as misses passed inside
+                # GetRadius of their target 101 of 288 times against a
+                # shielded Galaxy, and 100 of 655 against a mostly unshielded
+                # Galor -- a sphere called all of those hits.
+                # A ship with no cached hull box (unrealized, headless) has no
+                # bubble to test against and keeps the sphere of the DRAWN
+                # radius (world_radius = GetRadius(), base x scale: E1M2's
+                # rocks are scaled 3-8.5x), inside hull_segment_hit.
+                if (shield_up and has_hull_box(ship)
+                        and not point_in_shield_bubble(ship, seg_prev)):
+                    continue
+                if not hull_segment_hit(ship, seg_prev, seg_cur,
+                                        world_radius(ship)):
+                    continue
 
             if bubble_entry is not None:
                 # Detonate ON the bubble — BC shortens the shot to the point

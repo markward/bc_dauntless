@@ -217,8 +217,11 @@ def test_torpedo_with_shields_down_still_uses_the_hull_path():
 
     assert update_all(dt, [src, tgt]) == [], "no bubble to stop it out here"
 
-    # It carries on and detonates at the bounding sphere, as before.
+    # It carries on past the bounding sphere (the original's misses pass inside GetRadius; see
+    # projectiles.update_all) and detonates on the hull box.
     t.SetTranslateXYZ(0.0, tgt._radius + 0.5 * step, 0.0)
+    assert update_all(dt, [src, tgt]) == [], "a sphere of GetRadius is not the hull"
+    t.SetTranslateXYZ(0.0, GALAXY_HALF[1] + 0.5 * step, 0.0)
     assert len(update_all(dt, [src, tgt])) == 1
 
 
@@ -239,3 +242,16 @@ def test_dorsal_torpedo_reaches_the_thin_axis_of_the_bubble():
 
     assert len(hits) == 1
     assert t.GetTranslate().z == pytest.approx(bubble_z, abs=1e-3)
+
+
+def test_a_torpedo_that_misses_the_bubble_misses_the_ship_while_shields_are_up():
+    """Measured on the original (stbc-oracle duels_ai_matrix): 101 of 288 expired torpedoes passed inside a
+    shielded Galaxy's GetRadius without hitting. Here one passes 3 GU above the centre: inside the 4.03 GU
+    sphere, outside the 1.22 GU dorsal semi-axis of the bubble -- no hit."""
+    from engine.appc.projectiles import update_all
+    src, tgt = _shooter(), _target()
+    t = _torpedo_inbound(src, tgt)
+    dt = 1.0 / 60.0
+    step = abs(t._velocity.y) * dt
+    t.SetTranslateXYZ(0.0, 0.5 * step, 3.0)
+    assert update_all(dt, [src, tgt]) == []

@@ -755,15 +755,32 @@ K3Record Walker::run() {
             case St::SPHERE: {
                 const Moving& mv = s_.moving[s_.mi];
                 const ShipEntry& e = (*s_.cache)[s_.near[s_.mi][s_.ci]];
-                // if bubble_entry is None and not sphere_hit(seg_cur,
-                //     ship.GetWorldLocation(), world_radius(ship)): continue
-                // (GetWorldLocation is the cached read: no ship moves inside
-                // update_all)
-                if (!s_.bubble &&
-                    !sphere_hit(s_.seg_cur, e.pos, world_radius(m_, e.ship))) {
-                    ++s_.ci;
-                    s_.st = St::CANDIDATE;
-                    break;
+                // if bubble_entry is None:
+                //     if shield_up and has_hull_box(ship) and not
+                //         point_in_shield_bubble(ship, seg_prev): continue
+                //     if not hull_segment_hit(ship, seg_prev, seg_cur,
+                //         world_radius(ship)): continue
+                // (hull_segment_hit with no hull box is sphere_hit(seg_cur,
+                // ship.GetWorldLocation(), ...); GetWorldLocation is the
+                // cached read: no ship moves inside update_all)
+                if (!s_.bubble) {
+                    const bool shield_up = mv.aim && s_.shields && *s_.shields;
+                    const bool box = has_hull_box(m_, e.ship);
+                    bool hit;
+                    if (shield_up && box &&
+                        !point_in_shield_bubble(m_, e.ship, s_.seg_prev))
+                        hit = false;
+                    else if (box)
+                        hit = hull_box_segment_hit(m_, e.ship, s_.seg_prev,
+                                                   s_.seg_cur);
+                    else
+                        hit = sphere_hit(s_.seg_cur, e.pos,
+                                         world_radius(m_, e.ship));
+                    if (!hit) {
+                        ++s_.ci;
+                        s_.st = St::CANDIDATE;
+                        break;
+                    }
                 }
                 if (s_.bubble) {
                     // seg_cur = bubble_entry
