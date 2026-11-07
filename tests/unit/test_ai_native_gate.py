@@ -165,7 +165,7 @@ def test_the_snapshot_exists_right_after_importing_host_loop():
     import sys
     code = ("import sys, engine.host_loop;"
             "m = sys.modules.get('engine.appc.ai_native');"
-            "assert m is not None and m._SURFACE_SNAPSHOT")
+            "assert m is not None and m._READER_BODIES")
     r = subprocess.run([sys.executable, "-c", code], capture_output=True,
                        text=True)
     assert r.returncode == 0, r.stderr[-1500:]
@@ -255,40 +255,121 @@ def test_switch_is_read_at_use(monkeypatch):
     assert ai_native.enabled("avoid")
 
 
-def test_object_surface_detects_a_subclass_override():
+def test_reader_contract_detects_a_subclass_override():
     from engine.appc.ships import ShipClass, ShipClass_Create
     ship = ShipClass_Create("Galaxy")
-    names = ("GetRadius", "GetWorldLocation")
-    assert ai_native.object_surface_is_stock(ship, names)
+    contract = ai_native.reader_contract("GetRadius", "GetWorldLocation")
+    assert ai_native.object_reads_are_stock(ship, contract)
 
     class Modded(ShipClass):
         def GetRadius(self):
             return 1.0
     other = Modded()
-    assert not ai_native.object_surface_is_stock(other, names)
-    assert ai_native.object_surface_is_stock(ship, names)
+    assert not ai_native.object_reads_are_stock(other, contract)
+    assert ai_native.object_reads_are_stock(ship, contract)
 
 
-def test_object_surface_sees_a_patch_on_the_engine_class(monkeypatch):
+def test_reader_contract_sees_a_patch_on_the_engine_class(monkeypatch):
+    from engine.appc.objects import ObjectClass
     from engine.appc.ships import ShipClass, ShipClass_Create
     ship = ShipClass_Create("Galaxy")
-    names = ("GetWorldLocation",)
-    assert ai_native.object_surface_is_stock(ship, names)
+    contract = ai_native.reader_contract("GetWorldLocation")
+    assert ai_native.object_reads_are_stock(ship, contract)
     original = ShipClass.GetWorldLocation
     monkeypatch.setattr(ShipClass, "GetWorldLocation",
                         lambda self: original(self))
-    assert not ai_native.object_surface_is_stock(ship, names)
-    monkeypatch.setattr(ShipClass, "GetWorldLocation", original)
-    assert ai_native.object_surface_is_stock(ship, names)
+    assert not ai_native.object_reads_are_stock(ship, contract)
+    monkeypatch.delattr(ShipClass, "GetWorldLocation")
+    assert ai_native.object_reads_are_stock(ship, contract)
+    # Patching the defining class itself is seen too.
+    monkeypatch.setattr(ObjectClass, "GetWorldLocation",
+                        lambda self: original(self))
+    assert not ai_native.object_reads_are_stock(ship, contract)
 
 
-def test_object_surface_sees_an_instance_override():
+def test_reader_contract_sees_an_instance_override():
     from engine.appc.ships import ShipClass_Create
     ship = ShipClass_Create("Galaxy")
-    names = ("GetRadius",)
-    assert ai_native.object_surface_is_stock(ship, names)
+    contract = ai_native.reader_contract("GetRadius")
+    assert ai_native.object_reads_are_stock(ship, contract)
     ship.__dict__["GetRadius"] = lambda: 1.0
-    assert not ai_native.object_surface_is_stock(ship, names)
+    assert not ai_native.object_reads_are_stock(ship, contract)
+
+
+def test_reader_contract_requires_the_exact_body_the_reader_mirrors():
+    """Not "any engine function": DebrisChunk's GetWorldLocation / GetRadius
+    and Torpedo's GetVelocityTG are engine code, but not the bodies a native
+    reader reproduces, so they are rejected."""
+    from engine.appc.debris_chunk import DebrisChunk
+    from engine.appc.objects import ObjectClass, PhysicsObjectClass
+    from engine.appc.projectiles import Torpedo
+    from engine.core.ids import TGObject
+    chunk = DebrisChunk.__new__(DebrisChunk)
+    assert not ai_native.object_reads_are_stock(
+        chunk, ai_native.reader_contract("GetWorldLocation", "GetRadius"))
+    torp = Torpedo()
+    assert not ai_native.object_reads_are_stock(
+        torp, ai_native.reader_contract("GetVelocityTG"))
+    # Its inherited ObjectClass readers ARE the mirrored bodies.
+    assert ai_native.object_reads_are_stock(
+        torp, ai_native.reader_contract("GetWorldLocation", "GetRadius"))
+    assert dict(ai_native.reader_contract(
+        "GetObjID", "IsTypeOf", "GetWorldLocation", "GetRadius",
+        "GetVelocityTG")) == {
+        "GetObjID": TGObject.__dict__["GetObjID"],
+        "IsTypeOf": ObjectClass.__dict__["IsTypeOf"],
+        "GetWorldLocation": ObjectClass.__dict__["GetWorldLocation"],
+        "GetRadius": ObjectClass.__dict__["GetRadius"],
+        "GetVelocityTG": PhysicsObjectClass.__dict__["GetVelocityTG"]}
+    with pytest.raises(KeyError):
+        ai_native.reader_contract("GetMass")     # no native reader mirrors it
+
+
+def test_reader_contract_object_without_a_dict_shadows_nothing():
+    obj = _no_dict_ship()
+    contract = ai_native.reader_contract("GetRadius")
+    _NoDictShip.hidden = True
+    try:
+        assert ai_native.object_reads_are_stock(obj, contract)
+    finally:
+        _NoDictShip.hidden = False
+
+
+def _real_dict_descriptor(cls):
+    for klass in cls.__mro__[1:]:
+        d = klass.__dict__.get("__dict__")
+        if d is not None:
+            return d
+    raise AssertionError("no __dict__ slot")
+
+
+def _make_no_dict_class():
+    from engine.appc.ships import ShipClass
+
+    class _NoDict(ShipClass):
+        """A ship whose `__dict__` attribute is missing while `hidden`."""
+        hidden = False
+
+        @property
+        def __dict__(self):
+            if type(self).hidden:
+                raise AttributeError("__dict__")
+            return _real_dict_descriptor(type(self)).__get__(self)
+
+        def __getattr__(self, name):
+            raise AttributeError(name)
+    return _NoDict
+
+
+_NoDictShip = _make_no_dict_class()
+
+
+def _no_dict_ship():
+    return _NoDictShip()
+
+
+_EMPTY = {"native": 0, "python": 0, "reasons": {}, "object_fallbacks": {},
+          "counts": {}}
 
 
 def test_stats_count_and_reset():
@@ -297,14 +378,19 @@ def test_stats_count_and_reset():
     ai_native.note("avoid", "python", "not_stock")
     ai_native.note("avoid", "python", "not_stock")
     ai_native.note("fire", "python", "switch")
+    # Per-object fallbacks inside a native call, and results: neither is a
+    # call, so neither moves "native" or "python".
+    ai_native.note_object_fallback("avoid", "surface")
+    ai_native.count("avoid", "avoided", 3)
     s = ai_native.stats()
     assert s["avoid"] == {"native": 1, "python": 2,
-                          "reasons": {"not_stock": 2}}
-    assert s["fire"] == {"native": 0, "python": 1, "reasons": {"switch": 1}}
-    assert s["select"] == {"native": 0, "python": 0, "reasons": {}}
+                          "reasons": {"not_stock": 2},
+                          "object_fallbacks": {"surface": 1},
+                          "counts": {"avoided": 3}}
+    assert s["fire"] == dict(_EMPTY, python=1, reasons={"switch": 1})
+    assert s["select"] == _EMPTY
     ai_native.reset_stats()
-    assert all(v == {"native": 0, "python": 0, "reasons": {}}
-               for v in ai_native.stats().values())
+    assert all(v == _EMPTY for v in ai_native.stats().values())
 
 
 def test_stats_reset_on_mission_state_reset():
@@ -322,4 +408,8 @@ def test_stats_line_prints_with_the_frame_profiler_report():
     (line,) = frame_profiler._ai_native_lines()
     assert line == ("  ai native: avoid native 1, python 1 (not_stock 1); "
                     "select native 0, python 0; fire native 0, python 0")
+    ai_native.note_object_fallback("avoid", "surface")
+    (line,) = frame_profiler._ai_native_lines()
+    assert line.startswith("  ai native: avoid native 1, python 1 "
+                           "(not_stock 1) [objects to python: surface 1]; ")
     ai_native.reset_stats()

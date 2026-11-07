@@ -737,6 +737,10 @@ def _ai_native_lines() -> list[str]:
             counted = ["%s %d" % kv for kv in c["reasons"].items() if kv[1]]
             if counted:
                 part += " (%s)" % ", ".join(counted)
+            fallbacks = ["%s %d" % kv
+                         for kv in c.get("object_fallbacks", {}).items() if kv[1]]
+            if fallbacks:
+                part += " [objects to python: %s]" % ", ".join(fallbacks)
             parts.append(part)
         return ["  ai native: " + "; ".join(parts)]
     except Exception:

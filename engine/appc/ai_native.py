@@ -12,8 +12,9 @@ Python body only for an instance the SDK would have run UNCHANGED. "Stock"
   that file (``__code__.co_filename`` and ``__qualname__``), or one of our own
   wrappers of such a function (``_dauntless_wraps``: the sensor gate's);
 * neither the class chain nor the instance ``__dict__`` shadows one;
-* each App method the native code replaces a call to is the engine's own
-  function (``object_surface_is_stock``, a snapshot taken at import).
+* each App method the native code reproduces is, on the object's type, the
+  exact engine body its reader mirrors (``reader_contract`` /
+  ``object_reads_are_stock``, a table taken at import).
 
 Anything else runs the SDK Python for that call. That fallback is permanent: it
 is the mod path.
@@ -253,79 +254,85 @@ def preprocessor_is_stock(inst, sdk_class_name: str,
     return inst.__dict__.keys().isdisjoint(methods)
 
 
-# ── object_surface_is_stock ──────────────────────────────────────────────────
+# ── Reader contracts ─────────────────────────────────────────────────────────
+#
+# A native reader does not call an App method: it reproduces ONE body (the
+# transform-store read of ObjectClass.GetWorldLocation, the guarded
+# `_radius * _scale` of ObjectClass.GetRadius, ...). So "stock" for an object
+# is not "some engine function": it is "the exact function this reader
+# mirrors". DebrisChunk.GetRadius and Torpedo.GetVelocityTG are engine code
+# and still not stock for a reader of ObjectClass.GetRadius /
+# PhysicsObjectClass.GetVelocityTG, and neither is a future engine override
+# (a RockClass.GetRadius returning effective_radius, say).
 
-def _function_table(cls) -> dict:
-    return {n: v for n, v in cls.__dict__.items()
-            if isinstance(v, types.FunctionType)}
-
-
-def _take_surface_snapshot() -> dict:
-    """{class: {name: function}} for the engine classes whose methods the
-    native code stands in for, taken at import, before any test, tool or mod
-    can replace a name."""
-    from engine.appc import projectiles
-    from engine.appc.debris_chunk import DebrisChunk
-    from engine.appc.objects import (DamageableObject, ObjectClass,
-                                     PhysicsObjectClass)
-    from engine.appc.ships import ShipClass
-    from engine.core.ids import TGObject        # GetObjID
-    classes = [TGObject, ObjectClass, PhysicsObjectClass, DamageableObject,
-               ShipClass, projectiles.Torpedo, DebrisChunk]
-    try:
-        from engine.rocks.rock import RockClass
-        classes.append(RockClass)
-    except ImportError:
-        pass
-    return {cls: _function_table(cls) for cls in classes}
-
-
-_SURFACE_SNAPSHOT = _take_surface_snapshot()
+def _take_reader_bodies() -> dict:
+    """{App method name: the engine function a native reader mirrors}, taken
+    at import, before any test, tool or mod can replace a name."""
+    from engine.appc.objects import ObjectClass, PhysicsObjectClass
+    from engine.core.ids import TGObject
+    return {
+        "GetObjID": TGObject.__dict__["GetObjID"],             # `_obj_id`
+        # An isinstance on the type: its answer depends on the type alone.
+        "IsTypeOf": ObjectClass.__dict__["IsTypeOf"],
+        "GetWorldLocation": ObjectClass.__dict__["GetWorldLocation"],  # store
+        "GetRadius": ObjectClass.__dict__["GetRadius"],  # guarded _radius*_scale
+        "GetVelocityTG": PhysicsObjectClass.__dict__["GetVelocityTG"],  # _velocity
+    }
 
 
-def _snapshot_function(cls, name):
-    """What the import-time snapshot holds for `name` on the nearest engine
-    class of `cls`'s MRO that had it then (`_GONE` if none did). A class that
-    only re-sets that same function is therefore still stock."""
-    for klass in cls.__mro__:
-        table = _SURFACE_SNAPSHOT.get(klass)
-        if table is not None and name in table:
-            return table[name]
-    return _GONE
+_READER_BODIES = _take_reader_bodies()
+
+#: names -> contract, so every caller asking for the same names shares one
+#: hashable contract (and one cache entry per type).
+_contracts: dict = {}
 
 
-#: type -> {names: [resolved functions, verdict]}
-_surface_cache = weakref.WeakKeyDictionary()
+def reader_contract(*names) -> tuple:
+    """The contract for native readers of `names`: ``((name, function), ...)``
+    with each function the exact engine body the reader reproduces (the
+    import-time table above). A name no native reader mirrors raises
+    KeyError: register its body here first."""
+    contract = _contracts.get(names)
+    if contract is None:
+        contract = _contracts[names] = tuple(
+            (n, _READER_BODIES[n]) for n in names)
+    return contract
 
 
-def _decide_surface(cls, names, resolved) -> bool:
-    for name, fn in zip(names, resolved):
-        want = _snapshot_function(cls, name)
-        if fn is _GONE or fn is not want:
-            return False
-    return True
+#: type -> {contract: [resolved functions, verdict]}
+_reads_cache = weakref.WeakKeyDictionary()
 
 
-def object_surface_is_stock(obj, names: tuple) -> bool:
-    """Each of `names` resolves on ``type(obj)`` to the function the import-time
-    snapshot holds for the engine class defining it, and `obj` shadows none."""
+def object_reads_are_stock(obj, contract: tuple) -> bool:
+    """For each ``(name, function)`` of `contract`, ``type(obj)`` resolves
+    `name` to exactly `function`, and the instance ``__dict__`` shadows none of
+    the names (an object with no ``__dict__`` shadows nothing). The class half
+    is memoised per type and re-resolved on every call, so a patch is seen on
+    the next one."""
     cls = type(obj)
-    per_cls = _surface_cache.get(cls)
+    per_cls = _reads_cache.get(cls)
     if per_cls is None:
-        per_cls = _surface_cache[cls] = {}
-    entry = per_cls.get(names)
-    resolved = [getattr(cls, n, _GONE) for n in names]
+        per_cls = _reads_cache[cls] = {}
+    resolved = [getattr(cls, n, _GONE) for n, _fn in contract]
+    entry = per_cls.get(contract)
     if entry is None or entry[0] != resolved:
-        entry = per_cls[names] = [resolved,
-                                  _decide_surface(cls, names, resolved)]
+        entry = per_cls[contract] = [
+            resolved, all(r is fn for r, (_n, fn) in zip(resolved, contract))]
     if not entry[1]:
         return False
-    return obj.__dict__.keys().isdisjoint(names)
+    d = getattr(obj, "__dict__", None)
+    if not isinstance(d, dict):
+        return True
+    return d.keys().isdisjoint(n for n, _fn in contract)
 
 
 # ── Counters ─────────────────────────────────────────────────────────────────
 
-REASONS = ("switch", "not_stock", "surface", "no_mirror")
+REASONS = ("switch", "not_stock", "no_mirror")
+
+#: Why one OBJECT inside a native call went to the SDK Python
+#: (note_object_fallback).
+OBJECT_FALLBACKS = ("surface",)
 
 _counts: dict = {}
 
@@ -333,15 +340,20 @@ _counts: dict = {}
 def reset_stats() -> None:
     _counts.clear()
     for kind in KINDS:
-        _counts[kind] = {"native": 0, "python": 0, "reasons": {}}
+        _counts[kind] = {"native": 0, "python": 0, "reasons": {},
+                         "object_fallbacks": {}, "counts": {}}
 
 
 reset_stats()
 
 
 def note(kind: str, path: str, reason: str = "") -> None:
-    """Count one call of `kind` that ran `path` ("native" or "python"); a
-    python call names why (REASONS)."""
+    """Count one CALL of `kind`'s replaced method (avoid: TestCourseOverride;
+    select: GetTargetRating; fire: Update) by the path it took: "native" only
+    when the native code actually ran, "python" when the SDK's code ran
+    instead, naming why (REASONS: the switch is off, the instance is not
+    stock, or what the native code reads is not the engine's -- "no_mirror").
+    A call that returns before either (no ship, no set) is not counted."""
     c = _counts[kind]
     c[path] += 1
     if reason:
@@ -349,8 +361,26 @@ def note(kind: str, path: str, reason: str = "") -> None:
         r[reason] = r.get(reason, 0) + 1
 
 
+def note_object_fallback(kind: str, reason: str) -> None:
+    """Count one OBJECT a native call handed to the SDK Python
+    (OBJECT_FALLBACKS; "surface": its type does not resolve the reader
+    contract). Per object, so it moves neither "native" nor "python"."""
+    r = _counts[kind]["object_fallbacks"]
+    r[reason] = r.get(reason, 0) + 1
+
+
+def count(kind: str, key: str, n: int = 1) -> None:
+    """Add `n` to a result count of `kind`'s native calls (avoid: "avoided",
+    the objects the native scans returned)."""
+    r = _counts[kind]["counts"]
+    r[key] = r.get(key, 0) + n
+
+
 def stats() -> dict:
-    """{kind: {"native": n, "python": n, "reasons": {reason: n}}} since the
-    last reset (a copy)."""
+    """{kind: {"native": calls, "python": calls, "reasons": {reason: calls},
+    "object_fallbacks": {reason: objects}, "counts": {key: n}}} since the
+    last reset (a copy); see note, note_object_fallback and count."""
     return {k: {"native": c["native"], "python": c["python"],
-                "reasons": dict(c["reasons"])} for k, c in _counts.items()}
+                "reasons": dict(c["reasons"]),
+                "object_fallbacks": dict(c["object_fallbacks"]),
+                "counts": dict(c["counts"])} for k, c in _counts.items()}

@@ -63,6 +63,15 @@ def test_sdk_dumb_fire():
     native_ai_ab.assert_native(stats, "avoid")
 
 
+def test_pursuers_converge():
+    """The one scene where avoidance really fires (the fights above never put
+    an obstacle on a collision course): records byte-identical, and the native
+    scans returned objects to avoid."""
+    stats = _same("pursuers_converge")
+    native_ai_ab.assert_native(stats, "avoid")
+    assert stats["avoid"]["counts"].get("avoided", 0) > 0, stats
+
+
 def test_the_switch_off_side_reports_no_native_calls_and_assert_helpers_bite():
     _py, _nat, stats, py_stats = native_ai_ab.run_ab_full("akira_torp_select")
     native_ai_ab.assert_no_native(py_stats)

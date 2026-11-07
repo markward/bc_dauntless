@@ -313,10 +313,11 @@ def _surface_snapshot():
         "point_cls": TGPoint3,
         "point": point,
         "sqrt": math.sqrt,
-        "store_module": _ts,
+        # ObjectClass.GetWorldLocation calls engine.appc.objects' get_store.
+        "objects": _objects,
+        "get_store": _objects.get_store,
         "store_cls": _ts.NativeTransformStore,
         "get_position": _ts.NativeTransformStore.get_position,
-        "get_store": _ts.get_store,
         "iteration": _planet._ProximityIteration,
         "next_object": _planet._ProximityIteration.next_object,
         "get_next": _planet.ProximityManager.GetNextObject,
@@ -352,9 +353,11 @@ def _avoid_surface_is_stock(node) -> bool:
 
 
 def _native_store_ok() -> bool:
-    """GetWorldLocation reads the native transform store the scan reads."""
+    """GetWorldLocation reads the native transform store the scan reads:
+    the get_store it calls (engine.appc.objects' global) is the boot one and
+    hands back the native store."""
     snap = _AVOID_SURFACE
-    get_store = snap["store_module"].get_store
+    get_store = snap["objects"].__dict__.get("get_store")
     return (get_store is snap["get_store"]
             and type(get_store()) is snap["store_cls"]
             and snap["store_cls"].get_position is snap["get_position"])
@@ -405,10 +408,13 @@ def _native_test_course_override(self):
     if (pProxManager != None):                       # noqa: E711
         pObjectIter = pProxManager.GetNearObjects( vPredictedLocation, fCheckRadius )
         if _native_scan_applies(pProxManager, pObjectIter):
+            ai_native.note("avoid", "native")
             lAvoidObjects = _h.combat_ai_avoid_scan(
                 self, pShip, fPersonalSpaceRadius, pObjectIter)
+            ai_native.count("avoid", "avoided", len(lAvoidObjects))
         else:
             # A manager or handle that is not the engine's: the SDK loop.
+            ai_native.note("avoid", "python", "no_mirror")
             pObject = pProxManager.GetNextObject( pObjectIter )
             while (pObject != None):                 # noqa: E711
                 if pObject.GetObjID() != pShip.GetObjID():
@@ -474,7 +480,8 @@ def _phased_avoidance_class(base: type) -> type:
         if not _native_store_ok():
             ai_native.note("avoid", "python", "no_mirror")
             return non_lethal.TestCourseOverride(self)
-        ai_native.note("avoid", "native")
+        # Counts itself: native only where the scan runs (early returns
+        # count nothing).
         return _native_test_course_override(self)
     TestCourseOverride._dauntless_native_entry = True
 

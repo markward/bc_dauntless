@@ -5563,8 +5563,9 @@ bool contact_nonempty(Host& h, Key set) {
 // stock instance (the caller decided that: ai_native.preprocessor_is_stock).
 // Per object, in the SDK's order:
 //   1. `pObject.GetObjID() != pShip.GetObjID()`, then NeedToAvoid's
-//      lDontAvoidTypes loop. Native when the object's GetObjID and IsTypeOf
-//      are the engine's own (ai_native.object_surface_is_stock); the loop's
+//      lDontAvoidTypes loop. Native when the object's type resolves GetObjID
+//      and IsTypeOf to TGObject's and ObjectClass's own bodies
+//      (ai_native.object_reads_are_stock on a reader_contract); the loop's
 //      verdict depends on the object's TYPE only (ObjectClass.IsTypeOf is an
 //      isinstance test), so it is computed by the real IsTypeOf once per
 //      (type, the instance's tags) and cached, keyed also by
@@ -5572,13 +5573,15 @@ bool contact_nonempty(Host& h, Key set) {
 //   2. The arithmetic (dauntless/combat/ai_avoid.h), on what GetWorldLocation
 //      (the transform store), GetRadius (`_radius * _scale`, guarded) and
 //      GetVelocityTG (`_velocity`, physics objects only) would return. Native
-//      when those are the engine's own on the object's type. Nothing else
+//      when the type resolves each to exactly the body its reader mirrors
+//      (ObjectClass's, PhysicsObjectClass's): an engine override such as
+//      DebrisChunk.GetRadius or Torpedo.GetVelocityTG is not. Nothing else
 //      runs before step 1 ends with "skip", so a type that overrides only a
 //      step-2 reader (ProximityCheck.GetRadius, Torpedo.GetVelocityTG) is
 //      still filtered natively.
 // Any other object -- a non-stock reader, a value that is not a plain float,
 // a stale handle -- is handed to the SDK's NeedToAvoid in Python, alone, and
-// counted as ai_native.note("avoid", "python", "surface"). Its reads are
+// counted as ai_native.note_object_fallback("avoid", "surface"). Its reads are
 // pure, so re-running them there gives the SDK's answer and the SDK's
 // exception. After any such callback every value read from Python (the
 // ship's pose, fPredictionTime, lDontAvoidTypes, the per-call stock memo) is
@@ -5601,14 +5604,16 @@ struct Host {
     PyObject *s_obj_id, *s_xform, *s_radius, *s_scale, *s_velocity;
     PyObject *s_x, *s_y, *s_z, *s_cursor, *s_dict;
     PyObject *s_fPredictionTime, *s_lDontAvoidTypes, *s_GENERATION;
-    PyObject *s_object_surface_is_stock, *s_note;
+    PyObject *s_object_reads_are_stock, *s_note_object_fallback;
+    PyObject *s_PhysicsObjectClass;
     PyObject *s_GetWorldLocation, *s_GetVelocityTG;
-    PyObject *names_filter;    // ("GetObjID", "IsTypeOf")
-    PyObject *names_still;     // ("GetWorldLocation", "GetRadius")
-    PyObject *names_moving;    // ... + "GetVelocityTG"
-    PyObject *names_ship;      // ("GetObjID", "GetWorldLocation", "GetVelocityTG")
-    PyObject *note_args;       // ("avoid", "python", "surface")
-    PyObject *ai_native, *object_types, *physics_cls;
+    // ai_native.reader_contract(...): ((name, engine function), ...)
+    PyObject *reads_filter;    // GetObjID, IsTypeOf
+    PyObject *reads_still;     // GetWorldLocation, GetRadius
+    PyObject *reads_moving;    // ... + GetVelocityTG
+    PyObject *reads_ship;      // GetObjID, GetWorldLocation, GetVelocityTG
+    PyObject *note_args;       // ("avoid", "surface")
+    PyObject *ai_native, *object_types, *objects;
 
     // The lDontAvoidTypes verdict per (type, tags), for one generation.
     struct Verdict {
@@ -5644,8 +5649,9 @@ Host& host() {
         p->s_fPredictionTime = intern("fPredictionTime");
         p->s_lDontAvoidTypes = intern("lDontAvoidTypes");
         p->s_GENERATION = intern("_GENERATION");
-        p->s_object_surface_is_stock = intern("object_surface_is_stock");
-        p->s_note = intern("note");
+        p->s_object_reads_are_stock = intern("object_reads_are_stock");
+        p->s_note_object_fallback = intern("note_object_fallback");
+        p->s_PhysicsObjectClass = intern("PhysicsObjectClass");
         auto tuple_of = [](std::initializer_list<PyObject*> items) {
             PyObject* t = PyTuple_New(static_cast<Py_ssize_t>(items.size()));
             if (t == nullptr) throw py::error_already_set();
@@ -5656,20 +5662,34 @@ Host& host() {
             }
             return t;
         };
-        p->names_filter = tuple_of({p->s_GetObjID, p->s_IsTypeOf});
-        p->names_still = tuple_of({p->s_GetWorldLocation, p->s_GetRadius});
-        p->names_moving = tuple_of({p->s_GetWorldLocation, p->s_GetRadius, p->s_GetVelocityTG});
-        p->names_ship = tuple_of({p->s_GetObjID, p->s_GetWorldLocation, p->s_GetVelocityTG});
-        p->note_args = tuple_of({intern("avoid"), intern("python"), intern("surface")});
+        p->note_args = tuple_of({intern("avoid"), intern("surface")});
         p->ai_native = PyImport_ImportModule("engine.appc.ai_native");
         if (p->ai_native == nullptr) throw py::error_already_set();
         p->object_types = PyImport_ImportModule("engine.appc.object_types");
         if (p->object_types == nullptr) throw py::error_already_set();
-        PyObject* objects = PyImport_ImportModule("engine.appc.objects");
-        if (objects == nullptr) throw py::error_already_set();
-        p->physics_cls = PyObject_GetAttrString(objects, "PhysicsObjectClass");
-        Py_DECREF(objects);
-        if (p->physics_cls == nullptr) throw py::error_already_set();
+        p->objects = PyImport_ImportModule("engine.appc.objects");
+        if (p->objects == nullptr) throw py::error_already_set();
+        auto contract = [p, &tuple_of](std::initializer_list<PyObject*> names) {
+            PyObject* args = tuple_of(names);
+            PyObject* fn = PyObject_GetAttrString(p->ai_native, "reader_contract");
+            if (fn == nullptr) {
+                Py_DECREF(args);
+                throw py::error_already_set();
+            }
+            PyObject* c = PyObject_Call(fn, args, nullptr);
+            Py_DECREF(fn);
+            Py_DECREF(args);
+            if (c == nullptr) throw py::error_already_set();
+            if (!PyTuple_CheckExact(c)) {
+                Py_DECREF(c);
+                throw std::logic_error("ai_native.reader_contract: not a tuple");
+            }
+            return c;  // held for good
+        };
+        p->reads_filter = contract({p->s_GetObjID, p->s_IsTypeOf});
+        p->reads_still = contract({p->s_GetWorldLocation, p->s_GetRadius});
+        p->reads_moving = contract({p->s_GetWorldLocation, p->s_GetRadius, p->s_GetVelocityTG});
+        p->reads_ship = contract({p->s_GetObjID, p->s_GetWorldLocation, p->s_GetVelocityTG});
         return p;
     }();
     return *h;
@@ -5759,27 +5779,35 @@ bool read_radius(PyObject* o, double& out) {
     return true;
 }
 
-// ai_native.object_surface_is_stock(obj, names), memoised per type for one
+// ai_native.object_reads_are_stock(obj, contract), memoised per type for one
 // stretch of the call with no Python callback: a type found stock stays
 // stock until then, so a later object of it only needs its own __dict__ to
-// shadow none of `names` (the function's other half).
+// shadow none of the contract's names (the function's other half; as there,
+// an object with no __dict__, or one that is not a dict, shadows nothing).
 using Memo = std::unordered_map<PyTypeObject*, bool>;
 
-bool surface_stock(PyObject* obj, PyObject* names, Memo& memo) {
+bool surface_stock(PyObject* obj, PyObject* contract, Memo& memo) {
     auto& h = host();
     auto it = memo.find(Py_TYPE(obj));
     if (it != memo.end()) {
-        py::object d = own(PyObject_GetAttr(obj, h.s_dict));
-        if (!PyDict_Check(d.ptr())) return false;
-        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(names); ++i) {
-            int has = PyDict_Contains(d.ptr(), PyTuple_GET_ITEM(names, i));
+        PyObject* raw = PyObject_GetAttr(obj, h.s_dict);
+        if (raw == nullptr) {
+            if (!PyErr_ExceptionMatches(PyExc_AttributeError)) throw py::error_already_set();
+            PyErr_Clear();
+            return true;
+        }
+        py::object d = py::reinterpret_steal<py::object>(raw);
+        if (!PyDict_Check(raw)) return true;
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(contract); ++i) {
+            PyObject* pair = PyTuple_GET_ITEM(contract, i);
+            int has = PyDict_Contains(raw, PyTuple_GET_ITEM(pair, 0));
             if (has < 0) throw py::error_already_set();
             if (has) return false;
         }
         return true;
     }
-    py::object fn = own(PyObject_GetAttr(h.ai_native, h.s_object_surface_is_stock));
-    py::object r = own(PyObject_CallFunctionObjArgs(fn.ptr(), obj, names, nullptr));
+    py::object fn = own(PyObject_GetAttr(h.ai_native, h.s_object_reads_are_stock));
+    py::object r = own(PyObject_CallFunctionObjArgs(fn.ptr(), obj, contract, nullptr));
     bool ok = truth(r.ptr());
     if (ok) memo.emplace(Py_TYPE(obj), true);
     return ok;
@@ -5857,7 +5885,7 @@ bool filtered(PyObject* obj, PyObject* types, const std::vector<long long>& tags
 
 void note_surface() {
     auto& h = host();
-    py::object fn = own(PyObject_GetAttr(h.ai_native, h.s_note));
+    py::object fn = own(PyObject_GetAttr(h.ai_native, h.s_note_object_fallback));
     own(PyObject_Call(fn.ptr(), h.note_args, nullptr));
 }
 
@@ -5871,6 +5899,9 @@ struct Reads {
     py::object types;                 // self.lDontAvoidTypes
     std::vector<long long> tags;
     bool cachable = false;
+    // engine.appc.objects.PhysicsObjectClass, as PhysicsObjectClass_Cast
+    // reads it: the module global at the time of the call.
+    py::object physics_cls;
     Memo filter_memo, reader_memo;
 };
 
@@ -5878,10 +5909,11 @@ void read_all(Reads& r, PyObject* inst, PyObject* ship, double psr, bool psr_ok)
     auto& h = host();
     r.filter_memo.clear();
     r.reader_memo.clear();
+    r.physics_cls = own(PyObject_GetAttr(h.objects, h.s_PhysicsObjectClass));
     r.ship_native = false;
     r.ship_id = py::object();
     Memo ship_memo;
-    if (surface_stock(ship, h.names_ship, ship_memo) && read_position(ship, r.ship_pos) &&
+    if (surface_stock(ship, h.reads_ship, ship_memo) && read_position(ship, r.ship_pos) &&
         read_velocity(ship, r.ship_vel)) {
         PyObject* id = PyObject_GetAttr(ship, h.s_obj_id);
         if (id == nullptr) {
@@ -12168,7 +12200,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       PyObject* o = obj.ptr();
 
                       if (!r.ship_native || !r.params_native ||
-                          !avoid::surface_stock(o, h.names_filter, r.filter_memo)) {
+                          !avoid::surface_stock(o, h.reads_filter, r.filter_memo)) {
                           python_whole(o);
                           continue;
                       }
@@ -12186,9 +12218,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       // NeedToAvoid's lDontAvoidTypes loop.
                       if (avoid::filtered(o, r.types.ptr(), r.tags, r.cachable)) continue;
                       // The arithmetic, on the readers' values.
-                      int phys = PyObject_IsInstance(o, h.physics_cls);
+                      int phys = PyObject_IsInstance(o, r.physics_cls.ptr());
                       if (phys < 0) throw py::error_already_set();
-                      if (!avoid::surface_stock(o, phys ? h.names_moving : h.names_still,
+                      if (!avoid::surface_stock(o, phys ? h.reads_moving : h.reads_still,
                                                 r.reader_memo)) {
                           python_need(o);
                           continue;

@@ -23,6 +23,10 @@ The A/B test asserts the two records are byte-identical. Scenes:
                           difficulty row): the subsystem-rating RNG branch
 * ``akira_torp_select``   the Akira's ChooseTorpType (test_akira_ai_ammo_selection)
 * ``sdk_dumb_fire``       the golden scene (Difficulty 0.0: FireDumb)
+* ``pursuers_converge``   tests/helpers/straight_line_chase.py: six Keldons
+                          converging on a straight-line player, the one scene
+                          where AvoidObstacles actually returns obstacles (the
+                          fights above stand off at weapons range and never do)
 """
 import hashlib
 import json
@@ -46,6 +50,7 @@ DEFAULT_TICKS = {
     "fed_subsystems": 900,
     "akira_torp_select": 400,
     "sdk_dumb_fire": None,           # the golden's own length
+    "pursuers_converge": 2400,
 }
 SCENES = tuple(DEFAULT_TICKS)
 
@@ -103,12 +108,16 @@ def run_ab(scene, ticks=None):
     return run_ab_full(scene, ticks)[:3]
 
 
-def assert_native(stats, kind, allowed_python=()):
-    """The native run really took the native path for `kind`: native > 0 and
-    no call went back to the SDK Python, except for the reasons in
-    `allowed_python` (a scene may legitimately hold a non-stock instance)."""
+def assert_native(stats, kind, allowed_python=(), allowed_object_fallbacks=()):
+    """The native run really took the native path for `kind`: native > 0, no
+    call went back to the SDK Python, except for the reasons in
+    `allowed_python` (a scene may legitimately hold a non-stock instance), and
+    no object inside a native call did, except for `allowed_object_fallbacks`."""
     c = stats[kind]
     assert c["native"] > 0, ("%s never ran native" % kind, stats)
+    objs = {r: n for r, n in c.get("object_fallbacks", {}).items()
+            if r not in allowed_object_fallbacks and n}
+    assert not objs, ("%s objects fell back to Python" % kind, objs, stats)
     extra = {r: n for r, n in c["reasons"].items()
              if r not in allowed_python and n}
     assert not extra, ("%s fell back to Python" % kind, extra, stats)
@@ -335,6 +344,29 @@ def _akira_torp_select(ticks):
     return rows
 
 
+def _pursuers_converge(ticks):
+    """The straight-line chase, digested every tick, then the RNG tails."""
+    import pytest
+    import App
+    from engine.core.game import _set_current_game
+    from tests.helpers import k1_fight as k1d
+    from tests.helpers import straight_line_chase as chase
+    k1d._seed_every_rng(k1d.SEED)
+    with pytest.MonkeyPatch.context() as mp:
+        loop, player, pursuers = chase.build(mp)
+        ships = [player] + pursuers
+        rows = []
+        try:
+            for _ in range(ticks):
+                chase.fly_player(player)
+                loop.tick()
+                rows.append(_digest(ships, App.g_kUtopiaModule.GetGameTime()))
+        finally:
+            _set_current_game(None)
+    rows.append(_rng_tail())
+    return rows
+
+
 _SCENE_FUNCS = {
     "k1_gameloop_ai": _golden_scene("k1_gameloop_ai"),
     "sdk_dumb_fire": _golden_scene("sdk_dumb_fire"),
@@ -343,4 +375,5 @@ _SCENE_FUNCS = {
                                         count_subsystem_rng=True),
     "cloak_attack": _cloak_attack,
     "akira_torp_select": _akira_torp_select,
+    "pursuers_converge": _pursuers_converge,
 }

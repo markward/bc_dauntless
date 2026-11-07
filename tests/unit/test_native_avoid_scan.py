@@ -150,7 +150,7 @@ def test_native_scan_equals_the_sdk_loop_on_random_scenes():
     assert predicted > avoided * 0.2, (predicted, avoided)
     # Every kind in the pool is stock: nothing fell back to Python, so the
     # comparison above was native against the SDK, not the SDK twice.
-    assert ai_native.stats()["avoid"]["reasons"].get("surface", 0) == 0
+    assert ai_native.stats()["avoid"]["object_fallbacks"] == {}
 
 
 def test_an_object_overriding_getradius_takes_the_python_path():
@@ -175,7 +175,9 @@ def test_an_object_overriding_getradius_takes_the_python_path():
     # 8 < 2.5 + 10 (the override) but not < 2.5 + 0.5; both at rest.
     assert got == [big]
     assert got == _sdk_loop(inst, ship, psr, _ProximityIteration([big, plain]))
-    assert ai_native.stats()["avoid"]["reasons"].get("surface", 0) == 1
+    s = ai_native.stats()["avoid"]
+    assert s["object_fallbacks"] == {"surface": 1}
+    assert s["python"] == 0                 # an object, not a call
 
 
 def _scene_in_a_set():
@@ -295,3 +297,115 @@ def test_native_test_course_override_equals_the_sdk_method():
     assert fired > trials // 4, fired
     s = ai_native.stats()["avoid"]
     assert s["native"] == trials and s["python"] == 0, s
+    assert s["counts"]["avoided"] > 0, s
+
+
+def _scan_both(inst, ship, objs):
+    psr = ship.GetRadius() * inst.fPersonalSpace
+    want = _sdk_loop(inst, ship, psr, _ProximityIteration(objs))
+    got = _h.combat_ai_avoid_scan(inst, ship, psr, _ProximityIteration(objs))
+    assert [id(o) for o in got] == [id(o) for o in want]
+    return got
+
+
+def test_an_engine_class_with_its_own_getradius_takes_the_python_path(
+        monkeypatch):
+    """Review Focus 1 with ENGINE classes: ProximityCheck.GetRadius (the
+    trigger radius) and a RockClass.GetRadius added later (as an
+    effective_radius override might be) are not the body the native reader
+    mirrors, so each object runs the SDK NeedToAvoid."""
+    from engine.rocks.rock import RockClass as _Rock
+    ship = _ship(1.0)
+    inst = _inst(ship)
+    inst.lDontAvoidTypes = ()                 # let the check reach the reads
+    check = ProximityCheck_Create()
+    check.SetRadius(10.0)                     # the override GetRadius returns
+    check.SetTranslateXYZ(8.0, 0.0, 0.0)
+    rock = _ship(0.5)
+    rock.__class__ = _Rock
+    rock.SetTranslateXYZ(0.0, 8.0, 0.0)
+    monkeypatch.setattr(_Rock, "GetRadius", lambda self: 10.0, raising=False)
+
+    ai_native.reset_stats()
+    assert _scan_both(inst, ship, [check, rock]) == [check, rock]
+    s = ai_native.stats()["avoid"]
+    assert s["object_fallbacks"] == {"surface": 2}
+
+
+def test_a_type_with_no_dict_attribute_does_not_raise_on_a_memo_hit():
+    """The per-call stock memo checks each later object's own __dict__; one
+    whose type has none shadows nothing (the second object is the memo hit)."""
+    from tests.unit.test_ai_native_gate import _NoDictShip
+    ship = _ship(1.0)
+    inst = _inst(ship)
+    a, b = _NoDictShip(), _NoDictShip()
+    for o, x in ((a, 3.0), (b, 30.0)):
+        o.SetRadius(1.0)
+        o.SetTranslateXYZ(x, 0.0, 0.0)
+    ai_native.reset_stats()
+    _NoDictShip.hidden = True
+    try:
+        assert _scan_both(inst, ship, [a, b]) == [a]
+    finally:
+        _NoDictShip.hidden = False
+    assert ai_native.stats()["avoid"]["object_fallbacks"] == {}
+
+
+def test_native_counts_only_calls_that_ran_the_native_scan(monkeypatch):
+    """An early return counts nothing; a manager that is not the engine's runs
+    the SDK loop and counts python/no_mirror."""
+    ship, others = _scene_in_a_set()
+    inst = _inst(_ship(1.0))                  # this ship is in no set
+    ai_native.reset_stats()
+    assert inst.TestCourseOverride() == (None, None)
+    s = ai_native.stats()["avoid"]
+    assert (s["native"], s["python"]) == (0, 0), s
+
+    inst = _inst(ship)
+    pm = ship.GetContainingSet().GetProximityManager()
+    walked = []
+    real_next = type(pm).GetNextObject
+
+    def next_object(it=None):
+        obj = real_next(pm, it)
+        walked.append(obj)
+        return obj
+    monkeypatch.setitem(pm.__dict__, "GetNextObject", next_object)
+    ai_native.reset_stats()
+    inst.TestCourseOverride()
+    s = ai_native.stats()["avoid"]
+    assert (s["native"], s["python"], s["reasons"]) == \
+        (0, 1, {"no_mirror": 1}), s
+    assert walked[-1] is None and len(walked) == len(others) + 2
+
+
+def test_physics_class_is_read_at_use(monkeypatch):
+    """PhysicsObjectClass_Cast reads engine.appc.objects.PhysicsObjectClass
+    when it is called, so the scan does too: rebound, a closing ship is not a
+    physics object and its velocity is ignored, on both sides."""
+    from engine.appc import objects
+    ship = _ship(1.0)
+    inst = _inst(ship)
+    other = _ship(1.0)
+    other.SetTranslateXYZ(20.0, 0.0, 0.0)
+    other.SetVelocity(TGPoint3(-5.0, 0.0, 0.0))
+    assert _scan_both(inst, ship, [other]) == [other]
+
+    class NotPhysics:
+        pass
+    monkeypatch.setattr(objects, "PhysicsObjectClass", NotPhysics)
+    assert _scan_both(inst, ship, [other]) == []
+
+
+def test_a_replaced_get_store_in_objects_sends_the_call_to_the_sdk(monkeypatch):
+    """ObjectClass.GetWorldLocation calls engine.appc.objects.get_store: a
+    replacement there is not the store the scan reads."""
+    from engine.appc import objects
+    ship, _others = _scene_in_a_set()
+    inst = _inst(ship)
+    real = objects.get_store
+    monkeypatch.setattr(objects, "get_store", lambda: real())
+    ai_native.reset_stats()
+    inst.TestCourseOverride()
+    s = ai_native.stats()["avoid"]
+    assert (s["native"], s["reasons"]) == (0, {"no_mirror": 1}), s
