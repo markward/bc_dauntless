@@ -22,6 +22,7 @@ add_executable(combat_tests
     subsystem_step_test.cc
     beam_feed_test.cc
     torpedo_feed_test.cc
+    set_index_test.cc
 )
 target_link_libraries(combat_tests
     PRIVATE

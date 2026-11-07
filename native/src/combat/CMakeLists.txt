@@ -35,6 +35,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/subsystem_step.cc
     src/beam_feed.cc
     src/torpedo_feed.cc
+    src/set_index.cc
 )
 
 add_library(dauntless_combat STATIC ${DAUNTLESS_COMBAT_SOURCES})
