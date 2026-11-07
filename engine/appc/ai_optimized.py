@@ -428,7 +428,7 @@ def _surface_snapshot():
         "point_cls": TGPoint3,
         "point": point,
         "sqrt": math.sqrt,
-        # ObjectClass.GetWorldLocation calls engine.appc.objects' get_store.
+        # ObjectClass.GetWorldLocation consults engine.appc.objects' get_store.
         "objects": _objects,
         "get_store": _objects.get_store,
         "store_cls": _ts.NativeTransformStore,
@@ -510,7 +510,12 @@ def _store_watched(_kind):
 
 def _decide_store(kind) -> bool:
     """The store `kind`'s mirrored reads read is the native one, its readers
-    unpatched: get_position for all; get_rotation_col for select's forward,
+    unpatched. `objects.get_store` is what ObjectClass.GetWorldLocation
+    consults to pick its path (it now builds the point with the raw
+    `transform_point` binding and no longer calls get_position), so a patched
+    get_store is what diverts it; `get_position` stays guarded because the
+    scan mirrors the position the store holds and a patched reader is a mod
+    override the mirror would not see: get_position for all; get_rotation_col for select's forward,
     get_rotation for fire's rotations."""
     snap = _AVOID_SURFACE
     get_store = snap["objects"].__dict__.get("get_store")

@@ -5533,6 +5533,8 @@ static PyObject* transform_point_fn(PyObject*, PyObject* const* args,
     } catch (py::error_already_set& e) {
         e.restore();
         return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
     } catch (const std::exception& e) {
         // Not a stale handle: a missing TGPoint3 registration must not be
         // reported as one.
@@ -5545,6 +5547,70 @@ static PyMethodDef g_transform_point_def = {
     reinterpret_cast<PyCFunction>(
         reinterpret_cast<void (*)()>(&transform_point_fn)),
     METH_FASTCALL, "transform_point(index, generation): a fresh TGPoint3."};
+
+// point_copy(p): a fresh TGPoint3 equal to TGPoint3(p.x, p.y, p.z). For an
+// exact registered TGPoint3 whose three slots hold floats the values are read
+// from the slots; anything else (a subclass, a stand-in, an int or str
+// component) reads x, y, z by attribute, then float()s each, in the order and
+// with the errors of the Python constructor. Raw METH_FASTCALL.
+static PyObject* point_copy_fn(PyObject*, PyObject* const* args,
+                               Py_ssize_t nargs) {
+    if (nargs != 1) {
+        PyErr_SetString(PyExc_TypeError, "point_copy(p)");
+        return nullptr;
+    }
+    PyObject* p = args[0];
+    try {
+        const PointLayout& l = point_layout();
+        if (l.type && Py_TYPE(p) == l.type) {
+            const char* base = reinterpret_cast<const char*>(p);
+            PyObject* s[3];
+            bool ok = true;
+            for (int i = 0; i < 3; ++i) {
+                s[i] = *reinterpret_cast<PyObject* const*>(base + l.off[i]);
+                if (!s[i] || !PyFloat_CheckExact(s[i])) ok = false;
+            }
+            if (ok)
+                return make_point(PyFloat_AS_DOUBLE(s[0]),
+                                  PyFloat_AS_DOUBLE(s[1]),
+                                  PyFloat_AS_DOUBLE(s[2]));
+        }
+        PyObject* a[3] = {nullptr, nullptr, nullptr};
+        static const char* names[3] = {"x", "y", "z"};
+        PyObject* out = nullptr;
+        int i = 0;
+        for (; i < 3; ++i) {
+            a[i] = PyObject_GetAttrString(p, names[i]);
+            if (!a[i]) break;
+        }
+        double d[3];
+        if (i == 3) {
+            int k = 0;
+            for (; k < 3; ++k) {
+                PyObject* f = PyObject_CallOneArg(
+                    reinterpret_cast<PyObject*>(&PyFloat_Type), a[k]);
+                if (!f) break;
+                d[k] = PyFloat_AS_DOUBLE(f);
+                Py_DECREF(f);
+            }
+            if (k == 3) out = make_point(d[0], d[1], d[2]);
+        }
+        for (int j = 0; j < 3; ++j) Py_XDECREF(a[j]);
+        return out;
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+}
+static PyMethodDef g_point_copy_def = {
+    "point_copy",
+    reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&point_copy_fn)),
+    METH_FASTCALL, "point_copy(p): a fresh TGPoint3 copy of p."};
 
 // ── The native set index (engine/appc/set_index.py) ─────────────────────────
 // One SetIndex (native/src/combat/.../set_index.h) mirrors every
@@ -15096,6 +15162,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.add_object("transform_point",
                  py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                      &g_transform_point_def, nullptr,
+                     m.attr("__name__").ptr())));
+    m.add_object("point_copy",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &g_point_copy_def, nullptr,
                      m.attr("__name__").ptr())));
     m.add_object("bench_slots_point",
                  py::reinterpret_steal<py::object>(PyCFunction_NewEx(

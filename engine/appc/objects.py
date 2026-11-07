@@ -23,6 +23,28 @@ try:  # the raw native point builder; absent without the host extension
 except ImportError:  # pragma: no cover - the Python store never reaches it
     _transform_point = None
 
+try:  # the native velocity copy
+    import _dauntless_host as _host_mod
+except ImportError:  # pragma: no cover - no host extension: pure Python
+    _host_mod = None
+
+
+def _point_copy_py(p):
+    return TGPoint3(p.x, p.y, p.z)
+
+
+def _point_copy_stale(p):
+    """A binary with the host module but without `point_copy` is stale:
+    CLAUDE.md's contract is an AttributeError."""
+    raise AttributeError(
+        "module '_dauntless_host' has no attribute 'point_copy'")
+
+
+if _host_mod is None:  # pragma: no cover
+    _point_copy = _point_copy_py
+else:
+    _point_copy = getattr(_host_mod, "point_copy", _point_copy_stale)
+
 
 def _no_transform_point():
     """A binary with the native store but without `transform_point` is stale:
@@ -735,10 +757,10 @@ class PhysicsObjectClass(ObjectClass):
         self._velocity = TGPoint3(v.x, v.y, v.z)
 
     def GetVelocity(self, space: int = DIRECTION_WORLD_SPACE) -> TGPoint3:
-        return TGPoint3(self._velocity.x, self._velocity.y, self._velocity.z)
+        return _point_copy(self._velocity)
 
     def GetVelocityTG(self) -> TGPoint3:
-        return TGPoint3(self._velocity.x, self._velocity.y, self._velocity.z)
+        return _point_copy(self._velocity)
 
     def GetAccelerationTG(self) -> TGPoint3:
         """World-space acceleration the ship's controller commanded on its last
