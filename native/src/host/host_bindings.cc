@@ -5489,6 +5489,38 @@ static PyMethodDef g_bench_slots_def = {
         reinterpret_cast<void (*)()>(&bench_slots_point_fn)),
     METH_FASTCALL, "bench_slots_point(i, g): make_point(store position)."};
 
+// transform_point(index, generation): the stored position as a fresh TGPoint3
+// (ObjectClass.GetWorldLocation / GetTranslate). Raw METH_FASTCALL. A stale
+// handle raises RuntimeError(what) and a non-integer argument TypeError, the
+// two types the Python wrapper turns into StaleHandleError.
+static PyObject* transform_point_fn(PyObject*, PyObject* const* args,
+                                    Py_ssize_t nargs) {
+    if (nargs != 2) {
+        PyErr_SetString(PyExc_TypeError, "transform_point(index, generation)");
+        return nullptr;
+    }
+    const unsigned long i = PyLong_AsUnsignedLong(args[0]);
+    if (PyErr_Occurred()) return nullptr;
+    const unsigned long g = PyLong_AsUnsignedLong(args[1]);
+    if (PyErr_Occurred()) return nullptr;
+    try {
+        const auto p = dauntless::transform_store().position(
+            static_cast<std::uint32_t>(i), static_cast<std::uint32_t>(g));
+        return make_point(p[0], p[1], p[2]);
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_RuntimeError, e.what());
+        return nullptr;
+    }
+}
+static PyMethodDef g_transform_point_def = {
+    "transform_point",
+    reinterpret_cast<PyCFunction>(
+        reinterpret_cast<void (*)()>(&transform_point_fn)),
+    METH_FASTCALL, "transform_point(index, generation): a fresh TGPoint3."};
+
 // ── The native set index (engine/appc/set_index.py) ─────────────────────────
 // One SetIndex (native/src/combat/.../set_index.h) mirrors every
 // SetClass._objects. Keys are object addresses. Its lifetime per set is the
@@ -15036,6 +15068,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               pt.attr("y") = p[1];
               pt.attr("z") = p[2];
           });
+    m.add_object("transform_point",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &g_transform_point_def, nullptr,
+                     m.attr("__name__").ptr())));
     m.add_object("bench_slots_point",
                  py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                      &g_bench_slots_def, nullptr, m.attr("__name__").ptr())));

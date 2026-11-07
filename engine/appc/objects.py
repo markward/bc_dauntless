@@ -15,7 +15,13 @@ from engine.appc import native_combat
 from engine.appc import object_types as _object_types
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
-from engine.appc.transform_store import get_store
+from engine.appc.transform_store import (
+    NativeTransformStore, StaleHandleError, get_store)
+
+try:  # the raw native point builder; absent without the host extension
+    from _dauntless_host import transform_point as _transform_point
+except ImportError:  # pragma: no cover - the Python store never reaches it
+    _transform_point = None
 
 # Lifetime constants (BC DamageableObject). LIFETIME_UNSET is the "not set"
 # sentinel: Effects.py:753 treats GetLifeTime() > 1e6 as unset, so the default
@@ -394,11 +400,23 @@ class ObjectClass(TGEventHandlerObject):
                                      float(pos[0]), float(pos[1]), float(pos[2]))
 
     def GetTranslate(self) -> TGPoint3:
-        x, y, z = get_store().get_position(*self._xform)
+        store = get_store()
+        if type(store) is NativeTransformStore:
+            try:
+                return _transform_point(*self._xform)
+            except (RuntimeError, TypeError) as exc:
+                raise StaleHandleError(str(exc)) from exc
+        x, y, z = store.get_position(*self._xform)
         return TGPoint3(x, y, z)
 
     def GetWorldLocation(self) -> TGPoint3:
-        x, y, z = get_store().get_position(*self._xform)
+        store = get_store()
+        if type(store) is NativeTransformStore:
+            try:
+                return _transform_point(*self._xform)
+            except (RuntimeError, TypeError) as exc:
+                raise StaleHandleError(str(exc)) from exc
+        x, y, z = store.get_position(*self._xform)
         return TGPoint3(x, y, z)
 
     def GetRandomPointOnModel(self) -> TGPoint3:
