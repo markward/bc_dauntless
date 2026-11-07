@@ -639,3 +639,18 @@ def test_missing_character_skips_quietly(qb, monkeypatch, caplog):
     assert "Galor-2" in _ships(QB)
     assert not [1 for _, k, _ in said if k.startswith("Incoming")]
     assert "no g_pTact" in caplog.text
+
+
+def test_late_names_join_their_group_before_the_ship_exists(qb, monkeypatch):
+    """As the now-groups (test_qb_spawn): BC adds the name, then creates."""
+    from tests.host.test_qb_spawn import _record_membership_at_create
+    hl, controller, QB = qb
+    from engine.quickbattle import spawn
+    plan = _plan([_ENEMY_A, _ENEMY_B])
+    spawn.set_provider(lambda: plan)
+    seen = _record_membership_at_create(monkeypatch, QB)
+    _start(hl, controller)
+    t0 = _now()
+    _jump_to(t0 + 61.0)
+    assert seen["Galor-2"] == (1, 0, 0)
+    assert seen["Keldon-3"] == (1, 0, 0)

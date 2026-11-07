@@ -485,3 +485,76 @@ def test_no_radius_fn_behaves_as_before(qb):
     _start(hl, controller)
     assert _ship("Warbird-1") is not None
     assert _ship("Warbird-1").GetRadius() == 0.0
+
+
+def _record_membership_at_create(monkeypatch, QB):
+    """Wrap CreateShip to note which group already held the name when the
+    ship was created (BC's GenerateShips: AddName, then CreateShip)."""
+    import App
+    import loadspacehelper
+    seen = {}
+    real = loadspacehelper.CreateShip
+
+    def create(ship_file, pSet, name, *rest):
+        if pSet is not None:                     # not the late model-warm probe
+            neutrals = App.Game_GetCurrentGame().GetCurrentEpisode() \
+                .GetCurrentMission().GetNeutralGroup()
+            seen[name] = (QB.pEnemies.IsNameInGroup(name),
+                          QB.pFriendlies.IsNameInGroup(name),
+                          neutrals.IsNameInGroup(name))
+        return real(ship_file, pSet, name, *rest)
+
+    monkeypatch.setattr(loadspacehelper, "CreateShip", create)
+    return seen
+
+
+def test_names_join_their_group_before_the_ship_exists(qb, monkeypatch):
+    """A group's watchers hear of a ship through ENTERED_SET only for a name
+    already in the group. DynamicMusic's enemies-in-range check is one: with
+    names added after the ships, a Quick Battle never left the ambient
+    track."""
+    hl, controller, QB = qb
+    from engine.quickbattle import spawn
+    _s, plan = _plan([("enemy", "fore", "standard", "high", ["Warbird"]),
+                      ("friendly", "port", "close", "medium", ["Akira"]),
+                      ("neutral", "aft", "close", "medium", ["Transport"])])
+    spawn.set_provider(lambda: plan)
+    seen = _record_membership_at_create(monkeypatch, QB)
+    _start(hl, controller)
+    seen.pop("Player", None)          # Start recreates the player; not a battle ship
+    assert seen == {"Warbird-1": (1, 0, 0), "Akira-2": (0, 1, 0),
+                    "Transport-3": (0, 0, 1)}
+
+
+def test_a_failed_spawn_leaves_no_name_behind(qb, monkeypatch):
+    hl, controller, QB = qb
+    import loadspacehelper
+    from engine.quickbattle import spawn
+    _s, plan = _plan([("enemy", "fore", "standard", "high", ["Warbird", "Galor"])])
+    spawn.set_provider(lambda: plan)
+    real = loadspacehelper.CreateShip
+
+    def create(ship_file, pSet, name, *rest):
+        if name == "Warbird-1":
+            raise RuntimeError("boom")
+        return real(ship_file, pSet, name, *rest)
+
+    monkeypatch.setattr(loadspacehelper, "CreateShip", create)
+    _start(hl, controller)
+    assert not QB.pEnemies.IsNameInGroup("Warbird-1")
+    assert QB.pEnemies.IsNameInGroup("Galor-2")
+
+
+def test_enemies_in_range_switch_the_music_to_combat(qb):
+    """End to end: the SDK's StandardCombatMusic (DynamicMusic.py) leaves
+    "Starting Ambient" once an enemy is within 400 GU of the player."""
+    hl, controller, QB = qb
+    import DynamicMusic
+    from engine.appc.planet import evaluate_proximity_checks
+    from engine.quickbattle import spawn
+    _s, plan = _plan([("enemy", "fore", "close", "medium", ["Galor"])])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    evaluate_proximity_checks()
+    state = DynamicMusic.pStateMachine.GetMusicState()
+    assert state is not None and state.startswith("Combat"), state

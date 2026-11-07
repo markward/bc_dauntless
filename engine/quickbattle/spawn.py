@@ -363,6 +363,7 @@ def generate_ships(qb, plan) -> None:
             late.append((n, order))
             continue
         name = naming.object_name(order.title, n)
+        group = join_side_group(qb, order, name, neutrals)
         try:
             ship = loadspacehelper.CreateShip(order.ship_file, qb.g_pSet, name, "")
             if ship is None or App.IsNull(ship):
@@ -370,11 +371,33 @@ def generate_ships(qb, plan) -> None:
             _apply_identity(ship, order, name)
             created.append((order, ship))
         except Exception as e:
+            group.RemoveName(name)
             _log.error("quickbattle: could not spawn %s (%s): %s", name, order.ship_file, e)
 
     if created:
         _place_created(qb, plan, player, neutrals, created)
     _prepare_late(qb, late)
+
+
+def join_side_group(qb, order, name, neutrals=None):
+    """Put `name` in its side's mission group BEFORE its ship is created, and
+    return that group. BC's QuickBattle.GenerateShips (QuickBattle.py
+    ~2778-2785) does AddName and then CreateShip, and the order matters:
+    a group's watchers learn of a ship through its ENTERED_SET, which they
+    only hear for a name already in the group. DynamicMusic's "enemies within
+    400" check (Conditions/ConditionInRange) is one -- with the names added
+    after the ships, a Quick Battle never left the ambient track."""
+    side = _SIDE.get(order.allegiance)
+    if side is None:
+        if neutrals is None:
+            import App
+            neutrals = App.Game_GetCurrentGame().GetCurrentEpisode() \
+                .GetCurrentMission().GetNeutralGroup()
+        group = neutrals
+    else:
+        group = qb.pEnemies if side == "Enemy" else qb.pFriendlies
+    group.AddName(name)
+    return group
 
 
 def _place_created(qb, plan, player, neutrals, created) -> None:
@@ -429,9 +452,7 @@ def _place_created(qb, plan, player, neutrals, created) -> None:
                         pm.UpdateObject(ship)
                     side = _SIDE.get(order.allegiance)
                     if side is None:
-                        neutrals.AddName(ship.GetName())
                         continue
-                    (qb.pEnemies if side == "Enemy" else qb.pFriendlies).AddName(ship.GetName())
                     ai, msg = _details(qb, order.class_id, side)
                     qb.g_kShips[ship.GetObjID()] = (ai, msg, side, order.ai_level)
                     if side == "Enemy":
