@@ -36,8 +36,8 @@ inline constexpr float kShieldEllipsoidAxisScale = 1.7320508f;
 /// Overall opacity ceiling on the impact splash — the brightness a fragment at
 /// full coverage, from a hit at full intensity, contributes to the frame.
 /// MUST match the constant in shaders/shield.frag.
-/// 0.75 -> 0.675 (2026-11-07): 10% down, the splash flared too hard.
-inline constexpr float kShieldSplashOpacity = 0.675f;
+/// 0.75 -> 0.675 -> 0.6075 (2026-11-07): two 10% cuts, the splash flared too hard.
+inline constexpr float kShieldSplashOpacity = 0.6075f;
 
 // ── procedural 3D splash: reach ────────────────────────────────────────────
 
