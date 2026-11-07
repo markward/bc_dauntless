@@ -216,13 +216,16 @@ TEST(SetIndex, ForgetSetAndResetReturnEveryReference) {
     put(ix, S, "b", B);
     ix.add(S2, "c", C, true, T);
     auto sorted = [](Keys k) { std::sort(k.begin(), k.end()); return k; };
+    EXPECT_EQ(ix.entry_count(), 4u);
     EXPECT_EQ(sorted(ix.forget_set(S)), (Keys{A, A, B, S}));
+    EXPECT_EQ(ix.entry_count(), 1u);
     EXPECT_FALSE(ix.has_set(S));
     EXPECT_TRUE(ix.sets_holding(A).empty());
     EXPECT_EQ(ix.sets(), (Keys{S2}));
     put(ix, S, "d", D);
     EXPECT_EQ(sorted(ix.reset()), (Keys{C, D, S, S2}));
     EXPECT_TRUE(ix.sets().empty());
+    EXPECT_EQ(ix.entry_count(), 0u);
     EXPECT_TRUE(ix.reset().empty());
 }
 

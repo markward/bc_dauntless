@@ -144,20 +144,23 @@ def test_rock_conversion_moves_buckets():
     assert s.GetClassObjectList(App.CT_SHIP) == [ship]
 
 
-def _clear_everything_but_the_index(monkeypatch):
-    """Other registries hold ships too until the per-test reset: the
-    mission-scoped ones (host_loop.reset_mission_state, run here with the set
-    index's own reset neutralised), the contact buckets and the global id
-    registry (both cleared by tests/conftest.py between tests). After this
-    only the index can be keeping them alive."""
+def _clear_other_holders():
+    """Other registries hold ships (and, through `_containing_set` or a
+    bucket key, their set) until the per-test reset: the mission-scoped ones
+    (host_loop.reset_mission_state, which does NOT touch the set index), the
+    contact buckets and the global id registry (both cleared by
+    tests/conftest.py between tests)."""
     import engine.host_loop as hl
     from engine.core import ids
-    monkeypatch.setattr(set_index, "reset", lambda: None)
     hl.reset_mission_state(None)
-    monkeypatch.undo()
     contact_index.reset()
     ids._registry.clear()
     gc.collect()
+
+
+def _tracked():
+    t = _h.set_index_tracked()
+    return t["sets"], t["entries"]
 
 
 def _populated():
@@ -172,29 +175,71 @@ def _populated():
     return s, a, b
 
 
-def test_reset_releases_every_reference(monkeypatch):
+def test_a_dropped_set_is_released_without_a_reset():
+    """The index holds members BORROWED and each set by a weakref whose
+    callback forgets it: a set and its ships die with the last outside
+    reference, and the index forgets the set, with no reset call."""
+    gc.collect()
+    base = _tracked()
     s, a, b = _populated()
+    assert _tracked() == (base[0] + 1, base[1] + 3)
     refs = [weakref.ref(o) for o in (s, a, b)]
     del s, a, b
-    _clear_everything_but_the_index(monkeypatch)
-    assert all(r() is not None for r in refs)  # the index alone holds them
-    set_index.reset()
-    gc.collect()
+    _clear_other_holders()
     assert [r() for r in refs] == [None, None, None]
-    assert _h.set_index_held_refs() == 0
+    assert _tracked() == base
 
 
-def test_forget_set_releases_every_reference(monkeypatch):
-    s, a, b = _populated()
-    refs = [weakref.ref(o) for o in (s, a, b)]
-    _clear_everything_but_the_index(monkeypatch)
+def test_a_set_dying_with_members_inside_leaves_no_entries():
+    gc.collect()
+    base = _tracked()
+    s = SetClass()
+    for i in range(4):
+        s.AddObjectToSet(types.SimpleNamespace(), f"thing {i}")
+    s.GetClassObjectList(types.SimpleNamespace)
+    assert _tracked() == (base[0] + 1, base[1] + 4)
+    ref = weakref.ref(s)
+    del s
+    _clear_other_holders()  # the global id registry holds every TGObject
+    assert ref() is None
+    assert _tracked() == base
+
+
+def test_forget_set_drops_the_set():
+    gc.collect()
+    base = _tracked()
+    s, _a, _b = _populated()
     set_index.forget_set(s)
-    del s, a, b
-    gc.collect()
-    assert [r() for r in refs] == [None, None, None]
+    assert _tracked() == base
+    set_index.forget_set(s)  # twice is harmless
+    assert _tracked() == base
 
 
-def test_a_removed_object_is_released(monkeypatch):
+def test_reset_forgets_every_set():
+    _populated()
+    set_index.reset()
+    assert _tracked() == (0, 0)
+
+
+def test_a_set_outliving_reset_mission_state_keeps_its_lists():
+    """HostController's swap runs reset_mission_state BEFORE
+    reset_sdk_globals tears down against still-live sets, and conftest keeps
+    sets across tests: a live set's lists must survive it."""
+    import engine.host_loop as hl
+    from engine.appc.projectiles import Torpedo
+    s, a, b = _populated()
+    t = Torpedo()
+    s.AddObjectToSet(t, "Torp")
+    ships = s.GetClassObjectList(App.CT_SHIP)
+    torps = s.GetClassObjectList(App.CT_TORPEDO)
+    contacts = set_index.ships_in(s)
+    hl.reset_mission_state(None)
+    assert s.GetClassObjectList(App.CT_SHIP) == ships == [a, b, a]
+    assert s.GetClassObjectList(App.CT_TORPEDO) == torps == [t]
+    assert set_index.ships_in(s) == contacts == (a, b)
+
+
+def test_a_removed_object_is_released():
     s = SetClass()
     a, b = _ship("A"), _ship("B")
     s.AddObjectToSet(a, "A")
@@ -203,7 +248,7 @@ def test_a_removed_object_is_released(monkeypatch):
     s.RemoveObjectFromSet("A")
     refs = [weakref.ref(o) for o in (a, b)]
     del a, b
-    _clear_everything_but_the_index(monkeypatch)
+    _clear_other_holders()
     assert [r() for r in refs] == [None, None]
 
 

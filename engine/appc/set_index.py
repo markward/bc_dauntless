@@ -30,9 +30,16 @@ them desyncs the index silently; `DAUNTLESS_SET_INDEX_AUDIT=1` makes
 GetClassObjectList compare against the old scan and raise on any difference.
 There is no Python copy to fall back to.
 
-The index holds a strong reference to every set it knows and every member:
-`reset` (mission swap, and every test via host_loop.reset_mission_state)
-and `forget_set` (a set deleted by a carry-over mission change) release them.
+Lifetime: exactly each set's own, never a reset call. Members are BORROWED
+(the set's `_objects` dict keeps them alive, and the index mirrors it), and
+each set is held by a weakref whose callback forgets it, so a set and its
+members die as if the index did not exist. A reset tied to the mission swap
+would be wrong: HostController runs host_loop.reset_mission_state BEFORE
+reset_sdk_globals tears down against still-live sets, and tests/conftest.py
+keeps sets across tests. `forget_set` (a set deleted by a carry-over mission
+change) and `reset` remain as explicit calls. Members are borrowed, so a
+write that bypasses the doors can leave a dangling key: the writer guard is
+what makes that safe.
 """
 from __future__ import annotations
 
@@ -93,12 +100,12 @@ def sets_holding(obj) -> list:
 
 
 def forget_set(pSet) -> None:
-    """Drop `pSet` and release every reference held for it."""
+    """Forget `pSet` (deleted by a carry-over mission change)."""
     _h.set_index_forget_set(pSet)
 
 
 def reset() -> None:
-    """Drop every set; release every reference the index holds."""
+    """Forget every set. Explicit only: a set's death forgets it anyway."""
     _h.set_index_reset()
 
 

@@ -65,6 +65,7 @@ public:
     // Every set holding `obj`, LEAVING entries included (reclassification).
     std::vector<IndexKey> held_sets(IndexKey obj) const;
     std::size_t object_records() const { return objs_.size(); }
+    std::size_t entry_count() const;  // entries across every set
     // Every key whose reference is dropped, with multiplicity (one per entry's
     // object, plus the set key once per set).
     std::vector<IndexKey> forget_set(IndexKey set);

@@ -288,4 +288,10 @@ std::vector<IndexKey> SetIndex::reset() {
 
 std::vector<IndexKey> SetIndex::sets() const { return set_order_; }
 
+std::size_t SetIndex::entry_count() const {
+    std::size_t n = 0;
+    for (auto& [set, sd] : sets_) n += sd.entries.size();
+    return n;
+}
+
 }  // namespace dauntless::combat
