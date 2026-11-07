@@ -8,7 +8,13 @@
 // ai_driver's `_refresh_conditional_status_python`,
 // `_eval_conditional_python` (the memo in `ai.__dict__["_evalfn_cache"]`
 // included) and `_tick_conditional`'s two status reads; ai_driver's public
-// names pick them when the native walker is selected.
+// names pick them when the native walker is selected. Task 4 (S4): the WALK,
+// `_tick_ai_python`, `_dispatch_ai`, every stock `_tick_*` handler and the
+// helpers they call by global name (`_dispatch_priority_child` and its
+// rollback, `_queue_got_focus`, `_focus_instance_of`, `_retain_subtree_focus`,
+// `_note_due_ret`). The focus and activation RECONCILIATION
+// (`_reconcile_focus`, `_flush_pending_got_focus`, `_reconcile_active`) is
+// still Python, called at the root as Python calls it (Task 5's seam).
 //
 // Python surface (raw METH_FASTCALL; a missing name is a stale binary):
 //   aitree_tick_all(game_time, globals)   the roster; `globals` is ai_driver's
@@ -22,6 +28,44 @@
 //   aitree_condition_statuses(ai, globals) -> [c.GetStatus() for c in ...]
 //   aitree_any_condition(ai, globals) -> any(c.GetStatus() != 0 for c ...)
 //   aitree_conditional_counts()           (native S2 entries, direct reads)
+//   aitree_tick(ai, game_time, globals)   tick_ai with the native walker
+//   aitree_walk_counts()                  (native walks, then native runs of
+//                                         each stock handler kind)
+//
+// S4, THE WALK. ai_driver's `tick_ai` is a dispatcher: `_aitree_tick` when
+// `_native_walker` is true, else `_tick_ai_python`. The native walk runs a
+// driver function's body natively only while the module global of that name
+// is the stock one, as captured at import in `_STOCK_WALK` (name -> (function,
+// code)) or, for a handler from `_DISPATCH_BY_TYPE` / `_resolve_dispatch`,
+// `_STOCK_HANDLERS` (function -> (kind, code)): the very function, still with
+// its own code. Anything else in its place (a test's injected handler, a
+// monkeypatch, a wrapper, a reassigned __code__) is CALLED, at the point the
+// Python walk calls it. A stock dispatcher (tick_ai, the four S2 names) is
+// inlined only while `_native_walker` is true and the binding it would call
+// is still ours; otherwise the dispatcher itself is called. `_note_due` is
+// run inline only while the global is our builtin.
+//
+// The walk state is ai_driver's MODULE GLOBALS, read and rebound exactly
+// where Python reads and rebinds them: `_focus_depth`, `_ooa_cache`,
+// `_reached_this_tick`, `_reached_this_tick_all`, `_reached_this_tick_all_ids`
+// and `_pending_got_focus`. Not a native copy, deliberately: the
+// reconciliation is still Python and reads them by name; a Python handler
+// (an injected type's, a patched stock one calling the original) appends to
+// them; and a root walk nested in a focus hook rebinds them under the outer
+// root, whose reconciliation then reads the rebound lists, which is Python's
+// visible behaviour (Review Focus 4). Moving them onto the native frame waits
+// for the reconciliation to move (Task 5).
+//
+// `_run_script_step` is CALLED BACK, never reproduced: its `except
+// Exception`, the `_last_script_error` record, the once-per-(node ID,
+// exception type) report and its printed traceback stay one Python body that
+// both walkers share, so they cannot drift; it runs only for a script step
+// (the whole walk made about 82 k Python callbacks in 3,246 ticks at 128
+// ships, C-438), so its one frame per step costs little next to the script
+// it runs. The `lambda: bound(game_time + 1.0)` _tick_preprocessing
+// hands it for a dEndTime preprocessor is a small native callable holding the
+// two values the lambda's cells hold and adding when called (inside the try,
+// as the lambda does).
 //
 // S2 resolves at call time, through `globals`: `_eval_conditional` (the
 // refresh evaluates inline only while it is still `_STOCK_EVAL_CONDITIONAL`,
@@ -65,6 +109,19 @@
 //  - A stock GetStatus read inline pushes no frame: a tracer or profiler
 //    (sys.settrace / setprofile, cProfile) does not see that call, and it
 //    cannot raise RecursionError at the recursion limit.
+//  - The walk's builtins (`id`, `len`, `isinstance`, `type`, `range`,
+//    `float`, `sum`, `getattr`, `callable`, TypeError/ValueError in the arity
+//    probe's except) likewise, and so is the `(TypeError, ValueError)` tuple.
+//  - A driver function or handler run natively pushes no Python frame:
+//    tracers and profilers do not see it, `sys._getframe()` in a script
+//    called from it shows no driver frames, a printed traceback lacks them,
+//    and the recursion limit counts one level per native tick_ai (Python
+//    would count about four), so a cyclic tree raises RecursionError later
+//    natively (Py_EnterRecursiveCall keeps the C stack safe).
+//  - `_reached_this_tick_all_ids.update(id(n) for n in ...)` in the rollback:
+//    an exact set takes each id as the generator would yield it; any other
+//    receiver gets the ids as one list (its update() still runs once).
+//  - The arity probe counts `sum(1 for ...)` as a C integer (the same int).
 //  - On an exception, Python keeps the frame's locals alive through the
 //    traceback (the frame object) until the caller's `except` clause ends;
 //    the native roster releases them before it returns the error. A

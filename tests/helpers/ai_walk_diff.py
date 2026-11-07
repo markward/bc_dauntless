@@ -2,10 +2,10 @@
 
 ``run_walk_diff(scene, ticks)`` runs one seeded scene twice in this process,
 once with ``ai_driver._native_walker`` False (the Python walker) and once with
-it True (the native walker, from the task that lands it; until then the
-selector routes to the same Python code, so every comparison passes and the
-harness proves itself deterministic). It raises ``AssertionError`` naming the
-tick and the first difference unless, for every tick,
+it True (the native walker: the roster, the walk and the condition
+evaluation in aitree.cc; two Python runs agreeing is the harness's own proof
+of determinism). It raises ``AssertionError`` naming the tick and the first
+difference unless, for every tick,
 
 * the CALL LOG is identical: every call the driver makes into Python, in
   order, with its arguments and its result (or the exception it raised); and
@@ -59,7 +59,9 @@ reported-error set. Floats compare by ``float.hex``; node references by ID.
 
 Module-level walk state. Only what something OUTSIDE the walker can observe is
 compared: ``_focus_depth`` (every tick, so an escaping exception or a nested
-walk that fails to restore it shows). ``_reached_this_tick`` / ``_all`` /
+walk that fails to restore it shows). The native walk keeps the rest in the
+same module globals (aitree.h says why), so the reconciliation, still Python,
+is handed the same lists either way. ``_reached_this_tick`` / ``_all`` /
 ``_all_ids`` / ``_pending_got_focus`` / the walk-min-due slot (native since
 Task 2: ``_note_due`` writes it, reset per side) / ``_ooa_cache`` are
 walker-internal: a grep of engine/, tools/, tests/ and the SDK finds no reader
@@ -547,6 +549,20 @@ def _native_conditional_counts():
     return tuple(_dauntless_host.aitree_conditional_counts())
 
 
+def _native_walk_counts():
+    """(native walks started, (native runs of each stock handler kind, in
+    ai_driver._STOCK_HANDLERS order)) in this process (``aitree_walk_counts``).
+    Read around a side to prove which walk ran."""
+    import _dauntless_host
+    ticks, *kinds = _dauntless_host.aitree_walk_counts()
+    return ticks, tuple(kinds)
+
+
+#: The Python body of the walk (S4): the stock ``tick_ai`` calls it by global
+#: name when the Python walker is selected; on the native side it may run only
+#: if a scene calls it itself.
+_PYTHON_S4 = "_tick_ai_python"
+
 #: The Python bodies of the condition evaluation (S2). The dispatchers in
 #: ai_driver call these by global name when the Python walker is selected.
 _PYTHON_S2 = ("_refresh_conditional_status_python", "_eval_conditional_python",
@@ -564,9 +580,12 @@ def run_side(scene, ticks, native, bases=None):
         _fresh_state(mp, base_ai, base_obj)
         mp.setattr(ai_driver, "_native_walker", bool(native))
         entries = {"python": 0, "native": 0, "native_roster": 0,
-                   "python_s2": 0, "native_s2": 0, "stock_status_reads": 0}
+                   "python_s2": 0, "native_s2": 0, "stock_status_reads": 0,
+                   "python_s4": 0, "native_walk": 0,
+                   "native_handlers": (0,) * 7}
         roster_before = _native_roster_count()
         s2_before = _native_conditional_counts()
+        s4_before = _native_walk_counts()
         for key, attr in (("python", "_tick_all_ai_python"),
                           ("native", "_tick_all_ai_native")):
             def counted(game_time, _orig=getattr(ai_driver, attr), _k=key):
@@ -578,6 +597,11 @@ def run_side(scene, ticks, native, bases=None):
                 entries["python_s2"] += 1
                 return _orig(*args)
             mp.setattr(ai_driver, attr, counted_s2)
+
+        def counted_s4(*args, _orig=getattr(ai_driver, _PYTHON_S4)):
+            entries["python_s4"] += 1
+            return _orig(*args)
+        mp.setattr(ai_driver, _PYTHON_S4, counted_s4)
         rec = _Recorder(mp, None)
         out = []
         _ACTIVE.append(rec)
@@ -599,6 +623,10 @@ def run_side(scene, ticks, native, bases=None):
             s2_after = _native_conditional_counts()
             entries["native_s2"] = s2_after[0] - s2_before[0]
             entries["stock_status_reads"] = s2_after[1] - s2_before[1]
+            s4_after = _native_walk_counts()
+            entries["native_walk"] = s4_after[0] - s4_before[0]
+            entries["native_handlers"] = tuple(
+                a - b for a, b in zip(s4_after[1], s4_before[1]))
             top_obj = next(ids._counter)
             top_ai = ArtificialIntelligence._next_id
             mp.undo()
@@ -672,8 +700,13 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
     evaluation (S2): the Python side never ran it natively
     (``aitree_conditional_counts``), the native side never ran its Python
     bodies (``_PYTHON_S2``), and ran it natively whenever the Python side ran
-    them. The native side's counts are on the returned record as
-    ``native_entries`` (``native_s2``, ``stock_status_reads``).
+    them. Likewise for the walk (S4): the Python side never ran the native
+    walk (``aitree_walk_counts``), the native side never ran the Python body
+    ``_tick_ai_python``, and ran the native walk whenever the Python side ran
+    that body. The native side's counts are on the returned record as
+    ``native_entries`` (``native_s2``, ``stock_status_reads``,
+    ``native_walk``, ``native_handlers``: per stock handler kind, in
+    ``ai_driver._STOCK_HANDLERS`` order).
 
     `aba`: run Python, native, Python and require the second Python run to
     match the native one too (an asymmetric warm-up would otherwise bias the
@@ -707,6 +740,12 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
     assert not py.entries["python_s2"] or nat.entries["native_s2"], (
         "the native side never ran the native condition evaluation: %r"
         % nat.entries)
+    assert py.entries["native_walk"] == 0, (
+        "the Python side ran the native walk: %r" % py.entries)
+    assert nat.entries["python_s4"] == 0, (
+        "the native side ran the Python walk: %r" % nat.entries)
+    assert not py.entries["python_s4"] or nat.entries["native_walk"], (
+        "the native side never ran the native walk: %r" % nat.entries)
     py.native_entries = nat.entries
     diff = first_difference(py, nat)
     assert diff is None, diff

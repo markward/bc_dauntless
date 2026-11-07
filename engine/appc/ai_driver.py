@@ -65,6 +65,17 @@ _pending_got_focus: list = []
 
 
 def tick_ai(ai, game_time: float) -> int:
+    """Tick one AI subtree with the selected walker (``_native_walker``): the
+    native walk (aitree_tick, native/src/host/aitree.cc) or
+    ``_tick_ai_python``, the reference it reproduces statement for
+    statement. Every caller -- the rosters, the handlers, a script -- comes
+    through here, so a test patching ``tick_ai`` is honoured by both."""
+    if _native_walker:
+        return _aitree_tick(ai, game_time, _GLOBALS)
+    return _tick_ai_python(ai, game_time)
+
+
+def _tick_ai_python(ai, game_time: float) -> int:
     """Tick one AI subtree; reconcile preprocessor focus and tree-activation
     at the root call.
 
@@ -829,8 +840,28 @@ _MEMO_KEY_TYPES = (bool, int, float, str, type(None))
 # function with this code, taken at import, before anything can patch it;
 # anything else (an override, an instance attribute, a patched class) is
 # called.
-_STOCK_CONDITION_GETSTATUS = (TGCondition.__dict__["GetStatus"],
-                              TGCondition.__dict__["GetStatus"].__code__)
+#
+# Self-validating: the capture asserts that the code it takes really is
+# `return self._status` (one positional parameter, reading one attribute,
+# compared against a reference body compiled here), so a GetStatus patched
+# BEFORE this module is imported fails the import instead of being read
+# inline as if it were stock.
+def _stock_get_status_shape(self):
+    return self._status
+
+
+def _capture_stock_get_status():
+    fn = TGCondition.__dict__["GetStatus"]
+    code, ref = fn.__code__, _stock_get_status_shape.__code__
+    assert (code.co_code == ref.co_code and code.co_names == ref.co_names
+            and code.co_argcount == 1 and not code.co_kwonlyargcount
+            and not code.co_freevars and code.co_consts == ref.co_consts), (
+        "TGCondition.GetStatus is not the stock `return self._status`: it was "
+        "replaced before engine.appc.ai_driver was imported")
+    return fn, code
+
+
+_STOCK_CONDITION_GETSTATUS = _capture_stock_get_status()
 
 
 def _eval_conditional(ai, eval_fn, args):
@@ -1748,6 +1779,9 @@ _aitree_refresh_conditional = _aitree("aitree_refresh_conditional")
 _aitree_eval_conditional = _aitree("aitree_eval_conditional")
 _aitree_condition_statuses = _aitree("aitree_condition_statuses")
 _aitree_any_condition = _aitree("aitree_any_condition")
+# The native walk (aitree_tick): tick_ai, _dispatch_ai and every stock
+# _tick_* handler. See _STOCK_WALK.
+_aitree_tick = _aitree("aitree_tick")
 _GLOBALS = globals()
 
 
@@ -1762,19 +1796,21 @@ def _note_due_ret(when: float) -> bool:
     return True
 
 
-# Which tree walker tick_all_ai runs. False: the Python walker below (the
-# only one until phase 6 AI part 4 task 4). Tests set it per test; there is no
-# environment switch.
-_native_walker = False
+# Which tree walker runs: True (the default since phase 6 AI part 4 task 4),
+# the native one (aitree.cc: the roster, the walk, the condition evaluation);
+# False, the Python reference (_tick_all_ai_python, _tick_ai_python, the
+# _tick_* bodies, the *_python condition bodies). Tests set it per test; there
+# is no environment switch.
+_native_walker = True
 
 
 def tick_all_ai(game_time: float) -> None:
     """Tick every ship's AI tree with the selected walker (``_native_walker``).
 
-    The one selection point. The native arm runs the roster and its sleep
-    scheduling in C++ (aitree_tick_all); each root walk is still Python's
-    tick_ai until the native walk lands (part 4 task 4). The differential
-    harness (tests/helpers/ai_walk_diff.py) holds the two arms equal."""
+    The native arm runs the roster and its sleep scheduling in C++
+    (aitree_tick_all), and each root walk natively too (aitree_tick, through
+    a stock tick_ai). The differential harness (tests/helpers/ai_walk_diff.py)
+    holds the two arms equal."""
     if _native_walker:
         _tick_all_ai_native(game_time)
     else:
@@ -1870,3 +1906,40 @@ def _tick_all_ai_python(game_time: float) -> None:
                 else:
                     # Bare test doubles without the full ShipClass surface.
                     fire_ai_done(ship, ai)
+
+
+# ── The native walk's stock identities ──────────────────────────────────────
+#
+# The native walk (aitree_tick) runs a driver function's body natively only
+# while the module global of that name is still the function defined above,
+# with its own code, as captured here at import; anything else in its place
+# (a monkeypatch, a wrapper, a reassigned __code__) is CALLED, at the point
+# the Python walker would call it. Each global is read at the moment the
+# Python walker reads it, so a patch made mid-walk is honoured too.
+#
+# _STOCK_WALK: global name -> (function, its code at import). The dispatchers
+# that choose between a native binding and a Python body (tick_ai, the four
+# condition-evaluation names) are inlined natively only while they are stock,
+# _native_walker is true and the binding they would call is still the native
+# one; otherwise the dispatcher itself is called.
+#
+# _STOCK_HANDLERS: a stock _tick_* handler -> (its native kind, its code). A
+# handler found in _DISPATCH_BY_TYPE (or returned by _resolve_dispatch) runs
+# natively only when it is one of these, unchanged. The kinds are the native
+# walk's handler numbers (aitree.cc, `enum Kind`), in this order.
+def _stock(fn):
+    return fn, fn.__code__
+
+
+_STOCK_WALK = {
+    fn.__name__: _stock(fn) for fn in (
+        tick_ai, _dispatch_ai, _tick_preprocessing, _dispatch_priority_child,
+        _queue_got_focus, _focus_instance_of, _retain_subtree_focus,
+        _note_due_ret, _refresh_conditional_status, _condition_statuses,
+        _any_condition, _eval_conditional)
+}
+_STOCK_HANDLERS = {
+    fn: (kind, fn.__code__) for kind, fn in enumerate((
+        _tick_plain, _tick_priority_list, _tick_sequence, _tick_random,
+        _tick_conditional, _tick_preprocessing, _tick_builder), start=1)
+}

@@ -13,6 +13,7 @@
 
 #include <new>
 #include <utility>
+#include <vector>
 
 namespace dauntless::host::aitree {
 namespace {
@@ -86,10 +87,95 @@ struct Names {
     PyObject* memo_key_types;       // "_MEMO_KEY_TYPES"
     PyObject* evalfn_cache;         // "_evalfn_cache"
     PyObject* evalfn_memoisable;    // "_evalfn_memoisable"
+    // S4, the walk.
+    PyObject* focus_depth;           // "_focus_depth"
+    PyObject* ooa_cache;             // "_ooa_cache"
+    PyObject* reached;               // "_reached_this_tick"
+    PyObject* reached_all;           // "_reached_this_tick_all"
+    PyObject* reached_all_ids;       // "_reached_this_tick_all_ids"
+    PyObject* pending;               // "_pending_got_focus"
+    PyObject* dispatch_ai;           // "_dispatch_ai"
+    PyObject* reconcile_focus;       // "_reconcile_focus"
+    PyObject* flush_pending;         // "_flush_pending_got_focus"
+    PyObject* reconcile_active;      // "_reconcile_active"
+    PyObject* native_walker;         // "_native_walker"
+    PyObject* aitree_tick;           // "_aitree_tick"
+    PyObject* stock_walk;            // "_STOCK_WALK"
+    PyObject* stock_handlers;        // "_STOCK_HANDLERS"
+    PyObject* get_ship;              // "GetShip"
+    PyObject* ship_death;            // "ship_death"
+    PyObject* out_of_action;         // "_out_of_action"
+    PyObject* dispatch_by_type;      // "_DISPATCH_BY_TYPE"
+    PyObject* unresolved;            // "_UNRESOLVED"
+    PyObject* resolve_dispatch;      // "_resolve_dispatch"
+    PyObject* timed_dispatch;        // "_timed_dispatch"
+    PyObject* append;                // "append"
+    PyObject* add;                   // "add"
+    PyObject* clear;                 // "clear"
+    PyObject* update_m;              // "update"
+    PyObject* remove;                // "remove"
+    PyObject* has_focus;             // "_has_focus"
+    PyObject* next_update_time;      // "_next_update_time"
+    PyObject* get_script_instance;   // "GetScriptInstance"
+    PyObject* update;                // "Update"
+    PyObject* get_next_update_time;  // "GetNextUpdateTime"
+    PyObject* run_script_step;       // "_run_script_step"
+    PyObject* note_due;              // "_note_due"
+    PyObject* note_due_ret;          // "_note_due_ret"
+    PyObject* queue_got_focus;       // "_queue_got_focus"
+    PyObject* focus_instance_of;     // "_focus_instance_of"
+    PyObject* got_focus_called;      // "_got_focus_called"
+    PyObject* script_instance;       // "_script_instance"
+    PyObject* preprocessing_instance; // "_preprocessing_instance"
+    PyObject* ais;                   // "_ais"
+    PyObject* conditional_cls;       // "ConditionalAI"
+    PyObject* preprocessing_cls;     // "PreprocessingAI"
+    PyObject* refresh_cond;          // "_refresh_conditional_status"
+    PyObject* aitree_refresh;        // "_aitree_refresh_conditional"
+    PyObject* dispatch_priority_child; // "_dispatch_priority_child"
+    PyObject* current_index;         // "_current_index"
+    PyObject* loops_remaining;       // "_loops_remaining"
+    PyObject* skip_dormant;          // "_skip_dormant"
+    PyObject* current_child;         // "_current_child"
+    PyObject* untried;               // "_untried"
+    PyObject* random;                // "random"
+    PyObject* choice;                // "choice"
+    PyObject* condition_statuses;    // "_condition_statuses"
+    PyObject* aitree_statuses;       // "_aitree_condition_statuses"
+    PyObject* any_condition;         // "_any_condition"
+    PyObject* aitree_any;            // "_aitree_any_condition"
+    PyObject* aitree_eval;           // "_aitree_eval_conditional"
+    PyObject* preprocessing_method;  // "_preprocessing_method"
+    PyObject* damage_event;          // "DamageEvent"
+    PyObject* pcodeai;               // "pCodeAI"
+    PyObject* ensure_select;         // "_ensure_select_target_initialized"
+    PyObject* arity_cache;           // "_preprocess_arity_cache"
+    PyObject* inspect;               // "inspect"
+    PyObject* signature;             // "signature"
+    PyObject* parameters;            // "parameters"
+    PyObject* values;                // "values"
+    PyObject* kind;                  // "kind"
+    PyObject* parameter;             // "Parameter"
+    PyObject* positional_only;       // "POSITIONAL_ONLY"
+    PyObject* positional_or_keyword; // "POSITIONAL_OR_KEYWORD"
+    PyObject* is_interruptable;      // "IsInterruptable"
+    PyObject* last_preprocess_status; // "_last_preprocess_status"
+    PyObject* sync_fire;             // "_sync_fire_script_target_subsystem"
+    PyObject* ps_normal;             // "PS_NORMAL"
+    PyObject* ps_skip_active;        // "PS_SKIP_ACTIVE"
+    PyObject* ps_skip_dormant;       // "PS_SKIP_DORMANT"
+    PyObject* retain_focus;          // "_retain_subtree_focus"
+    PyObject* activation_failed;     // "_activation_failed"
+    PyObject* activated;             // "_activated"
+    PyObject* activate_builder;      // "_activate_builder"
+    PyObject* tick_preprocessing;    // "_tick_preprocessing"
+    PyObject* tick_ai_python;        // "_tick_ai_python"
     PyObject* inf;                  // float("inf")
     PyObject* zero;                 // 0
     PyObject* one;                  // 1
     PyObject* two;                  // 2
+    PyObject* fzero;                // 0.0
+    PyObject* fone;                 // 1.0
 };
 
 Names* g_names = nullptr;
@@ -136,6 +222,88 @@ const Names* names() {
         {&n->memo_key_types, "_MEMO_KEY_TYPES"},
         {&n->evalfn_cache, "_evalfn_cache"},
         {&n->evalfn_memoisable, "_evalfn_memoisable"},
+        {&n->focus_depth, "_focus_depth"},
+        {&n->ooa_cache, "_ooa_cache"},
+        {&n->reached, "_reached_this_tick"},
+        {&n->reached_all, "_reached_this_tick_all"},
+        {&n->reached_all_ids, "_reached_this_tick_all_ids"},
+        {&n->pending, "_pending_got_focus"},
+        {&n->dispatch_ai, "_dispatch_ai"},
+        {&n->reconcile_focus, "_reconcile_focus"},
+        {&n->flush_pending, "_flush_pending_got_focus"},
+        {&n->reconcile_active, "_reconcile_active"},
+        {&n->native_walker, "_native_walker"},
+        {&n->aitree_tick, "_aitree_tick"},
+        {&n->stock_walk, "_STOCK_WALK"},
+        {&n->stock_handlers, "_STOCK_HANDLERS"},
+        {&n->get_ship, "GetShip"},
+        {&n->ship_death, "ship_death"},
+        {&n->out_of_action, "_out_of_action"},
+        {&n->dispatch_by_type, "_DISPATCH_BY_TYPE"},
+        {&n->unresolved, "_UNRESOLVED"},
+        {&n->resolve_dispatch, "_resolve_dispatch"},
+        {&n->timed_dispatch, "_timed_dispatch"},
+        {&n->append, "append"},
+        {&n->add, "add"},
+        {&n->clear, "clear"},
+        {&n->update_m, "update"},
+        {&n->remove, "remove"},
+        {&n->has_focus, "_has_focus"},
+        {&n->next_update_time, "_next_update_time"},
+        {&n->get_script_instance, "GetScriptInstance"},
+        {&n->update, "Update"},
+        {&n->get_next_update_time, "GetNextUpdateTime"},
+        {&n->run_script_step, "_run_script_step"},
+        {&n->note_due, "_note_due"},
+        {&n->note_due_ret, "_note_due_ret"},
+        {&n->queue_got_focus, "_queue_got_focus"},
+        {&n->focus_instance_of, "_focus_instance_of"},
+        {&n->got_focus_called, "_got_focus_called"},
+        {&n->script_instance, "_script_instance"},
+        {&n->preprocessing_instance, "_preprocessing_instance"},
+        {&n->ais, "_ais"},
+        {&n->conditional_cls, "ConditionalAI"},
+        {&n->preprocessing_cls, "PreprocessingAI"},
+        {&n->refresh_cond, "_refresh_conditional_status"},
+        {&n->aitree_refresh, "_aitree_refresh_conditional"},
+        {&n->dispatch_priority_child, "_dispatch_priority_child"},
+        {&n->current_index, "_current_index"},
+        {&n->loops_remaining, "_loops_remaining"},
+        {&n->skip_dormant, "_skip_dormant"},
+        {&n->current_child, "_current_child"},
+        {&n->untried, "_untried"},
+        {&n->random, "random"},
+        {&n->choice, "choice"},
+        {&n->condition_statuses, "_condition_statuses"},
+        {&n->aitree_statuses, "_aitree_condition_statuses"},
+        {&n->any_condition, "_any_condition"},
+        {&n->aitree_any, "_aitree_any_condition"},
+        {&n->aitree_eval, "_aitree_eval_conditional"},
+        {&n->preprocessing_method, "_preprocessing_method"},
+        {&n->damage_event, "DamageEvent"},
+        {&n->pcodeai, "pCodeAI"},
+        {&n->ensure_select, "_ensure_select_target_initialized"},
+        {&n->arity_cache, "_preprocess_arity_cache"},
+        {&n->inspect, "inspect"},
+        {&n->signature, "signature"},
+        {&n->parameters, "parameters"},
+        {&n->values, "values"},
+        {&n->kind, "kind"},
+        {&n->parameter, "Parameter"},
+        {&n->positional_only, "POSITIONAL_ONLY"},
+        {&n->positional_or_keyword, "POSITIONAL_OR_KEYWORD"},
+        {&n->is_interruptable, "IsInterruptable"},
+        {&n->last_preprocess_status, "_last_preprocess_status"},
+        {&n->sync_fire, "_sync_fire_script_target_subsystem"},
+        {&n->ps_normal, "PS_NORMAL"},
+        {&n->ps_skip_active, "PS_SKIP_ACTIVE"},
+        {&n->ps_skip_dormant, "PS_SKIP_DORMANT"},
+        {&n->retain_focus, "_retain_subtree_focus"},
+        {&n->activation_failed, "_activation_failed"},
+        {&n->activated, "_activated"},
+        {&n->activate_builder, "_activate_builder"},
+        {&n->tick_preprocessing, "_tick_preprocessing"},
+        {&n->tick_ai_python, "_tick_ai_python"},
     };
     for (const S& s : strs) {
         *s.slot = PyUnicode_InternFromString(s.text);
@@ -147,11 +315,23 @@ const Names* names() {
     n->zero = PyLong_FromLong(0);
     n->one = PyLong_FromLong(1);
     n->two = PyLong_FromLong(2);
-    if (!n->fromlist_iter || !n->fromlist_cloak || !n->inf || !n->zero || !n->one || !n->two)
+    n->fzero = PyFloat_FromDouble(0.0);
+    n->fone = PyFloat_FromDouble(1.0);
+    if (!n->fromlist_iter || !n->fromlist_cloak || !n->inf || !n->zero || !n->one || !n->two ||
+        !n->fzero || !n->fone)
         return nullptr;
     g_names = n;
     return n;
 }
+
+// ai_driver's globals and the name table, for one native entry.
+struct Ctx {
+    PyObject* g;
+    const Names* n;
+};
+
+// The walk (S4, below): `tick_ai(node, game_time)` with the global loaded.
+PyObject* run_tick(const Ctx& c, PyObject* fn, PyObject* node, PyObject* gt);
 
 // ── the walk's min-due slot (Python: `_walk_min_due[0]`) ────────────────────
 // Holds the very object `_note_due` was given (an int due time stays an int,
@@ -189,6 +369,9 @@ int compare(PyObject* a, PyObject* b, int op) {
             case Py_LT: return x < y;
             case Py_LE: return x <= y;
             case Py_EQ: return x == y;
+            case Py_NE: return x != y;
+            case Py_GT: return x > y;
+            case Py_GE: return x >= y;
             default: break;
         }
     }
@@ -431,8 +614,7 @@ PyObject* tick_all_impl(PyObject* game_time, PyObject* g) {
         {
             Ref fn(load_global(g, n->tick_ai));
             if (!fn) return nullptr;
-            PyObject* a[2] = {f.ai.get(), game_time};
-            Ref value(PyObject_Vectorcall(fn.get(), a, 2, nullptr));
+            Ref value(run_tick(Ctx{g, n}, fn.get(), f.ai.get(), game_time));
             if (!value) return nullptr;
             f.status = std::move(value);
         }
@@ -979,6 +1161,2324 @@ PyObject* refresh_impl(PyObject* ai, PyObject* g) {
     Py_RETURN_NONE;
 }
 
+// ── S4: the walk ────────────────────────────────────────────────────────────
+// THE REFERENCE is ai_driver.py's `_tick_ai_python`, `_dispatch_ai`, the
+// stock `_tick_*` handlers and the helpers they call by global name
+// (`_dispatch_priority_child`, `_queue_got_focus`, `_focus_instance_of`,
+// `_retain_subtree_focus`, `_note_due_ret`); each step names the statement it
+// stands for. The rules (aitree.h) in short:
+//  - every module global is read when Python reads it (LOAD_GLOBAL), the walk
+//    state included: `_focus_depth`, `_ooa_cache`, `_reached_this_tick`,
+//    `_reached_this_tick_all(_ids)` and `_pending_got_focus` stay ai_driver's
+//    module globals, rebound at a root walk as Python rebinds them, so a
+//    Python handler (a patched one, or a test's) and the still-Python
+//    reconciliation see exactly the lists Python's walk would hand them;
+//  - a driver function runs natively only while its global is the stock one
+//    (`_STOCK_WALK` / `_STOCK_HANDLERS`: the very function with its code at
+//    import); anything else in its place is called, at the same point;
+//  - each Python local is an owned slot at function scope, rebound by
+//    move-assignment where Python rebinds it, released in co_varnames order
+//    at return (cells after plain locals).
+
+unsigned long long g_tick_runs = 0;            // native walks started
+enum Kind {
+    kNotStock = 0,
+    kPlain = 1,  // _STOCK_HANDLERS' order
+    kPriorityList,
+    kSequence,
+    kRandom,
+    kConditional,
+    kPreprocessing,
+    kBuilder,
+    kKinds
+};
+unsigned long long g_kind_runs[kKinds] = {};   // native runs per stock handler
+
+PyObject* tick(PyObject*, PyObject* const*, Py_ssize_t);
+PyObject* note_due(PyObject*, PyObject* const*, Py_ssize_t);
+PyObject* refresh_conditional(PyObject*, PyObject* const*, Py_ssize_t);
+PyObject* eval_conditional(PyObject*, PyObject* const*, Py_ssize_t);
+PyObject* condition_statuses(PyObject*, PyObject* const*, Py_ssize_t);
+PyObject* any_condition(PyObject*, PyObject* const*, Py_ssize_t);
+
+template <auto F>
+PyCFunction fast() {
+    return reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(F));
+}
+
+// `if when < slot: slot = when` (the native _note_due's body). 0, or -1.
+int note_due_value(PyObject* when) {
+    PyObject* cur = min_due();
+    if (cur == nullptr) return -1;
+    if (PyFloat_CheckExact(when) && PyFloat_CheckExact(cur)) {
+        if (PyFloat_AS_DOUBLE(when) < PyFloat_AS_DOUBLE(cur)) set_min_due(when);
+        return 0;
+    }
+    // The comparison can run Python (which may write the slot): it reads
+    // the value it was handed, held.
+    Ref held(Py_NewRef(cur));
+    const int lt = compare(when, held.get(), Py_LT);
+    if (lt < 0) return -1;
+    if (lt) set_min_due(when);
+    return 0;
+}
+
+// `fn` is this module's builtin `impl` (the binding as registered).
+bool our_builtin(PyObject* fn, PyCFunction impl) {
+    return PyCFunction_Check(fn) && PyCFunction_GET_FUNCTION(fn) == impl;
+}
+
+// 1: `fn` is ai_driver's stock function `name` (`_STOCK_WALK[name]`: the very
+// function, still running the code it had at import); 0: anything else; -1:
+// an error. A function hashes by identity, so the lookup runs no Python.
+int stock_fn(const Ctx& c, PyObject* name, PyObject* fn) {
+    if (!PyFunction_Check(fn)) return 0;
+    Ref table(load_global(c.g, c.n->stock_walk));
+    if (!table) return -1;
+    if (!PyDict_Check(table.get())) {
+        PyErr_SetString(PyExc_TypeError, "ai_driver._STOCK_WALK must be a dict");
+        return -1;
+    }
+    PyObject* pair = PyDict_GetItemWithError(table.get(), name);  // borrowed, used at once
+    if (pair == nullptr) return PyErr_Occurred() ? -1 : 0;
+    if (!PyTuple_Check(pair) || PyTuple_GET_SIZE(pair) != 2) {
+        PyErr_SetString(PyExc_TypeError, "ai_driver._STOCK_WALK values must be (function, code)");
+        return -1;
+    }
+    return PyTuple_GET_ITEM(pair, 0) == fn && PyFunction_GET_CODE(fn) == PyTuple_GET_ITEM(pair, 1);
+}
+
+// The stock handler kind of `handler` (`_STOCK_HANDLERS[handler]`, code
+// unchanged), kNotStock for anything else, -1 on an error.
+int handler_kind(const Ctx& c, PyObject* handler) {
+    if (!PyFunction_Check(handler)) return kNotStock;
+    Ref table(load_global(c.g, c.n->stock_handlers));
+    if (!table) return -1;
+    if (!PyDict_Check(table.get())) {
+        PyErr_SetString(PyExc_TypeError, "ai_driver._STOCK_HANDLERS must be a dict");
+        return -1;
+    }
+    PyObject* entry = PyDict_GetItemWithError(table.get(), handler);  // borrowed, used at once
+    if (entry == nullptr) return PyErr_Occurred() ? -1 : kNotStock;
+    if (!PyTuple_Check(entry) || PyTuple_GET_SIZE(entry) != 2 ||
+        !PyLong_Check(PyTuple_GET_ITEM(entry, 0))) {
+        PyErr_SetString(PyExc_TypeError, "ai_driver._STOCK_HANDLERS values must be (kind, code)");
+        return -1;
+    }
+    if (PyFunction_GET_CODE(handler) != PyTuple_GET_ITEM(entry, 1)) return kNotStock;
+    const long kind = PyLong_AsLong(PyTuple_GET_ITEM(entry, 0));
+    if (kind == -1 && PyErr_Occurred()) return -1;
+    return kind > kNotStock && kind < kKinds ? static_cast<int>(kind) : kNotStock;
+}
+
+// A stock dispatcher `name` (`if _native_walker: <binding>(...) else
+// <python body>`, e.g. tick_ai) would run our native `impl` now: 1. 0: call
+// the global itself (it is not stock, the Python body is selected, or the
+// binding it would call has been replaced). -1: an error.
+int routes_native(const Ctx& c, PyObject* name, PyObject* fn, PyObject* binding,
+                  PyCFunction impl) {
+    const int s = stock_fn(c, name, fn);
+    if (s <= 0) return s;
+    {
+        Ref flag(load_global(c.g, c.n->native_walker));
+        if (!flag) return -1;
+        const int t = PyObject_IsTrue(flag.get());
+        if (t <= 0) return t;
+    }
+    Ref b(load_global(c.g, binding));
+    if (!b) return -1;
+    return our_builtin(b.get(), impl) ? 1 : 0;
+}
+
+PyObject* call2(PyObject* fn, PyObject* a, PyObject* b) {
+    PyObject* args[2] = {a, b};
+    return PyObject_Vectorcall(fn, args, 2, nullptr);
+}
+
+PyObject* call3(PyObject* fn, PyObject* a, PyObject* b, PyObject* d) {
+    PyObject* args[3] = {a, b, d};
+    return PyObject_Vectorcall(fn, args, 3, nullptr);
+}
+
+// `a + b` (BINARY_OP +): two exact floats add as doubles (float_add);
+// anything else is Python's operator. Owned.
+PyObject* add_obj(PyObject* a, PyObject* b) {
+    if (PyFloat_CheckExact(a) && PyFloat_CheckExact(b)) {
+        const double s = PyFloat_AS_DOUBLE(a) + PyFloat_AS_DOUBLE(b);
+        return PyFloat_FromDouble(s);
+    }
+    return PyNumber_Add(a, b);
+}
+
+// `float(x)` (float_new: a str parses, anything else is PyNumber_Float).
+PyObject* py_float(PyObject* x) {
+    if (PyUnicode_CheckExact(x)) return PyFloat_FromString(x);
+    return PyNumber_Float(x);
+}
+
+// `obj.attr OP <global>` jumped on: the attribute, the global, COMPARE_OP
+// (operands released before the truth test). 1, 0, or -1.
+int attr_cmp_global(const Ctx& c, PyObject* obj, PyObject* attr, PyObject* gname, int op) {
+    Ref a(PyObject_GetAttr(obj, attr));
+    if (!a) return -1;
+    Ref b(load_global(c.g, gname));
+    if (!b) return -1;
+    return compare_owned(std::move(a), std::move(b), op);
+}
+
+// `local OP <global>` jumped on. 1, 0, or -1.
+int local_cmp_global(const Ctx& c, PyObject* local, PyObject* gname, int op) {
+    Ref b(load_global(c.g, gname));
+    if (!b) return -1;
+    return compare_owned(Ref(Py_NewRef(local)), std::move(b), op);
+}
+
+// `obj.attr = <global>`.
+int set_attr_global(const Ctx& c, PyObject* obj, PyObject* attr, PyObject* gname) {
+    Ref v(load_global(c.g, gname));
+    if (!v) return -1;
+    return PyObject_SetAttr(obj, attr, v.get());
+}
+
+// `lst.append(item)`: an exact list's own append; anything else, the method.
+int list_append(PyObject* lst, PyObject* item, const Names* n) {
+    if (PyList_CheckExact(lst)) return PyList_Append(lst, item);
+    Ref r(PyObject_CallMethodOneArg(lst, n->append, item));
+    return r ? 0 : -1;
+}
+
+// `<global>.append(item)`.
+int global_append(const Ctx& c, PyObject* gname, PyObject* item) {
+    Ref l(load_global(c.g, gname));
+    if (!l) return -1;
+    return list_append(l.get(), item, c.n);
+}
+
+// `d.get(key)` / `d.get(key, dflt)` (dflt nullptr: the one-argument form).
+PyObject* dict_get(PyObject* d, PyObject* key, PyObject* dflt, const Names* n) {
+    if (PyDict_CheckExact(d)) {
+        PyObject* v = PyDict_GetItemWithError(d, key);
+        if (v != nullptr) return Py_NewRef(v);
+        if (PyErr_Occurred()) return nullptr;
+        return Py_NewRef(dflt != nullptr ? dflt : Py_None);
+    }
+    if (dflt == nullptr) return PyObject_CallMethodOneArg(d, n->get, key);
+    return PyObject_CallMethodObjArgs(d, n->get, key, dflt, nullptr);
+}
+
+// `obj.__dict__.get(key[, dflt])`.
+PyObject* obj_dict_get(PyObject* obj, PyObject* key, PyObject* dflt, const Names* n) {
+    Ref d(PyObject_GetAttr(obj, n->dict));
+    if (!d) return nullptr;
+    return dict_get(d.get(), key, dflt, n);
+}
+
+// UNPACK_SEQUENCE 2 (CPython 3.11's, messages included). The sequence is
+// released by the caller after the items are taken, before they are stored.
+int unpack2(PyObject* seq, Ref* a, Ref* b) {
+    if ((PyTuple_CheckExact(seq) && PyTuple_GET_SIZE(seq) == 2) ||
+        (PyList_CheckExact(seq) && PyList_GET_SIZE(seq) == 2)) {
+        PyObject** items = PyTuple_CheckExact(seq) ? &PyTuple_GET_ITEM(seq, 0)
+                                                   : &PyList_GET_ITEM(seq, 0);
+        *a = Ref(Py_NewRef(items[0]));
+        *b = Ref(Py_NewRef(items[1]));
+        return 0;
+    }
+    Ref it(PyObject_GetIter(seq));
+    if (!it) {
+        if (PyErr_ExceptionMatches(PyExc_TypeError) && Py_TYPE(seq)->tp_iter == nullptr &&
+            !PySequence_Check(seq)) {
+            PyErr_Clear();
+            PyErr_Format(PyExc_TypeError, "cannot unpack non-iterable %.200s object",
+                         Py_TYPE(seq)->tp_name);
+        }
+        return -1;
+    }
+    Ref x(PyIter_Next(it.get()));
+    if (!x) {
+        if (!PyErr_Occurred())
+            PyErr_Format(PyExc_ValueError, "not enough values to unpack (expected %d, got %d)",
+                         2, 0);
+        return -1;
+    }
+    Ref y(PyIter_Next(it.get()));
+    if (!y) {
+        if (!PyErr_Occurred())
+            PyErr_Format(PyExc_ValueError, "not enough values to unpack (expected %d, got %d)",
+                         2, 1);
+        return -1;
+    }
+    Ref z(PyIter_Next(it.get()));
+    if (z) {
+        z = Ref();
+        PyErr_Format(PyExc_ValueError, "too many values to unpack (expected %d)", 2);
+        return -1;
+    }
+    if (PyErr_Occurred()) return -1;
+    *a = std::move(x);
+    *b = std::move(y);
+    return 0;
+}
+
+// The `lambda: bound(game_time + 1.0)` _tick_preprocessing hands to
+// _run_script_step for a preprocessor taking dEndTime: a callable holding the
+// two values its closure cells hold, adding when called (inside
+// _run_script_step's try, as the lambda's body does).
+struct EndTimeCall {
+    PyObject_HEAD
+    PyObject* bound;
+    PyObject* game_time;
+};
+
+PyTypeObject* g_end_time_type = nullptr;
+
+int etc_traverse(PyObject* self, visitproc visit, void* arg) {
+    auto* o = reinterpret_cast<EndTimeCall*>(self);
+    Py_VISIT(o->bound);
+    Py_VISIT(o->game_time);
+    Py_VISIT(Py_TYPE(self));
+    return 0;
+}
+
+int etc_clear(PyObject* self) {
+    auto* o = reinterpret_cast<EndTimeCall*>(self);
+    Py_CLEAR(o->bound);
+    Py_CLEAR(o->game_time);
+    return 0;
+}
+
+void etc_dealloc(PyObject* self) {
+    PyTypeObject* tp = Py_TYPE(self);
+    PyObject_GC_UnTrack(self);
+    etc_clear(self);
+    tp->tp_free(self);
+    Py_DECREF(tp);
+}
+
+PyObject* etc_call(PyObject* self, PyObject* args, PyObject* kw) {
+    if (PyTuple_GET_SIZE(args) != 0) {
+        PyErr_Format(PyExc_TypeError,
+                     "<lambda>() takes 0 positional arguments but %zd were given",
+                     PyTuple_GET_SIZE(args));
+        return nullptr;
+    }
+    if (kw != nullptr && PyDict_GET_SIZE(kw) != 0) {
+        PyErr_SetString(PyExc_TypeError, "<lambda>() got an unexpected keyword argument");
+        return nullptr;
+    }
+    const Names* n = names();
+    if (n == nullptr) return nullptr;
+    auto* o = reinterpret_cast<EndTimeCall*>(self);
+    if (o->bound == nullptr) {
+        PyErr_SetString(PyExc_RuntimeError, "aitree end-time call cleared");
+        return nullptr;
+    }
+    Ref bound(Py_NewRef(o->bound));             // LOAD_DEREF bound
+    Ref arg(add_obj(o->game_time, n->fone));    // game_time + 1.0
+    if (!arg) return nullptr;
+    return PyObject_CallOneArg(bound.get(), arg.get());
+}
+
+PyObject* make_end_time_call(PyObject* bound, PyObject* game_time) {
+    if (g_end_time_type == nullptr) {
+        static PyType_Slot slots[] = {
+            {Py_tp_call, reinterpret_cast<void*>(etc_call)},
+            {Py_tp_dealloc, reinterpret_cast<void*>(etc_dealloc)},
+            {Py_tp_traverse, reinterpret_cast<void*>(etc_traverse)},
+            {Py_tp_clear, reinterpret_cast<void*>(etc_clear)},
+            {0, nullptr},
+        };
+        static PyType_Spec spec = {
+            "_dauntless_host.aitree_end_time_call", sizeof(EndTimeCall), 0,
+            Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, slots};
+        PyObject* t = PyType_FromSpec(&spec);
+        if (t == nullptr) return nullptr;
+        g_end_time_type = reinterpret_cast<PyTypeObject*>(t);  // kept for good
+    }
+    EndTimeCall* o = PyObject_GC_New(EndTimeCall, g_end_time_type);
+    if (o == nullptr) return nullptr;
+    o->bound = Py_NewRef(bound);
+    o->game_time = Py_NewRef(game_time);
+    PyObject_GC_Track(reinterpret_cast<PyObject*>(o));
+    return reinterpret_cast<PyObject*>(o);
+}
+
+PyObject* tick_impl(const Ctx& c, PyObject* ai, PyObject* gt);
+
+// `tick_ai(node, game_time)` with `fn` the global already loaded (LOAD_GLOBAL
+// comes before the arguments): natively when the stock tick_ai would select
+// the native walk, else the global is called. Owned status.
+PyObject* run_tick(const Ctx& c, PyObject* fn, PyObject* node, PyObject* gt) {
+    const int r = routes_native(c, c.n->tick_ai, fn, c.n->aitree_tick, fast<tick>());
+    if (r < 0) return nullptr;
+    if (r) return tick_impl(c, node, gt);
+    return call2(fn, node, gt);
+}
+
+// `tick_ai(node, game_time)` as a statement (its result popped). 0 / -1.
+int tick_stmt(const Ctx& c, PyObject* node, PyObject* gt) {
+    Ref fn(load_global(c.g, c.n->tick_ai));
+    if (!fn) return -1;
+    Ref r(run_tick(c, fn.get(), node, gt));
+    return r ? 0 : -1;
+}
+
+// `tick_ai(obj.<attr>, game_time)` as a statement: the callee loaded, then
+// the attribute; the argument goes with the callee's frame, before the
+// result is popped. 0 / -1.
+int tick_attr_stmt(const Ctx& c, PyObject* obj, PyObject* attr, PyObject* gt) {
+    Ref fn(load_global(c.g, c.n->tick_ai));
+    if (!fn) return -1;
+    Ref arg(PyObject_GetAttr(obj, attr));
+    if (!arg) return -1;
+    Ref r(run_tick(c, fn.get(), arg.get(), gt));
+    if (!r) return -1;
+    arg = Ref();
+    r = Ref();
+    return 0;
+}
+
+// `_note_due(obj._next_update_time)` as a statement: the callee loaded, then
+// the attribute. Our builtin runs inline; anything else is called. 0 / -1.
+int note_due_attr_stmt(const Ctx& c, PyObject* obj) {
+    Ref fn(load_global(c.g, c.n->note_due));
+    if (!fn) return -1;
+    Ref when(PyObject_GetAttr(obj, c.n->next_update_time));
+    if (!when) return -1;
+    if (our_builtin(fn.get(), fast<note_due>())) return note_due_value(when.get());
+    Ref r(PyObject_CallOneArg(fn.get(), when.get()));
+    return r ? 0 : -1;
+}
+
+// `_run_script_step(ai, call)`, CALLED BACK, never reproduced: see aitree.h
+// (the exception policy, its log and its traceback stay one Python body).
+PyObject* run_script_step(const Ctx& c, PyObject* ai, PyObject* call) {
+    Ref fn(load_global(c.g, c.n->run_script_step));
+    if (!fn) return nullptr;
+    return call2(fn.get(), ai, call);
+}
+
+// `_focus_instance_of(node)`'s body. Owned.
+PyObject* focus_instance_of_impl(const Ctx& c, PyObject* node) {
+    const Names* n = c.n;
+    struct Frame {
+        Ref d, script_inst;
+        void release() {
+            d = Ref();
+            script_inst = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // d = getattr(node, "__dict__", {})
+    {
+        PyObject* r = nullptr;
+        const int has = lookup_attr(node, n->dict, &r);
+        if (has < 0) return nullptr;
+        Ref d(has ? r : PyDict_New());
+        if (!d) return nullptr;
+        f.d = std::move(d);
+    }
+    // script_inst = d.get("_script_instance")
+    {
+        Ref v(dict_get(f.d.get(), n->script_instance, nullptr, n));
+        if (!v) return nullptr;
+        f.script_inst = std::move(v);
+    }
+    // if script_inst is not None: return script_inst
+    if (f.script_inst.get() != Py_None) {
+        Ref ret(Py_NewRef(f.script_inst.get()));
+        f.release();
+        return ret.steal();
+    }
+    // return d.get("_preprocessing_instance")
+    Ref ret(dict_get(f.d.get(), n->preprocessing_instance, nullptr, n));
+    if (!ret) return nullptr;
+    f.release();
+    return ret.steal();
+}
+
+// `_queue_got_focus(node)`'s body. Owned None.
+PyObject* queue_got_focus_impl(const Ctx& c, PyObject* node) {
+    const Names* n = c.n;
+    struct Frame {
+        Ref inst, queued, inst2;  // inst, queued, _inst
+        void release() {
+            inst = Ref();
+            queued = Ref();
+            inst2 = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // if node.__dict__.get("_got_focus_called", False): return
+    {
+        Ref v(obj_dict_get(node, n->got_focus_called, Py_False, n));
+        if (!v) return nullptr;
+        const int t = PyObject_IsTrue(v.get());
+        if (t < 0) return nullptr;
+        if (t) {
+            v = Ref();
+            f.release();
+            Py_RETURN_NONE;
+        }
+    }
+    // inst = _focus_instance_of(node)
+    {
+        Ref fn(load_global(c.g, n->focus_instance_of));
+        if (!fn) return nullptr;
+        const int s = stock_fn(c, n->focus_instance_of, fn.get());
+        if (s < 0) return nullptr;
+        Ref v(s ? focus_instance_of_impl(c, node) : PyObject_CallOneArg(fn.get(), node));
+        if (!v) return nullptr;
+        fn = Ref();
+        f.inst = std::move(v);
+    }
+    // if inst is None: return
+    if (f.inst.get() == Py_None) {
+        f.release();
+        Py_RETURN_NONE;
+    }
+    // for queued, _inst in _pending_got_focus:
+    //     if queued is node: return
+    {
+        Ref it;
+        {
+            Ref l(load_global(c.g, n->pending));
+            if (!l) return nullptr;
+            it = Ref(PyObject_GetIter(l.get()));
+            if (!it) return nullptr;
+        }
+        for (;;) {
+            Ref item(PyIter_Next(it.get()));
+            if (!item) {
+                if (PyErr_Occurred()) return nullptr;
+                break;
+            }
+            Ref a, b;
+            if (unpack2(item.get(), &a, &b) < 0) return nullptr;
+            item = Ref();
+            f.queued = std::move(a);
+            f.inst2 = std::move(b);
+            if (f.queued.get() == node) {
+                it = Ref();
+                f.release();
+                Py_RETURN_NONE;
+            }
+        }
+    }
+    // _pending_got_focus.append((node, inst))
+    {
+        Ref l(load_global(c.g, n->pending));
+        if (!l) return nullptr;
+        Ref t(PyTuple_Pack(2, node, f.inst.get()));
+        if (!t) return nullptr;
+        if (list_append(l.get(), t.get(), n) < 0) return nullptr;
+    }
+    f.release();
+    Py_RETURN_NONE;
+}
+
+// `_queue_got_focus(node)` as a statement. 0 / -1.
+int queue_got_focus_stmt(const Ctx& c, PyObject* node) {
+    Ref fn(load_global(c.g, c.n->queue_got_focus));
+    if (!fn) return -1;
+    const int s = stock_fn(c, c.n->queue_got_focus, fn.get());
+    if (s < 0) return -1;
+    Ref r(s ? queue_got_focus_impl(c, node) : PyObject_CallOneArg(fn.get(), node));
+    return r ? 0 : -1;
+}
+
+// `_retain_subtree_focus(ai)`'s body. Owned None.
+PyObject* retain_subtree_focus_impl(const Ctx& c, PyObject* ai) {
+    const Names* n = c.n;
+    struct Frame {
+        Ref node;
+        std::vector<Ref> stack;  // a local list nothing else can see
+        Ref nn, child, cc;       // n, child, c
+        void release() {
+            node = Ref();
+            stack.clear();
+            nn = Ref();
+            child = Ref();
+            cc = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // node = ai._contained_ai
+    {
+        Ref v(PyObject_GetAttr(ai, n->contained_ai));
+        if (!v) return nullptr;
+        f.node = std::move(v);
+    }
+    // if node is None: return
+    if (f.node.get() == Py_None) {
+        f.release();
+        Py_RETURN_NONE;
+    }
+    // stack = [node]
+    f.stack.emplace_back(Py_NewRef(f.node.get()));
+    // while stack:
+    while (!f.stack.empty()) {
+        // n = stack.pop()
+        {
+            Ref top = std::move(f.stack.back());
+            f.stack.pop_back();
+            f.nn = std::move(top);
+        }
+        // if n.__dict__.get("_has_focus"): _reached_this_tick.append(n)
+        {
+            Ref v(obj_dict_get(f.nn.get(), n->has_focus, nullptr, n));
+            if (!v) return nullptr;
+            const int t = PyObject_IsTrue(v.get());
+            if (t < 0) return nullptr;
+            v = Ref();
+            if (t && global_append(c, n->reached, f.nn.get()) < 0) return nullptr;
+        }
+        // child = n.__dict__.get("_contained_ai")
+        {
+            Ref v(obj_dict_get(f.nn.get(), n->contained_ai, nullptr, n));
+            if (!v) return nullptr;
+            f.child = std::move(v);
+        }
+        // if child is not None: stack.append(child)
+        if (f.child.get() != Py_None) f.stack.emplace_back(Py_NewRef(f.child.get()));
+        // for c in (n.__dict__.get("_ais") or ()):
+        //     stack.append(c[1] if isinstance(c, tuple) else c)
+        Ref it;
+        {
+            Ref v(obj_dict_get(f.nn.get(), n->ais, nullptr, n));
+            if (!v) return nullptr;
+            const int t = PyObject_IsTrue(v.get());
+            if (t < 0) return nullptr;
+            if (!t) v = Ref(PyTuple_New(0));
+            if (!v) return nullptr;
+            it = Ref(PyObject_GetIter(v.get()));
+            if (!it) return nullptr;
+        }
+        for (;;) {
+            Ref next(PyIter_Next(it.get()));
+            if (!next) {
+                if (PyErr_Occurred()) return nullptr;
+                break;
+            }
+            f.cc = std::move(next);
+            const int is_tuple =
+                PyObject_IsInstance(f.cc.get(), reinterpret_cast<PyObject*>(&PyTuple_Type));
+            if (is_tuple < 0) return nullptr;
+            Ref item(is_tuple ? subscript(f.cc.get(), 1, n->one) : Py_NewRef(f.cc.get()));
+            if (!item) return nullptr;
+            f.stack.push_back(std::move(item));
+        }
+    }
+    f.release();
+    Py_RETURN_NONE;
+}
+
+// `_retain_subtree_focus(ai)` as a statement. 0 / -1.
+int retain_subtree_focus_stmt(const Ctx& c, PyObject* ai) {
+    Ref fn(load_global(c.g, c.n->retain_focus));
+    if (!fn) return -1;
+    const int s = stock_fn(c, c.n->retain_focus, fn.get());
+    if (s < 0) return -1;
+    Ref r(s ? retain_subtree_focus_impl(c, ai) : PyObject_CallOneArg(fn.get(), ai));
+    return r ? 0 : -1;
+}
+
+// `_refresh_conditional_status(child)` as a statement. 0 / -1.
+int refresh_stmt(const Ctx& c, PyObject* child) {
+    Ref fn(load_global(c.g, c.n->refresh_cond));
+    if (!fn) return -1;
+    const int r = routes_native(c, c.n->refresh_cond, fn.get(), c.n->aitree_refresh,
+                                fast<refresh_conditional>());
+    if (r < 0) return -1;
+    Ref v(r ? refresh_impl(child, c.g) : PyObject_CallOneArg(fn.get(), child));
+    return v ? 0 : -1;
+}
+
+// `_condition_statuses(ai)`. Owned.
+PyObject* condition_statuses_call(const Ctx& c, PyObject* ai) {
+    Ref fn(load_global(c.g, c.n->condition_statuses));
+    if (!fn) return nullptr;
+    const int r = routes_native(c, c.n->condition_statuses, fn.get(), c.n->aitree_statuses,
+                                fast<condition_statuses>());
+    if (r < 0) return nullptr;
+    if (!r) return PyObject_CallOneArg(fn.get(), ai);
+    ++g_s2_runs;
+    StockStatus stock;
+    if (stock_status_of(c.g, c.n, &stock) < 0) return nullptr;
+    return statuses_of(ai, stock, c.n);
+}
+
+// `_any_condition(ai)`. Owned (a bool, natively).
+PyObject* any_condition_call(const Ctx& c, PyObject* ai) {
+    Ref fn(load_global(c.g, c.n->any_condition));
+    if (!fn) return nullptr;
+    const int r = routes_native(c, c.n->any_condition, fn.get(), c.n->aitree_any,
+                                fast<any_condition>());
+    if (r < 0) return nullptr;
+    if (!r) return PyObject_CallOneArg(fn.get(), ai);
+    ++g_s2_runs;
+    StockStatus stock;
+    if (stock_status_of(c.g, c.n, &stock) < 0) return nullptr;
+    const int any = any_condition_of(ai, stock, c.n);
+    if (any < 0) return nullptr;
+    return Py_NewRef(any ? Py_True : Py_False);
+}
+
+// `_eval_conditional(ai, eval_fn, args)`. Owned.
+PyObject* eval_conditional_call(const Ctx& c, PyObject* ai, PyObject* eval_fn, PyObject* args) {
+    Ref fn(load_global(c.g, c.n->eval_conditional));
+    if (!fn) return nullptr;
+    const int r = routes_native(c, c.n->eval_conditional, fn.get(), c.n->aitree_eval,
+                                fast<eval_conditional>());
+    if (r < 0) return nullptr;
+    if (!r) return call3(fn.get(), ai, eval_fn, args);
+    ++g_s2_runs;
+    return eval_impl(ai, eval_fn, args, c.g, c.n);
+}
+
+// ── the stock handlers ──────────────────────────────────────────────────────
+
+// `return ai._status`, the frame released after the value is loaded.
+template <typename F>
+PyObject* return_status(PyObject* ai, const Names* n, F& frame) {
+    Ref r(PyObject_GetAttr(ai, n->status));
+    if (!r) return nullptr;
+    frame.release();
+    return r.steal();
+}
+
+// _tick_plain
+PyObject* plain_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
+    const Names* n = c.n;
+    ++g_kind_runs[kPlain];
+    struct Frame {
+        Ref inst, update_fn, status, next_update_fn, next_update, interval;
+        void release() {
+            inst = Ref();
+            update_fn = Ref();
+            status = Ref();
+            next_update_fn = Ref();
+            next_update = Ref();
+            interval = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // if ai._status != US_ACTIVE: return ai._status
+    {
+        const int ne = attr_cmp_global(c, ai, n->status, n->us_active, Py_NE);
+        if (ne < 0) return nullptr;
+        if (ne) return return_status(ai, n, f);
+    }
+    // ai._has_focus = True
+    if (PyObject_SetAttr(ai, n->has_focus, Py_True) < 0) return nullptr;
+    // _reached_this_tick.append(ai)
+    if (global_append(c, n->reached, ai) < 0) return nullptr;
+    // _queue_got_focus(ai)
+    if (queue_got_focus_stmt(c, ai) < 0) return nullptr;
+    // if game_time < ai._next_update_time:
+    //     _note_due(ai._next_update_time)
+    //     return ai._status
+    {
+        Ref due(PyObject_GetAttr(ai, n->next_update_time));
+        if (!due) return nullptr;
+        const int lt = compare_owned(Ref(Py_NewRef(gt)), std::move(due), Py_LT);
+        if (lt < 0) return nullptr;
+        if (lt) {
+            if (note_due_attr_stmt(c, ai) < 0) return nullptr;
+            return return_status(ai, n, f);
+        }
+    }
+    // inst = ai.GetScriptInstance()
+    {
+        Ref v(PyObject_CallMethodNoArgs(ai, n->get_script_instance));
+        if (!v) return nullptr;
+        f.inst = std::move(v);
+    }
+    // update_fn = getattr(inst, "Update", None)
+    {
+        Ref v(getattr_or(f.inst.get(), n->update, Py_None));
+        if (!v) return nullptr;
+        f.update_fn = std::move(v);
+    }
+    // if update_fn is None or not callable(update_fn): return ai._status
+    if (f.update_fn.get() == Py_None || !PyCallable_Check(f.update_fn.get()))
+        return return_status(ai, n, f);
+    // status = _run_script_step(ai, update_fn)
+    {
+        Ref v(run_script_step(c, ai, f.update_fn.get()));
+        if (!v) return nullptr;
+        f.status = std::move(v);
+    }
+    // if status is None: status = US_ACTIVE
+    if (f.status.get() == Py_None) {
+        Ref v(load_global(c.g, n->us_active));
+        if (!v) return nullptr;
+        f.status = std::move(v);
+    }
+    // ai._status = int(status)
+    {
+        Ref v(PyNumber_Long(f.status.get()));
+        if (!v) return nullptr;
+        if (PyObject_SetAttr(ai, n->status, v.get()) < 0) return nullptr;
+    }
+    // next_update_fn = getattr(inst, "GetNextUpdateTime", None)
+    {
+        Ref v(getattr_or(f.inst.get(), n->get_next_update_time, Py_None));
+        if (!v) return nullptr;
+        f.next_update_fn = std::move(v);
+    }
+    // next_update = next_update_fn() if callable(next_update_fn) else None
+    {
+        Ref v(PyCallable_Check(f.next_update_fn.get()) ? PyObject_CallNoArgs(f.next_update_fn.get())
+                                                       : Py_NewRef(Py_None));
+        if (!v) return nullptr;
+        f.next_update = std::move(v);
+    }
+    // interval = float(next_update) if next_update is not None else 0.0
+    {
+        Ref v(f.next_update.get() != Py_None ? py_float(f.next_update.get())
+                                             : Py_NewRef(n->fzero));
+        if (!v) return nullptr;
+        f.interval = std::move(v);
+    }
+    // ai._next_update_time = game_time + interval
+    {
+        Ref v(add_obj(gt, f.interval.get()));
+        if (!v) return nullptr;
+        if (PyObject_SetAttr(ai, n->next_update_time, v.get()) < 0) return nullptr;
+    }
+    // _note_due(ai._next_update_time)
+    if (note_due_attr_stmt(c, ai) < 0) return nullptr;
+    // return ai._status
+    return return_status(ai, n, f);
+}
+
+// `len(<global>)` as an int object.
+PyObject* len_global(const Ctx& c, PyObject* gname) {
+    Ref l(load_global(c.g, gname));
+    if (!l) return nullptr;
+    const Py_ssize_t k = PyObject_Size(l.get());
+    if (k < 0) return nullptr;
+    return PyLong_FromSsize_t(k);
+}
+
+// `del <global>[start:]` (BUILD_SLICE, DELETE_SUBSCR). 0 / -1.
+int del_tail(const Ctx& c, PyObject* gname, PyObject* start) {
+    Ref l(load_global(c.g, gname));
+    if (!l) return -1;
+    Ref sl(PySlice_New(start, Py_None, nullptr));
+    if (!sl) return -1;
+    return PyObject_DelItem(l.get(), sl.get());
+}
+
+// _dispatch_priority_child's body. Owned status.
+PyObject* dispatch_priority_child_impl(const Ctx& c, PyObject* child, PyObject* gt) {
+    const Names* n = c.n;
+    struct Frame {
+        Ref focus_n, all_n, pending_n, had_focus, had_got;
+        void release() {
+            focus_n = Ref();
+            all_n = Ref();
+            pending_n = Ref();
+            had_focus = Ref();
+            had_got = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // focus_n = len(_reached_this_tick)
+    // all_n = len(_reached_this_tick_all)
+    // pending_n = len(_pending_got_focus)
+    f.focus_n = Ref(len_global(c, n->reached));
+    if (!f.focus_n) return nullptr;
+    f.all_n = Ref(len_global(c, n->reached_all));
+    if (!f.all_n) return nullptr;
+    f.pending_n = Ref(len_global(c, n->pending));
+    if (!f.pending_n) return nullptr;
+    // had_focus = child._has_focus
+    f.had_focus = Ref(PyObject_GetAttr(child, n->has_focus));
+    if (!f.had_focus) return nullptr;
+    // had_got = child.__dict__.get("_got_focus_called", False)
+    f.had_got = Ref(obj_dict_get(child, n->got_focus_called, Py_False, n));
+    if (!f.had_got) return nullptr;
+    // tick_ai(child, game_time)
+    if (tick_stmt(c, child, gt) < 0) return nullptr;
+    // if child._status != US_ACTIVE:
+    const int ne = attr_cmp_global(c, child, n->status, n->us_active, Py_NE);
+    if (ne < 0) return nullptr;
+    if (ne) {
+        // del _reached_this_tick[focus_n:] (and the other two)
+        if (del_tail(c, n->reached, f.focus_n.get()) < 0) return nullptr;
+        if (del_tail(c, n->reached_all, f.all_n.get()) < 0) return nullptr;
+        if (del_tail(c, n->pending, f.pending_n.get()) < 0) return nullptr;
+        // _reached_this_tick_all_ids.clear()
+        {
+            Ref ids(load_global(c.g, n->reached_all_ids));
+            if (!ids) return nullptr;
+            if (PySet_CheckExact(ids.get())) {
+                if (PySet_Clear(ids.get()) < 0) return nullptr;
+            } else {
+                Ref r(PyObject_CallMethodNoArgs(ids.get(), n->clear));
+                if (!r) return nullptr;
+            }
+        }
+        // _reached_this_tick_all_ids.update(id(n) for n in _reached_this_tick_all)
+        {
+            Ref ids(load_global(c.g, n->reached_all_ids));
+            if (!ids) return nullptr;
+            Ref it;
+            {
+                Ref l(load_global(c.g, n->reached_all));
+                if (!l) return nullptr;
+                it = Ref(PyObject_GetIter(l.get()));
+                if (!it) return nullptr;
+            }
+            // An exact set takes each id as the generator yields it; any
+            // other receiver gets the ids as a list (its update() runs once).
+            const bool exact = PySet_CheckExact(ids.get());
+            Ref batch(exact ? nullptr : PyList_New(0));
+            if (!exact && !batch) return nullptr;
+            Ref node;  // the generator's frame: `.0` (it), `n`
+            for (;;) {
+                Ref next(PyIter_Next(it.get()));
+                if (!next) {
+                    if (PyErr_Occurred()) return nullptr;
+                    break;
+                }
+                node = std::move(next);
+                Ref ident(PyLong_FromVoidPtr(node.get()));
+                if (!ident) return nullptr;
+                if (exact ? PySet_Add(ids.get(), ident.get()) < 0
+                          : PyList_Append(batch.get(), ident.get()) < 0)
+                    return nullptr;
+            }
+            it = Ref();
+            node = Ref();
+            if (!exact) {
+                Ref r(PyObject_CallMethodOneArg(ids.get(), n->update_m, batch.get()));
+                if (!r) return nullptr;
+            }
+        }
+        // child._has_focus = had_focus
+        if (PyObject_SetAttr(child, n->has_focus, f.had_focus.get()) < 0) return nullptr;
+        // child.__dict__["_got_focus_called"] = had_got
+        if (own_dict_set(child, n->got_focus_called, f.had_got.get(), n) < 0) return nullptr;
+    }
+    // return child._status
+    return return_status(child, n, f);
+}
+
+// `_dispatch_priority_child(child, game_time)`. Owned status.
+PyObject* dispatch_priority_child_call(const Ctx& c, PyObject* child, PyObject* gt) {
+    Ref fn(load_global(c.g, c.n->dispatch_priority_child));
+    if (!fn) return nullptr;
+    const int s = stock_fn(c, c.n->dispatch_priority_child, fn.get());
+    if (s < 0) return nullptr;
+    if (s) return dispatch_priority_child_impl(c, child, gt);
+    return call2(fn.get(), child, gt);
+}
+
+// `isinstance(obj, <global class>)`. 1, 0, -1.
+int isinstance_global(const Ctx& c, PyObject* obj, PyObject* gname) {
+    Ref cls(load_global(c.g, gname));
+    if (!cls) return -1;
+    return PyObject_IsInstance(obj, cls.get());
+}
+
+// `_note_due_ret(child._next_update_time)`'s truth: the callee loaded, then
+// the attribute. The stock body (`_note_due(when); return True`) runs
+// inline. 1, 0, -1.
+int note_due_ret_test(const Ctx& c, PyObject* child) {
+    Ref fn(load_global(c.g, c.n->note_due_ret));
+    if (!fn) return -1;
+    Ref when(PyObject_GetAttr(child, c.n->next_update_time));
+    if (!when) return -1;
+    const int s = stock_fn(c, c.n->note_due_ret, fn.get());
+    if (s < 0) return -1;
+    if (s) {
+        // _note_due(when); return True
+        Ref nd(load_global(c.g, c.n->note_due));
+        if (!nd) return -1;
+        if (our_builtin(nd.get(), fast<note_due>())) {
+            if (note_due_value(when.get()) < 0) return -1;
+        } else {
+            Ref r(PyObject_CallOneArg(nd.get(), when.get()));
+            if (!r) return -1;
+        }
+        return 1;
+    }
+    Ref r(PyObject_CallOneArg(fn.get(), when.get()));
+    if (!r) return -1;
+    when = Ref();
+    return PyObject_IsTrue(r.get());
+}
+
+// _tick_priority_list
+PyObject* priority_list_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
+    const Names* n = c.n;
+    ++g_kind_runs[kPriorityList];
+    struct Frame {
+        Ref prio, child;  // _prio, child
+        void release() {
+            prio = Ref();
+            child = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // for _prio, child in ai._ais:
+    Ref it;
+    {
+        Ref ais(PyObject_GetAttr(ai, n->ais));
+        if (!ais) return nullptr;
+        it = Ref(PyObject_GetIter(ais.get()));
+        if (!it) return nullptr;
+    }
+    // A `return` inside the loop: the value is loaded, then the iterator
+    // popped, then the frame cleared.
+    auto return_in_loop = [&](Ref& iter) -> PyObject* {
+        Ref r(PyObject_GetAttr(ai, n->status));
+        if (!r) return nullptr;
+        iter = Ref();
+        f.release();
+        return r.steal();
+    };
+    for (;;) {
+        {
+            Ref item(PyIter_Next(it.get()));
+            if (!item) {
+                if (PyErr_Occurred()) return nullptr;
+                break;
+            }
+            Ref a, b;
+            if (unpack2(item.get(), &a, &b) < 0) return nullptr;
+            item = Ref();
+            f.prio = std::move(a);
+            f.child = std::move(b);
+        }
+        // `child` borrows the frame's own slot, which only this loop rebinds.
+        PyObject* child = f.child.get();
+        // if isinstance(child, ConditionalAI): _refresh_conditional_status(child)
+        {
+            const int is = isinstance_global(c, child, n->conditional_cls);
+            if (is < 0) return nullptr;
+            if (is && refresh_stmt(c, child) < 0) return nullptr;
+        }
+        // if child._status == US_DONE: continue
+        {
+            const int done = attr_cmp_global(c, f.child.get(), n->status, n->us_done, Py_EQ);
+            if (done < 0) return nullptr;
+            if (done) continue;
+        }
+        // if child._status == US_DORMANT:
+        {
+            const int dormant =
+                attr_cmp_global(c, f.child.get(), n->status, n->us_dormant, Py_EQ);
+            if (dormant < 0) return nullptr;
+            if (dormant) {
+                // if not (isinstance(child, PreprocessingAI)
+                //         and _note_due_ret(child._next_update_time)
+                //         and game_time >= child._next_update_time):
+                //     continue
+                int probe = isinstance_global(c, f.child.get(), n->preprocessing_cls);
+                if (probe < 0) return nullptr;
+                if (probe) {
+                    probe = note_due_ret_test(c, f.child.get());
+                    if (probe < 0) return nullptr;
+                }
+                if (probe) {
+                    Ref due(PyObject_GetAttr(f.child.get(), n->next_update_time));
+                    if (!due) return nullptr;
+                    probe = compare_owned(Ref(Py_NewRef(gt)), std::move(due), Py_GE);
+                    if (probe < 0) return nullptr;
+                }
+                if (!probe) continue;
+                // if _dispatch_priority_child(child, game_time) == US_ACTIVE:
+                //     ai._status = US_ACTIVE
+                //     return ai._status
+                // continue
+                Ref st(dispatch_priority_child_call(c, f.child.get(), gt));
+                if (!st) return nullptr;
+                Ref active(load_global(c.g, n->us_active));
+                if (!active) return nullptr;
+                const int eq = compare_owned(std::move(st), std::move(active), Py_EQ);
+                if (eq < 0) return nullptr;
+                if (eq) {
+                    if (set_attr_global(c, ai, n->status, n->us_active) < 0) return nullptr;
+                    return return_in_loop(it);
+                }
+                continue;
+            }
+        }
+        // if _dispatch_priority_child(child, game_time) == US_ACTIVE:
+        //     ai._status = US_ACTIVE
+        // return ai._status
+        {
+            Ref st(dispatch_priority_child_call(c, f.child.get(), gt));
+            if (!st) return nullptr;
+            Ref active(load_global(c.g, n->us_active));
+            if (!active) return nullptr;
+            const int eq = compare_owned(std::move(st), std::move(active), Py_EQ);
+            if (eq < 0) return nullptr;
+            if (eq && set_attr_global(c, ai, n->status, n->us_active) < 0) return nullptr;
+        }
+        return return_in_loop(it);
+    }
+    it = Ref();
+    // if ai._ais and all(c._status == US_DONE for _p, c in ai._ais):
+    //     ai._status = US_DONE
+    int all_done;
+    {
+        Ref ais(PyObject_GetAttr(ai, n->ais));
+        if (!ais) return nullptr;
+        all_done = PyObject_IsTrue(ais.get());
+        if (all_done < 0) return nullptr;
+    }
+    if (all_done) {
+        Ref git;
+        {
+            Ref ais(PyObject_GetAttr(ai, n->ais));
+            if (!ais) return nullptr;
+            git = Ref(PyObject_GetIter(ais.get()));
+            if (!git) return nullptr;
+        }
+        Ref p, cc;  // the generator's frame: `.0` (git), `_p`, `c`
+        for (;;) {
+            Ref item(PyIter_Next(git.get()));
+            if (!item) {
+                if (PyErr_Occurred()) return nullptr;
+                break;
+            }
+            Ref a, b;
+            if (unpack2(item.get(), &a, &b) < 0) return nullptr;
+            item = Ref();
+            p = std::move(a);
+            cc = std::move(b);
+            const int done = attr_cmp_global(c, cc.get(), n->status, n->us_done, Py_EQ);
+            if (done < 0) return nullptr;
+            if (!done) {
+                all_done = 0;
+                break;
+            }
+        }
+        git = Ref();
+        p = Ref();
+        cc = Ref();
+        if (all_done && set_attr_global(c, ai, n->status, n->us_done) < 0) return nullptr;
+    }
+    // return ai._status
+    return return_status(ai, n, f);
+}
+
+// _tick_sequence's `_wrap_or_finish(i)` (a closure over `ai`). Owned: None
+// (finished) or the int 0.
+PyObject* wrap_or_finish(const Ctx& c, PyObject* ai, PyObject* i) {
+    const Names* n = c.n;
+    struct Frame {
+        Ref remaining, child;
+        void release() {
+            remaining = Ref();
+            child = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // remaining = int(getattr(ai, "_loops_remaining", 1))
+    {
+        Ref v(getattr_or(ai, n->loops_remaining, n->one));
+        if (!v) return nullptr;
+        Ref as_int(PyNumber_Long(v.get()));
+        if (!as_int) return nullptr;
+        v = Ref();
+        f.remaining = std::move(as_int);
+    }
+    // if remaining > 0:
+    //     remaining -= 1
+    //     ai._loops_remaining = remaining
+    {
+        const int gt0 = compare_owned(Ref(Py_NewRef(f.remaining.get())), Ref(Py_NewRef(n->zero)),
+                                      Py_GT);
+        if (gt0 < 0) return nullptr;
+        if (gt0) {
+            Ref v(PyNumber_InPlaceSubtract(f.remaining.get(), n->one));
+            if (!v) return nullptr;
+            f.remaining = std::move(v);
+            if (PyObject_SetAttr(ai, n->loops_remaining, f.remaining.get()) < 0) return nullptr;
+        }
+    }
+    // if remaining == 0:
+    //     ai._current_index = i
+    //     ai._status = US_DONE
+    //     return None
+    {
+        const int eq0 = compare_owned(Ref(Py_NewRef(f.remaining.get())), Ref(Py_NewRef(n->zero)),
+                                      Py_EQ);
+        if (eq0 < 0) return nullptr;
+        if (eq0) {
+            if (PyObject_SetAttr(ai, n->current_index, i) < 0) return nullptr;
+            if (set_attr_global(c, ai, n->status, n->us_done) < 0) return nullptr;
+            f.release();
+            Py_RETURN_NONE;
+        }
+    }
+    // for child in ai._ais: child._status = US_ACTIVE
+    {
+        Ref it;
+        {
+            Ref ais(PyObject_GetAttr(ai, n->ais));
+            if (!ais) return nullptr;
+            it = Ref(PyObject_GetIter(ais.get()));
+            if (!it) return nullptr;
+        }
+        for (;;) {
+            Ref next(PyIter_Next(it.get()));
+            if (!next) {
+                if (PyErr_Occurred()) return nullptr;
+                break;
+            }
+            f.child = std::move(next);
+            if (set_attr_global(c, f.child.get(), n->status, n->us_active) < 0) return nullptr;
+        }
+    }
+    // return 0
+    f.release();
+    return Py_NewRef(n->zero);
+}
+
+// _tick_sequence
+PyObject* sequence_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
+    const Names* n = c.n;
+    ++g_kind_runs[kSequence];
+    struct Frame {
+        Ref nlen, idx, child;  // n, idx, child (`_wrap_or_finish` and `_` hold
+                               // nothing observable)
+        void release() {
+            nlen = Ref();
+            idx = Ref();
+            child = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // if not ai._ais:
+    //     ai._status = US_DONE
+    //     return ai._status
+    {
+        Ref ais(PyObject_GetAttr(ai, n->ais));
+        if (!ais) return nullptr;
+        const int t = PyObject_IsTrue(ais.get());
+        if (t < 0) return nullptr;
+        if (!t) {
+            ais = Ref();
+            if (set_attr_global(c, ai, n->status, n->us_done) < 0) return nullptr;
+            return return_status(ai, n, f);
+        }
+    }
+    // n = len(ai._ais)
+    Py_ssize_t count;
+    {
+        Ref ais(PyObject_GetAttr(ai, n->ais));
+        if (!ais) return nullptr;
+        const Py_ssize_t k = PyObject_Size(ais.get());
+        if (k < 0) return nullptr;
+        f.nlen = Ref(PyLong_FromSsize_t(k));
+        if (!f.nlen) return nullptr;
+        count = k;
+    }
+    // idx = getattr(ai, "_current_index", 0)
+    f.idx = Ref(getattr_or(ai, n->current_index, n->zero));
+    if (!f.idx) return nullptr;
+    // `idx >= n` (jumped on)
+    auto past_end = [&]() -> int {
+        return compare_owned(Ref(Py_NewRef(f.idx.get())), Ref(Py_NewRef(f.nlen.get())), Py_GE);
+    };
+    // idx = _wrap_or_finish(idx); 1 when it finished (idx is None).
+    auto wrap = [&]() -> int {
+        Ref v(wrap_or_finish(c, ai, f.idx.get()));
+        if (!v) return -1;
+        f.idx = std::move(v);
+        return f.idx.get() == Py_None ? 1 : 0;
+    };
+    // idx += 1
+    auto step = [&]() -> int {
+        Ref v(PyNumber_InPlaceAdd(f.idx.get(), n->one));
+        if (!v) return -1;
+        f.idx = std::move(v);
+        return 0;
+    };
+    // ai._current_index = idx; ai._status = US_ACTIVE; return ai._status
+    auto hold = [&]() -> PyObject* {
+        if (PyObject_SetAttr(ai, n->current_index, f.idx.get()) < 0) return nullptr;
+        if (set_attr_global(c, ai, n->status, n->us_active) < 0) return nullptr;
+        return return_status(ai, n, f);
+    };
+    // for _ in range(n + 1):   (range of an exact int from len(): n + 1 passes)
+    for (Py_ssize_t pass = 0; pass <= count; ++pass) {
+        // if idx >= n:
+        //     idx = _wrap_or_finish(idx)
+        //     if idx is None: return ai._status
+        {
+            const int past = past_end();
+            if (past < 0) return nullptr;
+            if (past) {
+                const int fin = wrap();
+                if (fin < 0) return nullptr;
+                if (fin) return return_status(ai, n, f);
+            }
+        }
+        // child = ai._ais[idx]
+        {
+            Ref ais(PyObject_GetAttr(ai, n->ais));
+            if (!ais) return nullptr;
+            Ref v(PyObject_GetItem(ais.get(), f.idx.get()));
+            if (!v) return nullptr;
+            ais = Ref();
+            f.child = std::move(v);
+        }
+        // if isinstance(child, ConditionalAI): _refresh_conditional_status(child)
+        {
+            const int is = isinstance_global(c, f.child.get(), n->conditional_cls);
+            if (is < 0) return nullptr;
+            if (is && refresh_stmt(c, f.child.get()) < 0) return nullptr;
+        }
+        // if child._status == US_DORMANT:
+        {
+            const int dormant =
+                attr_cmp_global(c, f.child.get(), n->status, n->us_dormant, Py_EQ);
+            if (dormant < 0) return nullptr;
+            if (dormant) {
+                // if int(getattr(ai, "_skip_dormant", 0)): idx += 1; continue
+                int skip;
+                {
+                    Ref v(getattr_or(ai, n->skip_dormant, n->zero));
+                    if (!v) return nullptr;
+                    Ref as_int(PyNumber_Long(v.get()));
+                    if (!as_int) return nullptr;
+                    v = Ref();
+                    skip = PyObject_IsTrue(as_int.get());
+                    if (skip < 0) return nullptr;
+                }
+                if (skip) {
+                    if (step() < 0) return nullptr;
+                    continue;
+                }
+                // ai._current_index = idx; ai._status = US_ACTIVE; return ai._status
+                return hold();
+            }
+        }
+        // if child._status == US_DONE: idx += 1; continue
+        {
+            const int done = attr_cmp_global(c, f.child.get(), n->status, n->us_done, Py_EQ);
+            if (done < 0) return nullptr;
+            if (done) {
+                if (step() < 0) return nullptr;
+                continue;
+            }
+        }
+        // tick_ai(child, game_time)
+        if (tick_stmt(c, f.child.get(), gt) < 0) return nullptr;
+        // if child._status == US_DONE:
+        //     idx += 1
+        //     if idx >= n:
+        //         idx = _wrap_or_finish(idx)
+        //         if idx is None: return ai._status
+        {
+            const int done = attr_cmp_global(c, f.child.get(), n->status, n->us_done, Py_EQ);
+            if (done < 0) return nullptr;
+            if (done) {
+                if (step() < 0) return nullptr;
+                const int past = past_end();
+                if (past < 0) return nullptr;
+                if (past) {
+                    const int fin = wrap();
+                    if (fin < 0) return nullptr;
+                    if (fin) return return_status(ai, n, f);
+                }
+            }
+        }
+        return hold();
+    }
+    // ai._current_index = 0
+    if (PyObject_SetAttr(ai, n->current_index, n->zero) < 0) return nullptr;
+    // ai._status = US_ACTIVE if int(getattr(ai, "_loops_remaining", 1)) != 0 else US_DONE
+    {
+        int more;
+        {
+            Ref v(getattr_or(ai, n->loops_remaining, n->one));
+            if (!v) return nullptr;
+            Ref as_int(PyNumber_Long(v.get()));
+            if (!as_int) return nullptr;
+            v = Ref();
+            more = compare_owned(std::move(as_int), Ref(Py_NewRef(n->zero)), Py_NE);
+            if (more < 0) return nullptr;
+        }
+        if (set_attr_global(c, ai, n->status, more ? n->us_active : n->us_done) < 0)
+            return nullptr;
+    }
+    return return_status(ai, n, f);
+}
+
+// _tick_random
+PyObject* random_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
+    const Names* n = c.n;
+    ++g_kind_runs[kRandom];
+    struct Frame {
+        Ref child;
+        void release() { child = Ref(); }
+        ~Frame() { release(); }
+    } f;
+    // if not ai._ais: ai._status = US_DONE; return ai._status
+    {
+        Ref ais(PyObject_GetAttr(ai, n->ais));
+        if (!ais) return nullptr;
+        const int t = PyObject_IsTrue(ais.get());
+        if (t < 0) return nullptr;
+        if (!t) {
+            ais = Ref();
+            if (set_attr_global(c, ai, n->status, n->us_done) < 0) return nullptr;
+            return return_status(ai, n, f);
+        }
+    }
+    // child = ai._current_child
+    f.child = Ref(PyObject_GetAttr(ai, n->current_child));
+    if (!f.child) return nullptr;
+    // if child is None or child._status in (US_DONE, US_DORMANT):
+    int redraw = f.child.get() == Py_None;
+    if (!redraw) {
+        Ref st(PyObject_GetAttr(f.child.get(), n->status));
+        if (!st) return nullptr;
+        Ref pair;
+        {
+            Ref done(load_global(c.g, n->us_done));
+            if (!done) return nullptr;
+            Ref dormant(load_global(c.g, n->us_dormant));
+            if (!dormant) return nullptr;
+            pair = Ref(PyTuple_Pack(2, done.get(), dormant.get()));
+            if (!pair) return nullptr;
+        }
+        redraw = PySequence_Contains(pair.get(), st.get());
+        if (redraw < 0) return nullptr;
+    }
+    if (redraw) {
+        // if not ai._untried: ai._untried = list(ai._ais)
+        {
+            Ref u(PyObject_GetAttr(ai, n->untried));
+            if (!u) return nullptr;
+            const int t = PyObject_IsTrue(u.get());
+            if (t < 0) return nullptr;
+            u = Ref();
+            if (!t) {
+                Ref ais(PyObject_GetAttr(ai, n->ais));
+                if (!ais) return nullptr;
+                Ref l(PySequence_List(ais.get()));
+                if (!l) return nullptr;
+                ais = Ref();
+                if (PyObject_SetAttr(ai, n->untried, l.get()) < 0) return nullptr;
+            }
+        }
+        // child = random.choice(ai._untried)
+        {
+            Ref v;
+            {
+                Ref rnd(load_global(c.g, n->random));
+                if (!rnd) return nullptr;
+                Ref choice(PyObject_GetAttr(rnd.get(), n->choice));
+                if (!choice) return nullptr;
+                Ref u(PyObject_GetAttr(ai, n->untried));
+                if (!u) return nullptr;
+                v = Ref(PyObject_CallOneArg(choice.get(), u.get()));
+                if (!v) return nullptr;
+            }
+            f.child = std::move(v);
+        }
+        // ai._untried.remove(child)
+        {
+            Ref u(PyObject_GetAttr(ai, n->untried));
+            if (!u) return nullptr;
+            Ref r(PyObject_CallMethodOneArg(u.get(), n->remove, f.child.get()));
+            if (!r) return nullptr;
+        }
+        // child._status = US_ACTIVE
+        if (set_attr_global(c, f.child.get(), n->status, n->us_active) < 0) return nullptr;
+        // ai._current_child = child
+        if (PyObject_SetAttr(ai, n->current_child, f.child.get()) < 0) return nullptr;
+    }
+    // tick_ai(child, game_time)
+    if (tick_stmt(c, f.child.get(), gt) < 0) return nullptr;
+    // ai._status = US_ACTIVE; return ai._status
+    if (set_attr_global(c, ai, n->status, n->us_active) < 0) return nullptr;
+    return return_status(ai, n, f);
+}
+
+// `ai._contained_ai is not None` (the attribute released before the jump).
+int has_contained(PyObject* ai, const Names* n) {
+    Ref ca(PyObject_GetAttr(ai, n->contained_ai));
+    if (!ca) return -1;
+    return ca.get() != Py_None ? 1 : 0;
+}
+
+// `if ai._contained_ai._status == US_DONE: ai._status = US_DONE`. 0 / -1.
+int fold_contained_done(const Ctx& c, PyObject* ai) {
+    const Names* n = c.n;
+    Ref st;
+    {
+        Ref ca(PyObject_GetAttr(ai, n->contained_ai));
+        if (!ca) return -1;
+        st = Ref(PyObject_GetAttr(ca.get(), n->status));
+        if (!st) return -1;
+    }
+    Ref done(load_global(c.g, n->us_done));
+    if (!done) return -1;
+    const int eq = compare_owned(std::move(st), std::move(done), Py_EQ);
+    if (eq < 0) return -1;
+    if (eq && set_attr_global(c, ai, n->status, n->us_done) < 0) return -1;
+    return 0;
+}
+
+// _tick_conditional
+PyObject* conditional_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
+    const Names* n = c.n;
+    ++g_kind_runs[kConditional];
+    struct Frame {
+        Ref eval_fn, args, active;
+        void release() {
+            eval_fn = Ref();
+            args = Ref();
+            active = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // eval_fn = ai._evaluation_function
+    f.eval_fn = Ref(PyObject_GetAttr(ai, n->evaluation_function));
+    if (!f.eval_fn) return nullptr;
+    if (f.eval_fn.get() != Py_None) {
+        // args = _condition_statuses(ai)
+        f.args = Ref(condition_statuses_call(c, ai));
+        if (!f.args) return nullptr;
+        // ai._status = _eval_conditional(ai, eval_fn, args)
+        {
+            Ref v(eval_conditional_call(c, ai, f.eval_fn.get(), f.args.get()));
+            if (!v) return nullptr;
+            if (PyObject_SetAttr(ai, n->status, v.get()) < 0) return nullptr;
+        }
+        // if ai._status == US_ACTIVE and ai._contained_ai is not None:
+        //     tick_ai(ai._contained_ai, game_time)
+        //     if ai._contained_ai._status == US_DONE: ai._status = US_DONE
+        int go = attr_cmp_global(c, ai, n->status, n->us_active, Py_EQ);
+        if (go < 0) return nullptr;
+        if (go) {
+            go = has_contained(ai, n);
+            if (go < 0) return nullptr;
+        }
+        if (go) {
+            if (tick_attr_stmt(c, ai, n->contained_ai, gt) < 0) return nullptr;
+            if (fold_contained_done(c, ai) < 0) return nullptr;
+        }
+        return return_status(ai, n, f);
+    }
+    // active = _any_condition(ai) if ai._conditions else False
+    {
+        int has;
+        {
+            Ref conds(PyObject_GetAttr(ai, n->conditions));
+            if (!conds) return nullptr;
+            has = PyObject_IsTrue(conds.get());
+            if (has < 0) return nullptr;
+        }
+        Ref v(has ? any_condition_call(c, ai) : Py_NewRef(Py_False));
+        if (!v) return nullptr;
+        f.active = std::move(v);
+    }
+    // if not active: ai._status = US_DORMANT; return ai._status
+    {
+        const int t = PyObject_IsTrue(f.active.get());
+        if (t < 0) return nullptr;
+        if (!t) {
+            if (set_attr_global(c, ai, n->status, n->us_dormant) < 0) return nullptr;
+            return return_status(ai, n, f);
+        }
+    }
+    // ai._status = US_ACTIVE
+    if (set_attr_global(c, ai, n->status, n->us_active) < 0) return nullptr;
+    // if ai._contained_ai is not None: tick_ai(ai._contained_ai, game_time)
+    {
+        const int has = has_contained(ai, n);
+        if (has < 0) return nullptr;
+        if (has && tick_attr_stmt(c, ai, n->contained_ai, gt) < 0) return nullptr;
+    }
+    return return_status(ai, n, f);
+}
+
+// _tick_preprocessing's frame (co_varnames, then the cell `bound`; the
+// `game_time` cell is the argument's own slot).
+struct PreFrame {
+    Ref inst, method, cache, sig, arity, contained, result, next_update_fn, nxt, interval, last,
+        bound;
+    void release() {
+        inst = Ref();
+        method = Ref();
+        cache = Ref();
+        sig = Ref();
+        arity = Ref();
+        contained = Ref();
+        result = Ref();
+        next_update_fn = Ref();
+        nxt = Ref();
+        interval = Ref();
+        last = Ref();
+        bound = Ref();
+    }
+    ~PreFrame() { release(); }
+};
+
+// `bound = getattr(inst, method)`: the builtin's own check of the name, then
+// the lookup. 0 / -1.
+int bind_method(PreFrame& f) {
+    if (!PyUnicode_Check(f.method.get())) {
+        PyErr_SetString(PyExc_TypeError, "getattr(): attribute name must be string");
+        return -1;
+    }
+    Ref b(PyObject_GetAttr(f.inst.get(), f.method.get()));
+    if (!b) return -1;
+    f.bound = std::move(b);
+    return 0;
+}
+
+// The arity probe's try body:
+//     sig = inspect.signature(bound)
+//     arity = sum(1 for p in sig.parameters.values()
+//                 if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+//                               inspect.Parameter.POSITIONAL_OR_KEYWORD))
+// 0, or -1 with the exception set (the caller's `except` decides).
+int arity_try(const Ctx& c, PreFrame& f) {
+    const Names* n = c.n;
+    {
+        Ref insp(load_global(c.g, n->inspect));
+        if (!insp) return -1;
+        Ref sig(PyObject_CallMethodOneArg(insp.get(), n->signature, f.bound.get()));
+        if (!sig) return -1;
+        insp = Ref();
+        f.sig = std::move(sig);
+    }
+    Ref it;
+    {
+        Ref params(PyObject_GetAttr(f.sig.get(), n->parameters));
+        if (!params) return -1;
+        Ref vals(PyObject_CallMethodNoArgs(params.get(), n->values));
+        if (!vals) return -1;
+        params = Ref();
+        it = Ref(PyObject_GetIter(vals.get()));
+        if (!it) return -1;
+    }
+    Py_ssize_t count = 0;
+    Ref p;  // the generator's frame: `.0` (it), `p`
+    for (;;) {
+        Ref next(PyIter_Next(it.get()));
+        if (!next) {
+            if (PyErr_Occurred()) return -1;
+            break;
+        }
+        p = std::move(next);
+        Ref kind(PyObject_GetAttr(p.get(), n->kind));
+        if (!kind) return -1;
+        Ref pair;
+        {
+            Ref first, second;
+            {
+                Ref insp(load_global(c.g, n->inspect));
+                if (!insp) return -1;
+                Ref param(PyObject_GetAttr(insp.get(), n->parameter));
+                if (!param) return -1;
+                first = Ref(PyObject_GetAttr(param.get(), n->positional_only));
+                if (!first) return -1;
+            }
+            {
+                Ref insp(load_global(c.g, n->inspect));
+                if (!insp) return -1;
+                Ref param(PyObject_GetAttr(insp.get(), n->parameter));
+                if (!param) return -1;
+                second = Ref(PyObject_GetAttr(param.get(), n->positional_or_keyword));
+                if (!second) return -1;
+            }
+            pair = Ref(PyTuple_Pack(2, first.get(), second.get()));
+            if (!pair) return -1;
+        }
+        // CONTAINS_OP: both operands released after the test.
+        const int in = PySequence_Contains(pair.get(), kind.get());
+        kind = Ref();
+        pair = Ref();
+        if (in < 0) return -1;
+        if (in) ++count;
+    }
+    it = Ref();
+    p = Ref();
+    Ref arity(PyLong_FromSsize_t(count));
+    if (!arity) return -1;
+    f.arity = std::move(arity);
+    return 0;
+}
+
+// `if <local> == PS_*:` and the three-way PS_* mapping shared by the two
+// arms. 1: a mapped status was set and the caller returns ai._status (after
+// _retain_subtree_focus for SKIP_ACTIVE); 0: PS_NORMAL, fall through; -1.
+int map_ps(const Ctx& c, PyObject* ai, PyObject* value) {
+    const Names* n = c.n;
+    int eq = local_cmp_global(c, value, n->ps_skip_active, Py_EQ);
+    if (eq < 0) return -1;
+    if (eq) {
+        if (set_attr_global(c, ai, n->status, n->us_active) < 0) return -1;
+        if (retain_subtree_focus_stmt(c, ai) < 0) return -1;
+        return 1;
+    }
+    eq = local_cmp_global(c, value, n->ps_skip_dormant, Py_EQ);
+    if (eq < 0) return -1;
+    if (eq) {
+        if (set_attr_global(c, ai, n->status, n->us_dormant) < 0) return -1;
+        return 1;
+    }
+    const int ne = local_cmp_global(c, value, n->ps_normal, Py_NE);
+    if (ne < 0) return -1;
+    if (ne) {
+        if (set_attr_global(c, ai, n->status, n->us_done) < 0) return -1;
+        return 1;
+    }
+    return 0;
+}
+
+// _tick_preprocessing
+PyObject* preprocessing_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
+    const Names* n = c.n;
+    ++g_kind_runs[kPreprocessing];
+    PreFrame f;
+    // inst = ai._preprocessing_instance
+    f.inst = Ref(PyObject_GetAttr(ai, n->preprocessing_instance));
+    if (!f.inst) return nullptr;
+    // method = ai._preprocessing_method
+    f.method = Ref(PyObject_GetAttr(ai, n->preprocessing_method));
+    if (!f.method) return nullptr;
+    // if inst is None or not method:
+    //     if ai._contained_ai is not None: tick_ai(ai._contained_ai, game_time)
+    //     return ai._status
+    {
+        int bare = f.inst.get() == Py_None;
+        if (!bare) {
+            const int t = PyObject_IsTrue(f.method.get());
+            if (t < 0) return nullptr;
+            bare = !t;
+        }
+        if (bare) {
+            const int has = has_contained(ai, n);
+            if (has < 0) return nullptr;
+            if (has && tick_attr_stmt(c, ai, n->contained_ai, gt) < 0) return nullptr;
+            return return_status(ai, n, f);
+        }
+    }
+    // if callable(getattr(inst, "DamageEvent", None)) and getattr(inst, "pCodeAI", None) is not None:
+    //     _ensure_select_target_initialized(inst)
+    {
+        int go;
+        {
+            Ref de(getattr_or(f.inst.get(), n->damage_event, Py_None));
+            if (!de) return nullptr;
+            go = PyCallable_Check(de.get());
+        }
+        if (go) {
+            Ref pc(getattr_or(f.inst.get(), n->pcodeai, Py_None));
+            if (!pc) return nullptr;
+            go = pc.get() != Py_None;
+        }
+        if (go) {
+            Ref fn(load_global(c.g, n->ensure_select));
+            if (!fn) return nullptr;
+            Ref r(PyObject_CallOneArg(fn.get(), f.inst.get()));
+            if (!r) return nullptr;
+        }
+    }
+    // ai._has_focus = True
+    if (PyObject_SetAttr(ai, n->has_focus, Py_True) < 0) return nullptr;
+    // _reached_this_tick.append(ai)
+    if (global_append(c, n->reached, ai) < 0) return nullptr;
+    // _queue_got_focus(ai)
+    if (queue_got_focus_stmt(c, ai) < 0) return nullptr;
+    // cache = ai.__dict__.get("_preprocess_arity_cache")
+    f.cache = Ref(obj_dict_get(ai, n->arity_cache, nullptr, n));
+    if (!f.cache) return nullptr;
+    // if cache is None or cache[0] is not inst or cache[1] != method:
+    int miss = f.cache.get() == Py_None;
+    if (!miss) {
+        Ref c0(subscript(f.cache.get(), 0, n->zero));
+        if (!c0) return nullptr;
+        miss = c0.get() != f.inst.get();
+    }
+    if (!miss) {
+        Ref c1(subscript(f.cache.get(), 1, n->one));
+        if (!c1) return nullptr;
+        miss = compare_owned(std::move(c1), Ref(Py_NewRef(f.method.get())), Py_NE);
+        if (miss < 0) return nullptr;
+    }
+    if (miss) {
+        // bound = getattr(inst, method)
+        if (bind_method(f) < 0) return nullptr;
+        // try: ... except (TypeError, ValueError): arity = 0
+        if (arity_try(c, f) < 0) {
+            if (!PyErr_ExceptionMatches(PyExc_TypeError) &&
+                !PyErr_ExceptionMatches(PyExc_ValueError))
+                return nullptr;
+            PyErr_Clear();
+            f.arity = Ref(Py_NewRef(n->zero));
+        }
+        // ai._preprocess_arity_cache = (inst, method, arity)
+        {
+            Ref t(PyTuple_Pack(3, f.inst.get(), f.method.get(), f.arity.get()));
+            if (!t) return nullptr;
+            if (PyObject_SetAttr(ai, n->arity_cache, t.get()) < 0) return nullptr;
+        }
+        // cache = ai._preprocess_arity_cache
+        {
+            Ref v(PyObject_GetAttr(ai, n->arity_cache));
+            if (!v) return nullptr;
+            f.cache = std::move(v);
+        }
+    }
+    // arity = cache[2]
+    {
+        Ref v(subscript(f.cache.get(), 2, n->two));
+        if (!v) return nullptr;
+        f.arity = std::move(v);
+    }
+    // contained = ai._contained_ai
+    f.contained = Ref(PyObject_GetAttr(ai, n->contained_ai));
+    if (!f.contained) return nullptr;
+    // if (contained is not None and contained._status == US_ACTIVE
+    //         and not contained.IsInterruptable()):
+    //     ai._status = US_ACTIVE
+    //     tick_ai(contained, game_time)
+    //     return ai._status
+    {
+        int bypass = f.contained.get() != Py_None;
+        if (bypass) {
+            bypass = attr_cmp_global(c, f.contained.get(), n->status, n->us_active, Py_EQ);
+            if (bypass < 0) return nullptr;
+        }
+        if (bypass) {
+            Ref r(PyObject_CallMethodNoArgs(f.contained.get(), n->is_interruptable));
+            if (!r) return nullptr;
+            const int t = PyObject_IsTrue(r.get());
+            if (t < 0) return nullptr;
+            bypass = !t;
+        }
+        if (bypass) {
+            if (set_attr_global(c, ai, n->status, n->us_active) < 0) return nullptr;
+            if (tick_stmt(c, f.contained.get(), gt) < 0) return nullptr;
+            return return_status(ai, n, f);
+        }
+    }
+    // if game_time >= ai._next_update_time:
+    int due;
+    {
+        Ref when(PyObject_GetAttr(ai, n->next_update_time));
+        if (!when) return nullptr;
+        due = compare_owned(Ref(Py_NewRef(gt)), std::move(when), Py_GE);
+        if (due < 0) return nullptr;
+    }
+    if (due) {
+        // bound = getattr(inst, method)
+        if (bind_method(f) < 0) return nullptr;
+        // if arity >= 1: result = _run_script_step(ai, lambda: bound(game_time + 1.0))
+        // else:          result = _run_script_step(ai, bound)
+        {
+            const int ge = compare_owned(Ref(Py_NewRef(f.arity.get())), Ref(Py_NewRef(n->one)),
+                                         Py_GE);
+            if (ge < 0) return nullptr;
+            Ref v;
+            {
+                Ref fn(load_global(c.g, n->run_script_step));
+                if (!fn) return nullptr;
+                Ref call(ge ? make_end_time_call(f.bound.get(), gt) : Py_NewRef(f.bound.get()));
+                if (!call) return nullptr;
+                v = Ref(call2(fn.get(), ai, call.get()));
+                if (!v) return nullptr;
+            }
+            f.result = std::move(v);
+        }
+        // if result is None: result = PS_NORMAL
+        if (f.result.get() == Py_None) {
+            Ref v(load_global(c.g, n->ps_normal));
+            if (!v) return nullptr;
+            f.result = std::move(v);
+        }
+        // ai._last_preprocess_status = result
+        if (PyObject_SetAttr(ai, n->last_preprocess_status, f.result.get()) < 0) return nullptr;
+        // _sync_fire_script_target_subsystem(inst)
+        {
+            Ref fn(load_global(c.g, n->sync_fire));
+            if (!fn) return nullptr;
+            Ref r(PyObject_CallOneArg(fn.get(), f.inst.get()));
+            if (!r) return nullptr;
+        }
+        // next_update_fn = getattr(inst, "GetNextUpdateTime", None)
+        {
+            Ref v(getattr_or(f.inst.get(), n->get_next_update_time, Py_None));
+            if (!v) return nullptr;
+            f.next_update_fn = std::move(v);
+        }
+        // nxt = next_update_fn() if callable(next_update_fn) else None
+        {
+            Ref v(PyCallable_Check(f.next_update_fn.get())
+                      ? PyObject_CallNoArgs(f.next_update_fn.get())
+                      : Py_NewRef(Py_None));
+            if (!v) return nullptr;
+            f.nxt = std::move(v);
+        }
+        // interval = float(nxt) if nxt is not None else 0.0
+        {
+            Ref v(f.nxt.get() != Py_None ? py_float(f.nxt.get()) : Py_NewRef(n->fzero));
+            if (!v) return nullptr;
+            f.interval = std::move(v);
+        }
+        // ai._next_update_time = game_time + interval
+        {
+            Ref v(add_obj(gt, f.interval.get()));
+            if (!v) return nullptr;
+            if (PyObject_SetAttr(ai, n->next_update_time, v.get()) < 0) return nullptr;
+        }
+        // _note_due(ai._next_update_time)
+        if (note_due_attr_stmt(c, ai) < 0) return nullptr;
+        // the PS_* mapping on `result`
+        const int mapped = map_ps(c, ai, f.result.get());
+        if (mapped < 0) return nullptr;
+        if (mapped) return return_status(ai, n, f);
+    } else {
+        // _note_due(ai._next_update_time)
+        if (note_due_attr_stmt(c, ai) < 0) return nullptr;
+        // last = ai._last_preprocess_status
+        f.last = Ref(PyObject_GetAttr(ai, n->last_preprocess_status));
+        if (!f.last) return nullptr;
+        // the PS_* mapping on `last`
+        const int mapped = map_ps(c, ai, f.last.get());
+        if (mapped < 0) return nullptr;
+        if (mapped) return return_status(ai, n, f);
+    }
+    // ai._status = US_ACTIVE
+    if (set_attr_global(c, ai, n->status, n->us_active) < 0) return nullptr;
+    // if ai._contained_ai is not None:
+    //     tick_ai(ai._contained_ai, game_time)
+    //     if ai._contained_ai._status == US_DONE: ai._status = US_DONE
+    {
+        const int has = has_contained(ai, n);
+        if (has < 0) return nullptr;
+        if (has) {
+            if (tick_attr_stmt(c, ai, n->contained_ai, gt) < 0) return nullptr;
+            if (fold_contained_done(c, ai) < 0) return nullptr;
+        }
+    }
+    return return_status(ai, n, f);
+}
+
+// _tick_builder
+PyObject* builder_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
+    const Names* n = c.n;
+    ++g_kind_runs[kBuilder];
+    // if ai._activation_failed: return US_DONE
+    {
+        Ref v(PyObject_GetAttr(ai, n->activation_failed));
+        if (!v) return nullptr;
+        const int t = PyObject_IsTrue(v.get());
+        if (t < 0) return nullptr;
+        if (t) return load_global(c.g, n->us_done);
+    }
+    // if not ai._activated:
+    //     _activate_builder(ai)
+    //     if ai._activation_failed: return US_DONE
+    {
+        int activated;
+        {
+            Ref v(PyObject_GetAttr(ai, n->activated));
+            if (!v) return nullptr;
+            activated = PyObject_IsTrue(v.get());
+            if (activated < 0) return nullptr;
+        }
+        if (!activated) {
+            {
+                Ref fn(load_global(c.g, n->activate_builder));
+                if (!fn) return nullptr;
+                Ref r(PyObject_CallOneArg(fn.get(), ai));
+                if (!r) return nullptr;
+            }
+            Ref v(PyObject_GetAttr(ai, n->activation_failed));
+            if (!v) return nullptr;
+            const int t = PyObject_IsTrue(v.get());
+            if (t < 0) return nullptr;
+            if (t) return load_global(c.g, n->us_done);
+        }
+    }
+    // return _tick_preprocessing(ai, game_time)
+    Ref fn(load_global(c.g, n->tick_preprocessing));
+    if (!fn) return nullptr;
+    const int s = stock_fn(c, n->tick_preprocessing, fn.get());
+    if (s < 0) return nullptr;
+    if (s) return preprocessing_impl(c, ai, gt);
+    return call2(fn.get(), ai, gt);
+}
+
+PyObject* run_handler(int kind, const Ctx& c, PyObject* ai, PyObject* gt) {
+    switch (kind) {
+        case kPlain: return plain_impl(c, ai, gt);
+        case kPriorityList: return priority_list_impl(c, ai, gt);
+        case kSequence: return sequence_impl(c, ai, gt);
+        case kRandom: return random_impl(c, ai, gt);
+        case kConditional: return conditional_impl(c, ai, gt);
+        case kPreprocessing: return preprocessing_impl(c, ai, gt);
+        case kBuilder: return builder_impl(c, ai, gt);
+        default: break;
+    }
+    PyErr_SetString(PyExc_SystemError, "aitree: unknown handler kind");
+    return nullptr;
+}
+
+// _dispatch_ai's body. Owned status.
+PyObject* dispatch_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
+    const Names* n = c.n;
+    struct Frame {
+        Ref ship, dead, node_id, node_type, handler;  // ship, _dead, node_id, node_type, handler
+        void release() {
+            ship = Ref();
+            dead = Ref();
+            node_id = Ref();
+            node_type = Ref();
+            handler = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    auto return_done = [&]() -> PyObject* {
+        Ref r(load_global(c.g, n->us_done));
+        if (!r) return nullptr;
+        f.release();
+        return r.steal();
+    };
+    // if ai is None: return US_DONE
+    if (ai == Py_None) return return_done();
+    // ship = ai.GetShip() if hasattr(ai, "GetShip") else None
+    {
+        PyObject* probe = nullptr;
+        const int has = lookup_attr(ai, n->get_ship, &probe);
+        if (has < 0) return nullptr;
+        Py_XDECREF(probe);
+        Ref v(has ? PyObject_CallMethodNoArgs(ai, n->get_ship) : Py_NewRef(Py_None));
+        if (!v) return nullptr;
+        f.ship = std::move(v);
+    }
+    // if ship is not None:
+    if (f.ship.get() != Py_None) {
+        // if _ooa_cache[0] is ship:
+        bool same;
+        {
+            Ref oc(load_global(c.g, n->ooa_cache));
+            if (!oc) return nullptr;
+            Ref s0(subscript(oc.get(), 0, n->zero));
+            if (!s0) return nullptr;
+            same = s0.get() == f.ship.get();
+        }
+        if (same) {
+            // if _ooa_cache[1]: return US_DONE
+            int t;
+            {
+                Ref oc(load_global(c.g, n->ooa_cache));
+                if (!oc) return nullptr;
+                Ref s1(subscript(oc.get(), 1, n->one));
+                if (!s1) return nullptr;
+                oc = Ref();
+                t = PyObject_IsTrue(s1.get());
+                if (t < 0) return nullptr;
+            }
+            if (t) return return_done();
+        } else {
+            // _dead = ship_death._out_of_action(ship)
+            {
+                Ref sd(load_global(c.g, n->ship_death));
+                if (!sd) return nullptr;
+                Ref v(PyObject_CallMethodOneArg(sd.get(), n->out_of_action, f.ship.get()));
+                if (!v) return nullptr;
+                sd = Ref();
+                f.dead = std::move(v);
+            }
+            // _ooa_cache[0] = ship
+            // _ooa_cache[1] = _dead
+            {
+                Ref oc(load_global(c.g, n->ooa_cache));
+                if (!oc) return nullptr;
+                if (PyObject_SetItem(oc.get(), n->zero, f.ship.get()) < 0) return nullptr;
+            }
+            {
+                Ref oc(load_global(c.g, n->ooa_cache));
+                if (!oc) return nullptr;
+                if (PyObject_SetItem(oc.get(), n->one, f.dead.get()) < 0) return nullptr;
+            }
+            // if _dead: return US_DONE
+            const int t = PyObject_IsTrue(f.dead.get());
+            if (t < 0) return nullptr;
+            if (t) return return_done();
+        }
+    }
+    // node_id = id(ai)
+    f.node_id = Ref(PyLong_FromVoidPtr(ai));
+    if (!f.node_id) return nullptr;
+    // if node_id not in _reached_this_tick_all_ids:
+    //     _reached_this_tick_all_ids.add(node_id)
+    //     _reached_this_tick_all.append(ai)
+    {
+        int in;
+        {
+            Ref ids(load_global(c.g, n->reached_all_ids));
+            if (!ids) return nullptr;
+            in = PySequence_Contains(ids.get(), f.node_id.get());
+            if (in < 0) return nullptr;
+        }
+        if (!in) {
+            {
+                Ref ids(load_global(c.g, n->reached_all_ids));
+                if (!ids) return nullptr;
+                if (PySet_CheckExact(ids.get())) {
+                    if (PySet_Add(ids.get(), f.node_id.get()) < 0) return nullptr;
+                } else {
+                    Ref r(PyObject_CallMethodOneArg(ids.get(), n->add, f.node_id.get()));
+                    if (!r) return nullptr;
+                }
+            }
+            if (global_append(c, n->reached_all, ai) < 0) return nullptr;
+        }
+    }
+    // node_type = type(ai)
+    f.node_type = Ref(Py_NewRef(reinterpret_cast<PyObject*>(Py_TYPE(ai))));
+    // handler = _DISPATCH_BY_TYPE.get(node_type, _UNRESOLVED)
+    {
+        Ref table(load_global(c.g, n->dispatch_by_type));
+        if (!table) return nullptr;
+        Ref unresolved(load_global(c.g, n->unresolved));
+        if (!unresolved) return nullptr;
+        Ref v(dict_get(table.get(), f.node_type.get(), unresolved.get(), n));
+        if (!v) return nullptr;
+        table = Ref();
+        unresolved = Ref();
+        f.handler = std::move(v);
+    }
+    // if handler is _UNRESOLVED:
+    //     handler = _DISPATCH_BY_TYPE[node_type] = _resolve_dispatch(node_type)
+    {
+        bool unresolved;
+        {
+            Ref u(load_global(c.g, n->unresolved));
+            if (!u) return nullptr;
+            unresolved = f.handler.get() == u.get();
+        }
+        if (unresolved) {
+            Ref v;
+            {
+                Ref fn(load_global(c.g, n->resolve_dispatch));
+                if (!fn) return nullptr;
+                v = Ref(PyObject_CallOneArg(fn.get(), f.node_type.get()));
+                if (!v) return nullptr;
+            }
+            f.handler = Ref(Py_NewRef(v.get()));
+            Ref table(load_global(c.g, n->dispatch_by_type));
+            if (!table) return nullptr;
+            if (PyObject_SetItem(table.get(), f.node_type.get(), v.get()) < 0) return nullptr;
+        }
+    }
+    // if handler is None: return ai._status
+    if (f.handler.get() == Py_None) return return_status(ai, n, f);
+    // if _AI_BREAKDOWN is not None: return _timed_dispatch(handler, ai, game_time)
+    {
+        bool timed;
+        {
+            Ref bd(load_global(c.g, n->ai_breakdown));
+            if (!bd) return nullptr;
+            timed = bd.get() != Py_None;
+        }
+        if (timed) {
+            Ref r;
+            {
+                Ref fn(load_global(c.g, n->timed_dispatch));
+                if (!fn) return nullptr;
+                r = Ref(call3(fn.get(), f.handler.get(), ai, gt));
+                if (!r) return nullptr;
+            }
+            f.release();
+            return r.steal();
+        }
+    }
+    // return handler(ai, game_time)
+    const int kind = handler_kind(c, f.handler.get());
+    if (kind < 0) return nullptr;
+    Ref r(kind ? run_handler(kind, c, ai, gt) : call2(f.handler.get(), ai, gt));
+    if (!r) return nullptr;
+    f.release();
+    return r.steal();
+}
+
+// `_focus_depth += 1` / `-= 1` (LOAD_GLOBAL, the in-place operator,
+// STORE_GLOBAL). 0 / -1.
+int bump_depth(const Ctx& c, int delta) {
+    Ref d(load_global(c.g, c.n->focus_depth));
+    if (!d) return -1;
+    Ref v(delta > 0 ? PyNumber_InPlaceAdd(d.get(), c.n->one)
+                    : PyNumber_InPlaceSubtract(d.get(), c.n->one));
+    if (!v) return -1;
+    d = Ref();
+    return PyDict_SetItem(c.g, c.n->focus_depth, v.get());
+}
+
+// `<global>(*args)` as a statement. 0 / -1.
+int call_global_stmt(const Ctx& c, PyObject* gname, PyObject* const* args, size_t nargs) {
+    Ref fn(load_global(c.g, gname));
+    if (!fn) return -1;
+    Ref r(PyObject_Vectorcall(fn.get(), args, nargs, nullptr));
+    return r ? 0 : -1;
+}
+
+// `_tick_ai_python`'s body: the native walk of one subtree. Owned status.
+PyObject* tick_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
+    const Names* n = c.n;
+    // Python would raise RecursionError on a cyclic tree; this keeps the C
+    // stack from overflowing on one (one level per tick_ai, not Python's).
+    if (Py_EnterRecursiveCall(" in the AI tree walk")) return nullptr;
+    struct Leave {
+        ~Leave() { Py_LeaveRecursiveCall(); }
+    } leave;
+    ++g_tick_runs;
+    struct Frame {
+        Ref is_root, status;
+        void release() {
+            is_root = Ref();
+            status = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // is_root = _focus_depth == 0
+    {
+        Ref d(load_global(c.g, n->focus_depth));
+        if (!d) return nullptr;
+        Ref v(PyObject_RichCompare(d.get(), n->zero, Py_EQ));
+        if (!v) return nullptr;
+        f.is_root = std::move(v);
+    }
+    // if is_root:
+    //     _ooa_cache[0] = None
+    //     _reached_this_tick = []
+    //     _reached_this_tick_all = []
+    //     _reached_this_tick_all_ids = set()
+    //     _pending_got_focus = []
+    {
+        const int root = PyObject_IsTrue(f.is_root.get());
+        if (root < 0) return nullptr;
+        if (root) {
+            {
+                Ref oc(load_global(c.g, n->ooa_cache));
+                if (!oc) return nullptr;
+                if (PyObject_SetItem(oc.get(), n->zero, Py_None) < 0) return nullptr;
+            }
+            const struct {
+                PyObject* name;
+                bool set;
+            } fresh[] = {{n->reached, false},
+                         {n->reached_all, false},
+                         {n->reached_all_ids, true},
+                         {n->pending, false}};
+            for (const auto& x : fresh) {
+                Ref v(x.set ? PySet_New(nullptr) : PyList_New(0));
+                if (!v) return nullptr;
+                if (PyDict_SetItem(c.g, x.name, v.get()) < 0) return nullptr;
+            }
+        }
+    }
+    // _focus_depth += 1
+    if (bump_depth(c, +1) < 0) return nullptr;
+    // try:
+    //     status = _dispatch_ai(ai, game_time)
+    // finally:
+    //     _focus_depth -= 1
+    {
+        Ref value;
+        {
+            Ref fn(load_global(c.g, n->dispatch_ai));
+            if (fn) {
+                const int s = stock_fn(c, n->dispatch_ai, fn.get());
+                if (s > 0)
+                    value = Ref(dispatch_impl(c, ai, gt));
+                else if (s == 0)
+                    value = Ref(call2(fn.get(), ai, gt));
+            }
+        }
+        if (!value) {
+            // The finally body runs with the exception pending; one it
+            // raises itself has the pending one as its context.
+            PyObject *et, *ev, *etb;
+            PyErr_Fetch(&et, &ev, &etb);
+            if (bump_depth(c, -1) < 0) {
+                _PyErr_ChainExceptions(et, ev, etb);
+                return nullptr;
+            }
+            PyErr_Restore(et, ev, etb);
+            return nullptr;
+        }
+        f.status = std::move(value);
+    }
+    if (bump_depth(c, -1) < 0) return nullptr;
+    // if is_root and ai is not None:
+    //     _reconcile_focus(ai, _reached_this_tick)
+    //     _flush_pending_got_focus()
+    //     _reconcile_active(ai, _reached_this_tick_all)
+    {
+        int go = PyObject_IsTrue(f.is_root.get());
+        if (go < 0) return nullptr;
+        if (go && ai != Py_None) {
+            {
+                Ref fn(load_global(c.g, n->reconcile_focus));
+                if (!fn) return nullptr;
+                Ref reached(load_global(c.g, n->reached));
+                if (!reached) return nullptr;
+                Ref r(call2(fn.get(), ai, reached.get()));
+                if (!r) return nullptr;
+            }
+            if (call_global_stmt(c, n->flush_pending, nullptr, 0) < 0) return nullptr;
+            {
+                Ref fn(load_global(c.g, n->reconcile_active));
+                if (!fn) return nullptr;
+                Ref reached(load_global(c.g, n->reached_all));
+                if (!reached) return nullptr;
+                Ref r(call2(fn.get(), ai, reached.get()));
+                if (!r) return nullptr;
+            }
+        }
+    }
+    // return status
+    Ref ret(Py_NewRef(f.status.get()));
+    f.release();
+    return ret.steal();
+}
+
+PyObject* tick(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 3 || !PyDict_Check(args[2])) {
+        PyErr_SetString(PyExc_TypeError, "aitree_tick(ai, game_time, globals: dict)");
+        return nullptr;
+    }
+    try {
+        const Names* n = names();
+        if (n == nullptr) return nullptr;
+        const Ctx c{args[2], n};
+        return tick_impl(c, args[0], args[1]);
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    }
+}
+
+PyObject* walk_counts(PyObject*, PyObject* const*, Py_ssize_t nargs) {
+    if (nargs != 0) {
+        PyErr_SetString(PyExc_TypeError, "aitree_walk_counts()");
+        return nullptr;
+    }
+    return Py_BuildValue("(KKKKKKKK)", g_tick_runs, g_kind_runs[kPlain],
+                         g_kind_runs[kPriorityList], g_kind_runs[kSequence],
+                         g_kind_runs[kRandom], g_kind_runs[kConditional],
+                         g_kind_runs[kPreprocessing], g_kind_runs[kBuilder]);
+}
+
 template <typename F>
 PyObject* guarded(F&& body) {
     try {
@@ -1069,19 +3569,7 @@ PyObject* note_due(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
                      nargs);
         return nullptr;
     }
-    PyObject* when = args[0];
-    PyObject* cur = min_due();
-    if (cur == nullptr) return nullptr;
-    if (PyFloat_CheckExact(when) && PyFloat_CheckExact(cur)) {
-        if (PyFloat_AS_DOUBLE(when) < PyFloat_AS_DOUBLE(cur)) set_min_due(when);
-        Py_RETURN_NONE;
-    }
-    // The comparison can run Python (which may write the slot): it reads
-    // the value it was handed, held.
-    Ref held(Py_NewRef(cur));
-    const int lt = compare(when, held.get(), Py_LT);
-    if (lt < 0) return nullptr;
-    if (lt) set_min_due(when);
+    if (note_due_value(args[0]) < 0) return nullptr;
     Py_RETURN_NONE;
 }
 
@@ -1113,11 +3601,6 @@ PyObject* roster_count(PyObject*, PyObject* const*, Py_ssize_t nargs) {
     return PyLong_FromUnsignedLongLong(g_roster_runs);
 }
 
-template <auto F>
-PyCFunction fast() {
-    return reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(F));
-}
-
 PyMethodDef kDefs[] = {
     {"aitree_tick_all", fast<tick_all>(), METH_FASTCALL,
      "aitree_tick_all(game_time, globals): ai_driver's per-tick roster and "
@@ -1145,6 +3628,13 @@ PyMethodDef kDefs[] = {
     {"aitree_any_condition", fast<any_condition>(), METH_FASTCALL,
      "aitree_any_condition(ai, globals) -> "
      "any(c.GetStatus() != 0 for c in ai._conditions)."},
+    {"aitree_tick", fast<tick>(), METH_FASTCALL,
+     "aitree_tick(ai, game_time, globals): ai_driver's tick_ai with the native "
+     "walker selected (its _tick_ai_python, _dispatch_ai and every stock _tick_* "
+     "handler); `globals` is ai_driver's module dict."},
+    {"aitree_walk_counts", fast<walk_counts>(), METH_FASTCALL,
+     "aitree_walk_counts() -> (native walks started, then native runs of each "
+     "stock handler in ai_driver._STOCK_HANDLERS order)."},
     {"aitree_conditional_counts", fast<conditional_counts>(), METH_FASTCALL,
      "aitree_conditional_counts() -> (native condition-evaluation entries, "
      "stock GetStatus calls read directly)."},

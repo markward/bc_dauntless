@@ -1,7 +1,7 @@
 """The tree-walk differential harness proves itself (phase 6 AI part 4, Task 1).
 
-The native side runs the native roster (Task 2) and the native condition
-evaluation (Task 3); the walk itself is still Python's until Task 4. What
+The native side runs the native roster (Task 2), the native condition
+evaluation (Task 3) and the native walk (Task 4). What
 these tests pin, besides the two sides agreeing, is that the harness is
 deterministic (two Python runs agree call for call and field for field), that
 each scene reaches the driver paths it claims (asserted on the recorded call
@@ -1421,6 +1421,517 @@ def test_harness_catches_a_native_side_that_runs_the_python_s2():
         return awd.synthetic_scene(mp, [ship])
     with pytest.raises(AssertionError,
                        match="ran the Python condition evaluation"):
+        awd.run_walk_diff(build, 5)
+
+
+# ── the walk (Task 4: S4 native) ─────────────────────────────────────────────
+#
+# From Task 4 the native side walks natively: tick_ai, _dispatch_ai and every
+# stock _tick_* handler (aitree_tick). The harness proves the native side ran
+# the native walk and never the Python body (_tick_ai_python). The scenes
+# below pin each Review Focus item of the plan on a tree built for it.
+
+class ScriptedLeaf(Leaf):
+    """A PlainAI script whose Update returns `results[n % len]` and marks
+    whether its node held focus while it ran; with focus hooks."""
+
+    def __init__(self, ai, results, owner, interval=0.0, on_update=None):
+        super().__init__(ai, interval=interval, on_update=on_update)
+        self.results = list(results)
+        self.owner = owner
+
+    def Update(self):
+        self.n += 1
+        awd.mark(self.owner, "focus in Update", self.pCodeAI.GetName(),
+                 self.pCodeAI.HasFocus())
+        if self.on_update is not None:
+            self.on_update(self.n)
+        return self.results[(self.n - 1) % len(self.results)]
+
+    def GotFocus(self):
+        return None
+
+    def LostFocus(self):
+        return None
+
+
+class ScriptedPre(Pre):
+    """A preprocessor whose PreUpdate returns `results[n % len]` (a PS_*, or
+    anything else), marking whether its node held focus; with focus hooks."""
+
+    def __init__(self, ai, results, owner, interval=0.0, on_update=None):
+        super().__init__(ai, interval=interval, on_update=on_update)
+        self.results = list(results)
+        self.owner = owner
+
+    def PreUpdate(self, dEndTime):
+        self.n += 1
+        awd.mark(self.owner, "focus in PreUpdate", self.pCodeAI.GetName(),
+                 self.pCodeAI.HasFocus())
+        if self.on_update is not None:
+            self.on_update(self.n)
+        return self.results[(self.n - 1) % len(self.results)]
+
+    def GotFocus(self):
+        return None
+
+    def LostFocus(self):
+        return None
+
+
+def _sleaf(ship, name, results=(US_ACTIVE,), owner=None, **kw):
+    node = _ai().PlainAI_Create(ship, name)
+    node._script_instance = ScriptedLeaf(node, results, owner, **kw)
+    return node
+
+
+def _spre(ship, name, results, contained=None, owner=None, **kw):
+    node = _ai().PreprocessingAI_Create(ship, name)
+    node._preprocessing_instance = ScriptedPre(node, results, owner, **kw)
+    node._preprocessing_method = "PreUpdate"
+    if contained is not None:
+        node.SetContainedAI(contained)
+    return node
+
+
+def _marks(rec, kind):
+    return [e[2:] for e in rec.log() if e[0] == "mark" and e[1] == kind]
+
+
+def _rollback_scene(mp):
+    """Review Focus 3 and the priority list's rules.
+
+    A: a dormant preprocessing child, probed whenever it is due (its own
+    cadence, or a ForceUpdate from the fallback), rejected while it reports
+    SKIP_DORMANT and accepted when it reports NORMAL: a rejected probe's
+    focus records and queued GotFocus roll back, though its script saw
+    HasFocus() == 1 during its own PreUpdate. B: an active child whose own
+    Update turns it DORMANT, then (after a Reset) DONE: rolled back, and the
+    list still stops at it that tick. C: every child DONE, so the list is
+    DONE. D: a dormant ConditionalAI and a dormant PlainAI child are skipped
+    without a dispatch."""
+    owner = awd.current()
+    holder = {}
+    a = _ship("A")
+    probe = _spre(a, "AProbe", [US_DORMANT] * 3 + [0] * 4 + [US_DORMANT] * 2,
+                  _sleaf(a, "AInner", owner=owner, interval=0.02),
+                  owner=owner, interval=0.1)
+
+    def fallback_hook(n):
+        if n % 7 == 0:
+            holder["probe"].ForceUpdate()
+    holder["probe"] = probe
+    _install(a, _plist(a, "ARoot", (1, probe),
+                       (2, _sleaf(a, "AFallback", owner=owner, interval=0.03,
+                                  on_update=fallback_hook))))
+
+    b = _ship("B")
+
+    def b2_hook(n):
+        if n in (4, 12):
+            holder["b1"].Reset()
+    b1 = _sleaf(b, "B1", [US_ACTIVE, US_ACTIVE, US_DORMANT, US_ACTIVE,
+                          US_DONE], owner=owner, interval=0.02)
+    holder["b1"] = b1
+    _install(b, _plist(b, "BRoot", (1, b1),
+                       (2, _sleaf(b, "B2", owner=owner, interval=0.02,
+                                  on_update=b2_hook))))
+
+    c = _ship("C")
+    _install(c, _plist(c, "CRoot", (1, _leaf(c, "C1", done_after=2)),
+                       (2, _leaf(c, "C2", done_after=3))))
+
+    d = _ship("D")
+    gate = _ai().ConditionalAI_Create(d, "DGate")
+    gate._status = US_DORMANT
+    sleeper = _leaf(d, "DSleeper")
+    sleeper._status = US_DORMANT
+    _install(d, _plist(d, "DRoot", (1, gate), (2, sleeper),
+                       (3, _sleaf(d, "DLeaf", owner=owner, interval=0.05))))
+    return _scene_of(mp, [a, b, c, d])
+
+
+def test_priority_child_rollback_and_the_priority_rules():
+    rec = awd.run_walk_diff(_rollback_scene, 150)
+    pre = _marks(rec, "focus in PreUpdate")
+    assert ("AProbe", 1) in pre and ("AProbe", 0) not in pre, pre
+    assert _count(rec, "script.PreUpdate") >= 8, rec.calls()
+    assert _count(rec, "script.GotFocus") >= 3, rec.calls()
+    assert _count(rec, "script.LostFocus") >= 2, rec.calls()
+    assert _count(rec, "node.ForceUpdate") >= 2, rec.calls()
+    assert _count(rec, "node.Reset") == 2
+    assert _count(rec, "ship.ClearAI") == 1           # C's list ends DONE
+    statuses = {s for s in _states(rec, "_status")}
+    assert ("int", US_DORMANT) in statuses and ("int", US_DONE) in statuses
+
+
+def _bypass_scene(mp):
+    """The non-interruptable bypass: while the contained node is ACTIVE and
+    not interruptable, the preprocessor is not consulted at all (neither
+    arm); the contained node's hook toggles SetInterruptable, and its DONE
+    ends the bypass and folds into the preprocessor."""
+    owner = awd.current()
+    holder = {}
+    s = _ship("S")
+
+    def inner_hook(n):
+        if n == 10:
+            holder["inner"].SetInterruptable(1)
+        if n == 25:
+            holder["inner"].SetInterruptable(0)
+    inner = _sleaf(s, "Inner", [US_ACTIVE] * 40 + [US_DONE], owner=owner,
+                   interval=0.02, on_update=inner_hook)
+    inner.SetInterruptable(0)
+    holder["inner"] = inner
+    pre = _spre(s, "Pre", [0, 0, US_DORMANT, 0], inner, owner=owner,
+                interval=0.05)
+    _install(s, _plist(s, "Root", (1, pre),
+                       (2, _sleaf(s, "Low", owner=owner, interval=0.04))))
+    return _scene_of(mp, [s])
+
+
+def test_the_non_interruptable_bypass():
+    rec = awd.run_walk_diff(_bypass_scene, 160)
+    assert _count(rec, "node.IsInterruptable") >= 20, rec.calls()
+    assert _count(rec, "script.PreUpdate") >= 3, rec.calls()
+    updates = [m for m in _marks(rec, "focus in Update") if m[0] == "Inner"]
+    assert len(updates) >= 30, updates
+
+
+_PS_VALUES = (0, 1, 2, 3, 4, None, 7, -1, 1.0, True, "x")
+
+
+def _ps_scene(mp):
+    """Every PS_* value (and some that are none of them) from a preprocessor,
+    in the due arm and, from `_last_preprocess_status`, the not-due arm: the
+    stored value is the raw result (not int()'d), PS_NORMAL replaces None."""
+    owner = awd.current()
+    ships = []
+    for k, value in enumerate(_PS_VALUES):
+        s = _ship("PS%d" % k)
+        pre = _spre(s, "Pre%d" % k, [0, value, value, 0], _sleaf(
+            s, "Inner%d" % k, owner=owner, interval=0.02), owner=owner,
+            interval=0.05)
+        _install(s, _plist(s, "Root%d" % k, (1, pre),
+                           (2, _sleaf(s, "Low%d" % k, owner=owner,
+                                      interval=0.03))))
+        ships.append(s)
+    return _scene_of(mp, ships)
+
+
+def test_ps_status_mapping_in_both_arms():
+    rec = awd.run_walk_diff(_ps_scene, 90)
+    seen = set(_states(rec, "_last_preprocess_status"))
+    for v in (("int", 1), ("int", 2), ("int", 3), ("int", 7), ("f", "0x1.0000000000000p+0")):
+        assert v in seen, (v, seen)
+    assert True in seen and "x" in seen, seen
+    assert _count(rec, "ship.ClearAI") == 0
+
+
+def _retain_scene(mp):
+    """PS_SKIP_ACTIVE: the suppressed subtree keeps its focus (no LostFocus
+    on the way in, no second GotFocus on the way out), found through a
+    PriorityList's (priority, node) tuples, a Sequence's plain list and a
+    preprocessor's contained node; a node without focus is not re-recorded."""
+    owner = awd.current()
+    s = _ship("R")
+    deep = _sleaf(s, "Deep", owner=owner, interval=0.02)
+    inner_pre = _spre(s, "InnerPre", [0], deep, owner=owner, interval=0.04)
+    seq = _ai().SequenceAI_Create(s, "Seq")
+    seq.SetLoopCount(-1)
+    seq.AddAI(_sleaf(s, "SeqLeaf", owner=owner, interval=0.03))
+    inner = _plist(s, "Inner", (1, inner_pre), (2, seq))
+    top = _spre(s, "Top", [0] * 3 + [1] * 5 + [0] * 2 + [1] * 2, inner,
+                owner=owner, interval=0.05)
+    _install(s, top)
+    other = _ship("R2")
+    lone = _spre(other, "Lone", [1, 1, 0], None, owner=owner, interval=0.05)
+    _install(other, lone)
+    return _scene_of(mp, [s, other])
+
+
+def test_skip_active_retains_the_subtree_focus():
+    rec = awd.run_walk_diff(_retain_scene, 150)
+    assert ("int", 1) in set(_states(rec, "_last_preprocess_status"))
+    assert _count(rec, "script.GotFocus") >= 2, rec.calls()
+    assert _count(rec, "script.LostFocus") == 0, rec.calls()
+
+
+def _sequence_live_scene(mp):
+    """A sequence takes `n = len(_ais)` once per tick and reads `_ais[idx]`
+    live: an EvalFunc (reached by the scan's refresh) appends a child (not
+    reached before the wrap that tick), removes one (the list shifts under
+    the scan), and finally removes two at once so `_ais[idx]` raises
+    IndexError, which escapes."""
+    s = _ship("Q")
+    seq = _ai().SequenceAI_Create(s, "Seq")
+    seq.SetLoopCount(-1)
+    seq.SetSkipDormant(1)
+    holder = {"k": 0}
+    first = _leaf(s, "First", done_after=1)
+    late = _leaf(s, "Late", done_after=1)
+    extra = _leaf(s, "Extra", done_after=1)
+
+    def eval_fn(bOn):
+        holder["k"] += 1
+        k = holder["k"]
+        if k == 3:
+            seq.AddAI(late)
+        if k == 6:
+            seq.RemoveAI(first)
+        if k == 9:
+            seq.AddAI(extra)
+        if k == 12:
+            seq.RemoveAI(late)
+            seq.RemoveAI(extra)
+        return US_ACTIVE if k % 4 == 0 else US_DORMANT
+    gate = _ai().ConditionalAI_Create(s, "Gate")
+    gate.AddCondition(_cond(1))
+    gate.SetEvaluationFunction(eval_fn)
+    gate.SetContainedAI(_leaf(s, "Gated", done_after=1))
+    for child in (first, gate, _leaf(s, "Last", done_after=1)):
+        seq.AddAI(child)
+    _install(s, seq)
+    return _scene_of(mp, [s])
+
+
+def test_sequence_takes_n_once_and_reads_its_list_live():
+    rec = awd.run_walk_diff(_sequence_live_scene, 60)
+    sizes = {len(st) - 1 for st in _states(rec, "_ais") if st != awd._ABSENT}
+    assert {3, 4} <= sizes, sizes
+    assert _count(rec, "eval") >= 12, rec.calls()
+
+
+def _ooa_scene(mp):
+    """The one-slot out-of-action cache: X's preprocessor walks Y's tree mid-walk (a
+    nested, non-root tick_ai), which moves the slot to Y, so X's next node
+    re-asks; a hook writes `_ooa_cache[0] = None` as a test does; X dies at
+    tick 40. Every answer is a probe int whose release is marked: the
+    `_dead` local keeps it while the handler runs."""
+    drv = _driver()
+    owner = awd.current()
+    clock = {"i": 0}
+    x, y = _ship("X"), _ship("Y")
+    y_root = _plist(y, "YRoot", (1, _leaf(y, "YLeaf")))
+    _install(y, y_root)
+
+    def x_hook(n):
+        if n % 3 == 0:
+            drv.tick_ai(y_root, (clock["i"] + 1) / 60.0)
+        if n % 5 == 0:
+            drv._ooa_cache[0] = None
+
+    import engine.appc.ship_death as sd
+
+    def ooa(ship):
+        v = _Status(1 if ship is x and clock["i"] >= 40 else 0)
+        v.owner, v.tag = owner, "%s%d" % (ship.GetName(), clock["i"])
+        return v
+    mp.setattr(sd, "_out_of_action", ooa)
+    # The hook runs in the preprocessor, so X's contained nodes are still
+    # dispatched after the slot has moved (and re-ask).
+    _install(x, _plist(x, "XRoot", (1, _pre(x, "XPre", _plist(
+        x, "XInner", (1, _leaf(x, "XLeaf"))), on_update=x_hook))))
+
+    def step(i):
+        clock["i"] = i
+        drv.tick_all_ai((i + 1) / 60.0)
+    return awd.synthetic_scene(mp, [x], step, extra_ships=[y])
+
+
+def test_the_out_of_action_slot():
+    rec = awd.run_walk_diff(_ooa_scene, 50)
+    asked = [e[2] for e in rec.log() if e[:2] == ("call", "_out_of_action")]
+    xs = asked.count(("obj", "ShipClass", "X"))
+    assert xs > 50, Counter(asked)                       # re-asked after Y
+    assert len(_marks(rec, "del status")) > 50
+    assert _count(rec, "ship.ClearAI") == 1             # X died at tick 40
+
+
+class _StampLeaf(Leaf):
+    """Update returns a probe status and GetNextUpdateTime a probe interval,
+    each marking its release."""
+
+    def __init__(self, ai, owner, interval):
+        super().__init__(ai, interval=interval)
+        self.owner = owner
+
+    def Update(self):
+        self.n += 1
+        st = _Status(US_ACTIVE)
+        st.owner, st.tag = self.owner, "plain status %d" % self.n
+        return st
+
+    def GetNextUpdateTime(self):
+        st = _Stamp(self.interval)
+        st.owner, st.tag = self.owner, "plain next %d" % self.n
+        return st
+
+
+class _StampPre(Pre):
+    def __init__(self, ai, owner, interval):
+        super().__init__(ai, interval=interval)
+        self.owner = owner
+
+    def GetNextUpdateTime(self):
+        st = _Stamp(self.interval)
+        st.owner, st.tag = self.owner, "pre next %d" % self.n
+        return st
+
+
+def _walk_lifetime_scene(mp):
+    """The walk's frame locals are released where Python releases them:
+    _tick_plain's `status` and `next_update`, _tick_preprocessing's `nxt`,
+    _dispatch_priority_child's `had_focus` (a probe written over the child's
+    `_has_focus` before the tick) and _tick_sequence's `idx` (a probe
+    written over `_current_index`)."""
+    drv = _driver()
+    owner = awd.current()
+    s = _ship("L")
+    leaf = _ai().PlainAI_Create(s, "StampLeaf")
+    leaf._script_instance = _StampLeaf(leaf, owner, 0.02)
+    seq = _ai().SequenceAI_Create(s, "Seq")
+    seq.SetLoopCount(-1)
+    seq.AddAI(leaf)
+    pre = _ai().PreprocessingAI_Create(s, "StampPre")
+    pre._preprocessing_instance = _StampPre(pre, owner, 0.03)
+    pre._preprocessing_method = "PreUpdate"
+    pre.SetContainedAI(seq)
+    child = _leaf(s, "Second", interval=0.05)
+    root = _plist(s, "Root", (1, pre), (2, child))
+    _install(s, root)
+
+    def step(i):
+        # The walk overwrites a preprocessor's `_has_focus` with True, so
+        # this probe is then held only by _dispatch_priority_child's
+        # `had_focus` local, released when that function returns. The scene
+        # keeps no reference to either probe.
+        pre._has_focus = _probe(_Status(0), owner, "had_focus %d" % i)
+        seq._current_index = _probe(_Status(0), owner, "idx %d" % i)
+        drv.tick_all_ai((i + 1) / 60.0)
+    return awd.synthetic_scene(mp, [s], step)
+
+
+def _probe(value, owner, tag):
+    value.owner, value.tag = owner, tag
+    return value
+
+
+def test_walk_locals_are_released_where_python_releases_them():
+    rec = awd.run_walk_diff(_walk_lifetime_scene, 12)
+    tags = [m[0].split()[0] for m in _marks(rec, "del status")]
+    tags += [m[0].split()[0] for m in _marks(rec, "del stamp")]
+    for kind in ("plain", "pre", "had_focus", "idx"):
+        assert kind in tags, (kind, tags)
+    # had_focus outlives the preprocessor's own subtree: released after the
+    # leaf's Update of that tick, not when the walk overwrote `_has_focus`.
+    tick0 = rec.ticks[0][0]
+    upd = next(k for k, e in enumerate(tick0)
+               if e[:2] == ("call", "script.Update"))
+    assert tick0.index(("mark", "del status", "had_focus 0")) > upd, tick0
+
+
+# ── a driver function patched (Review Focus 5), one at a time ────────────────
+
+def _sink_scene(patched=None, breakdown=False):
+    """One tree per stock handler path: a priority list with a dormant
+    preprocessing probe (rollback) over a gated sequence holding a random
+    node; a builder; a SKIP_ACTIVE preprocessor; a condition-only gate. With
+    `patched`, that ai_driver global is replaced by a pass-through that marks
+    each call, so both walkers must call it where Python does."""
+    def build(mp):
+        drv = _driver()
+        owner = awd.current()
+        if breakdown:
+            mp.setattr(drv, "_AI_BREAKDOWN", {})
+        if patched is not None:
+            orig = getattr(drv, patched)
+
+            def through(*a, _orig=orig, _name=patched):
+                awd.mark(owner, "patched", _name)
+                return _orig(*a)
+            mp.setattr(drv, patched, through)
+        s1 = _ship("P")
+        cond = _cond(1)
+        rnd = _ai().RandomAI_Create(s1, "Rnd")
+        for k in range(3):
+            rnd.AddAI(_leaf(s1, "R%d" % k, done_after=2, interval=0.02))
+        seq = _ai().SequenceAI_Create(s1, "Seq")
+        seq.SetLoopCount(-1)
+        seq.AddAI(_leaf(s1, "SeqHead", done_after=1))
+        seq.AddAI(rnd)
+        gated = _conditional(s1, "Gated", cond, seq)
+        probe = _spre(s1, "Probe", [US_DORMANT, US_DORMANT, 0, 0],
+                      _sleaf(s1, "ProbeInner", owner=owner, interval=0.02),
+                      owner=owner, interval=0.05)
+        _install(s1, _plist(s1, "P1Root", (1, probe), (2, gated)))
+
+        s2 = _ship("B")
+        mod = types.ModuleType("_awd_sink_builder")
+        mod.BuilderCreate1 = lambda pShip: _leaf(pShip, "Built", interval=0.04)
+        mp.setitem(sys.modules, mod.__name__, mod)
+        builder = _ai().BuilderAI_Create(s2, "Builder", mod.__name__)
+        builder.AddAIBlock("one", "BuilderCreate1")
+        builder._preprocessing_instance = Pre(builder, interval=0.1)
+        builder._preprocessing_method = "PreUpdate"
+        _install(s2, builder)
+
+        s3 = _ship("K")
+        skip = _spre(s3, "Skip", [0, 1, 1, 0], _plist(s3, "SkipInner", (
+            1, _sleaf(s3, "SkipLeaf", owner=owner, interval=0.03))),
+            owner=owner, interval=0.04)
+        _install(s3, _plist(s3, "KRoot", (1, skip)))
+
+        s4 = _ship("N")
+        bare = _ai().ConditionalAI_Create(s4, "Bare")
+        bare.AddCondition(_cond(1))
+        bare.SetContainedAI(_leaf(s4, "BareLeaf", interval=0.03))
+        _install(s4, bare)
+        return _scene_of(mp, [s1, s2, s3, s4], {
+            30: lambda: cond.SetStatus(0), 45: lambda: cond.SetStatus(1)})
+    return build
+
+
+def test_every_stock_handler_runs_natively():
+    rec = awd.run_walk_diff(_sink_scene(), 90)
+    kinds = rec.native_entries["native_handlers"]
+    assert len(kinds) == 7 and all(k > 0 for k in kinds), kinds
+    assert _count(rec, "random.choice") >= 2 and _count(rec, "eval") > 0
+
+
+_PATCHABLE = (
+    "tick_ai", "_dispatch_ai", "_resolve_dispatch", "_tick_preprocessing",
+    "_dispatch_priority_child", "_queue_got_focus", "_focus_instance_of",
+    "_retain_subtree_focus", "_note_due", "_note_due_ret", "_run_script_step",
+    "_refresh_conditional_status", "_condition_statuses", "_any_condition",
+    "_eval_conditional", "_activate_builder", "_reconcile_focus",
+    "_flush_pending_got_focus", "_reconcile_active",
+    "_ensure_select_target_initialized")
+
+
+@pytest.mark.parametrize("name", _PATCHABLE)
+def test_a_patched_driver_function_is_called_by_both_walkers(name):
+    rec = awd.run_walk_diff(_sink_scene(name), 90)
+    if name != "_ensure_select_target_initialized":
+        assert ("patched", name) in {e[1:3] for e in rec.log()
+                                     if e[0] == "mark"}, name
+
+
+def test_the_ai_breakdown_path_dispatches_through_timed_dispatch():
+    rec = awd.run_walk_diff(_sink_scene("_timed_dispatch", breakdown=True), 60)
+    assert any(e[:3] == ("mark", "patched", "_timed_dispatch")
+               for e in rec.log())
+
+
+def test_harness_catches_a_native_side_that_runs_the_python_walk():
+    def build(mp):
+        ship = _ship()
+        _install(ship, _plist(ship, "Root", (1, _leaf(ship, "Leaf"))))
+        drv = _driver()
+        mp.setattr(drv, "_aitree_tick",
+                   lambda ai, t, g: drv._tick_ai_python(ai, t))
+        return awd.synthetic_scene(mp, [ship])
+    with pytest.raises(AssertionError, match="ran the Python walk"):
         awd.run_walk_diff(build, 5)
 
 

@@ -687,3 +687,68 @@ def test_tick_conditional_reads_and_evaluates_through_s2(walker):
     finally:
         ai_driver.tick_ai = real_tick
     assert (after[0] > before[0]) == (walker == "native")
+
+
+def test_a_reassigned_get_status_code_is_called(walker):
+    """TGCondition.GetStatus left in place but its __code__ swapped: the
+    function object is still the stock one, but its body is not, so the
+    native stock check (function AND code) must call it, not read
+    `_status`."""
+    c = TGCondition()
+    c.SetStatus(0)
+    fn = TGCondition.__dict__["GetStatus"]
+    stock_code = fn.__code__
+
+    def seven(self):
+        return 7
+    seen = []
+    ai = _conditional([c], lambda a, seen=seen: seen.append(a) or US_ACTIVE)
+    fn.__code__ = seven.__code__
+    try:
+        _refresh_conditional_status(ai)
+    finally:
+        fn.__code__ = stock_code
+    assert seen == [7]
+
+
+def test_the_stock_get_status_capture_checks_its_shape():
+    """_STOCK_CONDITION_GETSTATUS is taken at import and asserts the code it
+    takes is `return self._status`: a GetStatus replaced before the import
+    fails the capture instead of being read inline as stock."""
+    assert ai_driver._STOCK_CONDITION_GETSTATUS == (
+        TGCondition.__dict__["GetStatus"],
+        TGCondition.__dict__["GetStatus"].__code__)
+    fn = TGCondition.__dict__["GetStatus"]
+    stock_code = fn.__code__
+
+    def other(self):
+        return self._status + 0
+    fn.__code__ = other.__code__
+    try:
+        with pytest.raises(AssertionError, match="not the stock"):
+            ai_driver._capture_stock_get_status()
+    finally:
+        fn.__code__ = stock_code
+    assert ai_driver._capture_stock_get_status() == (fn, stock_code)
+
+
+def test_a_nan_status_hits_the_memo_only_as_the_same_object():
+    """A NaN condition status enters the key (float is a memo key type). The
+    key compare is a tuple `==`, whose identity shortcut makes the SAME NaN
+    object equal and a fresh NaN unequal: the same answer from both walkers
+    (an EvalFunc re-run only for the fresh one)."""
+    nan = float("nan")
+    cond = _Cond(nan)
+    calls = []
+
+    def EvalFunc(a, calls=calls, ACTIVE=US_ACTIVE):
+        calls.append(a)
+        return ACTIVE
+    ai = _conditional([cond], EvalFunc)
+    _refresh_conditional_status(ai)
+    _refresh_conditional_status(ai)              # the same NaN object: a hit
+    assert len(calls) == 1
+    cond.status = float("nan")                   # equal-looking, not the same
+    _refresh_conditional_status(ai)
+    assert len(calls) == 2
+    assert ai._status == US_ACTIVE
