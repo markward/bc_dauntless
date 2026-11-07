@@ -33,7 +33,12 @@ reaches:
   through the EvalFunc arguments and the node states; a custom GetStatus logs
   itself with :func:`mark`);
 * every node: ``SetActive`` / ``SetInactive`` / ``IsInterruptable`` /
-  ``ForceUpdate`` / ``Reset``;
+  ``ForceUpdate`` / ``Reset``. An instance-level ``SetActive`` /
+  ``SetInactive`` wrapper SHADOWS the class's, so the native reconciliation
+  calls it every time; a scene built with ``wrap_node_activation=False``
+  leaves those two alone, so the native side may skip a stock call whose edge
+  test says nothing changes (compared through ``_is_active_in_tree``, the
+  conditions' own ``SetActive`` / ``SetInactive`` and the node states);
 * BuilderAI: each ``BuilderCreateN`` in its module.
 
 Module-level glue is wrapped for the run with a ``MonkeyPatch``:
@@ -60,8 +65,9 @@ reported-error set. Floats compare by ``float.hex``; node references by ID.
 Module-level walk state. Only what something OUTSIDE the walker can observe is
 compared: ``_focus_depth`` (every tick, so an escaping exception or a nested
 walk that fails to restore it shows). The native walk keeps the rest in the
-same module globals (aitree.h says why), so the reconciliation, still Python,
-is handed the same lists either way. ``_reached_this_tick`` / ``_all`` /
+same module globals (aitree.h says why), so the root-end reconciliation
+(native since Task 5, or a patched Python one) is handed the same lists
+either way. ``_reached_this_tick`` / ``_all`` /
 ``_all_ids`` / ``_pending_got_focus`` / the walk-min-due slot (native since
 Task 2: ``_note_due`` writes it, reset per side) / ``_ooa_cache`` are
 walker-internal: a grep of engine/, tools/, tests/ and the SDK finds no reader
@@ -271,6 +277,8 @@ class _Recorder:
     def _instrument_node(self, node):
         who = node.GetID()
         for m in _NODE_METHODS:
+            if m in ("SetActive", "SetInactive") and not self._wrap_activation():
+                continue
             self._wrap_attr(node, m, "node." + m, who)
         for m in ("AddAI", "SetContainedAI"):
             self._wrap_attr(node, m, "node." + m, who, self._instrument_new)
@@ -311,6 +319,11 @@ class _Recorder:
         ``_status`` directly and calls any other GetStatus itself (such a
         scene's custom GetStatus logs itself with :func:`mark`)."""
         return self.scene is None or self.scene.wrap_condition_status
+
+    def _wrap_activation(self):
+        """Whether to wrap each node's SetActive / SetInactive (unless the
+        scene asks for them to be left alone: ``wrap_node_activation``)."""
+        return self.scene is None or self.scene.wrap_node_activation
 
     def _instrument_builder_module(self, node, mod_name):
         import sys
@@ -455,9 +468,14 @@ class Scene:
     ``tick_all_ai`` at game time ``(i + 1) / 60``)."""
 
     def __init__(self, ships, step=None, wrap_roster=True, extra_ships=(),
-                 wrap_condition_status=True):
+                 wrap_condition_status=True, wrap_node_activation=True):
         self._ships = ships
         self._step = step
+        #: Wrap (and log) every node's SetActive / SetInactive. Off: a stock
+        #: one is left to each walker (the native reconciliation skips a call
+        #: whose edge test says nothing changes) and compared through
+        #: ``_is_active_in_tree``, the conditions' calls and the node states.
+        self.wrap_node_activation = wrap_node_activation
         #: Wrap (and log) every condition's GetStatus. Off: the reads are left
         #: to each walker (the native one reads a stock condition's
         #: ``_status`` directly) and are compared through the EvalFunc
@@ -483,14 +501,15 @@ class Scene:
 
 
 def synthetic_scene(mp, ships, step=None, extra_ships=(),
-                    wrap_condition_status=True):
+                    wrap_condition_status=True, wrap_node_activation=True):
     """A :class:`Scene` over hand-built `ships`: the roster the driver walks
     (``iter_non_rock_ships``) is exactly them."""
     from engine.appc import ship_iter
     roster = list(ships)
     mp.setattr(ship_iter, "iter_non_rock_ships", lambda *a, **k: iter(roster))
     return Scene(roster, step, extra_ships=extra_ships,
-                 wrap_condition_status=wrap_condition_status)
+                 wrap_condition_status=wrap_condition_status,
+                 wrap_node_activation=wrap_node_activation)
 
 
 def _bases():
@@ -558,6 +577,15 @@ def _native_walk_counts():
     return ticks, tuple(kinds)
 
 
+def _native_reconcile_counts():
+    """(native runs of _reconcile_focus, _flush_pending_got_focus and
+    _reconcile_active, then SetActive / SetInactive calls skipped as no-edge)
+    in this process (``aitree_reconcile_counts``). Read around a side to prove
+    which reconciliation ran."""
+    import _dauntless_host
+    return tuple(_dauntless_host.aitree_reconcile_counts())
+
+
 #: The Python body of the walk (S4): the stock ``tick_ai`` calls it by global
 #: name when the Python walker is selected; on the native side it may run only
 #: if a scene calls it itself.
@@ -582,10 +610,12 @@ def run_side(scene, ticks, native, bases=None):
         entries = {"python": 0, "native": 0, "native_roster": 0,
                    "python_s2": 0, "native_s2": 0, "stock_status_reads": 0,
                    "python_s4": 0, "native_walk": 0,
-                   "native_handlers": (0,) * 7}
+                   "native_handlers": (0,) * 7,
+                   "native_reconcile": (0, 0, 0), "activation_skips": 0}
         roster_before = _native_roster_count()
         s2_before = _native_conditional_counts()
         s4_before = _native_walk_counts()
+        s3_before = _native_reconcile_counts()
         for key, attr in (("python", "_tick_all_ai_python"),
                           ("native", "_tick_all_ai_native")):
             def counted(game_time, _orig=getattr(ai_driver, attr), _k=key):
@@ -627,6 +657,10 @@ def run_side(scene, ticks, native, bases=None):
             entries["native_walk"] = s4_after[0] - s4_before[0]
             entries["native_handlers"] = tuple(
                 a - b for a, b in zip(s4_after[1], s4_before[1]))
+            s3 = tuple(a - b for a, b in zip(_native_reconcile_counts(),
+                                             s3_before))
+            entries["native_reconcile"] = s3[:3]
+            entries["activation_skips"] = s3[3]
             top_obj = next(ids._counter)
             top_ai = ArtificialIntelligence._next_id
             mp.undo()
@@ -703,10 +737,16 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
     them. Likewise for the walk (S4): the Python side never ran the native
     walk (``aitree_walk_counts``), the native side never ran the Python body
     ``_tick_ai_python``, and ran the native walk whenever the Python side ran
-    that body. The native side's counts are on the returned record as
+    that body. Likewise for the root-end reconciliation (S3): the Python side
+    never ran it natively (``aitree_reconcile_counts``), and the native side
+    ran at least one of the three reconcilers natively whenever it ran the
+    native walk. The native side's counts are on the returned record as
     ``native_entries`` (``native_s2``, ``stock_status_reads``,
     ``native_walk``, ``native_handlers``: per stock handler kind, in
-    ``ai_driver._STOCK_HANDLERS`` order).
+    ``ai_driver._STOCK_HANDLERS`` order; ``native_reconcile``: native runs of
+    _reconcile_focus, _flush_pending_got_focus, _reconcile_active;
+    ``activation_skips``: stock SetActive / SetInactive calls skipped as
+    no-edge).
 
     `aba`: run Python, native, Python and require the second Python run to
     match the native one too (an asymmetric warm-up would otherwise bias the
@@ -746,6 +786,13 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
         "the native side ran the Python walk: %r" % nat.entries)
     assert not py.entries["python_s4"] or nat.entries["native_walk"], (
         "the native side never ran the native walk: %r" % nat.entries)
+    assert not any(py.entries["native_reconcile"]) and not (
+        py.entries["activation_skips"]), (
+        "the Python side ran the native reconciliation: %r" % py.entries)
+    assert not nat.entries["native_walk"] or any(
+        nat.entries["native_reconcile"]), (
+        "the native side never ran the native reconciliation: %r"
+        % nat.entries)
     py.native_entries = nat.entries
     diff = first_difference(py, nat)
     assert diff is None, diff

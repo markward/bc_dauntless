@@ -712,9 +712,11 @@ def test_a_reassigned_get_status_code_is_called(walker):
 
 
 def test_the_stock_get_status_capture_checks_its_shape():
-    """_STOCK_CONDITION_GETSTATUS is taken at import and asserts the code it
-    takes is `return self._status`: a GetStatus replaced before the import
-    fails the capture instead of being read inline as stock."""
+    """_STOCK_CONDITION_GETSTATUS is taken at import and checks that the code
+    it takes is `return self._status`. A GetStatus replaced before the import
+    is not taken as stock: the capture falls back to (None, None), so every
+    GetStatus is called (the import does not fail). A docstring on an
+    otherwise stock body does not break the check."""
     assert ai_driver._STOCK_CONDITION_GETSTATUS == (
         TGCondition.__dict__["GetStatus"],
         TGCondition.__dict__["GetStatus"].__code__)
@@ -723,13 +725,49 @@ def test_the_stock_get_status_capture_checks_its_shape():
 
     def other(self):
         return self._status + 0
-    fn.__code__ = other.__code__
+
+    def documented(self):
+        """The stock body, with a docstring."""
+        return self._status
+
+    def bare(self):
+        return self._status
     try:
-        with pytest.raises(AssertionError, match="not the stock"):
-            ai_driver._capture_stock_get_status()
+        fn.__code__ = other.__code__
+        assert ai_driver._capture_stock_get_status() == (None, None)
+        fn.__code__ = documented.__code__
+        assert ai_driver._capture_stock_get_status() == (
+            fn, documented.__code__)
+        fn.__code__ = bare.__code__
+        assert ai_driver._capture_stock_get_status() == (fn, bare.__code__)
     finally:
         fn.__code__ = stock_code
     assert ai_driver._capture_stock_get_status() == (fn, stock_code)
+
+
+def test_with_no_stock_get_status_every_get_status_is_called(monkeypatch):
+    """The fallback capture (None, None): a stock TGCondition's GetStatus is
+    called by the native evaluation too, never read inline."""
+    monkeypatch.setattr(ai_driver, "_STOCK_CONDITION_GETSTATUS", (None, None))
+    calls = []
+    real = TGCondition.__dict__["GetStatus"]
+
+    def counting(self):
+        calls.append(1)
+        return real(self)
+    c = TGCondition()
+    c.SetStatus(1)
+    c.GetStatus = counting.__get__(c)
+    seen = []
+    ai = _conditional([c], lambda a, seen=seen: seen.append(a) or US_ACTIVE)
+    before = _native_counts()[1]
+    _refresh_conditional_status(ai)
+    assert seen == [1] and calls == [1]
+    d = TGCondition()
+    d.SetStatus(1)
+    ai2 = _conditional([d], lambda a, seen=seen: seen.append(a) or US_ACTIVE)
+    _refresh_conditional_status(ai2)
+    assert _native_counts()[1] == before       # no inline stock read
 
 
 def test_a_nan_status_hits_the_memo_only_as_the_same_object():

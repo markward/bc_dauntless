@@ -3,8 +3,9 @@
 // The AI tree engine (phase 6 AI part 4, A5), built in seams. Task 2 (S1):
 // the per-tick ROSTER and its sleep scheduling, i.e.
 // engine/appc/ai_driver.py `_tick_all_ai_python` in C++, plus the walk's
-// min-due slot that `_note_due` writes. Each root walk is still Python's
-// `tick_ai` (native from Task 4). Task 3 (S2): the CONDITION EVALUATION,
+// min-due slot that `_note_due` writes. Each root walk goes through
+// `tick_ai`'s stock gate (native from Task 4). Task 3 (S2): the CONDITION
+// EVALUATION,
 // ai_driver's `_refresh_conditional_status_python`,
 // `_eval_conditional_python` (the memo in `ai.__dict__["_evalfn_cache"]`
 // included) and `_tick_conditional`'s two status reads; ai_driver's public
@@ -12,9 +13,9 @@
 // `_tick_ai_python`, `_dispatch_ai`, every stock `_tick_*` handler and the
 // helpers they call by global name (`_dispatch_priority_child` and its
 // rollback, `_queue_got_focus`, `_focus_instance_of`, `_retain_subtree_focus`,
-// `_note_due_ret`). The focus and activation RECONCILIATION
-// (`_reconcile_focus`, `_flush_pending_got_focus`, `_reconcile_active`) is
-// still Python, called at the root as Python calls it (Task 5's seam).
+// `_note_due_ret`). Task 5 (S3): the root end's focus and activation
+// RECONCILIATION, `_reconcile_focus` (with `_dispatch_lost_focus`),
+// `_flush_pending_got_focus` and `_reconcile_active`.
 //
 // Python surface (raw METH_FASTCALL; a missing name is a stale binary):
 //   aitree_tick_all(game_time, globals)   the roster; `globals` is ai_driver's
@@ -31,6 +32,9 @@
 //   aitree_tick(ai, game_time, globals)   tick_ai with the native walker
 //   aitree_walk_counts()                  (native walks, then native runs of
 //                                         each stock handler kind)
+//   aitree_reconcile_counts()             (native runs of the three
+//                                         reconcilers, then SetActive /
+//                                         SetInactive calls skipped)
 //
 // S4, THE WALK. ai_driver's `tick_ai` is a dispatcher: `_aitree_tick` when
 // `_native_walker` is true, else `_tick_ai_python`. The native walk runs a
@@ -48,13 +52,52 @@
 // The walk state is ai_driver's MODULE GLOBALS, read and rebound exactly
 // where Python reads and rebinds them: `_focus_depth`, `_ooa_cache`,
 // `_reached_this_tick`, `_reached_this_tick_all`, `_reached_this_tick_all_ids`
-// and `_pending_got_focus`. Not a native copy, deliberately: the
-// reconciliation is still Python and reads them by name; a Python handler
-// (an injected type's, a patched stock one calling the original) appends to
-// them; and a root walk nested in a focus hook rebinds them under the outer
-// root, whose reconciliation then reads the rebound lists, which is Python's
-// visible behaviour (Review Focus 4). Moving them onto the native frame waits
-// for the reconciliation to move (Task 5).
+// and `_pending_got_focus`. Not a native copy, deliberately (ruled in Task
+// 4, kept in Task 5 for exactness): a patched reconciler, or a Python
+// handler (an injected type's, a patched stock one calling the original),
+// reads or appends to them by name; and a root walk nested in a focus or
+// activation hook rebinds them under the outer root, whose next root-end step
+// then reads the REBOUND lists (`_tick_ai_python` loads each one as it calls
+// the reconciler), which is Python's visible behaviour (Review Focus 4).
+//
+// S3, THE ROOT END. Each reconciler runs natively while its global is the
+// stock one (`_STOCK_WALK`), else it is called; the native bodies call
+// `_dispatch_lost_focus` and `_focus_instance_of` through the same gate, and
+// every LostFocus / GotFocus through `_run_script_step`. The order is
+// Python's: LostFocus in the root's previous `_focused_preprocessors` order,
+// GotFocus in arrival (`_pending_got_focus`) order, SetInactive in the
+// previous `_active_nodes` order, SetActive in reached order. The two
+// `{id(n) for n in reached}` sets are only ever tested for membership while
+// the PREVIOUS list is iterated, so their iteration order cannot leak; they
+// are kept natively as the addresses the ids are. Each list is iterated live
+// (a hook mutating it in place is seen; one rebinding the root's attribute is
+// not), and the root's `_focused_preprocessors` / `_active_nodes` are stored
+// as `list(reached)`: Python lists on the root, which
+// `ships._deactivate_ai_tree` resets and the AI inspector reads.
+//
+// `SetActive()` / `SetInactive()` stay Python calls, made through Python's own
+// method lookup on each node, EXCEPT one skip: the call is not made when
+//  (a) the lookup lands, unbound, on the stock ArtificialIntelligence method
+//      (`_STOCK_SET_ACTIVE` / `_STOCK_SET_INACTIVE`: the very function, still
+//      with its code; no instance attribute, subclass override or class
+//      patch), and
+//  (b) `_is_active_in_tree` can be read without running Python (generic
+//      attribute lookup, no descriptor of that name on the type) and is
+//      exactly True (SetActive) / exactly False (SetInactive).
+// Then the stock body, `if [not] self._is_active_in_tree: return`, would
+// read that attribute and return None at its first statement: nothing to
+// see but the call itself (the accepted divergences below). The capture in
+// ai_driver checks that the method's body is that shape instruction by
+// instruction and falls back to (None, None), never skipping, if it is not.
+// An edge, a non-bool value (its __bool__ is Python), a descriptor, a
+// shadowed or overridden method: always called. ConditionalAI has no
+// SetActive of its own; its edge reaches `_on_activated`, the condition
+// SetActive / Activate calls, through the stock method, which is called.
+//
+// `DAUNTLESS_AI_BREAKDOWN`: with the breakdown on, `_dispatch_ai` hands each
+// handler to the Python `_timed_dispatch`, which calls the stock handlers as
+// Python functions. The results are the same; the timings measure the Python
+// handlers, not the native walk. A diagnostic only.
 //
 // `_run_script_step` is CALLED BACK, never reproduced: its `except
 // Exception`, the `_last_script_error` record, the once-per-(node ID,
@@ -108,7 +151,12 @@
 //    never a module-level shadow.
 //  - A stock GetStatus read inline pushes no frame: a tracer or profiler
 //    (sys.settrace / setprofile, cProfile) does not see that call, and it
-//    cannot raise RecursionError at the recursion limit.
+//    cannot raise RecursionError at the recursion limit. Likewise a skipped
+//    no-edge SetActive / SetInactive.
+//  - The skip reads `_is_active_in_tree` from the instance dict once more
+//    than Python when it then calls (an edge). The read runs no Python
+//    unless the dict holds a non-str key with that key's hash and an
+//    __eq__, which nothing does.
 //  - The walk's builtins (`id`, `len`, `isinstance`, `type`, `range`,
 //    `float`, `sum`, `getattr`, `callable`, TypeError/ValueError in the arity
 //    probe's except) likewise, and so is the `(TypeError, ValueError)` tuple.

@@ -15,6 +15,7 @@ The driver is *not* TimeSliceProcess-based. PlainAI carries its own
 _next_update_time field; the driver consults it each tick. This keeps
 Step 3 testable independently of the TimeSliceProcess scheduler (Step 2).
 """
+import dis
 import inspect
 import os
 import random
@@ -193,6 +194,14 @@ def _dispatch_ai(ai, game_time: float) -> int:
 # dispatch (the same shape as the dev_mode gates elsewhere in the engine), so
 # there is nothing to reclaim by deleting it. Remove it only if the AI tick
 # stops being a place performance work happens.
+#
+# With the native walker (aitree.cc) the breakdown changes what it measures:
+# when it is on, _dispatch_ai (native too) hands each handler to the Python
+# _timed_dispatch below, which calls the STOCK handlers as the Python
+# functions they are. The walk's results are identical; the self-times are
+# those of the Python handlers, not of the native walk that runs when the
+# breakdown is off (aitree.h says the same). Read them as relative weights,
+# never as the native walk's cost.
 _AI_BREAKDOWN = {} if os.environ.get("DAUNTLESS_AI_BREAKDOWN") else None
 _AI_CHILD_TIME = [0.0]
 _AI_TICKS = [0]
@@ -330,6 +339,10 @@ def _resolve_dispatch(node_type):
 def _reconcile_focus(root_ai, reached) -> None:
     """Dispatch LostFocus() to nodes focused last tick but not this one.
 
+    Native with the native walker (aitree.cc, S3) while this global is the
+    stock function; this body is the reference it reproduces, as are
+    _dispatch_lost_focus, _flush_pending_got_focus and _reconcile_active.
+
     Identity-based: `reached` holds the PreprocessingAI and PlainAI nodes
     ticked this root tick (see _tick_preprocessing / _tick_plain). Any node in
     the root's previous focused set that is not among them has left the active
@@ -404,7 +417,9 @@ def _reconcile_active(root_ai, reached) -> None:
     Every node `_dispatch_ai` can reach is a real ArtificialIntelligence
     subclass (production AI classes, or a test double that subclasses it --
     see tests/integration/test_defensive_cloak_cadence.py's _InertAI), so
-    SetActive/SetInactive are called unconditionally here."""
+    SetActive/SetInactive are called unconditionally here. (The native
+    reconciliation skips only a stock call that would return at its first
+    statement; see _STOCK_SET_ACTIVE.)"""
     reached_ids = {id(n) for n in reached}
     for node in getattr(root_ai, "_active_nodes", ()):
         if id(node) not in reached_ids:
@@ -841,24 +856,49 @@ _MEMO_KEY_TYPES = (bool, int, float, str, type(None))
 # anything else (an override, an instance attribute, a patched class) is
 # called.
 #
-# Self-validating: the capture asserts that the code it takes really is
-# `return self._status` (one positional parameter, reading one attribute,
-# compared against a reference body compiled here), so a GetStatus patched
-# BEFORE this module is imported fails the import instead of being read
-# inline as if it were stock.
+# Self-validating: the capture checks that the code it takes really is
+# `return self._status` (compared, instruction by instruction, against a
+# reference body compiled here; see _same_body). A GetStatus patched BEFORE
+# this module is imported is therefore not taken as stock: the capture falls
+# back to (None, None), "no stock body", and every GetStatus is called.
 def _stock_get_status_shape(self):
     return self._status
 
 
-def _capture_stock_get_status():
-    fn = TGCondition.__dict__["GetStatus"]
-    code, ref = fn.__code__, _stock_get_status_shape.__code__
-    assert (code.co_code == ref.co_code and code.co_names == ref.co_names
-            and code.co_argcount == 1 and not code.co_kwonlyargcount
-            and not code.co_freevars and code.co_consts == ref.co_consts), (
-        "TGCondition.GetStatus is not the stock `return self._status`: it was "
-        "replaced before engine.appc.ai_driver was imported")
+def _same_body(code, ref) -> bool:
+    """Whether `code` is the body `ref` is: the same parameters, flags (bar
+    CO_NESTED, which says only where the function was defined) and no
+    closure, and the same instructions with the same resolved arguments
+    (constants, by type and value, names, jump targets). A docstring and
+    line numbers are not part of the comparison: a docstring is
+    co_consts[0], which shifts every LOAD_CONST index without changing what
+    is loaded."""
+    if (code.co_argcount != ref.co_argcount
+            or code.co_posonlyargcount != ref.co_posonlyargcount
+            or code.co_kwonlyargcount != ref.co_kwonlyargcount
+            or (code.co_flags | inspect.CO_NESTED)
+            != (ref.co_flags | inspect.CO_NESTED)
+            or code.co_freevars or code.co_cellvars):
+        return False
+
+    def body(c):
+        return [(i.opname, type(i.argval), i.argval)
+                for i in dis.get_instructions(c)]
+    return body(code) == body(ref)
+
+
+def _capture_stock(fn, shape):
+    """(fn, its code) when `fn` is a function running `shape`'s body, else
+    (None, None): no stock body, so the native side calls it every time."""
+    code = getattr(fn, "__code__", None)
+    if code is None or not _same_body(code, shape.__code__):
+        return None, None
     return fn, code
+
+
+def _capture_stock_get_status():
+    return _capture_stock(TGCondition.__dict__["GetStatus"],
+                          _stock_get_status_shape)
 
 
 _STOCK_CONDITION_GETSTATUS = _capture_stock_get_status()
@@ -1936,10 +1976,48 @@ _STOCK_WALK = {
         tick_ai, _dispatch_ai, _tick_preprocessing, _dispatch_priority_child,
         _queue_got_focus, _focus_instance_of, _retain_subtree_focus,
         _note_due_ret, _refresh_conditional_status, _condition_statuses,
-        _any_condition, _eval_conditional)
+        _any_condition, _eval_conditional, _reconcile_focus,
+        _dispatch_lost_focus, _flush_pending_got_focus, _reconcile_active)
 }
 _STOCK_HANDLERS = {
     fn: (kind, fn.__code__) for kind, fn in enumerate((
         _tick_plain, _tick_priority_list, _tick_sequence, _tick_random,
         _tick_conditional, _tick_preprocessing, _tick_builder), start=1)
 }
+
+
+# The stock ArtificialIntelligence.SetActive / SetInactive, for the native
+# _reconcile_active's one skip. Python calls `node.SetActive()` /
+# `node.SetInactive()` on every node of the previous / reached lists; the
+# native side makes the same method lookup and calls whatever it finds,
+# EXCEPT that a call is skipped when all of these hold (aitree.h, "S3"):
+#
+#   * the lookup lands on exactly this function, with this code, unbound (no
+#     instance attribute shadows it, no subclass overrides it, the class is
+#     not patched);
+#   * `_is_active_in_tree` reads without running Python (no descriptor of
+#     that name on the type, so it comes from the instance dict);
+#   * it is exactly True (SetActive) / exactly False (SetInactive).
+#
+# Then the body below does nothing but read that attribute and return None
+# at its first statement, so the call is invisible. Self-validating like
+# _STOCK_CONDITION_GETSTATUS: a body that is not the shape below is not taken
+# as stock, (None, None), and every call is made.
+def _stock_set_active_shape(self):
+    if self._is_active_in_tree:
+        return
+    self._is_active_in_tree = True
+    self._on_activated()
+
+
+def _stock_set_inactive_shape(self):
+    if not self._is_active_in_tree:
+        return
+    self._is_active_in_tree = False
+    self._on_deactivated()
+
+
+_STOCK_SET_ACTIVE = _capture_stock(ArtificialIntelligence.__dict__["SetActive"],
+                                   _stock_set_active_shape)
+_STOCK_SET_INACTIVE = _capture_stock(
+    ArtificialIntelligence.__dict__["SetInactive"], _stock_set_inactive_shape)

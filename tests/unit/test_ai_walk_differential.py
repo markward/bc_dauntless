@@ -28,7 +28,7 @@ needs_native = pytest.mark.skipif(
     reason="native K1 bindings not built")
 
 
-def _k1_scene(dumb_fire=False, wrap_status=True):
+def _k1_scene(dumb_fire=False, wrap_status=True, wrap_activation=True):
     def build(mp):
         from engine import host_loop
         from engine.appc import sensor_contacts
@@ -54,7 +54,8 @@ def _k1_scene(dumb_fire=False, wrap_status=True):
             sensor_contacts.tick(scene.player,
                                  App.g_kUtopiaModule.GetGameTime())
         return awd.Scene(lambda: list(iter_ships()), step, wrap_roster=False,
-                         wrap_condition_status=wrap_status)
+                         wrap_condition_status=wrap_status,
+                         wrap_node_activation=wrap_activation)
     return build
 
 
@@ -177,7 +178,7 @@ def _conditional(ship, name, cond, contained):
     return node
 
 
-def _scene_of(mp, ships, actions=None):
+def _scene_of(mp, ships, actions=None, **kw):
     """A synthetic scene: `actions[i]()` runs before tick i's walk."""
     actions = actions or {}
 
@@ -185,7 +186,7 @@ def _scene_of(mp, ships, actions=None):
         if i in actions:
             actions[i]()
         _driver().tick_all_ai((i + 1) / 60.0)
-    return awd.synthetic_scene(mp, ships, step)
+    return awd.synthetic_scene(mp, ships, step, **kw)
 
 
 def _count(rec, name):
@@ -1880,6 +1881,10 @@ def _sink_scene(patched=None, breakdown=False):
         skip = _spre(s3, "Skip", [0, 1, 1, 0], _plist(s3, "SkipInner", (
             1, _sleaf(s3, "SkipLeaf", owner=owner, interval=0.03))),
             owner=owner, interval=0.04)
+        # SelectTarget-shaped (a callable DamageEvent, a bound pCodeAI), so
+        # _ensure_select_target_initialized is called; already initialised.
+        skip._preprocessing_instance.DamageEvent = lambda pEvent: None
+        skip._preprocessing_instance._dauntless_codeaiset_done = True
         _install(s3, _plist(s3, "KRoot", (1, skip)))
 
         s4 = _ship("N")
@@ -1905,16 +1910,15 @@ _PATCHABLE = (
     "_retain_subtree_focus", "_note_due", "_note_due_ret", "_run_script_step",
     "_refresh_conditional_status", "_condition_statuses", "_any_condition",
     "_eval_conditional", "_activate_builder", "_reconcile_focus",
-    "_flush_pending_got_focus", "_reconcile_active",
+    "_flush_pending_got_focus", "_reconcile_active", "_dispatch_lost_focus",
     "_ensure_select_target_initialized")
 
 
 @pytest.mark.parametrize("name", _PATCHABLE)
 def test_a_patched_driver_function_is_called_by_both_walkers(name):
     rec = awd.run_walk_diff(_sink_scene(name), 90)
-    if name != "_ensure_select_target_initialized":
-        assert ("patched", name) in {e[1:3] for e in rec.log()
-                                     if e[0] == "mark"}, name
+    assert ("patched", name) in {e[1:3] for e in rec.log()
+                                 if e[0] == "mark"}, name
 
 
 def test_the_ai_breakdown_path_dispatches_through_timed_dispatch():
@@ -1935,6 +1939,565 @@ def test_harness_catches_a_native_side_that_runs_the_python_walk():
         awd.run_walk_diff(build, 5)
 
 
+# ── focus and activation bookkeeping (Task 5: S3 native) ─────────────────────
+#
+# From Task 5 the root end of a native walk is native too: _reconcile_focus
+# (with _dispatch_lost_focus), _flush_pending_got_focus and _reconcile_active.
+# The harness proves the native side ran them natively. SetActive /
+# SetInactive stay Python calls; the native side skips only a STOCK one with
+# no instance shadow whose edge test says nothing changes, which a scene can
+# reach only with wrap_node_activation=False (otherwise the harness's own
+# instance wrappers shadow every node's, and must all be called).
+
+def _node_ids(snap, ship_name):
+    for key, row in snap["ships"].items():
+        if "'%s')" % ship_name in key:
+            return set(row["nodes"])
+    raise KeyError(ship_name)
+
+
+def _phase_positions(rec, tick, ship_name):
+    """Positions, in tick `tick`'s call log, of ship `ship_name`'s LostFocus,
+    GotFocus, node SetInactive and node SetActive calls."""
+    log, snap = rec.ticks[tick]
+    ids = {("int", i) for i in _node_ids(snap, ship_name)}
+    out = {"script.LostFocus": [], "script.GotFocus": [],
+           "node.SetInactive": [], "node.SetActive": []}
+    for k, e in enumerate(log):
+        if e[0] == "call" and e[1] in out and e[2] in ids:
+            out[e[1]].append(k)
+    return out
+
+
+def _handover_scene(wrap_activation=True, latch=False):
+    """Two branches of one priority list hand the path to each other: a
+    gated preprocessing branch A (gate open at ticks 20-39 and 60+) over the
+    always-ready branch B. Each handover is LostFocus of the leaving nodes,
+    GotFocus of the arriving ones, SetInactive of the leaving nodes (B's gate
+    conditions are deactivated through the ConditionalAI's own SetInactive),
+    SetActive of the reached ones. A second ship's root keeps its own lists.
+
+    `latch`: APre's GotFocus latches ALeaf (queued after it) by hand, so the
+    flush must skip ALeaf's GotFocus at that arrival."""
+    def build(mp):
+        owner = awd.current()
+        s = _ship("H")
+        cond = _cond(0)
+        a_leaf = _sleaf(s, "ALeaf", owner=owner, interval=0.02)
+        a = _spre(s, "APre", [0], a_leaf, owner=owner, interval=0.05)
+        gate = _conditional(s, "AGate", cond, a)
+        b_cond = _cond(1)
+        b_leaf = _sleaf(s, "BLeaf", owner=owner, interval=0.03)
+        b = _conditional(s, "BGate", b_cond, _spre(
+            s, "BPre", [0], b_leaf, owner=owner, interval=0.04))
+        _install(s, _plist(s, "HRoot", (1, gate), (2, b)))
+        if latch:
+            def got_focus():
+                awd.mark(owner, "APre GotFocus")
+                a_leaf.__dict__["_got_focus_called"] = True
+            a._preprocessing_instance.GotFocus = got_focus
+            a_leaf._script_instance.GotFocus = lambda: awd.mark(
+                owner, "ALeaf GotFocus")
+        t = _ship("T")
+        t_cond = _cond(1)
+        _install(t, _plist(t, "TRoot", (1, _conditional(
+            t, "TGate", t_cond, _sleaf(t, "TLeaf", owner=owner,
+                                       interval=0.02))),
+            (2, _sleaf(t, "TFallback", owner=owner, interval=0.05))))
+        return _scene_of(mp, [s, t], {
+            20: lambda: cond.SetStatus(1), 40: lambda: cond.SetStatus(0),
+            50: lambda: t_cond.SetStatus(0), 60: lambda: cond.SetStatus(1),
+            70: lambda: t_cond.SetStatus(1)},
+            wrap_node_activation=wrap_activation)
+    return build
+
+
+def _handover_ticks(rec):
+    return [t for t, (log, _s) in enumerate(rec.ticks)
+            if any(e[:2] == ("call", "script.LostFocus") for e in log)
+            and any(e[:2] == ("call", "script.GotFocus") for e in log)]
+
+
+def test_the_root_end_runs_its_four_phases_natively_in_order():
+    rec = awd.run_walk_diff(_handover_scene(), 90)
+    assert all(rec.native_entries["native_reconcile"]), rec.native_entries
+    checked = 0
+    for t in _handover_ticks(rec):
+        pos = _phase_positions(rec, t, "H")
+        lost, got = pos["script.LostFocus"], pos["script.GotFocus"]
+        off, on = pos["node.SetInactive"], pos["node.SetActive"]
+        if not lost:
+            continue                   # ship T's handover
+        assert len(lost) >= 2 and len(got) >= 2 and off and on, (t, pos)
+        assert max(lost) < min(got) and max(got) < min(off) \
+            and max(off) < min(on), (t, pos)
+        checked += 1
+    assert checked >= 3, checked
+    # B's gate condition was deactivated and re-activated by the edges
+    calls = rec.calls()
+    assert calls["cond.SetInactive"] >= 2 and calls["cond.SetActive"] >= 2
+
+
+def test_a_got_focus_latched_before_the_flush_is_skipped():
+    rec = awd.run_walk_diff(_handover_scene(latch=True), 90)
+    assert len(_marks(rec, "APre GotFocus")) >= 2
+    # ALeaf arrives with APre each time, queued after it; APre's GotFocus
+    # latches it first, so the flush skips it
+    assert not _marks(rec, "ALeaf GotFocus")
+    assert rec.calls()["script.GotFocus"] >= 4
+
+
+def test_stock_no_edge_activation_calls_are_skipped_natively():
+    rec = awd.run_walk_diff(_handover_scene(wrap_activation=False), 90)
+    calls = rec.calls()
+    assert calls["node.SetActive"] == 0 and calls["node.SetInactive"] == 0
+    assert calls["cond.SetInactive"] >= 2 and calls["cond.SetActive"] >= 2
+    assert rec.native_entries["activation_skips"] > 50, rec.native_entries
+
+
+def test_the_stock_activation_capture_checks_its_shape():
+    """_STOCK_SET_ACTIVE / _STOCK_SET_INACTIVE are taken at import, each
+    checked against the body the native skip relies on (a docstring is
+    ignored); anything else falls back to (None, None): never skipped."""
+    drv = _driver()
+    AI = _ai().ArtificialIntelligence
+    on, off = AI.__dict__["SetActive"], AI.__dict__["SetInactive"]
+    assert drv._STOCK_SET_ACTIVE == (on, on.__code__)
+    assert drv._STOCK_SET_INACTIVE == (off, off.__code__)
+    code = on.__code__
+
+    def louder(self):
+        if self._is_active_in_tree:
+            return 1
+        self._is_active_in_tree = True
+        self._on_activated()
+
+    def plain(self):
+        if self._is_active_in_tree:
+            return
+        self._is_active_in_tree = True
+        self._on_activated()
+    try:
+        on.__code__ = louder.__code__
+        assert drv._capture_stock(on, drv._stock_set_active_shape) == (
+            None, None)
+        on.__code__ = plain.__code__
+        assert drv._capture_stock(on, drv._stock_set_active_shape) == (
+            on, plain.__code__)
+        assert drv._capture_stock(off, drv._stock_set_active_shape) == (
+            None, None)
+    finally:
+        on.__code__ = code
+
+
+def test_without_a_stock_capture_nothing_is_skipped():
+    def build(mp):
+        drv = _driver()
+        mp.setattr(drv, "_STOCK_SET_ACTIVE", (None, None))
+        mp.setattr(drv, "_STOCK_SET_INACTIVE", (None, None))
+        return _handover_scene(wrap_activation=False)(mp)
+    rec = awd.run_walk_diff(build, 60)
+    assert rec.native_entries["activation_skips"] == 0, rec.native_entries
+    assert rec.calls()["cond.SetActive"] >= 2
+
+
+class _Truth:
+    """An `_is_active_in_tree` value whose truth test marks."""
+
+    def __init__(self, owner, value, tag):
+        self.owner, self.value, self.tag = owner, value, tag
+
+    def __bool__(self):
+        awd.mark(self.owner, "truth", self.tag, self.value)
+        return self.value
+
+
+def _patched_activation_scene(mp):
+    """SetActive / SetInactive that must be CALLED by the native side (the
+    harness leaves every node's alone here): a subclass override, an instance
+    shadow, a class-level patch (ticks 30-49), a reassigned __code__ (ticks
+    60-69), a data descriptor for `_is_active_in_tree`, and a non-bool value
+    whose truth test runs Python (SetActive with a truthy one, SetInactive
+    with a falsy one)."""
+    owner = awd.current()
+    ai = _ai()
+    AI = ai.ArtificialIntelligence
+
+    class Overridden(ai.PlainAI):
+        def SetActive(self):
+            awd.mark(owner, "override SetActive", self.GetName())
+            super().SetActive()
+
+    class Described(ai.PlainAI):
+        @property
+        def _is_active_in_tree(self):
+            awd.mark(owner, "descriptor read", self.GetName())
+            return self.__dict__.get("_described", False)
+
+        @_is_active_in_tree.setter
+        def _is_active_in_tree(self, v):
+            self.__dict__["_described"] = v
+
+    s = _ship("P")
+    steps = (US_ACTIVE, US_DONE)            # so the sequence moves along
+    over = Overridden(s, "Over")
+    over._script_instance = ScriptedLeaf(over, steps, owner, interval=0.02)
+    shadow = _sleaf(s, "Shadow", steps, owner=owner, interval=0.03)
+
+    def shadow_set_active():
+        awd.mark(owner, "shadow SetActive")
+        AI.SetActive(shadow)
+    shadow.SetActive = shadow_set_active
+    desc = Described(s, "Desc")
+    desc._script_instance = ScriptedLeaf(desc, steps, owner, interval=0.04)
+    truthy = _sleaf(s, "Truthy", steps, owner=owner, interval=0.02)
+    falsy = _sleaf(_ship("G0"), "Falsy", owner=owner, interval=0.02)
+    cond = _cond(1)
+    seq = _ai().SequenceAI_Create(s, "Seq")
+    seq.SetLoopCount(-1)
+    for n in (over, shadow, desc, truthy):
+        seq.AddAI(n)
+    _install(s, _plist(s, "PRoot", (1, seq)))
+    g = _ship("G")
+    gated = _conditional(g, "Gated", cond, falsy)
+    _install(g, _plist(g, "GRoot", (1, gated), (2, _sleaf(
+        g, "GFallback", owner=owner, interval=0.03))))
+    stock_set_active = AI.__dict__["SetActive"]
+    stock_code = stock_set_active.__code__
+
+    def swapped(self):                   # the stock body, plus a logged call
+        self.ForceUpdate()
+        if self._is_active_in_tree:
+            return
+        self._is_active_in_tree = True
+        self._on_activated()
+
+    def class_patch():
+        def patched(self):
+            awd.mark(owner, "class SetActive", self.GetName())
+            return stock_set_active(self)
+        mp.setattr(AI, "SetActive", patched)
+
+    def falsy_leaves():
+        falsy.__dict__["_is_active_in_tree"] = _Truth(owner, False, "falsy")
+        cond.SetStatus(0)
+
+    actions = {
+        5: lambda: truthy.__dict__.__setitem__(
+            "_is_active_in_tree", _Truth(owner, True, "truthy")),
+        12: falsy_leaves,
+        20: lambda: cond.SetStatus(1),
+        30: class_patch,
+        50: lambda: mp.setattr(AI, "SetActive", stock_set_active),
+        60: lambda: mp.setattr(stock_set_active, "__code__",
+                               swapped.__code__),
+        70: lambda: mp.setattr(stock_set_active, "__code__", stock_code),
+    }
+    return _scene_of(mp, [s, g], actions, wrap_node_activation=False)
+
+
+def test_a_set_active_that_is_not_the_stock_one_is_called():
+    rec = awd.run_walk_diff(_patched_activation_scene, 90)
+    over = _marks(rec, "override SetActive")
+    shadow = _marks(rec, "shadow SetActive")
+    # called on every reconciliation that reaches them, not only on edges
+    assert len(over) >= 10 and len(shadow) >= 10, (len(over), len(shadow))
+    assert len(_marks(rec, "descriptor read")) >= 10
+    assert ("truthy", True) in _marks(rec, "truth")
+    assert ("falsy", False) in _marks(rec, "truth")
+    assert len(_marks(rec, "class SetActive")) >= 10
+    assert rec.calls()["node.ForceUpdate"] >= 5      # the swapped __code__
+    assert rec.native_entries["activation_skips"] > 0, rec.native_entries
+
+
+def _raising_activate_scene(mp):
+    """A ConditionalAI whose ConditionScripts' Activate / Deactivate raise:
+    swallowed inside ConditionScript.SetActive / SetInactive (as today), so
+    the reconciliation goes on to the next node."""
+    owner = awd.current()
+    ai = _ai()
+
+    class Raising:
+        def Activate(self):
+            raise _Boom("Activate")
+
+        def Deactivate(self):
+            raise _Boom("Deactivate")
+
+    s = _ship("R")
+    conds = []
+    for k in range(2):
+        c = ai.ConditionScript()
+        c._instance = Raising()
+        c.SetStatus(1)
+        conds.append(c)
+    gate = _gated(s, "RGate", conds, lambda a, b: US_ACTIVE if a else
+                  US_DORMANT, _sleaf(s, "RLeaf", owner=owner, interval=0.02))
+    _install(s, _plist(s, "RRoot", (1, gate),
+                       (2, _sleaf(s, "RFallback", owner=owner,
+                                  interval=0.03))))
+    return _scene_of(mp, [s], {
+        10: lambda: conds[0].SetStatus(0), 20: lambda: conds[0].SetStatus(1),
+        30: lambda: conds[0].SetStatus(0), 40: lambda: conds[0].SetStatus(1)})
+
+
+def test_a_condition_activate_that_raises_is_swallowed():
+    rec = awd.run_walk_diff(_raising_activate_scene, 50)
+    log = rec.log()
+    assert not [e for e in log if e[0] == "escaped"]
+    raised = Counter(e[1] for e in log if e[0] == "raise")
+    assert raised["cond.Activate"] >= 4 and raised["cond.Deactivate"] >= 4, \
+        raised
+
+
+def _nested_reconcile_scene(mp):
+    """Hooks that start a nested ROOT walk from inside the root end: a
+    condition's Activate (during _reconcile_active) walks another ship and,
+    once, its own ship; GotFocus (during the flush) and LostFocus (during
+    _reconcile_focus) each walk the own ship once. A nested root walk rebinds
+    the module walk state and rewrites the root's own lists under the outer
+    reconciliation."""
+    drv = _driver()
+    ai = _ai()
+    clock = {"t": 1 / 60.0}
+    once = set()
+    other = _ship("Other")
+    other_root = _plist(other, "OtherRoot",
+                        (1, _leaf(other, "OtherLeaf", interval=0.0)))
+    _install(other, other_root)
+    s = _ship("Main")
+    holder = {}
+
+    def walk_own(tag):
+        if tag not in once:
+            once.add(tag)
+            drv.tick_ai(holder["root"], clock["t"])
+
+    class Hook:
+        def Activate(self):
+            drv.tick_ai(other_root, clock["t"])
+            walk_own("activate")
+
+        def Deactivate(self):
+            drv.tick_ai(other_root, clock["t"])
+    c = ai.ConditionScript()
+    c._instance = Hook()
+    c.SetStatus(1)
+    owner = awd.current()
+    leaf = _sleaf(s, "Leaf", owner=owner, interval=0.02)
+    pre = _spre(s, "Pre", [0], leaf, owner=owner, interval=0.05)
+    pre._preprocessing_instance.GotFocus = lambda: walk_own("got")
+    pre._preprocessing_instance.LostFocus = lambda: walk_own("lost")
+    gate = _gated(s, "Gate", [c], lambda a: US_ACTIVE if a else US_DORMANT,
+                  pre)
+    holder["root"] = _plist(s, "MainRoot", (1, gate),
+                            (2, _sleaf(s, "Fallback", owner=owner,
+                                       interval=0.03)))
+    _install(s, holder["root"])
+
+    def step(i):
+        clock["t"] = (i + 1) / 60.0
+        if i == 20:
+            c.SetStatus(0)
+        if i == 40:
+            c.SetStatus(1)
+        drv.tick_all_ai(clock["t"])
+    return awd.synthetic_scene(mp, [s], step, extra_ships=[other])
+
+
+def test_a_nested_root_walk_from_the_root_end():
+    rec = awd.run_walk_diff(_nested_reconcile_scene, 60)
+    calls = rec.calls()
+    assert calls["cond.Activate"] >= 2 and calls["cond.Deactivate"] >= 1
+    assert calls["script.GotFocus"] >= 1 and calls["script.LostFocus"] >= 1
+
+    def nested_walks(hook, ship):
+        depth, found = 0, 0
+        for e in rec.log():
+            if e[:2] == ("call", hook):
+                depth += 1
+            elif e[:2] in (("ret", hook), ("raise", hook)):
+                depth -= 1
+            elif (depth and e[:2] == ("call", "_out_of_action")
+                    and e[2] == ("obj", "ShipClass", ship)):
+                found += 1
+        return found
+    assert nested_walks("cond.Activate", "Other") >= 1
+    assert nested_walks("cond.Activate", "Main") >= 1
+    assert nested_walks("script.GotFocus", "Main") >= 1
+    assert nested_walks("script.LostFocus", "Main") >= 1
+
+
+def test_harness_catches_a_native_side_that_runs_the_python_reconciliation():
+    def build(mp):
+        ship = _ship()
+        _install(ship, _plist(ship, "Root", (1, _leaf(ship, "Leaf"))))
+        drv = _driver()
+        for n in ("_reconcile_focus", "_flush_pending_got_focus",
+                  "_reconcile_active"):
+            orig = getattr(drv, n)
+            mp.setattr(drv, n, lambda *a, _o=orig: _o(*a))
+        return awd.synthetic_scene(mp, [ship])
+    with pytest.raises(AssertionError,
+                       match="never ran the native reconciliation"):
+        awd.run_walk_diff(build, 5)
+
+
+# ── the preprocessor arity cache (Task 4 review) ─────────────────────────────
+
+class _BadSig:
+    """A callable whose inspect.signature raises TypeError (a bad
+    __signature__): the arity probe's `except (TypeError, ValueError)`."""
+    __signature__ = "not a signature"
+
+    def __init__(self, inst):
+        self.inst = inst
+
+    def __call__(self, *a):
+        awd.mark(self.inst.owner, "arity", "Weird", len(a))
+        return 0
+
+
+class _Multi:
+    def __init__(self, ai, owner):
+        self.pCodeAI = ai
+        self.owner = owner
+        self.Weird = _BadSig(self)
+
+    def One(self, dEndTime):
+        awd.mark(self.owner, "arity", "One", 1)
+        return 0
+
+    def Zero(self):
+        awd.mark(self.owner, "arity", "Zero", 0)
+        return 0
+
+    def GetNextUpdateTime(self):
+        return 0.03
+
+
+def _arity_scene(mp):
+    """The arity cache's paths: a 1-arg method, a 0-arg one (a miss on the
+    method name), a stale entry (the 0-arg method replaced by a 1-arg one on
+    the same instance under the same name: the cached 0 is used, the call
+    raises TypeError and is swallowed), a callable whose signature cannot be
+    taken (assumed 0-arg), the stale method named again after another (a
+    miss: re-probed, 1), and a new instance under the same method name whose
+    method takes no argument (a miss on the instance alone: 0)."""
+    owner = awd.current()
+    s = _ship("A")
+    pre = _ai().PreprocessingAI_Create(s, "Pre")
+    inst = _Multi(pre, owner)
+    pre._preprocessing_instance = inst
+    pre._preprocessing_method = "One"
+    pre.SetContainedAI(_leaf(s, "L", interval=0.02))
+    _install(s, _plist(s, "Root", (1, pre)))
+
+    def swap_zero():
+        pre._preprocessing_method = "Zero"
+
+    def stale():
+        def zero_now_one(dEndTime):
+            awd.mark(owner, "arity", "Stale", 1)
+            return 0
+        inst.Zero = zero_now_one
+
+    def weird():
+        pre._preprocessing_method = "Weird"
+
+    def new_inst():
+        pre._preprocessing_instance = _Multi(pre, owner)
+    return _scene_of(mp, [s], {10: swap_zero, 20: stale, 30: weird,
+                               35: swap_zero, 40: new_inst})
+
+
+def test_the_preprocessor_arity_cache_paths():
+    rec = awd.run_walk_diff(_arity_scene, 60)
+    by_tick = [(t, e[2:]) for t, (log, _s) in enumerate(rec.ticks)
+               for e in log if e[:2] == ("mark", "arity")]
+    for lo, hi, want in ((0, 10, ("One", 1)), (10, 20, ("Zero", 0)),
+                         (20, 30, None), (30, 35, ("Weird", 0)),
+                         (35, 40, ("Stale", 1)), (40, 60, ("Zero", 0))):
+        got = {m for t, m in by_tick if lo <= t < hi}
+        assert got == ({want} if want else set()), (lo, hi, got)
+    errors = rec.ticks[-1][1]["errors"]
+    assert any(k[1] == "TypeError" for k in errors), errors
+
+
+# ── engine glue raising out of the walk (Task 4 review) ──────────────────────
+
+class _SelectLike(Pre):
+    """A SelectTarget-shaped preprocessor: a callable DamageEvent and a bound
+    pCodeAI, so _tick_preprocessing calls _ensure_select_target_initialized.
+    Already initialised, so the real one returns at once."""
+
+    def __init__(self, ai, **kw):
+        super().__init__(ai, **kw)
+        self._dauntless_codeaiset_done = True
+
+    def DamageEvent(self, pEvent):
+        return None
+
+
+def _glue_escape_scene(mp):
+    """_sync_fire_script_target_subsystem, _ensure_select_target_initialized
+    and a condition's GetStatus each raise once: the exception escapes the
+    walk (and the roster) at the point Python's does."""
+    drv = _driver()
+    counts = Counter()
+    ships = []
+
+    def flaky(name, nth, orig):
+        def fn(*a):
+            counts[name] += 1
+            if counts[name] == nth:
+                raise _Boom(name)
+            return orig(*a)
+        return fn
+    mp.setattr(drv, "_sync_fire_script_target_subsystem",
+               flaky("_sync_fire", 5, drv._sync_fire_script_target_subsystem))
+    mp.setattr(drv, "_ensure_select_target_initialized",
+               flaky("_ensure_select", 9,
+                     drv._ensure_select_target_initialized))
+    s1 = _ship("Sel")
+    pre = _ai().PreprocessingAI_Create(s1, "SelPre")
+    pre._preprocessing_instance = _SelectLike(pre, interval=0.05)
+    pre._preprocessing_method = "PreUpdate"
+    pre.SetContainedAI(_leaf(s1, "SelLeaf", interval=0.02))
+    _install(s1, _plist(s1, "SelRoot", (1, pre)))
+    ships.append(s1)
+
+    s2 = _ship("Cond")
+
+    class FlakyCond(_ai().TGCondition):
+        def GetStatus(self):
+            counts["GetStatus"] += 1
+            if counts["GetStatus"] == 7:
+                raise _Boom("GetStatus")
+            return self._status
+    c = FlakyCond()
+    c.SetStatus(1)
+    _install(s2, _plist(s2, "CondRoot", (1, _gated(
+        s2, "CondGate", [c], lambda a: US_ACTIVE if a else US_DORMANT,
+        _leaf(s2, "CondLeaf", interval=0.02)))))
+    ships.append(s2)
+    s3 = _ship("After")
+    _install(s3, _plist(s3, "AfterRoot", (1, _leaf(s3, "AfterLeaf"))))
+    ships.append(s3)
+    return _scene_of(mp, ships)
+
+
+@pytest.mark.parametrize("wrap_status", [True, False])
+def test_engine_glue_and_get_status_raising_escape_the_walk(wrap_status):
+    def build(mp):
+        scene = _glue_escape_scene(mp)
+        scene.wrap_condition_status = wrap_status
+        return scene
+    rec = awd.run_walk_diff(build, 40)
+    escaped = sorted(e[2] for e in rec.log() if e[0] == "escaped")
+    assert escaped == ["GetStatus", "_ensure_select", "_sync_fire"], escaped
+
+
 # ── the real fights ──────────────────────────────────────────────────────────
 
 @needs_native
@@ -1950,14 +2513,20 @@ def test_k1_gameloop_ai_trees():
 
 @needs_native
 def test_k1_gameloop_ai_trees_with_direct_condition_reads():
-    """The same fight with no GetStatus wrapped: the SDK's ConditionScripts
-    (stock TGCondition.GetStatus) are read directly by the native side and
-    called by the Python side, compared through every EvalFunc's arguments
-    and the node states."""
-    rec = awd.run_walk_diff(_k1_scene(wrap_status=False), 150, warm_ticks=2)
+    """The same fight with no GetStatus and no node SetActive / SetInactive
+    wrapped: the SDK's ConditionScripts (stock TGCondition.GetStatus) are
+    read directly by the native side and called by the Python side, and a
+    stock no-edge SetActive / SetInactive is skipped natively and called by
+    the Python side; compared through every EvalFunc's arguments, the
+    conditions' own SetActive / SetInactive and the node states."""
+    rec = awd.run_walk_diff(_k1_scene(wrap_status=False,
+                                      wrap_activation=False), 150,
+                            warm_ticks=2)
     calls = rec.calls()
     assert calls["eval"] > 0 and calls["cond.GetStatus"] == 0, calls
+    assert calls["node.SetActive"] == 0 and calls["cond.SetActive"] > 0
     assert rec.native_entries["stock_status_reads"] > 1000, rec.native_entries
+    assert rec.native_entries["activation_skips"] > 1000, rec.native_entries
 
 
 @needs_native

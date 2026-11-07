@@ -11,6 +11,7 @@
 
 #include "aitree.h"
 
+#include <algorithm>
 #include <new>
 #include <utility>
 #include <vector>
@@ -169,7 +170,18 @@ struct Names {
     PyObject* activated;             // "_activated"
     PyObject* activate_builder;      // "_activate_builder"
     PyObject* tick_preprocessing;    // "_tick_preprocessing"
-    PyObject* tick_ai_python;        // "_tick_ai_python"
+    // S3, the root-end reconciliation.
+    PyObject* focused_preprocessors; // "_focused_preprocessors"
+    PyObject* active_nodes;          // "_active_nodes"
+    PyObject* dispatch_lost_focus;   // "_dispatch_lost_focus"
+    PyObject* lost_focus;            // "LostFocus"
+    PyObject* got_focus;             // "GotFocus"
+    PyObject* set_active;            // "SetActive"
+    PyObject* set_inactive;          // "SetInactive"
+    PyObject* is_active_in_tree;     // "_is_active_in_tree"
+    PyObject* stock_set_active;      // "_STOCK_SET_ACTIVE"
+    PyObject* stock_set_inactive;    // "_STOCK_SET_INACTIVE"
+    PyObject* whole_slice;          // slice(None, None) (`x[:]`)
     PyObject* inf;                  // float("inf")
     PyObject* zero;                 // 0
     PyObject* one;                  // 1
@@ -303,7 +315,16 @@ const Names* names() {
         {&n->activated, "_activated"},
         {&n->activate_builder, "_activate_builder"},
         {&n->tick_preprocessing, "_tick_preprocessing"},
-        {&n->tick_ai_python, "_tick_ai_python"},
+        {&n->focused_preprocessors, "_focused_preprocessors"},
+        {&n->active_nodes, "_active_nodes"},
+        {&n->dispatch_lost_focus, "_dispatch_lost_focus"},
+        {&n->lost_focus, "LostFocus"},
+        {&n->got_focus, "GotFocus"},
+        {&n->set_active, "SetActive"},
+        {&n->set_inactive, "SetInactive"},
+        {&n->is_active_in_tree, "_is_active_in_tree"},
+        {&n->stock_set_active, "_STOCK_SET_ACTIVE"},
+        {&n->stock_set_inactive, "_STOCK_SET_INACTIVE"},
     };
     for (const S& s : strs) {
         *s.slot = PyUnicode_InternFromString(s.text);
@@ -317,8 +338,9 @@ const Names* names() {
     n->two = PyLong_FromLong(2);
     n->fzero = PyFloat_FromDouble(0.0);
     n->fone = PyFloat_FromDouble(1.0);
+    n->whole_slice = PySlice_New(Py_None, Py_None, nullptr);
     if (!n->fromlist_iter || !n->fromlist_cloak || !n->inf || !n->zero || !n->one || !n->two ||
-        !n->fzero || !n->fone)
+        !n->fzero || !n->fone || !n->whole_slice)
         return nullptr;
     g_names = n;
     return n;
@@ -1171,8 +1193,9 @@ PyObject* refresh_impl(PyObject* ai, PyObject* g) {
 //    state included: `_focus_depth`, `_ooa_cache`, `_reached_this_tick`,
 //    `_reached_this_tick_all(_ids)` and `_pending_got_focus` stay ai_driver's
 //    module globals, rebound at a root walk as Python rebinds them, so a
-//    Python handler (a patched one, or a test's) and the still-Python
-//    reconciliation see exactly the lists Python's walk would hand them;
+//    Python handler (a patched one, or a test's), a patched reconciler and
+//    the native root end (S3, below) see exactly the lists Python's walk
+//    would hand them;
 //  - a driver function runs natively only while its global is the stock one
 //    (`_STOCK_WALK` / `_STOCK_HANDLERS`: the very function with its code at
 //    import); anything else in its place is called, at the same point;
@@ -1834,6 +1857,419 @@ PyObject* eval_conditional_call(const Ctx& c, PyObject* ai, PyObject* eval_fn, P
     if (!r) return call3(fn.get(), ai, eval_fn, args);
     ++g_s2_runs;
     return eval_impl(ai, eval_fn, args, c.g, c.n);
+}
+
+// ── S3: the root-end reconciliation ─────────────────────────────────────────
+// THE REFERENCE is ai_driver.py's `_reconcile_focus`, `_dispatch_lost_focus`,
+// `_flush_pending_got_focus` and `_reconcile_active`; each step names the
+// statement it stands for. The calls out (LostFocus / GotFocus through
+// `_run_script_step`, `SetActive` / `SetInactive` through Python's own method
+// lookup) are the Python calls, in Python's order, with one exception: a
+// stock SetActive / SetInactive whose edge test says nothing changes is not
+// called (`activation_stmt`; aitree.h says why that is invisible).
+
+unsigned long long g_s3_runs[3] = {};          // native focus, flush, active
+unsigned long long g_activation_skips = 0;     // no-edge stock calls skipped
+
+// `{id(n) for n in reached}`, the set comprehension: its iterator (`.0`)
+// and loop variable `n` are its own frame's locals, released in that order
+// when it returns. The set never leaves `_reconcile_*`, so only membership
+// is observable: the ids are kept as the addresses they are, sorted. 0 / -1.
+int id_set_of(PyObject* reached, std::vector<void*>* out) {
+    Ref it(PyObject_GetIter(reached));  // GET_ITER, in the caller's frame
+    if (!it) return -1;
+    Ref nn;
+    for (;;) {
+        Ref x(PyIter_Next(it.get()));
+        if (!x) {
+            if (PyErr_Occurred()) return -1;
+            break;
+        }
+        nn = std::move(x);
+        out->push_back(nn.get());
+    }
+    it = Ref();
+    nn = Ref();
+    std::sort(out->begin(), out->end());
+    return 0;
+}
+
+bool has_id(const std::vector<void*>& ids, PyObject* o) {
+    return std::binary_search(ids.begin(), ids.end(), static_cast<void*>(o));
+}
+
+// `_dispatch_lost_focus(node)`'s body. Owned None.
+PyObject* dispatch_lost_focus_impl(const Ctx& c, PyObject* node) {
+    const Names* n = c.n;
+    struct Frame {
+        Ref inst, lost;
+        void release() {
+            inst = Ref();
+            lost = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // inst = _focus_instance_of(node)
+    {
+        Ref fn(load_global(c.g, n->focus_instance_of));
+        if (!fn) return nullptr;
+        const int s = stock_fn(c, n->focus_instance_of, fn.get());
+        if (s < 0) return nullptr;
+        Ref v(s ? focus_instance_of_impl(c, node) : PyObject_CallOneArg(fn.get(), node));
+        if (!v) return nullptr;
+        fn = Ref();
+        f.inst = std::move(v);
+    }
+    // lost = getattr(inst, "LostFocus", None) if inst is not None else None
+    {
+        Ref v(f.inst.get() != Py_None ? getattr_or(f.inst.get(), n->lost_focus, Py_None)
+                                      : Py_NewRef(Py_None));
+        if (!v) return nullptr;
+        f.lost = std::move(v);
+    }
+    // if callable(lost): _run_script_step(node, lost)
+    if (PyCallable_Check(f.lost.get())) {
+        Ref r(run_script_step(c, node, f.lost.get()));
+        if (!r) return nullptr;
+    }
+    // node._has_focus = False
+    if (PyObject_SetAttr(node, n->has_focus, Py_False) < 0) return nullptr;
+    // node.__dict__["_got_focus_called"] = False
+    if (own_dict_set(node, n->got_focus_called, Py_False, n) < 0) return nullptr;
+    f.release();
+    Py_RETURN_NONE;
+}
+
+// `_dispatch_lost_focus(node)` as a statement. 0 / -1.
+int dispatch_lost_focus_stmt(const Ctx& c, PyObject* node) {
+    Ref fn(load_global(c.g, c.n->dispatch_lost_focus));
+    if (!fn) return -1;
+    const int s = stock_fn(c, c.n->dispatch_lost_focus, fn.get());
+    if (s < 0) return -1;
+    Ref r(s ? dispatch_lost_focus_impl(c, node) : PyObject_CallOneArg(fn.get(), node));
+    return r ? 0 : -1;
+}
+
+// `root_ai.<attr> = list(reached)`. 0 / -1.
+int store_list_of(PyObject* root_ai, PyObject* attr, PyObject* reached) {
+    Ref l(PySequence_List(reached));
+    if (!l) return -1;
+    return PyObject_SetAttr(root_ai, attr, l.get());
+}
+
+// `_reconcile_focus(root_ai, reached)`'s body; `reached` is the frame's own
+// reference (the caller's argument, moved in). Owned None.
+PyObject* reconcile_focus_impl(const Ctx& c, PyObject* root_ai, Ref reached) {
+    const Names* n = c.n;
+    ++g_s3_runs[0];
+    // Locals after root_ai: reached, reached_ids (a set of ints: nothing to
+    // finalise), node.
+    struct Frame {
+        Ref reached, node;
+        void release() {
+            reached = Ref();
+            node = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    f.reached = std::move(reached);
+    // reached_ids = {id(n) for n in reached}
+    std::vector<void*> ids;
+    if (id_set_of(f.reached.get(), &ids) < 0) return nullptr;
+    // for node in getattr(root_ai, "_focused_preprocessors", ()):
+    //     if id(node) not in reached_ids:
+    //         _dispatch_lost_focus(node)
+    {
+        Ref it;
+        {
+            Ref empty(PyTuple_New(0));
+            if (!empty) return nullptr;
+            Ref seq(getattr_or(root_ai, n->focused_preprocessors, empty.get()));
+            if (!seq) return nullptr;
+            it = Ref(PyObject_GetIter(seq.get()));
+            if (!it) return nullptr;
+        }
+        for (;;) {
+            Ref x(PyIter_Next(it.get()));
+            if (!x) {
+                if (PyErr_Occurred()) return nullptr;
+                break;
+            }
+            f.node = std::move(x);
+            if (!has_id(ids, f.node.get()) && dispatch_lost_focus_stmt(c, f.node.get()) < 0)
+                return nullptr;
+        }
+    }
+    // root_ai._focused_preprocessors = list(reached)
+    if (store_list_of(root_ai, n->focused_preprocessors, f.reached.get()) < 0) return nullptr;
+    f.release();
+    Py_RETURN_NONE;
+}
+
+// `_flush_pending_got_focus()`'s body. Owned None.
+PyObject* flush_pending_impl(const Ctx& c) {
+    const Names* n = c.n;
+    ++g_s3_runs[1];
+    struct Frame {
+        Ref pending, node, inst, got;
+        void release() {
+            pending = Ref();
+            node = Ref();
+            inst = Ref();
+            got = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // if not _pending_got_focus: return
+    {
+        Ref l(load_global(c.g, n->pending));
+        if (!l) return nullptr;
+        const int t = PyObject_IsTrue(l.get());
+        if (t < 0) return nullptr;
+        if (!t) {
+            l = Ref();
+            f.release();
+            Py_RETURN_NONE;
+        }
+    }
+    // pending = list(_pending_got_focus)
+    {
+        Ref l(load_global(c.g, n->pending));
+        if (!l) return nullptr;
+        Ref v(PySequence_List(l.get()));
+        if (!v) return nullptr;
+        l = Ref();
+        f.pending = std::move(v);
+    }
+    // del _pending_got_focus[:]
+    {
+        Ref l(load_global(c.g, n->pending));
+        if (!l) return nullptr;
+        if (PyObject_DelItem(l.get(), n->whole_slice) < 0) return nullptr;
+    }
+    // for node, inst in pending:
+    Ref it(PyObject_GetIter(f.pending.get()));
+    if (!it) return nullptr;
+    for (;;) {
+        Ref item(PyIter_Next(it.get()));
+        if (!item) {
+            if (PyErr_Occurred()) return nullptr;
+            break;
+        }
+        Ref a, b;
+        if (unpack2(item.get(), &a, &b) < 0) return nullptr;
+        item = Ref();
+        f.node = std::move(a);
+        f.inst = std::move(b);
+        // if node.__dict__.get("_got_focus_called", False): continue
+        {
+            Ref v(obj_dict_get(f.node.get(), n->got_focus_called, Py_False, n));
+            if (!v) return nullptr;
+            const int t = PyObject_IsTrue(v.get());
+            if (t < 0) return nullptr;
+            if (t) continue;
+        }
+        // got = getattr(inst, "GotFocus", None)
+        {
+            Ref v(getattr_or(f.inst.get(), n->got_focus, Py_None));
+            if (!v) return nullptr;
+            f.got = std::move(v);
+        }
+        // if callable(got): _run_script_step(node, got)
+        if (PyCallable_Check(f.got.get())) {
+            Ref r(run_script_step(c, f.node.get(), f.got.get()));
+            if (!r) return nullptr;
+        }
+        // node.__dict__["_got_focus_called"] = True
+        if (own_dict_set(f.node.get(), n->got_focus_called, Py_True, n) < 0) return nullptr;
+    }
+    it = Ref();
+    f.release();
+    Py_RETURN_NONE;
+}
+
+// The stock SetActive or SetInactive, `_STOCK_SET_ACTIVE` /
+// `_STOCK_SET_INACTIVE` = (function, its code at import), or (None, None)
+// when the capture did not recognise the body (then nothing is skipped).
+struct StockMethod {
+    Ref fn, code;
+};
+
+int stock_method_of(const Ctx& c, PyObject* gname, StockMethod* out) {
+    Ref pair(load_global(c.g, gname));
+    if (!pair) return -1;
+    if (!PyTuple_CheckExact(pair.get()) || PyTuple_GET_SIZE(pair.get()) != 2) {
+        PyErr_Format(PyExc_TypeError, "ai_driver.%U must be (function, code)", gname);
+        return -1;
+    }
+    out->fn = Ref(Py_NewRef(PyTuple_GET_ITEM(pair.get(), 0)));
+    out->code = Ref(Py_NewRef(PyTuple_GET_ITEM(pair.get(), 1)));
+    return 0;
+}
+
+// `fn` is the stock method, still running its code.
+bool is_stock_method(PyObject* fn, const StockMethod& stock) {
+    return fn == stock.fn.get() && PyFunction_Check(fn) &&
+           PyFunction_GET_CODE(fn) == stock.code.get();
+}
+
+// The stock body's first statement, `if [not] self._is_active_in_tree:
+// return`, would return without running Python: the attribute comes from the
+// instance (no descriptor of that name on the type, generic attribute
+// lookup) and is exactly `unchanged` (True for SetActive, False for
+// SetInactive), whose truth test runs nothing. 1 skip, 0 call, -1 error.
+int edge_unchanged(PyObject* node, PyObject* unchanged, const Names* n) {
+    PyTypeObject* tp = Py_TYPE(node);
+    if (tp->tp_getattro != PyObject_GenericGetAttr) return 0;
+    PyObject* descr = _PyType_Lookup(tp, n->is_active_in_tree);  // borrowed, runs nothing
+    if (descr != nullptr && Py_TYPE(descr)->tp_descr_get != nullptr) return 0;
+    Ref v(PyObject_GenericGetAttr(node, n->is_active_in_tree));
+    if (!v) {
+        if (!PyErr_ExceptionMatches(PyExc_AttributeError)) return -1;
+        PyErr_Clear();  // the call raises it again, as Python's would
+        return 0;
+    }
+    return v.get() == unchanged;
+}
+
+// `node.SetActive()` / `node.SetInactive()` as a statement: Python's method
+// lookup (LOAD_METHOD), then the call -- skipped only when the lookup lands
+// on the stock method, unbound, and `edge_unchanged`. The callable is
+// released before the result, as CALL then POP_TOP do. 0 / -1.
+int activation_stmt(const Ctx& c, PyObject* node, PyObject* name, const StockMethod& stock,
+                    PyObject* unchanged) {
+#if PY_VERSION_HEX < 0x030C0000
+    PyObject* m = nullptr;
+    const int unbound = _PyObject_GetMethod(node, name, &m);
+    if (m == nullptr) return -1;
+    Ref meth(m);
+    Ref r;
+    if (unbound) {
+        if (is_stock_method(m, stock)) {
+            const int same = edge_unchanged(node, unchanged, c.n);
+            if (same < 0) return -1;
+            if (same) {
+                ++g_activation_skips;
+                return 0;
+            }
+        }
+        PyObject* a[1] = {node};
+        r = Ref(PyObject_Vectorcall(m, a, 1, nullptr));
+    } else {
+        r = Ref(PyObject_CallNoArgs(m));
+    }
+#else
+    Ref meth(PyObject_GetAttr(node, name));
+    if (!meth) return -1;
+    if (PyMethod_Check(meth.get()) && PyMethod_GET_SELF(meth.get()) == node &&
+        is_stock_method(PyMethod_GET_FUNCTION(meth.get()), stock)) {
+        const int same = edge_unchanged(node, unchanged, c.n);
+        if (same < 0) return -1;
+        if (same) {
+            ++g_activation_skips;
+            return 0;
+        }
+    }
+    Ref r(PyObject_CallNoArgs(meth.get()));
+#endif
+    meth = Ref();
+    return r ? 0 : -1;
+}
+
+// `_reconcile_active(root_ai, reached)`'s body; `reached` moved in, as for
+// `_reconcile_focus`. Owned None.
+PyObject* reconcile_active_impl(const Ctx& c, PyObject* root_ai, Ref reached) {
+    const Names* n = c.n;
+    ++g_s3_runs[2];
+    struct Frame {
+        Ref reached, node;
+        void release() {
+            reached = Ref();
+            node = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    f.reached = std::move(reached);
+    StockMethod on, off;
+    if (stock_method_of(c, n->stock_set_active, &on) < 0 ||
+        stock_method_of(c, n->stock_set_inactive, &off) < 0)
+        return nullptr;
+    // reached_ids = {id(n) for n in reached}
+    std::vector<void*> ids;
+    if (id_set_of(f.reached.get(), &ids) < 0) return nullptr;
+    // for node in getattr(root_ai, "_active_nodes", ()):
+    //     if id(node) not in reached_ids:
+    //         node.SetInactive()
+    {
+        Ref it;
+        {
+            Ref empty(PyTuple_New(0));
+            if (!empty) return nullptr;
+            Ref seq(getattr_or(root_ai, n->active_nodes, empty.get()));
+            if (!seq) return nullptr;
+            it = Ref(PyObject_GetIter(seq.get()));
+            if (!it) return nullptr;
+        }
+        for (;;) {
+            Ref x(PyIter_Next(it.get()));
+            if (!x) {
+                if (PyErr_Occurred()) return nullptr;
+                break;
+            }
+            f.node = std::move(x);
+            if (!has_id(ids, f.node.get()) &&
+                activation_stmt(c, f.node.get(), n->set_inactive, off, Py_False) < 0)
+                return nullptr;
+        }
+    }
+    // for node in reached:
+    //     node.SetActive()
+    {
+        Ref it(PyObject_GetIter(f.reached.get()));
+        if (!it) return nullptr;
+        for (;;) {
+            Ref x(PyIter_Next(it.get()));
+            if (!x) {
+                if (PyErr_Occurred()) return nullptr;
+                break;
+            }
+            f.node = std::move(x);
+            if (activation_stmt(c, f.node.get(), n->set_active, on, Py_True) < 0) return nullptr;
+        }
+    }
+    // root_ai._active_nodes = list(reached)
+    if (store_list_of(root_ai, n->active_nodes, f.reached.get()) < 0) return nullptr;
+    f.release();
+    Py_RETURN_NONE;
+}
+
+// `<reconciler>(ai, <walk-state global>)` as a statement, at the root end:
+// the callee loaded, then the list; run natively while the callee is stock.
+int reconcile_stmt(const Ctx& c, PyObject* fname, PyObject* lname, PyObject* ai,
+                   PyObject* (*impl)(const Ctx&, PyObject*, Ref)) {
+    Ref fn(load_global(c.g, fname));
+    if (!fn) return -1;
+    Ref reached(load_global(c.g, lname));
+    if (!reached) return -1;
+    const int s = stock_fn(c, fname, fn.get());
+    if (s < 0) return -1;
+    Ref r(s ? impl(c, ai, std::move(reached)) : call2(fn.get(), ai, reached.get()));
+    if (!r) return -1;
+    reached = Ref();
+    fn = Ref();
+    return 0;
+}
+
+// `_flush_pending_got_focus()` as a statement. 0 / -1.
+int flush_stmt(const Ctx& c) {
+    Ref fn(load_global(c.g, c.n->flush_pending));
+    if (!fn) return -1;
+    const int s = stock_fn(c, c.n->flush_pending, fn.get());
+    if (s < 0) return -1;
+    Ref r(s ? flush_pending_impl(c) : PyObject_CallNoArgs(fn.get()));
+    if (!r) return -1;
+    fn = Ref();
+    return 0;
 }
 
 // ── the stock handlers ──────────────────────────────────────────────────────
@@ -3324,14 +3760,6 @@ int bump_depth(const Ctx& c, int delta) {
     return PyDict_SetItem(c.g, c.n->focus_depth, v.get());
 }
 
-// `<global>(*args)` as a statement. 0 / -1.
-int call_global_stmt(const Ctx& c, PyObject* gname, PyObject* const* args, size_t nargs) {
-    Ref fn(load_global(c.g, gname));
-    if (!fn) return -1;
-    Ref r(PyObject_Vectorcall(fn.get(), args, nargs, nullptr));
-    return r ? 0 : -1;
-}
-
 // `_tick_ai_python`'s body: the native walk of one subtree. Owned status.
 PyObject* tick_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
     const Names* n = c.n;
@@ -3428,23 +3856,12 @@ PyObject* tick_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
         int go = PyObject_IsTrue(f.is_root.get());
         if (go < 0) return nullptr;
         if (go && ai != Py_None) {
-            {
-                Ref fn(load_global(c.g, n->reconcile_focus));
-                if (!fn) return nullptr;
-                Ref reached(load_global(c.g, n->reached));
-                if (!reached) return nullptr;
-                Ref r(call2(fn.get(), ai, reached.get()));
-                if (!r) return nullptr;
-            }
-            if (call_global_stmt(c, n->flush_pending, nullptr, 0) < 0) return nullptr;
-            {
-                Ref fn(load_global(c.g, n->reconcile_active));
-                if (!fn) return nullptr;
-                Ref reached(load_global(c.g, n->reached_all));
-                if (!reached) return nullptr;
-                Ref r(call2(fn.get(), ai, reached.get()));
-                if (!r) return nullptr;
-            }
+            if (reconcile_stmt(c, n->reconcile_focus, n->reached, ai, reconcile_focus_impl) < 0)
+                return nullptr;
+            if (flush_stmt(c) < 0) return nullptr;
+            if (reconcile_stmt(c, n->reconcile_active, n->reached_all, ai,
+                               reconcile_active_impl) < 0)
+                return nullptr;
         }
     }
     // return status
@@ -3466,6 +3883,15 @@ PyObject* tick(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
     } catch (const std::bad_alloc&) {
         return PyErr_NoMemory();
     }
+}
+
+PyObject* reconcile_counts(PyObject*, PyObject* const*, Py_ssize_t nargs) {
+    if (nargs != 0) {
+        PyErr_SetString(PyExc_TypeError, "aitree_reconcile_counts()");
+        return nullptr;
+    }
+    return Py_BuildValue("(KKKK)", g_s3_runs[0], g_s3_runs[1], g_s3_runs[2],
+                         g_activation_skips);
 }
 
 PyObject* walk_counts(PyObject*, PyObject* const*, Py_ssize_t nargs) {
@@ -3604,8 +4030,9 @@ PyObject* roster_count(PyObject*, PyObject* const*, Py_ssize_t nargs) {
 PyMethodDef kDefs[] = {
     {"aitree_tick_all", fast<tick_all>(), METH_FASTCALL,
      "aitree_tick_all(game_time, globals): ai_driver's per-tick roster and "
-     "sleep scheduling (its _tick_all_ai_python), each root walk Python's "
-     "tick_ai; `globals` is ai_driver's module dict."},
+     "sleep scheduling (its _tick_all_ai_python); each root walk is the "
+     "native walk while ai_driver's tick_ai would select it, else tick_ai "
+     "is called; `globals` is ai_driver's module dict."},
     {"aitree_note_due", fast<note_due>(), METH_FASTCALL,
      "aitree_note_due(when): record a node's next-update time in the walk in "
      "progress (ai_driver._note_due)."},
@@ -3635,6 +4062,10 @@ PyMethodDef kDefs[] = {
     {"aitree_walk_counts", fast<walk_counts>(), METH_FASTCALL,
      "aitree_walk_counts() -> (native walks started, then native runs of each "
      "stock handler in ai_driver._STOCK_HANDLERS order)."},
+    {"aitree_reconcile_counts", fast<reconcile_counts>(), METH_FASTCALL,
+     "aitree_reconcile_counts() -> (native runs of _reconcile_focus, "
+     "_flush_pending_got_focus and _reconcile_active, then stock SetActive / "
+     "SetInactive calls skipped as no-edge)."},
     {"aitree_conditional_counts", fast<conditional_counts>(), METH_FASTCALL,
      "aitree_conditional_counts() -> (native condition-evaluation entries, "
      "stock GetStatus calls read directly)."},
