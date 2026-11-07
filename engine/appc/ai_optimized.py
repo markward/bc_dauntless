@@ -510,12 +510,16 @@ def _store_watched(_kind):
 
 def _decide_store(kind) -> bool:
     """The store `kind`'s mirrored reads read is the native one, its readers
-    unpatched. `objects.get_store` is what ObjectClass.GetWorldLocation
-    consults to pick its path (it now builds the point with the raw
-    `transform_point` binding and no longer calls get_position), so a patched
-    get_store is what diverts it; `get_position` stays guarded because the
-    scan mirrors the position the store holds and a patched reader is a mod
-    override the mirror would not see.
+    unpatched. Two guards, for two different things:
+
+    * `objects.get_store` (and the singleton's class) decides which path
+      ObjectClass.GetWorldLocation takes; a patched get_store diverts it.
+    * `NativeTransformStore.get_position` is NOT read by GetWorldLocation any
+      more (it builds its point with the raw `transform_point` binding), so a
+      patch of it is invisible there by design. It stays guarded here only
+      because the native scans mirror the position the store holds: a patched
+      reader is a mod override the mirror would not see, so the kind falls
+      back to Python.
 
     Each kind guards the readers its mirror stands in for: get_position for
     all; get_rotation_col for select's forward; get_rotation for fire's

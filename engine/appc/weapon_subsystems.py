@@ -3233,25 +3233,17 @@ class TorpedoTube(Weapon):
 
 # ── StartFiring, natively (phase 6 AI part 3, task 6) ───────────────────────
 #
-# What the native StartFiring does itself -- the IsOn read, the writes and
-# their descriptors -- is StartFiring's own surface; every gate is called
+# What the native StartFiring does itself -- the IsOn read and _add_target
+# -- is StartFiring's own surface; every gate is called
 # back. These are the engine bodies it reproduces, taken at import (before
 # any test, tool or mod can replace a name): at every use the native body
 # compares what it finds with them and calls or sets by attribute when they
 # differ, so a patch is seen exactly as the Python body would see it.
 def _take_start_firing_surface() -> dict:
-    import threading
     return {
         "IsOn": PoweredSubsystem.__dict__["IsOn"],
         "_add_target": WeaponSystem.__dict__["_add_target"],
         "SetForceUpdate": WeaponSystem.__dict__["SetForceUpdate"],
-        "NativeField.__set__": NativeField.__dict__["__set__"],
-        "_push_scalar": NativeField.__dict__["_push_scalar"],
-        "_held_target": WeaponSystem.__dict__["_held_target"],
-        "_held_offset": WeaponSystem.__dict__["_held_offset"],
-        "_fire_held": WeaponSystem.__dict__["_fire_held"],
-        "_force_update": WeaponSystem.__dict__["_force_update"],
-        "get_ident": threading.get_ident,
     }
 
 

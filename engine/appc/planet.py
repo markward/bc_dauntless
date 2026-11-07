@@ -603,7 +603,11 @@ class ProximityManager:
             # One native call: a stock candidate's radius and participation
             # read in C++ (no GetRadius call), anything else asked in Python
             # through _size / _radius_participates / _unstored_reaches, in
-            # the order _near_objects_cached asks.
+            # the order _near_objects_cached asks. For a STOCK candidate the
+            # native path bypasses the private helpers planet._size,
+            # _radius_participates, _reports and _near_objects_cached
+            # altogether (a patch of one is not seen for it, by design);
+            # _unstored_reaches is looked up once per query.
             return (_PROX_NEAR[0] or _prox_near())(cand, px, py, pz, r)
         return self._near_objects_cached(cand, px, py, pz, r)
 

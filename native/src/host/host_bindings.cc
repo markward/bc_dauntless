@@ -5524,6 +5524,8 @@ static PyObject* transform_point_fn(PyObject*, PyObject* const* args,
     } catch (const dauntless::StaleHandle& e) {
         PyErr_SetString(PyExc_RuntimeError, e.what());
         return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
     } catch (const std::exception& e) {
         PyErr_SetString(PyExc_SystemError, e.what());
         return nullptr;
@@ -5575,7 +5577,14 @@ static PyObject* point_copy_fn(PyObject*, PyObject* const* args,
                                   PyFloat_AS_DOUBLE(s[1]),
                                   PyFloat_AS_DOUBLE(s[2]));
         }
-        PyObject* a[3] = {nullptr, nullptr, nullptr};
+        // Owned, released on every path (make_point may throw).
+        struct Own3 {
+            PyObject* a[3] = {nullptr, nullptr, nullptr};
+            ~Own3() {
+                for (PyObject* o : a) Py_XDECREF(o);
+            }
+        } own3;
+        PyObject** a = own3.a;
         static const char* names[3] = {"x", "y", "z"};
         PyObject* out = nullptr;
         int i = 0;
@@ -5595,7 +5604,6 @@ static PyObject* point_copy_fn(PyObject*, PyObject* const* args,
             }
             if (k == 3) out = make_point(d[0], d[1], d[2]);
         }
-        for (int j = 0; j < 3; ++j) Py_XDECREF(a[j]);
         return out;
     } catch (py::error_already_set& e) {
         e.restore();
@@ -6814,11 +6822,10 @@ PyMethodDef subsystem_is_type_of_def = {
 // start_firing(system, target, offset) is the old Python body (frozen in
 // tests/helpers/start_firing_oracle.py), in one call, native ONLY for StartFiring's own surface:
 //   * the `IsOn()` read (PoweredSubsystem.IsOn's `_is_on`, when stock),
-//   * the writes: `_add_target` (its containment check; `append` and
-//     native_combat.push_field called), `_held_target`, `_held_offset`,
-//     `_fire_held` and SetForceUpdate's `_force_update` through
-//     NativeField.__set__'s body (the scalar pushes straight into
-//     combat_push_scalar, any other push through the descriptor's own _push),
+//   * `_add_target` (its containment check; `append` and
+//     native_combat.push_field called); the four field writes (`_held_target`,
+//     `_held_offset`, `_fire_held`, `_force_update`) are plain setattr, so the
+//     class's own descriptor runs,
 //   * `native_combat.k1_system(system, 0.0)`, looked up on the module.
 // Every gate is called back as the Python function it is, at its module-
 // global name, in the reference's order with its arguments: _is_offline,
@@ -6836,18 +6843,15 @@ namespace startfire {
 
 struct Host {
     // The surface table's entries (held for good).
-    PyObject *IsOn, *add_target, *set_force_update, *nf_set, *nf_push_scalar;
-    PyObject *d_held_target, *d_held_offset, *d_fire_held, *d_force_update, *get_ident;
+    PyObject *IsOn, *add_target, *set_force_update;
     // readers::reads_stock contracts, ((name, function),) each (held).
-    PyObject *c_IsOn, *c_add_target, *c_set_force_update, *c_push_scalar;
+    PyObject *c_IsOn, *c_add_target, *c_set_force_update;
     // Interned names.
     PyObject *s_IsOn, *s_is_on, *s_is_offline, *s_cloak_blocks, *s_dewarp_blocks;
     PyObject *s_target_undetectable, *s_can_engage, *s_GetParentShip, *s_add_target;
     PyObject *s_target_list, *s_append, *s_native_combat, *s_push_field, *s_held_target;
     PyObject *s_held_offset, *s_fire_held, *s_SetForceUpdate, *s_force_update, *s_k1_system;
-    PyObject *s_name, *s_enabled, *s_nslot, *s_get, *s_get_ident, *s_MAIN_IDENT;
-    PyObject *s_queue_push, *s_repush_native, *s_scalar, *s_push, *s_push_scalar, *s_fast;
-    PyObject *s_h, *s_combat_push_scalar, *s_drop, *s_set, *s_getattribute;
+    PyObject* s_getattribute;
     PyObject *float_zero, *int_one;
     PyObject* ws_d;                 // weapon_subsystems' globals (the reference body's)
     PyObject* object_getattribute;  // object.__getattribute__ (borrowed: static)
@@ -6875,16 +6879,8 @@ Host& host() {
         p->IsOn = entry("IsOn");
         p->add_target = entry("_add_target");
         p->set_force_update = entry("SetForceUpdate");
-        p->nf_set = entry("NativeField.__set__");
-        p->nf_push_scalar = entry("_push_scalar");
-        p->d_held_target = entry("_held_target");
-        p->d_held_offset = entry("_held_offset");
-        p->d_fire_held = entry("_fire_held");
-        p->d_force_update = entry("_force_update");
-        p->get_ident = entry("get_ident");
         Py_DECREF(surface);
-        for (PyObject* f : {p->IsOn, p->add_target, p->set_force_update, p->nf_set,
-                            p->nf_push_scalar})
+        for (PyObject* f : {p->IsOn, p->add_target, p->set_force_update})
             if (!PyFunction_Check(f)) throw std::logic_error("_START_FIRING_SURFACE: not a function");
         p->ws_d = PyModule_GetDict(ws);  // borrowed; the module is held
 
@@ -6907,22 +6903,6 @@ Host& host() {
         p->s_SetForceUpdate = intern("SetForceUpdate");
         p->s_force_update = intern("_force_update");
         p->s_k1_system = intern("k1_system");
-        p->s_name = intern("_name");
-        p->s_enabled = intern("_enabled");
-        p->s_nslot = intern("_nslot");
-        p->s_get = intern("get");
-        p->s_get_ident = intern("_get_ident");
-        p->s_MAIN_IDENT = intern("_MAIN_IDENT");
-        p->s_queue_push = intern("_queue_push");
-        p->s_repush_native = intern("_repush_native");
-        p->s_scalar = intern("_scalar");
-        p->s_push = intern("_push");
-        p->s_push_scalar = intern("_push_scalar");
-        p->s_fast = intern("_fast");
-        p->s_h = intern("_h");
-        p->s_combat_push_scalar = intern("combat_push_scalar");
-        p->s_drop = intern("_drop");
-        p->s_set = intern("__set__");
         p->s_getattribute = intern("__getattribute__");
         p->object_getattribute = _PyType_Lookup(&PyBaseObject_Type, p->s_getattribute);
         if (p->object_getattribute == nullptr) throw std::logic_error("object has no __getattribute__");
@@ -6938,7 +6918,6 @@ Host& host() {
         p->c_IsOn = contract(p->s_IsOn, p->IsOn);
         p->c_add_target = contract(p->s_add_target, p->add_target);
         p->c_set_force_update = contract(p->s_SetForceUpdate, p->set_force_update);
-        p->c_push_scalar = contract(p->s_push_scalar, p->nf_push_scalar);
         return p;
     }();
     return *h;
@@ -7083,96 +7062,9 @@ K0_INLINE bool stock(PyObject* o, PyObject* contract) {
     return reads_of(o->ob_type).generic_get && readers::reads_stock(o, contract);
 }
 
-// ── The writes ──────────────────────────────────────────────────────────────
-
-K0_INLINE bool is_push_scalar_binding(PyObject* fn) {
-    return PyCFunction_Check(fn) &&
-           PyCFunction_GET_FUNCTION(fn) ==
-               reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&combat_push_scalar));
-}
-
-// NativeField._push_scalar(descr, obj, h, value)'s body, the binding called
-// directly when `_h.combat_push_scalar` is it.
-void push_scalar_body(PyObject* descr, PyObject* obj, PyObject* hnd, PyObject* value) {
-    auto& h = host();
-    Ref fast = attr(descr, h.s_fast);
-    if (fast.p == Py_None) {  // the first push: the body fills `_fast`
-        method(descr, h.s_push_scalar, {obj, hnd, value});
-        return;
-    }
-    PyObject* g = globals_of(h.nf_push_scalar);
-    try {
-        Ref hmod = global(g, h.s_h);
-        Ref fn = attr(hmod.p, h.s_combat_push_scalar);
-        Ref fid = own(PySequence_GetItem(fast.p, 0));
-        Ref code = own(PySequence_GetItem(fast.p, 1));
-        PyObject* a[4] = {hnd, fid.p, code.p, value};
-        if (is_push_scalar_binding(fn.p))
-            own(combat_push_scalar(nullptr, a, 4));
-        else
-            own(PyObject_Vectorcall(fn.p, a, 4, nullptr));
-    } catch (py::error_already_set& e) {
-        if (!(e.matches(PyExc_TypeError) || e.matches(PyExc_ValueError) ||
-              e.matches(PyExc_OverflowError)))
-            throw;
-        call(global(g, h.s_drop).p, {obj});
-    }
-}
-
-// NativeField.__set__(descr, obj, value)'s body.
-void native_set_body(PyObject* descr, PyObject* obj, PyObject* value) {
-    auto& h = host();
-    Ref name = attr(descr, h.s_name);
-    {
-        Ref d = own(PyObject_GenericGetDict(obj, nullptr));
-        if (PyObject_SetItem(d.p, name.p, value) < 0) throw py::error_already_set();
-    }
-    PyObject* g = globals_of(h.nf_set);
-    if (!truth(global(g, h.s_enabled).p)) return;
-    Ref d = own(PyObject_GenericGetDict(obj, nullptr));
-    Ref hnd;
-    if (PyDict_CheckExact(d.p)) {
-        PyObject* v = PyDict_GetItemWithError(d.p, h.s_nslot);  // borrowed
-        if (v == nullptr && PyErr_Occurred()) throw py::error_already_set();
-        hnd = borrow(v == nullptr ? Py_None : v);
-    } else {
-        hnd = method(d.p, h.s_get, {h.s_nslot});
-    }
-    if (hnd.p == Py_None) return;
-    Ref gi = global(g, h.s_get_ident);
-    Ref ident = gi.p == h.get_ident ? own(PyLong_FromUnsignedLong(PyThread_get_thread_ident()))
-                                    : call(gi.p, {});
-    Ref main = global(g, h.s_MAIN_IDENT);
-    const int off_main = PyObject_RichCompareBool(ident.p, main.p, Py_NE);
-    if (off_main < 0) throw py::error_already_set();
-    if (off_main) {
-        Ref repush = global(g, h.s_repush_native);
-        call(global(g, h.s_queue_push).p, {obj, repush.p, descr, name.p});
-    } else if (attr(descr, h.s_scalar).p == Py_None) {
-        method(descr, h.s_push, {obj, hnd.p, value});
-    } else if (_PyType_Lookup(Py_TYPE(descr), h.s_push_scalar) == h.nf_push_scalar &&
-               !readers::dict_shadows(descr, h.c_push_scalar)) {
-        push_scalar_body(descr, obj, hnd.p, value);
-    } else {
-        method(descr, h.s_push_scalar, {obj, hnd.p, value});
-    }
-}
-
-// `obj.<name> = value` for a field whose stock descriptor is `stock_descr`:
-// its __set__ body here when the object sets and reads attributes
-// generically (its body reads `obj.__dict__`) with a plain `__dict__`, the
-// class resolves the name to that descriptor and its type's __set__ is
-// NativeField's; setattr otherwise.
-void set_field(PyObject* obj, PyObject* name, PyObject* stock_descr, PyObject* value) {
-    auto& h = host();
-    PyTypeObject* t = Py_TYPE(obj);
-    if (t->tp_setattro == PyObject_GenericSetAttr && reads_of(t).plain &&
-        _PyType_Lookup(t, name) == stock_descr &&
-        _PyType_Lookup(Py_TYPE(stock_descr), h.s_set) == h.nf_set) {
-        Ref held = borrow(stock_descr);
-        native_set_body(held.p, obj, value);
-        return;
-    }
+// `obj.<name> = value`: the class's own descriptor runs (NativeField.__set__
+// for the stock fields), so nothing here can drift from it.
+void set_field(PyObject* obj, PyObject* name, PyObject* value) {
     if (PyObject_SetAttr(obj, name, value) < 0) throw py::error_already_set();
 }
 
@@ -7222,11 +7114,11 @@ void start_firing(PyObject* sys, PyObject* target, PyObject* offset) {
         if (!truth(call(engage.p, {ship.p, target}).p)) return;
     }
     add_target(sys, target);
-    set_field(sys, h.s_held_target, h.d_held_target, target);
-    set_field(sys, h.s_held_offset, h.d_held_offset, offset);
-    set_field(sys, h.s_fire_held, h.d_fire_held, Py_True);
+    set_field(sys, h.s_held_target, target);
+    set_field(sys, h.s_held_offset, offset);
+    set_field(sys, h.s_fire_held, Py_True);
     if (stock(sys, h.c_set_force_update))
-        set_field(sys, h.s_force_update, h.d_force_update, Py_True);  // bool(1)
+        set_field(sys, h.s_force_update, Py_True);  // bool(1)
     else
         method(sys, h.s_SetForceUpdate, {h.int_one});
     Ref nc = global(h.ws_d, h.s_native_combat);
@@ -7435,7 +7327,19 @@ void decide(PyTypeObject* t, unsigned int tag, TypeMemo& m) {
 K0_INLINE bool fast_radius(PyObject* o, TypeMemo& m, double& out) {
     PyTypeObject* t = o->ob_type;
     const unsigned int tag = (t->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) ? t->tp_version_tag : 0u;
-    if (t != m.type || tag != m.tag) decide(t, tag, m);
+    if (t != m.type || tag != m.tag) {
+        // decide() may run the memo's first-use self-test, which allocates and
+        // so may run arbitrary code: hold `o` (borrowed from the caller's
+        // list) across it.
+        Py_INCREF(o);
+        try {
+            decide(t, tag, m);
+        } catch (...) {
+            Py_DECREF(o);
+            throw;
+        }
+        Py_DECREF(o);
+    }
     if (!m.fast) return false;
     const Host& h = *m.host;
     if (h.radius_field->ob_type->tp_descr_get != nullptr ||
@@ -7551,8 +7455,9 @@ void raise_stale_from_pending() {
     Py_INCREF(value);
     PyException_SetContext(err, value);  // steals one reference
     PyException_SetCause(err, value);    // steals the other
-    PyErr_SetObject(host().stale_error, err);
-    Py_DECREF(err);
+    // PyErr_Restore, not PyErr_SetObject: SetObject re-chains the exception
+    // being handled by an enclosing `except` over the __context__ set above.
+    PyErr_Restore(Py_NewRef(host().stale_error), err, nullptr);
     throw py::error_already_set();
 }
 

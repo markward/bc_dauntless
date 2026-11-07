@@ -390,3 +390,36 @@ def test_a_stale_handle_raises_what_the_store_raises():
         assert str(got.value) == str(want.value)
         assert type(got.value.__cause__) is type(want.value.__cause__)
         assert str(got.value.__cause__) == str(want.value.__cause__)
+
+
+def test_stale_error_context_survives_an_enclosing_except():
+    """Raised from inside an outer `except`, the stale error keeps the store
+    exception as __context__ (as `raise ... from exc` sets it), not the outer
+    one the interpreter was handling."""
+    from engine.appc.transform_store import StaleHandleError
+    o = ObjectClass()
+    index, generation = o._xform
+    cand = planet._Cand()
+    cand.objs, cand.is_set, cand.physics, cand.dup_of = [o], [True], [False], [-1]
+    cand.packed = array("I", [index, generation + 1])
+    cand.packed_pos, cand.unstored_pos = [0], []
+    radii = array("d", [0.0])
+
+    def caught(call):
+        try:
+            raise KeyError("outer")
+        except KeyError:
+            try:
+                call()
+            except StaleHandleError as e:
+                return e
+
+    want = caught(lambda: get_store().near_indices_sized(
+        cand.packed, radii, 0.0, 0.0, 0.0, 1.0))
+    got = caught(lambda: _h.prox_near(cand, 0.0, 0.0, 0.0, 1.0))
+    assert want is not None and got is not None
+    assert type(want.__context__) is not KeyError
+    assert type(got.__context__) is type(want.__context__)
+    assert str(got.__context__) == str(want.__context__)
+    assert got.__cause__ is got.__context__
+    assert got.__suppress_context__ is want.__suppress_context__

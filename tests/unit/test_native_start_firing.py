@@ -266,9 +266,9 @@ def test_torpedo_dumb_fire_gates_match(monkeypatch, scenario):
 
 def test_native_body_runs_its_own_surface(monkeypatch):
     """On a stock ship the native body runs StartFiring's own surface (the
-    IsOn read, the writes) without calling those Python bodies back."""
-    gone = {"IsOn", "_add_target", "SetForceUpdate", "__set__",
-            "_push_scalar"}
+    IsOn read, _add_target) without calling those Python bodies back. The
+    field writes are plain setattr: the real descriptor runs."""
+    gone = {"IsOn", "_add_target", "SetForceUpdate"}
     w = _World(monkeypatch)
     try:
         ph = w.galaxy.GetPhaserSystem()

@@ -206,3 +206,24 @@ The numbers are from SIG-206's native cProfile (C-420, 128 ships, relative):
 - [ ] **Step 4: Perf register.** Add the captures and one signal (the next SIG id), with the catch-up confound stated.
 - [ ] **Step 5: Commit** `docs(perf): phase 6 AI part 3, the hot App methods (SIG-…)`.
 - [ ] **Step 6: Live-check list** for Mark: a 64- and a 128-ship Quick Battle (avoidance, firing all weapon types, tractors); E1M2 Haven; a cloaked Warbird fight; a warp out and back; the LC Intrepid mod ship.
+
+## Outcome
+
+Patches the ports now bypass **by design** (a test or mod that applies one of these no longer sees it through the ported method):
+
+- A `TGPoint3.__init__` patch, or a rebinding of `objects.TGPoint3`: the native `GetWorldLocation`/`GetTranslate`/`point_copy` build the point from the registered type directly.
+- A `NativeTransformStore.get_position` patch: `GetWorldLocation` and `GetTranslate` use the raw `transform_point` binding. (The AI scans still guard `get_position` in `_decide_store`, so they fall back to Python.)
+- `subsystems._subsystem_is_type_of`: bypassed by the native FireScript binding (it answers `IsTypeOf` directly).
+- A `subsystem_types._ct_table` patch that leaves `_CT_TABLE_CACHE`: the cache is what the native `IsTypeOf` reads.
+- The private planet helpers `planet._size`, `_radius_participates`, `_reports` and `_near_objects_cached`, for stock candidates in `GetNearObjects`.
+- `_unstored_reaches`, looked up once per query rather than once per candidate.
+
+`StartFiring`'s four field writes are plain `setattr` (final review): the real `NativeField.__set__` runs, so nothing copies it.
+
+SIG-207 results per method (Release, back to back, `perf-register.md`):
+
+- `GetNearObjects`: 87.7 → 28.1 µs per call; `ai.avoid` at 128 ships 0.51-0.57 → 0.34-0.38 ms a tick. This part's gain.
+- `GetWorldLocation`: 1.20 → 0.47 µs per call (small in total).
+- `GetVelocityTG`: 0.62 → 0.32 µs per call (small in total).
+- `IsTypeOf`: Python calls 121 k → 1.6 k (the native FireScript answers it directly).
+- `StartFiring`: 195.5 → 186.4 µs per call (≈ -5%); bought nothing measurable.

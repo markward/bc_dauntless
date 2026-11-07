@@ -449,8 +449,9 @@ class ObjectClass(TGEventHandlerObject):
         if type(store) is NativeTransformStore:
             if _transform_point is None:
                 _no_transform_point()
+            xform = tuple(self._xform)
             try:
-                return _transform_point(*self._xform)
+                return _transform_point(*xform)
             except (RuntimeError, TypeError) as exc:
                 raise StaleHandleError(str(exc)) from exc
         x, y, z = store.get_position(*self._xform)
@@ -461,8 +462,9 @@ class ObjectClass(TGEventHandlerObject):
         if type(store) is NativeTransformStore:
             if _transform_point is None:
                 _no_transform_point()
+            xform = tuple(self._xform)
             try:
-                return _transform_point(*self._xform)
+                return _transform_point(*xform)
             except (RuntimeError, TypeError) as exc:
                 raise StaleHandleError(str(exc)) from exc
         x, y, z = store.get_position(*self._xform)

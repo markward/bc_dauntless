@@ -157,3 +157,16 @@ def test_out_of_range_handles_match_the_old_path(name, bad):
         with pytest.raises(StaleHandleError) as new:
             getattr(o, name)()
         assert type(new.value.__cause__) is type(old.value.__cause__) is TypeError
+
+
+@pytest.mark.parametrize("name", ["GetWorldLocation", "GetTranslate"])
+@pytest.mark.parametrize("bad", [None, 5])
+def test_a_malformed_xform_is_a_typeerror_not_a_stale_handle(name, bad):
+    """The unpack of `_xform` is outside the stale-handle `try`: a malformed
+    value raises what `*bad` raises, never StaleHandleError."""
+    _native_only()
+    o = ObjectClass()
+    o._xform = bad
+    with pytest.raises(TypeError) as got:
+        getattr(o, name)()
+    assert not isinstance(got.value, StaleHandleError)
