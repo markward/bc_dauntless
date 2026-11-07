@@ -23,6 +23,7 @@ add_executable(combat_tests
     beam_feed_test.cc
     torpedo_feed_test.cc
     set_index_test.cc
+    ai_avoid_test.cc
 )
 target_link_libraries(combat_tests
     PRIVATE

@@ -23,6 +23,7 @@
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
+#include "dauntless/combat/ai_avoid.h"
 #include "dauntless/combat/beam_feed.h"
 #include "dauntless/combat/torpedo_feed.h"
 #include "dauntless/combat/beam_geometry.h"
@@ -5554,6 +5555,370 @@ bool contact_nonempty(Host& h, Key set) {
     return false;
 }
 }  // namespace si
+}  // namespace
+
+// ── AvoidObstacles' obstacle scan (engine/appc/ai_optimized.py) ─────────────
+// combat_ai_avoid_scan stands in for the SDK's while loop in
+// AvoidObstacles.TestCourseOverride (AI/Preprocessors.py:1748-1761) for a
+// stock instance (the caller decided that: ai_native.preprocessor_is_stock).
+// Per object, in the SDK's order:
+//   1. `pObject.GetObjID() != pShip.GetObjID()`, then NeedToAvoid's
+//      lDontAvoidTypes loop. Native when the object's GetObjID and IsTypeOf
+//      are the engine's own (ai_native.object_surface_is_stock); the loop's
+//      verdict depends on the object's TYPE only (ObjectClass.IsTypeOf is an
+//      isinstance test), so it is computed by the real IsTypeOf once per
+//      (type, the instance's tags) and cached, keyed also by
+//      object_types._GENERATION.
+//   2. The arithmetic (dauntless/combat/ai_avoid.h), on what GetWorldLocation
+//      (the transform store), GetRadius (`_radius * _scale`, guarded) and
+//      GetVelocityTG (`_velocity`, physics objects only) would return. Native
+//      when those are the engine's own on the object's type. Nothing else
+//      runs before step 1 ends with "skip", so a type that overrides only a
+//      step-2 reader (ProximityCheck.GetRadius, Torpedo.GetVelocityTG) is
+//      still filtered natively.
+// Any other object -- a non-stock reader, a value that is not a plain float,
+// a stale handle -- is handed to the SDK's NeedToAvoid in Python, alone, and
+// counted as ai_native.note("avoid", "python", "surface"). Its reads are
+// pure, so re-running them there gives the SDK's answer and the SDK's
+// exception. After any such callback every value read from Python (the
+// ship's pose, fPredictionTime, lDontAvoidTypes, the per-call stock memo) is
+// read again: the callback may have changed it.
+//
+// Borrowing: the objects are items of the iteration TUPLE the caller holds,
+// so they outlive the call; each is still owned (INCREF) while Python runs.
+// The output list is allocated first.
+namespace {
+namespace avoid {
+
+PyObject* intern(const char* s) {
+    PyObject* o = PyUnicode_InternFromString(s);
+    if (o == nullptr) throw py::error_already_set();
+    return o;  // held for good
+}
+
+struct Host {
+    PyObject *s_GetObjID, *s_IsTypeOf, *s_NeedToAvoid, *s_GetRadius;
+    PyObject *s_obj_id, *s_xform, *s_radius, *s_scale, *s_velocity;
+    PyObject *s_x, *s_y, *s_z, *s_cursor, *s_dict;
+    PyObject *s_fPredictionTime, *s_lDontAvoidTypes, *s_GENERATION;
+    PyObject *s_object_surface_is_stock, *s_note;
+    PyObject *s_GetWorldLocation, *s_GetVelocityTG;
+    PyObject *names_filter;    // ("GetObjID", "IsTypeOf")
+    PyObject *names_still;     // ("GetWorldLocation", "GetRadius")
+    PyObject *names_moving;    // ... + "GetVelocityTG"
+    PyObject *names_ship;      // ("GetObjID", "GetWorldLocation", "GetVelocityTG")
+    PyObject *note_args;       // ("avoid", "python", "surface")
+    PyObject *ai_native, *object_types, *physics_cls;
+
+    // The lDontAvoidTypes verdict per (type, tags), for one generation.
+    struct Verdict {
+        py::object type;              // held: the address is the key
+        std::vector<long long> tags;
+        bool skip;
+    };
+    long long generation = 0;
+    bool have_generation = false;
+    std::unordered_map<PyTypeObject*, std::vector<Verdict>> verdicts;
+    std::size_t verdict_count = 0;
+};
+
+Host& host() {
+    static Host* h = [] {
+        auto* p = new Host();
+        p->s_GetObjID = intern("GetObjID");
+        p->s_IsTypeOf = intern("IsTypeOf");
+        p->s_NeedToAvoid = intern("NeedToAvoid");
+        p->s_GetRadius = intern("GetRadius");
+        p->s_GetWorldLocation = intern("GetWorldLocation");
+        p->s_GetVelocityTG = intern("GetVelocityTG");
+        p->s_obj_id = intern("_obj_id");
+        p->s_xform = intern("_xform");
+        p->s_radius = intern("_radius");
+        p->s_scale = intern("_scale");
+        p->s_velocity = intern("_velocity");
+        p->s_x = intern("x");
+        p->s_y = intern("y");
+        p->s_z = intern("z");
+        p->s_cursor = intern("_cursor");
+        p->s_dict = intern("__dict__");
+        p->s_fPredictionTime = intern("fPredictionTime");
+        p->s_lDontAvoidTypes = intern("lDontAvoidTypes");
+        p->s_GENERATION = intern("_GENERATION");
+        p->s_object_surface_is_stock = intern("object_surface_is_stock");
+        p->s_note = intern("note");
+        auto tuple_of = [](std::initializer_list<PyObject*> items) {
+            PyObject* t = PyTuple_New(static_cast<Py_ssize_t>(items.size()));
+            if (t == nullptr) throw py::error_already_set();
+            Py_ssize_t i = 0;
+            for (PyObject* o : items) {
+                Py_INCREF(o);
+                PyTuple_SET_ITEM(t, i++, o);
+            }
+            return t;
+        };
+        p->names_filter = tuple_of({p->s_GetObjID, p->s_IsTypeOf});
+        p->names_still = tuple_of({p->s_GetWorldLocation, p->s_GetRadius});
+        p->names_moving = tuple_of({p->s_GetWorldLocation, p->s_GetRadius, p->s_GetVelocityTG});
+        p->names_ship = tuple_of({p->s_GetObjID, p->s_GetWorldLocation, p->s_GetVelocityTG});
+        p->note_args = tuple_of({intern("avoid"), intern("python"), intern("surface")});
+        p->ai_native = PyImport_ImportModule("engine.appc.ai_native");
+        if (p->ai_native == nullptr) throw py::error_already_set();
+        p->object_types = PyImport_ImportModule("engine.appc.object_types");
+        if (p->object_types == nullptr) throw py::error_already_set();
+        PyObject* objects = PyImport_ImportModule("engine.appc.objects");
+        if (objects == nullptr) throw py::error_already_set();
+        p->physics_cls = PyObject_GetAttrString(objects, "PhysicsObjectClass");
+        Py_DECREF(objects);
+        if (p->physics_cls == nullptr) throw py::error_already_set();
+        return p;
+    }();
+    return *h;
+}
+
+py::object own(PyObject* o) {
+    if (o == nullptr) throw py::error_already_set();
+    return py::reinterpret_steal<py::object>(o);
+}
+
+bool truth(PyObject* o) {
+    int r = PyObject_IsTrue(o);
+    if (r < 0) throw py::error_already_set();
+    return r == 1;
+}
+
+// A plain Python float as a double; false (no error set) for anything else.
+bool exact_float(PyObject* o, double& out) {
+    if (o == nullptr || !PyFloat_CheckExact(o)) return false;
+    out = PyFloat_AS_DOUBLE(o);
+    return true;
+}
+
+// `getattr(o, name)` as a plain float; false (error cleared) otherwise.
+bool float_attr(PyObject* o, PyObject* name, double& out) {
+    PyObject* v = PyObject_GetAttr(o, name);
+    if (v == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    bool ok = exact_float(v, out);
+    Py_DECREF(v);
+    return ok;
+}
+
+// ObjectClass.GetWorldLocation: the store slot `_xform` names.
+bool read_position(PyObject* o, double out[3]) {
+    PyObject* xf = PyObject_GetAttr(o, host().s_xform);
+    if (xf == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    py::object keep = py::reinterpret_steal<py::object>(xf);
+    if (!PyTuple_CheckExact(xf) || PyTuple_GET_SIZE(xf) != 2) return false;
+    PyObject* pi = PyTuple_GET_ITEM(xf, 0);
+    PyObject* pg = PyTuple_GET_ITEM(xf, 1);
+    if (!PyLong_CheckExact(pi) || !PyLong_CheckExact(pg)) return false;
+    unsigned long long i = PyLong_AsUnsignedLongLong(pi);
+    unsigned long long g = PyLong_AsUnsignedLongLong(pg);
+    if (PyErr_Occurred()) {
+        PyErr_Clear();
+        return false;
+    }
+    if (i > 0xFFFFFFFFull || g > 0xFFFFFFFFull) return false;
+    try {
+        auto p = dauntless::transform_store().position(static_cast<std::uint32_t>(i),
+                                                       static_cast<std::uint32_t>(g));
+        out[0] = p[0];
+        out[1] = p[1];
+        out[2] = p[2];
+    } catch (const std::exception&) {
+        return false;  // stale: the Python path raises StaleHandleError
+    }
+    return true;
+}
+
+// PhysicsObjectClass.GetVelocityTG: TGPoint3(v.x, v.y, v.z) of `_velocity`.
+bool read_velocity(PyObject* o, double out[3]) {
+    PyObject* v = PyObject_GetAttr(o, host().s_velocity);
+    if (v == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    py::object keep = py::reinterpret_steal<py::object>(v);
+    auto& h = host();
+    return float_attr(v, h.s_x, out[0]) && float_attr(v, h.s_y, out[1]) &&
+           float_attr(v, h.s_z, out[2]);
+}
+
+// ObjectClass.GetRadius: `_radius * _scale` for a positive finite scale,
+// else `_radius`.
+bool read_radius(PyObject* o, double& out) {
+    auto& h = host();
+    double r, s;
+    if (!float_attr(o, h.s_radius, r) || !float_attr(o, h.s_scale, s)) return false;
+    out = (s > 0.0 && std::isfinite(s)) ? r * s : r;
+    return true;
+}
+
+// ai_native.object_surface_is_stock(obj, names), memoised per type for one
+// stretch of the call with no Python callback: a type found stock stays
+// stock until then, so a later object of it only needs its own __dict__ to
+// shadow none of `names` (the function's other half).
+using Memo = std::unordered_map<PyTypeObject*, bool>;
+
+bool surface_stock(PyObject* obj, PyObject* names, Memo& memo) {
+    auto& h = host();
+    auto it = memo.find(Py_TYPE(obj));
+    if (it != memo.end()) {
+        py::object d = own(PyObject_GetAttr(obj, h.s_dict));
+        if (!PyDict_Check(d.ptr())) return false;
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(names); ++i) {
+            int has = PyDict_Contains(d.ptr(), PyTuple_GET_ITEM(names, i));
+            if (has < 0) throw py::error_already_set();
+            if (has) return false;
+        }
+        return true;
+    }
+    py::object fn = own(PyObject_GetAttr(h.ai_native, h.s_object_surface_is_stock));
+    py::object r = own(PyObject_CallFunctionObjArgs(fn.ptr(), obj, names, nullptr));
+    bool ok = truth(r.ptr());
+    if (ok) memo.emplace(Py_TYPE(obj), true);
+    return ok;
+}
+
+long long read_generation() {
+    py::object g = own(PyObject_GetAttr(host().object_types, host().s_GENERATION));
+    long long v = PyLong_AsLongLong(g.ptr());
+    if (v == -1 && PyErr_Occurred()) throw py::error_already_set();
+    return v;
+}
+
+// The SDK's `for eType in self.lDontAvoidTypes: if pObject.IsTypeOf(eType):
+// return 0`, as "skip". `types` is the instance's value, held by the caller.
+bool filtered_live(PyObject* obj, PyObject* types) {
+    py::object iter = own(PyObject_GetIter(types));
+    while (PyObject* e = PyIter_Next(iter.ptr())) {
+        py::object keep = py::reinterpret_steal<py::object>(e);
+        py::object r = own(PyObject_CallMethodOneArg(obj, host().s_IsTypeOf, e));
+        if (truth(r.ptr())) return true;
+    }
+    if (PyErr_Occurred()) throw py::error_already_set();
+    return false;
+}
+
+// The cache key for `types`: a list or tuple of plain ints. False: uncachable.
+bool tags_of(PyObject* types, std::vector<long long>& tags) {
+    tags.clear();
+    if (!PyList_CheckExact(types) && !PyTuple_CheckExact(types)) return false;
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(types);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* e = PySequence_Fast_GET_ITEM(types, i);
+        if (!PyLong_CheckExact(e)) return false;
+        int overflow = 0;
+        long long v = PyLong_AsLongLongAndOverflow(e, &overflow);
+        if (overflow != 0 || (v == -1 && PyErr_Occurred())) {
+            PyErr_Clear();
+            return false;
+        }
+        tags.push_back(v);
+    }
+    return true;
+}
+
+bool filtered(PyObject* obj, PyObject* types, const std::vector<long long>& tags,
+              bool cachable) {
+    if (!cachable) return filtered_live(obj, types);
+    auto& h = host();
+    long long gen = read_generation();
+    if (!h.have_generation || gen != h.generation) {
+        h.verdicts.clear();
+        h.verdict_count = 0;
+        h.generation = gen;
+        h.have_generation = true;
+    }
+    PyTypeObject* t = Py_TYPE(obj);
+    auto found = h.verdicts.find(t);
+    if (found != h.verdicts.end())
+        for (const auto& v : found->second)
+            if (v.tags == tags) return v.skip;
+    bool skip = filtered_live(obj, types);
+    // IsTypeOf may populate the registry (a new generation): then the
+    // verdict is not cached, as IsTypeOf's own cache does not.
+    if (read_generation() == gen) {
+        if (h.verdict_count >= 1024) {
+            h.verdicts.clear();
+            h.verdict_count = 0;
+        }
+        h.verdicts[t].push_back(
+            {py::reinterpret_borrow<py::object>(reinterpret_cast<PyObject*>(t)), tags, skip});
+        ++h.verdict_count;
+    }
+    return skip;
+}
+
+void note_surface() {
+    auto& h = host();
+    py::object fn = own(PyObject_GetAttr(h.ai_native, h.s_note));
+    own(PyObject_Call(fn.ptr(), h.note_args, nullptr));
+}
+
+// What the scan reads from Python, read again after every callback.
+struct Reads {
+    bool ship_native = false;
+    double ship_pos[3] = {0, 0, 0}, ship_vel[3] = {0, 0, 0};
+    py::object ship_id;
+    bool params_native = false;
+    double prediction_time = 0.0;
+    py::object types;                 // self.lDontAvoidTypes
+    std::vector<long long> tags;
+    bool cachable = false;
+    Memo filter_memo, reader_memo;
+};
+
+void read_all(Reads& r, PyObject* inst, PyObject* ship, double psr, bool psr_ok) {
+    auto& h = host();
+    r.filter_memo.clear();
+    r.reader_memo.clear();
+    r.ship_native = false;
+    r.ship_id = py::object();
+    Memo ship_memo;
+    if (surface_stock(ship, h.names_ship, ship_memo) && read_position(ship, r.ship_pos) &&
+        read_velocity(ship, r.ship_vel)) {
+        PyObject* id = PyObject_GetAttr(ship, h.s_obj_id);
+        if (id == nullptr) {
+            PyErr_Clear();
+        } else {
+            r.ship_id = py::reinterpret_steal<py::object>(id);
+            r.ship_native = true;
+        }
+    }
+    r.params_native = false;
+    r.types = py::object();
+    PyObject* types = PyObject_GetAttr(inst, h.s_lDontAvoidTypes);
+    PyObject* pt = types ? PyObject_GetAttr(inst, h.s_fPredictionTime) : nullptr;
+    if (types == nullptr || pt == nullptr) {
+        Py_XDECREF(types);
+        PyErr_Clear();
+        return;
+    }
+    r.types = py::reinterpret_steal<py::object>(types);
+    py::object keep = py::reinterpret_steal<py::object>(pt);
+    bool pt_ok = exact_float(pt, r.prediction_time);
+    if (!pt_ok && PyLong_CheckExact(pt)) {
+        // An int compares exactly in Python; as a double only when exact.
+        int overflow = 0;
+        long long v = PyLong_AsLongLongAndOverflow(pt, &overflow);
+        if (overflow == 0 && !(v == -1 && PyErr_Occurred()) &&
+            v <= (1LL << 53) && v >= -(1LL << 53)) {
+            r.prediction_time = static_cast<double>(v);
+            pt_ok = true;
+        }
+        PyErr_Clear();
+    }
+    r.cachable = tags_of(types, r.tags);
+    r.params_native = pt_ok && psr_ok;
+}
+
+}  // namespace avoid
 }  // namespace
 
 PYBIND11_MODULE(_dauntless_host, m) {
@@ -11738,6 +12103,132 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("set"), py::arg("rater"), py::arg("target_id"),
           "The stock GetTargetRating fPopularity, as an integer count.");
+    // ── AvoidObstacles' obstacle scan (the `avoid` namespace above) ──────
+    m.def("combat_ai_avoid_scan",
+          [](py::handle inst, py::handle ship, py::handle psr_obj, py::handle near_iter) {
+              using avoid::own;
+              using avoid::truth;
+              auto& h = avoid::host();
+              PyObject* it = near_iter.ptr();
+              if (!PyTuple_Check(it))
+                  throw py::type_error("combat_ai_avoid_scan: near_iter is not a GetNearObjects handle");
+              py::list out;  // before any key is read
+              Py_ssize_t start;
+              {
+                  py::object c = own(PyObject_GetAttr(it, h.s_cursor));
+                  start = PyLong_AsSsize_t(c.ptr());
+                  if (start == -1 && PyErr_Occurred()) throw py::error_already_set();
+              }
+              if (start < 0)
+                  throw py::value_error("combat_ai_avoid_scan: a negative cursor");
+              double psr = 0.0;
+              const bool psr_ok = avoid::exact_float(psr_obj.ptr(), psr);
+              avoid::Reads r;
+              avoid::read_all(r, inst.ptr(), ship.ptr(), psr, psr_ok);
+
+              // One object through the SDK's own code, then everything read
+              // from Python is read again.
+              auto after_callback = [&] {
+                  avoid::note_surface();
+                  avoid::read_all(r, inst.ptr(), ship.ptr(), psr, psr_ok);
+              };
+              auto python_need = [&](PyObject* obj) {
+                  py::object v = own(PyObject_CallMethodObjArgs(
+                      inst.ptr(), h.s_NeedToAvoid, ship.ptr(), psr_obj.ptr(), obj, nullptr));
+                  if (truth(v.ptr()) && PyList_Append(out.ptr(), obj) < 0)
+                      throw py::error_already_set();
+                  after_callback();
+              };
+              auto python_whole = [&](PyObject* obj) {
+                  py::object a = own(PyObject_CallMethodNoArgs(obj, h.s_GetObjID));
+                  py::object b = own(PyObject_CallMethodNoArgs(ship.ptr(), h.s_GetObjID));
+                  int ne = PyObject_RichCompareBool(a.ptr(), b.ptr(), Py_NE);
+                  if (ne < 0) throw py::error_already_set();
+                  if (ne) {
+                      python_need(obj);
+                  } else {
+                      after_callback();
+                  }
+              };
+
+              const Py_ssize_t n = PyTuple_GET_SIZE(it);
+              Py_ssize_t cursor = start;
+              auto set_cursor = [&](Py_ssize_t c) {
+                  py::object v = own(PyLong_FromSsize_t(c));
+                  if (PyObject_SetAttr(it, h.s_cursor, v.ptr()) < 0) throw py::error_already_set();
+              };
+              try {
+                  for (Py_ssize_t i = start; i < n; ++i) {
+                      // `pObject = GetNextObject(...)`; `while (pObject != None)`
+                      py::object obj = py::reinterpret_borrow<py::object>(PyTuple_GET_ITEM(it, i));
+                      cursor = i + 1;
+                      int live = PyObject_RichCompareBool(obj.ptr(), Py_None, Py_NE);
+                      if (live < 0) throw py::error_already_set();
+                      if (!live) break;
+                      PyObject* o = obj.ptr();
+
+                      if (!r.ship_native || !r.params_native ||
+                          !avoid::surface_stock(o, h.names_filter, r.filter_memo)) {
+                          python_whole(o);
+                          continue;
+                      }
+                      // `pObject.GetObjID() != pShip.GetObjID()`
+                      PyObject* oid = PyObject_GetAttr(o, h.s_obj_id);
+                      if (oid == nullptr) {
+                          PyErr_Clear();
+                          python_whole(o);
+                          continue;
+                      }
+                      int ne = PyObject_RichCompareBool(oid, r.ship_id.ptr(), Py_NE);
+                      Py_DECREF(oid);
+                      if (ne < 0) throw py::error_already_set();
+                      if (!ne) continue;
+                      // NeedToAvoid's lDontAvoidTypes loop.
+                      if (avoid::filtered(o, r.types.ptr(), r.tags, r.cachable)) continue;
+                      // The arithmetic, on the readers' values.
+                      int phys = PyObject_IsInstance(o, h.physics_cls);
+                      if (phys < 0) throw py::error_already_set();
+                      if (!avoid::surface_stock(o, phys ? h.names_moving : h.names_still,
+                                                r.reader_memo)) {
+                          python_need(o);
+                          continue;
+                      }
+                      dauntless::combat::AvoidInputs in{};
+                      for (int k = 0; k < 3; ++k) {
+                          in.ship_pos[k] = r.ship_pos[k];
+                          in.ship_vel[k] = r.ship_vel[k];
+                      }
+                      if (!avoid::read_position(o, in.obj_pos) ||
+                          !avoid::read_radius(o, in.obj_radius) ||
+                          (phys && !avoid::read_velocity(o, in.obj_vel))) {
+                          python_need(o);
+                          continue;
+                      }
+                      in.is_physics = phys != 0;
+                      in.personal_space_radius = psr;
+                      in.prediction_time = r.prediction_time;
+                      if (dauntless::combat::need_to_avoid(in) && PyList_Append(out.ptr(), o) < 0)
+                          throw py::error_already_set();
+                  }
+              } catch (...) {
+                  // Where the SDK loop's handle would be when this raised.
+                  try {
+                      set_cursor(cursor);
+                  } catch (...) {
+                  }
+                  throw;
+              }
+              // A break leaves it past the None; a full walk at n, where the
+              // SDK's last GetNextObject returns None without moving it.
+              set_cursor(cursor);
+              return out;
+          },
+          py::arg("inst"), py::arg("ship"), py::arg("personal_space_radius"),
+          py::arg("near_iter"),
+          "AvoidObstacles.TestCourseOverride's loop for a stock instance: the "
+          "objects of the GetNearObjects handle `near_iter`, from its cursor, that "
+          "the SDK's NeedToAvoid would avoid, in order. Leaves the cursor where "
+          "the SDK loop would.");
     m.def("set_index_obj_id",
           [](py::handle obj) { return si::host().ix.obj_id(si::key_of(obj)); },
           py::arg("obj"), "obj's own id as the index holds it; -1 if no set holds it.");

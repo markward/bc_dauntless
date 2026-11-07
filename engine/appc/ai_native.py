@@ -269,8 +269,9 @@ def _take_surface_snapshot() -> dict:
     from engine.appc.objects import (DamageableObject, ObjectClass,
                                      PhysicsObjectClass)
     from engine.appc.ships import ShipClass
-    classes = [ObjectClass, PhysicsObjectClass, DamageableObject, ShipClass,
-               projectiles.Torpedo, DebrisChunk]
+    from engine.core.ids import TGObject        # GetObjID
+    classes = [TGObject, ObjectClass, PhysicsObjectClass, DamageableObject,
+               ShipClass, projectiles.Torpedo, DebrisChunk]
     try:
         from engine.rocks.rock import RockClass
         classes.append(RockClass)

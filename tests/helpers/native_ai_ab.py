@@ -118,7 +118,11 @@ def assert_native(stats, kind, allowed_python=()):
 
 
 def assert_no_native(stats):
-    """Nothing ran native (the DAUNTLESS_NATIVE_AI=0 side)."""
+    """Nothing ran native (the DAUNTLESS_NATIVE_AI=0 side). Every kind must be
+    reported: empty or partial counters would pass vacuously."""
+    from engine.appc import ai_native
+    missing = [k for k in ai_native.KINDS if k not in stats]
+    assert not missing, ("kinds not reported", missing, stats)
     assert all(c["native"] == 0 for c in stats.values()), stats
 
 

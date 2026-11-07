@@ -81,10 +81,12 @@ PS_NORMAL.
 """
 
 import functools
+import math
 import os
 
 import App
 
+from engine.appc import ai_native
 from engine.core import frame_profiler
 
 
@@ -278,11 +280,153 @@ def _engine_avoidance_class(base: type) -> type:
     return cls
 
 
+# ── AvoidObstacles: the obstacle scan, native for a stock instance ─────────
+#
+# Phase 6 AI part 2, Task 2. NeedToAvoid was 19% of AI time at 128 ships
+# (SIG-205). The engine TestCourseOverride below is the SDK's
+# (AI/Preprocessors.py:1713-1767) with ONE change: the while loop over the
+# near objects is one ``combat_ai_avoid_scan`` call, which returns the SDK
+# loop's ``lAvoidObjects``, identical by object and order
+# (native/src/host/host_bindings.cc, the ``avoid`` namespace;
+# native/src/combat/include/dauntless/combat/ai_avoid.h). Every App call
+# before the loop, the GetNearObjects / EndObjectIteration pair and
+# AvoidObjects (whose random unit vectors stay on their Python stream) are
+# the SDK's, in its order. It runs only for an instance the SDK would run
+# unchanged (ai_native.preprocessor_is_stock on the three methods below) whose
+# NeedToAvoid still sees the engine's App / math surface; anything else runs
+# the SDK method itself.
+
+#: The preprocessor methods the native path replaces or calls.
+_AVOID_METHODS = ("TestCourseOverride", "NeedToAvoid", "AvoidObjects")
+
+
+def _surface_snapshot():
+    from engine.appc import objects as _objects
+    from engine.appc import planet as _planet
+    from engine.appc import transform_store as _ts
+    from engine.appc.math import TGPoint3
+    point = {n: TGPoint3.__dict__[n] for n in
+             ("__init__", "Set", "SetXYZ", "Subtract", "Length",
+              "SqrLength", "Dot")}
+    return {
+        "cast": _objects.PhysicsObjectClass_Cast,
+        "point_cls": TGPoint3,
+        "point": point,
+        "sqrt": math.sqrt,
+        "store_module": _ts,
+        "store_cls": _ts.NativeTransformStore,
+        "get_position": _ts.NativeTransformStore.get_position,
+        "get_store": _ts.get_store,
+        "iteration": _planet._ProximityIteration,
+        "next_object": _planet._ProximityIteration.next_object,
+        "get_next": _planet.ProximityManager.GetNextObject,
+    }
+
+
+#: What NeedToAvoid's arithmetic and the scan's reads rest on, taken at import
+#: (as ai_native's surface snapshot): a later replacement is not stock.
+_AVOID_SURFACE = _surface_snapshot()
+
+
+def _avoid_surface_is_stock(node) -> bool:
+    """NeedToAvoid's module still calls the engine's App.PhysicsObjectClass_Cast,
+    App.TGPoint3 (its methods unpatched) and math.sqrt, and is the App this
+    module calls."""
+    fn = ai_native._unwrap(getattr(type(node), "NeedToAvoid", None))
+    if fn is None:
+        return False
+    g = fn.__globals__
+    app = g.get("App")
+    snap = _AVOID_SURFACE
+    if app is not App or getattr(app, "PhysicsObjectClass_Cast", None) \
+            is not snap["cast"]:
+        return False
+    point_cls = snap["point_cls"]
+    if getattr(app, "TGPoint3", None) is not point_cls:
+        return False
+    table = point_cls.__dict__
+    for name, want in snap["point"].items():
+        if table.get(name) is not want:
+            return False
+    return getattr(g.get("math"), "sqrt", None) is snap["sqrt"]
+
+
+def _native_store_ok() -> bool:
+    """GetWorldLocation reads the native transform store the scan reads."""
+    snap = _AVOID_SURFACE
+    get_store = snap["store_module"].get_store
+    return (get_store is snap["get_store"]
+            and type(get_store()) is snap["store_cls"]
+            and snap["store_cls"].get_position is snap["get_position"])
+
+
+def _native_scan_applies(manager, handle) -> bool:
+    """The handle is ours and walking it is the engine's GetNextObject."""
+    snap = _AVOID_SURFACE
+    return (type(handle) is snap["iteration"]
+            and getattr(type(manager), "GetNextObject", None) is snap["get_next"]
+            and snap["iteration"].next_object is snap["next_object"]
+            and "GetNextObject" not in getattr(manager, "__dict__", ()))
+
+
+def _native_test_course_override(self):
+    """AvoidObstacles.TestCourseOverride (AI/Preprocessors.py:1713-1767),
+    statement for statement, with the loop native."""
+    import _dauntless_host as _h
+    # Get our ship...
+    pShip = self.pCodeAI.GetShip()
+    if (pShip == None):                              # noqa: E711 (SDK spelling)
+        return (None, None)
+
+    pSet = pShip.GetContainingSet()
+    if (pSet == None):                               # noqa: E711
+        return (None, None)
+
+    # Predict our location in the near future...
+    vPredictedLocation = pShip.GetPredictedPosition(
+        pShip.GetWorldLocation(),
+        pShip.GetVelocityTG(),
+        pShip.GetAccelerationTG(),
+        self.fPredictionTime)
+
+    # Figure out how far that is from us...
+    vDiff = App.TGPoint3()
+    vDiff.Set( vPredictedLocation )
+    vDiff.Subtract( pShip.GetWorldLocation() )
+    fDistance = vDiff.Length()
+
+    fPersonalSpaceRadius = pShip.GetRadius() * self.fPersonalSpace
+    fCheckRadius = fDistance + fPersonalSpaceRadius
+    if fCheckRadius < self.fMinimumRadius:
+        fCheckRadius = self.fMinimumRadius
+
+    pProxManager = pSet.GetProximityManager()
+    lAvoidObjects = []
+    if (pProxManager != None):                       # noqa: E711
+        pObjectIter = pProxManager.GetNearObjects( vPredictedLocation, fCheckRadius )
+        if _native_scan_applies(pProxManager, pObjectIter):
+            lAvoidObjects = _h.combat_ai_avoid_scan(
+                self, pShip, fPersonalSpaceRadius, pObjectIter)
+        else:
+            # A manager or handle that is not the engine's: the SDK loop.
+            pObject = pProxManager.GetNextObject( pObjectIter )
+            while (pObject != None):                 # noqa: E711
+                if pObject.GetObjID() != pShip.GetObjID():
+                    if self.NeedToAvoid( pShip, fPersonalSpaceRadius, pObject ):
+                        lAvoidObjects.append( pObject )
+                pObject = pProxManager.GetNextObject( pObjectIter )
+        pProxManager.EndObjectIteration( pObjectIter )
+
+    return self.AvoidObjects( pShip, lAvoidObjects )
+
+
 _PHASED_AVOIDANCE_CLASSES: dict = {}
 
 
 def _phased_avoidance_class(base: type) -> type:
-    """Non-lethal `base` plus the one-off first-schedule phase offset.
+    """Non-lethal `base` plus the one-off first-schedule phase offset, and
+    the native obstacle scan for a stock instance (``TestCourseOverride``,
+    marked ``_dauntless_native_entry``; see _native_test_course_override).
 
     Split out of _engine_avoidance_class so the SDK scan gets it too. The
     offset and the evading cadence below were only ever applied to the ENGINE
@@ -315,8 +459,28 @@ def _phased_avoidance_class(base: type) -> type:
         with frame_profiler.scope("ai.avoid"):
             return non_lethal.Update(self, *args, **kwargs)
 
+    def TestCourseOverride(self):
+        """The SDK's TestCourseOverride with its obstacle loop native, for a
+        stock instance (_native_test_course_override); otherwise the SDK's
+        own, resolved at call time so a patch is seen."""
+        if not ai_native.enabled("avoid"):
+            ai_native.note("avoid", "python", "switch")
+            return non_lethal.TestCourseOverride(self)
+        if not (ai_native.preprocessor_is_stock(self, "AvoidObstacles",
+                                                _AVOID_METHODS)
+                and _avoid_surface_is_stock(self)):
+            ai_native.note("avoid", "python", "not_stock")
+            return non_lethal.TestCourseOverride(self)
+        if not _native_store_ok():
+            ai_native.note("avoid", "python", "no_mirror")
+            return non_lethal.TestCourseOverride(self)
+        ai_native.note("avoid", "native")
+        return _native_test_course_override(self)
+    TestCourseOverride._dauntless_native_entry = True
+
     cls = type("Phased" + base.__name__, (non_lethal,),
-               {"GetNextUpdateTime": GetNextUpdateTime, "Update": Update})
+               {"GetNextUpdateTime": GetNextUpdateTime, "Update": Update,
+                "TestCourseOverride": TestCourseOverride})
     _PHASED_AVOIDANCE_CLASSES[base] = cls
     globals()[cls.__name__] = cls
     return cls
