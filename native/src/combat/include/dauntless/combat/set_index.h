@@ -41,6 +41,13 @@ public:
                                 bool is_ship = false, int64_t target_id = kNoTarget);
     void mark_leaving(IndexKey set, std::string_view ident);
     std::optional<IndexKey> remove(IndexKey set, std::string_view ident);
+    // Marks every current entry of `set` LEAVING (the contact view empties;
+    // class lists and counts are untouched). A later add shows its member, an
+    // overwrite of a hidden entry clears the mark, removing one changes no
+    // contact view. No-op for an unknown set.
+    void hide_contacts(IndexKey set);
+    // True if `obj` has an entry in `set` that is not LEAVING.
+    bool visible(IndexKey set, IndexKey obj) const;
 
     void set_target(IndexKey ship, int64_t target_id);
     void set_is_ship(IndexKey obj, bool is_ship);

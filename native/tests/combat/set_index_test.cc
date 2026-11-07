@@ -243,3 +243,49 @@ TEST(SetIndex, DistinctLiveDropsDuplicates) {
     EXPECT_EQ(ix.distinct_live(S, CLS), (Keys{B, A}));
     EXPECT_EQ(ix.sets_holding(A), (Keys{S}));
 }
+
+TEST(SetIndex, HideContactsHidesEveryEntryButKeepsListsAndCounts) {
+    SetIndex ix = with_bucket();
+    put(ix, S, "a", A, true, T);
+    put(ix, S, "b", B);
+    ix.hide_contacts(S);
+    EXPECT_TRUE(ix.distinct_live(S, CLS).empty());
+    EXPECT_TRUE(ix.sets_holding(A).empty());
+    EXPECT_FALSE(ix.visible(S, A));
+    EXPECT_EQ(ix.bucket(S, CLS), (Keys{A, B}));
+    EXPECT_EQ(ix.targeted_by(S, T), 1);
+    ix.hide_contacts(S2);  // an unknown set is a no-op
+}
+
+TEST(SetIndex, AHiddenEntryOverwrittenIsVisibleAgain) {
+    SetIndex ix = with_bucket();
+    put(ix, S, "a", A);
+    ix.hide_contacts(S);
+    put(ix, S, "a", B);
+    EXPECT_EQ(ix.distinct_live(S, CLS), (Keys{B}));
+    EXPECT_TRUE(ix.visible(S, B));
+    put(ix, S, "c", C);  // a new identifier after a hide is visible too
+    EXPECT_EQ(ix.distinct_live(S, CLS), (Keys{B, C}));
+}
+
+TEST(SetIndex, AHiddenEntryRemovedChangesNoContactView) {
+    SetIndex ix = with_bucket();
+    put(ix, S, "a", A);
+    put(ix, S, "b", B);
+    ix.hide_contacts(S);
+    ix.remove(S, "a");
+    EXPECT_TRUE(ix.distinct_live(S, CLS).empty());
+    EXPECT_EQ(ix.bucket(S, CLS), (Keys{B}));
+}
+
+TEST(SetIndex, VisibleIsAnyEntryNotLeaving) {
+    SetIndex ix = with_bucket();
+    put(ix, S, "a", A);
+    put(ix, S, "a2", A);
+    EXPECT_TRUE(ix.visible(S, A));
+    ix.mark_leaving(S, "a");
+    EXPECT_TRUE(ix.visible(S, A));
+    ix.mark_leaving(S, "a2");
+    EXPECT_FALSE(ix.visible(S, A));
+    EXPECT_FALSE(ix.visible(S2, A));
+}

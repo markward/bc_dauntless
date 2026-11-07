@@ -219,17 +219,10 @@ class SetClass(TGEventHandlerObject):
         previous = self._objects.get(identifier)
         self._objects[identifier] = obj
         from engine.appc import set_index
-        set_index.on_added(self, identifier, obj)
+        set_index.on_added(self, identifier, obj, previous)
         self._index_member(identifier, obj, previous)
         from engine.appc.ships import ShipClass
         from engine.appc import ship_lifecycle
-        from engine.appc import contact_index
-        # contact_index buckets both ships and nebulae (on_added no-ops for
-        # anything else), so this must run for every object, not just ships —
-        # a nebula added here is the only route MetaNebula instances enter a
-        # set by, and sensor_detection.concealment_at reads the index instead
-        # of scanning GetClassObjectList(App.CT_NEBULA) per query.
-        contact_index.on_added(self, obj)
         if isinstance(obj, ShipClass):
             ship_lifecycle.publish_added(obj)
             self._resolve_player_identity_before_broadcast(obj, identifier)
@@ -300,9 +293,7 @@ class SetClass(TGEventHandlerObject):
         from engine.appc import set_index
         obj = self._objects.get(name)
         if obj is not None:
-            from engine.appc import contact_index
-            contact_index.on_removed(self, obj)
-            set_index.on_leaving(self, name)
+            set_index.on_leaving(self, name, obj)
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
             from engine.appc import sensor_contacts
@@ -318,7 +309,7 @@ class SetClass(TGEventHandlerObject):
         removed = self._objects.pop(name, _ABSENT)
         if removed is _ABSENT:
             return None
-        set_index.on_removed(self, name)  # `removed` still holds it
+        set_index.on_removed(self, name, removed)  # `removed` still holds it
         self._forget_in_proximity(removed)
         return removed
 
@@ -326,9 +317,7 @@ class SetClass(TGEventHandlerObject):
         from engine.appc import set_index
         obj = self._objects.get(name)
         if obj is not None:
-            from engine.appc import contact_index
-            contact_index.on_removed(self, obj)
-            set_index.on_leaving(self, name)
+            set_index.on_leaving(self, name, obj)
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
             from engine.appc import sensor_contacts
@@ -345,7 +334,7 @@ class SetClass(TGEventHandlerObject):
         removed = self._objects.pop(name, _ABSENT)
         if removed is _ABSENT:
             return
-        set_index.on_removed(self, name)  # `removed` still holds it
+        set_index.on_removed(self, name, removed)  # `removed` still holds it
         self._forget_in_proximity(removed)
 
     def _forget_in_proximity(self, obj) -> None:

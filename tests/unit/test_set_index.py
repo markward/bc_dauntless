@@ -544,3 +544,120 @@ def test_the_writer_guard_allows_only_the_listed_rebinds():
     hits = [(c, f) for _l, c, f, _k in _writes(ast.parse(src))]
     assert hits == [("SetClass", "__init__"), ("SetClass", "Other")]
     assert ("engine/appc/sets.py", "SetClass", "Other") not in _REBIND_ALLOWED
+
+
+# Recorded at 738b126bd, when contact_index kept its own buckets.
+EXPECTED_PUSHES = [
+    ("PushSet", ["A"], []),
+    "--nebula",
+    ("PushSet", ["A"], ["Neb"]),
+    "--torpedo",
+    "--second and third ship",
+    ("PushSet", ["A", "B"], ["Neb"]),
+    ("PushSet", ["A", "B", "C"], ["Neb"]),
+    "--same ship added again under its own identifier",
+    "--remove, delete",
+    ("PushSet", ["B", "C"], ["Neb"]),
+    ("PushSet", ["B", "C"], []),
+    "--absent names",
+    "--forget_set, reset",
+    ("OtherSet", ["A"], []),
+    ("OtherSet", [], []),
+    ("PushSet", ["B", "C", "A"], []),
+    ("PushSet", [], []),
+]
+
+
+def test_push_set_members_sees_the_same_lists_at_the_same_points(monkeypatch):
+    """The native combat mirror holds each set's ship and nebula lists. Which
+    door pushes them, in which order, and what lists they carry, was recorded
+    from contact_index's own buckets before they moved onto the set index;
+    the move must not change a single entry."""
+    from engine.appc import native_combat
+    from engine.appc.projectiles import Torpedo
+    seen = []
+    real = native_combat.push_set_members
+
+    def spy(pSet):
+        seen.append((pSet.GetName(),
+                     [o.GetName() for o in contact_index.ships_in(pSet)],
+                     [o.GetName() for o in contact_index.nebulae_in(pSet)]))
+        return real(pSet)
+
+    pSet = SetClass()
+    pSet.SetName("PushSet")
+    other = SetClass()
+    other.SetName("OtherSet")
+    a, b, c = _ship("A"), _ship("B"), _ship("C")
+    neb = App.MetaNebula_Create(0.6, 0.35, 0.72, 145.0, 10.5, "i.tga", "e.tga")
+    neb.SetName("Neb")
+    monkeypatch.setattr(native_combat, "push_set_members", spy)
+
+    pSet.AddObjectToSet(a, "A")
+    seen.append("--nebula")
+    pSet.AddObjectToSet(neb, "Neb")
+    seen.append("--torpedo")
+    pSet.AddObjectToSet(Torpedo(), "Torp")
+    seen.append("--second and third ship")
+    pSet.AddObjectToSet(b, "B")
+    pSet.AddObjectToSet(c, "C")
+    seen.append("--same ship added again under its own identifier")
+    pSet.AddObjectToSet(a, "A")
+    seen.append("--remove, delete")
+    pSet.RemoveObjectFromSet("A")
+    pSet.DeleteObjectFromSet("Neb")
+    seen.append("--absent names")
+    pSet.RemoveObjectFromSet("Nope")
+    pSet.DeleteObjectFromSet("Nope")
+    seen.append("--forget_set, reset")
+    other.AddObjectToSet(a, "A")
+    contact_index.forget_set(other)
+    pSet.AddObjectToSet(a, "A")
+    contact_index.reset()
+
+    assert seen == EXPECTED_PUSHES
+
+
+def test_drift_case_an_overwritten_identifier_drops_the_old_ship():
+    """Recorded drift case 1: contact_index's own bucket kept the replaced
+    ship forever; the set index mirrors the dict slot."""
+    s = SetClass()
+    old, new = _ship("Old"), _ship("New")
+    s.AddObjectToSet(old, "Slot")
+    s.AddObjectToSet(new, "Slot")
+    assert contact_index.ships_in(s) == (new,)
+    assert contact_index.sets_holding(old) == []
+
+
+def test_drift_case_an_object_under_a_second_identifier_stays_listed():
+    """Recorded drift case 2: one removal used to drop the ship from the
+    contact bucket although the set still held it under another name."""
+    s = SetClass()
+    a = _ship("A")
+    s.AddObjectToSet(a, "One")
+    s.AddObjectToSet(a, "Two")
+    s.RemoveObjectFromSet("One")
+    assert contact_index.ships_in(s) == (a,)
+    assert contact_index.sets_holding(a) == [s]
+    s.RemoveObjectFromSet("Two")
+    assert contact_index.ships_in(s) == ()
+
+
+def test_reset_and_forget_hide_the_view_but_not_the_class_lists():
+    s, t = SetClass(), SetClass()
+    a, b = _ship("A"), _ship("B")
+    s.AddObjectToSet(a, "A")
+    t.AddObjectToSet(b, "B")
+    contact_index.forget_set(s)
+    assert contact_index.ships_in(s) == ()
+    assert contact_index.ships_in(t) == (b,)
+    contact_index.reset()
+    assert contact_index.ships_in(t) == ()
+    assert s.GetClassObjectList(App.CT_SHIP) == [a]
+    assert t.GetClassObjectList(App.CT_SHIP) == [b]
+    c = _ship("C")
+    s.AddObjectToSet(c, "C")
+    assert contact_index.ships_in(s) == (c,)
+    t.RemoveObjectFromSet("B")  # a hidden entry: nothing to change
+    assert contact_index.ships_in(t) == ()
+    assert t.GetClassObjectList(App.CT_SHIP) == []

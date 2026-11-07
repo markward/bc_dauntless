@@ -98,6 +98,22 @@ void SetIndex::mark_leaving(IndexKey set, std::string_view ident) {
     si->second.entries[bi->second].leaving = true;
 }
 
+void SetIndex::hide_contacts(IndexKey set) {
+    auto si = sets_.find(set);
+    if (si == sets_.end()) return;
+    for (auto& [seq, e] : si->second.entries) e.leaving = true;
+}
+
+bool SetIndex::visible(IndexKey set, IndexKey obj) const {
+    auto si = sets_.find(set);
+    if (si == sets_.end()) return false;
+    auto bo = si->second.by_obj.find(obj);
+    if (bo == si->second.by_obj.end()) return false;
+    for (uint64_t seq : bo->second)
+        if (!si->second.entries.at(seq).leaving) return true;
+    return false;
+}
+
 std::optional<IndexKey> SetIndex::remove(IndexKey set, std::string_view ident) {
     auto si = sets_.find(set);
     if (si == sets_.end()) return std::nullopt;

@@ -58,22 +58,51 @@ def target_id(target) -> int:
     return int(target.GetObjID())
 
 
-def on_added(pSet, identifier: str, obj) -> None:
-    """`pSet._objects[identifier] = obj` just ran (AddObjectToSet)."""
+def _is_contact(obj) -> bool:
+    return isinstance(obj, (_ShipClass, _Nebula))
+
+
+def _push(pSet) -> None:
+    """The set's contact view changed: refresh the native combat mirror."""
+    from engine.appc import native_combat
+    native_combat.push_set_members(pSet)
+
+
+def on_added(pSet, identifier: str, obj, previous=None) -> None:
+    """`pSet._objects[identifier] = obj` just ran (AddObjectToSet).
+    `previous` is what the identifier held before, if anything (the caller
+    keeps it alive until this returns)."""
+    contact_new = _is_contact(obj)
+    contact_prev = (previous is not None and previous is not obj
+                    and _is_contact(previous))
+    seen_new = contact_new and _h.set_index_visible(pSet, obj)
+    seen_prev = contact_prev and _h.set_index_visible(pSet, previous)
     if isinstance(obj, _ShipClass):
         _h.set_index_add(pSet, identifier, obj, True, target_id(obj.GetTarget()))
     else:
         _h.set_index_add(pSet, identifier, obj, False, -1)
+    if ((contact_new and not seen_new)
+            or (seen_prev and not _h.set_index_visible(pSet, previous))):
+        _push(pSet)
 
 
-def on_leaving(pSet, identifier: str) -> None:
-    """A removal door is about to run its handlers for `identifier`."""
+def on_leaving(pSet, identifier: str, obj) -> None:
+    """A removal door is about to run its handlers for `identifier`, which
+    holds `obj`."""
+    seen = _is_contact(obj) and _h.set_index_visible(pSet, obj)
     _h.set_index_leaving(pSet, identifier)
+    if seen and not _h.set_index_visible(pSet, obj):
+        _push(pSet)
 
 
-def on_removed(pSet, identifier: str) -> None:
-    """A removal door popped `identifier` from `pSet._objects`."""
+def on_removed(pSet, identifier: str, removed) -> None:
+    """A removal door popped `identifier` (which held `removed`) from
+    `pSet._objects`. Only an entry that is still visible changes the
+    contact view (a handler re-added it)."""
+    seen = _is_contact(removed) and _h.set_index_visible(pSet, removed)
     _h.set_index_remove(pSet, identifier)
+    if seen and not _h.set_index_visible(pSet, removed):
+        _push(pSet)
 
 
 def on_reclassified(obj) -> None:
@@ -131,23 +160,44 @@ def entry_count(pSet) -> int:
     return _h.set_index_entry_count(pSet)
 
 
+def hide_contacts(pSet) -> None:
+    """Empty `pSet`'s contact view (ships_in, nebulae_in, sets_holding) while
+    its class lists and counts stay equal to its `_objects`. A later add shows
+    its member. This is what a mission swap and a carry-over mission change
+    do to a set that may still be alive."""
+    if _h.set_index_hide(pSet):
+        _push(pSet)
+
+
+def hide_all_contacts() -> None:
+    """hide_contacts for every set the index tracks."""
+    for pSet in _h.set_index_hide_all():
+        _push(pSet)
+
+
 def forget_set(pSet) -> None:
     """Forget `pSet` now. Explicit only: a set's death forgets it anyway, and
     forgetting a set that is still alive makes its lists diverge from its
     `_objects`."""
+    changed = _h.set_index_hide(pSet)
     _h.set_index_forget_set(pSet)
+    if changed:
+        _push(pSet)
 
 
 def reset() -> None:
     """Forget every set. Explicit only: a set's death forgets it anyway."""
+    changed = _h.set_index_hide_all()
     _h.set_index_reset()
+    for pSet in changed:
+        _push(pSet)
 
 
 def _configure():
     from App import Nebula
     from engine.appc.ships import ShipClass
     _h.set_index_configure(ShipClass, Nebula)
-    return ShipClass
+    return ShipClass, Nebula
 
 
-_ShipClass = _configure()
+_ShipClass, _Nebula = _configure()

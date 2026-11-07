@@ -5504,6 +5504,15 @@ py::tuple contact_view(Host& h, py::handle set, PyObject* cls) {
     py::list out = objects([&] { return h.ix.distinct_live(s, reinterpret_cast<Key>(cls)); });
     return py::tuple(out);  // every item already owned by `out`
 }
+
+// Does `set` show any ship or nebula in the contact view right now? Pure
+// C++: no Python allocates here.
+bool contact_nonempty(Host& h, Key set) {
+    for (PyObject* cls : {h.ship_cls, h.nebula_cls})
+        if (cls != nullptr && !h.ix.distinct_live(set, reinterpret_cast<Key>(cls)).empty())
+            return true;
+    return false;
+}
 }  // namespace si
 }  // namespace
 
@@ -11684,6 +11693,33 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("set"), py::arg("target_id"),
           "The entries' ships targeting `target_id`, in set order (duplicates kept).");
+    m.def("set_index_visible",
+          [](py::handle set, py::handle obj) {
+              return si::host().ix.visible(si::key_of(set), si::key_of(obj));
+          },
+          "Does obj have an entry in set that is not leaving?");
+    m.def("set_index_hide",
+          [](py::handle set) {
+              auto& h = si::host();
+              si::Key s = si::key_of(set);
+              bool changed = si::contact_nonempty(h, s);
+              h.ix.hide_contacts(s);
+              return changed;
+          },
+          "Hide every entry of the set from the contact view (class lists and "
+          "counts untouched). True if the view was not already empty.");
+    m.def("set_index_hide_all",
+          [] {
+              auto& h = si::host();
+              std::vector<si::Key> changed;
+              for (si::Key s : h.ix.sets()) {
+                  if (si::contact_nonempty(h, s)) changed.push_back(s);
+                  h.ix.hide_contacts(s);
+              }
+              return si::objects([&] { return changed; });
+          },
+          "Hide every tracked set's contact view; the sets whose view was not "
+          "already empty.");
     m.def("set_index_forget_set",
           [](py::handle set) {
               std::vector<py::object> dead;
