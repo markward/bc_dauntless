@@ -5548,6 +5548,37 @@ py::tuple contact_view(Host& h, py::handle set, PyObject* cls) {
     return py::tuple(out);  // every item already owned by `out`
 }
 
+// ((ship, (x, y, z)), ...) for the distinct live ships: the contact view
+// joined to the transform store in one call. The output tuple is allocated
+// before the core is read (a GC inside the allocation may free a set); the
+// members are then owned before any attribute read can run Python. A stale
+// handle throws the store's own error, as transform_get_positions does.
+py::tuple ship_positions(Host& h, py::handle set) {
+    Key s = key_of(set);
+    PyObject* cls = h.ship_cls;
+    if (cls == nullptr) return py::tuple();
+    if (h.ix.has_set(s) && !h.ix.has_bucket(s, reinterpret_cast<Key>(cls)))
+        create_bucket(h, s, cls);
+    py::list out;  // allocated first
+    std::vector<py::object> ships = own(h.ix.distinct_live(s, reinterpret_cast<Key>(cls)));
+    static PyObject* s_xform = PyUnicode_InternFromString("_xform");
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> handles;
+    handles.reserve(ships.size());
+    for (const py::object& ship : ships) {
+        py::object xf = py::reinterpret_steal<py::object>(PyObject_GetAttr(ship.ptr(), s_xform));
+        if (!xf) throw py::error_already_set();
+        if (!PyTuple_Check(xf.ptr()) || PyTuple_GET_SIZE(xf.ptr()) != 2)
+            throw py::type_error("transform handle is not an (index, generation) pair");
+        handles.emplace_back(py::cast<std::uint32_t>(PyTuple_GET_ITEM(xf.ptr(), 0)),
+                             py::cast<std::uint32_t>(PyTuple_GET_ITEM(xf.ptr(), 1)));
+    }
+    const auto pos = dauntless::transform_store().positions(handles);
+    for (std::size_t i = 0; i < ships.size(); ++i) {
+        out.append(py::make_tuple(ships[i], py::make_tuple(pos[i][0], pos[i][1], pos[i][2])));
+    }
+    return py::tuple(out);
+}
+
 // Does `set` show any ship or nebula in the contact view right now? Pure
 // C++: no Python allocates here.
 bool contact_nonempty(Host& h, Key set) {
@@ -14905,6 +14936,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return si::contact_view(h, set, h.ship_cls);
           },
           "Distinct ShipClass members not leaving, first-entry order.");
+    m.def("set_index_ship_positions",
+          [](py::handle set) { return si::ship_positions(si::host(), set); },
+          "((ship, (x, y, z)), ...) for the distinct live ships, same order as "
+          "set_index_ships, positions read from the transform store.");
     m.def("set_index_nebulae",
           [](py::handle set) {
               auto& h = si::host();

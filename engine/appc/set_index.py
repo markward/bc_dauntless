@@ -147,6 +147,16 @@ def ships_in(pSet) -> tuple:
     return _h.set_index_ships(pSet)
 
 
+def ship_positions_in(pSet) -> tuple:
+    """((ship, (x, y, z)), ...) for ships_in(pSet), in one native call. A
+    stale transform handle raises StaleHandleError, as get_positions does."""
+    try:
+        return _h.set_index_ship_positions(pSet)
+    except (RuntimeError, TypeError) as exc:
+        from engine.appc.transform_store import StaleHandleError
+        raise StaleHandleError(str(exc)) from exc
+
+
 def nebulae_in(pSet) -> tuple:
     """Distinct Nebula members of `pSet` not leaving, first-entry order."""
     return _h.set_index_nebulae(pSet)

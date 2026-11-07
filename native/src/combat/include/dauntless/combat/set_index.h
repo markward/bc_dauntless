@@ -87,6 +87,10 @@ public:
     // index.
     bool visit_bucket(IndexKey set, IndexKey cls, bool (*visit)(void* ctx, IndexKey obj),
                       void* ctx) const;
+    // True if some object has more than one entry in `set` (any state): when
+    // false, no bucket of the set can list an object twice, so a reader can
+    // skip de-duplicating. False for an unknown set.
+    bool has_duplicates(IndexKey set) const;
     std::vector<IndexKey> distinct_live(IndexKey set, IndexKey cls) const;
 
     int64_t targeted_by(IndexKey set, int64_t target_id) const;
@@ -126,6 +130,7 @@ private:
         std::unordered_map<IndexKey, std::vector<uint64_t>> by_obj;
         std::unordered_map<IndexKey, std::set<uint64_t>> buckets;
         std::unordered_map<int64_t, int64_t> counts;
+        std::size_t dup_objs = 0;  // objects held by more than one entry
     };
     struct ObjInfo {
         bool is_ship = false;
@@ -134,6 +139,8 @@ private:
         std::vector<std::pair<IndexKey, int64_t>> held;  // (set, multiplicity), first-entry order
     };
 
+    static void link_entry(SetData& sd, IndexKey obj, uint64_t seq);
+    static void unlink_entry(SetData& sd, IndexKey obj, uint64_t seq);
     void bump(SetData& sd, int64_t target, int64_t delta);
     void hold(IndexKey obj, IndexKey set, int64_t delta);
     void drop_entry_contrib(SetData& sd, IndexKey set, IndexKey obj);

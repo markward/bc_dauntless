@@ -78,12 +78,14 @@ def ship_positions_in(pSet) -> tuple:
     transform-store call for the whole set instead of one per ship, for
     callers (engine.appc.perception.perceived_by) that walk every ship in a
     set once per call."""
+    from engine.appc.transform_store import NativeTransformStore, get_store
+    store = get_store()
+    if type(store) is NativeTransformStore:
+        return set_index.ship_positions_in(pSet)
     ships = ships_in(pSet)
     if not ships:
         return ()
-    from engine.appc.transform_store import get_store
-    positions = get_store().get_positions([s._xform for s in ships])
-    return tuple(zip(ships, positions))
+    return tuple(zip(ships, store.get_positions([s._xform for s in ships])))
 
 
 def nebulae_in(pSet) -> tuple:

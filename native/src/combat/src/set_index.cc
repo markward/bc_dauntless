@@ -53,6 +53,24 @@ void SetIndex::drop_entry_contrib(SetData& sd, IndexKey set, IndexKey obj) {
     hold(obj, set, -1);
 }
 
+void SetIndex::link_entry(SetData& sd, IndexKey obj, uint64_t seq) {
+    auto& v = sd.by_obj[obj];
+    v.push_back(seq);
+    if (v.size() == 2) ++sd.dup_objs;
+}
+
+void SetIndex::unlink_entry(SetData& sd, IndexKey obj, uint64_t seq) {
+    auto& v = sd.by_obj[obj];
+    if (v.size() == 2) --sd.dup_objs;
+    erase_value(v, seq);
+    if (v.empty()) sd.by_obj.erase(obj);
+}
+
+bool SetIndex::has_duplicates(IndexKey set) const {
+    auto si = sets_.find(set);
+    return si != sets_.end() && si->second.dup_objs != 0;
+}
+
 std::optional<IndexKey> SetIndex::add(IndexKey set, std::string_view ident, IndexKey obj,
                                       bool is_ship, int64_t target_id, int64_t obj_id) {
     if (objs_.count(obj)) {
@@ -72,8 +90,7 @@ std::optional<IndexKey> SetIndex::add(IndexKey set, std::string_view ident, Inde
         Entry& e = sd.entries[seq];
         replaced = e.obj;
         drop_entry_contrib(sd, set, e.obj);
-        erase_value(sd.by_obj[e.obj], seq);
-        if (sd.by_obj[e.obj].empty()) sd.by_obj.erase(e.obj);
+        unlink_entry(sd, e.obj, seq);
         for (auto& [cls, seqs] : sd.buckets) seqs.erase(seq);
         e.obj = obj;
         e.leaving = false;
@@ -82,7 +99,7 @@ std::optional<IndexKey> SetIndex::add(IndexKey set, std::string_view ident, Inde
         sd.entries[seq] = Entry{key, obj, false};
         sd.by_ident[key] = seq;
     }
-    sd.by_obj[obj].push_back(seq);
+    link_entry(sd, obj, seq);
     ObjInfo& oi = objs_[obj];
     oi.is_ship = is_ship;
     oi.target = target_id;
@@ -124,8 +141,7 @@ std::optional<IndexKey> SetIndex::remove(IndexKey set, std::string_view ident) {
     uint64_t seq = bi->second;
     IndexKey obj = sd.entries[seq].obj;
     drop_entry_contrib(sd, set, obj);
-    erase_value(sd.by_obj[obj], seq);
-    if (sd.by_obj[obj].empty()) sd.by_obj.erase(obj);
+    unlink_entry(sd, obj, seq);
     for (auto& [cls, seqs] : sd.buckets) seqs.erase(seq);
     sd.entries.erase(seq);
     sd.by_ident.erase(bi);
@@ -226,6 +242,14 @@ std::vector<IndexKey> SetIndex::distinct_live(IndexKey set, IndexKey cls) const 
     if (si == sets_.end()) return out;
     auto bi = si->second.buckets.find(cls);
     if (bi == si->second.buckets.end()) return out;
+    if (si->second.dup_objs == 0) {  // no object twice: nothing to de-duplicate
+        out.reserve(bi->second.size());
+        for (uint64_t seq : bi->second) {
+            const Entry& e = si->second.entries.at(seq);
+            if (!e.leaving) out.push_back(e.obj);
+        }
+        return out;
+    }
     std::set<IndexKey> seen;
     for (uint64_t seq : bi->second) {
         const Entry& e = si->second.entries.at(seq);

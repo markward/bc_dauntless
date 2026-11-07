@@ -323,6 +323,7 @@ def test_every_object_returning_binding_survives_a_collection_inside_it():
             pass
 
         ship = object.__new__(ShipClass)
+        ship._xform = _h.transform_alloc()  # ship_positions reads its position
         neb = object.__new__(Nebula)
         keep = FakeSet()  # a live set the member-returning bindings read
         _h.set_index_add(keep, "ship", ship, True, 7, -1)
@@ -333,6 +334,8 @@ def test_every_object_returning_binding_survives_a_collection_inside_it():
             "class_objects": (lambda: _h.set_index_class_objects(keep, ShipClass),
                               ShipClass),
             "ships": (lambda: _h.set_index_ships(keep), ShipClass),
+            "ship_positions": (lambda: [p[0] for p in _h.set_index_ship_positions(keep)],
+                               ShipClass),
             "nebulae": (lambda: _h.set_index_nebulae(keep), Nebula),
             "targeting": (lambda: _h.set_index_targeting(keep, 7), ShipClass),
             "sets_holding": (lambda: _h.set_index_sets_holding(ship), FakeSet),

@@ -129,3 +129,39 @@ def test_ship_positions_in_matches_individual_reads_in_order():
 def test_ship_positions_in_empty_set_is_empty():
     contact_index.reset()
     assert contact_index.ship_positions_in(SetClass()) == ()
+
+
+def test_ship_positions_in_is_one_native_call_with_unchanged_values(monkeypatch):
+    from engine.appc.transform_store import get_store
+    contact_index.reset()
+    pSet = SetClass()
+    ships = [_ship(n) for n in ("A", "B", "C")]
+    for i, s in enumerate(ships):
+        s.SetTranslateXYZ(i + 0.1, -2.5 * i, 7.0 / 3.0)
+        _add(pSet, s)
+    pSet.AddObjectToSet(ships[0], "AAgain")  # a duplicate entry
+
+    store = get_store()
+    reference = tuple(zip(ships, store.get_positions([s._xform for s in ships])))
+
+    def boom(self, handles):
+        raise AssertionError("the Python get_positions was called")
+
+    monkeypatch.setattr(type(store), "get_positions", boom)
+    got = contact_index.ship_positions_in(pSet)
+
+    assert got == reference
+    assert all(type(p) is tuple and all(type(v) is float for v in p)
+               for _, p in got)
+
+
+def test_ship_positions_in_stale_handle_raises_like_get_positions():
+    from engine.appc.transform_store import StaleHandleError, get_store
+    contact_index.reset()
+    pSet = SetClass()
+    s = _ship("Stale")
+    _add(pSet, s)
+    get_store().free(*s._xform)
+    import pytest
+    with pytest.raises(StaleHandleError):
+        contact_index.ship_positions_in(pSet)

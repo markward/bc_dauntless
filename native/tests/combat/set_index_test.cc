@@ -365,3 +365,27 @@ TEST(SetIndex, VisitBucketWalksWhatBucketListsAndStopsWhenAsked) {
     EXPECT_TRUE(ix.visit_bucket(S, CLS + 1, record, &none));  // unknown bucket
     EXPECT_TRUE(none.seen.empty());
 }
+
+TEST(SetIndex, HasDuplicatesFollowsObjectsHeldByMoreThanOneEntry) {
+    SetIndex ix = with_bucket();
+    EXPECT_FALSE(ix.has_duplicates(S));
+    put(ix, S, "a", A);
+    put(ix, S, "b", B);
+    EXPECT_FALSE(ix.has_duplicates(S));
+    put(ix, S, "a2", A);  // A under two identifiers
+    EXPECT_TRUE(ix.has_duplicates(S));
+    EXPECT_FALSE(ix.has_duplicates(S2));
+    put(ix, S, "a3", A);  // three entries: still one duplicated object
+    ix.remove(S, "a2");
+    EXPECT_TRUE(ix.has_duplicates(S));
+    ix.remove(S, "a3");
+    EXPECT_FALSE(ix.has_duplicates(S));
+    put(ix, S, "b2", B);
+    EXPECT_TRUE(ix.has_duplicates(S));
+    ix.add(S, "b2", C);  // overwrite: B is held once again
+    EXPECT_FALSE(ix.has_duplicates(S));
+    ix.add(S, "b", C);  // overwrite makes C held twice
+    EXPECT_TRUE(ix.has_duplicates(S));
+    ix.forget_set(S);
+    EXPECT_FALSE(ix.has_duplicates(S));
+}
