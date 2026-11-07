@@ -288,6 +288,11 @@ std::vector<IndexKey> SetIndex::reset() {
 
 std::vector<IndexKey> SetIndex::sets() const { return set_order_; }
 
+std::size_t SetIndex::entry_count(IndexKey set) const {
+    auto si = sets_.find(set);
+    return si == sets_.end() ? 0 : si->second.entries.size();
+}
+
 std::size_t SetIndex::entry_count() const {
     std::size_t n = 0;
     for (auto& [set, sd] : sets_) n += sd.entries.size();

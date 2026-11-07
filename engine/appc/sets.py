@@ -74,6 +74,10 @@ class SetEffectRoot:
         return "<SetEffectRoot %r>" % (self._set.GetName(),)
 
 
+# A removal door's pop default: tells "absent" from a member stored as None.
+_ABSENT = object()
+
+
 class SetClass(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
@@ -200,6 +204,14 @@ class SetClass(TGEventHandlerObject):
         pass
 
     def AddObjectToSet(self, obj, identifier: str) -> bool:
+        # The SDK always names a member with a string. Anything else is
+        # refused before any state changes: the native set index keys
+        # entries by string, so a non-str key in `_objects` would put the
+        # dict and the index out of step.
+        if not isinstance(identifier, str):
+            raise TypeError(
+                f"AddObjectToSet: identifier must be a str, not "
+                f"{type(identifier).__name__}")
         if hasattr(obj, "SetName"):
             obj.SetName(identifier)
         if hasattr(obj, "_containing_set"):
@@ -303,8 +315,10 @@ class SetClass(TGEventHandlerObject):
             self._clear_containing_set(obj)
         if self._non_torpedo.pop(name, None) is not None:
             proximity_cache.bump()  # after the handlers, at the index pop
-        removed = self._objects.pop(name, None)
-        set_index.on_removed(self, name)
+        removed = self._objects.pop(name, _ABSENT)
+        if removed is _ABSENT:
+            return None
+        set_index.on_removed(self, name)  # `removed` still holds it
         self._forget_in_proximity(removed)
         return removed
 
@@ -328,8 +342,10 @@ class SetClass(TGEventHandlerObject):
             self._clear_containing_set(obj)
         if self._non_torpedo.pop(name, None) is not None:
             proximity_cache.bump()  # after the handlers, at the index pop
-        removed = self._objects.pop(name, None)
-        set_index.on_removed(self, name)
+        removed = self._objects.pop(name, _ABSENT)
+        if removed is _ABSENT:
+            return
+        set_index.on_removed(self, name)  # `removed` still holds it
         self._forget_in_proximity(removed)
 
     def _forget_in_proximity(self, obj) -> None:
@@ -571,8 +587,17 @@ class SetClass(TGEventHandlerObject):
         # Answered by the native set index (engine/appc/set_index.py), which
         # the three membership doors keep in step with `_objects`.
         from engine.appc import set_index
+        audit = os.environ.get("DAUNTLESS_SET_INDEX_AUDIT") == "1"
+        if audit:
+            # Before the index is read: its members are borrowed, so a pop
+            # that bypassed the doors may have left a freed key behind.
+            held = set_index.entry_count(self)
+            if held != len(self._objects):
+                raise AssertionError(
+                    f"set index drift: set {self.GetName()!r} holds "
+                    f"{len(self._objects)} objects, the index {held} entries")
         found = set_index.class_objects(self, class_type)
-        if os.environ.get("DAUNTLESS_SET_INDEX_AUDIT") == "1":
+        if audit:
             scan = [o for o in self._objects.values() if isinstance(o, class_type)]
             if len(scan) != len(found) or any(a is not b for a, b in zip(scan, found)):
                 raise AssertionError(

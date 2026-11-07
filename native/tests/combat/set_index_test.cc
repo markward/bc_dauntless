@@ -217,6 +217,9 @@ TEST(SetIndex, ForgetSetAndResetReturnEveryReference) {
     ix.add(S2, "c", C, true, T);
     auto sorted = [](Keys k) { std::sort(k.begin(), k.end()); return k; };
     EXPECT_EQ(ix.entry_count(), 4u);
+    EXPECT_EQ(ix.entry_count(S), 3u);
+    EXPECT_EQ(ix.entry_count(S2), 1u);
+    EXPECT_EQ(ix.entry_count(999), 0u);
     EXPECT_EQ(sorted(ix.forget_set(S)), (Keys{A, A, B, S}));
     EXPECT_EQ(ix.entry_count(), 1u);
     EXPECT_FALSE(ix.has_set(S));

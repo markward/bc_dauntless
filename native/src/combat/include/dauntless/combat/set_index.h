@@ -66,6 +66,7 @@ public:
     std::vector<IndexKey> held_sets(IndexKey obj) const;
     std::size_t object_records() const { return objs_.size(); }
     std::size_t entry_count() const;  // entries across every set
+    std::size_t entry_count(IndexKey set) const;  // 0 for an unknown set
     // Every key whose reference is dropped, with multiplicity (one per entry's
     // object, plus the set key once per set).
     std::vector<IndexKey> forget_set(IndexKey set);

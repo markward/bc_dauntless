@@ -5383,6 +5383,12 @@ static py::object& bench_point_class() {
 //  - The only strong references are to bucket CLASSES (one per bucket),
 //    released when the set is forgotten. No cached tuples: one would keep the
 //    set <-> ship cycle (ship._containing_set) alive.
+//  - GC safety: any GC allocation (and any isinstance) can run a collection
+//    whose weakref callbacks forget and free other sets. So keys read from
+//    the core are turned into owned references with no Python allocation in
+//    between: an output list is allocated BEFORE the core is asked (appends
+//    only realloc its item array, which never collects), and members are
+//    INCREF'd into owned handles before any isinstance runs.
 // Heap-allocated and never destroyed: no static destructor runs Py_DECREF
 // after the interpreter is gone.
 namespace {
@@ -5448,34 +5454,55 @@ void watch(Host& h, py::handle set) {
     host().watch[s] = py::reinterpret_steal<py::object>(ref);
 }
 
+// Borrowed keys -> owned references, with no Python allocation: std::vector
+// growth is C++ and Py_INCREF allocates nothing.
+std::vector<py::object> own(const std::vector<Key>& keys) {
+    std::vector<py::object> out;
+    out.reserve(keys.size());
+    for (Key k : keys) out.push_back(py::reinterpret_borrow<py::object>(member(k)));
+    return out;
+}
+
+// Creates the bucket empty (the predicate only records the members: no
+// Python runs inside the core's loop), owns the members, then runs the
+// isinstance tests, which may run Python and collect.
 void create_bucket(Host& h, Key set, PyObject* cls) {
     auto [it, fresh] = h.classes.try_emplace(reinterpret_cast<Key>(cls), cls, 0);
     if (fresh) Py_INCREF(cls);
-    ++it->second.second;  // before the fill: a raising isinstance keeps refs whole
-    h.ix.create_bucket(set, reinterpret_cast<Key>(cls),
-                       [&](Key o) { return is_instance(member(o), cls); });
+    ++it->second.second;
+    py::object keep_cls = py::reinterpret_borrow<py::object>(cls);
+    std::vector<Key> keys;
+    h.ix.create_bucket(set, reinterpret_cast<Key>(cls), [&](Key o) {
+        keys.push_back(o);
+        return false;
+    });
+    for (const py::object& o : own(keys))
+        if (is_instance(o.ptr(), cls))
+            h.ix.set_bucket_membership(set, reinterpret_cast<Key>(cls), key_of(o), true);
 }
 
+// The caller owns `obj`; the classes are owned here before any isinstance.
+// A set forgotten meanwhile makes set_bucket_membership a no-op.
 void reassess(Host& h, Key set, PyObject* obj) {
-    for (Key cls : h.ix.bucket_classes(set))
-        h.ix.set_bucket_membership(set, cls, reinterpret_cast<Key>(obj),
-                                   is_instance(obj, member(cls)));
+    for (const py::object& cls : own(h.ix.bucket_classes(set)))
+        h.ix.set_bucket_membership(set, key_of(cls), reinterpret_cast<Key>(obj),
+                                   is_instance(obj, cls.ptr()));
+}
+
+// `produce` reads keys from the core; it runs only after the output list
+// exists, and nothing between it and the INCREFs can collect.
+template <class Produce>
+py::list objects(Produce produce) {
+    py::list out;
+    for (Key k : produce()) out.append(py::reinterpret_borrow<py::object>(member(k)));
+    return out;
 }
 
 py::tuple contact_view(Host& h, py::handle set, PyObject* cls) {
     Key s = key_of(set);
-    if (!h.ix.has_set(s) || cls == nullptr) return py::tuple();
-    std::vector<Key> keys = h.ix.distinct_live(s, reinterpret_cast<Key>(cls));
-    py::tuple out(keys.size());
-    for (std::size_t i = 0; i < keys.size(); ++i)
-        out[i] = py::reinterpret_borrow<py::object>(member(keys[i]));
-    return out;
-}
-
-py::list objects(const std::vector<Key>& keys) {
-    py::list out;
-    for (Key k : keys) out.append(py::reinterpret_borrow<py::object>(member(k)));
-    return out;
+    if (cls == nullptr) return py::tuple();
+    py::list out = objects([&] { return h.ix.distinct_live(s, reinterpret_cast<Key>(cls)); });
+    return py::tuple(out);  // every item already owned by `out`
 }
 }  // namespace si
 }  // namespace
@@ -11611,7 +11638,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               si::Key s = si::key_of(set);
               if (!h.ix.has_set(s)) return py::list();
               if (!h.ix.has_bucket(s, si::key_of(cls))) si::create_bucket(h, s, cls.ptr());
-              return si::objects(h.ix.bucket(s, si::key_of(cls)));
+              return si::objects([&] { return h.ix.bucket(s, si::key_of(cls)); });
           },
           "GetClassObjectList: a new list, in `_objects` order, duplicates kept.");
     m.def("set_index_ships",
@@ -11628,7 +11655,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Distinct Nebula members not leaving, first-entry order.");
     m.def("set_index_sets_holding",
           [](py::handle obj) {
-              return si::objects(si::host().ix.sets_holding(si::key_of(obj)));
+              auto& h = si::host();
+              return si::objects([&] { return h.ix.sets_holding(si::key_of(obj)); });
           },
           "Every set holding obj under an entry that is not leaving.");
     m.def("set_index_forget_set",
@@ -11644,6 +11672,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (si::Key s : h.ix.sets()) si::forget(h, s, dead);
           },
           "Drop every set (explicit only: a set's death forgets it anyway).");
+    m.def("set_index_entry_count",
+          [](py::handle set) { return si::host().ix.entry_count(si::key_of(set)); },
+          "Entries the index holds for `set` (len of its `_objects` when in step).");
     m.def("set_index_tracked",
           [] {
               auto& h = si::host();

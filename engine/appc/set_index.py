@@ -36,10 +36,13 @@ each set is held by a weakref whose callback forgets it, so a set and its
 members die as if the index did not exist. A reset tied to the mission swap
 would be wrong: HostController runs host_loop.reset_mission_state BEFORE
 reset_sdk_globals tears down against still-live sets, and tests/conftest.py
-keeps sets across tests. `forget_set` (a set deleted by a carry-over mission
-change) and `reset` remain as explicit calls. Members are borrowed, so a
-write that bypasses the doors can leave a dangling key: the writer guard is
-what makes that safe.
+keeps sets across tests. A set deleted by a carry-over mission change is not
+forgotten either: while anything still holds it, its lists must keep matching
+its `_objects`. `forget_set` and `reset` remain as explicit calls.
+
+Members are borrowed, so a write that bypasses the doors can leave a dangling
+key: the writer guard is what makes that safe, and the audit checks the
+entry count against `len(_objects)` before it reads the index.
 """
 from __future__ import annotations
 
@@ -99,8 +102,15 @@ def sets_holding(obj) -> list:
     return _h.set_index_sets_holding(obj)
 
 
+def entry_count(pSet) -> int:
+    """Entries the index holds for `pSet`: len(pSet._objects) when in step."""
+    return _h.set_index_entry_count(pSet)
+
+
 def forget_set(pSet) -> None:
-    """Forget `pSet` (deleted by a carry-over mission change)."""
+    """Forget `pSet` now. Explicit only: a set's death forgets it anyway, and
+    forgetting a set that is still alive makes its lists diverge from its
+    `_objects`."""
     _h.set_index_forget_set(pSet)
 
 
