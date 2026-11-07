@@ -57,8 +57,90 @@ def _game_and_sets():
     _set_current_game(game)
     App.g_kSetManager._sets.clear()
     yield
+    # The last side's world is finalised here, while the conditions' shared
+    # instances are still registered (and before the per-test reset).
+    _retire_previous_side()
     _set_current_game(None)
     App.g_kSetManager._sets.clear()
+
+
+def _retire_previous_side():
+    """Drop everything the previous side's world left behind, in the order
+    that lets it finalise cleanly.
+
+    * its sets, event handlers and condition groups (the per-test reset clears
+      the same tables): handlers and groups would hear this side's events,
+      and posting them allocates ids;
+    * its garbage, collected on a THROWAWAY id counter: a condition's teardown
+      allocates ids and would otherwise run inside this side at a
+      collector-timing-dependent point and shift every id after it;
+    * only then the SDK condition scripts' shared "internal instances" (one
+      per ship name in a module global, which a new condition would reuse with
+      the old verdict). Clearing them BEFORE the collection would make the old
+      conditions' finalisers raise KeyError on removing their own entry."""
+    from engine.appc import projectiles
+    from engine.appc.objects import ObjectGroup
+    from engine.core import ids
+    App.g_kSetManager._sets.clear()
+    App.g_kEventManager._broadcast_handlers.clear()
+    if hasattr(App.g_kEventManager, "_method_handlers"):
+        App.g_kEventManager._method_handlers.clear()
+    ObjectGroup._live.clear()
+    ObjectGroup._by_name.clear()
+    projectiles._active.clear()
+    projectiles._groups.clear()
+    projectiles._scan_mark_dirty()
+    from engine.appc import ai_driver
+    # The walker's module-level scratch lists hold the last walk's nodes, and
+    # the out-of-action slot the last ship.
+    ai_driver._ooa_cache[:] = [None, False]
+    for attr in ("_reached_this_tick_all", "_reached_this_tick", "_all",
+                 "_all_ids", "_pending_got_focus"):
+        scratch = getattr(ai_driver, attr, None)
+        if isinstance(scratch, (list, set, dict)):
+            scratch.clear()
+    # The id registry holds every TGObject strongly (the condition scripts'
+    # event wrappers among them, and through them the conditions); the
+    # per-test reset clears it too.
+    ids._registry.clear()
+    ids._weak_registry.clear()
+    side_counter = ids._counter
+    ids._counter = itertools.count(10 ** 9)
+    try:
+        for _ in range(3):
+            gc.collect()
+    finally:
+        ids._counter = side_counter
+    # Conditions that outlive the collection (the harness's instance-level
+    # wrappers keep a few reachable) give their reference back NOW, while the
+    # shared entry exists, and are told their finaliser has nothing to do.
+    mod = sys.modules.get("Conditions.ConditionIncomingTorps")
+    if mod is not None:
+        class _Retired:
+            def RemoveReference(self, *args):
+                pass
+        for obj in gc.get_objects():
+            if type(obj) is mod.ConditionIncomingTorps and not isinstance(
+                    obj.pInternal, _Retired):
+                obj.pInternal.RemoveReference(obj, obj.pCodeCondition)
+                obj.pInternal = _Retired()
+    for name, mod in list(sys.modules.items()):
+        if name.startswith("Conditions.") and isinstance(
+                getattr(mod, "g_dInternalInstances", None), dict):
+            mod.g_dInternalInstances.clear()
+
+
+def _launch_torpedo(pSet, announce=False):
+    """One hostile torpedo 100 GU ahead of Ours, closing at 50 GU/s."""
+    from engine.appc import projectiles
+    from engine.appc.math import TGPoint3
+    torp = projectiles.Torpedo()
+    torp.SetTranslateXYZ(0, 100, 0)
+    torp._velocity = TGPoint3(0, -50, 0)
+    projectiles.register(torp)
+    pSet.AddObjectToSet(torp, "Torp")
+    if announce:
+        projectiles._post_set_transition(torp, entered=True)
 
 
 def _world(target_y=400.0, torpedo=False):
@@ -70,25 +152,6 @@ def _world(target_y=400.0, torpedo=False):
         HullSubsystem, ShieldSubsystem, PhaserSystem, TorpedoSystem,
         TorpedoAmmoType, ImpulseEngineSubsystem, SensorSubsystem,
         WarpEngineSubsystem)
-    App.g_kSetManager._sets.clear()
-    # The previous side's broadcast / method handlers (a condition's torpedo
-    # or set listener) would still hear this side's events; the per-test
-    # reset clears the same two tables.
-    App.g_kEventManager._broadcast_handlers.clear()
-    if hasattr(App.g_kEventManager, "_method_handlers"):
-        App.g_kEventManager._method_handlers.clear()
-    # Condition scripts share an "internal instance" per (ship name, ...) in a
-    # module global; the previous side's would be reused with its old verdict.
-    for name, mod in list(sys.modules.items()):
-        if name.startswith("Conditions.") and isinstance(
-                getattr(mod, "g_dInternalInstances", None), dict):
-            mod.g_dInternalInstances.clear()
-    # Groups the previous side's conditions still hold would hear this set's
-    # membership events, and posting them allocates ids (the per-test reset
-    # does the same clearing).
-    from engine.appc.objects import ObjectGroup
-    ObjectGroup._live.clear()
-    ObjectGroup._by_name.clear()
     pSet = App.SetClass_Create()
     pSet.SetName("S")
     App.g_kSetManager._sets["S"] = pSet
@@ -129,15 +192,10 @@ def _world(target_y=400.0, torpedo=False):
     wp.SetTranslateXYZ(1500.0, 300.0, 0.0)
     if torpedo:
         from engine.appc import projectiles
-        from engine.appc.math import TGPoint3
         projectiles._active.clear()
         projectiles._groups.clear()
         projectiles._scan_mark_dirty()
-        torp = projectiles.Torpedo()
-        torp.SetTranslateXYZ(0, 100, 0)
-        torp._velocity = TGPoint3(0, -50, 0)
-        projectiles.register(torp)
-        pSet.AddObjectToSet(torp, "Torp")
+        _launch_torpedo(pSet)
     return ours, target
 
 
@@ -265,18 +323,7 @@ def _scene(build_tree, target_y=400.0, torpedo=False, actions=None,
 
     def scene(mp):
         from engine.appc.ship_motion import _step_ship_motion
-        # Garbage of the previous side whose finaliser allocates an id (a
-        # condition's teardown) would otherwise run inside this side, on its
-        # fresh counter, at a collector-timing-dependent point and shift
-        # every id after it. Collect it on a throwaway counter.
-        from engine.core import ids
-        side_counter = ids._counter
-        ids._counter = itertools.count(10 ** 9)
-        try:
-            for _ in range(3):
-                gc.collect()
-        finally:
-            ids._counter = side_counter
+        _retire_previous_side()
         from engine.appc.time_slice import g_kAIManager
         g_kAIManager._procs = []
         ours, target = _world(target_y, torpedo)
@@ -288,6 +335,8 @@ def _scene(build_tree, target_y=400.0, torpedo=False, actions=None,
             if i in actions:
                 actions[i](ours)
             if timed:
+                from engine.appc.planet import evaluate_proximity_checks
+                evaluate_proximity_checks()
                 g_kAIManager.tick((i + 1) / 60.0, (i + 1) / 60.0)
             ai_driver.tick_all_ai((i + 1) / 60.0)
             for s in ships:
@@ -314,48 +363,161 @@ def _blind(ours):
     ours._sensor_subsystem.SetCondition(10.0)
 
 
+def _repair_sensors(ours):
+    ours._sensor_subsystem.SetCondition(100.0)
+
+
 def _cripple(ours):
     ours._hull.SetCondition(50.0)
 
 
-#: name -> (builder, scene kwargs, minimum number of script Updates)
+def _repair_hull(ours):
+    ours._hull.SetCondition(1000.0)
+
+
+def _move_target(y):
+    def act(ours):
+        App.ObjectClass_GetObject(None, "Target").SetTranslateXYZ(0, y, 0)
+    return act
+
+
+def _torp_out(ours):
+    """The inbound torpedo is gone."""
+    from engine.appc import projectiles
+    projectiles.expire(projectiles._active[0])      # posts the exit event
+
+
+def _torp_in(ours):
+    """... and another one comes in."""
+    _launch_torpedo(ours.GetContainingSet(), announce=True)
+
+
+def _set_flag(node_name, value):
+    """Set the status of the first condition of the ConditionalAI `node_name`
+    in Ours' tree (the SDK's flag conditions are plain statuses)."""
+    def act(ours):
+        from engine.appc.ai import ArtificialIntelligence
+        todo = [ours.GetAI()]
+        while todo:
+            n = todo.pop()
+            if n.GetName() == node_name:
+                n._conditions[0].SetStatus(value)
+                return
+            todo.extend(getattr(n, "_ais", []) and [
+                c[1] if isinstance(c, tuple) else c for c in n._ais])
+            if getattr(n, "_contained_ai", None) is not None:
+                todo.append(n._contained_ai)
+        raise AssertionError("no node " + node_name)
+    return act
+
+
+def _both(*acts):
+    def act(ours):
+        for a in acts:
+            a(ours)
+    return act
+
+
+#: name -> (builder, scene kwargs). Each scene changes something at tick 120,
+#: 200 and 280 so the tree switches on and then off again.
 def _awake_cases():
     return {
-        "FedAttack": (CASES["compound/FedAttack"], dict(target_y=30.0,
-                                                         torpedo=True,
-                                                         timed=True), 30),
-        "NonFedAttack": (CASES["compound/NonFedAttack"],
-                         dict(target_y=30.0, torpedo=True, timed=True), 30),
-        "SweepPhasers": (CASES["parts/SweepPhasers"],
-                         dict(target_y=30.0, timed=True), 12),
+        "FedAttack": (CASES["compound/FedAttack"], dict(
+            target_y=30.0, torpedo=True, timed=True,
+            actions={120: _both(_move_target(900.0), _torp_out),
+                     200: _both(_move_target(30.0), _torp_in),
+                     280: _move_target(900.0)})),
+        "NonFedAttack": (CASES["compound/NonFedAttack"], dict(
+            target_y=30.0, torpedo=True, timed=True,
+            actions={120: _both(_move_target(900.0), _torp_out),
+                     200: _both(_move_target(30.0), _torp_in),
+                     280: _move_target(900.0)})),
+        "SweepPhasers": (CASES["parts/SweepPhasers"], dict(
+            target_y=30.0, timed=True,
+            actions={120: _set_flag("UseSideArcs", 1),
+                     200: _set_flag("UseSideArcs", 0),
+                     280: _set_flag("UseSideArcs", 1)})),
         "EvadeTorps": (_compound("AI.Compound.Parts.EvadeTorps", None,
-                                 {"AvoidTorps": 1}),
-                       dict(target_y=30.0, torpedo=True, timed=True), 20),
+                                 {"AvoidTorps": 1}), dict(
+            target_y=30.0, torpedo=True, timed=True,
+            actions={120: _torp_out, 200: _torp_in, 280: _torp_out})),
         "WarpBeforeDeath": (_compound("AI.Compound.Parts.WarpBeforeDeath",
-                                      {"WarpOutBeforeDying": 1}),
-                            dict(actions={150: _cripple}, timed=True), 2),
-        "NoSensorsEvasive": (CASES["parts/NoSensorsEvasive"],
-                             dict(actions={150: _blind}, timed=True), 4),
+                                      {"WarpOutBeforeDying": 1}), dict(
+            timed=True, actions={120: _cripple, 200: _repair_hull,
+                                 280: _cripple})),
+        "NoSensorsEvasive": (CASES["parts/NoSensorsEvasive"], dict(
+            timed=True, actions={120: _blind, 200: _repair_sensors,
+                                 280: _blind})),
     }
+
+
+def _tree_movement(rec):
+    """What the recorded run shows the tree doing, from the call log and the
+    per-tick node state:
+
+    * ``updates``: script Updates;
+    * ``edges`` / ``deactivations``: real changes of a node's
+      ``_is_active_in_tree`` after tick 0 (the first walk's activation), False
+      to True and True to False respectively (SetActive / SetInactive are also
+      called on every walk, so call counts say nothing);
+    * ``verdicts``: distinct EvalFunc results;
+    * ``switched``: nodes whose ``_current_child`` (a priority list's
+      dispatched child) took two or more values;
+    * ``focus_moves``: ticks where the set of focused nodes changed."""
+    updates = sum(1 for log, _s in rec.ticks for e in log
+                  if e[0] == "call" and e[1] == "script.Update")
+    verdicts = {e[3] for e in rec.log() if e[0] == "ret" and e[1] == "eval"}
+    edges = deactivations = focus_moves = 0
+    children = {}
+    prev_active = {}
+    prev_focus = None
+    for t, (_log, snap) in enumerate(rec.ticks):
+        focus = set()
+        for sname, ship in snap["ships"].items():
+            for nid, st in ship["nodes"].items():
+                key = (sname, nid)
+                act = st["_is_active_in_tree"]
+                if t >= 1 and key in prev_active and prev_active[key] != act:
+                    edges += 1
+                    deactivations += not act
+                prev_active[key] = act
+                cur = st["_current_child"]
+                if cur is not None and cur != awd._ABSENT:
+                    children.setdefault(key, set()).add(cur)
+                if st["_has_focus"] is True or st["_has_focus"] == 1:
+                    focus.add(key)
+        if t >= 1 and prev_focus is not None and focus != prev_focus:
+            focus_moves += 1
+        prev_focus = focus
+    return {"updates": updates, "edges": edges,
+            "deactivations": deactivations, "verdicts": len(verdicts),
+            "switched": sorted(n for n, c in children.items() if len(c) >= 2),
+            "focus_moves": focus_moves}
 
 
 @pytest.mark.parametrize("name", sorted(_awake_cases()))
 def test_awake_scene_walks_identically(name):
-    build, kw, min_updates = _awake_cases()[name]
+    build, kw = _awake_cases()[name]
     rec = awd.run_walk_diff(_scene(build, **kw), AWAKE_TICKS,
                             warm_ticks=AWAKE_TICKS)
-    calls = rec.calls()
-    assert calls["script.Update"] >= min_updates, (name, dict(calls))
-    # The tree switched state: a node was activated and one deactivated or
-    # lost focus, beyond the first-tick activation.
-    assert calls["node.SetActive"] >= 1, dict(calls)
-    if name.startswith("Fed") or name.startswith("NonFed"):
-        assert calls["eval"] >= 6, dict(calls)      # conditionals flipped
-    if name in ("WarpBeforeDeath", "NoSensorsEvasive"):
-        # The midway change flipped a conditional: the eval ran again with a
-        # different verdict.
-        evals = [e for e in rec.log() if e[0] == "ret" and e[1] == "eval"]
-        assert len({e[3] for e in evals}) >= 2, evals[:6]
+    awake = _tree_movement(rec)
+    # The same tree in the static scene (400 GU target, nothing happening),
+    # for the same number of ticks, on the Python side.
+    static = _tree_movement(awd.run_side(_scene(build), AWAKE_TICKS,
+                                         native=False))
+    detail = (name, awake, static)
+    if name == "SweepPhasers":
+        # PhaserSweep polls every 0.3 s whenever it has focus, in the static
+        # scene too, so its Update count cannot rise; the switch between the
+        # side-arc and plain sweep is what this scene adds.
+        assert awake["updates"] >= static["updates"], detail
+    else:
+        assert awake["updates"] >= max(2 * static["updates"],
+                                       static["updates"] + 3), detail
+    assert awake["edges"] >= 1, detail
+    assert awake["deactivations"] >= 1, detail
+    assert awake["verdicts"] >= 2 or awake["switched"], detail
+    assert awake["focus_moves"] >= 2, detail      # focus moved between nodes
 
 
 # -- guard: every AI module a smoke test touches has a case ------------------
