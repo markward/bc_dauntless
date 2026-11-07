@@ -201,7 +201,16 @@ def _music_sound_adapter(path, looping=True):
                 s.SetLooping(1 if loop else 0)
             self._handle = s.Play()
         def SetVolume(self, gain):
-            self._snd.SetVolume(gain)
+            # The PLAYING stream's gain, never the shared TGSound's.
+            # TGSound.SetVolume is the gain the NEXT Play() launches at
+            # (minor_contact relies on that), so ramping through it made
+            # every crossfade inaudible, and a track faded out to 0 launched
+            # silent the next time the state machine came back to it.
+            # SetGain keeps the Music category volume (native set_gain
+            # multiplies it in).
+            h = self._handle
+            if h is not None:
+                h.SetGain(gain)
         def Stop(self):
             self._snd.Stop()
         @property

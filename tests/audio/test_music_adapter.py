@@ -35,8 +35,12 @@ class _FakeSound:
     def Play(self):
         self.played = True
         class _H:
+            gains = []
             def is_live(self): return True
-        return _H()
+            def SetGain(self, g): self.gains.append(g)
+        self.handle = _H()
+        self.handle.gains = []
+        return self.handle
 
 
 class _FakeManager:
@@ -117,3 +121,26 @@ def test_an_unloadable_file_yields_None_rather_than_a_dead_stream(monkeypatch):
 
     monkeypatch.setattr(tg, "TGSoundManager", _NoneMgr, raising=True)
     assert host_loop._music_sound_adapter("sfx/Music/missing.mp3") is None
+
+
+def test_set_volume_drives_the_playing_stream(monkeypatch):
+    """The crossfade ramps call SetVolume on a stream that is ALREADY playing.
+    TGSound.SetVolume only sets the gain the NEXT Play() launches at, so going
+    through it made every fade inaudible: both tracks at full volume for the
+    whole fade, then a hard cut. The ramp must reach the live handle."""
+    _patch(monkeypatch)
+    snd = host_loop._music_sound_adapter("sfx/Music/a.mp3")
+    snd.SetVolume(0.25)
+    snd.SetVolume(0.75)
+    assert snd._snd.handle.gains == [0.25, 0.75]
+
+
+def test_set_volume_leaves_the_shared_sound_launch_gain_alone(monkeypatch):
+    """LoadSound hands back the same TGSound for a path every time. Writing the
+    ramp into its launch gain left a faded-out track at 0, so the next time
+    the state machine came back to it (combat over, ambient again) it
+    launched silent."""
+    _patch(monkeypatch)
+    snd = host_loop._music_sound_adapter("sfx/Music/a.mp3")
+    snd.SetVolume(0.0)
+    assert snd._snd.gain is None
