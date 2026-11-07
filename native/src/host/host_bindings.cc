@@ -6562,6 +6562,254 @@ void read_all(Reads& r, PyObject* inst, PyObject* ship, double psr, bool psr_ok)
 }  // namespace avoid
 }  // namespace
 
+// ── IsTypeOf, answered natively (engine/appc/objects.py, subsystems.py) ─────
+// Two stock bodies, each one call from its Python function; the answers are
+// the Python bodies' (int 0/1, the same exceptions).
+//  * is_type_of(obj, cls, cache): ObjectClass.IsTypeOf. `cache` is the
+//    Python module's own memo dict (objects._ISTYPEOF_CACHE), keyed
+//    (type(obj), cls) and emptied when object_types._GENERATION moves, as the
+//    Python body did. A cls that is not an exact int or a type takes the
+//    uncached resolve_class path.
+//  * subsystem_is_type_of(obj, cls): ShipSubsystem.IsTypeOf. The mapping
+//    subsystem_class_for_ct(cls) is memoised here only for an exact-int cls,
+//    only while the module's function is the one imported at first use, and
+//    only against the table object that was cached when it was memoised
+//    (subsystem_types._CT_TABLE_CACHE, a tuple built once: a replaced table
+//    empties the memo). The isinstance test runs every call.
+namespace {
+namespace istype {
+
+struct Host {
+    PyObject* object_types;     // engine.appc.object_types
+    PyObject* s_GENERATION;
+    PyObject* s_resolve_class;
+    PyObject* subsystem_types;  // engine.appc.subsystem_types
+    PyObject* s_class_for_ct;   // "subsystem_class_for_ct"
+    PyObject* s_table;          // "_CT_TABLE_CACHE"
+    PyObject* class_for_ct_orig;  // the function at first use
+    PyObject* ct_memo;          // int tag -> class / tuple / None
+    PyObject* table_seen;       // the table the memo belongs to (held)
+    PyObject* zero;
+    PyObject* one;
+    long long gen_seen;
+};
+
+Host& host() {
+    static Host* h = [] {
+        auto* p = new Host();
+        auto need = [](PyObject* o) {
+            if (o == nullptr) throw py::error_already_set();
+            return o;
+        };
+        p->object_types = need(PyImport_ImportModule("engine.appc.object_types"));
+        p->s_GENERATION = need(PyUnicode_InternFromString("_GENERATION"));
+        p->s_resolve_class = need(PyUnicode_InternFromString("resolve_class"));
+        p->subsystem_types = need(PyImport_ImportModule("engine.appc.subsystem_types"));
+        p->s_class_for_ct = need(PyUnicode_InternFromString("subsystem_class_for_ct"));
+        p->s_table = need(PyUnicode_InternFromString("_CT_TABLE_CACHE"));
+        p->class_for_ct_orig = need(PyObject_GetAttr(p->subsystem_types, p->s_class_for_ct));
+        p->ct_memo = need(PyDict_New());
+        p->zero = need(PyLong_FromLong(0));
+        p->one = need(PyLong_FromLong(1));
+        p->table_seen = nullptr;
+        p->gen_seen = -1;
+        return p;
+    }();
+    return *h;
+}
+
+PyObject* verdict(int r) {
+    PyObject* v = r ? host().one : host().zero;
+    Py_INCREF(v);
+    return v;
+}
+
+// `1 if isinstance(c, type) and isinstance(obj, c) else 0`, c from resolve_class.
+PyObject* resolved_verdict(PyObject* obj, PyObject* cls) {
+    auto& h = host();
+    PyObject* c = PyObject_CallMethodOneArg(h.object_types, h.s_resolve_class, cls);
+    if (c == nullptr) return nullptr;
+    int r = 0;
+    if (PyType_Check(c)) {
+        r = PyObject_IsInstance(obj, c);
+        if (r < 0) {
+            Py_DECREF(c);
+            return nullptr;
+        }
+    }
+    Py_DECREF(c);
+    return verdict(r);
+}
+
+PyObject* object_is_type_of(PyObject* obj, PyObject* cls, PyObject* cache) {
+    auto& h = host();
+    if (!PyLong_CheckExact(cls) && !PyType_Check(cls)) return resolved_verdict(obj, cls);
+    PyObject* g = PyObject_GetAttr(h.object_types, h.s_GENERATION);
+    if (g == nullptr) return nullptr;
+    const long long gen = PyLong_AsLongLong(g);
+    Py_DECREF(g);
+    if (gen == -1 && PyErr_Occurred()) return nullptr;
+    if (gen != h.gen_seen) {
+        PyDict_Clear(cache);
+        h.gen_seen = gen;
+    }
+    PyObject* key = PyTuple_Pack(2, reinterpret_cast<PyObject*>(Py_TYPE(obj)), cls);
+    if (key == nullptr) return nullptr;
+    PyObject* hit = PyDict_GetItemWithError(cache, key);
+    if (hit != nullptr) {
+        Py_INCREF(hit);
+        Py_DECREF(key);
+        return hit;
+    }
+    if (PyErr_Occurred()) {
+        Py_DECREF(key);
+        return nullptr;
+    }
+    PyObject* ans = resolved_verdict(obj, cls);
+    if (ans == nullptr) {
+        Py_DECREF(key);
+        return nullptr;
+    }
+    // resolve_class may populate the registry (a new generation): then the
+    // answer is not cached.
+    PyObject* g2 = PyObject_GetAttr(h.object_types, h.s_GENERATION);
+    if (g2 == nullptr) {
+        Py_DECREF(key);
+        Py_DECREF(ans);
+        return nullptr;
+    }
+    const long long gen2 = PyLong_AsLongLong(g2);
+    Py_DECREF(g2);
+    if (gen2 == -1 && PyErr_Occurred()) {
+        Py_DECREF(key);
+        Py_DECREF(ans);
+        return nullptr;
+    }
+    if (gen2 == gen && PyDict_SetItem(cache, key, ans) < 0) {
+        Py_DECREF(key);
+        Py_DECREF(ans);
+        return nullptr;
+    }
+    Py_DECREF(key);
+    return ans;
+}
+
+PyObject* subsystem_is_type_of(PyObject* obj, PyObject* cls) {
+    auto& h = host();
+    const bool exact = PyLong_CheckExact(cls);
+    PyObject* fn = PyObject_GetAttr(h.subsystem_types, h.s_class_for_ct);
+    if (fn == nullptr) return nullptr;
+    const bool stock_fn = fn == h.class_for_ct_orig;
+    PyObject* table = nullptr;
+    PyObject* target = nullptr;
+    if (exact && stock_fn) {
+        table = PyObject_GetAttr(h.subsystem_types, h.s_table);
+        if (table == nullptr) {
+            Py_DECREF(fn);
+            return nullptr;
+        }
+        if (table != Py_None && table == h.table_seen) {
+            target = PyDict_GetItemWithError(h.ct_memo, cls);  // borrowed
+            if (target != nullptr) {
+                Py_INCREF(target);
+            } else if (PyErr_Occurred()) {
+                Py_DECREF(fn);
+                Py_DECREF(table);
+                return nullptr;
+            }
+        }
+    }
+    if (target == nullptr) {
+        target = PyObject_CallOneArg(fn, cls);
+        if (target == nullptr) {
+            Py_DECREF(fn);
+            Py_XDECREF(table);
+            return nullptr;
+        }
+        if (exact && stock_fn) {
+            // The call may have built the table: read it again.
+            Py_XDECREF(table);
+            table = PyObject_GetAttr(h.subsystem_types, h.s_table);
+            if (table == nullptr) {
+                Py_DECREF(fn);
+                Py_DECREF(target);
+                return nullptr;
+            }
+            if (table != Py_None) {
+                if (table != h.table_seen) {
+                    PyDict_Clear(h.ct_memo);
+                    Py_INCREF(table);
+                    Py_XSETREF(h.table_seen, table);
+                }
+                if (PyDict_SetItem(h.ct_memo, cls, target) < 0) {
+                    Py_DECREF(fn);
+                    Py_DECREF(table);
+                    Py_DECREF(target);
+                    return nullptr;
+                }
+            }
+        }
+    }
+    Py_DECREF(fn);
+    Py_XDECREF(table);
+    if (target == Py_None) {
+        Py_DECREF(target);
+        return verdict(0);
+    }
+    int r = PyObject_IsInstance(obj, target);
+    Py_DECREF(target);
+    if (r < 0) return nullptr;
+    return verdict(r);
+}
+
+PyObject* is_type_of_fn(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 3 || !PyDict_Check(args[2])) {
+        PyErr_SetString(PyExc_TypeError, "is_type_of(obj, cls, cache)");
+        return nullptr;
+    }
+    try {
+        return object_is_type_of(args[0], args[1], args[2]);
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+}
+
+PyObject* subsystem_is_type_of_fn(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 2) {
+        PyErr_SetString(PyExc_TypeError, "subsystem_is_type_of(obj, cls)");
+        return nullptr;
+    }
+    try {
+        return subsystem_is_type_of(args[0], args[1]);
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+}
+
+PyMethodDef is_type_of_def = {
+    "is_type_of",
+    reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&is_type_of_fn)),
+    METH_FASTCALL, "is_type_of(obj, cls, cache): ObjectClass.IsTypeOf."};
+PyMethodDef subsystem_is_type_of_def = {
+    "subsystem_is_type_of",
+    reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&subsystem_is_type_of_fn)),
+    METH_FASTCALL, "subsystem_is_type_of(obj, cls): ShipSubsystem.IsTypeOf."};
+
+}  // namespace istype
+}  // namespace
+
 // ── SelectTarget's candidate rating (engine/appc/ai_optimized.py) ───────────
 // combat_ai_target_rating stands in for SelectTarget.GetTargetRating
 // (AI/Preprocessors.py:1481-1608) for a stock instance (the caller decided
@@ -7100,7 +7348,7 @@ struct Host {
     PyObject *s_GetSubsystems, *s_dTargetSubsystemRating, *s_keys, *s_items, *s_remove;
     PyObject *s_iTargetSubsystemUpdateNum, *s_iNumTargetSubsystemsToUpdate, *s_g_kSystemWrapper;
     PyObject *s_GetRandomNumber, *s_GetTargetSubsystem, *s_IsCritical, *s_IsHittableFromLocation;
-    PyObject *s_IsTypeOf, *s_ct_rows[6], *s_GetConditionPercentage, *s_float, *s_list;
+    PyObject *s_IsTypeOf, *s_SubsystemIsTypeOf, *s_ct_rows[6], *s_GetConditionPercentage, *s_float, *s_list;
     PyObject *s_GetNumAmmoTypes, *s_GetNumAvailableTorpsToType, *s_GetAmmoType;
     PyObject *s_GetAmmoTypeNumber, *s_SetAmmoType, *s_Length, *s_GetPowerCost;
     PyObject *s_GetGuidanceLifetime, *s_GetMaxAngularAccel, *s_FuzzyLogic_BreakIntoSets;
@@ -7108,7 +7356,7 @@ struct Host {
     PyObject *int_zero, *float_zero, *int_one, *float_four, *float_one_and_half, *float_quarter;
     // ai_native.reader_contract(name): one mirrored body each.
     PyObject *reads_loc, *reads_rot, *reads_vel, *reads_acc, *reads_predict, *reads_position,
-        *reads_direction, *reads_objid, *reads_getship;
+        *reads_direction, *reads_objid, *reads_getship, *reads_subtype;
     PyObject *point_cls, *matrix_cls;  // engine.appc.math's, as the mirrored bodies build
     PyObject* note_args;               // ("fire", "surface")
 };
@@ -7248,6 +7496,7 @@ Host& host() {
         p->s_IsCritical = intern("IsCritical");
         p->s_IsHittableFromLocation = intern("IsHittableFromLocation");
         p->s_IsTypeOf = a.s_IsTypeOf;
+        p->s_SubsystemIsTypeOf = intern("IsTypeOf@subsystem");
         // RateSubsystemForTargeting's table, in its order (fire_system_rating).
         const char* ct[6] = {"CT_WEAPON_SYSTEM",       "CT_WEAPON",
                              "CT_SHIELD_SUBSYSTEM",    "CT_CLOAKING_SUBSYSTEM",
@@ -7285,6 +7534,7 @@ Host& host() {
         PyObject* ai_native = a.ai_native;
         p->reads_objid = rating::contract(ai_native, {p->s_GetObjID});
         p->reads_getship = rating::contract(ai_native, {p->s_GetShip});
+        p->reads_subtype = rating::contract(ai_native, {p->s_SubsystemIsTypeOf});
         p->reads_loc = rating::contract(ai_native, {p->s_GetWorldLocation});
         p->reads_rot = rating::contract(ai_native, {p->s_GetWorldRotation});
         p->reads_vel = rating::contract(ai_native, {p->s_GetVelocityTG});
@@ -8202,6 +8452,18 @@ void targetable_subsystems(const Ctx& c, PyObject* sub, PyObject* out) {
     });
 }
 
+// sub.IsTypeOf(tag), truthy. Direct when sub's type resolves IsTypeOf to
+// ShipSubsystem's own body and its instance dict shadows nothing; the
+// attribute call (a patch or an override is seen) otherwise.
+bool subsystem_is_type_of(PyObject* sub, PyObject* tag) {
+    auto& h = host();
+    if (rating::reads_stock(sub, h.reads_subtype)) {
+        py::object r = own(istype::subsystem_is_type_of(sub, tag));
+        return truth(r.ptr());
+    }
+    return truth(call1(sub, h.s_IsTypeOf, tag).ptr());
+}
+
 // FireScript.RateSubsystemForTargeting
 py::object rate_subsystem(const Ctx& c, PyObject* ours, PyObject* sub) {
     auto& h = host();
@@ -8233,7 +8495,7 @@ py::object rate_subsystem(const Ctx& c, PyObject* ours, PyObject* sub) {
     for (int i = 0; i < cb::kFireSystemRatingRows; ++i) types[i] = attr(c.app.ptr(), h.s_ct_rows[i]);
     int match = -1;
     for (int i = 0; i < cb::kFireSystemRatingRows && match < 0; ++i)
-        if (truth(call1(sub, h.s_IsTypeOf, types[i].ptr()).ptr())) match = i;
+        if (subsystem_is_type_of(sub, types[i].ptr())) match = i;
     // The factor table: -3.0 * self.bDisableFirst
     py::object disable_first = attr(c.self, h.s_bDisableFirst);
     cb::SubsystemRatingInputs in{};
@@ -15163,6 +15425,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                  py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                      &g_transform_point_def, nullptr,
                      m.attr("__name__").ptr())));
+    m.add_object("is_type_of",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &istype::is_type_of_def, nullptr, m.attr("__name__").ptr())));
+    m.add_object("subsystem_is_type_of",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &istype::subsystem_is_type_of_def, nullptr, m.attr("__name__").ptr())));
     m.add_object("point_copy",
                  py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                      &g_point_copy_def, nullptr,

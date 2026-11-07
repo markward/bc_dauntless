@@ -329,6 +329,10 @@ def _take_reader_bodies() -> dict:
         # of pCodeAI.GetShip() only for this body (Task 5).
         "GetShip": ArtificialIntelligence.__dict__["GetShip"],
         "GetObjID": TGObject.__dict__["GetObjID"],             # `_obj_id`
+        # ShipSubsystem's own IsTypeOf (the native FireScript answers it
+        # directly): "<attribute>@<alias>" is the attribute `IsTypeOf` with a
+        # second body, so two readers can mirror different ones.
+        "IsTypeOf@subsystem": ShipSubsystem.__dict__["IsTypeOf"],
         # An isinstance on the type: its answer depends on the type alone.
         "IsTypeOf": ObjectClass.__dict__["IsTypeOf"],
         "GetWorldLocation": ObjectClass.__dict__["GetWorldLocation"],  # store
@@ -358,7 +362,7 @@ def reader_contract(*names) -> tuple:
     contract = _contracts.get(names)
     if contract is None:
         contract = _contracts[names] = tuple(
-            (n, _READER_BODIES[n]) for n in names)
+            (n.split("@")[0], _READER_BODIES[n]) for n in names)
     return contract
 
 

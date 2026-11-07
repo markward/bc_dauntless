@@ -139,6 +139,9 @@ _NOW_NATIVE = frozenset({
     "ChooseTargetSubsystem", "ChooseTorpType", "GetTargetableSubsystems",
     "RateSubsystemForTargeting", "PickTargetSubsystemFromList",
     "GetChildTargets",
+    # IsTypeOf (phase 6 AI part 3, Task 4): a stock subsystem's is answered
+    # by the native body, so the Python function is not called.
+    "IsTypeOf",
 })
 _RECORDED = _RECORDED | _NOW_NATIVE
 

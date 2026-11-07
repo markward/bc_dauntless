@@ -515,8 +515,11 @@ def _decide_store(kind) -> bool:
     `transform_point` binding and no longer calls get_position), so a patched
     get_store is what diverts it; `get_position` stays guarded because the
     scan mirrors the position the store holds and a patched reader is a mod
-    override the mirror would not see: get_position for all; get_rotation_col for select's forward,
-    get_rotation for fire's rotations."""
+    override the mirror would not see.
+
+    Each kind guards the readers its mirror stands in for: get_position for
+    all; get_rotation_col for select's forward; get_rotation for fire's
+    rotations."""
     snap = _AVOID_SURFACE
     get_store = snap["objects"].__dict__.get("get_store")
     if not (get_store is snap["get_store"]
