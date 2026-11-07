@@ -52,6 +52,21 @@ def test_combat_stress_gated():
     native_ai_ab.assert_native(stats, "fire")
 
 
+def test_k1_gameloop_ai_with_the_memos_off():
+    """The host memos forced off (DAUNTLESS_AI_MEMOS=0: what a Python other
+    than 3.11, or a failed memo self-test, runs): every gate decided in
+    Python every call, and the fight still byte-identical."""
+    py, native, stats, py_stats, memos = native_ai_ab.run_ab_env(
+        "k1_gameloop_ai", {"DAUNTLESS_AI_MEMOS": "0"})
+    assert memos["enabled"] is False and memos["forced_off"] is True, memos
+    assert py == native, native_ai_ab.first_difference(py, native)
+    native_ai_ab.assert_no_native(py_stats)
+    native_ai_ab.assert_native(stats, "avoid")
+    native_ai_ab.assert_native(stats, "select")
+    native_ai_ab.assert_native(stats, "fire")
+    _assert_choices(stats, "subsystem_choice", "torp_choice", "torp_rated")
+
+
 def test_cloak_attack():
     # No `select` assertion: the scene has ONE target, and FindGoodTarget
     # returns a lone candidate unrated (AI/Preprocessors.py:1462-1464), so

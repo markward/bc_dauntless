@@ -5590,6 +5590,355 @@ bool contact_nonempty(Host& h, Key set) {
 }  // namespace si
 }  // namespace
 
+// ── The AI memos: version guard, self-test and switch ───────────────────────
+// The native AI keeps three memos of verdicts Python decided (`stockmemo`,
+// `surfacememo` and readers' remembered stock types) and one fast walk
+// (rating's crew scan). They read CPython 3.11 internals: a dict's
+// ma_version_tag (deprecated in 3.12, gone in 3.14), _PyDict_HasOnlyStringKeys
+// (internal from 3.13) and a type's tp_version_tag. Compiled for any other
+// Python they are OFF: every query answers "ask Python" (None, a miss, not
+// stored), never a stale yes, and every native path stays exact, only
+// slower. On 3.11 a self-test runs once, at the first query, and turns them
+// off if a dict insert / replace / delete or a class setattr (seen on a
+// subclass too) does not move the tag the memo keys on, or if the instance
+// dict the memos read is not the one attribute lookup uses. Forced off by
+// DAUNTLESS_AI_MEMOS=0 (read once, at that first query) or by
+// ai_memo_force_off(True) (tests: the exactness tests run both ways).
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030C0000
+#define DAUNTLESS_AI_MEMOS_COMPILED 1
+#else
+#define DAUNTLESS_AI_MEMOS_COMPILED 0
+#endif
+
+namespace {
+namespace aimemo {
+
+struct State {
+    bool ready = false;      // the self-test has run
+    bool self_test = false;  // ... and passed
+    bool env_off = false;    // DAUNTLESS_AI_MEMOS=0
+    bool forced_off = false; // ai_memo_force_off(True)
+};
+
+State& state() {
+    static State s;
+    return s;
+}
+
+#if DAUNTLESS_AI_MEMOS_COMPILED
+unsigned long long dict_tag(PyObject* d) {
+    return reinterpret_cast<PyDictObject*>(d)->ma_version_tag;
+}
+bool only_str_keys(PyObject* d) { return _PyDict_HasOnlyStringKeys(d) != 0; }
+#endif
+
+// The probes. Owned references are released on every path; any Python
+// error fails the test (and is cleared).
+bool run_self_test() {
+#if DAUNTLESS_AI_MEMOS_COMPILED
+    struct Own {
+        PyObject* p;
+        ~Own() { Py_XDECREF(p); }
+    };
+    Own key{PyUnicode_InternFromString("_ai_memo_probe")};
+    Own one{PyLong_FromLong(1)}, two{PyLong_FromLong(2)};
+    Own d{PyDict_New()};
+    if (!key.p || !one.p || !two.p || !d.p) return false;
+    // 1. A dict's tag moves on insert, replace and delete.
+    const unsigned long long t0 = dict_tag(d.p);
+    if (PyDict_SetItem(d.p, key.p, one.p) < 0) return false;
+    const unsigned long long t1 = dict_tag(d.p);
+    if (PyDict_SetItem(d.p, key.p, two.p) < 0) return false;
+    const unsigned long long t2 = dict_tag(d.p);
+    if (PyDict_DelItem(d.p, key.p) < 0) return false;
+    const unsigned long long t3 = dict_tag(d.p);
+    if (t0 == t1 || t1 == t2 || t2 == t3) return false;
+    // ... and the str-keys test the crew walk relies on answers both ways.
+    if (PyDict_SetItem(d.p, key.p, one.p) < 0 || !only_str_keys(d.p)) return false;
+    if (PyDict_SetItem(d.p, one.p, one.p) < 0 || only_str_keys(d.p)) return false;
+    // 2. A class setattr moves the class's tag and its subclass's.
+    Own base_ns{PyDict_New()}, sub_ns{PyDict_New()};
+    if (!base_ns.p || !sub_ns.p) return false;
+    Own base{PyObject_CallFunction(reinterpret_cast<PyObject*>(&PyType_Type), "s(O)O",
+                                   "_AiMemoProbe", reinterpret_cast<PyObject*>(&PyBaseObject_Type),
+                                   base_ns.p)};
+    if (!base.p) return false;
+    Own sub{PyObject_CallFunction(reinterpret_cast<PyObject*>(&PyType_Type), "s(O)O",
+                                  "_AiMemoProbeSub", base.p, sub_ns.p)};
+    if (!sub.p) return false;
+    auto* bt = reinterpret_cast<PyTypeObject*>(base.p);
+    auto* st = reinterpret_cast<PyTypeObject*>(sub.p);
+    const unsigned int b0 = k0_type_tag(bt), s0 = k0_type_tag(st);
+    if (b0 == 0 || s0 == 0) return false;
+    if (PyObject_SetAttr(base.p, key.p, one.p) < 0) return false;
+    const unsigned int b1 = k0_type_tag(bt), s1 = k0_type_tag(st);
+    if (b1 == 0 || s1 == 0 || b1 == b0 || s1 == s0) return false;
+    // 3. The instance dict the memos read is the one attribute lookup uses.
+    Own inst{PyObject_CallNoArgs(sub.p)};
+    if (!inst.p || PyObject_SetAttr(inst.p, key.p, two.p) < 0) return false;
+    Own real{PyObject_GetAttrString(inst.p, "__dict__")};
+    if (!real.p || k0_dict_of(inst.p) != real.p) return false;
+    return PyDict_GetItemWithError(real.p, key.p) == two.p;
+#else
+    return false;
+#endif
+}
+
+void ensure() {
+    State& s = state();
+    if (s.ready) return;
+    s.ready = true;
+    const char* env = std::getenv("DAUNTLESS_AI_MEMOS");
+    s.env_off = env != nullptr && std::strcmp(env, "0") == 0;
+    PyObject *type, *value, *tb;
+    PyErr_Fetch(&type, &value, &tb);  // a caller's pending error survives
+    s.self_test = run_self_test();
+    PyErr_Clear();
+    PyErr_Restore(type, value, tb);
+}
+
+// Whether the memos may answer. The first call runs the self-test, which
+// allocates: never first from a stretch that must not run Python (quiet()).
+bool on() {
+    const State& s = state();
+    if (!s.ready) ensure();
+    return s.self_test && !s.env_off && !s.forced_off;
+}
+
+// on() without the first-use self-test: false until it has run.
+bool quiet() {
+    const State& s = state();
+    return s.ready && s.self_test && !s.env_off && !s.forced_off;
+}
+
+PyObject* status(PyObject*, PyObject* const*, Py_ssize_t nargs) {
+    if (nargs != 0) {
+        PyErr_SetString(PyExc_TypeError, "ai_memo_status()");
+        return nullptr;
+    }
+    const bool enabled = on();
+    const State& s = state();
+    return Py_BuildValue("{s:O,s:O,s:O,s:O}", "compiled",
+                         DAUNTLESS_AI_MEMOS_COMPILED ? Py_True : Py_False, "self_test",
+                         s.self_test ? Py_True : Py_False, "forced_off",
+                         (s.env_off || s.forced_off) ? Py_True : Py_False, "enabled",
+                         enabled ? Py_True : Py_False);
+}
+
+PyObject* force_off(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 1) {
+        PyErr_SetString(PyExc_TypeError, "ai_memo_force_off(flag)");
+        return nullptr;
+    }
+    const int flag = PyObject_IsTrue(args[0]);
+    if (flag < 0) return nullptr;
+    ensure();
+    state().forced_off = flag == 1;
+    Py_RETURN_NONE;
+}
+
+PyMethodDef kDefs[] = {
+    {"ai_memo_status", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(status)),
+     METH_FASTCALL,
+     "ai_memo_status() -> {compiled, self_test, forced_off, enabled}: whether the "
+     "native AI memos may answer (compiled for 3.11, self-test passed, not "
+     "forced off by DAUNTLESS_AI_MEMOS=0 or ai_memo_force_off)."},
+    {"ai_memo_force_off",
+     reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(force_off)), METH_FASTCALL,
+     "ai_memo_force_off(flag): with True every memo answers 'ask Python' (tests)."},
+};
+
+}  // namespace aimemo
+
+// ── Reader contracts: one stock test for every native reader ────────────────
+// ai_native.object_reads_are_stock(obj, contract) decides whether a native
+// reader may stand in for `obj`'s App methods: its CLASS resolves each name
+// of the contract to exactly the engine body the reader mirrors, and its
+// INSTANCE dict shadows none of them. This is that test for avoid, rating
+// and fire alike:
+//   * class_stock: Python's verdict, with the class half remembered for a
+//     type it found stock, keyed by the type's version tag (CPython renews it
+//     whenever an attribute of the type or of any base is set or deleted, or
+//     its __bases__ change). Only for a type whose metaclass is `type`, and
+//     only while the memos are on (aimemo); otherwise Python is asked every
+//     time.
+//   * dict_shadows: the instance half, on every object -- the one rule
+//     Python's own half states: `obj.__dict__` missing shadows nothing; a
+//     dict shadows when it holds a contract name; anything else (not a dict)
+//     shadows, the conservative answer. For a type whose `__dict__` is
+//     CPython's own descriptor (`plain_dict`) the dict is read from its slot
+//     (no Python runs); for any other type `obj.__dict__` is looked up as
+//     Python looks it up.
+// Python's check reads only types and the instance's `__dict__`: no other
+// state, so it is treated as pure (the callers re-read nothing after it).
+namespace readers {
+
+struct Host {
+    PyObject* s_dict;
+    PyObject* s_object_reads_are_stock;
+    PyObject* ai_native;
+    getter subtype_dict;  // the getter of a plain class's `__dict__`
+};
+
+Host& host() {
+    static Host* h = [] {
+        auto* p = new Host();
+        p->s_dict = PyUnicode_InternFromString("__dict__");
+        p->s_object_reads_are_stock = PyUnicode_InternFromString("object_reads_are_stock");
+        if (!p->s_dict || !p->s_object_reads_are_stock) throw py::error_already_set();
+        p->ai_native = PyImport_ImportModule("engine.appc.ai_native");
+        if (p->ai_native == nullptr) throw py::error_already_set();
+        // A plain class's `__dict__` descriptor: its getter is CPython's own
+        // (subtype_dict), which reads the instance's dict slot.
+        PyObject* ns = PyDict_New();
+        if (ns == nullptr) throw py::error_already_set();
+        PyObject* probe =
+            PyObject_CallFunction(reinterpret_cast<PyObject*>(&PyType_Type), "s(O)O",
+                                  "_AiDictProbe", reinterpret_cast<PyObject*>(&PyBaseObject_Type), ns);
+        Py_DECREF(ns);
+        if (probe == nullptr) throw py::error_already_set();
+        PyObject* descr = _PyType_Lookup(reinterpret_cast<PyTypeObject*>(probe), p->s_dict);
+        if (descr == nullptr || !Py_IS_TYPE(descr, &PyGetSetDescr_Type)) {
+            Py_DECREF(probe);
+            throw std::logic_error("readers: a plain class has no __dict__ getset");
+        }
+        p->subtype_dict = reinterpret_cast<PyGetSetDescrObject*>(descr)->d_getset->get;
+        Py_DECREF(probe);
+        return p;
+    }();
+    return *h;
+}
+
+// `t`'s `__dict__` is CPython's own descriptor, so the instance dict in its
+// slot is what `obj.__dict__` returns. No Python runs, nothing allocates.
+bool plain_dict(PyTypeObject* t) {
+    PyObject* descr = _PyType_Lookup(t, host().s_dict);
+    return descr != nullptr && Py_IS_TYPE(descr, &PyGetSetDescr_Type) &&
+           reinterpret_cast<PyGetSetDescrObject*>(descr)->d_getset->get == host().subtype_dict;
+}
+
+// Does dict `d` hold one of `names` (a tuple of str, or of (str, fn) pairs)?
+bool holds_any(PyObject* d, PyObject* names, bool pairs) {
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(names); ++i) {
+        PyObject* n = PyTuple_GET_ITEM(names, i);
+        if (pairs) n = PyTuple_GET_ITEM(n, 0);
+        const int has = PyDict_Contains(d, n);
+        if (has < 0) throw py::error_already_set();
+        if (has) return true;
+    }
+    return false;
+}
+
+// The instance half (the namespace comment). Throws error_already_set on a
+// Python error other than AttributeError from a non-plain `__dict__`.
+// `plain`: plain_dict(type(obj)) if the caller knows it (-1: look it up).
+bool dict_shadows(PyObject* obj, PyObject* contract, int plain = -1) {
+    if (plain < 0) plain = plain_dict(Py_TYPE(obj)) ? 1 : 0;
+    if (plain == 1) {
+        PyObject* d = k0_dict_of(obj);  // already built: no allocation
+        if (d == nullptr) {
+            PyObject** dp = _PyObject_GetDictPtr(obj);  // builds it if need be
+            if (PyErr_Occurred()) throw py::error_already_set();
+            if (dp == nullptr) goto generic;
+            if (*dp == nullptr) return false;  // no attributes at all
+            d = *dp;
+        }
+        if (!PyDict_Check(d)) return true;
+        return holds_any(d, contract, true);
+    }
+generic:
+    PyObject* raw = PyObject_GetAttr(obj, host().s_dict);
+    if (raw == nullptr) {
+        if (!PyErr_ExceptionMatches(PyExc_AttributeError)) throw py::error_already_set();
+        PyErr_Clear();
+        return false;  // no `__dict__`: nothing shadows
+    }
+    py::object d = py::reinterpret_steal<py::object>(raw);
+    if (!PyDict_Check(raw)) return true;  // not a dict: shadows
+    return holds_any(raw, contract, true);
+}
+
+// The remembered stock types: a direct-mapped table keyed by (type,
+// contract), so a lookup is one slot (the Debug build pays nothing for a
+// container). A collision overwrites the slot: the evicted type is only asked
+// of Python again. Bounded by construction, so it is never emptied.
+struct StockSlot {
+    PyTypeObject* type = nullptr;
+    PyObject* contract = nullptr;
+    unsigned int tag = 0;
+    bool plain = false;  // plain_dict(type): a `__dict__` change moves the tag
+    py::object keep;     // the type, held: the address is the key
+};
+constexpr std::size_t kStockSlots = 256;
+
+StockSlot* stock_slots() {
+    static auto* t = new StockSlot[kStockSlots];
+    return t;
+}
+
+StockSlot& slot_for(PyTypeObject* t, PyObject* contract) {
+    const auto a = reinterpret_cast<std::uintptr_t>(t) >> 4;
+    const auto b = reinterpret_cast<std::uintptr_t>(contract) >> 4;
+    return stock_slots()[(a * 0x9E3779B1u ^ b * 0x85EBCA77u) % kStockSlots];
+}
+
+unsigned int tag_for(PyTypeObject* t) {
+    return Py_IS_TYPE(reinterpret_cast<PyObject*>(t), &PyType_Type) ? k0_type_tag(t) : 0u;
+}
+
+// The memo alone: the slot remembering `t` stock for `contract` under its
+// current tag, or nullptr. No Python runs. `quiet`: the memo's first-use
+// self-test (which allocates) must not run here; nullptr until it has.
+const StockSlot* known_slot(PyTypeObject* t, PyObject* contract, bool quiet = false) {
+    if (!(quiet ? aimemo::quiet() : aimemo::on())) return nullptr;
+    const StockSlot& e = slot_for(t, contract);
+    if (e.type != t || e.contract != contract) return nullptr;
+    const unsigned int tag = tag_for(t);
+    return tag != 0 && e.tag == tag ? &e : nullptr;
+}
+
+bool known_stock(PyTypeObject* t, PyObject* contract, bool quiet = false) {
+    return known_slot(t, contract, quiet) != nullptr;
+}
+
+bool class_stock(PyObject* obj, PyObject* contract) {
+    PyTypeObject* t = Py_TYPE(obj);
+    if (known_stock(t, contract)) return true;
+    const unsigned int tag = aimemo::on() ? tag_for(t) : 0u;
+    auto& h = host();
+    py::object fn = py::reinterpret_steal<py::object>(
+        PyObject_GetAttr(h.ai_native, h.s_object_reads_are_stock));
+    if (!fn) throw py::error_already_set();
+    PyObject* r = PyObject_CallFunctionObjArgs(fn.ptr(), obj, contract, nullptr);
+    if (r == nullptr) throw py::error_already_set();
+    const int ok = PyObject_IsTrue(r);
+    Py_DECREF(r);
+    if (ok < 0) throw py::error_already_set();
+    // Python's True covers the class half; remember it unless the type moved
+    // while Python ran.
+    if (ok == 1 && tag != 0 && tag_for(t) == tag) {
+        StockSlot& e = slot_for(t, contract);
+        // The evicted type is released after the slot is whole again: a
+        // release can run weakref callbacks, which may come back here.
+        py::object evicted = std::move(e.keep);
+        e.type = t;
+        e.contract = contract;
+        e.tag = tag;
+        e.plain = plain_dict(t);
+        e.keep = py::reinterpret_borrow<py::object>(reinterpret_cast<PyObject*>(t));
+    }
+    return ok == 1;
+}
+
+bool reads_stock(PyObject* obj, PyObject* contract) {
+    if (const StockSlot* e = known_slot(Py_TYPE(obj), contract))
+        return !dict_shadows(obj, contract, e->plain ? 1 : 0);
+    return class_stock(obj, contract) && !dict_shadows(obj, contract);
+}
+
+}  // namespace readers
+}  // namespace
+
 // ── AvoidObstacles' obstacle scan (engine/appc/ai_optimized.py) ─────────────
 // combat_ai_avoid_scan stands in for the SDK's while loop in
 // AvoidObstacles.TestCourseOverride (AI/Preprocessors.py:1748-1761) for a
@@ -5617,8 +5966,13 @@ bool contact_nonempty(Host& h, Key set) {
 // counted as ai_native.note_object_fallback("avoid", "surface"). Its reads are
 // pure, so re-running them there gives the SDK's answer and the SDK's
 // exception. After any such callback every value read from Python (the
-// ship's pose, fPredictionTime, lDontAvoidTypes, the per-call stock memo) is
-// read again: the callback may have changed it.
+// ship's pose, fPredictionTime, lDontAvoidTypes) is read again: the callback
+// may have changed it. The stock test of each object is readers::reads_stock,
+// the one every native reader uses (its class half remembered by type
+// version, its instance half checked per object).
+// If the FIRST read finds the ship or the instance's parameters are not
+// native reads, nothing is walked: the binding returns None and the caller
+// runs the SDK loop, counted python/no_mirror.
 //
 // Borrowing: the objects are items of the iteration TUPLE the caller holds,
 // so they outlive the call; each is still owned (INCREF) while Python runs.
@@ -5695,7 +6049,14 @@ Host& host() {
             }
             return t;
         };
-        p->note_args = tuple_of({intern("avoid"), intern("surface")});
+        {
+            // tuple_of takes its own reference to each item: drop intern's.
+            PyObject* kind = intern("avoid");
+            PyObject* why = intern("surface");
+            p->note_args = tuple_of({kind, why});
+            Py_DECREF(kind);
+            Py_DECREF(why);
+        }
         p->ai_native = PyImport_ImportModule("engine.appc.ai_native");
         if (p->ai_native == nullptr) throw py::error_already_set();
         p->object_types = PyImport_ImportModule("engine.appc.object_types");
@@ -5820,40 +6181,6 @@ bool read_radius(PyObject* o, double& out) {
     return true;
 }
 
-// ai_native.object_reads_are_stock(obj, contract), memoised per type for one
-// stretch of the call with no Python callback: a type found stock stays
-// stock until then, so a later object of it only needs its own __dict__ to
-// shadow none of the contract's names (the function's other half; as there,
-// an object with no __dict__, or one that is not a dict, shadows nothing).
-using Memo = std::unordered_map<PyTypeObject*, bool>;
-
-bool surface_stock(PyObject* obj, PyObject* contract, Memo& memo) {
-    auto& h = host();
-    auto it = memo.find(Py_TYPE(obj));
-    if (it != memo.end()) {
-        PyObject* raw = PyObject_GetAttr(obj, h.s_dict);
-        if (raw == nullptr) {
-            if (!PyErr_ExceptionMatches(PyExc_AttributeError)) throw py::error_already_set();
-            PyErr_Clear();
-            return true;
-        }
-        py::object d = py::reinterpret_steal<py::object>(raw);
-        if (!PyDict_Check(raw)) return true;
-        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(contract); ++i) {
-            PyObject* pair = PyTuple_GET_ITEM(contract, i);
-            int has = PyDict_Contains(raw, PyTuple_GET_ITEM(pair, 0));
-            if (has < 0) throw py::error_already_set();
-            if (has) return false;
-        }
-        return true;
-    }
-    py::object fn = own(PyObject_GetAttr(h.ai_native, h.s_object_reads_are_stock));
-    py::object r = own(PyObject_CallFunctionObjArgs(fn.ptr(), obj, contract, nullptr));
-    bool ok = truth(r.ptr());
-    if (ok) memo.emplace(Py_TYPE(obj), true);
-    return ok;
-}
-
 long long read_generation() {
     py::object g = own(PyObject_GetAttr(host().object_types, host().s_GENERATION));
     long long v = PyLong_AsLongLong(g.ptr());
@@ -5899,7 +6226,10 @@ bool filtered(PyObject* obj, PyObject* types, const std::vector<long long>& tags
     auto& h = host();
     long long gen = read_generation();
     if (!h.have_generation || gen != h.generation) {
-        h.verdicts.clear();
+        // Swapped out, then released: a type's release can run weakref
+        // callbacks, which must find the cache whole (empty).
+        decltype(h.verdicts) old;
+        old.swap(h.verdicts);
         h.verdict_count = 0;
         h.generation = gen;
         h.have_generation = true;
@@ -5914,7 +6244,8 @@ bool filtered(PyObject* obj, PyObject* types, const std::vector<long long>& tags
     // verdict is not cached, as IsTypeOf's own cache does not.
     if (read_generation() == gen) {
         if (h.verdict_count >= 1024) {
-            h.verdicts.clear();
+            decltype(h.verdicts) old;  // swapped out, then released
+            old.swap(h.verdicts);
             h.verdict_count = 0;
         }
         h.verdicts[t].push_back(
@@ -5943,18 +6274,14 @@ struct Reads {
     // engine.appc.objects.PhysicsObjectClass, as PhysicsObjectClass_Cast
     // reads it: the module global at the time of the call.
     py::object physics_cls;
-    Memo filter_memo, reader_memo;
 };
 
 void read_all(Reads& r, PyObject* inst, PyObject* ship, double psr, bool psr_ok) {
     auto& h = host();
-    r.filter_memo.clear();
-    r.reader_memo.clear();
     r.physics_cls = own(PyObject_GetAttr(h.objects, h.s_PhysicsObjectClass));
     r.ship_native = false;
     r.ship_id = py::object();
-    Memo ship_memo;
-    if (surface_stock(ship, h.reads_ship, ship_memo) && read_position(ship, r.ship_pos) &&
+    if (readers::reads_stock(ship, h.reads_ship) && read_position(ship, r.ship_pos) &&
         read_velocity(ship, r.ship_vel)) {
         PyObject* id = PyObject_GetAttr(ship, h.s_obj_id);
         if (id == nullptr) {
@@ -6011,7 +6338,10 @@ void read_all(Reads& r, PyObject* inst, PyObject* ship, double psr, bool psr_ok)
 //     id is the one its GetObjID() returns now, as the SDK reads it, so a
 //     candidate no set holds is still counted;
 //   * everything else by calling the very Python the SDK calls, in its
-//     order: GetName, ShipClass_Cast, GetShields().GetShieldPercentage(), the
+//     order, App's functions and constants read off the App the caller hands
+//     in (the gated SDK function's __globals__["App"], as its body reads
+//     them; the binding holds no App): GetName, ShipClass_Cast,
+//     GetShields().GetShieldPercentage(), the
 //     StartGetSubsystemMatch(CT_WEAPON_SYSTEM) walk and each system's
 //     GetCombinedConditionPercentage(), GetHull(), the damage ledger, the
 //     target group's ObjectGroupWithInfo_Cast and info -- so an override of
@@ -6023,11 +6353,16 @@ void read_all(Reads& r, PyObject* inst, PyObject* ship, double psr, bool psr_ok)
 // converts exactly, so each product and sum rounds as Python's does (an int
 // times an int is exact, and float(product) rounds as the double product).
 // A call the native path cannot answer exactly returns its reason as a str:
-// "surface" (a reader that is not the engine's) or "no_mirror" (a value of
-// another shape, a stale handle, or a Python exception, cleared). The caller
+// "surface" (a reader that is not the engine's), "no_mirror" (a value of
+// another shape, a stale handle, or a Python exception, cleared) or "audit"
+// (DAUNTLESS_SET_INDEX_AUDIT=1: GetClassObjectList's audit of the set index
+// runs only on the SDK path). The caller
 // then runs the SDK body for the whole call, which gives the SDK's answer and
 // raises the SDK's exception; every read here is pure, so reading it twice
 // changes nothing. No ship returns the SDK's int -1.
+//
+// The stock test of each object is readers::reads_stock (shared with avoid
+// and fire).
 //
 // Borrowing: the set index's bucket keys are owned (INCREF) before any
 // Python runs, and the popularity count is read with keys of objects held
@@ -6045,13 +6380,12 @@ struct Host {
     PyObject *s_bSetShipTarget, *s_sCurrentTarget, *s_fMinimumFullGoodDistance;
     PyObject *s_GetWorldLocation, *s_GetWorldForwardTG, *s_GetClassObjectList;
     PyObject* s_weights[9];
-    PyObject *r_surface, *r_no_mirror;
+    PyObject *r_surface, *r_no_mirror, *r_audit;
     // ai_native.reader_contract(...): ((name, engine function), ...)
     PyObject* reads_ship;       // GetWorldLocation, GetWorldForwardTG, GetObjID
     PyObject* reads_candidate;  // GetWorldLocation
     PyObject* reads_set;        // GetClassObjectList
     PyObject* reads_crew;       // GetObjID, GetTarget: each ship the loop visits
-    PyObject* app;
 };
 
 PyObject* contract(PyObject* ai_native, std::initializer_list<PyObject*> names) {
@@ -6103,13 +6437,12 @@ Host& host() {
         for (int i = 0; i < 9; ++i) p->s_weights[i] = intern(weights[i]);
         p->r_surface = intern("surface");
         p->r_no_mirror = intern("no_mirror");
+        p->r_audit = intern("audit");
         p->reads_ship = contract(a.ai_native, {p->s_GetWorldLocation, p->s_GetWorldForwardTG,
                                                p->s_GetObjID});
         p->reads_candidate = contract(a.ai_native, {p->s_GetWorldLocation});
         p->reads_set = contract(a.ai_native, {p->s_GetClassObjectList});
         p->reads_crew = contract(a.ai_native, {p->s_GetObjID, p->s_GetTarget});
-        p->app = PyImport_ImportModule("App");
-        if (p->app == nullptr) throw py::error_already_set();
         return p;
     }();
     return *h;
@@ -6126,9 +6459,10 @@ py::object call1(PyObject* o, PyObject* name, PyObject* arg) {
 }
 
 // `App.<fn>(arg)`, the function read off the module at the call, as the
-// SDK's `App.ShipClass_Cast(pTarget)` reads it.
-py::object app_call(PyObject* fn_name, PyObject* arg) {
-    py::object fn = attr(host().app, fn_name);
+// SDK's `App.ShipClass_Cast(pTarget)` reads it. `app` is the caller's: the
+// gated SDK function's __globals__["App"].
+py::object app_call(PyObject* app, PyObject* fn_name, PyObject* arg) {
+    py::object fn = attr(app, fn_name);
     return avoid::own(PyObject_CallOneArg(fn.ptr(), arg));
 }
 
@@ -6197,87 +6531,21 @@ bool read_forward(PyObject* o, double out[3]) {
 
 py::object reason(PyObject* r) { return py::reinterpret_borrow<py::object>(r); }
 
-// ai_native.object_reads_are_stock(obj, contract), with its CLASS half
-// remembered across calls for a type it found stock, keyed by the type's
-// version tag. CPython gives a type a new tag whenever an attribute of it or
-// of any base is set or deleted, or its __bases__ change, so an unchanged
-// tag means each contract name still resolves to the function Python
-// checked. Only for a type whose metaclass is `type` (attribute lookup is
-// then the MRO's alone); a type with no valid tag is asked every time.
-// The INSTANCE half -- no contract name in the object's own dict -- is
-// checked on every object, against the dict attribute lookup consults
-// (dict_shadows).
-struct StockType {
-    PyTypeObject* type;
-    unsigned int tag;
-    PyObject* contract;
-    py::object keep;  // the type, held: the address is the key
-};
-
-std::vector<StockType>& stock_types() {
-    static auto* v = new std::vector<StockType>();
-    return *v;
-}
-
-// The memo alone: true if `t` is remembered stock for `contract` under its
-// current tag (no Python runs; `tag` gets the tag, 0 for none).
-bool known_stock(PyTypeObject* t, PyObject* contract, unsigned int& tag) {
-    tag = Py_IS_TYPE(reinterpret_cast<PyObject*>(t), &PyType_Type) ? k0_type_tag(t) : 0u;
-    if (tag == 0) return false;
-    for (const StockType& e : stock_types())
-        if (e.type == t && e.contract == contract && e.tag == tag) return true;
-    return false;
-}
-
-bool class_stock(PyObject* obj, PyObject* contract) {
-    PyTypeObject* t = Py_TYPE(obj);
-    unsigned int tag;
-    if (known_stock(t, contract, tag)) return true;
-    auto& known = stock_types();
-    py::object fn = attr(avoid::host().ai_native, avoid::host().s_object_reads_are_stock);
-    py::object r = avoid::own(PyObject_CallFunctionObjArgs(fn.ptr(), obj, contract, nullptr));
-    const bool ok = avoid::truth(r.ptr());
-    // Python's True covers the class half; remember it unless the type moved
-    // while Python ran.
-    if (ok && tag != 0 && k0_type_tag(t) == tag) {
-        for (StockType& e : known)
-            if (e.type == t && e.contract == contract) {
-                e.tag = tag;
-                return ok;
-            }
-        if (known.size() >= 256) known.clear();
-        known.push_back(
-            {t, tag, contract, py::reinterpret_borrow<py::object>(reinterpret_cast<PyObject*>(t))});
-    }
-    return ok;
-}
-
-// Does `obj`'s own dict -- the one generic attribute lookup reads, built
-// from its inline values if it was not yet -- hold a contract name?
-bool dict_shadows(PyObject* obj, PyObject* contract) {
-    PyObject* d = k0_dict_of(obj);  // already built: no allocation
-    if (d == nullptr) {
-        PyObject** dp = _PyObject_GetDictPtr(obj);
-        if (dp == nullptr || *dp == nullptr) {
-            if (PyErr_Occurred()) throw py::error_already_set();
-            return false;  // no instance dict: nothing shadows
-        }
-        d = *dp;
-        if (!PyDict_Check(d)) return true;  // not a lookup we reproduce
-    }
-    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(contract); ++i) {
-        const int has = PyDict_Contains(d, PyTuple_GET_ITEM(PyTuple_GET_ITEM(contract, i), 0));
-        if (has < 0) throw py::error_already_set();
-        if (has) return true;
-    }
-    return false;
-}
+// The stock test of every native reader (readers::, shared with avoid and
+// fire): the class half remembered by type version, the instance half per
+// object.
+using readers::class_stock;
+using readers::dict_shadows;
+using readers::known_stock;
+using readers::reads_stock;
 
 // The crew check over the set index's borrowed keys, where nothing can run
-// Python or allocate: each member's type remembered stock (known_stock) and
-// its dict already built with only str keys, so a lookup compares strings.
-// `result`: 1 every member clean; 0 a contract name is in a member's dict;
-// -1 a member the owned walk below must decide.
+// Python or allocate: each member's type remembered stock (known_stock,
+// quietly: the memos' first-use self-test allocates) with a plain `__dict__`
+// (readers::plain_dict), and its dict already built with only str keys, so a
+// lookup compares strings. Only while the memos are on (the str-keys test is
+// a 3.11 internal; aimemo). `result`: 1 every member clean; 0 a contract
+// name is in a member's dict; -1 the owned walk below must decide.
 struct CrewScan {
     PyObject* contract;
     PyObject* names[2];
@@ -6290,15 +6558,20 @@ bool crew_visit(void* ctx, si::Key k) {
     PyObject* o = si::member(k);
     PyTypeObject* t = Py_TYPE(o);
     if (t != c->seen) {
-        unsigned int tag;
-        if (!known_stock(t, c->contract, tag)) {
+        const readers::StockSlot* e = readers::known_slot(t, c->contract, /*quiet=*/true);
+        if (e == nullptr || !e->plain) {
             c->result = -1;
             return false;
         }
         c->seen = t;
     }
     PyObject* d = k0_dict_of(o);
-    if (d == nullptr || !_PyDict_HasOnlyStringKeys(d)) {
+#if DAUNTLESS_AI_MEMOS_COMPILED
+    const bool str_keys = d != nullptr && aimemo::only_str_keys(d);
+#else
+    const bool str_keys = false;  // unreachable: known_stock is false
+#endif
+    if (!str_keys) {
         c->result = -1;
         return false;
     }
@@ -6331,18 +6604,27 @@ struct Crew {
     Crew& operator=(const Crew&) = delete;
 };
 
-bool reads_stock(PyObject* obj, PyObject* contract) {
-    return class_stock(obj, contract) && !dict_shadows(obj, contract);
+// DAUNTLESS_SET_INDEX_AUDIT=1, as engine/appc/sets.py reads it (at use;
+// os.environ writes reach the C environment).
+bool set_index_audit() {
+    const char* v = std::getenv("DAUNTLESS_SET_INDEX_AUDIT");
+    return v != nullptr && std::strcmp(v, "1") == 0;
 }
 
 // GetTargetRating's reads, in the SDK's order. Throws error_already_set on
 // a Python exception (the binding turns an Exception into "no_mirror").
-py::object rate(PyObject* inst, PyObject* target) {
+// `app`: the gated SDK function's __globals__["App"], where its body reads
+// App from.
+py::object rate(PyObject* inst, PyObject* target, PyObject* app) {
     auto& h = host();
     // pOurShip = self.pCodeAI.GetShip(); if (pOurShip == None): return -1
     py::object code_ai = attr(inst, h.s_pCodeAI);
     py::object ship = call0(code_ai.ptr(), h.s_GetShip);
     if (py_eq(ship.ptr(), Py_None)) return py::int_(-1);
+    // The set index audit checks the index against a scan in
+    // GetClassObjectList, which the native popularity never calls: with it
+    // on, the call is the SDK's.
+    if (set_index_audit()) return reason(h.r_audit);
 
     if (!reads_stock(ship.ptr(), h.reads_ship) || !reads_stock(target, h.reads_candidate))
         return reason(h.r_surface);
@@ -6374,14 +6656,14 @@ py::object rate(PyObject* inst, PyObject* target) {
     }
 
     // Shields, weapons and hull, for a ship.
-    py::object as_ship = app_call(h.s_ShipClass_Cast, target);
+    py::object as_ship = app_call(app, h.s_ShipClass_Cast, target);
     if (py_ne(as_ship.ptr(), Py_None)) {
         PyObject* s = as_ship.ptr();
         py::object shields = call0(s, h.s_GetShields);
         py::object pct = call0(shields.ptr(), h.s_GetShieldPercentage);
         if (!number(pct.ptr(), in.shield)) return reason(h.r_no_mirror);
 
-        py::object ct = attr(h.app, h.s_CT_WEAPON_SYSTEM);
+        py::object ct = attr(app, h.s_CT_WEAPON_SYSTEM);
         py::object it = call1(s, h.s_StartGetSubsystemMatch, ct.ptr());
         py::object system = call1(s, h.s_GetNextSubsystemMatch, it.ptr());
         double total = 0.0;  // fWeaponsGood, from 0.0
@@ -6418,7 +6700,7 @@ py::object rate(PyObject* inst, PyObject* target) {
     // fPriority: ObjectGroupWithInfo_Cast(self.pTargetGroup)[sTarget]["Priority"]
     {
         py::object group = attr(inst, h.s_pTargetGroup);
-        py::object with_info = app_call(h.s_ObjectGroupWithInfo_Cast, group.ptr());
+        py::object with_info = app_call(app, h.s_ObjectGroupWithInfo_Cast, group.ptr());
         if (avoid::truth(with_info.ptr())) {
             py::object info = getitem(with_info.ptr(), name.ptr());
             if (contains(info.ptr(), h.s_Priority)) {
@@ -6777,7 +7059,9 @@ Host& host() {
         if (p->point_cls == nullptr || p->matrix_cls == nullptr) throw py::error_already_set();
         PyObject* kind = intern("fire");
         PyObject* why = intern("surface");
-        p->note_args = PyTuple_Pack(2, kind, why);
+        p->note_args = PyTuple_Pack(2, kind, why);  // takes its own references
+        Py_DECREF(kind);
+        Py_DECREF(why);
         if (p->note_args == nullptr) throw py::error_already_set();
         return p;
     }();
@@ -8187,9 +8471,17 @@ void choose_torp_type(const Ctx& c, PyObject* torp, PyObject* location, PyObject
             // raw value and POP_EXCEPT puts it back (PyErr_SetHandledException
             // writes that item; PyErr_GetHandledException would read the
             // topmost one, an outer frame's, instead).
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030F0000
+            // The thread state's stack item (cpython/pystate.h, the same
+            // layout 3.11-3.14).
             _PyErr_StackItem* item = PyThreadState_Get()->exc_info;
             PyObject* previous = item->exc_value;  // the saved raw value
             Py_XINCREF(previous);
+#else
+            // Public API only: the topmost handled exception. It differs from
+            // the raw item only inside a generator whose own item is empty.
+            PyObject* previous = PyErr_GetHandledException();
+#endif
             PyErr_SetHandledException(caught.value().ptr());
             auto restore = [&] {
                 PyErr_SetHandledException(previous);
@@ -8517,8 +8809,11 @@ py::object update(PyObject* self, PyObject* globals) {
 // The instance half -- no gated name in the instance's own dict -- is
 // checked here on every call: the dict attribute lookup consults (built from
 // inline values if need be), its keys only str, the names compared by
-// PyDict_Contains (no Python runs). An instance with no dict, or with
-// non-str keys, is Python's to answer.
+// PyDict_Contains (no Python runs). An instance with no dict, with non-str
+// keys, or whose type's `__dict__` is not CPython's own descriptor
+// (readers::plain_dict) is Python's to answer. While the memos are off
+// (aimemo: any Python but 3.11, a failed self-test, or forced off) every
+// check answers None and the tag is 0, so Python decides every call.
 //   ai_stock_check(inst, name, methods) -> True / False / None (ask Python)
 //   ai_stock_tag(cls) -> the tag a verdict would be stored under (0: none)
 //   ai_stock_remember(cls, name, methods, verdict, tag)
@@ -8542,15 +8837,17 @@ std::vector<Entry>& entries() {
 }
 
 // The tag a verdict for `t` is keyed by; 0 when it cannot be (no valid tag,
-// or a metaclass other than `type`).
+// a metaclass other than `type`, or the memos are off: aimemo).
 unsigned int tag_of(PyTypeObject* t) {
+    if (!aimemo::on()) return 0;
     if (!Py_IS_TYPE(reinterpret_cast<PyObject*>(t), &PyType_Type)) return 0;
     return k0_type_tag(t);
 }
 
+// Two exact str equal (PyUnicode_Compare cannot fail on two exact str).
 bool same_name(PyObject* a, PyObject* b) {
     if (a == b) return true;
-    return PyUnicode_CheckExact(a) && PyUnicode_CheckExact(b) && _PyUnicode_EQ(a, b);
+    return PyUnicode_CheckExact(a) && PyUnicode_CheckExact(b) && PyUnicode_Compare(a, b) == 0;
 }
 
 Entry* find(PyTypeObject* t, PyObject* name, PyObject* methods) {
@@ -8566,11 +8863,14 @@ PyObject* check(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
     }
     PyObject* inst = args[0];
     PyTypeObject* t = Py_TYPE(inst);
-    const unsigned int tag = tag_of(t);
+    const unsigned int tag = tag_of(t);  // 0 while the memos are off
     if (tag == 0) Py_RETURN_NONE;
     Entry* e = find(t, args[1], args[2]);
     if (e == nullptr || e->tag != tag) Py_RETURN_NONE;
     if (!e->verdict) Py_RETURN_FALSE;
+    // The instance half reads the dict slot: only for a type whose
+    // `__dict__` is CPython's own (what `inst.__dict__` returns).
+    if (!readers::plain_dict(t)) Py_RETURN_NONE;
     PyObject* d = k0_dict_of(inst);
     if (d == nullptr) {
         PyObject** dp = _PyObject_GetDictPtr(inst);
@@ -8580,7 +8880,11 @@ PyObject* check(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
         }
         d = *dp;
     }
-    if (!PyDict_CheckExact(d) || !_PyDict_HasOnlyStringKeys(d)) Py_RETURN_NONE;
+#if DAUNTLESS_AI_MEMOS_COMPILED
+    if (!PyDict_CheckExact(d) || !aimemo::only_str_keys(d)) Py_RETURN_NONE;
+#else
+    Py_RETURN_NONE;  // unreachable: tag_of is 0
+#endif
     PyObject* methods = args[2];
     for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(methods); ++i) {
         PyObject* n = PyTuple_GET_ITEM(methods, i);
@@ -8622,7 +8926,12 @@ PyObject* remember(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
         Py_RETURN_NONE;
     }
     auto& all = entries();
-    if (all.size() >= 512) all.clear();
+    if (all.size() >= 512) {
+        // Swapped out, then released: a released key can run weakref
+        // callbacks, which may store here and must find the memo whole.
+        std::vector<Entry> old;
+        old.swap(all);
+    }
     all.push_back({t, now, args[1], args[2], verdict == 1,
                    py::reinterpret_borrow<py::object>(args[0]),
                    py::reinterpret_borrow<py::object>(args[1]),
@@ -8656,7 +8965,11 @@ PyMethodDef kDefs[] = {
 // decision read is unchanged its answer is too. This stores Python's answer
 // with those tags and returns it while they hold; any move and Python
 // decides again. A type with another metaclass, or one with no valid tag, or
-// anything that is neither an exact dict nor a type, is never taggable.
+// anything that is neither an exact dict nor a type, is never taggable; nor
+// is anything while the memos are off (aimemo: a dict's tag is a 3.11
+// internal), when tags answers None, get a miss and put stores nothing.
+// Used for every native kind's module surface and its transform store
+// (ai_optimized._memo_answer).
 //   ai_memo_tags(watched: tuple) -> tuple of the tags now, or None
 //   ai_memo_get(key, miss) -> the stored answer for `key`, or `miss`
 //   ai_memo_put(key, watched, tags, answer): stored if the tags still hold
@@ -8672,10 +8985,17 @@ std::vector<Entry>& entries() {
     return *v;
 }
 
+// A dict's or a type's version tag; false when it has none, or the memos
+// are off (aimemo: a dict's tag is a 3.11 internal).
 bool tag_of(PyObject* o, unsigned long long& out) {
+    if (!aimemo::on()) return false;
     if (PyDict_CheckExact(o)) {
-        out = reinterpret_cast<PyDictObject*>(o)->ma_version_tag;
+#if DAUNTLESS_AI_MEMOS_COMPILED
+        out = aimemo::dict_tag(o);
         return true;
+#else
+        return false;
+#endif
     }
     if (Py_IS_TYPE(o, &PyType_Type)) {
         out = k0_type_tag(reinterpret_cast<PyTypeObject*>(o));
@@ -8709,7 +9029,7 @@ PyObject* tags(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
         return nullptr;
     }
     std::vector<unsigned long long> t;
-    if (!tags_now(args[0], t)) Py_RETURN_NONE;
+    if (!aimemo::on() || !tags_now(args[0], t)) Py_RETURN_NONE;
     PyObject* out = PyTuple_New(static_cast<Py_ssize_t>(t.size()));
     if (out == nullptr) return nullptr;
     for (std::size_t i = 0; i < t.size(); ++i) {
@@ -8728,6 +9048,7 @@ PyObject* get(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
         PyErr_SetString(PyExc_TypeError, "ai_memo_get(key, miss)");
         return nullptr;
     }
+    if (!aimemo::on()) return Py_NewRef(args[1]);
     for (const Entry& e : entries())
         if (e.key.ptr() == args[0]) {
             if (!holds(e)) break;
@@ -8754,12 +9075,19 @@ PyObject* put(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
     auto& all = entries();
     for (Entry& e : all)
         if (e.key.ptr() == args[0]) {
+            // The old values are released after the entry is whole again (a
+            // release can run Python that stores here).
+            py::object old_watched = std::move(e.watched);
+            py::object old_answer = std::move(e.answer);
             e.watched = py::reinterpret_borrow<py::object>(args[1]);
             e.answer = py::reinterpret_borrow<py::object>(args[3]);
             e.tags = std::move(now);
             Py_RETURN_NONE;
         }
-    if (all.size() >= 64) all.clear();
+    if (all.size() >= 64) {
+        std::vector<Entry> old;  // swapped out, then released (as stockmemo)
+        old.swap(all);
+    }
     all.push_back({py::reinterpret_borrow<py::object>(args[0]),
                    py::reinterpret_borrow<py::object>(args[1]),
                    py::reinterpret_borrow<py::object>(args[3]), std::move(now)});
@@ -14972,19 +15300,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "The stock GetTargetRating fPopularity, as an integer count.");
     // ── SelectTarget's candidate rating (the `rating` namespace above) ────
     m.def("combat_ai_target_rating",
-          [](py::handle inst, py::handle target) -> py::object {
+          [](py::handle inst, py::handle target, py::handle app) -> py::object {
               try {
-                  return rating::rate(inst.ptr(), target.ptr());
+                  return rating::rate(inst.ptr(), target.ptr(), app.ptr());
               } catch (py::error_already_set& e) {
                   // The SDK body runs the call again and raises its own.
                   if (!e.matches(PyExc_Exception)) throw;
                   return rating::reason(rating::host().r_no_mirror);
               }
           },
-          py::arg("inst"), py::arg("target"),
-          "SelectTarget.GetTargetRating for a stock instance: the float rating, "
-          "the SDK's -1 with no ship, or a str reason (\"surface\" / \"no_mirror\") "
-          "when the caller must run the SDK body instead.");
+          py::arg("inst"), py::arg("target"), py::arg("app"),
+          "SelectTarget.GetTargetRating for a stock instance, reading App from "
+          "`app` (the SDK function's __globals__[\"App\"]): the float rating, "
+          "the SDK's -1 with no ship, or a str reason (\"surface\" / "
+          "\"no_mirror\" / \"audit\") when the caller must run the SDK body "
+          "instead.");
     // ── The stock verdict's memo (the `stockmemo` namespace above) ───────
     for (PyMethodDef& def : stockmemo::kDefs) {
         PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
@@ -14993,6 +15323,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
     }
     // ── The surface memo (the `surfacememo` namespace above) ─────────────
     for (PyMethodDef& def : surfacememo::kDefs) {
+        PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
+        if (fn == nullptr) throw py::error_already_set();
+        m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));
+    }
+    // ── The memos' version guard and switch (the `aimemo` namespace) ─────
+    for (PyMethodDef& def : aimemo::kDefs) {
         PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
         if (fn == nullptr) throw py::error_already_set();
         m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));
@@ -15009,7 +15345,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "exceptions raised unchanged.");
     // ── AvoidObstacles' obstacle scan (the `avoid` namespace above) ──────
     m.def("combat_ai_avoid_scan",
-          [](py::handle inst, py::handle ship, py::handle psr_obj, py::handle near_iter) {
+          [](py::handle inst, py::handle ship, py::handle psr_obj,
+             py::handle near_iter) -> py::object {
               using avoid::own;
               using avoid::truth;
               auto& h = avoid::host();
@@ -15029,6 +15366,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const bool psr_ok = avoid::exact_float(psr_obj.ptr(), psr);
               avoid::Reads r;
               avoid::read_all(r, inst.ptr(), ship.ptr(), psr, psr_ok);
+              // The ship or the parameters are not native reads: nothing is
+              // walked, and the caller runs the SDK loop (python/no_mirror).
+              if (!r.ship_native || !r.params_native) return py::object(py::none());
 
               // One object through the SDK's own code, then everything read
               // from Python is read again.
@@ -15072,7 +15412,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       PyObject* o = obj.ptr();
 
                       if (!r.ship_native || !r.params_native ||
-                          !avoid::surface_stock(o, h.reads_filter, r.filter_memo)) {
+                          !readers::reads_stock(o, h.reads_filter)) {
                           python_whole(o);
                           continue;
                       }
@@ -15092,8 +15432,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       // The arithmetic, on the readers' values.
                       int phys = PyObject_IsInstance(o, r.physics_cls.ptr());
                       if (phys < 0) throw py::error_already_set();
-                      if (!avoid::surface_stock(o, phys ? h.reads_moving : h.reads_still,
-                                                r.reader_memo)) {
+                      if (!readers::reads_stock(o, phys ? h.reads_moving : h.reads_still)) {
                           python_need(o);
                           continue;
                       }
@@ -15125,14 +15464,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // A break leaves it past the None; a full walk at n, where the
               // SDK's last GetNextObject returns None without moving it.
               set_cursor(cursor);
-              return out;
+              return py::object(std::move(out));
           },
           py::arg("inst"), py::arg("ship"), py::arg("personal_space_radius"),
           py::arg("near_iter"),
           "AvoidObstacles.TestCourseOverride's loop for a stock instance: the "
           "objects of the GetNearObjects handle `near_iter`, from its cursor, that "
           "the SDK's NeedToAvoid would avoid, in order. Leaves the cursor where "
-          "the SDK loop would.");
+          "the SDK loop would. None, with nothing walked, when the ship or the "
+          "instance's parameters are not native reads: the caller runs the SDK "
+          "loop.");
     m.def("set_index_obj_id",
           [](py::handle obj) { return si::host().ix.obj_id(si::key_of(obj)); },
           py::arg("obj"), "obj's own id as the index holds it; -1 if no set holds it.");

@@ -5,6 +5,8 @@ A native preprocessor path runs only for an instance the SDK would have run
 unchanged. These tests pin what "stock" means: the functions come from the
 real SDK file, nobody shadowed them on the class, the instance or an engine
 subclass, and a patch made at any time is seen on the NEXT call."""
+import contextlib
+
 import pytest
 
 import AI.Preprocessors as pp
@@ -335,6 +337,19 @@ def test_reader_contract_object_without_a_dict_shadows_nothing():
         _NoDictShip.hidden = False
 
 
+def test_reader_contract_object_with_a_non_dict___dict___shadows():
+    """A ``__dict__`` that is not a dict is not a lookup anyone reproduces:
+    the conservative answer, "shadows", here and in every native reader
+    (the host's one dict_shadows helper)."""
+    from engine.appc.ships import ShipClass
+    obj = ShipClass()
+    contract = ai_native.reader_contract("GetRadius")
+    with mapping_dict(obj):
+        assert not isinstance(obj.__dict__, dict)
+        assert not ai_native.object_reads_are_stock(obj, contract)
+    assert ai_native.object_reads_are_stock(obj, contract)
+
+
 def _real_dict_descriptor(cls):
     for klass in cls.__mro__[1:]:
         d = klass.__dict__.get("__dict__")
@@ -366,6 +381,39 @@ _NoDictShip = _make_no_dict_class()
 
 def _no_dict_ship():
     return _NoDictShip()
+
+
+def _make_mapping_dict_class():
+    """A ship whose `__dict__` attribute is a read-only view of its real
+    dict: not a dict (the real one still holds its attributes)."""
+    import types
+    from engine.appc.ships import ShipClass
+
+    class _MappingDict(ShipClass):
+        @property
+        def __dict__(self):
+            return types.MappingProxyType(
+                _real_dict_descriptor(type(self)).__get__(self))
+    return _MappingDict
+
+
+_MappingDictShip = _make_mapping_dict_class()
+
+
+@contextlib.contextmanager
+def mapping_dict(*objs):
+    """Each of `objs` (plain ships) as a _MappingDictShip for the block.
+    Only for the block: the engine writes obj.__dict__ (the constructor,
+    every setter that pushes to the native combat mirror), so the objects
+    are built and moved as plain ships, and put back before teardown."""
+    plain = [type(o) for o in objs]
+    for o in objs:
+        o.__class__ = _MappingDictShip
+    try:
+        yield objs
+    finally:
+        for o, cls in zip(objs, plain):
+            o.__class__ = cls
 
 
 _EMPTY = {"native": 0, "python": 0, "reasons": {}, "object_fallbacks": {},

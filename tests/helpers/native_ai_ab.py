@@ -60,8 +60,9 @@ _GOLDEN = ("k1_gameloop_ai", "sdk_dumb_fire")
 
 # ── The parent ───────────────────────────────────────────────────────────────
 
-def _run_side(scene, ticks, native, out):
+def _run_side(scene, ticks, native, out, extra_env=None):
     env = dict(os.environ)
+    env.update(extra_env or {})
     env[SCENE_ENV] = scene
     env[OUT_ENV] = str(out)
     if ticks is None:
@@ -82,22 +83,33 @@ def _run_side(scene, ticks, native, out):
                            % (scene, native, proc.stdout[-3000:],
                               proc.stderr[-1500:]))
     return (Path(str(out) + ".rows").read_bytes(),
-            json.loads(Path(str(out) + ".stats").read_text()))
+            json.loads(Path(str(out) + ".stats").read_text()),
+            json.loads(Path(str(out) + ".memos").read_text()))
+
+
+def run_ab_env(scene, extra_env, ticks=None):
+    """`(python_record, native_record, native_stats, python_stats,
+    native_memo_status)`: run_ab_full with `extra_env` set on both sides
+    (e.g. DAUNTLESS_AI_MEMOS=0), and the native side's
+    ``_dauntless_host.ai_memo_status()``, so a caller can prove the mode it
+    asked for was the one that ran."""
+    if scene not in SCENES:
+        raise ValueError("unknown A/B scene %r (%r)" % (scene, SCENES))
+    if ticks is None:
+        ticks = DEFAULT_TICKS[scene]
+    with tempfile.TemporaryDirectory() as tmp:
+        py_rows, py_stats, _ = _run_side(scene, ticks, False,
+                                         Path(tmp) / "py", extra_env)
+        nat_rows, nat_stats, nat_memos = _run_side(
+            scene, ticks, True, Path(tmp) / "native", extra_env)
+    return py_rows, nat_rows, nat_stats, py_stats, nat_memos
 
 
 def run_ab_full(scene, ticks=None):
     """`(python_record, native_record, native_stats, python_stats)`; see
     run_ab. The python side's counters are returned too: with the switch at 0
     they must read native == 0 for every kind."""
-    if scene not in SCENES:
-        raise ValueError("unknown A/B scene %r (%r)" % (scene, SCENES))
-    if ticks is None:
-        ticks = DEFAULT_TICKS[scene]
-    with tempfile.TemporaryDirectory() as tmp:
-        py_rows, py_stats = _run_side(scene, ticks, False, Path(tmp) / "py")
-        nat_rows, nat_stats = _run_side(scene, ticks, True,
-                                        Path(tmp) / "native")
-    return py_rows, nat_rows, nat_stats, py_stats
+    return run_ab_env(scene, None, ticks)[:4]
 
 
 def run_ab(scene, ticks=None):
@@ -165,6 +177,8 @@ def test_child():
     Path(out + ".rows").write_bytes(
         json.dumps(rows, sort_keys=True, separators=(",", ":")).encode())
     Path(out + ".stats").write_text(json.dumps(ai_native.stats()))
+    import _dauntless_host as _h
+    Path(out + ".memos").write_text(json.dumps(_h.ai_memo_status()))
 
 
 def _child_setup():

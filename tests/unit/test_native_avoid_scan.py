@@ -114,7 +114,18 @@ def _randomise(pool, rng):
             obj.SetScale(1.0)
 
 
-def test_native_scan_equals_the_sdk_loop_on_random_scenes():
+@pytest.fixture(params=("memos_on", "memos_off"))
+def memos(request):
+    """Each exactness test with the host memos on, and forced off (what a
+    Python other than 3.11, or a failed memo self-test, runs): the native
+    answers must not depend on them."""
+    off = request.param == "memos_off"
+    _h.ai_memo_force_off(off)
+    yield request.param
+    _h.ai_memo_force_off(False)
+
+
+def test_native_scan_equals_the_sdk_loop_on_random_scenes(memos):
     rng = random.Random(20261107)
     pool = _pool()
     ai_native.reset_stats()
@@ -253,7 +264,7 @@ def _course(result):
             float(speed).hex())
 
 
-def test_native_test_course_override_equals_the_sdk_method():
+def test_native_test_course_override_equals_the_sdk_method(memos):
     """The whole engine TestCourseOverride (the SDK body around the native
     loop, then the SDK's AvoidObjects) against the SDK method itself, from the
     same unit-vector RNG state, on crowded scenes where avoidance fires. The
@@ -333,8 +344,9 @@ def test_an_engine_class_with_its_own_getradius_takes_the_python_path(
 
 
 def test_a_type_with_no_dict_attribute_does_not_raise_on_a_memo_hit():
-    """The per-call stock memo checks each later object's own __dict__; one
-    whose type has none shadows nothing (the second object is the memo hit)."""
+    """The stock test checks each object's own __dict__ (the class half is
+    remembered by type version, so the second object is the memo hit); one
+    whose `__dict__` is missing shadows nothing."""
     from tests.unit.test_ai_native_gate import _NoDictShip
     ship = _ship(1.0)
     inst = _inst(ship)
@@ -409,3 +421,41 @@ def test_a_replaced_get_store_in_objects_sends_the_call_to_the_sdk(monkeypatch):
     inst.TestCourseOverride()
     s = ai_native.stats()["avoid"]
     assert (s["native"], s["reasons"]) == (0, {"no_mirror": 1}), s
+
+
+def test_a_ship_the_scan_cannot_read_runs_the_sdk_loop_counted_no_mirror():
+    """The ship itself is not a native read (here an instance GetVelocityTG):
+    the binding hands the whole loop back before walking anything, and the
+    caller runs the SDK loop, counted python / no_mirror -- not each object
+    through Python with every read taken again after it."""
+    ship, others = _scene_in_a_set()
+    inst = _inst(ship)
+    real = type(ship).GetVelocityTG
+    ship.__dict__["GetVelocityTG"] = lambda: real(ship)
+    psr = ship.GetRadius() * inst.fPersonalSpace
+    it = _ProximityIteration([ship] + others)
+    assert _h.combat_ai_avoid_scan(inst, ship, psr, it) is None
+    assert it._cursor == 0                      # nothing walked
+
+    ai_native.reset_stats()
+    inst.TestCourseOverride()
+    s = ai_native.stats()["avoid"]
+    assert (s["native"], s["python"], s["reasons"], s["object_fallbacks"]) \
+        == (0, 1, {"no_mirror": 1}, {}), s
+
+
+def test_an_object_with_a_non_dict___dict___takes_the_python_path():
+    """The one shadow rule (ai_native.object_reads_are_stock, the host's
+    dict_shadows): a `__dict__` that is not a dict shadows, so the object
+    is the SDK NeedToAvoid's; one with none shadows nothing."""
+    from tests.unit.test_ai_native_gate import mapping_dict
+    ship = _ship(1.0)
+    inst = _inst(ship)
+    odd = _ship(1.0)
+    odd.SetTranslateXYZ(3.0, 0.0, 0.0)
+    plain = _ship(1.0)
+    plain.SetTranslateXYZ(30.0, 0.0, 0.0)
+    ai_native.reset_stats()
+    with mapping_dict(odd):
+        assert _scan_both(inst, ship, [odd, plain]) == [odd]
+    assert ai_native.stats()["avoid"]["object_fallbacks"] == {"surface": 1}

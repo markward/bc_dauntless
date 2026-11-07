@@ -239,7 +239,16 @@ class _Scene:
         inst.dDamageReceived = damage
 
 
-def test_native_rating_equals_the_sdk_bit_for_bit():
+@pytest.fixture(params=("memos_on", "memos_off"))
+def memos(request):
+    """The exactness test with the host memos on, and forced off (what a
+    Python other than 3.11, or a failed memo self-test, runs)."""
+    _h.ai_memo_force_off(request.param == "memos_off")
+    yield request.param
+    _h.ai_memo_force_off(False)
+
+
+def test_native_rating_equals_the_sdk_bit_for_bit(memos):
     rng = random.Random(20261107)
     scene = _Scene(rng)
     rows = raised = 0
@@ -614,3 +623,61 @@ def test_switch_and_patch_send_the_call_to_the_sdk(monkeypatch):
     s = ai_native.stats()["select"]
     assert (s["native"], s["python"]) == (1, 2), s
     assert s["reasons"] == {"switch": 1, "not_stock": 1}, s
+
+
+def test_a_candidate_with_a_non_dict___dict___takes_the_python_path():
+    """The one shadow rule (ai_native.object_reads_are_stock, the host's
+    dict_shadows): a `__dict__` that is not a dict shadows."""
+    from tests.unit.test_ai_native_gate import mapping_dict
+    pSet, ours, them, inst = _pair()
+    with mapping_dict(them):
+        assert inst.GetTargetRating(them).hex() == _sdk(inst, them).hex()
+    s = ai_native.stats()["select"]
+    assert (s["native"], s["reasons"]) == (0, {"surface": 1}), s
+
+
+def test_the_rating_reads_app_from_the_caller():
+    """The binding holds no App of its own: it calls the App it is handed
+    (the gated SDK function's ``__globals__["App"]``), as the SDK body reads
+    its module's App. A stand-in whose ShipClass_Cast finds no ship drops the
+    shield, weapon and hull factors on both paths alike."""
+    import types
+    pSet, ours, them, inst = _pair()
+    fake = types.SimpleNamespace(**vars(App))
+    fake.ShipClass_Cast = lambda obj: None
+    real = _h.combat_ai_target_rating(inst, them, App)
+    assert real.hex() == _sdk(inst, them).hex()
+    got = _h.combat_ai_target_rating(inst, them, fake)
+    pp.__dict__["App"] = fake
+    try:
+        want = _sdk(inst, them)
+    finally:
+        pp.__dict__["App"] = App
+    assert got.hex() == want.hex()
+    assert got != real
+
+
+def test_the_set_index_audit_runs_the_sdk_rating(monkeypatch):
+    """DAUNTLESS_SET_INDEX_AUDIT=1 (read at use) checks the set index against
+    a scan in GetClassObjectList. The native popularity reads the index
+    directly, so with the audit on the call is the SDK's, counted "audit":
+    an index that drifted from its set raises there, as it does without the
+    native rating."""
+    pSet, ours, them, inst = _pair()
+    monkeypatch.setenv("DAUNTLESS_SET_INDEX_AUDIT", "1")
+    assert inst.GetTargetRating(them).hex() == _sdk(inst, them).hex()
+    s = ai_native.stats()["select"]
+    assert (s["native"], s["python"], s["reasons"]) == (0, 1, {"audit": 1}), s
+    # A pop behind the doors' backs: the audit sees it on the SDK path.
+    saved = dict(pSet._objects)
+    key = next(k for k, v in saved.items() if v is them)
+    pSet._objects.pop(key)
+    try:
+        with pytest.raises(AssertionError, match="set index drift"):
+            inst.GetTargetRating(them)
+    finally:
+        pSet._objects.clear()
+        pSet._objects.update(saved)          # in its order, as the index has it
+    monkeypatch.delenv("DAUNTLESS_SET_INDEX_AUDIT")
+    inst.GetTargetRating(them)
+    assert ai_native.stats()["select"]["native"] == 1

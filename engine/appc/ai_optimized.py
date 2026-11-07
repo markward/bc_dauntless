@@ -86,10 +86,12 @@ import functools
 import math
 import os
 import sys
+import types
 
 import App
 
 from engine.appc import ai_native
+from engine.appc import transform_store as _ts
 from engine.core import frame_profiler
 
 
@@ -303,6 +305,88 @@ def _engine_avoidance_class(base: type) -> type:
 _AVOID_METHODS = ("TestCourseOverride", "NeedToAvoid", "AvoidObjects")
 
 
+# ── One gate-cost model for the three native kinds ───────────────────────────
+#
+# Each gate is two halves. The INSTANCE half (preprocessor_is_stock) is
+# ai_native's, its class verdict remembered by the host per type version
+# (`stockmemo`). The MODULE-SURFACE half -- what an SDK body's globals, the
+# engine classes the mirrored readers build and the transform store resolve
+# to -- is decided here, in Python, by a _decide_* function that reads only
+# dicts and types; the host (`surfacememo`) remembers its answer under the
+# version tags of every one of them, read BEFORE deciding, and gives it back
+# while all hold. Any insert, replace or delete in one of those dicts, or any
+# change to one of those types, and Python decides again on the next call.
+# A decision that reads something no tag covers (an SDK function with a
+# `_dauntless_wraps` link, a module global bound to a non-module) is decided
+# every call. On a Python where the host memos are off (any but 3.11, or a
+# failed self-test; native/src/host/host_bindings.cc, `aimemo`) every call
+# decides: slower, still exact.
+
+#: The host's surface memo (host_bindings.cc, `surfacememo`): (tags, get,
+#: put), () without the host; looked up on first use.
+_SURFACE_MEMO = [None]
+_SURFACE_MISS = object()
+
+
+def _surface_memo():
+    memo = _SURFACE_MEMO[0]
+    if memo is None:
+        try:
+            import _dauntless_host as h
+            memo = (h.ai_memo_tags, h.ai_memo_get, h.ai_memo_put)
+        except (ImportError, AttributeError):
+            memo = ()
+        _SURFACE_MEMO[0] = memo
+    return memo
+
+
+def _memo_answer(key, decide, watched_of, arg):
+    """``decide(arg)``, remembered by the host under `key` while every dict
+    and type ``watched_of(arg)`` lists (taken before deciding) keeps its
+    version tag. ``watched_of`` returns None for a decision no tag covers:
+    decided every call. `decide` and `watched_of` are passed by the caller as
+    module globals, so a test can count the decisions."""
+    memo = _SURFACE_MEMO[0]
+    if memo is None:
+        memo = _surface_memo()
+    if not memo:
+        return decide(arg)
+    hit = memo[1](key, _SURFACE_MISS)
+    if hit is not _SURFACE_MISS:
+        return hit
+    watched = watched_of(arg)
+    tags = memo[0](watched) if watched is not None else None
+    answer = decide(arg)
+    if tags is not None:
+        memo[2](key, watched, tags, answer)
+    return answer
+
+
+def _module_dicts(g, names):
+    """The dicts behind `g[name]` for each of `names` a decision reads an
+    attribute of: a plain module's ``__dict__``; nothing for a missing name
+    (getattr(None, ...) reads nothing). None when one is bound to anything
+    else (its attribute lookup is not a dict's: decided every call)."""
+    out = ()
+    for name in names:
+        m = g.get(name)
+        if m is None:
+            continue
+        if type(m) is not types.ModuleType:
+            return None
+        out += (m.__dict__,)
+    return out
+
+
+def _sdk_function(cls, name):
+    """`cls`'s `name` with our wrappers unwrapped, and whether it is the raw
+    function (no `_dauntless_wraps` link to follow, so its own dict and
+    globals are all a decision about it reads)."""
+    raw = getattr(cls, name, None)
+    fn = ai_native._unwrap(raw)
+    return fn, fn is not None and fn is raw
+
+
 def _surface_snapshot():
     from engine.appc import objects as _objects
     from engine.appc import planet as _planet
@@ -335,8 +419,29 @@ _AVOID_SURFACE = _surface_snapshot()
 def _avoid_surface_is_stock(node) -> bool:
     """NeedToAvoid's module still calls the engine's App.PhysicsObjectClass_Cast,
     App.TGPoint3 (its methods unpatched) and math.sqrt, and is the App this
-    module calls."""
-    fn = ai_native._unwrap(getattr(type(node), "NeedToAvoid", None))
+    module calls. Decided per node type (_decide_avoid_surface), remembered
+    by the host (_memo_answer)."""
+    cls = type(node)
+    return _memo_answer(cls, _decide_avoid_surface, _avoid_watched, cls)
+
+
+def _avoid_watched(cls):
+    """What _decide_avoid_surface reads: the node type (its NeedToAvoid,
+    through the MRO), that function's dict and globals, App's dict, the
+    engine TGPoint3 and the module NeedToAvoid calls math from."""
+    fn, raw = _sdk_function(cls, "NeedToAvoid")
+    if not raw:
+        return None
+    g = fn.__globals__
+    tail = _module_dicts(g, ("math",))
+    if tail is None:
+        return None
+    return (cls, fn.__dict__, g, App.__dict__,
+            _AVOID_SURFACE["point_cls"]) + tail
+
+
+def _decide_avoid_surface(cls) -> bool:
+    fn = ai_native._unwrap(getattr(cls, "NeedToAvoid", None))
     if fn is None:
         return False
     g = fn.__globals__
@@ -358,12 +463,40 @@ def _avoid_surface_is_stock(node) -> bool:
 def _native_store_ok() -> bool:
     """GetWorldLocation reads the native transform store the scan reads:
     the get_store it calls (engine.appc.objects' global) is the boot one and
-    hands back the native store."""
+    hands back the native store (_decide_store, remembered by the host)."""
+    return _memo_answer(_STORE_KEYS["avoid"], _decide_store, _store_watched,
+                        "avoid")
+
+
+#: One memo key per kind's store check.
+_STORE_KEYS = {"avoid": object(), "select": object(), "fire": object()}
+
+
+def _store_watched(_kind):
+    """What _decide_store reads: engine.appc.objects' and transform_store's
+    dicts (get_store, the store singleton, NativeTransformStore) and the
+    native store class (its readers)."""
+    return (_AVOID_SURFACE["objects"].__dict__, _ts.__dict__,
+            _AVOID_SURFACE["store_cls"])
+
+
+def _decide_store(kind) -> bool:
+    """The store `kind`'s mirrored reads read is the native one, its readers
+    unpatched: get_position for all; get_rotation_col for select's forward,
+    get_rotation for fire's rotations."""
     snap = _AVOID_SURFACE
     get_store = snap["objects"].__dict__.get("get_store")
-    return (get_store is snap["get_store"]
+    if not (get_store is snap["get_store"]
             and type(get_store()) is snap["store_cls"]
-            and snap["store_cls"].get_position is snap["get_position"])
+            and snap["store_cls"].get_position is snap["get_position"]):
+        return False
+    if kind == "select":
+        return (_ts.NativeTransformStore.get_rotation_col
+                is _SELECT_SURFACE["get_rotation_col"])
+    if kind == "fire":
+        return (_ts.NativeTransformStore.get_rotation
+                is _FIRE_SURFACE["get_rotation"])
+    return True
 
 
 def _native_scan_applies(manager, handle) -> bool:
@@ -375,10 +508,23 @@ def _native_scan_applies(manager, handle) -> bool:
             and "GetNextObject" not in getattr(manager, "__dict__", ()))
 
 
+#: The host's bindings, looked up on the first native call (the host module
+#: is not importable when this module is): [avoid scan, target rating, fire].
+_BINDINGS = [None]
+
+
+def _bindings():
+    b = _BINDINGS[0]
+    if b is None:
+        import _dauntless_host as h
+        b = _BINDINGS[0] = (h.combat_ai_avoid_scan, h.combat_ai_target_rating,
+                            h.combat_ai_fire_update)
+    return b
+
+
 def _native_test_course_override(self):
     """AvoidObstacles.TestCourseOverride (AI/Preprocessors.py:1713-1767),
     statement for statement, with the loop native."""
-    import _dauntless_host as _h
     # Get our ship...
     pShip = self.pCodeAI.GetShip()
     if (pShip == None):                              # noqa: E711 (SDK spelling)
@@ -410,13 +556,19 @@ def _native_test_course_override(self):
     lAvoidObjects = []
     if (pProxManager != None):                       # noqa: E711
         pObjectIter = pProxManager.GetNearObjects( vPredictedLocation, fCheckRadius )
+        found = None
         if _native_scan_applies(pProxManager, pObjectIter):
+            # None, with nothing walked, when the ship or this node's
+            # parameters are not native reads.
+            scan = (_BINDINGS[0] or _bindings())[0]
+            found = scan(self, pShip, fPersonalSpaceRadius, pObjectIter)
+        if found is not None:
             ai_native.note("avoid", "native")
-            lAvoidObjects = _h.combat_ai_avoid_scan(
-                self, pShip, fPersonalSpaceRadius, pObjectIter)
+            lAvoidObjects = found
             ai_native.count("avoid", "avoided", len(lAvoidObjects))
         else:
-            # A manager or handle that is not the engine's: the SDK loop.
+            # A manager or handle that is not the engine's, or a ship or
+            # parameters the scan cannot read: the SDK loop.
             ai_native.note("avoid", "python", "no_mirror")
             pObject = pProxManager.GetNextObject( pObjectIter )
             while (pObject != None):                 # noqa: E711
@@ -715,68 +867,41 @@ def _decide_fire_surface(g):
     return None
 
 
-#: The host's surface memo (native/src/host/host_bindings.cc, `surfacememo`):
-#: (tags, get, put), () without the host; looked up on first use.
-_SURFACE_MEMO = [None]
-_SURFACE_MISS = object()
-
-
-def _surface_memo():
-    memo = _SURFACE_MEMO[0]
-    if memo is None:
-        try:
-            import _dauntless_host as h
-            memo = (h.ai_memo_tags, h.ai_memo_get, h.ai_memo_put)
-        except (ImportError, AttributeError):
-            memo = ()
-        _SURFACE_MEMO[0] = memo
-    return memo
-
-
 def _fire_surface_globals(base):
     """The globals the SDK FireScript (`base`) runs on -- its Update's
     __globals__, which the binding loads App and the builtins from -- if they
-    are stock (_decide_fire_surface), else None.
+    are stock (_decide_fire_surface), else None. Remembered by the host
+    (_memo_answer) under the tags of `base` (its Update), that function's own
+    __dict__ (a `_dauntless_wraps` link), its globals and their builtins, and
+    the snapshot's tables; an Update with a `_dauntless_wraps` link is
+    decided every call."""
+    return _memo_answer(base, _decide_fire_globals, _fire_watched, base)
 
-    The decision is Python's and reads only dicts and types: `base` (its
-    Update), that function's own __dict__ (a `_dauntless_wraps` link), its
-    globals and their builtins, and the snapshot's tables. The host remembers
-    the answer under all of their version tags (read BEFORE deciding) and
-    gives it back while every one holds; any insert, replace or delete in one
-    of them, or a change to one of the types, and this decides again. An
-    Update with a `_dauntless_wraps` link is decided every call."""
-    memo = _SURFACE_MEMO[0]
-    if memo is None:
-        memo = _surface_memo()
-    if memo:
-        hit = memo[1](base, _SURFACE_MISS)
-        if hit is not _SURFACE_MISS:
-            return hit
-    raw = getattr(base, "Update", None)
-    fn = ai_native._unwrap(raw)
-    if fn is None:
+
+def _fire_watched(base):
+    fn, raw = _sdk_function(base, "Update")
+    if not raw:
         return None
     g = fn.__globals__
-    tags = None
-    if memo and fn is raw:
-        b = g.get("__builtins__")
-        table = b if isinstance(b, dict) else getattr(b, "__dict__", None)
-        watched = (base, fn.__dict__, g) + (
-            (table,) if isinstance(table, dict) else ()) + _FIRE_SURFACE["watched"]
-        tags = memo[0](watched)
-    answer = _decide_fire_surface(g)
-    if tags is not None:
-        memo[2](base, watched, tags, answer)
-    return answer
+    b = g.get("__builtins__")
+    table = b if isinstance(b, dict) else getattr(b, "__dict__", None)
+    if type(table) is not dict:
+        return None
+    return (base, fn.__dict__, g, table) + _FIRE_SURFACE["watched"]
+
+
+def _decide_fire_globals(base):
+    fn = ai_native._unwrap(getattr(base, "Update", None))
+    if fn is None:
+        return None
+    return _decide_fire_surface(fn.__globals__)
 
 
 def _fire_store_ok() -> bool:
     """GetWorldLocation and GetWorldRotation read the native store the
-    binding reads (_native_store_ok, plus its rotation)."""
-    from engine.appc import transform_store as _ts
-    return (_native_store_ok()
-            and _ts.NativeTransformStore.get_rotation
-            is _FIRE_SURFACE["get_rotation"])
+    binding reads (_decide_store, remembered by the host)."""
+    return _memo_answer(_STORE_KEYS["fire"], _decide_store, _store_watched,
+                        "fire")
 
 
 def _fire_update(self, base, args, kwargs):
@@ -805,16 +930,8 @@ def _fire_update(self, base, args, kwargs):
         ai_native.note("fire", "python", "no_mirror")
         return base.Update(self, *args, **kwargs)
     ai_native.note("fire", "native")
-    fire = _FIRE_BINDING[0]
-    if fire is None:
-        import _dauntless_host
-        fire = _FIRE_BINDING[0] = _dauntless_host.combat_ai_fire_update
+    fire = (_BINDINGS[0] or _bindings())[2]
     return fire(self, end_time, sdk_globals)
-
-
-#: _dauntless_host.combat_ai_fire_update, looked up on the first native call
-#: (the host module is not importable when this module is).
-_FIRE_BINDING = [None]
 
 
 _NON_LETHAL_CLASSES: dict = {}
@@ -952,56 +1069,93 @@ def _select_surface_snapshot():
 _SELECT_SURFACE = _select_surface_snapshot()
 
 
-def _select_surface_is_stock(base) -> bool:
-    """The SDK GetTargetRating (on `base`, the SDK class) still sees the
-    engine's App, math.acos / math.pi, the TGPoint3 GetWorldLocation and
-    GetWorldForwardTG build (methods unpatched, math.sqrt behind Length),
-    and an App.CT_SHIP that GetClassObjectList resolves to the ShipClass the
-    set index buckets."""
-    fn = ai_native._unwrap(getattr(base, "GetTargetRating", None))
-    if fn is None:
-        return False
+def _select_surface_app(base):
+    """The App the SDK GetTargetRating (on `base`, the SDK class) reads --
+    its __globals__["App"], which the binding is handed -- if its surface is
+    stock (_decide_select_surface), else None. Remembered by the host
+    (_memo_answer)."""
+    return _memo_answer(base, _decide_select_surface, _select_watched, base)
+
+
+def _select_watched(base):
+    """What _decide_select_surface reads: `base` (its GetTargetRating), that
+    function's dict and globals, the math module it calls, App's dict, the
+    engine TGPoint3 and the modules behind GetWorldLocation's arithmetic,
+    and everything GetClassObjectList(App.CT_SHIP) resolves through:
+    object_types and its registry, sys.modules' engine.appc.ships and the
+    set index module."""
+    fn, raw = _sdk_function(base, "GetTargetRating")
+    if not raw:
+        return None
     g = fn.__globals__
     snap = _SELECT_SURFACE
-    if g.get("App") is not App:
-        return False
+    tail = _module_dicts(g, ("math",))
+    sqrt_mod = _module_dicts(snap["engine_math"].__dict__, ("_math",))
+    ot = snap["object_types"]
+    by_tag = ot.__dict__.get("_BY_TAG")
+    ships = sys.modules.get("engine.appc.ships")
+    if tail is None or sqrt_mod is None or type(by_tag) is not dict \
+            or type(ships) is not types.ModuleType:
+        return None
+    from engine.appc import set_index as _set_index
+    return (base, fn.__dict__, g, App.__dict__, snap["objects"].__dict__,
+            _AVOID_SURFACE["point_cls"], snap["engine_math"].__dict__,
+            ot.__dict__, by_tag, sys.modules, ships.__dict__,
+            _set_index.__dict__) + tail + sqrt_mod
+
+
+def _decide_select_surface(base):
+    """The SDK GetTargetRating still sees the engine's App, math.acos /
+    math.pi, the TGPoint3 GetWorldLocation and GetWorldForwardTG build
+    (methods unpatched, math.sqrt behind Length), and an App.CT_SHIP that
+    GetClassObjectList resolves to the ShipClass the set index buckets: its
+    App, else None."""
+    fn = ai_native._unwrap(getattr(base, "GetTargetRating", None))
+    if fn is None:
+        return None
+    g = fn.__globals__
+    snap = _SELECT_SURFACE
+    app = g.get("App")
+    if app is not App:
+        return None
     m = g.get("math")
     if getattr(m, "acos", None) is not snap["acos"] \
             or getattr(m, "pi", None) is not snap["pi"]:
-        return False
+        return None
     avoid = _AVOID_SURFACE
     point_cls = avoid["point_cls"]
     if snap["objects"].__dict__.get("TGPoint3") is not point_cls:
-        return False
+        return None
     table = point_cls.__dict__
     for name, want in avoid["point"].items():
         if table.get(name) is not want:
-            return False
+            return None
     sqrt_mod = snap["engine_math"].__dict__.get("_math")
     if getattr(sqrt_mod, "sqrt", None) is not avoid["sqrt"]:
-        return False
+        return None
     # GetClassObjectList(App.CT_SHIP): resolve_class, ShipProperty -> ShipClass.
     ot = snap["object_types"]
     if ot.__dict__.get("resolve_class") is not snap["resolve_class"]:
-        return False
+        return None
     cls = ot.resolve_class(App.CT_SHIP)
     if cls is snap["ship_property"]:
-        cls = sys.modules["engine.appc.ships"].__dict__.get("ShipClass")
+        ships = sys.modules.get("engine.appc.ships")
+        cls = getattr(ships, "__dict__", {}).get("ShipClass")
     if cls is not snap["ship_class"]:
-        return False
+        return None
     # The class GetClassObjectList's set index buckets as ships (imported on
     # first use, as sets.py imports it).
     from engine.appc import set_index as _set_index
-    return _set_index.__dict__.get("_ShipClass") is cls
+    if _set_index.__dict__.get("_ShipClass") is not cls:
+        return None
+    return app
 
 
 def _select_store_ok() -> bool:
     """GetWorldLocation and GetWorldForwardTG read the native store the
-    rating reads (_native_store_ok, plus its rotation column)."""
-    from engine.appc import transform_store as _ts
-    return (_native_store_ok()
-            and _ts.NativeTransformStore.get_rotation_col
-            is _SELECT_SURFACE["get_rotation_col"])
+    rating reads (_decide_store, remembered by the host)."""
+    return _memo_answer(_STORE_KEYS["select"], _decide_store, _store_watched,
+                        "select")
 
 
 _NATIVE_SELECT_CLASSES: dict = {}
@@ -1026,16 +1180,17 @@ def _native_select_class(base: type) -> type:
         if not ai_native.enabled("select"):
             ai_native.note("select", "python", "switch")
             return base.GetTargetRating(self, pTarget)
-        if not (ai_native.preprocessor_is_stock(self, "SelectTarget",
-                                                _SELECT_METHODS)
-                and _select_surface_is_stock(base)):
+        app = None
+        if ai_native.preprocessor_is_stock(self, "SelectTarget",
+                                           _SELECT_METHODS):
+            app = _select_surface_app(base)
+        if app is None:
             ai_native.note("select", "python", "not_stock")
             return base.GetTargetRating(self, pTarget)
         if not _select_store_ok():
             ai_native.note("select", "python", "no_mirror")
             return base.GetTargetRating(self, pTarget)
-        import _dauntless_host as _h
-        rating = _h.combat_ai_target_rating(self, pTarget)
+        rating = (_BINDINGS[0] or _bindings())[1](self, pTarget, app)
         if type(rating) is float:
             ai_native.note("select", "native")
             return rating

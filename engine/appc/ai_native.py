@@ -363,9 +363,14 @@ _reads_cache = weakref.WeakKeyDictionary()
 def object_reads_are_stock(obj, contract: tuple) -> bool:
     """For each ``(name, function)`` of `contract`, ``type(obj)`` resolves
     `name` to exactly `function`, and the instance ``__dict__`` shadows none of
-    the names (an object with no ``__dict__`` shadows nothing). The class half
-    is memoised per type and re-resolved on every call, so a patch is seen on
-    the next one."""
+    the names. The class half is memoised per type and re-resolved on every
+    call, so a patch is seen on the next one.
+
+    The shadow rule, the same in every native reader (native/src/host/
+    host_bindings.cc, ``readers::dict_shadows``): an object with no
+    ``__dict__`` shadows nothing; a dict shadows when it holds a name; a
+    ``__dict__`` that is not a dict shadows (the conservative answer: no
+    reader reproduces that lookup)."""
     cls = type(obj)
     per_cls = _reads_cache.get(cls)
     if per_cls is None:
@@ -377,9 +382,11 @@ def object_reads_are_stock(obj, contract: tuple) -> bool:
             resolved, all(r is fn for r, (_n, fn) in zip(resolved, contract))]
     if not entry[1]:
         return False
-    d = getattr(obj, "__dict__", None)
-    if not isinstance(d, dict):
+    d = getattr(obj, "__dict__", _GONE)
+    if d is _GONE:
         return True
+    if not isinstance(d, dict):
+        return False
     return d.keys().isdisjoint(n for n, _fn in contract)
 
 
@@ -388,9 +395,11 @@ def object_reads_are_stock(obj, contract: tuple) -> bool:
 #: Why a CALL ran the SDK's code (note): the switch is off; the instance or
 #: its module surface is not stock; an object the native code reads does not
 #: resolve its reader contract ("surface": SelectTarget, where one call
-#: rates one object, so the object's fallback is the call's); or a value the
-#: native code reads is not the engine's or not of a shape it reproduces.
-REASONS = ("switch", "not_stock", "surface", "no_mirror")
+#: rates one object, so the object's fallback is the call's); a value the
+#: native code reads is not the engine's or not of a shape it reproduces; or
+#: DAUNTLESS_SET_INDEX_AUDIT=1 ("audit": SelectTarget, whose native
+#: popularity reads the set index the audit checks in GetClassObjectList).
+REASONS = ("switch", "not_stock", "surface", "no_mirror", "audit")
 
 #: Why one OBJECT inside a native call went to the SDK Python
 #: (note_object_fallback).

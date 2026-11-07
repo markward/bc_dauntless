@@ -568,13 +568,15 @@ class _Scene:
         return (rows, self.started, list(self.using), self.getship_calls)
 
 
-def _step_both(sdk, nat, step_rng_seed, monkeypatch):
-    """One Update of each build under the same world change; returns the
-    two (outcome, calls, state, rng, digest) records."""
+def _step_both(sdk, nat, step_rng_seed, monkeypatch, perturb=True):
+    """One Update of each build under the same world change (made here
+    unless `perturb` is False: the caller made it); returns the two
+    (outcome, calls, state, rng, digest) records."""
     out = []
     rng0 = _rng_state()
     for scene, native in ((sdk, False), (nat, True)):
-        scene.perturb(random.Random(step_rng_seed))
+        if perturb:
+            scene.perturb(random.Random(step_rng_seed))
         _set_rng_state(rng0)
         if native:
             monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
@@ -769,9 +771,18 @@ _SCENES = {
 _STEPS = 60
 
 
+@pytest.fixture(params=("memos_on", "memos_off"))
+def memos(request):
+    """The exactness test with the host memos on, and forced off (what a
+    Python other than 3.11, or a failed memo self-test, runs)."""
+    _h.ai_memo_force_off(request.param == "memos_off")
+    yield request.param
+    _h.ai_memo_force_off(False)
+
+
 @pytest.mark.parametrize("scene_name", sorted(_SCENES))
 def test_native_fire_update_matches_the_sdk_call_by_call(scene_name,
-                                                          monkeypatch):
+                                                          monkeypatch, memos):
     assert App.TractorBeamSystem.TBS_DOCK_STAGE_1 == _TBS1
     opt = _SCENES[scene_name]
     if opt.get("gate"):
@@ -1252,3 +1263,27 @@ def test_the_unbound_pscript_error_chains_like_the_sdk(monkeypatch):
     assert out[False] == out[True], out
     assert out[True][1] == "ModuleNotFoundError", out
     assert ai_native.stats()["fire"]["native"] == 1
+
+
+def test_a_target_with_a_non_dict___dict___is_read_through_python(
+        monkeypatch):
+    """The one shadow rule (ai_native.object_reads_are_stock, the host's
+    dict_shadows): a `__dict__` that is not a dict shadows, so the target's
+    mirrored reads are its Python calls, counted; the Update is the SDK's
+    call for call."""
+    from tests.unit.test_ai_native_gate import mapping_dict
+    opt = dict(ours="Galaxy", target="Galaxy", range=1e20,
+               weapons=("GetPhaserSystem", "GetTorpedoSystem"))
+    sdk = _Scene("A", opt)
+    nat = _Scene("B", opt)
+    for step in range(6):
+        # The scene moves its objects first (the engine writes __dict__).
+        sdk.perturb(random.Random(7000 + step))
+        nat.perturb(random.Random(7000 + step))
+        with mapping_dict(sdk.target, nat.target):
+            a, b = _step_both(sdk, nat, 7000 + step, monkeypatch,
+                              perturb=False)
+        assert _first_diff(a, b) is None, step
+    stats = ai_native.stats()["fire"]
+    assert stats["native"] == 6, stats
+    assert stats["object_fallbacks"].get("surface", 0) > 0, stats
