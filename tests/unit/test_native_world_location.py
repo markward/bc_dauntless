@@ -115,3 +115,45 @@ def test_the_native_store_path_builds_the_point_natively(monkeypatch, name):
     o.SetTranslateXYZ(1.0, 2.0, 3.0)
     p = getattr(o, name)()
     assert type(p) is TGPoint3 and (p.x, p.y, p.z) == (1.0, 2.0, 3.0)
+
+
+@pytest.mark.parametrize("name", ["GetWorldLocation", "GetTranslate"])
+def test_a_stale_binary_is_an_attribute_error_not_a_stale_handle(monkeypatch, name):
+    _native_only()
+    monkeypatch.setattr(objects, "_transform_point", None)
+    o = ObjectClass()
+    with pytest.raises(AttributeError, match="transform_point"):
+        getattr(o, name)()
+
+
+def test_an_unregistered_point_class_is_not_a_stale_handle():
+    import subprocess
+    import sys
+    import os
+    code = (
+        "import _dauntless_host as h\n"
+        "i, g = h.transform_alloc()\n"
+        "try:\n"
+        "    h.transform_point(i, g)\n"
+        "except RuntimeError as e:\n"
+        "    print('RuntimeError', e)\n"
+        "except BaseException as e:\n"
+        "    print(type(e).__name__)\n")
+    env = dict(os.environ, PYTHONPATH=os.path.dirname(_h.__file__))
+    out = subprocess.run([sys.executable, "-c", code], env=env,
+                         capture_output=True, text=True).stdout
+    assert out.startswith("SystemError"), out
+
+
+@pytest.mark.parametrize("name", ["GetWorldLocation", "GetTranslate"])
+@pytest.mark.parametrize("bad", [-1, 2 ** 32, 2 ** 32 + 5, 2 ** 70])
+def test_out_of_range_handles_match_the_old_path(name, bad):
+    _native_only()
+    o = ObjectClass()
+    for xform in ((bad, o._xform[1]), (o._xform[0], bad)):
+        with pytest.raises(StaleHandleError) as old:
+            get_store().get_position(*xform)
+        o._xform = xform
+        with pytest.raises(StaleHandleError) as new:
+            getattr(o, name)()
+        assert type(new.value.__cause__) is type(old.value.__cause__) is TypeError

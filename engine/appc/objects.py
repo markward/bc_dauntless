@@ -23,6 +23,13 @@ try:  # the raw native point builder; absent without the host extension
 except ImportError:  # pragma: no cover - the Python store never reaches it
     _transform_point = None
 
+
+def _no_transform_point():
+    """A binary with the native store but without `transform_point` is stale:
+    CLAUDE.md's contract is an AttributeError, never a StaleHandleError."""
+    raise AttributeError(
+        "module '_dauntless_host' has no attribute 'transform_point'")
+
 # Lifetime constants (BC DamageableObject). LIFETIME_UNSET is the "not set"
 # sentinel: Effects.py:753 treats GetLifeTime() > 1e6 as unset, so the default
 # sits well above that. DYING_THRESHOLD is BC's g_dyingThreshold (0x8e5c18) —
@@ -402,6 +409,8 @@ class ObjectClass(TGEventHandlerObject):
     def GetTranslate(self) -> TGPoint3:
         store = get_store()
         if type(store) is NativeTransformStore:
+            if _transform_point is None:
+                _no_transform_point()
             try:
                 return _transform_point(*self._xform)
             except (RuntimeError, TypeError) as exc:
@@ -412,6 +421,8 @@ class ObjectClass(TGEventHandlerObject):
     def GetWorldLocation(self) -> TGPoint3:
         store = get_store()
         if type(store) is NativeTransformStore:
+            if _transform_point is None:
+                _no_transform_point()
             try:
                 return _transform_point(*self._xform)
             except (RuntimeError, TypeError) as exc:

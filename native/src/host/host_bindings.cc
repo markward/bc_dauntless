@@ -5499,19 +5499,44 @@ static PyObject* transform_point_fn(PyObject*, PyObject* const* args,
         PyErr_SetString(PyExc_TypeError, "transform_point(index, generation)");
         return nullptr;
     }
-    const unsigned long i = PyLong_AsUnsignedLong(args[0]);
-    if (PyErr_Occurred()) return nullptr;
-    const unsigned long g = PyLong_AsUnsignedLong(args[1]);
-    if (PyErr_Occurred()) return nullptr;
+    // Handles are uint32 like the pybind path: outside [0, 2^32) is a TypeError.
+    long long v[2];
+    for (int k = 0; k < 2; ++k) {
+        v[k] = PyLong_AsLongLong(args[k]);
+        if (v[k] == -1 && PyErr_Occurred()) {
+            if (PyErr_ExceptionMatches(PyExc_OverflowError)) {
+                PyErr_Clear();
+                PyErr_SetString(PyExc_TypeError,
+                                "transform_point: handle out of uint32 range");
+            }
+            return nullptr;
+        }
+        if (v[k] < 0 || v[k] > 0xFFFFFFFFLL) {
+            PyErr_SetString(PyExc_TypeError,
+                            "transform_point: handle out of uint32 range");
+            return nullptr;
+        }
+    }
+    std::array<double, 3> p;
     try {
-        const auto p = dauntless::transform_store().position(
-            static_cast<std::uint32_t>(i), static_cast<std::uint32_t>(g));
+        p = dauntless::transform_store().position(
+            static_cast<std::uint32_t>(v[0]), static_cast<std::uint32_t>(v[1]));
+    } catch (const dauntless::StaleHandle& e) {
+        PyErr_SetString(PyExc_RuntimeError, e.what());
+        return nullptr;
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+    try {
         return make_point(p[0], p[1], p[2]);
     } catch (py::error_already_set& e) {
         e.restore();
         return nullptr;
     } catch (const std::exception& e) {
-        PyErr_SetString(PyExc_RuntimeError, e.what());
+        // Not a stale handle: a missing TGPoint3 registration must not be
+        // reported as one.
+        PyErr_SetString(PyExc_SystemError, e.what());
         return nullptr;
     }
 }
