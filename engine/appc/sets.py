@@ -1,3 +1,4 @@
+import os
 import re
 from functools import lru_cache
 
@@ -205,6 +206,8 @@ class SetClass(TGEventHandlerObject):
             obj._containing_set = self
         previous = self._objects.get(identifier)
         self._objects[identifier] = obj
+        from engine.appc import set_index
+        set_index.on_added(self, identifier, obj)
         self._index_member(identifier, obj, previous)
         from engine.appc.ships import ShipClass
         from engine.appc import ship_lifecycle
@@ -282,10 +285,12 @@ class SetClass(TGEventHandlerObject):
         return self._objects.get(name)
 
     def RemoveObjectFromSet(self, name: str):
+        from engine.appc import set_index
         obj = self._objects.get(name)
         if obj is not None:
             from engine.appc import contact_index
             contact_index.on_removed(self, obj)
+            set_index.on_leaving(self, name)
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
             from engine.appc import sensor_contacts
@@ -299,14 +304,17 @@ class SetClass(TGEventHandlerObject):
         if self._non_torpedo.pop(name, None) is not None:
             proximity_cache.bump()  # after the handlers, at the index pop
         removed = self._objects.pop(name, None)
+        set_index.on_removed(self, name)
         self._forget_in_proximity(removed)
         return removed
 
     def DeleteObjectFromSet(self, name: str) -> None:
+        from engine.appc import set_index
         obj = self._objects.get(name)
         if obj is not None:
             from engine.appc import contact_index
             contact_index.on_removed(self, obj)
+            set_index.on_leaving(self, name)
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
             from engine.appc import sensor_contacts
@@ -320,7 +328,9 @@ class SetClass(TGEventHandlerObject):
             self._clear_containing_set(obj)
         if self._non_torpedo.pop(name, None) is not None:
             proximity_cache.bump()  # after the handlers, at the index pop
-        self._forget_in_proximity(self._objects.pop(name, None))
+        removed = self._objects.pop(name, None)
+        set_index.on_removed(self, name)
+        self._forget_in_proximity(removed)
 
     def _forget_in_proximity(self, obj) -> None:
         """An object that left this set leaves its manager list too (ruling
@@ -558,7 +568,17 @@ class SetClass(TGEventHandlerObject):
             class_type = ShipClass
         if not isinstance(class_type, type):
             return []
-        return [obj for obj in self._objects.values() if isinstance(obj, class_type)]
+        # Answered by the native set index (engine/appc/set_index.py), which
+        # the three membership doors keep in step with `_objects`.
+        from engine.appc import set_index
+        found = set_index.class_objects(self, class_type)
+        if os.environ.get("DAUNTLESS_SET_INDEX_AUDIT") == "1":
+            scan = [o for o in self._objects.values() if isinstance(o, class_type)]
+            if len(scan) != len(found) or any(a is not b for a, b in zip(scan, found)):
+                raise AssertionError(
+                    f"set index drift: set {self.GetName()!r}, class "
+                    f"{class_type.__name__}: index {found!r} != scan {scan!r}")
+        return found
 
     def GetNebula(self):
         """First CT_NEBULA object in this set, or None (SDK SetClass_GetNebula)."""

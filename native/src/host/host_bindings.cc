@@ -40,6 +40,7 @@
 #include "dauntless/combat/projectile_geometry.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/set_index.h"
 #include "dauntless/combat/impulse.h"
 #include "dauntless/combat/motion_step.h"
 #include "dauntless/combat/published_poses.h"
@@ -5365,6 +5366,108 @@ static py::object& bench_point_class() {
     static py::object* cls = new py::object();
     return *cls;
 }
+
+// ── The native set index (engine/appc/set_index.py) ─────────────────────────
+// One SetIndex (native/src/combat/.../set_index.h) mirrors every
+// SetClass._objects. Keys are object addresses; `refs` holds exactly one
+// strong reference per entry, per set and per bucket class, dropped as the
+// core hands keys back, so a reset or a forgotten set releases everything it
+// held (the 4.3 GB suite leak, docs/reference/architecture/
+// test-suite-memory.md). Heap-allocated and never destroyed: no static
+// destructor runs Py_DECREF after the interpreter is gone.
+namespace {
+namespace si {
+using Key = std::uintptr_t;
+
+struct Host {
+    dauntless::combat::SetIndex ix;
+    std::unordered_map<Key, std::pair<PyObject*, std::int64_t>> refs;
+    PyObject* ship_cls = nullptr;    // set_index_configure; held for good
+    PyObject* nebula_cls = nullptr;
+    // The contact view per set, rebuilt after any change to that set.
+    std::unordered_map<Key, py::object> ships, nebulae;
+};
+
+Host& host() {
+    static Host* h = new Host();
+    return *h;
+}
+
+Key key_of(py::handle o) { return reinterpret_cast<Key>(o.ptr()); }
+
+void take(Host& h, PyObject* o) {
+    auto [it, fresh] = h.refs.try_emplace(reinterpret_cast<Key>(o), o, 0);
+    if (fresh) Py_INCREF(o);
+    ++it->second.second;
+}
+
+// A release is parked in `dead` and only dropped when the binding returns,
+// once the index is consistent: the last reference can run a finaliser that
+// re-enters the index.
+void release(Host& h, Key k, std::vector<py::object>& dead) {
+    auto it = h.refs.find(k);
+    if (it == h.refs.end())
+        throw std::logic_error("set index: released a key it does not hold");
+    if (--it->second.second == 0) {
+        dead.push_back(py::reinterpret_steal<py::object>(it->second.first));
+        h.refs.erase(it);
+    }
+}
+
+PyObject* obj_of(const Host& h, Key k) { return h.refs.at(k).first; }
+
+bool is_instance(PyObject* o, PyObject* cls) {
+    int r = PyObject_IsInstance(o, cls);
+    if (r < 0) throw py::error_already_set();
+    return r == 1;
+}
+
+void invalidate(Host& h, Key set, std::vector<py::object>& dead) {
+    for (auto* cache : {&h.ships, &h.nebulae}) {
+        auto it = cache->find(set);
+        if (it == cache->end()) continue;
+        dead.push_back(std::move(it->second));
+        cache->erase(it);
+    }
+}
+
+void create_bucket(Host& h, Key set, PyObject* cls) {
+    take(h, cls);  // before the fill: a raising isinstance keeps refs whole
+    h.ix.create_bucket(set, reinterpret_cast<Key>(cls),
+                       [&](Key o) { return is_instance(obj_of(h, o), cls); });
+}
+
+void reassess(Host& h, Key set, PyObject* obj) {
+    for (Key cls : h.ix.bucket_classes(set))
+        h.ix.set_bucket_membership(set, cls, reinterpret_cast<Key>(obj),
+                                   is_instance(obj, obj_of(h, cls)));
+}
+
+void release_buckets(Host& h, Key set, std::vector<py::object>& dead) {
+    for (Key cls : h.ix.bucket_classes(set)) release(h, cls, dead);
+}
+
+py::object contact_view(Host& h, py::handle set, PyObject* cls,
+                        std::unordered_map<Key, py::object>& cache) {
+    Key s = key_of(set);
+    auto it = cache.find(s);
+    if (it != cache.end()) return it->second;
+    if (!h.ix.has_set(s)) return py::tuple();
+    std::vector<Key> keys = h.ix.distinct_live(s, reinterpret_cast<Key>(cls));
+    py::tuple out(keys.size());
+    for (std::size_t i = 0; i < keys.size(); ++i)
+        out[i] = py::reinterpret_borrow<py::object>(obj_of(h, keys[i]));
+    cache[s] = out;
+    return out;
+}
+
+py::list objects(const Host& h, const std::vector<Key>& keys) {
+    py::list out;
+    for (Key k : keys) out.append(py::reinterpret_borrow<py::object>(obj_of(h, k)));
+    return out;
+}
+}  // namespace si
+}  // namespace
 
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "dauntless renderer + sim host bindings";
@@ -11428,6 +11531,132 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return dauntless::combat::contains(x, y, z, cx, cy, cz, r);
           },
           "engine.appc.sensor_occlusion._contains(...).");
+
+    // ── The native set index: SetClass membership by class, contact view ─
+    // engine/appc/set_index.py is the only caller; sets.py's three doors and
+    // native_combat.reclassify keep it in step with SetClass._objects.
+    m.def("set_index_configure",
+          [](py::handle ship_cls, py::handle nebula_cls) {
+              auto& h = si::host();
+              if (h.ship_cls == ship_cls.ptr() && h.nebula_cls == nebula_cls.ptr())
+                  return;
+              if (!h.ix.sets().empty())
+                  throw std::logic_error("set index: reconfigured while it holds sets");
+              Py_INCREF(ship_cls.ptr());
+              Py_INCREF(nebula_cls.ptr());
+              Py_XDECREF(h.ship_cls);
+              Py_XDECREF(h.nebula_cls);
+              h.ship_cls = ship_cls.ptr();
+              h.nebula_cls = nebula_cls.ptr();
+          },
+          py::arg("ship_cls"), py::arg("nebula_cls"),
+          "The ShipClass and Nebula classes the contact view buckets by.");
+    m.def("set_index_add",
+          [](py::handle set, const std::string& ident, py::handle obj, bool is_ship,
+             std::int64_t target_id) {
+              auto& h = si::host();
+              if (h.ship_cls == nullptr)
+                  throw std::logic_error("set index: set_index_configure first");
+              std::vector<py::object> dead;
+              si::Key s = si::key_of(set);
+              bool new_set = !h.ix.has_set(s);
+              auto replaced = h.ix.add(s, ident, si::key_of(obj), is_ship, target_id);
+              si::take(h, obj.ptr());
+              if (new_set) {
+                  si::take(h, set.ptr());
+                  si::create_bucket(h, s, h.ship_cls);
+                  si::create_bucket(h, s, h.nebula_cls);
+              } else {
+                  // An overwrite took the slot out of every bucket; a new
+                  // entry is in none yet.
+                  si::reassess(h, s, obj.ptr());
+              }
+              if (replaced) si::release(h, *replaced, dead);
+              si::invalidate(h, s, dead);
+          },
+          py::arg("set"), py::arg("ident"), py::arg("obj"), py::arg("is_ship"),
+          py::arg("target_id"),
+          "SetClass.AddObjectToSet, right after `_objects[ident] = obj`.");
+    m.def("set_index_leaving",
+          [](py::handle set, const std::string& ident) {
+              auto& h = si::host();
+              std::vector<py::object> dead;
+              h.ix.mark_leaving(si::key_of(set), ident);
+              si::invalidate(h, si::key_of(set), dead);
+          },
+          "A removal door, before its handlers: hidden from the contact view.");
+    m.def("set_index_remove",
+          [](py::handle set, const std::string& ident) {
+              auto& h = si::host();
+              std::vector<py::object> dead;
+              if (auto r = h.ix.remove(si::key_of(set), ident)) si::release(h, *r, dead);
+              si::invalidate(h, si::key_of(set), dead);
+          },
+          "A removal door, at `_objects.pop(ident)`.");
+    m.def("set_index_reclassified",
+          [](py::handle obj, bool is_ship) {
+              auto& h = si::host();
+              std::vector<py::object> dead;
+              si::Key o = si::key_of(obj);
+              for (si::Key s : h.ix.held_sets(o)) {
+                  si::reassess(h, s, obj.ptr());
+                  si::invalidate(h, s, dead);
+              }
+              h.ix.set_is_ship(o, is_ship);
+          },
+          "obj.__class__ changed: re-test it against every bucket holding it.");
+    m.def("set_index_class_objects",
+          [](py::handle set, py::handle cls) {
+              auto& h = si::host();
+              si::Key s = si::key_of(set);
+              if (!h.ix.has_set(s)) return py::list();
+              if (!h.ix.has_bucket(s, si::key_of(cls))) si::create_bucket(h, s, cls.ptr());
+              return si::objects(h, h.ix.bucket(s, si::key_of(cls)));
+          },
+          "GetClassObjectList: a new list, in `_objects` order, duplicates kept.");
+    m.def("set_index_ships",
+          [](py::handle set) {
+              auto& h = si::host();
+              return si::contact_view(h, set, h.ship_cls, h.ships);
+          },
+          "Distinct ShipClass members not leaving, first-entry order.");
+    m.def("set_index_nebulae",
+          [](py::handle set) {
+              auto& h = si::host();
+              return si::contact_view(h, set, h.nebula_cls, h.nebulae);
+          },
+          "Distinct Nebula members not leaving, first-entry order.");
+    m.def("set_index_sets_holding",
+          [](py::handle obj) {
+              auto& h = si::host();
+              return si::objects(h, h.ix.sets_holding(si::key_of(obj)));
+          },
+          "Every set holding obj under an entry that is not leaving.");
+    m.def("set_index_forget_set",
+          [](py::handle set) {
+              auto& h = si::host();
+              std::vector<py::object> dead;
+              si::Key s = si::key_of(set);
+              if (!h.ix.has_set(s)) return;
+              si::release_buckets(h, s, dead);
+              for (si::Key k : h.ix.forget_set(s)) si::release(h, k, dead);
+              si::invalidate(h, s, dead);
+          },
+          "Drop a set and release every reference it held.");
+    m.def("set_index_reset",
+          [] {
+              auto& h = si::host();
+              std::vector<py::object> dead;
+              for (si::Key s : h.ix.sets()) {
+                  si::release_buckets(h, s, dead);
+                  si::invalidate(h, s, dead);
+              }
+              for (si::Key k : h.ix.reset()) si::release(h, k, dead);
+          },
+          "Drop every set and release every reference the index held.");
+    m.def("set_index_held_refs",
+          [] { return si::host().refs.size(); },
+          "Distinct objects the index holds a reference to (0 after a reset).");
 
     // ── Native combat: the mirror store ─────────────────────────────────────
     // Rows Python keeps in sync and the detection kernel reads (spec §7.1).

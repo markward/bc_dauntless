@@ -3545,7 +3545,10 @@ def _push_all(obj, h) -> None:
 
 
 def reclassify(ship) -> None:
-    """`ship.__class__` changed (engine.rocks.rock): re-push its class flags."""
+    """`ship.__class__` changed (engine.rocks.rock): re-push its class flags,
+    and re-file it in the set index's class buckets."""
+    from engine.appc import set_index
+    set_index.on_reclassified(ship)
     proximity_cache.bump()
     cls = type(ship)
     if cls not in _k2_seen_set:

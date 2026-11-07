@@ -163,7 +163,7 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
     import App
     from engine import host_loop
     from engine import dev_tutorial_flag
-    from engine.appc import contact_index, warp
+    from engine.appc import contact_index, set_index, warp
     from engine.appc.bridge_set import BridgeSet
 
     # Only the bridge set(s) and "warp" are kept. BC's native unload deletes
@@ -209,6 +209,7 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
                 traceback.print_exc()
         App.g_kSetManager.DeleteSet(name)
         contact_index.forget_set(pSet)
+        set_index.forget_set(pSet)
     if player is not None and not player_kept:
         game.SetPlayer(None)
 

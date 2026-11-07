@@ -7564,6 +7564,11 @@ def reset_mission_state(renderer=None) -> None:
     """
     from engine.appc import ship_lifecycle
     ship_lifecycle.reset()
+    # The set index holds a strong reference to every set and member it has
+    # seen (engine/appc/set_index.py): without this, every ship of every
+    # mission (and every test) stays alive.
+    from engine.appc import set_index as _set_index
+    _set_index.reset()
     # Effects held for the tick boundary name the old mission's ships.
     _effect_queue.reset()
     from engine.appc import ship_death
