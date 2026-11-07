@@ -37,6 +37,7 @@ type and a list compare.
 import os
 import sys
 import types
+import weakref
 
 from engine import paths
 
@@ -105,25 +106,74 @@ def _is_stock_file(co_filename: str) -> bool:
     return verdict
 
 
+#: The one file whose wrappers may carry ``_dauntless_wraps``: the sensor gate
+#: (found from this package's own path, never a typed-in string).
+_GATE_FILE = os.path.normcase(os.path.realpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "ai_sensor_gate.py")))
+
+
+def _is_ours(wrapper) -> bool:
+    """`wrapper` is a function defined in engine/appc/ai_sensor_gate.py. A
+    ``_dauntless_wraps`` attribute on anything else is just an attribute."""
+    return (isinstance(wrapper, types.FunctionType) and os.path.normcase(
+        os.path.realpath(wrapper.__code__.co_filename)) == _GATE_FILE)
+
+
 def _unwrap(fn):
-    """`fn` with every ``_dauntless_wraps`` link followed (our own wrappers
-    name the function they wrap). Bounded, so a cycle ends as not-a-function."""
+    """`fn` with every ``_dauntless_wraps`` link followed, but only links on
+    OUR wrappers (`_is_ours`). None for a foreign link, a non-function, or a
+    cycle."""
     for _ in range(_MAX_UNWRAP):
-        inner = getattr(fn, "_dauntless_wraps", None)
+        if not isinstance(fn, types.FunctionType):
+            return None
+        inner = fn.__dict__.get("_dauntless_wraps")
         if inner is None:
             return fn
+        if not _is_ours(fn):
+            return None
         fn = inner
     return None
 
 
+def _stock_module():
+    """The imported ``AI.Preprocessors`` module, if its file is the stock one."""
+    mod = sys.modules.get("AI.Preprocessors")
+    # The SDK loader (_SDKFinder) sets no __file__, only the spec's origin.
+    path = getattr(mod, "__file__", None) or getattr(
+        getattr(mod, "__spec__", None), "origin", None)
+    if isinstance(path, str) and os.path.normcase(
+            os.path.realpath(path)) == _stock_file():
+        return mod
+    return None
+
+
+def _stock_candidate(mod, qualname):
+    """What the stock module holds under `qualname` today, our wrappers
+    unwrapped (the function a stock instance would run, or its replacement)."""
+    obj = mod
+    for part in qualname.split("."):
+        table = getattr(obj, "__dict__", None)
+        obj = table.get(part) if table is not None else None
+        if obj is None:
+            return None
+    return _unwrap(obj)
+
+
 def is_stock_sdk_function(fn, qualname: str) -> bool:
-    """`fn`, after unwrapping ``_dauntless_wraps`` chains, is a function of the
-    stock SDK ``AI/Preprocessors.py`` named `qualname`."""
+    """`fn`, after unwrapping OUR ``_dauntless_wraps`` links, is a function of
+    the stock SDK ``AI/Preprocessors.py`` named `qualname`: its code is from
+    that file, its globals ARE the stock module's dict, it closes over
+    nothing and its defaults equal the module's own."""
     fn = _unwrap(fn)
-    if not isinstance(fn, types.FunctionType):
+    if fn is None or fn.__qualname__ != qualname or \
+            not _is_stock_file(fn.__code__.co_filename):
         return False
-    return fn.__qualname__ == qualname and _is_stock_file(
-        fn.__code__.co_filename)
+    mod = _stock_module()
+    if mod is None or fn.__globals__ is not mod.__dict__ \
+            or fn.__closure__ is not None:
+        return False
+    want = _stock_candidate(mod, qualname)
+    return want is not None and fn.__defaults__ == want.__defaults__
 
 
 # ── preprocessor_is_stock ────────────────────────────────────────────────────
@@ -136,24 +186,34 @@ def _sdk_base(cls, sdk_class_name):
     return None
 
 
-#: (type, sdk_class_name, methods) -> [base, resolved, verdict]
-_pp_cache: dict = {}
+#: type -> {(sdk_class_name, methods): [base, marked, resolved, verdict]}.
+#: Weak in the type, so a throwaway subclass is not kept alive by its verdict.
+_pp_cache = weakref.WeakKeyDictionary()
 
 
-def _resolve_pp(cls, base, methods):
-    """The functions the verdict is decided from, in order: each method as the
-    type resolves it, then (only where that is a marked engine override) as
-    the SDK base does."""
-    return [getattr(cls, n, _GONE) for n in methods] + \
-           [getattr(base, n, _GONE) for n in methods]
+def _resolve_pp(cls, base, methods, marked):
+    """The functions the verdict is decided from: each method as the type
+    resolves it, then, only for the marked engine overrides, as the SDK base
+    does."""
+    out = [getattr(cls, n, _GONE) for n in methods]
+    for i in marked:
+        out.append(getattr(base, methods[i], _GONE))
+    return out
 
 
-def _decide_pp(cls, base, methods, resolved) -> bool:
+def _decide_pp(base, methods, resolved):
+    """(marked indexes, verdict) for `resolved` (a first resolve has none
+    marked yet, so it is re-resolved with them)."""
+    marked = tuple(i for i, fn in enumerate(resolved[:len(methods)])
+                   if getattr(fn, "_dauntless_native_entry", False))
+    return marked
+
+
+def _verdict_pp(base, methods, marked, resolved) -> bool:
     n = len(methods)
+    extra = dict(zip(marked, resolved[n:]))
     for i, name in enumerate(methods):
-        fn = resolved[i]
-        if getattr(fn, "_dauntless_native_entry", False):
-            fn = resolved[n + i]            # the SDK method it shadows
+        fn = extra[i] if i in extra else resolved[i]
         if fn is _GONE:
             return False
         if not is_stock_sdk_function(fn, "%s.%s" % (base.__name__, name)):
@@ -161,27 +221,34 @@ def _decide_pp(cls, base, methods, resolved) -> bool:
     return True
 
 
+def _build_pp(cls, sdk_class_name, methods):
+    base = _sdk_base(cls, sdk_class_name)
+    if base is None:
+        return [None, (), None, False]
+    first = [getattr(cls, n, _GONE) for n in methods]
+    marked = _decide_pp(base, methods, first)
+    resolved = _resolve_pp(cls, base, methods, marked)
+    return [base, marked, resolved,
+            _verdict_pp(base, methods, marked, resolved)]
+
+
 def preprocessor_is_stock(inst, sdk_class_name: str,
                           methods: tuple) -> bool:
     """`inst` is the SDK's `sdk_class_name` running unchanged for each of
     `methods` (the module docstring)."""
     cls = type(inst)
-    key = (cls, sdk_class_name, methods)
-    entry = _pp_cache.get(key)
+    per_cls = _pp_cache.get(cls)
+    if per_cls is None:
+        per_cls = _pp_cache[cls] = {}
+    key = (sdk_class_name, methods)
+    entry = per_cls.get(key)
     if entry is None:
-        base = _sdk_base(cls, sdk_class_name)
-        if base is None:
-            entry = [None, None, False]
-        else:
-            resolved = _resolve_pp(cls, base, methods)
-            entry = [base, resolved, _decide_pp(cls, base, methods, resolved)]
-        _pp_cache[key] = entry
+        entry = per_cls[key] = _build_pp(cls, sdk_class_name, methods)
     elif entry[0] is not None:
-        resolved = _resolve_pp(cls, entry[0], methods)
-        if resolved != entry[1]:            # something moved: decide again
-            entry[1] = resolved
-            entry[2] = _decide_pp(cls, entry[0], methods, resolved)
-    if not entry[2]:
+        resolved = _resolve_pp(cls, entry[0], methods, entry[1])
+        if resolved != entry[2]:            # something moved: decide again
+            entry[:] = _build_pp(cls, sdk_class_name, methods)
+    if not entry[3]:
         return False
     return inst.__dict__.keys().isdisjoint(methods)
 
@@ -226,8 +293,8 @@ def _snapshot_function(cls, name):
     return _GONE
 
 
-#: (type, names) -> [resolved functions, verdict]
-_surface_cache: dict = {}
+#: type -> {names: [resolved functions, verdict]}
+_surface_cache = weakref.WeakKeyDictionary()
 
 
 def _decide_surface(cls, names, resolved) -> bool:
@@ -242,12 +309,14 @@ def object_surface_is_stock(obj, names: tuple) -> bool:
     """Each of `names` resolves on ``type(obj)`` to the function the import-time
     snapshot holds for the engine class defining it, and `obj` shadows none."""
     cls = type(obj)
-    key = (cls, names)
-    entry = _surface_cache.get(key)
+    per_cls = _surface_cache.get(cls)
+    if per_cls is None:
+        per_cls = _surface_cache[cls] = {}
+    entry = per_cls.get(names)
     resolved = [getattr(cls, n, _GONE) for n in names]
     if entry is None or entry[0] != resolved:
-        entry = [resolved, _decide_surface(cls, names, resolved)]
-        _surface_cache[key] = entry
+        entry = per_cls[names] = [resolved,
+                                  _decide_surface(cls, names, resolved)]
     if not entry[1]:
         return False
     return obj.__dict__.keys().isdisjoint(names)

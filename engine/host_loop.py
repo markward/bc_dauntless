@@ -96,6 +96,9 @@ from engine.appc import (
 )
 from engine.appc import effect_queue as _effect_queue
 from engine.appc import explosion_lights as _explosion_lights
+# Imported early on purpose: its import-time snapshot of the engine's App
+# surface must precede any mod or test patch (engine/appc/ai_native.py).
+from engine.appc import ai_native as _ai_native  # noqa: F401
 from engine.appc import native_combat as _native_combat
 from engine.appc import native_motion as _native_motion
 from engine.appc import target_menu as _target_menu_mod

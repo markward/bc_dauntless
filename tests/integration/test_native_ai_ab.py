@@ -20,9 +20,21 @@ pytestmark = pytest.mark.skipif(
 
 
 def _same(scene):
-    py, native, stats = native_ai_ab.run_ab(scene)
+    py, native, stats, py_stats = native_ai_ab.run_ab_full(scene)
     assert py == native, native_ai_ab.first_difference(py, native)
+    # The DAUNTLESS_NATIVE_AI=0 side must never report a native call.
+    native_ai_ab.assert_no_native(py_stats)
     return stats
+
+
+# TODO(per task): each scene switches on `native_ai_ab.assert_native(stats,
+# kind[, allowed_python])` as its kind goes native:
+#   Task 2 (avoid):  combat_stress_gated, k1_gameloop_ai, fed_subsystems
+#   Task 3 (select): combat_stress_gated (gate installed), k1_gameloop_ai
+#                    (ungated), cloak_attack, fed_subsystems
+#   Task 4/5 (fire): k1_gameloop_ai, sdk_dumb_fire, fed_subsystems,
+#                    akira_torp_select, cloak_attack
+# Until then every kind reads native == 0 and the records are one run twice.
 
 
 def test_k1_gameloop_ai():
@@ -47,3 +59,17 @@ def test_akira_torp_select():
 
 def test_sdk_dumb_fire():
     _same("sdk_dumb_fire")
+
+
+def test_the_switch_off_side_reports_no_native_calls_and_assert_helpers_bite():
+    _py, _nat, stats, py_stats = native_ai_ab.run_ab_full("akira_torp_select")
+    native_ai_ab.assert_no_native(py_stats)
+    with pytest.raises(AssertionError):
+        native_ai_ab.assert_native(stats, "fire")      # nothing native yet
+    forged = {k: {"native": 1, "python": 1, "reasons": {"not_stock": 1}}
+              for k in stats}
+    native_ai_ab.assert_native(forged, "fire", allowed_python=("not_stock",))
+    with pytest.raises(AssertionError):
+        native_ai_ab.assert_native(forged, "fire")
+    with pytest.raises(AssertionError):
+        native_ai_ab.assert_no_native(forged)

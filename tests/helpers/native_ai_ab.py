@@ -80,20 +80,46 @@ def _run_side(scene, ticks, native, out):
             json.loads(Path(str(out) + ".stats").read_text()))
 
 
-def run_ab(scene, ticks=None):
-    """`(python_record, native_record, native_stats)`: the scene run with
-    DAUNTLESS_NATIVE_AI=0 and with it unset, each in a fresh subprocess, the
-    serialised per-tick record of each, and the native run's
-    ``ai_native.stats()``."""
+def run_ab_full(scene, ticks=None):
+    """`(python_record, native_record, native_stats, python_stats)`; see
+    run_ab. The python side's counters are returned too: with the switch at 0
+    they must read native == 0 for every kind."""
     if scene not in SCENES:
         raise ValueError("unknown A/B scene %r (%r)" % (scene, SCENES))
     if ticks is None:
         ticks = DEFAULT_TICKS[scene]
     with tempfile.TemporaryDirectory() as tmp:
-        py_rows, _ = _run_side(scene, ticks, False, Path(tmp) / "py")
+        py_rows, py_stats = _run_side(scene, ticks, False, Path(tmp) / "py")
         nat_rows, nat_stats = _run_side(scene, ticks, True,
                                         Path(tmp) / "native")
-    return py_rows, nat_rows, nat_stats
+    return py_rows, nat_rows, nat_stats, py_stats
+
+
+def run_ab(scene, ticks=None):
+    """`(python_record, native_record, native_stats)`: the scene run with
+    DAUNTLESS_NATIVE_AI=0 and with it unset, each in a fresh subprocess, the
+    serialised per-tick record of each, and the native run's
+    ``ai_native.stats()``."""
+    return run_ab_full(scene, ticks)[:3]
+
+
+def assert_native(stats, kind, allowed_python=()):
+    """The native run really took the native path for `kind`: native > 0 and
+    no call went back to the SDK Python, except for the reasons in
+    `allowed_python` (a scene may legitimately hold a non-stock instance)."""
+    c = stats[kind]
+    assert c["native"] > 0, ("%s never ran native" % kind, stats)
+    extra = {r: n for r, n in c["reasons"].items()
+             if r not in allowed_python and n}
+    assert not extra, ("%s fell back to Python" % kind, extra, stats)
+    assert c["python"] == sum(n for r, n in c["reasons"].items()
+                              if r in allowed_python), ("%s python" % kind,
+                                                        stats)
+
+
+def assert_no_native(stats):
+    """Nothing ran native (the DAUNTLESS_NATIVE_AI=0 side)."""
+    assert all(c["native"] == 0 for c in stats.values()), stats
 
 
 def first_difference(a: bytes, b: bytes) -> str:
@@ -185,25 +211,26 @@ def _stress(ticks, ships, gate, count_subsystem_rng=False):
             ai_sensor_gate.install_ai_sensor_gate()
         rng_draws = [0]
         if count_subsystem_rng:
-            import AI.Preprocessors as pp
-            inside = [False]
-            choose = pp.FireScript.ChooseTargetSubsystem
-            draw = App.g_kSystemWrapper.GetRandomNumber
+            # Count by replacing only the wrapper's random.Random (same
+            # state, same stream): no SDK or engine method is patched, so the
+            # stock gate sees an unchanged surface on both sides. A draw
+            # counts when ChooseTargetSubsystem is on the stack.
+            import random as _random
+            import sys as _sys
 
-            def counting_choose(self, *a, **kw):
-                inside[0] = True
-                try:
-                    return choose(self, *a, **kw)
-                finally:
-                    inside[0] = False
-
-            def counting_draw(*a, **kw):
-                if inside[0]:
-                    rng_draws[0] += 1
-                return draw(*a, **kw)
-            mp.setattr(pp.FireScript, "ChooseTargetSubsystem",
-                       counting_choose)
-            mp.setattr(App.g_kSystemWrapper, "GetRandomNumber", counting_draw)
+            class CountingRandom(_random.Random):
+                def randrange(self, *a, **kw):
+                    f = _sys._getframe(1)
+                    while f is not None:
+                        if f.f_code.co_name == "ChooseTargetSubsystem":
+                            rng_draws[0] += 1
+                            break
+                        f = f.f_back
+                    return super().randrange(*a, **kw)
+            old = App.g_kSystemWrapper._rng
+            counting = CountingRandom()
+            counting.setstate(old.getstate())
+            mp.setattr(App.g_kSystemWrapper, "_rng", counting)
         while scene.tick < ticks:
             scene.tick += 1
             loop.tick()

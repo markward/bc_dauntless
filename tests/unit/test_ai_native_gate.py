@@ -120,6 +120,57 @@ def test_the_sensor_gate_wrapper_counts_as_stock():
         pp.FireScript("Tgt"), "FireScript", ("TargetVisible", "Update"))
 
 
+def test_a_foreign_wrapper_carrying_dauntless_wraps_is_not_stock(monkeypatch):
+    """_dauntless_wraps is honoured only on wrappers defined in the sensor
+    gate's file: a mod copying the attribute gets no free pass."""
+    original = pp.SelectTarget.GetTargetRating
+
+    def mine(self, pTarget):
+        return 0.0
+    mine._dauntless_wraps = original
+    monkeypatch.setattr(pp.SelectTarget, "GetTargetRating", mine)
+    assert not ai_native.is_stock_sdk_function(
+        mine, "SelectTarget.GetTargetRating")
+    assert not ai_native.preprocessor_is_stock(_select(), "SelectTarget",
+                                               SELECT)
+
+
+def test_a_clone_of_the_sdk_code_with_other_globals_is_not_stock(monkeypatch):
+    import types
+    sdk_fn = pp.SelectTarget.GetTargetRating
+    clone = types.FunctionType(sdk_fn.__code__, {}, sdk_fn.__name__,
+                               sdk_fn.__defaults__, None)
+    clone.__qualname__ = sdk_fn.__qualname__
+    assert not ai_native.is_stock_sdk_function(
+        clone, "SelectTarget.GetTargetRating")
+    monkeypatch.setattr(pp.SelectTarget, "GetTargetRating", clone)
+    assert not ai_native.preprocessor_is_stock(_select(), "SelectTarget",
+                                               SELECT)
+
+
+def test_a_clone_with_a_closure_or_other_defaults_is_not_stock():
+    import types
+    sdk_fn = pp.SelectTarget.GetTargetRating
+    other = types.FunctionType(sdk_fn.__code__, sdk_fn.__globals__,
+                               sdk_fn.__name__, (object(),) * len(
+                                   sdk_fn.__defaults__ or ()) or (1,), None)
+    other.__qualname__ = sdk_fn.__qualname__
+    assert not ai_native.is_stock_sdk_function(
+        other, "SelectTarget.GetTargetRating")
+
+
+def test_the_snapshot_exists_right_after_importing_host_loop():
+    """The surface snapshot must precede any patch, so boot imports it."""
+    import subprocess
+    import sys
+    code = ("import sys, engine.host_loop;"
+            "m = sys.modules.get('engine.appc.ai_native');"
+            "assert m is not None and m._SURFACE_SNAPSHOT")
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                       text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+
+
 def test_a_foreign_wrapper_is_not_stock(monkeypatch):
     original = pp.SelectTarget.FindGoodTarget
 
