@@ -13,8 +13,11 @@ set(HOST_BINDINGS_SOURCES
 
 # The AI tree engine (aitree.cc) must be bit-identical to the Python driver
 # it replaces, so no multiply-add may be contracted (the clang pragma in the
-# source too; MSVC: /fp:precise), and it is optimised in Debug as well (Mark
-# runs Debug; the AI stage is a frame cost), as native/src/combat does.
+# source too; MSVC: /fp:precise). On non-MSVC builds it is also optimised in
+# Debug (Mark runs Debug; the AI stage is a frame cost), as native/src/combat
+# does. MSVC Debug builds leave it unoptimised: MSVC rejects /O2 beside the
+# Debug /RTC1, and stripping that directory-wide (native/src/combat's fix)
+# would strip it from host_bindings.cc too.
 if(MSVC)
     set_source_files_properties(aitree.cc PROPERTIES COMPILE_OPTIONS "/fp:precise")
 else()

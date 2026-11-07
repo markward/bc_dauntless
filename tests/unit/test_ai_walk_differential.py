@@ -937,6 +937,171 @@ def test_scheduler_exceptions_escaping_the_roster():
     assert 4 in c_walked and 7 in c_walked
 
 
+# ── frame-local lifetimes: when the roster's locals let go ──────────────────
+#
+# The Python roster's locals (ship, due, ai, status, get_ai, clear) keep their
+# objects until the NEXT assignment to the same name (STORE_FAST: the new
+# value stored, then the old one released), or until the function returns.
+# A finaliser (SDK conditions tear down in __del__) runs at that point, so
+# the native roster must release at the same points. These probes record
+# their own __del__ into the call log, and hold no reference cycle (an AI
+# root lists itself in _active_nodes, which would leave its death to the
+# cyclic collector).
+
+class _Status(int):
+    """A tick status that records its own release."""
+
+    def __del__(self):
+        awd.mark(self.owner, "del status", self.tag)
+
+
+class _Stamp(float):
+    """A sleep stamp that records its own release."""
+
+    def __del__(self):
+        awd.mark(self.owner, "del stamp", self.tag)
+
+
+class _ProbeRoot:
+    """A cycle-free foreign root: the driver's writes of node lists and the
+    harness's instrumenting wrappers are dropped, so only the roster's local,
+    the ship and the driver's per-root scratch hold it."""
+
+    def __init__(self, ident, name, script):
+        object.__setattr__(self, "_id", ident)
+        object.__setattr__(self, "_name", name)
+        object.__setattr__(self, "_script", script)
+        object.__setattr__(self, "_owner", awd.current())
+        object.__setattr__(self, "_status", US_ACTIVE)
+
+    def __setattr__(self, k, v):
+        if k == "_active_nodes" or callable(v):
+            return
+        object.__setattr__(self, k, v)
+
+    def GetID(self):
+        return self._id
+
+    def GetName(self):
+        return self._name
+
+    def SetActive(self, *a):
+        pass
+
+    def SetInactive(self, *a):
+        pass
+
+    def __del__(self):
+        awd.mark(self._owner, "del root", self._name)
+
+
+def _lifetime_scene(mp):
+    """A: its root ends (US_DONE) and the roster ClearAIs it. B: its root's
+    second walk replaces it with SetAI. C: a plain follower. Every tick each
+    of A and B gets a fresh probe stamp in the past (so it is walked, and the
+    stamp is then held only by the roster's `due`), and every probe walk
+    returns a fresh probe status (held only by `status`)."""
+    drv = _driver()
+    owner = awd.current()
+    clock = {"i": 0}
+
+    def status(value, tag):
+        st = _Status(value)
+        st.owner, st.tag = owner, tag
+        return st
+
+    a, b, c = _ship("A"), _ship("B"), _ship("C")
+
+    def a_script(root, n):
+        return status(US_DONE, "A%d" % clock["i"])
+
+    def b_script(root, n):
+        if n == 2:
+            b.SetAI(_ProbeRoot(9_100_003, "PB2", b_script))
+        return status(US_ACTIVE, "B%d" % clock["i"])
+
+    calls = {}
+
+    def handler(ai, game_time):
+        calls[ai._id] = calls.get(ai._id, 0) + 1
+        return ai._script(ai, calls[ai._id])
+    mp.setitem(drv._DISPATCH_BY_TYPE, _ProbeRoot, handler)
+    a.SetAI(_ProbeRoot(9_100_001, "PA", a_script))
+    b.SetAI(_ProbeRoot(9_100_002, "PB", b_script))
+    _install(c, _plist(c, "CRoot", (1, _leaf(c, "CL"))))
+
+    def stamp(ship, i):
+        st = _Stamp(0.0)
+        st.owner, st.tag = owner, "%s%d" % (ship.GetName(), i)
+        ship.__dict__["_ai_next_walk_due"] = st
+
+    def step(i):
+        clock["i"] = i
+        stamp(a, i)
+        stamp(b, i)
+        drv.tick_all_ai((i + 1) / 60.0)
+    return awd.synthetic_scene(mp, [a, b, c], step)
+
+
+def test_roster_locals_are_released_where_python_releases_them():
+    rec = awd.run_walk_diff(_lifetime_scene, 6)
+    marks = [e[1:] for e in rec.log() if e[0] == "mark"]
+    kinds = {m[0] for m in marks}
+    assert kinds == {"del status", "del stamp", "del root"}, marks
+    # B's tick-0 status lives until the NEXT walked ship's status (C's) is
+    # stored, so it is released after C's is_defensive call, not at the end of
+    # B's iteration.
+    tick0 = rec.ticks[0][0]
+    names = [(e[0], e[1], e[2] if len(e) > 2 else None) for e in tick0]
+    del_b0 = names.index(("mark", "del status", "B0"))
+    c_def = next(k for k, e in enumerate(tick0)
+                 if e[:2] == ("call", "is_defensive")
+                 and e[2] == ("obj", "ShipClass", "C"))
+    assert c_def < del_b0, tick0
+    assert ("del root", "PA") in marks and ("del root", "PB") in marks
+
+
+def _root_lifetime_scene(mp):
+    """The `ai` local itself. A real root walk keeps the root alive in the
+    driver's per-root scratch until the next root walk, which masks when
+    the roster lets go, so here the probe roots skip the walk (tick_ai is
+    replaced for them, read per call by both rosters). A: its root ends and
+    is ClearAI'd. B: its root ends after installing a successor (the
+    not-still-installed path). C: a real tree after both."""
+    drv = _driver()
+    real_tick_ai = drv.tick_ai
+    a, b, c = _ship("A"), _ship("B"), _ship("C")
+    made = {"n": 0}
+
+    def tick_ai(ai, game_time):
+        if not isinstance(ai, _ProbeRoot):
+            return real_tick_ai(ai, game_time)
+        if ai._name.startswith("PB"):
+            made["n"] += 1
+            b.SetAI(_ProbeRoot(9_200_010 + made["n"], "PB%d" % made["n"],
+                               None))
+        return US_DONE
+    mp.setattr(drv, "tick_ai", tick_ai)
+    a.SetAI(_ProbeRoot(9_200_001, "PA", None))
+    b.SetAI(_ProbeRoot(9_200_002, "PB0", None))
+    _install(c, _plist(c, "CRoot", (1, _leaf(c, "CL"))))
+    return _scene_of(mp, [a, b, c])
+
+
+def test_roster_releases_a_cleared_or_replaced_root_where_python_does():
+    rec = awd.run_walk_diff(_root_lifetime_scene, 4)
+    tick0 = rec.ticks[0][0]
+    del_pa = tick0.index(("mark", "del root", "PA"))
+    # Python's `ai` holds A's cleared root until B's GetAI rebinds it: after
+    # B's is_defensive, not at the end of A's iteration.
+    b_def = next(k for k, e in enumerate(tick0)
+                 if e[:2] == ("call", "is_defensive")
+                 and e[2] == ("obj", "ShipClass", "B"))
+    assert b_def < del_pa, tick0
+    marks = [e[1:] for e in rec.log() if e[0] == "mark"]
+    assert ("del root", "PB0") in marks, marks
+
+
 # ── the real fights ──────────────────────────────────────────────────────────
 
 @needs_native

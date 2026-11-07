@@ -12,6 +12,7 @@
 #include "aitree.h"
 
 #include <new>
+#include <utility>
 
 namespace dauntless::host::aitree {
 namespace {
@@ -261,17 +262,44 @@ PyObject* walk_due_of(PyObject* ship, const Names* n) {
     return PyObject_CallMethodOneArg(d.get(), n->get, n->walk_due);
 }
 
+// The Python roster's frame locals, in its co_varnames order (game_time, the
+// parameter, is borrowed; still_installed is a bool and never held). Each
+// keeps its object until the statement that rebinds that name, as a Python
+// local does: rebinding is a move-assign, which stores the new object and
+// THEN releases the old one (STORE_FAST's order), so a finaliser (SDK
+// conditions tear down in __del__) runs at the same point. At a normal
+// return they are released in index order, as _PyFrame_Clear does.
+struct Frame {
+    Ref iter_non_rock_ships, defensive_cloak, max_sleep, ship, due, ai, status, get_ai,
+        clear;
+
+    void release() {
+        iter_non_rock_ships = Ref();
+        defensive_cloak = Ref();
+        max_sleep = Ref();
+        ship = Ref();
+        due = Ref();
+        ai = Ref();
+        status = Ref();
+        get_ai = Ref();
+        clear = Ref();
+    }
+    ~Frame() { release(); }
+};
+
 // The roster: `_tick_all_ai_python`'s body, statement for statement.
 PyObject* tick_all_impl(PyObject* game_time, PyObject* g) {
     const Names* n = names();
     if (n == nullptr) return nullptr;
     ++g_roster_runs;
+    Frame f;
     // from engine.appc.ship_iter import iter_non_rock_ships
-    Ref iter_fn(import_from(n->ship_iter_mod, n->fromlist_iter, n->iter_non_rock_ships, g));
-    if (!iter_fn) return nullptr;
+    f.iter_non_rock_ships =
+        Ref(import_from(n->ship_iter_mod, n->fromlist_iter, n->iter_non_rock_ships, g));
+    if (!f.iter_non_rock_ships) return nullptr;
     // from engine.appc import defensive_cloak
-    Ref cloak(import_from(n->appc_pkg, n->fromlist_cloak, n->defensive_cloak, g));
-    if (!cloak) return nullptr;
+    f.defensive_cloak = Ref(import_from(n->appc_pkg, n->fromlist_cloak, n->defensive_cloak, g));
+    if (!f.defensive_cloak) return nullptr;
     // if _AI_BREAKDOWN is not None: _AI_TICKS[0] += 1
     {
         Ref bd(load_global(g, n->ai_breakdown));
@@ -287,27 +315,31 @@ PyObject* tick_all_impl(PyObject* game_time, PyObject* g) {
         }
     }
     // max_sleep = AI_MAX_SLEEP_TICKS
-    Ref max_sleep(load_global(g, n->max_sleep));
-    if (!max_sleep) return nullptr;
-    // for ship in iter_non_rock_ships():
+    f.max_sleep = Ref(load_global(g, n->max_sleep));
+    if (!f.max_sleep) return nullptr;
+    // for ship in iter_non_rock_ships():   (the call's result is dropped once
+    // GET_ITER has its iterator; the iterator lives on the value stack)
     Ref it;
     {
-        Ref roster(PyObject_CallNoArgs(iter_fn.get()));
+        Ref roster(PyObject_CallNoArgs(f.iter_non_rock_ships.get()));
         if (!roster) return nullptr;
         it = Ref(PyObject_GetIter(roster.get()));
         if (!it) return nullptr;
     }
     for (;;) {
-        Ref ship(PyIter_Next(it.get()));
-        if (!ship) {
-            if (PyErr_Occurred()) return nullptr;
-            break;
+        {
+            Ref next(PyIter_Next(it.get()));
+            if (!next) {
+                if (PyErr_Occurred()) return nullptr;
+                break;
+            }
+            f.ship = std::move(next);  // the previous ship released here
         }
         // if defensive_cloak.is_defensive(ship): continue
         {
-            Ref fn(PyObject_GetAttr(cloak.get(), n->is_defensive));
+            Ref fn(PyObject_GetAttr(f.defensive_cloak.get(), n->is_defensive));
             if (!fn) return nullptr;
-            Ref r(PyObject_CallOneArg(fn.get(), ship.get()));
+            Ref r(PyObject_CallOneArg(fn.get(), f.ship.get()));
             if (!r) return nullptr;
             const int t = PyObject_IsTrue(r.get());
             if (t < 0) return nullptr;
@@ -319,18 +351,21 @@ PyObject* tick_all_impl(PyObject* game_time, PyObject* g) {
         //             game_time < due <= game_time + max_sleep * _TICK_SECONDS):
         //         continue
         {
-            const int ms = PyObject_IsTrue(max_sleep.get());
+            const int ms = PyObject_IsTrue(f.max_sleep.get());
             if (ms < 0) return nullptr;
             if (ms) {
-                Ref due(walk_due_of(ship.get(), n));
-                if (!due) return nullptr;
-                if (due.get() != Py_None) {
-                    const int lt = compare(game_time, due.get(), Py_LT);
+                {
+                    Ref d(walk_due_of(f.ship.get(), n));
+                    if (!d) return nullptr;
+                    f.due = std::move(d);
+                }
+                if (f.due.get() != Py_None) {
+                    const int lt = compare(game_time, f.due.get(), Py_LT);
                     if (lt < 0) return nullptr;
                     if (lt) {
-                        Ref cap(cap_of(game_time, max_sleep.get(), g));
+                        Ref cap(cap_of(game_time, f.max_sleep.get(), g));
                         if (!cap) return nullptr;
-                        const int le = compare(due.get(), cap.get(), Py_LE);
+                        const int le = compare(f.due.get(), cap.get(), Py_LE);
                         if (le < 0) return nullptr;
                         if (le) continue;
                     }
@@ -338,92 +373,110 @@ PyObject* tick_all_impl(PyObject* game_time, PyObject* g) {
             }
         }
         // ai = ship.GetAI() if hasattr(ship, "GetAI") else None
-        Ref ai;
         {
             PyObject* probe = nullptr;
-            const int has = lookup_attr(ship.get(), n->get_ai, &probe);
+            const int has = lookup_attr(f.ship.get(), n->get_ai, &probe);
             if (has < 0) return nullptr;
             Py_XDECREF(probe);
+            Ref value;
             if (has) {
-                ai = Ref(PyObject_CallMethodNoArgs(ship.get(), n->get_ai));
-                if (!ai) return nullptr;
+                value = Ref(PyObject_CallMethodNoArgs(f.ship.get(), n->get_ai));
+                if (!value) return nullptr;
+            } else {
+                value = Ref(Py_NewRef(Py_None));
             }
+            f.ai = std::move(value);
         }
         // if ai is not None:
-        if (!ai || ai.get() == Py_None) continue;
+        if (f.ai.get() == Py_None) continue;
         // _walk_min_due[0] = float("inf"); status = tick_ai(ai, game_time)
         set_min_due(n->inf);
-        Ref status;
         {
             Ref fn(load_global(g, n->tick_ai));
             if (!fn) return nullptr;
-            PyObject* a[2] = {ai.get(), game_time};
-            status = Ref(PyObject_Vectorcall(fn.get(), a, 2, nullptr));
-            if (!status) return nullptr;
+            PyObject* a[2] = {f.ai.get(), game_time};
+            Ref value(PyObject_Vectorcall(fn.get(), a, 2, nullptr));
+            if (!value) return nullptr;
+            f.status = std::move(value);
         }
         // if max_sleep:
         //     ship.__dict__["_ai_next_walk_due"] = min(
         //         _walk_min_due[0], game_time + max_sleep * _TICK_SECONDS)
         {
-            const int ms = PyObject_IsTrue(max_sleep.get());
+            const int ms = PyObject_IsTrue(f.max_sleep.get());
             if (ms < 0) return nullptr;
             if (ms) {
-                Ref cur(Py_NewRef(g_min_due));
-                Ref cap(cap_of(game_time, max_sleep.get(), g));
-                if (!cap) return nullptr;
-                // min(a, b): b only when `b < a` (builtin min's own test).
-                const int lt = compare(cap.get(), cur.get(), Py_LT);
-                if (lt < 0) return nullptr;
-                PyObject* v = lt ? cap.get() : cur.get();
-                Ref d(PyObject_GetAttr(ship.get(), n->dict));
+                Ref v;
+                {
+                    // min's arguments are released when the call returns,
+                    // before `ship.__dict__` is read.
+                    Ref cur(Py_NewRef(g_min_due));
+                    Ref cap(cap_of(game_time, f.max_sleep.get(), g));
+                    if (!cap) return nullptr;
+                    // min(a, b): b only when `b < a` (builtin min's own test).
+                    const int lt = compare(cap.get(), cur.get(), Py_LT);
+                    if (lt < 0) return nullptr;
+                    v = Ref(Py_NewRef(lt ? cap.get() : cur.get()));
+                }
+                Ref d(PyObject_GetAttr(f.ship.get(), n->dict));
                 if (!d) return nullptr;
-                if (PyObject_SetItem(d.get(), n->walk_due, v) < 0) return nullptr;
+                if (PyObject_SetItem(d.get(), n->walk_due, v.get()) < 0) return nullptr;
             }
         }
         // if status == US_DONE and not getattr(ai, "_done_event_fired", False):
         {
             Ref us_done(load_global(g, n->us_done));
             if (!us_done) return nullptr;
-            const int eq = compare(status.get(), us_done.get(), Py_EQ);
+            const int eq = compare(f.status.get(), us_done.get(), Py_EQ);
             if (eq < 0) return nullptr;
             if (!eq) continue;
-            Ref fired(getattr_or(ai.get(), n->done_fired, Py_False));
+            Ref fired(getattr_or(f.ai.get(), n->done_fired, Py_False));
             if (!fired) return nullptr;
             const int t = PyObject_IsTrue(fired.get());
             if (t < 0) return nullptr;
             if (t) continue;
         }
         // ai._done_event_fired = True
-        if (PyObject_SetAttr(ai.get(), n->done_fired, Py_True) < 0) return nullptr;
+        if (PyObject_SetAttr(f.ai.get(), n->done_fired, Py_True) < 0) return nullptr;
         // get_ai = getattr(ship, "GetAI", None)
         // still_installed = (get_ai() is ai) if callable(get_ai) else True
         // if not still_installed: continue
         {
-            Ref get_ai(getattr_or(ship.get(), n->get_ai, Py_None));
-            if (!get_ai) return nullptr;
-            if (PyCallable_Check(get_ai.get())) {
-                Ref now(PyObject_CallNoArgs(get_ai.get()));
+            Ref value(getattr_or(f.ship.get(), n->get_ai, Py_None));
+            if (!value) return nullptr;
+            f.get_ai = std::move(value);
+        }
+        if (PyCallable_Check(f.get_ai.get())) {
+            bool still_installed;
+            {
+                Ref now(PyObject_CallNoArgs(f.get_ai.get()));
                 if (!now) return nullptr;
-                if (now.get() != ai.get()) continue;
-            }
+                still_installed = now.get() == f.ai.get();
+            }  // IS_OP drops the call's result before the jump
+            if (!still_installed) continue;
         }
         // clear = getattr(ship, "ClearAI", None)
         // if callable(clear): clear()  else: fire_ai_done(ship, ai)
         {
-            Ref clear(getattr_or(ship.get(), n->clear_ai, Py_None));
-            if (!clear) return nullptr;
-            if (PyCallable_Check(clear.get())) {
-                Ref r(PyObject_CallNoArgs(clear.get()));
-                if (!r) return nullptr;
-            } else {
-                Ref fn(load_global(g, n->fire_ai_done));
-                if (!fn) return nullptr;
-                PyObject* a[2] = {ship.get(), ai.get()};
-                Ref r(PyObject_Vectorcall(fn.get(), a, 2, nullptr));
-                if (!r) return nullptr;
-            }
+            Ref value(getattr_or(f.ship.get(), n->clear_ai, Py_None));
+            if (!value) return nullptr;
+            f.clear = std::move(value);
+        }
+        if (PyCallable_Check(f.clear.get())) {
+            Ref r(PyObject_CallNoArgs(f.clear.get()));
+            if (!r) return nullptr;
+        } else {
+            Ref fn(load_global(g, n->fire_ai_done));
+            if (!fn) return nullptr;
+            PyObject* a[2] = {f.ship.get(), f.ai.get()};
+            Ref r(PyObject_Vectorcall(fn.get(), a, 2, nullptr));
+            if (!r) return nullptr;
         }
     }
+    // FOR_ITER's exhaustion drops the iterator; the return then clears the
+    // frame's locals in index order.
+    it = Ref();
+    f.release();
     Py_RETURN_NONE;
 }
 

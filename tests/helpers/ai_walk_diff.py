@@ -477,6 +477,26 @@ def _fresh_state(mp, base_ai, base_obj):
     k1_fight._seed_every_rng(0)
 
 
+#: The recorder of the side running now (a one-slot stack; empty between
+#: sides).
+_ACTIVE = []
+
+
+def current():
+    """The running side's recorder (an opaque owner token), or None."""
+    return _ACTIVE[-1] if _ACTIVE else None
+
+
+def mark(owner, *entry):
+    """Append ``("mark", *entry)`` to the call log of `owner` (a token from
+    :func:`current`, taken when the scene built the object) while that side
+    is still the one running. For a scene's own probes, such as a
+    ``__del__``: an object of one side finalised later (by the cyclic
+    collector, during the other side) is dropped, not misfiled."""
+    if _ACTIVE and _ACTIVE[-1] is owner:
+        owner.log.append(("mark",) + entry)
+
+
 def _native_roster_count():
     """How many times the native roster (``aitree_tick_all``) has started, in
     this process. Read around a side to prove which roster ran."""
@@ -502,11 +522,13 @@ def run_side(scene, ticks, native, bases=None):
                 entries[_k] += 1
                 return _orig(game_time)
             mp.setattr(ai_driver, attr, counted)
-        built = scene(mp)
-        rec = _Recorder(mp, built)
-        rec.install_glue()
+        rec = _Recorder(mp, None)
         out = []
+        _ACTIVE.append(rec)
         try:
+            built = scene(mp)
+            rec.scene = built
+            rec.install_glue()
             for i in range(ticks):
                 rec.instrument()
                 start = len(rec.log)
@@ -516,6 +538,7 @@ def run_side(scene, ticks, native, bases=None):
                     rec.log.append(("escaped", type(exc).__name__, str(exc)))
                 out.append((rec.log[start:], rec.snapshot()))
         finally:
+            _ACTIVE.remove(rec)
             entries["native_roster"] = _native_roster_count() - roster_before
             top_obj = next(ids._counter)
             top_ai = ArtificialIntelligence._next_id
@@ -608,8 +631,10 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
         "the native side never entered the native walker: %r" % nat.entries)
     assert nat.entries["python"] == 0, (
         "the native side ran the Python walker: %r" % nat.entries)
-    assert nat.entries["native_roster"] >= 1, (
-        "the native roster never ran on the native side: %r" % nat.entries)
+    assert nat.entries["native"] >= 1 and (
+        nat.entries["native_roster"] == nat.entries["native"]), (
+        "the native roster never ran on the native side (or not on every "
+        "native entry): %r" % nat.entries)
     diff = first_difference(py, nat)
     assert diff is None, diff
     if aba:
