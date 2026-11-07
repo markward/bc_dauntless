@@ -233,10 +233,44 @@ def _build_pp(cls, sdk_class_name, methods):
             _verdict_pp(base, methods, marked, resolved)]
 
 
+#: The host's memo of the class verdict (native/src/host/host_bindings.cc,
+#: `stockmemo`): (check, tag, remember), () without the host. Looked up on
+#: first use (the host is not importable when this module is).
+_MEMO = [None]
+
+
+def _memo():
+    memo = _MEMO[0]
+    if memo is None:
+        try:
+            import _dauntless_host as h
+            memo = (h.ai_stock_check, h.ai_stock_tag, h.ai_stock_remember)
+        except (ImportError, AttributeError):
+            memo = ()
+        _MEMO[0] = memo
+    return memo
+
+
 def preprocessor_is_stock(inst, sdk_class_name: str,
                           methods: tuple) -> bool:
     """`inst` is the SDK's `sdk_class_name` running unchanged for each of
-    `methods` (the module docstring)."""
+    `methods` (the module docstring).
+
+    The class verdict below is decided once per class VERSION: the host
+    remembers it keyed by the type's version tag, which CPython renews on any
+    attribute change of the type or of any base, and answers the next call
+    itself -- the instance-dict half included -- until the tag moves. A type
+    the host cannot key (no valid tag, another metaclass) is decided here
+    every call. This function stays the only place the rule is written."""
+    memo = _MEMO[0]
+    if memo is None:
+        memo = _memo()
+    tag = 0
+    if memo:
+        known = memo[0](inst, sdk_class_name, methods)
+        if known is not None:
+            return known
+        tag = memo[1](type(inst))            # read before deciding
     cls = type(inst)
     per_cls = _pp_cache.get(cls)
     if per_cls is None:
@@ -249,6 +283,9 @@ def preprocessor_is_stock(inst, sdk_class_name: str,
         resolved = _resolve_pp(cls, entry[0], methods, entry[1])
         if resolved != entry[2]:            # something moved: decide again
             entry[:] = _build_pp(cls, sdk_class_name, methods)
+    if tag:
+        # Stored only if the type still has the tag read before deciding.
+        memo[2](cls, sdk_class_name, methods, entry[3], tag)
     if not entry[3]:
         return False
     return inst.__dict__.keys().isdisjoint(methods)

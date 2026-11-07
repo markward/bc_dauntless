@@ -69,6 +69,22 @@ TEST(AiFire, TargetInRangeIsTheSqrLengthTest) {
     const double nan = std::numeric_limits<double>::quiet_NaN();
     EXPECT_FALSE(cb::fire_in_range(v(nan, 0.0, 0.0), v(0.0, 0.0, 0.0), 1.0e20));
     EXPECT_FALSE(cb::fire_in_range(v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0), nan));
+    // The boundary: an exactly representable 25 against 5 * 5, and the next
+    // range down.
+    EXPECT_TRUE(cb::fire_sqr_within(25.0, 5.0));
+    EXPECT_FALSE(cb::fire_sqr_within(25.0, std::nextafter(5.0, 0.0)));
+    EXPECT_TRUE(cb::fire_in_range(v(3.0, 4.0, 0.0), v(0.0, 0.0, 0.0), 5.0));
+    EXPECT_FALSE(cb::fire_in_range(v(3.0, 4.0, 0.0), v(0.0, 0.0, 0.0),
+                                   std::nextafter(5.0, 0.0)));
+}
+
+TEST(AiFire, FireAtLeastIsGreaterOrEqual) {
+    // `fDot >= self.fFireDotThreshold`
+    EXPECT_TRUE(cb::fire_at_least(0.5, 0.5));
+    EXPECT_FALSE(cb::fire_at_least(0.5, std::nextafter(0.5, 1.0)));
+    EXPECT_TRUE(cb::fire_at_least(std::nextafter(0.5, 1.0), 0.5));
+    EXPECT_FALSE(cb::fire_at_least(std::numeric_limits<double>::quiet_NaN(), 0.0));
+    EXPECT_FALSE(cb::fire_at_least(0.0, std::numeric_limits<double>::quiet_NaN()));
 }
 
 namespace {

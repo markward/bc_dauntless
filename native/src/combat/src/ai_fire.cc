@@ -68,16 +68,20 @@ FireVec fire_predicted_position(const FireVec& p, const FireVec& v, const FireVe
                    p.z + v.z * t + a.z * t2_half};
 }
 
-double fire_mul(double a, double b) { return a * b; }
-
 double fire_div(double a, double b) { return a / b; }
+
+bool fire_sqr_within(double sqr_length, double max_range) {
+    return sqr_length <= max_range * max_range;
+}
+
+bool fire_at_least(double dot, double threshold) { return dot >= threshold; }
 
 bool fire_in_range(const FireVec& target, const FireVec& ship, double max_range) {
     // vDiff = pTarget.GetWorldLocation(); vDiff.Subtract(pShip.GetWorldLocation())
     FireVec d = target;
     fire_subtract(d, ship);
     // if fSqrLength <= (self.fMaxFiringRange * self.fMaxFiringRange): return 1
-    return fire_sqr_length(d) <= max_range * max_range;
+    return fire_sqr_within(fire_sqr_length(d), max_range);
 }
 
 bool fire_predict_target_location(const PredictInputs& in, FireVec& out) {
@@ -114,7 +118,7 @@ int fire_good_shot_direction(const FireVec& predicted, const FireVec& our_pos,
                              double threshold) {
     const FireVec local = fire_to_local_unit(predicted, our_pos, our_rot);
     for (std::size_t i = 0; i < n; ++i)
-        if (fire_dot(local, dirs[i]) >= threshold) return static_cast<int>(i);
+        if (fire_at_least(fire_dot(local, dirs[i]), threshold)) return static_cast<int>(i);
     return -1;
 }
 

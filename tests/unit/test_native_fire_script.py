@@ -22,6 +22,7 @@ Plus Review Focus 4 (a callback that removes the target mid-Update) and 5 (a
 FireScript method patched after a native call)."""
 import math
 import random
+import re
 import sys
 import types
 
@@ -35,6 +36,7 @@ from engine.appc import ai_optimized
 from engine.appc import ai_sensor_gate
 from engine.appc.ai import PreprocessingAI_Create
 from engine.appc.math import TGMatrix3, TGPoint3
+from engine.appc.objects import PhysicsObjectClass
 from engine.appc.sets import SetClass
 from engine.appc.ships import ShipClass
 from engine.appc.subsystems import ShipSubsystem
@@ -204,7 +206,9 @@ def _outcome(fn):
     try:
         return ("ok", _canon(fn()))
     except Exception as exc:                     # noqa: BLE001 -- compared
-        return ("raise", type(exc).__name__, str(exc))
+        # A transform handle is a process-wide slot number: by shape only.
+        return ("raise", type(exc).__name__,
+                re.sub(r"\(\d+, \d+\)", "(slot)", str(exc)))
 
 
 def _state(inst):
@@ -288,8 +292,13 @@ class _Scene:
         App.g_kSetManager._sets[set_name] = self.pSet
         self.ours = loadspacehelper.CreateShip(opt["ours"], self.pSet, "Ours",
                                                None, 0, 0)
-        self.target = loadspacehelper.CreateShip(opt["target"], self.pSet,
-                                                 "Target", None, 0, 0)
+        if opt["target"] == "placement":
+            # Not a physics object: PhysicsObjectClass_Cast returns None.
+            self.target = App.PlacementObject_Create("Target", set_name)
+        else:
+            self.target = loadspacehelper.CreateShip(opt["target"], self.pSet,
+                                                     "Target", None, 0, 0)
+        self.stale = False
         if opt.get("aliasing"):
             self.target.__class__ = _AliasingShip
         self.fs = pp.FireScript("Target", **opt.get("kw", {}))
@@ -319,6 +328,11 @@ class _Scene:
                 _put(system.GetChildSubsystem(i), "FireDumb")
         for getter in opt.get("aim", ()):
             getattr(self.ours, getter)().GetProperty().SetAimedWeapon(1)
+        if opt.get("pulse_junk"):
+            # A pulse child that is not a PulseWeapon: its cast is None.
+            self.ours.GetPulseWeaponSystem().AddChildSubsystem(
+                ShipSubsystem("Junk"))
+        self.weapons0 = list(self.inst.lWeapons)
         self.torps = []
         if opt.get("torps_in_flight"):
             real = self.pSet.GetClassObjectList
@@ -354,10 +368,18 @@ class _Scene:
             self.inst.lWeapons = []
         elif mode == "kill":
             self.pSet.RemoveObjectFromSet("Target")
+        elif mode == "stale":
+            # The target's transform handle goes stale mid-Update: its next
+            # GetWorldLocation raises StaleHandleError.
+            index, generation = self.target._xform
+            self.target._xform = (index, generation + 1)
+            self.stale = True
 
     def perturb(self, rng):
         """One step's world change, from a step rng both builds share."""
         opt = self.opt
+        if not self.inst.lWeapons:              # "empty" emptied it
+            self.inst.lWeapons = list(self.weapons0)
         rng_range = opt.get("range", 150.0)
         dist = rng.uniform(0.2, 1.6) * (rng_range if rng_range < 1e6 else 150.0)
         direction = _unit(rng)
@@ -369,15 +391,24 @@ class _Scene:
             self.ours.SetAngleAxisRotation(rng.uniform(-math.pi, math.pi),
                                            _unit(rng))
         loc = self.ours.GetWorldLocation()
-        self.target.SetTranslateXYZ(loc.x + direction.x * dist,
-                                    loc.y + direction.y * dist,
-                                    loc.z + direction.z * dist)
-        self.target.SetAngleAxisRotation(rng.uniform(-math.pi, math.pi),
-                                         _unit(rng))
-        self.target.SetVelocity(TGPoint3(*(rng.uniform(-3, 3)
-                                           for _ in range(3))))
-        self.target.__dict__["_acceleration"] = tuple(
-            rng.uniform(-0.5, 0.5) for _ in range(3))
+        place = (loc.x + direction.x * dist, loc.y + direction.y * dist,
+                 loc.z + direction.z * dist)
+        angle, axis = rng.uniform(-math.pi, math.pi), _unit(rng)
+        velocity = TGPoint3(*(rng.uniform(-3, 3) for _ in range(3)))
+        accel = tuple(rng.uniform(-0.5, 0.5) for _ in range(3))
+        accel_mode = rng.choice(("tuple", "tuple", "none", "missing")) \
+            if opt.get("accel_modes") else "tuple"
+        if not self.stale:
+            self.target.SetTranslateXYZ(*place)
+            self.target.SetAngleAxisRotation(angle, axis)
+        if isinstance(self.target, PhysicsObjectClass):
+            self.target.SetVelocity(velocity)
+            if accel_mode == "tuple":
+                self.target.__dict__["_acceleration"] = accel
+            elif accel_mode == "none":
+                self.target.__dict__["_acceleration"] = None
+            else:
+                self.target.__dict__.pop("_acceleration", None)
         if opt.get("aliasing"):
             self.target.__dict__.pop("_cached_loc", None)
         if opt.get("visibility"):
@@ -467,6 +498,7 @@ _SCENES = {
     "mixed": dict(ours="Galaxy", target="Galaxy", range=150.0,
                   weapons=("GetPhaserSystem", "GetTorpedoSystem"),
                   tractor_mode=_TBS1, kw={"MaxFiringRange": 150.0},
+                  accel_modes=True,
                   toggle={"bHighPower": (0, 1), "bEnabled": (1, 1, 1, 0),
                           "eTractorBeamMode": (_TBS1, _TBS1, 0, None)}),
     # A tractor alone, every mode against every wanted mode: the Dock Stage
@@ -481,6 +513,7 @@ _SCENES = {
                              weapons=("GetPulseWeaponSystem",
                                       "GetTorpedoSystem"),
                              aim=("GetPulseWeaponSystem",),
+                             pulse_junk=True,
                              kw={"InaccurateTorps": 1}),
     # Dumb fire: tubes facing the target and facing away.
     "dumb_fire": dict(ours="Galaxy", target="Akira", range=1e20,
@@ -509,6 +542,25 @@ _SCENES = {
     "choose": dict(ours="Akira", target="Galaxy", range=1e20,
                    weapons=("GetTorpedoSystem", "GetPhaserSystem"),
                    kw={"ChooseSubsystemTargets": 1, "SmartTorpSelection": 1}),
+    # The target a placement object (no physics: the cast is None); the
+    # phasers aimed with no direction info (len(lDirections) == 0: fire).
+    "placement_target": dict(ours="Galaxy", target="placement", range=1e20,
+                             weapons=("GetTorpedoSystem", "GetPhaserSystem"),
+                             aim=("GetPhaserSystem",)),
+    # Dumb fire at a targeted subsystem (its GetWorldLocation, not the hull's).
+    "dumb_fire_subsystem": dict(ours="Galaxy", target="Akira", range=1e20,
+                                ahead_or_behind=True,
+                                weapons=("GetTorpedoSystem",),
+                                kw={"DumbFireTorps": 1, "TargetSubsystems":
+                                    [(App.CT_SENSOR_SUBSYSTEM, 1)]}),
+    # A UsingWeaponType handler that empties lWeapons (then: no weapons).
+    "using_empty": dict(ours="Galaxy", target="Galaxy", range=1e20,
+                        using_weapon_type="empty",
+                        weapons=("GetPhaserSystem", "GetTorpedoSystem")),
+    # A handler that leaves the target's transform handle stale mid-Update.
+    "stale_handle": dict(ours="Galaxy", target="Galaxy", range=1e20,
+                         using_weapon_type="stale",
+                         weapons=("GetTorpedoSystem", "GetPhaserSystem")),
     # A UsingWeaponType handler in the tree that rotates lWeapons.
     "using_weapon_type": dict(ours="Galaxy", target="Galaxy", range=1e20,
                               using_weapon_type="rotate",
@@ -548,6 +600,7 @@ def test_native_fire_update_matches_the_sdk_call_by_call(scene_name,
     raised = set()
     dock_exception = 0
     too_dangerous = [0, 0]           # [held fire, fired anyway]
+    facts = set()
     for step in range(_STEPS):
         a, b = _step_both(sdk, nat, seed * 1000 + step, monkeypatch)
         diff = _first_diff(a, b)
@@ -562,6 +615,23 @@ def test_native_fire_update_matches_the_sdk_call_by_call(scene_name,
             if names[i] == "IsFiring" and names[i + 1] == "GetMode" and \
                     "SetMode" not in names[i + 2:i + 3]:
                 dock_exception += 1
+        calls = a[1]
+        for i, (n, recv, args) in enumerate(calls):
+            nxt = calls[i + 1][0] if i + 1 < len(calls) else None
+            if n == "PulseWeapon_Cast" and args and args[0] and \
+                    args[0][0] == "sub" and args[0][1] == "ShipSubsystem":
+                facts.add("pulse cast failed")
+            # An aimed phaser system: no directions, so straight to firing.
+            if n == "PulseWeaponSystem_Cast" and args and args[0] and \
+                    args[0][1] == "PhaserSystem" and nxt == "StartFiring":
+                facts.add("aimed, no directions")
+            if n == "PhysicsObjectClass_Cast":
+                facts.add("physics target" if args[0][0] == "obj" and
+                          args[0][1] != "PlacementObject" else "not physics")
+        if "FireDumb" in names and a[2].get("idTargetedSubsystem"):
+            facts.add("dumb fire at a subsystem")
+        if a[0][0] == "ok" and a[2].get("lWeapons") == ("list", []):
+            facts.add("weapons emptied")
         # WeaponTooDangerous' verdict: configuring goes on (the tractor
         # cast is next) only when it was not too dangerous.
         for i, n in enumerate(names):
@@ -590,10 +660,23 @@ def test_native_fire_update_matches_the_sdk_call_by_call(scene_name,
         "using_weapon_type": {"CallExternalFunction", "StartFiring"},
         "aliasing": {"StartFiring"},
         "odd_values": {"StartFiring"},
+        "placement_target": {"StartFiring"},
+        "dumb_fire_subsystem": {"FireDumb"},
+        "using_empty": {"CallExternalFunction"},
+        "stale_handle": {"CallExternalFunction"},
     }[scene_name]
     assert want <= seen_calls, (want - seen_calls, sorted(seen_calls))
-    if scene_name in ("mixed", "tractor"):
+    if scene_name == "tractor":
         assert dock_exception > 0, "the Dock Stage exception never ran"
+    want_facts = {
+        "pulse_visibility": {"pulse cast failed"},
+        "placement_target": {"aimed, no directions", "not physics"},
+        "dumb_fire_subsystem": {"dumb fire at a subsystem"},
+        "using_empty": {"weapons emptied"},
+    }.get(scene_name, set())
+    assert want_facts <= facts, (want_facts - facts, facts)
+    if scene_name == "stale_handle":
+        assert "StaleHandleError" in raised, raised
     if scene_name == "disable_only":
         assert too_dangerous[0] > 0 and too_dangerous[1] > 0, too_dangerous
     if scene_name == "odd_values":
@@ -737,4 +820,75 @@ def test_a_patched_engine_surface_runs_the_sdk_update(patch, monkeypatch):
         scene.inst.Update(0.0)
         assert ai_native.stats()["fire"]["reasons"] == {"not_stock": 1}
     scene.inst.Update(0.0)
+    assert ai_native.stats()["fire"]["native"] == 2
+
+
+# ── Boundary probes: the shipped comparisons, at their last bit ─────────────
+
+def _fire_slot_outcome(scene, monkeypatch, native):
+    """One Update in the fire slot of the scene's first weapon, target known
+    visible: which of StartFiring / StopFiringAtTarget / TargetVisible ran."""
+    inst = scene.inst
+    inst.bTargetVisible = 1
+    inst.iLastUpdate = 0
+    inst.idTargetedSubsystem = None
+    if native:
+        monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+    else:
+        monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "0")
+    rec = _Recorder()
+    sys.setprofile(rec)
+    try:
+        inst.Update(0.0)
+    finally:
+        sys.setprofile(None)
+    monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+    names = [c[0] for c in rec.calls]
+    return [n for n in names
+            if n in ("StartFiring", "StopFiringAtTarget", "TargetVisible")]
+
+
+def test_the_fire_threshold_is_exact_at_its_last_bit(monkeypatch):
+    """CheckGoodShot's `fDot >= self.fFireDotThreshold` on the native
+    composite: the SDK's own best dot as the threshold fires, the next float
+    up does not -- on both paths."""
+    scene = _Scene("A", dict(ours="Galaxy", target="Galaxy", range=1e20,
+                             weapons=("GetTorpedoSystem",)))
+    scene.perturb(random.Random(11))
+    inst = scene.inst
+    system = inst.lWeapons[0]
+    # The SDK's statements, with the SDK's methods (CheckGoodShot's tail).
+    directions, speed = pp.FireScript.GetWeaponInfo(inst, system)
+    assert directions
+    v = pp.FireScript.PredictTargetLocation(inst, scene.target, None, speed)
+    ship = inst.pCodeAI.GetShip()
+    v.Subtract(ship.GetWorldLocation())
+    v.MultMatrixLeft(ship.GetWorldRotation().Transpose())
+    v.Unitize()
+    best = max(v.Dot(d) for d in directions)
+    for threshold, want in ((best, "StartFiring"),
+                            (math.nextafter(best, math.inf),
+                             "StopFiringAtTarget")):
+        inst.fFireDotThreshold = threshold
+        for native in (False, True):
+            got = _fire_slot_outcome(scene, monkeypatch, native)
+            assert got == [want], (threshold.hex(), native, got)
+    assert ai_native.stats()["fire"]["native"] == 2
+
+
+def test_the_firing_range_is_exact_at_its_last_bit(monkeypatch):
+    """TargetInRange's `fSqrLength <= fMaxFiringRange ** 2` on the native
+    composite: a squared distance of exactly 25 is in range at 5.0 and out
+    at the next float down -- on both paths."""
+    scene = _Scene("A", dict(ours="Galaxy", target="Galaxy", range=1e20,
+                             weapons=("GetPhaserSystem",)))
+    scene.perturb(random.Random(12))
+    scene.ours.SetTranslateXYZ(0.0, 0.0, 0.0)
+    scene.target.SetTranslateXYZ(3.0, 4.0, 0.0)
+    for rng_, want in ((5.0, "StartFiring"),
+                       (math.nextafter(5.0, 0.0), "TargetVisible")):
+        scene.inst.fMaxFiringRange = rng_
+        for native in (False, True):
+            got = _fire_slot_outcome(scene, monkeypatch, native)
+            assert got[:1] == [want], (rng_.hex(), native, got)
     assert ai_native.stats()["fire"]["native"] == 2

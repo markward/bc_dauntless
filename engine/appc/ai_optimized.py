@@ -605,7 +605,7 @@ def _fire_surface_snapshot():
         (TGPoint3.__dict__, point_names),
         (TGMatrix3.__dict__, matrix_names),
     )
-    # Flat, so one C-level pass checks them all (_fire_surface_is_stock):
+    # Flat, so one C-level pass checks them all (_fire_surface_globals):
     # each table's own live `get` (a class's is its mappingproxy's), its key,
     # and what that key held.
     gets = tuple(d.get for d, keys in tables for _k in keys)
@@ -627,28 +627,32 @@ def _fire_surface_snapshot():
 _FIRE_SURFACE = _fire_surface_snapshot()
 
 
-def _fire_surface_is_stock(base) -> bool:
-    """The SDK FireScript (`base`) still runs on the engine's App, on the
+def _fire_surface_globals(base):
+    """The globals the SDK FireScript (`base`) runs on -- its Update's
+    __globals__, which the binding loads App and the builtins from -- if they
+    are stock: the engine's App, CPython's builtins (len, range, and the
+    loader's __import__ lambda's isinstance / str), and underneath, the
     engine TGPoint3 / TGMatrix3 its mirrored readers build (methods
-    unpatched, math.sqrt behind Length) and on CPython's builtins (len,
-    range, and the loader's __import__ lambda's isinstance / str)."""
+    unpatched, math.sqrt behind Length). None otherwise."""
     fn = ai_native._unwrap(getattr(base, "Update", None))
     if fn is None:
-        return False
+        return None
     g = fn.__globals__
     if g.get("App") is not App or not g.keys().isdisjoint(_FIRE_BUILTINS):
-        return False
+        return None
     snap = _FIRE_SURFACE
     is_ = snap["is_"]
     b = g.get("__builtins__")
     table = b if isinstance(b, dict) else getattr(b, "__dict__", None)
     if table is None:
-        return False
+        return None
     # Identity, never ==; a deleted name reads None, which nothing was.
     get = table.get
-    return (all(map(is_, map(get, snap["builtin_names"]), snap["builtins"]))
+    if (all(map(is_, map(get, snap["builtin_names"]), snap["builtins"]))
             and all(map(is_, map(snap["call"], snap["gets"], snap["keys"]),
-                        snap["values"])))
+                        snap["values"]))):
+        return g
+    return None
 
 
 def _fire_store_ok() -> bool:
@@ -675,8 +679,10 @@ def _fire_update(self, base, args, kwargs):
     else:
         ai_native.note("fire", "python", "no_mirror")
         return base.Update(self, *args, **kwargs)
-    if not (ai_native.preprocessor_is_stock(self, "FireScript", _FIRE_METHODS)
-            and _fire_surface_is_stock(base)):
+    sdk_globals = None
+    if ai_native.preprocessor_is_stock(self, "FireScript", _FIRE_METHODS):
+        sdk_globals = _fire_surface_globals(base)
+    if sdk_globals is None:
         ai_native.note("fire", "python", "not_stock")
         return base.Update(self, *args, **kwargs)
     if not _fire_store_ok():
@@ -687,7 +693,7 @@ def _fire_update(self, base, args, kwargs):
     if fire is None:
         import _dauntless_host
         fire = _FIRE_BINDING[0] = _dauntless_host.combat_ai_fire_update
-    return fire(self, end_time)
+    return fire(self, end_time, sdk_globals)
 
 
 #: _dauntless_host.combat_ai_fire_update, looked up on the first native call

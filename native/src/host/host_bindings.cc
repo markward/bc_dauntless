@@ -6533,7 +6533,6 @@ struct Host {
     PyObject *s_sdk_importlib, *s_import_module, *s_GetCondition, *s_GetMaxCondition;
     PyObject *s_GetDisabledPercentage, *s_ShouldBeAimed, *s_GetLaunchSpeed, *s_GetProperty;
     PyObject *s_GetOrientationForward, *s_fFireDotThreshold, *s_App, *s_builtins, *s_range;
-    PyObject* sdk_module;  // "AI.Preprocessors"
     PyObject* one_on;      // slice(1, None, None): `[1:]`
     // ai_native.reader_contract(name): one mirrored body each.
     PyObject *reads_loc, *reads_rot, *reads_vel, *reads_acc, *reads_predict, *reads_position,
@@ -6652,8 +6651,7 @@ Host& host() {
         p->s_App = intern("App");
         p->s_builtins = intern("__builtins__");
         p->s_range = intern("range");
-        p->sdk_module = intern("AI.Preprocessors");
-        {
+            {
             PyObject* one = PyLong_FromLong(1);
             if (one == nullptr) throw py::error_already_set();
             p->one_on = PySlice_New(one, Py_None, Py_None);
@@ -6914,11 +6912,40 @@ Mat mat_transpose(const Mat& m) {
 
 // ── Reads ──────────────────────────────────────────────────────────────────
 
-// The mirrored read applies (`contract` holds for `o`); otherwise counted.
+// The mirrored read applies (`contract` holds for `o`); otherwise counted as
+// a surface fallback -- except None (a failed cast), which no contract is
+// about: its Python call raises the SDK's own AttributeError.
 bool mirrored(PyObject* o, PyObject* contract) {
+    if (o == Py_None) return false;
     if (rating::reads_stock(o, contract)) return true;
     note_surface();
     return false;
+}
+
+// The same test with nothing counted, and the read: for the all-native
+// paths, which fall back to the counted reads when it fails.
+bool quiet_location(PyObject* o, cb::FireVec& out) {
+    double p[3];
+    if (o == Py_None || !rating::reads_stock(o, host().reads_loc) || !avoid::read_position(o, p))
+        return false;
+    out = cb::FireVec{p[0], p[1], p[2]};
+    return true;
+}
+
+bool read_rotation(PyObject* o, cb::FireMat& out) {
+    std::uint32_t i, g;
+    if (!avoid::read_handle(o, i, g)) return false;
+    try {
+        auto r = dauntless::transform_store().rotation(i, g);
+        for (int k = 0; k < 9; ++k) out.m[k] = r[k];
+    } catch (const std::exception&) {
+        return false;  // stale: the Python call raises StaleHandleError
+    }
+    return true;
+}
+
+bool quiet_rotation(PyObject* o, cb::FireMat& out) {
+    return o != Py_None && rating::reads_stock(o, host().reads_rot) && read_rotation(o, out);
 }
 
 // o.GetWorldLocation(): the transform store slot `_xform` names.
@@ -6933,19 +6960,8 @@ Vec world_location(PyObject* o) {
 // o.GetWorldRotation(): the store rotation, row-major (set_from_tuple).
 Mat world_rotation(PyObject* o) {
     auto& h = host();
-    if (mirrored(o, h.reads_rot)) {
-        std::uint32_t i, g;
-        if (avoid::read_handle(o, i, g)) {
-            try {
-                auto r = dauntless::transform_store().rotation(i, g);
-                Mat out;
-                for (int k = 0; k < 9; ++k) out.m.m[k] = r[k];
-                return out;
-            } catch (const std::exception&) {
-                // stale: the Python call raises StaleHandleError
-            }
-        }
-    }
+    Mat out;
+    if (mirrored(o, h.reads_rot) && read_rotation(o, out.m)) return out;
     return Mat{false, {}, call0(o, h.s_GetWorldRotation)};
 }
 
@@ -7072,11 +7088,31 @@ py::object get_target(const Ctx& c) {
     return target;
 }
 
+// `fSqrLength <= (self.fMaxFiringRange * self.fMaxFiringRange)` for a native
+// fSqrLength: the library's compare for a plain float read twice as the one
+// object, else Python's own operators.
+bool sqr_within(double sqr, PyObject* r1, PyObject* r2) {
+    if (PyFloat_CheckExact(r1) && r1 == r2) return cb::fire_sqr_within(sqr, PyFloat_AS_DOUBLE(r1));
+    py::object prod = own(PyNumber_Multiply(r1, r2));
+    return cmp(pyfloat(sqr).ptr(), prod.ptr(), Py_LE);
+}
+
 // FireScript.TargetInRange's truth (the SDK returns 1 / 0).
 bool target_in_range(const Ctx& c, PyObject* target) {
     auto& h = host();
     py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
     if (!truth(ship.ptr())) return false;
+    // Both locations mirrored: the composite (ai_fire.h), nothing else runs.
+    cb::FireVec t, s;
+    if (quiet_location(target, t) && quiet_location(ship.ptr(), s)) {
+        py::object r1 = attr(c.self, h.s_fMaxFiringRange);
+        py::object r2 = attr(c.self, h.s_fMaxFiringRange);
+        if (PyFloat_CheckExact(r1.ptr()) && r1.ptr() == r2.ptr())
+            return cb::fire_in_range(t, s, PyFloat_AS_DOUBLE(r1.ptr()));
+        cb::FireVec d = t;
+        cb::fire_subtract(d, s);
+        return sqr_within(cb::fire_sqr_length(d), r1.ptr(), r2.ptr());
+    }
     Vec diff = world_location(target);
     py::object sub_m = method_of(diff, h.s_Subtract);
     Vec ours = world_location(ship.ptr());
@@ -7085,10 +7121,9 @@ bool target_in_range(const Ctx& c, PyObject* target) {
     // if fSqrLength <= (self.fMaxFiringRange * self.fMaxFiringRange)
     py::object r1 = attr(c.self, h.s_fMaxFiringRange);
     py::object r2 = attr(c.self, h.s_fMaxFiringRange);
-    if (sqr.native && PyFloat_CheckExact(r1.ptr()) && PyFloat_CheckExact(r2.ptr()))
-        return sqr.d <= cb::fire_mul(PyFloat_AS_DOUBLE(r1.ptr()), PyFloat_AS_DOUBLE(r2.ptr()));
+    if (sqr.native) return sqr_within(sqr.d, r1.ptr(), r2.ptr());
     py::object prod = own(PyNumber_Multiply(r1.ptr(), r2.ptr()));
-    return cmp(num_obj(sqr).ptr(), prod.ptr(), Py_LE);
+    return cmp(sqr.obj.ptr(), prod.ptr(), Py_LE);
 }
 
 // `fDistance / fSpeed`
@@ -7099,35 +7134,27 @@ Num divide(const Num& a, PyObject* b) {
     return num_of(own(PyNumber_TrueDivide(lhs.ptr(), b)));
 }
 
-// FireScript.PredictTargetLocation
-Vec predict_target_location(const Ctx& c, PyObject* target, PyObject* subsystem, PyObject* speed) {
+// PredictTargetLocation from `phys = App.PhysicsObjectClass_Cast(pTarget)`
+// on: vPredicted is `predicted`, fTime `time`; `has_subsystem` the truth of
+// `if pSubsystem:` when it has been evaluated already (-1: not yet).
+Vec predict_after_cast(PyObject* target, PyObject* subsystem, Vec predicted, const Num& time,
+                       PyObject* phys, int has_subsystem = -1) {
     auto& h = host();
-    Vec diff = world_location(target);
-    py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
-    if (eq(ship.ptr(), Py_None)) return diff;
-    py::object sub_m = method_of(diff, h.s_Subtract);
-    Vec ours = world_location(ship.ptr());
-    vec_op(Op::Subtract, diff, sub_m, ours);
-    Num distance = vec_unitize(diff);
-    Num time = divide(distance, speed);
-
-    Vec predicted = world_location(target);
-    py::object phys = app_call(c, h.s_PhysicsObjectClass_Cast, target);
-    if (ne(phys.ptr(), Py_None)) {
+    if (ne(phys, Py_None)) {
         // vPredicted.Set(pPhysicsTarget.GetPredictedPosition(
         //     pTarget.GetWorldLocation(), pPhysicsTarget.GetVelocityTG(),
         //     pPhysicsTarget.GetAccelerationTG(), fTime))
         py::object set_m = method_of(predicted, h.s_Set);
-        const bool pp_native = mirrored(phys.ptr(), h.reads_predict);
-        py::object pp_m = pp_native ? py::object() : attr(phys.ptr(), h.s_GetPredictedPosition);
+        const bool pp_native = mirrored(phys, h.reads_predict);
+        py::object pp_m = pp_native ? py::object() : attr(phys, h.s_GetPredictedPosition);
         Vec p = world_location(target);
-        Vec v = velocity(phys.ptr());
-        Vec a = acceleration(phys.ptr());
+        Vec v = velocity(phys);
+        Vec a = acceleration(phys);
         Vec result;
         if (pp_native && p.native && v.native && a.native && time.native) {
             result = vec_native(cb::fire_predicted_position(p.v, v.v, a.v, time.d));
         } else {
-            if (!pp_m) pp_m = attr(phys.ptr(), h.s_GetPredictedPosition);
+            if (!pp_m) pp_m = attr(phys, h.s_GetPredictedPosition);
             py::object pa = materialise(p), va = materialise(v), aa = materialise(a);
             py::object ta = num_obj(time);
             PyObject* argv[4] = {pa.ptr(), va.ptr(), aa.ptr(), ta.ptr()};
@@ -7135,7 +7162,8 @@ Vec predict_target_location(const Ctx& c, PyObject* target, PyObject* subsystem,
         }
         vec_op(Op::Set, predicted, set_m, result);
     }
-    if (truth(subsystem)) {
+    if (has_subsystem < 0) has_subsystem = truth(subsystem) ? 1 : 0;
+    if (has_subsystem) {
         // vSubsystemPos = pSubsystem.GetPositionTG()
         // vSubsystemPos.MultMatrixLeft(pTarget.GetWorldRotation()); vPredicted.Add(vSubsystemPos)
         Vec sp = position_tg(subsystem);
@@ -7146,6 +7174,91 @@ Vec predict_target_location(const Ctx& c, PyObject* target, PyObject* subsystem,
         vec_op(Op::Add, predicted, add_m, sp);
     }
     return predicted;
+}
+
+// PredictTargetLocation from `pOurShip = self.pCodeAI.GetShip()` (not None)
+// on, vDiff being `diff` (the target's location).
+Vec predict_after_ship(const Ctx& c, PyObject* target, PyObject* subsystem, PyObject* speed,
+                       Vec diff, PyObject* ship) {
+    auto& h = host();
+    py::object sub_m = method_of(diff, h.s_Subtract);
+    Vec ours = world_location(ship);
+    vec_op(Op::Subtract, diff, sub_m, ours);
+    Num distance = vec_unitize(diff);
+    Num time = divide(distance, speed);
+    Vec predicted = world_location(target);
+    py::object phys = app_call(c, h.s_PhysicsObjectClass_Cast, target);
+    return predict_after_cast(target, subsystem, predicted, time, phys.ptr());
+}
+
+// What the all-native PredictTargetLocation reads besides the two
+// locations, read before any call (every read is pure): the target as a
+// physics object, and the subsystem's position with the target's rotation.
+// A part that fails is simply not ready; nothing is counted.
+struct PredictReads {
+    bool physics_ready = false;  // pp, velocity, acceleration of the target
+    bool subsystem_ready = false;
+};
+
+PredictReads predict_reads(PyObject* target, PyObject* subsystem, cb::PredictInputs& in) {
+    auto& h = host();
+    PredictReads r;
+    double v[3];
+    r.physics_ready = rating::reads_stock(target, h.reads_predict) &&
+                      rating::reads_stock(target, h.reads_vel) && avoid::read_velocity(target, v) &&
+                      rating::reads_stock(target, h.reads_acc) &&
+                      read_acceleration(target, in.acceleration);
+    if (r.physics_ready) in.velocity = cb::FireVec{v[0], v[1], v[2]};
+    r.subsystem_ready = subsystem != Py_None && rating::reads_stock(subsystem, h.reads_position) &&
+                        read_attr_point(subsystem, h.s_position, in.subsystem_pos) &&
+                        quiet_rotation(target, in.target_rot);
+    return r;
+}
+
+// FireScript.PredictTargetLocation. When fSpeed is a non-zero float and every
+// read is a mirrored engine body, the composite (ai_fire.h) computes it;
+// the SDK's two calls (GetShip, the physics cast) are made at their points.
+// Otherwise -- or from wherever a part turns out not to be native -- the
+// statement-by-statement path.
+Vec predict_target_location(const Ctx& c, PyObject* target, PyObject* subsystem, PyObject* speed) {
+    auto& h = host();
+    cb::PredictInputs in{};
+    if (PyFloat_CheckExact(speed) && PyFloat_AS_DOUBLE(speed) != 0.0 &&
+        quiet_location(target, in.target_pos)) {
+        in.speed = PyFloat_AS_DOUBLE(speed);
+        const PredictReads ready = predict_reads(target, subsystem, in);
+        py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+        if (eq(ship.ptr(), Py_None)) return vec_native(in.target_pos);  // return vDiff
+        if (!quiet_location(ship.ptr(), in.our_pos))
+            return predict_after_ship(c, target, subsystem, speed, vec_native(in.target_pos),
+                                      ship.ptr());
+        py::object phys = app_call(c, h.s_PhysicsObjectClass_Cast, target);
+        in.physics = ne(phys.ptr(), Py_None);
+        const bool physics_ok = !in.physics || (phys.ptr() == target && ready.physics_ready);
+        int has_subsystem = -1;
+        if (physics_ok) {
+            has_subsystem = truth(subsystem) ? 1 : 0;
+            in.subsystem = has_subsystem == 1;
+            cb::FireVec out;
+            if (!in.subsystem || ready.subsystem_ready) {
+                const bool ok = cb::fire_predict_target_location(in, out);
+                (void)ok;  // fSpeed is non-zero
+                return vec_native(out);
+            }
+        }
+        // A part that is not native: vDiff, fDistance, fTime and vPredicted
+        // are the composite's own, then the statements from the cast on.
+        cb::FireVec diff = in.target_pos;
+        cb::fire_subtract(diff, in.our_pos);
+        const double distance = cb::fire_unitize(diff);
+        const Num time{true, cb::fire_div(distance, in.speed), {}};
+        return predict_after_cast(target, subsystem, vec_native(in.target_pos), time, phys.ptr(),
+                                  has_subsystem);
+    }
+    Vec diff = world_location(target);
+    py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (eq(ship.ptr(), Py_None)) return diff;
+    return predict_after_ship(c, target, subsystem, speed, diff, ship.ptr());
 }
 
 // FireScript.GetWeaponInfo: (lDirections, fSpeed)
@@ -7192,6 +7305,28 @@ bool check_good_shot(const Ctx& c, PyObject* system, PyObject* target, PyObject*
     weapon_info(c, system, dirs, speed);
     if (dirs.empty()) return true;
     Vec local = predict_target_location(c, target, subsystem, speed.ptr());
+    // All native from here (the predicted point, our location and rotation,
+    // every direction, a float threshold): the composite. No call is left in
+    // the SDK's tail, so the threshold read once is the one it reads each
+    // time round.
+    if (local.native) {
+        cb::FireVec ours;
+        cb::FireMat rot;
+        if (quiet_location(ship.ptr(), ours) && quiet_rotation(ship.ptr(), rot)) {
+            std::vector<cb::FireVec> flat(dirs.size());
+            bool all = true;
+            for (std::size_t i = 0; i < dirs.size() && all; ++i) {
+                if (dirs[i].native)
+                    flat[i] = dirs[i].v;
+                else
+                    all = exact_point(dirs[i].obj.ptr(), flat[i]);
+            }
+            py::object threshold = attr(c.self, h.s_fFireDotThreshold);
+            if (all && PyFloat_CheckExact(threshold.ptr()))
+                return cb::fire_good_shot_direction(local.v, ours, rot, flat.data(), flat.size(),
+                                                    PyFloat_AS_DOUBLE(threshold.ptr())) >= 0;
+        }
+    }
     {
         py::object sub_m = method_of(local, h.s_Subtract);
         Vec ours = world_location(ship.ptr());
@@ -7207,7 +7342,7 @@ bool check_good_shot(const Ctx& c, PyObject* system, PyObject* target, PyObject*
         Num dot = vec_dot(local, d);
         py::object threshold = attr(c.self, h.s_fFireDotThreshold);
         if (dot.native && PyFloat_CheckExact(threshold.ptr())) {
-            if (dot.d >= PyFloat_AS_DOUBLE(threshold.ptr())) return true;
+            if (cb::fire_at_least(dot.d, PyFloat_AS_DOUBLE(threshold.ptr()))) return true;
         } else if (cmp(num_obj(dot).ptr(), threshold.ptr(), Py_GE)) {
             return true;
         }
@@ -7225,8 +7360,10 @@ bool weapon_too_dangerous(const Ctx& c, PyObject* system, PyObject* target, PyOb
     py::object target_id = call0(target, h.s_GetObjID);
     if (!truth(pset.ptr())) return false;
     py::object incoming = pyfloat(0.0);
+    // pSet.GetClassObjectList(App.CT_TORPEDO): the method first
+    py::object list_m = attr(pset.ptr(), h.s_GetClassObjectList);
     py::object ct = attr(c.app.ptr(), h.s_CT_TORPEDO);
-    py::object torps = call1(pset.ptr(), h.s_GetClassObjectList, ct.ptr());
+    py::object torps = own(PyObject_CallOneArg(list_m.ptr(), ct.ptr()));
     py::object it = own(PyObject_GetIter(torps.ptr()));
     while (PyObject* e = PyIter_Next(it.ptr())) {
         py::object t = py::reinterpret_steal<py::object>(e);
@@ -7290,8 +7427,10 @@ bool configure_weapon_system(const Ctx& c, PyObject* system, PyObject* target,
                     keep = eq(mine.ptr(), stage1.ptr());
                 }
                 if (!keep) {
+                    // pTractor.SetMode(self.eTractorBeamMode): the method first
+                    py::object set_mode = attr(tractor.ptr(), h.s_SetMode);
                     py::object mine = attr(c.self, h.s_eTractorBeamMode);
-                    call1(tractor.ptr(), h.s_SetMode, mine.ptr());
+                    own(PyObject_CallOneArg(set_mode.ptr(), mine.ptr()));
                 }
             }
         }
@@ -7404,21 +7543,12 @@ void set_attr(PyObject* o, PyObject* name, PyObject* v) {
     if (PyObject_SetAttr(o, name, v) < 0) throw py::error_already_set();
 }
 
-// FireScript.Update
-py::object update(PyObject* self) {
+// FireScript.Update; `globals` the gated SDK function's __globals__ (the
+// dict its code loads App and the builtins from).
+py::object update(PyObject* self, PyObject* globals) {
     auto& h = host();
-    Ctx c{self, {}, {}};
-    {
-        PyObject* mod = PyImport_GetModule(h.sdk_module);
-        if (mod == nullptr) {
-            if (!PyErr_Occurred())
-                PyErr_SetString(PyExc_RuntimeError, "AI.Preprocessors is not imported");
-            throw py::error_already_set();
-        }
-        py::object keep = py::reinterpret_steal<py::object>(mod);
-        c.globals = attr(mod, h.s_dict);
-        c.app = global(c, h.s_App);
-    }
+    Ctx c{self, py::reinterpret_borrow<py::object>(globals), {}};
+    c.app = global(c, h.s_App);
 
     py::object target = get_target(c);
     if (!truth(target.ptr())) return ps(c, h.s_PS_DONE);
@@ -7493,6 +7623,152 @@ py::object update(PyObject* self) {
 }
 
 }  // namespace fire
+}  // namespace
+
+// ── The stock verdict's memo (engine/appc/ai_native.py) ──────────────────────
+// ai_native.preprocessor_is_stock is the only place the stock rule is
+// written; this only REMEMBERS its class verdict, per (type, SDK class name,
+// gated-methods tuple), keyed by the type's version tag. CPython renews a
+// type's tag whenever an attribute of it or of any base is set or deleted,
+// or its __bases__ change, so a class-level patch anywhere in the MRO -- the
+// SDK base included -- makes the stored verdict unreadable and Python
+// decides again. A type with no valid tag, or a metaclass other than `type`
+// (whose attribute lookup is not the MRO's alone), is never answered here.
+// Python stores a verdict with the tag it read BEFORE deciding; if the type
+// moved while Python ran, nothing is stored.
+// The instance half -- no gated name in the instance's own dict -- is
+// checked here on every call: the dict attribute lookup consults (built from
+// inline values if need be), its keys only str, the names compared by
+// PyDict_Contains (no Python runs). An instance with no dict, or with
+// non-str keys, is Python's to answer.
+//   ai_stock_check(inst, name, methods) -> True / False / None (ask Python)
+//   ai_stock_tag(cls) -> the tag a verdict would be stored under (0: none)
+//   ai_stock_remember(cls, name, methods, verdict, tag)
+// Raw METH_FASTCALL functions: this runs on every native call of the three
+// kinds, and pybind11's dispatch would cost more than the check.
+namespace {
+namespace stockmemo {
+
+struct Entry {
+    PyTypeObject* type;
+    unsigned int tag;
+    PyObject* name;
+    PyObject* methods;
+    bool verdict;
+    py::object keep_type, keep_name, keep_methods;  // the addresses are keys
+};
+
+std::vector<Entry>& entries() {
+    static auto* v = new std::vector<Entry>();
+    return *v;
+}
+
+// The tag a verdict for `t` is keyed by; 0 when it cannot be (no valid tag,
+// or a metaclass other than `type`).
+unsigned int tag_of(PyTypeObject* t) {
+    if (!Py_IS_TYPE(reinterpret_cast<PyObject*>(t), &PyType_Type)) return 0;
+    return k0_type_tag(t);
+}
+
+bool same_name(PyObject* a, PyObject* b) {
+    if (a == b) return true;
+    return PyUnicode_CheckExact(a) && PyUnicode_CheckExact(b) && _PyUnicode_EQ(a, b);
+}
+
+Entry* find(PyTypeObject* t, PyObject* name, PyObject* methods) {
+    for (Entry& e : entries())
+        if (e.type == t && e.methods == methods && same_name(e.name, name)) return &e;
+    return nullptr;
+}
+
+PyObject* check(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 3 || !PyTuple_CheckExact(args[2])) {
+        PyErr_SetString(PyExc_TypeError, "ai_stock_check(inst, name, methods: tuple)");
+        return nullptr;
+    }
+    PyObject* inst = args[0];
+    PyTypeObject* t = Py_TYPE(inst);
+    const unsigned int tag = tag_of(t);
+    if (tag == 0) Py_RETURN_NONE;
+    Entry* e = find(t, args[1], args[2]);
+    if (e == nullptr || e->tag != tag) Py_RETURN_NONE;
+    if (!e->verdict) Py_RETURN_FALSE;
+    PyObject* d = k0_dict_of(inst);
+    if (d == nullptr) {
+        PyObject** dp = _PyObject_GetDictPtr(inst);
+        if (dp == nullptr || *dp == nullptr) {
+            PyErr_Clear();
+            Py_RETURN_NONE;  // no instance dict: Python's to answer
+        }
+        d = *dp;
+    }
+    if (!PyDict_CheckExact(d) || !_PyDict_HasOnlyStringKeys(d)) Py_RETURN_NONE;
+    PyObject* methods = args[2];
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(methods); ++i) {
+        PyObject* n = PyTuple_GET_ITEM(methods, i);
+        if (!PyUnicode_CheckExact(n)) Py_RETURN_NONE;
+        const int has = PyDict_Contains(d, n);
+        if (has < 0) return nullptr;
+        if (has) Py_RETURN_FALSE;
+    }
+    Py_RETURN_TRUE;
+}
+
+PyObject* tag(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 1 || !PyType_Check(args[0])) {
+        PyErr_SetString(PyExc_TypeError, "ai_stock_tag(cls: type)");
+        return nullptr;
+    }
+    return PyLong_FromUnsignedLong(tag_of(reinterpret_cast<PyTypeObject*>(args[0])));
+}
+
+PyObject* remember(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 5 || !PyType_Check(args[0]) || !PyTuple_CheckExact(args[2]) ||
+        !PyLong_Check(args[4])) {
+        PyErr_SetString(PyExc_TypeError,
+                        "ai_stock_remember(cls: type, name, methods: tuple, verdict, tag: int)");
+        return nullptr;
+    }
+    auto* t = reinterpret_cast<PyTypeObject*>(args[0]);
+    const int verdict = PyObject_IsTrue(args[3]);
+    if (verdict < 0) return nullptr;
+    const unsigned long want = PyLong_AsUnsignedLong(args[4]);
+    if (want == static_cast<unsigned long>(-1) && PyErr_Occurred()) return nullptr;
+    const unsigned int now = tag_of(t);
+    // Decided under another version (the type moved while Python ran), or
+    // never keyable: nothing is stored.
+    if (want == 0 || now != want) Py_RETURN_NONE;
+    if (Entry* e = find(t, args[1], args[2])) {
+        e->tag = now;
+        e->verdict = verdict == 1;
+        Py_RETURN_NONE;
+    }
+    auto& all = entries();
+    if (all.size() >= 512) all.clear();
+    all.push_back({t, now, args[1], args[2], verdict == 1,
+                   py::reinterpret_borrow<py::object>(args[0]),
+                   py::reinterpret_borrow<py::object>(args[1]),
+                   py::reinterpret_borrow<py::object>(args[2])});
+    Py_RETURN_NONE;
+}
+
+PyMethodDef kDefs[] = {
+    {"ai_stock_check", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(check)),
+     METH_FASTCALL,
+     "ai_stock_check(inst, name, methods) -> True / False / None: the stock "
+     "verdict ai_native.preprocessor_is_stock stored for type(inst) under its "
+     "current version tag, with the instance-dict half checked; None: ask Python."},
+    {"ai_stock_tag", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(tag)),
+     METH_FASTCALL,
+     "ai_stock_tag(cls) -> the version tag a verdict for cls is stored under "
+     "(0: it cannot be)."},
+    {"ai_stock_remember",
+     reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(remember)), METH_FASTCALL,
+     "ai_stock_remember(cls, name, methods, verdict, tag): store Python's class "
+     "verdict, if cls still has the tag it was decided under."},
+};
+
+}  // namespace stockmemo
 }  // namespace
 
 PYBIND11_MODULE(_dauntless_host, m) {
@@ -13692,13 +13968,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "SelectTarget.GetTargetRating for a stock instance: the float rating, "
           "the SDK's -1 with no ship, or a str reason (\"surface\" / \"no_mirror\") "
           "when the caller must run the SDK body instead.");
+    // ── The stock verdict's memo (the `stockmemo` namespace above) ───────
+    for (PyMethodDef& def : stockmemo::kDefs) {
+        PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
+        if (fn == nullptr) throw py::error_already_set();
+        m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));
+    }
     // ── FireScript's Update (the `fire` namespace above) ─────────────────
     m.def("combat_ai_fire_update",
-          [](py::handle inst, py::handle end_time) -> py::object {
+          [](py::handle inst, py::handle end_time, py::dict globals) -> py::object {
               (void)end_time;  // the SDK's Update reads no end time
-              return fire::update(inst.ptr());
+              return fire::update(inst.ptr(), globals.ptr());
           },
-          py::arg("inst"), py::arg("dEndTime"),
+          py::arg("inst"), py::arg("dEndTime"), py::arg("globals"),
           "FireScript.Update for a stock instance, statement for statement "
           "(the `fire` namespace): the PS_* code the SDK returns, its "
           "exceptions raised unchanged.");

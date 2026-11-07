@@ -10,9 +10,13 @@
 // does natively is the vector arithmetic of TargetInRange, CheckGoodShot and
 // PredictTargetLocation, on values read where an engine body is mirrored
 // exactly (the transform store, `_velocity`, `_position`, ...), and the
-// iLastUpdate cycle. All of that arithmetic is here, so the host never
-// computes a float itself (-ffp-contract=off applies to this library; the
-// host's translation unit is not built with it).
+// iLastUpdate cycle. All of that arithmetic, and every float comparison, is
+// here, so the host never computes or compares a float itself
+// (-ffp-contract=off applies to this library; the host's translation unit is
+// not built with it). When every read of a method is native the host calls
+// the method's composite below (fire_in_range,
+// fire_predict_target_location, fire_good_shot_direction): what the gtests
+// pin is what runs. The primitives serve the mixed cases.
 //
 // Each function is one engine body, bit for bit, in its operand order:
 //   TGPoint3.Subtract / Add          x -= o.x ...  /  x += o.x ...
@@ -49,10 +53,14 @@ double fire_unitize(FireVec& v);
 void fire_mult_matrix_left(FireVec& v, const FireMat& m);
 FireMat fire_transpose(const FireMat& m);
 FireVec fire_predicted_position(const FireVec& p, const FireVec& v, const FireVec& a, double t);
-// `a * b`, `a / b` and `a <= b * b` for the host, which must not do float
-// arithmetic itself (see above).
-double fire_mul(double a, double b);
+// `a / b` for the host, which must not do float arithmetic itself.
 double fire_div(double a, double b);
+
+// The SDK's two float comparisons, so the host compares nothing itself:
+// `fSqrLength <= (fMaxFiringRange * fMaxFiringRange)` and
+// `fDot >= self.fFireDotThreshold`.
+bool fire_sqr_within(double sqr_length, double max_range);
+bool fire_at_least(double dot, double threshold);
 
 // TargetInRange after its reads: `vDiff.SqrLength() <= (fMaxFiringRange *
 // fMaxFiringRange)` with vDiff = target - ship.
