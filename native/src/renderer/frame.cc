@@ -136,12 +136,17 @@ namespace {
 // suppresses while this is on). host_bindings.cc forward-declares set_enabled;
 // frame() gates the LensFlareHdrPass + the resolve's lens-flare composite on
 // enabled() && dauntless_hdr::enabled() && exterior.
+// strength_scale() multiplies the flare's additive composite strength. It is
+// the Camera Realism level's lever: Medium (the default) = 0.5, High = 1.0.
 namespace dauntless_hdr_lens_flare {
 namespace {
     bool g_enabled = true;
+    float g_strength_scale = 0.5f;
 }
     bool enabled() { return g_enabled; }
     void set_enabled(bool v) { g_enabled = v; }
+    float strength_scale() { return g_strength_scale; }
+    void set_strength_scale(float v) { g_strength_scale = v < 0.0f ? 0.0f : v; }
 }
 
 // Toggle for sun shadow maps (depth pre-pass + PCF in opaque). Default on.

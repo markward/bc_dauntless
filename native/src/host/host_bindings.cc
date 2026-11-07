@@ -198,8 +198,10 @@ namespace dauntless_hdr {
     void set_enabled(bool v);  // defined in frame.cc
 }
 namespace dauntless_hdr_lens_flare {
-    bool enabled();            // defined in frame.cc
-    void set_enabled(bool v);  // defined in frame.cc
+    bool enabled();                   // defined in frame.cc
+    void set_enabled(bool v);         // defined in frame.cc
+    float strength_scale();           // defined in frame.cc
+    void set_strength_scale(float v); // defined in frame.cc
 }
 namespace dauntless_procedural_sky {
     bool enabled();            // defined in frame.cc
@@ -232,7 +234,9 @@ namespace dauntless_motion_blur {
 // number, so that tuning needs no rebuild.
 namespace dauntless_dof {
 namespace {
-bool                 g_enabled = true;
+// Off by default: Camera Realism's default level (Medium) leaves DOF off;
+// only High turns it on.
+bool                 g_enabled = false;
 renderer::DofParams  g_params;
 }
 bool enabled() { return g_enabled; }
@@ -2634,7 +2638,9 @@ void frame() {
         lens_flare_tex = g_lens_flare_hdr_pass->render(
             bloom_tex, g_bloom_pass ? g_bloom_pass->coarsest_texture() : 0u,
             fw, fh);
-        lens_flare_strength = 0.108f;  // additive flare intensity (0.15 -20% -10%)
+        // additive flare intensity (0.15 -20% -10%), times the Camera
+        // Realism level's scale (Medium 0.5, High 1.0).
+        lens_flare_strength = 0.108f * dauntless_hdr_lens_flare::strength_scale();
     }
 
     if (any_post) { g_ldr_target->resize(fw, fh); g_ldr_target->bind(); }
@@ -9243,7 +9249,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Read the Motion Blur toggle (Modern VFX). Default: on.");
     m.def("dof_set_enabled",
           [](bool enabled) { dauntless_dof::set_enabled(enabled); },
-          "Toggle depth of field (the Camera Realism master). Default: on. "
+          "Toggle depth of field (Camera Realism High only). Default: off. "
           "Off means the pass never runs, whatever params say.");
     m.def("dof_enabled",
           []() { return dauntless_dof::enabled(); },
@@ -9363,6 +9369,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("hdr_lens_flare_enabled",
           []() { return dauntless_hdr_lens_flare::enabled(); },
           "Read the Modern Lens Flares toggle (Modern VFX). Default: on.");
+    m.def("hdr_lens_flare_set_strength_scale",
+          [](float s) { dauntless_hdr_lens_flare::set_strength_scale(s); },
+          py::arg("scale"),
+          "Scale the image-based lens flare's composite strength. Default 0.5 "
+          "(Camera Realism Medium); High sets 1.0. Negative clamps to 0.");
+    m.def("hdr_lens_flare_strength_scale",
+          []() { return dauntless_hdr_lens_flare::strength_scale(); },
+          "Read the image-based lens flare strength scale. Default 0.5.");
     m.def("shadows_set_enabled",
           [](bool enabled) { dauntless_shadows::set_enabled(enabled); },
           py::arg("enabled"),

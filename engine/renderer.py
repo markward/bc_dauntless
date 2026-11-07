@@ -51,6 +51,7 @@ _REQUIRED_BINDINGS = frozenset({
     "filmic_set_enabled", "frame", "get_instance_bounds",
     "get_instance_head_center", "hdr_lens_flare_enabled",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
+    "hdr_lens_flare_set_strength_scale", "hdr_lens_flare_strength_scale",
     "prefetch_hull_fill", "prewarm_trace_accel", "hull_source_string",
     "prefetch_structure_parts", "structure_parts_set_cache_root",
     "set_instance_rigged",
@@ -918,6 +919,17 @@ def set_hdr_lens_flare_enabled(enabled: bool) -> None:
     _h.hdr_lens_flare_set_enabled(enabled)
 
 
+def set_hdr_lens_flare_strength_scale(scale: float) -> None:
+    """Scale the modern lens flare's strength. Default 0.5 (Camera Realism
+    Medium); High sets 1.0."""
+    _h.hdr_lens_flare_set_strength_scale(float(scale))
+
+
+def hdr_lens_flare_strength_scale() -> float:
+    """Read the modern lens flare's strength scale. Default 0.5."""
+    return float(_h.hdr_lens_flare_strength_scale())
+
+
 def prefetch_hull_fill(model: int) -> None:
     """Start decoding a hull's fill volume on the native background worker so
     the first cut never loads it synchronously. Never blocks; no-op for an
@@ -1036,7 +1048,7 @@ def set_ambient_gradient_enabled(enabled: bool) -> None:
 
 
 def set_dof_enabled(enabled: bool) -> None:
-    """Depth of field on/off, for the Camera Realism master.
+    """Depth of field on/off. Default off; Camera Realism High turns it on.
 
     Off means the pass never runs. On is not enough on its own: the pass also
     needs a focused subject (blend > 0 via set_dof_params), so the default

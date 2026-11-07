@@ -12168,7 +12168,6 @@ def run(mission_name: Optional[str] = None,
                 _store, _settings_ctx, section),
             set_dust=r.set_dust_enabled,
             set_fullscreen=r.set_fullscreen,
-            set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,
             # Routed through the settings row, not straight at the renderer:
             # one aa_mode index drives both set_smaa_enabled and
@@ -12177,6 +12176,10 @@ def run(mission_name: Optional[str] = None,
                 _settings_ctx, "aa_mode", mode),
             set_bridge_quality=lambda q: _settings.apply_setting(
                 _settings_ctx, "bridge_quality", q),
+            # One level drives HDR, filmic, motion blur, the lens flare (and
+            # its strength) and DOF; that fan-out lives in the SETTINGS row.
+            set_camera_realism=lambda lv: _settings.apply_setting(
+                _settings_ctx, "camera_realism", lv),
             max_msaa_samples=r.max_msaa_samples(),
             set_subtitles=_crew_speech.set_subtitles_enabled,
             set_disable_annoying_dialogue=_crew_speech.set_annoying_dialogue_disabled,
@@ -12184,12 +12187,8 @@ def run(mission_name: Optional[str] = None,
             set_fov_rad=director.set_fov,
             set_shadows=r.set_shadows_enabled,
             set_procedural_sky=r.set_procedural_sky_enabled,
-            set_filmic=r.set_filmic_enabled,
-            set_motion_blur=r.set_motion_blur_enabled,
-            set_dof=r.set_dof_enabled,
             set_volumetric_nebulae=r.set_volumetric_nebulae_enabled,
             set_nebula_lightning=r.set_nebula_lightning_enabled,
-            set_hdr_lens_flare=r.set_hdr_lens_flare_enabled,
             set_ship_light_emitters=_light_emitters.set_enabled,
             set_camera_shake=_camera_shake.set_enabled,
             set_ambient_gradient=r.set_ambient_gradient_enabled,

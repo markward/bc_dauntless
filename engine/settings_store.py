@@ -28,12 +28,15 @@ from engine import dev_mode, paths
 from engine.cameras import EXTERIOR_FOV_Y_RAD
 from engine.ui.configuration_panel import (
     AA_MODE_SAMPLES, AA_MSAA_8X, AA_OFF, AA_SMAA,
+    CAMERA_REALISM_HIGH, CAMERA_REALISM_MEDIUM, CAMERA_REALISM_OFF,
     FOV_MAX, FOV_MIN, SettingsSnapshot,
 )
 
 # 2: graphics.smaa_on (bool) became graphics.aa_mode (index) when SMAA and
 #    MSAA merged into one mutually-exclusive selector. See _migrate.
-SCHEMA_VERSION = 2
+# 3: graphics.camera_realism (bool) became a level index (Off/Medium/High)
+#    when Camera Realism gained a Medium setting. See _migrate.
+SCHEMA_VERSION = 3
 
 def default_settings_path() -> Path:
     """Where settings.json lives: the config dir (the checkout root in a
@@ -104,8 +107,18 @@ class SettingsStore:
         # absent — apply_all never applies an unstored key, so inventing an
         # aa_mode here would override the engine default on first launch.
         graphics = self._doc.get("graphics")
-        if isinstance(graphics, dict) and "smaa_on" in graphics:
+        if stamped < 2 and isinstance(graphics, dict) and "smaa_on" in graphics:
             graphics["aa_mode"] = AA_SMAA if graphics.pop("smaa_on") else AA_OFF
+
+        # v2 -> v3: the camera_realism on/off bool became a level index. A
+        # stored True was an explicit "everything on" (DOF and the full-
+        # strength flare included), so it maps to High, not to the new Medium
+        # default; False maps to Off. An ABSENT key stays absent (Medium).
+        if (stamped < 3 and isinstance(graphics, dict)
+                and isinstance(graphics.get("camera_realism"), bool)):
+            graphics["camera_realism"] = (CAMERA_REALISM_HIGH
+                                          if graphics["camera_realism"]
+                                          else CAMERA_REALISM_OFF)
 
         self._doc["version"] = SCHEMA_VERSION
 
@@ -265,6 +278,36 @@ def _fan(*appliers):
     return _apply
 
 
+# Lens-flare strength scale per Camera Realism level (Off ignores it: the
+# flare is disabled outright).
+CAMERA_REALISM_FLARE_SCALE = {
+    CAMERA_REALISM_OFF: 0.5,
+    CAMERA_REALISM_MEDIUM: 0.5,
+    CAMERA_REALISM_HIGH: 1.0,
+}
+
+
+def _apply_camera_realism(ctx, level) -> None:
+    on = level > CAMERA_REALISM_OFF
+    ctx.r.set_hdr_enabled(on)
+    ctx.r.set_filmic_enabled(on)
+    ctx.r.set_motion_blur_enabled(on)
+    ctx.r.set_hdr_lens_flare_enabled(on)
+    ctx.r.set_hdr_lens_flare_strength_scale(CAMERA_REALISM_FLARE_SCALE[level])
+    ctx.r.set_dof_enabled(level == CAMERA_REALISM_HIGH)
+
+
+def _camera_realism_level(ctx) -> int:
+    """Display fallback: the level the live renderer state reads as."""
+    if not (ctx.r.filmic_enabled() and ctx.r.motion_blur_enabled()
+            and ctx.r.hdr_lens_flare_enabled()):
+        return CAMERA_REALISM_OFF
+    # DOF is on at High only, so it alone tells High from Medium.
+    if ctx.r.dof_enabled():
+        return CAMERA_REALISM_HIGH
+    return CAMERA_REALISM_MEDIUM
+
+
 SETTINGS: tuple = (
     # One row drives BOTH anti-aliasing engines, which is what makes them
     # mutually exclusive by construction rather than by a rule someone has to
@@ -302,16 +345,16 @@ SETTINGS: tuple = (
             _fan(lambda c, v: c.r.set_procedural_sky_enabled(v),
                  lambda c, v: c.r.set_volumetric_nebulae_enabled(v)),
             reset_default=True),
-    Setting("camera_realism", "graphics", "camera_realism_on", bool,
-            lambda c: (c.r.filmic_enabled()
-                       and c.r.motion_blur_enabled()
-                       and c.r.hdr_lens_flare_enabled()),
-            _fan(lambda c, v: c.r.set_hdr_enabled(v),
-                 lambda c, v: c.r.set_filmic_enabled(v),
-                 lambda c, v: c.r.set_motion_blur_enabled(v),
-                 lambda c, v: c.r.set_hdr_lens_flare_enabled(v),
-                 lambda c, v: c.r.set_dof_enabled(v)),
-            reset_default=True),
+    # Camera Realism level: Off / Medium (default) / High. Medium is every
+    # member on except depth of field, with the modern lens flare at half
+    # strength; High adds DOF and the full-strength flare. The engine's own
+    # defaults ARE Medium (DOF off, flare scale 0.5 in C++), so an absent key
+    # still needs no applier.
+    Setting("camera_realism", "graphics", "camera_realism", int,
+            _camera_realism_level,
+            _apply_camera_realism,
+            lo=CAMERA_REALISM_OFF, hi=CAMERA_REALISM_HIGH,
+            reset_default=CAMERA_REALISM_MEDIUM),
     Setting("realistic_lighting", "graphics", "realistic_lighting_on", bool,
             lambda c: (c.r.nebula_lightning_enabled()
                        and c.light_emitters.enabled()),

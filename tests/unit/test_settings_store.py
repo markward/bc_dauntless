@@ -461,8 +461,45 @@ def test_migration_does_not_write_the_file(tmp_path):
     assert path.read_text(encoding="utf-8") == before
 
 
-def test_schema_version_is_two():
-    assert SCHEMA_VERSION == 2
+def test_schema_version_is_three():
+    assert SCHEMA_VERSION == 3
+
+
+# ── v2 -> v3 migration: camera_realism (bool) -> level index ────────────────
+
+@pytest.mark.parametrize("stored,expected", [(True, 2), (False, 0)])
+def test_migrates_camera_realism_bool_to_a_level(tmp_path, stored, expected):
+    """A stored True was an explicit "everything on" (DOF included), so it
+    keeps that as High rather than silently dropping to the Medium default."""
+    s = SettingsStore(path=_write_doc(
+        tmp_path, {"version": 2, "graphics": {"camera_realism": stored}}))
+    s.load()
+    assert s.get("graphics", "camera_realism") == expected
+
+
+def test_absent_camera_realism_stays_absent(tmp_path):
+    """Absent must stay absent so first launch lands on the engine default
+    (Medium) without any applier running."""
+    s = SettingsStore(path=_write_doc(
+        tmp_path, {"version": 2, "graphics": {"dust": False}}))
+    s.load()
+    assert not s.has("graphics", "camera_realism")
+
+
+def test_v3_camera_realism_level_is_untouched(tmp_path):
+    s = SettingsStore(path=_write_doc(
+        tmp_path, {"version": 3, "graphics": {"camera_realism": 1}}))
+    s.load()
+    assert s.get("graphics", "camera_realism") == 1
+
+
+def test_v1_document_takes_both_migrations(tmp_path):
+    s = SettingsStore(path=_write_doc(tmp_path, {
+        "version": 1, "graphics": {"smaa_on": True, "camera_realism": False}}))
+    s.load()
+    from engine.ui.configuration_panel import AA_SMAA
+    assert s.get("graphics", "aa_mode") == AA_SMAA
+    assert s.get("graphics", "camera_realism") == 0
 
 
 # ── the aa_mode row drives both AA engines, exclusively ─────────────────────

@@ -27,14 +27,16 @@ function _cpEventArg(s) {
 // together by test_js_graphics_focusables_match_python.
 const CP_MASTERS = [
     ['improved_space',     'Improved Space Visuals'],
-    ['camera_realism',     'Camera Realism'],
     ['realistic_lighting', 'Cinematic Lighting'],
 ];
 
 // Graphics-tab controls in rendered order: the standalone rows, then the
 // masters. Single source for both the focusable list and the rendered rows.
 const CP_GRAPHICS_STANDALONE = ['aa_mode', 'dust', 'fullscreen', 'fov'];
-// Plain rows that sit INSIDE the Modern VFX group, after the masters.
+// Segmented level selectors right after the masters (Camera Realism:
+// Off / Medium / High). Mirrors the order in Python's _focusables().
+const CP_GRAPHICS_LEVELS = ['camera_realism'];
+// Plain rows that sit INSIDE the Modern VFX group, after the level selectors.
 const CP_GRAPHICS_TRAILING = [['camera_shake', 'Camera Shake']];
 // Segmented selectors that end the Modern VFX group, after the trailing rows.
 const CP_GRAPHICS_GROUP_END = ['bridge_quality'];
@@ -43,6 +45,7 @@ const CP_GRAPHICS_GROUP_END = ['bridge_quality'];
 const CP_RESET_TARGETS = {graphics: 'reset_graphics', gameplay: 'reset_gameplay', bridges: 'reset_bridges'};
 const CP_GRAPHICS_CTRLS = CP_GRAPHICS_STANDALONE
     .concat(CP_MASTERS.map(m => m[0]))
+    .concat(CP_GRAPHICS_LEVELS)
     .concat(CP_GRAPHICS_TRAILING.map(t => t[0]))
     .concat(CP_GRAPHICS_GROUP_END)
     .concat([CP_RESET_TARGETS.graphics]);
@@ -185,6 +188,23 @@ function _cpRenderGraphicsBody(state, focusables) {
     CP_MASTERS.forEach(function (m) {
         html += _cpToggleRow(m[1], m[0], s[m[0] + '_on'], isFoc);
     });
+    // Camera Realism — three-way segmented control (Off / Medium / High) over
+    // HDR, filmic, motion blur, modern lens flares and depth of field. Medium
+    // (the default) leaves DOF off and halves the lens flare. Mirrors
+    // CAMERA_REALISM_LABELS in configuration_panel.py.
+    const crLabels = ['Off', 'Medium', 'High'];
+    const cr = (typeof s.camera_realism === 'number') ? s.camera_realism : 1;
+    html += '<div class="cp-row' + (isFoc('camera_realism') ? ' cp-focused' : '') + '">'
+          +     '<div class="cp-row__label">Camera Realism</div>'
+          +     '<div class="cp-row__control"><div class="cp-segmented">';
+    for (let i = 0; i < crLabels.length; ++i) {
+        html += '<button class="cp-toggle' + (cr === i ? ' cp-toggle--on' : '') + '"'
+              +    ' onclick="dauntlessEvent(\'configuration/camera_realism:' + i + '\')">'
+              +    crLabels[i]
+              + '</button>';
+    }
+    html += '</div></div></div>';
+
     CP_GRAPHICS_TRAILING.forEach(function (t) {
         html += _cpToggleRow(t[1], t[0], s[t[0] + '_on'], isFoc);
     });

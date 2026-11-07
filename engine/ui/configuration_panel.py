@@ -8,12 +8,16 @@ persist across launches via engine.settings_store: the host loop
 loads the store, applies stored values, and binds on_change/on_reset. The
 panel itself never imports the store.
 
-Three rows are masters over several appliers each: Improved Space
-Visuals (volumetric nebulae, procedural sky), Camera Realism
-(HDR, filmic filter, motion blur, modern lens flares) and Cinematic
-Lighting (Fresnel rim light, dynamic shadows, nebula lightning,
-subsystem light emitters, directional ambient). The appliers stay
-individually injected so the renderer surface is unchanged.
+Two rows are master toggles over several appliers each: Improved Space
+Visuals (volumetric nebulae, procedural sky) and Cinematic Lighting
+(Fresnel rim light, dynamic shadows, nebula lightning, subsystem light
+emitters, directional ambient). The appliers stay individually injected so
+the renderer surface is unchanged.
+
+Camera Realism is a three-level selector (Off / Medium / High) over HDR, the
+filmic filter, motion blur, modern lens flares and depth of field. Medium,
+the default, leaves DOF off and runs the lens flare at half strength. Its
+fan-out lives in the settings_store row, so the panel takes ONE applier.
 
 Effects deliberately NOT exposed, because they are core to how the game
 reads rather than preferences: specular highlights, damage decals, hull
@@ -59,6 +63,16 @@ AA_MSAA_8X = 4
 AA_MODE_SAMPLES = (0, 0, 2, 4, 8)
 AA_MODE_LABELS = ("Off", "SMAA", "2×", "4×", "8×")
 
+# ── Camera Realism levels ───────────────────────────────────────────────────
+# Off = stock BC look. Medium (the default) = HDR, filmic, motion blur and the
+# modern lens flare at half strength, no depth of field. High = all of that
+# with the flare at full strength and DOF on. The fan-out is the
+# "camera_realism" row in engine/settings_store.py.
+CAMERA_REALISM_OFF = 0
+CAMERA_REALISM_MEDIUM = 1
+CAMERA_REALISM_HIGH = 2
+CAMERA_REALISM_LABELS = ("Off", "Medium", "High")
+
 # ── Master toggles ───────────────────────────────────────────────────────────
 # One player-facing row over several renderer appliers. (key, label, appliers),
 # in rendered order. The key drives everything by construction: the settings
@@ -70,8 +84,6 @@ AA_MODE_LABELS = ("Off", "SMAA", "2×", "4×", "8×")
 MASTER_TOGGLES = (
     ("improved_space", "Improved Space Visuals",
      ("procedural_sky", "volumetric_nebulae")),
-    ("camera_realism", "Camera Realism",
-     ("hdr", "filmic", "motion_blur", "hdr_lens_flare", "dof")),
     # NOTE label vs key: the row reads "Cinematic Lighting" but the key stays
     # `realistic_lighting`. The key drives the action string, the payload key,
     # the focusable AND the persisted settings key, so renaming it would need
@@ -103,9 +115,10 @@ class SettingsSnapshot:
     # folded in here and pulled back out after a live look — it reads as its
     # own thing rather than part of the sky.
     improved_space_on: bool = True
-    # One master toggle over HDR, the filmic filter, motion blur and modern
-    # lens flares — four settings the player used to set independently.
-    camera_realism_on: bool = True
+    # Camera Realism level (Off/Medium/High) over HDR, the filmic filter,
+    # motion blur, modern lens flares and depth of field. See
+    # CAMERA_REALISM_* above.
+    camera_realism: int = CAMERA_REALISM_MEDIUM
     # One master toggle over Fresnel rim light, dynamic shadows, nebula
     # lightning, the subsystem light emitters, and directional ambient. The
     # row displays "Cinematic Lighting" but the field/key stays
@@ -122,22 +135,18 @@ class ConfigurationPanel(Panel):
                  tabs: List[Tuple[str, str]],
                  initial_settings: SettingsSnapshot,
                  set_dust: Callable[[bool], None],
-                 set_hdr: Callable[[bool], None],
                  set_rim: Callable[[bool], None],
                  set_aa_mode: Callable[[int], None],
                  set_bridge_quality: Callable[[int], None],
+                 set_camera_realism: Callable[[int], None],
                  set_subtitles: Callable[[bool], None],
                  set_disable_annoying_dialogue: Callable[[bool], None],
                  set_ai_difficulty: Callable[[int], None],
                  set_fov_rad: Callable[[float], None],
                  set_shadows: Callable[[bool], None],
                  set_procedural_sky: Callable[[bool], None],
-                 set_filmic: Callable[[bool], None],
-                 set_motion_blur: Callable[[bool], None],
-                 set_dof: Callable[[bool], None],
                  set_volumetric_nebulae: Callable[[bool], None],
                  set_nebula_lightning: Callable[[bool], None],
-                 set_hdr_lens_flare: Callable[[bool], None],
                  set_ship_light_emitters: Callable[[bool], None],
                  set_camera_shake: Callable[[bool], None],
                  set_ambient_gradient: Callable[[bool], None],
@@ -173,21 +182,19 @@ class ConfigurationPanel(Panel):
             fov_deg=int(initial_settings.fov_deg),
             ai_difficulty=max(0, min(2, int(initial_settings.ai_difficulty))),
             bridge_quality=max(0, min(2, int(initial_settings.bridge_quality))),
+            camera_realism=max(CAMERA_REALISM_OFF,
+                               min(CAMERA_REALISM_HIGH,
+                                   int(initial_settings.camera_realism))),
         )
         # Master-member appliers, addressed by the names in MASTER_TOGGLES.
         # Kept as explicit constructor params (not **kwargs) so a missing one
         # is a TypeError at construction rather than a silently dead toggle.
         self._appliers = {
-            "hdr": set_hdr,
             "rim": set_rim,
             "shadows": set_shadows,
             "procedural_sky": set_procedural_sky,
-            "filmic": set_filmic,
-            "motion_blur": set_motion_blur,
-            "dof": set_dof,
             "volumetric_nebulae": set_volumetric_nebulae,
             "nebula_lightning": set_nebula_lightning,
-            "hdr_lens_flare": set_hdr_lens_flare,
             "ship_light_emitters": set_ship_light_emitters,
             "ambient_gradient": set_ambient_gradient,
         }
@@ -200,6 +207,7 @@ class ConfigurationPanel(Panel):
         self._set_camera_shake = set_camera_shake
         self._set_aa_mode = set_aa_mode
         self._set_bridge_quality = set_bridge_quality
+        self._set_camera_realism = set_camera_realism
         self._max_msaa_samples = int(max_msaa_samples)
         self._set_subtitles = set_subtitles
         self._set_disable_annoying_dialogue = set_disable_annoying_dialogue
@@ -319,6 +327,7 @@ class ConfigurationPanel(Panel):
             self._settings.ai_difficulty,
             self._settings.dust_on,
             self._settings.bridge_quality,
+            self._settings.camera_realism,
             self._settings.camera_shake_on,
             self._settings.fullscreen_on,
             tuple(getattr(self._settings, k + "_on") for k in MASTER_KEYS),
@@ -351,6 +360,7 @@ class ConfigurationPanel(Panel):
                 "ai_difficulty": self._settings.ai_difficulty,
                 "dust_on": self._settings.dust_on,
                 "bridge_quality": self._settings.bridge_quality,
+                "camera_realism": self._settings.camera_realism,
                 "camera_shake_on": self._settings.camera_shake_on,
                 # Must be BOTH here and in the dirty tuple above. Alt+Enter
                 # toggles full screen from outside the panel, so this row's
@@ -484,6 +494,17 @@ class ConfigurationPanel(Panel):
             self._set_bridge_quality(level)
             self._settings.bridge_quality = level
             self._on_change("bridge_quality", level)
+            return True
+        if action.startswith("camera_realism:"):
+            raw = action[len("camera_realism:"):]
+            try:
+                level = int(raw)
+            except ValueError:
+                return False
+            level = max(CAMERA_REALISM_OFF, min(CAMERA_REALISM_HIGH, level))
+            self._set_camera_realism(level)
+            self._settings.camera_realism = level
+            self._on_change("camera_realism", level)
             return True
         if action.startswith("ai_difficulty:"):
             raw = action[len("ai_difficulty:"):]
@@ -736,6 +757,12 @@ class ConfigurationPanel(Panel):
             if _pressed(k_left):
                 self.dispatch_event("ai_difficulty:" + str(self._settings.ai_difficulty - 1))
 
+        if kind == "ctrl" and target == "camera_realism":
+            if _pressed(k_right):
+                self.dispatch_event("camera_realism:" + str(self._settings.camera_realism + 1))
+            if _pressed(k_left):
+                self.dispatch_event("camera_realism:" + str(self._settings.camera_realism - 1))
+
         if kind == "ctrl" and target == "bridge_quality":
             if _pressed(k_right):
                 self.dispatch_event("bridge_quality:" + str(self._settings.bridge_quality + 1))
@@ -756,11 +783,12 @@ class ConfigurationPanel(Panel):
         """Ordered focusable list: tab rows then controls in the
         currently selected tab. Order mirrors the rendered rows — the two
         standalone controls, then the 'Modern VFX' group (master toggles,
-        Camera Shake, Bridge Rendering), then the per-tab Reset row:
+        Camera Realism, Camera Shake, Bridge Rendering), then the per-tab
+        Reset row:
         [('tab','graphics'), ('ctrl','aa_mode'),
          ('ctrl','dust'), ('ctrl','fullscreen'), ('ctrl','fov'),
-         ('ctrl','improved_space'), ('ctrl','camera_realism'),
-         ('ctrl','realistic_lighting'), ('ctrl','camera_shake'),
+         ('ctrl','improved_space'), ('ctrl','realistic_lighting'),
+         ('ctrl','camera_realism'), ('ctrl','camera_shake'),
          ('ctrl','bridge_quality'), ('ctrl','reset_graphics')].
 
         configuration_panel.js mirrors this list by hand; the two are pinned
@@ -770,7 +798,8 @@ class ConfigurationPanel(Panel):
             out += [("ctrl", "aa_mode"), ("ctrl", "dust"),
                     ("ctrl", "fullscreen"), ("ctrl", "fov")]
             out += [("ctrl", k) for k in MASTER_KEYS]
-            out += [("ctrl", "camera_shake"), ("ctrl", "bridge_quality")]
+            out += [("ctrl", "camera_realism"), ("ctrl", "camera_shake"),
+                    ("ctrl", "bridge_quality")]
             out += [("ctrl", "reset_graphics")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles"),

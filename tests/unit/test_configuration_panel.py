@@ -13,6 +13,7 @@ import pytest
 
 from engine.ui.configuration_panel import (
     AA_MSAA_2X, AA_MSAA_4X, AA_MSAA_8X, AA_OFF, AA_SMAA,
+    CAMERA_REALISM_HIGH, CAMERA_REALISM_MEDIUM, CAMERA_REALISM_OFF,
     MASTER_KEYS, MASTER_TOGGLES, ConfigurationPanel, SettingsSnapshot,
 )
 
@@ -28,22 +29,18 @@ def _make(**overrides):
         ),
         set_dust=Mock(),
         set_fullscreen=Mock(),
-        set_hdr=Mock(),
         set_rim=Mock(),
         set_aa_mode=Mock(),
         set_subtitles=Mock(),
         set_disable_annoying_dialogue=Mock(),
         set_ai_difficulty=Mock(),
         set_bridge_quality=Mock(),
+        set_camera_realism=Mock(),
         set_fov_rad=Mock(),
         set_shadows=Mock(),
         set_procedural_sky=Mock(),
-        set_filmic=Mock(),
-        set_motion_blur=Mock(),
-        set_dof=Mock(),
         set_volumetric_nebulae=Mock(),
         set_nebula_lightning=Mock(),
-        set_hdr_lens_flare=Mock(),
         set_ship_light_emitters=Mock(),
         set_camera_shake=Mock(),
         set_ambient_gradient=Mock(),
@@ -82,10 +79,11 @@ def test_initial_settings_round_trip_to_render_payload():
         "dust_on": True, "camera_shake_on": True,
         "fullscreen_on": False,
         "subtitles_on": True, "improved_space_on": True,
-        "camera_realism_on": True, "realistic_lighting_on": True,
+        "realistic_lighting_on": True,
         "disable_annoying_dialogue_on": True,
         "ai_difficulty": 1,
         "bridge_quality": 1,
+        "camera_realism": CAMERA_REALISM_MEDIUM,
         "fov_deg": 62,
     }
 
@@ -736,7 +734,8 @@ def test_graphics_control_order_is_standalones_masters_then_trailing():
     ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
     assert ctrls == (["aa_mode", "dust", "fullscreen", "fov"]
                       + list(MASTER_KEYS)
-                      + ["camera_shake", "bridge_quality", "reset_graphics"])
+                      + ["camera_realism", "camera_shake", "bridge_quality",
+                         "reset_graphics"])
 
 
 def test_full_screen_row_toggles_the_window_and_persists():
@@ -796,7 +795,7 @@ def test_every_stored_field_survives_construction():
         fov_deg=62, aa_mode=AA_OFF, ai_difficulty=2, bridge_quality=0,
         subtitles_on=False, disable_annoying_dialogue_on=False,
         dust_on=False, fullscreen_on=True, improved_space_on=False,
-        camera_realism_on=False, realistic_lighting_on=False,
+        camera_realism=CAMERA_REALISM_HIGH, realistic_lighting_on=False,
         camera_shake_on=False,
     )
     names = [f.name for f in fields(SettingsSnapshot)]
@@ -809,10 +808,53 @@ def test_every_stored_field_survives_construction():
 
 def test_clamped_fields_are_still_clamped():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        fov_deg=62, aa_mode=99, ai_difficulty=-5, bridge_quality=7))
+        fov_deg=62, aa_mode=99, ai_difficulty=-5, bridge_quality=7,
+        camera_realism=9))
     assert p._settings.aa_mode == AA_MSAA_8X
     assert p._settings.ai_difficulty == 0   # clamped to the floor, not the top
     assert p._settings.bridge_quality == 2
+    assert p._settings.camera_realism == CAMERA_REALISM_HIGH
+
+
+# ---- Camera Realism level (Off / Medium / High) ---------------------------
+
+def test_camera_realism_defaults_to_medium():
+    assert SettingsSnapshot(fov_deg=45).camera_realism == CAMERA_REALISM_MEDIUM
+
+
+@pytest.mark.parametrize("level", [CAMERA_REALISM_OFF, CAMERA_REALISM_MEDIUM,
+                                   CAMERA_REALISM_HIGH])
+def test_camera_realism_dispatch_applies_stores_and_reports(level):
+    changes = []
+    p, kw = _make(on_change=lambda k, v: changes.append((k, v)))
+    p.open()
+    assert p.dispatch_event("camera_realism:%d" % level) is True
+    kw["set_camera_realism"].assert_called_once_with(level)
+    assert p._settings.camera_realism == level
+    assert changes == [("camera_realism", level)]
+
+
+def test_camera_realism_dispatch_clamps_and_rejects_junk():
+    p, kw = _make()
+    assert p.dispatch_event("camera_realism:7") is True
+    kw["set_camera_realism"].assert_called_once_with(CAMERA_REALISM_HIGH)
+    assert p.dispatch_event("camera_realism:banana") is False
+
+
+def test_camera_realism_reaches_the_page_and_repushes():
+    p, _ = _make()
+    p.open()
+    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["camera_realism"] == CAMERA_REALISM_MEDIUM
+    p.dispatch_event("camera_realism:%d" % CAMERA_REALISM_HIGH)
+    script = p.render_payload()
+    assert script is not None
+    body = json.loads(script[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["camera_realism"] == CAMERA_REALISM_HIGH
+
+
+def test_camera_realism_is_no_longer_a_master_toggle():
+    assert "camera_realism" not in MASTER_KEYS
 
 
 def test_full_screen_reaches_the_page_and_repushes_when_it_changes():
@@ -901,6 +943,8 @@ def test_js_graphics_focusables_match_python():
     assert standalone, "CP_GRAPHICS_STANDALONE not found"
     trailing = re.search(r"CP_GRAPHICS_TRAILING = \[(.*?)\];", _js_source(), re.S)
     assert trailing, "CP_GRAPHICS_TRAILING not found"
+    levels = re.search(r"CP_GRAPHICS_LEVELS = \[(.*?)\];", _js_source(), re.S)
+    assert levels, "CP_GRAPHICS_LEVELS not found"
     group_end = re.search(r"CP_GRAPHICS_GROUP_END = \[(.*?)\];", _js_source(), re.S)
     assert group_end, "CP_GRAPHICS_GROUP_END not found"
     resets = re.search(r"CP_RESET_TARGETS = \{(.*?)\};", _js_source(), re.S)
@@ -909,6 +953,7 @@ def test_js_graphics_focusables_match_python():
     assert graphics_reset, "CP_RESET_TARGETS has no graphics entry"
     js_targets = (re.findall(r"'(\w+)'", standalone.group(1))
                   + _js_master_keys()
+                  + re.findall(r"'(\w+)'", levels.group(1))
                   + re.findall(r"\['(\w+)',", trailing.group(1))
                   + re.findall(r"'(\w+)'", group_end.group(1))
                   + [graphics_reset.group(1)])

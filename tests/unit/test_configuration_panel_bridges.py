@@ -14,13 +14,13 @@ def _make(pins=None, tabs=None):
     kwargs = dict(
         tabs=tabs or [("graphics", "Graphics"), ("bridges", "Bridges")],
         initial_settings=SettingsSnapshot(fov_deg=70),
-        set_dust=Mock(), set_hdr=Mock(), set_rim=Mock(), set_aa_mode=Mock(),
-        set_bridge_quality=Mock(),
+        set_dust=Mock(), set_rim=Mock(), set_aa_mode=Mock(),
+        set_bridge_quality=Mock(), set_camera_realism=Mock(),
         set_subtitles=Mock(), set_disable_annoying_dialogue=Mock(),
         set_ai_difficulty=Mock(), set_fov_rad=Mock(), set_shadows=Mock(),
-        set_procedural_sky=Mock(), set_filmic=Mock(), set_motion_blur=Mock(),
-        set_dof=Mock(), set_volumetric_nebulae=Mock(), set_nebula_lightning=Mock(),
-        set_hdr_lens_flare=Mock(), set_ship_light_emitters=Mock(),
+        set_procedural_sky=Mock(),
+        set_volumetric_nebulae=Mock(), set_nebula_lightning=Mock(),
+        set_ship_light_emitters=Mock(),
         set_camera_shake=Mock(), set_ambient_gradient=Mock(),
         bridge_pins=pins,
     )
