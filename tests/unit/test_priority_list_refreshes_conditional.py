@@ -20,8 +20,18 @@ from engine.appc.ai import (
     ArtificialIntelligence, ConditionalAI, PlainAI, PriorityListAI,
     TGCondition,
 )
+import pytest
+
+from engine.appc import ai_driver
 from engine.appc.ai_driver import tick_ai
 from engine.appc.ships import ShipClass
+
+
+@pytest.fixture(autouse=True, params=["python", "native"])
+def walker(request, monkeypatch):
+    """Both condition evaluations: the Python driver's and the native one."""
+    monkeypatch.setattr(ai_driver, "_native_walker", request.param == "native")
+    return request.param
 
 
 class _Leaf:
@@ -85,3 +95,20 @@ def test_priority_list_picks_higher_priority_when_its_condition_flips_active():
         "list should re-pick it — even though high's cached _status "
         "was DORMANT from the previous evaluation"
     )
+
+
+def test_a_directly_written_condition_status_re_picks_the_branch():
+    """The same flip written straight into the stock condition's `_status`
+    (no SetStatus, so no handler runs): the refresh reads it anyway."""
+    cond_high = TGCondition()
+    cond_low = TGCondition()
+    cond_low._status = 1
+    leaf_high, leaf_low = _Leaf(), _Leaf()
+    pl = PriorityListAI(ShipClass(), "PL")
+    pl.AddAI(_conditional(_always_active, cond_high, leaf_high), 1)
+    pl.AddAI(_conditional(_always_active, cond_low, leaf_low), 2)
+    tick_ai(pl, game_time=0.0)
+    assert (leaf_high.calls, leaf_low.calls) == (0, 1)
+    cond_high._status = 1
+    tick_ai(pl, game_time=0.1)
+    assert (leaf_high.calls, leaf_low.calls) == (1, 1)

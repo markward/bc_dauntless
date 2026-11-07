@@ -22,7 +22,7 @@ import time as _time
 
 from engine.appc.ai import (
     ArtificialIntelligence, PlainAI, PriorityListAI, SequenceAI,
-    ConditionalAI, PreprocessingAI, BuilderAI, RandomAI,
+    ConditionalAI, PreprocessingAI, BuilderAI, RandomAI, TGCondition,
 )
 from engine.appc import sensor_media
 # Module level, not deferred inside _dispatch_ai. ship_death imports nothing
@@ -813,7 +813,71 @@ def _memoisable_evalfunc(fn) -> bool:
 _MEMO_KEY_TYPES = (bool, int, float, str, type(None))
 
 
+# ── The condition evaluation's two implementations ──────────────────────────
+#
+# The native one (native/src/host/aitree.cc: aitree_refresh_conditional,
+# aitree_eval_conditional, aitree_condition_statuses, aitree_any_condition)
+# runs when the native walker is selected; the Python bodies below are the
+# reference it reproduces, statement for statement, and what the Python walker
+# runs. The public names (_refresh_conditional_status, _eval_conditional,
+# _condition_statuses, _any_condition) choose between them per call, so a test
+# patching one of them is honoured by both walkers.
+#
+# A stock condition's GetStatus is TGCondition's own `return self._status`.
+# The native code reads `_status` directly, without the call, only when
+# `c.GetStatus` resolves (by Python's own method lookup) to exactly this
+# function with this code, taken at import, before anything can patch it;
+# anything else (an override, an instance attribute, a patched class) is
+# called.
+_STOCK_CONDITION_GETSTATUS = (TGCondition.__dict__["GetStatus"],
+                              TGCondition.__dict__["GetStatus"].__code__)
+
+
 def _eval_conditional(ai, eval_fn, args):
+    """_eval_conditional_python's answer, from the selected walker's code."""
+    if _native_walker:
+        return _aitree_eval_conditional(ai, eval_fn, args, _GLOBALS)
+    return _eval_conditional_python(ai, eval_fn, args)
+
+
+# The stock _eval_conditional: the native refresh evaluates inline only while
+# the module's _eval_conditional is still this function, and calls whatever
+# replaced it otherwise.
+_STOCK_EVAL_CONDITIONAL = _eval_conditional
+
+
+def _refresh_conditional_status(ai: ConditionalAI) -> None:
+    """_refresh_conditional_status_python, run by the selected walker's code."""
+    if _native_walker:
+        _aitree_refresh_conditional(ai, _GLOBALS)
+    else:
+        _refresh_conditional_status_python(ai)
+
+
+def _condition_statuses(ai: ConditionalAI) -> list:
+    """`[c.GetStatus() for c in ai._conditions]` (_tick_conditional's read)."""
+    if _native_walker:
+        return _aitree_condition_statuses(ai, _GLOBALS)
+    return _condition_statuses_python(ai)
+
+
+def _any_condition(ai: ConditionalAI) -> bool:
+    """`any(c.GetStatus() != 0 for c in ai._conditions)` (_tick_conditional's
+    no-EvalFunc read)."""
+    if _native_walker:
+        return _aitree_any_condition(ai, _GLOBALS)
+    return _any_condition_python(ai)
+
+
+def _condition_statuses_python(ai: ConditionalAI) -> list:
+    return [c.GetStatus() for c in ai._conditions]
+
+
+def _any_condition_python(ai: ConditionalAI) -> bool:
+    return any(c.GetStatus() != 0 for c in ai._conditions)
+
+
+def _eval_conditional_python(ai, eval_fn, args):
     """Run (or reuse) `eval_fn` over `args`, returning the pre-fold status.
 
     Returns the PRE-FOLD status, deliberately. The contained-AI DONE fold is
@@ -863,7 +927,7 @@ def _eval_conditional(ai, eval_fn, args):
     return status
 
 
-def _refresh_conditional_status(ai: ConditionalAI) -> None:
+def _refresh_conditional_status_python(ai: ConditionalAI) -> None:
     """Re-run a ConditionalAI's EvalFunc against its conditions and
     cache the result on ``ai._status`` without dispatching contained
     AI. Used by ``_tick_priority_list`` to keep conditional status
@@ -1024,7 +1088,7 @@ def _tick_conditional(ai: ConditionalAI, game_time: float) -> int:
     # AddCondition without SetEvaluationFunction).
     eval_fn = ai._evaluation_function
     if eval_fn is not None:
-        args = [c.GetStatus() for c in ai._conditions]
+        args = _condition_statuses(ai)
         ai._status = _eval_conditional(ai, eval_fn, args)
         if ai._status == US_ACTIVE and ai._contained_ai is not None:
             tick_ai(ai._contained_ai, game_time)
@@ -1045,7 +1109,7 @@ def _tick_conditional(ai: ConditionalAI, game_time: float) -> int:
             if ai._contained_ai._status == US_DONE:
                 ai._status = US_DONE
         return ai._status
-    active = any(c.GetStatus() != 0 for c in ai._conditions) if ai._conditions else False
+    active = _any_condition(ai) if ai._conditions else False
     if not active:
         ai._status = US_DORMANT
         return ai._status
@@ -1679,6 +1743,11 @@ _walk_min_due_get = _aitree("aitree_walk_min_due")
 _walk_min_due_reset = _aitree("aitree_walk_min_due_reset")
 # The native roster (aitree_tick_all), looked up per call.
 _aitree_tick_all = _aitree("aitree_tick_all")
+# The native condition evaluation (see _STOCK_CONDITION_GETSTATUS).
+_aitree_refresh_conditional = _aitree("aitree_refresh_conditional")
+_aitree_eval_conditional = _aitree("aitree_eval_conditional")
+_aitree_condition_statuses = _aitree("aitree_condition_statuses")
+_aitree_any_condition = _aitree("aitree_any_condition")
 _GLOBALS = globals()
 
 

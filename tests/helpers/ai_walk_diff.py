@@ -26,7 +26,12 @@ reaches:
   ``__globals__``, so the driver's memoisable-function test gives the same
   verdict) and each condition's ``GetStatus`` / ``SetActive`` /
   ``SetInactive``, and ``Activate`` / ``Deactivate`` of a ConditionScript's
-  instance;
+  instance. An instance-level ``GetStatus`` wrapper SHADOWS the class's, so
+  the native condition evaluation calls it too; a scene built with
+  ``wrap_condition_status=False`` leaves every ``GetStatus`` alone, so the
+  native side reads a stock condition's ``_status`` directly (compared
+  through the EvalFunc arguments and the node states; a custom GetStatus logs
+  itself with :func:`mark`);
 * every node: ``SetActive`` / ``SetInactive`` / ``IsInterruptable`` /
   ``ForceUpdate`` / ``Reset``;
 * BuilderAI: each ``BuilderCreateN`` in its module.
@@ -38,6 +43,9 @@ Module-level glue is wrapped for the run with a ``MonkeyPatch``:
 and ``random.choice``. ``ClearAI`` / ``SetAI`` are wrapped on each ship.
 Entries are ``("call", name, who, args, kwargs)``, then ``("ret", name, who,
 value)`` or ``("raise", name, who, exception type)``: nesting is visible.
+
+Values enter the log normalised (:func:`_norm`) and never as the object
+itself, so the log keeps nothing alive that a scene's finaliser probe watches.
 
 What is compared after each tick (:meth:`_Recorder.snapshot`): per node (by AI
 ID, never ``id()``) ``_status``, ``_has_focus``, ``_got_focus_called``,
@@ -92,10 +100,17 @@ def _norm(v, depth=0):
     """A value as a comparable, repr-stable tuple/scalar: floats by hex, AI
     nodes by ID, ships by name, containers element-wise, anything else by
     type name."""
-    if v is None or isinstance(v, (bool, str)):
+    # Never the value object itself: a log entry holding it would keep it
+    # alive, and a scene's finaliser probes (mark) watch exactly that. A
+    # subclass of int / str is named and copied (by the C slot, no Python).
+    if v is None or type(v) in (bool, str):
         return v
-    if isinstance(v, int):
+    if type(v) is int:
         return ("int", v)
+    if isinstance(v, int):
+        return ("int", type(v).__name__, int.__int__(v))
+    if isinstance(v, str):
+        return ("str", type(v).__name__, str.__str__(v))
     if isinstance(v, float):
         return ("f", v.hex())
     if depth > 4:
@@ -274,6 +289,8 @@ class _Recorder:
         for cond in d.get("_conditions") or ():
             cwho = ("cond", cond.GetObjID())
             for m in ("GetStatus", "SetActive", "SetInactive"):
+                if m == "GetStatus" and not self._wrap_status(cond):
+                    continue
                 self._wrap_attr(cond, m, "cond." + m, cwho)
             ci = getattr(cond, "__dict__", {}).get("_instance")
             if ci is not None:
@@ -282,6 +299,16 @@ class _Recorder:
         mod_name = d.get("_module_name")
         if mod_name and "_blocks" in d:
             self._instrument_builder_module(node, mod_name)
+
+    def _wrap_status(self, cond):
+        """Whether to wrap `cond`'s GetStatus: unless the scene asks for its
+        conditions' GetStatus to be left alone (``wrap_condition_status``).
+        An instance wrapper is a SHADOW, which the native walker must (and
+        does) call, so with the default every read goes through Python and is
+        logged; unwrapped, the native walker reads a stock condition's
+        ``_status`` directly and calls any other GetStatus itself (such a
+        scene's custom GetStatus logs itself with :func:`mark`)."""
+        return self.scene is None or self.scene.wrap_condition_status
 
     def _instrument_builder_module(self, node, mod_name):
         import sys
@@ -425,9 +452,15 @@ class Scene:
     ``ships()`` the current roster; ``step(i)`` runs tick ``i`` (default:
     ``tick_all_ai`` at game time ``(i + 1) / 60``)."""
 
-    def __init__(self, ships, step=None, wrap_roster=True, extra_ships=()):
+    def __init__(self, ships, step=None, wrap_roster=True, extra_ships=(),
+                 wrap_condition_status=True):
         self._ships = ships
         self._step = step
+        #: Wrap (and log) every condition's GetStatus. Off: the reads are left
+        #: to each walker (the native one reads a stock condition's
+        #: ``_status`` directly) and are compared through the EvalFunc
+        #: arguments, the node states and the scene's own marks instead.
+        self.wrap_condition_status = wrap_condition_status
         #: Ships outside the walked roster whose trees the scene ticks itself
         #: (a nested walk); instrumented and snapshotted like the roster.
         self.extra_ships = list(extra_ships)
@@ -447,13 +480,15 @@ class Scene:
         ai_driver.tick_all_ai((i + 1) / 60.0)
 
 
-def synthetic_scene(mp, ships, step=None, extra_ships=()):
+def synthetic_scene(mp, ships, step=None, extra_ships=(),
+                    wrap_condition_status=True):
     """A :class:`Scene` over hand-built `ships`: the roster the driver walks
     (``iter_non_rock_ships``) is exactly them."""
     from engine.appc import ship_iter
     roster = list(ships)
     mp.setattr(ship_iter, "iter_non_rock_ships", lambda *a, **k: iter(roster))
-    return Scene(roster, step, extra_ships=extra_ships)
+    return Scene(roster, step, extra_ships=extra_ships,
+                 wrap_condition_status=wrap_condition_status)
 
 
 def _bases():
@@ -504,6 +539,20 @@ def _native_roster_count():
     return _dauntless_host.aitree_roster_count()
 
 
+def _native_conditional_counts():
+    """(native condition-evaluation entries, stock ``_status`` reads) in this
+    process (``aitree_conditional_counts``). Read around a side to prove which
+    condition evaluation ran."""
+    import _dauntless_host
+    return tuple(_dauntless_host.aitree_conditional_counts())
+
+
+#: The Python bodies of the condition evaluation (S2). The dispatchers in
+#: ai_driver call these by global name when the Python walker is selected.
+_PYTHON_S2 = ("_refresh_conditional_status_python", "_eval_conditional_python",
+              "_condition_statuses_python", "_any_condition_python")
+
+
 def run_side(scene, ticks, native, bases=None):
     """One side of the comparison: returns its :class:`Record`. `bases` is the
     (AI id, object id) pair both sides start their counters from."""
@@ -514,14 +563,21 @@ def run_side(scene, ticks, native, bases=None):
         base_ai, base_obj = bases or _bases()
         _fresh_state(mp, base_ai, base_obj)
         mp.setattr(ai_driver, "_native_walker", bool(native))
-        entries = {"python": 0, "native": 0, "native_roster": 0}
+        entries = {"python": 0, "native": 0, "native_roster": 0,
+                   "python_s2": 0, "native_s2": 0, "stock_status_reads": 0}
         roster_before = _native_roster_count()
+        s2_before = _native_conditional_counts()
         for key, attr in (("python", "_tick_all_ai_python"),
                           ("native", "_tick_all_ai_native")):
             def counted(game_time, _orig=getattr(ai_driver, attr), _k=key):
                 entries[_k] += 1
                 return _orig(game_time)
             mp.setattr(ai_driver, attr, counted)
+        for attr in _PYTHON_S2:
+            def counted_s2(*args, _orig=getattr(ai_driver, attr)):
+                entries["python_s2"] += 1
+                return _orig(*args)
+            mp.setattr(ai_driver, attr, counted_s2)
         rec = _Recorder(mp, None)
         out = []
         _ACTIVE.append(rec)
@@ -540,6 +596,9 @@ def run_side(scene, ticks, native, bases=None):
         finally:
             _ACTIVE.remove(rec)
             entries["native_roster"] = _native_roster_count() - roster_before
+            s2_after = _native_conditional_counts()
+            entries["native_s2"] = s2_after[0] - s2_before[0]
+            entries["stock_status_reads"] = s2_after[1] - s2_before[1]
             top_obj = next(ids._counter)
             top_ai = ArtificialIntelligence._next_id
             mp.undo()
@@ -609,7 +668,12 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
     entered ``_tick_all_ai_native`` nor started the native roster; the native
     side entered ``_tick_all_ai_native`` at least once, the native roster
     (``_dauntless_host.aitree_tick_all``, counted natively) started at least
-    once, and ``_tick_all_ai_python`` never ran.
+    once, and ``_tick_all_ai_python`` never ran. Likewise for the condition
+    evaluation (S2): the Python side never ran it natively
+    (``aitree_conditional_counts``), the native side never ran its Python
+    bodies (``_PYTHON_S2``), and ran it natively whenever the Python side ran
+    them. The native side's counts are on the returned record as
+    ``native_entries`` (``native_s2``, ``stock_status_reads``).
 
     `aba`: run Python, native, Python and require the second Python run to
     match the native one too (an asymmetric warm-up would otherwise bias the
@@ -635,6 +699,15 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
         nat.entries["native_roster"] == nat.entries["native"]), (
         "the native roster never ran on the native side (or not on every "
         "native entry): %r" % nat.entries)
+    assert py.entries["native_s2"] == 0, (
+        "the Python side ran the native condition evaluation: %r" % py.entries)
+    assert nat.entries["python_s2"] == 0, (
+        "the native side ran the Python condition evaluation: %r"
+        % nat.entries)
+    assert not py.entries["python_s2"] or nat.entries["native_s2"], (
+        "the native side never ran the native condition evaluation: %r"
+        % nat.entries)
+    py.native_entries = nat.entries
     diff = first_difference(py, nat)
     assert diff is None, diff
     if aba:

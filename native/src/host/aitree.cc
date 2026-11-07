@@ -34,6 +34,12 @@ public:
     }
     ~Ref() { Py_XDECREF(p_); }
     PyObject* get() const { return p_; }
+    // Hands the reference to the caller.
+    PyObject* steal() {
+        PyObject* p = p_;
+        p_ = nullptr;
+        return p;
+    }
     explicit operator bool() const { return p_ != nullptr; }
 
 private:
@@ -65,9 +71,25 @@ struct Names {
     PyObject* appc_pkg;             // "engine.appc"
     PyObject* fromlist_iter;        // ("iter_non_rock_ships",)
     PyObject* fromlist_cloak;       // ("defensive_cloak",)
+    // S2, the condition evaluation.
+    PyObject* evaluation_function;  // "_evaluation_function"
+    PyObject* conditions;           // "_conditions"
+    PyObject* status;               // "_status"
+    PyObject* contained_ai;         // "_contained_ai"
+    PyObject* get_status;           // "GetStatus"
+    PyObject* eval_conditional;     // "_eval_conditional"
+    PyObject* stock_eval;           // "_STOCK_EVAL_CONDITIONAL"
+    PyObject* stock_get_status;     // "_STOCK_CONDITION_GETSTATUS"
+    PyObject* us_active;            // "US_ACTIVE"
+    PyObject* us_dormant;           // "US_DORMANT"
+    PyObject* memoisable;           // "_memoisable_evalfunc"
+    PyObject* memo_key_types;       // "_MEMO_KEY_TYPES"
+    PyObject* evalfn_cache;         // "_evalfn_cache"
+    PyObject* evalfn_memoisable;    // "_evalfn_memoisable"
     PyObject* inf;                  // float("inf")
     PyObject* zero;                 // 0
     PyObject* one;                  // 1
+    PyObject* two;                  // 2
 };
 
 Names* g_names = nullptr;
@@ -100,6 +122,20 @@ const Names* names() {
         {&n->name, "__name__"},
         {&n->ship_iter_mod, "engine.appc.ship_iter"},
         {&n->appc_pkg, "engine.appc"},
+        {&n->evaluation_function, "_evaluation_function"},
+        {&n->conditions, "_conditions"},
+        {&n->status, "_status"},
+        {&n->contained_ai, "_contained_ai"},
+        {&n->get_status, "GetStatus"},
+        {&n->eval_conditional, "_eval_conditional"},
+        {&n->stock_eval, "_STOCK_EVAL_CONDITIONAL"},
+        {&n->stock_get_status, "_STOCK_CONDITION_GETSTATUS"},
+        {&n->us_active, "US_ACTIVE"},
+        {&n->us_dormant, "US_DORMANT"},
+        {&n->memoisable, "_memoisable_evalfunc"},
+        {&n->memo_key_types, "_MEMO_KEY_TYPES"},
+        {&n->evalfn_cache, "_evalfn_cache"},
+        {&n->evalfn_memoisable, "_evalfn_memoisable"},
     };
     for (const S& s : strs) {
         *s.slot = PyUnicode_InternFromString(s.text);
@@ -110,7 +146,8 @@ const Names* names() {
     n->inf = PyFloat_FromDouble(Py_HUGE_VAL);
     n->zero = PyLong_FromLong(0);
     n->one = PyLong_FromLong(1);
-    if (!n->fromlist_iter || !n->fromlist_cloak || !n->inf || !n->zero || !n->one)
+    n->two = PyLong_FromLong(2);
+    if (!n->fromlist_iter || !n->fromlist_cloak || !n->inf || !n->zero || !n->one || !n->two)
         return nullptr;
     g_names = n;
     return n;
@@ -480,6 +517,539 @@ PyObject* tick_all_impl(PyObject* game_time, PyObject* g) {
     Py_RETURN_NONE;
 }
 
+// ── S2: the condition evaluation ────────────────────────────────────────────
+// THE REFERENCE is ai_driver.py's `_refresh_conditional_status_python`,
+// `_eval_conditional_python`, `_condition_statuses_python` and
+// `_any_condition_python`; each step names the statement (and, where the
+// order of effects matters, the bytecode) it stands for. Every frame-local
+// lifetime follows the rule in aitree.h, comprehensions and generator
+// expressions included: their iterator (`.0`) and loop variable are their
+// own frame's locals, released in that order when they return (or, for a
+// generator `any`/`all` stopped early, when it is dropped right after).
+
+unsigned long long g_s2_runs = 0;         // native S2 entries
+unsigned long long g_stock_reads = 0;     // GetStatus calls read directly
+
+// `seq[i]` (BINARY_SUBSCR with a constant int): an exact tuple in range is
+// read directly; anything else is Python's subscript. Owned.
+PyObject* subscript(PyObject* seq, Py_ssize_t i, PyObject* index) {
+    if (PyTuple_CheckExact(seq) && i < PyTuple_GET_SIZE(seq))
+        return Py_NewRef(PyTuple_GET_ITEM(seq, i));
+    return PyObject_GetItem(seq, index);
+}
+
+// `a OP b` jumped on, as COMPARE_OP then POP_JUMP_IF_*: the operands are
+// released (left, then right) before the result's truth is taken, and the
+// result after. Two exact floats compare as doubles. -1: an error is set.
+int compare_owned(Ref a, Ref b, int op) {
+    if (PyFloat_CheckExact(a.get()) && PyFloat_CheckExact(b.get())) {
+        const int r = compare(a.get(), b.get(), op);
+        a = Ref();
+        b = Ref();
+        return r;
+    }
+    Ref r(PyObject_RichCompare(a.get(), b.get(), op));
+    a = Ref();
+    b = Ref();
+    if (!r) return -1;
+    return PyObject_IsTrue(r.get());
+}
+
+// `obj.__dict__.get(key)`: the attribute each time (Python looks it up each
+// time; an EvalFunc may even rebind it), then dict.get. Owned.
+PyObject* own_dict_get(PyObject* obj, PyObject* key, const Names* n) {
+    Ref d(PyObject_GetAttr(obj, n->dict));
+    if (!d) return nullptr;
+    if (PyDict_CheckExact(d.get())) {
+        PyObject* v = PyDict_GetItemWithError(d.get(), key);
+        if (v != nullptr) return Py_NewRef(v);
+        if (PyErr_Occurred()) return nullptr;
+        Py_RETURN_NONE;
+    }
+    return PyObject_CallMethodOneArg(d.get(), n->get, key);
+}
+
+// `obj.__dict__[key] = value` (STORE_SUBSCR: the value is already built).
+int own_dict_set(PyObject* obj, PyObject* key, PyObject* value, const Names* n) {
+    Ref d(PyObject_GetAttr(obj, n->dict));
+    if (!d) return -1;
+    return PyObject_SetItem(d.get(), key, value);
+}
+
+// The stock GetStatus, `_STOCK_CONDITION_GETSTATUS` = (function, its code
+// at import), read from ai_driver's globals per native entry.
+struct StockStatus {
+    Ref fn, code;
+};
+
+int stock_status_of(PyObject* g, const Names* n, StockStatus* out) {
+    Ref pair(load_global(g, n->stock_get_status));
+    if (!pair) return -1;
+    if (!PyTuple_CheckExact(pair.get()) || PyTuple_GET_SIZE(pair.get()) != 2) {
+        PyErr_SetString(PyExc_TypeError,
+                        "ai_driver._STOCK_CONDITION_GETSTATUS must be (function, code)");
+        return -1;
+    }
+    out->fn = Ref(Py_NewRef(PyTuple_GET_ITEM(pair.get(), 0)));
+    out->code = Ref(Py_NewRef(PyTuple_GET_ITEM(pair.get(), 1)));
+    return 0;
+}
+
+// `c.GetStatus()`: Python's method lookup (LOAD_METHOD), then the call --
+// except that when the lookup lands on the stock TGCondition.GetStatus (the
+// very function, still with its own code) its body, `return self._status`,
+// is run here instead of called. An instance attribute, a subclass override
+// or a patched class is whatever the lookup finds, and is called. Owned.
+PyObject* condition_status(PyObject* c, const StockStatus& stock, const Names* n) {
+#if PY_VERSION_HEX < 0x030C0000
+    PyObject* m = nullptr;
+    const int unbound = _PyObject_GetMethod(c, n->get_status, &m);
+    if (m == nullptr) return nullptr;
+    Ref meth(m);
+    if (unbound) {
+        if (m == stock.fn.get() && PyFunction_Check(m) &&
+            PyFunction_GET_CODE(m) == stock.code.get()) {
+            ++g_stock_reads;
+            return PyObject_GetAttr(c, n->status);
+        }
+        PyObject* a[1] = {c};
+        return PyObject_Vectorcall(m, a, 1, nullptr);
+    }
+    return PyObject_CallNoArgs(m);
+#else
+    Ref meth(PyObject_GetAttr(c, n->get_status));
+    if (!meth) return nullptr;
+    if (PyMethod_Check(meth.get()) && PyMethod_GET_SELF(meth.get()) == c) {
+        PyObject* f = PyMethod_GET_FUNCTION(meth.get());
+        if (f == stock.fn.get() && PyFunction_Check(f) &&
+            PyFunction_GET_CODE(f) == stock.code.get()) {
+            ++g_stock_reads;
+            return PyObject_GetAttr(c, n->status);
+        }
+    }
+    return PyObject_CallNoArgs(meth.get());
+#endif
+}
+
+// `[c.GetStatus() for c in ai._conditions]`. Owned list.
+PyObject* statuses_of(PyObject* ai, const StockStatus& stock, const Names* n) {
+    // LOAD_ATTR _conditions; GET_ITER (the list ref goes, the iterator stays)
+    Ref it;
+    {
+        Ref conds(PyObject_GetAttr(ai, n->conditions));
+        if (!conds) return nullptr;
+        it = Ref(PyObject_GetIter(conds.get()));
+        if (!it) return nullptr;
+    }
+    // The comprehension's frame: `.0` (it), `c`.
+    Ref c;
+    Ref out(PyList_New(0));
+    if (!out) return nullptr;
+    for (;;) {
+        {
+            Ref next(PyIter_Next(it.get()));
+            if (!next) {
+                if (PyErr_Occurred()) return nullptr;
+                break;
+            }
+            c = std::move(next);
+        }
+        Ref v(condition_status(c.get(), stock, n));
+        if (!v) return nullptr;
+        if (PyList_Append(out.get(), v.get()) < 0) return nullptr;
+    }
+    it = Ref();
+    c = Ref();
+    return out.steal();
+}
+
+// `any(c.GetStatus() != 0 for c in ai._conditions)`: 1, 0, or -1 (error).
+// Stops at the first non-zero, as `any` does.
+int any_condition_of(PyObject* ai, const StockStatus& stock, const Names* n) {
+    Ref it;
+    {
+        Ref conds(PyObject_GetAttr(ai, n->conditions));
+        if (!conds) return -1;
+        it = Ref(PyObject_GetIter(conds.get()));
+        if (!it) return -1;
+    }
+    // The generator's frame: `.0` (it), `c`.
+    Ref c;
+    int found = 0;
+    for (;;) {
+        {
+            Ref next(PyIter_Next(it.get()));
+            if (!next) {
+                if (PyErr_Occurred()) return -1;
+                break;
+            }
+            c = std::move(next);
+        }
+        Ref v(condition_status(c.get(), stock, n));
+        if (!v) return -1;
+        // COMPARE_OP != 0 (the status released), YIELD; any(): truth, then
+        // the yielded value released.
+        Ref r(PyObject_RichCompare(v.get(), n->zero, Py_NE));
+        v = Ref();
+        if (!r) return -1;
+        const int t = PyObject_IsTrue(r.get());
+        r = Ref();
+        if (t < 0) return -1;
+        if (t) {
+            found = 1;
+            break;
+        }
+    }
+    it = Ref();
+    c = Ref();
+    return found;
+}
+
+// `all(type(a) in _MEMO_KEY_TYPES for a in args)`: 1, 0, or -1 (error).
+// `_MEMO_KEY_TYPES` is looked up per element, as the generator does.
+int all_key_types(PyObject* args, PyObject* g, const Names* n) {
+    Ref it(PyObject_GetIter(args));
+    if (!it) return -1;
+    Ref a;  // the generator's frame: `.0` (it), `a`
+    int all = 1;
+    for (;;) {
+        {
+            Ref next(PyIter_Next(it.get()));
+            if (!next) {
+                if (PyErr_Occurred()) return -1;
+                break;
+            }
+            a = std::move(next);
+        }
+        Ref t(Py_NewRef(reinterpret_cast<PyObject*>(Py_TYPE(a.get()))));
+        Ref types(load_global(g, n->memo_key_types));
+        if (!types) return -1;
+        // CONTAINS_OP: the operands released (left, right) after the test.
+        const int in = PySequence_Contains(types.get(), t.get());
+        t = Ref();
+        types = Ref();
+        if (in < 0) return -1;
+        if (!in) {
+            all = 0;
+            break;
+        }
+    }
+    it = Ref();
+    a = Ref();
+    return all;
+}
+
+// `_eval_conditional_python(ai, eval_fn, args)`, statement for statement.
+// Owned status.
+PyObject* eval_impl(PyObject* ai, PyObject* eval_fn, PyObject* args, PyObject* g,
+                    const Names* n) {
+    // The frame's own locals (co_varnames: ai, eval_fn, args, key, cache,
+    // raised, status, verdict), released at return in that order.
+    struct Frame {
+        Ref key, cache, status, verdict;
+        void release() {
+            key = Ref();
+            cache = Ref();
+            status = Ref();
+            verdict = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    bool raised = false;
+    // key = tuple(args)
+    f.key = Ref(PySequence_Tuple(args));
+    if (!f.key) return nullptr;
+    // cache = ai.__dict__.get("_evalfn_cache")
+    f.cache = Ref(own_dict_get(ai, n->evalfn_cache, n));
+    if (!f.cache) return nullptr;
+    // if cache is not None and cache[0] is eval_fn and cache[1] == key:
+    //     return cache[2]
+    if (f.cache.get() != Py_None) {
+        bool same_fn;
+        {
+            Ref c0(subscript(f.cache.get(), 0, n->zero));
+            if (!c0) return nullptr;
+            same_fn = c0.get() == eval_fn;
+        }
+        if (same_fn) {
+            Ref c1(subscript(f.cache.get(), 1, n->one));
+            if (!c1) return nullptr;
+            const int eq = compare_owned(std::move(c1), Ref(Py_NewRef(f.key.get())), Py_EQ);
+            if (eq < 0) return nullptr;
+            if (eq) {
+                Ref hit(subscript(f.cache.get(), 2, n->two));
+                if (!hit) return nullptr;
+                f.release();
+                return hit.steal();
+            }
+        }
+    }
+    // raised = False
+    // try: status = eval_fn(*args)
+    // except Exception: raised = True; status = US_DORMANT
+    {
+        Ref result;
+        {
+            Ref callargs(PyTuple_CheckExact(args) ? Py_NewRef(args) : PySequence_Tuple(args));
+            if (callargs) result = Ref(PyObject_Call(eval_fn, callargs.get(), nullptr));
+        }  // CALL_FUNCTION_EX drops its argument tuple before the store
+        if (result) {
+            f.status = std::move(result);
+        } else {
+            if (!PyErr_ExceptionMatches(PyExc_Exception)) return nullptr;
+            // The handled exception lives until POP_EXCEPT, after the body.
+            PyObject *et, *ev, *etb;
+            PyErr_Fetch(&et, &ev, &etb);
+            raised = true;
+            Ref dormant(load_global(g, n->us_dormant));
+            if (!dormant) {
+                // Raised inside the handler: the caught one is its context.
+                _PyErr_ChainExceptions(et, ev, etb);
+                return nullptr;
+            }
+            f.status = std::move(dormant);
+            Py_XDECREF(et);
+            Py_XDECREF(ev);
+            Py_XDECREF(etb);
+        }
+    }
+    // if status is None: status = US_DORMANT
+    if (f.status.get() == Py_None) {
+        Ref dormant(load_global(g, n->us_dormant));
+        if (!dormant) return nullptr;
+        f.status = std::move(dormant);
+    }
+    // status = int(status)
+    {
+        Ref as_int(PyNumber_Long(f.status.get()));
+        if (!as_int) return nullptr;
+        f.status = std::move(as_int);
+    }
+    // verdict = ai.__dict__.get("_evalfn_memoisable")
+    f.verdict = Ref(own_dict_get(ai, n->evalfn_memoisable, n));
+    if (!f.verdict) return nullptr;
+    // if verdict is None or verdict[0] is not eval_fn:
+    //     verdict = (eval_fn, _memoisable_evalfunc(eval_fn))
+    //     ai.__dict__["_evalfn_memoisable"] = verdict
+    bool take = f.verdict.get() == Py_None;
+    if (!take) {
+        Ref v0(subscript(f.verdict.get(), 0, n->zero));
+        if (!v0) return nullptr;
+        take = v0.get() != eval_fn;
+    }
+    if (take) {
+        Ref fresh;
+        {
+            Ref fn(load_global(g, n->memoisable));
+            if (!fn) return nullptr;
+            Ref ok(PyObject_CallOneArg(fn.get(), eval_fn));
+            if (!ok) return nullptr;
+            fresh = Ref(PyTuple_Pack(2, eval_fn, ok.get()));
+            if (!fresh) return nullptr;
+        }
+        f.verdict = std::move(fresh);
+        if (own_dict_set(ai, n->evalfn_memoisable, f.verdict.get(), n) < 0) return nullptr;
+    }
+    // if verdict[1] and not raised and all(type(a) in _MEMO_KEY_TYPES
+    //                                      for a in args):
+    //     ai.__dict__["_evalfn_cache"] = (eval_fn, key, status)
+    int memoise;
+    {
+        Ref v1(subscript(f.verdict.get(), 1, n->one));
+        if (!v1) return nullptr;
+        memoise = PyObject_IsTrue(v1.get());
+    }
+    if (memoise < 0) return nullptr;
+    if (memoise && !raised) {
+        memoise = all_key_types(args, g, n);
+        if (memoise < 0) return nullptr;
+        if (memoise) {
+            Ref entry(PyTuple_Pack(3, eval_fn, f.key.get(), f.status.get()));
+            if (!entry) return nullptr;
+            if (own_dict_set(ai, n->evalfn_cache, entry.get(), n) < 0) return nullptr;
+        }
+    }
+    // return status
+    Ref ret(Py_NewRef(f.status.get()));
+    f.release();
+    return ret.steal();
+}
+
+// `_refresh_conditional_status_python(ai)`, statement for statement.
+PyObject* refresh_impl(PyObject* ai, PyObject* g) {
+    const Names* n = names();
+    if (n == nullptr) return nullptr;
+    ++g_s2_runs;
+    StockStatus stock;
+    if (stock_status_of(g, n, &stock) < 0) return nullptr;
+    // The frame's locals (co_varnames: ai, eval_fn, args).
+    struct Frame {
+        Ref eval_fn, args;
+        void release() {
+            eval_fn = Ref();
+            args = Ref();
+        }
+        ~Frame() { release(); }
+    } f;
+    // eval_fn = ai._evaluation_function
+    f.eval_fn = Ref(PyObject_GetAttr(ai, n->evaluation_function));
+    if (!f.eval_fn) return nullptr;
+    if (f.eval_fn.get() != Py_None) {
+        // args = [c.GetStatus() for c in ai._conditions]
+        f.args = Ref(statuses_of(ai, stock, n));
+        if (!f.args) return nullptr;
+        // ai._status = _eval_conditional(ai, eval_fn, args)
+        {
+            Ref value;
+            {
+                Ref fn(load_global(g, n->eval_conditional));
+                if (!fn) return nullptr;
+                Ref stock_fn(load_global(g, n->stock_eval));
+                if (!stock_fn) return nullptr;
+                if (fn.get() == stock_fn.get()) {
+                    value = Ref(eval_impl(ai, f.eval_fn.get(), f.args.get(), g, n));
+                } else {
+                    PyObject* a[3] = {ai, f.eval_fn.get(), f.args.get()};
+                    value = Ref(PyObject_Vectorcall(fn.get(), a, 3, nullptr));
+                }
+                if (!value) return nullptr;
+            }
+            if (PyObject_SetAttr(ai, n->status, value.get()) < 0) return nullptr;
+        }
+        // if (ai._status == US_ACTIVE and ai._contained_ai is not None
+        //         and ai._contained_ai._status == US_DONE):
+        //     ai._status = US_DONE
+        {
+            Ref st(PyObject_GetAttr(ai, n->status));
+            if (!st) return nullptr;
+            Ref active(load_global(g, n->us_active));
+            if (!active) return nullptr;
+            const int is_active = compare_owned(std::move(st), std::move(active), Py_EQ);
+            if (is_active < 0) return nullptr;
+            if (is_active) {
+                bool has_contained;
+                {
+                    Ref ca(PyObject_GetAttr(ai, n->contained_ai));
+                    if (!ca) return nullptr;
+                    has_contained = ca.get() != Py_None;
+                }
+                if (has_contained) {
+                    Ref cst;
+                    {
+                        Ref ca(PyObject_GetAttr(ai, n->contained_ai));
+                        if (!ca) return nullptr;
+                        cst = Ref(PyObject_GetAttr(ca.get(), n->status));
+                        if (!cst) return nullptr;
+                    }
+                    Ref done(load_global(g, n->us_done));
+                    if (!done) return nullptr;
+                    const int is_done = compare_owned(std::move(cst), std::move(done), Py_EQ);
+                    if (is_done < 0) return nullptr;
+                    if (is_done) {
+                        Ref d(load_global(g, n->us_done));
+                        if (!d) return nullptr;
+                        if (PyObject_SetAttr(ai, n->status, d.get()) < 0) return nullptr;
+                    }
+                }
+            }
+        }
+        f.release();
+        Py_RETURN_NONE;
+    }
+    // if not ai._conditions: return
+    {
+        Ref conds(PyObject_GetAttr(ai, n->conditions));
+        if (!conds) return nullptr;
+        const int t = PyObject_IsTrue(conds.get());
+        if (t < 0) return nullptr;
+        if (!t) {
+            conds = Ref();
+            f.release();
+            Py_RETURN_NONE;
+        }
+    }
+    // ai._status = US_ACTIVE if any(c.GetStatus() != 0 for c in ...) else US_DORMANT
+    const int any = any_condition_of(ai, stock, n);
+    if (any < 0) return nullptr;
+    Ref value(load_global(g, any ? n->us_active : n->us_dormant));
+    if (!value) return nullptr;
+    if (PyObject_SetAttr(ai, n->status, value.get()) < 0) return nullptr;
+    value = Ref();
+    f.release();
+    Py_RETURN_NONE;
+}
+
+template <typename F>
+PyObject* guarded(F&& body) {
+    try {
+        return body();
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    }
+}
+
+PyObject* refresh_conditional(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 2 || !PyDict_Check(args[1])) {
+        PyErr_SetString(PyExc_TypeError, "aitree_refresh_conditional(ai, globals: dict)");
+        return nullptr;
+    }
+    return guarded([&] { return refresh_impl(args[0], args[1]); });
+}
+
+PyObject* eval_conditional(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 4 || !PyDict_Check(args[3])) {
+        PyErr_SetString(PyExc_TypeError,
+                        "aitree_eval_conditional(ai, eval_fn, args, globals: dict)");
+        return nullptr;
+    }
+    return guarded([&]() -> PyObject* {
+        const Names* n = names();
+        if (n == nullptr) return nullptr;
+        ++g_s2_runs;
+        return eval_impl(args[0], args[1], args[2], args[3], n);
+    });
+}
+
+PyObject* condition_statuses(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 2 || !PyDict_Check(args[1])) {
+        PyErr_SetString(PyExc_TypeError, "aitree_condition_statuses(ai, globals: dict)");
+        return nullptr;
+    }
+    return guarded([&]() -> PyObject* {
+        const Names* n = names();
+        if (n == nullptr) return nullptr;
+        ++g_s2_runs;
+        StockStatus stock;
+        if (stock_status_of(args[1], n, &stock) < 0) return nullptr;
+        return statuses_of(args[0], stock, n);
+    });
+}
+
+PyObject* any_condition(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 2 || !PyDict_Check(args[1])) {
+        PyErr_SetString(PyExc_TypeError, "aitree_any_condition(ai, globals: dict)");
+        return nullptr;
+    }
+    return guarded([&]() -> PyObject* {
+        const Names* n = names();
+        if (n == nullptr) return nullptr;
+        ++g_s2_runs;
+        StockStatus stock;
+        if (stock_status_of(args[1], n, &stock) < 0) return nullptr;
+        const int any = any_condition_of(args[0], stock, n);
+        if (any < 0) return nullptr;
+        return Py_NewRef(any ? Py_True : Py_False);
+    });
+}
+
+PyObject* conditional_counts(PyObject*, PyObject* const*, Py_ssize_t nargs) {
+    if (nargs != 0) {
+        PyErr_SetString(PyExc_TypeError, "aitree_conditional_counts()");
+        return nullptr;
+    }
+    return Py_BuildValue("(KK)", g_s2_runs, g_stock_reads);
+}
+
 PyObject* tick_all(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
     if (nargs != 2 || !PyDict_Check(args[1])) {
         PyErr_SetString(PyExc_TypeError, "aitree_tick_all(game_time, globals: dict)");
@@ -562,6 +1132,22 @@ PyMethodDef kDefs[] = {
      "aitree_walk_min_due_reset(): the slot back to float('inf')."},
     {"aitree_roster_count", fast<roster_count>(), METH_FASTCALL,
      "aitree_roster_count() -> how many native rosters have started."},
+    {"aitree_refresh_conditional", fast<refresh_conditional>(), METH_FASTCALL,
+     "aitree_refresh_conditional(ai, globals): ai_driver's "
+     "_refresh_conditional_status_python (the memoised EvalFunc, or the "
+     "any-non-zero rule, then the contained-DONE fold)."},
+    {"aitree_eval_conditional", fast<eval_conditional>(), METH_FASTCALL,
+     "aitree_eval_conditional(ai, eval_fn, args, globals) -> ai_driver's "
+     "_eval_conditional_python: the pre-fold status, through the memo."},
+    {"aitree_condition_statuses", fast<condition_statuses>(), METH_FASTCALL,
+     "aitree_condition_statuses(ai, globals) -> "
+     "[c.GetStatus() for c in ai._conditions]."},
+    {"aitree_any_condition", fast<any_condition>(), METH_FASTCALL,
+     "aitree_any_condition(ai, globals) -> "
+     "any(c.GetStatus() != 0 for c in ai._conditions)."},
+    {"aitree_conditional_counts", fast<conditional_counts>(), METH_FASTCALL,
+     "aitree_conditional_counts() -> (native condition-evaluation entries, "
+     "stock GetStatus calls read directly)."},
 };
 
 }  // namespace

@@ -1,7 +1,8 @@
 """The tree-walk differential harness proves itself (phase 6 AI part 4, Task 1).
 
-Until the native walker lands both sides of ``run_walk_diff`` run the Python
-walker, so every scene passes; what these tests pin is that the harness is
+The native side runs the native roster (Task 2) and the native condition
+evaluation (Task 3); the walk itself is still Python's until Task 4. What
+these tests pin, besides the two sides agreeing, is that the harness is
 deterministic (two Python runs agree call for call and field for field), that
 each scene reaches the driver paths it claims (asserted on the recorded call
 log, not on the scene's intent), and that it fails when the sides differ.
@@ -9,6 +10,7 @@ log, not on the scene's intent), and that it fails when the sides differ.
 import gc
 import sys
 import types
+from collections import Counter
 
 import pytest
 
@@ -26,7 +28,7 @@ needs_native = pytest.mark.skipif(
     reason="native K1 bindings not built")
 
 
-def _k1_scene(dumb_fire=False):
+def _k1_scene(dumb_fire=False, wrap_status=True):
     def build(mp):
         from engine import host_loop
         from engine.appc import sensor_contacts
@@ -51,7 +53,8 @@ def _k1_scene(dumb_fire=False):
             host_loop._combat_tick_boundary()
             sensor_contacts.tick(scene.player,
                                  App.g_kUtopiaModule.GetGameTime())
-        return awd.Scene(lambda: list(iter_ships()), step, wrap_roster=False)
+        return awd.Scene(lambda: list(iter_ships()), step, wrap_roster=False,
+                         wrap_condition_status=wrap_status)
     return build
 
 
@@ -1102,6 +1105,325 @@ def test_roster_releases_a_cleared_or_replaced_root_where_python_does():
     assert ("del root", "PB0") in marks, marks
 
 
+# ── condition evaluation (S2) ────────────────────────────────────────────────
+#
+# The native side evaluates conditions natively from Task 3 on: the priority
+# list's and the sequence's refresh, _tick_conditional's status reads and
+# _eval_conditional (memo included). The harness proves the native side ran it
+# (aitree_conditional_counts) and never the Python bodies.
+
+def _s2_scene_of(mp, ships, actions=None, wrap_status=True):
+    actions = actions or {}
+
+    def step(i):
+        if i in actions:
+            actions[i]()
+        _driver().tick_all_ai((i + 1) / 60.0)
+    return awd.synthetic_scene(mp, ships, step,
+                               wrap_condition_status=wrap_status)
+
+
+def _gated(ship, name, conds, fn, contained):
+    node = _ai().ConditionalAI_Create(ship, name)
+    for c in conds:
+        node.AddCondition(c)
+    if fn is not None:
+        node.SetEvaluationFunction(fn)
+    if contained is not None:
+        node.SetContainedAI(contained)
+    return node
+
+
+def _raising_eval_scene(mp):
+    """EvalFuncs that raise. Transient: memoisable (defaults, no globals), so
+    the retry after a raise is what the memo must not hide; an exception maps
+    to US_DORMANT and is never cached. Alternating: declined by the gate,
+    raises every other call. A second ship's EvalFunc returns a value int()
+    rejects, which is OUTSIDE the try and escapes the walk."""
+    ship = _ship()
+    c1, c2 = _cond(1), _cond(1)
+
+    def Transient(b, n=[0], ACTIVE=US_ACTIVE, Boom=_Boom):
+        n[0] += 1
+        if n[0] in (2, 3, 7):
+            raise Boom("transient")
+        return ACTIVE
+
+    def Alternating(b, n=[0]):
+        n[0] += 1
+        if n[0] % 2:
+            raise KeyError("alternating")
+        return US_ACTIVE if b else US_DORMANT
+
+    root = _plist(ship, "Root",
+                  (1, _gated(ship, "T", [c1], Transient,
+                             _leaf(ship, "TL"))),
+                  (2, _gated(ship, "A", [c2], Alternating,
+                             _leaf(ship, "AL"))),
+                  (3, _leaf(ship, "Idle")))
+    _install(ship, root)
+
+    bad = _ship("Bad")
+    cb = _cond(1)
+
+    seen = {"n": 0}
+
+    def Unparseable(b):                 # a closure: declined, so re-run
+        seen["n"] += 1
+        return "not-a-status" if seen["n"] == 4 else 0
+    _install(bad, _plist(bad, "BadRoot", (1, _gated(
+        bad, "B", [cb], Unparseable, _leaf(bad, "BL")))))
+    # Every flip of c1 is a memo miss for Transient (a fresh key), so it is
+    # called, and raises on its 2nd, 3rd and 7th calls; the dormant ticks
+    # that follow a raise let the scan reach Alternating.
+    actions = {i: (lambda v=i % 2: c1.SetStatus(v)) for i in range(2, 30, 3)}
+    actions[31] = lambda: c2.SetStatus(0)
+    return _s2_scene_of(mp, [ship, bad], actions)
+
+
+def test_conditional_an_evalfunc_that_raises():
+    rec = awd.run_walk_diff(_raising_eval_scene, 40)
+    raised = [e for e in rec.log() if e[0] == "raise" and e[1] == "eval"]
+    assert [e[3] for e in raised].count("_Boom") == 3, raised
+    assert [e[3] for e in raised].count("KeyError") >= 2, raised
+    escaped = [e[1] for e in rec.log() if e[0] == "escaped"]
+    assert escaped == ["ValueError"], escaped
+    assert rec.native_entries["native_s2"] > 0, rec.native_entries
+
+
+def _chainfollow_scene(mp):
+    """ChainFollow's EvalFunc shape: it reads a module global (iIndex), so the
+    memo gate declines it and it runs on every refresh; the scene moves the
+    global with the conditions held steady. A memoisable sibling is cached."""
+    ship = _ship()
+    ns = {}
+    exec(compile("iIndex = 0\n"
+                 "def EvalFunc(bShipExists):\n"
+                 "    if (iIndex <= 7) or not bShipExists:\n"
+                 "        return 2\n"
+                 "    return 0\n", "<chainfollow-like>", "exec"), ns)
+    cond, steady = _cond(1), _cond(1)
+
+    def Pure(b, ACTIVE=US_ACTIVE, DORMANT=US_DORMANT):
+        return ACTIVE if b else DORMANT
+
+    root = _plist(ship, "Root",
+                  (1, _gated(ship, "Chain", [cond], ns["EvalFunc"],
+                             _leaf(ship, "Follow"))),
+                  (2, _gated(ship, "Pure", [steady], Pure,
+                             _leaf(ship, "PureLeaf", interval=0.05))))
+    _install(ship, root)
+
+    def move(v):
+        ns["iIndex"] = v
+    return _s2_scene_of(mp, [ship], {6: lambda: move(9), 12: lambda: move(3),
+                                     18: lambda: move(8)})
+
+
+def test_conditional_a_non_memoisable_evalfunc():
+    rec = awd.run_walk_diff(_chainfollow_scene, 30)
+    assert _count(rec, "eval") >= 30, rec.calls()
+    caches = [st["_evalfn_cache"] for _log, snap in rec.ticks
+              for ship in snap["ships"].values()
+              for st in ship["nodes"].values() if st["type"] == "ConditionalAI"]
+    assert any(c != awd._ABSENT for c in caches)        # Pure is cached
+    statuses = _states(rec, "_status")
+    assert ("int", US_DORMANT) in statuses and ("int", US_ACTIVE) in statuses
+
+
+def _custom_status_scene(mp):
+    """A condition class with its own GetStatus, an instance whose dict
+    shadows the stock GetStatus, a class-level patch of TGCondition.GetStatus
+    mid-run, and stock conditions read directly. Nothing is wrapped: each
+    non-stock GetStatus marks its own call, so the order is in the log."""
+    ai = _ai()
+    owner = awd.current()
+
+    class OwnStatus(ai.TGCondition):
+        def __init__(self):
+            super().__init__()
+            self.n = 0
+
+        def GetStatus(self):
+            self.n += 1
+            awd.mark(owner, "own", self.GetObjID(), self.n)
+            return (self.n // 3) % 2        # flips every third read
+
+    ship = _ship()
+    own = OwnStatus()
+    shadowed = _cond(0)
+    flips = {"n": 0}
+
+    def shadow():
+        flips["n"] += 1
+        awd.mark(owner, "shadow", flips["n"])
+        return flips["n"] % 2
+    shadowed.GetStatus = shadow
+    stock_a, stock_b = _cond(1), _cond(0)
+
+    def Both(a, b, c, ACTIVE=US_ACTIVE, DORMANT=US_DORMANT):
+        return ACTIVE if (a and (b or c)) else DORMANT
+
+    real = ai.TGCondition.__dict__["GetStatus"]
+
+    def patched(self):
+        awd.mark(owner, "patched", self.GetObjID())
+        return 1 - real(self)
+
+    root = _plist(ship, "Root",
+                  (1, _gated(ship, "Mixed", [stock_a, own, shadowed], Both,
+                             _leaf(ship, "MixedLeaf"))),
+                  (2, _gated(ship, "AnyRule", [stock_b, own], None,
+                             _leaf(ship, "AnyLeaf"))),
+                  (3, _leaf(ship, "Idle", interval=0.1)))
+    _install(ship, root)
+    return _s2_scene_of(
+        mp, [ship], {8: lambda: stock_b.SetStatus(1),
+                     16: lambda: mp.setattr(ai.TGCondition, "GetStatus",
+                                            patched),
+                     24: lambda: mp.setattr(ai.TGCondition, "GetStatus",
+                                            real)},
+        wrap_status=False)
+
+
+def test_conditional_a_condition_class_with_its_own_get_status():
+    rec = awd.run_walk_diff(_custom_status_scene, 30)
+    kinds = Counter(e[1] for e in rec.log() if e[0] == "mark")
+    assert kinds["own"] >= 20 and kinds["shadow"] >= 15, kinds
+    assert kinds["patched"] >= 4, kinds
+    assert _count(rec, "cond.GetStatus") == 0, rec.calls()
+    assert rec.native_entries["stock_status_reads"] > 0, rec.native_entries
+
+
+def _direct_status_scene(mp):
+    """Stock conditions whose `_status` a test writes directly (no SetStatus,
+    so no handler and no event): the refresh must still see each write. Covers
+    the no-EvalFunc rule (any condition non-zero: ACTIVE, else DORMANT; no
+    conditions: status untouched) on both the refresh and _tick_conditional,
+    a condition-less conditional, the contained-DONE fold under a memo hit,
+    a sequence's refresh, and a ConditionScript (stock GetStatus)."""
+    ai = _ai()
+    ship = _ship()
+    a, b, c, d = _cond(0), _cond(0), _cond(1), _cond(0)
+    script = ai.ConditionScript()            # no module: a stock data bag
+
+    def Pure(x, ACTIVE=US_ACTIVE, DORMANT=US_DORMANT):
+        return ACTIVE if x else DORMANT
+
+    seq = ai.SequenceAI_Create(ship, "Seq")
+    seq.SetSkipDormant(1)
+    seq.SetLoopCount(-1)
+    seq.AddAI(_gated(ship, "SeqGate", [d], None, _leaf(ship, "SeqLeaf",
+                                                         done_after=2)))
+    seq.AddAI(_leaf(ship, "SeqTail", done_after=1))
+    root = _plist(ship, "Root",
+                  (1, _gated(ship, "AnyRule", [a, b], None,
+                             _leaf(ship, "AnyLeaf", done_after=4))),
+                  (2, _gated(ship, "Folded", [c], Pure,
+                             _leaf(ship, "FoldLeaf", done_after=3))),
+                  (3, _gated(ship, "Script", [script], Pure,
+                             _leaf(ship, "ScriptLeaf"))),
+                  (4, _gated(ship, "Empty", [], None, _leaf(ship, "E"))),
+                  (5, seq))
+    _install(ship, root)
+    lone = _ship("Lone")
+    _install(lone, _gated(lone, "LoneRoot", [_cond(0)], None,
+                          _leaf(lone, "LoneLeaf")))
+    lone_cond = lone.GetAI()._conditions[0]
+
+    def write(cond, v):
+        cond._status = v
+    return _s2_scene_of(mp, [ship, lone], {
+        3: lambda: write(b, 5),
+        6: lambda: write(b, 0),
+        7: lambda: write(script, 1),
+        9: lambda: write(a, -1),
+        12: lambda: write(c, 0),
+        13: lambda: write(c, 1),
+        15: lambda: write(a, 0),
+        16: lambda: write(d, 1),
+        18: lambda: write(lone_cond, 1),
+        24: lambda: write(lone_cond, 0)}, wrap_status=False)
+
+
+def test_conditional_status_written_directly_by_a_test():
+    rec = awd.run_walk_diff(_direct_status_scene, 40)
+    assert rec.native_entries["stock_status_reads"] > 50, rec.native_entries
+    assert _count(rec, "cond.GetStatus") == 0, rec.calls()
+    statuses = _states(rec, "_status")
+    assert ("int", US_DONE) in statuses          # the fold, and leaves ending
+    assert _count(rec, "eval") > 0
+
+
+def _s2_lifetime_scene(mp):
+    """When the condition evaluation lets go of what it read: a custom
+    GetStatus and an EvalFunc returning _Status objects (an int subclass, so
+    never a memo key, and `int(status)` makes a new int). The refresh holds
+    its `args` until it returns, _eval_conditional drops the EvalFunc's own
+    result at `status = int(status)`, and _tick_conditional holds its args
+    across the contained AI's tick."""
+    ai = _ai()
+    owner = awd.current()
+    made = {"n": 0}
+
+    def status(v, tag):
+        s = _Status(v)
+        s.owner, s.tag = owner, tag
+        return s
+
+    class Marked(ai.TGCondition):
+        def GetStatus(self):
+            made["n"] += 1
+            return status(self._status, "c%d" % made["n"])
+
+    ship = _ship()
+    m1, m2 = Marked(), Marked()
+    m1.SetStatus(1)
+    m2.SetStatus(1)
+
+    def Eval(a, b):
+        made["n"] += 1
+        return status(US_ACTIVE if (a and b) else US_DORMANT,
+                      "e%d" % made["n"])
+
+    root = _plist(ship, "Root",
+                  (1, _gated(ship, "Marked", [m1, m2], Eval,
+                             _leaf(ship, "MarkedLeaf"))),
+                  (2, _gated(ship, "NoEval", [Marked()], None,
+                             _leaf(ship, "NoEvalLeaf"))))
+    _install(ship, root)
+    return _s2_scene_of(mp, [ship], {3: lambda: m2.SetStatus(0)},
+                        wrap_status=False)
+
+
+def test_conditional_locals_are_released_where_python_releases_them():
+    rec = awd.run_walk_diff(_s2_lifetime_scene, 6)
+    marks = [e for e in rec.log() if e[0] == "mark"]
+    assert len(marks) > 20, marks
+    tick0 = rec.ticks[0][0]
+    names = [e[:2] for e in tick0]
+    # The leaf's Update runs inside _tick_conditional, whose args (c3, c4)
+    # outlive it; the refresh's args (c1, c2) die before the dispatch.
+    upd = names.index(("call", "script.Update"))
+    assert tick0.index(("mark", "del status", "c1")) < upd, tick0
+    assert tick0.index(("mark", "del status", "c4")) > upd, tick0
+
+
+def test_harness_catches_a_native_side_that_runs_the_python_s2():
+    def build(mp):
+        ship = _ship()
+        cond = _cond(1)
+        _install(ship, _plist(ship, "Root", (1, _gated(
+            ship, "G", [cond], lambda b: US_ACTIVE, _leaf(ship, "L")))))
+        drv = _driver()
+        mp.setattr(drv, "_aitree_refresh_conditional",
+                   lambda ai, g: drv._refresh_conditional_status_python(ai))
+        return awd.synthetic_scene(mp, [ship])
+    with pytest.raises(AssertionError,
+                       match="ran the Python condition evaluation"):
+        awd.run_walk_diff(build, 5)
+
+
 # ── the real fights ──────────────────────────────────────────────────────────
 
 @needs_native
@@ -1113,6 +1435,18 @@ def test_k1_gameloop_ai_trees():
     assert calls["script.GotFocus"] > 0 and calls["node.SetActive"] > 0
     assert calls["_sync_fire_script_target_subsystem"] > 0
     assert calls["_ensure_select_target_initialized"] > 0
+
+
+@needs_native
+def test_k1_gameloop_ai_trees_with_direct_condition_reads():
+    """The same fight with no GetStatus wrapped: the SDK's ConditionScripts
+    (stock TGCondition.GetStatus) are read directly by the native side and
+    called by the Python side, compared through every EvalFunc's arguments
+    and the node states."""
+    rec = awd.run_walk_diff(_k1_scene(wrap_status=False), 150, warm_ticks=2)
+    calls = rec.calls()
+    assert calls["eval"] > 0 and calls["cond.GetStatus"] == 0, calls
+    assert rec.native_entries["stock_status_reads"] > 1000, rec.native_entries
 
 
 @needs_native
