@@ -3270,37 +3270,16 @@ class TorpedoTube(Weapon):
 
 # ── StartFiring, natively (phase 6 AI part 3, task 6) ───────────────────────
 #
-# The engine bodies the native StartFiring reproduces, taken at import --
-# before any test, tool or mod can replace a name. The native body compares
-# what it finds at call time with these (a module global, a class's
-# attribute, a field's descriptor) and calls whatever it finds instead of
-# reproducing it when they differ, so a patch is seen exactly as the Python
-# body would see it.
+# What the native StartFiring does itself -- the IsOn read, the writes and
+# their descriptors -- is StartFiring's own surface; every gate is called
+# back. These are the engine bodies it reproduces, taken at import (before
+# any test, tool or mod can replace a name): at every use the native body
+# compares what it finds with them and calls or sets by attribute when they
+# differ, so a patch is seen exactly as the Python body would see it.
 def _take_start_firing_surface() -> dict:
     import threading
-    from engine.appc import ship_death, subsystems
-    from engine.appc.objects import DamageableObject
     return {
         "IsOn": PoweredSubsystem.__dict__["IsOn"],
-        "ws_IsDisabled": WeaponSystem.__dict__["IsDisabled"],
-        "ws_IsDestroyed": WeaponSystem.__dict__["IsDestroyed"],
-        "ss_IsDisabled": ShipSubsystem.__dict__["IsDisabled"],
-        "ss_IsDestroyed": ShipSubsystem.__dict__["IsDestroyed"],
-        "GetParentShip": ShipSubsystem.__dict__["GetParentShip"],
-        "IsDying": DamageableObject.__dict__["IsDying"],
-        "IsDead": DamageableObject.__dict__["IsDead"],
-        "_is_offline": subsystems._is_offline,
-        "_cloak_blocks_fire": _cloak_blocks_fire,
-        "_dewarp_blocks_fire": _dewarp_blocks_fire,
-        "_target_undetectable": _target_undetectable,
-        "_warp_state": _warp_state,
-        "implements": ids.implements,
-        "_out_of_action": ship_death._out_of_action,
-        "held_can_engage": _HeldFireWeaponSystem.__dict__["_can_engage"],
-        "phaser_can_engage": PhaserSystem.__dict__["_can_engage"],
-        "_target_in_system_range":
-            PhaserSystem.__dict__["_target_in_system_range"],
-        "_target_within_range_gu": _target_within_range_gu,
         "_add_target": WeaponSystem.__dict__["_add_target"],
         "SetForceUpdate": WeaponSystem.__dict__["SetForceUpdate"],
         "NativeField.__set__": NativeField.__dict__["__set__"],
@@ -3311,7 +3290,6 @@ def _take_start_firing_surface() -> dict:
         "_force_update": WeaponSystem.__dict__["_force_update"],
         "get_ident": threading.get_ident,
         "_start_firing_py": _start_firing_py,
-        "TGObject.__getattr__": ids.TGObject.__dict__["__getattr__"],
     }
 
 

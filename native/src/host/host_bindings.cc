@@ -6812,75 +6812,46 @@ PyMethodDef subsystem_is_type_of_def = {
 
 // ── WeaponSystem.StartFiring, natively (engine/appc/weapon_subsystems.py) ───
 // start_firing(system, target, offset) is `_start_firing_py`, the reference
-// body, in one call: its six gates in order, each with its early return (a
-// failing gate writes nothing), its five writes in order, then
-// `native_combat.k1_system(system, 0.0)` looked up on the module (the
-// session; a patched k1_system is the one called).
-//
-// The engine bodies it reproduces are the import-time table
-// weapon_subsystems._START_FIRING_SURFACE. At every use the body compares
-// what Python would find NOW with that table, and calls what it finds
-// instead of reproducing it when they differ:
-//   * a global a reproduced body reads, from that body's own globals (the
-//     gate functions, `implements` in each module that calls it,
-//     `_ship_death._out_of_action`, `_warp_state`, `_target_within_range_gu`,
-//     `ShipSubsystem`, native_combat's `_h`, `_get_ident`, ...),
-//   * a method of an object (`stock`: readers::reads_stock -- the class
-//     resolves the name to the table's function and the instance dict does
-//     not shadow it -- with the class half's NO remembered too): IsOn,
-//     IsDisabled / IsDestroyed (WeaponSystem's or ShipSubsystem's,
-//     recursively over the children), GetParentShip, IsDying / IsDead,
-//     _can_engage, _target_in_system_range, _add_target, SetForceUpdate,
-//   * a field's descriptor (the class resolves `_held_target`, ... to the
-//     table's descriptor, whose type's __set__ is NativeField's, and the
-//     object sets attributes generically): NativeField.__set__'s body runs
-//     here -- the scalar push (`_fire_held`, `_force_update`) straight into
-//     combat_push_scalar, any other push through the descriptor's own _push.
-// Called back always: GetCloakingSubsystem / IsTryingToCloak,
-// warp_state.is_arriving, sensor_detection.can_detect (inside the
-// reference's try/except Exception), _same_set and GetWorldLocation (the
-// range gate), _climb_to_ship, push_field, the non-scalar pushes, k1_system.
-// Every value is read from the live Python objects when the reference reads
-// it (nothing from the mirror). No borrowed pointer is held across a Python
-// call. References are raw (Ref), not py::object: a Debug build's
-// py::object checks the GIL on every inc/dec.
+// body, in one call, native ONLY for StartFiring's own surface:
+//   * the `IsOn()` read (PoweredSubsystem.IsOn's `_is_on`, when stock),
+//   * the writes: `_add_target` (its containment check; `append` and
+//     native_combat.push_field called), `_held_target`, `_held_offset`,
+//     `_fire_held` and SetForceUpdate's `_force_update` through
+//     NativeField.__set__'s body (the scalar pushes straight into
+//     combat_push_scalar, any other push through the descriptor's own _push),
+//   * `native_combat.k1_system(system, 0.0)`, looked up on the module.
+// Every gate is called back as the Python function it is, at its module-
+// global name, in the reference's order with its arguments: _is_offline,
+// _cloak_blocks_fire, _dewarp_blocks_fire, _target_undetectable, then
+// `self._can_engage(self.GetParentShip(), target)` when the object has one.
+// "Stock" is checked against the import-time table
+// weapon_subsystems._START_FIRING_SURFACE at every use: a method by
+// readers::reads_stock (never for a type with its own __getattribute__), a
+// field by its class's descriptor; anything else is called or set by
+// attribute. No borrowed pointer is held across a Python call. References
+// are raw (Ref), not py::object: a Debug build's py::object checks the GIL on
+// every inc/dec.
 namespace {
 namespace startfire {
 
 struct Host {
     // The surface table's entries (held for good).
-    PyObject *IsOn, *ws_IsDisabled, *ws_IsDestroyed, *ss_IsDisabled, *ss_IsDestroyed;
-    PyObject *GetParentShip, *IsDying, *IsDead, *is_offline, *cloak_blocks;
-    PyObject *dewarp_blocks, *target_undetectable, *warp_state, *implements, *out_of_action;
-    PyObject *held_can_engage, *phaser_can_engage, *in_system_range, *within_range;
-    PyObject *add_target, *set_force_update, *nf_set, *nf_push_scalar, *d_held_target;
-    PyObject *d_held_offset, *d_fire_held, *d_force_update, *get_ident, *start_firing_py;
-    // stock() contracts, ((name, function),) each (held).
-    PyObject *c_IsOn, *c_ws_IsDisabled, *c_ws_IsDestroyed, *c_ss_IsDisabled;
-    PyObject *c_ss_IsDestroyed, *c_GetParentShip, *c_IsDying, *c_IsDead, *c_held_can_engage;
-    PyObject *c_phaser_can_engage, *c_in_system_range, *c_add_target, *c_set_force_update;
-    PyObject* c_push_scalar;
+    PyObject *IsOn, *add_target, *set_force_update, *nf_set, *nf_push_scalar;
+    PyObject *d_held_target, *d_held_offset, *d_fire_held, *d_force_update, *get_ident;
+    PyObject* start_firing_py;
+    // readers::reads_stock contracts, ((name, function),) each (held).
+    PyObject *c_IsOn, *c_add_target, *c_set_force_update, *c_push_scalar;
     // Interned names.
-    PyObject *s_IsOn, *s_is_on, *s_IsDisabled, *s_IsDestroyed, *s_children, *s_condition;
-    PyObject *s_max_condition, *s_disabled_percentage, *s_destroyed, *s_radiation_out;
-    PyObject *s_parent_subsystem, *s_GetParentShip, *s_parent_ship, *s_climb_to_ship;
-    PyObject *s_is_offline, *s_ship_death_g, *s_out_of_action, *s_implements;
-    PyObject *s_IMPLEMENTS_CACHE, *s_mro, *s_dict, *s_IsDying, *s_IsDead, *s_dying;
-    PyObject *s_life_time, *s_DYING_THRESHOLD, *s_dead, *s_cloak_blocks;
-    PyObject *s_GetCloakingSubsystem, *s_IsTryingToCloak, *s_dewarp_blocks, *s_ids;
-    PyObject *s_warp_state, *s_warp_state_mod, *s_is_arriving, *s_target_undetectable;
-    PyObject *s_sensor_detection, *s_can_detect, *s_can_engage, *s_target_in_system_range;
-    PyObject *s_within_range, *s_PHASER_MAX_RANGE_GU, *s_GetWorldLocation, *s_same_set;
-    PyObject *s_x, *s_y, *s_z, *s_add_target, *s_target_list, *s_append, *s_native_combat;
-    PyObject *s_push_field, *s_held_target, *s_held_offset, *s_fire_held, *s_SetForceUpdate;
-    PyObject *s_force_update, *s_k1_system, *s_name, *s_enabled, *s_nslot, *s_get;
-    PyObject *s_get_ident, *s_MAIN_IDENT, *s_queue_push, *s_repush_native, *s_scalar;
-    PyObject *s_push, *s_push_scalar, *s_fast, *s_h, *s_combat_push_scalar, *s_drop;
-    PyObject *s_ShipSubsystem, *s_set, *s_getattribute, *s_getattr;
+    PyObject *s_IsOn, *s_is_on, *s_is_offline, *s_cloak_blocks, *s_dewarp_blocks;
+    PyObject *s_target_undetectable, *s_can_engage, *s_GetParentShip, *s_add_target;
+    PyObject *s_target_list, *s_append, *s_native_combat, *s_push_field, *s_held_target;
+    PyObject *s_held_offset, *s_fire_held, *s_SetForceUpdate, *s_force_update, *s_k1_system;
+    PyObject *s_name, *s_enabled, *s_nslot, *s_get, *s_get_ident, *s_MAIN_IDENT;
+    PyObject *s_queue_push, *s_repush_native, *s_scalar, *s_push, *s_push_scalar, *s_fast;
+    PyObject *s_h, *s_combat_push_scalar, *s_drop, *s_set, *s_getattribute;
     PyObject *float_zero, *int_one;
-    PyObject* ws_d;  // weapon_subsystems' globals (the reference body's)
+    PyObject* ws_d;                 // weapon_subsystems' globals (the reference body's)
     PyObject* object_getattribute;  // object.__getattribute__ (borrowed: static)
-    PyObject* tg_getattr;           // TGObject.__getattr__ (held)
 };
 
 PyObject* need(PyObject* o) {
@@ -6903,24 +6874,6 @@ Host& host() {
             return v;
         };
         p->IsOn = entry("IsOn");
-        p->ws_IsDisabled = entry("ws_IsDisabled");
-        p->ws_IsDestroyed = entry("ws_IsDestroyed");
-        p->ss_IsDisabled = entry("ss_IsDisabled");
-        p->ss_IsDestroyed = entry("ss_IsDestroyed");
-        p->GetParentShip = entry("GetParentShip");
-        p->IsDying = entry("IsDying");
-        p->IsDead = entry("IsDead");
-        p->is_offline = entry("_is_offline");
-        p->cloak_blocks = entry("_cloak_blocks_fire");
-        p->dewarp_blocks = entry("_dewarp_blocks_fire");
-        p->target_undetectable = entry("_target_undetectable");
-        p->warp_state = entry("_warp_state");
-        p->implements = entry("implements");
-        p->out_of_action = entry("_out_of_action");
-        p->held_can_engage = entry("held_can_engage");
-        p->phaser_can_engage = entry("phaser_can_engage");
-        p->in_system_range = entry("_target_in_system_range");
-        p->within_range = entry("_target_within_range_gu");
         p->add_target = entry("_add_target");
         p->set_force_update = entry("SetForceUpdate");
         p->nf_set = entry("NativeField.__set__");
@@ -6931,66 +6884,20 @@ Host& host() {
         p->d_force_update = entry("_force_update");
         p->get_ident = entry("get_ident");
         p->start_firing_py = entry("_start_firing_py");
-        p->tg_getattr = entry("TGObject.__getattr__");
         Py_DECREF(surface);
-        for (PyObject* f : {p->IsOn, p->ws_IsDisabled, p->ws_IsDestroyed, p->ss_IsDisabled,
-                            p->ss_IsDestroyed, p->GetParentShip, p->IsDying, p->IsDead,
-                            p->is_offline, p->cloak_blocks, p->dewarp_blocks,
-                            p->target_undetectable, p->warp_state, p->implements,
-                            p->out_of_action, p->held_can_engage, p->phaser_can_engage,
-                            p->in_system_range, p->within_range, p->add_target,
-                            p->set_force_update, p->nf_set, p->nf_push_scalar,
-                            p->start_firing_py, p->tg_getattr})
+        for (PyObject* f : {p->IsOn, p->add_target, p->set_force_update, p->nf_set,
+                            p->nf_push_scalar, p->start_firing_py})
             if (!PyFunction_Check(f)) throw std::logic_error("_START_FIRING_SURFACE: not a function");
         p->ws_d = PyFunction_GET_GLOBALS(p->start_firing_py);
 
         p->s_IsOn = intern("IsOn");
         p->s_is_on = intern("_is_on");
-        p->s_IsDisabled = intern("IsDisabled");
-        p->s_IsDestroyed = intern("IsDestroyed");
-        p->s_children = intern("_children");
-        p->s_condition = intern("_condition");
-        p->s_max_condition = intern("_max_condition");
-        p->s_disabled_percentage = intern("_disabled_percentage");
-        p->s_destroyed = intern("_destroyed");
-        p->s_radiation_out = intern("_radiation_out");
-        p->s_parent_subsystem = intern("_parent_subsystem");
-        p->s_GetParentShip = intern("GetParentShip");
-        p->s_parent_ship = intern("_parent_ship");
-        p->s_climb_to_ship = intern("_climb_to_ship");
         p->s_is_offline = intern("_is_offline");
-        p->s_ship_death_g = intern("_ship_death");
-        p->s_out_of_action = intern("_out_of_action");
-        p->s_implements = intern("implements");
-        p->s_IMPLEMENTS_CACHE = intern("_IMPLEMENTS_CACHE");
-        p->s_mro = intern("__mro__");
-        p->s_dict = intern("__dict__");
-        p->s_IsDying = intern("IsDying");
-        p->s_IsDead = intern("IsDead");
-        p->s_dying = intern("_dying");
-        p->s_life_time = intern("_life_time");
-        p->s_DYING_THRESHOLD = intern("DYING_THRESHOLD");
-        p->s_dead = intern("_dead");
         p->s_cloak_blocks = intern("_cloak_blocks_fire");
-        p->s_GetCloakingSubsystem = intern("GetCloakingSubsystem");
-        p->s_IsTryingToCloak = intern("IsTryingToCloak");
         p->s_dewarp_blocks = intern("_dewarp_blocks_fire");
-        p->s_ids = intern("ids");
-        p->s_warp_state = intern("_warp_state");
-        p->s_warp_state_mod = intern("_warp_state_mod");
-        p->s_is_arriving = intern("is_arriving");
         p->s_target_undetectable = intern("_target_undetectable");
-        p->s_sensor_detection = intern("engine.appc.sensor_detection");
-        p->s_can_detect = intern("can_detect");
         p->s_can_engage = intern("_can_engage");
-        p->s_target_in_system_range = intern("_target_in_system_range");
-        p->s_within_range = intern("_target_within_range_gu");
-        p->s_PHASER_MAX_RANGE_GU = intern("PHASER_MAX_RANGE_GU");
-        p->s_GetWorldLocation = intern("GetWorldLocation");
-        p->s_same_set = intern("_same_set");
-        p->s_x = intern("x");
-        p->s_y = intern("y");
-        p->s_z = intern("z");
+        p->s_GetParentShip = intern("GetParentShip");
         p->s_add_target = intern("_add_target");
         p->s_target_list = intern("_target_list");
         p->s_append = intern("append");
@@ -7017,10 +6924,8 @@ Host& host() {
         p->s_h = intern("_h");
         p->s_combat_push_scalar = intern("combat_push_scalar");
         p->s_drop = intern("_drop");
-        p->s_ShipSubsystem = intern("ShipSubsystem");
         p->s_set = intern("__set__");
         p->s_getattribute = intern("__getattribute__");
-        p->s_getattr = intern("__getattr__");
         p->object_getattribute = _PyType_Lookup(&PyBaseObject_Type, p->s_getattribute);
         if (p->object_getattribute == nullptr) throw std::logic_error("object has no __getattribute__");
         p->float_zero = need(PyFloat_FromDouble(0.0));
@@ -7033,16 +6938,6 @@ Host& host() {
             return need(c);
         };
         p->c_IsOn = contract(p->s_IsOn, p->IsOn);
-        p->c_ws_IsDisabled = contract(p->s_IsDisabled, p->ws_IsDisabled);
-        p->c_ws_IsDestroyed = contract(p->s_IsDestroyed, p->ws_IsDestroyed);
-        p->c_ss_IsDisabled = contract(p->s_IsDisabled, p->ss_IsDisabled);
-        p->c_ss_IsDestroyed = contract(p->s_IsDestroyed, p->ss_IsDestroyed);
-        p->c_GetParentShip = contract(p->s_GetParentShip, p->GetParentShip);
-        p->c_IsDying = contract(p->s_IsDying, p->IsDying);
-        p->c_IsDead = contract(p->s_IsDead, p->IsDead);
-        p->c_held_can_engage = contract(p->s_can_engage, p->held_can_engage);
-        p->c_phaser_can_engage = contract(p->s_can_engage, p->phaser_can_engage);
-        p->c_in_system_range = contract(p->s_target_in_system_range, p->in_system_range);
         p->c_add_target = contract(p->s_add_target, p->add_target);
         p->c_set_force_update = contract(p->s_SetForceUpdate, p->set_force_update);
         p->c_push_scalar = contract(p->s_push_scalar, p->nf_push_scalar);
@@ -7086,19 +6981,16 @@ K0_INLINE bool truth(PyObject* o) {
 }
 
 // The generic read, decided per type and re-decided when its version tag
-// moves (Task 5's TypeMemo, for any name): `plain` -- its __getattribute__
-// is object's and its `__dict__` the instance slot (readers::plain_dict), so
-// `o.<name>` is the instance dict's value whenever the type's own attribute
-// is absent or has no __get__ (NativeField has none); `miss_raises` -- its
-// __getattr__ is absent or TGObject's, which raises AttributeError for a
-// single-underscore name (engine/core/ids.py), so such a name found nowhere
-// is a plain AttributeError.
+// moves (Task 5's TypeMemo, for any name): `generic_get` -- its
+// __getattribute__ is object's; `plain` -- that, and its `__dict__` is the
+// instance slot (readers::plain_dict), so `o.<name>` is the instance dict's
+// value whenever the type's own attribute is absent or has no __get__
+// (NativeField has none).
 struct ReadSlot {
     PyTypeObject* type = nullptr;
     unsigned int tag = 0;
-    bool generic_get = false;  // __getattribute__ is object's
-    bool plain = false;        // generic_get, and `__dict__` the instance slot
-    bool miss_raises = false;
+    bool generic_get = false;
+    bool plain = false;
 };
 constexpr std::size_t kReadSlots = 64;
 
@@ -7107,55 +6999,29 @@ K0_INLINE const ReadSlot& reads_of(PyTypeObject* t) {
     ReadSlot& e = table[(reinterpret_cast<std::uintptr_t>(t) >> 4) % kReadSlots];
     const unsigned int tag = readers::tag_for(t);
     if (e.type != t || e.tag != tag || tag == 0) {
-        auto& h = host();
-        PyObject* ga = _PyType_Lookup(t, h.s_getattr);
         e.type = t;
         e.tag = tag;
-        e.generic_get = tag != 0 && _PyType_Lookup(t, h.s_getattribute) == h.object_getattribute;
+        e.generic_get =
+            tag != 0 && _PyType_Lookup(t, host().s_getattribute) == host().object_getattribute;
         e.plain = e.generic_get && readers::plain_dict(t);
-        e.miss_raises = e.plain && (ga == nullptr || ga == h.tg_getattr);
     }
     return e;
 }
 
-// TGObject.__getattr__'s raising rule: `name.startswith("_") and not
-// (name.startswith("__") and name.endswith("__"))`.
-K0_INLINE bool private_name(PyObject* name) {
-    const Py_ssize_t n = PyUnicode_GET_LENGTH(name);
-    if (n == 0 || PyUnicode_READ_CHAR(name, 0) != '_') return false;
-    const bool dunder = n >= 2 && PyUnicode_READ_CHAR(name, 1) == '_' &&
-                        PyUnicode_READ_CHAR(name, n - 1) == '_' &&
-                        PyUnicode_READ_CHAR(name, n - 2) == '_';
-    return !dunder;
-}
-
-// The read's answer without running Python: 1 with *out (borrowed) set, 0
-// missing (an AttributeError the generic read would raise), -1 undecided.
-K0_INLINE int fast_read(PyObject* o, PyObject* name, PyObject** out) {
-    PyTypeObject* t = o->ob_type;
-    const ReadSlot& r = reads_of(t);
-    if (!r.plain) return -1;
-    PyObject* descr = _PyType_Lookup(t, name);  // borrowed
-    if (descr != nullptr && descr->ob_type->tp_descr_get != nullptr) return -1;
-    PyObject* d = k0_dict_of(o);
-    if (d == nullptr) return -1;
-    PyObject* v = PyDict_GetItemWithError(d, name);  // borrowed
-    if (v != nullptr) {
-        *out = v;
-        return 1;
-    }
-    if (PyErr_Occurred()) throw py::error_already_set();
-    if (descr != nullptr) {
-        *out = descr;  // the class attribute itself (no __get__)
-        return 1;
-    }
-    return r.miss_raises && private_name(name) ? 0 : -1;
-}
-
-// o.<name>
+// o.<name>: the instance dict's value for a plain type whose own attribute
+// has no __get__, else the generic read.
 K0_INLINE Ref attr(PyObject* o, PyObject* name) {
-    PyObject* v = nullptr;
-    if (fast_read(o, name, &v) == 1) return borrow(v);
+    PyTypeObject* t = o->ob_type;
+    if (reads_of(t).plain) {
+        PyObject* descr = _PyType_Lookup(t, name);  // borrowed
+        if (descr == nullptr || descr->ob_type->tp_descr_get == nullptr) {
+            if (PyObject* d = k0_dict_of(o)) {
+                PyObject* v = PyDict_GetItemWithError(d, name);  // borrowed
+                if (v != nullptr) return borrow(v);
+                if (PyErr_Occurred()) throw py::error_already_set();
+            }
+        }
+    }
     return own(PyObject_GetAttr(o, name));
 }
 
@@ -7169,28 +7035,14 @@ K0_INLINE int lookup_attr(PyObject* o, PyObject* name, PyObject** r) {
 #endif
 }
 
-// getattr(o, name, default): only AttributeError gives the default.
-K0_INLINE Ref attr_or(PyObject* o, PyObject* name, PyObject* dflt) {
-    PyObject* v = nullptr;
-    const int k = fast_read(o, name, &v);
-    if (k == 1) return borrow(v);
-    if (k == 0) return borrow(dflt);
-    PyObject* r = nullptr;
-    if (lookup_attr(o, name, &r) < 0) throw py::error_already_set();
-    return r == nullptr ? borrow(dflt) : Ref(r);
-}
-
-// hasattr(o, name). A class's plain function is found (its __get__ cannot
-// fail).
+// hasattr(o, name). A plain type's own plain function is found (its __get__
+// cannot fail).
 K0_INLINE bool has(PyObject* o, PyObject* name) {
-    PyObject* v = nullptr;
     PyTypeObject* t = o->ob_type;
     if (reads_of(t).plain) {
         PyObject* descr = _PyType_Lookup(t, name);
         if (descr != nullptr && PyFunction_Check(descr)) return true;
     }
-    const int k = fast_read(o, name, &v);
-    if (k >= 0) return k == 1;
     PyObject* r = nullptr;
     const int found = lookup_attr(o, name, &r);
     if (found < 0) throw py::error_already_set();
@@ -7227,429 +7079,10 @@ K0_INLINE Ref global(PyObject* g, PyObject* name) {
 
 K0_INLINE PyObject* globals_of(PyObject* fn) { return PyFunction_GET_GLOBALS(fn); }
 
-// readers::reads_stock with the class half's answer -- yes AND no --
-// remembered here, by the type's version tag. readers remembers only a yes,
-// in a shared direct-mapped table, so a type that overrides a name
-// (PhaserSystem's _can_engage against _HeldFireWeaponSystem's, a
-// TorpedoTube's IsDisabled against WeaponSystem's), or two pairs that share
-// a slot there, would ask Python on every call. A yes from reads_stock is
-// the class half's; a no is the class half's when the instance dict
-// shadows nothing (object_reads_are_stock is `class_ok and not shadows`).
-// Two ways per set; the (type, tag) pair names one type version for the
-// process (tags are never reused), so no type is held.
-struct StockMemo {
-    PyTypeObject* type = nullptr;
-    PyObject* contract = nullptr;
-    unsigned int tag = 0;
-    bool yes = false;
-    bool plain = false;  // readers::plain_dict(type)
-};
-constexpr std::size_t kStockSets = 128;
-
-K0_INLINE StockMemo* stock_set(PyTypeObject* t, PyObject* contract) {
-    static auto* table = new StockMemo[kStockSets * 2];
-    const auto a = reinterpret_cast<std::uintptr_t>(t) >> 4;
-    const auto b = reinterpret_cast<std::uintptr_t>(contract) >> 4;
-    return &table[((a * 0x9E3779B1u ^ b * 0x85EBCA77u) % kStockSets) * 2];
-}
-
-// A method found on an object whose type has a __getattribute__ of its own
-// is that __getattribute__'s answer, which no contract can vouch for: such
-// an object is never stock (every method is called by attribute lookup).
-bool stock(PyObject* o, PyObject* contract) {
-    PyTypeObject* t = o->ob_type;
-    if (!reads_of(t).generic_get) return false;
-    const unsigned int tag = aimemo::on() ? readers::tag_for(t) : 0u;
-    StockMemo* set = tag != 0 ? stock_set(t, contract) : nullptr;
-    if (set != nullptr) {
-        for (int i = 0; i < 2; ++i) {
-            const StockMemo& e = set[i];
-            if (e.type == t && e.contract == contract && e.tag == tag)
-                return e.yes && !readers::dict_shadows(o, contract, e.plain ? 1 : 0);
-        }
-    }
-    const bool yes = readers::reads_stock(o, contract);
-    if (set != nullptr && readers::tag_for(t) == tag &&
-        (yes || !readers::dict_shadows(o, contract))) {
-        set[1] = set[0];  // the older way goes
-        set[0] = StockMemo{t, contract, tag, yes, readers::plain_dict(t)};
-    }
-    return yes;
-}
-
-// A recursion guard for the children walks (Python's own limit).
-struct Recursion {
-    explicit Recursion(const char* where) {
-        if (Py_EnterRecursiveCall(where) != 0) throw py::error_already_set();
-    }
-    ~Recursion() { Py_LeaveRecursiveCall(); }
-};
-
-// `a <op> b` as Python computes it: plain doubles for two exact floats, the
-// rich compare otherwise.
-K0_INLINE bool cmp(PyObject* a, PyObject* b, int op) {
-    if (PyFloat_CheckExact(a) && PyFloat_CheckExact(b)) {
-        const double x = PyFloat_AS_DOUBLE(a), y = PyFloat_AS_DOUBLE(b);
-        switch (op) {
-            case Py_LT: return x < y;
-            case Py_LE: return x <= y;
-            case Py_GT: return x > y;
-            default: break;
-        }
-    }
-    const int r = PyObject_RichCompareBool(a, b, op);
-    if (r < 0) throw py::error_already_set();
-    return r == 1;
-}
-
-// ── ShipSubsystem's and WeaponSystem's predicates ──────────────────────────
-
-// ShipSubsystem.IsDisabled's body: `mc <= 0.0` -> 0; else
-// `condition <= disabled_percentage * mc`.
-bool ss_is_disabled(PyObject* sub) {
-    auto& h = host();
-    Ref mc = attr(sub, h.s_max_condition);
-    if (cmp(mc.p, h.float_zero, Py_LE)) return false;
-    Ref dp = attr(sub, h.s_disabled_percentage);
-    if (PyFloat_CheckExact(dp.p) && PyFloat_CheckExact(mc.p)) {
-        const double threshold = PyFloat_AS_DOUBLE(dp.p) * PyFloat_AS_DOUBLE(mc.p);
-        Ref cond = attr(sub, h.s_condition);
-        if (PyFloat_CheckExact(cond.p)) return PyFloat_AS_DOUBLE(cond.p) <= threshold;
-        Ref t = own(PyFloat_FromDouble(threshold));
-        return cmp(cond.p, t.p, Py_LE);
-    }
-    Ref threshold = own(PyNumber_Multiply(dp.p, mc.p));
-    Ref cond = attr(sub, h.s_condition);
-    return cmp(cond.p, threshold.p, Py_LE);
-}
-
-// ShipSubsystem.IsDestroyed's body: `_destroyed` -> 1; `mc > 0.0 and
-// condition <= 0.0` -> 1; else 0.
-bool ss_is_destroyed(PyObject* sub) {
-    auto& h = host();
-    if (truth(attr(sub, h.s_destroyed).p)) return true;
-    Ref mc = attr(sub, h.s_max_condition);
-    if (!cmp(mc.p, h.float_zero, Py_GT)) return false;
-    Ref cond = attr(sub, h.s_condition);
-    return cmp(cond.p, h.float_zero, Py_LE);
-}
-
-// `ShipSubsystem.IsDisabled(self)` / `.IsDestroyed(self)` inside
-// WeaponSystem's body: its module's ShipSubsystem, that attribute now.
-bool explicit_ss(PyObject* sub, PyObject* name, PyObject* stock_fn, bool (*body)(PyObject*)) {
-    auto& h = host();
-    Ref cls = global(globals_of(h.ws_IsDisabled), h.s_ShipSubsystem);
-    Ref fn = attr(cls.p, name);
-    if (fn.p == stock_fn) return body(sub);
-    return truth(call(fn.p, {sub}).p);
-}
-
-bool is_disabled(PyObject* sub);
-bool is_destroyed(PyObject* sub);
-
-// sub.IsDisabled(), truthy.
-bool is_disabled(PyObject* sub) {
-    auto& h = host();
-    if (stock(sub, h.c_ws_IsDisabled)) {
-        if (!truth(attr(sub, h.s_children).p))
-            return explicit_ss(sub, h.s_IsDisabled, h.ss_IsDisabled, ss_is_disabled);
-        Recursion guard(" in IsDisabled");
-        Ref children = attr(sub, h.s_children);
-        Ref it = own(PyObject_GetIter(children.p));
-        while (PyObject* c = PyIter_Next(it.p)) {
-            Ref child(c);
-            if (!is_disabled(child.p)) return false;
-        }
-        if (PyErr_Occurred()) throw py::error_already_set();
-        return true;
-    }
-    if (stock(sub, h.c_ss_IsDisabled)) return ss_is_disabled(sub);
-    return truth(method(sub, h.s_IsDisabled, {}).p);
-}
-
-// sub.IsDestroyed(), truthy.
-bool is_destroyed(PyObject* sub) {
-    auto& h = host();
-    if (stock(sub, h.c_ws_IsDestroyed)) {
-        if (!truth(attr(sub, h.s_children).p))
-            return explicit_ss(sub, h.s_IsDestroyed, h.ss_IsDestroyed, ss_is_destroyed);
-        if (truth(attr(sub, h.s_destroyed).p)) return true;
-        Recursion guard(" in IsDestroyed");
-        Ref children = attr(sub, h.s_children);
-        Ref it = own(PyObject_GetIter(children.p));
-        while (PyObject* c = PyIter_Next(it.p)) {
-            Ref child(c);
-            if (!is_destroyed(child.p)) return false;
-        }
-        if (PyErr_Occurred()) throw py::error_already_set();
-        return true;
-    }
-    if (stock(sub, h.c_ss_IsDestroyed)) return ss_is_destroyed(sub);
-    return truth(method(sub, h.s_IsDestroyed, {}).p);
-}
-
-// sub.GetParentShip().
-Ref parent_ship(PyObject* sub) {
-    auto& h = host();
-    if (stock(sub, h.c_GetParentShip)) {
-        Ref ps = attr(sub, h.s_parent_ship);
-        if (ps.p != Py_None) return ps;
-        return method(sub, h.s_climb_to_ship, {});
-    }
-    return method(sub, h.s_GetParentShip, {});
-}
-
-// ship.IsDying(), truthy. DamageableObject's body: `_dying or _life_time <
-// DYING_THRESHOLD`.
-bool is_dying(PyObject* ship) {
-    auto& h = host();
-    if (!stock(ship, h.c_IsDying)) return truth(method(ship, h.s_IsDying, {}).p);
-    if (truth(attr(ship, h.s_dying).p)) return true;
-    Ref life = attr(ship, h.s_life_time);
-    Ref threshold = global(globals_of(h.IsDying), h.s_DYING_THRESHOLD);
-    return cmp(life.p, threshold.p, Py_LT);
-}
-
-// ship.IsDead(), truthy. DamageableObject's body: `_dead`.
-bool is_dead(PyObject* ship) {
-    auto& h = host();
-    if (!stock(ship, h.c_IsDead)) return truth(method(ship, h.s_IsDead, {}).p);
-    return truth(attr(ship, h.s_dead).p);
-}
-
-// ── engine.core.ids.implements ──────────────────────────────────────────────
-
-// implements(obj, name) through `fn`, the global a body reads: the stock
-// function's body (its per-class cache, ids._IMPLEMENTS_CACHE, read and
-// filled as it does) when `fn` is it, else a call.
-bool implements(PyObject* fn, PyObject* obj, PyObject* name) {
-    auto& h = host();
-    PyObject* cls = reinterpret_cast<PyObject*>(Py_TYPE(obj));
-    PyObject* cache = nullptr;  // borrowed from the stock function's globals
-    if (fn == h.implements) {
-        cache = PyDict_GetItemWithError(globals_of(fn), h.s_IMPLEMENTS_CACHE);
-        if (cache == nullptr && PyErr_Occurred()) throw py::error_already_set();
-    }
-    if (cache == nullptr || !PyDict_CheckExact(cache) || !Py_IS_TYPE(cls, &PyType_Type))
-        return truth(call(fn, {obj, name}).p);
-    Ref held_cache = borrow(cache);
-    PyObject* n = PyDict_GetItemWithError(cache, cls);  // borrowed
-    Ref names;
-    if (n == nullptr) {
-        if (PyErr_Occurred()) throw py::error_already_set();
-        names = own(PyDict_New());
-        if (PyDict_SetItem(cache, cls, names.p) < 0) throw py::error_already_set();
-    } else {
-        names = borrow(n);
-        if (!PyDict_CheckExact(names.p)) return truth(call(fn, {obj, name}).p);
-        PyObject* hit = PyDict_GetItemWithError(names.p, name);  // borrowed
-        if (hit != nullptr) {
-            Ref held = borrow(hit);
-            return truth(held.p);
-        }
-        if (PyErr_Occurred()) throw py::error_already_set();
-    }
-    bool hit = false;
-    Ref mro = attr(cls, h.s_mro);
-    Ref it = own(PyObject_GetIter(mro.p));
-    while (PyObject* k = PyIter_Next(it.p)) {
-        Ref klass(k);
-        Ref d = attr(klass.p, h.s_dict);
-        const int in = PySequence_Contains(d.p, name);
-        if (in < 0) throw py::error_already_set();
-        if (in == 1) {
-            hit = true;
-            break;
-        }
-    }
-    if (PyErr_Occurred()) throw py::error_already_set();
-    if (PyDict_SetItem(names.p, name, hit ? Py_True : Py_False) < 0)
-        throw py::error_already_set();
-    return hit;
-}
-
-// ── The gates ───────────────────────────────────────────────────────────────
-
-// ship_death._out_of_action(ship)'s body.
-bool out_of_action_body(PyObject* ship) {
-    auto& h = host();
-    if (ship == Py_None) return false;
-    PyObject* g = globals_of(h.out_of_action);
-    bool dying = false, dead = false;
-    if (implements(global(g, h.s_implements).p, ship, h.s_IsDying)) dying = is_dying(ship);
-    if (implements(global(g, h.s_implements).p, ship, h.s_IsDead)) dead = is_dead(ship);
-    return dying || dead;
-}
-
-// subsystems._is_offline(sub)'s body.
-bool is_offline_body(PyObject* sub) {
-    auto& h = host();
-    if (sub == Py_None) return false;
-    if (is_disabled(sub) || is_destroyed(sub)) return true;
-    if (attr_or(sub, h.s_radiation_out, Py_False).p == Py_True) return true;
-    Ref parent = attr_or(sub, h.s_parent_subsystem, Py_None);
-    if (parent.p != Py_None && attr_or(parent.p, h.s_radiation_out, Py_False).p == Py_True)
-        return true;
-    PyObject* g = globals_of(h.is_offline);
-    if (implements(global(g, h.s_implements).p, sub, h.s_GetParentShip)) {
-        Ref ooa = attr(global(g, h.s_ship_death_g).p, h.s_out_of_action);
-        Ref ship = parent_ship(sub);
-        if (ooa.p == h.out_of_action ? out_of_action_body(ship.p)
-                                     : truth(call(ooa.p, {ship.p}).p))
-            return true;
-    }
-    return false;
-}
-
-// `GetParentShip() if hasattr(ws, "GetParentShip") else None`.
-Ref ship_if_has(PyObject* ws) {
-    if (!has(ws, host().s_GetParentShip)) return borrow(Py_None);
-    return parent_ship(ws);
-}
-
-// weapon_subsystems._cloak_blocks_fire(ws)'s body.
-bool cloak_body(PyObject* ws) {
-    auto& h = host();
-    Ref ship = ship_if_has(ws);
-    if (ship.p == Py_None) return false;
-    Ref getter = attr_or(ship.p, h.s_GetCloakingSubsystem, Py_None);
-    if (getter.p == Py_None) return false;
-    Ref cloak = call(getter.p, {});
-    return cloak.p != Py_None && truth(method(cloak.p, h.s_IsTryingToCloak, {}).p);
-}
-
-// weapon_subsystems._dewarp_blocks_fire(ws)'s body (`ids.implements`, then
-// `_warp_state().is_arriving(ship)`; `_warp_state`'s own body returns the
-// cached `_warp_state_mod`, importing it on first use).
-bool dewarp_body(PyObject* ws) {
-    auto& h = host();
-    PyObject* g = globals_of(h.dewarp_blocks);
-    Ref impl = attr(global(g, h.s_ids).p, h.s_implements);
-    Ref ship = implements(impl.p, ws, h.s_GetParentShip) ? parent_ship(ws) : borrow(Py_None);
-    if (ship.p == Py_None) return false;
-    Ref fn = global(g, h.s_warp_state);
-    Ref mod;
-    if (fn.p == h.warp_state) {
-        Ref m = global(globals_of(h.warp_state), h.s_warp_state_mod);
-        mod = m.p == Py_None ? call(fn.p, {}) : std::move(m);
-    } else {
-        mod = call(fn.p, {});
-    }
-    return truth(method(mod.p, h.s_is_arriving, {ship.p}).p);
-}
-
-// weapon_subsystems._target_undetectable(ws, target)'s body: the import and
-// can_detect inside its `try: ... except Exception: return False`.
-bool undetectable_body(PyObject* ws, PyObject* target) {
-    auto& h = host();
-    if (target == Py_None) return false;
-    Ref ship = ship_if_has(ws);
-    if (ship.p == Py_None) return false;
-    try {
-        PyObject* m = PyImport_GetModule(h.s_sensor_detection);
-        if (m == nullptr) {
-            if (PyErr_Occurred()) throw py::error_already_set();
-            m = PyImport_Import(h.s_sensor_detection);
-        }
-        Ref mod = own(m);
-        Ref cd = attr(mod.p, h.s_can_detect);
-        return !truth(call(cd.p, {ship.p, target}).p);
-    } catch (py::error_already_set& e) {
-        if (!e.matches(PyExc_Exception)) throw;
-        return false;
-    }
-}
-
-// Each product and sum of a double stored, so no multiply-add is contracted
-// (this file is not built with -ffp-contract=off): Python's own roundings.
-K0_INLINE double rounded(double v) {
-    volatile double r = v;
-    return r;
-}
-
-// `tp.<c> - sp.<c>` as Python computes it (an exact-float difference, or
-// the generic one).
-struct Diff {
-    Ref obj;
-    double d = 0.0;
-    bool exact = false;
-};
-
-Diff diff(PyObject* tp, PyObject* sp, PyObject* name) {
-    Ref a = attr(tp, name);
-    Ref b = attr(sp, name);
-    Diff out;
-    if (PyFloat_CheckExact(a.p) && PyFloat_CheckExact(b.p)) {
-        out.d = rounded(PyFloat_AS_DOUBLE(a.p) - PyFloat_AS_DOUBLE(b.p));
-        out.exact = true;
-    } else {
-        out.obj = own(PyNumber_Subtract(a.p, b.p));
-        if (PyFloat_CheckExact(out.obj.p)) {
-            out.d = PyFloat_AS_DOUBLE(out.obj.p);
-            out.exact = true;
-        }
-    }
-    return out;
-}
-
-K0_INLINE Ref as_obj(Diff& v) {
-    if (v.obj.p != nullptr) return std::move(v.obj);
-    return own(PyFloat_FromDouble(v.d));
-}
-
-// weapon_subsystems._target_within_range_gu(ship, target, r)'s body:
-// `_same_set` is called; the distance is its arithmetic.
-bool within_range_body(PyObject* ship, PyObject* target, PyObject* r) {
-    auto& h = host();
-    if (ship == Py_None || target == Py_None) return false;
-    if (!has(ship, h.s_GetWorldLocation) || !has(target, h.s_GetWorldLocation)) return true;
-    Ref same = global(globals_of(h.within_range), h.s_same_set);
-    if (!truth(call(same.p, {ship, target}).p)) return false;
-    Ref sp = method(ship, h.s_GetWorldLocation, {});
-    Ref tp = method(target, h.s_GetWorldLocation, {});
-    Diff dx = diff(tp.p, sp.p, h.s_x);
-    Diff dy = diff(tp.p, sp.p, h.s_y);
-    Diff dz = diff(tp.p, sp.p, h.s_z);
-    if (dx.exact && dy.exact && dz.exact && PyFloat_CheckExact(r)) {
-        const double xx = rounded(dx.d * dx.d), yy = rounded(dy.d * dy.d);
-        const double zz = rounded(dz.d * dz.d);
-        const double dist_sq = rounded(rounded(xx + yy) + zz);
-        const double rr = rounded(PyFloat_AS_DOUBLE(r) * PyFloat_AS_DOUBLE(r));
-        return dist_sq <= rr;
-    }
-    Ref ox = as_obj(dx), oy = as_obj(dy), oz = as_obj(dz);
-    Ref xx = own(PyNumber_Multiply(ox.p, ox.p));
-    Ref yy = own(PyNumber_Multiply(oy.p, oy.p));
-    Ref zz = own(PyNumber_Multiply(oz.p, oz.p));
-    Ref s1 = own(PyNumber_Add(xx.p, yy.p));
-    Ref dist_sq = own(PyNumber_Add(s1.p, zz.p));
-    Ref rr = own(PyNumber_Multiply(r, r));
-    return cmp(dist_sq.p, rr.p, Py_LE);
-}
-
-// `target is not None and hasattr(self, "_can_engage") and not
-// self._can_engage(self.GetParentShip(), target)`: true when the gate
-// blocks.
-bool engage_blocks(PyObject* sys, PyObject* target) {
-    auto& h = host();
-    if (target == Py_None) return false;
-    if (stock(sys, h.c_held_can_engage)) return false;  // `return True`
-    if (stock(sys, h.c_phaser_can_engage)) {
-        Ref ship = parent_ship(sys);
-        // `return self._target_in_system_range(ship, target)`
-        if (!stock(sys, h.c_in_system_range))
-            return !truth(method(sys, h.s_target_in_system_range, {ship.p, target}).p);
-        // `return _target_within_range_gu(ship, target, PHASER_MAX_RANGE_GU)`
-        PyObject* g = globals_of(h.in_system_range);
-        Ref fn = global(g, h.s_within_range);
-        Ref r = global(g, h.s_PHASER_MAX_RANGE_GU);
-        if (fn.p == h.within_range) return !within_range_body(ship.p, target, r.p);
-        return !truth(call(fn.p, {ship.p, target, r.p}).p);
-    }
-    if (!has(sys, h.s_can_engage)) return false;
-    Ref meth = attr(sys, h.s_can_engage);
-    Ref ship = parent_ship(sys);
-    return !truth(call(meth.p, {ship.p, target}).p);
+// readers::reads_stock, never for a type with its own __getattribute__: a
+// method found through it is its answer, which no contract can vouch for.
+K0_INLINE bool stock(PyObject* o, PyObject* contract) {
+    return reads_of(o->ob_type).generic_get && readers::reads_stock(o, contract);
 }
 
 // ── The writes ──────────────────────────────────────────────────────────────
@@ -7767,13 +7200,9 @@ void add_target(PyObject* sys, PyObject* target) {
 
 // ── The body ────────────────────────────────────────────────────────────────
 
-// One gate: the global `name` of the reference body, reproduced when it is
-// the stock function, else called.
-template <typename Body>
-K0_INLINE bool gate(PyObject* name, PyObject* stock_fn, Body body,
-                    std::initializer_list<PyObject*> args) {
+// `if <gate>(*args): return` -- the reference body's global, called.
+K0_INLINE bool gate(PyObject* name, std::initializer_list<PyObject*> args) {
     Ref fn = global(host().ws_d, name);
-    if (fn.p == stock_fn) return body();
     return truth(call(fn.p, args).p);
 }
 
@@ -7783,16 +7212,17 @@ void start_firing(PyObject* sys, PyObject* target, PyObject* offset) {
     if (!(stock(sys, h.c_IsOn) ? truth(attr(sys, h.s_is_on).p)
                                : truth(method(sys, h.s_IsOn, {}).p)))
         return;
-    if (gate(h.s_is_offline, h.is_offline, [&] { return is_offline_body(sys); }, {sys}))
-        return;
-    if (gate(h.s_cloak_blocks, h.cloak_blocks, [&] { return cloak_body(sys); }, {sys}))
-        return;
-    if (gate(h.s_dewarp_blocks, h.dewarp_blocks, [&] { return dewarp_body(sys); }, {sys}))
-        return;
-    if (gate(h.s_target_undetectable, h.target_undetectable,
-             [&] { return undetectable_body(sys, target); }, {sys, target}))
-        return;
-    if (engage_blocks(sys, target)) return;
+    if (gate(h.s_is_offline, {sys})) return;
+    if (gate(h.s_cloak_blocks, {sys})) return;
+    if (gate(h.s_dewarp_blocks, {sys})) return;
+    if (gate(h.s_target_undetectable, {sys, target})) return;
+    // if (target is not None and hasattr(self, "_can_engage")
+    //         and not self._can_engage(self.GetParentShip(), target)): return
+    if (target != Py_None && has(sys, h.s_can_engage)) {
+        Ref engage = attr(sys, h.s_can_engage);
+        Ref ship = method(sys, h.s_GetParentShip, {});
+        if (!truth(call(engage.p, {ship.p, target}).p)) return;
+    }
     add_target(sys, target);
     set_field(sys, h.s_held_target, h.d_held_target, target);
     set_field(sys, h.s_held_offset, h.d_held_offset, offset);
@@ -7830,7 +7260,7 @@ PyMethodDef start_firing_def = {
     reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&start_firing_fn)),
     METH_FASTCALL,
     "start_firing(system, target, offset): WeaponSystem.StartFiring's body "
-    "(weapon_subsystems._start_firing_py) in one call."};
+    "(weapon_subsystems._start_firing_py) in one call; its gates called back."};
 
 }  // namespace startfire
 }  // namespace

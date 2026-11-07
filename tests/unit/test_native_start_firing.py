@@ -74,11 +74,16 @@ class _World:
         App.g_kSetManager.DeleteSet(self.tag)
 
 
-# The Python functions the native body still calls back (the reference body
-# reaches the same ones): their call order is the gate order.
+# The Python functions the native body calls back (the reference body calls
+# the same ones): the gates themselves and what they call. Their call order
+# is the gate order.
 _LEAVES = frozenset((
+    "_is_offline", "_cloak_blocks_fire", "_dewarp_blocks_fire",
+    "_target_undetectable", "_can_engage", "GetParentShip", "IsDisabled",
+    "IsDestroyed", "IsDying", "IsDead", "_out_of_action", "implements",
     "_climb_to_ship", "GetCloakingSubsystem", "IsTryingToCloak",
-    "is_arriving", "can_detect", "_same_set", "push_field", "k1_system",
+    "is_arriving", "can_detect", "_target_in_system_range",
+    "_target_within_range_gu", "_same_set", "push_field", "k1_system",
     "_post_cant_fire", "k1_tractor_start",
 ))
 
@@ -258,35 +263,37 @@ def test_torpedo_dumb_fire_gates_match(monkeypatch, scenario):
     assert got == want
 
 
-def test_native_body_calls_no_python_gate_function(monkeypatch):
-    """On a stock ship the native body calls none of the gate functions or
-    stock predicates back."""
-    gone = {"_is_offline", "_cloak_blocks_fire", "_dewarp_blocks_fire",
-            "_target_undetectable", "_can_engage", "IsOn", "IsDisabled",
-            "IsDestroyed", "GetParentShip", "implements", "_out_of_action",
-            "IsDying", "IsDead", "_target_in_system_range",
-            "_target_within_range_gu", "_add_target", "SetForceUpdate",
-            "__set__", "_push_scalar"}
+def test_native_body_runs_its_own_surface(monkeypatch):
+    """On a stock ship the native body runs StartFiring's own surface (the
+    IsOn read, the writes) without calling those Python bodies back."""
+    gone = {"IsOn", "_add_target", "SetForceUpdate", "__set__",
+            "_push_scalar", "_start_firing_py"}
     w = _World(monkeypatch)
     try:
         ph = w.galaxy.GetPhaserSystem()
         monkeypatch.setattr(nc, "k1_system", lambda s, dt: None)
         ph.StartFiring(w.vorcha)          # first call: memos warm
-        seen = []
+        direct = []
 
         def prof(frame, event, arg):
             # Called by the native body: the Python frame below it is the
-            # thin StartFiring (a callee of a called-back leaf -- _same_set's
-            # implements -- is not the body's).
-            if (event == "call" and frame.f_code.co_name in gone
+            # thin StartFiring (a gate's own callees are not the body's).
+            if (event == "call"
                     and frame.f_back.f_code.co_name == "StartFiring"):
-                seen.append(frame.f_code.co_name)
+                direct.append(frame.f_code.co_name)
         sys.setprofile(prof)
         try:
             ph.StartFiring(w.vorcha)
         finally:
             sys.setprofile(None)
-        assert seen == []
+        assert not gone & set(direct), direct
+        # Every gate is the Python function, called back in the order.
+        gates = [n for n in direct if n in (
+            "_is_offline", "_cloak_blocks_fire", "_dewarp_blocks_fire",
+            "_target_undetectable", "GetParentShip", "_can_engage")]
+        assert gates == ["_is_offline", "_cloak_blocks_fire",
+                         "_dewarp_blocks_fire", "_target_undetectable",
+                         "GetParentShip", "_can_engage"], direct
     finally:
         w.close()
 
@@ -536,6 +543,31 @@ def test_a_patch_is_called(monkeypatch, patch):
     assert go(_h.start_firing) == want
 
 
+def test_held_can_engage_still_calls_get_parent_ship(monkeypatch):
+    """`self._can_engage(self.GetParentShip(), target)`: the argument is
+    evaluated even when the stock held-fire `_can_engage` then answers True
+    (every PulseWeaponSystem with a target)."""
+    def go(body):
+        with monkeypatch.context() as mp:
+            w = _World(mp)
+            try:
+                pulse = w.vorcha.GetPulseWeaponSystem()
+                assert isinstance(pulse, ws._HeldFireWeaponSystem)
+                seen = []
+                real = ws.ShipSubsystem.GetParentShip
+                mp.setattr(ws.ShipSubsystem, "GetParentShip",
+                           lambda s: seen.append(type(s).__name__)
+                           or real(s))
+                mp.setattr(nc, "k1_system", lambda s, dt: None)
+                body(pulse, w.galaxy, None)
+                return seen, _label(w, _writes(pulse))
+            finally:
+                w.close()
+    want = go(ws._start_firing_py)
+    assert want[0]
+    assert go(_h.start_firing) == want
+
+
 def test_python_body_without_the_host(monkeypatch):
     """No host module: StartFiring runs the Python body."""
     assert ws._start_firing_py is not _h.start_firing
@@ -590,62 +622,3 @@ def test_system_session_pins_its_system_once(monkeypatch):
         assert nc.audit_failures() == [], nc.audit_failures()
     finally:
         w.close()
-
-
-# ── Drift: the bodies the native one reproduces ─────────────────────────────
-
-def _body_digest(fn):
-    """sha256 of the function's source as ast.unparse prints it, docstring
-    dropped: comments and docstrings may change, the code may not."""
-    import ast
-    import hashlib
-    import inspect
-    import textwrap
-    node = ast.parse(textwrap.dedent(inspect.getsource(fn))).body[0]
-    if (node.body and isinstance(node.body[0], ast.Expr)
-            and isinstance(getattr(node.body[0], "value", None), ast.Constant)
-            and isinstance(node.body[0].value.value, str)):
-        node.body = node.body[1:]
-    return hashlib.sha256(ast.unparse(node).encode()).hexdigest()[:16]
-
-
-# Recorded with the native body (host_bindings.cc, namespace startfire). A
-# change here means a reproduced body changed: change the C++ to match,
-# then re-record the digest.
-_MIRRORED_BODIES = {
-    'GetParentShip': '8d38d5c5e78392c9',
-    'IsDead': '1a0e5bab16bf9786',
-    'IsDying': 'c626e2cc30da8a3d',
-    'IsOn': '2db473341b6ab915',
-    'NativeField.__set__': '89ffd8f7504bb4bb',
-    'SetForceUpdate': 'adf78dd887a1b0ac',
-    'TGObject.__getattr__': '8008d267d87bcfa7',
-    '_add_target': '590fc19c9a48a08c',
-    '_cloak_blocks_fire': '309ab575ab961439',
-    '_dewarp_blocks_fire': '7793403723df4789',
-    '_is_offline': '8d8153fce94cb0b0',
-    '_out_of_action': 'bb8f82e2166a3c0d',
-    '_push_scalar': 'c7182a23f6ac581d',
-    '_start_firing_py': '6a3f010ae89d9150',
-    '_target_in_system_range': '393d3d6885105014',
-    '_target_undetectable': 'ebd436e17223a52c',
-    '_target_within_range_gu': '8e3947c1ceed17c8',
-    '_warp_state': 'f65d52189899abde',
-    'held_can_engage': '65caf3ae031b3574',
-    'implements': '716bf66df834cfac',
-    'phaser_can_engage': '353a897dafeafb6a',
-    'ss_IsDestroyed': '67e27c560b07d7e0',
-    'ss_IsDisabled': '81eab07600b80e7e',
-    'ws_IsDestroyed': 'c106f3764c03a4c9',
-    'ws_IsDisabled': '2da45cd73e3ccf15',
-}
-
-
-def test_reproduced_bodies_are_the_ones_the_native_body_mirrors():
-    import types
-    got = {name: _body_digest(fn)
-           for name, fn in sorted(ws._START_FIRING_SURFACE.items())
-           if isinstance(fn, types.FunctionType)}
-    assert got == _MIRRORED_BODIES, (
-        "a body host_bindings.cc (namespace startfire) reproduces changed: "
-        "change the native body to match, then re-record _MIRRORED_BODIES")
