@@ -1923,6 +1923,38 @@ def test_a_patched_driver_function_is_called_by_both_walkers(name):
                                  if e[0] == "mark"}, name
 
 
+def test_a_stock_walk_never_enters_a_forwarder():
+    """A forwarder (ai_driver's `_tick_plain`, `_dispatch_ai`, ...) runs the
+    native body through aitree_run, so a walk that fell back to calling one
+    would pass every differential and silently give back SIG-208's gain. A
+    stock walk must inline them all. Counted with sys.setprofile on the
+    forwarders' code objects, so no module global is swapped (a swap would
+    defeat the identity gate and make this vacuous)."""
+    drv = _driver()
+    names = [n for n, v in vars(drv).items()
+             if isinstance(v, types.FunctionType)
+             and v.__code__.co_names[:1] == ("_aitree_run",)] + [
+        "tick_ai", "_refresh_conditional_status", "_condition_statuses",
+        "_any_condition", "_eval_conditional"]
+    codes = {getattr(drv, n).__code__: n for n in names}
+    assert len(codes) == 21, sorted(codes.values())
+    entered = Counter()
+
+    def prof(frame, event, _arg):
+        if event == "call" and frame.f_code in codes:
+            entered[codes[frame.f_code]] += 1
+
+    sys.setprofile(prof)
+    try:
+        rec = awd.run_side(_sink_scene(), 90, native=True)
+    finally:
+        sys.setprofile(None)
+    handlers = rec.entries["native_handlers"]
+    assert len(handlers) == 7 and all(k > 0 for k in handlers), handlers
+    assert rec.entries["native_reconcile"][0] > 0, rec.entries
+    assert not entered, dict(entered)
+
+
 def test_the_ai_breakdown_path_dispatches_through_timed_dispatch():
     rec = awd.run_walk_diff(_sink_scene("_timed_dispatch", breakdown=True), 60)
     assert any(e[:3] == ("mark", "patched", "_timed_dispatch")
