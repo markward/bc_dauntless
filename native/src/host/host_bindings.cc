@@ -6810,6 +6810,433 @@ PyMethodDef subsystem_is_type_of_def = {
 }  // namespace istype
 }  // namespace
 
+// ── GetNearObjects' cached query (engine/appc/planet.py) ────────────────────
+// prox_near(cand, px, py, pz, r) is ProximityManager._near_objects_cached in
+// one call, the same objects in the same order as a _ProximityIteration:
+//   1. A radius per store-backed entry (`_size`): read here when the entry
+//      resolves GetRadius to ObjectClass's own body and its dict does not
+//      shadow it (readers::reads_stock on reader_contract("GetRadius")), as
+//      the guarded `_radius * _scale` on plain floats: straight from the
+//      instance dict for a type the per-call TypeMemo found plain
+//      (fast_radius), else avoid::read_radius; otherwise planet._size(obj)
+//      is called. Read on every query, never kept (a SetRadius / SetScale
+//      bumps no generation).
+//   2. The kernel's own compare (TransformStore::near_indices_sized, built
+//      with -ffp-contract=off) on the cache's `packed` handles, in place.
+//   3. `_reports` per hit: physics, else participation (radius > 0) by the
+//      same rule as step 1, else planet._radius_participates(obj); the
+//      dup_of twin rule for a manager entry.
+//   4. Unstored entries: `_reports`, then planet._unstored_reaches.
+//   5. The two ascending index lists merged (sorted(keep + more)).
+// Python runs in the order the Python path runs it. The cache's lists are
+// held for the call; every item is re-read by index (bounds-checked) after
+// any Python call, and an object is held while Python runs. A stale handle
+// raises transform_store.StaleHandleError(what) from RuntimeError(what), as
+// NativeTransformStore.near_indices_sized does; a point coordinate float()
+// rejects with TypeError does too (that wrapper's float(x)).
+namespace {
+namespace proxnear {
+
+struct Host {
+    PyObject *s_objs, *s_is_set, *s_physics, *s_dup_of, *s_packed, *s_packed_pos,
+        *s_unstored_pos;
+    PyObject *s_size, *s_participates, *s_unstored_reaches, *s_iteration;
+    PyObject *s_GetRadius, *s_radius, *s_scale, *s_getattribute;
+    PyObject* radius_field;  // ObjectClass.__dict__["_radius"] (held)
+    PyObject* scale_field;   // ObjectClass.__dict__["_scale"] (held)
+    PyObject* object_getattribute;  // object.__dict__["__getattribute__"]
+    PyObject* planet;        // engine.appc.planet
+    PyObject* stale_error;   // engine.appc.transform_store.StaleHandleError
+    PyObject* reads_radius;  // ai_native.reader_contract("GetRadius")
+};
+
+Host& host() {
+    static Host* h = [] {
+        auto* p = new Host();
+        p->s_objs = avoid::intern("objs");
+        p->s_is_set = avoid::intern("is_set");
+        p->s_physics = avoid::intern("physics");
+        p->s_dup_of = avoid::intern("dup_of");
+        p->s_packed = avoid::intern("packed");
+        p->s_packed_pos = avoid::intern("packed_pos");
+        p->s_unstored_pos = avoid::intern("unstored_pos");
+        p->s_size = avoid::intern("_size");
+        p->s_participates = avoid::intern("_radius_participates");
+        p->s_unstored_reaches = avoid::intern("_unstored_reaches");
+        p->s_iteration = avoid::intern("_ProximityIteration");
+        p->s_GetRadius = avoid::intern("GetRadius");
+        p->s_radius = avoid::intern("_radius");
+        p->s_scale = avoid::intern("_scale");
+        p->s_getattribute = avoid::intern("__getattribute__");
+        p->object_getattribute = _PyType_Lookup(&PyBaseObject_Type, p->s_getattribute);
+        if (p->object_getattribute == nullptr)
+            throw std::logic_error("prox_near: object has no __getattribute__");
+        Py_INCREF(p->object_getattribute);
+        PyObject* objects = PyImport_ImportModule("engine.appc.objects");
+        if (objects == nullptr) throw py::error_already_set();
+        PyObject* oc = PyObject_GetAttrString(objects, "ObjectClass");
+        Py_DECREF(objects);
+        if (oc == nullptr) throw py::error_already_set();
+        PyObject* od = reinterpret_cast<PyTypeObject*>(oc)->tp_dict;
+        p->radius_field = PyDict_GetItemWithError(od, p->s_radius);
+        p->scale_field = p->radius_field ? PyDict_GetItemWithError(od, p->s_scale) : nullptr;
+        if (p->radius_field == nullptr || p->scale_field == nullptr) {
+            Py_DECREF(oc);
+            if (PyErr_Occurred()) throw py::error_already_set();
+            throw std::logic_error("prox_near: ObjectClass has no _radius / _scale field");
+        }
+        Py_INCREF(p->radius_field);
+        Py_INCREF(p->scale_field);
+        Py_DECREF(oc);
+        p->planet = PyImport_ImportModule("engine.appc.planet");
+        if (p->planet == nullptr) throw py::error_already_set();
+        PyObject* ts = PyImport_ImportModule("engine.appc.transform_store");
+        if (ts == nullptr) throw py::error_already_set();
+        p->stale_error = PyObject_GetAttrString(ts, "StaleHandleError");
+        Py_DECREF(ts);
+        if (p->stale_error == nullptr) throw py::error_already_set();
+        PyObject* ai_native = PyImport_ImportModule("engine.appc.ai_native");
+        if (ai_native == nullptr) throw py::error_already_set();
+        PyObject* c = PyObject_CallMethod(ai_native, "reader_contract", "s", "GetRadius");
+        Py_DECREF(ai_native);
+        if (c == nullptr) throw py::error_already_set();
+        if (!PyTuple_CheckExact(c)) {
+            Py_DECREF(c);
+            throw std::logic_error("ai_native.reader_contract: not a tuple");
+        }
+        p->reads_radius = c;  // held for good
+        return p;
+    }();
+    return *h;
+}
+
+using avoid::own;
+
+// The cache's lists, held for the call.
+struct Cand {
+    py::object objs, is_set, physics, dup_of, packed_pos, unstored_pos;
+};
+
+PyObject* list_attr(PyObject* cand, PyObject* name) {
+    PyObject* v = PyObject_GetAttr(cand, name);
+    if (v == nullptr) throw py::error_already_set();
+    if (!PyList_Check(v)) {
+        Py_DECREF(v);
+        PyErr_Format(PyExc_TypeError, "prox_near: cand.%U is not a list", name);
+        throw py::error_already_set();
+    }
+    return v;
+}
+
+// `list[i]` as Python indexes it (i >= 0 here): borrowed, IndexError past the
+// end. Re-read after any Python call rather than held across it. Fields are
+// read directly: CPython's static-inline accessors are calls at -O0.
+K0_INLINE PyObject* at(const py::object& list, Py_ssize_t i) {
+    auto* l = reinterpret_cast<PyListObject*>(list.ptr());
+    if (i < 0 || i >= l->ob_base.ob_size) {
+        PyErr_SetString(PyExc_IndexError, "list index out of range");
+        throw py::error_already_set();
+    }
+    return l->ob_item[i];
+}
+
+K0_INLINE Py_ssize_t index_at(const py::object& list, Py_ssize_t i) {
+    PyObject* o = at(list, i);
+    const Py_ssize_t v = o->ob_type == &PyLong_Type ? PyLong_AsSsize_t(o)
+                                                    : PyNumber_AsSsize_t(o, PyExc_IndexError);
+    if (v == -1 && PyErr_Occurred()) throw py::error_already_set();
+    return v;
+}
+
+bool truth_at(const py::object& list, Py_ssize_t i) {
+    return avoid::truth(at(list, i));
+}
+
+// The class half of the fast read, remembered for the call per type and
+// re-decided when the type's version tag moves (any attribute of it or of a
+// base set or deleted). `fast`: the type is remembered stock for GetRadius
+// (readers::known_stock), its `__dict__` is the instance slot (plain_dict),
+// `__getattribute__` is object's, and `_radius` / `_scale` resolve to
+// ObjectClass's own fields. Then `obj._radius` is the instance dict's value
+// whenever the field's type has no __get__ (NativeField has none: checked per
+// read), and a missing value is left to the generic read.
+struct TypeMemo {
+    const Host* host = &proxnear::host();
+    PyTypeObject* type = nullptr;
+    unsigned int tag = 0;
+    bool fast = false;
+};
+
+void decide(PyTypeObject* t, unsigned int tag, TypeMemo& m) {
+    auto& h = host();
+    m.type = t;
+    m.tag = tag;
+    m.fast = tag != 0 && readers::known_stock(t, h.reads_radius) && readers::plain_dict(t) &&
+             _PyType_Lookup(t, h.s_getattribute) == h.object_getattribute &&
+             _PyType_Lookup(t, h.s_radius) == h.radius_field &&
+             _PyType_Lookup(t, h.s_scale) == h.scale_field;
+}
+
+// ObjectClass.GetRadius read straight from the instance dict: true with `out`
+// set, false (no error) when the generic path must decide. No Python runs.
+K0_INLINE bool fast_radius(PyObject* o, TypeMemo& m, double& out) {
+    PyTypeObject* t = o->ob_type;
+    const unsigned int tag = (t->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) ? t->tp_version_tag : 0u;
+    if (t != m.type || tag != m.tag) decide(t, tag, m);
+    if (!m.fast) return false;
+    const Host& h = *m.host;
+    if (h.radius_field->ob_type->tp_descr_get != nullptr ||
+        h.scale_field->ob_type->tp_descr_get != nullptr)
+        return false;
+    PyObject* d = k0_dict_of(o);
+    if (d == nullptr) return false;
+    // readers::dict_shadows' rule, for this one-name contract.
+    PyObject* shadow = PyDict_GetItemWithError(d, h.s_GetRadius);
+    if (shadow != nullptr || PyErr_Occurred()) {
+        PyErr_Clear();
+        return false;
+    }
+    PyObject* rv = PyDict_GetItemWithError(d, h.s_radius);
+    if (rv == nullptr || rv->ob_type != &PyFloat_Type) {
+        PyErr_Clear();
+        return false;
+    }
+    PyObject* sv = PyDict_GetItemWithError(d, h.s_scale);
+    if (sv == nullptr || sv->ob_type != &PyFloat_Type) {
+        PyErr_Clear();
+        return false;
+    }
+    const double r = reinterpret_cast<PyFloatObject*>(rv)->ob_fval;
+    const double s = reinterpret_cast<PyFloatObject*>(sv)->ob_fval;
+    out = (s > 0.0 && std::isfinite(s)) ? r * s : r;
+    return true;
+}
+
+// A stock GetRadius read here: true with `out` set, false (no error) when the
+// object must be asked in Python. A stock test that raises is "ask Python"
+// (its error dropped): Python's own path never runs that test. The caller
+// holds `o`.
+bool native_radius(PyObject* o, double& out) {
+    try {
+        if (!readers::reads_stock(o, host().reads_radius)) return false;
+    } catch (py::error_already_set&) {
+        return false;
+    }
+    return avoid::read_radius(o, out);
+}
+
+PyObject* call_planet(PyObject* name, PyObject* o) {
+    py::object fn = own(PyObject_GetAttr(host().planet, name));
+    return PyObject_CallOneArg(fn.ptr(), o);
+}
+
+// planet._size(obj).
+double size_of(PyObject* o, TypeMemo& m) {
+    double v;
+    if (fast_radius(o, m, v)) return v;
+    py::object keep = py::reinterpret_borrow<py::object>(o);
+    if (native_radius(o, v)) {
+        m.type = nullptr;  // may now be remembered stock: decide again
+        return v;
+    }
+    py::object r = own(call_planet(host().s_size, o));
+    v = PyFloat_AsDouble(r.ptr());
+    if (v == -1.0 && PyErr_Occurred()) throw py::error_already_set();
+    return v;
+}
+
+// planet._radius_participates(obj).
+bool participates(PyObject* o, TypeMemo& m) {
+    double v;
+    if (fast_radius(o, m, v)) return v > 0.0;
+    py::object keep = py::reinterpret_borrow<py::object>(o);
+    if (native_radius(o, v)) {
+        m.type = nullptr;
+        return v > 0.0;
+    }
+    py::object r = own(call_planet(host().s_participates, o));
+    return avoid::truth(r.ptr());
+}
+
+// planet._reports(cand, i).
+bool reports(const Cand& c, Py_ssize_t i, TypeMemo& m) {
+    if (truth_at(c.is_set, i)) return truth_at(c.physics, i) || participates(at(c.objs, i), m);
+    const Py_ssize_t d = index_at(c.dup_of, i);
+    return d < 0 || !(truth_at(c.physics, d) || participates(at(c.objs, d), m));
+}
+
+// float(o), as NativeTransformStore.near_indices_sized takes it.
+double coordinate(PyObject* o) {
+    if (PyFloat_CheckExact(o)) return PyFloat_AS_DOUBLE(o);
+    PyObject* f = PyNumber_Float(o);
+    if (f == nullptr) throw py::error_already_set();
+    const double v = PyFloat_AS_DOUBLE(f);
+    Py_DECREF(f);
+    return v;
+}
+
+// StaleHandleError(msg) from <the pending exception>: the store wrapper's
+// `raise StaleHandleError(str(exc)) from exc`.
+void raise_stale_from_pending() {
+    PyObject *type, *value, *tb;
+    PyErr_Fetch(&type, &value, &tb);
+    PyErr_NormalizeException(&type, &value, &tb);
+    if (tb != nullptr) PyException_SetTraceback(value, tb);
+    Py_XDECREF(type);
+    Py_XDECREF(tb);
+    PyObject* msg = PyObject_Str(value);
+    if (msg == nullptr) {
+        Py_DECREF(value);
+        throw py::error_already_set();
+    }
+    PyObject* err = PyObject_CallOneArg(host().stale_error, msg);
+    Py_DECREF(msg);
+    if (err == nullptr) {
+        Py_DECREF(value);
+        throw py::error_already_set();
+    }
+    Py_INCREF(value);
+    PyException_SetContext(err, value);  // steals one reference
+    PyException_SetCause(err, value);    // steals the other
+    PyErr_SetObject(host().stale_error, err);
+    Py_DECREF(err);
+    throw py::error_already_set();
+}
+
+// Step 2: the hit positions (ascending) of `packed` within reach.
+void compare(PyObject* packed, const std::vector<double>& radii, PyObject* const* xyz,
+             double r, std::vector<std::uint32_t>& hits) {
+    double p[3];
+    for (int k = 0; k < 3; ++k) {
+        try {
+            p[k] = coordinate(xyz[k]);
+        } catch (py::error_already_set& e) {
+            e.restore();
+            if (PyErr_ExceptionMatches(PyExc_TypeError)) raise_stale_from_pending();
+            throw py::error_already_set();
+        }
+    }
+    Py_buffer view;
+    if (PyObject_GetBuffer(packed, &view, PyBUF_FORMAT | PyBUF_ND) != 0)
+        throw py::error_already_set();
+    const bool flat = view.itemsize == sizeof(std::uint32_t) && view.ndim == 1 &&
+                      view.shape[0] % 2 == 0;
+    const std::size_t n = flat ? static_cast<std::size_t>(view.shape[0]) / 2 : 0;
+    if (!flat || n != radii.size()) {
+        PyBuffer_Release(&view);
+        PyErr_SetString(PyExc_ValueError,
+                        !flat ? "handles: flat uint32 (index, generation) pairs"
+                              : "radii: one per handle pair");
+        throw py::error_already_set();
+    }
+    std::string stale;
+    try {
+        dauntless::transform_store().near_indices_sized(
+            static_cast<const std::uint32_t*>(view.buf), n, radii.data(), p, r, hits);
+    } catch (const dauntless::StaleHandle& e) {
+        stale = e.what();
+    } catch (...) {
+        PyBuffer_Release(&view);
+        throw;
+    }
+    PyBuffer_Release(&view);
+    if (!stale.empty()) {
+        PyErr_SetString(PyExc_RuntimeError, stale.c_str());
+        raise_stale_from_pending();
+    }
+}
+
+PyObject* near(PyObject* cand_obj, PyObject* const* xyz, PyObject* r_obj) {
+    auto& h = host();
+    const double r = PyFloat_AsDouble(r_obj);
+    if (r == -1.0 && PyErr_Occurred()) throw py::error_already_set();
+    Cand c;
+    c.objs = own(list_attr(cand_obj, h.s_objs));
+    c.is_set = own(list_attr(cand_obj, h.s_is_set));
+    c.physics = own(list_attr(cand_obj, h.s_physics));
+    c.dup_of = own(list_attr(cand_obj, h.s_dup_of));
+    c.packed_pos = own(list_attr(cand_obj, h.s_packed_pos));
+    c.unstored_pos = own(list_attr(cand_obj, h.s_unstored_pos));
+
+    py::object packed = own(PyObject_GetAttr(cand_obj, h.s_packed));
+
+    TypeMemo memo;
+    std::vector<Py_ssize_t> keep;
+    if (avoid::truth(packed.ptr())) {  // `if cand.packed:`
+        std::vector<double> radii;
+        radii.reserve(static_cast<std::size_t>(PyList_GET_SIZE(c.packed_pos.ptr())));
+        for (Py_ssize_t k = 0; k < PyList_GET_SIZE(c.packed_pos.ptr()); ++k)
+            radii.push_back(size_of(at(c.objs, index_at(c.packed_pos, k)), memo));
+        std::vector<std::uint32_t> hits;
+        compare(packed.ptr(), radii, xyz, r, hits);
+        for (std::uint32_t k : hits) {
+            const Py_ssize_t i = index_at(c.packed_pos, static_cast<Py_ssize_t>(k));
+            if (reports(c, i, memo)) keep.push_back(i);
+        }
+    }
+    if (PyList_GET_SIZE(c.unstored_pos.ptr()) > 0) {
+        std::vector<Py_ssize_t> more;
+        py::object fn;
+        for (Py_ssize_t k = 0; k < PyList_GET_SIZE(c.unstored_pos.ptr()); ++k) {
+            const Py_ssize_t i = index_at(c.unstored_pos, k);
+            if (!reports(c, i, memo)) continue;
+            if (!fn) fn = own(PyObject_GetAttr(h.planet, h.s_unstored_reaches));
+            py::object o = py::reinterpret_borrow<py::object>(at(c.objs, i));
+            PyObject* args[5] = {o.ptr(), xyz[0], xyz[1], xyz[2], r_obj};
+            py::object res = own(PyObject_Vectorcall(fn.ptr(), args, 5, nullptr));
+            if (avoid::truth(res.ptr())) more.push_back(i);
+        }
+        if (!more.empty()) {
+            if (keep.empty()) {
+                keep.swap(more);
+            } else {
+                std::vector<Py_ssize_t> merged;
+                merged.reserve(keep.size() + more.size());
+                std::merge(keep.begin(), keep.end(), more.begin(), more.end(),
+                           std::back_inserter(merged));
+                keep.swap(merged);
+            }
+        }
+    }
+    // _ProximityIteration([objs[i] for i in keep]).
+    py::object items = own(PyList_New(static_cast<Py_ssize_t>(keep.size())));
+    for (std::size_t k = 0; k < keep.size(); ++k) {
+        PyObject* o = at(c.objs, keep[k]);
+        Py_INCREF(o);
+        PyList_SET_ITEM(items.ptr(), static_cast<Py_ssize_t>(k), o);
+    }
+    py::object cls = own(PyObject_GetAttr(h.planet, h.s_iteration));
+    return PyObject_CallOneArg(cls.ptr(), items.ptr());
+}
+
+PyObject* prox_near_fn(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 5) {
+        PyErr_SetString(PyExc_TypeError, "prox_near(cand, px, py, pz, r)");
+        return nullptr;
+    }
+    try {
+        return near(args[0], args + 1, args[4]);
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+}
+
+PyMethodDef prox_near_def = {
+    "prox_near",
+    reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&prox_near_fn)),
+    METH_FASTCALL,
+    "prox_near(cand, px, py, pz, r): ProximityManager._near_objects_cached, "
+    "radii and participation read natively for stock GetRadius."};
+
+}  // namespace proxnear
+}  // namespace
+
 // ── SelectTarget's candidate rating (engine/appc/ai_optimized.py) ───────────
 // combat_ai_target_rating stands in for SelectTarget.GetTargetRating
 // (AI/Preprocessors.py:1481-1608) for a stock instance (the caller decided
@@ -15431,6 +15858,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.add_object("subsystem_is_type_of",
                  py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                      &istype::subsystem_is_type_of_def, nullptr, m.attr("__name__").ptr())));
+    m.add_object("prox_near",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &proxnear::prox_near_def, nullptr, m.attr("__name__").ptr())));
     m.add_object("point_copy",
                  py::reinterpret_steal<py::object>(PyCFunction_NewEx(
                      &g_point_copy_def, nullptr,
