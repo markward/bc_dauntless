@@ -11,6 +11,11 @@ that compute directions, dot products, and cross products behave correctly.
 
 import math as _math
 
+try:
+    import _dauntless_host as _h
+except ImportError:  # pure-Python runs: no native constructor
+    _h = None
+
 
 class TGPoint3:
     """Mutable 3-component vector with x, y, z float attributes."""
@@ -156,6 +161,12 @@ class TGPoint3:
 
     def __repr__(self) -> str:
         return f"TGPoint3({self.x}, {self.y}, {self.z})"
+
+
+if _h is not None and hasattr(_h, "point_register"):
+    # Native getters build TGPoint3 with its slots written directly; the
+    # binding validates the layout and raises if this class ever changes.
+    _h.point_register(TGPoint3)
 
 
 class TGMatrix3:

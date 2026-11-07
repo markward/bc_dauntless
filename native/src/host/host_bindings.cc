@@ -20,6 +20,7 @@
 #include <exception>
 
 #include <pybind11/pybind11.h>
+#include <structmember.h>
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
@@ -5370,6 +5371,123 @@ static py::object& bench_point_class() {
     static py::object* cls = new py::object();
     return *cls;
 }
+
+// ── The native TGPoint3 constructor (phase 6 AI part 3, task 1) ────────────
+// engine.appc.math.TGPoint3 is a __slots__ class: three PyObject* members at
+// fixed offsets after the object header. make_point allocates one with the
+// type's own tp_alloc (what object.__new__ calls: GC-tracked, zeroed, no
+// dict or weaklist) and writes three fresh floats at those offsets, so no
+// __init__ runs and the result is bit-identical to TGPoint3(x, y, z). The
+// offsets are read ONCE from the slot descriptors at point_register; a class
+// of any other layout is refused there, and make_point throws until one is
+// registered. Intentionally leaked state (no destructor at shutdown).
+struct PointLayout {
+    PyTypeObject* type = nullptr;
+    Py_ssize_t off[3] = {0, 0, 0};
+};
+static PointLayout& point_layout() {
+    static PointLayout* l = new PointLayout();
+    return *l;
+}
+
+// New reference. Throws std::runtime_error (pybind: RuntimeError) when no
+// type is registered; a Python error from allocation becomes error_already_set.
+PyObject* make_point(double x, double y, double z) {
+    const PointLayout& l = point_layout();
+    if (!l.type) throw std::runtime_error("make_point: no TGPoint3 registered");
+    PyObject* fx = PyFloat_FromDouble(x);
+    PyObject* fy = fx ? PyFloat_FromDouble(y) : nullptr;
+    PyObject* fz = fy ? PyFloat_FromDouble(z) : nullptr;
+    PyObject* obj = fz ? l.type->tp_alloc(l.type, 0) : nullptr;
+    if (!obj) {
+        Py_XDECREF(fx);
+        Py_XDECREF(fy);
+        Py_XDECREF(fz);
+        if (!PyErr_Occurred()) PyErr_NoMemory();
+        throw py::error_already_set();
+    }
+    char* base = reinterpret_cast<char*>(obj);
+    *reinterpret_cast<PyObject**>(base + l.off[0]) = fx;
+    *reinterpret_cast<PyObject**>(base + l.off[1]) = fy;
+    *reinterpret_cast<PyObject**>(base + l.off[2]) = fz;
+    return obj;
+}
+
+static void point_register_impl(py::object cls) {
+    auto bad = [](const char* why) {
+        throw py::value_error(std::string("point_register: ") + why);
+    };
+    if (!PyType_Check(cls.ptr())) bad("not a class");
+    auto* t = reinterpret_cast<PyTypeObject*>(cls.ptr());
+    py::dict d = py::reinterpret_borrow<py::dict>(t->tp_dict);
+    if (!d.contains("__slots__")) bad("no __slots__");
+    py::tuple want = py::make_tuple("x", "y", "z");
+    if (!py::reinterpret_borrow<py::object>(d["__slots__"]).equal(want))
+        bad("__slots__ is not ('x', 'y', 'z')");
+    if (d.contains("__new__")) bad("defines __new__");
+    if (!d.contains("__init__")) bad("no __init__");
+    py::object init = d["__init__"];
+    if (!py::hasattr(init, "__module__") ||
+        py::str(init.attr("__module__")).cast<std::string>() !=
+            "engine.appc.math")
+        bad("__init__ is not the engine's");
+    if (t->tp_new != PyBaseObject_Type.tp_new) bad("custom tp_new");
+    if (t->tp_dictoffset != 0 || t->tp_weaklistoffset != 0)
+        bad("has a dict or weaklist");
+    if (t->tp_base != &PyBaseObject_Type) bad("has a base class");
+    if (t->tp_basicsize !=
+        static_cast<Py_ssize_t>(sizeof(PyObject) + 3 * sizeof(PyObject*)))
+        bad("unexpected object size");
+    PointLayout fresh;
+    fresh.type = t;
+    const char* names[3] = {"x", "y", "z"};
+    for (int i = 0; i < 3; ++i) {
+        PyObject* desc = PyDict_GetItemString(t->tp_dict, names[i]);
+        if (!desc || !PyObject_TypeCheck(desc, &PyMemberDescr_Type))
+            bad("slot is not a member descriptor");
+        PyMemberDef* m = reinterpret_cast<PyMemberDescrObject*>(desc)->d_member;
+        if (m->type != T_OBJECT_EX || (m->flags & READONLY))
+            bad("slot is not a writable object member");
+        if (m->offset < static_cast<Py_ssize_t>(sizeof(PyObject)) ||
+            m->offset + static_cast<Py_ssize_t>(sizeof(PyObject*)) >
+                t->tp_basicsize)
+            bad("slot offset out of range");
+        fresh.off[i] = m->offset;
+    }
+    // Hold the class: the cache keeps a raw pointer.
+    Py_INCREF(cls.ptr());
+    PointLayout& l = point_layout();
+    if (l.type) Py_DECREF(reinterpret_cast<PyObject*>(l.type));
+    l = fresh;
+}
+
+// benchmark-only: a raw METH_FASTCALL (i, g) -> make_point(store position).
+static PyObject* bench_slots_point_fn(PyObject*, PyObject* const* args,
+                                      Py_ssize_t nargs) {
+    if (nargs != 2) {
+        PyErr_SetString(PyExc_TypeError, "bench_slots_point(i, g)");
+        return nullptr;
+    }
+    const unsigned long i = PyLong_AsUnsignedLong(args[0]);
+    const unsigned long g = PyLong_AsUnsignedLong(args[1]);
+    if (PyErr_Occurred()) return nullptr;
+    try {
+        const auto p = dauntless::transform_store().position(
+            static_cast<std::uint32_t>(i), static_cast<std::uint32_t>(g));
+        return make_point(p[0], p[1], p[2]);
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_ValueError, e.what());
+        return nullptr;
+    }
+}
+static PyMethodDef g_bench_slots_def = {
+    "bench_slots_point",
+    reinterpret_cast<PyCFunction>(
+        reinterpret_cast<void (*)()>(&bench_slots_point_fn)),
+    METH_FASTCALL, "bench_slots_point(i, g): make_point(store position)."};
 
 // ── The native set index (engine/appc/set_index.py) ─────────────────────────
 // One SetIndex (native/src/combat/.../set_index.h) mirrors every
@@ -14900,6 +15018,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const auto p = dauntless::transform_store().position(i, g);
               return py::make_tuple(p[0], p[1], p[2]);
           });
+    m.def("point_register", &point_register_impl);
+    m.def("point_make", [](double x, double y, double z) {
+        return py::reinterpret_steal<py::object>(make_point(x, y, z));
+    });
     m.def("bench_set_point_class",
           [](py::object cls) { bench_point_class() = std::move(cls); });
     m.def("bench_new_point",
@@ -14914,6 +15036,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               pt.attr("y") = p[1];
               pt.attr("z") = p[2];
           });
+    m.add_object("bench_slots_point",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &g_bench_slots_def, nullptr, m.attr("__name__").ptr())));
     struct BenchPoint {
         double x, y, z;
     };
