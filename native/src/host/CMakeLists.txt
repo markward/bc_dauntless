@@ -4,11 +4,23 @@
 # generates PyInit__dauntless_host, used by both consumers.
 set(HOST_BINDINGS_SOURCES
     host_bindings.cc
+    aitree.cc
     frame_dump.cc
     combat_write_apply.cc
     motion_write_apply.cc
     subsystem_write_apply.cc
 )
+
+# The AI tree engine (aitree.cc) must be bit-identical to the Python driver
+# it replaces, so no multiply-add may be contracted (the clang pragma in the
+# source too; MSVC: /fp:precise), and it is optimised in Debug as well (Mark
+# runs Debug; the AI stage is a frame cost), as native/src/combat does.
+if(MSVC)
+    set_source_files_properties(aitree.cc PROPERTIES COMPILE_OPTIONS "/fp:precise")
+else()
+    set_source_files_properties(aitree.cc PROPERTIES
+        COMPILE_OPTIONS "-ffp-contract=off;$<$<CONFIG:Debug>:-O2>")
+endif()
 
 # Host logic with C++ tests (native/tests/host): the developer gate and the
 # bindings' testable bodies. Linked by both host targets and host_tests, so

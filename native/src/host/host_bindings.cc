@@ -10,6 +10,7 @@
 // through the remaining bindings.
 
 #include "host_bindings.h"
+#include "aitree.h"
 #include "combat_effect_queue.h"
 #include "combat_write_apply.h"
 #include "motion_write_apply.h"
@@ -16657,6 +16658,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
     }
     // ── The memos' version guard and switch (the `aimemo` namespace) ─────
     for (PyMethodDef& def : aimemo::kDefs) {
+        PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
+        if (fn == nullptr) throw py::error_already_set();
+        m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));
+    }
+    // ── The AI tree engine (aitree.h): the roster and its sleep scheduling ─
+    for (PyMethodDef& def : dauntless::host::aitree::method_defs()) {
         PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
         if (fn == nullptr) throw py::error_already_set();
         m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));

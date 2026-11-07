@@ -83,9 +83,12 @@ class _Preprocessor:
         return self._interval
 
 
-@pytest.fixture
-def drive(monkeypatch):
-    """Run one ship's real AI tree through the real tick_all_ai."""
+@pytest.fixture(params=["python", "native"])
+def drive(monkeypatch, request):
+    """Run one ship's real AI tree through the real tick_all_ai, under each
+    roster (phase 6 AI part 4: the native roster keeps every invariant)."""
+    monkeypatch.setattr(ai_driver, "_native_walker",
+                        request.param == "native")
 
     def run(ai, ticks, max_sleep, start=0.0):
         ship = _Ship(ai)
@@ -170,7 +173,7 @@ def test_a_dormant_preprocessing_child_is_re_probed_as_promptly_asleep(drive):
 
 
 def test_every_due_time_gate_in_the_driver_records_its_due_time():
-    """Structural backstop for the invariant _note_due's docstring claims.
+    """Structural backstop for the invariant _note_due's comment claims.
 
     The behavioural tests above cover the three gates that exist today. This one
     covers the gate somebody adds next year: any comparison of `game_time`

@@ -467,8 +467,11 @@ def test_add_ai_on_a_priority_list_being_scanned():
                 if any(e[:2] == ("call", "node.AddAI") for e in log))
     names = [e[1] for e in tick]
     added = next(e for e in tick if e[:2] == ("call", "node.AddAI"))[3][1]
+    assert added[0] == "ai", added                  # the AddAI's node argument
     after = tick[names.index("node.AddAI"):]
-    assert any(e[:2] == ("call", "script.Update") for e in after), after
+    # The ADDED node's own script Update (a hook logs under its node's ID).
+    assert any(e[:2] == ("call", "script.Update") and e[2] == ("int", added[1])
+               for e in after), (added, after)
 
 
 # ── escaping exceptions ──────────────────────────────────────────────────────
@@ -675,6 +678,265 @@ def test_injected_node_type_and_patched_stock_handler_are_honoured():
     assert _count(rec, "node.IsInterruptable") >= 2 * walks, rec.calls()
 
 
+# ── the roster and its sleep scheduling (Task 2: native roster) ─────────────
+
+def _walked_ticks(rec, name):
+    """Ticks in which ship `name`'s tree was walked: its out-of-action gate
+    (called at the root of every walk) was logged for it."""
+    who = ("obj", "ShipClass", name)
+    return [t for t, (log, _s) in enumerate(rec.ticks)
+            if any(e[:2] == ("call", "_out_of_action") and e[2] == who
+                   for e in log)]
+
+
+def _sleeper_scene(mp):
+    """A ship whose only leaf runs every 0.5 s sleeps to the 4-tick cap; an
+    every-tick ship beside it is walked every tick."""
+    sleeper = _ship("Sleeper")
+    _install(sleeper, _plist(sleeper, "SRoot",
+                             (1, _leaf(sleeper, "Slow", interval=0.5))))
+    awake = _ship("Awake")
+    _install(awake, _plist(awake, "ARoot", (1, _leaf(awake, "Fast"))))
+    return _scene_of(mp, [sleeper, awake])
+
+
+def test_scheduler_skips_a_ship_while_it_sleeps():
+    rec = awd.run_walk_diff(_sleeper_scene, 60)
+    slept = _walked_ticks(rec, "Sleeper")
+    assert 12 <= len(slept) <= 16, slept               # capped at 4 ticks
+    assert _walked_ticks(rec, "Awake") == list(range(60))
+    stamps = {s["ships"][repr(("obj", "ShipClass", "Sleeper"))]["walk_due"]
+              for _l, s in rec.ticks}
+    assert len(stamps) >= 12, stamps                   # stamped each walk
+
+
+def _stale_stamp_scene(mp):
+    """A stamp from an earlier mission (game time restarted) lies far above
+    the upper bound and must not freeze the ship; one just inside the bound
+    is honoured."""
+    ship = _ship("Stale")
+    _install(ship, _plist(ship, "Root", (1, _leaf(ship, "L", interval=0.5))))
+
+    def stale():
+        ship.__dict__["_ai_next_walk_due"] = 300.0
+
+    def inside():
+        ship.__dict__["_ai_next_walk_due"] = 31 / 60.0 + 3.5 / 60.0
+    return _scene_of(mp, [ship], {0: stale, 10: stale, 30: inside})
+
+
+def test_scheduler_ignores_a_stale_stamp_above_the_upper_bound():
+    rec = awd.run_walk_diff(_stale_stamp_scene, 40)
+    walked = _walked_ticks(rec, "Stale")
+    assert 0 in walked and 10 in walked, walked        # the stale stamp
+    assert 30 not in walked and 31 not in walked, walked   # honoured
+    assert any(t > 31 for t in walked), walked
+
+
+def _set_ai_while_asleep_scene(mp):
+    """SetAI on a sleeping ship: the new tree waits out the stamp (SetAI
+    sends no wake), then runs."""
+    ship = _ship("Swap")
+    _install(ship, _plist(ship, "Old", (1, _leaf(ship, "OldLeaf",
+                                                 interval=0.5))))
+
+    def swap():
+        ship.SetAI(_plist(ship, "New", (1, _leaf(ship, "NewLeaf",
+                                                 interval=0.0))))
+    return _scene_of(mp, [ship], {2: swap})
+
+
+def test_scheduler_set_ai_on_a_sleeping_ship():
+    rec = awd.run_walk_diff(_set_ai_while_asleep_scene, 20)
+    walked = _walked_ticks(rec, "Swap")
+    assert walked[0] == 0 and 2 not in walked, walked  # asleep at the SetAI
+    assert _count(rec, "ship.SetAI") == 1
+    assert _count(rec, "fire_ai_done") == 1            # the old tree's
+    first_new = min(t for t in walked if t > 2)
+    assert first_new <= 5, walked                      # the 4-tick cap
+    assert walked[walked.index(first_new):] == list(range(first_new, 20))
+
+
+def _done_scene(mp):
+    """Root completion: a tree that ends is torn down by ClearAI, which
+    announces ET_AI_DONE once; a tree whose last Update installs a successor
+    is NOT cleared (the still-installed check); a bare ship without ClearAI
+    gets fire_ai_done directly. The done trees are asleep-capable (0.05 s)."""
+    done = _ship("Done")
+    seq = _ai().SequenceAI_Create(done, "Once")
+    seq.SetLoopCount(1)
+    seq.AddAI(_leaf(done, "Finish", done_after=3, interval=0.05))
+    _install(done, seq)
+
+    handed = _ship("Handed")
+
+    def hand_over(n):
+        if n == 2:
+            handed.SetAI(_plist(handed, "Next",
+                                (1, _leaf(handed, "NextLeaf", interval=0.1))))
+    seq2 = _ai().SequenceAI_Create(handed, "Hands")
+    seq2.SetLoopCount(1)
+    seq2.AddAI(_leaf(handed, "Last", done_after=2, interval=0.05,
+                     on_update=hand_over))
+    _install(handed, seq2)
+
+    class Bare:
+        """A test double without ClearAI (the fire_ai_done fallback)."""
+        def __init__(self, name):
+            self._n = name
+            self._ai = None
+
+        def GetName(self):
+            return self._n
+
+        def GetAI(self):
+            return self._ai
+
+        def IsDying(self):
+            return False
+
+        def IsDead(self):
+            return False
+    bare = Bare("Bare")
+    bare_root = _ai().SequenceAI_Create(None, "BareRoot")
+    bare_root.SetLoopCount(1)
+    bare_root.AddAI(_leaf(None, "BareLeaf", done_after=2))
+    bare._ai = bare_root
+    return _scene_of(mp, [done, handed, bare])
+
+
+def test_scheduler_clear_ai_fires_ai_done_once():
+    rec = awd.run_walk_diff(_done_scene, 40)
+    calls = rec.log()
+    clears = [e for e in calls if e[:2] == ("call", "ship.ClearAI")]
+    assert [e[2] for e in clears] == [("tuple", "ship", "Done")], clears
+    dones = [e[2] for e in calls if e[:2] == ("call", "fire_ai_done")]
+    # Done's ClearAI, Handed's SetAI (the old tree), the bare ship's direct
+    # call: each tree announced exactly once.
+    assert sorted(map(repr, dones)) == sorted(map(repr, set(dones))), dones
+    assert len(dones) == 3, dones
+    last = rec.ticks[-1][1]["ships"]
+    assert last[repr(("obj", "ShipClass", "Done"))]["ai"] is None
+    assert last[repr(("obj", "ShipClass", "Handed"))]["ai"] is not None
+
+
+def _roster_glue_scene(mp):
+    """The defensive-cloak skip, a monkeypatched sleep cap and tick length,
+    and an int stamp (min() keeps the int when it is the smaller)."""
+    from engine.appc import defensive_cloak
+    drv = _driver()
+    hidden = _ship("Hidden")
+    _install(hidden, _plist(hidden, "HRoot", (1, _leaf(hidden, "HL"))))
+    timed = _ship("Timed")
+    leaf = _leaf(timed, "TL", interval=0.5)
+    _install(timed, _plist(timed, "TRoot", (1, leaf)))
+    real = defensive_cloak.is_defensive
+    mp.setattr(defensive_cloak, "is_defensive",
+               lambda ship: (ship is hidden and 5 <= clock["i"] < 12)
+               or real(ship))
+    mp.setattr(drv, "AI_MAX_SLEEP_TICKS", 6)
+    clock = {"i": 0}
+
+    def step(i):
+        clock["i"] = i
+        if i == 20:
+            mp.setattr(drv, "_TICK_SECONDS", 1.0 / 30.0)
+        if i == 40:
+            # an int due time between now and the cap: the stamp keeps it
+            leaf._next_update_time = 1
+        drv.tick_all_ai(0.3 + (i + 1) / 60.0 if i >= 40 else (i + 1) / 60.0)
+    return awd.synthetic_scene(mp, [hidden, timed], step)
+
+
+def test_scheduler_defensive_skip_patched_cap_and_int_stamp():
+    rec = awd.run_walk_diff(_roster_glue_scene, 60)
+    hidden = _walked_ticks(rec, "Hidden")
+    assert not set(range(5, 12)) & set(hidden), hidden
+    assert set(range(0, 5)) <= set(hidden), hidden
+    stamps = [s["ships"][repr(("obj", "ShipClass", "Timed"))]["walk_due"]
+              for _l, s in rec.ticks]
+    assert ("int", 1) in stamps, stamps
+
+
+def _min_tie_scene(mp):
+    """The stamp's min() on a tie: an int due time equal to the float cap is
+    kept (builtin min returns its FIRST argument unless the second is
+    smaller), so the stamp is the int 1, not 1.0."""
+    drv = _driver()
+    ship = _ship("Tie")
+    leaf = _leaf(ship, "L", interval=0.5)
+    leaf._next_update_time = 1                 # an int due time
+    _install(ship, _plist(ship, "Root", (1, leaf)))
+    mp.setattr(drv, "AI_MAX_SLEEP_TICKS", 4)
+    mp.setattr(drv, "_TICK_SECONDS", 0.125)    # cap = 0.5 + 4 * 0.125 = 1.0
+
+    def step(i):
+        drv.tick_all_ai(0.5 + i)
+    return awd.synthetic_scene(mp, [ship], step)
+
+
+def test_scheduler_min_keeps_the_noted_due_on_a_tie():
+    rec = awd.run_walk_diff(_min_tie_scene, 2)
+    stamp = rec.ticks[0][1]["ships"][repr(("obj", "ShipClass", "Tie"))]
+    assert stamp["walk_due"] == ("int", 1), stamp["walk_due"]
+
+
+def _roster_escape_scene(mp):
+    """Exceptions escaping the roster itself: is_defensive raising for the
+    second ship, GetAI raising, a ClearAI raising after US_DONE. Each skips
+    the stamp (where reached) and every later ship for that tick."""
+    from engine.appc import defensive_cloak
+    a, b, c = _ship("A"), _ship("B"), _ship("C")
+    for s in (a, b, c):
+        _install(s, _plist(s, s.GetName() + "Root",
+                           (1, _leaf(s, s.GetName() + "L", interval=0.0))))
+    real = defensive_cloak.is_defensive
+    clock = {"i": 0}
+
+    def flaky(ship):
+        if ship is b and clock["i"] == 3:
+            raise _Boom("is_defensive")
+        return real(ship)
+    mp.setattr(defensive_cloak, "is_defensive", flaky)
+    real_get = b.GetAI
+    raised = []
+
+    def get_ai():
+        # Once: the roster's call (the harness's own reads come before the
+        # tick's clock moves, or after the raise).
+        if clock["i"] == 6 and not raised:
+            raised.append(1)
+            raise _Boom("GetAI")
+        return real_get()
+    b.GetAI = get_ai
+    seq = _ai().SequenceAI_Create(a, "AOnce")
+    seq.SetLoopCount(1)
+    seq.AddAI(_leaf(a, "AFinal", done_after=1))
+
+    def clear_raises():
+        raise _Boom("ClearAI")
+
+    def arm():
+        a.SetAI(seq)
+        a.ClearAI = clear_raises
+
+    def step(i):
+        clock["i"] = i
+        if i == 9:
+            arm()
+        _driver().tick_all_ai((i + 1) / 60.0)
+    return awd.synthetic_scene(mp, [a, b, c], step)
+
+
+def test_scheduler_exceptions_escaping_the_roster():
+    rec = awd.run_walk_diff(_roster_escape_scene, 14)
+    escaped = [e[2] for e in rec.log() if e[0] == "escaped"]
+    assert escaped == ["is_defensive", "GetAI", "ClearAI"], escaped
+    c_walked = _walked_ticks(rec, "C")
+    assert 3 not in c_walked and 6 not in c_walked and 9 not in c_walked
+    assert 4 in c_walked and 7 in c_walked
+
+
 # ── the real fights ──────────────────────────────────────────────────────────
 
 @needs_native
@@ -741,6 +1003,36 @@ def test_harness_catches_a_native_side_that_never_enters_the_native_walker():
             _driver().tick_all_ai((i + 1) / 60.0)
         return awd.synthetic_scene(mp, [ship], step)
     with pytest.raises(AssertionError, match="never entered the native walker"):
+        awd.run_walk_diff(build, 5)
+
+
+def test_harness_catches_a_native_side_that_runs_the_python_walker():
+    def build(mp):
+        ship = _ship()
+        _install(ship, _plist(ship, "Root", (1, _leaf(ship, "Leaf"))))
+        drv = _driver()
+
+        def step(i):
+            t = (i + 1) / 60.0
+            if drv._native_walker and i > 0:
+                drv._tick_all_ai_python(t)      # delegating, as Task 1 did
+            else:
+                drv.tick_all_ai(t)
+        return awd.synthetic_scene(mp, [ship], step)
+    with pytest.raises(AssertionError, match="ran the Python walker"):
+        awd.run_walk_diff(build, 5)
+
+
+def test_harness_catches_a_native_entry_that_never_starts_the_native_roster():
+    def build(mp):
+        ship = _ship()
+        _install(ship, _plist(ship, "Root", (1, _leaf(ship, "Leaf"))))
+        drv = _driver()
+        # The entry point runs, but its roster is a Python stand-in.
+        mp.setattr(drv, "_aitree_tick_all",
+                   lambda t, g: drv.tick_ai(ship.GetAI(), t))
+        return awd.synthetic_scene(mp, [ship])
+    with pytest.raises(AssertionError, match="native roster never ran"):
         awd.run_walk_diff(build, 5)
 
 

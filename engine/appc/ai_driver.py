@@ -521,9 +521,9 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
 
     # Cadence gate. _note_due goes in the NOT-due arm only: on a tick the node
     # actually executes, its old due time is already in the past, and recording
-    # a past time pinned _walk_min_due below game_time -- so the ship's sleep
-    # stamp landed in the past and the whole tree was walked again on the very
-    # next tick to rediscover nothing was due. Measured 287 walks for 96 runs at
+    # a past time pinned the walk min-due slot below game_time -- so the ship's
+    # sleep stamp landed in the past and the whole tree was walked again on the
+    # very next tick to rediscover nothing was due. Measured 287 walks for 96 runs at
     # cap 4, where ~192 would do. The invariant is untouched: the not-due arm
     # records what it is waiting for, and the executing arm records the FRESH
     # due time below.
@@ -1255,11 +1255,11 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
             and not contained.IsInterruptable()):
         ai._status = US_ACTIVE
         # No _note_due for THIS node's due time — the one gating site that does
-        # not record, deliberately, and _note_due's docstring names the
+        # not record, deliberately, and _note_due's comment names the
         # exception. While the bypass holds, the preprocessor's Update never
         # runs, so _next_update_time is frozen (usually already in the past) and
-        # recording it would pin _walk_min_due below game_time and force an
-        # every-tick walk for a decision that cannot be taken. The contained
+        # recording it would pin the walk min-due slot below game_time and force
+        # an every-tick walk for a decision that cannot be taken. The contained
         # subtree still records its own gates through the tick_ai below, so
         # nothing that CAN run gets slept through.
         tick_ai(contained, game_time)
@@ -1628,38 +1628,69 @@ AI_MAX_SLEEP_TICKS = max(0, _env_int("DAUNTLESS_AI_MAX_SLEEP", 4))
 # tests/unit/test_ai_scheduler_invariants.py so the copy cannot silently drift
 # if the tick rate ever changes.
 _TICK_SECONDS = 1.0 / 60.0
-_walk_min_due = [float("inf")]
+
+# The AI tree engine's native half (native/src/host/aitree.{h,cc}). A host
+# module without one of its names is a STALE binary, and the contract for that
+# (CLAUDE.md, Build layout) is an AttributeError naming it -- raised on use, so
+# importing this module never fails on it.
+try:
+    import _dauntless_host as _host
+except ImportError:  # pragma: no cover - the engine needs the host module
+    _host = None
+
+
+def _aitree(name):
+    fn = getattr(_host, name, None)
+    if fn is not None:
+        return fn
+
+    def stale(*_a, **_k):
+        raise AttributeError(
+            "module '_dauntless_host' has no attribute %r" % name)
+    return stale
+
+
+# _note_due(when): record a node's next-update time during the walk in
+# progress, into the walk's min-due slot (`if when < slot: slot = when`; the
+# slot holds the very object given, so an int due time stays an int). NATIVE
+# since phase 6 AI part 4 task 2, so the native roster reads the slot directly;
+# the Python walker reaches it through this name, looked up at each call, so a
+# monkeypatched _note_due is still what the Python walk calls.
+#
+# Called from every site that gates on game_time >= _next_update_time and can
+# still ACT on that gate, so the tree's sleep can never outlast the soonest
+# thing it is waiting for. A site that gates WITHOUT calling this would let its
+# node oversleep -- which is why this is a named function and not an inline
+# min(), and why tests/unit/test_ai_scheduler_invariants.py fails the build if
+# a new gate appears without one.
+#
+# Two deliberate non-calls, both because there is nothing to wait FOR:
+#
+#   * the non-interruptable bypass in _tick_preprocessing, where the
+#     preprocessor's Update cannot run at all while the bypass holds;
+#   * a PlainAI whose script instance has no Update method.
+#
+# In both cases the node's due time is frozen in the past, so recording it
+# would pin the slot below game_time and force an every-tick walk for work that
+# cannot happen. Each site carries the reasoning inline.
+_note_due = _aitree("aitree_note_due")
+# The slot's value, and its reset to float("inf") (once per root walk).
+_walk_min_due_get = _aitree("aitree_walk_min_due")
+_walk_min_due_reset = _aitree("aitree_walk_min_due_reset")
+# The native roster (aitree_tick_all), looked up per call.
+_aitree_tick_all = _aitree("aitree_tick_all")
+_GLOBALS = globals()
 
 
 def _note_due_ret(when: float) -> bool:
     """_note_due in expression position; always True so it can be AND-ed into
-    an existing condition without changing it."""
+    an existing condition without changing it.
+
+    Stays Python on purpose: it calls _note_due through the module global, so a
+    monkeypatched _note_due is honoured at this site too (a native twin would
+    have to re-check the global on every call to do the same)."""
     _note_due(when)
     return True
-
-
-def _note_due(when: float) -> None:
-    """Record a node's next-update time during the walk in progress.
-
-    Called from every site that gates on game_time >= _next_update_time and can
-    still ACT on that gate, so the tree's sleep can never outlast the soonest
-    thing it is waiting for. A site that gates WITHOUT calling this would let
-    its node oversleep -- which is why this is a named function and not an
-    inline min(), and why tests/unit/test_ai_scheduler_invariants.py fails the
-    build if a new gate appears without one.
-
-    Two deliberate non-calls, both because there is nothing to wait FOR:
-
-      * the non-interruptable bypass in _tick_preprocessing, where the
-        preprocessor's Update cannot run at all while the bypass holds;
-      * a PlainAI whose script instance has no Update method.
-
-    In both cases the node's due time is frozen in the past, so recording it
-    would pin _walk_min_due below game_time and force an every-tick walk for
-    work that cannot happen. Each site carries the reasoning inline.
-    """
-    if when < _walk_min_due[0]:
-        _walk_min_due[0] = when
 
 
 # Which tree walker tick_all_ai runs. False: the Python walker below (the
@@ -1671,9 +1702,10 @@ _native_walker = False
 def tick_all_ai(game_time: float) -> None:
     """Tick every ship's AI tree with the selected walker (``_native_walker``).
 
-    The one selection point. Until the native walker lands both arms are the
-    Python walker, which is what lets the differential harness
-    (tests/helpers/ai_walk_diff.py) prove itself deterministic first."""
+    The one selection point. The native arm runs the roster and its sleep
+    scheduling in C++ (aitree_tick_all); each root walk is still Python's
+    tick_ai until the native walk lands (part 4 task 4). The differential
+    harness (tests/helpers/ai_walk_diff.py) holds the two arms equal."""
     if _native_walker:
         _tick_all_ai_native(game_time)
     else:
@@ -1681,7 +1713,10 @@ def tick_all_ai(game_time: float) -> None:
 
 
 def _tick_all_ai_native(game_time: float) -> None:
-    _tick_all_ai_python(game_time)
+    """_tick_all_ai_python in C++ (native/src/host/aitree.cc), statement for
+    statement; every callee it reaches is read from this module (or imported)
+    at the point the Python roster reads it."""
+    _aitree_tick_all(game_time, _GLOBALS)
 
 
 def _tick_all_ai_python(game_time: float) -> None:
@@ -1717,14 +1752,14 @@ def _tick_all_ai_python(game_time: float) -> None:
                 continue
         ai = ship.GetAI() if hasattr(ship, "GetAI") else None
         if ai is not None:
-            _walk_min_due[0] = float("inf")
+            _walk_min_due_reset()
             status = tick_ai(ai, game_time)
             if max_sleep:
                 # Never sleep past the soonest gate this walk saw, and never
                 # past the cap -- see AI_MAX_SLEEP_TICKS on why the cap is the
                 # part holding this together.
                 ship.__dict__["_ai_next_walk_due"] = min(
-                    _walk_min_due[0],
+                    _walk_min_due_get(),
                     game_time + max_sleep * _TICK_SECONDS)
             # Root-tree completion: announce the end (SDK: so orbit/helm state
             # can react) AND release the conn.

@@ -52,7 +52,8 @@ reported-error set. Floats compare by ``float.hex``; node references by ID.
 Module-level walk state. Only what something OUTSIDE the walker can observe is
 compared: ``_focus_depth`` (every tick, so an escaping exception or a nested
 walk that fails to restore it shows). ``_reached_this_tick`` / ``_all`` /
-``_all_ids`` / ``_pending_got_focus`` / ``_walk_min_due`` / ``_ooa_cache`` are
+``_all_ids`` / ``_pending_got_focus`` / the walk-min-due slot (native since
+Task 2: ``_note_due`` writes it, reset per side) / ``_ooa_cache`` are
 walker-internal: a grep of engine/, tools/, tests/ and the SDK finds no reader
 outside ai_driver's walker functions (tests/unit/test_out_of_action_slot.py
 only WRITES ``_ooa_cache[0]``), and their effects are already compared through
@@ -470,10 +471,17 @@ def _fresh_state(mp, base_ai, base_obj):
     ai_driver.reset_script_error_log()
     mp.setattr(ai_driver, "_DISPATCH_BY_TYPE", {})
     mp.setattr(ai_driver, "_ooa_cache", [None, False])
-    mp.setattr(ai_driver, "_walk_min_due", [float("inf")])
+    ai_driver._walk_min_due_reset()
     mp.setattr(ai_driver, "_focus_depth", 0)
     from tests.helpers import k1_fight
     k1_fight._seed_every_rng(0)
+
+
+def _native_roster_count():
+    """How many times the native roster (``aitree_tick_all``) has started, in
+    this process. Read around a side to prove which roster ran."""
+    import _dauntless_host
+    return _dauntless_host.aitree_roster_count()
 
 
 def run_side(scene, ticks, native, bases=None):
@@ -486,7 +494,8 @@ def run_side(scene, ticks, native, bases=None):
         base_ai, base_obj = bases or _bases()
         _fresh_state(mp, base_ai, base_obj)
         mp.setattr(ai_driver, "_native_walker", bool(native))
-        entries = {"python": 0, "native": 0}
+        entries = {"python": 0, "native": 0, "native_roster": 0}
+        roster_before = _native_roster_count()
         for key, attr in (("python", "_tick_all_ai_python"),
                           ("native", "_tick_all_ai_native")):
             def counted(game_time, _orig=getattr(ai_driver, attr), _k=key):
@@ -507,6 +516,7 @@ def run_side(scene, ticks, native, bases=None):
                     rec.log.append(("escaped", type(exc).__name__, str(exc)))
                 out.append((rec.log[start:], rec.snapshot()))
         finally:
+            entries["native_roster"] = _native_roster_count() - roster_before
             top_obj = next(ids._counter)
             top_ai = ArtificialIntelligence._next_id
             mp.undo()
@@ -573,10 +583,10 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
     it claims.
 
     Also asserts each side ran the walker it claims: the Python side never
-    entered ``_tick_all_ai_native``; the native side entered it at least once.
-    TODO(task 2): today the native entry point delegates to the Python walker,
-    so this cannot yet say "and no Python walker function ran on the native
-    side"; tighten it to that when the native walker stops delegating.
+    entered ``_tick_all_ai_native`` nor started the native roster; the native
+    side entered ``_tick_all_ai_native`` at least once, the native roster
+    (``_dauntless_host.aitree_tick_all``, counted natively) started at least
+    once, and ``_tick_all_ai_python`` never ran.
 
     `aba`: run Python, native, Python and require the second Python run to
     match the native one too (an asymmetric warm-up would otherwise bias the
@@ -592,8 +602,14 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
     assert py.entries["native"] == 0, (
         "the Python side entered the native walker: %r" % py.entries)
     assert py.entries["python"] >= 1, py.entries
+    assert py.entries["native_roster"] == 0, (
+        "the Python side started the native roster: %r" % py.entries)
     assert nat.entries["native"] >= 1, (
         "the native side never entered the native walker: %r" % nat.entries)
+    assert nat.entries["python"] == 0, (
+        "the native side ran the Python walker: %r" % nat.entries)
+    assert nat.entries["native_roster"] >= 1, (
+        "the native roster never ran on the native side: %r" % nat.entries)
     diff = first_difference(py, nat)
     assert diff is None, diff
     if aba:

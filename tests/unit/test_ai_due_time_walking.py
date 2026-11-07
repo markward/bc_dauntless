@@ -78,9 +78,12 @@ def _handler(ai, game_time):
     return US_ACTIVE
 
 
-@pytest.fixture
-def scene(monkeypatch):
-    """One ship, one node, driven through the real tick_all_ai."""
+@pytest.fixture(params=["python", "native"])
+def scene(monkeypatch, request):
+    """One ship, one node, driven through the real tick_all_ai -- under each
+    roster (phase 6 AI part 4: the native roster must keep every contract)."""
+    monkeypatch.setattr(ai_driver, "_native_walker",
+                        request.param == "native")
     made = {}
 
     def build(interval, max_sleep=4):
