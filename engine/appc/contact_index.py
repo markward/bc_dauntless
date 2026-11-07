@@ -48,11 +48,15 @@ be alive (a mission swap clears the view before the swap tears the sets down),
 so their class lists and counts must keep matching `_objects`. A hidden set
 shows a member again as soon as it is added.
 
-Two deliberate differences from the old private buckets, both of which were
-drift bugs there: an identifier overwritten with another ship drops the old
-ship from the view (it stayed listed forever), and an object still present
-under a second identifier stays listed when one of its entries is removed (one
-removal dropped it).
+Three deliberate differences from the old private buckets, each a drift
+from the dict there: an identifier overwritten with another ship drops the old
+ship from the view (it stayed listed forever); an object still present under a
+second identifier stays listed when one of its entries is removed (one removal
+dropped it); and after a hide (`reset` / `forget_set`), a hidden entry shown
+again by an overwrite takes its ORIGINAL slot position, as the dict keeps it,
+where the old buckets appended it at the end (hide; add X new; re-add Y under
+its old name: the view is (Y, X), the old buckets gave (X, Y)). All three are
+pinned in tests/unit/test_set_index.py (`test_drift_case_*`).
 """
 from __future__ import annotations
 

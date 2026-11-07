@@ -179,44 +179,55 @@ def _populated():
     return s, a, b
 
 
+def _key_state(key):
+    """What the index holds under one address (an int: the object may be
+    dead). Asserting only a test's OWN keys keeps the test independent of
+    whatever else the process-global index tracks."""
+    return _h.set_index_key_state(key)
+
+
+_GONE = {"set": False, "watched": False, "entries": 0, "held_by": 0}
+
+
 def test_a_dropped_set_is_released_without_a_reset():
     """The index holds members BORROWED and each set by a weakref whose
     callback forgets it: a set and its ships die with the last outside
     reference, and the index forgets the set, with no reset call."""
-    gc.collect()
-    base = _tracked()
     s, a, b = _populated()
-    assert _tracked() == (base[0] + 1, base[1] + 3)
+    keys = [id(o) for o in (s, a, b)]
+    assert _key_state(keys[0]) == {"set": True, "watched": True, "entries": 3,
+                                   "held_by": 0}
+    assert _key_state(keys[1])["held_by"] == 1
     refs = [weakref.ref(o) for o in (s, a, b)]
     del s, a, b
     _clear_other_holders()
     assert [r() for r in refs] == [None, None, None]
-    assert _tracked() == base
+    assert [_key_state(k) for k in keys] == [_GONE] * 3
 
 
 def test_a_set_dying_with_members_inside_leaves_no_entries():
-    gc.collect()
-    base = _tracked()
     s = SetClass()
-    for i in range(4):
-        s.AddObjectToSet(types.SimpleNamespace(), f"thing {i}")
+    things = [types.SimpleNamespace() for _ in range(4)]
+    for i, o in enumerate(things):
+        s.AddObjectToSet(o, f"thing {i}")
     s.GetClassObjectList(types.SimpleNamespace)
-    assert _tracked() == (base[0] + 1, base[1] + 4)
+    key = id(s)
+    assert _key_state(key)["entries"] == 4
     ref = weakref.ref(s)
     del s
     _clear_other_holders()  # the global id registry holds every TGObject
     assert ref() is None
-    assert _tracked() == base
+    assert _key_state(key) == _GONE
+    assert [_key_state(id(o))["held_by"] for o in things] == [0] * 4
 
 
 def test_forget_set_drops_the_set():
-    gc.collect()
-    base = _tracked()
-    s, _a, _b = _populated()
+    s, a, b = _populated()
     set_index.forget_set(s)
-    assert _tracked() == base
+    assert _key_state(id(s)) == _GONE
+    assert [_key_state(id(o))["held_by"] for o in (a, b)] == [0, 0]
     set_index.forget_set(s)  # twice is harmless
-    assert _tracked() == base
+    assert _key_state(id(s)) == _GONE
 
 
 def _run_isolated(code):
@@ -314,8 +325,8 @@ def test_every_object_returning_binding_survives_a_collection_inside_it():
         ship = object.__new__(ShipClass)
         neb = object.__new__(Nebula)
         keep = FakeSet()  # a live set the member-returning bindings read
-        _h.set_index_add(keep, "ship", ship, True, 7)
-        _h.set_index_add(keep, "neb", neb, False, -1)
+        _h.set_index_add(keep, "ship", ship, True, 7, -1)
+        _h.set_index_add(keep, "neb", neb, False, -1, -1)
         gc.collect()
         base = _h.set_index_tracked()["sets"]
         CALLS = {
@@ -329,14 +340,14 @@ def test_every_object_returning_binding_survives_a_collection_inside_it():
         }
         for name, (call, kind) in CALLS.items():
             for trial in range(20):
-                _h.set_index_add(keep, "ship", ship, True, 7)  # re-shown
-                _h.set_index_add(keep, "neb", neb, False, -1)
+                _h.set_index_add(keep, "ship", ship, True, 7, -1)  # re-shown
+                _h.set_index_add(keep, "neb", neb, False, -1, -1)
                 gc.collect()
                 gc.disable()
                 for i in range(6):
                     s = FakeSet()
                     s._cycle = s  # garbage only to the cycle collector
-                    _h.set_index_add(s, "x", ship, True, 7)  # visible: changed
+                    _h.set_index_add(s, "x", ship, True, 7, -1)  # visible: changed
                 del s
                 drain = [[] for _ in range(200)]  # the list freelist, emptied
                 gc.set_threshold(1, 10, 10)
@@ -373,6 +384,91 @@ def test_a_set_outliving_reset_mission_state_keeps_its_lists():
     assert s.GetClassObjectList(App.CT_SHIP) == ships == [a, b, a]
     assert s.GetClassObjectList(App.CT_TORPEDO) == torps == [t]
     assert set_index.ships_in(s) == contacts == (a, b)
+
+
+class _Boom(type):
+    """A class test that raises on one chosen member while armed."""
+    bad = None
+
+    def __instancecheck__(cls, obj):
+        if obj is _Boom.bad:
+            raise RuntimeError("class test raised")
+        return isinstance(obj, types.SimpleNamespace)
+
+
+class _Picky(metaclass=_Boom):
+    pass
+
+
+def test_a_raising_class_test_leaves_no_half_built_bucket():
+    """Final-review fix: an isinstance raising partway through building a
+    bucket (create_bucket) or re-testing a member (reassess) erased nothing,
+    so the next read silently returned the partial bucket. The bucket is
+    erased: the next read builds it again (and raises again)."""
+    s = SetClass()
+    first, bad, last = (types.SimpleNamespace(n=i) for i in range(3))
+    for name, o in (("First", first), ("Bad", bad), ("Last", last)):
+        s.AddObjectToSet(o, name)
+    _Boom.bad = bad
+    try:
+        for _ in range(2):  # create_bucket: raises, and raises again
+            with pytest.raises(RuntimeError):
+                set_index.class_objects(s, _Picky)
+        _Boom.bad = None
+        assert set_index.class_objects(s, _Picky) == [first, bad, last]
+        other = types.SimpleNamespace(n=9)
+        _Boom.bad = other
+        with pytest.raises(RuntimeError):  # reassess, on an overwrite
+            s.AddObjectToSet(other, "Bad")
+        with pytest.raises(RuntimeError):
+            set_index.class_objects(s, _Picky)
+        _Boom.bad = None
+        assert set_index.class_objects(s, _Picky) == [first, other, last]
+        assert set_index.class_objects(s, _Picky) == _scan(s, types.SimpleNamespace)
+    finally:
+        _Boom.bad = None
+
+
+class _Thing:
+    pass
+
+
+class _NotThing:
+    pass
+
+
+class _BoomThing(type):
+    armed = False
+
+    def __instancecheck__(cls, obj):
+        if _BoomThing.armed:
+            raise RuntimeError("class test raised")
+        return type(obj) is _Thing
+
+
+class _PickyThing(metaclass=_BoomThing):
+    pass
+
+
+def test_a_raising_reclassification_leaves_no_stale_bucket_in_any_set():
+    """A class test raising while one set re-tests a reclassified object
+    still re-tests (and so erases) the other sets' buckets: none keeps the
+    object under its old class."""
+    a = _Thing()
+    s1, s2 = SetClass(), SetClass()
+    s1.AddObjectToSet(a, "A")
+    s2.AddObjectToSet(a, "A")
+    assert set_index.class_objects(s1, _PickyThing) == [a]
+    assert set_index.class_objects(s2, _PickyThing) == [a]
+    a.__class__ = _NotThing
+    _BoomThing.armed = True
+    try:
+        with pytest.raises(RuntimeError):
+            _h.set_index_reclassified(a, False)
+    finally:
+        _BoomThing.armed = False
+    assert set_index.class_objects(s1, _PickyThing) == []
+    assert set_index.class_objects(s2, _PickyThing) == []
 
 
 def test_a_removed_object_is_released():
@@ -543,6 +639,18 @@ def _sources():
     return files
 
 
+def test_get_class_object_list_does_not_import_the_facade_per_call():
+    """Final-review fix: GetClassObjectList is the AI's hot path; the facade
+    is fetched once into a module global, not imported on every call (a
+    top-level import would cycle through App)."""
+    src = (PROJECT_ROOT / "engine" / "appc" / "sets.py").read_text()
+    method = next(n for n in ast.walk(ast.parse(src))
+                  if isinstance(n, ast.FunctionDef) and n.name == "GetClassObjectList")
+    imported = [a.name for n in ast.walk(method)
+                if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names]
+    assert "set_index" not in imported
+
+
 def test_objects_dict_has_one_writer():
     bad, door_hits = [], []
     for path in _sources():
@@ -707,6 +815,21 @@ def test_drift_case_an_object_under_a_second_identifier_stays_listed():
     assert contact_index.sets_holding(a) == [s]
     s.RemoveObjectFromSet("Two")
     assert contact_index.ships_in(s) == ()
+
+
+def test_drift_case_a_hidden_entry_shown_again_keeps_its_slot():
+    """Recorded drift case 3: after a hide (contact_index.reset /
+    forget_set), an entry shown again by an overwrite takes its ORIGINAL
+    slot position, as the dict does; the old buckets appended it at the end,
+    which gave (X, Y) here. The index answers (Y, X)."""
+    s = SetClass()
+    x, y = _ship("X"), _ship("Y")
+    s.AddObjectToSet(y, "Y")
+    contact_index.forget_set(s)
+    s.AddObjectToSet(x, "X")
+    s.AddObjectToSet(y, "Y")  # re-added under its old name: an overwrite
+    assert contact_index.ships_in(s) == (y, x)
+    assert s.GetClassObjectList(App.CT_SHIP) == [y, x]
 
 
 def test_reset_and_forget_hide_the_view_but_not_the_class_lists():

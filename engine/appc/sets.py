@@ -77,6 +77,18 @@ class SetEffectRoot:
 # A removal door's pop default: tells "absent" from a member stored as None.
 _ABSENT = object()
 
+# engine.appc.set_index, fetched on GetClassObjectList's first call (the AI's
+# hot path) rather than imported per call. Not a top-level import: the
+# facade imports App and ships at load, which cycles back through this module.
+_set_index = None
+
+
+def _load_set_index():
+    global _set_index
+    from engine.appc import set_index
+    _set_index = set_index
+    return set_index
+
 
 class SetClass(TGEventHandlerObject):
     def __init__(self):
@@ -575,7 +587,7 @@ class SetClass(TGEventHandlerObject):
             return []
         # Answered by the native set index (engine/appc/set_index.py), which
         # the three membership doors keep in step with `_objects`.
-        from engine.appc import set_index
+        set_index = _set_index or _load_set_index()
         audit = os.environ.get("DAUNTLESS_SET_INDEX_AUDIT") == "1"
         if audit:
             # Before the index is read: its members are borrowed, so a pop

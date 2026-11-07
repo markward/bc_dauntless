@@ -289,3 +289,46 @@ TEST(SetIndex, VisibleIsAnyEntryNotLeaving) {
     EXPECT_FALSE(ix.visible(S, A));
     EXPECT_FALSE(ix.visible(S2, A));
 }
+
+TEST(SetIndex, AddRecordsTheObjectsOwnId) {
+    SetIndex ix = with_bucket();
+    ix.add(S, "a", A, true, kNoTarget, 41);
+    ix.add(S, "b", B, false, kNoTarget);  // no id given
+    EXPECT_EQ(ix.obj_id(A), 41);
+    EXPECT_EQ(ix.obj_id(B), kNoId);
+    EXPECT_EQ(ix.obj_id(C), kNoId);  // held by no set
+    ix.add(S2, "a", A, true, kNoTarget, 41);
+    ix.remove(S, "a");
+    EXPECT_EQ(ix.obj_id(A), 41);  // still held by S2
+    ix.remove(S2, "a");
+    EXPECT_EQ(ix.obj_id(A), kNoId);  // the record went with the last hold
+}
+
+TEST(SetIndex, PopularityByKeyIsPopularityOfTheCandidatesId) {
+    SetIndex ix = with_bucket();
+    ix.add(S, "t", T, true, kNoTarget, 77);
+    ix.add(S, "a", A, true, 77, 1);
+    ix.add(S, "b", B, true, 77, 2);
+    ix.add(S, "b2", B, true, 77, 2);
+    ix.add(S, "c", C, true, kNoTarget, 3);
+    EXPECT_EQ(ix.popularity_by_key(S, A, T), ix.popularity(S, A, 77));
+    EXPECT_EQ(ix.popularity_by_key(S, A, T), 2);  // B twice, A skipped
+    EXPECT_EQ(ix.popularity_by_key(S, B, T), 1);
+    EXPECT_EQ(ix.popularity_by_key(S, C, T), 3);
+    EXPECT_EQ(ix.popularity_by_key(S, A, D), 0);  // a candidate it does not hold
+    EXPECT_EQ(ix.popularity_by_key(S, A, C), 0);  // nobody targets C
+}
+
+TEST(SetIndex, DropBucketForgetsOnlyThatBucket) {
+    SetIndex ix = with_bucket();
+    put(ix, S, "a", A);
+    ix.create_bucket(S, CLS + 1, [](IndexKey) { return true; });
+    EXPECT_TRUE(ix.drop_bucket(S, CLS));
+    EXPECT_FALSE(ix.has_bucket(S, CLS));
+    EXPECT_TRUE(ix.has_bucket(S, CLS + 1));
+    EXPECT_TRUE(ix.bucket(S, CLS).empty());
+    EXPECT_EQ(ix.bucket_classes(S), (Keys{CLS + 1}));
+    EXPECT_FALSE(ix.drop_bucket(S, CLS));   // already gone
+    EXPECT_FALSE(ix.drop_bucket(S2, CLS));  // an unknown set
+    EXPECT_EQ(ix.entry_count(S), 1u);
+}

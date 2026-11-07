@@ -189,3 +189,12 @@ The target doors (all route through `ShipClass.SetTarget`, so one door call cove
 - [ ] **Step 4: Perf register.** Captures plus one signal (next SIG id). State the catch-up-loop confound as SIG-199 does: per-tick rows are the comparable ones; frame ms at 128 moves with ticks a frame and projectiles in flight. Say plainly if the gain is within the spread.
 - [ ] **Step 5: Commit** `docs(perf): phase 6 AI part 1, the set index (SIG-…)`.
 - [ ] **Step 6: Live-check list for Mark** (in the ledger and the hand-off): a 64-ship Quick Battle (ships pick and switch targets; the target list fills and empties as ships die); E1M2 (Haven, rocks: a rock conversion); a warp out and back (sets swap; the target clears); a nebula mission (`nebulae_in`, sensors conceal); `--developer` → Load Mission to swap missions twice (reset).
+
+## Notes for Part 2
+
+Recorded at the final review of Part 1; none of this is built here.
+
+- **Kernel accessor.** The one `SetIndex` instance lives in an anonymous namespace in `native/src/host/host_bindings.cc` (`si::host()`). Kernels in `native/src/combat` cannot reach it; Part 2 needs an accessor (e.g. the host hands the kernel a `const SetIndex&`, or the instance moves to a combat-side owner the bindings also use).
+- **Set handle vs set address.** The rater's set is its `_containing_set`, which the native combat mirror holds as a `Set` handle (`_enc_ref("Set")` in `engine/appc/native_combat.py`), while the index keys a set by its `PyObject*` address. Part 2 needs a translation (the mirror's Set row recording the address, or the index learning the handle) before a kernel can ask about the rater's set.
+- **Own id.** `SetIndex::add` now records each object's own `GetObjID()`; `obj_id(key)` and `popularity_by_key(set, rater, candidate)` answer the stock fPopularity for a kernel that holds only keys.
+- **GIL / borrowed-key contract** (the header comment of `set_index.h`). Keys are borrowed `PyObject*` addresses. Read the index only under the GIL on the main thread, and never hold keys across a call that can run Python or allocate a Python object: an allocation can run a cyclic collection whose weakref callbacks forget and free sets.

@@ -54,7 +54,7 @@ void SetIndex::drop_entry_contrib(SetData& sd, IndexKey set, IndexKey obj) {
 }
 
 std::optional<IndexKey> SetIndex::add(IndexKey set, std::string_view ident, IndexKey obj,
-                                      bool is_ship, int64_t target_id) {
+                                      bool is_ship, int64_t target_id, int64_t obj_id) {
     if (objs_.count(obj)) {
         // Held elsewhere: equal to the stored values whenever the facade's
         // contract holds; applied through the re-counting path regardless.
@@ -86,6 +86,7 @@ std::optional<IndexKey> SetIndex::add(IndexKey set, std::string_view ident, Inde
     ObjInfo& oi = objs_[obj];
     oi.is_ship = is_ship;
     oi.target = target_id;
+    oi.id = obj_id;
     add_entry_contrib(sd, set, obj);
     return replaced;
 }
@@ -171,6 +172,11 @@ void SetIndex::create_bucket(IndexKey set, IndexKey cls,
         if (member_of(e.obj)) seqs.insert(seq);
 }
 
+bool SetIndex::drop_bucket(IndexKey set, IndexKey cls) {
+    auto si = sets_.find(set);
+    return si != sets_.end() && si->second.buckets.erase(cls) != 0;
+}
+
 std::vector<IndexKey> SetIndex::bucket_classes(IndexKey set) const {
     std::vector<IndexKey> out;
     auto si = sets_.find(set);
@@ -239,6 +245,15 @@ int64_t SetIndex::popularity(IndexKey set, IndexKey rater, int64_t target_id) co
     if (oi != objs_.end() && oi->second.is_ship && oi->second.target == target_id)
         n -= multiplicity(set, rater);
     return n;
+}
+
+int64_t SetIndex::obj_id(IndexKey obj) const {
+    auto oi = objs_.find(obj);
+    return oi == objs_.end() ? kNoId : oi->second.id;
+}
+
+int64_t SetIndex::popularity_by_key(IndexKey set, IndexKey rater, IndexKey candidate) const {
+    return popularity(set, rater, obj_id(candidate));
 }
 
 std::vector<IndexKey> SetIndex::targeting(IndexKey set, int64_t target_id) const {

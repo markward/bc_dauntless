@@ -3632,8 +3632,8 @@ def _members(pSet) -> tuple:
 
 def push_set_members(pSet) -> None:
     """Push the set's ordered ship and nebula lists, exactly
-    contact_index.ships_in / nebulae_in. contact_index calls this after every
-    mutation of the set's buckets."""
+    contact_index.ships_in / nebulae_in. engine/appc/set_index.py calls this
+    on any change to a set's contact view (`_push`)."""
     if not _enabled:
         return
     h = _slot_of(pSet)

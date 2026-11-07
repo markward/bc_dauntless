@@ -143,6 +143,29 @@ def test_targeting_lists_the_raters_in_set_order():
     assert set_index.targeting(S, c) == []
 
 
+def test_the_index_holds_each_members_own_id_for_part_2():
+    """Final-review fix: a native reader holding only the candidate's key
+    (Part 2's kernels) asks popularity by key, which needs the object's own
+    GetObjID() in the core. The facade passes it at every add."""
+    import _dauntless_host as _h
+    from engine.appc.projectiles import Torpedo
+    S = _set()
+    prey, a, b = _ship("Prey"), _ship("A"), _ship("B")
+    torp = Torpedo()
+    for n, s in (("Prey", prey), ("A", a), ("B", b), ("Torp", torp)):
+        S.AddObjectToSet(s, n)
+    for s in (a, b):
+        s.SetTarget(prey)
+    for o in (prey, a, b, torp):
+        assert _h.set_index_obj_id(o) == o.GetObjID()
+    assert _h.set_index_obj_id(_ship("Elsewhere")) == -1  # held by no set
+    for rater in (prey, a, b):
+        for cand in (prey, a, b, torp):
+            assert (_h.set_index_popularity_by_key(S, rater, cand)
+                    == set_index.popularity(S, rater, cand)), (rater, cand)
+    assert _h.set_index_popularity_by_key(S, a, prey) == 1
+
+
 def test_a_retarget_to_the_same_object_does_not_double_count():
     S = _set()
     prey = _ship("Prey")

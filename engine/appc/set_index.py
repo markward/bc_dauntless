@@ -77,10 +77,12 @@ def on_added(pSet, identifier: str, obj, previous=None) -> None:
                     and _is_contact(previous))
     seen_new = contact_new and _h.set_index_visible(pSet, obj)
     seen_prev = contact_prev and _h.set_index_visible(pSet, previous)
+    own_id = target_id(obj)  # the id other ships' targets count it under
     if isinstance(obj, _ShipClass):
-        _h.set_index_add(pSet, identifier, obj, True, target_id(obj.GetTarget()))
+        _h.set_index_add(pSet, identifier, obj, True, target_id(obj.GetTarget()),
+                         own_id)
     else:
-        _h.set_index_add(pSet, identifier, obj, False, -1)
+        _h.set_index_add(pSet, identifier, obj, False, -1, own_id)
     if ((contact_new and not seen_new)
             or (seen_prev and not _h.set_index_visible(pSet, previous))):
         _push(pSet)

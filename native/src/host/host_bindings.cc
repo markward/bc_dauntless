@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <exception>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -5432,6 +5433,19 @@ void release_classes(Host& h, Key set, std::vector<py::object>& dead) {
     }
 }
 
+// One bucket gone (a class test raised while it was built or re-tested):
+// the index forgets it and drops the reference it counted on its class.
+void drop_bucket(Host& h, Key set, Key cls, std::vector<py::object>& dead) {
+    if (!h.ix.drop_bucket(set, cls)) return;
+    auto it = h.classes.find(cls);
+    if (it == h.classes.end())
+        throw std::logic_error("set index: a bucket class it does not hold");
+    if (--it->second.second == 0) {
+        dead.push_back(py::reinterpret_steal<py::object>(it->second.first));
+        h.classes.erase(it);
+    }
+}
+
 void forget(Host& h, Key set, std::vector<py::object>& dead) {
     if (!h.ix.has_set(set)) return;
     release_classes(h, set, dead);
@@ -5465,7 +5479,9 @@ std::vector<py::object> own(const std::vector<Key>& keys) {
 
 // Creates the bucket empty (the predicate only records the members: no
 // Python runs inside the core's loop), owns the members, then runs the
-// isinstance tests, which may run Python and collect.
+// isinstance tests, which may run Python and collect. An isinstance that
+// raises erases the half-built bucket, so the next read builds it again
+// (and raises again) instead of returning a partial list.
 void create_bucket(Host& h, Key set, PyObject* cls) {
     auto [it, fresh] = h.classes.try_emplace(reinterpret_cast<Key>(cls), cls, 0);
     if (fresh) Py_INCREF(cls);
@@ -5476,17 +5492,38 @@ void create_bucket(Host& h, Key set, PyObject* cls) {
         keys.push_back(o);
         return false;
     });
-    for (const py::object& o : own(keys))
-        if (is_instance(o.ptr(), cls))
-            h.ix.set_bucket_membership(set, reinterpret_cast<Key>(cls), key_of(o), true);
+    try {
+        for (const py::object& o : own(keys))
+            if (is_instance(o.ptr(), cls))
+                h.ix.set_bucket_membership(set, reinterpret_cast<Key>(cls), key_of(o), true);
+    } catch (...) {
+        std::vector<py::object> dead;  // keep_cls outlives these releases
+        drop_bucket(h, set, reinterpret_cast<Key>(cls), dead);
+        throw;
+    }
 }
 
 // The caller owns `obj`; the classes are owned here before any isinstance.
-// A set forgotten meanwhile makes set_bucket_membership a no-op.
+// A set forgotten meanwhile makes set_bucket_membership a no-op. An
+// isinstance that raises leaves its bucket and every one not yet re-tested
+// stale for `obj` (an overwrite took the slot out of all of them; a
+// reclassification left the old answer): those are erased, to be rebuilt
+// on the next read.
 void reassess(Host& h, Key set, PyObject* obj) {
-    for (const py::object& cls : own(h.ix.bucket_classes(set)))
-        h.ix.set_bucket_membership(set, key_of(cls), reinterpret_cast<Key>(obj),
-                                   is_instance(obj, cls.ptr()));
+    std::vector<py::object> classes = own(h.ix.bucket_classes(set));
+    for (std::size_t i = 0; i < classes.size(); ++i) {
+        bool member;
+        try {
+            member = is_instance(obj, classes[i].ptr());
+        } catch (...) {
+            std::vector<py::object> dead;  // `classes` outlives these releases
+            for (std::size_t j = i; j < classes.size(); ++j)
+                drop_bucket(h, set, key_of(classes[j]), dead);
+            throw;
+        }
+        h.ix.set_bucket_membership(set, key_of(classes[i]), reinterpret_cast<Key>(obj),
+                                   member);
+    }
 }
 
 // `produce` reads keys from the core; it runs only after the output list
@@ -5501,6 +5538,9 @@ py::list objects(Produce produce) {
 py::tuple contact_view(Host& h, py::handle set, PyObject* cls) {
     Key s = key_of(set);
     if (cls == nullptr) return py::tuple();
+    // Only a raising class test erases a contact bucket; rebuilt here.
+    if (h.ix.has_set(s) && !h.ix.has_bucket(s, reinterpret_cast<Key>(cls)))
+        create_bucket(h, s, cls);
     py::list out = objects([&] { return h.ix.distinct_live(s, reinterpret_cast<Key>(cls)); });
     return py::tuple(out);  // every item already owned by `out`
 }
@@ -11600,7 +11640,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "The ShipClass and Nebula classes the contact view buckets by.");
     m.def("set_index_add",
           [](py::handle set, const std::string& ident, py::handle obj, bool is_ship,
-             std::int64_t target_id) {
+             std::int64_t target_id, std::int64_t obj_id) {
               auto& h = si::host();
               if (h.ship_cls == nullptr)
                   throw std::logic_error("set index: set_index_configure first");
@@ -11610,7 +11650,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                                // weakly referenced is refused
               // The replaced key (an overwrite) may already be freed by the
               // time this runs: it is never dereferenced.
-              h.ix.add(s, ident, si::key_of(obj), is_ship, target_id);
+              h.ix.add(s, ident, si::key_of(obj), is_ship, target_id, obj_id);
               if (new_set) {
                   si::create_bucket(h, s, h.ship_cls);
                   si::create_bucket(h, s, h.nebula_cls);
@@ -11621,8 +11661,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               }
           },
           py::arg("set"), py::arg("ident"), py::arg("obj"), py::arg("is_ship"),
-          py::arg("target_id"),
-          "SetClass.AddObjectToSet, right after `_objects[ident] = obj`.");
+          py::arg("target_id"), py::arg("obj_id"),
+          "SetClass.AddObjectToSet, right after `_objects[ident] = obj`. "
+          "`obj_id` is obj's own GetObjID() or -1.");
     m.def("set_index_leaving",
           [](py::handle set, const std::string& ident) {
               si::host().ix.mark_leaving(si::key_of(set), ident);
@@ -11637,8 +11678,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](py::handle obj, bool is_ship) {
               auto& h = si::host();
               si::Key o = si::key_of(obj);
-              for (si::Key s : h.ix.held_sets(o)) si::reassess(h, s, obj.ptr());
+              // A raising class test in one set still re-tests the others
+              // (each erases its own stale buckets); the first error is
+              // raised once every set and the class flag are done.
+              std::exception_ptr first;
+              for (si::Key s : h.ix.held_sets(o)) {
+                  try {
+                      si::reassess(h, s, obj.ptr());
+                  } catch (...) {
+                      if (!first) first = std::current_exception();
+                  }
+              }
               h.ix.set_is_ship(o, is_ship);
+              if (first) std::rethrow_exception(first);
           },
           "obj.__class__ changed: re-test it against every bucket holding it.");
     m.def("set_index_class_objects",
@@ -11686,6 +11738,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("set"), py::arg("rater"), py::arg("target_id"),
           "The stock GetTargetRating fPopularity, as an integer count.");
+    m.def("set_index_obj_id",
+          [](py::handle obj) { return si::host().ix.obj_id(si::key_of(obj)); },
+          py::arg("obj"), "obj's own id as the index holds it; -1 if no set holds it.");
+    m.def("set_index_popularity_by_key",
+          [](py::handle set, py::handle rater, py::handle candidate) {
+              return si::host().ix.popularity_by_key(si::key_of(set), si::key_of(rater),
+                                                     si::key_of(candidate));
+          },
+          py::arg("set"), py::arg("rater"), py::arg("candidate"),
+          "set_index_popularity with the candidate's id read from the index "
+          "(the question a native reader holding only keys asks).");
     m.def("set_index_targeting",
           [](py::handle set, std::int64_t target_id) {
               auto& h = si::host();
@@ -11741,6 +11804,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_index_entry_count",
           [](py::handle set) { return si::host().ix.entry_count(si::key_of(set)); },
           "Entries the index holds for `set` (len of its `_objects` when in step).");
+    m.def("set_index_key_state",
+          [](std::uintptr_t key) {
+              auto& h = si::host();
+              py::dict d;  // the key is never dereferenced (it may be dead)
+              d["set"] = h.ix.has_set(key);
+              d["watched"] = h.watch.count(key) != 0;
+              d["entries"] = h.ix.entry_count(key);
+              d["held_by"] = h.ix.held_sets(key).size();
+              return d;
+          },
+          py::arg("key"),
+          "What the index holds under one address (id(obj)): tracked as a "
+          "set, watched, its entries, and how many sets hold it as a member.");
     m.def("set_index_tracked",
           [] {
               auto& h = si::host();

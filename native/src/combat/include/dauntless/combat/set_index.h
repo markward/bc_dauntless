@@ -3,6 +3,18 @@
 // (an overwrite keeps the slot's sequence number, a pop-and-re-add goes to the
 // end), multiplicity (an object under two identifiers is two entries), and a
 // LEAVING flag that hides an entry from the contact view only.
+//
+// Native-reader contract. Keys are BORROWED `PyObject*` addresses: the set's
+// `_objects` dict keeps each member alive and a weakref callback forgets a
+// set as it dies (native/src/host/host_bindings.cc, namespace si). So a key
+// is valid only for as long as no Python can run:
+//  - read the index only under the GIL, on the main thread;
+//  - never hold a key (or a vector of keys) across a call that can run
+//    Python or allocate a Python object: any allocation can run a cyclic
+//    collection whose weakref callbacks forget and free sets, and any
+//    isinstance can run arbitrary Python. Turn keys into owned references
+//    (or finish with them) first.
+// The index never dereferences a key itself.
 #pragma once
 
 #include <cstdint>
@@ -19,6 +31,7 @@ namespace dauntless::combat {
 
 using IndexKey = std::uintptr_t;  // object identity; 0 = none
 constexpr int64_t kNoTarget = -1;
+constexpr int64_t kNoId = -1;  // an object with no GetObjID()
 
 class SetIndex {
 public:
@@ -34,11 +47,16 @@ public:
     // ever differ, add applies them through set_target / set_is_ship first,
     // so every other set holding the object is re-counted, never drifted.
     //
-    // Per-object records (class flag, target) exist only while some set holds
-    // the object: the last remove / forget_set erases it, and set_target /
-    // set_is_ship on an object held by no set do nothing.
+    // Per-object records (class flag, target, own id) exist only while some
+    // set holds the object: the last remove / forget_set erases it, and
+    // set_target / set_is_ship on an object held by no set do nothing.
+    //
+    // `obj_id` is the object's own GetObjID() (kNoId for none): the id other
+    // ships' targets are counted under, so a native reader holding only the
+    // candidate's key can ask popularity_by_key.
     std::optional<IndexKey> add(IndexKey set, std::string_view ident, IndexKey obj,
-                                bool is_ship = false, int64_t target_id = kNoTarget);
+                                bool is_ship = false, int64_t target_id = kNoTarget,
+                                int64_t obj_id = kNoId);
     void mark_leaving(IndexKey set, std::string_view ident);
     std::optional<IndexKey> remove(IndexKey set, std::string_view ident);
     // Marks every current entry of `set` LEAVING (the contact view empties;
@@ -56,6 +74,9 @@ public:
     bool has_bucket(IndexKey set, IndexKey cls) const;
     // Creates the set if unknown (check has_set first to count its reference).
     void create_bucket(IndexKey set, IndexKey cls, const std::function<bool(IndexKey)>& member_of);
+    // Forgets one bucket (a class test that raised left it half-built); the
+    // next read creates it again. False if there was none.
+    bool drop_bucket(IndexKey set, IndexKey cls);
     std::vector<IndexKey> bucket_classes(IndexKey set) const;
     void set_bucket_membership(IndexKey set, IndexKey cls, IndexKey obj, bool member);
     std::vector<IndexKey> bucket(IndexKey set, IndexKey cls) const;
@@ -65,6 +86,11 @@ public:
     int64_t multiplicity(IndexKey set, IndexKey obj) const;
     // 0 for kNoTarget (never negative).
     int64_t popularity(IndexKey set, IndexKey rater, int64_t target_id) const;
+    // The object's own id as `add` recorded it; kNoId for an object no set
+    // holds.
+    int64_t obj_id(IndexKey obj) const;
+    // popularity(set, rater, obj_id(candidate)).
+    int64_t popularity_by_key(IndexKey set, IndexKey rater, IndexKey candidate) const;
     std::vector<IndexKey> targeting(IndexKey set, int64_t target_id) const;
 
     // Sets holding `obj` under a non-LEAVING entry (the contact view).
@@ -97,6 +123,7 @@ private:
     struct ObjInfo {
         bool is_ship = false;
         int64_t target = kNoTarget;
+        int64_t id = kNoId;
         std::vector<std::pair<IndexKey, int64_t>> held;  // (set, multiplicity), first-entry order
     };
 
