@@ -35,9 +35,10 @@ try:
 except ImportError:
     _h = None
 
-pytestmark = pytest.mark.skipif(
-    _h is None or not hasattr(_h, "aitree_roster_count"),
-    reason="native AI tree engine not built")
+# A stale or missing build fails the collection loudly: a module-level skip
+# would silently turn the whole SDK differential off.
+assert _h is not None and hasattr(_h, "aitree_roster_count"), (
+    "stale build: rebuild build/ (cmake --build build -j)")
 
 TICKS = 120
 #: Awake scenes run longer: scripts poll every 0.5-5 s, and the change under

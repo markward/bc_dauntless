@@ -3,8 +3,10 @@
 // The AI tree engine (phase 6 AI part 4, A5), built in seams. THE PYTHON
 // WALKER IS GONE FROM THE ENGINE (Task 8): what this file calls
 // `_tick_all_ai_python`, `_tick_ai_python`, the `_tick_*` bodies and the
-// `*_python` condition bodies is frozen verbatim, as of commit 1a9aa97af, in
-// tests/helpers/ai_walker_oracle.py, the reference the differential harness
+// `*_python` condition bodies lives only in
+// tests/helpers/ai_walker_oracle.py (verbatim as of commit 1a9aa97af, then
+// kept equal to this walk: a change here changes the oracle in the same
+// commit), the reference the differential harness
 // (tests/helpers/ai_walk_diff.py) holds this walker equal to. In ai_driver
 // the same names are one-statement FORWARDERS into this unit (`aitree_run`
 // for the ones without a binding of their own): patch points, and the
@@ -19,7 +21,7 @@
 // ai_driver's `_refresh_conditional_status_python`,
 // `_eval_conditional_python` (the memo in `ai.__dict__["_evalfn_cache"]`
 // included) and `_tick_conditional`'s two status reads; ai_driver's public
-// names pick them when the native walker is selected. Task 4 (S4): the WALK,
+// names are forwarders into them. Task 4 (S4): the WALK,
 // `_tick_ai_python`, `_dispatch_ai`, every stock `_tick_*` handler and the
 // helpers they call by global name (`_dispatch_priority_child` and its
 // rollback, `_queue_got_focus`, `_focus_instance_of`, `_retain_subtree_focus`,
@@ -154,6 +156,13 @@
 // co_varnames order at return (_PyFrame_Clear). A finaliser (SDK conditions
 // tear down in __del__) therefore runs at the same point under both rosters.
 //
+// `_aitree_run` and `_GLOBALS` are NOT patch points: the stock forwarders
+// that go through `aitree_run` (the `_tick_*` handlers, `_dispatch_ai`, the
+// focus helpers) are inlined without re-checking that those two module
+// globals are still ours, as the `tick_ai` and S2 forwarders are re-checked
+// (a per-node dict lookup for nothing a real caller does). Patch the
+// forwarder's own global (`_tick_plain`, ...) instead.
+//
 // KNOWN, ACCEPTED DIVERGENCES:
 //  - The stock-body checks (`_same_body` in ai_driver, for GetStatus,
 //    SetActive and SetInactive) compare code flags with only CO_NESTED
@@ -173,6 +182,11 @@
 //  - Likewise `tuple`, `int`, `any`, `all`, `type` and `Exception` in S2:
 //    the builtins' own operations (PySequence_Tuple, PyNumber_Long, ...),
 //    never a module-level shadow.
+//  - Cyclic-GC trigger points differ: the native walk allocates less than
+//    the Python one did, so a cyclic collection (and with it a finaliser of
+//    cyclic garbage) can run at a different point. Deferred, per the ledger.
+//  - `load_global` reads `globals["__builtins__"]`, not the builtins the
+//    running function captured at its creation.
 //  - A stock GetStatus read inline pushes no frame: a tracer or profiler
 //    (sys.settrace / setprofile, cProfile) does not see that call, and it
 //    cannot raise RecursionError at the recursion limit. Likewise a skipped

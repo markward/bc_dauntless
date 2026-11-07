@@ -24,9 +24,10 @@ try:
 except ImportError:
     _h = None
 
-needs_native = pytest.mark.skipif(
-    _h is None or not hasattr(_h, "combat_k1_next"),
-    reason="native K1 bindings not built")
+# The whole net needs the native module: a stale or missing build fails the
+# collection loudly instead of skipping the walk's only tests.
+assert _h is not None and hasattr(_h, "aitree_roster_count") and hasattr(
+    _h, "combat_k1_next"), "stale build: rebuild build/ (cmake --build build -j)"
 
 
 def _k1_scene(dumb_fire=False, wrap_status=True, wrap_activation=True):
@@ -2534,7 +2535,6 @@ def test_engine_glue_and_get_status_raising_escape_the_walk(wrap_status):
 
 # ── the real fights ──────────────────────────────────────────────────────────
 
-@needs_native
 def test_k1_gameloop_ai_trees():
     rec = awd.run_walk_diff(_k1_scene(), 600, warm_ticks=2, aba=True)
     calls = rec.calls()
@@ -2545,7 +2545,6 @@ def test_k1_gameloop_ai_trees():
     assert calls["_ensure_select_target_initialized"] > 0
 
 
-@needs_native
 def test_k1_gameloop_ai_trees_with_direct_condition_reads():
     """The same fight with no GetStatus and no node SetActive / SetInactive
     wrapped: the SDK's ConditionScripts (stock TGCondition.GetStatus) are
@@ -2563,7 +2562,6 @@ def test_k1_gameloop_ai_trees_with_direct_condition_reads():
     assert rec.native_entries["activation_skips"] > 1000, rec.native_entries
 
 
-@needs_native
 def test_sdk_dumb_fire_trees():
     rec = awd.run_walk_diff(_k1_scene(dumb_fire=True), 300, warm_ticks=2,
                             aba=True)
@@ -2717,3 +2715,42 @@ def test_a_swapped_s2_forwarder_body_is_honoured(target):
         swapped = [e for e in rec.log() if e[0] == "call" and e[1] == "eval"
                    and e[3] == ("tuple", ("int", 0))]
         assert len(swapped) >= 3, rec.calls()
+
+
+def _midwalk_patch_scene(mp):
+    """A driver global patched from inside an SDK callback, mid-walk: a leaf's
+    Update swaps `_note_due` and `_flush_pending_got_focus` (both looked up by
+    name at each use; `_DISPATCH_BY_TYPE` caches its handlers, so a `_tick_*`
+    patch is not live on either side) for marking wrappers at its 3rd Update
+    and back at its 7th. Both walkers must call the wrappers from the very
+    next use."""
+    drv = _driver()
+    owner = awd.current()
+    real_flush, real_note = drv._flush_pending_got_focus, drv._note_due
+
+    def wrapped_flush():
+        awd.mark(owner, "flush")
+        return real_flush()
+
+    def wrapped_note(when):
+        awd.mark(owner, "note_due")
+        return real_note(when)
+
+    def hook(n):
+        if n == 3:
+            mp.setattr(drv, "_flush_pending_got_focus", wrapped_flush)
+            mp.setattr(drv, "_note_due", wrapped_note)
+        if n == 7:
+            mp.setattr(drv, "_flush_pending_got_focus", real_flush)
+            mp.setattr(drv, "_note_due", real_note)
+    s = _ship("P")
+    _install(s, _plist(s, "Root",
+                       (1, _leaf(s, "Patcher", on_update=hook, interval=0.03)),
+                       (2, _leaf(s, "Other", interval=0.05))))
+    return _scene_of(mp, [s])
+
+
+def test_a_driver_global_patched_from_a_callback_mid_walk():
+    rec = awd.run_walk_diff(_midwalk_patch_scene, 40)
+    assert len(_marks(rec, "flush")) >= 2, rec.calls()
+    assert len(_marks(rec, "note_due")) >= 2, rec.calls()

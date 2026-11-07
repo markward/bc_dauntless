@@ -1,8 +1,9 @@
 // native/src/host/aitree.cc -- see aitree.h.
 //
-// THE REFERENCE is the frozen Python walker, tests/helpers/ai_walker_oracle.py
-// (the former engine/appc/ai_driver.py `_tick_all_ai_python`, `_tick_ai_python`
-// and the rest, as of commit 1a9aa97af) and `_note_due`'s former Python body;
+// THE REFERENCE is the Python oracle, tests/helpers/ai_walker_oracle.py (the
+// former engine/appc/ai_driver.py `_tick_all_ai_python`, `_tick_ai_python`
+// and the rest, verbatim at commit 1a9aa97af, kept equal to this walk since)
+// and `_note_due`'s former Python body;
 // each step below names the statement it stands for. The arithmetic is Python's, in its operand order,
 // with no multiply-add contracted (the pragma here; -ffp-contract=off from
 // CMake for other compilers).
@@ -527,7 +528,7 @@ struct Frame {
     ~Frame() { release(); }
 };
 
-// The roster: `_tick_all_ai_python`'s body, statement for statement.
+// The roster: the oracle's `_tick_all_ai_python`, statement for statement.
 PyObject* tick_all_impl(PyObject* game_time, PyObject* g) {
     const Names* n = names();
     if (n == nullptr) return nullptr;
@@ -720,9 +721,9 @@ PyObject* tick_all_impl(PyObject* game_time, PyObject* g) {
 }
 
 // ── S2: the condition evaluation ────────────────────────────────────────────
-// THE REFERENCE is ai_driver.py's `_refresh_conditional_status_python`,
-// `_eval_conditional_python`, `_condition_statuses_python` and
-// `_any_condition_python`; each step names the statement (and, where the
+// THE REFERENCE is the oracle's (tests/helpers/ai_walker_oracle.py)
+// `_refresh_conditional_status_python`, `_eval_conditional_python`,
+// `_condition_statuses_python` and `_any_condition_python`; each step names the statement (and, where the
 // order of effects matters, the bytecode) it stands for. Every frame-local
 // lifetime follows the rule in aitree.h, comprehensions and generator
 // expressions included: their iterator (`.0`) and loop variable are their
@@ -941,7 +942,25 @@ int all_key_types(PyObject* args, PyObject* g, const Names* n) {
     return all;
 }
 
-// `_eval_conditional_python(ai, eval_fn, args)`, statement for statement.
+// Set the pending-exception context: the fetched exception (et, ev, etb) is
+// the context of the one now raised. Takes the three references.
+// 3.11 has `_PyErr_ChainExceptions(type, value, tb)`; 3.12 replaced it with
+// `_PyErr_ChainExceptions1(exc)` and 3.13 removed the old name. The #else arm
+// is UNCOMPILED here (only 3.11 headers are installed): written from the 3.12
+// API, to be checked on first build against a newer Python.
+void chain_exceptions(PyObject* et, PyObject* ev, PyObject* etb) {
+#if PY_VERSION_HEX < 0x030C0000
+    _PyErr_ChainExceptions(et, ev, etb);
+#else
+    PyErr_NormalizeException(&et, &ev, &etb);
+    if (ev != nullptr && etb != nullptr) PyException_SetTraceback(ev, etb);
+    Py_XDECREF(et);
+    Py_XDECREF(etb);
+    _PyErr_ChainExceptions1(ev);
+#endif
+}
+
+// The oracle's `_eval_conditional_python(ai, eval_fn, args)`, statement for statement.
 // Owned status.
 PyObject* eval_impl(PyObject* ai, PyObject* eval_fn, PyObject* args, PyObject* g,
                     const Names* n) {
@@ -1006,7 +1025,7 @@ PyObject* eval_impl(PyObject* ai, PyObject* eval_fn, PyObject* args, PyObject* g
             Ref dormant(load_global(g, n->us_dormant));
             if (!dormant) {
                 // Raised inside the handler: the caught one is its context.
-                _PyErr_ChainExceptions(et, ev, etb);
+                chain_exceptions(et, ev, etb);
                 return nullptr;
             }
             f.status = std::move(dormant);
@@ -1079,7 +1098,7 @@ PyObject* eval_impl(PyObject* ai, PyObject* eval_fn, PyObject* args, PyObject* g
 
 PyObject* eval_conditional_call(const Ctx& c, PyObject* ai, PyObject* eval_fn, PyObject* args);
 
-// `_refresh_conditional_status_python(ai)`, statement for statement.
+// The oracle's `_refresh_conditional_status_python(ai)`, statement for statement.
 PyObject* refresh_impl(PyObject* ai, PyObject* g) {
     const Names* n = names();
     if (n == nullptr) return nullptr;
@@ -1174,7 +1193,7 @@ PyObject* refresh_impl(PyObject* ai, PyObject* g) {
 }
 
 // ── S4: the walk ────────────────────────────────────────────────────────────
-// THE REFERENCE is ai_driver.py's `_tick_ai_python`, `_dispatch_ai`, the
+// THE REFERENCE is the oracle's `_tick_ai_python`, `_dispatch_ai`, the
 // stock `_tick_*` handlers and the helpers they call by global name
 // (`_dispatch_priority_child`, `_queue_got_focus`, `_focus_instance_of`,
 // `_retain_subtree_focus`, `_note_due_ret`); each step names the statement it
@@ -1843,7 +1862,7 @@ PyObject* eval_conditional_call(const Ctx& c, PyObject* ai, PyObject* eval_fn, P
 }
 
 // ── S3: the root-end reconciliation ─────────────────────────────────────────
-// THE REFERENCE is ai_driver.py's `_reconcile_focus`, `_dispatch_lost_focus`,
+// THE REFERENCE is the oracle's `_reconcile_focus`, `_dispatch_lost_focus`,
 // `_flush_pending_got_focus` and `_reconcile_active`; each step names the
 // statement it stands for. The calls out (LostFocus / GotFocus through
 // `_run_script_step`, `SetActive` / `SetInactive` through Python's own method
@@ -3743,7 +3762,7 @@ int bump_depth(const Ctx& c, int delta) {
     return PyDict_SetItem(c.g, c.n->focus_depth, v.get());
 }
 
-// `_tick_ai_python`'s body: the native walk of one subtree. Owned status.
+// The oracle's `_tick_ai_python`: the native walk of one subtree. Owned status.
 PyObject* tick_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
     const Names* n = c.n;
     // Python would raise RecursionError on a cyclic tree; this keeps the C
@@ -3806,7 +3825,9 @@ PyObject* tick_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
     //     _focus_depth -= 1
     {
         Ref value;
-        {
+        // A std::bad_alloc from the native walk becomes MemoryError HERE, so
+        // the `finally` below (the depth restore) still runs.
+        try {
             Ref fn(load_global(c.g, n->dispatch_ai));
             if (fn) {
                 const int s = stock_fn(c, n->dispatch_ai, fn.get());
@@ -3815,6 +3836,9 @@ PyObject* tick_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
                 else if (s == 0)
                     value = Ref(call2(fn.get(), ai, gt));
             }
+        } catch (const std::bad_alloc&) {
+            value = Ref();
+            PyErr_NoMemory();
         }
         if (!value) {
             // The finally body runs with the exception pending; one it
@@ -3822,7 +3846,7 @@ PyObject* tick_impl(const Ctx& c, PyObject* ai, PyObject* gt) {
             PyObject *et, *ev, *etb;
             PyErr_Fetch(&et, &ev, &etb);
             if (bump_depth(c, -1) < 0) {
-                _PyErr_ChainExceptions(et, ev, etb);
+                chain_exceptions(et, ev, etb);
                 return nullptr;
             }
             PyErr_Restore(et, ev, etb);
@@ -4085,9 +4109,9 @@ PyMethodDef kDefs[] = {
      "forwarder `name` (_tick_plain, _dispatch_ai, _reconcile_focus, ...)."},
     {"aitree_tick_all", fast<tick_all>(), METH_FASTCALL,
      "aitree_tick_all(game_time, globals): ai_driver's per-tick roster and "
-     "sleep scheduling (its _tick_all_ai_python); each root walk is the "
-     "native walk while ai_driver's tick_ai would select it, else tick_ai "
-     "is called; `globals` is ai_driver's module dict."},
+     "sleep scheduling; each root walk is the native walk while ai_driver's "
+     "tick_ai is still the stock forwarder, else tick_ai is called; "
+     "`globals` is ai_driver's module dict."},
     {"aitree_note_due", fast<note_due>(), METH_FASTCALL,
      "aitree_note_due(when): record a node's next-update time in the walk in "
      "progress (ai_driver._note_due)."},
@@ -4099,11 +4123,11 @@ PyMethodDef kDefs[] = {
      "aitree_roster_count() -> how many native rosters have started."},
     {"aitree_refresh_conditional", fast<refresh_conditional>(), METH_FASTCALL,
      "aitree_refresh_conditional(ai, globals): ai_driver's "
-     "_refresh_conditional_status_python (the memoised EvalFunc, or the "
+     "_refresh_conditional_status (the memoised EvalFunc, or the "
      "any-non-zero rule, then the contained-DONE fold)."},
     {"aitree_eval_conditional", fast<eval_conditional>(), METH_FASTCALL,
      "aitree_eval_conditional(ai, eval_fn, args, globals) -> ai_driver's "
-     "_eval_conditional_python: the pre-fold status, through the memo."},
+     "_eval_conditional: the pre-fold status, through the memo."},
     {"aitree_condition_statuses", fast<condition_statuses>(), METH_FASTCALL,
      "aitree_condition_statuses(ai, globals) -> "
      "[c.GetStatus() for c in ai._conditions]."},
@@ -4111,9 +4135,9 @@ PyMethodDef kDefs[] = {
      "aitree_any_condition(ai, globals) -> "
      "any(c.GetStatus() != 0 for c in ai._conditions)."},
     {"aitree_tick", fast<tick>(), METH_FASTCALL,
-     "aitree_tick(ai, game_time, globals): ai_driver's tick_ai with the native "
-     "walker selected (its _tick_ai_python, _dispatch_ai and every stock _tick_* "
-     "handler); `globals` is ai_driver's module dict."},
+     "aitree_tick(ai, game_time, globals): ai_driver's tick_ai (the native "
+     "walk: _dispatch_ai and every stock _tick_* handler); `globals` is "
+     "ai_driver's module dict."},
     {"aitree_walk_counts", fast<walk_counts>(), METH_FASTCALL,
      "aitree_walk_counts() -> (native walks started, then native runs of each "
      "stock handler in ai_driver._STOCK_HANDLERS order)."},

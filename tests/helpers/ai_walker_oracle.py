@@ -4,11 +4,15 @@ Phase 6 AI part 4, Task 8. Until commit 1a9aa97af the AI tree was walked by
 Python in engine/appc/ai_driver.py; the walker is now C++
 (native/src/host/aitree.cc) and Mark's rule (2026-11-07) is that ported code
 keeps no permanent Python copy in the engine. This file is that Python walker,
-VERBATIM as of 1a9aa97af ("test(ai): awake differentials prove the trees
+verbatim as of 1a9aa97af ("test(ai): awake differentials prove the trees
 switch"), the last commit before its deletion: ``git show
-1a9aa97af:engine/appc/ai_driver.py`` holds every function below unchanged.
-Nothing here is edited; it is the reference the native walk was proven against
-statement for statement.
+1a9aa97af:engine/appc/ai_driver.py`` holds the functions as they were then.
+It is the reference the native walk is proven against statement for statement.
+
+EVOLUTION RULE: a future change to the native walk (native/src/host/aitree.cc)
+changes this oracle in the same commit, so the two stay statement-for-
+statement equal and the differential harness keeps meaning something. The
+oracle is not frozen against the walk; it is frozen against drift.
 
 It cannot be imported as a standalone module: the bodies read ai_driver's
 module globals (``_DISPATCH_BY_TYPE``, ``_ooa_cache``, ``_reached_this_tick``,

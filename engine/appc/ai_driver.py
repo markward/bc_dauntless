@@ -757,8 +757,9 @@ def _aitree(name):
 # progress, into the walk's min-due slot (`if when < slot: slot = when`; the
 # slot holds the very object given, so an int due time stays an int). NATIVE
 # since phase 6 AI part 4 task 2, so the native roster reads the slot directly;
-# the Python walker reaches it through this name, looked up at each call, so a
-# monkeypatched _note_due is still what the Python walk calls.
+# the native walk reaches it through this name, looked up at each call, so a
+# monkeypatched _note_due is still what the walk calls (the test oracle, in
+# tests/helpers/ai_walker_oracle.py, does the same).
 #
 # Called from every site that gates on game_time >= _next_update_time and can
 # still ACT on that gate, so the tree's sleep can never outlast the soonest
