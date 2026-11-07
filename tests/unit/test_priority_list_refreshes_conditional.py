@@ -23,14 +23,17 @@ from engine.appc.ai import (
 import pytest
 
 from engine.appc import ai_driver
+from tests.helpers import ai_walker_oracle as oracle
 from engine.appc.ai_driver import tick_ai
 from engine.appc.ships import ShipClass
 
 
 @pytest.fixture(autouse=True, params=["python", "native"])
 def walker(request, monkeypatch):
-    """Both condition evaluations: the Python driver's and the native one."""
-    monkeypatch.setattr(ai_driver, "_native_walker", request.param == "native")
+    """Both condition evaluations: the frozen Python walker's (the test
+    oracle, installed over ai_driver) and the native one."""
+    if request.param == "python":
+        oracle.install(monkeypatch)
     return request.param
 
 

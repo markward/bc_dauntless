@@ -18,17 +18,29 @@ must decline.
 import pytest
 
 from engine.appc import ai_driver
-from engine.appc.ai_driver import (_memoisable_evalfunc, _eval_conditional,
-                                   _refresh_conditional_status,
+from tests.helpers import ai_walker_oracle as oracle
+from engine.appc.ai_driver import (_memoisable_evalfunc,
                                    US_ACTIVE, US_DORMANT, US_DONE)
 from engine.appc.ai import ConditionalAI, TGCondition
 
 
+def _eval_conditional(*args):
+    """Resolved at call time: the walker fixture may have installed the
+    oracle's over ai_driver's."""
+    return ai_driver._eval_conditional(*args)
+
+
+def _refresh_conditional_status(ai):
+    return ai_driver._refresh_conditional_status(ai)
+
+
 @pytest.fixture(autouse=True, params=["python", "native"])
 def walker(request, monkeypatch):
-    """Every test here runs against both condition evaluations: the Python
-    driver's and the native one (aitree.cc), selected by the walker flag."""
-    monkeypatch.setattr(ai_driver, "_native_walker", request.param == "native")
+    """Every test here runs against both condition evaluations: the frozen
+    Python walker's (tests/helpers/ai_walker_oracle.py, installed over
+    ai_driver) and the native one (aitree.cc)."""
+    if request.param == "python":
+        oracle.install(monkeypatch)
     return request.param
 
 

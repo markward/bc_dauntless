@@ -17,6 +17,7 @@ import pytest
 import App
 
 from tests.helpers import ai_walk_diff as awd
+from tests.helpers import ai_walker_oracle as oracle
 
 try:
     import _dauntless_host as _h
@@ -1418,7 +1419,8 @@ def test_harness_catches_a_native_side_that_runs_the_python_s2():
             ship, "G", [cond], lambda b: US_ACTIVE, _leaf(ship, "L")))))
         drv = _driver()
         mp.setattr(drv, "_aitree_refresh_conditional",
-                   lambda ai, g: drv._refresh_conditional_status_python(ai))
+                   lambda ai, g: oracle.clone(
+                       "_refresh_conditional_status_python")(ai))
         return awd.synthetic_scene(mp, [ship])
     with pytest.raises(AssertionError,
                        match="ran the Python condition evaluation"):
@@ -1933,7 +1935,7 @@ def test_harness_catches_a_native_side_that_runs_the_python_walk():
         _install(ship, _plist(ship, "Root", (1, _leaf(ship, "Leaf"))))
         drv = _driver()
         mp.setattr(drv, "_aitree_tick",
-                   lambda ai, t, g: drv._tick_ai_python(ai, t))
+                   lambda ai, t, g: oracle.clone("_tick_ai_python")(ai, t))
         return awd.synthetic_scene(mp, [ship])
     with pytest.raises(AssertionError, match="ran the Python walk"):
         awd.run_walk_diff(build, 5)
@@ -2335,7 +2337,7 @@ def test_harness_catches_a_native_side_that_runs_the_python_reconciliation():
         drv = _driver()
         for n in ("_reconcile_focus", "_flush_pending_got_focus",
                   "_reconcile_active"):
-            orig = getattr(drv, n)
+            orig = oracle.clone(n)
             mp.setattr(drv, n, lambda *a, _o=orig: _o(*a))
         return awd.synthetic_scene(mp, [ship])
     with pytest.raises(AssertionError,
@@ -2547,13 +2549,13 @@ def _negative_scene(kind):
         drv = _driver()
 
         def step(i):
-            if drv._native_walker:
+            if awd.is_native():
                 if kind == "state" and i == 7:
                     leaf._status = US_DORMANT
                 if kind == "log" and i == 9:
                     leaf.ForceUpdate()
             drv.tick_all_ai((i + 1) / 60.0)
-            if drv._native_walker and kind == "stamp" and i == 11:
+            if awd.is_native() and kind == "stamp" and i == 11:
                 ship.__dict__["_ai_next_walk_due"] += 1 / 120.0
         return awd.synthetic_scene(mp, [ship], step)
     return build
@@ -2578,8 +2580,8 @@ def test_harness_catches_a_native_side_that_never_enters_the_native_walker():
         _install(ship, _plist(ship, "Root", (1, _leaf(ship, "Leaf"))))
 
         def step(i):
-            _driver()._native_walker = False        # the selector is bypassed
-            _driver().tick_all_ai((i + 1) / 60.0)
+            if not awd.is_native():                 # the native entry is skipped
+                _driver().tick_all_ai((i + 1) / 60.0)
         return awd.synthetic_scene(mp, [ship], step)
     with pytest.raises(AssertionError, match="never entered the native walker"):
         awd.run_walk_diff(build, 5)
@@ -2593,8 +2595,8 @@ def test_harness_catches_a_native_side_that_runs_the_python_walker():
 
         def step(i):
             t = (i + 1) / 60.0
-            if drv._native_walker and i > 0:
-                drv._tick_all_ai_python(t)      # delegating, as Task 1 did
+            if awd.is_native() and i > 0:
+                oracle.clone("_tick_all_ai_python")(t)     # the oracle's roster
             else:
                 drv.tick_all_ai(t)
         return awd.synthetic_scene(mp, [ship], step)

@@ -25,6 +25,7 @@ import pathlib
 import pytest
 
 from engine.appc import ai_driver
+from tests.helpers import ai_walker_oracle as oracle
 from engine.appc.ai import (PlainAI, PreprocessingAI, PriorityListAI)
 from engine.appc.ai_driver import tick_all_ai, US_ACTIVE, US_DORMANT
 from engine.core import ids as core_ids
@@ -87,8 +88,8 @@ class _Preprocessor:
 def drive(monkeypatch, request):
     """Run one ship's real AI tree through the real tick_all_ai, under each
     roster (phase 6 AI part 4: the native roster keeps every invariant)."""
-    monkeypatch.setattr(ai_driver, "_native_walker",
-                        request.param == "native")
+    if request.param == "python":
+        oracle.install(monkeypatch)
 
     def run(ai, ticks, max_sleep, start=0.0):
         ship = _Ship(ai)
@@ -181,8 +182,13 @@ def test_every_due_time_gate_in_the_driver_records_its_due_time():
     time, or its node can oversleep by up to AI_MAX_SLEEP_TICKS -- silently,
     because oversleeping raises nothing and fails no assertion.
     """
-    src = pathlib.Path(ai_driver.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(src)
+    # The walker lives in C++ now (the differential harness holds it equal to
+    # the frozen Python reference), so the gates are looked for in the
+    # REFERENCE (tests/helpers/ai_walker_oracle.py), and ai_driver itself must
+    # hold none: a gate re-added there in Python would be a second walker.
+    oracle_src = pathlib.Path(oracle.__file__).read_text(encoding="utf-8")
+    driver_src = pathlib.Path(ai_driver.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(oracle_src)
 
     def _mentions(node, names):
         return any(isinstance(n, ast.Name) and n.id in names
@@ -198,6 +204,12 @@ def test_every_due_time_gate_in_the_driver_records_its_due_time():
                 return True
         return False
 
+    gated = [fn.name for fn in ast.walk(tree)
+             if isinstance(fn, ast.FunctionDef) and _gates(fn)]
+    assert {"_tick_plain", "_tick_preprocessing"} <= set(gated), gated
+    assert not [fn.name for fn in ast.walk(ast.parse(driver_src))
+                if isinstance(fn, ast.FunctionDef) and _gates(fn)], (
+        "ai_driver gates on game_time again: the walk is native")
     offenders = [fn.name for fn in ast.walk(tree)
                  if isinstance(fn, ast.FunctionDef) and _gates(fn)
                  and not _mentions(fn, {"_note_due", "_note_due_ret"})]

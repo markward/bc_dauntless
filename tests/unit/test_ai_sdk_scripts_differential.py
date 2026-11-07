@@ -461,8 +461,12 @@ def _tree_movement(rec):
       to True and True to False respectively (SetActive / SetInactive are also
       called on every walk, so call counts say nothing);
     * ``verdicts``: distinct EvalFunc results;
-    * ``switched``: nodes whose ``_current_child`` (a priority list's
-      dispatched child) took two or more values;
+    * ``switched``: nodes whose picked child changed: ``_current_child`` (a
+      RandomAI's pick; priority lists have none) or ``_current_index`` (a
+      SequenceAI's step) took two or more values over the run, None and a
+      node counted as different values (the snapshot does record the field:
+      a measure that skipped None saw a RandomAI's pick-and-finish as one
+      value and so read as dead);
     * ``focus_moves``: ticks where the set of focused nodes changed."""
     updates = sum(1 for log, _s in rec.ticks for e in log
                   if e[0] == "call" and e[1] == "script.Update")
@@ -481,9 +485,10 @@ def _tree_movement(rec):
                     edges += 1
                     deactivations += not act
                 prev_active[key] = act
-                cur = st["_current_child"]
-                if cur is not None and cur != awd._ABSENT:
-                    children.setdefault(key, set()).add(cur)
+                for field in ("_current_child", "_current_index"):
+                    if st[field] != awd._ABSENT:
+                        children.setdefault((key, field), set()).add(
+                            st[field])
                 if st["_has_focus"] is True or st["_has_focus"] == 1:
                     focus.add(key)
         if t >= 1 and prev_focus is not None and focus != prev_focus:

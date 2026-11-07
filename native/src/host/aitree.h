@@ -1,8 +1,18 @@
 // native/src/host/aitree.h
 //
-// The AI tree engine (phase 6 AI part 4, A5), built in seams. Task 2 (S1):
-// the per-tick ROSTER and its sleep scheduling, i.e.
-// engine/appc/ai_driver.py `_tick_all_ai_python` in C++, plus the walk's
+// The AI tree engine (phase 6 AI part 4, A5), built in seams. THE PYTHON
+// WALKER IS GONE FROM THE ENGINE (Task 8): what this file calls
+// `_tick_all_ai_python`, `_tick_ai_python`, the `_tick_*` bodies and the
+// `*_python` condition bodies is frozen verbatim, as of commit 1a9aa97af, in
+// tests/helpers/ai_walker_oracle.py, the reference the differential harness
+// (tests/helpers/ai_walk_diff.py) holds this walker equal to. In ai_driver
+// the same names are one-statement FORWARDERS into this unit (`aitree_run`
+// for the ones without a binding of their own): patch points, and the
+// "stock" identities the gates below compare against. There is no
+// `_native_walker` flag any more; the walk is always this one.
+//
+// Task 2 (S1): the per-tick ROSTER and its sleep scheduling, i.e.
+// `_tick_all_ai_python` in C++, plus the walk's
 // min-due slot that `_note_due` writes. Each root walk goes through
 // `tick_ai`'s stock gate (native from Task 4). Task 3 (S2): the CONDITION
 // EVALUATION,
@@ -29,6 +39,10 @@
 //   aitree_condition_statuses(ai, globals) -> [c.GetStatus() for c in ...]
 //   aitree_any_condition(ai, globals) -> any(c.GetStatus() != 0 for c ...)
 //   aitree_conditional_counts()           (native S2 entries, direct reads)
+//   aitree_run(name, globals, *args)      the native body of one ai_driver
+//                                         forwarder (_tick_plain, _dispatch_ai,
+//                                         _reconcile_focus, ...): what a
+//                                         wrapper calling the original lands in
 //   aitree_tick(ai, game_time, globals)   tick_ai with the native walker
 //   aitree_walk_counts()                  (native walks, then native runs of
 //                                         each stock handler kind)
@@ -36,18 +50,19 @@
 //                                         reconcilers, then SetActive /
 //                                         SetInactive calls skipped)
 //
-// S4, THE WALK. ai_driver's `tick_ai` is a dispatcher: `_aitree_tick` when
-// `_native_walker` is true, else `_tick_ai_python`. The native walk runs a
-// driver function's body natively only while the module global of that name
+// S4, THE WALK. ai_driver's `tick_ai` forwards to `_aitree_tick`. The native
+// walk runs a driver function's body natively only while the module global of that name
 // is the stock one, as captured at import in `_STOCK_WALK` (name -> (function,
 // code)) or, for a handler from `_DISPATCH_BY_TYPE` / `_resolve_dispatch`,
 // `_STOCK_HANDLERS` (function -> (kind, code)): the very function, still with
 // its own code. Anything else in its place (a test's injected handler, a
 // monkeypatch, a wrapper, a reassigned __code__) is CALLED, at the point the
-// Python walk calls it. A stock dispatcher (tick_ai, the four S2 names) is
-// inlined only while `_native_walker` is true and the binding it would call
-// is still ours; otherwise the dispatcher itself is called. `_note_due` is
-// run inline only while the global is our builtin.
+// old Python walk called it. A stock forwarder that names a binding of its
+// own (tick_ai, the four S2 names) is inlined only while that binding is
+// still ours; otherwise the forwarder itself is called (and lands in the same
+// binding). `_note_due` is run inline only while the global is our builtin.
+// `_note_due_ret` is the one stock name that is still a two-statement Python
+// body, inlined likewise.
 //
 // The walk state is ai_driver's MODULE GLOBALS, read and rebound exactly
 // where Python reads and rebinds them: `_focus_depth`, `_ooa_cache`,
@@ -95,9 +110,10 @@
 // SetActive / Activate calls, through the stock method, which is called.
 //
 // `DAUNTLESS_AI_BREAKDOWN`: with the breakdown on, `_dispatch_ai` hands each
-// handler to the Python `_timed_dispatch`, which calls the stock handlers as
-// Python functions. The results are the same; the timings measure the Python
-// handlers, not the native walk. A diagnostic only.
+// handler to the Python `_timed_dispatch`, which calls the handler's
+// forwarder (and so the native body) under a timer. The results are the
+// same; the timings carry one Python frame per node that the walk does not
+// have with the breakdown off. A diagnostic only.
 //
 // `_run_script_step` is CALLED BACK, never reproduced: its `except
 // Exception`, the `_last_script_error` record, the once-per-(node ID,
@@ -138,6 +154,13 @@
 // tear down in __del__) therefore runs at the same point under both rosters.
 //
 // KNOWN, ACCEPTED DIVERGENCES:
+//  - The stock-body checks (`_same_body` in ai_driver, for GetStatus,
+//    SetActive and SetInactive) compare code flags with only CO_NESTED
+//    masked. A Python that sets further flags on a plain function (3.14's
+//    CO_METHOD / CO_HAS_DOCSTRING) makes the comparison fail, which FAILS
+//    CLOSED: the function is not taken as stock and is called every time.
+//    Safe, only slower; widen the mask (or the capture's shape check) when
+//    moving the embedded Python.
 //  - hasattr, getattr, callable and min are the builtins' semantics applied
 //    directly, not looked up through LOAD_GLOBAL, so a module-level shadow of
 //    one of those names in ai_driver is ignored natively (Python would call

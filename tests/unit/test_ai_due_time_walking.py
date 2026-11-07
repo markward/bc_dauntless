@@ -20,6 +20,7 @@ here is the shape of that regression.
 import pytest
 
 from engine.appc import ai_driver
+from tests.helpers import ai_walker_oracle as oracle
 from engine.appc.ai_driver import tick_all_ai, US_ACTIVE
 
 
@@ -82,8 +83,8 @@ def _handler(ai, game_time):
 def scene(monkeypatch, request):
     """One ship, one node, driven through the real tick_all_ai -- under each
     roster (phase 6 AI part 4: the native roster must keep every contract)."""
-    monkeypatch.setattr(ai_driver, "_native_walker",
-                        request.param == "native")
+    if request.param == "python":
+        oracle.install(monkeypatch)
     made = {}
 
     def build(interval, max_sleep=4):

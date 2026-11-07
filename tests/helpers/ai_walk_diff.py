@@ -1,8 +1,10 @@
 """The tree-walk differential harness (phase 6 AI part 4, Task 1).
 
 ``run_walk_diff(scene, ticks)`` runs one seeded scene twice in this process,
-once with ``ai_driver._native_walker`` False (the Python walker) and once with
-it True (the native walker: the roster, the walk and the condition
+once with the frozen Python walker installed over ai_driver (the test oracle,
+``tests/helpers/ai_walker_oracle.py``: the verbatim Python walker as of commit
+1a9aa97af, bound to ai_driver's own module globals) and once with the engine
+as it ships (the native walker: the roster, the walk and the condition
 evaluation in aitree.cc; two Python runs agreeing is the harness's own proof
 of determinism). It raises ``AssertionError`` naming the tick and the first
 difference unless, for every tick,
@@ -101,6 +103,8 @@ from collections import Counter
 
 import pytest
 
+from tests.helpers import ai_walker_oracle as oracle
+
 _ABSENT = "<absent>"
 
 
@@ -179,6 +183,7 @@ class _Recorder:
     def __init__(self, mp, scene):
         self.mp = mp
         self.scene = scene
+        self.native = False             # set by run_side
         self.log = []
         self.ticks = []                 # [(log_slice, snapshot)]
         self._seen_modules = set()
@@ -543,6 +548,12 @@ def current():
     return _ACTIVE[-1] if _ACTIVE else None
 
 
+def is_native():
+    """True while the native side runs, False on the Python (oracle) side:
+    what a scene reads where it used to read ``ai_driver._native_walker``."""
+    return bool(_ACTIVE and _ACTIVE[-1].native)
+
+
 def mark(owner, *entry):
     """Append ``("mark", *entry)`` to the call log of `owner` (a token from
     :func:`current`, taken when the scene built the object) while that side
@@ -586,17 +597,6 @@ def _native_reconcile_counts():
     return tuple(_dauntless_host.aitree_reconcile_counts())
 
 
-#: The Python body of the walk (S4): the stock ``tick_ai`` calls it by global
-#: name when the Python walker is selected; on the native side it may run only
-#: if a scene calls it itself.
-_PYTHON_S4 = "_tick_ai_python"
-
-#: The Python bodies of the condition evaluation (S2). The dispatchers in
-#: ai_driver call these by global name when the Python walker is selected.
-_PYTHON_S2 = ("_refresh_conditional_status_python", "_eval_conditional_python",
-              "_condition_statuses_python", "_any_condition_python")
-
-
 def run_side(scene, ticks, native, bases=None):
     """One side of the comparison: returns its :class:`Record`. `bases` is the
     (AI id, object id) pair both sides start their counters from."""
@@ -606,7 +606,8 @@ def run_side(scene, ticks, native, bases=None):
     with pytest.MonkeyPatch.context() as mp:
         base_ai, base_obj = bases or _bases()
         _fresh_state(mp, base_ai, base_obj)
-        mp.setattr(ai_driver, "_native_walker", bool(native))
+        if not native:
+            oracle.install(mp)
         entries = {"python": 0, "native": 0, "native_roster": 0,
                    "python_s2": 0, "native_s2": 0, "stock_status_reads": 0,
                    "python_s4": 0, "native_walk": 0,
@@ -616,23 +617,19 @@ def run_side(scene, ticks, native, bases=None):
         s2_before = _native_conditional_counts()
         s4_before = _native_walk_counts()
         s3_before = _native_reconcile_counts()
-        for key, attr in (("python", "_tick_all_ai_python"),
-                          ("native", "_tick_all_ai_native")):
-            def counted(game_time, _orig=getattr(ai_driver, attr), _k=key):
-                entries[_k] += 1
-                return _orig(game_time)
-            mp.setattr(ai_driver, attr, counted)
-        for attr in _PYTHON_S2:
-            def counted_s2(*args, _orig=getattr(ai_driver, attr)):
-                entries["python_s2"] += 1
-                return _orig(*args)
-            mp.setattr(ai_driver, attr, counted_s2)
+        py_before = dict(oracle.ENTRIES)
 
-        def counted_s4(*args, _orig=getattr(ai_driver, _PYTHON_S4)):
-            entries["python_s4"] += 1
-            return _orig(*args)
-        mp.setattr(ai_driver, _PYTHON_S4, counted_s4)
+        # "native" counts entries into the roster by either side's
+        # tick_all_ai (the oracle's on the Python side, the forwarder to
+        # aitree_tick_all otherwise); the native roster itself is counted
+        # natively, so a stand-in for it shows as an entry that never started
+        # one.
+        def counted_entry(game_time, _orig=ai_driver.tick_all_ai):
+            entries["native"] += 1
+            return _orig(game_time)
+        mp.setattr(ai_driver, "tick_all_ai", counted_entry)
         rec = _Recorder(mp, None)
+        rec.native = bool(native)
         out = []
         _ACTIVE.append(rec)
         try:
@@ -649,6 +646,10 @@ def run_side(scene, ticks, native, bases=None):
                 out.append((rec.log[start:], rec.snapshot()))
         finally:
             _ACTIVE.remove(rec)
+            py_after = oracle.ENTRIES
+            entries["python"] = py_after["roster"] - py_before["roster"]
+            entries["python_s4"] = py_after["walk"] - py_before["walk"]
+            entries["python_s2"] = py_after["s2"] - py_before["s2"]
             entries["native_roster"] = _native_roster_count() - roster_before
             s2_after = _native_conditional_counts()
             entries["native_s2"] = s2_after[0] - s2_before[0]
@@ -726,11 +727,12 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
     Python side's :class:`Record` so a test can assert the scene reached what
     it claims.
 
-    Also asserts each side ran the walker it claims: the Python side never
-    entered ``_tick_all_ai_native`` nor started the native roster; the native
-    side entered ``_tick_all_ai_native`` at least once, the native roster
-    (``_dauntless_host.aitree_tick_all``, counted natively) started at least
-    once, and ``_tick_all_ai_python`` never ran. Likewise for the condition
+    Also asserts each side ran the walker it claims: the Python side ran the
+    oracle's roster (``_tick_all_ai_python``, counted by the oracle) and never
+    started the native roster; the native side entered ``tick_all_ai`` at
+    least once, the native roster (``_dauntless_host.aitree_tick_all``,
+    counted natively) started on every entry, and none of the oracle's entry
+    points ever ran. Likewise for the condition
     evaluation (S2): the Python side never ran it natively
     (``aitree_conditional_counts``), the native side never ran its Python
     bodies (``_PYTHON_S2``), and ran it natively whenever the Python side ran
@@ -759,8 +761,6 @@ def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
     bases = _bases()
     py = run_side(scene, ticks, native=False, bases=bases)
     nat = run_side(scene, ticks, native=True, bases=bases)
-    assert py.entries["native"] == 0, (
-        "the Python side entered the native walker: %r" % py.entries)
     assert py.entries["python"] >= 1, py.entries
     assert py.entries["native_roster"] == 0, (
         "the Python side started the native roster: %r" % py.entries)

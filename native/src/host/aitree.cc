@@ -1,8 +1,9 @@
 // native/src/host/aitree.cc -- see aitree.h.
 //
-// THE REFERENCE is engine/appc/ai_driver.py `_tick_all_ai_python` (the Python
-// roster) and `_note_due`'s former Python body; each step below names the
-// statement it stands for. The arithmetic is Python's, in its operand order,
+// THE REFERENCE is the frozen Python walker, tests/helpers/ai_walker_oracle.py
+// (the former engine/appc/ai_driver.py `_tick_all_ai_python`, `_tick_ai_python`
+// and the rest, as of commit 1a9aa97af) and `_note_due`'s former Python body;
+// each step below names the statement it stands for. The arithmetic is Python's, in its operand order,
 // with no multiply-add contracted (the pragma here; -ffp-contract=off from
 // CMake for other compilers).
 #if defined(__clang__)
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <new>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -99,7 +101,6 @@ struct Names {
     PyObject* reconcile_focus;       // "_reconcile_focus"
     PyObject* flush_pending;         // "_flush_pending_got_focus"
     PyObject* reconcile_active;      // "_reconcile_active"
-    PyObject* native_walker;         // "_native_walker"
     PyObject* aitree_tick;           // "_aitree_tick"
     PyObject* stock_walk;            // "_STOCK_WALK"
     PyObject* stock_handlers;        // "_STOCK_HANDLERS"
@@ -244,7 +245,6 @@ const Names* names() {
         {&n->reconcile_focus, "_reconcile_focus"},
         {&n->flush_pending, "_flush_pending_got_focus"},
         {&n->reconcile_active, "_reconcile_active"},
-        {&n->native_walker, "_native_walker"},
         {&n->aitree_tick, "_aitree_tick"},
         {&n->stock_walk, "_STOCK_WALK"},
         {&n->stock_handlers, "_STOCK_HANDLERS"},
@@ -1294,20 +1294,13 @@ int handler_kind(const Ctx& c, PyObject* handler) {
     return kind > kNotStock && kind < kKinds ? static_cast<int>(kind) : kNotStock;
 }
 
-// A stock dispatcher `name` (`if _native_walker: <binding>(...) else
-// <python body>`, e.g. tick_ai) would run our native `impl` now: 1. 0: call
-// the global itself (it is not stock, the Python body is selected, or the
-// binding it would call has been replaced). -1: an error.
+// A stock forwarder `name` (`return <binding>(...)`, e.g. tick_ai) would run
+// our native `impl` now: 1. 0: call the global itself (it is not stock, or
+// the binding it would call has been replaced). -1: an error.
 int routes_native(const Ctx& c, PyObject* name, PyObject* fn, PyObject* binding,
                   PyCFunction impl) {
     const int s = stock_fn(c, name, fn);
     if (s <= 0) return s;
-    {
-        Ref flag(load_global(c.g, c.n->native_walker));
-        if (!flag) return -1;
-        const int t = PyObject_IsTrue(flag.get());
-        if (t <= 0) return t;
-    }
     Ref b(load_global(c.g, binding));
     if (!b) return -1;
     return our_builtin(b.get(), impl) ? 1 : 0;
@@ -4027,7 +4020,79 @@ PyObject* roster_count(PyObject*, PyObject* const*, Py_ssize_t nargs) {
     return PyLong_FromUnsignedLongLong(g_roster_runs);
 }
 
+// aitree_run(name, globals, *args): the native body of one of ai_driver's
+// forwarders (its `_tick_plain`, `_dispatch_ai`, `_reconcile_focus`, ...).
+// The walk runs these inline while the module global is the stock forwarder;
+// the forwarder itself is what a patched wrapper (or a test, or ships.py)
+// reaches by calling the original, and it lands here. `name` is the Python
+// function's name; globals is ai_driver's module dict.
+PyObject* run(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs < 2 || !PyUnicode_Check(args[0]) || !PyDict_Check(args[1])) {
+        PyErr_SetString(PyExc_TypeError, "aitree_run(name, globals: dict, *args)");
+        return nullptr;
+    }
+    struct Entry {
+        const char* name;
+        int arity;   // positional arguments after globals
+        int kind;    // a handler kind, else 0
+    };
+    static const Entry kEntries[] = {
+        {"_tick_plain", 2, kPlain},
+        {"_tick_priority_list", 2, kPriorityList},
+        {"_tick_sequence", 2, kSequence},
+        {"_tick_random", 2, kRandom},
+        {"_tick_conditional", 2, kConditional},
+        {"_tick_preprocessing", 2, kPreprocessing},
+        {"_tick_builder", 2, kBuilder},
+        {"_dispatch_ai", 2, 0},
+        {"_dispatch_priority_child", 2, 0},
+        {"_queue_got_focus", 1, 0},
+        {"_focus_instance_of", 1, 0},
+        {"_retain_subtree_focus", 1, 0},
+        {"_dispatch_lost_focus", 1, 0},
+        {"_reconcile_focus", 2, 0},
+        {"_reconcile_active", 2, 0},
+        {"_flush_pending_got_focus", 0, 0},
+    };
+    const Entry* e = nullptr;
+    for (const Entry& cand : kEntries) {
+        if (PyUnicode_CompareWithASCIIString(args[0], cand.name) == 0) {
+            e = &cand;
+            break;
+        }
+    }
+    if (e == nullptr) {
+        PyErr_Format(PyExc_ValueError, "aitree_run: unknown function %R", args[0]);
+        return nullptr;
+    }
+    if (nargs - 2 != e->arity) {
+        PyErr_Format(PyExc_TypeError, "%s() takes %d positional arguments but %zd were given",
+                     e->name, e->arity, nargs - 2);
+        return nullptr;
+    }
+    return guarded([&]() -> PyObject* {
+        const Names* n = names();
+        if (n == nullptr) return nullptr;
+        const Ctx c{args[1], n};
+        PyObject* const* a = args + 2;
+        if (e->kind != 0) return run_handler(e->kind, c, a[0], a[1]);
+        const std::string_view f = e->name;
+        if (f == "_dispatch_ai") return dispatch_impl(c, a[0], a[1]);
+        if (f == "_dispatch_priority_child") return dispatch_priority_child_impl(c, a[0], a[1]);
+        if (f == "_queue_got_focus") return queue_got_focus_impl(c, a[0]);
+        if (f == "_focus_instance_of") return focus_instance_of_impl(c, a[0]);
+        if (f == "_retain_subtree_focus") return retain_subtree_focus_impl(c, a[0]);
+        if (f == "_dispatch_lost_focus") return dispatch_lost_focus_impl(c, a[0]);
+        if (f == "_reconcile_focus") return reconcile_focus_impl(c, a[0], Ref(Py_NewRef(a[1])));
+        if (f == "_reconcile_active") return reconcile_active_impl(c, a[0], Ref(Py_NewRef(a[1])));
+        return flush_pending_impl(c);
+    });
+}
+
 PyMethodDef kDefs[] = {
+    {"aitree_run", fast<run>(), METH_FASTCALL,
+     "aitree_run(name, globals, *args): the native body of the ai_driver "
+     "forwarder `name` (_tick_plain, _dispatch_ai, _reconcile_focus, ...)."},
     {"aitree_tick_all", fast<tick_all>(), METH_FASTCALL,
      "aitree_tick_all(game_time, globals): ai_driver's per-tick roster and "
      "sleep scheduling (its _tick_all_ai_python); each root walk is the "
