@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 #include "dauntless/combat/py_math.h"
@@ -424,6 +425,10 @@ struct Plant {
     double main, backup, main_conduit, backup_conduit, available, dispensed;
     bool wrote_main = false, wrote_backup = false, wrote_budgets = false,
          wrote_dispensed = false;
+    // This tick's share of what is left of the interval's conduit budget
+    // (power_flow's pacing): a conduit draw takes at most this much, then
+    // lowers it by what it got. Unlimited unless power_flow sets it.
+    double allowance = std::numeric_limits<double>::infinity();
 };
 
 // One pool's conduit draw: min of three, Python's fold (the former
@@ -448,6 +453,10 @@ double draw_backup(Plant& p, double amount) {
 // A conduit draw by POWER_MODE (the former PowerSubsystem._draw, deleted in
 // phase 6 Task 8; `amount` > 0 here, as every caller guards).
 double draw(Plant& p, double amount, int64_t mode) {
+    if (amount <= 0.0) return 0.0;
+    // The pacing (power_flow): never more than this tick's allowance. When
+    // the tick wants no more than its allowance this is `amount` itself.
+    amount = py_min(amount, p.allowance);
     if (amount <= 0.0) return 0.0;
     double got = 0.0;
     if (mode == kPsmMainFirst) {
@@ -480,6 +489,7 @@ double draw(Plant& p, double amount, int64_t mode) {
     }
     p.dispensed += got;
     p.wrote_dispensed = true;
+    p.allowance -= got;
     return got;
 }
 
@@ -643,6 +653,23 @@ bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
         p.backup_conduit = py_min(p.backup, backup_max);
         p.available = p.main_conduit + p.backup_conduit;
         p.wrote_budgets = true;
+    }
+    // The pacing: the interval's conduit budget is spread over the interval.
+    // This tick may spend at most what is left of it x dt / the time left in
+    // the interval (this tick included); the interval's last tick may spend
+    // all of it. Without it a plant asked for more than its conduits carry
+    // spent the whole budget first come, first served, gave every consumer
+    // full power until it ran dry (~0.88 s into a 1 s interval for a 12%
+    // shortfall) and then nothing for the rest of the interval: the sensors
+    // went blind and the player's target dropped every second. Paced, a
+    // shortfall reaches the consumers as a steady reduced share each tick, in
+    // draw order (the first-registered consumer still has first claim), and
+    // nothing switches off. A tick that wants no more than its allowance
+    // draws exactly as before.
+    {
+        const double remaining = p.main_conduit + p.backup_conduit;
+        const double left = m.globals().POWER_INTERVAL - interval;
+        p.allowance = left <= dt ? remaining : remaining * (dt / left);
     }
     // The pump: the parent ship's consumers, in attach order. A consumer
     // the pump cannot run (its row unnamed or freed, an unknown kind, a
