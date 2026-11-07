@@ -8819,6 +8819,19 @@ py::object update(PyObject* self, PyObject* globals) {
 //   ai_stock_remember(cls, name, methods, verdict, tag)
 // Raw METH_FASTCALL functions: this runs on every native call of the three
 // kinds, and pybind11's dispatch would cost more than the check.
+//
+// ACCEPTED BLIND SPOTS (none moves a type or dict version tag, none is
+// checked; only the A/B test and the goldens would see them):
+//  - reassigning a function's __code__, __defaults__ or _dauntless_wraps in
+//    place;
+//  - module-level SDK helpers (the stock rule covers methods only);
+//  - _FIRE_SURFACE mutated in place, and a non-dict __builtins__;
+//  - the native code mirrors the SDK loader's AST transforms (has_key ->
+//    __contains__, the __import__ lambda): a new transform touching these
+//    bodies diverges silently;
+//  - a wrapper from engine/appc/ai_sensor_gate.py counts as stock
+//    (ai_native._unwrap): safe only because every gate-wrapped name the
+//    native code touches (TargetVisible) is called back, never reimplemented.
 namespace {
 namespace stockmemo {
 

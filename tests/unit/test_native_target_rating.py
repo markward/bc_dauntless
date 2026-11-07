@@ -52,7 +52,7 @@ def _reset_app_state():
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
-    monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+    monkeypatch.setattr(ai_native, "_force_python", False)
     _reset_app_state()
     ai_native.reset_stats()
     yield
@@ -345,9 +345,9 @@ def _fight(rng):
 
 def _pick(monkeypatch, native):
     if native:
-        monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+        monkeypatch.setattr(ai_native, "_force_python", False)
     else:
-        monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "0")
+        monkeypatch.setattr(ai_native, "_force_python", True)
     picks = []
     rng = random.Random(7)
     for _ in range(12):
@@ -386,9 +386,9 @@ def test_the_sensor_gates_own_fallback_rates_natively(monkeypatch):
     picks = {}
     for native in (False, True):
         if native:
-            monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+            monkeypatch.setattr(ai_native, "_force_python", False)
         else:
-            monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "0")
+            monkeypatch.setattr(ai_native, "_force_python", True)
         _reset_app_state()
         ai_native.reset_stats()
         inst, _foes = _fight(random.Random(11))
@@ -608,13 +608,13 @@ def test_no_ship_returns_the_sdks_int():
     assert s["native"] == 0 and s["python"] == 0, s
 
 
-def test_switch_and_patch_send_the_call_to_the_sdk(monkeypatch):
+def test_force_python_and_patch_send_the_call_to_the_sdk(monkeypatch):
     pSet, ours, them, inst = _pair()
     want = _sdk(inst, them).hex()
-    monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "avoid,fire")
     assert inst.GetTargetRating(them).hex() == want
-    monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "select")
+    monkeypatch.setattr(ai_native, "_force_python", True)
     assert inst.GetTargetRating(them).hex() == want
+    monkeypatch.setattr(ai_native, "_force_python", False)
     # A mod patching the SDK method after the first native call: the next
     # call runs the patch.
     monkeypatch.setattr(pp.SelectTarget, "GetTargetRating",
@@ -622,7 +622,7 @@ def test_switch_and_patch_send_the_call_to_the_sdk(monkeypatch):
     assert inst.GetTargetRating(them) == 42.0
     s = ai_native.stats()["select"]
     assert (s["native"], s["python"]) == (1, 2), s
-    assert s["reasons"] == {"switch": 1, "not_stock": 1}, s
+    assert s["reasons"] == {"not_stock": 2}, s
 
 
 def test_a_candidate_with_a_non_dict___dict___takes_the_python_path():

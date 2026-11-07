@@ -1,4 +1,4 @@
-"""The stock gate, the build switch and the counters for the native stock
+"""The stock gate and the counters for the native stock
 preprocessors (phase 6 AI part 2; spec 2026-11-05-phase6-engine-stages-native-
 design.md section 5).
 
@@ -19,20 +19,48 @@ Python body only for an instance the SDK would have run UNCHANGED. "Stock"
 Anything else runs the SDK Python for that call. That fallback is permanent: it
 is the mod path.
 
-Two rules the checks keep:
+One rule the checks keep: an engine subclass's override of a hot method
+(marked ``_dauntless_native_entry = True``) is never accepted by itself. It
+shadows the SDK method, so the check looks the name up on the SDK BASE class
+instead: a mod patching ``AI.Preprocessors.AvoidObstacles.TestCourseOverride``
+must not be hidden by it.
 
-* A patch made after the first native call is seen on the NEXT one. The cache
-  holds the verdict AND the tuple of functions it was decided from, and every
-  call re-resolves that tuple (as ``native_motion._stock_holds`` compares its
-  snapshot); an equal tuple means nothing moved.
-* An engine subclass's override of a hot method (marked
-  ``_dauntless_native_entry = True``) is never accepted by itself. It shadows
-  the SDK method, so the check looks the name up on the SDK BASE class instead:
-  a mod patching ``AI.Preprocessors.AvoidObstacles.TestCourseOverride`` must not
-  be hidden by it.
+How the decision is made and kept (the model as shipped):
 
-Cost: ``preprocessor_is_stock`` is a dict hit, one list of ``getattr``s on the
-type and a list compare.
+* PYTHON decides. ``preprocessor_is_stock`` is the only place the rule is
+  written; it runs once per class VERSION.
+* C++ memoises. The host remembers the class verdict keyed on the type's
+  version tag (``stockmemo`` in native/src/host/host_bindings.cc), which
+  CPython renews on any attribute change of the type or of a base, and answers
+  the next call itself, instance ``__dict__`` check included. The module
+  surface a native body reads is memoised on module-dict and type tags
+  (``surfacememo``, ``ai_optimized._memo_answer``), and the reader-contract
+  verdicts per type (``class_stock``). An unkeyable type is decided in Python
+  every call.
+* The memos exist only on Python 3.11 (they read CPython internals). Outside
+  3.11, or when the startup self-test finds a tag that does not move, they are
+  off (``_dauntless_host.ai_memo_status()``) and every gate is decided in
+  Python every call: slower, still exact.
+
+Accepted blind spots (the memo keys on type tags; none of these move one, and
+none is checked; only the A/B test and the goldens would see them):
+
+* reassigning a function's ``__code__``, ``__defaults__`` or
+  ``_dauntless_wraps`` in place;
+* module-level SDK helpers (the stock rule covers methods; a mod replacing a
+  helper the native code reimplements is ignored);
+* ``_FIRE_SURFACE`` mutated in place, and a ``__builtins__`` that is not a
+  dict;
+* the native code mirrors the SDK loader's AST transforms (``has_key`` ->
+  ``__contains__``, the ``__import__`` lambda): a new transform touching
+  these bodies would diverge silently.
+
+``_force_python`` is the one switch left, and it is TEST-ONLY: the A/B
+harness (tests/helpers/native_ai_ab.py) sets it in a child process so the
+same seeded scene runs the SDK Python for comparison.
+
+Counters: ``note`` / ``stats`` feed the ``ai native:`` line of the profiler
+report.
 """
 
 import os
@@ -44,37 +72,10 @@ from engine import paths
 
 KINDS = ("avoid", "select", "fire")
 
-_SWITCH_ENV = "DAUNTLESS_NATIVE_AI"
-
-
-# ── The build switch ─────────────────────────────────────────────────────────
-
-_switch_cache = [None, frozenset(KINDS)]    # [raw string, kinds it enables]
-
-
-def _parse_switch(raw):
-    if raw is None:
-        return frozenset(KINDS)
-    raw = raw.strip()
-    if raw in ("", "1"):
-        return frozenset(KINDS)
-    if raw == "0":
-        return frozenset()
-    return frozenset(t for t in (p.strip() for p in raw.split(","))
-                     if t in KINDS)
-
-
-def enabled(kind: str) -> bool:
-    """Whether native `kind` is switched on: ``DAUNTLESS_NATIVE_AI`` unset or
-    ``1`` = all, ``0`` = none, else a comma list of kinds (an unknown word
-    enables nothing). Read at use. The switch exists for the A/B test and the
-    measurement; the SDK fallback for a non-stock instance does not depend on it."""
-    raw = os.environ.get(_SWITCH_ENV)
-    cache = _switch_cache
-    if cache[0] != raw:
-        cache[0] = raw
-        cache[1] = _parse_switch(raw)
-    return kind in cache[1]
+#: TEST-ONLY. True sends every gate to the SDK Python (the A/B harness's
+#: Python side); it is read before the host memo, so nothing remembered
+#: answers over it.
+_force_python = False
 
 
 # ── The stock SDK file ───────────────────────────────────────────────────────
@@ -123,7 +124,11 @@ def _is_ours(wrapper) -> bool:
 def _unwrap(fn):
     """`fn` with every ``_dauntless_wraps`` link followed, but only links on
     OUR wrappers (`_is_ours`). None for a foreign link, a non-function, or a
-    cycle."""
+    cycle.
+
+    A wrapper from the gate file therefore counts as stock. That is safe only
+    because every gate-wrapped name the native code touches (``TargetVisible``)
+    is called back, never reimplemented."""
     for _ in range(_MAX_UNWRAP):
         if not isinstance(fn, types.FunctionType):
             return None
@@ -202,12 +207,11 @@ def _resolve_pp(cls, base, methods, marked):
     return out
 
 
-def _decide_pp(base, methods, resolved):
-    """(marked indexes, verdict) for `resolved` (a first resolve has none
-    marked yet, so it is re-resolved with them)."""
-    marked = tuple(i for i, fn in enumerate(resolved[:len(methods)])
-                   if getattr(fn, "_dauntless_native_entry", False))
-    return marked
+def _marked_indexes(methods, resolved):
+    """The indexes in `methods` whose resolved function is an engine override
+    marked ``_dauntless_native_entry`` (checked on the SDK base instead)."""
+    return tuple(i for i, fn in enumerate(resolved[:len(methods)])
+                 if getattr(fn, "_dauntless_native_entry", False))
 
 
 def _verdict_pp(base, methods, marked, resolved) -> bool:
@@ -227,7 +231,7 @@ def _build_pp(cls, sdk_class_name, methods):
     if base is None:
         return [None, (), None, False]
     first = [getattr(cls, n, _GONE) for n in methods]
-    marked = _decide_pp(base, methods, first)
+    marked = _marked_indexes(methods, first)
     resolved = _resolve_pp(cls, base, methods, marked)
     return [base, marked, resolved,
             _verdict_pp(base, methods, marked, resolved)]
@@ -262,6 +266,8 @@ def preprocessor_is_stock(inst, sdk_class_name: str,
     itself -- the instance-dict half included -- until the tag moves. A type
     the host cannot key (no valid tag, another metaclass) is decided here
     every call. This function stays the only place the rule is written."""
+    if _force_python:
+        return False
     memo = _MEMO[0]
     if memo is None:
         memo = _memo()
@@ -392,14 +398,14 @@ def object_reads_are_stock(obj, contract: tuple) -> bool:
 
 # ── Counters ─────────────────────────────────────────────────────────────────
 
-#: Why a CALL ran the SDK's code (note): the switch is off; the instance or
+#: Why a CALL ran the SDK's code (note): the instance or
 #: its module surface is not stock; an object the native code reads does not
 #: resolve its reader contract ("surface": SelectTarget, where one call
 #: rates one object, so the object's fallback is the call's); a value the
 #: native code reads is not the engine's or not of a shape it reproduces; or
 #: DAUNTLESS_SET_INDEX_AUDIT=1 ("audit": SelectTarget, whose native
 #: popularity reads the set index the audit checks in GetClassObjectList).
-REASONS = ("switch", "not_stock", "surface", "no_mirror", "audit")
+REASONS = ("not_stock", "surface", "no_mirror", "audit")
 
 #: Why one OBJECT inside a native call went to the SDK Python
 #: (note_object_fallback).
@@ -422,8 +428,8 @@ def note(kind: str, path: str, reason: str = "") -> None:
     """Count one CALL of `kind`'s replaced method (avoid: TestCourseOverride;
     select: GetTargetRating; fire: Update) by the path it took: "native" only
     when the native code actually ran, "python" when the SDK's code ran
-    instead, naming why (REASONS: the switch is off, the instance is not
-    stock, an object read is not ("surface"), or what the native code reads
+    instead, naming why (REASONS: the instance is not stock (or the test-only
+    flag forces the SDK), an object read is not ("surface"), or what the native code reads
     is not the engine's -- "no_mirror").
     A call that returns before either (no ship, no set) is not counted."""
     c = _counts[kind]

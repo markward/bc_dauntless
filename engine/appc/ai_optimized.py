@@ -11,6 +11,26 @@ Python-backed node outright. The BaseAI default (0x00470750) is
 ``MOV EAX,ECX; RET`` — return ``this``, i.e. "I have no optimized version,
 use me".
 
+Phase 6 AI part 2 (spec docs/superpowers/specs/2026-11-05-phase6-engine-
+stages-native-design.md section 5) built native versions of three hot bodies,
+used for an instance the stock rule (engine/appc/ai_native.py) calls stock and
+the SDK Python otherwise (the mod path; no build switch):
+
+* ``AvoidObstacles.TestCourseOverride``'s obstacle scan -> native. STAYS SDK
+  Python: the rest of AvoidObstacles, and its RNG (the draws keep the stream
+  order the goldens pin).
+* ``SelectTarget.GetTargetRating`` -> native. STAYS SDK Python:
+  ``FindGoodTarget``'s candidate step (the sensor gate patches it).
+* ``FireScript.Update`` -> native, with ``ChooseTargetSubsystem`` and
+  ``ChooseTorpType``. STAYS SDK Python: every side effect, RNG draw and script
+  call it makes is performed by calling back into the SDK object.
+
+The A/B (tests/integration/test_native_ai_ab.py) runs a seeded scene with
+``ai_native._force_python`` (test-only) and without, byte for byte. The
+verdicts and surfaces are memoised by the host under type / module-dict
+version tags (CPython 3.11 only; off elsewhere, still exact): see
+ai_native.py's docstring for the model and the accepted blind spots.
+
 Four classes are registered in the binary: ``AvoidObstacles``, ``FireScript``,
 ``ManagePower``, ``SelectTarget``. In the shipped game all four Python ``Update``
 bodies are DEAD CODE — the native nodes replace them at bind time. We have no
@@ -333,7 +353,15 @@ def _surface_memo():
     if memo is None:
         try:
             import _dauntless_host as h
-            memo = (h.ai_memo_tags, h.ai_memo_get, h.ai_memo_put)
+            status = h.ai_memo_status()
+            # Not compiled / self-test failed (Python 3.12+, a tag that does
+            # not move): off for good, so decide straight away and never
+            # build the watched tuple. A memo forced off at run time (tests)
+            # stays on this path: its queries answer "miss".
+            if status["compiled"] and status["self_test"]:
+                memo = (h.ai_memo_tags, h.ai_memo_get, h.ai_memo_put)
+            else:
+                memo = ()
         except (ImportError, AttributeError):
             memo = ()
         _SURFACE_MEMO[0] = memo
@@ -624,9 +652,6 @@ def _phased_avoidance_class(base: type) -> type:
         """The SDK's TestCourseOverride with its obstacle loop native, for a
         stock instance (_native_test_course_override); otherwise the SDK's
         own, resolved at call time so a patch is seen."""
-        if not ai_native.enabled("avoid"):
-            ai_native.note("avoid", "python", "switch")
-            return non_lethal.TestCourseOverride(self)
         if not (ai_native.preprocessor_is_stock(self, "AvoidObstacles",
                                                 _AVOID_METHODS)
                 and _avoid_surface_is_stock(self)):
@@ -909,9 +934,6 @@ def _fire_update(self, base, args, kwargs):
     resolved at call time so a patch is seen. A call shape other than the
     SDK's (self, dEndTime) runs the SDK's too, which raises its own
     TypeError."""
-    if not ai_native.enabled("fire"):
-        ai_native.note("fire", "python", "switch")
-        return base.Update(self, *args, **kwargs)
     if len(args) == 1 and not kwargs:
         end_time = args[0]
     elif not args and len(kwargs) == 1 and "dEndTime" in kwargs:
@@ -1177,9 +1199,6 @@ def _native_select_class(base: type) -> type:
 
     def GetTargetRating(self, pTarget):
         """The SDK's GetTargetRating, native for a stock instance."""
-        if not ai_native.enabled("select"):
-            ai_native.note("select", "python", "switch")
-            return base.GetTargetRating(self, pTarget)
         app = None
         if ai_native.preprocessor_is_stock(self, "SelectTarget",
                                            _SELECT_METHODS):

@@ -10,7 +10,7 @@ mirrored engine reads and the vector arithmetic native.
 
 Pinned here, call by call: two scenes built identically from one seed (the
 same scene twice: object ids differ, so everything is compared by name), one
-driven through the SDK's Update (``DAUNTLESS_NATIVE_AI=0``) and one through the
+driven through the SDK's Update (``ai_native._force_python``) and one through the
 native one, step by step under the same world changes. Each step compares the
 PS_* code (or the exception), every recorded Python call the Update makes --
 method, receiver, arguments, in order (sys.setprofile, filtered to the calls
@@ -57,7 +57,7 @@ def _reset_app_state():
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
-    monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+    monkeypatch.setattr(ai_native, "_force_python", False)
     _reset_app_state()
     ai_native.reset_stats()
     yield
@@ -579,9 +579,9 @@ def _step_both(sdk, nat, step_rng_seed, monkeypatch, perturb=True):
             scene.perturb(random.Random(step_rng_seed))
         _set_rng_state(rng0)
         if native:
-            monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+            monkeypatch.setattr(ai_native, "_force_python", False)
         else:
-            monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "0")
+            monkeypatch.setattr(ai_native, "_force_python", True)
         rec = _Recorder()
         sys.setprofile(rec)
         try:
@@ -590,7 +590,7 @@ def _step_both(sdk, nat, step_rng_seed, monkeypatch, perturb=True):
             sys.setprofile(None)
         out.append((result, rec.calls, _state(scene.inst),
                     _rng_state(), scene.digest()))
-    monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+    monkeypatch.setattr(ai_native, "_force_python", False)
     return out
 
 
@@ -858,7 +858,7 @@ def test_native_fire_update_matches_the_sdk_call_by_call(scene_name,
     stats = ai_native.stats()["fire"]
     # Every native-side step ran the native Update; the SDK side never did.
     assert stats["native"] == _STEPS, stats
-    assert stats["reasons"] == {"switch": _STEPS}, stats
+    assert stats["reasons"] == {"not_stock": _STEPS}, stats
     if opt.get("aliasing"):
         assert stats["object_fallbacks"].get("surface", 0) > 0, stats
     else:
@@ -1103,16 +1103,16 @@ def _fire_slot_outcome(scene, monkeypatch, native):
     inst.iLastUpdate = 0
     inst.idTargetedSubsystem = None
     if native:
-        monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+        monkeypatch.setattr(ai_native, "_force_python", False)
     else:
-        monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "0")
+        monkeypatch.setattr(ai_native, "_force_python", True)
     rec = _Recorder()
     sys.setprofile(rec)
     try:
         inst.Update(0.0)
     finally:
         sys.setprofile(None)
-    monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+    monkeypatch.setattr(ai_native, "_force_python", False)
     names = [c[0] for c in rec.calls]
     return [n for n in names
             if n in ("StartFiring", "StopFiringAtTarget", "TargetVisible")]
@@ -1250,16 +1250,16 @@ def test_the_unbound_pscript_error_chains_like_the_sdk(monkeypatch):
         inst.iLastUpdate = 0                  # the torpedo system's slot
         inst.idTargetedSubsystem = None
         if native:
-            monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+            monkeypatch.setattr(ai_native, "_force_python", False)
         else:
-            monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "0")
+            monkeypatch.setattr(ai_native, "_force_python", True)
         with pytest.raises(UnboundLocalError) as err:
             inst.Update(0.0)
         context = err.value.__context__
         out[native] = (str(err.value), type(context).__name__, str(context),
                        err.value.__cause__, err.value.__suppress_context__)
         assert sys.exc_info() == (None, None, None)
-    monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+    monkeypatch.setattr(ai_native, "_force_python", False)
     assert out[False] == out[True], out
     assert out[True][1] == "ModuleNotFoundError", out
     assert ai_native.stats()["fire"]["native"] == 1

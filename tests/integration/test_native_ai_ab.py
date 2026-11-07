@@ -1,6 +1,6 @@
 """Native stock preprocessors vs the SDK Python, same seeded scene, byte for
 byte (phase 6 AI part 2). Harness: tests/helpers/native_ai_ab.py (each side in
-its own subprocess, DAUNTLESS_NATIVE_AI=0 against unset).
+its own subprocess, ai_native._force_python set against clear).
 
 Each scene also asserts, for every kind native so far, that its ``native``
 count is > 0 and its ``python`` count is 0 or explained. Native so far:
@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(
 def _same(scene):
     py, native, stats, py_stats = native_ai_ab.run_ab_full(scene)
     assert py == native, native_ai_ab.first_difference(py, native)
-    # The DAUNTLESS_NATIVE_AI=0 side must never report a native call.
+    # The forced-Python side must never report a native call.
     native_ai_ab.assert_no_native(py_stats)
     return stats
 
@@ -113,7 +113,7 @@ def test_pursuers_converge():
     assert stats["avoid"]["counts"].get("avoided", 0) > 0, stats
 
 
-def test_the_switch_off_side_reports_no_native_calls_and_assert_helpers_bite():
+def test_the_forced_python_side_reports_no_native_calls_and_assert_helpers_bite():
     _py, _nat, stats, py_stats = native_ai_ab.run_ab_full("akira_torp_select")
     native_ai_ab.assert_no_native(py_stats)
     with pytest.raises(AssertionError):

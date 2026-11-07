@@ -535,3 +535,36 @@ def test_a_memo_overflow_survives_reentrant_puts_from_dying_keys():
                     reason="interned strings are immortal from 3.12")
 def test_the_hosts_hold_one_reference_per_string_they_keep():
     _child("test_child_host_init_holds_one_reference_per_kept_string")
+
+
+# ── Memos off for good: no watched tuple is built ────────────────────────────
+
+def test_memos_off_for_good_skip_the_watched_work(monkeypatch):
+    """On a Python without the memos (3.12+, a failed self-test) the status
+    says so once; _memo_answer then decides straight away, never building the
+    watched tuple (the status is read once, cached)."""
+    status_calls = [0]
+
+    def off():
+        status_calls[0] += 1
+        return {"compiled": False, "self_test": False, "forced_off": False,
+                "enabled": False}
+
+    monkeypatch.setattr(_h, "ai_memo_status", off)
+    monkeypatch.setattr(ai_optimized, "_SURFACE_MEMO", [None])
+    watched_calls, decided = [0], [0]
+
+    def watched_of(arg):
+        watched_calls[0] += 1
+        return (pp.__dict__,)
+
+    def decide(arg):
+        decided[0] += 1
+        return "answer"
+
+    for _ in range(3):
+        assert ai_optimized._memo_answer("k", decide, watched_of, None) \
+            == "answer"
+    assert decided[0] == 3
+    assert watched_calls[0] == 0
+    assert status_calls[0] == 1

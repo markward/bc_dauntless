@@ -1,4 +1,4 @@
-"""The stock gate, the build switch and the counters for native stock
+"""The stock gate and the counters for native stock
 preprocessors (phase 6 AI part 2, Task 1; engine/appc/ai_native.py).
 
 A native preprocessor path runs only for an instance the SDK would have run
@@ -231,30 +231,29 @@ def test_a_monkeypatched_avoid_override_target_is_seen(monkeypatch):
     assert not ai_native.preprocessor_is_stock(inst, "AvoidObstacles", names)
 
 
-@pytest.mark.parametrize("raw, want", [
-    (None, {"avoid", "select", "fire"}),
-    ("", {"avoid", "select", "fire"}),
-    ("1", {"avoid", "select", "fire"}),
-    ("0", set()),
-    ("avoid,fire", {"avoid", "fire"}),
-    (" select ", {"select"}),
-    ("junk", set()),
-    ("avoid,junk", {"avoid"}),
-])
-def test_switch_parsing(monkeypatch, raw, want):
-    if raw is None:
-        monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
-    else:
-        monkeypatch.setenv("DAUNTLESS_NATIVE_AI", raw)
-    assert ai_native.KINDS == ("avoid", "select", "fire")
-    assert {k for k in ai_native.KINDS if ai_native.enabled(k)} == want
+def test_no_native_ai_switch_remains():
+    """The temporary build switch is gone: only the test-only in-process
+    flag forces the SDK Python."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    word = "DAUNTLESS_" + "NATIVE_AI"
+    hits = [str(p.relative_to(root))
+            for top in ("engine", "native")
+            for p in (root / top).rglob("*")
+            if p.is_file() and p.suffix in (".py", ".cc", ".h", ".txt",
+                                            ".js", ".json")
+            and word in p.read_text(errors="ignore")]
+    assert hits == []
+    assert not hasattr(ai_native, "enabled")
 
 
-def test_switch_is_read_at_use(monkeypatch):
-    monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "0")
-    assert not ai_native.enabled("avoid")
-    monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "1")
-    assert ai_native.enabled("avoid")
+def test_force_python_sends_the_gate_to_the_sdk(monkeypatch):
+    inst = pp.FireScript("Tgt")
+    assert ai_native.preprocessor_is_stock(inst, "FireScript", FIRE)
+    monkeypatch.setattr(ai_native, "_force_python", True)
+    assert not ai_native.preprocessor_is_stock(inst, "FireScript", FIRE)
+    monkeypatch.setattr(ai_native, "_force_python", False)
+    assert ai_native.preprocessor_is_stock(inst, "FireScript", FIRE)
 
 
 def test_reader_contract_detects_a_subclass_override():
@@ -425,7 +424,7 @@ def test_stats_count_and_reset():
     ai_native.note("avoid", "native")
     ai_native.note("avoid", "python", "not_stock")
     ai_native.note("avoid", "python", "not_stock")
-    ai_native.note("fire", "python", "switch")
+    ai_native.note("fire", "python", "no_mirror")
     # Per-object fallbacks inside a native call, and results: neither is a
     # call, so neither moves "native" or "python".
     ai_native.note_object_fallback("avoid", "surface")
@@ -435,7 +434,7 @@ def test_stats_count_and_reset():
                           "reasons": {"not_stock": 2},
                           "object_fallbacks": {"surface": 1},
                           "counts": {"avoided": 3}}
-    assert s["fire"] == dict(_EMPTY, python=1, reasons={"switch": 1})
+    assert s["fire"] == dict(_EMPTY, python=1, reasons={"no_mirror": 1})
     assert s["select"] == _EMPTY
     ai_native.reset_stats()
     assert all(v == _EMPTY for v in ai_native.stats().values())

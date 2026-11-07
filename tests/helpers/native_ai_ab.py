@@ -4,8 +4,8 @@ preprocessors.md, Task 1).
 
 ``run_ab(scene, ticks)`` runs one seeded scene TWICE, each in its own
 subprocess so no module state can leak from one side to the other:
-``DAUNTLESS_NATIVE_AI=0`` (every preprocessor runs the SDK Python) and the
-variable unset (all native). Each child is this file's ``test_child`` run by
+the test-only flag ``ai_native._force_python`` set (every preprocessor runs
+the SDK Python) and clear (all native). Each child is this file's ``test_child`` run by
 pytest (the project's conftest is what makes the SDK importable), records every
 tick with the golden-fight recorder (tests/helpers/golden_fight.py: poses,
 weapon state, events, calls, presentation, stage rows) or, for the scenes that
@@ -41,6 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCENE_ENV = "NATIVE_AI_AB_SCENE"
 TICKS_ENV = "NATIVE_AI_AB_TICKS"
 OUT_ENV = "NATIVE_AI_AB_OUT"
+PYTHON_ENV = "NATIVE_AI_AB_PYTHON"      # "1": the child forces the SDK Python
 
 #: scene -> default ticks (calls, for akira_torp_select)
 DEFAULT_TICKS = {
@@ -70,9 +71,9 @@ def _run_side(scene, ticks, native, out, extra_env=None):
     else:
         env[TICKS_ENV] = str(ticks)
     if native:
-        env.pop("DAUNTLESS_NATIVE_AI", None)
+        env.pop(PYTHON_ENV, None)
     else:
-        env["DAUNTLESS_NATIVE_AI"] = "0"
+        env[PYTHON_ENV] = "1"
     proc = subprocess.run(
         [sys.executable, "-m", "pytest",
          "tests/helpers/native_ai_ab.py::test_child", "-q", "-x",
@@ -107,14 +108,14 @@ def run_ab_env(scene, extra_env, ticks=None):
 
 def run_ab_full(scene, ticks=None):
     """`(python_record, native_record, native_stats, python_stats)`; see
-    run_ab. The python side's counters are returned too: with the switch at 0
+    run_ab. The python side's counters are returned too: with the flag set
     they must read native == 0 for every kind."""
     return run_ab_env(scene, None, ticks)[:4]
 
 
 def run_ab(scene, ticks=None):
     """`(python_record, native_record, native_stats)`: the scene run with
-    DAUNTLESS_NATIVE_AI=0 and with it unset, each in a fresh subprocess, the
+    ``_force_python`` set and clear, each in a fresh subprocess, the
     serialised per-tick record of each, and the native run's
     ``ai_native.stats()``."""
     return run_ab_full(scene, ticks)[:3]
@@ -139,7 +140,7 @@ def assert_native(stats, kind, allowed_python=(), allowed_object_fallbacks=()):
 
 
 def assert_no_native(stats):
-    """Nothing ran native (the DAUNTLESS_NATIVE_AI=0 side). Every kind must be
+    """Nothing ran native (the forced-Python side). Every kind must be
     reported: empty or partial counters would pass vacuously."""
     from engine.appc import ai_native
     missing = [k for k in ai_native.KINDS if k not in stats]
@@ -197,6 +198,7 @@ def _child_setup():
         pytest.skip("native K1 bindings not built")
     nc.reset()
     from engine.appc import ai_native
+    ai_native._force_python = os.environ.get(PYTHON_ENV) == "1"
     ai_native.reset_stats()
 
 
@@ -280,7 +282,7 @@ def _stress(ticks, ships, gate, count_subsystem_rng=False):
             assert sum(rng_draws) > 0, "the subsystem-rating RNG branch never ran"
             from engine.appc import ai_native
             # Each side drew from its own ChooseTargetSubsystem only.
-            if ai_native.enabled("fire"):
+            if not ai_native._force_python:
                 assert rng_draws[0] == 0 and rng_draws[1] > 0, rng_draws
             else:
                 assert rng_draws[1] == 0 and rng_draws[0] > 0, rng_draws
