@@ -270,3 +270,68 @@ def test_several_watching_groups_hear_it_in_live_order():
         g._keep = w
     _set().AddObjectToSet(_ship(), "Bart")
     assert seen == order
+
+
+# ── ET_OBJECT_GROUP_CHANGED ─────────────────────────────────────────────────
+# SDK Conditions/ConditionInRange arms GROUP_CHANGED on its group and handles
+# ET_OBJECT_GROUP_CHANGED in GroupChanged, whose SDK comment reads "An object
+# has been added to or removed from our self.pObjects group." Nothing posted
+# it, so a name added AFTER its ship entered the set was never watched: Quick
+# Battle's enemies never reached DynamicMusic's 400 GU check, and the battle
+# played the calm "Starting Ambient" throughout.
+
+class _Changes:
+    def __init__(self): self.dests = []
+    def Changed(self, evt): self.dests.append(evt.GetDestination())
+
+
+def _watch_changes(group, arm=True):
+    rec = _Changes()
+    w = App.TGPythonInstanceWrapper(); w.SetPyWrapper(rec)
+    if arm:
+        group.SetEventFlag(App.ObjectGroup.GROUP_CHANGED)
+    App.g_kEventManager.AddBroadcastPythonMethodHandler(
+        App.ET_OBJECT_GROUP_CHANGED, w, "Changed", group)
+    rec._w = w
+    return rec
+
+
+def test_add_name_posts_group_changed_to_the_group():
+    grp = ObjectGroup()
+    rec = _watch_changes(grp)
+    grp.AddName("Bart")
+    assert rec.dests == [grp]
+
+
+def test_adding_a_name_already_held_posts_nothing():
+    grp = ObjectGroup(); grp.AddName("Bart")
+    rec = _watch_changes(grp)
+    grp.AddName("Bart")
+    assert rec.dests == []
+
+
+def test_remove_name_posts_only_when_the_name_was_held():
+    grp = ObjectGroup(); grp.AddName("Bart")
+    rec = _watch_changes(grp)
+    grp.RemoveName("Lisa")
+    assert rec.dests == []
+    grp.RemoveName("Bart")
+    assert rec.dests == [grp]
+
+
+def test_remove_all_names_posts_once_and_not_when_already_empty():
+    grp = ObjectGroup(); grp.AddName("Bart"); grp.AddName("Lisa")
+    rec = _watch_changes(grp)
+    grp.RemoveAllNames()
+    assert rec.dests == [grp]
+    grp.RemoveAllNames()
+    assert rec.dests == [grp]
+
+
+def test_a_group_that_never_armed_group_changed_posts_nothing():
+    """The flag is the opt-in, as for ENTERED_SET/EXITED_SET: every other
+    AddName stays a lookup, never an event."""
+    grp = ObjectGroup()
+    rec = _watch_changes(grp, arm=False)
+    grp.AddName("Bart")
+    assert rec.dests == []

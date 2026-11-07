@@ -89,3 +89,31 @@ def test_status_zero_when_target_missing():
                                 "ConditionInRange", 100.0, "Anchor", "Target")
     evaluate_proximity_checks()
     assert cs.GetStatus() == 0
+
+
+def test_name_added_after_the_ship_entered_the_set_is_watched():
+    """Quick Battle's order: CreateShip puts the enemy in the set, THEN its
+    name joins the mission's enemy group. Only ET_OBJECT_GROUP_CHANGED
+    (ConditionInRange.GroupChanged) can tell the condition. This is the
+    shape of DynamicMusic's 'enemies within 400' check on a group."""
+    anchor, target = _place_two_ships(d=50.0)
+    enemies = App.ObjectGroup()
+    cs = ConditionScript_Create("Conditions.ConditionInRange",
+                                "ConditionInRange", 100.0, "Anchor", enemies)
+    evaluate_proximity_checks()
+    assert cs.GetStatus() == 0
+    enemies.AddName("Target")
+    evaluate_proximity_checks()
+    assert cs.GetStatus() == 1
+
+
+def test_group_changes_do_not_multiply_the_conditions_handlers():
+    """GroupChanged re-runs SetObjects, which re-registers GroupChanged."""
+    _place_two_ships(d=500.0)
+    enemies = App.ObjectGroup()
+    ConditionScript_Create("Conditions.ConditionInRange",
+                           "ConditionInRange", 100.0, "Anchor", enemies)
+    for n in range(6):
+        enemies.AddName("Ghost %d" % n)
+    handlers = App.g_kEventManager._method_handlers[App.ET_OBJECT_GROUP_CHANGED]
+    assert len(handlers) == 1
