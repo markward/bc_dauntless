@@ -81,6 +81,30 @@ def on_reclassified(obj) -> None:
     _h.set_index_reclassified(obj, isinstance(obj, _ShipClass))
 
 
+def on_target_changed(ship) -> None:
+    """`ship._target` just changed (ShipClass.SetTarget, the only writer)."""
+    _h.set_index_set_target(ship, target_id(ship._target))
+
+
+def targeted_by_count(pSet, target) -> int:
+    """Entries of `pSet` whose ship currently targets `target`. Target
+    membership in `pSet` is irrelevant: the key is the target's GetObjID()."""
+    return _h.set_index_targeted_by(pSet, target_id(target))
+
+
+def targeting(pSet, target) -> list:
+    """The ships of `pSet` targeting `target`, in set order, one per entry
+    (an object under two identifiers is listed twice, as it is counted)."""
+    return _h.set_index_targeting(pSet, target_id(target))
+
+
+def popularity(pSet, rater, target) -> float:
+    """The stock GetTargetRating fPopularity: other entries of `pSet`
+    targeting `target`, the rater's own entries skipped. A float, as the SDK
+    loop sums 1.0s."""
+    return float(_h.set_index_popularity(pSet, rater, target_id(target)))
+
+
 def class_objects(pSet, cls: type) -> list:
     """Members of `pSet` that are instances of `cls`, in `_objects` order, as
     a NEW list. The bucket is created on first use."""

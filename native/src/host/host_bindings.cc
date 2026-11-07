@@ -11659,6 +11659,31 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return si::objects([&] { return h.ix.sets_holding(si::key_of(obj)); });
           },
           "Every set holding obj under an entry that is not leaving.");
+    m.def("set_index_set_target",
+          [](py::handle ship, std::int64_t target_id) {
+              si::host().ix.set_target(si::key_of(ship), target_id);
+          },
+          py::arg("ship"), py::arg("target_id"),
+          "ShipClass.SetTarget, after `_target` changed: the new GetObjID() or -1.");
+    m.def("set_index_targeted_by",
+          [](py::handle set, std::int64_t target_id) {
+              return si::host().ix.targeted_by(si::key_of(set), target_id);
+          },
+          py::arg("set"), py::arg("target_id"),
+          "Entries of `set` whose ship targets `target_id`.");
+    m.def("set_index_popularity",
+          [](py::handle set, py::handle rater, std::int64_t target_id) {
+              return si::host().ix.popularity(si::key_of(set), si::key_of(rater), target_id);
+          },
+          py::arg("set"), py::arg("rater"), py::arg("target_id"),
+          "The stock GetTargetRating fPopularity, as an integer count.");
+    m.def("set_index_targeting",
+          [](py::handle set, std::int64_t target_id) {
+              auto& h = si::host();
+              return si::objects([&] { return h.ix.targeting(si::key_of(set), target_id); });
+          },
+          py::arg("set"), py::arg("target_id"),
+          "The entries' ships targeting `target_id`, in set order (duplicates kept).");
     m.def("set_index_forget_set",
           [](py::handle set) {
               std::vector<py::object> dead;
