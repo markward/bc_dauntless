@@ -1662,7 +1662,29 @@ def _note_due(when: float) -> None:
         _walk_min_due[0] = when
 
 
+# Which tree walker tick_all_ai runs. False: the Python walker below (the
+# only one until phase 6 AI part 4 task 4). Tests set it per test; there is no
+# environment switch.
+_native_walker = False
+
+
 def tick_all_ai(game_time: float) -> None:
+    """Tick every ship's AI tree with the selected walker (``_native_walker``).
+
+    The one selection point. Until the native walker lands both arms are the
+    Python walker, which is what lets the differential harness
+    (tests/helpers/ai_walk_diff.py) prove itself deterministic first."""
+    if _native_walker:
+        _tick_all_ai_native(game_time)
+    else:
+        _tick_all_ai_python(game_time)
+
+
+def _tick_all_ai_native(game_time: float) -> None:
+    _tick_all_ai_python(game_time)
+
+
+def _tick_all_ai_python(game_time: float) -> None:
     """Iterate every ship and tick its attached AI subtree.
 
     Called once per frame from GameLoop.tick(). Q2 closed at AI-first
