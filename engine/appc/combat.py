@@ -342,11 +342,15 @@ def _hull_box_for(ship):
 def shields_block(ship) -> bool:
     """True when ``ship``'s shield generator would absorb a weapon hit now.
 
-    The single predicate behind both halves of "the shot met the bubble":
-    :func:`apply_hit` uses it to decide whether the facing takes the damage,
-    and the beam renderer uses it to decide whether the drawn beam stops at
-    the bubble. Keeping one function means the visible beam can never
-    contradict where the damage went.
+    The Python half of "the shot met the bubble": :func:`apply_hit` uses it
+    to decide whether the facing takes the damage. The drawn beam's half is
+    its C++ twin: ``beam_geometry::shields_block`` (native/src/combat/src/
+    beam_geometry.cc, the K2 kernel's and the beam feed's for a ShipClass)
+    and ``feed_shields_block`` in beam_feed.cc, which answers a target whose
+    ``GetShields`` is TGObject's stub as this function does through the
+    ``_Stub``'s truthiness (HasShields/IsOn truthy, then IsDisabled truthy:
+    False). Change both, or the visible beam contradicts where the damage
+    went.
 
     Covers generator presence, power (``IsOn``), disabled/destroyed, the
     cloak-transition window, and the disable-NPC-shields dev cheat. It does NOT
@@ -774,8 +778,9 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
     absorbed_shields = 0.0
     shields = ship.GetShields() if hasattr(ship, "GetShields") else None
     # Generator presence / power / disabled / destroyed / cloak-fade window /
-    # the disable-NPC-shields cheat all live in shields_block, shared with the
-    # beam renderer so the drawn beam can't stop somewhere the damage didn't.
+    # the disable-NPC-shields cheat all live in shields_block, whose C++ twin
+    # the beam feed uses so the drawn beam can't stop somewhere the damage
+    # didn't (change both: see its docstring).
     shields_online = shields_block(ship)
     # Explosion / collision primitive (AddDamage): bypass the shield cascade
     # entirely — full damage reaches the hull/subsystems, shield faces untouched.

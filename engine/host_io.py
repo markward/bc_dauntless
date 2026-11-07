@@ -42,10 +42,8 @@ _logger = logging.getLogger(__name__)
 _REQUIRED_BINDINGS = frozenset({
     "key_state", "key_pressed", "mouse_button_pressed", "mouse_button_released",
     "consume_mouse_delta", "set_cursor_locked", "framebuffer_size", "window_size",
-    "set_torpedoes", "set_shockwaves", "set_hit_vfx", "set_particle_emitters",
+    "set_shockwaves", "set_hit_vfx", "set_particle_emitters",
     "set_warp_in_flashes", "set_warp_in_flash_params",
-    "set_dynamic_lights",
-    "set_phaser_beams", "set_tractor_beams",
     "cursor_pos",
     "shield_hit", "world_to_body", "damage_decal_add",
     "hull_damage_add", "hull_damage_add_body",
@@ -294,12 +292,8 @@ def cef_reset_text_translator() -> None:
 
 
 # ── Per-frame VFX descriptor lists ───────────────────────────────────────────
-
-def set_torpedoes(torpedoes: list) -> None:
-    if _h is None:
-        return
-    _h.set_torpedoes(torpedoes)
-
+# The torpedoes, the dynamic lights and both beam feeds are written natively
+# (native_combat.torpedo_feed / beam_feed), never pushed from here.
 
 def set_shockwaves(shockwaves: list) -> None:
     if _h is None:
@@ -323,12 +317,6 @@ def set_warp_in_flash_params(params: dict) -> None:
     _h.set_warp_in_flash_params(params)
 
 
-def set_dynamic_lights(lights: list) -> None:
-    if _h is None:
-        return
-    _h.set_dynamic_lights(lights)
-
-
 def set_hit_vfx(vfx: list) -> None:
     if _h is None:
         return
@@ -339,18 +327,6 @@ def set_particle_emitters(emitters: list) -> None:
     if _h is None:
         return
     _h.set_particle_emitters(emitters)
-
-
-def set_phaser_beams(beams: list) -> None:
-    if _h is None:
-        return
-    _h.set_phaser_beams(beams)
-
-
-def set_tractor_beams(beams: list) -> None:
-    if _h is None:
-        return
-    _h.set_tractor_beams(beams)
 
 
 # ── Hit / damage feedback ────────────────────────────────────────────────────

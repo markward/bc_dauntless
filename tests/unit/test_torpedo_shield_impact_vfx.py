@@ -87,9 +87,7 @@ def _run_tick(ships, dt, ship_instances, monkeypatch):
                         lambda iid, point, rgba, intensity, radius=0.0:
                             calls.append(point))
     # Everything else the frame pushes to the renderer is irrelevant here.
-    for name in ("set_torpedoes", "set_dynamic_lights", "set_shockwaves",
-                 "set_hit_vfx", "set_particle_emitters", "set_phaser_beams",
-                 "set_tractor_beams"):
+    for name in ("set_shockwaves", "set_hit_vfx", "set_particle_emitters"):
         monkeypatch.setattr(host_loop.host_io, name, lambda *a, **k: None)
     host_loop._advance_combat(ships, dt, ship_instances=ship_instances)
     host_loop._combat_tick_boundary()   # as the host does (native damage)

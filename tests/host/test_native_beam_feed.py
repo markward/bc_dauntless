@@ -5,9 +5,11 @@ pushed, so it is compared bit for bit against the render goldens recorded
 from the Python builders before they were deleted (tests/helpers/
 render_golden.py). There is no Python copy of the feed any more.
 """
-import struct
-
 import pytest
+
+from tests.helpers.native_render_feeds import (
+    BEAM_FIELDS, BEAM_ROW_LEN, beam_bytes, beam_dict, beam_dict_values,
+    drop_from_frames, f32, pack)
 
 try:
     import _dauntless_host as _h
@@ -17,10 +19,6 @@ except ImportError:
 pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "set_phaser_beams"),
     reason="native host not built")
-
-
-def f32(x):
-    return struct.unpack("<f", struct.pack("<f", x))[0]
 
 
 FULL = {
@@ -39,16 +37,7 @@ MINIMAL = {
 def packed(d):
     """The descriptor `d` as the native side must hold it: defaults applied,
     float32-rounded, packed bytes (so -0.0 / NaN cannot hide in a float ==)."""
-    return struct.pack(
-        PACK, *d["emitter"], *d["target"], *d["color"], d["width"],
-        d.get("u_tiles", 1.0), d.get("num_sides", 6),
-        d.get("taper_radius", 0.01), d.get("taper_ratio", 0.25),
-        d.get("taper_min_length", 5.0), d.get("taper_max_length", 30.0),
-        d.get("perimeter_tile", 1.0), d.get("texture_speed", 0.0),
-        d.get("end_width_scale", 1.0))
-
-
-PACK = "<12f i 7f"
+    return pack(BEAM_FIELDS, beam_dict_values(d))
 
 
 def test_readback_returns_what_set_phaser_beams_pushed():
@@ -58,8 +47,8 @@ def test_readback_returns_what_set_phaser_beams_pushed():
         assert _beams("phaser") == [packed(FULL), packed(MINIMAL)]
         assert _beams("tractor") == [packed(MINIMAL), packed(FULL)]
         # No end_width_scale given: the native default is 1.0.
-        assert struct.unpack(PACK, _beams("phaser")[1])[-1] == 1.0
-        assert len(_h.phaser_beams_debug()[0]) == 20
+        assert beam_dict(_h.phaser_beams_debug()[1])["end_width_scale"] == 1.0
+        assert len(_h.phaser_beams_debug()[0]) == BEAM_ROW_LEN == 20
     finally:
         _h.set_phaser_beams([])
         _h.set_tractor_beams([])
@@ -74,7 +63,7 @@ def _beams(kind):
     """The pushed descriptors of `kind` ('phaser' | 'tractor') as packed
     bytes, one per beam, so a compare is bitwise."""
     rows = getattr(_h, kind + "_beams_debug")()
-    return [struct.pack(PACK, *r) for r in rows]
+    return [beam_bytes(r) for r in rows]
 
 
 class BeamScene:
@@ -344,9 +333,6 @@ def test_a_skipped_ship_drops_only_its_own_beams(beam_scene, monkeypatch):
     name = shooter.GetName()
     shooter.GetContainingSet().RemoveObjectFromSet(name)
     elsewhere.AddObjectToSet(shooter, name)
-    gone = nc._slot_of(elsewhere)
-    assert gone is not None
-    table = nc._beam_frames
     ships = [s for s in bs.ships if s.GetContainingSet() is not None]
     ok, *drawn = _native_feed([s for s in before if s in ships],
                               bs.ship_instances)
@@ -356,14 +342,7 @@ def test_a_skipped_ship_drops_only_its_own_beams(beam_scene, monkeypatch):
     assert ok and want[0], "premise: other ships' phasers still draw"
     assert not any(nc.beam_feed_counts()["skips"].values())
     want = tuple(want)
-
-    def without(*a, **k):
-        t = table(*a, **k)
-        assert gone in t, "premise: the set is in the table"
-        del t[gone]
-        return t
-
-    monkeypatch.setattr(nc, "_beam_frames", without)
+    drop_from_frames(monkeypatch, elsewhere)
     nc.reset_beam_feed_counts()
     try:
         ok, phasers, tractors = _native_feed(ships, bs.ship_instances)
@@ -391,8 +370,7 @@ def test_a_patched_getter_is_not_honoured(beam_scene, monkeypatch):
     bs = beam_scene
     ok, *want = _native_feed(bs.ships, bs.ship_instances)
     assert ok and want[0], "premise: phasers draw"
-    width = 10          # emitter 3, target 3, colour 4, then the width
-    outer = [struct.unpack(PACK, d)[width] for d in want[0][0::2]]
+    outer = [beam_dict(r)["width"] for r in _h.phaser_beams_debug()[0::2]]
     assert outer and all(w != f32(9.0 * 3.0) for w in outer), \
         "premise: no mirrored width is the patch's"
     monkeypatch.setattr(ws.PhaserBank, "GetPhaserWidth", lambda self: 9.0)
@@ -444,8 +422,9 @@ def test_the_feed_counts_native_frames_and_skips(beam_scene, monkeypatch):
 #
 # Recorded from the Python builders before they were deleted (Task 1), so
 # each golden is what Python drew for the scene; the native feed's frames are
-# checked against it bit for bit. Recording is refused now
-# (tests/helpers/render_golden.py): UPDATE_RENDER_GOLDEN=1 fails.
+# checked against it bit for bit. UPDATE_RENDER_GOLDEN=1 fails (the builders
+# are gone); UPDATE_RENDER_GOLDEN=native re-records from the native feed, and
+# only on Mark's recorded ruling (tests/helpers/render_golden.py).
 
 from tests.helpers import render_golden  # noqa: E402
 
@@ -460,9 +439,9 @@ def golden_beam_frame(ships, ship_instances):
 
 
 def _record_or_check(scene_name, frames):
-    """Check `frames` against the golden; under UPDATE_RENDER_GOLDEN=1,
-    render_golden.record refuses first (a golden is never recorded from
-    native frames)."""
+    """Check `frames` against the golden. While UPDATE_RENDER_GOLDEN
+    records, render_golden.record runs first: "1" refuses, "native" (Mark's
+    recorded ruling only) writes the golden and skips."""
     if render_golden.recording():
         render_golden.record(scene_name, frames)
     render_golden.check(scene_name, frames)
@@ -473,7 +452,11 @@ def test_beam_scene_matches_the_golden(beam_scene):
     the Manual Aim beat. The recording (Task 1) had pairs ending on the
     shield bubble and on the hull mesh trace, tractor pairs, Manual Aim pairs
     and a lock on the posed ship in it; the scene side of that is asserted
-    here, the endpoints by the golden."""
+    here (a bank firing at a target whose shields block, which ends on the
+    bubble, and at one whose shields do not, which ends on the hull trace),
+    the endpoints by the golden. These premises run while re-recording too,
+    so a re-record cannot quietly lose a case."""
+    from engine.appc import combat
     from engine.appc.ship_iter import iter_ships
     from tests.host.test_native_k2_differential import (
         OPS, POSE_FROM, POSE_TO, POSED)
@@ -483,7 +466,8 @@ def test_beam_scene_matches_the_golden(beam_scene):
     assert start < POSE_FROM, start
     manual = random.Random(MANUAL_SEED)
     frames = []
-    seen = {"manual_aim": 0, "posed_lock": 0}
+    seen = {"manual_aim": 0, "posed_lock": 0, "shields_up_hit": 0,
+            "shields_down_hit": 0}
     nc.reset_beam_feed_counts()
 
     def frame(scene):
@@ -495,6 +479,11 @@ def test_beam_scene_matches_the_golden(beam_scene):
                 continue
             if ship.is_using_target_offset():
                 seen["manual_aim"] += 1
+            for bank in _firing(sys_):
+                if bank._target is not None and \
+                        bank._target in bs.ship_instances:
+                    seen["shields_up_hit" if combat.shields_block(bank._target)
+                         else "shields_down_hit"] += 1
             lock = ship.__dict__.get("_target_subsystem")
             if (POSE_FROM <= scene.tick < POSE_TO and lock is not None
                     and lock.GetParentShip() is scene.ship(POSED)):

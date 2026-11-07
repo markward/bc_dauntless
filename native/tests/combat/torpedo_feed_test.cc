@@ -475,3 +475,56 @@ TEST(Budget, SlicingMatchesPython) {
                         << " " << b.emitters << " / " << ne << " " << nt
                         << " " << nm;
 }
+
+// The intent of the light budget, case by case (the cases the deleted Python
+// tests of host_loop's blend named; tests/unit/test_dynamic_light_budget.py
+// keeps the budgets-fit-the-cap check on host_loop's knobs).
+
+static std::size_t count_group(const std::vector<LightPick>& picks, int g) {
+    std::size_t n = 0;
+    for (const LightPick& p : picks) n += p.group == g;
+    return n;
+}
+
+TEST(Budget, NeverExceedsTheNativeCap) {
+    const LightBudget stock;
+    EXPECT_EQ(budget_lights(99, 99, 99, stock).size(), 64u);
+}
+
+TEST(Budget, ExplosionsSurviveASceneThatFloodsTheEmitters) {
+    // THE regression this exists for: 50 ships' worth of emitters must not
+    // push every explosion light out of the frame.
+    const auto got = budget_lights(4, 0, 200, LightBudget{});
+    EXPECT_EQ(count_group(got, 0), 4u);
+    EXPECT_EQ(got.size(), 64u);
+}
+
+TEST(Budget, EachCategoryGetsItsGuaranteeWhenAllAreOverSubscribed) {
+    const LightBudget stock;
+    const auto got = budget_lights(50, 50, 50, stock);
+    EXPECT_GE(count_group(got, 0), 10u);
+    EXPECT_GE(count_group(got, 1), 10u);
+    EXPECT_GE(count_group(got, 2), 40u);
+}
+
+TEST(Budget, AQuietFrameIsNotCappedAtTheEmitterGuarantee) {
+    // Unused budget spills: 50 emitters and nothing else all get through,
+    // though the emitter guarantee is 40.
+    const auto got = budget_lights(0, 0, 50, LightBudget{});
+    EXPECT_EQ(count_group(got, 2), 50u);
+}
+
+TEST(Budget, NothingIsDroppedWhenEverythingFits) {
+    EXPECT_EQ(budget_lights(2, 3, 20, LightBudget{}).size(), 25u);
+}
+
+TEST(Budget, TheSpillFavoursExplosionsOverEmitters) {
+    // With room left over, the rarer and more dramatic source gets it.
+    const auto got = budget_lights(30, 0, 40, LightBudget{});
+    EXPECT_EQ(count_group(got, 0), 24u);
+    EXPECT_EQ(count_group(got, 2), 40u);
+}
+
+TEST(Budget, EmptyInputIsEmptyOutput) {
+    EXPECT_TRUE(budget_lights(0, 0, 0, LightBudget{}).empty());
+}

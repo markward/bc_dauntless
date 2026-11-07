@@ -4,7 +4,9 @@ Companion to test_shield_bubble_entry.py, which covers the geometry itself.
 This file covers the wiring:
 
   * the shield splash is anchored at the bubble entry point rather than at the
-    hull impact (and the predicate both it and the drawn beam use).
+    hull impact, and `combat.shields_block`, the predicate apply_hit uses
+    (the drawn beam uses its C++ twin, beam_geometry::shields_block /
+    beam_feed.cc feed_shields_block).
 
 The drawn phaser beam stopping at the bubble while a facing is live, and at
 the hull once it is not, is the native beam feed's (no Python copy): ctest

@@ -4146,22 +4146,50 @@ DEFAULT_TORPEDO_VISUAL = (
     False, 0.0, 0.0, 0.0)
 
 
+def _color_tuple(color):
+    """TGColorA → (r, g, b, a) tuple, or white when None."""
+    if color is None:
+        return (1.0, 1.0, 1.0, 1.0)
+    # TGColorA in our shim has GetRed/Green/Blue/Alpha or r/g/b/a attrs.
+    for attr_set in (("r", "g", "b", "a"),
+                     ("GetRed", "GetGreen", "GetBlue", "GetAlpha")):
+        try:
+            vals = []
+            for a in attr_set:
+                v = getattr(color, a)
+                vals.append(v() if callable(v) else v)
+            return tuple(float(v) for v in vals)
+        except Exception:
+            continue
+    return (1.0, 1.0, 1.0, 1.0)
+
+
+def _resolve_game_texture(path: str) -> str:
+    """SDK projectile scripts reference textures by 'data/Textures/...' which
+    in BC means relative-to-game-root.  Absolutise against the configured
+    game root (engine.paths.game_asset, read at use) so the renderer's
+    ifstream resolves regardless of where the BC install actually lives."""
+    if not path:
+        return ""
+    from engine import paths
+    return str(paths.game_asset(path))
+
+
 def _torp_visual_record(t):
     """The static visual record of `t` (`_vis_native`; the 21-tuple
     `combat_torp_set_visual` takes, minus `_id`): everything the native
     torpedo feed (torpedo_feed.h) draws from a torpedo that is not per-frame
     state, colours UNDIMMED (the feed dims them by TORPEDO_BRIGHTNESS),
     textures resolved now. Raises whatever those reads raise."""
-    from engine import host_loop as hl
     return (
-        hl._resolve_game_texture(t._core_texture),
-        hl._resolve_game_texture(t._glow_texture),
-        hl._resolve_game_texture(t._flares_texture),
-        hl._color_tuple(t._core_color),
-        hl._color_tuple(t._glow_color),
-        hl._color_tuple(t._flares_color),
-        hl._color_tuple(t._shell_color),
-        hl._color_tuple(t._bolt_core_color),
+        _resolve_game_texture(t._core_texture),
+        _resolve_game_texture(t._glow_texture),
+        _resolve_game_texture(t._flares_texture),
+        _color_tuple(t._core_color),
+        _color_tuple(t._glow_color),
+        _color_tuple(t._flares_color),
+        _color_tuple(t._shell_color),
+        _color_tuple(t._bolt_core_color),
         t._core_size_a, t._core_size_b,
         t._glow_size_a, t._glow_size_b, t._glow_size_c,
         t._num_flares, t._flares_size_a, t._flares_size_b,

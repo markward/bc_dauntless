@@ -8,7 +8,10 @@ exceed the cap there.
 
 The blend itself is native (torpedo_feed.h budget_lights, behind
 set_dynamic_lights_budgeted; no Python copy): its slicing is pinned by ctest
-Budget.SlicingMatchesPython. host_loop owns the knobs it reads.
+Budget.SlicingMatchesPython, and each intent case (explosions survive an
+emitter flood, a quiet frame is not capped at its guarantee, the spill favours
+explosions, ...) by a named Budget.* ctest in
+native/tests/combat/torpedo_feed_test.cc. host_loop owns the knobs it reads.
 """
 from engine.host_loop import (
     _LIGHT_CAP,

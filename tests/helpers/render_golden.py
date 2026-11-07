@@ -13,14 +13,28 @@ The goldens were recorded ONCE, from the Python builders, and the builders
 were then deleted (phase 6 follow-up 4, Task 3): the native feeds are now
 the only builders, and the goldens are what they are checked against.
 
-Recording is therefore REFUSED: under `UPDATE_RENDER_GOLDEN=1`, `record`
-fails (require_python_builders), because the builders it recorded from are
-gone and a golden is never recorded from the native feeds. Re-recording
-after a deliberate visual change needs Mark's ruling AND a new source of
-truth to record from; until then, a change that moves a golden is a
-regression. `_write` is the writer such a source would use (the unit tests
-build their goldens with it); it refuses a frame whose `source` is not
-"python" (`frame(..., source=)`), so it can never write native frames.
+Re-recording (Mark's ruling, 2026-11-07: native re-record on ruling):
+
+* `UPDATE_RENDER_GOLDEN=1` (record from the Python builders) is REFUSED:
+  the builders are gone (require_python_builders).
+* `UPDATE_RENDER_GOLDEN=native` records from the native feeds (every frame
+  must say `source="native"`) and then skips. It is for ONE case only: a
+  deliberate visual change Mark has ruled on, with the ruling written down
+  in the plan or the SDD ledger first. It also needs
+  `RENDER_GOLDEN_RULING=<where that ruling is recorded>`, which is written
+  into the golden's header; without it, record refuses. Only Mark, or a
+  session acting on that recorded ruling, runs it. It is NEVER run to make a
+  red golden test green: without a ruling, a frame that moves is a
+  regression in the feed, and the fix goes there.
+
+      UPDATE_RENDER_GOLDEN=native RENDER_GOLDEN_RULING="<plan/ledger ref>" \
+          uv run pytest <the golden test>
+
+  Then review the diff of `tests/fixtures/render_goldens/` and commit it
+  with the ruling named in the message. The scene premises the golden tests
+  assert (coverage counts, shields up and down hit) still run while
+  recording, so a re-record cannot quietly drop a case.
+* Any other value (unset, "", "0", "true", ...) records nothing.
 
 `RENDER_GOLDEN_DIR` (read at use) reads elsewhere. Goldens are per
 platform, as the combat goldens are (ruling R9: float math is not promised
@@ -42,6 +56,11 @@ DIR_ENV = "RENDER_GOLDEN_DIR"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "render_goldens"
 SCHEMA = 1
 FEEDS = ("phasers", "tractors", "torps", "lights")
+RULING_ENV = "RENDER_GOLDEN_RULING"
+# The UPDATE_RENDER_GOLDEN values that record, and the frame source each
+# records from.
+MODES = {"1": "python", "native": "native"}
+_HEADER_SOURCE = {"python": "python builders", "native": "native feeds"}
 # The platforms whose goldens were recorded: a missing file there fails.
 REQUIRED_PLATFORMS = ("darwin",)
 
@@ -54,17 +73,23 @@ def frame(phasers=(), tractors=(), torps=(), lights=(), *, source):
 
 
 def require_python_builders(scene_name="") -> None:
-    """Always fails: a golden was recorded only from engine/host_loop.py's
+    """Always fails: the goldens were first recorded from engine/host_loop.py's
     Python beam and torpedo builders, which were deleted (phase 6 follow-up
-    4, Task 3), and is never recorded from the native feeds."""
-    pytest.fail("render golden %s: the Python builders are gone; a golden is "
-                "recorded only from them, never from the native feeds. "
-                "Re-recording needs Mark's ruling and a new source"
-                % scene_name)
+    4, Task 3), so UPDATE_RENDER_GOLDEN=1 cannot record."""
+    pytest.fail("render golden %s: the Python builders are gone, so "
+                "UPDATE_RENDER_GOLDEN=1 cannot record. A re-record from the "
+                "native feeds (UPDATE_RENDER_GOLDEN=native) needs Mark's "
+                "recorded ruling" % scene_name)
+
+
+def mode():
+    """The source UPDATE_RENDER_GOLDEN records from ("python" | "native"),
+    or None: not recording."""
+    return MODES.get(os.environ.get(UPDATE_ENV))
 
 
 def recording() -> bool:
-    return os.environ.get(UPDATE_ENV) == "1"
+    return mode() is not None
 
 
 def _path(scene_name) -> Path:
@@ -87,27 +112,43 @@ def _record_of(i, f) -> dict:
 
 
 def record(scene_name, frames) -> None:
-    """Inert unless UPDATE_RENDER_GOLDEN=1; then it refuses
-    (require_python_builders), writing nothing."""
-    if not recording():
+    """Inert unless UPDATE_RENDER_GOLDEN records (see the module docstring):
+    "1" refuses (require_python_builders); "native" needs
+    RENDER_GOLDEN_RULING, writes the golden from the native `frames` and
+    skips."""
+    m = mode()
+    if m is None:
         return
-    require_python_builders(scene_name)
+    if m == "python":
+        require_python_builders(scene_name)
+    ruling = os.environ.get(RULING_ENV, "").strip()
+    if not ruling:
+        pytest.fail("render golden %s: UPDATE_RENDER_GOLDEN=native needs %s "
+                    "naming where Mark's ruling for this re-record is "
+                    "recorded (plan or ledger); never re-record to make a "
+                    "red test green" % (scene_name, RULING_ENV))
+    path = _write(scene_name, frames, m, ruling=ruling)
+    pytest.skip("render golden recorded from the %s: %s (%d frames) -> %s"
+                % (_HEADER_SOURCE[m], scene_name, len(frames), path))
 
 
-def _write(scene_name, frames, source) -> Path:
+def _write(scene_name, frames, source, ruling=None) -> Path:
     """Write `scene_name`'s golden from `frames` (counts and digests per
-    frame) and return its path. A frame not from "python" is refused: a
-    golden is never written from the native feeds."""
-    sources = sorted({f.get("source") for f in frames} - {"python"},
-                     key=repr)
+    frame), every one of which must say `source` ("python" | "native"), and
+    return its path. `ruling` (where Mark's ruling is recorded) goes into
+    the header."""
+    sources = sorted({f.get("source") for f in frames} - {source}, key=repr)
     if sources:
-        pytest.fail("render golden %s: frames from %r; a golden is never "
-                    "written from the native feeds" % (scene_name, sources))
+        pytest.fail("render golden %s: frames from %r; this golden is "
+                    "written only from %r frames" % (scene_name, sources,
+                                                      source))
     path = _path(scene_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     recs = [_record_of(i, f) for i, f in enumerate(frames)]
     data = {"scene": scene_name, "platform": sys.platform, "schema": SCHEMA,
-            "source": source, "frames": recs}
+            "source": _HEADER_SOURCE[source], "frames": recs}
+    if ruling is not None:
+        data["ruling"] = ruling
     path.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n")
     return path
 
@@ -117,8 +158,9 @@ def _compare(scene_name, frames):
     path = _path(scene_name)
     if not path.is_file():
         msg = ("no render golden for %s on %s: %s is missing (recording "
-               "needs Mark's ruling and a new source: the Python builders "
-               "are gone)" % (scene_name, sys.platform, path))
+               "one needs Mark's recorded ruling: UPDATE_RENDER_GOLDEN="
+               "native, see tests/helpers/render_golden.py)"
+               % (scene_name, sys.platform, path))
         if sys.platform in REQUIRED_PLATFORMS:
             raise AssertionError(msg)
         pytest.skip(msg)

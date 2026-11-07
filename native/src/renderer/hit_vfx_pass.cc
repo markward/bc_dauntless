@@ -71,7 +71,7 @@ constexpr float kSparkLife       = 3.0f;    // seconds — spark visibility, int
 constexpr float kSparkDamping    = 1.4f;    // velocity damping rate (SDK SetDamping analogue)
 constexpr float kSparkTailLength = 0.15f;   // streak length per unit speed (tune-by-eye)
 
-// Renderer CWD is the project root (see engine/host_loop.py:_resolve_game_texture),
+// Renderer CWD is the project root (see engine/appc/native_combat.py:_resolve_game_texture),
 // so these direct-ifstream sprite loads need to route through
 // resolve_asset_path — matching phaser_pass.cc's kBeamTexturePath. Without it
 // load_sprite fails, the main texture stays id()==0, and render() early-returns,

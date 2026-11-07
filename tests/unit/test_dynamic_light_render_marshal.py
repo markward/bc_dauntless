@@ -15,8 +15,9 @@ from engine.appc import explosion_lights
 from tests.helpers import native_render_feeds
 from tests.helpers.native_on import native_combat_on  # noqa: F401  (fixture)
 from tests.helpers.viewed_set import place_in_viewed_set, release_viewed_set
+from engine.appc.native_combat import _color_tuple
 from engine.host_loop import (
-    _color_tuple, _TORPEDO_LIGHT_RADIUS_SCALE, _TORPEDO_LIGHT_INTENSITY,
+    _TORPEDO_LIGHT_RADIUS_SCALE, _TORPEDO_LIGHT_INTENSITY,
 )
 
 pytestmark = pytest.mark.usefixtures("native_combat_on")

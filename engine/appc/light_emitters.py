@@ -4,8 +4,10 @@ An emitter is an independent child of a subsystem (0..N per subsystem), stored
 in the ship BODY frame (same frame as glow-region positions). Persistence
 mirrors glow regions: a Dauntless-invented SetLightEmitter* setter family
 recorded via the property data-bag (engine/appc/properties.py) and read back
-here. The runtime producer (engine/host_loop.py) transforms body->world and
-feeds host_io.set_dynamic_lights; the renderer (opaque.frag) casts the light.
+here. The runtime producer (engine/host_loop.py
+_build_emitter_light_render_data) hands body-frame lights to the dynamic-light
+blend (native_combat.torpedo_feed -> set_dynamic_lights_budgeted); the
+renderer resolves them through the hull's matrix and opaque.frag casts them.
 
 See docs/superpowers/specs/2026-07-29-subsystem-light-emitters-design.md.
 """

@@ -60,8 +60,8 @@ Vec3 forward(const Vec3& v) {
     return {v[0] / mag, v[1] / mag, v[2] / mag};
 }
 
-// host_loop._camera_distance_fade(position) (the emitter lights' Python
-// gate): nullopt is Python's None (culled).
+// host_loop._camera_distance_fade(position), the emitter lights' Python
+// twin of this gate: change both. nullopt is Python's None (culled).
 std::optional<double> camera_fade(const TorpedoFeedCtx& ctx, const Vec3& p) {
     if (!ctx.eye) return 1.0;
     const Vec3& eye = *ctx.eye;

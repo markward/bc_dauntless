@@ -9,13 +9,13 @@ goldens recorded from the Python builders before they were deleted
 (tests/helpers/render_golden.py). There is no Python copy of the feed any
 more.
 
-Packing (so a compare is bitwise and -0.0 / NaN cannot hide in a float ==):
-floats are float32 bits ("<f"), ints "<i", a bool one byte ("<B"), a string
-a "<i" utf-8 byte length and then the bytes.
+Packing and each feed's field order: tests/helpers/native_render_feeds.py.
 """
-import struct
-
 import pytest
+
+from tests.helpers.native_render_feeds import (
+    LIGHT_FIELDS, TORPEDO_FIELDS, drop_from_frames, f32, light_values, pack,
+    torpedo_dict_values)
 
 try:
     import _dauntless_host as _h
@@ -27,71 +27,24 @@ pytestmark = pytest.mark.skipif(
     reason="native host not built")
 
 
-def _f(*xs):
-    return b"".join(struct.pack("<f", x) for x in xs)
-
-
-def _i(x):
-    return struct.pack("<i", x)
-
-
-def _s(s):
-    b = s.encode("utf-8")
-    return _i(len(b)) + b
-
-
-def _pack_torp_row(r):
-    """One `torpedoes_debug()` row (TorpedoDescriptor, struct order) as bytes."""
-    (pos, core_tex, core_c, core_a, core_b, glow_tex, glow_c, ga, gb, gc,
-     flares_tex, flares_c, nflares, fa, fb, age, tid, is_dis, fwd, shell,
-     bolt_core, blen, bwid) = r
-    return (_f(*pos) + _s(core_tex) + _f(*core_c, core_a, core_b)
-            + _s(glow_tex) + _f(*glow_c, ga, gb, gc)
-            + _s(flares_tex) + _f(*flares_c) + _i(nflares) + _f(fa, fb, age)
-            + _i(tid) + struct.pack("<B", 1 if is_dis else 0) + _f(*fwd)
-            + _f(*shell) + _f(*bolt_core) + _f(blen, bwid))
-
-
-def _pack_torp_dict(d):
-    """The same bytes from a `set_torpedoes` dict (what native must hold)."""
-    return _pack_torp_row((
-        d["position"], d["core_texture"], d["core_color"], d["core_size_a"],
-        d["core_size_b"], d["glow_texture"], d["glow_color"], d["glow_size_a"],
-        d["glow_size_b"], d["glow_size_c"], d["flares_texture"],
-        d["flares_color"], d["num_flares"], d["flares_size_a"],
-        d["flares_size_b"], d["age"], d["id"], d["is_disruptor"], d["forward"],
-        d["shell_color"], d["bolt_core_color"], d["bolt_length"],
-        d["bolt_width"]))
-
-
-def _pack_light_row(r):
-    """One `dynamic_lights_debug()` row (DynamicLightDescriptor) as bytes."""
-    (pa, pb, color, radius, intensity, direction, tx, up, ty, idx, gen) = r
-    return (_f(*pa) + _f(*pb) + _f(*color) + _f(radius, intensity)
-            + _f(*direction) + _f(tx) + _f(*up) + _f(ty) + _i(idx) + _i(gen))
-
-
-def _pack_light_dict(d):
-    """The same bytes from a `set_dynamic_lights` dict, defaults applied."""
-    pos = d["position"]
-    iid = d.get("instance_id")
-    iid = (iid.index, iid.generation) if iid is not None else (0, 0)
-    return _pack_light_row((
-        pos, d.get("position_b") or pos, d["color"], d["radius"],
-        d["intensity"], d.get("direction") or (0.0, 0.0, 0.0),
-        -1.0 if d.get("spot_tan_x") is None else d["spot_tan_x"],
-        d.get("up") or (0.0, 1.0, 0.0),
-        -1.0 if d.get("spot_tan_y") is None else d["spot_tan_y"], *iid))
-
-
 def _torps():
     """The pushed torpedoes, one packed `bytes` each."""
-    return [_pack_torp_row(r) for r in _h.torpedoes_debug()]
+    return [pack(TORPEDO_FIELDS, r) for r in _h.torpedoes_debug()]
 
 
 def _lights():
     """The pushed dynamic lights, one packed `bytes` each."""
-    return [_pack_light_row(r) for r in _h.dynamic_lights_debug()]
+    return [pack(LIGHT_FIELDS, r) for r in _h.dynamic_lights_debug()]
+
+
+def _pack_torp_dict(d):
+    """A `set_torpedoes` dict as the native side must hold it."""
+    return pack(TORPEDO_FIELDS, torpedo_dict_values(d))
+
+
+def _pack_light_dict(d):
+    """A `set_dynamic_lights` dict as the native side must hold it."""
+    return pack(LIGHT_FIELDS, light_values(d))
 
 
 QUAD = {
@@ -355,7 +308,6 @@ def busy_torpedo_scene(monkeypatch, host):
 
 
 def test_scene_feeds_torpedoes_a_disruptor_and_lights(torpedo_scene):
-    import struct as st
     ts = torpedo_scene
     ok, torps, lights = _native_feed(ts)
     assert ok
@@ -373,9 +325,6 @@ def test_scene_feeds_torpedoes_a_disruptor_and_lights(torpedo_scene):
     from engine.systems import frames
     o = frames.render_origin()
     assert o == (12.5, -30.25, 4.0)
-
-    def f32(x):
-        return st.unpack("<f", st.pack("<f", x))[0]
 
     for row, t in zip(rows, ts.viewed):
         p = t.GetTranslate()
@@ -447,20 +396,6 @@ def _no_skips():
             and not any(nc.beam_feed_counts()["skips"].values()))
 
 
-def _drop_from_frames(monkeypatch, pset):
-    """`pset` left out of the frames table the feeds are sent."""
-    gone = nc._slot_of(pset)
-    table = nc._beam_frames
-
-    def without(*a, **k):
-        t = table(*a, **k)
-        assert gone in t, "premise: the set is in the table"
-        del t[gone]
-        return t
-
-    monkeypatch.setattr(nc, "_beam_frames", without)
-
-
 def test_a_skipped_torpedo_drops_only_itself_and_its_light(torpedo_scene,
                                                           monkeypatch):
     """The far torpedo's set left out of the frames table: the feed cannot
@@ -475,7 +410,7 @@ def test_a_skipped_torpedo_drops_only_itself_and_its_light(torpedo_scene,
     assert ok and _no_skips(), nc.torpedo_feed_counts()
     want = tuple(want)
     assert len(want[0]) == 3 and want[1], "premise: three in view, lit"
-    _drop_from_frames(monkeypatch, ts.far_set)
+    drop_from_frames(monkeypatch, ts.far_set)
     nc.reset_torpedo_feed_counts()
     ok, torps, lights = _native_feed(ts)
     assert ok
@@ -511,7 +446,7 @@ def test_skip_counts_reach_the_profiler_line(torpedo_scene, monkeypatch):
     assert nc.torpedo_feed(*args) is True
     monkeypatch.setattr(nc, "_switch", True)
     # The far set unframed: its torpedo is one skip, the rest is drawn.
-    _drop_from_frames(monkeypatch, ts.far_set)
+    drop_from_frames(monkeypatch, ts.far_set)
     assert nc.torpedo_feed(*args) is True
     assert len(_torps()) == 3
     # A "ship" with no row: one skip in each beam walk.
@@ -573,7 +508,6 @@ def test_a_torpedo_without_create_model_draws_the_default_record(
     assert spied["torp_lights"] == 2      # the two lit torpedoes, not the bare
     row = next(r for r in _h.torpedoes_debug() if r[16] == bare._id)
     b = host_loop.TORPEDO_BRIGHTNESS
-    f32 = lambda x: struct.unpack("<f", struct.pack("<f", x))[0]  # noqa: E731
     assert row[1] == row[5] == row[10] == ""
     assert tuple(row[2]) == (f32(b), f32(b), f32(b), 1.0)
     assert (row[3], row[4], row[7], row[8], row[9], row[12]) == (
@@ -649,7 +583,8 @@ def _golden_lights(scene):
             assert iid in names, "a light on no scene ship's instance: %r" % (
                 iid,)
             name = names[iid]
-        out.append(_pack_light_row(r[:9] + (0, 0)) + _s(name))
+        out.append(pack(LIGHT_FIELDS, r[:9] + (0, 0))
+                   + pack((("ship", "s", None),), [name]))
     return out
 
 

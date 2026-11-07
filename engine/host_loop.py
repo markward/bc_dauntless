@@ -1194,7 +1194,7 @@ def _phaser_step_bank(ship, sys_, i: int, dt: float, ship_instances) -> None:
     # distance falloff, the hit trace -- is a raw set-local compare,
     # so a bank left firing at a target in ANOTHER set (or a setless
     # one) would deal damage wherever raw numbers coincide, invisibly
-    # (the beam builder already drops cross-frame beams). No damage,
+    # (the native beam feed already drops cross-frame beams). No damage,
     # no feedback; stop the bank, and drop any banked dwell. Stopgap
     # until frame-aware weapon engagement lands (spec §6 widening
     # list). Same-set pairs are untouched.
@@ -1499,35 +1499,6 @@ def _push_combat_render_data(ships_list, *, ship_instances=None,
         _native_combat.beam_feed(ships_list, ship_instances)
 
 
-def _color_tuple(color):
-    """TGColorA → (r, g, b, a) tuple, or white when None."""
-    if color is None:
-        return (1.0, 1.0, 1.0, 1.0)
-    # TGColorA in our shim has GetRed/Green/Blue/Alpha or r/g/b/a attrs.
-    for attr_set in (("r", "g", "b", "a"),
-                     ("GetRed", "GetGreen", "GetBlue", "GetAlpha")):
-        try:
-            vals = []
-            for a in attr_set:
-                v = getattr(color, a)
-                vals.append(v() if callable(v) else v)
-            return tuple(float(v) for v in vals)
-        except Exception:
-            continue
-    return (1.0, 1.0, 1.0, 1.0)
-
-
-def _resolve_game_texture(path: str) -> str:
-    """SDK projectile scripts reference textures by 'data/Textures/...' which
-    in BC means relative-to-game-root.  Absolutise against the configured
-    game root (engine.paths.game_asset) so the renderer's ifstream resolves
-    regardless of where the BC install actually lives."""
-    if not path:
-        return ""
-    abs_path = _paths.game_asset(path)
-    return str(abs_path)
-
-
 def _build_ship_emitter_cache(ship, specs_of=None):
     """Body-frame light-emitter cache for one ship, built once at spawn.
 
@@ -1718,8 +1689,8 @@ def _build_explosion_light_render_data():
     camera-distance fade the torpedo lights use, so a distant battle does not
     fill the light list with entries no hull on screen can see.
     """
-    # DELIBERATELY NOT camera-distance culled, unlike the torpedo and emitter
-    # lights above.
+    # DELIBERATELY NOT camera-distance culled, unlike the torpedo lights (the
+    # native torpedo feed's) and the emitter lights (below).
     #
     # _camera_distance_fade drops anything past DYN_LIGHT_CULL_GU (~86 GU,
     # 15 km). That is right for a hull-local light -- a torpedo glow or a
@@ -1861,9 +1832,10 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
     sweep, so the cast light is locked to the hull on any refresh rate.
     Health-gated through `light_emitters.resolve_emitter_intensity` (flicker
     while disabled, off while destroyed), and impulse emitters brighten with
-    commanded throttle. Concatenated with the torpedo list at the
-    `set_dynamic_lights` call site; native clamps to 64 lights total, so no
-    cap is needed here.
+    commanded throttle. Blended with the explosion lights and the native
+    torpedo lights by `set_dynamic_lights_budgeted` (native_combat.
+    torpedo_feed), whose per-category budget caps the list at _LIGHT_CAP, so
+    no cap is needed here.
 
     Best-effort VFX: any failure producing one ship's or one emitter's light
     is swallowed (logged under --developer) rather than dropping the whole
@@ -2230,6 +2202,10 @@ def _camera_distance_fade(position):
     Compares squared distances first: the sqrt runs only for the handful of
     lights actually inside the fade band, never for the common near or far
     cases.
+
+    Used here by the emitter lights. Its C++ twin is `camera_fade` in
+    native/src/combat/src/torpedo_feed.cc (the torpedo lights, same knobs
+    passed per frame): change both.
     """
     eye = _last_camera_eye
     if eye is None:

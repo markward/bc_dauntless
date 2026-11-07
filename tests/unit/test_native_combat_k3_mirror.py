@@ -412,8 +412,7 @@ def TGColorA(r, g, b, a):
 
 
 def _col(c):
-    from engine import host_loop
-    return _hex(*host_loop._color_tuple(c))
+    return _hex(*nc._color_tuple(c))
 
 
 def _make_photon(num_flares=4):
@@ -429,11 +428,10 @@ def _make_photon(num_flares=4):
 
 
 def _expect_visual(t, v):
-    from engine import host_loop
     assert v is not None
-    assert v["core_texture"] == host_loop._resolve_game_texture(t._core_texture)
-    assert v["glow_texture"] == host_loop._resolve_game_texture(t._glow_texture)
-    assert v["flares_texture"] == host_loop._resolve_game_texture(
+    assert v["core_texture"] == nc._resolve_game_texture(t._core_texture)
+    assert v["glow_texture"] == nc._resolve_game_texture(t._glow_texture)
+    assert v["flares_texture"] == nc._resolve_game_texture(
         t._flares_texture)
     for key, c in (("core_color", t._core_color), ("glow_color", t._glow_color),
                    ("flares_color", t._flares_color),
@@ -561,7 +559,6 @@ def test_a_model_whose_record_cannot_be_read_clears_the_row(
     texture that does not resolve) leaves `t` with no record, and the row
     must not keep the default it held: it is cleared, so the feed skips the
     torpedo ("no_visual") rather than draw a stale record."""
-    from engine import host_loop
 
     def unresolvable(path):
         raise OSError("no such texture: %r" % path)
@@ -569,7 +566,7 @@ def test_a_model_whose_record_cannot_be_read_clears_the_row(
     t = Torpedo()
     projectiles.register(t)
     assert _row(t)["visual"] is not None          # the default record
-    monkeypatch.setattr(host_loop, "_resolve_game_texture", unresolvable)
+    monkeypatch.setattr(nc, "_resolve_game_texture", unresolvable)
     t.CreateTorpedoModel("a.tga", None, 1, 2, "b.tga", None, 7, 5, 1,
                          "c.tga", None, 2, 0.5, 0.25)
     assert "_vis_native" not in t.__dict__
