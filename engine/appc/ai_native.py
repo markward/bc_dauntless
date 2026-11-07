@@ -269,6 +269,8 @@ def _take_reader_bodies() -> dict:
     """{App method name: the engine function a native reader mirrors}, taken
     at import, before any test, tool or mod can replace a name."""
     from engine.appc.objects import ObjectClass, PhysicsObjectClass
+    from engine.appc.sets import SetClass
+    from engine.appc.ships import ShipClass
     from engine.core.ids import TGObject
     return {
         "GetObjID": TGObject.__dict__["GetObjID"],             # `_obj_id`
@@ -277,6 +279,12 @@ def _take_reader_bodies() -> dict:
         "GetWorldLocation": ObjectClass.__dict__["GetWorldLocation"],  # store
         "GetRadius": ObjectClass.__dict__["GetRadius"],  # guarded _radius*_scale
         "GetVelocityTG": PhysicsObjectClass.__dict__["GetVelocityTG"],  # _velocity
+        # Column 1 of the store rotation.
+        "GetWorldForwardTG": ObjectClass.__dict__["GetWorldForwardTG"],
+        # `_target`, which the set index counts (SelectTarget's popularity).
+        "GetTarget": ShipClass.__dict__["GetTarget"],
+        # The set index's class bucket.
+        "GetClassObjectList": SetClass.__dict__["GetClassObjectList"],
     }
 
 
@@ -328,7 +336,12 @@ def object_reads_are_stock(obj, contract: tuple) -> bool:
 
 # ── Counters ─────────────────────────────────────────────────────────────────
 
-REASONS = ("switch", "not_stock", "no_mirror")
+#: Why a CALL ran the SDK's code (note): the switch is off; the instance or
+#: its module surface is not stock; an object the native code reads does not
+#: resolve its reader contract ("surface": SelectTarget, where one call
+#: rates one object, so the object's fallback is the call's); or a value the
+#: native code reads is not the engine's or not of a shape it reproduces.
+REASONS = ("switch", "not_stock", "surface", "no_mirror")
 
 #: Why one OBJECT inside a native call went to the SDK Python
 #: (note_object_fallback).
@@ -352,7 +365,8 @@ def note(kind: str, path: str, reason: str = "") -> None:
     select: GetTargetRating; fire: Update) by the path it took: "native" only
     when the native code actually ran, "python" when the SDK's code ran
     instead, naming why (REASONS: the switch is off, the instance is not
-    stock, or what the native code reads is not the engine's -- "no_mirror").
+    stock, an object read is not ("surface"), or what the native code reads
+    is not the engine's -- "no_mirror").
     A call that returns before either (no ship, no set) is not counted."""
     c = _counts[kind]
     c[path] += 1

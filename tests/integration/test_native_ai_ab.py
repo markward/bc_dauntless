@@ -4,7 +4,8 @@ its own subprocess, DAUNTLESS_NATIVE_AI=0 against unset).
 
 Each scene also asserts, for every kind native so far, that its ``native``
 count is > 0 and its ``python`` count is 0 or explained. Native so far:
-``avoid`` (Task 2, AvoidObstacles' obstacle scan)."""
+``avoid`` (Task 2, AvoidObstacles' obstacle scan) and ``select`` (Task 3,
+SelectTarget's GetTargetRating)."""
 import pytest
 
 from tests.helpers import native_ai_ab
@@ -29,8 +30,6 @@ def _same(scene):
 
 # TODO(per task): each scene switches on `native_ai_ab.assert_native(stats,
 # kind[, allowed_python])` as its kind goes native:
-#   Task 3 (select): combat_stress_gated (gate installed), k1_gameloop_ai
-#                    (ungated), cloak_attack, fed_subsystems
 #   Task 4/5 (fire): k1_gameloop_ai, sdk_dumb_fire, fed_subsystems,
 #                    akira_torp_select, cloak_attack
 
@@ -38,20 +37,27 @@ def _same(scene):
 def test_k1_gameloop_ai():
     stats = _same("k1_gameloop_ai")
     native_ai_ab.assert_native(stats, "avoid")
+    native_ai_ab.assert_native(stats, "select")        # ungated
 
 
 def test_combat_stress_gated():
     stats = _same("combat_stress_gated")
     native_ai_ab.assert_native(stats, "avoid")
+    native_ai_ab.assert_native(stats, "select")        # sensor gate installed
 
 
 def test_cloak_attack():
+    # No `select` assertion: the scene has ONE target, and FindGoodTarget
+    # returns a lone candidate unrated (AI/Preprocessors.py:1462-1464), so
+    # GetTargetRating is never called on either side. The rating is covered
+    # by the scenes above and tests/unit/test_native_target_rating.py.
     _same("cloak_attack")
 
 
 def test_fed_subsystems():
     stats = _same("fed_subsystems")
     native_ai_ab.assert_native(stats, "avoid")
+    native_ai_ab.assert_native(stats, "select")
 
 
 def test_akira_torp_select():

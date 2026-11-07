@@ -209,6 +209,17 @@ std::vector<IndexKey> SetIndex::bucket(IndexKey set, IndexKey cls) const {
     return out;
 }
 
+bool SetIndex::visit_bucket(IndexKey set, IndexKey cls, bool (*visit)(void* ctx, IndexKey obj),
+                            void* ctx) const {
+    auto si = sets_.find(set);
+    if (si == sets_.end()) return true;
+    auto bi = si->second.buckets.find(cls);
+    if (bi == si->second.buckets.end()) return true;
+    for (uint64_t seq : bi->second)
+        if (!visit(ctx, si->second.entries.at(seq).obj)) return false;
+    return true;
+}
+
 std::vector<IndexKey> SetIndex::distinct_live(IndexKey set, IndexKey cls) const {
     std::vector<IndexKey> out;
     auto si = sets_.find(set);

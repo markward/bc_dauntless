@@ -332,3 +332,36 @@ TEST(SetIndex, DropBucketForgetsOnlyThatBucket) {
     EXPECT_FALSE(ix.drop_bucket(S2, CLS));  // an unknown set
     EXPECT_EQ(ix.entry_count(S), 1u);
 }
+
+namespace {
+struct Visited {
+    Keys seen;
+    std::size_t stop_after = 1000;
+};
+bool record(void* ctx, IndexKey obj) {
+    auto* v = static_cast<Visited*>(ctx);
+    v->seen.push_back(obj);
+    return v->seen.size() < v->stop_after;
+}
+}  // namespace
+
+TEST(SetIndex, VisitBucketWalksWhatBucketListsAndStopsWhenAsked) {
+    SetIndex ix = with_bucket();
+    put(ix, S, "a", A);
+    put(ix, S, "b", B);
+    put(ix, S, "a2", A);  // two entries: visited twice, as bucket lists it
+    put(ix, S, "c", C);
+    ix.mark_leaving(S, "c");  // LEAVING entries stay in the bucket
+    Visited all;
+    EXPECT_TRUE(ix.visit_bucket(S, CLS, record, &all));
+    EXPECT_EQ(all.seen, ix.bucket(S, CLS));
+    EXPECT_EQ(all.seen, (Keys{A, B, A, C}));
+    Visited two;
+    two.stop_after = 2;
+    EXPECT_FALSE(ix.visit_bucket(S, CLS, record, &two));
+    EXPECT_EQ(two.seen, (Keys{A, B}));
+    Visited none;
+    EXPECT_TRUE(ix.visit_bucket(S2, CLS, record, &none));     // unknown set
+    EXPECT_TRUE(ix.visit_bucket(S, CLS + 1, record, &none));  // unknown bucket
+    EXPECT_TRUE(none.seen.empty());
+}

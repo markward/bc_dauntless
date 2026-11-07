@@ -80,6 +80,13 @@ public:
     std::vector<IndexKey> bucket_classes(IndexKey set) const;
     void set_bucket_membership(IndexKey set, IndexKey cls, IndexKey obj, bool member);
     std::vector<IndexKey> bucket(IndexKey set, IndexKey cls) const;
+    // Calls visit(ctx, obj) for each entry bucket() would list, in its
+    // order, until visit returns false; false if it stopped early (true for
+    // an unknown set or bucket). Allocates nothing, so a native reader can
+    // walk the borrowed keys while no Python runs; visit must not change the
+    // index.
+    bool visit_bucket(IndexKey set, IndexKey cls, bool (*visit)(void* ctx, IndexKey obj),
+                      void* ctx) const;
     std::vector<IndexKey> distinct_live(IndexKey set, IndexKey cls) const;
 
     int64_t targeted_by(IndexKey set, int64_t target_id) const;

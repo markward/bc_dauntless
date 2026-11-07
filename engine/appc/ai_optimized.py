@@ -69,11 +69,13 @@ an entry here, for two different reasons:
   but that is a different class, and it is not worth buying a new wedge with. Read
   PS_NORMAL as "the pre-branch behaviour, minus the lethality", not as faithfulness.
 
-* ``SelectTarget`` is deliberately NOT registered, even though the binary
-  replaces it. Its Python body cannot return PS_DONE at all (its no-target path
-  returns PS_SKIP_DORMANT), so running it cannot kill a node — it needs no
-  protection. Pinned by
+* ``SelectTarget`` needs no protection: its Python body cannot return PS_DONE
+  at all (its no-target path returns PS_SKIP_DORMANT), so running it cannot
+  kill a node. Pinned by
   ``tests/unit/test_preprocess_done_is_lethal.py::test_select_targets_sdk_body_cannot_return_ps_done``.
+  It IS registered (phase 6 AI part 2, Task 3), for speed only: a subclass
+  whose one method, ``GetTargetRating``, is native for a stock instance (see
+  _native_select_class). ``Update`` and everything else stay the SDK's.
 
 ``AlertLevel`` is deliberately absent from both registries — it is not in the
 binary's either, which is exactly why *its* Python body correctly returns
@@ -83,6 +85,7 @@ PS_NORMAL.
 import functools
 import math
 import os
+import sys
 
 import App
 
@@ -652,6 +655,163 @@ def _wrap_non_lethal(instance):
     return alias
 
 
+# ── SelectTarget: candidate ratings, native for a stock instance ─────────
+#
+# Phase 6 AI part 2, Task 3. GetTargetRating was 20.7% of AI time at 128 ships
+# (SIG-205), mostly its popularity loop over every ship in the set. The engine
+# subclass overrides that one method: for an instance the SDK would run
+# unchanged it is one ``combat_ai_target_rating`` call (native/src/host/
+# host_bindings.cc, the ``rating`` namespace; the sum in native/src/combat/
+# include/dauntless/combat/ai_rating.h), bit-identical to the SDK body, with
+# popularity from the native set index. FindGoodTarget -- the candidate step,
+# the sensor gate's wrapper and its fallback, which all call
+# self.GetTargetRating -- stays the SDK's. Anything the native call cannot
+# answer exactly runs the SDK body for that call.
+
+#: The preprocessor methods the native path replaces or calls.
+_SELECT_METHODS = ("GetTargetRating",)
+
+
+def _select_surface_snapshot():
+    from engine.appc import math as _engine_math
+    from engine.appc import object_types as _object_types
+    from engine.appc import objects as _objects
+    from engine.appc import transform_store as _ts
+    from engine.appc.properties import ShipProperty
+    from engine.appc.ships import ShipClass
+    return {
+        "acos": math.acos,
+        "pi": math.pi,
+        "engine_math": _engine_math,
+        "objects": _objects,
+        "object_types": _object_types,
+        "resolve_class": _object_types.resolve_class,
+        "ship_property": ShipProperty,
+        "ship_class": ShipClass,
+        "get_rotation_col": _ts.NativeTransformStore.get_rotation_col,
+    }
+
+
+#: What GetTargetRating's arithmetic rests on, taken at import (as
+#: _AVOID_SURFACE): a later replacement is not stock.
+_SELECT_SURFACE = _select_surface_snapshot()
+
+
+def _select_surface_is_stock(base) -> bool:
+    """The SDK GetTargetRating (on `base`, the SDK class) still sees the
+    engine's App, math.acos / math.pi, the TGPoint3 GetWorldLocation and
+    GetWorldForwardTG build (methods unpatched, math.sqrt behind Length),
+    and an App.CT_SHIP that GetClassObjectList resolves to the ShipClass the
+    set index buckets."""
+    fn = ai_native._unwrap(getattr(base, "GetTargetRating", None))
+    if fn is None:
+        return False
+    g = fn.__globals__
+    snap = _SELECT_SURFACE
+    if g.get("App") is not App:
+        return False
+    m = g.get("math")
+    if getattr(m, "acos", None) is not snap["acos"] \
+            or getattr(m, "pi", None) is not snap["pi"]:
+        return False
+    avoid = _AVOID_SURFACE
+    point_cls = avoid["point_cls"]
+    if snap["objects"].__dict__.get("TGPoint3") is not point_cls:
+        return False
+    table = point_cls.__dict__
+    for name, want in avoid["point"].items():
+        if table.get(name) is not want:
+            return False
+    sqrt_mod = snap["engine_math"].__dict__.get("_math")
+    if getattr(sqrt_mod, "sqrt", None) is not avoid["sqrt"]:
+        return False
+    # GetClassObjectList(App.CT_SHIP): resolve_class, ShipProperty -> ShipClass.
+    ot = snap["object_types"]
+    if ot.__dict__.get("resolve_class") is not snap["resolve_class"]:
+        return False
+    cls = ot.resolve_class(App.CT_SHIP)
+    if cls is snap["ship_property"]:
+        cls = sys.modules["engine.appc.ships"].__dict__.get("ShipClass")
+    if cls is not snap["ship_class"]:
+        return False
+    # The class GetClassObjectList's set index buckets as ships (imported on
+    # first use, as sets.py imports it).
+    from engine.appc import set_index as _set_index
+    return _set_index.__dict__.get("_ShipClass") is cls
+
+
+def _select_store_ok() -> bool:
+    """GetWorldLocation and GetWorldForwardTG read the native store the
+    rating reads (_native_store_ok, plus its rotation column)."""
+    from engine.appc import transform_store as _ts
+    return (_native_store_ok()
+            and _ts.NativeTransformStore.get_rotation_col
+            is _SELECT_SURFACE["get_rotation_col"])
+
+
+_NATIVE_SELECT_CLASSES: dict = {}
+
+
+def _native_select_class(base: type) -> type:
+    """Build (once per SDK class) a subclass of `base` whose ONLY method is
+    ``GetTargetRating`` (marked ``_dauntless_native_entry``): native for a
+    stock instance, else `base`'s, resolved at call time so a patch is seen.
+
+    A subclass sharing the SDK instance's ``__dict__`` (as _wrap_non_lethal),
+    so the driver's duck-typed _ensure_select_target_initialized
+    (``DamageEvent``, ``dDamageReceived``, the event handlers), every SDK
+    method, ``isinstance(inst, SelectTarget)`` and the sensor gate's patch of
+    the SDK class's FindGoodTarget all see the SDK's class and state."""
+    cached = _NATIVE_SELECT_CLASSES.get(base)
+    if cached is not None:
+        return cached
+
+    def GetTargetRating(self, pTarget):
+        """The SDK's GetTargetRating, native for a stock instance."""
+        if not ai_native.enabled("select"):
+            ai_native.note("select", "python", "switch")
+            return base.GetTargetRating(self, pTarget)
+        if not (ai_native.preprocessor_is_stock(self, "SelectTarget",
+                                                _SELECT_METHODS)
+                and _select_surface_is_stock(base)):
+            ai_native.note("select", "python", "not_stock")
+            return base.GetTargetRating(self, pTarget)
+        if not _select_store_ok():
+            ai_native.note("select", "python", "no_mirror")
+            return base.GetTargetRating(self, pTarget)
+        import _dauntless_host as _h
+        rating = _h.combat_ai_target_rating(self, pTarget)
+        if type(rating) is float:
+            ai_native.note("select", "native")
+            return rating
+        if type(rating) is int:            # the SDK's -1: no ship (uncounted)
+            return rating
+        # A call the native path cannot answer exactly: the SDK's, whole.
+        ai_native.note("select", "python", rating)
+        return base.GetTargetRating(self, pTarget)
+    GetTargetRating._dauntless_native_entry = True
+
+    cls = type(base.__name__ + "_Native", (base,), {
+        "GetTargetRating": GetTargetRating,
+        "__doc__": ("SDK %s with GetTargetRating native for a stock "
+                    "instance. See engine/appc/ai_optimized.py."
+                    % base.__name__),
+    })
+    _NATIVE_SELECT_CLASSES[base] = cls
+    # Picklable by name, as _non_lethal_class's classes.
+    globals()[cls.__name__] = cls
+    return cls
+
+
+def _wrap_select_target(instance):
+    """The SelectTarget binding: the SDK instance's state under the engine
+    subclass (_native_select_class)."""
+    cls = _native_select_class(type(instance))
+    alias = cls.__new__(cls)
+    alias.__dict__ = instance.__dict__
+    return alias
+
+
 # Python preprocessor class NAME -> factory(original_instance) -> the object the
 # engine actually stores. Mirrors the binary's DAT_00982A1C name registry; see
 # the module docstring for why three of its four entries are here and what kind
@@ -666,6 +826,8 @@ OPTIMIZED_PREPROCESSORS: dict = {
     # the whole entry would have taken the protection with it --
     # test_preprocess_done_is_lethal caught exactly that.
     "AvoidObstacles": _wrap_avoid_obstacles,
+    # SDK body throughout, GetTargetRating native for a stock instance.
+    "SelectTarget": _wrap_select_target,
 }
 
 # ── AvoidObstacles: OFF by default, and why ────────────────────────────────

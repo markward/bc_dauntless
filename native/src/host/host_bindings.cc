@@ -24,6 +24,7 @@
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
 #include "dauntless/combat/ai_avoid.h"
+#include "dauntless/combat/ai_rating.h"
 #include "dauntless/combat/beam_feed.h"
 #include "dauntless/combat/torpedo_feed.h"
 #include "dauntless/combat/beam_geometry.h"
@@ -5725,8 +5726,8 @@ bool float_attr(PyObject* o, PyObject* name, double& out) {
     return ok;
 }
 
-// ObjectClass.GetWorldLocation: the store slot `_xform` names.
-bool read_position(PyObject* o, double out[3]) {
+// The store handle `_xform` names: (index, generation) as plain ints.
+bool read_handle(PyObject* o, std::uint32_t& index, std::uint32_t& generation) {
     PyObject* xf = PyObject_GetAttr(o, host().s_xform);
     if (xf == nullptr) {
         PyErr_Clear();
@@ -5744,9 +5745,17 @@ bool read_position(PyObject* o, double out[3]) {
         return false;
     }
     if (i > 0xFFFFFFFFull || g > 0xFFFFFFFFull) return false;
+    index = static_cast<std::uint32_t>(i);
+    generation = static_cast<std::uint32_t>(g);
+    return true;
+}
+
+// ObjectClass.GetWorldLocation: the store slot `_xform` names.
+bool read_position(PyObject* o, double out[3]) {
+    std::uint32_t i, g;
+    if (!read_handle(o, i, g)) return false;
     try {
-        auto p = dauntless::transform_store().position(static_cast<std::uint32_t>(i),
-                                                       static_cast<std::uint32_t>(g));
+        auto p = dauntless::transform_store().position(i, g);
         out[0] = p[0];
         out[1] = p[1];
         out[2] = p[2];
@@ -5951,6 +5960,494 @@ void read_all(Reads& r, PyObject* inst, PyObject* ship, double psr, bool psr_ok)
 }
 
 }  // namespace avoid
+}  // namespace
+
+// ── SelectTarget's candidate rating (engine/appc/ai_optimized.py) ───────────
+// combat_ai_target_rating stands in for SelectTarget.GetTargetRating
+// (AI/Preprocessors.py:1481-1608) for a stock instance (the caller decided
+// that: ai_native.preprocessor_is_stock and the module surface). It gathers
+// the nine factors and dauntless/combat/ai_rating.h sums them:
+//   * the two positions and our forward from the transform store, for a
+//     candidate whose type resolves GetWorldLocation, and a ship whose type
+//     resolves GetWorldLocation, GetWorldForwardTG and GetObjID, to exactly
+//     the engine bodies those reads mirror (ai_native.reader_contract);
+//   * fPopularity from the set index (SetIndex::popularity: the entries of
+//     our set whose ship targets the candidate's GetObjID(), our own entries
+//     skipped) for a set whose type resolves GetClassObjectList to SetClass's
+//     and whose every CT_SHIP member resolves GetObjID and GetTarget to the
+//     engine's (the stock loop calls both on each of them). The candidate's
+//     id is the one its GetObjID() returns now, as the SDK reads it, so a
+//     candidate no set holds is still counted;
+//   * everything else by calling the very Python the SDK calls, in its
+//     order: GetName, ShipClass_Cast, GetShields().GetShieldPercentage(), the
+//     StartGetSubsystemMatch(CT_WEAPON_SYSTEM) walk and each system's
+//     GetCombinedConditionPercentage(), GetHull(), the damage ledger, the
+//     target group's ObjectGroupWithInfo_Cast and info -- so an override of
+//     any of them is honoured as the SDK honours it;
+//   * the nine weights, fMinimumFullGoodDistance, bSetShipTarget and
+//     sCurrentTarget from the instance, on every call.
+// A number is used only where Python's arithmetic on it is the double
+// arithmetic: a float, or an int (bool included) of at most 2**53, which
+// converts exactly, so each product and sum rounds as Python's does (an int
+// times an int is exact, and float(product) rounds as the double product).
+// A call the native path cannot answer exactly returns its reason as a str:
+// "surface" (a reader that is not the engine's) or "no_mirror" (a value of
+// another shape, a stale handle, or a Python exception, cleared). The caller
+// then runs the SDK body for the whole call, which gives the SDK's answer and
+// raises the SDK's exception; every read here is pure, so reading it twice
+// changes nothing. No ship returns the SDK's int -1.
+//
+// Borrowing: the set index's bucket keys are owned (INCREF) before any
+// Python runs, and the popularity count is read with keys of objects held
+// here; every other object is a py::object.
+namespace {
+namespace rating {
+
+struct Host {
+    PyObject *s_pCodeAI, *s_GetShip, *s_GetTarget, *s_GetName, *s_GetObjID;
+    PyObject *s_GetContainingSet, *s_ShipClass_Cast, *s_GetShields;
+    PyObject *s_GetShieldPercentage, *s_StartGetSubsystemMatch;
+    PyObject *s_GetNextSubsystemMatch, *s_EndGetSubsystemMatch, *s_CT_WEAPON_SYSTEM;
+    PyObject *s_GetCombinedConditionPercentage, *s_GetHull, *s_dDamageReceived;
+    PyObject *s_contains, *s_ObjectGroupWithInfo_Cast, *s_pTargetGroup, *s_Priority;
+    PyObject *s_bSetShipTarget, *s_sCurrentTarget, *s_fMinimumFullGoodDistance;
+    PyObject *s_GetWorldLocation, *s_GetWorldForwardTG, *s_GetClassObjectList;
+    PyObject* s_weights[9];
+    PyObject *r_surface, *r_no_mirror;
+    // ai_native.reader_contract(...): ((name, engine function), ...)
+    PyObject* reads_ship;       // GetWorldLocation, GetWorldForwardTG, GetObjID
+    PyObject* reads_candidate;  // GetWorldLocation
+    PyObject* reads_set;        // GetClassObjectList
+    PyObject* reads_crew;       // GetObjID, GetTarget: each ship the loop visits
+    PyObject* app;
+};
+
+PyObject* contract(PyObject* ai_native, std::initializer_list<PyObject*> names) {
+    py::tuple args(names.size());
+    std::size_t i = 0;
+    for (PyObject* n : names) args[i++] = py::reinterpret_borrow<py::object>(n);
+    py::object fn = avoid::own(PyObject_GetAttrString(ai_native, "reader_contract"));
+    py::object c = avoid::own(PyObject_Call(fn.ptr(), args.ptr(), nullptr));
+    if (!PyTuple_CheckExact(c.ptr()))
+        throw std::logic_error("ai_native.reader_contract: not a tuple");
+    return c.release().ptr();  // held for good
+}
+
+Host& host() {
+    static Host* h = [] {
+        using avoid::intern;
+        auto& a = avoid::host();
+        auto* p = new Host();
+        p->s_pCodeAI = intern("pCodeAI");
+        p->s_GetShip = intern("GetShip");
+        p->s_GetTarget = intern("GetTarget");
+        p->s_GetName = intern("GetName");
+        p->s_GetObjID = a.s_GetObjID;
+        p->s_GetContainingSet = intern("GetContainingSet");
+        p->s_ShipClass_Cast = intern("ShipClass_Cast");
+        p->s_GetShields = intern("GetShields");
+        p->s_GetShieldPercentage = intern("GetShieldPercentage");
+        p->s_StartGetSubsystemMatch = intern("StartGetSubsystemMatch");
+        p->s_GetNextSubsystemMatch = intern("GetNextSubsystemMatch");
+        p->s_EndGetSubsystemMatch = intern("EndGetSubsystemMatch");
+        p->s_CT_WEAPON_SYSTEM = intern("CT_WEAPON_SYSTEM");
+        p->s_GetCombinedConditionPercentage = intern("GetCombinedConditionPercentage");
+        p->s_GetHull = intern("GetHull");
+        p->s_dDamageReceived = intern("dDamageReceived");
+        p->s_contains = intern("__contains__");
+        p->s_ObjectGroupWithInfo_Cast = intern("ObjectGroupWithInfo_Cast");
+        p->s_pTargetGroup = intern("pTargetGroup");
+        p->s_Priority = intern("Priority");
+        p->s_bSetShipTarget = intern("bSetShipTarget");
+        p->s_sCurrentTarget = intern("sCurrentTarget");
+        p->s_fMinimumFullGoodDistance = intern("fMinimumFullGoodDistance");
+        p->s_GetWorldLocation = a.s_GetWorldLocation;
+        p->s_GetWorldForwardTG = intern("GetWorldForwardTG");
+        p->s_GetClassObjectList = intern("GetClassObjectList");
+        // The SDK's list order (Preprocessors.py:1595-1606).
+        const char* weights[9] = {"fDistanceFactor", "fInFrontFactor", "fIsTargetFactor",
+                                  "fShieldFactor",   "fWeaponsFactor", "fHullFactor",
+                                  "fDamageFactor",   "fPriorityFactor", "fPopularityFactor"};
+        for (int i = 0; i < 9; ++i) p->s_weights[i] = intern(weights[i]);
+        p->r_surface = intern("surface");
+        p->r_no_mirror = intern("no_mirror");
+        p->reads_ship = contract(a.ai_native, {p->s_GetWorldLocation, p->s_GetWorldForwardTG,
+                                               p->s_GetObjID});
+        p->reads_candidate = contract(a.ai_native, {p->s_GetWorldLocation});
+        p->reads_set = contract(a.ai_native, {p->s_GetClassObjectList});
+        p->reads_crew = contract(a.ai_native, {p->s_GetObjID, p->s_GetTarget});
+        p->app = PyImport_ImportModule("App");
+        if (p->app == nullptr) throw py::error_already_set();
+        return p;
+    }();
+    return *h;
+}
+
+py::object attr(PyObject* o, PyObject* name) { return avoid::own(PyObject_GetAttr(o, name)); }
+
+py::object call0(PyObject* o, PyObject* name) {
+    return avoid::own(PyObject_CallMethodNoArgs(o, name));
+}
+
+py::object call1(PyObject* o, PyObject* name, PyObject* arg) {
+    return avoid::own(PyObject_CallMethodOneArg(o, name, arg));
+}
+
+// `App.<fn>(arg)`, the function read off the module at the call, as the
+// SDK's `App.ShipClass_Cast(pTarget)` reads it.
+py::object app_call(PyObject* fn_name, PyObject* arg) {
+    py::object fn = attr(host().app, fn_name);
+    return avoid::own(PyObject_CallOneArg(fn.ptr(), arg));
+}
+
+// `if (a == b):` / `if (a != b):` -- the comparison, then its truth (not
+// PyObject_RichCompareBool, whose identity shortcut Python's `==` lacks).
+bool py_eq(PyObject* a, PyObject* b) {
+    py::object r = avoid::own(PyObject_RichCompare(a, b, Py_EQ));
+    return avoid::truth(r.ptr());
+}
+
+bool py_ne(PyObject* a, PyObject* b) {
+    py::object r = avoid::own(PyObject_RichCompare(a, b, Py_NE));
+    return avoid::truth(r.ptr());
+}
+
+// `d.__contains__(key)` (the loader's spelling of `d.has_key(key)`): a plain
+// dict's own test, else the object's method.
+bool contains(PyObject* d, PyObject* key) {
+    if (PyDict_CheckExact(d)) {
+        int r = PyDict_Contains(d, key);
+        if (r < 0) throw py::error_already_set();
+        return r == 1;
+    }
+    py::object r = call1(d, host().s_contains, key);
+    return avoid::truth(r.ptr());
+}
+
+py::object getitem(PyObject* d, PyObject* key) { return avoid::own(PyObject_GetItem(d, key)); }
+
+// A Python number as the double Python's float arithmetic uses (the
+// namespace comment); false for any other value.
+bool number(PyObject* o, double& out) {
+    if (PyFloat_CheckExact(o)) {
+        out = PyFloat_AS_DOUBLE(o);
+        return true;
+    }
+    if (!PyLong_CheckExact(o) && !PyBool_Check(o)) return false;
+    int overflow = 0;
+    long long v = PyLong_AsLongLongAndOverflow(o, &overflow);
+    if (v == -1 && PyErr_Occurred()) throw py::error_already_set();
+    constexpr long long kExact = 1LL << 53;
+    if (overflow != 0 || v > kExact || v < -kExact) return false;
+    out = static_cast<double>(v);
+    return true;
+}
+
+bool number_attr(PyObject* o, PyObject* name, double& out) {
+    py::object v = attr(o, name);
+    return number(v.ptr(), out);
+}
+
+// ObjectClass.GetWorldForwardTG: column 1 of the store rotation `_xform` names.
+bool read_forward(PyObject* o, double out[3]) {
+    std::uint32_t i, g;
+    if (!avoid::read_handle(o, i, g)) return false;
+    try {
+        auto c = dauntless::transform_store().rotation_col(i, g, 1);
+        out[0] = c[0];
+        out[1] = c[1];
+        out[2] = c[2];
+    } catch (const std::exception&) {
+        return false;  // stale: the Python path raises StaleHandleError
+    }
+    return true;
+}
+
+py::object reason(PyObject* r) { return py::reinterpret_borrow<py::object>(r); }
+
+// ai_native.object_reads_are_stock(obj, contract), with its CLASS half
+// remembered across calls for a type it found stock, keyed by the type's
+// version tag. CPython gives a type a new tag whenever an attribute of it or
+// of any base is set or deleted, or its __bases__ change, so an unchanged
+// tag means each contract name still resolves to the function Python
+// checked. Only for a type whose metaclass is `type` (attribute lookup is
+// then the MRO's alone); a type with no valid tag is asked every time.
+// The INSTANCE half -- no contract name in the object's own dict -- is
+// checked on every object, against the dict attribute lookup consults
+// (dict_shadows).
+struct StockType {
+    PyTypeObject* type;
+    unsigned int tag;
+    PyObject* contract;
+    py::object keep;  // the type, held: the address is the key
+};
+
+std::vector<StockType>& stock_types() {
+    static auto* v = new std::vector<StockType>();
+    return *v;
+}
+
+// The memo alone: true if `t` is remembered stock for `contract` under its
+// current tag (no Python runs; `tag` gets the tag, 0 for none).
+bool known_stock(PyTypeObject* t, PyObject* contract, unsigned int& tag) {
+    tag = Py_IS_TYPE(reinterpret_cast<PyObject*>(t), &PyType_Type) ? k0_type_tag(t) : 0u;
+    if (tag == 0) return false;
+    for (const StockType& e : stock_types())
+        if (e.type == t && e.contract == contract && e.tag == tag) return true;
+    return false;
+}
+
+bool class_stock(PyObject* obj, PyObject* contract) {
+    PyTypeObject* t = Py_TYPE(obj);
+    unsigned int tag;
+    if (known_stock(t, contract, tag)) return true;
+    auto& known = stock_types();
+    py::object fn = attr(avoid::host().ai_native, avoid::host().s_object_reads_are_stock);
+    py::object r = avoid::own(PyObject_CallFunctionObjArgs(fn.ptr(), obj, contract, nullptr));
+    const bool ok = avoid::truth(r.ptr());
+    // Python's True covers the class half; remember it unless the type moved
+    // while Python ran.
+    if (ok && tag != 0 && k0_type_tag(t) == tag) {
+        for (StockType& e : known)
+            if (e.type == t && e.contract == contract) {
+                e.tag = tag;
+                return ok;
+            }
+        if (known.size() >= 256) known.clear();
+        known.push_back(
+            {t, tag, contract, py::reinterpret_borrow<py::object>(reinterpret_cast<PyObject*>(t))});
+    }
+    return ok;
+}
+
+// Does `obj`'s own dict -- the one generic attribute lookup reads, built
+// from its inline values if it was not yet -- hold a contract name?
+bool dict_shadows(PyObject* obj, PyObject* contract) {
+    PyObject* d = k0_dict_of(obj);  // already built: no allocation
+    if (d == nullptr) {
+        PyObject** dp = _PyObject_GetDictPtr(obj);
+        if (dp == nullptr || *dp == nullptr) {
+            if (PyErr_Occurred()) throw py::error_already_set();
+            return false;  // no instance dict: nothing shadows
+        }
+        d = *dp;
+        if (!PyDict_Check(d)) return true;  // not a lookup we reproduce
+    }
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(contract); ++i) {
+        const int has = PyDict_Contains(d, PyTuple_GET_ITEM(PyTuple_GET_ITEM(contract, i), 0));
+        if (has < 0) throw py::error_already_set();
+        if (has) return true;
+    }
+    return false;
+}
+
+// The crew check over the set index's borrowed keys, where nothing can run
+// Python or allocate: each member's type remembered stock (known_stock) and
+// its dict already built with only str keys, so a lookup compares strings.
+// `result`: 1 every member clean; 0 a contract name is in a member's dict;
+// -1 a member the owned walk below must decide.
+struct CrewScan {
+    PyObject* contract;
+    PyObject* names[2];
+    PyTypeObject* seen = nullptr;
+    int result = 1;
+};
+
+bool crew_visit(void* ctx, si::Key k) {
+    auto* c = static_cast<CrewScan*>(ctx);
+    PyObject* o = si::member(k);
+    PyTypeObject* t = Py_TYPE(o);
+    if (t != c->seen) {
+        unsigned int tag;
+        if (!known_stock(t, c->contract, tag)) {
+            c->result = -1;
+            return false;
+        }
+        c->seen = t;
+    }
+    PyObject* d = k0_dict_of(o);
+    if (d == nullptr || !_PyDict_HasOnlyStringKeys(d)) {
+        c->result = -1;
+        return false;
+    }
+    for (PyObject* n : c->names) {
+        const int has = PyDict_Contains(d, n);
+        if (has != 0) {
+            if (has < 0) PyErr_Clear();  // the owned walk raises it again
+            c->result = has > 0 ? 0 : -1;
+            return false;
+        }
+    }
+    return true;
+}
+
+// The set index's keys as owned references, released on scope exit.
+struct Crew {
+    std::vector<PyObject*> objs;
+    explicit Crew(std::vector<si::Key> keys) {
+        objs.reserve(keys.size());
+        for (si::Key k : keys) {
+            PyObject* o = si::member(k);
+            Py_INCREF(o);
+            objs.push_back(o);
+        }
+    }
+    ~Crew() {
+        for (PyObject* o : objs) Py_DECREF(o);
+    }
+    Crew(const Crew&) = delete;
+    Crew& operator=(const Crew&) = delete;
+};
+
+bool reads_stock(PyObject* obj, PyObject* contract) {
+    return class_stock(obj, contract) && !dict_shadows(obj, contract);
+}
+
+// GetTargetRating's reads, in the SDK's order. Throws error_already_set on
+// a Python exception (the binding turns an Exception into "no_mirror").
+py::object rate(PyObject* inst, PyObject* target) {
+    auto& h = host();
+    // pOurShip = self.pCodeAI.GetShip(); if (pOurShip == None): return -1
+    py::object code_ai = attr(inst, h.s_pCodeAI);
+    py::object ship = call0(code_ai.ptr(), h.s_GetShip);
+    if (py_eq(ship.ptr(), Py_None)) return py::int_(-1);
+
+    if (!reads_stock(ship.ptr(), h.reads_ship) || !reads_stock(target, h.reads_candidate))
+        return reason(h.r_surface);
+
+    dauntless::combat::RatingInputs in{};
+    // vDifference = pTarget.GetWorldLocation() - pOurShip.GetWorldLocation();
+    // vOurForward = pOurShip.GetWorldForwardTG()
+    if (!avoid::read_position(target, in.target_pos) ||
+        !avoid::read_position(ship.ptr(), in.our_pos) || !read_forward(ship.ptr(), in.our_forward))
+        return reason(h.r_no_mirror);
+    if (!number_attr(inst, h.s_fMinimumFullGoodDistance, in.min_full_good_distance))
+        return reason(h.r_no_mirror);
+
+    // fIsTargetGood
+    {
+        py::object set_ship_target = attr(inst, h.s_bSetShipTarget);
+        if (avoid::truth(set_ship_target.ptr())) {
+            py::object ours = call0(ship.ptr(), h.s_GetTarget);
+            if (avoid::truth(ours.ptr())) {
+                py::object a = call0(ours.ptr(), h.s_GetName);
+                py::object b = call0(target, h.s_GetName);
+                if (py_eq(a.ptr(), b.ptr())) in.is_target = 1.0;
+            }
+        } else {
+            py::object a = call0(target, h.s_GetName);
+            py::object b = attr(inst, h.s_sCurrentTarget);
+            if (py_eq(a.ptr(), b.ptr())) in.is_target = 1.0;
+        }
+    }
+
+    // Shields, weapons and hull, for a ship.
+    py::object as_ship = app_call(h.s_ShipClass_Cast, target);
+    if (py_ne(as_ship.ptr(), Py_None)) {
+        PyObject* s = as_ship.ptr();
+        py::object shields = call0(s, h.s_GetShields);
+        py::object pct = call0(shields.ptr(), h.s_GetShieldPercentage);
+        if (!number(pct.ptr(), in.shield)) return reason(h.r_no_mirror);
+
+        py::object ct = attr(h.app, h.s_CT_WEAPON_SYSTEM);
+        py::object it = call1(s, h.s_StartGetSubsystemMatch, ct.ptr());
+        py::object system = call1(s, h.s_GetNextSubsystemMatch, it.ptr());
+        double total = 0.0;  // fWeaponsGood, from 0.0
+        long long count = 0;  // fTotal
+        while (py_ne(system.ptr(), Py_None)) {
+            count = count + 1;
+            py::object c = call0(system.ptr(), h.s_GetCombinedConditionPercentage);
+            double v;
+            if (!number(c.ptr(), v)) return reason(h.r_no_mirror);
+            total = total + v;
+            system = call1(s, h.s_GetNextSubsystemMatch, it.ptr());
+        }
+        call1(s, h.s_EndGetSubsystemMatch, it.ptr());
+        in.weapons_sum = total;
+        in.weapons_count = count;
+
+        py::object hull = call0(s, h.s_GetHull);
+        py::object hc = call0(hull.ptr(), h.s_GetCombinedConditionPercentage);
+        if (!number(hc.ptr(), in.hull)) return reason(h.r_no_mirror);
+    }
+
+    // fDamageDealt: self.dDamageReceived by pTarget.GetObjID()
+    py::object name = call0(target, h.s_GetName);  // sTarget
+    {
+        py::object ledger = attr(inst, h.s_dDamageReceived);
+        py::object id = call0(target, h.s_GetObjID);
+        if (contains(ledger.ptr(), id.ptr())) {
+            py::object again = call0(target, h.s_GetObjID);
+            py::object v = getitem(ledger.ptr(), again.ptr());
+            if (!number(v.ptr(), in.damage)) return reason(h.r_no_mirror);
+        }
+    }
+
+    // fPriority: ObjectGroupWithInfo_Cast(self.pTargetGroup)[sTarget]["Priority"]
+    {
+        py::object group = attr(inst, h.s_pTargetGroup);
+        py::object with_info = app_call(h.s_ObjectGroupWithInfo_Cast, group.ptr());
+        if (avoid::truth(with_info.ptr())) {
+            py::object info = getitem(with_info.ptr(), name.ptr());
+            if (contains(info.ptr(), h.s_Priority)) {
+                py::object v = getitem(info.ptr(), h.s_Priority);
+                if (!number(v.ptr(), in.priority)) return reason(h.r_no_mirror);
+            }
+        }
+    }
+
+    // fPopularity
+    py::object pset = call0(ship.ptr(), h.s_GetContainingSet);
+    if (avoid::truth(pset.ptr())) {
+        if (!reads_stock(pset.ptr(), h.reads_set)) return reason(h.r_surface);
+        py::object tid = call0(target, h.s_GetObjID);  // idTargetID
+        if (!PyLong_CheckExact(tid.ptr())) return reason(h.r_no_mirror);
+        int overflow = 0;
+        long long target_id = PyLong_AsLongLongAndOverflow(tid.ptr(), &overflow);
+        if (target_id == -1 && PyErr_Occurred()) throw py::error_already_set();
+        // -1 is also the index's "no target": a candidate with that id
+        // would be counted against the ships targeting nothing.
+        if (overflow != 0 || target_id == dauntless::combat::kNoTarget)
+            return reason(h.r_no_mirror);
+        auto& sh = si::host();
+        if (sh.ship_cls == nullptr) return reason(h.r_no_mirror);
+        si::Key s = si::key_of(pset);
+        si::Key cls = reinterpret_cast<si::Key>(sh.ship_cls);
+        // A set the index has never seen holds nothing: GetClassObjectList
+        // is [] and the SDK's loop adds nothing.
+        if (sh.ix.has_set(s)) {
+            if (!sh.ix.has_bucket(s, cls)) si::create_bucket(sh, s, sh.ship_cls);
+            CrewScan scan{h.reads_crew, {h.s_GetObjID, h.s_GetTarget}};
+            sh.ix.visit_bucket(s, cls, crew_visit, &scan);
+            if (scan.result == 0) return reason(h.r_surface);
+            if (scan.result < 0) {
+                // Owned before any Python runs (a class test below can, and
+                // building a dict allocates). Plain INCREFs: no Python runs.
+                Crew crew(sh.ix.bucket(s, cls));
+                // The last type found stock: between two objects of it
+                // nothing runs but this loop's own reads.
+                PyTypeObject* seen = nullptr;
+                for (PyObject* c : crew.objs) {
+                    PyTypeObject* t = Py_TYPE(c);
+                    if (t != seen) {
+                        if (!class_stock(c, h.reads_crew)) return reason(h.r_surface);
+                        seen = t;
+                    }
+                    if (dict_shadows(c, h.reads_crew)) return reason(h.r_surface);
+                }
+            }
+            in.popularity = static_cast<double>(
+                sh.ix.popularity(s, si::key_of(ship), target_id));
+        }
+    }
+
+    for (int i = 0; i < 9; ++i)
+        if (!number_attr(inst, h.s_weights[i], in.weights[i])) return reason(h.r_no_mirror);
+
+    return py::float_(dauntless::combat::target_rating(in));
+}
+
+}  // namespace rating
 }  // namespace
 
 PYBIND11_MODULE(_dauntless_host, m) {
@@ -12135,6 +12632,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("set"), py::arg("rater"), py::arg("target_id"),
           "The stock GetTargetRating fPopularity, as an integer count.");
+    // ── SelectTarget's candidate rating (the `rating` namespace above) ────
+    m.def("combat_ai_target_rating",
+          [](py::handle inst, py::handle target) -> py::object {
+              try {
+                  return rating::rate(inst.ptr(), target.ptr());
+              } catch (py::error_already_set& e) {
+                  // The SDK body runs the call again and raises its own.
+                  if (!e.matches(PyExc_Exception)) throw;
+                  return rating::reason(rating::host().r_no_mirror);
+              }
+          },
+          py::arg("inst"), py::arg("target"),
+          "SelectTarget.GetTargetRating for a stock instance: the float rating, "
+          "the SDK's -1 with no ship, or a str reason (\"surface\" / \"no_mirror\") "
+          "when the caller must run the SDK body instead.");
     // ── AvoidObstacles' obstacle scan (the `avoid` namespace above) ──────
     m.def("combat_ai_avoid_scan",
           [](py::handle inst, py::handle ship, py::handle psr_obj, py::handle near_iter) {
