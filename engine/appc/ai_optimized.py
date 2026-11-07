@@ -559,13 +559,54 @@ def _replace_manage_power(instance):
 # instance's attributes are read and written where the SDK reads and writes
 # them. Only the mirrored engine reads (positions, rotations, velocities,
 # subsystem positions, tube directions) and the vector arithmetic on them are
-# native. TargetVisible (the sensor gate's), StopFiring, ChooseTargetSubsystem
-# and ChooseTorpType are called back as methods. The PS_DONE -> PS_NORMAL
-# mapping (_non_lethal_class) stays around it.
+# native. TargetVisible (the sensor gate's) and StopFiring are called back as
+# methods. Task 5 made ChooseTargetSubsystem (with GetTargetableSubsystems,
+# RateSubsystemForTargeting, PickTargetSubsystemFromList and our
+# GetChildTargets) and ChooseTorpType native the same way: their control flow
+# and sums, a subsystem's GetObjID; the RNG draws, the fuzzy logic and the
+# torpedo scripts stay the SDK's Python calls, in its order. The PS_DONE ->
+# PS_NORMAL mapping (_non_lethal_class) stays around it.
 
-#: Every FireScript method the native Update replaces, calls or will replace
-#: (Task 5: ChooseTargetSubsystem and the helpers it reaches, ChooseTorpType).
-#: A mod overriding any of them runs the SDK Update.
+def GetChildTargets(self, pSubsystem):
+    """Targetable, still-alive descendants of a non-targetable subsystem.
+
+    Called from the SDK's ChooseTargetSubsystem (Preprocessors.py:832)
+    and defined nowhere in the SDK — it belonged to BC's NATIVE
+    FireScript, which is unreconstructed. Stated assumption: the only
+    reading under which the SDK loop makes sense. Every stock hardpoint
+    marks its aggregator systems SetTargetable(0) and their banks/tubes
+    targetable (galaxy.py:774-995), so this branch is the common case for
+    any explicit TargetSubsystems list (Fleet/DisableTarget, Player/
+    Disable*). Without it: AttributeError out of the AI tick.
+
+    FireScript's engine class carries this one function (_non_lethal_class);
+    the native Update runs its statements itself for an instance whose type
+    resolves GetChildTargets to it, unshadowed (_fire_update), and this
+    module's GetChildTargets, int, range and hasattr unchanged (the fire
+    surface): change one, change the binding (host_bindings.cc,
+    fire::child_targets).
+    """
+    out = []
+    n = int(pSubsystem.GetNumChildSubsystems()) if hasattr(pSubsystem, "GetNumChildSubsystems") else 0
+    for i in range(n):
+        child = pSubsystem.GetChildSubsystem(i)
+        if child is None:
+            continue
+        if child.IsTargetable() and child.GetCondition() > 0:
+            out.append(child)
+        else:
+            out.extend(GetChildTargets(self, child))
+    return out
+
+
+#: The GetChildTargets the native Update mirrors, taken at import.
+_GET_CHILD_TARGETS = GetChildTargets
+
+
+#: Every FireScript method the native Update replaces or calls (Task 5 made
+#: ChooseTargetSubsystem, the helpers it reaches and ChooseTorpType native).
+#: A mod overriding any of them runs the SDK Update. Our GetChildTargets is
+#: not an SDK function; its own gate is _fire_helpers_stock.
 _FIRE_METHODS = (
     "Update", "GetTarget", "TargetInRange", "TargetVisible", "StopFiring",
     "ChooseTargetSubsystem", "GetTargetableSubsystems",
@@ -575,9 +616,13 @@ _FIRE_METHODS = (
     "PredictTargetLocation",
 )
 
-#: The builtins the SDK bodies call (len, range, and the loader's __import__
-#: lambda's isinstance / str): the native code uses CPython's own.
-_FIRE_BUILTINS = ("len", "range", "isinstance", "str")
+#: The builtins the SDK bodies call (len, range, float, the loader's
+#: `list(d.keys())` and its __import__ lambda's isinstance / str): the native
+#: code uses CPython's own.
+_FIRE_BUILTINS = ("len", "range", "isinstance", "str", "float", "list")
+
+#: The builtins our GetChildTargets calls, and its own recursion.
+_CHILD_GLOBALS = ("int", "range", "hasattr", "GetChildTargets")
 
 
 def _fire_surface_snapshot():
@@ -604,13 +649,25 @@ def _fire_surface_snapshot():
         (_subsystems.__dict__, ("TGPoint3",)),
         (TGPoint3.__dict__, point_names),
         (TGMatrix3.__dict__, matrix_names),
+        # PredictTargetLocation's reads run ahead of this cast: the engine's
+        # pure isinstance test only (Task 5).
+        (App.__dict__, ("PhysicsObjectClass_Cast",)),
+        # GetChildTargets' globals: this module's own (unshadowed builtins,
+        # its recursion), then the builtins themselves.
+        (globals(), _CHILD_GLOBALS),
+        (builtins.__dict__, _CHILD_GLOBALS[:3]),
     )
     # Flat, so one C-level pass checks them all (_fire_surface_globals):
     # each table's own live `get` (a class's is its mappingproxy's), its key,
     # and what that key held.
     gets = tuple(d.get for d, keys in tables for _k in keys)
     keys = tuple(k for _d, ks in tables for k in ks)
+    # What the host memo watches (_fire_surface_globals): each table's own
+    # dict, a class by its type (whose version tag covers its __dict__).
+    watched = [d for d, _keys in tables if isinstance(d, dict)]
+    watched += [TGPoint3, TGMatrix3]
     return {
+        "watched": tuple(watched),
         "gets": gets,
         "keys": keys,
         "values": tuple(map(operator.call, gets, keys)),
@@ -627,17 +684,20 @@ def _fire_surface_snapshot():
 _FIRE_SURFACE = _fire_surface_snapshot()
 
 
-def _fire_surface_globals(base):
-    """The globals the SDK FireScript (`base`) runs on -- its Update's
-    __globals__, which the binding loads App and the builtins from -- if they
-    are stock: the engine's App, CPython's builtins (len, range, and the
-    loader's __import__ lambda's isinstance / str), and underneath, the
-    engine TGPoint3 / TGMatrix3 its mirrored readers build (methods
-    unpatched, math.sqrt behind Length). None otherwise."""
-    fn = ai_native._unwrap(getattr(base, "Update", None))
-    if fn is None:
-        return None
-    g = fn.__globals__
+def _fire_helpers_stock(inst) -> bool:
+    """The instance runs our GetChildTargets: its type resolves the name to
+    that very function and its own dict does not shadow it."""
+    return (getattr(type(inst), "GetChildTargets", None) is _GET_CHILD_TARGETS
+            and "GetChildTargets" not in inst.__dict__)
+
+
+def _decide_fire_surface(g):
+    """`g` (an SDK FireScript's globals) if they are stock: the engine's App,
+    CPython's builtins (len, range, float, and the loader's `list(...)` and
+    __import__ lambda's isinstance / str), and underneath, the engine TGPoint3
+    / TGMatrix3 its mirrored readers build (methods unpatched, math.sqrt
+    behind Length), the engine's pure App.PhysicsObjectClass_Cast and
+    GetChildTargets' own globals. None otherwise."""
     if g.get("App") is not App or not g.keys().isdisjoint(_FIRE_BUILTINS):
         return None
     snap = _FIRE_SURFACE
@@ -653,6 +713,61 @@ def _fire_surface_globals(base):
                         snap["values"]))):
         return g
     return None
+
+
+#: The host's surface memo (native/src/host/host_bindings.cc, `surfacememo`):
+#: (tags, get, put), () without the host; looked up on first use.
+_SURFACE_MEMO = [None]
+_SURFACE_MISS = object()
+
+
+def _surface_memo():
+    memo = _SURFACE_MEMO[0]
+    if memo is None:
+        try:
+            import _dauntless_host as h
+            memo = (h.ai_memo_tags, h.ai_memo_get, h.ai_memo_put)
+        except (ImportError, AttributeError):
+            memo = ()
+        _SURFACE_MEMO[0] = memo
+    return memo
+
+
+def _fire_surface_globals(base):
+    """The globals the SDK FireScript (`base`) runs on -- its Update's
+    __globals__, which the binding loads App and the builtins from -- if they
+    are stock (_decide_fire_surface), else None.
+
+    The decision is Python's and reads only dicts and types: `base` (its
+    Update), that function's own __dict__ (a `_dauntless_wraps` link), its
+    globals and their builtins, and the snapshot's tables. The host remembers
+    the answer under all of their version tags (read BEFORE deciding) and
+    gives it back while every one holds; any insert, replace or delete in one
+    of them, or a change to one of the types, and this decides again. An
+    Update with a `_dauntless_wraps` link is decided every call."""
+    memo = _SURFACE_MEMO[0]
+    if memo is None:
+        memo = _surface_memo()
+    if memo:
+        hit = memo[1](base, _SURFACE_MISS)
+        if hit is not _SURFACE_MISS:
+            return hit
+    raw = getattr(base, "Update", None)
+    fn = ai_native._unwrap(raw)
+    if fn is None:
+        return None
+    g = fn.__globals__
+    tags = None
+    if memo and fn is raw:
+        b = g.get("__builtins__")
+        table = b if isinstance(b, dict) else getattr(b, "__dict__", None)
+        watched = (base, fn.__dict__, g) + (
+            (table,) if isinstance(table, dict) else ()) + _FIRE_SURFACE["watched"]
+        tags = memo[0](watched)
+    answer = _decide_fire_surface(g)
+    if tags is not None:
+        memo[2](base, watched, tags, answer)
+    return answer
 
 
 def _fire_store_ok() -> bool:
@@ -680,7 +795,8 @@ def _fire_update(self, base, args, kwargs):
         ai_native.note("fire", "python", "no_mirror")
         return base.Update(self, *args, **kwargs)
     sdk_globals = None
-    if ai_native.preprocessor_is_stock(self, "FireScript", _FIRE_METHODS):
+    if ai_native.preprocessor_is_stock(self, "FireScript", _FIRE_METHODS) \
+            and _fire_helpers_stock(self):
         sdk_globals = _fire_surface_globals(base)
     if sdk_globals is None:
         ai_native.note("fire", "python", "not_stock")
@@ -747,30 +863,6 @@ def _non_lethal_class(base: type) -> type:
             # parent AvoidObstacles — HOLDS on one). See the module docstring.
             return App.PreprocessingAI.PS_NORMAL
         return result
-
-    def GetChildTargets(self, pSubsystem):
-        """Targetable, still-alive descendants of a non-targetable subsystem.
-
-        Called from the SDK's ChooseTargetSubsystem (Preprocessors.py:832)
-        and defined nowhere in the SDK — it belonged to BC's NATIVE
-        FireScript, which is unreconstructed. Stated assumption: the only
-        reading under which the SDK loop makes sense. Every stock hardpoint
-        marks its aggregator systems SetTargetable(0) and their banks/tubes
-        targetable (galaxy.py:774-995), so this branch is the common case for
-        any explicit TargetSubsystems list (Fleet/DisableTarget, Player/
-        Disable*). Without it: AttributeError out of the AI tick.
-        """
-        out = []
-        n = int(pSubsystem.GetNumChildSubsystems()) if hasattr(pSubsystem, "GetNumChildSubsystems") else 0
-        for i in range(n):
-            child = pSubsystem.GetChildSubsystem(i)
-            if child is None:
-                continue
-            if child.IsTargetable() and child.GetCondition() > 0:
-                out.append(child)
-            else:
-                out.extend(GetChildTargets(self, child))
-        return out
 
     if run_update is not None:
         Update._dauntless_native_entry = True

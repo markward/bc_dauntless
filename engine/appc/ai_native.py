@@ -305,6 +305,7 @@ def preprocessor_is_stock(inst, sdk_class_name: str,
 def _take_reader_bodies() -> dict:
     """{App method name: the engine function a native reader mirrors}, taken
     at import, before any test, tool or mod can replace a name."""
+    from engine.appc.ai import ArtificialIntelligence
     from engine.appc.objects import ObjectClass, PhysicsObjectClass
     from engine.appc.sets import SetClass
     from engine.appc.ships import ShipClass
@@ -318,6 +319,9 @@ def _take_reader_bodies() -> dict:
         "GetPredictedPosition": ShipClass.__dict__["GetPredictedPosition"],
         "GetPositionTG": ShipSubsystem.__dict__["GetPositionTG"],
         "GetDirection": ShipSubsystem.__dict__["GetDirection"],
+        # `self._ship` (pure): PredictTargetLocation's reads may run ahead
+        # of pCodeAI.GetShip() only for this body (Task 5).
+        "GetShip": ArtificialIntelligence.__dict__["GetShip"],
         "GetObjID": TGObject.__dict__["GetObjID"],             # `_obj_id`
         # An isinstance on the type: its answer depends on the type alone.
         "IsTypeOf": ObjectClass.__dict__["IsTypeOf"],

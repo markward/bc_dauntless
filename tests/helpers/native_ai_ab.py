@@ -222,23 +222,26 @@ def _stress(ticks, ships, gate, count_subsystem_rng=False):
         if gate:
             from engine.appc import ai_sensor_gate
             ai_sensor_gate.install_ai_sensor_gate()
-        rng_draws = [0]
+        rng_draws = [0, 0]             # [SDK ChooseTargetSubsystem, native]
         if count_subsystem_rng:
             # Count by replacing only the wrapper's random.Random (same
             # state, same stream): no SDK or engine method is patched, so the
             # stock gate sees an unchanged surface on both sides. A draw
-            # counts when ChooseTargetSubsystem is on the stack.
+            # counts when GetRandomNumber was called by the SDK's
+            # ChooseTargetSubsystem or, natively, straight from the binding
+            # under FireScript's engine Update (_fire_update: no Python frame
+            # in between, so the native ChooseTargetSubsystem drew it).
             import random as _random
             import sys as _sys
 
             class CountingRandom(_random.Random):
                 def randrange(self, *a, **kw):
-                    f = _sys._getframe(1)
-                    while f is not None:
-                        if f.f_code.co_name == "ChooseTargetSubsystem":
-                            rng_draws[0] += 1
-                            break
-                        f = f.f_back
+                    f = _sys._getframe(1)             # GetRandomNumber
+                    caller = f.f_back.f_code.co_name if f.f_back else None
+                    if caller == "ChooseTargetSubsystem":
+                        rng_draws[0] += 1
+                    elif caller == "_fire_update":
+                        rng_draws[1] += 1
                     return super().randrange(*a, **kw)
             old = App.g_kSystemWrapper._rng
             counting = CountingRandom()
@@ -260,7 +263,13 @@ def _stress(ticks, ships, gate, count_subsystem_rng=False):
         nc.audit_mirror()
         assert list(nc.audit_failures()) == []
         if count_subsystem_rng:
-            assert rng_draws[0] > 0, "the subsystem-rating RNG branch never ran"
+            assert sum(rng_draws) > 0, "the subsystem-rating RNG branch never ran"
+            from engine.appc import ai_native
+            # Each side drew from its own ChooseTargetSubsystem only.
+            if ai_native.enabled("fire"):
+                assert rng_draws[0] == 0 and rng_draws[1] > 0, rng_draws
+            else:
+                assert rng_draws[1] == 0 and rng_draws[0] > 0, rng_draws
         rows = golden_fight._canonical(golden_fight._k1_take(scene))
     return rows
 

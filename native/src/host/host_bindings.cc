@@ -6463,10 +6463,15 @@ py::object rate(PyObject* inst, PyObject* target) {
 //   * every call the SDK makes is made here, in its order, through the same
 //     attribute lookup -- side effects (StartFiring, StopFiringAtTarget,
 //     FireDumb, SetPowerLevel, SetMode, SetAmmoType via ChooseTorpType,
-//     CallExternalFunction("UsingWeaponType")), the FireScript methods this
-//     task leaves Python (TargetVisible -- the sensor gate replaces it --
-//     StopFiring, ChooseTargetSubsystem, ChooseTorpType), the App casts and
-//     lookups, the torpedo scripts, and every read below that is not mirrored;
+//     CallExternalFunction("UsingWeaponType")), the FireScript methods left
+//     Python (TargetVisible -- the sensor gate replaces it -- and
+//     StopFiring), the App casts and lookups, the RNG, the fuzzy logic, the
+//     torpedo scripts, and every read below that is not mirrored;
+//   * ChooseTargetSubsystem (with GetTargetableSubsystems,
+//     RateSubsystemForTargeting, PickTargetSubsystemFromList and
+//     ai_optimized's GetChildTargets) and ChooseTorpType (:533-640,
+//     789-1045) are reached natively, under the same rules (Task 5; see
+//     "ChooseTargetSubsystem and ChooseTorpType" below);
 //   * every attribute of the instance is read and written where the SDK
 //     reads and writes it (iLastUpdate, bTargetVisible, lWeapons, ...), so the
 //     driver, the inspector and a mission see exactly what they saw;
@@ -6511,7 +6516,7 @@ struct Host {
     PyObject *s_bCallUsingWeaponTypeFunc, *s_GetAllAIsInTree, *s_CallExternalFunction;
     PyObject *s_UsingWeaponType, *s_lWeapons, *s_bEnabled, *s_bTargetVisible, *s_iLastUpdate;
     PyObject *s_TargetVisible, *s_StopFiring, *s_TGProfilingInfo_StartTiming;
-    PyObject *s_TGProfilingInfo_StopTiming, *s_timing_label, *s_ChooseTargetSubsystem;
+    PyObject *s_TGProfilingInfo_StopTiming, *s_timing_label;
     PyObject *s_idTargetedSubsystem, *s_ShipSubsystem_Cast, *s_TGObject_GetTGObjectPtr;
     PyObject *s_bAttackIfNoSubsystemsLeft, *s_fMaxFiringRange;
     PyObject *s_GetWorldLocation, *s_GetWorldRotation, *s_GetVelocityTG, *s_GetAccelerationTG;
@@ -6527,16 +6532,29 @@ struct Host {
     PyObject *s_eTractorBeamMode, *s_GetMode, *s_IsFiring, *s_SetMode, *s_TractorBeamSystem;
     PyObject *s_TBS_DOCK_STAGE_1, *s_TBS_DOCK_STAGE_2, *s_bHighPower, *s_SetPowerLevel;
     PyObject *s_PhaserSystem, *s_PP_LOW, *s_PP_HIGH, *s_bChooseTorpsWisely;
-    PyObject *s_GetImpulseEngineSubsystem, *s_GetCurMaxSpeed, *s_ChooseTorpType;
+    PyObject *s_GetImpulseEngineSubsystem, *s_GetCurMaxSpeed;
     PyObject *s_bAttackDisabledSubsystems, *s_GetObjID, *s_GetClassObjectList, *s_CT_TORPEDO;
     PyObject *s_GetTargetID, *s_GetDamage, *s_GetCurrentAmmoType, *s_GetTorpedoScript;
     PyObject *s_sdk_importlib, *s_import_module, *s_GetCondition, *s_GetMaxCondition;
     PyObject *s_GetDisabledPercentage, *s_ShouldBeAimed, *s_GetLaunchSpeed, *s_GetProperty;
     PyObject *s_GetOrientationForward, *s_fFireDotThreshold, *s_App, *s_builtins, *s_range;
     PyObject* one_on;      // slice(1, None, None): `[1:]`
+    // ChooseTargetSubsystem, GetTargetableSubsystems, RateSubsystemForTargeting,
+    // PickTargetSubsystemFromList, our GetChildTargets, ChooseTorpType (Task 5).
+    PyObject *s_lTargetSubsystems, *s_bDisableFirst, *s_bChooseSubsystemTargets;
+    PyObject *s_StartGetSubsystemMatch, *s_GetNextSubsystemMatch, *s_IsTargetable, *s_IsDisabled;
+    PyObject *s_GetSubsystems, *s_dTargetSubsystemRating, *s_keys, *s_items, *s_remove;
+    PyObject *s_iTargetSubsystemUpdateNum, *s_iNumTargetSubsystemsToUpdate, *s_g_kSystemWrapper;
+    PyObject *s_GetRandomNumber, *s_GetTargetSubsystem, *s_IsCritical, *s_IsHittableFromLocation;
+    PyObject *s_IsTypeOf, *s_ct_rows[6], *s_GetConditionPercentage, *s_float, *s_list;
+    PyObject *s_GetNumAmmoTypes, *s_GetNumAvailableTorpsToType, *s_GetAmmoType;
+    PyObject *s_GetAmmoTypeNumber, *s_SetAmmoType, *s_Length, *s_GetPowerCost;
+    PyObject *s_GetGuidanceLifetime, *s_GetMaxAngularAccel, *s_FuzzyLogic_BreakIntoSets;
+    PyObject *s_pScript, *s_count, *s_subsystem_choice, *s_torp_choice, *s_torp_rated, *s_kind;
+    PyObject *int_zero, *float_zero, *int_one, *float_four, *float_one_and_half, *float_quarter;
     // ai_native.reader_contract(name): one mirrored body each.
     PyObject *reads_loc, *reads_rot, *reads_vel, *reads_acc, *reads_predict, *reads_position,
-        *reads_direction;
+        *reads_direction, *reads_objid, *reads_getship;
     PyObject *point_cls, *matrix_cls;  // engine.appc.math's, as the mirrored bodies build
     PyObject* note_args;               // ("fire", "surface")
 };
@@ -6566,7 +6584,6 @@ Host& host() {
         p->s_TGProfilingInfo_StartTiming = intern("TGProfilingInfo_StartTiming");
         p->s_TGProfilingInfo_StopTiming = intern("TGProfilingInfo_StopTiming");
         p->s_timing_label = intern("FireScript Update->ChooseTargetSubsystem");
-        p->s_ChooseTargetSubsystem = intern("ChooseTargetSubsystem");
         p->s_idTargetedSubsystem = intern("idTargetedSubsystem");
         p->s_ShipSubsystem_Cast = intern("ShipSubsystem_Cast");
         p->s_TGObject_GetTGObjectPtr = intern("TGObject_GetTGObjectPtr");
@@ -6629,7 +6646,6 @@ Host& host() {
         p->s_bChooseTorpsWisely = intern("bChooseTorpsWisely");
         p->s_GetImpulseEngineSubsystem = intern("GetImpulseEngineSubsystem");
         p->s_GetCurMaxSpeed = intern("GetCurMaxSpeed");
-        p->s_ChooseTorpType = intern("ChooseTorpType");
         p->s_bAttackDisabledSubsystems = intern("bAttackDisabledSubsystems");
         p->s_GetObjID = a.s_GetObjID;
         p->s_GetClassObjectList = intern("GetClassObjectList");
@@ -6658,7 +6674,63 @@ Host& host() {
             Py_DECREF(one);
             if (p->one_on == nullptr) throw py::error_already_set();
         }
+        p->s_lTargetSubsystems = intern("lTargetSubsystems");
+        p->s_bDisableFirst = intern("bDisableFirst");
+        p->s_bChooseSubsystemTargets = intern("bChooseSubsystemTargets");
+        p->s_StartGetSubsystemMatch = intern("StartGetSubsystemMatch");
+        p->s_GetNextSubsystemMatch = intern("GetNextSubsystemMatch");
+        p->s_IsTargetable = intern("IsTargetable");
+        p->s_IsDisabled = intern("IsDisabled");
+        p->s_GetSubsystems = intern("GetSubsystems");
+        p->s_dTargetSubsystemRating = intern("dTargetSubsystemRating");
+        p->s_keys = intern("keys");
+        p->s_items = intern("items");
+        p->s_remove = intern("remove");
+        p->s_iTargetSubsystemUpdateNum = intern("iTargetSubsystemUpdateNum");
+        p->s_iNumTargetSubsystemsToUpdate = intern("iNumTargetSubsystemsToUpdate");
+        p->s_g_kSystemWrapper = intern("g_kSystemWrapper");
+        p->s_GetRandomNumber = intern("GetRandomNumber");
+        p->s_GetTargetSubsystem = intern("GetTargetSubsystem");
+        p->s_IsCritical = intern("IsCritical");
+        p->s_IsHittableFromLocation = intern("IsHittableFromLocation");
+        p->s_IsTypeOf = a.s_IsTypeOf;
+        // RateSubsystemForTargeting's table, in its order (fire_system_rating).
+        const char* ct[6] = {"CT_WEAPON_SYSTEM",       "CT_WEAPON",
+                             "CT_SHIELD_SUBSYSTEM",    "CT_CLOAKING_SUBSYSTEM",
+                             "CT_IMPULSE_ENGINE_SUBSYSTEM", "CT_HULL_SUBSYSTEM"};
+        for (int i = 0; i < 6; ++i) p->s_ct_rows[i] = intern(ct[i]);
+        p->s_GetConditionPercentage = intern("GetConditionPercentage");
+        p->s_float = intern("float");
+        p->s_list = intern("list");
+        p->s_GetNumAmmoTypes = intern("GetNumAmmoTypes");
+        p->s_GetNumAvailableTorpsToType = intern("GetNumAvailableTorpsToType");
+        p->s_GetAmmoType = intern("GetAmmoType");
+        p->s_GetAmmoTypeNumber = intern("GetAmmoTypeNumber");
+        p->s_SetAmmoType = intern("SetAmmoType");
+        p->s_Length = intern("Length");
+        p->s_GetPowerCost = intern("GetPowerCost");
+        p->s_GetGuidanceLifetime = intern("GetGuidanceLifetime");
+        p->s_GetMaxAngularAccel = intern("GetMaxAngularAccel");
+        p->s_FuzzyLogic_BreakIntoSets = intern("FuzzyLogic_BreakIntoSets");
+        p->s_pScript = intern("pScript");
+        p->s_count = intern("count");
+        p->s_subsystem_choice = intern("subsystem_choice");
+        p->s_torp_choice = intern("torp_choice");
+        p->s_torp_rated = intern("torp_rated");
+        p->s_kind = intern("fire");
+        auto keep = [](PyObject* o) {
+            if (o == nullptr) throw py::error_already_set();
+            return o;  // held for good
+        };
+        p->int_zero = keep(PyLong_FromLong(0));
+        p->int_one = keep(PyLong_FromLong(1));
+        p->float_zero = keep(PyFloat_FromDouble(0.0));
+        p->float_four = keep(PyFloat_FromDouble(4.0));
+        p->float_one_and_half = keep(PyFloat_FromDouble(1.5));
+        p->float_quarter = keep(PyFloat_FromDouble(0.25));
         PyObject* ai_native = a.ai_native;
+        p->reads_objid = rating::contract(ai_native, {p->s_GetObjID});
+        p->reads_getship = rating::contract(ai_native, {p->s_GetShip});
         p->reads_loc = rating::contract(ai_native, {p->s_GetWorldLocation});
         p->reads_rot = rating::contract(ai_native, {p->s_GetWorldRotation});
         p->reads_vel = rating::contract(ai_native, {p->s_GetVelocityTG});
@@ -7223,11 +7295,17 @@ PredictReads predict_reads(PyObject* target, PyObject* subsystem, cb::PredictInp
 Vec predict_target_location(const Ctx& c, PyObject* target, PyObject* subsystem, PyObject* speed) {
     auto& h = host();
     cb::PredictInputs in{};
+    // The reads below run ahead of `self.pCodeAI.GetShip()` and
+    // App.PhysicsObjectClass_Cast. Exact only while both are the engine's
+    // pure bodies: the cast is part of the module surface the gate checks
+    // (ai_optimized._fire_surface_globals), GetShip is checked here.
+    py::object cai;
     if (PyFloat_CheckExact(speed) && PyFloat_AS_DOUBLE(speed) != 0.0 &&
-        quiet_location(target, in.target_pos)) {
+        quiet_location(target, in.target_pos) &&
+        rating::reads_stock((cai = code_ai(c)).ptr(), h.reads_getship)) {
         in.speed = PyFloat_AS_DOUBLE(speed);
         const PredictReads ready = predict_reads(target, subsystem, in);
-        py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+        py::object ship = call0(cai.ptr(), h.s_GetShip);
         if (eq(ship.ptr(), Py_None)) return vec_native(in.target_pos);  // return vDiff
         if (!quiet_location(ship.ptr(), in.our_pos))
             return predict_after_ship(c, target, subsystem, speed, vec_native(in.target_pos),
@@ -7398,6 +7476,780 @@ bool weapon_too_dangerous(const Ctx& c, PyObject* system, PyObject* target, PyOb
     return cmp(ratio.ptr(), disabled.ptr(), Py_LT);
 }
 
+// ── ChooseTargetSubsystem and ChooseTorpType (Task 5) ───────────────────────
+// The SDK bodies (AI/Preprocessors.py:533-640, 789-1045, as the loader
+// compiled them: `list(d.keys())`, `d.__contains__(k)`) and ai_optimized's
+// GetChildTargets, statement for statement, under the same rules as the rest
+// of this namespace: every call the SDK makes is the same Python call in its
+// order (the RNG -- App.g_kSystemWrapper.GetRandomNumber -- the fuzzy logic,
+// the torpedo scripts, every subsystem predicate), every attribute of the
+// instance is read and written where the SDK does (dTargetSubsystemRating
+// is the instance's own object, changed in place). Natively: the control
+// flow, a subsystem's GetObjID where TGObject.GetObjID is the body
+// (`self._obj_id`), and the three sums (ai_fire.h) when their inputs are
+// plain floats; any other value goes through Python's own operators.
+
+void set_attr(PyObject* o, PyObject* name, PyObject* v) {
+    if (PyObject_SetAttr(o, name, v) < 0) throw py::error_already_set();
+}
+
+// A plain float, or an int / bool Python would convert exactly when it meets
+// a float operand (|v| <= 2**53): the double that arithmetic uses.
+bool small_number(PyObject* o, double& out) {
+    if (PyFloat_CheckExact(o)) {
+        out = PyFloat_AS_DOUBLE(o);
+        return true;
+    }
+    if (!PyLong_CheckExact(o) && !PyBool_Check(o)) return false;
+    int overflow = 0;
+    const long long v = PyLong_AsLongLongAndOverflow(o, &overflow);
+    if (v == -1 && PyErr_Occurred()) {
+        PyErr_Clear();
+        return false;
+    }
+    constexpr long long kExact = 1LL << 53;
+    if (overflow != 0 || v > kExact || v < -kExact) return false;
+    out = static_cast<double>(v);
+    return true;
+}
+
+// `a > b` for two values of the SDK's comparisons (fScore > fBestScore, ...).
+bool greater(const Num& a, const Num& b) {
+    if (a.native && b.native) return cb::fire_greater(a.d, b.d);
+    py::object x = num_obj(a), y = num_obj(b);
+    return cmp(x.ptr(), y.ptr(), Py_GT);
+}
+
+void append(PyObject* list, PyObject* item) {
+    if (PyList_Append(list, item) < 0) throw py::error_already_set();
+}
+
+// `list(x)`
+py::object as_list(PyObject* x) { return own(PySequence_List(x)); }
+
+// `a, b[, ...] = v` as UNPACK_SEQUENCE does it: an exact tuple or list of
+// that size directly, anything else by iteration, CPython's own messages.
+void unpack(PyObject* v, Py_ssize_t n, py::object* out) {
+    if ((PyTuple_CheckExact(v) && PyTuple_GET_SIZE(v) == n) ||
+        (PyList_CheckExact(v) && PyList_GET_SIZE(v) == n)) {
+        for (Py_ssize_t i = 0; i < n; ++i)
+            out[i] = py::reinterpret_borrow<py::object>(PySequence_Fast_GET_ITEM(v, i));
+        return;
+    }
+    PyObject* it = PyObject_GetIter(v);
+    if (it == nullptr) {
+        if (PyErr_ExceptionMatches(PyExc_TypeError) && Py_TYPE(v)->tp_iter == nullptr &&
+            !PySequence_Check(v)) {
+            PyErr_Clear();
+            PyErr_Format(PyExc_TypeError, "cannot unpack non-iterable %.200s object",
+                         Py_TYPE(v)->tp_name);
+        }
+        throw py::error_already_set();
+    }
+    py::object keep = py::reinterpret_steal<py::object>(it);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* w = PyIter_Next(it);
+        if (w == nullptr) {
+            if (!PyErr_Occurred())
+                PyErr_Format(PyExc_ValueError, "not enough values to unpack (expected %d, got %d)",
+                             static_cast<int>(n), static_cast<int>(i));
+            throw py::error_already_set();
+        }
+        out[i] = py::reinterpret_steal<py::object>(w);
+    }
+    PyObject* w = PyIter_Next(it);
+    if (w == nullptr) {
+        if (PyErr_Occurred()) throw py::error_already_set();
+        return;
+    }
+    Py_DECREF(w);
+    PyErr_Format(PyExc_ValueError, "too many values to unpack (expected %d)", static_cast<int>(n));
+    throw py::error_already_set();
+}
+
+// ai_native.count("fire", key): the native body of a choice ran.
+void count_choice(PyObject* key) {
+    auto& h = host();
+    py::object fn = attr(avoid::host().ai_native, h.s_count);
+    call_fn(fn.ptr(), {h.s_kind, key});
+}
+
+// o.GetObjID(): TGObject.GetObjID's `self._obj_id` for an object whose type
+// resolves that body (counted a surface fallback otherwise: the call).
+py::object obj_id(PyObject* o) {
+    auto& h = host();
+    if (mirrored(o, h.reads_objid)) return attr(o, avoid::host().s_obj_id);
+    return call0(o, h.s_GetObjID);
+}
+
+// The same read, uncounted, and only when it is a plain int.
+bool quiet_obj_id(PyObject* o, py::object& out) {
+    if (o == Py_None || !rating::reads_stock(o, host().reads_objid)) return false;
+    PyObject* v = PyObject_GetAttr(o, avoid::host().s_obj_id);
+    if (v == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    out = py::reinterpret_steal<py::object>(v);
+    return PyLong_CheckExact(v);
+}
+
+// ai_optimized's GetChildTargets (the gate saw the type resolve that very
+// function, unshadowed):
+//   n = int(p.GetNumChildSubsystems()) if hasattr(p, "GetNumChildSubsystems") else 0
+//   for i in range(n): child = p.GetChildSubsystem(i); None: skip;
+//     child.IsTargetable() and child.GetCondition() > 0: out.append(child)
+//     else: out.extend(GetChildTargets(self, child))
+py::object child_targets(const Ctx& c, PyObject* sub) {
+    auto& h = host();
+    py::object out = own(PyList_New(0));
+    py::object n;
+    PyObject* probe = PyObject_GetAttr(sub, h.s_GetNumChildSubsystems);
+    if (probe == nullptr) {
+        if (!PyErr_ExceptionMatches(PyExc_AttributeError)) throw py::error_already_set();
+        PyErr_Clear();
+        n = py::reinterpret_borrow<py::object>(h.int_zero);
+    } else {
+        Py_DECREF(probe);
+        py::object raw = call0(sub, h.s_GetNumChildSubsystems);
+        n = own(PyNumber_Long(raw.ptr()));
+    }
+    for_range(c, n, [&](py::object& i) {
+        py::object child = call1(sub, h.s_GetChildSubsystem, i.ptr());
+        if (child.ptr() == Py_None) return;
+        bool take = truth(call0(child.ptr(), h.s_IsTargetable).ptr());
+        if (take) take = cmp(call0(child.ptr(), h.s_GetCondition).ptr(), h.int_zero, Py_GT);
+        if (take) {
+            append(out.ptr(), child.ptr());
+        } else {
+            // out.extend(...) of a fresh list nothing else holds: its items
+            py::object more = child_targets(c, child.ptr());
+            for (Py_ssize_t k = 0; k < PyList_GET_SIZE(more.ptr()); ++k)
+                append(out.ptr(), PyList_GET_ITEM(more.ptr(), k));
+        }
+    });
+    return out;
+}
+
+// FireScript.GetTargetableSubsystems, extending `out` (the SDK extends its
+// caller's list with the list it builds; the same items, in order).
+void targetable_subsystems(const Ctx& c, PyObject* sub, PyObject* out) {
+    auto& h = host();
+    if (!cmp(call0(sub, h.s_GetCondition).ptr(), h.float_zero, Py_GT)) return;
+    if (truth(call0(sub, h.s_IsTargetable).ptr())) {
+        append(out, sub);
+        return;
+    }
+    for_range(c, call0(sub, h.s_GetNumChildSubsystems), [&](py::object& i) {
+        py::object child = call1(sub, h.s_GetChildSubsystem, i.ptr());
+        targetable_subsystems(c, child.ptr(), out);
+    });
+}
+
+// FireScript.RateSubsystemForTargeting
+py::object rate_subsystem(const Ctx& c, PyObject* ours, PyObject* sub) {
+    auto& h = host();
+    // fCritical = float(pSubsystem.IsCritical())
+    py::object critical = own(PyNumber_Float(call0(sub, h.s_IsCritical).ptr()));
+    py::object max_condition = call0(sub, h.s_GetMaxCondition);
+    py::object percentage = call0(sub, h.s_GetDisabledPercentage);
+    // fDisabledCondition = pct * fMaxCondition: deferred while both are
+    // floats (it runs nothing and cannot raise), else Python's, here.
+    bool floats = PyFloat_CheckExact(max_condition.ptr()) && PyFloat_CheckExact(percentage.ptr());
+    py::object disabled_condition;
+    if (!floats)
+        disabled_condition = own(PyNumber_Multiply(percentage.ptr(), max_condition.ptr()));
+    py::object condition = call0(sub, h.s_GetCondition);
+    py::object to_disable = py::reinterpret_borrow<py::object>(h.float_zero);
+    if (floats && !PyFloat_CheckExact(condition.ptr())) {
+        floats = false;
+        disabled_condition = own(PyNumber_Multiply(percentage.ptr(), max_condition.ptr()));
+    }
+    if (!floats && cmp(condition.ptr(), disabled_condition.ptr(), Py_GT))
+        to_disable = own(PyNumber_Subtract(condition.ptr(), disabled_condition.ptr()));
+    py::object is_disabled = own(PyNumber_Float(call0(sub, h.s_IsDisabled).ptr()));
+    // fHittable = pSubsystem.IsHittableFromLocation(pOurShip.GetWorldLocation())
+    py::object hit_m = attr(sub, h.s_IsHittableFromLocation);
+    py::object our_loc = call0(ours, h.s_GetWorldLocation);
+    py::object hittable = own(PyObject_CallOneArg(hit_m.ptr(), our_loc.ptr()));
+    // The type table is built (all six App reads), then the first IsTypeOf.
+    py::object types[cb::kFireSystemRatingRows];
+    for (int i = 0; i < cb::kFireSystemRatingRows; ++i) types[i] = attr(c.app.ptr(), h.s_ct_rows[i]);
+    int match = -1;
+    for (int i = 0; i < cb::kFireSystemRatingRows && match < 0; ++i)
+        if (truth(call1(sub, h.s_IsTypeOf, types[i].ptr()).ptr())) match = i;
+    // The factor table: -3.0 * self.bDisableFirst
+    py::object disable_first = attr(c.self, h.s_bDisableFirst);
+    cb::SubsystemRatingInputs in{};
+    if (floats && small_number(hittable.ptr(), in.hittable) &&
+        small_number(disable_first.ptr(), in.disable_first)) {
+        in.critical = PyFloat_AS_DOUBLE(critical.ptr());
+        in.max_condition = PyFloat_AS_DOUBLE(max_condition.ptr());
+        in.disabled_percentage = PyFloat_AS_DOUBLE(percentage.ptr());
+        in.condition = PyFloat_AS_DOUBLE(condition.ptr());
+        in.is_disabled = PyFloat_AS_DOUBLE(is_disabled.ptr());
+        in.system_rating = cb::fire_system_rating(match);
+        return pyfloat(cb::fire_subsystem_rating(in));
+    }
+    // Python's own arithmetic, in the SDK's order.
+    if (floats) {
+        disabled_condition = own(PyNumber_Multiply(percentage.ptr(), max_condition.ptr()));
+        if (cmp(condition.ptr(), disabled_condition.ptr(), Py_GT))
+            to_disable = own(PyNumber_Subtract(condition.ptr(), disabled_condition.ptr()));
+    }
+    py::object minus_three = pyfloat(-3.0);
+    py::object disabled_importance = own(PyNumber_Multiply(minus_three.ptr(), disable_first.ptr()));
+    py::object system_rating = pyfloat(cb::fire_system_rating(match));
+    py::object six = pyfloat(6.0), damage = pyfloat(-0.0005), one = pyfloat(1.0);
+    PyObject* table[6][2] = {{critical.ptr(), six.ptr()},
+                             {to_disable.ptr(), damage.ptr()},
+                             {is_disabled.ptr(), disabled_importance.ptr()},
+                             {condition.ptr(), damage.ptr()},
+                             {hittable.ptr(), one.ptr()},
+                             {system_rating.ptr(), one.ptr()}};
+    py::object total = py::reinterpret_borrow<py::object>(h.float_zero);
+    for (auto& row : table) {
+        py::object term = own(PyNumber_Multiply(row[0], row[1]));
+        total = own(PyNumber_Add(total.ptr(), term.ptr()));
+    }
+    return total;
+}
+
+// FireScript.PickTargetSubsystemFromList
+py::object pick_from_list(const Ctx& c, PyObject* subs) {
+    auto& h = host();
+    const Py_ssize_t n = PyObject_Length(subs);
+    if (n < 0) throw py::error_already_set();
+    if (n == 1) return own(PyObject_GetItem(subs, h.int_zero));
+    py::object chosen = py::none();
+    Num best{false, 0.0, py::none()};
+    py::object it = own(PyObject_GetIter(subs));
+    while (PyObject* e = PyIter_Next(it.ptr())) {
+        py::object sub = py::reinterpret_steal<py::object>(e);
+        // if self.idTargetedSubsystem == pSubsystem.GetObjID(): fIsTargetRating = 1.0
+        py::object current = attr(c.self, h.s_idTargetedSubsystem);
+        py::object id = obj_id(sub.ptr());
+        const double is_target = eq(current.ptr(), id.ptr()) ? 1.0 : 0.0;
+        py::object healthy = call0(sub.ptr(), h.s_GetConditionPercentage);
+        py::object disabled = call0(sub.ptr(), h.s_IsDisabled);
+        Num rating;
+        double hd, dd;
+        if (small_number(healthy.ptr(), hd) && small_number(disabled.ptr(), dd)) {
+            rating = Num{true, cb::fire_pick_rating(is_target, hd, dd), {}};
+        } else {
+            py::object one = pyfloat(1.0), minus_one = pyfloat(-1.0), ist = pyfloat(is_target);
+            PyObject* table[3][2] = {{ist.ptr(), one.ptr()},
+                                     {healthy.ptr(), minus_one.ptr()},
+                                     {disabled.ptr(), minus_one.ptr()}};
+            py::object total = py::reinterpret_borrow<py::object>(h.float_zero);
+            for (auto& row : table) {
+                py::object term = own(PyNumber_Multiply(row[0], row[1]));
+                total = own(PyNumber_Add(total.ptr(), term.ptr()));
+            }
+            rating = num_of(total);
+        }
+        // if (pTarget is None) or (fRating > fTargetRating)
+        if (chosen.ptr() == Py_None || greater(rating, best)) {
+            chosen = sub;
+            best = rating;
+        }
+    }
+    if (PyErr_Occurred()) throw py::error_already_set();
+    return chosen;
+}
+
+// The priority-list branch of ChooseTargetSubsystem: the subsystem it picks
+// (or None).
+py::object choose_from_priorities(const Ctx& c, PyObject* ship_target) {
+    auto& h = host();
+    py::object lts = attr(c.self, h.s_lTargetSubsystems);
+    py::object first = own(PyObject_GetItem(lts.ptr(), h.int_zero));
+    py::object current = own(PyObject_GetItem(first.ptr(), h.int_one));
+    py::object possible = own(PyList_New(0));
+    long long disabled_count = 0;
+    py::object list = attr(c.self, h.s_lTargetSubsystems);
+    py::object it = own(PyObject_GetIter(list.ptr()));
+    while (PyObject* e = PyIter_Next(it.ptr())) {
+        py::object row = py::reinterpret_steal<py::object>(e);
+        py::object pair[2];
+        unpack(row.ptr(), 2, pair);
+        // if len(lpPossibleTargets) and iPriority > iCurrentPriority:
+        if (PyList_GET_SIZE(possible.ptr()) && cmp(pair[1].ptr(), current.ptr(), Py_GT)) {
+            // if (not self.bDisableFirst) or (iNumDisabled < len(lpPossibleTargets)): break
+            if (!truth(attr(c.self, h.s_bDisableFirst).ptr()) ||
+                disabled_count < static_cast<long long>(PyList_GET_SIZE(possible.ptr())))
+                break;
+        }
+        current = pair[1];
+        py::object match = call1(ship_target, h.s_StartGetSubsystemMatch, pair[0].ptr());
+        py::object sub = call1(ship_target, h.s_GetNextSubsystemMatch, match.ptr());
+        while (truth(sub.ptr())) {
+            if (cmp(call0(sub.ptr(), h.s_GetCondition).ptr(), h.int_zero, Py_GT)) {
+                bool consider = truth(attr(c.self, h.s_bAttackDisabledSubsystems).ptr());
+                if (!consider) consider = !truth(call0(sub.ptr(), h.s_IsDisabled).ptr());
+                if (consider) {
+                    if (!truth(call0(sub.ptr(), h.s_IsTargetable).ptr())) {
+                        // lTargets = self.GetChildTargets(pSubsystem); one entry each
+                        py::object targets = child_targets(c, sub.ptr());
+                        for (Py_ssize_t k = 0; k < PyList_GET_SIZE(targets.ptr()); ++k) {
+                            if (truth(call0(sub.ptr(), h.s_IsDisabled).ptr())) ++disabled_count;
+                            append(possible.ptr(), sub.ptr());
+                        }
+                    } else {
+                        if (truth(call0(sub.ptr(), h.s_IsDisabled).ptr())) ++disabled_count;
+                        append(possible.ptr(), sub.ptr());
+                    }
+                }
+            }
+            sub = call1(ship_target, h.s_GetNextSubsystemMatch, match.ptr());
+        }
+    }
+    if (PyErr_Occurred()) throw py::error_already_set();
+    if (!PyList_GET_SIZE(possible.ptr())) return py::none();
+    py::object non_disabled = own(PyList_New(0));
+    for (Py_ssize_t k = 0; k < PyList_GET_SIZE(possible.ptr()); ++k) {
+        py::object sub = py::reinterpret_borrow<py::object>(PyList_GET_ITEM(possible.ptr(), k));
+        if (!truth(call0(sub.ptr(), h.s_IsDisabled).ptr())) append(non_disabled.ptr(), sub.ptr());
+    }
+    if (PyList_GET_SIZE(non_disabled.ptr())) possible = non_disabled;
+    return pick_from_list(c, possible.ptr());
+}
+
+// The ids of `subs` (our own list, which nothing else holds) for the pruning
+// and need-update loops, read once while no Python can run between two reads
+// of one: every subsystem resolves TGObject.GetObjID to a plain int, the
+// rating store is a plain dict of int keys and (int, float) tuples (so a
+// `del` frees nothing that runs code), and every compare is int against int.
+// `valid` drops the moment anything in those loops might run Python; from
+// then on each id is read where the SDK reads it. Plain ints are equal
+// exactly when their values are, so while valid the pruning compares values.
+struct IdCache {
+    std::vector<py::object> ids;
+    std::vector<long long> values;
+    bool valid = false;
+
+    py::object at(PyObject* subs, Py_ssize_t j) {
+        if (valid) return ids[static_cast<std::size_t>(j)];
+        py::object sub = py::reinterpret_borrow<py::object>(PyList_GET_ITEM(subs, j));
+        return obj_id(sub.ptr());
+    }
+};
+
+// A plain int's value; false for anything else, or one past long long.
+bool int_value(PyObject* o, long long& out) {
+    if (!PyLong_CheckExact(o)) return false;
+    int overflow = 0;
+    out = PyLong_AsLongLongAndOverflow(o, &overflow);
+    if (out == -1 && PyErr_Occurred()) {
+        PyErr_Clear();
+        return false;
+    }
+    return overflow == 0;
+}
+
+bool plain_rating_store(PyObject* d) {
+    if (!PyDict_CheckExact(d)) return false;
+    Py_ssize_t pos = 0;
+    PyObject *k, *v;
+    while (PyDict_Next(d, &pos, &k, &v)) {
+        if (!PyLong_CheckExact(k) || !PyTuple_CheckExact(v)) return false;
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(v); ++i) {
+            PyObject* item = PyTuple_GET_ITEM(v, i);
+            if (!PyLong_CheckExact(item) && !PyFloat_CheckExact(item)) return false;
+        }
+    }
+    return true;
+}
+
+// The ChooseSubsystemTargets branch: the subsystem it picks (or None).
+py::object choose_by_rating(const Ctx& c, PyObject* ours, PyObject* ship_target) {
+    auto& h = host();
+    py::object subs = own(PyList_New(0));
+    {
+        py::object all = call0(ship_target, h.s_GetSubsystems);
+        py::object it = own(PyObject_GetIter(all.ptr()));
+        while (PyObject* e = PyIter_Next(it.ptr())) {
+            py::object sub = py::reinterpret_steal<py::object>(e);
+            targetable_subsystems(c, sub.ptr(), subs.ptr());
+        }
+        if (PyErr_Occurred()) throw py::error_already_set();
+    }
+    PyObject* L = subs.ptr();
+    // for idKey in list(self.dTargetSubsystemRating.keys()):
+    py::object store = attr(c.self, h.s_dTargetSubsystemRating);
+    py::object keys = as_list(call0(store.ptr(), h.s_keys).ptr());
+    IdCache ids;
+    ids.valid = plain_rating_store(store.ptr());
+    for (Py_ssize_t j = 0; ids.valid && j < PyList_GET_SIZE(L); ++j) {
+        py::object id;
+        long long v = 0;
+        if (!quiet_obj_id(PyList_GET_ITEM(L, j), id) || !int_value(id.ptr(), v)) ids.valid = false;
+        ids.ids.push_back(id);
+        ids.values.push_back(v);
+    }
+    if (!ids.valid) {
+        ids.ids.clear();
+        ids.values.clear();
+    }
+    for (Py_ssize_t k = 0; k < PyList_GET_SIZE(keys.ptr()); ++k) {
+        PyObject* key = PyList_GET_ITEM(keys.ptr(), k);  // `keys` holds it
+        bool exists = false;
+        long long kv;
+        if (ids.valid && int_value(key, kv)) {
+            // pSubsystem.GetObjID() == idKey, int against int
+            for (long long v : ids.values)
+                if (v == kv) {
+                    exists = true;
+                    break;
+                }
+        } else {
+            for (Py_ssize_t j = 0; j < PyList_GET_SIZE(L); ++j) {
+                py::object id = ids.at(L, j);
+                if (eq(id.ptr(), key)) {
+                    exists = true;
+                    break;
+                }
+            }
+        }
+        if (!exists) {
+            py::object d = attr(c.self, h.s_dTargetSubsystemRating);
+            if (PyObject_DelItem(d.ptr(), key) < 0) throw py::error_already_set();
+        }
+    }
+    // Pull out the systems that need an update.
+    py::object need = own(PyList_New(0));
+    while (!PyList_GET_SIZE(need.ptr()) && PyList_GET_SIZE(L)) {
+        for (Py_ssize_t j = 0; j < PyList_GET_SIZE(L); ++j) {
+            PyObject* sub = PyList_GET_ITEM(L, j);
+            py::object d = attr(c.self, h.s_dTargetSubsystemRating);
+            py::object id = ids.at(L, j);
+            if (!rating::contains(d.ptr(), id.ptr())) {
+                append(need.ptr(), sub);
+                continue;
+            }
+            // elif self.dTargetSubsystemRating[pSubsystem.GetObjID()][0] < self.iTargetSubsystemUpdateNum
+            py::object d2 = attr(c.self, h.s_dTargetSubsystemRating);
+            py::object id2 = ids.at(L, j);
+            py::object entry = own(PyObject_GetItem(d2.ptr(), id2.ptr()));
+            py::object seq = own(PyObject_GetItem(entry.ptr(), h.int_zero));
+            py::object num = attr(c.self, h.s_iTargetSubsystemUpdateNum);
+            if (!PyLong_CheckExact(seq.ptr()) || !PyLong_CheckExact(num.ptr())) ids.valid = false;
+            if (cmp(seq.ptr(), num.ptr(), Py_LT)) append(need.ptr(), sub);
+        }
+        if (!PyList_GET_SIZE(need.ptr())) {
+            // self.iTargetSubsystemUpdateNum = self.iTargetSubsystemUpdateNum + 1
+            py::object num = attr(c.self, h.s_iTargetSubsystemUpdateNum);
+            if (!PyLong_CheckExact(num.ptr())) ids.valid = false;
+            py::object next = own(PyNumber_Add(num.ptr(), h.int_one));
+            set_attr(c.self, h.s_iTargetSubsystemUpdateNum, next.ptr());
+        }
+    }
+    ids.valid = false;  // what follows calls Python
+    // Pick some of them at random.
+    py::object chosen_list;
+    {
+        py::object len = own(PyLong_FromSsize_t(PyList_GET_SIZE(need.ptr())));
+        py::object limit = attr(c.self, h.s_iNumTargetSubsystemsToUpdate);
+        if (cmp(len.ptr(), limit.ptr(), Py_LE)) {
+            chosen_list = need;
+        } else {
+            chosen_list = own(PyList_New(0));
+            py::object count = attr(c.self, h.s_iNumTargetSubsystemsToUpdate);
+            for_range(c, count, [&](py::object&) {
+                // iIndex = App.g_kSystemWrapper.GetRandomNumber(len(lNeedUpdates))
+                py::object wrapper = attr(c.app.ptr(), h.s_g_kSystemWrapper);
+                py::object draw = attr(wrapper.ptr(), h.s_GetRandomNumber);
+                py::object n = own(PyLong_FromSsize_t(PyList_GET_SIZE(need.ptr())));
+                py::object index = own(PyObject_CallOneArg(draw.ptr(), n.ptr()));
+                // lTargetSubsystems.append( lNeedUpdates[iIndex] )
+                py::object pick = own(PyObject_GetItem(need.ptr(), index.ptr()));
+                append(chosen_list.ptr(), pick.ptr());
+                // lNeedUpdates.remove( lNeedUpdates[iIndex] )
+                py::object remove = attr(need.ptr(), h.s_remove);
+                py::object again = own(PyObject_GetItem(need.ptr(), index.ptr()));
+                own(PyObject_CallOneArg(remove.ptr(), again.ptr()));
+            });
+        }
+    }
+    // Rate the chosen ones:
+    // self.dTargetSubsystemRating[pSubsystem.GetObjID()] =
+    //     (self.iTargetSubsystemUpdateNum, self.RateSubsystemForTargeting(...))
+    {
+        py::object it = own(PyObject_GetIter(chosen_list.ptr()));
+        while (PyObject* e = PyIter_Next(it.ptr())) {
+            py::object sub = py::reinterpret_steal<py::object>(e);
+            py::object num = attr(c.self, h.s_iTargetSubsystemUpdateNum);
+            py::object rating = rate_subsystem(c, ours, sub.ptr());
+            py::object value = own(PyTuple_Pack(2, num.ptr(), rating.ptr()));
+            py::object d = attr(c.self, h.s_dTargetSubsystemRating);
+            py::object id = obj_id(sub.ptr());
+            if (PyObject_SetItem(d.ptr(), id.ptr(), value.ptr()) < 0) throw py::error_already_set();
+        }
+        if (PyErr_Occurred()) throw py::error_already_set();
+    }
+    // Choose from the history of ratings.
+    py::object chosen = py::none();
+    Num highest{true, -1.0e20, {}};
+    py::object store2 = attr(c.self, h.s_dTargetSubsystemRating);
+    py::object items = as_list(call0(store2.ptr(), h.s_items).ptr());
+    for (Py_ssize_t k = 0; k < PyList_GET_SIZE(items.ptr()); ++k) {
+        py::object row = py::reinterpret_borrow<py::object>(PyList_GET_ITEM(items.ptr(), k));
+        py::object kv[2], data[2];
+        unpack(row.ptr(), 2, kv);
+        unpack(kv[1].ptr(), 2, data);
+        Num rating = num_of(data[1]);
+        if (greater(rating, highest)) {
+            highest = rating;
+            // App.ShipSubsystem_Cast( App.TGObject_GetTGObjectPtr( idSubsystem ) )
+            py::object cast = attr(c.app.ptr(), h.s_ShipSubsystem_Cast);
+            py::object lookup = attr(c.app.ptr(), h.s_TGObject_GetTGObjectPtr);
+            py::object ptr = call_fn(lookup.ptr(), {kv[0].ptr()});
+            chosen = call_fn(cast.ptr(), {ptr.ptr()});
+        }
+    }
+    return chosen;
+}
+
+// FireScript.ChooseTargetSubsystem (its return value is unused by Update).
+void choose_target_subsystem(const Ctx& c, PyObject* target) {
+    auto& h = host();
+    count_choice(h.s_subsystem_choice);
+    py::object ship_target = app_call(c, h.s_ShipClass_Cast, target);
+    if (!truth(ship_target.ptr())) return;
+    py::object ours = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (!truth(ours.ptr())) return;
+    py::object chosen = py::none();
+    py::object lts = attr(c.self, h.s_lTargetSubsystems);
+    const Py_ssize_t n = PyObject_Length(lts.ptr());
+    if (n < 0) throw py::error_already_set();
+    if (n) {
+        chosen = choose_from_priorities(c, ship_target.ptr());
+    } else if (truth(attr(c.self, h.s_bChooseSubsystemTargets).ptr())) {
+        chosen = choose_by_rating(c, ours.ptr(), ship_target.ptr());
+    } else {
+        // The ship's own target subsystem (the player's).
+        py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+        chosen = call0(ship.ptr(), h.s_GetTargetSubsystem);
+        if (truth(chosen.ptr()) && truth(call0(chosen.ptr(), h.s_IsDisabled).ptr()) &&
+            !truth(attr(c.self, h.s_bAttackDisabledSubsystems).ptr()))
+            chosen = py::none();
+    }
+    if (truth(chosen.ptr())) {
+        py::object id = obj_id(chosen.ptr());
+        set_attr(c.self, h.s_idTargetedSubsystem, id.ptr());
+    } else {
+        set_attr(c.self, h.s_idTargetedSubsystem, Py_None);
+    }
+}
+
+// pScript = (lambda n: _sdk_importlib.import_module(n) if isinstance(n, str)
+//            else n)(pAmmo.GetTorpedoScript())
+py::object torpedo_script(const Ctx& c, PyObject* ammo) {
+    auto& h = host();
+    py::object name = call0(ammo, h.s_GetTorpedoScript);
+    const int is_str = PyObject_IsInstance(name.ptr(), reinterpret_cast<PyObject*>(&PyUnicode_Type));
+    if (is_str < 0) throw py::error_already_set();
+    if (!is_str) return name;
+    py::object importlib = global(c, h.s_sdk_importlib);
+    return call1(importlib.ptr(), h.s_import_module, name.ptr());
+}
+
+// One ammo type's row of lTorpAmmoRatings.
+struct TorpRow {
+    py::object index;
+    bool native = false;
+    cb::TorpIdeals t{};
+    py::object v[5];  // when !native: fIdealDistMin .. fRating
+};
+
+py::object row_value(const TorpRow& r, int i) {
+    if (!r.native) return r.v[i];
+    const double d[5] = {r.t.dist_min, r.t.dist_max, r.t.speed_min, r.t.speed_max, r.t.rating};
+    return pyfloat(d[i]);
+}
+
+// App.FuzzyLogic_BreakIntoSets(fValue, thresholds); (fLowIdeal, fHighIdeal).
+void fuzzy_ideals(const Ctx& c, const TorpRow& r, int min_i, int max_i, PyObject* value,
+                  py::object& low, py::object& high) {
+    auto& h = host();
+    py::object thresholds;
+    bool positive;
+    if (r.native) {
+        const double d[5] = {r.t.dist_min, r.t.dist_max, r.t.speed_min, r.t.speed_max, r.t.rating};
+        positive = cb::fire_greater(d[min_i], 0.0);
+        py::object fuzzy = attr(c.app.ptr(), h.s_FuzzyLogic_BreakIntoSets);
+        py::object mn = pyfloat(d[min_i]), mx = pyfloat(d[max_i]);
+        py::object far = pyfloat(cb::fire_torp_far(d[min_i], d[max_i]));
+        thresholds = positive ? own(PyTuple_Pack(4, h.float_zero, mn.ptr(), mx.ptr(), far.ptr()))
+                              : own(PyTuple_Pack(3, mn.ptr(), mx.ptr(), far.ptr()));
+        py::object sets = call_fn(fuzzy.ptr(), {value, thresholds.ptr()});
+        py::object out[4];
+        unpack(sets.ptr(), positive ? 4 : 3, out);
+        low = out[positive ? 1 : 0];
+        high = out[positive ? 2 : 1];
+        return;
+    }
+    PyObject* mn = r.v[min_i].ptr();
+    PyObject* mx = r.v[max_i].ptr();
+    positive = cmp(mn, h.int_zero, Py_GT);
+    py::object fuzzy = attr(c.app.ptr(), h.s_FuzzyLogic_BreakIntoSets);
+    if (positive) {
+        py::object span = own(PyNumber_Subtract(mx, mn));
+        py::object far = own(PyNumber_Multiply(span.ptr(), h.float_one_and_half));
+        thresholds = own(PyTuple_Pack(4, h.float_zero, mn, mx, far.ptr()));
+    } else {
+        py::object far = own(PyNumber_Multiply(mx, h.float_one_and_half));
+        thresholds = own(PyTuple_Pack(3, mn, mx, far.ptr()));
+    }
+    py::object sets = call_fn(fuzzy.ptr(), {value, thresholds.ptr()});
+    py::object out[4];
+    unpack(sets.ptr(), positive ? 4 : 3, out);
+    low = out[positive ? 1 : 0];
+    high = out[positive ? 2 : 1];
+}
+
+// `fRating * (fLowIdeal + fHighIdeal)` by Python's operators.
+py::object membership_score(PyObject* rating, PyObject* low, PyObject* high) {
+    py::object sum = own(PyNumber_Add(low, high));
+    return own(PyNumber_Multiply(rating, sum.ptr()));
+}
+
+// FireScript.ChooseTorpType
+void choose_torp_type(const Ctx& c, PyObject* torp, PyObject* location, PyObject* target_speed) {
+    auto& h = host();
+    count_choice(h.s_torp_choice);
+    std::vector<std::pair<py::object, py::object>> types;
+    for_range(c, call0(torp, h.s_GetNumAmmoTypes), [&](py::object& i) {
+        py::object left = call1(torp, h.s_GetNumAvailableTorpsToType, i.ptr());
+        if (cmp(left.ptr(), h.int_zero, Py_GT))
+            types.emplace_back(i, call1(torp, h.s_GetAmmoType, i.ptr()));
+    });
+    if (types.empty()) return;
+    if (types.size() == 1) {
+        py::object now = call0(torp, h.s_GetAmmoTypeNumber);
+        if (ne(now.ptr(), types[0].first.ptr())) {
+            py::object set_ammo = attr(torp, h.s_SetAmmoType);
+            own(PyObject_CallOneArg(set_ammo.ptr(), types[0].first.ptr()));
+        }
+        return;
+    }
+    count_choice(h.s_torp_rated);  // two or more types: the rating below
+    py::object diff = call0(torp, h.s_GetWorldLocation);
+    call1(diff.ptr(), h.s_Subtract, location);
+    py::object distance = call0(diff.ptr(), h.s_Length);
+
+    std::vector<TorpRow> rows;
+    py::object script;  // pScript: unbound until an import succeeds
+    for (auto& [index, ammo] : types) {
+        py::object launch = call0(ammo.ptr(), h.s_GetLaunchSpeed);
+        py::object cost = call0(ammo.ptr(), h.s_GetPowerCost);
+        py::object damage, lifetime, turn;
+        try {
+            script = torpedo_script(c, ammo.ptr());
+            damage = call0(script.ptr(), h.s_GetDamage);
+            lifetime = call0(script.ptr(), h.s_GetGuidanceLifetime);
+            turn = call0(script.ptr(), h.s_GetMaxAngularAccel);
+        } catch (py::error_already_set& caught) {
+            // The SDK's bare `except:`. The caught exception is the one being
+            // handled while its body runs, so anything raised there chains to
+            // it, as in Python: PUSH_EXC_INFO saves the CURRENT stack item's
+            // raw value and POP_EXCEPT puts it back (PyErr_SetHandledException
+            // writes that item; PyErr_GetHandledException would read the
+            // topmost one, an outer frame's, instead).
+            _PyErr_StackItem* item = PyThreadState_Get()->exc_info;
+            PyObject* previous = item->exc_value;  // the saved raw value
+            Py_XINCREF(previous);
+            PyErr_SetHandledException(caught.value().ptr());
+            auto restore = [&] {
+                PyErr_SetHandledException(previous);
+                Py_XDECREF(previous);
+            };
+            damage = pyfloat(0.0);
+            lifetime = pyfloat(0.0);
+            try {
+                if (!script) {
+                    PyErr_Format(PyExc_UnboundLocalError,
+                                 "cannot access local variable '%U' where it is not "
+                                 "associated with a value",
+                                 h.s_pScript);
+                    throw py::error_already_set();
+                }
+                turn = call0(script.ptr(), h.s_GetMaxAngularAccel);
+            } catch (py::error_already_set&) {
+                restore();
+                throw;
+            }
+            restore();
+        }
+        TorpRow row;
+        row.index = index;
+        double ls, pc, dm, gl, tr;
+        if (avoid::exact_float(launch.ptr(), ls) && avoid::exact_float(cost.ptr(), pc) &&
+            avoid::exact_float(damage.ptr(), dm) && avoid::exact_float(lifetime.ptr(), gl) &&
+            avoid::exact_float(turn.ptr(), tr)) {
+            row.native = true;
+            row.t = cb::fire_torp_ideals(ls, pc, dm, gl, tr);
+        } else {
+            // Python's operators, in the SDK's order.
+            py::object dist_max = py::reinterpret_borrow<py::object>(h.float_zero);
+            if (cmp(lifetime.ptr(), h.int_zero, Py_GT))
+                dist_max = own(PyNumber_Multiply(lifetime.ptr(), launch.ptr()));
+            py::object speed_max = py::reinterpret_borrow<py::object>(h.float_zero);
+            bool moves = cmp(lifetime.ptr(), h.int_zero, Py_GT);
+            if (!moves) moves = cmp(launch.ptr(), h.int_zero, Py_GT);
+            if (moves) {
+                py::object turned = own(PyNumber_Multiply(turn.ptr(), h.float_four));
+                speed_max = own(PyNumber_Add(turned.ptr(), launch.ptr()));
+            }
+            row.v[0] = py::reinterpret_borrow<py::object>(h.float_zero);
+            row.v[1] = dist_max;
+            row.v[2] = py::reinterpret_borrow<py::object>(h.float_zero);
+            row.v[3] = speed_max;
+            row.v[4] = own(PyNumber_Subtract(damage.ptr(), cost.ptr()));
+        }
+        rows.push_back(std::move(row));
+    }
+
+    Num best{true, -1.0e20, {}};
+    py::object chosen = py::reinterpret_borrow<py::object>(h.int_zero);
+    for (const TorpRow& r : rows) {
+        py::object dl, dh, sl, sh;
+        fuzzy_ideals(c, r, 0, 1, distance.ptr(), dl, dh);
+        // fDistScore = fRating * (fLowIdeal + fHighIdeal): deferred while it
+        // is all floats, else Python's, here.
+        double d_low, d_high;
+        const bool dist_native =
+            r.native && avoid::exact_float(dl.ptr(), d_low) && avoid::exact_float(dh.ptr(), d_high);
+        py::object dist_score;
+        if (!dist_native) {
+            py::object rating = row_value(r, 4);
+            dist_score = membership_score(rating.ptr(), dl.ptr(), dh.ptr());
+        }
+        fuzzy_ideals(c, r, 2, 3, target_speed, sl, sh);
+        double s_low, s_high;
+        Num score;
+        if (dist_native && avoid::exact_float(sl.ptr(), s_low) &&
+            avoid::exact_float(sh.ptr(), s_high)) {
+            score = Num{true, cb::fire_torp_score(r.t.rating, d_low, d_high, s_low, s_high), {}};
+        } else {
+            py::object rating = row_value(r, 4);
+            if (dist_native) dist_score = membership_score(rating.ptr(), dl.ptr(), dh.ptr());
+            py::object speed_score = membership_score(rating.ptr(), sl.ptr(), sh.ptr());
+            py::object quarter = own(PyNumber_Multiply(h.float_quarter, dist_score.ptr()));
+            score = num_of(own(PyNumber_Add(quarter.ptr(), speed_score.ptr())));
+        }
+        if (greater(score, best)) {
+            chosen = r.index;
+            best = score;
+        }
+    }
+    py::object now = call0(torp, h.s_GetAmmoTypeNumber);
+    if (ne(now.ptr(), chosen.ptr())) {
+        py::object set_ammo = attr(torp, h.s_SetAmmoType);
+        own(PyObject_CallOneArg(set_ammo.ptr(), chosen.ptr()));
+    }
+}
+
 // FireScript.ConfigureWeaponSystem's truth.
 bool configure_weapon_system(const Ctx& c, PyObject* system, PyObject* target,
                              PyObject* subsystem) {
@@ -7458,8 +8310,7 @@ bool configure_weapon_system(const Ctx& c, PyObject* system, PyObject* target,
                 py::object engines = call0(ship_target.ptr(), h.s_GetImpulseEngineSubsystem);
                 if (truth(engines.ptr())) speed = call0(engines.ptr(), h.s_GetCurMaxSpeed);
             }
-            py::object method = attr(c.self, h.s_ChooseTorpType);
-            call_fn(method.ptr(), {torp.ptr(), location.ptr(), speed.ptr()});
+            choose_torp_type(c, torp.ptr(), location.ptr(), speed.ptr());
         }
         return true;
     }
@@ -7539,10 +8390,6 @@ py::object next_update(const Ctx& c) {
     return own(PyNumber_Subtract(r.ptr(), two.ptr()));
 }
 
-void set_attr(PyObject* o, PyObject* name, PyObject* v) {
-    if (PyObject_SetAttr(o, name, v) < 0) throw py::error_already_set();
-}
-
 // FireScript.Update; `globals` the gated SDK function's __globals__ (the
 // dict its code loads App and the builtins from).
 py::object update(PyObject* self, PyObject* globals) {
@@ -7588,7 +8435,7 @@ py::object update(PyObject* self, PyObject* globals) {
     } else if (eq(attr(self, h.s_iLastUpdate).ptr(), pyint(-1).ptr())) {
         py::object start = attr(c.app.ptr(), h.s_TGProfilingInfo_StartTiming);
         py::object timing = call_fn(start.ptr(), {h.s_timing_label});
-        call1(self, h.s_ChooseTargetSubsystem, target.ptr());
+        choose_target_subsystem(c, target.ptr());
         py::object stop = attr(c.app.ptr(), h.s_TGProfilingInfo_StopTiming);
         call_fn(stop.ptr(), {timing.ptr()});
     } else {
@@ -7769,6 +8616,141 @@ PyMethodDef kDefs[] = {
 };
 
 }  // namespace stockmemo
+
+// ── A verdict remembered under the versions of what it read ─────────────────
+// ai_optimized._fire_surface_globals decides, in Python, whether FireScript's
+// module surface is stock; it reads only dicts and types. CPython renews a
+// dict's ma_version_tag on every insert, replace or delete, and a type's
+// version tag on any change to it or its bases, so while every tag the
+// decision read is unchanged its answer is too. This stores Python's answer
+// with those tags and returns it while they hold; any move and Python
+// decides again. A type with another metaclass, or one with no valid tag, or
+// anything that is neither an exact dict nor a type, is never taggable.
+//   ai_memo_tags(watched: tuple) -> tuple of the tags now, or None
+//   ai_memo_get(key, miss) -> the stored answer for `key`, or `miss`
+//   ai_memo_put(key, watched, tags, answer): stored if the tags still hold
+namespace surfacememo {
+
+struct Entry {
+    py::object key, watched, answer;
+    std::vector<unsigned long long> tags;
+};
+
+std::vector<Entry>& entries() {
+    static auto* v = new std::vector<Entry>();
+    return *v;
+}
+
+bool tag_of(PyObject* o, unsigned long long& out) {
+    if (PyDict_CheckExact(o)) {
+        out = reinterpret_cast<PyDictObject*>(o)->ma_version_tag;
+        return true;
+    }
+    if (Py_IS_TYPE(o, &PyType_Type)) {
+        out = k0_type_tag(reinterpret_cast<PyTypeObject*>(o));
+        return out != 0;
+    }
+    return false;
+}
+
+bool tags_now(PyObject* watched, std::vector<unsigned long long>& out) {
+    const Py_ssize_t n = PyTuple_GET_SIZE(watched);
+    out.resize(static_cast<std::size_t>(n));
+    for (Py_ssize_t i = 0; i < n; ++i)
+        if (!tag_of(PyTuple_GET_ITEM(watched, i), out[static_cast<std::size_t>(i)])) return false;
+    return true;
+}
+
+bool holds(const Entry& e) {
+    const Py_ssize_t n = PyTuple_GET_SIZE(e.watched.ptr());
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        unsigned long long t;
+        if (!tag_of(PyTuple_GET_ITEM(e.watched.ptr(), i), t) ||
+            t != e.tags[static_cast<std::size_t>(i)])
+            return false;
+    }
+    return true;
+}
+
+PyObject* tags(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 1 || !PyTuple_CheckExact(args[0])) {
+        PyErr_SetString(PyExc_TypeError, "ai_memo_tags(watched: tuple)");
+        return nullptr;
+    }
+    std::vector<unsigned long long> t;
+    if (!tags_now(args[0], t)) Py_RETURN_NONE;
+    PyObject* out = PyTuple_New(static_cast<Py_ssize_t>(t.size()));
+    if (out == nullptr) return nullptr;
+    for (std::size_t i = 0; i < t.size(); ++i) {
+        PyObject* v = PyLong_FromUnsignedLongLong(t[i]);
+        if (v == nullptr) {
+            Py_DECREF(out);
+            return nullptr;
+        }
+        PyTuple_SET_ITEM(out, static_cast<Py_ssize_t>(i), v);
+    }
+    return out;
+}
+
+PyObject* get(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 2) {
+        PyErr_SetString(PyExc_TypeError, "ai_memo_get(key, miss)");
+        return nullptr;
+    }
+    for (const Entry& e : entries())
+        if (e.key.ptr() == args[0]) {
+            if (!holds(e)) break;
+            return Py_NewRef(e.answer.ptr());
+        }
+    return Py_NewRef(args[1]);
+}
+
+PyObject* put(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 4 || !PyTuple_CheckExact(args[1]) || !PyTuple_CheckExact(args[2]) ||
+        PyTuple_GET_SIZE(args[1]) != PyTuple_GET_SIZE(args[2])) {
+        PyErr_SetString(PyExc_TypeError, "ai_memo_put(key, watched: tuple, tags: tuple, answer)");
+        return nullptr;
+    }
+    std::vector<unsigned long long> want(static_cast<std::size_t>(PyTuple_GET_SIZE(args[2])));
+    for (std::size_t i = 0; i < want.size(); ++i) {
+        want[i] = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args[2], static_cast<Py_ssize_t>(i)));
+        if (want[i] == static_cast<unsigned long long>(-1) && PyErr_Occurred()) return nullptr;
+    }
+    std::vector<unsigned long long> now;
+    // Decided under other versions (something moved while Python ran), or
+    // never taggable: nothing is stored.
+    if (!tags_now(args[1], now) || now != want) Py_RETURN_NONE;
+    auto& all = entries();
+    for (Entry& e : all)
+        if (e.key.ptr() == args[0]) {
+            e.watched = py::reinterpret_borrow<py::object>(args[1]);
+            e.answer = py::reinterpret_borrow<py::object>(args[3]);
+            e.tags = std::move(now);
+            Py_RETURN_NONE;
+        }
+    if (all.size() >= 64) all.clear();
+    all.push_back({py::reinterpret_borrow<py::object>(args[0]),
+                   py::reinterpret_borrow<py::object>(args[1]),
+                   py::reinterpret_borrow<py::object>(args[3]), std::move(now)});
+    Py_RETURN_NONE;
+}
+
+PyMethodDef kDefs[] = {
+    {"ai_memo_tags", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(tags)),
+     METH_FASTCALL,
+     "ai_memo_tags(watched) -> the version tags of the dicts / types in "
+     "`watched` now, or None when one cannot be tagged."},
+    {"ai_memo_get", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(get)),
+     METH_FASTCALL,
+     "ai_memo_get(key, miss) -> the answer stored for `key` while every tag "
+     "it was stored with holds; `miss` otherwise."},
+    {"ai_memo_put", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(put)),
+     METH_FASTCALL,
+     "ai_memo_put(key, watched, tags, answer): store Python's answer, if the "
+     "tags read before deciding still hold."},
+};
+
+}  // namespace surfacememo
 }  // namespace
 
 PYBIND11_MODULE(_dauntless_host, m) {
@@ -13970,6 +14952,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "when the caller must run the SDK body instead.");
     // ── The stock verdict's memo (the `stockmemo` namespace above) ───────
     for (PyMethodDef& def : stockmemo::kDefs) {
+        PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
+        if (fn == nullptr) throw py::error_already_set();
+        m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));
+    }
+    // ── The surface memo (the `surfacememo` namespace above) ─────────────
+    for (PyMethodDef& def : surfacememo::kDefs) {
         PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
         if (fn == nullptr) throw py::error_already_set();
         m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));

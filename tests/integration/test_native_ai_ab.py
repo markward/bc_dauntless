@@ -5,7 +5,10 @@ its own subprocess, DAUNTLESS_NATIVE_AI=0 against unset).
 Each scene also asserts, for every kind native so far, that its ``native``
 count is > 0 and its ``python`` count is 0 or explained. Native so far:
 ``avoid`` (Task 2, AvoidObstacles' obstacle scan), ``select`` (Task 3,
-SelectTarget's GetTargetRating) and ``fire`` (Task 4, FireScript's Update)."""
+SelectTarget's GetTargetRating) and ``fire`` (Task 4, FireScript's Update;
+Task 5 made its ChooseTargetSubsystem and ChooseTorpType native too, counted
+``subsystem_choice``, ``torp_choice`` and ``torp_rated`` -- a choice between
+two or more ammo types)."""
 import pytest
 
 from tests.helpers import native_ai_ab
@@ -28,11 +31,18 @@ def _same(scene):
     return stats
 
 
+def _assert_choices(stats, *keys):
+    counts = stats["fire"]["counts"]
+    for key in keys:
+        assert counts.get(key, 0) > 0, ("native %s never ran" % key, counts)
+
+
 def test_k1_gameloop_ai():
     stats = _same("k1_gameloop_ai")
     native_ai_ab.assert_native(stats, "avoid")
     native_ai_ab.assert_native(stats, "select")        # ungated
     native_ai_ab.assert_native(stats, "fire")
+    _assert_choices(stats, "subsystem_choice", "torp_choice", "torp_rated")
 
 
 def test_combat_stress_gated():
@@ -52,15 +62,22 @@ def test_cloak_attack():
 
 
 def test_fed_subsystems():
+    # The child also asserts the subsystem-rating RNG drew, and from the
+    # native ChooseTargetSubsystem on this side (tests/helpers/native_ai_ab.py).
     stats = _same("fed_subsystems")
     native_ai_ab.assert_native(stats, "avoid")
     native_ai_ab.assert_native(stats, "select")
     native_ai_ab.assert_native(stats, "fire")
+    _assert_choices(stats, "subsystem_choice", "torp_choice", "torp_rated")
 
 
 def test_akira_torp_select():
-    # No `fire` assertion: the scene calls ChooseTorpType directly, never
-    # Update (Task 5 makes ChooseTorpType native).
+    # No `fire` assertion: the scene calls the SDK's ChooseTorpType directly,
+    # never Update, so it never reaches the native one. The native choice
+    # (Update -> ConfigureWeaponSystem -> ChooseTorpType) is asserted in
+    # k1_gameloop_ai and fed_subsystems (`torp_rated`), and pinned call by
+    # call in tests/unit/test_native_fire_script.py (torp_choice,
+    # torp_bad_script).
     _same("akira_torp_select")
 
 

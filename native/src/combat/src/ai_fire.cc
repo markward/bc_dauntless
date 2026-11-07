@@ -122,4 +122,60 @@ int fire_good_shot_direction(const FireVec& predicted, const FireVec& our_pos,
     return -1;
 }
 
+// RateSubsystemForTargeting (AI/Preprocessors.py:959-1015), after its reads.
+double fire_subsystem_rating(const SubsystemRatingInputs& in) {
+    double damage_to_disable = 0.0;
+    const double disabled_condition = in.disabled_percentage * in.max_condition;
+    if (in.condition > disabled_condition) damage_to_disable = in.condition - disabled_condition;
+    // The factor table is built first (-3.0 * self.bDisableFirst), then summed.
+    const double disabled_importance = -3.0 * in.disable_first;
+    double rating = 0.0;
+    rating = rating + in.critical * 6.0;
+    rating = rating + damage_to_disable * -0.0005;
+    rating = rating + in.is_disabled * disabled_importance;
+    rating = rating + in.condition * -0.0005;
+    rating = rating + in.hittable * 1.0;
+    rating = rating + in.system_rating * 1.0;
+    return rating;
+}
+
+double fire_system_rating(int first_match) {
+    static const double kRatings[kFireSystemRatingRows] = {5.0, 5.0, 5.0, 4.0, 3.0, -200.0};
+    if (first_match < 0 || first_match >= kFireSystemRatingRows) return 0.0;
+    return kRatings[first_match];
+}
+
+// PickTargetSubsystemFromList (:1017-1045).
+double fire_pick_rating(double is_target, double healthy, double disabled) {
+    double rating = 0.0;
+    rating = rating + is_target * 1.0;
+    rating = rating + healthy * -1.0;
+    rating = rating + disabled * -1.0;
+    return rating;
+}
+
+bool fire_greater(double a, double b) { return a > b; }
+
+// ChooseTorpType (:533-640): one ammo type's ideals.
+TorpIdeals fire_torp_ideals(double launch_speed, double power_cost, double damage,
+                            double guidance_lifetime, double turn_rate) {
+    TorpIdeals t{0.0, 0.0, 0.0, 0.0, 0.0};
+    if (guidance_lifetime > 0) t.dist_max = guidance_lifetime * launch_speed;
+    if ((guidance_lifetime > 0) || (launch_speed > 0)) t.speed_max = (turn_rate * 4.0) + launch_speed;
+    t.rating = damage - power_cost;
+    return t;
+}
+
+double fire_torp_far(double min, double max) {
+    if (min > 0) return (max - min) * 1.5;
+    return max * 1.5;
+}
+
+double fire_torp_score(double rating, double dist_low, double dist_high, double speed_low,
+                       double speed_high) {
+    const double dist_score = rating * (dist_low + dist_high);
+    const double speed_score = rating * (speed_low + speed_high);
+    return (0.25 * dist_score) + speed_score;
+}
+
 }  // namespace dauntless::combat

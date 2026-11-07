@@ -91,7 +91,7 @@ _STAND_INS = {n: _stand_in(n) for n in (
     "StartFiring", "StopFiringAtTarget", "SetPowerLevel", "SetMode",
     "SetAmmoType", "FireDumb", "GetMode", "IsFiring", "CallExternalFunction",
     "GetAllAIsInTree", "GetClassObjectList", "GetTargetID", "GetDamage",
-    "GetLaunchSpeed")}
+    "GetLaunchSpeed", "GetTorpedoScript", "GetShip")}
 
 
 def _put(obj, name, ret=None, effect=None):
@@ -123,7 +123,24 @@ _RECORDED = frozenset({
     "GetImpulseEngineSubsystem", "GetCurMaxSpeed", "GetClassObjectList",
     "GetTorpedoScript", "GetCondition", "GetMaxCondition",
     "GetDisabledPercentage", "CalculateRoughDirection",
+    # ChooseTargetSubsystem's and ChooseTorpType's calls (Task 5).
+    "GetSubsystems", "StartGetSubsystemMatch", "GetNextSubsystemMatch",
+    "IsTargetable", "IsDisabled", "IsCritical", "IsHittableFromLocation",
+    "IsTypeOf", "GetConditionPercentage", "GetTargetSubsystem",
+    "GetNumAmmoTypes", "GetNumAvailableTorpsToType", "GetAmmoType",
+    "GetAmmoTypeNumber", "GetPowerCost", "GetGuidanceLifetime",
+    "GetMaxAngularAccel", "FuzzyLogic_BreakIntoSets",
 })
+
+#: The FireScript methods (and our GetChildTargets) the native Update runs
+#: itself (Task 5): recorded so the SDK side's calls are seen, never compared,
+#: and the native side must make none of them.
+_NOW_NATIVE = frozenset({
+    "ChooseTargetSubsystem", "ChooseTorpType", "GetTargetableSubsystems",
+    "RateSubsystemForTargeting", "PickTargetSubsystemFromList",
+    "GetChildTargets",
+})
+_RECORDED = _RECORDED | _NOW_NATIVE
 
 
 def _canon(v, depth=0):
@@ -280,6 +297,39 @@ def _unit(rng):
     return v
 
 
+#: A torpedo script that is not there: its import raises, ChooseTorpType's
+#: bare except takes it.
+_NO_SUCH_SCRIPT = "Tactical.Projectiles.NoSuchTorpedoTask5"
+
+
+def _all_subsystems(ship):
+    """Every subsystem of `ship`, depth first, children after their parent."""
+    out = []
+
+    def walk(sub):
+        out.append(sub)
+        for i in range(sub.GetNumChildSubsystems()):
+            walk(sub.GetChildSubsystem(i))
+    for sub in ship.GetSubsystems():
+        walk(sub)
+    return out
+
+
+def _limit_targetable(ship, n):
+    """Leave exactly `n` non-critical leaf subsystems of `ship` targetable
+    (and nothing else): the number GetTargetableSubsystems finds."""
+    leaves = []
+    for sub in _all_subsystems(ship):
+        sub.SetTargetable(0)
+        if sub.GetNumChildSubsystems() == 0 and not sub.IsCritical():
+            leaves.append(sub)
+    picks = leaves[:n]
+    assert len(picks) == n, (n, len(leaves))
+    for sub in picks:
+        sub.SetTargetable(1)
+    return picks
+
+
 class _Scene:
     """One build of scene `opt` (a dict), its objects named, never by id."""
 
@@ -352,6 +402,46 @@ class _Scene:
                  ret=lambda: real_speed() if self.launch[0] is None
                  else self.launch[0])
         self.started = 0
+        # ChooseTargetSubsystem's and ChooseTorpType's scenes (Task 5).
+        self.picks = []
+        if "targetable" in opt:
+            self.picks = _limit_targetable(self.target, opt["targetable"])
+        self.damageable = []
+        if opt.get("damage"):
+            self.damageable = [sub for sub in _all_subsystems(self.target)
+                               if not sub.IsCritical()]
+        self.player_subs = []
+        if opt.get("player_subsystem"):
+            self.player_subs = _all_subsystems(self.target)
+        self.n_avail = None
+        self.avail_slots = []
+        self.bad_slot = [None]
+        self.ammo = []
+        if opt.get("torp_avail"):
+            ts = self.ours.GetTorpedoSystem()
+            self.ammo = [ts.GetAmmoType(i) for i in range(ts.GetNumAmmoTypes())]
+            assert len(self.ammo) == 3, opt["ours"]
+            if opt.get("bad_script"):
+                for slot, ammo in enumerate(self.ammo):
+                    _put(ammo, "GetTorpedoScript",
+                         ret=lambda slot=slot, real=ammo.GetTorpedoScript:
+                         _NO_SUCH_SCRIPT if self.bad_slot[0] == slot
+                         else real())
+        self.accel_mode = None
+        self.getship_calls = 0
+        if opt.get("getship_moves"):
+            # A pCodeAI whose GetShip is not the engine's: it moves the
+            # target, so nothing about the target may be read before it.
+            _put(self.node, "GetShip", effect=self._get_ship)
+
+    def _get_ship(self):
+        self.getship_calls += 1
+        k = self.getship_calls
+        if isinstance(self.target, PhysicsObjectClass):
+            self.target.SetVelocity(TGPoint3(60.0 * ((k % 3) - 1),
+                                             45.0 * ((k % 2) * 2 - 1), 7.0))
+            self.target.__dict__["_acceleration"] = (0.0, 0.0, 9.0 * (k % 4))
+        return self.ours
 
     # A side effect with an effect of its own (Review Focus 4).
     def _start_firing(self, target, offset):
@@ -437,6 +527,37 @@ class _Scene:
             sub.SetCondition(rng.uniform(0.0, 1.0) * sub.GetMaxCondition())
         if opt.get("using_weapon_type") and rng.random() < 0.4:
             self.inst.bCallUsingWeaponTypeFunc = 1
+        self.accel_mode = accel_mode
+        if self.picks and opt.get("destroy") and rng.random() < 0.35:
+            # Destroyed (no longer targetable: its rating key is pruned) or
+            # repaired.
+            sub = rng.choice(self.picks)
+            sub.SetCondition(0.0 if sub.GetCondition() > 0.0
+                             else sub.GetMaxCondition())
+        if self.damageable and rng.random() < 0.5:
+            sub = rng.choice(self.damageable)
+            sub.SetCondition(rng.choice((0.0, 0.2, 0.6, 1.0))
+                             * sub.GetMaxCondition())
+        if self.player_subs:
+            self.ours.SetTargetSubsystem(rng.choice(self.player_subs + [None]))
+        if opt.get("ignore_toggle"):
+            r = rng.random()
+            if r < 0.3:
+                self.inst.IgnoreSubsystemTargets()
+            elif r < 0.6:
+                self.inst.RestoreSubsystemTargets()
+        if self.ammo:
+            for slot, ammo in enumerate(self.ammo):
+                if slot == 2:           # the Sovereign's empty PhasedPlasma
+                    ammo.SetMaxTorpedoes(rng.choice((0, 10)))
+                full = ammo.GetMaxTorpedoes()
+                ammo.SetAvailable(rng.choice((0, full, full)))
+            ts = self.ours.GetTorpedoSystem()
+            self.avail_slots = [i for i in range(ts.GetNumAmmoTypes())
+                                if ts.GetNumAvailableTorpsToType(i) > 0]
+            self.n_avail = len(self.avail_slots)
+            if opt.get("bad_script"):
+                self.bad_slot[0] = rng.choice((None, 0, 1, 1))
 
     def digest(self):
         rows = []
@@ -444,7 +565,7 @@ class _Scene:
             p = ship.__dict__.get("_cached_loc")
             rows.append((ship.GetName(), _canon(p),
                          self.pSet.GetObject(ship.GetName()) is not None))
-        return (rows, self.started, list(self.using))
+        return (rows, self.started, list(self.using), self.getship_calls)
 
 
 def _step_both(sdk, nat, step_rng_seed, monkeypatch):
@@ -472,6 +593,14 @@ def _step_both(sdk, nat, step_rng_seed, monkeypatch):
 
 
 def _first_diff(a, b):
+    """The first difference between the SDK record `a` and the native `b`,
+    or None. The native side may not call back a method it runs itself
+    (_NOW_NATIVE); those calls are dropped from the SDK side's log before
+    the two are compared."""
+    callbacks = [c for c in b[1] if c[0] in _NOW_NATIVE]
+    if callbacks:
+        return "the native Update called back %r" % (callbacks[0],)
+    a = (a[0], [c for c in a[1] if c[0] not in _NOW_NATIVE]) + tuple(a[2:])
     for label, x, y in zip(("outcome", "calls", "state", "rng", "digest"),
                            a, b):
         if x != y:
@@ -579,6 +708,62 @@ _SCENES = {
                        launch_speeds=(None, None, 0.0, 0, 22.5, 3, -0.0),
                        toggle={"fFireDotThreshold": (0, 0.5, math.nan, 2),
                                "iLastUpdate": (-9, 7, -2, -1, 0, 1, True)}),
+    # ChooseSubsystemTargets with 2, 4, 5 and 9 targetable subsystems: more
+    # than iNumTargetSubsystemsToUpdate (4) needing an update is the RNG
+    # branch; 9 also destroys and repairs them (key pruning).
+    "choose_2": dict(ours="Akira", target="Galaxy", range=1e20, targetable=2,
+                     weapons=("GetTorpedoSystem", "GetPhaserSystem"),
+                     kw={"ChooseSubsystemTargets": 1}),
+    "choose_4": dict(ours="Akira", target="Galaxy", range=1e20, targetable=4,
+                     weapons=("GetTorpedoSystem", "GetPhaserSystem"),
+                     kw={"ChooseSubsystemTargets": 1}),
+    "choose_5": dict(ours="Akira", target="Galaxy", range=1e20, targetable=5,
+                     weapons=("GetTorpedoSystem", "GetPhaserSystem"),
+                     kw={"ChooseSubsystemTargets": 1}),
+    "choose_9": dict(ours="Akira", target="Galaxy", range=1e20, targetable=9,
+                     destroy=True,
+                     weapons=("GetTorpedoSystem", "GetPhaserSystem"),
+                     kw={"ChooseSubsystemTargets": 1, "DisableBeforeDestroy": 1}),
+    # A priority list whose systems are not targetable (GetChildTargets),
+    # damaged and disabled, DisableBeforeDestroy and AttackDisabled toggled.
+    "priority_children": dict(
+        ours="Akira", target="Galaxy", range=1e20, damage=True,
+        weapons=("GetTorpedoSystem", "GetPhaserSystem"),
+        kw={"TargetSubsystems": [(App.CT_PHASER_SYSTEM, 1),
+                                 (App.CT_TORPEDO_SYSTEM, 1),
+                                 (App.CT_SENSOR_SUBSYSTEM, 2),
+                                 (App.CT_IMPULSE_ENGINE_SUBSYSTEM, 3)]},
+        toggle={"bDisableFirst": (0, 1), "bAttackDisabledSubsystems": (0, 1)}),
+    # The ignored-subsystem list: IgnoreSubsystemTargets / Restore toggle
+    # between the priority list and ChooseSubsystemTargets.
+    "ignored": dict(ours="Akira", target="Galaxy", range=1e20, damage=True,
+                    ignore_toggle=True,
+                    weapons=("GetTorpedoSystem", "GetPhaserSystem"),
+                    kw={"TargetSubsystems": [(App.CT_SENSOR_SUBSYSTEM, 1)]},
+                    # The kw is an elif after TargetSubsystems: set directly.
+                    attrs={"bChooseSubsystemTargets": 1}),
+    # No list, no ChooseSubsystemTargets: our ship's own target subsystem
+    # (the player's), dropped when disabled unless AttackDisabled.
+    "player_subsystem": dict(ours="Galaxy", target="Galaxy", range=1e20,
+                             damage=True, player_subsystem=True,
+                             weapons=("GetTorpedoSystem", "GetPhaserSystem"),
+                             toggle={"bAttackDisabledSubsystems": (0, 1)}),
+    # SmartTorpSelection on a Sovereign (photon, quantum and an empty
+    # PhasedPlasma): 0, 1, 2 and 3 types with ammo.
+    "torp_choice": dict(ours="Sovereign", target="Galaxy", range=1e20,
+                        torp_avail=True, weapons=("GetTorpedoSystem",),
+                        kw={"SmartTorpSelection": 1}),
+    # ... with a torpedo script that fails to import: the bare except, its
+    # unbound pScript (first type) or the previous type's script.
+    "torp_bad_script": dict(ours="Sovereign", target="Galaxy", range=1e20,
+                            torp_avail=True, bad_script=True,
+                            weapons=("GetTorpedoSystem",),
+                            kw={"SmartTorpSelection": 1}),
+    # A pCodeAI.GetShip that is not the engine's (it moves the target).
+    "getship_moves": dict(ours="Galaxy", target="Galaxy", range=1e20,
+                          getship_moves=True,
+                          weapons=("GetTorpedoSystem", "GetPhaserSystem"),
+                          kw={"InaccurateTorps": 1}),
 }
 
 _STEPS = 60
@@ -601,6 +786,7 @@ def test_native_fire_update_matches_the_sdk_call_by_call(scene_name,
     dock_exception = 0
     too_dangerous = [0, 0]           # [held fire, fired anyway]
     facts = set()
+    rated = set()
     for step in range(_STEPS):
         a, b = _step_both(sdk, nat, seed * 1000 + step, monkeypatch)
         diff = _first_diff(a, b)
@@ -609,6 +795,26 @@ def test_native_fire_update_matches_the_sdk_call_by_call(scene_name,
         seen_calls.update(names)
         if a[0][0] == "raise":
             raised.add(a[0][1])
+        if "PhysicsObjectClass_Cast" in names and sdk.accel_mode:
+            facts.add("accel " + sdk.accel_mode)    # it reached the predict
+        keys = {k for k, _r in a[2].get("dTargetSubsystemRating", ())}
+        if rated - keys and "ChooseTargetSubsystem" in names:
+            facts.add("pruned")
+        rated = keys
+        if "GetTargetSubsystem" in names:
+            facts.add("player target kept" if a[2].get("idTargetedSubsystem")
+                      else "player target dropped"
+                      if sdk.ours.GetTargetSubsystem() is not None
+                      else "no player target")
+        if "ChooseTorpType" in names and sdk.n_avail is not None:
+            facts.add("torp types %d" % sdk.n_avail)
+            slots = sdk.avail_slots
+            if sdk.bad_slot[0] in slots and len(slots) >= 2:
+                # The failing type rated first (pScript unbound) or later
+                # (the previous type's script answers GetMaxAngularAccel).
+                facts.add("bad script %s %s" % (
+                    "first" if sdk.bad_slot[0] == slots[0] else "later",
+                    "raised" if a[0][0] == "raise" else "ok"))
         # The Dock Stage exception: IsFiring, GetMode == STAGE_2 and our
         # mode STAGE_1, so no SetMode follows.
         for i in range(len(names) - 1):
@@ -664,11 +870,35 @@ def test_native_fire_update_matches_the_sdk_call_by_call(scene_name,
         "dumb_fire_subsystem": {"FireDumb"},
         "using_empty": {"CallExternalFunction"},
         "stale_handle": {"CallExternalFunction"},
+        "choose_2": {"ChooseTargetSubsystem", "IsHittableFromLocation",
+                     "IsTypeOf"},
+        "choose_4": {"ChooseTargetSubsystem", "IsHittableFromLocation"},
+        "choose_5": {"GetRandomNumber", "IsHittableFromLocation"},
+        "choose_9": {"GetRandomNumber", "IsHittableFromLocation"},
+        "priority_children": {"GetChildTargets", "PickTargetSubsystemFromList",
+                              "GetConditionPercentage",
+                              "StartGetSubsystemMatch"},
+        "ignored": {"StartGetSubsystemMatch", "GetSubsystems",
+                    "RateSubsystemForTargeting"},
+        "player_subsystem": {"GetTargetSubsystem", "StartFiring"},
+        "torp_choice": {"ChooseTorpType", "SetAmmoType",
+                        "FuzzyLogic_BreakIntoSets", "GetMaxAngularAccel"},
+        "torp_bad_script": {"ChooseTorpType", "import_module"},
+        "getship_moves": {"StartFiring", "PhysicsObjectClass_Cast"},
     }[scene_name]
+    # More than iNumTargetSubsystemsToUpdate needing a rating, and only
+    # then, draws (the `<=` boundary is 4).
+    if scene_name in ("choose_2", "choose_4"):
+        assert "GetRandomNumber" not in seen_calls
     assert want <= seen_calls, (want - seen_calls, sorted(seen_calls))
     if scene_name == "tractor":
         assert dock_exception > 0, "the Dock Stage exception never ran"
     want_facts = {
+        "mixed": {"accel tuple", "accel none", "accel missing"},
+        "choose_9": {"pruned"},
+        "player_subsystem": {"player target kept", "player target dropped"},
+        "torp_choice": {"torp types 1", "torp types 2", "torp types 3"},
+        "torp_bad_script": {"bad script first raised", "bad script later ok"},
         "pulse_visibility": {"pulse cast failed"},
         "placement_target": {"aimed, no directions", "not physics"},
         "dumb_fire_subsystem": {"dumb fire at a subsystem"},
@@ -681,6 +911,8 @@ def test_native_fire_update_matches_the_sdk_call_by_call(scene_name,
         assert too_dangerous[0] > 0 and too_dangerous[1] > 0, too_dangerous
     if scene_name == "odd_values":
         assert "ZeroDivisionError" in raised, raised
+    if scene_name == "torp_bad_script":
+        assert "UnboundLocalError" in raised, raised
 
 
 def test_a_target_destroyed_by_the_volley_mid_update(monkeypatch):
@@ -802,9 +1034,36 @@ def _patch_sqrt(mp):
     mp.setattr(math, "sqrt", lambda x: x ** 0.5)
 
 
+def _patch_physics_cast(mp):
+    # PredictTargetLocation reads ahead of it: only the engine's pure cast.
+    real = App.PhysicsObjectClass_Cast
+    mp.setattr(App, "PhysicsObjectClass_Cast", lambda o: real(o))
+
+
+def _patch_module_float(mp):
+    mp.setattr(pp, "float", float, raising=False)
+
+
+def _patch_module_list(mp):
+    mp.setattr(pp, "list", list, raising=False)
+
+
+def _patch_child_int(mp):
+    # GetChildTargets' own module shadowing a builtin it calls.
+    mp.setattr(ai_optimized, "int", int, raising=False)
+
+
+def _patch_child_recursion(mp):
+    # The name GetChildTargets recurses through.
+    real = ai_optimized.GetChildTargets
+    mp.setattr(ai_optimized, "GetChildTargets",
+               lambda self, sub: real(self, sub))
+
+
 @pytest.mark.parametrize("patch", [
     _patch_point_subtract, _patch_matrix_transpose, _patch_objects_point,
-    _patch_module_len, _patch_sqrt])
+    _patch_module_len, _patch_sqrt, _patch_physics_cast, _patch_module_float,
+    _patch_module_list, _patch_child_int, _patch_child_recursion])
 def test_a_patched_engine_surface_runs_the_sdk_update(patch, monkeypatch):
     """What the native arithmetic reproduces -- the engine TGPoint3 /
     TGMatrix3 methods, the classes the mirrored bodies build, math.sqrt, the
@@ -892,3 +1151,104 @@ def test_the_firing_range_is_exact_at_its_last_bit(monkeypatch):
             got = _fire_slot_outcome(scene, monkeypatch, native)
             assert got[:1] == [want], (rng_.hex(), native, got)
     assert ai_native.stats()["fire"]["native"] == 2
+
+
+@pytest.mark.parametrize("how", ["replaced", "shadowed"])
+def test_a_replaced_or_shadowed_get_child_targets_runs_the_sdk_update(
+        how, monkeypatch):
+    """GetChildTargets is ours, not the SDK's, so preprocessor_is_stock cannot
+    vouch for it: the native Update runs it only when the type resolves the
+    name to ai_optimized's very function and the instance does not shadow
+    it. Otherwise the SDK's Update, which calls the replacement."""
+    opt = dict(ours="Akira", target="Galaxy", range=1e20,
+               weapons=("GetTorpedoSystem", "GetPhaserSystem"),
+               kw={"TargetSubsystems": [(App.CT_PHASER_SYSTEM, 1)]})
+    scene = _Scene("A", opt)
+    scene.perturb(random.Random(5))
+    scene.inst.Update(0.0)
+    assert ai_native.stats()["fire"]["native"] == 1
+    hits = []
+
+    def other(self, sub):
+        hits.append(sub)
+        return ai_optimized.GetChildTargets(self, sub)
+    with monkeypatch.context() as mp:
+        if how == "replaced":
+            mp.setattr(type(scene.inst), "GetChildTargets", other)
+            call = other
+        else:
+            def call(sub):
+                return other(scene.inst, sub)
+            mp.setitem(scene.inst.__dict__, "GetChildTargets", call)
+        for _ in range(4):                  # the -1 slot comes round
+            scene.inst.Update(0.0)
+        stats = ai_native.stats()["fire"]
+        assert stats["native"] == 1 and stats["reasons"] == {"not_stock": 4}, \
+            stats
+        assert hits, "the SDK Update never reached the replacement"
+    for _ in range(4):
+        scene.inst.Update(0.0)
+    assert ai_native.stats()["fire"]["native"] == 5
+
+
+def test_native_choices_are_counted():
+    """The native bodies count themselves: ChooseTargetSubsystem's and
+    ChooseTorpType's ran natively (the A/B asserts these)."""
+    opt = dict(_SCENES["torp_choice"])
+    opt["kw"] = dict(opt["kw"], ChooseSubsystemTargets=1)
+    scene = _Scene("A", opt)
+    for step in range(12):
+        scene.perturb(random.Random(step))
+        scene.inst.Update(0.0)
+    counts = ai_native.stats()["fire"]["counts"]
+    assert counts.get("subsystem_choice", 0) > 0, counts
+    assert counts.get("torp_choice", 0) > 0, counts
+    assert counts.get("torp_rated", 0) > 0, counts
+
+
+def test_the_engine_pcodeai_lets_predict_read_ahead():
+    """PredictTargetLocation's all-native path reads the target before
+    pCodeAI.GetShip(); it is taken only for the engine's pure GetShip
+    (ai_native's "GetShip" reader body). The node the engine binds a
+    FireScript to is one, so a real fight keeps the fast path; a shadowed
+    one is not (the getship_moves scene pins that its fallback is exact)."""
+    scene = _Scene("A", dict(ours="Galaxy", target="Galaxy", range=1e20,
+                             weapons=("GetPhaserSystem",)))
+    contract = ai_native.reader_contract("GetShip")
+    assert scene.inst.pCodeAI is scene.node
+    assert ai_native.object_reads_are_stock(scene.node, contract)
+    _put(scene.node, "GetShip", ret=lambda: scene.ours)
+    assert not ai_native.object_reads_are_stock(scene.node, contract)
+
+
+def test_the_unbound_pscript_error_chains_like_the_sdk(monkeypatch):
+    """ChooseTorpType's bare except, when the FIRST rated type's script
+    fails to import: `pScript.GetMaxAngularAccel()` names a local never
+    bound, raised while the import error is being handled -- so it chains to
+    it (__context__) -- and nothing stays handled afterwards. The same on
+    both paths."""
+    out = {}
+    for tag, native in (("A", False), ("B", True)):
+        scene = _Scene(tag, _SCENES["torp_bad_script"])
+        scene.perturb(random.Random(21))
+        for slot, ammo in enumerate(scene.ammo[:2]):
+            ammo.SetAvailable(ammo.GetMaxTorpedoes())
+        scene.bad_slot[0] = 0
+        inst = scene.inst
+        inst.bTargetVisible = 1
+        inst.iLastUpdate = 0                  # the torpedo system's slot
+        inst.idTargetedSubsystem = None
+        if native:
+            monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+        else:
+            monkeypatch.setenv("DAUNTLESS_NATIVE_AI", "0")
+        with pytest.raises(UnboundLocalError) as err:
+            inst.Update(0.0)
+        context = err.value.__context__
+        out[native] = (str(err.value), type(context).__name__, str(context),
+                       err.value.__cause__, err.value.__suppress_context__)
+        assert sys.exc_info() == (None, None, None)
+    monkeypatch.delenv("DAUNTLESS_NATIVE_AI", raising=False)
+    assert out[False] == out[True], out
+    assert out[True][1] == "ModuleNotFoundError", out
+    assert ai_native.stats()["fire"]["native"] == 1

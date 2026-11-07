@@ -1,6 +1,6 @@
 #pragma once
 
-// FireScript's arithmetic, native (phase 6 AI part 2, Task 4).
+// FireScript's arithmetic, native (phase 6 AI part 2, Tasks 4 and 5).
 //
 // The host's combat_ai_fire_update (native/src/host/host_bindings.cc, the
 // `fire` namespace) runs the SDK's FireScript.Update and everything it reaches
@@ -94,5 +94,63 @@ FireVec fire_to_local_unit(FireVec predicted, const FireVec& our_pos, const Fire
 int fire_good_shot_direction(const FireVec& predicted, const FireVec& our_pos,
                              const FireMat& our_rot, const FireVec* dirs, std::size_t n,
                              double threshold);
+
+// ── ChooseTargetSubsystem and ChooseTorpType (Task 5) ────────────────────────
+// The host (the `fire` namespace) makes every Python call of
+// ChooseTargetSubsystem, GetTargetableSubsystems, RateSubsystemForTargeting,
+// PickTargetSubsystemFromList and ChooseTorpType (AI/Preprocessors.py:533-640,
+// 789-1045) itself, in the SDK's order; when every value a sum reads is a
+// plain float (or a small int the SDK only multiplies by a float), the sum is
+// computed here. Anything else is Python's own arithmetic in the host.
+
+// RateSubsystemForTargeting after its reads:
+//   fDisabledCondition = GetDisabledPercentage() * fMaxCondition
+//   fDamageToDisable = fCondition - fDisabledCondition if fCondition > it, else 0.0
+//   fRating = 0.0 + fCritical*6.0 + fDamageToDisable*-0.0005
+//             + fIsDisabled*(-3.0*bDisableFirst) + fCondition*-0.0005
+//             + fHittable*1.0 + fSystemRating*1.0   (left to right)
+struct SubsystemRatingInputs {
+    double critical;             // float(pSubsystem.IsCritical())
+    double max_condition;        // GetMaxCondition()
+    double disabled_percentage;  // GetDisabledPercentage()
+    double condition;            // GetCondition()
+    double is_disabled;          // float(pSubsystem.IsDisabled())
+    double hittable;             // IsHittableFromLocation(ours)
+    double system_rating;        // fire_system_rating(first IsTypeOf hit)
+    double disable_first;        // self.bDisableFirst
+};
+double fire_subsystem_rating(const SubsystemRatingInputs& in);
+
+// RateSubsystemForTargeting's type table, in the SDK's order: CT_WEAPON_SYSTEM
+// 5.0, CT_WEAPON 5.0, CT_SHIELD_SUBSYSTEM 5.0, CT_CLOAKING_SUBSYSTEM 4.0,
+// CT_IMPULSE_ENGINE_SUBSYSTEM 3.0, CT_HULL_SUBSYSTEM -200.0. The rating of row
+// `first_match` (the first whose IsTypeOf is true), 0.0 for none (-1).
+constexpr int kFireSystemRatingRows = 6;
+double fire_system_rating(int first_match);
+
+// PickTargetSubsystemFromList's `fRating = 0.0 + fIsTargetRating*1.0 +
+// fHealthyRating*-1.0 + fDisabledRating*-1.0`.
+double fire_pick_rating(double is_target, double healthy, double disabled);
+
+// `a > b` (fScore > fBestScore, fRating > fHighestRating, fRating >
+// fTargetRating).
+bool fire_greater(double a, double b);
+
+// ChooseTorpType's per-type ideals (fIdealDistMin, fIdealDistMax,
+// fIdealTargetSpeedMin, fIdealTargetSpeedMax) and fRating = damage - cost.
+struct TorpIdeals {
+    double dist_min, dist_max, speed_min, speed_max, rating;
+};
+TorpIdeals fire_torp_ideals(double launch_speed, double power_cost, double damage,
+                            double guidance_lifetime, double turn_rate);
+
+// The last FuzzyLogic threshold ChooseTorpType passes: `(fMax - fMin) * 1.5`
+// when fMin > 0, else `fMax * 1.5`.
+double fire_torp_far(double min, double max);
+
+// `fScore = (0.25 * (fRating * (fLowIdeal + fHighIdeal))) + (fRating *
+// (fLowIdeal' + fHighIdeal'))`: the distance memberships, then the speed ones.
+double fire_torp_score(double rating, double dist_low, double dist_high, double speed_low,
+                       double speed_high);
 
 }  // namespace dauntless::combat

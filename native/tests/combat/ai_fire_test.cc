@@ -219,3 +219,84 @@ TEST(AiFire, CheckGoodShotDotThreshold) {
                                            std::numeric_limits<double>::quiet_NaN()),
               -1);
 }
+
+// ── Task 5: ChooseTargetSubsystem's and ChooseTorpType's arithmetic ─────────
+// Expected values: the SDK statements (AI/Preprocessors.py:533-640, 959-1045)
+// run in Python on the same inputs, printed as float.hex().
+
+TEST(AiFire, SubsystemRatingMatchesTheSdk) {
+    // A critical weapon system above its disabled line, DisableBeforeDestroy.
+    cb::SubsystemRatingInputs a{1.0, 4000.0, 0.25, 2345.6789, 0.0, 1.0, 5.0, 1.0};
+    EXPECT_EQ(cb::fire_subsystem_rating(a), 0x1.44f032cdb2a5ep+3);
+    // The hull, disabled (condition under the line: no damage to disable).
+    cb::SubsystemRatingInputs b{0.0, 1200.0, 0.5, 300.125, 1.0, 1.0, -200.0, 0.0};
+    EXPECT_EQ(cb::fire_subsystem_rating(b), -0x1.8e4cd4fdf3b64p+7);
+    // Partly hittable impulse engines, disabled, DisableBeforeDestroy.
+    cb::SubsystemRatingInputs c{0.0, 900.0, 0.3, 0.1, 1.0, 0.7, 3.0, 1.0};
+    EXPECT_EQ(cb::fire_subsystem_rating(c), 0x1.665fd8adab9f8p-1);
+    // A NaN condition: `fCondition > fDisabledCondition` is false, the sum NaN.
+    cb::SubsystemRatingInputs d = a;
+    d.condition = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_TRUE(std::isnan(cb::fire_subsystem_rating(d)));
+}
+
+TEST(AiFire, SystemRatingTableIsTheSdkOrder) {
+    // CT_WEAPON_SYSTEM, CT_WEAPON, CT_SHIELD_SUBSYSTEM, CT_CLOAKING_SUBSYSTEM,
+    // CT_IMPULSE_ENGINE_SUBSYSTEM, CT_HULL_SUBSYSTEM; no match: 0.0.
+    ASSERT_EQ(cb::kFireSystemRatingRows, 6);
+    const double want[] = {5.0, 5.0, 5.0, 4.0, 3.0, -200.0};
+    for (int i = 0; i < 6; ++i) EXPECT_EQ(cb::fire_system_rating(i), want[i]) << i;
+    EXPECT_EQ(cb::fire_system_rating(-1), 0.0);
+}
+
+TEST(AiFire, PickRatingMatchesTheSdk) {
+    EXPECT_EQ(cb::fire_pick_rating(1.0, 0.7312345, 0.0), 0x1.133743632c1f4p-2);
+    EXPECT_EQ(cb::fire_pick_rating(0.0, 0.1, 1.0), -0x1.199999999999ap+0);
+    EXPECT_EQ(cb::fire_pick_rating(0.0, 1.0, 0.0), -0x1.0000000000000p+0);
+    // `0.0 + 0.0 * 1.0 + 0.0 * -1.0 + 0.0 * -1.0` keeps the SDK's signed zero.
+    EXPECT_FALSE(std::signbit(cb::fire_pick_rating(0.0, 0.0, 0.0)));
+}
+
+TEST(AiFire, GreaterIsStrict) {
+    EXPECT_FALSE(cb::fire_greater(1.5, 1.5));
+    EXPECT_TRUE(cb::fire_greater(std::nextafter(1.5, 2.0), 1.5));
+    EXPECT_TRUE(cb::fire_greater(-1.0e19, -1.0e20));
+    EXPECT_FALSE(cb::fire_greater(std::numeric_limits<double>::quiet_NaN(), -1.0e20));
+    EXPECT_FALSE(cb::fire_greater(-1.0e20, std::numeric_limits<double>::quiet_NaN()));
+}
+
+TEST(AiFire, TorpIdealsMatchTheSdk) {
+    // Guided and moving: (launch, cost, damage, lifetime, turn).
+    cb::TorpIdeals g = cb::fire_torp_ideals(19.0, 20.0, 500.0, 6.0, 0.15);
+    EXPECT_EQ(g.dist_min, 0.0);
+    EXPECT_EQ(g.dist_max, 0x1.c800000000000p+6);
+    EXPECT_EQ(g.speed_min, 0.0);
+    EXPECT_EQ(g.speed_max, 0x1.399999999999ap+4);
+    EXPECT_EQ(g.rating, 0x1.e000000000000p+8);
+    // Unguided and still: no ideal distance or speed at all.
+    cb::TorpIdeals s = cb::fire_torp_ideals(0.0, 40.0, 1200.5, 0.0, 0.3);
+    EXPECT_EQ(s.dist_max, 0.0);
+    EXPECT_EQ(s.speed_max, 0.0);
+    EXPECT_EQ(s.rating, 0x1.2220000000000p+10);
+    // Unguided but moving: a speed ideal only.
+    cb::TorpIdeals m = cb::fire_torp_ideals(12.5, 30.0, 875.0, 0.0, 0.25);
+    EXPECT_EQ(m.dist_max, 0.0);
+    EXPECT_EQ(m.speed_max, 0x1.b000000000000p+3);
+    EXPECT_EQ(m.rating, 0x1.a680000000000p+9);
+    // NaN lifetime: neither `> 0` holds, so only the launch speed decides.
+    cb::TorpIdeals n =
+        cb::fire_torp_ideals(0.0, 1.0, 2.0, std::numeric_limits<double>::quiet_NaN(), 1.0);
+    EXPECT_EQ(n.dist_max, 0.0);
+    EXPECT_EQ(n.speed_max, 0.0);
+}
+
+TEST(AiFire, TorpScoreAndBandsMatchTheSdk) {
+    EXPECT_EQ(cb::fire_torp_score(480.0, 0.3333333333333333, 0.6666666666666667, 0.123, 0.0),
+              0x1.66147ae147ae1p+7);
+    EXPECT_EQ(cb::fire_torp_score(845.0, 0.0, 0.41, 0.77, 0.23), 0x1.d1ce666666666p+9);
+    // The last FuzzyLogic threshold: `fMax * 1.5`, or `(fMax - fMin) * 1.5`
+    // when fMin > 0.
+    EXPECT_EQ(cb::fire_torp_far(0.0, 114.0), 0x1.5600000000000p+7);
+    EXPECT_EQ(cb::fire_torp_far(-0.0, 114.0), 0x1.5600000000000p+7);
+    EXPECT_EQ(cb::fire_torp_far(3.3, 114.0), 0x1.4c1999999999ap+7);
+}
