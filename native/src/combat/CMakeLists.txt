@@ -38,6 +38,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/set_index.cc
     src/ai_avoid.cc
     src/ai_rating.cc
+    src/ai_fire.cc
 )
 
 add_library(dauntless_combat STATIC ${DAUNTLESS_COMBAT_SOURCES})

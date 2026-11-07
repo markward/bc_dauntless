@@ -1,0 +1,90 @@
+#pragma once
+
+// FireScript's arithmetic, native (phase 6 AI part 2, Task 4).
+//
+// The host's combat_ai_fire_update (native/src/host/host_bindings.cc, the
+// `fire` namespace) runs the SDK's FireScript.Update and everything it reaches
+// (AI/Preprocessors.py:281-787) statement for statement for a stock instance
+// (engine/appc/ai_native.py): every side effect and every read it cannot
+// mirror is the very Python call the SDK makes, in the SDK's order. What it
+// does natively is the vector arithmetic of TargetInRange, CheckGoodShot and
+// PredictTargetLocation, on values read where an engine body is mirrored
+// exactly (the transform store, `_velocity`, `_position`, ...), and the
+// iLastUpdate cycle. All of that arithmetic is here, so the host never
+// computes a float itself (-ffp-contract=off applies to this library; the
+// host's translation unit is not built with it).
+//
+// Each function is one engine body, bit for bit, in its operand order:
+//   TGPoint3.Subtract / Add          x -= o.x ...  /  x += o.x ...
+//   TGPoint3.SqrLength / Dot         x*x + y*y + z*z  /  x*o.x + y*o.y + z*o.z
+//   TGPoint3.Unitize                 n = sqrt(SqrLength); if n > 1e-12: x /= n ...
+//   TGPoint3.MultMatrixLeft(m)       x' = m00*x + m01*y + m02*z ... (column vector)
+//   TGMatrix3.Transpose
+//   ShipClass.GetPredictedPosition   t2 = 0.5*t*t; p.x + v.x*t + a.x*t2 ...
+
+#include <cstddef>
+
+namespace dauntless::combat {
+
+struct FireVec {
+    double x, y, z;
+};
+
+// TGMatrix3's nine entries, row-major (m00 m01 m02 m10 ... m22), as
+// TGMatrix3.as_tuple() and the transform store's get_rotation order them.
+struct FireMat {
+    double m[9];
+};
+
+// FireScript.Update's `((self.iLastUpdate + 3) % (len(self.lWeapons) + 2)) - 2`
+// with Python's floor modulo. The caller keeps |last| well inside long long
+// and n_weapons >= 0.
+long long fire_cycle(long long last, long long n_weapons);
+
+void fire_subtract(FireVec& self, const FireVec& other);
+void fire_add(FireVec& self, const FireVec& other);
+double fire_sqr_length(const FireVec& v);
+double fire_dot(const FireVec& a, const FireVec& b);
+double fire_unitize(FireVec& v);
+void fire_mult_matrix_left(FireVec& v, const FireMat& m);
+FireMat fire_transpose(const FireMat& m);
+FireVec fire_predicted_position(const FireVec& p, const FireVec& v, const FireVec& a, double t);
+// `a * b`, `a / b` and `a <= b * b` for the host, which must not do float
+// arithmetic itself (see above).
+double fire_mul(double a, double b);
+double fire_div(double a, double b);
+
+// TargetInRange after its reads: `vDiff.SqrLength() <= (fMaxFiringRange *
+// fMaxFiringRange)` with vDiff = target - ship.
+bool fire_in_range(const FireVec& target, const FireVec& ship, double max_range);
+
+// PredictTargetLocation when every read is native and fSpeed is a float.
+struct PredictInputs {
+    FireVec target_pos;     // pTarget.GetWorldLocation() (each of its three calls)
+    FireVec our_pos;        // pOurShip.GetWorldLocation()
+    double speed;           // fSpeed
+    bool physics;           // App.PhysicsObjectClass_Cast(pTarget) != None
+    FireVec velocity;       // pPhysicsTarget.GetVelocityTG()
+    FireVec acceleration;   // pPhysicsTarget.GetAccelerationTG()
+    bool subsystem;         // `if pSubsystem:`
+    FireVec subsystem_pos;  // pSubsystem.GetPositionTG()
+    FireMat target_rot;     // pTarget.GetWorldRotation()
+};
+
+// The SDK's vPredicted; false where `fDistance / fSpeed` raises
+// ZeroDivisionError (fSpeed zero).
+bool fire_predict_target_location(const PredictInputs& in, FireVec& out);
+
+// CheckGoodShot's `vTargetLocation.Subtract(ours);
+// vTargetLocation.MultMatrixLeft(ourRotation.Transpose());
+// vTargetLocation.Unitize()`.
+FireVec fire_to_local_unit(FireVec predicted, const FireVec& our_pos, const FireMat& our_rot);
+
+// CheckGoodShot's direction loop on the predicted point: the index of the
+// first direction with `vTargetLocation.Dot(vDirection) >= threshold`, -1 if
+// none (the SDK's `return 0`).
+int fire_good_shot_direction(const FireVec& predicted, const FireVec& our_pos,
+                             const FireMat& our_rot, const FireVec* dirs, std::size_t n,
+                             double threshold);
+
+}  // namespace dauntless::combat

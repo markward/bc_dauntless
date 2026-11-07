@@ -25,6 +25,7 @@ add_executable(combat_tests
     set_index_test.cc
     ai_avoid_test.cc
     ai_rating_test.cc
+    ai_fire_test.cc
 )
 target_link_libraries(combat_tests
     PRIVATE

@@ -271,8 +271,16 @@ def _take_reader_bodies() -> dict:
     from engine.appc.objects import ObjectClass, PhysicsObjectClass
     from engine.appc.sets import SetClass
     from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import ShipSubsystem
     from engine.core.ids import TGObject
     return {
+        # FireScript (Task 4): the store rotation, `__dict__["_acceleration"]`,
+        # the kinematic forecast, a subsystem's `_position` / `_direction`.
+        "GetWorldRotation": ObjectClass.__dict__["GetWorldRotation"],
+        "GetAccelerationTG": PhysicsObjectClass.__dict__["GetAccelerationTG"],
+        "GetPredictedPosition": ShipClass.__dict__["GetPredictedPosition"],
+        "GetPositionTG": ShipSubsystem.__dict__["GetPositionTG"],
+        "GetDirection": ShipSubsystem.__dict__["GetDirection"],
         "GetObjID": TGObject.__dict__["GetObjID"],             # `_obj_id`
         # An isinstance on the type: its answer depends on the type alone.
         "IsTypeOf": ObjectClass.__dict__["IsTypeOf"],

@@ -548,6 +548,153 @@ def _replace_manage_power(instance):
     return ManagePower(params.get("bConservePower", 0))
 
 
+# ── FireScript: the firing cycle, native for a stock instance ────────────
+#
+# Phase 6 AI part 2, Task 4. FireScript was 11.1% of AI time at 128 ships
+# (SIG-205). Its Update -- and every FireScript method it reaches -- runs as
+# one ``combat_ai_fire_update`` call (native/src/host/host_bindings.cc, the
+# ``fire`` namespace; the arithmetic in native/src/combat/include/dauntless/
+# combat/ai_fire.h), statement for statement: every call the SDK makes, its
+# side effects above all, is the same Python call in the same order, and the
+# instance's attributes are read and written where the SDK reads and writes
+# them. Only the mirrored engine reads (positions, rotations, velocities,
+# subsystem positions, tube directions) and the vector arithmetic on them are
+# native. TargetVisible (the sensor gate's), StopFiring, ChooseTargetSubsystem
+# and ChooseTorpType are called back as methods. The PS_DONE -> PS_NORMAL
+# mapping (_non_lethal_class) stays around it.
+
+#: Every FireScript method the native Update replaces, calls or will replace
+#: (Task 5: ChooseTargetSubsystem and the helpers it reaches, ChooseTorpType).
+#: A mod overriding any of them runs the SDK Update.
+_FIRE_METHODS = (
+    "Update", "GetTarget", "TargetInRange", "TargetVisible", "StopFiring",
+    "ChooseTargetSubsystem", "GetTargetableSubsystems",
+    "RateSubsystemForTargeting", "PickTargetSubsystemFromList",
+    "FireSystemAtTarget", "ConfigureWeaponSystem", "WeaponTooDangerous",
+    "ChooseTorpType", "CheckGoodShot", "GetWeaponInfo",
+    "PredictTargetLocation",
+)
+
+#: The builtins the SDK bodies call (len, range, and the loader's __import__
+#: lambda's isinstance / str): the native code uses CPython's own.
+_FIRE_BUILTINS = ("len", "range", "isinstance", "str")
+
+
+def _fire_surface_snapshot():
+    import builtins
+    import operator
+    from engine.appc import math as _engine_math
+    from engine.appc import objects as _objects
+    from engine.appc import ships as _ships
+    from engine.appc import subsystems as _subsystems
+    from engine.appc import transform_store as _ts
+    from engine.appc.math import TGMatrix3, TGPoint3
+    point_names = ("__init__", "Set", "SetXYZ", "Subtract", "Length",
+                   "SqrLength", "Dot", "Add", "Unitize", "MultMatrixLeft")
+    matrix_names = ("__init__", "Transpose", "set_from_tuple")
+    # (namespace, keys): each key must still hold exactly what it held at
+    # import. The modules whose bodies the readers mirror build the engine
+    # TGPoint3 / TGMatrix3, whose methods (and math.sqrt behind Length) the
+    # arithmetic reproduces.
+    tables = (
+        (_engine_math.__dict__, ("TGPoint3", "TGMatrix3", "_math")),
+        (math.__dict__, ("sqrt",)),
+        (_objects.__dict__, ("TGPoint3", "TGMatrix3")),
+        (_ships.__dict__, ("TGPoint3",)),
+        (_subsystems.__dict__, ("TGPoint3",)),
+        (TGPoint3.__dict__, point_names),
+        (TGMatrix3.__dict__, matrix_names),
+    )
+    # Flat, so one C-level pass checks them all (_fire_surface_is_stock):
+    # each table's own live `get` (a class's is its mappingproxy's), its key,
+    # and what that key held.
+    gets = tuple(d.get for d, keys in tables for _k in keys)
+    keys = tuple(k for _d, ks in tables for k in ks)
+    return {
+        "gets": gets,
+        "keys": keys,
+        "values": tuple(map(operator.call, gets, keys)),
+        "call": operator.call,
+        "builtin_names": _FIRE_BUILTINS,
+        "builtins": tuple(getattr(builtins, n) for n in _FIRE_BUILTINS),
+        "is_": operator.is_,
+        "get_rotation": _ts.NativeTransformStore.get_rotation,
+    }
+
+
+#: What FireScript's native arithmetic rests on, taken at import (as
+#: _AVOID_SURFACE): a later replacement is not stock.
+_FIRE_SURFACE = _fire_surface_snapshot()
+
+
+def _fire_surface_is_stock(base) -> bool:
+    """The SDK FireScript (`base`) still runs on the engine's App, on the
+    engine TGPoint3 / TGMatrix3 its mirrored readers build (methods
+    unpatched, math.sqrt behind Length) and on CPython's builtins (len,
+    range, and the loader's __import__ lambda's isinstance / str)."""
+    fn = ai_native._unwrap(getattr(base, "Update", None))
+    if fn is None:
+        return False
+    g = fn.__globals__
+    if g.get("App") is not App or not g.keys().isdisjoint(_FIRE_BUILTINS):
+        return False
+    snap = _FIRE_SURFACE
+    is_ = snap["is_"]
+    b = g.get("__builtins__")
+    table = b if isinstance(b, dict) else getattr(b, "__dict__", None)
+    if table is None:
+        return False
+    # Identity, never ==; a deleted name reads None, which nothing was.
+    get = table.get
+    return (all(map(is_, map(get, snap["builtin_names"]), snap["builtins"]))
+            and all(map(is_, map(snap["call"], snap["gets"], snap["keys"]),
+                        snap["values"])))
+
+
+def _fire_store_ok() -> bool:
+    """GetWorldLocation and GetWorldRotation read the native store the
+    binding reads (_native_store_ok, plus its rotation)."""
+    from engine.appc import transform_store as _ts
+    return (_native_store_ok()
+            and _ts.NativeTransformStore.get_rotation
+            is _FIRE_SURFACE["get_rotation"])
+
+
+def _fire_update(self, base, args, kwargs):
+    """FireScript.Update, native for a stock instance; otherwise the SDK's,
+    resolved at call time so a patch is seen. A call shape other than the
+    SDK's (self, dEndTime) runs the SDK's too, which raises its own
+    TypeError."""
+    if not ai_native.enabled("fire"):
+        ai_native.note("fire", "python", "switch")
+        return base.Update(self, *args, **kwargs)
+    if len(args) == 1 and not kwargs:
+        end_time = args[0]
+    elif not args and len(kwargs) == 1 and "dEndTime" in kwargs:
+        end_time = kwargs["dEndTime"]
+    else:
+        ai_native.note("fire", "python", "no_mirror")
+        return base.Update(self, *args, **kwargs)
+    if not (ai_native.preprocessor_is_stock(self, "FireScript", _FIRE_METHODS)
+            and _fire_surface_is_stock(base)):
+        ai_native.note("fire", "python", "not_stock")
+        return base.Update(self, *args, **kwargs)
+    if not _fire_store_ok():
+        ai_native.note("fire", "python", "no_mirror")
+        return base.Update(self, *args, **kwargs)
+    ai_native.note("fire", "native")
+    fire = _FIRE_BINDING[0]
+    if fire is None:
+        import _dauntless_host
+        fire = _FIRE_BINDING[0] = _dauntless_host.combat_ai_fire_update
+    return fire(self, end_time)
+
+
+#: _dauntless_host.combat_ai_fire_update, looked up on the first native call
+#: (the host module is not importable when this module is).
+_FIRE_BINDING = [None]
+
+
 _NON_LETHAL_CLASSES: dict = {}
 
 
@@ -565,12 +712,19 @@ def _non_lethal_class(base: type) -> type:
     if cached is not None:
         return cached
 
+    # FireScript's Update is native for a stock instance (_fire_update); every
+    # other class runs the SDK's.
+    run_update = _fire_update if base.__name__ == "FireScript" else None
+
     # functools.wraps, so the driver's inspect.signature() arity probe
     # (ai_driver._tick_preprocessing) still sees the SDK's (self, dEndTime) and
     # passes the end time through.
     @functools.wraps(base.Update)
     def Update(self, *args, **kwargs):
-        result = base.Update(self, *args, **kwargs)
+        if run_update is not None:
+            result = run_update(self, base, args, kwargs)
+        else:
+            result = base.Update(self, *args, **kwargs)
         if result == App.PreprocessingAI.PS_DONE:
             # *** THE DIVERGENCE. *** The shipped engine never ran this Python
             # body — it ran a native class whose no-target/no-ship return value
@@ -611,6 +765,9 @@ def _non_lethal_class(base: type) -> type:
             else:
                 out.extend(GetChildTargets(self, child))
         return out
+
+    if run_update is not None:
+        Update._dauntless_native_entry = True
 
     members = {
         "Update": Update,
@@ -818,7 +975,8 @@ def _wrap_select_target(instance):
 # of object each one yields.
 OPTIMIZED_PREPROCESSORS: dict = {
     "ManagePower": _replace_manage_power,     # real replacement (SDK body is a stub)
-    "FireScript": _wrap_non_lethal,           # SDK body, PS_DONE de-fanged
+    # PS_DONE de-fanged; the Update native for a stock instance (_fire_update).
+    "FireScript": _wrap_non_lethal,
     # SDK scan, PS_DONE de-fanged, plus the phase offset and evading cadence.
     # This entry has always done TWO jobs and only one of them was the problem:
     # the engine scan (removed below, opt-in) and protection against

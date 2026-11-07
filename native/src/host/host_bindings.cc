@@ -25,6 +25,7 @@
 #include "dauntless/torpedo_scan.h"
 #include "dauntless/combat/ai_avoid.h"
 #include "dauntless/combat/ai_rating.h"
+#include "dauntless/combat/ai_fire.h"
 #include "dauntless/combat/beam_feed.h"
 #include "dauntless/combat/torpedo_feed.h"
 #include "dauntless/combat/beam_geometry.h"
@@ -6450,6 +6451,1050 @@ py::object rate(PyObject* inst, PyObject* target) {
 }  // namespace rating
 }  // namespace
 
+// ── FireScript's Update (engine/appc/ai_optimized.py) ───────────────────────
+// combat_ai_fire_update is the SDK's FireScript.Update (AI/Preprocessors.py:
+// 281-342) and every FireScript method it reaches -- GetTarget, TargetInRange,
+// FireSystemAtTarget, ConfigureWeaponSystem, WeaponTooDangerous, CheckGoodShot,
+// GetWeaponInfo, PredictTargetLocation (:344-787) -- for a stock instance (the
+// caller decided that: ai_native.preprocessor_is_stock over every method the
+// Update reaches, and the module surface). It is those bodies statement for
+// statement, as the SDK loader compiled them (WeaponTooDangerous' __import__
+// is the loader's `_sdk_importlib.import_module` lambda):
+//   * every call the SDK makes is made here, in its order, through the same
+//     attribute lookup -- side effects (StartFiring, StopFiringAtTarget,
+//     FireDumb, SetPowerLevel, SetMode, SetAmmoType via ChooseTorpType,
+//     CallExternalFunction("UsingWeaponType")), the FireScript methods this
+//     task leaves Python (TargetVisible -- the sensor gate replaces it --
+//     StopFiring, ChooseTargetSubsystem, ChooseTorpType), the App casts and
+//     lookups, the torpedo scripts, and every read below that is not mirrored;
+//   * every attribute of the instance is read and written where the SDK
+//     reads and writes it (iLastUpdate, bTargetVisible, lWeapons, ...), so the
+//     driver, the inspector and a mission see exactly what they saw;
+//   * natively: the reads whose engine body is mirrored exactly, for an
+//     object whose type resolves that name to exactly that body and whose
+//     own dict does not shadow it (ai_native.reader_contract; rating::
+//     reads_stock) -- GetWorldLocation and GetWorldRotation (the transform
+//     store), GetVelocityTG (`_velocity`), GetAccelerationTG
+//     (`__dict__["_acceleration"]`), GetPredictedPosition (ShipClass's
+//     kinematic forecast), a subsystem's GetPositionTG (`_position`) and a
+//     tube's GetDirection (`_direction`) -- and the TGPoint3 / TGMatrix3
+//     arithmetic on them (dauntless/combat/ai_fire.h, where every float
+//     operation is, -ffp-contract=off). Anything else is the Python call,
+//     counted ai_native.note_object_fallback("fire", "surface") when it was
+//     a contract that failed.
+// Values: a vector or matrix is native (doubles) or the very Python object a
+// Python call returned. A Python object stays one -- the SDK mutates these in
+// place (vDiff.Subtract, MultMatrixLeft, Set), and an object a non-engine
+// reader returns may be its own state -- and every op on it is its own
+// method, looked up before the op's argument is evaluated, as Python does. A
+// native value meeting an operand of any other shape becomes a fresh engine
+// TGPoint3 / TGMatrix3 (what the mirrored engine body would have returned)
+// and the op is the Python method. A scalar is a double only while it is a
+// plain float; otherwise Python's own operator (PyNumber_*, RichCompare)
+// computes it, so an int, a NaN or a zero divisor behave and raise as they do
+// in the SDK.
+// Exceptions propagate unchanged (the SDK's own). Every object is owned
+// (py::object): a callback may remove the target from its set, empty
+// lWeapons or swap the AI, and nothing borrowed is held across one; the next
+// line reads what the SDK's next line reads.
+namespace {
+namespace fire {
+
+namespace cb = dauntless::combat;
+using avoid::intern;
+using avoid::own;
+using avoid::truth;
+
+struct Host {
+    PyObject *s_pCodeAI, *s_GetShip, *s_GetContainingSet, *s_ObjectClass_GetObject, *s_sTarget;
+    PyObject *s_PreprocessingAI, *s_PS_DONE, *s_PS_NORMAL;
+    PyObject *s_bCallUsingWeaponTypeFunc, *s_GetAllAIsInTree, *s_CallExternalFunction;
+    PyObject *s_UsingWeaponType, *s_lWeapons, *s_bEnabled, *s_bTargetVisible, *s_iLastUpdate;
+    PyObject *s_TargetVisible, *s_StopFiring, *s_TGProfilingInfo_StartTiming;
+    PyObject *s_TGProfilingInfo_StopTiming, *s_timing_label, *s_ChooseTargetSubsystem;
+    PyObject *s_idTargetedSubsystem, *s_ShipSubsystem_Cast, *s_TGObject_GetTGObjectPtr;
+    PyObject *s_bAttackIfNoSubsystemsLeft, *s_fMaxFiringRange;
+    PyObject *s_GetWorldLocation, *s_GetWorldRotation, *s_GetVelocityTG, *s_GetAccelerationTG;
+    PyObject *s_GetPredictedPosition, *s_GetPositionTG, *s_GetDirection;
+    PyObject *s_Subtract, *s_Add, *s_Set, *s_SetXYZ, *s_SqrLength, *s_Unitize, *s_Dot;
+    PyObject *s_MultMatrixLeft, *s_Transpose, *s_set_from_tuple;
+    PyObject *s_x, *s_y, *s_z, *s_m[9], *s_dict, *s_acceleration, *s_position, *s_direction;
+    PyObject *s_TGPoint3, *s_TorpedoSystem_Cast, *s_TractorBeamSystem_Cast, *s_PhaserSystem_Cast;
+    PyObject *s_PulseWeaponSystem_Cast, *s_TorpedoTube_Cast, *s_PulseWeapon_Cast;
+    PyObject *s_PhysicsObjectClass_Cast, *s_ShipClass_Cast;
+    PyObject *s_bDumbFireTorps, *s_GetNumChildSubsystems, *s_GetChildSubsystem;
+    PyObject *s_CalculateRoughDirection, *s_FireDumb, *s_StartFiring, *s_StopFiringAtTarget;
+    PyObject *s_eTractorBeamMode, *s_GetMode, *s_IsFiring, *s_SetMode, *s_TractorBeamSystem;
+    PyObject *s_TBS_DOCK_STAGE_1, *s_TBS_DOCK_STAGE_2, *s_bHighPower, *s_SetPowerLevel;
+    PyObject *s_PhaserSystem, *s_PP_LOW, *s_PP_HIGH, *s_bChooseTorpsWisely;
+    PyObject *s_GetImpulseEngineSubsystem, *s_GetCurMaxSpeed, *s_ChooseTorpType;
+    PyObject *s_bAttackDisabledSubsystems, *s_GetObjID, *s_GetClassObjectList, *s_CT_TORPEDO;
+    PyObject *s_GetTargetID, *s_GetDamage, *s_GetCurrentAmmoType, *s_GetTorpedoScript;
+    PyObject *s_sdk_importlib, *s_import_module, *s_GetCondition, *s_GetMaxCondition;
+    PyObject *s_GetDisabledPercentage, *s_ShouldBeAimed, *s_GetLaunchSpeed, *s_GetProperty;
+    PyObject *s_GetOrientationForward, *s_fFireDotThreshold, *s_App, *s_builtins, *s_range;
+    PyObject* sdk_module;  // "AI.Preprocessors"
+    PyObject* one_on;      // slice(1, None, None): `[1:]`
+    // ai_native.reader_contract(name): one mirrored body each.
+    PyObject *reads_loc, *reads_rot, *reads_vel, *reads_acc, *reads_predict, *reads_position,
+        *reads_direction;
+    PyObject *point_cls, *matrix_cls;  // engine.appc.math's, as the mirrored bodies build
+    PyObject* note_args;               // ("fire", "surface")
+};
+
+Host& host() {
+    static Host* h = [] {
+        auto& a = avoid::host();
+        auto* p = new Host();
+        p->s_pCodeAI = intern("pCodeAI");
+        p->s_GetShip = intern("GetShip");
+        p->s_GetContainingSet = intern("GetContainingSet");
+        p->s_ObjectClass_GetObject = intern("ObjectClass_GetObject");
+        p->s_sTarget = intern("sTarget");
+        p->s_PreprocessingAI = intern("PreprocessingAI");
+        p->s_PS_DONE = intern("PS_DONE");
+        p->s_PS_NORMAL = intern("PS_NORMAL");
+        p->s_bCallUsingWeaponTypeFunc = intern("bCallUsingWeaponTypeFunc");
+        p->s_GetAllAIsInTree = intern("GetAllAIsInTree");
+        p->s_CallExternalFunction = intern("CallExternalFunction");
+        p->s_UsingWeaponType = intern("UsingWeaponType");
+        p->s_lWeapons = intern("lWeapons");
+        p->s_bEnabled = intern("bEnabled");
+        p->s_bTargetVisible = intern("bTargetVisible");
+        p->s_iLastUpdate = intern("iLastUpdate");
+        p->s_TargetVisible = intern("TargetVisible");
+        p->s_StopFiring = intern("StopFiring");
+        p->s_TGProfilingInfo_StartTiming = intern("TGProfilingInfo_StartTiming");
+        p->s_TGProfilingInfo_StopTiming = intern("TGProfilingInfo_StopTiming");
+        p->s_timing_label = intern("FireScript Update->ChooseTargetSubsystem");
+        p->s_ChooseTargetSubsystem = intern("ChooseTargetSubsystem");
+        p->s_idTargetedSubsystem = intern("idTargetedSubsystem");
+        p->s_ShipSubsystem_Cast = intern("ShipSubsystem_Cast");
+        p->s_TGObject_GetTGObjectPtr = intern("TGObject_GetTGObjectPtr");
+        p->s_bAttackIfNoSubsystemsLeft = intern("bAttackIfNoSubsystemsLeft");
+        p->s_fMaxFiringRange = intern("fMaxFiringRange");
+        p->s_GetWorldLocation = a.s_GetWorldLocation;
+        p->s_GetWorldRotation = intern("GetWorldRotation");
+        p->s_GetVelocityTG = a.s_GetVelocityTG;
+        p->s_GetAccelerationTG = intern("GetAccelerationTG");
+        p->s_GetPredictedPosition = intern("GetPredictedPosition");
+        p->s_GetPositionTG = intern("GetPositionTG");
+        p->s_GetDirection = intern("GetDirection");
+        p->s_Subtract = intern("Subtract");
+        p->s_Add = intern("Add");
+        p->s_Set = intern("Set");
+        p->s_SetXYZ = intern("SetXYZ");
+        p->s_SqrLength = intern("SqrLength");
+        p->s_Unitize = intern("Unitize");
+        p->s_Dot = intern("Dot");
+        p->s_MultMatrixLeft = intern("MultMatrixLeft");
+        p->s_Transpose = intern("Transpose");
+        p->s_set_from_tuple = intern("set_from_tuple");
+        p->s_x = a.s_x;
+        p->s_y = a.s_y;
+        p->s_z = a.s_z;
+        const char* m[9] = {"m00", "m01", "m02", "m10", "m11", "m12", "m20", "m21", "m22"};
+        for (int i = 0; i < 9; ++i) p->s_m[i] = intern(m[i]);
+        p->s_dict = a.s_dict;
+        p->s_acceleration = intern("_acceleration");
+        p->s_position = intern("_position");
+        p->s_direction = intern("_direction");
+        p->s_TGPoint3 = intern("TGPoint3");
+        p->s_TorpedoSystem_Cast = intern("TorpedoSystem_Cast");
+        p->s_TractorBeamSystem_Cast = intern("TractorBeamSystem_Cast");
+        p->s_PhaserSystem_Cast = intern("PhaserSystem_Cast");
+        p->s_PulseWeaponSystem_Cast = intern("PulseWeaponSystem_Cast");
+        p->s_TorpedoTube_Cast = intern("TorpedoTube_Cast");
+        p->s_PulseWeapon_Cast = intern("PulseWeapon_Cast");
+        p->s_PhysicsObjectClass_Cast = intern("PhysicsObjectClass_Cast");
+        p->s_ShipClass_Cast = intern("ShipClass_Cast");
+        p->s_bDumbFireTorps = intern("bDumbFireTorps");
+        p->s_GetNumChildSubsystems = intern("GetNumChildSubsystems");
+        p->s_GetChildSubsystem = intern("GetChildSubsystem");
+        p->s_CalculateRoughDirection = intern("CalculateRoughDirection");
+        p->s_FireDumb = intern("FireDumb");
+        p->s_StartFiring = intern("StartFiring");
+        p->s_StopFiringAtTarget = intern("StopFiringAtTarget");
+        p->s_eTractorBeamMode = intern("eTractorBeamMode");
+        p->s_GetMode = intern("GetMode");
+        p->s_IsFiring = intern("IsFiring");
+        p->s_SetMode = intern("SetMode");
+        p->s_TractorBeamSystem = intern("TractorBeamSystem");
+        p->s_TBS_DOCK_STAGE_1 = intern("TBS_DOCK_STAGE_1");
+        p->s_TBS_DOCK_STAGE_2 = intern("TBS_DOCK_STAGE_2");
+        p->s_bHighPower = intern("bHighPower");
+        p->s_SetPowerLevel = intern("SetPowerLevel");
+        p->s_PhaserSystem = intern("PhaserSystem");
+        p->s_PP_LOW = intern("PP_LOW");
+        p->s_PP_HIGH = intern("PP_HIGH");
+        p->s_bChooseTorpsWisely = intern("bChooseTorpsWisely");
+        p->s_GetImpulseEngineSubsystem = intern("GetImpulseEngineSubsystem");
+        p->s_GetCurMaxSpeed = intern("GetCurMaxSpeed");
+        p->s_ChooseTorpType = intern("ChooseTorpType");
+        p->s_bAttackDisabledSubsystems = intern("bAttackDisabledSubsystems");
+        p->s_GetObjID = a.s_GetObjID;
+        p->s_GetClassObjectList = intern("GetClassObjectList");
+        p->s_CT_TORPEDO = intern("CT_TORPEDO");
+        p->s_GetTargetID = intern("GetTargetID");
+        p->s_GetDamage = intern("GetDamage");
+        p->s_GetCurrentAmmoType = intern("GetCurrentAmmoType");
+        p->s_GetTorpedoScript = intern("GetTorpedoScript");
+        p->s_sdk_importlib = intern("_sdk_importlib");
+        p->s_import_module = intern("import_module");
+        p->s_GetCondition = intern("GetCondition");
+        p->s_GetMaxCondition = intern("GetMaxCondition");
+        p->s_GetDisabledPercentage = intern("GetDisabledPercentage");
+        p->s_ShouldBeAimed = intern("ShouldBeAimed");
+        p->s_GetLaunchSpeed = intern("GetLaunchSpeed");
+        p->s_GetProperty = intern("GetProperty");
+        p->s_GetOrientationForward = intern("GetOrientationForward");
+        p->s_fFireDotThreshold = intern("fFireDotThreshold");
+        p->s_App = intern("App");
+        p->s_builtins = intern("__builtins__");
+        p->s_range = intern("range");
+        p->sdk_module = intern("AI.Preprocessors");
+        {
+            PyObject* one = PyLong_FromLong(1);
+            if (one == nullptr) throw py::error_already_set();
+            p->one_on = PySlice_New(one, Py_None, Py_None);
+            Py_DECREF(one);
+            if (p->one_on == nullptr) throw py::error_already_set();
+        }
+        PyObject* ai_native = a.ai_native;
+        p->reads_loc = rating::contract(ai_native, {p->s_GetWorldLocation});
+        p->reads_rot = rating::contract(ai_native, {p->s_GetWorldRotation});
+        p->reads_vel = rating::contract(ai_native, {p->s_GetVelocityTG});
+        p->reads_acc = rating::contract(ai_native, {p->s_GetAccelerationTG});
+        p->reads_predict = rating::contract(ai_native, {p->s_GetPredictedPosition});
+        p->reads_position = rating::contract(ai_native, {p->s_GetPositionTG});
+        p->reads_direction = rating::contract(ai_native, {p->s_GetDirection});
+        PyObject* math = PyImport_ImportModule("engine.appc.math");
+        if (math == nullptr) throw py::error_already_set();
+        p->point_cls = PyObject_GetAttrString(math, "TGPoint3");
+        p->matrix_cls = PyObject_GetAttrString(math, "TGMatrix3");
+        Py_DECREF(math);
+        if (p->point_cls == nullptr || p->matrix_cls == nullptr) throw py::error_already_set();
+        PyObject* kind = intern("fire");
+        PyObject* why = intern("surface");
+        p->note_args = PyTuple_Pack(2, kind, why);
+        if (p->note_args == nullptr) throw py::error_already_set();
+        return p;
+    }();
+    return *h;
+}
+
+py::object attr(PyObject* o, PyObject* name) { return own(PyObject_GetAttr(o, name)); }
+py::object call0(PyObject* o, PyObject* name) { return own(PyObject_CallMethodNoArgs(o, name)); }
+py::object call1(PyObject* o, PyObject* name, PyObject* a) {
+    return own(PyObject_CallMethodOneArg(o, name, a));
+}
+py::object call_fn(PyObject* fn, std::initializer_list<PyObject*> args) {
+    PyObject* argv[4];
+    std::size_t n = 0;
+    for (PyObject* x : args) argv[n++] = x;
+    return own(PyObject_Vectorcall(fn, argv, n, nullptr));
+}
+bool is_none(PyObject* o) { return o == Py_None; }
+// `a == b` / `a != b` and their truth, as Python evaluates them.
+bool eq(PyObject* a, PyObject* b) { return rating::py_eq(a, b); }
+bool ne(PyObject* a, PyObject* b) { return rating::py_ne(a, b); }
+bool cmp(PyObject* a, PyObject* b, int op) {
+    py::object r = own(PyObject_RichCompare(a, b, op));
+    return truth(r.ptr());
+}
+py::object pyint(long v) { return own(PyLong_FromLong(v)); }
+py::object pyfloat(double v) { return own(PyFloat_FromDouble(v)); }
+
+// One call's context: the instance, the SDK module (its globals), its App.
+struct Ctx {
+    PyObject* self;
+    py::object globals;
+    py::object app;
+};
+
+// `App.<fn>(arg)`: the function read off the module at the call.
+py::object app_call(const Ctx& c, PyObject* fn_name, PyObject* arg) {
+    py::object fn = attr(c.app.ptr(), fn_name);
+    return own(PyObject_CallOneArg(fn.ptr(), arg));
+}
+
+// `App.PreprocessingAI.<code>`, read where the SDK returns it.
+py::object ps(const Ctx& c, PyObject* code) {
+    py::object klass = attr(c.app.ptr(), host().s_PreprocessingAI);
+    return attr(klass.ptr(), code);
+}
+
+// A global name of the SDK module as its code loads it: module, then builtins.
+py::object global(const Ctx& c, PyObject* name) {
+    PyObject* v = PyDict_GetItemWithError(c.globals.ptr(), name);
+    if (v != nullptr) return py::reinterpret_borrow<py::object>(v);
+    if (PyErr_Occurred()) throw py::error_already_set();
+    PyObject* b = PyDict_GetItemWithError(c.globals.ptr(), host().s_builtins);
+    if (b == nullptr) {
+        if (PyErr_Occurred()) throw py::error_already_set();
+        b = PyEval_GetBuiltins();
+    }
+    py::object found = PyDict_Check(b) ? py::reinterpret_borrow<py::object>(
+                                             PyDict_GetItemWithError(b, name))
+                                       : py::reinterpret_steal<py::object>(
+                                             PyObject_GetAttr(b, name));
+    if (!found) {
+        if (PyErr_Occurred() && !PyErr_ExceptionMatches(PyExc_AttributeError))
+            throw py::error_already_set();
+        PyErr_Clear();
+        PyErr_Format(PyExc_NameError, "name '%U' is not defined", name);
+        throw py::error_already_set();
+    }
+    return found;
+}
+
+void note_surface() {
+    auto& h = host();
+    py::object fn = attr(avoid::host().ai_native, avoid::host().s_note_object_fallback);
+    own(PyObject_Call(fn.ptr(), h.note_args, nullptr));
+}
+
+// ── Values ─────────────────────────────────────────────────────────────────
+
+struct Vec {
+    bool native = true;
+    cb::FireVec v{};
+    py::object obj;  // when !native: the Python object itself
+};
+
+struct Mat {
+    bool native = true;
+    cb::FireMat m{};
+    py::object obj;
+};
+
+struct Num {
+    bool native = true;
+    double d = 0.0;
+    py::object obj;
+};
+
+Vec vec_py(py::object o) { return Vec{false, {}, std::move(o)}; }
+Vec vec_native(const cb::FireVec& v) { return Vec{true, v, {}}; }
+
+Num num_of(py::object o) {
+    if (PyFloat_CheckExact(o.ptr())) return Num{true, PyFloat_AS_DOUBLE(o.ptr()), {}};
+    return Num{false, 0.0, std::move(o)};
+}
+
+py::object num_obj(const Num& n) { return n.native ? pyfloat(n.d) : n.obj; }
+
+bool exact_float_attr(PyObject* o, PyObject* name, double& out) {
+    return avoid::float_attr(o, name, out);
+}
+
+// An engine TGPoint3 (that very class) whose components are plain floats.
+bool exact_point(PyObject* o, cb::FireVec& out) {
+    auto& h = host();
+    if (reinterpret_cast<PyObject*>(Py_TYPE(o)) != h.point_cls) return false;
+    return exact_float_attr(o, h.s_x, out.x) && exact_float_attr(o, h.s_y, out.y) &&
+           exact_float_attr(o, h.s_z, out.z);
+}
+
+bool exact_matrix(PyObject* o, cb::FireMat& out) {
+    auto& h = host();
+    if (reinterpret_cast<PyObject*>(Py_TYPE(o)) != h.matrix_cls) return false;
+    for (int i = 0; i < 9; ++i)
+        if (!exact_float_attr(o, h.s_m[i], out.m[i])) return false;
+    return true;
+}
+
+// The object a mirrored engine body would have returned: a fresh TGPoint3 /
+// TGMatrix3 of the same floats.
+py::object materialise(const Vec& v) {
+    if (!v.native) return v.obj;
+    return own(PyObject_CallFunction(host().point_cls, "ddd", v.v.x, v.v.y, v.v.z));
+}
+
+py::object materialise(const Mat& m) {
+    if (!m.native) return m.obj;
+    auto& h = host();
+    py::object out = own(PyObject_CallNoArgs(h.matrix_cls));
+    py::tuple t(9);
+    for (int i = 0; i < 9; ++i) t[i] = pyfloat(m.m.m[i]);
+    call1(out.ptr(), h.s_set_from_tuple, t.ptr());
+    return out;
+}
+
+// A Python receiver's method, fetched before the op's argument is
+// evaluated (Python's order); none for a native receiver.
+py::object method_of(const Vec& v, PyObject* name) {
+    return v.native ? py::object() : attr(v.obj.ptr(), name);
+}
+
+void become_python(Vec& v) {
+    v.obj = materialise(v);
+    v.native = false;
+}
+
+enum class Op { Subtract, Add, Set };
+
+PyObject* op_name(Op op) {
+    auto& h = host();
+    return op == Op::Subtract ? h.s_Subtract : op == Op::Add ? h.s_Add : h.s_Set;
+}
+
+// `self.Subtract(other)` / `.Add` / `.Set`; `method` from method_of(self).
+void vec_op(Op op, Vec& self, const py::object& method, const Vec& other) {
+    if (self.native) {
+        cb::FireVec o;
+        if (other.native) {
+            o = other.v;
+        } else if (!exact_point(other.obj.ptr(), o)) {
+            become_python(self);
+            py::object m = attr(self.obj.ptr(), op_name(op));
+            own(PyObject_CallOneArg(m.ptr(), other.obj.ptr()));
+            return;
+        }
+        if (op == Op::Subtract)
+            cb::fire_subtract(self.v, o);
+        else if (op == Op::Add)
+            cb::fire_add(self.v, o);
+        else
+            self.v = o;
+        return;
+    }
+    py::object arg = materialise(other);
+    own(PyObject_CallOneArg(method.ptr(), arg.ptr()));
+}
+
+// `self.MultMatrixLeft(m)`; `method` from method_of(self).
+void vec_mult_matrix_left(Vec& self, const py::object& method, const Mat& m) {
+    if (self.native) {
+        cb::FireMat mm;
+        if (m.native) {
+            mm = m.m;
+        } else if (!exact_matrix(m.obj.ptr(), mm)) {
+            become_python(self);
+            call1(self.obj.ptr(), host().s_MultMatrixLeft, m.obj.ptr());
+            return;
+        }
+        cb::fire_mult_matrix_left(self.v, mm);
+        return;
+    }
+    py::object arg = materialise(m);
+    own(PyObject_CallOneArg(method.ptr(), arg.ptr()));
+}
+
+Num vec_unitize(Vec& self) {
+    if (self.native) return Num{true, cb::fire_unitize(self.v), {}};
+    return num_of(call0(self.obj.ptr(), host().s_Unitize));
+}
+
+Num vec_sqr_length(const Vec& self) {
+    if (self.native) return Num{true, cb::fire_sqr_length(self.v), {}};
+    return num_of(call0(self.obj.ptr(), host().s_SqrLength));
+}
+
+// `self.Dot(other)` (no evaluation between the lookup and the call).
+Num vec_dot(const Vec& self, const Vec& other) {
+    if (self.native) {
+        cb::FireVec o;
+        if (other.native) {
+            o = other.v;
+        } else if (!exact_point(other.obj.ptr(), o)) {
+            py::object stand_in = materialise(self);
+            return num_of(call1(stand_in.ptr(), host().s_Dot, other.obj.ptr()));
+        }
+        return Num{true, cb::fire_dot(self.v, o), {}};
+    }
+    py::object arg = materialise(other);
+    return num_of(call1(self.obj.ptr(), host().s_Dot, arg.ptr()));
+}
+
+Mat mat_transpose(const Mat& m) {
+    if (m.native) return Mat{true, cb::fire_transpose(m.m), {}};
+    return Mat{false, {}, call0(m.obj.ptr(), host().s_Transpose)};
+}
+
+// ── Reads ──────────────────────────────────────────────────────────────────
+
+// The mirrored read applies (`contract` holds for `o`); otherwise counted.
+bool mirrored(PyObject* o, PyObject* contract) {
+    if (rating::reads_stock(o, contract)) return true;
+    note_surface();
+    return false;
+}
+
+// o.GetWorldLocation(): the transform store slot `_xform` names.
+Vec world_location(PyObject* o) {
+    auto& h = host();
+    double p[3];
+    if (mirrored(o, h.reads_loc) && avoid::read_position(o, p))
+        return vec_native(cb::FireVec{p[0], p[1], p[2]});
+    return vec_py(call0(o, h.s_GetWorldLocation));
+}
+
+// o.GetWorldRotation(): the store rotation, row-major (set_from_tuple).
+Mat world_rotation(PyObject* o) {
+    auto& h = host();
+    if (mirrored(o, h.reads_rot)) {
+        std::uint32_t i, g;
+        if (avoid::read_handle(o, i, g)) {
+            try {
+                auto r = dauntless::transform_store().rotation(i, g);
+                Mat out;
+                for (int k = 0; k < 9; ++k) out.m.m[k] = r[k];
+                return out;
+            } catch (const std::exception&) {
+                // stale: the Python call raises StaleHandleError
+            }
+        }
+    }
+    return Mat{false, {}, call0(o, h.s_GetWorldRotation)};
+}
+
+// TGPoint3(o.<attr>.x, .y, .z) of plain floats.
+bool read_attr_point(PyObject* o, PyObject* name, cb::FireVec& out) {
+    PyObject* v = PyObject_GetAttr(o, name);
+    if (v == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    py::object keep = py::reinterpret_steal<py::object>(v);
+    auto& h = host();
+    return exact_float_attr(v, h.s_x, out.x) && exact_float_attr(v, h.s_y, out.y) &&
+           exact_float_attr(v, h.s_z, out.z);
+}
+
+Vec velocity(PyObject* o) {
+    auto& h = host();
+    double v[3];
+    if (mirrored(o, h.reads_vel) && avoid::read_velocity(o, v))
+        return vec_native(cb::FireVec{v[0], v[1], v[2]});
+    return vec_py(call0(o, h.s_GetVelocityTG));
+}
+
+// PhysicsObjectClass.GetAccelerationTG: `self.__dict__.get("_acceleration")`,
+// zeros for None, else TGPoint3(a[0], a[1], a[2]).
+bool read_acceleration(PyObject* o, cb::FireVec& out) {
+    PyObject* d = PyObject_GetAttr(o, host().s_dict);
+    if (d == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    py::object keep = py::reinterpret_steal<py::object>(d);
+    if (!PyDict_CheckExact(d)) return false;
+    PyObject* a = PyDict_GetItemWithError(d, host().s_acceleration);
+    if (a == nullptr) {
+        if (PyErr_Occurred()) {
+            PyErr_Clear();
+            return false;
+        }
+        out = cb::FireVec{0.0, 0.0, 0.0};
+        return true;
+    }
+    if (a == Py_None) {
+        out = cb::FireVec{0.0, 0.0, 0.0};
+        return true;
+    }
+    if (!PyTuple_CheckExact(a) && !PyList_CheckExact(a)) return false;
+    if (PySequence_Fast_GET_SIZE(a) < 3) return false;
+    double c[3];
+    for (int i = 0; i < 3; ++i) {
+        PyObject* e = PySequence_Fast_GET_ITEM(a, i);
+        if (!PyFloat_CheckExact(e)) return false;
+        c[i] = PyFloat_AS_DOUBLE(e);
+    }
+    out = cb::FireVec{c[0], c[1], c[2]};
+    return true;
+}
+
+Vec acceleration(PyObject* o) {
+    auto& h = host();
+    cb::FireVec v;
+    if (mirrored(o, h.reads_acc) && read_acceleration(o, v)) return vec_native(v);
+    return vec_py(call0(o, h.s_GetAccelerationTG));
+}
+
+// ShipSubsystem.GetPositionTG / GetDirection: `_position` / `_direction`.
+Vec position_tg(PyObject* o) {
+    auto& h = host();
+    cb::FireVec v;
+    if (mirrored(o, h.reads_position) && read_attr_point(o, h.s_position, v))
+        return vec_native(v);
+    return vec_py(call0(o, h.s_GetPositionTG));
+}
+
+Vec direction(PyObject* o) {
+    auto& h = host();
+    cb::FireVec v;
+    if (mirrored(o, h.reads_direction) && read_attr_point(o, h.s_direction, v))
+        return vec_native(v);
+    return vec_py(call0(o, h.s_GetDirection));
+}
+
+// `for i in range(n):` -- an int natively, anything else through the
+// module's own range (its TypeError included).
+template <class F>
+void for_range(const Ctx& c, py::object n, F&& body) {
+    if (PyLong_CheckExact(n.ptr())) {
+        int overflow = 0;
+        long long count = PyLong_AsLongLongAndOverflow(n.ptr(), &overflow);
+        if (count == -1 && PyErr_Occurred()) throw py::error_already_set();
+        if (overflow == 0) {
+            for (long long i = 0; i < count; ++i) {
+                py::object idx = own(PyLong_FromLongLong(i));
+                body(idx);
+            }
+            return;
+        }
+    }
+    py::object range = global(c, host().s_range);
+    py::object it = own(PyObject_GetIter(call_fn(range.ptr(), {n.ptr()}).ptr()));
+    while (PyObject* e = PyIter_Next(it.ptr())) {
+        py::object idx = py::reinterpret_steal<py::object>(e);
+        body(idx);
+    }
+    if (PyErr_Occurred()) throw py::error_already_set();
+}
+
+// ── The methods ────────────────────────────────────────────────────────────
+
+py::object code_ai(const Ctx& c) { return attr(c.self, host().s_pCodeAI); }
+
+// FireScript.GetTarget
+py::object get_target(const Ctx& c) {
+    auto& h = host();
+    py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (eq(ship.ptr(), Py_None)) return py::none();
+    py::object pset = call0(ship.ptr(), h.s_GetContainingSet);
+    if (eq(pset.ptr(), Py_None)) return py::none();
+    py::object fn = attr(c.app.ptr(), h.s_ObjectClass_GetObject);
+    py::object name = attr(c.self, h.s_sTarget);
+    py::object target = call_fn(fn.ptr(), {pset.ptr(), name.ptr()});
+    if (eq(target.ptr(), Py_None)) return py::none();
+    return target;
+}
+
+// FireScript.TargetInRange's truth (the SDK returns 1 / 0).
+bool target_in_range(const Ctx& c, PyObject* target) {
+    auto& h = host();
+    py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (!truth(ship.ptr())) return false;
+    Vec diff = world_location(target);
+    py::object sub_m = method_of(diff, h.s_Subtract);
+    Vec ours = world_location(ship.ptr());
+    vec_op(Op::Subtract, diff, sub_m, ours);
+    Num sqr = vec_sqr_length(diff);
+    // if fSqrLength <= (self.fMaxFiringRange * self.fMaxFiringRange)
+    py::object r1 = attr(c.self, h.s_fMaxFiringRange);
+    py::object r2 = attr(c.self, h.s_fMaxFiringRange);
+    if (sqr.native && PyFloat_CheckExact(r1.ptr()) && PyFloat_CheckExact(r2.ptr()))
+        return sqr.d <= cb::fire_mul(PyFloat_AS_DOUBLE(r1.ptr()), PyFloat_AS_DOUBLE(r2.ptr()));
+    py::object prod = own(PyNumber_Multiply(r1.ptr(), r2.ptr()));
+    return cmp(num_obj(sqr).ptr(), prod.ptr(), Py_LE);
+}
+
+// `fDistance / fSpeed`
+Num divide(const Num& a, PyObject* b) {
+    if (a.native && PyFloat_CheckExact(b) && PyFloat_AS_DOUBLE(b) != 0.0)
+        return Num{true, cb::fire_div(a.d, PyFloat_AS_DOUBLE(b)), {}};
+    py::object lhs = num_obj(a);
+    return num_of(own(PyNumber_TrueDivide(lhs.ptr(), b)));
+}
+
+// FireScript.PredictTargetLocation
+Vec predict_target_location(const Ctx& c, PyObject* target, PyObject* subsystem, PyObject* speed) {
+    auto& h = host();
+    Vec diff = world_location(target);
+    py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (eq(ship.ptr(), Py_None)) return diff;
+    py::object sub_m = method_of(diff, h.s_Subtract);
+    Vec ours = world_location(ship.ptr());
+    vec_op(Op::Subtract, diff, sub_m, ours);
+    Num distance = vec_unitize(diff);
+    Num time = divide(distance, speed);
+
+    Vec predicted = world_location(target);
+    py::object phys = app_call(c, h.s_PhysicsObjectClass_Cast, target);
+    if (ne(phys.ptr(), Py_None)) {
+        // vPredicted.Set(pPhysicsTarget.GetPredictedPosition(
+        //     pTarget.GetWorldLocation(), pPhysicsTarget.GetVelocityTG(),
+        //     pPhysicsTarget.GetAccelerationTG(), fTime))
+        py::object set_m = method_of(predicted, h.s_Set);
+        const bool pp_native = mirrored(phys.ptr(), h.reads_predict);
+        py::object pp_m = pp_native ? py::object() : attr(phys.ptr(), h.s_GetPredictedPosition);
+        Vec p = world_location(target);
+        Vec v = velocity(phys.ptr());
+        Vec a = acceleration(phys.ptr());
+        Vec result;
+        if (pp_native && p.native && v.native && a.native && time.native) {
+            result = vec_native(cb::fire_predicted_position(p.v, v.v, a.v, time.d));
+        } else {
+            if (!pp_m) pp_m = attr(phys.ptr(), h.s_GetPredictedPosition);
+            py::object pa = materialise(p), va = materialise(v), aa = materialise(a);
+            py::object ta = num_obj(time);
+            PyObject* argv[4] = {pa.ptr(), va.ptr(), aa.ptr(), ta.ptr()};
+            result = vec_py(own(PyObject_Vectorcall(pp_m.ptr(), argv, 4, nullptr)));
+        }
+        vec_op(Op::Set, predicted, set_m, result);
+    }
+    if (truth(subsystem)) {
+        // vSubsystemPos = pSubsystem.GetPositionTG()
+        // vSubsystemPos.MultMatrixLeft(pTarget.GetWorldRotation()); vPredicted.Add(vSubsystemPos)
+        Vec sp = position_tg(subsystem);
+        py::object mml = method_of(sp, h.s_MultMatrixLeft);
+        Mat rot = world_rotation(target);
+        vec_mult_matrix_left(sp, mml, rot);
+        py::object add_m = method_of(predicted, h.s_Add);
+        vec_op(Op::Add, predicted, add_m, sp);
+    }
+    return predicted;
+}
+
+// FireScript.GetWeaponInfo: (lDirections, fSpeed)
+void weapon_info(const Ctx& c, PyObject* system, std::vector<Vec>& dirs, py::object& speed) {
+    auto& h = host();
+    speed = pyfloat(1.0);
+    py::object torp = app_call(c, h.s_TorpedoSystem_Cast, system);
+    if (ne(torp.ptr(), Py_None)) {
+        for_range(c, call0(torp.ptr(), h.s_GetNumChildSubsystems), [&](py::object& i) {
+            py::object cast = attr(c.app.ptr(), h.s_TorpedoTube_Cast);
+            py::object child = call1(torp.ptr(), h.s_GetChildSubsystem, i.ptr());
+            py::object tube = call_fn(cast.ptr(), {child.ptr()});
+            dirs.push_back(direction(tube.ptr()));
+        });
+        py::object ammo = call0(torp.ptr(), h.s_GetCurrentAmmoType);
+        speed = call0(ammo.ptr(), h.s_GetLaunchSpeed);
+        return;
+    }
+    py::object pulse = app_call(c, h.s_PulseWeaponSystem_Cast, system);
+    if (ne(pulse.ptr(), Py_None)) {
+        for_range(c, call0(pulse.ptr(), h.s_GetNumChildSubsystems), [&](py::object& i) {
+            py::object cast = attr(c.app.ptr(), h.s_PulseWeapon_Cast);
+            py::object child = call1(pulse.ptr(), h.s_GetChildSubsystem, i.ptr());
+            py::object weapon = call_fn(cast.ptr(), {child.ptr()});
+            if (ne(weapon.ptr(), Py_None)) {
+                py::object prop = call0(weapon.ptr(), h.s_GetProperty);
+                dirs.push_back(vec_py(call0(prop.ptr(), h.s_GetOrientationForward)));
+                py::object launch = call0(weapon.ptr(), h.s_GetLaunchSpeed);
+                if (cmp(launch.ptr(), speed.ptr(), Py_GT))
+                    speed = call0(weapon.ptr(), h.s_GetLaunchSpeed);
+            }
+        });
+    }
+}
+
+// FireScript.CheckGoodShot's truth (the SDK returns 1 / 0).
+bool check_good_shot(const Ctx& c, PyObject* system, PyObject* target, PyObject* subsystem) {
+    auto& h = host();
+    if (!truth(call0(system, h.s_ShouldBeAimed).ptr())) return true;
+    py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (eq(ship.ptr(), Py_None)) return true;
+    std::vector<Vec> dirs;
+    py::object speed;
+    weapon_info(c, system, dirs, speed);
+    if (dirs.empty()) return true;
+    Vec local = predict_target_location(c, target, subsystem, speed.ptr());
+    {
+        py::object sub_m = method_of(local, h.s_Subtract);
+        Vec ours = world_location(ship.ptr());
+        vec_op(Op::Subtract, local, sub_m, ours);
+    }
+    {
+        py::object mml = method_of(local, h.s_MultMatrixLeft);
+        Mat rot = mat_transpose(world_rotation(ship.ptr()));
+        vec_mult_matrix_left(local, mml, rot);
+    }
+    vec_unitize(local);  // fTargetDistance (unused)
+    for (const Vec& d : dirs) {
+        Num dot = vec_dot(local, d);
+        py::object threshold = attr(c.self, h.s_fFireDotThreshold);
+        if (dot.native && PyFloat_CheckExact(threshold.ptr())) {
+            if (dot.d >= PyFloat_AS_DOUBLE(threshold.ptr())) return true;
+        } else if (cmp(num_obj(dot).ptr(), threshold.ptr(), Py_GE)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// FireScript.WeaponTooDangerous's truth.
+bool weapon_too_dangerous(const Ctx& c, PyObject* system, PyObject* target, PyObject* subsystem) {
+    auto& h = host();
+    if (truth(attr(c.self, h.s_bAttackDisabledSubsystems).ptr())) return false;
+    py::object torp = app_call(c, h.s_TorpedoSystem_Cast, system);
+    if (!truth(torp.ptr())) return false;
+    py::object pset = call0(target, h.s_GetContainingSet);
+    py::object target_id = call0(target, h.s_GetObjID);
+    if (!truth(pset.ptr())) return false;
+    py::object incoming = pyfloat(0.0);
+    py::object ct = attr(c.app.ptr(), h.s_CT_TORPEDO);
+    py::object torps = call1(pset.ptr(), h.s_GetClassObjectList, ct.ptr());
+    py::object it = own(PyObject_GetIter(torps.ptr()));
+    while (PyObject* e = PyIter_Next(it.ptr())) {
+        py::object t = py::reinterpret_steal<py::object>(e);
+        py::object tid = call0(t.ptr(), h.s_GetTargetID);
+        if (eq(tid.ptr(), target_id.ptr())) {
+            py::object dmg = call0(t.ptr(), h.s_GetDamage);
+            incoming = own(PyNumber_Add(incoming.ptr(), dmg.ptr()));
+        }
+    }
+    if (PyErr_Occurred()) throw py::error_already_set();
+    py::object torp_damage = pyfloat(0.0);
+    py::object ammo = call0(torp.ptr(), h.s_GetCurrentAmmoType);
+    // pScript = (lambda n: _sdk_importlib.import_module(n)
+    //            if isinstance(n, str) else n)(pAmmoType.GetTorpedoScript())
+    py::object name = call0(ammo.ptr(), h.s_GetTorpedoScript);
+    py::object script;
+    const int is_str = PyObject_IsInstance(name.ptr(), reinterpret_cast<PyObject*>(&PyUnicode_Type));
+    if (is_str < 0) throw py::error_already_set();
+    if (is_str) {
+        py::object importlib = global(c, h.s_sdk_importlib);
+        script = call1(importlib.ptr(), h.s_import_module, name.ptr());
+    } else {
+        script = name;
+    }
+    if (truth(script.ptr())) torp_damage = call0(script.ptr(), h.s_GetDamage);
+    incoming = own(PyNumber_Add(incoming.ptr(), torp_damage.ptr()));
+    py::object cond = call0(subsystem, h.s_GetCondition);
+    py::object resulting = own(PyNumber_Subtract(cond.ptr(), incoming.ptr()));
+    py::object max_cond = call0(subsystem, h.s_GetMaxCondition);
+    py::object ratio = own(PyNumber_TrueDivide(resulting.ptr(), max_cond.ptr()));
+    py::object disabled = call0(subsystem, h.s_GetDisabledPercentage);
+    return cmp(ratio.ptr(), disabled.ptr(), Py_LT);
+}
+
+// FireScript.ConfigureWeaponSystem's truth.
+bool configure_weapon_system(const Ctx& c, PyObject* system, PyObject* target,
+                             PyObject* subsystem) {
+    auto& h = host();
+    if (weapon_too_dangerous(c, system, target, subsystem)) return false;
+
+    py::object tractor = app_call(c, h.s_TractorBeamSystem_Cast, system);
+    if (truth(tractor.ptr())) {
+        py::object want = attr(c.self, h.s_eTractorBeamMode);
+        if (!is_none(want.ptr())) {
+            py::object mode = call0(tractor.ptr(), h.s_GetMode);
+            py::object want2 = attr(c.self, h.s_eTractorBeamMode);
+            if (ne(mode.ptr(), want2.ptr())) {
+                // not (IsFiring() and GetMode() == TBS_DOCK_STAGE_2 and
+                //      self.eTractorBeamMode == TBS_DOCK_STAGE_1)
+                bool keep = truth(call0(tractor.ptr(), h.s_IsFiring).ptr());
+                if (keep) {
+                    py::object now = call0(tractor.ptr(), h.s_GetMode);
+                    py::object tbs = attr(c.app.ptr(), h.s_TractorBeamSystem);
+                    py::object stage2 = attr(tbs.ptr(), h.s_TBS_DOCK_STAGE_2);
+                    keep = eq(now.ptr(), stage2.ptr());
+                }
+                if (keep) {
+                    py::object mine = attr(c.self, h.s_eTractorBeamMode);
+                    py::object tbs = attr(c.app.ptr(), h.s_TractorBeamSystem);
+                    py::object stage1 = attr(tbs.ptr(), h.s_TBS_DOCK_STAGE_1);
+                    keep = eq(mine.ptr(), stage1.ptr());
+                }
+                if (!keep) {
+                    py::object mine = attr(c.self, h.s_eTractorBeamMode);
+                    call1(tractor.ptr(), h.s_SetMode, mine.ptr());
+                }
+            }
+        }
+        return true;
+    }
+
+    py::object phaser = app_call(c, h.s_PhaserSystem_Cast, system);
+    if (truth(phaser.ptr())) {
+        const bool high = truth(attr(c.self, h.s_bHighPower).ptr());
+        py::object method = attr(phaser.ptr(), h.s_SetPowerLevel);
+        py::object klass = attr(c.app.ptr(), h.s_PhaserSystem);
+        py::object level = attr(klass.ptr(), high ? h.s_PP_HIGH : h.s_PP_LOW);
+        own(PyObject_CallOneArg(method.ptr(), level.ptr()));
+        return true;
+    }
+
+    py::object torp = app_call(c, h.s_TorpedoSystem_Cast, system);
+    if (truth(torp.ptr())) {
+        if (truth(attr(c.self, h.s_bChooseTorpsWisely).ptr())) {
+            py::object location = truth(subsystem) ? call0(subsystem, h.s_GetWorldLocation)
+                                                   : call0(target, h.s_GetWorldLocation);
+            py::object speed = pyfloat(0.0);
+            py::object ship_target = app_call(c, h.s_ShipClass_Cast, target);
+            if (truth(ship_target.ptr())) {
+                py::object engines = call0(ship_target.ptr(), h.s_GetImpulseEngineSubsystem);
+                if (truth(engines.ptr())) speed = call0(engines.ptr(), h.s_GetCurMaxSpeed);
+            }
+            py::object method = attr(c.self, h.s_ChooseTorpType);
+            call_fn(method.ptr(), {torp.ptr(), location.ptr(), speed.ptr()});
+        }
+        return true;
+    }
+    return true;
+}
+
+// FireScript.FireSystemAtTarget
+void fire_system_at_target(const Ctx& c, PyObject* system, PyObject* target, PyObject* subsystem) {
+    auto& h = host();
+    if (!configure_weapon_system(c, system, target, subsystem)) return;
+    if (!check_good_shot(c, system, target, subsystem)) {
+        call1(system, h.s_StopFiringAtTarget, target);
+        return;
+    }
+    py::object point = attr(c.app.ptr(), h.s_TGPoint3);
+    py::object offset = own(PyObject_CallNoArgs(point.ptr()));
+    bool dumb = truth(attr(c.self, h.s_bDumbFireTorps).ptr());
+    if (dumb) dumb = truth(app_call(c, h.s_TorpedoSystem_Cast, system).ptr());
+    if (dumb) {
+        py::object to_target = truth(subsystem) ? call0(subsystem, h.s_GetWorldLocation)
+                                                : call0(target, h.s_GetWorldLocation);
+        py::object sub_m = attr(to_target.ptr(), h.s_Subtract);
+        py::object from = call0(system, h.s_GetWorldLocation);
+        own(PyObject_CallOneArg(sub_m.ptr(), from.ptr()));
+        py::object zero = pyint(0), one = pyint(1);
+        for_range(c, call0(system, h.s_GetNumChildSubsystems), [&](py::object& i) {
+            py::object cast = attr(c.app.ptr(), h.s_TorpedoTube_Cast);
+            py::object child = call1(system, h.s_GetChildSubsystem, i.ptr());
+            py::object tube = call_fn(cast.ptr(), {child.ptr()});
+            py::object dot_m = attr(to_target.ptr(), h.s_Dot);
+            py::object rough = call0(tube.ptr(), h.s_CalculateRoughDirection);
+            py::object dot = own(PyObject_CallOneArg(dot_m.ptr(), rough.ptr()));
+            if (cmp(dot.ptr(), zero.ptr(), Py_GT)) {
+                py::object fire = attr(tube.ptr(), h.s_FireDumb);
+                call_fn(fire.ptr(), {zero.ptr(), one.ptr()});
+            }
+        });
+        return;
+    }
+    if (truth(subsystem)) {
+        py::object set_m = attr(offset.ptr(), h.s_Set);
+        py::object pos = call0(subsystem, h.s_GetPositionTG);
+        own(PyObject_CallOneArg(set_m.ptr(), pos.ptr()));
+    } else {
+        py::object set_m = attr(offset.ptr(), h.s_SetXYZ);
+        py::object zero = pyint(0);
+        call_fn(set_m.ptr(), {zero.ptr(), zero.ptr(), zero.ptr()});
+    }
+    py::object start = attr(system, h.s_StartFiring);
+    call_fn(start.ptr(), {target, offset.ptr()});
+}
+
+// The cycle: ((self.iLastUpdate + 3) % (len(self.lWeapons) + 2)) - 2
+py::object next_update(const Ctx& c) {
+    auto& h = host();
+    py::object last = attr(c.self, h.s_iLastUpdate);
+    if (PyLong_CheckExact(last.ptr())) {
+        int overflow = 0;
+        const long long v = PyLong_AsLongLongAndOverflow(last.ptr(), &overflow);
+        if (v == -1 && PyErr_Occurred()) throw py::error_already_set();
+        constexpr long long kSafe = 1LL << 62;
+        if (overflow == 0 && v < kSafe && v > -kSafe) {
+            py::object weapons = attr(c.self, h.s_lWeapons);
+            const Py_ssize_t n = PyObject_Length(weapons.ptr());
+            if (n < 0) throw py::error_already_set();
+            return own(PyLong_FromLongLong(cb::fire_cycle(v, static_cast<long long>(n))));
+        }
+    }
+    py::object three = pyint(3), two = pyint(2);
+    py::object a = own(PyNumber_Add(last.ptr(), three.ptr()));
+    py::object weapons = attr(c.self, h.s_lWeapons);
+    const Py_ssize_t n = PyObject_Length(weapons.ptr());
+    if (n < 0) throw py::error_already_set();
+    py::object len = own(PyLong_FromSsize_t(n));
+    py::object b = own(PyNumber_Add(len.ptr(), two.ptr()));
+    py::object r = own(PyNumber_Remainder(a.ptr(), b.ptr()));
+    return own(PyNumber_Subtract(r.ptr(), two.ptr()));
+}
+
+void set_attr(PyObject* o, PyObject* name, PyObject* v) {
+    if (PyObject_SetAttr(o, name, v) < 0) throw py::error_already_set();
+}
+
+// FireScript.Update
+py::object update(PyObject* self) {
+    auto& h = host();
+    Ctx c{self, {}, {}};
+    {
+        PyObject* mod = PyImport_GetModule(h.sdk_module);
+        if (mod == nullptr) {
+            if (!PyErr_Occurred())
+                PyErr_SetString(PyExc_RuntimeError, "AI.Preprocessors is not imported");
+            throw py::error_already_set();
+        }
+        py::object keep = py::reinterpret_steal<py::object>(mod);
+        c.globals = attr(mod, h.s_dict);
+        c.app = global(c, h.s_App);
+    }
+
+    py::object target = get_target(c);
+    if (!truth(target.ptr())) return ps(c, h.s_PS_DONE);
+
+    if (truth(attr(self, h.s_bCallUsingWeaponTypeFunc).ptr())) {
+        py::object all = call0(code_ai(c).ptr(), h.s_GetAllAIsInTree);
+        py::object rest = own(PyObject_GetItem(all.ptr(), h.one_on));
+        py::object it = own(PyObject_GetIter(rest.ptr()));
+        while (PyObject* e = PyIter_Next(it.ptr())) {
+            py::object ai = py::reinterpret_steal<py::object>(e);
+            py::object method = attr(ai.ptr(), h.s_CallExternalFunction);
+            py::object weapons = attr(self, h.s_lWeapons);
+            call_fn(method.ptr(), {h.s_UsingWeaponType, weapons.ptr()});
+        }
+        if (PyErr_Occurred()) throw py::error_already_set();
+        set_attr(self, h.s_bCallUsingWeaponTypeFunc, pyint(0).ptr());
+    }
+
+    {
+        py::object weapons = attr(self, h.s_lWeapons);
+        const Py_ssize_t n = PyObject_Length(weapons.ptr());
+        if (n < 0) throw py::error_already_set();
+        if (n == 0) return ps(c, h.s_PS_NORMAL);
+    }
+    if (!truth(attr(self, h.s_bEnabled).ptr())) return ps(c, h.s_PS_NORMAL);
+
+    bool look = !truth(attr(self, h.s_bTargetVisible).ptr());
+    if (!look) look = eq(attr(self, h.s_iLastUpdate).ptr(), pyint(-2).ptr());
+    if (!look) look = !target_in_range(c, target.ptr());
+    if (look) {
+        call1(self, h.s_TargetVisible, target.ptr());
+        if (!truth(attr(self, h.s_bTargetVisible).ptr())) {
+            call0(self, h.s_StopFiring);
+            set_attr(self, h.s_iLastUpdate, pyint(-2).ptr());
+            return ps(c, h.s_PS_NORMAL);
+        }
+    } else if (eq(attr(self, h.s_iLastUpdate).ptr(), pyint(-1).ptr())) {
+        py::object start = attr(c.app.ptr(), h.s_TGProfilingInfo_StartTiming);
+        py::object timing = call_fn(start.ptr(), {h.s_timing_label});
+        call1(self, h.s_ChooseTargetSubsystem, target.ptr());
+        py::object stop = attr(c.app.ptr(), h.s_TGProfilingInfo_StopTiming);
+        call_fn(stop.ptr(), {timing.ptr()});
+    } else {
+        py::object subsystem = py::none();
+        py::object id = attr(self, h.s_idTargetedSubsystem);
+        if (!is_none(id.ptr())) {
+            py::object cast = attr(c.app.ptr(), h.s_ShipSubsystem_Cast);
+            py::object lookup = attr(c.app.ptr(), h.s_TGObject_GetTGObjectPtr);
+            py::object id2 = attr(self, h.s_idTargetedSubsystem);
+            py::object ptr = call_fn(lookup.ptr(), {id2.ptr()});
+            subsystem = call_fn(cast.ptr(), {ptr.ptr()});
+        }
+        if (is_none(subsystem.ptr()) &&
+            !truth(attr(self, h.s_bAttackIfNoSubsystemsLeft).ptr())) {
+            call0(self, h.s_StopFiring);
+            return ps(c, h.s_PS_NORMAL);
+        }
+        // self.FireSystemAtTarget(self.lWeapons[self.iLastUpdate % len(self.lWeapons)], ...)
+        py::object weapons = attr(self, h.s_lWeapons);
+        py::object last = attr(self, h.s_iLastUpdate);
+        py::object weapons2 = attr(self, h.s_lWeapons);
+        const Py_ssize_t n = PyObject_Length(weapons2.ptr());
+        if (n < 0) throw py::error_already_set();
+        py::object len = own(PyLong_FromSsize_t(n));
+        py::object index = own(PyNumber_Remainder(last.ptr(), len.ptr()));
+        py::object system = own(PyObject_GetItem(weapons.ptr(), index.ptr()));
+        fire_system_at_target(c, system.ptr(), target.ptr(), subsystem.ptr());
+    }
+
+    set_attr(self, h.s_iLastUpdate, next_update(c).ptr());
+    return ps(c, h.s_PS_NORMAL);
+}
+
+}  // namespace fire
+}  // namespace
+
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "dauntless renderer + sim host bindings";
 
@@ -12647,6 +13692,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "SelectTarget.GetTargetRating for a stock instance: the float rating, "
           "the SDK's -1 with no ship, or a str reason (\"surface\" / \"no_mirror\") "
           "when the caller must run the SDK body instead.");
+    // ── FireScript's Update (the `fire` namespace above) ─────────────────
+    m.def("combat_ai_fire_update",
+          [](py::handle inst, py::handle end_time) -> py::object {
+              (void)end_time;  // the SDK's Update reads no end time
+              return fire::update(inst.ptr());
+          },
+          py::arg("inst"), py::arg("dEndTime"),
+          "FireScript.Update for a stock instance, statement for statement "
+          "(the `fire` namespace): the PS_* code the SDK returns, its "
+          "exceptions raised unchanged.");
     // ── AvoidObstacles' obstacle scan (the `avoid` namespace above) ──────
     m.def("combat_ai_avoid_scan",
           [](py::handle inst, py::handle ship, py::handle psr_obj, py::handle near_iter) {

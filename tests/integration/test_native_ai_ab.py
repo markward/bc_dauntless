@@ -4,8 +4,8 @@ its own subprocess, DAUNTLESS_NATIVE_AI=0 against unset).
 
 Each scene also asserts, for every kind native so far, that its ``native``
 count is > 0 and its ``python`` count is 0 or explained. Native so far:
-``avoid`` (Task 2, AvoidObstacles' obstacle scan) and ``select`` (Task 3,
-SelectTarget's GetTargetRating)."""
+``avoid`` (Task 2, AvoidObstacles' obstacle scan), ``select`` (Task 3,
+SelectTarget's GetTargetRating) and ``fire`` (Task 4, FireScript's Update)."""
 import pytest
 
 from tests.helpers import native_ai_ab
@@ -28,22 +28,18 @@ def _same(scene):
     return stats
 
 
-# TODO(per task): each scene switches on `native_ai_ab.assert_native(stats,
-# kind[, allowed_python])` as its kind goes native:
-#   Task 4/5 (fire): k1_gameloop_ai, sdk_dumb_fire, fed_subsystems,
-#                    akira_torp_select, cloak_attack
-
-
 def test_k1_gameloop_ai():
     stats = _same("k1_gameloop_ai")
     native_ai_ab.assert_native(stats, "avoid")
     native_ai_ab.assert_native(stats, "select")        # ungated
+    native_ai_ab.assert_native(stats, "fire")
 
 
 def test_combat_stress_gated():
     stats = _same("combat_stress_gated")
     native_ai_ab.assert_native(stats, "avoid")
     native_ai_ab.assert_native(stats, "select")        # sensor gate installed
+    native_ai_ab.assert_native(stats, "fire")
 
 
 def test_cloak_attack():
@@ -51,22 +47,28 @@ def test_cloak_attack():
     # returns a lone candidate unrated (AI/Preprocessors.py:1462-1464), so
     # GetTargetRating is never called on either side. The rating is covered
     # by the scenes above and tests/unit/test_native_target_rating.py.
-    _same("cloak_attack")
+    stats = _same("cloak_attack")
+    native_ai_ab.assert_native(stats, "fire")
 
 
 def test_fed_subsystems():
     stats = _same("fed_subsystems")
     native_ai_ab.assert_native(stats, "avoid")
     native_ai_ab.assert_native(stats, "select")
+    native_ai_ab.assert_native(stats, "fire")
 
 
 def test_akira_torp_select():
+    # No `fire` assertion: the scene calls ChooseTorpType directly, never
+    # Update (Task 5 makes ChooseTorpType native).
     _same("akira_torp_select")
 
 
 def test_sdk_dumb_fire():
     stats = _same("sdk_dumb_fire")
     native_ai_ab.assert_native(stats, "avoid")
+    native_ai_ab.assert_native(stats, "select")
+    native_ai_ab.assert_native(stats, "fire")
 
 
 def test_pursuers_converge():
@@ -75,6 +77,7 @@ def test_pursuers_converge():
     scans returned objects to avoid."""
     stats = _same("pursuers_converge")
     native_ai_ab.assert_native(stats, "avoid")
+    native_ai_ab.assert_native(stats, "fire")          # the Keldons' FireScripts
     assert stats["avoid"]["counts"].get("avoided", 0) > 0, stats
 
 
@@ -82,7 +85,8 @@ def test_the_switch_off_side_reports_no_native_calls_and_assert_helpers_bite():
     _py, _nat, stats, py_stats = native_ai_ab.run_ab_full("akira_torp_select")
     native_ai_ab.assert_no_native(py_stats)
     with pytest.raises(AssertionError):
-        native_ai_ab.assert_native(stats, "fire")      # nothing native yet
+        # The scene never calls an Update: nothing ran native.
+        native_ai_ab.assert_native(stats, "fire")
     forged = {k: {"native": 1, "python": 1, "reasons": {"not_stock": 1}}
               for k in stats}
     native_ai_ab.assert_native(forged, "fire", allowed_python=("not_stock",))
