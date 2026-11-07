@@ -49,6 +49,23 @@ ID, never ``id()``) ``_status``, ``_has_focus``, ``_got_focus_called``,
 ship the installed AI, ``_ai_next_walk_due``; and the driver's
 reported-error set. Floats compare by ``float.hex``; node references by ID.
 
+Module-level walk state. Only what something OUTSIDE the walker can observe is
+compared: ``_focus_depth`` (every tick, so an escaping exception or a nested
+walk that fails to restore it shows). ``_reached_this_tick`` / ``_all`` /
+``_all_ids`` / ``_pending_got_focus`` / ``_walk_min_due`` / ``_ooa_cache`` are
+walker-internal: a grep of engine/, tools/, tests/ and the SDK finds no reader
+outside ai_driver's walker functions (tests/unit/test_out_of_action_slot.py
+only WRITES ``_ooa_cache[0]``), and their effects are already compared through
+the root lists (``_focused_preprocessors`` / ``_active_nodes``), the
+GotFocus/LostFocus/SetActive call order, ``_ai_next_walk_due`` and the logged
+``_out_of_action`` calls. A native walker keeps per-walk state on its own
+stack, so comparing them would be a false constraint.
+
+Nodes created mid-tick (SetAI / AddAI / SetContainedAI / BuilderCreateN) are
+instrumented the moment they are attached, so their calls are logged in that
+tick. Heavy scenes may run Python, native, Python (``aba``) so an asymmetric
+warm-up cannot hide a difference.
+
 Fresh state per side: the AI and object id counters restart at the same base,
 the reported-error log and the dispatch cache are replaced, and every RNG is
 seeded with ``k1_fight._seed_every_rng``. IN-PROCESS rather than the
@@ -84,6 +101,9 @@ def _norm(v, depth=0):
         return ("deep", type(v).__name__)
     if isinstance(v, (list, tuple)):
         return (type(v).__name__,) + tuple(_norm(x, depth + 1) for x in v)
+    if isinstance(v, (set, frozenset)):
+        return ("set",) + tuple(sorted((_norm(x, depth + 1) for x in v),
+                                       key=repr))
     if isinstance(v, dict):
         return ("dict",) + tuple(sorted(
             (repr(k), _norm(x, depth + 1)) for k, x in v.items()))
@@ -150,16 +170,27 @@ class _Recorder:
         self.log.append(("ret", name, _norm(who), _norm(result)))
         return result
 
-    def _wrapper(self, name, who, fn):
+    def _wrapper(self, name, who, fn, after=None):
         record = self._record
 
         @functools.wraps(fn)
         def wrapped(*args, **kwargs):
-            return record(name, who, fn, args, kwargs)
+            result = record(name, who, fn, args, kwargs)
+            if after is not None:
+                after(args)
+            return result
         wrapped._diff_wrapped = True
         return wrapped
 
-    def _wrap_attr(self, obj, attr, name, who):
+    def _instrument_new(self, args):
+        """After SetAI / AddAI / SetContainedAI: instrument the subtree that
+        was just attached, so its calls are logged in the tick it appears."""
+        from engine.appc.ai import ArtificialIntelligence
+        if args and isinstance(args[0], ArtificialIntelligence):
+            for n in self.nodes(args[0]):
+                self._instrument_node(n)
+
+    def _wrap_attr(self, obj, attr, name, who, after=None):
         """Wrap ``obj.attr`` at instance level if the object really has it
         (statically: a data-bag's ``__getattr__`` lambdas are not wrapped)."""
         import inspect
@@ -174,7 +205,7 @@ class _Recorder:
             fn = getattr(obj, attr)
             if not callable(fn):
                 return
-            setattr(obj, attr, self._wrapper(name, who, fn))
+            setattr(obj, attr, self._wrapper(name, who, fn, after))
         except (AttributeError, TypeError):
             return
 
@@ -213,7 +244,9 @@ class _Recorder:
     def instrument(self):
         for ship, root in self.roots():
             for attr in ("ClearAI", "SetAI"):
-                self._wrap_attr(ship, attr, "ship." + attr, ("ship", ship.GetName()))
+                self._wrap_attr(ship, attr, "ship." + attr,
+                                ("ship", ship.GetName()),
+                                self._instrument_new if attr == "SetAI" else None)
             for node in self.nodes(root):
                 self._instrument_node(node)
 
@@ -221,6 +254,8 @@ class _Recorder:
         who = node.GetID()
         for m in _NODE_METHODS:
             self._wrap_attr(node, m, "node." + m, who)
+        for m in ("AddAI", "SetContainedAI"):
+            self._wrap_attr(node, m, "node." + m, who, self._instrument_new)
         d = node.__dict__
         from engine.appc.ai import PlainAI
         if isinstance(node, PlainAI):
@@ -358,14 +393,17 @@ class _Recorder:
             row["nodes"] = nodes
             ships[repr(_norm(ship))] = row
         return {"ships": ships,
+                "focus_depth": ai_driver._focus_depth,
                 "errors": sorted(ai_driver._reported_script_errors)}
 
 
 class Record:
-    """What one side saw: per tick, the call-log slice and the state."""
+    """What one side saw: per tick, the call-log slice and the state, and how
+    often each walker entry point ran (``entries``: python / native)."""
 
-    def __init__(self, ticks):
+    def __init__(self, ticks, entries=None):
         self.ticks = ticks
+        self.entries = entries or {"python": 0, "native": 0}
 
     def calls(self):
         """Counter of ``("call", name)`` entries over the whole run."""
@@ -448,6 +486,13 @@ def run_side(scene, ticks, native, bases=None):
         base_ai, base_obj = bases or _bases()
         _fresh_state(mp, base_ai, base_obj)
         mp.setattr(ai_driver, "_native_walker", bool(native))
+        entries = {"python": 0, "native": 0}
+        for key, attr in (("python", "_tick_all_ai_python"),
+                          ("native", "_tick_all_ai_native")):
+            def counted(game_time, _orig=getattr(ai_driver, attr), _k=key):
+                entries[_k] += 1
+                return _orig(game_time)
+            mp.setattr(ai_driver, attr, counted)
         built = scene(mp)
         rec = _Recorder(mp, built)
         rec.install_glue()
@@ -467,7 +512,7 @@ def run_side(scene, ticks, native, bases=None):
             mp.undo()
             ArtificialIntelligence._next_id = top_ai
             ids._counter = itertools.count(top_obj + 1)
-        return Record(out)
+        return Record(out, entries)
 
 
 def first_difference(py, nat):
@@ -486,6 +531,9 @@ def first_difference(py, nat):
                        (plog if len(plog) > len(nlog) else nlog)[
                            min(len(plog), len(nlog))]))
         if psnap != nsnap:
+            if psnap["focus_depth"] != nsnap["focus_depth"]:
+                return ("tick %d: _focus_depth differs: python %r native %r"
+                        % (t, psnap["focus_depth"], nsnap["focus_depth"]))
             if psnap["errors"] != nsnap["errors"]:
                 return ("tick %d: reported-error set differs:\n  python: %r\n"
                         "  native: %r" % (t, psnap["errors"], nsnap["errors"]))
@@ -516,13 +564,23 @@ def first_difference(py, nat):
     return None
 
 
-def run_walk_diff(scene, ticks, warm_ticks=0):
+def run_walk_diff(scene, ticks, warm_ticks=0, aba=False):
     """Run `scene` (a factory ``scene(mp)`` taking the side's MonkeyPatch and
     returning a :class:`Scene`; it is called once per side, after the fresh
-    state and the walker flag are set)
-    under the Python and the native walker; raise AssertionError naming the
-    tick and the first difference. Returns the Python side's :class:`Record`
-    so a test can assert the scene reached what it claims."""
+    state and the walker flag are set) under the Python and the native walker;
+    raise AssertionError naming the tick and the first difference. Returns the
+    Python side's :class:`Record` so a test can assert the scene reached what
+    it claims.
+
+    Also asserts each side ran the walker it claims: the Python side never
+    entered ``_tick_all_ai_native``; the native side entered it at least once.
+    TODO(task 2): today the native entry point delegates to the Python walker,
+    so this cannot yet say "and no Python walker function ran on the native
+    side"; tighten it to that when the native walker stops delegating.
+
+    `aba`: run Python, native, Python and require the second Python run to
+    match the native one too (an asymmetric warm-up would otherwise bias the
+    first Python run). Costs a third run, so only the heavy scenes use it."""
     if warm_ticks:
         # A discarded Python-side run first: the first load of a heavy scene
         # touches process-lifetime caches (as the golden fights' warm-up arm
@@ -531,6 +589,15 @@ def run_walk_diff(scene, ticks, warm_ticks=0):
     bases = _bases()
     py = run_side(scene, ticks, native=False, bases=bases)
     nat = run_side(scene, ticks, native=True, bases=bases)
+    assert py.entries["native"] == 0, (
+        "the Python side entered the native walker: %r" % py.entries)
+    assert py.entries["python"] >= 1, py.entries
+    assert nat.entries["native"] >= 1, (
+        "the native side never entered the native walker: %r" % nat.entries)
     diff = first_difference(py, nat)
     assert diff is None, diff
+    if aba:
+        py2 = run_side(scene, ticks, native=False, bases=bases)
+        diff = first_difference(py2, nat)
+        assert diff is None, "second Python run vs native: " + diff
     return py

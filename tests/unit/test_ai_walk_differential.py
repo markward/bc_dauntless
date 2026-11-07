@@ -390,13 +390,22 @@ def _set_ai_scene(mp):
             ship, "L2", interval=0.02,
             on_update=lambda n: ship.ClearAI() if n == 6 else None)))
 
+    clock = {"t": 0.0}
+
     def first_hook(n):
         if n == 5:
-            ship.SetAI(second_tree())            # a script replaces its own tree
+            new = second_tree()
+            ship.SetAI(new)                      # a script replaces its own tree
+            # ...and walks it at once, so the brand-new nodes run THIS tick.
+            _driver().tick_ai(new, clock["t"])
     first = _plist(ship, "First", (1, _leaf(
         ship, "L1", interval=0.02, on_update=first_hook)))
     _install(ship, first)
-    return _scene_of(mp, [ship])
+
+    def step(i):
+        clock["t"] = (i + 1) / 60.0
+        _driver().tick_all_ai(clock["t"])
+    return awd.synthetic_scene(mp, [ship], step)
 
 
 def test_script_sets_and_clears_the_ai_of_its_own_ship():
@@ -405,6 +414,12 @@ def test_script_sets_and_clears_the_ai_of_its_own_ship():
     assert _count(rec, "ship.ClearAI") == 1
     assert _count(rec, "fire_ai_done") == 2          # the old tree, then the new
     assert _count(rec, "script.Update") >= 10
+    # The new tree's leaf ran, and was logged, in the SAME tick as the SetAI.
+    tick = next(log for log, _s in rec.ticks
+                if any(e[:2] == ("call", "ship.SetAI") for e in log))
+    names = [e[1] for e in tick]
+    after = tick[names.index("ship.SetAI"):]
+    assert any(e[:2] == ("call", "script.Update") for e in after), after
 
 
 def _add_ai_scene(mp):
@@ -416,7 +431,7 @@ def _add_ai_scene(mp):
         # is iterating its live list: AddAI appends AND sorts in place.
         holder["evals"] = holder.get("evals", 0) + 1
         if holder["evals"] == 9:
-            holder["root"].AddAI(holder["extra"], 0)
+            holder["root"].AddAI(holder["extra"], 1)
         return US_DORMANT
 
     cond = _cond(1)
@@ -445,6 +460,15 @@ def test_add_ai_on_a_priority_list_being_scanned():
     assert max(sizes) == 4 and min(sizes) == 3, set(sizes)
     assert sizes[-1] == 3, "the extra child was never removed again"
     assert _count(rec, "script.Update") > 4
+    # AddAI(priority 1) sorts the extra child behind the gate being scanned, so
+    # the live scan reaches it in the same tick: its Update must be logged
+    # there, after the AddAI.
+    tick = next(log for log, _s in rec.ticks
+                if any(e[:2] == ("call", "node.AddAI") for e in log))
+    names = [e[1] for e in tick]
+    added = next(e for e in tick if e[:2] == ("call", "node.AddAI"))[3][1]
+    after = tick[names.index("node.AddAI"):]
+    assert any(e[:2] == ("call", "script.Update") for e in after), after
 
 
 # ── escaping exceptions ──────────────────────────────────────────────────────
@@ -655,7 +679,7 @@ def test_injected_node_type_and_patched_stock_handler_are_honoured():
 
 @needs_native
 def test_k1_gameloop_ai_trees():
-    rec = awd.run_walk_diff(_k1_scene(), 600, warm_ticks=2)
+    rec = awd.run_walk_diff(_k1_scene(), 600, warm_ticks=2, aba=True)
     calls = rec.calls()
     assert calls["script.Update"] > 100, calls
     assert calls["eval"] > 0 and calls["cond.GetStatus"] > 1000, calls
@@ -666,7 +690,8 @@ def test_k1_gameloop_ai_trees():
 
 @needs_native
 def test_sdk_dumb_fire_trees():
-    rec = awd.run_walk_diff(_k1_scene(dumb_fire=True), 600, warm_ticks=2)
+    rec = awd.run_walk_diff(_k1_scene(dumb_fire=True), 300, warm_ticks=2,
+                            aba=True)
     assert rec.calls()["script.Update"] > 100
 
 
@@ -704,6 +729,19 @@ def test_harness_catches_an_extra_call_in_the_second_run():
         awd.run_walk_diff(_negative_scene("log"), 30)
     assert "tick 9" in str(err.value) and "ForceUpdate" in str(err.value), \
         err.value
+
+
+def test_harness_catches_a_native_side_that_never_enters_the_native_walker():
+    def build(mp):
+        ship = _ship()
+        _install(ship, _plist(ship, "Root", (1, _leaf(ship, "Leaf"))))
+
+        def step(i):
+            _driver()._native_walker = False        # the selector is bypassed
+            _driver().tick_all_ai((i + 1) / 60.0)
+        return awd.synthetic_scene(mp, [ship], step)
+    with pytest.raises(AssertionError, match="never entered the native walker"):
+        awd.run_walk_diff(build, 5)
 
 
 def test_harness_catches_a_wrong_sleep_stamp():
