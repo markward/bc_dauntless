@@ -2654,3 +2654,66 @@ def test_harness_catches_a_wrong_sleep_stamp():
         awd.run_walk_diff(_negative_scene("stamp"), 30)
     assert "tick 11" in str(err.value) and "walk_due" in str(err.value), \
         err.value
+
+
+# ── a swapped S2 forwarder body is honoured on every path ────────────────────
+
+def _swap_eval(ai, eval_fn, args):
+    return eval_fn(0)
+
+
+def _swap_refresh(ai):
+    ai._status = 2
+
+
+def _swap_statuses(ai):
+    return [0] * len(ai._conditions)
+
+
+def _swap_any(ai):
+    return False
+
+
+_S2_SWAPS = {
+    "_eval_conditional": _swap_eval,
+    "_refresh_conditional_status": _swap_refresh,
+    "_condition_statuses": _swap_statuses,
+    "_any_condition": _swap_any,
+}
+
+
+def _swapped_s2_scene(target):
+    """`ai_driver.<target>.__code__` is replaced at tick 4, with the memo
+    warm. The same gate sits under a priority list (the refresh path), at a
+    root with an EvalFunc and at a root without one."""
+    def scene(mp):
+        drv = _driver()
+        owner = awd.current()
+
+        def Gate(b, ACTIVE=US_ACTIVE, DORMANT=US_DORMANT):
+            return ACTIVE if b else DORMANT
+        ships = []
+        s1 = _ship("PL")
+        _install(s1, _plist(s1, "Root", (1, _gated(
+            s1, "G", [_cond(1)], Gate, _sleaf(s1, "L1", owner=owner))),
+            (2, _sleaf(s1, "Low", owner=owner))))
+        s2 = _ship("Root")
+        _install(s2, _gated(s2, "G2", [_cond(1)], Gate,
+                            _sleaf(s2, "L2", owner=owner)))
+        s3 = _ship("NoEval")
+        _install(s3, _gated(s3, "G3", [_cond(1)], None,
+                            _sleaf(s3, "L3", owner=owner)))
+        ships = [s1, s2, s3]
+        fn = getattr(drv, target)
+        return _scene_of(mp, ships, {
+            4: lambda: mp.setattr(fn, "__code__", _S2_SWAPS[target].__code__)})
+    return scene
+
+
+@pytest.mark.parametrize("target", sorted(_S2_SWAPS))
+def test_a_swapped_s2_forwarder_body_is_honoured(target):
+    rec = awd.run_walk_diff(_swapped_s2_scene(target), 12)
+    if target == "_eval_conditional":
+        swapped = [e for e in rec.log() if e[0] == "call" and e[1] == "eval"
+                   and e[3] == ("tuple", ("int", 0))]
+        assert len(swapped) >= 3, rec.calls()

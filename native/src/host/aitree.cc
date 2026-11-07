@@ -82,7 +82,6 @@ struct Names {
     PyObject* contained_ai;         // "_contained_ai"
     PyObject* get_status;           // "GetStatus"
     PyObject* eval_conditional;     // "_eval_conditional"
-    PyObject* stock_eval;           // "_STOCK_EVAL_CONDITIONAL"
     PyObject* stock_get_status;     // "_STOCK_CONDITION_GETSTATUS"
     PyObject* us_active;            // "US_ACTIVE"
     PyObject* us_dormant;           // "US_DORMANT"
@@ -227,7 +226,6 @@ const Names* names() {
         {&n->contained_ai, "_contained_ai"},
         {&n->get_status, "GetStatus"},
         {&n->eval_conditional, "_eval_conditional"},
-        {&n->stock_eval, "_STOCK_EVAL_CONDITIONAL"},
         {&n->stock_get_status, "_STOCK_CONDITION_GETSTATUS"},
         {&n->us_active, "US_ACTIVE"},
         {&n->us_dormant, "US_DORMANT"},
@@ -1079,6 +1077,8 @@ PyObject* eval_impl(PyObject* ai, PyObject* eval_fn, PyObject* args, PyObject* g
     return ret.steal();
 }
 
+PyObject* eval_conditional_call(const Ctx& c, PyObject* ai, PyObject* eval_fn, PyObject* args);
+
 // `_refresh_conditional_status_python(ai)`, statement for statement.
 PyObject* refresh_impl(PyObject* ai, PyObject* g) {
     const Names* n = names();
@@ -1104,20 +1104,10 @@ PyObject* refresh_impl(PyObject* ai, PyObject* g) {
         if (!f.args) return nullptr;
         // ai._status = _eval_conditional(ai, eval_fn, args)
         {
-            Ref value;
-            {
-                Ref fn(load_global(g, n->eval_conditional));
-                if (!fn) return nullptr;
-                Ref stock_fn(load_global(g, n->stock_eval));
-                if (!stock_fn) return nullptr;
-                if (fn.get() == stock_fn.get()) {
-                    value = Ref(eval_impl(ai, f.eval_fn.get(), f.args.get(), g, n));
-                } else {
-                    PyObject* a[3] = {ai, f.eval_fn.get(), f.args.get()};
-                    value = Ref(PyObject_Vectorcall(fn.get(), a, 3, nullptr));
-                }
-                if (!value) return nullptr;
-            }
+            // The call goes through the same routing as _tick_conditional's:
+            // native only while the global is stock (same code, same binding).
+            Ref value(eval_conditional_call(Ctx{g, n}, ai, f.eval_fn.get(), f.args.get()));
+            if (!value) return nullptr;
             if (PyObject_SetAttr(ai, n->status, value.get()) < 0) return nullptr;
         }
         // if (ai._status == US_ACTIVE and ai._contained_ai is not None

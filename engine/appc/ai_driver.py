@@ -926,12 +926,6 @@ def _eval_conditional(ai, eval_fn, args):
     return _aitree_eval_conditional(ai, eval_fn, args, _GLOBALS)
 
 
-# The stock _eval_conditional: the native refresh evaluates inline only while
-# the module's _eval_conditional is still this function, and calls whatever
-# replaced it otherwise.
-_STOCK_EVAL_CONDITIONAL = _eval_conditional
-
-
 # ── The native walk's stock identities ──────────────────────────────────────
 #
 # The native walk (aitree_tick) runs a driver function's body natively only

@@ -126,9 +126,10 @@
 // two values the lambda's cells hold and adding when called (inside the try,
 // as the lambda does).
 //
-// S2 resolves at call time, through `globals`: `_eval_conditional` (the
-// refresh evaluates inline only while it is still `_STOCK_EVAL_CONDITIONAL`,
-// and calls the replacement otherwise), `_memoisable_evalfunc` (called on a
+// S2 resolves at call time, through `globals`: `_eval_conditional` (every
+// caller, the priority-child refresh included, runs it natively only while
+// the global is the stock function with its stock code and binding, and
+// calls whatever replaced it otherwise), `_memoisable_evalfunc` (called on a
 // verdict miss, exactly as Python; the verdict itself is Python's memo in
 // `ai.__dict__["_evalfn_memoisable"]`, so no native memo needs
 // invalidating), `_MEMO_KEY_TYPES`, `US_*`. `c.GetStatus()` is Python's own

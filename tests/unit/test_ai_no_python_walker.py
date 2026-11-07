@@ -74,7 +74,7 @@ def test_the_native_gate_names_survive():
                  "AI_MAX_SLEEP_TICKS", "_TICK_SECONDS", "_AI_BREAKDOWN",
                  "_timed_dispatch", "_STOCK_WALK", "_STOCK_HANDLERS",
                  "_STOCK_SET_ACTIVE", "_STOCK_SET_INACTIVE",
-                 "_STOCK_EVAL_CONDITIONAL", "_STOCK_CONDITION_GETSTATUS",
+                 "_STOCK_CONDITION_GETSTATUS",
                  "_note_due", "_note_due_ret", "_focus_depth", "_ooa_cache",
                  "_reached_this_tick", "_reached_this_tick_all",
                  "_reached_this_tick_all_ids", "_pending_got_focus"):
