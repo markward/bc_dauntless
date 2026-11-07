@@ -1099,44 +1099,6 @@ def _target_undetectable(weapon_system, target) -> bool:
         return False
 
 
-def _start_firing_py(self, target=None, offset=None) -> None:
-    """WeaponSystem.StartFiring's reference body. The native body
-    (`_dauntless_host.start_firing`, host_bindings.cc namespace startfire)
-    runs these gates, writes and this session in this order; this one runs
-    when there is no host module."""
-    if not self.IsOn():
-        return
-    # Disabled-weapons gate: when every child reports disabled (Project 2
-    # aggregation), the parent IsDisabled is 1 — block fire. Spec §4.2.
-    if _is_offline(self):
-        return
-    # Cloak gate: a cloaked / cloaking ship cannot fire (BC rule).
-    if _cloak_blocks_fire(self):
-        return
-    # Warp-in gate: an arriving ship holds fire until it has landed.
-    if _dewarp_blocks_fire(self):
-        return
-    # Detectability gate: never fire (nor play warm-up SFX) at a target the
-    # ship can't detect — cloaked, nebula-hidden, or out of sensor range.
-    if _target_undetectable(self, target):
-        return
-    # Engageability gate (per-class hook, e.g. PhaserSystem's global fire
-    # range): an out-of-range trigger must NOT latch _fire_held — an AI
-    # re-calls StartFiring every tick, and a latched-but-unengageable held
-    # state would flicker fire/stop each frame (the "ship's horn" loop).
-    if (target is not None and hasattr(self, "_can_engage")
-            and not self._can_engage(self.GetParentShip(), target)):
-        return
-    self._add_target(target)
-    self._held_target = target
-    self._held_offset = offset
-    self._fire_held = True
-    self.SetForceUpdate(1)
-    # One immediate update (dt 0), walked by the native K1 kernel:
-    # Python runs only its effects (native_combat.k1_system).
-    native_combat.k1_system(self, 0.0)
-
-
 class Weapon(ShipSubsystem):
     """BC leaf emitter — sdk/Build/scripts/App.py:5758 `class Weapon(ShipSubsystem)`.
 
@@ -1497,8 +1459,9 @@ class WeaponSystem(PoweredSubsystem):
         StartFiring + SetForceUpdate(1)).
 
         One native call (`_dauntless_host.start_firing`): the gates, the
-        writes and the session of `_start_firing_py`, the reference body,
-        in its order (host_bindings.cc, namespace startfire)."""
+        writes and the session, in the old Python body's order
+        (host_bindings.cc, namespace startfire; the body is frozen in
+        tests/helpers/start_firing_oracle.py)."""
         _start_firing(self, target, offset)
 
     def StopFiring(self, *args) -> None:
@@ -3289,7 +3252,6 @@ def _take_start_firing_surface() -> dict:
         "_fire_held": WeaponSystem.__dict__["_fire_held"],
         "_force_update": WeaponSystem.__dict__["_force_update"],
         "get_ident": threading.get_ident,
-        "_start_firing_py": _start_firing_py,
     }
 
 
@@ -3307,6 +3269,6 @@ def _start_firing_stale(system, target, offset):
 
 
 if _host_mod is None:  # pragma: no cover
-    _start_firing = _start_firing_py
+    _start_firing = _start_firing_stale
 else:
     _start_firing = getattr(_host_mod, "start_firing", _start_firing_stale)

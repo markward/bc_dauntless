@@ -6811,8 +6811,8 @@ PyMethodDef subsystem_is_type_of_def = {
 }  // namespace
 
 // ── WeaponSystem.StartFiring, natively (engine/appc/weapon_subsystems.py) ───
-// start_firing(system, target, offset) is `_start_firing_py`, the reference
-// body, in one call, native ONLY for StartFiring's own surface:
+// start_firing(system, target, offset) is the old Python body (frozen in
+// tests/helpers/start_firing_oracle.py), in one call, native ONLY for StartFiring's own surface:
 //   * the `IsOn()` read (PoweredSubsystem.IsOn's `_is_on`, when stock),
 //   * the writes: `_add_target` (its containment check; `append` and
 //     native_combat.push_field called), `_held_target`, `_held_offset`,
@@ -6838,7 +6838,6 @@ struct Host {
     // The surface table's entries (held for good).
     PyObject *IsOn, *add_target, *set_force_update, *nf_set, *nf_push_scalar;
     PyObject *d_held_target, *d_held_offset, *d_fire_held, *d_force_update, *get_ident;
-    PyObject* start_firing_py;
     // readers::reads_stock contracts, ((name, function),) each (held).
     PyObject *c_IsOn, *c_add_target, *c_set_force_update, *c_push_scalar;
     // Interned names.
@@ -6883,12 +6882,11 @@ Host& host() {
         p->d_fire_held = entry("_fire_held");
         p->d_force_update = entry("_force_update");
         p->get_ident = entry("get_ident");
-        p->start_firing_py = entry("_start_firing_py");
         Py_DECREF(surface);
         for (PyObject* f : {p->IsOn, p->add_target, p->set_force_update, p->nf_set,
-                            p->nf_push_scalar, p->start_firing_py})
+                            p->nf_push_scalar})
             if (!PyFunction_Check(f)) throw std::logic_error("_START_FIRING_SURFACE: not a function");
-        p->ws_d = PyFunction_GET_GLOBALS(p->start_firing_py);
+        p->ws_d = PyModule_GetDict(ws);  // borrowed; the module is held
 
         p->s_IsOn = intern("IsOn");
         p->s_is_on = intern("_is_on");
@@ -7260,7 +7258,7 @@ PyMethodDef start_firing_def = {
     reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&start_firing_fn)),
     METH_FASTCALL,
     "start_firing(system, target, offset): WeaponSystem.StartFiring's body "
-    "(weapon_subsystems._start_firing_py) in one call; its gates called back."};
+    "(frozen in tests/helpers/start_firing_oracle.py) in one call; its gates called back."};
 
 }  // namespace startfire
 }  // namespace

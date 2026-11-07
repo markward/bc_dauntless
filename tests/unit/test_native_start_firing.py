@@ -21,6 +21,7 @@ from engine.appc import weapon_subsystems as ws
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.subsystems import CloakingSubsystem
 from engine.core import ids
+from tests.helpers.start_firing_oracle import start_firing_py
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
 
@@ -241,7 +242,7 @@ def test_start_firing_is_native():
 def test_start_firing_gates_match_the_python_order(monkeypatch, scenario):
     phasers = lambda w: w.galaxy.GetPhaserSystem()      # noqa: E731
     vorcha = lambda w: w.vorcha                         # noqa: E731
-    want = _run(monkeypatch, scenario, ws._start_firing_py, phasers, vorcha)
+    want = _run(monkeypatch, scenario, start_firing_py, phasers, vorcha)
     got = _run(monkeypatch, scenario, _h.start_firing, phasers, vorcha)
     assert got == want
     if scenario not in ("nothing", "can_detect_raises", "decloaking",
@@ -258,7 +259,7 @@ def test_torpedo_dumb_fire_gates_match(monkeypatch, scenario):
     """The base body with target None: no detectability or engage gate."""
     torps = lambda w: w.galaxy.GetTorpedoSystem()       # noqa: E731
     none = lambda w: None                               # noqa: E731
-    want = _run(monkeypatch, scenario, ws._start_firing_py, torps, none)
+    want = _run(monkeypatch, scenario, start_firing_py, torps, none)
     got = _run(monkeypatch, scenario, _h.start_firing, torps, none)
     assert got == want
 
@@ -267,7 +268,7 @@ def test_native_body_runs_its_own_surface(monkeypatch):
     """On a stock ship the native body runs StartFiring's own surface (the
     IsOn read, the writes) without calling those Python bodies back."""
     gone = {"IsOn", "_add_target", "SetForceUpdate", "__set__",
-            "_push_scalar", "_start_firing_py"}
+            "_push_scalar"}
     w = _World(monkeypatch)
     try:
         ph = w.galaxy.GetPhaserSystem()
@@ -359,7 +360,7 @@ def test_unusual_attribute_reads_match(monkeypatch, cls):
         vorcha = lambda w: w.vorcha                         # noqa: E731
         want_reads, got_reads = [], []
         want = _run(monkeypatch, "unusual",
-                    _logging(ws._start_firing_py, want_reads), phasers, vorcha)
+                    _logging(start_firing_py, want_reads), phasers, vorcha)
         got = _run(monkeypatch, "unusual",
                    _logging(_h.start_firing, got_reads), phasers, vorcha)
         assert got == want
@@ -394,7 +395,7 @@ def test_start_firing_writes_and_pushes_match(monkeypatch):
                 return got, got2
             finally:
                 w.close()
-    assert go(_h.start_firing) == go(ws._start_firing_py)
+    assert go(_h.start_firing) == go(start_firing_py)
 
 
 def test_start_firing_runs_the_real_session(monkeypatch):
@@ -412,7 +413,7 @@ def test_start_firing_runs_the_real_session(monkeypatch):
                 return firing, _label(w, _writes(ph))
             finally:
                 w.close()
-    want = go(ws._start_firing_py)
+    want = go(start_firing_py)
     assert any(want[0])
     assert go(_h.start_firing) == want
 
@@ -538,7 +539,7 @@ def test_a_patch_is_called(monkeypatch, patch):
                 return seen, _label(w, _writes(ph)), len(k1)
             finally:
                 w.close()
-    want = go(ws._start_firing_py)
+    want = go(start_firing_py)
     assert want[0], "the patch was never reached"
     assert go(_h.start_firing) == want
 
@@ -563,20 +564,9 @@ def test_held_can_engage_still_calls_get_parent_ship(monkeypatch):
                 return seen, _label(w, _writes(pulse))
             finally:
                 w.close()
-    want = go(ws._start_firing_py)
+    want = go(start_firing_py)
     assert want[0]
     assert go(_h.start_firing) == want
-
-
-def test_python_body_without_the_host(monkeypatch):
-    """No host module: StartFiring runs the Python body."""
-    assert ws._start_firing_py is not _h.start_firing
-    seen = []
-    monkeypatch.setattr(ws, "_start_firing",
-                        lambda s, t, o: seen.append((s, t, o)))
-    sys_ = ws.TorpedoSystem("Torpedoes")
-    sys_.StartFiring("t", "o")
-    assert seen == [(sys_, "t", "o")]
 
 
 def test_a_stale_binary_surfaces_as_attributeerror():
