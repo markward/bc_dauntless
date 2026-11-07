@@ -21,12 +21,21 @@ void SetIndex::bump(SetData& sd, int64_t target, int64_t delta) {
     if (it->second <= 0) sd.counts.erase(it);
 }
 
+// An object's record lives exactly as long as some set holds it: the last
+// release erases it, so set_target / set_is_ship on an unheld object do
+// nothing (add receives the current values when it joins again).
 void SetIndex::hold(IndexKey obj, IndexKey set, int64_t delta) {
-    auto& held = objs_[obj].held;
+    auto oi = objs_.find(obj);
+    if (oi == objs_.end()) {
+        if (delta > 0) objs_[obj].held.emplace_back(set, delta);
+        return;
+    }
+    auto& held = oi->second.held;
     for (auto it = held.begin(); it != held.end(); ++it) {
         if (it->first != set) continue;
         it->second += delta;
         if (it->second <= 0) held.erase(it);
+        if (held.empty()) objs_.erase(oi);
         return;
     }
     if (delta > 0) held.emplace_back(set, delta);
@@ -39,13 +48,19 @@ void SetIndex::add_entry_contrib(SetData& sd, IndexKey set, IndexKey obj) {
 }
 
 void SetIndex::drop_entry_contrib(SetData& sd, IndexKey set, IndexKey obj) {
-    const ObjInfo& oi = objs_[obj];
-    if (oi.is_ship) bump(sd, oi.target, -1);
+    auto oi = objs_.find(obj);
+    if (oi != objs_.end() && oi->second.is_ship) bump(sd, oi->second.target, -1);
     hold(obj, set, -1);
 }
 
 std::optional<IndexKey> SetIndex::add(IndexKey set, std::string_view ident, IndexKey obj,
-                                      int64_t /*obj_id*/, bool is_ship, int64_t target_id) {
+                                      bool is_ship, int64_t target_id) {
+    if (objs_.count(obj)) {
+        // Held elsewhere: equal to the stored values whenever the facade's
+        // contract holds; applied through the re-counting path regardless.
+        set_target(obj, target_id);
+        set_is_ship(obj, is_ship);
+    }
     if (!sets_.count(set)) set_order_.push_back(set);
     SetData& sd = sets_[set];
     std::optional<IndexKey> replaced;
@@ -70,7 +85,7 @@ std::optional<IndexKey> SetIndex::add(IndexKey set, std::string_view ident, Inde
     sd.by_obj[obj].push_back(seq);
     ObjInfo& oi = objs_[obj];
     oi.is_ship = is_ship;
-    if (is_ship) oi.target = target_id;
+    oi.target = target_id;
     add_entry_contrib(sd, set, obj);
     return replaced;
 }
@@ -101,7 +116,9 @@ std::optional<IndexKey> SetIndex::remove(IndexKey set, std::string_view ident) {
 }
 
 void SetIndex::set_target(IndexKey ship, int64_t target_id) {
-    ObjInfo& oi = objs_[ship];
+    auto found = objs_.find(ship);
+    if (found == objs_.end()) return;  // held by no set: add brings it
+    ObjInfo& oi = found->second;
     if (oi.target == target_id) return;
     if (oi.is_ship) {
         for (auto& [set, mult] : oi.held) {
@@ -114,7 +131,9 @@ void SetIndex::set_target(IndexKey ship, int64_t target_id) {
 }
 
 void SetIndex::set_is_ship(IndexKey obj, bool is_ship) {
-    ObjInfo& oi = objs_[obj];
+    auto found = objs_.find(obj);
+    if (found == objs_.end()) return;  // held by no set: add brings it
+    ObjInfo& oi = found->second;
     if (oi.is_ship == is_ship) return;
     for (auto& [set, mult] : oi.held)
         bump(sets_[set], oi.target, is_ship ? mult : -mult);
@@ -198,6 +217,7 @@ int64_t SetIndex::multiplicity(IndexKey set, IndexKey obj) const {
 }
 
 int64_t SetIndex::popularity(IndexKey set, IndexKey rater, int64_t target_id) const {
+    if (target_id == kNoTarget) return 0;
     int64_t n = targeted_by(set, target_id);
     auto oi = objs_.find(rater);
     if (oi != objs_.end() && oi->second.is_ship && oi->second.target == target_id)
@@ -228,6 +248,14 @@ std::vector<IndexKey> SetIndex::sets_holding(IndexKey obj) const {
         for (uint64_t seq : bo->second)
             if (!sd.entries.at(seq).leaving) { out.push_back(set); break; }
     }
+    return out;
+}
+
+std::vector<IndexKey> SetIndex::held_sets(IndexKey obj) const {
+    std::vector<IndexKey> out;
+    auto oi = objs_.find(obj);
+    if (oi == objs_.end()) return out;
+    for (auto& [set, mult] : oi->second.held) out.push_back(set);
     return out;
 }
 

@@ -25,8 +25,20 @@ public:
     // Returns the object an overwrite replaced (the caller drops that
     // reference). An overwrite clears LEAVING and removes the slot from every
     // bucket (the caller re-asserts membership of the new object).
+    //
+    // `is_ship` / `target_id` must equal what was last pushed through
+    // set_is_ship / set_target for an object some set already holds. The
+    // facade (engine/appc/set_index.py) guarantees it: a target changes only
+    // through ShipClass.SetTarget, which calls set_target, and a class only
+    // through native_combat.reclassify, which calls set_is_ship. Should they
+    // ever differ, add applies them through set_target / set_is_ship first,
+    // so every other set holding the object is re-counted, never drifted.
+    //
+    // Per-object records (class flag, target) exist only while some set holds
+    // the object: the last remove / forget_set erases it, and set_target /
+    // set_is_ship on an object held by no set do nothing.
     std::optional<IndexKey> add(IndexKey set, std::string_view ident, IndexKey obj,
-                                int64_t obj_id, bool is_ship, int64_t target_id);
+                                bool is_ship = false, int64_t target_id = kNoTarget);
     void mark_leaving(IndexKey set, std::string_view ident);
     std::optional<IndexKey> remove(IndexKey set, std::string_view ident);
 
@@ -44,10 +56,15 @@ public:
 
     int64_t targeted_by(IndexKey set, int64_t target_id) const;
     int64_t multiplicity(IndexKey set, IndexKey obj) const;
+    // 0 for kNoTarget (never negative).
     int64_t popularity(IndexKey set, IndexKey rater, int64_t target_id) const;
     std::vector<IndexKey> targeting(IndexKey set, int64_t target_id) const;
 
+    // Sets holding `obj` under a non-LEAVING entry (the contact view).
     std::vector<IndexKey> sets_holding(IndexKey obj) const;
+    // Every set holding `obj`, LEAVING entries included (reclassification).
+    std::vector<IndexKey> held_sets(IndexKey obj) const;
+    std::size_t object_records() const { return objs_.size(); }
     // Every key whose reference is dropped, with multiplicity (one per entry's
     // object, plus the set key once per set).
     std::vector<IndexKey> forget_set(IndexKey set);

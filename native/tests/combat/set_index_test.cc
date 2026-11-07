@@ -20,7 +20,7 @@ SetIndex with_bucket() {
 }
 void put(SetIndex& ix, IndexKey set, const char* id, IndexKey o, bool ship = false,
          int64_t tgt = kNoTarget) {
-    ix.add(set, id, o, static_cast<int64_t>(o), ship, tgt);
+    ix.add(set, id, o, ship, tgt);
     ix.set_bucket_membership(set, CLS, o, true);
 }
 }  // namespace
@@ -30,7 +30,7 @@ TEST(SetIndex, BucketFollowsDictOrder) {
     put(ix, S, "a", A);
     put(ix, S, "b", B);
     put(ix, S, "c", C);
-    auto r = ix.add(S, "b", D, D, false, kNoTarget);
+    auto r = ix.add(S, "b", D, false, kNoTarget);
     ix.set_bucket_membership(S, CLS, D, true);
     ASSERT_TRUE(r.has_value());
     EXPECT_EQ(*r, B);
@@ -59,16 +59,16 @@ TEST(SetIndex, OverwriteOfALeavingEntryClearsLeaving) {
     SetIndex ix = with_bucket();
     put(ix, S, "x", A);
     ix.mark_leaving(S, "x");
-    ix.add(S, "x", B, B, false, kNoTarget);
+    ix.add(S, "x", B, false, kNoTarget);
     ix.set_bucket_membership(S, CLS, B, true);
     EXPECT_EQ(ix.distinct_live(S, CLS), (Keys{B}));
 }
 
 TEST(SetIndex, CountsFollowTargetsAndMembership) {
     SetIndex ix;
-    ix.add(S, "a", A, A, true, T);
-    ix.add(S, "b", B, B, true, T);
-    ix.add(S, "c", C, C, true, kNoTarget);
+    ix.add(S, "a", A, true, T);
+    ix.add(S, "b", B, true, T);
+    ix.add(S, "c", C, true, kNoTarget);
     EXPECT_EQ(ix.targeted_by(S, T), 2);
     ix.set_target(C, T);
     EXPECT_EQ(ix.targeted_by(S, T), 3);
@@ -76,7 +76,7 @@ TEST(SetIndex, CountsFollowTargetsAndMembership) {
     EXPECT_EQ(ix.targeted_by(S, T), 2);
     EXPECT_EQ(ix.targeted_by(S, D), 1);
     ix.remove(S, "a");
-    ix.add(S2, "a", A, A, true, D);
+    ix.add(S2, "a", A, true, D);
     EXPECT_EQ(ix.targeted_by(S, D), 0);
     EXPECT_EQ(ix.targeted_by(S2, D), 1);
     ix.set_target(A, T);
@@ -86,9 +86,9 @@ TEST(SetIndex, CountsFollowTargetsAndMembership) {
 
 TEST(SetIndex, PopularitySubtractsTheRaterByMultiplicity) {
     SetIndex ix;
-    ix.add(S, "r1", A, A, true, C);
-    ix.add(S, "r2", A, A, true, C);
-    ix.add(S, "o", B, B, true, C);
+    ix.add(S, "r1", A, true, C);
+    ix.add(S, "r2", A, true, C);
+    ix.add(S, "o", B, true, C);
     EXPECT_EQ(ix.targeted_by(S, C), 3);
     EXPECT_EQ(ix.multiplicity(S, A), 2);
     EXPECT_EQ(ix.popularity(S, A, C), 1);
@@ -96,24 +96,116 @@ TEST(SetIndex, PopularitySubtractsTheRaterByMultiplicity) {
 }
 
 TEST(SetIndex, TargetSetOutsideAnySetIsPickedUpOnAdd) {
+    // No record outside a set: set_target on an unheld ship does nothing, and
+    // add's target_id (the ship's current target, from Python) is what counts.
     SetIndex ix;
-    ix.set_target(A, T);  // unknown ship: only recorded
-    EXPECT_EQ(ix.targeted_by(S, T), 0);
-    ix.add(S, "a", A, A, true, T);
-    EXPECT_EQ(ix.targeted_by(S, T), 1);
-    ix.remove(S, "a");
-    ix.set_target(A, D);
-    ix.add(S, "a", A, A, true, D);
+    ix.set_target(A, T);
+    EXPECT_EQ(ix.object_records(), 0u);
+    ix.add(S, "a", A, true, D);
     EXPECT_EQ(ix.targeted_by(S, D), 1);
     EXPECT_EQ(ix.targeted_by(S, T), 0);
+    ix.remove(S, "a");
+    ix.set_target(A, T);
+    ix.add(S, "a", A, true, kNoTarget);
+    EXPECT_EQ(ix.targeted_by(S, T), 0);
+    EXPECT_EQ(ix.targeted_by(S, D), 0);
+}
+
+TEST(SetIndex, AnObjectRemovedFromItsLastSetLeavesNoRecord) {
+    SetIndex ix;
+    ix.add(S, "a", A, true, T);
+    ix.add(S, "a2", A, true, T);
+    ix.add(S2, "a", A, true, T);
+    EXPECT_EQ(ix.object_records(), 1u);
+    ix.remove(S, "a");
+    ix.remove(S, "a2");
+    EXPECT_EQ(ix.object_records(), 1u);
+    ix.remove(S2, "a");
+    EXPECT_EQ(ix.object_records(), 0u);
+    ix.add(S, "b", B);
+    ix.add(S, "b", C);  // overwrite: B is held nowhere now
+    EXPECT_EQ(ix.object_records(), 1u);
+    ix.forget_set(S);
+    EXPECT_EQ(ix.object_records(), 0u);
+}
+
+TEST(SetIndex, OverwriteChangesCounts) {
+    SetIndex ix;
+    ix.add(S, "x", A, true, T);
+    EXPECT_EQ(ix.targeted_by(S, T), 1);
+    ix.add(S, "x", B, true, D);
+    EXPECT_EQ(ix.targeted_by(S, T), 0);
+    EXPECT_EQ(ix.targeted_by(S, D), 1);
+    ix.add(S, "x", C, false, kNoTarget);
+    EXPECT_EQ(ix.targeted_by(S, D), 0);
+}
+
+TEST(SetIndex, OverwriteOfAnObjectHeldUnderTwoIdentifiers) {
+    SetIndex ix = with_bucket();
+    put(ix, S, "a", A, true, T);
+    put(ix, S, "a2", A, true, T);
+    EXPECT_EQ(ix.targeted_by(S, T), 2);
+    put(ix, S, "a", B, true, D);
+    EXPECT_EQ(ix.bucket(S, CLS), (Keys{B, A}));
+    EXPECT_EQ(ix.multiplicity(S, A), 1);
+    EXPECT_EQ(ix.targeted_by(S, T), 1);
+    EXPECT_EQ(ix.targeted_by(S, D), 1);
+    EXPECT_EQ(ix.sets_holding(A), (Keys{S}));
+}
+
+TEST(SetIndex, SetIsShipFlipsCounts) {
+    SetIndex ix;
+    ix.add(S, "a", A, true, T);
+    ix.add(S, "a2", A, true, T);
+    ix.add(S2, "a", A, true, T);
+    ix.set_is_ship(A, false);
+    EXPECT_EQ(ix.targeted_by(S, T), 0);
+    EXPECT_EQ(ix.targeted_by(S2, T), 0);
+    ix.set_is_ship(A, true);
+    EXPECT_EQ(ix.targeted_by(S, T), 2);
+    EXPECT_EQ(ix.targeted_by(S2, T), 1);
+    ix.set_is_ship(B, true);  // held by no set: nothing recorded
+    EXPECT_EQ(ix.object_records(), 1u);
+}
+
+TEST(SetIndex, AddWithANewTargetRecountsTheOtherSets) {
+    // The facade keeps add's target equal to the last set_target; if it ever
+    // differs, add applies it as set_target would, so no set drifts.
+    SetIndex ix;
+    ix.add(S, "a", A, true, T);
+    ix.add(S2, "a", A, true, D);
+    EXPECT_EQ(ix.targeted_by(S, T), 0);
+    EXPECT_EQ(ix.targeted_by(S, D), 1);
+    EXPECT_EQ(ix.targeted_by(S2, D), 1);
+    ix.remove(S, "a");
+    EXPECT_EQ(ix.targeted_by(S, D), 0);
+    EXPECT_EQ(ix.targeted_by(S, T), 0);
+}
+
+TEST(SetIndex, PopularityOfNoTargetIsZero) {
+    SetIndex ix;
+    ix.add(S, "a", A, true, kNoTarget);
+    ix.add(S, "b", B, true, kNoTarget);
+    EXPECT_EQ(ix.popularity(S, A, kNoTarget), 0);
+    EXPECT_EQ(ix.popularity(S, C, kNoTarget), 0);
+}
+
+TEST(SetIndex, HeldSetsIncludeLeavingEntries) {
+    SetIndex ix;
+    ix.add(S, "a", A);
+    ix.add(S2, "a", A);
+    ix.mark_leaving(S, "a");
+    EXPECT_EQ(ix.sets_holding(A), (Keys{S2}));
+    EXPECT_EQ(ix.held_sets(A), (Keys{S, S2}));
+    EXPECT_TRUE(ix.held_sets(B).empty());
 }
 
 TEST(SetIndex, TargetingListsRatersInSequenceOrder) {
     SetIndex ix;
-    ix.add(S, "c", C, C, true, T);
-    ix.add(S, "a", A, A, true, T);
-    ix.add(S, "b", B, B, true, D);
-    ix.add(S, "a2", A, A, true, T);
+    ix.add(S, "c", C, true, T);
+    ix.add(S, "a", A, true, T);
+    ix.add(S, "b", B, true, D);
+    ix.add(S, "a2", A, true, T);
     EXPECT_EQ(ix.targeting(S, T), (Keys{C, A, A}));
 }
 
@@ -122,7 +214,7 @@ TEST(SetIndex, ForgetSetAndResetReturnEveryReference) {
     put(ix, S, "a", A);
     put(ix, S, "a2", A);
     put(ix, S, "b", B);
-    ix.add(S2, "c", C, C, true, T);
+    ix.add(S2, "c", C, true, T);
     auto sorted = [](Keys k) { std::sort(k.begin(), k.end()); return k; };
     EXPECT_EQ(sorted(ix.forget_set(S)), (Keys{A, A, B, S}));
     EXPECT_FALSE(ix.has_set(S));
