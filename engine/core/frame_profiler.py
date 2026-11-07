@@ -686,6 +686,7 @@ def report_lines() -> list[str]:
                     native.get("frames", 0)))
     lines.extend(_beam_feed_lines())
     lines.extend(_torpedo_feed_lines())
+    lines.extend(_ai_native_lines())
     return lines
 
 
@@ -720,6 +721,24 @@ def _torpedo_feed_lines() -> list[str]:
     try:
         from engine.appc import native_combat
         return [_feed_line("torpedo", native_combat.torpedo_feed_counts())]
+    except Exception:
+        return []
+
+
+def _ai_native_lines() -> list[str]:
+    """`  ai native: avoid native N, python M (reason k); select ...; fire ...`:
+    the calls of each native stock preprocessor that ran native or went back
+    to the SDK Python (engine.appc.ai_native.stats, since its last reset)."""
+    try:
+        from engine.appc import ai_native
+        parts = []
+        for kind, c in ai_native.stats().items():
+            part = "%s native %d, python %d" % (kind, c["native"], c["python"])
+            counted = ["%s %d" % kv for kv in c["reasons"].items() if kv[1]]
+            if counted:
+                part += " (%s)" % ", ".join(counted)
+            parts.append(part)
+        return ["  ai native: " + "; ".join(parts)]
     except Exception:
         return []
 

@@ -7564,6 +7564,8 @@ def reset_mission_state(renderer=None) -> None:
     """
     from engine.appc import ship_lifecycle
     ship_lifecycle.reset()
+    from engine.appc import ai_native
+    ai_native.reset_stats()
     # Effects held for the tick boundary name the old mission's ships.
     _effect_queue.reset()
     from engine.appc import ship_death
