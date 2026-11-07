@@ -218,6 +218,79 @@ def test_every_due_time_gate_in_the_driver_records_its_due_time():
         "calling _note_due, so their nodes can oversleep: %r" % (offenders,))
 
 
+_AITREE_CC = (pathlib.Path(__file__).resolve().parents[2]
+              / "native" / "src" / "host" / "aitree.cc")
+_NOTE_DUE_CALLS = ("note_due_attr_stmt(", "note_due_value(", "note_due_ret_test(")
+_COMPARE_OPS = ("Py_LT", "Py_LE", "Py_GT", "Py_GE")
+
+
+def _cc_functions(text):
+    """(name, raw body, body with // comments removed) for every top-level
+    function in aitree.cc: a column-0 line ending in `{` up to the column-0
+    `}` that closes it."""
+    out, start = [], None
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if start is None:
+            if (line[:1].isalpha() and line.rstrip().endswith("{")
+                    and "(" in line and not line.startswith(
+                        ("namespace", "struct", "class", "enum", "extern"))):
+                start = i
+        elif line.startswith("}"):
+            raw = "\n".join(lines[start:i + 1])
+            code = "\n".join(l.split("//")[0] for l in lines[start:i + 1])
+            out.append((lines[start].split("(")[0].split()[-1], raw, code))
+            start = None
+    return out
+
+
+def _unrecorded_due_gates(text):
+    """Functions that compare against `next_update_time` (the attribute name
+    and a Py_LT/LE/GT/GE comparison in the same function) and neither call a
+    note-due helper nor carry a `// due-gate-exempt: <reason>` comment."""
+    bad = []
+    for name, raw, code in _cc_functions(text):
+        if "next_update_time" not in code:
+            continue
+        if not any(op in code for op in _COMPARE_OPS):
+            continue
+        if any(call in code for call in _NOTE_DUE_CALLS):
+            continue
+        if "// due-gate-exempt:" in raw:
+            continue
+        bad.append(name)
+    return bad
+
+
+def test_every_due_time_gate_in_aitree_cc_records_its_due_time():
+    """The native twin of the structural backstop above. The walk is C++, so
+    a gate added there is invisible to a scan of the frozen oracle: every
+    function in native/src/host/aitree.cc that compares against
+    `next_update_time` must also call one of the note-due helpers, or carry
+    `// due-gate-exempt: <reason>`."""
+    text = _AITREE_CC.read_text(encoding="utf-8")
+    gated = [name for name, _raw, code in _cc_functions(text)
+             if "next_update_time" in code
+             and any(op in code for op in _COMPARE_OPS)]
+    assert {"plain_impl", "preprocessing_impl"} <= set(gated), gated
+    assert not _unrecorded_due_gates(text), (
+        "these aitree.cc functions gate on _next_update_time without a "
+        "note-due call, so their nodes can oversleep: %r"
+        % (_unrecorded_due_gates(text),))
+
+
+def test_the_aitree_cc_gate_scan_bites():
+    text = _AITREE_CC.read_text(encoding="utf-8")
+    stripped = text.replace("note_due_ret_test(c, f.child.get())", "1")
+    assert _unrecorded_due_gates(stripped), "removing a note-due call went unseen"
+    fake = ("int gate(PyObject* ai) {\n%s\n"
+            "    auto t = PyObject_GetAttr(ai, n->next_update_time);\n"
+            "    return compare_owned(t, t, Py_GE);\n}\n")
+    assert _unrecorded_due_gates(fake % "") == ["gate"]
+    assert not _unrecorded_due_gates(fake % "    // due-gate-exempt: why")
+    assert not _unrecorded_due_gates(fake % "    note_due_value(t);")
+
+
 # ── the measured waste the pre-gate note used to cause ──────────────────────
 
 def test_a_node_that_just_ran_does_not_force_a_walk_on_the_very_next_tick(
