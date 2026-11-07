@@ -226,20 +226,27 @@ _COMPARE_OPS = ("Py_LT", "Py_LE", "Py_GT", "Py_GE")
 
 def _cc_functions(text):
     """(name, raw body, body with // comments removed) for every top-level
-    function in aitree.cc: a column-0 line ending in `{` up to the column-0
-    `}` that closes it."""
+    function in aitree.cc. A function starts at the last column-0 line that
+    opens a signature (an identifier, a `(`, not a `;`-ended declaration)
+    before the column-0 `}` that closes it, so a signature continued over
+    several lines is scanned too.
+
+    Limitation: the due-time name and the comparison must sit in the same
+    function. A gate that reads `next_update_time` in a helper and compares
+    in its caller is not seen; keep gates in one function or exempt them."""
     out, start = [], None
     lines = text.splitlines()
     for i, line in enumerate(lines):
-        if start is None:
-            if (line[:1].isalpha() and line.rstrip().endswith("{")
-                    and "(" in line and not line.startswith(
-                        ("namespace", "struct", "class", "enum", "extern"))):
-                start = i
+        if (line[:1].isalpha() and "(" in line
+                and not line.rstrip().endswith(";")
+                and not line.startswith(
+                    ("namespace", "struct", "class", "enum", "extern"))):
+            start = i
         elif line.startswith("}"):
-            raw = "\n".join(lines[start:i + 1])
-            code = "\n".join(l.split("//")[0] for l in lines[start:i + 1])
-            out.append((lines[start].split("(")[0].split()[-1], raw, code))
+            if start is not None:
+                raw = "\n".join(lines[start:i + 1])
+                code = "\n".join(l.split("//")[0] for l in lines[start:i + 1])
+                out.append((lines[start].split("(")[0].split()[-1], raw, code))
             start = None
     return out
 
@@ -289,6 +296,14 @@ def test_the_aitree_cc_gate_scan_bites():
     assert _unrecorded_due_gates(fake % "") == ["gate"]
     assert not _unrecorded_due_gates(fake % "    // due-gate-exempt: why")
     assert not _unrecorded_due_gates(fake % "    note_due_value(t);")
+    multi = ("static int gate2(PyObject* ai,\n"
+             "                 double now) {\n"
+             "    auto t = PyObject_GetAttr(ai, n->next_update_time);\n"
+             "    return compare_owned(t, t, Py_LT);\n}\n")
+    assert _unrecorded_due_gates(multi) == ["gate2"]
+    names = {name for name, _r, _c in _cc_functions(text)}
+    assert {"eval_impl", "routes_native", "reconcile_stmt"} <= names, (
+        "multi-line signatures are not scanned")
 
 
 # ── the measured waste the pre-gate note used to cause ──────────────────────
