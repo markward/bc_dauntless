@@ -291,6 +291,72 @@ def test_set_lists_survive_a_collection_inside_the_binding():
     """)
 
 
+def test_every_object_returning_binding_survives_a_collection_inside_it():
+    """Final-review fix: set_index_hide_all computed its changed set keys,
+    THEN allocated the output list, so a gen-0 collection inside that
+    allocation freed sets it was about to return (a SIGSEGV). Every binding
+    that turns core keys into Python objects is driven here under the same
+    pressure: a cycle of dead sets holding a visible ship, the list freelist
+    drained, a gen-0 threshold of 1. A returned object must be alive and of
+    the right type; a set returned must still be tracked."""
+    _run_isolated("""
+        import gc, faulthandler
+        faulthandler.enable()
+        import App
+        import _dauntless_host as _h
+        from App import Nebula
+        from engine.appc import set_index  # configures the binding
+        from engine.appc.ships import ShipClass
+
+        class FakeSet:
+            pass
+
+        ship = object.__new__(ShipClass)
+        neb = object.__new__(Nebula)
+        keep = FakeSet()  # a live set the member-returning bindings read
+        _h.set_index_add(keep, "ship", ship, True, 7)
+        _h.set_index_add(keep, "neb", neb, False, -1)
+        gc.collect()
+        base = _h.set_index_tracked()["sets"]
+        CALLS = {
+            "class_objects": (lambda: _h.set_index_class_objects(keep, ShipClass),
+                              ShipClass),
+            "ships": (lambda: _h.set_index_ships(keep), ShipClass),
+            "nebulae": (lambda: _h.set_index_nebulae(keep), Nebula),
+            "targeting": (lambda: _h.set_index_targeting(keep, 7), ShipClass),
+            "sets_holding": (lambda: _h.set_index_sets_holding(ship), FakeSet),
+            "hide_all": (lambda: _h.set_index_hide_all(), FakeSet),
+        }
+        for name, (call, kind) in CALLS.items():
+            for trial in range(20):
+                _h.set_index_add(keep, "ship", ship, True, 7)  # re-shown
+                _h.set_index_add(keep, "neb", neb, False, -1)
+                gc.collect()
+                gc.disable()
+                for i in range(6):
+                    s = FakeSet()
+                    s._cycle = s  # garbage only to the cycle collector
+                    _h.set_index_add(s, "x", ship, True, 7)  # visible: changed
+                del s
+                drain = [[] for _ in range(200)]  # the list freelist, emptied
+                gc.set_threshold(1, 10, 10)
+                gc.enable()
+                got = call()
+                gc.set_threshold(700, 10, 10)
+                assert all(type(o) is kind for o in got), (name, trial)
+                if kind is FakeSet:
+                    still = _h.set_index_tracked()["sets"]
+                    assert len(got) <= still, (name, trial, len(got), still)
+                else:
+                    assert len(got) >= 1, (name, trial)
+                got = drain = None
+                gc.collect()
+            assert _h.set_index_tracked()["sets"] == base, name
+            print(name, "survived", flush=True)  # names the crashing binding
+        print("OK")
+    """)
+
+
 def test_a_set_outliving_reset_mission_state_keeps_its_lists():
     """HostController's swap runs reset_mission_state BEFORE
     reset_sdk_globals tears down against still-live sets, and conftest keeps

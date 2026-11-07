@@ -11711,12 +11711,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_index_hide_all",
           [] {
               auto& h = si::host();
-              std::vector<si::Key> changed;
-              for (si::Key s : h.ix.sets()) {
-                  if (si::contact_nonempty(h, s)) changed.push_back(s);
-                  h.ix.hide_contacts(s);
-              }
-              return si::objects([&] { return changed; });
+              // Computed INSIDE produce: the output list must exist before
+              // any set key is read (its allocation can collect and free
+              // sets). produce runs exactly once, so each set hides once.
+              return si::objects([&] {
+                  std::vector<si::Key> changed;
+                  for (si::Key s : h.ix.sets()) {
+                      if (si::contact_nonempty(h, s)) changed.push_back(s);
+                      h.ix.hide_contacts(s);
+                  }
+                  return changed;
+              });
           },
           "Hide every tracked set's contact view; the sets whose view was not "
           "already empty.");
