@@ -53,6 +53,7 @@ add_executable(renderer_tests
     nebula_noise_test.cc
     system_nebula_cache_test.cc
     motion_blur_shutter_test.cc
+    motion_blur_skip_test.cc
     letterbox_pass_test.cc
     aabb_test.cc
     hull_cull_test.cc
