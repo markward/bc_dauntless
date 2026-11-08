@@ -1263,25 +1263,64 @@ class ObjectGroup(TGEventHandlerObject):
         ObjectGroup._live.add(self)
 
     def AddName(self, name: str) -> None:
-        if name not in self._names:
+        added = name not in self._names
+        if added:
             self._names.append(name)
             groups = ObjectGroup._by_name.get(name)
             if groups is None:
                 groups = ObjectGroup._by_name[name] = weakref.WeakSet()
             groups.add(self)
         self._event_flags.setdefault(name, set()).update(self._default_flags)
+        if added:
+            self._post_group_changed()
 
     def RemoveName(self, name: str) -> None:
-        if name in self._names:
+        removed = name in self._names
+        if removed:
             self._names.remove(name)
             _unindex_name(name, self)
         self._event_flags.pop(name, None)
+        if removed:
+            self._post_group_changed()
 
     def RemoveAllNames(self) -> None:
+        had_names = bool(self._names)
         for name in self._names:
             _unindex_name(name, self)
         self._names.clear()
         self._event_flags.clear()
+        if had_names:
+            self._post_group_changed()
+
+    def _post_group_changed(self) -> None:
+        """Post ET_OBJECT_GROUP_CHANGED (destination = this group) after the
+        name list changed, when the group armed GROUP_CHANGED.
+
+        Evidence tier: SDK. Conditions/ConditionInRange.py arms the flag and
+        handles the event in GroupChanged, documented there as "An object has
+        been added to or removed from our self.pObjects group"; BC's own
+        trigger has not been RE'd. Without it a name added AFTER its ship
+        entered the set was never watched (Quick Battle's enemies never
+        reached DynamicMusic's 400 GU check, so battles kept the ambient
+        track).
+
+        Cost: one set lookup for any group that did not arm the flag. The
+        consumer re-registers its handlers from GroupChanged, which is only
+        bounded because AddBroadcastPythonMethodHandler keeps an identical
+        registration once. Dispatch is isolated as in broadcast_membership:
+        a handler failing must not unwind the name-list change."""
+        if ObjectGroup.GROUP_CHANGED not in self._default_flags:
+            return
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_OBJECT_GROUP_CHANGED)
+        evt.SetSource(self)
+        evt.SetDestination(self)
+        try:
+            App.g_kEventManager.AddEvent(evt)
+        except Exception:
+            App.g_kEventManager._log_broadcast_failure(
+                "ObjectGroup GROUP_CHANGED -> %s" % type(self).__name__, evt)
 
     def IsNameInGroup(self, name: str) -> int:
         return 1 if name in self._names else 0

@@ -765,11 +765,20 @@ class TGEventManager(TGObject):
         but dispatches `getattr(wrapper.GetPyWrapper(), method_name)(evt)`
         instead of a module-qualified function. `target` (if given) restricts
         dispatch to events whose destination matches `target` by identity;
-        None matches all events of `event_type`."""
+        None matches all events of `event_type`.
+
+        An identical registration (same wrapper and target by identity, same
+        method) is kept ONCE. SDK Conditions/ConditionInRange.SetObjects
+        re-registers its handlers on every run -- from SetTarget and from its
+        own GroupChanged handler, which re-registers GroupChanged itself -- so
+        appending blindly doubled that handler per ET_OBJECT_GROUP_CHANGED.
+        Identity, not ==: `_Stub.__eq__` is type-based."""
         _validate_event_type(event_type, "AddBroadcastPythonMethodHandler(%s)" % method_name)
-        self._method_handlers.setdefault(event_type, []).append(
-            (wrapper, method_name, target)
-        )
+        handlers = self._method_handlers.setdefault(event_type, [])
+        for w, m, t in handlers:
+            if w is wrapper and m == method_name and t is target:
+                return
+        handlers.append((wrapper, method_name, target))
 
     def RemoveBroadcastHandler(
         self, event_type: int, dest_or_wrapper, qualified_name_or_method: str,

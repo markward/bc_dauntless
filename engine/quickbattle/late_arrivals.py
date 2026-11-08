@@ -295,8 +295,11 @@ def _spawn_one(qb, pSet, player, ppos, cols, n, order, pos) -> bool:
     plc.SetTranslate(App.TGPoint3(*pos))
     spawn._face(plc, pos, player, ppos, cols, order.allegiance)
     plc.UpdateNodeOnly()
+    # Name first, ship second, as BC's GenerateShips (see join_side_group).
+    group = spawn.join_side_group(qb, order, name)
     ship = loadspacehelper.CreateShip(order.ship_file, pSet, name, pname, 1)
     if ship is None or App.IsNull(ship):
+        group.RemoveName(name)
         _log.error("quickbattle: late ship %s (%s) did not spawn", name, order.ship_file)
         return False
     # The ship exists from here on, so it stays counted: g_kShips gets its
@@ -314,11 +317,6 @@ def _spawn_one(qb, pSet, player, ppos, cols, n, order, pos) -> bool:
         qb.g_kShips[ship.GetObjID()] = (ai, msg, side, order.ai_level)
     try:
         spawn._apply_identity(ship, order, name)
-        if side is None:
-            App.Game_GetCurrentGame().GetCurrentEpisode().GetCurrentMission() \
-                .GetNeutralGroup().AddName(ship.GetName())
-        else:
-            (qb.pEnemies if side == "Enemy" else qb.pFriendlies).AddName(ship.GetName())
         # Condition-stack targeting for a late arrival (never raises).
         km_targeting.ship_arrived(qb, ship.GetName())
         if side is not None:

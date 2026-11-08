@@ -699,6 +699,16 @@ When BC posts each is not established; no RE read has been done. A fix would add
 
 ---
 
+## 16. `ET_OBJECT_GROUP_CHANGED` — ✅ DONE (found 2026-11-07)
+
+`Conditions/ConditionInRange.py:132-133` arms `ObjectGroup.GROUP_CHANGED` on its group and handles the event in `GroupChanged` (`:376`), which rebuilds its proximity sphere; the SDK comment there says the event means "an object has been added to or removed from our self.pObjects group". Nothing posted it, so a name added AFTER its ship entered the set was never watched. Live consequence: Quick Battle's spawn added enemy names after `CreateShip`, DynamicMusic's "enemies within 400" check never saw them, and every battle kept the calm "Starting Ambient" track.
+
+**Fix:** `objects.py` `ObjectGroup._post_group_changed()`, from `AddName` / `RemoveName` / `RemoveAllNames` on a real change only, destination = the group, and only when the group armed `GROUP_CHANGED` (every other group pays one set lookup). `GroupChanged` re-registers its own handler through `SetObjects`, so this depends on `AddBroadcastPythonMethodHandler` keeping an identical registration once (`events.py`); without that the handler doubled per event. Quick Battle also now adds names before `CreateShip`, as BC's `GenerateShips` does. Pinned by `tests/unit/test_object_group_membership_events.py`, `tests/unit/test_condition_in_range.py`, `tests/unit/test_broadcast_method_handler_dedupe.py` and `tests/host/test_qb_spawn.py` (`test_enemies_in_range_switch_the_music_to_combat`). **Live-verified by Mark 2026-11-08:** Quick Battle music switches to combat as enemies close.
+
+⚠️ Evidence tier: SDK comment only. BC's trigger has not been RE'd (the stbc-reference server was down when this was built). The other SDK listener, `AI/Preprocessors.py:1106-1107`, is commented out and stays unregistered (`ai_driver.py`).
+
+---
+
 ## Summary table
 
 | Event | SDK handler (file:line) | Engine emitter |
@@ -718,3 +728,4 @@ When BC posts each is not established; no RE read has been done. A fix would add
 | `ET_PLANET_COLLISION` | `E1M2.py:1135/1308` | ✅ **DONE** (#13, found after the 12) — `collisions.py` `_emit_planet_collision()`, impact path, source planet / destination body, posted before impact damage |
 | `ET_WEAPON_FIRED` (target + pulse) | `E1M2.py:1139/1384`, `E2M1.py:704/963` | ✅ **DONE** (#14, found 2026-11-02) — `weapon_subsystems.py` `_post_weapon_fired(weapon, target)` sets the object pointer; posted from native fire control's `WEAPON_FIRED` entries (`effect_queue._weapon_fired`) and a cannon's `SPAWN` delivery (`spawn_launch`) |
 | `ET_SUBSYSTEM_COMPLETELY_DESTROYED` / `_DAMAGED` / `_STATE_CHANGED` | `Maelstrom.py:223`, `E8M1.py:889`, `E8M2.py:4723`, `E2M0.py:825`, `E3M4.py:533` | **OPEN** (#15, found 2026-11-02) — never posted |
+| `ET_OBJECT_GROUP_CHANGED` | `ConditionInRange.py:133/376` | ✅ **DONE** (#16, found 2026-11-07) — `objects.py` `ObjectGroup._post_group_changed()` on a real name-list change, only for groups that armed `GROUP_CHANGED`; relies on identical method handlers registering once |
