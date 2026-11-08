@@ -196,7 +196,7 @@ class SettingsStore:
         section) — a SETTINGS row with section="version" would silently
         collide with it. Unreachable today: every section comes from the
         SETTINGS table, and test_every_setting_key_is_unique_and_in_a_known_section
-        pins the section set to {"graphics", "gameplay"}.
+        pins the section set to {"graphics", "gameplay", "audio"}.
         """
         self._doc.setdefault("version", SCHEMA_VERSION)
         tmp = self._path.parent / (self._path.name + ".tmp")
@@ -297,6 +297,20 @@ def _apply_camera_realism(ctx, level) -> None:
     ctx.r.set_dof_enabled(level == CAMERA_REALISM_HIGH)
 
 
+def _volume_row(key: str, channel: str) -> Setting:
+    """One Audio tab slider: a 0-100 level for one engine.audio.volume channel.
+    The applier imports at use: volume owns the gains and the boot mute."""
+    def _apply(_ctx, value):
+        from engine.audio import volume
+        volume.set_level(channel, value)
+    return Setting(key, "audio", key, int, 100, _apply, lo=0, hi=100)
+
+
+def _apply_audio_3d(_ctx, on) -> None:
+    from engine.audio import volume
+    volume.set_3d_enabled(on)
+
+
 def _camera_realism_level(ctx) -> int:
     """Display fallback: the level the live renderer state reads as."""
     if not (ctx.r.filmic_enabled() and ctx.r.motion_blur_enabled()
@@ -376,6 +390,14 @@ SETTINGS: tuple = (
     Setting("ai_difficulty", "gameplay", "ai_difficulty", int, 1,
             lambda c, v: c.App.Game_SetDifficulty(v),
             lo=0, hi=2),
+    # Audio tab. Defaults are today's sound: every channel at full, 3D on.
+    # "ui_volume" is the row labelled "UI": the Interface channel.
+    _volume_row("music_volume", "Music"),
+    _volume_row("voice_volume", "Voice"),
+    _volume_row("sfx_volume", "SFX"),
+    _volume_row("ui_volume", "Interface"),
+    # Off switches off Doppler pitch shift only (engine.audio.volume).
+    Setting("audio_3d", "audio", "audio_3d_on", bool, True, _apply_audio_3d),
 )
 
 _BY_KEY = {s.key: s for s in SETTINGS}

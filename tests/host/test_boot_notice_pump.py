@@ -241,18 +241,34 @@ class _FakeAudio:
     def set_category_gain(self, cat, g):
         self.gains.append((cat, g))
 
+    def set_doppler_enabled(self, on):
+        pass
 
-def test_boot_audio_mute_silences_and_restores_every_category(monkeypatch):
+
+@pytest.fixture
+def _volume():
+    from engine.audio import volume
+    volume.reset()
+    yield volume
+    volume.reset()
+
+
+def test_boot_audio_mute_silences_and_restores_every_category(_volume):
     """The SDK starts sounds during the load (AmbBridge at LoadBridge.py:213)
     and the window holds the notice meanwhile: Mark heard a blast of bridge
-    noise over the logo (2026-10-27)."""
+    noise over the logo (2026-10-27). The unmute restores the player's Audio
+    tab levels, not full volume."""
     audio = _FakeAudio()
-    monkeypatch.setattr(host_loop, "_audio_mod", audio)
+    _volume.attach(audio)
+    _volume.set_level("SFX", 50)
+    audio.gains.clear()
     host_loop._set_boot_audio_muted(True)
-    assert sorted(audio.gains) == [("Interface", 0.0), ("SFX", 0.0), ("Voice", 0.0)]
+    assert sorted(audio.gains) == [("Interface", 0.0), ("Music", 0.0),
+                                   ("SFX", 0.0), ("Voice", 0.0)]
     audio.gains.clear()
     host_loop._set_boot_audio_muted(False)
-    assert sorted(audio.gains) == [("Interface", 1.0), ("SFX", 1.0), ("Voice", 1.0)]
+    assert sorted(audio.gains) == [("Interface", 1.0), ("Music", 1.0),
+                                   ("SFX", 0.25), ("Voice", 1.0)]
 
 
 def test_boot_audio_mute_without_audio_is_a_no_op(monkeypatch):
@@ -272,12 +288,13 @@ def test_run_mutes_the_load_and_unmutes_at_the_fade_out():
 
 
 def test_nothing_else_owns_the_category_gains():
-    """Unmuting restores 1.0, which is only right while no volume setting
-    drives these gains. A second owner must make the mute save and restore."""
+    """engine.audio.volume keeps the Audio tab levels AND the boot mute and
+    works out each channel's gain from both. A second caller would fight it:
+    whichever wrote last would win, and an unmute could undo a setting."""
     import re
     from pathlib import Path
     root = Path(host_loop.__file__).resolve().parent
     owners = [str(p.relative_to(root)) for p in root.rglob("*.py")
               if "__pycache__" not in p.parts
               and re.search(r"set_category_gain\(", p.read_text(encoding="utf-8"))]
-    assert owners == ["host_loop.py"]
+    assert owners == [str(Path("audio") / "volume.py")]

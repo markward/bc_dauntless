@@ -171,6 +171,11 @@ class TGSound:
     def IsVoice(self) -> int:                return 1 if self._category_tag == "Voice" else 0
     def SetInterface(self, *_args) -> None:  self._category_tag = "Interface"
     def IsInterface(self) -> int:            return 1 if self._category_tag == "Interface" else 0
+    # Not SDK surface: BC played music through its own player, never a
+    # TGSound. Ours is a TGSound, so it needs a channel of its own for the
+    # Audio tab's Music slider (engine.audio.volume).
+    def SetMusic(self, *_args) -> None:      self._category_tag = "Music"
+    def IsMusic(self) -> int:                return 1 if self._category_tag == "Music" else 0
 
     def Play(self, attach_node=None, position=None) -> Optional[_PlayingSound]:
         if not _audio or not self._loaded:
