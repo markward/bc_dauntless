@@ -84,8 +84,10 @@ void BloomPass::rebuild(int fw, int fh) {
 
         glGenTextures(1, &m.tex);
         glBindTexture(GL_TEXTURE_2D, m.tex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0,
-                     GL_RGBA, GL_FLOAT, nullptr);
+        // R11F_G11F_B10F: nothing reads bloom alpha or a negative (the
+        // prefilter thresholds to >= 0), so half the bandwidth of RGBA16F.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R11F_G11F_B10F, w, h, 0,
+                     GL_RGB, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

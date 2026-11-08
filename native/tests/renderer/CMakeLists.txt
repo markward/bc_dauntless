@@ -92,6 +92,7 @@ add_executable(renderer_tests
     hdr_msaa_target_test.cc
     hdr_msaa_resolve_test.cc
     hdr_target_test.cc
+    hdr_format_test.cc
     cubemap_target_test.cc
     resolve_pass_test.cc
     filmic_pass_test.cc
