@@ -1,6 +1,6 @@
 # Perf cadences that are also gameplay latency
 
-Ten things that used to run every tick now run on a cadence (the table below). Each was landed as
+Eleven things that used to run every tick now run on a cadence (the table below). Each was landed as
 a performance win, and **each is also a behaviour change**. Read this before
 reporting a delayed in-game reaction as a bug — the delay may be the design.
 
