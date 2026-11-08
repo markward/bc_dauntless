@@ -9,3 +9,21 @@ target_include_directories(ui_cef_tests PRIVATE
 target_link_libraries(ui_cef_tests PRIVATE GTest::gtest_main)
 
 gtest_discover_tests(ui_cef_tests)
+
+# The composite pass's sub-image upload on a real GL context (hidden GLFW
+# window via the assets tests' gl_fixture; skips without one). The pass
+# itself includes only glad, so it is compiled in directly with no CEF.
+add_executable(ui_cef_gpu_tests
+    cef_composite_pass_gpu_test.cc
+    ${CMAKE_SOURCE_DIR}/native/src/ui_cef/cef_composite_pass.cc
+    ${CMAKE_SOURCE_DIR}/native/tests/assets/gpu/gl_fixture.cc
+)
+target_include_directories(ui_cef_gpu_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/native/src/ui_cef
+    ${CMAKE_SOURCE_DIR}/native/tests/assets/gpu)
+target_link_libraries(ui_cef_gpu_tests PRIVATE glad glfw GTest::gtest_main)
+
+gtest_discover_tests(ui_cef_gpu_tests
+    PROPERTIES
+        ENVIRONMENT "GALLIUM_DRIVER=llvmpipe"
+)
