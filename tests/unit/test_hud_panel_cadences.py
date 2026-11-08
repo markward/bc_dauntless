@@ -121,7 +121,6 @@ def test_keyboard_hide_menu_draws_next_frame(fake_menu):
 
 @pytest.fixture
 def hud_world():
-    host_loop._hud_change_state.clear()
     clock = _Clock()
     reg = PanelRegistry(clock=clock)
     panels = {p.name: _counting(p) for p in _make_all()}
@@ -132,7 +131,8 @@ def hud_world():
     for p in panels.values():
         assert not p._render_due
     yield reg, panels
-    host_loop._hud_change_state.clear()
+    from engine.appc import weapon_config
+    weapon_config.on_change = None
 
 
 class _Ship:
@@ -200,3 +200,46 @@ def test_run_calls_the_helper_every_frame():
     calls = [c for c in ast.walk(tree) if isinstance(c, ast.Call)
              and ast.unparse(c.func) == "_mark_hud_due_on_changes"]
     assert len(calls) == 1
+
+
+def test_reset_mission_state_clears_hud_change_state():
+    host_loop._hud_change_state["alert"] = 3
+    host_loop.reset_mission_state()
+    assert host_loop._hud_change_state == {}
+
+
+@pytest.mark.parametrize("fn", ["cycle_torpedo_type", "cycle_torpedo_spread",
+                                "toggle_phaser_intensity", "toggle_tractor",
+                                "toggle_cloak"])
+def test_any_weapon_config_writer_marks_weapons_due(hud_world, fn):
+    """F2 command rows and the engineering panel call these directly."""
+    from engine.appc import weapon_config
+    reg, panels = hud_world
+    host_loop._install_weapons_due_hook(reg)
+    panels["weapons"]._render_due = False
+    getattr(weapon_config, fn)(_Ship())      # no subsystems: a no-op write
+    assert panels["weapons"]._render_due
+
+
+def test_f2_rows_and_engineering_toggle_reach_the_hook(hud_world):
+    from engine.appc import weapon_tactical_commands as wtc
+    from engine.ui.engineering_power_panel import EngineeringPowerPanel
+    reg, panels = hud_world
+    host_loop._install_weapons_due_hook(reg)
+    ship = _Ship()
+    for cmd in wtc._COMMANDS:                 # the F2 Tactical command rows
+        panels["weapons"]._render_due = False
+        cmd.action(ship)
+        assert panels["weapons"]._render_due, cmd.key
+    eng = EngineeringPowerPanel(lambda: ship)
+    for action in ("toggle:tractor", "toggle:cloak"):
+        panels["weapons"]._render_due = False
+        assert eng.dispatch_event(action)
+        assert panels["weapons"]._render_due, action
+
+
+def test_run_installs_the_weapons_hook():
+    tree = host_frame_source.run_tree()
+    assert any(isinstance(c, ast.Call)
+               and ast.unparse(c.func) == "_install_weapons_due_hook"
+               for c in ast.walk(tree))

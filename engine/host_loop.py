@@ -7603,6 +7603,19 @@ def _mark_hud_due_on_changes(registry, player) -> None:
             panel.mark_due()
 
 
+def _install_weapons_due_hook(registry) -> None:
+    """Redraw the weapons panel next frame on any weapon_config mutation
+    (F2 command rows and the engineering panel bypass the panel's own
+    dispatch, so the 10 Hz throttle would otherwise delay them)."""
+    from engine.appc import weapon_config
+
+    def _mark():
+        panel = registry.find("weapons")
+        if panel is not None:
+            panel.mark_due()
+    weapon_config.on_change = _mark
+
+
 def reset_mission_state(renderer=None) -> None:
     """Forget the outgoing mission's module-level state: ships, effects,
     damage records, rocks, Quick Battle bookkeeping, camera-derived state.
@@ -7621,6 +7634,7 @@ def reset_mission_state(renderer=None) -> None:
     ship_lifecycle.reset()
     # The first pump after a swap is a full contact rebuild.
     contact_refresh.reset()
+    _hud_change_state.clear()
     from engine.appc import ai_native
     ai_native.reset_stats()
     # Effects held for the tick boundary name the old mission's ships.
@@ -12352,6 +12366,7 @@ def run(mission_name: Optional[str] = None,
         # target-list invalidation below. A list so the loop body
         # can rebind it without a global.
         _last_target_key = [None]
+        _install_weapons_due_hook(registry)
         registry.register(sensors_panel)
         from engine.appc.sdk_mirror_panel import SDKMirrorPanel
         sdk_mirror = SDKMirrorPanel()
