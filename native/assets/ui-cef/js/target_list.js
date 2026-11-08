@@ -4,6 +4,7 @@
 //   setTargetList({visible, selected, selected_subsystem,
 //                  filters: {FRIENDLY, NEUTRAL, ENEMY},
 //                  sort: "name" | "distance" | "health",
+//                  minimized: bool,
 //                  rows: [{name, label, affiliation, hull, shields,
 //                          has_shields, dist_km, marker}, ...]});
 //
@@ -17,6 +18,7 @@
 //   target/<ship>                   - set target ship, clear sub-lock
 //   target/__filter__/<AFF>         - toggle a FRIENDLY / NEUTRAL / ENEMY tab
 //   target/__sort__/<mode>          - choose name / distance / health order
+//   target/__minimize__             - collapse / expand to the header
 //
 // Spec: docs/superpowers/specs/2026-11-05-target-list-and-target-panel-redesign-design.md
 
@@ -62,6 +64,8 @@ function setTargetList(state) {
         return;
     }
     panel.classList.remove('target-list--hidden');
+    // Collapsed to the header by its ▼ button (target/__minimize__).
+    panel.classList.toggle('target-list--minimized', state.minimized === true);
 
     const body = document.getElementById('target-list-body');
     if (!body) return;
@@ -80,7 +84,7 @@ function setTargetList(state) {
         const hull = clampPct((typeof row.hull === 'number') ? row.hull : 100);
         const shields = clampPct((typeof row.shields === 'number') ? row.shields : 0);
         // Inert targets (asteroids) carry no real shields — omit the bar
-        // entirely and let the hull bar occupy the far-right slot. Default to
+        // entirely; the hull bar keeps its far-right slot. Default to
         // showing the bar when the flag is absent (older payloads).
         const hasShields = (row.has_shields !== false);
         const nameHtml = escapeHtml(label);
@@ -107,13 +111,14 @@ function setTargetList(state) {
               +   markerHtml
               +   '<span class="target-list__name">' + nameHtml + '</span>'
               +   '<span class="target-list__dist">' + dist.toFixed(2) + ' km</span>'
+              // Shields left, hull right; vertical, draining from the top.
               +   '<span class="target-list__bars">'
-              +     '<span class="target-list__bar target-list__bar--hull"'
-              +     ' style="--bar-pct:' + hull + '%"></span>'
               +     (hasShields
                      ? '<span class="target-list__bar target-list__bar--shields"'
                        + ' style="--bar-pct:' + shields + '%"></span>'
                      : '')
+              +     '<span class="target-list__bar target-list__bar--hull"'
+              +     ' style="--bar-pct:' + hull + '%"></span>'
               +   '</span>'
               + '</div>';
     }

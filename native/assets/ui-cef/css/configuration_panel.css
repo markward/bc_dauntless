@@ -354,7 +354,10 @@
 /* Icon button + page-drawn hover text. CEF OSR renders no native tooltip
    (the host has no OnTooltip), so [data-tip] draws its own on :hover and on
    keyboard focus. The tip sits to the LEFT of the button, inside the row:
-   .cp-body scrolls, so anything poking above the first row would clip. */
+   .cp-body scrolls, so anything poking above the first row would clip.
+   Scoped to .cp-iconbtn: this sheet loads on the in-game page too, and an
+   unscoped rule leaked its right/top into the target list's tips, squeezing
+   their box narrower than the text. */
 .cp-iconbtn {
     width: 24px;
     height: 22px;
@@ -365,7 +368,7 @@
     position: relative;
 }
 .cp-iconbtn svg { display: block; }
-[data-tip]::after {
+.cp-iconbtn[data-tip]::after {
     content: attr(data-tip);
     position: absolute;
     right: calc(100% + 8px);
@@ -382,8 +385,8 @@
     opacity: 0;
     transition: opacity 80ms linear;
 }
-[data-tip]:hover::after,
-.cp-focused[data-tip]::after { opacity: 1; }
+.cp-iconbtn[data-tip]:hover::after,
+.cp-iconbtn.cp-focused[data-tip]::after { opacity: 1; }
 .cp-bridges__fixed {
     flex: 1 1 55%;
     padding: 6px 10px;

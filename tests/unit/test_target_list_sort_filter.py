@@ -196,3 +196,24 @@ def test_sort_key_orders_names_naturally():
     for sort in ("name", "distance", "health"):
         got = sorted(names, key=lambda n: sort_key(row(n), sort))
         assert got == ["Alpha", "Unknown 1", "unknown 2", "Unknown 10"], sort
+
+
+def test_minimize_toggles_and_rides_the_payload():
+    # User-driven collapse, like the target status panel: the SDK's target
+    # list pane is never minimizable, so no SDK call drives this.
+    view, _p, _s = _setup([("Keldon 1", "ENEMY", 3.0)])
+    try:
+        assert _state(view)["minimized"] is False
+        assert view.dispatch_event("__minimize__") is True
+        st = _state(view)
+        assert st["minimized"] is True
+        assert _labels(st) == ["Keldon 1"]  # rows still sent; the page hides them
+        assert view.dispatch_event("__minimize__") is True
+        assert _state(view)["minimized"] is False
+    finally:
+        _teardown()
+
+
+def test_minimize_needs_no_player():
+    from engine.ui.target_list_view import TargetListView
+    assert TargetListView().dispatch_event("__minimize__") is True

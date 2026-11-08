@@ -119,3 +119,21 @@ def test_grandchild_only_family_lists_its_targetable_descendants():
     fams = st.build_families(_ship(phaser=ph))
     assert _names(fams) == ["Phasers"]
     assert [m.name for m in fams[0].members] == ["Bank A", "Bank C"]
+
+
+def test_condition_pct_is_a_whole_percent_clamped_to_0_100():
+    assert st.condition_pct(1.0) == 100
+    assert st.condition_pct(0.0) == 0
+    assert st.condition_pct(0.5) == 50
+    assert st.condition_pct(0.994) == 99
+    assert st.condition_pct(1.2) == 100
+    assert st.condition_pct(-0.1) == 0
+
+
+def test_member_pct_is_its_own_condition():
+    ph = _sub(PhaserSystem, "Phasers", cond=10.0)
+    ph.AddChildSubsystem(_sub(ShipSubsystem, "Full"))
+    ph.AddChildSubsystem(_sub(ShipSubsystem, "Half", cond=50.0))
+    ph.AddChildSubsystem(_sub(ShipSubsystem, "Most", cond=99.4))
+    fam = st.build_families(_ship(phaser=ph))[0]
+    assert [m.pct for m in fam.members] == [100, 50, 99]

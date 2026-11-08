@@ -400,7 +400,7 @@ def _family_json(fam) -> dict:
         "lockable": fam.lockable, "x_px": fam.x_px, "y_px": fam.y_px,
         "members": [{
             "name": m.name, "state": m.state, "icon_key": m.icon_key,
-            "x_px": m.x_px, "y_px": m.y_px,
+            "x_px": m.x_px, "y_px": m.y_px, "pct": m.pct,
         } for m in fam.members],
     }
 

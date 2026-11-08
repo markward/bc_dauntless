@@ -123,10 +123,17 @@ the scrolling body, so it stays visible when the list scrolls:
   and reticle used (`_range_and_speed_to`: distance to the target's
   bounding sphere, converted at the display boundary via `engine.units`).
   The contact record already holds it (`Contact.surface_gu`).
-- **Stacked bars:** shields directly on top of hull, no gap, each 4px
-  (half the old 8px), 32px wide. A target with no shields shows the hull
-  bar alone at the full 8px.
+- **Vertical bars** (Mark, 2026-11-08; replaced the stacked horizontal
+  bars): two 5px x 16px bars at the row's right edge, shields (blue) on the
+  left, hull (yellow) on the right, 2px apart. The fill is anchored at the
+  bottom, so a bar drains from the top as health falls. A target with no
+  shields shows the hull bar alone, still in the far-right slot.
 - Row tints, chosen/hover states, markers (`protect`, `target`) unchanged.
+- **Collapsible** (Mark, 2026-11-08): the header carries the target status
+  panel's ▼ button (`target/__minimize__`); collapsed, only the header
+  shows. User-driven only: BC's target list pane is never minimizable
+  (`TacticalControlWindow` forces it open on every resize), so the SDK
+  neither drives nor resets it. Rows are still built while collapsed.
 
 ## 4. Target panel
 
@@ -253,8 +260,15 @@ When a family is open, its members are blocks in a grid under the name bar.
   (centred was tried and rejected), 11px, `text-wrap: balance` so a
   two-line name keeps its number with it ("Forward / Torp 1"; Chromium
   114+, the CEF build is Chromium 144).
-- **No health bar.** Health is a **3px left edge in the BC state colour**:
-  none (transparent, space kept) when healthy, lime when damaged (Mark).
+- ~~**No health bar.** Health is a 3px left edge in the BC state colour~~
+  (superseded 2026-11-08: the edge is gone, the health bar below replaces it).
+- **Health bar on the right** (Mark, 2026-11-08, after play showed the
+  edge alone was not enough; a percent readout was tried first and
+  rejected): the target list's vertical bar (§3), 5px x 16px, yellow like
+  the hull bar, fill anchored at the bottom so it drains from the top.
+  Always shown, full at 100%. The member's OWN condition, as a whole
+  percent (`subsystem_tree.condition_pct`) so repair ticks don't rebuild
+  the page every frame.
 - **Disabled fills the whole block with BC's disabled grey and the name
   turns black** (Mark).
 - **Destroyed members drop off the grid** (Mark). The column count uses
