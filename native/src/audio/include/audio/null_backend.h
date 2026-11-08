@@ -34,6 +34,7 @@ public:
     void set_listener(float,float,float, float,float,float, float,float,float,
                       float,float,float) override;
     void set_category_gain(Category, float) override;
+    void set_doppler_enabled(bool) override;
     bool source_finished(SourceHandle) override;
 
     const std::vector<LoggedCall>& command_log() const { return log_; }

@@ -388,4 +388,40 @@ TEST(AudioSystem, StereoBufferCannotBePositional) {
                                wav.data(), wav.size(), /*positional*/ false));
 }
 
+TEST(AudioSystem, MusicIsItsOwnCategory) {
+    // The Audio settings tab's Music slider needs a channel of its own: music
+    // used to share SFX, so one slider moved both.
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    raw->clear_command_log();
+    sys.set_category_gain(Category::Music, 0.25f);
+    ASSERT_EQ(raw->command_log().size(), 1u);
+    const auto& c = raw->command_log().front();
+    EXPECT_EQ(c.op, "set_category_gain");
+    EXPECT_EQ(c.u[0], static_cast<uint32_t>(Category::Music));
+    EXPECT_NE(static_cast<int>(Category::Music), static_cast<int>(Category::SFX));
+    EXPECT_FLOAT_EQ(c.f[0], 0.25f);
+}
+
+TEST(AudioSystem, DopplerSwitchReachesTheBackend) {
+    // 3D Audio off = no Doppler pitch shift; panning and distance falloff stay.
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    raw->clear_command_log();
+    sys.set_doppler_enabled(false);
+    sys.set_doppler_enabled(true);
+    ASSERT_EQ(raw->command_log().size(), 2u);
+    EXPECT_EQ(raw->command_log()[0].op, "set_doppler_enabled");
+    EXPECT_FALSE(raw->command_log()[0].b[0]);
+    EXPECT_TRUE(raw->command_log()[1].b[0]);
+}
+
 }  // namespace

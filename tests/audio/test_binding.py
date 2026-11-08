@@ -34,3 +34,19 @@ def test_audio_load_and_play_via_null_backend():
     assert any(entry["op"] == "play" for entry in log)
     audio.stop(pid)
     audio.shutdown()
+
+
+def test_music_channel_and_doppler_switch_reach_the_backend():
+    """The Audio settings tab's Music slider and 3D Audio switch."""
+    audio = _dauntless_host.audio
+    audio.init(backend="null")
+    audio.clear_command_log()
+    audio.set_category_gain("Music", 0.5)
+    audio.set_category_gain("SFX", 0.75)
+    audio.set_doppler_enabled(False)
+    log = audio.debug_command_log()
+    gains = [(e["u"][0], e["f"][0]) for e in log if e["op"] == "set_category_gain"]
+    assert gains == [(3, 0.5), (0, 0.75)], "Music is category 3, apart from SFX (0)"
+    doppler = [e["b"][0] for e in log if e["op"] == "set_doppler_enabled"]
+    assert doppler == [False]
+    audio.shutdown()

@@ -60,6 +60,7 @@ public:
     void set_velocity(PlayingId, float, float, float);
 
     void set_category_gain(Category, float);
+    void set_doppler_enabled(bool);
 
     void update(float lx, float ly, float lz,
                 float fx, float fy, float fz,
