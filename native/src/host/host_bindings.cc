@@ -1444,6 +1444,10 @@ void init(int width, int height, const std::string& title) {
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
     g_viewscreen_hdr  = std::make_unique<renderer::HdrTarget>();
+    // No alpha or negative reader (bridge.frag's alpha test only ever sees 1,
+    // so it discards less, never more): half the bandwidth of RGBA16F. The
+    // main scene + MSAA twin pick theirs per frame (nonfinite probe).
+    g_viewscreen_hdr->set_color_format(renderer::HdrColorFormat::R11g11b10f);
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
     g_nonfinite_probe = std::make_unique<renderer::NonfiniteProbe>();
     g_lens_flare_hdr_pass = std::make_unique<renderer::LensFlareHdrPass>();
@@ -1455,6 +1459,8 @@ void init(int width, int height, const std::string& title) {
     g_motion_blur_pass = std::make_unique<renderer::MotionBlurPass>();
     g_dof_pass   = std::make_unique<renderer::DofPass>();
     g_dof_target = std::make_unique<renderer::HdrTarget>();
+    // dof.frag writes .rgb and alpha 1 (CoC comes from depth, not alpha).
+    g_dof_target->set_color_format(renderer::HdrColorFormat::R11g11b10f);
     g_shadow_target = std::make_unique<renderer::ShadowMapTarget>();
     g_shadow_target->resize(2048, 2048);
     g_prev_frame_time_seconds = glfwGetTime();
@@ -2389,6 +2395,16 @@ void frame() {
     // ── Main HDR target ────────────────────────────────────────────────────
     {
         DAUNTLESS_FRAME_SCOPE("hdr.clear");
+        // R11F_G11F_B10F (half the bandwidth) unless the dev nonfinite probe
+        // runs: it reads opaque.frag's cause code from alpha and needs
+        // negatives / -Inf, which R11F drops. The MSAA twin always matches,
+        // because its resolve into g_hdr_target is a same-format blit; a toggle
+        // reallocates both at the next resize.
+        const renderer::HdrColorFormat scene_fmt =
+            g_nfprobe_enabled ? renderer::HdrColorFormat::Rgba16f
+                              : renderer::HdrColorFormat::R11g11b10f;
+        g_hdr_target->set_color_format(scene_fmt);
+        g_msaa_target->set_color_format(scene_fmt);
         g_hdr_target->resize(fw, fh);
         g_hdr_target->bind();   // sets viewport to fw x fh
         if (viewer_mode) {
@@ -2415,7 +2431,8 @@ void frame() {
         //
         // Falls through to the stock path whenever the requested count clamps
         // to 0, or the driver refused the allocation (!valid()) — we never
-        // trust GL_RGBA16F multisample on the strength of the spec alone.
+        // trust RGBA16F / R11F_G11F_B10F multisample on the strength of the
+        // spec alone.
         const int msaa = renderer::clamp_msaa_samples(
             g_msaa_samples, renderer::query_gl_caps());
         if (msaa >= 2) g_msaa_target->resize(fw, fh, msaa);
@@ -14390,6 +14407,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "synchronous readback. `dump_dir` must be ABSOLUTE (GLFW changes the "
           "process cwd on macOS); empty disables PNG dumps. Enabling resets the "
           "counters.");
+    m.def("hdr_scene_color_format",
+          []() -> std::string {
+              if (!g_hdr_target)
+                  throw std::runtime_error("hdr_scene_color_format: renderer not initialised");
+              return g_hdr_target->color_format() == renderer::HdrColorFormat::R11g11b10f
+                         ? "r11g11b10f" : "rgba16f";
+          },
+          "Colour format frame() last picked for the main HDR scene target (and "
+          "its MSAA twin): \"r11g11b10f\", or \"rgba16f\" while the nonfinite "
+          "probe is on. For tests and the dev overlay.");
     m.def("nonfinite_probe_enabled",
           []() { return g_nfprobe_enabled; },
           "True when the non-finite probe is running.");
