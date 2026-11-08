@@ -1096,7 +1096,8 @@ PyObject* eval_impl(PyObject* ai, PyObject* eval_fn, PyObject* args, PyObject* g
     return ret.steal();
 }
 
-PyObject* eval_conditional_call(const Ctx& c, PyObject* ai, PyObject* eval_fn, PyObject* args);
+PyObject* eval_conditional_call(const Ctx& c, PyObject* ai, PyObject* eval_fn, PyObject* args,
+                                 bool count_entry = true);
 
 // The oracle's `_refresh_conditional_status_python(ai)`, statement for statement.
 PyObject* refresh_impl(PyObject* ai, PyObject* g) {
@@ -1125,7 +1126,9 @@ PyObject* refresh_impl(PyObject* ai, PyObject* g) {
         {
             // The call goes through the same routing as _tick_conditional's:
             // native only while the global is stock (same code, same binding).
-            Ref value(eval_conditional_call(Ctx{g, n}, ai, f.eval_fn.get(), f.args.get()));
+            // refresh_impl already counted this entry (++g_s2_runs above).
+            Ref value(eval_conditional_call(Ctx{g, n}, ai, f.eval_fn.get(), f.args.get(),
+                                            /*count_entry=*/false));
             if (!value) return nullptr;
             if (PyObject_SetAttr(ai, n->status, value.get()) < 0) return nullptr;
         }
@@ -1850,14 +1853,15 @@ PyObject* any_condition_call(const Ctx& c, PyObject* ai) {
 }
 
 // `_eval_conditional(ai, eval_fn, args)`. Owned.
-PyObject* eval_conditional_call(const Ctx& c, PyObject* ai, PyObject* eval_fn, PyObject* args) {
+PyObject* eval_conditional_call(const Ctx& c, PyObject* ai, PyObject* eval_fn, PyObject* args,
+                                 bool count_entry) {
     Ref fn(load_global(c.g, c.n->eval_conditional));
     if (!fn) return nullptr;
     const int r = routes_native(c, c.n->eval_conditional, fn.get(), c.n->aitree_eval,
                                 fast<eval_conditional>());
     if (r < 0) return nullptr;
     if (!r) return call3(fn.get(), ai, eval_fn, args);
-    ++g_s2_runs;
+    if (count_entry) ++g_s2_runs;
     return eval_impl(ai, eval_fn, args, c.g, c.n);
 }
 

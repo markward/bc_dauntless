@@ -261,6 +261,13 @@ def test_all_weapon_system_subclasses_are_classified():
     classification tuples, not zero (unclassified) and not both (contradictory)."""
     from engine.appc.subsystem_types import _WEAPON_SYSTEM_CLASSES, _ENERGY_WEAPON_CLASSES
     from engine.appc.weapon_subsystems import WeaponSystem
+    import gc
+
+    # A class is always in a reference cycle (its __mro__ holds itself), so a
+    # test-local subclass from an earlier test lingers in __subclasses__()
+    # until the cycle collector runs. Collect first, so the walk sees only
+    # live classes and the result does not depend on GC timing.
+    gc.collect()
 
     # Recursively walk the WeaponSystem hierarchy to find all subclasses.
     def _walk_subclasses(cls):
