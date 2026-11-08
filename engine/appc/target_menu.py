@@ -148,8 +148,9 @@ class STTargetMenu(STTopLevelMenu):
         # Ships that were TARGETABLE on the previous push -- the membership
         # this list actually shows (_rows() filters on Contact.targetable).
         # The diff against it is what makes ET_TARGET_LIST_OBJECT_ADDED /
-        # _REMOVED possible: set_contacts is pushed every frame, so without a
-        # previous set there is no crossing to post on.
+        # _REMOVED possible: set_contacts is pushed on every re-derivation
+        # (the sensor sweep and events, host_loop._pump_contacts), so without
+        # a previous set there is no crossing to post on.
         self._listed: frozenset = frozenset()
         super().__init__(label)
         # The last ship the player manually selected — the slot BC's
@@ -186,7 +187,7 @@ class STTargetMenu(STTopLevelMenu):
         mark a listed row not-visible.
 
         THE CONSEQUENCE FOR READERS: this method re-asserts `IsVisible()` for
-        everything it lists, every frame, so the flag answers NO question about
+        everything it lists, on every push, so the flag answers NO question about
         detectability — nothing writes `perceivable` into it. A reader that
         filters on it drops nothing on a pushed frame, and between a
         `SetNotVisible` and the next push it drops the WRONG thing: a live,
@@ -238,6 +239,19 @@ class STTargetMenu(STTopLevelMenu):
                 from engine.appc import unknown_labels
                 row.ShowUnknownName(unknown_labels.placeholder(c.ship))
         self._post_membership_changes()
+
+    def set_contact_distances(self, contacts: tuple) -> None:
+        """Replace the pushed records with *contacts*, the same records with
+        this frame's distances (perception.refresh_distances). Records ONLY:
+        no row work, no affiliation, no ET_TARGET_LIST_OBJECT_ADDED /
+        _REMOVED. Membership and verdicts change only through set_contacts
+        (host_loop._pump_contacts, on the sweep and on events)."""
+        self._contacts = contacts
+
+    def contacts(self) -> tuple:
+        """The pushed perception.Contact records (every ship in the
+        player's system, listed or not)."""
+        return self._contacts
 
     def _post_membership_changes(self) -> None:
         """Post ET_TARGET_LIST_OBJECT_ADDED / _REMOVED for this push's
@@ -485,6 +499,9 @@ class STTargetMenu(STTopLevelMenu):
         self._row_cache.clear()
         self._contacts = ()
         self._listed = frozenset()
+        # The push is no longer every frame: ask for the next one.
+        from engine.appc import contact_refresh
+        contact_refresh.mark_dirty("clear_target_list")
 
     def ClearPersistentTarget(self) -> None:
         """SDK: TacticalInterfaceHandlers.py:656, HelmMenuHandlers.py:947,
@@ -594,7 +611,8 @@ class STTargetMenu(STTopLevelMenu):
         NOT the engine auto-population hook — it used to be, and this docstring
         used to call it "a single entry point" for one, which is stale. The
         hook is `host_loop._pump_contacts`, which pushes
-        `perception.perceived_by(player)` every frame. This is a
+        `perception.perceived_by(player)` on the sensor sweep and on events
+        (engine.appc.contact_refresh). This is a
         bootstrap/test-population helper and nothing more.
 
         It pushes membership rather than appending children, so its effect is

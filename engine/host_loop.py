@@ -104,6 +104,7 @@ from engine.appc import native_motion as _native_motion
 from engine.appc import target_menu as _target_menu_mod
 from engine.appc import viewscreen_static as _vss
 from engine.appc import bridge_set as _bridge_set
+from engine.appc import contact_refresh
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
 from engine.core import step_memo
@@ -7584,6 +7585,8 @@ def reset_mission_state(renderer=None) -> None:
     """
     from engine.appc import ship_lifecycle
     ship_lifecycle.reset()
+    # The first pump after a swap is a full contact rebuild.
+    contact_refresh.reset()
     from engine.appc import ai_native
     ai_native.reset_stats()
     # Effects held for the tick boundary name the old mission's ships.
@@ -9571,47 +9574,95 @@ def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open,
 def _ensure_target_menu() -> None:
     """Create the target-menu singleton if the mission load cleared it.
 
-    Membership is no longer wired here. It is derived every frame from the
-    player's containing set (see the contact push in the host loop), so there
-    is no subscription to bind and nothing to rebind on warp — which is exactly
-    the fault this replaced: the old wiring bound to one set at mission load
-    and never rebound, so ships spawned into a departed system kept getting
-    rows while the destination system got none.
+    Membership is no longer wired here. It is derived from the player's
+    containing set (see the contact push in the host loop: on the sweep and
+    on events, engine.appc.contact_refresh), so there is no subscription to
+    bind and nothing to rebind on warp — which is exactly the fault this
+    replaced: the old wiring bound to one set at mission load and never
+    rebound, so ships spawned into a departed system kept getting rows while
+    the destination system got none.
     """
     import App as _App
     if _App.STTargetMenu_GetTargetMenu() is None:
         _App.STTargetMenu_CreateW("Targets")
 
 
+# (id(menu), id(player), id(player's set)) of the last full contact
+# re-derivation: a change is a rebuild even with no mark (warp, hand-off, a
+# re-created target menu). A recycled id is covered by the marks: a new
+# player comes with SetPlayer, a set change with the set door's mark.
+_contacts_key: list = [None]
+
+
 def _pump_contacts(menu, player) -> tuple:
-    """Push the player's current system into the target menu. Every frame.
+    """Push the player's current system into the target menu.
 
-    This IS the contact model: membership is derived, never stored, so the
-    push is not a refresh of some authoritative list — it is the only thing
-    that makes the list exist. Worst case it is one frame stale; it can never
-    be permanently wrong, which is exactly what the set-subscription this
-    replaced was (bound at mission load, never rebound on warp, so ships
-    spawned into a departed system kept their rows and the destination's
-    ships got none).
+    Membership and verdicts (which ships have records; perceivable,
+    targetable, identified, subsystems_targetable; affiliation colour) are
+    re-derived by `_rebuild_contacts` only when engine.appc.contact_refresh is
+    marked -- the player's 1 s sensor sweep and the events listed there --
+    or when (menu, player, set) changed since the last rebuild. Every other
+    frame only refreshes the records' distances from positions, and
+    re-checks the player's TARGET: its identified / subsystems_targetable
+    are exact every frame, and a flip rebuilds in the same frame (medium
+    entry/exit and a scan glimpse expiring post nothing). Anything without an
+    event (a range or cloak-bubble crossing, sensor damage, IsTargetable,
+    regrouping without ResetAffiliationColors) waits for the sweep, at most
+    one sweep period: BC's own cadence.
+    See docs/reference/engine/perf-cadences-and-latency.md.
 
-    Affiliation is recomputed alongside membership because it is derived from
-    the mission's friendly/enemy/neutral groups, which missions reassign
-    mid-flight (E2M2, E2M6 both call ResetAffiliationColors after regrouping).
-    Doing it here keeps colours right without having to catch those calls.
-
-    Pushes perception.Contact RECORDS, not ships: the record carries this
-    frame's verdict (perceivable / targetable) and its distances, so the menu
-    derives row visibility from the same answer it derives membership from.
-    That is what retired engine.ui.target_list_visibility, whose separate pass
-    recomputed range and cloak under its own rule and ignored death entirely.
+    Membership is still DERIVED from the player's containing set, never
+    stored, so it can never be permanently wrong -- which is exactly what the
+    set-subscription this replaced was (bound at mission load, never rebound
+    on warp, so ships spawned into a departed system kept their rows and the
+    destination's ships got none).
 
     Returns the contacts pushed, so callers and tests can see the answer.
 
-    Spec: docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md
+    Specs: docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md,
+    docs/superpowers/specs/2026-11-08-perf-tier1-design.md §2.1.
     """
-    from engine.appc.perception import perceived_by
+    from engine.appc import perception
+    from engine.core.ids import implements
+    dirty = contact_refresh.consume()
+    key = (id(menu), id(player), id(player.GetContainingSet()))
+    if dirty or key != _contacts_key[0]:
+        _contacts_key[0] = key
+        return _rebuild_contacts(menu, player)
+    with frame_profiler.scope("contacts.distances"):
+        contacts = perception.refresh_distances(menu.contacts(), player)
+        menu.set_contact_distances(contacts)
+        stale = False
+        target = (player.GetTarget()
+                  if implements(player, "GetTarget") else None)
+        if target is not None:
+            rec = menu.contact_for(target)
+            stale = rec is not None and perception.target_verdict(
+                player, target) != (rec.identified, rec.subsystems_targetable)
+    if stale:
+        return _rebuild_contacts(menu, player)
+    return contacts
+
+
+def _rebuild_contacts(menu, player) -> tuple:
+    """The full re-derivation: `perception.perceived_by` pushed as
+    perception.Contact RECORDS, then affiliation.
+
+    The record carries the verdict (perceivable / targetable) and the
+    distances, so the menu derives row visibility from the same answer it
+    derives membership from. That is what retired
+    engine.ui.target_list_visibility, whose separate pass recomputed range
+    and cloak under its own rule and ignored death entirely.
+
+    Affiliation is recomputed alongside membership because it is derived from
+    the mission's friendly/enemy/neutral groups, which missions reassign
+    mid-flight (E2M2, E2M6 both call ResetAffiliationColors after
+    regrouping; those calls recolour at once, a regroup without one waits
+    for the sweep).
+    """
+    from engine.appc import perception
     with frame_profiler.scope("contacts.perceive"):
-        contacts = perceived_by(player)
+        contacts = perception.perceived_by(player)
     with frame_profiler.scope("contacts.push"):
         menu.set_contacts(contacts)
     with frame_profiler.scope("contacts.colors"):
@@ -12841,11 +12892,12 @@ def run(mission_name: Optional[str] = None,
                     cutscene_active=_top_window.IsCutsceneMode(),
                     cinematic_active=_top_window.is_cinematic_active())
 
-                # Contact membership AND per-row visibility — push the player's
-                # current system every frame. Worst case this is one frame
-                # stale; it can never be permanently wrong, which is what the
-                # old set-subscription was (bound at mission load, never
-                # rebound on warp).
+                # Contact membership AND per-row visibility — derived from the
+                # player's current system, re-derived on the sensor sweep and
+                # on events (engine.appc.contact_refresh), distances every
+                # frame. Worst case one sweep stale; it can never be
+                # permanently wrong, which is what the old set-subscription
+                # was (bound at mission load, never rebound on warp).
                 #
                 # There is no second visibility pass: _pump_contacts pushes
                 # perception.Contact records and the menu's listing is derived
@@ -12932,6 +12984,9 @@ def run(mission_name: Optional[str] = None,
                 if _tgt_key != _last_target_key[0]:
                     _last_target_key[0] = _tgt_key
                     target_list_view.invalidate()
+                    # The contact list too, on the next frame's pump (it
+                    # ran above, before this frame's lock rules).
+                    contact_refresh.mark_dirty("target")
 
                 # Re-centre the star map's rect on the LIVE CEF view size
                 # (which tracks the window in points — see

@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import _dauntless_host as _h
 
+from engine.appc import contact_refresh
 from engine.core.ids import implements
 
 
@@ -63,9 +64,12 @@ def _is_contact(obj) -> bool:
 
 
 def _push(pSet) -> None:
-    """The set's contact view changed: refresh the native combat mirror."""
+    """The set's contact view changed: refresh the native combat mirror, and
+    mark the player's contact list for re-derivation (a flag only: this runs
+    inside the set door)."""
     from engine.appc import native_combat
     native_combat.push_set_members(pSet)
+    contact_refresh.mark_dirty("set")
 
 
 def on_added(pSet, identifier: str, obj, previous=None) -> None:

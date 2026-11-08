@@ -11,8 +11,9 @@ The two accessors happen to return the same number on our ObjectClass
 from an un-migrated one. The discriminating tests move the ship WITHOUT
 re-pushing: the readout must follow the pushed record, because the record
 is the frame's answer. In production _pump_contacts runs every frame
-before PanelRegistry.render_all (host_loop.py:7028 vs :7046), so the two
-never actually diverge on screen.
+before PanelRegistry.render_all and refreshes every record's distance even on
+a frame that does not re-derive membership (perception.refresh_distances), so
+the two never actually diverge on screen.
 """
 import math
 

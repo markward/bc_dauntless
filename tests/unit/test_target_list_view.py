@@ -21,12 +21,14 @@ def _listed(*ships):
 
 
 def _pump(target_menu, player):
-    """One frame of the host loop's contact push (host_loop._pump_contacts).
+    """One full re-derivation of the host loop's contact push
+    (host_loop._pump_contacts).
 
     The listing is DERIVED from the pushed record, so a change to a ship's
-    state reaches the panel on the next push — as it does in game, where the
-    push runs every frame before the panels render. The view no longer keeps
-    its own copy of the cloak/death rule to short-circuit that.
+    state reaches the panel on the next re-derivation — in game, the next
+    frame for an event (death, cloak, set change; engine.appc.contact_refresh)
+    and the next sensor sweep otherwise. The view no longer keeps its own copy
+    of the cloak/death rule to short-circuit that.
     """
     from engine.appc.perception import perceived_by
     target_menu.set_contacts(perceived_by(player))
