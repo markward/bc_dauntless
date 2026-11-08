@@ -10,6 +10,7 @@
 // through the remaining bindings.
 
 #include "host_bindings.h"
+#include "aitree.h"
 #include "combat_effect_queue.h"
 #include "combat_write_apply.h"
 #include "motion_write_apply.h"
@@ -17,11 +18,16 @@
 
 #include <algorithm>
 #include <cstring>
+#include <exception>
 
 #include <pybind11/pybind11.h>
+#include <structmember.h>
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
+#include "dauntless/combat/ai_avoid.h"
+#include "dauntless/combat/ai_rating.h"
+#include "dauntless/combat/ai_fire.h"
 #include "dauntless/combat/beam_feed.h"
 #include "dauntless/combat/torpedo_feed.h"
 #include "dauntless/combat/beam_geometry.h"
@@ -40,6 +46,7 @@
 #include "dauntless/combat/projectile_geometry.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/set_index.h"
 #include "dauntless/combat/impulse.h"
 #include "dauntless/combat/motion_step.h"
 #include "dauntless/combat/published_poses.h"
@@ -5371,6 +5378,5047 @@ static py::object& bench_point_class() {
     static py::object* cls = new py::object();
     return *cls;
 }
+
+// ── The native TGPoint3 constructor (phase 6 AI part 3, task 1) ────────────
+// engine.appc.math.TGPoint3 is a __slots__ class: three PyObject* members at
+// fixed offsets after the object header. make_point allocates one with the
+// type's own tp_alloc (what object.__new__ calls: GC-tracked, zeroed, no
+// dict or weaklist) and writes three fresh floats at those offsets, so no
+// __init__ runs and the result is bit-identical to TGPoint3(x, y, z). The
+// offsets are read ONCE from the slot descriptors at point_register; a class
+// of any other layout is refused there, and make_point throws until one is
+// registered. Intentionally leaked state (no destructor at shutdown).
+struct PointLayout {
+    PyTypeObject* type = nullptr;
+    Py_ssize_t off[3] = {0, 0, 0};
+};
+static PointLayout& point_layout() {
+    static PointLayout* l = new PointLayout();
+    return *l;
+}
+
+// New reference. Throws std::runtime_error (pybind: RuntimeError) when no
+// type is registered; a Python error from allocation becomes error_already_set.
+PyObject* make_point(double x, double y, double z) {
+    const PointLayout& l = point_layout();
+    if (!l.type) throw std::runtime_error("make_point: no TGPoint3 registered");
+    PyObject* fx = PyFloat_FromDouble(x);
+    PyObject* fy = fx ? PyFloat_FromDouble(y) : nullptr;
+    PyObject* fz = fy ? PyFloat_FromDouble(z) : nullptr;
+    PyObject* obj = fz ? l.type->tp_alloc(l.type, 0) : nullptr;
+    if (!obj) {
+        Py_XDECREF(fx);
+        Py_XDECREF(fy);
+        Py_XDECREF(fz);
+        if (!PyErr_Occurred()) PyErr_NoMemory();
+        throw py::error_already_set();
+    }
+    char* base = reinterpret_cast<char*>(obj);
+    *reinterpret_cast<PyObject**>(base + l.off[0]) = fx;
+    *reinterpret_cast<PyObject**>(base + l.off[1]) = fy;
+    *reinterpret_cast<PyObject**>(base + l.off[2]) = fz;
+    return obj;
+}
+
+static void point_register_impl(py::object cls) {
+    auto bad = [](const char* why) {
+        throw py::value_error(std::string("point_register: ") + why);
+    };
+    if (!PyType_Check(cls.ptr())) bad("not a class");
+    auto* t = reinterpret_cast<PyTypeObject*>(cls.ptr());
+    py::dict d = py::reinterpret_borrow<py::dict>(t->tp_dict);
+    if (!d.contains("__slots__")) bad("no __slots__");
+    py::tuple want = py::make_tuple("x", "y", "z");
+    if (!py::reinterpret_borrow<py::object>(d["__slots__"]).equal(want))
+        bad("__slots__ is not ('x', 'y', 'z')");
+    if (d.contains("__new__")) bad("defines __new__");
+    if (!d.contains("__init__")) bad("no __init__");
+    py::object init = d["__init__"];
+    if (!py::hasattr(init, "__module__") ||
+        py::str(init.attr("__module__")).cast<std::string>() !=
+            "engine.appc.math")
+        bad("__init__ is not the engine's");
+    if (t->tp_new != PyBaseObject_Type.tp_new) bad("custom tp_new");
+    if (t->tp_dictoffset != 0 || t->tp_weaklistoffset != 0)
+        bad("has a dict or weaklist");
+    if (t->tp_base != &PyBaseObject_Type) bad("has a base class");
+    if (t->tp_basicsize !=
+        static_cast<Py_ssize_t>(sizeof(PyObject) + 3 * sizeof(PyObject*)))
+        bad("unexpected object size");
+    PointLayout fresh;
+    fresh.type = t;
+    const char* names[3] = {"x", "y", "z"};
+    for (int i = 0; i < 3; ++i) {
+        PyObject* desc = PyDict_GetItemString(t->tp_dict, names[i]);
+        if (!desc || !PyObject_TypeCheck(desc, &PyMemberDescr_Type))
+            bad("slot is not a member descriptor");
+        PyMemberDef* m = reinterpret_cast<PyMemberDescrObject*>(desc)->d_member;
+        if (m->type != T_OBJECT_EX || (m->flags & READONLY))
+            bad("slot is not a writable object member");
+        if (m->offset < static_cast<Py_ssize_t>(sizeof(PyObject)) ||
+            m->offset + static_cast<Py_ssize_t>(sizeof(PyObject*)) >
+                t->tp_basicsize)
+            bad("slot offset out of range");
+        fresh.off[i] = m->offset;
+    }
+    // Hold the class: the cache keeps a raw pointer.
+    Py_INCREF(cls.ptr());
+    PointLayout& l = point_layout();
+    if (l.type) Py_DECREF(reinterpret_cast<PyObject*>(l.type));
+    l = fresh;
+}
+
+// benchmark-only: a raw METH_FASTCALL (i, g) -> make_point(store position).
+static PyObject* bench_slots_point_fn(PyObject*, PyObject* const* args,
+                                      Py_ssize_t nargs) {
+    if (nargs != 2) {
+        PyErr_SetString(PyExc_TypeError, "bench_slots_point(i, g)");
+        return nullptr;
+    }
+    const unsigned long i = PyLong_AsUnsignedLong(args[0]);
+    const unsigned long g = PyLong_AsUnsignedLong(args[1]);
+    if (PyErr_Occurred()) return nullptr;
+    try {
+        const auto p = dauntless::transform_store().position(
+            static_cast<std::uint32_t>(i), static_cast<std::uint32_t>(g));
+        return make_point(p[0], p[1], p[2]);
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_ValueError, e.what());
+        return nullptr;
+    }
+}
+static PyMethodDef g_bench_slots_def = {
+    "bench_slots_point",
+    reinterpret_cast<PyCFunction>(
+        reinterpret_cast<void (*)()>(&bench_slots_point_fn)),
+    METH_FASTCALL, "bench_slots_point(i, g): make_point(store position)."};
+
+// transform_point(index, generation): the stored position as a fresh TGPoint3
+// (ObjectClass.GetWorldLocation / GetTranslate). Raw METH_FASTCALL. A stale
+// handle raises RuntimeError(what) and a non-integer argument TypeError, the
+// two types the Python wrapper turns into StaleHandleError.
+static PyObject* transform_point_fn(PyObject*, PyObject* const* args,
+                                    Py_ssize_t nargs) {
+    if (nargs != 2) {
+        PyErr_SetString(PyExc_TypeError, "transform_point(index, generation)");
+        return nullptr;
+    }
+    // Handles are uint32 like the pybind path: outside [0, 2^32) is a TypeError.
+    long long v[2];
+    for (int k = 0; k < 2; ++k) {
+        v[k] = PyLong_AsLongLong(args[k]);
+        if (v[k] == -1 && PyErr_Occurred()) {
+            if (PyErr_ExceptionMatches(PyExc_OverflowError)) {
+                PyErr_Clear();
+                PyErr_SetString(PyExc_TypeError,
+                                "transform_point: handle out of uint32 range");
+            }
+            return nullptr;
+        }
+        if (v[k] < 0 || v[k] > 0xFFFFFFFFLL) {
+            PyErr_SetString(PyExc_TypeError,
+                            "transform_point: handle out of uint32 range");
+            return nullptr;
+        }
+    }
+    std::array<double, 3> p;
+    try {
+        p = dauntless::transform_store().position(
+            static_cast<std::uint32_t>(v[0]), static_cast<std::uint32_t>(v[1]));
+    } catch (const dauntless::StaleHandle& e) {
+        PyErr_SetString(PyExc_RuntimeError, e.what());
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+    try {
+        return make_point(p[0], p[1], p[2]);
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        // Not a stale handle: a missing TGPoint3 registration must not be
+        // reported as one.
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+}
+static PyMethodDef g_transform_point_def = {
+    "transform_point",
+    reinterpret_cast<PyCFunction>(
+        reinterpret_cast<void (*)()>(&transform_point_fn)),
+    METH_FASTCALL, "transform_point(index, generation): a fresh TGPoint3."};
+
+// point_copy(p): a fresh TGPoint3 equal to TGPoint3(p.x, p.y, p.z). For an
+// exact registered TGPoint3 whose three slots hold floats the values are read
+// from the slots; anything else (a subclass, a stand-in, an int or str
+// component) reads x, y, z by attribute, then float()s each, in the order and
+// with the errors of the Python constructor. Raw METH_FASTCALL.
+static PyObject* point_copy_fn(PyObject*, PyObject* const* args,
+                               Py_ssize_t nargs) {
+    if (nargs != 1) {
+        PyErr_SetString(PyExc_TypeError, "point_copy(p)");
+        return nullptr;
+    }
+    PyObject* p = args[0];
+    try {
+        const PointLayout& l = point_layout();
+        if (l.type && Py_TYPE(p) == l.type) {
+            const char* base = reinterpret_cast<const char*>(p);
+            PyObject* s[3];
+            bool ok = true;
+            for (int i = 0; i < 3; ++i) {
+                s[i] = *reinterpret_cast<PyObject* const*>(base + l.off[i]);
+                if (!s[i] || !PyFloat_CheckExact(s[i])) ok = false;
+            }
+            if (ok)
+                return make_point(PyFloat_AS_DOUBLE(s[0]),
+                                  PyFloat_AS_DOUBLE(s[1]),
+                                  PyFloat_AS_DOUBLE(s[2]));
+        }
+        // Owned, released on every path (make_point may throw).
+        struct Own3 {
+            PyObject* a[3] = {nullptr, nullptr, nullptr};
+            ~Own3() {
+                for (PyObject* o : a) Py_XDECREF(o);
+            }
+        } own3;
+        PyObject** a = own3.a;
+        static const char* names[3] = {"x", "y", "z"};
+        PyObject* out = nullptr;
+        int i = 0;
+        for (; i < 3; ++i) {
+            a[i] = PyObject_GetAttrString(p, names[i]);
+            if (!a[i]) break;
+        }
+        double d[3];
+        if (i == 3) {
+            int k = 0;
+            for (; k < 3; ++k) {
+                PyObject* f = PyObject_CallOneArg(
+                    reinterpret_cast<PyObject*>(&PyFloat_Type), a[k]);
+                if (!f) break;
+                d[k] = PyFloat_AS_DOUBLE(f);
+                Py_DECREF(f);
+            }
+            if (k == 3) out = make_point(d[0], d[1], d[2]);
+        }
+        return out;
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+}
+static PyMethodDef g_point_copy_def = {
+    "point_copy",
+    reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&point_copy_fn)),
+    METH_FASTCALL, "point_copy(p): a fresh TGPoint3 copy of p."};
+
+// ── The native set index (engine/appc/set_index.py) ─────────────────────────
+// One SetIndex (native/src/combat/.../set_index.h) mirrors every
+// SetClass._objects. Keys are object addresses. Its lifetime per set is the
+// set's own:
+//  - Members are BORROWED. The set's `_objects` dict keeps each one alive,
+//    and the index mirrors that dict exactly (three doors in sets.py, the
+//    writer guard and the audit in tests/unit/test_set_index.py), so a key
+//    in the index is a live object. A replaced or removed key is never
+//    dereferenced.
+//  - Each set is held by a WEAKREF whose callback forgets it. CPython clears
+//    weakrefs (running callbacks) before it clears the dying set's __dict__,
+//    in refcount dealloc and in cyclic GC alike, so nothing is dangling while
+//    the callback runs, and the address cannot be reused before it.
+//  - The only strong references are to bucket CLASSES (one per bucket),
+//    released when the set is forgotten. No cached tuples: one would keep the
+//    set <-> ship cycle (ship._containing_set) alive.
+//  - GC safety: any GC allocation (and any isinstance) can run a collection
+//    whose weakref callbacks forget and free other sets. So keys read from
+//    the core are turned into owned references with no Python allocation in
+//    between: an output list is allocated BEFORE the core is asked (appends
+//    only realloc its item array, which never collects), and members are
+//    INCREF'd into owned handles before any isinstance runs.
+// Heap-allocated and never destroyed: no static destructor runs Py_DECREF
+// after the interpreter is gone.
+namespace {
+namespace si {
+using Key = std::uintptr_t;
+
+struct Host {
+    dauntless::combat::SetIndex ix;
+    std::unordered_map<Key, std::pair<PyObject*, std::int64_t>> classes;
+    std::unordered_map<Key, py::object> watch;  // set -> weakref (callback forgets)
+    PyObject* ship_cls = nullptr;                // set_index_configure; held for good
+    PyObject* nebula_cls = nullptr;
+};
+
+Host& host() {
+    static Host* h = new Host();
+    return *h;
+}
+
+Key key_of(py::handle o) { return reinterpret_cast<Key>(o.ptr()); }
+PyObject* member(Key k) { return reinterpret_cast<PyObject*>(k); }
+
+bool is_instance(PyObject* o, PyObject* cls) {
+    int r = PyObject_IsInstance(o, cls);
+    if (r < 0) throw py::error_already_set();
+    return r == 1;
+}
+
+// Dropped references are parked in `dead` and only released when the
+// binding returns, once the index is consistent: a release can run a
+// finaliser that re-enters the index.
+void release_classes(Host& h, Key set, std::vector<py::object>& dead) {
+    for (Key cls : h.ix.bucket_classes(set)) {
+        auto it = h.classes.find(cls);
+        if (it == h.classes.end())
+            throw std::logic_error("set index: a bucket class it does not hold");
+        if (--it->second.second == 0) {
+            dead.push_back(py::reinterpret_steal<py::object>(it->second.first));
+            h.classes.erase(it);
+        }
+    }
+}
+
+// One bucket gone (a class test raised while it was built or re-tested):
+// the index forgets it and drops the reference it counted on its class.
+void drop_bucket(Host& h, Key set, Key cls, std::vector<py::object>& dead) {
+    if (!h.ix.drop_bucket(set, cls)) return;
+    auto it = h.classes.find(cls);
+    if (it == h.classes.end())
+        throw std::logic_error("set index: a bucket class it does not hold");
+    if (--it->second.second == 0) {
+        dead.push_back(py::reinterpret_steal<py::object>(it->second.first));
+        h.classes.erase(it);
+    }
+}
+
+void forget(Host& h, Key set, std::vector<py::object>& dead) {
+    if (!h.ix.has_set(set)) return;
+    release_classes(h, set, dead);
+    h.ix.forget_set(set);  // members are borrowed: nothing to release
+    auto w = h.watch.find(set);
+    if (w != h.watch.end()) {
+        dead.push_back(std::move(w->second));
+        h.watch.erase(w);
+    }
+}
+
+void watch(Host& h, py::handle set) {
+    Key s = key_of(set);
+    py::cpp_function on_dead([s](py::object /*weakref, kept alive by the call*/) {
+        std::vector<py::object> dead;
+        forget(host(), s, dead);
+    });
+    PyObject* ref = PyWeakref_NewRef(set.ptr(), on_dead.ptr());
+    if (ref == nullptr) throw py::error_already_set();
+    host().watch[s] = py::reinterpret_steal<py::object>(ref);
+}
+
+// Borrowed keys -> owned references, with no Python allocation: std::vector
+// growth is C++ and Py_INCREF allocates nothing.
+std::vector<py::object> own(const std::vector<Key>& keys) {
+    std::vector<py::object> out;
+    out.reserve(keys.size());
+    for (Key k : keys) out.push_back(py::reinterpret_borrow<py::object>(member(k)));
+    return out;
+}
+
+// Creates the bucket empty (the predicate only records the members: no
+// Python runs inside the core's loop), owns the members, then runs the
+// isinstance tests, which may run Python and collect. An isinstance that
+// raises erases the half-built bucket, so the next read builds it again
+// (and raises again) instead of returning a partial list.
+void create_bucket(Host& h, Key set, PyObject* cls) {
+    auto [it, fresh] = h.classes.try_emplace(reinterpret_cast<Key>(cls), cls, 0);
+    if (fresh) Py_INCREF(cls);
+    ++it->second.second;
+    py::object keep_cls = py::reinterpret_borrow<py::object>(cls);
+    std::vector<Key> keys;
+    h.ix.create_bucket(set, reinterpret_cast<Key>(cls), [&](Key o) {
+        keys.push_back(o);
+        return false;
+    });
+    try {
+        for (const py::object& o : own(keys))
+            if (is_instance(o.ptr(), cls))
+                h.ix.set_bucket_membership(set, reinterpret_cast<Key>(cls), key_of(o), true);
+    } catch (...) {
+        std::vector<py::object> dead;  // keep_cls outlives these releases
+        drop_bucket(h, set, reinterpret_cast<Key>(cls), dead);
+        throw;
+    }
+}
+
+// The caller owns `obj`; the classes are owned here before any isinstance.
+// A set forgotten meanwhile makes set_bucket_membership a no-op. An
+// isinstance that raises leaves its bucket and every one not yet re-tested
+// stale for `obj` (an overwrite took the slot out of all of them; a
+// reclassification left the old answer): those are erased, to be rebuilt
+// on the next read.
+void reassess(Host& h, Key set, PyObject* obj) {
+    std::vector<py::object> classes = own(h.ix.bucket_classes(set));
+    for (std::size_t i = 0; i < classes.size(); ++i) {
+        bool member;
+        try {
+            member = is_instance(obj, classes[i].ptr());
+        } catch (...) {
+            std::vector<py::object> dead;  // `classes` outlives these releases
+            for (std::size_t j = i; j < classes.size(); ++j)
+                drop_bucket(h, set, key_of(classes[j]), dead);
+            throw;
+        }
+        h.ix.set_bucket_membership(set, key_of(classes[i]), reinterpret_cast<Key>(obj),
+                                   member);
+    }
+}
+
+// `produce` reads keys from the core; it runs only after the output list
+// exists, and nothing between it and the INCREFs can collect.
+template <class Produce>
+py::list objects(Produce produce) {
+    py::list out;
+    for (Key k : produce()) out.append(py::reinterpret_borrow<py::object>(member(k)));
+    return out;
+}
+
+py::tuple contact_view(Host& h, py::handle set, PyObject* cls) {
+    Key s = key_of(set);
+    if (cls == nullptr) return py::tuple();
+    // Only a raising class test erases a contact bucket; rebuilt here.
+    if (h.ix.has_set(s) && !h.ix.has_bucket(s, reinterpret_cast<Key>(cls)))
+        create_bucket(h, s, cls);
+    py::list out = objects([&] { return h.ix.distinct_live(s, reinterpret_cast<Key>(cls)); });
+    return py::tuple(out);  // every item already owned by `out`
+}
+
+// ((ship, (x, y, z)), ...) for the distinct live ships: the contact view
+// joined to the transform store in one call. The output tuple is allocated
+// before the core is read (a GC inside the allocation may free a set); the
+// members are then owned before any attribute read can run Python. A stale
+// handle throws the store's own error, as transform_get_positions does.
+py::tuple ship_positions(Host& h, py::handle set) {
+    Key s = key_of(set);
+    PyObject* cls = h.ship_cls;
+    if (cls == nullptr) return py::tuple();
+    if (h.ix.has_set(s) && !h.ix.has_bucket(s, reinterpret_cast<Key>(cls)))
+        create_bucket(h, s, cls);
+    py::list out;  // allocated first
+    std::vector<py::object> ships = own(h.ix.distinct_live(s, reinterpret_cast<Key>(cls)));
+    static PyObject* s_xform = PyUnicode_InternFromString("_xform");
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> handles;
+    handles.reserve(ships.size());
+    for (const py::object& ship : ships) {
+        py::object xf = py::reinterpret_steal<py::object>(PyObject_GetAttr(ship.ptr(), s_xform));
+        if (!xf) throw py::error_already_set();
+        if (!PyTuple_Check(xf.ptr()) || PyTuple_GET_SIZE(xf.ptr()) != 2)
+            throw py::type_error("transform handle is not an (index, generation) pair");
+        handles.emplace_back(py::cast<std::uint32_t>(PyTuple_GET_ITEM(xf.ptr(), 0)),
+                             py::cast<std::uint32_t>(PyTuple_GET_ITEM(xf.ptr(), 1)));
+    }
+    const auto pos = dauntless::transform_store().positions(handles);
+    for (std::size_t i = 0; i < ships.size(); ++i) {
+        out.append(py::make_tuple(ships[i], py::make_tuple(pos[i][0], pos[i][1], pos[i][2])));
+    }
+    return py::tuple(out);
+}
+
+// Does `set` show any ship or nebula in the contact view right now? Pure
+// C++: no Python allocates here.
+bool contact_nonempty(Host& h, Key set) {
+    for (PyObject* cls : {h.ship_cls, h.nebula_cls})
+        if (cls != nullptr && !h.ix.distinct_live(set, reinterpret_cast<Key>(cls)).empty())
+            return true;
+    return false;
+}
+}  // namespace si
+}  // namespace
+
+// ── The AI memos: version guard, self-test and switch ───────────────────────
+// The native AI keeps three memos of verdicts Python decided (`stockmemo`,
+// `surfacememo` and readers' remembered stock types) and one fast walk
+// (rating's crew scan). They read CPython 3.11 internals: a dict's
+// ma_version_tag (deprecated in 3.12, gone in 3.14), _PyDict_HasOnlyStringKeys
+// (internal from 3.13) and a type's tp_version_tag. Compiled for any other
+// Python they are OFF: every query answers "ask Python" (None, a miss, not
+// stored), never a stale yes, and every native path stays exact, only
+// slower. On 3.11 a self-test runs once, at the first query, and turns them
+// off if a dict insert / replace / delete or a class setattr (seen on a
+// subclass too) does not move the tag the memo keys on, or if the instance
+// dict the memos read is not the one attribute lookup uses. Forced off by
+// DAUNTLESS_AI_MEMOS=0 (read once, at that first query) or by
+// ai_memo_force_off(True) (tests: the exactness tests run both ways).
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030C0000
+#define DAUNTLESS_AI_MEMOS_COMPILED 1
+#else
+#define DAUNTLESS_AI_MEMOS_COMPILED 0
+#endif
+
+namespace {
+namespace aimemo {
+
+struct State {
+    bool ready = false;      // the self-test has run
+    bool self_test = false;  // ... and passed
+    bool env_off = false;    // DAUNTLESS_AI_MEMOS=0
+    bool forced_off = false; // ai_memo_force_off(True)
+};
+
+State& state() {
+    static State s;
+    return s;
+}
+
+#if DAUNTLESS_AI_MEMOS_COMPILED
+unsigned long long dict_tag(PyObject* d) {
+    return reinterpret_cast<PyDictObject*>(d)->ma_version_tag;
+}
+bool only_str_keys(PyObject* d) { return _PyDict_HasOnlyStringKeys(d) != 0; }
+#endif
+
+// The probes. Owned references are released on every path; any Python
+// error fails the test (and is cleared).
+bool run_self_test() {
+#if DAUNTLESS_AI_MEMOS_COMPILED
+    struct Own {
+        PyObject* p;
+        ~Own() { Py_XDECREF(p); }
+    };
+    Own key{PyUnicode_InternFromString("_ai_memo_probe")};
+    Own one{PyLong_FromLong(1)}, two{PyLong_FromLong(2)};
+    Own d{PyDict_New()};
+    if (!key.p || !one.p || !two.p || !d.p) return false;
+    // 1. A dict's tag moves on insert, replace and delete.
+    const unsigned long long t0 = dict_tag(d.p);
+    if (PyDict_SetItem(d.p, key.p, one.p) < 0) return false;
+    const unsigned long long t1 = dict_tag(d.p);
+    if (PyDict_SetItem(d.p, key.p, two.p) < 0) return false;
+    const unsigned long long t2 = dict_tag(d.p);
+    if (PyDict_DelItem(d.p, key.p) < 0) return false;
+    const unsigned long long t3 = dict_tag(d.p);
+    if (t0 == t1 || t1 == t2 || t2 == t3) return false;
+    // ... and the str-keys test the crew walk relies on answers both ways.
+    if (PyDict_SetItem(d.p, key.p, one.p) < 0 || !only_str_keys(d.p)) return false;
+    if (PyDict_SetItem(d.p, one.p, one.p) < 0 || only_str_keys(d.p)) return false;
+    // 2. A class setattr moves the class's tag and its subclass's.
+    Own base_ns{PyDict_New()}, sub_ns{PyDict_New()};
+    if (!base_ns.p || !sub_ns.p) return false;
+    Own base{PyObject_CallFunction(reinterpret_cast<PyObject*>(&PyType_Type), "s(O)O",
+                                   "_AiMemoProbe", reinterpret_cast<PyObject*>(&PyBaseObject_Type),
+                                   base_ns.p)};
+    if (!base.p) return false;
+    Own sub{PyObject_CallFunction(reinterpret_cast<PyObject*>(&PyType_Type), "s(O)O",
+                                  "_AiMemoProbeSub", base.p, sub_ns.p)};
+    if (!sub.p) return false;
+    auto* bt = reinterpret_cast<PyTypeObject*>(base.p);
+    auto* st = reinterpret_cast<PyTypeObject*>(sub.p);
+    const unsigned int b0 = k0_type_tag(bt), s0 = k0_type_tag(st);
+    if (b0 == 0 || s0 == 0) return false;
+    if (PyObject_SetAttr(base.p, key.p, one.p) < 0) return false;
+    const unsigned int b1 = k0_type_tag(bt), s1 = k0_type_tag(st);
+    if (b1 == 0 || s1 == 0 || b1 == b0 || s1 == s0) return false;
+    // 3. The instance dict the memos read is the one attribute lookup uses.
+    Own inst{PyObject_CallNoArgs(sub.p)};
+    if (!inst.p || PyObject_SetAttr(inst.p, key.p, two.p) < 0) return false;
+    Own real{PyObject_GetAttrString(inst.p, "__dict__")};
+    if (!real.p || k0_dict_of(inst.p) != real.p) return false;
+    return PyDict_GetItemWithError(real.p, key.p) == two.p;
+#else
+    return false;
+#endif
+}
+
+void ensure() {
+    State& s = state();
+    if (s.ready) return;
+    s.ready = true;
+    const char* env = std::getenv("DAUNTLESS_AI_MEMOS");
+    s.env_off = env != nullptr && std::strcmp(env, "0") == 0;
+    PyObject *type, *value, *tb;
+    PyErr_Fetch(&type, &value, &tb);  // a caller's pending error survives
+    s.self_test = run_self_test();
+    PyErr_Clear();
+    PyErr_Restore(type, value, tb);
+}
+
+// Whether the memos may answer. The first call runs the self-test, which
+// allocates: never first from a stretch that must not run Python (quiet()).
+bool on() {
+    const State& s = state();
+    if (!s.ready) ensure();
+    return s.self_test && !s.env_off && !s.forced_off;
+}
+
+// on() without the first-use self-test: false until it has run.
+bool quiet() {
+    const State& s = state();
+    return s.ready && s.self_test && !s.env_off && !s.forced_off;
+}
+
+PyObject* status(PyObject*, PyObject* const*, Py_ssize_t nargs) {
+    if (nargs != 0) {
+        PyErr_SetString(PyExc_TypeError, "ai_memo_status()");
+        return nullptr;
+    }
+    const bool enabled = on();
+    const State& s = state();
+    return Py_BuildValue("{s:O,s:O,s:O,s:O}", "compiled",
+                         DAUNTLESS_AI_MEMOS_COMPILED ? Py_True : Py_False, "self_test",
+                         s.self_test ? Py_True : Py_False, "forced_off",
+                         (s.env_off || s.forced_off) ? Py_True : Py_False, "enabled",
+                         enabled ? Py_True : Py_False);
+}
+
+PyObject* force_off(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 1) {
+        PyErr_SetString(PyExc_TypeError, "ai_memo_force_off(flag)");
+        return nullptr;
+    }
+    const int flag = PyObject_IsTrue(args[0]);
+    if (flag < 0) return nullptr;
+    ensure();
+    state().forced_off = flag == 1;
+    Py_RETURN_NONE;
+}
+
+PyMethodDef kDefs[] = {
+    {"ai_memo_status", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(status)),
+     METH_FASTCALL,
+     "ai_memo_status() -> {compiled, self_test, forced_off, enabled}: whether the "
+     "native AI memos may answer (compiled for 3.11, self-test passed, not "
+     "forced off by DAUNTLESS_AI_MEMOS=0 or ai_memo_force_off)."},
+    {"ai_memo_force_off",
+     reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(force_off)), METH_FASTCALL,
+     "ai_memo_force_off(flag): with True every memo answers 'ask Python' (tests)."},
+};
+
+}  // namespace aimemo
+
+// ── Reader contracts: one stock test for every native reader ────────────────
+// ai_native.object_reads_are_stock(obj, contract) decides whether a native
+// reader may stand in for `obj`'s App methods: its CLASS resolves each name
+// of the contract to exactly the engine body the reader mirrors, and its
+// INSTANCE dict shadows none of them. This is that test for avoid, rating
+// and fire alike:
+//   * class_stock: Python's verdict, with the class half remembered for a
+//     type it found stock, keyed by the type's version tag (CPython renews it
+//     whenever an attribute of the type or of any base is set or deleted, or
+//     its __bases__ change). Only for a type whose metaclass is `type`, and
+//     only while the memos are on (aimemo); otherwise Python is asked every
+//     time.
+//   * dict_shadows: the instance half, on every object -- the one rule
+//     Python's own half states: `obj.__dict__` missing shadows nothing; a
+//     dict shadows when it holds a contract name; anything else (not a dict)
+//     shadows, the conservative answer. For a type whose `__dict__` is
+//     CPython's own descriptor (`plain_dict`) the dict is read from its slot
+//     (no Python runs); for any other type `obj.__dict__` is looked up as
+//     Python looks it up.
+// Python's check reads only types and the instance's `__dict__`: no other
+// state, so it is treated as pure (the callers re-read nothing after it).
+namespace readers {
+
+struct Host {
+    PyObject* s_dict;
+    PyObject* s_object_reads_are_stock;
+    PyObject* ai_native;
+    getter subtype_dict;  // the getter of a plain class's `__dict__`
+};
+
+Host& host() {
+    static Host* h = [] {
+        auto* p = new Host();
+        p->s_dict = PyUnicode_InternFromString("__dict__");
+        p->s_object_reads_are_stock = PyUnicode_InternFromString("object_reads_are_stock");
+        if (!p->s_dict || !p->s_object_reads_are_stock) throw py::error_already_set();
+        p->ai_native = PyImport_ImportModule("engine.appc.ai_native");
+        if (p->ai_native == nullptr) throw py::error_already_set();
+        // A plain class's `__dict__` descriptor: its getter is CPython's own
+        // (subtype_dict), which reads the instance's dict slot.
+        PyObject* ns = PyDict_New();
+        if (ns == nullptr) throw py::error_already_set();
+        PyObject* probe =
+            PyObject_CallFunction(reinterpret_cast<PyObject*>(&PyType_Type), "s(O)O",
+                                  "_AiDictProbe", reinterpret_cast<PyObject*>(&PyBaseObject_Type), ns);
+        Py_DECREF(ns);
+        if (probe == nullptr) throw py::error_already_set();
+        PyObject* descr = _PyType_Lookup(reinterpret_cast<PyTypeObject*>(probe), p->s_dict);
+        if (descr == nullptr || !Py_IS_TYPE(descr, &PyGetSetDescr_Type)) {
+            Py_DECREF(probe);
+            throw std::logic_error("readers: a plain class has no __dict__ getset");
+        }
+        p->subtype_dict = reinterpret_cast<PyGetSetDescrObject*>(descr)->d_getset->get;
+        Py_DECREF(probe);
+        return p;
+    }();
+    return *h;
+}
+
+// `t`'s `__dict__` is CPython's own descriptor, so the instance dict in its
+// slot is what `obj.__dict__` returns. No Python runs, nothing allocates.
+bool plain_dict(PyTypeObject* t) {
+    PyObject* descr = _PyType_Lookup(t, host().s_dict);
+    return descr != nullptr && Py_IS_TYPE(descr, &PyGetSetDescr_Type) &&
+           reinterpret_cast<PyGetSetDescrObject*>(descr)->d_getset->get == host().subtype_dict;
+}
+
+// Does dict `d` hold one of `names` (a tuple of str, or of (str, fn) pairs)?
+bool holds_any(PyObject* d, PyObject* names, bool pairs) {
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(names); ++i) {
+        PyObject* n = PyTuple_GET_ITEM(names, i);
+        if (pairs) n = PyTuple_GET_ITEM(n, 0);
+        const int has = PyDict_Contains(d, n);
+        if (has < 0) throw py::error_already_set();
+        if (has) return true;
+    }
+    return false;
+}
+
+// The instance half (the namespace comment). Throws error_already_set on a
+// Python error other than AttributeError from a non-plain `__dict__`.
+// `plain`: plain_dict(type(obj)) if the caller knows it (-1: look it up).
+bool dict_shadows(PyObject* obj, PyObject* contract, int plain = -1) {
+    if (plain < 0) plain = plain_dict(Py_TYPE(obj)) ? 1 : 0;
+    if (plain == 1) {
+        PyObject* d = k0_dict_of(obj);  // already built: no allocation
+        if (d == nullptr) {
+            PyObject** dp = _PyObject_GetDictPtr(obj);  // builds it if need be
+            if (PyErr_Occurred()) throw py::error_already_set();
+            if (dp == nullptr) goto generic;
+            if (*dp == nullptr) return false;  // no attributes at all
+            d = *dp;
+        }
+        if (!PyDict_Check(d)) return true;
+        return holds_any(d, contract, true);
+    }
+generic:
+    PyObject* raw = PyObject_GetAttr(obj, host().s_dict);
+    if (raw == nullptr) {
+        if (!PyErr_ExceptionMatches(PyExc_AttributeError)) throw py::error_already_set();
+        PyErr_Clear();
+        return false;  // no `__dict__`: nothing shadows
+    }
+    py::object d = py::reinterpret_steal<py::object>(raw);
+    if (!PyDict_Check(raw)) return true;  // not a dict: shadows
+    return holds_any(raw, contract, true);
+}
+
+// The remembered stock types: a direct-mapped table keyed by (type,
+// contract), so a lookup is one slot (the Debug build pays nothing for a
+// container). A collision overwrites the slot: the evicted type is only asked
+// of Python again. Bounded by construction, so it is never emptied.
+struct StockSlot {
+    PyTypeObject* type = nullptr;
+    PyObject* contract = nullptr;
+    unsigned int tag = 0;
+    bool plain = false;  // plain_dict(type): a `__dict__` change moves the tag
+    py::object keep;     // the type, held: the address is the key
+};
+constexpr std::size_t kStockSlots = 256;
+
+StockSlot* stock_slots() {
+    static auto* t = new StockSlot[kStockSlots];
+    return t;
+}
+
+StockSlot& slot_for(PyTypeObject* t, PyObject* contract) {
+    const auto a = reinterpret_cast<std::uintptr_t>(t) >> 4;
+    const auto b = reinterpret_cast<std::uintptr_t>(contract) >> 4;
+    return stock_slots()[(a * 0x9E3779B1u ^ b * 0x85EBCA77u) % kStockSlots];
+}
+
+unsigned int tag_for(PyTypeObject* t) {
+    return Py_IS_TYPE(reinterpret_cast<PyObject*>(t), &PyType_Type) ? k0_type_tag(t) : 0u;
+}
+
+// The memo alone: the slot remembering `t` stock for `contract` under its
+// current tag, or nullptr. No Python runs. `quiet`: the memo's first-use
+// self-test (which allocates) must not run here; nullptr until it has.
+const StockSlot* known_slot(PyTypeObject* t, PyObject* contract, bool quiet = false) {
+    if (!(quiet ? aimemo::quiet() : aimemo::on())) return nullptr;
+    const StockSlot& e = slot_for(t, contract);
+    if (e.type != t || e.contract != contract) return nullptr;
+    const unsigned int tag = tag_for(t);
+    return tag != 0 && e.tag == tag ? &e : nullptr;
+}
+
+bool known_stock(PyTypeObject* t, PyObject* contract, bool quiet = false) {
+    return known_slot(t, contract, quiet) != nullptr;
+}
+
+bool class_stock(PyObject* obj, PyObject* contract) {
+    PyTypeObject* t = Py_TYPE(obj);
+    if (known_stock(t, contract)) return true;
+    const unsigned int tag = aimemo::on() ? tag_for(t) : 0u;
+    auto& h = host();
+    py::object fn = py::reinterpret_steal<py::object>(
+        PyObject_GetAttr(h.ai_native, h.s_object_reads_are_stock));
+    if (!fn) throw py::error_already_set();
+    PyObject* r = PyObject_CallFunctionObjArgs(fn.ptr(), obj, contract, nullptr);
+    if (r == nullptr) throw py::error_already_set();
+    const int ok = PyObject_IsTrue(r);
+    Py_DECREF(r);
+    if (ok < 0) throw py::error_already_set();
+    // Python's True covers the class half; remember it unless the type moved
+    // while Python ran.
+    if (ok == 1 && tag != 0 && tag_for(t) == tag) {
+        StockSlot& e = slot_for(t, contract);
+        // The evicted type is released after the slot is whole again: a
+        // release can run weakref callbacks, which may come back here.
+        py::object evicted = std::move(e.keep);
+        e.type = t;
+        e.contract = contract;
+        e.tag = tag;
+        e.plain = plain_dict(t);
+        e.keep = py::reinterpret_borrow<py::object>(reinterpret_cast<PyObject*>(t));
+    }
+    return ok == 1;
+}
+
+bool reads_stock(PyObject* obj, PyObject* contract) {
+    if (const StockSlot* e = known_slot(Py_TYPE(obj), contract))
+        return !dict_shadows(obj, contract, e->plain ? 1 : 0);
+    return class_stock(obj, contract) && !dict_shadows(obj, contract);
+}
+
+}  // namespace readers
+}  // namespace
+
+// ── AvoidObstacles' obstacle scan (engine/appc/ai_optimized.py) ─────────────
+// combat_ai_avoid_scan stands in for the SDK's while loop in
+// AvoidObstacles.TestCourseOverride (AI/Preprocessors.py:1748-1761) for a
+// stock instance (the caller decided that: ai_native.preprocessor_is_stock).
+// Per object, in the SDK's order:
+//   1. `pObject.GetObjID() != pShip.GetObjID()`, then NeedToAvoid's
+//      lDontAvoidTypes loop. Native when the object's type resolves GetObjID
+//      and IsTypeOf to TGObject's and ObjectClass's own bodies
+//      (ai_native.object_reads_are_stock on a reader_contract); the loop's
+//      verdict depends on the object's TYPE only (ObjectClass.IsTypeOf is an
+//      isinstance test), so it is computed by the real IsTypeOf once per
+//      (type, the instance's tags) and cached, keyed also by
+//      object_types._GENERATION.
+//   2. The arithmetic (dauntless/combat/ai_avoid.h), on what GetWorldLocation
+//      (the transform store), GetRadius (`_radius * _scale`, guarded) and
+//      GetVelocityTG (`_velocity`, physics objects only) would return. Native
+//      when the type resolves each to exactly the body its reader mirrors
+//      (ObjectClass's, PhysicsObjectClass's): an engine override such as
+//      DebrisChunk.GetRadius or Torpedo.GetVelocityTG is not. Nothing else
+//      runs before step 1 ends with "skip", so a type that overrides only a
+//      step-2 reader (ProximityCheck.GetRadius, Torpedo.GetVelocityTG) is
+//      still filtered natively.
+// Any other object -- a non-stock reader, a value that is not a plain float,
+// a stale handle -- is handed to the SDK's NeedToAvoid in Python, alone, and
+// counted as ai_native.note_object_fallback("avoid", "surface"). Its reads are
+// pure, so re-running them there gives the SDK's answer and the SDK's
+// exception. After any such callback every value read from Python (the
+// ship's pose, fPredictionTime, lDontAvoidTypes) is read again: the callback
+// may have changed it. The stock test of each object is readers::reads_stock,
+// the one every native reader uses (its class half remembered by type
+// version, its instance half checked per object).
+// If the FIRST read finds the ship or the instance's parameters are not
+// native reads, nothing is walked: the binding returns None and the caller
+// runs the SDK loop, counted python/no_mirror.
+//
+// Borrowing: the objects are items of the iteration TUPLE the caller holds,
+// so they outlive the call; each is still owned (INCREF) while Python runs.
+// The output list is allocated first.
+namespace {
+namespace avoid {
+
+PyObject* intern(const char* s) {
+    PyObject* o = PyUnicode_InternFromString(s);
+    if (o == nullptr) throw py::error_already_set();
+    return o;  // held for good
+}
+
+struct Host {
+    PyObject *s_GetObjID, *s_IsTypeOf, *s_NeedToAvoid, *s_GetRadius;
+    PyObject *s_obj_id, *s_xform, *s_radius, *s_scale, *s_velocity;
+    PyObject *s_x, *s_y, *s_z, *s_cursor, *s_dict;
+    PyObject *s_fPredictionTime, *s_lDontAvoidTypes, *s_GENERATION;
+    PyObject *s_object_reads_are_stock, *s_note_object_fallback;
+    PyObject *s_PhysicsObjectClass;
+    PyObject *s_GetWorldLocation, *s_GetVelocityTG;
+    // ai_native.reader_contract(...): ((name, engine function), ...)
+    PyObject *reads_filter;    // GetObjID, IsTypeOf
+    PyObject *reads_still;     // GetWorldLocation, GetRadius
+    PyObject *reads_moving;    // ... + GetVelocityTG
+    PyObject *reads_ship;      // GetObjID, GetWorldLocation, GetVelocityTG
+    PyObject *note_args;       // ("avoid", "surface")
+    PyObject *ai_native, *object_types, *objects;
+
+    // The lDontAvoidTypes verdict per (type, tags), for one generation.
+    struct Verdict {
+        py::object type;              // held: the address is the key
+        std::vector<long long> tags;
+        bool skip;
+    };
+    long long generation = 0;
+    bool have_generation = false;
+    std::unordered_map<PyTypeObject*, std::vector<Verdict>> verdicts;
+    std::size_t verdict_count = 0;
+};
+
+Host& host() {
+    static Host* h = [] {
+        auto* p = new Host();
+        p->s_GetObjID = intern("GetObjID");
+        p->s_IsTypeOf = intern("IsTypeOf");
+        p->s_NeedToAvoid = intern("NeedToAvoid");
+        p->s_GetRadius = intern("GetRadius");
+        p->s_GetWorldLocation = intern("GetWorldLocation");
+        p->s_GetVelocityTG = intern("GetVelocityTG");
+        p->s_obj_id = intern("_obj_id");
+        p->s_xform = intern("_xform");
+        p->s_radius = intern("_radius");
+        p->s_scale = intern("_scale");
+        p->s_velocity = intern("_velocity");
+        p->s_x = intern("x");
+        p->s_y = intern("y");
+        p->s_z = intern("z");
+        p->s_cursor = intern("_cursor");
+        p->s_dict = intern("__dict__");
+        p->s_fPredictionTime = intern("fPredictionTime");
+        p->s_lDontAvoidTypes = intern("lDontAvoidTypes");
+        p->s_GENERATION = intern("_GENERATION");
+        p->s_object_reads_are_stock = intern("object_reads_are_stock");
+        p->s_note_object_fallback = intern("note_object_fallback");
+        p->s_PhysicsObjectClass = intern("PhysicsObjectClass");
+        auto tuple_of = [](std::initializer_list<PyObject*> items) {
+            PyObject* t = PyTuple_New(static_cast<Py_ssize_t>(items.size()));
+            if (t == nullptr) throw py::error_already_set();
+            Py_ssize_t i = 0;
+            for (PyObject* o : items) {
+                Py_INCREF(o);
+                PyTuple_SET_ITEM(t, i++, o);
+            }
+            return t;
+        };
+        {
+            // tuple_of takes its own reference to each item: drop intern's.
+            PyObject* kind = intern("avoid");
+            PyObject* why = intern("surface");
+            p->note_args = tuple_of({kind, why});
+            Py_DECREF(kind);
+            Py_DECREF(why);
+        }
+        p->ai_native = PyImport_ImportModule("engine.appc.ai_native");
+        if (p->ai_native == nullptr) throw py::error_already_set();
+        p->object_types = PyImport_ImportModule("engine.appc.object_types");
+        if (p->object_types == nullptr) throw py::error_already_set();
+        p->objects = PyImport_ImportModule("engine.appc.objects");
+        if (p->objects == nullptr) throw py::error_already_set();
+        auto contract = [p, &tuple_of](std::initializer_list<PyObject*> names) {
+            PyObject* args = tuple_of(names);
+            PyObject* fn = PyObject_GetAttrString(p->ai_native, "reader_contract");
+            if (fn == nullptr) {
+                Py_DECREF(args);
+                throw py::error_already_set();
+            }
+            PyObject* c = PyObject_Call(fn, args, nullptr);
+            Py_DECREF(fn);
+            Py_DECREF(args);
+            if (c == nullptr) throw py::error_already_set();
+            if (!PyTuple_CheckExact(c)) {
+                Py_DECREF(c);
+                throw std::logic_error("ai_native.reader_contract: not a tuple");
+            }
+            return c;  // held for good
+        };
+        p->reads_filter = contract({p->s_GetObjID, p->s_IsTypeOf});
+        p->reads_still = contract({p->s_GetWorldLocation, p->s_GetRadius});
+        p->reads_moving = contract({p->s_GetWorldLocation, p->s_GetRadius, p->s_GetVelocityTG});
+        p->reads_ship = contract({p->s_GetObjID, p->s_GetWorldLocation, p->s_GetVelocityTG});
+        return p;
+    }();
+    return *h;
+}
+
+py::object own(PyObject* o) {
+    if (o == nullptr) throw py::error_already_set();
+    return py::reinterpret_steal<py::object>(o);
+}
+
+bool truth(PyObject* o) {
+    int r = PyObject_IsTrue(o);
+    if (r < 0) throw py::error_already_set();
+    return r == 1;
+}
+
+// A plain Python float as a double; false (no error set) for anything else.
+bool exact_float(PyObject* o, double& out) {
+    if (o == nullptr || !PyFloat_CheckExact(o)) return false;
+    out = PyFloat_AS_DOUBLE(o);
+    return true;
+}
+
+// `getattr(o, name)` as a plain float; false (error cleared) otherwise.
+bool float_attr(PyObject* o, PyObject* name, double& out) {
+    PyObject* v = PyObject_GetAttr(o, name);
+    if (v == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    bool ok = exact_float(v, out);
+    Py_DECREF(v);
+    return ok;
+}
+
+// The store handle `_xform` names: (index, generation) as plain ints.
+bool read_handle(PyObject* o, std::uint32_t& index, std::uint32_t& generation) {
+    PyObject* xf = PyObject_GetAttr(o, host().s_xform);
+    if (xf == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    py::object keep = py::reinterpret_steal<py::object>(xf);
+    if (!PyTuple_CheckExact(xf) || PyTuple_GET_SIZE(xf) != 2) return false;
+    PyObject* pi = PyTuple_GET_ITEM(xf, 0);
+    PyObject* pg = PyTuple_GET_ITEM(xf, 1);
+    if (!PyLong_CheckExact(pi) || !PyLong_CheckExact(pg)) return false;
+    unsigned long long i = PyLong_AsUnsignedLongLong(pi);
+    unsigned long long g = PyLong_AsUnsignedLongLong(pg);
+    if (PyErr_Occurred()) {
+        PyErr_Clear();
+        return false;
+    }
+    if (i > 0xFFFFFFFFull || g > 0xFFFFFFFFull) return false;
+    index = static_cast<std::uint32_t>(i);
+    generation = static_cast<std::uint32_t>(g);
+    return true;
+}
+
+// ObjectClass.GetWorldLocation: the store slot `_xform` names.
+bool read_position(PyObject* o, double out[3]) {
+    std::uint32_t i, g;
+    if (!read_handle(o, i, g)) return false;
+    try {
+        auto p = dauntless::transform_store().position(i, g);
+        out[0] = p[0];
+        out[1] = p[1];
+        out[2] = p[2];
+    } catch (const std::exception&) {
+        return false;  // stale: the Python path raises StaleHandleError
+    }
+    return true;
+}
+
+// PhysicsObjectClass.GetVelocityTG: TGPoint3(v.x, v.y, v.z) of `_velocity`.
+bool read_velocity(PyObject* o, double out[3]) {
+    PyObject* v = PyObject_GetAttr(o, host().s_velocity);
+    if (v == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    py::object keep = py::reinterpret_steal<py::object>(v);
+    auto& h = host();
+    return float_attr(v, h.s_x, out[0]) && float_attr(v, h.s_y, out[1]) &&
+           float_attr(v, h.s_z, out[2]);
+}
+
+// ObjectClass.GetRadius: `_radius * _scale` for a positive finite scale,
+// else `_radius`.
+bool read_radius(PyObject* o, double& out) {
+    auto& h = host();
+    double r, s;
+    if (!float_attr(o, h.s_radius, r) || !float_attr(o, h.s_scale, s)) return false;
+    out = (s > 0.0 && std::isfinite(s)) ? r * s : r;
+    return true;
+}
+
+long long read_generation() {
+    py::object g = own(PyObject_GetAttr(host().object_types, host().s_GENERATION));
+    long long v = PyLong_AsLongLong(g.ptr());
+    if (v == -1 && PyErr_Occurred()) throw py::error_already_set();
+    return v;
+}
+
+// The SDK's `for eType in self.lDontAvoidTypes: if pObject.IsTypeOf(eType):
+// return 0`, as "skip". `types` is the instance's value, held by the caller.
+bool filtered_live(PyObject* obj, PyObject* types) {
+    py::object iter = own(PyObject_GetIter(types));
+    while (PyObject* e = PyIter_Next(iter.ptr())) {
+        py::object keep = py::reinterpret_steal<py::object>(e);
+        py::object r = own(PyObject_CallMethodOneArg(obj, host().s_IsTypeOf, e));
+        if (truth(r.ptr())) return true;
+    }
+    if (PyErr_Occurred()) throw py::error_already_set();
+    return false;
+}
+
+// The cache key for `types`: a list or tuple of plain ints. False: uncachable.
+bool tags_of(PyObject* types, std::vector<long long>& tags) {
+    tags.clear();
+    if (!PyList_CheckExact(types) && !PyTuple_CheckExact(types)) return false;
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(types);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* e = PySequence_Fast_GET_ITEM(types, i);
+        if (!PyLong_CheckExact(e)) return false;
+        int overflow = 0;
+        long long v = PyLong_AsLongLongAndOverflow(e, &overflow);
+        if (overflow != 0 || (v == -1 && PyErr_Occurred())) {
+            PyErr_Clear();
+            return false;
+        }
+        tags.push_back(v);
+    }
+    return true;
+}
+
+bool filtered(PyObject* obj, PyObject* types, const std::vector<long long>& tags,
+              bool cachable) {
+    if (!cachable) return filtered_live(obj, types);
+    auto& h = host();
+    long long gen = read_generation();
+    if (!h.have_generation || gen != h.generation) {
+        // Swapped out, then released: a type's release can run weakref
+        // callbacks, which must find the cache whole (empty).
+        decltype(h.verdicts) old;
+        old.swap(h.verdicts);
+        h.verdict_count = 0;
+        h.generation = gen;
+        h.have_generation = true;
+    }
+    PyTypeObject* t = Py_TYPE(obj);
+    auto found = h.verdicts.find(t);
+    if (found != h.verdicts.end())
+        for (const auto& v : found->second)
+            if (v.tags == tags) return v.skip;
+    bool skip = filtered_live(obj, types);
+    // IsTypeOf may populate the registry (a new generation): then the
+    // verdict is not cached, as IsTypeOf's own cache does not.
+    if (read_generation() == gen) {
+        if (h.verdict_count >= 1024) {
+            decltype(h.verdicts) old;  // swapped out, then released
+            old.swap(h.verdicts);
+            h.verdict_count = 0;
+        }
+        h.verdicts[t].push_back(
+            {py::reinterpret_borrow<py::object>(reinterpret_cast<PyObject*>(t)), tags, skip});
+        ++h.verdict_count;
+    }
+    return skip;
+}
+
+void note_surface() {
+    auto& h = host();
+    py::object fn = own(PyObject_GetAttr(h.ai_native, h.s_note_object_fallback));
+    own(PyObject_Call(fn.ptr(), h.note_args, nullptr));
+}
+
+// What the scan reads from Python, read again after every callback.
+struct Reads {
+    bool ship_native = false;
+    double ship_pos[3] = {0, 0, 0}, ship_vel[3] = {0, 0, 0};
+    py::object ship_id;
+    bool params_native = false;
+    double prediction_time = 0.0;
+    py::object types;                 // self.lDontAvoidTypes
+    std::vector<long long> tags;
+    bool cachable = false;
+    // engine.appc.objects.PhysicsObjectClass, as PhysicsObjectClass_Cast
+    // reads it: the module global at the time of the call.
+    py::object physics_cls;
+};
+
+void read_all(Reads& r, PyObject* inst, PyObject* ship, double psr, bool psr_ok) {
+    auto& h = host();
+    r.physics_cls = own(PyObject_GetAttr(h.objects, h.s_PhysicsObjectClass));
+    r.ship_native = false;
+    r.ship_id = py::object();
+    if (readers::reads_stock(ship, h.reads_ship) && read_position(ship, r.ship_pos) &&
+        read_velocity(ship, r.ship_vel)) {
+        PyObject* id = PyObject_GetAttr(ship, h.s_obj_id);
+        if (id == nullptr) {
+            PyErr_Clear();
+        } else {
+            r.ship_id = py::reinterpret_steal<py::object>(id);
+            r.ship_native = true;
+        }
+    }
+    r.params_native = false;
+    r.types = py::object();
+    PyObject* types = PyObject_GetAttr(inst, h.s_lDontAvoidTypes);
+    PyObject* pt = types ? PyObject_GetAttr(inst, h.s_fPredictionTime) : nullptr;
+    if (types == nullptr || pt == nullptr) {
+        Py_XDECREF(types);
+        PyErr_Clear();
+        return;
+    }
+    r.types = py::reinterpret_steal<py::object>(types);
+    py::object keep = py::reinterpret_steal<py::object>(pt);
+    bool pt_ok = exact_float(pt, r.prediction_time);
+    if (!pt_ok && PyLong_CheckExact(pt)) {
+        // An int compares exactly in Python; as a double only when exact.
+        int overflow = 0;
+        long long v = PyLong_AsLongLongAndOverflow(pt, &overflow);
+        if (overflow == 0 && !(v == -1 && PyErr_Occurred()) &&
+            v <= (1LL << 53) && v >= -(1LL << 53)) {
+            r.prediction_time = static_cast<double>(v);
+            pt_ok = true;
+        }
+        PyErr_Clear();
+    }
+    r.cachable = tags_of(types, r.tags);
+    r.params_native = pt_ok && psr_ok;
+}
+
+}  // namespace avoid
+}  // namespace
+
+// ── IsTypeOf, answered natively (engine/appc/objects.py, subsystems.py) ─────
+// Two stock bodies, each one call from its Python function; the answers are
+// the Python bodies' (int 0/1, the same exceptions).
+//  * is_type_of(obj, cls, cache): ObjectClass.IsTypeOf. `cache` is the
+//    Python module's own memo dict (objects._ISTYPEOF_CACHE), keyed
+//    (type(obj), cls) and emptied when object_types._GENERATION moves, as the
+//    Python body did. A cls that is not an exact int or a type takes the
+//    uncached resolve_class path.
+//  * subsystem_is_type_of(obj, cls): ShipSubsystem.IsTypeOf. The mapping
+//    subsystem_class_for_ct(cls) is memoised here only for an exact-int cls,
+//    only while the module's function is the one imported at first use, and
+//    only against the table object that was cached when it was memoised
+//    (subsystem_types._CT_TABLE_CACHE, a tuple built once: a replaced table
+//    empties the memo). The isinstance test runs every call.
+namespace {
+namespace istype {
+
+struct Host {
+    PyObject* object_types;     // engine.appc.object_types
+    PyObject* s_GENERATION;
+    PyObject* s_resolve_class;
+    PyObject* subsystem_types;  // engine.appc.subsystem_types
+    PyObject* s_class_for_ct;   // "subsystem_class_for_ct"
+    PyObject* s_table;          // "_CT_TABLE_CACHE"
+    PyObject* class_for_ct_orig;  // the function at first use
+    PyObject* ct_memo;          // int tag -> class / tuple / None
+    PyObject* table_seen;       // the table the memo belongs to (held)
+    PyObject* zero;
+    PyObject* one;
+    long long gen_seen;
+};
+
+Host& host() {
+    static Host* h = [] {
+        auto* p = new Host();
+        auto need = [](PyObject* o) {
+            if (o == nullptr) throw py::error_already_set();
+            return o;
+        };
+        p->object_types = need(PyImport_ImportModule("engine.appc.object_types"));
+        p->s_GENERATION = need(PyUnicode_InternFromString("_GENERATION"));
+        p->s_resolve_class = need(PyUnicode_InternFromString("resolve_class"));
+        p->subsystem_types = need(PyImport_ImportModule("engine.appc.subsystem_types"));
+        p->s_class_for_ct = need(PyUnicode_InternFromString("subsystem_class_for_ct"));
+        p->s_table = need(PyUnicode_InternFromString("_CT_TABLE_CACHE"));
+        p->class_for_ct_orig = need(PyObject_GetAttr(p->subsystem_types, p->s_class_for_ct));
+        p->ct_memo = need(PyDict_New());
+        p->zero = need(PyLong_FromLong(0));
+        p->one = need(PyLong_FromLong(1));
+        p->table_seen = nullptr;
+        p->gen_seen = -1;
+        return p;
+    }();
+    return *h;
+}
+
+PyObject* verdict(int r) {
+    PyObject* v = r ? host().one : host().zero;
+    Py_INCREF(v);
+    return v;
+}
+
+// `1 if isinstance(c, type) and isinstance(obj, c) else 0`, c from resolve_class.
+PyObject* resolved_verdict(PyObject* obj, PyObject* cls) {
+    auto& h = host();
+    PyObject* c = PyObject_CallMethodOneArg(h.object_types, h.s_resolve_class, cls);
+    if (c == nullptr) return nullptr;
+    int r = 0;
+    if (PyType_Check(c)) {
+        r = PyObject_IsInstance(obj, c);
+        if (r < 0) {
+            Py_DECREF(c);
+            return nullptr;
+        }
+    }
+    Py_DECREF(c);
+    return verdict(r);
+}
+
+PyObject* object_is_type_of(PyObject* obj, PyObject* cls, PyObject* cache) {
+    auto& h = host();
+    if (!PyLong_CheckExact(cls) && !PyType_Check(cls)) return resolved_verdict(obj, cls);
+    PyObject* g = PyObject_GetAttr(h.object_types, h.s_GENERATION);
+    if (g == nullptr) return nullptr;
+    const long long gen = PyLong_AsLongLong(g);
+    Py_DECREF(g);
+    if (gen == -1 && PyErr_Occurred()) return nullptr;
+    if (gen != h.gen_seen) {
+        PyDict_Clear(cache);
+        h.gen_seen = gen;
+    }
+    PyObject* key = PyTuple_Pack(2, reinterpret_cast<PyObject*>(Py_TYPE(obj)), cls);
+    if (key == nullptr) return nullptr;
+    PyObject* hit = PyDict_GetItemWithError(cache, key);
+    if (hit != nullptr) {
+        Py_INCREF(hit);
+        Py_DECREF(key);
+        return hit;
+    }
+    if (PyErr_Occurred()) {
+        Py_DECREF(key);
+        return nullptr;
+    }
+    PyObject* ans = resolved_verdict(obj, cls);
+    if (ans == nullptr) {
+        Py_DECREF(key);
+        return nullptr;
+    }
+    // resolve_class may populate the registry (a new generation): then the
+    // answer is not cached.
+    PyObject* g2 = PyObject_GetAttr(h.object_types, h.s_GENERATION);
+    if (g2 == nullptr) {
+        Py_DECREF(key);
+        Py_DECREF(ans);
+        return nullptr;
+    }
+    const long long gen2 = PyLong_AsLongLong(g2);
+    Py_DECREF(g2);
+    if (gen2 == -1 && PyErr_Occurred()) {
+        Py_DECREF(key);
+        Py_DECREF(ans);
+        return nullptr;
+    }
+    if (gen2 == gen && PyDict_SetItem(cache, key, ans) < 0) {
+        Py_DECREF(key);
+        Py_DECREF(ans);
+        return nullptr;
+    }
+    Py_DECREF(key);
+    return ans;
+}
+
+PyObject* subsystem_is_type_of(PyObject* obj, PyObject* cls) {
+    auto& h = host();
+    const bool exact = PyLong_CheckExact(cls);
+    PyObject* fn = PyObject_GetAttr(h.subsystem_types, h.s_class_for_ct);
+    if (fn == nullptr) return nullptr;
+    const bool stock_fn = fn == h.class_for_ct_orig;
+    PyObject* table = nullptr;
+    PyObject* target = nullptr;
+    if (exact && stock_fn) {
+        table = PyObject_GetAttr(h.subsystem_types, h.s_table);
+        if (table == nullptr) {
+            Py_DECREF(fn);
+            return nullptr;
+        }
+        if (table != Py_None && table == h.table_seen) {
+            target = PyDict_GetItemWithError(h.ct_memo, cls);  // borrowed
+            if (target != nullptr) {
+                Py_INCREF(target);
+            } else if (PyErr_Occurred()) {
+                Py_DECREF(fn);
+                Py_DECREF(table);
+                return nullptr;
+            }
+        }
+    }
+    if (target == nullptr) {
+        target = PyObject_CallOneArg(fn, cls);
+        if (target == nullptr) {
+            Py_DECREF(fn);
+            Py_XDECREF(table);
+            return nullptr;
+        }
+        if (exact && stock_fn) {
+            // The call may have built the table: read it again.
+            Py_XDECREF(table);
+            table = PyObject_GetAttr(h.subsystem_types, h.s_table);
+            if (table == nullptr) {
+                Py_DECREF(fn);
+                Py_DECREF(target);
+                return nullptr;
+            }
+            if (table != Py_None) {
+                if (table != h.table_seen) {
+                    PyDict_Clear(h.ct_memo);
+                    Py_INCREF(table);
+                    Py_XSETREF(h.table_seen, table);
+                }
+                if (PyDict_SetItem(h.ct_memo, cls, target) < 0) {
+                    Py_DECREF(fn);
+                    Py_DECREF(table);
+                    Py_DECREF(target);
+                    return nullptr;
+                }
+            }
+        }
+    }
+    Py_DECREF(fn);
+    Py_XDECREF(table);
+    if (target == Py_None) {
+        Py_DECREF(target);
+        return verdict(0);
+    }
+    int r = PyObject_IsInstance(obj, target);
+    Py_DECREF(target);
+    if (r < 0) return nullptr;
+    return verdict(r);
+}
+
+PyObject* is_type_of_fn(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 3 || !PyDict_Check(args[2])) {
+        PyErr_SetString(PyExc_TypeError, "is_type_of(obj, cls, cache)");
+        return nullptr;
+    }
+    try {
+        return object_is_type_of(args[0], args[1], args[2]);
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+}
+
+PyObject* subsystem_is_type_of_fn(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 2) {
+        PyErr_SetString(PyExc_TypeError, "subsystem_is_type_of(obj, cls)");
+        return nullptr;
+    }
+    try {
+        return subsystem_is_type_of(args[0], args[1]);
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+}
+
+PyMethodDef is_type_of_def = {
+    "is_type_of",
+    reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&is_type_of_fn)),
+    METH_FASTCALL, "is_type_of(obj, cls, cache): ObjectClass.IsTypeOf."};
+PyMethodDef subsystem_is_type_of_def = {
+    "subsystem_is_type_of",
+    reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&subsystem_is_type_of_fn)),
+    METH_FASTCALL, "subsystem_is_type_of(obj, cls): ShipSubsystem.IsTypeOf."};
+
+}  // namespace istype
+}  // namespace
+
+// ── WeaponSystem.StartFiring, natively (engine/appc/weapon_subsystems.py) ───
+// start_firing(system, target, offset) is the old Python body (frozen in
+// tests/helpers/start_firing_oracle.py), in one call, native ONLY for StartFiring's own surface:
+//   * the `IsOn()` read (PoweredSubsystem.IsOn's `_is_on`, when stock),
+//   * `_add_target` (its containment check; `append` and
+//     native_combat.push_field called); the four field writes (`_held_target`,
+//     `_held_offset`, `_fire_held`, `_force_update`) are plain setattr, so the
+//     class's own descriptor runs,
+//   * `native_combat.k1_system(system, 0.0)`, looked up on the module.
+// Every gate is called back as the Python function it is, at its module-
+// global name, in the reference's order with its arguments: _is_offline,
+// _cloak_blocks_fire, _dewarp_blocks_fire, _target_undetectable, then
+// `self._can_engage(self.GetParentShip(), target)` when the object has one.
+// "Stock" is checked against the import-time table
+// weapon_subsystems._START_FIRING_SURFACE at every use: a method by
+// readers::reads_stock (never for a type with its own __getattribute__), a
+// field by its class's descriptor; anything else is called or set by
+// attribute. No borrowed pointer is held across a Python call. References
+// are raw (Ref), not py::object: a Debug build's py::object checks the GIL on
+// every inc/dec.
+namespace {
+namespace startfire {
+
+struct Host {
+    // The surface table's entries (held for good).
+    PyObject *IsOn, *add_target, *set_force_update;
+    // readers::reads_stock contracts, ((name, function),) each (held).
+    PyObject *c_IsOn, *c_add_target, *c_set_force_update;
+    // Interned names.
+    PyObject *s_IsOn, *s_is_on, *s_is_offline, *s_cloak_blocks, *s_dewarp_blocks;
+    PyObject *s_target_undetectable, *s_can_engage, *s_GetParentShip, *s_add_target;
+    PyObject *s_target_list, *s_append, *s_native_combat, *s_push_field, *s_held_target;
+    PyObject *s_held_offset, *s_fire_held, *s_SetForceUpdate, *s_force_update, *s_k1_system;
+    PyObject* s_getattribute;
+    PyObject *float_zero, *int_one;
+    PyObject* ws_d;                 // weapon_subsystems' globals (the reference body's)
+    PyObject* object_getattribute;  // object.__getattribute__ (borrowed: static)
+};
+
+PyObject* need(PyObject* o) {
+    if (o == nullptr) throw py::error_already_set();
+    return o;
+}
+
+Host& host() {
+    static Host* h = [] {
+        auto* p = new Host();
+        auto intern = [](const char* s) { return need(PyUnicode_InternFromString(s)); };
+        PyObject* ws = need(PyImport_ImportModule("engine.appc.weapon_subsystems"));  // held
+        PyObject* surface = need(PyObject_GetAttrString(ws, "_START_FIRING_SURFACE"));
+        if (!PyDict_Check(surface)) throw std::logic_error("_START_FIRING_SURFACE: not a dict");
+        auto entry = [surface](const char* k) {
+            PyObject* v = PyDict_GetItemString(surface, k);  // borrowed
+            if (v == nullptr)
+                throw std::logic_error(std::string("_START_FIRING_SURFACE: no ") + k);
+            Py_INCREF(v);
+            return v;
+        };
+        p->IsOn = entry("IsOn");
+        p->add_target = entry("_add_target");
+        p->set_force_update = entry("SetForceUpdate");
+        Py_DECREF(surface);
+        for (PyObject* f : {p->IsOn, p->add_target, p->set_force_update})
+            if (!PyFunction_Check(f)) throw std::logic_error("_START_FIRING_SURFACE: not a function");
+        p->ws_d = PyModule_GetDict(ws);  // borrowed; the module is held
+
+        p->s_IsOn = intern("IsOn");
+        p->s_is_on = intern("_is_on");
+        p->s_is_offline = intern("_is_offline");
+        p->s_cloak_blocks = intern("_cloak_blocks_fire");
+        p->s_dewarp_blocks = intern("_dewarp_blocks_fire");
+        p->s_target_undetectable = intern("_target_undetectable");
+        p->s_can_engage = intern("_can_engage");
+        p->s_GetParentShip = intern("GetParentShip");
+        p->s_add_target = intern("_add_target");
+        p->s_target_list = intern("_target_list");
+        p->s_append = intern("append");
+        p->s_native_combat = intern("native_combat");
+        p->s_push_field = intern("push_field");
+        p->s_held_target = intern("_held_target");
+        p->s_held_offset = intern("_held_offset");
+        p->s_fire_held = intern("_fire_held");
+        p->s_SetForceUpdate = intern("SetForceUpdate");
+        p->s_force_update = intern("_force_update");
+        p->s_k1_system = intern("k1_system");
+        p->s_getattribute = intern("__getattribute__");
+        p->object_getattribute = _PyType_Lookup(&PyBaseObject_Type, p->s_getattribute);
+        if (p->object_getattribute == nullptr) throw std::logic_error("object has no __getattribute__");
+        p->float_zero = need(PyFloat_FromDouble(0.0));
+        p->int_one = need(PyLong_FromLong(1));
+
+        auto contract = [](PyObject* name, PyObject* fn) {
+            PyObject* pair = need(PyTuple_Pack(2, name, fn));
+            PyObject* c = PyTuple_Pack(1, pair);
+            Py_DECREF(pair);
+            return need(c);
+        };
+        p->c_IsOn = contract(p->s_IsOn, p->IsOn);
+        p->c_add_target = contract(p->s_add_target, p->add_target);
+        p->c_set_force_update = contract(p->s_SetForceUpdate, p->set_force_update);
+        return p;
+    }();
+    return *h;
+}
+
+// An owned reference, released at scope end.
+struct Ref {
+    PyObject* p = nullptr;
+    K0_INLINE Ref() = default;
+    K0_INLINE explicit Ref(PyObject* o) : p(o) {}
+    K0_INLINE Ref(Ref&& o) noexcept : p(o.p) { o.p = nullptr; }
+    K0_INLINE Ref& operator=(Ref&& o) noexcept {
+        PyObject* old = p;
+        p = o.p;
+        o.p = nullptr;
+        Py_XDECREF(old);
+        return *this;
+    }
+    Ref(const Ref&) = delete;
+    Ref& operator=(const Ref&) = delete;
+    K0_INLINE ~Ref() { Py_XDECREF(p); }
+};
+
+K0_INLINE Ref own(PyObject* o) {
+    if (o == nullptr) throw py::error_already_set();
+    return Ref(o);
+}
+
+K0_INLINE Ref borrow(PyObject* o) {
+    Py_INCREF(o);
+    return Ref(o);
+}
+
+K0_INLINE bool truth(PyObject* o) {
+    const int t = PyObject_IsTrue(o);
+    if (t < 0) throw py::error_already_set();
+    return t == 1;
+}
+
+// The generic read, decided per type and re-decided when its version tag
+// moves (Task 5's TypeMemo, for any name): `generic_get` -- its
+// __getattribute__ is object's; `plain` -- that, and its `__dict__` is the
+// instance slot (readers::plain_dict), so `o.<name>` is the instance dict's
+// value whenever the type's own attribute is absent or has no __get__
+// (NativeField has none).
+struct ReadSlot {
+    PyTypeObject* type = nullptr;
+    unsigned int tag = 0;
+    bool generic_get = false;
+    bool plain = false;
+};
+constexpr std::size_t kReadSlots = 64;
+
+K0_INLINE const ReadSlot& reads_of(PyTypeObject* t) {
+    static auto* table = new ReadSlot[kReadSlots];
+    ReadSlot& e = table[(reinterpret_cast<std::uintptr_t>(t) >> 4) % kReadSlots];
+    const unsigned int tag = readers::tag_for(t);
+    if (e.type != t || e.tag != tag || tag == 0) {
+        e.type = t;
+        e.tag = tag;
+        e.generic_get =
+            tag != 0 && _PyType_Lookup(t, host().s_getattribute) == host().object_getattribute;
+        e.plain = e.generic_get && readers::plain_dict(t);
+    }
+    return e;
+}
+
+// o.<name>: the instance dict's value for a plain type whose own attribute
+// has no __get__, else the generic read.
+K0_INLINE Ref attr(PyObject* o, PyObject* name) {
+    PyTypeObject* t = o->ob_type;
+    if (reads_of(t).plain) {
+        PyObject* descr = _PyType_Lookup(t, name);  // borrowed
+        if (descr == nullptr || descr->ob_type->tp_descr_get == nullptr) {
+            if (PyObject* d = k0_dict_of(o)) {
+                PyObject* v = PyDict_GetItemWithError(d, name);  // borrowed
+                if (v != nullptr) return borrow(v);
+                if (PyErr_Occurred()) throw py::error_already_set();
+            }
+        }
+    }
+    return own(PyObject_GetAttr(o, name));
+}
+
+// getattr's lookup: 1 found (*r owned), 0 an AttributeError (cleared), -1
+// any other error.
+K0_INLINE int lookup_attr(PyObject* o, PyObject* name, PyObject** r) {
+#if PY_VERSION_HEX >= 0x030D0000
+    return PyObject_GetOptionalAttr(o, name, r);
+#else
+    return _PyObject_LookupAttr(o, name, r);
+#endif
+}
+
+// hasattr(o, name). A plain type's own plain function is found (its __get__
+// cannot fail).
+K0_INLINE bool has(PyObject* o, PyObject* name) {
+    PyTypeObject* t = o->ob_type;
+    if (reads_of(t).plain) {
+        PyObject* descr = _PyType_Lookup(t, name);
+        if (descr != nullptr && PyFunction_Check(descr)) return true;
+    }
+    PyObject* r = nullptr;
+    const int found = lookup_attr(o, name, &r);
+    if (found < 0) throw py::error_already_set();
+    Py_XDECREF(r);
+    return found == 1;
+}
+
+K0_INLINE Ref call(PyObject* fn, std::initializer_list<PyObject*> args) {
+    PyObject* a[4];
+    std::size_t n = 0;
+    for (PyObject* x : args) a[n++] = x;
+    return own(PyObject_Vectorcall(fn, a, n, nullptr));
+}
+
+// o.<name>(*args).
+K0_INLINE Ref method(PyObject* o, PyObject* name, std::initializer_list<PyObject*> args) {
+    PyObject* a[5];
+    std::size_t n = 0;
+    a[n++] = o;
+    for (PyObject* x : args) a[n++] = x;
+    return own(PyObject_VectorcallMethod(name, a, n, nullptr));
+}
+
+// The global `name` of a function's globals `g`, as its body reads it
+// (NameError when missing: no builtin shadows these names).
+K0_INLINE Ref global(PyObject* g, PyObject* name) {
+    PyObject* v = PyDict_GetItemWithError(g, name);  // borrowed
+    if (v == nullptr) {
+        if (!PyErr_Occurred()) PyErr_Format(PyExc_NameError, "name '%U' is not defined", name);
+        throw py::error_already_set();
+    }
+    return borrow(v);
+}
+
+K0_INLINE PyObject* globals_of(PyObject* fn) { return PyFunction_GET_GLOBALS(fn); }
+
+// readers::reads_stock, never for a type with its own __getattribute__: a
+// method found through it is its answer, which no contract can vouch for.
+K0_INLINE bool stock(PyObject* o, PyObject* contract) {
+    return reads_of(o->ob_type).generic_get && readers::reads_stock(o, contract);
+}
+
+// `obj.<name> = value`: the class's own descriptor runs (NativeField.__set__
+// for the stock fields), so nothing here can drift from it.
+void set_field(PyObject* obj, PyObject* name, PyObject* value) {
+    if (PyObject_SetAttr(obj, name, value) < 0) throw py::error_already_set();
+}
+
+// self._add_target(target)
+void add_target(PyObject* sys, PyObject* target) {
+    auto& h = host();
+    if (!stock(sys, h.c_add_target)) {
+        method(sys, h.s_add_target, {target});
+        return;
+    }
+    if (target == Py_None) return;
+    {
+        Ref tl = attr(sys, h.s_target_list);
+        const int in = PySequence_Contains(tl.p, target);
+        if (in < 0) throw py::error_already_set();
+        if (in == 1) return;
+    }
+    Ref tl = attr(sys, h.s_target_list);
+    method(tl.p, h.s_append, {target});
+    Ref nc = global(globals_of(h.add_target), h.s_native_combat);
+    method(nc.p, h.s_push_field, {sys, h.s_target_list});
+}
+
+// ── The body ────────────────────────────────────────────────────────────────
+
+// `if <gate>(*args): return` -- the reference body's global, called.
+K0_INLINE bool gate(PyObject* name, std::initializer_list<PyObject*> args) {
+    Ref fn = global(host().ws_d, name);
+    return truth(call(fn.p, args).p);
+}
+
+void start_firing(PyObject* sys, PyObject* target, PyObject* offset) {
+    auto& h = host();
+    // if not self.IsOn(): return
+    if (!(stock(sys, h.c_IsOn) ? truth(attr(sys, h.s_is_on).p)
+                               : truth(method(sys, h.s_IsOn, {}).p)))
+        return;
+    if (gate(h.s_is_offline, {sys})) return;
+    if (gate(h.s_cloak_blocks, {sys})) return;
+    if (gate(h.s_dewarp_blocks, {sys})) return;
+    if (gate(h.s_target_undetectable, {sys, target})) return;
+    // if (target is not None and hasattr(self, "_can_engage")
+    //         and not self._can_engage(self.GetParentShip(), target)): return
+    if (target != Py_None && has(sys, h.s_can_engage)) {
+        Ref engage = attr(sys, h.s_can_engage);
+        Ref ship = method(sys, h.s_GetParentShip, {});
+        if (!truth(call(engage.p, {ship.p, target}).p)) return;
+    }
+    add_target(sys, target);
+    set_field(sys, h.s_held_target, target);
+    set_field(sys, h.s_held_offset, offset);
+    set_field(sys, h.s_fire_held, Py_True);
+    if (stock(sys, h.c_set_force_update))
+        set_field(sys, h.s_force_update, Py_True);  // bool(1)
+    else
+        method(sys, h.s_SetForceUpdate, {h.int_one});
+    Ref nc = global(h.ws_d, h.s_native_combat);
+    method(nc.p, h.s_k1_system, {sys, h.float_zero});
+}
+
+PyObject* start_firing_fn(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 3) {
+        PyErr_SetString(PyExc_TypeError, "start_firing(system, target, offset)");
+        return nullptr;
+    }
+    try {
+        // The arguments are the caller's, held for the call.
+        start_firing(args[0], args[1], args[2]);
+        Py_RETURN_NONE;
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+}
+
+PyMethodDef start_firing_def = {
+    "start_firing",
+    reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&start_firing_fn)),
+    METH_FASTCALL,
+    "start_firing(system, target, offset): WeaponSystem.StartFiring's body "
+    "(frozen in tests/helpers/start_firing_oracle.py) in one call; its gates called back."};
+
+}  // namespace startfire
+}  // namespace
+
+// ── GetNearObjects' cached query (engine/appc/planet.py) ────────────────────
+// prox_near(cand, px, py, pz, r) is ProximityManager._near_objects_cached in
+// one call, the same objects in the same order as a _ProximityIteration:
+//   1. A radius per store-backed entry (`_size`): read here when the entry
+//      resolves GetRadius to ObjectClass's own body and its dict does not
+//      shadow it (readers::reads_stock on reader_contract("GetRadius")), as
+//      the guarded `_radius * _scale` on plain floats: straight from the
+//      instance dict for a type the per-call TypeMemo found plain
+//      (fast_radius), else avoid::read_radius; otherwise planet._size(obj)
+//      is called. Read on every query, never kept (a SetRadius / SetScale
+//      bumps no generation).
+//   2. The kernel's own compare (TransformStore::near_indices_sized, built
+//      with -ffp-contract=off) on the cache's `packed` handles, in place.
+//   3. `_reports` per hit: physics, else participation (radius > 0) by the
+//      same rule as step 1, else planet._radius_participates(obj); the
+//      dup_of twin rule for a manager entry.
+//   4. Unstored entries: `_reports`, then planet._unstored_reaches.
+//   5. The two ascending index lists merged (sorted(keep + more)).
+// Python runs in the order the Python path runs it. The cache's lists are
+// held for the call; every item is re-read by index (bounds-checked) after
+// any Python call, and an object is held while Python runs. A stale handle
+// raises transform_store.StaleHandleError(what) from RuntimeError(what), as
+// NativeTransformStore.near_indices_sized does; a point coordinate float()
+// rejects with TypeError does too (that wrapper's float(x)).
+namespace {
+namespace proxnear {
+
+struct Host {
+    PyObject *s_objs, *s_is_set, *s_physics, *s_dup_of, *s_packed, *s_packed_pos,
+        *s_unstored_pos;
+    PyObject *s_size, *s_participates, *s_unstored_reaches, *s_iteration;
+    PyObject *s_GetRadius, *s_radius, *s_scale, *s_getattribute;
+    PyObject* radius_field;  // ObjectClass.__dict__["_radius"] (held)
+    PyObject* scale_field;   // ObjectClass.__dict__["_scale"] (held)
+    PyObject* object_getattribute;  // object.__dict__["__getattribute__"]
+    PyObject* planet;        // engine.appc.planet
+    PyObject* stale_error;   // engine.appc.transform_store.StaleHandleError
+    PyObject* reads_radius;  // ai_native.reader_contract("GetRadius")
+};
+
+Host& host() {
+    static Host* h = [] {
+        auto* p = new Host();
+        p->s_objs = avoid::intern("objs");
+        p->s_is_set = avoid::intern("is_set");
+        p->s_physics = avoid::intern("physics");
+        p->s_dup_of = avoid::intern("dup_of");
+        p->s_packed = avoid::intern("packed");
+        p->s_packed_pos = avoid::intern("packed_pos");
+        p->s_unstored_pos = avoid::intern("unstored_pos");
+        p->s_size = avoid::intern("_size");
+        p->s_participates = avoid::intern("_radius_participates");
+        p->s_unstored_reaches = avoid::intern("_unstored_reaches");
+        p->s_iteration = avoid::intern("_ProximityIteration");
+        p->s_GetRadius = avoid::intern("GetRadius");
+        p->s_radius = avoid::intern("_radius");
+        p->s_scale = avoid::intern("_scale");
+        p->s_getattribute = avoid::intern("__getattribute__");
+        p->object_getattribute = _PyType_Lookup(&PyBaseObject_Type, p->s_getattribute);
+        if (p->object_getattribute == nullptr)
+            throw std::logic_error("prox_near: object has no __getattribute__");
+        Py_INCREF(p->object_getattribute);
+        PyObject* objects = PyImport_ImportModule("engine.appc.objects");
+        if (objects == nullptr) throw py::error_already_set();
+        PyObject* oc = PyObject_GetAttrString(objects, "ObjectClass");
+        Py_DECREF(objects);
+        if (oc == nullptr) throw py::error_already_set();
+        PyObject* od = reinterpret_cast<PyTypeObject*>(oc)->tp_dict;
+        p->radius_field = PyDict_GetItemWithError(od, p->s_radius);
+        p->scale_field = p->radius_field ? PyDict_GetItemWithError(od, p->s_scale) : nullptr;
+        if (p->radius_field == nullptr || p->scale_field == nullptr) {
+            Py_DECREF(oc);
+            if (PyErr_Occurred()) throw py::error_already_set();
+            throw std::logic_error("prox_near: ObjectClass has no _radius / _scale field");
+        }
+        Py_INCREF(p->radius_field);
+        Py_INCREF(p->scale_field);
+        Py_DECREF(oc);
+        p->planet = PyImport_ImportModule("engine.appc.planet");
+        if (p->planet == nullptr) throw py::error_already_set();
+        PyObject* ts = PyImport_ImportModule("engine.appc.transform_store");
+        if (ts == nullptr) throw py::error_already_set();
+        p->stale_error = PyObject_GetAttrString(ts, "StaleHandleError");
+        Py_DECREF(ts);
+        if (p->stale_error == nullptr) throw py::error_already_set();
+        PyObject* ai_native = PyImport_ImportModule("engine.appc.ai_native");
+        if (ai_native == nullptr) throw py::error_already_set();
+        PyObject* c = PyObject_CallMethod(ai_native, "reader_contract", "s", "GetRadius");
+        Py_DECREF(ai_native);
+        if (c == nullptr) throw py::error_already_set();
+        if (!PyTuple_CheckExact(c)) {
+            Py_DECREF(c);
+            throw std::logic_error("ai_native.reader_contract: not a tuple");
+        }
+        p->reads_radius = c;  // held for good
+        return p;
+    }();
+    return *h;
+}
+
+using avoid::own;
+
+// The cache's lists, held for the call.
+struct Cand {
+    py::object objs, is_set, physics, dup_of, packed_pos, unstored_pos;
+};
+
+PyObject* list_attr(PyObject* cand, PyObject* name) {
+    PyObject* v = PyObject_GetAttr(cand, name);
+    if (v == nullptr) throw py::error_already_set();
+    if (!PyList_Check(v)) {
+        Py_DECREF(v);
+        PyErr_Format(PyExc_TypeError, "prox_near: cand.%U is not a list", name);
+        throw py::error_already_set();
+    }
+    return v;
+}
+
+// `list[i]` as Python indexes it (i >= 0 here): borrowed, IndexError past the
+// end. Re-read after any Python call rather than held across it. Fields are
+// read directly: CPython's static-inline accessors are calls at -O0.
+K0_INLINE PyObject* at(const py::object& list, Py_ssize_t i) {
+    auto* l = reinterpret_cast<PyListObject*>(list.ptr());
+    if (i < 0 || i >= l->ob_base.ob_size) {
+        PyErr_SetString(PyExc_IndexError, "list index out of range");
+        throw py::error_already_set();
+    }
+    return l->ob_item[i];
+}
+
+K0_INLINE Py_ssize_t index_at(const py::object& list, Py_ssize_t i) {
+    PyObject* o = at(list, i);
+    const Py_ssize_t v = o->ob_type == &PyLong_Type ? PyLong_AsSsize_t(o)
+                                                    : PyNumber_AsSsize_t(o, PyExc_IndexError);
+    if (v == -1 && PyErr_Occurred()) throw py::error_already_set();
+    return v;
+}
+
+bool truth_at(const py::object& list, Py_ssize_t i) {
+    return avoid::truth(at(list, i));
+}
+
+// The class half of the fast read, remembered for the call per type and
+// re-decided when the type's version tag moves (any attribute of it or of a
+// base set or deleted). `fast`: the type is remembered stock for GetRadius
+// (readers::known_stock), its `__dict__` is the instance slot (plain_dict),
+// `__getattribute__` is object's, and `_radius` / `_scale` resolve to
+// ObjectClass's own fields. Then `obj._radius` is the instance dict's value
+// whenever the field's type has no __get__ (NativeField has none: checked per
+// read), and a missing value is left to the generic read.
+struct TypeMemo {
+    const Host* host = &proxnear::host();
+    PyTypeObject* type = nullptr;
+    unsigned int tag = 0;
+    bool fast = false;
+};
+
+void decide(PyTypeObject* t, unsigned int tag, TypeMemo& m) {
+    auto& h = host();
+    m.type = t;
+    m.tag = tag;
+    m.fast = tag != 0 && readers::known_stock(t, h.reads_radius) && readers::plain_dict(t) &&
+             _PyType_Lookup(t, h.s_getattribute) == h.object_getattribute &&
+             _PyType_Lookup(t, h.s_radius) == h.radius_field &&
+             _PyType_Lookup(t, h.s_scale) == h.scale_field;
+}
+
+// ObjectClass.GetRadius read straight from the instance dict: true with `out`
+// set, false (no error) when the generic path must decide. No Python runs.
+K0_INLINE bool fast_radius(PyObject* o, TypeMemo& m, double& out) {
+    PyTypeObject* t = o->ob_type;
+    const unsigned int tag = (t->tp_flags & Py_TPFLAGS_VALID_VERSION_TAG) ? t->tp_version_tag : 0u;
+    if (t != m.type || tag != m.tag) {
+        // decide() may run the memo's first-use self-test, which allocates and
+        // so may run arbitrary code: hold `o` (borrowed from the caller's
+        // list) across it.
+        Py_INCREF(o);
+        try {
+            decide(t, tag, m);
+        } catch (...) {
+            Py_DECREF(o);
+            throw;
+        }
+        Py_DECREF(o);
+    }
+    if (!m.fast) return false;
+    const Host& h = *m.host;
+    if (h.radius_field->ob_type->tp_descr_get != nullptr ||
+        h.scale_field->ob_type->tp_descr_get != nullptr)
+        return false;
+    PyObject* d = k0_dict_of(o);
+    if (d == nullptr) return false;
+    // readers::dict_shadows' rule, for this one-name contract.
+    PyObject* shadow = PyDict_GetItemWithError(d, h.s_GetRadius);
+    if (shadow != nullptr || PyErr_Occurred()) {
+        PyErr_Clear();
+        return false;
+    }
+    PyObject* rv = PyDict_GetItemWithError(d, h.s_radius);
+    if (rv == nullptr || rv->ob_type != &PyFloat_Type) {
+        PyErr_Clear();
+        return false;
+    }
+    PyObject* sv = PyDict_GetItemWithError(d, h.s_scale);
+    if (sv == nullptr || sv->ob_type != &PyFloat_Type) {
+        PyErr_Clear();
+        return false;
+    }
+    const double r = reinterpret_cast<PyFloatObject*>(rv)->ob_fval;
+    const double s = reinterpret_cast<PyFloatObject*>(sv)->ob_fval;
+    out = (s > 0.0 && std::isfinite(s)) ? r * s : r;
+    return true;
+}
+
+// A stock GetRadius read here: true with `out` set, false (no error) when the
+// object must be asked in Python. A stock test that raises is "ask Python"
+// (its error dropped): Python's own path never runs that test. The caller
+// holds `o`.
+bool native_radius(PyObject* o, double& out) {
+    try {
+        if (!readers::reads_stock(o, host().reads_radius)) return false;
+    } catch (py::error_already_set&) {
+        return false;
+    }
+    return avoid::read_radius(o, out);
+}
+
+PyObject* call_planet(PyObject* name, PyObject* o) {
+    py::object fn = own(PyObject_GetAttr(host().planet, name));
+    return PyObject_CallOneArg(fn.ptr(), o);
+}
+
+// planet._size(obj).
+double size_of(PyObject* o, TypeMemo& m) {
+    double v;
+    if (fast_radius(o, m, v)) return v;
+    py::object keep = py::reinterpret_borrow<py::object>(o);
+    if (native_radius(o, v)) {
+        m.type = nullptr;  // may now be remembered stock: decide again
+        return v;
+    }
+    py::object r = own(call_planet(host().s_size, o));
+    v = PyFloat_AsDouble(r.ptr());
+    if (v == -1.0 && PyErr_Occurred()) throw py::error_already_set();
+    return v;
+}
+
+// planet._radius_participates(obj).
+bool participates(PyObject* o, TypeMemo& m) {
+    double v;
+    if (fast_radius(o, m, v)) return v > 0.0;
+    py::object keep = py::reinterpret_borrow<py::object>(o);
+    if (native_radius(o, v)) {
+        m.type = nullptr;
+        return v > 0.0;
+    }
+    py::object r = own(call_planet(host().s_participates, o));
+    return avoid::truth(r.ptr());
+}
+
+// planet._reports(cand, i).
+bool reports(const Cand& c, Py_ssize_t i, TypeMemo& m) {
+    if (truth_at(c.is_set, i)) return truth_at(c.physics, i) || participates(at(c.objs, i), m);
+    const Py_ssize_t d = index_at(c.dup_of, i);
+    return d < 0 || !(truth_at(c.physics, d) || participates(at(c.objs, d), m));
+}
+
+// float(o), as NativeTransformStore.near_indices_sized takes it.
+double coordinate(PyObject* o) {
+    if (PyFloat_CheckExact(o)) return PyFloat_AS_DOUBLE(o);
+    PyObject* f = PyNumber_Float(o);
+    if (f == nullptr) throw py::error_already_set();
+    const double v = PyFloat_AS_DOUBLE(f);
+    Py_DECREF(f);
+    return v;
+}
+
+// StaleHandleError(msg) from <the pending exception>: the store wrapper's
+// `raise StaleHandleError(str(exc)) from exc`.
+void raise_stale_from_pending() {
+    PyObject *type, *value, *tb;
+    PyErr_Fetch(&type, &value, &tb);
+    PyErr_NormalizeException(&type, &value, &tb);
+    if (tb != nullptr) PyException_SetTraceback(value, tb);
+    Py_XDECREF(type);
+    Py_XDECREF(tb);
+    PyObject* msg = PyObject_Str(value);
+    if (msg == nullptr) {
+        Py_DECREF(value);
+        throw py::error_already_set();
+    }
+    PyObject* err = PyObject_CallOneArg(host().stale_error, msg);
+    Py_DECREF(msg);
+    if (err == nullptr) {
+        Py_DECREF(value);
+        throw py::error_already_set();
+    }
+    Py_INCREF(value);
+    PyException_SetContext(err, value);  // steals one reference
+    PyException_SetCause(err, value);    // steals the other
+    // PyErr_Restore, not PyErr_SetObject: SetObject re-chains the exception
+    // being handled by an enclosing `except` over the __context__ set above.
+    PyErr_Restore(Py_NewRef(host().stale_error), err, nullptr);
+    throw py::error_already_set();
+}
+
+// Step 2: the hit positions (ascending) of `packed` within reach.
+void compare(PyObject* packed, const std::vector<double>& radii, PyObject* const* xyz,
+             double r, std::vector<std::uint32_t>& hits) {
+    double p[3];
+    for (int k = 0; k < 3; ++k) {
+        try {
+            p[k] = coordinate(xyz[k]);
+        } catch (py::error_already_set& e) {
+            e.restore();
+            if (PyErr_ExceptionMatches(PyExc_TypeError)) raise_stale_from_pending();
+            throw py::error_already_set();
+        }
+    }
+    Py_buffer view;
+    if (PyObject_GetBuffer(packed, &view, PyBUF_FORMAT | PyBUF_ND) != 0)
+        throw py::error_already_set();
+    const bool flat = view.itemsize == sizeof(std::uint32_t) && view.ndim == 1 &&
+                      view.shape[0] % 2 == 0;
+    const std::size_t n = flat ? static_cast<std::size_t>(view.shape[0]) / 2 : 0;
+    if (!flat || n != radii.size()) {
+        PyBuffer_Release(&view);
+        PyErr_SetString(PyExc_ValueError,
+                        !flat ? "handles: flat uint32 (index, generation) pairs"
+                              : "radii: one per handle pair");
+        throw py::error_already_set();
+    }
+    std::string stale;
+    try {
+        dauntless::transform_store().near_indices_sized(
+            static_cast<const std::uint32_t*>(view.buf), n, radii.data(), p, r, hits);
+    } catch (const dauntless::StaleHandle& e) {
+        stale = e.what();
+    } catch (...) {
+        PyBuffer_Release(&view);
+        throw;
+    }
+    PyBuffer_Release(&view);
+    if (!stale.empty()) {
+        PyErr_SetString(PyExc_RuntimeError, stale.c_str());
+        raise_stale_from_pending();
+    }
+}
+
+PyObject* near(PyObject* cand_obj, PyObject* const* xyz, PyObject* r_obj) {
+    auto& h = host();
+    const double r = PyFloat_AsDouble(r_obj);
+    if (r == -1.0 && PyErr_Occurred()) throw py::error_already_set();
+    Cand c;
+    c.objs = own(list_attr(cand_obj, h.s_objs));
+    c.is_set = own(list_attr(cand_obj, h.s_is_set));
+    c.physics = own(list_attr(cand_obj, h.s_physics));
+    c.dup_of = own(list_attr(cand_obj, h.s_dup_of));
+    c.packed_pos = own(list_attr(cand_obj, h.s_packed_pos));
+    c.unstored_pos = own(list_attr(cand_obj, h.s_unstored_pos));
+
+    py::object packed = own(PyObject_GetAttr(cand_obj, h.s_packed));
+
+    TypeMemo memo;
+    std::vector<Py_ssize_t> keep;
+    if (avoid::truth(packed.ptr())) {  // `if cand.packed:`
+        std::vector<double> radii;
+        radii.reserve(static_cast<std::size_t>(PyList_GET_SIZE(c.packed_pos.ptr())));
+        for (Py_ssize_t k = 0; k < PyList_GET_SIZE(c.packed_pos.ptr()); ++k)
+            radii.push_back(size_of(at(c.objs, index_at(c.packed_pos, k)), memo));
+        std::vector<std::uint32_t> hits;
+        compare(packed.ptr(), radii, xyz, r, hits);
+        for (std::uint32_t k : hits) {
+            const Py_ssize_t i = index_at(c.packed_pos, static_cast<Py_ssize_t>(k));
+            if (reports(c, i, memo)) keep.push_back(i);
+        }
+    }
+    if (PyList_GET_SIZE(c.unstored_pos.ptr()) > 0) {
+        std::vector<Py_ssize_t> more;
+        py::object fn;
+        for (Py_ssize_t k = 0; k < PyList_GET_SIZE(c.unstored_pos.ptr()); ++k) {
+            const Py_ssize_t i = index_at(c.unstored_pos, k);
+            if (!reports(c, i, memo)) continue;
+            if (!fn) fn = own(PyObject_GetAttr(h.planet, h.s_unstored_reaches));
+            py::object o = py::reinterpret_borrow<py::object>(at(c.objs, i));
+            PyObject* args[5] = {o.ptr(), xyz[0], xyz[1], xyz[2], r_obj};
+            py::object res = own(PyObject_Vectorcall(fn.ptr(), args, 5, nullptr));
+            if (avoid::truth(res.ptr())) more.push_back(i);
+        }
+        if (!more.empty()) {
+            if (keep.empty()) {
+                keep.swap(more);
+            } else {
+                std::vector<Py_ssize_t> merged;
+                merged.reserve(keep.size() + more.size());
+                std::merge(keep.begin(), keep.end(), more.begin(), more.end(),
+                           std::back_inserter(merged));
+                keep.swap(merged);
+            }
+        }
+    }
+    // _ProximityIteration([objs[i] for i in keep]).
+    py::object items = own(PyList_New(static_cast<Py_ssize_t>(keep.size())));
+    for (std::size_t k = 0; k < keep.size(); ++k) {
+        PyObject* o = at(c.objs, keep[k]);
+        Py_INCREF(o);
+        PyList_SET_ITEM(items.ptr(), static_cast<Py_ssize_t>(k), o);
+    }
+    py::object cls = own(PyObject_GetAttr(h.planet, h.s_iteration));
+    return PyObject_CallOneArg(cls.ptr(), items.ptr());
+}
+
+PyObject* prox_near_fn(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 5) {
+        PyErr_SetString(PyExc_TypeError, "prox_near(cand, px, py, pz, r)");
+        return nullptr;
+    }
+    try {
+        return near(args[0], args + 1, args[4]);
+    } catch (py::error_already_set& e) {
+        e.restore();
+        return nullptr;
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_SystemError, e.what());
+        return nullptr;
+    }
+}
+
+PyMethodDef prox_near_def = {
+    "prox_near",
+    reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(&prox_near_fn)),
+    METH_FASTCALL,
+    "prox_near(cand, px, py, pz, r): ProximityManager._near_objects_cached, "
+    "radii and participation read natively for stock GetRadius."};
+
+}  // namespace proxnear
+}  // namespace
+
+// ── SelectTarget's candidate rating (engine/appc/ai_optimized.py) ───────────
+// combat_ai_target_rating stands in for SelectTarget.GetTargetRating
+// (AI/Preprocessors.py:1481-1608) for a stock instance (the caller decided
+// that: ai_native.preprocessor_is_stock and the module surface). It gathers
+// the nine factors and dauntless/combat/ai_rating.h sums them:
+//   * the two positions and our forward from the transform store, for a
+//     candidate whose type resolves GetWorldLocation, and a ship whose type
+//     resolves GetWorldLocation, GetWorldForwardTG and GetObjID, to exactly
+//     the engine bodies those reads mirror (ai_native.reader_contract);
+//   * fPopularity from the set index (SetIndex::popularity: the entries of
+//     our set whose ship targets the candidate's GetObjID(), our own entries
+//     skipped) for a set whose type resolves GetClassObjectList to SetClass's
+//     and whose every CT_SHIP member resolves GetObjID and GetTarget to the
+//     engine's (the stock loop calls both on each of them). The candidate's
+//     id is the one its GetObjID() returns now, as the SDK reads it, so a
+//     candidate no set holds is still counted;
+//   * everything else by calling the very Python the SDK calls, in its
+//     order, App's functions and constants read off the App the caller hands
+//     in (the gated SDK function's __globals__["App"], as its body reads
+//     them; the binding holds no App): GetName, ShipClass_Cast,
+//     GetShields().GetShieldPercentage(), the
+//     StartGetSubsystemMatch(CT_WEAPON_SYSTEM) walk and each system's
+//     GetCombinedConditionPercentage(), GetHull(), the damage ledger, the
+//     target group's ObjectGroupWithInfo_Cast and info -- so an override of
+//     any of them is honoured as the SDK honours it;
+//   * the nine weights, fMinimumFullGoodDistance, bSetShipTarget and
+//     sCurrentTarget from the instance, on every call.
+// A number is used only where Python's arithmetic on it is the double
+// arithmetic: a float, or an int (bool included) of at most 2**53, which
+// converts exactly, so each product and sum rounds as Python's does (an int
+// times an int is exact, and float(product) rounds as the double product).
+// A call the native path cannot answer exactly returns its reason as a str:
+// "surface" (a reader that is not the engine's), "no_mirror" (a value of
+// another shape, a stale handle, or a Python exception, cleared) or "audit"
+// (DAUNTLESS_SET_INDEX_AUDIT=1: GetClassObjectList's audit of the set index
+// runs only on the SDK path). The caller
+// then runs the SDK body for the whole call, which gives the SDK's answer and
+// raises the SDK's exception; every read here is pure, so reading it twice
+// changes nothing. No ship returns the SDK's int -1.
+//
+// The stock test of each object is readers::reads_stock (shared with avoid
+// and fire).
+//
+// Borrowing: the set index's bucket keys are owned (INCREF) before any
+// Python runs, and the popularity count is read with keys of objects held
+// here; every other object is a py::object.
+namespace {
+namespace rating {
+
+struct Host {
+    PyObject *s_pCodeAI, *s_GetShip, *s_GetTarget, *s_GetName, *s_GetObjID;
+    PyObject *s_GetContainingSet, *s_ShipClass_Cast, *s_GetShields;
+    PyObject *s_GetShieldPercentage, *s_StartGetSubsystemMatch;
+    PyObject *s_GetNextSubsystemMatch, *s_EndGetSubsystemMatch, *s_CT_WEAPON_SYSTEM;
+    PyObject *s_GetCombinedConditionPercentage, *s_GetHull, *s_dDamageReceived;
+    PyObject *s_contains, *s_ObjectGroupWithInfo_Cast, *s_pTargetGroup, *s_Priority;
+    PyObject *s_bSetShipTarget, *s_sCurrentTarget, *s_fMinimumFullGoodDistance;
+    PyObject *s_GetWorldLocation, *s_GetWorldForwardTG, *s_GetClassObjectList;
+    PyObject* s_weights[9];
+    PyObject *r_surface, *r_no_mirror, *r_audit;
+    // ai_native.reader_contract(...): ((name, engine function), ...)
+    PyObject* reads_ship;       // GetWorldLocation, GetWorldForwardTG, GetObjID
+    PyObject* reads_candidate;  // GetWorldLocation
+    PyObject* reads_set;        // GetClassObjectList
+    PyObject* reads_crew;       // GetObjID, GetTarget: each ship the loop visits
+};
+
+PyObject* contract(PyObject* ai_native, std::initializer_list<PyObject*> names) {
+    py::tuple args(names.size());
+    std::size_t i = 0;
+    for (PyObject* n : names) args[i++] = py::reinterpret_borrow<py::object>(n);
+    py::object fn = avoid::own(PyObject_GetAttrString(ai_native, "reader_contract"));
+    py::object c = avoid::own(PyObject_Call(fn.ptr(), args.ptr(), nullptr));
+    if (!PyTuple_CheckExact(c.ptr()))
+        throw std::logic_error("ai_native.reader_contract: not a tuple");
+    return c.release().ptr();  // held for good
+}
+
+Host& host() {
+    static Host* h = [] {
+        using avoid::intern;
+        auto& a = avoid::host();
+        auto* p = new Host();
+        p->s_pCodeAI = intern("pCodeAI");
+        p->s_GetShip = intern("GetShip");
+        p->s_GetTarget = intern("GetTarget");
+        p->s_GetName = intern("GetName");
+        p->s_GetObjID = a.s_GetObjID;
+        p->s_GetContainingSet = intern("GetContainingSet");
+        p->s_ShipClass_Cast = intern("ShipClass_Cast");
+        p->s_GetShields = intern("GetShields");
+        p->s_GetShieldPercentage = intern("GetShieldPercentage");
+        p->s_StartGetSubsystemMatch = intern("StartGetSubsystemMatch");
+        p->s_GetNextSubsystemMatch = intern("GetNextSubsystemMatch");
+        p->s_EndGetSubsystemMatch = intern("EndGetSubsystemMatch");
+        p->s_CT_WEAPON_SYSTEM = intern("CT_WEAPON_SYSTEM");
+        p->s_GetCombinedConditionPercentage = intern("GetCombinedConditionPercentage");
+        p->s_GetHull = intern("GetHull");
+        p->s_dDamageReceived = intern("dDamageReceived");
+        p->s_contains = intern("__contains__");
+        p->s_ObjectGroupWithInfo_Cast = intern("ObjectGroupWithInfo_Cast");
+        p->s_pTargetGroup = intern("pTargetGroup");
+        p->s_Priority = intern("Priority");
+        p->s_bSetShipTarget = intern("bSetShipTarget");
+        p->s_sCurrentTarget = intern("sCurrentTarget");
+        p->s_fMinimumFullGoodDistance = intern("fMinimumFullGoodDistance");
+        p->s_GetWorldLocation = a.s_GetWorldLocation;
+        p->s_GetWorldForwardTG = intern("GetWorldForwardTG");
+        p->s_GetClassObjectList = intern("GetClassObjectList");
+        // The SDK's list order (Preprocessors.py:1595-1606).
+        const char* weights[9] = {"fDistanceFactor", "fInFrontFactor", "fIsTargetFactor",
+                                  "fShieldFactor",   "fWeaponsFactor", "fHullFactor",
+                                  "fDamageFactor",   "fPriorityFactor", "fPopularityFactor"};
+        for (int i = 0; i < 9; ++i) p->s_weights[i] = intern(weights[i]);
+        p->r_surface = intern("surface");
+        p->r_no_mirror = intern("no_mirror");
+        p->r_audit = intern("audit");
+        p->reads_ship = contract(a.ai_native, {p->s_GetWorldLocation, p->s_GetWorldForwardTG,
+                                               p->s_GetObjID});
+        p->reads_candidate = contract(a.ai_native, {p->s_GetWorldLocation});
+        p->reads_set = contract(a.ai_native, {p->s_GetClassObjectList});
+        p->reads_crew = contract(a.ai_native, {p->s_GetObjID, p->s_GetTarget});
+        return p;
+    }();
+    return *h;
+}
+
+py::object attr(PyObject* o, PyObject* name) { return avoid::own(PyObject_GetAttr(o, name)); }
+
+py::object call0(PyObject* o, PyObject* name) {
+    return avoid::own(PyObject_CallMethodNoArgs(o, name));
+}
+
+py::object call1(PyObject* o, PyObject* name, PyObject* arg) {
+    return avoid::own(PyObject_CallMethodOneArg(o, name, arg));
+}
+
+// `App.<fn>(arg)`, the function read off the module at the call, as the
+// SDK's `App.ShipClass_Cast(pTarget)` reads it. `app` is the caller's: the
+// gated SDK function's __globals__["App"].
+py::object app_call(PyObject* app, PyObject* fn_name, PyObject* arg) {
+    py::object fn = attr(app, fn_name);
+    return avoid::own(PyObject_CallOneArg(fn.ptr(), arg));
+}
+
+// `if (a == b):` / `if (a != b):` -- the comparison, then its truth (not
+// PyObject_RichCompareBool, whose identity shortcut Python's `==` lacks).
+bool py_eq(PyObject* a, PyObject* b) {
+    py::object r = avoid::own(PyObject_RichCompare(a, b, Py_EQ));
+    return avoid::truth(r.ptr());
+}
+
+bool py_ne(PyObject* a, PyObject* b) {
+    py::object r = avoid::own(PyObject_RichCompare(a, b, Py_NE));
+    return avoid::truth(r.ptr());
+}
+
+// `d.__contains__(key)` (the loader's spelling of `d.has_key(key)`): a plain
+// dict's own test, else the object's method.
+bool contains(PyObject* d, PyObject* key) {
+    if (PyDict_CheckExact(d)) {
+        int r = PyDict_Contains(d, key);
+        if (r < 0) throw py::error_already_set();
+        return r == 1;
+    }
+    py::object r = call1(d, host().s_contains, key);
+    return avoid::truth(r.ptr());
+}
+
+py::object getitem(PyObject* d, PyObject* key) { return avoid::own(PyObject_GetItem(d, key)); }
+
+// A Python number as the double Python's float arithmetic uses (the
+// namespace comment); false for any other value.
+bool number(PyObject* o, double& out) {
+    if (PyFloat_CheckExact(o)) {
+        out = PyFloat_AS_DOUBLE(o);
+        return true;
+    }
+    if (!PyLong_CheckExact(o) && !PyBool_Check(o)) return false;
+    int overflow = 0;
+    long long v = PyLong_AsLongLongAndOverflow(o, &overflow);
+    if (v == -1 && PyErr_Occurred()) throw py::error_already_set();
+    constexpr long long kExact = 1LL << 53;
+    if (overflow != 0 || v > kExact || v < -kExact) return false;
+    out = static_cast<double>(v);
+    return true;
+}
+
+bool number_attr(PyObject* o, PyObject* name, double& out) {
+    py::object v = attr(o, name);
+    return number(v.ptr(), out);
+}
+
+// ObjectClass.GetWorldForwardTG: column 1 of the store rotation `_xform` names.
+bool read_forward(PyObject* o, double out[3]) {
+    std::uint32_t i, g;
+    if (!avoid::read_handle(o, i, g)) return false;
+    try {
+        auto c = dauntless::transform_store().rotation_col(i, g, 1);
+        out[0] = c[0];
+        out[1] = c[1];
+        out[2] = c[2];
+    } catch (const std::exception&) {
+        return false;  // stale: the Python path raises StaleHandleError
+    }
+    return true;
+}
+
+py::object reason(PyObject* r) { return py::reinterpret_borrow<py::object>(r); }
+
+// The stock test of every native reader (readers::, shared with avoid and
+// fire): the class half remembered by type version, the instance half per
+// object.
+using readers::class_stock;
+using readers::dict_shadows;
+using readers::known_stock;
+using readers::reads_stock;
+
+// The crew check over the set index's borrowed keys, where nothing can run
+// Python or allocate: each member's type remembered stock (known_stock,
+// quietly: the memos' first-use self-test allocates) with a plain `__dict__`
+// (readers::plain_dict), and its dict already built with only str keys, so a
+// lookup compares strings. Only while the memos are on (the str-keys test is
+// a 3.11 internal; aimemo). `result`: 1 every member clean; 0 a contract
+// name is in a member's dict; -1 the owned walk below must decide.
+struct CrewScan {
+    PyObject* contract;
+    PyObject* names[2];
+    PyTypeObject* seen = nullptr;
+    int result = 1;
+};
+
+bool crew_visit(void* ctx, si::Key k) {
+    auto* c = static_cast<CrewScan*>(ctx);
+    PyObject* o = si::member(k);
+    PyTypeObject* t = Py_TYPE(o);
+    if (t != c->seen) {
+        const readers::StockSlot* e = readers::known_slot(t, c->contract, /*quiet=*/true);
+        if (e == nullptr || !e->plain) {
+            c->result = -1;
+            return false;
+        }
+        c->seen = t;
+    }
+    PyObject* d = k0_dict_of(o);
+#if DAUNTLESS_AI_MEMOS_COMPILED
+    const bool str_keys = d != nullptr && aimemo::only_str_keys(d);
+#else
+    const bool str_keys = false;  // unreachable: known_stock is false
+#endif
+    if (!str_keys) {
+        c->result = -1;
+        return false;
+    }
+    for (PyObject* n : c->names) {
+        const int has = PyDict_Contains(d, n);
+        if (has != 0) {
+            if (has < 0) PyErr_Clear();  // the owned walk raises it again
+            c->result = has > 0 ? 0 : -1;
+            return false;
+        }
+    }
+    return true;
+}
+
+// The set index's keys as owned references, released on scope exit.
+struct Crew {
+    std::vector<PyObject*> objs;
+    explicit Crew(std::vector<si::Key> keys) {
+        objs.reserve(keys.size());
+        for (si::Key k : keys) {
+            PyObject* o = si::member(k);
+            Py_INCREF(o);
+            objs.push_back(o);
+        }
+    }
+    ~Crew() {
+        for (PyObject* o : objs) Py_DECREF(o);
+    }
+    Crew(const Crew&) = delete;
+    Crew& operator=(const Crew&) = delete;
+};
+
+// DAUNTLESS_SET_INDEX_AUDIT=1, as engine/appc/sets.py reads it (at use;
+// os.environ writes reach the C environment).
+bool set_index_audit() {
+    const char* v = std::getenv("DAUNTLESS_SET_INDEX_AUDIT");
+    return v != nullptr && std::strcmp(v, "1") == 0;
+}
+
+// GetTargetRating's reads, in the SDK's order. Throws error_already_set on
+// a Python exception (the binding turns an Exception into "no_mirror").
+// `app`: the gated SDK function's __globals__["App"], where its body reads
+// App from.
+py::object rate(PyObject* inst, PyObject* target, PyObject* app) {
+    auto& h = host();
+    // pOurShip = self.pCodeAI.GetShip(); if (pOurShip == None): return -1
+    py::object code_ai = attr(inst, h.s_pCodeAI);
+    py::object ship = call0(code_ai.ptr(), h.s_GetShip);
+    if (py_eq(ship.ptr(), Py_None)) return py::int_(-1);
+    // The set index audit checks the index against a scan in
+    // GetClassObjectList, which the native popularity never calls: with it
+    // on, the call is the SDK's.
+    if (set_index_audit()) return reason(h.r_audit);
+
+    if (!reads_stock(ship.ptr(), h.reads_ship) || !reads_stock(target, h.reads_candidate))
+        return reason(h.r_surface);
+
+    dauntless::combat::RatingInputs in{};
+    // vDifference = pTarget.GetWorldLocation() - pOurShip.GetWorldLocation();
+    // vOurForward = pOurShip.GetWorldForwardTG()
+    if (!avoid::read_position(target, in.target_pos) ||
+        !avoid::read_position(ship.ptr(), in.our_pos) || !read_forward(ship.ptr(), in.our_forward))
+        return reason(h.r_no_mirror);
+    if (!number_attr(inst, h.s_fMinimumFullGoodDistance, in.min_full_good_distance))
+        return reason(h.r_no_mirror);
+
+    // fIsTargetGood
+    {
+        py::object set_ship_target = attr(inst, h.s_bSetShipTarget);
+        if (avoid::truth(set_ship_target.ptr())) {
+            py::object ours = call0(ship.ptr(), h.s_GetTarget);
+            if (avoid::truth(ours.ptr())) {
+                py::object a = call0(ours.ptr(), h.s_GetName);
+                py::object b = call0(target, h.s_GetName);
+                if (py_eq(a.ptr(), b.ptr())) in.is_target = 1.0;
+            }
+        } else {
+            py::object a = call0(target, h.s_GetName);
+            py::object b = attr(inst, h.s_sCurrentTarget);
+            if (py_eq(a.ptr(), b.ptr())) in.is_target = 1.0;
+        }
+    }
+
+    // Shields, weapons and hull, for a ship.
+    py::object as_ship = app_call(app, h.s_ShipClass_Cast, target);
+    if (py_ne(as_ship.ptr(), Py_None)) {
+        PyObject* s = as_ship.ptr();
+        py::object shields = call0(s, h.s_GetShields);
+        py::object pct = call0(shields.ptr(), h.s_GetShieldPercentage);
+        if (!number(pct.ptr(), in.shield)) return reason(h.r_no_mirror);
+
+        py::object ct = attr(app, h.s_CT_WEAPON_SYSTEM);
+        py::object it = call1(s, h.s_StartGetSubsystemMatch, ct.ptr());
+        py::object system = call1(s, h.s_GetNextSubsystemMatch, it.ptr());
+        double total = 0.0;  // fWeaponsGood, from 0.0
+        long long count = 0;  // fTotal
+        while (py_ne(system.ptr(), Py_None)) {
+            count = count + 1;
+            py::object c = call0(system.ptr(), h.s_GetCombinedConditionPercentage);
+            double v;
+            if (!number(c.ptr(), v)) return reason(h.r_no_mirror);
+            total = total + v;
+            system = call1(s, h.s_GetNextSubsystemMatch, it.ptr());
+        }
+        call1(s, h.s_EndGetSubsystemMatch, it.ptr());
+        in.weapons_sum = total;
+        in.weapons_count = count;
+
+        py::object hull = call0(s, h.s_GetHull);
+        py::object hc = call0(hull.ptr(), h.s_GetCombinedConditionPercentage);
+        if (!number(hc.ptr(), in.hull)) return reason(h.r_no_mirror);
+    }
+
+    // fDamageDealt: self.dDamageReceived by pTarget.GetObjID()
+    py::object name = call0(target, h.s_GetName);  // sTarget
+    {
+        py::object ledger = attr(inst, h.s_dDamageReceived);
+        py::object id = call0(target, h.s_GetObjID);
+        if (contains(ledger.ptr(), id.ptr())) {
+            py::object again = call0(target, h.s_GetObjID);
+            py::object v = getitem(ledger.ptr(), again.ptr());
+            if (!number(v.ptr(), in.damage)) return reason(h.r_no_mirror);
+        }
+    }
+
+    // fPriority: ObjectGroupWithInfo_Cast(self.pTargetGroup)[sTarget]["Priority"]
+    {
+        py::object group = attr(inst, h.s_pTargetGroup);
+        py::object with_info = app_call(app, h.s_ObjectGroupWithInfo_Cast, group.ptr());
+        if (avoid::truth(with_info.ptr())) {
+            py::object info = getitem(with_info.ptr(), name.ptr());
+            if (contains(info.ptr(), h.s_Priority)) {
+                py::object v = getitem(info.ptr(), h.s_Priority);
+                if (!number(v.ptr(), in.priority)) return reason(h.r_no_mirror);
+            }
+        }
+    }
+
+    // fPopularity
+    py::object pset = call0(ship.ptr(), h.s_GetContainingSet);
+    if (avoid::truth(pset.ptr())) {
+        if (!reads_stock(pset.ptr(), h.reads_set)) return reason(h.r_surface);
+        py::object tid = call0(target, h.s_GetObjID);  // idTargetID
+        if (!PyLong_CheckExact(tid.ptr())) return reason(h.r_no_mirror);
+        int overflow = 0;
+        long long target_id = PyLong_AsLongLongAndOverflow(tid.ptr(), &overflow);
+        if (target_id == -1 && PyErr_Occurred()) throw py::error_already_set();
+        // -1 is also the index's "no target": a candidate with that id
+        // would be counted against the ships targeting nothing.
+        if (overflow != 0 || target_id == dauntless::combat::kNoTarget)
+            return reason(h.r_no_mirror);
+        auto& sh = si::host();
+        if (sh.ship_cls == nullptr) return reason(h.r_no_mirror);
+        si::Key s = si::key_of(pset);
+        si::Key cls = reinterpret_cast<si::Key>(sh.ship_cls);
+        // A set the index has never seen holds nothing: GetClassObjectList
+        // is [] and the SDK's loop adds nothing.
+        if (sh.ix.has_set(s)) {
+            if (!sh.ix.has_bucket(s, cls)) si::create_bucket(sh, s, sh.ship_cls);
+            CrewScan scan{h.reads_crew, {h.s_GetObjID, h.s_GetTarget}};
+            sh.ix.visit_bucket(s, cls, crew_visit, &scan);
+            if (scan.result == 0) return reason(h.r_surface);
+            if (scan.result < 0) {
+                // Owned before any Python runs (a class test below can, and
+                // building a dict allocates). Plain INCREFs: no Python runs.
+                Crew crew(sh.ix.bucket(s, cls));
+                // The last type found stock: between two objects of it
+                // nothing runs but this loop's own reads.
+                PyTypeObject* seen = nullptr;
+                for (PyObject* c : crew.objs) {
+                    PyTypeObject* t = Py_TYPE(c);
+                    if (t != seen) {
+                        if (!class_stock(c, h.reads_crew)) return reason(h.r_surface);
+                        seen = t;
+                    }
+                    if (dict_shadows(c, h.reads_crew)) return reason(h.r_surface);
+                }
+            }
+            in.popularity = static_cast<double>(
+                sh.ix.popularity(s, si::key_of(ship), target_id));
+        }
+    }
+
+    for (int i = 0; i < 9; ++i)
+        if (!number_attr(inst, h.s_weights[i], in.weights[i])) return reason(h.r_no_mirror);
+
+    return py::float_(dauntless::combat::target_rating(in));
+}
+
+}  // namespace rating
+}  // namespace
+
+// ── FireScript's Update (engine/appc/ai_optimized.py) ───────────────────────
+// combat_ai_fire_update is the SDK's FireScript.Update (AI/Preprocessors.py:
+// 281-342) and every FireScript method it reaches -- GetTarget, TargetInRange,
+// FireSystemAtTarget, ConfigureWeaponSystem, WeaponTooDangerous, CheckGoodShot,
+// GetWeaponInfo, PredictTargetLocation (:344-787) -- for a stock instance (the
+// caller decided that: ai_native.preprocessor_is_stock over every method the
+// Update reaches, and the module surface). It is those bodies statement for
+// statement, as the SDK loader compiled them (WeaponTooDangerous' __import__
+// is the loader's `_sdk_importlib.import_module` lambda):
+//   * every call the SDK makes is made here, in its order, through the same
+//     attribute lookup -- side effects (StartFiring, StopFiringAtTarget,
+//     FireDumb, SetPowerLevel, SetMode, SetAmmoType via ChooseTorpType,
+//     CallExternalFunction("UsingWeaponType")), the FireScript methods left
+//     Python (TargetVisible -- the sensor gate replaces it -- and
+//     StopFiring), the App casts and lookups, the RNG, the fuzzy logic, the
+//     torpedo scripts, and every read below that is not mirrored;
+//   * ChooseTargetSubsystem (with GetTargetableSubsystems,
+//     RateSubsystemForTargeting, PickTargetSubsystemFromList and
+//     ai_optimized's GetChildTargets) and ChooseTorpType (:533-640,
+//     789-1045) are reached natively, under the same rules (Task 5; see
+//     "ChooseTargetSubsystem and ChooseTorpType" below);
+//   * every attribute of the instance is read and written where the SDK
+//     reads and writes it (iLastUpdate, bTargetVisible, lWeapons, ...), so the
+//     driver, the inspector and a mission see exactly what they saw;
+//   * natively: the reads whose engine body is mirrored exactly, for an
+//     object whose type resolves that name to exactly that body and whose
+//     own dict does not shadow it (ai_native.reader_contract; rating::
+//     reads_stock) -- GetWorldLocation and GetWorldRotation (the transform
+//     store), GetVelocityTG (`_velocity`), GetAccelerationTG
+//     (`__dict__["_acceleration"]`), GetPredictedPosition (ShipClass's
+//     kinematic forecast), a subsystem's GetPositionTG (`_position`) and a
+//     tube's GetDirection (`_direction`) -- and the TGPoint3 / TGMatrix3
+//     arithmetic on them (dauntless/combat/ai_fire.h, where every float
+//     operation is, -ffp-contract=off). Anything else is the Python call,
+//     counted ai_native.note_object_fallback("fire", "surface") when it was
+//     a contract that failed.
+// Values: a vector or matrix is native (doubles) or the very Python object a
+// Python call returned. A Python object stays one -- the SDK mutates these in
+// place (vDiff.Subtract, MultMatrixLeft, Set), and an object a non-engine
+// reader returns may be its own state -- and every op on it is its own
+// method, looked up before the op's argument is evaluated, as Python does. A
+// native value meeting an operand of any other shape becomes a fresh engine
+// TGPoint3 / TGMatrix3 (what the mirrored engine body would have returned)
+// and the op is the Python method. A scalar is a double only while it is a
+// plain float; otherwise Python's own operator (PyNumber_*, RichCompare)
+// computes it, so an int, a NaN or a zero divisor behave and raise as they do
+// in the SDK.
+// Exceptions propagate unchanged (the SDK's own). Every object is owned
+// (py::object): a callback may remove the target from its set, empty
+// lWeapons or swap the AI, and nothing borrowed is held across one; the next
+// line reads what the SDK's next line reads.
+namespace {
+namespace fire {
+
+namespace cb = dauntless::combat;
+using avoid::intern;
+using avoid::own;
+using avoid::truth;
+
+struct Host {
+    PyObject *s_pCodeAI, *s_GetShip, *s_GetContainingSet, *s_ObjectClass_GetObject, *s_sTarget;
+    PyObject *s_PreprocessingAI, *s_PS_DONE, *s_PS_NORMAL;
+    PyObject *s_bCallUsingWeaponTypeFunc, *s_GetAllAIsInTree, *s_CallExternalFunction;
+    PyObject *s_UsingWeaponType, *s_lWeapons, *s_bEnabled, *s_bTargetVisible, *s_iLastUpdate;
+    PyObject *s_TargetVisible, *s_StopFiring, *s_TGProfilingInfo_StartTiming;
+    PyObject *s_TGProfilingInfo_StopTiming, *s_timing_label;
+    PyObject *s_idTargetedSubsystem, *s_ShipSubsystem_Cast, *s_TGObject_GetTGObjectPtr;
+    PyObject *s_bAttackIfNoSubsystemsLeft, *s_fMaxFiringRange;
+    PyObject *s_GetWorldLocation, *s_GetWorldRotation, *s_GetVelocityTG, *s_GetAccelerationTG;
+    PyObject *s_GetPredictedPosition, *s_GetPositionTG, *s_GetDirection;
+    PyObject *s_Subtract, *s_Add, *s_Set, *s_SetXYZ, *s_SqrLength, *s_Unitize, *s_Dot;
+    PyObject *s_MultMatrixLeft, *s_Transpose, *s_set_from_tuple;
+    PyObject *s_x, *s_y, *s_z, *s_m[9], *s_dict, *s_acceleration, *s_position, *s_direction;
+    PyObject *s_TGPoint3, *s_TorpedoSystem_Cast, *s_TractorBeamSystem_Cast, *s_PhaserSystem_Cast;
+    PyObject *s_PulseWeaponSystem_Cast, *s_TorpedoTube_Cast, *s_PulseWeapon_Cast;
+    PyObject *s_PhysicsObjectClass_Cast, *s_ShipClass_Cast;
+    PyObject *s_bDumbFireTorps, *s_GetNumChildSubsystems, *s_GetChildSubsystem;
+    PyObject *s_CalculateRoughDirection, *s_FireDumb, *s_StartFiring, *s_StopFiringAtTarget;
+    PyObject *s_eTractorBeamMode, *s_GetMode, *s_IsFiring, *s_SetMode, *s_TractorBeamSystem;
+    PyObject *s_TBS_DOCK_STAGE_1, *s_TBS_DOCK_STAGE_2, *s_bHighPower, *s_SetPowerLevel;
+    PyObject *s_PhaserSystem, *s_PP_LOW, *s_PP_HIGH, *s_bChooseTorpsWisely;
+    PyObject *s_GetImpulseEngineSubsystem, *s_GetCurMaxSpeed;
+    PyObject *s_bAttackDisabledSubsystems, *s_GetObjID, *s_GetClassObjectList, *s_CT_TORPEDO;
+    PyObject *s_GetTargetID, *s_GetDamage, *s_GetCurrentAmmoType, *s_GetTorpedoScript;
+    PyObject *s_sdk_importlib, *s_import_module, *s_GetCondition, *s_GetMaxCondition;
+    PyObject *s_GetDisabledPercentage, *s_ShouldBeAimed, *s_GetLaunchSpeed, *s_GetProperty;
+    PyObject *s_GetOrientationForward, *s_fFireDotThreshold, *s_App, *s_builtins, *s_range;
+    PyObject* one_on;      // slice(1, None, None): `[1:]`
+    // ChooseTargetSubsystem, GetTargetableSubsystems, RateSubsystemForTargeting,
+    // PickTargetSubsystemFromList, our GetChildTargets, ChooseTorpType (Task 5).
+    PyObject *s_lTargetSubsystems, *s_bDisableFirst, *s_bChooseSubsystemTargets;
+    PyObject *s_StartGetSubsystemMatch, *s_GetNextSubsystemMatch, *s_IsTargetable, *s_IsDisabled;
+    PyObject *s_GetSubsystems, *s_dTargetSubsystemRating, *s_keys, *s_items, *s_remove;
+    PyObject *s_iTargetSubsystemUpdateNum, *s_iNumTargetSubsystemsToUpdate, *s_g_kSystemWrapper;
+    PyObject *s_GetRandomNumber, *s_GetTargetSubsystem, *s_IsCritical, *s_IsHittableFromLocation;
+    PyObject *s_IsTypeOf, *s_SubsystemIsTypeOf, *s_ct_rows[6], *s_GetConditionPercentage, *s_float, *s_list;
+    PyObject *s_GetNumAmmoTypes, *s_GetNumAvailableTorpsToType, *s_GetAmmoType;
+    PyObject *s_GetAmmoTypeNumber, *s_SetAmmoType, *s_Length, *s_GetPowerCost;
+    PyObject *s_GetGuidanceLifetime, *s_GetMaxAngularAccel, *s_FuzzyLogic_BreakIntoSets;
+    PyObject *s_pScript, *s_count, *s_subsystem_choice, *s_torp_choice, *s_torp_rated, *s_kind;
+    PyObject *int_zero, *float_zero, *int_one, *float_four, *float_one_and_half, *float_quarter;
+    // ai_native.reader_contract(name): one mirrored body each.
+    PyObject *reads_loc, *reads_rot, *reads_vel, *reads_acc, *reads_predict, *reads_position,
+        *reads_direction, *reads_objid, *reads_getship, *reads_subtype;
+    PyObject *point_cls, *matrix_cls;  // engine.appc.math's, as the mirrored bodies build
+    PyObject* note_args;               // ("fire", "surface")
+};
+
+Host& host() {
+    static Host* h = [] {
+        auto& a = avoid::host();
+        auto* p = new Host();
+        p->s_pCodeAI = intern("pCodeAI");
+        p->s_GetShip = intern("GetShip");
+        p->s_GetContainingSet = intern("GetContainingSet");
+        p->s_ObjectClass_GetObject = intern("ObjectClass_GetObject");
+        p->s_sTarget = intern("sTarget");
+        p->s_PreprocessingAI = intern("PreprocessingAI");
+        p->s_PS_DONE = intern("PS_DONE");
+        p->s_PS_NORMAL = intern("PS_NORMAL");
+        p->s_bCallUsingWeaponTypeFunc = intern("bCallUsingWeaponTypeFunc");
+        p->s_GetAllAIsInTree = intern("GetAllAIsInTree");
+        p->s_CallExternalFunction = intern("CallExternalFunction");
+        p->s_UsingWeaponType = intern("UsingWeaponType");
+        p->s_lWeapons = intern("lWeapons");
+        p->s_bEnabled = intern("bEnabled");
+        p->s_bTargetVisible = intern("bTargetVisible");
+        p->s_iLastUpdate = intern("iLastUpdate");
+        p->s_TargetVisible = intern("TargetVisible");
+        p->s_StopFiring = intern("StopFiring");
+        p->s_TGProfilingInfo_StartTiming = intern("TGProfilingInfo_StartTiming");
+        p->s_TGProfilingInfo_StopTiming = intern("TGProfilingInfo_StopTiming");
+        p->s_timing_label = intern("FireScript Update->ChooseTargetSubsystem");
+        p->s_idTargetedSubsystem = intern("idTargetedSubsystem");
+        p->s_ShipSubsystem_Cast = intern("ShipSubsystem_Cast");
+        p->s_TGObject_GetTGObjectPtr = intern("TGObject_GetTGObjectPtr");
+        p->s_bAttackIfNoSubsystemsLeft = intern("bAttackIfNoSubsystemsLeft");
+        p->s_fMaxFiringRange = intern("fMaxFiringRange");
+        p->s_GetWorldLocation = a.s_GetWorldLocation;
+        p->s_GetWorldRotation = intern("GetWorldRotation");
+        p->s_GetVelocityTG = a.s_GetVelocityTG;
+        p->s_GetAccelerationTG = intern("GetAccelerationTG");
+        p->s_GetPredictedPosition = intern("GetPredictedPosition");
+        p->s_GetPositionTG = intern("GetPositionTG");
+        p->s_GetDirection = intern("GetDirection");
+        p->s_Subtract = intern("Subtract");
+        p->s_Add = intern("Add");
+        p->s_Set = intern("Set");
+        p->s_SetXYZ = intern("SetXYZ");
+        p->s_SqrLength = intern("SqrLength");
+        p->s_Unitize = intern("Unitize");
+        p->s_Dot = intern("Dot");
+        p->s_MultMatrixLeft = intern("MultMatrixLeft");
+        p->s_Transpose = intern("Transpose");
+        p->s_set_from_tuple = intern("set_from_tuple");
+        p->s_x = a.s_x;
+        p->s_y = a.s_y;
+        p->s_z = a.s_z;
+        const char* m[9] = {"m00", "m01", "m02", "m10", "m11", "m12", "m20", "m21", "m22"};
+        for (int i = 0; i < 9; ++i) p->s_m[i] = intern(m[i]);
+        p->s_dict = a.s_dict;
+        p->s_acceleration = intern("_acceleration");
+        p->s_position = intern("_position");
+        p->s_direction = intern("_direction");
+        p->s_TGPoint3 = intern("TGPoint3");
+        p->s_TorpedoSystem_Cast = intern("TorpedoSystem_Cast");
+        p->s_TractorBeamSystem_Cast = intern("TractorBeamSystem_Cast");
+        p->s_PhaserSystem_Cast = intern("PhaserSystem_Cast");
+        p->s_PulseWeaponSystem_Cast = intern("PulseWeaponSystem_Cast");
+        p->s_TorpedoTube_Cast = intern("TorpedoTube_Cast");
+        p->s_PulseWeapon_Cast = intern("PulseWeapon_Cast");
+        p->s_PhysicsObjectClass_Cast = intern("PhysicsObjectClass_Cast");
+        p->s_ShipClass_Cast = intern("ShipClass_Cast");
+        p->s_bDumbFireTorps = intern("bDumbFireTorps");
+        p->s_GetNumChildSubsystems = intern("GetNumChildSubsystems");
+        p->s_GetChildSubsystem = intern("GetChildSubsystem");
+        p->s_CalculateRoughDirection = intern("CalculateRoughDirection");
+        p->s_FireDumb = intern("FireDumb");
+        p->s_StartFiring = intern("StartFiring");
+        p->s_StopFiringAtTarget = intern("StopFiringAtTarget");
+        p->s_eTractorBeamMode = intern("eTractorBeamMode");
+        p->s_GetMode = intern("GetMode");
+        p->s_IsFiring = intern("IsFiring");
+        p->s_SetMode = intern("SetMode");
+        p->s_TractorBeamSystem = intern("TractorBeamSystem");
+        p->s_TBS_DOCK_STAGE_1 = intern("TBS_DOCK_STAGE_1");
+        p->s_TBS_DOCK_STAGE_2 = intern("TBS_DOCK_STAGE_2");
+        p->s_bHighPower = intern("bHighPower");
+        p->s_SetPowerLevel = intern("SetPowerLevel");
+        p->s_PhaserSystem = intern("PhaserSystem");
+        p->s_PP_LOW = intern("PP_LOW");
+        p->s_PP_HIGH = intern("PP_HIGH");
+        p->s_bChooseTorpsWisely = intern("bChooseTorpsWisely");
+        p->s_GetImpulseEngineSubsystem = intern("GetImpulseEngineSubsystem");
+        p->s_GetCurMaxSpeed = intern("GetCurMaxSpeed");
+        p->s_bAttackDisabledSubsystems = intern("bAttackDisabledSubsystems");
+        p->s_GetObjID = a.s_GetObjID;
+        p->s_GetClassObjectList = intern("GetClassObjectList");
+        p->s_CT_TORPEDO = intern("CT_TORPEDO");
+        p->s_GetTargetID = intern("GetTargetID");
+        p->s_GetDamage = intern("GetDamage");
+        p->s_GetCurrentAmmoType = intern("GetCurrentAmmoType");
+        p->s_GetTorpedoScript = intern("GetTorpedoScript");
+        p->s_sdk_importlib = intern("_sdk_importlib");
+        p->s_import_module = intern("import_module");
+        p->s_GetCondition = intern("GetCondition");
+        p->s_GetMaxCondition = intern("GetMaxCondition");
+        p->s_GetDisabledPercentage = intern("GetDisabledPercentage");
+        p->s_ShouldBeAimed = intern("ShouldBeAimed");
+        p->s_GetLaunchSpeed = intern("GetLaunchSpeed");
+        p->s_GetProperty = intern("GetProperty");
+        p->s_GetOrientationForward = intern("GetOrientationForward");
+        p->s_fFireDotThreshold = intern("fFireDotThreshold");
+        p->s_App = intern("App");
+        p->s_builtins = intern("__builtins__");
+        p->s_range = intern("range");
+            {
+            PyObject* one = PyLong_FromLong(1);
+            if (one == nullptr) throw py::error_already_set();
+            p->one_on = PySlice_New(one, Py_None, Py_None);
+            Py_DECREF(one);
+            if (p->one_on == nullptr) throw py::error_already_set();
+        }
+        p->s_lTargetSubsystems = intern("lTargetSubsystems");
+        p->s_bDisableFirst = intern("bDisableFirst");
+        p->s_bChooseSubsystemTargets = intern("bChooseSubsystemTargets");
+        p->s_StartGetSubsystemMatch = intern("StartGetSubsystemMatch");
+        p->s_GetNextSubsystemMatch = intern("GetNextSubsystemMatch");
+        p->s_IsTargetable = intern("IsTargetable");
+        p->s_IsDisabled = intern("IsDisabled");
+        p->s_GetSubsystems = intern("GetSubsystems");
+        p->s_dTargetSubsystemRating = intern("dTargetSubsystemRating");
+        p->s_keys = intern("keys");
+        p->s_items = intern("items");
+        p->s_remove = intern("remove");
+        p->s_iTargetSubsystemUpdateNum = intern("iTargetSubsystemUpdateNum");
+        p->s_iNumTargetSubsystemsToUpdate = intern("iNumTargetSubsystemsToUpdate");
+        p->s_g_kSystemWrapper = intern("g_kSystemWrapper");
+        p->s_GetRandomNumber = intern("GetRandomNumber");
+        p->s_GetTargetSubsystem = intern("GetTargetSubsystem");
+        p->s_IsCritical = intern("IsCritical");
+        p->s_IsHittableFromLocation = intern("IsHittableFromLocation");
+        p->s_IsTypeOf = a.s_IsTypeOf;
+        p->s_SubsystemIsTypeOf = intern("IsTypeOf@subsystem");
+        // RateSubsystemForTargeting's table, in its order (fire_system_rating).
+        const char* ct[6] = {"CT_WEAPON_SYSTEM",       "CT_WEAPON",
+                             "CT_SHIELD_SUBSYSTEM",    "CT_CLOAKING_SUBSYSTEM",
+                             "CT_IMPULSE_ENGINE_SUBSYSTEM", "CT_HULL_SUBSYSTEM"};
+        for (int i = 0; i < 6; ++i) p->s_ct_rows[i] = intern(ct[i]);
+        p->s_GetConditionPercentage = intern("GetConditionPercentage");
+        p->s_float = intern("float");
+        p->s_list = intern("list");
+        p->s_GetNumAmmoTypes = intern("GetNumAmmoTypes");
+        p->s_GetNumAvailableTorpsToType = intern("GetNumAvailableTorpsToType");
+        p->s_GetAmmoType = intern("GetAmmoType");
+        p->s_GetAmmoTypeNumber = intern("GetAmmoTypeNumber");
+        p->s_SetAmmoType = intern("SetAmmoType");
+        p->s_Length = intern("Length");
+        p->s_GetPowerCost = intern("GetPowerCost");
+        p->s_GetGuidanceLifetime = intern("GetGuidanceLifetime");
+        p->s_GetMaxAngularAccel = intern("GetMaxAngularAccel");
+        p->s_FuzzyLogic_BreakIntoSets = intern("FuzzyLogic_BreakIntoSets");
+        p->s_pScript = intern("pScript");
+        p->s_count = intern("count");
+        p->s_subsystem_choice = intern("subsystem_choice");
+        p->s_torp_choice = intern("torp_choice");
+        p->s_torp_rated = intern("torp_rated");
+        p->s_kind = intern("fire");
+        auto keep = [](PyObject* o) {
+            if (o == nullptr) throw py::error_already_set();
+            return o;  // held for good
+        };
+        p->int_zero = keep(PyLong_FromLong(0));
+        p->int_one = keep(PyLong_FromLong(1));
+        p->float_zero = keep(PyFloat_FromDouble(0.0));
+        p->float_four = keep(PyFloat_FromDouble(4.0));
+        p->float_one_and_half = keep(PyFloat_FromDouble(1.5));
+        p->float_quarter = keep(PyFloat_FromDouble(0.25));
+        PyObject* ai_native = a.ai_native;
+        p->reads_objid = rating::contract(ai_native, {p->s_GetObjID});
+        p->reads_getship = rating::contract(ai_native, {p->s_GetShip});
+        p->reads_subtype = rating::contract(ai_native, {p->s_SubsystemIsTypeOf});
+        p->reads_loc = rating::contract(ai_native, {p->s_GetWorldLocation});
+        p->reads_rot = rating::contract(ai_native, {p->s_GetWorldRotation});
+        p->reads_vel = rating::contract(ai_native, {p->s_GetVelocityTG});
+        p->reads_acc = rating::contract(ai_native, {p->s_GetAccelerationTG});
+        p->reads_predict = rating::contract(ai_native, {p->s_GetPredictedPosition});
+        p->reads_position = rating::contract(ai_native, {p->s_GetPositionTG});
+        p->reads_direction = rating::contract(ai_native, {p->s_GetDirection});
+        PyObject* math = PyImport_ImportModule("engine.appc.math");
+        if (math == nullptr) throw py::error_already_set();
+        p->point_cls = PyObject_GetAttrString(math, "TGPoint3");
+        p->matrix_cls = PyObject_GetAttrString(math, "TGMatrix3");
+        Py_DECREF(math);
+        if (p->point_cls == nullptr || p->matrix_cls == nullptr) throw py::error_already_set();
+        PyObject* kind = intern("fire");
+        PyObject* why = intern("surface");
+        p->note_args = PyTuple_Pack(2, kind, why);  // takes its own references
+        Py_DECREF(kind);
+        Py_DECREF(why);
+        if (p->note_args == nullptr) throw py::error_already_set();
+        return p;
+    }();
+    return *h;
+}
+
+py::object attr(PyObject* o, PyObject* name) { return own(PyObject_GetAttr(o, name)); }
+py::object call0(PyObject* o, PyObject* name) { return own(PyObject_CallMethodNoArgs(o, name)); }
+py::object call1(PyObject* o, PyObject* name, PyObject* a) {
+    return own(PyObject_CallMethodOneArg(o, name, a));
+}
+py::object call_fn(PyObject* fn, std::initializer_list<PyObject*> args) {
+    PyObject* argv[4];
+    std::size_t n = 0;
+    for (PyObject* x : args) argv[n++] = x;
+    return own(PyObject_Vectorcall(fn, argv, n, nullptr));
+}
+bool is_none(PyObject* o) { return o == Py_None; }
+// `a == b` / `a != b` and their truth, as Python evaluates them.
+bool eq(PyObject* a, PyObject* b) { return rating::py_eq(a, b); }
+bool ne(PyObject* a, PyObject* b) { return rating::py_ne(a, b); }
+bool cmp(PyObject* a, PyObject* b, int op) {
+    py::object r = own(PyObject_RichCompare(a, b, op));
+    return truth(r.ptr());
+}
+py::object pyint(long v) { return own(PyLong_FromLong(v)); }
+py::object pyfloat(double v) { return own(PyFloat_FromDouble(v)); }
+
+// One call's context: the instance, the SDK module (its globals), its App.
+struct Ctx {
+    PyObject* self;
+    py::object globals;
+    py::object app;
+};
+
+// `App.<fn>(arg)`: the function read off the module at the call.
+py::object app_call(const Ctx& c, PyObject* fn_name, PyObject* arg) {
+    py::object fn = attr(c.app.ptr(), fn_name);
+    return own(PyObject_CallOneArg(fn.ptr(), arg));
+}
+
+// `App.PreprocessingAI.<code>`, read where the SDK returns it.
+py::object ps(const Ctx& c, PyObject* code) {
+    py::object klass = attr(c.app.ptr(), host().s_PreprocessingAI);
+    return attr(klass.ptr(), code);
+}
+
+// A global name of the SDK module as its code loads it: module, then builtins.
+py::object global(const Ctx& c, PyObject* name) {
+    PyObject* v = PyDict_GetItemWithError(c.globals.ptr(), name);
+    if (v != nullptr) return py::reinterpret_borrow<py::object>(v);
+    if (PyErr_Occurred()) throw py::error_already_set();
+    PyObject* b = PyDict_GetItemWithError(c.globals.ptr(), host().s_builtins);
+    if (b == nullptr) {
+        if (PyErr_Occurred()) throw py::error_already_set();
+        b = PyEval_GetBuiltins();
+    }
+    py::object found = PyDict_Check(b) ? py::reinterpret_borrow<py::object>(
+                                             PyDict_GetItemWithError(b, name))
+                                       : py::reinterpret_steal<py::object>(
+                                             PyObject_GetAttr(b, name));
+    if (!found) {
+        if (PyErr_Occurred() && !PyErr_ExceptionMatches(PyExc_AttributeError))
+            throw py::error_already_set();
+        PyErr_Clear();
+        PyErr_Format(PyExc_NameError, "name '%U' is not defined", name);
+        throw py::error_already_set();
+    }
+    return found;
+}
+
+void note_surface() {
+    auto& h = host();
+    py::object fn = attr(avoid::host().ai_native, avoid::host().s_note_object_fallback);
+    own(PyObject_Call(fn.ptr(), h.note_args, nullptr));
+}
+
+// ── Values ─────────────────────────────────────────────────────────────────
+
+struct Vec {
+    bool native = true;
+    cb::FireVec v{};
+    py::object obj;  // when !native: the Python object itself
+};
+
+struct Mat {
+    bool native = true;
+    cb::FireMat m{};
+    py::object obj;
+};
+
+struct Num {
+    bool native = true;
+    double d = 0.0;
+    py::object obj;
+};
+
+Vec vec_py(py::object o) { return Vec{false, {}, std::move(o)}; }
+Vec vec_native(const cb::FireVec& v) { return Vec{true, v, {}}; }
+
+Num num_of(py::object o) {
+    if (PyFloat_CheckExact(o.ptr())) return Num{true, PyFloat_AS_DOUBLE(o.ptr()), {}};
+    return Num{false, 0.0, std::move(o)};
+}
+
+py::object num_obj(const Num& n) { return n.native ? pyfloat(n.d) : n.obj; }
+
+bool exact_float_attr(PyObject* o, PyObject* name, double& out) {
+    return avoid::float_attr(o, name, out);
+}
+
+// An engine TGPoint3 (that very class) whose components are plain floats.
+bool exact_point(PyObject* o, cb::FireVec& out) {
+    auto& h = host();
+    if (reinterpret_cast<PyObject*>(Py_TYPE(o)) != h.point_cls) return false;
+    return exact_float_attr(o, h.s_x, out.x) && exact_float_attr(o, h.s_y, out.y) &&
+           exact_float_attr(o, h.s_z, out.z);
+}
+
+bool exact_matrix(PyObject* o, cb::FireMat& out) {
+    auto& h = host();
+    if (reinterpret_cast<PyObject*>(Py_TYPE(o)) != h.matrix_cls) return false;
+    for (int i = 0; i < 9; ++i)
+        if (!exact_float_attr(o, h.s_m[i], out.m[i])) return false;
+    return true;
+}
+
+// The object a mirrored engine body would have returned: a fresh TGPoint3 /
+// TGMatrix3 of the same floats.
+py::object materialise(const Vec& v) {
+    if (!v.native) return v.obj;
+    return own(PyObject_CallFunction(host().point_cls, "ddd", v.v.x, v.v.y, v.v.z));
+}
+
+py::object materialise(const Mat& m) {
+    if (!m.native) return m.obj;
+    auto& h = host();
+    py::object out = own(PyObject_CallNoArgs(h.matrix_cls));
+    py::tuple t(9);
+    for (int i = 0; i < 9; ++i) t[i] = pyfloat(m.m.m[i]);
+    call1(out.ptr(), h.s_set_from_tuple, t.ptr());
+    return out;
+}
+
+// A Python receiver's method, fetched before the op's argument is
+// evaluated (Python's order); none for a native receiver.
+py::object method_of(const Vec& v, PyObject* name) {
+    return v.native ? py::object() : attr(v.obj.ptr(), name);
+}
+
+void become_python(Vec& v) {
+    v.obj = materialise(v);
+    v.native = false;
+}
+
+enum class Op { Subtract, Add, Set };
+
+PyObject* op_name(Op op) {
+    auto& h = host();
+    return op == Op::Subtract ? h.s_Subtract : op == Op::Add ? h.s_Add : h.s_Set;
+}
+
+// `self.Subtract(other)` / `.Add` / `.Set`; `method` from method_of(self).
+void vec_op(Op op, Vec& self, const py::object& method, const Vec& other) {
+    if (self.native) {
+        cb::FireVec o;
+        if (other.native) {
+            o = other.v;
+        } else if (!exact_point(other.obj.ptr(), o)) {
+            become_python(self);
+            py::object m = attr(self.obj.ptr(), op_name(op));
+            own(PyObject_CallOneArg(m.ptr(), other.obj.ptr()));
+            return;
+        }
+        if (op == Op::Subtract)
+            cb::fire_subtract(self.v, o);
+        else if (op == Op::Add)
+            cb::fire_add(self.v, o);
+        else
+            self.v = o;
+        return;
+    }
+    py::object arg = materialise(other);
+    own(PyObject_CallOneArg(method.ptr(), arg.ptr()));
+}
+
+// `self.MultMatrixLeft(m)`; `method` from method_of(self).
+void vec_mult_matrix_left(Vec& self, const py::object& method, const Mat& m) {
+    if (self.native) {
+        cb::FireMat mm;
+        if (m.native) {
+            mm = m.m;
+        } else if (!exact_matrix(m.obj.ptr(), mm)) {
+            become_python(self);
+            call1(self.obj.ptr(), host().s_MultMatrixLeft, m.obj.ptr());
+            return;
+        }
+        cb::fire_mult_matrix_left(self.v, mm);
+        return;
+    }
+    py::object arg = materialise(m);
+    own(PyObject_CallOneArg(method.ptr(), arg.ptr()));
+}
+
+Num vec_unitize(Vec& self) {
+    if (self.native) return Num{true, cb::fire_unitize(self.v), {}};
+    return num_of(call0(self.obj.ptr(), host().s_Unitize));
+}
+
+Num vec_sqr_length(const Vec& self) {
+    if (self.native) return Num{true, cb::fire_sqr_length(self.v), {}};
+    return num_of(call0(self.obj.ptr(), host().s_SqrLength));
+}
+
+// `self.Dot(other)` (no evaluation between the lookup and the call).
+Num vec_dot(const Vec& self, const Vec& other) {
+    if (self.native) {
+        cb::FireVec o;
+        if (other.native) {
+            o = other.v;
+        } else if (!exact_point(other.obj.ptr(), o)) {
+            py::object stand_in = materialise(self);
+            return num_of(call1(stand_in.ptr(), host().s_Dot, other.obj.ptr()));
+        }
+        return Num{true, cb::fire_dot(self.v, o), {}};
+    }
+    py::object arg = materialise(other);
+    return num_of(call1(self.obj.ptr(), host().s_Dot, arg.ptr()));
+}
+
+Mat mat_transpose(const Mat& m) {
+    if (m.native) return Mat{true, cb::fire_transpose(m.m), {}};
+    return Mat{false, {}, call0(m.obj.ptr(), host().s_Transpose)};
+}
+
+// ── Reads ──────────────────────────────────────────────────────────────────
+
+// The mirrored read applies (`contract` holds for `o`); otherwise counted as
+// a surface fallback -- except None (a failed cast), which no contract is
+// about: its Python call raises the SDK's own AttributeError.
+bool mirrored(PyObject* o, PyObject* contract) {
+    if (o == Py_None) return false;
+    if (rating::reads_stock(o, contract)) return true;
+    note_surface();
+    return false;
+}
+
+// The same test with nothing counted, and the read: for the all-native
+// paths, which fall back to the counted reads when it fails.
+bool quiet_location(PyObject* o, cb::FireVec& out) {
+    double p[3];
+    if (o == Py_None || !rating::reads_stock(o, host().reads_loc) || !avoid::read_position(o, p))
+        return false;
+    out = cb::FireVec{p[0], p[1], p[2]};
+    return true;
+}
+
+bool read_rotation(PyObject* o, cb::FireMat& out) {
+    std::uint32_t i, g;
+    if (!avoid::read_handle(o, i, g)) return false;
+    try {
+        auto r = dauntless::transform_store().rotation(i, g);
+        for (int k = 0; k < 9; ++k) out.m[k] = r[k];
+    } catch (const std::exception&) {
+        return false;  // stale: the Python call raises StaleHandleError
+    }
+    return true;
+}
+
+bool quiet_rotation(PyObject* o, cb::FireMat& out) {
+    return o != Py_None && rating::reads_stock(o, host().reads_rot) && read_rotation(o, out);
+}
+
+// o.GetWorldLocation(): the transform store slot `_xform` names.
+Vec world_location(PyObject* o) {
+    auto& h = host();
+    double p[3];
+    if (mirrored(o, h.reads_loc) && avoid::read_position(o, p))
+        return vec_native(cb::FireVec{p[0], p[1], p[2]});
+    return vec_py(call0(o, h.s_GetWorldLocation));
+}
+
+// o.GetWorldRotation(): the store rotation, row-major (set_from_tuple).
+Mat world_rotation(PyObject* o) {
+    auto& h = host();
+    Mat out;
+    if (mirrored(o, h.reads_rot) && read_rotation(o, out.m)) return out;
+    return Mat{false, {}, call0(o, h.s_GetWorldRotation)};
+}
+
+// TGPoint3(o.<attr>.x, .y, .z) of plain floats.
+bool read_attr_point(PyObject* o, PyObject* name, cb::FireVec& out) {
+    PyObject* v = PyObject_GetAttr(o, name);
+    if (v == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    py::object keep = py::reinterpret_steal<py::object>(v);
+    auto& h = host();
+    return exact_float_attr(v, h.s_x, out.x) && exact_float_attr(v, h.s_y, out.y) &&
+           exact_float_attr(v, h.s_z, out.z);
+}
+
+Vec velocity(PyObject* o) {
+    auto& h = host();
+    double v[3];
+    if (mirrored(o, h.reads_vel) && avoid::read_velocity(o, v))
+        return vec_native(cb::FireVec{v[0], v[1], v[2]});
+    return vec_py(call0(o, h.s_GetVelocityTG));
+}
+
+// PhysicsObjectClass.GetAccelerationTG: `self.__dict__.get("_acceleration")`,
+// zeros for None, else TGPoint3(a[0], a[1], a[2]).
+bool read_acceleration(PyObject* o, cb::FireVec& out) {
+    PyObject* d = PyObject_GetAttr(o, host().s_dict);
+    if (d == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    py::object keep = py::reinterpret_steal<py::object>(d);
+    if (!PyDict_CheckExact(d)) return false;
+    PyObject* a = PyDict_GetItemWithError(d, host().s_acceleration);
+    if (a == nullptr) {
+        if (PyErr_Occurred()) {
+            PyErr_Clear();
+            return false;
+        }
+        out = cb::FireVec{0.0, 0.0, 0.0};
+        return true;
+    }
+    if (a == Py_None) {
+        out = cb::FireVec{0.0, 0.0, 0.0};
+        return true;
+    }
+    if (!PyTuple_CheckExact(a) && !PyList_CheckExact(a)) return false;
+    if (PySequence_Fast_GET_SIZE(a) < 3) return false;
+    double c[3];
+    for (int i = 0; i < 3; ++i) {
+        PyObject* e = PySequence_Fast_GET_ITEM(a, i);
+        if (!PyFloat_CheckExact(e)) return false;
+        c[i] = PyFloat_AS_DOUBLE(e);
+    }
+    out = cb::FireVec{c[0], c[1], c[2]};
+    return true;
+}
+
+Vec acceleration(PyObject* o) {
+    auto& h = host();
+    cb::FireVec v;
+    if (mirrored(o, h.reads_acc) && read_acceleration(o, v)) return vec_native(v);
+    return vec_py(call0(o, h.s_GetAccelerationTG));
+}
+
+// ShipSubsystem.GetPositionTG / GetDirection: `_position` / `_direction`.
+Vec position_tg(PyObject* o) {
+    auto& h = host();
+    cb::FireVec v;
+    if (mirrored(o, h.reads_position) && read_attr_point(o, h.s_position, v))
+        return vec_native(v);
+    return vec_py(call0(o, h.s_GetPositionTG));
+}
+
+Vec direction(PyObject* o) {
+    auto& h = host();
+    cb::FireVec v;
+    if (mirrored(o, h.reads_direction) && read_attr_point(o, h.s_direction, v))
+        return vec_native(v);
+    return vec_py(call0(o, h.s_GetDirection));
+}
+
+// `for i in range(n):` -- an int natively, anything else through the
+// module's own range (its TypeError included).
+template <class F>
+void for_range(const Ctx& c, py::object n, F&& body) {
+    if (PyLong_CheckExact(n.ptr())) {
+        int overflow = 0;
+        long long count = PyLong_AsLongLongAndOverflow(n.ptr(), &overflow);
+        if (count == -1 && PyErr_Occurred()) throw py::error_already_set();
+        if (overflow == 0) {
+            for (long long i = 0; i < count; ++i) {
+                py::object idx = own(PyLong_FromLongLong(i));
+                body(idx);
+            }
+            return;
+        }
+    }
+    py::object range = global(c, host().s_range);
+    py::object it = own(PyObject_GetIter(call_fn(range.ptr(), {n.ptr()}).ptr()));
+    while (PyObject* e = PyIter_Next(it.ptr())) {
+        py::object idx = py::reinterpret_steal<py::object>(e);
+        body(idx);
+    }
+    if (PyErr_Occurred()) throw py::error_already_set();
+}
+
+// ── The methods ────────────────────────────────────────────────────────────
+
+py::object code_ai(const Ctx& c) { return attr(c.self, host().s_pCodeAI); }
+
+// FireScript.GetTarget
+py::object get_target(const Ctx& c) {
+    auto& h = host();
+    py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (eq(ship.ptr(), Py_None)) return py::none();
+    py::object pset = call0(ship.ptr(), h.s_GetContainingSet);
+    if (eq(pset.ptr(), Py_None)) return py::none();
+    py::object fn = attr(c.app.ptr(), h.s_ObjectClass_GetObject);
+    py::object name = attr(c.self, h.s_sTarget);
+    py::object target = call_fn(fn.ptr(), {pset.ptr(), name.ptr()});
+    if (eq(target.ptr(), Py_None)) return py::none();
+    return target;
+}
+
+// `fSqrLength <= (self.fMaxFiringRange * self.fMaxFiringRange)` for a native
+// fSqrLength: the library's compare for a plain float read twice as the one
+// object, else Python's own operators.
+bool sqr_within(double sqr, PyObject* r1, PyObject* r2) {
+    if (PyFloat_CheckExact(r1) && r1 == r2) return cb::fire_sqr_within(sqr, PyFloat_AS_DOUBLE(r1));
+    py::object prod = own(PyNumber_Multiply(r1, r2));
+    return cmp(pyfloat(sqr).ptr(), prod.ptr(), Py_LE);
+}
+
+// FireScript.TargetInRange's truth (the SDK returns 1 / 0).
+bool target_in_range(const Ctx& c, PyObject* target) {
+    auto& h = host();
+    py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (!truth(ship.ptr())) return false;
+    // Both locations mirrored: the composite (ai_fire.h), nothing else runs.
+    cb::FireVec t, s;
+    if (quiet_location(target, t) && quiet_location(ship.ptr(), s)) {
+        py::object r1 = attr(c.self, h.s_fMaxFiringRange);
+        py::object r2 = attr(c.self, h.s_fMaxFiringRange);
+        if (PyFloat_CheckExact(r1.ptr()) && r1.ptr() == r2.ptr())
+            return cb::fire_in_range(t, s, PyFloat_AS_DOUBLE(r1.ptr()));
+        cb::FireVec d = t;
+        cb::fire_subtract(d, s);
+        return sqr_within(cb::fire_sqr_length(d), r1.ptr(), r2.ptr());
+    }
+    Vec diff = world_location(target);
+    py::object sub_m = method_of(diff, h.s_Subtract);
+    Vec ours = world_location(ship.ptr());
+    vec_op(Op::Subtract, diff, sub_m, ours);
+    Num sqr = vec_sqr_length(diff);
+    // if fSqrLength <= (self.fMaxFiringRange * self.fMaxFiringRange)
+    py::object r1 = attr(c.self, h.s_fMaxFiringRange);
+    py::object r2 = attr(c.self, h.s_fMaxFiringRange);
+    if (sqr.native) return sqr_within(sqr.d, r1.ptr(), r2.ptr());
+    py::object prod = own(PyNumber_Multiply(r1.ptr(), r2.ptr()));
+    return cmp(sqr.obj.ptr(), prod.ptr(), Py_LE);
+}
+
+// `fDistance / fSpeed`
+Num divide(const Num& a, PyObject* b) {
+    if (a.native && PyFloat_CheckExact(b) && PyFloat_AS_DOUBLE(b) != 0.0)
+        return Num{true, cb::fire_div(a.d, PyFloat_AS_DOUBLE(b)), {}};
+    py::object lhs = num_obj(a);
+    return num_of(own(PyNumber_TrueDivide(lhs.ptr(), b)));
+}
+
+// PredictTargetLocation from `phys = App.PhysicsObjectClass_Cast(pTarget)`
+// on: vPredicted is `predicted`, fTime `time`; `has_subsystem` the truth of
+// `if pSubsystem:` when it has been evaluated already (-1: not yet).
+Vec predict_after_cast(PyObject* target, PyObject* subsystem, Vec predicted, const Num& time,
+                       PyObject* phys, int has_subsystem = -1) {
+    auto& h = host();
+    if (ne(phys, Py_None)) {
+        // vPredicted.Set(pPhysicsTarget.GetPredictedPosition(
+        //     pTarget.GetWorldLocation(), pPhysicsTarget.GetVelocityTG(),
+        //     pPhysicsTarget.GetAccelerationTG(), fTime))
+        py::object set_m = method_of(predicted, h.s_Set);
+        const bool pp_native = mirrored(phys, h.reads_predict);
+        py::object pp_m = pp_native ? py::object() : attr(phys, h.s_GetPredictedPosition);
+        Vec p = world_location(target);
+        Vec v = velocity(phys);
+        Vec a = acceleration(phys);
+        Vec result;
+        if (pp_native && p.native && v.native && a.native && time.native) {
+            result = vec_native(cb::fire_predicted_position(p.v, v.v, a.v, time.d));
+        } else {
+            if (!pp_m) pp_m = attr(phys, h.s_GetPredictedPosition);
+            py::object pa = materialise(p), va = materialise(v), aa = materialise(a);
+            py::object ta = num_obj(time);
+            PyObject* argv[4] = {pa.ptr(), va.ptr(), aa.ptr(), ta.ptr()};
+            result = vec_py(own(PyObject_Vectorcall(pp_m.ptr(), argv, 4, nullptr)));
+        }
+        vec_op(Op::Set, predicted, set_m, result);
+    }
+    if (has_subsystem < 0) has_subsystem = truth(subsystem) ? 1 : 0;
+    if (has_subsystem) {
+        // vSubsystemPos = pSubsystem.GetPositionTG()
+        // vSubsystemPos.MultMatrixLeft(pTarget.GetWorldRotation()); vPredicted.Add(vSubsystemPos)
+        Vec sp = position_tg(subsystem);
+        py::object mml = method_of(sp, h.s_MultMatrixLeft);
+        Mat rot = world_rotation(target);
+        vec_mult_matrix_left(sp, mml, rot);
+        py::object add_m = method_of(predicted, h.s_Add);
+        vec_op(Op::Add, predicted, add_m, sp);
+    }
+    return predicted;
+}
+
+// PredictTargetLocation from `pOurShip = self.pCodeAI.GetShip()` (not None)
+// on, vDiff being `diff` (the target's location).
+Vec predict_after_ship(const Ctx& c, PyObject* target, PyObject* subsystem, PyObject* speed,
+                       Vec diff, PyObject* ship) {
+    auto& h = host();
+    py::object sub_m = method_of(diff, h.s_Subtract);
+    Vec ours = world_location(ship);
+    vec_op(Op::Subtract, diff, sub_m, ours);
+    Num distance = vec_unitize(diff);
+    Num time = divide(distance, speed);
+    Vec predicted = world_location(target);
+    py::object phys = app_call(c, h.s_PhysicsObjectClass_Cast, target);
+    return predict_after_cast(target, subsystem, predicted, time, phys.ptr());
+}
+
+// What the all-native PredictTargetLocation reads besides the two
+// locations, read before any call (every read is pure): the target as a
+// physics object, and the subsystem's position with the target's rotation.
+// A part that fails is simply not ready; nothing is counted.
+struct PredictReads {
+    bool physics_ready = false;  // pp, velocity, acceleration of the target
+    bool subsystem_ready = false;
+};
+
+PredictReads predict_reads(PyObject* target, PyObject* subsystem, cb::PredictInputs& in) {
+    auto& h = host();
+    PredictReads r;
+    double v[3];
+    r.physics_ready = rating::reads_stock(target, h.reads_predict) &&
+                      rating::reads_stock(target, h.reads_vel) && avoid::read_velocity(target, v) &&
+                      rating::reads_stock(target, h.reads_acc) &&
+                      read_acceleration(target, in.acceleration);
+    if (r.physics_ready) in.velocity = cb::FireVec{v[0], v[1], v[2]};
+    r.subsystem_ready = subsystem != Py_None && rating::reads_stock(subsystem, h.reads_position) &&
+                        read_attr_point(subsystem, h.s_position, in.subsystem_pos) &&
+                        quiet_rotation(target, in.target_rot);
+    return r;
+}
+
+// FireScript.PredictTargetLocation. When fSpeed is a non-zero float and every
+// read is a mirrored engine body, the composite (ai_fire.h) computes it;
+// the SDK's two calls (GetShip, the physics cast) are made at their points.
+// Otherwise -- or from wherever a part turns out not to be native -- the
+// statement-by-statement path.
+Vec predict_target_location(const Ctx& c, PyObject* target, PyObject* subsystem, PyObject* speed) {
+    auto& h = host();
+    cb::PredictInputs in{};
+    // The reads below run ahead of `self.pCodeAI.GetShip()` and
+    // App.PhysicsObjectClass_Cast. Exact only while both are the engine's
+    // pure bodies: the cast is part of the module surface the gate checks
+    // (ai_optimized._fire_surface_globals), GetShip is checked here.
+    py::object cai;
+    if (PyFloat_CheckExact(speed) && PyFloat_AS_DOUBLE(speed) != 0.0 &&
+        quiet_location(target, in.target_pos) &&
+        rating::reads_stock((cai = code_ai(c)).ptr(), h.reads_getship)) {
+        in.speed = PyFloat_AS_DOUBLE(speed);
+        const PredictReads ready = predict_reads(target, subsystem, in);
+        py::object ship = call0(cai.ptr(), h.s_GetShip);
+        if (eq(ship.ptr(), Py_None)) return vec_native(in.target_pos);  // return vDiff
+        if (!quiet_location(ship.ptr(), in.our_pos))
+            return predict_after_ship(c, target, subsystem, speed, vec_native(in.target_pos),
+                                      ship.ptr());
+        py::object phys = app_call(c, h.s_PhysicsObjectClass_Cast, target);
+        in.physics = ne(phys.ptr(), Py_None);
+        const bool physics_ok = !in.physics || (phys.ptr() == target && ready.physics_ready);
+        int has_subsystem = -1;
+        if (physics_ok) {
+            has_subsystem = truth(subsystem) ? 1 : 0;
+            in.subsystem = has_subsystem == 1;
+            cb::FireVec out;
+            if (!in.subsystem || ready.subsystem_ready) {
+                const bool ok = cb::fire_predict_target_location(in, out);
+                (void)ok;  // fSpeed is non-zero
+                return vec_native(out);
+            }
+        }
+        // A part that is not native: vDiff, fDistance, fTime and vPredicted
+        // are the composite's own, then the statements from the cast on.
+        cb::FireVec diff = in.target_pos;
+        cb::fire_subtract(diff, in.our_pos);
+        const double distance = cb::fire_unitize(diff);
+        const Num time{true, cb::fire_div(distance, in.speed), {}};
+        return predict_after_cast(target, subsystem, vec_native(in.target_pos), time, phys.ptr(),
+                                  has_subsystem);
+    }
+    Vec diff = world_location(target);
+    py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (eq(ship.ptr(), Py_None)) return diff;
+    return predict_after_ship(c, target, subsystem, speed, diff, ship.ptr());
+}
+
+// FireScript.GetWeaponInfo: (lDirections, fSpeed)
+void weapon_info(const Ctx& c, PyObject* system, std::vector<Vec>& dirs, py::object& speed) {
+    auto& h = host();
+    speed = pyfloat(1.0);
+    py::object torp = app_call(c, h.s_TorpedoSystem_Cast, system);
+    if (ne(torp.ptr(), Py_None)) {
+        for_range(c, call0(torp.ptr(), h.s_GetNumChildSubsystems), [&](py::object& i) {
+            py::object cast = attr(c.app.ptr(), h.s_TorpedoTube_Cast);
+            py::object child = call1(torp.ptr(), h.s_GetChildSubsystem, i.ptr());
+            py::object tube = call_fn(cast.ptr(), {child.ptr()});
+            dirs.push_back(direction(tube.ptr()));
+        });
+        py::object ammo = call0(torp.ptr(), h.s_GetCurrentAmmoType);
+        speed = call0(ammo.ptr(), h.s_GetLaunchSpeed);
+        return;
+    }
+    py::object pulse = app_call(c, h.s_PulseWeaponSystem_Cast, system);
+    if (ne(pulse.ptr(), Py_None)) {
+        for_range(c, call0(pulse.ptr(), h.s_GetNumChildSubsystems), [&](py::object& i) {
+            py::object cast = attr(c.app.ptr(), h.s_PulseWeapon_Cast);
+            py::object child = call1(pulse.ptr(), h.s_GetChildSubsystem, i.ptr());
+            py::object weapon = call_fn(cast.ptr(), {child.ptr()});
+            if (ne(weapon.ptr(), Py_None)) {
+                py::object prop = call0(weapon.ptr(), h.s_GetProperty);
+                dirs.push_back(vec_py(call0(prop.ptr(), h.s_GetOrientationForward)));
+                py::object launch = call0(weapon.ptr(), h.s_GetLaunchSpeed);
+                if (cmp(launch.ptr(), speed.ptr(), Py_GT))
+                    speed = call0(weapon.ptr(), h.s_GetLaunchSpeed);
+            }
+        });
+    }
+}
+
+// FireScript.CheckGoodShot's truth (the SDK returns 1 / 0).
+bool check_good_shot(const Ctx& c, PyObject* system, PyObject* target, PyObject* subsystem) {
+    auto& h = host();
+    if (!truth(call0(system, h.s_ShouldBeAimed).ptr())) return true;
+    py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (eq(ship.ptr(), Py_None)) return true;
+    std::vector<Vec> dirs;
+    py::object speed;
+    weapon_info(c, system, dirs, speed);
+    if (dirs.empty()) return true;
+    Vec local = predict_target_location(c, target, subsystem, speed.ptr());
+    // All native from here (the predicted point, our location and rotation,
+    // every direction, a float threshold): the composite. No call is left in
+    // the SDK's tail, so the threshold read once is the one it reads each
+    // time round.
+    if (local.native) {
+        cb::FireVec ours;
+        cb::FireMat rot;
+        if (quiet_location(ship.ptr(), ours) && quiet_rotation(ship.ptr(), rot)) {
+            std::vector<cb::FireVec> flat(dirs.size());
+            bool all = true;
+            for (std::size_t i = 0; i < dirs.size() && all; ++i) {
+                if (dirs[i].native)
+                    flat[i] = dirs[i].v;
+                else
+                    all = exact_point(dirs[i].obj.ptr(), flat[i]);
+            }
+            py::object threshold = attr(c.self, h.s_fFireDotThreshold);
+            if (all && PyFloat_CheckExact(threshold.ptr()))
+                return cb::fire_good_shot_direction(local.v, ours, rot, flat.data(), flat.size(),
+                                                    PyFloat_AS_DOUBLE(threshold.ptr())) >= 0;
+        }
+    }
+    {
+        py::object sub_m = method_of(local, h.s_Subtract);
+        Vec ours = world_location(ship.ptr());
+        vec_op(Op::Subtract, local, sub_m, ours);
+    }
+    {
+        py::object mml = method_of(local, h.s_MultMatrixLeft);
+        Mat rot = mat_transpose(world_rotation(ship.ptr()));
+        vec_mult_matrix_left(local, mml, rot);
+    }
+    vec_unitize(local);  // fTargetDistance (unused)
+    for (const Vec& d : dirs) {
+        Num dot = vec_dot(local, d);
+        py::object threshold = attr(c.self, h.s_fFireDotThreshold);
+        if (dot.native && PyFloat_CheckExact(threshold.ptr())) {
+            if (cb::fire_at_least(dot.d, PyFloat_AS_DOUBLE(threshold.ptr()))) return true;
+        } else if (cmp(num_obj(dot).ptr(), threshold.ptr(), Py_GE)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// FireScript.WeaponTooDangerous's truth.
+bool weapon_too_dangerous(const Ctx& c, PyObject* system, PyObject* target, PyObject* subsystem) {
+    auto& h = host();
+    if (truth(attr(c.self, h.s_bAttackDisabledSubsystems).ptr())) return false;
+    py::object torp = app_call(c, h.s_TorpedoSystem_Cast, system);
+    if (!truth(torp.ptr())) return false;
+    py::object pset = call0(target, h.s_GetContainingSet);
+    py::object target_id = call0(target, h.s_GetObjID);
+    if (!truth(pset.ptr())) return false;
+    py::object incoming = pyfloat(0.0);
+    // pSet.GetClassObjectList(App.CT_TORPEDO): the method first
+    py::object list_m = attr(pset.ptr(), h.s_GetClassObjectList);
+    py::object ct = attr(c.app.ptr(), h.s_CT_TORPEDO);
+    py::object torps = own(PyObject_CallOneArg(list_m.ptr(), ct.ptr()));
+    py::object it = own(PyObject_GetIter(torps.ptr()));
+    while (PyObject* e = PyIter_Next(it.ptr())) {
+        py::object t = py::reinterpret_steal<py::object>(e);
+        py::object tid = call0(t.ptr(), h.s_GetTargetID);
+        if (eq(tid.ptr(), target_id.ptr())) {
+            py::object dmg = call0(t.ptr(), h.s_GetDamage);
+            incoming = own(PyNumber_Add(incoming.ptr(), dmg.ptr()));
+        }
+    }
+    if (PyErr_Occurred()) throw py::error_already_set();
+    py::object torp_damage = pyfloat(0.0);
+    py::object ammo = call0(torp.ptr(), h.s_GetCurrentAmmoType);
+    // pScript = (lambda n: _sdk_importlib.import_module(n)
+    //            if isinstance(n, str) else n)(pAmmoType.GetTorpedoScript())
+    py::object name = call0(ammo.ptr(), h.s_GetTorpedoScript);
+    py::object script;
+    const int is_str = PyObject_IsInstance(name.ptr(), reinterpret_cast<PyObject*>(&PyUnicode_Type));
+    if (is_str < 0) throw py::error_already_set();
+    if (is_str) {
+        py::object importlib = global(c, h.s_sdk_importlib);
+        script = call1(importlib.ptr(), h.s_import_module, name.ptr());
+    } else {
+        script = name;
+    }
+    if (truth(script.ptr())) torp_damage = call0(script.ptr(), h.s_GetDamage);
+    incoming = own(PyNumber_Add(incoming.ptr(), torp_damage.ptr()));
+    py::object cond = call0(subsystem, h.s_GetCondition);
+    py::object resulting = own(PyNumber_Subtract(cond.ptr(), incoming.ptr()));
+    py::object max_cond = call0(subsystem, h.s_GetMaxCondition);
+    py::object ratio = own(PyNumber_TrueDivide(resulting.ptr(), max_cond.ptr()));
+    py::object disabled = call0(subsystem, h.s_GetDisabledPercentage);
+    return cmp(ratio.ptr(), disabled.ptr(), Py_LT);
+}
+
+// ── ChooseTargetSubsystem and ChooseTorpType (Task 5) ───────────────────────
+// The SDK bodies (AI/Preprocessors.py:533-640, 789-1045, as the loader
+// compiled them: `list(d.keys())`, `d.__contains__(k)`) and ai_optimized's
+// GetChildTargets, statement for statement, under the same rules as the rest
+// of this namespace: every call the SDK makes is the same Python call in its
+// order (the RNG -- App.g_kSystemWrapper.GetRandomNumber -- the fuzzy logic,
+// the torpedo scripts, every subsystem predicate), every attribute of the
+// instance is read and written where the SDK does (dTargetSubsystemRating
+// is the instance's own object, changed in place). Natively: the control
+// flow, a subsystem's GetObjID where TGObject.GetObjID is the body
+// (`self._obj_id`), and the three sums (ai_fire.h) when their inputs are
+// plain floats; any other value goes through Python's own operators.
+
+void set_attr(PyObject* o, PyObject* name, PyObject* v) {
+    if (PyObject_SetAttr(o, name, v) < 0) throw py::error_already_set();
+}
+
+// A plain float, or an int / bool Python would convert exactly when it meets
+// a float operand (|v| <= 2**53): the double that arithmetic uses.
+bool small_number(PyObject* o, double& out) {
+    if (PyFloat_CheckExact(o)) {
+        out = PyFloat_AS_DOUBLE(o);
+        return true;
+    }
+    if (!PyLong_CheckExact(o) && !PyBool_Check(o)) return false;
+    int overflow = 0;
+    const long long v = PyLong_AsLongLongAndOverflow(o, &overflow);
+    if (v == -1 && PyErr_Occurred()) {
+        PyErr_Clear();
+        return false;
+    }
+    constexpr long long kExact = 1LL << 53;
+    if (overflow != 0 || v > kExact || v < -kExact) return false;
+    out = static_cast<double>(v);
+    return true;
+}
+
+// `a > b` for two values of the SDK's comparisons (fScore > fBestScore, ...).
+bool greater(const Num& a, const Num& b) {
+    if (a.native && b.native) return cb::fire_greater(a.d, b.d);
+    py::object x = num_obj(a), y = num_obj(b);
+    return cmp(x.ptr(), y.ptr(), Py_GT);
+}
+
+void append(PyObject* list, PyObject* item) {
+    if (PyList_Append(list, item) < 0) throw py::error_already_set();
+}
+
+// `list(x)`
+py::object as_list(PyObject* x) { return own(PySequence_List(x)); }
+
+// `a, b[, ...] = v` as UNPACK_SEQUENCE does it: an exact tuple or list of
+// that size directly, anything else by iteration, CPython's own messages.
+void unpack(PyObject* v, Py_ssize_t n, py::object* out) {
+    if ((PyTuple_CheckExact(v) && PyTuple_GET_SIZE(v) == n) ||
+        (PyList_CheckExact(v) && PyList_GET_SIZE(v) == n)) {
+        for (Py_ssize_t i = 0; i < n; ++i)
+            out[i] = py::reinterpret_borrow<py::object>(PySequence_Fast_GET_ITEM(v, i));
+        return;
+    }
+    PyObject* it = PyObject_GetIter(v);
+    if (it == nullptr) {
+        if (PyErr_ExceptionMatches(PyExc_TypeError) && Py_TYPE(v)->tp_iter == nullptr &&
+            !PySequence_Check(v)) {
+            PyErr_Clear();
+            PyErr_Format(PyExc_TypeError, "cannot unpack non-iterable %.200s object",
+                         Py_TYPE(v)->tp_name);
+        }
+        throw py::error_already_set();
+    }
+    py::object keep = py::reinterpret_steal<py::object>(it);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* w = PyIter_Next(it);
+        if (w == nullptr) {
+            if (!PyErr_Occurred())
+                PyErr_Format(PyExc_ValueError, "not enough values to unpack (expected %d, got %d)",
+                             static_cast<int>(n), static_cast<int>(i));
+            throw py::error_already_set();
+        }
+        out[i] = py::reinterpret_steal<py::object>(w);
+    }
+    PyObject* w = PyIter_Next(it);
+    if (w == nullptr) {
+        if (PyErr_Occurred()) throw py::error_already_set();
+        return;
+    }
+    Py_DECREF(w);
+    PyErr_Format(PyExc_ValueError, "too many values to unpack (expected %d)", static_cast<int>(n));
+    throw py::error_already_set();
+}
+
+// ai_native.count("fire", key): the native body of a choice ran.
+void count_choice(PyObject* key) {
+    auto& h = host();
+    py::object fn = attr(avoid::host().ai_native, h.s_count);
+    call_fn(fn.ptr(), {h.s_kind, key});
+}
+
+// o.GetObjID(): TGObject.GetObjID's `self._obj_id` for an object whose type
+// resolves that body (counted a surface fallback otherwise: the call).
+py::object obj_id(PyObject* o) {
+    auto& h = host();
+    if (mirrored(o, h.reads_objid)) return attr(o, avoid::host().s_obj_id);
+    return call0(o, h.s_GetObjID);
+}
+
+// The same read, uncounted, and only when it is a plain int.
+bool quiet_obj_id(PyObject* o, py::object& out) {
+    if (o == Py_None || !rating::reads_stock(o, host().reads_objid)) return false;
+    PyObject* v = PyObject_GetAttr(o, avoid::host().s_obj_id);
+    if (v == nullptr) {
+        PyErr_Clear();
+        return false;
+    }
+    out = py::reinterpret_steal<py::object>(v);
+    return PyLong_CheckExact(v);
+}
+
+// ai_optimized's GetChildTargets (the gate saw the type resolve that very
+// function, unshadowed):
+//   n = int(p.GetNumChildSubsystems()) if hasattr(p, "GetNumChildSubsystems") else 0
+//   for i in range(n): child = p.GetChildSubsystem(i); None: skip;
+//     child.IsTargetable() and child.GetCondition() > 0: out.append(child)
+//     else: out.extend(GetChildTargets(self, child))
+py::object child_targets(const Ctx& c, PyObject* sub) {
+    auto& h = host();
+    py::object out = own(PyList_New(0));
+    py::object n;
+    PyObject* probe = PyObject_GetAttr(sub, h.s_GetNumChildSubsystems);
+    if (probe == nullptr) {
+        if (!PyErr_ExceptionMatches(PyExc_AttributeError)) throw py::error_already_set();
+        PyErr_Clear();
+        n = py::reinterpret_borrow<py::object>(h.int_zero);
+    } else {
+        Py_DECREF(probe);
+        py::object raw = call0(sub, h.s_GetNumChildSubsystems);
+        n = own(PyNumber_Long(raw.ptr()));
+    }
+    for_range(c, n, [&](py::object& i) {
+        py::object child = call1(sub, h.s_GetChildSubsystem, i.ptr());
+        if (child.ptr() == Py_None) return;
+        bool take = truth(call0(child.ptr(), h.s_IsTargetable).ptr());
+        if (take) take = cmp(call0(child.ptr(), h.s_GetCondition).ptr(), h.int_zero, Py_GT);
+        if (take) {
+            append(out.ptr(), child.ptr());
+        } else {
+            // out.extend(...) of a fresh list nothing else holds: its items
+            py::object more = child_targets(c, child.ptr());
+            for (Py_ssize_t k = 0; k < PyList_GET_SIZE(more.ptr()); ++k)
+                append(out.ptr(), PyList_GET_ITEM(more.ptr(), k));
+        }
+    });
+    return out;
+}
+
+// FireScript.GetTargetableSubsystems, extending `out` (the SDK extends its
+// caller's list with the list it builds; the same items, in order).
+void targetable_subsystems(const Ctx& c, PyObject* sub, PyObject* out) {
+    auto& h = host();
+    if (!cmp(call0(sub, h.s_GetCondition).ptr(), h.float_zero, Py_GT)) return;
+    if (truth(call0(sub, h.s_IsTargetable).ptr())) {
+        append(out, sub);
+        return;
+    }
+    for_range(c, call0(sub, h.s_GetNumChildSubsystems), [&](py::object& i) {
+        py::object child = call1(sub, h.s_GetChildSubsystem, i.ptr());
+        targetable_subsystems(c, child.ptr(), out);
+    });
+}
+
+// sub.IsTypeOf(tag), truthy. Direct when sub's type resolves IsTypeOf to
+// ShipSubsystem's own body and its instance dict shadows nothing; the
+// attribute call (a patch or an override is seen) otherwise.
+bool subsystem_is_type_of(PyObject* sub, PyObject* tag) {
+    auto& h = host();
+    if (rating::reads_stock(sub, h.reads_subtype)) {
+        py::object r = own(istype::subsystem_is_type_of(sub, tag));
+        return truth(r.ptr());
+    }
+    return truth(call1(sub, h.s_IsTypeOf, tag).ptr());
+}
+
+// FireScript.RateSubsystemForTargeting
+py::object rate_subsystem(const Ctx& c, PyObject* ours, PyObject* sub) {
+    auto& h = host();
+    // fCritical = float(pSubsystem.IsCritical())
+    py::object critical = own(PyNumber_Float(call0(sub, h.s_IsCritical).ptr()));
+    py::object max_condition = call0(sub, h.s_GetMaxCondition);
+    py::object percentage = call0(sub, h.s_GetDisabledPercentage);
+    // fDisabledCondition = pct * fMaxCondition: deferred while both are
+    // floats (it runs nothing and cannot raise), else Python's, here.
+    bool floats = PyFloat_CheckExact(max_condition.ptr()) && PyFloat_CheckExact(percentage.ptr());
+    py::object disabled_condition;
+    if (!floats)
+        disabled_condition = own(PyNumber_Multiply(percentage.ptr(), max_condition.ptr()));
+    py::object condition = call0(sub, h.s_GetCondition);
+    py::object to_disable = py::reinterpret_borrow<py::object>(h.float_zero);
+    if (floats && !PyFloat_CheckExact(condition.ptr())) {
+        floats = false;
+        disabled_condition = own(PyNumber_Multiply(percentage.ptr(), max_condition.ptr()));
+    }
+    if (!floats && cmp(condition.ptr(), disabled_condition.ptr(), Py_GT))
+        to_disable = own(PyNumber_Subtract(condition.ptr(), disabled_condition.ptr()));
+    py::object is_disabled = own(PyNumber_Float(call0(sub, h.s_IsDisabled).ptr()));
+    // fHittable = pSubsystem.IsHittableFromLocation(pOurShip.GetWorldLocation())
+    py::object hit_m = attr(sub, h.s_IsHittableFromLocation);
+    py::object our_loc = call0(ours, h.s_GetWorldLocation);
+    py::object hittable = own(PyObject_CallOneArg(hit_m.ptr(), our_loc.ptr()));
+    // The type table is built (all six App reads), then the first IsTypeOf.
+    py::object types[cb::kFireSystemRatingRows];
+    for (int i = 0; i < cb::kFireSystemRatingRows; ++i) types[i] = attr(c.app.ptr(), h.s_ct_rows[i]);
+    int match = -1;
+    for (int i = 0; i < cb::kFireSystemRatingRows && match < 0; ++i)
+        if (subsystem_is_type_of(sub, types[i].ptr())) match = i;
+    // The factor table: -3.0 * self.bDisableFirst
+    py::object disable_first = attr(c.self, h.s_bDisableFirst);
+    cb::SubsystemRatingInputs in{};
+    if (floats && small_number(hittable.ptr(), in.hittable) &&
+        small_number(disable_first.ptr(), in.disable_first)) {
+        in.critical = PyFloat_AS_DOUBLE(critical.ptr());
+        in.max_condition = PyFloat_AS_DOUBLE(max_condition.ptr());
+        in.disabled_percentage = PyFloat_AS_DOUBLE(percentage.ptr());
+        in.condition = PyFloat_AS_DOUBLE(condition.ptr());
+        in.is_disabled = PyFloat_AS_DOUBLE(is_disabled.ptr());
+        in.system_rating = cb::fire_system_rating(match);
+        return pyfloat(cb::fire_subsystem_rating(in));
+    }
+    // Python's own arithmetic, in the SDK's order.
+    if (floats) {
+        disabled_condition = own(PyNumber_Multiply(percentage.ptr(), max_condition.ptr()));
+        if (cmp(condition.ptr(), disabled_condition.ptr(), Py_GT))
+            to_disable = own(PyNumber_Subtract(condition.ptr(), disabled_condition.ptr()));
+    }
+    py::object minus_three = pyfloat(-3.0);
+    py::object disabled_importance = own(PyNumber_Multiply(minus_three.ptr(), disable_first.ptr()));
+    py::object system_rating = pyfloat(cb::fire_system_rating(match));
+    py::object six = pyfloat(6.0), damage = pyfloat(-0.0005), one = pyfloat(1.0);
+    PyObject* table[6][2] = {{critical.ptr(), six.ptr()},
+                             {to_disable.ptr(), damage.ptr()},
+                             {is_disabled.ptr(), disabled_importance.ptr()},
+                             {condition.ptr(), damage.ptr()},
+                             {hittable.ptr(), one.ptr()},
+                             {system_rating.ptr(), one.ptr()}};
+    py::object total = py::reinterpret_borrow<py::object>(h.float_zero);
+    for (auto& row : table) {
+        py::object term = own(PyNumber_Multiply(row[0], row[1]));
+        total = own(PyNumber_Add(total.ptr(), term.ptr()));
+    }
+    return total;
+}
+
+// FireScript.PickTargetSubsystemFromList
+py::object pick_from_list(const Ctx& c, PyObject* subs) {
+    auto& h = host();
+    const Py_ssize_t n = PyObject_Length(subs);
+    if (n < 0) throw py::error_already_set();
+    if (n == 1) return own(PyObject_GetItem(subs, h.int_zero));
+    py::object chosen = py::none();
+    Num best{false, 0.0, py::none()};
+    py::object it = own(PyObject_GetIter(subs));
+    while (PyObject* e = PyIter_Next(it.ptr())) {
+        py::object sub = py::reinterpret_steal<py::object>(e);
+        // if self.idTargetedSubsystem == pSubsystem.GetObjID(): fIsTargetRating = 1.0
+        py::object current = attr(c.self, h.s_idTargetedSubsystem);
+        py::object id = obj_id(sub.ptr());
+        const double is_target = eq(current.ptr(), id.ptr()) ? 1.0 : 0.0;
+        py::object healthy = call0(sub.ptr(), h.s_GetConditionPercentage);
+        py::object disabled = call0(sub.ptr(), h.s_IsDisabled);
+        Num rating;
+        double hd, dd;
+        if (small_number(healthy.ptr(), hd) && small_number(disabled.ptr(), dd)) {
+            rating = Num{true, cb::fire_pick_rating(is_target, hd, dd), {}};
+        } else {
+            py::object one = pyfloat(1.0), minus_one = pyfloat(-1.0), ist = pyfloat(is_target);
+            PyObject* table[3][2] = {{ist.ptr(), one.ptr()},
+                                     {healthy.ptr(), minus_one.ptr()},
+                                     {disabled.ptr(), minus_one.ptr()}};
+            py::object total = py::reinterpret_borrow<py::object>(h.float_zero);
+            for (auto& row : table) {
+                py::object term = own(PyNumber_Multiply(row[0], row[1]));
+                total = own(PyNumber_Add(total.ptr(), term.ptr()));
+            }
+            rating = num_of(total);
+        }
+        // if (pTarget is None) or (fRating > fTargetRating)
+        if (chosen.ptr() == Py_None || greater(rating, best)) {
+            chosen = sub;
+            best = rating;
+        }
+    }
+    if (PyErr_Occurred()) throw py::error_already_set();
+    return chosen;
+}
+
+// The priority-list branch of ChooseTargetSubsystem: the subsystem it picks
+// (or None).
+py::object choose_from_priorities(const Ctx& c, PyObject* ship_target) {
+    auto& h = host();
+    py::object lts = attr(c.self, h.s_lTargetSubsystems);
+    py::object first = own(PyObject_GetItem(lts.ptr(), h.int_zero));
+    py::object current = own(PyObject_GetItem(first.ptr(), h.int_one));
+    py::object possible = own(PyList_New(0));
+    long long disabled_count = 0;
+    py::object list = attr(c.self, h.s_lTargetSubsystems);
+    py::object it = own(PyObject_GetIter(list.ptr()));
+    while (PyObject* e = PyIter_Next(it.ptr())) {
+        py::object row = py::reinterpret_steal<py::object>(e);
+        py::object pair[2];
+        unpack(row.ptr(), 2, pair);
+        // if len(lpPossibleTargets) and iPriority > iCurrentPriority:
+        if (PyList_GET_SIZE(possible.ptr()) && cmp(pair[1].ptr(), current.ptr(), Py_GT)) {
+            // if (not self.bDisableFirst) or (iNumDisabled < len(lpPossibleTargets)): break
+            if (!truth(attr(c.self, h.s_bDisableFirst).ptr()) ||
+                disabled_count < static_cast<long long>(PyList_GET_SIZE(possible.ptr())))
+                break;
+        }
+        current = pair[1];
+        py::object match = call1(ship_target, h.s_StartGetSubsystemMatch, pair[0].ptr());
+        py::object sub = call1(ship_target, h.s_GetNextSubsystemMatch, match.ptr());
+        while (truth(sub.ptr())) {
+            if (cmp(call0(sub.ptr(), h.s_GetCondition).ptr(), h.int_zero, Py_GT)) {
+                bool consider = truth(attr(c.self, h.s_bAttackDisabledSubsystems).ptr());
+                if (!consider) consider = !truth(call0(sub.ptr(), h.s_IsDisabled).ptr());
+                if (consider) {
+                    if (!truth(call0(sub.ptr(), h.s_IsTargetable).ptr())) {
+                        // lTargets = self.GetChildTargets(pSubsystem); one entry each
+                        py::object targets = child_targets(c, sub.ptr());
+                        for (Py_ssize_t k = 0; k < PyList_GET_SIZE(targets.ptr()); ++k) {
+                            if (truth(call0(sub.ptr(), h.s_IsDisabled).ptr())) ++disabled_count;
+                            append(possible.ptr(), sub.ptr());
+                        }
+                    } else {
+                        if (truth(call0(sub.ptr(), h.s_IsDisabled).ptr())) ++disabled_count;
+                        append(possible.ptr(), sub.ptr());
+                    }
+                }
+            }
+            sub = call1(ship_target, h.s_GetNextSubsystemMatch, match.ptr());
+        }
+    }
+    if (PyErr_Occurred()) throw py::error_already_set();
+    if (!PyList_GET_SIZE(possible.ptr())) return py::none();
+    py::object non_disabled = own(PyList_New(0));
+    for (Py_ssize_t k = 0; k < PyList_GET_SIZE(possible.ptr()); ++k) {
+        py::object sub = py::reinterpret_borrow<py::object>(PyList_GET_ITEM(possible.ptr(), k));
+        if (!truth(call0(sub.ptr(), h.s_IsDisabled).ptr())) append(non_disabled.ptr(), sub.ptr());
+    }
+    if (PyList_GET_SIZE(non_disabled.ptr())) possible = non_disabled;
+    return pick_from_list(c, possible.ptr());
+}
+
+// The ids of `subs` (our own list, which nothing else holds) for the pruning
+// and need-update loops, read once while no Python can run between two reads
+// of one: every subsystem resolves TGObject.GetObjID to a plain int, the
+// rating store is a plain dict of int keys and (int, float) tuples (so a
+// `del` frees nothing that runs code), and every compare is int against int.
+// `valid` drops the moment anything in those loops might run Python; from
+// then on each id is read where the SDK reads it. Plain ints are equal
+// exactly when their values are, so while valid the pruning compares values.
+struct IdCache {
+    std::vector<py::object> ids;
+    std::vector<long long> values;
+    bool valid = false;
+
+    py::object at(PyObject* subs, Py_ssize_t j) {
+        if (valid) return ids[static_cast<std::size_t>(j)];
+        py::object sub = py::reinterpret_borrow<py::object>(PyList_GET_ITEM(subs, j));
+        return obj_id(sub.ptr());
+    }
+};
+
+// A plain int's value; false for anything else, or one past long long.
+bool int_value(PyObject* o, long long& out) {
+    if (!PyLong_CheckExact(o)) return false;
+    int overflow = 0;
+    out = PyLong_AsLongLongAndOverflow(o, &overflow);
+    if (out == -1 && PyErr_Occurred()) {
+        PyErr_Clear();
+        return false;
+    }
+    return overflow == 0;
+}
+
+bool plain_rating_store(PyObject* d) {
+    if (!PyDict_CheckExact(d)) return false;
+    Py_ssize_t pos = 0;
+    PyObject *k, *v;
+    while (PyDict_Next(d, &pos, &k, &v)) {
+        if (!PyLong_CheckExact(k) || !PyTuple_CheckExact(v)) return false;
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(v); ++i) {
+            PyObject* item = PyTuple_GET_ITEM(v, i);
+            if (!PyLong_CheckExact(item) && !PyFloat_CheckExact(item)) return false;
+        }
+    }
+    return true;
+}
+
+// The ChooseSubsystemTargets branch: the subsystem it picks (or None).
+py::object choose_by_rating(const Ctx& c, PyObject* ours, PyObject* ship_target) {
+    auto& h = host();
+    py::object subs = own(PyList_New(0));
+    {
+        py::object all = call0(ship_target, h.s_GetSubsystems);
+        py::object it = own(PyObject_GetIter(all.ptr()));
+        while (PyObject* e = PyIter_Next(it.ptr())) {
+            py::object sub = py::reinterpret_steal<py::object>(e);
+            targetable_subsystems(c, sub.ptr(), subs.ptr());
+        }
+        if (PyErr_Occurred()) throw py::error_already_set();
+    }
+    PyObject* L = subs.ptr();
+    // for idKey in list(self.dTargetSubsystemRating.keys()):
+    py::object store = attr(c.self, h.s_dTargetSubsystemRating);
+    py::object keys = as_list(call0(store.ptr(), h.s_keys).ptr());
+    IdCache ids;
+    ids.valid = plain_rating_store(store.ptr());
+    for (Py_ssize_t j = 0; ids.valid && j < PyList_GET_SIZE(L); ++j) {
+        py::object id;
+        long long v = 0;
+        if (!quiet_obj_id(PyList_GET_ITEM(L, j), id) || !int_value(id.ptr(), v)) ids.valid = false;
+        ids.ids.push_back(id);
+        ids.values.push_back(v);
+    }
+    if (!ids.valid) {
+        ids.ids.clear();
+        ids.values.clear();
+    }
+    for (Py_ssize_t k = 0; k < PyList_GET_SIZE(keys.ptr()); ++k) {
+        PyObject* key = PyList_GET_ITEM(keys.ptr(), k);  // `keys` holds it
+        bool exists = false;
+        long long kv;
+        if (ids.valid && int_value(key, kv)) {
+            // pSubsystem.GetObjID() == idKey, int against int
+            for (long long v : ids.values)
+                if (v == kv) {
+                    exists = true;
+                    break;
+                }
+        } else {
+            for (Py_ssize_t j = 0; j < PyList_GET_SIZE(L); ++j) {
+                py::object id = ids.at(L, j);
+                if (eq(id.ptr(), key)) {
+                    exists = true;
+                    break;
+                }
+            }
+        }
+        if (!exists) {
+            py::object d = attr(c.self, h.s_dTargetSubsystemRating);
+            if (PyObject_DelItem(d.ptr(), key) < 0) throw py::error_already_set();
+        }
+    }
+    // Pull out the systems that need an update.
+    py::object need = own(PyList_New(0));
+    while (!PyList_GET_SIZE(need.ptr()) && PyList_GET_SIZE(L)) {
+        for (Py_ssize_t j = 0; j < PyList_GET_SIZE(L); ++j) {
+            PyObject* sub = PyList_GET_ITEM(L, j);
+            py::object d = attr(c.self, h.s_dTargetSubsystemRating);
+            py::object id = ids.at(L, j);
+            if (!rating::contains(d.ptr(), id.ptr())) {
+                append(need.ptr(), sub);
+                continue;
+            }
+            // elif self.dTargetSubsystemRating[pSubsystem.GetObjID()][0] < self.iTargetSubsystemUpdateNum
+            py::object d2 = attr(c.self, h.s_dTargetSubsystemRating);
+            py::object id2 = ids.at(L, j);
+            py::object entry = own(PyObject_GetItem(d2.ptr(), id2.ptr()));
+            py::object seq = own(PyObject_GetItem(entry.ptr(), h.int_zero));
+            py::object num = attr(c.self, h.s_iTargetSubsystemUpdateNum);
+            if (!PyLong_CheckExact(seq.ptr()) || !PyLong_CheckExact(num.ptr())) ids.valid = false;
+            if (cmp(seq.ptr(), num.ptr(), Py_LT)) append(need.ptr(), sub);
+        }
+        if (!PyList_GET_SIZE(need.ptr())) {
+            // self.iTargetSubsystemUpdateNum = self.iTargetSubsystemUpdateNum + 1
+            py::object num = attr(c.self, h.s_iTargetSubsystemUpdateNum);
+            if (!PyLong_CheckExact(num.ptr())) ids.valid = false;
+            py::object next = own(PyNumber_Add(num.ptr(), h.int_one));
+            set_attr(c.self, h.s_iTargetSubsystemUpdateNum, next.ptr());
+        }
+    }
+    ids.valid = false;  // what follows calls Python
+    // Pick some of them at random.
+    py::object chosen_list;
+    {
+        py::object len = own(PyLong_FromSsize_t(PyList_GET_SIZE(need.ptr())));
+        py::object limit = attr(c.self, h.s_iNumTargetSubsystemsToUpdate);
+        if (cmp(len.ptr(), limit.ptr(), Py_LE)) {
+            chosen_list = need;
+        } else {
+            chosen_list = own(PyList_New(0));
+            py::object count = attr(c.self, h.s_iNumTargetSubsystemsToUpdate);
+            for_range(c, count, [&](py::object&) {
+                // iIndex = App.g_kSystemWrapper.GetRandomNumber(len(lNeedUpdates))
+                py::object wrapper = attr(c.app.ptr(), h.s_g_kSystemWrapper);
+                py::object draw = attr(wrapper.ptr(), h.s_GetRandomNumber);
+                py::object n = own(PyLong_FromSsize_t(PyList_GET_SIZE(need.ptr())));
+                py::object index = own(PyObject_CallOneArg(draw.ptr(), n.ptr()));
+                // lTargetSubsystems.append( lNeedUpdates[iIndex] )
+                py::object pick = own(PyObject_GetItem(need.ptr(), index.ptr()));
+                append(chosen_list.ptr(), pick.ptr());
+                // lNeedUpdates.remove( lNeedUpdates[iIndex] )
+                py::object remove = attr(need.ptr(), h.s_remove);
+                py::object again = own(PyObject_GetItem(need.ptr(), index.ptr()));
+                own(PyObject_CallOneArg(remove.ptr(), again.ptr()));
+            });
+        }
+    }
+    // Rate the chosen ones:
+    // self.dTargetSubsystemRating[pSubsystem.GetObjID()] =
+    //     (self.iTargetSubsystemUpdateNum, self.RateSubsystemForTargeting(...))
+    {
+        py::object it = own(PyObject_GetIter(chosen_list.ptr()));
+        while (PyObject* e = PyIter_Next(it.ptr())) {
+            py::object sub = py::reinterpret_steal<py::object>(e);
+            py::object num = attr(c.self, h.s_iTargetSubsystemUpdateNum);
+            py::object rating = rate_subsystem(c, ours, sub.ptr());
+            py::object value = own(PyTuple_Pack(2, num.ptr(), rating.ptr()));
+            py::object d = attr(c.self, h.s_dTargetSubsystemRating);
+            py::object id = obj_id(sub.ptr());
+            if (PyObject_SetItem(d.ptr(), id.ptr(), value.ptr()) < 0) throw py::error_already_set();
+        }
+        if (PyErr_Occurred()) throw py::error_already_set();
+    }
+    // Choose from the history of ratings.
+    py::object chosen = py::none();
+    Num highest{true, -1.0e20, {}};
+    py::object store2 = attr(c.self, h.s_dTargetSubsystemRating);
+    py::object items = as_list(call0(store2.ptr(), h.s_items).ptr());
+    for (Py_ssize_t k = 0; k < PyList_GET_SIZE(items.ptr()); ++k) {
+        py::object row = py::reinterpret_borrow<py::object>(PyList_GET_ITEM(items.ptr(), k));
+        py::object kv[2], data[2];
+        unpack(row.ptr(), 2, kv);
+        unpack(kv[1].ptr(), 2, data);
+        Num rating = num_of(data[1]);
+        if (greater(rating, highest)) {
+            highest = rating;
+            // App.ShipSubsystem_Cast( App.TGObject_GetTGObjectPtr( idSubsystem ) )
+            py::object cast = attr(c.app.ptr(), h.s_ShipSubsystem_Cast);
+            py::object lookup = attr(c.app.ptr(), h.s_TGObject_GetTGObjectPtr);
+            py::object ptr = call_fn(lookup.ptr(), {kv[0].ptr()});
+            chosen = call_fn(cast.ptr(), {ptr.ptr()});
+        }
+    }
+    return chosen;
+}
+
+// FireScript.ChooseTargetSubsystem (its return value is unused by Update).
+void choose_target_subsystem(const Ctx& c, PyObject* target) {
+    auto& h = host();
+    count_choice(h.s_subsystem_choice);
+    py::object ship_target = app_call(c, h.s_ShipClass_Cast, target);
+    if (!truth(ship_target.ptr())) return;
+    py::object ours = call0(code_ai(c).ptr(), h.s_GetShip);
+    if (!truth(ours.ptr())) return;
+    py::object chosen = py::none();
+    py::object lts = attr(c.self, h.s_lTargetSubsystems);
+    const Py_ssize_t n = PyObject_Length(lts.ptr());
+    if (n < 0) throw py::error_already_set();
+    if (n) {
+        chosen = choose_from_priorities(c, ship_target.ptr());
+    } else if (truth(attr(c.self, h.s_bChooseSubsystemTargets).ptr())) {
+        chosen = choose_by_rating(c, ours.ptr(), ship_target.ptr());
+    } else {
+        // The ship's own target subsystem (the player's).
+        py::object ship = call0(code_ai(c).ptr(), h.s_GetShip);
+        chosen = call0(ship.ptr(), h.s_GetTargetSubsystem);
+        if (truth(chosen.ptr()) && truth(call0(chosen.ptr(), h.s_IsDisabled).ptr()) &&
+            !truth(attr(c.self, h.s_bAttackDisabledSubsystems).ptr()))
+            chosen = py::none();
+    }
+    if (truth(chosen.ptr())) {
+        py::object id = obj_id(chosen.ptr());
+        set_attr(c.self, h.s_idTargetedSubsystem, id.ptr());
+    } else {
+        set_attr(c.self, h.s_idTargetedSubsystem, Py_None);
+    }
+}
+
+// pScript = (lambda n: _sdk_importlib.import_module(n) if isinstance(n, str)
+//            else n)(pAmmo.GetTorpedoScript())
+py::object torpedo_script(const Ctx& c, PyObject* ammo) {
+    auto& h = host();
+    py::object name = call0(ammo, h.s_GetTorpedoScript);
+    const int is_str = PyObject_IsInstance(name.ptr(), reinterpret_cast<PyObject*>(&PyUnicode_Type));
+    if (is_str < 0) throw py::error_already_set();
+    if (!is_str) return name;
+    py::object importlib = global(c, h.s_sdk_importlib);
+    return call1(importlib.ptr(), h.s_import_module, name.ptr());
+}
+
+// One ammo type's row of lTorpAmmoRatings.
+struct TorpRow {
+    py::object index;
+    bool native = false;
+    cb::TorpIdeals t{};
+    py::object v[5];  // when !native: fIdealDistMin .. fRating
+};
+
+py::object row_value(const TorpRow& r, int i) {
+    if (!r.native) return r.v[i];
+    const double d[5] = {r.t.dist_min, r.t.dist_max, r.t.speed_min, r.t.speed_max, r.t.rating};
+    return pyfloat(d[i]);
+}
+
+// App.FuzzyLogic_BreakIntoSets(fValue, thresholds); (fLowIdeal, fHighIdeal).
+void fuzzy_ideals(const Ctx& c, const TorpRow& r, int min_i, int max_i, PyObject* value,
+                  py::object& low, py::object& high) {
+    auto& h = host();
+    py::object thresholds;
+    bool positive;
+    if (r.native) {
+        const double d[5] = {r.t.dist_min, r.t.dist_max, r.t.speed_min, r.t.speed_max, r.t.rating};
+        positive = cb::fire_greater(d[min_i], 0.0);
+        py::object fuzzy = attr(c.app.ptr(), h.s_FuzzyLogic_BreakIntoSets);
+        py::object mn = pyfloat(d[min_i]), mx = pyfloat(d[max_i]);
+        py::object far = pyfloat(cb::fire_torp_far(d[min_i], d[max_i]));
+        thresholds = positive ? own(PyTuple_Pack(4, h.float_zero, mn.ptr(), mx.ptr(), far.ptr()))
+                              : own(PyTuple_Pack(3, mn.ptr(), mx.ptr(), far.ptr()));
+        py::object sets = call_fn(fuzzy.ptr(), {value, thresholds.ptr()});
+        py::object out[4];
+        unpack(sets.ptr(), positive ? 4 : 3, out);
+        low = out[positive ? 1 : 0];
+        high = out[positive ? 2 : 1];
+        return;
+    }
+    PyObject* mn = r.v[min_i].ptr();
+    PyObject* mx = r.v[max_i].ptr();
+    positive = cmp(mn, h.int_zero, Py_GT);
+    py::object fuzzy = attr(c.app.ptr(), h.s_FuzzyLogic_BreakIntoSets);
+    if (positive) {
+        py::object span = own(PyNumber_Subtract(mx, mn));
+        py::object far = own(PyNumber_Multiply(span.ptr(), h.float_one_and_half));
+        thresholds = own(PyTuple_Pack(4, h.float_zero, mn, mx, far.ptr()));
+    } else {
+        py::object far = own(PyNumber_Multiply(mx, h.float_one_and_half));
+        thresholds = own(PyTuple_Pack(3, mn, mx, far.ptr()));
+    }
+    py::object sets = call_fn(fuzzy.ptr(), {value, thresholds.ptr()});
+    py::object out[4];
+    unpack(sets.ptr(), positive ? 4 : 3, out);
+    low = out[positive ? 1 : 0];
+    high = out[positive ? 2 : 1];
+}
+
+// `fRating * (fLowIdeal + fHighIdeal)` by Python's operators.
+py::object membership_score(PyObject* rating, PyObject* low, PyObject* high) {
+    py::object sum = own(PyNumber_Add(low, high));
+    return own(PyNumber_Multiply(rating, sum.ptr()));
+}
+
+// FireScript.ChooseTorpType
+void choose_torp_type(const Ctx& c, PyObject* torp, PyObject* location, PyObject* target_speed) {
+    auto& h = host();
+    count_choice(h.s_torp_choice);
+    std::vector<std::pair<py::object, py::object>> types;
+    for_range(c, call0(torp, h.s_GetNumAmmoTypes), [&](py::object& i) {
+        py::object left = call1(torp, h.s_GetNumAvailableTorpsToType, i.ptr());
+        if (cmp(left.ptr(), h.int_zero, Py_GT))
+            types.emplace_back(i, call1(torp, h.s_GetAmmoType, i.ptr()));
+    });
+    if (types.empty()) return;
+    if (types.size() == 1) {
+        py::object now = call0(torp, h.s_GetAmmoTypeNumber);
+        if (ne(now.ptr(), types[0].first.ptr())) {
+            py::object set_ammo = attr(torp, h.s_SetAmmoType);
+            own(PyObject_CallOneArg(set_ammo.ptr(), types[0].first.ptr()));
+        }
+        return;
+    }
+    count_choice(h.s_torp_rated);  // two or more types: the rating below
+    py::object diff = call0(torp, h.s_GetWorldLocation);
+    call1(diff.ptr(), h.s_Subtract, location);
+    py::object distance = call0(diff.ptr(), h.s_Length);
+
+    std::vector<TorpRow> rows;
+    py::object script;  // pScript: unbound until an import succeeds
+    for (auto& [index, ammo] : types) {
+        py::object launch = call0(ammo.ptr(), h.s_GetLaunchSpeed);
+        py::object cost = call0(ammo.ptr(), h.s_GetPowerCost);
+        py::object damage, lifetime, turn;
+        try {
+            script = torpedo_script(c, ammo.ptr());
+            damage = call0(script.ptr(), h.s_GetDamage);
+            lifetime = call0(script.ptr(), h.s_GetGuidanceLifetime);
+            turn = call0(script.ptr(), h.s_GetMaxAngularAccel);
+        } catch (py::error_already_set& caught) {
+            // The SDK's bare `except:`. The caught exception is the one being
+            // handled while its body runs, so anything raised there chains to
+            // it, as in Python: PUSH_EXC_INFO saves the CURRENT stack item's
+            // raw value and POP_EXCEPT puts it back (PyErr_SetHandledException
+            // writes that item; PyErr_GetHandledException would read the
+            // topmost one, an outer frame's, instead).
+#if PY_VERSION_HEX >= 0x030B0000 && PY_VERSION_HEX < 0x030F0000
+            // The thread state's stack item (cpython/pystate.h, the same
+            // layout 3.11-3.14).
+            _PyErr_StackItem* item = PyThreadState_Get()->exc_info;
+            PyObject* previous = item->exc_value;  // the saved raw value
+            Py_XINCREF(previous);
+#else
+            // Public API only: the topmost handled exception. It differs from
+            // the raw item only inside a generator whose own item is empty.
+            PyObject* previous = PyErr_GetHandledException();
+#endif
+            PyErr_SetHandledException(caught.value().ptr());
+            auto restore = [&] {
+                PyErr_SetHandledException(previous);
+                Py_XDECREF(previous);
+            };
+            damage = pyfloat(0.0);
+            lifetime = pyfloat(0.0);
+            try {
+                if (!script) {
+                    PyErr_Format(PyExc_UnboundLocalError,
+                                 "cannot access local variable '%U' where it is not "
+                                 "associated with a value",
+                                 h.s_pScript);
+                    throw py::error_already_set();
+                }
+                turn = call0(script.ptr(), h.s_GetMaxAngularAccel);
+            } catch (py::error_already_set&) {
+                restore();
+                throw;
+            }
+            restore();
+        }
+        TorpRow row;
+        row.index = index;
+        double ls, pc, dm, gl, tr;
+        if (avoid::exact_float(launch.ptr(), ls) && avoid::exact_float(cost.ptr(), pc) &&
+            avoid::exact_float(damage.ptr(), dm) && avoid::exact_float(lifetime.ptr(), gl) &&
+            avoid::exact_float(turn.ptr(), tr)) {
+            row.native = true;
+            row.t = cb::fire_torp_ideals(ls, pc, dm, gl, tr);
+        } else {
+            // Python's operators, in the SDK's order.
+            py::object dist_max = py::reinterpret_borrow<py::object>(h.float_zero);
+            if (cmp(lifetime.ptr(), h.int_zero, Py_GT))
+                dist_max = own(PyNumber_Multiply(lifetime.ptr(), launch.ptr()));
+            py::object speed_max = py::reinterpret_borrow<py::object>(h.float_zero);
+            bool moves = cmp(lifetime.ptr(), h.int_zero, Py_GT);
+            if (!moves) moves = cmp(launch.ptr(), h.int_zero, Py_GT);
+            if (moves) {
+                py::object turned = own(PyNumber_Multiply(turn.ptr(), h.float_four));
+                speed_max = own(PyNumber_Add(turned.ptr(), launch.ptr()));
+            }
+            row.v[0] = py::reinterpret_borrow<py::object>(h.float_zero);
+            row.v[1] = dist_max;
+            row.v[2] = py::reinterpret_borrow<py::object>(h.float_zero);
+            row.v[3] = speed_max;
+            row.v[4] = own(PyNumber_Subtract(damage.ptr(), cost.ptr()));
+        }
+        rows.push_back(std::move(row));
+    }
+
+    Num best{true, -1.0e20, {}};
+    py::object chosen = py::reinterpret_borrow<py::object>(h.int_zero);
+    for (const TorpRow& r : rows) {
+        py::object dl, dh, sl, sh;
+        fuzzy_ideals(c, r, 0, 1, distance.ptr(), dl, dh);
+        // fDistScore = fRating * (fLowIdeal + fHighIdeal): deferred while it
+        // is all floats, else Python's, here.
+        double d_low, d_high;
+        const bool dist_native =
+            r.native && avoid::exact_float(dl.ptr(), d_low) && avoid::exact_float(dh.ptr(), d_high);
+        py::object dist_score;
+        if (!dist_native) {
+            py::object rating = row_value(r, 4);
+            dist_score = membership_score(rating.ptr(), dl.ptr(), dh.ptr());
+        }
+        fuzzy_ideals(c, r, 2, 3, target_speed, sl, sh);
+        double s_low, s_high;
+        Num score;
+        if (dist_native && avoid::exact_float(sl.ptr(), s_low) &&
+            avoid::exact_float(sh.ptr(), s_high)) {
+            score = Num{true, cb::fire_torp_score(r.t.rating, d_low, d_high, s_low, s_high), {}};
+        } else {
+            py::object rating = row_value(r, 4);
+            if (dist_native) dist_score = membership_score(rating.ptr(), dl.ptr(), dh.ptr());
+            py::object speed_score = membership_score(rating.ptr(), sl.ptr(), sh.ptr());
+            py::object quarter = own(PyNumber_Multiply(h.float_quarter, dist_score.ptr()));
+            score = num_of(own(PyNumber_Add(quarter.ptr(), speed_score.ptr())));
+        }
+        if (greater(score, best)) {
+            chosen = r.index;
+            best = score;
+        }
+    }
+    py::object now = call0(torp, h.s_GetAmmoTypeNumber);
+    if (ne(now.ptr(), chosen.ptr())) {
+        py::object set_ammo = attr(torp, h.s_SetAmmoType);
+        own(PyObject_CallOneArg(set_ammo.ptr(), chosen.ptr()));
+    }
+}
+
+// FireScript.ConfigureWeaponSystem's truth.
+bool configure_weapon_system(const Ctx& c, PyObject* system, PyObject* target,
+                             PyObject* subsystem) {
+    auto& h = host();
+    if (weapon_too_dangerous(c, system, target, subsystem)) return false;
+
+    py::object tractor = app_call(c, h.s_TractorBeamSystem_Cast, system);
+    if (truth(tractor.ptr())) {
+        py::object want = attr(c.self, h.s_eTractorBeamMode);
+        if (!is_none(want.ptr())) {
+            py::object mode = call0(tractor.ptr(), h.s_GetMode);
+            py::object want2 = attr(c.self, h.s_eTractorBeamMode);
+            if (ne(mode.ptr(), want2.ptr())) {
+                // not (IsFiring() and GetMode() == TBS_DOCK_STAGE_2 and
+                //      self.eTractorBeamMode == TBS_DOCK_STAGE_1)
+                bool keep = truth(call0(tractor.ptr(), h.s_IsFiring).ptr());
+                if (keep) {
+                    py::object now = call0(tractor.ptr(), h.s_GetMode);
+                    py::object tbs = attr(c.app.ptr(), h.s_TractorBeamSystem);
+                    py::object stage2 = attr(tbs.ptr(), h.s_TBS_DOCK_STAGE_2);
+                    keep = eq(now.ptr(), stage2.ptr());
+                }
+                if (keep) {
+                    py::object mine = attr(c.self, h.s_eTractorBeamMode);
+                    py::object tbs = attr(c.app.ptr(), h.s_TractorBeamSystem);
+                    py::object stage1 = attr(tbs.ptr(), h.s_TBS_DOCK_STAGE_1);
+                    keep = eq(mine.ptr(), stage1.ptr());
+                }
+                if (!keep) {
+                    // pTractor.SetMode(self.eTractorBeamMode): the method first
+                    py::object set_mode = attr(tractor.ptr(), h.s_SetMode);
+                    py::object mine = attr(c.self, h.s_eTractorBeamMode);
+                    own(PyObject_CallOneArg(set_mode.ptr(), mine.ptr()));
+                }
+            }
+        }
+        return true;
+    }
+
+    py::object phaser = app_call(c, h.s_PhaserSystem_Cast, system);
+    if (truth(phaser.ptr())) {
+        const bool high = truth(attr(c.self, h.s_bHighPower).ptr());
+        py::object method = attr(phaser.ptr(), h.s_SetPowerLevel);
+        py::object klass = attr(c.app.ptr(), h.s_PhaserSystem);
+        py::object level = attr(klass.ptr(), high ? h.s_PP_HIGH : h.s_PP_LOW);
+        own(PyObject_CallOneArg(method.ptr(), level.ptr()));
+        return true;
+    }
+
+    py::object torp = app_call(c, h.s_TorpedoSystem_Cast, system);
+    if (truth(torp.ptr())) {
+        if (truth(attr(c.self, h.s_bChooseTorpsWisely).ptr())) {
+            py::object location = truth(subsystem) ? call0(subsystem, h.s_GetWorldLocation)
+                                                   : call0(target, h.s_GetWorldLocation);
+            py::object speed = pyfloat(0.0);
+            py::object ship_target = app_call(c, h.s_ShipClass_Cast, target);
+            if (truth(ship_target.ptr())) {
+                py::object engines = call0(ship_target.ptr(), h.s_GetImpulseEngineSubsystem);
+                if (truth(engines.ptr())) speed = call0(engines.ptr(), h.s_GetCurMaxSpeed);
+            }
+            choose_torp_type(c, torp.ptr(), location.ptr(), speed.ptr());
+        }
+        return true;
+    }
+    return true;
+}
+
+// FireScript.FireSystemAtTarget
+void fire_system_at_target(const Ctx& c, PyObject* system, PyObject* target, PyObject* subsystem) {
+    auto& h = host();
+    if (!configure_weapon_system(c, system, target, subsystem)) return;
+    if (!check_good_shot(c, system, target, subsystem)) {
+        call1(system, h.s_StopFiringAtTarget, target);
+        return;
+    }
+    py::object point = attr(c.app.ptr(), h.s_TGPoint3);
+    py::object offset = own(PyObject_CallNoArgs(point.ptr()));
+    bool dumb = truth(attr(c.self, h.s_bDumbFireTorps).ptr());
+    if (dumb) dumb = truth(app_call(c, h.s_TorpedoSystem_Cast, system).ptr());
+    if (dumb) {
+        py::object to_target = truth(subsystem) ? call0(subsystem, h.s_GetWorldLocation)
+                                                : call0(target, h.s_GetWorldLocation);
+        py::object sub_m = attr(to_target.ptr(), h.s_Subtract);
+        py::object from = call0(system, h.s_GetWorldLocation);
+        own(PyObject_CallOneArg(sub_m.ptr(), from.ptr()));
+        py::object zero = pyint(0), one = pyint(1);
+        for_range(c, call0(system, h.s_GetNumChildSubsystems), [&](py::object& i) {
+            py::object cast = attr(c.app.ptr(), h.s_TorpedoTube_Cast);
+            py::object child = call1(system, h.s_GetChildSubsystem, i.ptr());
+            py::object tube = call_fn(cast.ptr(), {child.ptr()});
+            py::object dot_m = attr(to_target.ptr(), h.s_Dot);
+            py::object rough = call0(tube.ptr(), h.s_CalculateRoughDirection);
+            py::object dot = own(PyObject_CallOneArg(dot_m.ptr(), rough.ptr()));
+            if (cmp(dot.ptr(), zero.ptr(), Py_GT)) {
+                py::object fire = attr(tube.ptr(), h.s_FireDumb);
+                call_fn(fire.ptr(), {zero.ptr(), one.ptr()});
+            }
+        });
+        return;
+    }
+    if (truth(subsystem)) {
+        py::object set_m = attr(offset.ptr(), h.s_Set);
+        py::object pos = call0(subsystem, h.s_GetPositionTG);
+        own(PyObject_CallOneArg(set_m.ptr(), pos.ptr()));
+    } else {
+        py::object set_m = attr(offset.ptr(), h.s_SetXYZ);
+        py::object zero = pyint(0);
+        call_fn(set_m.ptr(), {zero.ptr(), zero.ptr(), zero.ptr()});
+    }
+    py::object start = attr(system, h.s_StartFiring);
+    call_fn(start.ptr(), {target, offset.ptr()});
+}
+
+// The cycle: ((self.iLastUpdate + 3) % (len(self.lWeapons) + 2)) - 2
+py::object next_update(const Ctx& c) {
+    auto& h = host();
+    py::object last = attr(c.self, h.s_iLastUpdate);
+    if (PyLong_CheckExact(last.ptr())) {
+        int overflow = 0;
+        const long long v = PyLong_AsLongLongAndOverflow(last.ptr(), &overflow);
+        if (v == -1 && PyErr_Occurred()) throw py::error_already_set();
+        constexpr long long kSafe = 1LL << 62;
+        if (overflow == 0 && v < kSafe && v > -kSafe) {
+            py::object weapons = attr(c.self, h.s_lWeapons);
+            const Py_ssize_t n = PyObject_Length(weapons.ptr());
+            if (n < 0) throw py::error_already_set();
+            return own(PyLong_FromLongLong(cb::fire_cycle(v, static_cast<long long>(n))));
+        }
+    }
+    py::object three = pyint(3), two = pyint(2);
+    py::object a = own(PyNumber_Add(last.ptr(), three.ptr()));
+    py::object weapons = attr(c.self, h.s_lWeapons);
+    const Py_ssize_t n = PyObject_Length(weapons.ptr());
+    if (n < 0) throw py::error_already_set();
+    py::object len = own(PyLong_FromSsize_t(n));
+    py::object b = own(PyNumber_Add(len.ptr(), two.ptr()));
+    py::object r = own(PyNumber_Remainder(a.ptr(), b.ptr()));
+    return own(PyNumber_Subtract(r.ptr(), two.ptr()));
+}
+
+// FireScript.Update; `globals` the gated SDK function's __globals__ (the
+// dict its code loads App and the builtins from).
+py::object update(PyObject* self, PyObject* globals) {
+    auto& h = host();
+    Ctx c{self, py::reinterpret_borrow<py::object>(globals), {}};
+    c.app = global(c, h.s_App);
+
+    py::object target = get_target(c);
+    if (!truth(target.ptr())) return ps(c, h.s_PS_DONE);
+
+    if (truth(attr(self, h.s_bCallUsingWeaponTypeFunc).ptr())) {
+        py::object all = call0(code_ai(c).ptr(), h.s_GetAllAIsInTree);
+        py::object rest = own(PyObject_GetItem(all.ptr(), h.one_on));
+        py::object it = own(PyObject_GetIter(rest.ptr()));
+        while (PyObject* e = PyIter_Next(it.ptr())) {
+            py::object ai = py::reinterpret_steal<py::object>(e);
+            py::object method = attr(ai.ptr(), h.s_CallExternalFunction);
+            py::object weapons = attr(self, h.s_lWeapons);
+            call_fn(method.ptr(), {h.s_UsingWeaponType, weapons.ptr()});
+        }
+        if (PyErr_Occurred()) throw py::error_already_set();
+        set_attr(self, h.s_bCallUsingWeaponTypeFunc, pyint(0).ptr());
+    }
+
+    {
+        py::object weapons = attr(self, h.s_lWeapons);
+        const Py_ssize_t n = PyObject_Length(weapons.ptr());
+        if (n < 0) throw py::error_already_set();
+        if (n == 0) return ps(c, h.s_PS_NORMAL);
+    }
+    if (!truth(attr(self, h.s_bEnabled).ptr())) return ps(c, h.s_PS_NORMAL);
+
+    bool look = !truth(attr(self, h.s_bTargetVisible).ptr());
+    if (!look) look = eq(attr(self, h.s_iLastUpdate).ptr(), pyint(-2).ptr());
+    if (!look) look = !target_in_range(c, target.ptr());
+    if (look) {
+        call1(self, h.s_TargetVisible, target.ptr());
+        if (!truth(attr(self, h.s_bTargetVisible).ptr())) {
+            call0(self, h.s_StopFiring);
+            set_attr(self, h.s_iLastUpdate, pyint(-2).ptr());
+            return ps(c, h.s_PS_NORMAL);
+        }
+    } else if (eq(attr(self, h.s_iLastUpdate).ptr(), pyint(-1).ptr())) {
+        py::object start = attr(c.app.ptr(), h.s_TGProfilingInfo_StartTiming);
+        py::object timing = call_fn(start.ptr(), {h.s_timing_label});
+        choose_target_subsystem(c, target.ptr());
+        py::object stop = attr(c.app.ptr(), h.s_TGProfilingInfo_StopTiming);
+        call_fn(stop.ptr(), {timing.ptr()});
+    } else {
+        py::object subsystem = py::none();
+        py::object id = attr(self, h.s_idTargetedSubsystem);
+        if (!is_none(id.ptr())) {
+            py::object cast = attr(c.app.ptr(), h.s_ShipSubsystem_Cast);
+            py::object lookup = attr(c.app.ptr(), h.s_TGObject_GetTGObjectPtr);
+            py::object id2 = attr(self, h.s_idTargetedSubsystem);
+            py::object ptr = call_fn(lookup.ptr(), {id2.ptr()});
+            subsystem = call_fn(cast.ptr(), {ptr.ptr()});
+        }
+        if (is_none(subsystem.ptr()) &&
+            !truth(attr(self, h.s_bAttackIfNoSubsystemsLeft).ptr())) {
+            call0(self, h.s_StopFiring);
+            return ps(c, h.s_PS_NORMAL);
+        }
+        // self.FireSystemAtTarget(self.lWeapons[self.iLastUpdate % len(self.lWeapons)], ...)
+        py::object weapons = attr(self, h.s_lWeapons);
+        py::object last = attr(self, h.s_iLastUpdate);
+        py::object weapons2 = attr(self, h.s_lWeapons);
+        const Py_ssize_t n = PyObject_Length(weapons2.ptr());
+        if (n < 0) throw py::error_already_set();
+        py::object len = own(PyLong_FromSsize_t(n));
+        py::object index = own(PyNumber_Remainder(last.ptr(), len.ptr()));
+        py::object system = own(PyObject_GetItem(weapons.ptr(), index.ptr()));
+        fire_system_at_target(c, system.ptr(), target.ptr(), subsystem.ptr());
+    }
+
+    set_attr(self, h.s_iLastUpdate, next_update(c).ptr());
+    return ps(c, h.s_PS_NORMAL);
+}
+
+}  // namespace fire
+}  // namespace
+
+// ── The stock verdict's memo (engine/appc/ai_native.py) ──────────────────────
+// ai_native.preprocessor_is_stock is the only place the stock rule is
+// written; this only REMEMBERS its class verdict, per (type, SDK class name,
+// gated-methods tuple), keyed by the type's version tag. CPython renews a
+// type's tag whenever an attribute of it or of any base is set or deleted,
+// or its __bases__ change, so a class-level patch anywhere in the MRO -- the
+// SDK base included -- makes the stored verdict unreadable and Python
+// decides again. A type with no valid tag, or a metaclass other than `type`
+// (whose attribute lookup is not the MRO's alone), is never answered here.
+// Python stores a verdict with the tag it read BEFORE deciding; if the type
+// moved while Python ran, nothing is stored.
+// The instance half -- no gated name in the instance's own dict -- is
+// checked here on every call: the dict attribute lookup consults (built from
+// inline values if need be), its keys only str, the names compared by
+// PyDict_Contains (no Python runs). An instance with no dict, with non-str
+// keys, or whose type's `__dict__` is not CPython's own descriptor
+// (readers::plain_dict) is Python's to answer. While the memos are off
+// (aimemo: any Python but 3.11, a failed self-test, or forced off) every
+// check answers None and the tag is 0, so Python decides every call.
+//   ai_stock_check(inst, name, methods) -> True / False / None (ask Python)
+//   ai_stock_tag(cls) -> the tag a verdict would be stored under (0: none)
+//   ai_stock_remember(cls, name, methods, verdict, tag)
+// Raw METH_FASTCALL functions: this runs on every native call of the three
+// kinds, and pybind11's dispatch would cost more than the check.
+//
+// ACCEPTED BLIND SPOTS (none moves a type or dict version tag, none is
+// checked; only the A/B test and the goldens would see them):
+//  - reassigning a function's __code__, __defaults__ or _dauntless_wraps in
+//    place;
+//  - module-level SDK helpers (the stock rule covers methods only);
+//  - _FIRE_SURFACE mutated in place, and a non-dict __builtins__;
+//  - the native code mirrors the SDK loader's AST transforms (has_key ->
+//    __contains__, the __import__ lambda): a new transform touching these
+//    bodies diverges silently;
+//  - a wrapper from engine/appc/ai_sensor_gate.py counts as stock
+//    (ai_native._unwrap): safe only because every gate-wrapped name the
+//    native code touches (TargetVisible) is called back, never reimplemented.
+namespace {
+namespace stockmemo {
+
+struct Entry {
+    PyTypeObject* type;
+    unsigned int tag;
+    PyObject* name;
+    PyObject* methods;
+    bool verdict;
+    py::object keep_type, keep_name, keep_methods;  // the addresses are keys
+};
+
+std::vector<Entry>& entries() {
+    static auto* v = new std::vector<Entry>();
+    return *v;
+}
+
+// The tag a verdict for `t` is keyed by; 0 when it cannot be (no valid tag,
+// a metaclass other than `type`, or the memos are off: aimemo).
+unsigned int tag_of(PyTypeObject* t) {
+    if (!aimemo::on()) return 0;
+    if (!Py_IS_TYPE(reinterpret_cast<PyObject*>(t), &PyType_Type)) return 0;
+    return k0_type_tag(t);
+}
+
+// Two exact str equal (PyUnicode_Compare cannot fail on two exact str).
+bool same_name(PyObject* a, PyObject* b) {
+    if (a == b) return true;
+    return PyUnicode_CheckExact(a) && PyUnicode_CheckExact(b) && PyUnicode_Compare(a, b) == 0;
+}
+
+Entry* find(PyTypeObject* t, PyObject* name, PyObject* methods) {
+    for (Entry& e : entries())
+        if (e.type == t && e.methods == methods && same_name(e.name, name)) return &e;
+    return nullptr;
+}
+
+PyObject* check(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 3 || !PyTuple_CheckExact(args[2])) {
+        PyErr_SetString(PyExc_TypeError, "ai_stock_check(inst, name, methods: tuple)");
+        return nullptr;
+    }
+    PyObject* inst = args[0];
+    PyTypeObject* t = Py_TYPE(inst);
+    const unsigned int tag = tag_of(t);  // 0 while the memos are off
+    if (tag == 0) Py_RETURN_NONE;
+    Entry* e = find(t, args[1], args[2]);
+    if (e == nullptr || e->tag != tag) Py_RETURN_NONE;
+    if (!e->verdict) Py_RETURN_FALSE;
+    // The instance half reads the dict slot: only for a type whose
+    // `__dict__` is CPython's own (what `inst.__dict__` returns).
+    if (!readers::plain_dict(t)) Py_RETURN_NONE;
+    PyObject* d = k0_dict_of(inst);
+    if (d == nullptr) {
+        PyObject** dp = _PyObject_GetDictPtr(inst);
+        if (dp == nullptr || *dp == nullptr) {
+            PyErr_Clear();
+            Py_RETURN_NONE;  // no instance dict: Python's to answer
+        }
+        d = *dp;
+    }
+#if DAUNTLESS_AI_MEMOS_COMPILED
+    if (!PyDict_CheckExact(d) || !aimemo::only_str_keys(d)) Py_RETURN_NONE;
+#else
+    Py_RETURN_NONE;  // unreachable: tag_of is 0
+#endif
+    PyObject* methods = args[2];
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(methods); ++i) {
+        PyObject* n = PyTuple_GET_ITEM(methods, i);
+        if (!PyUnicode_CheckExact(n)) Py_RETURN_NONE;
+        const int has = PyDict_Contains(d, n);
+        if (has < 0) return nullptr;
+        if (has) Py_RETURN_FALSE;
+    }
+    Py_RETURN_TRUE;
+}
+
+PyObject* tag(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 1 || !PyType_Check(args[0])) {
+        PyErr_SetString(PyExc_TypeError, "ai_stock_tag(cls: type)");
+        return nullptr;
+    }
+    return PyLong_FromUnsignedLong(tag_of(reinterpret_cast<PyTypeObject*>(args[0])));
+}
+
+PyObject* remember(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 5 || !PyType_Check(args[0]) || !PyTuple_CheckExact(args[2]) ||
+        !PyLong_Check(args[4])) {
+        PyErr_SetString(PyExc_TypeError,
+                        "ai_stock_remember(cls: type, name, methods: tuple, verdict, tag: int)");
+        return nullptr;
+    }
+    auto* t = reinterpret_cast<PyTypeObject*>(args[0]);
+    const int verdict = PyObject_IsTrue(args[3]);
+    if (verdict < 0) return nullptr;
+    const unsigned long want = PyLong_AsUnsignedLong(args[4]);
+    if (want == static_cast<unsigned long>(-1) && PyErr_Occurred()) return nullptr;
+    const unsigned int now = tag_of(t);
+    // Decided under another version (the type moved while Python ran), or
+    // never keyable: nothing is stored.
+    if (want == 0 || now != want) Py_RETURN_NONE;
+    if (Entry* e = find(t, args[1], args[2])) {
+        e->tag = now;
+        e->verdict = verdict == 1;
+        Py_RETURN_NONE;
+    }
+    auto& all = entries();
+    if (all.size() >= 512) {
+        // Swapped out, then released: a released key can run weakref
+        // callbacks, which may store here and must find the memo whole.
+        std::vector<Entry> old;
+        old.swap(all);
+    }
+    all.push_back({t, now, args[1], args[2], verdict == 1,
+                   py::reinterpret_borrow<py::object>(args[0]),
+                   py::reinterpret_borrow<py::object>(args[1]),
+                   py::reinterpret_borrow<py::object>(args[2])});
+    Py_RETURN_NONE;
+}
+
+PyMethodDef kDefs[] = {
+    {"ai_stock_check", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(check)),
+     METH_FASTCALL,
+     "ai_stock_check(inst, name, methods) -> True / False / None: the stock "
+     "verdict ai_native.preprocessor_is_stock stored for type(inst) under its "
+     "current version tag, with the instance-dict half checked; None: ask Python."},
+    {"ai_stock_tag", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(tag)),
+     METH_FASTCALL,
+     "ai_stock_tag(cls) -> the version tag a verdict for cls is stored under "
+     "(0: it cannot be)."},
+    {"ai_stock_remember",
+     reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(remember)), METH_FASTCALL,
+     "ai_stock_remember(cls, name, methods, verdict, tag): store Python's class "
+     "verdict, if cls still has the tag it was decided under."},
+};
+
+}  // namespace stockmemo
+
+// ── A verdict remembered under the versions of what it read ─────────────────
+// ai_optimized._fire_surface_globals decides, in Python, whether FireScript's
+// module surface is stock; it reads only dicts and types. CPython renews a
+// dict's ma_version_tag on every insert, replace or delete, and a type's
+// version tag on any change to it or its bases, so while every tag the
+// decision read is unchanged its answer is too. This stores Python's answer
+// with those tags and returns it while they hold; any move and Python
+// decides again. A type with another metaclass, or one with no valid tag, or
+// anything that is neither an exact dict nor a type, is never taggable; nor
+// is anything while the memos are off (aimemo: a dict's tag is a 3.11
+// internal), when tags answers None, get a miss and put stores nothing.
+// Used for every native kind's module surface and its transform store
+// (ai_optimized._memo_answer).
+//   ai_memo_tags(watched: tuple) -> tuple of the tags now, or None
+//   ai_memo_get(key, miss) -> the stored answer for `key`, or `miss`
+//   ai_memo_put(key, watched, tags, answer): stored if the tags still hold
+namespace surfacememo {
+
+struct Entry {
+    py::object key, watched, answer;
+    std::vector<unsigned long long> tags;
+};
+
+std::vector<Entry>& entries() {
+    static auto* v = new std::vector<Entry>();
+    return *v;
+}
+
+// A dict's or a type's version tag; false when it has none, or the memos
+// are off (aimemo: a dict's tag is a 3.11 internal).
+bool tag_of(PyObject* o, unsigned long long& out) {
+    if (!aimemo::on()) return false;
+    if (PyDict_CheckExact(o)) {
+#if DAUNTLESS_AI_MEMOS_COMPILED
+        out = aimemo::dict_tag(o);
+        return true;
+#else
+        return false;
+#endif
+    }
+    if (Py_IS_TYPE(o, &PyType_Type)) {
+        out = k0_type_tag(reinterpret_cast<PyTypeObject*>(o));
+        return out != 0;
+    }
+    return false;
+}
+
+bool tags_now(PyObject* watched, std::vector<unsigned long long>& out) {
+    const Py_ssize_t n = PyTuple_GET_SIZE(watched);
+    out.resize(static_cast<std::size_t>(n));
+    for (Py_ssize_t i = 0; i < n; ++i)
+        if (!tag_of(PyTuple_GET_ITEM(watched, i), out[static_cast<std::size_t>(i)])) return false;
+    return true;
+}
+
+bool holds(const Entry& e) {
+    const Py_ssize_t n = PyTuple_GET_SIZE(e.watched.ptr());
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        unsigned long long t;
+        if (!tag_of(PyTuple_GET_ITEM(e.watched.ptr(), i), t) ||
+            t != e.tags[static_cast<std::size_t>(i)])
+            return false;
+    }
+    return true;
+}
+
+PyObject* tags(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 1 || !PyTuple_CheckExact(args[0])) {
+        PyErr_SetString(PyExc_TypeError, "ai_memo_tags(watched: tuple)");
+        return nullptr;
+    }
+    std::vector<unsigned long long> t;
+    if (!aimemo::on() || !tags_now(args[0], t)) Py_RETURN_NONE;
+    PyObject* out = PyTuple_New(static_cast<Py_ssize_t>(t.size()));
+    if (out == nullptr) return nullptr;
+    for (std::size_t i = 0; i < t.size(); ++i) {
+        PyObject* v = PyLong_FromUnsignedLongLong(t[i]);
+        if (v == nullptr) {
+            Py_DECREF(out);
+            return nullptr;
+        }
+        PyTuple_SET_ITEM(out, static_cast<Py_ssize_t>(i), v);
+    }
+    return out;
+}
+
+PyObject* get(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 2) {
+        PyErr_SetString(PyExc_TypeError, "ai_memo_get(key, miss)");
+        return nullptr;
+    }
+    if (!aimemo::on()) return Py_NewRef(args[1]);
+    for (const Entry& e : entries())
+        if (e.key.ptr() == args[0]) {
+            if (!holds(e)) break;
+            return Py_NewRef(e.answer.ptr());
+        }
+    return Py_NewRef(args[1]);
+}
+
+PyObject* put(PyObject*, PyObject* const* args, Py_ssize_t nargs) {
+    if (nargs != 4 || !PyTuple_CheckExact(args[1]) || !PyTuple_CheckExact(args[2]) ||
+        PyTuple_GET_SIZE(args[1]) != PyTuple_GET_SIZE(args[2])) {
+        PyErr_SetString(PyExc_TypeError, "ai_memo_put(key, watched: tuple, tags: tuple, answer)");
+        return nullptr;
+    }
+    std::vector<unsigned long long> want(static_cast<std::size_t>(PyTuple_GET_SIZE(args[2])));
+    for (std::size_t i = 0; i < want.size(); ++i) {
+        want[i] = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args[2], static_cast<Py_ssize_t>(i)));
+        if (want[i] == static_cast<unsigned long long>(-1) && PyErr_Occurred()) return nullptr;
+    }
+    std::vector<unsigned long long> now;
+    // Decided under other versions (something moved while Python ran), or
+    // never taggable: nothing is stored.
+    if (!tags_now(args[1], now) || now != want) Py_RETURN_NONE;
+    auto& all = entries();
+    for (Entry& e : all)
+        if (e.key.ptr() == args[0]) {
+            // The old values are released after the entry is whole again (a
+            // release can run Python that stores here).
+            py::object old_watched = std::move(e.watched);
+            py::object old_answer = std::move(e.answer);
+            e.watched = py::reinterpret_borrow<py::object>(args[1]);
+            e.answer = py::reinterpret_borrow<py::object>(args[3]);
+            e.tags = std::move(now);
+            Py_RETURN_NONE;
+        }
+    if (all.size() >= 64) {
+        std::vector<Entry> old;  // swapped out, then released (as stockmemo)
+        old.swap(all);
+    }
+    all.push_back({py::reinterpret_borrow<py::object>(args[0]),
+                   py::reinterpret_borrow<py::object>(args[1]),
+                   py::reinterpret_borrow<py::object>(args[3]), std::move(now)});
+    Py_RETURN_NONE;
+}
+
+PyMethodDef kDefs[] = {
+    {"ai_memo_tags", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(tags)),
+     METH_FASTCALL,
+     "ai_memo_tags(watched) -> the version tags of the dicts / types in "
+     "`watched` now, or None when one cannot be tagged."},
+    {"ai_memo_get", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(get)),
+     METH_FASTCALL,
+     "ai_memo_get(key, miss) -> the answer stored for `key` while every tag "
+     "it was stored with holds; `miss` otherwise."},
+    {"ai_memo_put", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(put)),
+     METH_FASTCALL,
+     "ai_memo_put(key, watched, tags, answer): store Python's answer, if the "
+     "tags read before deciding still hold."},
+};
+
+}  // namespace surfacememo
+}  // namespace
 
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "dauntless renderer + sim host bindings";
@@ -11155,6 +16203,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const auto p = dauntless::transform_store().position(i, g);
               return py::make_tuple(p[0], p[1], p[2]);
           });
+    m.def("point_register", &point_register_impl);
+    m.def("point_make", [](double x, double y, double z) {
+        return py::reinterpret_steal<py::object>(make_point(x, y, z));
+    });
     m.def("bench_set_point_class",
           [](py::object cls) { bench_point_class() = std::move(cls); });
     m.def("bench_new_point",
@@ -11169,6 +16221,29 @@ PYBIND11_MODULE(_dauntless_host, m) {
               pt.attr("y") = p[1];
               pt.attr("z") = p[2];
           });
+    m.add_object("transform_point",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &g_transform_point_def, nullptr,
+                     m.attr("__name__").ptr())));
+    m.add_object("is_type_of",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &istype::is_type_of_def, nullptr, m.attr("__name__").ptr())));
+    m.add_object("subsystem_is_type_of",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &istype::subsystem_is_type_of_def, nullptr, m.attr("__name__").ptr())));
+    m.add_object("start_firing",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &startfire::start_firing_def, nullptr, m.attr("__name__").ptr())));
+    m.add_object("prox_near",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &proxnear::prox_near_def, nullptr, m.attr("__name__").ptr())));
+    m.add_object("point_copy",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &g_point_copy_def, nullptr,
+                     m.attr("__name__").ptr())));
+    m.add_object("bench_slots_point",
+                 py::reinterpret_steal<py::object>(PyCFunction_NewEx(
+                     &g_bench_slots_def, nullptr, m.attr("__name__").ptr())));
     struct BenchPoint {
         double x, y, z;
     };
@@ -11442,6 +16517,404 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return dauntless::combat::contains(x, y, z, cx, cy, cz, r);
           },
           "engine.appc.sensor_occlusion._contains(...).");
+
+    // ── The native set index: SetClass membership by class, contact view ─
+    // engine/appc/set_index.py is the only caller; sets.py's three doors and
+    // native_combat.reclassify keep it in step with SetClass._objects.
+    m.def("set_index_configure",
+          [](py::handle ship_cls, py::handle nebula_cls) {
+              auto& h = si::host();
+              if (h.ship_cls == ship_cls.ptr() && h.nebula_cls == nebula_cls.ptr())
+                  return;
+              if (!h.ix.sets().empty())
+                  throw std::logic_error("set index: reconfigured while it holds sets");
+              Py_INCREF(ship_cls.ptr());
+              Py_INCREF(nebula_cls.ptr());
+              Py_XDECREF(h.ship_cls);
+              Py_XDECREF(h.nebula_cls);
+              h.ship_cls = ship_cls.ptr();
+              h.nebula_cls = nebula_cls.ptr();
+          },
+          py::arg("ship_cls"), py::arg("nebula_cls"),
+          "The ShipClass and Nebula classes the contact view buckets by.");
+    m.def("set_index_add",
+          [](py::handle set, const std::string& ident, py::handle obj, bool is_ship,
+             std::int64_t target_id, std::int64_t obj_id) {
+              auto& h = si::host();
+              if (h.ship_cls == nullptr)
+                  throw std::logic_error("set index: set_index_configure first");
+              si::Key s = si::key_of(set);
+              bool new_set = !h.ix.has_set(s);
+              if (new_set) si::watch(h, set);  // first: a set that cannot be
+                                               // weakly referenced is refused
+              // The replaced key (an overwrite) may already be freed by the
+              // time this runs: it is never dereferenced.
+              h.ix.add(s, ident, si::key_of(obj), is_ship, target_id, obj_id);
+              if (new_set) {
+                  si::create_bucket(h, s, h.ship_cls);
+                  si::create_bucket(h, s, h.nebula_cls);
+              } else {
+                  // An overwrite took the slot out of every bucket; a new
+                  // entry is in none yet.
+                  si::reassess(h, s, obj.ptr());
+              }
+          },
+          py::arg("set"), py::arg("ident"), py::arg("obj"), py::arg("is_ship"),
+          py::arg("target_id"), py::arg("obj_id"),
+          "SetClass.AddObjectToSet, right after `_objects[ident] = obj`. "
+          "`obj_id` is obj's own GetObjID() or -1.");
+    m.def("set_index_leaving",
+          [](py::handle set, const std::string& ident) {
+              si::host().ix.mark_leaving(si::key_of(set), ident);
+          },
+          "A removal door, before its handlers: hidden from the contact view.");
+    m.def("set_index_remove",
+          [](py::handle set, const std::string& ident) {
+              si::host().ix.remove(si::key_of(set), ident);  // key not dereferenced
+          },
+          "A removal door, at `_objects.pop(ident)`.");
+    m.def("set_index_reclassified",
+          [](py::handle obj, bool is_ship) {
+              auto& h = si::host();
+              si::Key o = si::key_of(obj);
+              // A raising class test in one set still re-tests the others
+              // (each erases its own stale buckets); the first error is
+              // raised once every set and the class flag are done.
+              std::exception_ptr first;
+              for (si::Key s : h.ix.held_sets(o)) {
+                  try {
+                      si::reassess(h, s, obj.ptr());
+                  } catch (...) {
+                      if (!first) first = std::current_exception();
+                  }
+              }
+              h.ix.set_is_ship(o, is_ship);
+              if (first) std::rethrow_exception(first);
+          },
+          "obj.__class__ changed: re-test it against every bucket holding it.");
+    m.def("set_index_class_objects",
+          [](py::handle set, py::handle cls) {
+              auto& h = si::host();
+              si::Key s = si::key_of(set);
+              if (!h.ix.has_set(s)) return py::list();
+              if (!h.ix.has_bucket(s, si::key_of(cls))) si::create_bucket(h, s, cls.ptr());
+              return si::objects([&] { return h.ix.bucket(s, si::key_of(cls)); });
+          },
+          "GetClassObjectList: a new list, in `_objects` order, duplicates kept.");
+    m.def("set_index_ships",
+          [](py::handle set) {
+              auto& h = si::host();
+              return si::contact_view(h, set, h.ship_cls);
+          },
+          "Distinct ShipClass members not leaving, first-entry order.");
+    m.def("set_index_ship_positions",
+          [](py::handle set) { return si::ship_positions(si::host(), set); },
+          "((ship, (x, y, z)), ...) for the distinct live ships, same order as "
+          "set_index_ships, positions read from the transform store.");
+    m.def("set_index_nebulae",
+          [](py::handle set) {
+              auto& h = si::host();
+              return si::contact_view(h, set, h.nebula_cls);
+          },
+          "Distinct Nebula members not leaving, first-entry order.");
+    m.def("set_index_sets_holding",
+          [](py::handle obj) {
+              auto& h = si::host();
+              return si::objects([&] { return h.ix.sets_holding(si::key_of(obj)); });
+          },
+          "Every set holding obj under an entry that is not leaving.");
+    m.def("set_index_set_target",
+          [](py::handle ship, std::int64_t target_id) {
+              si::host().ix.set_target(si::key_of(ship), target_id);
+          },
+          py::arg("ship"), py::arg("target_id"),
+          "ShipClass.SetTarget, after `_target` changed: the new GetObjID() or -1.");
+    m.def("set_index_targeted_by",
+          [](py::handle set, std::int64_t target_id) {
+              return si::host().ix.targeted_by(si::key_of(set), target_id);
+          },
+          py::arg("set"), py::arg("target_id"),
+          "Entries of `set` whose ship targets `target_id`.");
+    m.def("set_index_popularity",
+          [](py::handle set, py::handle rater, std::int64_t target_id) {
+              return si::host().ix.popularity(si::key_of(set), si::key_of(rater), target_id);
+          },
+          py::arg("set"), py::arg("rater"), py::arg("target_id"),
+          "The stock GetTargetRating fPopularity, as an integer count.");
+    // ── SelectTarget's candidate rating (the `rating` namespace above) ────
+    m.def("combat_ai_target_rating",
+          [](py::handle inst, py::handle target, py::handle app) -> py::object {
+              try {
+                  return rating::rate(inst.ptr(), target.ptr(), app.ptr());
+              } catch (py::error_already_set& e) {
+                  // The SDK body runs the call again and raises its own.
+                  if (!e.matches(PyExc_Exception)) throw;
+                  return rating::reason(rating::host().r_no_mirror);
+              }
+          },
+          py::arg("inst"), py::arg("target"), py::arg("app"),
+          "SelectTarget.GetTargetRating for a stock instance, reading App from "
+          "`app` (the SDK function's __globals__[\"App\"]): the float rating, "
+          "the SDK's -1 with no ship, or a str reason (\"surface\" / "
+          "\"no_mirror\" / \"audit\") when the caller must run the SDK body "
+          "instead.");
+    // ── The stock verdict's memo (the `stockmemo` namespace above) ───────
+    for (PyMethodDef& def : stockmemo::kDefs) {
+        PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
+        if (fn == nullptr) throw py::error_already_set();
+        m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));
+    }
+    // ── The surface memo (the `surfacememo` namespace above) ─────────────
+    for (PyMethodDef& def : surfacememo::kDefs) {
+        PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
+        if (fn == nullptr) throw py::error_already_set();
+        m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));
+    }
+    // ── The memos' version guard and switch (the `aimemo` namespace) ─────
+    for (PyMethodDef& def : aimemo::kDefs) {
+        PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
+        if (fn == nullptr) throw py::error_already_set();
+        m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));
+    }
+    // ── The AI tree engine (aitree.h): the roster and its sleep scheduling ─
+    for (PyMethodDef& def : dauntless::host::aitree::method_defs()) {
+        PyObject* fn = PyCFunction_NewEx(&def, nullptr, nullptr);
+        if (fn == nullptr) throw py::error_already_set();
+        m.add_object(def.ml_name, py::reinterpret_steal<py::object>(fn));
+    }
+    // ── FireScript's Update (the `fire` namespace above) ─────────────────
+    m.def("combat_ai_fire_update",
+          [](py::handle inst, py::handle end_time, py::dict globals) -> py::object {
+              (void)end_time;  // the SDK's Update reads no end time
+              return fire::update(inst.ptr(), globals.ptr());
+          },
+          py::arg("inst"), py::arg("dEndTime"), py::arg("globals"),
+          "FireScript.Update for a stock instance, statement for statement "
+          "(the `fire` namespace): the PS_* code the SDK returns, its "
+          "exceptions raised unchanged.");
+    // ── AvoidObstacles' obstacle scan (the `avoid` namespace above) ──────
+    m.def("combat_ai_avoid_scan",
+          [](py::handle inst, py::handle ship, py::handle psr_obj,
+             py::handle near_iter) -> py::object {
+              using avoid::own;
+              using avoid::truth;
+              auto& h = avoid::host();
+              PyObject* it = near_iter.ptr();
+              if (!PyTuple_Check(it))
+                  throw py::type_error("combat_ai_avoid_scan: near_iter is not a GetNearObjects handle");
+              py::list out;  // before any key is read
+              Py_ssize_t start;
+              {
+                  py::object c = own(PyObject_GetAttr(it, h.s_cursor));
+                  start = PyLong_AsSsize_t(c.ptr());
+                  if (start == -1 && PyErr_Occurred()) throw py::error_already_set();
+              }
+              if (start < 0)
+                  throw py::value_error("combat_ai_avoid_scan: a negative cursor");
+              double psr = 0.0;
+              const bool psr_ok = avoid::exact_float(psr_obj.ptr(), psr);
+              avoid::Reads r;
+              avoid::read_all(r, inst.ptr(), ship.ptr(), psr, psr_ok);
+              // The ship or the parameters are not native reads: nothing is
+              // walked, and the caller runs the SDK loop (python/no_mirror).
+              if (!r.ship_native || !r.params_native) return py::object(py::none());
+
+              // One object through the SDK's own code, then everything read
+              // from Python is read again.
+              auto after_callback = [&] {
+                  avoid::note_surface();
+                  avoid::read_all(r, inst.ptr(), ship.ptr(), psr, psr_ok);
+              };
+              auto python_need = [&](PyObject* obj) {
+                  py::object v = own(PyObject_CallMethodObjArgs(
+                      inst.ptr(), h.s_NeedToAvoid, ship.ptr(), psr_obj.ptr(), obj, nullptr));
+                  if (truth(v.ptr()) && PyList_Append(out.ptr(), obj) < 0)
+                      throw py::error_already_set();
+                  after_callback();
+              };
+              auto python_whole = [&](PyObject* obj) {
+                  py::object a = own(PyObject_CallMethodNoArgs(obj, h.s_GetObjID));
+                  py::object b = own(PyObject_CallMethodNoArgs(ship.ptr(), h.s_GetObjID));
+                  int ne = PyObject_RichCompareBool(a.ptr(), b.ptr(), Py_NE);
+                  if (ne < 0) throw py::error_already_set();
+                  if (ne) {
+                      python_need(obj);
+                  } else {
+                      after_callback();
+                  }
+              };
+
+              const Py_ssize_t n = PyTuple_GET_SIZE(it);
+              Py_ssize_t cursor = start;
+              auto set_cursor = [&](Py_ssize_t c) {
+                  py::object v = own(PyLong_FromSsize_t(c));
+                  if (PyObject_SetAttr(it, h.s_cursor, v.ptr()) < 0) throw py::error_already_set();
+              };
+              try {
+                  for (Py_ssize_t i = start; i < n; ++i) {
+                      // `pObject = GetNextObject(...)`; `while (pObject != None)`
+                      py::object obj = py::reinterpret_borrow<py::object>(PyTuple_GET_ITEM(it, i));
+                      cursor = i + 1;
+                      int live = PyObject_RichCompareBool(obj.ptr(), Py_None, Py_NE);
+                      if (live < 0) throw py::error_already_set();
+                      if (!live) break;
+                      PyObject* o = obj.ptr();
+
+                      if (!r.ship_native || !r.params_native ||
+                          !readers::reads_stock(o, h.reads_filter)) {
+                          python_whole(o);
+                          continue;
+                      }
+                      // `pObject.GetObjID() != pShip.GetObjID()`
+                      PyObject* oid = PyObject_GetAttr(o, h.s_obj_id);
+                      if (oid == nullptr) {
+                          PyErr_Clear();
+                          python_whole(o);
+                          continue;
+                      }
+                      int ne = PyObject_RichCompareBool(oid, r.ship_id.ptr(), Py_NE);
+                      Py_DECREF(oid);
+                      if (ne < 0) throw py::error_already_set();
+                      if (!ne) continue;
+                      // NeedToAvoid's lDontAvoidTypes loop.
+                      if (avoid::filtered(o, r.types.ptr(), r.tags, r.cachable)) continue;
+                      // The arithmetic, on the readers' values.
+                      int phys = PyObject_IsInstance(o, r.physics_cls.ptr());
+                      if (phys < 0) throw py::error_already_set();
+                      if (!readers::reads_stock(o, phys ? h.reads_moving : h.reads_still)) {
+                          python_need(o);
+                          continue;
+                      }
+                      dauntless::combat::AvoidInputs in{};
+                      for (int k = 0; k < 3; ++k) {
+                          in.ship_pos[k] = r.ship_pos[k];
+                          in.ship_vel[k] = r.ship_vel[k];
+                      }
+                      if (!avoid::read_position(o, in.obj_pos) ||
+                          !avoid::read_radius(o, in.obj_radius) ||
+                          (phys && !avoid::read_velocity(o, in.obj_vel))) {
+                          python_need(o);
+                          continue;
+                      }
+                      in.is_physics = phys != 0;
+                      in.personal_space_radius = psr;
+                      in.prediction_time = r.prediction_time;
+                      if (dauntless::combat::need_to_avoid(in) && PyList_Append(out.ptr(), o) < 0)
+                          throw py::error_already_set();
+                  }
+              } catch (...) {
+                  // Where the SDK loop's handle would be when this raised.
+                  try {
+                      set_cursor(cursor);
+                  } catch (...) {
+                  }
+                  throw;
+              }
+              // A break leaves it past the None; a full walk at n, where the
+              // SDK's last GetNextObject returns None without moving it.
+              set_cursor(cursor);
+              return py::object(std::move(out));
+          },
+          py::arg("inst"), py::arg("ship"), py::arg("personal_space_radius"),
+          py::arg("near_iter"),
+          "AvoidObstacles.TestCourseOverride's loop for a stock instance: the "
+          "objects of the GetNearObjects handle `near_iter`, from its cursor, that "
+          "the SDK's NeedToAvoid would avoid, in order. Leaves the cursor where "
+          "the SDK loop would. None, with nothing walked, when the ship or the "
+          "instance's parameters are not native reads: the caller runs the SDK "
+          "loop.");
+    m.def("set_index_obj_id",
+          [](py::handle obj) { return si::host().ix.obj_id(si::key_of(obj)); },
+          py::arg("obj"), "obj's own id as the index holds it; -1 if no set holds it.");
+    m.def("set_index_popularity_by_key",
+          [](py::handle set, py::handle rater, py::handle candidate) {
+              return si::host().ix.popularity_by_key(si::key_of(set), si::key_of(rater),
+                                                     si::key_of(candidate));
+          },
+          py::arg("set"), py::arg("rater"), py::arg("candidate"),
+          "set_index_popularity with the candidate's id read from the index "
+          "(the question a native reader holding only keys asks).");
+    m.def("set_index_targeting",
+          [](py::handle set, std::int64_t target_id) {
+              auto& h = si::host();
+              return si::objects([&] { return h.ix.targeting(si::key_of(set), target_id); });
+          },
+          py::arg("set"), py::arg("target_id"),
+          "The entries' ships targeting `target_id`, in set order (duplicates kept).");
+    m.def("set_index_visible",
+          [](py::handle set, py::handle obj) {
+              return si::host().ix.visible(si::key_of(set), si::key_of(obj));
+          },
+          "Does obj have an entry in set that is not leaving?");
+    m.def("set_index_hide",
+          [](py::handle set) {
+              auto& h = si::host();
+              si::Key s = si::key_of(set);
+              bool changed = si::contact_nonempty(h, s);
+              h.ix.hide_contacts(s);
+              return changed;
+          },
+          "Hide every entry of the set from the contact view (class lists and "
+          "counts untouched). True if the view was not already empty.");
+    m.def("set_index_hide_all",
+          [] {
+              auto& h = si::host();
+              // Computed INSIDE produce: the output list must exist before
+              // any set key is read (its allocation can collect and free
+              // sets). produce runs exactly once, so each set hides once.
+              return si::objects([&] {
+                  std::vector<si::Key> changed;
+                  for (si::Key s : h.ix.sets()) {
+                      if (si::contact_nonempty(h, s)) changed.push_back(s);
+                      h.ix.hide_contacts(s);
+                  }
+                  return changed;
+              });
+          },
+          "Hide every tracked set's contact view; the sets whose view was not "
+          "already empty.");
+    m.def("set_index_forget_set",
+          [](py::handle set) {
+              std::vector<py::object> dead;
+              si::forget(si::host(), si::key_of(set), dead);
+          },
+          "Drop a set (a set deleted by a carry-over mission change).");
+    m.def("set_index_reset",
+          [] {
+              auto& h = si::host();
+              std::vector<py::object> dead;
+              for (si::Key s : h.ix.sets()) si::forget(h, s, dead);
+          },
+          "Drop every set (explicit only: a set's death forgets it anyway).");
+    m.def("set_index_entry_count",
+          [](py::handle set) { return si::host().ix.entry_count(si::key_of(set)); },
+          "Entries the index holds for `set` (len of its `_objects` when in step).");
+    m.def("set_index_key_state",
+          [](std::uintptr_t key) {
+              auto& h = si::host();
+              py::dict d;  // the key is never dereferenced (it may be dead)
+              d["set"] = h.ix.has_set(key);
+              d["watched"] = h.watch.count(key) != 0;
+              d["entries"] = h.ix.entry_count(key);
+              d["held_by"] = h.ix.held_sets(key).size();
+              return d;
+          },
+          py::arg("key"),
+          "What the index holds under one address (id(obj)): tracked as a "
+          "set, watched, its entries, and how many sets hold it as a member.");
+    m.def("set_index_tracked",
+          [] {
+              auto& h = si::host();
+              py::dict d;
+              d["sets"] = h.ix.sets().size();
+              d["entries"] = h.ix.entry_count();
+              d["objects"] = h.ix.object_records();
+              d["watched"] = h.watch.size();
+              d["classes"] = h.classes.size();
+              return d;
+          },
+          "What the index tracks: sets, entries, object records, weakrefs, "
+          "held bucket classes.");
 
     // ── Native combat: the mirror store ─────────────────────────────────────
     // Rows Python keeps in sync and the detection kernel reads (spec §7.1).

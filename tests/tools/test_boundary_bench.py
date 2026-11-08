@@ -7,7 +7,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 VARIANTS = ("py_method", "bind_tuple", "bind_new_obj", "bind_fill",
-            "native_point", "buffer_view", "push_scalar", "noop")
+            "bind_slots", "native_point", "buffer_view", "push_scalar", "noop")
 
 
 def test_boundary_bench_runs_every_variant():

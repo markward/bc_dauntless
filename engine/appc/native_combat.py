@@ -3545,7 +3545,10 @@ def _push_all(obj, h) -> None:
 
 
 def reclassify(ship) -> None:
-    """`ship.__class__` changed (engine.rocks.rock): re-push its class flags."""
+    """`ship.__class__` changed (engine.rocks.rock): re-push its class flags,
+    and re-file it in the set index's class buckets."""
+    from engine.appc import set_index
+    set_index.on_reclassified(ship)
     proximity_cache.bump()
     cls = type(ship)
     if cls not in _k2_seen_set:
@@ -3629,8 +3632,8 @@ def _members(pSet) -> tuple:
 
 def push_set_members(pSet) -> None:
     """Push the set's ordered ship and nebula lists, exactly
-    contact_index.ships_in / nebulae_in. contact_index calls this after every
-    mutation of the set's buckets."""
+    contact_index.ships_in / nebulae_in. engine/appc/set_index.py calls this
+    on any change to a set's contact view (`_push`)."""
     if not _enabled:
         return
     h = _slot_of(pSet)
@@ -4778,7 +4781,7 @@ class _K1Walk:
     (k1_fire_control.h, PINNING) -- and its materialised walk: its number
     in the session, its system and its offset object."""
 
-    __slots__ = ("pins", "offset", "walk", "walked", "result")
+    __slots__ = ("pins", "offset", "walk", "walked", "result", "pinned")
 
     def __init__(self) -> None:
         self.pins = {}
@@ -4786,6 +4789,9 @@ class _K1Walk:
         self.walk = None
         self.walked = None
         self.result = 0
+        # The system _run_k1 pinned before the kernel walked (a system
+        # session's), or None.
+        self.pinned = None
 
     def materialise(self, n, h):
         """The offset OBJECT of the session's walk `n`, of the system with
@@ -4800,7 +4806,15 @@ class _K1Walk:
         if self.walk == n:
             return self.offset
         system = self.obj(h)
-        self.pin_system(system)
+        # A system session (k1_system) pinned this system, its children and
+        # its target list before the kernel walked; pinning it again here
+        # added nothing (tests/unit/test_native_start_firing.py, the system
+        # session test): the children are unchanged, the kernel only ever
+        # writes a SUBSET of the target list (k1_fire_control.cc
+        # write_target_list: a prune or a clear), and every object a write
+        # named was pinned as it was resolved (`live`).
+        if system is not self.pinned:
+            self.pin_system(system)
         manual = _h.combat_k1_walk_manual_offset(n)
         self.offset = (system.__dict__.get("_held_offset") if manual is None
                        else TGPoint3(*manual))
@@ -5095,6 +5109,7 @@ def _run_k1(system, offset=_NO_OFFSET) -> int:
     walk = _K1Walk()
     if system is not None:
         walk.pin_system(system)
+        walk.pinned = system
     if offset is not _NO_OFFSET:
         walk.walk, walk.offset, walk.walked = 1, offset, system
     prev = _UNSET

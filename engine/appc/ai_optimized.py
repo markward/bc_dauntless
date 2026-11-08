@@ -11,6 +11,26 @@ Python-backed node outright. The BaseAI default (0x00470750) is
 ``MOV EAX,ECX; RET`` — return ``this``, i.e. "I have no optimized version,
 use me".
 
+Phase 6 AI part 2 (spec docs/superpowers/specs/2026-11-05-phase6-engine-
+stages-native-design.md section 5) built native versions of three hot bodies,
+used for an instance the stock rule (engine/appc/ai_native.py) calls stock and
+the SDK Python otherwise (the mod path; no build switch):
+
+* ``AvoidObstacles.TestCourseOverride``'s obstacle scan -> native. STAYS SDK
+  Python: the rest of AvoidObstacles, and its RNG (the draws keep the stream
+  order the goldens pin).
+* ``SelectTarget.GetTargetRating`` -> native. STAYS SDK Python:
+  ``FindGoodTarget``'s candidate step (the sensor gate patches it).
+* ``FireScript.Update`` -> native, with ``ChooseTargetSubsystem`` and
+  ``ChooseTorpType``. STAYS SDK Python: every side effect, RNG draw and script
+  call it makes is performed by calling back into the SDK object.
+
+The A/B (tests/integration/test_native_ai_ab.py) runs a seeded scene with
+``ai_native._force_python`` (test-only) and without, byte for byte. The
+verdicts and surfaces are memoised by the host under type / module-dict
+version tags (CPython 3.11 only; off elsewhere, still exact): see
+ai_native.py's docstring for the model and the accepted blind spots.
+
 Four classes are registered in the binary: ``AvoidObstacles``, ``FireScript``,
 ``ManagePower``, ``SelectTarget``. In the shipped game all four Python ``Update``
 bodies are DEAD CODE — the native nodes replace them at bind time. We have no
@@ -69,11 +89,13 @@ an entry here, for two different reasons:
   but that is a different class, and it is not worth buying a new wedge with. Read
   PS_NORMAL as "the pre-branch behaviour, minus the lethality", not as faithfulness.
 
-* ``SelectTarget`` is deliberately NOT registered, even though the binary
-  replaces it. Its Python body cannot return PS_DONE at all (its no-target path
-  returns PS_SKIP_DORMANT), so running it cannot kill a node — it needs no
-  protection. Pinned by
+* ``SelectTarget`` needs no protection: its Python body cannot return PS_DONE
+  at all (its no-target path returns PS_SKIP_DORMANT), so running it cannot
+  kill a node. Pinned by
   ``tests/unit/test_preprocess_done_is_lethal.py::test_select_targets_sdk_body_cannot_return_ps_done``.
+  It IS registered (phase 6 AI part 2, Task 3), for speed only: a subclass
+  whose one method, ``GetTargetRating``, is native for a stock instance (see
+  _native_select_class). ``Update`` and everything else stay the SDK's.
 
 ``AlertLevel`` is deliberately absent from both registries — it is not in the
 binary's either, which is exactly why *its* Python body correctly returns
@@ -81,10 +103,15 @@ PS_NORMAL.
 """
 
 import functools
+import math
 import os
+import sys
+import types
 
 import App
 
+from engine.appc import ai_native
+from engine.appc import transform_store as _ts
 from engine.core import frame_profiler
 
 
@@ -278,11 +305,329 @@ def _engine_avoidance_class(base: type) -> type:
     return cls
 
 
+# ── AvoidObstacles: the obstacle scan, native for a stock instance ─────────
+#
+# Phase 6 AI part 2, Task 2. NeedToAvoid was 19% of AI time at 128 ships
+# (SIG-205). The engine TestCourseOverride below is the SDK's
+# (AI/Preprocessors.py:1713-1767) with ONE change: the while loop over the
+# near objects is one ``combat_ai_avoid_scan`` call, which returns the SDK
+# loop's ``lAvoidObjects``, identical by object and order
+# (native/src/host/host_bindings.cc, the ``avoid`` namespace;
+# native/src/combat/include/dauntless/combat/ai_avoid.h). Every App call
+# before the loop, the GetNearObjects / EndObjectIteration pair and
+# AvoidObjects (whose random unit vectors stay on their Python stream) are
+# the SDK's, in its order. It runs only for an instance the SDK would run
+# unchanged (ai_native.preprocessor_is_stock on the three methods below) whose
+# NeedToAvoid still sees the engine's App / math surface; anything else runs
+# the SDK method itself.
+
+#: The preprocessor methods the native path replaces or calls.
+_AVOID_METHODS = ("TestCourseOverride", "NeedToAvoid", "AvoidObjects")
+
+
+# ── One gate-cost model for the three native kinds ───────────────────────────
+#
+# Each gate is two halves. The INSTANCE half (preprocessor_is_stock) is
+# ai_native's, its class verdict remembered by the host per type version
+# (`stockmemo`). The MODULE-SURFACE half -- what an SDK body's globals, the
+# engine classes the mirrored readers build and the transform store resolve
+# to -- is decided here, in Python, by a _decide_* function that reads only
+# dicts and types; the host (`surfacememo`) remembers its answer under the
+# version tags of every one of them, read BEFORE deciding, and gives it back
+# while all hold. Any insert, replace or delete in one of those dicts, or any
+# change to one of those types, and Python decides again on the next call.
+# A decision that reads something no tag covers (an SDK function with a
+# `_dauntless_wraps` link, a module global bound to a non-module) is decided
+# every call. On a Python where the host memos are off (any but 3.11, or a
+# failed self-test; native/src/host/host_bindings.cc, `aimemo`) every call
+# decides: slower, still exact.
+
+#: The host's surface memo (host_bindings.cc, `surfacememo`): (tags, get,
+#: put), () without the host; looked up on first use.
+_SURFACE_MEMO = [None]
+_SURFACE_MISS = object()
+
+
+def _surface_memo():
+    memo = _SURFACE_MEMO[0]
+    if memo is None:
+        try:
+            import _dauntless_host as h
+            status = h.ai_memo_status()
+            # Not compiled / self-test failed (Python 3.12+, a tag that does
+            # not move): off for good, so decide straight away and never
+            # build the watched tuple. A memo forced off at run time (tests)
+            # stays on this path: its queries answer "miss".
+            if status["compiled"] and status["self_test"]:
+                memo = (h.ai_memo_tags, h.ai_memo_get, h.ai_memo_put)
+            else:
+                memo = ()
+        except (ImportError, AttributeError):
+            memo = ()
+        _SURFACE_MEMO[0] = memo
+    return memo
+
+
+def _memo_answer(key, decide, watched_of, arg):
+    """``decide(arg)``, remembered by the host under `key` while every dict
+    and type ``watched_of(arg)`` lists (taken before deciding) keeps its
+    version tag. ``watched_of`` returns None for a decision no tag covers:
+    decided every call. `decide` and `watched_of` are passed by the caller as
+    module globals, so a test can count the decisions."""
+    memo = _SURFACE_MEMO[0]
+    if memo is None:
+        memo = _surface_memo()
+    if not memo:
+        return decide(arg)
+    hit = memo[1](key, _SURFACE_MISS)
+    if hit is not _SURFACE_MISS:
+        return hit
+    watched = watched_of(arg)
+    tags = memo[0](watched) if watched is not None else None
+    answer = decide(arg)
+    if tags is not None:
+        memo[2](key, watched, tags, answer)
+    return answer
+
+
+def _module_dicts(g, names):
+    """The dicts behind `g[name]` for each of `names` a decision reads an
+    attribute of: a plain module's ``__dict__``; nothing for a missing name
+    (getattr(None, ...) reads nothing). None when one is bound to anything
+    else (its attribute lookup is not a dict's: decided every call)."""
+    out = ()
+    for name in names:
+        m = g.get(name)
+        if m is None:
+            continue
+        if type(m) is not types.ModuleType:
+            return None
+        out += (m.__dict__,)
+    return out
+
+
+def _sdk_function(cls, name):
+    """`cls`'s `name` with our wrappers unwrapped, and whether it is the raw
+    function (no `_dauntless_wraps` link to follow, so its own dict and
+    globals are all a decision about it reads)."""
+    raw = getattr(cls, name, None)
+    fn = ai_native._unwrap(raw)
+    return fn, fn is not None and fn is raw
+
+
+def _surface_snapshot():
+    from engine.appc import objects as _objects
+    from engine.appc import planet as _planet
+    from engine.appc import transform_store as _ts
+    from engine.appc.math import TGPoint3
+    point = {n: TGPoint3.__dict__[n] for n in
+             ("__init__", "Set", "SetXYZ", "Subtract", "Length",
+              "SqrLength", "Dot")}
+    return {
+        "cast": _objects.PhysicsObjectClass_Cast,
+        "point_cls": TGPoint3,
+        "point": point,
+        "sqrt": math.sqrt,
+        # ObjectClass.GetWorldLocation consults engine.appc.objects' get_store.
+        "objects": _objects,
+        "get_store": _objects.get_store,
+        "store_cls": _ts.NativeTransformStore,
+        "get_position": _ts.NativeTransformStore.get_position,
+        "iteration": _planet._ProximityIteration,
+        "next_object": _planet._ProximityIteration.next_object,
+        "get_next": _planet.ProximityManager.GetNextObject,
+    }
+
+
+#: What NeedToAvoid's arithmetic and the scan's reads rest on, taken at import
+#: (as ai_native's surface snapshot): a later replacement is not stock.
+_AVOID_SURFACE = _surface_snapshot()
+
+
+def _avoid_surface_is_stock(node) -> bool:
+    """NeedToAvoid's module still calls the engine's App.PhysicsObjectClass_Cast,
+    App.TGPoint3 (its methods unpatched) and math.sqrt, and is the App this
+    module calls. Decided per node type (_decide_avoid_surface), remembered
+    by the host (_memo_answer)."""
+    cls = type(node)
+    return _memo_answer(cls, _decide_avoid_surface, _avoid_watched, cls)
+
+
+def _avoid_watched(cls):
+    """What _decide_avoid_surface reads: the node type (its NeedToAvoid,
+    through the MRO), that function's dict and globals, App's dict, the
+    engine TGPoint3 and the module NeedToAvoid calls math from."""
+    fn, raw = _sdk_function(cls, "NeedToAvoid")
+    if not raw:
+        return None
+    g = fn.__globals__
+    tail = _module_dicts(g, ("math",))
+    if tail is None:
+        return None
+    return (cls, fn.__dict__, g, App.__dict__,
+            _AVOID_SURFACE["point_cls"]) + tail
+
+
+def _decide_avoid_surface(cls) -> bool:
+    fn = ai_native._unwrap(getattr(cls, "NeedToAvoid", None))
+    if fn is None:
+        return False
+    g = fn.__globals__
+    app = g.get("App")
+    snap = _AVOID_SURFACE
+    if app is not App or getattr(app, "PhysicsObjectClass_Cast", None) \
+            is not snap["cast"]:
+        return False
+    point_cls = snap["point_cls"]
+    if getattr(app, "TGPoint3", None) is not point_cls:
+        return False
+    table = point_cls.__dict__
+    for name, want in snap["point"].items():
+        if table.get(name) is not want:
+            return False
+    return getattr(g.get("math"), "sqrt", None) is snap["sqrt"]
+
+
+def _native_store_ok() -> bool:
+    """GetWorldLocation reads the native transform store the scan reads:
+    the get_store it calls (engine.appc.objects' global) is the boot one and
+    hands back the native store (_decide_store, remembered by the host)."""
+    return _memo_answer(_STORE_KEYS["avoid"], _decide_store, _store_watched,
+                        "avoid")
+
+
+#: One memo key per kind's store check.
+_STORE_KEYS = {"avoid": object(), "select": object(), "fire": object()}
+
+
+def _store_watched(_kind):
+    """What _decide_store reads: engine.appc.objects' and transform_store's
+    dicts (get_store, the store singleton, NativeTransformStore) and the
+    native store class (its readers)."""
+    return (_AVOID_SURFACE["objects"].__dict__, _ts.__dict__,
+            _AVOID_SURFACE["store_cls"])
+
+
+def _decide_store(kind) -> bool:
+    """The store `kind`'s mirrored reads read is the native one, its readers
+    unpatched. Two guards, for two different things:
+
+    * `objects.get_store` (and the singleton's class) decides which path
+      ObjectClass.GetWorldLocation takes; a patched get_store diverts it.
+    * `NativeTransformStore.get_position` is NOT read by GetWorldLocation any
+      more (it builds its point with the raw `transform_point` binding), so a
+      patch of it is invisible there by design. It stays guarded here only
+      because the native scans mirror the position the store holds: a patched
+      reader is a mod override the mirror would not see, so the kind falls
+      back to Python.
+
+    Each kind guards the readers its mirror stands in for: get_position for
+    all; get_rotation_col for select's forward; get_rotation for fire's
+    rotations."""
+    snap = _AVOID_SURFACE
+    get_store = snap["objects"].__dict__.get("get_store")
+    if not (get_store is snap["get_store"]
+            and type(get_store()) is snap["store_cls"]
+            and snap["store_cls"].get_position is snap["get_position"]):
+        return False
+    if kind == "select":
+        return (_ts.NativeTransformStore.get_rotation_col
+                is _SELECT_SURFACE["get_rotation_col"])
+    if kind == "fire":
+        return (_ts.NativeTransformStore.get_rotation
+                is _FIRE_SURFACE["get_rotation"])
+    return True
+
+
+def _native_scan_applies(manager, handle) -> bool:
+    """The handle is ours and walking it is the engine's GetNextObject."""
+    snap = _AVOID_SURFACE
+    return (type(handle) is snap["iteration"]
+            and getattr(type(manager), "GetNextObject", None) is snap["get_next"]
+            and snap["iteration"].next_object is snap["next_object"]
+            and "GetNextObject" not in getattr(manager, "__dict__", ()))
+
+
+#: The host's bindings, looked up on the first native call (the host module
+#: is not importable when this module is): [avoid scan, target rating, fire].
+_BINDINGS = [None]
+
+
+def _bindings():
+    b = _BINDINGS[0]
+    if b is None:
+        import _dauntless_host as h
+        b = _BINDINGS[0] = (h.combat_ai_avoid_scan, h.combat_ai_target_rating,
+                            h.combat_ai_fire_update)
+    return b
+
+
+def _native_test_course_override(self):
+    """AvoidObstacles.TestCourseOverride (AI/Preprocessors.py:1713-1767),
+    statement for statement, with the loop native."""
+    # Get our ship...
+    pShip = self.pCodeAI.GetShip()
+    if (pShip == None):                              # noqa: E711 (SDK spelling)
+        return (None, None)
+
+    pSet = pShip.GetContainingSet()
+    if (pSet == None):                               # noqa: E711
+        return (None, None)
+
+    # Predict our location in the near future...
+    vPredictedLocation = pShip.GetPredictedPosition(
+        pShip.GetWorldLocation(),
+        pShip.GetVelocityTG(),
+        pShip.GetAccelerationTG(),
+        self.fPredictionTime)
+
+    # Figure out how far that is from us...
+    vDiff = App.TGPoint3()
+    vDiff.Set( vPredictedLocation )
+    vDiff.Subtract( pShip.GetWorldLocation() )
+    fDistance = vDiff.Length()
+
+    fPersonalSpaceRadius = pShip.GetRadius() * self.fPersonalSpace
+    fCheckRadius = fDistance + fPersonalSpaceRadius
+    if fCheckRadius < self.fMinimumRadius:
+        fCheckRadius = self.fMinimumRadius
+
+    pProxManager = pSet.GetProximityManager()
+    lAvoidObjects = []
+    if (pProxManager != None):                       # noqa: E711
+        pObjectIter = pProxManager.GetNearObjects( vPredictedLocation, fCheckRadius )
+        found = None
+        if _native_scan_applies(pProxManager, pObjectIter):
+            # None, with nothing walked, when the ship or this node's
+            # parameters are not native reads.
+            scan = (_BINDINGS[0] or _bindings())[0]
+            found = scan(self, pShip, fPersonalSpaceRadius, pObjectIter)
+        if found is not None:
+            ai_native.note("avoid", "native")
+            lAvoidObjects = found
+            ai_native.count("avoid", "avoided", len(lAvoidObjects))
+        else:
+            # A manager or handle that is not the engine's, or a ship or
+            # parameters the scan cannot read: the SDK loop.
+            ai_native.note("avoid", "python", "no_mirror")
+            pObject = pProxManager.GetNextObject( pObjectIter )
+            while (pObject != None):                 # noqa: E711
+                if pObject.GetObjID() != pShip.GetObjID():
+                    if self.NeedToAvoid( pShip, fPersonalSpaceRadius, pObject ):
+                        lAvoidObjects.append( pObject )
+                pObject = pProxManager.GetNextObject( pObjectIter )
+        pProxManager.EndObjectIteration( pObjectIter )
+
+    return self.AvoidObjects( pShip, lAvoidObjects )
+
+
 _PHASED_AVOIDANCE_CLASSES: dict = {}
 
 
 def _phased_avoidance_class(base: type) -> type:
-    """Non-lethal `base` plus the one-off first-schedule phase offset.
+    """Non-lethal `base` plus the one-off first-schedule phase offset, and
+    the native obstacle scan for a stock instance (``TestCourseOverride``,
+    marked ``_dauntless_native_entry``; see _native_test_course_override).
 
     Split out of _engine_avoidance_class so the SDK scan gets it too. The
     offset and the evading cadence below were only ever applied to the ENGINE
@@ -315,8 +660,26 @@ def _phased_avoidance_class(base: type) -> type:
         with frame_profiler.scope("ai.avoid"):
             return non_lethal.Update(self, *args, **kwargs)
 
+    def TestCourseOverride(self):
+        """The SDK's TestCourseOverride with its obstacle loop native, for a
+        stock instance (_native_test_course_override); otherwise the SDK's
+        own, resolved at call time so a patch is seen."""
+        if not (ai_native.preprocessor_is_stock(self, "AvoidObstacles",
+                                                _AVOID_METHODS)
+                and _avoid_surface_is_stock(self)):
+            ai_native.note("avoid", "python", "not_stock")
+            return non_lethal.TestCourseOverride(self)
+        if not _native_store_ok():
+            ai_native.note("avoid", "python", "no_mirror")
+            return non_lethal.TestCourseOverride(self)
+        # Counts itself: native only where the scan runs (early returns
+        # count nothing).
+        return _native_test_course_override(self)
+    TestCourseOverride._dauntless_native_entry = True
+
     cls = type("Phased" + base.__name__, (non_lethal,),
-               {"GetNextUpdateTime": GetNextUpdateTime, "Update": Update})
+               {"GetNextUpdateTime": GetNextUpdateTime, "Update": Update,
+                "TestCourseOverride": TestCourseOverride})
     _PHASED_AVOIDANCE_CLASSES[base] = cls
     globals()[cls.__name__] = cls
     return cls
@@ -374,6 +737,237 @@ def _replace_manage_power(instance):
     return ManagePower(params.get("bConservePower", 0))
 
 
+# ── FireScript: the firing cycle, native for a stock instance ────────────
+#
+# Phase 6 AI part 2, Task 4. FireScript was 11.1% of AI time at 128 ships
+# (SIG-205). Its Update -- and every FireScript method it reaches -- runs as
+# one ``combat_ai_fire_update`` call (native/src/host/host_bindings.cc, the
+# ``fire`` namespace; the arithmetic in native/src/combat/include/dauntless/
+# combat/ai_fire.h), statement for statement: every call the SDK makes, its
+# side effects above all, is the same Python call in the same order, and the
+# instance's attributes are read and written where the SDK reads and writes
+# them. Only the mirrored engine reads (positions, rotations, velocities,
+# subsystem positions, tube directions) and the vector arithmetic on them are
+# native. TargetVisible (the sensor gate's) and StopFiring are called back as
+# methods. Task 5 made ChooseTargetSubsystem (with GetTargetableSubsystems,
+# RateSubsystemForTargeting, PickTargetSubsystemFromList and our
+# GetChildTargets) and ChooseTorpType native the same way: their control flow
+# and sums, a subsystem's GetObjID; the RNG draws, the fuzzy logic and the
+# torpedo scripts stay the SDK's Python calls, in its order. The PS_DONE ->
+# PS_NORMAL mapping (_non_lethal_class) stays around it.
+
+def GetChildTargets(self, pSubsystem):
+    """Targetable, still-alive descendants of a non-targetable subsystem.
+
+    Called from the SDK's ChooseTargetSubsystem (Preprocessors.py:832)
+    and defined nowhere in the SDK — it belonged to BC's NATIVE
+    FireScript, which is unreconstructed. Stated assumption: the only
+    reading under which the SDK loop makes sense. Every stock hardpoint
+    marks its aggregator systems SetTargetable(0) and their banks/tubes
+    targetable (galaxy.py:774-995), so this branch is the common case for
+    any explicit TargetSubsystems list (Fleet/DisableTarget, Player/
+    Disable*). Without it: AttributeError out of the AI tick.
+
+    FireScript's engine class carries this one function (_non_lethal_class);
+    the native Update runs its statements itself for an instance whose type
+    resolves GetChildTargets to it, unshadowed (_fire_update), and this
+    module's GetChildTargets, int, range and hasattr unchanged (the fire
+    surface): change one, change the binding (host_bindings.cc,
+    fire::child_targets).
+    """
+    out = []
+    n = int(pSubsystem.GetNumChildSubsystems()) if hasattr(pSubsystem, "GetNumChildSubsystems") else 0
+    for i in range(n):
+        child = pSubsystem.GetChildSubsystem(i)
+        if child is None:
+            continue
+        if child.IsTargetable() and child.GetCondition() > 0:
+            out.append(child)
+        else:
+            out.extend(GetChildTargets(self, child))
+    return out
+
+
+#: The GetChildTargets the native Update mirrors, taken at import.
+_GET_CHILD_TARGETS = GetChildTargets
+
+
+#: Every FireScript method the native Update replaces or calls (Task 5 made
+#: ChooseTargetSubsystem, the helpers it reaches and ChooseTorpType native).
+#: A mod overriding any of them runs the SDK Update. Our GetChildTargets is
+#: not an SDK function; its own gate is _fire_helpers_stock.
+_FIRE_METHODS = (
+    "Update", "GetTarget", "TargetInRange", "TargetVisible", "StopFiring",
+    "ChooseTargetSubsystem", "GetTargetableSubsystems",
+    "RateSubsystemForTargeting", "PickTargetSubsystemFromList",
+    "FireSystemAtTarget", "ConfigureWeaponSystem", "WeaponTooDangerous",
+    "ChooseTorpType", "CheckGoodShot", "GetWeaponInfo",
+    "PredictTargetLocation",
+)
+
+#: The builtins the SDK bodies call (len, range, float, the loader's
+#: `list(d.keys())` and its __import__ lambda's isinstance / str): the native
+#: code uses CPython's own.
+_FIRE_BUILTINS = ("len", "range", "isinstance", "str", "float", "list")
+
+#: The builtins our GetChildTargets calls, and its own recursion.
+_CHILD_GLOBALS = ("int", "range", "hasattr", "GetChildTargets")
+
+
+def _fire_surface_snapshot():
+    import builtins
+    import operator
+    from engine.appc import math as _engine_math
+    from engine.appc import objects as _objects
+    from engine.appc import ships as _ships
+    from engine.appc import subsystems as _subsystems
+    from engine.appc import transform_store as _ts
+    from engine.appc.math import TGMatrix3, TGPoint3
+    point_names = ("__init__", "Set", "SetXYZ", "Subtract", "Length",
+                   "SqrLength", "Dot", "Add", "Unitize", "MultMatrixLeft")
+    matrix_names = ("__init__", "Transpose", "set_from_tuple")
+    # (namespace, keys): each key must still hold exactly what it held at
+    # import. The modules whose bodies the readers mirror build the engine
+    # TGPoint3 / TGMatrix3, whose methods (and math.sqrt behind Length) the
+    # arithmetic reproduces.
+    tables = (
+        (_engine_math.__dict__, ("TGPoint3", "TGMatrix3", "_math")),
+        (math.__dict__, ("sqrt",)),
+        (_objects.__dict__, ("TGPoint3", "TGMatrix3")),
+        (_ships.__dict__, ("TGPoint3",)),
+        (_subsystems.__dict__, ("TGPoint3",)),
+        (TGPoint3.__dict__, point_names),
+        (TGMatrix3.__dict__, matrix_names),
+        # PredictTargetLocation's reads run ahead of this cast: the engine's
+        # pure isinstance test only (Task 5).
+        (App.__dict__, ("PhysicsObjectClass_Cast",)),
+        # GetChildTargets' globals: this module's own (unshadowed builtins,
+        # its recursion), then the builtins themselves.
+        (globals(), _CHILD_GLOBALS),
+        (builtins.__dict__, _CHILD_GLOBALS[:3]),
+    )
+    # Flat, so one C-level pass checks them all (_fire_surface_globals):
+    # each table's own live `get` (a class's is its mappingproxy's), its key,
+    # and what that key held.
+    gets = tuple(d.get for d, keys in tables for _k in keys)
+    keys = tuple(k for _d, ks in tables for k in ks)
+    # What the host memo watches (_fire_surface_globals): each table's own
+    # dict, a class by its type (whose version tag covers its __dict__).
+    watched = [d for d, _keys in tables if isinstance(d, dict)]
+    watched += [TGPoint3, TGMatrix3]
+    return {
+        "watched": tuple(watched),
+        "gets": gets,
+        "keys": keys,
+        "values": tuple(map(operator.call, gets, keys)),
+        "call": operator.call,
+        "builtin_names": _FIRE_BUILTINS,
+        "builtins": tuple(getattr(builtins, n) for n in _FIRE_BUILTINS),
+        "is_": operator.is_,
+        "get_rotation": _ts.NativeTransformStore.get_rotation,
+    }
+
+
+#: What FireScript's native arithmetic rests on, taken at import (as
+#: _AVOID_SURFACE): a later replacement is not stock.
+_FIRE_SURFACE = _fire_surface_snapshot()
+
+
+def _fire_helpers_stock(inst) -> bool:
+    """The instance runs our GetChildTargets: its type resolves the name to
+    that very function and its own dict does not shadow it."""
+    return (getattr(type(inst), "GetChildTargets", None) is _GET_CHILD_TARGETS
+            and "GetChildTargets" not in inst.__dict__)
+
+
+def _decide_fire_surface(g):
+    """`g` (an SDK FireScript's globals) if they are stock: the engine's App,
+    CPython's builtins (len, range, float, and the loader's `list(...)` and
+    __import__ lambda's isinstance / str), and underneath, the engine TGPoint3
+    / TGMatrix3 its mirrored readers build (methods unpatched, math.sqrt
+    behind Length), the engine's pure App.PhysicsObjectClass_Cast and
+    GetChildTargets' own globals. None otherwise."""
+    if g.get("App") is not App or not g.keys().isdisjoint(_FIRE_BUILTINS):
+        return None
+    snap = _FIRE_SURFACE
+    is_ = snap["is_"]
+    b = g.get("__builtins__")
+    table = b if isinstance(b, dict) else getattr(b, "__dict__", None)
+    if table is None:
+        return None
+    # Identity, never ==; a deleted name reads None, which nothing was.
+    get = table.get
+    if (all(map(is_, map(get, snap["builtin_names"]), snap["builtins"]))
+            and all(map(is_, map(snap["call"], snap["gets"], snap["keys"]),
+                        snap["values"]))):
+        return g
+    return None
+
+
+def _fire_surface_globals(base):
+    """The globals the SDK FireScript (`base`) runs on -- its Update's
+    __globals__, which the binding loads App and the builtins from -- if they
+    are stock (_decide_fire_surface), else None. Remembered by the host
+    (_memo_answer) under the tags of `base` (its Update), that function's own
+    __dict__ (a `_dauntless_wraps` link), its globals and their builtins, and
+    the snapshot's tables; an Update with a `_dauntless_wraps` link is
+    decided every call."""
+    return _memo_answer(base, _decide_fire_globals, _fire_watched, base)
+
+
+def _fire_watched(base):
+    fn, raw = _sdk_function(base, "Update")
+    if not raw:
+        return None
+    g = fn.__globals__
+    b = g.get("__builtins__")
+    table = b if isinstance(b, dict) else getattr(b, "__dict__", None)
+    if type(table) is not dict:
+        return None
+    return (base, fn.__dict__, g, table) + _FIRE_SURFACE["watched"]
+
+
+def _decide_fire_globals(base):
+    fn = ai_native._unwrap(getattr(base, "Update", None))
+    if fn is None:
+        return None
+    return _decide_fire_surface(fn.__globals__)
+
+
+def _fire_store_ok() -> bool:
+    """GetWorldLocation and GetWorldRotation read the native store the
+    binding reads (_decide_store, remembered by the host)."""
+    return _memo_answer(_STORE_KEYS["fire"], _decide_store, _store_watched,
+                        "fire")
+
+
+def _fire_update(self, base, args, kwargs):
+    """FireScript.Update, native for a stock instance; otherwise the SDK's,
+    resolved at call time so a patch is seen. A call shape other than the
+    SDK's (self, dEndTime) runs the SDK's too, which raises its own
+    TypeError."""
+    if len(args) == 1 and not kwargs:
+        end_time = args[0]
+    elif not args and len(kwargs) == 1 and "dEndTime" in kwargs:
+        end_time = kwargs["dEndTime"]
+    else:
+        ai_native.note("fire", "python", "no_mirror")
+        return base.Update(self, *args, **kwargs)
+    sdk_globals = None
+    if ai_native.preprocessor_is_stock(self, "FireScript", _FIRE_METHODS) \
+            and _fire_helpers_stock(self):
+        sdk_globals = _fire_surface_globals(base)
+    if sdk_globals is None:
+        ai_native.note("fire", "python", "not_stock")
+        return base.Update(self, *args, **kwargs)
+    if not _fire_store_ok():
+        ai_native.note("fire", "python", "no_mirror")
+        return base.Update(self, *args, **kwargs)
+    ai_native.note("fire", "native")
+    fire = (_BINDINGS[0] or _bindings())[2]
+    return fire(self, end_time, sdk_globals)
+
+
 _NON_LETHAL_CLASSES: dict = {}
 
 
@@ -391,12 +985,19 @@ def _non_lethal_class(base: type) -> type:
     if cached is not None:
         return cached
 
+    # FireScript's Update is native for a stock instance (_fire_update); every
+    # other class runs the SDK's.
+    run_update = _fire_update if base.__name__ == "FireScript" else None
+
     # functools.wraps, so the driver's inspect.signature() arity probe
     # (ai_driver._tick_preprocessing) still sees the SDK's (self, dEndTime) and
     # passes the end time through.
     @functools.wraps(base.Update)
     def Update(self, *args, **kwargs):
-        result = base.Update(self, *args, **kwargs)
+        if run_update is not None:
+            result = run_update(self, base, args, kwargs)
+        else:
+            result = base.Update(self, *args, **kwargs)
         if result == App.PreprocessingAI.PS_DONE:
             # *** THE DIVERGENCE. *** The shipped engine never ran this Python
             # body — it ran a native class whose no-target/no-ship return value
@@ -414,29 +1015,8 @@ def _non_lethal_class(base: type) -> type:
             return App.PreprocessingAI.PS_NORMAL
         return result
 
-    def GetChildTargets(self, pSubsystem):
-        """Targetable, still-alive descendants of a non-targetable subsystem.
-
-        Called from the SDK's ChooseTargetSubsystem (Preprocessors.py:832)
-        and defined nowhere in the SDK — it belonged to BC's NATIVE
-        FireScript, which is unreconstructed. Stated assumption: the only
-        reading under which the SDK loop makes sense. Every stock hardpoint
-        marks its aggregator systems SetTargetable(0) and their banks/tubes
-        targetable (galaxy.py:774-995), so this branch is the common case for
-        any explicit TargetSubsystems list (Fleet/DisableTarget, Player/
-        Disable*). Without it: AttributeError out of the AI tick.
-        """
-        out = []
-        n = int(pSubsystem.GetNumChildSubsystems()) if hasattr(pSubsystem, "GetNumChildSubsystems") else 0
-        for i in range(n):
-            child = pSubsystem.GetChildSubsystem(i)
-            if child is None:
-                continue
-            if child.IsTargetable() and child.GetCondition() > 0:
-                out.append(child)
-            else:
-                out.extend(GetChildTargets(self, child))
-        return out
+    if run_update is not None:
+        Update._dauntless_native_entry = True
 
     members = {
         "Update": Update,
@@ -481,13 +1061,206 @@ def _wrap_non_lethal(instance):
     return alias
 
 
+# ── SelectTarget: candidate ratings, native for a stock instance ─────────
+#
+# Phase 6 AI part 2, Task 3. GetTargetRating was 20.7% of AI time at 128 ships
+# (SIG-205), mostly its popularity loop over every ship in the set. The engine
+# subclass overrides that one method: for an instance the SDK would run
+# unchanged it is one ``combat_ai_target_rating`` call (native/src/host/
+# host_bindings.cc, the ``rating`` namespace; the sum in native/src/combat/
+# include/dauntless/combat/ai_rating.h), bit-identical to the SDK body, with
+# popularity from the native set index. FindGoodTarget -- the candidate step,
+# the sensor gate's wrapper and its fallback, which all call
+# self.GetTargetRating -- stays the SDK's. Anything the native call cannot
+# answer exactly runs the SDK body for that call.
+
+#: The preprocessor methods the native path replaces or calls.
+_SELECT_METHODS = ("GetTargetRating",)
+
+
+def _select_surface_snapshot():
+    from engine.appc import math as _engine_math
+    from engine.appc import object_types as _object_types
+    from engine.appc import objects as _objects
+    from engine.appc import transform_store as _ts
+    from engine.appc.properties import ShipProperty
+    from engine.appc.ships import ShipClass
+    return {
+        "acos": math.acos,
+        "pi": math.pi,
+        "engine_math": _engine_math,
+        "objects": _objects,
+        "object_types": _object_types,
+        "resolve_class": _object_types.resolve_class,
+        "ship_property": ShipProperty,
+        "ship_class": ShipClass,
+        "get_rotation_col": _ts.NativeTransformStore.get_rotation_col,
+    }
+
+
+#: What GetTargetRating's arithmetic rests on, taken at import (as
+#: _AVOID_SURFACE): a later replacement is not stock.
+_SELECT_SURFACE = _select_surface_snapshot()
+
+
+def _select_surface_app(base):
+    """The App the SDK GetTargetRating (on `base`, the SDK class) reads --
+    its __globals__["App"], which the binding is handed -- if its surface is
+    stock (_decide_select_surface), else None. Remembered by the host
+    (_memo_answer)."""
+    return _memo_answer(base, _decide_select_surface, _select_watched, base)
+
+
+def _select_watched(base):
+    """What _decide_select_surface reads: `base` (its GetTargetRating), that
+    function's dict and globals, the math module it calls, App's dict, the
+    engine TGPoint3 and the modules behind GetWorldLocation's arithmetic,
+    and everything GetClassObjectList(App.CT_SHIP) resolves through:
+    object_types and its registry, sys.modules' engine.appc.ships and the
+    set index module."""
+    fn, raw = _sdk_function(base, "GetTargetRating")
+    if not raw:
+        return None
+    g = fn.__globals__
+    snap = _SELECT_SURFACE
+    tail = _module_dicts(g, ("math",))
+    sqrt_mod = _module_dicts(snap["engine_math"].__dict__, ("_math",))
+    ot = snap["object_types"]
+    by_tag = ot.__dict__.get("_BY_TAG")
+    ships = sys.modules.get("engine.appc.ships")
+    if tail is None or sqrt_mod is None or type(by_tag) is not dict \
+            or type(ships) is not types.ModuleType:
+        return None
+    from engine.appc import set_index as _set_index
+    return (base, fn.__dict__, g, App.__dict__, snap["objects"].__dict__,
+            _AVOID_SURFACE["point_cls"], snap["engine_math"].__dict__,
+            ot.__dict__, by_tag, sys.modules, ships.__dict__,
+            _set_index.__dict__) + tail + sqrt_mod
+
+
+def _decide_select_surface(base):
+    """The SDK GetTargetRating still sees the engine's App, math.acos /
+    math.pi, the TGPoint3 GetWorldLocation and GetWorldForwardTG build
+    (methods unpatched, math.sqrt behind Length), and an App.CT_SHIP that
+    GetClassObjectList resolves to the ShipClass the set index buckets: its
+    App, else None."""
+    fn = ai_native._unwrap(getattr(base, "GetTargetRating", None))
+    if fn is None:
+        return None
+    g = fn.__globals__
+    snap = _SELECT_SURFACE
+    app = g.get("App")
+    if app is not App:
+        return None
+    m = g.get("math")
+    if getattr(m, "acos", None) is not snap["acos"] \
+            or getattr(m, "pi", None) is not snap["pi"]:
+        return None
+    avoid = _AVOID_SURFACE
+    point_cls = avoid["point_cls"]
+    if snap["objects"].__dict__.get("TGPoint3") is not point_cls:
+        return None
+    table = point_cls.__dict__
+    for name, want in avoid["point"].items():
+        if table.get(name) is not want:
+            return None
+    sqrt_mod = snap["engine_math"].__dict__.get("_math")
+    if getattr(sqrt_mod, "sqrt", None) is not avoid["sqrt"]:
+        return None
+    # GetClassObjectList(App.CT_SHIP): resolve_class, ShipProperty -> ShipClass.
+    ot = snap["object_types"]
+    if ot.__dict__.get("resolve_class") is not snap["resolve_class"]:
+        return None
+    cls = ot.resolve_class(App.CT_SHIP)
+    if cls is snap["ship_property"]:
+        ships = sys.modules.get("engine.appc.ships")
+        cls = getattr(ships, "__dict__", {}).get("ShipClass")
+    if cls is not snap["ship_class"]:
+        return None
+    # The class GetClassObjectList's set index buckets as ships (imported on
+    # first use, as sets.py imports it).
+    from engine.appc import set_index as _set_index
+    if _set_index.__dict__.get("_ShipClass") is not cls:
+        return None
+    return app
+
+
+def _select_store_ok() -> bool:
+    """GetWorldLocation and GetWorldForwardTG read the native store the
+    rating reads (_decide_store, remembered by the host)."""
+    return _memo_answer(_STORE_KEYS["select"], _decide_store, _store_watched,
+                        "select")
+
+
+_NATIVE_SELECT_CLASSES: dict = {}
+
+
+def _native_select_class(base: type) -> type:
+    """Build (once per SDK class) a subclass of `base` whose ONLY method is
+    ``GetTargetRating`` (marked ``_dauntless_native_entry``): native for a
+    stock instance, else `base`'s, resolved at call time so a patch is seen.
+
+    A subclass sharing the SDK instance's ``__dict__`` (as _wrap_non_lethal),
+    so the driver's duck-typed _ensure_select_target_initialized
+    (``DamageEvent``, ``dDamageReceived``, the event handlers), every SDK
+    method, ``isinstance(inst, SelectTarget)`` and the sensor gate's patch of
+    the SDK class's FindGoodTarget all see the SDK's class and state."""
+    cached = _NATIVE_SELECT_CLASSES.get(base)
+    if cached is not None:
+        return cached
+
+    def GetTargetRating(self, pTarget):
+        """The SDK's GetTargetRating, native for a stock instance."""
+        app = None
+        if ai_native.preprocessor_is_stock(self, "SelectTarget",
+                                           _SELECT_METHODS):
+            app = _select_surface_app(base)
+        if app is None:
+            ai_native.note("select", "python", "not_stock")
+            return base.GetTargetRating(self, pTarget)
+        if not _select_store_ok():
+            ai_native.note("select", "python", "no_mirror")
+            return base.GetTargetRating(self, pTarget)
+        rating = (_BINDINGS[0] or _bindings())[1](self, pTarget, app)
+        if type(rating) is float:
+            ai_native.note("select", "native")
+            return rating
+        if type(rating) is int:            # the SDK's -1: no ship (uncounted)
+            return rating
+        # A call the native path cannot answer exactly: the SDK's, whole.
+        ai_native.note("select", "python", rating)
+        return base.GetTargetRating(self, pTarget)
+    GetTargetRating._dauntless_native_entry = True
+
+    cls = type(base.__name__ + "_Native", (base,), {
+        "GetTargetRating": GetTargetRating,
+        "__doc__": ("SDK %s with GetTargetRating native for a stock "
+                    "instance. See engine/appc/ai_optimized.py."
+                    % base.__name__),
+    })
+    _NATIVE_SELECT_CLASSES[base] = cls
+    # Picklable by name, as _non_lethal_class's classes.
+    globals()[cls.__name__] = cls
+    return cls
+
+
+def _wrap_select_target(instance):
+    """The SelectTarget binding: the SDK instance's state under the engine
+    subclass (_native_select_class)."""
+    cls = _native_select_class(type(instance))
+    alias = cls.__new__(cls)
+    alias.__dict__ = instance.__dict__
+    return alias
+
+
 # Python preprocessor class NAME -> factory(original_instance) -> the object the
 # engine actually stores. Mirrors the binary's DAT_00982A1C name registry; see
 # the module docstring for why three of its four entries are here and what kind
 # of object each one yields.
 OPTIMIZED_PREPROCESSORS: dict = {
     "ManagePower": _replace_manage_power,     # real replacement (SDK body is a stub)
-    "FireScript": _wrap_non_lethal,           # SDK body, PS_DONE de-fanged
+    # PS_DONE de-fanged; the Update native for a stock instance (_fire_update).
+    "FireScript": _wrap_non_lethal,
     # SDK scan, PS_DONE de-fanged, plus the phase offset and evading cadence.
     # This entry has always done TWO jobs and only one of them was the problem:
     # the engine scan (removed below, opt-in) and protection against
@@ -495,6 +1268,8 @@ OPTIMIZED_PREPROCESSORS: dict = {
     # the whole entry would have taken the protection with it --
     # test_preprocess_done_is_lethal caught exactly that.
     "AvoidObstacles": _wrap_avoid_obstacles,
+    # SDK body throughout, GetTargetRating native for a stock instance.
+    "SelectTarget": _wrap_select_target,
 }
 
 # ── AvoidObstacles: OFF by default, and why ────────────────────────────────

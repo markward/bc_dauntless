@@ -332,6 +332,34 @@ _THRESHOLD_DISABLED    = 1
 _THRESHOLD_DESTROYED   = 2
 
 
+try:
+    import _dauntless_host as _host_mod
+except ImportError:  # pragma: no cover
+    _host_mod = None
+
+
+def _subsystem_is_type_of_py(obj, cls):
+    # The reference body; the native one (host_bindings.cc istype::) answers
+    # the same.
+    from engine.appc.subsystem_types import subsystem_class_for_ct
+    target = subsystem_class_for_ct(cls)
+    if target is None:
+        return 0
+    return 1 if isinstance(obj, target) else 0
+
+
+def _subsystem_is_type_of_stale(obj, cls):
+    raise AttributeError(
+        "module '_dauntless_host' has no attribute 'subsystem_is_type_of'")
+
+
+if _host_mod is None:  # pragma: no cover
+    _subsystem_is_type_of = _subsystem_is_type_of_py
+else:
+    _subsystem_is_type_of = getattr(
+        _host_mod, "subsystem_is_type_of", _subsystem_is_type_of_stale)
+
+
 class ShipSubsystem(TGEventHandlerObject):
     # Mirrored into the native combat row on every write (native_combat).
     _condition = NativeField(float)
@@ -716,11 +744,7 @@ class ShipSubsystem(TGEventHandlerObject):
         constant any real SDK caller passes to a ShipSubsystem.IsTypeOf
         (verified by grep across sdk/Build/scripts/ — task 3b fix).
         """
-        from engine.appc.subsystem_types import subsystem_class_for_ct
-        target = subsystem_class_for_ct(cls)
-        if target is None:
-            return 0
-        return 1 if isinstance(self, target) else 0
+        return _subsystem_is_type_of(self, cls)
 
     def GetObjType(self):
         """The subsystem's own most-specific `CT_*` int type tag.

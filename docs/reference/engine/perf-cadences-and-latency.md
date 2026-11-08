@@ -12,11 +12,11 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 
 | What | Constant | Period | Where |
 |---|---|---|---|
-| Shield charging | `SHIELD_CHARGE_PERIOD_S` | 0.5 s | `engine/appc/subsystems.py:232` |
+| Shield charging | `SHIELD_CHARGE_PERIOD_S` | 0.5 s | `engine/appc/subsystems.py` (`SHIELD_CHARGE_PERIOD_S`) |
 | Native subsystem stage (native only, not a cadence) | none (no switch) | every tick | `engine/appc/native_subsystems.py` (`step_all`), `native/src/combat/` (`subsystem_step.cc`) |
 | Target-list poll | (panel throttle) | 0.5 s / 2 Hz | `engine/ui/panel_registry.py` |
-| Avoidance re-decision | `AVOID_EVADING_UPDATE_DELAY_S` | 0.25 s / 4 Hz | `engine/appc/ai_optimized.py:138` |
-| AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py:1548` |
+| Avoidance re-decision | `AVOID_EVADING_UPDATE_DELAY_S` | 0.25 s / 4 Hz | `engine/appc/ai_optimized.py` (`AVOID_EVADING_UPDATE_DELAY_S`) |
+| AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py` (`AI_MAX_SLEEP_TICKS`; the walk it gates is native, `native/src/host/aitree.cc`) |
 
 The last two are environment-overridable — `DAUNTLESS_AVOID_EVADE_DELAY_S` and
 `DAUNTLESS_AI_MAX_SLEEP`. Setting the avoid delay to `0.0` restores the SDK's

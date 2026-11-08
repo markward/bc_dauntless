@@ -1456,38 +1456,13 @@ class WeaponSystem(PoweredSubsystem):
         The actual dispatch is the native K1 walk, pumped per frame by
         host_loop._pump_held_weapons; SetForceUpdate(1) + one immediate
         update makes a tap fire this frame (SDK FireWeapons does exactly
-        StartFiring + SetForceUpdate(1))."""
-        if not self.IsOn():
-            return
-        # Disabled-weapons gate: when every child reports disabled (Project 2
-        # aggregation), the parent IsDisabled is 1 — block fire. Spec §4.2.
-        if _is_offline(self):
-            return
-        # Cloak gate: a cloaked / cloaking ship cannot fire (BC rule).
-        if _cloak_blocks_fire(self):
-            return
-        # Warp-in gate: an arriving ship holds fire until it has landed.
-        if _dewarp_blocks_fire(self):
-            return
-        # Detectability gate: never fire (nor play warm-up SFX) at a target the
-        # ship can't detect — cloaked, nebula-hidden, or out of sensor range.
-        if _target_undetectable(self, target):
-            return
-        # Engageability gate (per-class hook, e.g. PhaserSystem's global fire
-        # range): an out-of-range trigger must NOT latch _fire_held — an AI
-        # re-calls StartFiring every tick, and a latched-but-unengageable held
-        # state would flicker fire/stop each frame (the "ship's horn" loop).
-        if (target is not None and hasattr(self, "_can_engage")
-                and not self._can_engage(self.GetParentShip(), target)):
-            return
-        self._add_target(target)
-        self._held_target = target
-        self._held_offset = offset
-        self._fire_held = True
-        self.SetForceUpdate(1)
-        # One immediate update (dt 0), walked by the native K1 kernel:
-        # Python runs only its effects (native_combat.k1_system).
-        native_combat.k1_system(self, 0.0)
+        StartFiring + SetForceUpdate(1)).
+
+        One native call (`_dauntless_host.start_firing`): the gates, the
+        writes and the session, in the old Python body's order
+        (host_bindings.cc, namespace startfire; the body is frozen in
+        tests/helpers/start_firing_oracle.py)."""
+        _start_firing(self, target, offset)
 
     def StopFiring(self, *args) -> None:
         # K1 (the pump's system_stop) and K2 (an offline phaser system's
@@ -3254,3 +3229,38 @@ class TorpedoTube(Weapon):
     def IsSkewFire(self) -> int:
         """Return 1 if skew-fire is enabled on this tube, else 0."""
         return 1 if self._skew_fire else 0
+
+
+# ── StartFiring, natively (phase 6 AI part 3, task 6) ───────────────────────
+#
+# What the native StartFiring does itself -- the IsOn read and _add_target
+# -- is StartFiring's own surface; every gate is called
+# back. These are the engine bodies it reproduces, taken at import (before
+# any test, tool or mod can replace a name): at every use the native body
+# compares what it finds with them and calls or sets by attribute when they
+# differ, so a patch is seen exactly as the Python body would see it.
+def _take_start_firing_surface() -> dict:
+    return {
+        "IsOn": PoweredSubsystem.__dict__["IsOn"],
+        "_add_target": WeaponSystem.__dict__["_add_target"],
+        "SetForceUpdate": WeaponSystem.__dict__["SetForceUpdate"],
+    }
+
+
+_START_FIRING_SURFACE = _take_start_firing_surface()
+
+try:
+    import _dauntless_host as _host_mod
+except ImportError:  # pragma: no cover
+    _host_mod = None
+
+
+def _start_firing_stale(system, target, offset):
+    raise AttributeError(
+        "module '_dauntless_host' has no attribute 'start_firing'")
+
+
+if _host_mod is None:  # pragma: no cover
+    _start_firing = _start_firing_stale
+else:
+    _start_firing = getattr(_host_mod, "start_firing", _start_firing_stale)
