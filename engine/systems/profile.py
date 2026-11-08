@@ -78,7 +78,7 @@ def clump_radius(region, star_position) -> float:
 def locate(obj):
     """(profile, distance from the star) for an object in a mapped region,
     else None. Resolved at use; never cached."""
-    from engine.systems import frames, resolve
+    from engine.systems import frames, resolve  # hot-import: cycle frames -> resolve -> map -> profile
     pos = frames.system_position(obj)
     if pos is None or pos[0][0] != "system":
         return None
@@ -143,7 +143,7 @@ def star_transmittance(obj, veil: float = VEIL_DEFAULT) -> float:
     """exp(-k_sys * integral from the star's surface to the object's radius):
     how much of the star shows through the cloud. The eye->star line is radial,
     so this is exact. 1.0 outside a mapped system."""
-    from engine.systems import frames, resolve
+    from engine.systems import frames, resolve  # hot-import: cycle frames -> resolve -> map -> profile
     pos = frames.system_position(obj)
     if pos is None or pos[0][0] != "system":
         return 1.0
