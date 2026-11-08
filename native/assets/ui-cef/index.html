@@ -1034,7 +1034,12 @@
                  routes to TargetListView.dispatch_event in Python.
                  Spec: docs/superpowers/ui_designs/02-tactical-cluster.md -->
             <div id="target-list-panel" class="target-list--hidden">
-                <div class="target-list__header">Targets</div>
+                <div class="target-list__header">
+                    <span class="target-list__title">Targets</span>
+                    <button class="bc-panel__minimize" data-event="target/__minimize__"
+                            aria-label="Collapse or expand the target list"
+                            onclick="dauntlessEvent('target/__minimize__')">&#9660;</button>
+                </div>
                 <!-- Filter tabs and sort strip: static markup, reflected by
                      setTargetList. Icons: Lucide (ISC), see THIRD_PARTY_NOTICES.md. -->
                 <div class="target-list__tabs" id="target-list-tabs">

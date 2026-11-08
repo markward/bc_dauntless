@@ -4,6 +4,7 @@
 //   setTargetList({visible, selected, selected_subsystem,
 //                  filters: {FRIENDLY, NEUTRAL, ENEMY},
 //                  sort: "name" | "distance" | "health",
+//                  minimized: bool,
 //                  rows: [{name, label, affiliation, hull, shields,
 //                          has_shields, dist_km, marker}, ...]});
 //
@@ -17,6 +18,7 @@
 //   target/<ship>                   - set target ship, clear sub-lock
 //   target/__filter__/<AFF>         - toggle a FRIENDLY / NEUTRAL / ENEMY tab
 //   target/__sort__/<mode>          - choose name / distance / health order
+//   target/__minimize__             - collapse / expand to the header
 //
 // Spec: docs/superpowers/specs/2026-11-05-target-list-and-target-panel-redesign-design.md
 
@@ -62,6 +64,8 @@ function setTargetList(state) {
         return;
     }
     panel.classList.remove('target-list--hidden');
+    // Collapsed to the header by its ▼ button (target/__minimize__).
+    panel.classList.toggle('target-list--minimized', state.minimized === true);
 
     const body = document.getElementById('target-list-body');
     if (!body) return;

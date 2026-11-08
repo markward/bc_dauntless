@@ -47,7 +47,8 @@ let body = "";
 const bodyEl = {set innerHTML(v) { body = v; }, get innerHTML() { return body; }};
 const panelCls = new Set(["target-list--hidden"]);
 const panel = {
-  classList: {add: c => panelCls.add(c), remove: c => panelCls.delete(c)},
+  classList: {add: c => panelCls.add(c), remove: c => panelCls.delete(c),
+              toggle(c, on) { if (on) panelCls.add(c); else panelCls.delete(c); }},
   querySelectorAll: sel => sel.includes("tab") ? tabs : sorts,
 };
 const byId = {
@@ -67,6 +68,7 @@ for (const step of s) {
   if (step.sort != null) targetListSortClick({target: sorts[step.sort]});
   out.push({
     body, events: events.slice(), hidden: panelCls.has("target-list--hidden"),
+    minimized: panelCls.has("target-list--minimized"),
     tabs: tabs.map(t => t.cls()), sorts: sorts.map(t => t.cls()),
     checked: sorts.map(t => t.getAttribute("aria-checked")),
   });
@@ -152,3 +154,25 @@ def test_bars_are_vertical_and_drain_from_the_top():
     assert re.search(r"bottom:\s*0", fill)
     assert re.search(r"height:\s*var\(--bar-pct\)", fill)
     assert "width: var(--bar-pct)" not in css
+
+
+def test_minimized_flag_collapses_the_panel():
+    o = _run([{"push": dict(_state([_row()]), minimized=True)},
+              {"push": dict(_state([_row()]), minimized=False)},
+              {"push": _state([_row()])}])
+    assert [x["minimized"] for x in o] == [True, False, False]
+
+
+def test_header_has_the_minimize_button_and_minimized_hides_the_rest():
+    import re
+    html = (ROOT / "native/assets/ui-cef/index.html").read_text(encoding="utf-8")
+    header = re.search(r'<div class="target-list__header">(.*?)</div>', html, re.S).group(1)
+    assert "dauntlessEvent('target/__minimize__')" in header
+    assert 'class="bc-panel__minimize' in header
+    css = (ROOT / "native/assets/ui-cef/css/target_list.css").read_text(encoding="utf-8")
+    # One rule hides the strips and the list; only the header stays.
+    rule = re.search(r"((?:[^{}]*\.target-list--minimized[^{}]*)+)\{\s*display:\s*none;?\s*\}", css)
+    assert rule, "no minimized display:none rule"
+    for part in ("tabs", "body", "sort"):
+        assert ".target-list__%s" % part in rule.group(1), part
+    assert ".target-list__header" not in rule.group(1)

@@ -129,6 +129,11 @@ the scrolling body, so it stays visible when the list scrolls:
   bottom, so a bar drains from the top as health falls. A target with no
   shields shows the hull bar alone, still in the far-right slot.
 - Row tints, chosen/hover states, markers (`protect`, `target`) unchanged.
+- **Collapsible** (Mark, 2026-11-08): the header carries the target status
+  panel's ▼ button (`target/__minimize__`); collapsed, only the header
+  shows. User-driven only: BC's target list pane is never minimizable
+  (`TacticalControlWindow` forces it open on every resize), so the SDK
+  neither drives nor resets it. Rows are still built while collapsed.
 
 ## 4. Target panel
 

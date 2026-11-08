@@ -70,6 +70,19 @@
     font-size: 14px;
 }
 
+/* Header: title left, the ▼ minimize button right (.bc-panel__minimize,
+   ship_display.css, same as the target status panel). */
+.target-list__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* Collapsed: only the header shows (target/__minimize__). */
+#target-list-panel.target-list--minimized .target-list__tabs,
+#target-list-panel.target-list--minimized .target-list__body,
+#target-list-panel.target-list--minimized .target-list__sort { display: none; }
+
 .target-list__body {
     /* Scroll region: takes the panel's remaining height and scrolls when the
        row list overflows. min-height:0 is required for the flex child to

@@ -190,6 +190,11 @@ class TargetListView(Panel):
         # Sides whose rows are hidden. UNKNOWN (and anything else) always shows.
         self._hidden: set = set()
         self._sort = "name"
+        # Collapsed to its header by the ▼ button: user-driven, like the
+        # target status panel (ShipDisplayPanel). The SDK never makes its
+        # target list pane minimizable (TacticalControlWindow forces it open
+        # on every resize), so no SDK call drives or resets this.
+        self._minimized = False
 
     def _snapshot(self):
         """Build a hashable snapshot of the rendered state."""
@@ -198,7 +203,8 @@ class TargetListView(Panel):
         hidden = tuple(s for s in FILTERABLE if s in self._hidden)
         target_menu = App.STTargetMenu_GetTargetMenu()
         if target_menu is None:
-            return (self._visible, None, None, hidden, self._sort, ())
+            return (self._visible, None, None, hidden, self._sort, (),
+                    self._minimized)
         from engine.appc.target_menu import STSubsystemMenu
         # Resolve the player ship so we can exclude it from the panel —
         # the player's own ship shouldn't be a target.
@@ -252,14 +258,15 @@ class TargetListView(Panel):
             if target_sub is not None and hasattr(target_sub, "GetName"):
                 selected_subsystem = target_sub.GetName()
         return (self._visible, selected, selected_subsystem, hidden,
-                self._sort, tuple(rows))
+                self._sort, tuple(rows), self._minimized)
 
     def render_payload(self) -> Optional[str]:
         snapshot = self._snapshot()
         if snapshot == self._last_snapshot:
             return None
         self._last_snapshot = snapshot
-        visible, selected, selected_subsystem, hidden, sort, rows = snapshot
+        (visible, selected, selected_subsystem, hidden, sort, rows,
+         minimized) = snapshot
         payload_rows = [
             {
                 "name": name,
@@ -281,6 +288,7 @@ class TargetListView(Panel):
             "selected_subsystem": selected_subsystem,
             "filters": {s: s not in hidden for s in FILTERABLE},
             "sort": sort,
+            "minimized": minimized,
             "rows": payload_rows,
         }
         return "setTargetList(" + json.dumps(payload) + ");"
@@ -291,6 +299,7 @@ class TargetListView(Panel):
           - ``<ship>/<subsystem>``          — set target + subsystem
           - ``__filter__/<SIDE>``           — toggle a side's rows
           - ``__sort__/<name|distance|health>`` — set the sort
+          - ``__minimize__``                — collapse / expand to the header
         """
         # List controls are pure UI state: handled before any SetTarget, and
         # without a player (a ship can never be named "__filter__").
@@ -299,6 +308,10 @@ class TargetListView(Panel):
             if side not in FILTERABLE:
                 return False
             self._hidden.symmetric_difference_update({side})
+            self.mark_due()
+            return True
+        if action == "__minimize__":
+            self._minimized = not self._minimized
             self.mark_due()
             return True
         if action.startswith("__sort__/"):
