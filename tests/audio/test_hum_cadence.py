@@ -129,3 +129,12 @@ def test_dead_hulk_never_restarts_hum(boot, monkeypatch):
     engine_rumble._on_ship_event("destroyed", hulk)  # SetDead's publish
     hum_allocator.update(LISTENER)  # hulk stays in its set
     assert hum_allocator.humming_ship_names() == {"live"}
+
+
+def test_mission_state_reset_forces_next_hum_pass(boot, monkeypatch):
+    from engine import host_loop
+    monkeypatch.setattr(hum_allocator, "_roster", lambda: [])
+    assert hum_allocator.maybe_update(LISTENER, 10.0)
+    assert not hum_allocator.maybe_update(LISTENER, 10.01)  # inside the period
+    host_loop.reset_mission_state()
+    assert hum_allocator.maybe_update(LISTENER, 10.02)  # swap marked it dirty

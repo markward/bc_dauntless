@@ -504,7 +504,8 @@ def install_generate_ships_hook(qb) -> bool:
 
     def GenerateShips():
         result = _generate(qb, orig)
-        # The battle is loaded: freeze it at the next frame boundary
+        # The battle is loaded: freeze it at the second gc_freeze.service() after this
+        # request, inside sim.session_sync after the delete-me sweep
         # (engine/core/gc_freeze.py).
         from engine.core import gc_freeze
         gc_freeze.request()

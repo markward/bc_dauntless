@@ -1737,6 +1737,12 @@ def _reset_leakable_engine_globals():
         warp.configure_warp_vfx(start=None, stop=None, enabled=None, vantage_of=None)
     except Exception:
         pass
+    # run() installs a weapons-panel hook closing over the HUD registry.
+    try:
+        from engine.appc import weapon_config
+        weapon_config.on_change = None
+    except Exception:
+        pass
     # TGPoint3_GetRandomUnitVector's seeded RNG (engine/appc/math.py): seeded
     # once per process, so without a rewind a test's draws depended on how
     # many draws every earlier test made -- the avoidance tests
