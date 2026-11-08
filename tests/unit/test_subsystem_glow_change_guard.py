@@ -279,3 +279,22 @@ def test_emissive_scale_guard_is_pruned_with_the_ship(monkeypatch):
         r, session, player, NativeTransformBuffer(), 0.5,
         game_time=1.0, model_scale=2.0)
     assert set(session.emissive_scales) == {1}
+
+
+def test_ai_poll_works_with_a_real_instance_id(monkeypatch):
+    # The host hands the controller a pybind `_dauntless_host.InstanceId`
+    # (readonly index/generation, no int conversion), not a plain int: the
+    # poll stagger must read its index, or every AI frame raises.
+    import _dauntless_host as _h
+    iid = _h.InstanceId()
+    impulse = _ImpulseSub(_Point(0.0, -0.98, -0.45), max_speed=10.0)
+    ship = _AIShip(None, impulse, None, setpoint=(10.0, (0, 1, 0), 0))
+    rend = _FakeRenderer(results=[0])
+    ctrl = sg.ShipGlowController(rend, instance_id=iid, ship=ship)
+    calls = _count_glow_state(monkeypatch)
+    for k in range(10):
+        ctrl.update(now=k / 60.0)
+    assert 2 <= len(calls) <= 4
+    assert rend.impulse_calls[0][0] is iid
+    assert sg._stagger_slot(iid) == iid.index % 4
+    assert [sg._stagger_slot(n) for n in (4, 5, 6, 7)] == [0, 1, 2, 3]
