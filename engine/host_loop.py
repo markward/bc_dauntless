@@ -106,6 +106,11 @@ from engine.appc import target_menu as _target_menu_mod
 from engine.appc import viewscreen_static as _vss
 from engine.appc import bridge_set as _bridge_set
 from engine.appc import contact_refresh
+from engine.appc import perception
+from engine.audio import attached_sources, hum_allocator, hum_diagnostic, scene_scope
+from engine.core import ids as _ids_mod
+from engine import warp_vfx as _warp_vfx_mod
+import time as _time_mod
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
 from engine.core import step_memo
@@ -275,8 +280,6 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player,
     velocity is that movement over that time."""
     if _audio_mod is None:
         return
-    from engine.audio import attached_sources, hum_allocator, hum_diagnostic, scene_scope
-    from engine.systems import frames
     # Guide §11: only the viewed FRAME is audible — stop every other frame's
     # sources before anything else touches this tick's audio state.
     # frames.viewing_set() is NOT App.g_kSetManager.GetRenderedSet() — it
@@ -284,13 +287,12 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player,
     # explicit rendered set isn't a space scene, so it does not change on a
     # bridge<->space camera toggle. See scene_scope's module docstring
     # ("Current wiring note") for what this gate does and does not cover.
-    viewed = frames.viewing_set()
-    scene_scope.set_active_frame(frames.frame_of(viewed).key if viewed is not None else None)
+    viewed = _frames.viewing_set()
+    scene_scope.set_active_frame(_frames.frame_of(viewed).key if viewed is not None else None)
     # Guide §9, in order: (1) attached emitters from their nodes,
     # (2) the nearest-≤4 hum allocator, (3) the listener from the active camera.
     attached_sources.pump(dt if source_dt is None else source_dt)
-    import time
-    hum_allocator.maybe_update(camera_position, time.monotonic())
+    hum_allocator.maybe_update(camera_position, _time_mod.monotonic())
     # Dev-only diagnostic (F8-toggled, --developer only): a single boolean
     # short-circuit inside maybe_report keeps this out of the 60 Hz hot path
     # both in production and, by default, under --developer too -- see
@@ -9675,8 +9677,6 @@ def _pump_contacts(menu, player) -> tuple:
     Specs: docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md,
     docs/superpowers/specs/2026-11-08-perf-tier1-design.md §2.1.
     """
-    from engine.appc import perception
-    from engine.core.ids import implements
     dirty = contact_refresh.consume()
     key = (id(menu), id(player), id(player.GetContainingSet()))
     if dirty or key != _contacts_key[0]:
@@ -9687,7 +9687,7 @@ def _pump_contacts(menu, player) -> tuple:
         menu.set_contact_distances(contacts)
         stale = False
         target = (player.GetTarget()
-                  if implements(player, "GetTarget") else None)
+                  if _ids_mod.implements(player, "GetTarget") else None)
         if target is not None:
             rec = menu.contact_for(target)
             stale = rec is not None and perception.target_verdict(
@@ -10072,8 +10072,7 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # hiding (so objects realised mid-window are caught) plus the single frame
     # we stop (to restore visibility). Off-parity: no calls when not warping.
     global _warp_hidden
-    from engine import warp_vfx as _wv_hide
-    _wh = _wv_hide.get()
+    _wh = _warp_vfx_mod.get()
     _warp_hide = _wh.is_active() and _wh.streak_intensity() > 0.0
     _warp_apply_vis = _warp_hide or _warp_hidden
     _warp_hidden = _warp_hide

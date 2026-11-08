@@ -16,7 +16,9 @@ Module attributes are looked up at call time (far_tier.field_strength_at,
 sensor_detection.concealment_at, is_hidden_by_cloak) so tests can monkeypatch
 them on their home modules.
 """
-from engine.appc import sensor_dials
+from engine import dev_mode
+from engine.appc import sensor_detection, sensor_dials
+from engine.rocks import far_tier
 
 
 def medium_unknown(obj, *, concealment=None) -> bool:
@@ -36,15 +38,12 @@ def medium_unknown(obj, *, concealment=None) -> bool:
     """
     if obj is None:
         return False
-    from engine.rocks import far_tier
-    from engine.appc import sensor_detection
     if far_tier.field_strength_at(obj) >= sensor_dials.get("field_unknown_threshold"):
         return True
     if concealment is None:
         try:
             concealment = sensor_detection.concealment_at(obj)
         except Exception as exc:
-            from engine import dev_mode
             dev_mode.log_swallowed("sensor_media.medium_unknown concealment_at", exc)
             concealment = 0.0
     return concealment >= sensor_dials.get("nebula_unknown_threshold")
@@ -57,6 +56,5 @@ def subsystems_hidden(obj, *, concealment=None) -> bool:
     *concealment* is forwarded to ``medium_unknown`` unchanged — see its
     docstring for the hand-off contract.
     """
-    from engine.appc import sensor_detection
     return bool(sensor_detection.is_hidden_by_cloak(obj)
                 or medium_unknown(obj, concealment=concealment))

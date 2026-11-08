@@ -38,7 +38,12 @@ here reads a path or the catalogue at import.
 """
 from __future__ import annotations
 
+import App
+from engine import dev_mode
+from engine.rocks import catalogue, density, minors, scenery_contact
 from engine.rocks import far_dials as fd
+from engine.rocks.rock import is_rock
+from engine.systems import frames
 
 _ZERO = (0.0, 0.0, 0.0)
 _UNSET = object()
@@ -63,7 +68,6 @@ _ATLAS_UPLOADS_PER_FRAME = 1
 
 
 def _swallow(what: str, e: BaseException) -> None:
-    from engine import dev_mode
     dev_mode.log_swallowed("far_tier " + what, e)
 
 
@@ -75,8 +79,6 @@ def note_model(ship, model_path: str, model_scale: float) -> None:
     configured game root -> (-1, STOCK_RADIUS_MU). Anything else (a non-rock,
     a mod's own rock mesh, even one named like a stock NIF) is not recorded,
     and forgets an earlier note for the same ship."""
-    from engine.rocks import catalogue
-    from engine.rocks.rock import is_rock
     if not is_rock(ship):
         return
     idx = catalogue.index_of_path(model_path)
@@ -110,7 +112,6 @@ def frame_for(view_set) -> tuple:
     (None, origin) for the warp set, a one-set frame (Multi*, Starbase 12,
     QuickBattle) and None. There no BELT is pushed; the viewed set's tile
     fields (view-space spheres) and flagged rocks still draw."""
-    from engine.systems import frames
     f = frames.frame_of(view_set)
     if f is None or f.key[0] != "system":
         return None, _ZERO
@@ -169,7 +170,6 @@ def _catalogue_entry(r, rock) -> dict:
     major with two LODs) also carries lod0/lod1 model handles, loaded exactly
     as minors._ensure_fragments loads fragments; a failed load omits them
     (the host then leaves that rock out of the near band)."""
-    from engine.rocks import catalogue
     e = {"albedo": rock.impostor_albedo, "normal": rock.impostor_normal,
          "avg_albedo": tuple(rock.avg_albedo), "kind": rock.kind,
          "family": rock.family,
@@ -199,7 +199,6 @@ def _native_lost_near(r) -> bool:
 
 def _push_catalogue(r) -> None:
     global _catalogue_root, _near_pushed, _prefetch_due
-    from engine.rocks import catalogue
     root = str(catalogue.catalogue_root())
     if root == _catalogue_root and not _native_lost_near(r):
         return
@@ -281,8 +280,6 @@ def tile_sources(view_set, fields) -> list:
     """One sphere DiscSource per AsteroidField of `fields` that lies in
     `view_set` (a field whose containing set is another set: none), centred
     in view space -- so an unmapped set (Multi7) has its fields too."""
-    from engine.rocks import density, minors
-    from engine.systems import frames
     out = []
     for f in fields:
         if f is None:
@@ -305,7 +302,6 @@ def _push_sources(r, system, tiles) -> None:
     _tiles = tiles
     _sources_dirty = False
     try:
-        from engine.rocks import density
         belts = density.sources_for_system(system) if system else []
         sources = [density.to_native(s) for s in belts + list(tiles)]
         r.far_set_sources(sources)
@@ -347,9 +343,6 @@ def reconcile(session, r) -> None:
     (realised, not scope-hidden, in the viewed frame) and AsteroidFields --
     gathered exactly as minors.reconcile does. Never raises."""
     try:
-        import App
-        from engine.rocks.rock import is_rock
-        from engine.systems import frames
         view = frames.viewing_set()
         hidden = getattr(session, "scope_hidden", ())
         instances = getattr(session, "ship_instances", {}) or {}
@@ -397,7 +390,6 @@ def reconcile(session, r) -> None:
     # The near band's player contact box: inflated to the shield bubble while
     # shields are up (rock-fields Task 8, engine/rocks/scenery_contact.py).
     try:
-        from engine.rocks import scenery_contact
         r.rockfield_set_shield_inflate(
             scenery_contact.shield_inflate(getattr(session, "player", None)))
     except Exception as e:
@@ -420,7 +412,6 @@ def source_strength(source, point_view: tuple, anchor: tuple) -> float:
             return 0.0
         inner = R * (1.0 - min(1.0, max(0.0, float(source.sphere_edge_frac))))
         return 1.0 if d <= inner else (R - d) / (R - inner)
-    from engine.rocks import density
     sys_pt = tuple(a + p for a, p in zip(anchor, point_view))
     return min(1.0, max(0.0, density.evaluate(source, sys_pt)))
 
@@ -445,7 +436,6 @@ def field_strength_at(player) -> float:
     tile fields (as last pushed) and its system's belt. 0 when unknown.
     Never raises."""
     try:
-        from engine.systems import frames
         view = frames.viewing_set()
         if not (_tiles if _tiles is not _UNSET else []):
             # No tile field: only a belt can contribute. Answer 0.0 before
@@ -454,7 +444,6 @@ def field_strength_at(player) -> float:
             if not system:
                 return 0.0
             if system not in _belt_cache:
-                from engine.rocks import density
                 _belt_cache.clear()
                 _belt_cache[system] = density.sources_for_system(system)
             if not _belt_cache[system]:
@@ -474,7 +463,6 @@ def field_strength_at(player) -> float:
             best = max(best, source_strength(s, p, anchor))
         if system:
             if system not in _belt_cache:
-                from engine.rocks import density
                 _belt_cache.clear()
                 _belt_cache[system] = density.sources_for_system(system)
             for s in _belt_cache[system]:
