@@ -428,3 +428,5 @@ sliders (0-100, default 100, FOV-style: applied on `change`, arrow keys step
   and distance falloff stay. BC's option chose a Windows 3D provider
   (`SoundConfig.py`), which has no modern equivalent; what Off means here is
   Mark's call (2026-11-08), not recovered BC behaviour.
+
+**Live-verified by Mark 2026-11-08.**
