@@ -75,6 +75,9 @@ def change(*, mission=None, episode=None) -> bool:
         return False
 
     _in_progress = True
+    # Thaw BEFORE the old mission is torn down (engine/core/gc_freeze.py).
+    from engine.core import gc_freeze
+    gc_freeze.thaw()
     try:
         _terminate(cur_mis)
         if ep_changes:
@@ -110,6 +113,7 @@ def change(*, mission=None, episode=None) -> bool:
     finally:
         _in_progress = False
 
+    gc_freeze.request()
     if _on_changed is not None:
         try:
             _on_changed()

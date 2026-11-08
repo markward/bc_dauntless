@@ -950,6 +950,14 @@ def pytest_collection_modifyitems(config, items):
 # explicitly-requested fixtures, it cleans the *previous* test's leaks without
 # clobbering the current test's own setup.
 def _reset_leakable_engine_globals():
+    # GC freeze (engine/core/gc_freeze.py): the suite never runs frozen. A
+    # test that arms and fails before its own finally is thawed here, before
+    # and after every test. thaw() unfreezes a heap the module froze even
+    # once disarmed. Not in reset_mission_state: the game's freeze is
+    # requested and thawed by its load and teardown paths themselves.
+    from engine.core import gc_freeze as _gc_freeze
+    _gc_freeze.disarm()
+    _gc_freeze.thaw()
     # Mod index: engine.mods._INDEX is exactly the kind of module global this
     # fixture exists for -- a test that configures a fake mods tree would
     # otherwise leave every later test resolving assets through it. Harmless

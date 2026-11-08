@@ -28,6 +28,7 @@ import engine.dev_mode as dev_mode
 import engine.dev_nebula_dials as dev_nebula_dials
 from engine.core import case_paths as _case_paths
 from engine.core import frame_profiler
+from engine.core import gc_freeze
 from engine.core.tracked_instances import TrackedInstances
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
@@ -7801,6 +7802,8 @@ class HostController:
             return
         name = self.pending_swap
         self.pending_swap = None
+        # Thaw BEFORE any teardown, or the old mission's cycles stay frozen.
+        gc_freeze.thaw()
         for hook in list(self.pre_swap_hooks):
             try:
                 hook()
@@ -7867,6 +7870,7 @@ class HostController:
             return
         if self.post_load_hook is not None:
             self.post_load_hook()
+        gc_freeze.request()
 
 
 def _after_mission_change(controller, snap_scene, close_star_map) -> None:
@@ -10826,6 +10830,10 @@ def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
         # "End Combat" clears the battle this way); the reconciliation below
         # then tears down their render instances.
         _process_object_deletions()
+        # A load requested a GC freeze: collect + freeze AFTER the sweep, one
+        # frame after the request, so a swept battle's ships have left both
+        # their set and the scene reconcile (engine/core/gc_freeze.py).
+        gc_freeze.service()
         # Mirror the SDK config-dialog flag onto the Quick Battle Setup
         # panel: opens it when the player clicks the XO menu's config
         # button, closes it on Close/Start. Boot leaves it closed.
@@ -11528,6 +11536,11 @@ def run(mission_name: Optional[str] = None,
             mission_name = _env_mission
 
     boot_quickbattle = mission_name is None
+
+    # Collect + freeze the heap after each mission load (engine/core/
+    # gc_freeze.py). Never under pytest: the suite must not run frozen.
+    if "pytest" not in sys.modules:
+        gc_freeze.arm()
 
     # Build identity first: whatever happens after this, the log says which
     # build produced it. A bug report against an unidentifiable zip is one
@@ -12777,6 +12790,8 @@ def run(mission_name: Optional[str] = None,
             prev_drawn_player_pose=_prev_drawn_player_pose,
         )
 
+        # The boot load is done: freeze it once the first frames have swept.
+        gc_freeze.request()
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
             # No-op (one global read + branch) unless a developer enabled it
@@ -13989,9 +14004,11 @@ def run(mission_name: Optional[str] = None,
         if frame_profiler.is_enabled():
             frame_profiler.print_report()
 
+        gc_freeze.thaw()
         if controller.session is not None:
             controller.session.teardown(r)
     finally:
+        gc_freeze.thaw()
         from engine.core import mission_change as _mission_change
         _mission_change.configure(on_changed=None)
         # The warp hooks close over this controller too; left installed they

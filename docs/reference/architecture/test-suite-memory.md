@@ -143,6 +143,22 @@ the floor is already above its need. Lowering the full-suite peak means
 slimming those tests' working sets, starting with `test_k1_gameloop_ai`; I
 did not, because each is a reference for a native kernel.
 
+## GC freeze (2026-11-08)
+
+The game collects and `gc.freeze()`s its heap after every mission load and
+thaws it before every teardown (`engine/core/gc_freeze.py`, perf-tier1 spec
+§2.5). It is **never armed under pytest**: only `engine.host_loop.run()`
+arms it, and only when `pytest` is not in `sys.modules`. The per-test reset
+in `tests/conftest.py` disarms and thaws before and after every test, so a
+test that arms and fails early cannot leave the run frozen. The suite's RSS
+budget above is unaffected.
+
+In the game, a load-time object that turns into cyclic garbage mid-mission
+is not collected while frozen: it is reclaimed (and its `weakref.finalize`
+native-mirror free queued) at the next teardown's thaw. Refcount frees still
+happen and objects made after the freeze collect normally, so the growth is
+bounded by the load-time heap.
+
 ## History: the original >100 GB OOM (2026-06)
 
 The first OOM report came when the suite had ~1,700 tests and per-test SDK
