@@ -80,7 +80,7 @@ function setTargetList(state) {
         const hull = clampPct((typeof row.hull === 'number') ? row.hull : 100);
         const shields = clampPct((typeof row.shields === 'number') ? row.shields : 0);
         // Inert targets (asteroids) carry no real shields — omit the bar
-        // entirely and let the hull bar occupy the far-right slot. Default to
+        // entirely; the hull bar keeps its far-right slot. Default to
         // showing the bar when the flag is absent (older payloads).
         const hasShields = (row.has_shields !== false);
         const nameHtml = escapeHtml(label);
@@ -107,13 +107,14 @@ function setTargetList(state) {
               +   markerHtml
               +   '<span class="target-list__name">' + nameHtml + '</span>'
               +   '<span class="target-list__dist">' + dist.toFixed(2) + ' km</span>'
+              // Shields left, hull right; vertical, draining from the top.
               +   '<span class="target-list__bars">'
-              +     '<span class="target-list__bar target-list__bar--hull"'
-              +     ' style="--bar-pct:' + hull + '%"></span>'
               +     (hasShields
                      ? '<span class="target-list__bar target-list__bar--shields"'
                        + ' style="--bar-pct:' + shields + '%"></span>'
                      : '')
+              +     '<span class="target-list__bar target-list__bar--hull"'
+              +     ' style="--bar-pct:' + hull + '%"></span>'
               +   '</span>'
               + '</div>';
     }

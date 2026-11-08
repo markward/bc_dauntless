@@ -134,3 +134,21 @@ def test_empty_rows_still_renders_and_responds():
     assert o[0]["body"] == ""
     assert not o[0]["hidden"]
     assert o[-1]["events"] == ["target/__filter__/FRIENDLY", "target/__sort__/health"]
+
+
+def test_bars_are_shields_left_then_hull_right():
+    out = _run([{"push": _state([_row()])}])[0]["body"]
+    assert out.index("target-list__bar--shields") < out.index("target-list__bar--hull")
+    assert 'target-list__bar--shields" style="--bar-pct:50%"' in out
+    assert 'target-list__bar--hull" style="--bar-pct:80%"' in out
+
+
+def test_bars_are_vertical_and_drain_from_the_top():
+    import re
+    css = (ROOT / "native/assets/ui-cef/css/target_list.css").read_text(encoding="utf-8")
+    fill = re.search(r"\.target-list__bar::after\s*\{([^}]*)\}", css).group(1)
+    # Fill anchored at the bottom, its HEIGHT is the percent: losing health
+    # lowers the top edge.
+    assert re.search(r"bottom:\s*0", fill)
+    assert re.search(r"height:\s*var\(--bar-pct\)", fill)
+    assert "width: var(--bar-pct)" not in css

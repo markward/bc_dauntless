@@ -137,29 +137,43 @@
     flex: 1 1 auto;
 }
 
+/* Two vertical bars at the row's right edge: shields (blue) on the left,
+ * hull (yellow) on the right. The fill is anchored at the bottom and its
+ * height is the percent, so a bar drains from the top as health falls.
+ * With no shields the hull bar keeps the far-right slot (flex-end), so the
+ * hull bars line up down the list. */
 .target-list__bars {
+    flex: 0 0 auto;
     display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: stretch;
+    gap: 2px;
+    width: 12px;
+    height: 16px;
 }
 
 .target-list__bar {
     --bar-pct: 0%;
-    width: 32px;
-    height: 8px;
-    background: rgba(40, 40, 40, 0.6);
     position: relative;
+    width: 5px;
+    height: 100%;
+    background: rgba(40, 40, 40, 0.6);
 }
 
 .target-list__bar::after {
     content: "";
-    display: block;
-    height: 100%;
-    width: var(--bar-pct);
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--bar-pct);
     background: var(--bar-fill, white);
-    transition: width 120ms linear;
+    transition: height 120ms linear;
 }
 
 .target-list__bar--hull    { --bar-fill: rgb(255, 200, 60); }
-.target-list__bar--shields { --bar-fill: rgb(150, 129, 222); }
+.target-list__bar--shields { --bar-fill: rgb(90, 160, 255); }
 
 /* ── Filter tabs and sort strip ──────────────────────────────────── */
 .target-list__tabs {
@@ -246,19 +260,6 @@
   font-variant-numeric: tabular-nums;
   color: rgb(220, 210, 225);                /* --bc-row-text-dim */
 }
-
-/* ── NEW (v6): stacked bars ────────────────────────────────────────
-   Shields sit directly on top of hull, no gap, each half the old 8px.
-   With no shield bar the hull bar is alone and keeps the full 8px. */
-.target-list__bars {
-  width: 32px;
-  flex-direction: column-reverse;           /* DOM is hull, shields */
-  gap: 0;
-  align-items: stretch;
-  justify-content: center;
-}
-.target-list__bars .target-list__bar { width: 32px; height: 4px; }
-.target-list__bars .target-list__bar:only-child { height: 8px; }
 
 /* ── Page-drawn tooltips ─────────────────────────────────────────────
  * CEF OSR renders no native tooltip, so [data-tip] draws its own on hover.
