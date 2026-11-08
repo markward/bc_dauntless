@@ -420,6 +420,18 @@ def region_ops(raws, default_pos, pod_name="") -> list:
     return ops
 
 
+def _stagger_slot(instance_id) -> int:
+    """0..3 poll phase for an instance. The host's ids are pybind
+    `_dauntless_host.InstanceId`s, which expose a readonly integer `index`
+    (and no int conversion); tests pass plain ints. Anything else gets
+    phase 0."""
+    idx = getattr(instance_id, "index", instance_id)
+    try:
+        return int(idx) % 4
+    except (TypeError, ValueError):
+        return 0
+
+
 class ShipGlowController:
     """Per-ship: register glow regions once, push state when it changes.
 
@@ -566,7 +578,7 @@ class ShipGlowController:
             # spreads ships spawned together over four phases without ever
             # making the first interval longer than one poll.
             self._next_poll = now + AI_GLOW_POLL_S * (
-                (self._iid % 4) + 1) / 4.0
+                _stagger_slot(self._iid) + 1) / 4.0
         elif not (is_player or warp_glow is not None or self._warp_live):
             if now < self._next_poll:
                 return
