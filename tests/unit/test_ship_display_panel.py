@@ -760,7 +760,8 @@ def test_target_payload_carries_families_open_family_and_locked():
         assert [m["name"] for m in fam["members"]] == ["Bank 0", "Bank 1"]
         m0 = fam["members"][0]
         assert (m0["x_px"], m0["y_px"]) == (10.0, 20.0)
-        assert set(m0) == {"name", "state", "icon_key", "x_px", "y_px"}
+        assert set(m0) == {"name", "state", "icon_key", "x_px", "y_px", "pct"}
+        assert m0["pct"] == 100  # the health bar is full
         player.SetTargetSubsystem(foe.GetPhaserSystem().GetChildSubsystem(1))
         assert _payload(panel)["locked"] == "Bank 1"
     finally:

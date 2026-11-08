@@ -161,7 +161,7 @@ def test_constant():
 _AKIRA = """
 function fam(n, st, ms, x, y) { return {name:n, state:st||'healthy', icon_key:'k1',
   lockable:false, x_px:x||0, y_px:y||0, members:ms||[]}; }
-function mem(n, st, x, y) { return {name:n, state:st||'healthy', icon_key:'k1', x_px:x||0, y_px:y||0}; }
+function mem(n, st, x, y, pct) { return {name:n, state:st||'healthy', icon_key:'k1', x_px:x||0, y_px:y||0, pct:pct==null?null:pct}; }
 function akira(extra) {
   var fams = [fam('Phasers','healthy',[mem('Dorsal Phaser 2','healthy',54,30), mem('Dorsal Phaser 1','damaged',60,30)]),
     fam('Impulse','disabled'), fam('Warp'), fam('Sensors'), fam('Shields'), fam('Hull'), fam('Cloak'), fam('Tractors')];
@@ -332,3 +332,37 @@ def test_open_and_locked_tint_survives_hover():
     # Disabled still wins: its hover rule is more specific than the tints.
     assert '.subsys-btn[data-state="disabled"]:hover' in css
     assert '.subsys-block[data-state="disabled"]:hover' in css
+
+
+def test_member_block_has_a_health_bar_at_its_pct():
+    h = _render("var s = akira({open_family:'Phasers'});"
+                "s.families[0].members = [mem('A','damaged',0,0,42), mem('B','healthy',0,0,100)];"
+                "renderSubsystemPicker(root, s); return root.host.innerHTML;")
+    assert '<span class="subsys-block__bar" style="--bar-pct:42%"></span>' in h
+    assert '<span class="subsys-block__bar" style="--bar-pct:100%"></span>' in h
+    # The bar follows the name, on the block's right.
+    assert h.index("subsys-block__name") < h.index("subsys-block__bar")
+    assert "subsys-block__pct" not in h
+
+
+def test_member_without_pct_has_no_bar():
+    h = _render("var s = akira({open_family:'Phasers'}); renderSubsystemPicker(root, s);"
+                "return root.host.innerHTML;")
+    assert "subsys-block__bar" not in h
+
+
+def test_pct_change_rebuilds():
+    r = _render("var s = akira({open_family:'Phasers'}); s.families[0].members[1].pct = 60;"
+                "renderSubsystemPicker(root, s); var n = root.host.sets;"
+                "var s2 = akira({open_family:'Phasers'}); s2.families[0].members[1].pct = 59;"
+                "renderSubsystemPicker(root, s2); return [n, root.host.sets, root.host.innerHTML];")
+    assert r[1] == r[0] + 1
+    assert "--bar-pct:59%" in r[2]
+
+
+def test_member_bar_is_vertical_and_drains_from_the_top():
+    import re
+    css = (ROOT / "native/assets/ui-cef/panels/ship_display/ship_display.css").read_text(encoding="utf-8")
+    fill = re.search(r"\.subsys-block__bar::after\s*\{([^}]*)\}", css).group(1)
+    assert re.search(r"bottom:\s*0", fill)
+    assert re.search(r"height:\s*var\(--bar-pct\)", fill)

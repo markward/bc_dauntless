@@ -461,6 +461,30 @@
 .subsys-block[data-state="damaged"]  { border-left-color: var(--bc-damage-damaged); }
 .subsys-block[data-state="disabled"] { border-left-color: var(--bc-damage-disabled); }
 .subsys-block__name { text-wrap: balance; }
+/* Health bar, right side of the block: the target list's vertical bar
+   (target_list.css), yellow like the hull bar there. The fill is anchored
+   at the bottom, so it drains from the top as health falls. The track is
+   darker than the block's grey so an empty bar still reads. */
+.subsys-block__bar {
+    --bar-pct: 0%;
+    flex: none;
+    position: relative;
+    width: 5px;
+    height: 16px;
+    margin-left: auto;
+    background: rgba(0, 0, 0, 0.45);
+}
+.subsys-block__bar::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--bar-pct);
+    background: rgb(255, 200, 60);
+    transition: height 120ms linear;
+}
+.subsys-block__name { margin-right: 4px; }
 .subsys-block:hover { background-color: rgba(216, 43, 43, 0.15); color: var(--bc-label-text); }
 .subsys-block--locked { color: var(--bc-label-text); background: rgba(216, 43, 43, 0.35); }
 .subsys-block--locked:hover { background-color: rgba(216, 43, 43, 0.35); }
