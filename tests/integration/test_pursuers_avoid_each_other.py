@@ -24,13 +24,10 @@ import math
 
 import pytest
 
+from tests.helpers import straight_line_chase as chase
+from tests.helpers.straight_line_chase import NOMINAL_RADIUS_GU
 
-SHIPS = 6
-SPREAD_GU = 14.0
-START_BEHIND_GU = 120.0
-PLAYER_SPEED_GUPS = 5.0
 TICKS = 2400
-NOMINAL_RADIUS_GU = 4.0
 
 # A hull "touch": two ships closer than the sum of their radii are inside one
 # another. Nothing in the sim stops that -- collision response nudges, it does
@@ -40,74 +37,8 @@ CONTACT_GU = 2 * NOMINAL_RADIUS_GU
 
 @pytest.fixture
 def straight_line_chase(monkeypatch):
-    monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
-
-    from tools import mission_harness
-    mission_harness.setup_sdk()
-
-    import App
-    import MissionLib
-    import loadspacehelper
-    from engine.core.game import Game, Episode, Mission, _set_current_game
-    from engine.core.loop import GameLoop
-
-    game, ep, mission = Game(), Episode(), Mission()
-    ep.SetCurrentMission(mission)
-    game.SetCurrentEpisode(ep)
-    _set_current_game(game)
-
-    import Systems.QuickBattle.QuickBattleRegion
-    Systems.QuickBattle.QuickBattleRegion.Initialize()
-    pSet = App.g_kSetManager.GetSet("QuickBattleRegion")
-
-    # Headless has no realize step, so GetRadius() reads 0 -- which removes a
-    # ship from avoidance entirely (personal space is radius * multiplier) and
-    # would make this test pass vacuously. Same nominal hull as combat_stress.
-    player = MissionLib.CreatePlayerShip("Sovereign", pSet, "Player", "")
-    player.SetTranslateXYZ(0.0, 0.0, 0.0)
-    player.UpdateNodeOnly()
-    if player.GetRadius() <= 0.0:
-        player.SetRadius(NOMINAL_RADIUS_GU)
-    mission.GetFriendlyGroup().AddName("Player")
-
-    pursuers = []
-    for i in range(SHIPS):
-        name = "Enemy-%d" % (i + 1)
-        s = loadspacehelper.CreateShip("Keldon", pSet, name, "")
-        if App.IsNull(s):
-            continue
-        s.SetTranslateXYZ((i - (SHIPS - 1) / 2.0) * SPREAD_GU,
-                          -START_BEHIND_GU,
-                          ((i % 3) - 1) * SPREAD_GU * 0.5)
-        s.UpdateNodeOnly()
-        if s.GetRadius() <= 0.0:
-            s.SetRadius(NOMINAL_RADIUS_GU)
-        mission.GetEnemyGroup().AddName(name)
-        pursuers.append(s)
-    assert len(pursuers) == SHIPS
-
-    # QuickBattleAI's own construction: BasicAttack (which dispatches a Keldon
-    # to NonFedAttack by species) inside an AvoidObstacles PreprocessingAI.
-    import AI.Preprocessors
-    import AI.Compound.BasicAttack
-    for s in pursuers:
-        pAI = AI.Compound.BasicAttack.CreateAI(
-            s, mission.GetFriendlyGroup(), Difficulty=0.5,
-            FollowTargetThroughWarp=1, UseCloaking=1)
-        assert pAI is not None
-        script = AI.Preprocessors.AvoidObstacles()
-        avoid = App.PreprocessingAI_Create(s, "AvoidObstacles")
-        avoid.SetInterruptable(1)
-        avoid.SetPreprocessingMethod(script, "Update")
-        avoid.SetContainedAI(pAI)
-        s.SetAI(avoid, 0, 0)
-
-    evt = App.TGEvent()
-    evt.SetEventType(App.ET_MISSION_START)
-    evt.SetDestination(ep)
-    App.g_kEventManager.AddEvent(evt)
-
-    yield GameLoop(), player, pursuers
+    from engine.core.game import _set_current_game
+    yield chase.build(monkeypatch)
     _set_current_game(None)
 
 
@@ -125,17 +56,11 @@ def _is_overriding(ship):
 def _run(loop, player, pursuers):
     """Fly the player dead straight; return (worst separation, contact ticks,
     ticks on which avoidance overrode at least one pursuer's course)."""
-    import App
-
     worst = float("inf")
     contact_ticks = 0
     override_ticks = 0
     for _ in range(TICKS):
-        p = player.GetWorldLocation()
-        q = App.TGPoint3()
-        q.SetXYZ(p.GetX(), p.GetY() + PLAYER_SPEED_GUPS / 60.0, p.GetZ())
-        player.SetWorldLocation(q)
-        player.UpdateNodeOnly()
+        chase.fly_player(player)
 
         loop.tick()
 

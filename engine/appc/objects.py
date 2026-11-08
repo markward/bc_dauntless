@@ -15,7 +15,42 @@ from engine.appc import native_combat
 from engine.appc import object_types as _object_types
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
-from engine.appc.transform_store import get_store
+from engine.appc.transform_store import (
+    NativeTransformStore, StaleHandleError, get_store)
+
+try:  # the raw native point builder; absent without the host extension
+    from _dauntless_host import transform_point as _transform_point
+except ImportError:  # pragma: no cover - the Python store never reaches it
+    _transform_point = None
+
+try:  # the native velocity copy
+    import _dauntless_host as _host_mod
+except ImportError:  # pragma: no cover - no host extension: pure Python
+    _host_mod = None
+
+
+def _point_copy_py(p):
+    return TGPoint3(p.x, p.y, p.z)
+
+
+def _point_copy_stale(p):
+    """A binary with the host module but without `point_copy` is stale:
+    CLAUDE.md's contract is an AttributeError."""
+    raise AttributeError(
+        "module '_dauntless_host' has no attribute 'point_copy'")
+
+
+if _host_mod is None:  # pragma: no cover
+    _point_copy = _point_copy_py
+else:
+    _point_copy = getattr(_host_mod, "point_copy", _point_copy_stale)
+
+
+def _no_transform_point():
+    """A binary with the native store but without `transform_point` is stale:
+    CLAUDE.md's contract is an AttributeError, never a StaleHandleError."""
+    raise AttributeError(
+        "module '_dauntless_host' has no attribute 'transform_point'")
 
 # Lifetime constants (BC DamageableObject). LIFETIME_UNSET is the "not set"
 # sentinel: Effects.py:753 treats GetLifeTime() > 1e6 as unset, so the default
@@ -77,7 +112,46 @@ def _release_transform_slot(store, handle, nslot=None) -> None:
 
 
 _ISTYPEOF_CACHE: dict = {}
+
+
+def _is_type_of_py(obj, cls, cache):
+    # The reference body; the native one (host_bindings.cc istype::) answers
+    # the same, and keeps `cache` (keyed (type, cls), emptied when the
+    # object_types generation moves).
+    global _ISTYPEOF_GEN
+    tc = type(cls)
+    if tc is not int and not isinstance(cls, type):
+        # bool/float hash equal to an int tag, and each App.CT_<undefined>
+        # lookup is a fresh stub: neither may share or fill the cache.
+        c = _object_types.resolve_class(cls)
+        return 1 if isinstance(c, type) and isinstance(obj, c) else 0
+    gen = _object_types._GENERATION
+    if gen != _ISTYPEOF_GEN:
+        cache.clear()
+        _ISTYPEOF_GEN = gen
+    key = (type(obj), cls)
+    ans = cache.get(key)
+    if ans is not None:
+        return ans
+    c = _object_types.resolve_class(cls)
+    ans = 1 if isinstance(c, type) and isinstance(obj, c) else 0
+    if _object_types._GENERATION == gen:
+        cache[key] = ans
+    return ans
+
+
 _ISTYPEOF_GEN = -1
+
+
+def _is_type_of_stale(obj, cls, cache):
+    raise AttributeError(
+        "module '_dauntless_host' has no attribute 'is_type_of'")
+
+
+if _host_mod is None:  # pragma: no cover
+    _is_type_of = _is_type_of_py
+else:
+    _is_type_of = getattr(_host_mod, "is_type_of", _is_type_of_stale)
 
 
 class ObjectClass(TGEventHandlerObject):
@@ -175,30 +249,7 @@ class ObjectClass(TGEventHandlerObject):
         # isinstance(..., type) guard turns that into 0.
         # Sun(Planet): a Sun IsTypeOf CT_PLANET and CT_SUN; a plain Planet
         # IsTypeOf CT_SUN is 0 — this is what filters suns out of the orbit menu.
-        global _ISTYPEOF_GEN
-        tc = type(cls)
-        if tc is not int and not isinstance(cls, type):
-            # bool/float hash equal to an int tag, and each App.CT_<undefined>
-            # lookup is a fresh stub: neither may share or fill the cache.
-            c = _object_types.resolve_class(cls)
-            return 1 if isinstance(c, type) and isinstance(self, c) else 0
-        # Direct attribute read, not generation(): this is the hot path.
-        gen = _object_types._GENERATION
-        if gen != _ISTYPEOF_GEN:
-            _ISTYPEOF_CACHE.clear()
-            _ISTYPEOF_GEN = gen
-        # Keyed by type(self): a runtime class swap gets its new answers.
-        key = (type(self), cls)
-        ans = _ISTYPEOF_CACHE.get(key)
-        if ans is not None:
-            return ans
-        c = _object_types.resolve_class(cls)
-        ans = 1 if isinstance(c, type) and isinstance(self, c) else 0
-        # resolve_class may populate the registry (bumping the generation);
-        # only cache if it did not move under us.
-        if _object_types._GENERATION == gen:
-            _ISTYPEOF_CACHE[key] = ans
-        return ans
+        return _is_type_of(self, cls, _ISTYPEOF_CACHE)
 
     def GetName(self) -> str:
         return self._name
@@ -394,11 +445,29 @@ class ObjectClass(TGEventHandlerObject):
                                      float(pos[0]), float(pos[1]), float(pos[2]))
 
     def GetTranslate(self) -> TGPoint3:
-        x, y, z = get_store().get_position(*self._xform)
+        store = get_store()
+        if type(store) is NativeTransformStore:
+            if _transform_point is None:
+                _no_transform_point()
+            xform = tuple(self._xform)
+            try:
+                return _transform_point(*xform)
+            except (RuntimeError, TypeError) as exc:
+                raise StaleHandleError(str(exc)) from exc
+        x, y, z = store.get_position(*self._xform)
         return TGPoint3(x, y, z)
 
     def GetWorldLocation(self) -> TGPoint3:
-        x, y, z = get_store().get_position(*self._xform)
+        store = get_store()
+        if type(store) is NativeTransformStore:
+            if _transform_point is None:
+                _no_transform_point()
+            xform = tuple(self._xform)
+            try:
+                return _transform_point(*xform)
+            except (RuntimeError, TypeError) as exc:
+                raise StaleHandleError(str(exc)) from exc
+        x, y, z = store.get_position(*self._xform)
         return TGPoint3(x, y, z)
 
     def GetRandomPointOnModel(self) -> TGPoint3:
@@ -706,10 +775,10 @@ class PhysicsObjectClass(ObjectClass):
         self._velocity = TGPoint3(v.x, v.y, v.z)
 
     def GetVelocity(self, space: int = DIRECTION_WORLD_SPACE) -> TGPoint3:
-        return TGPoint3(self._velocity.x, self._velocity.y, self._velocity.z)
+        return _point_copy(self._velocity)
 
     def GetVelocityTG(self) -> TGPoint3:
-        return TGPoint3(self._velocity.x, self._velocity.y, self._velocity.z)
+        return _point_copy(self._velocity)
 
     def GetAccelerationTG(self) -> TGPoint3:
         """World-space acceleration the ship's controller commanded on its last

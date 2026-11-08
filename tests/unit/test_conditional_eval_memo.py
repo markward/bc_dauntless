@@ -17,10 +17,36 @@ must decline.
 """
 import pytest
 
-from engine.appc.ai_driver import (_memoisable_evalfunc, _eval_conditional,
-                                   _refresh_conditional_status,
+from engine.appc import ai_driver
+from tests.helpers import ai_walker_oracle as oracle
+from engine.appc.ai_driver import (_memoisable_evalfunc,
                                    US_ACTIVE, US_DORMANT, US_DONE)
-from engine.appc.ai import ConditionalAI
+from engine.appc.ai import ConditionalAI, TGCondition
+
+
+def _eval_conditional(*args):
+    """Resolved at call time: the walker fixture may have installed the
+    oracle's over ai_driver's."""
+    return ai_driver._eval_conditional(*args)
+
+
+def _refresh_conditional_status(ai):
+    return ai_driver._refresh_conditional_status(ai)
+
+
+@pytest.fixture(autouse=True, params=["python", "native"])
+def walker(request, monkeypatch):
+    """Every test here runs against both condition evaluations: the frozen
+    Python walker's (tests/helpers/ai_walker_oracle.py, installed over
+    ai_driver) and the native one (aitree.cc)."""
+    if request.param == "python":
+        oracle.install(monkeypatch)
+    return request.param
+
+
+def _native_counts():
+    import _dauntless_host
+    return tuple(_dauntless_host.aitree_conditional_counts())
 
 
 class _Cond:
@@ -412,3 +438,367 @@ def test_a_nested_function_touching_nothing_global_is_still_admitted():
     ns = {}
     exec(compile(src, "<nested>", "exec"), ns)          # noqa: S102
     assert _memoisable_evalfunc(ns["outer"])
+
+
+# ── condition reads and the rules around the memo (both walkers) ─────────────
+
+def test_an_evalfunc_raising_a_base_exception_propagates():
+    """`except Exception` is the catch: a BaseException that is not an
+    Exception (KeyboardInterrupt, SystemExit) escapes, and nothing is cached."""
+    class Stop(BaseException):
+        pass
+
+    def EvalFunc(a, Stop=Stop):
+        raise Stop()
+
+    ai = _conditional([_Cond(1)], EvalFunc)
+    ai._status = US_ACTIVE
+    with pytest.raises(Stop):
+        _refresh_conditional_status(ai)
+    assert ai._status == US_ACTIVE
+    assert "_evalfn_cache" not in ai.__dict__
+    assert "_evalfn_memoisable" not in ai.__dict__
+
+
+def test_an_unparseable_status_escapes_int():
+    """`int(status)` is outside the try: a value it rejects raises."""
+    ai = _conditional([_Cond(1)], lambda a: "busy")
+    with pytest.raises(ValueError):
+        _refresh_conditional_status(ai)
+
+
+def test_a_condition_class_with_its_own_get_status_is_called(walker):
+    """A TGCondition subclass overriding GetStatus is CALLED, in condition
+    order, by both walkers (natively only stock TGCondition.GetStatus is read
+    directly)."""
+    order = []
+
+    class Own(TGCondition):
+        def __init__(self, tag, value):
+            super().__init__()
+            self.tag, self.value = tag, value
+
+        def GetStatus(self):
+            order.append(self.tag)
+            return self.value
+
+    stock = TGCondition()
+    stock.SetStatus(1)
+    a, b = Own("a", 1), Own("b", 0)
+    seen = []
+
+    def EvalFunc(x, y, z, seen=seen):
+        seen.append((x, y, z))
+        return US_ACTIVE if (x and y and not z) else US_DORMANT
+
+    ai = _conditional([a, stock, b], EvalFunc)
+    before = _native_counts()
+    _refresh_conditional_status(ai)
+    assert order == ["a", "b"]
+    assert seen == [(1, 1, 0)]
+    assert ai._status == US_ACTIVE
+    reads = _native_counts()[1] - before[1]
+    assert reads == (1 if walker == "native" else 0), reads
+
+
+def test_an_instance_shadowing_get_status_is_called():
+    """An instance attribute named GetStatus shadows the class's, so it is what
+    `c.GetStatus()` calls -- the stock read must not be taken for it."""
+    c = TGCondition()
+    c.SetStatus(0)
+    c.GetStatus = lambda: 1
+    ai = _conditional([c], lambda a, ACTIVE=US_ACTIVE, DORMANT=US_DORMANT:
+                      ACTIVE if a else DORMANT)
+    _refresh_conditional_status(ai)
+    assert ai._status == US_ACTIVE
+
+
+def test_a_class_level_patch_of_get_status_is_called(monkeypatch):
+    """TGCondition.GetStatus replaced on the class: no longer the stock body,
+    so it is called (the native stock check compares against the function
+    taken at import, not whatever the class holds now)."""
+    c = TGCondition()
+    c.SetStatus(0)
+    monkeypatch.setattr(TGCondition, "GetStatus", lambda self: 7)
+    seen = []
+    ai = _conditional([c], lambda a, seen=seen: seen.append(a) or US_ACTIVE)
+    _refresh_conditional_status(ai)
+    assert seen == [7]
+
+
+def test_a_status_written_directly_is_seen(walker):
+    """A test (or an SDK script reaching past SetStatus) writes `_status`
+    directly: no handler runs and no event is posted, and the next refresh
+    still sees it. Natively that is the direct read of a stock condition."""
+    c = TGCondition()
+
+    def EvalFunc(a, calls=[], ACTIVE=US_ACTIVE, DORMANT=US_DORMANT):
+        calls.append(a)
+        return ACTIVE if a else DORMANT
+
+    ai = _conditional([c], EvalFunc)
+    before = _native_counts()
+    _refresh_conditional_status(ai)
+    assert ai._status == US_DORMANT
+    c._status = 3
+    _refresh_conditional_status(ai)
+    assert ai._status == US_ACTIVE
+    _refresh_conditional_status(ai)              # memo hit on (3,)
+    assert EvalFunc.__defaults__[0] == [0, 3]
+    after = _native_counts()
+    if walker == "native":
+        assert after[0] - before[0] == 3 and after[1] - before[1] == 3
+    else:
+        assert after == before
+
+
+@pytest.mark.parametrize("statuses, expected", [
+    ([0, 0], US_DORMANT), ([0, 2], US_ACTIVE), ([-1], US_ACTIVE),
+    ([0], US_DORMANT), ([0.0, 0], US_DORMANT), ([False, True], US_ACTIVE),
+])
+def test_without_an_evalfunc_any_non_zero_condition_is_active(statuses,
+                                                              expected):
+    ai = ConditionalAI()
+    for v in statuses:
+        ai.AddCondition(_Cond(v))
+    ai._status = 99
+    _refresh_conditional_status(ai)
+    assert ai._status == expected
+
+
+def test_without_an_evalfunc_any_stops_at_the_first_non_zero():
+    """`any(c.GetStatus() != 0 ...)` short-circuits: conditions after the
+    first non-zero one are not read."""
+    order = []
+
+    class Probe(_Cond):
+        def __init__(self, tag, status):
+            super().__init__(status)
+            self.tag = tag
+
+        def GetStatus(self):
+            order.append(self.tag)
+            return self.status
+
+    ai = ConditionalAI()
+    for tag, v in (("a", 0), ("b", 1), ("c", 1)):
+        ai.AddCondition(Probe(tag, v))
+    _refresh_conditional_status(ai)
+    assert order == ["a", "b"]
+    assert ai._status == US_ACTIVE
+
+
+def test_without_conditions_or_evalfunc_the_status_is_left_alone():
+    ai = ConditionalAI()
+    ai._status = 42
+    _refresh_conditional_status(ai)
+    assert ai._status == 42
+
+
+def test_the_done_fold_needs_an_active_evaluation():
+    """The fold only turns ACTIVE into DONE: a DORMANT answer stays DORMANT
+    even with a finished contained AI."""
+    class _Child:
+        _status = US_DONE
+
+    ai = _conditional([_Cond(0)], lambda a, ACTIVE=US_ACTIVE,
+                      DORMANT=US_DORMANT: ACTIVE if a else DORMANT)
+    ai._contained_ai = _Child()
+    _refresh_conditional_status(ai)
+    assert ai._status == US_DORMANT
+
+
+def test_the_memo_key_includes_the_function_args_and_answer():
+    """The cache entry is `(fn, tuple(args), status)`: the very function, a
+    tuple of the read statuses, and the pre-fold answer."""
+    def EvalFunc(a, b, ACTIVE=US_ACTIVE):
+        return ACTIVE
+
+    ai = _conditional([_Cond(1), _Cond(0)], EvalFunc)
+    _refresh_conditional_status(ai)
+    fn, key, status = ai.__dict__["_evalfn_cache"]
+    assert fn is EvalFunc and key == (1, 0) and type(key) is tuple
+    assert status == US_ACTIVE and type(status) is int
+    assert ai.__dict__["_evalfn_memoisable"] == (EvalFunc, True)
+
+
+def test_a_cached_answer_for_other_args_is_not_reused():
+    """A cache entry for the same function but different statuses is a miss
+    (the key compares `==`, element-wise)."""
+    calls = []
+
+    def EvalFunc(a, calls=calls, ACTIVE=US_ACTIVE, DORMANT=US_DORMANT):
+        calls.append(a)
+        return ACTIVE if a else DORMANT
+
+    c = _Cond(1)
+    ai = _conditional([c], EvalFunc)
+    ai.__dict__["_evalfn_cache"] = (EvalFunc, (0,), US_DORMANT)
+    _refresh_conditional_status(ai)
+    assert calls == [1] and ai._status == US_ACTIVE
+    ai.__dict__["_evalfn_cache"] = (EvalFunc, (1.0,), 77)   # 1 == 1.0: a hit
+    _refresh_conditional_status(ai)
+    assert calls == [1] and ai._status == 77
+
+
+def test_eval_conditional_returns_the_pre_fold_answer():
+    """_eval_conditional itself, as _tick_conditional calls it."""
+    def EvalFunc(a, ACTIVE=US_ACTIVE):
+        return True
+    ai = _conditional([_Cond(1)], EvalFunc)
+    status = _eval_conditional(ai, EvalFunc, [1])
+    assert status == 1 and type(status) is int
+    assert _eval_conditional(ai, EvalFunc, [1]) == 1
+
+
+def test_a_patched_eval_conditional_is_called_by_the_refresh(monkeypatch):
+    """The refresh calls _eval_conditional through the module, so a patch
+    is honoured by both walkers."""
+    seen = []
+
+    def fake(ai, fn, args):
+        seen.append(list(args))
+        return US_DONE
+    monkeypatch.setattr(ai_driver, "_eval_conditional", fake)
+    ai = _conditional([_Cond(1), _Cond(0)], lambda a, b: US_ACTIVE)
+    _refresh_conditional_status(ai)
+    assert seen == [[1, 0]] and ai._status == US_DONE
+
+
+def test_tick_conditional_reads_and_evaluates_through_s2(walker):
+    """_tick_conditional's status reads: the EvalFunc path and the
+    any-non-zero path, with the contained AI ticked only when ACTIVE."""
+    from engine.appc.ai_driver import _tick_conditional
+
+    class _Child:
+        def __init__(self):
+            self._status = US_ACTIVE
+
+    ticked = []
+    monkey_child = _Child()
+    c = TGCondition()
+    ai = _conditional([c], lambda a, ACTIVE=US_ACTIVE, DORMANT=US_DORMANT:
+                      ACTIVE if a else DORMANT)
+    ai._contained_ai = monkey_child
+    real_tick = ai_driver.tick_ai
+    ai_driver.tick_ai = lambda node, t: ticked.append(node) or US_ACTIVE
+    try:
+        before = _native_counts()
+        assert _tick_conditional(ai, 0.0) == US_DORMANT and ticked == []
+        c._status = 1
+        assert _tick_conditional(ai, 0.0) == US_ACTIVE and ticked == [
+            monkey_child]
+        bare = ConditionalAI()
+        assert _tick_conditional(bare, 0.0) == US_DORMANT
+        bare.AddCondition(_Cond(0))
+        bare.AddCondition(c)
+        bare._contained_ai = monkey_child
+        assert _tick_conditional(bare, 0.0) == US_ACTIVE
+        assert ticked == [monkey_child, monkey_child]
+        after = _native_counts()
+    finally:
+        ai_driver.tick_ai = real_tick
+    assert (after[0] > before[0]) == (walker == "native")
+
+
+def test_a_reassigned_get_status_code_is_called(walker):
+    """TGCondition.GetStatus left in place but its __code__ swapped: the
+    function object is still the stock one, but its body is not, so the
+    native stock check (function AND code) must call it, not read
+    `_status`."""
+    c = TGCondition()
+    c.SetStatus(0)
+    fn = TGCondition.__dict__["GetStatus"]
+    stock_code = fn.__code__
+
+    def seven(self):
+        return 7
+    seen = []
+    ai = _conditional([c], lambda a, seen=seen: seen.append(a) or US_ACTIVE)
+    fn.__code__ = seven.__code__
+    try:
+        _refresh_conditional_status(ai)
+    finally:
+        fn.__code__ = stock_code
+    assert seen == [7]
+
+
+def test_the_stock_get_status_capture_checks_its_shape():
+    """_STOCK_CONDITION_GETSTATUS is taken at import and checks that the code
+    it takes is `return self._status`. A GetStatus replaced before the import
+    is not taken as stock: the capture falls back to (None, None), so every
+    GetStatus is called (the import does not fail). A docstring on an
+    otherwise stock body does not break the check."""
+    assert ai_driver._STOCK_CONDITION_GETSTATUS == (
+        TGCondition.__dict__["GetStatus"],
+        TGCondition.__dict__["GetStatus"].__code__)
+    fn = TGCondition.__dict__["GetStatus"]
+    stock_code = fn.__code__
+
+    def other(self):
+        return self._status + 0
+
+    def documented(self):
+        """The stock body, with a docstring."""
+        return self._status
+
+    def bare(self):
+        return self._status
+    try:
+        fn.__code__ = other.__code__
+        assert ai_driver._capture_stock_get_status() == (None, None)
+        fn.__code__ = documented.__code__
+        assert ai_driver._capture_stock_get_status() == (
+            fn, documented.__code__)
+        fn.__code__ = bare.__code__
+        assert ai_driver._capture_stock_get_status() == (fn, bare.__code__)
+    finally:
+        fn.__code__ = stock_code
+    assert ai_driver._capture_stock_get_status() == (fn, stock_code)
+
+
+def test_with_no_stock_get_status_every_get_status_is_called(monkeypatch):
+    """The fallback capture (None, None): a stock TGCondition's GetStatus is
+    called by the native evaluation too, never read inline."""
+    monkeypatch.setattr(ai_driver, "_STOCK_CONDITION_GETSTATUS", (None, None))
+    calls = []
+    real = TGCondition.__dict__["GetStatus"]
+
+    def counting(self):
+        calls.append(1)
+        return real(self)
+    c = TGCondition()
+    c.SetStatus(1)
+    c.GetStatus = counting.__get__(c)
+    seen = []
+    ai = _conditional([c], lambda a, seen=seen: seen.append(a) or US_ACTIVE)
+    before = _native_counts()[1]
+    _refresh_conditional_status(ai)
+    assert seen == [1] and calls == [1]
+    d = TGCondition()
+    d.SetStatus(1)
+    ai2 = _conditional([d], lambda a, seen=seen: seen.append(a) or US_ACTIVE)
+    _refresh_conditional_status(ai2)
+    assert _native_counts()[1] == before       # no inline stock read
+
+
+def test_a_nan_status_hits_the_memo_only_as_the_same_object():
+    """A NaN condition status enters the key (float is a memo key type). The
+    key compare is a tuple `==`, whose identity shortcut makes the SAME NaN
+    object equal and a fresh NaN unequal: the same answer from both walkers
+    (an EvalFunc re-run only for the fresh one)."""
+    nan = float("nan")
+    cond = _Cond(nan)
+    calls = []
+
+    def EvalFunc(a, calls=calls, ACTIVE=US_ACTIVE):
+        calls.append(a)
+        return ACTIVE
+    ai = _conditional([cond], EvalFunc)
+    _refresh_conditional_status(ai)
+    _refresh_conditional_status(ai)              # the same NaN object: a hit
+    assert len(calls) == 1
+    cond.status = float("nan")                   # equal-looking, not the same
+    _refresh_conditional_status(ai)
+    assert len(calls) == 2
+    assert ai._status == US_ACTIVE

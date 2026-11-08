@@ -113,6 +113,7 @@ def _wrap_active_tuple(orig):
         return tuple(obj for obj in result if can_detect(observer, obj))
 
     _gated_active._sensor_gated = True
+    _gated_active._dauntless_wraps = orig
     return _gated_active
 
 
@@ -185,6 +186,7 @@ def _wrap_find_good_target(orig):
             return _best_detectable_candidate(self, ship)
 
     _gated_find._sensor_gated = True
+    _gated_find._dauntless_wraps = orig
     return _gated_find
 
 
@@ -199,6 +201,7 @@ def _wrap_get_targets(orig):
             return orig(self, pShip)
 
     _gated_get_targets._sensor_gated = True
+    _gated_get_targets._dauntless_wraps = orig
     return _gated_get_targets
 
 
@@ -224,6 +227,7 @@ def _gated_fire_script_target_visible(self, pTarget):
 
 
 _gated_fire_script_target_visible._sensor_gated = True
+# _dauntless_wraps is set at install (the stub it replaces is the SDK's).
 
 
 # Every (owner, name) install replaced, with the object it found there, so
@@ -279,6 +283,11 @@ def install_ai_sensor_gate() -> None:
     # Gate the actual firing path. FireScript.TargetVisible is a no-op stub in
     # stock BC; replace it so a ship that can't detect its target stops firing.
     if not getattr(_pp.FireScript.TargetVisible, "_sensor_gated", False):
+        # Marked as a wrapper of the stub it replaces, so engine/appc/
+        # ai_native.py still reads FireScript as stock (set per install: a
+        # reloaded SDK module is a new original).
+        _gated_fire_script_target_visible._dauntless_wraps = \
+            _pp.FireScript.TargetVisible
         _replace(_pp.FireScript, "TargetVisible",
                  _gated_fire_script_target_visible)
 

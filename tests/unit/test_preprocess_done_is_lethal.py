@@ -183,14 +183,16 @@ def test_an_unregistered_preprocessor_is_left_alone():
     assert node.GetPreprocessingInstance() is inst
 
 
-def test_the_registry_holds_the_three_classes_whose_python_bodies_can_be_lethal():
+def test_the_registry_holds_the_binarys_four_classes():
     """The binary registers four preprocessors (AvoidObstacles, FireScript,
-    ManagePower, SelectTarget). We register the three whose SDK Python Update can
-    return PS_DONE: ManagePower (full replacement) plus FireScript and
-    AvoidObstacles (thin non-lethal wrappers around the real SDK bodies).
+    ManagePower, SelectTarget), and so do we. The three whose SDK Python Update
+    can return PS_DONE are protected: ManagePower (full replacement) plus
+    FireScript and AvoidObstacles (thin non-lethal wrappers around the real SDK
+    bodies).
 
-    SelectTarget is deliberately absent — its Python body cannot return PS_DONE
-    (pinned below), so it needs no protection.
+    SelectTarget needs no protection -- its Python body cannot return PS_DONE
+    (pinned below). Its entry is for speed only (phase 6 AI part 2, Task 3:
+    GetTargetRating native for a stock instance); its Update is the SDK's.
 
     AvoidObstacles' entry is the plain non-lethal wrapper by default. The
     engine-side SCAN that used to occupy this slot is opt-in
@@ -198,12 +200,12 @@ def test_the_registry_holds_the_three_classes_whose_python_bodies_can_be_lethal(
     subtree via PS_SKIP_ACTIVE; the PS_DONE protection is orthogonal to that
     and must survive the swap either way."""
     assert set(ai_optimized.OPTIMIZED_PREPROCESSORS) == {
-        "ManagePower", "FireScript", "AvoidObstacles",
+        "ManagePower", "FireScript", "AvoidObstacles", "SelectTarget",
     }
 
 
 def test_select_targets_sdk_body_cannot_return_ps_done():
-    """The reason SelectTarget stays out of the registry. Its no-target path
+    """Why SelectTarget's registry entry wraps no Update. Its no-target path
     returns PS_SKIP_DORMANT (AI/Preprocessors.py, eNoTargetPreprocessStatus) —
     it never returns PS_DONE, so running its Python body cannot kill an AI node.
     If this ever goes red, SelectTarget needs a wrapper like FireScript's."""

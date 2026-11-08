@@ -22,7 +22,7 @@ from array import array
 from engine.appc.objects import ObjectClass, PhysicsObjectClass
 from engine.appc import proximity_cache
 from engine.appc import proximity_table
-from engine.appc.transform_store import get_store
+from engine.appc.transform_store import NativeTransformStore, get_store
 from engine.core import frame_profiler
 
 
@@ -344,6 +344,39 @@ def _within_reach(dx, dy, dz, r, size) -> bool:
     return dx * dx + dy * dy + dz * dz <= reach * reach
 
 
+def _unstored_reaches(obj, px, py, pz, r) -> bool:
+    """An entry that answers GetWorldLocation itself (none in a fight): asked
+    where it is, then the size rule. Shared by both cached paths (the native
+    `prox_near` calls it)."""
+    loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
+    if loc is None:
+        return False
+    return _within_reach(loc.x - px, loc.y - py, loc.z - pz, r, _size(obj))
+
+
+#: The host's `prox_near`, looked up on the first native query.
+_PROX_NEAR = [None]
+
+#: The store reader `prox_near` stands in for, taken at import: a patched one
+#: (a test spy, a mod) is a reader the native query would not see, so the
+#: query takes the Python path (as ai_optimized._decide_store guards
+#: get_position).
+_NATIVE_NEAR_SIZED = NativeTransformStore.near_indices_sized
+
+
+def _prox_near_stale(cand, px, py, pz, r):
+    raise AttributeError(
+        "module '_dauntless_host' has no attribute 'prox_near'")
+
+
+def _prox_near():
+    fn = _PROX_NEAR[0]
+    if fn is None:
+        import _dauntless_host as h
+        fn = _PROX_NEAR[0] = getattr(h, "prox_near", _prox_near_stale)
+    return fn
+
+
 def _reports(cand, i) -> bool:
     """Whether entry `i` is a candidate THIS query (the uncached walk's
     rule): a set member when it participates now; a manager entry unless its
@@ -551,6 +584,9 @@ class ProximityManager:
         Answered from the cached candidate list (_cached) with one native
         `near_indices_sized` call for every store-backed entry; same objects,
         same order as the uncached walk (tests/helpers/proximity_oracle.py).
+        On the native store that whole cached query is one `prox_near` call,
+        which reads a stock candidate's radius in C++ instead of calling
+        GetRadius (_near_objects_cached is the Python reference).
         """
         with frame_profiler.scope("prox.near"):
             return self._near_objects(point, radius)
@@ -561,6 +597,23 @@ class ProximityManager:
             return self._near_objects_python(point, radius)
         r = float(radius)
         px, py, pz = point.x, point.y, point.z
+        if (type(get_store()) is NativeTransformStore
+                and NativeTransformStore.near_indices_sized
+                is _NATIVE_NEAR_SIZED):
+            # One native call: a stock candidate's radius and participation
+            # read in C++ (no GetRadius call), anything else asked in Python
+            # through _size / _radius_participates / _unstored_reaches, in
+            # the order _near_objects_cached asks. For a STOCK candidate the
+            # native path bypasses the private helpers planet._size,
+            # _radius_participates, _reports and _near_objects_cached
+            # altogether (a patch of one is not seen for it, by design);
+            # _unstored_reaches is looked up once per query.
+            return (_PROX_NEAR[0] or _prox_near())(cand, px, py, pz, r)
+        return self._near_objects_cached(cand, px, py, pz, r)
+
+    def _near_objects_cached(self, cand, px, py, pz, r):
+        """The cached query in Python: the reference `prox_near` equals
+        (host_bindings.cc proxnear::), and the path on the Python store."""
         objs = cand.objs
         keep = []
         if cand.packed:
@@ -576,15 +629,8 @@ class ProximityManager:
             # uncached walk never asks a non-candidate where it is.
             more = []
             for i in cand.unstored_pos:
-                if not _reports(cand, i):
-                    continue
-                obj = objs[i]
-                loc = (obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation")
-                       else None)
-                if loc is None:
-                    continue
-                if _within_reach(loc.x - px, loc.y - py, loc.z - pz, r,
-                                 _size(obj)):
+                if _reports(cand, i) and _unstored_reaches(objs[i], px, py,
+                                                           pz, r):
                     more.append(i)
             if more:
                 keep = sorted(keep + more) if keep else more

@@ -1947,6 +1947,10 @@ class ShipClass(DamageableObject):
         # run in this engine, so swallowing here would hide the first real
         # signal of a bug in code that has never executed.
         if self._target is not old_target:
+            # The set index counts targeters per set; tell it BEFORE the event
+            # so a handler sees the new count.
+            from engine.appc import set_index
+            set_index.on_target_changed(self)
             # The manual aim offset is expressed in the OLD target's frame.
             self._manual_target_offset = None
             self._use_target_offset = False

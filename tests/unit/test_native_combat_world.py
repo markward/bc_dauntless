@@ -383,6 +383,7 @@ def test_audit_flags_a_bypassed_set_write():
     nc.configure(ON)
     pSet = _set("world_audit")
     ship = App.ShipClass_Create("Bypassed")
-    contact_index._buckets.setdefault(pSet, []).append(ship)  # no push
+    import _dauntless_host as _h
+    _h.set_index_add(pSet, "Bypassed", ship, True, -1, ship.GetObjID())  # no push
     nc.audit_mirror()
     assert ("SetClass", "ships") in nc.audit_failures()

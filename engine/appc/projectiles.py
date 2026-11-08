@@ -23,7 +23,7 @@ from engine.appc import proximity_cache
 from engine.appc import torpedo_scan as _torpedo_scan
 from engine.appc import native_combat as _nc
 from engine.appc.math import TGPoint3
-from engine.appc.objects import ObjectClass
+from engine.appc.objects import ObjectClass, _point_copy
 from engine.systems.frames import shifted as _shifted
 
 
@@ -333,7 +333,7 @@ class Torpedo(ObjectClass):
         ``vVelocity = pTorp.GetVelocityTG(); vVelocity.Subtract(pShip...)`` --
         handing back the live vector would let that in-place Subtract corrupt
         the torpedo's real velocity."""
-        return TGPoint3(self._velocity.x, self._velocity.y, self._velocity.z)
+        return _point_copy(self._velocity)
 
     def GetNode(self):
         """Weak node handle mirroring ObjectClass.GetNode(), so

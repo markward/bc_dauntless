@@ -25,6 +25,7 @@ import pathlib
 import pytest
 
 from engine.appc import ai_driver
+from tests.helpers import ai_walker_oracle as oracle
 from engine.appc.ai import (PlainAI, PreprocessingAI, PriorityListAI)
 from engine.appc.ai_driver import tick_all_ai, US_ACTIVE, US_DORMANT
 from engine.core import ids as core_ids
@@ -83,9 +84,12 @@ class _Preprocessor:
         return self._interval
 
 
-@pytest.fixture
-def drive(monkeypatch):
-    """Run one ship's real AI tree through the real tick_all_ai."""
+@pytest.fixture(params=["python", "native"])
+def drive(monkeypatch, request):
+    """Run one ship's real AI tree through the real tick_all_ai, under each
+    roster (phase 6 AI part 4: the native roster keeps every invariant)."""
+    if request.param == "python":
+        oracle.install(monkeypatch)
 
     def run(ai, ticks, max_sleep, start=0.0):
         ship = _Ship(ai)
@@ -170,7 +174,7 @@ def test_a_dormant_preprocessing_child_is_re_probed_as_promptly_asleep(drive):
 
 
 def test_every_due_time_gate_in_the_driver_records_its_due_time():
-    """Structural backstop for the invariant _note_due's docstring claims.
+    """Structural backstop for the invariant _note_due's comment claims.
 
     The behavioural tests above cover the three gates that exist today. This one
     covers the gate somebody adds next year: any comparison of `game_time`
@@ -178,8 +182,13 @@ def test_every_due_time_gate_in_the_driver_records_its_due_time():
     time, or its node can oversleep by up to AI_MAX_SLEEP_TICKS -- silently,
     because oversleeping raises nothing and fails no assertion.
     """
-    src = pathlib.Path(ai_driver.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(src)
+    # The walker lives in C++ now (the differential harness holds it equal to
+    # the frozen Python reference), so the gates are looked for in the
+    # REFERENCE (tests/helpers/ai_walker_oracle.py), and ai_driver itself must
+    # hold none: a gate re-added there in Python would be a second walker.
+    oracle_src = pathlib.Path(oracle.__file__).read_text(encoding="utf-8")
+    driver_src = pathlib.Path(ai_driver.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(oracle_src)
 
     def _mentions(node, names):
         return any(isinstance(n, ast.Name) and n.id in names
@@ -195,12 +204,106 @@ def test_every_due_time_gate_in_the_driver_records_its_due_time():
                 return True
         return False
 
+    gated = [fn.name for fn in ast.walk(tree)
+             if isinstance(fn, ast.FunctionDef) and _gates(fn)]
+    assert {"_tick_plain", "_tick_preprocessing"} <= set(gated), gated
+    assert not [fn.name for fn in ast.walk(ast.parse(driver_src))
+                if isinstance(fn, ast.FunctionDef) and _gates(fn)], (
+        "ai_driver gates on game_time again: the walk is native")
     offenders = [fn.name for fn in ast.walk(tree)
                  if isinstance(fn, ast.FunctionDef) and _gates(fn)
                  and not _mentions(fn, {"_note_due", "_note_due_ret"})]
     assert not offenders, (
         "these functions gate on game_time vs _next_update_time without ever "
         "calling _note_due, so their nodes can oversleep: %r" % (offenders,))
+
+
+_AITREE_CC = (pathlib.Path(__file__).resolve().parents[2]
+              / "native" / "src" / "host" / "aitree.cc")
+_NOTE_DUE_CALLS = ("note_due_attr_stmt(", "note_due_value(", "note_due_ret_test(")
+_COMPARE_OPS = ("Py_LT", "Py_LE", "Py_GT", "Py_GE")
+
+
+def _cc_functions(text):
+    """(name, raw body, body with // comments removed) for every top-level
+    function in aitree.cc. A function starts at the last column-0 line that
+    opens a signature (an identifier, a `(`, not a `;`-ended declaration)
+    before the column-0 `}` that closes it, so a signature continued over
+    several lines is scanned too.
+
+    Limitation: the due-time name and the comparison must sit in the same
+    function. A gate that reads `next_update_time` in a helper and compares
+    in its caller is not seen; keep gates in one function or exempt them."""
+    out, start = [], None
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if (line[:1].isalpha() and "(" in line
+                and not line.rstrip().endswith(";")
+                and not line.startswith(
+                    ("namespace", "struct", "class", "enum", "extern"))):
+            start = i
+        elif line.startswith("}"):
+            if start is not None:
+                raw = "\n".join(lines[start:i + 1])
+                code = "\n".join(l.split("//")[0] for l in lines[start:i + 1])
+                out.append((lines[start].split("(")[0].split()[-1], raw, code))
+            start = None
+    return out
+
+
+def _unrecorded_due_gates(text):
+    """Functions that compare against `next_update_time` (the attribute name
+    and a Py_LT/LE/GT/GE comparison in the same function) and neither call a
+    note-due helper nor carry a `// due-gate-exempt: <reason>` comment."""
+    bad = []
+    for name, raw, code in _cc_functions(text):
+        if "next_update_time" not in code:
+            continue
+        if not any(op in code for op in _COMPARE_OPS):
+            continue
+        if any(call in code for call in _NOTE_DUE_CALLS):
+            continue
+        if "// due-gate-exempt:" in raw:
+            continue
+        bad.append(name)
+    return bad
+
+
+def test_every_due_time_gate_in_aitree_cc_records_its_due_time():
+    """The native twin of the structural backstop above. The walk is C++, so
+    a gate added there is invisible to a scan of the frozen oracle: every
+    function in native/src/host/aitree.cc that compares against
+    `next_update_time` must also call one of the note-due helpers, or carry
+    `// due-gate-exempt: <reason>`."""
+    text = _AITREE_CC.read_text(encoding="utf-8")
+    gated = [name for name, _raw, code in _cc_functions(text)
+             if "next_update_time" in code
+             and any(op in code for op in _COMPARE_OPS)]
+    assert {"plain_impl", "preprocessing_impl"} <= set(gated), gated
+    assert not _unrecorded_due_gates(text), (
+        "these aitree.cc functions gate on _next_update_time without a "
+        "note-due call, so their nodes can oversleep: %r"
+        % (_unrecorded_due_gates(text),))
+
+
+def test_the_aitree_cc_gate_scan_bites():
+    text = _AITREE_CC.read_text(encoding="utf-8")
+    stripped = text.replace("note_due_ret_test(c, f.child.get())", "1")
+    assert _unrecorded_due_gates(stripped), "removing a note-due call went unseen"
+    fake = ("int gate(PyObject* ai) {\n%s\n"
+            "    auto t = PyObject_GetAttr(ai, n->next_update_time);\n"
+            "    return compare_owned(t, t, Py_GE);\n}\n")
+    assert _unrecorded_due_gates(fake % "") == ["gate"]
+    assert not _unrecorded_due_gates(fake % "    // due-gate-exempt: why")
+    assert not _unrecorded_due_gates(fake % "    note_due_value(t);")
+    multi = ("static int gate2(PyObject* ai,\n"
+             "                 double now) {\n"
+             "    auto t = PyObject_GetAttr(ai, n->next_update_time);\n"
+             "    return compare_owned(t, t, Py_LT);\n}\n")
+    assert _unrecorded_due_gates(multi) == ["gate2"]
+    names = {name for name, _r, _c in _cc_functions(text)}
+    assert {"eval_impl", "routes_native", "reconcile_stmt"} <= names, (
+        "multi-line signatures are not scanned")
 
 
 # ── the measured waste the pre-gate note used to cause ──────────────────────
