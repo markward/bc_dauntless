@@ -8,7 +8,7 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 
 ---
 
-## The five cadences (and one native stage)
+## The cadences (and one native stage)
 
 | What | Constant | Period | Where |
 |---|---|---|---|
@@ -22,6 +22,7 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 | Contact list membership | sensor_dials sweep_period_s | 1.0 s game time + events | engine/appc/contact_refresh.py |
 | Avoidance re-decision | `AVOID_EVADING_UPDATE_DELAY_S` | 0.25 s / 4 Hz | `engine/appc/ai_optimized.py` (`AVOID_EVADING_UPDATE_DELAY_S`) |
 | AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py` (`AI_MAX_SLEEP_TICKS`; the walk it gates is native, `native/src/host/aitree.cc`) |
+| AI ship glow state poll | `AI_GLOW_POLL_S` | 0.05 s game time | `engine/appc/subsystem_glow.py` |
 
 The last two are environment-overridable — `DAUNTLESS_AVOID_EVADE_DELAY_S` and
 `DAUNTLESS_AI_MAX_SLEEP`. Setting the avoid delay to `0.0` restores the SDK's
@@ -231,6 +232,25 @@ re-derivation; the per-tick firing chokepoint and `clear_undetectable_player_loc
 keep feeding it, and the latch is idempotent set membership, so the lock guard
 and the list cannot disagree on a lock break: the break changes the target, and
 the target compare marks the list.
+
+## 6. An AI ship's glow state is polled at 20 Hz
+
+`ShipGlowController.update` (`engine/appc/subsystem_glow.py`) reads each glow
+region's subsystem state, condition and the ship's commanded throttle only
+every `AI_GLOW_POLL_S` (0.05 s of game time) for AI ships, staggered across
+ships by instance id; the player's ship still polls every frame. Consequence,
+**accepted** (perf tier 1, spec `2026-11-08-perf-tier1-design.md` §2.3): an AI
+ship's damage flicker, disabled/destroyed blow-out and throttle ease start **up
+to 50 ms late**, because the edge time is the detection time. Purely visual: no
+gameplay reads it.
+
+The impulse glow's ease and slow pulse are no longer stepped in Python: the
+renderer evaluates them at upload (`native/src/renderer/include/renderer/glow_impulse.h`)
+from the glow flicker's game clock, so a held throttle is one push. AI
+combat throttles rarely hold (the SDK's CircleObject / FollowObject /
+ManeuverLoop re-blend speed every AI update), so for combat AI the push rate
+is capped by the 20 Hz poll rather than reduced to one. The warp
+gain stays per-frame Python (only the player warps).
 
 ---
 

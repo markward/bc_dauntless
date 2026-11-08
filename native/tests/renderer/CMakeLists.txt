@@ -66,6 +66,7 @@ add_executable(renderer_tests
     channel_binder_test.cc
     channel_binder_assets_test.cc
     glow_region_test.cc
+    glow_impulse_test.cc
     ray_trace_test.cc
     shield_state_test.cc
     warp_in_flash_shape_test.cc

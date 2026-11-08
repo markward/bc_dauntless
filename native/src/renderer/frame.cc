@@ -6,6 +6,7 @@
 #include "renderer/shader.h"
 #include "renderer/hull_fill_cache.h"
 #include "renderer/dynamic_lights.h"
+#include "renderer/glow_impulse.h"
 #include "renderer/aabb.h"
 #include "renderer/hull_cull.h"
 #include <cfloat>
@@ -995,7 +996,14 @@ static void draw_model_pass(const assets::Model& model,
             na[nn] = glm::vec4(n.center, n.radius);
             nb[nn] = glm::vec4(n.axis, n.aft);
             nc[nn] = glm::vec4(n.fore, n.dim_target, n.disable_time, n.flicker);
-            nd[nn] = glm::vec4(n.gain, n.gain_axis.x, n.gain_axis.y, n.gain_axis.z);
+            // Impulse regions: ease + pulse evaluated here from the same game
+            // clock the shader's flicker reads (u_decal_time), so Python pushes
+            // only on change (spec 2026-11-08 §2.3).
+            const float gain =
+                n.impulse ? renderer::glow_impulse::gain(n.imp_start, n.imp_target, n.imp_t0,
+                                               decal_time, n.imp_powered)
+                          : n.gain;
+            nd[nn] = glm::vec4(gain, n.gain_axis.x, n.gain_axis.y, n.gain_axis.z);
             ne[nn] = glm::vec4(n.shape, n.half_extents.x, n.half_extents.y, n.half_extents.z);
             nf[nn] = glm::vec4(n.forward, 0.0f);
             ng[nn] = glm::vec4(n.up, 0.0f);

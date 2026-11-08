@@ -126,6 +126,7 @@ class _FakeRenderer:
         self.box_calls = []
         self.dim_calls = []
         self.gain_calls = []
+        self.impulse_calls = []
     def add_sphere_region(self, iid, center, radius):
         self.sphere_calls.append((iid, center, radius))
         return self._results.pop(0)
@@ -140,6 +141,17 @@ class _FakeRenderer:
         self.dim_calls.append((iid, idx, dim_target, edge_time, flicker))
     def set_glow_region_gain(self, iid, idx, gain, gate_axis=(0.0, 0.0, 0.0)):
         self.gain_calls.append((iid, idx, gain, gate_axis))
+    def set_glow_region_impulse(self, iid, idx, start, target, t0, powered,
+                                gate_axis=(0.0, 0.0, 0.0)):
+        self.impulse_calls.append(
+            (iid, idx, start, target, t0, powered, gate_axis))
+
+
+def _impulse_gain_of(call, now):
+    """The gain the renderer evaluates at `now` for a recorded
+    set_glow_region_impulse call (renderer/glow_impulse.h's twin)."""
+    _iid, _idx, start, target, t0, powered, _gate = call
+    return sg.impulse_gain(sg.eased_frac(start, target, t0, now), now, powered)
 
 
 def test_controller_registers_baked_warp_impulse_and_sensor():
@@ -323,13 +335,15 @@ def test_controller_pushes_gain_only_for_impulse_region():
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
     ctrl.update(now=0.0)
 
-    # exactly one gain push, on the impulse region index (1), at full throttle,
-    # gated to the aft axis so only exhaust faces brighten
-    assert len(rend.gain_calls) == 1
-    iid, idx, gain, gate = rend.gain_calls[0]
-    assert (iid, idx) == (7, 1)
-    assert abs(gain - sg.GAIN_MAX) < 1e-9
-    assert gate == sg.IMPULSE_AFT_AXIS
+    # exactly one impulse push, on the impulse region index (1), at full
+    # throttle, gated to the aft axis so only exhaust faces brighten; no plain
+    # gain push anywhere (the warp region is not warping)
+    assert rend.gain_calls == []
+    assert len(rend.impulse_calls) == 1
+    call = rend.impulse_calls[0]
+    assert call[:2] == (7, 1)
+    assert abs(_impulse_gain_of(call, 0.0) - sg.GAIN_MAX) < 1e-9
+    assert call[6] == sg.IMPULSE_AFT_AXIS
 
 
 def _warp_impulse_sensor_ship():
@@ -361,9 +375,10 @@ def test_controller_pushes_no_warp_gain_while_not_warping():
     ctrl.update(now=0.0)
     ctrl.update(now=1.0)
     assert _gains_for(rend, 0) == []          # warp region untouched
-    # The impulse region drives as always, but an idle (unchanged) gain is
+    # The impulse region drives as always, but an idle (unchanged) ease is
     # pushed once, not every update (phase 3b change guard).
-    assert len(_gains_for(rend, 1)) == 1
+    assert _gains_for(rend, 1) == []
+    assert len([c for c in rend.impulse_calls if c[1] == 1]) == 1
 
 
 def test_controller_pushes_warp_gain_over_the_whole_volume():
@@ -419,9 +434,9 @@ def test_controller_boost_ignores_ison_flag():
     rend = _FakeRenderer(results=[0])
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
     ctrl.update(now=0.0)
-    iid, idx, gain, _gate = rend.gain_calls[0]
-    assert (iid, idx) == (7, 0)
-    assert abs(gain - sg.GAIN_MAX) < 1e-9
+    call = rend.impulse_calls[0]
+    assert call[:2] == (7, 0)
+    assert abs(_impulse_gain_of(call, 0.0) - sg.GAIN_MAX) < 1e-9
 
 
 def test_controller_registers_boost_region_per_impulse_pod():
@@ -449,8 +464,9 @@ def test_controller_registers_boost_region_per_impulse_pod():
     assert sum(1 for r in ctrl._regions if r["boost"]) == 3
     # driving at full throttle pushes a full-gain call per pod
     ctrl.update(now=0.0)
-    assert len(rend.gain_calls) == 3
-    assert all(abs(g - sg.GAIN_MAX) < 1e-9 for (_i, _x, g, _ax) in rend.gain_calls)
+    assert len(rend.impulse_calls) == 3
+    assert all(abs(_impulse_gain_of(c, 0.0) - sg.GAIN_MAX) < 1e-9
+               for c in rend.impulse_calls)
 
 
 def test_controller_no_boost_when_impulse_disabled():
@@ -461,7 +477,10 @@ def test_controller_no_boost_when_impulse_disabled():
     rend = _FakeRenderer(results=[0])
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
     ctrl.update(now=0.0)
-    assert rend.gain_calls == [(7, 0, 1.0, sg.IMPULSE_AFT_AXIS)]
+    assert rend.gain_calls == []
+    assert rend.impulse_calls == [
+        (7, 0, 0.0, 0.0, 0.0, False, sg.IMPULSE_AFT_AXIS)]
+    assert _impulse_gain_of(rend.impulse_calls[0], 0.0) == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -572,7 +591,10 @@ def test_controller_baked_sphere_still_boosts_with_gain():
     assert rend.sphere_calls == [(7, (1.0, 2.0, 3.0), 0.6)]
     assert rend.cylinder_calls == []
     ctrl.update(now=0.0)
-    assert rend.gain_calls == [(7, 4, 1.0, sg.IMPULSE_AFT_AXIS)]
+    assert rend.gain_calls == []
+    assert rend.impulse_calls == [
+        (7, 4, 0.0, 0.0, 0.0, True, sg.IMPULSE_AFT_AXIS)]
+    assert _impulse_gain_of(rend.impulse_calls[0], 0.0) == sg.GAIN_IDLE
 
 
 def test_controller_multiple_baked_regions_all_boost():
@@ -591,7 +613,7 @@ def test_controller_multiple_baked_regions_all_boost():
     assert len(ctrl._regions) == 2
     assert all(r["boost"] for r in ctrl._regions)
     ctrl.update(now=0.0)
-    assert [c[1] for c in rend.gain_calls] == [0, 1]
+    assert [c[1] for c in rend.impulse_calls] == [0, 1]
 
 
 def test_controller_box_pod_registers_box_region():

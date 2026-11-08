@@ -59,7 +59,7 @@ class _Renderer:
         self._next = 0
         self._capacity = capacity
         self.box_calls, self.cylinder_calls, self.sphere_calls = [], [], []
-        self.dim_calls, self.gain_calls = [], []
+        self.dim_calls, self.gain_calls, self.impulse_calls = [], [], []
     def _alloc(self):
         if self._next >= self._capacity:
             return -1
@@ -79,6 +79,9 @@ class _Renderer:
         self.dim_calls.append((idx, dim, etime, flick))
     def set_glow_region_gain(self, iid, idx, gain, gate=(0.0, 0.0, 0.0)):
         self.gain_calls.append((idx, gain))
+    def set_glow_region_impulse(self, iid, idx, start, target, t0, powered,
+                                gate=(0.0, 0.0, 0.0)):
+        self.impulse_calls.append((idx, start, target, t0, powered))
 
 
 CANNON = (1.008, 0.45, -0.67)
@@ -113,6 +116,7 @@ def test_a_weapon_region_is_not_an_impulse_boost():
     ctrl = sg.ShipGlowController(r, 7, _Ship(weapons=cannon))
     ctrl.update(now=10.0, throttle_frac=1.0)
     assert r.gain_calls == []
+    assert r.impulse_calls == []
 
 
 def test_an_impulse_pod_is_registered_ONCE_and_still_boosts():
@@ -122,7 +126,8 @@ def test_an_impulse_pod_is_registered_ONCE_and_still_boosts():
     ctrl = sg.ShipGlowController(r, 7, _Ship(impulse=impulse))
     assert len(r.box_calls) == 1
     ctrl.update(now=10.0, throttle_frac=1.0)
-    assert r.gain_calls, "the impulse region must keep its throttle boost"
+    assert r.impulse_calls == [(0, 1.0, 1.0, 10.0, True)], (
+        "the impulse region must keep its throttle boost")
 
 
 def test_an_unbaked_subsystem_gets_nothing():
