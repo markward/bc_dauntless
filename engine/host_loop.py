@@ -7639,6 +7639,8 @@ def reset_mission_state(renderer=None) -> None:
     # The first pump after a swap is a full contact rebuild.
     contact_refresh.reset()
     _hud_change_state.clear()
+    # Hum cadence state: a swap must not wait out the old 10 Hz deadline.
+    hum_allocator.mark_dirty()
     from engine.appc import ai_native
     ai_native.reset_stats()
     # Effects held for the tick boundary name the old mission's ships.
@@ -9713,7 +9715,6 @@ def _rebuild_contacts(menu, player) -> tuple:
     regrouping; those calls recolour at once, a regroup without one waits
     for the sweep).
     """
-    from engine.appc import perception
     with frame_profiler.scope("contacts.perceive"):
         contacts = perception.perceived_by(player)
     with frame_profiler.scope("contacts.push"):
@@ -14022,6 +14023,10 @@ def run(mission_name: Optional[str] = None,
         _warp_hooks.configure_warp_vfx(start=None, stop=None, enabled=None,
                                        vantage_of=None)
         _gate_hooks.configure_gate_hooks(ray_collide=None)
+        # The weapons-panel redraw hook closes over the HUD registry and
+        # through it the controller and session; clear it with the rest.
+        from engine.appc import weapon_config as _weapon_config
+        _weapon_config.on_change = None
         # Likewise the bridge controllers registered "for the lifetime of
         # run()": a leaked walk controller makes a later headless MoveTo wait
         # on a renderer that is gone, stalling any sequence behind it.

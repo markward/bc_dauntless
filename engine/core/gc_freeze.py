@@ -35,6 +35,10 @@ Mid-mission, a load-time object that turns into CYCLIC garbage stays alive
 until the next teardown thaws it (refcount frees still happen; objects made
 after the freeze collect normally), so the growth is bounded by the load-time
 heap. Its ``weakref.finalize`` callbacks (native-mirror frees) fire then.
+What relies on mid-mission cyclic collection: the transform-slot and
+native-row finalizers (objects.py, native_combat.py) and the hum finalizer
+(hum_allocator.py, now also covered by dirty marks). Before this change those
+frees waited for a gen-2 pass (30-80 s); now they wait for the next teardown.
 
 Armed only by ``engine.host_loop.run()`` outside pytest: the suite never runs
 frozen (docs/reference/architecture/test-suite-memory.md).

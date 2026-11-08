@@ -1,6 +1,6 @@
 # Perf cadences that are also gameplay latency
 
-Five things that used to run every tick now run on a cadence. Each was landed as
+Ten things that used to run every tick now run on a cadence (the table below). Each was landed as
 a performance win, and **each is also a behaviour change**. Read this before
 reporting a delayed in-game reaction as a bug — the delay may be the design.
 
@@ -61,7 +61,7 @@ or subsystem behind its back.
 player's phasers up to 0.5 s aiming at an already-destroyed subsystem. It is now
 `reconcile_subsystem_lock()` at module scope
 (`engine/ui/target_list_view.py:396`), driven per-frame from the host loop
-(`engine/host_loop.py:12964`, in `run()`) beside `clear_undetectable_player_lock`.
+(`engine/host_loop.py`, the `reconcile_subsystem_lock()` call in `run()`'s frame loop) beside `clear_undetectable_player_lock`.
 
 One accepted wrinkle, documented at `panel_registry.py:24-36`: the panel
 throttle runs on **wall** clock while the shield period accumulates **game** dt,
@@ -404,7 +404,7 @@ skip. The shield cadence above is unchanged.
 
 ---
 
-## HUD panels poll at 10-20 Hz
+## 7. HUD panels poll at 10-20 Hz
 
 The radar (20 Hz) and the crew menu, player ship and weapons panels (10 Hz)
 used to rebuild every frame. Continuous data now trails by up to one interval:
