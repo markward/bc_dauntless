@@ -1,5 +1,8 @@
 """_pump_contacts — the one wire from the player's containing set to the target
-menu. Runs every frame: membership is DERIVED, so the push is the feature.
+menu. Runs every frame: membership is DERIVED, so the push is the feature. It
+re-derives membership on the sensor sweep and on events
+(engine/appc/contact_refresh.py; tests/unit/test_contact_refresh.py) and
+refreshes distances on every other frame.
 
 Behaviour of the helper itself is covered by
 tests/integration/test_target_list_follows_player_system.py, whose `_pump`
@@ -55,6 +58,34 @@ def test_pump_contacts_excludes_ships_in_other_sets():
 
     assert _ships(_pump_contacts(menu, player)) == ()
     assert menu.GetNumChildren() == 0
+
+
+def test_a_clean_pump_matches_a_full_rebuild():
+    """A frame with nothing marked must push the records a full re-derivation
+    would: same ships, same verdicts, distances from this frame's positions.
+    Only motion happens between the pumps (nothing that marks the list)."""
+    from engine.appc import contact_refresh
+    from engine.appc.perception import perceived_by
+    contact_index.reset()
+    App._reset_target_menu_singleton()
+    menu = App.STTargetMenu_CreateW("Targets")
+    pSet = SetClass()
+    player = _ship("player")
+    pSet.AddObjectToSet(player, "player")
+    galor, keldon = _ship("Galor"), _ship("Keldon")
+    galor.SetTranslateXYZ(100.0, 0.0, 0.0)
+    keldon.SetTranslateXYZ(0.0, 300.0, 0.0)
+    pSet.AddObjectToSet(galor, "Galor")
+    pSet.AddObjectToSet(keldon, "Keldon")
+    _pump_contacts(menu, player)
+
+    galor.SetTranslateXYZ(140.0, 0.0, 0.0)
+    player.SetTranslateXYZ(0.0, 0.0, 25.0)
+    assert contact_refresh.consume() is False    # motion marks nothing
+    clean = _pump_contacts(menu, player)
+
+    assert clean == perceived_by(player)
+    assert menu.contacts() == clean
 
 
 # ---------------------------------------------------------------------------

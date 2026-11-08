@@ -35,8 +35,9 @@ from tests.helpers.native_off import native_switch_zero  # noqa: E402,F401
 
 
 def _pump(menu, player):
-    """One frame of the real contact push — perception.perceived_by, exactly
-    as host_loop._pump_contacts drives it every tick."""
+    """One full re-derivation of the contact push — perception.perceived_by,
+    exactly as host_loop._pump_contacts drives it on a marked frame (a cloak
+    transition marks it: engine.appc.contact_refresh)."""
     menu.set_contacts(perceived_by(player))
 
 

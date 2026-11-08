@@ -390,6 +390,8 @@ class Game(TGObject):
 
     def SetPlayer(self, player) -> None:
         self._player = player
+        from engine.appc import contact_refresh
+        contact_refresh.mark_dirty("set_player")
         # Camera.MakePlayerCamera_PlayerChanged's table (Camera.py:685-703):
         # anchor every player-relative camera mode on the new player.
         if player is not None:

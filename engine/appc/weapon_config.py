@@ -16,6 +16,18 @@ from engine.appc.subsystems import PhaserSystem
 
 # ── Subsystem lookups (raise-safe) ───────────────────────────────────────────
 
+# Called after every mutator below. The HUD installs one so the (throttled)
+# weapons panel redraws on the next frame whoever drove the change: the
+# weapons panel itself, the F2 tactical command rows, the engineering panel.
+on_change = None
+
+
+def _notify() -> None:
+    hook = on_change
+    if hook is not None:
+        hook()
+
+
 def _get(ship, getter_name):
     if ship is None:
         return None
@@ -233,6 +245,13 @@ def _tube_ready_count(torps) -> int:
 # ── Mutate ───────────────────────────────────────────────────────────────────
 
 def cycle_torpedo_type(ship) -> None:
+    try:
+        _cycle_torpedo_type(ship)
+    finally:
+        _notify()
+
+
+def _cycle_torpedo_type(ship) -> None:
     """Advance the selected torpedo ammo type to the next loaded slot (wraps).
     No-op with ≤1 type or no torpedo system."""
     torps = _torpedo_system(ship)
@@ -245,6 +264,13 @@ def cycle_torpedo_type(ship) -> None:
 
 
 def cycle_torpedo_spread(ship) -> None:
+    try:
+        _cycle_torpedo_spread(ship)
+    finally:
+        _notify()
+
+
+def _cycle_torpedo_spread(ship) -> None:
     """Advance the torpedo firing chain (BC's tactical 'spread' toggle IS
     the chain selector — SetFiringChainMode; audited §2.10). Wraps; no-op
     when the hardpoint authors fewer than two chains."""
@@ -261,6 +287,13 @@ def cycle_torpedo_spread(ship) -> None:
 
 
 def toggle_phaser_intensity(ship) -> None:
+    try:
+        _toggle_phaser_intensity(ship)
+    finally:
+        _notify()
+
+
+def _toggle_phaser_intensity(ship) -> None:
     """Flip phaser power level between PP_HIGH (Full) and PP_LOW (Light)."""
     phasers = _phaser_system(ship)
     if phasers is None:
@@ -275,6 +308,13 @@ def toggle_phaser_intensity(ship) -> None:
 
 
 def toggle_tractor(ship) -> None:
+    try:
+        _toggle_tractor(ship)
+    finally:
+        _notify()
+
+
+def _toggle_tractor(ship) -> None:
     """Engage / disengage the tractor beam.  Engaging fires on the ship's
     current target (the tractor's StartFiring is a no-op without one)."""
     tractor = _tractor_system(ship)
@@ -294,6 +334,13 @@ def toggle_tractor(ship) -> None:
 
 
 def toggle_cloak(ship) -> None:
+    try:
+        _toggle_cloak(ship)
+    finally:
+        _notify()
+
+
+def _toggle_cloak(ship) -> None:
     """Engage / disengage the cloaking device."""
     cloak = _cloak_subsystem(ship)
     if cloak is None:
