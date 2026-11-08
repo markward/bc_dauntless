@@ -447,6 +447,18 @@ def field_strength_at(player) -> float:
     try:
         from engine.systems import frames
         view = frames.viewing_set()
+        if not (_tiles if _tiles is not _UNSET else []):
+            # No tile field: only a belt can contribute. Answer 0.0 before
+            # any position work when the system has none either.
+            system, _anchor = frame_for(view)
+            if not system:
+                return 0.0
+            if system not in _belt_cache:
+                from engine.rocks import density
+                _belt_cache.clear()
+                _belt_cache[system] = density.sources_for_system(system)
+            if not _belt_cache[system]:
+                return 0.0
         pset = frames.containing_set(player)
         loc = player.GetWorldLocation()
         p = (loc.x, loc.y, loc.z)
