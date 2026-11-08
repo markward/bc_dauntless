@@ -337,3 +337,64 @@ def test_a_sensorless_player_rebuilds_every_frame(world):
     sensor_contacts.tick(world.player, 0.0)
     world.pump()
     assert world.calls == 1
+
+
+# ── Out of action without ship_death (review fix round 1) ──────────────────
+#
+# targetable = perceivable and (not _out_of_action or is_targetable_wreck),
+# and IsDying() = _dying or _life_time < DYING_THRESHOLD. is_targetable_wreck
+# only covers ship_death's own entries, so SetDying / SetLifeTime from
+# anywhere else (rocks.death, SDK E7M1 / E3M2 SetLifeTime) drops the row.
+
+def test_set_dying_rebuilds_next_frame(world):
+    world.settle()
+    world.alpha.SetDying(True)
+    world.pump()
+    assert world.calls == 1
+    assert world.menu.GetObjectEntry(world.alpha) is None
+
+
+def test_set_dying_false_rebuilds_next_frame(world):
+    world.alpha.SetDying(True)
+    world.settle()
+    assert world.menu.GetObjectEntry(world.alpha) is None
+    world.alpha.SetDying(False)
+    world.pump()
+    assert world.calls == 1
+    assert world.menu.GetObjectEntry(world.alpha) is not None
+
+
+def test_set_life_time_rebuilds_next_frame(world):
+    world.settle()
+    world.alpha.SetLifeTime(4.0)             # SDK E7M1's doomed freighter
+    world.pump()
+    assert world.calls == 1
+    assert world.menu.GetObjectEntry(world.alpha) is None
+
+
+def test_lifetime_countdown_never_crosses_the_threshold(world):
+    """The only per-tick writer of _life_time is object_lifetime.advance, and
+    it holds only objects registered BELOW the threshold, so IsDying cannot
+    flip by counting down: SetLifeTime is the crossing."""
+    from engine.appc import object_lifetime
+    from engine.appc.objects import DYING_THRESHOLD
+    world.alpha.SetLifeTime(DYING_THRESHOLD * 2.0)
+    assert not any(o is world.alpha for o in object_lifetime._timed)
+    assert world.alpha.IsDying() == 0
+
+
+def test_rock_death_rebuilds_next_frame(world):
+    import App
+    from engine.rocks import death as rock_death
+    from tests.unit.test_rock_class import _make
+    rock = _make(App.GENUS_ASTEROID)
+    rock.SetTranslateXYZ(50.0, 0.0, 0.0)
+    world.pSet.AddObjectToSet(rock, "Asteroid 1")
+    world.settle()
+    assert world.menu.GetObjectEntry(rock) is not None
+    contact_refresh.counts.clear()
+    rock_death.begin(rock)
+    assert contact_refresh.counts.get("dying", 0) >= 1
+    world.pump()
+    assert world.calls == 1
+    assert world.menu.GetObjectEntry(rock) is None

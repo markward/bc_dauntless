@@ -184,7 +184,10 @@ an event-manager listener (the mission swap clears those):
 - the player's sensor sweep, `sensor_contacts._sweep` (`sweep_period_s`, BC's
   1.0 s of **game** time; a player with no sensor subsystem has no sweep and
   marks every tick instead);
-- a ship's death (`ship_lifecycle` "destroyed", i.e. `SetDead`);
+- a ship's death (`ship_lifecycle` "destroyed", i.e. `SetDead`), and any
+  `IsDying()` flip (`SetDying`, or `SetLifeTime` crossing `DYING_THRESHOLD`:
+  rock death, SDK E7M1 / E3M2 lifetimes); the lifetime countdown never crosses
+  the threshold on its own;
 - a set's contact view changing (`set_index._push`: add, leave, remove, hide,
   reset), which covers a ship entering or leaving the player's set;
 - every cloak transition (`CloakingSubsystem._fire`, reached by the native

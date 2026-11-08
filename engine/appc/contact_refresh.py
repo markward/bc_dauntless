@@ -13,7 +13,8 @@ mission swap clears g_kEventManager's handlers):
 - the player's sensor sweep (`sensor_contacts._sweep`, BC's 1.0 s game-time
   `sweep_period_s`): the floor for everything that has no event -- range and
   cloak-bubble crossings, sensor damage, media, IsTargetable, regrouping;
-- a ship's death (`ship_lifecycle` "destroyed", subscribed below);
+- a ship's death (`ship_lifecycle` "destroyed", subscribed below), and an
+  IsDying() flip (`DamageableObject.SetDying` / `SetLifeTime`);
 - a set's contact view changing (`set_index._push`);
 - a cloak transition (`CloakingSubsystem._fire`, which the native completion
   `native_subsystems._cloak_done` also reaches);
