@@ -15,6 +15,10 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 | Shield charging | `SHIELD_CHARGE_PERIOD_S` | 0.5 s | `engine/appc/subsystems.py` (`SHIELD_CHARGE_PERIOD_S`) |
 | Native subsystem stage (native only, not a cadence) | none (no switch) | every tick | `engine/appc/native_subsystems.py` (`step_all`), `native/src/combat/` (`subsystem_step.cc`) |
 | Target-list poll | (panel throttle) | 0.5 s / 2 Hz | `engine/ui/panel_registry.py` |
+| Radar poll | `SENSORS_POLL_S` | 0.05 s / 20 Hz, wall clock | `engine/ui/sensors_panel.py` (`PanelRegistry`) |
+| Crew menu poll | `CREW_MENU_POLL_S` | 0.1 s / 10 Hz, wall clock | `engine/ui/crew_menu_panel.py` (`PanelRegistry`) |
+| Player ship poll | `PLAYER_SHIP_POLL_S` | 0.1 s / 10 Hz, wall clock (role `player` only) | `engine/ui/ship_display_panel.py` (`PanelRegistry`) |
+| Weapons poll | `WEAPONS_POLL_S` | 0.1 s / 10 Hz, wall clock | `engine/ui/weapons_display_panel.py` (`PanelRegistry`) |
 | Contact list membership | sensor_dials sweep_period_s | 1.0 s game time + events | engine/appc/contact_refresh.py |
 | Avoidance re-decision | `AVOID_EVADING_UPDATE_DELAY_S` | 0.25 s / 4 Hz | `engine/appc/ai_optimized.py` (`AVOID_EVADING_UPDATE_DELAY_S`) |
 | AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py` (`AI_MAX_SLEEP_TICKS`; the walk it gates is native, `native/src/host/aitree.cc`) |
@@ -376,3 +380,21 @@ reason). Under `DAUNTLESS_NATIVE_AUDIT=1` a skip is an audit failure. The
 goldens pin the stage bit for bit and assert zero skips; a unit test ticks
 its own ships through `tests/helpers/subsystem_stage.py`, which fails on any
 skip. The shield cadence above is unchanged.
+
+---
+
+## HUD panels poll at 10-20 Hz
+
+The radar (20 Hz) and the crew menu, player ship and weapons panels (10 Hz)
+used to rebuild every frame. Continuous data now trails by up to one interval:
+
+- Firing and charge icons, shield and hull bars and the speed readout may trail
+  by up to 100 ms.
+- Radar blips move at 20 Hz (up to 50 ms behind).
+
+Interaction never waits: clicks (`dispatch_event`), visibility flips, keyboard
+menu open/close (`show_menu` / `hide_menu`), a target change (radar, weapons)
+and an alert-level change (crew menu, weapons) all `mark_due` the panel for the
+next frame. The last two are `host_loop._mark_hud_due_on_changes`, an identity
+compare each frame. Damage cannot be event-driven (`ET_SUBSYSTEM_*` are never
+posted, event-emitter-gaps #15), so the interval is a floor, not a fallback.

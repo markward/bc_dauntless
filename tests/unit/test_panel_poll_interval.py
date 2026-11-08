@@ -169,17 +169,31 @@ def test_throttling_one_panel_does_not_throttle_its_neighbours(clock):
     assert slow.polls <= 3, slow.polls
 
 
-def test_the_target_list_is_the_panel_that_is_throttled():
-    """Pins the intent: this exists for one measured panel, not as a blanket
-    policy. If another panel takes an interval, that should be deliberate.
+def test_only_the_named_panels_are_throttled():
+    """Pins the intent: an interval is a deliberate, named choice per panel.
 
     Asserts the INSTANCE property, which is what PanelRegistry.render_all
     actually reads. Asserting only the module constant let the property be
     rewritten to return a literal (or 0.0) with the test still green.
     """
     from engine.ui.target_list_view import TargetListView, TARGET_LIST_POLL_S
-    assert TARGET_LIST_POLL_S == 0.5
-    assert TargetListView().poll_interval_s == 0.5
+    from engine.ui.sensors_panel import SensorsPanel, SENSORS_POLL_S
+    from engine.ui.crew_menu_panel import CrewMenuPanel, CREW_MENU_POLL_S
+    from engine.ui.ship_display_panel import (ShipDisplayPanel,
+                                              PLAYER_SHIP_POLL_S)
+    from engine.ui.weapons_display_panel import (WeaponsDisplayPanel,
+                                                 WEAPONS_POLL_S)
+    table = [
+        (TargetListView(), TARGET_LIST_POLL_S, 0.5),
+        (SensorsPanel(), SENSORS_POLL_S, 0.05),
+        (CrewMenuPanel(), CREW_MENU_POLL_S, 0.1),
+        (ShipDisplayPanel("player"), PLAYER_SHIP_POLL_S, 0.1),
+        (WeaponsDisplayPanel(), WEAPONS_POLL_S, 0.1),
+    ]
+    for panel, const, expected in table:
+        assert const == expected, panel.name
+        assert panel.poll_interval_s == expected, panel.name
+    assert ShipDisplayPanel("target").poll_interval_s == 0.0
 
 
 # ── Hidden panels are not polled ────────────────────────────────────────────

@@ -41,6 +41,10 @@ _AFFILIATION_TO_KIND = {
 }
 
 
+# How often the radar is polled. See SensorsPanel.poll_interval_s.
+SENSORS_POLL_S = 0.05
+
+
 class SensorsPanel(Panel):
     @property
     def name(self) -> str:
@@ -228,6 +232,22 @@ class SensorsPanel(Panel):
             self._minimized = not self._minimized
             return True
         return False
+
+    @property
+    def poll_interval_s(self) -> float:
+        """Polled at 20 Hz, not per frame.
+
+        Blips and the player pose are continuous data. 20 Hz is above what the
+        eye resolves on a small radar disc, so a blip may trail its true
+        position by up to 50 ms -- accepted. A target change marks the panel
+        due at once.
+
+        Interaction is unaffected: input goes through dispatch_event, visibility
+        flips through the visible setter, and discrete state changes through
+        mark_due (host_loop._mark_hud_due_on_changes), all of which draw on the
+        next frame.
+        """
+        return SENSORS_POLL_S
 
     def invalidate(self) -> None:
         self._last_snapshot = None

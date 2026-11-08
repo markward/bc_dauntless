@@ -7569,6 +7569,40 @@ def _sync_quick_battle_panel(controller) -> None:
         panel.close()
 
 
+# Last (target, subsystem, alert level) the HUD panels were told about.
+_hud_change_state: dict = {}
+
+
+def _mark_hud_due_on_changes(registry, player) -> None:
+    """Mark the throttled HUD panels due on a discrete player-state change.
+
+    The radar, crew menu, player ship and weapons panels poll at 10-20 Hz; a
+    target change (radar rows, weapons) or an alert-level change (crew menu,
+    weapons) must not wait for the next interval. Identity compare, as with
+    the target list, so no event subscription can be missed. Uses mark_due,
+    never invalidate (four invalidate overrides do not call super).
+    """
+    try:
+        tgt = player.GetTarget() if player is not None else None
+        sub = player.GetTargetSubsystem() if player is not None else None
+        alert = player.GetAlertLevel() if player is not None else None
+    except Exception:
+        tgt = sub = alert = None
+    target_key = (id(tgt) if tgt is not None else None,
+                  id(sub) if sub is not None else None)
+    due = []
+    if target_key != _hud_change_state.get("target"):
+        _hud_change_state["target"] = target_key
+        due += ["sensors", "weapons"]
+    if alert != _hud_change_state.get("alert"):
+        _hud_change_state["alert"] = alert
+        due += ["crew-menu", "weapons"]
+    for name in due:
+        panel = registry.find(name)
+        if panel is not None:
+            panel.mark_due()
+
+
 def reset_mission_state(renderer=None) -> None:
     """Forget the outgoing mission's module-level state: ships, effects,
     damage records, rocks, Quick Battle bookkeeping, camera-derived state.
@@ -12987,6 +13021,9 @@ def run(mission_name: Optional[str] = None,
                     # The contact list too, on the next frame's pump (it
                     # ran above, before this frame's lock rules).
                     contact_refresh.mark_dirty("target")
+
+                # Discrete changes redraw the throttled HUD panels at once.
+                _mark_hud_due_on_changes(registry, _player)
 
                 # Re-centre the star map's rect on the LIVE CEF view size
                 # (which tracks the window in points — see
