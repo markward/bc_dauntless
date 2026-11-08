@@ -28,6 +28,7 @@ import engine.dev_mode as dev_mode
 import engine.dev_nebula_dials as dev_nebula_dials
 from engine.core import case_paths as _case_paths
 from engine.core import frame_profiler
+from engine.core import gc_freeze
 from engine.core.tracked_instances import TrackedInstances
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
@@ -7750,6 +7751,8 @@ class HostController:
             return
         name = self.pending_swap
         self.pending_swap = None
+        # Thaw BEFORE any teardown, or the old mission's cycles stay frozen.
+        gc_freeze.thaw()
         for hook in list(self.pre_swap_hooks):
             try:
                 hook()
@@ -7816,6 +7819,7 @@ class HostController:
             return
         if self.post_load_hook is not None:
             self.post_load_hook()
+        gc_freeze.request()
 
 
 def _after_mission_change(controller, snap_scene, close_star_map) -> None:
@@ -11427,6 +11431,11 @@ def run(mission_name: Optional[str] = None,
 
     boot_quickbattle = mission_name is None
 
+    # Collect + freeze the heap after each mission load (engine/core/
+    # gc_freeze.py). Never under pytest: the suite must not run frozen.
+    if "pytest" not in sys.modules:
+        gc_freeze.arm()
+
     # Build identity first: whatever happens after this, the log says which
     # build produced it. A bug report against an unidentifiable zip is one
     # nobody can act on, and main moves fast enough that "last week's build"
@@ -12674,6 +12683,8 @@ def run(mission_name: Optional[str] = None,
             prev_drawn_player_pose=_prev_drawn_player_pose,
         )
 
+        # The boot load is done: freeze it at the end of the first frame.
+        gc_freeze.request()
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
             # No-op (one global read + branch) unless a developer enabled it
@@ -13845,6 +13856,10 @@ def run(mission_name: Optional[str] = None,
                     drawn=(_player_interp_pose[0]
                            if _player_interp_pose is not None else None),
                     eye=locals().get("eye"), target=locals().get("target"))
+            # A load requested a GC freeze: collect + freeze here, at the frame
+            # boundary, still inside the timeline so the frame that pays for
+            # it is timed and a spike names "gc.freeze".
+            gc_freeze.service()
             # Close the frame timeline. Deliberately AFTER r.frame(), so the
             # "r.frame" phase carries the whole render call and the loop total
             # is the real wall-clock cost of one iteration.
@@ -13879,9 +13894,11 @@ def run(mission_name: Optional[str] = None,
         if frame_profiler.is_enabled():
             frame_profiler.print_report()
 
+        gc_freeze.thaw()
         if controller.session is not None:
             controller.session.teardown(r)
     finally:
+        gc_freeze.thaw()
         from engine.core import mission_change as _mission_change
         _mission_change.configure(on_changed=None)
         # The warp hooks close over this controller too; left installed they
