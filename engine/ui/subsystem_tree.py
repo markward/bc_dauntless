@@ -25,6 +25,7 @@ class Member:
     icon_key: str
     x_px: float
     y_px: float
+    pct: Optional[int] = None   # whole-percent health, 0..100; None = unknown
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,23 @@ def subsystem_state(sub) -> str:
     except Exception as _e:
         dev_mode.log_swallowed("subsystem health state", _e)
     return "healthy"
+
+
+def condition_pct(frac: float) -> int:
+    """Whole-percent health, 0..100, for a member block's health bar.
+
+    Whole percents keep the per-frame snapshot from changing (and the page
+    from rebuilding) on every repair tick.
+    """
+    return max(0, min(100, int(round(frac * 100.0))))
+
+
+def _member_pct(sub) -> Optional[int]:
+    try:
+        return condition_pct(float(sub.GetConditionPercentage()))
+    except Exception as _e:
+        dev_mode.log_swallowed("member health percent", _e)
+    return None
 
 
 def _own_state(sub) -> str:
@@ -114,7 +132,8 @@ def _family_for(sub) -> Optional[Family]:
                 continue
             x, y = _pos(d)
             members.append(Member(_name(d), subsystem_state(d),
-                                  subsystem_icons.icon_key_for(d), x, y))
+                                  subsystem_icons.icon_key_for(d), x, y,
+                                  _member_pct(d)))
         if not members:
             return None
     elif not _is_targetable(sub) or not _alive(sub):

@@ -129,6 +129,14 @@
             + '<span class="lock-marker__icon">' + _glyph(state, sub.icon_key) + '</span></div>';
     }
 
+    // Member health: a vertical bar on the block's right, draining from the
+    // top (same design as the target list rows). No pct, no bar.
+    function _barHtml(pct) {
+        if (typeof pct !== "number") { return ""; }
+        var v = Math.max(0, Math.min(100, Math.round(pct)));
+        return '<span class="subsys-block__bar" style="--bar-pct:' + v + '%"></span>';
+    }
+
     function _subsystemsHtml(state) {
         var fams = state.families || [];
         if (!fams.length) { return ""; }
@@ -156,7 +164,8 @@
                     + (state.locked === ms[j].name ? ' subsys-block--locked' : '') + '"'
                     + ' data-member="' + escapeHtml(ms[j].name) + '"'
                     + ' data-state="' + escapeHtml(ms[j].state || "healthy") + '">'
-                    + '<span class="subsys-block__name">' + escapeHtml(ms[j].name) + '</span></div>';
+                    + '<span class="subsys-block__name">' + escapeHtml(ms[j].name) + '</span>'
+                    + _barHtml(ms[j].pct) + '</div>';
             }
             html += '</div>';
         }

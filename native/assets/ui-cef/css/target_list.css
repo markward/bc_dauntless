@@ -70,6 +70,19 @@
     font-size: 14px;
 }
 
+/* Header: title left, the ▼ minimize button right (.bc-panel__minimize,
+   ship_display.css, same as the target status panel). */
+.target-list__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* Collapsed: only the header shows (target/__minimize__). */
+#target-list-panel.target-list--minimized .target-list__tabs,
+#target-list-panel.target-list--minimized .target-list__body,
+#target-list-panel.target-list--minimized .target-list__sort { display: none; }
+
 .target-list__body {
     /* Scroll region: takes the panel's remaining height and scrolls when the
        row list overflows. min-height:0 is required for the flex child to
@@ -137,29 +150,43 @@
     flex: 1 1 auto;
 }
 
+/* Two vertical bars at the row's right edge: shields (blue) on the left,
+ * hull (yellow) on the right. The fill is anchored at the bottom and its
+ * height is the percent, so a bar drains from the top as health falls.
+ * With no shields the hull bar keeps the far-right slot (flex-end), so the
+ * hull bars line up down the list. */
 .target-list__bars {
+    flex: 0 0 auto;
     display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: stretch;
+    gap: 2px;
+    width: 12px;
+    height: 16px;
 }
 
 .target-list__bar {
     --bar-pct: 0%;
-    width: 32px;
-    height: 8px;
-    background: rgba(40, 40, 40, 0.6);
     position: relative;
+    width: 5px;
+    height: 100%;
+    background: rgba(40, 40, 40, 0.6);
 }
 
 .target-list__bar::after {
     content: "";
-    display: block;
-    height: 100%;
-    width: var(--bar-pct);
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--bar-pct);
     background: var(--bar-fill, white);
-    transition: width 120ms linear;
+    transition: height 120ms linear;
 }
 
 .target-list__bar--hull    { --bar-fill: rgb(255, 200, 60); }
-.target-list__bar--shields { --bar-fill: rgb(150, 129, 222); }
+.target-list__bar--shields { --bar-fill: rgb(90, 160, 255); }
 
 /* ── Filter tabs and sort strip ──────────────────────────────────── */
 .target-list__tabs {
@@ -247,40 +274,52 @@
   color: rgb(220, 210, 225);                /* --bc-row-text-dim */
 }
 
-/* ── NEW (v6): stacked bars ────────────────────────────────────────
-   Shields sit directly on top of hull, no gap, each half the old 8px.
-   With no shield bar the hull bar is alone and keeps the full 8px. */
-.target-list__bars {
-  width: 32px;
-  flex-direction: column-reverse;           /* DOM is hull, shields */
-  gap: 0;
-  align-items: stretch;
-  justify-content: center;
-}
-.target-list__bars .target-list__bar { width: 32px; height: 4px; }
-.target-list__bars .target-list__bar:only-child { height: 8px; }
-
 /* ── Page-drawn tooltips ─────────────────────────────────────────────
- * CEF OSR renders no native tooltip, so [data-tip] draws its own on hover
- * (pattern from configuration_panel.css). Scoped to this panel; the tip
- * sits above the icon so neither strip's edge clips it. */
+ * CEF OSR renders no native tooltip, so [data-tip] draws its own on hover.
+ * LCARS chrome to match the panel: the list body's near-opaque dark fill
+ * and 4px salmon left edge, a rounded right end, Antonio uppercase like the
+ * header. A thin salmon outline and a drop shadow lift it off the dark list.
+ *
+ * Placement keeps every tip INSIDE the panel: #tactical-target-stack is
+ * overflow:hidden, so anything past the column's edge is cut off. The
+ * filter tips drop below the tabs and the sort tips rise above the sort
+ * strip, so both land over the list body; the outer buttons' tips align to
+ * their outer edge instead of centring. Every offset is set explicitly so
+ * no other sheet's [data-tip] rule can leak a stray top/right/left in. */
 #target-list-panel [data-tip] { position: relative; }
 #target-list-panel [data-tip]::after {
     content: attr(data-tip);
     position: absolute;
+    top: auto;
+    right: auto;
+    bottom: auto;
     left: 50%;
-    bottom: calc(100% + 6px);
     transform: translateX(-50%);
-    padding: 3px 8px;
+    padding: 3px 10px 3px 8px;
     white-space: nowrap;
-    font-size: 11px;
-    letter-spacing: 0.04em;
-    color: #e6e9ee;
-    background: rgb(28, 31, 38);
-    border: 1px solid rgb(80, 88, 100);
+    font-family: "Antonio", "Antonio-Regular", sans-serif;
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 14px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--bc-label-text);
+    background: var(--bc-body-bg);
+    border-left: 4px solid var(--bc-menu1-base);
+    border-radius: 0 8px 8px 0;
+    box-shadow: inset 0 0 0 1px rgba(216, 94, 86, 0.45),
+                0 2px 8px rgba(0, 0, 0, 0.75);
     pointer-events: none;
     opacity: 0;
     z-index: 10;
     transition: opacity 80ms linear;
 }
 #target-list-panel [data-tip]:hover::after { opacity: 1; }
+
+/* Filter tabs: below. Sort strip: above. */
+#target-list-panel .target-list__tabs [data-tip]::after { top: calc(100% + 6px); }
+#target-list-panel .target-list__sort [data-tip]::after { bottom: calc(100% + 6px); }
+
+/* Outer buttons: align to the outer edge so the tip never crosses it. */
+#target-list-panel [data-tip]:first-child::after { left: 0; transform: none; }
+#target-list-panel [data-tip]:last-child::after  { left: auto; right: 0; transform: none; }

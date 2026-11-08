@@ -135,6 +135,7 @@
 #include <renderer/filmic_pass.h>
 #include <renderer/motion_blur_pass.h>
 #include <renderer/motion_blur_shutter.h>
+#include <renderer/motion_blur_skip.h>
 #include <renderer/render_origin.h>
 #include <renderer/dof_pass.h>
 #include <renderer/aabb.h>
@@ -2641,8 +2642,32 @@ void frame() {
     // after this so the overlay composites on top of the resolved 3D scene.
     const bool aa_on    = g_smaa_enabled;
     const bool filmic_on = dauntless_filmic::enabled() && exterior;
-    const bool mblur_on  = dauntless_motion_blur::enabled() && exterior
-                           && g_have_prev_viewproj;
+    bool mblur_on  = dauntless_motion_blur::enabled() && exterior
+                     && g_have_prev_viewproj;
+    // Current-camera matrices for the blur, shared by the skip test and the
+    // pass lambda below. Last frame's matrix was in last frame's render
+    // space; the origin followed the camera since (render_origin.h).
+    glm::mat4 mb_inv_proj{1.0f}, mb_prev{1.0f};
+    glm::mat3 mb_cam_rot{1.0f};
+    glm::vec3 mb_cam_pos{0.0f};
+    float mb_shutter = 1.0f;
+    if (mblur_on) {
+        mb_inv_proj = glm::inverse(g_camera.proj_matrix());
+        mb_cam_rot  = glm::mat3(glm::inverse(g_camera.view_matrix()));
+        mb_cam_pos  = g_camera.eye;
+        mb_prev     = renderer::render_origin::rebase_prev_viewproj(
+            g_prev_viewproj, g_prev_viewproj_origin, g_world.render_origin());
+        // Shutter: frame-rate normalised and faded out by the dash intensity
+        // (renderer/motion_blur_shutter.h documents both). `dt` is the
+        // wall-clock frame time already computed at the top of frame().
+        mb_shutter = renderer::motion_blur_shutter(
+            dt, kMotionBlurRefDt, dauntless_dash_vfx::intensity());
+        // Skip the pass when the reprojection moves under half a pixel.
+        // g_prev_viewproj still updates every frame below.
+        mblur_on = renderer::motion_blur_max_px(
+                       mb_inv_proj, mb_cam_rot, mb_cam_pos, mb_prev,
+                       mb_shutter, fw, fh) >= renderer::kMotionBlurSkipPx;
+    }
 
     // Optional LDR post passes run, in order, after the HDR resolve:
     //   SMAA -> motion blur -> filmic.
@@ -2693,22 +2718,11 @@ void frame() {
                 g_smaa_pass->draw(s, d, fw, fh);
             });
         if (mblur_on) {
-            // Current-camera matrices for the blur, computed only when the pass
-            // actually runs. Captured by value so they outlive this scope when
-            // the ping-pong loop below invokes the lambda.
-            const glm::mat4 inv_proj = glm::inverse(g_camera.proj_matrix());
-            const glm::mat3 cam_rot  = glm::mat3(glm::inverse(g_camera.view_matrix()));
-            const glm::vec3 cam_pos  = g_camera.eye;
-            // Last frame's matrix was in last frame's render space; the
-            // origin followed the camera since (render_origin.h).
-            const glm::mat4 prev     = renderer::render_origin::rebase_prev_viewproj(
-                g_prev_viewproj, g_prev_viewproj_origin, g_world.render_origin());
-            // Shutter: frame-rate normalised and faded out by the dash
-            // intensity (renderer/motion_blur_shutter.h documents both).
-            // `dt` is the wall-clock frame time already computed at the top
-            // of frame(); no second timestamp is tracked for this.
-            const float shutter = renderer::motion_blur_shutter(
-                dt, kMotionBlurRefDt, dauntless_dash_vfx::intensity());
+            const glm::mat4 inv_proj = mb_inv_proj;
+            const glm::mat3 cam_rot  = mb_cam_rot;
+            const glm::vec3 cam_pos  = mb_cam_pos;
+            const glm::mat4 prev     = mb_prev;
+            const float shutter      = mb_shutter;
             passes.emplace_back([inv_proj, cam_rot, cam_pos, prev, fw, fh, shutter]
                                 (std::uint32_t s, std::uint32_t d) {
                 g_motion_blur_pass->draw(s, d, fw, fh, inv_proj, cam_rot,
