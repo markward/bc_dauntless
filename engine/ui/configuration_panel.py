@@ -39,6 +39,22 @@ FOV_MIN  = 25
 FOV_MAX  = 55
 FOV_STEP = 5
 
+# ── Audio tab ───────────────────────────────────────────────────────────────
+# (settings key, row label), in rendered order. Each key is the snapshot field,
+# the persisted setting, the focusable and the action `volume:<key>:<0-100>`.
+# Mirrored by CP_AUDIO_VOLUMES in configuration_panel.js (pinned by
+# test_js_audio_focusables_match_python). "UI" is the Interface channel.
+AUDIO_VOLUMES = (
+    ("music_volume", "Music"),
+    ("voice_volume", "Voice"),
+    ("sfx_volume", "SFX"),
+    ("ui_volume", "UI"),
+)
+AUDIO_VOLUME_KEYS = tuple(key for key, _label in AUDIO_VOLUMES)
+VOLUME_MIN = 0
+VOLUME_MAX = 100
+VOLUME_STEP = 5         # arrow keys; the mouse drags in steps of 1
+
 # AI difficulty index (0=Easy, 1=Medium, 2=Hard) — mirrors App.Game_GetDifficulty.
 AI_DIFFICULTY_LABELS = ("Easy", "Medium", "Hard")
 
@@ -128,6 +144,13 @@ class SettingsSnapshot:
     realistic_lighting_on: bool = True
     # Weapon-impact camera kick. Sits under Modern VFX beside the masters.
     camera_shake_on: bool = True
+    # Audio tab: 0-100 per channel (engine.audio.volume), and 3D Audio, whose
+    # Off switches off Doppler only. ui_volume is the row labelled "UI".
+    music_volume: int = 100
+    voice_volume: int = 100
+    sfx_volume: int = 100
+    ui_volume: int = 100
+    audio_3d_on: bool = True
 
 
 class ConfigurationPanel(Panel):
@@ -154,6 +177,11 @@ class ConfigurationPanel(Panel):
                  # Optional so construction sites and tests that predate the
                  # row keep working; without it the toggle is inert.
                  set_fullscreen: Optional[Callable[[bool], None]] = None,
+                 # Audio tab: (settings key, 0-100) for a slider, and the 3D
+                 # Audio switch. Optional like set_fullscreen: construction
+                 # sites and tests that predate the tab keep working.
+                 set_audio_volume: Optional[Callable[[str, int], None]] = None,
+                 set_audio_3d: Optional[Callable[[bool], None]] = None,
                  input_map=None,
                  # Bridges tab: the ship->bridge matrix (engine.bridge_selection.
                  # BridgePins). Optional so existing construction/tests without
@@ -185,6 +213,9 @@ class ConfigurationPanel(Panel):
             camera_realism=max(CAMERA_REALISM_OFF,
                                min(CAMERA_REALISM_HIGH,
                                    int(initial_settings.camera_realism))),
+            **{key: max(VOLUME_MIN, min(VOLUME_MAX,
+                                        int(getattr(initial_settings, key))))
+               for key in AUDIO_VOLUME_KEYS},
         )
         # Master-member appliers, addressed by the names in MASTER_TOGGLES.
         # Kept as explicit constructor params (not **kwargs) so a missing one
@@ -204,6 +235,8 @@ class ConfigurationPanel(Panel):
         # by callers that predate this row, and a missing display control must
         # not be an AttributeError mid-click.
         self._set_fullscreen = set_fullscreen or (lambda _on: None)
+        self._set_audio_volume = set_audio_volume or (lambda _key, _v: None)
+        self._set_audio_3d = set_audio_3d or (lambda _on: None)
         self._set_camera_shake = set_camera_shake
         self._set_aa_mode = set_aa_mode
         self._set_bridge_quality = set_bridge_quality
@@ -332,6 +365,8 @@ class ConfigurationPanel(Panel):
             self._settings.fullscreen_on,
             tuple(getattr(self._settings, k + "_on") for k in MASTER_KEYS),
             self._settings.fov_deg,
+            tuple(getattr(self._settings, k) for k in AUDIO_VOLUME_KEYS),
+            self._settings.audio_3d_on,
             json.dumps(bridges, sort_keys=True) if bridges is not None else None,
         )
         if snapshot == self._last_pushed:
@@ -370,6 +405,8 @@ class ConfigurationPanel(Panel):
                 "fov_deg": self._settings.fov_deg,
                 **{k + "_on": getattr(self._settings, k + "_on")
                    for k in MASTER_KEYS},
+                **{k: getattr(self._settings, k) for k in AUDIO_VOLUME_KEYS},
+                "audio_3d_on": self._settings.audio_3d_on,
             },
         }
         if bridges is not None:
@@ -454,6 +491,26 @@ class ConfigurationPanel(Panel):
             self._set_fullscreen(new_val)
             self._settings.fullscreen_on = new_val
             self._on_change("fullscreen", new_val)
+            return True
+        if action == "toggle:audio_3d":
+            new_val = not self._settings.audio_3d_on
+            self._set_audio_3d(new_val)
+            self._settings.audio_3d_on = new_val
+            self._on_change("audio_3d", new_val)
+            return True
+        if action.startswith("volume:"):
+            # "volume:<settings key>:<0-100>", sent when a slider is released.
+            key, _, raw = action[len("volume:"):].partition(":")
+            if key not in AUDIO_VOLUME_KEYS:
+                return False
+            try:
+                level = int(raw)
+            except ValueError:
+                return False
+            level = max(VOLUME_MIN, min(VOLUME_MAX, level))
+            self._set_audio_volume(key, level)
+            setattr(self._settings, key, level)
+            self._on_change(key, level)
             return True
         if action == "toggle:dust":
             new_val = not self._settings.dust_on
@@ -626,7 +683,7 @@ class ConfigurationPanel(Panel):
                 self._bridge_pins.reset()      # deletes bridges.json; settings.json untouched
                 self._leave_bridge_add_view()
                 return True
-            if section not in ("graphics", "gameplay"):
+            if section not in ("graphics", "gameplay", "audio"):
                 return False
             for field, value in self._on_reset(section).items():
                 setattr(self._settings, field, value)
@@ -722,6 +779,10 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("reset:graphics")
         elif activate and kind == "ctrl" and target == "reset_gameplay":
             self.dispatch_event("reset:gameplay")
+        elif activate and kind == "ctrl" and target == "audio_3d":
+            self.dispatch_event("toggle:audio_3d")
+        elif activate and kind == "ctrl" and target == "reset_audio":
+            self.dispatch_event("reset:audio")
         elif activate and kind == "rebind":
             self.dispatch_event("rebind:" + target)
         elif activate and kind == "tab":
@@ -750,6 +811,16 @@ class ConfigurationPanel(Panel):
                 self.dispatch_event("fov:" + str(self._settings.fov_deg + FOV_STEP))
             if _pressed(k_left):
                 self.dispatch_event("fov:" + str(self._settings.fov_deg - FOV_STEP))
+
+        # Clamped here like aa_mode, so holding an arrow at an end is a no-op.
+        if kind == "ctrl" and target in AUDIO_VOLUME_KEYS:
+            current = getattr(self._settings, target)
+            if _pressed(k_right):
+                self.dispatch_event("volume:%s:%d" % (
+                    target, min(VOLUME_MAX, current + VOLUME_STEP)))
+            if _pressed(k_left):
+                self.dispatch_event("volume:%s:%d" % (
+                    target, max(VOLUME_MIN, current - VOLUME_STEP)))
 
         if kind == "ctrl" and target == "ai_difficulty":
             if _pressed(k_right):
@@ -806,6 +877,9 @@ class ConfigurationPanel(Panel):
                     ("ctrl", "disable_annoying_dialogue"),
                     ("ctrl", "ai_difficulty"),
                     ("ctrl", "reset_gameplay")]
+        elif self._selected_tab == "audio":
+            out += [("ctrl", k) for k in AUDIO_VOLUME_KEYS]
+            out += [("ctrl", "audio_3d"), ("ctrl", "reset_audio")]
         elif self._selected_tab == "controls" and self._input_map is not None:
             from engine.input_map import ACTION_IDS
             out += [("rebind", aid) for aid in ACTION_IDS]

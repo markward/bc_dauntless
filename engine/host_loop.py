@@ -146,6 +146,10 @@ def init_audio_backend() -> None:
     backend = "null" if _os_mod.environ.get("OPEN_STBC_AUDIO") == "0" else "openal"
     _audio_mod.init(backend=backend)
     _audio_backend_ready = True
+    # A fresh backend starts at full gain with Doppler on: hand it the
+    # player's Audio tab levels (engine.audio.volume owns the gains).
+    from engine.audio import volume
+    volume.attach(_audio_mod)
 
 
 def init_audio() -> None:
@@ -202,6 +206,10 @@ def _music_sound_adapter(path, looping=True):
             self._snd = s
             if hasattr(s, "SetLooping"):
                 s.SetLooping(1 if loop else 0)
+            # Before Play: the channel is fixed when the stream starts, and
+            # the Audio tab's Music slider is the Music channel.
+            if hasattr(s, "SetMusic"):
+                s.SetMusic()
             self._handle = s.Play()
         def SetVolume(self, gain):
             # The PLAYING stream's gain, never the shared TGSound's.
@@ -10376,21 +10384,19 @@ def _begin_boot_notice(view_w=1280, view_h=720, clock=None):
 
 
 def _set_boot_audio_muted(muted: bool) -> None:
-    """Silence every sound category while the game loads behind the boot
+    """Silence every sound channel while the game loads behind the boot
     notice. The SDK starts sounds during the load (LoadBridge.py:213 plays
     AmbBridge) and the screen is showing the logo meanwhile. The backend
-    re-applies a category gain to sounds already playing, so a loop started
-    under the mute is heard at its own gain once unmuted. Restores 1.0: no
-    volume setting drives these gains (test_nothing_else_owns_the_category_gains).
-    Music only plays from the game loop, so it needs nothing here."""
-    if _audio_mod is None:
-        return
-    gain = 0.0 if muted else 1.0
-    for category in ("SFX", "Voice", "Interface"):
-        try:
-            _audio_mod.set_category_gain(category, gain)
-        except Exception as _e:
-            dev_mode.log_swallowed("boot notice audio mute", _e)
+    re-applies a channel gain to sounds already playing, so a loop started
+    under the mute is heard at its own gain once unmuted. The unmute restores
+    the player's Audio tab levels, not full volume: engine.audio.volume keeps
+    both and is the only caller of set_category_gain
+    (test_nothing_else_owns_the_category_gains)."""
+    from engine.audio import volume
+    try:
+        volume.set_muted(muted)
+    except Exception as _e:
+        dev_mode.log_swallowed("boot notice audio mute", _e)
 
 
 def _finish_boot_notice(panel, view_w=1280, view_h=720):
@@ -12175,6 +12181,7 @@ def run(mission_name: Optional[str] = None,
             _dev_render_off.apply(_render_off, r)
         configuration_panel = ConfigurationPanel(
             tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay"),
+                  ("audio", "Audio"),
                   ("controls", "Controls"), ("bridges", "Bridges")],
             initial_settings=_settings.snapshot_for_panel(_store, _settings_ctx),
             on_change=lambda key, value: _settings.set_setting(_store, key, value),
@@ -12206,6 +12213,12 @@ def run(mission_name: Optional[str] = None,
             set_ship_light_emitters=_light_emitters.set_enabled,
             set_camera_shake=_camera_shake.set_enabled,
             set_ambient_gradient=r.set_ambient_gradient_enabled,
+            # Audio tab: through the SETTINGS rows, which hand each level to
+            # engine.audio.volume (the one owner of the channel gains).
+            set_audio_volume=lambda key, level: _settings.apply_setting(
+                _settings_ctx, key, level),
+            set_audio_3d=lambda on: _settings.apply_setting(
+                _settings_ctx, "audio_3d", on),
             input_map=input_map,
             bridge_pins=controller.bridge_pins,
         )

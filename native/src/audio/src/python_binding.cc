@@ -16,6 +16,7 @@ AudioSystem* system() { return g_system.get(); }
 static Category parse_category(const std::string& s) {
     if (s == "Voice") return Category::Voice;
     if (s == "Interface") return Category::Interface;
+    if (s == "Music") return Category::Music;
     return Category::SFX;
 }
 
@@ -93,6 +94,10 @@ static void set_min_max_distance_impl(uint32_t pid, float mn, float mx) {
 
 static void set_category_gain_impl(const std::string& cat, float g) {
     if (g_system) g_system->set_category_gain(parse_category(cat), g);
+}
+
+static void set_doppler_enabled_impl(bool on) {
+    if (g_system) g_system->set_doppler_enabled(on);
 }
 
 static void update_impl(float lx, float ly, float lz,
@@ -174,6 +179,7 @@ void register_python_bindings(py::module_& parent) {
     m.def("set_looping", &set_looping_impl);
     m.def("set_min_max_distance", &set_min_max_distance_impl);
     m.def("set_category_gain", &set_category_gain_impl);
+    m.def("set_doppler_enabled", &set_doppler_enabled_impl);
     m.def("update", &update_impl);
     m.def("speed_of_sound", &speed_of_sound_impl);
     m.def("bc_default_priority", &bc_default_priority_impl);

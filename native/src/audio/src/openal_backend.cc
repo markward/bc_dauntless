@@ -169,6 +169,10 @@ public:
             if (src.cat == c) alSourcef(src.al, AL_GAIN, src.user_gain * g);
         }
     }
+    void set_doppler_enabled(bool on) override {
+        // 1.0 is BC's factor (see init); 0 removes the pitch shift entirely.
+        alDopplerFactor(on ? 1.0f : 0.0f);
+    }
     bool source_finished(SourceHandle h) override {
         auto it = sources_.find(h);
         if (it == sources_.end()) return true;
@@ -185,7 +189,7 @@ private:
     std::unordered_map<SourceHandle, Source> sources_;
     BufferHandle next_buf_ = 0;
     SourceHandle next_src_ = 0;
-    float category_gain_[3] = {1.f, 1.f, 1.f};
+    float category_gain_[kCategoryCount] = {1.f, 1.f, 1.f, 1.f};
 };
 
 }  // namespace

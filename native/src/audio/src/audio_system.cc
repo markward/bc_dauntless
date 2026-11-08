@@ -193,6 +193,10 @@ void AudioSystem::set_category_gain(Category c, float g) {
     backend_->set_category_gain(c, g);
 }
 
+void AudioSystem::set_doppler_enabled(bool on) {
+    backend_->set_doppler_enabled(on);
+}
+
 bool AudioSystem::is_finished(PlayingId pid) const {
     auto it = sources_.find(pid);
     if (it == sources_.end()) return true;  // already reaped by update()

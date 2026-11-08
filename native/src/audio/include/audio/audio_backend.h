@@ -11,7 +11,12 @@ enum class Category : uint8_t {
     SFX = 0,
     Voice = 1,
     Interface = 2,
+    // The music player's streams (the Audio settings tab's Music slider).
+    Music = 3,
 };
+
+// One gain slot per Category; backends size their per-category tables by it.
+inline constexpr int kCategoryCount = 4;
 
 struct PcmDesc {
     uint16_t channels;
@@ -59,6 +64,9 @@ public:
                               float ux, float uy, float uz,
                               float vx, float vy, float vz) = 0;
     virtual void set_category_gain(Category, float) = 0;
+    // The Audio settings tab's "3D Audio" switch. Off removes Doppler pitch
+    // shift only; panning and distance falloff are untouched.
+    virtual void set_doppler_enabled(bool) = 0;
 
     // True if the source has stopped on its own (one-shot completed).
     virtual bool source_finished(SourceHandle) = 0;

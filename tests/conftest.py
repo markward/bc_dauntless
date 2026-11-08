@@ -967,6 +967,10 @@ def _reset_leakable_engine_globals():
         _passive_state.reset()
     except Exception:
         pass
+    # Audio tab levels / boot mute / 3D switch: session state, so it is NOT in
+    # reset_mission_state (a mission swap keeps the player's levels).
+    from engine.audio import volume as _volume
+    _volume.reset()
     # Mission-scoped module state: the SAME list the game clears on a mission
     # swap (engine.host_loop.reset_mission_state), so the two cannot drift.
     # They had: 15 swap-time resets had no counterpart here, and two of them

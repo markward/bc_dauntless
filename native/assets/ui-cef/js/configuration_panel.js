@@ -42,7 +42,7 @@ const CP_GRAPHICS_TRAILING = [['camera_shake', 'Camera Shake']];
 const CP_GRAPHICS_GROUP_END = ['bridge_quality'];
 // Per-tab "Reset to Defaults" rows. Scoped, not global: the Controls tab
 // resets its own bindings, so a fat-finger here can't wipe them.
-const CP_RESET_TARGETS = {graphics: 'reset_graphics', gameplay: 'reset_gameplay', bridges: 'reset_bridges'};
+const CP_RESET_TARGETS = {graphics: 'reset_graphics', gameplay: 'reset_gameplay', audio: 'reset_audio', bridges: 'reset_bridges'};
 const CP_GRAPHICS_CTRLS = CP_GRAPHICS_STANDALONE
     .concat(CP_MASTERS.map(m => m[0]))
     .concat(CP_GRAPHICS_LEVELS)
@@ -60,6 +60,18 @@ const CP_GRAPHICS_CTRLS = CP_GRAPHICS_STANDALONE
 const CP_GAMEPLAY_STANDALONE = ['subtitles', 'disable_annoying_dialogue', 'ai_difficulty'];
 const CP_GAMEPLAY_CTRLS = CP_GAMEPLAY_STANDALONE
     .concat([CP_RESET_TARGETS.gameplay]);
+
+// Audio-tab sliders in rendered order: [settings key, label]. Mirrors
+// AUDIO_VOLUMES in configuration_panel.py (test_js_audio_focusables_match_python
+// and test_js_labels_match_python). "UI" is the Interface channel.
+const CP_AUDIO_VOLUMES = [
+    ['music_volume', 'Music'],
+    ['voice_volume', 'Voice'],
+    ['sfx_volume',   'SFX'],
+    ['ui_volume',    'UI'],
+];
+const CP_AUDIO_CTRLS = CP_AUDIO_VOLUMES.map(v => v[0])
+    .concat(['audio_3d', CP_RESET_TARGETS.audio]);
 
 // One On/Off settings row. `key` names both the setting (`<key>_on`) and the
 // action (`toggle:<key>`), so a row cannot read one control and toggle another.
@@ -93,6 +105,8 @@ function _cpFocusableList(state) {
         CP_GRAPHICS_CTRLS.forEach(t => out.push({kind: 'ctrl', target: t}));
     } else if (state.selected_tab === 'gameplay') {
         CP_GAMEPLAY_CTRLS.forEach(t => out.push({kind: 'ctrl', target: t}));
+    } else if (state.selected_tab === 'audio') {
+        CP_AUDIO_CTRLS.forEach(t => out.push({kind: 'ctrl', target: t}));
     } else if (state.selected_tab === 'controls') {
         (state.controls || []).forEach(c => out.push({kind: 'rebind', target: c.id}));
         out.push({kind: 'ctrl', target: 'controls_reset'});
@@ -275,6 +289,39 @@ function _cpRenderGameplayBody(state, focusables) {
     html += _cpResetRow('gameplay',
                         focused.kind === 'ctrl'
                         && focused.target === CP_RESET_TARGETS.gameplay);
+
+    return html;
+}
+
+// Audio tab — a 0-100 slider per channel, then 3D Audio and Reset. The sliders
+// work like the FOV slider: 'change' (released), not 'input', so a drag does
+// not flood the CEF event channel.
+function _cpRenderAudioBody(state, focusables) {
+    const focused = focusables[state.focused] || {};
+    const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
+    const s = state.settings;
+    let html = '';
+
+    CP_AUDIO_VOLUMES.forEach(function (v) {
+        const key = v[0];
+        const level = (typeof s[key] === 'number') ? s[key] : 100;
+        html += '<div class="cp-row' + (isFoc(key) ? ' cp-focused' : '') + '">'
+              +   '<div class="cp-row__label">' + escapeHtmlCP(v[1]) + '</div>'
+              +   '<div class="cp-row__control">'
+              +     '<input class="cp-slider" type="range" min="0" max="100" step="1"'
+              +        ' value="' + level + '"'
+              +        ' onchange="dauntlessEvent(\'configuration/volume:' + key + ':\' + this.value)">'
+              +     '<span class="cp-slider-value">' + level + '</span>'
+              +   '</div>'
+              + '</div>';
+    });
+
+    // Off switches off Doppler pitch shift only; panning and distance stay.
+    html += _cpToggleRow('3D Audio', 'audio_3d', s.audio_3d_on !== false, isFoc);
+
+    html += _cpResetRow('audio',
+                        focused.kind === 'ctrl'
+                        && focused.target === CP_RESET_TARGETS.audio);
 
     return html;
 }
@@ -542,6 +589,8 @@ function setConfigurationPanel(state) {
             body.innerHTML = _cpRenderGraphicsBody(state, focusables);
         } else if (state.selected_tab === 'gameplay') {
             body.innerHTML = _cpRenderGameplayBody(state, focusables);
+        } else if (state.selected_tab === 'audio') {
+            body.innerHTML = _cpRenderAudioBody(state, focusables);
         } else if (state.selected_tab === 'controls') {
             body.innerHTML = _cpRenderControlsBody(state, focusables);
         } else if (state.selected_tab === 'bridges') {

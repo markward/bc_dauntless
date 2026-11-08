@@ -404,3 +404,29 @@ matching the mission-picker pattern but production-visible:
   codebase currently uses 70°. Decision recorded: keep 70°, slider
   seed reads the live engine value. If the global default later
   changes, the panel follows automatically.
+
+## Addendum 2026-11-08 — Audio tab
+
+Brings back the original game's sound options now that music plays. A tab
+between Gameplay and Controls: **Music**, **Voice**, **SFX** and **UI**
+sliders (0-100, default 100, FOV-style: applied on `change`, arrow keys step
+5), **3D Audio** On/Off (default On), and Reset to Defaults. Stored in the
+`audio` section of `settings.json` (`music_volume`, `voice_volume`,
+`sfx_volume`, `ui_volume`, `audio_3d`).
+
+- **One owner of the channel gains: `engine/audio/volume.py`.** It keeps the
+  four levels and the boot-notice mute and works out each channel's gain from
+  both, so the unmute restores the player's levels instead of 1.0. Nothing
+  else may call `set_category_gain` (`test_nothing_else_owns_the_category_gains`).
+  The backend is re-handed the whole state on every (re)init.
+- **Channels** are the native audio categories: Music (new, category 3: the
+  music player's streams, tagged by `TGSound.SetMusic()` before Play), Voice,
+  SFX, and Interface (the "UI" row).
+- **Loudness curve:** gain = (level / 100)², so half the bar is -12 dB
+  (about half as loud) rather than the -6 dB a straight line gives.
+- **3D Audio Off** switches off Doppler only (`alDopplerFactor(0)`); panning
+  and distance falloff stay. BC's option chose a Windows 3D provider
+  (`SoundConfig.py`), which has no modern equivalent; what Off means here is
+  Mark's call (2026-11-08), not recovered BC behaviour.
+
+**Live-verified by Mark 2026-11-08.**

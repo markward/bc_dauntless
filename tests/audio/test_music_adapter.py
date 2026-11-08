@@ -29,6 +29,8 @@ class _FakeSound:
         self.looping = None
         self.stopped = False
         self.played = False
+        self.music_before_play = None
+    def SetMusic(self): self.music_before_play = not self.played
     def SetVolume(self, g): self.gain = g
     def SetLooping(self, v): self.looping = v
     def Stop(self): self.stopped = True
@@ -144,3 +146,30 @@ def test_set_volume_leaves_the_shared_sound_launch_gain_alone(monkeypatch):
     snd = host_loop._music_sound_adapter("sfx/Music/a.mp3")
     snd.SetVolume(0.0)
     assert snd._snd.gain is None
+
+
+def test_music_plays_on_the_music_channel(monkeypatch):
+    """The Audio tab's Music slider is its own channel. Tagged after Play, the
+    stream would already be playing on SFX and follow the SFX slider."""
+    _patch(monkeypatch)
+    snd = host_loop._music_sound_adapter("sfx/Music/a.mp3")
+    assert snd._snd.music_before_play is True
+
+
+def test_a_tgsound_tagged_music_plays_on_the_music_category(monkeypatch):
+    import engine.audio.tg_sound as tg
+    calls = []
+
+    class _A:
+        def play(self, **kw):
+            calls.append(kw)
+            return 7
+        def set_min_max_distance(self, *a): pass
+        def get_sound(self, name): return 1
+
+    monkeypatch.setattr(tg, "_audio", _A())
+    snd = tg.TGSound("music-test", False)
+    snd.SetMusic()
+    assert snd.IsMusic() == 1 and snd.IsSFX() == 0
+    snd.Play()
+    assert calls[-1]["category"] == "Music"

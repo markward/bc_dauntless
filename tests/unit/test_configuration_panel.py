@@ -85,6 +85,8 @@ def test_initial_settings_round_trip_to_render_payload():
         "bridge_quality": 1,
         "camera_realism": CAMERA_REALISM_MEDIUM,
         "fov_deg": 62,
+        "music_volume": 100, "voice_volume": 100, "sfx_volume": 100,
+        "ui_volume": 100, "audio_3d_on": True,
     }
 
 
@@ -797,9 +799,11 @@ def test_every_stored_field_survives_construction():
         dust_on=False, fullscreen_on=True, improved_space_on=False,
         camera_realism=CAMERA_REALISM_HIGH, realistic_lighting_on=False,
         camera_shake_on=False,
+        music_volume=10, voice_volume=20, sfx_volume=30, ui_volume=40,
+        audio_3d_on=False,
     )
     names = [f.name for f in fields(SettingsSnapshot)]
-    assert len(names) == 12, "new field: give it a non-default value above"
+    assert len(names) == 17, "new field: give it a non-default value above"
     p, _ = _make(initial_settings=stored)
     for name in names:
         assert getattr(p._settings, name) == getattr(stored, name), name

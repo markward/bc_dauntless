@@ -280,7 +280,7 @@ def test_every_snapshot_field_has_exactly_one_setting_row():
 def test_every_setting_key_is_unique_and_in_a_known_section():
     keys = [s.key for s in SETTINGS]
     assert len(keys) == len(set(keys))
-    assert {s.section for s in SETTINGS} == {"graphics", "gameplay"}
+    assert {s.section for s in SETTINGS} == {"graphics", "gameplay", "audio"}
 
 
 def test_master_fan_out_matches_the_panel_master_table():
@@ -646,3 +646,93 @@ def test_set_section_replaces_the_whole_section_and_saves(tmp_path):
     store.set_section("pins", {})
     assert json.loads(p.read_text(encoding="utf-8"))["pins"] == {}
     assert store.has_section("pins") is True
+
+
+# ── Audio tab: four channel levels and the 3D switch ────────────────────────
+
+class _FakeAudio:
+    def __init__(self):
+        self.gains = {}
+        self.doppler = []
+
+    def set_category_gain(self, category, gain):
+        self.gains[category] = gain
+
+    def set_doppler_enabled(self, on):
+        self.doppler.append(on)
+
+
+@pytest.fixture
+def audio():
+    from engine.audio import volume
+    volume.reset()
+    fake = _FakeAudio()
+    volume.attach(fake)
+    yield fake
+    volume.reset()
+
+
+_AUDIO_ROWS = [("music_volume", "Music"), ("voice_volume", "Voice"),
+               ("sfx_volume", "SFX"), ("ui_volume", "Interface")]
+
+
+@pytest.mark.parametrize("key,channel", _AUDIO_ROWS)
+def test_audio_level_rows(key, channel):
+    row = setting_for(key)
+    assert (row.section, row.field, row.kind, row.default, row.lo, row.hi) == (
+        "audio", key, int, 100, 0, 100)
+
+
+@pytest.mark.parametrize("key,channel", _AUDIO_ROWS)
+def test_a_stored_level_reaches_its_channel_at_boot(tmp_path, audio, key, channel):
+    s = _store(tmp_path)
+    s.load()
+    s.set("audio", key, 50)
+    apply_all(s, _ctx())
+    assert audio.gains[channel] == pytest.approx(0.25)
+    others = [c for _k, c in _AUDIO_ROWS if c != channel]
+    assert all(audio.gains[c] == 1.0 for c in others)
+
+
+def test_a_stored_level_out_of_range_is_clamped(tmp_path, audio):
+    s = _store(tmp_path)
+    s.load()
+    s.set("audio", "sfx_volume", 250)
+    apply_all(s, _ctx())
+    assert audio.gains["SFX"] == 1.0
+
+
+def test_3d_audio_row_drives_doppler(tmp_path, audio):
+    row = setting_for("audio_3d")
+    assert (row.section, row.field, row.kind, row.default) == (
+        "audio", "audio_3d_on", bool, True)
+    s = _store(tmp_path)
+    s.load()
+    s.set("audio", "audio_3d", False)
+    apply_all(s, _ctx())
+    assert audio.doppler[-1] is False
+
+
+def test_reset_audio_restores_full_volume_and_3d(tmp_path, audio):
+    s = _store(tmp_path)
+    s.load()
+    for key, _c in _AUDIO_ROWS:
+        s.set("audio", key, 10)
+    s.set("audio", "audio_3d", False)
+    apply_all(s, _ctx())
+
+    out = reset_and_apply_section(s, _ctx(), "audio")
+
+    assert out == {"music_volume": 100, "voice_volume": 100, "sfx_volume": 100,
+                   "ui_volume": 100, "audio_3d_on": True}
+    assert set(audio.gains.values()) == {1.0}
+    assert audio.doppler[-1] is True
+    assert not s.has("audio", "music_volume")
+
+
+def test_a_first_launch_snapshot_shows_full_volume(tmp_path, audio):
+    s = _store(tmp_path)
+    s.load()
+    snap = snapshot_for_panel(s, _ctx())
+    assert (snap.music_volume, snap.voice_volume, snap.sfx_volume,
+            snap.ui_volume, snap.audio_3d_on) == (100, 100, 100, 100, True)
