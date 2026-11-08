@@ -144,6 +144,7 @@
 #include <renderer/asset_path.h>
 #include <renderer/ray_trace.h>
 #include <renderer/glow_region.h>
+#include <renderer/glow_impulse.h>
 #include <renderer/node_anim.h>
 #include <renderer/bridge_node_anim_store.h>
 #include <renderer/model_parts.h>
@@ -15541,6 +15542,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               auto& n = inst->glow_regions[static_cast<std::size_t>(region_index)];
               if (!n.active) return;
               n.gain = gain;
+              n.impulse = false;   // a plain gain (warp regions) wins
               // Gate axis is a direction (model space) — normalize, no scale.
               glm::vec3 a(std::get<0>(gate_axis), std::get<1>(gate_axis),
                           std::get<2>(gate_axis));
@@ -15553,6 +15555,45 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "the glow inside the region for impulse engine power/speed; feeds HDR). "
           "gate_axis (model-space dir, 0 = none) restricts the gain to faces "
           "whose normal points along it (aft impulse faces only).");
+
+    m.def("set_glow_region_impulse",
+          [](scenegraph::InstanceId id, int region_index, float start_frac,
+             float target_frac, float t0, bool powered,
+             std::tuple<float, float, float> gate_axis) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              if (region_index < 0 ||
+                  region_index >= static_cast<int>(inst->glow_regions.size())) return;
+              auto& n = inst->glow_regions[static_cast<std::size_t>(region_index)];
+              if (!n.active) return;
+              n.impulse = true;
+              n.imp_start = start_frac;
+              n.imp_target = target_frac;
+              n.imp_t0 = t0;
+              n.imp_powered = powered;
+              glm::vec3 a(std::get<0>(gate_axis), std::get<1>(gate_axis),
+                          std::get<2>(gate_axis));
+              const float len = glm::length(a);
+              n.gain_axis = (len > 1e-6f) ? (a / len) : glm::vec3(0.0f);
+          },
+          py::arg("instance_id"), py::arg("region_index"), py::arg("start_frac"),
+          py::arg("target_frac"), py::arg("t0"), py::arg("powered"),
+          py::arg("gate_axis") = std::make_tuple(0.0f, 0.0f, 0.0f),
+          "Drive a glow region's gain from the impulse throttle: the renderer "
+          "eases start_frac (at game time t0) toward target_frac and adds the "
+          "slow pulse at upload, from the glow flicker's game clock "
+          "(renderer/glow_impulse.h). powered=False pins the gain to 1. "
+          "gate_axis as set_glow_region_gain. Push on change only.");
+
+    m.def("glow_impulse_gain_eval",
+          [](float start_frac, float target_frac, float t0, float now, bool powered) {
+              return renderer::glow_impulse::gain(start_frac, target_frac, t0, now,
+                                                  powered);
+          },
+          py::arg("start_frac"), py::arg("target_frac"), py::arg("t0"),
+          py::arg("now"), py::arg("powered"),
+          "Test twin: the gain the renderer uploads for an impulse glow region "
+          "(tests/unit/test_glow_impulse_twin.py).");
 
     m.def("world_to_body",
           [](scenegraph::InstanceId id,

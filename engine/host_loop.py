@@ -9999,9 +9999,12 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     for ship, iid in session.ship_instances.items():
         _wg = session.ship_glow_controllers.get(iid)
         if _wg is not None:
+            # The player polls its glow state every frame; AI ships at 20 Hz
+            # (subsystem_glow.AI_GLOW_POLL_S).
             _wg.update(game_time,
                        _player_throttle_frac if ship is player else None,
-                       _player_warp_glow if ship is player else None)
+                       _player_warp_glow if ship is player else None,
+                       is_player=ship is player)
         # Destroyed (dying/dead) ships lose self-illumination —
         # a dark hulk in space. Hull stays lit by external light.
         _es = _emissive_scale_for(ship, ship is player, _hd_boost)

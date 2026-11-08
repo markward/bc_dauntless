@@ -79,7 +79,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_instance_atmosphere",
     "set_instance_surface",
     "set_project_asset_root", "prewarm_scuff_normal_texture",
-    "set_glow_region_gain",
+    "set_glow_region_gain", "set_glow_region_impulse",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
     "set_instance_decals",
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
@@ -1240,6 +1240,21 @@ def set_glow_region_gain(instance_id: InstanceId, region_index: int,
     whose normal points along it — used to glow only the aft impulse faces."""
     _h.set_glow_region_gain(instance_id, int(region_index), float(gain),
                             tuple(gate_axis))
+
+
+def set_glow_region_impulse(instance_id: InstanceId, region_index: int,
+                            start_frac: float, target_frac: float, t0: float,
+                            powered: bool, gate_axis=(0.0, 0.0, 0.0)) -> None:
+    """Drive a glow region's gain from the impulse throttle. The renderer eases
+    `start_frac` (the eased throttle at game time `t0`) toward `target_frac`
+    and adds the slow pulse itself at upload, from the glow flicker's game
+    clock -- so this is pushed only when one of the inputs changes, not every
+    frame. `powered=False` pins the gain to 1.0. `gate_axis` as
+    set_glow_region_gain. A later set_glow_region_gain on the region replaces
+    this with a plain gain."""
+    _h.set_glow_region_impulse(instance_id, int(region_index),
+                               float(start_frac), float(target_frac),
+                               float(t0), bool(powered), tuple(gate_axis))
 
 
 # ── Shield pass ─────────────────────────────────────────────────────────────

@@ -293,6 +293,14 @@ struct Instance {
         float     flicker = 0.0f;   // 1 = disabled (continuous flicker), 0 = solid settle
         float     gain = 1.0f;      // >1 brightens glow inside the region (impulse power/speed)
         glm::vec3 gain_axis{0.0f};  // aft dir (model space); non-zero gates gain to faces facing it
+        // Impulse boost evaluated at upload (renderer/glow_impulse.h) from the
+        // game clock instead of `gain`: set by set_glow_region_impulse, cleared
+        // by set_glow_region_gain (warp regions keep the plain gain).
+        bool      impulse = false;
+        float     imp_start = 0.0f;    // eased throttle at imp_t0 (0..1)
+        float     imp_target = 0.0f;   // commanded throttle (0..1)
+        float     imp_t0 = 0.0f;       // game-time seconds of the last target change
+        bool      imp_powered = false; // false (unhealthy pod) -> gain exactly 1
         float     shape = 0.0f;          // 0 = capsule/sphere, 1 = body-axis box
         glm::vec3 half_extents{0.0f};    // box half-extents (model units); box only
         // Box orientation in body space (columns of the box-local basis). The

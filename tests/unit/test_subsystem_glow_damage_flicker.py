@@ -48,6 +48,9 @@ class _Renderer:
         self.dim_calls.append((dim_target, edge_time, flicker))
     def set_glow_region_gain(self, iid, idx, gain, gate_axis=(0.0, 0.0, 0.0)):
         pass
+    def set_glow_region_impulse(self, iid, idx, start, target, t0, powered,
+                                gate_axis=(0.0, 0.0, 0.0)):
+        pass
 
 
 HEALTHY_PUSH = (1.0, -1.0, 0.0)

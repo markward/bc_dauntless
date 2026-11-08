@@ -17,6 +17,7 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 | Target-list poll | (panel throttle) | 0.5 s / 2 Hz | `engine/ui/panel_registry.py` |
 | Avoidance re-decision | `AVOID_EVADING_UPDATE_DELAY_S` | 0.25 s / 4 Hz | `engine/appc/ai_optimized.py` (`AVOID_EVADING_UPDATE_DELAY_S`) |
 | AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py` (`AI_MAX_SLEEP_TICKS`; the walk it gates is native, `native/src/host/aitree.cc`) |
+| AI ship glow state poll | `AI_GLOW_POLL_S` | 0.05 s game time | `engine/appc/subsystem_glow.py` |
 
 The last two are environment-overridable — `DAUNTLESS_AVOID_EVADE_DELAY_S` and
 `DAUNTLESS_AI_MAX_SLEEP`. Setting the avoid delay to `0.0` restores the SDK's
@@ -164,6 +165,22 @@ cadence missing.
 
 Default 4 ticks (~66 ms at 60 Hz). **`ForceUpdate` is therefore no longer
 "next tick."**
+
+## 5. An AI ship's glow state is polled at 20 Hz
+
+`ShipGlowController.update` (`engine/appc/subsystem_glow.py`) reads each glow
+region's subsystem state, condition and the ship's commanded throttle only
+every `AI_GLOW_POLL_S` (0.05 s of game time) for AI ships, staggered across
+ships by instance id; the player's ship still polls every frame. Consequence,
+**accepted** (perf tier 1, spec `2026-11-08-perf-tier1-design.md` §2.3): an AI
+ship's damage flicker, disabled/destroyed blow-out and throttle ease start **up
+to 50 ms late**, because the edge time is the detection time. Purely visual: no
+gameplay reads it.
+
+The impulse glow's ease and slow pulse are no longer stepped in Python: the
+renderer evaluates them at upload (`native/src/renderer/include/renderer/glow_impulse.h`)
+from the glow flicker's game clock, so a held throttle is one push. The warp
+gain stays per-frame Python (only the player warps).
 
 ---
 
