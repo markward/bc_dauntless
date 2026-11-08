@@ -255,8 +255,8 @@ When a family is open, its members are blocks in a grid under the name bar.
   (centred was tried and rejected), 11px, `text-wrap: balance` so a
   two-line name keeps its number with it ("Forward / Torp 1"; Chromium
   114+, the CEF build is Chromium 144).
-- **No health bar.** Health is a **3px left edge in the BC state colour**:
-  none (transparent, space kept) when healthy, lime when damaged (Mark).
+- ~~**No health bar.** Health is a 3px left edge in the BC state colour~~
+  (superseded 2026-11-08: the edge is gone, the health bar below replaces it).
 - **Health bar on the right** (Mark, 2026-11-08, after play showed the
   edge alone was not enough; a percent readout was tried first and
   rejected): the target list's vertical bar (§3), 5px x 16px, yellow like
