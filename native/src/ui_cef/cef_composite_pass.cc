@@ -114,6 +114,27 @@ void CefCompositePass::upload(const std::uint8_t* pixels,
     }
 }
 
+void CefCompositePass::upload_rects(const std::uint8_t* pixels,
+                                    int width, int height,
+                                    const std::vector<PixelRect>& rects) {
+    if (!pixels || !allocated() || size_differs(width, height)) return;
+
+    glBindTexture(GL_TEXTURE_2D, tex_id_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    // Each rect is a window into the tight width-pixel rows of `pixels`.
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, width);
+    for (PixelRect r : rects) {
+        r = clip_rect(r, width, height);
+        if (r.w <= 0 || r.h <= 0) continue;
+        const std::uint8_t* src =
+            pixels + (static_cast<size_t>(r.y) * width + r.x) * 4;
+        glTexSubImage2D(GL_TEXTURE_2D, 0, r.x, r.y, r.w, r.h,
+                        GL_BGRA, GL_UNSIGNED_BYTE, src);
+    }
+    // Every other pass assumes the default row length.
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+}
+
 void CefCompositePass::draw() {
     if (!allocated()) return;
 

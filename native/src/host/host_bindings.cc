@@ -2798,12 +2798,13 @@ void frame() {
         dauntless::ui_cef::pump();
     }
     {
-        // By default the composite uploads the ENTIRE CEF surface every
-        // frame — no dirty-rect, no PBO. At 2560x1440 BGRA that is ~14.7 MB
-        // of glTexSubImage2D per frame. Upload and draw are timed separately
-        // because the upload is where the CPU appears to wait for the GPU
-        // (docs/reference/engine/perf-register.md, A-1); DAUNTLESS_CEF_UPLOAD switches
-        // the upload policy for that experiment.
+        // By default (`on_paint`) the composite uploads only on frames CEF
+        // repainted, and then only CEF's dirty rects (cef_dirty_rects.h; a
+        // size change or a mostly-dirty surface uploads whole). No PBO.
+        // DAUNTLESS_CEF_UPLOAD=always restores the old whole-surface upload
+        // every frame (~14.7 MB of glTexSubImage2D at 2560x1440 BGRA). Upload
+        // and draw are timed separately (docs/reference/engine/
+        // perf-register.md, A-1 and P-10).
         DAUNTLESS_FRAME_SCOPE("cef.composite");
         {
             DAUNTLESS_FRAME_SCOPE("cef.upload");

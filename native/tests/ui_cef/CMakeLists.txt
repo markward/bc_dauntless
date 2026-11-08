@@ -2,6 +2,7 @@
 # test builds whether or not DAUNTLESS_ENABLE_CEF is on.
 add_executable(ui_cef_tests
     cef_upload_policy_test.cc
+    cef_dirty_rects_test.cc
 )
 target_include_directories(ui_cef_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/native/src/ui_cef)
