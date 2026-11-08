@@ -58,6 +58,7 @@ def _on_ship_event(event: str, ship) -> None:
     if event == "destroyed":
         from engine.audio import hum_allocator
         hum_allocator._stop_hum(ship)
+        hum_allocator.mark_dirty()
 
 
 def install_engine_rumble_listener() -> None:

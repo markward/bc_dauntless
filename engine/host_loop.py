@@ -289,7 +289,8 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player,
     # Guide §9, in order: (1) attached emitters from their nodes,
     # (2) the nearest-≤4 hum allocator, (3) the listener from the active camera.
     attached_sources.pump(dt if source_dt is None else source_dt)
-    hum_allocator.update(listener_pos=camera_position)
+    import time
+    hum_allocator.maybe_update(camera_position, time.monotonic())
     # Dev-only diagnostic (F8-toggled, --developer only): a single boolean
     # short-circuit inside maybe_report keeps this out of the 60 Hz hot path
     # both in production and, by default, under --developer too -- see

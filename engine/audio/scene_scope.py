@@ -72,7 +72,8 @@ def set_active_frame(key) -> None:
     if key == _active_frame:
         return
     _active_frame = key
-    from engine.audio import attached_sources
+    from engine.audio import attached_sources, hum_allocator
+    hum_allocator.mark_dirty()
     carried = []
     for frame_key, handles in list(_by_frame.items()):
         if frame_key == key:

@@ -23,8 +23,9 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 | Avoidance re-decision | `AVOID_EVADING_UPDATE_DELAY_S` | 0.25 s / 4 Hz | `engine/appc/ai_optimized.py` (`AVOID_EVADING_UPDATE_DELAY_S`) |
 | AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py` (`AI_MAX_SLEEP_TICKS`; the walk it gates is native, `native/src/host/aitree.cc`) |
 | AI ship glow state poll | `AI_GLOW_POLL_S` | 0.05 s game time | `engine/appc/subsystem_glow.py` |
+| Hum reallocation | `HUM_REALLOC_PERIOD_S` | 0.1 s wall + on scene switch / removal / death | `engine/audio/hum_allocator.py` |
 
-The last two are environment-overridable — `DAUNTLESS_AVOID_EVADE_DELAY_S` and
+The avoidance and AI-sleep cadences are environment-overridable — `DAUNTLESS_AVOID_EVADE_DELAY_S` and
 `DAUNTLESS_AI_MAX_SLEEP`. Setting the avoid delay to `0.0` restores the SDK's
 exact every-tick behaviour, which is the cleanest way to test whether a
 suspected latency bug is this cadence.
