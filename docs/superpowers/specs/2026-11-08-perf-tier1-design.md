@@ -48,8 +48,11 @@ as a follow-up only, because it needs CEF's GPU lockdown
   (see `docs/reference/engine/event-emitter-gaps.md`) must not be relied on.
   Also immediate (*my call*): an identification commit
   (`sensor_contacts._identify_one`, the single commit point), so a row's
-  caption never trails the reticle's `shows_identity`, and a medium
-  entry/exit that flips `subsystems_targetable`.
+  caption never trails the reticle's `shows_identity`. The current
+  target's `identified` / `subsystems_targetable` are re-checked every frame
+  (one sample), and a flip rebuilds at once: every reader of
+  `subsystems_targetable` concerns the player's target, and medium
+  entry/exit has no event.
 - **Range and cloak-bubble crossings are NOT immediate**: a ship crossing
   sensor range keeps or lacks its row until the next sweep (≤ 1 s). Accepted:
   it is the lag Mark accepted for everything not event-driven, and it matches
@@ -95,7 +98,8 @@ machinery (`poll_interval_s`, `mark_due`, visibility flip, event dispatch):
 
 ### 2.2 R11G11B10F for the HDR scene and bloom targets
 
-`HdrTarget` colour, `HdrMsaaTarget` colour (same format, so the resolve stays a
+The format is chosen PER TARGET (`HdrTarget`'s default stays RGBA16F: bridge
+AO keeps signed normals in one). The main scene `HdrTarget` colour, `HdrMsaaTarget` colour (same format, so the resolve stays a
 same-format blit) and the bloom mip chain move from `RGBA16F` to
 `GL_R11F_G11F_B10F`. Keep `RGBA16F` wherever alpha is read (nebula buffer)
 **or wherever a negative value must survive** (R11G11B10F is unsigned).
@@ -117,14 +121,16 @@ against the branch's worktree; no runtime format toggle is added (Mark,
 
 ### 2.3 Glow updates off the per-frame path
 
-`subsystem_glow.SubsystemGlow.update` runs per ship per frame from
+`subsystem_glow.ShipGlowController.update` runs per ship per frame from
 `_sync_instance_transforms`. Pushes are already change-only, except the impulse
 (and warp) gain, which changes every frame while moving for two reasons: a
 `sin(now)` pulse, and the throttle ease (`_eased_frac`, an exponential with
 `IMPULSE_EASE_TAU`, stepped by each frame's dt). Design:
 
-- Move both into the renderer, evaluated from the game clock it already uses
-  for glow flicker. *My call:* the ease is pushed as (start value, target,
+- Move the impulse gain into the renderer, evaluated in C++ at glow-region
+  upload time from the game clock it already uses for glow flicker
+  (`u_decal_time`). Warp gain stays in Python: only the player warps, and
+  its envelope changes every frame anyway. *My call:* the ease is pushed as (start value, target,
   start time) and evaluated in closed form, `target + (start − target)·
   exp(−(t − t0)/τ)`, with today's settle-to-0 snap. For a target held
   constant this equals today's per-frame integration up to float rounding
