@@ -33,7 +33,10 @@ def armed():
 
 
 def _freeze_now():
+    """A request is serviced at the SECOND service() after it: the first
+    only marks it ready, so a whole frame's sweep and reconcile run first."""
     gc_freeze.request()
+    assert gc_freeze.service() is False
     assert gc_freeze.service() is True
     assert gc.get_freeze_count() > 0
 
@@ -42,6 +45,7 @@ def test_disarmed_is_inert():
     try:
         assert gc_freeze.armed() is False
         gc_freeze.request()
+        assert gc_freeze.service() is False
         assert gc_freeze.service() is False
         assert gc.get_freeze_count() == 0
     finally:
@@ -60,10 +64,21 @@ def test_armed_request_service_freezes(armed):
 def test_thaw_unfreezes_and_cancels_request(armed):
     _freeze_now()
     gc_freeze.request()
+    assert gc_freeze.service() is False          # ready, one frame from due
     gc_freeze.thaw()
     assert gc.get_freeze_count() == 0
     assert gc_freeze.service() is False          # the pending request is gone
+    assert gc_freeze.service() is False
     assert gc.get_freeze_count() == 0
+
+
+def test_a_new_request_restarts_the_wait(armed):
+    gc_freeze.request()
+    assert gc_freeze.service() is False          # ready
+    gc_freeze.request()                          # another load, this frame
+    assert gc_freeze.service() is False          # ready again, not frozen
+    assert gc.get_freeze_count() == 0
+    assert gc_freeze.service() is True
 
 
 def test_disarm_then_thaw_still_unfreezes():
@@ -228,6 +243,69 @@ def test_swapped_out_ship_is_collected(armed):
     assert fired == [True]
 
 
+def test_doomed_battle_is_not_frozen_before_its_sweep(armed, monkeypatch):
+    """Quick Battle End runs mid-frame (CEF pump inside r.frame(), or a timer
+    in the sim ticks): BC flags the battle SetDeleteMe and sim_restore
+    requests while the ships are still in their set. The NEXT frame's
+    session_sync sweep takes them out of the set, but session.ship_instances
+    still holds them until that frame's sim.reconcile. A freeze in between
+    would keep the battle's cycles alive to the next teardown."""
+    import App
+    import engine.host_loop as hl
+    from engine.appc import objects as objects_mod
+    monkeypatch.setattr(objects_mod, "broadcast_object_deleted",
+                        lambda obj: None)
+
+    class _Ship:
+        pass
+
+    class _Set:
+        def __init__(self):
+            self._objects = {}
+
+        def RemoveObjectFromSet(self, name):
+            self._objects.pop(name, None)
+
+    fired = []
+    ship = _Ship()
+    ship.self_ref = ship                          # a reference cycle
+    weakref.finalize(ship, fired.append, True)
+    pset = _Set()
+    pset._objects["Enemy 1"] = ship
+    ship_instances = {ship: 7}                    # session.ship_instances
+    monkeypatch.setitem(App.g_kSetManager._sets, "QBDoomed", pset)
+    del ship
+
+    # Mid-frame End: flag, then sim_restore's request.
+    pset._objects["Enemy 1"].__dict__["_delete_me"] = True
+    gc_freeze.request()
+
+    def reconcile():                              # _reconcile_runtime_instances
+        live = {id(o) for s in App.g_kSetManager._sets.values()
+                for o in getattr(s, "_objects", {}).values()}
+        for s_ in [k for k in ship_instances if id(k) not in live]:
+            ship_instances.pop(s_)
+
+    for _ in range(3):                            # next frames, host order
+        hl._process_object_deletions()            # sim.session_sync: sweep
+        gc_freeze.service()                       # ... then service
+        reconcile()                               # sim.reconcile, later
+    assert gc.get_freeze_count() > 0, "the battle load was never frozen"
+    gc.collect()
+    assert fired == [True], "the swept battle ship was frozen alive"
+
+
+def test_service_sits_after_the_sweep_in_session_sync():
+    import engine.host_loop as hl
+    src = inspect.getsource(hl._run_frame_sim)
+    sync = src.index('frame_profiler.scope("sim.session_sync")')
+    sweep = src.index("_process_object_deletions()", sync)
+    svc = src.index("gc_freeze.service()", sync)
+    assert sweep < svc < src.index("frame_profiler.scope(", sync + 1)
+    assert src.count("gc_freeze.service()") == 1
+    assert "gc_freeze.service()" not in inspect.getsource(hl.run)
+
+
 def test_run_arms_only_outside_pytest():
     import engine.host_loop as hl
     src = inspect.getsource(hl.run)
@@ -235,7 +313,6 @@ def test_run_arms_only_outside_pytest():
     guard = src.index('"pytest" not in sys.modules')
     assert "gc_freeze.arm()" in src[guard:guard + 200]
     assert "gc_freeze.request()" in src
-    assert "gc_freeze.service()" in src
     # run()'s outer finally opens by unhooking mission_change.
     tail = src[src.index("_mission_change.configure(on_changed=None)") - 300:]
     assert "gc_freeze.thaw()" in tail

@@ -10728,6 +10728,10 @@ def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
         # "End Combat" clears the battle this way); the reconciliation below
         # then tears down their render instances.
         _process_object_deletions()
+        # A load requested a GC freeze: collect + freeze AFTER the sweep, one
+        # frame after the request, so a swept battle's ships have left both
+        # their set and the scene reconcile (engine/core/gc_freeze.py).
+        gc_freeze.service()
         # Mirror the SDK config-dialog flag onto the Quick Battle Setup
         # panel: opens it when the player clicks the XO menu's config
         # button, closes it on Close/Start. Boot leaves it closed.
@@ -12683,7 +12687,7 @@ def run(mission_name: Optional[str] = None,
             prev_drawn_player_pose=_prev_drawn_player_pose,
         )
 
-        # The boot load is done: freeze it at the end of the first frame.
+        # The boot load is done: freeze it once the first frames have swept.
         gc_freeze.request()
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
@@ -13856,10 +13860,6 @@ def run(mission_name: Optional[str] = None,
                     drawn=(_player_interp_pose[0]
                            if _player_interp_pose is not None else None),
                     eye=locals().get("eye"), target=locals().get("target"))
-            # A load requested a GC freeze: collect + freeze here, at the frame
-            # boundary, still inside the timeline so the frame that pays for
-            # it is timed and a spike names "gc.freeze".
-            gc_freeze.service()
             # Close the frame timeline. Deliberately AFTER r.frame(), so the
             # "r.frame" phase carries the whole render call and the loop total
             # is the real wall-clock cost of one iteration.
