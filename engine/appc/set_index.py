@@ -101,6 +101,8 @@ def on_removed(pSet, identifier: str, removed) -> None:
     """A removal door popped `identifier` (which held `removed`) from
     `pSet._objects`. Only an entry that is still visible changes the
     contact view (a handler re-added it)."""
+    from engine.audio import hum_allocator
+    hum_allocator.mark_dirty()  # flag write only: a removed ship stops humming
     seen = _is_contact(removed) and _h.set_index_visible(pSet, removed)
     _h.set_index_remove(pSet, identifier)
     if seen and not _h.set_index_visible(pSet, removed):

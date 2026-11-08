@@ -17,6 +17,7 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 | Target-list poll | (panel throttle) | 0.5 s / 2 Hz | `engine/ui/panel_registry.py` |
 | Avoidance re-decision | `AVOID_EVADING_UPDATE_DELAY_S` | 0.25 s / 4 Hz | `engine/appc/ai_optimized.py` (`AVOID_EVADING_UPDATE_DELAY_S`) |
 | AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py` (`AI_MAX_SLEEP_TICKS`; the walk it gates is native, `native/src/host/aitree.cc`) |
+| Hum reallocation | `HUM_REALLOC_PERIOD_S` | 0.1 s wall + on scene switch / removal / death | `engine/audio/hum_allocator.py` |
 
 The last two are environment-overridable — `DAUNTLESS_AVOID_EVADE_DELAY_S` and
 `DAUNTLESS_AI_MAX_SLEEP`. Setting the avoid delay to `0.0` restores the SDK's
