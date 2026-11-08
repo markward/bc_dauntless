@@ -413,8 +413,9 @@ def sim_ticks_avg() -> float:
 
 # ── Reporting ────────────────────────────────────────────────────────────────
 # The report is printed to the console rather than drawn as a CEF overlay, and
-# that is deliberate: the CEF surface is uploaded to the GPU in full every frame
-# (no dirty-rect, no PBO), so a DOM overlay mutating every frame would add paint
+# that is deliberate: CEF re-rasters and the composite re-uploads (by default
+# only CEF's dirty rects, only on frames CEF repainted) whatever the DOM
+# changes, so a DOM overlay mutating every frame would add paint and upload
 # work to the very frame being measured. The console costs nothing until it
 # prints, and it prints once every REPORT_EVERY frames.
 

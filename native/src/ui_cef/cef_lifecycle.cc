@@ -4,6 +4,7 @@
 #include "cef_app.h"
 #include "cef_client.h"
 #include "cef_composite_pass.h"
+#include "cef_dirty_rects.h"
 #include "cef_upload_policy.h"
 
 #include "platform/exe_path.h"
@@ -40,10 +41,12 @@ std::unique_ptr<CefCompositePass>         g_composite;
 bool                                      g_initialized = false;
 std::function<void()>                     g_capture_reset;
 
-// Overlay upload policy (perf-register A-1). DAUNTLESS_CEF_UPLOAD picks the
-// mode at init; unset means `always`, the original every-frame upload. When
-// the variable is set, a one-line upload/skip count goes to stderr every
-// kUploadStatsEvery composites so a capture shows how often CEF repaints.
+// Overlay upload policy (perf-register A-1, P-10). DAUNTLESS_CEF_UPLOAD picks
+// the mode at init; unset means `on_paint`: upload only a frame CEF repainted,
+// and then only its dirty rects (cef_dirty_rects.h). `always` is the original
+// every-frame whole-surface upload. When the variable is set, a one-line
+// upload/skip count goes to stderr every kUploadStatsEvery composites so a
+// capture shows how often CEF repaints.
 struct UploadStats {
     int frames  = 0;
     int uploads = 0;
@@ -52,7 +55,7 @@ struct UploadStats {
     double frame_ms_max = 0.0;
 };
 constexpr int    kUploadStatsEvery = 600;
-UploadMode       g_upload_mode = UploadMode::Always;
+UploadMode       g_upload_mode = UploadMode::OnPaint;
 bool             g_upload_stats_enabled = false;
 std::uint64_t    g_uploaded_gen = 0;
 UploadStats      g_upload_stats;
@@ -351,9 +354,17 @@ void composite_upload() {
     const std::uint8_t* pixels = g_client->latest_bitmap(&w, &h);
     if (!pixels) return;
     const std::uint64_t gen = g_client->paint_generation();
-    if (should_upload(g_upload_mode, g_composite->allocated(),
-                      g_composite->size_differs(w, h), gen, g_uploaded_gen)) {
-        g_composite->upload(pixels, w, h);
+    const bool allocated = g_composite->allocated();
+    const bool differs = g_composite->size_differs(w, h);
+    if (should_upload(g_upload_mode, allocated, differs, gen, g_uploaded_gen)) {
+        // The rects every paint since the last upload copied into the bitmap;
+        // the rest of the texture already matches it (cef_dirty_rects.h).
+        const DirtyRegion dirty = g_client->take_dirty();
+        if (upload_needs_full(g_upload_mode, allocated, differs, dirty)) {
+            g_composite->upload(pixels, w, h);
+        } else {
+            g_composite->upload_rects(pixels, w, h, dirty.rects());
+        }
         g_uploaded_gen = gen;
         ++g_upload_stats.uploads;
     } else {

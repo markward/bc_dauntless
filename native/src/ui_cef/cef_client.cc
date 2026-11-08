@@ -40,7 +40,7 @@ bool DauntlessCefClient::GetScreenInfo(CefRefPtr<CefBrowser> /*browser*/,
 
 void DauntlessCefClient::OnPaint(CefRefPtr<CefBrowser> browser,
                                   PaintElementType type,
-                                  const RectList& /*dirtyRects*/,
+                                  const RectList& dirtyRects,
                                   const void* buffer,
                                   int width, int height) {
     if (type != PET_VIEW) return;
@@ -48,11 +48,18 @@ void DauntlessCefClient::OnPaint(CefRefPtr<CefBrowser> browser,
     // ShowDevTools shares this client, so a windowless DevTools browser would
     // otherwise paint its own page over the game's UI.
     if (browser_ && !browser->IsSame(browser_)) return;
-    const size_t bytes = static_cast<size_t>(width) * height * 4;
-    if (bitmap_.size() != bytes) bitmap_.resize(bytes);
-    std::memcpy(bitmap_.data(), buffer, bytes);
-    bitmap_width_  = width;
-    bitmap_height_ = height;
+    // `buffer` is the whole view; copy only the rects CEF says changed and
+    // accumulate them for the composite's sub-image upload. A first paint,
+    // a size change or an empty rect list copies the whole buffer and marks
+    // the region full (cef_dirty_rects.h).
+    std::vector<PixelRect> rects;
+    rects.reserve(dirtyRects.size());
+    for (const CefRect& r : dirtyRects) {
+        rects.push_back(PixelRect{r.x, r.y, r.width, r.height});
+    }
+    apply_paint(bitmap_, bitmap_width_, bitmap_height_, dirty_,
+                static_cast<const std::uint8_t*>(buffer), width, height,
+                rects);
     ready_ = true;
     ++paint_generation_;
 }

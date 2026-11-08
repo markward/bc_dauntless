@@ -28,6 +28,8 @@
 #include "include/cef_render_handler.h"
 #include "include/cef_request_handler.h"
 
+#include "cef_dirty_rects.h"
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -121,6 +123,16 @@ public:
     // generation it last uploaded to tell a repainted frame from a stale one.
     std::uint64_t paint_generation() const { return paint_generation_; }
 
+    // Hands over the rects OnPaint copied since the last take (full after a
+    // first paint, a size change or past the area threshold) and clears
+    // them. The composite takes them only when it uploads, so a skipped
+    // frame keeps accumulating.
+    DirtyRegion take_dirty() {
+        DirtyRegion taken = dirty_;
+        dirty_.clear();
+        return taken;
+    }
+
     CefRefPtr<CefBrowser> browser() const { return browser_; }
 
     // Event-handler injection. cef_lifecycle::set_event_handler routes
@@ -144,6 +156,7 @@ private:
     int bitmap_height_ = 0;
     bool ready_ = false;
     std::uint64_t paint_generation_ = 0;
+    DirtyRegion dirty_;
 
     CefRefPtr<CefBrowser> browser_;
 

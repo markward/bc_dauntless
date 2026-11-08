@@ -280,9 +280,11 @@ mechanism behind the cost is **not established**. Read the per-pass CPU column
 with that inflation in mind, and use the GPU column for relative pass
 comparisons.
 
-The report prints to the console rather than a CEF overlay deliberately: the
-CEF surface is uploaded in full every frame (no dirty-rect, no PBO), so a DOM
-overlay mutating each frame would add paint work to the frame being measured.
+The report prints to the console rather than a CEF overlay deliberately: CEF
+re-rasters, and the composite re-uploads, whatever the DOM changes (by default
+only CEF's dirty rects, and only on frames CEF repainted), so a DOM overlay
+mutating each frame would add paint and upload work to the frame being
+measured.
 Report output is ASCII-only — Windows consoles default to cp1252, and a
 box-drawing character raised `UnicodeEncodeError` from inside the frame loop on
 the first live run.
@@ -359,10 +361,14 @@ bottlenecks** — profile the one you intend to fix.
 
 Reading notes for this capture:
 
-* `cef.composite` at 1.9 ms CPU is the full-surface overlay upload:
-  `glTexSubImage2D` of the entire CEF surface every frame, no dirty-rect and no
-  PBO, plus the `memcpy` in `OnPaint`. CEF hands us `dirtyRects` and the
-  parameter is currently named-out and discarded.
+* `cef.composite` at 1.9 ms CPU was, at the time of this capture, the
+  full-surface overlay upload: `glTexSubImage2D` of the entire CEF surface
+  every frame, no dirty-rect and no PBO, plus a whole-surface `memcpy` in
+  `OnPaint`, which discarded CEF's `dirtyRects`. **Since changed (P-10):** the
+  default upload mode is now `on_paint` (a frame CEF did not repaint uploads
+  nothing), and `OnPaint` copies, and the composite uploads, only CEF's dirty
+  rects (`native/src/ui_cef/cef_dirty_rects.h`); `DAUNTLESS_CEF_UPLOAD=always`
+  restores the old every-frame whole-surface upload. Still no PBO.
 * `anim` at 4.1 ms is bone-palette rebuilds for every animated instance with no
   visibility or distance gate — the bridge has a full crew.
 * `scene_push` costs 0.7–1.5 ms. This number was originally reported as
@@ -597,8 +603,8 @@ between them.
 In the QuickBattle/bridge frame, inside `r.frame` (7.7 ms):
 
 * `anim` **4.1 ms** — bone palettes for every animated instance, ungated.
-* `cef.composite` **1.9 ms CPU** — the full-surface overlay upload. No
-  dirty-rect, no PBO.
+* `cef.composite` **1.9 ms CPU** — the full-surface overlay upload at the
+  time (no dirty-rect, no PBO). Now `on_paint` + dirty rects by default (P-10).
 
 Both scenes: `scene_push` runs 0.7–1.5 ms (lights, backdrops, suns, planets,
 nebulae, decals, warp VFX). ⚠️ This was reported as `starmap` until the phase was
