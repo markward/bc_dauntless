@@ -96,11 +96,15 @@ for ship in ships_list:                                                # list or
         dx,dy,dz = target_pos - emitter_pos ; dist = (dx*dx+dy*dy+dz*dz) ** 0.5           # F1
         aim_unit = TGPoint3(dx/dist, dy/dist, dz/dist) if dist > 1e-6 else None            # F2
         arc_aim = _resolve_bank_aim_world(bank, target_sub or target)  # computed even on the flush path (unused there)
+        beam_on = True
         if flush_dwell is None:
+            beam_on = bank.IsBeamOn()                                  # read BEFORE the arc test (an arc fail stops the bank)
             if not _emitter_in_arc(bank, ship, arc_aim):              # `ship` = the loop ship
                 flush_dwell = bank.take_dwell(); bank.StopFiring()     # WRITE + EFFECT; continues to deliver the partial pulse
             else:
                 flush_dwell = bank.accumulate_dwell(dt)                # WRITE _dwell; >0 only on a flush tick
+        if flush_dwell <= 0.0 and not beam_on:                         # inside the beam-on delay: no trace, no contact
+            continue                                                   # K2: after_arc() -> BANK_NEXT
         level = sys_.GetPowerLevel() if hasattr(sys_,"GetPowerLevel") else sys_.PP_HIGH   # WS:2339 → _power_level
         impact_point, impact_normal = combat._resolve_hit_point(       # §1.4 — the hull trace, EVERY contact tick
             ship_instances=ship_instances, ship=target, ray_origin=emitter_pos,
@@ -109,7 +113,7 @@ for ship in ships_list:                                                # list or
         bubble_entry = (combat.shield_bubble_entry(target, emitter_pos, aim_unit, dist * 1.5)
                         if (aim_unit is not None and combat.shields_block(target)) else None)  # §1.5; shields_block only if aim_unit
         ───────── PURE-GEOMETRY DECISION ENDS HERE (per bank) ─────────
-        if flush_dwell <= 0.0:                                         # not a pulse tick (incl. the whole 0.66 s beam-on delay)
+        if flush_dwell <= 0.0:                                         # not a pulse tick on a beam that is on
             hit_feedback.beam_contact(ship=target, source=ship, point=impact_point, normal=impact_normal,
                 shield_point=bubble_entry,
                 tick_damage=_phaser_damage_for_tick(max_damage=bank.GetMaxDamage(),
@@ -128,9 +132,11 @@ for ship in ships_list:                                                # list or
 **Branch facts**
 
 - "Firing" is decided by `_firing` alone.
-  - A bank that is lit but still inside its beam-on delay (`_beam_on_countdown > 0`) runs the whole geometry every tick: detect, set, aim, strip, arc, trace, bubble and `beam_contact`.
+  - A bank that is lit but still inside its beam-on delay (`_beam_on_countdown > 0`) runs detect, set, aim, strip and arc, then stops: no trace, no bubble, no `beam_contact` (K2 `after_arc()` → `BANK_NEXT`).
   - During the delay `accumulate_dwell` returns 0.0 because `IsBeamOn` (WS:912) is False.
-  - So sparks and splashes are drawn during the windup.
+  - So no sparks or splashes are drawn during the windup: the impact first shows when the beam comes on. Measured on the original (PR #25: stbc-oracle AI duels, one zero-damage shield impact 0.50-0.52 s before the first damaging hit, at every range), and a bank stopped inside the delay never shows an impact.
+  - `IsBeamOn` is read before the arc test, so a beam that was already on and then loses its arc still delivers its partial pulse and contact on the stop tick.
+  - The drawn beam is still full length from the first tick of the delay; whether the original extends it over the delay is unmeasured.
 - **The flush path for a non-firing bank** is a bank that has stopped but still holds banked dwell. It skips `can_detect` and the arc test, but still checks `_same_set`, and delivers the pulse through `apply_hit` with the hull trace.
 - On an arc failure the beam is stopped, and the partial pulse **is still delivered on the same tick** with the aim this tick computed.
 - `_same_set` failure on the flush path quietly drops the dwell. `take_dwell` already zeroed it.

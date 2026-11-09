@@ -175,8 +175,13 @@ return False
   if self._depleted:
       if self._charge_level < self._min_firing_charge: return False
       self._depleted = False
-  return self._charge_level > 0.0
+  if not self._charge_level > 0.0: return False
+  # PhaserBank only (PR #25, native fire_gates.cc energy_can_fire):
+  if is_phaser_bank and not self._firing and self._charge_level < self._min_firing_charge: return False
+  return True
   ```
+- **A phaser bank needs MinFiringCharge to START, and fires down to 0 once lit** (PR #25). Measured on the original: Galaxy and Sovereign banks (MinFiringCharge 3) preset to 0.1-2.9 never fire and light the moment they recharge to 3.0; a drained bank relights at 3.01 with the trigger held. "Start" is any `CanFire` while `_firing` is False, whatever stopped the bank (drained, arc loss, retarget, SingleFire cycling); ⚠️ the arc-loss and retarget restarts are NOT measured. Treating them like a drained restart is an ASSUMPTION, read from the RE note's start (`MinFiringCharge < charge`) versus sustain (`charge > 0`) wording in `2026-09-09-phaser-discharge-rate-source.md`; the note does not say what the binary tests to tell a start from a sustain. Tractors share the gate and are unmeasured, so they still start on any charge > 0. For phasers the `_depleted` latch is now redundant with this clause; it is kept for its reported clear.
+- ⚠️ **Deliberate `>=` (decided 2026-11-09).** The binary RE note (`2026-09-09-phaser-discharge-rate-source.md` §"Also answered") records the start test as strict `MinFiringCharge < charge`; we start at `charge >= MinFiringCharge`. The measurements cannot tell the two apart, and the only visible difference is a bank whose MaxCharge equals its MinFiringCharge: charge caps at exactly the minimum, so the original never fires it and we do. No stock hardpoint has one (all 208 stock MaxCharge/MinFiringCharge pairs have max > min), so only a mod can reach it.
 - `PhaserBank.Fire` (WS:2545):
   ```
   was_firing = self._firing
@@ -501,7 +506,7 @@ if self.GetDisabledPercentage() >= combined: return 0
 - `>=` with NaN `combined` gives False, so the gate passes.
 
 **F4 charge gates**:
-- Beam (WS:800-803): `self._charge_level < self._min_firing_charge` (only when `_depleted`), then `self._charge_level > 0.0`.
+- Beam (WS:800-803): `self._charge_level < self._min_firing_charge` (only when `_depleted`), then `self._charge_level > 0.0`, then for a phaser bank that is not firing `self._charge_level < self._min_firing_charge` refuses (PR #25; tractors exempt). See §1.4.
 - Pulse (WS:2739): `self._charge_level >= self._shot_cost() - 1e-9` with `_shot_cost = self._normal_discharge_rate * PULSE_COST_SCALE_BY_POWER_SETTING[self._power_setting]`. Order: `level >= ((rate*scale) - 1e-9)`.
 - Pulse cooldown (WS:2742): `self._cooldown_remaining > 0.0`.
 
@@ -751,7 +756,8 @@ The **target-side** transform (`target_offset_world`, F11) adds `authored_mount_
 | tests/unit/test_weapon_no_target_bail.py (3) | None-target StartFiring no-op for phaser and pulse; no flicker |
 | tests/unit/test_weapons_disabled_blocks_fire.py (9) | offline (all children disabled) blocks; repair restores; pump stops on offline; `_advance_combat` stops disabled / sensors-offline / powered-off |
 | tests/integration/test_weapon_cross_set_interim_guard.py (7) | cross-set and setless targets out of range (phaser, tractor) |
-| tests/unit/test_phaser_canfire_fidelity.py | start/sustain need only nonzero charge; restart after depletion needs MinFiringCharge (`_depleted` latch); dead ship; condition-product gate incl. parent |
+| tests/unit/test_phaser_canfire_fidelity.py | a phaser bank needs MinFiringCharge to start (fresh or after depletion), sustains on any nonzero charge; dead ship; condition-product gate incl. parent |
+| tests/oracle/test_phaser_min_firing_charge.py | the measured start table (preset 0.1-3.5, drained relight at 3.01) |
 | tests/unit/test_energy_weapon_gating.py, tests/unit/test_phaser_charge_stops_fire.py | CanFire charge and on gates; Fire records; SFX; auto-stop at 0 |
 | tests/unit/test_energy_weapon_discharge_source.py (9) | pulse shot cost and affordability, refire cadence, power-setting vs power-level |
 | tests/unit/test_pulse_aimed_launch.py, tests/unit/test_pulse_weapon_fire.py | lead solve, lifetime and outrun refusal, arc on the LED direction, no-target forward, ship-target fallback, offset threaded through StartFiring |

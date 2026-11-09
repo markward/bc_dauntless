@@ -47,6 +47,7 @@
    - Tested in Task 5 (`test_patched_trace_runs_python_step`).
 5. **A beam in its 0.66 s windup, and a flush on the arc-fail tick.** Sparks are drawn every windup tick, and the partial pulse is still delivered on the stop tick.
    - Tested in Task 4 (`WindupContactsEveryTick`, `ArcFailStopsThenFlushes`) and Task 6.
+   - ⚠️ **Superseded by PR #25 (2026-11-09):** a bank inside its windup now has no contact at all until the beam is on (measured on the original). `WindupContactsEveryTick` became `WindupHasNoContactUntilTheBeamIsOn`; the current rule is in `docs/reference/engine/native-combat/k2-beams-map.md` (Branch facts).
 
 ---
 
@@ -179,7 +180,7 @@
   - `SystemGateStopsEveryTick`;
   - `IdleBankTakesDwellElided`;
   - `DeadOrNoneTargetStops`, `UndetectableStops`, `CrossSetStopsOrDropsDwell`;
-  - `WindupContactsEveryTick`, `ArcFailStopsThenFlushes`, `FlushPathSkipsDetectAndArc`;
+  - `WindupContactsEveryTick` (now `WindupHasNoContactUntilTheBeamIsOn`, PR #25), `ArcFailStopsThenFlushes`, `FlushPathSkipsDetectAndArc`;
   - `NumWeaponsReadOnce`;
   - `PrescanRunsPythonBeforeAnyRecord`;
   - `LockShipPosedAsks`;
