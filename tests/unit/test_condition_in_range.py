@@ -103,6 +103,10 @@ def test_name_added_after_the_ship_entered_the_set_is_watched():
     evaluate_proximity_checks()
     assert cs.GetStatus() == 0
     enemies.AddName("Target")
+    # The tick boundary posts ET_OBJECT_GROUP_CHANGED (GameLoop.tick ->
+    # ObjectGroup.deliver_changes), as on the original: not inside AddName.
+    from engine.appc.objects import ObjectGroup
+    ObjectGroup.deliver_changes()
     evaluate_proximity_checks()
     assert cs.GetStatus() == 1
 

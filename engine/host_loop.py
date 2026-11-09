@@ -302,8 +302,21 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player,
     fx, fy, fz = camera_forward
     ux, uy, uz = camera_up
     _audio_mod.update(px, py, pz, fx, fy, fz, ux, uy, uz, dt)
-    # Music ramps on the same dt as the rest of the audio layer, so it freezes
-    # under pause rather than sliding on wall-clock.
+    # Music ramps on the same dt as the rest of the audio layer. Under pause
+    # this function is skipped and run() calls _pump_music_paused instead.
+    _pump_music(dt)
+
+
+def _pump_music_paused(dt) -> None:
+    """Drive the music on real time while the sim is frozen.
+
+    BC's music plays on through a pause (stbc-oracle music probe Q3,
+    UtopiaModule.Pause for 20 s mid-fight): the combat track that ends during
+    the pause is followed by the next one, and the one after that comes 30 s
+    of real time later. The streams already play on in OpenAL; this keeps the
+    track-done event and the fades moving with them, so a track that ends
+    under pause is not followed by silence until the game resumes. `dt` is
+    the frame's real elapsed time, clamped as run() clamps it."""
     _pump_music(dt)
 
 
@@ -7697,6 +7710,14 @@ def reset_mission_state(renderer=None) -> None:
     # The Objectives buttons' click event type, cached for the same reason.
     from engine.appc import mission_goals as _mission_goals
     _mission_goals.reset()
+    # Group changes and condition events queued for the next tick boundary
+    # (ObjectGroup.deliver_changes, ai.deliver_condition_events): an edit or
+    # a condition flip in the old mission's last tick must not be posted
+    # into the new mission, nor keep the old groups and events alive.
+    from engine.appc.objects import ObjectGroup as _ObjectGroup
+    _ObjectGroup._changed = []
+    from engine.appc import ai as _ai_queue
+    _ai_queue._pending_condition_events.clear()
     # Blind-warp parked marks (engine/appc/warp.py): the swap deletes the
     # warp set with every other set.
     from engine.appc import warp as _warp_parked
@@ -13792,6 +13813,8 @@ def run(mission_name: Optional[str] = None,
                     source_dt=_frame_game_dt,
                     player=player,
                 )
+            else:
+                _pump_music_paused(min(max(_wall_dt, 0.0), MAX_FRAME_DT))
 
             active_set = _resolve_active_set(player)
 

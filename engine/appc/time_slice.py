@@ -7,8 +7,8 @@ exposed as constants for SDK code that references them).
 
 Phase 1 model: a single TimeSliceProcessManager owns every registered
 process. GameLoop.tick() calls manager.tick(game_time, real_time) once
-per 60 Hz frame; the manager fires every process whose next_fire has
-been reached, in priority order (UNSTOPPABLE=0 first, LOW=3 last —
+per 60 Hz frame; the manager fires every process whose delay since its
+last run has been exceeded (BC's measured rule, see tick), in priority order (UNSTOPPABLE=0 first, LOW=3 last —
 lower int == higher priority, matching SDK enum order).
 
 Real Appc's C++ TimeSliceProcess ctor self-registers with the scheduler
@@ -22,6 +22,9 @@ weakly, so the SDK's owner <-> process cycle (Bridge/PowerDisplay.py:73-98)
 ends the moment the owner is dropped, as in BC (Python 1.5, no cyclic gc).
 """
 import weakref
+
+# A frame within this of a process's delay is ON the delay, not past it.
+_EXCEED = 1e-6
 
 
 class TimeSliceProcess:
@@ -180,14 +183,23 @@ class TimeSliceProcessManager:
                 # First tick that sees this process: SetDelay has run by now.
                 proc._next_fire = t + proc._delay
                 continue
-            if t >= proc._next_fire:
-                due.append((proc._priority, proc))
-        due.sort(key=lambda pair: pair[0])
-        for _prio, proc in due:
+            # BC's rule, measured on the original (stbc-oracle sched probe,
+            # native Windows, HelmMenuHandlers.CollisionAlertCheck's 5 s
+            # process): a process runs on the first frame whose time since its
+            # last run EXCEEDS its delay -- a frame landing exactly on it does
+            # not count -- and its clock restarts at that run. At exact 60 Hz
+            # (lockstep 1 and 2) every gap was 301 frames (5.0167 s, n=25);
+            # in real time 5.000-5.012 s, never under 5. _EXCEED absorbs the
+            # float sum of 1/60 ticks landing a hair over the delay.
+            if t > proc._next_fire + _EXCEED:
+                due.append((proc._priority, proc, t))
+        due.sort(key=lambda entry: entry[0])
+        for _prio, proc, t in due:
             proc.Update(proc._delay)
             if proc._delay > 0:
-                # Advance rather than restamp: no drift under variable ticks.
-                proc._next_fire += proc._delay
+                # Restamp from this run, not the grid (the measured 301-frame
+                # gaps never catch up).
+                proc._next_fire = t + proc._delay
             else:
                 # One-shot: never fires again unless SetDelay re-arms it.
                 proc._next_fire = float("inf")

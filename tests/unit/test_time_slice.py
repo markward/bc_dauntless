@@ -2,6 +2,12 @@ from engine.appc.time_slice import (
     TimeSliceProcess, PythonMethodProcess, TimeSliceProcessManager,
 )
 
+# One 60 Hz frame. BC runs a process on the first frame PAST its delay since
+# its last run, never on a frame landing exactly on it (stbc-oracle sched
+# probe: 301 frames for a 5 s process at exact 60 Hz), so a tick meant to fire
+# a process sits one frame past the delay.
+F = 1.0 / 60.0
+
 
 def test_priority_constants_distinct():
     p = {TimeSliceProcess.UNSTOPPABLE, TimeSliceProcess.CRITICAL,
@@ -87,14 +93,14 @@ def test_game_time_vs_real_time_isolated():
     mgr = TimeSliceProcessManager()
     mgr.Add(g); mgr.Add(r)
     mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
-    mgr.tick(game_time=1.0, real_time=0.0)
+    mgr.tick(game_time=1.0 + F, real_time=0.0)
     assert fired == ["G"]
-    mgr.tick(game_time=1.0, real_time=1.0)
+    mgr.tick(game_time=1.0 + F, real_time=1.0 + F)
     assert fired == ["G", "R"]
 
 
 def test_reschedule_after_fire():
-    """After dispatch the process re-arms at next_fire += delay."""
+    """After dispatch the process re-arms one delay after that run."""
     h_calls = []
     class H:
         def Go(self, _dt=0.0): h_calls.append(1)
@@ -104,9 +110,9 @@ def test_reschedule_after_fire():
     mgr = TimeSliceProcessManager()
     mgr.Add(p)
     mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
-    mgr.tick(game_time=1.0, real_time=0.0)
+    mgr.tick(game_time=1.0 + F, real_time=0.0)
     mgr.tick(game_time=1.5, real_time=0.0)  # not due yet
-    mgr.tick(game_time=2.0, real_time=0.0)
+    mgr.tick(game_time=2.0 + 2 * F, real_time=0.0)
     assert len(h_calls) == 2
 
 
@@ -162,7 +168,7 @@ def test_sdk_convention_one_arg_form_receives_float_time_budget():
     mgr = TimeSliceProcessManager()
     mgr.Add(pmp)
     mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
-    mgr.tick(game_time=0.25, real_time=0.0)
+    mgr.tick(game_time=0.25 + F, real_time=0.0)
 
     assert len(received) == 1
     assert isinstance(received[0], float)
@@ -186,8 +192,58 @@ def test_sdk_convention_two_arg_form_receives_float_time_budget():
     mgr = TimeSliceProcessManager()
     mgr.Add(pmp)
     mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
-    mgr.tick(game_time=0.5, real_time=0.0)
+    mgr.tick(game_time=0.5 + F, real_time=0.0)
 
     assert len(received) == 1
     assert isinstance(received[0], float)
     assert received[0] == 0.5
+
+
+def test_bc_spacing_at_exact_60hz_is_one_frame_past_the_delay():
+    """Measured on the original (stbc-oracle sched probe, native Windows,
+    HelmMenuHandlers.CollisionAlertCheck, lockstep 1 and 2): a 5 s process
+    runs every 301 frames at exact 60 Hz (5.0167 s, n=25), never catching up,
+    so the collision alarm's "5 s since the last alarm" passes every check."""
+    calls = []
+
+    class H:
+        def Go(self, _dt=0.0):
+            calls.append(t[0])
+
+    h = H(); p = PythonMethodProcess(); p.SetFunction(h, "Go"); p.SetDelay(5.0)
+    p.SetDelayUsesGameTime(1)
+    mgr = TimeSliceProcessManager()
+    mgr.Add(p)
+    t = [0.0]
+    for i in range(60 * 31):                    # summed 1/60 steps, as the game loop does
+        mgr.tick(game_time=t[0], real_time=t[0])
+        t[0] += 1.0 / 60.0
+    gaps = [round((b - a) * 60.0) for a, b in zip(calls, calls[1:])]
+    assert gaps and all(g == 301 for g in gaps)
+    assert round(calls[0] * 60.0) == 301
+
+
+def test_bc_spacing_under_uneven_frames_never_runs_early():
+    """In real time the original's 5 s process ran 5.000-5.012 s apart: the
+    first frame past the delay, so never under it and less than a frame over."""
+    import random
+    rng = random.Random(7)
+    calls = []
+
+    class H:
+        def Go(self, _dt=0.0):
+            calls.append(now[0])
+
+    h = H(); p = PythonMethodProcess(); p.SetFunction(h, "Go"); p.SetDelay(5.0)
+    p.SetDelayUsesGameTime(1)
+    mgr = TimeSliceProcessManager()
+    mgr.Add(p)
+    now = [0.0]
+    worst = 0.0
+    while now[0] < 120.0:
+        mgr.tick(game_time=now[0], real_time=now[0])
+        step = rng.uniform(0.010, 0.020)
+        worst = max(worst, step)
+        now[0] += step
+    gaps = [b - a for a, b in zip(calls, calls[1:])]
+    assert gaps and min(gaps) > 5.0 and max(gaps) <= 5.0 + worst + 1e-9

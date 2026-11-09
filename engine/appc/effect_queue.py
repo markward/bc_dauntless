@@ -422,9 +422,15 @@ def boundary() -> None:
     combat step (_combat_tick_boundary, both switch states) and once more
     after the frame's post-step pass (radiation, collisions, scenery,
     hull_breakup); a GameLoop the host does not drive, at the end of its
-    tick. Inside a delivery: what is queued now is delivered there."""
+    tick. Inside a delivery: what is queued now is delivered there.
+
+    Condition events a delivery queued (a watcher crossing flips a
+    ConditionScript; ai.ConditionEventCreator) go out here too, after it,
+    so the handler reads the status the boundary left."""
     if not deferring():
         flush()
+        from engine.appc.ai import deliver_condition_events
+        deliver_condition_events()
 
 
 def emit(kind: int, *operands) -> None:

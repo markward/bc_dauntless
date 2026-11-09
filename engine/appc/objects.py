@@ -1356,55 +1356,69 @@ class ObjectGroup(TGEventHandlerObject):
             groups.add(self)
         self._event_flags.setdefault(name, set()).update(self._default_flags)
         if added:
-            self._post_group_changed()
+            self._mark_changed(name)
 
     def RemoveName(self, name: str) -> None:
-        removed = name in self._names
-        if removed:
+        if name in self._names:
             self._names.remove(name)
             _unindex_name(name, self)
-        self._event_flags.pop(name, None)
-        if removed:
-            self._post_group_changed()
+        flags = self._event_flags.pop(name, None)
+        # Measured on the original: a remove posts even for a name that was
+        # not in the group (stbc-oracle music probe, ev_removename_absent).
+        self._mark_changed(name, flags)
 
     def RemoveAllNames(self) -> None:
-        had_names = bool(self._names)
         for name in self._names:
             _unindex_name(name, self)
+        old = self._event_flags
         self._names.clear()
-        self._event_flags.clear()
-        if had_names:
-            self._post_group_changed()
+        self._event_flags = {}
+        self._mark_changed(None, set().union(*old.values()) if old else None)
 
-    def _post_group_changed(self) -> None:
-        """Post ET_OBJECT_GROUP_CHANGED (destination = this group) after the
-        name list changed, when the group armed GROUP_CHANGED.
+    # ── ET_OBJECT_GROUP_CHANGED ──────────────────────────────────────────────
+    # Groups changed since the last tick boundary, in first-change order.
+    _changed: "list" = []
 
-        Evidence tier: SDK. Conditions/ConditionInRange.py arms the flag and
-        handles the event in GroupChanged, documented there as "An object has
-        been added to or removed from our self.pObjects group"; BC's own
-        trigger has not been RE'd. Without it a name added AFTER its ship
-        entered the set was never watched (Quick Battle's enemies never
-        reached DynamicMusic's 400 GU check, so battles kept the ambient
-        track).
+    def _mark_changed(self, name, flags=None) -> None:
+        """Queue this group's ET_OBJECT_GROUP_CHANGED for the tick boundary
+        when GROUP_CHANGED is set for the name or group-wide.
 
-        Cost: one set lookup for any group that did not arm the flag. The
-        consumer re-registers its handlers from GroupChanged, which is only
-        bounded because AddBroadcastPythonMethodHandler keeps an identical
-        registration once. Dispatch is isolated as in broadcast_membership:
-        a handler failing must not unwind the name-list change."""
-        if ObjectGroup.GROUP_CHANGED not in self._default_flags:
+        Measured on the original (stbc-oracle music probe, Windows): the event
+        reaches a handler after the edit returns, not inside it; two AddName
+        calls in one frame post ONE event; adding a name already in the group
+        posts nothing; a group without GROUP_CHANGED posts nothing. The SDK's
+        range, set and existence conditions arm it and rebuild what they watch
+        on it (Conditions/ConditionInRange.py GroupChanged): without it,
+        enemies added after DynamicMusic's "enemies within 400" condition was
+        built (Quick Battle late groups, stations turned hostile, campaign
+        spawns) never brought in the combat music."""
+        if flags is None:
+            flags = self._event_flags.get(name, ()) if name is not None else ()
+        if self.GROUP_CHANGED not in flags and self.GROUP_CHANGED not in self._default_flags:
             return
+        if not any(g is self for g in ObjectGroup._changed):
+            ObjectGroup._changed.append(self)
+
+    @classmethod
+    def deliver_changes(cls) -> None:
+        """Post one ET_OBJECT_GROUP_CHANGED per group changed since the last
+        call (GameLoop.tick, after the AI window, where BC drained its event
+        queue). Destination = the group, as broadcast_membership. A handler's
+        own edits queue for the next boundary. Each post is isolated: a
+        handler failure must not stop the next group's event."""
+        if not cls._changed:
+            return
+        groups, cls._changed = cls._changed, []
         import App
-        evt = App.TGEvent_Create()
-        evt.SetEventType(App.ET_OBJECT_GROUP_CHANGED)
-        evt.SetSource(self)
-        evt.SetDestination(self)
-        try:
-            App.g_kEventManager.AddEvent(evt)
-        except Exception:
-            App.g_kEventManager._log_broadcast_failure(
-                "ObjectGroup GROUP_CHANGED -> %s" % type(self).__name__, evt)
+        for group in groups:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_OBJECT_GROUP_CHANGED)
+            evt.SetDestination(group)
+            try:
+                App.g_kEventManager.AddEvent(evt)
+            except Exception:
+                App.g_kEventManager._log_broadcast_failure(
+                    "ObjectGroup changed -> %s" % type(group).__name__, evt)
 
     def IsNameInGroup(self, name: str) -> int:
         return 1 if name in self._names else 0
@@ -1580,8 +1594,9 @@ class ObjectGroupWithInfo(ObjectGroup):
         self._info: dict[str, object] = {}
 
     def AddNameAndInfo(self, name: str, info) -> None:
-        self.AddName(name)
+        # Info first: a GROUP_CHANGED handler may read it.
         self._info[name] = info
+        self.AddName(name)
 
     def GetInfo(self, name: str):
         return self._info.get(name)

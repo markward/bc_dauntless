@@ -161,7 +161,7 @@ def test_track_end_broadcasts_et_music_done_carrying_the_track_name(monkeypatch)
 
     class _EvtMgr:
         def AddBroadcastPythonFuncHandler(self, *a, **k): pass
-        def BroadcastEvent(self, evt): sent.append(evt)
+        def AddEvent(self, evt): sent.append(evt)
 
     monkeypatch.setattr(App, "g_kEventManager", _EvtMgr(), raising=False)
 
@@ -181,7 +181,7 @@ def test_track_end_on_an_idle_manager_is_a_no_op(monkeypatch):
 
     class _EvtMgr:
         def AddBroadcastPythonFuncHandler(self, *a, **k): pass
-        def BroadcastEvent(self, evt): sent.append(evt)
+        def AddEvent(self, evt): sent.append(evt)
 
     monkeypatch.setattr(App, "g_kEventManager", _EvtMgr(), raising=False)
 

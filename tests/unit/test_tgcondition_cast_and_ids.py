@@ -69,8 +69,11 @@ def test_condition_changed_redirect_passes_the_real_status():
     mission = Mission()
     c = TGCondition()
     MissionLib.CallFunctionWhenConditionChanges(mission, "MissionLib", "_probe_handler", c)
+    from engine.appc.ai import deliver_condition_events
     c.SetStatus(1)
+    deliver_condition_events()      # a tick boundary between the two flips
     c.SetStatus(0)
+    deliver_condition_events()
 
     assert seen[-2:] == [1, 0]
 
