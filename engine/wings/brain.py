@@ -374,6 +374,7 @@ def tick_wing(wing) -> None:
         screen_ally=wing.screen_ally,
         screen_done=frozenset(wing.screen_done),
         escorts_player=wing.wing_id == service.player_wing_id())
+    decisions.seed_near(ctx, near)       # one engage-range filter a tick
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
         log("%s decision %s -> %s"

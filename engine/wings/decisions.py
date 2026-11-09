@@ -130,6 +130,16 @@ def _near(ctx):
                  if assess.dist(e.pos, ctx.anchor.pos) <= engage]))
 
 
+def seed_near(ctx, near) -> None:
+    """Hand _near the list the brain already filtered (the same test,
+    dist <= engage_gu from the anchor, over the same enemies list) so a
+    tick filters its enemies at engage range once. The memo key and inputs
+    are _near's own, so a reassigned field or a changed dial recomputes."""
+    engage = dials.get("engage_gu")
+    ctx.__dict__.setdefault("_memo", {})["near"] = (
+        (ctx.enemies, ctx.anchor, engage), list(near))
+
+
 def _sides(ctx, engage):
     """(our, their) strength within `engage` of the anchor."""
     return _memo(

@@ -800,3 +800,33 @@ def test_screen_skips_ally_on_cooldown():
     ctx = _ctx(_closing() + [V("d1", 0, 1000)], [_weak(), other],
                screen_done=frozenset({"W"}))
     assert _by("screen").choose(ctx).ally == "V"
+
+
+def test_seed_near_is_what_near_computes_and_is_not_recomputed(monkeypatch):
+    """The brain hands _near the engage-range list it already filtered; the
+    seed is the same list _near would compute, and a seeded context does no
+    distance work for it. A changed dial still recomputes."""
+    enemies = [V("e1", 100.0), V("e2", 349.0), V("e3", 351.0), V("e4", 900.0)]
+    fresh = _ctx(enemies=enemies)
+    computed = [e.name for e in decisions._near(fresh)]
+    seeded = _ctx(enemies=enemies)
+    engage = dials.get("engage_gu")
+    decisions.seed_near(seeded, [e for e in seeded.enemies
+                                 if math.dist(e.pos, seeded.anchor.pos)
+                                 <= engage])
+    calls = [0]
+    real = decisions.assess.dist
+
+    def counting(a, b):
+        calls[0] += 1
+        return real(a, b)
+
+    monkeypatch.setattr(decisions.assess, "dist", counting)
+    assert [e.name for e in decisions._near(seeded)] == computed == ["e1", "e2"]
+    assert calls[0] == 0
+    dials._dials["engage_gu"] = 1000.0
+    try:
+        assert len(decisions._near(seeded)) == 4
+        assert calls[0] > 0
+    finally:
+        dials.reset()
