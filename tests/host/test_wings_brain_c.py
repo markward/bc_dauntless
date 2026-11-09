@@ -133,9 +133,9 @@ def test_focus_face_assigns_slots_on_weak_side(now):
         target, body_dir, standoff = m.slot
         assert target == "e1"
         assert body_dir[0] < 0.0                  # the LEFT side
-        # Akira phasers reach full damage at 60 GU: 0.8 x 60 (ruling
-        # 2026-11-09), inside [attack_standoff_min_gu, attack_standoff_gu].
-        assert standoff == pytest.approx(48.0)
+        # Akira phasers reach full damage at 60 GU: 0.8 x 60 = 48, raised
+        # to focus_face's floor attack_flank_min_gu (ruling 2026-11-09).
+        assert standoff == dials.get("attack_flank_min_gu")
         assert m.attack_target == "e1"
         assert m.fire_script.sTarget == "e1"
         assert not m.fire_script.HasSubsystemTargets()   # hull mode
@@ -227,18 +227,36 @@ def test_slot_assignment_fresh_when_the_primary_changes(now):
     assert wing.attack_prev[2] == swapped
 
 
-def test_each_holder_uses_its_own_standoff(now):
+def test_each_holder_uses_its_own_standoff(monkeypatch, now):
     """Ruling 2026-11-09: a holder's standoff is clamp(0.8 x its beam range,
-    attack_standoff_min_gu, attack_standoff_gu); no beams -> the cap."""
+    floor, attack_standoff_gu); no beams -> the cap. The floor is
+    attack_flank_min_gu for focus_face / envelop."""
     wing, ships = _scene([(150.0, 0.0, 0.0)])
     _set_face(ships["e1"], _LEFT, 0.1)
+    monkeypatch.setitem(dials._dials, "attack_standoff_gu", 120.0)
     roster.member("m3").beam_range_gu = 10.0
     roster.member("m4").beam_range_gu = None
+    roster.member("m2").beam_range_gu = 100.0
     brain.tick_wing(wing)
+    assert wing.decision == "focus_face"
     got = {n: roster.member(n).slot[2] for n in _holders(wing)}
-    assert got == {"m2": pytest.approx(48.0),
-                   "m3": dials.get("attack_standoff_min_gu"),
-                   "m4": dials.get("attack_standoff_gu")}
+    assert got == {"m2": pytest.approx(80.0),
+                   "m3": dials.get("attack_flank_min_gu"),
+                   "m4": 120.0}
+
+
+def test_disable_holders_keep_the_pure_beam_standoff(now):
+    """Disable is not a flank: its holders sit at 0.8 x beam range clamped
+    to attack_standoff_min_gu only (Bird of Prey pulse 100 GU -> 80, the
+    cap; set lower to see the rule)."""
+    wing, ships = _disable_scene()
+    roster.member("m2").beam_range_gu = 40.0
+    roster.member("m3").beam_range_gu = 10.0
+    brain.tick_wing(wing)
+    assert wing.decision == "disable"
+    got = {n: roster.member(n).slot[2] for n in _holders(wing)}
+    assert got["m2"] == pytest.approx(32.0)
+    assert got["m3"] == dials.get("attack_standoff_min_gu")
 
 
 def test_slot_eligible_counts_live_non_commanders(monkeypatch, now):
@@ -618,8 +636,9 @@ def test_slot_holders_dwell_on_their_slots(monkeypatch, capsys):
     print("\n[slot dwell] %d/%d samples on the slot facing the target (%.2f)"
           % (good, total, frac))
     # Seen: 0.48 before hold mode (it drove through the slot toward the
-    # target), 0.92 with it at a 120 GU standoff, 0.79 at the Akira's own
-    # 48 GU (2026-11-09; this scene is deterministic).
+    # target), 0.92 with it at a 120 GU standoff, 0.74-0.79 at 48-60 GU
+    # (the Akira's own, then focus_face's floor; 2026-11-09; this scene is
+    # deterministic).
     assert frac >= 0.65
     _no_fire_errors(capsys)
 

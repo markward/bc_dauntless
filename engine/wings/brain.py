@@ -674,6 +674,9 @@ def _slot_points(wing, members, choice, busy, ship_of):
     return cands, slots
 
 
+_FLANK_DECISIONS = ("focus_face", "envelop")
+
+
 def _apply_attack(wing, members, enemies, choice, busy, ship_of):
     """Attack slots (spec §3): the choice's slot directions round its
     primary go to the members not in `busy` (commander, players, guards,
@@ -699,6 +702,11 @@ def _apply_attack(wing, members, enemies, choice, busy, ship_of):
         wing.attack_prev = (choice.primary, dirs, got)
     primary = choice.primary
     lo, hi = dials.get("attack_standoff_min_gu"), dials.get("attack_standoff_gu")
+    if wing.decision in _FLANK_DECISIONS:
+        # Flanking holds a ring round a ship that turns and fights back;
+        # at a pure beam-range standoff (Akira 48 GU) the holders got
+        # tangled in its turns (ruling 2026-11-09). Disable keeps it.
+        lo = max(lo, dials.get("attack_flank_min_gu"))
     for name, m in wing.members.items():
         if m.is_player:
             continue

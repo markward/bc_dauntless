@@ -15,7 +15,8 @@ SPEC = {"leash_gu": 200.0, "leash_slack_gu": 100.0, "regroup_gather_gu": 100.0,
         "withdraw_cooldown_s": 120.0, "attack_standoff_gu": 80.0,
         "attack_slots": 3, "face_weak": 0.3, "disable_threat": 1.5,
         "reserve_min_wing": 5, "reserve_gu": 150.0, "reserve_max_s": 90.0,
-        "disable_max_s": 300.0, "attack_standoff_min_gu": 25.0}
+        "disable_max_s": 300.0, "attack_standoff_min_gu": 25.0,
+        "attack_flank_min_gu": 60.0}
 
 
 def test_defaults_match_spec():
@@ -69,3 +70,11 @@ def test_attack_standoff_dials_step_and_floor():
         "attack_standoff_min_gu"] == 5.0
     d["attack_standoff_gu"] = 20.0
     assert dials.step(d, "attack_standoff_gu", -1)["attack_standoff_gu"] == 20.0
+
+
+def test_attack_flank_min_steps_by_five_floor_five():
+    d = dict(dials.DEFAULTS)
+    assert dials.step(d, "attack_flank_min_gu", 1)["attack_flank_min_gu"] == 65.0
+    d["attack_flank_min_gu"] = 5.0
+    assert dials.step(d, "attack_flank_min_gu", -1)[
+        "attack_flank_min_gu"] == 5.0

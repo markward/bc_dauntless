@@ -148,7 +148,9 @@ Conditional[ConditionWing(ship, "attack")]
   defaults **25** and **80 GU**), where `r` is the smallest
   `GetMaxDamageDistance` over its phaser and pulse banks (tractors and
   torpedoes excluded), cached on the member at wrap; no such banks →
-  `attack_standoff_gu`. Slots are assigned on points at `attack_standoff_gu`.
+  `attack_standoff_gu`. Under focus_face and envelop the floor is raised
+  to `attack_flank_min_gu` (default **60 GU**); disable keeps the pure
+  beam-range standoff. Slots are assigned on points at `attack_standoff_gu`.
 
 **Who takes slots.**
 - Up to `attack_slots` members (dial, default **3**).
@@ -391,7 +393,10 @@ picks one.
    0.93 / 0.07 of samples (bound 0.7). The same scene at a fixed 80 GU gives
    0.93 / 0.93 / 0.87, and at 120 GU 0.33 / 0.93 / 0.93. Scaling the
    hold hysteresis with the standoff (in at `min(20, 0.25 × standoff)`,
-   out at twice that) left (a) at 0.35 / 0.93 / 0.07.
+   out at twice that) left (a) at 0.35 / 0.93 / 0.07. A 60 GU floor for
+   focus_face and envelop (`attack_flank_min_gu`; disable keeps its pure
+   beam-range standoff) gives 0.22 / 0.93 / 0.87: seed 1 still fails.
+   Re-bounding (a) or raising the floor is a ruling still owed.
 5. **Minors.** Repeated disable directions are turned 25° per wrap; Regroup
    does not count last tick's slot-holders or the held reserve as strays; a
    failed QB difficulty read is logged once (`DAUNTLESS_WINGS_LOG=1`).
