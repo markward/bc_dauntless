@@ -125,24 +125,36 @@ def test_group_changed_follows_the_original():
     assert ch.n == 0                    # no GROUP_CHANGED flag: no event
 
 
-def test_a_repeated_registration_is_called_twice():
-    """The original calls a broadcast method handler once per registration
-    (ev_dup_broadcast_method_total calls_for_one_add=2)."""
+def test_a_repeated_registration_is_called_once():
+    """A DELIBERATE DEPARTURE FROM THE ORIGINAL. The original calls a
+    broadcast method handler once per registration
+    (ev_dup_broadcast_method_total calls_for_one_add=2); Dauntless keeps an
+    identical registration (same wrapper, method and target) once
+    (events.py AddBroadcastPythonMethodHandler), so it is called once. See
+    the next test for why."""
     headless_mission.load("Maelstrom.Episode1.E1M1.E1M1")
     g, c, w = _counted_group()
     App.g_kEventManager.AddBroadcastPythonMethodHandler(App.ET_OBJECT_GROUP_CHANGED, w, "Changed", g)
     g.AddName("A")
     _tick(0.1)
-    assert c.n == 2
+    assert c.n == 1
 
 
-def test_group_changed_doubles_per_event_and_coalesces_per_tick(monkeypatch):
+def test_group_changed_runs_once_per_event_and_coalesces_per_tick(monkeypatch):
     """The original, measured (stbc-oracle music probe A1, native Windows):
     ConditionInRange.GroupChanged runs SetObjects, which registers the group
     handlers again, and a repeated registration is called again, so one
     name added per frame gives GroupChanged calls 1, 2, 4, 8, 16, 32
-    (cumulative 63, SetObjects 64 with the constructor's), the condition
-    still watching the same group. Edits within one tick post one event."""
+    (cumulative 63, SetObjects 64 with the constructor's).
+
+    A DELIBERATE DEPARTURE: Dauntless keeps the re-registration once, so each
+    event runs GroupChanged once (cumulative 1, 2, ... 6; SetObjects 7).
+    Quick Battle edits its groups far more than the original's missions do
+    (late arrivals, km_targeting, spawn, stations turning hostile), and the
+    doubling grows without bound: twenty edits in a long battle would run
+    GroupChanged over a million times for one event. The condition still
+    watches the same group, and edits within one tick still post one
+    event, as measured."""
     headless_mission.load("Maelstrom.Episode1.E1M1.E1M1")
     import Conditions.ConditionInRange as CIR
     C = CIR.ConditionInRange
@@ -169,10 +181,10 @@ def test_group_changed_doubles_per_event_and_coalesces_per_tick(monkeypatch):
         group.AddName("Zed %d" % i)
         _tick(0.1)
         seen.append(calls["gc"])
-    assert seen == [1, 3, 7, 15, 31, 63]
-    assert calls["so"] == 64
+    assert seen == [1, 2, 3, 4, 5, 6]
+    assert calls["so"] == 7
     before = calls["gc"]
     group.AddName("Pair A")
     group.AddName("Pair B")                 # same tick: one event
     _tick(0.1)
-    assert calls["gc"] - before == 64       # one event, called once per registration (64)
+    assert calls["gc"] - before == 1        # one event, one call
