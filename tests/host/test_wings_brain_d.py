@@ -792,3 +792,49 @@ def test_player_escort_wing_never_reinforces(monkeypatch, now):
     brain.tick_wing(a)
     assert seen["a1"].escorts_player is False
     assert a.decision == "reinforce"
+
+
+# ── fix wave I4: flank cap, per-ally cooldown, yields to trouble ──────────
+
+def test_flank_cap_puts_ally_on_cooldown(monkeypatch, now):
+    a, b, _ships = _flank_scene()
+    seen = _spy(monkeypatch)
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert a.decision == "flank"
+    now[0] = 89.0
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert a.decision == "flank" and a.flank_done == {}
+    now[0] = 90.0
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert seen["a1"].decision_age_s == pytest.approx(90.0)
+    assert a.decision != "flank" and a.flank_ally is None
+    assert a.flank_done == {"b": pytest.approx(150.0)}
+    now[0] = 91.0
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert seen["a1"].flank_done == frozenset({"b"})
+    assert a.decision != "flank"
+    now[0] = 150.0
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert seen["a1"].flank_done == frozenset()
+    assert a.flank_done == {} and a.decision == "flank"
+
+
+def test_latched_flank_yields_to_reinforce(now):
+    a, b, ships = _flank_scene()
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert a.decision == "flank"
+    for n in b.members:                       # b slips into trouble
+        ships[n].GetHull().SetConditionPercentage(0.5)
+    now[0] = 10.0
+    brain.tick_wing(b)
+    assert allies.in_trouble(b.status)
+    brain.tick_wing(a)
+    assert a.decision == "reinforce" and a.reinforce_ally == "b"
+    assert a.flank_ally is None
+    assert a.flank_done == {}                 # not the cap: no cooldown

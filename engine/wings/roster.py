@@ -110,15 +110,17 @@ class Wing:
     # feint lures toward,
     # when the feint cooldown ends (it starts whenever a feint ends) and
     # since when no enemy has been within engage_gu while feinting; the
-    # ally a running flank swings round; when the current decision became
-    # current; and the last hold (kind, ally, hold point, {name: ring
-    # index}) for the formation's incumbency.
+    # ally a running flank swings round and ally -> game time its flank
+    # cooldown ends (set only when a flank ends by its cap); when the
+    # current decision became current; and the last hold (kind, ally, hold
+    # point, {name: ring index}) for the formation's incumbency.
     reinforce_ally: str | None = None
     reinforce_done: dict = field(default_factory=dict)
     feint_ally: str | None = None
     feint_cooldown_until: float = -1.0
     feint_quiet_since: float | None = None
     flank_ally: str | None = None
+    flank_done: dict = field(default_factory=dict)
     decision_since: float = 0.0
     hold_prev: tuple | None = None
 

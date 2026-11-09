@@ -395,10 +395,18 @@ def test_flank_zero_when_already_at_hold_point():
     assert _by("flank").score(ctx) == 0.0
 
 
-def test_flank_latch_ignores_trouble_gate():
+def test_flank_latch_ignores_range_gate():
+    far = _fair(anchor=(2000.0, 0.0, 0.0), centroid=(1700.0, 0.0, 0.0))
+    ctx = _ctx([], [far], anchor=US, current="flank", flank_ally="B")
+    assert _by("flank").score(ctx) == 1.1
+
+
+def test_flank_latch_yields_when_ally_in_trouble():
+    """Fix wave I4: a latched flank whose ally is now in trouble scores 0,
+    so reinforce takes over for that ally."""
     ctx = _ctx([], [_fair(ours=1.0)], anchor=US, current="flank",
                flank_ally="B")
-    assert _by("flank").score(ctx) == 1.1
+    assert _by("flank").score(ctx) == 0.0
 
 
 def test_flank_ends_on_arrival():
@@ -451,10 +459,10 @@ def test_no_flip_between_reinforce_and_flank():
                reinforce_ally="B")
     assert _by("reinforce").score(rec) == 0.0
     assert decisions.pick(rec).name == "flank"
-    # And the latched flank holds when the ally slips into trouble: no
-    # flip back to reinforce tick to tick.
+    # And a latched flank yields when the ally slips into trouble (fix
+    # wave I4): reinforce takes over for it.
     back = _ctx(ec, [trouble], anchor=US, current="flank", flank_ally="B")
-    assert decisions.pick(back).name == "flank"
+    assert decisions.pick(back).name == "reinforce"
 
 
 # --- Task 3 review items ---------------------------------------------------
@@ -699,3 +707,35 @@ def test_escort_wing_never_flanks():
     ctx = _ctx([], [_fair()], anchor=US, current="flank", flank_ally="B",
                escorts_player=True)
     assert _by("flank").score(ctx) == 0.0
+
+
+# --- fix wave I4: flank has a cap and a per-ally cooldown ------------------
+
+def test_flank_ends_at_cap():
+    ctx = _ctx([], [_fair()], anchor=US, current="flank", flank_ally="B",
+               decision_age_s=89.0)
+    assert _by("flank").score(ctx) == 1.1
+    ctx = _ctx([], [_fair()], anchor=US, current="flank", flank_ally="B",
+               decision_age_s=90.0)
+    assert _by("flank").score(ctx) == 0.0
+    dials._dials["flank_max_s"] = 120.0
+    assert _by("flank").score(ctx) == 1.1
+
+
+def test_flank_cap_only_when_latched():
+    ctx = _ctx([], [_fair()], anchor=US, current="swarm_weakest",
+               decision_age_s=500.0)
+    assert _by("flank").score(ctx) == 1.1
+
+
+def test_flank_skips_ally_on_cooldown():
+    ctx = _ctx([], [_fair()], anchor=US, flank_done=frozenset({"B"}))
+    assert _by("flank").score(ctx) == 0.0
+    c = _fair("C", anchor=(0.0, 900.0, 0.0), centroid=(0.0, 700.0, 0.0))
+    ctx = _ctx([], [_fair(), c], anchor=(0.0, 400.0, 0.0),
+               flank_done=frozenset({"B"}))
+    assert _by("flank").choose(ctx).ally == "C"
+
+
+def test_flank_done_default():
+    assert _ctx().flank_done == frozenset()

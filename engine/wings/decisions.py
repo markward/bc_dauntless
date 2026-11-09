@@ -56,8 +56,10 @@ class Context:
     feint_ready: bool = True
     feint_quiet_s: float = 0.0
     decision_age_s: float = 0.0
-    # The ally a running flank swings round (a latched flank keeps it).
+    # The ally a running flank swings round (a latched flank keeps it) and
+    # the allies on flank cooldown (a flank that ran to flank_max_s).
     flank_ally: Optional[str] = None
+    flank_done: frozenset = frozenset()
     # This wing is the player's escort (service.set_player_wing): it stays
     # with the player, so it never reinforces, feints, screens or flanks.
     escorts_player: bool = False
@@ -589,20 +591,24 @@ class Screen:
 
 def _flank_target(ctx):
     """(ally, hold point) to flank, or None. Ends (checked latched or not):
-    an enemy within engage_gu of our anchor, the ally not engaged or gone,
-    our anchor within leash_gu of the hold point (recomputed from the
-    ally's status every tick). Entry adds: the ally is not in trouble and
-    within reinforce_range_gu; latched (a current flank) skips those two,
-    so an ally slipping into trouble mid-swing does not flip us to
-    reinforce, and keeps its ally. Latched means a current flank WITH its
-    ally (ctx.flank_ally): without one (a stand-down) the entry gates
-    apply. Arrival hysteresis: entry needs the hold point beyond leash_gu
-    + leash_slack_gu, the end is at leash_gu. The nearest such ally."""
+    an enemy within engage_gu of our anchor, the ally not engaged, gone or
+    in trouble (fix wave I4: a latched flank yields, so reinforce takes
+    over for that ally), our anchor within leash_gu of the hold point
+    (recomputed from the ally's status every tick). Latched it also ends
+    at flank_max_s (the brain then puts the ally on flank cooldown).
+    Entry adds: the ally is within reinforce_range_gu and not on flank
+    cooldown; latched (a current flank) skips those two and keeps its
+    ally. Latched means a current flank WITH its ally (ctx.flank_ally):
+    without one (a stand-down) the entry gates apply. Arrival hysteresis:
+    entry needs the hold point beyond leash_gu + leash_slack_gu, the end
+    is at leash_gu. The nearest such ally."""
     if ctx.escorts_player:
         return None
     if _near(ctx):
         return None
     latched = ctx.current == "flank" and ctx.flank_ally is not None
+    if latched and ctx.decision_age_s >= dials.get("flank_max_s"):
+        return None
     held = ctx.flank_ally if latched else None
     reach = dials.get("reinforce_range_gu")
     leash = dials.get("leash_gu")
@@ -613,7 +619,10 @@ def _flank_target(ctx):
             continue
         if not a.engaged or a.enemy_centroid is None:
             continue
-        if not latched and (_allies.in_trouble(a) or _to(ctx, a) > reach):
+        if _allies.in_trouble(a):
+            continue
+        if not latched and (a.wing_id in ctx.flank_done
+                            or _to(ctx, a) > reach):
             continue
         p = _allies.flank_point(ctx.anchor.pos, a.anchor, a.enemy_centroid)
         if assess.dist(p, ctx.anchor.pos) <= (leash if latched else enter):

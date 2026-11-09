@@ -368,6 +368,7 @@ def tick_wing(wing) -> None:
                         if wing.decision is not None else 0.0),
         strict_protectees=_strict_protectees(wing, members),
         flank_ally=wing.flank_ally,
+        flank_done=frozenset(wing.flank_done),
         escorts_player=wing.wing_id == service.player_wing_id())
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
@@ -473,12 +474,16 @@ def _track_disable(wing, decision, choice, now) -> None:
 
 
 def _side_clocks(wing, near, now) -> None:
-    """Before the Context (Phase D): drop the reinforce cooldowns that have
-    run out, and while feinting keep since when no enemy has been within
-    engage_gu of the anchor (the 10 s "they didn't follow" end)."""
+    """Before the Context (Phase D): drop the reinforce and flank cooldowns
+    that have run out, and while feinting keep since when no enemy has
+    been within engage_gu of the anchor (the 10 s "they didn't follow"
+    end)."""
     if wing.reinforce_done:
         wing.reinforce_done = {a: t for a, t in wing.reinforce_done.items()
                                if now < t}
+    if wing.flank_done:
+        wing.flank_done = {a: t for a, t in wing.flank_done.items()
+                           if now < t}
     if wing.feint_ally is not None:
         if near:
             wing.feint_quiet_since = None
@@ -488,12 +493,12 @@ def _side_clocks(wing, near, now) -> None:
 
 def _track_side(wing, decision, choice, now, ctx) -> None:
     """After choose (Phase D): start and stop the reinforce and feint
-    latches and keep the flank's ally. A reinforce that ends by its cap
-    puts its ally on cooldown; a feint that ends for any reason starts the
-    feint cooldown. One clock: the reinforce's age is the decision's
-    (ctx.decision_age_s, read before this tick's pick), since
-    decision_since resets only on a change of decision name and a stand-
-    down clears the decision."""
+    latches and keep the flank's ally. A reinforce or a flank that ends by
+    its cap puts its ally on that decision's cooldown; a feint that ends
+    for any reason starts the feint cooldown. One clock: a latch's age is
+    the decision's (ctx.decision_age_s, read before this tick's pick),
+    since decision_since resets only on a change of decision name and a
+    stand-down clears the decision."""
     r = choice.ally if decision == "reinforce" else None
     if wing.reinforce_ally is not None and wing.reinforce_ally != r:
         _end_reinforce(wing, now, ctx)
@@ -504,7 +509,14 @@ def _track_side(wing, decision, choice, now, ctx) -> None:
         _end_feint(wing, now)
     if f is not None and wing.feint_ally is None:
         wing.feint_ally, wing.feint_quiet_since = f, None
-    wing.flank_ally = choice.ally if decision == "flank" else None
+    fl = choice.ally if decision == "flank" else None
+    if (wing.flank_ally is not None and wing.flank_ally != fl
+            and ctx.current == "flank"
+            and ctx.decision_age_s >= dials.get("flank_max_s")):
+        wing.flank_done[wing.flank_ally] = (
+            now + dials.get("flank_cooldown_s"))
+        log("%s flank done %s" % (wing.wing_id, wing.flank_ally))
+    wing.flank_ally = fl
 
 
 def _end_reinforce(wing, now, ctx) -> None:
