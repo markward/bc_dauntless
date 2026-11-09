@@ -48,6 +48,12 @@ class Wing:
     withdraw_since: float | None = None
     withdraw_cooldown_until: float = -1.0
     clear_since: float | None = None
+    # name -> time before which a timed-out faller may not fall back again
+    # (rotate.fallback_flags owns the rule; one dict per wing across ticks).
+    fallback_cooldown: dict = field(default_factory=dict)
+    # name -> (t, strength) samples for protectees that are not members
+    # (protect ships, the player), so their damage rate is seen too.
+    protect_hist: dict = field(default_factory=dict)
 
 
 _wings: dict[str, Wing] = {}
