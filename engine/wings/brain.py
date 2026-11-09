@@ -284,6 +284,10 @@ def tick_wing(wing) -> None:
         elif wing.clear_since is None:
             wing.clear_since = now
     player_commands = _player_commands(wing)
+    if player_commands and wing.withdraw_since is not None:
+        # Withdraw never applies to a player-led wing: a handover to the
+        # player ends one in progress (the cooldown starts).
+        _end_withdraw(wing, now)
     ctx = decisions.Context(
         members=list(members.values()), anchor=anchor, enemies=enemies,
         current=wing.decision, protectees=protectees, rates=rates,
@@ -411,8 +415,12 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
                         None)
         if protectee is not None and attacker is not None:
             live = list(members.values())
+            # A ship already falling back is never a guard: it keeps
+            # falling back until its shields recover.
+            falling = {n for n, m in wing.members.items()
+                       if m.fallback_since is not None}
             guards = protect.pick_guards(
-                live, protectee, {wing.commander} | players,
+                live, protectee, {wing.commander} | players | falling,
                 {v.name: _strength_frac(v) for v in live})
             point = protect.guard_point(protectee.pos, attacker.pos)
             for name in guards:

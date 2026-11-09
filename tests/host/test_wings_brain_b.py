@@ -366,3 +366,129 @@ def test_new_branches_stand_down_when_leaderless_or_away(now):
     brain.tick_wing(wing)
     assert wing.away is True
     _assert_stood_down(wing)
+
+
+# ── fix round 1 ────────────────────────────────────────────────────────────
+
+def test_current_faller_is_never_picked_as_guard(now):
+    """m3 is already falling back (shields 0.22, hull 1.0: strength frac
+    0.61, guard-eligible on health alone) and nearest the threatened m2:
+    m4 guards instead and m3 keeps falling back."""
+    wing, ships = _scene([(150.0, 0.0, 0.0), (160.0, 30.0, 0.0),
+                          (170.0, -30.0, 0.0)], n_members=4,
+                         member_xyz=[(0.0, 0.0, 0.0), (-40.0, 0.0, 0.0),
+                                     (-30.0, 20.0, 0.0), (-80.0, -30.0, 0.0)])
+    _set_shields(ships["m3"], 0.22)
+    brain.tick_wing(wing)                    # nobody attacked yet
+    m3 = roster.member("m3")
+    assert m3.fallback_since == 0.0
+    for e in ("e1", "e2", "e3"):
+        ships[e].SetTarget("m2")
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert wing.decision == "protect"
+    assert m3.guard is False and _status("m3", "guard") == 0
+    assert m3.fallback_since == 0.0 and _status("m3", "fallback") == 1
+    assert roster.member("m4").guard is True
+
+
+def test_guard_released_when_attacker_dies(now):
+    wing, ships = _protect_scene()
+    brain.tick_wing(wing)
+    assert roster.member("m3").guard is True
+    ships["e1"].SetDead()                    # the primary attacker
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    m3 = roster.member("m3")
+    assert m3.guard is False and _status("m3", "guard") == 0
+    assert m3.move_point is None
+
+
+def _player_member(wing, ships, name, xyz, hull=1.0):
+    pSet = ships["m1"].GetContainingSet()
+    ships[name] = _ship(pSet, "Akira", name, xyz)
+    ships[name].GetHull().SetConditionPercentage(hull)
+    m = roster.add_member(wing, name, is_player=True)
+    m.conditions.update({k: App.TGCondition() for k in _KINDS})
+    return m
+
+
+def test_player_member_never_guards_moves_or_is_pushed(monkeypatch, now):
+    """Library path: a player member nearest the threatened ship, healthy
+    then shield-less, is never a guard or faller and gets no push."""
+    wing, ships = _protect_scene()
+    p = _player_member(wing, ships, "p", (-45.0, 5.0, 0.0))
+    wing.chain = ["m1"]                      # the player does not command
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ships["p"])
+    for k in ("withdraw", "guard", "fallback"):
+        p.conditions[k].SetStatus(1)         # any push would show as 0
+    brain.tick_wing(wing)
+    assert wing.decision == "protect"
+    assert roster.member("m3").guard is True
+    _set_shields(ships["p"], 0.1)
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert p.guard is False and p.move_point is None
+    assert p.fallback_since is None
+    for k in ("withdraw", "guard", "fallback"):
+        assert p.conditions[k].GetStatus() == 1, k
+
+
+def test_withdraw_ends_when_the_player_takes_command(monkeypatch, now):
+    """Library path: a withdrawing wing whose commander becomes the player
+    stops withdrawing (Withdraw never applies to a player-led wing)."""
+    enemies = [(120.0 + 10.0 * i, 10.0 * (i % 3), 0.0) for i in range(8)]
+    pSet = SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "WingTest")
+    ships = {}
+    group = App.ObjectGroup()
+    wing = roster.create_wing("blue", group)
+    for name, xyz, player in (("m1", (0.0, 0.0, 0.0), False),
+                              ("m2", (-20.0, 0.0, 0.0), False),
+                              ("p", (-40.0, 0.0, 0.0), True)):
+        ships[name] = _ship(pSet, "Akira", name, xyz)
+        m = roster.add_member(wing, name, is_player=player)
+        m.conditions.update({k: App.TGCondition() for k in _KINDS})
+    for i, xyz in enumerate(enemies, 1):
+        ships["e%d" % i] = _ship(pSet, "BirdOfPrey", "e%d" % i, xyz)
+        group.AddName("e%d" % i)
+    brain.arm_chain(wing)
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ships["p"])
+    for n in ("m1", "m2", "p"):
+        ships[n].GetHull().SetConditionPercentage(0.3)
+    wing.chain = ["m1"]
+    brain.tick_wing(wing)
+    assert wing.decision == "withdraw" and wing.withdraw_since == 0.0
+    assert _status("m1", "withdraw") == 1
+    wing.chain = ["p", "m1"]                 # the player takes command
+    now[0] = 2.0
+    brain.tick_wing(wing)
+    assert wing.commander == "p"
+    assert wing.decision != "withdraw"
+    assert wing.withdraw_since is None and wing.clear_since is None
+    assert wing.withdraw_cooldown_until == pytest.approx(
+        2.0 + dials.get("withdraw_cooldown_s"))
+    assert _status("m1", "withdraw") == 0
+    assert roster.member("m1").move_point is None
+
+
+def test_withdraw_ends_when_odds_recover(now):
+    wing, ships = _withdraw_scene()
+    brain.tick_wing(wing)
+    assert wing.decision == "withdraw"
+    for i in range(2, 9):                    # seven enemies die; e1 stays near
+        ships["e%d" % i].SetDead()
+    engage = dials.get("engage_gu")
+    anchor = brain.view_of(ships["m1"]).pos
+    ours = assess.side_strength([brain.view_of(ships[n])
+                                 for n in ("m1", "m2")], anchor, engage)
+    theirs = assess.side_strength([brain.view_of(ships[n])
+                                   for n in ("e1",)], anchor, engage)
+    assert theirs > 0.0
+    assert ours >= 1.5 * dials.get("withdraw_odds") * theirs
+    now[0] = 3.0
+    brain.tick_wing(wing)
+    assert wing.decision != "withdraw" and wing.withdraw_since is None
+    assert wing.withdraw_cooldown_until == pytest.approx(
+        3.0 + dials.get("withdraw_cooldown_s"))
+    assert _status("m1", "withdraw") == 0
