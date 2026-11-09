@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from engine.audio import tg_sound
 from engine.audio.tg_sound import TGSoundManager, _PlayingSound
 
 
@@ -33,6 +34,9 @@ def set_active(active: bool) -> None:
             snd.SetLooping(1)
             snd.SetSFX()
             _playing = snd.Play()  # non-positional (no attach_node)
+            # Ours to stop on leaving the bridge; a sweep would silence it
+            # until the next view change.
+            tg_sound.owner_managed(_playing)
     else:
         if _playing is not None:
             _playing.Stop()
