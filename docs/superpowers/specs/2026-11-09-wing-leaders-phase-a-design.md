@@ -18,8 +18,9 @@ his review at play-test time.
 - **Leaderless fallback + desperation.**
 - The first **behaviour library** entries and the SDK-facing surface
   (`DauntlessWings`) that both Quick Battle and `combat_stress` use.
-- A switch, a dial group, a dev log, a dev-only commander marker, and the
-  `combat_stress` wiring the perf A/B needs.
+- A switch, a dial group, a dev log, a commander marker, and the
+  `combat_stress` wiring the perf A/B needs. (Mark, 2026-11-09: the switch is
+  a Quick Battle setup option and the marker is always on, §11.)
 
 ## 2. Facts this design rests on (verified 2026-11-09)
 
@@ -104,8 +105,15 @@ AI reads on its own schedule (programme anti-goal: no sim check-ins).
   never enter a chain: a station can't anchor a leash. **(ruling)** Members
   must also be **mobile** (impulse engines, max speed > 0). A wing whose
   initial members are all late builds its chain from its first arrival wave.
-- The player is a member of the player's group's wing. `PlayerOrder` gains the
-  player's group id (QB) so the consumer can tell.
+- ~~The player is a member of the player's group's wing.~~ **Superseded
+  (Mark, 2026-11-09):** the player's group is **AI-led** until an orders UI
+  exists. Quick Battle puts the player in no wing; the friendly wing's chain
+  is built from its AI members only (top 20% by rated power, min 1), its
+  anchor is the AI commander, and it never takes the player's target as its
+  primary. A player-only group gets no wing. The "player commands" paths in
+  `engine/wings` (`is_player`, `DauntlessWings.AddMember(..., bPlayer)`) stay
+  for that future orders UI, unused by Quick Battle. `PlayerOrder.group_id`
+  stays (it names the player's group).
 - Late arrivals (`late_arrivals._spawn_one`) are added to their group's wing
   at spawn (the order carrying `group_id` is in scope there) and get the same
   wrapped tree; they never enter the chain.
@@ -317,19 +325,22 @@ is pushed rejoin off too (WingRejoin cannot reach a commander in another
 set).
 
 **Switch:** `DAUNTLESS_WINGS=0` disables wings everywhere (consumers don't
-arm, trees are stock). Otherwise on in Quick Battle. Developer Options →
-Combat → **Wing AI** (default on) is read at battle start; `=0` env wins.
-**(ruling)** The dev switch is read only at arm time (`wings_qb.arm`,
-`combat_stress`, `DauntlessWings.CreateWing`/`AddMember`/`ArmWing` via
-`service.enabled()`); armed wings keep ticking until reset, so toggling it
-mid-battle changes the next battle only. `service.tick` reads only the env
-and the armed list.
+arm, trees are stock); `service.enabled()` is that env check only. Otherwise
+on in Quick Battle, per battle: **(Mark's ruling 2026-11-09, replaces the
+Developer Options toggles)** the Quick Battle setup screen's victory
+(battle settings) view has a **"Wing commanders"** On/Off row ("Groups pick
+leaders and fight together"), stored as `Scenario.wings` (default on, saved
+with presets; a preset without the key loads on), carried as
+`BattlePlan.wings`, and read by `wings_qb.arm` at battle start. Armed wings
+keep ticking until reset. `service.tick` reads only the env and the armed
+list.
 
 **Diagnostics:** `DAUNTLESS_WINGS_LOG=1` prints `[wings]` lines to stderr on
-arm, handover, decision change, leaderless, desperation. Developer Options →
-Combat → **Show Wing Commanders** (dev-only, off by default) marks each
-current commander's row in the target list with a ★ — so the play test can see
-who commands. Production UI unchanged.
+arm, handover, decision change, leaderless, desperation. **(Mark's ruling
+2026-11-09, replaces the dev-only ★ toggle)** The target list always marks
+each wing's current commander with a small inline **command chevron** before
+the name (a row's `commander` flag), for everyone, no toggle. It moves on a
+handover and disappears when a wing goes leaderless.
 
 **Dials:** group `"wings"` on `/ L O` (pattern `engine/appc/sensor_dials.py`):
 `leash_gu`, `leash_slack_gu`, `regroup_gather_gu`, `engage_gu`,
@@ -339,14 +350,18 @@ who commands. Production UI unchanged.
 ## 12. Calls made without Mark (review at play test)
 
 1. Stations / starbase AI and neutrals are never wing members.
-2. Player counts as one of the 20% when in a group.
+2. ~~Player counts as one of the 20% when in a group.~~ Superseded: the
+   player's group is AI-led until an orders UI exists — Mark 2026-11-09 (§4).
 3. Leash slack 100 GU; regroup gathers to 100 GU.
 4. Strength formula; weakest = lowest strength.
 5. Swarm strategy chosen by odds (≥ 0.8 of their strength ⇒ weakest, else commander).
 6. Target priorities 3.0 / 1.5 / 0; popularity −0.3 for wing members.
 7. Desperation: below 40% hull, 30% ram else flee, rolled once, permanent.
 8. Brain at 1 Hz, wings phase-staggered.
-9. A dev-only ★ commander marker in the target list for play-testing.
+9. ~~A dev-only ★ commander marker in the target list for play-testing.~~
+   Replaced (Mark's ruling 2026-11-09): an always-on command chevron in the
+   target list, and the Wing AI switch moved to the Quick Battle setup
+   screen ("Wing commanders"); the Developer Options toggles are gone (§11).
 10. Members must be mobile (impulse engines, max speed > 0).
 11. A wing whose initial members are all late builds its chain from its first
     arrival wave.
@@ -401,10 +416,10 @@ who commands. Production UI unchanged.
 1. **One battle.** In a Quick Battle with two groups of 5+ ships a side, after
    three minutes the fight is still in one area: wing members stay within
    roughly mid range (~35 km) of their commander, instead of the 100 km+
-   spread with Wing AI off.
+   spread with "Wing commanders" Off.
 2. **Focus.** Most of a wing shoots the same one or two targets at a time and
-   moves on together when one dies; with ★ markers on, you can see who
+   moves on together when one dies; the chevron in the target list shows who
    commands each wing.
 3. **Command matters.** Destroying a wing's commander hands command to the
-   next strongest ship (★ moves); destroying all of a wing's top 20% makes the
+   next strongest ship (the chevron moves); destroying all of a wing's top 20% makes the
    survivors fight on their own, and badly damaged ones flee or ram.
