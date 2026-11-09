@@ -66,7 +66,18 @@ def fire_keywords(difficulty):
 def _build_fire_script(pShip, kw):
     """The stock FireScript, built as FedAttack builds FireAll. Its initial
     target is the ship itself: a placeholder the brain replaces before the
-    attack branch is ever switched on."""
+    attack branch is ever switched on.
+
+    It keeps the stock attack flags (attack disabled subsystems, fire with
+    no valid subsystem) in both modes; only the subsystem list is switched
+    (IgnoreSubsystemTargets / RestoreSubsystemTargets). Weapons-first still
+    prefers a live weapon: ChooseTargetSubsystem picks among the
+    non-disabled ones while any is left. SetAttackDisabled(0) is never
+    set: the SDK's WeaponTooDangerous then reads pSubsystem.GetCondition()
+    with no subsystem chosen (hull aim, a fresh target), so a torpedo frame
+    raised and left the weapon cycle stuck; and its DisableOnly partner,
+    SetAttackWithoutValidSubsystems(0), returns from a fire frame before
+    the cycle advances, so a fresh target never reaches its choose frame."""
     import AI.Preprocessors
     keywords = dict(kw)
     keywords["TargetSubsystems"] = [(App.CT_WEAPON_SYSTEM, 1)]
@@ -75,7 +86,6 @@ def _build_fire_script(pShip, kw):
                     pShip.GetPulseWeaponSystem()):
         if not App.IsNull(pSystem):
             pFire.AddWeaponSystem(pSystem)
-    pFire.SetAttackDisabled(0)
     pFire.IgnoreSubsystemTargets()
     return pFire
 

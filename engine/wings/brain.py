@@ -12,8 +12,8 @@ import dataclasses
 import os
 import sys
 
-from engine.wings import (assess, chain, decisions, dials, plans, protect,
-                          roster, rotate)
+from engine.wings import (assess, attack, chain, decisions, dials, plans,
+                          protect, roster, rotate)
 
 _NUM_SHIELDS = 6
 
@@ -312,7 +312,8 @@ def tick_wing(wing) -> None:
         armed_strength=wing.armed_strength, now=now,
         withdraw_since=wing.withdraw_since,
         withdraw_cooldown_until=wing.withdraw_cooldown_until,
-        clear_since=wing.clear_since, player_commands=player_commands)
+        clear_since=wing.clear_since, player_commands=player_commands,
+        slot_eligible=_slot_eligible(wing, members))
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
         log("%s decision %s -> %s"
@@ -333,8 +334,12 @@ def tick_wing(wing) -> None:
         prios = plans.target_priorities(enemies, anchor, choice, km,
                                         player_target, player_commands)
     _write_group(wing.target_group, prios)
-    _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
-                 now)
+    guards, fallers, withdrawers = _apply_moves(
+        wing, members, anchor, enemies, near, protectees, choice, now)
+    busy = ({wing.commander} | guards | fallers | withdrawers
+            | {n for n, m in wing.members.items()
+               if m.is_player or m.reserve})
+    holders = _apply_attack(wing, members, enemies, choice, busy, ship_of)
 
     player = next((n for n, m in wing.members.items() if m.is_player), None)
     # A commanding player with nothing to fight: the escorts form up on it.
@@ -345,8 +350,10 @@ def tick_wing(wing) -> None:
         gather, wing.commander, player)
     for name, m in wing.members.items():
         # Outside the home set WingRejoin cannot reach the commander: off.
-        # Withdrawing, every member runs its own line: off too.
-        flag = flags.get(name, False) and not choice.withdraw
+        # Withdrawing, every member runs its own line: off too. A
+        # slot-holder's slot hangs off the primary, inside reach: off.
+        flag = (flags.get(name, False) and not choice.withdraw
+                and name not in holders)
         m.rejoin = flag
         _push(m, "rejoin", flag)
 
@@ -493,6 +500,105 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
         _push(m, "withdraw", name in withdrawers)
         _push(m, "guard", m.guard)
         _push(m, "fallback", m.fallback_since is not None)
+    return (set(guards),
+            {n for n, since in fallers.items() if since is not None},
+            withdrawers)
+
+
+def _slot_eligible(wing, members) -> int:
+    """Live non-player, non-commander members in the home set, less last
+    tick's fallers and the reserve. Guards are not taken off: they are
+    chosen after the decision."""
+    return sum(1 for name in members
+               if name != wing.commander
+               and not wing.members[name].is_player
+               and wing.members[name].fallback_since is None
+               and not wing.members[name].reserve)
+
+
+def _slot_points(wing, members, choice, busy, ship_of):
+    """(candidate views, (body_dir, world point) per slot) for the choice's
+    slot directions round its primary, or None when nobody can hold a slot
+    this tick: no directions, or a primary that is no live ship."""
+    if not choice.slot_dirs or choice.primary is None:
+        return None
+    target = ship_of(choice.primary)
+    if not _alive(target):
+        return None
+    cands = [v for n, v in members.items() if n not in busy]
+    if not cands:
+        return None
+    dirs = choice.slot_dirs
+    n = len(cands) if choice.slot_all else len(dirs)
+    loc = target.GetWorldLocation()
+    R = target.GetWorldRotation()
+    cols = [(c.x, c.y, c.z) for c in (R.GetCol(0), R.GetCol(1), R.GetCol(2))]
+    standoff = dials.get("attack_standoff_gu")
+    slots = []
+    for i in range(n):
+        d = dirs[i % len(dirs)]
+        slots.append((d, attack.slot_point((loc.x, loc.y, loc.z), cols, d,
+                                           standoff)))
+    return cands, slots
+
+
+def _apply_attack(wing, members, enemies, choice, busy, ship_of=None):
+    """Attack slots (spec §3): the choice's slot directions round its
+    primary go to the members not in `busy` (commander, players, guards,
+    fallers, reserve, withdrawers), nearest first. Each holder's wing
+    FireScript and ship target follow the primary (changes only) and its
+    aim mode follows choice.weapons_first; its attack branch is pushed on.
+    Everyone else has no slot and the branch off. Returns the holders."""
+    if ship_of is None:
+        import App
+        home = _home_set(wing)
+
+        def ship_of(name):
+            return (App.ShipClass_GetObject(home, name)
+                    if home is not None else None)
+    holders = {}
+    plan = _slot_points(wing, members, choice, busy, ship_of)
+    if plan is not None:
+        cands, slots = plan
+        got = attack.assign_slots(cands, [p for _d, p in slots])
+        holders = {name: slots[j][0] for name, j in got.items()}
+    primary = choice.primary
+    standoff = dials.get("attack_standoff_gu")
+    for name, m in wing.members.items():
+        if m.is_player:
+            continue
+        if name not in holders:
+            m.slot = None
+            m.attack_target = None
+            _push(m, "attack", False)
+            continue
+        m.slot = (primary, holders[name], standoff)
+        fire = m.fire_script
+        if m.attack_target != primary:
+            if fire is not None:
+                fire.SetTarget(primary)
+            ship = ship_of(name)
+            if ship is not None:
+                ship.SetTarget(primary)
+            m.attack_target = primary
+        if m.weapons_first != choice.weapons_first:
+            if fire is not None:
+                if choice.weapons_first:
+                    fire.RestoreSubsystemTargets()
+                else:
+                    fire.IgnoreSubsystemTargets()
+            m.weapons_first = choice.weapons_first
+        _push(m, "attack", True)
+        _push(m, "rejoin", False)
+    sig = ((primary, tuple(sorted(holders)), bool(choice.weapons_first))
+           if holders else None)
+    if sig != wing.attack_sig:
+        wing.attack_sig = sig
+        if sig is not None:
+            log("%s attack %s slots=%d weapons_first=%d"
+                % (wing.wing_id, primary, len(holders),
+                   int(choice.weapons_first)))
+    return set(holders)
 
 
 def _end_withdraw(wing, now) -> None:
@@ -503,19 +609,23 @@ def _end_withdraw(wing, now) -> None:
 
 
 def _stand_down(wing) -> None:
-    """Leaderless or command away: every Phase B branch off, no move
-    points (like rejoin). A withdraw in progress ends."""
+    """Leaderless or command away: every Phase B branch and the attack
+    branch off, no move points or slots (like rejoin). A withdraw in
+    progress ends."""
     if wing.withdraw_since is not None:
         import App
         _end_withdraw(wing, float(App.g_kUtopiaModule.GetGameTime()))
     wing.guarded = None
+    wing.attack_sig = None
     for m in wing.members.values():
         m.move_point = None
         m.guard = False
         m.fallback_since = None
+        m.slot = None
+        m.attack_target = None
         if m.is_player:
             continue
-        for kind in ("withdraw", "guard", "fallback"):
+        for kind in ("withdraw", "guard", "fallback", "attack"):
             _push(m, kind, False)
 
 

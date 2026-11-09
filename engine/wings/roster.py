@@ -66,6 +66,9 @@ class Wing:
     # The protectee the current guards (Member.guard) cover: guard
     # incumbency holds only while it is unchanged (protect.pick_guards).
     guarded: str | None = None
+    # (primary, holder names, weapons_first) last logged by the brain's
+    # attack step: it logs only on a change.
+    attack_sig: tuple | None = None
 
 
 _wings: dict[str, Wing] = {}
