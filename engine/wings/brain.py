@@ -519,13 +519,18 @@ def _slot_eligible(wing, members) -> int:
 def _slot_points(wing, members, choice, busy, ship_of):
     """(candidate views, (body_dir, world point) per slot) for the choice's
     slot directions round its primary, or None when nobody can hold a slot
-    this tick: no directions, or a primary that is no live ship."""
+    this tick: no directions, or a primary that is no live, uncloaked
+    ship. A member without the wing tree (no wing FireScript, e.g. a wrap
+    that failed) is no candidate: it could not fly or fire the slot."""
     if not choice.slot_dirs or choice.primary is None:
         return None
     target = ship_of(choice.primary)
-    if not _alive(target):
+    # The warm enemy snapshot re-checks only _alive, so a primary that
+    # cloaked since the build is caught here.
+    if not _alive(target) or _cloaked(target):
         return None
-    cands = [v for n, v in members.items() if n not in busy]
+    cands = [v for n, v in members.items()
+             if n not in busy and wing.members[n].fire_script is not None]
     if not cands:
         return None
     dirs = choice.slot_dirs
@@ -542,20 +547,15 @@ def _slot_points(wing, members, choice, busy, ship_of):
     return cands, slots
 
 
-def _apply_attack(wing, members, enemies, choice, busy, ship_of=None):
+def _apply_attack(wing, members, enemies, choice, busy, ship_of):
     """Attack slots (spec §3): the choice's slot directions round its
     primary go to the members not in `busy` (commander, players, guards,
     fallers, reserve, withdrawers), nearest first. Each holder's wing
     FireScript and ship target follow the primary (changes only) and its
     aim mode follows choice.weapons_first; its attack branch is pushed on.
-    Everyone else has no slot and the branch off. Returns the holders."""
-    if ship_of is None:
-        import App
-        home = _home_set(wing)
-
-        def ship_of(name):
-            return (App.ShipClass_GetObject(home, name)
-                    if home is not None else None)
+    Everyone else has no slot and the branch off. Returns the holders.
+    `enemies` is unused (kept for the plan's interface): the primary is
+    resolved live through `ship_of`, the home-set lookup."""
     holders = {}
     plan = _slot_points(wing, members, choice, busy, ship_of)
     if plan is not None:
@@ -598,6 +598,8 @@ def _apply_attack(wing, members, enemies, choice, busy, ship_of=None):
             log("%s attack %s slots=%d weapons_first=%d"
                 % (wing.wing_id, primary, len(holders),
                    int(choice.weapons_first)))
+        else:
+            log("%s attack ends" % wing.wing_id)
     return set(holders)
 
 
@@ -616,7 +618,9 @@ def _stand_down(wing) -> None:
         import App
         _end_withdraw(wing, float(App.g_kUtopiaModule.GetGameTime()))
     wing.guarded = None
-    wing.attack_sig = None
+    if wing.attack_sig is not None:
+        wing.attack_sig = None
+        log("%s attack ends" % wing.wing_id)
     for m in wing.members.values():
         m.move_point = None
         m.guard = False

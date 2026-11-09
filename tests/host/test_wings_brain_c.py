@@ -395,3 +395,122 @@ def test_slot_holder_reaches_slot_and_faces(monkeypatch, capsys):
                 best = (n, d, ang)
     assert best is not None, "no holder reached its slot facing the target"
     _no_fire_errors(capsys)
+
+
+# ── fix round 1 ────────────────────────────────────────────────────────────
+
+def _rewrap(wing, ship):
+    """Re-run the wrap on a ship (as DauntlessWings.WrapTree / the QB
+    CreateAI wrap do): a fresh FireScript, own-name target, hull mode."""
+    import AI.Compound.BasicAttack
+    stock = AI.Compound.BasicAttack.CreateAI(ship, wing.target_group,
+                                             Difficulty=0.5)
+    ship.SetAI(tree.wrap_tree(ship, stock, wing))
+
+
+def test_rewrapped_holder_gets_new_fire_script_retargeted(now):
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    _set_face(ships["e1"], _LEFT, 0.1)
+    brain.tick_wing(wing)
+    assert "m2" in _holders(wing)
+    old = roster.member("m2").fire_script
+    _rewrap(wing, ships["m2"])
+    new = roster.member("m2").fire_script
+    assert new is not old and new.sTarget == "m2"     # the placeholder
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert "m2" in _holders(wing)
+    assert new.sTarget == "e1"
+    assert not new.HasSubsystemTargets()
+    assert _status("m2", "attack") == 1
+
+
+def test_rewrapped_holder_under_disable_is_weapons_first(now):
+    wing, ships = _disable_scene()
+    brain.tick_wing(wing)
+    assert wing.decision == "disable" and "m2" in _holders(wing)
+    _rewrap(wing, ships["m2"])
+    new = roster.member("m2").fire_script
+    assert not new.HasSubsystemTargets()              # built in hull mode
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert new.sTarget == "e1"
+    assert new.HasSubsystemTargets()
+    assert roster.member("m2").weapons_first is True
+
+
+def test_member_without_fire_script_takes_no_slot(now):
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    _set_face(ships["e1"], _LEFT, 0.1)
+    roster.member("m2").fire_script = None            # stock tree kept
+    brain.tick_wing(wing)
+    assert wing.decision == "focus_face"
+    holders = _holders(wing)
+    assert "m2" not in holders and len(holders) >= 2
+
+
+class _AlwaysSlots:
+    """Test-only decision naming e1 with slots whatever the snapshot says,
+    so the brain's own check on the resolved primary decides."""
+    name = "always_slots"
+
+    def score(self, ctx):
+        return 9.0
+
+    def choose(self, ctx):
+        return decisions.Choice("e1", (), slot_dirs=attack.envelop_dirs(3))
+
+
+def test_cloaked_primary_gets_no_slots(now):
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    decisions.register(_AlwaysSlots())
+    brain.tick_wing(wing)
+    assert len(_holders(wing)) == 3
+    ships["e1"].GetCloakingSubsystem().StartCloaking()
+    assert ships["e1"].GetCloakingSubsystem().IsCloaking()
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert _holders(wing) == []
+    for n in wing.members:
+        assert _status(n, "attack") == 0
+
+
+def test_dead_primary_named_by_decision_gets_no_slots(now):
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    decisions.register(_AlwaysSlots())
+    brain.tick_wing(wing)
+    assert len(_holders(wing)) == 3
+    ships["e1"].SetDead()
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert _holders(wing) == []
+
+
+def test_attack_end_is_logged(monkeypatch, capsys, now):
+    monkeypatch.setenv("DAUNTLESS_WINGS_LOG", "1")
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    _set_face(ships["e1"], _LEFT, 0.1)
+    brain.tick_wing(wing)
+    ships["e1"].SetDead()
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    now[0] = 2.0
+    brain.tick_wing(wing)
+    err = capsys.readouterr().err
+    lines = [ln for ln in err.splitlines() if " attack" in ln]
+    assert lines == ["[wings] blue attack e1 slots=3 weapons_first=0",
+                     "[wings] blue attack ends"]
+
+
+def test_attack_end_is_logged_on_stand_down(monkeypatch, capsys, now):
+    monkeypatch.setenv("DAUNTLESS_WINGS_LOG", "1")
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    _set_face(ships["e1"], _LEFT, 0.1)
+    brain.tick_wing(wing)
+    ships["m1"].SetDead()                          # the whole chain
+    wing.chain = ["m1"]
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert wing.leaderless is True
+    err = capsys.readouterr().err
+    assert "[wings] blue attack ends" in err.splitlines()

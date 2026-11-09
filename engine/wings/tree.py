@@ -117,6 +117,11 @@ def wrap_tree(pShip, pStockTree, wing, fire_keywords=None):
     pFire = _build_fire_script(pShip, kw)
     if member is not None:
         member.fire_script = pFire
+        # A fresh script (own-name target, hull mode): the brain's
+        # change-only writes must see it as untargeted, or a re-wrapped
+        # slot-holder keeps a script aimed at its own ship.
+        member.attack_target = None
+        member.weapons_first = False
 
     pAvoidObstacles = avoiding("AvoidObstacles",
                                _plain(pShip, "Rejoin", "WingRejoin"))
