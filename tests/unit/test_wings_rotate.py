@@ -56,3 +56,21 @@ def test_fallback_excludes():
 
 def test_fallback_point_behind_anchor():
     assert rotate.fallback_point((0, 0, 0), (10, 0, 0), 100.0) == (-100.0, 0.0, 0.0)
+
+
+def test_timeout_return_not_reflagged_until_cooldown():
+    cd = {}
+    out = rotate.fallback_flags(four(a=0.1), {"a": 0.0}, 31.0, set(), cd)
+    assert out["a"] is None
+    out = rotate.fallback_flags(four(a=0.1), out, 32.0, set(), cd)
+    assert out["a"] is None
+    out = rotate.fallback_flags(four(a=0.1), out, 61.0, set(), cd)
+    assert out["a"] == 61.0
+
+
+def test_shield_recovery_return_can_reflag_immediately():
+    cd = {}
+    out = rotate.fallback_flags(four(a=0.7), {"a": 0.0}, 5.0, set(), cd)
+    assert out["a"] is None and cd == {}
+    out = rotate.fallback_flags(four(a=0.1), out, 6.0, set(), cd)
+    assert out["a"] == 6.0

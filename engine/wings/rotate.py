@@ -5,7 +5,12 @@ from engine.wings import dials
 from engine.wings.assess import dist
 
 
-def fallback_flags(member_views, prev, now, exclude):
+def fallback_flags(member_views, prev, now, exclude, cooldown=None):
+    """`cooldown` (name -> time) is caller-owned state, updated in place: a
+    fallback ended by the rotate_max_s timeout bars a new one until
+    now + rotate_max_s. Shield-recovery returns set no cooldown."""
+    if cooldown is None:
+        cooldown = {}
     views = list(member_views)
     n = len(views)
     cap = 0 if n <= 1 else min(
@@ -16,8 +21,10 @@ def fallback_flags(member_views, prev, now, exclude):
         since = prev.get(v.name)
         if since is None or v.name in exclude:
             continue
-        if v.shield >= dials.get("rotate_in_shield") \
-                or now - since >= dials.get("rotate_max_s"):
+        if v.shield >= dials.get("rotate_in_shield"):
+            continue
+        if now - since >= dials.get("rotate_max_s"):
+            cooldown[v.name] = now + dials.get("rotate_max_s")
             continue
         keep.append(v)
     keep.sort(key=lambda v: (v.shield, v.name))
@@ -28,6 +35,7 @@ def fallback_flags(member_views, prev, now, exclude):
     if room > 0:
         fresh = [v for v in views
                  if v.name not in exclude and prev.get(v.name) is None
+                 and now >= cooldown.get(v.name, -1.0)
                  and v.shield < dials.get("rotate_out_shield")
                  and v.hull >= dials.get("desperate_hull")]
         fresh.sort(key=lambda v: (v.shield, v.name))
