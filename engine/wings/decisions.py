@@ -56,6 +56,8 @@ class Context:
     feint_ready: bool = True
     feint_quiet_s: float = 0.0
     decision_age_s: float = 0.0
+    # The ally a running flank swings round (a latched flank keeps it).
+    flank_ally: Optional[str] = None
 
 
 @dataclass
@@ -415,18 +417,31 @@ def _odds(a) -> float:
     return a.ours / a.theirs if a.theirs > 0 else math.inf
 
 
+def _ally_enemies(ctx, a):
+    """Our enemies within engage_gu of ally a's anchor, nearest it first
+    (ties by name). Memoised per ally: score and choose read the same."""
+    engage = dials.get("engage_gu")
+    return _memo(
+        ctx, ("ally_enemies", a.wing_id), (ctx.enemies, a.anchor, engage),
+        lambda: sorted(
+            (e for e in ctx.enemies if assess.dist(e.pos, a.anchor) <= engage),
+            key=lambda e: (assess.dist(e.pos, a.anchor), e.name)))
+
+
 def _reinforce_ally(ctx):
     """The ally to reinforce, or None. Latched (a current reinforce on
     ctx.reinforce_ally): only the end conditions -- arrival within leash of
     its anchor, it no longer in trouble or gone, the reinforce_max_s cap.
     Otherwise the entry gate: we are not engaged or can spare the help, and
     the in-trouble ally within reinforce_range_gu with the worst odds
-    (ties: nearest), skipping allies on cooldown."""
+    (ties: nearest), skipping allies on cooldown. Either way an ally none
+    of our enemies is near gives no far primary, so it is no reinforce."""
     leash = dials.get("leash_gu")
     if ctx.current == "reinforce" and ctx.reinforce_ally is not None:
         a = _ally(ctx, ctx.reinforce_ally)
         if (a is None or not _allies.in_trouble(a) or _to(ctx, a) <= leash
-                or ctx.decision_age_s >= dials.get("reinforce_max_s")):
+                or ctx.decision_age_s >= dials.get("reinforce_max_s")
+                or not _ally_enemies(ctx, a)):
             return None
         return a
     if _near(ctx):
@@ -436,7 +451,7 @@ def _reinforce_ally(ctx):
     reach = dials.get("reinforce_range_gu")
     cands = [a for a in ctx.allies
              if a.wing_id not in ctx.reinforce_done and _allies.in_trouble(a)
-             and leash < _to(ctx, a) <= reach]
+             and leash < _to(ctx, a) <= reach and _ally_enemies(ctx, a)]
     if not cands:
         return None
     return min(cands, key=lambda a: (_odds(a), _to(ctx, a), a.wing_id))
@@ -452,12 +467,7 @@ class Reinforce:
         a = _reinforce_ally(ctx)
         if a is None:
             return swarm_choice(ctx)
-        engage = dials.get("engage_gu")
-        theirs = sorted(
-            (e for e in ctx.enemies if assess.dist(e.pos, a.anchor) <= engage),
-            key=lambda e: (assess.dist(e.pos, a.anchor), e.name))
-        if not theirs:
-            return Choice(None, (), far=True, ally=a.wing_id)
+        theirs = _ally_enemies(ctx, a)
         return Choice(theirs[0].name, tuple(e.name for e in theirs[1:3]),
                       far=True, ally=a.wing_id)
 
@@ -521,14 +531,18 @@ def _closing_centroid(ctx, a):
 def _screen_target(ctx):
     """(ally, enemy centroid) to screen, or None. No latch: we are not
     engaged at strength_frac >= 0.6; the ally is weak (strength_frac < 0.5,
-    or withdrawing); the enemies watched near it have not reached it (their
-    centroid is beyond engage_gu). The weakest such ally, ties nearest."""
+    or withdrawing) and within reinforce_range_gu of us; the enemies watched
+    near it have not reached it (their centroid is beyond engage_gu). The
+    weakest such ally, ties nearest."""
     if _near(ctx) or _strength_frac(ctx) < 0.6:
         return None
     engage = dials.get("engage_gu")
+    reach = dials.get("reinforce_range_gu")
     best = None
     for a in ctx.allies:
         if not (a.strength_frac < 0.5 or a.decision == "withdraw"):
+            continue
+        if _to(ctx, a) > reach:
             continue
         c = _closing_centroid(ctx, a)
         if c is None or assess.dist(c, a.anchor) <= engage:
@@ -563,14 +577,18 @@ def _flank_target(ctx):
     ally's status every tick). Entry adds: the ally is not in trouble and
     within reinforce_range_gu; latched (a current flank) skips those two,
     so an ally slipping into trouble mid-swing does not flip us to
-    reinforce. The nearest such ally."""
+    reinforce, and keeps its ally (ctx.flank_ally) when it has one. The
+    nearest such ally."""
     if _near(ctx):
         return None
     latched = ctx.current == "flank"
+    held = ctx.flank_ally if latched else None
     reach = dials.get("reinforce_range_gu")
     leash = dials.get("leash_gu")
     best = None
     for a in ctx.allies:
+        if held is not None and a.wing_id != held:
+            continue
         if not a.engaged or a.enemy_centroid is None:
             continue
         if not latched and (_allies.in_trouble(a) or _to(ctx, a) > reach):

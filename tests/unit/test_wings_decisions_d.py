@@ -107,8 +107,9 @@ def test_reinforce_zero_when_already_arrived():
 def test_reinforce_skips_ally_in_done():
     ctx = _ctx(_ally_enemies(), [_trouble()], reinforce_done=frozenset({"B"}))
     assert _by("reinforce").score(ctx) == 0.0
-    two = _ctx(_ally_enemies(), [_trouble(),
-                                 _trouble("C", (0.0, 900.0, 0.0))],
+    # Reinforce needs an enemy near the ally (its far primary): c1 by C.
+    two = _ctx(_ally_enemies() + [V("c1", 0, 950)],
+               [_trouble(), _trouble("C", (0.0, 900.0, 0.0))],
                reinforce_done=frozenset({"B"}))
     assert _by("reinforce").score(two) == 1.25
     assert _by("reinforce").choose(two).ally == "C"
@@ -171,11 +172,12 @@ def test_reinforce_choose_far_primary_nearest_ally_anchor():
 
 
 def test_reinforce_choose_worst_odds_then_nearest():
+    by_c = _ally_enemies() + [V("c1", 0, 1250)]
     worse = _trouble("C", (0.0, 1200.0, 0.0), ours=0.5)
-    ctx = _ctx(_ally_enemies(), [_trouble(), worse])
+    ctx = _ctx(by_c, [_trouble(), worse])
     assert _by("reinforce").choose(ctx).ally == "C"
     tie_far = _trouble("C", (0.0, 1200.0, 0.0))
-    ctx = _ctx(_ally_enemies(), [tie_far, _trouble()])
+    ctx = _ctx(by_c, [tie_far, _trouble()])
     assert _by("reinforce").choose(ctx).ally == "B"
 
 
@@ -430,15 +432,64 @@ def test_flank_choose_keeps_swarm_primary():
 def test_no_flip_between_reinforce_and_flank():
     trouble = _fair(ours=1.0)
     fair = _fair()
-    assert decisions.pick(_ctx([], [trouble], anchor=US)).name == "reinforce"
-    assert decisions.pick(_ctx([], [fair], anchor=US)).name == "flank"
+    # The ally's enemy at C (300 GU from it, 670 from us): reinforce's far
+    # primary, never near us.
+    ec = [V("ec", 600)]
+    assert decisions.pick(_ctx(ec, [trouble], anchor=US)).name == "reinforce"
+    assert decisions.pick(_ctx(ec, [fair], anchor=US)).name == "flank"
     # A current reinforce whose ally recovers ends (score 0); the next
     # pick is flank, a decision of its own, not a stickiness flip.
-    rec = _ctx([], [fair], anchor=US, current="reinforce",
+    rec = _ctx(ec, [fair], anchor=US, current="reinforce",
                reinforce_ally="B")
     assert _by("reinforce").score(rec) == 0.0
     assert decisions.pick(rec).name == "flank"
     # And the latched flank holds when the ally slips into trouble: no
     # flip back to reinforce tick to tick.
-    back = _ctx([], [trouble], anchor=US, current="flank")
+    back = _ctx(ec, [trouble], anchor=US, current="flank")
     assert decisions.pick(back).name == "flank"
+
+
+# --- Task 3 review items ---------------------------------------------------
+
+def test_reinforce_zero_without_a_primary():
+    # The ally is in trouble but none of OUR enemies is near its anchor:
+    # reinforce would have no far primary to intercept.
+    ctx = _ctx([V("far", 3000)], [_trouble()])
+    assert _by("reinforce").score(ctx) == 0.0
+    latched = _latched([V("far", 3000)], [_trouble()])
+    assert _by("reinforce").score(latched) == 0.0
+    # Another ally in trouble that does have enemies near it is picked.
+    two = _ctx(_ally_enemies(), [_trouble("A", (0.0, 900.0, 0.0), ours=0.1),
+                                 _trouble()])
+    assert _by("reinforce").choose(two).ally == "B"
+
+
+def test_screen_zero_when_ally_beyond_reinforce_range():
+    far = _weak(anchor=(1600.0, 0.0, 0.0))
+    enemies = [V("c1", 2100), V("c2", 2100, 20)]
+    assert _by("screen").score(_ctx(enemies, [far])) == 0.0
+    dials._dials["reinforce_range_gu"] = 1700.0
+    assert _by("screen").score(_ctx(enemies, [far])) == 1.15
+
+
+def test_flank_latch_keeps_its_ally():
+    near_b = _fair()
+    near_c = _fair("C", anchor=(0.0, 900.0, 0.0), centroid=(0.0, 700.0, 0.0))
+    ctx = _ctx([], [near_b, near_c], anchor=(0.0, 400.0, 0.0),
+               current="flank", flank_ally="B")
+    c = _by("flank").choose(ctx)
+    assert c.ally == "B"
+    # Not latched: picks the nearest afresh (C).
+    fresh = _ctx([], [near_b, near_c], anchor=(0.0, 400.0, 0.0))
+    assert _by("flank").choose(fresh).ally == "C"
+
+
+def test_flank_latched_ally_gone_ends():
+    ctx = _ctx([], [_fair("C", anchor=(0.0, 900.0, 0.0),
+                          centroid=(0.0, 700.0, 0.0))],
+               anchor=US, current="flank", flank_ally="B")
+    assert _by("flank").score(ctx) == 0.0
+
+
+def test_flank_ally_default():
+    assert _ctx().flank_ally is None

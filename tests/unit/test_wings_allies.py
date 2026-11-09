@@ -95,3 +95,57 @@ def test_geometry_reads_dials_at_use():
     got = allies.flank_point((0, 300, 0), (900, 0, 0), (600, 0, 0))
     assert _close(got, (600, 100, 0))
     dials.reset()
+
+
+# --- hold formation (Phase D Task 3) ----------------------------------------
+
+def _d(a, b):
+    return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def test_formation_one_member_is_the_hold_point():
+    assert allies.formation_points((1, 2, 3), (100, 2, 3), 1, 30.0) == [
+        (1.0, 2.0, 3.0)]
+    assert allies.formation_points((1, 2, 3), (100, 2, 3), 0, 30.0) == []
+
+
+def test_formation_two_members_centre_and_one_ring_point():
+    hp, toward = (10.0, 0.0, 0.0), (500.0, 0.0, 0.0)
+    pts = allies.formation_points(hp, toward, 2, 30.0)
+    assert len(pts) == 2
+    assert _close(pts[0], hp)
+    off = tuple(p - h for p, h in zip(pts[1], hp))
+    assert abs(_d(pts[1], hp) - 30.0) < 1e-6
+    assert abs(_dot(off, (1.0, 0.0, 0.0))) < 1e-6   # perpendicular
+
+
+def test_formation_eight_members_evenly_on_the_ring():
+    hp, toward = (0.0, 100.0, 0.0), (300.0, 500.0, -200.0)
+    axis = tuple(t - h for t, h in zip(toward, hp))
+    pts = allies.formation_points(hp, toward, 8, 30.0)
+    assert len(pts) == 8 and _close(pts[0], hp)
+    ring = pts[1:]
+    for p in ring:
+        off = tuple(a - b for a, b in zip(p, hp))
+        assert abs(_d(p, hp) - 30.0) < 1e-6
+        assert abs(_dot(off, axis)) < 1e-6
+    # Evenly spaced: every neighbour chord equal (7 points, 2 pi / 7).
+    chord = 2.0 * 30.0 * __import__("math").sin(__import__("math").pi / 7)
+    for i in range(7):
+        assert abs(_d(ring[i], ring[(i + 1) % 7]) - chord) < 1e-6
+    # Centred on the hold point.
+    mean = tuple(sum(p[k] for p in ring) / 7 for k in range(3))
+    assert _close(mean, hp)
+
+
+def test_formation_degenerate_toward_any_perpendicular():
+    hp = (5.0, 5.0, 5.0)
+    pts = allies.formation_points(hp, hp, 4, 20.0)
+    assert len(pts) == 4 and _close(pts[0], hp)
+    for p in pts[1:]:
+        assert abs(_d(p, hp) - 20.0) < 1e-6
+    assert len({tuple(round(c, 6) for c in p) for p in pts}) == 4

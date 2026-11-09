@@ -92,3 +92,33 @@ def lure_point(our_anchor, f_anchor) -> tuple:
     """F + unit(our - F) * feint_stop_gu: just short of F, on our side."""
     return _along(f_anchor, _sub(our_anchor, f_anchor),
                   dials.get("feint_stop_gu"))
+
+
+def _unit(v):
+    n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def formation_points(hold_point, toward, n, spread_gu) -> list:
+    """The hold formation (spec §5): index 0 is the hold point itself (the
+    commander's); the other n - 1 sit evenly spaced on a ring of radius
+    spread_gu about it, in the plane perpendicular to toward - hold_point
+    (any perpendicular plane when the two coincide)."""
+    if n <= 0:
+        return []
+    hp = tuple(float(x) for x in hold_point)
+    axis = _sub(toward, hp)
+    if max(abs(c) for c in axis) <= 0.0:
+        u, v = (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)
+    else:
+        w = _unit(axis)
+        u = _unit(_any_perp(w))
+        v = (w[1] * u[2] - w[2] * u[1], w[2] * u[0] - w[0] * u[2],
+             w[0] * u[1] - w[1] * u[0])
+    out = [hp]
+    k = n - 1
+    for i in range(k):
+        a = 2.0 * math.pi * i / k
+        c, s = math.cos(a) * spread_gu, math.sin(a) * spread_gu
+        out.append(tuple(hp[j] + u[j] * c + v[j] * s for j in range(3)))
+    return out

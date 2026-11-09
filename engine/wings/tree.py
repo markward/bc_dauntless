@@ -5,13 +5,18 @@
       1  Conditional[ConditionWing(ship, "ram")]     -> Ram (current target)
       2  Conditional[ConditionWing(ship, "flee")]    -> Flee (enemy group)
       3  Conditional[ConditionWing(ship, "withdraw")] -> AvoidObstacles(WingMoveTo)
-      4  Conditional[ConditionWing(ship, "guard")]    -> AvoidObstacles(WingMoveTo)
-      5  Conditional[ConditionWing(ship, "fallback")] -> AvoidObstacles(WingMoveTo)
-      6  Conditional[ConditionWing(ship, "reserve")] -> AvoidObstacles(WingMoveTo)
-      7  Conditional[ConditionWing(ship, "attack")]  -> WingFire (the wing's own
+      4  Conditional[ConditionWing(ship, "hold")]     -> AvoidObstacles(WingMoveTo)
+      5  Conditional[ConditionWing(ship, "guard")]    -> AvoidObstacles(WingMoveTo)
+      6  Conditional[ConditionWing(ship, "fallback")] -> AvoidObstacles(WingMoveTo)
+      7  Conditional[ConditionWing(ship, "reserve")] -> AvoidObstacles(WingMoveTo)
+      8  Conditional[ConditionWing(ship, "attack")]  -> WingFire (the wing's own
                                    stock FireScript) -> AvoidObstacles(WingMoveTo)
-      8  Conditional[ConditionWing(ship, "rejoin")]  -> AvoidObstacles(WingRejoin)
-      9  <stock tree, unchanged>
+      9  Conditional[ConditionWing(ship, "rejoin")]  -> AvoidObstacles(WingRejoin)
+     10  <stock tree, unchanged>
+
+Hold (Phase D, spec 2026-11-09-wing-leaders-phase-d-design.md §5): every
+non-player member, the commander included, flies to its formation point
+round a screen, flank or feint hold point.
 
 Every condition is pushed by the brain (status 0/1); nothing here polls.
 The stock tree keeps its own preprocessors; its SelectTarget nodes are found
@@ -148,23 +153,24 @@ def wrap_tree(pShip, pStockTree, wing, fire_keywords=None):
     pRoot.SetInterruptable(1)
     pRoot.AddAI(_conditional(pShip, "WingRam", "ram", pRam), 1)
     pRoot.AddAI(_conditional(pShip, "WingFlee", "flee", pFlee), 2)
-    for sKind, iPriority in (("withdraw", 3), ("guard", 4), ("fallback", 5)):
+    for sKind, iPriority in (("withdraw", 3), ("hold", 4), ("guard", 5),
+                             ("fallback", 6)):
         pMove = avoiding("AvoidObstacles",
                          _plain(pShip, "Move" + sKind, "WingMoveTo"))
         pRoot.AddAI(_conditional(pShip, "Wing" + sKind.capitalize(), sKind,
                                  pMove), iPriority)
     pReserve = avoiding("AvoidObstacles",
                         _plain(pShip, "Movereserve", "WingMoveTo"))
-    pRoot.AddAI(_conditional(pShip, "WingReserve", "reserve", pReserve), 6)
+    pRoot.AddAI(_conditional(pShip, "WingReserve", "reserve", pReserve), 7)
     pWingFire = App.PreprocessingAI_Create(pShip, "WingFire")
     pWingFire.SetInterruptable(1)
     pWingFire.SetPreprocessingMethod(pFire, "Update")
     pWingFire.SetContainedAI(avoiding("AvoidObstacles",
                                       _plain(pShip, "Moveattack",
                                              "WingMoveTo")))
-    pRoot.AddAI(_conditional(pShip, "WingAttack", "attack", pWingFire), 7)
-    pRoot.AddAI(_conditional(pShip, "WingRejoin", "rejoin", pAvoidObstacles), 8)
-    pRoot.AddAI(pStockTree, 9)
+    pRoot.AddAI(_conditional(pShip, "WingAttack", "attack", pWingFire), 8)
+    pRoot.AddAI(_conditional(pShip, "WingRejoin", "rejoin", pAvoidObstacles), 9)
+    pRoot.AddAI(pStockTree, 10)
     return pRoot
 
 

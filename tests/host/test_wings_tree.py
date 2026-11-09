@@ -71,7 +71,7 @@ def _branches(root):
 
 
 def _rejoin_ai(root):
-    return _branches(root)[8].GetContainedAI().GetContainedAI()
+    return _branches(root)[9].GetContainedAI().GetContainedAI()
 
 
 def _activate_builders(ship):
@@ -93,10 +93,10 @@ def test_wrapped_tree_shape():
     root = ships["m2"].GetAI()
     member = roster.member("m2")
     assert isinstance(root, aimod.PriorityListAI)
-    assert [p for p, _a in root._ais] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert [p for p, _a in root._ais] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     b = _branches(root)
-    assert b[9] is stock["m2"]
-    for prio, kind in ((1, "ram"), (2, "flee"), (8, "rejoin")):
+    assert b[10] is stock["m2"]
+    for prio, kind in ((1, "ram"), (2, "flee"), (9, "rejoin")):
         cond_ai = b[prio]
         assert isinstance(cond_ai, aimod.ConditionalAI)
         (cond,) = cond_ai.GetConditions()
@@ -113,7 +113,7 @@ def test_wrapped_tree_shape():
     flee = b[2].GetContainedAI()
     assert isinstance(flee, aimod.PlainAI) and flee.GetScriptModule() == "Flee"
     assert flee.GetScriptInstance().pFleeObjectGroup is wing.enemy_group
-    avoid = b[8].GetContainedAI()
+    avoid = b[9].GetContainedAI()
     assert isinstance(avoid, aimod.PreprocessingAI)
     assert avoid.GetName() == "AvoidObstacles"
     import AI.Preprocessors
@@ -127,7 +127,7 @@ def test_wrapped_tree_shape():
     script = rejoin.GetScriptInstance()
     assert isinstance(script, AI.PlainAI.WingRejoin.WingRejoin)
     assert isinstance(script, AI.PlainAI.FollowObject.FollowObject)
-    for node in [root, b[1], ram, b[2], flee, b[8], avoid, rejoin]:
+    for node in [root, b[1], ram, b[2], flee, b[9], avoid, rejoin]:
         assert node.IsInterruptable() == 1
 
 
@@ -145,17 +145,17 @@ def test_wrap_tree_branch_order_c():
     _wing, ships, stock = _scene()
     root = ships["m2"].GetAI()
     names = [a.GetName() for _p, a in root._ais]
-    assert names[:8] == ["WingRam", "WingFlee", "WingWithdraw", "WingGuard",
-                         "WingFallback", "WingReserve", "WingAttack",
-                         "WingRejoin"]
-    assert root._ais[8][1] is stock["m2"]
+    assert names[:9] == ["WingRam", "WingFlee", "WingWithdraw", "WingHold",
+                         "WingGuard", "WingFallback", "WingReserve",
+                         "WingAttack", "WingRejoin"]
+    assert root._ais[9][1] is stock["m2"]
     b = _branches(root)
-    attack = b[7].GetContainedAI()
+    attack = b[8].GetContainedAI()
     assert attack.GetName() == "WingFire"
     assert attack.GetContainedAI().GetName() == "AvoidObstacles"
     assert attack.GetContainedAI().GetContainedAI().GetScriptModule() \
         == "WingMoveTo"
-    reserve = b[6].GetContainedAI()
+    reserve = b[7].GetContainedAI()
     assert reserve.GetName() == "AvoidObstacles"
     assert reserve.GetContainedAI().GetScriptModule() == "WingMoveTo"
 
@@ -174,7 +174,7 @@ def test_attack_branch_holds_stock_firescript_with_weapons():
     from engine.appc import ai_optimized
     assert ai_native.preprocessor_is_stock(fs, "FireScript",
                                            ai_optimized._FIRE_METHODS)
-    node = _branches(ships["m2"].GetAI())[7].GetContainedAI()
+    node = _branches(ships["m2"].GetAI())[8].GetContainedAI()
     # the node binds a non-lethal alias that shares the instance's state
     assert node.GetPreprocessingInstance().__dict__ is fs.__dict__
 
@@ -192,7 +192,7 @@ def test_fire_keywords_from_difficulty():
 def test_condition_push_activates_branch():
     _wing, ships, _stock = _scene()
     root = ships["m2"].GetAI()
-    rejoin_branch = _branches(root)[8]
+    rejoin_branch = _branches(root)[9]
     ai_driver.tick_ai(root, 1.0)
     assert rejoin_branch._status == AIC.US_DORMANT
     roster.member("m2").conditions["rejoin"].SetStatus(1)
@@ -207,7 +207,8 @@ def test_wrapped_tree_phase_b_order():
     member = roster.member("m2")
     b = _branches(root)
     import AI.Preprocessors
-    for prio, kind in ((3, "withdraw"), (4, "guard"), (5, "fallback")):
+    for prio, kind in ((3, "withdraw"), (4, "hold"), (5, "guard"),
+                       (6, "fallback"), (7, "reserve")):
         cond_ai = b[prio]
         assert isinstance(cond_ai, aimod.ConditionalAI)
         (cond,) = cond_ai.GetConditions()
@@ -226,11 +227,12 @@ def test_wrapped_tree_phase_b_order():
         assert move.GetScriptModule() == "WingMoveTo"
         for node in (cond_ai, avoid, move):
             assert node.IsInterruptable() == 1
-    assert b[9] is stock["m2"]
+    assert b[10] is stock["m2"]
 
 
-@pytest.mark.parametrize("kind,prio", [("withdraw", 3), ("guard", 4),
-                                       ("fallback", 5)])
+@pytest.mark.parametrize("kind,prio", [("withdraw", 3), ("hold", 4),
+                                       ("guard", 5), ("fallback", 6),
+                                       ("reserve", 7)])
 def test_new_kinds_activate_branch(kind, prio):
     _wing, ships, _stock = _scene()
     root = ships["m2"].GetAI()

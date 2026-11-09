@@ -103,6 +103,24 @@ class Wing:
     # end of a led tick (None when leaderless, away or standing down).
     side: str | None = None
     status: object = None
+    # Phase D latches and cooldowns (spec §4-§6), kept across ticks and fed
+    # into the Context: the ally a running reinforce helps and when it
+    # started; ally -> game time its reinforce cooldown ends (set only when
+    # a reinforce ends by its cap); the ally a running feint lures toward,
+    # when the feint cooldown ends (it starts whenever a feint ends) and
+    # since when no enemy has been within engage_gu while feinting; the
+    # ally a running flank swings round; when the current decision became
+    # current; and the last hold (kind, ally, hold point, {name: ring
+    # index}) for the formation's incumbency.
+    reinforce_ally: str | None = None
+    reinforce_since: float | None = None
+    reinforce_done: dict = field(default_factory=dict)
+    feint_ally: str | None = None
+    feint_cooldown_until: float = -1.0
+    feint_quiet_since: float | None = None
+    flank_ally: str | None = None
+    decision_since: float = 0.0
+    hold_prev: tuple | None = None
 
 
 _wings: dict[str, Wing] = {}
