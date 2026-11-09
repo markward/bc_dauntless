@@ -71,7 +71,7 @@ def _branches(root):
 
 
 def _rejoin_ai(root):
-    return _branches(root)[3].GetContainedAI().GetContainedAI()
+    return _branches(root)[6].GetContainedAI().GetContainedAI()
 
 
 def _activate_builders(ship):
@@ -93,10 +93,10 @@ def test_wrapped_tree_shape():
     root = ships["m2"].GetAI()
     member = roster.member("m2")
     assert isinstance(root, aimod.PriorityListAI)
-    assert [p for p, _a in root._ais] == [1, 2, 3, 4]
+    assert [p for p, _a in root._ais] == [1, 2, 3, 4, 5, 6, 7]
     b = _branches(root)
-    assert b[4] is stock["m2"]
-    for prio, kind in ((1, "ram"), (2, "flee"), (3, "rejoin")):
+    assert b[7] is stock["m2"]
+    for prio, kind in ((1, "ram"), (2, "flee"), (6, "rejoin")):
         cond_ai = b[prio]
         assert isinstance(cond_ai, aimod.ConditionalAI)
         (cond,) = cond_ai.GetConditions()
@@ -113,7 +113,7 @@ def test_wrapped_tree_shape():
     flee = b[2].GetContainedAI()
     assert isinstance(flee, aimod.PlainAI) and flee.GetScriptModule() == "Flee"
     assert flee.GetScriptInstance().pFleeObjectGroup is wing.enemy_group
-    avoid = b[3].GetContainedAI()
+    avoid = b[6].GetContainedAI()
     assert isinstance(avoid, aimod.PreprocessingAI)
     assert avoid.GetName() == "AvoidObstacles"
     import AI.Preprocessors
@@ -127,7 +127,7 @@ def test_wrapped_tree_shape():
     script = rejoin.GetScriptInstance()
     assert isinstance(script, AI.PlainAI.WingRejoin.WingRejoin)
     assert isinstance(script, AI.PlainAI.FollowObject.FollowObject)
-    for node in [root, b[1], ram, b[2], flee, b[3], avoid, rejoin]:
+    for node in [root, b[1], ram, b[2], flee, b[6], avoid, rejoin]:
         assert node.IsInterruptable() == 1
 
 
@@ -144,13 +144,54 @@ def test_condition_for_a_non_member_registers_nothing():
 def test_condition_push_activates_branch():
     _wing, ships, _stock = _scene()
     root = ships["m2"].GetAI()
-    rejoin_branch = _branches(root)[3]
+    rejoin_branch = _branches(root)[6]
     ai_driver.tick_ai(root, 1.0)
     assert rejoin_branch._status == AIC.US_DORMANT
     roster.member("m2").conditions["rejoin"].SetStatus(1)
     ai_driver.tick_ai(root, 2.0)
     assert rejoin_branch._status == AIC.US_ACTIVE
     assert _rejoin_ai(root).GetScriptInstance().pcFollowObjectName == "m1"
+
+
+def test_wrapped_tree_phase_b_order():
+    _wing, ships, stock = _scene()
+    root = ships["m2"].GetAI()
+    member = roster.member("m2")
+    b = _branches(root)
+    import AI.Preprocessors
+    for prio, kind in ((3, "withdraw"), (4, "guard"), (5, "fallback")):
+        cond_ai = b[prio]
+        assert isinstance(cond_ai, aimod.ConditionalAI)
+        (cond,) = cond_ai.GetConditions()
+        assert cond.GetModuleName() == "Conditions.ConditionWing"
+        assert cond.GetArguments() == ("m2", kind)
+        assert member.conditions[kind] is cond
+        assert cond.GetStatus() == 0
+        assert ai_driver._memoisable_evalfunc(cond_ai.GetEvaluationFunction())
+        avoid = cond_ai.GetContainedAI()
+        assert isinstance(avoid, aimod.PreprocessingAI)
+        assert avoid.GetName() == "AvoidObstacles"
+        assert isinstance(avoid.GetPreprocessingInstance(),
+                          AI.Preprocessors.AvoidObstacles)
+        move = avoid.GetContainedAI()
+        assert isinstance(move, aimod.PlainAI)
+        assert move.GetScriptModule() == "WingMoveTo"
+        for node in (cond_ai, avoid, move):
+            assert node.IsInterruptable() == 1
+    assert b[7] is stock["m2"]
+
+
+@pytest.mark.parametrize("kind,prio", [("withdraw", 3), ("guard", 4),
+                                       ("fallback", 5)])
+def test_new_kinds_activate_branch(kind, prio):
+    _wing, ships, _stock = _scene()
+    root = ships["m2"].GetAI()
+    branch = _branches(root)[prio]
+    ai_driver.tick_ai(root, 1.0)
+    assert branch._status == AIC.US_DORMANT
+    roster.member("m2").conditions[kind].SetStatus(1)
+    ai_driver.tick_ai(root, 2.0)
+    assert branch._status == AIC.US_ACTIVE
 
 
 # ── SelectTarget discovery ─────────────────────────────────────────────────

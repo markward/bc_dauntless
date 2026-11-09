@@ -30,6 +30,7 @@ _WINGS = _HERE / "wing_library"
 _CLAIMS = {
     "custom.nanofxv2": _HERE / "fx_api",
     "ai.plainai.wingrejoin": _WINGS / "AI" / "PlainAI" / "WingRejoin.py",
+    "ai.plainai.wingmoveto": _WINGS / "AI" / "PlainAI" / "WingMoveTo.py",
     "conditions.conditionwing": _WINGS / "Conditions" / "ConditionWing.py",
     "dauntlesswings": _WINGS / "DauntlessWings.py",
 }
