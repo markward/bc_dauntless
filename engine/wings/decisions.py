@@ -643,17 +643,45 @@ def reset_registry() -> None:
     _registry[:] = _stock()
 
 
-def pick(ctx: Context):
+# Phase A's decisions: stickiness damps flapping among these only.
+BASELINE = frozenset({"swarm_weakest", "swarm_commander", "regroup"})
+
+
+def _best(scored, current, bonus):
     """Highest score wins. The current decision gets the stickiness bonus
     and wins ties, but only while it scores above 0: a decision whose own
-    rule says stop (an ended Withdraw) must never win on stickiness."""
-    bonus = dials.get("stickiness")
+    rule says stop (an ended Withdraw) must never win on stickiness. On a
+    tie otherwise, registration order (the earlier wins)."""
     best, best_score = None, None
-    for d in _registry:
-        s = d.score(ctx)
-        sticky = d.name == ctx.current and s > 0.0
+    for d, s in scored:
+        sticky = d.name == current and s > 0.0
         if sticky:
             s += bonus
         if best is None or s > best_score or (s == best_score and sticky):
             best, best_score = d, s
     return best
+
+
+def pick(ctx: Context):
+    """The decision for this tick; each score is read once.
+
+    A current non-baseline decision (or none): _best over everything, the
+    current with its stickiness bonus. A current BASELINE decision: the
+    bonus only damps switches between baseline decisions (_best over
+    them); a non-baseline decision wins if its raw score is strictly above
+    the highest raw baseline score (ruling 2026-11-09: a sticky swarm at
+    1.0 + 0.25 otherwise shut out every Phase C/D decision but disable)."""
+    bonus = dials.get("stickiness")
+    scored = [(d, d.score(ctx)) for d in _registry]
+    base = [(d, s) for d, s in scored if d.name in BASELINE]
+    if ctx.current not in BASELINE or not base:
+        return _best(scored, ctx.current, bonus)
+    winner = _best(base, ctx.current, bonus)
+    others = [(d, s) for d, s in scored if d.name not in BASELINE]
+    if others:
+        top = max(s for _d, s in base)
+        challenger, raw = max(
+            others, key=lambda ds: ds[1])      # max keeps the first on ties
+        if raw > top:
+            return challenger
+    return winner

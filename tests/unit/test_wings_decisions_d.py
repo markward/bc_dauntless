@@ -2,6 +2,8 @@
 2026-11-09-wing-leaders-phase-d-design.md §4-§7). Pure."""
 import math
 
+import pytest
+
 from engine.wings import dials, decisions
 from engine.wings.allies import WingStatus
 from engine.wings.assess import ShipView
@@ -493,3 +495,87 @@ def test_flank_latched_ally_gone_ends():
 
 def test_flank_ally_default():
     assert _ctx().flank_ally is None
+
+
+# --- stickiness only damps baseline switches (ruling, Task 3 concern 1) ---
+
+class _Fixed:
+    def __init__(self, name, value):
+        self.name, self.value = name, value
+
+    def score(self, ctx):
+        return self.value
+
+    def choose(self, ctx):
+        return decisions.Choice(None)
+
+
+_ORDER = ["regroup", "swarm_weakest", "swarm_commander", "protect",
+          "withdraw", "focus_face", "envelop", "disable", "reinforce",
+          "feint", "screen", "flank"]
+
+
+def _pick(monkeypatch, current, **scores):
+    """pick() over the stock names in stock order, each at a fixed score
+    (0 unless given)."""
+    monkeypatch.setattr(decisions, "_registry",
+                        [_Fixed(n, scores.get(n, 0.0)) for n in _ORDER])
+    return decisions.pick(_ctx(current=current)).name
+
+
+def test_baseline_current_loses_to_higher_raw_score(monkeypatch):
+    assert _pick(monkeypatch, "swarm_weakest", swarm_weakest=1.0,
+                 swarm_commander=0.3, focus_face=1.2) == "focus_face"
+
+
+@pytest.mark.parametrize("name,value", [
+    ("feint", 1.2), ("screen", 1.15), ("flank", 1.1), ("envelop", 1.05),
+    ("reinforce", 1.25)])
+def test_baseline_current_loses_to_each_phase_c_d_decision(
+        monkeypatch, name, value):
+    assert _pick(monkeypatch, "swarm_weakest", swarm_weakest=1.0,
+                 swarm_commander=0.3, **{name: value}) == name
+
+
+def test_baseline_vs_baseline_keeps_stickiness(monkeypatch):
+    assert _pick(monkeypatch, "swarm_weakest", swarm_weakest=1.0,
+                 swarm_commander=1.2) == "swarm_weakest"
+    assert _pick(monkeypatch, "swarm_weakest", swarm_weakest=1.0,
+                 swarm_commander=1.3) == "swarm_commander"
+
+
+def test_regroup_current_beats_lower_non_baseline(monkeypatch):
+    assert _pick(monkeypatch, "regroup", regroup=1.4, swarm_weakest=1.0,
+                 focus_face=1.2) == "regroup"
+
+
+def test_non_baseline_current_keeps_its_bonus(monkeypatch):
+    assert _pick(monkeypatch, "focus_face", swarm_weakest=1.0,
+                 focus_face=1.2, reinforce=1.25) == "focus_face"
+
+
+def test_non_baseline_must_beat_the_raw_baseline_top(monkeypatch):
+    # Equal is not strictly greater: the baseline winner stands.
+    assert _pick(monkeypatch, "swarm_weakest", swarm_weakest=1.0,
+                 envelop=1.0) == "swarm_weakest"
+    # The sticky baseline winner (weakest, 1.0 + 0.25) is not the raw top
+    # (commander 1.2): envelop 1.1 must beat 1.2, so weakest stands.
+    assert _pick(monkeypatch, "swarm_weakest", swarm_weakest=1.0,
+                 swarm_commander=1.2, envelop=1.1) == "swarm_weakest"
+    assert _pick(monkeypatch, "swarm_weakest", swarm_weakest=1.0,
+                 swarm_commander=1.2, envelop=1.21) == "envelop"
+
+
+def test_best_non_baseline_challenges(monkeypatch):
+    assert _pick(monkeypatch, "swarm_weakest", swarm_weakest=1.0,
+                 focus_face=1.2, reinforce=1.25) == "reinforce"
+    # A tie between challengers: registration order (focus_face first).
+    assert _pick(monkeypatch, "swarm_weakest", swarm_weakest=1.0,
+                 focus_face=1.2, feint=1.2) == "focus_face"
+
+
+def test_none_current_and_zero_current_unchanged(monkeypatch):
+    assert _pick(monkeypatch, None, swarm_weakest=1.0,
+                 focus_face=1.2) == "focus_face"
+    assert _pick(monkeypatch, "feint", swarm_weakest=1.0,
+                 feint=0.0) == "swarm_weakest"

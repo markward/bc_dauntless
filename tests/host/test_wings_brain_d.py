@@ -196,9 +196,8 @@ def test_reinforce_cap_puts_ally_on_cooldown(monkeypatch, now):
     brain.tick_wing(a)
     assert seen["a1"].reinforce_done == frozenset({"b"})
     assert a.decision != "reinforce"
-    # The cooldown is over: reinforce may enter again. Stickiness 0: a
-    # current swarm (1.0 + 0.25) ties reinforce's 1.25 and keeps winning.
-    dials._dials["stickiness"] = 0.0
+    # The cooldown is over: reinforce enters again over the current swarm
+    # (stickiness only damps baseline switches).
     now[0] = 150.0
     brain.tick_wing(b)
     brain.tick_wing(a)
@@ -655,3 +654,17 @@ def test_no_hold_pushes_hold_off(now):
     assert a.decision != "feint"
     for n in a.members:
         assert _status(n, "hold") == 0
+
+
+def test_reinforce_displaces_a_current_swarm(now):
+    """The live order: a wing's first tick comes before its ally has a
+    status, so it starts in swarm; once the ally publishes, reinforce
+    (1.25) must beat that swarm (1.0 + stickiness) -- stickiness only
+    damps baseline switches."""
+    a, b, _ships = _reinforce_scene()
+    brain.tick_wing(a)
+    assert a.decision == "swarm_weakest"
+    now[0] = 1.0
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert a.decision == "reinforce" and a.decision_since == 1.0
