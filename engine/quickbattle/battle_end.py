@@ -238,6 +238,7 @@ def begin(qb, plan) -> None:
     global _state, _qb, _outcome
     import App
     reset()
+    _guard("music hold release", lambda: App.g_kMusicManager.end_hold())
     _outcome = None
     conds, late = (), set()
     if plan is not None:
@@ -594,6 +595,59 @@ def _ship_destroyed(qb, orig, pObject, pEvent):
     return result
 
 
+def _wins_on_death(qb, ship) -> bool:
+    """Whether `ship`'s death, now that it is exploding, ends the armed battle
+    won: what _settle and check_win will decide at its ShipDestroyed, read
+    ahead. A Defeat condition it would meet means no; a Victory Ships
+    condition it would meet means yes; otherwise every enemy still counted
+    (g_iNumEnemies, late arrivals included) must already be exploding."""
+    import App
+    from engine.quickbattle import victory as vic
+    st = _state
+    if st is None or st.ended or not qb.bInSimulation or qb.bWonOrLost != 0:
+        return False
+    name = ship.GetName()
+    known = _ship_ids.get(name)
+    listed = known is None or ship.GetObjID() == known
+
+    def met_with(c):
+        if listed and name in c.names:
+            c = replace(c, destroyed=set(c.destroyed) | {name})
+        return c.met()
+    if any(c.side == vic.DEFEAT and met_with(c) for c in st.conditions):
+        return False
+    if any(c.side == vic.VICTORY and met_with(c) for c in st.conditions):
+        return True
+    dying = 0
+    for obj_id, entry in list(qb.g_kShips.items()):
+        if entry[2] != "Enemy":
+            continue
+        other = App.ShipClass_GetObjectByID(None, obj_id)
+        if other is not None and (other.IsDying() or other.IsDead()
+                                  or other.GetObjID() == ship.GetObjID()):
+            dying += 1
+    return qb.g_iNumEnemies - dying <= 0
+
+
+def _ship_exploding(qb, orig, pObject, pEvent):
+    """BC's ShipExploding (its EnemyBlewUp fanfare), then, for the kill that
+    wins the battle, the end-of-battle music hold: EnemyBlewUp in full, Win
+    alone from its end, the ambient after Win (music_manager.begin_end_hold).
+    A suggestion for the Win fanfare, not BC: the original never plays Win."""
+    import App
+    result = orig(pObject, pEvent)
+    ship = _guard("exploding ship cast",
+                  lambda: App.ShipClass_Cast(pEvent.GetDestination()))
+    entry = qb.g_kShips.get(ship.GetObjID()) if ship is not None else None
+    if entry is not None and entry[2] == "Enemy" \
+            and _guard("final kill", _wins_on_death, qb, ship):
+        import DynamicMusic
+        win = DynamicMusic.dsMusicTypes.get("Win")
+        if win:
+            _guard("music hold", lambda: App.g_kMusicManager.begin_end_hold(win))
+    return result
+
+
 def _take_outcome():
     global _outcome
     out, _outcome = _outcome, None
@@ -687,6 +741,8 @@ def install(qb) -> bool:
             _ship_destroyed(qb, orig, pObject, pEvent),
         "GenerateLoseSequence": lambda orig: lambda:
             _generate_lose_sequence(qb, orig),
+        "ShipExploding": lambda orig: lambda pObject, pEvent:
+            _ship_exploding(qb, orig, pObject, pEvent),
         "GenerateWinSequence": lambda orig: lambda pSequence=None:
             _generate_win_sequence(qb, orig, pSequence),
     }

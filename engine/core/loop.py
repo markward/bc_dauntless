@@ -73,6 +73,14 @@ class GameLoop:
         # the AI window, where BC drained its event queue (ShipClass.ProcessEvent).
         from engine.appc.ships import apply_pending_alert_levels
         apply_pending_alert_levels()
+        # ET_OBJECT_GROUP_CHANGED for groups edited since the last tick, one
+        # each, at the same boundary (ObjectGroup.deliver_changes).
+        from engine.appc.objects import ObjectGroup
+        ObjectGroup.deliver_changes()
+        # Condition events (ConditionEventCreator) queued since the last tick,
+        # after the group changes that so often cause them.
+        from engine.appc.ai import deliver_condition_events
+        deliver_condition_events()
         # Drive each bridge officer's CharacterClass animation queue one step --
         # the headless equivalent of host_loop._pump_character_queues. A
         # re-pointed CharacterAction (turn / glance / gesture / breathe / menu)
@@ -84,6 +92,9 @@ class GameLoop:
         # fires on_complete on the next drain. AI/Python-first ordering.
         with _prof.scope("gl.bridge_chars"):
             _pump_bridge_character_queues()
+        # An officer's waiting line starts as his previous one ends.
+        from engine.appc import crew_speech
+        crew_speech.bus().pump()
         # Per-tick proximity evaluation.  SDK conditions like
         # ConditionInRange register ProximityChecks; the per-tick sweep
         # fires events when objects cross the radius boundary.

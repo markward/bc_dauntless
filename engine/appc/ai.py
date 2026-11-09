@@ -1129,14 +1129,33 @@ class ConditionEventCreator(TGConditionHandler):
         return self._event
 
     def ConditionChanged(self, cond: TGCondition) -> None:
-        # Re-fire the stored event to its destination.  Headless: enqueue
-        # via the global event manager so handlers wired during mission
-        # init see it.  Self-contained — no external dispatcher needed.
+        # Queue the stored event; deliver_condition_events posts it at the
+        # tick boundary. BC's event queue delivers it after the code that
+        # changed the condition has finished, so a handler reads the status
+        # that code left, not a passing one. ConditionInRange.SetObjects
+        # (run on every ET_OBJECT_GROUP_CHANGED of its group) sets its status
+        # to 0, then back to 1 for each object already in range. Posted at
+        # once, DynamicMusic read the 0 and switched to Starting Ambient
+        # mid-fight, then back to a new combat track.
         if self._event is None:
             return
+        _pending_condition_events.append(self._event)
+
+
+# Events queued by ConditionEventCreator.ConditionChanged, oldest first.
+_pending_condition_events: list = []
+
+
+def deliver_condition_events() -> None:
+    """Post every queued condition event, in order. GameLoop.tick calls it
+    right after ObjectGroup.deliver_changes, whose handlers are the usual
+    source of a passing status. An event queued while these are delivered
+    goes out in the same call, as a queue drained to empty would."""
+    import App
+    while _pending_condition_events:
+        evt = _pending_condition_events.pop(0)
         try:
-            import App
-            App.g_kEventManager.AddEvent(self._event)
+            App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
             dev_mode.log_swallowed("AI add activation event", _e)
 
