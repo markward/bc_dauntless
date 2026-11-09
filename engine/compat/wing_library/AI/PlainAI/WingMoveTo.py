@@ -20,8 +20,12 @@ in the ship's set, the point is the slot, re-read from the target's live pose
 each Update: target position + R * body_dir * standoff (R's columns are
 right/forward/up). A target that is gone falls back to move_point.
 
-Holding the slot (final review I3): within _SLOW_GU of it the ship enters
-hold mode (member.slot_hold), and leaves it only past _LEAVE_GU. Holding,
+Holding the slot (final review I3): within the slot radius,
+min(_SLOW_GU, 0.25 x standoff), the ship enters hold mode
+(member.slot_hold), and leaves it only past twice that (ruling 2026-11-09:
+a fixed 20 in / 40 out is large beside a 48 GU standoff; 80 GU and up keep
+20 / 40). The approach slow-down uses the same radius with a slot.
+Holding,
 it turns to face the target and thrusts only by the slot offset along its
 nose, clamp(dot(forward, slot - here) / _SLOW_GU, 0, 1): nothing when the
 slot is behind or beside it. (Turning to the target while thrusting by the
@@ -34,7 +38,7 @@ import App
 
 _SLOW_GU = 20.0
 _STOP_GU = 2.0
-_LEAVE_GU = 40.0
+_SLOT_RADIUS_FRAC = 0.25
 
 
 class WingMoveTo:
@@ -53,13 +57,13 @@ class WingMoveTo:
         pShip.SetImpulse(fFraction, App.TGPoint3_GetModelForward(),
                          App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
 
-    def _Hold(self, member, fDistance):
-        """Hold mode with hysteresis: in within _SLOW_GU, out past
-        _LEAVE_GU."""
+    def _Hold(self, member, fDistance, fRadius):
+        """Hold mode with hysteresis: in within fRadius, out past twice
+        it."""
         if member.slot_hold:
-            member.slot_hold = fDistance <= _LEAVE_GU
+            member.slot_hold = fDistance <= 2.0 * fRadius
         else:
-            member.slot_hold = fDistance <= _SLOW_GU
+            member.slot_hold = fDistance <= fRadius
         return member.slot_hold
 
     def _SlotTarget(self, pShip, sName):
@@ -82,6 +86,7 @@ class WingMoveTo:
             return App.ArtificialIntelligence.US_DONE
         point = member.move_point
         vFace = None
+        fSlow = _SLOW_GU
         slot = member.slot
         if slot is not None:
             pTarget = self._SlotTarget(pShip, slot[0])
@@ -95,6 +100,7 @@ class WingMoveTo:
                      (R.GetCol(0), R.GetCol(1), R.GetCol(2))],
                     slot[1], slot[2])
                 vFace = vT
+                fSlow = min(_SLOW_GU, _SLOT_RADIUS_FRAC * slot[2])
         if point is None:
             self._Impulse(pShip, 0.0)
             return App.ArtificialIntelligence.US_ACTIVE
@@ -102,7 +108,7 @@ class WingMoveTo:
         fDistance = math.sqrt((point[0] - vHere.x) ** 2
                               + (point[1] - vHere.y) ** 2
                               + (point[2] - vHere.z) ** 2)
-        if vFace is not None and self._Hold(member, fDistance):
+        if vFace is not None and self._Hold(member, fDistance, fSlow):
             pShip.TurnTowardLocation(vFace)
             vFwd = pShip.GetWorldRotation().GetCol(1)
             fAhead = (vFwd.x * (point[0] - vHere.x)
@@ -115,9 +121,9 @@ class WingMoveTo:
         pShip.TurnTowardLocation(vDestination)
         if fDistance <= _STOP_GU:
             fFraction = 0.0
-        elif fDistance >= _SLOW_GU:
+        elif fDistance >= fSlow:
             fFraction = 1.0
         else:
-            fFraction = (fDistance - _STOP_GU) / (_SLOW_GU - _STOP_GU)
+            fFraction = (fDistance - _STOP_GU) / (fSlow - _STOP_GU)
         self._Impulse(pShip, fFraction)
         return App.ArtificialIntelligence.US_ACTIVE
