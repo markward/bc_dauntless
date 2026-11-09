@@ -171,6 +171,12 @@ public:
     std::uint64_t applied() const { return applied_; }
     void reset_counts() { applied_ = 0; }
 
+    // Drop the (type, field) kind cache and the kinds mapping it holds,
+    // with their strong references (native_combat.reset). Without it a
+    // class a session wrote through stays alive until another mapping is
+    // handed in; the next set_context rebuilds the cache.
+    void forget_kinds();
+
     // Implementation hooks (combat_write_apply.cc).
     struct Impl;
 

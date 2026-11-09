@@ -398,6 +398,10 @@ def reset() -> None:
             _h.combat_k2_abandon()
         _h.combat_k2_reset_counts()
         _h.combat_set_applier(None)
+        # ... and the binding's (type, field) kind cache, which keys every
+        # class it applied to strongly (a test's local class would outlive
+        # the test, as the Python caches above would).
+        _h.combat_apply_reset_kinds()
         _h.combat_k4_reset_counts()
         if _h.combat_k3_open():
             _h.combat_k3_abandon()

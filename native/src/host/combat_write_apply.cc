@@ -1389,6 +1389,8 @@ PyObject* registry_lookup(PyObject* registry, PyObject* h) {
 
 // ── WriteApplier ─────────────────────────────────────────────────────────
 
+void WriteApplier::forget_kinds() { reset_kind_cache(Py_None); }
+
 PyObject* WriteApplier::set_context(PyObject* ctx) {
     PyObject* next = nullptr;
     if (ctx != Py_None) {
