@@ -79,7 +79,8 @@ def test_battle_plan_orders_names_registries_and_levels():
     plan = sc.battle_plan(s, INDEX)
 
     assert plan.player == sc.PlayerOrder(ship_file="Galaxy", class_id="Galaxy",
-                                         registry="Dauntless", display_name="USS Dauntless")
+                                         registry="Dauntless", display_name="USS Dauntless",
+                                         group_id=pg.id)
     ids = [o.entry_id for o in plan.orders]
     assert ids == [esc.id, w.id, v.id, x.id]
     o_esc, o_w, o_v, o_x = plan.orders

@@ -367,6 +367,7 @@ class PlayerOrder:
     class_id: str
     registry: Optional[str]
     display_name: Optional[str]
+    group_id: Optional[str] = None     # the player's group (its wing)
 
 
 @dataclass(frozen=True)
@@ -456,7 +457,8 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
             distance_gu=(DISTANCE_KM[g.distance] / GU_TO_KM) if g.distance else None,
             ai_level=DIFFICULTY_LEVEL[g.difficulty],
             warp_in_s=g.warp_in_min * 60.0))
-    return BattlePlan(player=PlayerOrder(p_file, pce.ship_id, p_reg, names[0]),
+    return BattlePlan(player=PlayerOrder(p_file, pce.ship_id, p_reg, names[0],
+                                         group_id=scenario.player_group().id),
                       orders=tuple(orders),
                       victory=_victory_order(scenario, {o.entry_id for o in orders}),
                       # An enemy entry whose ship is not in the catalog spawns
