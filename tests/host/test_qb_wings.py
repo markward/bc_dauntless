@@ -3,8 +3,9 @@
 
 One wing per non-neutral group, armed from battle_end.begin: members are the
 ships spawned with QuickBattleAI / QuickBattleFriendlyAI (never station AI,
-never neutrals), the player joins its group's wing first in the chain, and
-every member's attack AI targets its wing's target group. km_targeting
+never neutrals). The player's own group is AI-led (Mark, 2026-11-09): the
+player is in no wing, and its group's chain is built from its AI ships. Every
+member's attack AI targets its wing's target group. km_targeting
 composes on top: a listed ship's priority reaches the wing group. Late
 arrivals join, outside the chain. End Combat and a mission swap put
 everything back.
@@ -77,10 +78,11 @@ def test_wings_armed_per_group(world):
     assert len(wings) == 3
     pw, w1, w2 = _wing_for(panel, 0), _wing_for(panel, 1), _wing_for(panel, 2)
     assert {pw.wing_id, w1.wing_id, w2.wing_id} == {w.wing_id for w in wings}
-    # The player's wing: the player first, counted in the 20%.
-    assert pw.members[player].is_player
-    assert set(pw.members) == {player} | set(escorts)
-    assert pw.chain == [player]                       # max(1, 5 // 5)
+    # The player's group is AI-led: the player is no member.
+    assert roster.wing_of(player) is None
+    assert set(pw.members) == set(escorts)
+    assert not any(m.is_player for m in pw.members.values())
+    assert len(pw.chain) == chain.chain_size(4) == 1 and pw.chain[0] in escorts
     assert pw.enemy_group is QB.pEnemies
     # Enemy wings: chains sized max(1, floor(0.2 * n)), all from members.
     assert set(w1.members) == set(first) and len(w1.chain) == chain.chain_size(2) == 1
@@ -131,7 +133,8 @@ def test_stations_and_neutrals_not_members(world):
                        wings_qb._ORIG_ATTR)                   # stock, unwrapped
     assert roster.wing_of(transport) is None
     assert _wing_for(panel, 3) is None                       # the neutral group
-    assert len(roster.wings()) == 3
+    assert _wing_for(panel, 0) is None                       # player-only group
+    assert len(roster.wings()) == 2
 
 
 def test_km_priorities_reach_wing_group(world):
@@ -361,3 +364,30 @@ def test_setup_switch_off_is_stock(world):
     assert ships[warbird].GetAI().GetName() == "Wait"        # QuickBattleAI's root
     assert not _is_wing_tree(ships[escort])
     assert wings_qb._wrapped == []
+
+
+def test_player_group_is_ai_led_by_its_strongest_ship(world):
+    """The player is in no wing (no orders UI yet, Mark 2026-11-09): the
+    friendly wing's commander is its strongest AI ship by rated power."""
+    hl, _c, panel, QB = world
+    from engine.wings import brain, roster
+    escorts = _name_list(_add_to_player_group(panel, "Akira", "Sovereign", "Akira"))
+    _enemies(panel, "Warbird")
+    _go(hl, panel)
+    ships = _ships(QB)
+    pw = _wing_for(panel, 0)
+    assert roster.wing_of(_player().GetName()) is None
+    power = {n: brain._rated_power(ships[n]) for n in escorts}
+    strongest = max(escorts, key=lambda n: power[n])
+    assert strongest == escorts[1] and power[strongest] > power[escorts[0]]
+    assert pw.chain == [strongest] and pw.commander == strongest
+
+
+def test_player_only_group_gets_no_wing(world):
+    hl, _c, panel, QB = world
+    from engine.wings import roster
+    _enemies(panel, "Warbird")
+    _go(hl, panel)
+    assert _wing_for(panel, 0) is None
+    assert roster.wing_of(_player().GetName()) is None
+    assert _wing_for(panel, 1) is not None

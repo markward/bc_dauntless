@@ -13,8 +13,12 @@ commanders" switch is Off (`plan.wings`), or BC's own GenerateShips ran):
   Biranu Station) and neutral groups are never members: a station can't
   anchor a leash (spec §12 call 1). A non-member gets its stock tree and no
   redirect.
-- The player joins the wing of `plan.player.group_id` (`is_player`); its
-  name is read from App.Game_GetCurrentPlayer() at arm time.
+- The player's own group is AI-led (Mark, 2026-11-09, until an orders UI
+  exists): the player is in NO wing, its group's chain is built from the
+  group's AI ships only (the strongest by rated power commands), and the
+  wing never takes the player's target as its primary. A player-only group
+  gets no wing. engine/wings keeps its "player commands" paths (`is_player`,
+  DauntlessWings bPlayer) for that future UI; Quick Battle does not use them.
 - A late (warp-in) order is not a member at arm: `ship_arrived` adds it
   just before late_arrivals gives it its AI, outside the chain -- except
   that a wing whose members are ALL late (every order of a QB group shares
@@ -121,10 +125,6 @@ def arm(qb, plan) -> None:
             members.append(name)
         if ai not in modules:
             modules.append(ai)
-    player = App.Game_GetCurrentPlayer()
-    player_gid = getattr(plan.player, "group_id", None)
-    if player is not None and player_gid is not None:
-        groups.setdefault(player_gid, ("friendly", []))
     for gid, (allegiance, members) in groups.items():
         attacked = _ATTACKED[allegiance]
         wing = roster.create_wing(
@@ -132,8 +132,6 @@ def arm(qb, plan) -> None:
             km_priorities=lambda a=allegiance: km_targeting.priorities_for(a))
         _attacked[wing.wing_id] = attacked
         _by_group[gid] = wing
-        if gid == player_gid and player is not None:
-            roster.add_member(wing, player.GetName(), is_player=True)
         for name in members:
             roster.add_member(wing, name)
             _owned[name] = wing
