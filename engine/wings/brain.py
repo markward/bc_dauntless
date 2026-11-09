@@ -13,7 +13,7 @@ import os
 import sys
 
 from engine.wings import (assess, attack, chain, decisions, dials, plans,
-                          protect, roster, rotate)
+                          protect, reserve, roster, rotate)
 
 _NUM_SHIELDS = 6
 
@@ -92,11 +92,12 @@ def _find_anywhere(name):
 
 
 def arm_chain(wing) -> None:
-    eligible, player, armed = [], None, 0.0
+    eligible, player, armed, views = [], None, 0.0, []
     for name, m in wing.members.items():
         v = view_of(_find_anywhere(name))
         if v is not None:
             armed += assess.strength(v)
+            views.append(v)
         if m.is_player:
             player = name
         elif m.in_chain_eligible:
@@ -106,6 +107,27 @@ def arm_chain(wing) -> None:
     # Withdraw compares the live wing against this (spec §2).
     wing.armed_strength = armed
     wing.commander = wing.chain[0] if wing.chain else None
+    _arm_reserve(wing, views)
+
+
+def _arm_reserve(wing, views) -> None:
+    """The reserve pick (spec §6), at arming. A late wave's chain re-arms
+    on each first-wave arrival, so the pick lands once the wave reaches
+    reserve_min_wing; a reserve already held is kept (its clock too), and
+    a committed one is never re-picked."""
+    import App
+    players = {n for n, m in wing.members.items() if m.is_player}
+    wing.reserve_live = sum(1 for v in views if v.name not in players)
+    if wing.reserve_spent or wing.reserve is not None:
+        return
+    wing.reserve = reserve.pick_reserve(
+        views, wing.commander, players, int(dials.get("reserve_min_wing")))
+    if wing.reserve is None:
+        return
+    wing.reserve_since = float(App.g_kUtopiaModule.GetGameTime())
+    for name, m in wing.members.items():
+        m.reserve = name == wing.reserve
+    log("%s reserve %s" % (wing.wing_id, wing.reserve))
 
 
 def _home_set(wing):
@@ -334,6 +356,7 @@ def tick_wing(wing) -> None:
         prios = plans.target_priorities(enemies, anchor, choice, km,
                                         player_target, player_commands)
     _write_group(wing.target_group, prios)
+    _update_reserve(wing, members, enemies, near, anchor, now)
     guards, fallers, withdrawers = _apply_moves(
         wing, members, anchor, enemies, near, protectees, choice, now)
     busy = ({wing.commander} | guards | fallers | withdrawers
@@ -351,9 +374,10 @@ def tick_wing(wing) -> None:
     for name, m in wing.members.items():
         # Outside the home set WingRejoin cannot reach the commander: off.
         # Withdrawing, every member runs its own line: off too. A
-        # slot-holder's slot hangs off the primary, inside reach: off.
+        # slot-holder's slot hangs off the primary, inside reach: off. The
+        # reserve holds its own point behind the commander: off.
         flag = (flags.get(name, False) and not choice.withdraw
-                and name not in holders)
+                and name not in holders and name != wing.reserve)
         m.rejoin = flag
         _push(m, "rejoin", flag)
 
@@ -413,6 +437,59 @@ def _strength_frac(v):
     return assess.strength(v) / v.power if v.power > 0.0 else 0.0
 
 
+def _update_reserve(wing, members, enemies, near, anchor, now) -> None:
+    """Commit the reserve on the first trigger (spec §6), before the moves
+    are applied. A reserve that is gone (dead, out of the home set) is
+    spent; one that now commands is committed. The live count and the last
+    centroid in reach are kept every led tick, reserve or not."""
+    live = sum(1 for n in members if not wing.members[n].is_player)
+    if near:
+        wing.last_centroid = assess.centroid(near)
+    held = wing.reserve
+    if held is not None:
+        if held not in members:
+            why = "gone"
+        elif held == wing.commander:
+            why = "command"
+        else:
+            primary = next((e for e in enemies if e.name == wing.primary),
+                           None)
+            engage = dials.get("engage_gu")
+            why = reserve.commit_reason(
+                lost_member=live < wing.reserve_live,
+                decision=wing.decision,
+                primary_hull=primary.hull if primary is not None else None,
+                ours=assess.side_strength(members.values(), anchor.pos,
+                                          engage),
+                theirs=assess.side_strength(enemies, anchor.pos, engage),
+                enemies_in_reach=len(near),
+                held_s=now - wing.reserve_since)
+        if why is not None:
+            _commit_reserve(wing, why)
+    wing.reserve_live = live
+
+
+def _commit_reserve(wing, why) -> None:
+    """Permanently: the reserve is an ordinary member from here on."""
+    if wing.reserve is None:
+        return
+    wing.reserve = None
+    wing.reserve_spent = True
+    for m in wing.members.values():
+        m.reserve = False
+    log("%s reserve commits (%s)" % (wing.wing_id, why))
+
+
+def _reserve_point(wing, anchor, near):
+    """anchor + unit(anchor - enemy centroid) x reserve_gu: the centroid
+    in reach, else the last one seen, else the anchor itself."""
+    centroid = (assess.centroid(near) if near else
+                wing.last_centroid if wing.last_centroid is not None
+                else anchor.pos)
+    return rotate.fallback_point(anchor.pos, centroid,
+                                 dials.get("reserve_gu"))
+
+
 def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
                  now):
     """Withdraw (every member), guards (protect) and fallers (the standing
@@ -430,7 +507,10 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
     # 4. fallback / guard > rejoin by tree priority only: m.rejoin may stay
     #    True under either (it keeps rejoin's hysteresis), and the guard and
     #    fallback branches outrank the rejoin branch.
+    # 5. the reserve (Phase C) is never a guard or a faller: it holds the
+    #    reserve point, or withdraws with everyone.
     players = {n for n, m in wing.members.items() if m.is_player}
+    held = {wing.reserve} if wing.reserve is not None else set()
     points = {}
 
     # Withdraw: every non-player member opens distance on its own line away
@@ -463,7 +543,7 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
             prev = ([n for n, m in wing.members.items() if m.guard]
                     if wing.guarded == protectee.name else [])
             guards = protect.pick_guards(
-                live, protectee, {wing.commander} | players | falling,
+                live, protectee, {wing.commander} | players | falling | held,
                 {v.name: _strength_frac(v) for v in live}, prev)
             point = protect.guard_point(protectee.pos, attacker.pos)
             for name in guards:
@@ -472,7 +552,7 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
     # Fall back: never while withdrawing, never with nothing to hide from.
     fallers = {}
     if not choice.withdraw and near:
-        exclude = {wing.commander} | players | set(guards)
+        exclude = {wing.commander} | players | set(guards) | held
         fallers = rotate.fallback_flags(
             list(members.values()), {n: m.fallback_since
                                      for n, m in wing.members.items()},
@@ -482,6 +562,10 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
         for name, since in fallers.items():
             if since is not None:
                 points[name] = behind
+
+    holding = held and not choice.withdraw
+    if holding:
+        points[wing.reserve] = _reserve_point(wing, anchor, near)
 
     wing.guarded = protectee.name if guards else None
     for name, m in wing.members.items():
@@ -500,6 +584,7 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
         _push(m, "withdraw", name in withdrawers)
         _push(m, "guard", m.guard)
         _push(m, "fallback", m.fallback_since is not None)
+        _push(m, "reserve", bool(holding) and name in held)
     return (set(guards),
             {n for n, since in fallers.items() if since is not None},
             withdrawers)
@@ -610,10 +695,11 @@ def _end_withdraw(wing, now) -> None:
     log("%s withdraw ends" % wing.wing_id)
 
 
-def _stand_down(wing) -> None:
-    """Leaderless or command away: every Phase B branch and the attack
-    branch off, no move points or slots (like rejoin). A withdraw in
-    progress ends."""
+def _stand_down(wing, why) -> None:
+    """Leaderless or command away: every Phase B branch, the attack and
+    reserve branches off, no move points or slots (like rejoin). A withdraw
+    in progress ends; a held reserve is committed (spent)."""
+    _commit_reserve(wing, why)
     if wing.withdraw_since is not None:
         import App
         _end_withdraw(wing, float(App.g_kUtopiaModule.GetGameTime()))
@@ -629,7 +715,7 @@ def _stand_down(wing) -> None:
         m.attack_target = None
         if m.is_player:
             continue
-        for kind in ("withdraw", "guard", "fallback", "attack"):
+        for kind in ("withdraw", "guard", "fallback", "attack", "reserve"):
             _push(m, kind, False)
 
 
@@ -688,7 +774,7 @@ def _command_away(wing, enemies, km) -> None:
         if entering:
             for node in m.select_nodes:
                 node.ForceUpdate()
-    _stand_down(wing)
+    _stand_down(wing, "away")
 
 
 def _go_leaderless(wing) -> None:
@@ -703,7 +789,7 @@ def _go_leaderless(wing) -> None:
             node.ForceUpdate()
         m.rejoin = False
         _push(m, "rejoin", False)
-    _stand_down(wing)
+    _stand_down(wing, "leaderless")
 
 
 def _desperation(wing, members, ship_of) -> None:

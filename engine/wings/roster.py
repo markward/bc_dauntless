@@ -69,6 +69,15 @@ class Wing:
     # (primary, holder names, weapons_first) last logged by the brain's
     # attack step: it logs only on a change.
     attack_sig: tuple | None = None
+    # Phase C reserve (spec §6): the member held back, when it was picked,
+    # whether the wing has already committed it (never re-picked), the live
+    # non-player count last tick (a drop is a loss) and the last enemy
+    # centroid in reach (the reserve point with nobody in reach).
+    reserve: str | None = None
+    reserve_since: float | None = None
+    reserve_spent: bool = False
+    reserve_live: int = 0
+    last_centroid: tuple | None = None
 
 
 _wings: dict[str, Wing] = {}

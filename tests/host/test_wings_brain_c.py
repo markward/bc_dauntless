@@ -19,7 +19,7 @@ import loadspacehelper  # noqa: E402
 
 from engine.appc.sets import SetClass_Create  # noqa: E402
 from engine.wings import (  # noqa: E402
-    attack, brain, decisions, dials, roster, service, tree)
+    attack, brain, decisions, dials, reserve, roster, service, tree)
 
 _BRANCHES = ("withdraw", "guard", "fallback", "reserve", "attack")
 _LEFT = 4
@@ -76,6 +76,16 @@ def _scene(enemy_xyz, n_members=4, member_xyz=None, member_kind="Akira",
         s.SetAI(tree.wrap_tree(s, stock, wing))
     brain.arm_chain(wing)
     return wing, ships
+
+
+def _hold(monkeypatch, wing, name):
+    """Hold `name` as the wing's reserve for the whole test: the arm-time
+    pick replaced, and never committed (tests/host/test_wings_reserve.py
+    covers the commits)."""
+    wing.reserve, wing.reserve_since = name, 0.0
+    for n, m in wing.members.items():
+        m.reserve = n == name
+    monkeypatch.setattr(reserve, "commit_reason", lambda **_kw: None)
 
 
 def _status(name, kind):
@@ -143,7 +153,7 @@ def test_slot_eligible_counts_live_non_commanders(monkeypatch, now):
     monkeypatch.setattr(decisions, "pick",
                         lambda ctx: (seen.append(ctx), real(ctx))[1])
     roster.member("m4").fallback_since = -1.0       # last tick's faller
-    roster.member("m5").reserve = True
+    _hold(monkeypatch, wing, "m5")
     brain.tick_wing(wing)
     assert seen[-1].slot_eligible == 2              # m2, m3
     ships["m2"].SetDead()
@@ -181,7 +191,7 @@ class _GuardAndSlots:
                                 slot_all=True)
 
 
-def test_commander_guard_faller_reserve_never_slot(now):
+def test_commander_guard_faller_reserve_never_slot(monkeypatch, now):
     wing, ships = _scene(
         [(150.0, 0.0, 0.0)], n_members=7,
         member_xyz=[(0.0, 0.0, 0.0), (-40.0, 0.0, 0.0), (-30.0, 20.0, 0.0),
@@ -189,23 +199,25 @@ def test_commander_guard_faller_reserve_never_slot(now):
                     (-20.0, 40.0, 0.0), (-20.0, -40.0, 0.0)])
     decisions.register(_GuardAndSlots())
     _set_shields(ships["m4"], 0.1)                 # falls back
-    roster.member("m5").reserve = True             # held back (Task 5 sets it)
+    _hold(monkeypatch, wing, "m5")                 # held back
     for t in range(3):
         now[0] = float(t)
         brain.tick_wing(wing)
         m = {n: roster.member(n) for n in wing.members}
-        assert m["m3"].guard is True               # nearest healthy to m2
+        # Two guards (a wing of 6+): the nearest healthy to m2 that are
+        # not the reserve -- m5, nearer than m6, is held back.
+        assert sorted(n for n in m if m[n].guard) == ["m3", "m6"]
         assert m["m4"].fallback_since is not None
-        for n in ("m1", "m3", "m4", "m5"):
+        for n in ("m1", "m3", "m4", "m5", "m6"):
             assert m[n].slot is None, n
             assert _status(n, "attack") == 0, n
-        assert _holders(wing) == ["m2", "m6", "m7"]
+        assert _holders(wing) == ["m2", "m7"]
         for n in wing.members:
             on = [k for k in _BRANCHES if _status(n, k) == 1]
             if n == "m1":
                 assert on == []                    # stock tree
             elif n == "m5":
-                assert "attack" not in on and len(on) <= 1
+                assert on == ["reserve"]
             else:
                 assert len(on) == 1, (n, on)
 
