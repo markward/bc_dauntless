@@ -76,10 +76,22 @@ def test_withdraw_max_then_cooldown():
 def test_withdraw_ended_when_odds_recover():
     w = _by("withdraw")
     ms = [V("a", hull=0.2), V("b", 5, hull=0.2)]
-    ctx = decisions.Context(members=ms, anchor=ms[0],
-                            enemies=[V("x", 50, hull=0.1)],
-                            armed_strength=3.0, now=100.0, withdraw_since=95.0)
-    assert w.score(ctx) == 0.0
+
+    def ctx(hull):
+        return decisions.Context(members=ms, anchor=ms[0],
+                                 enemies=[V("x", 50, hull=hull)],
+                                 armed_strength=3.0, now=100.0,
+                                 withdraw_since=95.0)
+    assert w.score(ctx(0.8333)) == 2.5
+    assert w.score(ctx(0.6)) == 0.0
+
+
+def test_withdraw_persists_with_no_enemies_in_range():
+    w = _by("withdraw")
+    ctx = _w(enemies=[], withdraw_since=95.0, clear_since=95.0)
+    assert w.score(ctx) == 2.5
+    assert w.score(_w(enemies=[], withdraw_since=95.0,
+                      clear_since=80.0)) == 0.0
 
 
 def test_withdraw_beats_regroup():

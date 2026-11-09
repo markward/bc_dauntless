@@ -127,24 +127,25 @@ class Withdraw:
     name = "withdraw"
 
     def score(self, ctx: Context) -> float:
-        if ctx.player_commands or ctx.now < ctx.withdraw_cooldown_until:
-            return 0.0
         engage = dials.get("engage_gu")
         odds = dials.get("withdraw_odds")
         ours = assess.side_strength(ctx.members, ctx.anchor.pos, engage)
         theirs = assess.side_strength(ctx.enemies, ctx.anchor.pos, engage)
-        if not ours < odds * theirs:
-            return 0.0
-        members = sum(assess.strength(m) for m in ctx.members)
-        if not members < dials.get("withdraw_wing_frac") * ctx.armed_strength:
-            return 0.0
         if ctx.withdraw_since is not None:
             if (ctx.now - ctx.withdraw_since >= dials.get("withdraw_max_s")
                     or (ctx.clear_since is not None
                         and ctx.now - ctx.clear_since
                         >= dials.get("withdraw_clear_s"))
-                    or ours >= odds * 1.5 * theirs):
+                    or (theirs > 0 and ours >= odds * 1.5 * theirs)):
                 return 0.0
+            return 2.5
+        if ctx.player_commands or ctx.now < ctx.withdraw_cooldown_until:
+            return 0.0
+        if not ours < odds * theirs:
+            return 0.0
+        members = sum(assess.strength(m) for m in ctx.members)
+        if not members < dials.get("withdraw_wing_frac") * ctx.armed_strength:
+            return 0.0
         return 2.5
 
     def choose(self, ctx: Context) -> Choice:
