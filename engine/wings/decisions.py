@@ -1,8 +1,9 @@
 """Wing decision registry and the Phase A decisions (spec §8). Pure."""
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
-from engine.wings import assess, dials, protect
+from engine.wings import assess, attack, dials, protect
 
 
 @dataclass
@@ -19,6 +20,7 @@ class Context:
     withdraw_cooldown_until: float = -1.0
     clear_since: Optional[float] = None
     player_commands: bool = False
+    slot_eligible: int = 0
 
 
 @dataclass
@@ -28,6 +30,9 @@ class Choice:
     gather: bool = False
     protectee: Optional[str] = None
     withdraw: bool = False
+    slot_dirs: tuple = ()
+    weapons_first: bool = False
+    slot_all: bool = False
 
 
 class Decision(Protocol):
@@ -153,9 +158,122 @@ class Withdraw:
         return Choice(None, (), withdraw=True)
 
 
+def swarm_choice(ctx: Context) -> Choice:
+    """What the higher-scoring swarm decision would choose (tie: weakest),
+    without stickiness."""
+    weakest, cmdr = SwarmWeakest(), SwarmCommander()
+    if cmdr.score(ctx) > weakest.score(ctx):
+        return cmdr.choose(ctx)
+    return weakest.choose(ctx)
+
+
+def _primary_view(ctx):
+    """(swarm choice, the primary's view in ctx.enemies or None)."""
+    choice = swarm_choice(ctx)
+    if choice.primary is None:
+        return choice, None
+    for e in ctx.enemies:
+        if e.name == choice.primary:
+            return choice, e
+    return choice, None
+
+
+class FocusFace:
+    name = "focus_face"
+
+    def _target(self, ctx):
+        choice, p = _primary_view(ctx)
+        if p is None or len(p.faces) != 6:
+            return choice, None
+        if p not in _in_reach(ctx):
+            return choice, None
+        return choice, p
+
+    def score(self, ctx: Context) -> float:
+        _, p = self._target(ctx)
+        if p is None or ctx.slot_eligible < 2:
+            return 0.0
+        face, value = attack.weakest_face(p.faces)
+        limit = dials.get("face_weak")
+        if ctx.current == self.name:
+            limit += 0.2
+        if not value < limit:
+            return 0.0
+        others = (sum(p.faces) - value) / 5.0
+        return 1.2 if others >= 0.6 else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        choice, p = self._target(ctx)
+        if p is None:
+            return choice
+        n = min(int(dials.get("attack_slots")), ctx.slot_eligible)
+        if n <= 0:
+            return choice
+        face, _ = attack.weakest_face(p.faces)
+        return dataclasses.replace(choice,
+                                   slot_dirs=attack.focus_dirs(face, n))
+
+
+class Envelop:
+    name = "envelop"
+
+    def _target(self, ctx):
+        choice, p = _primary_view(ctx)
+        if p is None or len(p.faces) != 6 or p not in _in_reach(ctx):
+            return choice, None
+        return choice, p
+
+    def score(self, ctx: Context) -> float:
+        _, p = self._target(ctx)
+        if p is None or ctx.slot_eligible < 3:
+            return 0.0
+        if min(p.faces) < dials.get("face_weak"):
+            return 0.0
+        return 1.05 if sum(p.faces) / 6.0 >= 0.5 else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        choice, p = self._target(ctx)
+        if p is None:
+            return choice
+        n = min(int(dials.get("attack_slots")), ctx.slot_eligible)
+        if n <= 0:
+            return choice
+        return dataclasses.replace(choice, slot_dirs=attack.envelop_dirs(n))
+
+
+def _disable_target(ctx):
+    reach = _in_reach(ctx)
+    if not reach or not ctx.members:
+        return None
+    big = min(reach, key=lambda e: (-assess.strength(e), e.name))
+    mine = max(assess.strength(m) for m in ctx.members)
+    if big.weapons_down:
+        return None
+    if assess.strength(big) < dials.get("disable_threat") * mine:
+        return None
+    return big
+
+
+class Disable:
+    name = "disable"
+
+    def score(self, ctx: Context) -> float:
+        return 1.3 if _disable_target(ctx) is not None else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        big = _disable_target(ctx)
+        if big is None:
+            return swarm_choice(ctx)
+        rest = tuple(n for n in swarm_choice(ctx).secondaries
+                     if n != big.name)
+        return Choice(big.name, rest,
+                      slot_dirs=attack.envelop_dirs(max(ctx.slot_eligible, 1)),
+                      weapons_first=True, slot_all=True)
+
+
 def _stock() -> list:
     return [Regroup(), SwarmWeakest(), SwarmCommander(), Protect(),
-            Withdraw()]
+            Withdraw(), FocusFace(), Envelop(), Disable()]
 
 
 _registry: list = _stock()

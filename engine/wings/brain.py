@@ -33,13 +33,26 @@ def _rated_power(ship) -> float:
     return float(prop.GetPowerOutput()) if prop is not None else 0.0
 
 
-def _shield_faces(ship) -> list:
+def _shield_faces(ship) -> tuple:
+    """The six per-face fractions (index = face constant), () with no
+    shield generator."""
     shields = ship.GetShields()
     if shields is None:
-        return [0.0] * _NUM_SHIELDS
-    return [float(shields.GetSingleShieldPercentage(i))
-            for i in range(_NUM_SHIELDS)]
+        return ()
+    return tuple(float(shields.GetSingleShieldPercentage(i))
+                 for i in range(_NUM_SHIELDS))
 
+
+def _shield_fraction(ship) -> float:
+    faces = _shield_faces(ship)
+    return sum(faces) / _NUM_SHIELDS if faces else 0.0
+
+
+def _weapons_down(ship) -> bool:
+    """Every existing weapon system is disabled; no weapons at all counts."""
+    systems = [s for s in (ship.GetTorpedoSystem(), ship.GetPhaserSystem(),
+                           ship.GetPulseWeaponSystem()) if s is not None]
+    return all(s.IsDisabled() for s in systems)
 
 
 def _cloaked(ship) -> bool:
@@ -50,7 +63,7 @@ def _cloaked(ship) -> bool:
     return cloak is not None and bool(cloak.IsCloaked() or cloak.IsCloaking())
 
 
-def view_of(ship, wing_id=None, is_commander=False):
+def view_of(ship, wing_id=None, is_commander=False, weapons=False):
     if not _alive(ship):
         return None
     loc = ship.GetWorldLocation()
@@ -62,12 +75,14 @@ def view_of(ship, wing_id=None, is_commander=False):
         pos=(loc.x, loc.y, loc.z),
         # No hull subsystem reads as intact, so it never trips desperation.
         hull=float(hull.GetConditionPercentage()) if hull is not None else 1.0,
-        shield=sum(faces) / _NUM_SHIELDS,
-        weak_face=min(faces),
+        shield=sum(faces) / _NUM_SHIELDS if faces else 0.0,
+        weak_face=min(faces) if faces else 0.0,
         power=_rated_power(ship),
         wing_id=wing_id,
         is_commander=is_commander,
         target=target.GetName() if target is not None else None,
+        faces=faces if len(faces) == _NUM_SHIELDS else (),
+        weapons_down=_weapons_down(ship) if weapons else False,
     )
 
 
@@ -195,7 +210,7 @@ def _enemy_views(wing, home, candidates, ship_of):
             if ship is not None and _cloaked(ship):
                 continue
             flags = _roster_flags(name)
-            v = view_of(ship, *flags)
+            v = view_of(ship, *flags, weapons=True)
             if v is not None:
                 entry.views.append(v)
                 entry.flags.append(flags)
