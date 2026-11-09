@@ -15,25 +15,45 @@ def weakest_face(faces):
     return i, faces[i]
 
 
+def _turn(d, deg, about_x):
+    """`d` turned `deg` degrees about body x (top/bottom faces) or body z
+    (every other face), the focus_dirs scheme."""
+    x, y, z = (float(c) for c in d)
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    if about_x:
+        return (x, y * c - z * s, y * s + z * c)
+    return (x * c - y * s, x * s + y * c, z)
+
+
 def focus_dirs(face, n, arc_deg=25.0):
-    x, y, z = (float(c) for c in FACE_AXES[face])
     if n <= 0:
         return ()
     about_x = face in (2, 3)
+    return tuple(
+        _turn(FACE_AXES[face],
+              0.0 if n == 1 else -arc_deg + 2.0 * arc_deg * i / (n - 1),
+              about_x)
+        for i in range(n))
+
+
+def spread_dirs(dirs, n, wrap_deg=25.0):
+    """n directions cycling `dirs`; each further wrap turns them another
+    wrap_deg (about x for a top/bottom-led direction, else about z), so
+    more holders than directions never share a point (review M2). Distinct
+    for envelop's axes, 90 degrees apart, up to 14 wraps; only slot_all
+    (disable, on envelop's axes) ever wraps."""
     out = []
     for i in range(n):
-        deg = 0.0 if n == 1 else -arc_deg + 2.0 * arc_deg * i / (n - 1)
-        c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
-        if about_x:
-            out.append((x, y * c - z * s, y * s + z * c))
-        else:
-            out.append((x * c - y * s, x * s + y * c, z))
+        d = dirs[i % len(dirs)]
+        k = i // len(dirs)
+        out.append(tuple(d) if k == 0 else
+                   _turn(d, wrap_deg * k,
+                         abs(d[2]) > max(abs(d[0]), abs(d[1]))))
     return tuple(out)
 
 
 def envelop_dirs(n):
-    return tuple(FACE_AXES[ENVELOP_ORDER[i % len(ENVELOP_ORDER)]]
-                 for i in range(n))
+    return spread_dirs(tuple(FACE_AXES[f] for f in ENVELOP_ORDER), n)
 
 
 def slot_point(target_pos, rot_cols, body_dir, standoff_gu):

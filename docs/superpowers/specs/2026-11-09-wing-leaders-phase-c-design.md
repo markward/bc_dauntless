@@ -32,8 +32,9 @@ Earlier phases are extended, not rewritten.
   movement PlainAI.
 - **Native path.** It stays native when stock (`ai_native.preprocessor_is_stock`
   checks only the instance class). Don't shadow its methods on the instance.
-- **Retarget and aim.** `SetTarget(sName)` retargets it. It fires only when the
-  ship faces the target within about 10°.
+- **Retarget and aim.** `SetTarget(sName)` retargets it. Its aim cone
+  (`fFireDotThreshold`, about 10°) gates only aimed weapons with direction
+  info (torpedoes, `CheckGoodShot`); phasers fire on their own arcs.
 
 **Subsystem aim:**
 - `FireScript(..., TargetSubsystems=[(CT_x, priority)], DisableOnly=0|1)`.
@@ -127,10 +128,13 @@ Conditional[ConditionWing(ship, "attack")]
   `target_pos + R · body_dir · standoff`, instead of reading `move_point`. A
   slot fixed in the target's frame sweeps at up to ~36 GU/s when a ship turns
   at 0.3 rad/s 120 GU away; a 1 Hz point would always be behind it.
-- Within 20 GU of the slot point it turns toward the target, not the point,
-  and holds the slot nose-on so FireScript can fire. On the way the nose
-  points at the slot, and FireScript fires whenever the target happens to be
-  in its cone.
+- Within 20 GU of the slot point it enters **hold mode** and leaves it only
+  past 40 GU (`Member.slot_hold`; the brain clears it when the slot changes).
+  Holding, it turns toward the target and thrusts only by the slot offset
+  along its nose, `clamp(dot(forward, slot − here) / 20, 0, 1)`: nothing
+  when the slot is behind or beside it (§11). On the way the nose points at
+  the slot, and FireScript fires whenever the target happens to be in its
+  cone.
 - A missing or dead slot target falls back to `move_point` (stop if None).
 
 **Slot geometry.** A slot is the target position + `R · dir · d`, with
@@ -143,7 +147,10 @@ Conditional[ConditionWing(ship, "attack")]
 - Up to `attack_slots` members (dial, default **3**).
 - They must be alive, not the commander, not the player, not guards, not
   fallers and not reserves.
-- Nearest to their slot first, with greedy assignment.
+- Nearest to their slot first, with greedy assignment. A holder keeps its
+  slot while the primary and the slot set are unchanged; only vacated slots
+  are refilled (§11). More holders than directions (disable) get each wrap
+  of the directions turned a further 25°, so no two share a point.
 - **(call)** The commander keeps the stock tree, so it anchors the wing.
 
 **Exclusivity.**
@@ -202,9 +209,15 @@ flapping.
   - **every** slot-eligible member, not just `attack_slots`, takes an attack
     assignment with weapons-first subsystem aim, on the slots `envelop` would
     use.
+- **Latched** once running: it stays on the same target (the wing's
+  primary) while that is alive, in reach and its weapons are up. The
+  strength ratio is not re-checked: stripping the shields alone halves it
+  (§11).
 - **Ends** when all its weapon systems are down. The score drops to 0 and
   swarm takes over; it is now the weakest or a commander target, and the
-  wing kills it.
+  wing kills it. It also ends after `disable_max_s` (dial, default
+  **300 s**) on one target. A disable that ends with the target still alive
+  marks it done: disable never re-enters against it.
 - **(call)** Engine-disabling a fleeing ship is not in this phase. It conflicts
   with Phase A's don't-chase, which drops runners anyway. This is noted for
   later.
@@ -225,7 +238,8 @@ A **standing rule**, like rotate.
 - Reserve point: `reserve_gu` (dial, default **150 GU**) farther from the
   enemy centroid than the anchor, **on the reserve's own bearing** from the
   centroid (`reserve.hold_point`; on the anchor's bearing if the reserve sits
-  on the centroid). At the start that is behind the commander.
+  on the centroid). It is not "behind the commander": it holds on its own
+  bearing, `reserve_gu` farther from the enemy than the commander.
 - **Changed in Task 6.** The first formula, `anchor + unit(anchor −
   enemy_centroid) × reserve_gu`, swings round with a commander circling the
   enemy: at 100 GU from the centroid and 6.6 GU/s it moves ~16 GU/s at the
@@ -285,7 +299,8 @@ picks one.
   - in disable, the member's `GetTargetSubsystem()` becomes one of the
     target's weapon systems;
   - aim survives the engine sync (`ship.GetTarget()` matches).
-- The reserve holds behind the commander and commits on a member death.
+- The reserve holds farther from the enemy than the commander and commits
+  on a member death.
 
 **Behaviour (headless, generous bounds, 3 runs).**
 - (a) Focus-face: with a target's LEFT face forced to 0.1, at least 2
@@ -324,7 +339,38 @@ picks one.
    Slots are REAR, LEFT, RIGHT, then TOP, BOTTOM.
 5. `disable` score 1.3 against an enemy ≥ 1.5× our strongest, weapons first.
    Engine-disabling runners is deferred.
-6. Reserve: wings of 5+, one ship held 150 GU behind the commander. It commits
+6. Reserve: wings of 5+, one ship held on its own bearing, 150 GU farther
+   from the enemy than the commander. It commits
    once on loss, protect, near-kill, a 2× advantage or 90 s.
 7. Branch order: ram, flee, withdraw, guard, fallback, reserve, attack,
    rejoin, stock. Slot-holders are exempt from rejoin.
+
+## 11. Build rulings (final review, 2026-11-09)
+
+1. **Disable latches (I1).** A running disable holds its target while it is
+   alive, in reach and its weapons are up, without re-checking the strength
+   ratio. Before, Akira ×4 vs a Warbird (1.88×) left disable at 103 s with
+   the weapons up, and they never went down. The cap `disable_max_s` was
+   ruled at 120 s; measured, the weapons went down at 179–267 s (that
+   scene, 3 seeds; 224–270 s with ruling 3's hold mode) and 235 s
+   (behaviour test (b)), and at 120 s none did, so it defaults to
+   **300 s**. A target done by the cap, or by any end but
+   its death, is never disabled again.
+2. **Slot incumbency (I2).** A previous holder keeps its slot index while
+   the primary and the slot set are unchanged; only vacated slots are
+   filled nearest-first. Same-primary swaps over 120 s: 20–32 → 0–3.
+3. **WingMoveTo holds the slot (I3).** Hold mode in at 20 GU, out at 40 GU;
+   holding, it faces the target and thrusts only by the slot offset along
+   its nose. Against a still target: on the slot and facing it 0.48 → 0.92
+   of samples. Against a target that turns, its body-frame slot sweeps
+   faster than an Akira flies, and the dwell barely changes.
+   ⚠️ **Open, needs a ruling.** Holding exposes the 120 GU standoff (§10
+   call 1): it is far past the beams' full-damage distance (Galor 30–40 GU,
+   Akira 60 GU). Driving through the slot used to bring holders in to
+   ~95 GU on average. Behaviour test (b) (Galor ×4 vs a still Warbird)
+   fails 3 of 3: weapons never down in 600 s; hull 0.95 at 240 s, where it
+   was 0.59 with the weapons down at 235 s. With hold mode, a 40 GU
+   standoff gets them down at 201 s; 60 GU does not within 300 s.
+4. **Minors.** Repeated disable directions are turned 25° per wrap; Regroup
+   does not count last tick's slot-holders or the held reserve as strays; a
+   failed QB difficulty read is logged once (`DAUNTLESS_WINGS_LOG=1`).

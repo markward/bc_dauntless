@@ -26,6 +26,11 @@ class Context:
     # (the brain's cap, or a disable that ended with the target alive).
     current_primary: Optional[str] = None
     disable_done: frozenset = frozenset()
+    # Last tick's slot-holders and the held reserve: their stations hang off
+    # the primary or their own bearing, not the anchor, so Regroup does not
+    # count them as strays (review M7).
+    slot_holders: frozenset = frozenset()
+    reserve: Optional[str] = None
 
 
 @dataclass
@@ -72,7 +77,9 @@ class Regroup:
     name = "regroup"
 
     def score(self, ctx: Context) -> float:
-        others = [m for m in ctx.members if m.name != ctx.anchor.name]
+        others = [m for m in ctx.members if m.name != ctx.anchor.name
+                  and m.name not in ctx.slot_holders
+                  and m.name != ctx.reserve]
         radius = dials.get("leash_gu") + dials.get("leash_slack_gu")
         return 2.0 * assess.fraction_beyond(others, ctx.anchor.pos, radius)
 

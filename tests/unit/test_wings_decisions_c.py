@@ -197,3 +197,16 @@ def test_disable_with_no_current_primary_uses_the_gate():
     assert _by("disable").score(ctx) == 1.3
     ctx = _latched([V("e", 50, power=6.0)], primary=None)
     assert _by("disable").score(ctx) == 0.0
+
+
+# ── regroup leaves slot-holders and the reserve out (review M7) ────────────
+
+def test_regroup_ignores_slot_holders_and_the_reserve():
+    ms = [V("a"), V("b", 400), V("c", 400), V("d", 400), V("e", 10)]
+    ctx = decisions.Context(members=ms, anchor=ms[0], enemies=[V("x", 50)])
+    assert _by("regroup").score(ctx) == 1.5           # 3 of 4 strayed
+    ctx.slot_holders = frozenset({"b", "c"})
+    ctx.reserve = "d"
+    assert _by("regroup").score(ctx) == 0.0           # only e counts
+    ctx.reserve = None
+    assert _by("regroup").score(ctx) == 1.0           # d of d, e

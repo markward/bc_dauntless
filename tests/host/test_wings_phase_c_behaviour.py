@@ -290,9 +290,10 @@ def test_disable_holds_until_weapons_down(seed, monkeypatch):
     # Before the latch, disable ended at 103 s at ratio 1.5 (the gate) with
     # the weapons up, and they never went down (final review I1, seed 1).
     # Latched: one unbroken disable from the first brain tick until the
-    # weapons are down. Seen: down at 179 / 267 / 220 s, the ratio falling
-    # to 0.94-0.98 while still disabling (2026-11-09, seeds 1-3). With a
-    # 120 s cap no seed got the weapons down: disable_max_s defaults to 300.
+    # weapons are down. Seen: down at 224 / 270 / 248 s (179 / 267 / 220 s
+    # before WingMoveTo's hold mode), the ratio falling to 0.94-1.01 while
+    # still disabling (2026-11-09, seeds 1-3). With a 120 s cap no seed got
+    # the weapons down: disable_max_s defaults to 300.
     assert down is not None
     assert set(decs) == {"disable"}
     assert low < dials.get("disable_threat")

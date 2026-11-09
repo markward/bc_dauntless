@@ -188,6 +188,24 @@ def test_slot_hold_kept_on_the_same_slot_cleared_on_change(now):
     assert not any(m.slot_hold for m in wing.members.values())
 
 
+def test_context_carries_slot_holders_and_reserve(monkeypatch, now):
+    """Review M7: Regroup reads last tick's slot-holders and the held
+    reserve from the context."""
+    wing, ships = _scene([(150.0, 0.0, 0.0)], n_members=5)
+    _hold(monkeypatch, wing, "m5")
+    _set_face(ships["e1"], _LEFT, 0.1)
+    brain.tick_wing(wing)
+    holders = _holders(wing)
+    seen = []
+    real = decisions.pick
+    monkeypatch.setattr(decisions, "pick",
+                        lambda ctx: (seen.append(ctx), real(ctx))[1])
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert seen[0].slot_holders == frozenset(holders)
+    assert seen[0].reserve == "m5"
+
+
 def test_slot_assignment_fresh_when_the_primary_changes(now):
     wing, ships = _scene([(150.0, 0.0, 0.0)])
     _set_face(ships["e1"], _LEFT, 0.1)

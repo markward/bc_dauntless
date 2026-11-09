@@ -43,7 +43,37 @@ def test_envelop_dirs_order_and_cycle():
     assert attack.envelop_dirs(3) == (
         attack.FACE_AXES[1], attack.FACE_AXES[4], attack.FACE_AXES[5])
     assert len(attack.envelop_dirs(7)) == 7
-    assert attack.envelop_dirs(7)[5] == attack.FACE_AXES[1]
+    # The second wrap is rear again, turned 25 degrees (review M2).
+    assert _angle(attack.envelop_dirs(7)[5], attack.FACE_AXES[1]) == (
+        pytest.approx(25.0))
+
+
+def _distinct(points, tol=1e-6):
+    return all(sum((a - b) ** 2 for a, b in zip(p, q)) > tol
+               for i, p in enumerate(points) for q in points[i + 1:])
+
+
+def test_seven_slots_seven_distinct_points():
+    """Review M2: disable with more holders than directions never stacks
+    two holders on one point."""
+    cols = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+    dirs = attack.envelop_dirs(7)
+    assert _distinct([attack.slot_point((0, 0, 0), cols, d, 120.0)
+                      for d in dirs])
+    for d in dirs:
+        assert math.sqrt(sum(c * c for c in d)) == pytest.approx(1.0)
+
+
+def test_spread_dirs_cycles_and_turns_each_wrap():
+    base = (attack.FACE_AXES[1], attack.FACE_AXES[4])
+    out = attack.spread_dirs(base, 5)
+    assert out[:2] == base
+    assert _distinct(out)
+    assert _angle(out[2], base[0]) == pytest.approx(25.0)
+    assert _angle(out[4], base[0]) == pytest.approx(50.0)
+    top = attack.spread_dirs((attack.FACE_AXES[2],), 2)
+    assert top[1][0] == pytest.approx(0.0)       # about x, as focus_dirs
+    assert _distinct(attack.envelop_dirs(15))
 
 
 def test_slot_point_rotates_body_dir():

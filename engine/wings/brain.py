@@ -349,7 +349,10 @@ def tick_wing(wing) -> None:
         clear_since=wing.clear_since, player_commands=player_commands,
         slot_eligible=_slot_eligible(wing, members),
         current_primary=wing.primary,
-        disable_done=frozenset(wing.disable_done))
+        disable_done=frozenset(wing.disable_done),
+        slot_holders=frozenset(n for n, m in wing.members.items()
+                               if m.slot is not None),
+        reserve=wing.reserve)
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
         log("%s decision %s -> %s"
@@ -664,11 +667,10 @@ def _slot_points(wing, members, choice, busy, ship_of):
     R = target.GetWorldRotation()
     cols = [(c.x, c.y, c.z) for c in (R.GetCol(0), R.GetCol(1), R.GetCol(2))]
     standoff = dials.get("attack_standoff_gu")
-    slots = []
-    for i in range(n):
-        d = dirs[i % len(dirs)]
-        slots.append((d, attack.slot_point((loc.x, loc.y, loc.z), cols, d,
-                                           standoff)))
+    # More holders than directions (slot_all): each wrap turned, so no two
+    # share a point (review M2).
+    slots = [(d, attack.slot_point((loc.x, loc.y, loc.z), cols, d, standoff))
+             for d in attack.spread_dirs(dirs, n)]
     return cands, slots
 
 
