@@ -512,3 +512,128 @@ def test_going_leaderless_forces_select_update(monkeypatch):
     ships["m1"].SetDead()
     brain.tick_wing(wing)
     assert wing.leaderless is True and calls == [1]
+
+
+# ── shared enemy snapshot (final review M2) ────────────────────────────────
+
+def _second_wing(ships, wing, wing_id="green", names=("g1", "g2")):
+    """Another wing on the same side, same enemy group, same home set."""
+    pSet = ships["m1"].GetContainingSet()
+    other = roster.create_wing(wing_id, wing.enemy_group)
+    for i, name in enumerate(names):
+        ships[name] = _ship(pSet, "Akira", name, (-20.0 * (i + 1), 0.0, 0.0))
+        roster.add_member(other, name)
+    brain.arm_chain(other)
+    return other
+
+
+def _game_time(monkeypatch, start=0.0):
+    now = [start]
+    monkeypatch.setattr(App.g_kUtopiaModule, "GetGameTime", lambda: now[0])
+    return now
+
+
+def _count_shield_reads(monkeypatch):
+    reads = {}
+    real = brain._shield_fraction
+
+    def spy(ship):
+        reads[ship.GetName()] = reads.get(ship.GetName(), 0) + 1
+        return real(ship)
+    monkeypatch.setattr(brain, "_shield_fraction", spy)
+    return reads
+
+
+def test_wings_on_one_side_share_the_enemy_snapshot(monkeypatch):
+    """Two wings ticking within one period read each enemy ship once."""
+    wing, ships = _scene([(100.0, 0.0, 0.0), (150.0, 0.0, 0.0)])
+    green = _second_wing(ships, wing)
+    now = _game_time(monkeypatch)
+    reads = _count_shield_reads(monkeypatch)
+    brain.tick_wing(wing)
+    now[0] = 0.5
+    brain.tick_wing(green)
+    assert reads["e1"] == 1 and reads["e2"] == 1
+    assert _group(green) == _group(wing)
+
+
+def test_enemy_snapshot_older_than_the_period_is_rebuilt(monkeypatch):
+    wing, ships = _scene([(100.0, 0.0, 0.0), (150.0, 0.0, 0.0)])
+    green = _second_wing(ships, wing)
+    now = _game_time(monkeypatch)
+    reads = _count_shield_reads(monkeypatch)
+    brain.tick_wing(wing)
+    ships["e1"].SetTranslateXYZ(600.0, 0.0, 0.0)     # out of reach
+    now[0] = dials.get("brain_period_s") + 0.01
+    brain.tick_wing(green)
+    assert reads["e1"] == 2
+    assert set(_group(green)) == {"e2"}
+
+
+def test_enemy_snapshot_never_reused_by_the_wing_that_read_it(monkeypatch):
+    """A wing's next tick always sees a fresh world, even if the game clock
+    has not moved a whole period (float drift on the accumulator)."""
+    wing, ships = _scene([(100.0, 0.0, 0.0), (150.0, 0.0, 0.0)])
+    now = _game_time(monkeypatch)
+    reads = _count_shield_reads(monkeypatch)
+    brain.tick_wing(wing)
+    now[0] = dials.get("brain_period_s") - 1e-6
+    brain.tick_wing(wing)
+    assert reads["e1"] == 2
+
+
+def test_enemy_commander_follows_a_handover_while_the_snapshot_is_warm(
+        monkeypatch):
+    """The cached views carry no roster flags: a handover in the enemy wing
+    between two of our wings' ticks is seen by the second one."""
+    wing, ships = _scene([(100.0, 0.0, 0.0), (120.0, 0.0, 0.0)])
+    green = _second_wing(ships, wing)
+    red = roster.create_wing("red", App.ObjectGroup())
+    roster.add_member(red, "e1")
+    roster.add_member(red, "e2")
+    red.commander = "e1"
+    now = _game_time(monkeypatch)
+    seen = []
+    real = decisions.pick
+
+    def spy(ctx):
+        seen.append({e.name: (e.wing_id, e.is_commander)
+                     for e in ctx.enemies})
+        return real(ctx)
+    monkeypatch.setattr(decisions, "pick", spy)
+    reads = _count_shield_reads(monkeypatch)
+    brain.tick_wing(wing)
+    red.commander = "e2"                       # the handover
+    now[0] = 0.25
+    brain.tick_wing(green)
+    assert reads["e1"] == 1                    # the snapshot was warm
+    assert seen[0] == {"e1": ("red", True), "e2": ("red", False)}
+    assert seen[1] == {"e1": ("red", False), "e2": ("red", True)}
+
+
+def test_reset_clears_the_enemy_snapshot(monkeypatch):
+    from engine.wings import service
+    wing, ships = _scene([(100.0, 0.0, 0.0)])
+    green = _second_wing(ships, wing)
+    _game_time(monkeypatch)
+    reads = _count_shield_reads(monkeypatch)
+    brain.tick_wing(wing)
+    service.reset()
+    brain.tick_wing(green)
+    assert reads["e1"] == 2
+
+
+def test_enemy_snapshot_cache_drops_expired_entries(monkeypatch):
+    """A candidate list that changes (a name leaves the group) keys a new
+    entry; the old one is dropped once expired instead of piling up for
+    the rest of the mission."""
+    wing, ships = _scene([(100.0, 0.0, 0.0), (150.0, 0.0, 0.0),
+                          (170.0, 0.0, 0.0)])
+    now = _game_time(monkeypatch)
+    period = dials.get("brain_period_s")
+    for i in (1, 2, 3):
+        brain.tick_wing(wing)
+        wing.enemy_group.RemoveName("e%d" % i)
+        now[0] += period
+    brain.tick_wing(wing)
+    assert len(brain._enemy_cache) == 1

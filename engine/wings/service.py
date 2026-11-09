@@ -77,6 +77,7 @@ def tick(dt: float) -> None:
 def reset() -> None:
     roster.reset()
     _armed.clear()
+    brain.reset_cache()
 
 
 def reset_all() -> None:

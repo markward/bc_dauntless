@@ -8,10 +8,11 @@ set: the set holding most of its live non-player members, else the player's.
 A name that resolves to nothing, or to a dead / dying ship, is skipped, never
 raised on.
 """
+import dataclasses
 import os
 import sys
 
-from engine.wings import assess, chain, decisions, plans, roster
+from engine.wings import assess, chain, decisions, dials, plans, roster
 
 _NUM_SHIELDS = 6
 
@@ -127,6 +128,78 @@ def _ensure_select_nodes(wing, ship_of) -> None:
             tree.discover_select_nodes(ship, m)
 
 
+class _EnemySnapshot:
+    """One side's enemy views, shared by every wing that reads the same
+    candidates in the same home set (final review M2). Plain values only:
+    names, numbers and ShipViews (frozen), never a ship object."""
+    __slots__ = ("built_s", "views", "flags", "users")
+
+    def __init__(self, built_s):
+        self.built_s = built_s
+        self.views = []          # ShipView per live, uncloaked candidate
+        self.flags = []          # (wing_id, is_commander) each view carries
+        self.users = set()       # wing ids that have read this entry
+
+
+# (id(home set), id(enemy group), candidate names) -> _EnemySnapshot
+_enemy_cache: dict = {}
+
+
+def reset_cache() -> None:
+    _enemy_cache.clear()
+
+
+def _roster_flags(name):
+    other = roster.wing_of(name)
+    if other is None:
+        return (None, False)
+    return (other.wing_id, other.commander == name)
+
+
+def _enemy_views(wing, home, candidates, ship_of):
+    """The enemy ShipViews for `candidates`: built once per brain period per
+    (home set, enemy group, candidates) and reused by the other wings that
+    tick inside that period. A wing never reuses an entry it already read,
+    so its own next tick always sees a fresh world. The roster flags
+    (wing_id, is_commander) are re-read on every use, so a handover between
+    two wings' ticks is never stale."""
+    import App
+    now = float(App.g_kUtopiaModule.GetGameTime())
+    key = (id(home), id(wing.enemy_group), tuple(candidates))
+    period = dials.get("brain_period_s")
+    entry = _enemy_cache.get(key)
+    if (entry is None or wing.wing_id in entry.users
+            or not 0.0 <= now - entry.built_s < period):
+        # Rebuilds are about one per side per period: drop expired entries
+        # (an old candidate list keys nothing any wing will ask for again).
+        for k in [k for k, e in _enemy_cache.items()
+                  if not 0.0 <= now - e.built_s < period]:
+            del _enemy_cache[k]
+        entry = _EnemySnapshot(now)
+        for name in candidates:
+            ship = ship_of(name)
+            # A cloaked enemy is no candidate: SelectTarget would skip it,
+            # so a group of only cloaked ships (the nothing-in-reach pick)
+            # idles the wing. It comes back on the tick after it decloaks.
+            if ship is not None and _cloaked(ship):
+                continue
+            flags = _roster_flags(name)
+            v = view_of(ship, *flags)
+            if v is not None:
+                entry.views.append(v)
+                entry.flags.append(flags)
+        _enemy_cache[key] = entry
+    else:
+        for i, v in enumerate(entry.views):
+            flags = _roster_flags(v.name)
+            if flags != entry.flags[i]:
+                entry.views[i] = dataclasses.replace(
+                    v, wing_id=flags[0], is_commander=flags[1])
+                entry.flags[i] = flags
+    entry.users.add(wing.wing_id)
+    return list(entry.views)
+
+
 def tick_wing(wing) -> None:
     import App
     home = _home_set(wing)
@@ -150,20 +223,7 @@ def tick_wing(wing) -> None:
     candidates = list(wing.enemy_group.GetNameTuple())
     seen = set(candidates)
     candidates += [n for n in km if n not in seen]
-    enemies = []
-    for name in candidates:
-        ship = ship_of(name)
-        # A cloaked enemy is no candidate: SelectTarget would skip it, so a
-        # group of only cloaked ships (the nothing-in-reach pick) idles the
-        # wing. It comes back on the tick after it decloaks.
-        if ship is not None and _cloaked(ship):
-            continue
-        other = roster.wing_of(name)
-        v = view_of(ship,
-                    other.wing_id if other is not None else None,
-                    other is not None and other.commander == name)
-        if v is not None:
-            enemies.append(v)
+    enemies = _enemy_views(wing, home, candidates, ship_of)
 
     # 2. Chain: the first entry alive AND in the home set commands.
     if not wing.leaderless:
