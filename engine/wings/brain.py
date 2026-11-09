@@ -103,13 +103,19 @@ def _home_set(wing):
 def _ensure_select_nodes(wing, ship_of) -> None:
     """Discover a member's stock SelectTarget nodes once its attack
     builders have run (they build SelectTarget lazily, on the first AI
-    tick). Members that already have nodes are not walked again."""
+    tick). Members that already have nodes are not walked again -- unless
+    the ship's AI was replaced, which makes them stale. Never the player."""
     from engine.wings import tree
     for name, m in wing.members.items():
-        if m.select_nodes:
+        if m.is_player:
             continue
         ship = ship_of(name)
-        if _alive(ship):
+        if not _alive(ship):
+            continue
+        if ship.GetAI() is not m.ai_root:
+            m.select_nodes.clear()
+            m.select_saved.clear()
+        if not m.select_nodes:
             tree.discover_select_nodes(ship, m)
 
 
@@ -146,7 +152,13 @@ def tick_wing(wing) -> None:
                                             lambda n: n in members)
         if commander is None and any(_alive(_find_anywhere(n))
                                      for n in wing.chain):
-            # Command is alive but away (a warp): leave the wing untouched.
+            # Command is alive but away (a warp): leave the wing's targets
+            # alone, but nobody here can rejoin it -- stand the flags down
+            # so members fight with their stock tree until it is back.
+            for name in members:
+                m = wing.members[name]
+                m.rejoin = False
+                _push(m, "rejoin", False)
             return
         if commander != wing.commander:
             if commander is not None:
@@ -162,6 +174,10 @@ def tick_wing(wing) -> None:
                      plans.leaderless_priorities(enemies, km))
         _desperation(wing, members, ship_of)
         return
+
+    from engine.wings import tree
+    for m in wing.members.values():
+        tree.apply_popularity(m)          # the dial is read at use
 
     # 4. Decide.
     anchor = members[wing.commander]
@@ -240,9 +256,10 @@ def _go_leaderless(wing) -> None:
     wing.leaderless = True
     wing.primary = None
     log("%s leaderless" % wing.wing_id)
+    from engine.wings import tree
     for m in wing.members.values():
+        tree.restore_popularity(m)
         for node in m.select_nodes:
-            node.GetPreprocessingInstance().SetRelativeImportance()
             node.ForceUpdate()
         m.rejoin = False
         _push(m, "rejoin", False)

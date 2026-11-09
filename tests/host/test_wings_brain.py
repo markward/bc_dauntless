@@ -182,6 +182,8 @@ def test_leaderless_latches_and_restores_stock():
     wing, ships = _scene([(100.0, 0.0, 0.0), (600.0, 0.0, 0.0)])
     node = _select_node(ships["m2"], wing.target_group)
     roster.member("m2").select_nodes.append(node)
+    roster.member("m2").select_saved[id(node)] = -1.1   # as found (stock)
+    node.GetPreprocessingInstance().fDistanceFactor = 2.5  # never touched
     rejoin = App.TGCondition()
     rejoin.SetStatus(1)
     roster.member("m2").conditions["rejoin"] = rejoin
@@ -191,8 +193,8 @@ def test_leaderless_latches_and_restores_stock():
     assert wing.leaderless is True and wing.commander is None
     assert _group(wing) == {"e1": 0.0, "e2": 0.0}   # every enemy, out of reach too
     inst = node.GetPreprocessingInstance()
-    assert inst.fPopularityFactor == pytest.approx(-1.1)    # stock
-    assert inst.fDistanceFactor == pytest.approx(1.0)
+    assert inst.fPopularityFactor == pytest.approx(-1.1)    # restored
+    assert inst.fDistanceFactor == pytest.approx(2.5)
     assert rejoin.GetStatus() == 0 and roster.member("m2").rejoin is False
     # The command is not re-elected even if a chain ship came back.
     ships["m1"].SetDead(False)
@@ -337,6 +339,21 @@ def test_whole_chain_in_another_set_leaves_the_wing_alone():
     brain.tick_wing(wing)
     assert _group(wing) == before
     assert wing.leaderless is False and rejoin.GetStatus() == 0
+
+
+def test_command_away_stands_rejoin_down():
+    """While command is away nobody can rejoin it: members in the home set
+    drop the flag and fight with their stock tree until it is back."""
+    wing, ships = _scene([(100.0, 0.0, 0.0)], n_members=3)
+    rejoin = App.TGCondition()
+    roster.member("m2").conditions["rejoin"] = rejoin
+    ships["m2"].SetTranslateXYZ(-350.0, 0.0, 0.0)    # past leash + slack
+    brain.tick_wing(wing)
+    assert rejoin.GetStatus() == 1 and roster.member("m2").rejoin is True
+    _move(ships["m1"], "Elsewhere")
+    brain.tick_wing(wing)
+    assert rejoin.GetStatus() == 0 and roster.member("m2").rejoin is False
+    assert wing.commander == "m1" and wing.leaderless is False
 
 
 def test_ram_roll_with_no_target_flees():

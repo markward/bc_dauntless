@@ -254,3 +254,101 @@ def test_rejoin_waits_while_the_commander_is_not_in_the_set():
     wing.commander = "m2"
     assert script.Update() == AIC.US_ACTIVE
     assert script.pcFollowObjectName == "m2"
+
+
+def test_rejoin_hold_stops_the_ship():
+    wing, ships, _stock = _scene()
+    script = _rejoin_ai(ships["m3"].GetAI()).GetScriptInstance()
+    ships["m3"].SetImpulse(1.0, App.TGPoint3_GetModelForward(),
+                           App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+    assert ships["m3"].GetSpeedSetpoint()[0] > 0.0
+    wing.commander = "gone"
+    assert script.Update() == AIC.US_ACTIVE
+    assert ships["m3"].GetSpeedSetpoint()[0] == 0.0
+
+
+# ── weights: popularity only, saved, re-applied, restored ──────────────────
+
+def test_weighting_touches_only_popularity():
+    _wing, ships, _stock = _scene()
+    member = roster.member("m2")
+    _activate_builders(ships["m2"])
+    inst = _select_nodes(ships["m2"])[0].GetPreprocessingInstance()
+    inst.fDistanceFactor = 2.5                 # a mission's own weighting
+    inst.fPopularityFactor = -0.7
+    assert tree.discover_select_nodes(ships["m2"], member)
+    assert inst.fDistanceFactor == 2.5
+    assert inst.fPopularityFactor == pytest.approx(-0.3)
+
+
+def test_leaderless_restores_the_saved_popularity():
+    _wing, ships, _stock = _scene()
+    _activate_builders(ships["m2"])
+    inst = _select_nodes(ships["m2"])[0].GetPreprocessingInstance()
+    inst.fPopularityFactor = -0.7
+    brain.tick_wing(_wing)
+    assert inst.fPopularityFactor == pytest.approx(-0.3)
+    ships["m1"].SetDead()                      # the whole chain
+    brain.tick_wing(_wing)
+    assert _wing.leaderless is True
+    assert inst.fPopularityFactor == pytest.approx(-0.7)
+
+
+def test_tick_reapplies_the_popularity_dial():
+    wing, ships, _stock = _scene()
+    _activate_builders(ships["m2"])
+    brain.tick_wing(wing)
+    inst = roster.member("m2").select_nodes[0].GetPreprocessingInstance()
+    dials._step("wing_popularity", +1)
+    brain.tick_wing(wing)
+    assert inst.fPopularityFactor == pytest.approx(dials.get("wing_popularity"))
+    assert inst.fPopularityFactor == pytest.approx(-0.2)
+
+
+def test_replaced_ai_is_rediscovered():
+    import AI.Compound.BasicAttack
+    wing, ships, _stock = _scene()
+    _activate_builders(ships["m2"])
+    brain.tick_wing(wing)
+    old = list(roster.member("m2").select_nodes)
+    assert old
+    ships["m2"].SetAI(AI.Compound.BasicAttack.CreateAI(
+        ships["m2"], wing.target_group, Difficulty=0.5))
+    _activate_builders(ships["m2"])
+    brain.tick_wing(wing)
+    nodes = roster.member("m2").select_nodes
+    assert nodes == _select_nodes(ships["m2"])
+    assert not any(n is o for n in nodes for o in old)
+    assert nodes[0].GetPreprocessingInstance().fPopularityFactor \
+        == pytest.approx(-0.3)
+
+
+def test_player_member_is_never_weighted():
+    wing, ships, _stock = _scene()
+    member = roster.member("m2")
+    member.is_player = True
+    _activate_builders(ships["m2"])
+    stock_pop = _select_nodes(ships["m2"])[0] \
+        .GetPreprocessingInstance().fPopularityFactor
+    assert tree.discover_select_nodes(ships["m2"], member) is False
+    brain.tick_wing(wing)
+    assert member.select_nodes == []
+    assert _select_nodes(ships["m2"])[0] \
+        .GetPreprocessingInstance().fPopularityFactor == stock_pop
+
+
+# ── stock detection ────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("cls_name", ["ModSelectTarget", "SelectTarget"])
+def test_mod_select_target_subclass_is_not_stock(cls_name):
+    import AI.Preprocessors
+    wing, ships, _stock = _scene()
+    mod_cls = type(cls_name, (AI.Preprocessors.SelectTarget,), {})
+    node = App.PreprocessingAI_Create(ships["m2"], "SelectTarget")
+    node.SetPreprocessingMethod(mod_cls(wing.target_group), "Update")
+    root = App.PriorityListAI_Create(ships["m2"], "ModRoot")
+    root.AddAI(node, 1)
+    ships["m2"].SetAI(root)
+    member = roster.member("m2")
+    assert tree.discover_select_nodes(ships["m2"], member) is False
+    assert member.select_nodes == []

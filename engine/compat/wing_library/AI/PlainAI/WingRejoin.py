@@ -9,16 +9,19 @@ Served by the claimed-namespace rule (engine/compat/claimed.py); spec
 The stock FollowObject manoeuvre (AI/PlainAI/FollowObject.py, its default
 rough distances), aimed at the commander of the ship's wing. The commander
 is read from the wing on every Update, so a handover retargets the
-manoeuvre with no tree surgery -- and a SetTarget broadcast (SelectTarget
-calls SetTarget on every AI in the tree, which FollowObject maps to
-SetFollowObjectName) never leaves it following an enemy.
+manoeuvre with no tree surgery. Re-reading it also makes the manoeuvre
+immune to a SetTarget call (FollowObject maps SetTarget to
+SetFollowObjectName). In the wing tree none reaches it today -- SelectTarget
+broadcasts SetTarget only to the AIs beneath its own node
+(AI/Preprocessors.py:1384), and the wing branches sit above the stock tree --
+so that is defensive, for a tree built some other way.
 
 * No wing, or a leaderless wing (no commander): US_DONE, as FollowObject
   reports when it has nothing to follow. Leaderless is permanent, so is DONE.
-* A commander not in this ship's set (it died and was removed, or warped)
-  holds US_ACTIVE without moving, rather than FollowObject's US_DONE: a
-  PlainAI that returns DONE is latched for good, and the brain hands over
-  (or clears the rejoin flag) on its next tick.
+* A commander not in this ship's set (it died and was removed, or warped):
+  stop the ship and hold US_ACTIVE, rather than FollowObject's US_DONE. A
+  PlainAI that returns DONE is latched for good; the brain hands over, or
+  stands the rejoin flags down while command is away, on its next tick.
 """
 import App
 import AI.PlainAI.FollowObject
@@ -52,5 +55,7 @@ class WingRejoin(_FollowObject):
         pShip = self.pCodeAI.GetShip()
         pSet = pShip.GetContainingSet() if pShip is not None else None
         if pSet is not None and App.ObjectClass_GetObject(pSet, sCommander) is None:
+            pShip.SetImpulse(0.0, App.TGPoint3_GetModelForward(),
+                             App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
             return App.ArtificialIntelligence.US_ACTIVE
         return _FollowObject.Update(self)

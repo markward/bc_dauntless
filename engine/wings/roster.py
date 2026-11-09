@@ -13,6 +13,10 @@ class Member:
     is_player: bool = False
     in_chain_eligible: bool = True
     select_nodes: list = field(default_factory=list)
+    # id(node) -> the node's fPopularityFactor as found, restored when the
+    # wing goes leaderless; ai_root is the tree the nodes were found under.
+    select_saved: dict = field(default_factory=dict)
+    ai_root: object = None
     rejoin: bool = False
     desperate: str | None = None
     conditions: dict = field(default_factory=dict)

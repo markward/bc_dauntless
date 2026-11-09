@@ -10,7 +10,9 @@
 Every condition is pushed by the brain (status 0/1); nothing here polls.
 The stock tree keeps its own preprocessors; its SelectTarget nodes are found
 once its builders have run (discover_select_nodes) and weighted for the
-wing. Only weights are set on them, so they stay on the native rating path.
+wing: popularity only, saved as found and restored when the wing goes
+leaderless. Only a weight is set on them, so they stay on the native rating
+path.
 """
 import App
 
@@ -77,22 +79,47 @@ def wrap_tree(pShip, pStockTree, wing):
 
 
 def _is_stock_select_target(inst) -> bool:
-    """The SDK's own SelectTarget class -- or the engine's native-rating
-    alias of it (ai_optimized._native_select_class), whose only method is
-    marked _dauntless_native_entry. A mod subclass is not stock."""
+    """Exactly the SDK's AI.Preprocessors.SelectTarget class -- or the
+    engine's native-rating alias of it (ai_optimized._native_select_class,
+    whose only method is marked _dauntless_native_entry). A mod subclass is
+    not stock, whatever it is named."""
+    import AI.Preprocessors
     cls = type(inst)
     entry = cls.__dict__.get("GetTargetRating")
     if getattr(entry, "_dauntless_native_entry", False):
         cls = cls.__mro__[1]
-    return cls.__name__ == "SelectTarget"
+    return cls is AI.Preprocessors.SelectTarget
+
+
+def apply_popularity(member) -> None:
+    """Set every recorded node's popularity to the wing dial (read at use).
+    Popularity is the only weight a wing touches."""
+    fPopularity = dials.get("wing_popularity")
+    for node in member.select_nodes:
+        inst = node.GetPreprocessingInstance()
+        if inst.fPopularityFactor != fPopularity:
+            inst.fPopularityFactor = fPopularity
+
+
+def restore_popularity(member) -> None:
+    """Put back each node's popularity as it was found (leaderless)."""
+    for node in member.select_nodes:
+        saved = member.select_saved.get(id(node))
+        if saved is not None:
+            node.GetPreprocessingInstance().fPopularityFactor = saved
 
 
 def discover_select_nodes(pShip, member) -> bool:
     """Record the stock SelectTarget nodes in `pShip`'s built AI tree on
-    `member`, weighting each new one for the wing (popularity), unless the
-    wing is leaderless (stock weights then). True if a new node was found.
-    Before the attack builders have run there is nothing to find."""
+    `member` (and the tree's root as member.ai_root), saving each new node's
+    popularity and setting it to the wing dial -- unless the wing is
+    leaderless (left as found). True if a new node was found. Before the
+    attack builders have run there is nothing to find. A player member is
+    never touched: its AI is not the wing's to weight."""
+    if member.is_player:
+        return False
     pAI = pShip.GetAI()
+    member.ai_root = pAI
     if pAI is None:
         return False
     wing = roster.wing_of(member.name)
@@ -108,7 +135,8 @@ def discover_select_nodes(pShip, member) -> bool:
         if not _is_stock_select_target(inst):
             continue
         member.select_nodes.append(pNode)
-        if weight:
-            inst.SetRelativeImportance(fPopularity=dials.get("wing_popularity"))
+        member.select_saved[id(pNode)] = inst.fPopularityFactor
         found = True
+    if found and weight:
+        apply_popularity(member)
     return found
