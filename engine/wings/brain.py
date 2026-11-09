@@ -117,7 +117,13 @@ def _arm_reserve(wing, views) -> None:
     a committed one is never re-picked."""
     import App
     players = {n for n, m in wing.members.items() if m.is_player}
-    wing.reserve_live = sum(1 for v in views if v.name not in players)
+    # Counted the way a led tick counts (live non-players in the home set),
+    # so a member elsewhere at arming never reads as a loss on the first
+    # tick.
+    home = _home_set(wing)
+    wing.reserve_live = 0 if home is None else sum(
+        1 for name in wing.members if name not in players
+        and _alive(App.ShipClass_GetObject(home, name)))
     if wing.reserve_spent or wing.reserve is not None:
         return
     wing.reserve = reserve.pick_reserve(
@@ -698,8 +704,10 @@ def _end_withdraw(wing, now) -> None:
 def _stand_down(wing, why) -> None:
     """Leaderless or command away: every Phase B branch, the attack and
     reserve branches off, no move points or slots (like rejoin). A withdraw
-    in progress ends; a held reserve is committed (spent)."""
+    in progress ends; a held reserve is committed, and a wing without
+    command never holds one later (spent either way)."""
     _commit_reserve(wing, why)
+    wing.reserve_spent = True
     if wing.withdraw_since is not None:
         import App
         _end_withdraw(wing, float(App.g_kUtopiaModule.GetGameTime()))

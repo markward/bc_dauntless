@@ -278,17 +278,33 @@ def test_dead_reserve_is_spent(now):
 
 
 def test_reserve_never_repicked_after_commit(now):
-    wing, ships = _scene(_HELD)
+    """Committed with all five alive (timeout), so a re-arm -- as a late
+    wave's arrival does -- would pick again but for reserve_spent."""
+    wing, ships = _scene(_FAR)
     brain.tick_wing(wing)
-    ships["m3"].SetDead()
-    now[0] = 1.0
+    now[0] = dials.get("reserve_max_s") + 1.0
     brain.tick_wing(wing)
     _spent(wing)
-    brain.arm_chain(wing)                 # a late arrival re-arms
+    service.arm(wing)
     assert wing.reserve is None and wing.reserve_spent is True
-    now[0] = 2.0
+    assert not any(m.reserve for m in wing.members.values())
+    now[0] += 1.0
     brain.tick_wing(wing)
     _spent(wing)
+
+
+def test_split_set_arm_is_no_loss(now):
+    """A member outside the home set at arming is not counted, so the first
+    led tick does not read it as a loss."""
+    wing, ships = _scene(_HELD, n_members=6)
+    ships["m6"].GetContainingSet().RemoveObjectFromSet("m6")
+    other = SetClass_Create()
+    App.g_kSetManager.AddSet(other, "Elsewhere")
+    other.AddObjectToSet(ships["m6"], "m6")
+    brain.arm_chain(wing)
+    assert wing.reserve == "m2" and wing.reserve_live == 5
+    brain.tick_wing(wing)
+    assert wing.reserve == "m2" and wing.reserve_spent is False
 
 
 def test_rearm_keeps_a_held_reserve(now):
@@ -324,6 +340,44 @@ def test_reserve_withdraws_with_the_wing(now):
     assert _status("m2", "withdraw") == 1
     assert _status("m2", "reserve") == 0
     assert roster.member("m2").slot is None
+
+
+def test_reserve_returns_after_withdraw_ends(now):
+    enemies = [(120.0 + 10.0 * i, 10.0 * (i % 3), 0.0) for i in range(8)]
+    wing, ships = _scene(enemies, enemy_kind="BirdOfPrey")
+    for i in range(1, 6):
+        ships["m%d" % i].GetHull().SetConditionPercentage(0.3)
+    brain.tick_wing(wing)
+    assert wing.decision == "withdraw" and _status("m2", "reserve") == 0
+    for i in range(1, 9):
+        ships["e%d" % i].SetTranslateXYZ(2000.0 + i, 0.0, 0.0)
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    now[0] = 1.0 + dials.get("withdraw_clear_s")
+    brain.tick_wing(wing)
+    assert wing.withdraw_since is None and wing.decision != "withdraw"
+    assert wing.reserve == "m2"
+    assert _status("m2", "reserve") == 1
+    assert _status("m2", "withdraw") == 0
+    m2 = roster.member("m2")
+    anchor = _pos(ships["m1"])
+    assert m2.move_point == pytest.approx(rotate.fallback_point(
+        anchor, wing.last_centroid, dials.get("reserve_gu")))
+
+
+def test_stand_down_without_a_reserve_still_spends_it(now):
+    """A wing that lost command never holds a reserve, even if re-armed."""
+    wing, ships = _scene(_HELD)
+    wing.reserve = None                       # as if nothing was picked
+    for m in wing.members.values():
+        m.reserve = False
+    ships["m1"].SetDead()
+    wing.chain = ["m1"]
+    brain.tick_wing(wing)
+    assert wing.leaderless is True and wing.reserve_spent is True
+    service.arm(wing)
+    assert wing.reserve is None
+    assert not any(m.reserve for m in wing.members.values())
 
 
 def test_leaderless_commits_reserve(monkeypatch, capsys, now):
