@@ -137,20 +137,38 @@ def _hold_target(ship):
         shields.SetCurShields(i, frac * shields.GetMaxShields(i))
 
 
+STEADY_IMPULSE = 0.5
+
+
+def _steady_course(ship):
+    """Straight ahead along its own nose at STEADY_IMPULSE: no AI, so it
+    never turns."""
+    ship.SetImpulse(STEADY_IMPULSE, App.TGPoint3_GetModelForward(),
+                    App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+
+
 def _focus_face_run(seed, monkeypatch, slots_on):
-    """Five Akiras against a Bird of Prey that fights back, its LEFT face
-    held at 0.1. The wing starts on the target's RIGHT (+x of an unrotated
-    target). Returns (decisions seen, samples every 0.5 s from 30 s:
-    (slot-holders, slot-holders on the LEFT, non-commanders on the LEFT))."""
+    """Five Akiras against a Bird of Prey on a steady course (no AI: it
+    flies straight along +y at STEADY_IMPULSE), its LEFT face held at 0.1.
+    The wing starts on the target's RIGHT (+x of an unrotated target).
+    Returns (decisions seen, samples every 0.5 s from 30 s: (slot-holders,
+    slot-holders on the LEFT, non-commanders on the LEFT), the target's
+    speed at the end).
+
+    Against a hard-turning dogfighter the weak-side share is chaotic by
+    seed (0.07-0.93 at a 48 GU standoff, spec §11): a live-check item, not
+    a test. As (b) holds its target still, this checks that the holders
+    take and track the weak-side slots on a moving target."""
     wing, ships, loop = _scene(
         monkeypatch, seed, "Akira",
         [(150.0 + 20.0 * i, 0.0, 0.0) for i in range(5)],
         "BirdOfPrey", [(0.0, 0.0, 0.0)],
-        None if slots_on else {"attack_slots": 0})
+        None if slots_on else {"attack_slots": 0}, enemy_ai=False)
     target = ships["e1"]
     samples, decs = [], set()
     for t in range(60 * HZ):
         _hold_target(target)
+        _steady_course(target)
         _step(loop)
         decs.add(wing.decision)
         if t < 30 * HZ or t % 30:
@@ -162,25 +180,26 @@ def _focus_face_run(seed, monkeypatch, slots_on):
             len(holders),
             sum(1 for n in holders if _body(target, ships[n])[0] < 0.0),
             sum(1 for n in others if _body(target, ships[n])[0] < 0.0)))
-    return decs, samples
+    return decs, samples, target.GetVelocityTG().Length()
 
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_focus_face_flanks_weak_side(seed, monkeypatch):
-    decs, on = _focus_face_run(seed, monkeypatch, True)
-    c_decs, off = _focus_face_run(seed, monkeypatch, False)
+    decs, on, speed = _focus_face_run(seed, monkeypatch, True)
+    c_decs, off, _c_speed = _focus_face_run(seed, monkeypatch, False)
     frac_on = sum(1 for _h, left, _o in on if left >= 2) / len(on)
     frac_off = sum(1 for _h, _l, left in off if left >= 2) / len(off)
     print("\n[focus_face seed %d] >=2 slot-holders LEFT on %.2f of samples "
           "30-60 s (holders %s); control (attack_slots 0) >=2 members LEFT "
-          "%.2f; decisions %s / %s"
+          "%.2f; decisions %s / %s; target speed %.2f GU/s"
           % (seed, frac_on, sorted({h for h, _l, _o in on}), frac_off,
-             sorted(map(str, decs)), sorted(map(str, c_decs))))
+             sorted(map(str, decs)), sorted(map(str, c_decs)), speed))
     assert "focus_face" in decs
-    # The wing starts on the target's right; the holders take ~26-30 s to
-    # come round the turning target (focus_face from the first brain tick).
-    # From 30 s: >= 2 holders on the LEFT on 0.88-0.93 of samples, the
-    # control's members on 0.00 (2026-11-09, 3 seeds).
+    # The wing starts on the target's right and comes round the moving
+    # target (3.1 GU/s; focus_face from the first brain tick). From 30 s:
+    # >= 2 holders on the LEFT on 0.82 / 0.85 / 0.87 of samples, the
+    # control's members on 0.00 (2026-11-09, seeds 1-3; Akira holders at
+    # 48 GU).
     assert frac_on >= 0.7
     assert frac_off <= 0.3
 

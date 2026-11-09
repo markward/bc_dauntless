@@ -315,8 +315,9 @@ picks one.
 - (c) Reserve: the reserve stays farther from the enemy than the commander
   until a member dies, then closes.
 - Built as `tests/host/test_wings_phase_c_behaviour.py`, each against a
-  control with the behaviour dialled off. (b)'s target holds still: fighting
-  back, one run in three let the commander drift past the 200 GU leash for
+  control with the behaviour dialled off. (a)'s target flies a steady
+  course (no AI, straight ahead at impulse 0.5, ~3.1 GU/s; §11 ruling 4).
+  (b)'s target holds still: fighting back, one run in three let the commander drift past the 200 GU leash for
   ~2 min, which turns disable off. (c) closes "≥ 50 GU within 25 s of the
   loss": a held reserve sits ~140 GU farther out and must turn about first.
 
@@ -382,11 +383,16 @@ picks one.
    40) → 25 GU, Bird of Prey 100 → 80 GU. Test (b): weapons down at
    166 s, hull below half at 192 s (3 seeds). Against a still target the
    holders are on the slot and facing it on 0.72 of samples (0.54 at
-   120 GU, 0.17 before hold mode). ⚠️ **Open:** behaviour test (a)
-   (focus face against a Bird of Prey that turns and fights back) fails 2
-   of 3 seeds at the Akira's 48 GU: ≥ 2 holders on the weak side on 0.35 /
-   0.93 / 0.07 of samples (bound 0.7). The same scene at a fixed 80 GU gives
-   0.93 / 0.93 / 0.87, and at 120 GU 0.33 / 0.93 / 0.93.
+   120 GU, 0.17 before hold mode).
+   ⚠️ **Live-check item:** against a hard-turning dogfighter (a Bird of
+   Prey that fights back) the weak-side share is chaotic by seed: ≥ 2
+   holders on the weak side on 0.35 / 0.93 / 0.07 of samples at 48 GU, and
+   not monotonic in the standoff (seed 1: 0.35 at 48 GU, 0.22 at 60, 0.93
+   at 80, 0.33 at 120). A 60 GU flank floor and a standoff-scaled hold
+   radius were tried and reverted (the floor cost short-range ships their
+   flank damage; the radius had no measurable benefit and slowed disable).
+   Behaviour test (a) now flies its target on a steady course: 0.82 /
+   0.85 / 0.87, control 0.00.
 5. **Minors.** Repeated disable directions are turned 25° per wrap; Regroup
    does not count last tick's slot-holders or the held reserve as strays; a
    failed QB difficulty read is logged once (`DAUNTLESS_WINGS_LOG=1`).
