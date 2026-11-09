@@ -7,7 +7,6 @@ from engine.wings import roster, service
 @pytest.fixture(autouse=True)
 def _clean():
     service.reset_all()
-    service.reset_dev()
     yield
     service.reset_all()
 
@@ -96,16 +95,12 @@ def test_wing_targets_ordered():
     assert dw.GetWingTargets("X") == ("b", "a")
 
 
-@pytest.mark.parametrize("how", ["env", "dev"])
-def test_building_calls_do_nothing_when_disabled(monkeypatch, how):
+def test_building_calls_do_nothing_when_disabled(monkeypatch):
     """With wings off CreateWing / AddMember / ArmWing build no state, so
     GetCommander / IsCommander never report a wing no brain runs."""
     from engine.wings import brain
     monkeypatch.setattr(brain, "arm_chain", lambda w: setattr(w, "commander", "Lead"))
-    if how == "env":
-        monkeypatch.setenv("DAUNTLESS_WINGS", "0")
-    else:
-        service.set_dev_enabled(False)
+    monkeypatch.setenv("DAUNTLESS_WINGS", "0")
     dw = _dw()
     assert dw.CreateWing("W", _Group()) is None
     assert dw.AddMember("W", "Lead") is None

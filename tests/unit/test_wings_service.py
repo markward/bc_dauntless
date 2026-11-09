@@ -12,10 +12,8 @@ class _Group:
 @pytest.fixture(autouse=True)
 def _clean():
     service.reset_all()
-    service.reset_dev()
     yield
     service.reset_all()
-    service.reset_dev()
 
 
 def _wing(wid):
@@ -39,12 +37,13 @@ def test_disabled_by_env(monkeypatch):
     assert not service.enabled()
 
 
-def test_dev_switch():
-    service.set_dev_enabled(False)
-    assert not service.enabled()
-    service.reset()
-    assert not service.enabled()      # mission reset leaves it
-    service.reset_dev()
+def test_env_is_the_only_switch():
+    """The developer toggles are gone (Mark, 2026-11-09): wings are switched
+    per battle by the Quick Battle setup screen (plan.wings), and globally
+    only by DAUNTLESS_WINGS."""
+    for gone in ("set_dev_enabled", "_dev_enabled", "reset_dev",
+                 "set_show_markers", "show_markers", "_show_markers"):
+        assert not hasattr(service, gone), gone
     assert service.enabled()
 
 
@@ -110,33 +109,6 @@ def test_nothing_armed_tick_does_no_work(monkeypatch):
     _wing("A")                                  # created, never armed
     service.tick(5.0)
     assert seen == []
-
-
-def test_dev_toggle_mid_battle_leaves_armed_wing_ticking(monkeypatch):
-    """The dev switch is read at arm time only ("next battle"): switching it
-    off mid-battle does not stop an armed wing half way."""
-    seen = []
-    monkeypatch.setattr(brain, "arm_chain", lambda w: None)
-    monkeypatch.setattr(brain, "tick_safely", lambda w: seen.append(1))
-    service.arm(_wing("A"))
-    service.set_dev_enabled(False)
-    service.tick(1.0)
-    assert seen == [1]
-
-
-def test_reset_all_resets_dev_switch():
-    service.set_dev_enabled(False)
-    service.reset_all()
-    assert service.enabled()
-
-
-def test_markers_default_off_survive_reset_cleared_by_reset_all():
-    assert service.show_markers() is False
-    service.set_show_markers(True)
-    service.reset()
-    assert service.show_markers() is True
-    service.reset_all()
-    assert service.show_markers() is False
 
 
 def test_is_commander():

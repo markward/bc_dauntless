@@ -26,8 +26,6 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'disable_collisions'});
         out.push({kind: 'ctrl', target: 'sensor_occlusion'});
         out.push({kind: 'ctrl', target: 'quick_repair'});
-        out.push({kind: 'ctrl', target: 'wing_ai'});
-        out.push({kind: 'ctrl', target: 'wing_markers'});
     }
     if (state.selected_tab === 'lighting') {
         out.push({kind: 'ctrl', target: 'systems_damaged'});
@@ -139,11 +137,6 @@ function _doRenderCombatBody(state, focusables) {
                          s.sensor_occlusion, isFoc('sensor_occlusion'));
     html += _doActionRow('Quick Repair Player Ship', 'quick_repair',
                          'Repair', isFoc('quick_repair'));
-    // Wing AI applies at the next battle start (arming reads the switch).
-    html += _doToggleRow('Wing AI (next battle)', 'wing_ai', s.wing_ai,
-                         isFoc('wing_ai'));
-    html += _doToggleRow('Show Wing Commanders', 'wing_markers',
-                         s.wing_markers, isFoc('wing_markers'));
     return html;
 }
 

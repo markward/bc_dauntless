@@ -9,38 +9,21 @@ import os
 
 from engine.wings import brain, decisions, dials, roster
 
-_dev_enabled = True
-_show_markers = False
 _armed: list = []
 _EPS = 1e-9
 
 
 def enabled() -> bool:
-    return os.environ.get("DAUNTLESS_WINGS") != "0" and _dev_enabled
-
-
-def set_dev_enabled(on) -> None:
-    global _dev_enabled
-    _dev_enabled = bool(on)
-
-
-def set_show_markers(on) -> None:
-    global _show_markers
-    _show_markers = bool(on)
-
-
-def show_markers() -> bool:
-    return _show_markers
+    """The global switch: DAUNTLESS_WINGS=0 turns wings off everywhere (perf
+    A/B, tests). Quick Battle also reads its setup screen's per-battle
+    "Wing commanders" switch (plan.wings, engine/quickbattle/wings_qb.py)."""
+    return os.environ.get("DAUNTLESS_WINGS") != "0"
 
 
 def is_commander(name) -> bool:
     wing = roster.wing_of(name)
     return (wing is not None and not wing.leaderless
             and wing.commander == name)
-
-
-def reset_dev() -> None:
-    set_dev_enabled(True)
 
 
 def arm(wing) -> None:
@@ -60,10 +43,8 @@ def arm(wing) -> None:
 
 
 def tick(dt: float) -> None:
-    """Run every armed wing whose period has passed. The dev switch is NOT
-    read here: it is read at arm time (consumers check enabled() before
-    arming), so toggling it mid-battle leaves the battle as armed. Only
-    DAUNTLESS_WINGS=0 stops the brain."""
+    """Run every armed wing whose period has passed. Consumers check
+    enabled() before arming; DAUNTLESS_WINGS=0 also stops the brain."""
     if not _armed or os.environ.get("DAUNTLESS_WINGS") == "0":
         return
     period = dials.get("brain_period_s")
@@ -81,10 +62,7 @@ def reset() -> None:
 
 
 def reset_all() -> None:
-    """Tests only: also drops mod-registered decisions, dial changes and
-    the dev switch."""
+    """Tests only: also drops mod-registered decisions and dial changes."""
     reset()
-    reset_dev()
-    set_show_markers(False)
     decisions.reset_registry()
     dials.reset()
