@@ -41,6 +41,8 @@ class Context:
     protect_prev: Optional[str] = None
     # Ordinary wing members: protect.threatened's real-danger rule.
     strict_protectees: frozenset = frozenset()
+    # Phase D: the WingStatus of the other wings on this wing's side.
+    allies: tuple = ()
 
 
 @dataclass

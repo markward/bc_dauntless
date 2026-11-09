@@ -42,6 +42,20 @@ DEFAULTS: dict = {
     "protect_min_s": 10.0,
     "attack_min_s": 10.0,
     "protect_member_frac": 0.6,
+    "reinforce_odds": 1.0,
+    "reinforce_spare_odds": 2.5,
+    "reinforce_range_gu": 1500.0,
+    "reinforce_max_s": 90.0,
+    "reinforce_cooldown_s": 60.0,
+    "hold_spread_gu": 30.0,
+    "screen_watch_gu": 700.0,
+    "screen_gu": 150.0,
+    "flank_gu": 250.0,
+    "feint_range_gu": 800.0,
+    "feint_stop_gu": 100.0,
+    "feint_odds": 1.0,
+    "feint_cooldown_s": 180.0,
+    "feint_max_s": 45.0,
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {"leash_gu": 25.0, "leash_slack_gu": 25.0, "regroup_gather_gu": 25.0,
@@ -60,7 +74,13 @@ _STEP = {"leash_gu": 25.0, "leash_slack_gu": 25.0, "regroup_gather_gu": 25.0,
          "reserve_min_wing": 1, "reserve_gu": 10.0, "reserve_max_s": 5.0,
          "disable_max_s": 10.0, "attack_standoff_min_gu": 5.0,
          "protect_min_s": 1.0, "attack_min_s": 1.0,
-         "protect_member_frac": 0.05}
+         "protect_member_frac": 0.05,
+         "reinforce_odds": 0.1, "reinforce_spare_odds": 0.1,
+         "reinforce_range_gu": 100.0, "reinforce_max_s": 5.0,
+         "reinforce_cooldown_s": 5.0, "hold_spread_gu": 5.0,
+         "screen_watch_gu": 50.0, "screen_gu": 10.0, "flank_gu": 25.0,
+         "feint_range_gu": 50.0, "feint_stop_gu": 10.0, "feint_odds": 0.1,
+         "feint_cooldown_s": 10.0, "feint_max_s": 5.0}
 _MIN = {"leash_gu": 25.0, "leash_slack_gu": 0.0, "regroup_gather_gu": 25.0,
         "engage_gu": 25.0, "wing_popularity": -2.0, "stickiness": 0.0,
         "odds_ratio": 0.1, "desperate_hull": 0.0, "ram_chance": 0.0,
@@ -76,14 +96,22 @@ _MIN = {"leash_gu": 25.0, "leash_slack_gu": 0.0, "regroup_gather_gu": 25.0,
         "disable_threat": 1.0, "reserve_min_wing": 2, "reserve_gu": 25.0,
         "reserve_max_s": 5.0, "disable_max_s": 10.0,
         "attack_standoff_min_gu": 5.0, "protect_min_s": 0.0,
-        "attack_min_s": 0.0, "protect_member_frac": 0.0}
+        "attack_min_s": 0.0, "protect_member_frac": 0.0,
+        "reinforce_odds": 0.0, "reinforce_spare_odds": 1.0,
+        "reinforce_range_gu": 100.0, "reinforce_max_s": 5.0,
+        "reinforce_cooldown_s": 0.0, "hold_spread_gu": 5.0,
+        "screen_watch_gu": 100.0, "screen_gu": 25.0, "flank_gu": 50.0,
+        "feint_range_gu": 100.0, "feint_stop_gu": 25.0, "feint_odds": 0.1,
+        "feint_cooldown_s": 0.0, "feint_max_s": 5.0}
 _MAX = {"wing_popularity": 2.0, "stickiness": 1.0, "odds_ratio": 3.0,
         "desperate_hull": 1.0, "ram_chance": 1.0,
         "heavy_fire_frac": 1.0, "rotate_out_shield": 1.0,
         "rotate_in_shield": 1.0, "rotate_cap_frac": 1.0, "rotate_out_hull": 1.0,
         "withdraw_odds": 3.0,
         "withdraw_wing_frac": 1.0, "face_weak": 1.0, "disable_threat": 5.0,
-        "protect_member_frac": 1.0}
+        "protect_member_frac": 1.0,
+        "reinforce_odds": 5.0, "reinforce_spare_odds": 10.0,
+        "feint_odds": 5.0}
 
 _dials: dict = dict(DEFAULTS)
 

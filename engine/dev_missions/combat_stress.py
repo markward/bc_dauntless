@@ -267,6 +267,7 @@ def _arm_wings(created, pFriendlies, pEnemies):
         for k, start in enumerate(range(0, len(names), n)):
             wid = "cs:%s:%d" % (side, k)
             DauntlessWings.CreateWing(wid, attacked)
+            roster._wings[wid].side = side
             chunk = names[start:start + n]
             for name in chunk:
                 DauntlessWings.AddMember(wid, name)

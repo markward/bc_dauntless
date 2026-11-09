@@ -12,7 +12,7 @@ import dataclasses
 import os
 import sys
 
-from engine.wings import (assess, attack, chain, decisions, dials, plans,
+from engine.wings import (allies, assess, attack, chain, decisions, dials, plans,
                           protect, reserve, roster, rotate)
 
 _NUM_SHIELDS = 6
@@ -356,7 +356,8 @@ def tick_wing(wing) -> None:
         decision_age_s=(now - wing.decision_since
                         if wing.decision is not None else 0.0),
         protect_prev=wing.protect_prev,
-        strict_protectees=_strict_protectees(wing, members))
+        strict_protectees=_strict_protectees(wing, members),
+        allies=allies.side_allies(wing, roster.wings()))
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
         log("%s decision %s -> %s"
@@ -415,6 +416,21 @@ def tick_wing(wing) -> None:
         for m in wing.members.values():
             for node in m.select_nodes:
                 node.ForceUpdate()
+    _publish_status(wing, ctx, near, members)
+
+
+def _publish_status(wing, ctx, near, members) -> None:
+    """The wing's status for its allies' next tick (Phase D): sides read
+    through the decisions' memo, within engage_gu of the anchor."""
+    ours, theirs = decisions._sides(ctx, dials.get("engage_gu"))
+    live = sum(assess.strength(v) for v in members.values())
+    armed = wing.armed_strength
+    wing.status = allies.WingStatus(
+        wing_id=wing.wing_id, side=allies.side_of(wing),
+        anchor=tuple(ctx.anchor.pos),
+        strength_frac=live / armed if armed else 0.0,
+        ours=ours, theirs=theirs, enemy_centroid=assess.centroid(near),
+        engaged=bool(near), decision=wing.decision)
 
 
 def _disable_cap(wing, now) -> None:
@@ -775,6 +791,7 @@ def _stand_down(wing, why) -> None:
     reserve branches off, no move points or slots (like rejoin). A withdraw
     in progress ends; a held reserve is committed, and a wing without
     command never holds one later (spent either way)."""
+    wing.status = None
     _commit_reserve(wing, why)
     wing.reserve_spent = True
     if wing.withdraw_since is not None:

@@ -98,6 +98,11 @@ class Wing:
     disable_target: str | None = None
     disable_since: float | None = None
     disable_done: set = field(default_factory=set)
+    # Phase D: the side its allies share (allies.side_of falls back to the
+    # enemy group's identity) and the WingStatus the brain publishes at the
+    # end of a led tick (None when leaderless, away or standing down).
+    side: str | None = None
+    status: object = None
 
 
 _wings: dict[str, Wing] = {}

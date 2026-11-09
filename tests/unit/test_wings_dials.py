@@ -17,7 +17,13 @@ SPEC = {"leash_gu": 200.0, "leash_slack_gu": 100.0, "regroup_gather_gu": 100.0,
         "reserve_min_wing": 5, "reserve_gu": 150.0, "reserve_max_s": 90.0,
         "disable_max_s": 300.0, "attack_standoff_min_gu": 25.0,
         "protect_min_s": 10.0, "attack_min_s": 10.0,
-        "protect_member_frac": 0.6}
+        "protect_member_frac": 0.6,
+        "reinforce_odds": 1.0, "reinforce_spare_odds": 2.5,
+        "reinforce_range_gu": 1500.0, "reinforce_max_s": 90.0,
+        "reinforce_cooldown_s": 60.0, "hold_spread_gu": 30.0,
+        "screen_watch_gu": 700.0, "screen_gu": 150.0, "flank_gu": 250.0,
+        "feint_range_gu": 800.0, "feint_stop_gu": 100.0, "feint_odds": 1.0,
+        "feint_cooldown_s": 180.0, "feint_max_s": 45.0}
 
 
 def test_defaults_match_spec():
