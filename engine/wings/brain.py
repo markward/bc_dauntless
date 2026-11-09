@@ -270,6 +270,7 @@ def tick_wing(wing) -> None:
     import App
     home = _home_set(wing)
     if home is None:
+        wing.status = None            # nobody left to report
         return
 
     def ship_of(name):

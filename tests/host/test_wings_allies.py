@@ -8,7 +8,7 @@ import App  # noqa: E402
 import loadspacehelper  # noqa: E402
 
 from engine.appc.sets import SetClass_Create  # noqa: E402
-from engine.wings import brain, decisions, roster, service, tree  # noqa: E402
+from engine.wings import allies, brain, decisions, roster, service, tree  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -137,3 +137,16 @@ def test_context_allies_same_side_only(now, monkeypatch):
     brain.tick_wing(c)
     assert [s.wing_id for s in seen["a1"]] == ["b"]
     assert seen["c1"] == ()
+
+
+def test_no_live_members_clears_status(now):
+    a, b, _c, ships = _two_sides()
+    brain.tick_wing(a)
+    brain.tick_wing(b)
+    assert a.status is not None
+    for n in a.members:
+        ships[n].SetDead()
+    now[0] = 1.0
+    brain.tick_wing(a)
+    assert a.status is None
+    assert allies.side_allies(b, roster.wings()) == ()

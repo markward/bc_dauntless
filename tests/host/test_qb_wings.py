@@ -90,6 +90,7 @@ def test_wings_armed_per_group(world):
     assert set(w2.chain) <= set(second)
     assert w1.enemy_group is QB.pFriendlies and w2.enemy_group is QB.pFriendlies
     assert all(w.commander == w.chain[0] for w in wings)
+    assert pw.side == "friendly" and w1.side == w2.side == "enemy"
     assert all(w in service._armed for w in wings)
 
 
