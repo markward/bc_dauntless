@@ -11,11 +11,11 @@ def target_priorities(enemies, anchor, choice, km, player_target):
         return {}
     leash = dials.get("leash_gu")
     reach = [e for e in enemies if assess.dist(e.pos, anchor.pos) <= leash]
-    if not reach:
+    if not reach and not any(e.name == player_target for e in enemies):
         nearest = min(enemies,
                       key=lambda e: (assess.dist(e.pos, anchor.pos), e.name))
         return {nearest.name: 3.0}
-    names = {e.name for e in reach}
+    names = {e.name for e in reach}  # may be empty if only player_target
     out = {n: km.get(n, 0.0) for n in names}
     primary = choice.primary if choice.primary in names else None
     secondaries = [s for s in choice.secondaries if s in names]

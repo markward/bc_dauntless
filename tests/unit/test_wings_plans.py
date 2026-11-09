@@ -84,3 +84,25 @@ def test_desperation_deterministic_and_once():
     r = random.Random(7)
     exp = {n: ("ram" if r.random() < 0.3 else "flee") for n in ("a", "b")}
     assert one == exp
+
+
+def test_far_player_target_nothing_in_reach():
+    anchor = V("anc", 0)
+    en = [V("near", 600), V("far", 900)]
+    out = plans.target_priorities(en, anchor, Choice(None), {}, "far")
+    assert out == {"far": 3.0}
+
+
+def test_far_player_target_with_others_in_reach():
+    anchor = V("anc", 0)
+    en = [V("a", 50), V("b", 100), V("far", 900)]
+    out = plans.target_priorities(en, anchor, Choice("a", ("b",)), {}, "far")
+    assert out == {"a": 0.0, "b": 1.5, "far": 3.0}
+
+
+def test_choice_outside_reach_is_dropped():
+    anchor = V("anc", 0)
+    en = [V("a", 50), V("far", 900), V("far2", 800)]
+    out = plans.target_priorities(en, anchor, Choice("far", ("far2",)), {},
+                                  None)
+    assert out == {"a": 0.0}
