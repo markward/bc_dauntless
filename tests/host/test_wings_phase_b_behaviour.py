@@ -114,12 +114,9 @@ def test_guard_moves_between_protectee_and_attacker(monkeypatch):
 
 def test_shieldless_member_falls_back_behind_commander(monkeypatch):
     _load(monkeypatch, 8, 4)
-    from engine.wings import dials
-    # Protect off: the enemy wing swarms the weakest ship, and a protectee is
-    # never rotated out (it waits for its guard), so with protect on this
-    # would measure protect, not rotate.
-    monkeypatch.setitem(dials._dials, "heavy_fire_attackers", 99)
-    monkeypatch.setitem(dials._dials, "heavy_fire_frac", 1.0)
+    # Protect stays on: the enemy wing swarms the weakest ship, which makes
+    # the faller the protectee too, and a member protectee still falls back
+    # (ruling 2026-11-09) with its guard covering its retreat.
     ships = _set_ships()
     fw, ew = _wing("cs:friend:0"), _wing("cs:enemy:0")
     cmd = fw.commander
@@ -136,11 +133,12 @@ def test_shieldless_member_falls_back_behind_commander(monkeypatch):
         _place(s, (100.0, float(y), float(z)))
 
     loop = GameLoop()
-    first, fell, trace = None, False, []
+    first, fell, trace, guarded = None, False, [], False
     for t in range(15 * HZ):
         _set_shields(ships[faller], 0.1)           # held: it stays down
         loop.tick()
         fell = fell or fw.members[faller].fallback_since is not None
+        guarded = guarded or fw.guarded == faller
         if t % 30:
             continue
         cen = _centroid(enemies)
@@ -149,11 +147,14 @@ def test_shieldless_member_falls_back_behind_commander(monkeypatch):
         trace.append((round(t / HZ, 1), round(d_f, 1), round(d_c, 1)))
         if first is None and d_f > d_c:
             first = t / HZ
-    print("\n[rotate] faller %s cmd %s farther at %s s; (t, faller, cmd) %s"
-          % (faller, cmd, first, trace[::4] + trace[-1:]))
+    print("\n[rotate] faller %s cmd %s farther at %s s; guarded as "
+          "protectee %s; (t, faller, cmd) %s"
+          % (faller, cmd, first, guarded, trace[::4] + trace[-1:]))
     assert fell
-    # Seen farther than the commander at 9.0 s in every run (window 15 s); with
-    # rotate off (rotate_out_shield 0) it never was: it closed to 13-31 GU.
+    # Seen farther than the commander at 8.5-9.5 s in every run (window 15 s),
+    # with Protect on and the faller guarded as the protectee in every run
+    # (2026-11-09, 6 runs); with rotate off (rotate_out_shield 0, protect on,
+    # 2 runs) it never was: it closed to 24.7-29.2 GU.
     assert first is not None
 
 

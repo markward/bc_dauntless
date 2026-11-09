@@ -23,12 +23,24 @@ def test_registered_after_phase_a():
 
 def test_protect_scores_when_threatened():
     p = V("p", 5)
-    ctx = decisions.Context(members=[V("a"), p], anchor=V("a"), enemies=[],
+    atk = [V("e", 30, target="p")]
+    ctx = decisions.Context(members=[V("a"), p], anchor=V("a"), enemies=atk,
                             protectees=[p], rates={"p": 0.3})
     assert _by("protect").score(ctx) == 1.5
-    ctx2 = decisions.Context(members=[V("a"), p], anchor=V("a"), enemies=[],
+    ctx2 = decisions.Context(members=[V("a"), p], anchor=V("a"), enemies=atk,
                              protectees=[p], rates={"p": 0.0})
     assert _by("protect").score(ctx2) == 0.0
+
+
+def test_protect_rate_alone_scores_zero():
+    """Review I1: damage with no attacker in reach never wins Protect, so
+    Phase A's focus stays."""
+    p = V("p", 5)
+    ctx = decisions.Context(members=[V("a"), p], anchor=V("a"),
+                            enemies=[V("x", 50)], protectees=[p],
+                            rates={"p": 0.9})
+    assert _by("protect").score(ctx) == 0.0
+    assert decisions.pick(ctx).name == "swarm_weakest"
 
 
 def test_protect_choice_attackers():
@@ -108,3 +120,22 @@ def test_phase_a_scores_unchanged():
     assert s["regroup"] == 0.0 and s["swarm_weakest"] == 1.0
     assert s["swarm_commander"] == 0.3
     assert s["protect"] == 0.0 and s["withdraw"] == 0.0
+
+
+def test_ended_withdraw_never_wins_on_stickiness():
+    """Review M3: a decision scoring 0 gets no stickiness bonus, so an
+    ended Withdraw ends even with the dial at 0.5 (outmatched swarm 0.4)."""
+    dials._dials["stickiness"] = 0.5
+    ended = _w(current="withdraw", withdraw_since=30.0)   # past withdraw_max_s
+    assert _by("withdraw").score(ended) == 0.0
+    assert decisions.pick(ended).name != "withdraw"
+    live = _w(current="withdraw", withdraw_since=95.0)
+    assert decisions.pick(live).name == "withdraw"
+
+
+def test_stickiness_still_holds_a_scoring_current():
+    dials._dials["stickiness"] = 0.75
+    ms = [V("a"), V("b", 10)]
+    ctx = decisions.Context(members=ms, anchor=ms[0], enemies=[V("x", 50)],
+                            current="swarm_commander")
+    assert decisions.pick(ctx).name == "swarm_commander"   # 0.3 + 0.75 > 1.0

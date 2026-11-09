@@ -10,9 +10,13 @@ Each Update reads engine.wings.roster member(own name).move_point (a world
 (x, y, z) tuple or None). With a point it drives there as the stock
 AI/PlainAI/Intercept.py does toward vDestination: TurnTowardLocation, then
 SetImpulse along model-forward, the fraction scaling down linearly inside
-20 GU and 0 within 2 GU. With no point it stops the ship. It never reports
-DONE: the brain owns when the branch ends (its condition goes false).
+20 GU and 0 within 2 GU. With no point it stops the ship. While the ship is
+a wing member it never reports DONE: the brain owns when the branch ends
+(its condition goes false). With no member record (the wing was reset) it
+reports DONE, as WingRejoin does.
 """
+import math
+
 import App
 
 _SLOW_GU = 20.0
@@ -24,7 +28,12 @@ class WingMoveTo:
         self.pCodeAI = pCodeAI
 
     def GetNextUpdateTime(self):
-        return 0.0
+        # FollowObject's 0.2 s (WingRejoin inherits it). 0.0 would pin the
+        # tree walk's next update to now, so a guarding, falling-back or
+        # withdrawing ship would never sleep (AI_MAX_SLEEP_TICKS) and would
+        # run this at 60 Hz for a move point the brain changes at 1 Hz. At
+        # impulse speeds 0.2 s is under _STOP_GU of travel.
+        return 0.2
 
     def _Impulse(self, pShip, fFraction):
         pShip.SetImpulse(fFraction, App.TGPoint3_GetModelForward(),
@@ -36,16 +45,18 @@ class WingMoveTo:
             return App.ArtificialIntelligence.US_ACTIVE
         from engine.wings import roster
         member = roster.member(pShip.GetName())
-        point = member.move_point if member is not None else None
+        if member is None:
+            return App.ArtificialIntelligence.US_DONE
+        point = member.move_point
         if point is None:
             self._Impulse(pShip, 0.0)
             return App.ArtificialIntelligence.US_ACTIVE
+        vHere = pShip.GetWorldLocation()
+        fDistance = math.sqrt((point[0] - vHere.x) ** 2
+                              + (point[1] - vHere.y) ** 2
+                              + (point[2] - vHere.z) ** 2)
         vDestination = App.TGPoint3()
         vDestination.SetXYZ(point[0], point[1], point[2])
-        vDestination.Subtract(pShip.GetWorldLocation())
-        fDistance = vDestination.Length()
-        vDestination = App.TGPoint3()
-        vDestination.SetXYZ(*point)
         pShip.TurnTowardLocation(vDestination)
         if fDistance <= _STOP_GU:
             fFraction = 0.0

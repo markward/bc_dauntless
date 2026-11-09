@@ -117,8 +117,7 @@ class Protect:
         atk = sorted(protect.attackers_of(p.name, ctx.enemies, ctx.anchor.pos,
                                           dials.get("engage_gu")),
                      key=lambda e: (assess.dist(e.pos, p.pos), e.name))
-        if not atk:
-            return Choice(None, (), protectee=p.name)
+        # threatened() only returns a protectee with an attacker in reach.
         return Choice(atk[0].name, tuple(e.name for e in atk[1:3]),
                       protectee=p.name)
 
@@ -179,11 +178,16 @@ def reset_registry() -> None:
 
 
 def pick(ctx: Context):
+    """Highest score wins. The current decision gets the stickiness bonus
+    and wins ties, but only while it scores above 0: a decision whose own
+    rule says stop (an ended Withdraw) must never win on stickiness."""
     bonus = dials.get("stickiness")
     best, best_score = None, None
     for d in _registry:
-        s = d.score(ctx) + (bonus if d.name == ctx.current else 0.0)
-        if best is None or s > best_score or (
-                s == best_score and d.name == ctx.current):
+        s = d.score(ctx)
+        sticky = d.name == ctx.current and s > 0.0
+        if sticky:
+            s += bonus
+        if best is None or s > best_score or (s == best_score and sticky):
             best, best_score = d, s
     return best

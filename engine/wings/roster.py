@@ -54,6 +54,9 @@ class Wing:
     # name -> (t, strength) samples for protectees that are not members
     # (protect ships, the player), so their damage rate is seen too.
     protect_hist: dict = field(default_factory=dict)
+    # The protectee the current guards (Member.guard) cover: guard
+    # incumbency holds only while it is unchanged (protect.pick_guards).
+    guarded: str | None = None
 
 
 _wings: dict[str, Wing] = {}

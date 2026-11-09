@@ -81,6 +81,12 @@ def step(dials: dict, name: str, direction: int) -> dict:
     v = max(_MIN[name], v)
     if name in _MAX:
         v = min(_MAX[name], v)
+    # rotate_in_shield >= rotate_out_shield, or a ship between the two
+    # returns and re-falls every tick: the stepped dial stops at the other.
+    if name == "rotate_out_shield":
+        v = min(v, out["rotate_in_shield"])
+    elif name == "rotate_in_shield":
+        v = max(v, out["rotate_out_shield"])
     out[name] = v
     return out
 

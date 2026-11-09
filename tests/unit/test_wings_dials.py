@@ -33,3 +33,16 @@ def test_get_reads_current_after_step():
 def test_register_adds_group():
     dials.register()
     assert "wings" in dev_dial_groups._groups
+
+
+def test_rotate_dials_stay_ordered_when_stepped():
+    """Review M6: rotate_in_shield never steps below rotate_out_shield
+    (a ship between the two would return and re-fall every tick)."""
+    d = dict(dials.DEFAULTS, rotate_out_shield=0.55, rotate_in_shield=0.6)
+    up = dials.step(d, "rotate_out_shield", 1)
+    up = dials.step(up, "rotate_out_shield", 1)
+    assert up["rotate_out_shield"] <= up["rotate_in_shield"] == 0.6
+    down = dials.step(d, "rotate_in_shield", -1)
+    down = dials.step(down, "rotate_in_shield", -1)
+    assert down["rotate_in_shield"] >= down["rotate_out_shield"] == 0.55
+    assert dials.step(d, "rotate_in_shield", 1)["rotate_in_shield"] == 0.65

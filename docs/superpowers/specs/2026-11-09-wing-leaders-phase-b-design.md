@@ -59,6 +59,11 @@ Battle consumer supplies the protect ships.
 - ≥ `heavy_fire_attackers` (dial, default **3**) enemies in reach target it
   **(call)**.
 
+Either way it needs **at least one attacker in reach**: a damage rate with
+nobody in reach targeting the protectee (rocks, a green-alert shield drop, a
+fight past `engage_gu`) is never heavy fire, so Protect never displaces
+Phase A's focus with nothing to turn on (final review I1, ruling 2026-11-09).
+
 The most threatened protectee is the one with the highest damage rate, ties
 broken by attacker count, then name.
 
@@ -78,8 +83,13 @@ swarm (1.0) and loses to regroup once more than 75% of the wing has strayed.
 
 - Count: `guard_count` (dial, default **1**; 2 when the wing has ≥ 6 live
   members) **(call)**.
-- Who: the healthiest members (strength fraction ≥ 0.6) nearest the
-  protectee, excluding the commander, the player and the protectee itself.
+- Who: the healthiest members (strength fraction ≥ 0.6, mean shield ≥
+  `rotate_out_shield`) nearest the protectee, excluding the commander, the
+  player, the protectee itself and any ship already falling back.
+  `guard_count` 0 switches guards off at any wing size.
+- **Incumbency:** a current guard keeps the role while it is still eligible
+  and the protectee is unchanged; only vacancies go to the nearest
+  (ruling 2026-11-09).
 - Guard point: `protectee_pos + unit(attacker_pos − protectee_pos) ×
   min(interpose_gu, 0.5 × distance)`. `interpose_gu` is a dial, default
   **40 GU** **(call)**, recomputed every brain tick.
@@ -100,8 +110,12 @@ damaged ship falls back under any decision except Withdraw.
   **(call)**.
 - **Cap:** at most `max(1, floor(rotate_cap_frac × live members))` (dial,
   default **0.34**) ships fall back at once. The worst shields go first.
-- **Never:** the commander, the player, a guard, or a ship that is the current
-  protectee.
+- **Never:** the commander, the player, or a guard. A member that is the
+  current protectee **does** fall back; the wing still protects it, and its
+  guards interpose on its current position as it retreats (ruling
+  2026-11-09). Non-member protectees (the player, Quick Battle protect ships)
+  are not members, so never fall back.
+- `rotate_in_shield` never steps below `rotate_out_shield` (the dials clamp).
 - **Fall-back point:** `anchor_pos + unit(anchor_pos − enemy_centroid) ×
   regroup_gather_gu`, i.e. behind the commander, away from the enemy.
   `enemy_centroid` is the mean position of enemies in reach. With no enemies
@@ -131,7 +145,9 @@ Otherwise the score is 0 **(call)**.
   commander).
 - The target group is emptied, so nobody turns back to fight.
 
-**Ends** when any of these holds; stickiness keeps it from flapping:
+**Ends** when any of these holds; stickiness keeps it from flapping, but a
+decision scoring 0 gets no stickiness bonus, so an ended Withdraw always
+ends:
 
 - no enemy is within `engage_gu` of the anchor for `withdraw_clear_s` (dial,
   default **10 s**);
@@ -164,8 +180,11 @@ branch indices are not part of any contract.
   update it reads `roster.member(own name).move_point` (a 3-tuple or None). It
   flies there the way SDK `AI/PlainAI/Intercept.py` flies to its destination:
   `TurnTowardLocation` plus an impulse that scales down within 20 GU of the
-  point **(call)**. With no point it stops and returns ACTIVE. It never
-  returns DONE (Phase A lesson: DONE latches a branch dead).
+  point **(call)**. With no point it stops and returns ACTIVE. While the
+  ship is a wing member it never returns DONE (Phase A lesson: DONE latches
+  a branch dead); with no member record (the wing was reset) it returns
+  DONE, as WingRejoin does. It asks for an update every 0.2 s
+  (FollowObject's period), so the tree walk can sleep.
 - **`Conditions.ConditionWing`** gains the kinds `"withdraw"`, `"guard"` and
   `"fallback"`. The brain pushes them like `"rejoin"`.
 - **No firing during wing manoeuvres (call).** While a wing branch is active
@@ -235,5 +254,7 @@ wing like any protect ship **(call)**, so your AI escorts cover you.
    It never applies to a player-led wing. It ends when the wing is clear for
    10 s, the odds recover, or 60 s pass. The cooldown is 120 s.
 6. Ships hold fire while running wing manoeuvres.
-7. `WingMoveTo` slows within 20 GU of its point and never returns DONE.
+7. `WingMoveTo` slows within 20 GU of its point and never returns DONE while
+   the ship is a wing member (DONE once its wing is gone). It asks for an
+   update every 0.2 s, FollowObject's period.
 8. The player's own group's wing treats the player's ship as a protectee, so AI escorts cover the player.

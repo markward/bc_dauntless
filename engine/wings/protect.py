@@ -20,11 +20,16 @@ def attackers_of(name, enemies, reach_center, reach_gu):
 
 
 def threatened(protectees, rates, enemies, anchor):
+    """The most threatened protectee, or None. A protectee with no attacker
+    in reach is never threatened, whatever its damage rate (rocks, green
+    alert, a fight past engage_gu): there is nobody to turn on."""
     reach = dials.get("engage_gu")
     best = None
     for p in protectees:
         rate = rates.get(p.name, 0.0)
         n = len(attackers_of(p.name, enemies, anchor.pos, reach))
+        if n == 0:
+            continue
         if rate >= dials.get("heavy_fire_frac") or n >= dials.get("heavy_fire_attackers"):
             key = (-rate, -n, p.name)
             if best is None or key < best[0]:
@@ -32,15 +37,25 @@ def threatened(protectees, rates, enemies, anchor):
     return best[1] if best else None
 
 
-def pick_guards(members, protectee, exclude, strength_frac):
+def pick_guards(members, protectee, exclude, strength_frac, prev=()):
+    """Guard names for `protectee`. Eligible: not excluded, not the
+    protectee, strength fraction >= 0.6 and shields at or above
+    rotate_out_shield (a ship due to fall back never guards). `prev` are the
+    current guards of the SAME protectee: each still eligible keeps its slot
+    (incumbency, so a guard that left the crowd to reach its point is not
+    replaced by a wingmate now nearer); only vacancies go to the nearest."""
     count = int(dials.get("guard_count"))
-    if len(members) >= 6:
+    if count >= 1 and len(members) >= 6:
         count = max(count, 2)
+    out = dials.get("rotate_out_shield")
     cands = [m for m in members
              if m.name not in exclude and m.name != protectee.name
-             and strength_frac.get(m.name, 0.0) >= 0.6]
+             and strength_frac.get(m.name, 0.0) >= 0.6
+             and m.shield >= out]
     cands.sort(key=lambda m: (dist(m.pos, protectee.pos), m.name))
-    return [m.name for m in cands[:count]]
+    keep = [m.name for m in cands if m.name in prev][:count]
+    fill = [m.name for m in cands if m.name not in keep]
+    return keep + fill[:count - len(keep)]
 
 
 def guard_point(protectee_pos, attacker_pos):

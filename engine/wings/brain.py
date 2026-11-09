@@ -393,6 +393,18 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
     """Withdraw (every member), guards (protect) and fallers (the standing
     rotate rule): move points and branch pushes for every non-player
     member. One move point per member; the sets are disjoint."""
+    # Exclusivity, all four rules (the player is never in any set):
+    # 1. withdraw > everything: a withdrawing wing has no protectee and no
+    #    fallers, and tick_wing turns rejoin off for it;
+    # 2. guard > fallback: guards are picked first and excluded from falling
+    #    back; a ship already falling back (last tick's fallback_since) or
+    #    with shields under rotate_out_shield is never a guard candidate;
+    # 3. the commander is never a guard or a faller; the protectee is never
+    #    its own guard, but a member protectee MAY fall back (ruling
+    #    2026-11-09) and its guards then cover its current position;
+    # 4. fallback / guard > rejoin by tree priority only: m.rejoin may stay
+    #    True under either (it keeps rejoin's hysteresis), and the guard and
+    #    fallback branches outrank the rejoin branch.
     players = {n for n, m in wing.members.items() if m.is_player}
     points = {}
 
@@ -423,9 +435,11 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
             # falling back until its shields recover.
             falling = {n for n, m in wing.members.items()
                        if m.fallback_since is not None}
+            prev = ([n for n, m in wing.members.items() if m.guard]
+                    if wing.guarded == protectee.name else [])
             guards = protect.pick_guards(
                 live, protectee, {wing.commander} | players | falling,
-                {v.name: _strength_frac(v) for v in live})
+                {v.name: _strength_frac(v) for v in live}, prev)
             point = protect.guard_point(protectee.pos, attacker.pos)
             for name in guards:
                 points[name] = point
@@ -434,8 +448,6 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
     fallers = {}
     if not choice.withdraw and near:
         exclude = {wing.commander} | players | set(guards)
-        if protectee is not None:
-            exclude.add(protectee.name)
         fallers = rotate.fallback_flags(
             list(members.values()), {n: m.fallback_since
                                      for n, m in wing.members.items()},
@@ -446,6 +458,7 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
             if since is not None:
                 points[name] = behind
 
+    wing.guarded = protectee.name if guards else None
     for name, m in wing.members.items():
         if m.is_player:
             continue
@@ -470,6 +483,7 @@ def _stand_down(wing) -> None:
     if wing.withdraw_since is not None:
         import App
         _end_withdraw(wing, float(App.g_kUtopiaModule.GetGameTime()))
+    wing.guarded = None
     for m in wing.members.values():
         m.move_point = None
         m.guard = False

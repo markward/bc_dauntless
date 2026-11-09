@@ -501,3 +501,68 @@ def test_withdraw_ends_when_odds_recover(now):
     assert wing.withdraw_cooldown_until == pytest.approx(
         3.0 + dials.get("withdraw_cooldown_s"))
     assert _status("m1", "withdraw") == 0 and _status("m2", "withdraw") == 0
+
+
+# ── final review fixes ─────────────────────────────────────────────────────
+
+def test_shield_depleted_protectee_falls_back_and_is_guarded(now):
+    """Review I2 (ruling 2026-11-09): a focused member whose shields are
+    gone falls back, and the wing still guards it -- on its current
+    position, as it retreats."""
+    wing, ships = _protect_scene()
+    _set_shields(ships["m2"], 0.1)
+    brain.tick_wing(wing)
+    assert wing.decision == "protect"
+    m2, m3 = roster.member("m2"), roster.member("m3")
+    assert m2.fallback_since == 0.0 and _status("m2", "fallback") == 1
+    assert m2.move_point is not None
+    assert m3.guard is True and _status("m3", "guard") == 1
+    m2pos = brain.view_of(ships["m2"]).pos
+    e1pos = brain.view_of(ships["e1"]).pos
+    assert m3.move_point == pytest.approx(protect.guard_point(m2pos, e1pos))
+    # It retreats: the guard point follows it.
+    ships["m2"].SetTranslateXYZ(-90.0, 0.0, 0.0)
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert m2.fallback_since == 0.0 and m3.guard is True
+    m2pos = brain.view_of(ships["m2"]).pos
+    assert m3.move_point == pytest.approx(protect.guard_point(m2pos, e1pos))
+
+
+def test_guard_incumbent_kept_when_nearer_mate_appears(now):
+    """Review I3: a guard keeps the role while eligible and the protectee
+    is unchanged, even with a wingmate now nearer the protectee."""
+    wing, ships = _scene([(150.0, 0.0, 0.0), (160.0, 30.0, 0.0),
+                          (170.0, -30.0, 0.0)], n_members=4,
+                         member_xyz=[(0.0, 0.0, 0.0), (-40.0, 0.0, 0.0),
+                                     (-30.0, 20.0, 0.0), (-80.0, -60.0, 0.0)])
+    for e in ("e1", "e2", "e3"):
+        ships[e].SetTarget("m2")
+    brain.tick_wing(wing)
+    assert roster.member("m3").guard is True
+    assert roster.member("m4").guard is False
+    ships["m4"].SetTranslateXYZ(-38.0, 2.0, 0.0)   # now nearest m2
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert wing.decision == "protect"
+    assert roster.member("m3").guard is True and _status("m3", "guard") == 1
+    assert roster.member("m4").guard is False and _status("m4", "guard") == 0
+
+
+def test_guard_incumbency_ends_when_protectee_changes(now):
+    """A new protectee picks its guards afresh (nearest)."""
+    wing, ships = _scene([(150.0, 0.0, 0.0), (160.0, 30.0, 0.0),
+                          (170.0, -30.0, 0.0)], n_members=4,
+                         member_xyz=[(0.0, 0.0, 0.0), (-40.0, 0.0, 0.0),
+                                     (-30.0, 20.0, 0.0), (-80.0, -60.0, 0.0)])
+    for e in ("e1", "e2", "e3"):
+        ships[e].SetTarget("m2")
+    brain.tick_wing(wing)
+    assert roster.member("m3").guard is True
+    for e in ("e1", "e2", "e3"):
+        ships[e].SetTarget("m4")
+    ships["m2"].SetTranslateXYZ(-85.0, -60.0, 0.0)  # now nearest m4
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert roster.member("m2").guard is True
+    assert roster.member("m3").guard is False

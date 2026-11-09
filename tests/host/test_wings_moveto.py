@@ -72,8 +72,25 @@ def test_moveto_no_point_stops():
     assert ship.GetSpeedSetpoint()[0] == 0.0
 
 
-def test_moveto_never_done():
+def test_moveto_never_done_while_a_member():
     ship, member, script = _scene()
     for p in (None, (0.0, 500.0, 0.0), (0.0, 1.0, 0.0)):
         member.move_point = p
         assert script.Update() == AIC.US_ACTIVE
+
+
+def test_moveto_update_period_lets_the_tree_sleep():
+    """Review I4: not every AI tick (0.0 pinned the tree walk awake); the
+    move point only changes at the brain's 1 Hz. FollowObject's 0.2 s."""
+    _ship, _member, script = _scene()
+    assert script.GetNextUpdateTime() == pytest.approx(0.2)
+
+
+def test_moveto_done_when_wing_gone():
+    """Review M4: no member record (the wing was reset) -> DONE, like
+    WingRejoin, instead of parking the ship forever."""
+    ship, member, script = _scene()
+    member.move_point = (0.0, 500.0, 0.0)
+    script.Update()
+    roster.reset()
+    assert script.Update() == AIC.US_DONE
