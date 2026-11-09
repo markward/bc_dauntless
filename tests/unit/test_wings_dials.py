@@ -14,7 +14,8 @@ SPEC = {"leash_gu": 200.0, "leash_slack_gu": 100.0, "regroup_gather_gu": 100.0,
         "withdraw_clear_s": 10.0, "withdraw_max_s": 60.0,
         "withdraw_cooldown_s": 120.0, "attack_standoff_gu": 120.0,
         "attack_slots": 3, "face_weak": 0.3, "disable_threat": 1.5,
-        "reserve_min_wing": 5, "reserve_gu": 150.0, "reserve_max_s": 90.0}
+        "reserve_min_wing": 5, "reserve_gu": 150.0, "reserve_max_s": 90.0,
+        "disable_max_s": 300.0}
 
 
 def test_defaults_match_spec():
@@ -49,3 +50,10 @@ def test_rotate_dials_stay_ordered_when_stepped():
     down = dials.step(down, "rotate_in_shield", -1)
     assert down["rotate_in_shield"] >= down["rotate_out_shield"] == 0.55
     assert dials.step(d, "rotate_in_shield", 1)["rotate_in_shield"] == 0.65
+
+
+def test_disable_max_s_steps_by_ten_floor_ten():
+    d = dict(dials.DEFAULTS)
+    assert dials.step(d, "disable_max_s", 1)["disable_max_s"] == 310.0
+    d["disable_max_s"] = 10.0
+    assert dials.step(d, "disable_max_s", -1)["disable_max_s"] == 10.0

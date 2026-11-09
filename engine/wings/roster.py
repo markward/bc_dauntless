@@ -78,6 +78,12 @@ class Wing:
     reserve_spent: bool = False
     reserve_live: int = 0
     last_centroid: tuple | None = None
+    # Disable (final review I1): the target the running disable started on
+    # and when; targets it never re-enters against (the disable_max_s cap,
+    # or a disable that ended with the target still alive).
+    disable_target: str | None = None
+    disable_since: float | None = None
+    disable_done: set = field(default_factory=set)
 
 
 _wings: dict[str, Wing] = {}

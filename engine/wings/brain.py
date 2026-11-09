@@ -339,6 +339,7 @@ def tick_wing(wing) -> None:
         # Withdraw never applies to a player-led wing: a handover to the
         # player ends one in progress (the cooldown starts).
         _end_withdraw(wing, now)
+    _disable_cap(wing, now)
     ctx = decisions.Context(
         members=list(members.values()), anchor=anchor, enemies=enemies,
         current=wing.decision, protectees=protectees, rates=rates,
@@ -346,13 +347,16 @@ def tick_wing(wing) -> None:
         withdraw_since=wing.withdraw_since,
         withdraw_cooldown_until=wing.withdraw_cooldown_until,
         clear_since=wing.clear_since, player_commands=player_commands,
-        slot_eligible=_slot_eligible(wing, members))
+        slot_eligible=_slot_eligible(wing, members),
+        current_primary=wing.primary,
+        disable_done=frozenset(wing.disable_done))
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
         log("%s decision %s -> %s"
             % (wing.wing_id, wing.decision, decision.name))
         wing.decision = decision.name
     choice = decision.choose(ctx)
+    _track_disable(wing, decision.name, choice, now)
     if choice.withdraw and wing.withdraw_since is None:
         wing.withdraw_since = now
         log("%s withdraw" % wing.wing_id)
@@ -398,6 +402,30 @@ def tick_wing(wing) -> None:
         for m in wing.members.values():
             for node in m.select_nodes:
                 node.ForceUpdate()
+
+
+def _disable_cap(wing, now) -> None:
+    """A disable running disable_max_s on one target gives it up: the
+    target is done, so disable scores 0 against it from this tick."""
+    if (wing.disable_target is not None
+            and now - wing.disable_since >= dials.get("disable_max_s")):
+        wing.disable_done.add(wing.disable_target)
+
+
+def _track_disable(wing, decision, choice, now) -> None:
+    """Record when disable starts on a target; when it ends for any reason
+    but the target dying (weapons down, the cap, out of reach, another
+    decision winning), the target is done: disable never re-enters
+    against it (final review I1)."""
+    target = choice.primary if decision == "disable" else None
+    old = wing.disable_target
+    if old is not None and old != target:
+        if _alive(_find_anywhere(old)):
+            wing.disable_done.add(old)
+            log("%s disable done %s" % (wing.wing_id, old))
+        wing.disable_target = wing.disable_since = None
+    if target is not None and wing.disable_target is None:
+        wing.disable_target, wing.disable_since = target, now
 
 
 def _near_anchor(enemies, anchor):

@@ -146,3 +146,54 @@ def test_disable_beats_focus_beats_envelop_beats_swarm():
 def test_zero_score_no_stickiness_for_new_decisions():
     ctx = _ctx([_strong(down=True)], current="disable")
     assert decisions.pick(ctx).name != "disable"
+
+
+# ── disable latch (final review I1) ────────────────────────────────────────
+
+def _latched(enemies, primary="big", done=frozenset(), current="disable"):
+    ctx = _ctx(enemies, current=current)
+    ctx.current_primary = primary
+    ctx.disable_done = done
+    return ctx
+
+
+def test_disable_latch_holds_below_the_gate():
+    """Shield damage halves strength: once disabling, the target is held
+    without the strength ratio being re-checked."""
+    weak = V("big", 60, power=6.0)          # 6 < 1.5 * 5: under the gate
+    assert _by("disable").score(_ctx([weak])) == 0.0
+    ctx = _latched([weak])
+    assert _by("disable").score(ctx) == 1.3
+    c = _by("disable").choose(ctx)
+    assert c.primary == "big" and c.weapons_first and c.slot_all
+
+
+def test_disable_latch_holds_on_its_target_not_a_stronger_one():
+    ctx = _latched([V("big", 60, power=6.0), V("huge", 70, power=20.0)])
+    assert _by("disable").choose(ctx).primary == "big"
+
+
+def test_disable_latch_ends_on_weapons_down_gone_or_out_of_reach():
+    d = _by("disable")
+    assert d.score(_latched([V("big", 60, power=6.0, down=True)])) == 0.0
+    assert d.score(_latched([V("other", 60, power=20.0)])) == 0.0
+    assert d.score(_latched([V("big", 5000, power=20.0)])) == 0.0
+
+
+def test_disable_never_reenters_against_a_done_target():
+    d = _by("disable")
+    done = frozenset({"big"})
+    assert d.score(_latched([_strong()], done=done, current=None)) == 0.0
+    assert d.score(_latched([_strong()], done=done)) == 0.0
+    # another strong ship in reach is still a disable target
+    ctx = _latched([_strong(), _strong("big2", x=70)], primary=None,
+                   done=done, current=None)
+    assert d.score(ctx) == 1.3
+    assert d.choose(ctx).primary == "big2"
+
+
+def test_disable_with_no_current_primary_uses_the_gate():
+    ctx = _latched([_strong()], primary=None)
+    assert _by("disable").score(ctx) == 1.3
+    ctx = _latched([V("e", 50, power=6.0)], primary=None)
+    assert _by("disable").score(ctx) == 0.0

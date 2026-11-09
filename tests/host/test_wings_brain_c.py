@@ -327,6 +327,72 @@ def test_disable_ends_when_weapon_pools_are_gone(now):
     assert not any(roster.member(n).weapons_first for n in wing.members)
 
 
+def _weaken(ship):
+    """Shields down and half the hull: the Warbird (1500 rated) drops to
+    375, under the entry gate (1.5 x a Bird of Prey's 400)."""
+    _set_shields(ship, 0.0)
+    ship.GetHull().SetConditionPercentage(0.5)
+
+
+def test_disable_latch_holds_after_the_target_weakens(now):
+    """Final review I1: stripping the shields halves the target's strength;
+    a running disable stays on it until its weapons are down."""
+    wing, ships = _disable_scene()
+    brain.tick_wing(wing)
+    assert wing.decision == "disable" and wing.primary == "e1"
+    _weaken(ships["e1"])
+    for t in (1.0, 2.0, 3.0):
+        now[0] = t
+        brain.tick_wing(wing)
+        assert wing.decision == "disable"
+        assert all(roster.member(n).weapons_first for n in _holders(wing))
+    assert wing.disable_target == "e1" and wing.disable_since == 0.0
+
+
+def test_disable_cap_marks_the_target_done(monkeypatch, now):
+    wing, ships = _disable_scene()
+    brain.tick_wing(wing)
+    assert wing.decision == "disable"
+    now[0] = dials.get("disable_max_s") - 1.0
+    brain.tick_wing(wing)
+    assert wing.decision == "disable"
+    now[0] = dials.get("disable_max_s")
+    brain.tick_wing(wing)
+    assert wing.decision != "disable"
+    assert "e1" in wing.disable_done
+    assert wing.disable_target is None
+    now[0] += 1.0
+    brain.tick_wing(wing)                     # still far stronger: no re-entry
+    assert wing.decision != "disable"
+
+
+def test_disable_ended_with_the_target_alive_never_reenters(now):
+    wing, ships = _disable_scene()
+    brain.tick_wing(wing)
+    systems = _weapon_systems(ships["e1"])
+    for s in systems:
+        s.SetCondition(0.0)
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert wing.decision != "disable"
+    assert wing.disable_done == {"e1"}
+    for s in systems:
+        s.SetCondition(s.GetMaxCondition())   # repaired: the gate passes
+    now[0] = 2.0
+    brain.tick_wing(wing)
+    assert wing.decision != "disable"
+
+
+def test_disable_target_death_is_not_done(now):
+    wing, ships = _disable_scene()
+    brain.tick_wing(wing)
+    ships["e1"].SetDead()
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert wing.decision != "disable"
+    assert wing.disable_done == set() and wing.disable_target is None
+
+
 # ── stand-down ─────────────────────────────────────────────────────────────
 
 def test_slot_target_death_clears_slots(now):

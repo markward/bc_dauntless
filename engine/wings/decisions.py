@@ -21,6 +21,11 @@ class Context:
     clear_since: Optional[float] = None
     player_commands: bool = False
     slot_eligible: int = 0
+    # The wing's written primary last tick: the target a running disable
+    # is latched on. disable_done: targets disable never re-enters against
+    # (the brain's cap, or a disable that ended with the target alive).
+    current_primary: Optional[str] = None
+    disable_done: frozenset = frozenset()
 
 
 @dataclass
@@ -242,7 +247,16 @@ class Envelop:
 
 
 def _disable_target(ctx):
-    reach = _in_reach(ctx)
+    """The ship to disable, or None. A running disable is latched on its
+    target (ctx.current_primary) while it is alive, in reach, not done and
+    its weapons are up: the strength ratio is not re-checked, because
+    stripping the shields alone halves it (final review I1). Otherwise the
+    entry gate: the strongest not-done enemy in reach, weapons up, at least
+    disable_threat x our strongest member."""
+    reach = [e for e in _in_reach(ctx) if e.name not in ctx.disable_done]
+    if ctx.current == "disable" and ctx.current_primary is not None:
+        big = next((e for e in reach if e.name == ctx.current_primary), None)
+        return None if big is None or big.weapons_down else big
     if not reach or not ctx.members:
         return None
     big = min(reach, key=lambda e: (-assess.strength(e), e.name))

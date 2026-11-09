@@ -253,6 +253,51 @@ def test_disable_weapons_before_hull_half(seed, monkeypatch):
     assert c_down is None or c_hull < c_down
 
 
+def _latch_run(seed, monkeypatch):
+    """Four Akiras (800 each) against a Warbird (1500: 1.88x) that fights
+    back, 150 GU off (final review I1). Returns (the first time (s) the
+    brain reads its weapons down, the lowest strength ratio seen while the
+    wing was still disabling, the decision every second until then)."""
+    wing, ships, loop = _scene(
+        monkeypatch, seed, "Akira",
+        [(-20.0 * i, 0.0, 0.0) for i in range(4)],
+        "Warbird", [(150.0, 0.0, 0.0)])
+    target = ships["e1"]
+    from engine.wings import brain
+    decs, low = [], None
+    for t in range(int(dials.get("disable_max_s")) * HZ):
+        _step(loop)
+        if t % HZ or t == 0:
+            continue
+        ev = brain.view_of(target, weapons=True)
+        if ev.weapons_down:
+            return t / HZ, low, decs
+        decs.append(wing.decision)
+        mine = max(assess.strength(brain.view_of(ships[n]))
+                   for n in wing.members if brain._alive(ships[n]))
+        if wing.decision == "disable":
+            r = assess.strength(ev) / mine
+            low = r if low is None else min(low, r)
+    return None, low, decs
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_disable_holds_until_weapons_down(seed, monkeypatch):
+    down, low, decs = _latch_run(seed, monkeypatch)
+    print("\n[disable latch seed %d] weapons down %s s; lowest ratio while "
+          "disabling %.2f; decisions %s"
+          % (seed, down, low, sorted(set(map(str, decs)))))
+    # Before the latch, disable ended at 103 s at ratio 1.5 (the gate) with
+    # the weapons up, and they never went down (final review I1, seed 1).
+    # Latched: one unbroken disable from the first brain tick until the
+    # weapons are down. Seen: down at 179 / 267 / 220 s, the ratio falling
+    # to 0.94-0.98 while still disabling (2026-11-09, seeds 1-3). With a
+    # 120 s cap no seed got the weapons down: disable_max_s defaults to 300.
+    assert down is not None
+    assert set(decs) == {"disable"}
+    assert low < dials.get("disable_threat")
+
+
 # ── (c) reserve: held back until a loss, then committed ────────────────────
 
 def _hold_full(ships):
