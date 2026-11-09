@@ -279,6 +279,12 @@ def test_several_watching_groups_hear_it_in_live_order():
 # it, so a name added AFTER its ship entered the set was never watched: Quick
 # Battle's enemies never reached DynamicMusic's 400 GU check, and the battle
 # played the calm "Starting Ambient" throughout.
+#
+# The rules are the original's, as PR #24 measured them (stbc-oracle music
+# probe): the event goes out after the edit, at the tick boundary
+# (ObjectGroup.deliver_changes, from GameLoop.tick), one per group however
+# many edits; tests/integration/test_enemy_group_change_reaches_conditions.py
+# covers them through real ticks.
 
 class _Changes:
     def __init__(self): self.dests = []
@@ -296,10 +302,16 @@ def _watch_changes(group, arm=True):
     return rec
 
 
-def test_add_name_posts_group_changed_to_the_group():
+def _boundary():
+    ObjectGroup.deliver_changes()
+
+
+def test_add_name_posts_group_changed_to_the_group_at_the_boundary():
     grp = ObjectGroup()
     rec = _watch_changes(grp)
     grp.AddName("Bart")
+    assert rec.dests == []              # not inside AddName
+    _boundary()
     assert rec.dests == [grp]
 
 
@@ -307,24 +319,39 @@ def test_adding_a_name_already_held_posts_nothing():
     grp = ObjectGroup(); grp.AddName("Bart")
     rec = _watch_changes(grp)
     grp.AddName("Bart")
+    _boundary()
     assert rec.dests == []
 
 
-def test_remove_name_posts_only_when_the_name_was_held():
+def test_remove_name_posts_even_for_a_name_not_held():
+    """Measured on the original (ev_removename_absent)."""
     grp = ObjectGroup(); grp.AddName("Bart")
     rec = _watch_changes(grp)
     grp.RemoveName("Lisa")
-    assert rec.dests == []
-    grp.RemoveName("Bart")
+    _boundary()
     assert rec.dests == [grp]
+    grp.RemoveName("Bart")
+    _boundary()
+    assert rec.dests == [grp, grp]
 
 
-def test_remove_all_names_posts_once_and_not_when_already_empty():
+def test_remove_all_names_posts_once():
+    """One event for the whole clear. (A clear of a group already empty is
+    not measured, so it is not pinned here.)"""
     grp = ObjectGroup(); grp.AddName("Bart"); grp.AddName("Lisa")
     rec = _watch_changes(grp)
     grp.RemoveAllNames()
+    _boundary()
     assert rec.dests == [grp]
-    grp.RemoveAllNames()
+
+
+def test_edits_in_one_tick_post_one_event():
+    grp = ObjectGroup()
+    rec = _watch_changes(grp)
+    grp.AddName("Bart")
+    grp.AddName("Lisa")
+    grp.RemoveName("Bart")
+    _boundary()
     assert rec.dests == [grp]
 
 
@@ -334,4 +361,5 @@ def test_a_group_that_never_armed_group_changed_posts_nothing():
     grp = ObjectGroup()
     rec = _watch_changes(grp, arm=False)
     grp.AddName("Bart")
+    _boundary()
     assert rec.dests == []

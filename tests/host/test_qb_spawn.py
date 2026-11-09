@@ -555,6 +555,12 @@ def test_enemies_in_range_switch_the_music_to_combat(qb):
     _s, plan = _plan([("enemy", "fore", "close", "medium", ["Galor"])])
     spawn.set_provider(lambda: plan)
     _start(hl, controller)
+    # Two tick boundaries, as in the game: the first posts the enemy group's
+    # ET_OBJECT_GROUP_CHANGED (its proximity sweep then sees the enemy), the
+    # second the 400 GU condition's event to DynamicMusic.
+    from engine.core.loop import GameLoop
+    GameLoop().tick()
+    GameLoop().tick()
     evaluate_proximity_checks()
     state = DynamicMusic.pStateMachine.GetMusicState()
     assert state is not None and state.startswith("Combat"), state
