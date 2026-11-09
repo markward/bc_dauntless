@@ -411,3 +411,51 @@ def test_player_only_group_has_no_focus(world):
     _enemies(panel, "Warbird")
     _go(hl, panel)
     assert service.player_focus() is None
+
+
+# ── Phase B: who each wing protects ─────────────────────────────────────────
+
+def test_player_is_protectee_not_member(world):
+    """Phase B (spec 2026-11-09-wing-leaders-phase-b-design.md): the player's
+    group's wing protects the player, who stays out of the wing. An enemy
+    wing never protects the player."""
+    hl, _c, panel, QB = world
+    from engine.wings import roster
+    _add_to_player_group(panel, "Akira", "Akira")
+    _enemies(panel, "Warbird", "Galor")
+    _go(hl, panel)
+    player = _player().GetName()
+    pw, ew = _wing_for(panel, 0), _wing_for(panel, 1)
+    assert roster.wing_of(player) is None and player not in pw.members
+    assert list(pw.protect_names()) == [player]
+    assert player not in list(ew.protect_names())
+
+
+def test_protected_friendly_is_protectee(world, monkeypatch):
+    """A Defeat-protected friendly (the ships the enemy AI weights) is a
+    protectee of every friendly wing, never of an enemy wing; a Victory hunt
+    target is a protectee of the enemy wings; a protected NEUTRAL is on
+    nobody's side. Read at call time, not captured at arm."""
+    hl, _c, panel, QB = world
+    from engine.quickbattle import km_targeting
+    _add_to_player_group(panel, "Akira")
+    galor_eid, warbird_eid = _enemies(panel, "Galor", "Warbird")
+    akira_eid, sov_eid = _group(panel, "friendly", "Akira", "Sovereign")
+    (transport_eid,) = _group(panel, "neutral", "Transport")
+    _cond(panel, "defeat", "ships", [akira_eid, transport_eid])
+    _cond(panel, "victory", "ships", [galor_eid])
+    names = _names()
+    akira, galor, transport = (names[akira_eid][0], names[galor_eid][0],
+                               names[transport_eid][0])
+    _go(hl, panel)
+    player = _player().GetName()
+    pw, ew, fw = _wing_for(panel, 0), _wing_for(panel, 1), _wing_for(panel, 2)
+    assert akira in fw.members                    # a member is a protectee too
+    assert set(fw.protect_names()) == {akira}
+    assert set(pw.protect_names()) == {akira, player}
+    assert set(ew.protect_names()) == {galor}
+    assert transport not in set(pw.protect_names()) | set(ew.protect_names())
+    # Lazy: a list change after arm is seen at the next call.
+    monkeypatch.setattr(km_targeting, "priorities_for", lambda a: {})
+    assert list(fw.protect_names()) == [] and list(ew.protect_names()) == []
+    assert list(pw.protect_names()) == [player]
