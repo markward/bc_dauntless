@@ -46,10 +46,29 @@ Earlier phases are extended, not rewritten.
   player. The native FireScript re-reads `lTargetSubsystems` from the
   instance on every call (`host_bindings.cc` `s_lTargetSubsystems`), so the
   switch works on the native path.
-- `SetAttackDisabled(0)` stops it shooting a subsystem that is already
-  disabled (else it keeps hitting a disabled weapon until it is destroyed).
-  `bAttackIfNoSubsystemsLeft` stays 1, so with every weapon down it shoots
-  the hull.
+- **Stock attack flags, never `SetAttackDisabled(0)`** (as built,
+  de1a14088). With it, a fire frame with no subsystem chosen (hull aim, a
+  fresh target) reaches the SDK's `WeaponTooDangerous`, which calls
+  `pSubsystem.GetCondition()` on None: every torpedo frame raised, the weapon
+  cycle stuck and the attack branch never fired. Its `DisableOnly` partner
+  `SetAttackWithoutValidSubsystems(0)` is no fix: a fresh target never
+  reaches its choose frame. Not needed either: stock
+  `ChooseTargetSubsystem` already picks among the non-disabled subsystems
+  while any is left (SDK `AI/Preprocessors.py` ~846, `lNonDisabled`), and
+  `bAttackIfNoSubsystemsLeft` stays 1, so with nothing left it shoots the
+  hull.
+- **Where weapons-first aim lands (measured, Task 6).** Every stock weapon
+  system is `SetTargetable(0)` with targetable banks/tubes. For such a system
+  the SDK's `ChooseTargetSubsystem` appends the **system itself** once per
+  live child (`lpPossibleTargets.append(pSubsystem)`, not `pTarget`), so the
+  aim and the damage land on the system's **own** condition. Its
+  `IsDisabled()` is the banks' aggregate (`weapon_subsystems.py`), so it never
+  reads that damage. At 0 the system is silent (a Warbird with its three
+  systems zeroed hit an Akira 0 times in 60 s, against 22-27) and FireScript
+  stops choosing it (`GetCondition() > 0`). So the wing reads a weapon system
+  as down when `IsDisabled()` **or** its own condition is 0
+  (`brain._weapons_down`). Four Galors on a still Warbird: weapons down at
+  ~235 s, `IsDisabled()` never all true.
 - The engine copies the chosen subsystem onto the ship in
   `ai_driver._sync_fire_script_target_subsystem`. This only holds while
   **`ship.GetTarget()` names the same ship as the FireScript target**;
@@ -92,8 +111,9 @@ Conditional[ConditionWing(ship, "attack")]
   `QuickBattle.GetCurrentAILevel()` through `SetFlagsFromDifficulty`); with
   none, `{"Difficulty": 0.5}` through the same function.
 - It is also given `TargetSubsystems=[(CT_WEAPON_SYSTEM, 1)]`, then
-  `SetAttackDisabled(0)` and `IgnoreSubsystemTargets()`, so it starts in
-  hull mode.
+  `IgnoreSubsystemTargets()`, so it starts in hull mode. Its attack flags
+  stay stock in both modes; `SetAttackDisabled(0)` was dropped during the
+  build because it crashed hull-mode fire (§2).
 - The brain retargets it with `SetTarget(name)` when the member's attack
   target changes. **(call)** The brain also calls `ship.SetTarget(name)` so the
   engine's subsystem aim sticks (§2). This is the only new ship-state write in
@@ -174,14 +194,15 @@ flapping.
 - **Score 1.3** when all of these hold **(call)**:
   - the strongest enemy in reach has strength ≥ `disable_threat` (dial,
     default **1.5**) × our strongest member;
-  - its weapon systems are not all disabled. Check with `IsDisabled()` on each
-    of its torpedo, phaser and pulse systems that exist.
+  - its weapon systems are not all down. A torpedo, phaser or pulse system
+    that exists is down when `IsDisabled()` or its own condition is 0
+    (§2 "Where weapons-first aim lands").
 - **Choice:**
   - the primary is that ship;
   - **every** slot-eligible member, not just `attack_slots`, takes an attack
     assignment with weapons-first subsystem aim, on the slots `envelop` would
     use.
-- **Ends** when all its weapon systems are disabled. The score drops to 0 and
+- **Ends** when all its weapon systems are down. The score drops to 0 and
   swarm takes over; it is now the weakest or a commander target, and the
   wing kills it.
 - **(call)** Engine-disabling a fleeing ship is not in this phase. It conflicts
@@ -195,13 +216,24 @@ A **standing rule**, like rotate.
 **Who.**
 - At arming, a wing with ≥ `reserve_min_wing` (dial, default **5**) live
   non-player members holds **one** member in reserve **(call)**: the healthiest
-  non-commander member.
+  non-commander member. **Ruling (build):** among equally healthy members, the
+  lowest power, then the name.
 - A late wave's wing (chain from its first arrival wave) applies the rule when
   its first wave arrives.
 
 **Where.**
-- Reserve point = `anchor + unit(anchor − enemy_centroid) × reserve_gu` (dial,
-  default **150 GU**).
+- Reserve point: `reserve_gu` (dial, default **150 GU**) farther from the
+  enemy centroid than the anchor, **on the reserve's own bearing** from the
+  centroid (`reserve.hold_point`; on the anchor's bearing if the reserve sits
+  on the centroid). At the start that is behind the commander.
+- **Changed in Task 6.** The first formula, `anchor + unit(anchor −
+  enemy_centroid) × reserve_gu`, swings round with a commander circling the
+  enemy: at 100 GU from the centroid and 6.6 GU/s it moves ~16 GU/s at the
+  reserve's range, faster than any ship of the wing. The reserve chased it
+  and drifted in: six Akiras vs two Warbirds, it was farther from the enemy
+  than its commander on only 68-69% of held samples over 85 s, and in front
+  of it from ~60 s. With its own bearing it only moves in and out: 100%, ≤
+  20 GU from its point from 20 s. ⚠️ Not Mark's call yet.
 - Recomputed each tick. With no enemies in reach, the reserve just holds near
   the anchor through the same point formula, using the last centroid, or the
   anchor itself if there was never one.
@@ -212,13 +244,19 @@ A **standing rule**, like rotate.
 - a wing member dies;
 - Protect becomes the decision;
 - the wing primary's hull is < 0.3 (finish it);
-- our strength in reach ≥ 2 × theirs (pile on);
+- our strength in reach ≥ 2 × theirs (pile on), with at least one enemy in
+  reach (**ruling, build**: 2× nothing is no advantage);
 - `reserve_max_s` (dial, default **90 s**) has passed.
+
+**Rulings (build):** it also commits on "command" (the reserve becomes the
+commander) and "gone" (it died or left the home set): spent either way.
 
 Committed, it is an ordinary member.
 
 **Stand-down.** Leaderless or command away stands the reserve down and commits
-it. A wing without command doesn't hold anything back.
+it. A wing without command doesn't hold anything back: **ruling (build)**, the
+stand-down spends the reserve even when none is held, so a later re-arm never
+picks one.
 
 ## 7. Perf
 
@@ -253,10 +291,15 @@ it. A wing without command doesn't hold anything back.
 - (a) Focus-face: with a target's LEFT face forced to 0.1, at least 2
   slot-holders end up on the LEFT side of the target, in the target's body
   frame.
-- (b) Disable: against a much stronger ship, its weapon systems reach disabled
-  before its hull drops below 50%.
+- (b) Disable: against a much stronger ship, its weapon systems go down
+  (§5) before its hull drops below 50%.
 - (c) Reserve: the reserve stays farther from the enemy than the commander
   until a member dies, then closes.
+- Built as `tests/host/test_wings_phase_c_behaviour.py`, each against a
+  control with the behaviour dialled off. (b)'s target holds still: fighting
+  back, one run in three let the commander drift past the 200 GU leash for
+  ~2 min, which turns disable off. (c) closes "≥ 50 GU within 25 s of the
+  loss": a held reserve sits ~140 GU farther out and must turn about first.
 
 ## 9. Acceptance criteria for Mark's play test
 
