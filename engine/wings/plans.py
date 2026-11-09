@@ -19,6 +19,18 @@ def target_priorities(enemies, anchor, choice, km, player_target):
     out = {n: km.get(n, 0.0) for n in names}
     primary = choice.primary if choice.primary in names else None
     secondaries = [s for s in choice.secondaries if s in names]
+    # A listed ship in reach (km priority > 0: a protect / hunt target) is
+    # the primary, the decision's primary stepping down to first secondary:
+    # the listed ships stay what the side goes for, as km_targeting meant.
+    listed = [e for e in reach if km.get(e.name, 0.0) > 0.0]
+    if listed and (primary is None or km.get(primary, 0.0) <= 0.0):
+        best = min(listed, key=lambda e: (-km[e.name],
+                                          assess.dist(e.pos, anchor.pos),
+                                          e.name))
+        if primary is not None:
+            secondaries = [primary] + secondaries
+        primary = best.name
+        secondaries = [s for s in secondaries if s != primary][:2]
     if player_target is not None and any(
             e.name == player_target for e in enemies):
         primary = player_target

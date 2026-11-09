@@ -28,6 +28,23 @@ def test_km_priority_kept_and_maxed():
     assert out == {"a": 5.0, "b": 2.0, "c": 0.7}
 
 
+def test_listed_ship_in_reach_outranks_decision_primary():
+    """A km-listed ship (protect / hunt target) in reach is the primary: the
+    decision's primary steps down to the first secondary. Ties on the km
+    priority go to the nearer ship."""
+    anchor = V("anc", 0)
+    en = [V("a", 50), V("b", 100), V("c", 150), V("d", 160)]
+    out = plans.target_priorities(en, anchor, Choice("a", ("b",)),
+                                  {"c": 2.0, "d": 2.0}, None)
+    assert out == {"c": 3.0, "a": 1.5, "b": 1.5, "d": 2.0}
+    # No decision primary: still the listed ship.
+    out = plans.target_priorities(en, anchor, Choice(None), {"d": 2.0}, None)
+    assert out == {"a": 0.0, "b": 0.0, "c": 0.0, "d": 3.0}
+    # The player commanding still decides.
+    out = plans.target_priorities(en, anchor, Choice("a"), {"c": 2.0}, "b")
+    assert out["b"] == 3.0 and out["c"] == 2.0
+
+
 def test_nothing_in_reach_targets_nearest():
     anchor = V("anc", 0)
     en = [V("f1", 900), V("f2", 600)]

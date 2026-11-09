@@ -136,15 +136,20 @@ def tick_wing(wing) -> None:
         v = view_of(ship_of(name), wing.wing_id)
         if v is not None:
             members[name] = v
+    # Candidates: the enemy group, then any listed (km) ship not in it --
+    # a neutral protect target is in no side's group.
+    km = wing.km_priorities()
+    candidates = list(wing.enemy_group.GetNameTuple())
+    seen = set(candidates)
+    candidates += [n for n in km if n not in seen]
     enemies = []
-    for name in wing.enemy_group.GetNameTuple():
+    for name in candidates:
         other = roster.wing_of(name)
         v = view_of(ship_of(name),
                     other.wing_id if other is not None else None,
                     other is not None and other.commander == name)
         if v is not None:
             enemies.append(v)
-    km = wing.km_priorities()
 
     # 2. Chain: the first entry alive AND in the home set commands.
     if not wing.leaderless:

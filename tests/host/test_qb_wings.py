@@ -20,7 +20,7 @@ pytest.importorskip("_dauntless_host")
 from tests.host.test_qb_battle_end import (  # noqa: E402
     _cond, _enemies, _group, _km, _names)
 from tests.host.test_qb_km_targeting import (  # noqa: E402
-    _arrive_late, _player, _put, _target_group)
+    _arrive_late, _hunt, _player, _put, _select_target, _target_group)
 from tests.integration.test_quickbattle_setup_e2e import (  # noqa: E402,F401
     _do, _go, _ships, world)
 
@@ -154,22 +154,123 @@ def test_km_priorities_reach_wing_group(world):
     assert ew.target_group[protected]["Priority"] >= 2.0
 
 
-def test_late_arrival_joins_not_in_chain(world):
+def test_all_late_wing_first_wave_commands(world):
+    """Every order of a group shares its warp-in, so a late group is all
+    late: its first arrival wave builds the chain and it never goes
+    leaderless for want of one."""
     hl, _c, panel, QB = world
-    from engine.wings import roster
+    from engine.wings import brain, roster
     _enemies(panel, "Warbird")
-    (late,) = _name_list(_group(panel, "enemy", "Galor", warp_in=1))
+    late = _name_list(_group(panel, "enemy", "Galor", "Galor", warp_in=1))
     _go(hl, panel)
     lw = _wing_for(panel, 2)
-    assert lw is not None and late not in lw.members
+    assert lw is not None and lw.members == {} and lw.chain == []
     _arrive_late()
     ships = _ships(QB)
-    assert late in ships
-    m = roster.member(late)
-    assert m is not None and roster.wing_of(late) is lw
-    assert not m.in_chain_eligible and late not in lw.chain
-    assert _is_wing_tree(ships[late])
-    assert _target_group(ships[late]) is lw.target_group
+    assert set(late) <= set(ships)
+    assert set(lw.members) == set(late)
+    assert all(roster.member(n).in_chain_eligible for n in late)
+    assert lw.chain and set(lw.chain) <= set(late)
+    assert lw.commander == lw.chain[0]
+    for name in late:
+        assert _is_wing_tree(ships[name])
+        assert _target_group(ships[name]) is lw.target_group
+    brain.tick_wing(lw)
+    assert not lw.leaderless and lw.commander in late
+
+
+def test_later_wave_not_in_chain(world):
+    """A wave after the first never enters the chain (spec §5)."""
+    hl, _c, panel, QB = world
+    import dataclasses
+    import loadspacehelper
+    from engine.quickbattle import spawn, wings_qb
+    from engine.wings import roster
+    _enemies(panel, "Warbird")
+    (first,) = _name_list(_group(panel, "enemy", "Galor", warp_in=1))
+    _go(hl, panel)
+    _arrive_late()
+    lw = _wing_for(panel, 2)
+    assert lw.chain == [first]
+    order = next(o for o in spawn.current_plan().orders
+                 if o.group_id == panel.scenario.groups[2].id)
+    later = dataclasses.replace(order, warp_in_s=order.warp_in_s + 60.0)
+    loadspacehelper.CreateShip("Galor", QB.g_pSet, "Galor-late", None, 0, 0)
+    wings_qb.ship_arrived(QB, later, "Galor-late")
+    m = roster.member("Galor-late")
+    assert m is not None and roster.wing_of("Galor-late") is lw
+    assert not m.in_chain_eligible and lw.chain == [first]
+    assert wings_qb.owns("Galor-late")
+
+
+# ── listed ships keep their pull with wings on ──────────────────────────────
+
+@pytest.mark.parametrize("allegiance,ship", [("neutral", "Transport"),
+                                             ("friendly", "Akira")])
+def test_enemy_wing_prefers_protected_when_equal(world, allegiance, ship):
+    """The km intent with wings on: equidistant, equally far off the
+    Warbird's nose, nobody has hurt it, no current target -- the enemy wing
+    goes for the Defeat-protected ship, a neutral one included."""
+    hl, _c, panel, QB = world
+    from engine.wings import brain
+    name = _km(panel, allegiance=allegiance, ship=ship)
+    _go(hl, panel)
+    ships = _ships(QB)
+    warbird, protected, player = ships["Warbird-1"], ships[name], _player()
+    ew = _wing_for(panel, 1)
+    assert _target_group(warbird) is ew.target_group
+    # Seeded before the first tick, at the member's CreateAI.
+    assert ew.target_group.IsNameInGroup(name)
+    _put(warbird, 0.0, 0.0, 0.0)                 # nose along +Y
+    _put(player, -10.0, 20.0, 0.0)
+    _put(protected, 10.0, 20.0, 0.0)
+    st = _select_target(warbird)
+    brain.tick_wing(ew)
+    warbird.SetTarget(None)
+    assert st.dDamageReceived == {}
+    assert ew.target_group[name]["Priority"] >= 2.0
+    assert st.FindGoodTarget() == name
+
+
+def test_friendly_wing_prefers_hunt_target_when_equal(world):
+    hl, _c, panel, QB = world
+    from engine.wings import brain
+    keldon, galor, akira = _hunt(panel)
+    _go(hl, panel)
+    ships = _ships(QB)
+    fw = _wing_for(panel, 2)
+    assert _target_group(ships[akira]) is fw.target_group
+    _put(ships[akira], 0.0, 0.0, 0.0)             # nose along +Y
+    _put(ships[keldon], -10.0, 20.0, 0.0)
+    _put(ships[galor], 10.0, 20.0, 0.0)
+    _put(_player(), 0.0, -400.0, 0.0)
+    st = _select_target(ships[akira])
+    brain.tick_wing(fw)
+    ships[akira].SetTarget(None)
+    assert st.dDamageReceived == {}
+    assert st.FindGoodTarget() == galor
+
+
+def test_immobile_quickbattleai_ship_not_a_member(world, monkeypatch):
+    """A station given QuickBattleAI -- BC's own table does that for Biranu
+    Station (not in the ship catalog), here the Card Station's row, which a
+    mod could equally write -- has no impulse engine: not a member, stock
+    tree, no redirect."""
+    hl, _c, panel, QB = world
+    from engine.wings import roster
+    table = {k: (r[:3] + ["QuickBattleAI"] + r[4:]
+                 if r[0] == "CardStation" else r)
+             for k, r in QB.g_dEnemyShipTypeToDetails.items()}
+    monkeypatch.setattr(QB, "g_dEnemyShipTypeToDetails", table)
+    _enemies(panel, "Warbird")
+    station, galor = _name_list(_group(panel, "enemy", "CardStation", "Galor"))
+    _go(hl, panel)
+    ships = _ships(QB)
+    sw = _wing_for(panel, 2)
+    assert set(sw.members) == {galor}
+    assert roster.wing_of(station) is None
+    assert not _is_wing_tree(ships[station])
+    assert _target_group(ships[station]) is QB.pFriendlies
 
 
 def test_reset_on_end_and_swap_clears_wings(world):

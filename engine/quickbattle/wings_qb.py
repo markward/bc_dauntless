@@ -5,18 +5,27 @@ Armed from `battle_end.begin` for every plan-driven battle (no-op when
 `engine.wings.service.enabled()` is false, or BC's own GenerateShips ran):
 
 - One wing per non-neutral group that has a member, id ``"qb:<group id>"``.
-  Members are the orders whose AI module (`spawn._details`, the same lookup
-  that fills g_kShips) is QuickBattleAI or QuickBattleFriendlyAI. Station AI
-  (StarbaseAI, StarbaseFriendlyAI) and neutral groups are never members: a
-  station can't anchor a leash (spec §12 call 1).
+  Members are the MOBILE ships (an impulse engine with an authored max
+  speed > 0) of the orders whose AI module (`spawn._details`, the same
+  lookup that fills g_kShips) is QuickBattleAI or QuickBattleFriendlyAI.
+  Station AI, stations given QuickBattleAI (BC's own table does that for
+  Biranu Station) and neutral groups are never members: a station can't
+  anchor a leash (spec §12 call 1). A non-member gets its stock tree and no
+  redirect.
 - The player joins the wing of `plan.player.group_id` (`is_player`); its
   name is read from App.Game_GetCurrentPlayer() at arm time.
-- A late (warp-in) order is not a member at arm: `ship_arrived` adds it,
-  outside the chain, just before late_arrivals gives it its AI.
+- A late (warp-in) order is not a member at arm: `ship_arrived` adds it
+  just before late_arrivals gives it its AI, outside the chain -- except
+  that a wing whose members are ALL late (every order of a QB group shares
+  its warp-in) builds its chain from its first arrival wave, re-running
+  `brain.arm_chain` after each of those arrivals.
 - The candidate enemy group is the QuickBattle group the members' stock AI
   attacks: enemies' wings `pFriendlies`, friendlies' wings `pEnemies`.
 - `km_priorities` reads `km_targeting.priorities_for(allegiance)` at use, so
-  a listed protect / hunt target keeps its weight in the wing group.
+  a listed protect / hunt target keeps its weight in the wing group, and the
+  brain counts a listed ship outside the enemy group (a neutral protect
+  target) as a candidate. km arms after the wings, so those ships are seeded
+  into the wing group at the first member's CreateAI, not at create_wing.
 
 Mechanism (no SDK edit), the km_targeting pattern: the member modules'
 CreateAI is wrapped for the battle. For a member ship the wrapper answers the
@@ -53,6 +62,18 @@ _wrapped: list = []          # (module, original CreateAI)
 _owned: dict = {}            # non-player member name -> its wing
 _attacked: dict = {}         # wing id -> the attacked QuickBattle group attr
 _by_group: dict = {}         # QB group id -> its wing
+_first_wave: dict = {}       # all-late group id -> its first arrivals' warp_in_s
+
+
+def _is_mobile(ship) -> bool:
+    """A ship that can move: an impulse engine whose authored max speed
+    (the property's, not the damage-derated live figure) is above 0."""
+    if ship is None:
+        return False
+    engine = ship.GetImpulseEngineSubsystem()
+    prop = engine.GetProperty() if engine is not None else None
+    speed = prop.GetMaxSpeed() if prop is not None else None
+    return speed is not None and float(speed) > 0.0
 
 
 def _member_module(qb, order):
@@ -79,14 +100,21 @@ def arm(qb, plan) -> None:
     reset()
     if plan is None or not service.enabled():
         return
-    groups: dict = {}            # group id -> (allegiance, [(name, late)])
+    groups: dict = {}            # group id -> (allegiance, [initial names])
+    late: dict = {}              # group id -> [warp_in_s of its late orders]
     modules: list = []
     for n, order in enumerate(plan.orders, start=1):
         ai = _member_module(qb, order)
         if ai is None:
             continue
+        name = naming.object_name(order.title, n)
+        if order.warp_in_s > 0:
+            late.setdefault(order.group_id, []).append(order.warp_in_s)
+        elif not _is_mobile(App.ShipClass_GetObject(None, name)):
+            continue             # a station (or a ship that did not spawn)
         _alleg, members = groups.setdefault(order.group_id, (order.allegiance, []))
-        members.append((naming.object_name(order.title, n), order.warp_in_s > 0))
+        if order.warp_in_s <= 0:
+            members.append(name)
         if ai not in modules:
             modules.append(ai)
     player = App.Game_GetCurrentPlayer()
@@ -102,10 +130,12 @@ def arm(qb, plan) -> None:
         _by_group[gid] = wing
         if gid == player_gid and player is not None:
             roster.add_member(wing, player.GetName(), is_player=True)
-        for name, late in members:
-            if not late:
-                roster.add_member(wing, name)
-                _owned[name] = wing
+        for name in members:
+            roster.add_member(wing, name)
+            _owned[name] = wing
+        if not wing.members and gid in late:
+            # All late: its first arrival wave will build the chain.
+            _first_wave[gid] = min(late[gid])
     for name in modules:
         _wrap(name)
     for wing in _by_group.values():
@@ -152,6 +182,16 @@ def _create_ai(orig, pShip, args, kw):
             return group
         return real(module_name, attr_name)
 
+    # Listed (km) ships the enemy group lacks -- a neutral protect target --
+    # are candidates from the start; km is armed by now (battle_end.begin
+    # arms it after us, StartSimulation2 runs CreateAI after that).
+    try:
+        for name, priority in wing.km_priorities().items():
+            if not group.IsNameInGroup(name):
+                group[name] = {"Priority": priority}
+    except Exception:
+        _log.exception("quickbattle wings: listed ships not seeded for %s",
+                       pShip.GetName())
     App.ObjectGroup_FromModule = FromModule
     try:
         stock = orig(pShip, *args, **kw)
@@ -168,16 +208,24 @@ def _create_ai(orig, pShip, args, kw):
 
 def ship_arrived(qb, order, name) -> None:
     """A late ship of `order` is in the battle, its AI not yet set: it joins
-    its group's wing outside the chain. Never raises."""
+    its group's wing -- in the chain only when the wing had no initial
+    member and this is its first arrival wave (the chain is rebuilt after
+    each), otherwise outside it. Never raises."""
     if not _by_group:
         return
     try:
-        from engine.wings import roster
+        import App
+        from engine.wings import brain, roster
         wing = _by_group.get(order.group_id)
         if wing is None or _member_module(qb, order) is None:
             return
-        roster.add_member(wing, name, chain_eligible=False)
+        if not _is_mobile(App.ShipClass_GetObject(None, name)):
+            return
+        eligible = _first_wave.get(order.group_id) == order.warp_in_s
+        roster.add_member(wing, name, chain_eligible=eligible)
         _owned[name] = wing
+        if eligible:
+            brain.arm_chain(wing)
     except Exception:
         _log.exception("quickbattle wings: %s did not join its wing", name)
 
@@ -193,4 +241,5 @@ def reset() -> None:
     _owned.clear()
     _attacked.clear()
     _by_group.clear()
+    _first_wave.clear()
     service.reset()

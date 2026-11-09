@@ -164,7 +164,22 @@ def test_km_priority_kept_for_reach_set():
     wing.km_priorities = lambda: {"e3": 2.0}
     brain.tick_wing(wing)
     group = _group(wing)
-    assert group["e1"] == 3.0 and group["e2"] == 1.5 and group["e3"] == 2.0
+    # The listed e3 is the primary; the decision's e1 steps down.
+    assert group["e3"] == 3.0 and group["e1"] == 1.5 and group["e2"] == 1.5
+
+
+def test_km_listed_ship_outside_enemy_group_is_a_candidate():
+    """A listed ship that is not in the enemy group (a neutral Quick Battle
+    protect target) is still a candidate enemy: enemy-group names first,
+    then the km names."""
+    wing, ships = _scene([(100.0, 0.0, 0.0)])
+    pSet = ships["m1"].GetContainingSet()
+    ships["n1"] = _ship(pSet, "BirdOfPrey", "n1", (120.0, 0.0, 0.0))
+    wing.km_priorities = lambda: {"n1": 2.0}
+    brain.tick_wing(wing)
+    group = _group(wing)
+    assert set(group) == {"e1", "n1"}
+    assert group["n1"] == 3.0
 
 
 def test_handover_on_commander_death():
