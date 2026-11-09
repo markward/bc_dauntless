@@ -243,14 +243,14 @@ def test_disable_weapons_before_hull_half(seed, monkeypatch):
     # Weapons-first aim lands on each weapon SYSTEM's own condition, which
     # its IsDisabled() (the banks' aggregate) never reads; the brain reads a
     # system with none left as down (spec §2). Seen, holders at their own
-    # beam standoff (Galor 25 GU): weapons down at 158.4 s, hull below half
-    # at 198.3-199.4 s (2026-11-09, 3 seeds; 235.8 s / 283.6-348.2 s at a
+    # beam standoff (Galor 25 GU): weapons down at 166.2 s, hull below half
+    # at 191.9-192.7 s (2026-11-09, 3 seeds; 235.8 s / 283.6-348.2 s at a
     # fixed 120 GU before hold mode); IsDisabled() never all true.
     assert down is not None
     assert hull is None or down < hull
-    # Control (disable_threat 5.0: hull fire on envelop / focus_face slots,
-    # held at the 60 GU flank floor): hull below half at 353.7-386.2 s with
-    # every weapon system untouched (169.0-169.4 s at the Galor's own 25 GU).
+    # Control (disable_threat 5.0: hull fire on envelop / focus_face slots):
+    # hull below half at 169.0-169.4 s with every weapon system untouched
+    # (352.5-385.8 s at a fixed 120 GU).
     assert c_hull is not None
     assert c_down is None or c_hull < c_down
 
@@ -292,10 +292,8 @@ def test_disable_holds_until_weapons_down(seed, monkeypatch):
     # Before the latch, disable ended at 103 s at ratio 1.5 (the gate) with
     # the weapons up, and they never went down (final review I1, seed 1).
     # Latched: one unbroken disable from the first brain tick until the
-    # weapons are down. Seen: down at 166 / 173 / 169 s with each holder at
-    # its own beam standoff (Akira 48 GU, hold radius 12 / 24 GU; 133 / 144
-    # / 160 s with a fixed 20 / 40 GU hold radius), the ratio falling to
-    # 0.98-1.01
+    # weapons are down. Seen: down at 133 / 144 / 160 s with each holder at
+    # its own beam standoff (Akira 48 GU), the ratio falling to 0.99-1.01
     # while still disabling (2026-11-09, seeds 1-3; 224-270 s at a fixed
     # 120 GU). With a 120 s cap no seed got the weapons down at 120 GU:
     # disable_max_s defaults to 300.
