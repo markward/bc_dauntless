@@ -7710,6 +7710,14 @@ def reset_mission_state(renderer=None) -> None:
     # The Objectives buttons' click event type, cached for the same reason.
     from engine.appc import mission_goals as _mission_goals
     _mission_goals.reset()
+    # Group changes and condition events queued for the next tick boundary
+    # (ObjectGroup.deliver_changes, ai.deliver_condition_events): an edit or
+    # a condition flip in the old mission's last tick must not be posted
+    # into the new mission, nor keep the old groups and events alive.
+    from engine.appc.objects import ObjectGroup as _ObjectGroup
+    _ObjectGroup._changed = []
+    from engine.appc import ai as _ai_queue
+    _ai_queue._pending_condition_events.clear()
     # Blind-warp parked marks (engine/appc/warp.py): the swap deletes the
     # warp set with every other set.
     from engine.appc import warp as _warp_parked
