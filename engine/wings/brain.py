@@ -16,6 +16,8 @@ from engine.wings import (allies, assess, attack, chain, decisions, dials, plans
                           protect, reserve, roster, rotate)
 
 _NUM_SHIELDS = 6
+# A feint a higher decision pre-empts this soon starts no cooldown.
+_FEINT_GRACE_S = 5.0
 
 
 def log(msg: str) -> None:
@@ -357,7 +359,7 @@ def tick_wing(wing) -> None:
                                if m.slot is not None),
         reserve=wing.reserve,
         protect_prev=wing.protect_prev,
-        allies=allies.side_allies(wing, roster.wings()),
+        allies=allies.side_allies(wing, roster.wings(), home.GetName()),
         reinforce_ally=wing.reinforce_ally,
         reinforce_done=frozenset(wing.reinforce_done),
         feint_ally=wing.feint_ally,
@@ -434,12 +436,13 @@ def tick_wing(wing) -> None:
         for m in wing.members.values():
             for node in m.select_nodes:
                 node.ForceUpdate()
-    _publish_status(wing, ctx, near, members)
+    _publish_status(wing, ctx, near, members, home)
 
 
-def _publish_status(wing, ctx, near, members) -> None:
+def _publish_status(wing, ctx, near, members, home) -> None:
     """The wing's status for its allies' next tick (Phase D): sides read
-    through the decisions' memo, within engage_gu of the anchor."""
+    through the decisions' memo, within engage_gu of the anchor; the home
+    set's name, so only wings in that set read it."""
     ours, theirs = decisions._sides(ctx, dials.get("engage_gu"))
     live = sum(assess.strength(v) for v in members.values())
     armed = wing.armed_strength
@@ -448,7 +451,8 @@ def _publish_status(wing, ctx, near, members) -> None:
         anchor=tuple(ctx.anchor.pos),
         strength_frac=live / armed if armed else 0.0,
         ours=ours, theirs=theirs, enemy_centroid=assess.centroid(near),
-        engaged=bool(near), decision=wing.decision)
+        engaged=bool(near), decision=wing.decision,
+        set_name=home.GetName())
 
 
 def _disable_cap(wing, now) -> None:
@@ -495,10 +499,11 @@ def _track_side(wing, decision, choice, now, ctx) -> None:
     """After choose (Phase D): start and stop the reinforce and feint
     latches and keep the flank's and the screen's ally. A reinforce, flank
     or screen that ends by its cap puts its ally on that decision's
-    cooldown; a feint that ends for any reason starts the feint cooldown. One clock: a latch's age is
-    the decision's (ctx.decision_age_s, read before this tick's pick),
-    since decision_since resets only on a change of decision name and a
-    stand-down clears the decision."""
+    cooldown; a feint that ends starts the feint cooldown, unless a higher
+    decision pre-empted it within _FEINT_GRACE_S. One clock: a latch's
+    age is the decision's (ctx.decision_age_s, read before this tick's
+    pick), since decision_since resets only on a change of decision name
+    and a stand-down clears the decision."""
     r = choice.ally if decision == "reinforce" else None
     if wing.reinforce_ally is not None and wing.reinforce_ally != r:
         _end_reinforce(wing, now, ctx)
@@ -506,7 +511,12 @@ def _track_side(wing, decision, choice, now, ctx) -> None:
         wing.reinforce_ally = r
     f = choice.ally if decision == "feint" else None
     if wing.feint_ally is not None and wing.feint_ally != f:
-        _end_feint(wing, now)
+        # Pre-empted in its first _FEINT_GRACE_S by a higher decision (its
+        # own ends had not fired): no cooldown (fix wave M1).
+        pre_empted = (ctx.current == "feint"
+                      and ctx.decision_age_s < _FEINT_GRACE_S
+                      and decisions._feint_ally(ctx) is not None)
+        _end_feint(wing, now, cooldown=not pre_empted)
     if f is not None and wing.feint_ally is None:
         wing.feint_ally, wing.feint_quiet_since = f, None
     wing.flank_ally = _held_latch(wing, "flank", decision, choice, now,
@@ -538,8 +548,9 @@ def _end_reinforce(wing, now, ctx) -> None:
     wing.reinforce_ally = None
 
 
-def _end_feint(wing, now) -> None:
-    wing.feint_cooldown_until = now + dials.get("feint_cooldown_s")
+def _end_feint(wing, now, cooldown=True) -> None:
+    if cooldown:
+        wing.feint_cooldown_until = now + dials.get("feint_cooldown_s")
     wing.feint_ally = wing.feint_quiet_since = None
 
 
@@ -1075,6 +1086,7 @@ def tick_safely(wing) -> None:
     try:
         tick_wing(wing)
     except Exception as exc:  # noqa: BLE001 - one wing must not stop the rest
+        wing.status = None            # allies never read a frozen status
         from engine import dev_mode
         dev_mode.log_swallowed("wings brain tick", exc)
 

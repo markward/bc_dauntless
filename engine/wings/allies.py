@@ -19,6 +19,9 @@ class WingStatus:
     enemy_centroid: Optional[tuple]
     engaged: bool
     decision: Optional[str]
+    # The name of the wing's home set: its anchor is in that set's
+    # coordinates, so only a wing in the same set reads it (side_allies).
+    set_name: Optional[str] = None
 
 
 def in_trouble(s: WingStatus) -> bool:
@@ -39,11 +42,14 @@ def side_of(wing) -> str:
     return wing.side if wing.side is not None else str(id(wing.enemy_group))
 
 
-def side_allies(wing, wings) -> tuple:
+def side_allies(wing, wings, set_name) -> tuple:
+    """The statuses of the other wings on wing's side whose home set is
+    `set_name` (the asking wing's), sorted by wing id."""
     side = side_of(wing)
     return tuple(sorted(
         (w.status for w in wings
-         if w is not wing and w.status is not None and side_of(w) == side),
+         if w is not wing and w.status is not None and side_of(w) == side
+         and w.status.set_name == set_name),
         key=lambda s: s.wing_id))
 
 

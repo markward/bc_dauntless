@@ -905,3 +905,51 @@ def test_screen_latch_clears_on_stand_down(now):
     now[0] = 1.0
     brain.tick_wing(a)
     assert a.away is True and a.screen_ally is None
+
+
+# ── fix wave minors ────────────────────────────────────────────────────────
+
+class _Top:
+    """A registered decision that outscores everything while on."""
+    name = "zz_top"
+
+    def __init__(self):
+        self.on = False
+
+    def score(self, ctx):
+        return 9.0 if self.on else 0.0
+
+    def choose(self, ctx):
+        return decisions.swarm_choice(ctx)
+
+
+@pytest.mark.parametrize("at,cooldown", [(2.0, False), (5.0, True)])
+def test_feint_pre_empted_early_starts_no_cooldown(now, at, cooldown):
+    """M1: a feint that a higher decision pre-empts within its first 5 s
+    starts no feint cooldown; later, it does."""
+    top = _Top()
+    decisions.register(top)
+    a, f, _ships = _feint_scene()
+    _start_feint(a, f)
+    top.on = True
+    now[0] = at
+    brain.tick_wing(f)
+    brain.tick_wing(a)
+    assert a.decision == "zz_top" and a.feint_ally is None
+    if cooldown:
+        assert a.feint_cooldown_until == pytest.approx(at + 180.0)
+    else:
+        assert a.feint_cooldown_until == -1.0
+
+
+def test_tick_that_raises_clears_status(monkeypatch, now):
+    """M2: a wing whose tick raises publishes no stale status."""
+    a, b, _ships = _reinforce_scene()
+    brain.tick_wing(b)
+    assert b.status is not None
+
+    def boom(_wing):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(brain, "tick_wing", boom)
+    brain.tick_safely(b)
+    assert b.status is None

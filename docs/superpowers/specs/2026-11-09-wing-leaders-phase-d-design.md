@@ -5,7 +5,7 @@ groups") and Phases A–C. Read Phase A §2/§11 (brain, tree), Phase B §6
 (`WingMoveTo`, withdraw), and Phase C §3 and §11 (slots, build rulings).
 Branch `feat/wing-leaders-d`, cut from the end of `feat/wing-leaders-c`. As
 with Phase C, Mark asked for this phase to be built without his spec approval.
-Every choice he didn't make is marked **(call)** and listed in §10.
+Every choice he didn't make is marked **(call)** and listed in §11.
 
 ## 1. What Phase D delivers
 
@@ -64,19 +64,25 @@ most one brain period (1 s) old.
 | `enemy_centroid` | centroid of the enemies within `engage_gu`, or None |
 | `engaged` | at least one enemy within `engage_gu` |
 | `decision` | the current decision |
+| `set_name` | the name of the wing's home set (§12.18) |
 
 Rules:
 - A leaderless wing, or one whose command is away, publishes **no** status.
   Allies don't count on it.
-- `allies.side_allies(wing)` returns the other led wings on the same side, as
-  their last statuses.
+- `allies.side_allies(wing, wings, set_name)` returns the other led wings on
+  the same side **whose home set is the asking wing's** (§12.18), as their
+  last statuses.
 - Decisions get them as `Context.allies` (a tuple of `WingStatus`), and they
   stay pure.
+- The player's escort wing (`Context.escorts_player`) never scores
+  reinforce, feint, screen or flank (§12.13).
 
 **In trouble** (pure: `allies.in_trouble(status)`). An ally is in trouble
-when it is engaged and either:
-- `ours < reinforce_odds × theirs` (dial, default **1.0**); or
-- its decision is `protect` or `withdraw`.
+when it is engaged and any of:
+- `ours < reinforce_odds × theirs` (dial, default **1.0**);
+- its decision is `withdraw`;
+- its decision is `protect` **and** `ours < reinforce_close_odds × theirs`
+  (dial, default **1.5**; §12.11).
 
 ## 4. Reinforce (#3)
 
@@ -149,10 +155,15 @@ it once the hold ends.
 - **Hold point:** `ally_anchor + unit(enemy_centroid − ally_anchor) ×
   min(screen_gu, 0.5 × gap)`, where `screen_gu` is a dial (default
   **150 GU**) and gap is the distance between the two.
-- **Ends** when either:
+- **Ends** when any of these holds:
   - an enemy comes within `engage_gu` of **our anchor** — we have met them
     where we chose, and normal decisions fight;
-  - the ally is no longer weak, or no enemies are closing on it.
+  - the ally is no longer weak, or no enemies are closing on it;
+  - `screen_max_s` (dial, default **60 s**) passes; that ally is then on
+    `screen_cooldown_s` (dial, default **60 s**).
+- **Latch** (§12.15). A current screen holds its ally (`screen_ally`), and
+  while it does the ally stays "weak" until its `strength_frac` reaches
+  **0.6** (entry needs < 0.5).
 
 ### Flank
 - **Score 1.1** when all of these hold **(call)**:
@@ -171,11 +182,14 @@ it once the hold ends.
     `engage_gu` of our anchor (we're in; swarm takes it);
   - the ally is no longer engaged.
 - **Latch.** While flank is current and holds its ally (`flank_ally`), the
-  entry checks on the ally (not in trouble, within `reinforce_range_gu`)
-  are not re-checked, so an ally slipping into trouble mid-swing does not
-  flip us to reinforce. Both end conditions still apply: flank ends the
-  moment an enemy is within `engage_gu` of our anchor, latched or not
-  (§12). Without `flank_ally` (after a stand-down) the entry gates apply.
+  range and cooldown entry checks are not re-checked. Every end condition
+  still applies: flank ends the moment an enemy is within `engage_gu` of
+  our anchor (§12.3), and when the ally is **in trouble** it scores 0 so
+  reinforce takes over for that ally (§12.14; this replaced "an ally
+  slipping into trouble does not flip us to reinforce"). It ends at
+  `flank_max_s` (dial, default **90 s**), and that ally is then on
+  `flank_cooldown_s` (dial, default **60 s**). Without `flank_ally` (after
+  a stand-down) the entry gates apply.
 
 ## 6. Bait and feint (#12)
 
@@ -184,6 +198,8 @@ like withdraw.
 - **Score 1.2** when all of these hold **(call)**:
   - we are engaged;
   - our `strength_frac` ≥ 0.5 (a feint, not a rout);
+  - we are not comfortably ahead: `ours < feint_max_odds × theirs` (dial,
+    default **1.25**; §12.12) — a lure is for an enemy we can't beat alone;
   - some ally F is **not engaged**, F's `strength_frac` ≥ 0.6, and F's anchor
     is within `feint_range_gu` of ours (dial, default **800 GU**) but farther
     than `engage_gu`;
@@ -204,7 +220,8 @@ like withdraw.
     follow);
   - `feint_max_s` (dial, default **45 s**) passes;
   - F becomes engaged elsewhere, or has no status.
-  Once it ends, the feint goes on cooldown and the normal decisions fight.
+  Once it ends, the feint goes on cooldown and the normal decisions fight —
+  unless a higher decision pre-empted it within its first 5 s (§12.16).
 - **(call)** F is not told anything. When the enemy arrives it is "engaged",
   and its own brain fights; its swarm picks targets in reach. If the enemy
   stops short, F may score flank or reinforce on its own.
@@ -220,7 +237,7 @@ like withdraw.
 | **reinforce** | 1.25 (latched) | D |
 | focus_face | 1.2 | C |
 | **feint** | 1.2 | D |
-| **screen** | 1.15 | D |
+| **screen** | 1.15 (latched) | D |
 | **flank** | 1.1 (latched) | D |
 | envelop | 1.05 | C |
 | swarm_weakest / swarm_commander | 1.0 / 0.3–1.0 | A |
@@ -292,7 +309,8 @@ like withdraw.
    - flank 1.1.
    The ties are as in §7.
 2. Odds:
-   - in trouble = losing on odds (< 1.0) or protecting/withdrawing;
+   - in trouble = losing on odds (< 1.0), withdrawing, or protecting at
+     close odds (< 1.5, §12.11);
    - we can spare help at ≥ 2.5× odds.
 3. Ranges and distances:
    - help range 1500 GU;
@@ -302,7 +320,8 @@ like withdraw.
    - formation ring 30 GU.
 4. Timers:
    - reinforce: 90 s cap, 60 s cooldown per ally;
-   - feint: 45 s cap, 180 s cooldown per wing.
+   - feint: 45 s cap, 180 s cooldown per wing;
+   - flank 90 s / screen 60 s caps, 60 s cooldowns per ally (§12.14-15).
 5. Reinforce moves the wing by retargeting it (the commander's stock attack
    intercepts), not by a move branch.
 6. Hold (screen, flank, feint) moves every non-player member, the commander
@@ -318,10 +337,16 @@ Rulings made while building Phase D (2026-11-09), none of them Mark's:
    applies only among the baseline decisions (`swarm_weakest`,
    `swarm_commander`, `regroup`). A non-baseline decision beats a current
    baseline decision on raw score alone (strictly above the best raw
-   baseline score). This applies to Phase C's decisions too (focus_face,
-   envelop, disable): a sticky swarm at 1.0 + 0.25 otherwise shut out
-   every situational decision below 1.25. A current non-baseline decision
-   keeps the old rule. Cost if wrong: more decision changes live.
+   baseline score). This changes every non-baseline decision, not only
+   Phase C's (focus_face, envelop, disable) and D's: a sticky swarm at
+   1.0 + 0.25 otherwise shut out every situational decision below 1.25.
+   **Protect and withdraw lose the old damping too**: a current regroup
+   scoring 1.4 used to keep winning at 1.65 against protect's 1.5; now
+   protect's raw 1.5 beats it. A current non-baseline decision keeps the
+   old rule. Cost if wrong: more decision changes live. Signal (final
+   review, headless): 2-3x more decision changes than the old `pick` in
+   the behaviour scenes, almost every run ≥ 6 brain ticks and no
+   tick-to-tick flapping.
 2. **Arrival hysteresis** for reinforce and flank: a wing enters only when
    the ally's anchor (reinforce) or the flank point (flank) is beyond
    `leash_gu + leash_slack_gu`, and the running decision ends at
@@ -353,8 +378,51 @@ Rulings made while building Phase D (2026-11-09), none of them Mark's:
       trouble) and comes in in both arms, so where the enemy ends relative
       to F's anchor hides the lure (40 s: 265-268 GU with the feint,
       276-278 without); F's ships hold station (the brain still leads F).
+      Since §12.12, W is 3 Akiras against 4 Galors (1.2:1); the first
+      scene (4 against 3, 2.1:1) no longer feints. Seeds 1-3: C-F at 40 s
+      423 / 476 / 476 GU against the control's 598 / 619 / 622.
     Feint and flank overlap in that case: the feint does not close the trap
     sooner when the ally flanks anyway. A live-check item for §10.
     - (b) the flank is slow: the hold branch flies at impulse, so A reached
       engage range of the fight at 62-73 s, where the control's intercept
       (in-system warp) arrived at 9-10 s. Also a live-check item.
+
+### Fix wave rulings (2026-11-09, after the final review)
+
+11. **Protect is trouble only when the odds are close** (§3). Protect was
+    66-94 % of engaged wing ticks, so an idle wing almost always
+    reinforced and flank was almost never reachable. An ally on protect is
+    in trouble only while `ours < reinforce_close_odds × theirs` (dial
+    **1.5**, step 0.1, 1-5); withdraw still counts at any odds. Probe (an
+    idle wing beside an ally on protect every tick, 90 s, seeds 1-2): at
+    1.6-2.2:1 the idle wing flanked 41-57 ticks and reinforced 0 (before:
+    flank 0, reinforce 44-90); at 1.07-1.5:1 it still reinforces.
+12. **A feint is a lure for a stronger enemy** (§6). It enters only while
+    `ours < feint_max_odds × theirs` (our own near odds; dial **1.25**,
+    step 0.05, 0.5-5). The latch is unaffected. Below 1.0 the feinting
+    wing is also in trouble, so an idle F may reinforce it: both wings
+    converge, which is the trap closing.
+13. **The player's escort wing stays with the player.** The wing
+    `service.set_player_wing` marks (Quick Battle's player group) gets
+    `Context.escorts_player`, and never scores reinforce, feint, screen or
+    flank, latched or not.
+14. **Flank has a cap and yields to trouble** (§5). `flank_max_s` (dial
+    **90 s**, step 5, min 5) ends it and puts that ally on
+    `flank_cooldown_s` (dial **60 s**, step 5, min 0), per ally like
+    `reinforce_done`. A latched flank scores 0 when its ally is now in
+    trouble, so reinforce (1.25) takes over for that ally; that end starts
+    no cooldown.
+15. **Screen ends** (§5). A latched screen ally (`Context.screen_ally`,
+    `Wing.screen_ally`, as flank has); weak-ally hysteresis (enter < 0.5,
+    stay < 0.6: an ally with its shields down reads about 0.5);
+    `screen_max_s` (dial **60 s**, step 5, min 5) ends it and puts that
+    ally on `screen_cooldown_s` (dial **60 s**, step 5, min 0), per ally.
+16. **An early pre-empted feint starts no cooldown.** A feint that a higher
+    decision pre-empts within its first 5 s (its own ends had not fired)
+    leaves the feint cooldown as it was. Its own ends, a stand-down, and
+    any end from 5 s on start the cooldown.
+17. **A tick that raises clears the wing's status** (`brain.tick_safely`),
+    so its allies never read a frozen one.
+18. **Allies are per set.** `WingStatus.set_name` is the home set's name,
+    and `side_allies` keeps only allies in the asking wing's set: an
+    anchor in another set's coordinates is never compared with ours.

@@ -3,10 +3,11 @@ from engine.wings.allies import WingStatus
 
 
 def _st(wid="a", side="s", ours=10.0, theirs=5.0, engaged=True,
-        decision=None):
+        decision=None, set_name="S"):
     return WingStatus(wing_id=wid, side=side, anchor=(0.0, 0.0, 0.0),
                       strength_frac=1.0, ours=ours, theirs=theirs,
-                      enemy_centroid=None, engaged=engaged, decision=decision)
+                      enemy_centroid=None, engaged=engaged, decision=decision,
+                      set_name=set_name)
 
 
 def _wing(wid, side, status=None):
@@ -53,8 +54,20 @@ def test_side_allies_same_side_sorted_excluding_self_and_none():
     a = _wing("a", "x", _st("a", "x"))
     none = _wing("n", "x", None)
     other = _wing("o", "y", _st("o", "y"))
-    got = allies.side_allies(me, [me, b, none, other, a])
+    got = allies.side_allies(me, [me, b, none, other, a], "S")
     assert [s.wing_id for s in got] == ["a", "b"]
+
+
+def test_side_allies_same_set_only():
+    """Fix wave M3: an ally led in another set publishes an anchor in that
+    set's coordinates: it is no ally of a wing in this one."""
+    me = _wing("m", "x", _st("m", "x"))
+    here = _wing("h", "x", _st("h", "x", set_name="S"))
+    there = _wing("t", "x", _st("t", "x", set_name="Elsewhere"))
+    got = allies.side_allies(me, [me, here, there], "S")
+    assert [s.wing_id for s in got] == ["h"]
+    got = allies.side_allies(me, [me, here, there], "Elsewhere")
+    assert [s.wing_id for s in got] == ["t"]
 
 
 def test_side_of_default_and_explicit():

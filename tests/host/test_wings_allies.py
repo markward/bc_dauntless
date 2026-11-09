@@ -80,6 +80,7 @@ def test_status_after_led_tick(now):
     assert s.enemy_centroid is not None
     assert s.decision == a.decision
     assert 0.0 < s.strength_frac <= 1.0 + 1e-6
+    assert s.set_name == "WingTest"
 
 
 def test_status_not_engaged_without_enemy_near(now):
@@ -149,4 +150,27 @@ def test_no_live_members_clears_status(now):
     now[0] = 1.0
     brain.tick_wing(a)
     assert a.status is None
-    assert allies.side_allies(b, roster.wings()) == ()
+    assert allies.side_allies(b, roster.wings(), "WingTest") == ()
+
+
+def test_context_allies_same_set_only(now, monkeypatch):
+    """Fix wave M3: a friendly wing led in another set is no ally."""
+    pSet = SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "WingTest")
+    other = SetClass_Create()
+    App.g_kSetManager.AddSet(other, "Elsewhere")
+    a, _sa = _wing(pSet, "a", "friendly", "a", (0.0, 0.0, 0.0),
+                   ["ea"], [(150.0, 0.0, 0.0)])
+    b, _sb = _wing(other, "b", "friendly", "b", (0.0, 3000.0, 0.0),
+                   ["eb"], [(0.0, 3150.0, 0.0)])
+    seen = {}
+    real = decisions.pick
+
+    def spy(ctx):
+        seen[ctx.anchor.name] = ctx.allies
+        return real(ctx)
+    monkeypatch.setattr(decisions, "pick", spy)
+    brain.tick_wing(b)
+    assert b.status.set_name == "Elsewhere"
+    brain.tick_wing(a)
+    assert seen["a1"] == ()

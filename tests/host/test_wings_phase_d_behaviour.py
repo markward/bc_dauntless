@@ -301,7 +301,9 @@ def test_idle_wing_flanks_even_fight():
     # side, past square: the two wings close on C from far apart. The
     # control intercepts straight in. Seen: 119 / 149 / 93 deg at 62-73 s
     # (mean 120); the control 52 / 52 / 49 deg at 9-10 s (2026-11-09,
-    # seeds 1-3; 96-116 vs 48-55 deg on seeds 4-7 with feint off).
+    # seeds 1-3; 96-116 vs 48-55 deg on seeds 4-7 with feint off). After
+    # the fix wave (B at 1.6:1 no longer feints): 119 / 155 / 105 deg at
+    # 69-74 s (mean 126); A flanks 61-63 s, inside flank_max_s (90 s).
     assert sum(1 for a in got if a >= 60.0) >= 2
     assert sum(got) / len(got) >= sum(ctl) / len(ctl) + 20.0
 
