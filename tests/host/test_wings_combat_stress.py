@@ -20,6 +20,11 @@ SAMPLE_EVERY = 60          # one sample a second at 60 Hz
 
 
 def _load(monkeypatch, ships, wing_size, wings_on=True):
+    # Radii come from the models, as live (tests/helpers/k1_fight.py): a
+    # headless flag leaked by an earlier host test (many set it bare and never
+    # unset it) makes combat_stress seed every ship one nominal radius, which
+    # changes the fight this file measures.
+    monkeypatch.delenv("OPEN_STBC_HOST_HEADLESS", raising=False)
     monkeypatch.setenv("DAUNTLESS_COMBAT_SHIPS", str(ships))
     monkeypatch.setenv("DAUNTLESS_COMBAT_WING_SIZE", str(wing_size))
     if wings_on:
