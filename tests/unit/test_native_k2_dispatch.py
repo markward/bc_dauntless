@@ -827,12 +827,14 @@ def test_point_blank_contact_omits_shields_kwarg(monkeypatch):
         v.SetTranslateXYZ(mount.x, mount.y, mount.z)
         bank._firing = True
         bank._target = v
-        bank._beam_on_countdown = 1.0       # still winding up: no drain
+        bank._beam_on_countdown = 0.0       # beam on (a contact)
         bank._dwell = 0.0
         w.point_blank = bank
 
     def script(w, t):
-        w.point_blank._beam_on_countdown = 1.0
+        # Held on, its dwell under the flush: resting contacts, no pulse.
+        w.point_blank._beam_on_countdown = 0.0
+        w.point_blank._dwell = 0.0
 
     ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 5,
                               setup=setup)
@@ -891,7 +893,9 @@ def test_asks_answered_in_python(monkeypatch):
             _light(a, planet)
             _light(b, hulk)
         for bank in w.lit:
-            bank._beam_on_countdown = 1.0
+            # Held on, its dwell under the flush: resting contacts only.
+            bank._beam_on_countdown = 0.0
+            bank._dwell = 0.0
 
     ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 30,
                               setup=setup)

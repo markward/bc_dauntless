@@ -186,6 +186,7 @@ struct K2Kernel::Session {
     int64_t bank = -1, target = -1;
     double dwell = 0.0;                 // the idle branch's take_dwell
     std::optional<double> flush_dwell;  // None on the IsFiring branch
+    bool beam_on = true;                // bank.IsBeamOn() before the arc test
     Vec3 target_pos{0, 0, 0};
     bool has_sub = false;  // target_sub is not None
     Vec3 emitter{0, 0, 0};
@@ -527,6 +528,14 @@ private:
     K2Record contact();
     bool queue_contact();
     bool pulse();
+    // `if flush_dwell <= 0.0 and not bank.IsBeamOn(): return` -- the beam
+    // has not reached its target yet (inside the beam-on delay, or the bank
+    // stopped there): no contact, the walk goes on to the next bank.
+    // `beam_on` is read before the arc test (an arc fail stops the bank).
+    St after_arc() const {
+        return (*s_.flush_dwell <= 0.0 && !s_.beam_on) ? St::BANK_NEXT
+                                                        : St::TRACE;
+    }
 
     Mirror& m_;
     Session& s_;
@@ -1011,7 +1020,12 @@ K2Record Walker::run() {
                                      m_, detail::obj(m_, s_.target));
                 const Vec3 arc_aim = _resolve_bank_aim_world_at(
                     m_, s_.bank, arc_point, s_.use_memo);
+                s_.beam_on = true;
                 if (!s_.flush_dwell) {
+                    // beam_on = bank.IsBeamOn()  (before the arc test)
+                    const SubsystemRow* b = subrow(s_.bank);
+                    s_.beam_on =
+                        b->_firing != 0 && b->_beam_on_countdown <= 0.0;
                     // if not _emitter_in_arc(bank, ship, arc_aim):
                     if (!_emitter_in_arc(m_, s_.bank, s_.ship, arc_aim)) {
                         // flush_dwell = bank.take_dwell(); bank.StopFiring()
@@ -1022,7 +1036,7 @@ K2Record Walker::run() {
                         if (!bank_stop(s_.bank))
                             return emit(K2Kind::BANK_STOP, St::ARC_STOPPED,
                                         s_.bank);
-                        s_.st = St::TRACE;  // the partial pulse, this tick
+                        s_.st = after_arc();  // the partial pulse, this tick
                         break;
                     }
                     // else: flush_dwell = bank.accumulate_dwell(dt)
@@ -1030,11 +1044,11 @@ K2Record Walker::run() {
                     if (d.wrote) write_dwell(s_.bank, d.new_dwell, false);
                     s_.flush_dwell = d.flushed;
                 }
-                s_.st = St::TRACE;
+                s_.st = after_arc();
                 break;
             }
             case St::ARC_STOPPED:
-                s_.st = St::TRACE;
+                s_.st = after_arc();
                 break;
 
             // impact_point, impact_normal = combat._resolve_hit_point(

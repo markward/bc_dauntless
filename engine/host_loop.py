@@ -1242,13 +1242,24 @@ def _phaser_step_bank(ship, sys_, i: int, dt: float, ship_instances) -> None:
     # on the next tick because its emit point sat past the
     # target on the strip. See research doc § Bug F.
     arc_aim = _resolve_bank_aim_world(bank, target_sub or target)
+    beam_on = True
     if flush_dwell is None:
+        beam_on = bank.IsBeamOn()        # before an arc fail stops the bank
         if not _emitter_in_arc(bank, ship, arc_aim):
             # Swept off: deliver the partial pulse, then stop.
             flush_dwell = bank.take_dwell()
             bank.StopFiring()
         else:
             flush_dwell = bank.accumulate_dwell(dt)
+    # The beam reaches its target when the beam-on delay ends: until then
+    # there is no contact to show, and a bank stopped inside the delay (its
+    # target swept out of the arc) never landed. Measured on the original
+    # (stbc-oracle AI duels, CombatTap weapon-hit rows against each bank's
+    # IsFiring): one zero-damage hit -- the shield impact -- 0.50-0.52 s
+    # before the first damaging one at every range, i.e. at the end of the
+    # delay. A pulse to flush (the stopped bank's partial pulse) still lands.
+    if flush_dwell <= 0.0 and not beam_on:
+        return
     level = _phaser_level(sys_)
     # Where the beam is touching, resolved EVERY contact frame —
     # the per-frame impact feedback below needs it as much as the

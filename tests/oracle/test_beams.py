@@ -130,16 +130,28 @@ def test_b7_damage_arrives_as_quanta(oracle):
 
 
 def test_b8_rate_independent_of_remaining_charge(oracle):
-    """B8 — `phaser_high_front_57_charge3`: a bank preset to charge 3 fires at
-    the same 805/s.  The Kessok forward beams author MinFiringCharge 4.0, so
-    this capture is also evidence about what MinFiringCharge gates."""
+    """B8 — `phaser_high_front_57_charge3`: the Kessok forward beams author
+    MinFiringCharge 4.0.  Preset to charge 3, no bank lights until it has
+    recharged to 4 (4.01 in the capture, ~6 s at 0.17/s), and from then it
+    fires at the same rate as a full bank."""
     full = oracle(attacker="KessokHeavy", range_gu=57)
     full.fire("phaser", intensity=HIGH)
     r_full = _front_rate(full)
     low = oracle(attacker="KessokHeavy", range_gu=57)
-    for b in low.emitters("phaser"):
+    banks = low.emitters("phaser")
+    for b in banks:
         b.SetChargeLevel(3.0)
     low.fire("phaser", intensity=HIGH)
+    t_fire = low.t
+    lit = None
+    for _ in range(10 * 60):
+        low.step(1)
+        on = [b for b in banks if b.IsFiring()]
+        if on:
+            lit = on[0].GetChargeLevel()
+            break
+    assert lit is not None and lit == pytest.approx(4.0, abs=0.02)
+    assert low.t - t_fire == pytest.approx(1.0 / 0.17, abs=0.3)
     r_low = _front_rate(low)
     assert r_low == pytest.approx(r_full, rel=0.05)
 

@@ -148,6 +148,15 @@ CanFireResult energy_can_fire(const Mirror& m, int64_t h, bool pulse) {
             r.clear_depleted = true;  // self._depleted = False (reported)
         }
         if (!(self._charge_level > 0.0)) return r;
+        // A phaser bank lights only at MinFiringCharge, fresh or after
+        // draining; once lit it fires down to 0. Measured on the original
+        // (stbc-oracle results_win_charge: Galaxy and Sovereign banks preset
+        // to 0.1-2.9 never fire, and light the moment they recharge to 3.0;
+        // the Kessok's charge-3 bank in phaser_high_front_57_charge3 lit at
+        // 4.01). Tractors share this gate and are unmeasured, so phasers only.
+        if (self.weapon_kind == kPhaserBank && !self._firing &&
+            self._charge_level < self._min_firing_charge)
+            return r;
     }
     const double combined =
         condition_percentage(m, self) * condition_percentage(m, *parent);
