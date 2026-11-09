@@ -101,8 +101,16 @@ def _home_set(wing):
 
 
 def _ensure_select_nodes(wing, ship_of) -> None:
-    """Hook for Task 6: discover a member's stock SelectTarget nodes once
-    its builders have activated. A no-op until then."""
+    """Discover a member's stock SelectTarget nodes once its attack
+    builders have run (they build SelectTarget lazily, on the first AI
+    tick). Members that already have nodes are not walked again."""
+    from engine.wings import tree
+    for name, m in wing.members.items():
+        if m.select_nodes:
+            continue
+        ship = ship_of(name)
+        if _alive(ship):
+            tree.discover_select_nodes(ship, m)
 
 
 def tick_wing(wing) -> None:

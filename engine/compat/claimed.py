@@ -21,8 +21,18 @@ import types
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-# folded dotted prefix -> directory serving it
-_CLAIMS = {"custom.nanofxv2": _HERE / "fx_api"}
+_WINGS = _HERE / "wing_library"
+# Two kinds of claim (spec 2026-11-09-wing-leaders-phase-a-design.md §11):
+#   folded dotted prefix -> directory serving it and every name below it;
+#   folded dotted name   -> ONE .py file, serving that exact name only (the
+#                           wing library: a project-root AI/ or Conditions/
+#                           package would shadow the SDK's whole package).
+_CLAIMS = {
+    "custom.nanofxv2": _HERE / "fx_api",
+    "ai.plainai.wingrejoin": _WINGS / "AI" / "PlainAI" / "WingRejoin.py",
+    "conditions.conditionwing": _WINGS / "Conditions" / "ConditionWing.py",
+    "dauntlesswings": _WINGS / "DauntlessWings.py",
+}
 
 _noted: list = []
 
@@ -80,6 +90,12 @@ class _UnsupportedLoader(importlib.abc.Loader):
 def claimed_spec(fullname: str):
     folded = fullname.lower()
     for prefix, base in _CLAIMS.items():
+        if base.suffix == ".py":
+            # A single-file claim: the exact name only, and only while the
+            # file exists (otherwise the name resolves as it always would).
+            if folded == prefix and base.is_file():
+                return importlib.util.spec_from_file_location(fullname, base)
+            continue
         if folded != prefix and not folded.startswith(prefix + "."):
             continue
         rest = fullname.split(".")[len(prefix.split(".")):]
