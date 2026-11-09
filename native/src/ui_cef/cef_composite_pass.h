@@ -7,7 +7,10 @@
 
 #pragma once
 
+#include "cef_dirty_rects.h"
+
 #include <cstdint>
+#include <vector>
 
 namespace dauntless::ui_cef {
 
@@ -25,6 +28,13 @@ public:
 
     // pixels is BGRA8 premultiplied (CEF OSR contract). No-op if pixels==nullptr.
     void upload(const std::uint8_t* pixels, int width, int height);
+    // Uploads only `rects` of the width x height bitmap `pixels` into the
+    // texture already allocated at that size (one glTexSubImage2D per rect,
+    // GL_UNPACK_ROW_LENGTH = width, reset to 0 after). No-op if
+    // pixels==nullptr or the texture is unallocated or a different size:
+    // the caller takes upload() for those (cef_dirty_rects.h).
+    void upload_rects(const std::uint8_t* pixels, int width, int height,
+                      const std::vector<PixelRect>& rects);
     // Draws the texture as last uploaded. No-op before the first upload.
     void draw();
 

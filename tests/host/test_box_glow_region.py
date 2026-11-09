@@ -143,3 +143,68 @@ def test_box_region_gain_brightens_inside():
         H.destroy_instance(iid)
         H.shutdown()
         os.environ.pop("OPEN_STBC_HOST_HEADLESS", None)
+
+
+def test_impulse_region_gain_is_evaluated_at_upload():
+    """set_glow_region_impulse drives the region's gain from the game clock
+    (renderer/glow_impulse.h at upload in frame.cc): a held full throttle at a
+    zero pulse phase renders like a plain gain of GAIN_MAX, unpowered like no
+    boost, and a later set_glow_region_gain replaces the impulse drive."""
+    if not GALAXY_NIF.is_file() or not GALAXY_TEX.is_dir():
+        pytest.skip("BC assets not available")
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    import _dauntless_host as H
+    H.init(640, 360, "test_box_glow")
+    XFORM = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    HALF = (5000.0, 5000.0, 5000.0)
+    try:
+        h = H.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
+        iid = H.create_instance(h)
+        H.set_world_transform(iid, XFORM)
+        H.set_camera(eye=(0.0, 0.0, 1500.0), target=(0.0, 0.0, 0.0),
+                     up=(0.0, 1.0, 0.0), fov_y_rad=1.0472, near=1.0, far=100000.0)
+        H.set_lighting((0.0, 0.0, 0.0), [])
+        idx = H.add_box_region(iid, (0.0, 0.0, 0.0), HALF)
+        assert idx >= 0
+        fw, fh = H.framebuffer_size()
+        cx, cy = fw // 2, fh // 2
+        # Game time 2.5 s: one whole 0.4 Hz pulse period, so sin() is ~0 and
+        # a held full throttle is exactly GAIN_MAX (3.0).
+        H.damage_decals_tick(2.5)
+
+        H.frame()
+        base1 = _glow_grid(H, cx, cy)
+        H.frame()
+        base2 = _glow_grid(H, cx, cy)
+        noise = max(abs(a - b) for a, b in zip(base1, base2))
+        budget = max(noise * 3, 15)
+
+        H.set_glow_region_gain(iid, idx, 3.0, (0.0, 0.0, 0.0))
+        H.frame()
+        plain = _glow_grid(H, cx, cy)
+        assert max(plain) > max(base2), "plain gain 3.0 did not brighten"
+
+        H.set_glow_region_impulse(iid, idx, 1.0, 1.0, 0.0, True, (0.0, 0.0, 0.0))
+        H.frame()
+        driven = _glow_grid(H, cx, cy)
+        diff = max(abs(a - b) for a, b in zip(driven, plain))
+        assert diff <= budget, (
+            f"impulse drive at full throttle != plain gain 3.0 (diff {diff})")
+
+        H.set_glow_region_impulse(iid, idx, 1.0, 1.0, 0.0, False, (0.0, 0.0, 0.0))
+        H.frame()
+        unpowered = _glow_grid(H, cx, cy)
+        diff = max(abs(a - b) for a, b in zip(unpowered, base2))
+        assert diff <= budget, f"unpowered impulse is not gain 1 (diff {diff})"
+
+        # A plain gain push (warp regions) clears the impulse drive.
+        H.set_glow_region_impulse(iid, idx, 1.0, 1.0, 0.0, True, (0.0, 0.0, 0.0))
+        H.set_glow_region_gain(iid, idx, 1.0, (0.0, 0.0, 0.0))
+        H.frame()
+        cleared = _glow_grid(H, cx, cy)
+        diff = max(abs(a - b) for a, b in zip(cleared, base2))
+        assert diff <= budget, f"set_glow_region_gain did not clear (diff {diff})"
+    finally:
+        H.destroy_instance(iid)
+        H.shutdown()
+        os.environ.pop("OPEN_STBC_HOST_HEADLESS", None)

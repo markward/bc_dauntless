@@ -53,6 +53,7 @@ add_executable(renderer_tests
     nebula_noise_test.cc
     system_nebula_cache_test.cc
     motion_blur_shutter_test.cc
+    motion_blur_skip_test.cc
     letterbox_pass_test.cc
     aabb_test.cc
     hull_cull_test.cc
@@ -66,6 +67,7 @@ add_executable(renderer_tests
     channel_binder_test.cc
     channel_binder_assets_test.cc
     glow_region_test.cc
+    glow_impulse_test.cc
     ray_trace_test.cc
     shield_state_test.cc
     warp_in_flash_shape_test.cc
@@ -92,6 +94,7 @@ add_executable(renderer_tests
     hdr_msaa_target_test.cc
     hdr_msaa_resolve_test.cc
     hdr_target_test.cc
+    hdr_format_test.cc
     cubemap_target_test.cc
     resolve_pass_test.cc
     filmic_pass_test.cc

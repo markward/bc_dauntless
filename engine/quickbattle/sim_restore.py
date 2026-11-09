@@ -359,6 +359,11 @@ def _restore_after_end(qb) -> None:
                 _rebuild(record)
         except Exception:  # noqa: BLE001 - the other records are still restored
             _log.exception("quickbattle: restoring %s failed", record.name)
+    # The world is rebuilt: freeze it at the second gc_freeze.service() after this
+    # request, inside sim.session_sync after the delete-me sweep
+    # (engine/core/gc_freeze.py; spawn's End wrapper thawed first).
+    from engine.core import gc_freeze
+    gc_freeze.request()
 
 
 # ── Installing ───────────────────────────────────────────────────────────────

@@ -16,13 +16,17 @@ void HdrTarget::destroy() {
 void HdrTarget::resize(int w, int h) {
     if (w < 1) w = 1;
     if (h < 1) h = 1;
-    if (w == width_ && h == height_ && fbo_ != 0) return;
+    if (w == width_ && h == height_ && fbo_ != 0 && format_ == allocated_format_)
+        return;
     destroy();
     width_ = w; height_ = h;
+    allocated_format_ = format_;
 
+    const bool r11 = format_ == HdrColorFormat::R11g11b10f;
     glGenTextures(1, &color_tex_);
     glBindTexture(GL_TEXTURE_2D, color_tex_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, r11 ? GL_R11F_G11F_B10F : GL_RGBA16F, w, h, 0,
+                 r11 ? GL_RGB : GL_RGBA, GL_FLOAT, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

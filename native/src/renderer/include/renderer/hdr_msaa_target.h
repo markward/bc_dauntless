@@ -1,12 +1,12 @@
 // native/src/renderer/include/renderer/hdr_msaa_target.h
 #pragma once
 #include <cstdint>
+#include "renderer/hdr_target.h"
 
 namespace renderer {
 
-class HdrTarget;
-
-/// A multisample RGBA16F colour + depth target for the opaque space pass.
+/// A multisample HDR colour (RGBA16F by default, see set_color_format) + depth
+/// target for the opaque space pass.
 ///
 /// Both attachments are RENDERBUFFERS, not textures, and that is deliberate:
 /// nothing ever samples these surfaces. The only way data leaves this target
@@ -25,12 +25,14 @@ public:
 
     /// (Re)allocate to w x h at `samples`. No-op if already those exact
     /// parameters. `samples` < 2 destroys any existing buffers and leaves the
-    /// target invalid(). Requires a current GL context.
+    /// target invalid(). A color_format() change since the last allocation
+    /// also reallocates. Requires a current GL context.
     ///
     /// If the driver refuses the combination (framebuffer incomplete), the
     /// target is destroyed and left invalid() rather than half-built — the
     /// caller checks valid() and falls back to the non-MSAA path. We do not
-    /// trust GL_RGBA16F multisample support on the strength of the spec alone.
+    /// trust RGBA16F or R11F_G11F_B10F multisample support on the strength of
+    /// the spec alone.
     void resize(int w, int h, int samples);
 
     /// Make this the draw framebuffer and set the viewport to its size.
@@ -48,6 +50,12 @@ public:
     /// No-op if !valid() or the sizes disagree.
     void resolve_to(const HdrTarget& dst) const;
 
+    /// Colour format of the NEXT allocation; same contract as
+    /// HdrTarget::set_color_format. resolve_to() is a same-format blit, so the
+    /// caller keeps this equal to the destination HdrTarget's format.
+    void set_color_format(HdrColorFormat f) { format_ = f; }
+    HdrColorFormat color_format() const { return format_; }
+
     bool valid() const { return fbo_ != 0; }
     std::uint32_t fbo() const { return fbo_; }
     int width() const { return width_; }
@@ -62,6 +70,8 @@ private:
     int width_ = 0;
     int height_ = 0;
     int samples_ = 0;
+    HdrColorFormat format_ = HdrColorFormat::Rgba16f;
+    HdrColorFormat allocated_format_ = HdrColorFormat::Rgba16f;
 };
 
 }  // namespace renderer

@@ -1089,16 +1089,31 @@ class DamageableObject(PhysicsObjectClass):
             v = float(value)
         except (TypeError, ValueError):
             return
+        was_dying = self.IsDying()
         self._life_time = v
         if v < DYING_THRESHOLD:
             from engine.appc import object_lifetime
             object_lifetime.register(self)
+        self._note_dying_edge(was_dying)
 
     def GetLifeTime(self) -> float:
         return self._life_time
 
     def SetDying(self, v) -> None:
+        was_dying = self.IsDying()
         self._dying = bool(v)
+        self._note_dying_edge(was_dying)
+
+    def _note_dying_edge(self, was_dying) -> None:
+        """IsDying() flipped: the object went out of action (or back), which
+        changes its `targetable` verdict (perception.perceived_by), so the
+        player's contact list is re-derived on the next frame
+        (engine.appc.contact_refresh). SetDying and SetLifeTime are the only
+        crossings: object_lifetime counts down only objects already below
+        DYING_THRESHOLD, and native code never writes these fields."""
+        if self.IsDying() != was_dying:
+            from engine.appc import contact_refresh
+            contact_refresh.mark_dirty("dying")
 
     def IsDead(self) -> int:
         return 1 if self._dead else 0

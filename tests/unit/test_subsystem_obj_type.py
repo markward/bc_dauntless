@@ -275,9 +275,16 @@ def test_all_weapon_system_subclasses_are_classified():
             yield sub
             yield from _walk_subclasses(sub)
 
+    # Only classes defined at module level: a class defined inside a
+    # function is a test's local double, never engine surface, and whether
+    # one is still alive here depends on when every cache that saw it
+    # (Python and native) let it go -- the gc.collect() above cannot
+    # promise that, and the walk flaked on test_native_k2_dispatch's
+    # FixedLevel.
     concrete_classes = [
         c for c in _walk_subclasses(WeaponSystem)
         if not c.__name__.startswith("_")  # Exclude private/abstract helpers
+        and "<locals>" not in c.__qualname__
     ]
 
     # Flatten the tuples into a set for membership testing.

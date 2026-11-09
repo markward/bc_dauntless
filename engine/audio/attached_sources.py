@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from engine.systems import frames
+
 try:
     import _dauntless_host
     _audio = _dauntless_host.audio
@@ -89,7 +91,6 @@ def node_world_position(node) -> Optional[tuple[float, float, float]]:
         return None
     x, y, z = float(x), float(y), float(z)
 
-    from engine.systems import frames
     view = frames.viewing_set()
     node_set = frames.containing_set(node)
     if view is None or node_set is None:
@@ -138,7 +139,6 @@ def owner_frame(handle):
     entry = _attached.get(handle._pid)
     if entry is None:
         return None
-    from engine.systems import frames
     node_set = frames.containing_set(entry.node)
     frame = frames.frame_of(node_set) if node_set is not None else None
     return frame.key if frame is not None else None

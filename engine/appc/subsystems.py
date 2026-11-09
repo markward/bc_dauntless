@@ -3184,6 +3184,16 @@ class CloakingSubsystem(PoweredSubsystem):
         if was_cloaked:
             self._fire("ET_DECLOAK_COMPLETED")
 
+    def _fire(self, event_attr: str) -> None:
+        """Every cloak event (BEGINNING / COMPLETED, both ways, from Python
+        or from the native piece's CLOAK_DONE / FORCE_DECLOAK) posts through
+        here, including the two that flip IsCloaked (CLOAK_COMPLETED,
+        DECLOAK_BEGINNING), so the player's contact list is re-derived on the
+        next frame (engine.appc.contact_refresh)."""
+        from engine.appc import contact_refresh
+        contact_refresh.mark_dirty("cloak")
+        super()._fire(event_attr)
+
     def _cloak_dev_log(self, verb: str) -> None:
         """Dev-mode-only transition trace. print(), not logging — the host
         configures no logging handler, so logging.* is swallowed. Matches the

@@ -57,6 +57,9 @@ def _identify_one(sensors, obj) -> bool:
         dev_mode.log_swallowed("identify display-name", _e)
 
     sensors.AddKnownObject(obj)
+    # The row's caption must not trail the reticle's shows_identity.
+    from engine.appc import contact_refresh
+    contact_refresh.mark_dirty("identified")
 
     # Before the event: Science's ShipIdentified de-dupes a newly-identified
     # contact's Scan Object button by its REAL name (CreateScanButton's

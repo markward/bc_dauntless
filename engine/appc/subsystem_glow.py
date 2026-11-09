@@ -57,8 +57,12 @@ WARP_WHOLE_AXIS = (0.0, 0.0, 0.0)
 
 # Impulse-glow power/speed scaling (Mark's "sell the movement" pass). Driven by
 # the *commanded* impulse throttle (player notch / AI speed setpoint), NOT
-# measured velocity, so warp/collision/drift never brighten the engines. All
-# tunable here with no rebuild; biased slightly strong (calibrate up then down).
+# measured velocity, so warp/collision/drift never brighten the engines.
+# Biased slightly strong (calibrate up then down). The renderer evaluates the
+# eased, pulsing gain itself (renderer/glow_impulse.h mirrors GAIN_IDLE,
+# GAIN_MAX, PULSE_FREQ_HZ, PULSE_AMP, IMPULSE_EASE_TAU and IMPULSE_SETTLE_EPS),
+# so retuning one of those means changing both and rebuilding;
+# tests/unit/test_glow_impulse_twin.py fails if they drift.
 GAIN_IDLE = 1.0      # powered but stopped -> base glow (matches legacy brightness)
 GAIN_MAX = 3.0       # full throttle -> 3x brighter (feeds HDR bloom)
 PULSE_FREQ_HZ = 0.4  # slow throb rate
@@ -87,6 +91,13 @@ WARP_BURST_GAIN = 10.0    # CEILING the jump reaches; the brightest it ever gets
 WARP_PULSE_FREQ_HZ = 0.8  # faster than the impulse throb — a drive spooling up
 WARP_PULSE_AMP = 0.05     # peak pulse fraction at full drive (scales with it)
 
+# AI ships run the region state poll (glow_state, condition, commanded
+# throttle) at 20 Hz of game time, staggered across ships; the player polls
+# every frame. Consequence, accepted (perf tier 1, spec 2026-11-08 §2.3): an AI
+# ship's damage flicker, disabled/destroyed blow-out and throttle ease start up
+# to this late, because the edge time is the detection time.
+AI_GLOW_POLL_S = 0.05
+
 
 def _clamp01(x: float) -> float:
     return 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
@@ -113,6 +124,26 @@ def commanded_impulse_frac(ship, throttle_override=None) -> float:
     if max_speed <= 0.0:
         return 0.0
     return _clamp01(commanded / max_speed)
+
+
+def eased_frac(start: float, target: float, t0: float, now: float) -> float:
+    """Commanded throttle eased from `start` (at game time `t0`) toward
+    `target`: target + (start - target) * exp(-(now - t0) / IMPULSE_EASE_TAU),
+    snapped to exactly 0 once the target is 0 and the value is below
+    IMPULSE_SETTLE_EPS. At or before t0 it is `start` (still snapped).
+
+    For a target held since t0 this equals the old per-frame integration (the
+    product of exp(-dt_i/tau) is exp(-sum dt_i/tau)). TWIN of
+    renderer/glow_impulse.h `eased`, which the renderer evaluates at upload --
+    change both (tests/unit/test_glow_impulse_twin.py).
+    """
+    if now <= t0:
+        e = start
+    else:
+        e = target + (start - target) * math.exp(-(now - t0) / IMPULSE_EASE_TAU)
+    if target == 0.0 and e < IMPULSE_SETTLE_EPS:
+        return 0.0
+    return e
 
 
 def impulse_gain(frac: float, now: float, powered: bool) -> float:
@@ -389,6 +420,18 @@ def region_ops(raws, default_pos, pod_name="") -> list:
     return ops
 
 
+def _stagger_slot(instance_id) -> int:
+    """0..3 poll phase for an instance. The host's ids are pybind
+    `_dauntless_host.InstanceId`s, which expose a readonly integer `index`
+    (and no int conversion); tests pass plain ints. Anything else gets
+    phase 0."""
+    idx = getattr(instance_id, "index", instance_id)
+    try:
+        return int(idx) % 4
+    except (TypeError, ValueError):
+        return 0
+
+
 class ShipGlowController:
     """Per-ship: register glow regions once, push state when it changes.
 
@@ -409,8 +452,14 @@ class ShipGlowController:
         self._regions_of = regions_of
         self._regions = []  # dicts: sub, idx, prev, etime, boost
         self._registered = set()  # id() of every subsystem already walked
-        self._eased_frac = 0.0    # smoothed commanded throttle (0..1)
-        self._last_now = None     # game-time of the previous update (for dt)
+        # Impulse ease (start at t0 -> target), evaluated in closed form by
+        # eased_frac here and by the renderer at upload (glow_impulse.h).
+        self._imp_start = 0.0
+        self._imp_target = 0.0
+        self._imp_t0 = 0.0
+        self._last_now = None     # game-time of the previous update
+        self._next_poll = None    # AI only: game time of the next state poll
+        self._warp_live = False   # a warp region holds a gain != 1.0
 
         # Warp nacelles, impulse engines, and the sensor array ALL take their
         # glow volumes ONLY from baked hardpoint data (GlowRegion* fields;
@@ -489,41 +538,68 @@ class ShipGlowController:
             self._regions.append(
                 {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0,
                  "boost": boost, "warp": warp, "wgain": 1.0,
-                 # Last (dim, etime, flick) / impulse gain sent; None until
+                 # Last (dim, etime, flick) / impulse (start, target, t0,
+                 # powered) sent; None until
                  # the first update, which therefore always pushes.
-                 "pushed_dim": None, "pushed_gain": None,
+                 "pushed_dim": None, "pushed_imp": None,
                  # Damage flicker: last condition seen (None until the first
                  # update, so damage present at spawn never flickers) and the
                  # current window [dmg_start, dmg_until) in game time.
                  "cond": None, "dmg_start": -1.0, "dmg_until": -1.0})
 
-    def update(self, now: float, throttle_frac=None, warp_glow=None) -> None:
-        """Push dim/edge/flicker on change; brighten the impulse region by the
-        (time-eased) commanded throttle + slow pulse, pushed when it changes
-        (every frame while moving, since the pulse runs on `now`). `throttle_frac` is the
-        player's notch fraction from the host loop; None -> derive from the AI
-        speed setpoint.
+    def eased_frac(self, now: float) -> float:
+        """The eased commanded throttle at game time `now` (0..1)."""
+        return eased_frac(self._imp_start, self._imp_target, self._imp_t0, now)
+
+    def update(self, now: float, throttle_frac=None, warp_glow=None, *,
+               is_player: bool = False) -> None:
+        """Push dim/edge/flicker on change; drive the impulse regions' gain by
+        the (time-eased) commanded throttle + slow pulse, which the renderer
+        evaluates itself from (start, target, t0, powered) -- pushed only when
+        one of those changes. `throttle_frac` is the player's notch fraction
+        from the host loop; None -> derive from the AI speed setpoint.
+
+        `is_player` polls the region state every frame; any other ship polls
+        it at 20 Hz of game time (AI_GLOW_POLL_S), staggered by instance id,
+        so its damage flicker, blow-out and throttle ease start up to that
+        late (accepted, spec 2026-11-08 §2.3).
 
         `warp_glow` is the `(drive, burst)` envelope from
         `WarpVFX.engine_glow()`, supplied by the host loop ONLY for the ship
         actually flying a cross-system warp. None (every other ship, every
-        other frame) leaves the warp regions alone entirely."""
-        # Ease the commanded throttle so stepping between impulse notches ramps
-        # the glow smoothly rather than jumping. "Powered up" = commanded
-        # throttle, NOT the subsystem IsOn() (ImpulseEngineSubsystem never gets
-        # turned on -> IsOn() is always False).
-        target = commanded_impulse_frac(self._ship, throttle_frac)
-        if self._last_now is None or now < self._last_now:
-            self._eased_frac = target   # snap on first frame / after a reset
-        else:
-            dt = now - self._last_now
-            alpha = (1.0 - math.exp(-dt / IMPULSE_EASE_TAU)
-                     if IMPULSE_EASE_TAU > 0.0 else 1.0)
-            self._eased_frac += (target - self._eased_frac) * alpha
-        if target == 0.0 and self._eased_frac < IMPULSE_SETTLE_EPS:
-            self._eased_frac = 0.0
+        other frame) leaves the warp regions alone entirely. The warp gain
+        stays per-frame Python: a frame with a warp envelope, or a warp gain
+        still to reset, always polls."""
+        reset = self._last_now is None or now < self._last_now
         self._last_now = now
+        if reset:
+            # First frame, or the clock went back (mission reset): poll now
+            # and start the stagger afresh. ((iid % 4) + 1) / 4 of a poll
+            # spreads ships spawned together over four phases without ever
+            # making the first interval longer than one poll.
+            self._next_poll = now + AI_GLOW_POLL_S * (
+                _stagger_slot(self._iid) + 1) / 4.0
+        elif not (is_player or warp_glow is not None or self._warp_live):
+            if now < self._next_poll:
+                return
+            # Fixed 20 Hz schedule (no drift to 15 Hz at 60 fps); re-anchor
+            # after a long gap instead of polling every frame to catch up.
+            self._next_poll += AI_GLOW_POLL_S
+            if self._next_poll <= now:
+                self._next_poll = now + AI_GLOW_POLL_S
 
+        # "Powered up" = commanded throttle, NOT the subsystem IsOn()
+        # (ImpulseEngineSubsystem never gets turned on -> IsOn() is always
+        # False). A new target re-bases the ease at the value it had reached;
+        # the first frame / a reset snaps straight to the target.
+        target = commanded_impulse_frac(self._ship, throttle_frac)
+        if reset:
+            self._imp_start, self._imp_target, self._imp_t0 = target, target, now
+        elif target != self._imp_target:
+            self._imp_start = self.eased_frac(now)
+            self._imp_target, self._imp_t0 = target, now
+
+        warp_live = False   # a warp gain still to reset next frame
         for reg in self._regions:
             sub = reg["sub"]
             state = glow_state(sub)
@@ -552,15 +628,19 @@ class ShipGlowController:
             reg["etime"] = etime
             if reg["boost"]:
                 # Gate only on health; the dim state machine owns disabled/
-                # destroyed. Eased frac drives brightness: 0 at full-stop ->
-                # GAIN_IDLE (no visible change), up to GAIN_MAX at full throttle.
-                active = (state == HEALTHY)
-                frac = self._eased_frac if active else 0.0
-                gain = impulse_gain(frac, now, active)
-                if gain != reg["pushed_gain"]:
-                    self._r.set_glow_region_gain(self._iid, reg["idx"], gain,
-                                                 IMPULSE_AFT_AXIS)
-                    reg["pushed_gain"] = gain
+                # destroyed (and the damage flicker): unpowered pins the gain
+                # to 1.0, so the ease is irrelevant and is not re-pushed. The
+                # eased frac drives brightness: 0 at full-stop -> GAIN_IDLE
+                # (no visible change), up to GAIN_MAX at full throttle.
+                if state == HEALTHY:
+                    key = (self._imp_start, self._imp_target, self._imp_t0,
+                           True)
+                else:
+                    key = (0.0, 0.0, 0.0, False)
+                if key != reg["pushed_imp"]:
+                    self._r.set_glow_region_impulse(
+                        self._iid, reg["idx"], *key, IMPULSE_AFT_AXIS)
+                    reg["pushed_imp"] = key
             elif reg["warp"]:
                 # Same health gate as the impulse boost: the dim state machine
                 # owns disabled/destroyed pods, so a blown nacelle never
@@ -575,3 +655,5 @@ class ShipGlowController:
                     self._r.set_glow_region_gain(self._iid, reg["idx"], gain,
                                                  WARP_WHOLE_AXIS)
                     reg["wgain"] = gain
+                    warp_live = warp_live or gain != 1.0
+        self._warp_live = warp_live

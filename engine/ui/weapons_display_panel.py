@@ -70,6 +70,10 @@ _ICON_SOURCE_SYSTEMS = (
 )
 
 
+# How often the weapons display is polled. See WeaponsDisplayPanel.poll_interval_s.
+WEAPONS_POLL_S = 0.1
+
+
 class WeaponsDisplayPanel(Panel):
     @property
     def name(self) -> str:
@@ -133,6 +137,22 @@ class WeaponsDisplayPanel(Panel):
         getattr(weapon_config, handler_name)(player)
         self.invalidate()
         return True
+
+    @property
+    def poll_interval_s(self) -> float:
+        """Polled at 10 Hz, not per frame.
+
+        Firing and charge icons and the speed readout are continuous data, so
+        they may trail by up to 100 ms -- accepted. Clicks on the panel
+        (dispatch_event) and target / alert-level changes mark it due at
+        once.
+
+        Interaction is unaffected: input goes through dispatch_event, visibility
+        flips through the visible setter, and discrete state changes through
+        mark_due (host_loop._mark_hud_due_on_changes), all of which draw on the
+        next frame.
+        """
+        return WEAPONS_POLL_S
 
     def invalidate(self) -> None:
         self._last_snapshot = None

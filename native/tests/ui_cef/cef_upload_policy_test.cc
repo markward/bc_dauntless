@@ -12,10 +12,14 @@ using dauntless::ui_cef::UploadMode;
 using dauntless::ui_cef::parse_upload_mode;
 using dauntless::ui_cef::should_upload;
 
-TEST(CefUploadPolicy, UnsetOrUnknownEnvIsAlways) {
-    EXPECT_EQ(parse_upload_mode(nullptr), UploadMode::Always);
-    EXPECT_EQ(parse_upload_mode(""), UploadMode::Always);
-    EXPECT_EQ(parse_upload_mode("sometimes"), UploadMode::Always);
+TEST(CefUploadPolicy, UnsetOrUnknownEnvIsOnPaint) {
+    EXPECT_EQ(parse_upload_mode(nullptr), UploadMode::OnPaint);
+    EXPECT_EQ(parse_upload_mode(""), UploadMode::OnPaint);
+    EXPECT_EQ(parse_upload_mode("sometimes"), UploadMode::OnPaint);
+}
+
+TEST(CefUploadPolicy, ExplicitAlwaysIsAlways) {
+    EXPECT_EQ(parse_upload_mode("always"), UploadMode::Always);
 }
 
 TEST(CefUploadPolicy, ParsesEachNamedMode) {

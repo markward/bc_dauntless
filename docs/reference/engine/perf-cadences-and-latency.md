@@ -1,6 +1,6 @@
 # Perf cadences that are also gameplay latency
 
-Four things that used to run every tick now run on a cadence. Each was landed as
+Eleven things that used to run every tick now run on a cadence (the table below). Each was landed as
 a performance win, and **each is also a behaviour change**. Read this before
 reporting a delayed in-game reaction as a bug — the delay may be the design.
 
@@ -8,17 +8,24 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 
 ---
 
-## The four cadences
+## The cadences (and one native stage)
 
 | What | Constant | Period | Where |
 |---|---|---|---|
 | Shield charging | `SHIELD_CHARGE_PERIOD_S` | 0.5 s | `engine/appc/subsystems.py` (`SHIELD_CHARGE_PERIOD_S`) |
 | Native subsystem stage (native only, not a cadence) | none (no switch) | every tick | `engine/appc/native_subsystems.py` (`step_all`), `native/src/combat/` (`subsystem_step.cc`) |
 | Target-list poll | (panel throttle) | 0.5 s / 2 Hz | `engine/ui/panel_registry.py` |
+| Radar poll | `SENSORS_POLL_S` | 0.05 s / 20 Hz, wall clock | `engine/ui/sensors_panel.py` (`PanelRegistry`) |
+| Crew menu poll | `CREW_MENU_POLL_S` | 0.1 s / 10 Hz, wall clock | `engine/ui/crew_menu_panel.py` (`PanelRegistry`) |
+| Player ship poll | `PLAYER_SHIP_POLL_S` | 0.1 s / 10 Hz, wall clock (role `player` only) | `engine/ui/ship_display_panel.py` (`PanelRegistry`) |
+| Weapons poll | `WEAPONS_POLL_S` | 0.1 s / 10 Hz, wall clock | `engine/ui/weapons_display_panel.py` (`PanelRegistry`) |
+| Contact list membership | sensor_dials sweep_period_s | 1.0 s game time + events | engine/appc/contact_refresh.py |
 | Avoidance re-decision | `AVOID_EVADING_UPDATE_DELAY_S` | 0.25 s / 4 Hz | `engine/appc/ai_optimized.py` (`AVOID_EVADING_UPDATE_DELAY_S`) |
 | AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py` (`AI_MAX_SLEEP_TICKS`; the walk it gates is native, `native/src/host/aitree.cc`) |
+| AI ship glow state poll | `AI_GLOW_POLL_S` | 0.05 s game time | `engine/appc/subsystem_glow.py` |
+| Hum reallocation | `HUM_REALLOC_PERIOD_S` | 0.1 s wall + on scene switch / removal / death | `engine/audio/hum_allocator.py` |
 
-The last two are environment-overridable — `DAUNTLESS_AVOID_EVADE_DELAY_S` and
+The avoidance and AI-sleep cadences are environment-overridable — `DAUNTLESS_AVOID_EVADE_DELAY_S` and
 `DAUNTLESS_AI_MAX_SLEEP`. Setting the avoid delay to `0.0` restores the SDK's
 exact every-tick behaviour, which is the cleanest way to test whether a
 suspected latency bug is this cadence.
@@ -53,8 +60,8 @@ or subsystem behind its back.
 `_reconcile_subsystem_lock` was there, and the throttle silently gave the
 player's phasers up to 0.5 s aiming at an already-destroyed subsystem. It is now
 `reconcile_subsystem_lock()` at module scope
-(`engine/ui/target_list_view.py:523`), driven per-frame from the host loop
-(`engine/host_loop.py:7778`) beside `clear_undetectable_player_lock`.
+(`engine/ui/target_list_view.py:396`), driven per-frame from the host loop
+(`engine/host_loop.py`, the `reconcile_subsystem_lock()` call in `run()`'s frame loop) beside `clear_undetectable_player_lock`.
 
 One accepted wrinkle, documented at `panel_registry.py:24-36`: the panel
 throttle runs on **wall** clock while the shield period accumulates **game** dt,
@@ -164,6 +171,87 @@ cadence missing.
 
 Default 4 ticks (~66 ms at 60 Hz). **`ForceUpdate` is therefore no longer
 "next tick."**
+
+## 5. The contact list is re-derived on the sensor sweep and on events
+
+`host_loop._pump_contacts` still runs every frame, but the full re-derivation
+(`perception.perceived_by` + `set_contacts` + `ResetAffiliationColors`: which
+ships have records, perceivable / targetable / identified /
+subsystems_targetable, affiliation colour) runs only when
+`engine/appc/contact_refresh.py` is marked, or when the (menu, player, player's
+set) key changed. Every other frame refreshes each record's `surface_gu` from
+this frame's positions (`perception.refresh_distances`), so range readouts never
+lag. Cost reference: SIG-193 (`ui.contacts` ≈ 1.08 ms, `contacts.perceive`
+0.96 ms); a clean frame shows as `contacts.distances`.
+
+**What marks it (re-derived on the next frame).** Each is a direct hook, never
+an event-manager listener (the mission swap clears those):
+
+- the player's sensor sweep, `sensor_contacts._sweep` (`sweep_period_s`, BC's
+  1.0 s of **game** time; a player with no sensor subsystem has no sweep and
+  marks every tick instead);
+- a ship's death (`ship_lifecycle` "destroyed", i.e. `SetDead`), and any
+  `IsDying()` flip (`SetDying`, or `SetLifeTime` crossing `DYING_THRESHOLD`:
+  rock death, SDK E7M1 / E3M2 lifetimes); the lifetime countdown never crosses
+  the threshold on its own;
+- a set's contact view changing (`set_index._push`: add, leave, remove, hide,
+  reset), which covers a ship entering or leaving the player's set;
+- every cloak transition (`CloakingSubsystem._fire`, reached by the native
+  completion `native_subsystems._cloak_done` too);
+- an identification commit (`sensor_identification._identify_one`) and a lost
+  track (`sensor_contacts._lose_track`, `on_exited_set`), so a row's caption
+  never trails the reticle;
+- `Game.SetPlayer`, the SDK's `STTargetMenu.ClearTargetList`, and `run()`'s
+  existing target-identity compare (target or subsystem changed, including a
+  lock break by `clear_undetectable_player_lock`);
+- the player changing set (warp, hand-off) or a re-created target menu, via the
+  pump's own key, with no mark needed;
+- `reset_mission_state` (so the first frame of a mission is a full rebuild).
+
+**What waits for the sweep (up to one sweep, ≤ 1 s game time).** Anything with
+no event: a ship crossing sensor range or a cloak bubble, the player's sensor
+damage or power, `SetTargetable`, a mission regrouping that does not call
+`ResetAffiliationColors` (E2M2 and E2M6 do call it, which recolours at once),
+and a row an SDK script hid with `SetNotVisible` (re-asserted on the next
+re-derivation). This is the lag Mark accepted for everything not event-driven,
+and it matches BC's own 1 s sweep. It is **game** time, so under a time scale it
+stretches in wall clock, and it does not run while the sim is paused.
+
+**ET_TARGET_LIST_OBJECT_ADDED / _REMOVED** are posted by `set_contacts` when the
+targetable membership changes, so they now post at this cadence: on the next
+frame for an event above, at the next sweep for a range or bubble crossing.
+
+**The current target is exact every frame.** On a frame that does not
+re-derive, the pump compares `perception.target_verdict(player, target)` (the
+same expressions `perceived_by` uses, `perception._identity_verdict`) with the
+target's record, and a difference re-derives in that same frame. Every reader of
+`subsystems_targetable` concerns the player's target, and medium entry/exit and
+a scan glimpse expiring post nothing.
+
+`can_detect`'s hysteresis latch is now written by the UI only on a
+re-derivation; the per-tick firing chokepoint and `clear_undetectable_player_lock`
+keep feeding it, and the latch is idempotent set membership, so the lock guard
+and the list cannot disagree on a lock break: the break changes the target, and
+the target compare marks the list.
+
+## 6. An AI ship's glow state is polled at 20 Hz
+
+`ShipGlowController.update` (`engine/appc/subsystem_glow.py`) reads each glow
+region's subsystem state, condition and the ship's commanded throttle only
+every `AI_GLOW_POLL_S` (0.05 s of game time) for AI ships, staggered across
+ships by instance id; the player's ship still polls every frame. Consequence,
+**accepted** (perf tier 1, spec `2026-11-08-perf-tier1-design.md` §2.3): an AI
+ship's damage flicker, disabled/destroyed blow-out and throttle ease start **up
+to 50 ms late**, because the edge time is the detection time. Purely visual: no
+gameplay reads it.
+
+The impulse glow's ease and slow pulse are no longer stepped in Python: the
+renderer evaluates them at upload (`native/src/renderer/include/renderer/glow_impulse.h`)
+from the glow flicker's game clock, so a held throttle is one push. AI
+combat throttles rarely hold (the SDK's CircleObject / FollowObject /
+ManeuverLoop re-blend speed every AI update), so for combat AI the push rate
+is capped by the 20 Hz poll rather than reduced to one. The warp
+gain stays per-frame Python (only the player warps).
 
 ---
 
@@ -313,3 +401,21 @@ reason). Under `DAUNTLESS_NATIVE_AUDIT=1` a skip is an audit failure. The
 goldens pin the stage bit for bit and assert zero skips; a unit test ticks
 its own ships through `tests/helpers/subsystem_stage.py`, which fails on any
 skip. The shield cadence above is unchanged.
+
+---
+
+## 7. HUD panels poll at 10-20 Hz
+
+The radar (20 Hz) and the crew menu, player ship and weapons panels (10 Hz)
+used to rebuild every frame. Continuous data now trails by up to one interval:
+
+- Firing and charge icons, shield and hull bars and the speed readout may trail
+  by up to 100 ms.
+- Radar blips move at 20 Hz (up to 50 ms behind).
+
+Interaction never waits: clicks (`dispatch_event`), visibility flips, keyboard
+menu open/close (`show_menu` / `hide_menu`), a target change (radar, weapons)
+and an alert-level change (crew menu, weapons) all `mark_due` the panel for the
+next frame. The last two are `host_loop._mark_hud_due_on_changes`, an identity
+compare each frame. Damage cannot be event-driven (`ET_SUBSYSTEM_*` are never
+posted, event-emitter-gaps #15), so the interval is a floor, not a fallback.

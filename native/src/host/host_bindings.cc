@@ -135,6 +135,7 @@
 #include <renderer/filmic_pass.h>
 #include <renderer/motion_blur_pass.h>
 #include <renderer/motion_blur_shutter.h>
+#include <renderer/motion_blur_skip.h>
 #include <renderer/render_origin.h>
 #include <renderer/dof_pass.h>
 #include <renderer/aabb.h>
@@ -144,6 +145,7 @@
 #include <renderer/asset_path.h>
 #include <renderer/ray_trace.h>
 #include <renderer/glow_region.h>
+#include <renderer/glow_impulse.h>
 #include <renderer/node_anim.h>
 #include <renderer/bridge_node_anim_store.h>
 #include <renderer/model_parts.h>
@@ -1444,6 +1446,10 @@ void init(int width, int height, const std::string& title) {
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
     g_viewscreen_hdr  = std::make_unique<renderer::HdrTarget>();
+    // No alpha or negative reader (bridge.frag's alpha test only ever sees 1,
+    // so it discards less, never more): half the bandwidth of RGBA16F. The
+    // main scene + MSAA twin pick theirs per frame (nonfinite probe).
+    g_viewscreen_hdr->set_color_format(renderer::HdrColorFormat::R11g11b10f);
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
     g_nonfinite_probe = std::make_unique<renderer::NonfiniteProbe>();
     g_lens_flare_hdr_pass = std::make_unique<renderer::LensFlareHdrPass>();
@@ -1455,6 +1461,8 @@ void init(int width, int height, const std::string& title) {
     g_motion_blur_pass = std::make_unique<renderer::MotionBlurPass>();
     g_dof_pass   = std::make_unique<renderer::DofPass>();
     g_dof_target = std::make_unique<renderer::HdrTarget>();
+    // dof.frag writes .rgb and alpha 1 (CoC comes from depth, not alpha).
+    g_dof_target->set_color_format(renderer::HdrColorFormat::R11g11b10f);
     g_shadow_target = std::make_unique<renderer::ShadowMapTarget>();
     g_shadow_target->resize(2048, 2048);
     g_prev_frame_time_seconds = glfwGetTime();
@@ -2389,6 +2397,16 @@ void frame() {
     // ── Main HDR target ────────────────────────────────────────────────────
     {
         DAUNTLESS_FRAME_SCOPE("hdr.clear");
+        // R11F_G11F_B10F (half the bandwidth) unless the dev nonfinite probe
+        // runs: it reads opaque.frag's cause code from alpha and needs
+        // negatives / -Inf, which R11F drops. The MSAA twin always matches,
+        // because its resolve into g_hdr_target is a same-format blit; a toggle
+        // reallocates both at the next resize.
+        const renderer::HdrColorFormat scene_fmt =
+            g_nfprobe_enabled ? renderer::HdrColorFormat::Rgba16f
+                              : renderer::HdrColorFormat::R11g11b10f;
+        g_hdr_target->set_color_format(scene_fmt);
+        g_msaa_target->set_color_format(scene_fmt);
         g_hdr_target->resize(fw, fh);
         g_hdr_target->bind();   // sets viewport to fw x fh
         if (viewer_mode) {
@@ -2415,7 +2433,8 @@ void frame() {
         //
         // Falls through to the stock path whenever the requested count clamps
         // to 0, or the driver refused the allocation (!valid()) — we never
-        // trust GL_RGBA16F multisample on the strength of the spec alone.
+        // trust RGBA16F / R11F_G11F_B10F multisample on the strength of the
+        // spec alone.
         const int msaa = renderer::clamp_msaa_samples(
             g_msaa_samples, renderer::query_gl_caps());
         if (msaa >= 2) g_msaa_target->resize(fw, fh, msaa);
@@ -2623,8 +2642,32 @@ void frame() {
     // after this so the overlay composites on top of the resolved 3D scene.
     const bool aa_on    = g_smaa_enabled;
     const bool filmic_on = dauntless_filmic::enabled() && exterior;
-    const bool mblur_on  = dauntless_motion_blur::enabled() && exterior
-                           && g_have_prev_viewproj;
+    bool mblur_on  = dauntless_motion_blur::enabled() && exterior
+                     && g_have_prev_viewproj;
+    // Current-camera matrices for the blur, shared by the skip test and the
+    // pass lambda below. Last frame's matrix was in last frame's render
+    // space; the origin followed the camera since (render_origin.h).
+    glm::mat4 mb_inv_proj{1.0f}, mb_prev{1.0f};
+    glm::mat3 mb_cam_rot{1.0f};
+    glm::vec3 mb_cam_pos{0.0f};
+    float mb_shutter = 1.0f;
+    if (mblur_on) {
+        mb_inv_proj = glm::inverse(g_camera.proj_matrix());
+        mb_cam_rot  = glm::mat3(glm::inverse(g_camera.view_matrix()));
+        mb_cam_pos  = g_camera.eye;
+        mb_prev     = renderer::render_origin::rebase_prev_viewproj(
+            g_prev_viewproj, g_prev_viewproj_origin, g_world.render_origin());
+        // Shutter: frame-rate normalised and faded out by the dash intensity
+        // (renderer/motion_blur_shutter.h documents both). `dt` is the
+        // wall-clock frame time already computed at the top of frame().
+        mb_shutter = renderer::motion_blur_shutter(
+            dt, kMotionBlurRefDt, dauntless_dash_vfx::intensity());
+        // Skip the pass when the reprojection moves under half a pixel.
+        // g_prev_viewproj still updates every frame below.
+        mblur_on = renderer::motion_blur_max_px(
+                       mb_inv_proj, mb_cam_rot, mb_cam_pos, mb_prev,
+                       mb_shutter, fw, fh) >= renderer::kMotionBlurSkipPx;
+    }
 
     // Optional LDR post passes run, in order, after the HDR resolve:
     //   SMAA -> motion blur -> filmic.
@@ -2675,22 +2718,11 @@ void frame() {
                 g_smaa_pass->draw(s, d, fw, fh);
             });
         if (mblur_on) {
-            // Current-camera matrices for the blur, computed only when the pass
-            // actually runs. Captured by value so they outlive this scope when
-            // the ping-pong loop below invokes the lambda.
-            const glm::mat4 inv_proj = glm::inverse(g_camera.proj_matrix());
-            const glm::mat3 cam_rot  = glm::mat3(glm::inverse(g_camera.view_matrix()));
-            const glm::vec3 cam_pos  = g_camera.eye;
-            // Last frame's matrix was in last frame's render space; the
-            // origin followed the camera since (render_origin.h).
-            const glm::mat4 prev     = renderer::render_origin::rebase_prev_viewproj(
-                g_prev_viewproj, g_prev_viewproj_origin, g_world.render_origin());
-            // Shutter: frame-rate normalised and faded out by the dash
-            // intensity (renderer/motion_blur_shutter.h documents both).
-            // `dt` is the wall-clock frame time already computed at the top
-            // of frame(); no second timestamp is tracked for this.
-            const float shutter = renderer::motion_blur_shutter(
-                dt, kMotionBlurRefDt, dauntless_dash_vfx::intensity());
+            const glm::mat4 inv_proj = mb_inv_proj;
+            const glm::mat3 cam_rot  = mb_cam_rot;
+            const glm::vec3 cam_pos  = mb_cam_pos;
+            const glm::mat4 prev     = mb_prev;
+            const float shutter      = mb_shutter;
             passes.emplace_back([inv_proj, cam_rot, cam_pos, prev, fw, fh, shutter]
                                 (std::uint32_t s, std::uint32_t d) {
                 g_motion_blur_pass->draw(s, d, fw, fh, inv_proj, cam_rot,
@@ -2798,12 +2830,13 @@ void frame() {
         dauntless::ui_cef::pump();
     }
     {
-        // By default the composite uploads the ENTIRE CEF surface every
-        // frame — no dirty-rect, no PBO. At 2560x1440 BGRA that is ~14.7 MB
-        // of glTexSubImage2D per frame. Upload and draw are timed separately
-        // because the upload is where the CPU appears to wait for the GPU
-        // (docs/reference/engine/perf-register.md, A-1); DAUNTLESS_CEF_UPLOAD switches
-        // the upload policy for that experiment.
+        // By default (`on_paint`) the composite uploads only on frames CEF
+        // repainted, and then only CEF's dirty rects (cef_dirty_rects.h; a
+        // size change or a mostly-dirty surface uploads whole). No PBO.
+        // DAUNTLESS_CEF_UPLOAD=always restores the old whole-surface upload
+        // every frame (~14.7 MB of glTexSubImage2D at 2560x1440 BGRA). Upload
+        // and draw are timed separately (docs/reference/engine/
+        // perf-register.md, A-1 and P-10).
         DAUNTLESS_FRAME_SCOPE("cef.composite");
         {
             DAUNTLESS_FRAME_SCOPE("cef.upload");
@@ -14389,6 +14422,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "synchronous readback. `dump_dir` must be ABSOLUTE (GLFW changes the "
           "process cwd on macOS); empty disables PNG dumps. Enabling resets the "
           "counters.");
+    m.def("hdr_scene_color_format",
+          []() -> std::string {
+              if (!g_hdr_target)
+                  throw std::runtime_error("hdr_scene_color_format: renderer not initialised");
+              return g_hdr_target->color_format() == renderer::HdrColorFormat::R11g11b10f
+                         ? "r11g11b10f" : "rgba16f";
+          },
+          "Colour format frame() last picked for the main HDR scene target (and "
+          "its MSAA twin): \"r11g11b10f\", or \"rgba16f\" while the nonfinite "
+          "probe is on. For tests and the dev overlay.");
     m.def("nonfinite_probe_enabled",
           []() { return g_nfprobe_enabled; },
           "True when the non-finite probe is running.");
@@ -15541,6 +15584,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               auto& n = inst->glow_regions[static_cast<std::size_t>(region_index)];
               if (!n.active) return;
               n.gain = gain;
+              n.impulse = false;   // a plain gain (warp regions) wins
               // Gate axis is a direction (model space) — normalize, no scale.
               glm::vec3 a(std::get<0>(gate_axis), std::get<1>(gate_axis),
                           std::get<2>(gate_axis));
@@ -15553,6 +15597,45 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "the glow inside the region for impulse engine power/speed; feeds HDR). "
           "gate_axis (model-space dir, 0 = none) restricts the gain to faces "
           "whose normal points along it (aft impulse faces only).");
+
+    m.def("set_glow_region_impulse",
+          [](scenegraph::InstanceId id, int region_index, float start_frac,
+             float target_frac, float t0, bool powered,
+             std::tuple<float, float, float> gate_axis) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              if (region_index < 0 ||
+                  region_index >= static_cast<int>(inst->glow_regions.size())) return;
+              auto& n = inst->glow_regions[static_cast<std::size_t>(region_index)];
+              if (!n.active) return;
+              n.impulse = true;
+              n.imp_start = start_frac;
+              n.imp_target = target_frac;
+              n.imp_t0 = t0;
+              n.imp_powered = powered;
+              glm::vec3 a(std::get<0>(gate_axis), std::get<1>(gate_axis),
+                          std::get<2>(gate_axis));
+              const float len = glm::length(a);
+              n.gain_axis = (len > 1e-6f) ? (a / len) : glm::vec3(0.0f);
+          },
+          py::arg("instance_id"), py::arg("region_index"), py::arg("start_frac"),
+          py::arg("target_frac"), py::arg("t0"), py::arg("powered"),
+          py::arg("gate_axis") = std::make_tuple(0.0f, 0.0f, 0.0f),
+          "Drive a glow region's gain from the impulse throttle: the renderer "
+          "eases start_frac (at game time t0) toward target_frac and adds the "
+          "slow pulse at upload, from the glow flicker's game clock "
+          "(renderer/glow_impulse.h). powered=False pins the gain to 1. "
+          "gate_axis as set_glow_region_gain. Push on change only.");
+
+    m.def("glow_impulse_gain_eval",
+          [](float start_frac, float target_frac, float t0, float now, bool powered) {
+              return renderer::glow_impulse::gain(start_frac, target_frac, t0, now,
+                                                  powered);
+          },
+          py::arg("start_frac"), py::arg("target_frac"), py::arg("t0"),
+          py::arg("now"), py::arg("powered"),
+          "Test twin: the gain the renderer uploads for an impulse glow region "
+          "(tests/unit/test_glow_impulse_twin.py).");
 
     m.def("world_to_body",
           [](scenegraph::InstanceId id,
@@ -19340,6 +19423,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_apply_reset_counts",
               [] { dauntless::host::write_applier().reset_counts(); });
+        m.def("combat_apply_reset_kinds",
+              [] { dauntless::host::write_applier().forget_kinds(); },
+              "Drop the applier's (type, field) kind cache and its strong "
+              "references (native_combat.reset).");
 
         // ── The combat effect queue (combat_effect_queue.h) ──────────────
         // Entries come out as (kind, native, operands): a kernel's operands

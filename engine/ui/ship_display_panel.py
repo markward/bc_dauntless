@@ -113,6 +113,10 @@ class _HullGaugeSubview(_SubviewBase):
     def SetEmptyColor(self, *args, **kwargs) -> None: pass
 
 
+# How often the PLAYER ship display is polled. The target role stays per-frame.
+PLAYER_SHIP_POLL_S = 0.1
+
+
 class ShipDisplayPanel(Panel):
     def __init__(self, role: str):
         super().__init__()
@@ -375,6 +379,22 @@ class ShipDisplayPanel(Panel):
                 self._last_snapshot = None
                 return True
         return False
+
+    @property
+    def poll_interval_s(self) -> float:
+        """Player role polled at 10 Hz; the target role stays per-frame.
+
+        Shield and hull bars are continuous data (shields only change at BC's
+        0.5 s charge tick), so a bar may trail a hit by up to 100 ms --
+        accepted. The target role carries the subsystem picker and its lock
+        marker, so it is not throttled.
+
+        Interaction is unaffected: input goes through dispatch_event, visibility
+        flips through the visible setter, and discrete state changes through
+        mark_due (host_loop._mark_hud_due_on_changes), all of which draw on the
+        next frame.
+        """
+        return PLAYER_SHIP_POLL_S if self._role == ROLE_PLAYER else 0.0
 
     def invalidate(self) -> None:
         self._last_snapshot = None

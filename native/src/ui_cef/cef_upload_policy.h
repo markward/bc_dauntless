@@ -4,14 +4,15 @@
 // Header-only with no CEF or GL dependency, so it is unit-tested on its own
 // (native/tests/ui_cef/cef_upload_policy_test.cc).
 //
-// Exists for perf-register A-1 (docs/reference/engine/perf-register.md): the CPU time
-// in `cef.composite` tracks the GPU frame time almost exactly, which points
-// at the full-surface glTexSubImage2D as the place the CPU waits for the GPU.
-// The modes, chosen by DAUNTLESS_CEF_UPLOAD:
+// Introduced for perf-register A-1 (docs/reference/engine/perf-register.md);
+// `on_paint` became the default with P-10's dirty-rect upload
+// (cef_dirty_rects.h). The modes, chosen by DAUNTLESS_CEF_UPLOAD:
 //
-//   always    every frame (unset or unknown value; the original behaviour)
-//   on_paint  only a frame CEF repainted since the last upload. Lossless:
-//             an unrepainted frame redraws the texture it already holds.
+//   on_paint  only a frame CEF repainted since the last upload, and then only
+//             its dirty rects (unset or unknown value; the default).
+//             Lossless: an unrepainted frame redraws the texture it already
+//             holds.
+//   always    every frame, the whole surface (the original behaviour).
 //   never     only the first upload and size changes. The overlay FREEZES;
 //             a diagnostic that removes the upload from every later frame.
 //
@@ -27,10 +28,10 @@ enum class UploadMode { Always, OnPaint, Never };
 
 inline UploadMode parse_upload_mode(const char* value) {
     if (value != nullptr) {
-        if (std::strcmp(value, "on_paint") == 0) return UploadMode::OnPaint;
+        if (std::strcmp(value, "always") == 0) return UploadMode::Always;
         if (std::strcmp(value, "never") == 0) return UploadMode::Never;
     }
-    return UploadMode::Always;
+    return UploadMode::OnPaint;
 }
 
 inline const char* upload_mode_name(UploadMode mode) {

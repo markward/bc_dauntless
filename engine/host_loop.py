@@ -28,6 +28,7 @@ import engine.dev_mode as dev_mode
 import engine.dev_nebula_dials as dev_nebula_dials
 from engine.core import case_paths as _case_paths
 from engine.core import frame_profiler
+from engine.core import gc_freeze
 from engine.core.tracked_instances import TrackedInstances
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
@@ -104,6 +105,12 @@ from engine.appc import native_motion as _native_motion
 from engine.appc import target_menu as _target_menu_mod
 from engine.appc import viewscreen_static as _vss
 from engine.appc import bridge_set as _bridge_set
+from engine.appc import contact_refresh
+from engine.appc import perception
+from engine.audio import attached_sources, hum_allocator, hum_diagnostic, scene_scope
+from engine.core import ids as _ids_mod
+from engine import warp_vfx as _warp_vfx_mod
+import time as _time_mod
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
 from engine.core import step_memo
@@ -273,8 +280,6 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player,
     velocity is that movement over that time."""
     if _audio_mod is None:
         return
-    from engine.audio import attached_sources, hum_allocator, hum_diagnostic, scene_scope
-    from engine.systems import frames
     # Guide §11: only the viewed FRAME is audible — stop every other frame's
     # sources before anything else touches this tick's audio state.
     # frames.viewing_set() is NOT App.g_kSetManager.GetRenderedSet() — it
@@ -282,12 +287,12 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player,
     # explicit rendered set isn't a space scene, so it does not change on a
     # bridge<->space camera toggle. See scene_scope's module docstring
     # ("Current wiring note") for what this gate does and does not cover.
-    viewed = frames.viewing_set()
-    scene_scope.set_active_frame(frames.frame_of(viewed).key if viewed is not None else None)
+    viewed = _frames.viewing_set()
+    scene_scope.set_active_frame(_frames.frame_of(viewed).key if viewed is not None else None)
     # Guide §9, in order: (1) attached emitters from their nodes,
     # (2) the nearest-≤4 hum allocator, (3) the listener from the active camera.
     attached_sources.pump(dt if source_dt is None else source_dt)
-    hum_allocator.update(listener_pos=camera_position)
+    hum_allocator.maybe_update(camera_position, _time_mod.monotonic())
     # Dev-only diagnostic (F8-toggled, --developer only): a single boolean
     # short-circuit inside maybe_report keeps this out of the 60 Hz hot path
     # both in production and, by default, under --developer too -- see
@@ -7568,6 +7573,53 @@ def _sync_quick_battle_panel(controller) -> None:
         panel.close()
 
 
+# Last (target, subsystem, alert level) the HUD panels were told about.
+_hud_change_state: dict = {}
+
+
+def _mark_hud_due_on_changes(registry, player) -> None:
+    """Mark the throttled HUD panels due on a discrete player-state change.
+
+    The radar, crew menu, player ship and weapons panels poll at 10-20 Hz; a
+    target change (radar rows, weapons) or an alert-level change (crew menu,
+    weapons) must not wait for the next interval. Identity compare, as with
+    the target list, so no event subscription can be missed. Uses mark_due,
+    never invalidate (four invalidate overrides do not call super).
+    """
+    try:
+        tgt = player.GetTarget() if player is not None else None
+        sub = player.GetTargetSubsystem() if player is not None else None
+        alert = player.GetAlertLevel() if player is not None else None
+    except Exception:
+        tgt = sub = alert = None
+    target_key = (id(tgt) if tgt is not None else None,
+                  id(sub) if sub is not None else None)
+    due = []
+    if target_key != _hud_change_state.get("target"):
+        _hud_change_state["target"] = target_key
+        due += ["sensors", "weapons"]
+    if alert != _hud_change_state.get("alert"):
+        _hud_change_state["alert"] = alert
+        due += ["crew-menu", "weapons"]
+    for name in due:
+        panel = registry.find(name)
+        if panel is not None:
+            panel.mark_due()
+
+
+def _install_weapons_due_hook(registry) -> None:
+    """Redraw the weapons panel next frame on any weapon_config mutation
+    (F2 command rows and the engineering panel bypass the panel's own
+    dispatch, so the 10 Hz throttle would otherwise delay them)."""
+    from engine.appc import weapon_config
+
+    def _mark():
+        panel = registry.find("weapons")
+        if panel is not None:
+            panel.mark_due()
+    weapon_config.on_change = _mark
+
+
 def reset_mission_state(renderer=None) -> None:
     """Forget the outgoing mission's module-level state: ships, effects,
     damage records, rocks, Quick Battle bookkeeping, camera-derived state.
@@ -7584,6 +7636,11 @@ def reset_mission_state(renderer=None) -> None:
     """
     from engine.appc import ship_lifecycle
     ship_lifecycle.reset()
+    # The first pump after a swap is a full contact rebuild.
+    contact_refresh.reset()
+    _hud_change_state.clear()
+    # Hum cadence state: a swap must not wait out the old 10 Hz deadline.
+    hum_allocator.mark_dirty()
     from engine.appc import ai_native
     ai_native.reset_stats()
     # Effects held for the tick boundary name the old mission's ships.
@@ -7750,6 +7807,8 @@ class HostController:
             return
         name = self.pending_swap
         self.pending_swap = None
+        # Thaw BEFORE any teardown, or the old mission's cycles stay frozen.
+        gc_freeze.thaw()
         for hook in list(self.pre_swap_hooks):
             try:
                 hook()
@@ -7816,6 +7875,7 @@ class HostController:
             return
         if self.post_load_hook is not None:
             self.post_load_hook()
+        gc_freeze.request()
 
 
 def _after_mission_change(controller, snap_scene, close_star_map) -> None:
@@ -9571,47 +9631,92 @@ def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open,
 def _ensure_target_menu() -> None:
     """Create the target-menu singleton if the mission load cleared it.
 
-    Membership is no longer wired here. It is derived every frame from the
-    player's containing set (see the contact push in the host loop), so there
-    is no subscription to bind and nothing to rebind on warp — which is exactly
-    the fault this replaced: the old wiring bound to one set at mission load
-    and never rebound, so ships spawned into a departed system kept getting
-    rows while the destination system got none.
+    Membership is no longer wired here. It is derived from the player's
+    containing set (see the contact push in the host loop: on the sweep and
+    on events, engine.appc.contact_refresh), so there is no subscription to
+    bind and nothing to rebind on warp — which is exactly the fault this
+    replaced: the old wiring bound to one set at mission load and never
+    rebound, so ships spawned into a departed system kept getting rows while
+    the destination system got none.
     """
     import App as _App
     if _App.STTargetMenu_GetTargetMenu() is None:
         _App.STTargetMenu_CreateW("Targets")
 
 
+# (id(menu), id(player), id(player's set)) of the last full contact
+# re-derivation: a change is a rebuild even with no mark (warp, hand-off, a
+# re-created target menu). A recycled id is covered by the marks: a new
+# player comes with SetPlayer, a set change with the set door's mark.
+_contacts_key: list = [None]
+
+
 def _pump_contacts(menu, player) -> tuple:
-    """Push the player's current system into the target menu. Every frame.
+    """Push the player's current system into the target menu.
 
-    This IS the contact model: membership is derived, never stored, so the
-    push is not a refresh of some authoritative list — it is the only thing
-    that makes the list exist. Worst case it is one frame stale; it can never
-    be permanently wrong, which is exactly what the set-subscription this
-    replaced was (bound at mission load, never rebound on warp, so ships
-    spawned into a departed system kept their rows and the destination's
-    ships got none).
+    Membership and verdicts (which ships have records; perceivable,
+    targetable, identified, subsystems_targetable; affiliation colour) are
+    re-derived by `_rebuild_contacts` only when engine.appc.contact_refresh is
+    marked -- the player's 1 s sensor sweep and the events listed there --
+    or when (menu, player, set) changed since the last rebuild. Every other
+    frame only refreshes the records' distances from positions, and
+    re-checks the player's TARGET: its identified / subsystems_targetable
+    are exact every frame, and a flip rebuilds in the same frame (medium
+    entry/exit and a scan glimpse expiring post nothing). Anything without an
+    event (a range or cloak-bubble crossing, sensor damage, IsTargetable,
+    regrouping without ResetAffiliationColors) waits for the sweep, at most
+    one sweep period: BC's own cadence.
+    See docs/reference/engine/perf-cadences-and-latency.md.
 
-    Affiliation is recomputed alongside membership because it is derived from
-    the mission's friendly/enemy/neutral groups, which missions reassign
-    mid-flight (E2M2, E2M6 both call ResetAffiliationColors after regrouping).
-    Doing it here keeps colours right without having to catch those calls.
-
-    Pushes perception.Contact RECORDS, not ships: the record carries this
-    frame's verdict (perceivable / targetable) and its distances, so the menu
-    derives row visibility from the same answer it derives membership from.
-    That is what retired engine.ui.target_list_visibility, whose separate pass
-    recomputed range and cloak under its own rule and ignored death entirely.
+    Membership is still DERIVED from the player's containing set, never
+    stored, so it can never be permanently wrong -- which is exactly what the
+    set-subscription this replaced was (bound at mission load, never rebound
+    on warp, so ships spawned into a departed system kept their rows and the
+    destination's ships got none).
 
     Returns the contacts pushed, so callers and tests can see the answer.
 
-    Spec: docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md
+    Specs: docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md,
+    docs/superpowers/specs/2026-11-08-perf-tier1-design.md §2.1.
     """
-    from engine.appc.perception import perceived_by
+    dirty = contact_refresh.consume()
+    key = (id(menu), id(player), id(player.GetContainingSet()))
+    if dirty or key != _contacts_key[0]:
+        _contacts_key[0] = key
+        return _rebuild_contacts(menu, player)
+    with frame_profiler.scope("contacts.distances"):
+        contacts = perception.refresh_distances(menu.contacts(), player)
+        menu.set_contact_distances(contacts)
+        stale = False
+        target = (player.GetTarget()
+                  if _ids_mod.implements(player, "GetTarget") else None)
+        if target is not None:
+            rec = menu.contact_for(target)
+            stale = rec is not None and perception.target_verdict(
+                player, target) != (rec.identified, rec.subsystems_targetable)
+    if stale:
+        return _rebuild_contacts(menu, player)
+    return contacts
+
+
+def _rebuild_contacts(menu, player) -> tuple:
+    """The full re-derivation: `perception.perceived_by` pushed as
+    perception.Contact RECORDS, then affiliation.
+
+    The record carries the verdict (perceivable / targetable) and the
+    distances, so the menu derives row visibility from the same answer it
+    derives membership from. That is what retired
+    engine.ui.target_list_visibility, whose separate pass recomputed range
+    and cloak under its own rule and ignored death entirely.
+
+    Affiliation is recomputed alongside membership because it is derived from
+    the mission's friendly/enemy/neutral groups, which missions reassign
+    mid-flight (E2M2, E2M6 both call ResetAffiliationColors after
+    regrouping; those calls recolour at once, a regroup without one waits
+    for the sweep).
+    """
     with frame_profiler.scope("contacts.perceive"):
-        contacts = perceived_by(player)
+        contacts = perception.perceived_by(player)
     with frame_profiler.scope("contacts.push"):
         menu.set_contacts(contacts)
     with frame_profiler.scope("contacts.colors"):
@@ -9968,8 +10073,7 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # hiding (so objects realised mid-window are caught) plus the single frame
     # we stop (to restore visibility). Off-parity: no calls when not warping.
     global _warp_hidden
-    from engine import warp_vfx as _wv_hide
-    _wh = _wv_hide.get()
+    _wh = _warp_vfx_mod.get()
     _warp_hide = _wh.is_active() and _wh.streak_intensity() > 0.0
     _warp_apply_vis = _warp_hide or _warp_hidden
     _warp_hidden = _warp_hide
@@ -9999,9 +10103,12 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     for ship, iid in session.ship_instances.items():
         _wg = session.ship_glow_controllers.get(iid)
         if _wg is not None:
+            # The player polls its glow state every frame; AI ships at 20 Hz
+            # (subsystem_glow.AI_GLOW_POLL_S).
             _wg.update(game_time,
                        _player_throttle_frac if ship is player else None,
-                       _player_warp_glow if ship is player else None)
+                       _player_warp_glow if ship is player else None,
+                       is_player=ship is player)
         # Destroyed (dying/dead) ships lose self-illumination —
         # a dark hulk in space. Hull stays lit by external light.
         _es = _emissive_scale_for(ship, ship is player, _hd_boost)
@@ -10724,6 +10831,10 @@ def _run_frame_sim(ctx: FrameSimContext, *, mx: float, my: float,
         # "End Combat" clears the battle this way); the reconciliation below
         # then tears down their render instances.
         _process_object_deletions()
+        # A load requested a GC freeze: collect + freeze AFTER the sweep, one
+        # frame after the request, so a swept battle's ships have left both
+        # their set and the scene reconcile (engine/core/gc_freeze.py).
+        gc_freeze.service()
         # Mirror the SDK config-dialog flag onto the Quick Battle Setup
         # panel: opens it when the player clicks the XO menu's config
         # button, closes it on Close/Start. Boot leaves it closed.
@@ -11426,6 +11537,11 @@ def run(mission_name: Optional[str] = None,
             mission_name = _env_mission
 
     boot_quickbattle = mission_name is None
+
+    # Collect + freeze the heap after each mission load (engine/core/
+    # gc_freeze.py). Never under pytest: the suite must not run frozen.
+    if "pytest" not in sys.modules:
+        gc_freeze.arm()
 
     # Build identity first: whatever happens after this, the log says which
     # build produced it. A bug report against an unidentifiable zip is one
@@ -12267,6 +12383,7 @@ def run(mission_name: Optional[str] = None,
         # target-list invalidation below. A list so the loop body
         # can rebind it without a global.
         _last_target_key = [None]
+        _install_weapons_due_hook(registry)
         registry.register(sensors_panel)
         from engine.appc.sdk_mirror_panel import SDKMirrorPanel
         sdk_mirror = SDKMirrorPanel()
@@ -12674,6 +12791,8 @@ def run(mission_name: Optional[str] = None,
             prev_drawn_player_pose=_prev_drawn_player_pose,
         )
 
+        # The boot load is done: freeze it once the first frames have swept.
+        gc_freeze.request()
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
             # No-op (one global read + branch) unless a developer enabled it
@@ -12841,11 +12960,12 @@ def run(mission_name: Optional[str] = None,
                     cutscene_active=_top_window.IsCutsceneMode(),
                     cinematic_active=_top_window.is_cinematic_active())
 
-                # Contact membership AND per-row visibility — push the player's
-                # current system every frame. Worst case this is one frame
-                # stale; it can never be permanently wrong, which is what the
-                # old set-subscription was (bound at mission load, never
-                # rebound on warp).
+                # Contact membership AND per-row visibility — derived from the
+                # player's current system, re-derived on the sensor sweep and
+                # on events (engine.appc.contact_refresh), distances every
+                # frame. Worst case one sweep stale; it can never be
+                # permanently wrong, which is what the old set-subscription
+                # was (bound at mission load, never rebound on warp).
                 #
                 # There is no second visibility pass: _pump_contacts pushes
                 # perception.Contact records and the menu's listing is derived
@@ -12932,6 +13052,12 @@ def run(mission_name: Optional[str] = None,
                 if _tgt_key != _last_target_key[0]:
                     _last_target_key[0] = _tgt_key
                     target_list_view.invalidate()
+                    # The contact list too, on the next frame's pump (it
+                    # ran above, before this frame's lock rules).
+                    contact_refresh.mark_dirty("target")
+
+                # Discrete changes redraw the throttled HUD panels at once.
+                _mark_hud_due_on_changes(registry, _player)
 
                 # Re-centre the star map's rect on the LIVE CEF view size
                 # (which tracks the window in points — see
@@ -13879,9 +14005,11 @@ def run(mission_name: Optional[str] = None,
         if frame_profiler.is_enabled():
             frame_profiler.print_report()
 
+        gc_freeze.thaw()
         if controller.session is not None:
             controller.session.teardown(r)
     finally:
+        gc_freeze.thaw()
         from engine.core import mission_change as _mission_change
         _mission_change.configure(on_changed=None)
         # The warp hooks close over this controller too; left installed they
@@ -13895,6 +14023,10 @@ def run(mission_name: Optional[str] = None,
         _warp_hooks.configure_warp_vfx(start=None, stop=None, enabled=None,
                                        vantage_of=None)
         _gate_hooks.configure_gate_hooks(ray_collide=None)
+        # The weapons-panel redraw hook closes over the HUD registry and
+        # through it the controller and session; clear it with the rest.
+        from engine.appc import weapon_config as _weapon_config
+        _weapon_config.on_change = None
         # Likewise the bridge controllers registered "for the lifetime of
         # run()": a leaked walk controller makes a later headless MoveTo wait
         # on a renderer that is gone, stalling any sequence behind it.

@@ -479,6 +479,23 @@ def _begin_battle(qb, plan) -> None:
         _log.exception("quickbattle: arming the battle end failed")
 
 
+def _generate(qb, orig):
+    plan = current_plan()
+    if plan is None:
+        result = orig()
+        _begin_battle(qb, None)
+        return result
+    try:
+        result = generate_ships(qb, plan)
+    except Exception as e:
+        _log.error("quickbattle: GenerateShips hook failed, falling back to BC: %s", e)
+        result = orig()
+        _begin_battle(qb, None)        # BC's ships, not the plan's
+        return result
+    _begin_battle(qb, plan)
+    return result
+
+
 def install_generate_ships_hook(qb) -> bool:
     current = getattr(qb, "GenerateShips", None)
     if current is None or getattr(current, "_dauntless_qb_spawn_orig", None) is not None:
@@ -486,19 +503,12 @@ def install_generate_ships_hook(qb) -> bool:
     orig = current
 
     def GenerateShips():
-        plan = current_plan()
-        if plan is None:
-            result = orig()
-            _begin_battle(qb, None)
-            return result
-        try:
-            result = generate_ships(qb, plan)
-        except Exception as e:
-            _log.error("quickbattle: GenerateShips hook failed, falling back to BC: %s", e)
-            result = orig()
-            _begin_battle(qb, None)        # BC's ships, not the plan's
-            return result
-        _begin_battle(qb, plan)
+        result = _generate(qb, orig)
+        # The battle is loaded: freeze it at the second gc_freeze.service() after this
+        # request, inside sim.session_sync after the delete-me sweep
+        # (engine/core/gc_freeze.py).
+        from engine.core import gc_freeze
+        gc_freeze.request()
         return result
 
     GenerateShips._dauntless_qb_spawn_orig = orig
@@ -518,6 +528,10 @@ def install_end_simulation_hook(qb) -> bool:
     orig = current
 
     def EndSimulation(*args):
+        # Thaw BEFORE BC's End tears the battle down (engine/core/
+        # gc_freeze.py); sim_restore requests the next freeze.
+        from engine.core import gc_freeze
+        gc_freeze.thaw()
         from engine.quickbattle import late_arrivals
         try:
             late_arrivals.cancel_all()

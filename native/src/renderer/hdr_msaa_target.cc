@@ -18,12 +18,18 @@ void HdrMsaaTarget::resize(int w, int h, int samples) {
     if (w < 1) w = 1;
     if (h < 1) h = 1;
     if (samples < 2) { destroy(); return; }
-    if (w == width_ && h == height_ && samples == samples_ && fbo_ != 0) return;
+    if (w == width_ && h == height_ && samples == samples_ && fbo_ != 0 &&
+        format_ == allocated_format_)
+        return;
     destroy();
+    allocated_format_ = format_;
 
     glGenRenderbuffers(1, &color_rb_);
     glBindRenderbuffer(GL_RENDERBUFFER, color_rb_);
-    glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA16F, w, h);
+    glRenderbufferStorageMultisample(
+        GL_RENDERBUFFER, samples,
+        format_ == HdrColorFormat::R11g11b10f ? GL_R11F_G11F_B10F : GL_RGBA16F,
+        w, h);
 
     glGenRenderbuffers(1, &depth_rb_);
     glBindRenderbuffer(GL_RENDERBUFFER, depth_rb_);

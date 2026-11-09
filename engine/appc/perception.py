@@ -19,8 +19,9 @@ which made the model layer depend on the UI layer —
 perception -> App -> target_menu -> perception, a cycle held apart only by lazy
 imports. It is now `target_menu.surface_gu_to`, on the class that owns the
 record; what stayed is the measurement it falls back to,
-`measure_surface_gu_to`. This module imports no App and knows nothing about
-menus.
+`measure_surface_gu_to`. This module imports no App itself (sensor_contacts and
+sensor_media, hoisted for the per-contact hot path, do; sensor_detection
+stays function-local) and knows nothing about menus.
 
 STAGE 4 SCOPE: there is now exactly ONE detection rule.
 `sensor_detection.can_detect` — already the gate for weapons, AI targeting and
@@ -61,9 +62,9 @@ See docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from engine.appc import contact_index
+from engine.appc import contact_index, sensor_contacts, sensor_media, sets, ship_death
 from engine.appc.subsystems import _get_xyz
 from engine.core.ids import implements
 
@@ -156,11 +157,7 @@ def perceived_by(observer) -> tuple:
     holds -- empty unless a mission parked some there -- with no explicit
     clear needed either way.
     """
-    from engine.appc import sensor_detection as sd
-    from engine.appc import sensor_contacts, sensor_media
-    from engine.appc.sensor_detection import can_detect, effective_sensor_range
-    from engine.appc.sets import SetClass
-    from engine.appc.ship_death import _out_of_action, is_targetable_wreck
+    from engine.appc import sensor_detection as sd  # hot-import: imports App; this module promises none
 
     if observer is None:
         return ()
@@ -171,22 +168,20 @@ def perceived_by(observer) -> tuple:
     # replaced as the membership source. `contact_index` buckets by SetClass,
     # so SetClass is the honest precondition; a `_Stub` or a None set is
     # rejected the same way it was before.
-    if not isinstance(pSet, SetClass):
+    if not isinstance(pSet, sets.SetClass):
         return ()
 
     # Sensors offline => effective range 0 => nothing perceivable. One check,
     # before any iteration. can_detect re-derives this per contact and returns
     # False on its own for range 0, so this is purely a saved-work short
     # circuit; the answer is the same either way.
-    range_gu = effective_sensor_range(observer)
+    range_gu = sd.effective_sensor_range(observer)
     ox, oy, oz = _get_xyz(observer)
     # Read the stage-4 toggle ONCE per frame, not per contact, so every row in
     # a frame is answered under one configuration even if it were flipped
     # mid-pass. See the gate note in the loop below.
     apply_conceal = sd.ENHANCED_SENSOR_CONTEST
-    observer_sensors = (
-        observer.GetSensorSubsystem()
-        if implements(observer, "GetSensorSubsystem") else None)
+    observer_sensors = _sensors_of(observer)
 
     out = []
     for ship, (sx, sy, sz) in contact_index.ship_positions_in(pSet):
@@ -194,8 +189,7 @@ def perceived_by(observer) -> tuple:
             continue
         dx, dy, dz = sx - ox, sy - oy, sz - oz
         dist_sq = dx * dx + dy * dy + dz * dz
-        known = bool(observer_sensors is not None
-                     and observer_sensors.IsObjectKnown(ship))
+        known = _knows(observer_sensors, ship)
         # `concealment_at` is a density-field sample, not a cheap read, and
         # this frame needs it for up to three different callers for the SAME
         # ship: can_detect's nebula gate (when apply_conceal), and — only for
@@ -205,13 +199,12 @@ def perceived_by(observer) -> tuple:
         # actually read it, and hand the identical value to both — the same
         # precedent as the already-derived `dist_sq` below. Do NOT let either
         # consumer re-sample: that would double real work on perceived_by,
-        # which runs every contact every frame.
+        # which runs every contact on every re-derivation.
         conceal = sd.concealment_at(ship) if (apply_conceal or known) else None
-        # THE display answer (sensor_contacts.shows_identity): known AND not
-        # unknown-by-medium (or freshly scanned). Read from the OBSERVER's
-        # sensors, handed this frame's concealment sample.
-        identified = known and sensor_contacts.shows_identity(
-            ship, sensors=observer_sensors, concealment=conceal)
+        # identified / subsystems_targetable: `_identity_verdict`, shared with
+        # `target_verdict` (the per-frame re-check of the player's target).
+        identified, subsystems_targetable = _identity_verdict(
+            ship, observer_sensors, known, conceal)
         # ONE detection rule, shared with the weapons, AI targeting and the
         # player's lock. can_detect also mutates a per-(observer, target)
         # hysteresis latch, which this loop writes once per contact. That is
@@ -227,29 +220,93 @@ def perceived_by(observer) -> tuple:
         # call yields range + absolute cloak + distance, which IS the
         # pre-stage-4 UI rule exactly — so the off state is a real rollback
         # without a second copy of the rule here to drift out of step.
-        perceivable = range_gu > 0.0 and can_detect(
+        perceivable = range_gu > 0.0 and sd.can_detect(
             observer, ship, dist_sq_gu=dist_sq,
             apply_concealment=apply_conceal, concealment=conceal)
-        alive_or_wreck = (not _out_of_action(ship)) or is_targetable_wreck(ship)
-        # A cloaked contact, or one inside an identity-hiding medium (an
-        # asteroid field or moderate nebula — sensor_media.medium_unknown),
-        # is a fuzzy sensor return: targetable at ship level (once it clears
-        # the checks above) but not down to individual subsystems.
-        # `sensor_media.subsystems_hidden` is NOT a detectability gate —
-        # `perceivable`/`targetable` above already settled detectability via
-        # can_detect's range-contest cloak bubble, so a cloaked ship well
-        # inside that bubble is routinely perceivable AND subsystem-hidden at
-        # once. That combination is exactly what this field exists to
-        # express.
+        alive_or_wreck = (not ship_death._out_of_action(ship)) or ship_death.is_targetable_wreck(ship)
         out.append(Contact(
             ship=ship,
             surface_gu=_surface_gu(dist_sq, ship),
             perceivable=perceivable,
             targetable=perceivable and alive_or_wreck and bool(ship.IsTargetable()),
-            subsystems_targetable=identified and not sensor_media.subsystems_hidden(
-                ship, concealment=conceal),
+            subsystems_targetable=subsystems_targetable,
             identified=identified,
         ))
+    return tuple(out)
+
+
+def _sensors_of(observer):
+    """The observer's sensor subsystem, or None."""
+    return (observer.GetSensorSubsystem()
+            if implements(observer, "GetSensorSubsystem") else None)
+
+
+def _knows(observer_sensors, ship) -> bool:
+    return bool(observer_sensors is not None
+                and observer_sensors.IsObjectKnown(ship))
+
+
+def _identity_verdict(ship, observer_sensors, known: bool, conceal) -> tuple:
+    """``(identified, subsystems_targetable)`` for one ship: THE expressions,
+    used by `perceived_by` for every contact and by `target_verdict` for the
+    player's target. *conceal* is this frame's `concealment_at(ship)` sample;
+    it may be None when *known* is False (both answers are then False and it
+    is never read).
+
+    identified is THE display answer (sensor_contacts.shows_identity): known
+    AND not unknown-by-medium (or freshly scanned), read from the OBSERVER's
+    sensors. A cloaked contact, or one inside an identity-hiding medium (an
+    asteroid field or moderate nebula -- sensor_media.medium_unknown), is a
+    fuzzy sensor return: targetable at ship level but not down to individual
+    subsystems. `sensor_media.subsystems_hidden` is NOT a detectability
+    gate -- `perceived_by` settles detectability via can_detect's
+    range-contest cloak bubble, so a cloaked ship well inside that bubble is
+    routinely perceivable AND subsystem-hidden at once. That combination is
+    exactly what subsystems_targetable exists to express.
+    """
+    identified = known and sensor_contacts.shows_identity(
+        ship, sensors=observer_sensors, concealment=conceal)
+    subsystems_targetable = identified and not sensor_media.subsystems_hidden(
+        ship, concealment=conceal)
+    return identified, subsystems_targetable
+
+
+def target_verdict(observer, target) -> tuple:
+    """``(identified, subsystems_targetable)`` of *target* as *observer*
+    perceives it NOW: the same expressions `perceived_by` puts on the
+    target's record (`_identity_verdict`), without re-running detection for
+    the whole set. host_loop._pump_contacts compares it with the record every
+    frame, because the record is only re-derived on the sweep and on events,
+    and medium entry/exit or a glimpse expiry posts nothing."""
+    from engine.appc import sensor_detection as sd  # hot-import: imports App; this module promises none
+    sensors = _sensors_of(observer)
+    known = _knows(sensors, target)
+    conceal = sd.concealment_at(target) if known else None
+    return _identity_verdict(target, sensors, known, conceal)
+
+
+def refresh_distances(contacts: tuple, observer) -> tuple:
+    """*contacts* with every record's `surface_gu` re-measured from this
+    frame's positions; nothing else re-derived. One
+    `contact_index.ship_positions_in` read for the observer's set; a ship
+    absent from it keeps its record unchanged (the next re-derivation drops
+    it)."""
+    if observer is None or not contacts:
+        return contacts
+    pSet = observer.GetContainingSet()
+    if not isinstance(pSet, sets.SetClass):
+        return contacts
+    ox, oy, oz = _get_xyz(observer)
+    positions = dict(contact_index.ship_positions_in(pSet))
+    out = []
+    for c in contacts:
+        xyz = positions.get(c.ship)
+        if xyz is None:
+            out.append(c)
+            continue
+        dx, dy, dz = xyz[0] - ox, xyz[1] - oy, xyz[2] - oz
+        out.append(replace(
+            c, surface_gu=_surface_gu(dx * dx + dy * dy + dz * dz, c.ship)))
     return tuple(out)
 
 

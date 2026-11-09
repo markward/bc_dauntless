@@ -23,6 +23,11 @@ from __future__ import annotations
 import math
 from typing import NamedTuple
 
+from engine.appc import bridge_set, sets
+from engine.appc import math as math_
+from engine.core import ids
+from engine.systems import region_hooks, resolve
+
 _ZERO = (0.0, 0.0, 0.0)
 
 
@@ -32,10 +37,8 @@ class Frame(NamedTuple):
 
 
 def frame_of(pSet):
-    from engine.appc.sets import SetClass
-    if not isinstance(pSet, SetClass):
+    if not isinstance(pSet, sets.SetClass):
         return None
-    from engine.systems import region_hooks, resolve
     if region_hooks.is_mapped(pSet):
         name = pSet.GetName()
         anchor = resolve.anchor_of(name)
@@ -46,8 +49,7 @@ def frame_of(pSet):
 
 
 def containing_set(obj):
-    from engine.core.ids import implements
-    if obj is None or not implements(obj, "GetContainingSet"):
+    if obj is None or not ids.implements(obj, "GetContainingSet"):
         return None
     return obj.GetContainingSet()
 
@@ -60,8 +62,7 @@ def offset_between(set_a, set_b):
     if set_a is set_b:
         # One set is one frame: zero, whatever that frame is -- without
         # resolving it (the commonest compare by far). A non-set has no frame.
-        from engine.appc.sets import SetClass
-        return _ZERO if isinstance(set_a, SetClass) else None
+        return _ZERO if isinstance(set_a, sets.SetClass) else None
     fa, fb = frame_of(set_a), frame_of(set_b)
     if fa is None or fb is None or fa.key != fb.key:
         return None
@@ -173,8 +174,7 @@ def shifted(p, off, sign=1.0):
     (a ray trace against b's mesh, a hit point on b's hull)."""
     if off is None or off == _ZERO:
         return p
-    from engine.appc.math import TGPoint3
-    return TGPoint3(p.x + sign * off[0], p.y + sign * off[1], p.z + sign * off[2])
+    return math_.TGPoint3(p.x + sign * off[0], p.y + sign * off[1], p.z + sign * off[2])
 
 
 def _xyz(obj):
@@ -227,13 +227,11 @@ def is_space_scene(pSet) -> bool:
     same line host_loop._realize_comm_sets draws when it picks the comm rooms
     out of g_kSetManager (skip "bridge", take sets with a background model).
     """
-    from engine.appc.sets import SetClass
-    if not isinstance(pSet, SetClass):
+    if not isinstance(pSet, sets.SetClass):
         return False
-    from engine.appc.bridge_set import BridgeSet
-    if isinstance(pSet, BridgeSet):
+    if isinstance(pSet, bridge_set.BridgeSet):
         return False
-    import App
+    import App  # hot-import: cycle App -> sets/lens_flare/projectiles -> frames
     if App.g_kSetManager._sets.get("bridge") is pSet:
         return False
     return pSet.GetBackgroundModelNIF() is None
@@ -247,9 +245,9 @@ def viewing_set():
     (E6M1, E6M2, E7M1, E8M1, ...) and only a warp arrival resets it, so the
     explicit rendered set is routinely the bridge while the player flies in
     tactical view; that must not blank the world scene."""
-    import App
+    import App  # hot-import: cycle App -> sets/lens_flare/projectiles -> frames
     s = App.g_kSetManager.get_explicit_rendered_set()
     if s is not None and is_space_scene(s):
         return s
-    from engine.appc.ship_iter import active_set
+    from engine.appc.ship_iter import active_set  # hot-import: ship_iter imports App (cycle via lens_flare -> frames)
     return active_set()

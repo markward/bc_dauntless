@@ -35,6 +35,7 @@ from __future__ import annotations
 import weakref
 
 from engine.audio import attached_sources, engine_rumble
+from engine.core.ids import implements
 from engine.audio.engine_rumble import (
     HUM_MAX_DISTANCE, HUM_MIN_DISTANCE, _engine_sound_name_for, _node_for,
 )
@@ -60,6 +61,37 @@ BOUNDARY_HYSTERESIS_FRACTION = 0.05
 # over it. `_start_hum` guards against that with `weakref.finalize`, which
 # actually stops the source when the ship dies.
 _humming: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+# Reallocation cadence (wall clock). Positions/gains are driven elsewhere and
+# stay per frame; only WHO hums is re-decided at 10 Hz, plus at once when
+# `mark_dirty` is called (scene switch, set removal, death).
+HUM_REALLOC_PERIOD_S = 0.1
+_dirty = False
+_next_due = 0.0
+
+
+def mark_dirty() -> None:
+    """Make the next `maybe_update` reallocate regardless of the deadline."""
+    global _dirty
+    _dirty = True
+
+
+def maybe_update(listener_pos, now: float) -> bool:
+    """`update(listener_pos)` when dirty or `now` has reached the deadline.
+    Returns whether it ran."""
+    global _dirty, _next_due
+    if not _dirty and now < _next_due:
+        return False
+    update(listener_pos)
+    _next_due = now + HUM_REALLOC_PERIOD_S
+    _dirty = False
+    return True
+
+
+def _is_dead(ship) -> bool:
+    """A dead hulk (stays in its set). A DYING ship is not dead: it keeps
+    humming through the throes."""
+    return implements(ship, "IsDead") and bool(ship.IsDead())
 
 
 def _roster(listener_pos=None):
@@ -192,7 +224,7 @@ def update(listener_pos) -> None:
     formation at the #4/#5 cutoff doesn't stop/restart every frame.
     """
     candidates = [(s, d) for s, d in _audible(_roster(), listener_pos)
-                  if _engine_sound_name_for(s)]
+                  if not _is_dead(s) and _engine_sound_name_for(s)]
     # Liveness (`_PlayingSound.is_live`), not mere dict-key presence or a
     # bare `_pid` truthiness check (review Critical #1): a humming ship's
     # source can go dead two ways this registry cannot see on its own --
@@ -241,6 +273,9 @@ def humming_ship_names() -> set:
 
 
 def reset_for_tests() -> None:
+    global _dirty, _next_due
+    _dirty = False
+    _next_due = 0.0
     for ship in list(_humming.keys()):
         _stop_hum(ship)
     _humming.clear()

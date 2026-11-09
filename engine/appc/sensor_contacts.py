@@ -71,7 +71,7 @@ import weakref
 
 import App
 import engine.dev_mode as dev_mode
-from engine.appc import sensor_dials
+from engine.appc import contact_refresh, sensor_dials
 from engine.core.ids import implements
 
 _near: "weakref.WeakSet" = weakref.WeakSet()
@@ -249,6 +249,7 @@ def _lose_track(player, sensors, obj) -> None:
         dev_mode.log_swallowed("sensor_contacts lost-track Helm ExitedSet", e)
     _concealed_since.pop(obj, None)
     _scanned_at.pop(obj, None)
+    contact_refresh.mark_dirty("lose_track")
 
 
 def _scan_menu():
@@ -428,6 +429,9 @@ def _sweep(player, sensors, now_gt) -> None:
                     and not _unknown_by_medium(obj)):
                 _pending[obj] = (now_gt + dwell, False)
         _sync_science_label(obj, now_gt)
+    # The contact list's membership and verdicts follow the sweep (range and
+    # cloak-bubble crossings, sensor damage and media have no event).
+    contact_refresh.mark_dirty("sweep")
 
 
 def _continuity(player, sensors, obj, now_gt) -> None:
@@ -447,6 +451,10 @@ def tick(player, now_gt: float) -> None:
     _sync_player(player)
     sensors = _sensors_of(player)
     if sensors is None:
+        # No sweep without sensors, so nothing else would re-derive the
+        # contact list's range crossings: every tick, as before the sweep
+        # cadence (engine.appc.contact_refresh).
+        contact_refresh.mark_dirty("no_sensors")
         return
     _commit_due(player, sensors, now_gt)
     if _next_sweep_gt is None or now_gt >= _next_sweep_gt:
@@ -481,6 +489,7 @@ def on_exited_set(pSet, obj) -> None:
     from engine.appc.objects import ObjectClass
     if not isinstance(obj, ObjectClass):
         return
+    contact_refresh.mark_dirty("exited_set")
     _near.discard(obj)
     _far.discard(obj)
     _pending.pop(obj, None)

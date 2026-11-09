@@ -113,6 +113,10 @@ def _current_player():
         return None
 
 
+# How often the crew menu is polled. See CrewMenuPanel.poll_interval_s.
+CREW_MENU_POLL_S = 0.1
+
+
 class CrewMenuPanel(Panel):
     def __init__(self, on_set_course=None, on_warp_engage=None,
                  on_course_set=None):
@@ -504,6 +508,7 @@ class CrewMenuPanel(Panel):
             return                       # already open
         self._open_menu_id = wid
         self._expanded_ids.clear()       # a reopened menu starts collapsed
+        self.mark_due()                  # keyboard open draws next frame
         try:
             menu.SendActivationEvent()   # BC broadcasts activation on open
         except Exception:
@@ -515,6 +520,7 @@ class CrewMenuPanel(Panel):
             return
         self._open_menu_id = None
         self._expanded_ids.clear()
+        self.mark_due()                  # keyboard close draws next frame
 
     def toggle_menu(self, menu) -> None:
         """Open `menu` (closing any other), or close it if already open.
@@ -625,6 +631,23 @@ class CrewMenuPanel(Panel):
         else:
             self.hide_menu()
         return True
+
+    @property
+    def poll_interval_s(self) -> float:
+        """Polled at 10 Hz, not per frame.
+
+        The menu tree is walked and JSON-diffed to find out whether anything
+        changed; disabled/enabled flips and captions that follow game state may
+        trail by up to 100 ms -- accepted. Opening and closing a menu (click or
+        keyboard: show_menu / hide_menu) and an alert-level change mark the
+        panel due at once.
+
+        Interaction is unaffected: input goes through dispatch_event, visibility
+        flips through the visible setter, and discrete state changes through
+        mark_due (host_loop._mark_hud_due_on_changes), all of which draw on the
+        next frame.
+        """
+        return CREW_MENU_POLL_S
 
     def invalidate(self) -> None:
         self._last_pushed = None
