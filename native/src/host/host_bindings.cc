@@ -19423,6 +19423,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_apply_reset_counts",
               [] { dauntless::host::write_applier().reset_counts(); });
+        m.def("combat_apply_reset_kinds",
+              [] { dauntless::host::write_applier().forget_kinds(); },
+              "Drop the applier's (type, field) kind cache and its strong "
+              "references (native_combat.reset).");
 
         // ── The combat effect queue (combat_effect_queue.h) ──────────────
         // Entries come out as (kind, native, operands): a kernel's operands

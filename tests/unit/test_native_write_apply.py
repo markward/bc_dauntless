@@ -535,6 +535,33 @@ def test_reset_clears_a_leaked_applier_context():
     assert _h.combat_set_applier(None) is None
 
 
+def test_reset_releases_the_classes_the_native_kind_cache_holds(monkeypatch):
+    """The binding caches each (type, field) apply kind, and the kinds
+    mapping, with strong references until it is handed another mapping.
+    native_combat.reset() drops that cache, so a class a test defined and
+    wrote through the C path does not outlive the test (a later
+    __subclasses__() walk would see it: test_subsystem_obj_type)."""
+    import gc
+    import weakref
+
+    class LocalLeaf(Leaf):
+        pass
+
+    arm = _Arm("c", n_leaves=0, n_systems=0)
+    obj = LocalLeaf("c", 0, _handle(0))
+    arm.objs.append(obj)
+    arm.registry[_handle(0)] = obj
+    err, _ = _apply_c(arm, [(_handle(0), "_f", 1.5)], monkeypatch)
+    assert err is None
+    assert obj.__dict__["_f"] == 1.5
+    dead = weakref.ref(LocalLeaf)
+    del obj, arm, LocalLeaf
+    monkeypatch.undo()
+    nc.reset()
+    gc.collect()
+    assert dead() is None, "the native kind cache kept the class alive"
+
+
 def test_reset_abandons_a_leaked_k2_session_and_its_queue(monkeypatch):
     """A K2 session left open with resting contacts queued for its drain
     (here its abandon swallowed once, after a raise at a DONE): reset()
