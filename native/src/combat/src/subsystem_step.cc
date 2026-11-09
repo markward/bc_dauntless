@@ -666,8 +666,18 @@ bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
     // draw order (the sensor array, then first-registered first), and
     // nothing switches off. A tick that wants no more than its allowance
     // draws exactly as before.
+    //
+    // Only the budget a battery can still supply counts: a conduit draw
+    // takes at most min(conduit, battery), and a main battery emptied
+    // outside the conduits (a tractor's direct steal) left its conduit
+    // budget standing. Counted anyway, it let the early ticks overdraw the
+    // backup conduit, which ran dry before the interval ended, and every
+    // consumer got 0 until the reset: the blink again. Wherever the
+    // battery covers its conduit this is the conduit itself, bit for bit.
     {
-        const double remaining = p.main_conduit + p.backup_conduit;
+        const double remaining =
+            py_min(p.main_conduit, py_max(p.main, 0.0)) +
+            py_min(p.backup_conduit, py_max(p.backup, 0.0));
         const double left = m.globals().POWER_INTERVAL - interval;
         p.allowance = left <= dt ? remaining : remaining * (dt / left);
     }

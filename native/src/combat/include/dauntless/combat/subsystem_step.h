@@ -132,7 +132,8 @@
 //           UNCONDITIONALLY: main = min(main battery, MainConduitCapacity *
 //           condPct * elapsed), backup = min(backup battery,
 //           BackupConduitCapacity * elapsed); available = their sum;
-//   the pacing: this tick's allowance = (main + backup conduit budget left)
+//   the pacing: this tick's allowance = (main + backup conduit budget left,
+//           each capped by its battery: min(conduit, max(battery, 0)))
 //           * dt / (POWER_INTERVAL - interval), or all of it when that time
 //           left is <= dt; every conduit draw below takes at most the
 //           allowance left and lowers it by what it got (a tick wanting

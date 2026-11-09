@@ -87,3 +87,27 @@ def test_the_shortfall_still_falls_on_the_consumers_last_in_attach_order():
                 starved.add(getter)
     _step(loop, player, int(5.0 / TICK_DELTA), look)
     assert starved, "a plant 81% short must starve some consumer"
+
+
+def test_an_emptied_main_battery_does_not_blink_the_ship_at_the_interval_end():
+    """A main battery emptied mid-interval (a tractor's direct steal does it
+    in play; zeroed here every tick, as tractor_modes' starve beat) leaves
+    its conduit budget unusable. Counted in the pacing allowance anyway, it
+    let the ticks overdraw the backup conduit, which then ran dry before the
+    interval ended, and every consumer, the sensors included, got 0 until
+    the next reset."""
+    player, plant = _over_asked_player(backup=99500.0)
+    plant.GetProperty().SetBackupConduitCapacity(250.0)
+    sensors = player.GetSensorSubsystem()
+    loop = GameLoop()
+    _step(loop, player, int(1.0 / TICK_DELTA))
+    blind = []
+
+    def drain():
+        plant.SetMainBatteryPower(0.0)
+        if sensors.GetPowerWanted() > 0.0 and sensors.GetPowerReceived() <= 0.0 \
+                and plant.GetBackupBatteryPower() > 0.0:
+            blind.append(round(App.g_kUtopiaModule.GetGameTime(), 3))
+    _step(loop, player, int(5.0 / TICK_DELTA), drain)
+    assert blind == [], "sensors got 0 on %d ticks with backup power left; first %s" % (
+        len(blind), blind[:5])
