@@ -13,6 +13,9 @@ namespace gi = renderer::glow_impulse;
 
 namespace {
 
+// Not M_PI: MSVC's <cmath> defines it only under _USE_MATH_DEFINES.
+constexpr double kPi = 3.14159265358979323846;
+
 // Today's per-frame rule (subsystem_glow.py before this change): snap is the
 // caller's job; each frame eases by alpha = 1 - exp(-dt/tau), then settles to
 // exactly 0 once the target is 0 and the value drops below the epsilon.
@@ -77,7 +80,7 @@ TEST(GlowImpulse, PulseMatchesFormula) {
         for (float now : {0.0f, 0.4f, 0.625f, 1.3f, 33.3f}) {
             const double base = gi::kGainIdle + (gi::kGainMax - gi::kGainIdle) * frac;
             const double want = base * (1.0 + gi::kPulseAmp * frac *
-                                std::sin(2.0 * M_PI * gi::kPulseFreqHz * now));
+                                std::sin(2.0 * kPi * gi::kPulseFreqHz * now));
             // Held target (start == target): the ease is the identity.
             EXPECT_NEAR(gi::gain(frac, frac, 0.0f, now, true), want, 1e-6)
                 << "frac " << frac << " now " << now;

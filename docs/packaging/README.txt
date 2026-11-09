@@ -70,6 +70,12 @@ GETTING STARTED
    Pick each with Browse. Each says "Bridge Commander install found" when
    it's right; then press Continue. You only do this once.
 
+If Windows says a file such as MSVCP140.dll or VCRUNTIME140.dll "was not
+found", install Microsoft's Visual C++ Redistributable (64-bit) and run
+BC Dauntless again:
+    https://aka.ms/vs/17/release/vc_redist.x64.exe
+The download includes these files, so you shouldn't normally need this.
+
 FULL SCREEN
 -----------
 
