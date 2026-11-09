@@ -224,3 +224,49 @@ def test_regroup_ignores_slot_holders_and_the_reserve():
     assert _by("regroup").score(ctx) == 0.0           # only e counts
     ctx.reserve = None
     assert _by("regroup").score(ctx) == 1.0           # d of d, e
+
+
+# ── per-context memo (perf: one reach / side-strength pass per tick) ───────
+
+def _counting(monkeypatch, module, name):
+    calls = []
+    real = getattr(module, name)
+
+    def wrapped(*a, **k):
+        calls.append(a)
+        return real(*a, **k)
+    monkeypatch.setattr(module, name, wrapped)
+    return calls
+
+
+def test_one_tick_reads_sides_and_swarm_once(monkeypatch):
+    """pick() then the winner's choose() on one context: each side's
+    strength is summed once and the swarm choice is made once, however many
+    decisions read them."""
+    from engine.wings import assess
+    sides = _counting(monkeypatch, assess, "side_strength")
+    swarm = _counting(monkeypatch, decisions.SwarmCommander, "choose")
+    weakest = _counting(monkeypatch, decisions.SwarmWeakest, "choose")
+    ctx = _ctx([V("e", 50, faces=F()), V("f", 60, faces=F())], eligible=5)
+    d = decisions.pick(ctx)
+    assert d.name == "envelop"
+    c = d.choose(ctx)
+    assert c.primary == "e" and c.slot_dirs
+    assert len(sides) == 2
+    assert len(swarm) + len(weakest) == 1
+
+
+def test_memo_follows_reassigned_inputs_and_dials():
+    ctx = _ctx([V("e", 50), V("f", 60, power=0.5)])
+    assert decisions.swarm_choice(ctx).primary == "f"
+    ctx.enemies = [V("e", 50)]
+    assert decisions.swarm_choice(ctx).primary == "e"
+    dials._dials["leash_gu"] = 10.0
+    assert decisions.swarm_choice(ctx).primary is None
+
+
+def test_memoised_choice_is_not_shared():
+    ctx = _ctx([V("e", 50)])
+    a = decisions.swarm_choice(ctx)
+    a.primary = "mutated"
+    assert decisions.swarm_choice(ctx).primary == "e"

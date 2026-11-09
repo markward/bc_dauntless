@@ -1,4 +1,5 @@
 """Wing decision registry and the Phase A decisions (spec §8). Pure."""
+import copy
 import dataclasses
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
@@ -55,16 +56,41 @@ class Decision(Protocol):
     def choose(self, ctx: Context) -> Choice: ...
 
 
+def _memo(ctx, kind, inputs, compute):
+    """compute() once per context while `inputs` are unchanged (the same
+    objects, the same dial values): every decision's score and the winner's
+    choose read the same reach, side strengths and swarm choice in one tick.
+    Kept off the dataclass fields, so a dataclasses.replace() copy starts
+    empty and repr / == are unchanged."""
+    memo = ctx.__dict__.setdefault("_memo", {})
+    hit = memo.get(kind)
+    # Tuple == tests each pair by identity first: the context's lists and
+    # anchor match by identity, the dial floats by value.
+    if hit is not None and hit[0] == inputs:
+        return hit[1]
+    value = compute()
+    memo[kind] = (inputs, value)
+    return value
+
+
 def _in_reach(ctx):
     leash = dials.get("leash_gu")
-    return [e for e in ctx.enemies
-            if assess.dist(e.pos, ctx.anchor.pos) <= leash]
+    return list(_memo(
+        ctx, "reach", (ctx.enemies, ctx.anchor, leash),
+        lambda: [e for e in ctx.enemies
+                 if assess.dist(e.pos, ctx.anchor.pos) <= leash]))
+
+
+def _sides(ctx, engage):
+    """(our, their) strength within `engage` of the anchor."""
+    return _memo(
+        ctx, "sides", (ctx.members, ctx.enemies, ctx.anchor, engage),
+        lambda: (assess.side_strength(ctx.members, ctx.anchor.pos, engage),
+                 assess.side_strength(ctx.enemies, ctx.anchor.pos, engage)))
 
 
 def _outmatched(ctx) -> bool:
-    engage = dials.get("engage_gu")
-    ours = assess.side_strength(ctx.members, ctx.anchor.pos, engage)
-    theirs = assess.side_strength(ctx.enemies, ctx.anchor.pos, engage)
+    ours, theirs = _sides(ctx, dials.get("engage_gu"))
     return ours < dials.get("odds_ratio") * theirs
 
 
@@ -145,10 +171,8 @@ class Withdraw:
     name = "withdraw"
 
     def score(self, ctx: Context) -> float:
-        engage = dials.get("engage_gu")
         odds = dials.get("withdraw_odds")
-        ours = assess.side_strength(ctx.members, ctx.anchor.pos, engage)
-        theirs = assess.side_strength(ctx.enemies, ctx.anchor.pos, engage)
+        ours, theirs = _sides(ctx, dials.get("engage_gu"))
         if ctx.withdraw_since is not None:
             if (ctx.now - ctx.withdraw_since >= dials.get("withdraw_max_s")
                     or (ctx.clear_since is not None
@@ -174,11 +198,16 @@ class Withdraw:
 
 def swarm_choice(ctx: Context) -> Choice:
     """What the higher-scoring swarm decision would choose (tie: weakest),
-    without stickiness."""
-    weakest, cmdr = SwarmWeakest(), SwarmCommander()
-    if cmdr.score(ctx) > weakest.score(ctx):
-        return cmdr.choose(ctx)
-    return weakest.choose(ctx)
+    without stickiness. Made once per context (a copy each call: a caller
+    may replace fields on what it gets)."""
+    def compute():
+        weakest, cmdr = SwarmWeakest(), SwarmCommander()
+        if cmdr.score(ctx) > weakest.score(ctx):
+            return cmdr.choose(ctx)
+        return weakest.choose(ctx)
+    inputs = (ctx.members, ctx.enemies, ctx.anchor, dials.get("leash_gu"),
+              dials.get("engage_gu"), dials.get("odds_ratio"))
+    return copy.copy(_memo(ctx, "swarm", inputs, compute))
 
 
 def _primary_view(ctx):
