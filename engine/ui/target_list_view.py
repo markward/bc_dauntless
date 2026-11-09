@@ -214,6 +214,7 @@ class TargetListView(Panel):
         player = game.GetPlayer() if game is not None else None
 
         rows = []
+        focus_name = wing_service.player_focus()    # once, not per row
         child = target_menu.GetFirstChild()
         while child is not None:
             if isinstance(child, STSubsystemMenu):
@@ -248,6 +249,7 @@ class TargetListView(Panel):
                         _markers.marker_for(name),
                         # Read only: in the snapshot so a handover re-emits.
                         wing_service.is_commander(name),
+                        name == focus_name,
                     ))
             child = target_menu.GetNextChild(child)
 
@@ -281,9 +283,10 @@ class TargetListView(Panel):
                 "dist_km": dist_km,
                 "marker": marker,
                 "commander": commander,
+                "focus": focus,
             }
             for (name, caption, aff, hull, shields, has_shields, dist_km,
-                 marker, commander) in rows
+                 marker, commander, focus) in rows
         ]
         payload_rows.sort(key=lambda r: sort_key(r, sort))
         payload = {

@@ -106,7 +106,7 @@ def arm(qb, plan) -> None:
     from engine.wings import roster, service
     reset()
     if (plan is None or not service.enabled()
-            or not getattr(plan, "wings", True)):    # the setup's switch Off
+            or not plan.wings):    # the setup's switch Off
         return
     groups: dict = {}            # group id -> (allegiance, [initial names])
     late: set = set()            # group ids with a late order
@@ -142,6 +142,8 @@ def arm(qb, plan) -> None:
         _wrap(name)
     for wing in _by_group.values():
         service.arm(wing)
+    player_wing = _by_group.get(plan.player.group_id)
+    service.set_player_wing(player_wing.wing_id if player_wing else None)
 
 
 def _wrap(module_name) -> None:

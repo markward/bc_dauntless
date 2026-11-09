@@ -80,3 +80,31 @@ def test_handover_re_emits_and_moves_the_flag(scene):
     rows = _rows(view.render_payload())
     assert rows["Lead"]["commander"] is False
     assert rows["Wingman"]["commander"] is True
+
+
+def test_focus_flag_only_on_the_player_wings_primary(scene):
+    view, wing = scene
+    wing.primary = "Loner"
+    service.set_player_wing(wing.wing_id)
+    rows = _rows(view.render_payload())
+    assert rows["Loner"]["focus"] is True
+    assert rows["Lead"]["focus"] is False
+    assert rows["Wingman"]["focus"] is False
+
+
+def test_focus_re_emits_when_the_primary_changes(scene):
+    view, wing = scene
+    wing.primary = "Loner"
+    service.set_player_wing(wing.wing_id)
+    assert view.render_payload() is not None
+    assert view.render_payload() is None
+    wing.primary = "Wingman"
+    rows = _rows(view.render_payload())
+    assert rows["Wingman"]["focus"] is True and rows["Loner"]["focus"] is False
+
+
+def test_no_player_wing_no_focus(scene):
+    view, wing = scene
+    wing.primary = "Loner"
+    rows = _rows(view.render_payload())
+    assert not any(r["focus"] for r in rows.values())

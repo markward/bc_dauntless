@@ -6,7 +6,8 @@
 //                  sort: "name" | "distance" | "health",
 //                  minimized: bool,
 //                  rows: [{name, label, affiliation, hull, shields,
-//                          has_shields, dist_km, marker, commander}, ...]});
+//                          has_shields, dist_km, marker, commander,
+//                          focus}, ...]});
 //
 // Rows arrive already filtered and in display order: the page never sorts
 // or filters. `name` is the click/selection key (ship.GetName()) and never
@@ -115,10 +116,23 @@ function setTargetList(state) {
               + ' aria-hidden="true"><path d="M1 6 L5 2.5 L9 6 M1 10 L5 6.5 L9 10"/>'
               + '</svg></span>'
             : '';
+        // Wing focus: the player's wing's current main target. A crosshair
+        // like the "target" marker plus a filled centre dot; after the
+        // chevron, before the marker.
+        const focusHtml = (row.focus === true)
+            ? '<span class="target-list__marker target-list__marker--focus">'
+              + '<svg viewBox="0 0 10 12" width="1em" height="1.2em" fill="none"'
+              + ' stroke="currentColor" stroke-width="1" aria-hidden="true">'
+              + '<circle cx="5" cy="6" r="3"/>'
+              + '<path d="M5 0.5 V3 M5 9 V11.5 M0 6 H2 M8 6 H10"/>'
+              + '<circle cx="5" cy="6" r="1.2" fill="currentColor" stroke="none"/>'
+              + '</svg></span>'
+            : '';
         const dist = (typeof row.dist_km === 'number') ? row.dist_km : 0;
         html += '<div class="target-list__row target-list__row--' + aff + chosen + '"'
               +   ' onclick="' + targetAttr + '">'
               +   commanderHtml
+              +   focusHtml
               +   markerHtml
               +   '<span class="target-list__name">' + nameHtml + '</span>'
               +   '<span class="target-list__dist">' + dist.toFixed(2) + ' km</span>'

@@ -124,3 +124,45 @@ def test_is_commander():
     w.leaderless = True
     assert not service.is_commander("A")
     service.reset_all()
+
+
+def _player_wing():
+    import App
+    w = roster.create_wing("qb:g", App.ObjectGroup())
+    roster.add_member(w, "A")
+    w.commander = "A"
+    w.primary = "Foe"
+    return w
+
+
+def test_player_focus_none_without_a_player_wing():
+    _player_wing()
+    assert service.player_focus() is None
+    service.set_player_wing("missing")
+    assert service.player_focus() is None
+
+
+def test_player_focus_is_the_primary():
+    _player_wing()
+    service.set_player_wing("qb:g")
+    assert service.player_focus() == "Foe"
+
+
+def test_player_focus_none_when_leaderless_away_or_no_primary():
+    w = _player_wing()
+    service.set_player_wing("qb:g")
+    w.leaderless = True
+    assert service.player_focus() is None
+    w.leaderless = False
+    w.away = True
+    assert service.player_focus() is None
+    w.away = False
+    w.primary = None
+    assert service.player_focus() is None
+
+
+def test_reset_clears_player_wing():
+    _player_wing()
+    service.set_player_wing("qb:g")
+    service.reset()
+    assert service.player_focus() is None

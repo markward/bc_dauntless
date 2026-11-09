@@ -391,3 +391,23 @@ def test_player_only_group_gets_no_wing(world):
     assert _wing_for(panel, 0) is None
     assert roster.wing_of(_player().GetName()) is None
     assert _wing_for(panel, 1) is not None
+
+
+def test_player_focus_is_the_friendly_wings_primary(world):
+    hl, _c, panel, QB = world
+    from engine.wings import brain, service
+    _add_to_player_group(panel, "Akira")
+    _enemies(panel, "Warbird")
+    _go(hl, panel)
+    pw = _wing_for(panel, 0)
+    brain.tick_wing(pw)
+    assert pw.primary is not None
+    assert service.player_focus() == pw.primary
+
+
+def test_player_only_group_has_no_focus(world):
+    hl, _c, panel, QB = world
+    from engine.wings import service
+    _enemies(panel, "Warbird")
+    _go(hl, panel)
+    assert service.player_focus() is None

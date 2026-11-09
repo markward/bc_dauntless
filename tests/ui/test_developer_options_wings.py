@@ -4,13 +4,15 @@ always on in the target list. The Combat tab's Python and JS focusable lists
 stay aligned."""
 import json
 import re
+from pathlib import Path
 
 import pytest
 
 from engine import dev_mode
 from engine.ui.developer_options_panel import DeveloperOptionsPanel
 
-JS = "native/assets/ui-cef/js/developer_options.js"
+JS = str(Path(__file__).resolve().parents[2]
+         / "native/assets/ui-cef/js/developer_options.js")
 
 
 @pytest.fixture(autouse=True)

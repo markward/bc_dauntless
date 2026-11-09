@@ -10,6 +10,7 @@ import os
 from engine.wings import brain, decisions, dials, roster
 
 _armed: list = []
+_player_wing_id: str | None = None
 _EPS = 1e-9
 
 
@@ -24,6 +25,25 @@ def is_commander(name) -> bool:
     wing = roster.wing_of(name)
     return (wing is not None and not wing.leaderless
             and wing.commander == name)
+
+
+def set_player_wing(wing_id) -> None:
+    """The wing built from the player's own group (it is AI-led; the player
+    is no member). None when the player's group has no wing."""
+    global _player_wing_id
+    _player_wing_id = wing_id
+
+
+def player_focus():
+    """The player's wing's current main target (its primary), or None when
+    there is no such wing, it is leaderless or its command is away."""
+    if _player_wing_id is None:
+        return None
+    wing = next((w for w in roster.wings() if w.wing_id == _player_wing_id),
+                None)
+    if wing is None or wing.leaderless or wing.away:
+        return None
+    return wing.primary
 
 
 def arm(wing) -> None:
@@ -56,6 +76,7 @@ def tick(dt: float) -> None:
 
 
 def reset() -> None:
+    set_player_wing(None)
     roster.reset()
     _armed.clear()
     brain.reset_cache()

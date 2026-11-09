@@ -341,6 +341,10 @@ arm, handover, decision change, leaderless, desperation. **(Mark's ruling
 each wing's current commander with a small inline **command chevron** before
 the name (a row's `commander` flag), for everyone, no toggle. It moves on a
 handover and disappears when a wing goes leaderless.
+**Focus marker (Mark, 2026-11-09):** the player's own group's wing's current
+primary (`service.player_focus()`) gets a crosshair with a filled centre dot
+(a row's `focus` flag), after the chevron. None when that wing is
+leaderless, away or has no primary, or the player's group has no wing.
 
 **Dials:** group `"wings"` on `/ L O` (pattern `engine/appc/sensor_dials.py`):
 `leash_gu`, `leash_slack_gu`, `regroup_gather_gu`, `engage_gu`,
@@ -366,7 +370,8 @@ handover and disappears when a wing goes leaderless.
 11. A wing whose initial members are all late builds its chain from its first
     arrival wave.
 12. A km-listed ship in reach is the primary; a commanding player's target is
-    the primary even outside reach.
+    the primary even outside reach. (The "player commands" rules are
+    reachable only via DauntlessWings `bPlayer`, see §4, not Quick Battle.)
 13. Only `fPopularityFactor` is touched; the player's SelectTarget is never
     weighted.
 14. Home set = the set with most live non-player members; away command makes
@@ -375,6 +380,8 @@ handover and disappears when a wing goes leaderless.
 15. Cloaked / cloaking enemies are never candidates.
 16. A commanding player with nothing in reach and no candidate target: empty
     group, escorts gather on the player.
+17. The focus marker shows the primary only, not secondaries, as a crosshair
+    with a filled centre dot (distinct from the outline hunt-target marker).
 
 ## 13. Testing
 
