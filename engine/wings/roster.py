@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import random
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
 
@@ -21,6 +21,10 @@ class Member:
     desperate: str | None = None
     conditions: dict = field(default_factory=dict)
     ram_script: object = None
+    strength_hist: list = field(default_factory=list)   # (t, strength)
+    move_point: tuple | None = None
+    guard: bool = False
+    fallback_since: float | None = None
 
 
 @dataclass
@@ -39,6 +43,11 @@ class Wing:
     phase_s: float = 0.0
     accum_s: float = 0.0
     rng: random.Random = field(default_factory=random.Random)
+    armed_strength: float = 0.0
+    protect_names: Callable[[], Iterable[str]] = field(default=lambda: ())
+    withdraw_since: float | None = None
+    withdraw_cooldown_until: float = -1.0
+    clear_since: float | None = None
 
 
 _wings: dict[str, Wing] = {}
