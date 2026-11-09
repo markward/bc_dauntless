@@ -72,7 +72,8 @@ def test_stickiness_keeps_current_on_near_tie():
 
 def test_register_replaces_by_name_and_reset_restores_stock():
     names = [d.name for d in decisions.registered()]
-    assert names == ["regroup", "swarm_weakest", "swarm_commander"]
+    assert names == ["regroup", "swarm_weakest", "swarm_commander",
+                     "protect", "withdraw"]
 
     class Fake:
         name = "swarm_weakest"

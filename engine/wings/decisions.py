@@ -1,8 +1,8 @@
 """Wing decision registry and the Phase A decisions (spec §8). Pure."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
-from engine.wings import assess, dials
+from engine.wings import assess, dials, protect
 
 
 @dataclass
@@ -11,6 +11,14 @@ class Context:
     anchor: assess.ShipView
     enemies: list
     current: Optional[str] = None
+    protectees: list = ()
+    rates: dict = field(default_factory=dict)
+    armed_strength: float = 0.0
+    now: float = 0.0
+    withdraw_since: Optional[float] = None
+    withdraw_cooldown_until: float = -1.0
+    clear_since: Optional[float] = None
+    player_commands: bool = False
 
 
 @dataclass
@@ -18,6 +26,8 @@ class Choice:
     primary: Optional[str]
     secondaries: tuple = ()
     gather: bool = False
+    protectee: Optional[str] = None
+    withdraw: bool = False
 
 
 class Decision(Protocol):
@@ -91,8 +101,59 @@ class SwarmCommander:
         return Choice(cmd.name, tuple(e.name for e in mates[:2]), False)
 
 
+class Protect:
+    name = "protect"
+
+    def score(self, ctx: Context) -> float:
+        hit = protect.threatened(ctx.protectees, ctx.rates, ctx.enemies,
+                                 ctx.anchor)
+        return 1.5 if hit is not None else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        p = protect.threatened(ctx.protectees, ctx.rates, ctx.enemies,
+                               ctx.anchor)
+        if p is None:
+            return Choice(None, ())
+        atk = sorted(protect.attackers_of(p.name, ctx.enemies, ctx.anchor.pos,
+                                          dials.get("engage_gu")),
+                     key=lambda e: (assess.dist(e.pos, p.pos), e.name))
+        if not atk:
+            return Choice(None, (), protectee=p.name)
+        return Choice(atk[0].name, tuple(e.name for e in atk[1:3]),
+                      protectee=p.name)
+
+
+class Withdraw:
+    name = "withdraw"
+
+    def score(self, ctx: Context) -> float:
+        if ctx.player_commands or ctx.now < ctx.withdraw_cooldown_until:
+            return 0.0
+        engage = dials.get("engage_gu")
+        odds = dials.get("withdraw_odds")
+        ours = assess.side_strength(ctx.members, ctx.anchor.pos, engage)
+        theirs = assess.side_strength(ctx.enemies, ctx.anchor.pos, engage)
+        if not ours < odds * theirs:
+            return 0.0
+        members = sum(assess.strength(m) for m in ctx.members)
+        if not members < dials.get("withdraw_wing_frac") * ctx.armed_strength:
+            return 0.0
+        if ctx.withdraw_since is not None:
+            if (ctx.now - ctx.withdraw_since >= dials.get("withdraw_max_s")
+                    or (ctx.clear_since is not None
+                        and ctx.now - ctx.clear_since
+                        >= dials.get("withdraw_clear_s"))
+                    or ours >= odds * 1.5 * theirs):
+                return 0.0
+        return 2.5
+
+    def choose(self, ctx: Context) -> Choice:
+        return Choice(None, (), gather=True, withdraw=True)
+
+
 def _stock() -> list:
-    return [Regroup(), SwarmWeakest(), SwarmCommander()]
+    return [Regroup(), SwarmWeakest(), SwarmCommander(), Protect(),
+            Withdraw()]
 
 
 _registry: list = _stock()
