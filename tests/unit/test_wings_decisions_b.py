@@ -61,7 +61,8 @@ def test_withdraw_gates_each():
     assert w.score(_w(player_commands=True)) == 0.0
     assert w.score(_w(enemies=[V("x", 50)])) == 0.0
     c = w.choose(_w())
-    assert c.primary is None and c.gather and c.withdraw
+    # Every member runs withdraw itself: no gather on the commander.
+    assert c.primary is None and not c.gather and c.withdraw
 
 
 def test_withdraw_max_then_cooldown():

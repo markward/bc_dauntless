@@ -32,12 +32,12 @@ commanders" switch is Off (`plan.wings`), or BC's own GenerateShips ran):
   brain counts a listed ship outside the enemy group (a neutral protect
   target) as a candidate. km arms after the wings, so those ships are seeded
   into the wing group at the first member's CreateAI, not at create_wing.
-- `protect_names` (Phase B, spec 2026-11-09-wing-leaders-phase-b-design.md)
-  is read at use: the ships of this wing's side that the OTHER side's AI
-  weights (`km_targeting.priorities_for(<other allegiance>)` names in this
-  side's own QuickBattle group: Defeat-protected friendlies for a friendly
-  wing, Victory hunt targets for an enemy wing; a listed neutral is on no
-  wing's side), plus, for the player's group's wing, the player's ship.
+- `protect_names` (Phase B, spec 2026-11-09-wing-leaders-phase-b-design.md
+  §3) is read at use, from the ships the OTHER side's AI weights
+  (`km_targeting.priorities_for(<other allegiance>)`): a friendly wing
+  protects every Defeat-listed ship, friendly or neutral (never one in
+  pEnemies); an enemy wing protects the Victory-listed ships in pEnemies.
+  The player's group's wing also protects the player's ship.
 
 Mechanism (no SDK edit), the km_targeting pattern: the member modules'
 CreateAI is wrapped for the battle. For a member ship the wrapper answers the
@@ -69,8 +69,7 @@ MEMBER_MODULES = ("QuickBattleAI", "QuickBattleFriendlyAI")
 _ORIG_ATTR = "_dauntless_wings_qb_orig"
 # allegiance -> the QuickBattle group that side's attack AI targets
 _ATTACKED = {"enemy": "pFriendlies", "friendly": "pEnemies"}
-# allegiance -> its own QuickBattle group, and the side that attacks it
-_OWN = {"enemy": "pEnemies", "friendly": "pFriendlies"}
+# allegiance -> the side whose weighted (km) ships this side protects
 _OTHER = {"enemy": "friendly", "friendly": "enemy"}
 
 _wrapped: list = []          # (module, original CreateAI)
@@ -165,9 +164,12 @@ def _protect_names(allegiance, with_player) -> list:
     import App
     from engine.quickbattle import km_targeting
     out = []
-    own = App.ObjectGroup_FromModule(QB_MODULE, _OWN[allegiance])
+    enemies = App.ObjectGroup_FromModule(QB_MODULE, "pEnemies")
     for name in km_targeting.priorities_for(_OTHER[allegiance]):
-        if own is not None and own.IsNameInGroup(name):
+        in_enemies = enemies is not None and enemies.IsNameInGroup(name)
+        # Friendly wings: any Defeat ship not an enemy (neutrals included).
+        # Enemy wings: Victory ships that are enemies.
+        if in_enemies == (allegiance == "enemy"):
             out.append(name)
     if with_player:
         game = App.Game_GetCurrentGame()

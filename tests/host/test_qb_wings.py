@@ -432,10 +432,10 @@ def test_player_is_protectee_not_member(world):
 
 
 def test_protected_friendly_is_protectee(world, monkeypatch):
-    """A Defeat-protected friendly (the ships the enemy AI weights) is a
-    protectee of every friendly wing, never of an enemy wing; a Victory hunt
-    target is a protectee of the enemy wings; a protected NEUTRAL is on
-    nobody's side. Read at call time, not captured at arm."""
+    """Every Defeat-protected ship (the ships the enemy AI weights), friendly
+    or neutral, is a protectee of every friendly wing and never of an enemy
+    wing; a Victory hunt target is a protectee of the enemy wings (ruling
+    2026-11-09). Read at call time, not captured at arm."""
     hl, _c, panel, QB = world
     from engine.quickbattle import km_targeting
     _add_to_player_group(panel, "Akira")
@@ -451,11 +451,36 @@ def test_protected_friendly_is_protectee(world, monkeypatch):
     player = _player().GetName()
     pw, ew, fw = _wing_for(panel, 0), _wing_for(panel, 1), _wing_for(panel, 2)
     assert akira in fw.members                    # a member is a protectee too
-    assert set(fw.protect_names()) == {akira}
-    assert set(pw.protect_names()) == {akira, player}
+    assert set(fw.protect_names()) == {akira, transport}
+    assert set(pw.protect_names()) == {akira, transport, player}
     assert set(ew.protect_names()) == {galor}
-    assert transport not in set(pw.protect_names()) | set(ew.protect_names())
     # Lazy: a list change after arm is seen at the next call.
     monkeypatch.setattr(km_targeting, "priorities_for", lambda a: {})
     assert list(fw.protect_names()) == [] and list(ew.protect_names()) == []
     assert list(pw.protect_names()) == [player]
+
+
+def test_protected_neutral_is_protectee_of_friendly_wings(world):
+    """A Defeat-protected neutral alone: both friendly wings protect it, the
+    enemy wing does not."""
+    hl, _c, panel, QB = world
+    _add_to_player_group(panel, "Akira")
+    _enemies(panel, "Warbird")
+    _group(panel, "friendly", "Akira")
+    (transport_eid,) = _group(panel, "neutral", "Transport")
+    _cond(panel, "defeat", "ships", [transport_eid])
+    transport = _names()[transport_eid][0]
+    _go(hl, panel)
+    pw, ew, fw = _wing_for(panel, 0), _wing_for(panel, 1), _wing_for(panel, 2)
+    assert transport in set(fw.protect_names())
+    assert transport in set(pw.protect_names())
+    assert transport not in set(ew.protect_names())
+
+
+def test_hunt_target_is_protectee_of_its_enemy_wing(world):
+    hl, _c, panel, QB = world
+    keldon, galor, akira = _hunt(panel)
+    _go(hl, panel)
+    ew, fw = _wing_for(panel, 1), _wing_for(panel, 2)
+    assert list(ew.protect_names()) == [galor]
+    assert galor not in set(fw.protect_names())

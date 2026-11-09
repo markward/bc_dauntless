@@ -327,7 +327,8 @@ def tick_wing(wing) -> None:
         gather, wing.commander, player)
     for name, m in wing.members.items():
         # Outside the home set WingRejoin cannot reach the commander: off.
-        flag = flags.get(name, False)
+        # Withdrawing, every member runs its own line: off too.
+        flag = flags.get(name, False) and not choice.withdraw
         m.rejoin = flag
         _push(m, "rejoin", flag)
 
@@ -389,21 +390,24 @@ def _strength_frac(v):
 
 def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
                  now):
-    """Withdraw (commander), guards (protect) and fallers (the standing
+    """Withdraw (every member), guards (protect) and fallers (the standing
     rotate rule): move points and branch pushes for every non-player
     member. One move point per member; the sets are disjoint."""
     players = {n for n, m in wing.members.items() if m.is_player}
     points = {}
 
-    # Withdraw: the commander opens distance; the rest rejoin (gather).
-    withdrawer = None
+    # Withdraw: every non-player member opens distance on its own line away
+    # from the enemy centroid, recomputed each tick; nobody rejoins.
+    withdrawers = set()
     if choice.withdraw:
-        withdrawer = wing.commander
         away_from = assess.centroid(near or enemies)
-        points[withdrawer] = (
-            rotate.fallback_point(anchor.pos, away_from,
-                                  dials.get("withdraw_step_gu"))
-            if away_from is not None else None)
+        step = dials.get("withdraw_step_gu")
+        for name, v in members.items():
+            if name in players:
+                continue
+            withdrawers.add(name)
+            points[name] = (rotate.fallback_point(v.pos, away_from, step)
+                            if away_from is not None else None)
 
     # Protect: guards between the protectee and its primary attacker.
     guards = []
@@ -448,7 +452,7 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
         m.guard = name in guards
         m.fallback_since = fallers.get(name)
         m.move_point = points.get(name)
-        _push(m, "withdraw", name == withdrawer)
+        _push(m, "withdraw", name in withdrawers)
         _push(m, "guard", m.guard)
         _push(m, "fallback", m.fallback_since is not None)
 

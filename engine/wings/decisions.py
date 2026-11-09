@@ -149,7 +149,9 @@ class Withdraw:
         return 2.5
 
     def choose(self, ctx: Context) -> Choice:
-        return Choice(None, (), gather=True, withdraw=True)
+        # Every member withdraws on its own line (brain._apply_moves): no
+        # gather, nobody waits for the commander.
+        return Choice(None, (), withdraw=True)
 
 
 def _stock() -> list:

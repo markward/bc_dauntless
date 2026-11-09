@@ -45,10 +45,11 @@ reuse it.
 
 ## 3. Protect (#2)
 
-**Protectees.** These are the live members, plus any Quick Battle protect
-ship on our side, plus, for the player's own group's wing, **the player's ship**
-**(call)**. A protect ship is a ship in a Defeat
-"Ships Destroyed" list, i.e. km-listed for the *enemy* side. Generic hook:
+**Protectees.** These are the live members, plus the Quick Battle protect
+ships, plus, for the player's own group's wing, **the player's ship**
+**(call)**. A friendly wing protects every ship in a Defeat "Ships Destroyed"
+list, friendly or neutral (ruling 2026-11-09); an enemy wing protects the
+Victory-listed (hunt) ships on its own side. Generic hook:
 `Wing.protect_names: Callable[[], Iterable[str]]` (default empty); the Quick
 Battle consumer supplies the protect ships.
 
@@ -122,11 +123,12 @@ Otherwise the score is 0 **(call)**.
 
 **Effect.**
 
-- The commander runs `"withdraw"` → `WingMoveTo` to
-  `anchor_pos + unit(anchor_pos − enemy_centroid) × withdraw_step_gu` (dial,
-  default **300 GU**), recomputed each tick, so it keeps opening distance.
-- Every other member gets rejoin with gather. They follow the commander
-  (Phase A's `WingRejoin`).
+- Every non-player member runs `"withdraw"` → `WingMoveTo` to
+  `own_pos + unit(own_pos − enemy_centroid) × withdraw_step_gu` (dial,
+  default **300 GU**), recomputed each tick, so the whole wing keeps opening
+  distance. Nobody rejoins while withdrawing (ruling 2026-11-09: with
+  rejoin-with-gather the wingmates kept fighting until 100 GU from the
+  commander).
 - The target group is emptied, so nobody turns back to fight.
 
 **Ends** when any of these holds; stickiness keeps it from flapping:
@@ -148,7 +150,7 @@ The Phase A tree gains two branches above rejoin. The new order is:
 PriorityList
   1 ram       (Phase A)
   2 flee      (Phase A)
-  3 withdraw  -> AvoidObstacles(WingMoveTo)      [commander only]
+  3 withdraw  -> AvoidObstacles(WingMoveTo)      [every member]
   4 guard     -> AvoidObstacles(WingMoveTo)
   5 fallback  -> AvoidObstacles(WingMoveTo)
   6 rejoin    -> AvoidObstacles(WingRejoin)       (Phase A)
@@ -203,8 +205,8 @@ catch Phase B adding cost.
 - a 2-ship wing against 8 enemies at 0.3 hull withdraws, opens distance, and
   stops after `withdraw_max_s`.
 
-**Quick Battle:** a Defeat-protected friendly under fire is protected by its
-friendly wing; the player (in no wing) is a protectee of their own group's
+**Quick Battle:** a Defeat-protected friendly or neutral under fire is
+protected by the friendly wings, a Victory hunt target by its enemy wing; the player (in no wing) is a protectee of their own group's
 wing like any protect ship **(call)**, so your AI escorts cover you.
 
 ## 9. Acceptance criteria for Mark's play test

@@ -159,8 +159,13 @@ def test_shieldless_member_falls_back_behind_commander(monkeypatch):
 
 # ── (c) withdraw: a battered two-ship wing opens the range ──────────────────
 
-def test_battered_pair_withdraws_from_eight(monkeypatch):
+def _pair_vs_eight(monkeypatch, withdraw_on):
+    """The wing's mean distance (GU) from the enemy centroid at the start,
+    every 2 s, and after 20 s."""
     _load(monkeypatch, 16, 2)
+    from engine.wings import dials
+    if not withdraw_on:
+        monkeypatch.setitem(dials._dials, "withdraw_odds", 0.0)
     ships = _set_ships()
     fw = _wing("cs:friend:0")
     pair = [ships[n] for n in sorted(fw.members)]
@@ -184,15 +189,13 @@ def test_battered_pair_withdraws_from_eight(monkeypatch):
         for s in pair:
             s.GetHull().SetConditionPercentage(0.3)
 
-    held()
-    cmd = ships[fw.commander]
-    other = next(s for s in pair if s is not cmd)
-
-    def dists():
+    def mean_dist():
         cen = _centroid(enemies)
-        return (assess.dist(_pos(cmd), cen), assess.dist(_pos(other), cen))
+        live = [s for s in pair if not s.IsDead()]
+        return sum(assess.dist(_pos(s), cen) for s in live) / len(live)
 
-    d0 = dists()
+    held()
+    d0 = mean_dist()
     loop = GameLoop()
     withdrew, trace = False, []
     for t in range(20 * HZ):
@@ -200,14 +203,19 @@ def test_battered_pair_withdraws_from_eight(monkeypatch):
         loop.tick()
         withdrew = withdrew or fw.withdraw_since is not None
         if t % 120 == 0:
-            trace.append(tuple(round(d, 1) for d in dists()))
-    d1 = dists()
-    print("\n[withdraw] commander %.1f -> %.1f GU, wingmate %.1f -> %.1f GU; "
-          "every 2 s %s" % (d0[0], d1[0], d0[1], d1[1], trace))
-    assert withdrew
-    # The withdrawer (the commander): seen +59 to +62 GU over 20 s; with
-    # withdraw off (withdraw_odds 0) -14 to +1.4 GU. The wingmate is not
-    # bounded: it follows on rejoin-with-gather, which only flags beyond
-    # regroup_gather_gu (100 GU) of the commander, so it keeps fighting until
-    # then (seen 66 -> 42-48 GU at 20 s).
-    assert d1[0] > d0[0] + 30.0
+            trace.append(round(mean_dist(), 1))
+    return withdrew, d0, mean_dist(), trace
+
+
+def test_battered_pair_withdraws_from_eight(monkeypatch):
+    withdrew, d0, d1, trace = _pair_vs_eight(monkeypatch, True)
+    c_withdrew, c0, c1, c_trace = _pair_vs_eight(monkeypatch, False)
+    print("\n[withdraw] mean %.1f -> %.1f GU %s; control (withdraw off) "
+          "%.1f -> %.1f GU %s" % (d0, d1, trace, c0, c1, c_trace))
+    assert withdrew and not c_withdrew
+    # The wing's mean distance from the enemy centroid over 20 s. Bound:
+    # grows by >= 30 GU and ends beyond the control's (same layout, withdraw
+    # dialled off). Seen 65.8 -> 120.0-125.6 GU (+54 to +60); control
+    # 65.8 -> 69.3-79.8 GU (2026-11-09, 3 runs).
+    assert d1 >= d0 + 30.0
+    assert d1 > c1

@@ -274,13 +274,18 @@ def test_withdraw_enters_and_cools_down(now):
     assert wing.withdraw_since == 5.0
     assert _group(wing) == {}
     m1, m2 = roster.member("m1"), roster.member("m2")
-    assert _status("m1", "withdraw") == 1 and _status("m2", "withdraw") == 0
-    anchor = brain.view_of(ships["m1"]).pos
+    # Every member withdraws on its own line away from the enemy, and
+    # nobody rejoins (ruling 2026-11-09, fix round 1).
+    assert _status("m1", "withdraw") == 1 and _status("m2", "withdraw") == 1
+    assert _status("m1", "rejoin") == 0 and _status("m2", "rejoin") == 0
+    assert not m1.rejoin and not m2.rejoin
     cen = assess.centroid([brain.view_of(ships["e%d" % i])
                            for i in range(1, 9)])
-    want = rotate.fallback_point(anchor, cen, dials.get("withdraw_step_gu"))
-    assert m1.move_point == pytest.approx(want)
-    assert m2.move_point is None
+    step = dials.get("withdraw_step_gu")
+    for n, m in (("m1", m1), ("m2", m2)):
+        own = brain.view_of(ships[n]).pos
+        assert m.move_point == pytest.approx(
+            rotate.fallback_point(own, cen, step))
     # Enemies still close: not clear.
     now[0] = 6.0
     brain.tick_wing(wing)
@@ -293,6 +298,7 @@ def test_withdraw_enters_and_cools_down(now):
     assert wing.withdraw_cooldown_until == pytest.approx(
         now[0] + dials.get("withdraw_cooldown_s"))
     assert _status("m1", "withdraw") == 0 and m1.move_point is None
+    assert _status("m2", "withdraw") == 0 and m2.move_point is None
     # Inside the cooldown it does not come back.
     now[0] += 1.0
     brain.tick_wing(wing)
@@ -459,7 +465,9 @@ def test_withdraw_ends_when_the_player_takes_command(monkeypatch, now):
     wing.chain = ["m1"]
     brain.tick_wing(wing)
     assert wing.decision == "withdraw" and wing.withdraw_since == 0.0
-    assert _status("m1", "withdraw") == 1
+    assert _status("m1", "withdraw") == 1 and _status("m2", "withdraw") == 1
+    assert _status("p", "withdraw") == 0          # the player is never pushed
+    assert roster.member("p").move_point is None
     wing.chain = ["p", "m1"]                 # the player takes command
     now[0] = 2.0
     brain.tick_wing(wing)
@@ -468,8 +476,9 @@ def test_withdraw_ends_when_the_player_takes_command(monkeypatch, now):
     assert wing.withdraw_since is None and wing.clear_since is None
     assert wing.withdraw_cooldown_until == pytest.approx(
         2.0 + dials.get("withdraw_cooldown_s"))
-    assert _status("m1", "withdraw") == 0
+    assert _status("m1", "withdraw") == 0 and _status("m2", "withdraw") == 0
     assert roster.member("m1").move_point is None
+    assert roster.member("m2").move_point is None
 
 
 def test_withdraw_ends_when_odds_recover(now):
@@ -491,4 +500,4 @@ def test_withdraw_ends_when_odds_recover(now):
     assert wing.decision != "withdraw" and wing.withdraw_since is None
     assert wing.withdraw_cooldown_until == pytest.approx(
         3.0 + dials.get("withdraw_cooldown_s"))
-    assert _status("m1", "withdraw") == 0
+    assert _status("m1", "withdraw") == 0 and _status("m2", "withdraw") == 0
