@@ -15,7 +15,7 @@ z-index" — every one of these did; #star-map-panel sits at z-index 50. It is
 that the element's NEAREST POSITIONED ancestor must itself create a stacking
 context, so the value stays local to the layer it was reasoned about in.
 
-This is a RATCHET, not a clean bill of health. The six escapes below are
+This is a RATCHET, not a clean bill of health. The four escapes below are
 pre-existing and currently benign — each cluster escapes to one shared
 context where its relative order happens to be right. They are listed so a
 SEVENTH cannot appear unnoticed, and so fixing one is a deliberate act (the
@@ -37,16 +37,9 @@ _TAG = re.compile(r"<(/?)([a-zA-Z][\w-]*)([^>]*?)(/?)>")
 # same naming the failure message prints, with the reason it is tolerated.
 _KNOWN_ESCAPES = {
 
-    # Ship-display silhouette stack: shields (1-4), silhouette (2) and the
-    # damage overlay (5) are ordered against each other only.
-    ".ship-display__silhouette in .ship-display__silhouette-stack",
-    ".ship-display__damage-overlay in .ship-display__silhouette-stack",
-    ".shield--top.ship-display__shield in .ship-display__silhouette-stack",
-    ".shield--bottom.ship-display__shield in .ship-display__silhouette-stack",
-    ".shield--front.ship-display__shield in .ship-display__silhouette-stack",
-    ".shield--rear.ship-display__shield in .ship-display__silhouette-stack",
-    ".shield--left.ship-display__shield in .ship-display__silhouette-stack",
-    ".shield--right.ship-display__shield in .ship-display__silhouette-stack",
+    # (The ship-display silhouette stack's eight entries were never escapes:
+    # the stack is `isolation: isolate`, which _creates_stacking_context now
+    # models.)
 
     # Weapons display: three layers around one silhouette.
     ".weapons-display__silhouette in .weapons-display__pane",
@@ -161,8 +154,12 @@ def _name(el):
 
 
 def _creates_stacking_context(el):
-    """A positioned element with an integer z-index. Enough for these sheets:
-    none of them uses transform/filter/opacity to make a context."""
+    """A positioned element with an integer z-index, or any element with
+    `isolation: isolate` (both silhouette stacks use it, precisely so their
+    layers stay local). Transform/filter/opacity also make a context in CSS;
+    no container here relies on one, so they are not modelled."""
+    if (_prop(el, "isolation") or "").strip() == "isolate":
+        return True
     z = _prop(el, "z-index")
     pos = (_prop(el, "position") or "static")
     return bool(z and re.match(r"-?\d+$", z) and pos != "static")
