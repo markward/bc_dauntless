@@ -171,6 +171,13 @@ power; a subsystem only turns off via `TurnOff`/damage) and **draw-order
 priority** (first-registered consumer gets first claim on a starved
 conduit).
 
+> **Update 2026-11-09.** The sensor array now has first claim, ahead of
+> attach order (`subsystem_step.cc` `power_flow`). The original serves
+> sensors and torpedoes at the budget reset before anything else
+> (stbc-oracle, measured for PR #26), and once #26 paced the budget across
+> the interval, attach order gave an 81%-short Galaxy's sensors a steady 0
+> because its weapons attach first. The other consumers keep attach order.
+
 The manual's "auto-rebalance on warp-core damage" is not engine logic —
 it is `PowerDisplay.AdjustPower` (client-side SDK Python) and arrives for
 free with § 3.

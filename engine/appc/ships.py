@@ -168,10 +168,10 @@ class ShipClass(DamageableObject):
         self._power_subsystem = None
         self._repair_subsystem = None
         self._rigless_gen = 0
-        # Powered consumers in attach order — this list IS the BC draw priority
-        # (mirrors BC's linked list of powered subsystems).  PowerSubsystem's
-        # per-interval pump walks it in order so earlier-attached systems get
-        # first claim on the conduit budget.  Populated by _attach_subsystem.
+        # Powered consumers in attach order.  The power plant's pump
+        # (subsystem_step.cc power_flow) serves the sensor array first, then
+        # walks this list in order so earlier-attached systems get first
+        # claim on the conduit budget.  Populated by _attach_subsystem.
         self._powered_consumers: list = []
         # Cloaking device — None on most ships (only birdofprey, warbird,
         # vorcha, sunbuster, kessok*, matankeldon declare one). Created on
@@ -1272,8 +1272,8 @@ class ShipClass(DamageableObject):
         can climb the parent chain to reach the ShipClass at fire-time.
 
         Powered subsystems are also registered as power consumers in attach
-        order (the BC draw priority) so PowerSubsystem's per-interval pump can
-        walk them.  PowerSubsystem itself inherits ShipSubsystem (it generates
+        order (the draw priority after the sensor array, which the pump
+        serves first) so PowerSubsystem's per-interval pump can walk them.  PowerSubsystem itself inherits ShipSubsystem (it generates
         power, not consumes it) so it is never registered here.
 
         Every Set*System comes through here, so this is also where the
@@ -1283,7 +1283,9 @@ class ShipClass(DamageableObject):
         if s is not None and hasattr(s, "SetParentShip"):
             s.SetParentShip(self)
         if isinstance(s, PoweredSubsystem) and s not in self._powered_consumers:
-            self._powered_consumers.append(s)   # attach order = BC draw priority
+            # Attach order = draw priority, except that the pump serves the
+            # sensor array first (subsystem_step.cc power_flow).
+            self._powered_consumers.append(s)
             native_combat.push_field(self, "_powered_consumers")
         return s
 
