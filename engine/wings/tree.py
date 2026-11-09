@@ -90,6 +90,23 @@ def _build_fire_script(pShip, kw):
     return pFire
 
 
+def beam_range(pShip):
+    """The smallest GetMaxDamageDistance (GU) over the ship's phaser and
+    pulse banks -- the children of GetPhaserSystem() /
+    GetPulseWeaponSystem(), read from each bank's property -- or None.
+    Tractors and torpedoes are not beams that set a standoff."""
+    from engine.wings import attack
+    out = []
+    for pSystem in (pShip.GetPhaserSystem(), pShip.GetPulseWeaponSystem()):
+        if App.IsNull(pSystem):
+            continue
+        for i in range(pSystem.GetNumChildSubsystems()):
+            pProp = pSystem.GetChildSubsystem(i).GetProperty()
+            if pProp is not None:
+                out.append(pProp.GetMaxDamageDistance())
+    return attack.beam_range(out)
+
+
 def wrap_tree(pShip, pStockTree, wing, fire_keywords=None):
     """The wing tree for `pShip` with `pStockTree` as its last branch. The
     ship must already be a member of `wing` for its conditions to register."""
@@ -117,6 +134,7 @@ def wrap_tree(pShip, pStockTree, wing, fire_keywords=None):
     pFire = _build_fire_script(pShip, kw)
     if member is not None:
         member.fire_script = pFire
+        member.beam_range_gu = beam_range(pShip)
         # A fresh script (own-name target, hull mode): the brain's
         # change-only writes must see it as untargeted, or a re-wrapped
         # slot-holder keeps a script aimed at its own ship.

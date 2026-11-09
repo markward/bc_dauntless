@@ -122,3 +122,22 @@ def test_assign_slots_two_prev_on_one_index_keep_one():
     points = [(12, 0, 0), (-1, 0, 0)]
     got = attack.assign_slots(cands, points, {"a": 0, "b": 0})
     assert sorted(got.values()) == [0, 1] and got["a"] == 0
+
+
+# ── slot standoff from each holder's beam range (ruling 2026-11-09) ────────
+
+def test_beam_range_is_the_smallest_positive():
+    assert attack.beam_range([60.0, 40.0, 30.0]) == 30.0
+    assert attack.beam_range([0.0, 50.0]) == 50.0
+    assert attack.beam_range([]) is None
+    assert attack.beam_range([0.0]) is None
+
+
+def test_holder_standoff_is_four_fifths_of_range_clamped():
+    assert attack.holder_standoff(40.0, 25.0, 80.0) == pytest.approx(32.0)
+    assert attack.holder_standoff(60.0, 25.0, 80.0) == pytest.approx(48.0)
+    assert attack.holder_standoff(30.0, 25.0, 80.0) == pytest.approx(25.0)
+    assert attack.holder_standoff(10.0, 25.0, 80.0) == 25.0
+    assert attack.holder_standoff(200.0, 25.0, 80.0) == 80.0
+    assert attack.holder_standoff(None, 25.0, 80.0) == 80.0   # no beams
+    assert attack.holder_standoff(60.0, 90.0, 80.0) == 80.0   # the cap wins

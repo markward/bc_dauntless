@@ -140,8 +140,12 @@ Conditional[ConditionWing(ship, "attack")]
 **Slot geometry.** A slot is the target position + `R · dir · d`, with
 `R = target.GetWorldRotation()`:
 - `dir` is a unit vector in the target's body frame;
-- `d = attack_standoff_gu` (dial, default **120 GU**, inside the close band)
-  **(call)**.
+- `d` is the holder's own standoff (§11 ruling 4):
+  `clamp(0.8 × r, attack_standoff_min_gu, attack_standoff_gu)` (dials,
+  defaults **25** and **80 GU**), where `r` is the smallest
+  `GetMaxDamageDistance` over its phaser and pulse banks (tractors and
+  torpedoes excluded), cached on the member at wrap; no such banks →
+  `attack_standoff_gu`. Slots are assigned on points at `attack_standoff_gu`.
 
 **Who takes slots.**
 - Up to `attack_slots` members (dial, default **3**).
@@ -330,7 +334,8 @@ picks one.
 
 ## 10. Calls made without Mark
 
-1. Attack standoff 120 GU. Up to 3 slot-holders (disable uses all eligible
+1. Attack standoff 120 GU, superseded by §11 ruling 4 (each holder's own
+   beam range). Up to 3 slot-holders (disable uses all eligible
    members). The commander never takes a slot.
 2. The brain sets `ship.SetTarget` for slot-holders, so subsystem aim sticks.
 3. `focus_face` score 1.2 needs a face < 0.3 with the others ≥ 0.6. Slots sit
@@ -354,8 +359,10 @@ picks one.
    ruled at 120 s; measured, the weapons went down at 179–267 s (that
    scene, 3 seeds; 224–270 s with ruling 3's hold mode) and 235 s
    (behaviour test (b)), and at 120 s none did, so it defaults to
-   **300 s**. A target done by the cap, or by any end but
-   its death, is never disabled again.
+   **300 s** (accepted as the measured value). With ruling 4's standoff the
+   weapons go down at 133–160 s (Akira ×4 vs Warbird) and 166 s ((b)). A
+   target done by the cap, or by any end but its death, is never disabled
+   again.
 2. **Slot incumbency (I2).** A previous holder keeps its slot index while
    the primary and the slot set are unchanged; only vacated slots are
    filled nearest-first. Same-primary swaps over 120 s: 20–32 → 0–3.
@@ -364,13 +371,22 @@ picks one.
    its nose. Against a still target: on the slot and facing it 0.48 → 0.92
    of samples. Against a target that turns, its body-frame slot sweeps
    faster than an Akira flies, and the dwell barely changes.
-   ⚠️ **Open, needs a ruling.** Holding exposes the 120 GU standoff (§10
-   call 1): it is far past the beams' full-damage distance (Galor 30–40 GU,
-   Akira 60 GU). Driving through the slot used to bring holders in to
-   ~95 GU on average. Behaviour test (b) (Galor ×4 vs a still Warbird)
-   fails 3 of 3: weapons never down in 600 s; hull 0.95 at 240 s, where it
-   was 0.59 with the weapons down at 235 s. With hold mode, a 40 GU
-   standoff gets them down at 201 s; 60 GU does not within 300 s.
-4. **Minors.** Repeated disable directions are turned 25° per wrap; Regroup
+   Holding exposed the fixed 120 GU standoff (§10 call 1): far past the
+   beams' full-damage distance, so behaviour test (b) failed 3 of 3
+   (weapons never down in 600 s). Driving through the slot had hidden it,
+   bringing holders in to ~95 GU on average. Ruling 4 fixes the standoff.
+4. **Slot standoff from each holder's beam range.** Each holder's standoff
+   is `clamp(0.8 × r, attack_standoff_min_gu (25), attack_standoff_gu
+   (80))`, `r` its smallest phaser/pulse `GetMaxDamageDistance`: Akira
+   60 → 48 GU, Warbird 40 → 32 GU, Galor 30 (Forward Beam; its other beams
+   40) → 25 GU, Bird of Prey 100 → 80 GU. Test (b): weapons down at
+   166 s, hull below half at 192 s (3 seeds). Against a still target the
+   holders are on the slot and facing it on 0.72 of samples (0.54 at
+   120 GU, 0.17 before hold mode). ⚠️ **Open:** behaviour test (a)
+   (focus face against a Bird of Prey that turns and fights back) fails 2
+   of 3 seeds at the Akira's 48 GU: ≥ 2 holders on the weak side on 0.35 /
+   0.93 / 0.07 of samples (bound 0.7). The same scene at a fixed 80 GU gives
+   0.93 / 0.93 / 0.87, and at 120 GU 0.33 / 0.93 / 0.93.
+5. **Minors.** Repeated disable directions are turned 25° per wrap; Regroup
    does not count last tick's slot-holders or the held reserve as strays; a
    failed QB difficulty read is logged once (`DAUNTLESS_WINGS_LOG=1`).

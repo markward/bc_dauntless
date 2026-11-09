@@ -698,7 +698,7 @@ def _apply_attack(wing, members, enemies, choice, busy, ship_of):
         holders = {name: slots[j][0] for name, j in got.items()}
         wing.attack_prev = (choice.primary, dirs, got)
     primary = choice.primary
-    standoff = dials.get("attack_standoff_gu")
+    lo, hi = dials.get("attack_standoff_min_gu"), dials.get("attack_standoff_gu")
     for name, m in wing.members.items():
         if m.is_player:
             continue
@@ -708,7 +708,8 @@ def _apply_attack(wing, members, enemies, choice, busy, ship_of):
             m.attack_target = None
             _push(m, "attack", False)
             continue
-        slot = (primary, holders[name], standoff)
+        slot = (primary, holders[name],
+                attack.holder_standoff(m.beam_range_gu, lo, hi))
         if slot != m.slot:
             m.slot_hold = False           # WingMoveTo re-enters on arrival
         m.slot = slot

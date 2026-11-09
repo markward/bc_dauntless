@@ -32,6 +32,10 @@ class Member:
     # 20 GU of it, left past 40; the brain clears it when the slot changes.
     slot_hold: bool = False
     fire_script: object = None
+    # The smallest full-damage distance (GU) of its phaser and pulse banks,
+    # None with none: cached at wrap (fixed per hardpoint), it sets the
+    # member's slot standoff (attack.holder_standoff).
+    beam_range_gu: float | None = None
     attack_target: str | None = None
     weapons_first: bool = False
     reserve: bool = False

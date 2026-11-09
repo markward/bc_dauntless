@@ -63,6 +63,23 @@ def slot_point(target_pos, rot_cols, body_dir, standoff_gu):
                  * standoff_gu for k in range(3))
 
 
+def beam_range(distances):
+    """The smallest positive full-damage distance (GU) of a holder's beam
+    banks, or None with none."""
+    live = [float(d) for d in distances if d is not None and d > 0.0]
+    return min(live) if live else None
+
+
+def holder_standoff(range_gu, lo, hi):
+    """A slot-holder's standoff (ruling 2026-11-09): 0.8 x its beam range
+    clamped to [lo, hi] (the cap wins if lo > hi); hi with no beam range.
+    A fixed 120 GU sat far past every beam's full-damage distance (Galor
+    30-40 GU, Akira 60 GU), so holding a slot there did little damage."""
+    if range_gu is None:
+        return hi
+    return min(hi, max(lo, 0.8 * range_gu))
+
+
 def assign_slots(candidates, points, prev=None):
     """name -> slot index. `prev` (name -> index, last tick's) keeps each
     previous holder that is still a candidate on its index while that index

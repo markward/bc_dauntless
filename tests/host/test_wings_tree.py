@@ -491,3 +491,39 @@ def test_mod_select_target_subclass_is_not_stock(cls_name, monkeypatch):
     member = roster.member("m2")
     assert tree.discover_select_nodes(ships["m2"], member) is False
     assert member.select_nodes == []
+
+
+def test_wrap_tree_caches_the_beam_range():
+    """Ruling 2026-11-09: the smallest GetMaxDamageDistance over the
+    phaser and pulse banks, cached on the member at wrap (Akira phasers
+    60 GU); a ship with neither (no member record here) is skipped."""
+    wing, ships, _stock = _scene(2)
+    assert roster.member("m1").beam_range_gu == pytest.approx(60.0)
+
+
+@pytest.mark.parametrize("kind,want", [("Galor", 30.0), ("BirdOfPrey", 100.0),
+                                       ("Warbird", 40.0)])
+def test_beam_range_of_stock_ships(kind, want):
+    pSet = SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "WingTest")
+    assert tree.beam_range(_ship(pSet, kind, "x", (0.0, 0.0, 0.0))) == (
+        pytest.approx(want))
+
+
+def test_beam_range_skips_tractors():
+    pSet = SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "WingTest")
+    ship = _ship(pSet, "Akira", "x", (0.0, 0.0, 0.0))
+    assert ship.GetTractorBeamSystem() is not None   # 100 GU tractors
+    assert tree.beam_range(ship) == pytest.approx(60.0)
+
+
+def test_rewrap_recomputes_the_beam_range():
+    import AI.Compound.BasicAttack
+    wing, ships, _stock = _scene(2)
+    m = roster.member("m2")
+    m.beam_range_gu = 1.0
+    s = ships["m2"]
+    s.SetAI(tree.wrap_tree(s, AI.Compound.BasicAttack.CreateAI(
+        s, wing.target_group, Difficulty=0.5), wing))
+    assert m.beam_range_gu == pytest.approx(60.0)
