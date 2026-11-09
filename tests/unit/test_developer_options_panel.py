@@ -127,6 +127,7 @@ def test_render_payload_shape(panel):
     assert body["settings"] == {
         "god_mode": False, "double_weapons": False, "no_npc_shields": False,
         "disable_collisions": False, "sensor_occlusion": True,
+        "wing_ai": True, "wing_markers": False,
         "systems_damaged": False, "systems_disabled": False,
         "running_lights": True,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
@@ -219,6 +220,8 @@ def test_focusables_order(panel):
         ("ctrl", "disable_collisions"),
         ("ctrl", "sensor_occlusion"),
         ("ctrl", "quick_repair"),
+        ("ctrl", "wing_ai"),
+        ("ctrl", "wing_markers"),
     ]
 
 
