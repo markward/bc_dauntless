@@ -72,3 +72,36 @@ def test_timeout():
 
 def test_no_trigger_returns_none():
     assert R() is None
+
+
+# ── where: the hold point ───────────────────────────────────────────────────
+
+def _dist(a, b):
+    return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
+def test_hold_point_on_reserve_bearing_past_commander_range():
+    """reserve_gu farther from the centroid than the commander, on the
+    reserve's own bearing: a commander circling the enemy does not swing
+    the point round (Task 6: the anchor's bearing outran the ship)."""
+    p = reserve.hold_point((100.0, 0.0, 0.0), (0.0, -50.0, 0.0),
+                           (0.0, 0.0, 0.0), 150.0)
+    assert p == (0.0, -250.0, 0.0)
+    assert _dist(p, (0.0, 0.0, 0.0)) == 100.0 + 150.0
+
+
+def test_hold_point_behind_commander_when_on_its_line():
+    p = reserve.hold_point((-100.0, 0.0, 0.0), (-120.0, 0.0, 0.0),
+                           (0.0, 0.0, 0.0), 150.0)
+    assert p == (-250.0, 0.0, 0.0)
+
+
+def test_hold_point_no_enemy_ever_is_the_anchor():
+    assert reserve.hold_point((5.0, 6.0, 7.0), (0.0, 0.0, 0.0),
+                              (5.0, 6.0, 7.0), 150.0) == (5.0, 6.0, 7.0)
+
+
+def test_hold_point_reserve_on_the_centroid_uses_commander_bearing():
+    p = reserve.hold_point((-100.0, 0.0, 0.0), (0.0, 0.0, 0.0),
+                           (0.0, 0.0, 0.0), 150.0)
+    assert p == (-250.0, 0.0, 0.0)

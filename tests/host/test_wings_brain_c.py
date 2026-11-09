@@ -308,6 +308,25 @@ def test_disable_aims_at_weapons_and_survives_sync(monkeypatch, capsys):
     _no_fire_errors(capsys)
 
 
+def test_disable_ends_when_weapon_pools_are_gone(now):
+    """Weapons-first aim lands on each weapon SYSTEM's own condition (the
+    SDK's ChooseTargetSubsystem picks the non-targetable system itself),
+    which the system's IsDisabled() -- its children's aggregate -- never
+    reads. The FireScript stops choosing a system once its condition is 0,
+    and the weapon is silent, so the wing reads it as down and disable
+    ends (Task 6)."""
+    wing, ships = _disable_scene()
+    brain.tick_wing(wing)
+    assert wing.decision == "disable"
+    for s in _weapon_systems(ships["e1"]):
+        s.SetCondition(0.0)
+    assert not any(s.IsDisabled() for s in _weapon_systems(ships["e1"]))
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert wing.decision != "disable"
+    assert not any(roster.member(n).weapons_first for n in wing.members)
+
+
 # ── stand-down ─────────────────────────────────────────────────────────────
 
 def test_slot_target_death_clears_slots(now):

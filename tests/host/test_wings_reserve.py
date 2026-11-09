@@ -15,7 +15,7 @@ import loadspacehelper  # noqa: E402
 
 from engine.appc.sets import SetClass_Create  # noqa: E402
 from engine.wings import (  # noqa: E402
-    assess, brain, dials, roster, rotate, service, tree)
+    assess, brain, dials, reserve, roster, service, tree)
 
 
 @pytest.fixture(autouse=True)
@@ -138,8 +138,10 @@ def test_reserve_holds_behind_commander(now):
     anchor = _pos(ships["m1"])
     centroid = assess.centroid([brain.view_of(ships[e]) for e in ("e1", "e2")])
     gu = dials.get("reserve_gu")
+    # reserve_gu past the commander's range, on the reserve's own bearing
+    # (Task 6: the commander's bearing swept faster than the ship).
     assert m2.move_point == pytest.approx(
-        rotate.fallback_point(anchor, centroid, gu))
+        reserve.hold_point(anchor, _pos(ships["m2"]), centroid, gu))
     assert (assess.dist(m2.move_point, centroid)
             == pytest.approx(assess.dist(anchor, centroid) + gu))
     assert _status("m2", "reserve") == 1
@@ -361,8 +363,9 @@ def test_reserve_returns_after_withdraw_ends(now):
     assert _status("m2", "withdraw") == 0
     m2 = roster.member("m2")
     anchor = _pos(ships["m1"])
-    assert m2.move_point == pytest.approx(rotate.fallback_point(
-        anchor, wing.last_centroid, dials.get("reserve_gu")))
+    assert m2.move_point == pytest.approx(reserve.hold_point(
+        anchor, _pos(ships["m2"]), wing.last_centroid,
+        dials.get("reserve_gu")))
 
 
 def test_stand_down_without_a_reserve_still_spends_it(now):

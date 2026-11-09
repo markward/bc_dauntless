@@ -49,10 +49,15 @@ def _shield_fraction(ship) -> float:
 
 
 def _weapons_down(ship) -> bool:
-    """Every existing weapon system is disabled; no weapons at all counts."""
+    """Every existing weapon system is disabled or has no condition left;
+    no weapons at all counts. Weapons-first aim lands on the system's own
+    condition (stock ChooseTargetSubsystem picks the non-targetable system
+    itself), which its IsDisabled() -- the children's aggregate -- never
+    reads; at 0 the FireScript stops choosing it and the weapon is silent
+    (Phase C Task 6)."""
     systems = [s for s in (ship.GetTorpedoSystem(), ship.GetPhaserSystem(),
                            ship.GetPulseWeaponSystem()) if s is not None]
-    return all(s.IsDisabled() for s in systems)
+    return all(s.IsDisabled() or s.GetCondition() <= 0.0 for s in systems)
 
 
 def _cloaked(ship) -> bool:
@@ -486,14 +491,15 @@ def _commit_reserve(wing, why) -> None:
     log("%s reserve commits (%s)" % (wing.wing_id, why))
 
 
-def _reserve_point(wing, anchor, near):
-    """anchor + unit(anchor - enemy centroid) x reserve_gu: the centroid
-    in reach, else the last one seen, else the anchor itself."""
+def _reserve_point(wing, members, anchor, near):
+    """reserve_gu farther from the enemy centroid than the anchor, on the
+    reserve's own bearing (reserve.hold_point): the centroid in reach,
+    else the last one seen, else the anchor itself."""
     centroid = (assess.centroid(near) if near else
                 wing.last_centroid if wing.last_centroid is not None
                 else anchor.pos)
-    return rotate.fallback_point(anchor.pos, centroid,
-                                 dials.get("reserve_gu"))
+    return reserve.hold_point(anchor.pos, members[wing.reserve].pos,
+                              centroid, dials.get("reserve_gu"))
 
 
 def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
@@ -571,7 +577,7 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
 
     holding = held and not choice.withdraw
     if holding:
-        points[wing.reserve] = _reserve_point(wing, anchor, near)
+        points[wing.reserve] = _reserve_point(wing, members, anchor, near)
 
     wing.guarded = protectee.name if guards else None
     for name, m in wing.members.items():
