@@ -233,6 +233,10 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
     # it does.
     from engine.appc import effect_queue
     effect_queue.reset()
+    # That reset drops any queued LOOP_STOP and the doomed sets' ships went
+    # without StopFiring: no weapon loop may play on into the next mission.
+    from engine.audio import tg_sound
+    tg_sound.stop_sfx_loops()
     # The native mirror's pending frees and off-main pushes land before the
     # next mission builds a row (spec 2026-11-03 ruling R2).
     from engine.appc import native_combat

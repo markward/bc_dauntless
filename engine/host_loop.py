@@ -7548,6 +7548,12 @@ def _process_object_deletions() -> None:
                   if obj.__dict__.get("_delete_me", False)]
         for name in doomed:
             obj = objs.get(name)
+            # A flagged ship can still fire before this sweep removes it
+            # (after EndSimulation's loop sweep); once out of its set nothing
+            # stops its banks, so a loop started now would play forever.
+            if obj is not None:
+                from engine.appc import warp as _warp
+                _warp._silence_ship_weapons(obj)
             # Remove from the set (posts EXITED_SET) BEFORE broadcasting the
             # delete, matching DeleteObjectFromSet / ship_death._remove — an
             # object "leaves the set" before it "leaves the world" (M5,
@@ -7669,6 +7675,12 @@ def reset_mission_state(renderer=None) -> None:
     ai_native.reset_stats()
     # Effects held for the tick boundary name the old mission's ships.
     _effect_queue.reset()
+    # That reset drops any queued LOOP_STOP, and the old ships go without
+    # StopFiring: stop every looping SFX (a bank's phaser loop) so none
+    # plays on into the next mission. Hums and the bridge ambient are their
+    # owners' (tg_sound.owner_managed).
+    from engine.audio import tg_sound as _tg_sound
+    _tg_sound.stop_sfx_loops()
     from engine.appc import ship_death
     ship_death.reset()
     from engine.rocks import death as _rock_death

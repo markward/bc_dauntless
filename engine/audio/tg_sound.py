@@ -70,6 +70,7 @@ class _PlayingSound:
         if self._pid:
             from engine.audio import attached_sources
             attached_sources.detach(self)
+            _loops.pop(self._pid, None)
         self._pid = 0
 
     def SetPosition(self, x: float, y: float, z: float) -> None:
@@ -83,6 +84,48 @@ class _PlayingSound:
     def SetGain(self, gain: float) -> None:
         if _audio and self._pid:
             _audio.set_gain(self._pid, float(gain))
+
+
+# Every live looping SFX source TGSound.Play started, by playing id, so a
+# battle's end or a mission load can stop them all (`stop_sfx_loops`). A
+# weapon's sustained fire sound is held ONLY by its bank's `_loop_handle` and
+# stopped only by StopFiring: a ship deleted mid-fire (Quick Battle's End
+# Combat), or a LOOP_STOP dropped with the effect queue on a mission swap,
+# left it looping forever. Music is not SFX and is never tracked. A loop whose
+# owner reconciles it every update (engine hums, the bridge ambient) is
+# released with `owner_managed` and left to that owner.
+_loops: "dict[int, _PlayingSound]" = {}
+
+
+def _track_loop(handle: "_PlayingSound") -> None:
+    # Reap loops the backend ended without a Stop() (pool eviction), so the
+    # registry cannot grow across a long mission.
+    for pid, h in list(_loops.items()):
+        if not h.is_live():
+            del _loops[pid]
+    _loops[handle._pid] = handle
+
+
+def owner_managed(handle) -> None:
+    """Exempt `handle` from `stop_sfx_loops`: its owner starts, stops and
+    restarts it itself, and sweeping it would only restart it from sample 0
+    (an engine hum) or silence it for good (the bridge ambient, whose owner
+    only acts on a view change)."""
+    if handle is not None and handle._pid:
+        _loops.pop(handle._pid, None)
+
+
+def stop_sfx_loops() -> int:
+    """Stop every live looping SFX source not owned by a managing owner.
+    Returns how many were stopped. Called when a Quick Battle ends and when a
+    mission loads, where no weapon loop may carry over."""
+    stopped = 0
+    for h in list(_loops.values()):
+        if h.is_live():
+            h.Stop()
+            stopped += 1
+    _loops.clear()
+    return stopped
 
 
 class TGSound:
@@ -269,6 +312,8 @@ class TGSound:
             return None
         handle = _PlayingSound(pid)
         self._active.append(handle)
+        if self._looping and self._category_tag != "Music":
+            _track_loop(handle)
         if self._positional or self._node is not None or position is not None:
             _audio.set_min_max_distance(pid, self._min_dist, self._max_dist)
         if self._node is not None:
@@ -559,6 +604,7 @@ def init_audio_for_tests() -> None:
     global g_kSoundManager
     g_kSoundManager = TGSoundManager._instance
     _regions.clear()
+    _loops.clear()
     # Keep App.g_kSoundManager in sync — it was bound at import time via
     # `from engine.audio.tg_sound import g_kSoundManager` so we must push
     # the new reference into the App module's namespace directly.
@@ -575,6 +621,7 @@ def shutdown_audio_for_tests() -> None:
     global g_kSoundManager
     g_kSoundManager = None
     _regions.clear()
+    _loops.clear()
     # Mirror init_audio_for_tests: push None into App's namespace so the
     # module-level binding doesn't silently keep a stale manager alive.
     if "App" in sys.modules:
