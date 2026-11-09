@@ -127,8 +127,7 @@ Exactly programme §4. Implementation notes:
 
 ## 6. The brain tick
 
-`service.tick(dt)` is called from `GameLoop.tick` right after `gl.ai`'s
-siblings `gl.warp_states`, in its own profiler scope **`gl.wings`**, and runs
+`service.tick(dt)` is called from `GameLoop.tick` next to `gl.warp_states` (after `gl.ai`), in its own profiler scope **`gl.wings`**, and runs
 each armed wing whose game-time accumulator has passed `brain_period_s`
 (default 1.0). Wings are **phase-staggered** (wing *i* starts at
 `i / n_wings · period`) so 16 wings don't all run on the same tick **(call)**.
