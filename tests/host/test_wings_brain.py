@@ -32,13 +32,14 @@ def _ship(pSet, kind, name, xyz):
     return s
 
 
-def _scene(enemy_xyz, extra_enemy_names=()):
-    """Two Akira members (m1 at the origin, m2 20 GU off) and Bird of Prey
-    enemies at the given offsets, named e1, e2, ..."""
+def _scene(enemy_xyz, extra_enemy_names=(), n_members=2):
+    """Akira members (m1 at the origin, m2 20 GU off, m3 40 GU off) and Bird
+    of Prey enemies at the given offsets, named e1, e2, ..."""
     pSet = SetClass_Create()
     App.g_kSetManager.AddSet(pSet, "WingTest")
-    ships = {"m1": _ship(pSet, "Akira", "m1", (0.0, 0.0, 0.0)),
-             "m2": _ship(pSet, "Akira", "m2", (20.0, 0.0, 0.0))}
+    ships = {"m%d" % i: _ship(pSet, "Akira", "m%d" % i,
+                              (20.0 * (i - 1), 0.0, 0.0))
+             for i in range(1, n_members + 1)}
     group = App.ObjectGroup()
     for i, xyz in enumerate(enemy_xyz, 1):
         name = "e%d" % i
@@ -47,10 +48,21 @@ def _scene(enemy_xyz, extra_enemy_names=()):
     for name in extra_enemy_names:
         group.AddName(name)
     wing = roster.create_wing("blue", group)
-    roster.add_member(wing, "m1")
-    roster.add_member(wing, "m2")
+    for i in range(1, n_members + 1):
+        roster.add_member(wing, "m%d" % i)
     brain.arm_chain(wing)
     return wing, ships
+
+
+def _move(ship, to_set_name):
+    """Take the ship out of its set and put it in another (a warp)."""
+    name = ship.GetName()
+    ship.GetContainingSet().RemoveObjectFromSet(name)
+    other = App.g_kSetManager.GetSet(to_set_name)
+    if other is None:
+        other = SetClass_Create()
+        App.g_kSetManager.AddSet(other, to_set_name)
+    other.AddObjectToSet(ship, name)
 
 
 def _group(wing):
@@ -294,3 +306,60 @@ def test_log_only_when_env_set(monkeypatch, capsys):
     brain.log("loud")
     err = capsys.readouterr().err
     assert "quiet" not in err and "[wings] loud" in err
+
+
+# ── sets: the wing lives where most of its members are ─────────────────────
+
+def test_commander_in_another_set_hands_over_and_reclaims():
+    wing, ships = _scene([(100.0, 0.0, 0.0), (900.0, 0.0, 0.0)], n_members=3)
+    wing.chain = ["m1", "m2"]
+    brain.tick_wing(wing)
+    assert wing.commander == "m1"
+    _move(ships["m1"], "Elsewhere")
+    brain.tick_wing(wing)
+    assert wing.commander == "m2" and wing.leaderless is False
+    assert "e1" in wing.target_group.GetNameTuple()
+    _move(ships["m1"], "WingTest")
+    brain.tick_wing(wing)
+    assert wing.commander == "m1"
+
+
+def test_whole_chain_in_another_set_leaves_the_wing_alone():
+    wing, ships = _scene([(100.0, 0.0, 0.0), (150.0, 0.0, 0.0)], n_members=3)
+    rejoin = App.TGCondition()
+    roster.member("m2").conditions["rejoin"] = rejoin
+    brain.tick_wing(wing)
+    before = _group(wing)
+    assert wing.chain == ["m1"] and before
+    _move(ships["m1"], "Elsewhere")             # e.g. the player warped
+    ships["e1"].SetTranslateXYZ(900.0, 0.0, 0.0)   # a rewrite would show
+    ships["m2"].SetTranslateXYZ(-900.0, 0.0, 0.0)  # a push would show
+    brain.tick_wing(wing)
+    assert _group(wing) == before
+    assert wing.leaderless is False and rejoin.GetStatus() == 0
+
+
+def test_ram_roll_with_no_target_flees():
+    wing, ships = _scene([(100.0, 0.0, 0.0)])
+    ram, flee = App.TGCondition(), App.TGCondition()
+    m2 = roster.member("m2")
+    m2.conditions.update({"ram": ram, "flee": flee})
+    ships["m2"].GetHull().SetConditionPercentage(0.2)
+    ships["m2"].SetTarget(None)
+    ships["m1"].SetDead()
+    dials._dials["ram_chance"] = 1.0
+    brain.tick_wing(wing)
+    assert m2.desperate == "flee"
+    assert flee.GetStatus() == 1 and ram.GetStatus() == 0
+
+
+def test_going_leaderless_forces_select_update(monkeypatch):
+    wing, ships = _scene([(100.0, 0.0, 0.0)])
+    brain.tick_wing(wing)                       # primary settles first
+    node = _select_node(ships["m2"], wing.target_group)
+    roster.member("m2").select_nodes.append(node)
+    calls = []
+    monkeypatch.setattr(node, "ForceUpdate", lambda: calls.append(1))
+    ships["m1"].SetDead()
+    brain.tick_wing(wing)
+    assert wing.leaderless is True and calls == [1]

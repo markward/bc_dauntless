@@ -3,9 +3,10 @@ condition statuses out (spec 2026-11-09-wing-leaders-phase-a-design.md
 §5-§7, §9, §10).
 
 The decision logic is pure (assess, chain, decisions, plans); this module is
-the only one that reads ships. Ships are found by name in the wing's set: the
-anchor's containing set, else the first live member's. A name that resolves
-to nothing, or to a dead / dying ship, is skipped, never raised on.
+the only one that reads ships. Ships are found by name in the wing's home
+set: the set holding most of its live non-player members, else the player's.
+A name that resolves to nothing, or to a dead / dying ship, is skipped, never
+raised on.
 """
 import os
 import sys
@@ -73,15 +74,29 @@ def arm_chain(wing) -> None:
 
 
 def _home_set(wing):
-    """The anchor's set, else the first live member's."""
-    for name in [wing.commander, *wing.chain, *wing.members]:
-        if name is None:
+    """The set holding the most live non-player members (ties: the set of
+    the first such member in group order), else the player's set, else
+    None. Recomputed every tick, so a warp moves the wing with its body."""
+    counts, first = {}, []
+    for name, m in wing.members.items():
+        if m.is_player:
             continue
         ship = _find_anywhere(name)
-        if _alive(ship):
-            pset = ship.GetContainingSet()
-            if pset is not None:
-                return pset
+        pset = ship.GetContainingSet() if _alive(ship) else None
+        if pset is None:
+            continue
+        key = id(pset)
+        if key not in counts:
+            counts[key] = 0
+            first.append(pset)
+        counts[key] += 1
+    if first:
+        return max(first, key=lambda p: counts[id(p)])   # max keeps first
+    for name, m in wing.members.items():
+        if m.is_player:
+            ship = _find_anywhere(name)
+            if _alive(ship):
+                return ship.GetContainingSet()
     return None
 
 
@@ -93,10 +108,11 @@ def _ensure_select_nodes(wing, ship_of) -> None:
 def tick_wing(wing) -> None:
     import App
     home = _home_set(wing)
+    if home is None:
+        return
 
     def ship_of(name):
-        return App.ShipClass_GetObject(home, name) if home is not None \
-            else None
+        return App.ShipClass_GetObject(home, name)
 
     _ensure_select_nodes(wing, ship_of)
 
@@ -116,10 +132,14 @@ def tick_wing(wing) -> None:
             enemies.append(v)
     km = wing.km_priorities()
 
-    # 2. Chain.
+    # 2. Chain: the first entry alive AND in the home set commands.
     if not wing.leaderless:
         commander = chain.current_commander(wing.chain,
                                             lambda n: n in members)
+        if commander is None and any(_alive(_find_anywhere(n))
+                                     for n in wing.chain):
+            # Command is alive but away (a warp): leave the wing untouched.
+            return
         if commander != wing.commander:
             if commander is not None:
                 log("%s handover %s -> %s"
@@ -215,6 +235,7 @@ def _go_leaderless(wing) -> None:
     for m in wing.members.values():
         for node in m.select_nodes:
             node.GetPreprocessingInstance().SetRelativeImportance()
+            node.ForceUpdate()
         m.rejoin = False
         _push(m, "rejoin", False)
 
@@ -224,12 +245,13 @@ def _desperation(wing, members, ship_of) -> None:
     already = {n: m.desperate for n, m in wing.members.items()}
     for name, kind in plans.desperation(views, already, wing.rng).items():
         m = wing.members[name]
+        target = ship_of(name).GetTarget()
+        if kind == "ram" and target is None:
+            kind = "flee"            # nothing to ram
         m.desperate = kind
         log("%s %s %s" % (wing.wing_id, name, kind))
         if kind == "ram" and m.ram_script is not None:
-            target = ship_of(name).GetTarget()
-            if target is not None:
-                m.ram_script.SetTargetObjectName(target.GetName())
+            m.ram_script.SetTargetObjectName(target.GetName())
         _push(m, kind, True)
 
 
