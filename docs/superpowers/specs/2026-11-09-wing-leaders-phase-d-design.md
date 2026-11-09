@@ -170,8 +170,12 @@ it once the hold ends.
   - our anchor is within `leash_gu` of the hold point, or an enemy is within
     `engage_gu` of our anchor (we're in; swarm takes it);
   - the ally is no longer engaged.
-- **Latch.** As with reinforce, "not engaged" is not re-checked while flank
-  is current. The **arrival** end condition covers that case.
+- **Latch.** While flank is current and holds its ally (`flank_ally`), the
+  entry checks on the ally (not in trouble, within `reinforce_range_gu`)
+  are not re-checked, so an ally slipping into trouble mid-swing does not
+  flip us to reinforce. Both end conditions still apply: flank ends the
+  moment an enemy is within `engage_gu` of our anchor, latched or not
+  (§12). Without `flank_ally` (after a stand-down) the entry gates apply.
 
 ## 6. Bait and feint (#12)
 
@@ -258,11 +262,13 @@ like withdraw.
 **Behaviour (headless, generous bounds, 3 seeds, with controls).**
 - (a) **Reinforce:** wing B, losing 2:5 against an enemy cluster 600 GU from
   idle wing A. A's anchor ends within leash of B's within 60 s. The control,
-  with reinforce unregistered, doesn't move A.
+  with reinforce unregistered, doesn't move A to B: a decoy enemy on A's
+  far side gives its nearest-enemy fallback somewhere else to go (§12).
 - (b) **Flank:** A arrives on the flank: the angle at C between A's and B's
   anchors is ≥ 60°. In the control, A simply intercepts.
-- (c) **Feint:** with F idle 500 GU away, the chasing enemy's centroid ends
-  closer to F's anchor than in the control (feint unregistered).
+- (c) **Feint:** with F idle 500 GU away (holding station, §12), the chasing
+  enemy's centroid ends closer to F's anchor than in the control (feint
+  unregistered).
 
 ## 10. Acceptance criteria for Mark's play test
 
@@ -303,3 +309,52 @@ like withdraw.
    included, in a 30 GU ring formation.
 7. The ally receiving a feint is not told; its own brain fights when the
    enemy arrives.
+
+## 12. Build rulings
+
+Rulings made while building Phase D (2026-11-09), none of them Mark's:
+
+1. **Stickiness damps only BASELINE switches.** The stickiness bonus
+   applies only among the baseline decisions (`swarm_weakest`,
+   `swarm_commander`, `regroup`). A non-baseline decision beats a current
+   baseline decision on raw score alone (strictly above the best raw
+   baseline score). This applies to Phase C's decisions too (focus_face,
+   envelop, disable): a sticky swarm at 1.0 + 0.25 otherwise shut out
+   every situational decision below 1.25. A current non-baseline decision
+   keeps the old rule. Cost if wrong: more decision changes live.
+2. **Arrival hysteresis** for reinforce and flank: a wing enters only when
+   the ally's anchor (reinforce) or the flank point (flank) is beyond
+   `leash_gu + leash_slack_gu`, and the running decision ends at
+   `leash_gu`. Without it they flapped at the leash.
+3. **Flank ends when we're engaged, even while latched** (§5). Its latch
+   needs `flank_ally`: a flank without one re-runs the entry gates.
+4. **Screen requires the weak ally within `reinforce_range_gu`** of our
+   anchor, the same range as reinforce and flank (§5 left it open).
+5. **Reinforce scores 0 with no primary**: an ally none of our enemies is
+   within `engage_gu` of gives no far primary, so it is no reinforce, on
+   entry and while latched.
+6. **Stand-down clears the decision** (and `decision_since`), so a wing
+   whose command goes away and comes back re-gates from scratch; one clock
+   for the reinforce cap.
+7. **The disable latch keys on `disable_target` alone** (Phase C): the
+   brain keeps it only while a disable runs, and across a command-away.
+8. **The hold ring faces the ally's enemy centroid** (screen, flank), else
+   the centroid of the enemies near us, else all enemies.
+9. **A player commander leaves the ring centre empty**: the AI members take
+   ring points 1..n and the player gets no move point.
+10. **Behaviour scenes** (§9; `tests/host/test_wings_phase_d_behaviour.py`).
+    An idle wing does not stay idle: with nothing in reach its target group
+    holds the nearest enemy at 3.0 (Phase A §9) and its commander's stock
+    intercept goes for it, in-system warp included. So:
+    - (a) without a decoy the control's A reached B's fight anyway (within
+      130 GU of B, seed 1); the scene adds a stationary Warbird on A's far
+      side, nearer A than any of B's enemies;
+    - (c) with its own AI, F flanks W's fight (W is engaged and not in
+      trouble) and comes in in both arms, so where the enemy ends relative
+      to F's anchor hides the lure (40 s: 265-268 GU with the feint,
+      276-278 without); F's ships hold station (the brain still leads F).
+    Feint and flank overlap in that case: the feint does not close the trap
+    sooner when the ally flanks anyway. A live-check item for §10.
+    - (b) the flank is slow: the hold branch flies at impulse, so A reached
+      engage range of the fight at 62-73 s, where the control's intercept
+      (in-system warp) arrived at 9-10 s. Also a live-check item.

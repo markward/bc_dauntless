@@ -445,3 +445,6 @@ guard or a faller that waits about a second before moving is this cadence.
 
 Phase C: an attack slot's point tracks the live target pose every 0.2 s in
 `WingMoveTo`; which member holds which slot changes at the brain's 1 Hz.
+
+Phase D: a wing reads its allies' statuses as published at their last brain
+tick, so an ally's status is up to one brain period (1 s) old.
