@@ -20,6 +20,8 @@ THE SHIPPED LAYOUT, and why it is shaped this way:
         licenses/                   each bundled component's license text
         python312.dll               linked by the exe, so it must sit beside it
         libcef.dll, *.pak, locales/ the CEF runtime, likewise
+        msvcp140.dll, vcruntime140* the Microsoft C++ runtime, likewise
+                                    (from Visual Studio: stage_msvc_runtime)
         _dauntless_host*.pyd
         python/Lib, python/DLLs     the bundled stdlib (PYTHONHOME)
         engine/, *.py, tools/       the game's Python
@@ -266,10 +268,12 @@ def stage_python(bin_dir: Path) -> None:
             f"[package] no {dll.name} at {home}. The bundled runtime must be a "
             "normal CPython install (sys.base_prefix); nothing to copy from.")
     shutil.copy2(dll, bin_dir / dll.name)
-    for extra in ("python3.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
-        src = home / extra
-        if src.is_file():
-            shutil.copy2(src, bin_dir / extra)
+    # NOT vcruntime140*.dll, although Python's install has them: the C++
+    # runtime comes from one place, Visual Studio's redist folder
+    # (stage_msvc_runtime), which also has the msvcp140.dll Python lacks.
+    src = home / "python3.dll"
+    if src.is_file():
+        shutil.copy2(src, bin_dir / src.name)
 
     lib_src = home / "Lib"
     lib_dest = stdlib_dir / "Lib"
@@ -286,6 +290,123 @@ def stage_python(bin_dir: Path) -> None:
             if item.is_file() and not item.name.lower().startswith(
                     _DLL_SKIP_PREFIXES):
                 shutil.copy2(item, dlls_dest / item.name)
+
+
+# The Microsoft C++ runtime. The engine is built against the SHARED runtime
+# (/MD, native/CMakeLists.txt -- _dauntless_host is a Python extension, so it
+# must share the CRT with python3xx.dll), which means the exe and the .pyd
+# load msvcp140.dll and vcruntime140*.dll when they start. Windows itself
+# does not have them; the Visual C++ Redistributable installs them, and plenty
+# of PCs never ran it. 0.2.1 shipped only the vcruntime pair it found in the
+# Python install, and on such a PC the exe would not start: "MSVCP140.dll was
+# not found". So the whole runtime folder ships beside the exe ("app-local"
+# deployment, which Microsoft supports), and staging refuses without it.
+#
+# The folder lives in Visual Studio's install, one per toolset version:
+#     <VS>/VC/Redist/MSVC/<version>/x64/Microsoft.VC143.CRT/
+# The newest installed version is used: the runtime is backward compatible,
+# and it must be at least as new as the toolset that built the exe.
+_MSVC_ARCH = "x64"
+# Present in every toolset's runtime folder; a folder without them is not one.
+_MSVC_REQUIRED = ("msvcp140.dll", "vcruntime140.dll")
+
+
+def _version_key(name: str):
+    """(14, 38, 33135) for "14.38.33135"; None for a non-version folder."""
+    try:
+        return tuple(int(part) for part in name.split("."))
+    except ValueError:
+        return None
+
+
+def _crt_in(version_dir: Path) -> Path | None:
+    """The newest Microsoft.VC<nnn>.CRT folder in one toolset version."""
+    arch = version_dir / _MSVC_ARCH
+    if not arch.is_dir():
+        return None
+    found = []
+    for item in arch.iterdir():
+        name = item.name
+        if (item.is_dir() and name.startswith("Microsoft.VC")
+                and name.endswith(".CRT")):
+            digits = name[len("Microsoft.VC"):-len(".CRT")]
+            if digits.isdigit():
+                found.append((int(digits), item))
+    return max(found)[1] if found else None
+
+
+def _newest_crt(msvc_dir: Path) -> Path | None:
+    """The CRT folder of the newest toolset version under VC/Redist/MSVC."""
+    if not msvc_dir.is_dir():
+        return None
+    versions = []
+    for item in msvc_dir.iterdir():
+        key = _version_key(item.name)
+        crt = _crt_in(item) if key and item.is_dir() else None
+        if crt is not None:
+            versions.append((key, crt))
+    return max(versions)[1] if versions else None
+
+
+def _vs_install() -> Path | None:
+    """The newest Visual Studio install with the C++ tools, from vswhere."""
+    vswhere = (Path(os.environ.get("ProgramFiles(x86)",
+                                   r"C:\Program Files (x86)"))
+               / "Microsoft Visual Studio" / "Installer" / "vswhere.exe")
+    if not vswhere.is_file():
+        return None
+    out = subprocess.run(
+        [str(vswhere), "-latest", "-products", "*", "-requires",
+         "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+         "-property", "installationPath"],
+        capture_output=True, text=True).stdout.strip()
+    return Path(out.splitlines()[0]) if out else None
+
+
+def find_msvc_crt(env=os.environ, vs_install=_vs_install) -> Path:
+    """The Visual C++ runtime folder to ship, or SystemExit.
+
+    A Developer Prompt names its toolset's redist folder in VCToolsRedistDir;
+    otherwise vswhere finds the Visual Studio install and its newest toolset.
+    """
+    prompt = env.get("VCToolsRedistDir", "").rstrip("\\/")
+    if prompt:
+        crt = _crt_in(Path(prompt))
+        if crt is not None:
+            return crt
+    install = vs_install()
+    if install is not None:
+        crt = _newest_crt(Path(install) / "VC" / "Redist" / "MSVC")
+        if crt is not None:
+            return crt
+    raise SystemExit(
+        "[package] no Visual C++ runtime to ship: looked for "
+        f"<Visual Studio>/VC/Redist/MSVC/<version>/{_MSVC_ARCH}/"
+        "Microsoft.VC*.CRT via VCToolsRedistDir and vswhere. Install Visual "
+        "Studio's \"Desktop development with C++\" workload, or run this from "
+        "a Developer Prompt. Without it the exe will not start on a PC that "
+        "lacks the Visual C++ Redistributable.")
+
+
+def stage_msvc_runtime(bin_dir: Path, crt: Path) -> list:
+    """Copy every DLL of the runtime folder beside the exe; return the names.
+
+    The whole folder, not a hand-picked list: it is ~1.5 MB, and a DLL left
+    out is a start-up failure on exactly the PCs we cannot test on. Copied
+    over anything already there (Python's install brings its own, possibly
+    older, vcruntime140.dll).
+    """
+    dlls = sorted(p for p in crt.iterdir()
+                  if p.is_file() and p.suffix.lower() == ".dll")
+    names = [p.name for p in dlls]
+    missing = [n for n in _MSVC_REQUIRED if n not in {x.lower() for x in names}]
+    if missing:
+        raise SystemExit(
+            f"[package] {crt} is not a Visual C++ runtime folder: no "
+            f"{', '.join(missing)}")
+    for src in dlls:
+        shutil.copy2(src, bin_dir / src.name)
+    return names
 
 
 def _pe_subsystem_offset(data: bytearray) -> int:
@@ -359,6 +480,8 @@ def stage(dest: Path) -> Path:
         raise SystemExit(
             "[package] build/dauntless.exe is missing -- build first:\n"
             "  cmake --build build -j")
+    # Found before anything is copied, so a machine without it fails fast.
+    msvc_crt = find_msvc_crt()
 
     # 1. The binary, as a GUI-subsystem copy.
     exe_dest = bin_dir / f"{APP_NAME}.exe"
@@ -388,6 +511,10 @@ def stage(dest: Path) -> Path:
     # 3. The bundled interpreter.
     stage_python(bin_dir)
     _say(f"python  -> python/ (stdlib from {python_home()})")
+
+    # 3b. The Microsoft C++ runtime, after everything else so its copies win.
+    crt_dlls = stage_msvc_runtime(bin_dir, msvc_crt)
+    _say(f"msvc    -> {len(crt_dlls)} runtime libraries from {msvc_crt}")
 
     # 4. The game's Python and the project-authored assets.
     stage_game_python(app)
