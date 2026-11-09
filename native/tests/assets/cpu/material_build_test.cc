@@ -386,3 +386,86 @@ TEST(MaterialBuild, UnresolvedMultiTexStageLeavesAnEmptyStageEmpty) {
     EXPECT_LT(m.stages[static_cast<std::size_t>(S::Glow)].texture_index, 0);
     EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Glow)].uv_set, 0);
 }
+
+// --- Material emissive vs a _glow map's alpha mask --------------------------
+//
+// BC's hull self-illumination lives in the ALPHA of the `_glow` texture. When a
+// shape's base image is a `_glow` map that has a real alpha channel, that mask
+// is the whole story: the NiMaterialProperty emissive must not also light the
+// surface. Community mods (the USS Valhalla: emissive 0.346 on its only
+// material) otherwise glow uniformly over the whole hull. The material value is
+// used only when the image is not a `_glow` map or the map has no alpha.
+
+namespace {
+
+nif::NiMaterialProperty emissive_material() {
+    nif::NiMaterialProperty mat;
+    mat.emissive = {0.346f, 0.346f, 0.346f};
+    return mat;
+}
+
+}  // namespace
+
+TEST(MaterialBuild, GlowMapWithAlphaIgnoresMaterialEmissive) {
+    auto mat = emissive_material();
+    nif::NiTextureProperty tex;
+    tex.image_link = 13;
+    std::unordered_map<std::uint32_t, int> img_to_tex = {{13, 0}};
+    std::unordered_set<std::uint32_t> glow_links = {13};
+    std::unordered_set<std::uint32_t> glow_alpha_links = {13};
+
+    auto in = basic_inputs();
+    in.material = &mat;
+    in.texture = &tex;
+    in.image_to_texture = &img_to_tex;
+    in.glow_image_links = &glow_links;
+    in.glow_alpha_image_links = &glow_alpha_links;
+
+    auto m = assets::detail::build_material(in);
+    EXPECT_FLOAT_EQ(m.emissive.x, 0.0f);
+    EXPECT_FLOAT_EQ(m.emissive.y, 0.0f);
+    EXPECT_FLOAT_EQ(m.emissive.z, 0.0f);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Glow)].texture_index, 0)
+        << "the glow map itself must still bind";
+}
+
+TEST(MaterialBuild, GlowMapWithoutAlphaKeepsMaterialEmissive) {
+    auto mat = emissive_material();
+    nif::NiTextureProperty tex;
+    tex.image_link = 13;
+    std::unordered_map<std::uint32_t, int> img_to_tex = {{13, 0}};
+    std::unordered_set<std::uint32_t> glow_links = {13};
+    std::unordered_set<std::uint32_t> glow_alpha_links = {};  // RGB-only map
+
+    auto in = basic_inputs();
+    in.material = &mat;
+    in.texture = &tex;
+    in.image_to_texture = &img_to_tex;
+    in.glow_image_links = &glow_links;
+    in.glow_alpha_image_links = &glow_alpha_links;
+
+    auto m = assets::detail::build_material(in);
+    EXPECT_FLOAT_EQ(m.emissive.x, 0.346f);
+}
+
+TEST(MaterialBuild, NonGlowImageKeepsMaterialEmissive) {
+    // An alpha channel on a texture that is NOT a _glow map (e.g. a cutout)
+    // is not a self-illumination mask.
+    auto mat = emissive_material();
+    nif::NiTextureProperty tex;
+    tex.image_link = 13;
+    std::unordered_map<std::uint32_t, int> img_to_tex = {{13, 0}};
+    std::unordered_set<std::uint32_t> glow_links = {};
+    std::unordered_set<std::uint32_t> glow_alpha_links = {13};
+
+    auto in = basic_inputs();
+    in.material = &mat;
+    in.texture = &tex;
+    in.image_to_texture = &img_to_tex;
+    in.glow_image_links = &glow_links;
+    in.glow_alpha_image_links = &glow_alpha_links;
+
+    auto m = assets::detail::build_material(in);
+    EXPECT_FLOAT_EQ(m.emissive.x, 0.346f);
+}

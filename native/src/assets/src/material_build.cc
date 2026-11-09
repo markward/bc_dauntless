@@ -87,6 +87,7 @@ void apply_texture_property(
     const std::unordered_map<std::uint32_t, std::uint32_t>* flip_image_override_for_prop,
     const std::unordered_map<std::uint32_t, int>* image_to_texture,
     const std::unordered_set<std::uint32_t>* glow_image_links,
+    const std::unordered_set<std::uint32_t>* glow_alpha_image_links,
     const std::unordered_set<std::uint32_t>* specular_image_links,
     const std::unordered_map<std::uint32_t, int>* sibling_specular_for_image,
     const std::unordered_set<std::uint32_t>* normal_image_links,
@@ -155,6 +156,19 @@ void apply_texture_property(
         auto& glow = m.stages[static_cast<std::size_t>(Material::StageSlot::Glow)];
         glow.texture_index = tex_idx;
         glow.apply_mode    = 2;
+        // A `_glow` map WITH an alpha channel is the surface's whole
+        // self-illumination: the alpha says exactly where it glows. The
+        // NiMaterialProperty emissive is then ignored, because the shader adds
+        // it uniformly (emissive x base) over the entire surface. Community
+        // ship mods carry a hull-wide material emissive (the USS Valhalla's
+        // only material is 0.346 grey) that otherwise lights the whole hull,
+        // shadow side included. Only a glow map without alpha, or a non-glow
+        // image, keeps the material value. apply_material_property has already
+        // run, so this overrides it.
+        if (glow_alpha_image_links &&
+            glow_alpha_image_links->count(effective_image_link) != 0) {
+            m.emissive = {0.0f, 0.0f, 0.0f};
+        }
     }
     // Phase 1 AddLOD shim: if the asset loader probed for a sibling
     // `_specular` texture next to this image and found one, bind it to
@@ -308,7 +322,8 @@ Material build_material(const MaterialInputs& in) {
         in.sibling_emissive_r_for_image, in.sibling_emissive_s_for_image};
     if (in.texture) apply_texture_property(m, *in.texture,
         in.texture_link_id, in.flip_image_override_for_prop,
-        in.image_to_texture, in.glow_image_links, in.specular_image_links,
+        in.image_to_texture, in.glow_image_links, in.glow_alpha_image_links,
+        in.specular_image_links,
         in.sibling_specular_for_image,
         in.normal_image_links,
         in.sibling_normal_for_image,

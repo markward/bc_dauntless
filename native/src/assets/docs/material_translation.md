@@ -53,6 +53,21 @@ comparison function (D3DCMP_*).
 `TextureStage::apply_mode` for all populated stages (BC has one apply mode
 per property, not per stage).
 
+## Material emissive vs a `_glow` map's alpha
+
+BC hull self-illumination is the ALPHA of the `_glow` texture. When a shape's
+NiTextureProperty image is a `_glow` map whose file decodes **with** an alpha
+channel (RGBA), `Material::emissive` is set to 0 and the NiMaterialProperty
+emissive is ignored: the alpha mask alone decides what glows. The material
+value is kept only when the image is not a `_glow` map, the `_glow` map has no
+alpha (RGB), or the file failed to load (the checkerboard stand-in is RGBA but
+is not a mask). Why: the shader adds `emissive × base` uniformly over the
+surface, so a community mod's hull-wide material emissive (USS Valhalla: 0.346)
+lit the entire hull. Stock effect: only the Akira, whose six 0.502 engine and
+bulb materials sit on `AkiraMisc2_glow.tga` (RGBA). Tests:
+`MaterialBuild.GlowMap*`, `GlowMaskEmissiveTest.*`,
+`ModelBuildRealAssets.StockAkiraGlowMapsDropEveryMaterialEmissive`.
+
 ## NiMultiTextureProperty → Material::stages
 
 NiMultiTextureProperty has 5 `MultiTextureElement`s. Their slot mapping is

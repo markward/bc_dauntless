@@ -1328,3 +1328,112 @@ TEST_F(ModelBuildAuthored, InteriorBuildUsesAttachedEdges) {
     EXPECT_FALSE(report.edges[0].joined_a);
     EXPECT_FALSE(report.edges[0].joined_b);
 }
+
+// --- Material emissive vs a _glow map's alpha mask (end to end) -------------
+//
+// build_model must tell a `_glow` map WITH an alpha channel (the hull's
+// self-illumination mask) from one without, by what the file decodes to, and
+// drop the material emissive only for the former. See MaterialBuild's
+// GlowMapWithAlphaIgnoresMaterialEmissive for the rule.
+namespace {
+
+std::vector<std::uint8_t> tga_2x1(bool with_alpha) {
+    if (with_alpha) {
+        return {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 32, 8,
+                0x10, 0x20, 0x30, 0x00,   0x40, 0x50, 0x60, 0x80};
+    }
+    return {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 24, 0,
+            0x10, 0x20, 0x30,   0x40, 0x50, 0x60};
+}
+
+void write_bytes(const fs::path& p, const std::vector<std::uint8_t>& bytes) {
+    std::ofstream out(p, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+}
+
+}  // namespace
+
+class GlowMaskEmissiveTest : public ModelBuildTest {
+protected:
+    // The textured-shape fixture with its image renamed to `name` and its
+    // material given the Valhalla's emissive.
+    nif::File emissive_shape_with_image(const char* name) {
+        auto f = file_with_textured_shape();
+        std::get<nif::NiMaterialProperty>(f.blocks[3]).emissive =
+            {0.346f, 0.346f, 0.346f};
+        std::get<nif::NiImage>(f.blocks[5]).file_name = name;
+        return f;
+    }
+};
+
+TEST_F(GlowMaskEmissiveTest, GlowTgaWithAlphaDropsMaterialEmissive) {
+    write_bytes(tmp_dir / "hull_glow.tga", tga_2x1(/*with_alpha=*/true));
+    auto model = assets::detail::build_model(
+        emissive_shape_with_image("hull_glow.tga"), make_ctx());
+    ASSERT_EQ(model.materials.size(), 1u);
+    EXPECT_FLOAT_EQ(model.materials[0].emissive.x, 0.0f);
+}
+
+TEST_F(GlowMaskEmissiveTest, GlowTgaWithoutAlphaKeepsMaterialEmissive) {
+    write_bytes(tmp_dir / "hull_glow.tga", tga_2x1(/*with_alpha=*/false));
+    auto model = assets::detail::build_model(
+        emissive_shape_with_image("hull_glow.tga"), make_ctx());
+    ASSERT_EQ(model.materials.size(), 1u);
+    EXPECT_FLOAT_EQ(model.materials[0].emissive.x, 0.346f);
+}
+
+TEST_F(GlowMaskEmissiveTest, MissingGlowTgaKeepsMaterialEmissive) {
+    // The checkerboard stand-in is RGBA, but it is not a glow mask: a glow map
+    // that failed to load must not switch the material emissive off.
+    auto model = assets::detail::build_model(
+        emissive_shape_with_image("hull_glow.tga"), make_ctx());
+    ASSERT_EQ(model.materials.size(), 1u);
+    EXPECT_FLOAT_EQ(model.materials[0].emissive.x, 0.346f);
+}
+
+TEST_F(GlowMaskEmissiveTest, NonGlowTgaWithAlphaKeepsMaterialEmissive) {
+    write_bytes(tmp_dir / "hull.tga", tga_2x1(/*with_alpha=*/true));
+    auto model = assets::detail::build_model(
+        emissive_shape_with_image("hull.tga"), make_ctx());
+    ASSERT_EQ(model.materials.size(), 1u);
+    EXPECT_FLOAT_EQ(model.materials[0].emissive.x, 0.346f);
+}
+
+// The stock Akira is the one stock ship with a non-zero material emissive:
+// six materials ('Engine - Big', 'Engine - Small', 'Red Bulb', in the hull
+// and wing groups) at 0.502, all drawn with AkiraMisc2_glow.tga, a 32-bit
+// _glow map. Every hull material is textured by an RGBA _glow map, so after
+// build_model none may keep a material emissive: the glow maps' alpha alone
+// decides what self-illuminates.
+TEST(ModelBuildRealAssets, StockAkiraGlowMapsDropEveryMaterialEmissive) {
+    const fs::path ship = test_support::game_root() / "data/Models/Ships/Akira";
+    const fs::path nif  = ship / "Akira.nif";
+    if (!fs::is_regular_file(nif)) GTEST_SKIP() << "asset missing: " << nif;
+
+    nif::File f = nif::load(nif);
+    // Precondition: the raw file really carries emissive materials, so a pass
+    // below is the rule acting, not a file with nothing to drop.
+    int raw_emissive = 0;
+    for (const auto& b : f.blocks) {
+        if (const auto* mp = std::get_if<nif::NiMaterialProperty>(&b)) {
+            if (mp->emissive.r > 0.0f) ++raw_emissive;
+        }
+    }
+    ASSERT_GT(raw_emissive, 0);
+
+    assets::PathResolver resolver;
+    assets::detail::ModelBuildContext ctx;
+    ctx.resolver = &resolver;
+    ctx.texture_search_paths = {ship / "High"};
+    ctx.texture_uploader = stub_texture;
+    ctx.mesh_uploader = stub_mesh;
+    auto model = assets::detail::build_model(f, ctx);
+
+    ASSERT_FALSE(model.materials.empty());
+    for (std::size_t i = 0; i < model.materials.size(); ++i) {
+        const auto& m = model.materials[i];
+        EXPECT_FLOAT_EQ(m.emissive.x, 0.0f) << "material " << i
+            << " (base '" << m.base_texture_name << "') kept its emissive";
+    }
+}

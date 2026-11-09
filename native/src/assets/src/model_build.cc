@@ -152,6 +152,9 @@ std::vector<std::filesystem::path> sibling_dirs_for(
 struct TextureLoadResult {
     std::unordered_map<std::uint32_t, int> image_to_texture;
     std::unordered_set<std::uint32_t>      glow_image_links;
+    /// glow_image_links entries whose file really decoded as RGBA (never
+    /// the checkerboard stand-in): see MaterialInputs::glow_alpha_image_links.
+    std::unordered_set<std::uint32_t>      glow_alpha_image_links;
     std::unordered_set<std::uint32_t>      specular_image_links;
     /// NIF link_id of a non-_specular NiImage -> Model::textures index
     /// of a sibling "<basename>_specular.tga" file discovered on disk
@@ -274,6 +277,9 @@ TextureLoadResult load_all_textures(
         }
         if (img->use_external != 0 && filename_is_glow(img->file_name)) {
             out.glow_image_links.insert(link_id);
+            if (albedo_decoded && decoded.format == Image::Format::RGBA8) {
+                out.glow_alpha_image_links.insert(link_id);
+            }
         }
         if (img->use_external != 0 && filename_is_specular(img->file_name)) {
             out.specular_image_links.insert(link_id);
@@ -1131,6 +1137,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             tex_result.sibling_rough_for_image,
             tex_result.sibling_metal_for_image, resolver);
         mat_inputs.image_filename_for_link = &tex_result.image_filename_for_link;
+        mat_inputs.glow_alpha_image_links = &tex_result.glow_alpha_image_links;
         mat_inputs.sibling_emissive_for_image = &tex_result.sibling_emissive_for_image;
         mat_inputs.sibling_emissive_y_for_image = &tex_result.sibling_emissive_y_for_image;
         mat_inputs.sibling_emissive_r_for_image = &tex_result.sibling_emissive_r_for_image;

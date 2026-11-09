@@ -26,6 +26,13 @@ struct MaterialInputs {
     /// suffix convention. When a property's base-stage image is in this
     /// set, the texture is routed to StageSlot::Glow instead of Base.
     const std::unordered_set<std::uint32_t>* glow_image_links = nullptr;
+    /// The subset of glow_image_links whose file decoded WITH an alpha
+    /// channel: the hull's self-illumination mask. When a property's base
+    /// image is in this set, the mask alone decides what glows and the
+    /// NiMaterialProperty emissive is dropped (set to 0). A `_glow` map
+    /// without alpha, a non-glow image, or a glow map that failed to load
+    /// keeps the material emissive.
+    const std::unordered_set<std::uint32_t>* glow_alpha_image_links = nullptr;
     /// Link IDs of NiImages whose filename matches BC's AddLOD
     /// "_specular" / "_spec" suffix convention. When a property's base-
     /// stage image is in this set, the texture is routed to
