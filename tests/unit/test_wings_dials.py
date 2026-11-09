@@ -12,7 +12,9 @@ SPEC = {"leash_gu": 200.0, "leash_slack_gu": 100.0, "regroup_gather_gu": 100.0,
         "withdraw_odds": 0.4,
         "withdraw_wing_frac": 0.5, "withdraw_step_gu": 300.0,
         "withdraw_clear_s": 10.0, "withdraw_max_s": 60.0,
-        "withdraw_cooldown_s": 120.0}
+        "withdraw_cooldown_s": 120.0, "attack_standoff_gu": 120.0,
+        "attack_slots": 3, "face_weak": 0.3, "disable_threat": 1.5,
+        "reserve_min_wing": 5, "reserve_gu": 150.0, "reserve_max_s": 90.0}
 
 
 def test_defaults_match_spec():
