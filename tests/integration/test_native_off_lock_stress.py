@@ -110,6 +110,12 @@ def _needs_assets_and_hermetic_mods(monkeypatch, tmp_path):
     yield
     _h.combat_gil_probe_arm(False)
     _h.combat_gil_probe_take()
+    # The churned arm runs with the cyclic collector off, so ~1 GB of its
+    # cyclic garbage reaches the oldest generation and outlives the test:
+    # the next test then stacks its own working set on top of it (the full
+    # suite's RSS peak). Collect it here, before the reset, so the frees its
+    # finalizers queue are cleared with this test's mirror, not a later one.
+    gc.collect()
     nc.reset()
 
 
