@@ -702,10 +702,14 @@ def _apply_attack(wing, members, enemies, choice, busy, ship_of):
             continue
         if name not in holders:
             m.slot = None
+            m.slot_hold = False
             m.attack_target = None
             _push(m, "attack", False)
             continue
-        m.slot = (primary, holders[name], standoff)
+        slot = (primary, holders[name], standoff)
+        if slot != m.slot:
+            m.slot_hold = False           # WingMoveTo re-enters on arrival
+        m.slot = slot
         fire = m.fire_script
         if m.attack_target != primary:
             if fire is not None:
@@ -763,6 +767,7 @@ def _stand_down(wing, why) -> None:
         m.guard = False
         m.fallback_since = None
         m.slot = None
+        m.slot_hold = False
         m.attack_target = None
         if m.is_player:
             continue

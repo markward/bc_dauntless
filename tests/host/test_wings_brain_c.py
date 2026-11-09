@@ -163,6 +163,31 @@ def test_slot_holders_keep_their_slots_when_they_cross(now):
     assert {n: roster.member(n).slot for n in _holders(wing)} == before
 
 
+def test_slot_hold_kept_on_the_same_slot_cleared_on_change(now):
+    """Final review I3: WingMoveTo's hold mode survives a brain tick that
+    keeps the slot, and is cleared when the slot changes or goes."""
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    _set_face(ships["e1"], _LEFT, 0.1)
+    brain.tick_wing(wing)
+    a, b = _holders(wing)[:2]
+    for n in (a, b):
+        roster.member(n).slot_hold = True
+    _p, dirs, got = wing.attack_prev
+    swapped = dict(got, **{a: got[b], b: got[a]})
+    wing.attack_prev = ("e1", dirs, swapped)
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert roster.member(a).slot_hold is False     # a new slot
+    roster.member(a).slot_hold = True
+    now[0] = 2.0
+    brain.tick_wing(wing)
+    assert roster.member(a).slot_hold is True      # the same slot
+    ships["e1"].SetDead()
+    now[0] = 3.0
+    brain.tick_wing(wing)
+    assert not any(m.slot_hold for m in wing.members.values())
+
+
 def test_slot_assignment_fresh_when_the_primary_changes(now):
     wing, ships = _scene([(150.0, 0.0, 0.0)])
     _set_face(ships["e1"], _LEFT, 0.1)
@@ -527,6 +552,40 @@ def test_slot_holder_reaches_slot_and_faces(monkeypatch, capsys):
             if d < 40.0 and ang < 30.0:
                 best = (n, d, ang)
     assert best is not None, "no holder reached its slot facing the target"
+    _no_fire_errors(capsys)
+
+
+def test_slot_holders_dwell_on_their_slots(monkeypatch, capsys):
+    """Final review I3: a holder holds its slot nose-on to a still target
+    instead of driving through it. Samples every 0.5 s from 20 s to 50 s:
+    within 20 GU of the slot AND within 10 degrees of facing the target."""
+    from engine.core.loop import GameLoop
+    monkeypatch.delenv("OPEN_STBC_HOST_HEADLESS", raising=False)
+    App.g_kTimerManager._time = 0.0
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    target = ships["e1"]                           # no AI: it holds still
+    service.arm(wing)
+    loop = GameLoop()
+    good = total = 0
+    for t in range(50 * 60):
+        _set_shields(target, 1.0)
+        _set_face(target, _LEFT, 0.1)              # held: the weak face
+        loop.tick()
+        if t < 20 * 60 or t % 30:
+            continue
+        assert wing.decision == "focus_face"
+        for n in _holders(wing):
+            slot = roster.member(n).slot
+            d = math.sqrt(sum((a - b) ** 2 for a, b in zip(
+                _pos(ships[n]), _slot_world(target, slot[1], slot[2]))))
+            total += 1
+            good += d < 20.0 and _angle_deg(ships[n], target) < 10.0
+    frac = good / total
+    print("\n[slot dwell] %d/%d samples on the slot facing the target (%.2f)"
+          % (good, total, frac))
+    # Seen: 0.48 before hold mode (it drove through the slot toward the
+    # target), 0.92 with it (2026-11-09).
+    assert frac >= 0.75
     _no_fire_errors(capsys)
 
 

@@ -28,6 +28,9 @@ class Member:
     # Phase C: (target_name, body_dir, standoff_gu) the member holds;
     # fire_script is the wing-owned stock FireScript of its attack branch.
     slot: tuple | None = None
+    # WingMoveTo's hold mode on the slot (final review I3): entered within
+    # 20 GU of it, left past 40; the brain clears it when the slot changes.
+    slot_hold: bool = False
     fire_script: object = None
     attack_target: str | None = None
     weapons_first: bool = False

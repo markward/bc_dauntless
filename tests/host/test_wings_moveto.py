@@ -159,3 +159,69 @@ def test_slot_dead_target_falls_back_to_move_point(monkeypatch):
     seen = _record_turns(ship, monkeypatch)
     script.Update()
     assert seen == [(0.0, 500.0, 0.0)]
+
+
+# ── holding the slot (final review I3) ─────────────────────────────────────
+# The ship is unrotated: its nose is world +y. The slot is at (-120, 1000, 0)
+# (LEFT of the target at (0, 1000, 0), standoff 120).
+
+def _speed(ship):
+    return ship.GetSpeedSetpoint()[0]
+
+
+def test_hold_no_thrust_when_the_slot_is_behind(monkeypatch):
+    """Inside 20 GU the ship turns to the target and thrusts only by the
+    slot offset along its nose: a slot behind it gets none (it used to
+    drive on toward the target and through the slot)."""
+    ship, member, script, target = _slot_scene()
+    ship.SetTranslateXYZ(-120.0, 1010.0, 0.0)        # the slot 10 GU behind
+    seen = _record_turns(ship, monkeypatch)
+    script.Update()
+    tp = target.GetWorldLocation()
+    assert seen[-1] == pytest.approx((tp.x, tp.y, tp.z), abs=1e-3)
+    assert member.slot_hold is True
+    assert _speed(ship) == 0.0
+
+
+def test_hold_thrust_scales_with_the_slot_ahead():
+    ship, member, script, target = _slot_scene()
+    ship.SetTranslateXYZ(-120.0, 990.0, 0.0)         # the slot 10 GU ahead
+    script.Update()
+    half = _speed(ship)
+    ship.SetTranslateXYZ(-120.0, 1000.0, 0.0)        # on the slot
+    script.Update()
+    assert _speed(ship) == 0.0
+    ship.SetTranslateXYZ(-120.0, 981.0, 0.0)         # 19 GU ahead
+    script.Update()
+    near_full = _speed(ship)
+    assert 0.0 < half < near_full
+    assert half / near_full == pytest.approx(10.0 / 19.0, rel=1e-3)
+
+
+def test_hold_no_thrust_when_the_slot_is_beside():
+    ship, member, script, target = _slot_scene()
+    ship.SetTranslateXYZ(-105.0, 1000.0, 0.0)        # the slot 15 GU abeam
+    script.Update()
+    assert member.slot_hold is True
+    assert _speed(ship) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_hold_hysteresis_twenty_in_forty_out(monkeypatch):
+    ship, member, script, target = _slot_scene()
+    seen = _record_turns(ship, monkeypatch)
+    tp = target.GetWorldLocation()
+    face = pytest.approx((tp.x, tp.y, tp.z), abs=1e-3)
+    slot = pytest.approx((-120.0, 1000.0, 0.0), abs=1e-3)
+    ship.SetTranslateXYZ(-120.0, 970.0, 0.0)         # 30 GU: not yet holding
+    script.Update()
+    assert member.slot_hold is False and seen[-1] == slot
+    ship.SetTranslateXYZ(-120.0, 985.0, 0.0)         # 15 GU: holds
+    script.Update()
+    assert member.slot_hold is True and seen[-1] == face
+    ship.SetTranslateXYZ(-120.0, 965.0, 0.0)         # 35 GU: still holds
+    script.Update()
+    assert member.slot_hold is True and seen[-1] == face
+    ship.SetTranslateXYZ(-120.0, 955.0, 0.0)         # 45 GU: leaves
+    script.Update()
+    assert member.slot_hold is False and seen[-1] == slot
+    assert _speed(ship) > 0.0
