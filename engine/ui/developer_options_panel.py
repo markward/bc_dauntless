@@ -27,6 +27,7 @@ from engine import dev_hull_damage_tuning as hull_damage_tuning
 from engine import dev_light_preview as light_preview
 from engine import dev_perf_monitor
 from engine import host_io
+from engine.wings import service as wing_service
 from engine import renderer
 from engine.appc import sensor_occlusion
 from engine.rocks import catalogue as rock_catalogue
@@ -124,6 +125,8 @@ class DeveloperOptionsPanel(Panel):
         self._double_weapons = cheats.double_player_weapons_active()
         self._no_npc_shields = cheats.disable_npc_shields_active()
         self._disable_collisions = cheats.disable_collisions_active()
+        self._wing_ai = wing_service._dev_enabled
+        self._wing_markers = wing_service.show_markers()
         self._sensor_occlusion = sensor_occlusion.enabled()
         self._systems_damaged = light_preview.systems_damaged_active()
         self._systems_disabled = light_preview.systems_disabled_active()
@@ -184,6 +187,8 @@ class DeveloperOptionsPanel(Panel):
         self._double_weapons = cheats.double_player_weapons_active()
         self._no_npc_shields = cheats.disable_npc_shields_active()
         self._disable_collisions = cheats.disable_collisions_active()
+        self._wing_ai = wing_service._dev_enabled
+        self._wing_markers = wing_service.show_markers()
         self._sensor_occlusion = sensor_occlusion.enabled()
         self._systems_damaged = light_preview.systems_damaged_active()
         self._systems_disabled = light_preview.systems_disabled_active()
@@ -223,6 +228,7 @@ class DeveloperOptionsPanel(Panel):
             self._visible, tuple(self._tabs), self._selected_tab,
             self._focused, self._god_mode, self._double_weapons,
             self._no_npc_shields, self._disable_collisions,
+            self._wing_ai, self._wing_markers,
             self._sensor_occlusion,
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
@@ -256,6 +262,8 @@ class DeveloperOptionsPanel(Panel):
                 "double_weapons": self._double_weapons,
                 "no_npc_shields": self._no_npc_shields,
                 "disable_collisions": self._disable_collisions,
+                "wing_ai": self._wing_ai,
+                "wing_markers": self._wing_markers,
                 "sensor_occlusion": self._sensor_occlusion,
                 "systems_damaged": self._systems_damaged,
                 "systems_disabled": self._systems_disabled,
@@ -292,6 +300,17 @@ class DeveloperOptionsPanel(Panel):
             new_val = not self._god_mode
             cheats.set_god_mode(new_val)
             self._god_mode = new_val
+            return True
+        if action == "toggle:wing_ai":
+            # Applies at the next battle start (arming reads the switch).
+            new_val = not self._wing_ai
+            wing_service.set_dev_enabled(new_val)
+            self._wing_ai = new_val
+            return True
+        if action == "toggle:wing_markers":
+            new_val = not self._wing_markers
+            wing_service.set_show_markers(new_val)
+            self._wing_markers = new_val
             return True
         if action == "toggle:double_weapons":
             new_val = not self._double_weapons
@@ -499,7 +518,8 @@ class DeveloperOptionsPanel(Panel):
         if self._selected_tab == "combat":
             out += [("ctrl", "god_mode"), ("ctrl", "double_weapons"),
                     ("ctrl", "no_npc_shields"), ("ctrl", "disable_collisions"),
-                    ("ctrl", "sensor_occlusion"), ("ctrl", "quick_repair")]
+                    ("ctrl", "sensor_occlusion"), ("ctrl", "quick_repair"),
+                    ("ctrl", "wing_ai"), ("ctrl", "wing_markers")]
         if self._selected_tab == "lighting":
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
                     ("ctrl", "running_lights"),

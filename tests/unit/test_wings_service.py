@@ -101,3 +101,27 @@ def test_disabled_tick_is_noop(monkeypatch):
     service.set_dev_enabled(False)
     service.tick(5.0)
     assert seen == []
+
+
+def test_markers_default_off_survive_reset_cleared_by_reset_all():
+    assert service.show_markers() is False
+    service.set_show_markers(True)
+    service.reset()
+    assert service.show_markers() is True
+    service.reset_all()
+    assert service.show_markers() is False
+
+
+def test_is_commander():
+    from engine.wings import roster
+    import App
+    g = App.ObjectGroup()
+    w = roster.create_wing("wx", g)
+    roster.add_member(w, "A")
+    roster.add_member(w, "B")
+    w.commander = "A"
+    assert service.is_commander("A") and not service.is_commander("B")
+    assert not service.is_commander("nobody")
+    w.leaderless = True
+    assert not service.is_commander("A")
+    service.reset_all()

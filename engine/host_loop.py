@@ -12193,6 +12193,8 @@ def run(mission_name: Optional[str] = None,
                 _far_dials.register()
                 from engine.appc import sensor_dials as _sensor_dials
                 _sensor_dials.register()
+                from engine.wings import dials as _wing_dials
+                _wing_dials.register()
                 from engine.appc import running_light_dials as _rl_dials
                 _rl_dials.register()
                 from engine.appc import warp_in_dials as _warp_in_dials

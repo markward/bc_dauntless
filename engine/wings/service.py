@@ -10,6 +10,7 @@ import os
 from engine.wings import brain, decisions, dials, roster
 
 _dev_enabled = True
+_show_markers = False
 _armed: list = []
 _EPS = 1e-9
 
@@ -21,6 +22,21 @@ def enabled() -> bool:
 def set_dev_enabled(on) -> None:
     global _dev_enabled
     _dev_enabled = bool(on)
+
+
+def set_show_markers(on) -> None:
+    global _show_markers
+    _show_markers = bool(on)
+
+
+def show_markers() -> bool:
+    return _show_markers
+
+
+def is_commander(name) -> bool:
+    wing = roster.wing_of(name)
+    return (wing is not None and not wing.leaderless
+            and wing.commander == name)
 
 
 def reset_dev() -> None:
@@ -62,5 +78,6 @@ def reset() -> None:
 def reset_all() -> None:
     """Tests only: also drops mod-registered decisions and dial changes."""
     reset()
+    set_show_markers(False)
     decisions.reset_registry()
     dials.reset()
