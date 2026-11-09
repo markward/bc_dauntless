@@ -2,7 +2,7 @@
 
 > **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and are compared across commits by `tools/golden_ab.py` (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to goldens or recordings pinning behaviour are historical.
 
-Eleven things that used to run every tick now run on a cadence (the table below). Each was landed as
+Twelve things that used to run every tick now run on a cadence (the table below). Each was landed as
 a performance win, and **each is also a behaviour change**. Read this before
 reporting a delayed in-game reaction as a bug — the delay may be the design.
 
@@ -26,6 +26,7 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 | AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py` (`AI_MAX_SLEEP_TICKS`; the walk it gates is native, `native/src/host/aitree.cc`) |
 | AI ship glow state poll | `AI_GLOW_POLL_S` | 0.05 s game time | `engine/appc/subsystem_glow.py` |
 | Hum reallocation | `HUM_REALLOC_PERIOD_S` | 0.1 s wall + on scene switch / removal / death | `engine/audio/hum_allocator.py` |
+| Wing brain (Quick Battle wings) | dial `brain_period_s` ("wings") | 1.0 s / 1 Hz game time, wings phase-staggered | `engine/wings/service.py` (`tick`), `engine/wings/brain.py`; section 8 |
 
 The avoidance and AI-sleep cadences are environment-overridable — `DAUNTLESS_AVOID_EVADE_DELAY_S` and
 `DAUNTLESS_AI_MAX_SLEEP`. Setting the avoid delay to `0.0` restores the SDK's

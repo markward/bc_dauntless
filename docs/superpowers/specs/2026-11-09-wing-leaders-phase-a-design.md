@@ -139,8 +139,11 @@ Each tick of one wing:
 
 1. **Snapshot** (one pass): live members (position, hull fraction, shield
    fraction, rated power), the anchor (§7), candidate enemies from the side's
-   enemy group that are alive and in the wing's set (position, hull, shield,
-   rated power, which wing they belong to if any, whether they command it).
+   enemy group that are alive, in the wing's set and **not cloaked or
+   cloaking** (position, hull, shield, rated power, which wing they belong to
+   if any, whether they command it). **(ruling)** A cloaked ship is never a
+   candidate: stock SelectTarget skips it, so a group of only cloaked ships
+   idled the wing; it is back the tick after it decloaks.
 2. **Chain:** resolve the current commander; detect handover / leaderless.
 3. **Leaderless?** → §10, stop.
 4. **Score decisions** (§8) and pick one with stickiness.
@@ -216,7 +219,11 @@ Rebuilt each brain tick:
   a body instead of scattering after separate targets.
 - **Player commanding:** the player's current target, if it is a candidate
   enemy, is the primary regardless of decision. **(ruling)** In every case,
-  even outside reach.
+  even outside reach. **(ruling)** When the player commands, nothing is in
+  reach and its target is not a candidate, the group is **empty** (not the
+  nearest) and every non-player member beyond `regroup_gather_gu` gets the
+  rejoin flag: the escorts form up on the player instead of charging an
+  enemy the leash yanks them back from.
 
 **Wing members' SelectTarget weights** (set once at wrap time via the stock
 `SetRelativeImportance`): stock values except **popularity = `wing_popularity`**
@@ -299,12 +306,24 @@ member for weights and `ForceUpdate`.
 `DauntlessWings`.
 
 **Home set (ruling):** the wing's home set is the set holding most live
-non-player members, and a commander must be in it; while command is alive but
-away the brain stands rejoin down.
+non-player members, and a commander must be in it. **(ruling)** While command
+is alive but away (no chain entry in the home set), the wing is
+**temporarily leaderless, not latched**: the group gets every candidate at
+stock priority (`leaderless_priorities`), each member's popularity is
+restored, rejoin is pushed off for every member in any set, SelectTarget is
+forced once on entering; no desperation rolls. When a chain entry is home
+again normal ticking resumes. In a normal tick a member outside the home set
+is pushed rejoin off too (WingRejoin cannot reach a commander in another
+set).
 
 **Switch:** `DAUNTLESS_WINGS=0` disables wings everywhere (consumers don't
 arm, trees are stock). Otherwise on in Quick Battle. Developer Options →
 Combat → **Wing AI** (default on) is read at battle start; `=0` env wins.
+**(ruling)** The dev switch is read only at arm time (`wings_qb.arm`,
+`combat_stress`, `DauntlessWings.CreateWing`/`AddMember`/`ArmWing` via
+`service.enabled()`); armed wings keep ticking until reset, so toggling it
+mid-battle changes the next battle only. `service.tick` reads only the env
+and the armed list.
 
 **Diagnostics:** `DAUNTLESS_WINGS_LOG=1` prints `[wings]` lines to stderr on
 arm, handover, decision change, leaderless, desperation. Developer Options →
@@ -335,8 +354,12 @@ who commands. Production UI unchanged.
     the primary even outside reach.
 13. Only `fPopularityFactor` is touched; the player's SelectTarget is never
     weighted.
-14. Home set = the set with most live non-player members; away command stands
-    rejoin down.
+14. Home set = the set with most live non-player members; away command makes
+    the wing temporarily leaderless (stock targeting, no latch, no
+    desperation).
+15. Cloaked / cloaking enemies are never candidates.
+16. A commanding player with nothing in reach and no candidate target: empty
+    group, escorts gather on the player.
 
 ## 13. Testing
 
@@ -351,8 +374,9 @@ who commands. Production UI unchanged.
   `ai native:` counters show no Python ratings), late arrival joins, reset on
   end and on mission swap leaves no wing state.
 - **Behaviour (headless, slow — may be deep tier):** `combat_stress`, wing
-  size 4, 18000 ticks per arm: asserts ON p90 member-to-commander distance
-  < 350 GU and ON < 0.6 × OFF (the scene is nondeterministic run to run).
+  size 4, 18000 ticks per arm: asserts ON < 0.6 × OFF p90
+  member-to-commander distance (the claim), and ON < 450 GU as a sanity
+  bound only (the scene is nondeterministic run to run).
 - **Off means off:** with `DAUNTLESS_WINGS=0` the trees are byte-for-byte the
   stock trees (same node types/order) and no `gl.wings` work runs.
 - Tree guards as always (`tests/docs`, path indirection, install-write,
