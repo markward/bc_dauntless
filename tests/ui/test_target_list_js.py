@@ -176,3 +176,22 @@ def test_header_has_the_minimize_button_and_minimized_hides_the_rest():
     for part in ("tabs", "body", "sort"):
         assert ".target-list__%s" % part in rule.group(1), part
     assert ".target-list__header" not in rule.group(1)
+
+
+def test_commander_row_draws_the_chevron_before_the_name():
+    out = _run([{"push": _state([dict(_row(), commander=True)])}])[0]["body"]
+    chev = 'target-list__marker target-list__marker--commander'
+    assert chev in out
+    assert out.index(chev) < out.index("target-list__name")
+
+
+def test_commander_chevron_sits_beside_a_protect_marker():
+    out = _run([{"push": _state([dict(_row(), commander=True,
+                                      marker="protect")])}])[0]["body"]
+    assert "target-list__marker--commander" in out
+    assert "target-list__marker--protect" in out
+
+
+def test_non_commander_row_has_no_chevron():
+    out = _run([{"push": _state([_row(), dict(_row(name="B"), commander=False)])}])[0]["body"]
+    assert "target-list__marker--commander" not in out

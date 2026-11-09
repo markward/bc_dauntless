@@ -1,3 +1,6 @@
+"""Target list rows carry a `commander` flag: True only for the current
+commander of a led wing. Always on (no dev mode, no toggle); the page draws
+a command chevron from it (tests/ui/test_target_list_js.py)."""
 import json
 
 import App
@@ -17,41 +20,63 @@ def _clean():
     service.reset_all()
 
 
-def _labels(monkeypatch, dev, markers):
+@pytest.fixture
+def scene(monkeypatch):
+    """Lead + Wingman in one wing, Loner in none. Yields (view, wing)."""
     from engine.core.game import _set_current_game
     from engine.ui.target_list_view import TargetListView
-    monkeypatch.setattr(dev_mode, "is_enabled", lambda: dev)
-    service.set_show_markers(markers)
+    # Production: no developer flag.
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
     App._reset_target_menu_singleton()
     tm = App.STTargetMenu_CreateW("Targets")
     game, player, mission = _setup_game_with_player()
     try:
-        mission.GetEnemyGroup().AddName("Lead")
-        mission.GetEnemyGroup().AddName("Wingman")
-        a = ShipClass(); a.SetName("Lead")
-        b = ShipClass(); b.SetName("Wingman")
-        tm.set_contacts(_listed(a, b))
+        for n in ("Lead", "Wingman", "Loner"):
+            mission.GetEnemyGroup().AddName(n)
+        ships = []
+        for n in ("Lead", "Wingman", "Loner"):
+            s = ShipClass(); s.SetName(n); ships.append(s)
+        tm.set_contacts(_listed(*ships))
         tm.ResetAffiliationColors()
         wing = roster.create_wing("w1", mission.GetEnemyGroup())
         roster.add_member(wing, "Lead")
         roster.add_member(wing, "Wingman")
         wing.commander = "Lead"
-        js = TargetListView().render_payload()
-        rows = json.loads(js[len("setTargetList("):-2])["rows"]
-        return {r["name"]: r["label"] for r in rows}
+        yield TargetListView(), wing
     finally:
         _set_current_game(None)
 
 
-def test_marker_only_on_commander_with_dev_and_toggle(monkeypatch):
-    lab = _labels(monkeypatch, True, True)
-    assert lab["Lead"].startswith("★ ")
-    assert not lab["Wingman"].startswith("★")
+def _rows(js):
+    return {r["name"]: r for r in json.loads(js[len("setTargetList("):-2])["rows"]}
 
 
-def test_no_marker_without_toggle(monkeypatch):
-    assert not _labels(monkeypatch, True, False)["Lead"].startswith("★")
+def test_commander_flag_only_on_the_current_commander(scene):
+    view, _wing = scene
+    rows = _rows(view.render_payload())
+    assert rows["Lead"]["commander"] is True
+    assert rows["Wingman"]["commander"] is False
+    assert rows["Loner"]["commander"] is False
 
 
-def test_no_marker_without_dev_mode(monkeypatch):
-    assert not _labels(monkeypatch, False, True)["Lead"].startswith("★")
+def test_label_is_never_prefixed(scene):
+    view, _wing = scene
+    rows = _rows(view.render_payload())
+    assert rows["Lead"]["label"] == "Lead"
+
+
+def test_leaderless_wing_has_no_commander(scene):
+    view, wing = scene
+    wing.leaderless = True
+    rows = _rows(view.render_payload())
+    assert not any(r["commander"] for r in rows.values())
+
+
+def test_handover_re_emits_and_moves_the_flag(scene):
+    view, wing = scene
+    assert view.render_payload() is not None
+    assert view.render_payload() is None          # unchanged: no re-emit
+    wing.commander = "Wingman"
+    rows = _rows(view.render_payload())
+    assert rows["Lead"]["commander"] is False
+    assert rows["Wingman"]["commander"] is True

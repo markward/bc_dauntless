@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-from engine import dev_mode
 from engine.ui import target_markers as _markers
 from engine.wings import service as wing_service
 from engine.ui.panel import Panel
@@ -238,19 +237,17 @@ class TargetListView(Panel):
                     name = ship.GetName()
                     dist_km = (round(target_menu.surface_gu_to(ship, player) * GU_TO_KM, 2)
                                if player is not None else 0.0)
-                    caption = child.GetCaption()
-                    if (dev_mode.is_enabled() and wing_service.show_markers()
-                            and wing_service.is_commander(name)):
-                        caption = "★ " + caption
                     rows.append((
                         name,
-                        caption,
+                        child.GetCaption(),
                         aff,
                         _query_hull_percentage(ship),
                         _query_shield_percentage(ship),
                         _query_has_shields(ship),
                         dist_km,
                         _markers.marker_for(name),
+                        # Read only: in the snapshot so a handover re-emits.
+                        wing_service.is_commander(name),
                     ))
             child = target_menu.GetNextChild(child)
 
@@ -283,9 +280,10 @@ class TargetListView(Panel):
                 "has_shields": has_shields,
                 "dist_km": dist_km,
                 "marker": marker,
+                "commander": commander,
             }
             for (name, caption, aff, hull, shields, has_shields, dist_km,
-                 marker) in rows
+                 marker, commander) in rows
         ]
         payload_rows.sort(key=lambda r: sort_key(r, sort))
         payload = {
