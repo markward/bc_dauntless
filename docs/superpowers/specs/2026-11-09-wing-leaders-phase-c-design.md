@@ -128,11 +128,8 @@ Conditional[ConditionWing(ship, "attack")]
   `target_pos + R · body_dir · standoff`, instead of reading `move_point`. A
   slot fixed in the target's frame sweeps at up to ~36 GU/s when a ship turns
   at 0.3 rad/s 120 GU away; a 1 Hz point would always be behind it.
-- Within the slot radius, `min(20, 0.25 × standoff)` GU, of the slot point
-  it enters **hold mode** and leaves it only past twice that (48 GU
-  standoff: 12 in / 24 out; 80 GU: 20 / 40) (`Member.slot_hold`; the brain
-  clears it when the slot changes). The approach slow-down uses the same
-  radius.
+- Within 20 GU of the slot point it enters **hold mode** and leaves it only
+  past 40 GU (`Member.slot_hold`; the brain clears it when the slot changes).
   Holding, it turns toward the target and thrusts only by the slot offset
   along its nose, `clamp(dot(forward, slot − here) / 20, 0, 1)`: nothing
   when the slot is behind or beside it (§11). On the way the nose points at
@@ -389,9 +386,7 @@ picks one.
    (focus face against a Bird of Prey that turns and fights back) fails 2
    of 3 seeds at the Akira's 48 GU: ≥ 2 holders on the weak side on 0.35 /
    0.93 / 0.07 of samples (bound 0.7). The same scene at a fixed 80 GU gives
-   0.93 / 0.93 / 0.87, and at 120 GU 0.33 / 0.93 / 0.93. Scaling the
-   hold hysteresis with the standoff (in at `min(20, 0.25 × standoff)`,
-   out at twice that) left (a) at 0.35 / 0.93 / 0.07.
+   0.93 / 0.93 / 0.87, and at 120 GU 0.33 / 0.93 / 0.93.
 5. **Minors.** Repeated disable directions are turned 25° per wrap; Regroup
    does not count last tick's slot-holders or the held reserve as strays; a
    failed QB difficulty read is logged once (`DAUNTLESS_WINGS_LOG=1`).
