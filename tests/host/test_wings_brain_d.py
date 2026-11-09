@@ -118,10 +118,11 @@ def _spy(monkeypatch):
     return seen
 
 
-def _assert_hold(wing, ships, hold_point, toward):
-    """Every non-player member on "hold" at its formation point (the
-    commander at the centre), every other branch off, no slot."""
-    names = [n for n, m in wing.members.items() if not m.is_player]
+def _assert_hold(wing, ships, hold_point, toward, names=None):
+    """Every (live) non-player member on "hold" at its formation point
+    (the commander at the centre), every other branch off, no slot."""
+    if names is None:
+        names = [n for n, m in wing.members.items() if not m.is_player]
     pts = allies.formation_points(hold_point, toward, len(names),
                                   dials.get("hold_spread_gu"))
     assert _close(roster.member(wing.commander).move_point, pts[0])
@@ -157,8 +158,7 @@ def test_reinforce_writes_far_primary(now):
     brain.tick_wing(a)
     assert a.decision == "reinforce"
     assert _group(a) == {"w1": 3.0, "w2": 1.5}
-    assert a.reinforce_ally == "b" and a.reinforce_since == 0.0
-    assert a.decision_since == 0.0
+    assert a.reinforce_ally == "b" and a.decision_since == 0.0
     # Reinforce is no hold: nobody on the hold branch.
     for n in a.members:
         assert _status(n, "hold") == 0
@@ -176,7 +176,7 @@ def test_reinforce_latch_survives_a_tick(monkeypatch, now):
     assert ctx.current == "reinforce" and ctx.reinforce_ally == "b"
     assert ctx.decision_age_s == pytest.approx(1.0)
     assert a.decision == "reinforce"
-    assert a.reinforce_ally == "b" and a.reinforce_since == 0.0
+    assert a.reinforce_ally == "b" and a.decision_since == 0.0
 
 
 def test_reinforce_cap_puts_ally_on_cooldown(monkeypatch, now):
@@ -189,7 +189,7 @@ def test_reinforce_cap_puts_ally_on_cooldown(monkeypatch, now):
     brain.tick_wing(a)
     assert seen["a1"].decision_age_s == pytest.approx(90.0)
     assert a.decision != "reinforce"
-    assert a.reinforce_ally is None and a.reinforce_since is None
+    assert a.reinforce_ally is None
     assert a.reinforce_done == {"b": pytest.approx(150.0)}
     now[0] = 91.0
     brain.tick_wing(b)
@@ -249,7 +249,8 @@ def test_reinforce_latch_clears_on_stand_down(now):
     now[0] = 1.0
     brain.tick_wing(a)
     assert a.leaderless is True
-    assert a.reinforce_ally is None and a.reinforce_since is None
+    assert a.reinforce_ally is None
+    assert a.decision is None and a.decision_since == 0.0
 
 
 def test_reinforce_commander_targets_far_primary(monkeypatch):
@@ -668,3 +669,90 @@ def test_reinforce_displaces_a_current_swarm(now):
     brain.tick_wing(b)
     brain.tick_wing(a)
     assert a.decision == "reinforce" and a.decision_since == 1.0
+
+
+# ── review fixes: stand-down clears the decision; a hold member dies ──────
+
+def _send_away(wing, ships):
+    cmd = wing.commander
+    wing.chain = [cmd]
+    home = ships[cmd].GetContainingSet()
+    home.RemoveObjectFromSet(cmd)
+    other = SetClass_Create()
+    App.g_kSetManager.AddSet(other, "Elsewhere")
+    other.AddObjectToSet(ships[cmd], cmd)
+    return cmd, home, other
+
+
+def _bring_back(ships, cmd, home, other):
+    other.RemoveObjectFromSet(cmd)
+    home.AddObjectToSet(ships[cmd], cmd)
+
+
+def test_away_and_back_mid_flank_re_gates(monkeypatch, now):
+    """A flank stood down by command-away comes back with no decision and
+    no ally: an ally now in trouble gets the entry gates (reinforce), not a
+    latched flank round it."""
+    a, b, ships = _flank_scene()
+    seen = _spy(monkeypatch)
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert a.decision == "flank"
+    away = _send_away(a, ships)
+    now[0] = 1.0
+    brain.tick_wing(a)
+    assert a.away is True
+    assert a.decision is None and a.flank_ally is None
+    for n in b.members:                       # b slips into trouble
+        ships[n].GetHull().SetConditionPercentage(0.5)
+    brain.tick_wing(b)
+    assert allies.in_trouble(b.status)
+    _bring_back(ships, *away)
+    now[0] = 2.0
+    brain.tick_wing(a)
+    assert a.away is False
+    assert seen["a1"].current is None and seen["a1"].flank_ally is None
+    assert a.decision == "reinforce" and a.decision_since == 2.0
+
+
+def test_away_and_back_mid_reinforce_restarts_its_clock(monkeypatch, now):
+    """A reinforce re-entered after command-away starts a fresh cap: it is
+    not dropped at once on the pre-away clock (with no cooldown)."""
+    a, b, ships = _reinforce_scene()
+    seen = _spy(monkeypatch)
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert a.decision == "reinforce"
+    away = _send_away(a, ships)
+    now[0] = 80.0
+    brain.tick_wing(a)
+    assert a.decision is None and a.reinforce_ally is None
+    _bring_back(ships, *away)
+    now[0] = 85.0
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert a.decision == "reinforce" and a.decision_since == 85.0
+    now[0] = 91.0
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert seen["a1"].decision_age_s == pytest.approx(6.0)
+    assert a.decision == "reinforce" and a.reinforce_ally == "b"
+    assert a.reinforce_done == {}
+
+
+def test_hold_member_dies_mid_hold(now):
+    a, w, ships = _screen_scene()
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert a.decision == "screen"
+    ships["a3"].SetDead()
+    now[0] = 1.0
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert a.decision == "screen"
+    hp = _screen_point(ships)
+    _assert_hold(a, ships, hp, _SCREEN_TOWARD, names=["a1", "a2"])
+    assert math.dist(roster.member("a2").move_point, hp) == pytest.approx(
+        dials.get("hold_spread_gu"))
+    m3 = roster.member("a3")
+    assert _status("a3", "hold") == 0 and m3.move_point is None

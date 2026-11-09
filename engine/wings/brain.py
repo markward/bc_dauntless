@@ -376,7 +376,7 @@ def tick_wing(wing) -> None:
     choice = decision.choose(ctx)
     wing.protect_prev = choice.protectee
     _track_disable(wing, decision.name, choice, now)
-    _track_side(wing, decision.name, choice, now)
+    _track_side(wing, decision.name, choice, now, ctx)
     if choice.withdraw and wing.withdraw_since is None:
         wing.withdraw_since = now
         log("%s withdraw" % wing.wing_id)
@@ -484,16 +484,19 @@ def _side_clocks(wing, near, now) -> None:
             wing.feint_quiet_since = now
 
 
-def _track_side(wing, decision, choice, now) -> None:
+def _track_side(wing, decision, choice, now, ctx) -> None:
     """After choose (Phase D): start and stop the reinforce and feint
     latches and keep the flank's ally. A reinforce that ends by its cap
     puts its ally on cooldown; a feint that ends for any reason starts the
-    feint cooldown."""
+    feint cooldown. One clock: the reinforce's age is the decision's
+    (ctx.decision_age_s, read before this tick's pick), since
+    decision_since resets only on a change of decision name and a stand-
+    down clears the decision."""
     r = choice.ally if decision == "reinforce" else None
     if wing.reinforce_ally is not None and wing.reinforce_ally != r:
-        _end_reinforce(wing, now)
+        _end_reinforce(wing, now, ctx)
     if r is not None and wing.reinforce_ally is None:
-        wing.reinforce_ally, wing.reinforce_since = r, now
+        wing.reinforce_ally = r
     f = choice.ally if decision == "feint" else None
     if wing.feint_ally is not None and wing.feint_ally != f:
         _end_feint(wing, now)
@@ -502,13 +505,13 @@ def _track_side(wing, decision, choice, now) -> None:
     wing.flank_ally = choice.ally if decision == "flank" else None
 
 
-def _end_reinforce(wing, now) -> None:
-    if (wing.reinforce_since is not None and now - wing.reinforce_since
-            >= dials.get("reinforce_max_s")):
+def _end_reinforce(wing, now, ctx) -> None:
+    if (ctx.current == "reinforce"
+            and ctx.decision_age_s >= dials.get("reinforce_max_s")):
         wing.reinforce_done[wing.reinforce_ally] = (
             now + dials.get("reinforce_cooldown_s"))
         log("%s reinforce done %s" % (wing.wing_id, wing.reinforce_ally))
-    wing.reinforce_ally = wing.reinforce_since = None
+    wing.reinforce_ally = None
 
 
 def _end_feint(wing, now) -> None:
@@ -916,19 +919,24 @@ def _stand_down(wing, why) -> None:
     A withdraw in progress ends; a held reserve is committed, and a wing
     without command never holds one later (spent either way). The Phase D
     latches clear (a feint's cooldown starts; a reinforce cut short is no
-    cap, so no cooldown)."""
-    import App
-    now = float(App.g_kUtopiaModule.GetGameTime())
+    cap, so no cooldown) and so does the decision itself: the next led
+    tick picks afresh, through the entry gates, on a fresh clock. (The
+    disable latch keys on wing.disable_target, which is kept.)"""
     wing.status = None
     _commit_reserve(wing, why)
     wing.reserve_spent = True
-    if wing.withdraw_since is not None:
-        _end_withdraw(wing, now)
+    if wing.withdraw_since is not None or wing.feint_ally is not None:
+        import App
+        now = float(App.g_kUtopiaModule.GetGameTime())
+        if wing.withdraw_since is not None:
+            _end_withdraw(wing, now)
+        if wing.feint_ally is not None:
+            _end_feint(wing, now)
     _log_hold(wing, None)
-    if wing.feint_ally is not None:
-        _end_feint(wing, now)
-    wing.reinforce_ally = wing.reinforce_since = None
+    wing.reinforce_ally = None
     wing.flank_ally = None
+    wing.decision = None
+    wing.decision_since = 0.0
     wing.guarded = None
     if wing.attack_sig is not None:
         wing.attack_sig = None

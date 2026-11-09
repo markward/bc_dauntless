@@ -359,9 +359,11 @@ def _disable_target(ctx):
     its weapons are up: the strength ratio is not re-checked, because
     stripping the shields alone halves it (final review I1). Otherwise the
     entry gate: the strongest not-done enemy in reach, weapons up, at least
-    disable_threat x our strongest member."""
+    disable_threat x our strongest member. The latch keys on
+    ctx.disable_target alone: the brain keeps it only while a disable runs
+    (and across a command-away, which clears the decision itself)."""
     reach = [e for e in _in_reach(ctx) if e.name not in ctx.disable_done]
-    if ctx.current == "disable" and ctx.disable_target is not None:
+    if ctx.disable_target is not None:
         big = next((e for e in reach if e.name == ctx.disable_target), None)
         return None if big is None or big.weapons_down else big
     if not reach or not ctx.members:
@@ -435,7 +437,9 @@ def _reinforce_ally(ctx):
     Otherwise the entry gate: we are not engaged or can spare the help, and
     the in-trouble ally within reinforce_range_gu with the worst odds
     (ties: nearest), skipping allies on cooldown. Either way an ally none
-    of our enemies is near gives no far primary, so it is no reinforce."""
+    of our enemies is near gives no far primary, so it is no reinforce.
+    Arrival hysteresis: entry needs the ally beyond leash_gu +
+    leash_slack_gu, the latched end is at leash_gu."""
     leash = dials.get("leash_gu")
     if ctx.current == "reinforce" and ctx.reinforce_ally is not None:
         a = _ally(ctx, ctx.reinforce_ally)
@@ -449,9 +453,10 @@ def _reinforce_ally(ctx):
         if not ours >= dials.get("reinforce_spare_odds") * theirs:
             return None
     reach = dials.get("reinforce_range_gu")
+    enter = leash + dials.get("leash_slack_gu")
     cands = [a for a in ctx.allies
              if a.wing_id not in ctx.reinforce_done and _allies.in_trouble(a)
-             and leash < _to(ctx, a) <= reach and _ally_enemies(ctx, a)]
+             and enter < _to(ctx, a) <= reach and _ally_enemies(ctx, a)]
     if not cands:
         return None
     return min(cands, key=lambda a: (_odds(a), _to(ctx, a), a.wing_id))
@@ -577,14 +582,17 @@ def _flank_target(ctx):
     ally's status every tick). Entry adds: the ally is not in trouble and
     within reinforce_range_gu; latched (a current flank) skips those two,
     so an ally slipping into trouble mid-swing does not flip us to
-    reinforce, and keeps its ally (ctx.flank_ally) when it has one. The
-    nearest such ally."""
+    reinforce, and keeps its ally. Latched means a current flank WITH its
+    ally (ctx.flank_ally): without one (a stand-down) the entry gates
+    apply. Arrival hysteresis: entry needs the hold point beyond leash_gu
+    + leash_slack_gu, the end is at leash_gu. The nearest such ally."""
     if _near(ctx):
         return None
-    latched = ctx.current == "flank"
+    latched = ctx.current == "flank" and ctx.flank_ally is not None
     held = ctx.flank_ally if latched else None
     reach = dials.get("reinforce_range_gu")
     leash = dials.get("leash_gu")
+    enter = leash + dials.get("leash_slack_gu")
     best = None
     for a in ctx.allies:
         if held is not None and a.wing_id != held:
@@ -594,7 +602,7 @@ def _flank_target(ctx):
         if not latched and (_allies.in_trouble(a) or _to(ctx, a) > reach):
             continue
         p = _allies.flank_point(ctx.anchor.pos, a.anchor, a.enemy_centroid)
-        if assess.dist(p, ctx.anchor.pos) <= leash:
+        if assess.dist(p, ctx.anchor.pos) <= (leash if latched else enter):
             continue
         key = (_to(ctx, a), a.wing_id)
         if best is None or key < best[0]:

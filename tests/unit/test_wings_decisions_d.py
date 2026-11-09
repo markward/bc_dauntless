@@ -391,7 +391,8 @@ def test_flank_zero_when_already_at_hold_point():
 
 
 def test_flank_latch_ignores_trouble_gate():
-    ctx = _ctx([], [_fair(ours=1.0)], anchor=US, current="flank")
+    ctx = _ctx([], [_fair(ours=1.0)], anchor=US, current="flank",
+               flank_ally="B")
     assert _by("flank").score(ctx) == 1.1
 
 
@@ -447,7 +448,7 @@ def test_no_flip_between_reinforce_and_flank():
     assert decisions.pick(rec).name == "flank"
     # And the latched flank holds when the ally slips into trouble: no
     # flip back to reinforce tick to tick.
-    back = _ctx(ec, [trouble], anchor=US, current="flank")
+    back = _ctx(ec, [trouble], anchor=US, current="flank", flank_ally="B")
     assert decisions.pick(back).name == "flank"
 
 
@@ -579,3 +580,53 @@ def test_none_current_and_zero_current_unchanged(monkeypatch):
                  focus_face=1.2) == "focus_face"
     assert _pick(monkeypatch, "feint", swarm_weakest=1.0,
                  feint=0.0) == "swarm_weakest"
+
+
+# --- review fixes: flank latch needs its ally; arrival hysteresis ---------
+
+def test_flank_without_ally_is_not_latched():
+    # A current flank with no flank_ally (the wing stood down and came
+    # back) takes the entry gates: an ally in trouble is no flank.
+    ctx = _ctx([], [_fair(ours=1.0)], anchor=US, current="flank")
+    assert _by("flank").score(ctx) == 0.0
+    far = _fair(anchor=(3000.0, 0.0, 0.0), centroid=(2700.0, 0.0, 0.0))
+    ctx = _ctx([], [far], anchor=US, current="flank")
+    assert _by("flank").score(ctx) == 0.0
+
+
+def _ally_at(d):
+    """An ally in trouble d GU off along +x, its enemy 300 GU beyond it
+    (never near us)."""
+    a = _trouble(anchor=(d, 0.0, 0.0))
+    return a, [V("e1", d + 300.0)]
+
+
+@pytest.mark.parametrize("d,current,want", [
+    (190.0, "reinforce", 0.0),          # arrived: ends at leash_gu
+    (210.0, "reinforce", 1.25),         # latched: still on
+    (290.0, "reinforce", 1.25),
+    (210.0, None, 0.0),                 # no re-entry inside leash + slack
+    (290.0, None, 0.0),
+    (310.0, None, 1.25),                # entry beyond leash + slack
+])
+def test_reinforce_arrival_hysteresis(d, current, want):
+    a, enemies = _ally_at(d)
+    ctx = _ctx(enemies, [a], current=current,
+               reinforce_ally="B" if current else None)
+    assert _by("reinforce").score(ctx) == want
+
+
+@pytest.mark.parametrize("d,current,want", [
+    (190.0, "flank", 0.0),              # arrived: ends at leash_gu
+    (210.0, "flank", 1.1),              # latched: still on
+    (290.0, "flank", 1.1),
+    (210.0, None, 0.0),                 # no re-entry inside leash + slack
+    (290.0, None, 0.0),
+    (310.0, None, 1.1),                 # entry beyond leash + slack
+])
+def test_flank_arrival_hysteresis(d, current, want):
+    # Ally B at (900, 0), its enemies' centroid C (600, 0): the flank
+    # point on our side is (600, 250). We sit d GU above it.
+    ctx = _ctx([], [_fair()], anchor=(600.0, 250.0 + d, 0.0),
+               current=current, flank_ally="B" if current else None)
+    assert _by("flank").score(ctx) == want
