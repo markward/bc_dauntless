@@ -663,15 +663,26 @@ bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
     // shortfall) and then nothing for the rest of the interval: the sensors
     // went blind and the player's target dropped every second. Paced, a
     // shortfall reaches the consumers as a steady reduced share each tick, in
-    // draw order (the first-registered consumer still has first claim), and
+    // draw order (the sensor array, then first-registered first), and
     // nothing switches off. A tick that wants no more than its allowance
     // draws exactly as before.
+    //
+    // Only the budget a battery can still supply counts: a conduit draw
+    // takes at most min(conduit, battery), and a main battery emptied
+    // outside the conduits (a tractor's direct steal) left its conduit
+    // budget standing. Counted anyway, it let the early ticks overdraw the
+    // backup conduit, which ran dry before the interval ended, and every
+    // consumer got 0 until the reset: the blink again. Wherever the
+    // battery covers its conduit this is the conduit itself, bit for bit.
     {
-        const double remaining = p.main_conduit + p.backup_conduit;
+        const double remaining =
+            py_min(p.main_conduit, py_max(p.main, 0.0)) +
+            py_min(p.backup_conduit, py_max(p.backup, 0.0));
         const double left = m.globals().POWER_INTERVAL - interval;
         p.allowance = left <= dt ? remaining : remaining * (dt / left);
     }
-    // The pump: the parent ship's consumers, in attach order. A consumer
+    // The pump: the parent ship's consumers, the sensor array first and the
+    // rest in attach order. A consumer
     // the pump cannot run (its row unnamed or freed, an unknown kind, a
     // tractor's beams unreadable) is passed over and counted -- a CONSUMER
     // skip, that consumer only, as the repair walk's QUEUE_MEMBER -- and
@@ -690,7 +701,19 @@ bool power_flow(SubsystemSession& s, Mirror& m, size_t i,
                 skip(s, i, SubsystemPiece::POWER, SubsystemSkip::CONSUMER, c);
             }
         }
-        for (int64_t c : ready) update_power(s, m, c, p);
+        // Draw order: the ship's sensor array first, then every other
+        // consumer in attach order. The original serves sensors (and
+        // torpedoes) at the budget reset ahead of everything else
+        // (stbc-oracle, PR #26), so a starved plant never blinds the ship;
+        // in attach order the Galaxy's weapons came first and an 81% short
+        // plant gave its sensors a steady 0. The wanted total is still
+        // summed in attach order.
+        std::vector<int64_t> order = ready;
+        const int64_t sensor = m.object(row._parent_ship)->_sensor_subsystem;
+        auto first = std::find(order.begin(), order.end(), sensor);
+        if (first != order.end())
+            std::rotate(order.begin(), first, first + 1);
+        for (int64_t c : order) update_power(s, m, c, p);
         for (int64_t c : ready) total += m.subsystem(c)->_power_wanted;
         wrote_total = true;
     }

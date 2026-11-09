@@ -132,13 +132,16 @@
 //           UNCONDITIONALLY: main = min(main battery, MainConduitCapacity *
 //           condPct * elapsed), backup = min(backup battery,
 //           BackupConduitCapacity * elapsed); available = their sum;
-//   the pacing: this tick's allowance = (main + backup conduit budget left)
+//   the pacing: this tick's allowance = (main + backup conduit budget left,
+//           each capped by its battery: min(conduit, max(battery, 0)))
 //           * dt / (POWER_INTERVAL - interval), or all of it when that time
 //           left is <= dt; every conduit draw below takes at most the
 //           allowance left and lowers it by what it got (a tick wanting
 //           no more than its allowance draws exactly as without it);
-//   the pump, when the parent ship has consumers: each consumer in attach
-//           order, by its power_kind (PoweredSubsystem's rules, the
+//   the pump, when the parent ship has consumers: the ship's sensor array
+//           (_sensor_subsystem) first, then each other consumer in attach
+//           order (the wanted total is summed in attach order), by its
+//           power_kind (PoweredSubsystem's rules, the
 //           tractor's _wants_power, the cloak's; the former Python
 //           _update_power methods, deleted in phase 6 Task 8):
 //           not wanting power zeroes its four draw fields (the cloak also

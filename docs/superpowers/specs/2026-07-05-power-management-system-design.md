@@ -171,6 +171,28 @@ power; a subsystem only turns off via `TurnOff`/damage) and **draw-order
 priority** (first-registered consumer gets first claim on a starved
 conduit).
 
+> **Update 2026-11-09.** The sensor array now has first claim, ahead of
+> attach order (`subsystem_step.cc` `power_flow`). The original serves
+> sensors and torpedoes at the budget reset before anything else
+> (stbc-oracle, measured for PR #26), and once #26 paced the budget across
+> the interval, attach order gave an 81%-short Galaxy's sensors a steady 0
+> because its weapons attach first. The other consumers keep attach order.
+> The paced allowance also counts each conduit only up to what its battery
+> still holds, so a main battery emptied outside the conduits (a tractor's
+> direct steal) no longer drains the backup early.
+>
+> **Priority over proportional sharing (Mark, 2026-11-09).** A shortfall
+> stays in draw order: the consumers last in it lose their share first.
+> Sharing it in proportion was considered and declined.
+>
+> **Future.** An overhauled power system is to be contemplated later. It is
+> not scheduled or designed. The per-tick priority pump is now three patches
+> (pacing, sensors first, battery cap) on a model that departs from the
+> original. The original's measured scheme (stbc-oracle, PR #26) is the
+> starting point: three hand-outs a second, each system all-or-nothing;
+> sensors and torpedoes at the budget reset, shields and impulse five frames
+> later, phasers every frame.
+
 The manual's "auto-rebalance on warp-core damage" is not engine logic —
 it is `PowerDisplay.AdjustPower` (client-side SDK Python) and arrives for
 free with § 3.
