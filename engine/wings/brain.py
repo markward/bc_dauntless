@@ -190,12 +190,19 @@ def _enemy_views(wing, home, candidates, ship_of):
                 entry.flags.append(flags)
         _enemy_cache[key] = entry
     else:
-        for i, v in enumerate(entry.views):
+        # Warm: a ship that died since the build drops out (a lookup and
+        # two predicates, no shield reads), so no wing targets a corpse.
+        views, all_flags = [], []
+        for v, old in zip(entry.views, entry.flags):
+            if not _alive(ship_of(v.name)):
+                continue
             flags = _roster_flags(v.name)
-            if flags != entry.flags[i]:
-                entry.views[i] = dataclasses.replace(
+            if flags != old:
+                v = dataclasses.replace(
                     v, wing_id=flags[0], is_commander=flags[1])
-                entry.flags[i] = flags
+            views.append(v)
+            all_flags.append(flags)
+        entry.views, entry.flags = views, all_flags
     entry.users.add(wing.wing_id)
     return list(entry.views)
 

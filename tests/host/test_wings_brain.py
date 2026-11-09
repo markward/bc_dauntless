@@ -637,3 +637,20 @@ def test_enemy_snapshot_cache_drops_expired_entries(monkeypatch):
         now[0] += period
     brain.tick_wing(wing)
     assert len(brain._enemy_cache) == 1
+
+
+def test_enemy_killed_inside_the_period_leaves_the_warm_snapshot(
+        monkeypatch):
+    """A ship that dies between two wings' ticks is dropped from the warm
+    snapshot: it never reaches the second wing's target group."""
+    wing, ships = _scene([(100.0, 0.0, 0.0), (150.0, 0.0, 0.0)])
+    green = _second_wing(ships, wing)
+    now = _game_time(monkeypatch)
+    reads = _count_shield_reads(monkeypatch)
+    brain.tick_wing(wing)
+    assert "e1" in wing.target_group.GetNameTuple()
+    ships["e1"].SetDead()
+    now[0] = 0.25
+    brain.tick_wing(green)
+    assert reads["e2"] == 1                    # still the warm snapshot
+    assert set(_group(green)) == {"e2"}
