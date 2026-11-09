@@ -2151,6 +2151,13 @@ void main() {
     // The glow-map term is already textured (glow_rgb is a texture sample), so
     // only the material term needs the base multiply. A material emissive of
     // 0.0 leaves this byte-identical to before.
+    //
+    // u_emissive_color is 0 whenever the surface's base image is a `_glow` map
+    // WITH an alpha channel: material_build drops the NiMaterialProperty value
+    // there, so the glow map's alpha alone decides what self-illuminates (the
+    // USS Valhalla's hull-wide 0.346 lit the whole hull, shadow side too). The
+    // material term below only ever fires for a non-glow image or an RGB-only
+    // glow map.
     // glow_alive: windows go dark around damage (glow_kill above).
     // It multiplies the GLOW-MAP term only -- the material emissive is a
     // property of the surface, not of a lit compartment behind it.
