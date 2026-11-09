@@ -179,6 +179,35 @@ def test_all_late_wing_first_wave_commands(world):
     assert not lw.leaderless and lw.commander in late
 
 
+def test_all_late_first_wave_is_its_first_mobile_arrivals(world):
+    """An all-late wing whose earliest late order is immobile (a station
+    given QuickBattleAI) builds its chain from its first MOBILE arrivals:
+    the station never joins, so it must not fix the first wave."""
+    hl, _c, panel, QB = world
+    import dataclasses
+    import loadspacehelper
+    from engine.quickbattle import spawn, wings_qb
+    from engine.wings import roster
+    _enemies(panel, "Warbird")
+    _group(panel, "enemy", "Galor", "Galor", warp_in=1)
+    _go(hl, panel)
+    plan = spawn.current_plan()
+    gid = panel.scenario.groups[2].id
+    first, second = [o for o in plan.orders if o.group_id == gid]
+    station = dataclasses.replace(first, warp_in_s=first.warp_in_s / 2)
+    plan = dataclasses.replace(plan, orders=tuple(
+        station if o is first else o for o in plan.orders))
+    wings_qb.arm(QB, plan)                  # the station's wave is earliest
+    lw = _wing_for(panel, 2)
+    assert lw.members == {}
+    wings_qb.ship_arrived(QB, station, "Never-spawned")  # immobile: no ship
+    assert roster.member("Never-spawned") is None
+    loadspacehelper.CreateShip("Galor", QB.g_pSet, "Galor-w1", None, 0, 0)
+    wings_qb.ship_arrived(QB, second, "Galor-w1")
+    assert roster.member("Galor-w1").in_chain_eligible
+    assert lw.chain == ["Galor-w1"] and lw.commander == "Galor-w1"
+
+
 def test_later_wave_not_in_chain(world):
     """A wave after the first never enters the chain (spec §5)."""
     hl, _c, panel, QB = world

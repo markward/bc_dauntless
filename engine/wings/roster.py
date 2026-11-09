@@ -32,6 +32,7 @@ class Wing:
     chain: list = field(default_factory=list)
     commander: str | None = None
     leaderless: bool = False
+    away: bool = False           # command alive but outside the home set
     decision: str | None = None
     primary: str | None = None
     km_priorities: Callable[[], dict] = field(default=lambda: {})

@@ -22,6 +22,10 @@ wings. All names are ship NAMES (strings).
                                       engine.wings.decisions) to the brain.
     IsEnabled()                       1 unless DAUNTLESS_WINGS=0 or the dev
                                       switch is off.
+
+While wings are disabled (IsEnabled() is 0) CreateWing, AddMember and ArmWing
+do nothing and return None, so no wing exists and the Get*/Is* calls answer
+as for a ship in no wing.
 """
 from engine.wings import decisions, roster, service, tree
 
@@ -31,10 +35,15 @@ def IsEnabled():
 
 
 def CreateWing(sWingID, pEnemyGroup):
+    if not service.enabled():
+        return None
     roster.create_wing(sWingID, pEnemyGroup)
+    return None
 
 
 def AddMember(sWingID, sShip, bPlayer=0, bChainEligible=1):
+    if not service.enabled():
+        return None
     wing = roster._wings.get(sWingID)
     if wing is None:
         return
@@ -43,6 +52,8 @@ def AddMember(sWingID, sShip, bPlayer=0, bChainEligible=1):
 
 
 def ArmWing(sWingID):
+    if not service.enabled():
+        return None
     wing = roster._wings.get(sWingID)
     if wing is not None:
         service.arm(wing)
@@ -82,7 +93,8 @@ def GetWingTargets(sShip):
     if wing is None:
         return ()
     group = wing.target_group
-    scored = [(group[n]["Priority"], n) for n in group.GetNameTuple()]
+    scored = [(group[n].get("Priority", 0.0), n)
+              for n in group.GetNameTuple()]
     scored = [s for s in scored if s[0] > 0]
     scored.sort(key=lambda s: -s[0])
     return tuple(n for _, n in scored)

@@ -341,19 +341,136 @@ def test_commander_in_another_set_hands_over_and_reclaims():
     assert wing.commander == "m1"
 
 
-def test_whole_chain_in_another_set_leaves_the_wing_alone():
+def test_whole_chain_in_another_set_fights_stock_not_latched():
+    """Command alive but away (e.g. the player warped): the wing is
+    TEMPORARILY leaderless -- every candidate at stock priority, no latch."""
     wing, ships = _scene([(100.0, 0.0, 0.0), (150.0, 0.0, 0.0)], n_members=3)
     rejoin = App.TGCondition()
     roster.member("m2").conditions["rejoin"] = rejoin
     brain.tick_wing(wing)
-    before = _group(wing)
-    assert wing.chain == ["m1"] and before
+    assert wing.chain == ["m1"] and _group(wing)
     _move(ships["m1"], "Elsewhere")             # e.g. the player warped
-    ships["e1"].SetTranslateXYZ(900.0, 0.0, 0.0)   # a rewrite would show
-    ships["m2"].SetTranslateXYZ(-900.0, 0.0, 0.0)  # a push would show
+    ships["e1"].SetTranslateXYZ(900.0, 0.0, 0.0)   # out of any reach
+    ships["m2"].SetTranslateXYZ(-900.0, 0.0, 0.0)  # far past the leash
     brain.tick_wing(wing)
-    assert _group(wing) == before
-    assert wing.leaderless is False and rejoin.GetStatus() == 0
+    assert _group(wing) == {"e1": 0.0, "e2": 0.0}  # all candidates
+    assert wing.leaderless is False and wing.commander == "m1"
+    assert rejoin.GetStatus() == 0
+
+
+def test_command_away_restores_stock_everywhere_once(monkeypatch):
+    """Away: popularity back as found, rejoin stood down for every member in
+    ANY set, SelectTarget forced once on entering, no desperation roll; when
+    a chain entry is home again the wing is a wing again."""
+    wing, ships = _scene([(100.0, 0.0, 0.0), (150.0, 0.0, 0.0),
+                          (900.0, 0.0, 0.0)], n_members=4)
+    m2, m4 = roster.member("m2"), roster.member("m4")
+    node = _select_node(ships["m2"], wing.target_group)
+    m2.select_nodes.append(node)
+    m2.select_saved[id(node)] = -1.1           # as found (stock)
+    m2.ai_root = ships["m2"].GetAI()
+    calls = []
+    monkeypatch.setattr(node, "ForceUpdate", lambda: calls.append(1))
+    rejoin2, rejoin4, ram = App.TGCondition(), App.TGCondition(), \
+        App.TGCondition()
+    m2.conditions.update({"rejoin": rejoin2, "ram": ram})
+    m4.conditions["rejoin"] = rejoin4
+    brain.tick_wing(wing)
+    assert "e3" not in _group(wing)
+    calls.clear()
+    for m, cond in ((m2, rejoin2), (m4, rejoin4)):
+        m.rejoin = True
+        cond.SetStatus(1)
+    _move(ships["m4"], "Other")                 # a straggler in a third set
+    _move(ships["m1"], "Elsewhere")             # the whole chain away
+    ships["m2"].GetHull().SetConditionPercentage(0.2)
+    dials._dials["ram_chance"] = 1.0
+    brain.tick_wing(wing)
+    assert wing.leaderless is False and wing.commander == "m1"
+    assert _group(wing) == {"e1": 0.0, "e2": 0.0, "e3": 0.0}
+    inst = node.GetPreprocessingInstance()
+    assert inst.fPopularityFactor == pytest.approx(-1.1)
+    assert rejoin2.GetStatus() == 0 and rejoin4.GetStatus() == 0
+    assert m2.rejoin is False and m4.rejoin is False
+    assert calls == [1]
+    assert m2.desperate is None and ram.GetStatus() == 0
+    brain.tick_wing(wing)                       # still away: forced once
+    assert calls == [1]
+    _move(ships["m1"], "WingTest")
+    brain.tick_wing(wing)
+    assert wing.commander == "m1" and "e3" not in _group(wing)
+    assert inst.fPopularityFactor == pytest.approx(
+        dials.get("wing_popularity"))
+
+
+def test_member_outside_home_set_is_never_left_rejoining():
+    """A member left in another set while command is home is stood down:
+    WingRejoin cannot reach a commander in another set."""
+    wing, ships = _scene([(100.0, 0.0, 0.0)], n_members=3)
+    cond = App.TGCondition()
+    roster.member("m3").conditions["rejoin"] = cond
+    ships["m3"].SetTranslateXYZ(-350.0, 0.0, 0.0)    # past leash + slack
+    brain.tick_wing(wing)
+    assert cond.GetStatus() == 1
+    _move(ships["m3"], "Other")
+    brain.tick_wing(wing)
+    assert wing.commander == "m1"
+    assert cond.GetStatus() == 0 and roster.member("m3").rejoin is False
+
+
+def test_listed_primary_change_forces_select_update(monkeypatch):
+    """The ForceUpdate trigger follows the WRITTEN primary: a km-listed ship
+    promoted over the decision's pick counts as a change."""
+    wing, ships = _scene([(100.0, 0.0, 0.0), (120.0, 0.0, 0.0),
+                          (140.0, 0.0, 0.0)])
+    node = _select_node(ships["m2"], wing.target_group)
+    roster.member("m2").select_nodes.append(node)
+    calls = []
+    monkeypatch.setattr(node, "ForceUpdate", lambda: calls.append(1))
+    brain.tick_wing(wing)
+    assert wing.primary == "e1" and len(calls) == 1
+    wing.km_priorities = lambda: {"e3": 2.0}
+    brain.tick_wing(wing)
+    assert _group(wing)["e3"] == 3.0
+    assert wing.primary == "e3" and len(calls) == 2
+
+
+def test_player_commanding_nothing_in_reach_escorts_form_up(monkeypatch):
+    """The player commands, nothing in reach, no candidate target: the
+    group is empty and escorts beyond the gather distance rejoin."""
+    wing, ships = _scene([(600.0, 0.0, 0.0), (900.0, 0.0, 0.0)],
+                         n_members=3)
+    roster.member("m1").is_player = True
+    brain.arm_chain(wing)
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ships["m1"])
+    ships["m1"].SetTarget(None)
+    near, far = App.TGCondition(), App.TGCondition()
+    roster.member("m2").conditions["rejoin"] = near     # 20 GU off
+    roster.member("m3").conditions["rejoin"] = far
+    ships["m3"].SetTranslateXYZ(-150.0, 0.0, 0.0)  # inside leash, past gather
+    brain.tick_wing(wing)
+    assert _group(wing) == {}
+    assert far.GetStatus() == 1 and roster.member("m3").rejoin is True
+    assert near.GetStatus() == 0
+
+
+def test_cloaked_enemy_never_in_target_group():
+    """Cloaked or cloaking enemies are not candidates (SelectTarget skips a
+    cloaked ship): not in the reach set, not the nothing-in-reach pick."""
+    wing, ships = _scene([(100.0, 0.0, 0.0), (150.0, 0.0, 0.0),
+                          (170.0, 0.0, 0.0)])
+    ships["e1"].GetCloakingSubsystem().InstantCloak()
+    ships["e2"].GetCloakingSubsystem().StartCloaking()
+    assert ships["e2"].GetCloakingSubsystem().IsCloaking()
+    brain.tick_wing(wing)
+    assert set(_group(wing)) == {"e3"}
+
+
+def test_cloaked_nearest_is_not_the_nothing_in_reach_pick():
+    wing, ships = _scene([(500.0, 0.0, 0.0), (900.0, 0.0, 0.0)])
+    ships["e1"].GetCloakingSubsystem().InstantCloak()
+    brain.tick_wing(wing)
+    assert _group(wing) == {"e2": 3.0}
 
 
 def test_command_away_stands_rejoin_down():

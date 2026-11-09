@@ -94,3 +94,38 @@ def test_wing_targets_ordered():
                     "c": {"Priority": 0.0}}[k]
     w.target_group = G()
     assert dw.GetWingTargets("X") == ("b", "a")
+
+
+@pytest.mark.parametrize("how", ["env", "dev"])
+def test_building_calls_do_nothing_when_disabled(monkeypatch, how):
+    """With wings off CreateWing / AddMember / ArmWing build no state, so
+    GetCommander / IsCommander never report a wing no brain runs."""
+    from engine.wings import brain
+    monkeypatch.setattr(brain, "arm_chain", lambda w: setattr(w, "commander", "Lead"))
+    if how == "env":
+        monkeypatch.setenv("DAUNTLESS_WINGS", "0")
+    else:
+        service.set_dev_enabled(False)
+    dw = _dw()
+    assert dw.CreateWing("W", _Group()) is None
+    assert dw.AddMember("W", "Lead") is None
+    assert dw.ArmWing("W") is None
+    assert roster.wings() == [] and service._armed == []
+    assert dw.GetWing("Lead") is None and dw.GetCommander("Lead") is None
+    assert not dw.IsCommander("Lead")
+
+
+def test_wing_targets_tolerate_names_without_info():
+    """A name a mod AddName'd into the group has no info: Priority 0."""
+    dw = _dw()
+    w = roster.create_wing("W", _Group())
+    dw.AddMember("W", "X")
+
+    class G:
+        def GetNameTuple(self):
+            return ("a", "modded")
+
+        def __getitem__(self, k):
+            return {"a": {"Priority": 1.5}}.get(k, {})
+    w.target_group = G()
+    assert dw.GetWingTargets("X") == ("a",)

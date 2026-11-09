@@ -17,8 +17,9 @@ Armed from `battle_end.begin` for every plan-driven battle (no-op when
 - A late (warp-in) order is not a member at arm: `ship_arrived` adds it
   just before late_arrivals gives it its AI, outside the chain -- except
   that a wing whose members are ALL late (every order of a QB group shares
-  its warp-in) builds its chain from its first arrival wave, re-running
-  `brain.arm_chain` after each of those arrivals.
+  its warp-in) builds its chain from its first MOBILE arrival wave (fixed by
+  the first mobile ship to arrive: a late station never joins, so it cannot
+  set the wave), re-running `brain.arm_chain` after each of those arrivals.
 - The candidate enemy group is the QuickBattle group the members' stock AI
   attacks: enemies' wings `pFriendlies`, friendlies' wings `pEnemies`.
 - `km_priorities` reads `km_targeting.priorities_for(allegiance)` at use, so
@@ -62,7 +63,8 @@ _wrapped: list = []          # (module, original CreateAI)
 _owned: dict = {}            # non-player member name -> its wing
 _attacked: dict = {}         # wing id -> the attacked QuickBattle group attr
 _by_group: dict = {}         # QB group id -> its wing
-_first_wave: dict = {}       # all-late group id -> its first arrivals' warp_in_s
+_first_wave: dict = {}       # all-late group id -> its first mobile
+                             # arrivals' warp_in_s (None until one arrives)
 
 
 def _is_mobile(ship) -> bool:
@@ -101,7 +103,7 @@ def arm(qb, plan) -> None:
     if plan is None or not service.enabled():
         return
     groups: dict = {}            # group id -> (allegiance, [initial names])
-    late: dict = {}              # group id -> [warp_in_s of its late orders]
+    late: set = set()            # group ids with a late order
     modules: list = []
     for n, order in enumerate(plan.orders, start=1):
         ai = _member_module(qb, order)
@@ -109,7 +111,7 @@ def arm(qb, plan) -> None:
             continue
         name = naming.object_name(order.title, n)
         if order.warp_in_s > 0:
-            late.setdefault(order.group_id, []).append(order.warp_in_s)
+            late.add(order.group_id)
         elif not _is_mobile(App.ShipClass_GetObject(None, name)):
             continue             # a station (or a ship that did not spawn)
         _alleg, members = groups.setdefault(order.group_id, (order.allegiance, []))
@@ -134,8 +136,8 @@ def arm(qb, plan) -> None:
             roster.add_member(wing, name)
             _owned[name] = wing
         if not wing.members and gid in late:
-            # All late: its first arrival wave will build the chain.
-            _first_wave[gid] = min(late[gid])
+            # All late: its first mobile arrival wave will build the chain.
+            _first_wave[gid] = None
     for name in modules:
         _wrap(name)
     for wing in _by_group.values():
@@ -209,8 +211,8 @@ def _create_ai(orig, pShip, args, kw):
 def ship_arrived(qb, order, name) -> None:
     """A late ship of `order` is in the battle, its AI not yet set: it joins
     its group's wing -- in the chain only when the wing had no initial
-    member and this is its first arrival wave (the chain is rebuilt after
-    each), otherwise outside it. Never raises."""
+    member and this is its first MOBILE arrival wave (the chain is rebuilt
+    after each), otherwise outside it. Never raises."""
     if not _by_group:
         return
     try:
@@ -221,7 +223,10 @@ def ship_arrived(qb, order, name) -> None:
             return
         if not _is_mobile(App.ShipClass_GetObject(None, name)):
             return
-        eligible = _first_wave.get(order.group_id) == order.warp_in_s
+        gid = order.group_id
+        if gid in _first_wave and _first_wave[gid] is None:
+            _first_wave[gid] = order.warp_in_s       # first mobile arrival
+        eligible = gid in _first_wave and _first_wave[gid] == order.warp_in_s
         roster.add_member(wing, name, chain_eligible=eligible)
         _owned[name] = wing
         if eligible:

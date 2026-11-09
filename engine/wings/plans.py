@@ -5,13 +5,20 @@ Spec 2026-11-09-wing-leaders-phase-a-design.md sections 7, 9, 10. No App imports
 from engine.wings import assess, dials
 
 
-def target_priorities(enemies, anchor, choice, km, player_target):
+def target_priorities(enemies, anchor, choice, km, player_target,
+                      player_commands=False):
+    """The wing target group {name: Priority} (spec §9). Nothing in reach
+    holds only the nearest candidate at 3.0 -- unless the player commands
+    and its target is not a candidate: then nothing (the escorts form up on
+    the player rather than charge an enemy the leash yanks them back from)."""
     enemies = list(enemies)
     if not enemies:
         return {}
     leash = dials.get("leash_gu")
     reach = [e for e in enemies if assess.dist(e.pos, anchor.pos) <= leash]
     if not reach and not any(e.name == player_target for e in enemies):
+        if player_commands:
+            return {}
         nearest = min(enemies,
                       key=lambda e: (assess.dist(e.pos, anchor.pos), e.name))
         return {nearest.name: 3.0}

@@ -60,7 +60,11 @@ def arm(wing) -> None:
 
 
 def tick(dt: float) -> None:
-    if not _armed or not enabled():
+    """Run every armed wing whose period has passed. The dev switch is NOT
+    read here: it is read at arm time (consumers check enabled() before
+    arming), so toggling it mid-battle leaves the battle as armed. Only
+    DAUNTLESS_WINGS=0 stops the brain."""
+    if not _armed or os.environ.get("DAUNTLESS_WINGS") == "0":
         return
     period = dials.get("brain_period_s")
     for wing in list(_armed):
@@ -76,8 +80,10 @@ def reset() -> None:
 
 
 def reset_all() -> None:
-    """Tests only: also drops mod-registered decisions and dial changes."""
+    """Tests only: also drops mod-registered decisions, dial changes and
+    the dev switch."""
     reset()
+    reset_dev()
     set_show_markers(False)
     decisions.reset_registry()
     dials.reset()

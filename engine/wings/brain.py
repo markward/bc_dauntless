@@ -39,6 +39,14 @@ def _shield_fraction(ship) -> float:
                for i in range(_NUM_SHIELDS)) / _NUM_SHIELDS
 
 
+def _cloaked(ship) -> bool:
+    """Cloaked or cloaking: the cloak subsystem's own state predicates (the
+    ones stock SelectTarget.FindGoodTarget reads; it skips IsCloaked). A
+    ship with no cloaking device is never cloaked."""
+    cloak = ship.GetCloakingSubsystem()
+    return cloak is not None and bool(cloak.IsCloaked() or cloak.IsCloaking())
+
+
 def view_of(ship, wing_id=None, is_commander=False):
     if not _alive(ship):
         return None
@@ -144,8 +152,14 @@ def tick_wing(wing) -> None:
     candidates += [n for n in km if n not in seen]
     enemies = []
     for name in candidates:
+        ship = ship_of(name)
+        # A cloaked enemy is no candidate: SelectTarget would skip it, so a
+        # group of only cloaked ships (the nothing-in-reach pick) idles the
+        # wing. It comes back on the tick after it decloaks.
+        if ship is not None and _cloaked(ship):
+            continue
         other = roster.wing_of(name)
-        v = view_of(ship_of(name),
+        v = view_of(ship,
                     other.wing_id if other is not None else None,
                     other is not None and other.commander == name)
         if v is not None:
@@ -157,14 +171,12 @@ def tick_wing(wing) -> None:
                                             lambda n: n in members)
         if commander is None and any(_alive(_find_anywhere(n))
                                      for n in wing.chain):
-            # Command is alive but away (a warp): leave the wing's targets
-            # alone, but nobody here can rejoin it -- stand the flags down
-            # so members fight with their stock tree until it is back.
-            for name in members:
-                m = wing.members[name]
-                m.rejoin = False
-                _push(m, "rejoin", False)
+            # Command is alive but away (a warp): temporarily leaderless,
+            # not latched -- stock targeting, no desperation, until a chain
+            # entry is in the home set again.
+            _command_away(wing, enemies, km)
             return
+        wing.away = False
         if commander != wing.commander:
             if commander is not None:
                 log("%s handover %s -> %s"
@@ -196,22 +208,26 @@ def tick_wing(wing) -> None:
     choice = decision.choose(ctx)
 
     # 5. Apply.
-    player_target = _player_target(wing)
+    player_commands = _player_commands(wing)
+    player_target = _player_target(wing) if player_commands else None
     prios = plans.target_priorities(enemies, anchor, choice, km,
-                                    player_target)
+                                    player_target, player_commands)
     _write_group(wing.target_group, prios)
 
     player = next((n for n, m in wing.members.items() if m.is_player), None)
+    # A commanding player with nothing to fight: the escorts form up on it.
+    gather = choice.gather or (player_commands and not prios)
     flags = plans.rejoin_flags(
         list(members.values()), anchor,
         {n: m.rejoin for n, m in wing.members.items()},
-        choice.gather, wing.commander, player)
-    for name, flag in flags.items():
-        m = wing.members[name]
+        gather, wing.commander, player)
+    for name, m in wing.members.items():
+        # Outside the home set WingRejoin cannot reach the commander: off.
+        flag = flags.get(name, False)
         m.rejoin = flag
         _push(m, "rejoin", flag)
 
-    primary = _primary_of(prios, choice, player_target)
+    primary = _primary_of(prios)
     if primary != wing.primary:
         wing.primary = primary
         for m in wing.members.values():
@@ -219,23 +235,21 @@ def tick_wing(wing) -> None:
                 node.ForceUpdate()
 
 
-def _primary_of(prios, choice, player_target):
-    if player_target is not None and player_target in prios:
-        return player_target
-    if choice.primary in prios:
-        return choice.primary
-    if len(prios) == 1:          # nothing in reach: the nearest, at 3.0
-        (name, p), = prios.items()
-        if p >= 3.0:
-            return name
-    return None
+def _primary_of(prios):
+    """The written primary: the highest priority at >= 3.0 (ties by name),
+    else None. Change detection only (ForceUpdate)."""
+    top = [(-p, n) for n, p in prios.items() if p >= 3.0]
+    return min(top)[1] if top else None
+
+
+def _player_commands(wing) -> bool:
+    m = wing.members.get(wing.commander)
+    return m is not None and m.is_player
 
 
 def _player_target(wing):
-    """The player's current target name, when the player commands."""
-    m = wing.members.get(wing.commander)
-    if m is None or not m.is_player:
-        return None
+    """The player's current target name (call only when the player
+    commands)."""
     import App
     player = App.Game_GetCurrentPlayer()
     target = player.GetTarget() if player is not None else None
@@ -254,6 +268,28 @@ def _push(member, kind, on) -> None:
     cond = member.conditions.get(kind)
     if cond is not None:
         cond.SetStatus(1 if on else 0)
+
+
+def _command_away(wing, enemies, km) -> None:
+    """Command alive but away: every candidate at stock priority, each
+    member's popularity as found, rejoin off for every member in any set
+    (nobody can rejoin a commander in another set); SelectTarget forced once
+    on entering. Not latched: the next tick with a chain entry home is a
+    normal one (popularity re-applied there)."""
+    from engine.wings import tree
+    _write_group(wing.target_group, plans.leaderless_priorities(enemies, km))
+    entering = not wing.away
+    if entering:
+        wing.away = True
+        wing.primary = None
+        log("%s command away" % wing.wing_id)
+    for m in wing.members.values():
+        tree.restore_popularity(m)
+        m.rejoin = False
+        _push(m, "rejoin", False)
+        if entering:
+            for node in m.select_nodes:
+                node.ForceUpdate()
 
 
 def _go_leaderless(wing) -> None:

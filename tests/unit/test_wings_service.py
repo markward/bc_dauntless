@@ -93,14 +93,41 @@ def test_tick_uses_tick_safely(monkeypatch):
     assert seen == ["A"]
 
 
-def test_disabled_tick_is_noop(monkeypatch):
+def test_env_off_tick_does_no_work(monkeypatch):
+    """DAUNTLESS_WINGS=0: no brain work runs, even for an armed wing."""
+    seen = []
+    monkeypatch.setattr(brain, "arm_chain", lambda w: None)
+    monkeypatch.setattr(brain, "tick_safely", lambda w: seen.append(1))
+    service.arm(_wing("A"))
+    monkeypatch.setenv("DAUNTLESS_WINGS", "0")
+    service.tick(5.0)
+    assert seen == []
+
+
+def test_nothing_armed_tick_does_no_work(monkeypatch):
+    seen = []
+    monkeypatch.setattr(brain, "tick_safely", lambda w: seen.append(1))
+    _wing("A")                                  # created, never armed
+    service.tick(5.0)
+    assert seen == []
+
+
+def test_dev_toggle_mid_battle_leaves_armed_wing_ticking(monkeypatch):
+    """The dev switch is read at arm time only ("next battle"): switching it
+    off mid-battle does not stop an armed wing half way."""
     seen = []
     monkeypatch.setattr(brain, "arm_chain", lambda w: None)
     monkeypatch.setattr(brain, "tick_safely", lambda w: seen.append(1))
     service.arm(_wing("A"))
     service.set_dev_enabled(False)
-    service.tick(5.0)
-    assert seen == []
+    service.tick(1.0)
+    assert seen == [1]
+
+
+def test_reset_all_resets_dev_switch():
+    service.set_dev_enabled(False)
+    service.reset_all()
+    assert service.enabled()
 
 
 def test_markers_default_off_survive_reset_cleared_by_reset_all():

@@ -123,3 +123,26 @@ def test_choice_outside_reach_is_dropped():
     out = plans.target_priorities(en, anchor, Choice("far", ("far2",)), {},
                                   None)
     assert out == {"a": 0.0}
+
+
+def test_player_commanding_nothing_in_reach_holds_nothing():
+    """The player commands, nothing is in reach and the player's target is
+    not a candidate: the group is EMPTY (escorts form up on the player
+    instead of charging the nearest enemy and being yanked back)."""
+    anchor = V("anc", 0)
+    en = [V("f1", 900), V("f2", 600)]
+    out = plans.target_priorities(en, anchor, Choice(None), {}, None,
+                                  player_commands=True)
+    assert out == {}
+    out = plans.target_priorities(en, anchor, Choice(None), {}, "nobody",
+                                  player_commands=True)
+    assert out == {}
+    # A candidate player target is still the primary, out of reach too.
+    out = plans.target_priorities(en, anchor, Choice(None), {}, "f1",
+                                  player_commands=True)
+    assert out == {"f1": 3.0}
+    # Something in reach: unchanged.
+    en.append(V("a", 50))
+    out = plans.target_priorities(en, anchor, Choice("a"), {}, None,
+                                  player_commands=True)
+    assert out == {"a": 3.0}
