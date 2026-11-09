@@ -13,6 +13,13 @@ are not a combat_stress fight, a pose / hull / target digest plus the state of
 every RNG stream at the end, and writes the serialised record and the native
 counters (``ai_native.stats()``) for the parent.
 
+The record goes over as zlib'd JSON, written a row at a time, and the stress
+scenes keep each recorded tick packed (zlib'd pickle) until it is written:
+combat_stress_gated's record is ~100 MB of JSON, and holding it whole, with
+the take it was built from, peaked the child at 1.7 GB on top of the parent
+(the full gate's pytest peak RSS). The parent compares the compressed bytes;
+first_difference unpacks them.
+
 The A/B test asserts the two records are byte-identical. Scenes:
 
 * ``k1_gameloop_ai``      the golden scene, as the goldens run it (ungated)
@@ -31,9 +38,12 @@ The A/B test asserts the two records are byte-identical. Scenes:
 import hashlib
 import json
 import os
+import pickle
 import subprocess
 import sys
 import tempfile
+import zlib
+from collections.abc import Sequence
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -149,8 +159,9 @@ def assert_no_native(stats):
 
 
 def first_difference(a: bytes, b: bytes) -> str:
-    """Where two records first differ, for an assertion message."""
-    ra, rb = json.loads(a), json.loads(b)
+    """Where two records (as the children write them) first differ, for an
+    assertion message."""
+    ra, rb = json.loads(zlib.decompress(a)), json.loads(zlib.decompress(b))
     for i, (x, y) in enumerate(zip(ra, rb)):
         if x != y:
             return "first differing tick row %d:\n  python: %.600s\n  native: %.600s" \
@@ -175,11 +186,58 @@ def test_child():
     _child_setup()
     rows = _SCENE_FUNCS[scene](ticks)
     from engine.appc import ai_native
-    Path(out + ".rows").write_bytes(
-        json.dumps(rows, sort_keys=True, separators=(",", ":")).encode())
+    _write_rows(out + ".rows", rows)
     Path(out + ".stats").write_text(json.dumps(ai_native.stats()))
     import _dauntless_host as _h
     Path(out + ".memos").write_text(json.dumps(_h.ai_memo_status()))
+
+
+def _write_rows(path, rows):
+    """`rows` (any iterable) as one zlib'd JSON array, a row at a time: the
+    bytes json.dumps(list(rows), sort_keys=True, separators=(",", ":"))
+    would give, compressed, without holding them whole."""
+    z = zlib.compressobj()
+    with open(path, "wb") as f:
+        f.write(z.compress(b"["))
+        for i, row in enumerate(rows):
+            if i:
+                f.write(z.compress(b","))
+            f.write(z.compress(json.dumps(
+                row, sort_keys=True, separators=(",", ":")).encode()))
+        f.write(z.compress(b"]"))
+        f.write(z.flush())
+
+
+class _PackedTicks(Sequence):
+    """A k1 _Scene's per-tick state (golden_fight._k1_state's rows), each
+    tick held as zlib'd pickle of its (log row, extras) and built on read.
+    The kinds are read once, from the scene at the end, as _k1_state does."""
+
+    def __init__(self, scene, packed):
+        from tests.helpers import golden_fight
+        self._kinds = golden_fight._k1_kinds(scene)
+        self._packed = packed
+
+    def __len__(self):
+        return len(self._packed)
+
+    def __getitem__(self, i):
+        from tests.helpers import golden_fight
+        if isinstance(i, slice):
+            return [self[j] for j in range(*i.indices(len(self)))]
+        row, extra = pickle.loads(zlib.decompress(self._packed[i]))
+        return golden_fight._k1_state_row(self._kinds, row, extra)
+
+
+def _pack_last_tick(scene, packed):
+    """Move the tick just recorded (the last _Scene.log row and its
+    golden_extra) out of the scene into `packed`. Nothing reads either list
+    back during a run."""
+    assert len(scene.log) == len(scene.golden_extra) == 1, \
+        (len(scene.log), len(scene.golden_extra))
+    packed.append(zlib.compress(pickle.dumps(
+        (scene.log.pop(), scene.golden_extra.pop()),
+        protocol=pickle.HIGHEST_PROTOCOL)))
 
 
 def _child_setup():
@@ -263,6 +321,7 @@ def _stress(ticks, ships, gate, count_subsystem_rng=False):
             counting = CountingRandom()
             counting.setstate(old.getstate())
             mp.setattr(App.g_kSystemWrapper, "_rng", counting)
+        packed = []
         while scene.tick < ticks:
             scene.tick += 1
             loop.tick()
@@ -274,6 +333,7 @@ def _stress(ticks, ships, gate, count_subsystem_rng=False):
                                           push_render_data=False)
             host_loop._combat_tick_boundary()
             scene.record()
+            _pack_last_tick(scene, packed)
             sensor_contacts.tick(scene.player,
                                  App.g_kUtopiaModule.GetGameTime())
         nc.audit_mirror()
@@ -286,8 +346,10 @@ def _stress(ticks, ships, gate, count_subsystem_rng=False):
                 assert rng_draws[0] == 0 and rng_draws[1] > 0, rng_draws
             else:
                 assert rng_draws[1] == 0 and rng_draws[0] > 0, rng_draws
-        rows = golden_fight._canonical(golden_fight._k1_take(scene))
-    return rows
+        take = golden_fight._Take(_PackedTicks(scene, packed), scene.events,
+                                  scene.queued.rows, scene.calls, [])
+    # A generator: test_child writes the rows out one tick at a time.
+    return golden_fight._canonical_rows(take)
 
 
 def _digest(ships, loop_time):

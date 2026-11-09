@@ -320,17 +320,27 @@ def _patch_records(mp):
     mp.setattr(k3_fight.Recorder, "record", k3)
 
 
+def _k1_kinds(scene):
+    """The kind of each leading _Scene.log row: systems, weapons, ships
+    (anything after them is a torpedo)."""
+    return (["system"] * len(scene.systems)
+            + ["weapon"] * len(scene.weapons)
+            + ["ship"] * len(scene.ships))
+
+
+def _k1_state_row(kinds, row, extra):
+    """One tick of _k1_state: `row` (a _Scene.log entry) given its kinds,
+    plus that tick's extras."""
+    return [[kinds[i] if i < len(kinds) else "torpedo"] + list(r)
+            for i, r in enumerate(row)] + extra
+
+
 def _k1_state(scene):
     """_Scene.log, each row given its kind (the record's layout: systems,
     weapons, ships, then torpedoes), plus the extras."""
-    kinds = (["system"] * len(scene.systems)
-             + ["weapon"] * len(scene.weapons)
-             + ["ship"] * len(scene.ships))
-    out = []
-    for row, extra in zip(scene.log, scene.golden_extra):
-        out.append([[kinds[i] if i < len(kinds) else "torpedo"] + list(r)
-                    for i, r in enumerate(row)] + extra)
-    return out
+    kinds = _k1_kinds(scene)
+    return [_k1_state_row(kinds, row, extra)
+            for row, extra in zip(scene.log, scene.golden_extra)]
 
 
 def _k1_take(scene, notes=()):
@@ -773,6 +783,13 @@ def _by_tick(rows, at, n):
 
 
 def _canonical(take):
+    return list(_canonical_rows(take))
+
+
+def _canonical_rows(take):
+    """_canonical's rows one tick at a time, in order (a generator), so a
+    caller can write a long scene out without holding it whole. Reads
+    `take.state` by len() and index only."""
     n = len(take.state)
     ordered, shown = k3_fight.split_calls(take.calls)
     events = _by_tick(take.events, 3, n)
@@ -791,12 +808,10 @@ def _canonical(take):
             out.append(r)
         return out
 
-    rows = []
     for t in range(n + 1):
-        rows.append((t, [] if t == 0 else take.state[t - 1],
-                     typed(events[t]), typed(queued[t]), calls[t],
-                     shown.get(t, []), notes[t]))
-    return [tuple(r) for r in _norm(rows)]
+        yield tuple(_norm((t, [] if t == 0 else take.state[t - 1],
+                           typed(events[t]), typed(queued[t]), calls[t],
+                           shown.get(t, []), notes[t])))
 
 
 def run_scene(name: str, arm: str) -> list:
