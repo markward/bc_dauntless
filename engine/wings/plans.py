@@ -7,8 +7,10 @@ from engine.wings import assess, dials
 
 def target_priorities(enemies, anchor, choice, km, player_target,
                       player_commands=False):
-    """The wing target group {name: Priority} (spec §9). Nothing in reach
-    holds only the nearest candidate at 3.0 -- unless the player commands
+    """The wing target group {name: Priority} (spec §9). A far choice
+    (choice.far) keeps its primary and secondaries even beyond leash
+    (Phase D §4). Nothing in reach (and no far pick) holds only the
+    nearest candidate at 3.0 -- unless the player commands
     and its target is not a candidate: then nothing (the escorts form up on
     the player rather than charge an enemy the leash yanks them back from)."""
     enemies = list(enemies)
@@ -16,13 +18,22 @@ def target_priorities(enemies, anchor, choice, km, player_target,
         return {}
     leash = dials.get("leash_gu")
     reach = [e for e in enemies if assess.dist(e.pos, anchor.pos) <= leash]
-    if not reach and not any(e.name == player_target for e in enemies):
+    # A far choice (Phase D reinforce: another wing's fight) keeps its
+    # primary and secondaries beyond leash. Only the in-reach ships can be
+    # promoted as listed ships below.
+    far = []
+    if choice.far:
+        picked = {choice.primary, *choice.secondaries}
+        far = [e for e in enemies if e.name in picked and e not in reach]
+    if (not reach and not far
+            and not any(e.name == player_target for e in enemies)):
         if player_commands:
             return {}
         nearest = min(enemies,
                       key=lambda e: (assess.dist(e.pos, anchor.pos), e.name))
         return {nearest.name: 3.0}
-    names = {e.name for e in reach}  # may be empty if only player_target
+    # may be empty if only player_target
+    names = {e.name for e in reach} | {e.name for e in far}
     out = {n: km.get(n, 0.0) for n in names}
     primary = choice.primary if choice.primary in names else None
     secondaries = [s for s in choice.secondaries if s in names]

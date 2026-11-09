@@ -1,9 +1,11 @@
 """Wing decision registry and the Phase A decisions (spec §8). Pure."""
 import copy
 import dataclasses
+import math
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
+from engine.wings import allies as _allies
 from engine.wings import assess, attack, dials, protect
 
 
@@ -43,6 +45,17 @@ class Context:
     strict_protectees: frozenset = frozenset()
     # Phase D: the WingStatus of the other wings on this wing's side.
     allies: tuple = ()
+    # Phase D latches and cooldowns, filled by the brain: the ally a running
+    # reinforce is helping and the allies on reinforce cooldown; the ally a
+    # running feint is luring toward, whether the feint cooldown is over,
+    # and how long no enemy has been within engage_gu of our anchor while
+    # feinting; how long the current decision has been current.
+    reinforce_ally: Optional[str] = None
+    reinforce_done: frozenset = frozenset()
+    feint_ally: Optional[str] = None
+    feint_ready: bool = True
+    feint_quiet_s: float = 0.0
+    decision_age_s: float = 0.0
 
 
 @dataclass
@@ -55,6 +68,13 @@ class Choice:
     slot_dirs: tuple = ()
     weapons_first: bool = False
     slot_all: bool = False
+    # Phase D: far keeps the primary and secondaries beyond leash
+    # (reinforce); a hold point and its kind ("screen" | "flank" | "feint")
+    # for the hold branch; the ally the decision is about.
+    far: bool = False
+    hold_point: Optional[tuple] = None
+    hold_kind: Optional[str] = None
+    ally: Optional[str] = None
 
 
 class Decision(Protocol):
@@ -88,6 +108,15 @@ def _in_reach(ctx):
         ctx, "reach", (ctx.enemies, ctx.anchor, leash),
         lambda: [e for e in ctx.enemies
                  if assess.dist(e.pos, ctx.anchor.pos) <= leash]))
+
+
+def _near(ctx):
+    """Enemies within engage_gu of the anchor (we are engaged when any)."""
+    engage = dials.get("engage_gu")
+    return list(_memo(
+        ctx, "near", (ctx.enemies, ctx.anchor, engage),
+        lambda: [e for e in ctx.enemies
+                 if assess.dist(e.pos, ctx.anchor.pos) <= engage]))
 
 
 def _sides(ctx, engage):
@@ -364,9 +393,217 @@ class Disable:
                       weapons_first=True, slot_all=True)
 
 
+# --- Phase D: wings working together (spec 2026-11-09 phase D §4-§6) ------
+
+def _strength_frac(ctx) -> float:
+    """Our live strength / armed strength, as the published status."""
+    armed = ctx.armed_strength
+    if not armed:
+        return 0.0
+    return sum(assess.strength(m) for m in ctx.members) / armed
+
+
+def _ally(ctx, wing_id):
+    return next((a for a in ctx.allies if a.wing_id == wing_id), None)
+
+
+def _to(ctx, a) -> float:
+    return assess.dist(a.anchor, ctx.anchor.pos)
+
+
+def _odds(a) -> float:
+    return a.ours / a.theirs if a.theirs > 0 else math.inf
+
+
+def _reinforce_ally(ctx):
+    """The ally to reinforce, or None. Latched (a current reinforce on
+    ctx.reinforce_ally): only the end conditions -- arrival within leash of
+    its anchor, it no longer in trouble or gone, the reinforce_max_s cap.
+    Otherwise the entry gate: we are not engaged or can spare the help, and
+    the in-trouble ally within reinforce_range_gu with the worst odds
+    (ties: nearest), skipping allies on cooldown."""
+    leash = dials.get("leash_gu")
+    if ctx.current == "reinforce" and ctx.reinforce_ally is not None:
+        a = _ally(ctx, ctx.reinforce_ally)
+        if (a is None or not _allies.in_trouble(a) or _to(ctx, a) <= leash
+                or ctx.decision_age_s >= dials.get("reinforce_max_s")):
+            return None
+        return a
+    if _near(ctx):
+        ours, theirs = _sides(ctx, dials.get("engage_gu"))
+        if not ours >= dials.get("reinforce_spare_odds") * theirs:
+            return None
+    reach = dials.get("reinforce_range_gu")
+    cands = [a for a in ctx.allies
+             if a.wing_id not in ctx.reinforce_done and _allies.in_trouble(a)
+             and leash < _to(ctx, a) <= reach]
+    if not cands:
+        return None
+    return min(cands, key=lambda a: (_odds(a), _to(ctx, a), a.wing_id))
+
+
+class Reinforce:
+    name = "reinforce"
+
+    def score(self, ctx: Context) -> float:
+        return 1.25 if _reinforce_ally(ctx) is not None else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        a = _reinforce_ally(ctx)
+        if a is None:
+            return swarm_choice(ctx)
+        engage = dials.get("engage_gu")
+        theirs = sorted(
+            (e for e in ctx.enemies if assess.dist(e.pos, a.anchor) <= engage),
+            key=lambda e: (assess.dist(e.pos, a.anchor), e.name))
+        if not theirs:
+            return Choice(None, (), far=True, ally=a.wing_id)
+        return Choice(theirs[0].name, tuple(e.name for e in theirs[1:3]),
+                      far=True, ally=a.wing_id)
+
+
+def _feint_ally(ctx):
+    """The ally F to lure toward, or None. Latched (a current feint on
+    ctx.feint_ally): only the §6 ends -- we are within feint_stop_gu + 50
+    of F, F is engaged (the trap is sprung, or F is busy elsewhere) or gone,
+    no enemy near us for 10 s, the feint_max_s cap. Otherwise the entry
+    gate: we are engaged at strength_frac >= 0.5, the cooldown is over,
+    and the nearest F that is idle, at strength_frac >= 0.6, between
+    engage_gu and feint_range_gu from us, with theirs <= (ours + F.ours) x
+    feint_odds."""
+    if ctx.current == "feint" and ctx.feint_ally is not None:
+        f = _ally(ctx, ctx.feint_ally)
+        if (f is None or f.engaged
+                or _to(ctx, f) <= dials.get("feint_stop_gu") + 50.0
+                or ctx.feint_quiet_s >= 10.0
+                or ctx.decision_age_s >= dials.get("feint_max_s")):
+            return None
+        return f
+    if not ctx.feint_ready or not _near(ctx) or _strength_frac(ctx) < 0.5:
+        return None
+    engage = dials.get("engage_gu")
+    ours, theirs = _sides(ctx, engage)
+    lo, hi = engage, dials.get("feint_range_gu")
+    odds = dials.get("feint_odds")
+    cands = [f for f in ctx.allies
+             if not f.engaged and f.strength_frac >= 0.6
+             and lo < _to(ctx, f) <= hi
+             and theirs <= (ours + f.ours) * odds]
+    if not cands:
+        return None
+    return min(cands, key=lambda f: (_to(ctx, f), f.wing_id))
+
+
+class Feint:
+    name = "feint"
+
+    def score(self, ctx: Context) -> float:
+        return 1.2 if _feint_ally(ctx) is not None else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        f = _feint_ally(ctx)
+        if f is None:
+            return swarm_choice(ctx)
+        return Choice(None, (), hold_kind="feint", ally=f.wing_id,
+                      hold_point=_allies.lure_point(ctx.anchor.pos, f.anchor))
+
+
+def _closing_centroid(ctx, a):
+    """Centroid of the enemies within screen_watch_gu of ally a's anchor,
+    or None. Memoised per ally: score and choose read the same one."""
+    watch = dials.get("screen_watch_gu")
+    return _memo(
+        ctx, ("watch", a.wing_id), (ctx.enemies, a.anchor, watch),
+        lambda: assess.centroid(
+            e for e in ctx.enemies if assess.dist(e.pos, a.anchor) <= watch))
+
+
+def _screen_target(ctx):
+    """(ally, enemy centroid) to screen, or None. No latch: we are not
+    engaged at strength_frac >= 0.6; the ally is weak (strength_frac < 0.5,
+    or withdrawing); the enemies watched near it have not reached it (their
+    centroid is beyond engage_gu). The weakest such ally, ties nearest."""
+    if _near(ctx) or _strength_frac(ctx) < 0.6:
+        return None
+    engage = dials.get("engage_gu")
+    best = None
+    for a in ctx.allies:
+        if not (a.strength_frac < 0.5 or a.decision == "withdraw"):
+            continue
+        c = _closing_centroid(ctx, a)
+        if c is None or assess.dist(c, a.anchor) <= engage:
+            continue
+        key = (a.strength_frac, _to(ctx, a), a.wing_id)
+        if best is None or key < best[0]:
+            best = (key, a, c)
+    return None if best is None else best[1:]
+
+
+class Screen:
+    name = "screen"
+
+    def score(self, ctx: Context) -> float:
+        return 1.15 if _screen_target(ctx) is not None else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        hit = _screen_target(ctx)
+        choice = swarm_choice(ctx)
+        if hit is None:
+            return choice
+        a, c = hit
+        return dataclasses.replace(
+            choice, hold_point=_allies.screen_point(a.anchor, c),
+            hold_kind="screen", ally=a.wing_id)
+
+
+def _flank_target(ctx):
+    """(ally, hold point) to flank, or None. Ends (checked latched or not):
+    an enemy within engage_gu of our anchor, the ally not engaged or gone,
+    our anchor within leash_gu of the hold point (recomputed from the
+    ally's status every tick). Entry adds: the ally is not in trouble and
+    within reinforce_range_gu; latched (a current flank) skips those two,
+    so an ally slipping into trouble mid-swing does not flip us to
+    reinforce. The nearest such ally."""
+    if _near(ctx):
+        return None
+    latched = ctx.current == "flank"
+    reach = dials.get("reinforce_range_gu")
+    leash = dials.get("leash_gu")
+    best = None
+    for a in ctx.allies:
+        if not a.engaged or a.enemy_centroid is None:
+            continue
+        if not latched and (_allies.in_trouble(a) or _to(ctx, a) > reach):
+            continue
+        p = _allies.flank_point(ctx.anchor.pos, a.anchor, a.enemy_centroid)
+        if assess.dist(p, ctx.anchor.pos) <= leash:
+            continue
+        key = (_to(ctx, a), a.wing_id)
+        if best is None or key < best[0]:
+            best = (key, a, p)
+    return None if best is None else best[1:]
+
+
+class Flank:
+    name = "flank"
+
+    def score(self, ctx: Context) -> float:
+        return 1.1 if _flank_target(ctx) is not None else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        hit = _flank_target(ctx)
+        choice = swarm_choice(ctx)
+        if hit is None:
+            return choice
+        a, p = hit
+        return dataclasses.replace(choice, hold_point=p, hold_kind="flank",
+                                   ally=a.wing_id)
+
+
 def _stock() -> list:
     return [Regroup(), SwarmWeakest(), SwarmCommander(), Protect(),
-            Withdraw(), FocusFace(), Envelop(), Disable()]
+            Withdraw(), FocusFace(), Envelop(), Disable(), Reinforce(),
+            Feint(), Screen(), Flank()]
 
 
 _registry: list = _stock()

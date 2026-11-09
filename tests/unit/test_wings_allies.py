@@ -48,3 +48,50 @@ def test_side_of_default_and_explicit():
     assert allies.side_of(w) == str(id(g))
     w.side = "friendly"
     assert allies.side_of(w) == "friendly"
+
+
+def _close(a, b):
+    return all(abs(x - y) < 1e-6 for x, y in zip(a, b))
+
+
+def test_screen_point_between_capped_by_half_gap():
+    dials.reset()
+    assert _close(allies.screen_point((0, 0, 0), (400, 0, 0)), (150, 0, 0))
+    assert _close(allies.screen_point((0, 0, 0), (0, 200, 0)), (0, 100, 0))
+    assert _close(allies.screen_point((5, 5, 5), (5, 5, 5)), (5, 5, 5))
+
+
+def test_flank_point_on_our_side():
+    dials.reset()
+    got = allies.flank_point((0, 300, 0), (900, 0, 0), (600, 0, 0))
+    assert _close(got, (600, 250, 0))
+    got = allies.flank_point((100, 0, -40), (900, 0, 0), (600, 0, 0))
+    assert _close(got, (600, 0, -250))
+
+
+def test_flank_point_dead_behind_fallback():
+    dials.reset()
+    c = (600.0, 0.0, 0.0)
+    for us in ((1200.0, 0.0, 0.0), (0.0, 0.0, 0.0), (600.5, 0.3, 0.0)):
+        got = allies.flank_point(us, (900.0, 0.0, 0.0), c)
+        off = tuple(g - x for g, x in zip(got, c))
+        assert abs(sum(o * o for o in off) ** 0.5 - 250.0) < 1e-6
+        assert abs(off[0]) < 1e-6      # perpendicular to ally - C
+    # Degenerate: the ally sits on the centroid too.
+    got = allies.flank_point(c, c, c)
+    off = tuple(g - x for g, x in zip(got, c))
+    assert abs(sum(o * o for o in off) ** 0.5 - 250.0) < 1e-6
+
+
+def test_lure_point_short_of_the_ally():
+    dials.reset()
+    assert _close(allies.lure_point((0, 0, 0), (-500, 0, 0)), (-400, 0, 0))
+    assert _close(allies.lure_point((0, 0, 0), (0, 0, 0)), (0, 0, 0))
+
+
+def test_geometry_reads_dials_at_use():
+    dials.reset()
+    dials._dials["flank_gu"] = 100.0
+    got = allies.flank_point((0, 300, 0), (900, 0, 0), (600, 0, 0))
+    assert _close(got, (600, 100, 0))
+    dials.reset()

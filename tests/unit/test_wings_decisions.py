@@ -74,7 +74,7 @@ def test_register_replaces_by_name_and_reset_restores_stock():
     names = [d.name for d in decisions.registered()]
     assert names == ["regroup", "swarm_weakest", "swarm_commander",
                      "protect", "withdraw", "focus_face", "envelop",
-                     "disable"]
+                     "disable", "reinforce", "feint", "screen", "flank"]
 
     class Fake:
         name = "swarm_weakest"

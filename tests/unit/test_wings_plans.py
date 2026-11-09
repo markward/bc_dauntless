@@ -146,3 +146,40 @@ def test_player_commanding_nothing_in_reach_holds_nothing():
     out = plans.target_priorities(en, anchor, Choice("a"), {}, None,
                                   player_commands=True)
     assert out == {"a": 3.0}
+
+
+def test_far_choice_keeps_out_of_leash_primary_and_secondaries():
+    anchor = V("anc", 0)
+    en = [V("n1", 600), V("f1", 1000), V("f2", 1050), V("f3", 1100)]
+    out = plans.target_priorities(en, anchor,
+                                  Choice("f1", ("f2", "f3"), far=True), {},
+                                  None)
+    assert out == {"f1": 3.0, "f2": 1.5, "f3": 1.5}
+    # Not far: today's fallback, the nearest.
+    out = plans.target_priorities(en, anchor, Choice("f1", ("f2", "f3")), {},
+                                  None)
+    assert out == {"n1": 3.0}
+
+
+def test_far_choice_with_ships_in_reach():
+    anchor = V("anc", 0)
+    en = [V("a", 50), V("f1", 1000), V("f2", 1050)]
+    out = plans.target_priorities(en, anchor, Choice("f1", ("f2",), far=True),
+                                  {}, None)
+    assert out == {"a": 0.0, "f1": 3.0, "f2": 1.5}
+    # An in-reach listed ship still wins; the far primary steps down.
+    out = plans.target_priorities(en, anchor, Choice("f1", ("f2",), far=True),
+                                  {"a": 2.0}, None)
+    assert out == {"a": 3.0, "f1": 1.5, "f2": 1.5}
+    # A listed far ship is not promoted over the far primary.
+    out = plans.target_priorities(en, anchor, Choice("f1", ("f2",), far=True),
+                                  {"f2": 2.0}, None)
+    assert out == {"a": 0.0, "f1": 3.0, "f2": 2.0}
+
+
+def test_far_choice_dead_primary_falls_back():
+    anchor = V("anc", 0)
+    en = [V("n1", 600)]
+    out = plans.target_priorities(en, anchor, Choice("gone", far=True), {},
+                                  None)
+    assert out == {"n1": 3.0}

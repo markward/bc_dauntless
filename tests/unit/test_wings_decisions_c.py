@@ -33,7 +33,7 @@ def _ctx(enemies, members=None, eligible=5, current=None):
 
 
 def test_registered_order():
-    assert [d.name for d in decisions.registered()][-3:] == [
+    assert [d.name for d in decisions.registered()][5:8] == [
         "focus_face", "envelop", "disable"]
 
 
