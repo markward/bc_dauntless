@@ -482,10 +482,11 @@ def _feint_ally(ctx):
     ctx.feint_ally): only the §6 ends -- we are within feint_stop_gu + 50
     of F, F is engaged (the trap is sprung, or F is busy elsewhere) or gone,
     no enemy near us for 10 s, the feint_max_s cap. Otherwise the entry
-    gate: we are engaged at strength_frac >= 0.5, the cooldown is over,
-    and the nearest F that is idle, at strength_frac >= 0.6, between
-    engage_gu and feint_range_gu from us, with theirs <= (ours + F.ours) x
-    feint_odds."""
+    gate: we are engaged at strength_frac >= 0.5 and not comfortably
+    ahead (ours < feint_max_odds x theirs: a lure is for an enemy we
+    cannot beat alone, fix wave I2), the cooldown is over, and the nearest
+    F that is idle, at strength_frac >= 0.6, between engage_gu and
+    feint_range_gu from us, with theirs <= (ours + F.ours) x feint_odds."""
     if ctx.current == "feint" and ctx.feint_ally is not None:
         f = _ally(ctx, ctx.feint_ally)
         if (f is None or f.engaged
@@ -498,6 +499,8 @@ def _feint_ally(ctx):
         return None
     engage = dials.get("engage_gu")
     ours, theirs = _sides(ctx, engage)
+    if not ours < dials.get("feint_max_odds") * theirs:
+        return None
     lo, hi = engage, dials.get("feint_range_gu")
     odds = dials.get("feint_odds")
     cands = [f for f in ctx.allies

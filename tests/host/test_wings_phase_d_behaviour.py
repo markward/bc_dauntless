@@ -308,22 +308,24 @@ def test_idle_wing_flanks_even_fight():
 
 # ── (c) feint: a fighting wing draws its enemy onto an idle ally ───────────
 
-_THREE = [(0.0, 0.0, 0.0), (0.0, 30.0, 0.0), (20.0, -15.0, 0.0)]
+_FOUR_C = [(0.0, 0.0, 0.0), (0.0, 30.0, 0.0), (20.0, -15.0, 0.0),
+           (20.0, 15.0, 0.0)]
 
 
 def _feint_run(seed, off=(), secs=40):
-    """W (4 Akiras, 3200) fights three Galors (1500) 150 GU off; F (4
-    Akiras) holds station 500 GU from W, on W's far side from them. With
-    its own AI, F flanks W's fight and its commander warps in when the
-    flank ends, in both arms, so F's anchor converges on the fight either
-    way and hides the lure (spec §12). The Galors fight every friendly
-    ship. Returns (the enemy centroid's distance to F's anchor every 5 s,
-    W's decisions (ticks))."""
+    """W (3 Akiras, 2400) fights four Galors (2000) 150 GU off: 1.2:1, not
+    comfortably ahead (a feint needs ours < feint_max_odds 1.25 x theirs,
+    fix wave I2) and not in trouble. F (4 Akiras) holds station 500 GU
+    from W, on W's far side from them. With its own AI, F flanks W's fight
+    and its commander warps in when the flank ends, in both arms, so F's
+    anchor converges on the fight either way and hides the lure (spec
+    §12). The Galors fight every friendly ship. Returns (the enemy
+    centroid's distance to F's anchor every 5 s, W's decisions (ticks))."""
     wings, ships, loop = _scene(
         seed,
-        [("w", "Akira", _row((-150.0, 0.0, 0.0), 4)),
+        [("w", "Akira", _row((-150.0, 0.0, 0.0), 3)),
          ("f", "Akira", _row((-650.0, 0.0, 0.0), 4), True)],
-        [("Galor", xyz, "*") for xyz in _THREE], off)
+        [("Galor", xyz, "*") for xyz in _FOUR_C], off)
     w, f = wings["w"], wings["f"]
     foes = _enemies(ships)
     trace, decs = [], {}
@@ -354,10 +356,13 @@ def test_feint_draws_enemy_onto_ally():
     gain = [c - g for g, c in zip(got, ctl)]
     print("[feint] C-F at 40 s %s, control %s, mean gain %.0f GU"
           % (got, ctl, sum(gain) / len(gain)))
-    # W pulls back toward F the whole 40 s (feint_max_s is 45 s) and the
-    # Galors follow. Seen: C-F 473 GU at 40 s on every seed, the control
-    # (W fights where it stands) 601 / 606 / 609 GU: a gain of 128-136 GU
-    # (2026-11-09, seeds 1-5). With F's own AI on, F flanks and comes in
-    # in both arms: 268 / 265 / 265 vs 276 / 276 / 278 GU.
+    # W pulls back toward F (36-39 s of the 40; feint_max_s is 45 s) and
+    # the Galors follow. Seen (fix wave, 3 Akiras vs 4 Galors): C-F 423 /
+    # 476 / 476 GU at 40 s, the control (W fights where it stands) 598 /
+    # 619 / 622 GU: a gain of 175 / 143 / 146 GU, mean 155 (2026-11-09,
+    # seeds 1-3). The old scene (4 Akiras vs 3 Galors, 2.1:1) no longer
+    # feints; it gained 128-136 GU. A 4 vs 6 Galors scene (1.07:1) feints
+    # only 7-8 s (F is engaged by the Galors that go for it, the trap
+    # sprung) and gained 31-53 GU: too thin a margin for this test.
     assert sum(1 for x in gain if x > 0) >= 2
     assert sum(gain) / len(gain) >= 50.0

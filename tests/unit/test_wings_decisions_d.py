@@ -190,7 +190,9 @@ def _f(wid="F", anchor=(-500.0, 0.0, 0.0), engaged=False, frac=1.0,
     return A(wid, anchor, ours=ours, theirs=0.0, engaged=engaged, frac=frac)
 
 
-def _fighting(power=5.0):
+def _fighting(power=9.0):
+    """One enemy near us. Ours is 10: 9 keeps us under feint_max_odds
+    (1.25) x theirs, so a feint can enter (fix wave I2)."""
     return [V("x", 100, power=power)]
 
 
@@ -284,7 +286,10 @@ def test_feint_choose_lure_point():
 def test_focus_face_beats_fresh_feint_current_feint_keeps_winning():
     f = [0.9] * 6
     f[4] = 0.1
-    enemies = [V("x", 100, power=5.0, faces=tuple(f))]
+    # x (7: under disable_threat x 5) in reach, y beyond it but engaged:
+    # theirs 9, so the feint's odds gate holds.
+    enemies = [V("x", 100, power=7.0, faces=tuple(f)),
+               V("y", 300, power=2.0)]
     fresh = _ctx(enemies, [_f()], slot_eligible=2)
     assert _by("focus_face").score(fresh) == 1.2
     assert _by("feint").score(fresh) == 1.2
@@ -641,3 +646,19 @@ def test_ally_on_protect_flank_or_reinforce_by_odds(ours, want):
     b = A("B", (900.0, 0.0, 0.0), ours=ours, theirs=5.0, engaged=True,
           centroid=C, decision="protect")
     assert decisions.pick(_ctx([V("ec", 600)], [b], anchor=US)).name == want
+
+
+# --- fix wave I2: a feint is a lure for a stronger enemy -------------------
+
+def test_feint_zero_when_comfortably_ahead():
+    # Ours 10: enters only while 10 < feint_max_odds (1.25) x theirs.
+    assert _by("feint").score(_ctx(_fighting(5.0), [_f()])) == 0.0
+    assert _by("feint").score(_ctx(_fighting(8.0), [_f()])) == 0.0
+    assert _by("feint").score(_ctx(_fighting(8.1), [_f()])) == 1.2
+    dials._dials["feint_max_odds"] = 2.5
+    assert _by("feint").score(_ctx(_fighting(5.0), [_f()])) == 1.2
+
+
+def test_feint_latch_ignores_the_odds_gate():
+    ctx = _feinting(_fighting(1.0), [_f()])
+    assert _by("feint").score(ctx) == 1.2

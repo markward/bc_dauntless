@@ -61,11 +61,12 @@ def _set():
 
 
 def _enemies(pSet, specs, kind="Warbird"):
-    """Enemy ships (no AI: they hold still) in one group both wings share."""
+    """Enemy ships (no AI: they hold still) in one group both wings share.
+    A spec is (name, xyz) or (name, xyz, kind)."""
     group = App.ObjectGroup()
     ships = {}
-    for name, xyz in specs:
-        ships[name] = _ship(pSet, kind, name, xyz)
+    for name, xyz, *k in specs:
+        ships[name] = _ship(pSet, k[0] if k else kind, name, xyz)
         group.AddName(name)
     return group, ships
 
@@ -497,9 +498,14 @@ def test_flank_ally_clears_when_flank_ends(now):
 
 # ── feint ──────────────────────────────────────────────────────────────────
 
-def _feint_scene(n=3, enemies=(("e1", (300.0, 0.0, 0.0)),)):
-    """a (n Akiras) at the origin fights a Warbird 300 GU off (engaged, not
-    in reach). f idle 600 GU behind a, along -x."""
+_FEINT_FOES = (("e1", (300.0, 0.0, 0.0)), ("e2", (300.0, 30.0, 0.0), "Galor"))
+
+
+def _feint_scene(n=3, enemies=_FEINT_FOES):
+    """a (n Akiras, 2400) at the origin fights a Warbird and a Galor (2000)
+    300 GU off (engaged, not in reach): 1.2:1, not comfortably ahead, so a
+    feint can enter (feint_max_odds 1.25). f idle 600 GU behind a, along
+    -x."""
     pSet = _set()
     group, es = _enemies(pSet, list(enemies))
     f, sf = _wing(pSet, "f", (-600.0, 0.0, 0.0), group)
@@ -521,8 +527,16 @@ def test_feint_holds_and_writes_nothing(monkeypatch, capsys, now):
     assert _group(a) == {}                    # nobody turns back early
     lure = allies.lure_point(_pos(ships["a1"]), _pos(ships["f1"]))
     assert _close(lure, (-500.0, 0.0, 0.0))
-    _assert_hold(a, ships, lure, (300.0, 0.0, 0.0))
+    _assert_hold(a, ships, lure, (300.0, 15.0, 0.0))
     assert "[wings] a feint -> f" in capsys.readouterr().err.splitlines()
+
+
+def test_no_feint_when_comfortably_ahead(now):
+    # One Warbird (1500) against 2400: 1.6:1, past feint_max_odds.
+    a, f, _ships = _feint_scene(enemies=(("e1", (300.0, 0.0, 0.0)),))
+    brain.tick_wing(f)
+    brain.tick_wing(a)
+    assert a.decision != "feint" and a.feint_ally is None
 
 
 def test_feint_ends_when_the_ally_is_engaged(monkeypatch, capsys, now):
@@ -531,6 +545,7 @@ def test_feint_ends_when_the_ally_is_engaged(monkeypatch, capsys, now):
     seen = _spy(monkeypatch)
     _start_feint(a, f)
     ships["e1"].SetTranslateXYZ(-500.0, 0.0, 0.0)    # the trap is sprung
+    ships["e2"].SetTranslateXYZ(-500.0, 30.0, 0.0)
     now[0] = 5.0
     brain.tick_wing(f)
     assert f.status.engaged is True
@@ -556,7 +571,8 @@ def test_feint_quiet_ends_it(monkeypatch, now):
     seen = _spy(monkeypatch)
     _start_feint(a, f)
     assert a.feint_quiet_since is None
-    ships["e1"].SetTranslateXYZ(3000.0, 0.0, 0.0)    # it did not follow
+    ships["e1"].SetTranslateXYZ(3000.0, 0.0, 0.0)    # they did not follow
+    ships["e2"].SetTranslateXYZ(3000.0, 30.0, 0.0)
     now[0] = 1.0
     brain.tick_wing(f)
     brain.tick_wing(a)
@@ -584,10 +600,11 @@ def test_feint_ends_when_the_ally_dies(now):
 
 
 def test_feint_with_reserve_and_slots_off(now):
-    # Two Warbirds (3000) against five Akiras (4000): no 2x advantage, so
-    # the reserve is not committed.
+    # Three Warbirds (4500) against five Akiras (4000): no 2x advantage,
+    # so the reserve is not committed, and not ahead, so a feint enters.
     a, f, ships = _feint_scene(n=5, enemies=(("e1", (300.0, 0.0, 0.0)),
-                                             ("e2", (300.0, 30.0, 0.0))))
+                                             ("e2", (300.0, 30.0, 0.0)),
+                                             ("e3", (300.0, -30.0, 0.0))))
     assert a.reserve == "a2"
     for n in a.members:
         for k in _OFF:
@@ -595,7 +612,7 @@ def test_feint_with_reserve_and_slots_off(now):
         roster.member(n).slot = ("e1", (1.0, 0.0, 0.0), 48.0)
     _start_feint(a, f)
     lure = allies.lure_point(_pos(ships["a1"]), _pos(ships["f1"]))
-    _assert_hold(a, ships, lure, (300.0, 15.0, 0.0))
+    _assert_hold(a, ships, lure, (300.0, 0.0, 0.0))
     assert a.reserve == "a2" and roster.member("a2").reserve is True
     assert [k for k in _KINDS if _status("a2", k)] == ["hold"]
     assert a.attack_prev is None
