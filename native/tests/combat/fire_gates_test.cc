@@ -124,12 +124,17 @@ TEST(FireGates, NanConditionReadsAsFullHealth) {
     EXPECT_TRUE(can_fire(w.m, w.bank, 0.0).ok);
 }
 
-TEST(FireGates, TubeStaggerIsExclusiveAndSkewExempt) {
+TEST(FireGates, TubeStaggerIsExclusiveAndSkewPassesInTheStampingTick) {
     World w;
     EXPECT_FALSE(can_fire(w.m, w.tube, 10.5).ok);  // 10.5 - 10.0 == 0.5
     EXPECT_TRUE(can_fire(w.m, w.tube, std::nextafter(10.5, 100.0)).ok);
+    // A skew-fire tube passes only in the stamp's own tick (a spread salvo's
+    // partners); later inside the gate it waits like any tube.
     w.m.set_i(w.tube, Field::_skew_fire, 1);
-    EXPECT_TRUE(can_fire(w.m, w.tube, 10.5).ok);
+    EXPECT_TRUE(can_fire(w.m, w.tube, 10.0).ok);
+    EXPECT_FALSE(can_fire(w.m, w.tube, std::nextafter(10.0, 100.0)).ok);
+    EXPECT_FALSE(can_fire(w.m, w.tube, 10.5).ok);
+    EXPECT_TRUE(can_fire(w.m, w.tube, std::nextafter(10.5, 100.0)).ok);
 }
 
 TEST(FireGates, TubeAmmoGate) {
