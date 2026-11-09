@@ -340,8 +340,19 @@ def test_player_member_is_never_weighted():
 # ── stock detection ────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("cls_name", ["ModSelectTarget", "SelectTarget"])
-def test_mod_select_target_subclass_is_not_stock(cls_name):
+def test_mod_select_target_subclass_is_not_stock(cls_name, monkeypatch):
     import AI.Preprocessors
+    from engine.appc import ai_optimized
+    # A class NAMED "SelectTarget" is wrapped by the engine optimizer
+    # (OPTIMIZED_PREPROCESSORS dispatches by name), which caches a
+    # "SelectTarget_Native" subclass of THIS test's class and publishes it as
+    # ai_optimized.SelectTarget_Native -- over the stock class's alias. Restore
+    # both so a later test's cached stock alias is still the published one.
+    monkeypatch.setattr(ai_optimized, "_NATIVE_SELECT_CLASSES",
+                        dict(ai_optimized._NATIVE_SELECT_CLASSES))
+    monkeypatch.setattr(ai_optimized, "SelectTarget_Native",
+                        getattr(ai_optimized, "SelectTarget_Native", None),
+                        raising=False)
     wing, ships, _stock = _scene()
     mod_cls = type(cls_name, (AI.Preprocessors.SelectTarget,), {})
     node = App.PreprocessingAI_Create(ships["m2"], "SelectTarget")
