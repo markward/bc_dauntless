@@ -222,15 +222,21 @@ CanFireResult tube_can_fire(const Mirror& m, int64_t h, double now) {
     const SubsystemRow* parent =
         sub_ref(m, self._parent_subsystem, "_parent_subsystem");
     if (parent == nullptr || !parent_is_on(*parent)) return r;
-    // not self.IsSkewFire() and parent is not None and
-    //   _game_time() - getattr(parent, "_last_system_fire_time", -1000.0) <= 0.5
-    // (-1000.0 and 0.5 are inline literals, weapon_subsystems.py:3308; only a
-    // TorpedoSystem carries the attribute.)
-    if (!self._skew_fire) {
+    // The ship-wide 0.5 s gate:
+    //   since = _game_time() - getattr(parent, "_last_system_fire_time", -1000.0)
+    //   blocked when since <= 0.5, except a skew-fire tube in the stamping
+    //   tick itself (since == 0.0)
+    // (-1000.0 and 0.5 are inline literals; only a TorpedoSystem carries the
+    // attribute.) A spread salvo -- the skew-fire tubes of the active group --
+    // launches together in one tick, and the next salvo waits the gate like
+    // any shot: measured on the original, Dual fires its pairs 0.65-0.67 s
+    // apart and Quad all four at once (stbc-oracle sweep/torp_spread*.json).
+    {
         const double last = (parent->weapon_kind == kTorpedoSystem)
                                 ? parent->_last_system_fire_time
                                 : -1000.0;
-        if (now - last <= 0.5) return r;
+        const double since = now - last;
+        if (since <= 0.5 && !(self._skew_fire && since == 0.0)) return r;
     }
     if (self._num_ready <= 0) return r;
     if (leaf_is_disabled(self)) return r;  // self.IsDisabled(): a plain Weapon
