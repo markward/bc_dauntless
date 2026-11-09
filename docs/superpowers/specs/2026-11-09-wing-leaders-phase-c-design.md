@@ -126,8 +126,9 @@ Conditional[ConditionWing(ship, "attack")]
 - `Member.slot`: `(target_name, body_dir, standoff_gu)` or None. With a slot,
   every Update (0.2 s) computes the point from the target's **live** pose,
   `target_pos + R · body_dir · standoff`, instead of reading `move_point`. A
-  slot fixed in the target's frame sweeps at up to ~36 GU/s when a ship turns
-  at 0.3 rad/s 120 GU away; a 1 Hz point would always be behind it.
+  slot fixed in the target's frame sweeps at up to ~24 GU/s when a ship turns
+  at 0.3 rad/s 80 GU away (the standoff cap); a 1 Hz point would always be
+  behind it.
 - Within 20 GU of the slot point it enters **hold mode** and leaves it only
   past 40 GU (`Member.slot_hold`; the brain clears it when the slot changes).
   Holding, it turns toward the target and thrusts only by the slot offset
@@ -213,8 +214,9 @@ flapping.
   - **every** slot-eligible member, not just `attack_slots`, takes an attack
     assignment with weapons-first subsystem aim, on the slots `envelop` would
     use.
-- **Latched** once running: it stays on the same target (the wing's
-  primary) while that is alive, in reach and its weapons are up. The
+- **Latched** once running: it stays on the target it started on (the
+  wing's `disable_target`, which a command-away leaves alone) while that is
+  alive, in reach and its weapons are up. The
   strength ratio is not re-checked: stripping the shields alone halves it
   (§11).
 - **Ends** when all its weapon systems are down. The score drops to 0 and
@@ -366,7 +368,9 @@ picks one.
    again.
 2. **Slot incumbency (I2).** A previous holder keeps its slot index while
    the primary and the slot set are unchanged; only vacated slots are
-   filled nearest-first. Same-primary swaps over 120 s: 20–32 → 0–3.
+   filled nearest-first. Same-primary swaps over 120 s: 20–32 → 0 (3 in
+   one run before the repeated-direction fix, ruling 5). Disable passes the
+   five base envelop axes; the brain spreads them once over every holder.
 3. **WingMoveTo holds the slot (I3).** Hold mode in at 20 GU, out at 40 GU;
    holding, it faces the target and thrusts only by the slot offset along
    its nose. Against a still target: on the slot and facing it 0.48 → 0.92

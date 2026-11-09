@@ -348,7 +348,7 @@ def tick_wing(wing) -> None:
         withdraw_cooldown_until=wing.withdraw_cooldown_until,
         clear_since=wing.clear_since, player_commands=player_commands,
         slot_eligible=_slot_eligible(wing, members),
-        current_primary=wing.primary,
+        disable_target=wing.disable_target,
         disable_done=frozenset(wing.disable_done),
         slot_holders=frozenset(n for n, m in wing.members.items()
                                if m.slot is not None),
@@ -393,7 +393,8 @@ def tick_wing(wing) -> None:
         # Outside the home set WingRejoin cannot reach the commander: off.
         # Withdrawing, every member runs its own line: off too. A
         # slot-holder's slot hangs off the primary, inside reach: off. The
-        # reserve holds its own point behind the commander: off.
+        # reserve holds its own point (reserve.hold_point: its own bearing,
+        # reserve_gu farther from the enemy than the commander): off.
         flag = (flags.get(name, False) and not choice.withdraw
                 and name not in holders and name != wing.reserve)
         m.rejoin = flag

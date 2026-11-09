@@ -128,7 +128,21 @@ def test_disable_choose_weapons_first_all_slots():
     assert c.primary == "big"
     assert c.weapons_first and c.slot_all
     assert "big" not in c.secondaries
-    assert c.slot_dirs == attack.envelop_dirs(1)
+    # The five base envelop axes: the brain spreads them once over every
+    # holder (re-review).
+    assert c.slot_dirs == attack.envelop_dirs(len(attack.ENVELOP_ORDER))
+
+
+def test_disable_eight_holders_eight_distinct_points():
+    """Re-review: Disable passes the base axes and _slot_points spreads
+    them once (attack.spread_dirs over every candidate). Spreading an
+    already-spread list put two holders on one point."""
+    c = _by("disable").choose(_ctx([_strong()], eligible=6))
+    dirs = attack.spread_dirs(c.slot_dirs, 8)
+    cols = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+    pts = [attack.slot_point((0, 0, 0), cols, d, 50.0) for d in dirs]
+    assert all(sum((a - b) ** 2 for a, b in zip(p, q)) > 1e-6
+               for i, p in enumerate(pts) for q in pts[i + 1:])
 
 
 def test_disable_beats_focus_beats_envelop_beats_swarm():
@@ -152,7 +166,7 @@ def test_zero_score_no_stickiness_for_new_decisions():
 
 def _latched(enemies, primary="big", done=frozenset(), current="disable"):
     ctx = _ctx(enemies, current=current)
-    ctx.current_primary = primary
+    ctx.disable_target = primary
     ctx.disable_done = done
     return ctx
 
@@ -192,7 +206,7 @@ def test_disable_never_reenters_against_a_done_target():
     assert d.choose(ctx).primary == "big2"
 
 
-def test_disable_with_no_current_primary_uses_the_gate():
+def test_disable_with_no_disable_target_uses_the_gate():
     ctx = _latched([_strong()], primary=None)
     assert _by("disable").score(ctx) == 1.3
     ctx = _latched([V("e", 50, power=6.0)], primary=None)

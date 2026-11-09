@@ -488,6 +488,32 @@ def test_disable_target_death_is_not_done(now):
     assert wing.disable_done == set() and wing.disable_target is None
 
 
+def test_disable_latch_survives_command_away_and_back(now):
+    """Re-review: _command_away clears wing.primary; the latch keys on
+    wing.disable_target, so a wing whose command was away and came back
+    keeps disabling the same (now weakened) target."""
+    wing, ships = _disable_scene()
+    brain.tick_wing(wing)
+    assert wing.decision == "disable" and wing.disable_target == "e1"
+    _weaken(ships["e1"])                     # under the entry gate now
+    home = ships["m1"].GetContainingSet()
+    home.RemoveObjectFromSet("m1")
+    other = SetClass_Create()
+    App.g_kSetManager.AddSet(other, "Elsewhere")
+    other.AddObjectToSet(ships["m1"], "m1")
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert wing.away is True and wing.primary is None
+    other.RemoveObjectFromSet("m1")
+    home.AddObjectToSet(ships["m1"], "m1")
+    now[0] = 2.0
+    brain.tick_wing(wing)
+    assert wing.away is False
+    assert wing.decision == "disable" and wing.primary == "e1"
+    assert wing.disable_done == set()
+    assert all(roster.member(n).weapons_first for n in _holders(wing))
+
+
 # ── stand-down ─────────────────────────────────────────────────────────────
 
 def test_slot_target_death_clears_slots(now):

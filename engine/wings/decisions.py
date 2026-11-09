@@ -21,10 +21,12 @@ class Context:
     clear_since: Optional[float] = None
     player_commands: bool = False
     slot_eligible: int = 0
-    # The wing's written primary last tick: the target a running disable
-    # is latched on. disable_done: targets disable never re-enters against
-    # (the brain's cap, or a disable that ended with the target alive).
-    current_primary: Optional[str] = None
+    # The target a running disable started on (the wing's disable_target,
+    # which a command-away does not clear, as it does the primary): the
+    # latch keys on it. disable_done: targets disable never re-enters
+    # against (the brain's cap, or a disable that ended with the target
+    # alive).
+    disable_target: Optional[str] = None
     disable_done: frozenset = frozenset()
     # Last tick's slot-holders and the held reserve: their stations hang off
     # the primary or their own bearing, not the anchor, so Regroup does not
@@ -255,14 +257,14 @@ class Envelop:
 
 def _disable_target(ctx):
     """The ship to disable, or None. A running disable is latched on its
-    target (ctx.current_primary) while it is alive, in reach, not done and
+    target (ctx.disable_target) while it is alive, in reach, not done and
     its weapons are up: the strength ratio is not re-checked, because
     stripping the shields alone halves it (final review I1). Otherwise the
     entry gate: the strongest not-done enemy in reach, weapons up, at least
     disable_threat x our strongest member."""
     reach = [e for e in _in_reach(ctx) if e.name not in ctx.disable_done]
-    if ctx.current == "disable" and ctx.current_primary is not None:
-        big = next((e for e in reach if e.name == ctx.current_primary), None)
+    if ctx.current == "disable" and ctx.disable_target is not None:
+        big = next((e for e in reach if e.name == ctx.disable_target), None)
         return None if big is None or big.weapons_down else big
     if not reach or not ctx.members:
         return None
@@ -287,8 +289,11 @@ class Disable:
             return swarm_choice(ctx)
         rest = tuple(n for n in swarm_choice(ctx).secondaries
                      if n != big.name)
+        # The five base envelop axes: the brain spreads them once over
+        # every holder (slot_all); spreading an already-spread list put two
+        # holders on one point.
         return Choice(big.name, rest,
-                      slot_dirs=attack.envelop_dirs(max(ctx.slot_eligible, 1)),
+                      slot_dirs=attack.envelop_dirs(len(attack.ENVELOP_ORDER)),
                       weapons_first=True, slot_all=True)
 
 
