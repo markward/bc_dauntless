@@ -111,7 +111,8 @@ class Wing:
     # when the feint cooldown ends (it starts whenever a feint ends) and
     # since when no enemy has been within engage_gu while feinting; the
     # ally a running flank swings round and ally -> game time its flank
-    # cooldown ends (set only when a flank ends by its cap); when the
+    # cooldown ends (set only when a flank ends by its cap); the same pair
+    # for a running screen (fix wave I5); when the
     # current decision became current; and the last hold (kind, ally, hold
     # point, {name: ring index}) for the formation's incumbency.
     reinforce_ally: str | None = None
@@ -121,6 +122,8 @@ class Wing:
     feint_quiet_since: float | None = None
     flank_ally: str | None = None
     flank_done: dict = field(default_factory=dict)
+    screen_ally: str | None = None
+    screen_done: dict = field(default_factory=dict)
     decision_since: float = 0.0
     hold_prev: tuple | None = None
 

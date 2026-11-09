@@ -60,6 +60,10 @@ class Context:
     # the allies on flank cooldown (a flank that ran to flank_max_s).
     flank_ally: Optional[str] = None
     flank_done: frozenset = frozenset()
+    # The ally a running screen covers (a latched screen keeps it) and the
+    # allies on screen cooldown (a screen that ran to screen_max_s).
+    screen_ally: Optional[str] = None
+    screen_done: frozenset = frozenset()
     # This wing is the player's escort (service.set_player_wing): it stays
     # with the player, so it never reinforces, feints, screens or flanks.
     escorts_player: bool = False
@@ -546,20 +550,32 @@ def _closing_centroid(ctx, a):
 
 
 def _screen_target(ctx):
-    """(ally, enemy centroid) to screen, or None. No latch: we are not
-    engaged at strength_frac >= 0.6; the ally is weak (strength_frac < 0.5,
-    or withdrawing) and within reinforce_range_gu of us; the enemies watched
+    """(ally, enemy centroid) to screen, or None. We are not engaged and at
+    strength_frac >= 0.6; the ally is weak (strength_frac < 0.5, or
+    withdrawing) and within reinforce_range_gu of us; the enemies watched
     near it have not reached it (their centroid is beyond engage_gu). The
-    weakest such ally, ties nearest."""
+    weakest such ally, ties nearest, skipping allies on screen cooldown.
+    Latched (a current screen WITH its ally, ctx.screen_ally; fix wave
+    I5): only that ally, weak while strength_frac < 0.6 (hysteresis: an
+    ally with its shields down reads about 0.5), and it ends at
+    screen_max_s (the brain then puts the ally on screen cooldown)."""
     if ctx.escorts_player:
         return None
     if _near(ctx) or _strength_frac(ctx) < 0.6:
         return None
+    latched = ctx.current == "screen" and ctx.screen_ally is not None
+    if latched and ctx.decision_age_s >= dials.get("screen_max_s"):
+        return None
+    weak = 0.6 if latched else 0.5
     engage = dials.get("engage_gu")
     reach = dials.get("reinforce_range_gu")
     best = None
     for a in ctx.allies:
-        if not (a.strength_frac < 0.5 or a.decision == "withdraw"):
+        if latched and a.wing_id != ctx.screen_ally:
+            continue
+        if not latched and a.wing_id in ctx.screen_done:
+            continue
+        if not (a.strength_frac < weak or a.decision == "withdraw"):
             continue
         if _to(ctx, a) > reach:
             continue

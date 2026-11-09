@@ -838,3 +838,70 @@ def test_latched_flank_yields_to_reinforce(now):
     assert a.decision == "reinforce" and a.reinforce_ally == "b"
     assert a.flank_ally is None
     assert a.flank_done == {}                 # not the cap: no cooldown
+
+
+# ── fix wave I5: screen latch, hysteresis, cap, per-ally cooldown ─────────
+
+def _set_hull(wing, ships, frac):
+    for n in wing.members:
+        ships[n].GetHull().SetConditionPercentage(frac)
+
+
+def test_screen_latch_hysteresis(monkeypatch, now):
+    a, w, ships = _screen_scene()
+    seen = _spy(monkeypatch)
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert a.decision == "screen" and a.screen_ally == "w"
+    _set_hull(w, ships, 0.55)                 # above entry, below stay
+    now[0] = 1.0
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert seen["a1"].screen_ally == "w"
+    assert a.decision == "screen" and a.screen_ally == "w"
+    _set_hull(w, ships, 0.65)
+    now[0] = 2.0
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert a.decision != "screen" and a.screen_ally is None
+    assert a.screen_done == {}                # not the cap: no cooldown
+    _set_hull(w, ships, 0.55)                 # no re-entry above 0.5
+    now[0] = 3.0
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert a.decision != "screen"
+
+
+def test_screen_cap_puts_ally_on_cooldown(monkeypatch, now):
+    a, w, _ships = _screen_scene()
+    seen = _spy(monkeypatch)
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert a.decision == "screen"
+    now[0] = 60.0
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert a.decision != "screen" and a.screen_ally is None
+    assert a.screen_done == {"w": pytest.approx(120.0)}
+    for n in a.members:
+        assert _status(n, "hold") == 0
+    now[0] = 61.0
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert seen["a1"].screen_done == frozenset({"w"})
+    assert a.decision != "screen"
+    now[0] = 120.0
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert a.screen_done == {} and a.decision == "screen"
+
+
+def test_screen_latch_clears_on_stand_down(now):
+    a, w, ships = _screen_scene()
+    brain.tick_wing(w)
+    brain.tick_wing(a)
+    assert a.screen_ally == "w"
+    _send_away(a, ships)
+    now[0] = 1.0
+    brain.tick_wing(a)
+    assert a.away is True and a.screen_ally is None

@@ -25,7 +25,8 @@ SPEC = {"leash_gu": 200.0, "leash_slack_gu": 100.0, "regroup_gather_gu": 100.0,
         "feint_range_gu": 800.0, "feint_stop_gu": 100.0, "feint_odds": 1.0,
         "feint_cooldown_s": 180.0, "feint_max_s": 45.0,
         "reinforce_close_odds": 1.5, "feint_max_odds": 1.25,
-        "flank_max_s": 90.0, "flank_cooldown_s": 60.0}
+        "flank_max_s": 90.0, "flank_cooldown_s": 60.0,
+        "screen_max_s": 60.0, "screen_cooldown_s": 60.0}
 
 
 def test_defaults_match_spec():
@@ -109,3 +110,12 @@ def test_flank_cap_dials_step_and_floor():
     d["flank_max_s"], d["flank_cooldown_s"] = 5.0, 0.0
     assert dials.step(d, "flank_max_s", -1)["flank_max_s"] == 5.0
     assert dials.step(d, "flank_cooldown_s", -1)["flank_cooldown_s"] == 0.0
+
+
+def test_screen_cap_dials_step_and_floor():
+    d = dict(dials.DEFAULTS)
+    assert dials.step(d, "screen_max_s", 1)["screen_max_s"] == 65.0
+    assert dials.step(d, "screen_cooldown_s", -1)["screen_cooldown_s"] == 55.0
+    d["screen_max_s"], d["screen_cooldown_s"] = 5.0, 0.0
+    assert dials.step(d, "screen_max_s", -1)["screen_max_s"] == 5.0
+    assert dials.step(d, "screen_cooldown_s", -1)["screen_cooldown_s"] == 0.0

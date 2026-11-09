@@ -369,6 +369,8 @@ def tick_wing(wing) -> None:
         strict_protectees=_strict_protectees(wing, members),
         flank_ally=wing.flank_ally,
         flank_done=frozenset(wing.flank_done),
+        screen_ally=wing.screen_ally,
+        screen_done=frozenset(wing.screen_done),
         escorts_player=wing.wing_id == service.player_wing_id())
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
@@ -474,16 +476,14 @@ def _track_disable(wing, decision, choice, now) -> None:
 
 
 def _side_clocks(wing, near, now) -> None:
-    """Before the Context (Phase D): drop the reinforce and flank cooldowns
-    that have run out, and while feinting keep since when no enemy has
-    been within engage_gu of the anchor (the 10 s "they didn't follow"
-    end)."""
-    if wing.reinforce_done:
-        wing.reinforce_done = {a: t for a, t in wing.reinforce_done.items()
-                               if now < t}
-    if wing.flank_done:
-        wing.flank_done = {a: t for a, t in wing.flank_done.items()
-                           if now < t}
+    """Before the Context (Phase D): drop the reinforce, flank and screen
+    cooldowns that have run out, and while feinting keep since when no
+    enemy has been within engage_gu of the anchor (the 10 s "they didn't
+    follow" end)."""
+    for attr in ("reinforce_done", "flank_done", "screen_done"):
+        done = getattr(wing, attr)
+        if done:
+            setattr(wing, attr, {a: t for a, t in done.items() if now < t})
     if wing.feint_ally is not None:
         if near:
             wing.feint_quiet_since = None
@@ -493,9 +493,9 @@ def _side_clocks(wing, near, now) -> None:
 
 def _track_side(wing, decision, choice, now, ctx) -> None:
     """After choose (Phase D): start and stop the reinforce and feint
-    latches and keep the flank's ally. A reinforce or a flank that ends by
-    its cap puts its ally on that decision's cooldown; a feint that ends
-    for any reason starts the feint cooldown. One clock: a latch's age is
+    latches and keep the flank's and the screen's ally. A reinforce, flank
+    or screen that ends by its cap puts its ally on that decision's
+    cooldown; a feint that ends for any reason starts the feint cooldown. One clock: a latch's age is
     the decision's (ctx.decision_age_s, read before this tick's pick),
     since decision_since resets only on a change of decision name and a
     stand-down clears the decision."""
@@ -509,14 +509,24 @@ def _track_side(wing, decision, choice, now, ctx) -> None:
         _end_feint(wing, now)
     if f is not None and wing.feint_ally is None:
         wing.feint_ally, wing.feint_quiet_since = f, None
-    fl = choice.ally if decision == "flank" else None
-    if (wing.flank_ally is not None and wing.flank_ally != fl
-            and ctx.current == "flank"
-            and ctx.decision_age_s >= dials.get("flank_max_s")):
-        wing.flank_done[wing.flank_ally] = (
-            now + dials.get("flank_cooldown_s"))
-        log("%s flank done %s" % (wing.wing_id, wing.flank_ally))
-    wing.flank_ally = fl
+    wing.flank_ally = _held_latch(wing, "flank", decision, choice, now,
+                                  ctx)
+    wing.screen_ally = _held_latch(wing, "screen", decision, choice, now,
+                                   ctx)
+
+
+def _held_latch(wing, kind, decision, choice, now, ctx):
+    """The ally a flank or screen (kind) holds after this tick. One that
+    ends by its <kind>_max_s cap puts its ally on <kind>_cooldown_s
+    (wing.<kind>_done); any other end starts no cooldown."""
+    old = getattr(wing, kind + "_ally")
+    new = choice.ally if decision == kind else None
+    if (old is not None and old != new and ctx.current == kind
+            and ctx.decision_age_s >= dials.get(kind + "_max_s")):
+        getattr(wing, kind + "_done")[old] = (
+            now + dials.get(kind + "_cooldown_s"))
+        log("%s %s done %s" % (wing.wing_id, kind, old))
+    return new
 
 
 def _end_reinforce(wing, now, ctx) -> None:
@@ -949,6 +959,7 @@ def _stand_down(wing, why) -> None:
     _log_hold(wing, None)
     wing.reinforce_ally = None
     wing.flank_ally = None
+    wing.screen_ally = None
     wing.decision = None
     wing.decision_since = 0.0
     wing.guarded = None

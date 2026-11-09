@@ -60,6 +60,8 @@ DEFAULTS: dict = {
     "feint_max_odds": 1.25,
     "flank_max_s": 90.0,
     "flank_cooldown_s": 60.0,
+    "screen_max_s": 60.0,
+    "screen_cooldown_s": 60.0,
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {"leash_gu": 25.0, "leash_slack_gu": 25.0, "regroup_gather_gu": 25.0,
@@ -86,7 +88,8 @@ _STEP = {"leash_gu": 25.0, "leash_slack_gu": 25.0, "regroup_gather_gu": 25.0,
          "feint_range_gu": 50.0, "feint_stop_gu": 10.0, "feint_odds": 0.1,
          "feint_cooldown_s": 10.0, "feint_max_s": 5.0,
          "reinforce_close_odds": 0.1, "feint_max_odds": 0.05,
-         "flank_max_s": 5.0, "flank_cooldown_s": 5.0}
+         "flank_max_s": 5.0, "flank_cooldown_s": 5.0,
+         "screen_max_s": 5.0, "screen_cooldown_s": 5.0}
 _MIN = {"leash_gu": 25.0, "leash_slack_gu": 0.0, "regroup_gather_gu": 25.0,
         "engage_gu": 25.0, "wing_popularity": -2.0, "stickiness": 0.0,
         "odds_ratio": 0.1, "desperate_hull": 0.0, "ram_chance": 0.0,
@@ -110,7 +113,8 @@ _MIN = {"leash_gu": 25.0, "leash_slack_gu": 0.0, "regroup_gather_gu": 25.0,
         "feint_range_gu": 100.0, "feint_stop_gu": 25.0, "feint_odds": 0.1,
         "feint_cooldown_s": 0.0, "feint_max_s": 5.0,
         "reinforce_close_odds": 1.0, "feint_max_odds": 0.5,
-        "flank_max_s": 5.0, "flank_cooldown_s": 0.0}
+        "flank_max_s": 5.0, "flank_cooldown_s": 0.0,
+        "screen_max_s": 5.0, "screen_cooldown_s": 0.0}
 _MAX = {"wing_popularity": 2.0, "stickiness": 1.0, "odds_ratio": 3.0,
         "desperate_hull": 1.0, "ram_chance": 1.0,
         "heavy_fire_frac": 1.0, "rotate_out_shield": 1.0,

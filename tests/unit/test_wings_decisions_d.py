@@ -739,3 +739,64 @@ def test_flank_skips_ally_on_cooldown():
 
 def test_flank_done_default():
     assert _ctx().flank_done == frozenset()
+
+
+# --- fix wave I5: screen latches its ally, has hysteresis, a cap, a cooldown
+
+def _screening(allies, **kw):
+    kw.setdefault("screen_ally", "W")
+    return _ctx(_closing(), allies, current="screen", **kw)
+
+
+def test_screen_defaults():
+    ctx = _ctx()
+    assert ctx.screen_ally is None and ctx.screen_done == frozenset()
+
+
+def test_screen_weak_hysteresis():
+    # Enter below 0.5; once screening that ally, stay below 0.6.
+    assert _by("screen").score(_ctx(_closing(), [_weak(frac=0.55)])) == 0.0
+    assert _by("screen").score(_screening([_weak(frac=0.55)])) == 1.15
+    assert _by("screen").score(_screening([_weak(frac=0.6)])) == 0.0
+    # Withdrawing counts either way.
+    ctx = _screening([_weak(frac=0.9, decision="withdraw")])
+    assert _by("screen").score(ctx) == 1.15
+
+
+def test_screen_latch_keeps_its_ally():
+    other = _weak("V", anchor=(0.0, 500.0, 0.0), frac=0.2)
+    enemies = _closing() + [V("d1", 0, 1000)]
+    ctx = _ctx(enemies, [_weak(frac=0.4), other], current="screen",
+               screen_ally="W")
+    assert _by("screen").choose(ctx).ally == "W"
+    fresh = _ctx(enemies, [_weak(frac=0.4), other])
+    assert _by("screen").choose(fresh).ally == "V"
+
+
+def test_screen_latched_ally_gone_ends():
+    ctx = _screening([_weak("V")])
+    assert _by("screen").score(ctx) == 0.0
+
+
+def test_screen_without_ally_is_not_latched():
+    ctx = _ctx(_closing(), [_weak(frac=0.55)], current="screen")
+    assert _by("screen").score(ctx) == 0.0
+
+
+def test_screen_ends_at_cap():
+    assert _by("screen").score(_screening([_weak()],
+                                          decision_age_s=59.0)) == 1.15
+    assert _by("screen").score(_screening([_weak()],
+                                          decision_age_s=60.0)) == 0.0
+    ctx = _ctx(_closing(), [_weak()], current="swarm_weakest",
+               decision_age_s=500.0)
+    assert _by("screen").score(ctx) == 1.15
+
+
+def test_screen_skips_ally_on_cooldown():
+    ctx = _ctx(_closing(), [_weak()], screen_done=frozenset({"W"}))
+    assert _by("screen").score(ctx) == 0.0
+    other = _weak("V", anchor=(0.0, 500.0, 0.0), frac=0.45)
+    ctx = _ctx(_closing() + [V("d1", 0, 1000)], [_weak(), other],
+               screen_done=frozenset({"W"}))
+    assert _by("screen").choose(ctx).ally == "V"
