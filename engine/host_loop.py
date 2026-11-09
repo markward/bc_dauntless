@@ -7740,6 +7740,8 @@ def reset_mission_state(renderer=None) -> None:
     _qb_sim_restore.reset()
     from engine.quickbattle import battle_end as _qb_end
     _qb_end.reset()
+    from engine.wings import service as _wing_service
+    _wing_service.reset()
     from engine.ui import target_markers as _target_markers
     _target_markers.clear()
     from engine.appc import particles
