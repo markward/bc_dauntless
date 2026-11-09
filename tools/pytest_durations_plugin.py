@@ -9,7 +9,6 @@ PYTHONPATH). Writes nothing when the variable is unset.
 """
 import json
 import os
-import resource
 import sys
 from collections import defaultdict
 
@@ -17,12 +16,46 @@ import pytest
 
 _durations = defaultdict(float)
 _rss_steps = {}
-# ru_maxrss is bytes on macOS, KB elsewhere.
-_RSS_UNIT_MB = 1.0 / (1024 * 1024) if sys.platform == "darwin" else 1.0 / 1024
 
+if sys.platform == "win32":
+    # No `resource` on Windows: the peak working set is its ru_maxrss.
+    import ctypes
+    from ctypes import wintypes
 
-def _maxrss_mb():
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * _RSS_UNIT_MB
+    class _PMC(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t)]
+
+    _k32 = ctypes.WinDLL("kernel32")
+    _k32.GetCurrentProcess.restype = wintypes.HANDLE
+    _k32.K32GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE, ctypes.POINTER(_PMC), wintypes.DWORD]
+
+    def _maxrss_mb():
+        pmc = _PMC()
+        pmc.cb = ctypes.sizeof(pmc)
+        if not _k32.K32GetProcessMemoryInfo(
+                _k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
+            return 0.0
+        return pmc.PeakWorkingSetSize / (1024 * 1024)
+else:
+    import resource
+
+    # ru_maxrss is bytes on macOS, KB elsewhere.
+    _RSS_UNIT_MB = (1.0 / (1024 * 1024) if sys.platform == "darwin"
+                    else 1.0 / 1024)
+
+    def _maxrss_mb():
+        return (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                * _RSS_UNIT_MB)
 
 
 def pytest_runtest_logreport(report):

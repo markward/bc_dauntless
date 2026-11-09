@@ -330,7 +330,7 @@ TEST_F(BridgePanels, UpdateThatUploadsStaysCheap) {
     for (int i = 0; std::chrono::steady_clock::now() < deadline; ++i) {
         const double t0 = thread_cpu_ms();
         frame(0.04 * i);
-        worst_ms = std::max(worst_ms, thread_cpu_ms() - t0);
+        worst_ms = (std::max)(worst_ms, thread_cpu_ms() - t0);  // (): Windows.h max macro
         const auto s = panels->take_stats();
         jobs += s.jobs;
         uploads += s.uploads;
