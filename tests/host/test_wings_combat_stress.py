@@ -15,7 +15,7 @@ import App  # noqa: E402
 from engine.core.loop import GameLoop  # noqa: E402
 from tests.helpers import headless_mission  # noqa: E402
 
-TICKS = 3000
+TICKS = 12000
 SAMPLE_EVERY = 60          # one sample a second at 60 Hz
 
 
@@ -72,8 +72,9 @@ def test_wings_disabled_leaves_plain_trees(monkeypatch):
 
 def _spread_p90(monkeypatch, wings_on):
     """90th percentile member->commander distance (GU) over the last third.
-    Without wings, the same wings' membership by name (Friend-k/Enemy-k in
-    creation order) with the commander taken as each chunk's first ship."""
+    Without wings, the same chunks by name (Friend-k/Enemy-k in creation
+    order) with the commander taken as each chunk's first ship in ring order;
+    with wings, the wing's real commander."""
     _load(monkeypatch, 16, 4, wings_on=wings_on)
     from engine.wings import roster
     if wings_on:
@@ -117,3 +118,4 @@ def test_wings_keep_formation_together(monkeypatch):
     print("\n[wings spread] p90 wings ON %.1f GU (%.0fs), OFF %.1f GU (%.0fs)"
           % (on, t_on, off, t_off))
     assert on < 300.0
+    assert on < 0.5 * off
