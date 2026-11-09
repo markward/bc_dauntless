@@ -406,6 +406,30 @@ def test_player_focus_is_the_friendly_wings_primary(world):
     assert service.player_focus() == pw.primary
 
 
+def test_player_group_wing_escorts_the_player(world, monkeypatch):
+    """Fix wave I3: the player's group wing is marked as the player's
+    escort in its Context (it never reinforces, feints, screens or
+    flanks away from the player); another friendly wing and the enemy's
+    are not."""
+    hl, _c, panel, QB = world
+    from engine.wings import brain, decisions
+    _add_to_player_group(panel, "Akira", "Akira")
+    _group(panel, "friendly", "Akira", "Akira")
+    _enemies(panel, "Warbird")
+    _go(hl, panel)
+    seen = {}
+    real = decisions.pick
+
+    def spy(ctx):
+        seen[ctx.anchor.wing_id] = ctx.escorts_player
+        return real(ctx)
+    monkeypatch.setattr(decisions, "pick", spy)
+    pw, ew, fw = (_wing_for(panel, i) for i in (0, 1, 2))
+    for w in (pw, fw, ew):
+        brain.tick_wing(w)
+    assert seen == {pw.wing_id: True, fw.wing_id: False, ew.wing_id: False}
+
+
 def test_player_only_group_has_no_focus(world):
     hl, _c, panel, QB = world
     from engine.wings import service

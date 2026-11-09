@@ -773,3 +773,22 @@ def test_hold_member_dies_mid_hold(now):
         dials.get("hold_spread_gu"))
     m3 = roster.member("a3")
     assert _status("a3", "hold") == 0 and m3.move_point is None
+
+
+# ── fix wave I3: the player's escort wing stays with the player ───────────
+
+def test_player_escort_wing_never_reinforces(monkeypatch, now):
+    a, b, _ships = _reinforce_scene()
+    seen = _spy(monkeypatch)
+    service.set_player_wing("a")
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert seen["a1"].escorts_player is True
+    assert seen["b1"].escorts_player is False
+    assert a.decision != "reinforce" and a.reinforce_ally is None
+    service.set_player_wing(None)
+    now[0] = 1.0
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    assert seen["a1"].escorts_player is False
+    assert a.decision == "reinforce"

@@ -662,3 +662,40 @@ def test_feint_zero_when_comfortably_ahead():
 def test_feint_latch_ignores_the_odds_gate():
     ctx = _feinting(_fighting(1.0), [_f()])
     assert _by("feint").score(ctx) == 1.2
+
+
+# --- fix wave I3: the player's escort wing stays with the player ----------
+
+def test_escorts_player_default_false():
+    assert _ctx().escorts_player is False
+
+
+def test_escort_wing_never_reinforces():
+    assert _by("reinforce").score(_ctx(_ally_enemies(), [_trouble()])) == 1.25
+    ctx = _ctx(_ally_enemies(), [_trouble()], escorts_player=True)
+    assert _by("reinforce").score(ctx) == 0.0
+    ctx = _latched(_ally_enemies(), [_trouble()], escorts_player=True)
+    assert _by("reinforce").score(ctx) == 0.0
+
+
+def test_escort_wing_never_feints():
+    assert _by("feint").score(_ctx(_fighting(), [_f()])) == 1.2
+    ctx = _ctx(_fighting(), [_f()], escorts_player=True)
+    assert _by("feint").score(ctx) == 0.0
+    ctx = _feinting(_fighting(), [_f()], escorts_player=True)
+    assert _by("feint").score(ctx) == 0.0
+
+
+def test_escort_wing_never_screens():
+    assert _by("screen").score(_ctx(_closing(), [_weak()])) == 1.15
+    ctx = _ctx(_closing(), [_weak()], escorts_player=True)
+    assert _by("screen").score(ctx) == 0.0
+
+
+def test_escort_wing_never_flanks():
+    assert _by("flank").score(_ctx([], [_fair()], anchor=US)) == 1.1
+    ctx = _ctx([], [_fair()], anchor=US, escorts_player=True)
+    assert _by("flank").score(ctx) == 0.0
+    ctx = _ctx([], [_fair()], anchor=US, current="flank", flank_ally="B",
+               escorts_player=True)
+    assert _by("flank").score(ctx) == 0.0

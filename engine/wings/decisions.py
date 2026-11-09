@@ -58,6 +58,9 @@ class Context:
     decision_age_s: float = 0.0
     # The ally a running flank swings round (a latched flank keeps it).
     flank_ally: Optional[str] = None
+    # This wing is the player's escort (service.set_player_wing): it stays
+    # with the player, so it never reinforces, feints, screens or flanks.
+    escorts_player: bool = False
 
 
 @dataclass
@@ -440,6 +443,8 @@ def _reinforce_ally(ctx):
     of our enemies is near gives no far primary, so it is no reinforce.
     Arrival hysteresis: entry needs the ally beyond leash_gu +
     leash_slack_gu, the latched end is at leash_gu."""
+    if ctx.escorts_player:
+        return None
     leash = dials.get("leash_gu")
     if ctx.current == "reinforce" and ctx.reinforce_ally is not None:
         a = _ally(ctx, ctx.reinforce_ally)
@@ -487,6 +492,8 @@ def _feint_ally(ctx):
     cannot beat alone, fix wave I2), the cooldown is over, and the nearest
     F that is idle, at strength_frac >= 0.6, between engage_gu and
     feint_range_gu from us, with theirs <= (ours + F.ours) x feint_odds."""
+    if ctx.escorts_player:
+        return None
     if ctx.current == "feint" and ctx.feint_ally is not None:
         f = _ally(ctx, ctx.feint_ally)
         if (f is None or f.engaged
@@ -542,6 +549,8 @@ def _screen_target(ctx):
     or withdrawing) and within reinforce_range_gu of us; the enemies watched
     near it have not reached it (their centroid is beyond engage_gu). The
     weakest such ally, ties nearest."""
+    if ctx.escorts_player:
+        return None
     if _near(ctx) or _strength_frac(ctx) < 0.6:
         return None
     engage = dials.get("engage_gu")
@@ -589,6 +598,8 @@ def _flank_target(ctx):
     ally (ctx.flank_ally): without one (a stand-down) the entry gates
     apply. Arrival hysteresis: entry needs the hold point beyond leash_gu
     + leash_slack_gu, the end is at leash_gu. The nearest such ally."""
+    if ctx.escorts_player:
+        return None
     if _near(ctx):
         return None
     latched = ctx.current == "flank" and ctx.flank_ally is not None

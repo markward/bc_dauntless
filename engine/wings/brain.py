@@ -342,6 +342,7 @@ def tick_wing(wing) -> None:
         _end_withdraw(wing, now)
     _disable_cap(wing, now)
     _side_clocks(wing, near, now)
+    from engine.wings import service      # service imports brain
     ctx = decisions.Context(
         members=list(members.values()), anchor=anchor, enemies=enemies,
         current=wing.decision, protectees=protectees, rates=rates,
@@ -366,7 +367,8 @@ def tick_wing(wing) -> None:
         decision_age_s=(now - wing.decision_since
                         if wing.decision is not None else 0.0),
         strict_protectees=_strict_protectees(wing, members),
-        flank_ally=wing.flank_ally)
+        flank_ally=wing.flank_ally,
+        escorts_player=wing.wing_id == service.player_wing_id())
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
         log("%s decision %s -> %s"
