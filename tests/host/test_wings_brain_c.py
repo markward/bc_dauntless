@@ -146,6 +146,42 @@ def test_focus_face_assigns_slots_on_weak_side(now):
     assert _status("m1", "attack") == 0 and roster.member("m1").slot is None
 
 
+def test_slot_holders_keep_their_slots_when_they_cross(now):
+    """Final review I2: with the primary and the slot set unchanged, each
+    holder keeps its slot even when another holder is now nearer to it."""
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    _set_face(ships["e1"], _LEFT, 0.1)
+    brain.tick_wing(wing)
+    before = {n: roster.member(n).slot for n in _holders(wing)}
+    a, b = sorted(before)[:2]
+    pa, pb = _pos(ships[a]), _pos(ships[b])
+    ships[a].SetTranslateXYZ(*pb)
+    ships[b].SetTranslateXYZ(*pa)
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert wing.decision == "focus_face"
+    assert {n: roster.member(n).slot for n in _holders(wing)} == before
+
+
+def test_slot_assignment_fresh_when_the_primary_changes(now):
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    _set_face(ships["e1"], _LEFT, 0.1)
+    brain.tick_wing(wing)
+    prim, dirs, got = wing.attack_prev
+    assert prim == "e1" and set(got) == set(_holders(wing))
+    assert len(dirs) == len(got)
+    names = sorted(got)
+    swapped = dict(got, **{names[0]: got[names[1]], names[1]: got[names[0]]})
+    wing.attack_prev = ("someone else", dirs, swapped)
+    now[0] = 1.0
+    brain.tick_wing(wing)                 # nobody moved: the same fresh pairs
+    assert wing.attack_prev[2] == got
+    wing.attack_prev = ("e1", dirs, swapped)
+    now[0] = 2.0
+    brain.tick_wing(wing)                 # same primary and slots: kept
+    assert wing.attack_prev[2] == swapped
+
+
 def test_slot_eligible_counts_live_non_commanders(monkeypatch, now):
     wing, ships = _scene([(150.0, 0.0, 0.0)], n_members=5)
     seen = []

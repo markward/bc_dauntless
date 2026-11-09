@@ -62,3 +62,33 @@ def test_assign_slots_greedy_nearest():
     assert attack.assign_slots(cands, points) == {"b": 0, "a": 1}
     three = [V("a", 0), V("b", 10), V("c", 20)]
     assert len(attack.assign_slots(three, points)) == 2
+
+
+def test_assign_slots_incumbents_keep_their_slot():
+    """Final review I2: a previous holder that is still a candidate keeps
+    its slot index even when another candidate is now nearer to it."""
+    cands = [V("a", 0), V("b", 10)]
+    points = [(12, 0, 0), (-1, 0, 0)]
+    assert attack.assign_slots(cands, points, {"a": 0, "b": 1}) == {
+        "a": 0, "b": 1}
+
+
+def test_assign_slots_vacated_slot_filled_nearest():
+    cands = [V("a", 0), V("c", 100), V("d", 13)]
+    points = [(12, 0, 0), (-1, 0, 0)]
+    # "b" held slot 0 and is gone: the nearest remaining candidate takes it.
+    got = attack.assign_slots(cands, points, {"a": 1, "b": 0})
+    assert got == {"a": 1, "d": 0}
+
+
+def test_assign_slots_prev_index_out_of_range_is_refilled():
+    cands = [V("a", 0), V("b", 10)]
+    points = [(12, 0, 0)]
+    assert attack.assign_slots(cands, points, {"a": 3}) == {"b": 0}
+
+
+def test_assign_slots_two_prev_on_one_index_keep_one():
+    cands = [V("a", 0), V("b", 10)]
+    points = [(12, 0, 0), (-1, 0, 0)]
+    got = attack.assign_slots(cands, points, {"a": 0, "b": 0})
+    assert sorted(got.values()) == [0, 1] and got["a"] == 0

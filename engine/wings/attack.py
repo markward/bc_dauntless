@@ -43,11 +43,22 @@ def slot_point(target_pos, rot_cols, body_dir, standoff_gu):
                  * standoff_gu for k in range(3))
 
 
-def assign_slots(candidates, points):
+def assign_slots(candidates, points, prev=None):
+    """name -> slot index. `prev` (name -> index, last tick's) keeps each
+    previous holder that is still a candidate on its index while that index
+    exists (final review I2: re-pairing from scratch swapped holders every
+    few seconds); the vacated slots go to the other candidates, nearest
+    pair first."""
+    names = {c.name for c in candidates}
+    out, used = {}, set()
+    for name, j in sorted((prev or {}).items()):
+        if name in names and 0 <= j < len(points) and j not in used:
+            out[name] = j
+            used.add(j)
     pairs = sorted(
         (dist(c.pos, p), c.name, j)
-        for c in candidates for j, p in enumerate(points))
-    out, used = {}, set()
+        for c in candidates if c.name not in out
+        for j, p in enumerate(points) if j not in used)
     for _d, name, j in pairs:
         if name in out or j in used:
             continue

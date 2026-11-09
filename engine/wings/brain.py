@@ -682,11 +682,19 @@ def _apply_attack(wing, members, enemies, choice, busy, ship_of):
     `enemies` is unused (kept for the plan's interface): the primary is
     resolved live through `ship_of`, the home-set lookup."""
     holders = {}
+    prev_assign = wing.attack_prev
+    wing.attack_prev = None
     plan = _slot_points(wing, members, choice, busy, ship_of)
     if plan is not None:
         cands, slots = plan
-        got = attack.assign_slots(cands, [p for _d, p in slots])
+        dirs = tuple(d for d, _p in slots)
+        # Incumbency (final review I2) only while the primary and the slot
+        # set are unchanged; otherwise a fresh nearest-first pairing.
+        prev = (prev_assign[2] if prev_assign is not None
+                and prev_assign[:2] == (choice.primary, dirs) else None)
+        got = attack.assign_slots(cands, [p for _d, p in slots], prev)
         holders = {name: slots[j][0] for name, j in got.items()}
+        wing.attack_prev = (choice.primary, dirs, got)
     primary = choice.primary
     standoff = dials.get("attack_standoff_gu")
     for name, m in wing.members.items():
@@ -749,6 +757,7 @@ def _stand_down(wing, why) -> None:
     if wing.attack_sig is not None:
         wing.attack_sig = None
         log("%s attack ends" % wing.wing_id)
+    wing.attack_prev = None
     for m in wing.members.values():
         m.move_point = None
         m.guard = False

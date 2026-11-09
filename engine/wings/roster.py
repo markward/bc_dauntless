@@ -69,6 +69,9 @@ class Wing:
     # (primary, holder names, weapons_first) last logged by the brain's
     # attack step: it logs only on a change.
     attack_sig: tuple | None = None
+    # (primary, slot body dirs, {holder: slot index}) of the last attack
+    # step: the incumbents attack.assign_slots keeps (final review I2).
+    attack_prev: tuple | None = None
     # Phase C reserve (spec §6): the member held back, when it was picked,
     # whether the wing has already committed it (never re-picked), the live
     # non-player count last tick (a drop is a loss) and the last enemy
