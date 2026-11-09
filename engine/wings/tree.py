@@ -7,8 +7,11 @@
       3  Conditional[ConditionWing(ship, "withdraw")] -> AvoidObstacles(WingMoveTo)
       4  Conditional[ConditionWing(ship, "guard")]    -> AvoidObstacles(WingMoveTo)
       5  Conditional[ConditionWing(ship, "fallback")] -> AvoidObstacles(WingMoveTo)
-      6  Conditional[ConditionWing(ship, "rejoin")]  -> AvoidObstacles(WingRejoin)
-      7  <stock tree, unchanged>
+      6  Conditional[ConditionWing(ship, "reserve")] -> AvoidObstacles(WingMoveTo)
+      7  Conditional[ConditionWing(ship, "attack")]  -> WingFire (the wing's own
+                                   stock FireScript) -> AvoidObstacles(WingMoveTo)
+      8  Conditional[ConditionWing(ship, "rejoin")]  -> AvoidObstacles(WingRejoin)
+      9  <stock tree, unchanged>
 
 Every condition is pushed by the brain (status 0/1); nothing here polls.
 The stock tree keeps its own preprocessors; its SelectTarget nodes are found
@@ -50,7 +53,34 @@ def _plain(pShip, sName, sModule):
     return pPlain
 
 
-def wrap_tree(pShip, pStockTree, wing):
+def fire_keywords(difficulty):
+    """FireScript keywords for an AI difficulty (None = 0.5), set exactly as
+    AI.Compound.BasicAttack.CreateAI sets them."""
+    import AI.Compound.BasicAttack
+    kw = {"Difficulty": difficulty if difficulty is not None else 0.5}
+    prefix = ("Easy_", "", "Hard_")[App.Game_GetDifficulty()]
+    AI.Compound.BasicAttack.SetFlagsFromDifficulty(prefix, kw)
+    return kw
+
+
+def _build_fire_script(pShip, kw):
+    """The stock FireScript, built as FedAttack builds FireAll. Its initial
+    target is the ship itself: a placeholder the brain replaces before the
+    attack branch is ever switched on."""
+    import AI.Preprocessors
+    keywords = dict(kw)
+    keywords["TargetSubsystems"] = [(App.CT_WEAPON_SYSTEM, 1)]
+    pFire = AI.Preprocessors.FireScript(pShip.GetName(), **keywords)
+    for pSystem in (pShip.GetTorpedoSystem(), pShip.GetPhaserSystem(),
+                    pShip.GetPulseWeaponSystem()):
+        if not App.IsNull(pSystem):
+            pFire.AddWeaponSystem(pSystem)
+    pFire.SetAttackDisabled(0)
+    pFire.IgnoreSubsystemTargets()
+    return pFire
+
+
+def wrap_tree(pShip, pStockTree, wing, fire_keywords=None):
     """The wing tree for `pShip` with `pStockTree` as its last branch. The
     ship must already be a member of `wing` for its conditions to register."""
     import AI.Preprocessors
@@ -73,6 +103,11 @@ def wrap_tree(pShip, pStockTree, wing):
         pAvoid.SetContainedAI(pContained)
         return pAvoid
 
+    kw = fire_keywords or globals()["fire_keywords"](None)
+    pFire = _build_fire_script(pShip, kw)
+    if member is not None:
+        member.fire_script = pFire
+
     pAvoidObstacles = avoiding("AvoidObstacles",
                                _plain(pShip, "Rejoin", "WingRejoin"))
 
@@ -85,8 +120,18 @@ def wrap_tree(pShip, pStockTree, wing):
                          _plain(pShip, "Move" + sKind, "WingMoveTo"))
         pRoot.AddAI(_conditional(pShip, "Wing" + sKind.capitalize(), sKind,
                                  pMove), iPriority)
-    pRoot.AddAI(_conditional(pShip, "WingRejoin", "rejoin", pAvoidObstacles), 6)
-    pRoot.AddAI(pStockTree, 7)
+    pReserve = avoiding("AvoidObstacles",
+                        _plain(pShip, "Movereserve", "WingMoveTo"))
+    pRoot.AddAI(_conditional(pShip, "WingReserve", "reserve", pReserve), 6)
+    pWingFire = App.PreprocessingAI_Create(pShip, "WingFire")
+    pWingFire.SetInterruptable(1)
+    pWingFire.SetPreprocessingMethod(pFire, "Update")
+    pWingFire.SetContainedAI(avoiding("AvoidObstacles",
+                                      _plain(pShip, "Moveattack",
+                                             "WingMoveTo")))
+    pRoot.AddAI(_conditional(pShip, "WingAttack", "attack", pWingFire), 7)
+    pRoot.AddAI(_conditional(pShip, "WingRejoin", "rejoin", pAvoidObstacles), 8)
+    pRoot.AddAI(pStockTree, 9)
     return pRoot
 
 

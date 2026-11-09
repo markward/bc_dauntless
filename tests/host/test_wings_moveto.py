@@ -94,3 +94,68 @@ def test_moveto_done_when_wing_gone():
     script.Update()
     roster.reset()
     assert script.Update() == AIC.US_DONE
+
+
+# ── attack slots (phase C) ─────────────────────────────────────────────────
+
+def _slot_scene():
+    ship, member, script = _scene()
+    pSet = ship.GetContainingSet()
+    target = loadspacehelper.CreateShip("BirdOfPrey", pSet, "e1", None, 0, 0)
+    target.SetTranslateXYZ(0.0, 1000.0, 0.0)
+    member.slot = ("e1", (-1.0, 0.0, 0.0), 120.0)
+    return ship, member, script, target
+
+
+def _record_turns(ship, monkeypatch):
+    seen = []
+    real = ship.TurnTowardLocation
+    monkeypatch.setattr(ship, "TurnTowardLocation",
+                        lambda v: (seen.append((v.x, v.y, v.z)), real(v))[1])
+    return seen
+
+
+def _slot_world(target, body_dir, standoff):
+    R = target.GetWorldRotation()
+    p = target.GetWorldLocation()
+    cols = [R.GetCol(i) for i in range(3)]
+    return tuple(
+        (p.x, p.y, p.z)[k] + sum((cols[i].x, cols[i].y, cols[i].z)[k]
+                                 * body_dir[i] for i in range(3)) * standoff
+        for k in range(3))
+
+
+def test_slot_tracks_target_live_pose(monkeypatch):
+    ship, member, script, target = _slot_scene()
+    seen = _record_turns(ship, monkeypatch)
+    script.Update()
+    first = _slot_world(target, (-1.0, 0.0, 0.0), 120.0)
+    assert seen[-1] == pytest.approx(first, abs=1e-3)
+    tp = target.GetWorldLocation()
+    # Rotate 90 degrees about up: forward/right swap.
+    m = App.TGMatrix3()
+    m.MakeZRotation(1.5707963267948966)
+    target.SetMatrixRotation(m)
+    script.Update()
+    second = _slot_world(target, (-1.0, 0.0, 0.0), 120.0)
+    assert seen[-1] == pytest.approx(second, abs=1e-3)
+    assert second != pytest.approx(first, abs=1.0)
+
+
+def test_slot_faces_target_when_close(monkeypatch):
+    ship, member, script, target = _slot_scene()
+    p = _slot_world(target, (-1.0, 0.0, 0.0), 120.0)
+    ship.SetTranslateXYZ(*p)
+    seen = _record_turns(ship, monkeypatch)
+    script.Update()
+    tp = target.GetWorldLocation()
+    assert seen[-1] == pytest.approx((tp.x, tp.y, tp.z), abs=1e-3)
+
+
+def test_slot_dead_target_falls_back_to_move_point(monkeypatch):
+    ship, member, script, target = _slot_scene()
+    member.move_point = (0.0, 500.0, 0.0)
+    monkeypatch.setattr(target, "IsDying", lambda: True)
+    seen = _record_turns(ship, monkeypatch)
+    script.Update()
+    assert seen == [(0.0, 500.0, 0.0)]

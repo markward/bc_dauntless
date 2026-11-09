@@ -25,6 +25,13 @@ class Member:
     move_point: tuple | None = None
     guard: bool = False
     fallback_since: float | None = None
+    # Phase C: (target_name, body_dir, standoff_gu) the member holds;
+    # fire_script is the wing-owned stock FireScript of its attack branch.
+    slot: tuple | None = None
+    fire_script: object = None
+    attack_target: str | None = None
+    weapons_first: bool = False
+    reserve: bool = False
 
 
 @dataclass

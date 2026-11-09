@@ -14,6 +14,12 @@ SetImpulse along model-forward, the fraction scaling down linearly inside
 a wing member it never reports DONE: the brain owns when the branch ends
 (its condition goes false). With no member record (the wing was reset) it
 reports DONE, as WingRejoin does.
+
+With member.slot = (target_name, body_dir, standoff_gu) and that target alive
+in the ship's set, the point is the slot, re-read from the target's live pose
+each Update: target position + R * body_dir * standoff (R's columns are
+right/forward/up). Within _SLOW_GU of it the ship turns to face the target
+instead of the point. A target that is gone falls back to move_point.
 """
 import math
 
@@ -39,6 +45,16 @@ class WingMoveTo:
         pShip.SetImpulse(fFraction, App.TGPoint3_GetModelForward(),
                          App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
 
+    def _SlotTarget(self, pShip, sName):
+        pSet = pShip.GetContainingSet()
+        if pSet is None:
+            return None
+        pTarget = App.ShipClass_GetObject(pSet, sName)
+        from engine.wings import brain
+        if not brain._alive(pTarget):
+            return None
+        return pTarget
+
     def Update(self):
         pShip = self.pCodeAI.GetShip()
         if pShip is None:
@@ -48,6 +64,20 @@ class WingMoveTo:
         if member is None:
             return App.ArtificialIntelligence.US_DONE
         point = member.move_point
+        vFace = None
+        slot = member.slot
+        if slot is not None:
+            pTarget = self._SlotTarget(pShip, slot[0])
+            if pTarget is not None:
+                from engine.wings import attack
+                R = pTarget.GetWorldRotation()
+                vT = pTarget.GetWorldLocation()
+                point = attack.slot_point(
+                    (vT.x, vT.y, vT.z),
+                    [(c.x, c.y, c.z) for c in
+                     (R.GetCol(0), R.GetCol(1), R.GetCol(2))],
+                    slot[1], slot[2])
+                vFace = vT
         if point is None:
             self._Impulse(pShip, 0.0)
             return App.ArtificialIntelligence.US_ACTIVE
@@ -57,6 +87,8 @@ class WingMoveTo:
                               + (point[2] - vHere.z) ** 2)
         vDestination = App.TGPoint3()
         vDestination.SetXYZ(point[0], point[1], point[2])
+        if vFace is not None and fDistance <= _SLOW_GU:
+            vDestination = vFace
         pShip.TurnTowardLocation(vDestination)
         if fDistance <= _STOP_GU:
             fFraction = 0.0

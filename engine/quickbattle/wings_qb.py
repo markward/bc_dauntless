@@ -235,7 +235,12 @@ def _create_ai(orig, pShip, args, kw):
     finally:
         App.ObjectGroup_FromModule = real
     try:
-        return tree.wrap_tree(pShip, stock, wing)
+        try:
+            import QuickBattle.QuickBattle as qb
+            kw = tree.fire_keywords(qb.GetCurrentAILevel())
+        except Exception:
+            kw = None
+        return tree.wrap_tree(pShip, stock, wing, fire_keywords=kw)
     except Exception:
         # StartSimulation2's AI loop runs this: the ship keeps its stock tree.
         _log.exception("quickbattle wings: tree not wrapped for %s",

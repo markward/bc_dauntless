@@ -484,3 +484,19 @@ def test_hunt_target_is_protectee_of_its_enemy_wing(world):
     ew, fw = _wing_for(panel, 1), _wing_for(panel, 2)
     assert list(ew.protect_names()) == [galor]
     assert galor not in set(fw.protect_names())
+
+
+def test_qb_passes_fire_keywords(world, monkeypatch):
+    """A member's wing FireScript carries the flags of the QB AI level."""
+    hl, _c, panel, QB = world
+    from engine.wings import roster, tree
+    import QuickBattle.QuickBattle as qb
+    escorts = _name_list(_add_to_player_group(panel, "Akira", "Akira"))
+    _enemies(panel, "Warbird", "Galor")
+    monkeypatch.setattr(qb, "GetCurrentAILevel", lambda: 1.0)
+    _go(hl, panel)
+    want = tree.fire_keywords(1.0)
+    fs = roster.member(escorts[0]).fire_script
+    assert fs is not None
+    assert want["SmartPhasers"] and fs.bSmartPhasers
+    assert want["SmartTorpSelection"] and fs.bChooseTorpsWisely
