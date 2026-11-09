@@ -79,3 +79,11 @@ def test_preset_round_trip_keeps_conditions(tmp_path):
     assert sc.same_setup(loaded, s) is True
     assert vc.set_mode(loaded, c.id, vc.ALL)
     assert sc.same_setup(loaded, s) is False
+
+
+def test_preset_keeps_wings_switch(tmp_path):
+    p = _store(tmp_path)
+    s = sc.default_scenario()
+    s.wings = False
+    assert p.save("solo", s)
+    assert _store(tmp_path).load("solo").wings is False

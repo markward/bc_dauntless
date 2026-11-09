@@ -343,3 +343,21 @@ def test_wings_off_is_stock(world, monkeypatch):
     # km behaviour unchanged.
     assert _target_group(warbird) is km_targeting.enemy_target_group()
     assert _target_group(ships[escort]) is QB.pEnemies
+
+
+def test_setup_switch_off_is_stock(world):
+    """The setup screen's "Wing commanders" Off: plan.wings is False, so no
+    wing is armed and every tree is the stock one, with wings enabled."""
+    hl, _c, panel, QB = world
+    from engine.quickbattle import wings_qb
+    from engine.wings import roster, service
+    assert service.enabled()
+    (escort,) = _name_list(_add_to_player_group(panel, "Akira"))
+    (warbird,) = _name_list(_enemies(panel, "Warbird"))
+    _do(panel, "wings:off")
+    _go(hl, panel)
+    ships = _ships(QB)
+    assert roster.wings() == [] and service._armed == []
+    assert ships[warbird].GetAI().GetName() == "Wait"        # QuickBattleAI's root
+    assert not _is_wing_tree(ships[escort])
+    assert wings_qb._wrapped == []

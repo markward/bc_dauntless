@@ -985,3 +985,20 @@ def test_condition_change_marks_dirty(panel):
     assert not _setup(panel)["dirty"]
     assert panel.dispatch_event("cond-add:victory:timer")
     assert _setup(panel)["dirty"]
+
+
+def test_wings_switch_flips_scenario_and_payload(panel):
+    assert _setup(panel)["wings"] is True
+    assert panel.dispatch_event("wings:off")
+    assert panel.scenario.wings is False
+    s = _setup(panel)
+    assert s["wings"] is False and s["dirty"]
+    assert panel.current_plan().wings is False
+    assert panel.dispatch_event("wings:on")
+    assert panel.scenario.wings is True and _setup(panel)["wings"] is True
+
+
+def test_wings_switch_rejects_unknown_arg(panel):
+    assert not panel.dispatch_event("wings:maybe")
+    assert not panel.dispatch_event("wings")
+    assert panel.scenario.wings is True

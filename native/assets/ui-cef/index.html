@@ -245,11 +245,15 @@
             <div id="qbs-species" class="cp-segmented qbs-strip qbs-species-strip"></div>
             <div id="qbs-catalog" class="qbs-catalog-body"></div>
           </main>
-          <!-- Victory view (the footer cog): the Victory and Defeat condition
-               stacks side by side (spec 2026-10-27-quickbattle-condition-stacks). -->
+          <!-- Victory view (the footer cog): a battle settings strip (Wing
+               commanders), then the Victory and Defeat condition stacks side
+               by side (spec 2026-10-27-quickbattle-condition-stacks). -->
           <main id="qbs-vcond" class="vc-cols" hidden>
-            <div id="qbs-vc-victory" class="vc-col"></div>
-            <div id="qbs-vc-defeat" class="vc-col"></div>
+            <div id="qbs-vc-battle" class="vc-battle"></div>
+            <div class="vc-stacks">
+              <div id="qbs-vc-victory" class="vc-col"></div>
+              <div id="qbs-vc-defeat" class="vc-col"></div>
+            </div>
           </main>
         </div>
         <div class="cp-footer qbs-footer">

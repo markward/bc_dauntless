@@ -141,3 +141,11 @@ def test_startable_needs_a_resolved_enemy_order():
     assert plan.orders == () and plan.startable is False
     s.add_ship(s.groups[1].id, "Warbird")
     assert sc.battle_plan(s, INDEX).startable is True
+
+
+def test_battle_plan_carries_wings_switch():
+    s = sc.default_scenario()
+    s.add_ship(s.groups[1].id, "Warbird")
+    assert sc.battle_plan(s, INDEX).wings is True
+    s.wings = False
+    assert sc.battle_plan(s, INDEX).wings is False

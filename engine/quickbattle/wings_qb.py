@@ -2,7 +2,8 @@
 2026-11-09-wing-leaders-phase-a-design.md §4, §11 "Quick Battle consumer").
 
 Armed from `battle_end.begin` for every plan-driven battle (no-op when
-`engine.wings.service.enabled()` is false, or BC's own GenerateShips ran):
+`engine.wings.service.enabled()` is false, the setup screen's "Wing
+commanders" switch is Off (`plan.wings`), or BC's own GenerateShips ran):
 
 - One wing per non-neutral group that has a member, id ``"qb:<group id>"``.
   Members are the MOBILE ships (an impulse engine with an authored max
@@ -100,7 +101,8 @@ def arm(qb, plan) -> None:
     from engine.quickbattle import km_targeting, naming
     from engine.wings import roster, service
     reset()
-    if plan is None or not service.enabled():
+    if (plan is None or not service.enabled()
+            or not getattr(plan, "wings", True)):    # the setup's switch Off
         return
     groups: dict = {}            # group id -> (allegiance, [initial names])
     late: set = set()            # group ids with a late order

@@ -75,7 +75,7 @@ global.dauntlessEvent = e => events.push(e);
 
 function payload(o) {
   return {open: true, view: o.view || "victory", groups: [], draft: null, can_start: true,
-    summary: "", victory: o.victory};
+    summary: "", victory: o.victory, wings: o.wings};
 }
 function buttons(id) {
   const out = [];
@@ -96,6 +96,7 @@ function snap() {
     groupsHidden: ctl("qbs-groups").hidden, mainHidden: ctl("qbs-main").hidden,
     cogOn: !!(ctl("qbs-victory-btn").on || {})["qbs-victory-btn--on"],
     victory: ctl("qbs-vc-victory").innerHTML, defeat: ctl("qbs-vc-defeat").innerHTML,
+    battle: ctl("qbs-vc-battle").innerHTML,
     menu: ctl("qbs-menu").innerHTML, menuHidden: ctl("qbs-menu").hidden,
     events: events.slice(),
   };
@@ -323,3 +324,30 @@ def test_two_conditions_each_render_their_own_card():
     d = s["defeat"]
     assert "Ships Destroyed" in _card(d, "c1") and "Timer" not in _card(d, "c1")
     assert ">7 min<" in _card(d, "t1")
+
+
+def _pushw(wings):
+    p = _push()
+    p["push"]["wings"] = wings
+    return p
+
+
+def test_wing_commanders_row_shows_the_switch():
+    on, off = _run([_step(_pushw(True), snap=1), _step(_pushw(False), snap=1)])
+    for s in (on, off):
+        assert ">Wing commanders<" in s["battle"]
+        assert ">Groups pick leaders and fight together<" in s["battle"]
+        assert "<select" not in s["battle"] and "title=" not in s["battle"]
+    assert re.search(r'class="cp-toggle cp-toggle--on"[^>]*data-arg="off"[^>]*>On<',
+                     on["battle"]), on["battle"]
+    assert re.search(r'class="cp-toggle"[^>]*data-arg="on"[^>]*>Off<',
+                     off["battle"]), off["battle"]
+
+
+def test_wing_commanders_click_sends_the_flip():
+    (s,) = _run([_pushw(True),
+                 {"click": ["qbs-vc-battle", "wings", "off"], "snap": 1}])
+    assert s["events"] == ["quick-battle-setup/wings:off"]
+    (s,) = _run([_pushw(False),
+                 {"click": ["qbs-vc-battle", "wings", "on"], "snap": 1}])
+    assert s["events"] == ["quick-battle-setup/wings:on"]

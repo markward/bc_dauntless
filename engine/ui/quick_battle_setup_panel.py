@@ -436,6 +436,7 @@ class QuickBattleSetupPanel(Panel):
         return {
             "open": True,
             "view": self._view, "victory": self._victory_payload(),
+            "wings": s.wings,
             "groups": [{"id": g.id, "name": g.name, "player": g.player,
                         "allegiance": g.allegiance, "direction": g.direction,
                         "distance": g.distance, "difficulty": g.difficulty,
@@ -782,6 +783,14 @@ class QuickBattleSetupPanel(Panel):
             return False
         return self._victory_done(vic.set_minutes(self._scenario, cid, minutes))
 
+    def _on_wings(self, arg) -> bool:
+        """`on` / `off`: the battle's "Wing commanders" switch."""
+        if arg not in ("on", "off"):
+            return False
+        self._scenario.wings = (arg == "on")
+        self._after_change()
+        return True
+
     # dialogs
     def _on_confirm(self, _arg) -> bool:
         pending, self._confirm = self._confirm, None
@@ -837,5 +846,6 @@ class QuickBattleSetupPanel(Panel):
         "cond-mode": _on_cond_mode, "cond-ship-add": _on_cond_ship_add,
         "cond-ship-remove": _on_cond_ship_remove,
         "cond-minutes": _on_cond_minutes,
+        "wings": _on_wings,
         "start": _on_start, "close": _on_close, "esc": _on_esc,
     }

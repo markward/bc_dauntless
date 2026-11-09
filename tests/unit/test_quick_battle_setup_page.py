@@ -147,6 +147,13 @@ def test_victory_containers_exist():
     assert '<div id="qbs-vc-defeat" class="vc-col">' in cols
 
 
+def test_wing_commanders_row_sits_above_the_stacks():
+    view = SECTION.split('id="qbs-vcond"', 1)[1].split("</main>", 1)[0]
+    assert '<div id="qbs-vc-battle" class="vc-battle">' in view
+    assert view.index('id="qbs-vc-battle"') < view.index('id="qbs-vc-victory"')
+    assert ".vc-battle" in CSS
+
+
 def test_phase1_battle_type_css_is_gone():
     for rule in (".vc-type", ".vc-pick", ".vc-blurb"):
         assert rule not in CSS, rule
