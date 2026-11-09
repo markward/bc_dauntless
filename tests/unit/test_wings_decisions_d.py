@@ -630,3 +630,14 @@ def test_flank_arrival_hysteresis(d, current, want):
     ctx = _ctx([], [_fair()], anchor=(600.0, 250.0 + d, 0.0),
                current=current, flank_ally="B" if current else None)
     assert _by("flank").score(ctx) == want
+
+
+# --- fix wave I1: protect is trouble only when the odds are close ---------
+
+@pytest.mark.parametrize("ours,want", [(7.0, "reinforce"), (10.0, "flank")])
+def test_ally_on_protect_flank_or_reinforce_by_odds(ours, want):
+    # B protects a member at 1.4:1 (close: in trouble, reinforce) or 2:1
+    # (comfortable: a fair fight, flank).
+    b = A("B", (900.0, 0.0, 0.0), ours=ours, theirs=5.0, engaged=True,
+          centroid=C, decision="protect")
+    assert decisions.pick(_ctx([V("ec", 600)], [b], anchor=US)).name == want

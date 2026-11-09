@@ -23,7 +23,8 @@ SPEC = {"leash_gu": 200.0, "leash_slack_gu": 100.0, "regroup_gather_gu": 100.0,
         "reinforce_cooldown_s": 60.0, "hold_spread_gu": 30.0,
         "screen_watch_gu": 700.0, "screen_gu": 150.0, "flank_gu": 250.0,
         "feint_range_gu": 800.0, "feint_stop_gu": 100.0, "feint_odds": 1.0,
-        "feint_cooldown_s": 180.0, "feint_max_s": 45.0}
+        "feint_cooldown_s": 180.0, "feint_max_s": 45.0,
+        "reinforce_close_odds": 1.5}
 
 
 def test_defaults_match_spec():
@@ -77,3 +78,15 @@ def test_attack_standoff_dials_step_and_floor():
         "attack_standoff_min_gu"] == 5.0
     d["attack_standoff_gu"] = 20.0
     assert dials.step(d, "attack_standoff_gu", -1)["attack_standoff_gu"] == 20.0
+
+
+def test_reinforce_close_odds_steps_and_clamps():
+    d = dict(dials.DEFAULTS)
+    assert dials.step(d, "reinforce_close_odds", 1)[
+        "reinforce_close_odds"] == 1.6
+    d["reinforce_close_odds"] = 1.0
+    assert dials.step(d, "reinforce_close_odds", -1)[
+        "reinforce_close_odds"] == 1.0
+    d["reinforce_close_odds"] = 5.0
+    assert dials.step(d, "reinforce_close_odds", 1)[
+        "reinforce_close_odds"] == 5.0

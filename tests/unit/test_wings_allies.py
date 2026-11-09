@@ -21,10 +21,25 @@ def test_in_trouble_losing_odds():
     assert not allies.in_trouble(_st(ours=6.0, theirs=5.0))
 
 
-def test_in_trouble_protect_and_withdraw():
-    assert allies.in_trouble(_st(decision="protect"))
+def test_in_trouble_withdraw_at_any_odds():
+    dials.reset()
     assert allies.in_trouble(_st(decision="withdraw"))
+    assert allies.in_trouble(_st(ours=50.0, theirs=5.0, decision="withdraw"))
     assert not allies.in_trouble(_st(decision="swarm"))
+
+
+def test_in_trouble_protect_only_when_close():
+    """Fix wave I1: protect is the commonest engaged decision, so it counts
+    as trouble only while ours < reinforce_close_odds (1.5) x theirs."""
+    dials.reset()
+    assert allies.in_trouble(_st(ours=7.0, theirs=5.0, decision="protect"))
+    assert not allies.in_trouble(_st(ours=7.5, theirs=5.0,
+                                     decision="protect"))
+    assert not allies.in_trouble(_st(ours=10.0, theirs=5.0,
+                                     decision="protect"))
+    dials._dials["reinforce_close_odds"] = 2.5
+    assert allies.in_trouble(_st(ours=10.0, theirs=5.0, decision="protect"))
+    dials.reset()
 
 
 def test_in_trouble_requires_engaged():

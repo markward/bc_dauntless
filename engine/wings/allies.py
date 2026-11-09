@@ -22,8 +22,17 @@ class WingStatus:
 
 
 def in_trouble(s: WingStatus) -> bool:
-    return s.engaged and (s.ours < dials.get("reinforce_odds") * s.theirs
-                          or s.decision in ("protect", "withdraw"))
+    """Engaged, and losing on odds, withdrawing, or protecting while the
+    odds are close. Protect is the commonest engaged decision (fix wave
+    I1: 66-94 % of engaged ticks), so on its own it is no trouble."""
+    if not s.engaged:
+        return False
+    if s.ours < dials.get("reinforce_odds") * s.theirs:
+        return True
+    if s.decision == "withdraw":
+        return True
+    return (s.decision == "protect"
+            and s.ours < dials.get("reinforce_close_odds") * s.theirs)
 
 
 def side_of(wing) -> str:
