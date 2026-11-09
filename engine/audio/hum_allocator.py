@@ -39,6 +39,7 @@ from engine.core.ids import implements
 from engine.audio.engine_rumble import (
     HUM_MAX_DISTANCE, HUM_MIN_DISTANCE, _engine_sound_name_for, _node_for,
 )
+from engine.audio import tg_sound
 from engine.audio.tg_sound import TGSoundManager
 
 # Guide §10: BC's cap. Tunable, but default 4 so the mix density matches.
@@ -195,6 +196,8 @@ def _start_hum(ship) -> None:
     playing = snd.Play(attach_node=_node_for(ship))
     if playing is not None:
         _humming[ship] = playing
+        # update() reconciles every hum each pass: never the loop sweep's.
+        tg_sound.owner_managed(playing)
         # Stop the source when the ship dies even if nobody calls _stop_hum
         # (review finding #3 — see the `_humming` comment above). The
         # finalizer callback holds only `playing`, never `ship`, so it

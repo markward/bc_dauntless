@@ -546,7 +546,17 @@ def install_end_simulation_hook(qb) -> bool:
             _delete_pending_end_timer(qb)
         except Exception:
             _log.exception("quickbattle: deleting the pending end timer failed")
-        return orig(*args)
+        try:
+            return orig(*args)
+        finally:
+            # BC's End flags the battle's ships SetDeleteMe(1): they leave
+            # without StopFiring, and a firing bank's phaser loop would play
+            # on. Stop every looping SFX once the battle is torn down.
+            from engine.audio import tg_sound
+            try:
+                tg_sound.stop_sfx_loops()
+            except Exception:
+                _log.exception("quickbattle: stopping SFX loops failed")
 
     EndSimulation._dauntless_qb_spawn_orig = orig
     qb.EndSimulation = EndSimulation

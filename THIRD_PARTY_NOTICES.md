@@ -21,6 +21,18 @@ library are bundled so that no separate Python install is needed.
 - License text: `licenses/Python-LICENSE.txt` (taken from the Python
   installation the build was packaged with)
 
+### Microsoft Visual C++ runtime (Windows only)
+
+The C++ runtime libraries the Windows build needs to start
+(`msvcp140*.dll`, `vcruntime140*.dll` and their companions), shipped beside
+the exe so that no separate Visual C++ Redistributable install is needed.
+
+- Source: the `Microsoft.VC*.CRT` redistributable folder of the Visual
+  Studio install the build was packaged with
+- License: Microsoft Visual Studio license terms, which allow these files
+  to be distributed with an application. Microsoft supplies no separate
+  license file for them.
+
 ### Chromium Embedded Framework (CEF)
 
 Off-screen browser that draws the game's interface over the 3D scene.

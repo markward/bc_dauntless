@@ -18,6 +18,9 @@ using dauntless::combat::target_rating;
 
 namespace {
 
+// Not M_PI: MSVC's <cmath> defines it only under _USE_MATH_DEFINES.
+constexpr double kPi = 3.14159265358979323846;
+
 // Our ship at the origin facing +Y; the target 60 GU dead ahead; every factor
 // but distance and angle zero, every weight 1.0.
 RatingInputs ahead() {
@@ -102,7 +105,7 @@ TEST(AiRating, DistanceAndAngleEdgeCases) {
         RatingInputs in = ahead();
         in.target_pos[0] = 60.0;
         in.target_pos[1] = 0.0;
-        EXPECT_EQ(target_rating(in), 0.5 + (1.0 - (std::acos(0.0) / M_PI)));
+        EXPECT_EQ(target_rating(in), 0.5 + (1.0 - (std::acos(0.0) / kPi)));
     }
     // A forward that is not a unit vector: the dot over the distance leaves
     // [-1, 1] and is clamped (2 -> 1 -> acos 0; -2 -> -1 -> acos pi).
@@ -126,7 +129,7 @@ TEST(AiRating, DistanceAndAngleEdgeCases) {
         const double dx = 0.1 - 1.0, dy = 70.3 - 2.0, dz = -4.7 - 3.0;
         const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
         double a = (0.0 * dx + 1.0 * dy + 0.0 * dz) / d;
-        const double want = (30.0 / d) + (1.0 - (std::acos(a) / M_PI));
+        const double want = (30.0 / d) + (1.0 - (std::acos(a) / kPi));
         EXPECT_EQ(target_rating(in), want);
     }
     // NaN position: `fDistance > 0` is False, so both stay 0.0.
