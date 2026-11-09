@@ -225,7 +225,10 @@ merge gate runs when Mark says to merge into main.
   utilisation, `"fullscreen": false` in the worktree's `settings.json`, Debug
   against Debug. Results become new signals in `perf-register.md`.
 - **Mark checks in game:** HUD responsiveness (2.1) and the HDR format on
-  bright scenes and nebulae (2.2).
+  bright scenes and nebulae (2.2). **Done 2026-11-09:** Mark ran the
+  `int/2026-11-08-01` build in game and saw no problems with any Tier 1 item.
+  This is a look-and-feel check; it does not show whether the GC freeze removes
+  hitches (SIG-218).
 
 ## 5. Left to the builder
 
