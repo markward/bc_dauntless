@@ -98,8 +98,11 @@ identical (the harness tests), which is the proof.
 """
 import functools
 import itertools
+import pickle
 import random
+import zlib
 from collections import Counter
+from collections.abc import Sequence
 
 import pytest
 
@@ -445,25 +448,58 @@ class _Recorder:
                 "errors": sorted(ai_driver._reported_script_errors)}
 
 
+def _pack(snap):
+    """A tick's snapshot as compressed pickle bytes. Kept as live dicts, a
+    600-tick fight's snapshots (every ship's whole AI tree, per tick) cost
+    ~0.5 GB per run, and run_walk_diff holds three runs. A snapshot holds
+    only _norm values (tuples and scalars), so it pickles."""
+    return zlib.compress(pickle.dumps(snap, pickle.HIGHEST_PROTOCOL), 1)
+
+
+def _unpack(blob):
+    return pickle.loads(zlib.decompress(blob))
+
+
+class _Ticks(Sequence):
+    """``Record.ticks``: ``(log, snapshot)`` per tick, the snapshot unpacked
+    only when that tick is read (see _pack), so a reader holds one at a time.
+    Every access unpacks a fresh copy."""
+
+    def __init__(self, packed):
+        self._packed = packed
+
+    def __len__(self):
+        return len(self._packed)
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return [(log, _unpack(blob)) for log, blob in self._packed[i]]
+        log, blob = self._packed[i]
+        return log, _unpack(blob)
+
+
 class Record:
     """What one side saw: per tick, the call-log slice and the state, and how
-    often each walker entry point ran (``entries``: python / native)."""
+    often each walker entry point ran (``entries``: python / native).
+    ``ticks`` reads as ``[(log, snapshot), ...]``; the snapshots are held
+    packed (``packed``: ``[(log, bytes), ...]``, see _pack)."""
 
-    def __init__(self, ticks, entries=None):
-        self.ticks = ticks
+    def __init__(self, packed, entries=None):
+        self.packed = packed
+        self.ticks = _Ticks(packed)
         self.entries = entries or {"python": 0, "native": 0}
 
     def calls(self):
         """Counter of ``("call", name)`` entries over the whole run."""
         c = Counter()
-        for log, _snap in self.ticks:
+        for log, _blob in self.packed:
             for e in log:
                 if e[0] == "call":
                     c[e[1]] += 1
         return c
 
     def log(self):
-        return [e for log, _s in self.ticks for e in log]
+        return [e for log, _blob in self.packed for e in log]
 
 
 class Scene:
@@ -643,7 +679,7 @@ def run_side(scene, ticks, native, bases=None):
                     built.step(i)
                 except Exception as exc:                     # noqa: BLE001
                     rec.log.append(("escaped", type(exc).__name__, str(exc)))
-                out.append((rec.log[start:], rec.snapshot()))
+                out.append((rec.log[start:], _pack(rec.snapshot())))
         finally:
             _ACTIVE.remove(rec)
             py_after = oracle.ENTRIES
@@ -672,10 +708,11 @@ def run_side(scene, ticks, native, bases=None):
 
 def first_difference(py, nat):
     """None, or a message naming the tick and the first difference."""
-    if len(py.ticks) != len(nat.ticks):
-        return "tick counts differ: %d vs %d" % (len(py.ticks), len(nat.ticks))
+    if len(py.packed) != len(nat.packed):
+        return "tick counts differ: %d vs %d" % (len(py.packed),
+                                                 len(nat.packed))
     for t, ((plog, psnap), (nlog, nsnap)) in enumerate(
-            zip(py.ticks, nat.ticks)):
+            zip(py.packed, nat.packed)):
         if plog != nlog:
             for k, (a, b) in enumerate(zip(plog, nlog)):
                 if a != b:
@@ -685,6 +722,11 @@ def first_difference(py, nat):
                     % (t, len(plog), len(nlog),
                        (plog if len(plog) > len(nlog) else nlog)[
                            min(len(plog), len(nlog))]))
+        if psnap == nsnap:
+            continue                # same bytes: same snapshot
+        # Different bytes may still be equal snapshots (a dict built in a
+        # different order pickles differently): compare the values.
+        psnap, nsnap = _unpack(psnap), _unpack(nsnap)
         if psnap != nsnap:
             if psnap["focus_depth"] != nsnap["focus_depth"]:
                 return ("tick %d: _focus_depth differs: python %r native %r"
