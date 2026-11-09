@@ -101,7 +101,9 @@ AI reads on its own schedule (programme anti-goal: no sim check-ins).
   (mobile attack AI). In Quick Battle that is every ship spawned with
   `QuickBattleAI` / `QuickBattleFriendlyAI`. **(call)** Starbase/station AI
   ships, neutral groups, and ships with no AI are **not** wing members and
-  never enter a chain: a station can't anchor a leash.
+  never enter a chain: a station can't anchor a leash. **(ruling)** Members
+  must also be **mobile** (impulse engines, max speed > 0). A wing whose
+  initial members are all late builds its chain from its first arrival wave.
 - The player is a member of the player's group's wing. `PlayerOrder` gains the
   player's group id (QB) so the consumer can tell.
 - Late arrivals (`late_arrivals._spawn_one`) are added to their group's wing
@@ -197,9 +199,12 @@ One `ObjectGroupWithInfo` per wing, installed as every member's
 
 Rebuilt each brain tick:
 
-- **Reach set** = candidate enemies within `leash_gu` of the anchor.
+- **Reach set** = candidate enemies (**ruling:** the enemy group ∪ the
+  km-listed names for the side) within `leash_gu` of the anchor.
   Each enters at `Priority` 0.0 — or its `km_targeting` priority if the
   ship is a listed protect/hunt target (QB victory conditions keep working).
+  **(ruling)** A km-listed ship in reach becomes the primary (the decision's
+  pick drops to a secondary; a commanding player still overrides).
 - **Primary** (from the decision) gets `Priority` **3.0**; up to two
   **secondaries** get **1.5** **(call)**. Primary/secondaries are chosen
   from the reach set.
@@ -210,11 +215,14 @@ Rebuilt each brain tick:
   group) heads for it and the leash pulls the wing along: the wing advances as
   a body instead of scattering after separate targets.
 - **Player commanding:** the player's current target, if it is a candidate
-  enemy, is the primary regardless of decision.
+  enemy, is the primary regardless of decision. **(ruling)** In every case,
+  even outside reach.
 
 **Wing members' SelectTarget weights** (set once at wrap time via the stock
 `SetRelativeImportance`): stock values except **popularity = `wing_popularity`**
-(dial, default **−0.3**, stock −1.1) **(call)**. With a 1.5 priority gap and
+(dial, default **−0.3**, stock −1.1) **(call)**. **(ruling)** Only
+`fPopularityFactor` is touched (original saved and restored on leaderless);
+the player's own SelectTarget is never weighted. With a 1.5 priority gap and
 distance worth ≤ 1.0, a wing piles onto its primary but overflows to a
 secondary at about five attackers — swarm without a 25-ship scrum. Self-defence
 is kept: an enemy in reach that is shooting a member still rates through
@@ -290,6 +298,10 @@ member for weights and `ForceUpdate`.
 0, each side is split into wings of N in ring order and each tree wrapped via
 `DauntlessWings`.
 
+**Home set (ruling):** the wing's home set is the set holding most live
+non-player members, and a commander must be in it; while command is alive but
+away the brain stands rejoin down.
+
 **Switch:** `DAUNTLESS_WINGS=0` disables wings everywhere (consumers don't
 arm, trees are stock). Otherwise on in Quick Battle. Developer Options →
 Combat → **Wing AI** (default on) is read at battle start; `=0` env wins.
@@ -316,6 +328,15 @@ who commands. Production UI unchanged.
 7. Desperation: below 40% hull, 30% ram else flee, rolled once, permanent.
 8. Brain at 1 Hz, wings phase-staggered.
 9. A dev-only ★ commander marker in the target list for play-testing.
+10. Members must be mobile (impulse engines, max speed > 0).
+11. A wing whose initial members are all late builds its chain from its first
+    arrival wave.
+12. A km-listed ship in reach is the primary; a commanding player's target is
+    the primary even outside reach.
+13. Only `fPopularityFactor` is touched; the player's SelectTarget is never
+    weighted.
+14. Home set = the set with most live non-player members; away command stands
+    rejoin down.
 
 ## 13. Testing
 
@@ -329,10 +350,9 @@ who commands. Production UI unchanged.
   `SelectTarget` shares the wing group and stays on the native path (the
   `ai native:` counters show no Python ratings), late arrival joins, reset on
   end and on mission swap leaves no wing state.
-- **Behaviour (headless, slow — may be deep tier):** `combat_stress` at 16
-  ships, wing size 4, ~3000 ticks: the 90th-percentile member-to-commander
-  distance stays under `leash_gu + leash_slack_gu`; with wings off the same
-  metric is recorded (not asserted) for the report.
+- **Behaviour (headless, slow — may be deep tier):** `combat_stress`, wing
+  size 4, 18000 ticks per arm: asserts ON p90 member-to-commander distance
+  < 350 GU and ON < 0.6 × OFF (the scene is nondeterministic run to run).
 - **Off means off:** with `DAUNTLESS_WINGS=0` the trees are byte-for-byte the
   stock trees (same node types/order) and no `gl.wings` work runs.
 - Tree guards as always (`tests/docs`, path indirection, install-write,

@@ -421,3 +421,12 @@ and an alert-level change (crew menu, weapons) all `mark_due` the panel for the
 next frame. The last two are `host_loop._mark_hud_due_on_changes`, an identity
 compare each frame. Damage cannot be event-driven (`ET_SUBSYSTEM_*` are never
 posted, event-emitter-gaps #15), so the interval is a floor, not a fallback.
+
+## 8. Wing brain decides at 1 Hz of game time
+
+Quick Battle wings (`engine/wings/`) decide once per `brain_period_s` (1 s of
+game time), phase-staggered so wings do not share a frame. A wing reacts to a
+member's death or a command handover within <= 1 s, plus SelectTarget's
+`ForceUpdate` (<= 4 AI ticks, section above). Not a bug: a slow-looking
+retarget after a kill is this cadence. `brain_period_s` is a dial in the
+"wings" group on `/ L O`; `DAUNTLESS_WINGS=0` removes it.
