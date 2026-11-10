@@ -1,5 +1,6 @@
 """The golden row vocabulary (tests/helpers/golden_rows.py): light, no engine."""
 import subprocess
+from pathlib import Path
 import sys
 
 from tests.helpers import golden_rows
@@ -42,8 +43,18 @@ def test_row_difference_names_field_for_tuple_rows():
 def test_module_is_light():
     code = ("import tests.helpers.golden_rows, sys; "
             "assert 'engine' not in sys.modules "
+            "and 'App' not in sys.modules "
             "and 'pytest' not in sys.modules")
-    assert subprocess.run([sys.executable, "-c", code]).returncode == 0
+    root = Path(__file__).resolve().parents[2]
+    assert subprocess.run([sys.executable, "-c", code],
+                          cwd=root).returncode == 0
+
+
+def test_no_recordings_are_committed():
+    """The recordings are retired: scenes are code, compared across commits
+    by the A/B tool, never stored."""
+    assert not (Path(__file__).resolve().parents[1] / "fixtures"
+                / "golden_fights").exists()
 
 
 def test_subsystems_scene_is_a_golden_scene():

@@ -15,7 +15,6 @@ scene's rows across commits, and ``test_motion_branches_python_motion_arm``
 compares the native motion arm with the Python motion arm live, in one
 process.
 """
-from pathlib import Path
 
 import pytest
 
@@ -127,13 +126,6 @@ def test_golden_arm_is_native_only():
         "python_motion": dict(on, DAUNTLESS_NATIVE_MOTION="0")}
     with pytest.raises(ValueError, match="native only"):
         golden_fight.run_scene("k1_ops_tpf1", "python")
-
-
-def test_no_recordings_are_committed():
-    """The recordings are retired: scenes are code, compared across commits
-    by the A/B tool, never stored."""
-    assert not (Path(__file__).parents[1] / "fixtures"
-                / "golden_fights").exists()
 
 
 def test_motion_branches():

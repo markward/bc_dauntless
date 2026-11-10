@@ -1,5 +1,5 @@
-"""Recorded golden fights: the reference fire control is checked against
-once its Python copy is gone (fire control native only, Task 1; spec
+"""Golden SCENES (code; no recordings are kept): fire control is checked
+through them now that its Python copy is gone (fire control native only, Task 1; spec
 docs/superpowers/specs/2026-11-03-fire-control-native-only-design.md §4.2,
 decision M7, rulings R9 and R10; the proposal and its rows are
 docs/reference/engine/native-combat/k1-retirement-map.md §5.5).
@@ -27,7 +27,11 @@ are those fights themselves, imported, not copied:
 * ``host_frames`` / ``host_frames_tpf1``: the same GameLoop fight through
   real host frames (``host_loop._run_frame_sim``, headless;
   tests/helpers/host_frame_fight.py), a tick-count cycle with ops, and one
-  tick per frame.
+  tick per frame;
+* ``motion_branches``: the live Python-vs-native motion branch scene
+  (``_motion_branches``);
+* ``native_subsystems_scene``: the subsystem-stage scene
+  (``_native_subsystems``, tests/helpers/subsystems_scene).
 
 ``run_scene(name, arm)`` returns one canonical tuple per tick, tick 0 first
 (what happened before the first tick):
@@ -54,7 +58,7 @@ are those fights themselves, imported, not copied:
   order inside a tick: ruling Q1, compare_calls);
 * ``notes``: what a scene's own listeners saw (the tractor scene's).
 
-Every value is JSON-normalised (tuples become lists), as the file holds it.
+Every value is JSON-normalised (tuples become lists), as a JSON round trip would.
 
 Nothing is recorded: the scenes are code, and the golden A/B tool compares
 their rows across commits.
