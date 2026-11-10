@@ -78,6 +78,7 @@ _attacked: dict = {}         # wing id -> the attacked QuickBattle group attr
 _by_group: dict = {}         # QB group id -> its wing
 _first_wave: dict = {}       # all-late group id -> its first mobile
                              # arrivals' warp_in_s (None until one arrives)
+_difficulty_logged = False   # the QB difficulty fallback, said once
 
 
 def _is_mobile(ship) -> bool:
@@ -206,6 +207,7 @@ def owns(name) -> bool:
 
 
 def _create_ai(orig, pShip, args, kw):
+    global _difficulty_logged
     wing = _owned.get(pShip.GetName()) if pShip is not None else None
     if wing is None:
         return orig(pShip, *args, **kw)
@@ -235,7 +237,18 @@ def _create_ai(orig, pShip, args, kw):
     finally:
         App.ObjectGroup_FromModule = real
     try:
-        return tree.wrap_tree(pShip, stock, wing)
+        try:
+            import QuickBattle.QuickBattle as qb
+            kw = tree.fire_keywords(qb.GetCurrentAILevel())
+        except Exception as exc:
+            kw = None                  # wrap_tree's default difficulty
+            if not _difficulty_logged:
+                _difficulty_logged = True
+                from engine.wings import brain
+                brain.log("QB difficulty not read (%s: %s): wing FireScripts "
+                          "use the default difficulty"
+                          % (type(exc).__name__, exc))
+        return tree.wrap_tree(pShip, stock, wing, fire_keywords=kw)
     except Exception:
         # StartSimulation2's AI loop runs this: the ship keeps its stock tree.
         _log.exception("quickbattle wings: tree not wrapped for %s",
@@ -282,4 +295,6 @@ def reset() -> None:
     _attacked.clear()
     _by_group.clear()
     _first_wave.clear()
+    global _difficulty_logged
+    _difficulty_logged = False
     service.reset()

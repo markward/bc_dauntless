@@ -484,3 +484,43 @@ def test_hunt_target_is_protectee_of_its_enemy_wing(world):
     ew, fw = _wing_for(panel, 1), _wing_for(panel, 2)
     assert list(ew.protect_names()) == [galor]
     assert galor not in set(fw.protect_names())
+
+
+def test_qb_passes_fire_keywords(world, monkeypatch):
+    """A member's wing FireScript carries the flags of the QB AI level."""
+    hl, _c, panel, QB = world
+    from engine.wings import roster, tree
+    import QuickBattle.QuickBattle as qb
+    escorts = _name_list(_add_to_player_group(panel, "Akira", "Akira"))
+    _enemies(panel, "Warbird", "Galor")
+    monkeypatch.setattr(qb, "GetCurrentAILevel", lambda: 1.0)
+    _go(hl, panel)
+    want = tree.fire_keywords(1.0)
+    fs = roster.member(escorts[0]).fire_script
+    assert fs is not None
+    assert want["SmartPhasers"] and fs.bSmartPhasers
+    assert want["SmartTorpSelection"] and fs.bChooseTorpsWisely
+
+
+def test_failed_difficulty_read_logged_once(world, monkeypatch, capsys):
+    """Review M6: the stock-difficulty fallback says so, once, instead of
+    falling back without a word."""
+    hl, _c, panel, QB = world
+    from engine.wings import roster, tree
+    escorts = _name_list(_add_to_player_group(panel, "Akira", "Akira"))
+    _enemies(panel, "Warbird", "Galor")
+
+    real = tree.fire_keywords
+
+    def broken(level):
+        if level is not None:
+            raise RuntimeError("no AI level")
+        return real(level)              # wrap_tree's own default read
+    # Stock QuickBattle reads GetCurrentAILevel itself: break our read only.
+    monkeypatch.setattr(tree, "fire_keywords", broken)
+    monkeypatch.setenv("DAUNTLESS_WINGS_LOG", "1")
+    capsys.readouterr()
+    _go(hl, panel)
+    err = capsys.readouterr().err
+    assert err.count("QB difficulty not read") == 1, err[-2000:]
+    assert roster.member(escorts[0]).fire_script is not None

@@ -25,6 +25,20 @@ class Member:
     move_point: tuple | None = None
     guard: bool = False
     fallback_since: float | None = None
+    # Phase C: (target_name, body_dir, standoff_gu) the member holds;
+    # fire_script is the wing-owned stock FireScript of its attack branch.
+    slot: tuple | None = None
+    # WingMoveTo's hold mode on the slot (final review I3): entered within
+    # 20 GU of it, left past 40; the brain clears it when the slot changes.
+    slot_hold: bool = False
+    fire_script: object = None
+    # The smallest full-damage distance (GU) of its phaser and pulse banks,
+    # None with none: cached at wrap (fixed per hardpoint), it sets the
+    # member's slot standoff (attack.holder_standoff).
+    beam_range_gu: float | None = None
+    attack_target: str | None = None
+    weapons_first: bool = False
+    reserve: bool = False
 
 
 @dataclass
@@ -51,6 +65,10 @@ class Wing:
     # name -> time before which a timed-out faller may not fall back again
     # (rotate.fallback_flags owns the rule; one dict per wing across ticks).
     fallback_cooldown: dict = field(default_factory=dict)
+    # Game time the current decision became current; the protectee the
+    # last protect covered (decisions._protectee's dwell).
+    decision_since: float = 0.0
+    protect_prev: str | None = None
     # name -> "active" / "spent": each ship's one hull fall-back.
     fallback_hull: dict = field(default_factory=dict)
     # name -> (t, strength) samples for protectees that are not members
@@ -59,6 +77,27 @@ class Wing:
     # The protectee the current guards (Member.guard) cover: guard
     # incumbency holds only while it is unchanged (protect.pick_guards).
     guarded: str | None = None
+    # (primary, holder names, weapons_first) last logged by the brain's
+    # attack step: it logs only on a change.
+    attack_sig: tuple | None = None
+    # (primary, slot body dirs, {holder: slot index}) of the last attack
+    # step: the incumbents attack.assign_slots keeps (final review I2).
+    attack_prev: tuple | None = None
+    # Phase C reserve (spec §6): the member held back, when it was picked,
+    # whether the wing has already committed it (never re-picked), the live
+    # non-player count last tick (a drop is a loss) and the last enemy
+    # centroid in reach (the reserve point with nobody in reach).
+    reserve: str | None = None
+    reserve_since: float | None = None
+    reserve_spent: bool = False
+    reserve_live: int = 0
+    last_centroid: tuple | None = None
+    # Disable (final review I1): the target the running disable started on
+    # and when; targets it never re-enters against (the disable_max_s cap,
+    # or a disable that ended with the target still alive).
+    disable_target: str | None = None
+    disable_since: float | None = None
+    disable_done: set = field(default_factory=set)
 
 
 _wings: dict[str, Wing] = {}

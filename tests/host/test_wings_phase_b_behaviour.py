@@ -75,12 +75,17 @@ def test_guard_moves_between_protectee_and_attacker(monkeypatch):
     _place(ships[far[0]], (-30.0, 30.0, 0.0))
     _place(ships[far[1]], (-30.0, -30.0, 0.0))
 
+    # Real danger (a member needs it, not a crowd): the headless fight
+    # lands no damage, so the protectee's shields are drained by hand as
+    # focus fire would, hull 0.6 (strength frac falls under 0.6).
+    ships[protectee].GetHull().SetConditionPercentage(0.6)
     loop = GameLoop()
     best, start, decided = {}, {}, False
     for t in range(10 * HZ):
         loop.tick()
         if t % 6:
             continue
+        _set_shields(ships[protectee], max(0.3, 1.0 - 0.14 * t / HZ))
         decided = decided or fw.decision == "protect"
         p = ships[protectee]
         if p.IsDead():

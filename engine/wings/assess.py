@@ -14,6 +14,8 @@ class ShipView:
     wing_id: Optional[str] = None
     is_commander: bool = False
     target: Optional[str] = None
+    faces: tuple = ()
+    weapons_down: bool = False
     # Weakest single shield face; None reads as `shield` (the mean).
     weak_face: Optional[float] = None
 
@@ -23,6 +25,11 @@ def strength(v: ShipView) -> float:
 
 
 def dist(a, b) -> float:
+    # The 3-vector case (every ship position) without the generator: the
+    # same squares summed by sum() in the same order, so bit-identical.
+    if len(a) == 3 and len(b) == 3:
+        return math.sqrt(sum(((a[0] - b[0]) ** 2, (a[1] - b[1]) ** 2,
+                              (a[2] - b[2]) ** 2)))
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
 
 

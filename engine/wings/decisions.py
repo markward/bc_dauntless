@@ -1,8 +1,10 @@
 """Wing decision registry and the Phase A decisions (spec §8). Pure."""
+import copy
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
-from engine.wings import assess, dials, protect
+from engine.wings import assess, attack, dials, protect
 
 
 @dataclass
@@ -19,6 +21,26 @@ class Context:
     withdraw_cooldown_until: float = -1.0
     clear_since: Optional[float] = None
     player_commands: bool = False
+    slot_eligible: int = 0
+    # The target a running disable started on (the wing's disable_target,
+    # which a command-away does not clear, as it does the primary): the
+    # latch keys on it. disable_done: targets disable never re-enters
+    # against (the brain's cap, or a disable that ended with the target
+    # alive).
+    disable_target: Optional[str] = None
+    disable_done: frozenset = frozenset()
+    # Last tick's slot-holders and the held reserve: their stations hang off
+    # the primary or their own bearing, not the anchor, so Regroup does not
+    # count them as strays (review M7).
+    slot_holders: frozenset = frozenset()
+    reserve: Optional[str] = None
+    # Seconds the current decision has been current (0 with none), and the
+    # protectee a running protect covers: protect holds protect_min_s on
+    # it, and a young attack decision is not cut off by attacker count.
+    decision_age_s: float = 0.0
+    protect_prev: Optional[str] = None
+    # Ordinary wing members: protect.threatened's real-danger rule.
+    strict_protectees: frozenset = frozenset()
 
 
 @dataclass
@@ -28,6 +50,9 @@ class Choice:
     gather: bool = False
     protectee: Optional[str] = None
     withdraw: bool = False
+    slot_dirs: tuple = ()
+    weapons_first: bool = False
+    slot_all: bool = False
 
 
 class Decision(Protocol):
@@ -38,16 +63,41 @@ class Decision(Protocol):
     def choose(self, ctx: Context) -> Choice: ...
 
 
+def _memo(ctx, kind, inputs, compute):
+    """compute() once per context while `inputs` are unchanged (the same
+    objects, the same dial values): every decision's score and the winner's
+    choose read the same reach, side strengths and swarm choice in one tick.
+    Kept off the dataclass fields, so a dataclasses.replace() copy starts
+    empty and repr / == are unchanged."""
+    memo = ctx.__dict__.setdefault("_memo", {})
+    hit = memo.get(kind)
+    # Tuple == tests each pair by identity first: the context's lists and
+    # anchor match by identity, the dial floats by value.
+    if hit is not None and hit[0] == inputs:
+        return hit[1]
+    value = compute()
+    memo[kind] = (inputs, value)
+    return value
+
+
 def _in_reach(ctx):
     leash = dials.get("leash_gu")
-    return [e for e in ctx.enemies
-            if assess.dist(e.pos, ctx.anchor.pos) <= leash]
+    return list(_memo(
+        ctx, "reach", (ctx.enemies, ctx.anchor, leash),
+        lambda: [e for e in ctx.enemies
+                 if assess.dist(e.pos, ctx.anchor.pos) <= leash]))
+
+
+def _sides(ctx, engage):
+    """(our, their) strength within `engage` of the anchor."""
+    return _memo(
+        ctx, "sides", (ctx.members, ctx.enemies, ctx.anchor, engage),
+        lambda: (assess.side_strength(ctx.members, ctx.anchor.pos, engage),
+                 assess.side_strength(ctx.enemies, ctx.anchor.pos, engage)))
 
 
 def _outmatched(ctx) -> bool:
-    engage = dials.get("engage_gu")
-    ours = assess.side_strength(ctx.members, ctx.anchor.pos, engage)
-    theirs = assess.side_strength(ctx.enemies, ctx.anchor.pos, engage)
+    ours, theirs = _sides(ctx, dials.get("engage_gu"))
     return ours < dials.get("odds_ratio") * theirs
 
 
@@ -62,7 +112,9 @@ class Regroup:
     name = "regroup"
 
     def score(self, ctx: Context) -> float:
-        others = [m for m in ctx.members if m.name != ctx.anchor.name]
+        others = [m for m in ctx.members if m.name != ctx.anchor.name
+                  and m.name not in ctx.slot_holders
+                  and m.name != ctx.reserve]
         radius = dials.get("leash_gu") + dials.get("leash_slack_gu")
         return 2.0 * assess.fraction_beyond(others, ctx.anchor.pos, radius)
 
@@ -101,23 +153,52 @@ class SwarmCommander:
         return Choice(cmd.name, tuple(e.name for e in mates[:2]), False)
 
 
+_ATTACKS = frozenset({"focus_face", "envelop", "disable"})
+
+
+def _protectee(ctx):
+    """The protectee protect covers this tick, or None.
+
+    Fresh: protect.threatened (heavy fire: heavy_fire_frac lost in the
+    window, or heavy_fire_attackers on it). A young attack decision
+    (focus_face, envelop, disable; under attack_min_s) is cut off only by
+    real damage, never by the attacker count alone. Dwell: a protect under
+    protect_min_s keeps its protectee while it lives and has an attacker in
+    reach. Mark's C play test (2026-11-10): the attacker count came and
+    went, protect and focus_face swapped every few seconds, and each swap
+    ended the flank slots before they formed."""
+    hit = protect.threatened(ctx.protectees, ctx.rates, ctx.enemies,
+                             ctx.anchor, ctx.strict_protectees)
+    if (hit is not None and ctx.current in _ATTACKS
+            and ctx.decision_age_s < dials.get("attack_min_s")
+            and ctx.rates.get(hit.name, 0.0) < dials.get("heavy_fire_frac")):
+        hit = None
+    if hit is not None:
+        return hit
+    if (ctx.current == "protect" and ctx.protect_prev is not None
+            and ctx.decision_age_s < dials.get("protect_min_s")):
+        p = next((p for p in ctx.protectees if p.name == ctx.protect_prev),
+                 None)
+        if p is not None and protect.attackers_of(
+                p.name, ctx.enemies, ctx.anchor.pos, dials.get("engage_gu")):
+            return p
+    return None
+
+
 class Protect:
     name = "protect"
 
     def score(self, ctx: Context) -> float:
-        hit = protect.threatened(ctx.protectees, ctx.rates, ctx.enemies,
-                                 ctx.anchor)
-        return 1.5 if hit is not None else 0.0
+        return 1.5 if _protectee(ctx) is not None else 0.0
 
     def choose(self, ctx: Context) -> Choice:
-        p = protect.threatened(ctx.protectees, ctx.rates, ctx.enemies,
-                               ctx.anchor)
+        p = _protectee(ctx)
         if p is None:
             return Choice(None, ())
         atk = sorted(protect.attackers_of(p.name, ctx.enemies, ctx.anchor.pos,
                                           dials.get("engage_gu")),
                      key=lambda e: (assess.dist(e.pos, p.pos), e.name))
-        # threatened() only returns a protectee with an attacker in reach.
+        # _protectee() only returns a protectee with an attacker in reach.
         return Choice(atk[0].name, tuple(e.name for e in atk[1:3]),
                       protectee=p.name)
 
@@ -126,10 +207,8 @@ class Withdraw:
     name = "withdraw"
 
     def score(self, ctx: Context) -> float:
-        engage = dials.get("engage_gu")
         odds = dials.get("withdraw_odds")
-        ours = assess.side_strength(ctx.members, ctx.anchor.pos, engage)
-        theirs = assess.side_strength(ctx.enemies, ctx.anchor.pos, engage)
+        ours, theirs = _sides(ctx, dials.get("engage_gu"))
         if ctx.withdraw_since is not None:
             if (ctx.now - ctx.withdraw_since >= dials.get("withdraw_max_s")
                     or (ctx.clear_since is not None
@@ -153,9 +232,139 @@ class Withdraw:
         return Choice(None, (), withdraw=True)
 
 
+def swarm_choice(ctx: Context) -> Choice:
+    """What the higher-scoring swarm decision would choose (tie: weakest),
+    without stickiness. Made once per context (a copy each call: a caller
+    may replace fields on what it gets)."""
+    def compute():
+        weakest, cmdr = SwarmWeakest(), SwarmCommander()
+        if cmdr.score(ctx) > weakest.score(ctx):
+            return cmdr.choose(ctx)
+        return weakest.choose(ctx)
+    inputs = (ctx.members, ctx.enemies, ctx.anchor, dials.get("leash_gu"),
+              dials.get("engage_gu"), dials.get("odds_ratio"))
+    return copy.copy(_memo(ctx, "swarm", inputs, compute))
+
+
+def _primary_view(ctx):
+    """(swarm choice, the primary's view in ctx.enemies or None)."""
+    choice = swarm_choice(ctx)
+    if choice.primary is None:
+        return choice, None
+    for e in ctx.enemies:
+        if e.name == choice.primary:
+            return choice, e
+    return choice, None
+
+
+class FocusFace:
+    name = "focus_face"
+
+    def _target(self, ctx):
+        choice, p = _primary_view(ctx)
+        if p is None or len(p.faces) != 6:
+            return choice, None
+        if p not in _in_reach(ctx):
+            return choice, None
+        return choice, p
+
+    def score(self, ctx: Context) -> float:
+        _, p = self._target(ctx)
+        if p is None or ctx.slot_eligible < 2:
+            return 0.0
+        face, value = attack.weakest_face(p.faces)
+        limit = dials.get("face_weak")
+        if ctx.current == self.name:
+            limit += 0.2
+        if not value < limit:
+            return 0.0
+        others = (sum(p.faces) - value) / 5.0
+        return 1.2 if others >= 0.6 else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        choice, p = self._target(ctx)
+        if p is None:
+            return choice
+        n = min(int(dials.get("attack_slots")), ctx.slot_eligible)
+        if n <= 0:
+            return choice
+        face, _ = attack.weakest_face(p.faces)
+        return dataclasses.replace(choice,
+                                   slot_dirs=attack.focus_dirs(face, n))
+
+
+class Envelop:
+    name = "envelop"
+
+    def _target(self, ctx):
+        choice, p = _primary_view(ctx)
+        if p is None or len(p.faces) != 6 or p not in _in_reach(ctx):
+            return choice, None
+        return choice, p
+
+    def score(self, ctx: Context) -> float:
+        _, p = self._target(ctx)
+        if p is None or ctx.slot_eligible < 3:
+            return 0.0
+        if min(p.faces) < dials.get("face_weak"):
+            return 0.0
+        return 1.05 if sum(p.faces) / 6.0 >= 0.5 else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        choice, p = self._target(ctx)
+        if p is None:
+            return choice
+        n = min(int(dials.get("attack_slots")), ctx.slot_eligible)
+        if n <= 0:
+            return choice
+        return dataclasses.replace(choice, slot_dirs=attack.envelop_dirs(n))
+
+
+def _disable_target(ctx):
+    """The ship to disable, or None. A running disable is latched on its
+    target (ctx.disable_target) while it is alive, in reach, not done and
+    its weapons are up: the strength ratio is not re-checked, because
+    stripping the shields alone halves it (final review I1). Otherwise the
+    entry gate: the strongest not-done enemy in reach, weapons up, at least
+    disable_threat x our strongest member."""
+    reach = [e for e in _in_reach(ctx) if e.name not in ctx.disable_done]
+    if ctx.current == "disable" and ctx.disable_target is not None:
+        big = next((e for e in reach if e.name == ctx.disable_target), None)
+        return None if big is None or big.weapons_down else big
+    if not reach or not ctx.members:
+        return None
+    big = min(reach, key=lambda e: (-assess.strength(e), e.name))
+    mine = max(assess.strength(m) for m in ctx.members)
+    if big.weapons_down:
+        return None
+    if assess.strength(big) < dials.get("disable_threat") * mine:
+        return None
+    return big
+
+
+class Disable:
+    name = "disable"
+
+    def score(self, ctx: Context) -> float:
+        return 1.3 if _disable_target(ctx) is not None else 0.0
+
+    def choose(self, ctx: Context) -> Choice:
+        big = _disable_target(ctx)
+        if big is None:
+            return swarm_choice(ctx)
+        rest = tuple(n for n in swarm_choice(ctx).secondaries
+                     if n != big.name)
+        # The five base envelop axes: the brain spreads them once over
+        # every holder (slot_all); spreading an already-spread list put two
+        # holders on one point.
+        return Choice(big.name, rest,
+                      slot_dirs=attack.envelop_dirs(len(attack.ENVELOP_ORDER)),
+                      weapons_first=True, slot_all=True)
+
+
 def _stock() -> list:
     return [Regroup(), SwarmWeakest(), SwarmCommander(), Protect(),
-            Withdraw()]
+            Withdraw(), FocusFace(), Envelop(), Disable()]
 
 
 _registry: list = _stock()

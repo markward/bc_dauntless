@@ -45,6 +45,26 @@ def test_dist_and_side_strength():
     assert assess.side_strength(views, (0, 0, 0), 100.0) == 1000.0
 
 
+def test_dist_is_bit_identical_to_the_zip_sum():
+    """dist's 3-vector fast path sums the same squares in the same order as
+    the general zip form (sum() of floats, whichever Python), so every
+    reach / leash comparison is unchanged; other lengths keep zip's
+    truncation."""
+    import math
+    import random
+
+    def ref(a, b):
+        return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+    rng = random.Random(7)
+    for _ in range(2000):
+        a = tuple(rng.uniform(-1e4, 1e4) for _ in range(3))
+        b = tuple(rng.uniform(-1e4, 1e4) for _ in range(3))
+        assert assess.dist(a, b) == ref(a, b)
+    assert assess.dist([1, 2, 3], (4.5, 6, 8)) == ref([1, 2, 3], (4.5, 6, 8))
+    assert assess.dist((0, 0), (3, 4, 12)) == 5.0
+    assert assess.dist((1, 2, 3, 9), (1, 2, 3)) == 0.0
+
+
 def test_fraction_beyond():
     views = [_v("a", pos=(10, 0, 0)), _v("b", pos=(500, 0, 0))]
     assert assess.fraction_beyond(views, (0, 0, 0), 100.0) == 0.5

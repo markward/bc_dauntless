@@ -142,3 +142,35 @@ def test_pick_guards_skips_a_downed_face():
     ok = V("ok", (50, 0, 0))
     out = protect.pick_guards([low, ok], V("p"), set(), {"low": 1.0, "ok": 1.0})
     assert out == ["ok"]
+
+
+# ── members: real danger only (Mark's C play test 2, 2026-11-10) ───────────
+
+def test_member_needs_damage_and_low_strength():
+    """In a 17-ship brawl some member always had 3 attackers or lost 15%
+    in 5 s (shields fall fast at contact), so protect (1.5) held the wing
+    for the whole fight and no flank ever ran. A member is threatened
+    only while losing heavy_fire_frac AND under protect_member_frac of
+    its strength."""
+    anchor = V("anchor")
+    es = [V("e%d" % i, (10, 0, 0), target="m") for i in range(3)]
+    healthy = V("m")
+    assert protect.threatened([healthy], {"m": 0.2}, es, anchor,
+                              strict={"m"}) is None
+    hurt = V("m", hull=0.5, shield=0.2)            # strength frac 0.3
+    assert protect.threatened([hurt], {"m": 0.2}, es, anchor,
+                              strict={"m"}).name == "m"
+    # Attackers alone never threaten a member.
+    assert protect.threatened([hurt], {"m": 0.05}, es, anchor,
+                              strict={"m"}) is None
+
+
+def test_listed_protectees_keep_the_old_rule():
+    anchor = V("anchor")
+    es = [V("e%d" % i, (10, 0, 0), target="p") for i in range(3)]
+    assert protect.threatened([V("p")], {"p": 0.0}, es, anchor,
+                              strict={"m"}).name == "p"
+
+
+def test_protect_member_frac_dial():
+    assert dials.get("protect_member_frac") == 0.6

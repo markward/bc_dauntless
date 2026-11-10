@@ -442,3 +442,6 @@ ends a withdraw, each up to 1 s after the condition holds. Heavy fire itself
 is a strength loss over `heavy_fire_window_s` (5 s), sampled once per brain
 tick, so a burst of damage is noticed 1-2 ticks after it lands. Not a bug: a
 guard or a faller that waits about a second before moving is this cadence.
+
+Phase C: an attack slot's point tracks the live target pose every 0.2 s in
+`WingMoveTo`; which member holds which slot changes at the brain's 1 Hz.

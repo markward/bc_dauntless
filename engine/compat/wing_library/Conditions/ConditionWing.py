@@ -6,7 +6,7 @@ Served by the claimed-namespace rule (engine/compat/claimed.py); spec
     App.ConditionScript_Create("Conditions.ConditionWing", "ConditionWing",
                                sShipName, sKind)
 
-sKind is "rejoin", "ram", "flee", "withdraw", "guard" or "fallback". The
+sKind is "rejoin", "ram", "flee", "withdraw", "guard", "fallback", "reserve" or "attack". The
 condition starts false and holds no logic of its own: on construction it
 registers with the ship's wing member record (engine.wings.roster), and the
 wing brain sets its status to 1 or 0 when that member should (or should no

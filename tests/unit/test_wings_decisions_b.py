@@ -17,7 +17,7 @@ def _by(name):
 
 
 def test_registered_after_phase_a():
-    assert [d.name for d in decisions.registered()][-2:] == [
+    assert [d.name for d in decisions.registered()][3:5] == [
         "protect", "withdraw"]
 
 
