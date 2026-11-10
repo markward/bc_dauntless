@@ -94,8 +94,11 @@ from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.ship_iter import iter_ships
 from engine.core import loop as game_loop
 from engine.core.loop import TICK_DELTA
-from tests.helpers import k3_fight, posed_fight
+from tests.helpers import k3_fight, posed_fight, subsystems_scene
 from tests.helpers import k1_fight as k1d
+from tests.helpers.golden_rows import (  # noqa: F401  re-exported
+    COMPONENTS, EVENT_FIELDS, FIELDS, describe, differences,
+    first_difference, norm)
 
 SCHEMA = 4     # the file format; bump it on any change to it or to the rows
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "golden_fights"
@@ -107,54 +110,6 @@ UPDATE_ENV = "UPDATE_COMBAT_GOLDEN"
 #: M is checked against, on the one Python recording.
 ARMS = {"native": k1d.ON,
         "python_motion": {**k1d.ON, "DAUNTLESS_NATIVE_MOTION": "0"}}
-
-#: The tick tuple's components, in order.
-COMPONENTS = ("tick", "state", "events", "queued", "calls", "presented",
-              "notes")
-
-#: Field names of each state row kind, after its kind (index 0 = label).
-FIELDS = {
-    # tests/helpers/k1_fight._Scene.record
-    "system": ("label", "IsFiring", "_fire_held", "_force_update",
-               "_last_weapon_idx", "_last_group_fired", "_group_fire_mode",
-               "_held_target", "_target_list", "_target_list_is_new"),
-    "weapon": ("label", "IsFiring", "_target", "_fire_timer", "_depleted",
-               "_charge_level", "_cooldown_remaining", "_num_ready",
-               "_target_offset", "offset_first_holder",
-               "offset_is_held_offset", "_beam_on_countdown",
-               "asleep_not_at_rest"),
-    "ship": ("name", "IsDead", "hull_condition", "shields"),
-    "torpedo": ("label", "translate", "_velocity", "_target_ship",
-                "_target_offset", "_damage",
-                "_damage_radius_factor", "_ttl", "_age",
-                "_guidance_lifetime", "_max_angular_accel", "_source_ship",
-                "in_set", "_is_disruptor"),
-    # tests/helpers/k3_fight.py weapon_rows (the posed fight)
-    "psystem": ("label", "IsFiring", "_fire_held", "_force_update",
-                "_last_weapon_idx", "_last_group_fired", "_held_target",
-                "_target_list"),
-    "pweapon": ("label", "IsFiring", "_target", "_fire_timer", "_depleted",
-                "_dwell", "_beam_on_countdown", "_charge_level",
-                "_cooldown_remaining", "_num_ready", "_target_offset",
-                "offset_first_holder", "asleep_not_at_rest"),
-    # added here, every scene
-    "pose": ("name", "position", "rotation", "velocity"),
-    "tractor": ("label", "_mode", "_engage_state", "_was_firing",
-                "_next_emitter_index", "IsEngaged"),
-    "tube": ("label", "_reload_timers", "_last_fire_time"),
-    # the subsystem stage's own state (_stage_rows), every scene, last
-    "stage": ("name", "_main_battery_power", "_backup_battery_power",
-              "_available_power", "conditions", "repair_queue",
-              "_cloak_state", "_transition_elapsed", "_charge_accum"),
-    # tests/helpers/motion_fight.py (the motion_branches scene only)
-    "motion": ("name", "_current_speed", "_current_angular_velocity",
-               "_drift_velocity", "_speed_setpoint",
-               "_target_angular_velocity_setpoint", "_angular_velocity",
-               "_angular_space", "warp_flight", "_warp_consumed", "arriving",
-               "impulse_fractions", "effective_motion"),
-}
-
-EVENT_FIELDS = ("type", "source", "destination", "tick", "payload")
 
 
 class Scene(NamedTuple):
@@ -730,6 +685,16 @@ def _host_frames_tpf1(mp, env, spec):
     return hff.run(mp, env, spec, (1,), 300, ())
 
 
+# ── Scene 10: the native subsystem stage ─────────────────────────────────────
+
+def _native_subsystems(mp, env, spec):
+    """tests/helpers/subsystems_scene.py: combat_stress under its seeded op
+    stream, the subsystem stage's every written field and event. Returns the
+    canonical rows itself (a list), which run_scene takes unchanged; the
+    scene sets up its own world, so `mp` and `env` are unused."""
+    return subsystems_scene.canonical_rows(subsystems_scene.run().log)
+
+
 # ── The scene table ──────────────────────────────────────────────────────────
 
 SCENES = {s.name: s for s in (
@@ -749,6 +714,9 @@ SCENES = {s.name: s for s in (
     Scene("host_frames", "native", k1d.SEED, "8", 720, 0, _host_frames),
     Scene("host_frames_tpf1", "native", k1d.SEED, "8", 300, 1,
           _host_frames_tpf1),
+    Scene("native_subsystems_scene", "native", subsystems_scene.SEED,
+          subsystems_scene.SHIPS, subsystems_scene.TICKS, 1,
+          _native_subsystems),
 )}
 
 _LAST_ARM = {}
@@ -768,10 +736,6 @@ _DYNAMIC_EVENT_TYPES = range(1200, 0x10000)
 
 
 # ── Canonical rows ───────────────────────────────────────────────────────────
-
-def _norm(v):
-    return json.loads(json.dumps(v))
-
 
 def _by_tick(rows, at, n):
     out = [[] for _ in range(n + 1)]
@@ -809,7 +773,7 @@ def _canonical_rows(take):
         return out
 
     for t in range(n + 1):
-        yield tuple(_norm((t, [] if t == 0 else take.state[t - 1],
+        yield tuple(norm((t, [] if t == 0 else take.state[t - 1],
                            typed(events[t]), typed(queued[t]), calls[t],
                            shown.get(t, []), notes[t])))
 
@@ -833,7 +797,7 @@ def run_scene(name: str, arm: str) -> list:
         no_fire = nc.counts()["k1_no_fire"]
     assert not any(no_fire.values()), (name, no_fire)
     _LAST_ARM[name] = arm
-    return _canonical(take)
+    return take if isinstance(take, list) else _canonical(take)
 
 
 # ── The file ─────────────────────────────────────────────────────────────────
@@ -932,50 +896,6 @@ def record(name, rows, reason):
                 % (out, len(rows) - 1, out.stat().st_size))
 
 
-def _first_difference(want, got, at=()):
-    if isinstance(want, list) and isinstance(got, list):
-        for i, (a, b) in enumerate(zip(want, got)):
-            d = _first_difference(a, b, at + (i,))
-            if d is not None:
-                return d
-        if len(want) != len(got):
-            return at + ("length",), len(want), len(got)
-        return None
-    if type(want) is not type(got) or want != got:
-        return at, want, got
-    return None
-
-
-def _describe(t, at, want_row):
-    """`at`, a path into tick `t`'s tuple `want_row`, in words: the
-    component, a state row's kind and label and its field's name."""
-    words = ["tick %d" % t]
-    if not at:
-        return words[0]
-    comp = COMPONENTS[at[0]]
-    words.append(comp)
-    rest = list(at[1:])
-    if comp == "state" and rest and isinstance(rest[0], int):
-        row = want_row[1][rest[0]]
-        words.append("row %d (%s %r)" % (rest[0], row[0], row[1]))
-        rest = rest[1:]
-        if rest and isinstance(rest[0], int):
-            i = rest[0] - 1
-            names = FIELDS.get(row[0], ())
-            words.append("field %d %s" % (
-                i, names[i] if 0 <= i < len(names) else "?"))
-            rest = rest[1:]
-    elif rest and isinstance(rest[0], int):
-        words.append("[%d]" % rest[0])
-        rest = rest[1:]
-        if comp in ("events", "queued") and rest and isinstance(rest[0], int):
-            words.append("field %s" % EVENT_FIELDS[rest[0]])
-            rest = rest[1:]
-    if rest:
-        words.append("at %r" % (rest,))
-    return ", ".join(words)
-
-
 def _drop_baked_offset(ticks):
     """Schema 2 -> 3: torpedo rows lost their `_baked_offset` field (fire
     control native only, M5: a picked spot is a plain body point, there is
@@ -1010,11 +930,11 @@ def check(name, rows):
     stored = _decode(data["ticks"])
     want = (stored if h["schema"] == SCHEMA
             else _UPGRADES[h["schema"]](stored))
-    got = [list(r) for r in _norm([list(r) for r in rows])]
+    got = [list(r) for r in norm([list(r) for r in rows])]
     for t, (a, b) in enumerate(zip(want, got)):
         # The rows themselves are compared (a digest alone would pass a
         # perturbed row), and the stored digest must still be its row's.
-        d = _first_difference(a, b)
+        d = first_difference(a, b)
         if d is None:
             if data["digests"][t] != _digest(stored[t]):
                 raise AssertionError("%s tick %d: the golden's digest does "
@@ -1024,7 +944,7 @@ def check(name, rows):
         raise AssertionError(
             "%s: golden differs at %s\n recorded %r\n got      %r\n"
             "(golden %s, recorded from the %s arm: %s)"
-            % (name, _describe(t, at, a), w, g, p.name, h["arm"],
+            % (name, describe(t, at, a), w, g, p.name, h["arm"],
                h["reason"]))
     assert len(want) == len(got), (
         "%s: golden has %d ticks, the run %d" % (name, len(want) - 1,
