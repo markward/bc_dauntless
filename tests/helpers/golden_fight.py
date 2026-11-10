@@ -60,7 +60,7 @@ are those fights themselves, imported, not copied:
 
 Every value is JSON-normalised (tuples become lists), as a JSON round trip would.
 
-Nothing is recorded: the scenes are code, and the golden A/B tool compares
+Nothing is recorded: the scenes are code, and tools/golden_ab.py compares
 their rows across commits.
 
 Determinism (R10): every RNG seeded (the scenes' own seeding), in-flight

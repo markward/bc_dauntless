@@ -16,6 +16,8 @@
 
 # Local git worktrees created for parallel feature work
 .worktrees/
+# golden A/B base trees (tools/golden_ab_build.py) and other session worktrees
+.claude/worktrees/
 
 # Specific file types that may contain copyrighted content if placed
 # outside the above directories

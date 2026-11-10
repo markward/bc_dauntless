@@ -45,6 +45,7 @@ Never symlink or clone `build/`. Check: `uv run pytest tests/unit/test_gate_tier
 
 1. **The live motion comparison runs both arms in one process, not in child processes** (spec §5). `run_scene` is already built to run scenes back to back in one process: the suite has always run `test_motion_branches` and `test_motion_branches_python_motion_arm` that way.
 2. **`test_scene_skips_identical_writes_and_audit_is_clean` loses its golden comparison and gets no replacement.** Its oracle (behaviour from before write-skipping existed) has done its job, and the audit assertion it keeps proves mirror agreement.
+3. **`--ticks` is not implemented:** a scene always runs its defined length; a partial run would compare a different scene.
 
 ## Review Focus
 

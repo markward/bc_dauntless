@@ -51,6 +51,41 @@ FIELDS = {
 
 EVENT_FIELDS = ("type", "source", "destination", "tick", "payload")
 
+#: Per-scene vocabularies that differ from the fight scenes': scene name ->
+#: (state row fields, event fields). tests/helpers/subsystems_scene.py rows.
+SCENE_VOCAB = {
+    "native_subsystems_scene": (
+        {
+            "ship": ("name", "_articulation_poses",
+                     "_articulation_transitions"),
+            "sub": ("label", "_condition", "_threshold_state",
+                    "_in_repair_queue", "_condition_watcher",
+                    "_combined_watcher"),
+            "shield": ("name", "_charge_accum", "_ramp_fraction",
+                       "_current_shields", "_is_on", "_power_wanted",
+                       "_power_received", "_efficiency", "_power_factor"),
+            "plant": ("name", "_available_power", "_main_battery_power",
+                      "_backup_battery_power", "_main_conduit_current",
+                      "_backup_conduit_current", "_interval_elapsed",
+                      "_power_dispensed", "_power_wanted_total",
+                      "_breach_fired", "main_battery_watcher",
+                      "backup_battery_watcher"),
+            "consumer": ("label", "_power_wanted", "_power_received",
+                         "_efficiency", "_power_factor", "_is_on",
+                         "_normal_power", "_power_percentage_wanted"),
+            "cloak": ("name", "_cloak_state", "_transition_elapsed",
+                      "_transition_duration", "_backup_reserve"),
+            "repair": ("name", "queue", "cannot_complete_notified"),
+        },
+        ("tick", "in_stage", "type", "source", "destination", "payload"),
+    ),
+}
+
+
+def vocabulary(scene=None):
+    """(state fields, event fields) for `scene`, else the fight scenes'."""
+    return SCENE_VOCAB.get(scene, (FIELDS, EVENT_FIELDS))
+
 
 def first_difference(want, got, at=()):
     if isinstance(want, list) and isinstance(got, list):
@@ -66,9 +101,10 @@ def first_difference(want, got, at=()):
     return None
 
 
-def describe(t, at, want_row):
+def describe(t, at, want_row, scene=None):
     """`at`, a path into tick `t`'s tuple `want_row`, in words: the
     component, a state row's kind and label and its field's name."""
+    fields, event_fields = vocabulary(scene)
     words = ["tick %d" % t]
     if not at:
         return words[0]
@@ -81,7 +117,7 @@ def describe(t, at, want_row):
         rest = rest[1:]
         if rest and isinstance(rest[0], int):
             i = rest[0] - 1
-            names = FIELDS.get(row[0], ())
+            names = fields.get(row[0], ())
             words.append("field %d %s" % (
                 i, names[i] if 0 <= i < len(names) else "?"))
             rest = rest[1:]
@@ -89,14 +125,17 @@ def describe(t, at, want_row):
         words.append("[%d]" % rest[0])
         rest = rest[1:]
         if comp in ("events", "queued") and rest and isinstance(rest[0], int):
-            words.append("field %s" % EVENT_FIELDS[rest[0]])
+            k = rest[0]
+            words.append("field %s" % (
+                event_fields[k] if 0 <= k < len(event_fields)
+                else "[%d]" % k))
             rest = rest[1:]
     if rest:
         words.append("at %r" % (rest,))
     return ", ".join(words)
 
 
-def row_difference(t, want_row, got_row):
+def row_difference(t, want_row, got_row, scene=None):
     """None when tick `t`'s rows are equal, else a message naming the
     component, row and field and both values. Takes run_scene's tuple rows
     (first_difference recurses into lists only)."""
@@ -105,7 +144,7 @@ def row_difference(t, want_row, got_row):
     if d is None:
         return None
     at, w, g = d
-    return "%s: %r != %r" % (describe(t, at, want), w, g)
+    return "%s: %r != %r" % (describe(t, at, want, scene), w, g)
 
 
 def differences(want, got, limit):
