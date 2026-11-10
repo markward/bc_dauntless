@@ -50,13 +50,16 @@ def _run_scene(scene, base_tree, head_tree, in_base, in_head):
         return SceneDiff(scene, "only in base")
     if scene not in in_base:
         return SceneDiff(scene, "only in HEAD")
-    try:
-        base_rows = side.run_scene_rows(base_tree, scene)
-        head_rows = side.run_scene_rows(head_tree, scene)
-    except side.ChildError as e:
-        return SceneDiff(scene, "error", error=e.tail)
-    except (OSError, ValueError, zlib.error) as e:
-        return SceneDiff(scene, "error", error="%s: %s" % (type(e).__name__, e))
+    rows = {}
+    for name, tree in (("base", base_tree), ("HEAD", head_tree)):
+        try:
+            rows[name] = side.run_scene_rows(tree, scene)
+        except side.ChildError as e:
+            return SceneDiff(scene, "error", error=e.tail, side=name)
+        except (OSError, ValueError, zlib.error) as e:
+            return SceneDiff(scene, "error", side=name,
+                             error="%s: %s" % (type(e).__name__, e))
+    base_rows, head_rows = rows["base"], rows["HEAD"]
     return compare_scene(scene, base_rows, head_rows)
 
 
@@ -77,6 +80,11 @@ def _main(argv):
             return 0
         sha = resolve_sha(args.base) if args.base else _default_base()
         head_tree = build.head_root()
+        if Path(head_tree).resolve() != Path(side.PROJECT_ROOT).resolve():
+            raise RuntimeError(
+                "the current tree %s is not the tree this tool lives in, %s; "
+                "run %s/tools/golden_ab.py" % (head_tree, side.PROJECT_ROOT,
+                                               head_tree))
         build.build_head(head_tree)
         base_tree = build.ensure_base(sha, head_tree / "build")
         side.install_child(base_tree)
@@ -99,7 +107,9 @@ def _main(argv):
         scenes = args.scene
     diffs = [_run_scene(s, base_tree, head_tree, in_base, in_head)
              for s in scenes]
-    sys.stdout.write(format_report(diffs, build.harness_changed(sha)))
+    sys.stdout.write(format_report(
+        diffs, build.harness_changed(sha),
+        side.inherited_dauntless_env(os.environ)))
     return exit_code(diffs)
 
 

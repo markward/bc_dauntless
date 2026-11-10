@@ -24,6 +24,7 @@ class SceneDiff:
     last_tick: "int | None" = None
     first_kind: "str | None" = None
     error: "str | None" = None
+    side: "str | None" = None  # which side crashed: base | HEAD
 
 
 def _is_hex_float(v):
@@ -85,15 +86,22 @@ def compare_scene(scene, base_rows, head_rows):
     return d
 
 
-def format_report(diffs, harness_changed):
+TAIL_LINES = 15
+
+
+def format_report(diffs, harness_changed, inherited_env=None):
     lines = []
+    if inherited_env:
+        lines.append("inherited env: " + " ".join(inherited_env))
     if harness_changed:
         lines.append("WARNING: harness differs between base and HEAD: "
                      + ", ".join(harness_changed))
     for d in diffs:
         if d.status == "error":
-            first = (d.error or "").splitlines()[0] if d.error else ""
-            lines.append("%s: error: %s" % (d.scene, first))
+            lines.append("%s: error%s" % (
+                d.scene, " (%s)" % d.side if d.side else ""))
+            for t in (d.error or "").splitlines()[-TAIL_LINES:]:
+                lines.append("    " + t)
             continue
         lines.append("%s: %s" % (d.scene, d.status))
         if d.status != "differs":

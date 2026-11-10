@@ -7,7 +7,6 @@ otherwise GOLDEN_AB_SCENE is run and its rows written as one zlib'd JSON
 array, a row at a time."""
 import json
 import os
-import tempfile
 import zlib
 
 import pytest
@@ -35,7 +34,9 @@ def test_child():
         with open(out, "w") as f:
             json.dump(sorted(golden_fight.SCENES), f)
         return
-    bc_assets.require_game_dir("data/Models/Ships/BirdOfPrey")
-    os.environ["DAUNTLESS_MODS_DIR"] = tempfile.mkdtemp(prefix="golden_ab_no_mods")
+    try:
+        bc_assets.require_game_dir("data/Models/Ships/BirdOfPrey")
+    except pytest.skip.Exception as e:
+        pytest.fail("golden A/B child cannot run: %s" % e)
     rows = golden_fight.run_scene(os.environ["GOLDEN_AB_SCENE"], "native")
     _write_rows(out, rows)

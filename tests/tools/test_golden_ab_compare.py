@@ -78,11 +78,27 @@ def test_report_differs_block():
 
 def test_report_only_in_and_error():
     ds = [SceneDiff("a", "only in base"), SceneDiff("b", "only in HEAD"),
-          SceneDiff("c", "error", error="boom\ntrace")]
+          SceneDiff("c", "error", error="boom\ntrace", side="HEAD")]
     r = format_report(ds, [])
     assert "a: only in base" in r
     assert "b: only in HEAD" in r
-    assert "c: error: boom" in r and "trace" not in r
+    assert "c: error (HEAD)\n    boom\n    trace" in r
     assert exit_code(ds[:1]) == 1
     assert exit_code(ds[1:2]) == 1
     assert exit_code(ds[2:]) == 2
+
+
+def test_report_error_shows_last_lines_and_names_side():
+    tail = "\n".join("line %d" % i for i in range(40))
+    r = format_report([SceneDiff("c", "error", error=tail, side="base")], [])
+    lines = r.splitlines()
+    assert lines[0] == "c: error (base)"
+    assert lines[1:] == ["    line %d" % i for i in range(25, 40)]
+
+
+def test_report_inherited_env_line_and_omission():
+    r = format_report([SceneDiff("s", "identical")], [],
+                      ["DAUNTLESS_PASSIVE_STATE=0", "DAUNTLESS_X=1"])
+    assert r.splitlines()[0] == ("inherited env: DAUNTLESS_PASSIVE_STATE=0 "
+                                 "DAUNTLESS_X=1")
+    assert "inherited" not in format_report([SceneDiff("s", "identical")], [], [])
