@@ -352,13 +352,18 @@ def tick_wing(wing) -> None:
         disable_done=frozenset(wing.disable_done),
         slot_holders=frozenset(n for n, m in wing.members.items()
                                if m.slot is not None),
-        reserve=wing.reserve)
+        reserve=wing.reserve,
+        decision_age_s=(now - wing.decision_since
+                        if wing.decision is not None else 0.0),
+        protect_prev=wing.protect_prev)
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
         log("%s decision %s -> %s"
             % (wing.wing_id, wing.decision, decision.name))
         wing.decision = decision.name
+        wing.decision_since = now
     choice = decision.choose(ctx)
+    wing.protect_prev = choice.protectee
     _track_disable(wing, decision.name, choice, now)
     if choice.withdraw and wing.withdraw_since is None:
         wing.withdraw_since = now
@@ -374,7 +379,10 @@ def tick_wing(wing) -> None:
         prios = plans.target_priorities(enemies, anchor, choice, km,
                                         player_target, player_commands)
     _write_group(wing.target_group, prios)
-    _update_reserve(wing, members, enemies, near, anchor, now)
+    _update_reserve(wing, members, enemies, near, anchor, now,
+                    protect_damaged=(choice.protectee is not None
+                                     and rates.get(choice.protectee, 0.0)
+                                     >= dials.get("heavy_fire_frac")))
     guards, fallers, withdrawers = _apply_moves(
         wing, members, anchor, enemies, near, protectees, choice, now)
     busy = ({wing.commander} | guards | fallers | withdrawers
@@ -480,7 +488,8 @@ def _strength_frac(v):
     return assess.strength(v) / v.power if v.power > 0.0 else 0.0
 
 
-def _update_reserve(wing, members, enemies, near, anchor, now) -> None:
+def _update_reserve(wing, members, enemies, near, anchor, now,
+                    protect_damaged=False) -> None:
     """Commit the reserve on the first trigger (spec §6), before the moves
     are applied. A reserve that is gone (dead, out of the home set) is
     spent; one that now commands is committed. The live count and the last
@@ -501,6 +510,7 @@ def _update_reserve(wing, members, enemies, near, anchor, now) -> None:
             why = reserve.commit_reason(
                 lost_member=live < wing.reserve_live,
                 decision=wing.decision,
+                protect_damaged=protect_damaged,
                 primary_hull=primary.hull if primary is not None else None,
                 ours=assess.side_strength(members.values(), anchor.pos,
                                           engage),

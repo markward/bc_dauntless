@@ -390,7 +390,9 @@ def test_current_faller_is_never_picked_as_guard(now):
     assert m3.fallback_since == 0.0
     for e in ("e1", "e2", "e3"):
         ships[e].SetTarget("m2")
-    now[0] = 1.0
+    # Past attack_min_s: three attackers alone no longer wait out a young
+    # attack decision (phase C dwell ruling, 2026-11-10).
+    now[0] = dials.get("attack_min_s")
     brain.tick_wing(wing)
     assert wing.decision == "protect"
     assert m3.guard is False and _status("m3", "guard") == 0
@@ -399,11 +401,19 @@ def test_current_faller_is_never_picked_as_guard(now):
 
 
 def test_guard_released_when_attacker_dies(now):
+    """Inside protect_min_s the protect holds while any attacker is left
+    (the guard covers the next one); with every attacker dead it ends."""
     wing, ships = _protect_scene()
     brain.tick_wing(wing)
     assert roster.member("m3").guard is True
     ships["e1"].SetDead()                    # the primary attacker
     now[0] = 1.0
+    brain.tick_wing(wing)
+    assert wing.decision == "protect"
+    assert roster.member("m3").guard is True
+    ships["e2"].SetDead()
+    ships["e3"].SetDead()
+    now[0] = 2.0
     brain.tick_wing(wing)
     m3 = roster.member("m3")
     assert m3.guard is False and _status("m3", "guard") == 0

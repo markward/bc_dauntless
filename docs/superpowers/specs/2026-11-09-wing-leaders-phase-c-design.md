@@ -400,3 +400,20 @@ picks one.
 5. **Minors.** Repeated disable directions are turned 25° per wrap; Regroup
    does not count last tick's slot-holders or the held reserve as strays; a
    failed QB difficulty read is logged once (`DAUNTLESS_WINGS_LOG=1`).
+
+## 12. Play-test rulings (Mark, 2026-11-10)
+
+Mark's first C play test (one Quick Battle, two wings) showed protect and
+focus_face swapping every few seconds, each swap ending the flank slots,
+and both wings committing their reserve within seconds of contact.
+
+1. **Protect dwell.** Once current, protect holds `protect_min_s` (dial,
+   default **10 s**) on its protectee while that ship lives and has an
+   attacker in reach, even after the heavy-fire trigger drops.
+2. **Flank hold.** A young attack decision (focus_face, envelop or disable,
+   current for under `attack_min_s`, dial, default **10 s**) is cut off by
+   protect only for real damage (the protectee lost `heavy_fire_frac` in
+   the window), never by `heavy_fire_attackers` alone.
+3. **Reserve on protect.** A protect commits the reserve only while its
+   protectee is losing strength (`heavy_fire_frac` in the window). A
+   protect on attacker count alone keeps it back.

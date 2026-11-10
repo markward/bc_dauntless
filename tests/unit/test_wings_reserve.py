@@ -39,7 +39,8 @@ def test_pick_reserve_ignores_players():
 
 
 def R(**kw):
-    base = dict(lost_member=False, decision=None, primary_hull=None,
+    base = dict(lost_member=False, decision=None, protect_damaged=False,
+                primary_hull=None,
                 ours=1.0, theirs=1.0, enemies_in_reach=1, held_s=0.0)
     base.update(kw)
     return reserve.commit_reason(**base)
@@ -50,7 +51,14 @@ def test_loss():
 
 
 def test_protect():
-    assert R(decision="protect") == "protect"
+    assert R(decision="protect", protect_damaged=True) == "protect"
+
+
+def test_protect_on_attacker_count_alone_keeps_the_reserve():
+    """In play both wings' reserves committed within seconds: protect
+    fires on 3 attackers at first contact. Only a protectee that is
+    actually losing strength (heavy_fire_frac in the window) commits it."""
+    assert R(decision="protect", protect_damaged=False) is None
 
 
 def test_finish():

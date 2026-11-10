@@ -34,6 +34,11 @@ class Context:
     # count them as strays (review M7).
     slot_holders: frozenset = frozenset()
     reserve: Optional[str] = None
+    # Seconds the current decision has been current (0 with none), and the
+    # protectee a running protect covers: protect holds protect_min_s on
+    # it, and a young attack decision is not cut off by attacker count.
+    decision_age_s: float = 0.0
+    protect_prev: Optional[str] = None
 
 
 @dataclass
@@ -146,23 +151,52 @@ class SwarmCommander:
         return Choice(cmd.name, tuple(e.name for e in mates[:2]), False)
 
 
+_ATTACKS = frozenset({"focus_face", "envelop", "disable"})
+
+
+def _protectee(ctx):
+    """The protectee protect covers this tick, or None.
+
+    Fresh: protect.threatened (heavy fire: heavy_fire_frac lost in the
+    window, or heavy_fire_attackers on it). A young attack decision
+    (focus_face, envelop, disable; under attack_min_s) is cut off only by
+    real damage, never by the attacker count alone. Dwell: a protect under
+    protect_min_s keeps its protectee while it lives and has an attacker in
+    reach. Mark's C play test (2026-11-10): the attacker count came and
+    went, protect and focus_face swapped every few seconds, and each swap
+    ended the flank slots before they formed."""
+    hit = protect.threatened(ctx.protectees, ctx.rates, ctx.enemies,
+                             ctx.anchor)
+    if (hit is not None and ctx.current in _ATTACKS
+            and ctx.decision_age_s < dials.get("attack_min_s")
+            and ctx.rates.get(hit.name, 0.0) < dials.get("heavy_fire_frac")):
+        hit = None
+    if hit is not None:
+        return hit
+    if (ctx.current == "protect" and ctx.protect_prev is not None
+            and ctx.decision_age_s < dials.get("protect_min_s")):
+        p = next((p for p in ctx.protectees if p.name == ctx.protect_prev),
+                 None)
+        if p is not None and protect.attackers_of(
+                p.name, ctx.enemies, ctx.anchor.pos, dials.get("engage_gu")):
+            return p
+    return None
+
+
 class Protect:
     name = "protect"
 
     def score(self, ctx: Context) -> float:
-        hit = protect.threatened(ctx.protectees, ctx.rates, ctx.enemies,
-                                 ctx.anchor)
-        return 1.5 if hit is not None else 0.0
+        return 1.5 if _protectee(ctx) is not None else 0.0
 
     def choose(self, ctx: Context) -> Choice:
-        p = protect.threatened(ctx.protectees, ctx.rates, ctx.enemies,
-                               ctx.anchor)
+        p = _protectee(ctx)
         if p is None:
             return Choice(None, ())
         atk = sorted(protect.attackers_of(p.name, ctx.enemies, ctx.anchor.pos,
                                           dials.get("engage_gu")),
                      key=lambda e: (assess.dist(e.pos, p.pos), e.name))
-        # threatened() only returns a protectee with an attacker in reach.
+        # _protectee() only returns a protectee with an attacker in reach.
         return Choice(atk[0].name, tuple(e.name for e in atk[1:3]),
                       protectee=p.name)
 

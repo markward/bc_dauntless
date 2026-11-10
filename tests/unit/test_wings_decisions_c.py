@@ -270,3 +270,55 @@ def test_memoised_choice_is_not_shared():
     a = decisions.swarm_choice(ctx)
     a.primary = "mutated"
     assert decisions.swarm_choice(ctx).primary == "e"
+
+
+# ── protect dwell and flank hold (Mark's C play test, 2026-11-10) ──────────
+
+def T(name, x=0.0, target=None):
+    return ShipView(name, (x, 0.0, 0.0), 1.0, 1.0, 1.0, None, False, target)
+
+
+def _pctx(n_attackers, rate=0.0, current=None, age=0.0, prev=None):
+    p = T("p", 5)
+    atk = [T("e%d" % i, 30 + i, target="p") for i in range(n_attackers)]
+    return decisions.Context(members=[T("a"), p], anchor=T("a"),
+                             enemies=atk + [T("x", 60)], protectees=[p],
+                             rates={"p": rate}, current=current,
+                             decision_age_s=age, protect_prev=prev)
+
+
+def test_protect_holds_for_its_minimum_time():
+    """In play, protect flipped with focus_face every few seconds as the
+    3-attacker trigger came and went; each flip ended the flank slots."""
+    ctx = _pctx(1, current="protect", age=3.0, prev="p")
+    assert _by("protect").score(ctx) == 1.5
+    c = _by("protect").choose(ctx)
+    assert c.protectee == "p" and c.primary == "e0"
+    ctx = _pctx(1, current="protect", age=dials.get("protect_min_s"),
+                prev="p")
+    assert _by("protect").score(ctx) == 0.0
+
+
+def test_protect_dwell_needs_an_attacker_and_its_protectee():
+    assert _by("protect").score(
+        _pctx(0, current="protect", age=3.0, prev="p")) == 0.0
+    assert _by("protect").score(
+        _pctx(1, current="protect", age=3.0, prev="gone")) == 0.0
+    assert _by("protect").score(_pctx(1, current=None, age=3.0,
+                                      prev="p")) == 0.0
+
+
+def test_a_young_flank_is_not_cut_off_by_attacker_count():
+    for cur in ("focus_face", "envelop", "disable"):
+        assert _by("protect").score(_pctx(3, current=cur, age=3.0)) == 0.0
+        # Real damage still breaks it at once.
+        assert _by("protect").score(
+            _pctx(3, rate=0.2, current=cur, age=3.0)) == 1.5
+        # Past attack_min_s, the attacker count does too.
+        assert _by("protect").score(
+            _pctx(3, current=cur, age=dials.get("attack_min_s"))) == 1.5
+
+
+def test_protect_dwell_dials():
+    assert dials.get("protect_min_s") == 10.0
+    assert dials.get("attack_min_s") == 10.0

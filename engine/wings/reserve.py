@@ -15,10 +15,13 @@ def pick_reserve(views, commander, players, min_wing):
 
 
 def commit_reason(*, lost_member, decision, primary_hull, ours, theirs,
-                  enemies_in_reach, held_s):
+                  enemies_in_reach, held_s, protect_damaged=False):
+    """`protect_damaged`: the protectee is losing strength (heavy_fire_frac
+    in the window). A protect on attacker count alone keeps the reserve:
+    in a Quick Battle that fires at first contact (C play test)."""
     if lost_member:
         return "loss"
-    if decision == "protect":
+    if decision == "protect" and protect_damaged:
         return "protect"
     if primary_hull is not None and primary_hull < 0.3:
         return "finish"

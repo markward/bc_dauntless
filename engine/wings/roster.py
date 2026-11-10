@@ -65,6 +65,10 @@ class Wing:
     # name -> time before which a timed-out faller may not fall back again
     # (rotate.fallback_flags owns the rule; one dict per wing across ticks).
     fallback_cooldown: dict = field(default_factory=dict)
+    # Game time the current decision became current; the protectee the
+    # last protect covered (decisions._protectee's dwell).
+    decision_since: float = 0.0
+    protect_prev: str | None = None
     # name -> "active" / "spent": each ship's one hull fall-back.
     fallback_hull: dict = field(default_factory=dict)
     # name -> (t, strength) samples for protectees that are not members
