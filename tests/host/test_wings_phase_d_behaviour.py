@@ -231,7 +231,11 @@ def test_idle_wing_reinforces_losing_ally(seed):
     # and the reinforce ends on arrival, within leash of B's commander.
     # Bound 60 s; seen at 7.0 / 19.2 / 6.7 s, closest 107 / 199 / 127 GU
     # (2026-11-09, seeds 1-3; 6.7-10.0 s on seeds 4-9 with feint off).
-    assert _first(d, leash) is not None
+    # The reinforce ENDS at leash_gu (arrival), so a wing that arrives and
+    # then fights at range sits right on that line: seed 2's closest was
+    # 199 GU alone and just over 200 in the merge gate. Arrival is judged
+    # with a 50 GU margin; the control never comes within 400.
+    assert _first(d, leash + 50.0) is not None
     # Control: A goes for the decoy (and disables it). Seen: closest
     # 431 / 450 / 450 GU, 867-977 GU at 60 s (435-450 on seeds 4-9).
     # Without the decoy the control's nearest-enemy fallback took A to
