@@ -7,10 +7,13 @@
 #include <stb_image.h>
 
 #include <nif/block.h>
+#include <nif/file.h>
 
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <string_view>
+#include <variant>
 
 namespace assets {
 
@@ -137,6 +140,22 @@ Image decode_raw_image(const nif::NiRawImageData& raw) {
     }
     img.pixels = raw.pixels;
     return img;
+}
+
+bool is_nif_bytes(std::span<const std::uint8_t> bytes) {
+    static constexpr std::string_view kMagic = "NetImmerse File Format";
+    return bytes.size() >= kMagic.size() &&
+           std::equal(kMagic.begin(), kMagic.end(), bytes.begin());
+}
+
+Image decode_nif_image_file(const std::filesystem::path& path) {
+    const nif::File f = nif::load(path);
+    for (const auto& block : f.blocks) {
+        if (const auto* raw = std::get_if<nif::NiRawImageData>(&block)) {
+            return decode_raw_image(*raw);
+        }
+    }
+    throw TextureDecodeError("NIF holds no NiRawImageData: " + path.string());
 }
 
 }  // namespace assets

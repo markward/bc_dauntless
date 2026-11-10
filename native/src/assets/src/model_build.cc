@@ -202,8 +202,8 @@ struct TextureLoadResult {
     std::unordered_map<std::uint32_t, fs::path> lottie_json_for_link;
 };
 
-/// Walk all NiImage blocks; load + decode + upload referenced TGAs (or
-/// embedded NiRawImageData). Returns: nif block index of NiImage -> Model::textures index.
+/// Walk all NiImage blocks; load + decode + upload referenced TGAs or NIF
+/// image files (or embedded NiRawImageData). Returns: nif block index of NiImage -> Model::textures index.
 TextureLoadResult load_all_textures(
     const nif::File& f,
     Model& model,
@@ -232,7 +232,11 @@ TextureLoadResult load_all_textures(
             if (img->use_external != 0) {
                 resolved_albedo = ctx.resolver->resolve(img->file_name, ctx.texture_search_paths);
                 auto bytes = read_file(resolved_albedo);
-                decoded = decode_tga(bytes);
+                // A NIF here is a texture saved as a NIF image file (see
+                // is_nif_bytes), not a model.
+                decoded = is_nif_bytes(bytes)
+                    ? decode_nif_image_file(resolved_albedo)
+                    : decode_tga(bytes);
                 albedo_decoded = true;
             } else {
                 auto raw_idx = resolver.resolve(img->image_data_link);

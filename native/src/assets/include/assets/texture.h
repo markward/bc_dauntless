@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -101,4 +102,15 @@ namespace nif { struct NiRawImageData; }
 
 namespace assets {
 Image decode_raw_image(const nif::NiRawImageData& raw);
+
+/// True when `bytes` start with the NetImmerse header line. Some BC-era mod
+/// tools saved a texture as a NIF whose only block is an NiRawImageData (the
+/// LB Sovereign mod's SOVn_glow.nif), and a model's NiImage names that file
+/// as its external texture, so an external texture is not always a TGA.
+bool is_nif_bytes(std::span<const std::uint8_t> bytes);
+
+/// Decode a texture saved as a NIF: parse the file and decode its first
+/// NiRawImageData via decode_raw_image. Throws TextureDecodeError when the
+/// NIF holds no NiRawImageData, and nif::ParseError when it does not parse.
+Image decode_nif_image_file(const std::filesystem::path& path);
 }
