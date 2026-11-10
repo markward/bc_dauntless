@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -1352,6 +1353,36 @@ void write_bytes(const fs::path& p, const std::vector<std::uint8_t>& bytes) {
               static_cast<std::streamsize>(bytes.size()));
 }
 
+// The RGBA pixels of nif_image_2x1, as stored in the file.
+const std::vector<std::uint8_t> kNifImagePixels = {
+    0x10, 0x20, 0x30, 0x00,   0x40, 0x50, 0x60, 0x80};
+
+// A texture saved as a NetImmerse 3.1 NIF, the way some BC-era mod tools
+// wrote one (the LB Sovereign mod's SOVn_glow.nif): the text header, one
+// top-level NiRawImageData block (2x1 RGBA), then the End Of File marker. With
+// `with_image` false the file holds no blocks at all.
+std::vector<std::uint8_t> nif_image_2x1(bool with_image = true) {
+    std::vector<std::uint8_t> out;
+    auto text = [&](std::string_view s) { out.insert(out.end(), s.begin(), s.end()); };
+    auto u32 = [&](std::uint32_t v) {
+        for (int i = 0; i < 4; ++i) out.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
+    };
+    auto name = [&](std::string_view s) { u32(static_cast<std::uint32_t>(s.size())); text(s); };
+    text("NetImmerse File Format, Version 3.1\n");
+    text("Numerical Design Limited, Chapel Hill, NC 27514\n");
+    text("Copyright (c) 1996-2000\n");
+    text("All Rights Reserved\n");
+    if (with_image) {
+        name("Top Level Object");
+        name("NiRawImageData");
+        u32(0x05c1c4c0);           // link ID
+        u32(2); u32(1); u32(2);    // width, height, image_type 2 = RGBA
+        out.insert(out.end(), kNifImagePixels.begin(), kNifImagePixels.end());
+    }
+    name("End Of File");
+    return out;
+}
+
 }  // namespace
 
 class GlowMaskEmissiveTest : public ModelBuildTest {
@@ -1388,6 +1419,52 @@ TEST_F(GlowMaskEmissiveTest, MissingGlowTgaKeepsMaterialEmissive) {
     // that failed to load must not switch the material emissive off.
     auto model = assets::detail::build_model(
         emissive_shape_with_image("hull_glow.tga"), make_ctx());
+    ASSERT_EQ(model.materials.size(), 1u);
+    EXPECT_FLOAT_EQ(model.materials[0].emissive.x, 0.346f);
+}
+
+// An external NiImage naming a .nif file decodes that NIF's NiRawImageData
+// instead of failing as a TGA and falling back to the checkerboard.
+TEST_F(GlowMaskEmissiveTest, NifImageFileUploadsItsPixels) {
+    write_bytes(tmp_dir / "hull.nif", nif_image_2x1());
+    std::vector<assets::Image> uploaded;
+    auto ctx = make_ctx();
+    ctx.texture_uploader = [&](const assets::Image& img, bool mips) {
+        uploaded.push_back(img);
+        return stub_texture(img, mips);
+    };
+    auto model = assets::detail::build_model(emissive_shape_with_image("hull.nif"), ctx);
+    ASSERT_EQ(uploaded.size(), 1u);
+    EXPECT_EQ(uploaded[0].width, 2u);
+    EXPECT_EQ(uploaded[0].height, 1u);
+    EXPECT_EQ(uploaded[0].format, assets::Image::Format::RGBA8);
+    EXPECT_EQ(uploaded[0].pixels, kNifImagePixels);
+    EXPECT_EQ(base_texture_index(model), 0);
+}
+
+// A `_glow` NIF image with alpha is a glow mask like a `_glow` TGA with alpha:
+// it switches the material emissive off.
+TEST_F(GlowMaskEmissiveTest, GlowNifImageWithAlphaDropsMaterialEmissive) {
+    write_bytes(tmp_dir / "hull_glow.nif", nif_image_2x1());
+    auto model = assets::detail::build_model(
+        emissive_shape_with_image("hull_glow.nif"), make_ctx());
+    ASSERT_EQ(model.materials.size(), 1u);
+    EXPECT_FLOAT_EQ(model.materials[0].emissive.x, 0.0f);
+}
+
+// A NIF with no NiRawImageData is not a texture: the checkerboard stands in,
+// the build does not throw, and the material emissive is kept.
+TEST_F(GlowMaskEmissiveTest, NifFileWithoutImageDataFallsBackToCheckerboard) {
+    write_bytes(tmp_dir / "hull_glow.nif", nif_image_2x1(/*with_image=*/false));
+    std::vector<assets::Image> uploaded;
+    auto ctx = make_ctx();
+    ctx.texture_uploader = [&](const assets::Image& img, bool mips) {
+        uploaded.push_back(img);
+        return stub_texture(img, mips);
+    };
+    auto model = assets::detail::build_model(emissive_shape_with_image("hull_glow.nif"), ctx);
+    ASSERT_EQ(uploaded.size(), 1u);
+    EXPECT_NE(uploaded[0].pixels, kNifImagePixels);
     ASSERT_EQ(model.materials.size(), 1u);
     EXPECT_FLOAT_EQ(model.materials[0].emissive.x, 0.346f);
 }
