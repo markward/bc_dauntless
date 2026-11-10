@@ -349,6 +349,36 @@ class FocusFace:
                                    slot_dirs=attack.focus_dirs(face, n))
 
 
+def focus_face_end_reason(ctx: Context, prev_target) -> str:
+    """Why focus_face no longer holds on `prev_target` (last tick's
+    primary), for the brain's log: the first of FocusFace's own gates that
+    fails, else "outscored". D play test 2 (2026-11-10): focus_face and
+    swarm alternated every few seconds and the log could not say why."""
+    view = next((e for e in ctx.enemies if e.name == prev_target), None)
+    if view is None:
+        return "target gone"
+    if view.retiring:
+        return "target falling back"
+    choice, _ = _primary_view(ctx)
+    if choice.primary is not None and choice.primary != prev_target:
+        return "new weakest target %s" % choice.primary
+    if len(view.faces) != 6:
+        return "no shield faces"
+    if view not in _in_reach(ctx):
+        return "target out of reach"
+    if ctx.slot_eligible < 2:
+        return "too few free ships"
+    _, value = attack.weakest_face(view.faces)
+    limit = dials.get("face_weak")
+    if ctx.current == FocusFace.name:
+        limit += 0.2
+    if not value < limit:
+        return "weak face recovered"
+    if (sum(view.faces) - value) / 5.0 < 0.6:
+        return "other faces down"
+    return "outscored"
+
+
 class Envelop:
     name = "envelop"
 

@@ -953,3 +953,20 @@ def test_tick_that_raises_clears_status(monkeypatch, now):
     monkeypatch.setattr(brain, "tick_wing", boom)
     brain.tick_safely(b)
     assert b.status is None
+
+
+def test_reinforce_start_and_end_are_logged(monkeypatch, capsys, now):
+    """The log names the ally a reinforce goes to, as flank and feint do,
+    and says when it ends."""
+    monkeypatch.setenv("DAUNTLESS_WINGS_LOG", "1")
+    a, b, ships = _reinforce_scene()
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    for n in b.members:
+        ships[n].SetDead()
+    now[0] = 1.0
+    brain.tick_wing(b)
+    brain.tick_wing(a)
+    lines = [ln for ln in capsys.readouterr().err.splitlines()
+             if "] a reinforce" in ln]
+    assert lines == ["[wings] a reinforce -> b", "[wings] a reinforce ends"]

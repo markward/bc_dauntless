@@ -442,3 +442,12 @@ Rulings made while building Phase D (2026-11-09), none of them Mark's:
       times in one fight, chasing each one out of reach. Swarm, regroup,
       focus_face and envelop all take their primary from this pick, so
       none of them chases a faller while anything else is in reach.
+20. **D play test 2 (Mark, 2026-11-10): two log lines.** A reinforce logs
+    `<wing> reinforce -> <ally>` when it starts and `<wing> reinforce ends`
+    when it stops, as flank, screen and feint do. When focus_face stops,
+    `<wing> focus_face ends (<reason>)` names the first of its gates that
+    failed (`decisions.focus_face_end_reason`: target gone, falling back,
+    new weakest target, out of reach, too few free ships, weak face
+    recovered, other faces down, no shield faces), else "outscored". It
+    alternated with swarm every few seconds in both play-test battles, and
+    falling-back targets alone did not explain it.

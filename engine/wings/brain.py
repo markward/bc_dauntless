@@ -385,6 +385,10 @@ def tick_wing(wing) -> None:
     if decision.name != wing.decision:
         log("%s decision %s -> %s"
             % (wing.wing_id, wing.decision, decision.name))
+        if wing.decision == "focus_face":
+            log("%s focus_face ends (%s)" % (
+                wing.wing_id,
+                decisions.focus_face_end_reason(ctx, wing.primary)))
         wing.decision = decision.name
         wing.decision_since = now
     choice = decision.choose(ctx)
@@ -513,9 +517,11 @@ def _track_side(wing, decision, choice, now, ctx) -> None:
     and a stand-down clears the decision."""
     r = choice.ally if decision == "reinforce" else None
     if wing.reinforce_ally is not None and wing.reinforce_ally != r:
+        log("%s reinforce ends" % wing.wing_id)
         _end_reinforce(wing, now, ctx)
     if r is not None and wing.reinforce_ally is None:
         wing.reinforce_ally = r
+        log("%s reinforce -> %s" % (wing.wing_id, r))
     f = choice.ally if decision == "feint" else None
     if wing.feint_ally is not None and wing.feint_ally != f:
         # Pre-empted in its first _FEINT_GRACE_S by a higher decision (its
