@@ -76,3 +76,16 @@ def test_install_child_copies_into_tree(tmp_path):
     dst = tmp_path / "tests" / "helpers" / "golden_ab_child.py"
     src = Path(side.__file__).resolve().parents[1] / "tests/helpers/golden_ab_child.py"
     assert dst.read_bytes() == src.read_bytes()
+
+
+def test_child_env_uses_given_data_dir(tmp_path):
+    env = side.child_env({}, data_dir=tmp_path)
+    assert env[paths.DATA_DIR_ENV] == str(tmp_path)
+
+
+def test_child_row_writer_round_trips(tmp_path):
+    from tests.helpers import golden_ab_child as child
+    for rows in ([], [[1, ["a", 0.5]], [2, []]]):
+        out = tmp_path / "r.z"
+        child._write_rows(str(out), rows)
+        assert json.loads(zlib.decompress(out.read_bytes())) == rows

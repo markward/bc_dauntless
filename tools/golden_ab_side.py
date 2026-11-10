@@ -18,13 +18,15 @@ class ChildError(Exception):
         self.tail = tail
 
 
-def child_env(base_env: dict) -> dict:
-    sys.path.insert(0, str(PROJECT_ROOT))
+def child_env(base_env: dict, data_dir=None) -> dict:
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
     from engine import paths
     env = dict(base_env)
     env[paths.ENV_VARS["game"]] = str(paths.game_root())  # paths-guard: ENV_VARS key
     env[paths.ENV_VARS["sdk"]] = str(paths.sdk_root())  # paths-guard: ENV_VARS key
-    env[paths.DATA_DIR_ENV] = tempfile.mkdtemp(prefix="golden_ab_data")
+    env[paths.DATA_DIR_ENV] = (str(data_dir) if data_dir is not None
+                               else tempfile.mkdtemp(prefix="golden_ab_data"))
     return env
 
 
@@ -43,7 +45,7 @@ def run_child(tree: Path, env: dict, out: Path) -> None:
 def list_scenes(tree: Path) -> list:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "scenes.json"
-        env = child_env(os.environ)
+        env = child_env(os.environ, data_dir=tmp)
         env["GOLDEN_AB_LIST"] = "1"
         run_child(tree, env, out)
         return json.loads(out.read_text())
@@ -52,7 +54,7 @@ def list_scenes(tree: Path) -> list:
 def run_scene_rows(tree: Path, scene: str) -> list:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "rows.z"
-        env = child_env(os.environ)
+        env = child_env(os.environ, data_dir=tmp)
         env.pop("GOLDEN_AB_LIST", None)
         env["GOLDEN_AB_SCENE"] = scene
         run_child(tree, env, out)
