@@ -1,5 +1,7 @@
 # Golden fights for the motion and whole-tick phases
 
+> **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and will be compared across commits by the planned golden A/B tool (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to recordings and `UPDATE_COMBAT_GOLDEN` are historical.
+
 **Status:** reading notes, 2026-11-03, for phases 2 and 4 of `docs/superpowers/specs/2026-11-03-native-motion-and-proximity-design.md` (NMP). Nothing was built, run or measured. Facts carry file:line; anything else is marked **inferred**.
 
 **Sources and their state**
@@ -89,7 +91,7 @@ The scenes are the differentials' own fights, imported rather than copied (`gold
 
 **Re-record** (`test_golden_fights.py:12-19`; `record`, `golden_fight.py:762-786`)
 
-- Command: `UPDATE_COMBAT_GOLDEN=1 COMBAT_GOLDEN_REASON="<why>" uv run pytest tests/integration/test_golden_fights.py::<test>`.
+- Command: (historical, switch removed 2026-11-10) `UPDATE_COMBAT_GOLDEN=1 COMBAT_GOLDEN_REASON="<why>" uv run pytest tests/integration/test_golden_fights.py::<test>`.
 - With no reason it fails; with one it writes the file and skips.
 - `COMBAT_GOLDEN_ARM=python|native` overrides a scene's arm (`test_golden_fights.py:53`).
 - **The gate is a rule, not code:** "A golden is re-recorded only in a commit whose message names the behaviour change and the scenes it touched. An unposed scene that moves is a bug, not a re-record" (plan, Global Constraints). `SCHEMA`'s comment says "bump it on any change to it or to the rows" (`:87`).

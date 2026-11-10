@@ -1,5 +1,7 @@
 # Radius / scale audit: making `GetRadius()` the scaled world radius
 
+> **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and will be compared across commits by the planned golden A/B tool (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to recordings and `UPDATE_COMBAT_GOLDEN` are historical.
+
 **Status:** reading notes, 2026-11-03. Nothing was built, run or changed. Prerequisite for the phase 1 size-rule task (BC's size rule; Task 7 in their plan since the ghost fix took Task 6) and phase 3a of `docs/superpowers/specs/2026-11-03-native-motion-and-proximity-design.md`. Design: `docs/superpowers/specs/2026-11-03-scaled-getradius-design.md`.
 
 **Sources and their state**

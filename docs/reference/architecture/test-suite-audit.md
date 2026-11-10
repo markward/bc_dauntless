@@ -1,5 +1,7 @@
 # Test-suite audit (2026-11-06)
 
+> **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and will be compared across commits by the planned golden A/B tool (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to recordings and `UPDATE_COMBAT_GOLDEN` are historical.
+
 Branch `fix/test-suite-and-gate`, off local `main` at `ecbeec5a0`. Companion
 docs: [test-suite-memory.md](test-suite-memory.md) (the memory fix) and the
 two-tier gate spec,

@@ -1,3 +1,5 @@
+> **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and will be compared across commits by the planned golden A/B tool (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to recordings and `UPDATE_COMBAT_GOLDEN` are historical.
+
 > **Built 2026-11-03** (branch `ws/native-default`). The Python fire-control copy this map describes is deleted, along with its guards, the walk check, the launch check, the Manual Aim slot and the bake. Tractors and the SDK routes are native, and the switch defaults on. Read the spec's outcome for what was built and ruled: `docs/superpowers/specs/2026-11-03-fire-control-native-only-design.md` §6. The map below is the pre-build snapshot and is not updated.
 
 # K1 retirement — code map (switch default ON, fire control's Python copy deleted, tractors ported, aim simplified)
@@ -420,7 +422,7 @@ Store the digests for every tick and the full rows gzipped, so a failure names i
 
 **Order of recording, so the golden is the reference:** record scenes 1-5 from the **Python** arm on the current code, before anything is deleted. Check native against them (it already matches where the differentials are green). Then delete. Each intended behaviour change re-records only the scenes it touches, in its own commit that says why: D5 (posed scenes; the unposed scenes must not move, which proves the change is local), the tractor port's event deferral (scene 5), and any D6 change. The K1 differential's arms and op streams become the recorder.
 
-**Re-recording legitimately:** an env switch, after the repo's precedent `UPDATE_STOCK_PARTICLE_GOLDEN=1` (`tests/unit/test_stock_particle_output_unchanged.py:7, 65-68`), e.g. `UPDATE_COMBAT_GOLDEN=1 uv run pytest <file>::<case>`. It writes and skips. Each file carries a header: scene, seed, ships, ticks, tpf, schema version, platform, and the reason for the last re-record.
+**Re-recording legitimately (historical; the recordings and switch were removed 2026-11-10):** an env switch, after the repo's precedent `UPDATE_STOCK_PARTICLE_GOLDEN=1` (`tests/unit/test_stock_particle_output_unchanged.py:7, 65-68`), e.g. `UPDATE_COMBAT_GOLDEN=1 uv run pytest <file>::<case>`. It writes and skips. Each file carries a header: scene, seed, ships, ticks, tpf, schema version, platform, and the reason for the last re-record.
 
 **Where:** `tests/fixtures/golden_fights/<scene>.<platform>.json.gz` next to the existing `tests/fixtures/stock_particle_descriptors.json` (§7 R9 explains the platform suffix).
 
