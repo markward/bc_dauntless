@@ -4,6 +4,7 @@ import argparse
 import os
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,8 +29,9 @@ pasted from this report.
 
 
 def resolve_sha(rev):
-    proc = subprocess.run(["git", "rev-parse", rev], capture_output=True,
-                          text=True)
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "--end-of-options", rev + "^{commit}"],
+        capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError("cannot resolve %r: %s" % (rev, proc.stderr.strip()))
     return proc.stdout.strip()
@@ -53,10 +55,12 @@ def _run_scene(scene, base_tree, head_tree, in_base, in_head):
         head_rows = side.run_scene_rows(head_tree, scene)
     except side.ChildError as e:
         return SceneDiff(scene, "error", error=e.tail)
+    except (OSError, ValueError, zlib.error) as e:
+        return SceneDiff(scene, "error", error="%s: %s" % (type(e).__name__, e))
     return compare_scene(scene, base_rows, head_rows)
 
 
-def main(argv=None):
+def _main(argv):
     ap = argparse.ArgumentParser(
         prog="tools/golden_ab.py", description=DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -72,7 +76,7 @@ def main(argv=None):
                 print("removed %s" % p)
             return 0
         sha = resolve_sha(args.base) if args.base else _default_base()
-        head_tree = Path.cwd()
+        head_tree = build.head_root()
         build.build_head(head_tree)
         base_tree = build.ensure_base(sha, head_tree / "build")
         side.install_child(base_tree)
@@ -82,7 +86,7 @@ def main(argv=None):
             return 2
         in_base = side.list_scenes(base_tree)
         in_head = side.list_scenes(head_tree)
-    except (RuntimeError, side.ChildError) as e:
+    except Exception as e:
         print("error: %s" % e, file=sys.stderr)
         return 2
     scenes = sorted(set(in_base) | set(in_head))
@@ -97,6 +101,14 @@ def main(argv=None):
              for s in scenes]
     sys.stdout.write(format_report(diffs, build.harness_changed(sha)))
     return exit_code(diffs)
+
+
+def main(argv=None):
+    try:
+        return _main(argv)
+    except Exception as e:
+        print("error: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

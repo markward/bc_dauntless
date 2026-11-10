@@ -50,6 +50,13 @@ def _checked(cmd, cwd=None):
         raise RuntimeError("command failed (%d): %s" % (proc.returncode, " ".join(cmd)))
 
 
+def head_root() -> Path:
+    out = _run(["git", "rev-parse", "--show-toplevel"]).stdout.strip()
+    if not out:
+        raise RuntimeError("not inside a git work tree")
+    return Path(out)
+
+
 def main_root() -> Path:
     out = _run(["git", "rev-parse", "--path-format=absolute",
                 "--git-common-dir"]).stdout.strip()
@@ -65,13 +72,25 @@ def _built(tree: Path) -> bool:
 
 
 def ensure_base(sha: str, head_build: Path) -> Path:
+    from tools import golden_ab_side as side
     tree = base_tree_path(main_root(), sha)
-    if tree.is_dir():
-        head = _run(["git", "rev-parse", "HEAD"], cwd=str(tree)).stdout.strip()
-        if head == sha and _built(tree):
+    if tree.exists():
+        top = _run(["git", "-C", str(tree), "rev-parse",
+                    "--show-toplevel"]).stdout.strip()
+        head = _run(["git", "-C", str(tree), "rev-parse",
+                     "HEAD"]).stdout.strip()
+        if not top or Path(top).resolve() != tree.resolve() or head != sha:
+            raise RuntimeError(
+                "%s exists but is not a worktree of %s at that commit; "
+                "delete it by hand and rerun" % (tree, sha[:12]))
+        if _built(tree):
             return tree
-    if not tree.is_dir():
+    else:
         _checked(["git", "worktree", "add", "--detach", str(tree), sha])
+    side.install_child(tree)
+    problem = side.check_base_usable(tree)
+    if problem:
+        raise RuntimeError(problem)
     cache = (Path(head_build) / "CMakeCache.txt").read_text()
     _checked(["cmake", "-B", "build", "-S", "."]
              + cache_options(cache, Path(head_build)), cwd=str(tree))
@@ -84,23 +103,32 @@ def build_head(tree) -> None:
     build = Path(tree) / "build"
     if not (build / "CMakeCache.txt").is_file():
         raise RuntimeError("no CMakeCache.txt in %s: configure HEAD first" % build)
+    home = _entries((build / "CMakeCache.txt").read_text()).get(
+        "CMAKE_HOME_DIRECTORY")
+    if home and Path(home).resolve() != Path(tree).resolve():
+        raise RuntimeError("%s was configured for %s, not %s (symlinked build?)"
+                           % (build, home, tree))
     _checked(["cmake", "--build", str(build), "--target", "_dauntless_host", "-j"])
 
 
 def harness_changed(base_sha: str) -> list:
     out = _run(["git", "diff", "--name-only", base_sha, "--",
-                "tests/helpers", "tests/conftest.py"]).stdout
+                "tests/helpers", "tests/conftest.py",
+                ":(exclude)tests/helpers/golden_ab_child.py"]).stdout
     return [line for line in out.splitlines() if line]
 
 
 def prune_bases(main_root: Path) -> list:
     out = _run(["git", "worktree", "list", "--porcelain"]).stdout
+    parent = Path(main_root) / ".claude" / "worktrees"
     gone = []
     for line in out.splitlines():
         if not line.startswith("worktree "):
             continue
         path = Path(line[len("worktree "):])
-        if path.name.startswith(WORKTREE_PREFIX):
-            subprocess.run(["git", "worktree", "remove", "--force", str(path)])
+        if path.parent != parent or not path.name.startswith(WORKTREE_PREFIX):
+            continue
+        proc = subprocess.run(["git", "worktree", "remove", "--force", str(path)])
+        if proc.returncode == 0:
             gone.append(path)
     return gone
