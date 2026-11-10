@@ -3,7 +3,7 @@
 Both SDK loaders (`_SDKLoader.exec_module` in tools/mission_harness.py and its
 twin in tests/conftest.py) call `on_sdk_module_exec` after executing any module
 whose qualified name starts with "ships." or "Systems.", and after executing
-"loadspacehelper". This is the second
+"loadspacehelper" or "Multiplayer.SpeciesToTorp". This is the second
 pass of the "pre-load then override" scheme: the SDK file runs untouched, then
 we extend or tweak what it produced. sdk/Build/scripts/ stays byte-identical.
 
@@ -39,6 +39,9 @@ def on_sdk_module_exec(module, qualname: str) -> None:
         (applies the system map after the region's Initialize())
     loadspacehelper          -> home_stations.install_create_ship_hook(module)
         (a mission's CreateShip for a placed home station reuses it)
+    Multiplayer.SpeciesToTorp -> species_to_torp.install(module)
+        (a torpedo type only an extended community copy defines reads as
+        UNKNOWN instead of aborting the mod torpedo's Create())
     Anything else (including the "ships" and "ships.Hardpoints" packages, the
     "Systems" and "Systems.<System>" packages, "Systems.Utils", and any
     "Systems.<System>.<Region>_S" static module) is a no-op.
@@ -52,6 +55,10 @@ def on_sdk_module_exec(module, qualname: str) -> None:
     if qualname == "loadspacehelper":
         from engine.systems import home_stations
         _dispatch(home_stations.install_create_ship_hook, module)
+        return
+    if qualname == "Multiplayer.SpeciesToTorp":
+        from engine.compat import species_to_torp
+        _dispatch(species_to_torp.install, module)
         return
     parts = qualname.split(".")
     if parts[0] == "Systems":
