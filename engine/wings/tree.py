@@ -4,8 +4,11 @@
     PriorityList
       1  Conditional[ConditionWing(ship, "ram")]     -> Ram (current target)
       2  Conditional[ConditionWing(ship, "flee")]    -> Flee (enemy group)
-      3  Conditional[ConditionWing(ship, "rejoin")]  -> AvoidObstacles(WingRejoin)
-      4  <stock tree, unchanged>
+      3  Conditional[ConditionWing(ship, "withdraw")] -> AvoidObstacles(WingMoveTo)
+      4  Conditional[ConditionWing(ship, "guard")]    -> AvoidObstacles(WingMoveTo)
+      5  Conditional[ConditionWing(ship, "fallback")] -> AvoidObstacles(WingMoveTo)
+      6  Conditional[ConditionWing(ship, "rejoin")]  -> AvoidObstacles(WingRejoin)
+      7  <stock tree, unchanged>
 
 Every condition is pushed by the brain (status 0/1); nothing here polls.
 The stock tree keeps its own preprocessors; its SelectTarget nodes are found
@@ -62,19 +65,28 @@ def wrap_tree(pShip, pStockTree, wing):
     pFlee = _plain(pShip, "Flee", "Flee")
     pFlee.GetScriptInstance().SetFleeFromGroup(wing.enemy_group)
 
-    pRejoin = _plain(pShip, "Rejoin", "WingRejoin")
-    pAvoidObstacles = App.PreprocessingAI_Create(pShip, "AvoidObstacles")
-    pAvoidObstacles.SetInterruptable(1)
-    pAvoidObstacles.SetPreprocessingMethod(AI.Preprocessors.AvoidObstacles(),
-                                           "Update")
-    pAvoidObstacles.SetContainedAI(pRejoin)
+    def avoiding(sName, pContained):
+        pAvoid = App.PreprocessingAI_Create(pShip, sName)
+        pAvoid.SetInterruptable(1)
+        pAvoid.SetPreprocessingMethod(AI.Preprocessors.AvoidObstacles(),
+                                      "Update")
+        pAvoid.SetContainedAI(pContained)
+        return pAvoid
+
+    pAvoidObstacles = avoiding("AvoidObstacles",
+                               _plain(pShip, "Rejoin", "WingRejoin"))
 
     pRoot = App.PriorityListAI_Create(pShip, "WingPriorityList")
     pRoot.SetInterruptable(1)
     pRoot.AddAI(_conditional(pShip, "WingRam", "ram", pRam), 1)
     pRoot.AddAI(_conditional(pShip, "WingFlee", "flee", pFlee), 2)
-    pRoot.AddAI(_conditional(pShip, "WingRejoin", "rejoin", pAvoidObstacles), 3)
-    pRoot.AddAI(pStockTree, 4)
+    for sKind, iPriority in (("withdraw", 3), ("guard", 4), ("fallback", 5)):
+        pMove = avoiding("AvoidObstacles",
+                         _plain(pShip, "Move" + sKind, "WingMoveTo"))
+        pRoot.AddAI(_conditional(pShip, "Wing" + sKind.capitalize(), sKind,
+                                 pMove), iPriority)
+    pRoot.AddAI(_conditional(pShip, "WingRejoin", "rejoin", pAvoidObstacles), 6)
+    pRoot.AddAI(pStockTree, 7)
     return pRoot
 
 

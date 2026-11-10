@@ -32,6 +32,12 @@ commanders" switch is Off (`plan.wings`), or BC's own GenerateShips ran):
   brain counts a listed ship outside the enemy group (a neutral protect
   target) as a candidate. km arms after the wings, so those ships are seeded
   into the wing group at the first member's CreateAI, not at create_wing.
+- `protect_names` (Phase B, spec 2026-11-09-wing-leaders-phase-b-design.md
+  §3) is read at use, from the ships the OTHER side's AI weights
+  (`km_targeting.priorities_for(<other allegiance>)`): a friendly wing
+  protects every Defeat-listed ship, friendly or neutral (never one in
+  pEnemies); an enemy wing protects the Victory-listed ships in pEnemies.
+  The player's group's wing also protects the player's ship.
 
 Mechanism (no SDK edit), the km_targeting pattern: the member modules'
 CreateAI is wrapped for the battle. For a member ship the wrapper answers the
@@ -63,6 +69,8 @@ MEMBER_MODULES = ("QuickBattleAI", "QuickBattleFriendlyAI")
 _ORIG_ATTR = "_dauntless_wings_qb_orig"
 # allegiance -> the QuickBattle group that side's attack AI targets
 _ATTACKED = {"enemy": "pFriendlies", "friendly": "pEnemies"}
+# allegiance -> the side whose weighted (km) ships this side protects
+_OTHER = {"enemy": "friendly", "friendly": "enemy"}
 
 _wrapped: list = []          # (module, original CreateAI)
 _owned: dict = {}            # non-player member name -> its wing
@@ -138,12 +146,37 @@ def arm(qb, plan) -> None:
         if not wing.members and gid in late:
             # All late: its first mobile arrival wave will build the chain.
             _first_wave[gid] = None
+    player_wing = _by_group.get(plan.player.group_id)
+    for gid, (allegiance, _members) in groups.items():
+        wing = _by_group[gid]
+        wing.protect_names = (
+            lambda a=allegiance, p=(wing is player_wing):
+            _protect_names(a, p))
     for name in modules:
         _wrap(name)
     for wing in _by_group.values():
         service.arm(wing)
-    player_wing = _by_group.get(plan.player.group_id)
     service.set_player_wing(player_wing.wing_id if player_wing else None)
+
+
+def _protect_names(allegiance, with_player) -> list:
+    """The names a wing of `allegiance` protects, now (module docstring)."""
+    import App
+    from engine.quickbattle import km_targeting
+    out = []
+    enemies = App.ObjectGroup_FromModule(QB_MODULE, "pEnemies")
+    for name in km_targeting.priorities_for(_OTHER[allegiance]):
+        in_enemies = enemies is not None and enemies.IsNameInGroup(name)
+        # Friendly wings: any Defeat ship not an enemy (neutrals included).
+        # Enemy wings: Victory ships that are enemies.
+        if in_enemies == (allegiance == "enemy"):
+            out.append(name)
+    if with_player:
+        game = App.Game_GetCurrentGame()
+        player = game.GetPlayer() if game is not None else None
+        if player is not None and player.GetName() not in out:
+            out.append(player.GetName())
+    return out
 
 
 def _wrap(module_name) -> None:

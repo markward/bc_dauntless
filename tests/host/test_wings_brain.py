@@ -535,12 +535,12 @@ def _game_time(monkeypatch, start=0.0):
 
 def _count_shield_reads(monkeypatch):
     reads = {}
-    real = brain._shield_fraction
+    real = brain._shield_faces
 
     def spy(ship):
         reads[ship.GetName()] = reads.get(ship.GetName(), 0) + 1
         return real(ship)
-    monkeypatch.setattr(brain, "_shield_fraction", spy)
+    monkeypatch.setattr(brain, "_shield_faces", spy)
     return reads
 
 

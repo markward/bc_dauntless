@@ -14,9 +14,11 @@ pytest.importorskip("_dauntless_host")
 import App  # noqa: E402
 from engine.core.loop import GameLoop  # noqa: E402
 from tests.helpers import headless_mission  # noqa: E402
+from tests.helpers.k1_fight import _seed_every_rng  # noqa: E402
 
 TICKS = 18000
 SAMPLE_EVERY = 60          # one sample a second at 60 Hz
+SEED = 1
 
 
 def _load(monkeypatch, ships, wing_size, wings_on=True):
@@ -80,8 +82,14 @@ def _spread_p90(monkeypatch, wings_on):
     Without wings, the same chunks by name (Friend-k/Enemy-k in creation
     order) with the commander taken as each chunk's first ship in ring order;
     with wings, the wing's real commander."""
+    # One fight every run: seed every stream the scene draws on (the golden
+    # fights' helper) and each wing's own rng. Unseeded, ON p90 ranged
+    # 200-660 GU run to run on one tree, and the bounds below flaked.
+    _seed_every_rng(SEED)
     _load(monkeypatch, 16, 4, wings_on=wings_on)
     from engine.wings import roster
+    for i, w in enumerate(roster.wings()):
+        w.rng.seed(SEED + i)
     if wings_on:
         chunks = [(list(w.members), None) for w in roster.wings()]
     else:
@@ -122,9 +130,9 @@ def test_wings_keep_formation_together(monkeypatch):
     t_off = time.time() - t0
     print("\n[wings spread] p90 wings ON %.1f GU (%.0fs), OFF %.1f GU (%.0fs)"
           % (on, t_on, off, t_off))
-    # Main claim: wings cut the spread to under 0.6x (seen 0.20-0.25x). The
-    # absolute bound is only a sanity check no healthy run approaches: the
-    # scene is not reproducible run to run (ON p90 seen 240-312 GU), so a
-    # tight bound (300, then 350) was a flake risk.
+    # Main claim: wings cut the spread to under 0.6x. The absolute bound is
+    # a sanity check no healthy run approaches. The fight is seeded (one
+    # fight every run); seeds 1-8 on phase B with the rejoin warp: ON p90
+    # 234-268 GU, OFF 1019-1529 GU.
     assert on < 0.6 * off
     assert on < 450.0

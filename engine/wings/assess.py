@@ -13,6 +13,9 @@ class ShipView:
     power: float
     wing_id: Optional[str] = None
     is_commander: bool = False
+    target: Optional[str] = None
+    # Weakest single shield face; None reads as `shield` (the mean).
+    weak_face: Optional[float] = None
 
 
 def strength(v: ShipView) -> float:
@@ -41,3 +44,11 @@ def fraction_beyond(member_views, anchor_pos, radius_gu: float) -> float:
         return 0.0
     n = sum(1 for v in member_views if dist(v.pos, anchor_pos) > radius_gu)
     return n / len(member_views)
+
+
+def centroid(views) -> Optional[tuple]:
+    views = list(views)
+    if not views:
+        return None
+    n = len(views)
+    return tuple(sum(v.pos[i] for v in views) / n for i in range(3))

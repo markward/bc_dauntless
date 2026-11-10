@@ -12,7 +12,8 @@ import dataclasses
 import os
 import sys
 
-from engine.wings import assess, chain, decisions, dials, plans, roster
+from engine.wings import (assess, chain, decisions, dials, plans, protect,
+                          roster, rotate)
 
 _NUM_SHIELDS = 6
 
@@ -32,12 +33,13 @@ def _rated_power(ship) -> float:
     return float(prop.GetPowerOutput()) if prop is not None else 0.0
 
 
-def _shield_fraction(ship) -> float:
+def _shield_faces(ship) -> list:
     shields = ship.GetShields()
     if shields is None:
-        return 0.0
-    return sum(float(shields.GetSingleShieldPercentage(i))
-               for i in range(_NUM_SHIELDS)) / _NUM_SHIELDS
+        return [0.0] * _NUM_SHIELDS
+    return [float(shields.GetSingleShieldPercentage(i))
+            for i in range(_NUM_SHIELDS)]
+
 
 
 def _cloaked(ship) -> bool:
@@ -53,15 +55,19 @@ def view_of(ship, wing_id=None, is_commander=False):
         return None
     loc = ship.GetWorldLocation()
     hull = ship.GetHull()
+    target = ship.GetTarget()
+    faces = _shield_faces(ship)
     return assess.ShipView(
         name=ship.GetName(),
         pos=(loc.x, loc.y, loc.z),
         # No hull subsystem reads as intact, so it never trips desperation.
         hull=float(hull.GetConditionPercentage()) if hull is not None else 1.0,
-        shield=_shield_fraction(ship),
+        shield=sum(faces) / _NUM_SHIELDS,
+        weak_face=min(faces),
         power=_rated_power(ship),
         wing_id=wing_id,
         is_commander=is_commander,
+        target=target.GetName() if target is not None else None,
     )
 
 
@@ -71,14 +77,19 @@ def _find_anywhere(name):
 
 
 def arm_chain(wing) -> None:
-    eligible, player = [], None
+    eligible, player, armed = [], None, 0.0
     for name, m in wing.members.items():
+        v = view_of(_find_anywhere(name))
+        if v is not None:
+            armed += assess.strength(v)
         if m.is_player:
             player = name
         elif m.in_chain_eligible:
             ship = _find_anywhere(name)
             eligible.append((name, _rated_power(ship) if ship else 0.0))
     wing.chain = chain.build_chain(eligible, player)
+    # Withdraw compares the live wing against this (spec §2).
+    wing.armed_strength = armed
     wing.commander = wing.chain[0] if wing.chain else None
 
 
@@ -264,22 +275,51 @@ def tick_wing(wing) -> None:
         tree.apply_popularity(m)          # the dial is read at use
 
     # 4. Decide.
+    now = float(App.g_kUtopiaModule.GetGameTime())
     anchor = members[wing.commander]
-    ctx = decisions.Context(members=list(members.values()), anchor=anchor,
-                            enemies=enemies, current=wing.decision)
+    near = _near_anchor(enemies, anchor)
+    protectees = _protectees(wing, members, ship_of)
+    rates = _sample_strength(wing, members, protectees, now)
+    if wing.withdraw_since is not None:
+        # Clear: no enemy within engage_gu of the anchor (spec §5).
+        if near:
+            wing.clear_since = None
+        elif wing.clear_since is None:
+            wing.clear_since = now
+    player_commands = _player_commands(wing)
+    if player_commands and wing.withdraw_since is not None:
+        # Withdraw never applies to a player-led wing: a handover to the
+        # player ends one in progress (the cooldown starts).
+        _end_withdraw(wing, now)
+    ctx = decisions.Context(
+        members=list(members.values()), anchor=anchor, enemies=enemies,
+        current=wing.decision, protectees=protectees, rates=rates,
+        armed_strength=wing.armed_strength, now=now,
+        withdraw_since=wing.withdraw_since,
+        withdraw_cooldown_until=wing.withdraw_cooldown_until,
+        clear_since=wing.clear_since, player_commands=player_commands)
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
         log("%s decision %s -> %s"
             % (wing.wing_id, wing.decision, decision.name))
         wing.decision = decision.name
     choice = decision.choose(ctx)
+    if choice.withdraw and wing.withdraw_since is None:
+        wing.withdraw_since = now
+        log("%s withdraw" % wing.wing_id)
+    elif not choice.withdraw and wing.withdraw_since is not None:
+        _end_withdraw(wing, now)
 
     # 5. Apply.
-    player_commands = _player_commands(wing)
     player_target = _player_target(wing) if player_commands else None
-    prios = plans.target_priorities(enemies, anchor, choice, km,
-                                    player_target, player_commands)
+    if choice.withdraw:
+        prios = {}                     # nobody turns back to fight
+    else:
+        prios = plans.target_priorities(enemies, anchor, choice, km,
+                                        player_target, player_commands)
     _write_group(wing.target_group, prios)
+    _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
+                 now)
 
     player = next((n for n, m in wing.members.items() if m.is_player), None)
     # A commanding player with nothing to fight: the escorts form up on it.
@@ -290,7 +330,8 @@ def tick_wing(wing) -> None:
         gather, wing.commander, player)
     for name, m in wing.members.items():
         # Outside the home set WingRejoin cannot reach the commander: off.
-        flag = flags.get(name, False)
+        # Withdrawing, every member runs its own line: off too.
+        flag = flags.get(name, False) and not choice.withdraw
         m.rejoin = flag
         _push(m, "rejoin", flag)
 
@@ -300,6 +341,167 @@ def tick_wing(wing) -> None:
         for m in wing.members.values():
             for node in m.select_nodes:
                 node.ForceUpdate()
+
+
+def _near_anchor(enemies, anchor):
+    """Enemies within engage_gu of the anchor: Phase B's reach (withdraw
+    odds, protect attackers, the fall-back centroid)."""
+    reach = dials.get("engage_gu")
+    return [e for e in enemies if assess.dist(e.pos, anchor.pos) <= reach]
+
+
+def _protectees(wing, members, ship_of):
+    """Live member views, then the wing's protect ships (Quick Battle's
+    protect list, the player) resolved in the home set, deduped."""
+    out = list(members.values())
+    seen = set(members)
+    for name in wing.protect_names():
+        if name in seen:
+            continue
+        seen.add(name)
+        v = view_of(ship_of(name), *_roster_flags(name))
+        if v is not None:
+            out.append(v)
+    return out
+
+
+def _sample_strength(wing, members, protectees, now):
+    """Append one strength sample per live protectee (members on their
+    record, protect ships on the wing), trim to heavy_fire_window_s, and
+    return the damage rate per name."""
+    window = dials.get("heavy_fire_window_s")
+    rates = {}
+    others = {}
+    for v in protectees:
+        m = wing.members.get(v.name)
+        hist = (m.strength_hist if m is not None
+                else wing.protect_hist.get(v.name, []))
+        hist = [(t, x) for t, x in hist if now - t <= window]
+        hist.append((now, assess.strength(v)))
+        if m is not None:
+            m.strength_hist = hist
+        else:
+            others[v.name] = hist
+        rates[v.name] = protect.damage_rate(hist, now, window)
+    wing.protect_hist = others        # a protect ship gone drops its history
+    return rates
+
+
+def _strength_frac(v):
+    return assess.strength(v) / v.power if v.power > 0.0 else 0.0
+
+
+def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
+                 now):
+    """Withdraw (every member), guards (protect) and fallers (the standing
+    rotate rule): move points and branch pushes for every non-player
+    member. One move point per member; the sets are disjoint."""
+    # Exclusivity, all four rules (the player is never in any set):
+    # 1. withdraw > everything: a withdrawing wing has no protectee and no
+    #    fallers, and tick_wing turns rejoin off for it;
+    # 2. guard > fallback: guards are picked first and excluded from falling
+    #    back; a ship already falling back (last tick's fallback_since) or
+    #    with shields under rotate_out_shield is never a guard candidate;
+    # 3. the commander is never a guard or a faller; the protectee is never
+    #    its own guard, but a member protectee MAY fall back (ruling
+    #    2026-11-09) and its guards then cover its current position;
+    # 4. fallback / guard > rejoin by tree priority only: m.rejoin may stay
+    #    True under either (it keeps rejoin's hysteresis), and the guard and
+    #    fallback branches outrank the rejoin branch.
+    players = {n for n, m in wing.members.items() if m.is_player}
+    points = {}
+
+    # Withdraw: every non-player member opens distance on its own line away
+    # from the enemy centroid, recomputed each tick; nobody rejoins.
+    withdrawers = set()
+    if choice.withdraw:
+        away_from = assess.centroid(near or enemies)
+        step = dials.get("withdraw_step_gu")
+        for name, v in members.items():
+            if name in players:
+                continue
+            withdrawers.add(name)
+            points[name] = (rotate.fallback_point(v.pos, away_from, step)
+                            if away_from is not None else None)
+
+    # Protect: guards between the protectee and its primary attacker.
+    guards = []
+    protectee = None
+    if choice.protectee is not None:
+        protectee = next((p for p in protectees
+                          if p.name == choice.protectee), None)
+        attacker = next((e for e in enemies if e.name == choice.primary),
+                        None)
+        if protectee is not None and attacker is not None:
+            live = list(members.values())
+            # A ship already falling back is never a guard: it keeps
+            # falling back until its shields recover.
+            falling = {n for n, m in wing.members.items()
+                       if m.fallback_since is not None}
+            prev = ([n for n, m in wing.members.items() if m.guard]
+                    if wing.guarded == protectee.name else [])
+            guards = protect.pick_guards(
+                live, protectee, {wing.commander} | players | falling,
+                {v.name: _strength_frac(v) for v in live}, prev)
+            point = protect.guard_point(protectee.pos, attacker.pos)
+            for name in guards:
+                points[name] = point
+
+    # Fall back: never while withdrawing, never with nothing to hide from.
+    fallers = {}
+    if not choice.withdraw and near:
+        exclude = {wing.commander} | players | set(guards)
+        fallers = rotate.fallback_flags(
+            list(members.values()), {n: m.fallback_since
+                                     for n, m in wing.members.items()},
+            now, exclude, wing.fallback_cooldown, wing.fallback_hull)
+        behind = rotate.fallback_point(anchor.pos, assess.centroid(near),
+                                       dials.get("regroup_gather_gu"))
+        for name, since in fallers.items():
+            if since is not None:
+                points[name] = behind
+
+    wing.guarded = protectee.name if guards else None
+    for name, m in wing.members.items():
+        if m.is_player:
+            continue
+        m.guard = name in guards
+        was = m.fallback_since
+        m.fallback_since = fallers.get(name)
+        if was is None and m.fallback_since is not None:
+            log("%s %s falls back (%s)" % (
+                wing.wing_id, name,
+                rotate.reason(name, members.get(name), wing.fallback_hull)))
+        elif was is not None and m.fallback_since is None:
+            log("%s %s returns" % (wing.wing_id, name))
+        m.move_point = points.get(name)
+        _push(m, "withdraw", name in withdrawers)
+        _push(m, "guard", m.guard)
+        _push(m, "fallback", m.fallback_since is not None)
+
+
+def _end_withdraw(wing, now) -> None:
+    wing.withdraw_cooldown_until = now + dials.get("withdraw_cooldown_s")
+    wing.withdraw_since = None
+    wing.clear_since = None
+    log("%s withdraw ends" % wing.wing_id)
+
+
+def _stand_down(wing) -> None:
+    """Leaderless or command away: every Phase B branch off, no move
+    points (like rejoin). A withdraw in progress ends."""
+    if wing.withdraw_since is not None:
+        import App
+        _end_withdraw(wing, float(App.g_kUtopiaModule.GetGameTime()))
+    wing.guarded = None
+    for m in wing.members.values():
+        m.move_point = None
+        m.guard = False
+        m.fallback_since = None
+        if m.is_player:
+            continue
+        for kind in ("withdraw", "guard", "fallback"):
+            _push(m, kind, False)
 
 
 def _primary_of(prios):
@@ -357,6 +559,7 @@ def _command_away(wing, enemies, km) -> None:
         if entering:
             for node in m.select_nodes:
                 node.ForceUpdate()
+    _stand_down(wing)
 
 
 def _go_leaderless(wing) -> None:
@@ -371,6 +574,7 @@ def _go_leaderless(wing) -> None:
             node.ForceUpdate()
         m.rejoin = False
         _push(m, "rejoin", False)
+    _stand_down(wing)
 
 
 def _desperation(wing, members, ship_of) -> None:

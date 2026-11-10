@@ -185,7 +185,8 @@ A **Decision** is a library object: `name`, `score(ctx) -> float`,
 later phases and mods add entries without touching the brain. Each tick the
 brain scores every registered decision; the current decision gets
 `+stickiness` (dial, default **0.25**); highest wins; ties keep the current
-one.
+one. (Phase B: a current decision scoring 0 gets no bonus and does not win
+ties — see the Phase B spec §5.)
 
 Phase A registers three:
 
