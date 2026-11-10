@@ -268,7 +268,9 @@ wing like any protect ship **(call)**, so your AI escorts cover you.
    off it with BC's own `InSystemWarp` (`WingRejoin._WarpBack`), then
    follows at impulse. Rejoin by FollowObject alone could never catch a
    commander as fast as the member, e.g. one that warped ahead to another
-   wing's fight (Phase D reinforce, stress seed 1).
+   wing's fight (Phase D reinforce, stress seed 1). *(Changed in Phase D,
+   §12.19 there: the warp starts beyond `rejoin_warp_gu`, 600 GU; between
+   leash + slack and that the member flies back at impulse.)*
 7. `WingMoveTo` slows within 20 GU of its point and never returns DONE while
    the ship is a wing member (DONE once its wing is gone). It asks for an
    update every 0.2 s, FollowObject's period.

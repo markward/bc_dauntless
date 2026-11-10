@@ -33,7 +33,7 @@ def _ctx(enemies, members=None, eligible=5, current=None):
 
 
 def test_registered_order():
-    assert [d.name for d in decisions.registered()][-3:] == [
+    assert [d.name for d in decisions.registered()][5:8] == [
         "focus_face", "envelop", "disable"]
 
 
@@ -322,3 +322,30 @@ def test_a_young_flank_is_not_cut_off_by_attacker_count():
 def test_protect_dwell_dials():
     assert dials.get("protect_min_s") == 10.0
     assert dials.get("attack_min_s") == 10.0
+
+
+def test_focus_face_end_reasons():
+    """D play test 2 (2026-11-10): focus_face and swarm alternated every few
+    seconds; the brain logs why focus_face ended, from this."""
+    import dataclasses
+    why = decisions.focus_face_end_reason
+    weak = V("x", 50, faces=F(left=0.1))
+    cur = "focus_face"
+    assert why(_ctx([V("y", 60, faces=F(left=0.1))], current=cur),
+               "x") == "target gone"
+    gone = dataclasses.replace(weak, retiring=True)
+    assert why(_ctx([gone, V("y", 60, hull=0.9, faces=F())], current=cur),
+               "x") == "target falling back"
+    assert why(_ctx([weak, V("y", 60, hull=0.05, faces=F())], current=cur),
+               "x") == "new weakest target y"
+    assert why(_ctx([V("x", 900, faces=F(left=0.1))], current=cur),
+               "x") == "target out of reach"
+    assert why(_ctx([weak], eligible=1, current=cur),
+               "x") == "too few free ships"
+    assert why(_ctx([V("x", 50, faces=F(left=0.55))], current=cur),
+               "x") == "weak face recovered"
+    assert why(_ctx([V("x", 50, faces=F(left=0.1, others=0.4))],
+                    current=cur), "x") == "other faces down"
+    assert why(_ctx([V("x", 50, faces=())], current=cur),
+               "x") == "no shield faces"
+    assert why(_ctx([weak], current=cur), "x") == "outscored"

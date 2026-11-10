@@ -289,6 +289,26 @@ def test_enemy_commander_flagged_from_roster(monkeypatch):
     assert seen == {"e1": ("red", True), "e2": (None, False)}
 
 
+def test_enemy_falling_back_is_flagged_retiring(monkeypatch):
+    """An enemy wing member falling back reads as retiring, warm cache
+    included (the flag is re-read on every use, like the commander's)."""
+    wing, ships = _scene([(100.0, 0.0, 0.0), (120.0, 0.0, 0.0)])
+    red = roster.create_wing("red", App.ObjectGroup())
+    roster.add_member(red, "e1")
+    seen = {}
+    real = decisions.pick
+
+    def spy(ctx):
+        seen.update({e.name: e.retiring for e in ctx.enemies})
+        return real(ctx)
+    monkeypatch.setattr(decisions, "pick", spy)
+    brain.tick_wing(wing)
+    assert seen == {"e1": False, "e2": False}
+    roster.member("e1").fallback_since = 1.0
+    brain.tick_wing(wing)
+    assert seen == {"e1": True, "e2": False}
+
+
 def test_player_commander_target_is_primary(monkeypatch):
     wing, ships = _scene([(100.0, 0.0, 0.0), (150.0, 0.0, 0.0)])
     roster.member("m1").is_player = True

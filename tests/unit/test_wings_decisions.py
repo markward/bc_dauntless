@@ -74,7 +74,7 @@ def test_register_replaces_by_name_and_reset_restores_stock():
     names = [d.name for d in decisions.registered()]
     assert names == ["regroup", "swarm_weakest", "swarm_commander",
                      "protect", "withdraw", "focus_face", "envelop",
-                     "disable"]
+                     "disable", "reinforce", "feint", "screen", "flank"]
 
     class Fake:
         name = "swarm_weakest"
@@ -108,3 +108,28 @@ def test_choose_weakest_and_regroup_gather():
     assert (ch.primary, ch.secondaries, ch.gather) == ("w", ("m", "z"), False)
     rg = decisions.Regroup().choose(ctx)
     assert (rg.primary, rg.secondaries, rg.gather) == ("w", ("m", "z"), True)
+
+
+def _retiring(v):
+    import dataclasses
+    return dataclasses.replace(v, retiring=True)
+
+
+def test_swarm_passes_over_an_enemy_falling_back():
+    """D play test (2026-11-10): the weakest enemy was nearly always one
+    falling back to recharge; chasing it strung the wing out and ended each
+    focus within seconds. A retiring enemy goes after every one still
+    fighting."""
+    faller = _retiring(V("x1", 50, hull=0.2))
+    ctx = _ctx([V("a"), V("b", 10)], [faller, V("x2", 60, hull=0.6),
+                                      V("x3", 70, hull=0.9)])
+    c = decisions.pick(ctx).choose(ctx)
+    assert c.primary == "x2"
+    assert c.secondaries == ("x3", "x1")
+
+
+def test_swarm_still_targets_fallers_when_nothing_else_is_in_reach():
+    ctx = _ctx([V("a"), V("b", 10)],
+               [_retiring(V("x1", 50, hull=0.6)),
+                _retiring(V("x2", 60, hull=0.2))])
+    assert decisions.pick(ctx).choose(ctx).primary == "x2"

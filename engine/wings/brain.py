@@ -12,10 +12,12 @@ import dataclasses
 import os
 import sys
 
-from engine.wings import (assess, attack, chain, decisions, dials, plans,
+from engine.wings import (allies, assess, attack, chain, decisions, dials, plans,
                           protect, reserve, roster, rotate)
 
 _NUM_SHIELDS = 6
+# A feint a higher decision pre-empts this soon starts no cooldown.
+_FEINT_GRACE_S = 5.0
 
 
 def log(msg: str) -> None:
@@ -68,7 +70,8 @@ def _cloaked(ship) -> bool:
     return cloak is not None and bool(cloak.IsCloaked() or cloak.IsCloaking())
 
 
-def view_of(ship, wing_id=None, is_commander=False, weapons=False):
+def view_of(ship, wing_id=None, is_commander=False, retiring=False,
+            weapons=False):
     if not _alive(ship):
         return None
     loc = ship.GetWorldLocation()
@@ -88,6 +91,7 @@ def view_of(ship, wing_id=None, is_commander=False, weapons=False):
         target=target.GetName() if target is not None else None,
         faces=faces if len(faces) == _NUM_SHIELDS else (),
         weapons_down=_weapons_down(ship) if weapons else False,
+        retiring=retiring,
     )
 
 
@@ -209,10 +213,13 @@ def reset_cache() -> None:
 
 
 def _roster_flags(name):
+    """(wing_id, is_commander, retiring) for a ship from the roster."""
     other = roster.wing_of(name)
     if other is None:
-        return (None, False)
-    return (other.wing_id, other.commander == name)
+        return (None, False, False)
+    m = other.members.get(name)
+    return (other.wing_id, other.commander == name,
+            m is not None and m.fallback_since is not None)
 
 
 def _enemy_views(wing, home, candidates, ship_of):
@@ -258,7 +265,8 @@ def _enemy_views(wing, home, candidates, ship_of):
             flags = _roster_flags(v.name)
             if flags != old:
                 v = dataclasses.replace(
-                    v, wing_id=flags[0], is_commander=flags[1])
+                    v, wing_id=flags[0], is_commander=flags[1],
+                    retiring=flags[2])
             views.append(v)
             all_flags.append(flags)
         entry.views, entry.flags = views, all_flags
@@ -270,6 +278,7 @@ def tick_wing(wing) -> None:
     import App
     home = _home_set(wing)
     if home is None:
+        wing.status = None            # nobody left to report
         return
 
     def ship_of(name):
@@ -340,6 +349,8 @@ def tick_wing(wing) -> None:
         # player ends one in progress (the cooldown starts).
         _end_withdraw(wing, now)
     _disable_cap(wing, now)
+    _side_clocks(wing, near, now)
+    from engine.wings import service      # service imports brain
     ctx = decisions.Context(
         members=list(members.values()), anchor=anchor, enemies=enemies,
         current=wing.decision, protectees=protectees, rates=rates,
@@ -353,19 +364,37 @@ def tick_wing(wing) -> None:
         slot_holders=frozenset(n for n, m in wing.members.items()
                                if m.slot is not None),
         reserve=wing.reserve,
+        protect_prev=wing.protect_prev,
+        allies=allies.side_allies(wing, roster.wings(), home.GetName()),
+        reinforce_ally=wing.reinforce_ally,
+        reinforce_done=frozenset(wing.reinforce_done),
+        feint_ally=wing.feint_ally,
+        feint_ready=now >= wing.feint_cooldown_until,
+        feint_quiet_s=(now - wing.feint_quiet_since
+                       if wing.feint_quiet_since is not None else 0.0),
         decision_age_s=(now - wing.decision_since
                         if wing.decision is not None else 0.0),
-        protect_prev=wing.protect_prev,
-        strict_protectees=_strict_protectees(wing, members))
+        strict_protectees=_strict_protectees(wing, members),
+        flank_ally=wing.flank_ally,
+        flank_done=frozenset(wing.flank_done),
+        screen_ally=wing.screen_ally,
+        screen_done=frozenset(wing.screen_done),
+        escorts_player=wing.wing_id == service.player_wing_id())
+    decisions.seed_near(ctx, near)       # one engage-range filter a tick
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
         log("%s decision %s -> %s"
             % (wing.wing_id, wing.decision, decision.name))
+        if wing.decision == "focus_face":
+            log("%s focus_face ends (%s)" % (
+                wing.wing_id,
+                decisions.focus_face_end_reason(ctx, wing.primary)))
         wing.decision = decision.name
         wing.decision_since = now
     choice = decision.choose(ctx)
     wing.protect_prev = choice.protectee
     _track_disable(wing, decision.name, choice, now)
+    _track_side(wing, decision.name, choice, now, ctx)
     if choice.withdraw and wing.withdraw_since is None:
         wing.withdraw_since = now
         log("%s withdraw" % wing.wing_id)
@@ -374,7 +403,7 @@ def tick_wing(wing) -> None:
 
     # 5. Apply.
     player_target = _player_target(wing) if player_commands else None
-    if choice.withdraw:
+    if choice.withdraw or choice.hold_kind == "feint":
         prios = {}                     # nobody turns back to fight
     else:
         prios = plans.target_priorities(enemies, anchor, choice, km,
@@ -384,12 +413,13 @@ def tick_wing(wing) -> None:
                     protect_damaged=(choice.protectee is not None
                                      and rates.get(choice.protectee, 0.0)
                                      >= dials.get("heavy_fire_frac")))
-    guards, fallers, withdrawers = _apply_moves(
-        wing, members, anchor, enemies, near, protectees, choice, now)
-    busy = ({wing.commander} | guards | fallers | withdrawers
+    guards, fallers, withdrawers, holders = _apply_moves(
+        wing, members, anchor, enemies, near, protectees, choice, now,
+        _hold_toward(choice, ctx.allies, near, enemies))
+    busy = ({wing.commander} | guards | fallers | withdrawers | holders
             | {n for n, m in wing.members.items()
                if m.is_player or m.reserve})
-    holders = _apply_attack(wing, members, enemies, choice, busy, ship_of)
+    slotted = _apply_attack(wing, members, enemies, choice, busy, ship_of)
 
     player = next((n for n, m in wing.members.items() if m.is_player), None)
     # A commanding player with nothing to fight: the escorts form up on it.
@@ -404,8 +434,10 @@ def tick_wing(wing) -> None:
         # slot-holder's slot hangs off the primary, inside reach: off. The
         # reserve holds its own point (reserve.hold_point: its own bearing,
         # reserve_gu farther from the enemy than the commander): off.
+        # Holding (Phase D), every member flies its formation point: off.
         flag = (flags.get(name, False) and not choice.withdraw
-                and name not in holders and name != wing.reserve)
+                and name not in slotted and name != wing.reserve
+                and name not in holders)
         m.rejoin = flag
         _push(m, "rejoin", flag)
 
@@ -415,6 +447,23 @@ def tick_wing(wing) -> None:
         for m in wing.members.values():
             for node in m.select_nodes:
                 node.ForceUpdate()
+    _publish_status(wing, ctx, near, members, home)
+
+
+def _publish_status(wing, ctx, near, members, home) -> None:
+    """The wing's status for its allies' next tick (Phase D): sides read
+    through the decisions' memo, within engage_gu of the anchor; the home
+    set's name, so only wings in that set read it."""
+    ours, theirs = decisions._sides(ctx, dials.get("engage_gu"))
+    live = sum(assess.strength(v) for v in members.values())
+    armed = wing.armed_strength
+    wing.status = allies.WingStatus(
+        wing_id=wing.wing_id, side=allies.side_of(wing),
+        anchor=tuple(ctx.anchor.pos),
+        strength_frac=live / armed if armed else 0.0,
+        ours=ours, theirs=theirs, enemy_centroid=assess.centroid(near),
+        engaged=bool(near), decision=wing.decision,
+        set_name=home.GetName())
 
 
 def _disable_cap(wing, now) -> None:
@@ -439,6 +488,137 @@ def _track_disable(wing, decision, choice, now) -> None:
         wing.disable_target = wing.disable_since = None
     if target is not None and wing.disable_target is None:
         wing.disable_target, wing.disable_since = target, now
+
+
+def _side_clocks(wing, near, now) -> None:
+    """Before the Context (Phase D): drop the reinforce, flank and screen
+    cooldowns that have run out, and while feinting keep since when no
+    enemy has been within engage_gu of the anchor (the 10 s "they didn't
+    follow" end)."""
+    for attr in ("reinforce_done", "flank_done", "screen_done"):
+        done = getattr(wing, attr)
+        if done:
+            setattr(wing, attr, {a: t for a, t in done.items() if now < t})
+    if wing.feint_ally is not None:
+        if near:
+            wing.feint_quiet_since = None
+        elif wing.feint_quiet_since is None:
+            wing.feint_quiet_since = now
+
+
+def _track_side(wing, decision, choice, now, ctx) -> None:
+    """After choose (Phase D): start and stop the reinforce and feint
+    latches and keep the flank's and the screen's ally. A reinforce, flank
+    or screen that ends by its cap puts its ally on that decision's
+    cooldown; a feint that ends starts the feint cooldown, unless a higher
+    decision pre-empted it within _FEINT_GRACE_S. One clock: a latch's
+    age is the decision's (ctx.decision_age_s, read before this tick's
+    pick), since decision_since resets only on a change of decision name
+    and a stand-down clears the decision."""
+    r = choice.ally if decision == "reinforce" else None
+    if wing.reinforce_ally is not None and wing.reinforce_ally != r:
+        log("%s reinforce ends" % wing.wing_id)
+        _end_reinforce(wing, now, ctx)
+    if r is not None and wing.reinforce_ally is None:
+        wing.reinforce_ally = r
+        log("%s reinforce -> %s" % (wing.wing_id, r))
+    f = choice.ally if decision == "feint" else None
+    if wing.feint_ally is not None and wing.feint_ally != f:
+        # Pre-empted in its first _FEINT_GRACE_S by a higher decision (its
+        # own ends had not fired): no cooldown (fix wave M1).
+        pre_empted = (ctx.current == "feint"
+                      and ctx.decision_age_s < _FEINT_GRACE_S
+                      and decisions._feint_ally(ctx) is not None)
+        _end_feint(wing, now, cooldown=not pre_empted)
+    if f is not None and wing.feint_ally is None:
+        wing.feint_ally, wing.feint_quiet_since = f, None
+    wing.flank_ally = _held_latch(wing, "flank", decision, choice, now,
+                                  ctx)
+    wing.screen_ally = _held_latch(wing, "screen", decision, choice, now,
+                                   ctx)
+
+
+def _held_latch(wing, kind, decision, choice, now, ctx):
+    """The ally a flank or screen (kind) holds after this tick. One that
+    ends by its <kind>_max_s cap puts its ally on <kind>_cooldown_s
+    (wing.<kind>_done); any other end starts no cooldown."""
+    old = getattr(wing, kind + "_ally")
+    new = choice.ally if decision == kind else None
+    if (old is not None and old != new and ctx.current == kind
+            and ctx.decision_age_s >= dials.get(kind + "_max_s")):
+        getattr(wing, kind + "_done")[old] = (
+            now + dials.get(kind + "_cooldown_s"))
+        log("%s %s done %s" % (wing.wing_id, kind, old))
+    return new
+
+
+def _end_reinforce(wing, now, ctx) -> None:
+    if (ctx.current == "reinforce"
+            and ctx.decision_age_s >= dials.get("reinforce_max_s")):
+        wing.reinforce_done[wing.reinforce_ally] = (
+            now + dials.get("reinforce_cooldown_s"))
+        log("%s reinforce done %s" % (wing.wing_id, wing.reinforce_ally))
+    wing.reinforce_ally = None
+
+
+def _end_feint(wing, now, cooldown=True) -> None:
+    if cooldown:
+        wing.feint_cooldown_until = now + dials.get("feint_cooldown_s")
+    wing.feint_ally = wing.feint_quiet_since = None
+
+
+def _hold_toward(choice, ally_statuses, near, enemies):
+    """The point the hold formation's ring faces: for screen and flank the
+    ally's enemy centroid when it has one, else (and for a feint) the
+    enemies near us, else all of them; the hold point itself (any plane)
+    with no enemy at all. None without a hold."""
+    if choice.hold_point is None or choice.withdraw:
+        return None
+    if choice.hold_kind != "feint":
+        a = next((s for s in ally_statuses if s.wing_id == choice.ally),
+                 None)
+        if a is not None and a.enemy_centroid is not None:
+            return a.enemy_centroid
+    c = assess.centroid(near or enemies)
+    return c if c is not None else choice.hold_point
+
+
+def _log_hold(wing, kind_ally) -> None:
+    """Log a hold starting or ending; no hold clears hold_prev."""
+    old = wing.hold_prev[:2] if wing.hold_prev is not None else None
+    if old is not None and old != kind_ally:
+        log("%s %s ends" % (wing.wing_id, old[0]))
+    if kind_ally is not None and old != kind_ally:
+        log("%s %s -> %s" % (wing.wing_id, kind_ally[0], kind_ally[1]))
+    if kind_ally is None:
+        wing.hold_prev = None
+
+
+def _hold_formation(wing, members, choice, toward):
+    """name -> formation point for every live non-player member (spec §5):
+    the commander the hold point itself, the rest the ring, assigned by
+    attack.assign_slots with last tick's assignment kept while the hold
+    (same kind and ally) moved less than hold_spread_gu. A player
+    commander leaves the centre empty: the AI members all take the ring."""
+    spread = dials.get("hold_spread_gu")
+    names = [n for n in members if not wing.members[n].is_player]
+    cmd = wing.commander if wing.commander in names else None
+    others = [n for n in names if n != cmd]
+    pts = allies.formation_points(choice.hold_point, toward,
+                                  len(others) + 1, spread)
+    ring = pts[1:]
+    old = wing.hold_prev
+    prev = (old[3] if old is not None
+            and old[:2] == (choice.hold_kind, choice.ally)
+            and assess.dist(old[2], choice.hold_point) < spread else None)
+    got = (attack.assign_slots([members[n] for n in others], ring, prev)
+           if others else {})
+    out = {n: ring[j] for n, j in got.items()}
+    if cmd is not None:
+        out[cmd] = pts[0]
+    wing.hold_prev = (choice.hold_kind, choice.ally,
+                      tuple(choice.hold_point), got)
+    return out
 
 
 def _near_anchor(enemies, anchor):
@@ -554,10 +734,11 @@ def _reserve_point(wing, members, anchor, near):
 
 
 def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
-                 now):
-    """Withdraw (every member), guards (protect) and fallers (the standing
-    rotate rule): move points and branch pushes for every non-player
-    member. One move point per member; the sets are disjoint."""
+                 now, toward=None):
+    """Withdraw (every member), hold (every member, Phase D), guards
+    (protect) and fallers (the standing rotate rule): move points and
+    branch pushes for every non-player member. One move point per member;
+    the sets are disjoint."""
     # Exclusivity, all four rules (the player is never in any set):
     # 1. withdraw > everything: a withdrawing wing has no protectee and no
     #    fallers, and tick_wing turns rejoin off for it;
@@ -572,9 +753,18 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
     #    fallback branches outrank the rejoin branch.
     # 5. the reserve (Phase C) is never a guard or a faller: it holds the
     #    reserve point, or withdraws with everyone.
+    # 6. hold (Phase D) > guard, fallback, reserve, attack, rejoin: every
+    #    member flies its formation point (the reserve too, keeping its
+    #    flag), so no guards or fallers are picked and nothing else is on.
     players = {n for n, m in wing.members.items() if m.is_player}
     held = {wing.reserve} if wing.reserve is not None else set()
     points = {}
+
+    hold = choice.hold_point is not None and not choice.withdraw
+    _log_hold(wing, (choice.hold_kind, choice.ally) if hold else None)
+    holders = (_hold_formation(wing, members, choice, toward) if hold
+               else {})
+    points.update(holders)
 
     # Withdraw: every non-player member opens distance on its own line away
     # from the enemy centroid, recomputed each tick; nobody rejoins.
@@ -592,7 +782,7 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
     # Protect: guards between the protectee and its primary attacker.
     guards = []
     protectee = None
-    if choice.protectee is not None:
+    if choice.protectee is not None and not hold:
         protectee = next((p for p in protectees
                           if p.name == choice.protectee), None)
         attacker = next((e for e in enemies if e.name == choice.primary),
@@ -614,7 +804,7 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
 
     # Fall back: never while withdrawing, never with nothing to hide from.
     fallers = {}
-    if not choice.withdraw and near:
+    if not choice.withdraw and not hold and near:
         exclude = {wing.commander} | players | set(guards) | held
         fallers = rotate.fallback_flags(
             list(members.values()), {n: m.fallback_since
@@ -626,7 +816,7 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
             if since is not None:
                 points[name] = behind
 
-    holding = held and not choice.withdraw
+    holding = held and not choice.withdraw and not hold
     if holding:
         points[wing.reserve] = _reserve_point(wing, members, anchor, near)
 
@@ -645,12 +835,13 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
             log("%s %s returns" % (wing.wing_id, name))
         m.move_point = points.get(name)
         _push(m, "withdraw", name in withdrawers)
+        _push(m, "hold", name in holders)
         _push(m, "guard", m.guard)
         _push(m, "fallback", m.fallback_since is not None)
         _push(m, "reserve", bool(holding) and name in held)
     return (set(guards),
             {n for n, since in fallers.items() if since is not None},
-            withdrawers)
+            withdrawers, set(holders))
 
 
 def _slot_eligible(wing, members) -> int:
@@ -771,15 +962,30 @@ def _end_withdraw(wing, now) -> None:
 
 
 def _stand_down(wing, why) -> None:
-    """Leaderless or command away: every Phase B branch, the attack and
-    reserve branches off, no move points or slots (like rejoin). A withdraw
-    in progress ends; a held reserve is committed, and a wing without
-    command never holds one later (spent either way)."""
+    """Leaderless or command away: every Phase B branch, the attack,
+    reserve and hold branches off, no move points or slots (like rejoin).
+    A withdraw in progress ends; a held reserve is committed, and a wing
+    without command never holds one later (spent either way). The Phase D
+    latches clear (a feint's cooldown starts; a reinforce cut short is no
+    cap, so no cooldown) and so does the decision itself: the next led
+    tick picks afresh, through the entry gates, on a fresh clock. (The
+    disable latch keys on wing.disable_target, which is kept.)"""
+    wing.status = None
     _commit_reserve(wing, why)
     wing.reserve_spent = True
-    if wing.withdraw_since is not None:
+    if wing.withdraw_since is not None or wing.feint_ally is not None:
         import App
-        _end_withdraw(wing, float(App.g_kUtopiaModule.GetGameTime()))
+        now = float(App.g_kUtopiaModule.GetGameTime())
+        if wing.withdraw_since is not None:
+            _end_withdraw(wing, now)
+        if wing.feint_ally is not None:
+            _end_feint(wing, now)
+    _log_hold(wing, None)
+    wing.reinforce_ally = None
+    wing.flank_ally = None
+    wing.screen_ally = None
+    wing.decision = None
+    wing.decision_since = 0.0
     wing.guarded = None
     if wing.attack_sig is not None:
         wing.attack_sig = None
@@ -794,7 +1000,8 @@ def _stand_down(wing, why) -> None:
         m.attack_target = None
         if m.is_player:
             continue
-        for kind in ("withdraw", "guard", "fallback", "attack", "reserve"):
+        for kind in ("withdraw", "hold", "guard", "fallback", "attack",
+                     "reserve"):
             _push(m, kind, False)
 
 
@@ -892,6 +1099,7 @@ def tick_safely(wing) -> None:
     try:
         tick_wing(wing)
     except Exception as exc:  # noqa: BLE001 - one wing must not stop the rest
+        wing.status = None            # allies never read a frozen status
         from engine import dev_mode
         dev_mode.log_swallowed("wings brain tick", exc)
 

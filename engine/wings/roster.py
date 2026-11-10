@@ -98,6 +98,33 @@ class Wing:
     disable_target: str | None = None
     disable_since: float | None = None
     disable_done: set = field(default_factory=set)
+    # Phase D: the side its allies share (allies.side_of falls back to the
+    # enemy group's identity) and the WingStatus the brain publishes at the
+    # end of a led tick (None when leaderless, away or standing down).
+    side: str | None = None
+    status: object = None
+    # Phase D latches and cooldowns (spec §4-§6), kept across ticks and fed
+    # into the Context: the ally a running reinforce helps (its age is the
+    # decision's, decision_since); ally -> game time its reinforce cooldown
+    # ends (set only when a reinforce ends by its cap); the ally a running
+    # feint lures toward,
+    # when the feint cooldown ends (it starts whenever a feint ends) and
+    # since when no enemy has been within engage_gu while feinting; the
+    # ally a running flank swings round and ally -> game time its flank
+    # cooldown ends (set only when a flank ends by its cap); the same pair
+    # for a running screen (fix wave I5); when the
+    # current decision became current; and the last hold (kind, ally, hold
+    # point, {name: ring index}) for the formation's incumbency.
+    reinforce_ally: str | None = None
+    reinforce_done: dict = field(default_factory=dict)
+    feint_ally: str | None = None
+    feint_cooldown_until: float = -1.0
+    feint_quiet_since: float | None = None
+    flank_ally: str | None = None
+    flank_done: dict = field(default_factory=dict)
+    screen_ally: str | None = None
+    screen_done: dict = field(default_factory=dict)
+    hold_prev: tuple | None = None
 
 
 _wings: dict[str, Wing] = {}

@@ -270,6 +270,8 @@ def _arm_wings(created, pFriendlies, pEnemies):
             chunk = names[start:start + n]
             for name in chunk:
                 DauntlessWings.AddMember(wid, name)
+            if chunk:
+                roster.wing_of(chunk[0]).side = side
             DauntlessWings.ArmWing(wid)
             for name in chunk:
                 out[name] = roster.wing_of(name)

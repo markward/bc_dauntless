@@ -34,6 +34,11 @@ def set_player_wing(wing_id) -> None:
     _player_wing_id = wing_id
 
 
+def player_wing_id():
+    """The wing set_player_wing marked (the player's escorts), or None."""
+    return _player_wing_id
+
+
 def player_focus():
     """The player's wing's current main target (its primary), or None when
     there is no such wing, it is leaderless or its command is away."""

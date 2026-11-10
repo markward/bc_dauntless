@@ -139,6 +139,7 @@ def arm(qb, plan) -> None:
         wing = roster.create_wing(
             "qb:" + gid, App.ObjectGroup_FromModule(QB_MODULE, attacked),
             km_priorities=lambda a=allegiance: km_targeting.priorities_for(a))
+        wing.side = allegiance
         _attacked[wing.wing_id] = attacked
         _by_group[gid] = wing
         for name in members:

@@ -767,3 +767,18 @@ def test_attack_end_is_logged_on_stand_down(monkeypatch, capsys, now):
     assert wing.leaderless is True
     err = capsys.readouterr().err
     assert "[wings] blue attack ends" in err.splitlines()
+
+
+def test_focus_face_end_logs_its_reason(monkeypatch, capsys, now):
+    """D play test 2 (2026-11-10): the log names why focus_face ended."""
+    monkeypatch.setenv("DAUNTLESS_WINGS_LOG", "1")
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    _set_face(ships["e1"], _LEFT, 0.1)
+    brain.tick_wing(wing)
+    assert wing.decision == "focus_face"
+    _set_face(ships["e1"], _LEFT, 0.9)
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert wing.decision != "focus_face"
+    err = capsys.readouterr().err
+    assert "[wings] blue focus_face ends (weak face recovered)" in err
