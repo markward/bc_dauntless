@@ -558,7 +558,8 @@ class _SDKLoader(importlib.abc.Loader):
         # tools/mission_harness.py.
         _qual = self.also_register_as or module.__name__
         if (_qual.startswith(("ships.", "Systems."))
-                or _qual in ("loadspacehelper", "Multiplayer.SpeciesToTorp")):
+                or _qual == "loadspacehelper"
+                or _qual == "Multiplayer.SpeciesToTorp"):
             try:
                 from engine.appc import sdk_overrides
                 sdk_overrides.on_sdk_module_exec(module, _qual)

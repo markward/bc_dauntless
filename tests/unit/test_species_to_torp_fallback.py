@@ -82,3 +82,15 @@ def test_real_sdk_module_through_the_loader():
     assert mod.PHOTON == 2
     assert mod.ROMULANCANNON == 15
     assert mod.PHOTON6 == mod.UNKNOWN == 0
+
+
+def test_both_sdk_loaders_route_species_to_torp():
+    """The runtime loader (tools/mission_harness.py) and its test twin
+    (tests/conftest.py) must gate identically: the tests only run the twin,
+    so without this the runtime loader could drop the hook unseen."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    gate = '_qual == "Multiplayer.SpeciesToTorp"'
+    for rel in ("tools/mission_harness.py", "tests/conftest.py"):
+        text = (root / rel).read_text(encoding="utf-8")
+        assert gate in text, f"{rel} does not route Multiplayer.SpeciesToTorp"
