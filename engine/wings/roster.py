@@ -124,7 +124,6 @@ class Wing:
     flank_done: dict = field(default_factory=dict)
     screen_ally: str | None = None
     screen_done: dict = field(default_factory=dict)
-    decision_since: float = 0.0
     hold_prev: tuple | None = None
 
 

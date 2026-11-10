@@ -55,7 +55,6 @@ class Context:
     feint_ally: Optional[str] = None
     feint_ready: bool = True
     feint_quiet_s: float = 0.0
-    decision_age_s: float = 0.0
     # The ally a running flank swings round (a latched flank keeps it) and
     # the allies on flank cooldown (a flank that ran to flank_max_s).
     flank_ally: Optional[str] = None
