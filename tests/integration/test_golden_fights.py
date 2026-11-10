@@ -10,10 +10,14 @@ platform: one row per tick (plus tick 0), no no-fire and no dropped row
 (k1_no_fire all zero: ruling R3), no ``TurnGoal`` hand-back to Python and no
 skipped subsystem-stage piece.
 
-The scenes are code; nothing is recorded. The golden A/B tool compares a
-scene's rows across commits, and ``test_motion_branches_python_motion_arm``
+The scenes are code; nothing is recorded. tools/golden_ab.py compares a
+scene's rows across commits (on demand, never in a gate), and ``test_motion_branches_python_motion_arm``
 compares the native motion arm with the Python motion arm live, in one
 process.
+
+Convention (spec §5): a commit that changes gameplay describes its change in
+the commit message (the first divergent tick and what differs), optionally
+pasted from a golden A/B report.
 """
 
 import pytest

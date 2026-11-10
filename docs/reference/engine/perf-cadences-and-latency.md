@@ -1,6 +1,6 @@
 # Perf cadences that are also gameplay latency
 
-> **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and will be compared across commits by the planned golden A/B tool (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to goldens or recordings pinning behaviour are historical.
+> **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and are compared across commits by `tools/golden_ab.py` (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to goldens or recordings pinning behaviour are historical.
 
 Eleven things that used to run every tick now run on a cadence (the table below). Each was landed as
 a performance win, and **each is also a behaviour change**. Read this before
@@ -343,7 +343,7 @@ every shift shows on multi-tick frames, i.e. below 60 fps.
 
 | # | What changes | Before | After | Pinned by |
 |---|---|---|---|---|
-| 1 | Poses combat reads on a multi-tick frame | every combat tick saw the poses after the frame's last motion tick | combat tick *i* sees motion tick *i* | `host_frames` scene (no recording since 2026-11-10; compare across commits with the planned A/B tool, spec Part B) |
+| 1 | Poses combat reads on a multi-tick frame | every combat tick saw the poses after the frame's last motion tick | combat tick *i* sees motion tick *i* | `host_frames` scene (no recording since 2026-11-10; compare across commits with `tools/golden_ab.py`, spec Part B) |
 | 2 | Combat results the AI sees | all of the frame's AI ticks ran before any of its combat | AI tick *i+1* sees combat tick *i*'s hits, deaths and events; so do the per-ship subsystem updates in `GameLoop.tick` (shields, power and its passive thaw, cloak, repair), which before saw them next frame | `host_frames` scene (no recording) |
 | 3 | GameLoop effect delivery (`owns_boundary=False`) | every GameLoop tick's held effects landed at combat boundary 1 | GameLoop tick *i*'s effects land at combat boundary *i* | `host_frames` scene (no recording) |
 | 4 | Fire keys, mouse fire, chords, raw keys, skip-dialogue | after the frame's GameLoop ticks | before tick 0; still before the first combat tick, and this frame's AI sees the firing state | `test_fire_press_reaches_the_frames_first_combat_tick`; ⚠️ Mark's live check |

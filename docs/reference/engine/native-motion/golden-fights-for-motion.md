@@ -1,6 +1,6 @@
 # Golden fights for the motion and whole-tick phases
 
-> **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and will be compared across commits by the planned golden A/B tool (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to recordings and `UPDATE_COMBAT_GOLDEN` are historical.
+> **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and are compared across commits by `tools/golden_ab.py` (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to recordings and `UPDATE_COMBAT_GOLDEN` are historical.
 
 **Status:** reading notes, 2026-11-03, for phases 2 and 4 of `docs/superpowers/specs/2026-11-03-native-motion-and-proximity-design.md` (NMP). Nothing was built, run or measured. Facts carry file:line; anything else is marked **inferred**.
 
