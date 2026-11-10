@@ -134,3 +134,11 @@ def test_guard_count_zero_disables_guards_at_six():
     ms = [V("m%d" % i, (i + 1, 0, 0)) for i in range(6)]
     frac = {m.name: 1.0 for m in ms}
     assert protect.pick_guards(ms, p, set(), frac) == []
+
+
+def test_pick_guards_skips_a_downed_face():
+    """A ship that would fall back on its weakest face never guards."""
+    low = ShipView("low", (5, 0, 0), 1.0, 0.9, 1.0, weak_face=0.1)
+    ok = V("ok", (50, 0, 0))
+    out = protect.pick_guards([low, ok], V("p"), set(), {"low": 1.0, "ok": 1.0})
+    assert out == ["ok"]

@@ -434,8 +434,10 @@ retarget after a kill is this cadence. `brain_period_s` is a dial in the
 
 Phase B's reactions ride the same tick
 (`docs/superpowers/specs/2026-11-09-wing-leaders-phase-b-design.md`): a guard
-is sent to cover a ship under heavy fire, a ship below `rotate_out_shield`
-falls back (and returns at `rotate_in_shield`), and a beaten wing starts or
+is sent to cover a ship under heavy fire, a ship whose weakest shield face
+is below `rotate_out_shield` (or, once, whose hull is below
+`rotate_out_hull`) falls back (and returns at `rotate_in_shield`, or after
+`rotate_max_s` for a hull fall-back), and a beaten wing starts or
 ends a withdraw, each up to 1 s after the condition holds. Heavy fire itself
 is a strength loss over `heavy_fire_window_s` (5 s), sampled once per brain
 tick, so a burst of damage is noticed 1-2 ticks after it lands. Not a bug: a

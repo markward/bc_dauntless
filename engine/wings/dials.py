@@ -23,6 +23,7 @@ DEFAULTS: dict = {
     "rotate_in_shield": 0.6,
     "rotate_max_s": 30.0,
     "rotate_cap_frac": 0.34,
+    "rotate_out_hull": 0.5,
     "withdraw_odds": 0.4,
     "withdraw_wing_frac": 0.5,
     "withdraw_step_gu": 300.0,
@@ -38,7 +39,8 @@ _STEP = {"leash_gu": 25.0, "leash_slack_gu": 25.0, "regroup_gather_gu": 25.0,
          "heavy_fire_frac": 0.05, "heavy_fire_attackers": 1, "guard_count": 1,
          "interpose_gu": 5.0, "rotate_out_shield": 0.05,
          "rotate_in_shield": 0.05, "rotate_max_s": 5.0,
-         "rotate_cap_frac": 0.05, "withdraw_odds": 0.05,
+         "rotate_cap_frac": 0.05, "rotate_out_hull": 0.05,
+         "withdraw_odds": 0.05,
          "withdraw_wing_frac": 0.05, "withdraw_step_gu": 25.0,
          "withdraw_clear_s": 1.0, "withdraw_max_s": 5.0,
          "withdraw_cooldown_s": 10.0}
@@ -49,13 +51,14 @@ _MIN = {"leash_gu": 25.0, "leash_slack_gu": 0.0, "regroup_gather_gu": 25.0,
         "heavy_fire_frac": 0.0, "heavy_fire_attackers": 1, "guard_count": 0,
         "interpose_gu": 0.0, "rotate_out_shield": 0.0,
         "rotate_in_shield": 0.0, "rotate_max_s": 1.0, "rotate_cap_frac": 0.0,
+        "rotate_out_hull": 0.0,
         "withdraw_odds": 0.0, "withdraw_wing_frac": 0.0,
         "withdraw_step_gu": 25.0, "withdraw_clear_s": 0.0,
         "withdraw_max_s": 1.0, "withdraw_cooldown_s": 0.0}
 _MAX = {"wing_popularity": 2.0, "stickiness": 1.0, "odds_ratio": 3.0,
         "desperate_hull": 1.0, "ram_chance": 1.0,
         "heavy_fire_frac": 1.0, "rotate_out_shield": 1.0,
-        "rotate_in_shield": 1.0, "rotate_cap_frac": 1.0, "withdraw_odds": 3.0,
+        "rotate_in_shield": 1.0, "rotate_cap_frac": 1.0, "rotate_out_hull": 1.0, "withdraw_odds": 3.0,
         "withdraw_wing_frac": 1.0}
 
 _dials: dict = dict(DEFAULTS)

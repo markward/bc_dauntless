@@ -566,3 +566,54 @@ def test_guard_incumbency_ends_when_protectee_changes(now):
     brain.tick_wing(wing)
     assert roster.member("m2").guard is True
     assert roster.member("m3").guard is False
+
+
+# ── weakest face, hull fall-back, logging (B play test 2026-11-10) ─────────
+
+def test_view_of_fills_weakest_face():
+    pSet = SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "WingTest")
+    a = _ship(pSet, "Akira", "a", (0.0, 0.0, 0.0))
+    shields = a.GetShields()
+    shields.SetCurShields(2, 0.1 * shields.GetMaxShields(2))
+    v = brain.view_of(a)
+    assert v.weak_face == pytest.approx(0.1)
+    assert v.shield == pytest.approx((5.0 + 0.1) / 6.0)
+
+
+def test_one_downed_face_sends_a_ship_back(now):
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    shields = ships["m2"].GetShields()
+    shields.SetCurShields(0, 0.0)
+    brain.tick_wing(wing)
+    assert roster.member("m2").fallback_since == 0.0
+    assert _status("m2", "fallback") == 1
+
+
+def test_hull_fallback_holds_then_is_spent(now):
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    ships["m2"].GetHull().SetConditionPercentage(0.45)
+    brain.tick_wing(wing)
+    m2 = roster.member("m2")
+    assert m2.fallback_since == 0.0
+    now[0] = dials.get("rotate_max_s") - 1.0
+    brain.tick_wing(wing)
+    assert m2.fallback_since == 0.0               # full shields: still out
+    now[0] = dials.get("rotate_max_s") + 1.0
+    brain.tick_wing(wing)
+    assert m2.fallback_since is None
+    now[0] = 3.0 * dials.get("rotate_max_s")      # past the cooldown
+    brain.tick_wing(wing)
+    assert m2.fallback_since is None              # hull alone: once only
+
+
+def test_fallback_and_return_are_logged(monkeypatch, now, capsys):
+    monkeypatch.setenv("DAUNTLESS_WINGS_LOG", "1")
+    wing, ships = _scene([(150.0, 0.0, 0.0)])
+    _set_shields(ships["m2"], 0.1)
+    brain.tick_wing(wing)
+    assert "[wings] blue m2 falls back (shields)" in capsys.readouterr().err
+    _set_shields(ships["m2"], 0.7)
+    now[0] = 1.0
+    brain.tick_wing(wing)
+    assert "[wings] blue m2 returns" in capsys.readouterr().err

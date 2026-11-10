@@ -33,12 +33,13 @@ def _rated_power(ship) -> float:
     return float(prop.GetPowerOutput()) if prop is not None else 0.0
 
 
-def _shield_fraction(ship) -> float:
+def _shield_faces(ship) -> list:
     shields = ship.GetShields()
     if shields is None:
-        return 0.0
-    return sum(float(shields.GetSingleShieldPercentage(i))
-               for i in range(_NUM_SHIELDS)) / _NUM_SHIELDS
+        return [0.0] * _NUM_SHIELDS
+    return [float(shields.GetSingleShieldPercentage(i))
+            for i in range(_NUM_SHIELDS)]
+
 
 
 def _cloaked(ship) -> bool:
@@ -55,12 +56,14 @@ def view_of(ship, wing_id=None, is_commander=False):
     loc = ship.GetWorldLocation()
     hull = ship.GetHull()
     target = ship.GetTarget()
+    faces = _shield_faces(ship)
     return assess.ShipView(
         name=ship.GetName(),
         pos=(loc.x, loc.y, loc.z),
         # No hull subsystem reads as intact, so it never trips desperation.
         hull=float(hull.GetConditionPercentage()) if hull is not None else 1.0,
-        shield=_shield_fraction(ship),
+        shield=sum(faces) / _NUM_SHIELDS,
+        weak_face=min(faces),
         power=_rated_power(ship),
         wing_id=wing_id,
         is_commander=is_commander,
@@ -451,7 +454,7 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
         fallers = rotate.fallback_flags(
             list(members.values()), {n: m.fallback_since
                                      for n, m in wing.members.items()},
-            now, exclude, wing.fallback_cooldown)
+            now, exclude, wing.fallback_cooldown, wing.fallback_hull)
         behind = rotate.fallback_point(anchor.pos, assess.centroid(near),
                                        dials.get("regroup_gather_gu"))
         for name, since in fallers.items():
@@ -463,7 +466,14 @@ def _apply_moves(wing, members, anchor, enemies, near, protectees, choice,
         if m.is_player:
             continue
         m.guard = name in guards
+        was = m.fallback_since
         m.fallback_since = fallers.get(name)
+        if was is None and m.fallback_since is not None:
+            log("%s %s falls back (%s)" % (
+                wing.wing_id, name,
+                rotate.reason(name, members.get(name), wing.fallback_hull)))
+        elif was is not None and m.fallback_since is None:
+            log("%s %s returns" % (wing.wing_id, name))
         m.move_point = points.get(name)
         _push(m, "withdraw", name in withdrawers)
         _push(m, "guard", m.guard)

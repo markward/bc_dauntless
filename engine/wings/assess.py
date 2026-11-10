@@ -14,6 +14,8 @@ class ShipView:
     wing_id: Optional[str] = None
     is_commander: bool = False
     target: Optional[str] = None
+    # Weakest single shield face; None reads as `shield` (the mean).
+    weak_face: Optional[float] = None
 
 
 def strength(v: ShipView) -> float:

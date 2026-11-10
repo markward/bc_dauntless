@@ -2,6 +2,7 @@
 
 from engine.wings import dials
 from engine.wings.assess import dist
+from engine.wings.rotate import weak_face
 
 
 def damage_rate(hist, now, window_s):
@@ -39,7 +40,7 @@ def threatened(protectees, rates, enemies, anchor):
 
 def pick_guards(members, protectee, exclude, strength_frac, prev=()):
     """Guard names for `protectee`. Eligible: not excluded, not the
-    protectee, strength fraction >= 0.6 and shields at or above
+    protectee, strength fraction >= 0.6 and weakest shield face at or above
     rotate_out_shield (a ship due to fall back never guards). `prev` are the
     current guards of the SAME protectee: each still eligible keeps its slot
     (incumbency, so a guard that left the crowd to reach its point is not
@@ -51,7 +52,7 @@ def pick_guards(members, protectee, exclude, strength_frac, prev=()):
     cands = [m for m in members
              if m.name not in exclude and m.name != protectee.name
              and strength_frac.get(m.name, 0.0) >= 0.6
-             and m.shield >= out]
+             and weak_face(m) >= out]
     cands.sort(key=lambda m: (dist(m.pos, protectee.pos), m.name))
     keep = [m.name for m in cands if m.name in prev][:count]
     fill = [m.name for m in cands if m.name not in keep]

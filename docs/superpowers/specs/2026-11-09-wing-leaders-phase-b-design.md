@@ -101,13 +101,21 @@ swarm (1.0) and loses to regroup once more than 75% of the wing has strayed.
 Rotate is a **standing rule**, like don't-chase, not a scored decision. A
 damaged ship falls back under any decision except Withdraw.
 
-- **Falls back** when its mean shield fraction is < `rotate_out_shield`
-  (dial, default **0.25**) and its hull fraction is ≥ `desperate_hull`.
-  Below that, desperation (Phase A) is the leaderless path and the ship keeps
-  fighting **(call)**.
-- **Returns** when its mean shield fraction is ≥ `rotate_in_shield` (dial,
-  default **0.6**) or after `rotate_max_s` (dial, default **30 s**)
-  **(call)**.
+- **Falls back** when its **weakest shield face** is < `rotate_out_shield`
+  (dial, default **0.25**), or **once per ship** when its hull fraction is <
+  `rotate_out_hull` (dial, default **0.5**), and in either case only while
+  its hull fraction is ≥ `desperate_hull`. Below that, desperation (Phase A)
+  is the leaderless path and the ship keeps fighting **(call)**. *Revised
+  after Mark's play test 2026-11-10: the first build used the MEAN of the six
+  faces and no hull trigger; one or two faces go down in a real fight, so the
+  mean almost never reached 0.25 and nobody rotated.*
+- **Returns** when its weakest face is ≥ `rotate_in_shield` (dial, default
+  **0.6**) or after `rotate_max_s` (dial, default **30 s**) **(call)**. A
+  hull fall-back ignores shields and holds the full `rotate_max_s` (hull
+  does not recharge); after it the ship's hull trigger is spent, and only a
+  downed face sends it back again.
+- Each fall-back and return is logged under `DAUNTLESS_WINGS_LOG=1`
+  (`<wing> <ship> falls back (shields|hull)`, `<wing> <ship> returns`).
 - **Cap:** at most `max(1, floor(rotate_cap_frac × live members))` (dial,
   default **0.34**) ships fall back at once. The worst shields go first.
 - **Never:** the commander, the player, or a guard. A member that is the
@@ -247,7 +255,8 @@ wing like any protect ship **(call)**, so your AI escorts cover you.
    primary is the attacker nearest the protectee.
 3. Guards: 1, or 2 in a wing of 6 or more, the healthiest and nearest to the
    protectee, holding a point 40 GU out toward the attacker.
-4. Rotate out below 25% shields and back at 60% or after 30 s. At most a third
+4. Rotate out below 25% on the weakest shield face (or once below 50% hull)
+   and back at 60% or after 30 s. At most a third
    of the wing falls back at once. The fall-back point is behind the commander,
    away from the enemy.
 5. Withdraw needs odds under 0.4 and the wing under half its armed strength.
