@@ -63,3 +63,36 @@ def test_subsystems_scene_is_a_golden_scene():
     assert scene.ticks == 600
     assert scene.run is golden_fight._native_subsystems
     assert golden_rows.COMPONENTS is golden_fight.COMPONENTS
+
+
+def test_describe_event_index_past_vocabulary_falls_back():
+    text = describe(1, (2, 0, 9), (1, [], [[1, 2, 3]], [], [], [], []))
+    assert "[9]" in text
+
+
+def test_subsystem_scene_ship_row_is_not_fight_ship():
+    row = ["ship", "Player", ["x"], ["y"]]
+    text = describe(1, (1, 0, 2), (1, [row], [], [], [], [], []),
+                    scene="native_subsystems_scene")
+    assert "IsDead" not in text
+    assert "_articulation_poses" in text
+
+
+def test_vocabulary_defaults_to_fight_scenes():
+    assert golden_rows.vocabulary(None) == (golden_rows.FIELDS,
+                                            golden_rows.EVENT_FIELDS)
+    assert golden_rows.vocabulary("other") == (golden_rows.FIELDS,
+                                               golden_rows.EVENT_FIELDS)
+
+
+def test_subsystem_vocab_matches_scene():
+    from tests.helpers import subsystems_scene as s
+    fields, events = golden_rows.SCENE_VOCAB["native_subsystems_scene"]
+    assert fields["ship"] == ("name",) + s._SHIP
+    assert fields["sub"] == ("label",) + s._SUBSYSTEM + s._WATCHERS
+    assert fields["shield"][:1 + len(s._SHIELD)] == ("name",) + s._SHIELD
+    assert fields["plant"][:1 + len(s._PLANT)] == ("name",) + s._PLANT
+    assert fields["consumer"] == ("label",) + s._CONSUMER
+    assert fields["cloak"] == ("name",) + s._CLOAK
+    assert events[:2] == ("tick", "in_stage")
+    assert len(events) == 6
