@@ -7,6 +7,10 @@ DEFAULTS: dict = {
     "leash_gu": 200.0,
     "leash_slack_gu": 100.0,
     "regroup_gather_gu": 100.0,
+    # A rejoining member in-system warps back only beyond this distance
+    # from its commander (D play test: at leash + slack every dogfight
+    # overshoot warped).
+    "rejoin_warp_gu": 600.0,
     "engage_gu": 350.0,
     "wing_popularity": -0.3,
     "stickiness": 0.25,
@@ -65,6 +69,7 @@ DEFAULTS: dict = {
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {"leash_gu": 25.0, "leash_slack_gu": 25.0, "regroup_gather_gu": 25.0,
+         "rejoin_warp_gu": 50.0,
          "engage_gu": 25.0, "wing_popularity": 0.1, "stickiness": 0.05,
          "odds_ratio": 0.05, "desperate_hull": 0.05, "ram_chance": 0.05,
          "brain_period_s": 0.25, "heavy_fire_window_s": 0.5,
@@ -91,6 +96,7 @@ _STEP = {"leash_gu": 25.0, "leash_slack_gu": 25.0, "regroup_gather_gu": 25.0,
          "flank_max_s": 5.0, "flank_cooldown_s": 5.0,
          "screen_max_s": 5.0, "screen_cooldown_s": 5.0}
 _MIN = {"leash_gu": 25.0, "leash_slack_gu": 0.0, "regroup_gather_gu": 25.0,
+        "rejoin_warp_gu": 100.0,
         "engage_gu": 25.0, "wing_popularity": -2.0, "stickiness": 0.0,
         "odds_ratio": 0.1, "desperate_hull": 0.0, "ram_chance": 0.0,
         "brain_period_s": 0.25, "heavy_fire_window_s": 0.5,

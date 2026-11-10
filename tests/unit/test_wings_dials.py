@@ -2,6 +2,7 @@ from engine import dev_dial_groups
 from engine.wings import dials
 
 SPEC = {"leash_gu": 200.0, "leash_slack_gu": 100.0, "regroup_gather_gu": 100.0,
+        "rejoin_warp_gu": 600.0,
         "engage_gu": 350.0, "wing_popularity": -0.3, "stickiness": 0.25,
         "odds_ratio": 0.8, "desperate_hull": 0.4, "ram_chance": 0.3,
         "brain_period_s": 1.0, "heavy_fire_window_s": 5.0,
@@ -119,3 +120,10 @@ def test_screen_cap_dials_step_and_floor():
     d["screen_max_s"], d["screen_cooldown_s"] = 5.0, 0.0
     assert dials.step(d, "screen_max_s", -1)["screen_max_s"] == 5.0
     assert dials.step(d, "screen_cooldown_s", -1)["screen_cooldown_s"] == 0.0
+
+
+def test_rejoin_warp_gu_steps_and_floors():
+    d = dict(dials.DEFAULTS)
+    assert dials.step(d, "rejoin_warp_gu", 1)["rejoin_warp_gu"] == 650.0
+    d["rejoin_warp_gu"] = 100.0
+    assert dials.step(d, "rejoin_warp_gu", -1)["rejoin_warp_gu"] == 100.0

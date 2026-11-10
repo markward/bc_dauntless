@@ -67,20 +67,32 @@ class WingRejoin(_FollowObject):
         return _FollowObject.Update(self)
 
     def _WarpBack(self, pShip, pCommander):
-        """Beyond leash + slack of the commander: in-system warp back to
+        """Beyond rejoin_warp_gu of the commander: in-system warp back to
         regroup_gather_gu off its surface, with BC's own InSystemWarp (as
         Intercept uses; it waits for the nose to come round, which
         FollowObject's turn provides). FollowObject alone flies at impulse
         and never catches a commander as fast as this ship, e.g. one that
         warped ahead to another wing's fight (ruling 2026-11-10). A warp
         already under way runs on; an earlier warp's once-per-cycle latch
-        is cleared first, since that latch is Intercept's, not ours."""
-        from engine.wings import dials
+        is cleared first, since that latch is Intercept's, not ours.
+        Between leash + slack and rejoin_warp_gu the member flies back at
+        impulse: warping on every dogfight overshoot had ships skipping
+        about all fight (D play test, 2026-11-10). Each warp begun is
+        logged, so a play-test log tells ours from Intercept's."""
+        from engine.wings import brain, dials, roster
         if pShip.IsDoingInSystemWarp():
             return 1
         vDiff = pCommander.GetWorldLocation()
         vDiff.Subtract(pShip.GetWorldLocation())
-        if vDiff.Length() <= dials.get("leash_gu") + dials.get("leash_slack_gu"):
+        fDist = vDiff.Length()
+        if fDist <= dials.get("rejoin_warp_gu"):
             return 0
         pShip.StopInSystemWarp()
-        return pShip.InSystemWarp(pCommander, dials.get("regroup_gather_gu"))
+        iWarping = pShip.InSystemWarp(pCommander,
+                                      dials.get("regroup_gather_gu"))
+        if iWarping:
+            wing = roster.wing_of(pShip.GetName())
+            brain.log("%s %s rejoin warp -> %s (%.0f GU)"
+                      % (wing.wing_id if wing is not None else "-",
+                         pShip.GetName(), pCommander.GetName(), fDist))
+        return iWarping

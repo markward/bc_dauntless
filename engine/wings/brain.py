@@ -70,7 +70,8 @@ def _cloaked(ship) -> bool:
     return cloak is not None and bool(cloak.IsCloaked() or cloak.IsCloaking())
 
 
-def view_of(ship, wing_id=None, is_commander=False, weapons=False):
+def view_of(ship, wing_id=None, is_commander=False, retiring=False,
+            weapons=False):
     if not _alive(ship):
         return None
     loc = ship.GetWorldLocation()
@@ -90,6 +91,7 @@ def view_of(ship, wing_id=None, is_commander=False, weapons=False):
         target=target.GetName() if target is not None else None,
         faces=faces if len(faces) == _NUM_SHIELDS else (),
         weapons_down=_weapons_down(ship) if weapons else False,
+        retiring=retiring,
     )
 
 
@@ -211,10 +213,13 @@ def reset_cache() -> None:
 
 
 def _roster_flags(name):
+    """(wing_id, is_commander, retiring) for a ship from the roster."""
     other = roster.wing_of(name)
     if other is None:
-        return (None, False)
-    return (other.wing_id, other.commander == name)
+        return (None, False, False)
+    m = other.members.get(name)
+    return (other.wing_id, other.commander == name,
+            m is not None and m.fallback_since is not None)
 
 
 def _enemy_views(wing, home, candidates, ship_of):
@@ -260,7 +265,8 @@ def _enemy_views(wing, home, candidates, ship_of):
             flags = _roster_flags(v.name)
             if flags != old:
                 v = dataclasses.replace(
-                    v, wing_id=flags[0], is_commander=flags[1])
+                    v, wing_id=flags[0], is_commander=flags[1],
+                    retiring=flags[2])
             views.append(v)
             all_flags.append(flags)
         entry.views, entry.flags = views, all_flags

@@ -153,7 +153,12 @@ def _outmatched(ctx) -> bool:
 
 
 def _weakest_choice(ctx, gather=False) -> Choice:
-    reach = sorted(_in_reach(ctx), key=lambda v: (assess.strength(v), v.name))
+    """The weakest enemy in reach, then the next two. An enemy falling back
+    to recharge (retiring) comes after every one still fighting: chasing it
+    strung the wing out and ended each focus_face within seconds (D play
+    test, 2026-11-10)."""
+    reach = sorted(_in_reach(ctx),
+                   key=lambda v: (v.retiring, assess.strength(v), v.name))
     if not reach:
         return Choice(None, (), gather)
     return Choice(reach[0].name, tuple(v.name for v in reach[1:3]), gather)

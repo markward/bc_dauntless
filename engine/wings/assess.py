@@ -18,6 +18,9 @@ class ShipView:
     weapons_down: bool = False
     # Weakest single shield face; None reads as `shield` (the mean).
     weak_face: Optional[float] = None
+    # A wing member falling back to recharge (its wing's fallback_since):
+    # target picks pass over it while anything else is in reach.
+    retiring: bool = False
 
 
 def strength(v: ShipView) -> float:

@@ -366,7 +366,7 @@ def test_rejoin_warps_to_a_far_commander():
     An earlier warp's latch does not block it."""
     _wing, ships, _stock = _scene()
     m3 = ships["m3"]
-    m3.SetTranslateXYZ(0.0, -600.0, 0.0)      # nose (+Y) on m1 at origin
+    m3.SetTranslateXYZ(0.0, -800.0, 0.0)      # nose (+Y) on m1 at origin
     ships["m1"].SetTranslateXYZ(0.0, 0.0, 0.0)
     m3._warp_consumed = True
     script = _rejoin_ai(m3.GetAI()).GetScriptInstance()
@@ -387,10 +387,38 @@ def test_rejoin_does_not_warp_inside_the_leash():
     assert not m3.IsDoingInSystemWarp()
 
 
+def test_rejoin_flies_at_impulse_short_of_rejoin_warp_gu():
+    """D play test (2026-11-10): beyond leash + slack but inside
+    rejoin_warp_gu (an ordinary dogfight overshoot) a rejoining member
+    flies back at impulse; warping there had ships skipping about all
+    fight."""
+    _wing, ships, _stock = _scene()
+    m3 = ships["m3"]
+    m3.SetTranslateXYZ(0.0, -500.0, 0.0)      # nose on m1, 500 GU out
+    ships["m1"].SetTranslateXYZ(0.0, 0.0, 0.0)
+    script = _rejoin_ai(m3.GetAI()).GetScriptInstance()
+    assert script.Update() == AIC.US_ACTIVE
+    assert not m3.IsDoingInSystemWarp()
+
+
+def test_rejoin_warp_is_logged(monkeypatch, capsys):
+    _wing, ships, _stock = _scene()
+    monkeypatch.setenv("DAUNTLESS_WINGS_LOG", "1")
+    m3 = ships["m3"]
+    m3.SetTranslateXYZ(0.0, -800.0, 0.0)
+    ships["m1"].SetTranslateXYZ(0.0, 0.0, 0.0)
+    script = _rejoin_ai(m3.GetAI()).GetScriptInstance()
+    script.Update()
+    script.Update()                            # under way: not logged again
+    err = capsys.readouterr().err
+    assert err.count("rejoin warp") == 1
+    assert "m3 rejoin warp -> m1 (800 GU)" in err
+
+
 def test_rejoin_turns_before_it_warps():
     _wing, ships, _stock = _scene()
     m3 = ships["m3"]
-    m3.SetTranslateXYZ(0.0, 600.0, 0.0)       # nose (+Y) away from m1
+    m3.SetTranslateXYZ(0.0, 800.0, 0.0)       # nose (+Y) away from m1
     ships["m1"].SetTranslateXYZ(0.0, 0.0, 0.0)
     script = _rejoin_ai(m3.GetAI()).GetScriptInstance()
     assert script.Update() == AIC.US_ACTIVE

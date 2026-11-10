@@ -426,3 +426,19 @@ Rulings made while building Phase D (2026-11-09), none of them Mark's:
 18. **Allies are per set.** `WingStatus.set_name` is the home set's name,
     and `side_allies` keeps only allies in the asking wing's set: an
     anchor in another set's coordinates is never compared with ours.
+19. **D play test 1 (Mark, 2026-11-10): ships skipping about all fight.**
+    - The rejoin warp (Phase B §10 item 7) now starts only beyond
+      `rejoin_warp_gu` (dial **600 GU**, step 50, min 100), well past a
+      dogfight overshoot. Between leash + slack (300 GU) and that, a
+      rejoining member flies back at impulse. Each rejoin warp begun is
+      logged (`<wing> <ship> rejoin warp -> <commander> (<d> GU)`), so a
+      play-test log tells ours from Intercept's own dash.
+    - Target picks pass over an enemy that is falling back. A wing member
+      with `fallback_since` set reads as `ShipView.retiring`, re-read from
+      the roster each use as the commander flag is, and
+      `decisions._weakest_choice` sorts it after every enemy still
+      fighting. In the log the Sovereign wing's weakest target was nearly
+      always an Akira that had just fallen back; it switched decision 32
+      times in one fight, chasing each one out of reach. Swarm, regroup,
+      focus_face and envelop all take their primary from this pick, so
+      none of them chases a faller while anything else is in reach.
