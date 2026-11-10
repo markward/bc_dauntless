@@ -42,15 +42,11 @@ anything** before opening the diff, on contributor PRs and on pushes to main.
    HEAD on the same machine and report where they first differ. This is how a
    refactor, perf or native-port branch proves "no behaviour change", and how
    a behaviour change describes itself.
-3. **GitHub Actions CI** that answers as much of "did this break anything?"
-   as can be answered without BC content:
-   - **Layer 1, rules check:** the project's tree guards and drift tests, plus
-     new repo-hygiene rules.
-   - **Layer 2, build and content-free tests:** build on macOS, Windows and
-     Linux; run the C++ and Python tests that need no BC content.
-4. CI results honest about what they cover: a green tick means "builds
-   everywhere, keeps the rules, passes the content-free tests", never "the
-   game still works".
+3. **GitHub Actions CI**, deliberately small: build on macOS, Windows and
+   Linux, and run the project's rules checks (tree guards, drift tests, a
+   file-size rule). No gameplay or unit tests run on GitHub in this work.
+4. CI results honest about what they cover: a green tick means "builds on
+   all three platforms and keeps the rules", never "the game still works".
 
 ## 3. Non-goals
 
@@ -66,15 +62,21 @@ anything** before opening the diff, on contributor PRs and on pushes to main.
   on PRs). Possible later step; not in this work. This Mac is never that
   runner: it is used for performance testing.
 - A licensable test NIF from the community (Mark will ask later) so the NIF
-  loader can be tested without BC. Layer 2 should make it easy to add, nothing
-  more. The mesh-fix drift test can never use it: its inputs are the stock
+  loader can be tested without BC. The mesh-fix drift test can never use it: its inputs are the stock
   hulls by content hash.
+- Running unit or gameplay tests on GitHub. Planned once and cut on
+  2026-11-10 (§7.4): classifying ~19,000 tests into CI and local lists, and
+  keeping per-platform failure ledgers, would have added a "classify before
+  you can merge" chore to every new test file, the kind of friction this
+  spec exists to remove, for a signal limited to tests that never touch BC
+  content.
 - Replacing the merge gate or the full gate. Both keep their rules
   (CLAUDE.md "Test gate"). CI adds a signal; it does not move the gate.
 
 ## 4. Anti-goals (would make this a failure even if it works)
 
-- CI that is green while testing nothing: mass skips counted as passes.
+- CI that is green while testing nothing: a check that skips counts as
+  failed, never passed.
 - CI that needs BC content, or quietly downloads or caches it.
 - A golden A/B that runs as part of a gate, per task, or automatically on this
   machine (it is CPU-heavy and wrecks perf baselines).
@@ -235,159 +237,104 @@ gate, CI, or a per-task loop, and never run unasked on this machine.
 
 ## 7. Part C — GitHub Actions CI
 
-There are no workflows today (`.github/` does not exist).
+There are no workflows today (`.github/` does not exist). Mark's question
+was whether CI would make things easier; it does only where the signal is
+real and the upkeep is near zero. So Part C is builds plus rules checks, and
+nothing that needs a list maintained by hand or by generator.
 
 ### 7.1 Constraints found in the code
 
-- `tests/conftest.py` **fails fast** without both BC roots, on purpose (no
-  800 silent skips). Every pytest test, the tree guards included, is behind
-  it today.
-- The conftest's autouse fixture calls `native_combat.configure()` and
-  `native_motion.configure()`, which need the built `_dauntless_host`
-  module. So pytest in CI runs after a build, unless the builder finds a
-  clean way to run the pure guards without one.
-- About 52 of the 256 gtest source files reference the content root
-  (`native/tests/support/content_root.h`); the rest may still need a GL
-  context or CEF (`renderer_tests`, `ui_cef_gpu_tests`). GitHub runners have
-  no GPU.
-- The build fetches CEF (pinned, hashed; ~hundreds of MB per platform),
-  pybind11, nlohmann_json and OpenAL Soft. Intel macOS has no CEF hash; the
-  macOS runner must be arm64.
-- `.gitattributes` forces LF everywhere; the drift tests rely on it, which
-  matters on the Windows runner.
+- `tests/conftest.py` **fails fast** without both BC roots, on purpose. CI
+  satisfies it with a **fake install**: a temp tree holding only the markers
+  `engine.paths` validates, built by the same code as the existing
+  `fake_bc_install` fixture. The conftest itself is unchanged.
+- The conftest's autouse fixture configures native combat, which needs the
+  built `_dauntless_host` module, so the pytest rules checks run after the
+  build.
+- The build fetches CEF (pinned, hashed, hundreds of MB per platform),
+  pybind11, nlohmann_json, OpenAL Soft and FreeType. Intel macOS has no CEF
+  hash, so the macOS runner must be arm64. Cache the FetchContent downloads.
+- `.gitattributes` forces LF everywhere; Windows must not override it.
+- Debug is the canonical build type (some digest tests are bit-exact only at
+  -O0); CI builds Debug so a later test step would not need a second build.
 
-### 7.2 Layer 1 — rules check
+### 7.2 Builds
 
-Runs on every PR and every push to `main`. Linux. Target: a few minutes once
-the build is cached.
+Every PR and every push to `main`, one job per platform: Linux x64, macOS
+arm64, Windows x64 (MSVC). Each runs the project's normal configure and
+build (`cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug` plus the Python pins,
+then `cmake --build build -j`), CEF on, and fails if the build fails. That
+is the whole job on macOS and Windows.
 
-Content:
+### 7.3 Rules checks (Linux job, after its build)
 
-1. The existing tree guards and drift tests that need no BC content:
-   `tests/unit/test_path_indirection.py`, `tests/unit/test_install_write_guard.py`,
-   `tests/tools/test_raw_key_reads.py`, `tests/unit/test_gate_tiers.py`,
-   `tests/docs/`, and the drift tests `test_app_icon_drift.py`,
-   `test_dauntless_dialogue_drift.py`, `test_rock_catalogue_drift.py`,
-   `test_sprite_drift.py`, `test_viewscreen_font_drift.py`. **Not**
-   `test_mesh_fixes_drift.py` (reads stock NIFs). Each must actually pass with
-   no BC content; one that turns out to read content is dropped from CI and
-   the plan says so.
-2. **`tests/known_failures.txt` holds no failure entries** (the ledger rule).
+1. The existing tree guards and drift tests, run with pytest against the
+   fake install: `tests/unit/test_path_indirection.py`,
+   `tests/unit/test_install_write_guard.py`, `tests/tools/test_raw_key_reads.py`,
+   `tests/unit/test_gate_tiers.py`, `tests/docs/`, and the drift tests
+   `test_app_icon_drift.py`, `test_dauntless_dialogue_drift.py`,
+   `test_rock_catalogue_drift.py`, `test_sprite_drift.py`,
+   `test_viewscreen_font_drift.py`. **Not** `test_mesh_fixes_drift.py` (reads
+   stock NIFs). This is a fixed list in the workflow. Any skip fails the step
+   (`-rs` plus a check of the summary, or pytest's own option the builder
+   picks). A check that turns out to need BC content is removed from the
+   list in the same change, and the plan's hand-off says so.
+2. **`tests/known_failures.txt` holds no failure entries**: every
+   non-comment line starts with `skip:` or `optional-mod:`.
 3. **File-size rule (my call on thresholds):**
-   - any file under `tests/` added or changed by the PR over **256 KB** fails;
-   - any other added or changed file over **5 MB** fails unless its path is
-     listed in a committed allowlist (`tools/ci/large_files.txt`, path +
-     reason). The allowlist is seeded with today's files over 5 MB;
-   - the job summary always lists every added/changed file over 1 MB, so
-     growth is visible without failing.
+   - any file under `tests/` added or changed over **256 KB** fails;
+   - any other added or changed file over **5 MB** fails unless listed in
+     `tools/ci/large_files.txt` (path + reason), seeded with today's files
+     over 5 MB;
+   - the job summary lists every added or changed file over 1 MB.
 
-### 7.3 Layer 2 — build and content-free tests
+The rules checks run on Linux only **(my call)**: they test the tree, not
+the platform. Running them on Windows too (where the drift tests would also
+catch line-ending trouble) is a later option.
 
-Runs on every PR and every push to `main`, one job per platform: macOS arm64,
-Windows x64, Linux x64.
+### 7.4 What was cut, and why (decided by Mark, 2026-11-10)
 
-1. **Build** with the project's normal command (`cmake -B build -S . &&
-   cmake --build build -j`), Release or the project default — the builder
-   picks and says why. Cache CEF and the FetchContent downloads.
-2. **Content-free gtests:** run each gtest binary from a generated list of
-   tests that pass with no BC content and no GPU.
-3. **Content-free pytest:** on Linux at least (all three if cheap): the tests
-   from a generated list that pass with no BC content.
+An earlier version of this section ran every test that needs no BC content:
+two generated lists classifying all ~16,000 Python and ~3,000 C++ tests, a
+merge-tier guard failing on any unclassified test, a classify command, and
+shrink-only failure ledgers per platform. Mark asked whether it would make
+things easier; it would not. Every new test file would need classifying
+before it could merge, a chore of the same kind as re-recording goldens; the
+ledgers would mean debugging failures that exist only on GitHub's runners (no
+GPU, fake install); and the signal covers only tests that never touch BC
+content, while Mark merges locally and pushes `main` only occasionally. The
+earlier ruling on ledgers (Windows and macOS go live with failures listed) is
+moot with them.
 
-**No silent skips (anti-goal §4).** CI never runs "everything and lets
-content tests skip". It runs an explicit list, and **any test on the list
-that skips or errors fails the job**.
+If the build-only CI proves useful, running tests on GitHub is a separate,
+later spec, starting from which tests are worth it.
 
-**Every test is classified; a new test is classified by rule (my call).**
-There are two GENERATED lists, never hand-edited: `content_free` (passes with
-no BC content) and `needs_content`. Every test (pytest node ID; each gtest
-case) is on exactly one of them. A guard test, cheap and in the merge tier,
-fails on:
-- a test on neither list ("unclassified"), with the command that fixes it;
-- a listed test that no longer exists.
+### 7.5 Workflow behaviour
 
-The classify command runs **only the unclassified tests**, in the no-content
-mode, on this machine, and adds each to the list its result puts it on. That
-is a handful of focused tests, not a suite run, so it is allowed under the
-"focused tests only" rule, and a developer or contributor runs it in the same
-change that adds the test. This matches the gate tiers' "in by rule, not by
-memory": a new content-free test reaches CI the moment it is classified,
-which is in the change that adds it. One list serves all three platforms. A
-content-free test that fails on Windows, macOS or Linux CI is a real failure
-on that platform, never a reason to drop it from the list. (How the first
-Windows and macOS runs treat the failures they will surface is §7.5.)
-
-To run pytest with no BC content at all, the conftest needs an explicit,
-narrow CI mode (an env var) in which it skips the fail-fast and SDK set-up
-but **only collects tests on the list**. Outside that mode the fail-fast is
-unchanged. The builder designs the mode; the fail-fast's purpose must
-survive it.
-
-**The first classification** means running every test once with no content
-roots. That is a whole-suite run, which CLAUDE.md forbids unasked on this
-machine. So it runs on a GitHub Linux runner **(my call)**: a manually
-triggered (`workflow_dispatch`) job that uploads the two lists as an artifact
-for a person to commit. It costs this machine nothing, and it is the
-environment the lists are for (no GPU, no content). The same job is how the
-lists are rebuilt wholesale later. After the first time, the classify command
-above keeps them current.
-
-**Layer 2 should make later additions easy:** a licensed test NIF (§3)
-dropped into a fixtures directory is picked up by a content-free test, and
-cross-platform behaviour scenes (short scenes on made-up ships, checking
-outcomes within a tolerance) can be added as ordinary tests on the list.
-Building those scenes is not in this work.
-
-### 7.4 Workflow behaviour
-
-- Triggers: `pull_request` (not `pull_request_target`: contributor code must
-  never run with repo secrets) and `push` to `main`. No secrets are needed.
+- Triggers: `pull_request` (never `pull_request_target`: contributor code
+  must never run with repo secrets), `push` to `main`, and
+  `workflow_dispatch`. Permissions `contents: read`; no secrets.
 - Fork PRs from first-time contributors wait for approval (GitHub's default
-  for public repos); keep that default.
+  for public repos); keep it.
 - Merging is not blocked on CI by branch protection **(my call)**: Mark
-  merges locally and pushes, and the merge gate stays the authority. CI
-  reports; it does not gate.
-- Each job's summary states plainly what was and was not tested
-  ("content-free tests only; gameplay scenes need BC content and were not
-  run"), so a green tick is never read as more than it is.
-
-### 7.5 First runs on each platform: failures are listed, printed, and only shrink
-
-Decided by Mark: the Windows and macOS jobs go live even though their first
-runs will surface failing content-free tests (parts of Windows have never
-run). The failures are listed and printed on every run until they are fixed.
-
-- Each platform has its own ledger, `tools/ci/failing_<platform>.txt`: test
-  ID plus a one-line reason. It is **separate from `tests/known_failures.txt`**,
-  which stays empty and is still checked by layer 1. These ledgers record
-  platform bugs that CI found, not baselines for the gates.
-- A ledger is seeded **once**, from that platform's first full run of the
-  `content_free` list. After that it can **only shrink**:
-  - a failure not on the ledger fails the job (a new regression, to fix, not
-    to list);
-  - a listed test that now passes fails the job with "remove it from the
-    ledger", so a fix is recorded the moment it lands;
-  - no tool or workflow appends entries after seeding.
-- Every run's job summary prints the platform's ledger in full (count first,
-  then each test and reason), so the open platform bugs are never out of
-  sight.
-- The same mechanism applies to Linux **(my call)**, though Linux is
-  expected to seed with few or no entries.
-- Fixing ledger entries is ordinary bug work, outside this spec. Filing them
-  as GitHub issues follows CLAUDE.md's issue rules (only when Mark asks).
+  merges locally and pushes, and the merge gate stays the authority.
+- Each job's summary begins: "Builds and rules checks only: no unit or
+  gameplay tests run on GitHub."
 
 ## 8. Order of work
 
 1. Part A (retire the recordings), first: it unblocks merges now.
 2. Part B (golden A/B), so refactor branches have a replacement before they
    need one.
-3. Part C layer 1, then layer 2 (Linux first, then macOS, then Windows).
+3. Part C: the Linux build and rules checks, then the macOS and Windows
+   builds.
 
 Each part merges on its own. Per CLAUDE.md, no gate runs per task; focused
 tests plus the tree guards during development.
 
 ## 9. Open for later
 
+- Running tests on GitHub (§7.4), if the build-only CI earns its keep.
 - Self-hosted runner with BC content for the merge gate on PRs.
 - The community test NIF and the cross-platform behaviour scenes.
 - History rewrite, if repo size ever becomes a real problem.
