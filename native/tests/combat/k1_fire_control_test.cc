@@ -3,7 +3,7 @@
 // one record, the no-fires (NO FIRE) and the session stack. Fire control's
 // Python copy is deleted (fire control native only, M3): the end-to-end
 // checks are tests/unit/test_native_k1_dispatch.py (recorded expectations)
-// and tests/integration/test_golden_fights.py.
+// and the scene invariants in tests/integration/test_golden_fights.py.
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif

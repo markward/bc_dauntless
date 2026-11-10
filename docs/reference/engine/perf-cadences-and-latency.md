@@ -1,5 +1,7 @@
 # Perf cadences that are also gameplay latency
 
+> **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and will be compared across commits by the planned golden A/B tool (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to goldens or recordings pinning behaviour are historical.
+
 Eleven things that used to run every tick now run on a cadence (the table below). Each was landed as
 a performance win, and **each is also a behaviour change**. Read this before
 reporting a delayed in-game reaction as a bug — the delay may be the design.
@@ -289,8 +291,8 @@ edge, and `engine/appc/effect_queue.py` posts them when the queue is
 delivered, **one tick after the beam gripped or dropped**. A handler that
 reacts to the grip therefore acts a tick late. E7M2's tractor win also lands
 one tick later. That is the design, not a missed event. The `tractor_modes`
-golden records it: the SDK's `ConditionFiringTractorBeam` ends the tick at 0
-with the beam off.
+scene (recorded until 2026-11-10, no recording now) showed it: the SDK's
+`ConditionFiringTractorBeam` ends the tick at 0 with the beam off.
 
 ### 2026-11-04, briefly: the pull itself started a FRAME later
 
@@ -336,14 +338,14 @@ drain, Quick Battle's preload-done spawn, object deletions, player identity,
 `sim.keys`, `sim.input`, the fire keys and Manual Aim) moved to **frame
 start, before tick 0**. Game time and tick counts are unchanged, so none of
 the four cadences above moved. On a one-tick frame with no input the two
-orders are the same sequence (the `host_frames_tpf1` golden is unchanged);
+orders are the same sequence (the `host_frames_tpf1` recording was unchanged when it existed);
 every shift shows on multi-tick frames, i.e. below 60 fps.
 
 | # | What changes | Before | After | Pinned by |
 |---|---|---|---|---|
-| 1 | Poses combat reads on a multi-tick frame | every combat tick saw the poses after the frame's last motion tick | combat tick *i* sees motion tick *i* | `host_frames` golden |
-| 2 | Combat results the AI sees | all of the frame's AI ticks ran before any of its combat | AI tick *i+1* sees combat tick *i*'s hits, deaths and events; so do the per-ship subsystem updates in `GameLoop.tick` (shields, power and its passive thaw, cloak, repair), which before saw them next frame | `host_frames` |
-| 3 | GameLoop effect delivery (`owns_boundary=False`) | every GameLoop tick's held effects landed at combat boundary 1 | GameLoop tick *i*'s effects land at combat boundary *i* | `host_frames` |
+| 1 | Poses combat reads on a multi-tick frame | every combat tick saw the poses after the frame's last motion tick | combat tick *i* sees motion tick *i* | `host_frames` scene (no recording since 2026-11-10; compare across commits with the planned A/B tool, spec Part B) |
+| 2 | Combat results the AI sees | all of the frame's AI ticks ran before any of its combat | AI tick *i+1* sees combat tick *i*'s hits, deaths and events; so do the per-ship subsystem updates in `GameLoop.tick` (shields, power and its passive thaw, cloak, repair), which before saw them next frame | `host_frames` scene (no recording) |
+| 3 | GameLoop effect delivery (`owns_boundary=False`) | every GameLoop tick's held effects landed at combat boundary 1 | GameLoop tick *i*'s effects land at combat boundary *i* | `host_frames` scene (no recording) |
 | 4 | Fire keys, mouse fire, chords, raw keys, skip-dialogue | after the frame's GameLoop ticks | before tick 0; still before the first combat tick, and this frame's AI sees the firing state | `test_fire_press_reaches_the_frames_first_combat_tick`; ⚠️ Mark's live check |
 | 5 | Manual Aim pick | after this frame's motion, with last frame's camera | at frame start, with last frame's camera: the pick traces the target's sim pose, which is within one tick of the pose last frame drew (before: the frame's n ticks plus that) | live-verified 2026-11-04 (moving target) |
 | 6 | Manual player integrator `_apply_input`, and the manual→AI seed | after the frame's AI ticks | before them: AI, proximity and combat all see this frame's manual pose, and a UI helm order is seeded before the first AI tick | the source guard `tests/host/test_scene_reconcile_ordering.py::test_whole_tick_order_and_frame_start_stages` (`_apply_input(` before `advance_ticks(`: headless has no window, so the integration tests never reach `_apply_input`); ⚠️ Mark's live check |
@@ -353,7 +355,7 @@ every shift shows on multi-tick frames, i.e. below 60 fps.
 | 10 | Ship list per combat tick | tick 0's list was built after all GameLoop ticks | built after GameLoop tick *i* | `test_ship_spawned_in_tick_2_reaches_combat_tick_2_only` |
 | 11 | A frame frozen by `sim.keys` (a dev key) | GameLoop ticks ran, combat did not | the frame's whole ticks run (*n* is decided at frame top). So that frame has `_ships_this_tick` set, and the render section applies the render origin and pushes combat feeds for the ticks that ran (a frame frozen from its top still runs none and pushes none) | `test_frame_frozen_mid_frame_still_runs_its_whole_ticks` |
 | 12 | Interpolation re-seat | prev = pose before the last GameLoop tick | prev = pose after whole tick *n−1* | `test_reseat_runs_after_the_penultimate_boundary` |
-| 14 | Tractor pull, HOLD and release latency | one FRAME after the K1 grip (the motion stage ran all of a frame's ticks before any combat) | one TICK, as Mark ruled | `tractor_modes` golden (unchanged: headless, one tick a frame); ⚠️ Mark's live check |
+| 14 | Tractor pull, HOLD and release latency | one FRAME after the K1 grip (the motion stage ran all of a frame's ticks before any combat) | one TICK, as Mark ruled | `tractor_modes` scene (was unchanged when recorded: headless, one tick a frame; no recording since 2026-11-10); ⚠️ Mark's live check |
 | 13 | Unchanged | — | collisions, debris, dash, hand-off, the frame-end boundary, nebula and radiation (still batched after all ticks, Mark's decision 3), the cadences above | existing tests |
 
 The tests named are in `tests/integration/test_whole_ticks.py` (real host
@@ -366,7 +368,7 @@ combat tick (`test_fire_press_on_a_zero_tick_frame_reaches_the_next_combat_tick`
 The source order is guarded by
 `tests/host/test_scene_reconcile_ordering.py::test_whole_tick_order_and_frame_start_stages`.
 `host_frames` and `k1_ops_tpf6` (now driven in whole ticks) were re-recorded
-once for this ruling; every other golden is unchanged.
+once for this ruling (historical: the recordings are retired); no other recording changed.
 
 ---
 
@@ -398,7 +400,7 @@ instead at `native_subsystems.skip_counts()` and the stderr `native subsystems:
 ... skipped` lines. A piece the mirror cannot run (a dropped row, an unnamed
 subsystem) is skipped, not run, and is counted and logged once per (piece,
 reason). Under `DAUNTLESS_NATIVE_AUDIT=1` a skip is an audit failure. The
-goldens pin the stage bit for bit and assert zero skips; a unit test ticks
+scene invariants assert zero skips; nothing records the stage; a unit test ticks
 its own ships through `tests/helpers/subsystem_stage.py`, which fails on any
 skip. The shield cadence above is unchanged.
 

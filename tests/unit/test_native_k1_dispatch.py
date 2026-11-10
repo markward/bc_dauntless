@@ -79,8 +79,8 @@ def _switch():
 # what it must equal. RE-RECORDING (no Python copy is left to record from):
 # UPDATE_K1_DISPATCH=1 takes the native run as the expectation -- every
 # comparison passes, and at teardown the test's file is written and the
-# test skips, naming it (as UPDATE_COMBAT_GOLDEN does for the goldens). Same
-# rule as the goldens: a re-record goes only in a commit naming the
+# test skips, naming it (the same way the retired golden-fight recordings were). Same
+# rule as those: a re-record goes only in a commit naming the
 # behaviour change it records.
 
 RECORDINGS = Path(__file__).resolve().parents[1] / "fixtures" / "k1_dispatch"
