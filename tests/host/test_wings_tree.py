@@ -308,6 +308,45 @@ def test_rejoin_hold_stops_the_ship():
     assert ships["m3"].GetSpeedSetpoint()[0] == 0.0
 
 
+def test_rejoin_warps_to_a_far_commander():
+    """A member beyond leash + slack of its commander in-system warps back
+    (BC's own InSystemWarp, as Intercept uses), stopping regroup_gather_gu
+    off the commander's surface. FollowObject alone flies at impulse and
+    never catches a commander as fast as it (Mark's ruling 2026-11-10).
+    An earlier warp's latch does not block it."""
+    _wing, ships, _stock = _scene()
+    m3 = ships["m3"]
+    m3.SetTranslateXYZ(0.0, -600.0, 0.0)      # nose (+Y) on m1 at origin
+    ships["m1"].SetTranslateXYZ(0.0, 0.0, 0.0)
+    m3._warp_consumed = True
+    script = _rejoin_ai(m3.GetAI()).GetScriptInstance()
+    assert script.Update() == AIC.US_ACTIVE
+    assert m3.IsDoingInSystemWarp()
+    flight = m3._insystem_warp_transit
+    assert flight.drop_distance == pytest.approx(
+        dials.get("regroup_gather_gu") + ships["m1"].GetRadius())
+
+
+def test_rejoin_does_not_warp_inside_the_leash():
+    _wing, ships, _stock = _scene()
+    m3 = ships["m3"]
+    m3.SetTranslateXYZ(0.0, -250.0, 0.0)
+    ships["m1"].SetTranslateXYZ(0.0, 0.0, 0.0)
+    script = _rejoin_ai(m3.GetAI()).GetScriptInstance()
+    assert script.Update() == AIC.US_ACTIVE
+    assert not m3.IsDoingInSystemWarp()
+
+
+def test_rejoin_turns_before_it_warps():
+    _wing, ships, _stock = _scene()
+    m3 = ships["m3"]
+    m3.SetTranslateXYZ(0.0, 600.0, 0.0)       # nose (+Y) away from m1
+    ships["m1"].SetTranslateXYZ(0.0, 0.0, 0.0)
+    script = _rejoin_ai(m3.GetAI()).GetScriptInstance()
+    assert script.Update() == AIC.US_ACTIVE
+    assert not m3.IsDoingInSystemWarp()
+
+
 # ── weights: popularity only, saved, re-applied, restored ──────────────────
 
 def test_weighting_touches_only_popularity():

@@ -263,6 +263,12 @@ wing like any protect ship **(call)**, so your AI escorts cover you.
    It never applies to a player-led wing. It ends when the wing is clear for
    10 s, the odds recover, or 60 s pass. The cooldown is 120 s.
 6. Ships hold fire while running wing manoeuvres.
+7. *(Ruling 2026-11-10, Mark.)* A member rejoining a commander beyond
+   `leash_gu + leash_slack_gu` in-system warps back to `regroup_gather_gu`
+   off it with BC's own `InSystemWarp` (`WingRejoin._WarpBack`), then
+   follows at impulse. Rejoin by FollowObject alone could never catch a
+   commander as fast as the member, e.g. one that warped ahead to another
+   wing's fight (Phase D reinforce, stress seed 1).
 7. `WingMoveTo` slows within 20 GU of its point and never returns DONE while
    the ship is a wing member (DONE once its wing is gone). It asks for an
    update every 0.2 s, FollowObject's period.

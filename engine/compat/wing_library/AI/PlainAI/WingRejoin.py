@@ -18,6 +18,8 @@ so that is defensive, for a tree built some other way.
 
 * No wing, or a leaderless wing (no commander): US_DONE, as FollowObject
   reports when it has nothing to follow. Leaderless is permanent, so is DONE.
+* A commander beyond leash_gu + leash_slack_gu: in-system warp back to
+  regroup_gather_gu off it (_WarpBack, ruling 2026-11-10), then follow.
 * A commander not in this ship's set (it died and was removed, or warped):
   stop the ship and hold US_ACTIVE, rather than FollowObject's US_DONE. A
   PlainAI that returns DONE is latched for good; the brain hands over, or
@@ -54,8 +56,31 @@ class WingRejoin(_FollowObject):
         self.SetFollowObjectName(sCommander)
         pShip = self.pCodeAI.GetShip()
         pSet = pShip.GetContainingSet() if pShip is not None else None
-        if pSet is not None and App.ObjectClass_GetObject(pSet, sCommander) is None:
+        pCommander = (App.ObjectClass_GetObject(pSet, sCommander)
+                      if pSet is not None else None)
+        if pSet is not None and pCommander is None:
             pShip.SetImpulse(0.0, App.TGPoint3_GetModelForward(),
                              App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
             return App.ArtificialIntelligence.US_ACTIVE
+        if pCommander is not None and self._WarpBack(pShip, pCommander):
+            return App.ArtificialIntelligence.US_ACTIVE
         return _FollowObject.Update(self)
+
+    def _WarpBack(self, pShip, pCommander):
+        """Beyond leash + slack of the commander: in-system warp back to
+        regroup_gather_gu off its surface, with BC's own InSystemWarp (as
+        Intercept uses; it waits for the nose to come round, which
+        FollowObject's turn provides). FollowObject alone flies at impulse
+        and never catches a commander as fast as this ship, e.g. one that
+        warped ahead to another wing's fight (ruling 2026-11-10). A warp
+        already under way runs on; an earlier warp's once-per-cycle latch
+        is cleared first, since that latch is Intercept's, not ours."""
+        from engine.wings import dials
+        if pShip.IsDoingInSystemWarp():
+            return 1
+        vDiff = pCommander.GetWorldLocation()
+        vDiff.Subtract(pShip.GetWorldLocation())
+        if vDiff.Length() <= dials.get("leash_gu") + dials.get("leash_slack_gu"):
+            return 0
+        pShip.StopInSystemWarp()
+        return pShip.InSystemWarp(pCommander, dials.get("regroup_gather_gu"))
