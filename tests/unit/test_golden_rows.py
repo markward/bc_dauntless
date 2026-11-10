@@ -3,7 +3,8 @@ import subprocess
 import sys
 
 from tests.helpers import golden_rows
-from tests.helpers.golden_rows import describe, differences, first_difference
+from tests.helpers.golden_rows import (describe, differences, first_difference,
+                                       row_difference)
 
 
 def test_first_difference_names_path():
@@ -22,6 +23,20 @@ def test_describe_names_kind_label_field():
     assert "tick 2" in text
     assert "weapon 'Player/Phaser 1'" in text
     assert "_fire_timer" in text
+
+
+def test_row_difference_names_field_for_tuple_rows():
+    def tick(timer):
+        row = ["weapon", "Player/Phaser 1", ["bool", True], "Enemy-1",
+               ["float", timer]]
+        return (2, [row], [], [], [], [], [])
+
+    assert row_difference(2, tick("0x1p+0"), tick("0x1p+0")) is None
+    msg = row_difference(2, tick("0x1p+0"), tick("0x1p+1"))
+    assert "tick 2" in msg
+    assert "weapon 'Player/Phaser 1'" in msg
+    assert "_fire_timer" in msg
+    assert "0x1p+0" in msg and "0x1p+1" in msg
 
 
 def test_module_is_light():

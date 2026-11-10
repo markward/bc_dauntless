@@ -113,12 +113,12 @@ def test_host_frames_tpf1():
     _invariants("host_frames_tpf1")
 
 
-# ── The arms and the recordings ───────────────────────────────────────────────
+# ── The arms, and no recordings ──────────────────────────────────────────────
 
 def test_golden_arm_is_native_only():
-    """A re-record is labelled with the arm it ran, and fire control is
-    native in every arm (fire control native only, M3): asking for "python"
-    fails loudly instead of recording native rows as Python's. The one
+    """Fire control is native in every arm (fire control native only, M3):
+    asking for "python" fails loudly instead of running native rows as
+    Python's. The one
     other arm is the native arm with the motion stage in Python (native
     motion phase 2)."""
     on = golden_fight.k1d.ON
@@ -154,6 +154,6 @@ def test_motion_branches_python_motion_arm():
     assert native_motion.counts()["native_calls"] == 0
     assert len(nat) == len(py)
     for t in range(len(nat)):
-        d = golden_rows.first_difference(nat[t], py[t])
-        assert d is None, golden_rows.describe(t, d[0], nat[t])
+        msg = golden_rows.row_difference(t, nat[t], py[t])
+        assert msg is None, msg
     _no_subsystem_skips()

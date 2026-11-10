@@ -96,6 +96,18 @@ def describe(t, at, want_row):
     return ", ".join(words)
 
 
+def row_difference(t, want_row, got_row):
+    """None when tick `t`'s rows are equal, else a message naming the
+    component, row and field and both values. Takes run_scene's tuple rows
+    (first_difference recurses into lists only)."""
+    want, got = list(want_row), list(got_row)
+    d = first_difference(want, got)
+    if d is None:
+        return None
+    at, w, g = d
+    return "%s: %r != %r" % (describe(t, at, want), w, g)
+
+
 def differences(want, got, limit):
     """Every (at, want, got) where the rows differ, up to `limit`, in
     first_difference's order."""
