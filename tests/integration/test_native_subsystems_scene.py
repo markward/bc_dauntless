@@ -14,13 +14,9 @@ combat_stress at 16 ships gets the seeded op stream below, and the stage:
   crossings;
 * leaves the mirror agreeing with every Python object (the audit).
 
-* and reproduces, tick for tick, every field it writes and every event it
-  posts: the whole per-tick log is pinned as a golden
-  (tests/fixtures/golden_fights/native_subsystems_scene.<platform>.json.gz,
-  through tests/helpers/golden_fight.py's record/check; re-record only with
-  UPDATE_COMBAT_GOLDEN=1 and a COMBAT_GOLDEN_REASON). It covers what the
-  fight goldens do not: every consumer's draw fields, the cloak's reserve,
-  the watchers and the repair queue under the op stream.
+* does all of that over the per-tick log of every field it writes and
+  every event it posts (tests/helpers/subsystems_scene.py's ``run``). Nothing
+  is recorded: the A/B tool compares this scene's rows across commits.
 
 Review Focus 1 is pinned by a handler on shield watchers: a range check on
 each face of the first few ships, fired mid-stage by the shield regen's
@@ -32,8 +28,6 @@ fired mid-stage by a drain or a recharge crossing half charge.
 Deterministic by construction: no GameLoop tick (AI draws on the unseeded module ``random``), the clock and
 ``random`` reset before each load, the ops from their own seeded Random.
 """
-import os
-
 import App
 import pytest
 
@@ -42,9 +36,8 @@ from engine.appc import native_combat as nc
 from engine.appc import native_subsystems
 from engine.core import loop as game_loop
 from engine.core.loop import TICK_DELTA
-from tests.helpers import bc_assets, golden_fight
-from tests.helpers.subsystems_scene import (SEED, SHIPS, TICKS, _World,
-                                            canonical_rows, run)
+from tests.helpers import bc_assets
+from tests.helpers.subsystems_scene import SHIPS, TICKS, _World, run
 
 @pytest.fixture(autouse=True)
 def _clean():
@@ -54,17 +47,8 @@ def _clean():
     nc.reset()
 
 
-GOLDEN = "native_subsystems_scene"
-
-
-def test_combat_scene_runs_every_piece_natively(monkeypatch):
+def test_combat_scene_runs_every_piece_natively():
     log, handled, counts, events, skips, rigged, audit = run()
-    monkeypatch.setitem(golden_fight.SCENES, GOLDEN, golden_fight.Scene(
-        name=GOLDEN, arm="native", seed=SEED, ships=SHIPS, ticks=TICKS,
-        tpf=1, run=None))
-    rows = canonical_rows(log)
-    golden_fight.record(GOLDEN, rows, os.environ.get("COMBAT_GOLDEN_REASON"))
-    golden_fight.check(GOLDEN, rows)
     assert counts["stages"] == TICKS, counts
     assert len(log) == TICKS
     assert skips == {}, skips
@@ -100,8 +84,7 @@ def test_combat_scene_runs_every_piece_natively(monkeypatch):
 
 def test_scene_skips_identical_writes_and_audit_is_clean(monkeypatch):
     """The stage does not log a write the mirror already holds bit for bit:
-    Python holds it too (the audit proves the two agree at the end), and the
-    golden of the test above is unchanged by the skipping."""
+    Python holds it too (the audit proves the two agree at the end)."""
     monkeypatch.setenv("DAUNTLESS_NATIVE_AUDIT", "1")
     log, _handled, _counts, _events, skips, _rigged, audit = run()
     stats = native_subsystems.write_stats()
@@ -110,10 +93,6 @@ def test_scene_skips_identical_writes_and_audit_is_clean(monkeypatch):
     assert stats["logged"] > 0, stats
     assert skips == {}, skips
     assert audit == [], audit
-    monkeypatch.setitem(golden_fight.SCENES, GOLDEN, golden_fight.Scene(
-        name=GOLDEN, arm="native", seed=SEED, ships=SHIPS, ticks=TICKS,
-        tpf=1, run=None))
-    golden_fight.check(GOLDEN, canonical_rows(log))
 
 
 def test_a_ship_whose_shields_start_at_zero_gets_float_ramps():

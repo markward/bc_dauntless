@@ -56,13 +56,8 @@ are those fights themselves, imported, not copied:
 
 Every value is JSON-normalised (tuples become lists), as the file holds it.
 
-``check(name, rows)`` compares with
-``tests/fixtures/golden_fights/<name>.<sys.platform>.json.gz`` (per-tick
-SHA-256 digests plus the rows; R9: no file for this platform skips, naming
-it) and names the first differing tick, row and field. ``record(name, rows,
-reason)`` writes that file, only under ``UPDATE_COMBAT_GOLDEN=1``, and then
-skips; its header names scene, arm, seed, ships, ticks, tpf, schema,
-platform and the reason.
+Nothing is recorded: the scenes are code, and the golden A/B tool compares
+their rows across commits.
 
 Determinism (R10): every RNG seeded (the scenes' own seeding), in-flight
 objects cleared and fight audio isolated (the scenes do both),
@@ -71,14 +66,8 @@ counter named by first sight (``_DYNAMIC_EVENT_TYPES``), so a scene gives
 the same rows whatever ran before it in the process.
 """
 import gc
-import gzip
-import hashlib
-import json
 import math
-import os
 import random
-import sys
-from pathlib import Path
 from typing import Callable, NamedTuple, Optional
 
 import pytest
@@ -100,14 +89,11 @@ from tests.helpers.golden_rows import (  # noqa: F401  re-exported
     COMPONENTS, EVENT_FIELDS, FIELDS, describe, differences,
     first_difference, norm)
 
-SCHEMA = 4     # the file format; bump it on any change to it or to the rows
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "golden_fights"
-UPDATE_ENV = "UPDATE_COMBAT_GOLDEN"
 #: The arms a scene can run as: native fire control always (it has no
-#: Python copy, M3; a re-record is labelled with the arm it ran).
+#: Python copy, M3; a scene runs as one arm).
 #: "python_motion" is the native arm with the motion stage in Python
 #: (DAUNTLESS_NATIVE_MOTION=0, native motion phase 2): the reference kernel
-#: M is checked against, on the one Python recording.
+#: M is checked against, live, in one process.
 ARMS = {"native": k1d.ON,
         "python_motion": {**k1d.ON, "DAUNTLESS_NATIVE_MOTION": "0"}}
 
@@ -719,8 +705,6 @@ SCENES = {s.name: s for s in (
           _native_subsystems),
 )}
 
-_LAST_ARM = {}
-
 # Event types the SDK takes from App's dynamic counter (App.py
 # Game_GetNextEventType, from 1200 up; every static ET_* constant is below
 # 1200 or at 0x800000 and up). The engine restarts the counter on every
@@ -796,156 +780,4 @@ def run_scene(name: str, arm: str) -> list:
         take = spec.run(mp, env, spec)
         no_fire = nc.counts()["k1_no_fire"]
     assert not any(no_fire.values()), (name, no_fire)
-    _LAST_ARM[name] = arm
     return take if isinstance(take, list) else _canonical(take)
-
-
-# ── The file ─────────────────────────────────────────────────────────────────
-
-def path(name):
-    return FIXTURES / ("%s.%s.json.gz" % (name, sys.platform))
-
-
-def _digest(row):
-    return hashlib.sha256(json.dumps(
-        row, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-
-
-def _load(name):
-    with gzip.open(path(name), "rt", encoding="utf-8") as f:
-        return json.load(f)
-
-
-# The file holds each tick's state as its changes since the tick before:
-# the full rows were ~17 MB gzipped for the seven scenes (gzip's window is
-# smaller than a tick). A row equal to the row at its index is left out; a
-# row whose (kind, label) was in the tick before is stored as the fields
-# that differ from that row ("from": its index there; torpedoes shift
-# index as others die); anything else whole.
-
-
-def _key(row):
-    return json.dumps(row[:2])
-
-
-def _encode(rows):
-    out, prev = [], []
-    for r in rows:
-        state = r[1]
-        where = {_key(row): j for j, row in enumerate(prev)}
-        changed = []
-        for i, row in enumerate(state):
-            if i < len(prev) and prev[i] == row:
-                continue
-            j = where.get(_key(row))
-            if j is not None and len(prev[j]) == len(row):
-                changed.append([i, {"from": j, "f": [
-                    [k, v] for k, (u, v) in enumerate(zip(prev[j], row))
-                    if u != v]}])
-            else:
-                changed.append([i, row])
-        out.append([r[0], {"n": len(state), "changed": changed}] + r[2:])
-        prev = state
-    return out
-
-
-def _decode(ticks):
-    out, prev = [], []
-    for r in ticks:
-        enc = r[1]
-        state = prev[:enc["n"]] + [None] * max(0, enc["n"] - len(prev))
-        for i, row in enc["changed"]:
-            if isinstance(row, dict):
-                delta, row = row, list(prev[row["from"]])
-                for k, v in delta["f"]:
-                    row[k] = v
-            state[i] = row
-        out.append([r[0], state] + r[2:])
-        prev = state
-    return out
-
-
-def header(name):
-    return _load(name)["header"]
-
-
-def record(name, rows, reason):
-    """Write scene `name`'s golden for this platform, only under
-    UPDATE_COMBAT_GOLDEN=1 (then skip). A re-record must say why."""
-    if os.environ.get(UPDATE_ENV) != "1":
-        return
-    if not reason:
-        pytest.fail("a golden re-record needs a reason "
-                    "(COMBAT_GOLDEN_REASON)")
-    spec = SCENES[name]
-    rows = [list(r) for r in rows]
-    data = {"header": {"scene": name, "arm": _LAST_ARM.get(name, spec.arm),
-                       "seed": spec.seed, "ships": spec.ships,
-                       "ticks": len(rows) - 1, "tpf": spec.tpf,
-                       "schema": SCHEMA, "platform": sys.platform,
-                       "reason": reason},
-            "digests": [_digest(r) for r in rows],
-            "ticks": _encode(rows)}
-    out = path(name)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    raw = json.dumps(data, separators=(",", ":")).encode()
-    with open(out, "wb") as f:
-        with gzip.GzipFile(fileobj=f, mode="wb", mtime=0) as gz:
-            gz.write(raw)
-    pytest.skip("golden re-recorded: %s (%d ticks, %d bytes)"
-                % (out, len(rows) - 1, out.stat().st_size))
-
-
-def _drop_baked_offset(ticks):
-    """Schema 2 -> 3: torpedo rows lost their `_baked_offset` field (fire
-    control native only, M5: a picked spot is a plain body point, there is
-    no launch-time bake). It sat after `_target_offset`, row index 6; every
-    other field of the recorded row is compared as it was recorded."""
-    out = []
-    for r in ticks:
-        state = [row[:6] + row[7:] if row and row[0] == "torpedo" else row
-                 for row in r[1]]
-        out.append([r[0], state] + r[2:])
-    return out
-
-
-#: Readers of older schemas: each maps a file's decoded ticks to this one's.
-#: The stored digests stay those of the rows as recorded.
-_UPGRADES = {2: _drop_baked_offset}
-
-
-def check(name, rows):
-    """Compare `rows` (run_scene's) with this platform's golden of `name`;
-    fail naming the first differing tick and field. No golden for this
-    platform skips (R9)."""
-    p = path(name)
-    if not p.exists():
-        pytest.skip("no golden for %s on %s: %s is missing (goldens are "
-                    "per platform, ruling R9; record one with %s=1)"
-                    % (name, sys.platform, p, UPDATE_ENV))
-    data = _load(name)
-    h = data["header"]
-    assert h["schema"] == SCHEMA or h["schema"] in _UPGRADES, (
-        "golden schema", h, SCHEMA)
-    stored = _decode(data["ticks"])
-    want = (stored if h["schema"] == SCHEMA
-            else _UPGRADES[h["schema"]](stored))
-    got = [list(r) for r in norm([list(r) for r in rows])]
-    for t, (a, b) in enumerate(zip(want, got)):
-        # The rows themselves are compared (a digest alone would pass a
-        # perturbed row), and the stored digest must still be its row's.
-        d = first_difference(a, b)
-        if d is None:
-            if data["digests"][t] != _digest(stored[t]):
-                raise AssertionError("%s tick %d: the golden's digest does "
-                                     "not match its own row" % (name, t))
-            continue
-        at, w, g = d
-        raise AssertionError(
-            "%s: golden differs at %s\n recorded %r\n got      %r\n"
-            "(golden %s, recorded from the %s arm: %s)"
-            % (name, describe(t, at, a), w, g, p.name, h["arm"],
-               h["reason"]))
-    assert len(want) == len(got), (
-        "%s: golden has %d ticks, the run %d" % (name, len(want) - 1,
-                                                 len(got) - 1))
