@@ -16,7 +16,8 @@ SPEC = {"leash_gu": 200.0, "leash_slack_gu": 100.0, "regroup_gather_gu": 100.0,
         "attack_slots": 3, "face_weak": 0.3, "disable_threat": 1.5,
         "reserve_min_wing": 5, "reserve_gu": 150.0, "reserve_max_s": 90.0,
         "disable_max_s": 300.0, "attack_standoff_min_gu": 25.0,
-        "protect_min_s": 10.0, "attack_min_s": 10.0}
+        "protect_min_s": 10.0, "attack_min_s": 10.0,
+        "protect_member_frac": 0.6}
 
 
 def test_defaults_match_spec():

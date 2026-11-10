@@ -1,7 +1,7 @@
 """Protect rules: damage rate, threat, guards. Pure: no App imports."""
 
 from engine.wings import dials
-from engine.wings.assess import dist
+from engine.wings.assess import dist, strength
 from engine.wings.rotate import weak_face
 
 
@@ -20,18 +20,32 @@ def attackers_of(name, enemies, reach_center, reach_gu):
             if e.target == name and dist(e.pos, reach_center) <= reach_gu]
 
 
-def threatened(protectees, rates, enemies, anchor):
+def threatened(protectees, rates, enemies, anchor, strict=()):
     """The most threatened protectee, or None. A protectee with no attacker
     in reach is never threatened, whatever its damage rate (rocks, green
-    alert, a fight past engage_gu): there is nobody to turn on."""
+    alert, a fight past engage_gu): there is nobody to turn on.
+
+    Heavy fire: heavy_fire_frac lost in the window, or heavy_fire_attackers
+    on it. A `strict` protectee (an ordinary wing member) needs real
+    danger instead: heavy_fire_frac lost AND under protect_member_frac of
+    its strength. In a big brawl some member always met heavy fire, so
+    protect held the wing all fight and no flank ever ran (Mark's C play
+    test 2, 2026-11-10). The player and listed protect ships keep heavy
+    fire."""
     reach = dials.get("engage_gu")
+    heavy = dials.get("heavy_fire_frac")
     best = None
     for p in protectees:
         rate = rates.get(p.name, 0.0)
         n = len(attackers_of(p.name, enemies, anchor.pos, reach))
         if n == 0:
             continue
-        if rate >= dials.get("heavy_fire_frac") or n >= dials.get("heavy_fire_attackers"):
+        if p.name in strict:
+            frac = strength(p) / p.power if p.power > 0 else 0.0
+            hit = rate >= heavy and frac < dials.get("protect_member_frac")
+        else:
+            hit = rate >= heavy or n >= dials.get("heavy_fire_attackers")
+        if hit:
             key = (-rate, -n, p.name)
             if best is None or key < best[0]:
                 best = (key, p)

@@ -39,6 +39,8 @@ class Context:
     # it, and a young attack decision is not cut off by attacker count.
     decision_age_s: float = 0.0
     protect_prev: Optional[str] = None
+    # Ordinary wing members: protect.threatened's real-danger rule.
+    strict_protectees: frozenset = frozenset()
 
 
 @dataclass
@@ -166,7 +168,7 @@ def _protectee(ctx):
     went, protect and focus_face swapped every few seconds, and each swap
     ended the flank slots before they formed."""
     hit = protect.threatened(ctx.protectees, ctx.rates, ctx.enemies,
-                             ctx.anchor)
+                             ctx.anchor, ctx.strict_protectees)
     if (hit is not None and ctx.current in _ATTACKS
             and ctx.decision_age_s < dials.get("attack_min_s")
             and ctx.rates.get(hit.name, 0.0) < dials.get("heavy_fire_frac")):

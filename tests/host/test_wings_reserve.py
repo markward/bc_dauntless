@@ -209,35 +209,43 @@ def test_reserve_commits_on_member_death(monkeypatch, capsys, now):
 def test_reserve_commits_on_protect(monkeypatch, capsys, now):
     monkeypatch.setenv("DAUNTLESS_WINGS_LOG", "1")
     # Three Warbirds (4500) against five Akiras: no 2x advantage commit.
+    # A Warbird is a disable target (>= 1.5x an Akira); disable is not
+    # under test here, so it is switched off.
+    dials._dials["disable_threat"] = 5.0
     wing, ships = _scene([(150.0, 0.0, 0.0), (160.0, 30.0, 0.0),
                           (170.0, -30.0, 0.0)])
     for e in ("e1", "e2", "e3"):
         ships[e].SetTarget("m3")
     brain.tick_wing(wing)
-    assert wing.decision == "protect"
-    ships["m3"].GetHull().SetConditionPercentage(0.8)
+    ships["m3"].GetHull().SetConditionPercentage(0.5)
     now[0] = 1.0
     brain.tick_wing(wing)
+    assert wing.decision == "protect"
     _spent(wing)
     assert "[wings] blue reserve commits (protect)" in \
         capsys.readouterr().err.splitlines()
 
 
-def test_reserve_held_through_an_attacker_count_protect(monkeypatch, now):
-    """Three attackers on m3 but no damage yet: protect runs, the reserve
-    stays back. Then m3 loses a fifth of its strength: it commits."""
+def test_reserve_held_until_a_member_is_in_real_danger(monkeypatch, now):
+    """Three attackers on a healthy m3: no protect, the reserve stays back.
+    Then m3 drops to half strength in a second (real danger): protect,
+    and the reserve commits."""
     # Three Warbirds (4500) against five Akiras: no 2x advantage commit.
+    # A Warbird is a disable target (>= 1.5x an Akira); disable is not
+    # under test here, so it is switched off.
+    dials._dials["disable_threat"] = 5.0
     wing, ships = _scene([(150.0, 0.0, 0.0), (160.0, 30.0, 0.0),
                           (170.0, -30.0, 0.0)])
     for e in ("e1", "e2", "e3"):
         ships[e].SetTarget("m3")
     brain.tick_wing(wing)
-    assert wing.decision == "protect"
+    assert wing.decision != "protect"
     held = wing.reserve
     assert held is not None and held != "m3"
-    ships["m3"].GetHull().SetConditionPercentage(0.8)
+    ships["m3"].GetHull().SetConditionPercentage(0.5)
     now[0] = 1.0
     brain.tick_wing(wing)
+    assert wing.decision == "protect"
     assert wing.reserve is None and wing.reserve_spent
 
 

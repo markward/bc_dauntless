@@ -355,7 +355,8 @@ def tick_wing(wing) -> None:
         reserve=wing.reserve,
         decision_age_s=(now - wing.decision_since
                         if wing.decision is not None else 0.0),
-        protect_prev=wing.protect_prev)
+        protect_prev=wing.protect_prev,
+        strict_protectees=_strict_protectees(wing, members))
     decision = decisions.pick(ctx)
     if decision.name != wing.decision:
         log("%s decision %s -> %s"
@@ -445,6 +446,14 @@ def _near_anchor(enemies, anchor):
     odds, protect attackers, the fall-back centroid)."""
     reach = dials.get("engage_gu")
     return [e for e in enemies if assess.dist(e.pos, anchor.pos) <= reach]
+
+
+def _strict_protectees(wing, members):
+    """Ordinary members (not the player, not on the protect list): they
+    need real danger before the wing protects them (protect.threatened)."""
+    listed = set(wing.protect_names())
+    return frozenset(n for n in members
+                     if not wing.members[n].is_player and n not in listed)
 
 
 def _protectees(wing, members, ship_of):

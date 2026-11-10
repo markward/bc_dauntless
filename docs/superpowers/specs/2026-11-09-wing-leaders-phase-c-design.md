@@ -417,3 +417,12 @@ and both wings committing their reserve within seconds of contact.
 3. **Reserve on protect.** A protect commits the reserve only while its
    protectee is losing strength (`heavy_fire_frac` in the window). A
    protect on attacker count alone keeps it back.
+4. **Members need real danger** (second play test: a 17-ship brawl held
+   protect all fight, because some member always met heavy fire and
+   shields fall fast at contact). An ordinary wing member is threatened
+   only while it has lost `heavy_fire_frac` in the window **and** is under
+   `protect_member_frac` (dial, default **0.6**) of its strength; the
+   attacker count alone never protects it. The player and Quick Battle's
+   protect ships keep heavy fire (`protect.threatened(strict=...)`).
+   Known: a current disable (1.3 + 0.25 stickiness) still outranks protect
+   (1.5) for a member in real danger.

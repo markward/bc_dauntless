@@ -154,16 +154,39 @@ def test_protectees_are_members_plus_protect_names(monkeypatch, now):
 
 # ── protect: guards body-block ─────────────────────────────────────────────
 
+def _in_danger(ships, name, t=0.0):
+    """`name` in real danger (protect.threatened's member rule): hull 0.55
+    (strength frac 0.55 < protect_member_frac) and, by its strength record,
+    just lost half its strength (rate 0.5 >= heavy_fire_frac)."""
+    ships[name].GetHull().SetConditionPercentage(0.55)
+    s = assess.strength(brain.view_of(ships[name]))
+    roster.member(name).strength_hist = [(t - 1.0, 2.0 * s)]
+
+
 def _protect_scene():
-    """m2 (the protectee, 40 GU behind m1) is targeted by three enemies;
-    m3 is the healthy member nearest it."""
+    """m2 (the protectee, 40 GU behind m1) is targeted by three enemies and
+    in real danger; m3 is the healthy member nearest it."""
     wing, ships = _scene([(150.0, 0.0, 0.0), (160.0, 30.0, 0.0),
                           (170.0, -30.0, 0.0)],
                          member_xyz=[(0.0, 0.0, 0.0), (-40.0, 0.0, 0.0),
                                      (-30.0, 20.0, 0.0)])
     for e in ("e1", "e2", "e3"):
         ships[e].SetTarget("m2")
+    _in_danger(ships, "m2")
     return wing, ships
+
+
+def test_three_attackers_on_a_healthy_member_is_no_protect(now):
+    """Mark's C play test 2: a member needs real danger, not a crowd."""
+    wing, ships = _scene([(150.0, 0.0, 0.0), (160.0, 30.0, 0.0),
+                          (170.0, -30.0, 0.0)],
+                         member_xyz=[(0.0, 0.0, 0.0), (-40.0, 0.0, 0.0),
+                                     (-30.0, 20.0, 0.0)])
+    for e in ("e1", "e2", "e3"):
+        ships[e].SetTarget("m2")
+    brain.tick_wing(wing)
+    assert wing.decision != "protect"
+    assert not any(m.guard for m in wing.members.values())
 
 
 def test_protect_assigns_guard_between(now):
@@ -390,9 +413,8 @@ def test_current_faller_is_never_picked_as_guard(now):
     assert m3.fallback_since == 0.0
     for e in ("e1", "e2", "e3"):
         ships[e].SetTarget("m2")
-    # Past attack_min_s: three attackers alone no longer wait out a young
-    # attack decision (phase C dwell ruling, 2026-11-10).
-    now[0] = dials.get("attack_min_s")
+    now[0] = 1.0
+    _in_danger(ships, "m2", now[0])
     brain.tick_wing(wing)
     assert wing.decision == "protect"
     assert m3.guard is False and _status("m3", "guard") == 0
@@ -548,6 +570,7 @@ def test_guard_incumbent_kept_when_nearer_mate_appears(now):
                                      (-30.0, 20.0, 0.0), (-80.0, -60.0, 0.0)])
     for e in ("e1", "e2", "e3"):
         ships[e].SetTarget("m2")
+    _in_danger(ships, "m2")
     brain.tick_wing(wing)
     assert roster.member("m3").guard is True
     assert roster.member("m4").guard is False
@@ -567,12 +590,15 @@ def test_guard_incumbency_ends_when_protectee_changes(now):
                                      (-30.0, 20.0, 0.0), (-80.0, -60.0, 0.0)])
     for e in ("e1", "e2", "e3"):
         ships[e].SetTarget("m2")
+    _in_danger(ships, "m2")
     brain.tick_wing(wing)
     assert roster.member("m3").guard is True
     for e in ("e1", "e2", "e3"):
         ships[e].SetTarget("m4")
     ships["m2"].SetTranslateXYZ(-85.0, -60.0, 0.0)  # now nearest m4
+    ships["m2"].GetHull().SetConditionPercentage(1.0)   # guard-eligible
     now[0] = 1.0
+    _in_danger(ships, "m4", now[0])
     brain.tick_wing(wing)
     assert roster.member("m2").guard is True
     assert roster.member("m3").guard is False
