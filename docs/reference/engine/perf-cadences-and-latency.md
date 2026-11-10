@@ -2,7 +2,7 @@
 
 > **2026-11-10:** the committed golden-fight recordings are retired (`tests/fixtures/golden_fights/`, `golden_fight.record/check` and the `UPDATE_COMBAT_GOLDEN` re-record switch are gone). The scenes remain as invariant tests plus a live Python-vs-native motion check, and are compared across commits by `tools/golden_ab.py` (spec `docs/superpowers/specs/2026-11-10-golden-ab-and-github-ci-design.md`, Part B). References below to goldens or recordings pinning behaviour are historical.
 
-Eleven things that used to run every tick now run on a cadence (the table below). Each was landed as
+Twelve things that used to run every tick now run on a cadence (the table below). Each was landed as
 a performance win, and **each is also a behaviour change**. Read this before
 reporting a delayed in-game reaction as a bug — the delay may be the design.
 
@@ -26,6 +26,7 @@ This file is the detail; `CLAUDE.md` carries only the one-line pointer.
 | AI tree sleep | `AI_MAX_SLEEP_TICKS` | up to 4 ticks (~66 ms) | `engine/appc/ai_driver.py` (`AI_MAX_SLEEP_TICKS`; the walk it gates is native, `native/src/host/aitree.cc`) |
 | AI ship glow state poll | `AI_GLOW_POLL_S` | 0.05 s game time | `engine/appc/subsystem_glow.py` |
 | Hum reallocation | `HUM_REALLOC_PERIOD_S` | 0.1 s wall + on scene switch / removal / death | `engine/audio/hum_allocator.py` |
+| Wing brain (Quick Battle wings) | dial `brain_period_s` ("wings") | 1.0 s / 1 Hz game time, wings phase-staggered | `engine/wings/service.py` (`tick`), `engine/wings/brain.py`; section 8 |
 
 The avoidance and AI-sleep cadences are environment-overridable — `DAUNTLESS_AVOID_EVADE_DELAY_S` and
 `DAUNTLESS_AI_MAX_SLEEP`. Setting the avoid delay to `0.0` restores the SDK's
@@ -421,3 +422,12 @@ and an alert-level change (crew menu, weapons) all `mark_due` the panel for the
 next frame. The last two are `host_loop._mark_hud_due_on_changes`, an identity
 compare each frame. Damage cannot be event-driven (`ET_SUBSYSTEM_*` are never
 posted, event-emitter-gaps #15), so the interval is a floor, not a fallback.
+
+## 8. Wing brain decides at 1 Hz of game time
+
+Quick Battle wings (`engine/wings/`) decide once per `brain_period_s` (1 s of
+game time), phase-staggered so wings do not share a frame. A wing reacts to a
+member's death or a command handover within <= 1 s, plus SelectTarget's
+`ForceUpdate` (<= 4 AI ticks, section above). Not a bug: a slow-looking
+retarget after a kill is this cadence. `brain_period_s` is a dial in the
+"wings" group on `/ L O`; `DAUNTLESS_WINGS=0` removes it.

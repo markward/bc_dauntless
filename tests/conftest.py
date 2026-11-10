@@ -980,6 +980,8 @@ def _reset_leakable_engine_globals():
     # reset_mission_state (a mission swap keeps the player's levels).
     from engine.audio import volume as _volume
     _volume.reset()
+    from engine.wings import service as _wing_service
+    _wing_service.reset_all()
     # Mission-scoped module state: the SAME list the game clears on a mission
     # swap (engine.host_loop.reset_mission_state), so the two cannot drift.
     # They had: 15 swap-time resets had no counterpart here, and two of them

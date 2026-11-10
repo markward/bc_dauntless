@@ -25,6 +25,7 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'no_npc_shields'});
         out.push({kind: 'ctrl', target: 'disable_collisions'});
         out.push({kind: 'ctrl', target: 'sensor_occlusion'});
+        out.push({kind: 'ctrl', target: 'quick_repair'});
     }
     if (state.selected_tab === 'lighting') {
         out.push({kind: 'ctrl', target: 'systems_damaged'});

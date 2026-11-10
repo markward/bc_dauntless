@@ -64,6 +64,8 @@ def valid_warp_in(v) -> bool:
 class Scenario:
     groups: list
     victory: Victory = field(default_factory=Victory)
+    # Battle-level: groups pick leaders and fight as wings (engine/wings).
+    wings: bool = True
 
     # ── lookup ──────────────────────────────────────────────────────────
     def group(self, gid) -> Optional[Group]:
@@ -184,7 +186,8 @@ class Scenario:
 
     # ── JSON ────────────────────────────────────────────────────────────
     def to_json(self) -> dict:
-        return {"victory": _victory.to_json(self.victory), "groups": [{
+        return {"victory": _victory.to_json(self.victory), "wings": self.wings,
+                "groups": [{
             "id": g.id, "name": g.name, "custom_name": g.custom_name,
             "player": g.player, "allegiance": g.allegiance,
             "direction": g.direction, "distance": g.distance,
@@ -246,7 +249,10 @@ def from_json(d) -> Scenario:
     _req(len(pgs) == 1, "need exactly one player group")
     pes = [e for g in groups for e in g.entries if e.player]
     _req(len(pes) == 1 and pes[0] in pgs[0].entries, "need exactly one player entry")
-    s = Scenario(groups=groups, victory=_victory.from_json(d.get("victory")))
+    wings = d.get("wings", True)    # an older preset has no key: on
+    _req(type(wings) is bool, "bad wings")
+    s = Scenario(groups=groups, victory=_victory.from_json(d.get("victory")),
+                 wings=wings)
     _victory.reconcile(s)
     return s
 
@@ -263,7 +269,7 @@ def _strip_ids(s: Scenario) -> list:
     out.append({"victory": {"conditions": [
         dict({k: v for k, v in c.items() if k != "id"},
              ships=[pos.get(eid) for eid in c["ships"]])
-        for c in j["victory"]["conditions"]]}})
+        for c in j["victory"]["conditions"]]}, "wings": j["wings"]})
     for g in j["groups"]:
         g = dict(g)
         g.pop("id")
@@ -367,6 +373,7 @@ class PlayerOrder:
     class_id: str
     registry: Optional[str]
     display_name: Optional[str]
+    group_id: Optional[str] = None     # the player's group (its wing)
 
 
 @dataclass(frozen=True)
@@ -409,6 +416,7 @@ class BattlePlan:
     orders: tuple
     victory: VictoryOrder = VictoryOrder()
     startable: bool = True
+    wings: bool = True
 
 
 def _bc_default_stem(class_id):
@@ -456,13 +464,15 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
             distance_gu=(DISTANCE_KM[g.distance] / GU_TO_KM) if g.distance else None,
             ai_level=DIFFICULTY_LEVEL[g.difficulty],
             warp_in_s=g.warp_in_min * 60.0))
-    return BattlePlan(player=PlayerOrder(p_file, pce.ship_id, p_reg, names[0]),
+    return BattlePlan(player=PlayerOrder(p_file, pce.ship_id, p_reg, names[0],
+                                         group_id=scenario.player_group().id),
                       orders=tuple(orders),
                       victory=_victory_order(scenario, {o.entry_id for o in orders}),
                       # An enemy entry whose ship is not in the catalog spawns
                       # nothing: count the enemy ORDERS, not the entries.
                       startable=scenario.can_start()
-                      and any(o.allegiance == "enemy" for o in orders))
+                      and any(o.allegiance == "enemy" for o in orders),
+                      wings=scenario.wings)
 
 
 def _victory_order(scenario: "Scenario", spawned) -> VictoryOrder:

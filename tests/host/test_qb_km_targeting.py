@@ -25,6 +25,14 @@ from tests.integration.test_quickbattle_setup_e2e import (  # noqa: E402,F401
     _do, _go, _ships, world)
 
 
+@pytest.fixture(autouse=True)
+def _wings_off(monkeypatch):
+    """These pin km_targeting's OWN groups, which wing members replace with
+    their wing's group (engine/quickbattle/wings_qb.py): run with wings off.
+    km composed with wings is tests/host/test_qb_wings.py."""
+    monkeypatch.setenv("DAUNTLESS_WINGS", "0")
+
+
 def _builders(ship):
     from engine.appc import ai as aimod
     return [a for a in ship.GetAI().GetAllAIsInTree()

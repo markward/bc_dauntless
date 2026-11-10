@@ -196,3 +196,23 @@ def test_player_group_cannot_be_delayed():
 
 def test_same_setup_sees_delay():
     assert not sc.same_setup(_delayed(0), _delayed(2))
+
+
+def test_wings_default_on_and_round_trip():
+    s = sc.default_scenario()
+    assert s.wings is True
+    s.wings = False
+    assert s.to_json()["wings"] is False
+    assert sc.from_json(s.to_json()).wings is False
+
+
+def test_old_preset_without_wings_key_loads_on():
+    d = sc.default_scenario().to_json()
+    d.pop("wings", None)
+    assert sc.from_json(d).wings is True
+
+
+def test_same_setup_sees_wings():
+    a, b = sc.default_scenario(), sc.default_scenario()
+    b.wings = False
+    assert not sc.same_setup(a, b)

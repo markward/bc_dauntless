@@ -120,6 +120,9 @@ class GameLoop:
         from engine.systems import shuttle_service
         with _prof.scope("gl.shuttles"):
             shuttle_service.tick(TICK_DELTA)
+        from engine.wings import service as _wing_service
+        with _prof.scope("gl.wings"):
+            _wing_service.tick(TICK_DELTA)
         from engine.appc import warp_in_flash
         warp_in_flash.advance(TICK_DELTA)
         with _prof.scope("gl.motion"):

@@ -92,6 +92,23 @@ def _group_of(key):
     return None if side is None else side.group
 
 
+def priorities_for(allegiance) -> dict:
+    """Listed name -> Priority in the weighted group the AI of the
+    `allegiance` side ("enemy" / "friendly") attacks with: the protected
+    ships for "enemy", the hunt targets for "friendly". Only listed ships
+    that are in the group now; {} when that side is not armed. A wing's
+    target group adds these over its own base (wings_qb)."""
+    for key, _att, _tgt, _spawn_side, alleg in _SIDE_SPECS:
+        if alleg != allegiance:
+            continue
+        side = _sides.get(key)
+        if side is None:
+            return {}
+        return {name: side.group[name]["Priority"] for name in side.listed
+                if side.group.IsNameInGroup(name)}
+    return {}
+
+
 def enemy_target_group():
     """The enemies' weighted target group (protected ships first), or None."""
     return _group_of("enemy")
@@ -181,6 +198,11 @@ def _side_for(qb, ship) -> Optional[_Side]:
 
 
 def _create_ai(orig, pShip, args, kw):
+    from engine.quickbattle import wings_qb
+    if pShip is not None and wings_qb.owns(pShip.GetName()):
+        # A wing member: the wings wrapper under this one redirects to the
+        # wing's group, which carries our priorities (priorities_for).
+        return orig(pShip, *args, **kw)
     qb = _qb
     side = None if qb is None or pShip is None else _side_for(qb, pShip)
     if side is None:
