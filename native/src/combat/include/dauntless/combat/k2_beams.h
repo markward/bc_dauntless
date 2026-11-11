@@ -174,7 +174,10 @@
 // resolving outside the engine package, or patched since K2 first saw the
 // class: native_combat._k2_python_candidates); first_blocker throws
 // NeedPython at such a candidate where the Python first calls it (IsDead),
-// so the bank's whole question is the ASK's.
+// so the bank's whole question is the ASK's. A planet's IsHidden is not
+// read from the mirror: the driver calls it for every planet row
+// (BeamPlanet::hidden, _k2_planet_rows' last field), so a hidden planet is
+// skipped exactly where the Python skips it, rowed or not.
 //
 // RECORDS (K2Kind, in combat_k2_kinds() order). The Python layouts, as the
 // binding builds them (handles are mirror handles, -1 = None; xyz = a

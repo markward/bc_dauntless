@@ -18705,8 +18705,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
         //   "pulse": THE DAMAGE PULSE's context (k2_pulse_ctx's dict; absent:
         //       every damage pulse is a CONTACT record)
         //   "planets": THE BLOCKER's planets, a list of (set handle, Object
-        //       handle or -1, cx, cy, cz, radius, planet_instances value) --
-        //       the value as "iids"' ([])
+        //       handle or -1, cx, cy, cz, radius, planet_instances value,
+        //       hidden) -- the value as "iids"', hidden planet.IsHidden() as
+        //       a bool ([])
         //   "python_candidates": iterable of Object handles the blocker
         //       leaves to Python (THE BLOCKER, CLASS OVERRIDES) (())
         // A record also carries the damage pulses the kernel applied since
@@ -18758,10 +18759,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 std::vector<cb::BeamPlanet> planets;
                 for (auto row : d["planets"]) {
                     const auto t = row.cast<py::tuple>();
-                    if (t.size() != 7)
+                    if (t.size() != 8)
                         throw py::value_error(
                             "combat K2: a planet row is (set, handle, cx, "
-                            "cy, cz, radius, iid)");
+                            "cy, cz, radius, iid, hidden)");
                     cb::BeamPlanet p;
                     p.set = t[0].cast<std::int64_t>();
                     p.handle = t[1].cast<std::int64_t>();
@@ -18777,6 +18778,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                             p.iid_bad = true;
                         }
                     }
+                    p.hidden = t[7].cast<bool>();
                     planets.push_back(p);
                 }
                 c.planets = std::move(planets);

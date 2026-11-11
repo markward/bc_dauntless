@@ -195,6 +195,25 @@ def test_feed_ends_on_planet_where_the_step_stopped(scene, monkeypatch):
     _assert_ends_at(beams, _render(stops[-1].point))
 
 
+def test_feed_passes_through_a_hidden_planet(scene):
+    """Spec section 4.1: a hidden planet in front of the blocker never
+    blocks. The step lands its contact on the blocker, and the drawn beam
+    ends there too (the planet row's hidden flag), with no "blocker" skip."""
+    planet = Planet()
+    planet.SetTranslateXYZ(0.0, 30.0, 0.0)
+    planet.SetRadius(10.0)
+    planet.SetHidden(1)
+    scene.set.AddObjectToSet(planet, "Rock")
+    scene.fire()
+    scene.step()
+    assert scene.contacts, "the Python step landed no contact"
+    _bank_, target, impact, bubble = scene.contacts[-1]
+    assert target is scene.blocker, "premise: the hidden planet let it by"
+    beams = scene.feed()
+    _assert_ends_at(beams, _render(bubble if bubble is not None else impact))
+    assert nc.beam_feed_counts()["skips"]["blocker"] == 0
+
+
 def test_candidate_only_python_may_decide_keeps_the_target_end(scene):
     """The blocker's class overrides IsHidden (the mirror cannot know it):
     the feed has no Python fallback, so the beam is drawn to its target's

@@ -187,6 +187,8 @@ std::optional<BeamBlocker> walk(const BeamBlockInputs& in, int64_t shooter,
         // if planet is shooter or planet is target: continue
         if (p.handle != -1 && (p.handle == shooter || p.handle == target))
             continue;
+        // if planet.IsHidden(): continue  (the feeder's call, BeamPlanet)
+        if (p.hidden) continue;
         // radius = world_radius(planet); bound = radius * PLANET_BOUND_SLACK
         const double radius = p.radius;
         const double bound = radius * kPlanetBoundSlack;

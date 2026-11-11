@@ -277,6 +277,18 @@ TEST(BeamBlock, PlanetMesh) {
     EXPECT_EQ(r->tier, BeamBlocker::Tier::Mesh);
 }
 
+// test_beam_blockers.test_hidden_planet_never_blocks: spec section 4.1,
+// hidden objects never block -- sphere tier and mesh tier, never traced.
+TEST(BeamBlock, HiddenPlanetNeverBlocks) {
+    World w;
+    w.planet({0.0, 60.0, 0.0}).hidden = true;
+    EXPECT_FALSE(w.run().has_value());
+    w.planets.back().iid = InstanceId{77, 1};
+    w.hits[77] = 54.0;
+    EXPECT_FALSE(w.run().has_value());
+    EXPECT_TRUE(w.traced.empty());
+}
+
 TEST(BeamBlock, RockBlocks) {
     World w;
     const int64_t rk = w.add({0.0, 50.0, 0.0});

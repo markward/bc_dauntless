@@ -200,6 +200,17 @@ def test_planet_blocks_by_mesh_with_instance(world):
     assert r.tier == "mesh"
 
 
+def test_hidden_planet_never_blocks(world):
+    """Spec section 4.1: hidden objects never block, planets included,
+    on both the sphere tier and the mesh tier."""
+    p = _planet(world, (0.0, 60.0, 0.0))
+    p.SetHidden(1)
+    assert world.run() is None
+    world.planet_instances[p] = 77
+    world.hits[77] = 54.0
+    assert world.run() is None
+
+
 def test_rock_blocks(world):
     from engine.rocks.rock import RockClass
     rk = world.add("Rock", (0.0, 50.0, 0.0))

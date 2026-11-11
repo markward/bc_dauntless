@@ -6071,7 +6071,9 @@ def _k2_planet_rows(ships, planet_instances, sets=None) -> list:
     object order -- beam_blockers.planet_rows' order -- each only when its
     containing set IS that set (first_blocker's own check), as (set handle,
     Object handle or -1, cx, cy, cz, collisions.world_radius(planet),
-    planet_instances.get(planet))."""
+    planet_instances.get(planet), bool(planet.IsHidden())). The hidden flag
+    is called here for every planet, rowed or not: a planet with no Object
+    row has no mirror `_hidden` to read."""
     from engine.appc.collisions import world_radius
     from engine.appc.planet import Planet
     frames = _frames()
@@ -6089,7 +6091,7 @@ def _k2_planet_rows(ships, planet_instances, sets=None) -> list:
                 ph = REF_NONE
             c = obj.GetWorldLocation()
             rows.append((h, ph, c.x, c.y, c.z, world_radius(obj),
-                         pi.get(obj)))
+                         pi.get(obj), bool(obj.IsHidden())))
     return rows
 
 

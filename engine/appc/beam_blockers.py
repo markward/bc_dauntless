@@ -136,6 +136,8 @@ def first_blocker(shooter, target, emitter, aim_unit, contact_dist,
     for planet, iid in planet_rows(shooter_set, planet_instances):
         if planet is shooter or planet is target:
             continue
+        if planet.IsHidden():
+            continue
         if frames.containing_set(planet) is not shooter_set:
             continue
         radius = world_radius(planet)

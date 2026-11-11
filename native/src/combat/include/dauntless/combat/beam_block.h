@@ -58,7 +58,10 @@ constexpr double kPlanetBoundSlack = 1.02;
 //   iid    -- planet_instances.get(planet): nullopt (and !iid_bad) is None;
 //   iid_bad -- the entry is not an InstanceId: the mesh path runs, the trace
 //             raises inside _resolve_hit_point's try, and the planet does not
-//             block (never the sphere path).
+//             block (never the sphere path);
+//   hidden -- planet.IsHidden(), as the feeder called it (a planet with no
+//             Object row has no mirror `_hidden`, so the feeder answers for
+//             every planet): a hidden planet never blocks.
 struct BeamPlanet {
     int64_t set = -1;
     int64_t handle = -1;
@@ -66,6 +69,7 @@ struct BeamPlanet {
     double radius = 0.0;
     std::optional<InstanceId> iid;
     bool iid_bad = false;
+    bool hidden = false;
 };
 
 struct BeamBlockInputs {

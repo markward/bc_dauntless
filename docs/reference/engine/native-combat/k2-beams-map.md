@@ -328,7 +328,7 @@ K2 (`k2_beams.cc`), after `BUBBLE` / `BUBBLE_ANSWER`:
 
 Feeds (driver, `native_combat.py`):
 
-- `_k2_planet_rows(ships, planet_instances)` → context `planets`: `(set handle, Object handle or -1, cx, cy, cz, world_radius, iid)` per Planet of each set a ship is in, in the set's object order, only where the planet's containing set is that set.
+- `_k2_planet_rows(ships, planet_instances)` → context `planets`: `(set handle, Object handle or -1, cx, cy, cz, world_radius, iid, hidden)` per Planet of each set a ship is in, in the set's object order, only where the planet's containing set is that set. `hidden` is `bool(planet.IsHidden())`, called by the driver for every planet (a planet with no Object row has no mirror `_hidden`); `first_blocker` skips a hidden planet right after the shooter/target check, in Python and C++ alike.
 - `_k2_python_candidates(ships)` → context `python_candidates`: ships whose class `_k2_flag` calls overridden (IsDead and IsHidden are now in the ObjectClass / ShipClass roles). `first_blocker` throws `NeedPython` at such a candidate (at its IsDead), so the ASK decides.
 - `view_offsets`: an entry for every set a ship of the step is in, and `-1` → None (`_K2PhaserContext`). Before, only the viewing set had one; a target with an instance in an unviewed set is now traced natively too.
 - All three are read at begin and again after any non-pure record (`_K2PhaserContext.python_ran`); the view offsets also when the viewing set changed.

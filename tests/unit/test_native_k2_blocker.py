@@ -262,6 +262,27 @@ def test_planet_blocker_native_equals_python():
     assert counts["k2_blocked"]["planet"] > 0, counts
 
 
+def test_hidden_planet_never_blocks_native_equals_python():
+    """Spec section 4.1: a hidden planet in the line never blocks. The
+    feeder carries planet.IsHidden() in the planet row (_k2_planet_rows),
+    so the kernel skips it without an ASK and the target takes the hits."""
+    def build(s):
+        _shooter_blocker_target(s, blocker_at=(500.0, 500.0, 0.0))
+        planet = Planet()
+        planet.SetTranslateXYZ(0.0, 50.0, 0.0)
+        planet.SetRadius(10.0)
+        planet.SetHidden(1)
+        s.set.AddObjectToSet(planet, "Rock")
+
+    pe, pt, ne, nt, counts = _both(build)
+    assert pe and {e[0] for e in pe} == {"Target"}, pe
+    assert ne == pe
+    assert nt == pt
+    _native_ran(counts)
+    assert counts["k2_ask_queries"]["blocker"] == 0, counts
+    assert counts["k2_blocked"] == {"ship": 0, "planet": 0}, counts
+
+
 def test_two_banks_one_blocker_native_equals_python():
     def build(s):
         left = s.add("Left", (-10.0, 0.0, 0.0))
