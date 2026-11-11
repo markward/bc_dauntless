@@ -1694,3 +1694,48 @@ def test_no_flap_lips_speak_line_asks_for_no_lip_movement(monkeypatch):
     CharacterAction(None, CharacterAction.AT_SPEAK_LINE_NO_FLAP_LIPS, "L").Play()
     CharacterAction(None, CharacterAction.AT_SPEAK_LINE, "L").Play()
     assert seen == [False, True]
+
+
+# ── A script action that raises ───────────────────────────────────────────────
+# BC's embedded Python printed a failing script's traceback and the engine
+# kept running; one broken SDK or mod script (KM's Starbase 220 raising in
+# QuickBattle.StartSimulationAction) must not end the game.
+
+def _raising_module(name):
+    mod = types.ModuleType(name)
+
+    def boom(pAction):
+        raise AttributeError("no STARBASE220")
+
+    mod.boom = boom
+    sys.modules[name] = mod
+    return mod
+
+
+def test_a_raising_script_action_is_reported_not_raised(capsys):
+    _raising_module("_test_raising_action")
+    try:
+        a = TGScriptAction_Create("_test_raising_action", "boom")
+        a.Play()                                   # must not raise
+        err = capsys.readouterr().err
+        assert "_test_raising_action.boom" in err
+        assert "AttributeError: no STARBASE220" in err
+        assert not a.IsPlaying()                   # it counts as finished
+    finally:
+        del sys.modules["_test_raising_action"]
+
+
+def test_a_sequence_carries_on_past_a_raising_script_action():
+    _raising_module("_test_raising_seq")
+    played = []
+    sys.modules["_test_raising_seq"].ok = lambda pAction: played.append(True)
+    try:
+        s = TGSequence_Create()
+        s.AppendAction(TGScriptAction_Create("_test_raising_seq", "boom"))
+        s.AppendAction(TGScriptAction_Create("_test_raising_seq", "ok"))
+        s.Play()
+        for _ in range(10):
+            App.g_kTimerManager.tick(1.0 / 60.0)
+        assert played == [True]
+    finally:
+        del sys.modules["_test_raising_seq"]
