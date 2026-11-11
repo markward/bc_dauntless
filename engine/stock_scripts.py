@@ -104,6 +104,12 @@ class _Index:
             # A package beats a same-named module, as in Python's import.
             if folded not in self.entries or is_package:
                 self.entries[folded] = entry
+        # Non-package entries by folded last segment, for find_by_leaf.
+        self.by_leaf: dict[str, list[_Entry]] = {}
+        for entry in self.entries.values():
+            if not entry.is_package:
+                leaf = entry.rel.rsplit("/", 1)[-1].casefold()
+                self.by_leaf.setdefault(leaf, []).append(entry)
         self._paths: dict[str, Path] = {}
         self.by_path: dict[str, _Entry] = {}
 
@@ -126,6 +132,9 @@ _index: Optional[_Index] = None
 _index_manifest: Optional[dict] = None
 _warned: set = set()
 _required: dict = {}      # require_install's memo, str(root) -> InstallCheck
+# (paths.game_root(), paths.stock_scripts()) for the last game root seen, so
+# the case-blind "scripts" lookup runs once per root, not once per call.
+_scripts_memo: Optional[tuple[Path, Path]] = None
 
 
 def configure(manifest_modules: Optional[dict] = None,
@@ -133,10 +142,12 @@ def configure(manifest_modules: Optional[dict] = None,
     """Inject a manifest ``modules`` mapping and a scripts root (tests).
     ``None`` = the committed manifest / ``paths.stock_scripts()`` at use."""
     global _manifest_override, _root_override, _index, _index_manifest
+    global _scripts_memo
     _manifest_override = manifest_modules
     _root_override = Path(scripts_root) if scripts_root is not None else None
     _index = None
     _index_manifest = None
+    _scripts_memo = None
     _required.clear()
 
 
@@ -154,10 +165,20 @@ def _manifest() -> dict:
     return _committed
 
 
+def _scripts_root() -> Path:
+    """``paths.stock_scripts()``, re-resolved only when the game root
+    changes (the root is still read at every use)."""
+    global _scripts_memo
+    game = paths.game_root()
+    if _scripts_memo is None or _scripts_memo[0] != game:
+        _scripts_memo = (game, paths.stock_scripts())
+    return _scripts_memo[1]
+
+
 def _current() -> _Index:
     """The index for the current (root, manifest); rebuilt only on change."""
     global _index, _index_manifest
-    root = _root_override if _root_override is not None else paths.stock_scripts()
+    root = _root_override if _root_override is not None else _scripts_root()
     manifest = _manifest()
     if _index is None or _index.root != root or _index_manifest is not manifest:
         _index = _Index(root, manifest)
@@ -231,8 +252,12 @@ def find_by_leaf(name: str) -> list[StockFile]:
     """Every listed (or fixture) non-package module whose last segment folds
     equal to ``name``, sorted by ``rel``."""
     folded = name.casefold()
-    return _select(lambda rel, is_package: not is_package
-                   and rel.rsplit("/", 1)[-1].casefold() == folded)
+    index = _current()
+    found = [index.file(e) for e in index.by_leaf.get(folded, ())]
+    found += [sf for key, sf in _fixture_files.items()
+              if key not in index.entries and not sf.is_package
+              and sf.rel.rsplit("/", 1)[-1].casefold() == folded]
+    return sorted(found, key=lambda sf: sf.rel)
 
 
 def children(rel_dir: str) -> list[StockFile]:
@@ -262,7 +287,16 @@ def top_level_functions(sf: StockFile) -> dict[str, tuple[str, ...]]:
         tree = ast.parse(fix_source(read_source(sf.path)), str(sf.path))
         return {node.name: tuple(a.arg for a in node.args.args)
                 for node in tree.body if isinstance(node, ast.FunctionDef)}
-    code = marshal15.load_pyc(sf.path.read_bytes())
+    try:
+        code = marshal15.load_pyc(sf.path.read_bytes())
+    except OSError as exc:
+        raise StockScriptError(
+            "stock module %s: cannot read %s: %s" % (sf.rel, sf.path, exc),
+            sf.path) from exc
+    except marshal15.Py15FormatError as exc:
+        raise StockScriptError(
+            "stock module %s: %s is not readable Python 1.5 bytecode: %s"
+            % (sf.rel, sf.path, exc), sf.path) from exc
     return {c.name: tuple(c.varnames[:c.argcount]) for c in code.consts
             if isinstance(c, marshal15.Code15) and not c.name.startswith("<")
             and not c.code.endswith(_CLASS_BODY_END)}
@@ -305,6 +339,10 @@ def load_tree(path: str, fullname: str) -> ast.Module:
     fixture ``.py`` through the 1.5 source fixer."""
     p = Path(path)
     if p.suffix.lower() == ".py":
+        if not any(sf.path == p for sf in _fixture_files.values()):
+            raise StockScriptError(
+                "stock module %s (%s) is source, and only a test fixture "
+                "loads from source" % (fullname, p), p)
         return ast.parse(fix_source(read_source(p)), str(p))
     entry = _entry_for(p)
     if entry is None:

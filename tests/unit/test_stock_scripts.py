@@ -6,11 +6,10 @@ needed (a lift, a code object), which come from the configured install.
 """
 import ast
 import hashlib
-import shutil
 
 import pytest
 
-from engine import py15, stock_scripts
+from engine import paths, py15, stock_scripts
 from engine.core import case_paths
 from tests.helpers import write_audit
 from tests.helpers.bc_assets import require_game_dir
@@ -261,3 +260,77 @@ def test_no_lifted_text_written(tmp_path):
     with write_audit.recording() as records:
         stock_scripts.load_tree(str(sf.path), "Maelstrom.Episode1.E1M1.E1M1")
     assert records == []
+
+
+def test_lookup_folds_through_case_paths(tmp_path, monkeypatch):
+    # Filesystem-independent: macOS cannot tell a right fold from a wrong one.
+    miscased = tmp_path / "SHIPS" / "galaxy.PYC"
+    seen = []
+
+    def _resolve(base, rel):
+        seen.append(rel)
+        return miscased if rel == "ships/Galaxy.pyc" else None
+    monkeypatch.setattr(case_paths, "resolve", _resolve)
+    stock_scripts.configure({"ships/Galaxy.pyc": [H]}, tmp_path)
+    sf = stock_scripts.find("SHIPS/GALAXY")
+    assert sf.path == miscased and sf.rel == "ships/Galaxy"
+    assert seen == ["ships/Galaxy.pyc"]
+
+
+def test_find_by_leaf_does_not_walk_every_entry(tmp_path):
+    stock_scripts.configure({"AI/Foo.pyc": [H], "AI/Bar.pyc": [H],
+                             "Tactical/Foo.pyc": [H]}, tmp_path)
+    index = stock_scripts._current()
+
+    class _NoWalk(dict):
+        def values(self):
+            raise AssertionError("find_by_leaf must use the leaf index")
+        items = values
+        __iter__ = values
+    index.entries = _NoWalk(index.entries)
+    assert [sf.rel for sf in stock_scripts.find_by_leaf("FOO")] == [
+        "AI/Foo", "Tactical/Foo"]
+    assert stock_scripts.find_by_leaf("missing") == []
+
+
+def test_scripts_folder_lookup_is_memoised_per_game_root(tmp_path, monkeypatch):
+    a, b = tmp_path / "a", tmp_path / "b"
+    _put(a, "scripts/X.pyc")
+    _put(b, "Scripts/X.pyc")
+    root = [a]
+    monkeypatch.setattr(paths, "game_root", lambda: root[0])
+    calls = []
+    real = case_paths.resolve
+    monkeypatch.setattr(case_paths, "resolve",
+                        lambda base, rel: calls.append(rel) or real(base, rel))
+    stock_scripts.configure({"X.pyc": [H]}, None)
+    assert stock_scripts.find("X").path.samefile(a / "scripts/X.pyc")
+    stock_scripts.find("X")
+    stock_scripts.is_stock("X")
+    assert calls.count("scripts") == 1
+    root[0] = b          # a re-configured root is followed (resolve-at-use)
+    assert stock_scripts.find("X").path.samefile(b / "Scripts/X.pyc")
+    assert calls.count("scripts") == 2
+
+
+def test_top_level_functions_of_a_missing_file_names_it(tmp_path):
+    stock_scripts.configure({"Gone.pyc": [H]}, tmp_path)
+    with pytest.raises(stock_scripts.StockScriptError) as info:
+        stock_scripts.top_level_functions(stock_scripts.find("Gone"))
+    assert "Gone.pyc" in str(info.value) and "Gone.pyc" in info.value.path
+
+
+def test_top_level_functions_of_a_bad_pyc_names_it(tmp_path):
+    _put(tmp_path, "Broken.pyc", b"not bytecode at all")
+    stock_scripts.configure({"Broken.pyc": [H]}, tmp_path)
+    with pytest.raises(stock_scripts.StockScriptError) as info:
+        stock_scripts.top_level_functions(stock_scripts.find("Broken"))
+    assert "Broken.pyc" in str(info.value) and "Broken.pyc" in info.value.path
+
+
+def test_load_tree_refuses_a_py_that_is_not_a_fixture(tmp_path):
+    stray = _put(tmp_path, "QuickBattle/QuickBattle.py", b"def X(): pass\n")
+    stock_scripts.configure({}, tmp_path)
+    with pytest.raises(stock_scripts.StockScriptError) as info:
+        stock_scripts.load_tree(str(stray), "QuickBattle.QuickBattle")
+    assert info.value.path == str(stray)
