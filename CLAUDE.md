@@ -38,7 +38,8 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 | Gap analysis | `docs/gap_analysis.md` | 8 gaps, 26 open questions, solution paths |
 | Open questions | `docs/reference/instrumented_experiments/open_questions.md` | 4 instrumentation questions — Q4 closed |
 | Live game | configurable — see `engine/paths.py` | BC installation; location set via `--game-dir`/`DAUNTLESS_GAME_DIR`/`settings.json`, falling back to the in-project `game/` — needed for instrumentation |
-| BC content paths | `engine/paths.py`, `docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md`, `docs/superpowers/specs/2026-09-06-first-run-folder-picker-design.md` | Where `game/` and `sdk/` live. Five sources, **in precedence order**: a root picked in the first-run screen, `--game-dir`/`--sdk-dir`, `DAUNTLESS_GAME_DIR`/`DAUNTLESS_SDK_DIR`, `settings.json`, legacy in-project. The highest **set** one wins even when invalid. A pick outranks the CLI flag on purpose — it is the most recent explicit human act, and an invalid flag stays "set", so anything lower would lose to the very flag the screen exists to correct. Resolved at USE, never at import — a module-level constant is stale the moment the first-run picker changes a root. When no source resolves, boot hands off to the CEF-rendered "Select Bridge Commander Install" screen (`engine/ui/first_run_panel.py`, driven from `engine/host_loop.py`'s own pump loop before the game loop exists) rather than a bare dialog. Guarded by `tests/unit/test_path_indirection.py`. |
+| BC content paths | `engine/paths.py`, `tools/dev_sdk.py`, `tests/unit/test_game_never_reads_sdk.py`, spec `2026-11-11-no-sdk-runtime-design.md` | **The game reads ONE root: the game folder.** Precedence: first-run pick, `--game-dir`, `DAUNTLESS_GAME_DIR`, `settings.json`, legacy `game/`; the highest **set** one wins even when invalid. Resolved at USE, never at import. `--sdk-dir`/`DAUNTLESS_SDK_DIR`/`[paths].sdk` are **ignored by the game** (`--sdk-dir` logs one line). **Developers** need the SDK via `tools/dev_sdk.py`: `DAUNTLESS_SDK_DIR` → `settings.json [paths].sdk` → in-project `sdk/`. No root → CEF "Select Bridge Commander Install" screen (`engine/ui/first_run_panel.py`, one folder). Guards: `test_path_indirection.py`, `test_game_never_reads_sdk.py`. Older specs `2026-09-05-bc-path-resolution`, `2026-09-06-first-run-folder-picker`. |
+| **Stock scripts — lifted from the install, by manifest** | `engine/stock_scripts.py`, `engine/stock_manifest.json` (GENERATED), `tools/gen_stock_manifest.py`, `tests/tools/test_stock_manifest_drift.py`, spec `2026-11-11-no-sdk-runtime-design.md` §2 | Stock SDK modules (the former `sdk/Build/scripts`) load by lifting the retail install's `.pyc` (`engine/py15`), only for modules the manifest lists. An unknown hash warns once and loads; a missing or unliftable file stops boot naming it (on the first-run screen). Verdicts (hashes) cached in the cache dir. Manifest: `tools/gen_stock_manifest.py --write`; `--add` merges a second verified retail build's hashes; **never hand-edit**, the drift test fails. `Custom` is a synthetic empty package (retail has no Custom folder). The SDK tutorial sample (`Custom/Tutorial`) is a TEST fixture: `tests/conftest.py` registers it via `stock_scripts.add_fixture_tree`. ⚠️ SDK-loaded modules have no `__file__`: use `__spec__.origin`. |
 | Space dust pass | `native/src/renderer/dust_pass.cc`, `docs/superpowers/specs/2026-05-11-space-dust-particles-design.md` | Camera-anchored dust particles with motion smear; toggle via `_h.dust_set_enabled()` |
 | BCS save format | `docs/reference/engine/bcs-save-format.md`, `tools/bcs_inspect.py` | Real binary save format; preamble + object table + TGL + pickle-memo decoded; 93.6% object-state region remains as parking-lot RE work |
 | AI surface & gaps | `docs/reference/engine/aieditor-ai-surface-and-gaps.md`, `docs/reference/engine/event-emitter-gaps.md` | What BC's `AIEditor` reveals about its AI: it is a code *generator* emitting `CreateAI(pShip)` Python that `engine/appc/ai.py` + `ai_driver.py` already run. Maps the 7 AI container types, 8 preprocessors and 34 Condition classes against ours. ⚠️ **Treat every ❌ in that doc as a hypothesis to re-check against `engine/`, not a fact** — an audit found several of its "confirmed gaps" already implemented. **Never use a `def <Name>(` grep to decide whether Appc surface exists**: SWIG binds most of the surface at module level via `new.instancemethod`, so that grep can never match, and it mis-attributes the receiver class. `event-emitter-gaps.md` is the live register: 15 of its 16 entries are closed (the original 12, #13, #14, #16 `ET_OBJECT_GROUP_CHANGED`); **#15 is OPEN** — `ET_SUBSYSTEM_COMPLETELY_DESTROYED` / `_DAMAGED` / `_STATE_CHANGED` are never posted. Still genuinely open: partial collision avoidance (`ProximityManager_Update` is catalogued **stub**, body unreconstructed). |
@@ -101,7 +102,7 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 | Ship metadata catalog | `engine/ship_catalog/`, `engine/foundation/shipdef_overrides.py`, `docs/superpowers/specs/2026-10-01-ship-metadata-catalog-design.md` | Dauntless-owned per-ship metadata (era span, role, playable, title, species, named variants) for Quick Battle, as a `dauntless` dict on the Foundation `ShipDef`: stock in `shipdef_overrides.py` (unlisted), mod ships in `Custom/Ships`, gate answers as `zz_Dauntless_<shipFile>.py`. **Read metadata ONLY through `engine.ship_catalog`** (`entries()`, `entry()`, `species()`, `insignia_path()`): merges stock then mods, validated. ⚠️ Keep stock dict literals Python 1.5-safe (1/0, never True/False). ⚠️ A variant's `script` spawns a separate ship script; the class default (`variants[0]`) is name-only, not scripted. Sub-project 3: named classes (`variant_of`, one starred `class_default`) via the pre-boot **Mods screen** (`engine/ui/mods_screen.py` + its state machine `mods_screen_panel.py`): gate mode for incomplete mod ships, else a READ-ONLY home mode via `--mods`/pause's **Quit and Manage Mods** (RELAUNCHES, `platform/relaunch`). CEF keyboard input is pre-boot AND in-game. Spec `2026-10-01-mod-ships-screen-design.md`. |
 | Quick Battle setup + group spawning | `engine/quickbattle/`, `engine/ui/quick_battle_setup_panel.py`, `docs/superpowers/specs/2026-10-02-quickbattle-setup-screen-design.md` | Victory and Defeat condition stacks (`victory.py`: ships-destroyed ANY/ALL lists, timers) end the battle via `battle_end.py`; `km_targeting` makes enemies weight Defeat ships and friendlies Victory targets (E6M1-style). `spawn` wraps `GenerateShips` and `EndSimulation`; `battle_end` wraps `ShipDestroyed` and the win/lose sequences. `GenerateShips` reads the panel's plan via `spawn.set_provider` at call time (no provider ⇒ BC's original). It also writes `g_kEnemyList`: `StartSimulation2` arms the win from its length. Neutrals: no `g_kShips` entry. Placement is deterministic (`placement.py`). ⚠️ `GetRadius() == 0` before realisation: `spawn.set_radius_fn` seeds radii first. Player name: `spawn.apply_player_identity` (no `has_replacements` guard). ⚠️ The setup is per-run; only presets are on disk (`quickbattle_presets.json`). ⚠️ No revert hook: outside a battle `RecreatePlayer` resolves the home ship (ruled 2026-10-02; `spawn.player_type_for_recreate`). ⚠️ **Not live-verified.** |
 | Home stations — world systems own their objects; Quick Battle restores them | `engine/systems/home_stations.{py,json}`, `engine/systems/owners.py`, `engine/quickbattle/sim_restore.py`, `docs/reference/engine/home-stations.md`, `docs/superpowers/specs/2026-10-25-home-stations-design.md` | 13 stations placed by the region hook, gated ONLY by `is_standing`; a mission's `CreateShip` reuses the station. Objects a world system places carry an owner tag (`owners.py`): Quick Battle never treats them as battle objects; the owner rebuilds them or opts out (`restores_after_battle`). Tau Ceti shuttles: `engine/systems/shuttle_service.py`. A battle restores real objects by **rebuilding** what changed. ⚠️ A rebuild loses pre-battle scars. ⚠️ The Prendel outpost reappears in E6M4 until world state lands. ⚠️ Unowned real ships pulled in by BC's `ChangeRegion` stay in the battle region. A station the player damages twice (≥5 s apart, within 60 s) turns enemy in Quick Battle/free roam (`engine/systems/station_hostility.py`; armed ones get `StarbaseAttack`, ends on leaving the system); a free-roam player death is final (`engine/quickbattle/free_roam_death.py`). ⚠️ **Not live-verified.** |
-| **Python 1.5 scripts — source fixes + `.pyc`-only mod scripts** | `engine/py15/` (`source.py` = ONE fixer for both loaders; `lift.py` = bytecode), `_module_tree` + `_mod_override_spec` in `tools/mission_harness.py` AND `tests/conftest.py`, spec `2026-11-11-legacy-script-parsing-design.md` (rules + proofs) | **Source:** UTF-8 if valid else cp1252; tabs = 8 columns (1.5's rule, NOT 4); `0xFFFFFFFF` = -1; `print`/`raise X, v`/`exec`/`except X, e` also after `;` or a header colon; no rewrite touches a string or comment. **Bytecode:** a mod module shipped only as 1.5 `.pyc` (LC Intrepid torpedoes, Kobayashi Maru's ships) is lifted to the AST its source would parse to, control flow and classes included, then takes the SAME pipeline. **Mod files only**. Unliftable: `Py15Unsupported`, ONE `[sdk-loader]` line, projectiles fall back to the photon. ⚠️ The lifter grows only with proof in `test_py15_stock_oracle.py` (1201 of 1201, 0 mismatches, CLOSED normalisation). ⚠️ Never write lifted mod text anywhere or commit a mod-derived value. ⚠️ uncompyle6 mis-decompiles 1.5. |
+| **Python 1.5 scripts — source fixes + `.pyc`-only mod scripts** | `engine/py15/` (`source.py` = ONE fixer for both loaders; `lift.py` = bytecode), `_module_tree` + `_mod_override_spec` in `tools/mission_harness.py` AND `tests/conftest.py`, spec `2026-11-11-legacy-script-parsing-design.md` (rules + proofs) | **Source:** UTF-8 if valid else cp1252; tabs = 8 columns (1.5's rule, NOT 4); `0xFFFFFFFF` = -1; `print`/`raise X, v`/`exec`/`except X, e` also after `;` or a header colon; no rewrite touches a string or comment. **Bytecode:** a mod module shipped only as 1.5 `.pyc` (LC Intrepid torpedoes, Kobayashi Maru's ships) is lifted to the AST its source would parse to, control flow and classes included, then takes the SAME pipeline. Applies to **stock scripts too** (lifted from the install; see the Stock scripts row), not only mod files. Unliftable: `Py15Unsupported`, ONE `[sdk-loader]` line, projectiles fall back to the photon. ⚠️ The lifter grows only with proof in `test_py15_stock_oracle.py` (1201 of 1201, 0 mismatches, CLOSED normalisation). ⚠️ Never write lifted mod text anywhere or commit a mod-derived value. ⚠️ uncompyle6 mis-decompiles 1.5. |
 
 ## Open questions status
 
@@ -189,13 +190,14 @@ The ConfigMapping API (argument order confirmed from SDK scripts):
 - Loop is single-threaded from Python's perspective (`sys.setcheckinterval(200)` in `Autoexec.py`)
 - Python priority levels actually used: `NORMAL` (most things) and `LOW` (2 scripts only); `CRITICAL`/`UNSTOPPABLE` are C++ internal
 
-## Project-root SDK shims
+## Project-root shims
 
 Some Python files at the project root exist specifically to **shadow SDK modules of the same name**. SDK scripts use bare imports (`import App`, `import LoadBridge`), and `tests/conftest.py` configures `_SDKFinder` to check `PROJECT_ROOT` before falling back to `sdk/Build/scripts/`. This is how Phase 1 swaps real SDK behaviour for headless stubs without forking the SDK tree.
 
 Current shims:
 - `App.py` — Phase 1 replacement for `Appc.dll` / `sdk/Build/scripts/App.py`
-- `LoadBridge.py` — empty `SetClass` registration so `g_kSetManager.GetSet("bridge")` works headless
+- `Foundation.py` — thin re-export of `engine/foundation/`; wins over a mod-bundled copy
+- `strop.py` — Python 1.5 `strop` (removed in Python 3), used by MissionLib
 - `LoadDamageHitSounds.py` — project-authored SDK *companion* (no BC original): damage-impact sound names for `hit_feedback`. Lives here, not in `sdk/`, because BC content is no longer inside the project tree
 
 Add new SDK-name shadows at the root only when needed; keep application code in `engine/`. If a third shim shows up, consider grouping them into a `shims/` directory and updating `_SDKFinder` accordingly.
@@ -267,10 +269,13 @@ forward, it is a regression — fix it.
 
 ## BC content paths — one authority, resolved at use
 
-`game/` and `sdk/` do not have to live inside the project. `engine/paths.py`
-resolves both roots from four sources in precedence order — `--game-dir` /
-`--sdk-dir`, `DAUNTLESS_GAME_DIR` / `DAUNTLESS_SDK_DIR`, `settings.json`
-`[paths]`, then the legacy in-project layout. The highest source that is
+`game/` does not have to live inside the project, and the game reads no
+other content root: it never reads the SDK (stock scripts are lifted from
+the install; developers' SDK chain is `tools/dev_sdk.py`, guarded by
+`tests/unit/test_game_never_reads_sdk.py`). `engine/paths.py` resolves the
+game root from sources in precedence order — `--game-dir`,
+`DAUNTLESS_GAME_DIR`, `settings.json` `[paths]`, then the legacy in-project
+layout (a first-run pick outranks all of them). The highest source that is
 **set** wins even if it is invalid; falling through would silently run a
 different install than the one that was asked for. A CLI flag persists; an
 env var never does.
@@ -282,8 +287,7 @@ resolve-at-use rule: never capture one at import.
 
 - **Never spell `game` or `sdk` as a path segment.** Not in `engine/`, not in
   `tools/`, not in `tests/conftest.py`, not in `native/src`. Ask
-  `paths.game_asset(rel)`, `paths.game_root()`, `paths.sdk_scripts()`,
-  `paths.sdk_data()`.
+  `paths.game_asset(rel)`, `paths.game_root()`; tools ask `tools/dev_sdk.py`.
 - **Never capture a path at import.** No module-level constant may hold one.
   `paths.configure()` is callable again after boot — that is what the
   first-run picker needs — so anything captured at import is stale the moment
@@ -361,7 +365,8 @@ Hard rules:
 ## Setup
 
 ```bash
-# Drop BC installation into game/, BC SDK v1.1 into sdk/
+# Drop BC installation into game/. The game needs only that; DEVELOPMENT also
+# needs BC SDK v1.1 (sdk/, or settings.json [paths].sdk, or DAUNTLESS_SDK_DIR)
 uv sync
 uv run pytest
 ```

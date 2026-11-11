@@ -1,5 +1,7 @@
 # BC Path Resolution — Design
 
+> Superseded in part by `2026-11-11-no-sdk-runtime-design.md` (the game no longer reads the SDK).
+
 **Status:** approved, not yet implemented
 **Date:** 2026-09-05
 **Supersedes:** the "Future: the bootstrap tier" section of

@@ -38,11 +38,8 @@ runs on one core.
 On a Mac: Apple Silicon (M1 or later) with macOS 26 or later. See "On a
 Mac" below.
 
-And two things from Bridge Commander itself:
+And one thing from Bridge Commander itself:
   - A retail copy of Star Trek: Bridge Commander, installed
-  - The Bridge Commander SDK, version 1.1. It's free and widely mirrored
-    on community sites:
-      https://www.google.com/search?q=bridge+commander+sdk+download
 
 
 GETTING STARTED
@@ -51,24 +48,18 @@ GETTING STARTED
 1. Install Bridge Commander from your retail copy. Use a CLEAN install:
    see "Use a clean copy of Bridge Commander" below.
 
-2. Download the Bridge Commander SDK 1.1 and unpack it anywhere. You need
-   the folder that contains "Build".
-
-3. Download the latest BC Dauntless zip from GitHub Releases:
+2. Download the latest BC Dauntless zip from GitHub Releases:
        https://github.com/markward/bc_dauntless/releases
    Unzip it anywhere you like, for example your Documents folder. Do NOT
    unzip it into your Bridge Commander folder.
 
-4. Run "BC Dauntless.exe" (on a Mac, "BC Dauntless.app": see "On a Mac"
+3. Run "BC Dauntless.exe" (on a Mac, "BC Dauntless.app": see "On a Mac"
    below for the first launch).
 
-5. The first time you start it, a "Select Bridge Commander Install" screen
-   asks for two folders:
-     - Game folder: your Bridge Commander install, the folder that
-       contains "data".
-     - SDK folder: the SDK you unpacked, the folder that contains "Build".
-   Pick each with Browse. Each says "Bridge Commander install found" when
-   it's right; then press Continue. You only do this once.
+4. The first time you start it, a "Select Bridge Commander Install" screen
+   asks for one folder: your Bridge Commander install, the folder that
+   contains "data". Pick it with Browse. It says "Bridge Commander install
+   found" when it's right; then press Continue. You only do this once.
 
 If Windows says a file such as MSVCP140.dll or VCRUNTIME140.dll "was not
 found", install Microsoft's Visual C++ Redistributable (64-bit) and run
@@ -123,8 +114,9 @@ USE A CLEAN COPY OF BRIDGE COMMANDER
 
 Please point BC Dauntless at an UNMODIFIED Bridge Commander install.
 
-BC Dauntless loads models, textures and sounds straight from your Bridge
-Commander folder. If that folder has been modded, changed files get mixed
+BC Dauntless loads models, textures, sounds and Bridge Commander's own
+scripts straight from your Bridge Commander folder. If a stock script there
+has been changed, the log file notes a warning naming it. If that folder has been modded, changed files get mixed
 into the game in ways we can't detect or support, and the result is very
 hard to tell apart from a bug in BC Dauntless.
 

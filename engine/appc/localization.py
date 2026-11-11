@@ -13,8 +13,8 @@ same database, and the database is released when refcount returns to zero.
 This matches the Appc semantics — MissionLib.py routinely wraps Load/Unload
 around short-lived menu queries on shared menu databases.
 
-Load() resolves the SDK-relative path against the game install root (real
-install) then the SDK root's Build/ (SDK fallback) and decodes the binary
+Load() resolves the script-relative path against the game install root
+(then any test-only fixture TGL roots; never the SDK) and decodes the binary
 TGL via engine.missions.tgl_reader.  When the file can't be located, an empty
 database is returned and GetString falls back to returning the key, which
 keeps SDK call sites (FindMenu("Helm"), TextBanner(..., "Friendly Fire"),

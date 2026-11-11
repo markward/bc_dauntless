@@ -1,5 +1,7 @@
 # Loading `.pyc`-only mod modules: design
 
+> Superseded in part by `2026-11-11-no-sdk-runtime-design.md` (the game no longer reads the SDK).
+
 **Status:** approach (b) approved by Mark 2026-10-15, scoped to **Phase 1: loading mod scripts only** (§0). Phase 1 is implemented on branch `feat/pyc-only-mod-modules`, not yet live-verified; Phase 2 is not started.
 **Update 2026-11-11:** D2 (straight-line subset only) is superseded: control-flow recovery landed for Kobayashi Maru's bytecode-only ships and hardpoints, and the oracle now accepts all 1,201 stock modules. See `2026-11-11-legacy-script-parsing-design.md` §3.
 **Date:** 2026-10-15

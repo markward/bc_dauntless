@@ -1,5 +1,7 @@
 # First-Run Folder Picker — Design
 
+> Superseded in part by `2026-11-11-no-sdk-runtime-design.md` (the game no longer reads the SDK).
+
 **Date:** 2026-09-06
 **Status:** Approved, not yet implemented
 **Follows:** `docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md` (Spec 1)

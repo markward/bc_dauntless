@@ -1,6 +1,6 @@
 # Stock scripts from the retail install: no SDK at runtime
 
-Status: design, approved for planning pending review. Branch `feat/no-sdk-runtime`
+Status: implemented on `feat/no-sdk-runtime`; not live-verified. Branch `feat/no-sdk-runtime`
 (worktree `.claude/worktrees/no-sdk-runtime`).
 
 ## 1. Intent
