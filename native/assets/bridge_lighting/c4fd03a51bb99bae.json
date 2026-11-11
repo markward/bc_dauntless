@@ -10,7 +10,7 @@
       "emission": 0.98,
       "modifiers": [
         {
-          "level": 0.36,
+          "level": 0.27,
           "scope": [
             "offline",
             "yellow",
@@ -68,6 +68,11 @@
       "roughness": 0,
       "texture": "consoletopview.tga"
     },
+    "floorlight": {
+      "emission": 0,
+      "modifiers": [],
+      "texture": "floorlight.tga"
+    },
     "lcarsschematicleft": {
       "emission": 1.04,
       "roughness": 0,
@@ -104,10 +109,29 @@
       "texture": "newcomp.tga"
     },
     "roofcovelight": {
+      "emission": 0.26,
+      "modifiers": [
+        {
+          "glows": false,
+          "level": 1.86,
+          "scope": [
+            "green",
+            "yellow",
+            "red"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        }
+      ],
       "roughness": 0.02,
       "texture": "roofcovelight.tga"
     },
     "stationcolor": {
+      "modifiers": [],
       "roughness": 1,
       "texture": "stationcolor.tga"
     },
@@ -133,6 +157,28 @@
     }
   },
   "objects": {
+    "12:Material: roof grill": {
+      "block": 12,
+      "lights": [
+        {
+          "direction": [
+            0.004903,
+            0.001907,
+            -0.999986
+          ],
+          "inner_deg": 30,
+          "intensity": 10000,
+          "outer_deg": 90,
+          "position": [
+            -7.486917,
+            -86.828918,
+            147.215515
+          ],
+          "range": 200
+        }
+      ],
+      "name": "Material: roof grill"
+    },
     "20:Dim Material": {
       "block": 20,
       "lights": [
@@ -238,12 +284,17 @@
       "name": "Material: Material #38"
     }
   },
+  "room_light": {
+    "red": 0.55,
+    "special": 0.55
+  },
   "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/EBridge/EBridge.nif",
   "textures": {
     "ceilingwhite.tga": "ceilingwhite",
     "chair.tga": "chair",
     "commandstationlight.tga": "commandstationlight",
     "consoletopview.tga": "consoletopview",
+    "floorlight.tga": "floorlight",
     "lcarsschematicleft.tga": "lcarsschematicleft",
     "lcarsschematicright.tga": "LCarsSchematicRight",
     "newcomp.tga": "newcomp",

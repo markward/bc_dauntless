@@ -257,6 +257,7 @@
       "texture": "map 19.tga"
     },
     "g_imp_connops": {
+      "emission": 1.11,
       "modifiers": [
         {
           "level": 0.42,
@@ -375,14 +376,14 @@
           "type": "state"
         },
         {
-          "level": 0.4,
+          "level": 0.75,
           "scope": [
             "red",
             "special"
           ],
           "tint": [
-            0.2498,
-            0.5219,
+            0.385,
+            0.4844,
             1
           ],
           "type": "state"
