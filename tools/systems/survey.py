@@ -23,7 +23,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from engine import paths
 from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 from engine.systems import folds
 

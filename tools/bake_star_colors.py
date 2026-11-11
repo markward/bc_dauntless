@@ -30,7 +30,6 @@ import re
 import sys
 from pathlib import Path
 
-from engine import paths
 from tools import dev_sdk  # reads SDK source as reference data (spec 2026-11-11 decision 5)
 
 ROOT = Path(__file__).resolve().parents[1]

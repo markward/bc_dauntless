@@ -84,7 +84,7 @@ def main() -> None:
         print(f"scripts/ not found under {paths.game_root()} - set --game-dir or settings.json [paths].game")
         sys.exit(1)
     if not sdk_app().exists():
-        print(f"Build/scripts/App.py not found under {dev_sdk.sdk_root()} - set --sdk-dir or settings.json [paths].sdk")
+        print(f"Build/scripts/App.py not found under {dev_sdk.sdk_root()} - set {dev_sdk.ENV_VAR} or settings.json [paths].sdk")
         sys.exit(1)
 
     # Remove stale files from earlier approaches.
