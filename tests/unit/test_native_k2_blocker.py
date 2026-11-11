@@ -16,6 +16,8 @@ Headless the native mesh trace never hits, so the blockers are shielded
 ships with a seeded hull box (they block at their bubble) and planets with
 no renderer instance (they block at their sphere).
 """
+import random
+
 import pytest
 
 import App
@@ -33,6 +35,7 @@ from engine import host_loop  # noqa: E402
 from engine.appc import beam_blockers  # noqa: E402
 from engine.appc import hit_feedback  # noqa: E402
 from engine.appc import native_combat as nc  # noqa: E402
+from engine.appc import object_lifetime, ship_death  # noqa: E402
 from engine.appc import passive_state  # noqa: E402
 from engine.appc.objects import DamageableObject  # noqa: E402
 from engine.appc.planet import Planet  # noqa: E402
@@ -135,19 +138,21 @@ class Scene:
         App.g_kEventManager.AddBroadcastPythonFuncHandler(
             App.ET_WEAPON_HIT, self.set, __name__ + "._on_hit")
 
-    def add(self, name, at, shielded=False, box=4.0):
+    def add(self, name, at, shielded=False, box=4.0, hull=HULL,
+            shield=SHIELD):
         """A ship with a hull and full shields (so no pulse reaches a
-        subsystem: a death's timing is not what these tests compare).
-        `shielded`: a hull box too, so a beam meets its shield bubble."""
+        subsystem: a death's timing is not what these tests compare, unless
+        a test sets `shield` to 0). `shielded`: a hull box too, so a beam
+        meets its shield bubble."""
         ship = ShipClass_Create(name)
         ship.SetTranslateXYZ(*at)
         ship.SetRadius(5.0)
         ship._hull = HullSubsystem("Hull")
-        ship._hull.SetMaxCondition(HULL)
-        ship._hull.SetCondition(HULL)
+        ship._hull.SetMaxCondition(hull)
+        ship._hull.SetCondition(hull)
         ss = ShieldSubsystem("Shield Generator")
         for f in range(ShieldSubsystem.NUM_SHIELDS):
-            ss.SetMaxShields(f, SHIELD)
+            ss.SetMaxShields(f, shield)
         ship.SetShieldSubsystem(ss)
         if shielded:
             ship._shield_hull_box = ((0.0, 0.0, 0.0), (box, box, box))
@@ -204,11 +209,22 @@ class Scene:
         _events.clear()
 
 
+def _fresh_arm():
+    """The same start for each arm: both RNGs seeded (App.g_kSystemWrapper's
+    own, which the death cascade's blasts draw, and the module `random`) and
+    no dying ship or timed object left over from an earlier arm or test."""
+    App.g_kSystemWrapper.SetRandomSeed(0)
+    random.seed(0)
+    ship_death.reset()
+    object_lifetime.reset()
+
+
 def _both(build, ticks=TICKS):
     """(python events, python totals, native events, native totals, native
     counts) for the scene `build(scene)` makes."""
     out = []
     for native in (False, True):
+        _fresh_arm()
         s = Scene(native, "k2_blocker_%s" % ("nat" if native else "py"))
         try:
             build(s)
@@ -351,3 +367,23 @@ def test_no_blocker_records_unchanged():
     _native_ran(counts)
     assert counts["k2_ask_queries"]["blocker"] == 0, counts
     assert counts["k2_blocked"] == {"ship": 0, "planet": 0}, counts
+
+
+def test_unshielded_pair_native_equals_python():
+    """No shields, so every pulse reaches the hull and the subsystems and
+    the death cascade draws App.g_kSystemWrapper's RNG: the two arms agree
+    only because _both seeds the RNGs and clears the death registries
+    before each (an unseeded harness drew different numbers in the native
+    arm, the old "native 20 vs Python 9" reading)."""
+    def build(s):
+        shooter = s.add("Shooter", (0.0, 0.0, 0.0), hull=100000.0,
+                        shield=0.0)
+        target = s.add("Target", (0.0, 100.0, 0.0), hull=100000.0,
+                       shield=0.0)
+        s.arm(shooter, target)
+
+    pe, pt, ne, nt, counts = _both(build, ticks=200)
+    assert pe and {e[0] for e in pe} == {"Target"}, pe
+    assert ne == pe
+    assert nt == pt
+    _native_ran(counts)
