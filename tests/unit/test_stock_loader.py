@@ -191,7 +191,13 @@ def test_bare_import_never_finds_an_unlisted_install_file(twin, fake_stock):
 
 
 @pytest.mark.parametrize("twin", TWINS, ids=TWIN_IDS)
-def test_mod_py_beats_stock_pyc_on_every_branch(twin, tmp_path):
+def test_mod_py_beats_stock_pyc_on_every_branch(twin, tmp_path, monkeypatch):
+    # An already-imported module is deliberately reused through _AliasLoader,
+    # which would hide the branch under test; earlier tests in a full run
+    # import these, so take them out of sys.modules for this test only.
+    for name in ("ships.Galaxy", "Galaxy", "Bridge.Characters.Felix",
+                 "Characters.Felix"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
     ships = _retail("ships/Galaxy").parent
     chars = _retail("Bridge/Characters/Felix").parent
     finder = twin._SDKFinder()
