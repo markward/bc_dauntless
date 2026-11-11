@@ -16,6 +16,8 @@ from engine.foundation.shipdef import (  # noqa: F401
     ShipDef, ShipDefinition, ShipList, _ShipDefNamespace)
 from engine.foundation.mutator import MutatorDef  # noqa: F401  (spec 2026-10-16 §6.1)
 from engine.foundation.race import RACES as _RACES
+from engine.foundation.bridge import (  # noqa: F401
+    BridgeDef, BridgeSetLocation, MutatorElementDef, Registry, bridgeList)
 
 shipList = ShipList()
 
@@ -78,6 +80,11 @@ def __getattr__(attr):
     Deliberately narrow: anything not matching <Race>ShipDef still raises,
     so a genuine typo is not swallowed.
     """
+    if attr == "pCurrentBridge":
+        # Read live, never stored: the BridgeDef of whatever bridge the
+        # "bridge" set has loaded now (Foundation set it in LoadBridge.Load).
+        from engine.foundation import bridge
+        return bridge.current_bridge()
     m = _RACE_FACTORY.match(attr)
     if not m:
         raise AttributeError(attr)
@@ -98,7 +105,8 @@ def load_plugins():
 
 def describe(report) -> str:
     """The boot report. Empty when nothing loaded, like mods.describe()."""
-    if not (report.ships or report.autoload or report.failures):
+    if not (report.ships or report.autoload or report.failures
+            or len(bridgeList)):
         return ""
 
     lines = ["foundation:"]
@@ -107,6 +115,13 @@ def describe(report) -> str:
                      % (len(report.ships), len(_registered_names())))
     if report.autoload:
         lines.append("  %d plugin(s) run" % len(report.autoload))
+    if len(bridgeList):
+        lines.append("  %d bridge(s) registered: %s"
+                     % (len(bridgeList), ", ".join(bridgeList._arrayList)))
+    from engine.foundation import bridge as _bridge
+    if _bridge.ignored_settings():
+        lines.append("  bridge settings not used by Dauntless: %s"
+                     % ", ".join(_bridge.ignored_settings()))
 
     # Every tech any definition declares is "not installed" while
     # FoundationTech is out of scope. FTech itself logs and continues in
@@ -192,6 +207,8 @@ def reset():
     for cls in _ShipDefNamespace._classes:
         cls.clear_registered()
     shipList._items.clear()
+    from engine.foundation import bridge as _bridge
+    _bridge.reset()
     _synthesised.clear()
     _sound_failures.clear()
     # Definitions accumulate on construction, so this must be cleared too
