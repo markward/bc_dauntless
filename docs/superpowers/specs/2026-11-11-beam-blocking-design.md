@@ -144,6 +144,10 @@ the blocker contact point is the same kind of point the target would get:
    (`projectiles.py` ~1015-1055: trace back from the bubble, then the sphere
    entry, then the bubble point). (My call; check against BC's `TestHit`
    once the clean-room reference is reachable.)
+   **A target inside a friendly's bubble** (an enemy hugging a friendly
+   starbase) cannot be beamed from outside: the friendly's bubble blocks and
+   takes the pulses, toward the friendly-fire tally. Mark ruled 2026-11-11 to
+   keep this: it is how shields work in Star Trek.
 3. **Planet / Sun:** a ray–sphere entry with radius `collisions.world_radius`
    (`GetRadius()`, the drawn radius), NOT the collision `contact_radius`
    (0.8 × R for planets) and NOT `SetAtmosphereRadius` (gameplay-only).
