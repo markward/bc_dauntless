@@ -45,6 +45,10 @@ def capture_placement(character):
     """
     import App
     import Bridge.Characters.CommonAnimations as _CommonAnim
+    # A bridge pack's officers stand at locations its Foundation.BridgeDef
+    # declares, which the stock SetPosition does not know. Idempotent.
+    from engine import bridge_positions
+    bridge_positions.install(_CommonAnim)
 
     seq = _CommonAnim.SetPosition(character)
     # The matched branch appends exactly one TGAnimPosition; an unmatched /

@@ -106,6 +106,8 @@ Mod entries come from `_scan_mod_bridges()` at call time. Memoised for the
 life of the process, keyed on `mods.current()` identity — the module reads
 `mods.current()` at use, never captures it.
 
+> **Update 2026-11-11:** implemented to this contract (plus bytecode-only `.pyc` bridges and `BridgeDef` labels); see `2026-11-11-foundation-bridge-starbase-defs-design.md`.
+
 `_scan_mod_bridges()` **ships as a stub returning `[]`** in this feature. Its
 contract is fixed here so the follow-up starts from a RED test:
 
