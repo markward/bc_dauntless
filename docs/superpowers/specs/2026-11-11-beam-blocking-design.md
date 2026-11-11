@@ -46,9 +46,12 @@ Beams are the odd one out.
    `ET_FRIENDLY_FIRE_GAME_OVER`, just as in BC. Any other script listening
    to `ET_WEAPON_HIT` sees the blocker get hit.
 5. It works the same with `DAUNTLESS_NATIVE_COMBAT=0` (the Python K2 copy) as
-   on the native path, proven by the existing native-on vs native-off
-   differential (`tests/integration/test_native_combat_step_differential.py`)
-   on a scene with a blocker. (The runtime audit, `DAUNTLESS_NATIVE_AUDIT=1`,
+   on the native path, proven by `tests/unit/test_native_k2_blocker.py`
+   (seeded blocker scenes, native vs Python compared with `==`) and
+   `tests/host/test_native_k2_differential.py` (real meshes; about 2,000
+   blocked contacts in its Python arm). `test_native_combat_step_differential.py`
+   is NOT that proof: it is unchanged, and headless `combat_stress` has no
+   blocker. (The runtime audit, `DAUNTLESS_NATIVE_AUDIT=1`,
    runs `cb.phasers` wholly in Python and compares mirror rows, not kernel
    outputs, so it has nothing to say about the blocker choice; no new audit
    machinery is in scope.)
@@ -267,9 +270,11 @@ least one test exercises a real mesh.
    through the real SDK handler.
 9. **Line clears:** once the blocker leaves the line, the next pulse lands
    on the target.
-10. **Native = Python:** the native-on vs native-off differential
-    (`test_native_combat_step_differential.py`), seeded, is byte-identical on
-    a scene with a blocker.
+10. **Native = Python:** native on and off are byte-identical on seeded
+    blocker scenes (`tests/unit/test_native_k2_blocker.py`: ship, planet,
+    hidden planet, two banks, the ASK paths, an unshielded pair) and on real
+    meshes (`tests/host/test_native_k2_differential.py`, about 2,000 blocked
+    contacts in its Python arm).
 12. **Hidden ship:** a hidden ship in the line does not block.
 11. **Drawn beam:** the beam feed's endpoint equals the damage contact point
     for a blocked bank.
@@ -333,6 +338,19 @@ says "not live-verified".
 - **Tests**: the spec's asset-backed tests 3 and 11 became fake-trace tests
   (`install_trace_hooks` in gtest, a monkeypatched `host_io.ray_trace_mesh` in
   Python); real meshes are covered by the live check.
+- **The native = Python proof** is `tests/unit/test_native_k2_blocker.py`
+  plus `tests/host/test_native_k2_differential.py` (real meshes; 2,017
+  blocked contacts through the Python `first_blocker` in one run), not
+  `test_native_combat_step_differential.py` (unchanged; headless
+  `combat_stress` cannot block). An earlier "native 20 hits vs Python 9"
+  reading in `test_native_k2_blocker.py` was the harness, not the kernel:
+  its two arms shared `App.g_kSystemWrapper`'s RNG, the module `random` and
+  the `ship_death` / `object_lifetime` registries. It reproduces at the base
+  commit and matches once each arm is seeded and the registries cleared
+  (`_fresh_arm`; the unshielded-pair case guards it).
+- **Hidden planets** never block either: `first_blocker` skips
+  `planet.IsHidden()` after the shooter/target check, and the native side
+  reads the same answer from the planet row (`_k2_planet_rows`' `hidden`).
 - **Golden**: Mark re-recorded the `beam_scene` render golden on 2026-11-11;
   drawn beams now end on blockers from frame 19.
 - **Owed**: live check (fly through a beam between two AI ships, fire past an
