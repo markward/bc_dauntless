@@ -52,6 +52,13 @@ def test_child_host_init_holds_one_reference_per_kept_string():
     from engine.appc import object_types, objects  # noqa: F401
     import _dauntless_host as h
     s = sys.intern("surface")
+    # CPython 3.11's type attribute cache holds a strong reference to every
+    # attribute NAME it caches (an earlier `x.surface` lookup leaves one), and
+    # the slot is picked by the name's address, so whether a later lookup
+    # evicts it depends on the run's memory layout: ~1-3% of runs lost that
+    # reference between the two counts and read +2. Empty the cache before
+    # each count so only real holders are counted.
+    sys._clear_type_cache()
     before = sys.getrefcount(s)
     with pytest.raises(TypeError):             # builds the avoid host first
         h.combat_ai_avoid_scan(None, None, 0.0, None)
@@ -63,4 +70,5 @@ def test_child_host_init_holds_one_reference_per_kept_string():
         h.combat_ai_fire_update(object(), 0.0, {})
     # One each: avoid's and fire's ("<kind>", "surface") note arguments and
     # the rating's reason string.
+    sys._clear_type_cache()
     assert sys.getrefcount(s) - before == 3
