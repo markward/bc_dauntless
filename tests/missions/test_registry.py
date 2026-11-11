@@ -1,16 +1,9 @@
 """End-to-end: discover() returns entries with display_name filled."""
-import pytest
-
-from engine import paths as _paths
 from engine.missions import discover
-
-SCRIPTS_ROOT = _paths.sdk_scripts()
 
 
 def test_display_names_are_non_empty():
-    if not SCRIPTS_ROOT.is_dir():
-        pytest.skip("SDK scripts not present")
-    reg = discover(SCRIPTS_ROOT)
+    reg = discover()
     for fam in reg.families:
         assert fam.display_name, f"family {fam.dir_name!r} has empty display_name"
         for ep in fam.episodes:
@@ -24,9 +17,7 @@ def test_display_names_are_non_empty():
 
 def test_display_name_falls_back_to_dir_when_unknown():
     """A family root that doesn't exist in TGL still produces dir-name labels."""
-    if not SCRIPTS_ROOT.is_dir():
-        pytest.skip("SDK scripts not present")
-    reg = discover(SCRIPTS_ROOT)
+    reg = discover()
     tutorial = next(f for f in reg.families if f.dir_name == "Tutorial")
     m1 = next(
         m for ep in tutorial.episodes for m in ep.missions

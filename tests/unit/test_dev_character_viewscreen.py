@@ -1,19 +1,14 @@
 """Tests for engine.dev_character_viewscreen — the developer-only "put any SDK
-character on the viewscreen" shortcut. The catalogue is read from the SDK tree
-(character scripts + the missions that stage them), so these tests build a tiny
-fake tree rather than relying on the installed SDK."""
+character on the viewscreen" shortcut. The catalogue is read from the stock
+scripts' text (character scripts + the missions that stage them; in the game,
+lifted retail .pyc unparsed in memory), so most tests hand build_catalogue a
+tiny fake set of module texts rather than relying on the install."""
 import sys
 import types
 
 import pytest
 
 from engine import dev_character_viewscreen as dcv
-
-
-def _write(root, rel, text):
-    p = root / rel
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(text)
 
 
 _CHARACTER = '''
@@ -34,30 +29,71 @@ def _character(object_name, character_name=None, location=None):
 
 
 @pytest.fixture
-def sdk(tmp_path):
-    _write(tmp_path, "Bridge/Characters/Kessok.py", _character("Kessok", location="KessokSeated"))
-    _write(tmp_path, "Bridge/Characters/Admiral_Liu.py", _character("Liu"))
-    # The crew add themselves under their station name.
-    _write(tmp_path, "Bridge/Characters/Saffi.py", _character("XO", "Saffi"))
-    # Not a character: no CreateCharacter.
-    _write(tmp_path, "Bridge/Characters/CharacterPaths.py", "g_pcRootPath = 'x'\n")
-    _write(tmp_path, "Maelstrom/Episode8/E8M1/E8M1.py",
-           'MissionLib.SetupBridgeSet("KessokSet", "data/Models/Sets/Kessok/kessokbridge.nif")\n'
-           'MissionLib.SetupCharacter("Bridge.Characters.Kessok", "KessokSet")\n')
-    # Liu appears on two sets; the more common one wins.
-    for i in range(2):
-        _write(tmp_path, "Maelstrom/M%d.py" % i,
-               'MissionLib.SetupBridgeSet("StarbaseSet", "data/Models/Sets/StarbaseControl/starbasecontrolRM.nif")\n'
-               'MissionLib.SetupCharacter("Bridge.Characters.Admiral_Liu", "StarbaseSet")\n')
-    _write(tmp_path, "Maelstrom/M9.py",
-           'MissionLib.SetupBridgeSet("LiuSet", "data/Models/Sets/Other/other.nif")\n'
-           'MissionLib.SetupCharacter("Bridge.Characters.Admiral_Liu", "LiuSet")\n')
-    return tmp_path
+def sdk():
+    texts = {
+        "Bridge/Characters/Kessok": _character("Kessok", location="KessokSeated"),
+        "Bridge/Characters/Admiral_Liu": _character("Liu"),
+        # The crew add themselves under their station name.
+        "Bridge/Characters/Saffi": _character("XO", "Saffi"),
+        # Not a character: no CreateCharacter.
+        "Bridge/Characters/CharacterPaths": "g_pcRootPath = 'x'\n",
+        "Maelstrom/Episode8/E8M1/E8M1":
+            'MissionLib.SetupBridgeSet("KessokSet", "data/Models/Sets/Kessok/kessokbridge.nif")\n'
+            'MissionLib.SetupCharacter("Bridge.Characters.Kessok", "KessokSet")\n',
+    }
+    # Liu appears on two sets; the more common one wins. One is written the
+    # way ast.unparse writes a lifted module: single quotes.
+    texts["Maelstrom/M0"] = (
+        'MissionLib.SetupBridgeSet("StarbaseSet", "data/Models/Sets/StarbaseControl/starbasecontrolRM.nif")\n'
+        'MissionLib.SetupCharacter("Bridge.Characters.Admiral_Liu", "StarbaseSet")\n')
+    texts["Maelstrom/M1"] = (
+        "MissionLib.SetupBridgeSet('StarbaseSet', 'data/Models/Sets/StarbaseControl/starbasecontrolRM.nif')\n"
+        "MissionLib.SetupCharacter('Bridge.Characters.Admiral_Liu', 'StarbaseSet')\n")
+    texts["Maelstrom/M9"] = (
+        'MissionLib.SetupBridgeSet("LiuSet", "data/Models/Sets/Other/other.nif")\n'
+        'MissionLib.SetupCharacter("Bridge.Characters.Admiral_Liu", "LiuSet")\n')
+    return texts
 
 
 def test_catalogue_lists_only_character_scripts_by_character_name(sdk):
     names = [e.name for e in dcv.build_catalogue(sdk)]
     assert names == ["Kessok", "Liu", "Saffi"]
+
+
+def test_single_quoted_character_scripts_are_read(sdk):
+    sdk["Bridge/Characters/Lifted"] = (
+        "def CreateCharacter(pSet):\n"
+        "    pX = App.CharacterClass_Create('a', 'b')\n"
+        "    pSet.AddObjectToSet(pX, 'Helm')\n"
+        "    pX.SetCharacterName('Kiska')\n"
+        "    return pX\n")
+    kiska = {e.name: e for e in dcv.build_catalogue(sdk)}["Kiska"]
+    assert kiska.module == "Bridge.Characters.Lifted"
+    assert kiska.object_name == "Helm"
+
+
+# Recorded from the SDK-based scan (Bridge/Characters/*.py in the BC SDK)
+# before the catalogue moved to the install's lifted .pyc: names only.
+_SDK_CHARACTER_NAMES = [
+    "Barel", "Brex", "CardCapt", "Data", "Dawson", "Draxon", "Felix",
+    "FemaleExtra1", "FemaleExtra2", "FemaleExtra3", "Graff", "Haley",
+    "Hanson", "Jadeja", "Kartok", "Kessok", "Kiska", "Korbus", "Liu",
+    "MacCray", "MaleExtra1", "MaleExtra2", "MaleExtra3", "Martin", "Matan",
+    "Miguel", "Oben", "Picard", "Praag", "Saalek", "Saffi", "Sek", "Soams",
+    "Soto", "Takahara", "Terrik", "Torenn", "Verata", "Willis", "Yi",
+    "Zeiss"]
+
+
+def test_stock_catalogue_lists_the_same_characters_as_the_sdk_scan(
+        monkeypatch):
+    from engine import paths
+
+    def _no_sdk(*_a, **_k):
+        raise AssertionError("the catalogue must not read the SDK")
+    monkeypatch.setattr(paths, "sdk_scripts", _no_sdk)
+    monkeypatch.setattr(paths, "sdk_root", _no_sdk)
+    monkeypatch.setattr(dcv, "_cache", None)
+    assert [e.name for e in dcv.catalogue()] == _SDK_CHARACTER_NAMES
 
 
 def test_entry_keeps_the_set_object_name_viewscreen_on_looks_up(sdk):

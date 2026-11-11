@@ -120,6 +120,39 @@ def test_is_stock_accepts_any_extension_and_case(tmp_path):
     assert not stock_scripts.is_stock("ships")
 
 
+def test_is_stock_is_a_manifest_question_needing_no_game_root(monkeypatch):
+    """mods.classify asks is_stock while booting with roots held in hand
+    (host_loop passes resolution.game), so it must never read the ambient
+    paths.game_root()."""
+    stock_scripts.configure({"ships/Galaxy.pyc": [H],
+                             "Bridge/__init__.pyc": [H]})
+
+    def _unresolved():
+        raise AssertionError("is_stock must not resolve the game root")
+    monkeypatch.setattr(paths, "game_root", _unresolved)
+    assert stock_scripts.is_stock("ships/Galaxy.py")
+    assert stock_scripts.is_stock("Bridge")
+    assert not stock_scripts.is_stock("ships/MyShip.py")
+
+
+def test_is_mission_script_wants_initialize_taking_pmission(tmp_path):
+    _put(tmp_path, "Custom/Tutorial/M1/M1.py",
+         b"def Initialize(pMission):\n\tpass\n")
+    _put(tmp_path, "Custom/Tutorial/Episode.py",
+         b"def Initialize(pEpisode):\n\tpass\n")
+    _put(tmp_path, "Custom/Tutorial/Bare.py", b"def Initialize():\n\tpass\n")
+    _put(tmp_path, "Custom/Tutorial/None.py", b"x = 1\n")
+    stock_scripts.configure({}, tmp_path / "install")
+    stock_scripts.add_fixture_tree(tmp_path, "Custom/Tutorial")
+    got = {rel: stock_scripts.is_mission_script(stock_scripts.find(rel))
+           for rel in ("Custom/Tutorial/M1/M1", "Custom/Tutorial/Episode",
+                       "Custom/Tutorial/Bare", "Custom/Tutorial/None")}
+    assert got == {"Custom/Tutorial/M1/M1": True,
+                   "Custom/Tutorial/Episode": False,
+                   "Custom/Tutorial/Bare": False,
+                   "Custom/Tutorial/None": False}
+
+
 def test_top_level_functions_reads_bytecode_without_lifting(tmp_path, monkeypatch):
     real = _retail_pyc()
     root = real.parents[3]

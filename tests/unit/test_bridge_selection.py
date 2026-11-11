@@ -56,6 +56,31 @@ def test_available_ships_are_bcs_player_menu_hulls_that_exist(fake_install):
     assert set(ships) == {"Galaxy", "Sovereign", "Akira", "BirdOfPrey", "KessokLight"}
 
 
+# Recorded from the SDK-based scan (ships/*.py in the BC SDK) before stock
+# ship stems moved to the install's listed .pyc: the stems must not change.
+_SDK_SHIP_STEMS = (
+    "Akira", "Amagon", "Ambassador", "Asteroid", "Asteroid1", "Asteroid2",
+    "Asteroid3", "Asteroidh1", "Asteroidh2", "Asteroidh3", "BiranuStation",
+    "BirdOfPrey", "BombFreighter", "CardFacility", "CardFreighter",
+    "CardHybrid", "CardOutpost", "CardStarbase", "CardStation", "CommArray",
+    "CommLight", "Decoy", "DryDock", "E2M0Warbird", "Enterprise",
+    "EscapePod", "FedOutpost", "FedStarbase", "Freighter", "Galaxy", "Galor",
+    "GenericTemplate", "Geronimo", "Keldon", "KessokHeavy", "KessokLight",
+    "KessokMine", "Marauder", "MatanKeldon", "Nebula", "Peregrine", "Probe",
+    "RanKuf", "Shuttle", "Sovereign", "SpaceFacility", "Sunbuster",
+    "Transport", "Vorcha", "Warbird")
+
+
+def test_stock_ship_stems_come_from_the_install_unchanged(monkeypatch):
+    from engine import paths
+
+    def _no_sdk(*_a, **_k):
+        raise AssertionError("ship stems must not read the SDK")
+    monkeypatch.setattr(paths, "sdk_scripts", _no_sdk)
+    stems = bs._stock_ship_stems()
+    assert stems == {s.lower(): s for s in _SDK_SHIP_STEMS}
+
+
 def test_stock_player_ships_is_bcs_sixteen():
     assert bs.STOCK_PLAYER_SHIPS == (
         "Akira", "Ambassador", "Galaxy", "Nebula", "Sovereign",

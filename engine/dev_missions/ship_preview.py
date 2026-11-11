@@ -73,13 +73,15 @@ def _report_resolution(name: str) -> None:
 
     lines = ["[ship_preview] resolving assets for ship %r:" % name]
 
-    # Script and hardpoints resolve through the SDK finder.
+    # Script and hardpoints resolve through the SDK finder: a mod's .py, else
+    # the install's listed stock .pyc.
     for rel in ("ships/%s.py" % name, "ships/Hardpoints/%s.py" % name):
         hit = mods.sdk_override(rel)
         if hit is not None:
             lines.append("  %-34s MOD    %s" % (rel, hit))
         else:
-            lines.append("  %-34s stock  %s" % (rel, paths.sdk_scripts() / rel))
+            stock = paths.stock_scripts() / (rel[:-len(".py")] + ".pyc")
+            lines.append("  %-34s stock  %s" % (rel, stock))
 
     # The model path is named by the ship script itself, so read it back
     # rather than guessing at the layout.

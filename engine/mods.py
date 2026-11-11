@@ -153,7 +153,7 @@ IGNORED_SUFFIXES = (".txt", ".html", ".htm", ".pdf", ".rtf", ".doc")
 # keying paths.py's own vocabulary, not path segments.
 _TARGET_FOR = {
     "data": "game",     # paths-guard: kind label, keys paths.game_root()
-    "scripts": "sdk",   # paths-guard: kind label, keys paths.sdk_scripts()
+    "scripts": "sdk",   # paths-guard: kind label, keys engine.stock_scripts
     "sfx": "game",      # paths-guard: kind label, keys paths.game_root()
 }
 
@@ -386,12 +386,15 @@ def _policy_decision(pending: list) -> "mod_policy.PolicyDecision":
     return mod_policy.decide(files, imports)
 
 
-def classify(index: ModIndex, game_root: Path, sdk_scripts: Path) -> None:
-    """Fill index.overrides. Costs one stat PER MOD KEY -- never a walk of
-    the install."""
-    roots = {"game": game_root, "sdk": sdk_scripts}  # paths-guard: kind labels
+def classify(index: ModIndex, game_root: Path) -> None:
+    """Fill index.overrides. Costs one stat per game-targeted mod key and a
+    manifest lookup per script key (stock scripts are the install's listed
+    ``.pyc``, engine.stock_scripts) -- never a walk of the install."""
+    from engine import stock_scripts
 
     def _shadows_stock(mf: ModFile) -> bool:
+        if mf.target == "sdk":  # paths-guard: kind label
+            return stock_scripts.is_stock(mf.rel)
         # Stat the mod author's OWN spelling as well as the folded one. On a
         # case-insensitive filesystem the two are the same question; on a
         # case-sensitive one the folded spelling finds a stock file only when
@@ -399,15 +402,14 @@ def classify(index: ModIndex, game_root: Path, sdk_scripts: Path) -> None:
         # Data/Icons/Ships/Galaxy.tga over the identically-spelled stock file
         # was reported as a pure addition. Reporting only -- resolution is
         # always by the folded key.
-        root = roots[mf.target]
-        if mf.raw_rel and (root / mf.raw_rel).exists():
+        if mf.raw_rel and (game_root / mf.raw_rel).exists():
             return True
-        return (root / mf.rel).exists()
+        return (game_root / mf.rel).exists()
 
     index.overrides = [
         rel for rel, mf in sorted(index.files.items()) if _shadows_stock(mf)
     ]
-    _classify_ship_scripts(index, sdk_scripts)
+    _classify_ship_scripts(index)
 
 
 # ``ships/<name>.py`` and ``ships/hardpoints/<name>.py`` as folded index keys.
@@ -426,7 +428,7 @@ _HARDPOINT_DECL = re.compile(
     r"""["']HardpointFile["']\s*:\s*["']([^"']+)["']""")
 
 
-def _classify_ship_scripts(index: ModIndex, sdk_scripts) -> None:
+def _classify_ship_scripts(index: ModIndex) -> None:
     """Fill each mod's `orphan_hardpoints` and `replaces_ships`.
 
     Both answer the same player question -- "why is this mod's ship not in the
@@ -438,9 +440,11 @@ def _classify_ship_scripts(index: ModIndex, sdk_scripts) -> None:
     * a mod that replaces a stock ship in place rather than adding one.
 
     Reads the mod's OWN ship scripts (already indexed, typically a few dozen
-    small files) to learn which hardpoints they claim, plus one stat per mod
-    hardpoint against the stock root. Never walks the install.
+    small files) to learn which hardpoints they claim, plus one stock
+    manifest lookup per mod hardpoint. Never walks the install.
     """
+    from engine import stock_scripts
+
     by_mod = {}
     for status in index.mods:
         by_mod[status.name] = status
@@ -466,7 +470,7 @@ def _classify_ship_scripts(index: ModIndex, sdk_scripts) -> None:
             # follows -- Galaxy.py declares "galaxy".
             if name in claimed:
                 continue
-            if (sdk_scripts / "ships" / f"{name}.py").exists():
+            if stock_scripts.is_stock(f"ships/{name}"):
                 continue
             # Preserve the mod author's own capitalisation for the report;
             # the index key is folded.
@@ -476,7 +480,7 @@ def _classify_ship_scripts(index: ModIndex, sdk_scripts) -> None:
         ship = _SHIP_KEY.match(key)
         if ship is not None:
             name = ship.group(1)
-            if (sdk_scripts / "ships" / f"{name}.py").exists():
+            if stock_scripts.is_stock(f"ships/{name}"):
                 status.replaces_ships.append(_raw_stem(mf, name))
 
 
@@ -774,24 +778,22 @@ def renderer_overrides_with_replacements(index: ModIndex) -> dict:
     return {**renderer_overrides(index), **renderer_overrides(replacements())}
 
 
-def install(argv=None, env=None, game_root=None, sdk_scripts=None) -> ModIndex:
+def install(argv=None, env=None, game_root=None) -> ModIndex:
     """Build, classify, scan and install the index. Called once at boot,
     AFTER paths.configure() -- mapping Data/ and Scripts/ to their targets
     needs the resolved roots.
 
-    `game_root`/`sdk_scripts` let a caller that already holds a resolved
-    Resolution (host_loop's boot sequence) pass those roots directly rather
-    than going through paths.game_root()/paths.sdk_scripts() -- those read
-    the global paths._RESOLUTION, which a caller may have deliberately left
-    unconfigured (e.g. a test that monkeypatches paths.configure to a no-op
-    while holding its own fake Resolution). When either is omitted, this
-    falls back to the ambient paths accessors exactly as before, so every
-    existing caller (tools/, tests with no Resolution in hand) is unaffected.
+    `game_root` lets a caller that already holds a resolved Resolution
+    (host_loop's boot sequence) pass the root directly rather than going
+    through paths.game_root() -- that reads the global paths._RESOLUTION,
+    which a caller may have deliberately left unconfigured (e.g. a test that
+    monkeypatches paths.configure to a no-op while holding its own fake
+    Resolution). When omitted, this falls back to the ambient accessor.
+    Stock scripts need no root: they are the manifest's
+    (engine.stock_scripts.is_stock).
     """
     if game_root is None:
         game_root = paths.game_root()
-    if sdk_scripts is None:
-        sdk_scripts = paths.sdk_scripts()
     disabled_by = mods_disabled_by(argv=argv, env=env)
     if disabled_by:
         # No disk walk at all: every consumer reads current(), so an empty
@@ -801,7 +803,7 @@ def install(argv=None, env=None, game_root=None, sdk_scripts=None) -> ModIndex:
         configure(index)
         return index
     index = build_index(mods_root(argv=argv, env=env))
-    classify(index, game_root, sdk_scripts)
+    classify(index, game_root)
     detect_frameworks(index)
     configure(index)
     return index

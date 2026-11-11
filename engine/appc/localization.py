@@ -31,13 +31,12 @@ def _resolve_tgl_path(filename: str):
 
     SDK scripts pass paths like "data/TGL/Bridge Menus.tgl" — relative to
     the BC working directory. We mirror that by checking the game root
-    first, then falling back to the SDK root for SDK-shipped TGLs (used in
-    headless tests where the game install may not be present). The SDK
-    ships its TGLs under <sdk>/Build/Data/TGL (capital D); the prefix is
-    re-cased when present so lookups work on case-sensitive filesystems.
-    Either root may be unresolved (PathsUnresolved) -- that candidate is
-    simply skipped, matching the pre-existing "file can't be located"
-    fallback rather than raising.
+    first, then each test-only fixture TGL root
+    (``stock_scripts.fixture_tgl_roots()``, the SDK tutorial sample's TGL,
+    decision 8) with the path after "data/TGL/" in any case. The game never
+    reads the SDK. An unresolved game root (PathsUnresolved) is simply
+    skipped, matching the pre-existing "file can't be located" fallback
+    rather than raising.
     """
     raw = Path(filename)
     candidates = []
@@ -49,15 +48,12 @@ def _resolve_tgl_path(filename: str):
     except _paths.PathsUnresolved:
         pass
 
-    sdk_path = filename
-    for lower in ("data/TGL/", "data/tgl/", "Data/tgl/"):
-        if sdk_path.startswith(lower):
-            sdk_path = "Data/TGL/" + sdk_path[len(lower):]
-            break
-    try:
-        candidates.append(_paths.sdk_root() / "Build" / sdk_path)
-    except _paths.PathsUnresolved:
-        pass
+    prefix = "data/tgl/"
+    if filename.replace("\\", "/").lower().startswith(prefix):
+        rest = filename[len(prefix):]
+        from engine import stock_scripts
+        for root in stock_scripts.fixture_tgl_roots():
+            candidates.append(root / rest)
 
     candidates.append(_paths.PROJECT_ROOT / filename)
 

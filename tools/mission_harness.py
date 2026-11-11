@@ -59,10 +59,7 @@ def discover_missions() -> list[str]:
     from engine import stock_scripts as _stock
     missions = []
     for sf in _stock.modules():
-        if sf.is_package:
-            continue
-        args = _stock.top_level_functions(sf).get("Initialize", ())
-        if args[:1] == ("pMission",):
+        if _stock.is_mission_script(sf):
             missions.append(sf.rel.replace("/", "."))
     return sorted(missions)
 

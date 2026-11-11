@@ -1,8 +1,9 @@
 """Fake BC install + fake mods/ tree for the ship->bridge matrix tests.
 
-`fake_install` points engine.paths at a tmp SDK scripts dir and game data
-dir (five playable stock ship scripts plus two non-player hulls, a
-Hardpoints/ subdir that must NOT count as a ship, and a real Ships.tgl);
+`fake_install` points engine.stock_scripts at an injected manifest over a
+tmp scripts root, and engine.paths at a tmp game data dir (five playable
+stock ship scripts plus two non-player hulls, a Hardpoints/ subdir that must
+NOT count as a ship, and a real Ships.tgl);
 `install_mod` builds a mods/ tree and installs it through
 engine.mods.build_index so the overlay path runs for real;
 `register_player_ship` is a Foundation `RegisterQBPlayerShipMenu` without a
@@ -10,7 +11,7 @@ QuickBattle module, which is how a mod puts a hull on BC's player menu.
 """
 import pytest
 
-from engine import foundation, mods, paths
+from engine import foundation, mods, paths, stock_scripts
 from engine import bridge_selection as bs
 
 
@@ -22,23 +23,27 @@ def write_tgl(path, strings: dict):
 
 @pytest.fixture
 def fake_install(tmp_path, monkeypatch):
-    sdk_scripts = tmp_path / "sdkroot" / "Build" / "scripts"   # paths-guard: fake install tree
+    scripts = tmp_path / "gameroot" / "scripts"               # paths-guard: fake install tree
     game_root = tmp_path / "gameroot"                          # paths-guard: fake install tree
-    (sdk_scripts / "ships" / "Hardpoints").mkdir(parents=True)
-    for stem in ("Galaxy", "Sovereign", "Akira", "BirdOfPrey", "KessokLight",
-                 "FedStarbase", "Asteroid"):     # last two: never player hulls
-        (sdk_scripts / "ships" / f"{stem}.py").write_text("# ship\n")
-    (sdk_scripts / "ships" / "__init__.py").write_text("")
-    (sdk_scripts / "ships" / "Hardpoints" / "galaxy.py").write_text("# hp\n")
+    manifest = {f"ships/{stem}.pyc": ["0" * 32]
+                for stem in ("Galaxy", "Sovereign", "Akira", "BirdOfPrey",
+                             "KessokLight",
+                             "FedStarbase", "Asteroid")}  # last two: never player hulls
+    manifest["ships/__init__.pyc"] = ["0" * 32]
+    manifest["ships/Hardpoints/galaxy.pyc"] = ["0" * 32]
+    for key in manifest:
+        (scripts / key).parent.mkdir(parents=True, exist_ok=True)
+        (scripts / key).write_bytes(b"")
     write_tgl(game_root / "data" / "TGL" / "Ships.tgl",
               {"Galaxy": "Galaxy", "Sovereign": "Sovereign", "Akira": "Akira",
                "BirdOfPrey": "Bird of Prey", "KessokLight": "Light Cruiser"})
-    monkeypatch.setattr(paths, "sdk_scripts", lambda: sdk_scripts)
+    stock_scripts.configure(manifest, scripts)
     monkeypatch.setattr(paths, "game_asset", lambda rel: game_root / rel)
     mods.configure(None)
     foundation.reset()
     bs.clear_caches()
-    yield sdk_scripts, game_root
+    yield scripts, game_root
+    stock_scripts.configure()
     mods.configure(None)
     foundation.reset()
     bs.clear_caches()

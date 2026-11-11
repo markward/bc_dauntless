@@ -19,8 +19,7 @@ def _clear_index():
 
 def test_install_builds_classifies_and_configures(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "g")
-    monkeypatch.setattr(paths, "sdk_scripts", lambda: tmp_path / "s")
-    (tmp_path / "g").mkdir(); (tmp_path / "s").mkdir()
+    (tmp_path / "g").mkdir()
     _touch(tmp_path / "mods" / "M" / "Data" / "a.nif")
     _touch(tmp_path / "mods" / "M" / "Scripts" / "Custom" / "x.py",)
     # FoundationTech, not Foundation: this asserts only that install() RUNS
@@ -38,7 +37,6 @@ def test_install_builds_classifies_and_configures(monkeypatch, tmp_path):
 
 def test_install_with_no_mods_dir_is_an_empty_index(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "g")
-    monkeypatch.setattr(paths, "sdk_scripts", lambda: tmp_path / "s")
     idx = mods.install(argv=["--mods-dir", str(tmp_path / "absent")], env={})
     assert idx.files == {}
     assert mods.describe(idx) == ""
@@ -46,8 +44,7 @@ def test_install_with_no_mods_dir_is_an_empty_index(monkeypatch, tmp_path):
 
 def test_renderer_override_payload_is_game_targets_only(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "g")
-    monkeypatch.setattr(paths, "sdk_scripts", lambda: tmp_path / "s")
-    (tmp_path / "g").mkdir(); (tmp_path / "s").mkdir()
+    (tmp_path / "g").mkdir()
     _touch(tmp_path / "mods" / "M" / "Data" / "a.nif")
     _touch(tmp_path / "mods" / "M" / "Scripts" / "b.py")
     idx = mods.install(argv=["--mods-dir", str(tmp_path / "mods")], env={})
@@ -58,42 +55,66 @@ def test_renderer_override_payload_is_game_targets_only(monkeypatch, tmp_path):
 
 def test_install_uses_explicit_roots_not_ambient_globals(monkeypatch, tmp_path):
     """Regression test for the Task 10 review finding: install() reaching
-    classify() via paths.game_root()/paths.sdk_scripts() reads the GLOBAL
-    paths._RESOLUTION, which a caller holding its own resolved roots (host_
-    loop's boot sequence, passing resolution.game/resolution.sdk directly;
-    or a test that monkeypatches paths.configure to a no-op the way
+    classify() via paths.game_root() reads the GLOBAL paths._RESOLUTION,
+    which a caller holding its own resolved roots (host_loop's boot
+    sequence, passing resolution.game directly; or a test that
+    monkeypatches paths.configure to a no-op the way
     tests/host/test_host_loop_first_run.py does) may leave stale or
     unconfigured. That leak let a live scan of the developer's real mods/
     directory, classified against their real ambient BC install, print from
     inside an unrelated test.
 
-    Passing game_root/sdk_scripts explicitly must bypass the ambient
-    accessors entirely -- proven here by making them raise if install() ever
-    calls them, and by asserting the override was resolved against the
-    PASSED root (not merely that nothing printed).
+    Passing game_root explicitly must bypass the ambient accessors entirely
+    -- proven here by making them raise if install() ever calls them, and by
+    asserting the override was resolved against the PASSED root (not merely
+    that nothing printed). A mod ship script exercises the stock-script
+    question too, which is answered by the manifest, never a root.
     """
     monkeypatch.setattr(paths, "configure", lambda resolution: None)
 
     def _must_not_be_called():
         raise AssertionError(
-            "install() must use the passed game_root/sdk_scripts, never "
-            "read them back through the ambient paths accessors")
+            "install() must use the passed game_root, never read roots back "
+            "through the ambient paths accessors")
     monkeypatch.setattr(paths, "game_root", _must_not_be_called)
-    monkeypatch.setattr(paths, "sdk_scripts", _must_not_be_called)
+    monkeypatch.setattr(paths, "stock_scripts", _must_not_be_called)
 
     game = tmp_path / "g"
-    sdk = tmp_path / "s"
     game.mkdir()
-    sdk.mkdir()
     # A stock file the mod overrides -- classify() only records an override
     # if it resolves the mod's relative path against the PASSED root.
     _touch(game / "data" / "a.nif")
     _touch(tmp_path / "mods" / "M" / "Data" / "a.nif")
+    _touch(tmp_path / "mods" / "M" / "Scripts" / "ships" / "Galaxy.py")
 
     idx = mods.install(argv=["--mods-dir", str(tmp_path / "mods")], env={},
-                       game_root=game, sdk_scripts=sdk)
+                       game_root=game)
 
-    assert idx.overrides == ["data/a.nif"]
+    assert idx.overrides == ["data/a.nif", "ships/galaxy.py"]
+    assert {m.name: m.replaces_ships for m in idx.mods}["M"] == ["Galaxy"]
+
+
+def test_a_mod_ship_over_a_stock_ship_is_reported_with_no_sdk(
+        monkeypatch, tmp_path):
+    """Stock ship scripts are the install's listed .pyc (the committed
+    manifest), not SDK .py files: replaces_ships needs no SDK."""
+    from engine import stock_scripts
+
+    def _no_sdk(*_a, **_k):
+        raise AssertionError("mods must not read the SDK")
+    monkeypatch.setattr(paths, "sdk_scripts", _no_sdk)
+    monkeypatch.setattr(paths, "sdk_root", _no_sdk)
+    stock_scripts.clear_fixture_trees()
+    game = tmp_path / "g"
+    game.mkdir()
+    _touch(tmp_path / "mods" / "CGSov" / "Scripts" / "Ships" / "Galaxy.py")
+    _touch(tmp_path / "mods" / "CGSov" / "Scripts" / "Ships" / "MyShip.py")
+
+    idx = mods.install(argv=["--mods-dir", str(tmp_path / "mods")], env={},
+                       game_root=game)
+
+    assert {m.name: m.replaces_ships for m in idx.mods}["CGSov"] == ["Galaxy"]
+    assert idx.overrides == ["ships/galaxy.py"]
 
 
 # ── --disable-mods / DAUNTLESS_DISABLE_MODS ────────────────────────────────
@@ -102,8 +123,7 @@ def test_install_uses_explicit_roots_not_ambient_globals(monkeypatch, tmp_path):
 
 def _populated_mods(monkeypatch, tmp_path) -> Path:
     monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "g")
-    monkeypatch.setattr(paths, "sdk_scripts", lambda: tmp_path / "s")
-    (tmp_path / "g").mkdir(); (tmp_path / "s").mkdir()
+    (tmp_path / "g").mkdir()
     _touch(tmp_path / "mods" / "M" / "Data" / "a.nif")
     _touch(tmp_path / "mods" / "M" / "Scripts" / "Custom" / "Ships" / "x.py")
     return tmp_path / "mods"

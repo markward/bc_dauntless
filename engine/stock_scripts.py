@@ -53,7 +53,8 @@ __all__ = [
     "InstallCheck", "SYNTHETIC_PACKAGES", "StockFile", "StockInstallError",
     "StockScriptError", "add_fixture_tree", "check_install", "checked",
     "children", "clear_fixture_trees", "configure", "find", "find_by_leaf",
-    "fixture_tgl_roots", "forget_failed_checks", "is_stock", "load_tree",
+    "fixture_tgl_roots", "forget_failed_checks", "is_mission_script",
+    "is_stock", "load_tree",
     "logical_rel", "modules", "owns", "require_install", "root",
     "top_level_functions", "validate_install",
 ]
@@ -94,10 +95,8 @@ class _Index:
     def __init__(self, root: Path, modules: dict) -> None:
         self.root = root
         self.entries: dict[str, _Entry] = {}
-        self.stock_names: set[str] = set()
         for key, hashes in modules.items():
             stem = key[:-len(".pyc")] if key.lower().endswith(".pyc") else key
-            self.stock_names.add(stem.casefold())
             is_package = stem.rsplit("/", 1)[-1] == _INIT
             rel = stem.rsplit("/", 1)[0] if is_package and "/" in stem else stem
             entry = _Entry(rel, key, is_package, frozenset(hashes))
@@ -287,9 +286,37 @@ def is_stock(rel: str) -> bool:
         if folded.endswith(ext):
             folded = folded[:-len(ext)]
             break
-    index = _current()
-    return folded in index.stock_names or (
-        folded in index.entries and index.entries[folded].is_package)
+    return folded in _stock_names()
+
+
+_names_memo: Optional[tuple[dict, frozenset]] = None
+
+
+def _stock_names() -> frozenset:
+    """Every folded listed stem, plus each listed package's folded name.
+    Read from the manifest alone, never the game root: ``mods.classify``
+    asks while booting with roots held in hand, not configured."""
+    global _names_memo
+    manifest = _manifest()
+    if _names_memo is None or _names_memo[0] is not manifest:
+        names = set()
+        for key in manifest:
+            stem = key[:-len(".pyc")] if key.lower().endswith(".pyc") else key
+            names.add(stem.casefold())
+            head, _, leaf = stem.rpartition("/")
+            if leaf == _INIT and head:
+                names.add(head.casefold())
+        _names_memo = (manifest, frozenset(names))
+    return _names_memo[1]
+
+
+def is_mission_script(sf: StockFile) -> bool:
+    """Whether ``sf`` is a mission script: a top-level ``Initialize`` whose
+    first argument is ``pMission`` (an episode's takes ``pEpisode``)."""
+    if sf.is_package:
+        return False
+    args = top_level_functions(sf).get("Initialize", ())
+    return args[:1] == ("pMission",)
 
 
 def top_level_functions(sf: StockFile) -> dict[str, tuple[str, ...]]:

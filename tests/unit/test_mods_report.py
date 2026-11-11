@@ -9,75 +9,75 @@ def _touch(p: Path, body: str = "x") -> None:
     p.write_text(body)
 
 
-def _roots(tmp_path):
+def _game(tmp_path):
+    """A stock game root. Stock SCRIPTS are the committed manifest's
+    (engine.stock_scripts.is_stock), so no scripts root is built."""
     game = tmp_path / "stock_game"
-    sdk = tmp_path / "stock_sdk"
-    game.mkdir(); sdk.mkdir()
-    return game, sdk
+    game.mkdir()
+    return game
 
 
 def test_pure_addition_is_neither_override_nor_conflict(tmp_path):
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     _touch(tmp_path / "mods" / "M" / "Data" / "new.nif")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     assert idx.overrides == []
     assert idx.conflicts == []
 
 
 def test_stock_override_is_detected(tmp_path):
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     _touch(game / "data" / "shared.nif", "stock")
     _touch(tmp_path / "mods" / "M" / "Data" / "shared.nif", "modded")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     assert idx.overrides == ["data/shared.nif"]
 
 
 def test_sdk_override_is_detected(tmp_path):
-    game, sdk = _roots(tmp_path)
-    _touch(sdk / "loadspacehelper.py", "stock")
+    game = _game(tmp_path)
     _touch(tmp_path / "mods" / "M" / "Scripts" / "loadspacehelper.py", "modded")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     assert idx.overrides == ["loadspacehelper.py"]
 
 
 def test_mod_conflict_names_loser_and_winner(tmp_path):
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     _touch(tmp_path / "mods" / "Alpha" / "Data" / "a.nif")
     _touch(tmp_path / "mods" / "Bravo" / "Data" / "a.nif")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     assert idx.conflicts == [("data/a.nif", "Alpha", "Bravo")]
 
 
 def test_describe_reports_counts_and_warns_on_conflict(tmp_path):
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     _touch(tmp_path / "mods" / "Alpha" / "Data" / "a.nif")
     _touch(tmp_path / "mods" / "Bravo" / "Data" / "a.nif")
     _touch(tmp_path / "mods" / "Bravo" / ".DS_Store")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     text = mods.describe(idx)
     assert "Alpha" in text and "Bravo" in text
     assert "conflict" in text.lower()
 
 
 def test_describe_is_empty_with_no_mods(tmp_path):
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     idx = mods.build_index(tmp_path / "absent")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     assert mods.describe(idx) == ""
 
 
 def test_describe_distinguishes_zero_placed_files(tmp_path):
     """A mod with a content root but zero placed files (all ignored) is legible."""
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     _touch(tmp_path / "mods" / "Empty" / "Data" / ".DS_Store")
     _touch(tmp_path / "mods" / "Empty" / "readme.txt")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     text = mods.describe(idx)
     # Should have "Empty" in the output and show the ignored count
     assert "Empty" in text
@@ -94,7 +94,7 @@ def test_describe_flags_read_failure_explicitly(tmp_path, monkeypatch):
     all: it swallows a permission error and simply does not descend, which is
     exactly why this reported "0 files" and no problem for the commonest real
     failure."""
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     _touch(tmp_path / "mods" / "Broken" / "Data" / "file.nif")
     _touch(tmp_path / "mods" / "Broken" / "Data" / "Sub" / "buried.nif")
 
@@ -108,7 +108,7 @@ def test_describe_flags_read_failure_explicitly(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "scandir", mock_scandir)
 
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     text = mods.describe(idx)
 
     status = {m.name: m for m in idx.mods}["Broken"]
@@ -127,7 +127,7 @@ def test_stock_override_is_detected_when_the_mod_matches_stock_case(tmp_path):
     statting only "data/icons/ships/galaxy.tga" finds nothing on a
     case-sensitive filesystem, so the commonest override of all -- a ship
     icon replacement -- was reported as a pure addition."""
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     _touch(game / "data" / "Icons" / "Ships" / "Galaxy.tga", "stock")
     _touch(tmp_path / "mods" / "M" / "Data" / "Icons" / "Ships" / "Galaxy.tga", "modded")
     idx = mods.build_index(tmp_path / "mods")
@@ -135,7 +135,7 @@ def test_stock_override_is_detected_when_the_mod_matches_stock_case(tmp_path):
     # The un-folded spelling is kept alongside the folded index key.
     assert mf.rel == "data/icons/ships/galaxy.tga"
     assert mf.raw_rel == "Data/Icons/Ships/Galaxy.tga"
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     assert idx.overrides == ["data/icons/ships/galaxy.tga"]
     assert "1 stock file(s) overridden" in mods.describe(idx)
 
@@ -168,7 +168,7 @@ def test_stock_override_survives_a_case_sensitive_filesystem(tmp_path):
     idx = mods.build_index(tmp_path / "mods")
     # Stock ships the capitalised spelling and ONLY that one, as BC does.
     game = _CaseSensitiveRoot({"Data/Icons/Ships/Galaxy.tga"})
-    mods.classify(idx, game, _CaseSensitiveRoot(set()))
+    mods.classify(idx, game)
     assert idx.overrides == ["data/icons/ships/galaxy.tga"]
 
 
@@ -177,7 +177,7 @@ def test_a_pure_addition_is_still_not_an_override_under_case_sensitivity(tmp_pat
     _touch(tmp_path / "mods" / "M" / "Data" / "Icons" / "Ships" / "Fsteamr.tga")
     idx = mods.build_index(tmp_path / "mods")
     game = _CaseSensitiveRoot({"Data/Icons/Ships/Galaxy.tga"})
-    mods.classify(idx, game, _CaseSensitiveRoot(set()))
+    mods.classify(idx, game)
     assert idx.overrides == []
 
 
@@ -199,10 +199,10 @@ def _hardpoint(root, name):
 
 
 def test_hardpoint_without_a_ship_script_is_reported(tmp_path):
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     _hardpoint(tmp_path / "mods" / "CubeHP", "VoyagerCube")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
 
     status = {m.name: m for m in idx.mods}["CubeHP"]
     assert status.orphan_hardpoints == ["VoyagerCube"]
@@ -232,12 +232,12 @@ def _ship_script(root, script_name, hardpoint_name):
 
 
 def test_a_hardpoint_whose_ship_the_same_mod_ships_is_not_orphaned(tmp_path):
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     root = tmp_path / "mods" / "Whole"
     _hardpoint(root, "NewShip")
     _ship_script(root, "NewShip", "NewShip")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
 
     assert {m.name: m for m in idx.mods}["Whole"].orphan_hardpoints == []
 
@@ -245,57 +245,55 @@ def test_a_hardpoint_whose_ship_the_same_mod_ships_is_not_orphaned(tmp_path):
 def test_a_hardpoint_named_differently_from_its_ship_is_not_orphaned(tmp_path):
     """The LC Intrepid case, verbatim: LCintrepidZZ.py declares
     HardpointFile "LCintrepidHP". Nothing links them by filename."""
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     root = tmp_path / "mods" / "LC Intrepid Pack"
     _hardpoint(root, "LCintrepidHP")
     _ship_script(root, "LCintrepidZZ", "LCintrepidHP")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
 
     status = {m.name: m for m in idx.mods}["LC Intrepid Pack"]
     assert status.orphan_hardpoints == []
 
 
 def test_single_quoted_hardpoint_declarations_are_read_too(tmp_path):
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     root = tmp_path / "mods" / "Quoted"
     _hardpoint(root, "OddHP")
     _touch(root / "Scripts" / "ships" / "Odd.py",
            "def GetShipStats():\n\treturn {'HardpointFile': 'OddHP'}\n")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
 
     assert {m.name: m for m in idx.mods}["Quoted"].orphan_hardpoints == []
 
 
 def test_a_hardpoint_whose_ship_ANOTHER_mod_ships_is_not_orphaned(tmp_path):
     """The base mod being installed is exactly the case this must not flag."""
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     _hardpoint(tmp_path / "mods" / "CubeHP", "VoyagerCube")
     _ship_script(tmp_path / "mods" / "CubeBase", "VoyagerCube", "VoyagerCube")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
 
     assert {m.name: m for m in idx.mods}["CubeHP"].orphan_hardpoints == []
 
 
 def test_a_hardpoint_upgrading_a_STOCK_ship_is_not_orphaned(tmp_path):
     """A hardpoint-only upgrade to a stock hull is a normal, working mod."""
-    game, sdk = _roots(tmp_path)
-    _touch(sdk / "ships" / "Galaxy.py", "stock")
+    game = _game(tmp_path)
     _hardpoint(tmp_path / "mods" / "GalaxyHP", "Galaxy")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
 
     assert {m.name: m for m in idx.mods}["GalaxyHP"].orphan_hardpoints == []
 
 
 def test_replacing_a_stock_ship_script_is_reported(tmp_path):
-    game, sdk = _roots(tmp_path)
-    _touch(sdk / "ships" / "Sovereign.py", "stock")
+    game = _game(tmp_path)
     _touch(tmp_path / "mods" / "CGSov" / "Scripts" / "ships" / "Sovereign.py")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
 
     status = {m.name: m for m in idx.mods}["CGSov"]
     assert status.replaces_ships == ["Sovereign"]
@@ -303,11 +301,10 @@ def test_replacing_a_stock_ship_script_is_reported(tmp_path):
 
 
 def test_adding_a_new_ship_script_is_not_a_replacement(tmp_path):
-    game, sdk = _roots(tmp_path)
-    _touch(sdk / "ships" / "Sovereign.py", "stock")
+    game = _game(tmp_path)
     _touch(tmp_path / "mods" / "Additive" / "Scripts" / "ships" / "LCintrepidZZ.py")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
 
     status = {m.name: m for m in idx.mods}["Additive"]
     assert status.replaces_ships == []
@@ -317,20 +314,19 @@ def test_adding_a_new_ship_script_is_not_a_replacement(tmp_path):
 def test_a_hardpoint_replacement_is_not_reported_as_a_ship_replacement(tmp_path):
     """ships/Hardpoints/X.py lives under ships/ too -- it must not be read as
     a replacement of the ship script X."""
-    game, sdk = _roots(tmp_path)
-    _touch(sdk / "ships" / "Hardpoints" / "Galaxy.py", "stock")
+    game = _game(tmp_path)
     _hardpoint(tmp_path / "mods" / "GalaxyHP", "Galaxy")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
 
     assert {m.name: m for m in idx.mods}["GalaxyHP"].replaces_ships == []
 
 
 def test_a_mod_with_neither_condition_gains_no_extra_report_text(tmp_path):
-    game, sdk = _roots(tmp_path)
+    game = _game(tmp_path)
     _touch(tmp_path / "mods" / "Plain" / "Data" / "thing.nif")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
 
     text = mods.describe(idx)
     assert "no ship script" not in text

@@ -1,7 +1,8 @@
-"""MissionRegistry.discover walks sdk/Build/scripts to a typed tree."""
-import pytest
+"""MissionRegistry.discover reads the stock script listing (the install's
+.pyc, plus the test-only Custom/Tutorial fixture tree) into a typed tree."""
 
 from engine import paths as _paths
+from engine import stock_scripts
 from engine.missions.discovery import (
     discover,
     MissionEntry,
@@ -10,22 +11,16 @@ from engine.missions.discovery import (
     MissionRegistry,
 )
 
-SCRIPTS_ROOT = _paths.sdk_scripts()
-
 
 def test_discover_returns_registry():
-    if not SCRIPTS_ROOT.is_dir():
-        pytest.skip("SDK scripts not present")
-    reg = discover(SCRIPTS_ROOT)
+    reg = discover()
     assert isinstance(reg, MissionRegistry)
     assert isinstance(reg.families, list)
     assert reg.families  # at least one
 
 
 def test_discover_finds_tutorial_missions():
-    if not SCRIPTS_ROOT.is_dir():
-        pytest.skip("SDK scripts not present")
-    reg = discover(SCRIPTS_ROOT)
+    reg = discover()
     fams = {f.dir_name: f for f in reg.families}
     assert "Tutorial" in fams
 
@@ -41,9 +36,7 @@ def test_discover_finds_tutorial_missions():
 
 
 def test_discover_finds_maelstrom_episode_grouping():
-    if not SCRIPTS_ROOT.is_dir():
-        pytest.skip("SDK scripts not present")
-    reg = discover(SCRIPTS_ROOT)
+    reg = discover()
     fams = {f.dir_name: f for f in reg.families}
     assert "Maelstrom" in fams
     eps = {ep.dir_name for ep in fams["Maelstrom"].episodes}
@@ -55,9 +48,7 @@ def test_discover_maelstrom_campaign_order_and_labels():
     """Maelstrom missions follow the original game's menu order and labels,
     not a lexical directory sort. Episode 4 plays E4M6 first; Episode 2's
     first mission (dir E2M0) is labelled "E1M3"."""
-    if not SCRIPTS_ROOT.is_dir():
-        pytest.skip("SDK scripts not present")
-    reg = discover(SCRIPTS_ROOT)
+    reg = discover()
     fams = {f.dir_name: f for f in reg.families}
     eps = {ep.dir_name: ep for ep in fams["Maelstrom"].episodes}
 
@@ -75,11 +66,9 @@ def test_discover_maelstrom_campaign_order_and_labels():
 def test_maelstrom_campaign_table_matches_disk():
     """Guard against SDK/table drift: every on-disk Maelstrom mission dir is in
     MAELSTROM_CAMPAIGN, and the table lists no directory that isn't on disk."""
-    if not SCRIPTS_ROOT.is_dir():
-        pytest.skip("SDK scripts not present")
     from engine.missions.name_resolver import MAELSTROM_CAMPAIGN
 
-    reg = discover(SCRIPTS_ROOT)
+    reg = discover()
     fams = {f.dir_name: f for f in reg.families}
     on_disk = {
         (ep.dir_name, m.dir_name)
@@ -97,9 +86,7 @@ def test_maelstrom_campaign_table_matches_disk():
 
 
 def test_discover_module_name_format():
-    if not SCRIPTS_ROOT.is_dir():
-        pytest.skip("SDK scripts not present")
-    reg = discover(SCRIPTS_ROOT)
+    reg = discover()
     m1 = next(
         m for f in reg.families if f.dir_name == "Tutorial"
         for ep in f.episodes for m in ep.missions
@@ -109,20 +96,52 @@ def test_discover_module_name_format():
 
 
 def test_discover_synthetic_tree(tmp_path):
-    """End-to-end on a tmp_path tree — no SDK assets required."""
+    """End-to-end on a tmp_path fixture tree -- no SDK assets required."""
     custom = tmp_path / "Custom" / "Tutorial" / "Episode"
     (custom / "MX").mkdir(parents=True)
-    (custom / "MX" / "MX.py").write_text("def Initialize(mission): pass\n")
-    # A dir whose .py has no Initialize — must NOT be discovered.
+    (custom / "MX" / "MX.py").write_text("def Initialize(pMission): pass\n")
+    # A dir whose .py has no Initialize -- must NOT be discovered.
     (custom / "Skip").mkdir()
     (custom / "Skip" / "Skip.py").write_text("# nothing here\n")
-    # A dir whose name doesn't match its .py — must NOT be discovered.
+    # A dir whose name doesn't match its .py -- must NOT be discovered.
     (custom / "Mismatch").mkdir()
-    (custom / "Mismatch" / "Other.py").write_text("def Initialize(m): pass\n")
+    (custom / "Mismatch" / "Other.py").write_text(
+        "def Initialize(pMission): pass\n")
+    # An episode entry point -- must NOT be discovered.
+    (custom / "Episode.py").write_text("def Initialize(pEpisode): pass\n")
+    stock_scripts.clear_fixture_trees()
+    stock_scripts.add_fixture_tree(tmp_path, "Custom/Tutorial")
 
-    reg = discover(tmp_path)
+    reg = discover()
     found = [
         m.dir_name
-        for f in reg.families for ep in f.episodes for m in ep.missions
+        for f in reg.families if f.dir_name == "Tutorial"
+        for ep in f.episodes for m in ep.missions
     ]
     assert found == ["MX"]
+
+
+def test_discovery_needs_no_sdk_for_maelstrom(monkeypatch):
+    """With the SDK fixture trees cleared and every SDK accessor raising,
+    the retail install alone still lists Maelstrom and Multiplayer; the
+    Tutorial family (an SDK sample) is simply absent."""
+    def _no_sdk(*_a, **_k):
+        raise AssertionError("discover() must not read the SDK")
+    monkeypatch.setattr(_paths, "sdk_scripts", _no_sdk)
+    monkeypatch.setattr(_paths, "sdk_root", _no_sdk)
+    monkeypatch.setattr(_paths, "sdk_data", _no_sdk)
+    stock_scripts.clear_fixture_trees()
+
+    reg = discover()
+    fams = {f.dir_name: f for f in reg.families}
+    assert "Tutorial" not in fams
+    assert "Maelstrom" in fams and "Multiplayer" in fams
+    multiplayer = [m.module_name for ep in fams["Multiplayer"].episodes
+                   for m in ep.missions]
+    assert "Multiplayer.Episode.Mission1.Mission1" in multiplayer
+    # Multiplayer/MissionShared defines Initialize(pMission) but is not a
+    # <dir>/<dir> mission script.
+    assert not any("MissionShared" in m for m in multiplayer)
+    e1 = {ep.dir_name: ep for ep in fams["Maelstrom"].episodes}["Episode1"]
+    assert [m.module_name for m in e1.missions] == [
+        "Maelstrom.Episode1.E1M1.E1M1", "Maelstrom.Episode1.E1M2.E1M2"]

@@ -3677,7 +3677,7 @@ _NULL_PICKER = _NullPicker()
 
 def _developer_family_entry():
     """The synthetic "Developer" mission-picker family: in-repo preview
-    missions that don't live under sdk/. Split out of _get_mission_registry
+    missions that aren't stock scripts. Split out of _get_mission_registry
     so tests can assert a mission is registered without booting main()."""
     from engine.missions import FamilyEntry, EpisodeEntry, MissionEntry
     return FamilyEntry(
@@ -10648,9 +10648,9 @@ def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
         return None
 
     # Mods layer over the resolved roots, so this must follow both configure()
-    # above and the resolution.ok check just above it. Roots are passed
+    # above and the resolution.ok check just above it. The game root is passed
     # EXPLICITLY from the local `resolution` this function just computed,
-    # not read back via paths.game_root()/paths.sdk_scripts() -- those read
+    # not read back via paths.game_root() -- that reads
     # the global paths._RESOLUTION, which a caller (a test that monkeypatches
     # paths.configure to a no-op, holding its own fake Resolution) may
     # deliberately leave stale or unconfigured. Reading the global here would
@@ -10665,8 +10665,7 @@ def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
     try:
         _mod_index = _mods.install(
             argv=argv, env=env,
-            game_root=resolution.game,
-            sdk_scripts=_paths.sdk_scripts_in(resolution.sdk))
+            game_root=resolution.game)
     except Exception as _mod_exc:
         import traceback as _traceback
         print(f"[host_loop] mods.install() failed -- booting without mods: "
@@ -12257,10 +12256,9 @@ def run(mission_name: Optional[str] = None,
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:
-                    sdk_scripts = _paths.sdk_scripts()
-                    reg = _missions.discover(sdk_scripts)
+                    reg = _missions.discover()
                     # Dev-only synthetic family: in-repo preview missions that
-                    # don't live under sdk/. The single "." episode is collapsed
+                    # aren't stock scripts. The single "." episode is collapsed
                     # by the picker so the mission rows sit directly under
                     # "Developer".
                     reg.families.append(_developer_family_entry())

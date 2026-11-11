@@ -118,19 +118,12 @@ def bridge_label(script_name: str) -> str:
 # ── Ship universe ──────────────────────────────────────────────────────────
 
 def _stock_ship_stems() -> dict:
-    """{folded stem: stem} for every top-level ships/*.py in the SDK."""
-    out: dict = {}
-    try:
-        entries = list((paths.sdk_scripts() / "ships").iterdir())
-    except OSError:
-        return out
-    for p in entries:
-        if p.suffix.lower() != ".py" or not p.is_file():
-            continue
-        if p.stem == "__init__":
-            continue
-        out[p.stem.lower()] = p.stem
-    return out
+    """{folded stem: stem} for every top-level stock ships/ module: the
+    install's listed .pyc (engine.stock_scripts), never the SDK."""
+    from engine import stock_scripts
+    stems = (sf.rel.split("/")[-1] for sf in stock_scripts.children("ships")
+             if not sf.is_package)
+    return {stem.lower(): stem for stem in stems}
 
 
 def _mod_ship_stems() -> dict:

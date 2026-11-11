@@ -53,12 +53,12 @@ def test_foundation_is_provided_by_the_engine(tmp_path):
 
 
 def test_the_report_does_not_call_foundation_unsupported(tmp_path):
-    game = tmp_path / "stock_game"; sdk = tmp_path / "stock_sdk"
-    game.mkdir(); sdk.mkdir()
+    game = tmp_path / "stock_game"
+    game.mkdir()
     _touch(tmp_path / "mods" / "M" / "Scripts" / "Custom" / "Ships" / "A.py",
            "import Foundation\n")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     mods.detect_frameworks(idx)
     assert "Foundation" not in mods.describe(idx)
 
@@ -66,12 +66,12 @@ def test_the_report_does_not_call_foundation_unsupported(tmp_path):
 def test_an_unimplemented_framework_is_still_called_out(tmp_path):
     """The line must keep working for frameworks we genuinely lack, or
     fixing the false positive would just blind the report instead."""
-    game = tmp_path / "stock_game"; sdk = tmp_path / "stock_sdk"
-    game.mkdir(); sdk.mkdir()
+    game = tmp_path / "stock_game"
+    game.mkdir()
     _touch(tmp_path / "mods" / "M" / "Scripts" / "Custom" / "A.py",
            "import FoundationTech\nimport Registry\n")
     idx = mods.build_index(tmp_path / "mods")
-    mods.classify(idx, game, sdk)
+    mods.classify(idx, game)
     mods.detect_frameworks(idx)
     text = mods.describe(idx)
     assert "FoundationTech" in text and "Registry" in text

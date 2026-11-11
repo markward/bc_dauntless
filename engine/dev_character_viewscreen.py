@@ -6,36 +6,43 @@ This stages a character the same way an SDK mission does -- the same three
 MissionLib calls (SetupBridgeSet, SetupCharacter, ViewscreenOn) -- so what
 shows up is what the mission would show, not a separate render path.
 
-The catalogue is read from the SDK tree at use (never at import, see
-engine/paths.py): every Bridge/Characters script with a CreateCharacter, named
-by its SetCharacterName, paired with the comm set the SDK's own missions most
-often stage it on. A character no mission puts on a viewscreen (the player's
-own crew) falls back to the Galaxy bridge comm set; if its CreateCharacter
-places it nowhere (the crew's stations are set later, by ConfigureForGalaxy)
-it is seated where Zeiss's own script seats her on that set.
+The catalogue is read from the stock scripts at use (never at import, see
+engine/paths.py): the install's listed .pyc, lifted and unparsed IN MEMORY
+(never written to disk), plus any test fixture tree. Every Bridge/Characters
+script with a CreateCharacter, named by its SetCharacterName, paired with the
+comm set the SDK's own missions most often stage it on. A character no
+mission puts on a viewscreen (the player's own crew) falls back to the Galaxy
+bridge comm set; if its CreateCharacter places it nowhere (the crew's
+stations are set later, by ConfigureForGalaxy) it is seated where Zeiss's own
+script seats her on that set.
 
 Driven from the Developer Options panel's "Characters" tab.
 """
 from __future__ import annotations
 
+import ast
 import re
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-
-from engine import paths
+from typing import Dict, List, Mapping, Optional, Tuple
 
 # The Galaxy bridge comm set, as SDK missions build it (Zeiss, Willis, Yi...),
 # and the seat Zeiss.CreateCharacter uses on it.
 FALLBACK_SET = ("DBridgeSet", "data/Models/Sets/DBridge/DBridge.nif")
 FALLBACK_LOCATION = "GalaxySeated"
 
-_ADD_TO_SET = re.compile(r'AddObjectToSet\(\s*\w+\s*,\s*"([^"]+)"\s*\)')
-_CHARACTER_NAME = re.compile(r'SetCharacterName\(\s*"([^"]+)"\s*\)')
+# Either quote style: SDK source uses double quotes, ast.unparse of a lifted
+# .pyc writes single ones.
+_Q = r"""["']"""
+_S = r"""["']([^"']+)["']"""
+_ADD_TO_SET = re.compile(r'AddObjectToSet\(\s*\w+\s*,\s*' + _S + r'\s*\)')
+_CHARACTER_NAME = re.compile(r'SetCharacterName\(\s*' + _S + r'\s*\)')
 _CREATE_BODY = re.compile(r'^def CreateCharacter\(.*?(?=^def |\Z)', re.M | re.S)
-_SETUP_SET = re.compile(r'SetupBridgeSet\(\s*"([^"]+)"\s*,\s*"([^"]+)"')
-_SETUP_CHAR = re.compile(r'SetupCharacter\(\s*"(Bridge\.Characters\.\w+)"\s*,\s*"([^"]+)"')
+_SETUP_SET = re.compile(r'SetupBridgeSet\(\s*' + _S + r'\s*,\s*' + _S)
+_SETUP_CHAR = re.compile(r'SetupCharacter\(\s*' + _Q + r'(Bridge\.Characters\.\w+)'
+                         + _Q + r'\s*,\s*' + _S)
+
+_CHARACTERS = "Bridge/Characters"
 
 
 @dataclass(frozen=True)
@@ -55,21 +62,22 @@ class CharacterEntry:
         return self.object_name or self.name
 
 
-def _read(path: Path) -> str:
-    return path.read_text(encoding="latin-1")
+def _is_character_rel(rel: str) -> bool:
+    """A module directly in Bridge/Characters."""
+    return "/" in rel and rel.rsplit("/", 1)[0] == _CHARACTERS
 
 
-def _mission_sets(scripts_root: Path) -> Dict[str, Tuple[str, str]]:
+def _mission_sets(texts: Mapping[str, str]) -> Dict[str, Tuple[str, str]]:
     """module -> (set name, set model) of the set its missions stage it on most.
 
     A set name is resolved against the SetupBridgeSet in the SAME file: the
     same name can mean a different model in another mission (PBridgeSet is
     both the Ferengi and the Galaxy E-bridge)."""
     counts: Dict[str, Counter] = {}
-    for path in sorted(scripts_root.rglob("*.py")):
-        if "Bridge/Characters" in path.as_posix():
+    for rel in sorted(texts):
+        if _CHARACTERS in rel:
             continue
-        text = _read(path)
+        text = texts[rel]
         if "SetupCharacter" not in text:
             continue
         models = {}
@@ -82,20 +90,20 @@ def _mission_sets(scripts_root: Path) -> Dict[str, Tuple[str, str]]:
     return {module: c.most_common(1)[0][0] for module, c in counts.items()}
 
 
-def build_catalogue(scripts_root: Path) -> List[CharacterEntry]:
-    """Every SDK character under `scripts_root`, sorted by name."""
-    scripts_root = Path(scripts_root)
-    sets = _mission_sets(scripts_root)
+def build_catalogue(texts: Mapping[str, str]) -> List[CharacterEntry]:
+    """Every character among ``texts`` (module rel without extension, e.g.
+    "Bridge/Characters/Kessok" -> its source text), sorted by name."""
+    sets = _mission_sets(texts)
     out = []
-    for path in sorted((scripts_root / "Bridge" / "Characters").glob("*.py")):
-        body = _CREATE_BODY.search(_read(path))
+    for rel in sorted(r for r in texts if _is_character_rel(r)):
+        body = _CREATE_BODY.search(texts[rel])
         added = body and _ADD_TO_SET.search(body.group(0))
         if not added:
             continue
         object_name = added.group(1)
         named = _CHARACTER_NAME.search(body.group(0))
         name = named.group(1) if named else object_name
-        module = "Bridge.Characters." + path.stem
+        module = "Bridge.Characters." + rel.rsplit("/", 1)[1]
         location = None
         if module in sets:
             set_name, set_model = sets[module]
@@ -109,15 +117,34 @@ def build_catalogue(scripts_root: Path) -> List[CharacterEntry]:
     return sorted(out, key=lambda e: e.name.lower())
 
 
+def _stock_texts() -> Dict[str, str]:
+    """rel -> text of every stock module the catalogue could use: a
+    character script defining CreateCharacter, or a module staging one with
+    SetupCharacter. The raw bytes are checked first (a .pyc holds its names
+    verbatim), so only those few modules are lifted; their text is
+    ``ast.unparse`` of the tree, in memory only."""
+    from engine import stock_scripts
+    out: Dict[str, str] = {}
+    for sf in stock_scripts.modules():
+        needle = (b"CreateCharacter" if _is_character_rel(sf.rel)
+                  else b"SetupCharacter")
+        if needle not in sf.path.read_bytes():
+            continue
+        tree = stock_scripts.load_tree(str(sf.path), sf.rel.replace("/", "."))
+        out[sf.rel] = ast.unparse(tree)
+    return out
+
+
 _cache: Optional[Tuple[str, List[CharacterEntry]]] = None
 
 
 def catalogue() -> List[CharacterEntry]:
-    """The catalogue for the CURRENT SDK root, rebuilt if the root changed."""
+    """The catalogue for the CURRENT stock root, rebuilt if the root changed."""
     global _cache
-    root = str(paths.sdk_scripts())
+    from engine import stock_scripts
+    root = str(stock_scripts.root())
     if _cache is None or _cache[0] != root:
-        _cache = (root, build_catalogue(Path(root)))
+        _cache = (root, build_catalogue(_stock_texts()))
     return _cache[1]
 
 

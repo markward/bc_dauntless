@@ -1,11 +1,7 @@
-"""Mission discovery — walks sdk/Build/scripts to a MissionRegistry."""
+"""Mission discovery — the stock script listing to a MissionRegistry."""
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
-from pathlib import Path
-
-_INITIALIZE_RE = re.compile(rb"^def\s+Initialize\s*\(", re.MULTILINE)
 
 # Known family roots, in the order they should appear in the picker.
 _FAMILY_ROOTS: list[tuple[str, str]] = [
@@ -41,37 +37,37 @@ class MissionRegistry:
     families: list[FamilyEntry] = field(default_factory=list)
 
 
-def discover(scripts_root: Path | str) -> MissionRegistry:
-    scripts_root = Path(scripts_root)
+def discover() -> MissionRegistry:
+    """The mission tree from the stock script listing (spec
+    2026-11-11-no-sdk-runtime §4.3): a mission is a ``<dir>/<dir>`` module
+    under a family root whose ``Initialize`` takes ``pMission`` first. A
+    family root with no listed (or fixture) modules is skipped."""
+    from engine import stock_scripts
+
+    listed = stock_scripts.modules()
     by_family: dict[str, dict[str, list[MissionEntry]]] = {}
 
     for family_rel, family_name in _FAMILY_ROOTS:
-        family_root = scripts_root / family_rel
-        if not family_root.is_dir():
-            continue
-        # First pass: find every candidate mission dir.
+        prefix = family_rel.casefold() + "/"
+        # First pass: every <dir>/<dir> mission script under the family.
         candidates = [
-            d for d in _iter_leaf_dirs(family_root)
-            if _maybe_mission(d, scripts_root) is not None
+            sf for sf in listed
+            if sf.rel.casefold().startswith(prefix) and _names_its_dir(sf.rel)
+            and stock_scripts.is_mission_script(sf)
         ]
-        # Second pass: drop a candidate if it's an ancestor of another
-        # candidate. This filters out episode-init dirs like
-        # Custom/Tutorial/Episode/, whose Episode.py also defines
-        # Initialize() but is the *episode* entry-point, not a mission.
-        candidate_set = {d.resolve() for d in candidates}
-        for mission_dir in candidates:
-            if any(
-                other != mission_dir.resolve()
-                and other.is_relative_to(mission_dir.resolve())
-                for other in candidate_set
-            ):
+        # Second pass: drop a candidate whose folder is an ancestor of
+        # another candidate's (an episode entry point is never a mission).
+        dirs = {_mission_dir(sf.rel).casefold() for sf in candidates}
+        for sf in candidates:
+            mission_dir = _mission_dir(sf.rel)
+            folded = mission_dir.casefold() + "/"
+            if any(other.startswith(folded) for other in dirs):
                 continue
-            entry = _maybe_mission(mission_dir, scripts_root)
-            if entry is None:
-                continue
-            episode_dir = mission_dir.parent.name
+            parts = mission_dir.split("/")
+            entry = MissionEntry(module_name=sf.rel.replace("/", "."),
+                                 dir_name=parts[-1])
             by_family.setdefault(family_name, {}).setdefault(
-                episode_dir, []).append(entry)
+                parts[-2], []).append(entry)
 
     from engine.missions import name_resolver as nr
 
@@ -107,36 +103,12 @@ def discover(scripts_root: Path | str) -> MissionRegistry:
     return reg
 
 
-def _iter_leaf_dirs(root: Path):
-    for path in root.rglob("*"):
-        if not path.is_dir():
-            continue
-        if any(p.startswith("__") for p in path.parts):
-            continue
-        yield path
+def _mission_dir(rel: str) -> str:
+    """The folder a ``<dir>/<dir>`` mission script lives in."""
+    return rel.rsplit("/", 1)[0]
 
 
-def _maybe_mission(mission_dir: Path,
-                   scripts_root: Path) -> MissionEntry | None:
-    candidate = mission_dir / f"{mission_dir.name}.py"
-    if not candidate.is_file():
-        # Case-insensitive fallback for filesystems that preserve case
-        # but the on-disk name differs.
-        for child in mission_dir.iterdir():
-            if (child.is_file()
-                    and child.suffix == ".py"
-                    and child.stem.lower() == mission_dir.name.lower()):
-                candidate = child
-                break
-        else:
-            return None
-    try:
-        body = candidate.read_bytes()
-    except OSError:
-        return None
-    if not _INITIALIZE_RE.search(body):
-        return None
-
-    rel = mission_dir.relative_to(scripts_root)
-    module_name = ".".join(rel.parts + (mission_dir.name,))
-    return MissionEntry(module_name=module_name, dir_name=mission_dir.name)
+def _names_its_dir(rel: str) -> bool:
+    """Whether the module's last segment repeats its folder's name."""
+    parts = rel.split("/")
+    return len(parts) >= 3 and parts[-1].casefold() == parts[-2].casefold()

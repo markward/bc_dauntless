@@ -134,3 +134,34 @@ def test_tutorial_mission_lookup(fake_tgl):
         "Tutorial", "Episode", "M1Basic",
         "Custom.Tutorial.Episode.M1Basic.M1Basic",
     ) == "Basic Maneuvers"
+
+
+def test_tutorial_tgl_resolves_through_the_fixture_tgl_root():
+    """The SDK tutorial sample is a test fixture (decision 8): its TGL is
+    found through stock_scripts.fixture_tgl_roots(), not an SDK accessor."""
+    import engine.missions.name_resolver as nr
+    from engine import stock_scripts
+    fixture_roots = stock_scripts.fixture_tgl_roots()
+    assert fixture_roots, "tests/conftest.py registers the tutorial TGL root"
+    assert nr._tgl_roots()[:len(fixture_roots)] == fixture_roots
+    nr._load_tgl.cache_clear()
+    try:
+        assert nr._load_tgl("Tutorial/Tutorial.tgl") is not None
+    finally:
+        nr._load_tgl.cache_clear()
+
+
+def test_game_tgl_roots_exclude_the_sdk(monkeypatch):
+    import engine.missions.name_resolver as nr
+    from engine import paths, stock_scripts
+    from tools import dev_sdk
+    sdk = dev_sdk.sdk_root()
+
+    def _no_sdk(*_a, **_k):
+        raise AssertionError("TGL roots must not read the SDK")
+    monkeypatch.setattr(paths, "sdk_data", _no_sdk)
+    monkeypatch.setattr(paths, "sdk_root", _no_sdk)
+    stock_scripts.clear_fixture_trees()
+    roots = nr._tgl_roots()
+    assert roots
+    assert not any(r.resolve().is_relative_to(sdk.resolve()) for r in roots)

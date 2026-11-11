@@ -266,3 +266,22 @@ def test_load_caches_parsed_database_across_calls():
     db1 = mgr.Load("data/TGL/Tutorial/Tutorial.tgl")
     db2 = mgr.Load("data/TGL/Tutorial/Tutorial.tgl")
     assert db1 is db2
+
+
+def test_tutorial_tgl_resolves_through_the_fixture_tgl_root_not_the_sdk(
+        monkeypatch):
+    """The SDK tutorial TGL is a test fixture (decision 8): Load() finds it
+    through stock_scripts.fixture_tgl_roots(), never an SDK accessor."""
+    from engine import paths, stock_scripts
+    from engine.appc.localization import _resolve_tgl_path
+
+    def _no_sdk(*_a, **_k):
+        raise AssertionError("TGL lookup must not read the SDK")
+    monkeypatch.setattr(paths, "sdk_root", _no_sdk)
+    monkeypatch.setattr(paths, "sdk_data", _no_sdk)
+    (root,) = stock_scripts.fixture_tgl_roots()
+    for spelling in ("data/TGL/Tutorial/Tutorial.tgl",
+                     "data/tgl/Tutorial/Tutorial.tgl"):
+        assert _resolve_tgl_path(spelling) == root / "Tutorial" / "Tutorial.tgl"
+    stock_scripts.clear_fixture_trees()
+    assert _resolve_tgl_path("data/TGL/Tutorial/Tutorial.tgl") is None
