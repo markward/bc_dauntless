@@ -52,13 +52,13 @@ ROLES = (
         "IsCloaking", "IsDecloaking")),
     ("engine.appc.subsystems", "ShipSubsystem", ()),
     ("engine.appc.ships", "ShipClass", (
-        "IsDead", "GetWorldLocation", "GetWorldRotation", "GetContainingSet",
+        "IsDead", "IsHidden", "GetWorldLocation", "GetWorldRotation", "GetContainingSet",
         "GetScale", "GetRadius", "GetBaseRadius", "GetShields",
         "GetPhaserSystem",
         "GetTargetSubsystem", "is_using_target_offset", "GetTargetOffsetTG",
         "GetCloakingSubsystem")),
     ("engine.appc.objects", "ObjectClass", (
-        "IsDead", "GetWorldLocation", "GetWorldRotation", "GetContainingSet",
+        "IsDead", "IsHidden", "GetWorldLocation", "GetWorldRotation", "GetContainingSet",
         "GetScale", "GetRadius", "GetBaseRadius", "GetShields")),
 )
 
@@ -71,6 +71,11 @@ ALLOWED = {
         "(implements(obj, 'IsDead')) makes the kernel read the row's "
         "`_dead` exactly as DamageableObject.IsDead does, and ASK is_dead "
         "for a target without it",
+    "engine.appc.characters.CharacterClass.IsHidden":
+        "ported: `1 if self._hidden else 0` has the truth of the mirrored "
+        "`_hidden` (ObjectClass's NativeField, which SetHidden writes), the "
+        "only thing the beam blocker reads (`if c.IsHidden(): continue`); a "
+        "character is never in the combat step's ship list anyway",
     "engine.appc.ai.ProximityCheck.GetRadius":
         "unreachable: GetRadius is read only for a bank's TARGET (the sphere "
         "tier's world_radius). A ProximityCheck has no real IsDead "

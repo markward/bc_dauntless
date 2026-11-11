@@ -41,6 +41,10 @@
 *.dlu
 *.dot
 *.nif
+# AnimateTest cube by Cordy (https://github.com/Cordanilus), GPL-3.0 with the
+# author's permission: the NiFlipController test fixture (see README.md)
+!native/tests/assets/fixtures/animate_test_cube/AnimateTest.nif
+!native/tests/assets/fixtures/animate_test_cube/00[1-4]_glow.tga
 *.pyd
 *.pyc
 # BC compiled scripts

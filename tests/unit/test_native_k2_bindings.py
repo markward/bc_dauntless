@@ -157,7 +157,9 @@ def test_contact_record_layout(scene):
                            "k2_logged_firing_system_stop",
                            "k2_logged_bank_stop", "k2_entries",
                            "k2_present_native", "k2_native_pulses",
-                           "k2_pulse_python", "k2_pulse_python_reasons"}
+                           "k2_pulse_python", "k2_pulse_python_reasons",
+                           "k2_blocked"}
+    assert counts["k2_blocked"] == {"ship": 0, "planet": 0}, counts
     # No pulse context sent: a damage pulse is a CONTACT record (THE DAMAGE
     # PULSE, native damage Task 4), counted not_ok.
     assert set(counts["k2_pulse_python_reasons"]) == {
@@ -175,7 +177,74 @@ def test_contact_record_layout(scene):
     assert counts["k2_posed"] == {"banks": 0, "lock_aims": 0}
     assert set(counts["k2_ask_queries"]) == {
         "is_dead", "can_detect", "aim_point", "shields_block", "bubble",
-        "resolve_hit", "bank_step"}
+        "resolve_hit", "bank_step", "blocker"}
+
+
+def test_blocker_ask_record_and_answers(scene):
+    """THE BLOCKER (k2_beams.h): a candidate the context leaves to Python
+    makes the walk ASK blocker (ship, target, emitter, aim unit, contact
+    distance). A "ship" answer hands the contact to the named ship (met at
+    its bubble with no normal, its point IS the bubble: tier "bubble"); a
+    "planet" answer ends the bank
+    (no contact); None keeps the target's; an unknown kind is refused."""
+    pset, a, b, sys_ = scene
+    k = _kinds()
+    c = _ship(pset, "C", "galaxy", (0.0, 30.0, 0.0))
+    bank = _bank_in_arc(sys_, a, b)
+
+    def begin():
+        bank._firing = True
+        bank._target = b
+        bank._beam_on_countdown = 0.0
+        bank._dwell = 0.125
+        ctx = {"view_offsets": {_set_handle(a): None, -1: None},
+               "trace": False, "python_candidates": [nc.slot(c)]}
+        _h.combat_k2_begin([nc.slot(a), nc.slot(c)], DT, 100.0, True, 0.0,
+                           ctx)
+        rec = _h.combat_k2_next()
+        assert rec[0] == k["ASK"] and rec[1] == "blocker"
+        ship, target, emitter, aim, contact_dist, writes = rec[2:]
+        assert (ship, target) == (nc.slot(a), nc.slot(b))
+        assert len(emitter) == 3 and len(aim) == 3
+        assert isinstance(contact_dist, float) and contact_dist > 0.0
+        return emitter, aim
+
+    # A ship in the way: the resting contact is the blocker's.
+    emitter, aim = begin()
+    with pytest.raises(ValueError):
+        _h.combat_k2_answer(("moon", 1.0))
+    point = (emitter[0] + aim[0] * 20.0, emitter[1] + aim[1] * 20.0,
+             emitter[2] + aim[2] * 20.0)
+    _h.combat_k2_answer(("ship", nc.slot(c), 20.0, point, None, point,
+                         "bubble"))
+    rec = _h.combat_k2_next()
+    while rec[0] == k["ASK"]:            # the blocker's shields_block
+        assert rec[1] == "shields_block" and rec[2] == nc.slot(c)
+        from engine.appc import combat
+        _h.combat_k2_answer(bool(combat.shields_block(c)))
+        rec = _h.combat_k2_next()
+    assert rec[0] == k["DONE"]
+    (entry,) = _h.combat_k2_drain()
+    assert entry[1] == nc.slot(c) and entry[6] == 20.0
+    assert entry[8] == point and entry[9] is None and entry[10] == "bubble"
+    assert entry[11] == point
+    _h.combat_k2_end()
+    # A planet in the way: no contact at all.
+    begin()
+    _h.combat_k2_answer(("planet", 20.0))
+    assert _h.combat_k2_next()[0] == k["DONE"]
+    assert _h.combat_k2_drain() == []
+    _h.combat_k2_end()
+    # Nothing in the way: the target's own contact.
+    begin()
+    _h.combat_k2_answer(None)
+    assert _h.combat_k2_next()[0] == k["DONE"]
+    (entry,) = _h.combat_k2_drain()
+    assert entry[1] == nc.slot(b)
+    _h.combat_k2_end()
+    counts = _h.combat_k2_counts()
+    assert counts["k2_ask_queries"]["blocker"] == 3, counts
+    assert counts["k2_blocked"] == {"ship": 1, "planet": 1}, counts
 
 
 def test_context_and_ask_answers(scene):

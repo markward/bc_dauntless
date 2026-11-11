@@ -298,6 +298,7 @@ TEST(K2, KindsAndNames) {
     EXPECT_STREQ(k2_kind_name(K2Kind::ASK), "ASK");
     EXPECT_STREQ(k2_query_name(K2Query::resolve_hit), "resolve_hit");
     EXPECT_STREQ(k2_query_name(K2Query::bank_step), "bank_step");
+    EXPECT_STREQ(k2_query_name(K2Query::blocker), "blocker");
     EXPECT_STREQ(k2_why_name(K2Why::PosedShip), "posed_ship");
     EXPECT_STREQ(k2_why_name(K2Why::PartStale), "part_stale");
 }
@@ -1823,4 +1824,151 @@ TEST(K2Pulse, TheNextRecordCarriesThePulse) {
     EXPECT_TRUE(d.hits.empty());
     EXPECT_EQ(w.k.take_hits(), 0);
     w.k.end();
+}
+
+// ── THE BLOCKER (k2_beams.h; beam blocking spec 2026-11-11 §5) ──────────────
+
+namespace {
+
+K2Context blocker_ctx(World& w) {
+    K2Context ctx;
+    ctx.hooks = w.host.hooks();
+    ctx.view_offsets[w.set] = std::nullopt;
+    ctx.view_offsets[-1] = std::nullopt;
+    return ctx;
+}
+
+}  // namespace
+
+TEST(K2Blocker, AShipInTheWayTakesTheContact) {
+    // The target (no instance) is met at its fallback point, 50 GU out; a
+    // ship 22 GU out whose mesh the beam hits at 20 GU takes the contact:
+    // its handle, its distance, its point and normal (tier mesh), its
+    // shields answer. The aim stays the intended target's.
+    World w;
+    const auto s = w.scene(true);
+    const int64_t blocker = w.ship("blocker", 0.0, 22.0, 0.0);
+    w.host.hit = TraceHit{{0.0f, 20.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 20.0f};
+    K2Context ctx = blocker_ctx(w);
+    ctx.iids[blocker] = K2Context::Iid{false, {1, 1}};
+    w.k.begin({s.ship, blocker, s.target}, kDt, 10.0, true, 0.0, ctx);
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    ASSERT_EQ(w.k.rests().size(), 1u);
+    const K2Contact& c = w.k.rests()[0].contact;
+    EXPECT_EQ(c.target, blocker);
+    EXPECT_EQ(c.dist, 20.0);
+    EXPECT_EQ(c.hit.point, (Vec3{0.0, 20.0, 0.0}));
+    EXPECT_EQ(c.hit.normal, (std::optional<Vec3>(Vec3{0.0, -1.0, 0.0})));
+    EXPECT_EQ(c.hit.tier, ResolvedHit::Tier::Mesh);
+    EXPECT_FALSE(c.bubble.has_value());
+    EXPECT_FALSE(c.point_is_bubble);
+    EXPECT_EQ(c.shields_block, std::optional<bool>(false));
+    EXPECT_FALSE(c.shields_asked);
+    EXPECT_EQ(c.target_pos, (Vec3{0.0, 50.0, 0.0}));
+    ASSERT_TRUE(w.k.rests()[0].iid.has_value());
+    EXPECT_EQ(w.k.rests()[0].iid->index, 1u);
+    w.k.end();
+    EXPECT_EQ(w.k.counts().blocked_ship, 1);
+    EXPECT_EQ(w.k.counts().queries[static_cast<size_t>(K2Query::blocker)], 0);
+}
+
+TEST(K2Blocker, APlanetInTheWayEndsTheBank) {
+    // A planet (no instance) 25 GU out, radius 5: the beam enters it at 20
+    // GU, nearer than the target. No contact, no rest, no pulse; the dwell
+    // the bank took stays written.
+    World w;
+    const auto s = w.scene(true, 0.6);
+    K2Context ctx = blocker_ctx(w);
+    BeamPlanet p;
+    p.set = w.set;
+    p.centre = {0.0, 25.0, 0.0};
+    p.radius = 5.0;
+    ctx.planets.push_back(p);
+    w.k.begin({s.ship, s.target}, kDt, 10.0, true, 0.0, ctx);
+    const K2Record d = w.k.next();
+    ASSERT_EQ(d.kind, K2Kind::DONE);
+    EXPECT_EQ(w.writes(d), (World::V{"b0._dwell=0"}));
+    EXPECT_TRUE(d.hits.empty());
+    EXPECT_TRUE(w.k.rests().empty());
+    w.k.end();
+    EXPECT_EQ(w.k.counts().blocked_planet, 1);
+    EXPECT_EQ(w.k.counts().native_pulses, 0);
+}
+
+TEST(K2Blocker, APythonCandidateAsksAndTheAnswerIsTaken) {
+    // A candidate the driver leaves to Python (a class override): the walk
+    // ASKs blocker with (ship, target, emitter, aim unit, contact distance).
+    // A ship answer gives the contact to it (no normal: tier sphere); a
+    // planet answer ends the bank; a ship with no row breaks the protocol.
+    World w;
+    const auto s = w.scene(true);
+    const int64_t prop = w.ship("prop", 300.0, 0.0, 0.0);
+    const int64_t blocker = w.ship("blocker", 0.0, 22.0, 0.0);
+    K2Context ctx = blocker_ctx(w);
+    ctx.python_candidates.insert(prop);
+    const std::vector<int64_t> ships{s.ship, prop, blocker, s.target};
+
+    w.k.begin(ships, kDt, 10.0, true, 0.0, ctx);
+    const K2Record r = w.k.next();
+    ASSERT_EQ(w.brief(r), "ASK blocker");
+    ASSERT_EQ(r.args.size(), 5u);
+    EXPECT_EQ(std::get<int64_t>(r.args[0]), s.ship);
+    EXPECT_EQ(std::get<int64_t>(r.args[1]), s.target);
+    EXPECT_EQ(std::get<Vec3>(r.args[2]), (Vec3{0.0, 0.0, 0.0}));
+    EXPECT_EQ(std::get<Vec3>(r.args[3]), (Vec3{0.0, 1.0, 0.0}));
+    EXPECT_EQ(std::get<double>(r.args[4]), 50.0);
+    K2Answer a;
+    a.blocker_kind = 1;
+    a.handle = blocker;
+    a.dist = 19.5;
+    a.point = {0.0, 19.5, 0.0};
+    a.bubble = Vec3{0.0, 19.5, 0.0};
+    w.k.answer(a);
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    ASSERT_EQ(w.k.rests().size(), 1u);
+    const K2Contact& c = w.k.rests()[0].contact;
+    EXPECT_EQ(c.target, blocker);
+    EXPECT_EQ(c.dist, 19.5);
+    EXPECT_EQ(c.hit.tier, ResolvedHit::Tier::Sphere);
+    EXPECT_FALSE(c.hit.normal.has_value());
+    EXPECT_EQ(c.bubble, (std::optional<Vec3>(Vec3{0.0, 19.5, 0.0})));
+    // Met at its bubble with no normal: the point IS the bubble entry.
+    EXPECT_TRUE(c.point_is_bubble);
+    EXPECT_EQ(c.shields_block, std::optional<bool>(false));
+    w.k.end();
+
+    w.k.begin(ships, kDt, 10.0, true, 0.0, ctx);
+    ASSERT_EQ(w.brief(w.k.next()), "ASK blocker");
+    K2Answer planet;
+    planet.blocker_kind = 2;
+    planet.dist = 20.0;
+    w.k.answer(planet);
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    EXPECT_TRUE(w.k.rests().empty());
+    w.k.end();
+
+    w.k.begin(ships, kDt, 10.0, true, 0.0, ctx);
+    ASSERT_EQ(w.brief(w.k.next()), "ASK blocker");
+    K2Answer gone = a;
+    gone.handle = 987654;
+    w.k.answer(gone);
+    EXPECT_THROW(w.k.next(), std::logic_error);
+    w.k.abandon();
+    EXPECT_EQ(w.k.counts().queries[static_cast<size_t>(K2Query::blocker)], 3);
+    EXPECT_EQ(w.k.counts().blocked_ship, 1);
+    EXPECT_EQ(w.k.counts().blocked_planet, 1);
+}
+
+TEST(K2Blocker, AShipWithNoRowSendsTheBankToPython) {
+    // A session ship with no row (-1) could never be named by a blocker
+    // answer: a bank that goes on hands its ship to Python before any
+    // record.
+    World w;
+    const auto s = w.scene(true);
+    K2Context ctx = blocker_ctx(w);
+    w.k.begin({s.ship, -1}, kDt, 10.0, true, 0.0, ctx);
+    EXPECT_EQ(w.run_to_done(),
+              (World::V{"RUN_PYTHON ship 0", "RUN_PYTHON -1 1", "DONE"}));
+    w.k.end();
+    EXPECT_EQ(w.k.counts().why[static_cast<size_t>(K2Why::StaleRow)], 1);
 }

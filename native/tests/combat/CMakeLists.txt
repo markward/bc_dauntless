@@ -7,6 +7,7 @@ add_executable(combat_tests
     beam_geometry_test.cc
     projectile_geometry_test.cc
     beam_trace_test.cc
+    beam_block_test.cc
     fire_gates_test.cc
     k1_fire_control_test.cc
     k0_charging_test.cc
