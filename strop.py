@@ -4,8 +4,8 @@ the only call site is MissionLib.ConditionChangedRedirect:
 ``strop.split(sModuleAndFunction, "*")`` (the CallFunctionWhenConditionChanges
 redirect that drives, e.g., the helm "entering/leaving orbit" lines).
 
-See CLAUDE.md → "Project-root SDK shims" for how root modules shadow
-SDK/stdlib names (App.py, LoadBridge.py are the precedents).
+See CLAUDE.md → "Project-root shims" for how root modules shadow
+SDK/stdlib names (App.py is the precedent).
 """
 
 

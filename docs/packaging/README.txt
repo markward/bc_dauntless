@@ -116,9 +116,10 @@ Please point BC Dauntless at an UNMODIFIED Bridge Commander install.
 
 BC Dauntless loads models, textures, sounds and Bridge Commander's own
 scripts straight from your Bridge Commander folder. If a stock script there
-has been changed, the log file notes a warning naming it. If that folder has been modded, changed files get mixed
-into the game in ways we can't detect or support, and the result is very
-hard to tell apart from a bug in BC Dauntless.
+has been changed, the log file notes a warning naming it. If that folder
+has been modded, changed files get mixed into the game in ways we can't
+detect or support, and the result is very hard to tell apart from a bug in
+BC Dauntless.
 
 If your current install is modded, install a second, untouched copy just for
 BC Dauntless. Mods go somewhere else entirely: see MODDING.txt.

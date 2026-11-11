@@ -192,7 +192,7 @@ The ConfigMapping API (argument order confirmed from SDK scripts):
 
 ## Project-root shims
 
-Some Python files at the project root exist specifically to **shadow SDK modules of the same name**. SDK scripts use bare imports (`import App`, `import LoadBridge`), and `tests/conftest.py` configures `_SDKFinder` to check `PROJECT_ROOT` before falling back to `sdk/Build/scripts/`. This is how Phase 1 swaps real SDK behaviour for headless stubs without forking the SDK tree.
+Some Python files at the project root exist specifically to **shadow modules of the same name** (scripts use bare imports, e.g. `import App`). The loaders (`tools/mission_harness.py` and `tests/conftest.py`) resolve a name in this order: project-root shims first, then claimed names, then mod overrides, then stock modules lifted from the install's `scripts/` (manifest-listed only). So a root shim always wins, which is how the engine swaps real behaviour for its own without touching BC content.
 
 Current shims:
 - `App.py` — Phase 1 replacement for `Appc.dll` / `sdk/Build/scripts/App.py`
@@ -200,7 +200,7 @@ Current shims:
 - `strop.py` — Python 1.5 `strop` (removed in Python 3), used by MissionLib
 - `LoadDamageHitSounds.py` — project-authored SDK *companion* (no BC original): damage-impact sound names for `hit_feedback`. Lives here, not in `sdk/`, because BC content is no longer inside the project tree
 
-Add new SDK-name shadows at the root only when needed; keep application code in `engine/`. If a third shim shows up, consider grouping them into a `shims/` directory and updating `_SDKFinder` accordingly.
+Add new shadows at the root only when needed; keep application code in `engine/`. With four shims already, grouping them into a `shims/` directory (and updating both loaders) is worth considering before a fifth.
 
 ## Rotation matrix convention — column-vector, right-handed
 
