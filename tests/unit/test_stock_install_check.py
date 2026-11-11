@@ -299,6 +299,75 @@ def test_require_install_returns_a_good_check_once(tmp_path, monkeypatch):
     assert len(hashed) == 1
 
 
+def _count_digests(monkeypatch):
+    hashed = []
+    real = stock_scripts._digest
+    monkeypatch.setattr(stock_scripts, "_digest",
+                        lambda data: hashed.append(1) or real(data))
+    return hashed
+
+
+def test_a_passing_validation_spares_require_install_a_second_hash(
+        tmp_path, monkeypatch):
+    """Ruling R6: the first-run screen's check at a GUI boot is the one
+    hash of the install; setup_sdk()'s require_install reuses it, whatever
+    spelling of the same root it is given."""
+    root = _install(tmp_path, {"A.pyc": b"a"})
+    stock_scripts.configure({"A.pyc": [_hash(b"a")]}, None)
+    hashed = _count_digests(monkeypatch)
+    assert stock_scripts.validate_install(root).ok
+    assert len(hashed) == 1
+    assert stock_scripts.require_install(str(root) + "/").ok
+    assert stock_scripts.require_install(root / "scripts" / "..").ok
+    assert len(hashed) == 1
+
+
+def test_a_passing_checked_resolution_spares_require_install(
+        tmp_path, monkeypatch):
+    root = _install(tmp_path, {"A.pyc": b"a"})
+    stock_scripts.configure({"A.pyc": [_hash(b"a")]}, None)
+    hashed = _count_digests(monkeypatch)
+    res = _resolution(paths.normalise(root), paths.validate_game_root(root))
+    assert stock_scripts.checked(res) is res
+    assert stock_scripts.require_install(root).ok
+    assert len(hashed) == 1
+
+
+def test_a_failed_validation_is_not_reused(tmp_path, monkeypatch):
+    """Only a PASSING check is recorded: a fixed install re-checks."""
+    root = _install(tmp_path, {"A.pyc": b"a"})
+    stock_scripts.configure({"A.pyc": [_hash(b"a")], "B.pyc": [H]}, None)
+    assert not stock_scripts.validate_install(root).ok
+    _put(root / "scripts", "B.pyc", b"b")
+    stock_scripts.configure({"A.pyc": [_hash(b"a")], "B.pyc": [_hash(b"b")]},
+                            None)
+    assert stock_scripts.require_install(root).ok
+
+
+def test_forget_failed_checks_keeps_the_passing_ones(tmp_path, monkeypatch):
+    """The test suite's per-test reset: a memoised FAILED check must not
+    outlive its test, and a passing one is kept (no re-hash per test)."""
+    (tmp_path / "good").mkdir()
+    (tmp_path / "bad").mkdir()
+    good = _install(tmp_path / "good", {"A.pyc": b"a"})
+    bad = _install(tmp_path / "bad", {})
+    stock_scripts.configure({"A.pyc": [_hash(b"a")]}, None)
+    assert stock_scripts.require_install(good).ok
+    with pytest.raises(stock_scripts.StockInstallError):
+        stock_scripts.require_install(bad)
+    hashed = _count_digests(monkeypatch)
+    stock_scripts.forget_failed_checks()
+    assert stock_scripts.require_install(good).ok
+    assert hashed == []
+    with pytest.raises(stock_scripts.StockInstallError):
+        stock_scripts.require_install(bad)
+    _put(bad / "scripts", "A.pyc", b"a")
+    with pytest.raises(stock_scripts.StockInstallError):
+        stock_scripts.require_install(bad)      # still memoised...
+    stock_scripts.forget_failed_checks()
+    assert stock_scripts.require_install(bad).ok  # ...until forgotten
+
+
 def test_message_names_at_most_three_files(tmp_path):
     names = ["A.pyc", "B.pyc", "C.pyc", "D.pyc", "E.pyc"]
     root = _install(tmp_path)

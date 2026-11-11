@@ -53,7 +53,8 @@ __all__ = [
     "InstallCheck", "SYNTHETIC_PACKAGES", "StockFile", "StockInstallError",
     "StockScriptError", "add_fixture_tree", "check_install", "checked",
     "children", "clear_fixture_trees", "configure", "find", "find_by_leaf",
-    "fixture_tgl_roots", "is_stock", "load_tree", "require_install",
+    "fixture_tgl_roots", "forget_failed_checks", "is_stock", "load_tree",
+    "logical_rel", "modules", "owns", "require_install", "root",
     "top_level_functions", "validate_install",
 ]
 
@@ -131,7 +132,7 @@ _committed: Optional[dict] = None
 _index: Optional[_Index] = None
 _index_manifest: Optional[dict] = None
 _warned: set = set()
-_required: dict = {}      # require_install's memo, str(root) -> InstallCheck
+_required: dict = {}      # require_install's memo, _memo_key(root) -> check
 # (paths.game_root(), paths.stock_scripts()) for the last game root seen, so
 # the case-blind "scripts" lookup runs once per root, not once per call.
 _scripts_memo: Optional[tuple[Path, Path]] = None
@@ -184,6 +185,12 @@ def _current() -> _Index:
         _index = _Index(root, manifest)
         _index_manifest = manifest
     return _index
+
+
+def root() -> Path:
+    """The scripts root stock files are found under: the injected one, else
+    ``paths.stock_scripts()`` (resolved at use)."""
+    return _root_override if _root_override is not None else _scripts_root()
 
 
 def _fold(logical: str) -> str:
@@ -260,6 +267,11 @@ def find_by_leaf(name: str) -> list[StockFile]:
     return sorted(found, key=lambda sf: sf.rel)
 
 
+def modules() -> list[StockFile]:
+    """Every listed module and package, then fixtures, sorted by ``rel``."""
+    return _select(lambda _rel, _pkg: True)
+
+
 def children(rel_dir: str) -> list[StockFile]:
     """The direct module (and package) children of folder ``rel_dir``."""
     folded = _fold(rel_dir)
@@ -300,6 +312,39 @@ def top_level_functions(sf: StockFile) -> dict[str, tuple[str, ...]]:
     return {c.name: tuple(c.varnames[:c.argcount]) for c in code.consts
             if isinstance(c, marshal15.Code15) and not c.name.startswith("<")
             and not c.code.endswith(_CLASS_BODY_END)}
+
+
+def _fixture_at(path: Path) -> Optional[StockFile]:
+    for sf in _fixture_files.values():
+        if sf.path == path:
+            return sf
+    return None
+
+
+def owns(path) -> bool:
+    """Whether ``load_tree`` is the loader for the file at ``path``: it is
+    under the scripts root, or a registered fixture. (An unlisted file under
+    the root is owned too, so ``load_tree`` refuses it loudly.)"""
+    p = Path(path)
+    if _fixture_at(p) is not None:
+        return True
+    try:
+        p.relative_to(root())
+    except ValueError:
+        return False
+    return True
+
+
+def logical_rel(path) -> Optional[str]:
+    """The listed (or fixture) file at ``path`` as a path under the scripts
+    root in the manifest's spelling, with its suffix ("ships/Galaxy.pyc",
+    "Bridge/__init__.pyc"); None for anything else."""
+    p = Path(path)
+    sf = _fixture_at(p)
+    if sf is not None:
+        return sf.rel + ("/" + _INIT if sf.is_package else "") + p.suffix
+    entry = _entry_for(p)
+    return entry.key if entry is not None else None
 
 
 # --- loading ---------------------------------------------------------------
@@ -525,6 +570,9 @@ def validate_install(path) -> paths.Validation:
         return validation
     check = check_install(validation.root)
     if check.ok:
+        # Ruling R6: require_install (setup_sdk) reuses this passing check,
+        # so a GUI boot hashes the install once.
+        _required[_memo_key(validation.root)] = check
         return validation
     return paths.Validation(ok=False, root=validation.root,
                             missing=check.missing + check.unliftable,
@@ -543,11 +591,15 @@ def checked(resolution: paths.Resolution) -> paths.Resolution:
     return dataclasses.replace(resolution, game=None, game_validation=validation)
 
 
+def _memo_key(game_root) -> str:
+    return str(paths.normalise(game_root))
+
+
 def require_install(game_root: Path) -> InstallCheck:
     """``check_install`` once per root per process (headless boot and
     ``setup_sdk``); raises ``StockInstallError`` with the message when the
-    install fails."""
-    key = str(Path(game_root))
+    install fails. A passing ``validate_install`` of the same root counts."""
+    key = _memo_key(game_root)
     check = _required.get(key)
     if check is None:
         check = check_install(Path(game_root))
@@ -555,3 +607,10 @@ def require_install(game_root: Path) -> InstallCheck:
     if not check.ok:
         raise StockInstallError(check.message)
     return check
+
+
+def forget_failed_checks() -> None:
+    """Drop memoised FAILED checks so the next ``require_install`` re-checks;
+    passing ones stay. The test suite's per-test reset calls it."""
+    for key in [k for k, check in _required.items() if not check.ok]:
+        del _required[key]
