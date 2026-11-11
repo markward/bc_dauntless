@@ -6,6 +6,8 @@ Phase A §2 for the engine facts and §11 for the wing tree, and Phase B §6 for
 `feat/wing-leaders-b`. Mark asked for this phase to be built without his spec
 approval. Every choice he didn't make is marked **(call)** and listed in §9.
 
+**Status (2026-11-10):** live-verified by Mark and merged into `feat/wing-leaders` (rebased on main).
+
 ## 1. What Phase C delivers
 
 Three items from the programme table (§6), added to the decision registry.

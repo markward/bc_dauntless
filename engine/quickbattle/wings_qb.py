@@ -245,10 +245,9 @@ def _create_ai(orig, pShip, args, kw):
             kw = None                  # wrap_tree's default difficulty
             if not _difficulty_logged:
                 _difficulty_logged = True
-                from engine.wings import brain
-                brain.log("QB difficulty not read (%s: %s): wing FireScripts "
-                          "use the default difficulty"
-                          % (type(exc).__name__, exc))
+                _log.warning("quickbattle wings: QB difficulty not read "
+                             "(%s: %s): wing FireScripts use the default "
+                             "difficulty", type(exc).__name__, exc)
         return tree.wrap_tree(pShip, stock, wing, fire_keywords=kw)
     except Exception:
         # StartSimulation2's AI loop runs this: the ship keeps its stock tree.

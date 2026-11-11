@@ -20,8 +20,7 @@ wings. All names are ship NAMES (strings).
                                       Priority > 0, highest first.
     RegisterDecision(pDecision)       Add a decision (score/choose, see
                                       engine.wings.decisions) to the brain.
-    IsEnabled()                       1 unless DAUNTLESS_WINGS=0 or the dev
-                                      switch is off.
+    IsEnabled()                       1 unless DAUNTLESS_WINGS=0.
 
 While wings are disabled (IsEnabled() is 0) CreateWing, AddMember and ArmWing
 do nothing and return None, so no wing exists and the Get*/Is* calls answer

@@ -7,7 +7,8 @@ first). Branch `feat/wing-leaders-b`, cut from the end of `feat/wing-leaders-a`.
 
 **Status (2026-11-09):** built on `feat/wing-leaders-b`, Quick Battle hooks
 included; headless behaviour tests in
-`tests/host/test_wings_phase_b_behaviour.py`. ⚠️ **Not live-verified.**
+`tests/host/test_wings_phase_b_behaviour.py`. Live-verified by Mark 2026-11-10;
+merged into `feat/wing-leaders` (rebased on main).
 
 Phase A is live-verified by Mark (2026-11-09), including his play-test changes: Developer Options toggles removed, a "Wing commanders" switch on the Quick Battle setup screen (default on), an always-on commander chevron and a focus marker in the target list, and the player's own group AI-led (the player is in no wing). Mark asked for Phase B to be specified and built without his spec approval.
 Every choice below that he didn't make is marked **(call)** and listed in §10.

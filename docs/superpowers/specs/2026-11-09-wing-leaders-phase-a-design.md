@@ -8,6 +8,8 @@ Items marked **(call)** were decided by Claude without Mark, under his
 instruction to proceed without spec approval; they are listed again in §12 for
 his review at play-test time.
 
+**Status (2026-11-10):** live-verified by Mark and merged into `feat/wing-leaders` (rebased on main).
+
 ## 1. What Phase A delivers
 
 - The **wing brain** (one per wing, ~1 Hz of game time) and its registry.

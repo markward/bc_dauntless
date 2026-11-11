@@ -527,9 +527,9 @@ def test_qb_passes_fire_keywords(world, monkeypatch):
     assert want["SmartTorpSelection"] and fs.bChooseTorpsWisely
 
 
-def test_failed_difficulty_read_logged_once(world, monkeypatch, capsys):
+def test_failed_difficulty_read_logged_once(world, monkeypatch, caplog):
     """Review M6: the stock-difficulty fallback says so, once, instead of
-    falling back without a word."""
+    falling back without a word -- a warning, not the opt-in wing log."""
     hl, _c, panel, QB = world
     from engine.wings import roster, tree
     escorts = _name_list(_add_to_player_group(panel, "Akira", "Akira"))
@@ -543,9 +543,11 @@ def test_failed_difficulty_read_logged_once(world, monkeypatch, capsys):
         return real(level)              # wrap_tree's own default read
     # Stock QuickBattle reads GetCurrentAILevel itself: break our read only.
     monkeypatch.setattr(tree, "fire_keywords", broken)
-    monkeypatch.setenv("DAUNTLESS_WINGS_LOG", "1")
-    capsys.readouterr()
-    _go(hl, panel)
-    err = capsys.readouterr().err
-    assert err.count("QB difficulty not read") == 1, err[-2000:]
+    monkeypatch.delenv("DAUNTLESS_WINGS_LOG", raising=False)
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="engine.quickbattle.wings_qb"):
+        _go(hl, panel)
+    hits = [r for r in caplog.records
+            if "QB difficulty not read" in r.getMessage()]
+    assert len(hits) == 1 and hits[0].levelname == "WARNING", caplog.text
     assert roster.member(escorts[0]).fire_script is not None

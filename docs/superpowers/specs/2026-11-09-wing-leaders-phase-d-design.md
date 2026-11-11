@@ -7,6 +7,8 @@ Branch `feat/wing-leaders-d`, cut from the end of `feat/wing-leaders-c`. As
 with Phase C, Mark asked for this phase to be built without his spec approval.
 Every choice he didn't make is marked **(call)** and listed in §11.
 
+**Status (2026-11-10):** live-verified by Mark and merged into `feat/wing-leaders` (rebased on main). The screen move (§5, hold ring) was never seen live; reinforce, flank and feint were.
+
 ## 1. What Phase D delivers
 
 Up to Phase C every wing decides alone. Phase D lets the wings on one side
