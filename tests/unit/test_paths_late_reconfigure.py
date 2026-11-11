@@ -21,16 +21,16 @@ def _restore_cache():
     paths.configure(before)
 
 
-def _point_at(root_pair):
-    game, sdk = root_pair
+def _point_at(game):
     paths.configure(paths.resolve(
-        argv=["--game-dir", str(game), "--sdk-dir", str(sdk)], env={}, store=None))
+        argv=["--game-dir", str(game)], env={}, store=None))
 
 
 def _second_install(game):
     other = game.parent / "other-install"
-    for rel in ("data", "data/Models", "data/Textures", "data/Icons"):
+    for rel in ("data", "data/Models", "data/Textures", "data/Icons", "scripts"):
         (other / rel).mkdir(parents=True, exist_ok=True)
+    (other / "scripts" / "MissionLib.pyc").write_bytes(b"")
     return other
 
 
@@ -53,33 +53,36 @@ CONSUMERS = [
 
 @pytest.mark.parametrize("module_name,func_name", CONSUMERS)
 def test_path_accessors_follow_a_later_configure(fake_bc_install, module_name, func_name):
-    game, sdk = fake_bc_install
+    game = fake_bc_install
     module = importlib.import_module(module_name)
-    _point_at((game, sdk))
+    _point_at(game)
     first = str(getattr(module, func_name)())
     assert str(game) in first
 
     other = _second_install(game)
-    _point_at((other, sdk))
+    _point_at(other)
     second = str(getattr(module, func_name)())
     assert str(other) in second
     assert first != second
 
 
 def test_tgl_roots_follow_a_later_configure(fake_bc_install, monkeypatch, tmp_path):
-    """name_resolver held BOTH roots in one module-level tuple."""
-    from engine import mods
+    """name_resolver held its TGL roots in one module-level tuple. The game
+    never reads the SDK, so the install's data/TGL is the stock root (the
+    test-only fixture TGL roots are cleared here)."""
+    from engine import mods, stock_scripts
     from engine.missions import name_resolver
     # The project's own replacements/data/TGL would lead the list; this test
-    # is about the two BC roots only.
+    # is about the BC root only.
     monkeypatch.setattr(mods, "replacements_root", lambda: tmp_path / "no-replacements")
-    game, sdk = fake_bc_install
-    _point_at((game, sdk))
+    stock_scripts.clear_fixture_trees()
+    game = fake_bc_install
+    _point_at(game)
     assert [str(r) for r in name_resolver._tgl_roots()] == [
-        str(sdk / "Build" / "Data" / "TGL"), str(game / "data" / "TGL")]
+        str(game / "data" / "TGL")]
 
     other = _second_install(game)
-    _point_at((other, sdk))
+    _point_at(other)
     assert str(other / "data" / "TGL") in [str(r) for r in name_resolver._tgl_roots()]
 
 
@@ -93,14 +96,14 @@ def test_icon_file_accessors_follow_a_later_configure(
     """ship_icons/weapon_icons/damage_icons's _game_icon_file(stem) took
     over from the old no-arg _game_icons_dir()/_damage_dir() accessors
     (Task 7) — same resolve-at-use contract, now with an argument."""
-    game, sdk = fake_bc_install
+    game = fake_bc_install
     module = importlib.import_module(module_name)
-    _point_at((game, sdk))
+    _point_at(game)
     first = str(getattr(module, func_name)(stem))
     assert str(game) in first
 
     other = _second_install(game)
-    _point_at((other, sdk))
+    _point_at(other)
     second = str(getattr(module, func_name)(stem))
     assert str(other) in second
     assert first != second
@@ -111,13 +114,13 @@ def test_viewscreen_static_texture_paths_follows_a_later_configure(fake_bc_insta
     accessor (Task 7), which was deleted outright rather than kept
     unused."""
     from engine.appc import viewscreen_static
-    game, sdk = fake_bc_install
-    _point_at((game, sdk))
+    game = fake_bc_install
+    _point_at(game)
     first = viewscreen_static.static_texture_paths("View Screen Static")
     assert all(str(game) in p for p in first)
 
     other = _second_install(game)
-    _point_at((other, sdk))
+    _point_at(other)
     second = viewscreen_static.static_texture_paths("View Screen Static")
     assert all(str(other) in p for p in second)
     assert first != second
@@ -126,23 +129,23 @@ def test_viewscreen_static_texture_paths_follows_a_later_configure(fake_bc_insta
 def test_lip_sync_runtime_follows_a_later_configure(fake_bc_install):
     """_abs_sfx takes an argument, so it doesn't fit the no-arg CONSUMERS shape."""
     from engine.lip_sync_runtime import _abs_sfx
-    game, sdk = fake_bc_install
-    _point_at((game, sdk))
+    game = fake_bc_install
+    _point_at(game)
     assert str(game) in _abs_sfx("sfx/x.wav")
 
     other = _second_install(game)
-    _point_at((other, sdk))
+    _point_at(other)
     assert str(other) in _abs_sfx("sfx/x.wav")
 
 
 def test_tg_sound_follows_a_later_configure(fake_bc_install):
     from engine.audio import tg_sound
-    game, sdk = fake_bc_install
-    _point_at((game, sdk))
+    game = fake_bc_install
+    _point_at(game)
     assert str(game) in tg_sound._resolve_sfx_path("sfx/x.wav")
 
     other = _second_install(game)
-    _point_at((other, sdk))
+    _point_at(other)
     assert str(other) in tg_sound._resolve_sfx_path("sfx/x.wav")
 
 

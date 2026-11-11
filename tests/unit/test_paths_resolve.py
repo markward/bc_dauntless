@@ -32,6 +32,15 @@ def _isolate_cache():
     paths.configure(saved)
 
 
+def _project_game(project):
+    """A valid in-project game root under `project` (the legacy fallback)."""
+    game = project / "game"     # paths-guard: test fixture tree
+    for rel in ("data", "data/Models", "data/Textures", "data/Icons", "scripts"):
+        (game / rel).mkdir(parents=True, exist_ok=True)
+    (game / "scripts" / "MissionLib.pyc").write_bytes(b"")
+    return game
+
+
 def _store_with(tmp_path, **kv):
     store = SettingsStore(tmp_path / "settings.json")
     store.load()
@@ -43,49 +52,83 @@ def _store_with(tmp_path, **kv):
 # --- precedence -------------------------------------------------------------
 
 def test_cli_flag_wins(fake_bc_install, tmp_path):
-    game, sdk = fake_bc_install
-    store = _store_with(tmp_path, game="/nowhere", sdk="/nowhere")
+    game = fake_bc_install
+    store = _store_with(tmp_path, game="/nowhere")
     res = paths.resolve(
-        argv=["--game-dir", str(game), "--sdk-dir", str(sdk)],
+        argv=["--game-dir", str(game)],
         env={"DAUNTLESS_GAME_DIR": "/also-nowhere"},
         store=store,
     )
     assert res.game == game
     assert res.game_source == "cli"
-    assert res.sdk_source == "cli"
 
 
 def test_cli_flag_accepts_equals_form(fake_bc_install):
-    game, _sdk = fake_bc_install
+    game = fake_bc_install
     res = paths.resolve(argv=[f"--game-dir={game}"], env={}, store=None)
     assert res.game == game
     assert res.game_source == "cli"
 
 
 def test_env_beats_settings(fake_bc_install, tmp_path):
-    game, sdk = fake_bc_install
-    store = _store_with(tmp_path, game="/nowhere", sdk=str(sdk))
+    game = fake_bc_install
+    store = _store_with(tmp_path, game="/nowhere")
     res = paths.resolve(argv=[], env={"DAUNTLESS_GAME_DIR": str(game)}, store=store)
     assert res.game == game
     assert res.game_source == "env"
-    assert res.sdk == sdk
-    assert res.sdk_source == "settings"
 
 
 def test_settings_beats_the_project_default(fake_bc_install, tmp_path):
-    game, sdk = fake_bc_install
-    store = _store_with(tmp_path, game=game, sdk=sdk)
+    game = fake_bc_install
+    store = _store_with(tmp_path, game=game)
     res = paths.resolve(argv=[], env={}, store=store)
     assert res.game == game
     assert res.game_source == "settings"
 
 
-def test_the_two_roots_resolve_independently(fake_bc_install, tmp_path):
-    game, sdk = fake_bc_install
-    store = _store_with(tmp_path, sdk=sdk)
-    res = paths.resolve(argv=["--game-dir", str(game)], env={}, store=store)
-    assert res.game_source == "cli"
-    assert res.sdk_source == "settings"
+def test_the_game_root_is_the_only_root(fake_bc_install, tmp_path):
+    """One content root (spec 2026-11-11 §4.4): `ok` means the game is valid."""
+    game = fake_bc_install
+    res = paths.resolve(argv=["--game-dir", str(game)], env={}, store=_store_with(tmp_path))
+    assert res.ok
+    assert not hasattr(res, "sdk")
+    with pytest.raises(ValueError):
+        res.source("sdk")       # paths-guard: kind label
+    with pytest.raises(ValueError):
+        res.validation("sdk")   # paths-guard: kind label
+
+
+def test_stale_sdk_setting_and_flag_do_not_block_resolution(
+        fake_bc_install, tmp_path, monkeypatch, capsys):
+    """Review Focus 1: a settings.json still naming a deleted SDK folder,
+    an old --sdk-dir shortcut and a stale DAUNTLESS_SDK_DIR must all boot
+    normally. The flag logs one line; the setting is never written."""
+    monkeypatch.setattr(paths, "_sdk_flag_warned", False)
+    game = fake_bc_install
+    store = _store_with(tmp_path, sdk="/nonexistent")
+    argv = ["--sdk-dir", "/nonexistent", "--game-dir", str(game)]
+    env = {"DAUNTLESS_SDK_DIR": "/nonexistent"}
+    res = paths.resolve(argv=argv, env=env, store=store)
+    assert res.ok
+    assert res.game == game
+    paths.resolve(argv=argv, env=env, store=store)   # a re-resolve: no repeat
+    err = capsys.readouterr().err
+    line = ("[paths] --sdk-dir is no longer used: BC Dauntless reads Bridge "
+            "Commander's scripts from your game folder")
+    assert err.count(line) == 1, err
+
+    fresh = _store_with(tmp_path / "fresh")
+    paths.persist(res, fresh)
+    assert not fresh.has("paths", "sdk")
+    paths.persist(res, store)
+    assert store.get("paths", "sdk") == "/nonexistent", (
+        "the dev chain still reads [paths].sdk: the game leaves it untouched")
+
+
+def test_no_sdk_flag_logs_nothing(fake_bc_install, monkeypatch, capsys):
+    monkeypatch.setattr(paths, "_sdk_flag_warned", False)
+    paths.resolve(argv=["--game-dir", str(fake_bc_install)], env={}, store=None)
+    assert "--sdk-dir" not in capsys.readouterr().err
 
 
 # --- the load-bearing precedence rule ---------------------------------------
@@ -93,8 +136,8 @@ def test_the_two_roots_resolve_independently(fake_bc_install, tmp_path):
 def test_a_set_but_invalid_source_is_an_error_not_a_fallthrough(fake_bc_install, tmp_path):
     """--game-dir /typo must be reported, NOT silently replaced by a stale
     settings.json — that would run a different install than was asked for."""
-    game, sdk = fake_bc_install
-    store = _store_with(tmp_path, game=game, sdk=sdk)
+    game = fake_bc_install
+    store = _store_with(tmp_path, game=game)
     res = paths.resolve(argv=["--game-dir", "/definitely/not/here"], env={}, store=store)
     assert not res.ok
     assert res.game is None
@@ -115,8 +158,8 @@ def test_an_empty_cli_value_is_set_and_therefore_an_error(fake_bc_install, tmp_p
     """--game-dir="$UNSET_VAR" must NOT fall through to a lower source: the
     user named a root, and silently booting a different one is the exact harm
     the precedence rule exists to prevent."""
-    game, sdk = fake_bc_install
-    store = _store_with(tmp_path, game=game, sdk=sdk)
+    game = fake_bc_install
+    store = _store_with(tmp_path, game=game)
     res = paths.resolve(argv=argv, env={}, store=store)
     assert not res.ok
     assert res.game is None
@@ -124,8 +167,8 @@ def test_an_empty_cli_value_is_set_and_therefore_an_error(fake_bc_install, tmp_p
 
 
 def test_an_invalid_env_value_does_not_fall_through_to_settings(fake_bc_install, tmp_path):
-    game, sdk = fake_bc_install
-    store = _store_with(tmp_path, game=game, sdk=sdk)
+    game = fake_bc_install
+    store = _store_with(tmp_path, game=game)
     res = paths.resolve(argv=[], env={"DAUNTLESS_GAME_DIR": "/definitely/not/here"}, store=store)
     assert not res.ok
     assert res.game is None
@@ -133,8 +176,7 @@ def test_an_invalid_env_value_does_not_fall_through_to_settings(fake_bc_install,
 
 
 def test_an_invalid_settings_value_does_not_fall_through_to_the_project_default(tmp_path, monkeypatch):
-    for rel in ("game/data", "game/data/Models", "game/data/Textures", "game/data/Icons"):
-        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+    _project_game(tmp_path)
     monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)
     store = _store_with(tmp_path, game="/definitely/not/here")
     res = paths.resolve(argv=[], env={}, store=store)
@@ -145,8 +187,8 @@ def test_an_invalid_settings_value_does_not_fall_through_to_the_project_default(
 def test_an_empty_env_var_is_treated_as_unset(fake_bc_install, tmp_path):
     """Deliberate asymmetry with the CLI tier: `FOO=${BAR:-}` is idiomatic
     shell for "unset", and CI tooling exports empty vars for undefined ones."""
-    game, sdk = fake_bc_install
-    store = _store_with(tmp_path, game=game, sdk=sdk)
+    game = fake_bc_install
+    store = _store_with(tmp_path, game=game)
     res = paths.resolve(argv=[], env={"DAUNTLESS_GAME_DIR": ""}, store=store)
     assert res.game == game
     assert res.game_source == "settings"
@@ -156,8 +198,7 @@ def test_an_empty_settings_value_is_set_and_therefore_an_error(tmp_path, monkeyp
     """store.has() is the source of truth, not the value's truthiness. persist()
     only ever writes valid non-empty paths, so an empty stored value is a
     hand-edit that must be reported rather than silently skipped."""
-    for rel in ("game/data", "game/data/Models", "game/data/Textures", "game/data/Icons"):
-        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+    _project_game(tmp_path)
     monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)
     store = _store_with(tmp_path, game="")
     res = paths.resolve(argv=[], env={}, store=store)
@@ -169,7 +210,7 @@ def test_an_empty_settings_value_is_set_and_therefore_an_error(tmp_path, monkeyp
 def test_an_empty_value_never_validates_against_the_working_directory(fake_bc_install, monkeypatch):
     """os.path.abspath("") is cwd. Without an explicit empty check, running
     --game-dir= from inside a real BC install would validate ok=True."""
-    game, _sdk = fake_bc_install
+    game = fake_bc_install
     monkeypatch.chdir(game)
     res = paths.resolve(argv=["--game-dir="], env={}, store=None)
     assert not res.ok
@@ -188,8 +229,7 @@ def test_an_absent_project_default_is_not_an_error(tmp_path, monkeypatch):
 
 
 def test_the_project_default_is_used_when_present(tmp_path, monkeypatch):
-    for rel in ("game/data", "game/data/Models", "game/data/Textures", "game/data/Icons"):
-        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+    _project_game(tmp_path)
     monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)
     res = paths.resolve(argv=[], env={}, store=_store_with(tmp_path))
     assert res.game == tmp_path / "game"
@@ -199,7 +239,7 @@ def test_the_project_default_is_used_when_present(tmp_path, monkeypatch):
 # --- stored form ------------------------------------------------------------
 
 def test_stored_paths_expand_user_and_normalise(fake_bc_install, tmp_path, monkeypatch):
-    game, _sdk = fake_bc_install
+    game = fake_bc_install
     # HOME is what expanduser() reads on POSIX; ntpath.expanduser never looks
     # at it and takes USERPROFILE (then HOMEDRIVE+HOMEPATH). Set all of them
     # so the fake home is found whichever platform is running.
@@ -213,7 +253,7 @@ def test_stored_paths_expand_user_and_normalise(fake_bc_install, tmp_path, monke
 
 @requires_symlinks
 def test_symlinks_are_not_followed(fake_bc_install, tmp_path):
-    game, _sdk = fake_bc_install
+    game = fake_bc_install
     link = tmp_path / "via-link"
     link.symlink_to(game, target_is_directory=True)
     res = paths.resolve(argv=["--game-dir", str(link)], env={}, store=None)
@@ -224,23 +264,30 @@ def test_symlinks_are_not_followed(fake_bc_install, tmp_path):
 # --- persistence ------------------------------------------------------------
 
 def test_persist_writes_only_cli_sourced_roots(fake_bc_install, tmp_path):
-    game, sdk = fake_bc_install
-    store = _store_with(tmp_path, sdk=sdk)
+    game = fake_bc_install
+    store = _store_with(tmp_path)
     res = paths.resolve(argv=["--game-dir", str(game)], env={}, store=store)
     paths.persist(res, store)
     doc = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
-    assert doc["paths"]["game"] == str(game)
-    # Symmetric check: sdk came from settings, not cli, so persist() must
-    # leave the pre-existing value alone rather than re-writing it.
-    assert doc["paths"]["sdk"] == str(sdk)
+    assert doc["paths"] == {"game": str(game)}
+
+
+def test_persist_does_not_rewrite_a_settings_sourced_root(fake_bc_install, tmp_path):
+    game = fake_bc_install
+    store = _store_with(tmp_path, game=game)
+    res = paths.resolve(argv=[], env={}, store=store)
+    assert res.game_source == "settings"
+    writes = []
+    store.set = lambda *a: writes.append(a)
+    paths.persist(res, store)
+    assert writes == []
 
 
 def test_persist_never_writes_an_env_sourced_root(fake_bc_install, tmp_path):
-    """DAUNTLESS_SDK_DIR=/fixtures pytest must not mutate a real config."""
-    game, sdk = fake_bc_install
+    """DAUNTLESS_GAME_DIR=/fixtures pytest must not mutate a real config."""
+    game = fake_bc_install
     store = _store_with(tmp_path)
-    res = paths.resolve(argv=[], env={"DAUNTLESS_GAME_DIR": str(game),
-                                     "DAUNTLESS_SDK_DIR": str(sdk)}, store=store)
+    res = paths.resolve(argv=[], env={"DAUNTLESS_GAME_DIR": str(game)}, store=store)
     paths.persist(res, store)
     # The store is write-through: with nothing to persist the file is never
     # created at all, which is itself the assertion.
@@ -259,7 +306,7 @@ def test_persist_never_writes_an_invalid_path(tmp_path):
 
 
 def test_resolve_itself_writes_nothing(fake_bc_install, tmp_path):
-    game, _sdk = fake_bc_install
+    game = fake_bc_install
     settings = tmp_path / "settings.json"
     store = _store_with(tmp_path)
     before = settings.read_text(encoding="utf-8") if settings.exists() else None
@@ -271,21 +318,17 @@ def test_resolve_itself_writes_nothing(fake_bc_install, tmp_path):
 # --- cache and accessors ----------------------------------------------------
 
 def test_accessors_read_the_configured_resolution(fake_bc_install):
-    game, sdk = fake_bc_install
-    paths.configure(paths.resolve(argv=["--game-dir", str(game),
-                                        "--sdk-dir", str(sdk)], env={}, store=None))
+    game = fake_bc_install
+    paths.configure(paths.resolve(argv=["--game-dir", str(game)], env={}, store=None))
     assert paths.game_root() == game
-    assert paths.sdk_root() == sdk
-    assert paths.sdk_scripts() == sdk / "Build" / "scripts"
-    assert paths.sdk_data() == sdk / "Build" / "Data"
+    assert paths.stock_scripts() == game / "scripts"
     assert paths.game_asset("data/rough.tga") == game / "data" / "rough.tga"
 
 
 def test_game_asset_accepts_a_path_as_well_as_a_string(fake_bc_install):
     from pathlib import Path
-    game, sdk = fake_bc_install
-    paths.configure(paths.resolve(argv=["--game-dir", str(game),
-                                        "--sdk-dir", str(sdk)], env={}, store=None))
+    game = fake_bc_install
+    paths.configure(paths.resolve(argv=["--game-dir", str(game)], env={}, store=None))
     assert paths.game_asset(Path("data") / "rough.tga") == game / "data" / "rough.tga"
 
 
@@ -306,14 +349,12 @@ def test_describe_failure_names_every_source_it_consulted(tmp_path, monkeypatch)
     assert "--game-dir" in text
     assert "DAUNTLESS_GAME_DIR" in text
     assert "settings.json" in text
-    assert "--sdk-dir" in text
-    assert "DAUNTLESS_SDK_DIR" in text
+    assert "sdk" not in text.lower()
 
 
 def test_describe_failure_reports_missing_markers_and_the_hint(fake_bc_install, tmp_path):
-    game, sdk = fake_bc_install
-    res = paths.resolve(argv=["--game-dir", str(game.parent),
-                              "--sdk-dir", str(sdk)], env={}, store=None)
+    game = fake_bc_install
+    res = paths.resolve(argv=["--game-dir", str(game.parent)], env={}, store=None)
     text = paths.describe_failure(res)
     assert "data/Models" in text
     assert "contains 'game'" in text
@@ -321,9 +362,8 @@ def test_describe_failure_reports_missing_markers_and_the_hint(fake_bc_install, 
 
 
 def test_describe_failure_is_empty_for_a_good_resolution(fake_bc_install):
-    game, sdk = fake_bc_install
-    res = paths.resolve(argv=["--game-dir", str(game),
-                              "--sdk-dir", str(sdk)], env={}, store=None)
+    game = fake_bc_install
+    res = paths.resolve(argv=["--game-dir", str(game)], env={}, store=None)
     assert res.ok
     assert paths.describe_failure(res) == ""
 
@@ -351,14 +391,14 @@ def test_the_live_sdk_finder_has_no_module_level_path_constant():
     captured path would be stale by the time the picker changes it."""
     import tools.mission_harness as mh
     assert not hasattr(mh, "SDK_SCRIPTS"), (
-        "mission_harness.SDK_SCRIPTS captures a path at import; it must call "
-        "engine.paths.sdk_scripts() at point of use instead"
+        "mission_harness.SDK_SCRIPTS captures a path at import; it must ask "
+        "engine.paths.stock_scripts() at point of use instead"
     )
 
 
 def test_boot_resolution_is_wired_before_the_sdk_finder(monkeypatch):
     """host_loop.run() must configure paths BEFORE _setup_sdk(): the finder
-    asks paths.sdk_scripts(), so a later configure would be too late.
+    asks paths.stock_scripts(), so a later configure would be too late.
 
     paths.configure() itself now lives inside the extracted
     _resolve_paths_or_report() helper (added so the branch is testable

@@ -100,10 +100,6 @@ def test_a_mod_ship_over_a_stock_ship_is_reported_with_no_sdk(
     manifest), not SDK .py files: replaces_ships needs no SDK."""
     from engine import stock_scripts
 
-    def _no_sdk(*_a, **_k):
-        raise AssertionError("mods must not read the SDK")
-    monkeypatch.setattr(paths, "sdk_scripts", _no_sdk)
-    monkeypatch.setattr(paths, "sdk_root", _no_sdk)
     stock_scripts.clear_fixture_trees()
     game = tmp_path / "g"
     game.mkdir()

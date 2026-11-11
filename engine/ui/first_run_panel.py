@@ -5,6 +5,12 @@ this class emits and reports button presses back; it holds no logic of its
 own, because CEF is software-rasterized in this project and there is no
 headless render to test a page against.
 
+One row: the game folder is the only content root (spec
+docs/superpowers/specs/2026-11-11-no-sdk-runtime-design.md §4.4). A folder
+is accepted only if it passes the boot install check
+(engine.stock_scripts.validate_install), whose hint names a missing or
+unreadable stock file (§4.1a).
+
 Nothing in this module captures a path at import.
 """
 from __future__ import annotations
@@ -12,7 +18,7 @@ from __future__ import annotations
 import json
 from typing import Callable, Dict, Optional
 
-from engine import first_run, paths
+from engine import first_run, paths, stock_scripts
 from engine.ui.panel import Panel
 
 TITLE = "Select Bridge Commander Install"
@@ -25,18 +31,15 @@ _ROWS = (
     # kind, label, picker title
     ("game", "Game folder",  # paths-guard: kind label, matches Resolution.source()'s vocabulary
      "Select your Bridge Commander game folder"),
-    ("sdk", "SDK folder",    # paths-guard: kind label, matches Resolution.source()'s vocabulary
-     "Select your Bridge Commander SDK folder"),
 )
 
 _VALIDATORS = {
-    "game": paths.validate_game_root,  # paths-guard: kind label, keys paths.py's own validators
-    "sdk": paths.validate_sdk_root,    # paths-guard: kind label, keys paths.py's own validators
+    "game": stock_scripts.validate_install,  # paths-guard: kind label, markers then the install check
 }
 
 
 class FirstRunPanel(Panel):
-    """One row per BC root, Browse each, Continue gated on both validating.
+    """One row (the game folder), Browse it, Continue gated on it validating.
 
     `picker` is the folder chooser -- injected so tests never open a modal.
     `resolver` maps a {kind: path} dict to a Resolution; injected for the
@@ -80,7 +83,8 @@ class FirstRunPanel(Panel):
 
     # ── state ───────────────────────────────────────────────────────────
     def _root_for(self, kind: str):
-        return self._resolution.game if kind == "game" else self._resolution.sdk  # paths-guard: kind label, not a path segment
+        # `kind` is always "game", the one row; kept for the row vocabulary.
+        return self._resolution.game
 
     def _status_for(self, kind: str) -> dict:
         # A rejection may NEVER override the status of a root the current
@@ -104,6 +108,13 @@ class FirstRunPanel(Panel):
             return {"status": _FOUND, "hint": hint, "ok": True, "state": "ok"}
         if kind in self._rejected:
             return {"status": _NOT_AN_INSTALL, "hint": self._rejected[kind],
+                    "ok": False, "state": "bad"}
+        # A root boot already tried and refused (a bad --game-dir, or an
+        # install the stock-scripts check stopped) opens saying why, so a
+        # broken install's row names the file from the start.
+        verdict = self._resolution.validation(kind)
+        if verdict is not None and not verdict.ok:
+            return {"status": _NOT_AN_INSTALL, "hint": verdict.hint or "",
                     "ok": False, "state": "bad"}
         return {"status": _UNSET, "hint": "", "ok": False, "state": "unset"}
 
@@ -132,7 +143,7 @@ class FirstRunPanel(Panel):
         if action.startswith("browse:"):
             return self._browse(action[len("browse:"):])
         if action == "continue":
-            # Inert unless both roots validate -- the page disables the
+            # Inert unless the root validates -- the page disables the
             # button, but the page is not the authority on this.
             if self._resolution.ok:
                 self._outcome = "continue"
@@ -173,4 +184,4 @@ class FirstRunPanel(Panel):
 
 
 def _default_resolver(picked: Dict[str, str]):
-    return paths.resolve(picked=picked)
+    return stock_scripts.checked(paths.resolve(picked=picked))

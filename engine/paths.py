@@ -1,8 +1,13 @@
 """Where the player's Bridge Commander content lives — the single authority.
 
-BC content is two roots: the game install (models, textures, icons, sounds)
-and the SDK (the Python scripts and the TGL string tables). Neither has to
-live inside the project tree.
+BC content is ONE root: the game install (models, textures, icons, sounds,
+TGL string tables, and the stock scripts as the retail .pyc, lifted by
+engine.stock_scripts). It does not have to live inside the project tree.
+The game never reads the BC SDK (spec
+docs/superpowers/specs/2026-11-11-no-sdk-runtime-design.md, decision 1): a
+stale ``--sdk-dir``, ``DAUNTLESS_SDK_DIR`` or ``settings.json`` [paths].sdk
+is ignored (the flag logs one line), and the developer SDK chain lives in
+tools/dev_sdk.py.
 
 HARD RULE — paths resolve at USE, never at import.
     No module in engine/ may bind a module-level name to a path from here.
@@ -39,15 +44,18 @@ from typing import Optional
 
 from engine.core import case_paths
 
-# The markers are the paths the engine actually loads. stbc.exe and scripts/
-# are deliberately absent: neither is read at runtime (scripts/ is only
-# tools/setup.py's instrumentation target), so requiring them would reject a
-# perfectly usable content-only copy.
-GAME_MARKERS: tuple[str, ...] = ("data", "data/Models", "data/Textures", "data/Icons")
-SDK_MARKERS: tuple[str, ...] = ("Build/scripts/App.py", "Build/Data/TGL")
+# The markers are paths the engine actually loads. The stock scripts are
+# read from the install (engine.stock_scripts lifts its .pyc), so an install
+# without its scripts folder cannot boot: scripts/MissionLib.pyc stands for
+# it, and is matched case-insensitively (_CASE_BLIND_MARKERS), as the stock
+# loader matches that folder. The full per-file proof is the boot install
+# check (engine.stock_scripts.validate_install), not this marker list.
+# stbc.exe is deliberately absent: it is never loaded.
+GAME_MARKERS: tuple[str, ...] = (
+    "data", "data/Models", "data/Textures", "data/Icons", "scripts/MissionLib.pyc")
+_CASE_BLIND_MARKERS = frozenset({"scripts/MissionLib.pyc"})
 
-_MARKERS = {"game": GAME_MARKERS, "sdk": SDK_MARKERS}
-_LABEL = {"game": "game", "sdk": "SDK"}
+_MARKERS = {"game": GAME_MARKERS}
 
 
 @dataclass(frozen=True)
@@ -72,8 +80,14 @@ def normalise(path) -> Path:
     return Path(os.path.normpath(os.path.abspath(os.path.expanduser(str(path)))))
 
 
+def _marker_present(root: Path, marker: str) -> bool:
+    if (root / marker).exists():
+        return True
+    return marker in _CASE_BLIND_MARKERS and case_paths.resolve(root, marker) is not None
+
+
 def _markers_ok(root: Path, markers: tuple[str, ...]) -> bool:
-    return all((root / m).exists() for m in markers)
+    return all(_marker_present(root, m) for m in markers)
 
 
 def _case_insensitive_spelling(root: Path, rel: str) -> Optional[str]:
@@ -107,16 +121,10 @@ def _hint_for(root: Path, kind: str, missing: tuple[str, ...]) -> Optional[str]:
         m = missing[0]
         return f"found '{spellings[m]}', expected '{m}' — this volume is case-sensitive"
 
-    # The parent was picked: this folder CONTAINS a valid game/ or sdk/.
+    # The parent was picked: this folder CONTAINS a valid game/.
     child = root / kind
     if child.is_dir() and _markers_ok(child, _MARKERS[kind]):
         return f"That folder contains '{kind}' — did you mean {child}?"
-
-    # Swapped: it validates as the OTHER root.
-    other = "sdk" if kind == "game" else "game"
-    if _markers_ok(root, _MARKERS[other]):
-        return (f"That's the {_LABEL[other]} folder; "
-                f"it belongs in the {_LABEL[other]} field.")
 
     # One level too deep: the parent is the root that was wanted.
     parent = root.parent
@@ -137,7 +145,7 @@ def _validate(path, kind: str) -> Validation:
                           hint="No path given — the flag or setting is present but empty.")
     root = normalise(path)
     markers = _MARKERS[kind]
-    missing = tuple(m for m in markers if not (root / m).exists())
+    missing = tuple(m for m in markers if not _marker_present(root, m))
     if not missing:
         return Validation(ok=True, root=root, missing=(), hint=None)
     return Validation(ok=False, root=root, missing=missing,
@@ -145,13 +153,10 @@ def _validate(path, kind: str) -> Validation:
 
 
 def validate_game_root(path) -> Validation:
-    """Is `path` a usable BC game install? One stat per marker, no writes."""
+    """Is `path` a usable BC game install? One stat per marker, no writes.
+    Markers only: the boot install check (engine.stock_scripts.
+    validate_install) proves the stock scripts on top of this."""
     return _validate(path, "game")
-
-
-def validate_sdk_root(path) -> Validation:
-    """Is `path` a usable BC SDK tree? One stat per marker, no writes."""
-    return _validate(path, "sdk")
 
 
 # --- resolution -------------------------------------------------------------
@@ -163,44 +168,57 @@ def validate_sdk_root(path) -> Validation:
 # OUR OWN module file, the same idiom engine/settings_store.py already uses.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-CLI_FLAGS = {"game": "--game-dir", "sdk": "--sdk-dir"}
-ENV_VARS = {"game": "DAUNTLESS_GAME_DIR", "sdk": "DAUNTLESS_SDK_DIR"}
-_PROJECT_DIR = {"game": "game", "sdk": "sdk"}
-_VALIDATORS = {"game": validate_game_root, "sdk": validate_sdk_root}
+CLI_FLAGS = {"game": "--game-dir"}
+ENV_VARS = {"game": "DAUNTLESS_GAME_DIR"}
+_PROJECT_DIR = {"game": "game"}
+_VALIDATORS = {"game": validate_game_root}
+
+# The game no longer reads the SDK. An old shortcut passing this flag still
+# boots; the flag is reported once per process and otherwise ignored.
+IGNORED_SDK_FLAG = "--sdk-dir"
+_IGNORED_SDK_FLAG_LINE = ("[paths] --sdk-dir is no longer used: BC Dauntless "
+                          "reads Bridge Commander's scripts from your game folder")
+_sdk_flag_warned = False
 
 
 class PathsUnresolved(RuntimeError):
-    """No usable root for a requested half. Carries describe_failure()'s text.
+    """No usable game root. Carries describe_failure()'s text.
 
     Not meant to be handled: it is a boot-time configuration error and the
     message is the whole point.
     """
 
 
+def _only_game(kind: str) -> None:
+    if kind != "game":
+        raise ValueError(f"the game root is the only content root, not {kind!r}")
+
+
 @dataclass(frozen=True)
 class Resolution:
-    """The outcome of one resolve(). `game`/`sdk` are set ONLY when valid.
+    """The outcome of one resolve(). `game` is set ONLY when valid.
 
-    An invalid candidate leaves the root None and records the attempt in the
-    matching Validation, so describe_failure() can name the path and say what
-    was wrong with it.
+    An invalid candidate leaves the root None and records the attempt in
+    `game_validation`, so describe_failure() can name the path and say what
+    was wrong with it. `source(kind)`/`validation(kind)` keep their `kind`
+    parameter for the first-run screen's row vocabulary; "game" is the only
+    kind.
     """
     game: Optional[Path]
-    sdk: Optional[Path]
     game_source: str            # "picker" | "cli" | "env" | "settings" | "project" | ""
-    sdk_source: str
     game_validation: Optional[Validation]
-    sdk_validation: Optional[Validation]
 
     @property
     def ok(self) -> bool:
-        return self.game is not None and self.sdk is not None
+        return self.game is not None
 
     def source(self, kind: str) -> str:
-        return self.game_source if kind == "game" else self.sdk_source
+        _only_game(kind)
+        return self.game_source
 
     def validation(self, kind: str) -> Optional[Validation]:
-        return self.game_validation if kind == "game" else self.sdk_validation
+        _only_game(kind)
+        return self.game_validation
 
 
 # Distinguishes "flag absent" from "flag present with an empty value" --
@@ -226,7 +244,7 @@ def _flag_value(argv, flag: str) -> str | object:
 
 
 def _candidate(kind: str, argv, env, store, picked=None):
-    """The highest-precedence SET source for one root, as (value, source).
+    """The highest-precedence SET source for the root, as (value, source).
 
     Returns (None, "") when nothing is set. A set-but-wrong source is
     returned as-is and never skipped in favour of a lower one -- falling
@@ -282,20 +300,31 @@ def _candidate(kind: str, argv, env, store, picked=None):
     return None, ""
 
 
-def resolve(argv=None, env=None, store=None, picked=None) -> Resolution:
-    """Resolve both roots. PURE: no globals, no writes, no ambient state
-    beyond the defaults for argv/env/store.
+def warn_ignored_sdk_sources(argv) -> None:
+    """Say once per process, on stderr, that `--sdk-dir` is ignored, when
+    `argv` carries it. An old shortcut must still boot (spec 2026-11-11
+    §4.4); DAUNTLESS_SDK_DIR and settings.json [paths].sdk stay silent, as
+    the developer SDK chain (tools/dev_sdk.py) still reads them."""
+    global _sdk_flag_warned
+    if _sdk_flag_warned or _flag_value(argv, IGNORED_SDK_FLAG) is _UNSET:
+        return
+    _sdk_flag_warned = True
+    print(_IGNORED_SDK_FLAG_LINE, file=sys.stderr)
 
-    `picked` is the first-run dialog's answer -- a dict keyed "game" /
-    "sdk" -- and outranks every other source. It is a plain argument, not
-    ambient state, so this function still never prompts and never blocks.
+
+def resolve(argv=None, env=None, store=None, picked=None) -> Resolution:
+    """Resolve the game root. PURE apart from warn_ignored_sdk_sources()'s
+    one stderr line: no writes, no ambient state beyond the defaults for
+    argv/env/store.
+
+    `picked` is the first-run dialog's answer -- a dict keyed "game" -- and
+    outranks every other source. It is a plain argument, not ambient
+    state, so this function still never prompts and never blocks.
 
     settings_store is imported HERE rather than at module scope: it imports
     engine.ui.configuration_panel, and this module is imported by
     engine/audio/ and engine/appc/.
     """
-    import sys
-
     if argv is None:
         argv = sys.argv[1:]
     if env is None:
@@ -304,46 +333,33 @@ def resolve(argv=None, env=None, store=None, picked=None) -> Resolution:
         from engine.settings_store import SettingsStore
         store = SettingsStore()
         store.load()
+    warn_ignored_sdk_sources(argv)
 
-    roots: dict = {}
-    sources: dict = {}
-    validations: dict = {}
-    for kind in ("game", "sdk"):
-        value, source = _candidate(kind, argv, env, store, picked)
-        sources[kind] = source
-        if value is None:
-            roots[kind] = None
-            validations[kind] = None
-            continue
-        verdict = _VALIDATORS[kind](value)
-        validations[kind] = verdict
-        roots[kind] = verdict.root if verdict.ok else None
-
-    return Resolution(
-        game=roots["game"], sdk=roots["sdk"],
-        game_source=sources["game"], sdk_source=sources["sdk"],
-        game_validation=validations["game"], sdk_validation=validations["sdk"],
-    )
+    value, source = _candidate("game", argv, env, store, picked)
+    if value is None:
+        return Resolution(game=None, game_source=source, game_validation=None)
+    verdict = _VALIDATORS["game"](value)
+    return Resolution(game=verdict.root if verdict.ok else None,
+                      game_source=source, game_validation=verdict)
 
 
 def persist(resolution: Resolution, store=None) -> None:
-    """Write CLI- and picker-sourced roots to settings.json [paths].
+    """Write a CLI- or picker-sourced game root to settings.json [paths].
 
-    Only these two, and only when valid. An env var is ephemeral by
-    contract, so `DAUNTLESS_SDK_DIR=/fixtures pytest` cannot mutate a real
+    Only these two sources, and only when valid. An env var is ephemeral by
+    contract, so `DAUNTLESS_GAME_DIR=/fixtures pytest` cannot mutate a real
     config; and a typo never becomes the stored answer, which would make
     the NEXT launch fail for a reason the player has already forgotten
     about. A picked root is stored for the opposite reason: the whole
-    point of asking was to not ask again.
+    point of asking was to not ask again. [paths].sdk is never written
+    (the developer SDK chain owns it).
     """
     if store is None:
         from engine.settings_store import SettingsStore
         store = SettingsStore()
         store.load()
-    for kind in ("game", "sdk"):
-        root = resolution.game if kind == "game" else resolution.sdk
-        if root is not None and resolution.source(kind) in ("cli", "picker"):
-            store.set("paths", kind, str(root))
+    if resolution.game is not None and resolution.game_source in ("cli", "picker"):
+        store.set("paths", "game", str(resolution.game))
 
 
 # --- the cache --------------------------------------------------------------
@@ -372,22 +388,12 @@ def current() -> Resolution:
     return _RESOLUTION
 
 
-def _root(kind: str) -> Path:
-    resolution = current()
-    root = resolution.game if kind == "game" else resolution.sdk
-    if root is None:
-        raise PathsUnresolved(describe_failure(resolution))
-    return root
-
-
 def game_root() -> Path:
     """The BC game install root. Never captured at module scope."""
-    return _root("game")
-
-
-def sdk_root() -> Path:
-    """The BC SDK root. Never captured at module scope."""
-    return _root("sdk")
+    resolution = current()
+    if resolution.game is None:
+        raise PathsUnresolved(describe_failure(resolution))
+    return resolution.game
 
 
 def stock_scripts() -> Path:
@@ -396,28 +402,6 @@ def stock_scripts() -> Path:
     root = game_root()
     found = case_paths.resolve(root, "scripts")
     return found if found is not None else root / "scripts"
-
-
-def sdk_scripts_in(root: Path) -> Path:
-    """root/Build/scripts. Pure: takes the root rather than resolving one.
-
-    The one place that knows the SDK's on-disk layout -- sdk_scripts() below
-    is just this applied to the ambient sdk_root(). Exists so a caller that
-    already holds a resolved root (e.g. a Resolution from paths.resolve())
-    can derive the scripts dir without going through the global _RESOLUTION
-    -- see engine/mods.py:install()'s game_root/sdk_scripts parameters.
-    """
-    return root / "Build" / "scripts"
-
-
-def sdk_scripts() -> Path:
-    """sdk_root()/Build/scripts — where the SDK's Python modules live."""
-    return sdk_scripts_in(sdk_root())
-
-
-def sdk_data() -> Path:
-    """sdk_root()/Build/Data — TGL string tables and friends."""
-    return sdk_root() / "Build" / "Data"
 
 
 def game_asset(rel) -> Path:
@@ -474,8 +458,8 @@ def refuse_repo_write_when_packaged(path) -> None:
 def data_dir_override(argv=None, env=None) -> Optional[Path]:
     """The user-data root asked for by `--data-dir` or DAUNTLESS_DATA_DIR.
 
-    Flag first, then env. An empty value counts as unset (unlike the game/sdk
-    flags, an empty data dir has no meaning to correct). Read on every call.
+    Flag first, then env. An empty value counts as unset (unlike the game
+    flag, an empty data dir has no meaning to correct). Read on every call.
     """
     if argv is None:
         argv = sys.argv[1:]
@@ -695,41 +679,33 @@ def describe_failure(resolution: Resolution) -> str:
     if resolution.ok:
         return ""
 
+    kind, label = "game", "game folder"
     lines = ["dauntless: cannot locate your Bridge Commander install.", ""]
-    for kind, label in (("game", "game folder"), ("sdk", "sdk folder ")):
-        root = resolution.game if kind == "game" else resolution.sdk
-        if root is not None:
-            lines.append(f"  {label}: {root}")
-            lines.append("")
-            continue
-
-        verdict = resolution.validation(kind)
-        if verdict is None:
-            lines.append(f"  {label}: not found")
-            lines.append(f"     {CLI_FLAGS[kind]:<18}(not given)")
-            lines.append(f"     {ENV_VARS[kind]:<18}(not set)")
-            lines.append(f"     {'settings.json':<18}(not set)")
-            project = PROJECT_ROOT / _PROJECT_DIR[kind]
-            lines.append(f"     {str(project):<18}(does not exist)")
-        else:
-            # _validate's empty-value guard sets root=Path(""), which
-            # stringifies to "." -- printing that verbatim reads as a
-            # reference to cwd, exactly the confusion the guard exists to
-            # avoid. Name it plainly instead.
-            root_display = "(empty)" if verdict.root == Path("") else str(verdict.root)
-            lines.append(f"  {label}: invalid — {root_display}")
-            lines.append(f"     missing: {', '.join(verdict.missing)}")
-            lines.append(f"     source : {resolution.source(kind)}")
-            if verdict.hint:
-                lines.append(f"     hint   : {verdict.hint}")
-        lines.append("")
+    verdict = resolution.game_validation
+    if verdict is None:
+        lines.append(f"  {label}: not found")
+        lines.append(f"     {CLI_FLAGS[kind]:<18}(not given)")
+        lines.append(f"     {ENV_VARS[kind]:<18}(not set)")
+        lines.append(f"     {'settings.json':<18}(not set)")
+        project = PROJECT_ROOT / _PROJECT_DIR[kind]
+        lines.append(f"     {str(project):<18}(does not exist)")
+    else:
+        # _validate's empty-value guard sets root=Path(""), which
+        # stringifies to "." -- printing that verbatim reads as a
+        # reference to cwd, exactly the confusion the guard exists to
+        # avoid. Name it plainly instead.
+        root_display = "(empty)" if verdict.root == Path("") else str(verdict.root)
+        lines.append(f"  {label}: invalid — {root_display}")
+        lines.append(f"     missing: {', '.join(verdict.missing)}")
+        lines.append(f"     source : {resolution.game_source}")
+        if verdict.hint:
+            lines.append(f"     hint   : {verdict.hint}")
+    lines.append("")
 
     lines += [
-        "Set them once and they persist:",
+        "Set it once and it persists:",
         "",
-        "  ./build/dauntless \\",
-        '      --game-dir "/path/to/Star Trek Bridge Commander/game" \\',
-        '      --sdk-dir  "/path/to/Star Trek Bridge Commander/sdk"',
+        '  ./build/dauntless --game-dir "/path/to/Star Trek Bridge Commander/game"',
         "",
     ]
     return "\n".join(lines)

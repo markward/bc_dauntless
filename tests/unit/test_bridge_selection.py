@@ -71,12 +71,9 @@ _SDK_SHIP_STEMS = (
     "Transport", "Vorcha", "Warbird")
 
 
-def test_stock_ship_stems_come_from_the_install_unchanged(monkeypatch):
-    from engine import paths
-
-    def _no_sdk(*_a, **_k):
-        raise AssertionError("ship stems must not read the SDK")
-    monkeypatch.setattr(paths, "sdk_scripts", _no_sdk)
+def test_stock_ship_stems_come_from_the_install_unchanged():
+    # engine.paths has no SDK accessor left to probe: the absence guard is
+    # tests/unit/test_game_never_reads_sdk.py.
     stems = bs._stock_ship_stems()
     assert stems == {s.lower(): s for s in _SDK_SHIP_STEMS}
 

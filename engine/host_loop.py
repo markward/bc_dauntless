@@ -10497,11 +10497,11 @@ def _run_first_run_screen(resolution, resolver=None, view_w=1280, view_h=720):
     makes that impossible rather than unlikely.
 
     `resolver` is threaded in from _resolve_paths_or_report(), bound to the
-    same argv/env/store it used for the resolve() that got us here -- so a
-    `--game-dir` given at launch is still the answer a re-resolve sees after
-    the player picks the other root, rather than being silently outranked by
-    whatever FirstRunPanel's own default (a fresh sys.argv/os.environ/
-    SettingsStore read) would produce. Left None, FirstRunPanel falls back
+    same argv/env/store it used for the resolve() that got us here (and
+    through the same stock-scripts install check) -- so every re-resolve
+    sees the sources boot saw, rather than whatever FirstRunPanel's own
+    default (a fresh sys.argv/os.environ/SettingsStore read) would
+    produce. Left None, FirstRunPanel falls back
     to that default itself, which is fine for a caller with no boot
     context (e.g. a test constructing the screen directly).
 
@@ -10596,10 +10596,19 @@ def _finish_boot_notice(panel, view_w=1280, view_h=720):
 
 
 def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
-    """Resolve the BC roots, asking the player if they are not configured.
+    """Resolve the BC game root, asking the player if it is not configured.
 
     Returns the Resolution on success. Returns None after printing the
     full diagnostic, which means run() should return 1.
+
+    Boot runs the stock-scripts install check here (spec 2026-11-11
+    §4.1a): every resolve, the screen's re-resolves included, goes through
+    engine.stock_scripts.checked(), so a root whose markers pass but which
+    is missing (or cannot lift) a listed stock file comes back unresolved,
+    its Validation hint naming the file. That reopens the first-run screen
+    on the problem rather than failing mid-game at the module's first
+    import. A passing check is memoised, so setup_sdk()'s require_install
+    does not hash the install a second time.
 
     The screen is reachable from here and nowhere else: paths.current() is
     reached lazily by tools/ scripts, pytest and CI, none of which can drive
@@ -10623,6 +10632,7 @@ def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
     """
     import os as _os
     import sys as _sys
+    from engine import stock_scripts as _stock_scripts
     from engine.settings_store import SettingsStore
 
     argv = _sys.argv[1:]
@@ -10630,24 +10640,24 @@ def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
     store = SettingsStore()
     store.load()
 
-    resolution = _paths.resolve(argv=argv, env=env, store=store)
+    resolution = _stock_scripts.checked(
+        _paths.resolve(argv=argv, env=env, store=store))
     if not resolution.ok and cef_ready:
         resolution = _run_first_run_screen(
             resolution,
-            resolver=lambda picked: _paths.resolve(
-                argv=argv, env=env, store=store, picked=picked),
+            resolver=lambda picked: _stock_scripts.checked(_paths.resolve(
+                argv=argv, env=env, store=store, picked=picked)),
             view_w=view_w, view_h=view_h,
         )
     _paths.configure(resolution)
-    # Above the early return on purpose: a root the player located by hand
-    # is stored even if they quit before finding the other one, so the next
-    # launch asks only for what is still missing.
+    # Writes only a valid CLI- or picker-sourced root: a root the boot check
+    # refused is unresolved here, so it is never stored.
     _paths.persist(resolution, store=store)
     if not resolution.ok:
         print(_paths.describe_failure(resolution), file=_sys.stderr)
         return None
 
-    # Mods layer over the resolved roots, so this must follow both configure()
+    # Mods layer over the resolved root, so this must follow both configure()
     # above and the resolution.ok check just above it. The game root is passed
     # EXPLICITLY from the local `resolution` this function just computed,
     # not read back via paths.game_root() -- that reads
@@ -11674,20 +11684,21 @@ def run(mission_name: Optional[str] = None,
         # Non-fatal in builds where CEF is disabled (the stub returns False).
         # If CEF is enabled and initialize failed, the binary will print the
         # framework-load error to stderr — surface it but keep running so the
-        # 3D scene still renders (once the roots below are resolved some
+        # 3D scene still renders (once the game root below is resolved some
         # other way; see _resolve_paths_or_report's cef_ready gate for the
-        # case where they are not).
+        # case where it is not).
         import sys as _sys
         print("[host_loop] cef_initialize returned False — overlay disabled",
               file=_sys.stderr)
 
     # Resolve where BC content lives. This runs AFTER cef_initialize so the
-    # first-run screen has a live browser to draw into when the roots are
-    # not configured -- and still BEFORE the SDK setup call below, because
-    # the SDK meta-path finder calls paths.sdk_scripts(). _cef_ready is
-    # threaded through so a build/init with no live browser falls straight
-    # to the describe_failure() diagnostic instead of pumping a screen that
-    # can never receive a click.
+    # first-run screen has a live browser to draw into when the game root
+    # is not configured (or its stock scripts fail the boot check) -- and
+    # still BEFORE the SDK setup call below, because the stock-script
+    # meta-path finder asks paths.stock_scripts(). _cef_ready is threaded
+    # through so a build/init with no live browser falls straight to the
+    # describe_failure() diagnostic instead of pumping a screen that can
+    # never receive a click.
     #
     # Verified safe to boot this far unresolved: CEF's page is project
     # content, not BC content, and window/pipeline init reads no game

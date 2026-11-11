@@ -151,16 +151,12 @@ def test_tutorial_tgl_resolves_through_the_fixture_tgl_root():
         nr._load_tgl.cache_clear()
 
 
-def test_game_tgl_roots_exclude_the_sdk(monkeypatch):
+def test_game_tgl_roots_exclude_the_sdk():
     import engine.missions.name_resolver as nr
-    from engine import paths, stock_scripts
+    from engine import stock_scripts
     from tools import dev_sdk
     sdk = dev_sdk.sdk_root()
 
-    def _no_sdk(*_a, **_k):
-        raise AssertionError("TGL roots must not read the SDK")
-    monkeypatch.setattr(paths, "sdk_data", _no_sdk)
-    monkeypatch.setattr(paths, "sdk_root", _no_sdk)
     stock_scripts.clear_fixture_trees()
     roots = nr._tgl_roots()
     assert roots

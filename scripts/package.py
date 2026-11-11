@@ -47,8 +47,11 @@ MACOS. On a Mac the same tree is staged as dist/BC Dauntless.app, with the
 install root in Contents/Resources; the "macOS" section below explains that
 layout. --zip writes BC-Dauntless-<version>-macos-arm64.zip.
 
-BC's own content (game/, sdk/) is never copied. It is the player's, it is
-found at runtime through engine/paths.py, and it is not ours to ship.
+BC's own content (the player's game folder) is never copied. It is the
+player's, it is found at runtime through engine/paths.py, and it is not ours
+to ship. The game reads Bridge Commander's stock scripts from that folder
+(engine/stock_scripts.py lifts its .pyc); the BC SDK is a development
+requirement only and is never read by a packaged build.
 """
 from __future__ import annotations
 
@@ -85,13 +88,16 @@ PLATFORM = platform_tag()
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 
 # tools/ is a developer tree, but engine/ reaches into it at run time:
-# host_loop._setup_sdk does `from tools import mission_harness` for the SDK
-# loader, and that module imports tools.timeout_guard. Ship exactly those and
-# nothing else -- the rest of tools/ is instrumentation for the ORIGINAL
-# stbc.exe (tools/setup.py rewrites a BC install) and has no business in a
-# player's copy.
+# host_loop._setup_sdk does `from tools import mission_harness` for the
+# stock-script loader (the meta-path finder that serves BC's scripts, lifted
+# from the install's .pyc, plus mod overrides), and that module imports
+# tools.timeout_guard. Ship exactly those and nothing else -- the rest of
+# tools/ is instrumentation for the ORIGINAL stbc.exe (tools/setup.py
+# rewrites a BC install) or the developer SDK chain (tools/dev_sdk.py, which
+# tests/unit/test_game_never_reads_sdk.py keeps out of this list) and has no
+# business in a player's copy.
 #
-# This is a layering smell, not a packaging one: the SDK finder is runtime
+# This is a layering smell, not a packaging one: the finder is runtime
 # machinery that happens to live under tools/. If it ever moves into engine/,
 # delete this list. A real launch (launch_check) is what catches a new
 # runtime import landing here, because --smoke-check never reaches _setup_sdk.

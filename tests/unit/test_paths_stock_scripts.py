@@ -6,8 +6,7 @@ from engine import paths
 
 def _configure(root):
     paths.configure(paths.Resolution(
-        game=root, sdk=None, game_source="env", sdk_source="",
-        game_validation=None, sdk_validation=None))
+        game=root, game_source="env", game_validation=None))
 
 
 @pytest.fixture(autouse=True)

@@ -45,9 +45,13 @@ def game_with_assets(tmp_path, monkeypatch):
     # Point the sfx resolver at a tmp game dir and stage every bridge WAV so the
     # real LoadBridge.LoadSounds() loads from disk without needing the game/ tree.
     monkeypatch.setenv("DAUNTLESS_GAME_DIR", str(tmp_path))
-    for rel in ("data", "data/Models", "data/Textures", "data/Icons"):
+    for rel in ("data", "data/Models", "data/Textures", "data/Icons", "scripts"):
         (tmp_path / rel).mkdir(parents=True, exist_ok=True)
-    from engine import paths
+    (tmp_path / "scripts" / "MissionLib.pyc").write_bytes(b"")   # a paths marker
+    from engine import paths, stock_scripts
+    # LoadBridge itself is the real stock module (the install's .pyc): keep
+    # stock scripts on the real install while the sfx come from tmp_path.
+    stock_scripts.configure(None, paths.stock_scripts())
     # setattr (not configure()) so monkeypatch restores the real session
     # Resolution on teardown -- this fixture must not leak a tmp game root
     # into later tests.
@@ -62,6 +66,7 @@ def game_with_assets(tmp_path, monkeypatch):
     yield g
     _set_current_game(None)
     shutdown_audio_for_tests()
+    stock_scripts.configure(None, None)
 
 
 def test_real_loadbridge_loadsounds_registers_all(game_with_assets):

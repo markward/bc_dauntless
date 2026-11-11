@@ -72,8 +72,9 @@
         </div>
     </section>
 
-    <!-- First-run overlay (production). Shown when BC's content roots can't
-         be found at launch; the player locates Game/SDK folders here.
+    <!-- First-run overlay (production). Shown when BC's game folder can't
+         be found at launch, or its stock scripts fail the boot install
+         check; the player locates the game folder here (one row).
          setFirstRun(payload) drives state where payload is
          {title, rows: [{kind, label, path, status, hint, ok, state}],
          can_continue} or null to hide. `state` is one of "ok"/"bad"/"unset"

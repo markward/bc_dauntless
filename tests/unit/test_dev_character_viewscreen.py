@@ -86,12 +86,8 @@ _SDK_CHARACTER_NAMES = [
 
 def test_stock_catalogue_lists_the_same_characters_as_the_sdk_scan(
         monkeypatch):
-    from engine import paths
-
-    def _no_sdk(*_a, **_k):
-        raise AssertionError("the catalogue must not read the SDK")
-    monkeypatch.setattr(paths, "sdk_scripts", _no_sdk)
-    monkeypatch.setattr(paths, "sdk_root", _no_sdk)
+    # engine.paths has no SDK accessor left to probe: the absence guard is
+    # tests/unit/test_game_never_reads_sdk.py.
     monkeypatch.setattr(dcv, "_cache", None)
     assert [e.name for e in dcv.catalogue()] == _SDK_CHARACTER_NAMES
 

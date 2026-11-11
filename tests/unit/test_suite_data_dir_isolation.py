@@ -18,7 +18,6 @@ def test_suite_still_finds_content_without_settings_json():
     res = paths.resolve()
     assert res.ok
     assert res.source("game") in ("env", "cli")
-    assert res.source("sdk") in ("env", "cli")
 
 
 def test_suite_keeps_project_mods():

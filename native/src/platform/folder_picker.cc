@@ -77,7 +77,7 @@ std::optional<std::string> pick_folder(const std::string& title,
     }
     std::fprintf(stderr,
                  "dauntless: no folder chooser found (install zenity or "
-                 "kdialog), or pass --game-dir / --sdk-dir instead.\n");
+                 "kdialog), or pass --game-dir instead.\n");
     return std::nullopt;
 }
 

@@ -6,9 +6,6 @@ from engine import mods, paths
 def test_stock_script_lines_name_the_install_pyc(monkeypatch, capsys):
     from engine.dev_missions import ship_preview
 
-    def _no_sdk(*_a, **_k):
-        raise AssertionError("ship_preview must not read the SDK")
-    monkeypatch.setattr(paths, "sdk_scripts", _no_sdk)
     monkeypatch.setattr(mods, "sdk_override", lambda rel: None)
 
     ship_preview._report_resolution("ZZNoSuchShip")

@@ -1,7 +1,6 @@
 """MissionRegistry.discover reads the stock script listing (the install's
 .pyc, plus the test-only Custom/Tutorial fixture tree) into a typed tree."""
 
-from engine import paths as _paths
 from engine import stock_scripts
 from engine.missions.discovery import (
     discover,
@@ -121,15 +120,11 @@ def test_discover_synthetic_tree(tmp_path):
     assert found == ["MX"]
 
 
-def test_discovery_needs_no_sdk_for_maelstrom(monkeypatch):
-    """With the SDK fixture trees cleared and every SDK accessor raising,
-    the retail install alone still lists Maelstrom and Multiplayer; the
-    Tutorial family (an SDK sample) is simply absent."""
-    def _no_sdk(*_a, **_k):
-        raise AssertionError("discover() must not read the SDK")
-    monkeypatch.setattr(_paths, "sdk_scripts", _no_sdk)
-    monkeypatch.setattr(_paths, "sdk_root", _no_sdk)
-    monkeypatch.setattr(_paths, "sdk_data", _no_sdk)
+def test_discovery_needs_no_sdk_for_maelstrom():
+    """With the SDK fixture trees cleared, the retail install alone still
+    lists Maelstrom and Multiplayer; the Tutorial family (an SDK sample) is
+    simply absent. (engine.paths has no SDK accessor left to probe: the
+    absence guard is tests/unit/test_game_never_reads_sdk.py.)"""
     stock_scripts.clear_fixture_trees()
 
     reg = discover()

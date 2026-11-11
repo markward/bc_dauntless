@@ -111,7 +111,7 @@ def test_packaged_build_writes_only_to_user_folders(tmp_path):
     home.mkdir()
     result_path = tmp_path / "result.json"
     build_python = paths.PROJECT_ROOT / "build" / "python"
-    game_root, sdk_root = paths.game_root(), paths.sdk_root()
+    game_root = paths.game_root()
 
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("XDG_", "PYTHON", "DAUNTLESS_"))
@@ -119,8 +119,7 @@ def test_packaged_build_writes_only_to_user_folders(tmp_path):
     env.update(HOME=str(home), USERPROFILE=str(home),
                APPDATA=str(home / "AppData" / "Roaming"),
                LOCALAPPDATA=str(home / "AppData" / "Local"),
-               DAUNTLESS_GAME_DIR=str(game_root),
-               DAUNTLESS_SDK_DIR=str(sdk_root))
+               DAUNTLESS_GAME_DIR=str(game_root))
     if build_python.is_dir():
         env["E2E_BUILD_PYTHON"] = str(build_python)
     assert "DAUNTLESS_DATA_DIR" not in env and "DAUNTLESS_MODS_DIR" not in env

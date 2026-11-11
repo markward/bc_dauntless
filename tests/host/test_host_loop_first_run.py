@@ -5,11 +5,12 @@ picker-less platform ever boots on unresolved paths, or loses the
 describe_failure() diagnostic, nothing else in the suite would notice.
 """
 
+import hashlib
 import sys as _sys
 
 import pytest
 
-from engine import first_run, host_loop, paths
+from engine import first_run, host_loop, paths, stock_scripts
 from engine import settings_store as _settings_store_mod
 from tests.helpers.source_guards import code_only as _code_only
 from tests.helpers import host_frame_source
@@ -36,16 +37,39 @@ class FakeStore:
         self._values[(section, key)] = value
 
 
+def _hash(data: bytes) -> str:
+    return hashlib.blake2b(data, digest_size=16).hexdigest()
+
+
+# A two-file stand-in for the committed stock manifest, so a fake install
+# can pass (or fail) boot's stock-scripts check (engine.stock_scripts).
+_FILES = {"MissionLib.pyc": b"missionlib", "AI/Preprocessors.pyc": b"preprocessors"}
+
+
+@pytest.fixture(autouse=True)
+def _small_manifest(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "cache_dir", lambda: tmp_path / "cache")
+    stock_scripts.configure({rel: [_hash(data)] for rel, data in _FILES.items()}, None)
+    yield
+    stock_scripts.configure(None, None)
+
+
+def _make_install(root, skip=()):
+    for rel in ("data", "data/Models", "data/Textures", "data/Icons"):
+        (root / rel).mkdir(parents=True, exist_ok=True)
+    for rel, data in _FILES.items():
+        if rel in skip:
+            continue
+        target = root / "scripts" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    return root
+
+
 @pytest.fixture
 def install(tmp_path):
-    game = tmp_path / "install" / "game"          # paths-guard: test fixture tree
-    for marker in paths.GAME_MARKERS:
-        (game / marker).mkdir(parents=True, exist_ok=True)
-    sdk = tmp_path / "install" / "sdk"            # paths-guard: test fixture tree
-    (sdk / "Build" / "scripts").mkdir(parents=True, exist_ok=True)
-    (sdk / "Build" / "scripts" / "App.py").write_text("")
-    (sdk / "Build" / "Data" / "TGL").mkdir(parents=True, exist_ok=True)
-    return game, sdk
+    """A game install that passes boot's stock-scripts check."""
+    return _make_install(tmp_path / "install" / "game")   # paths-guard: test fixture tree
 
 
 @pytest.fixture(autouse=True)
@@ -107,9 +131,9 @@ def test_unresolved_paths_hand_off_to_the_first_run_screen(monkeypatch, install)
     pump loop (tests/host/test_first_run_pump_loop.py). This test is the WIRING:
     the screen is consulted on failure, and gets the unresolved Resolution.
     """
-    game, sdk = install
+    game = install
     resolved = paths.resolve(argv=[], env={}, store=FakeStore(),
-                              picked={"game": str(game), "sdk": str(sdk)})
+                              picked={"game": str(game)})
     seen = []
 
     def fake_screen(resolution, **kwargs):
@@ -170,22 +194,74 @@ def test_no_live_browser_skips_the_screen_and_prints_the_diagnostic(
     assert "cannot locate your Bridge Commander install" in printed
 
 
-def test_a_partial_screen_result_persists_even_when_boot_still_fails(
-        monkeypatch, install, _nothing_resolves_by_accident):
-    """FINDING 1 regression test: a root the first-run screen located must
-    reach the STORE, not just the in-memory Resolution, even when boot still
-    fails overall -- e.g. the player located the game folder by hand, then
-    quit before finding the sdk one.
-
-    _resolve_paths_or_report() used to call persist() only after the
-    `if not resolution.ok: return None` branch, so that player got nothing
-    written -- next launch asked for BOTH roots again. persist() must run
-    on this partial-resolution path too. The screen itself is stubbed out
-    here (its picker-driving mechanics are FirstRunPanel's job, covered in
-    tests/unit/test_first_run_panel.py) so this test is purely about what
-    _resolve_paths_or_report does with a partial result.
+@pytest.mark.parametrize("cef_ready", [True, False])
+def test_broken_install_reopens_the_first_run_screen(
+        monkeypatch, capsys, tmp_path, _nothing_resolves_by_accident, cef_ready):
+    """Spec §4.1a: boot runs the stock-scripts check. A root that resolves
+    (its markers are all there) but is missing a listed .pyc is an install
+    problem, so it goes back to the first-run screen, the row saying which
+    file; with no live browser, describe_failure() names it and boot stops.
     """
-    game, _sdk = install
+    from engine.ui.first_run_panel import FirstRunPanel
+    broken = _make_install(tmp_path / "broken" / "game",   # paths-guard: test fixture tree
+                           skip=("AI/Preprocessors.pyc",))
+    _nothing_resolves_by_accident.set("paths", "game", str(broken))
+    seen = []
+
+    def fake_screen(resolution, **kwargs):
+        seen.append(resolution)
+        return resolution          # the player quit without fixing it
+
+    monkeypatch.setattr(host_loop, "_run_first_run_screen", fake_screen)
+
+    result = host_loop._resolve_paths_or_report(cef_ready=cef_ready)
+
+    assert result is None, "boot must not continue on a broken install"
+    missing = "scripts/AI/Preprocessors.pyc"
+    printed = capsys.readouterr().err
+    assert missing in printed
+    if not cef_ready:
+        assert seen == []
+        return
+    assert len(seen) == 1
+    handed = seen[0]
+    assert handed.game is None and handed.source("game") == "settings"
+    panel = FirstRunPanel(handed, picker=lambda title, message: None)
+    row = panel._snapshot()["rows"][0]
+    assert row["state"] == "bad"
+    assert missing in row["hint"]
+
+
+def test_the_screens_resolver_runs_the_install_check(
+        monkeypatch, tmp_path):
+    """The re-resolve after a pick goes through the same boot check, so a
+    broken folder the screen re-resolves never comes back valid."""
+    broken = _make_install(tmp_path / "broken" / "game",   # paths-guard: test fixture tree
+                           skip=("AI/Preprocessors.pyc",))
+    captured = {}
+
+    def fake_screen(resolution, **kwargs):
+        captured["resolver"] = kwargs.get("resolver")
+        return resolution
+
+    monkeypatch.setattr(host_loop, "_run_first_run_screen", fake_screen)
+    host_loop._resolve_paths_or_report()
+    again = captured["resolver"]({"game": str(broken)})
+    assert again.game is None
+    assert "scripts/AI/Preprocessors.pyc" in again.validation("game").hint
+
+
+def test_a_root_picked_on_the_screen_is_persisted(
+        monkeypatch, install, _nothing_resolves_by_accident):
+    """FINDING 1's surviving half: a root the first-run screen located must
+    reach the STORE, not just the in-memory Resolution, so the next launch
+    does not ask again. (With one content root there is no longer a
+    "partial" result: a valid game root is a complete one, and an invalid
+    one has nothing to persist.) The screen itself is stubbed out here (its
+    picker-driving mechanics are FirstRunPanel's job, covered in
+    tests/unit/test_first_run_panel.py).
+    """
+    game = install
     fake_store = _nothing_resolves_by_accident
 
     # _nothing_resolves_by_accident stubs persist() to a no-op so the OTHER
@@ -197,40 +273,31 @@ def test_a_partial_screen_result_persists_even_when_boot_still_fails(
         paths, "persist",
         lambda resolution, store=None: _REAL_PERSIST(resolution, store=fake_store))
 
-    # The screen located "game" and returned with "sdk" still missing --
-    # the shape a quit-after-one-pick leaves behind.
-    partial = paths.resolve(argv=[], env={}, store=FakeStore(),
-                             picked={"game": str(game)})
-    assert partial.game == game and not partial.ok
+    picked = paths.resolve(argv=[], env={}, store=FakeStore(),
+                            picked={"game": str(game)})
+    assert picked.ok
     monkeypatch.setattr(host_loop, "_run_first_run_screen",
-                         lambda resolution, **kwargs: partial)
-
+                         lambda resolution, **kwargs: picked)
     result = host_loop._resolve_paths_or_report()
 
-    assert result is None, "sdk is still missing, so boot must still stop"
-    assert fake_store.has("paths", "game"), (
+    assert result is not None and result.ok
+    assert fake_store.get("paths", "game") == str(game), (
         "the validated game root was never persisted -- the player will be "
         "asked for it again next launch")
-    assert fake_store.get("paths", "game") == str(game)
-    assert not fake_store.has("paths", "sdk"), (
-        "the missing sdk root must not be written")
+    assert not fake_store.has("paths", "sdk"), (   # paths-guard: kind label
+        "the game never writes an SDK root")
 
 
 def test_the_screens_resolver_stays_bound_to_the_store_boot_captured(
         monkeypatch, install, tmp_path):
     """Carried-forward regression, fix round 2.
 
-    Round 1's version of this test discriminated on VALUE -- a distinctive
-    "sdk" answer no fresh SettingsStore() could reproduce -- but
     engine.settings_store.SettingsStore is necessarily patched at the CLASS
     level (it's the only lever a test has over what boot's own `store is
     None` branch would build), so paths.resolve()'s OWN `store is None`
     branch -- exactly what FirstRunPanel._default_resolver hits -- reads
     the SAME patched class and reproduces any answer a correctly-threaded
-    resolver gives. Value-based discrimination cannot work here: a review
-    proved it with a standalone repro (a bare
-    ``lambda picked: paths.resolve(argv=argv, env=env, picked=picked)``
-    -- no store -- produced the identical result.sdk under that patch).
+    resolver gives. Value-based discrimination cannot work here.
 
     What actually distinguishes a correctly-wired resolver is WHEN it
     captures its store, not what the store contains: bound ONCE, at
@@ -243,60 +310,51 @@ def test_the_screens_resolver_stays_bound_to_the_store_boot_captured(
     with the weak/default-equivalent ``paths.resolve(picked=picked)`` form)
     picks up the CHANGED one instead.
 
-    Fix round 3 -- order-dependent gate regression. This test drives the
-    REAL _resolve_paths_or_report(), which reads the REAL sys.argv and
-    os.environ (that is the whole point: it is checking what boot's own
-    resolve() call captures). Under `scripts/check_tests.sh` the gate
-    exports DAUNTLESS_GAME_DIR (see that script -- it derives the
-    developer's real, VALID game root so the C++ asset tests can run) for
-    the whole pytest subprocess. With that var set, the initial
-    `_paths.resolve(argv=argv, env=env, store=store)` call inside
-    _resolve_paths_or_report() resolves "game" from the environment all by
-    itself, and combined with the patched store answering "sdk", the
-    Resolution comes back already `ok=True` -- so `_run_first_run_screen`
-    (and therefore this test's `fake_screen`) is never even called, and
-    `captured["resolver"]` stays None. That is real leakage from the
-    process environment, not a bug in the resolver-binding logic this test
-    exists to pin -- so argv/env are pinned here explicitly rather than
-    trusted to whatever the runner happened to export.
+    With one content root, the store boot captured names a BROKEN install
+    (markers there, a listed stock file missing), which is what sends boot
+    to the screen at all; the store a fresh SettingsStore() would build
+    afterwards names a GOOD one. A correctly-bound resolver, asked with no
+    pick, still reports the broken root.
+
+    argv/env are pinned: this test drives the REAL _resolve_paths_or_report(),
+    which reads the REAL sys.argv and os.environ, and a gate run exports
+    DAUNTLESS_GAME_DIR for the whole pytest process -- that would resolve
+    the root from the environment and never reach the screen.
     """
     monkeypatch.setattr(_sys, "argv", ["dauntless"])
     monkeypatch.delenv("DAUNTLESS_GAME_DIR", raising=False)
-    monkeypatch.delenv("DAUNTLESS_SDK_DIR", raising=False)
-    game, sdk_at_capture = install
-    sdk_after_capture = tmp_path / "other_install" / "sdk"  # paths-guard: test fixture tree
-    (sdk_after_capture / "Build" / "scripts").mkdir(parents=True, exist_ok=True)
-    (sdk_after_capture / "Build" / "scripts" / "App.py").write_text("")
-    (sdk_after_capture / "Build" / "Data" / "TGL").mkdir(parents=True, exist_ok=True)
+    good = install
+    broken = _make_install(tmp_path / "broken" / "game",   # paths-guard: test fixture tree
+                           skip=("AI/Preprocessors.pyc",))
 
-    class _StoreWithSdk:
-        """Answers only ("paths", "sdk"), with whichever path it was built
+    class _StoreWithGame:
+        """Answers only ("paths", "game"), with whichever path it was built
         with -- never touches disk."""
-        def __init__(self, sdk_path):
-            self._sdk = str(sdk_path)
+        def __init__(self, game_path):
+            self._game = str(game_path)
 
         def load(self):
             pass
 
         def has(self, section, key):
-            return (section, key) == ("paths", "sdk")
+            return (section, key) == ("paths", "game")
 
         def get(self, section, key):
-            assert (section, key) == ("paths", "sdk")
-            return self._sdk
+            assert (section, key) == ("paths", "game")
+            return self._game
 
         def set(self, section, key, value):
             pass
 
     # Undo _nothing_resolves_by_accident's substitution: this test wants the
-    # REAL resolve()/persist(), pointed only at the patched SettingsStore
-    # class below, not a hardcoded fake one that would mask which store the
-    # resolver actually used.
+    # REAL resolve(), pointed only at the patched SettingsStore class below,
+    # not a hardcoded fake one that would mask which store the resolver
+    # actually used.
     monkeypatch.setattr(paths, "resolve", _REAL_RESOLVE)
     monkeypatch.setattr(paths, "persist", lambda resolution, store=None: None)
     monkeypatch.setattr(paths, "configure", lambda resolution: None)
     monkeypatch.setattr(_settings_store_mod, "SettingsStore",
-                        lambda *a, **kw: _StoreWithSdk(sdk_at_capture))
+                        lambda *a, **kw: _StoreWithGame(broken))
 
     captured = {}
 
@@ -319,10 +377,11 @@ def test_the_screens_resolver_stays_bound_to_the_store_boot_captured(
     # resolver correctly bound to the store boot already constructed must
     # not observe this -- only a re-defaulting one would.
     monkeypatch.setattr(_settings_store_mod, "SettingsStore",
-                        lambda *a, **kw: _StoreWithSdk(sdk_after_capture))
+                        lambda *a, **kw: _StoreWithGame(good))
 
-    result = resolver({"game": str(game)})
-    assert result.sdk == sdk_at_capture, (
+    result = resolver({})
+    assert result.game is None
+    assert result.validation("game").root == paths.normalise(broken), (
         "the resolver picked up ambient state that changed AFTER it was "
         "captured -- it must stay bound to the store boot built ONCE at "
         "its own resolve() call, not re-derive a fresh one on every call")

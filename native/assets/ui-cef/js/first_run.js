@@ -4,6 +4,11 @@
 // presses back. It holds no logic of its own: CEF is software-rasterized in
 // this project, so there is no headless render to test a page against, and
 // anything conditional therefore belongs in Python where it can be.
+//
+// payload.rows holds one row today, the game folder (the only content
+// root); the loop below renders whatever rows arrive. A row's hint carries
+// the boot install check's message when a folder is missing a stock
+// script, naming the file.
 
 function escapeJsLiteralFR(s) {
     // Embedded in onclick="dauntlessEvent('...')". Backslash-escape single

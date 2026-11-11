@@ -124,9 +124,9 @@ void configure_bundled_python(const std::filesystem::path& project_root) {
     set_env_var("PYTHONSTARTUP", "");
 }
 
-// Set PYTHONPATH so the embedded interpreter can find engine/ (and the SDK
-// scripts via the project's existing sys.path-based finder). Honors an active
-// uv venv's site-packages via VIRTUAL_ENV when set.
+// Set PYTHONPATH so the embedded interpreter can find engine/ (BC's stock
+// scripts come from the install, through the project's meta-path finder).
+// Honors an active uv venv's site-packages via VIRTUAL_ENV when set.
 //
 // `packaged` suppresses the venv lookup entirely: a shipped build carries
 // every module it needs under its own root, and inheriting the site-packages
@@ -275,9 +275,9 @@ int main(int argc, char* argv[]) {
     // with the existing positional --smoke-check / --banner modes (which only
     // read argv[1]). Setting must happen before Py_InitializeEx so the
     // attribute set at PYBIND11_MODULE init reads the final value.
-    // --game-dir and --sdk-dir need no scan here: they are consumed entirely
-    // on the Python side (engine.paths.resolve() reads sys.argv), so this
-    // loop only has to publish argv below, not parse those two flags itself.
+    // --game-dir needs no scan here: it is consumed entirely on the Python
+    // side (engine.paths.resolve() reads sys.argv), so this loop only has to
+    // publish argv below, not parse that flag itself.
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--developer") {
             dauntless::set_developer_mode(true);
@@ -287,7 +287,7 @@ int main(int argc, char* argv[]) {
 
     Py_InitializeEx(/*initsigs=*/1);
 
-    // engine.paths reads sys.argv for --game-dir / --sdk-dir, and
+    // engine.paths reads sys.argv for --game-dir, and
     // Py_InitializeEx leaves sys.argv unset. Build the list directly rather
     // than calling PySys_SetArgvEx, which is deprecated since 3.11 -- and
     // which would also prepend argv[0] to sys.path unless told not to,

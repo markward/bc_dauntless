@@ -29,26 +29,23 @@ class FakeStore:
 
 @pytest.fixture
 def install(tmp_path):
-    """A valid game root and a valid sdk root, both outside the project."""
+    """A valid game root (the one content root), outside the project."""
     game = tmp_path / "install" / "game"          # paths-guard: test fixture tree
-    for marker in paths.GAME_MARKERS:
-        (game / marker).mkdir(parents=True, exist_ok=True)
-    sdk = tmp_path / "install" / "sdk"            # paths-guard: test fixture tree
-    (sdk / "Build" / "scripts").mkdir(parents=True, exist_ok=True)
-    (sdk / "Build" / "scripts" / "App.py").write_text("")
-    (sdk / "Build" / "Data" / "TGL").mkdir(parents=True, exist_ok=True)
-    return game, sdk
+    for rel in ("data", "data/Models", "data/Textures", "data/Icons", "scripts"):
+        (game / rel).mkdir(parents=True, exist_ok=True)
+    (game / "scripts" / "MissionLib.pyc").write_bytes(b"")
+    return game
 
 
 def test_picked_outranks_an_invalid_cli_flag(install, tmp_path):
-    game, sdk = install
+    game = install
     bogus = tmp_path / "not-an-install"
     bogus.mkdir()
     r = paths.resolve(
-        argv=["--game-dir", str(bogus), "--sdk-dir", str(bogus)],
+        argv=["--game-dir", str(bogus)],
         env={},
         store=FakeStore(),
-        picked={"game": str(game), "sdk": str(sdk)},
+        picked={"game": str(game)},
     )
     assert r.ok
     assert r.game == game
@@ -56,34 +53,28 @@ def test_picked_outranks_an_invalid_cli_flag(install, tmp_path):
 
 
 def test_picked_outranks_env_and_settings(install):
-    game, sdk = install
+    game = install
     r = paths.resolve(
         argv=[],
-        env={"DAUNTLESS_GAME_DIR": "/nope", "DAUNTLESS_SDK_DIR": "/nope"},
-        store=FakeStore({("paths", "game"): "/also-nope",
-                         ("paths", "sdk"): "/also-nope"}),
-        picked={"game": str(game), "sdk": str(sdk)},
-    )
-    assert r.source("game") == "picker"
-    assert r.source("sdk") == "picker"
-
-
-def test_picked_may_cover_only_one_root(install):
-    game, sdk = install
-    r = paths.resolve(
-        argv=["--sdk-dir", str(sdk)],
-        env={},
-        store=FakeStore(),
+        env={"DAUNTLESS_GAME_DIR": "/nope"},
+        store=FakeStore({("paths", "game"): "/also-nope"}),
         picked={"game": str(game)},
     )
     assert r.source("game") == "picker"
-    assert r.source("sdk") == "cli"
     assert r.ok
 
 
+def test_a_picked_sdk_entry_is_ignored(install):
+    """The picker has one row; a stray "sdk" key names no root."""
+    game = install
+    r = paths.resolve(argv=[], env={}, store=FakeStore(),
+                      picked={"game": str(game), "sdk": "/nope"})  # paths-guard: kind label
+    assert r.ok and r.source("game") == "picker"
+
+
 def test_picked_none_behaves_exactly_as_before(install):
-    game, sdk = install
-    argv = ["--game-dir", str(game), "--sdk-dir", str(sdk)]
+    game = install
+    argv = ["--game-dir", str(game)]
     without = paths.resolve(argv=argv, env={}, store=FakeStore())
     with_none = paths.resolve(argv=argv, env={}, store=FakeStore(), picked=None)
     assert without == with_none
@@ -101,20 +92,19 @@ def test_an_invalid_pick_is_reported_not_skipped(tmp_path):
 
 
 def test_persist_writes_a_picked_root(install):
-    game, sdk = install
+    game = install
     store = FakeStore()
     r = paths.resolve(argv=[], env={}, store=FakeStore(),
-                      picked={"game": str(game), "sdk": str(sdk)})
+                      picked={"game": str(game)})
     paths.persist(r, store=store)
     assert store.get("paths", "game") == str(game)
-    assert store.get("paths", "sdk") == str(sdk)
+    assert not store.has("paths", "sdk")
 
 
 def test_persist_still_refuses_env_and_settings(install):
-    game, sdk = install
+    game = install
     store = FakeStore()
-    r = paths.resolve(argv=[], env={"DAUNTLESS_GAME_DIR": str(game),
-                                    "DAUNTLESS_SDK_DIR": str(sdk)},
+    r = paths.resolve(argv=[], env={"DAUNTLESS_GAME_DIR": str(game)},
                       store=FakeStore())
     assert r.ok and r.source("game") == "env"
     paths.persist(r, store=store)

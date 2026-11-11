@@ -56,12 +56,11 @@ def test_a_mod_providing_nothing_there_is_absent(monkeypatch, tmp_path):
 def test_tgl_roots_include_mod_dirs(monkeypatch, tmp_path):
     from engine.missions import name_resolver
     monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "g")
-    monkeypatch.setattr(paths, "sdk_data", lambda: tmp_path / "s")
     _touch(tmp_path / "mods" / "M" / "Data" / "TGL" / "FTBShips.TGL")
     mods.configure(mods.build_index(tmp_path / "mods"))
     roots = name_resolver._tgl_roots()
     assert tmp_path / "mods" / "M" / "Data" / "TGL" in roots
-    assert tmp_path / "s" / "TGL" in roots
+    assert roots[-1] == tmp_path / "g" / "data/TGL"
 
 
 def test_a_trailing_slash_in_the_caller_prefix_still_matches(monkeypatch, tmp_path):

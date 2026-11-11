@@ -5,11 +5,12 @@ because the page cannot be tested: CEF is software-rasterized in this
 project, so there is no headless render to assert against.
 """
 
+import hashlib
 import json
 
 import pytest
 
-from engine import first_run, paths
+from engine import first_run, paths, stock_scripts
 from engine.ui.first_run_panel import FirstRunPanel
 
 
@@ -37,26 +38,58 @@ class RecordingPicker:
         return self._answers.pop(0) if self._answers else None
 
 
+def _hash(data: bytes) -> str:
+    return hashlib.blake2b(data, digest_size=16).hexdigest()
+
+
+# A two-file stand-in for the committed stock manifest, so a fake install
+# can pass the stock-scripts install check (engine.stock_scripts).
+_FILES = {"MissionLib.pyc": b"missionlib", "AI/Preprocessors.pyc": b"preprocessors"}
+
+
+@pytest.fixture(autouse=True)
+def _small_manifest(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "cache_dir", lambda: tmp_path / "cache")
+    stock_scripts.configure({rel: [_hash(data)] for rel, data in _FILES.items()}, None)
+    yield
+    stock_scripts.configure(None, None)
+
+
+def _make_install(root, skip=()):
+    for rel in ("data", "data/Models", "data/Textures", "data/Icons"):
+        (root / rel).mkdir(parents=True, exist_ok=True)
+    for rel, data in _FILES.items():
+        if rel in skip:
+            continue
+        target = root / "scripts" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    return root
+
+
 @pytest.fixture
 def install(tmp_path):
-    game = tmp_path / "install" / "game"        # paths-guard: test fixture tree
-    for marker in paths.GAME_MARKERS:
-        (game / marker).mkdir(parents=True, exist_ok=True)
-    sdk = tmp_path / "install" / "sdk"          # paths-guard: test fixture tree
-    (sdk / "Build" / "scripts").mkdir(parents=True, exist_ok=True)
-    (sdk / "Build" / "scripts" / "App.py").write_text("")
-    (sdk / "Build" / "Data" / "TGL").mkdir(parents=True, exist_ok=True)
-    return game, sdk
+    """A game install that passes the stock-scripts check."""
+    return _make_install(tmp_path / "install" / "game")   # paths-guard: test fixture tree
+
+
+@pytest.fixture
+def broken_install(tmp_path):
+    """Markers all present, one listed stock file missing."""
+    return _make_install(tmp_path / "broken" / "game",     # paths-guard: test fixture tree
+                         skip=("AI/Preprocessors.pyc",))
 
 
 def _panel(picker, store=None, argv=None):
-    """A panel over a resolution where nothing is configured."""
+    """A panel over a resolution where nothing is configured (or what argv
+    names), re-resolving through the boot check the way host_loop does."""
     store = store or FakeStore()
     argv = argv or []
-    start = paths.resolve(argv=argv, env={}, store=store)
+    start = stock_scripts.checked(paths.resolve(argv=argv, env={}, store=store))
 
     def resolver(picked):
-        return paths.resolve(argv=argv, env={}, store=store, picked=picked)
+        return stock_scripts.checked(
+            paths.resolve(argv=argv, env={}, store=store, picked=picked))
 
     return FirstRunPanel(start, picker=picker, resolver=resolver)
 
@@ -69,54 +102,75 @@ def _payload(panel):
     return json.loads(js[len("setFirstRun("):-len(");")])
 
 
-def test_both_rows_start_unset():
+def test_one_row_only():
+    """The game folder is the one content root (spec 2026-11-11 §4.4)."""
     panel = _panel(RecordingPicker([]))
     payload = _payload(panel)
     assert payload["title"] == "Select Bridge Commander Install"
-    assert [row["status"] for row in payload["rows"]] == ["Not set", "Not set"]
+    assert [row["kind"] for row in payload["rows"]] == ["game"]
+    assert payload["rows"][0]["label"] == "Game folder"
+    assert payload["rows"][0]["status"] == "Not set"
     assert payload["can_continue"] is False
+    assert panel.dispatch_event("browse:sdk") is False   # paths-guard: kind label
 
 
-def test_a_valid_browse_satisfies_that_row_only(install):
-    game, _sdk = install
-    panel = _panel(RecordingPicker([str(game)]))
+def test_a_valid_browse_satisfies_the_row(install):
+    game = install
+    picker = RecordingPicker([str(game)])
+    panel = _panel(picker)
     _payload(panel)                       # drain the initial payload
     panel.dispatch_event("browse:game")
     payload = _payload(panel)
     assert payload["rows"][0]["status"] == "Bridge Commander install found"
     assert payload["rows"][0]["path"] == str(game)
-    assert payload["rows"][1]["status"] == "Not set"
-    assert payload["can_continue"] is False
-
-
-def test_continue_enables_only_when_both_validate(install):
-    game, sdk = install
-    panel = _panel(RecordingPicker([str(game), str(sdk)]))
-    panel.dispatch_event("browse:game")
-    panel.dispatch_event("browse:sdk")
-    payload = _payload(panel)
     assert payload["can_continue"] is True
     assert panel.outcome is None          # enabling is not pressing
+    assert picker.calls[0][0] == "Select your Bridge Commander game folder"
 
 
-def test_an_invalid_browse_reports_the_verdict_and_the_hint(install, tmp_path):
-    sdk = install[1]
-    # The Build folder is one level too deep -- paths.py emits a hint saying so.
-    panel = _panel(RecordingPicker([str(sdk / "Build")]))
-    panel.dispatch_event("browse:sdk")
+def test_an_invalid_browse_reports_the_verdict_and_the_hint(install):
+    # The data folder is one level too deep -- paths.py emits a hint saying so.
+    panel = _panel(RecordingPicker([str(install / "data")]))
+    panel.dispatch_event("browse:game")
     payload = _payload(panel)
-    row = payload["rows"][1]
+    row = payload["rows"][0]
     assert row["status"] == "Not a Bridge Commander install"
     assert row["hint"]
     assert payload["can_continue"] is False
 
 
+def test_a_broken_install_is_rejected_naming_the_file(broken_install):
+    """Spec §4.1a: a folder missing a listed stock .pyc is not accepted;
+    the row says which file, and Continue stays disabled."""
+    panel = _panel(RecordingPicker([str(broken_install)]))
+    panel.dispatch_event("browse:game")
+    payload = _payload(panel)
+    row = payload["rows"][0]
+    assert row["status"] == "Not a Bridge Commander install"
+    assert row["state"] == "bad"
+    assert "scripts/AI/Preprocessors.pyc" in row["hint"]
+    assert row["hint"] == stock_scripts.check_install(broken_install).message
+    assert payload["can_continue"] is False
+    panel.dispatch_event("continue")
+    assert panel.outcome is None
+    assert panel.resolution.game is None
+
+
+def test_a_root_broken_at_boot_opens_with_the_checks_hint(broken_install):
+    """host_loop hands the screen a Resolution its boot check unresolved:
+    the row opens showing why, not a blank "Not set"."""
+    panel = _panel(RecordingPicker([]), argv=["--game-dir", str(broken_install)])
+    row = _payload(panel)["rows"][0]
+    assert row["state"] == "bad"
+    assert row["status"] == "Not a Bridge Commander install"
+    assert "scripts/AI/Preprocessors.pyc" in row["hint"]
+
+
 def test_the_status_line_never_enumerates_markers(install):
-    game, _sdk = install
-    panel = _panel(RecordingPicker([str(game)]))
+    panel = _panel(RecordingPicker([str(install)]))
     panel.dispatch_event("browse:game")
     blob = json.dumps(_payload(panel))
-    for marker in paths.GAME_MARKERS + paths.SDK_MARKERS:
+    for marker in paths.GAME_MARKERS:
         assert marker not in blob, (
             "the status line is a verdict, not a checklist -- "
             + marker + " leaked into the payload"
@@ -124,8 +178,7 @@ def test_the_status_line_never_enumerates_markers(install):
 
 
 def test_a_cancelled_browse_leaves_the_row_untouched(install):
-    game, _sdk = install
-    panel = _panel(RecordingPicker([str(game), None]))
+    panel = _panel(RecordingPicker([str(install), None]))
     panel.dispatch_event("browse:game")
     before = _payload(panel)
     panel.dispatch_event("browse:game")    # picker returns None this time
@@ -143,37 +196,38 @@ def test_a_blank_browse_answer_is_treated_as_a_cancel(blank):
     assert panel.resolution.game is None    # never Path("."), which Path("") becomes
 
 
-def test_an_already_resolved_root_starts_satisfied_and_is_not_asked(install):
-    game, sdk = install
-    picker = RecordingPicker([str(sdk)])
-    panel = _panel(picker, argv=["--game-dir", str(game)])
+def test_an_already_resolved_root_starts_satisfied(install):
+    picker = RecordingPicker([])
+    panel = _panel(picker, argv=["--game-dir", str(install)])
     payload = _payload(panel)
     assert payload["rows"][0]["status"] == "Bridge Commander install found"
-    panel.dispatch_event("browse:sdk")
-    assert len(picker.calls) == 1
-    assert "SDK" in picker.calls[0][0]
+    assert payload["can_continue"] is True
+    assert picker.calls == []
 
 
 def test_continue_sets_the_outcome_only_when_allowed(install):
-    game, sdk = install
-    panel = _panel(RecordingPicker([str(game), str(sdk)]))
+    panel = _panel(RecordingPicker([str(install)]))
     panel.dispatch_event("continue")
-    assert panel.outcome is None, "Continue must be inert while a row is unsatisfied"
+    assert panel.outcome is None, "Continue must be inert while the row is unsatisfied"
     panel.dispatch_event("browse:game")
-    panel.dispatch_event("browse:sdk")
     panel.dispatch_event("continue")
     assert panel.outcome == "continue"
     assert panel.resolution.ok
 
 
 def test_quit_sets_the_outcome_and_keeps_what_validated(install):
-    game, _sdk = install
-    panel = _panel(RecordingPicker([str(game)]))
+    panel = _panel(RecordingPicker([str(install)]))
     panel.dispatch_event("browse:game")
     panel.dispatch_event("quit")
     assert panel.outcome == "quit"
-    assert panel.resolution.game == game
+    assert panel.resolution.game == install
     assert panel.resolution.source("game") == "picker"
+
+
+def test_quit_before_any_pick_leaves_nothing_resolved():
+    panel = _panel(RecordingPicker([]))
+    panel.dispatch_event("quit")
+    assert panel.outcome == "quit"
     assert not panel.resolution.ok
 
 
@@ -183,8 +237,7 @@ def test_an_unknown_action_is_not_handled():
 
 
 def test_render_payload_is_idempotent_until_something_changes(install):
-    game, _sdk = install
-    panel = _panel(RecordingPicker([str(game)]))
+    panel = _panel(RecordingPicker([str(install)]))
     assert panel.render_payload() is not None
     assert panel.render_payload() is None
     panel.dispatch_event("browse:game")
@@ -207,18 +260,15 @@ def test_a_bad_browse_on_an_already_satisfied_row_keeps_the_valid_root(install):
     player's earlier work must stand; the bad click should still say
     something (via hint), or it looks like it did nothing.
     """
-    game, sdk = install
-    # One level too deep -- invalid, same fixture shape as the existing
-    # invalid-browse test.
-    picker = RecordingPicker([str(sdk / "Build")])
-    panel = _panel(picker, argv=["--game-dir", str(game), "--sdk-dir", str(sdk)])
+    picker = RecordingPicker([str(install / "data")])   # one level too deep
+    panel = _panel(picker, argv=["--game-dir", str(install)])
     _payload(panel)                       # drain the initial payload
-    panel.dispatch_event("browse:sdk")
+    panel.dispatch_event("browse:game")
     payload = _payload(panel)
-    row = payload["rows"][1]
+    row = payload["rows"][0]
     assert row["ok"] is True
     assert row["status"] == "Bridge Commander install found"
-    assert row["path"] == str(sdk)        # the OLD valid root, not destroyed
+    assert row["path"] == str(install)    # the OLD valid root, not destroyed
     assert row["hint"]                    # the bad click still says something
     assert payload["can_continue"] is True
     assert row["state"] == "ok"           # the row is fine; the LAST CLICK wasn't
@@ -229,11 +279,10 @@ def test_a_bad_browse_on_an_unsatisfied_row_still_reports_not_an_install(install
     pick on a row with no valid root yet still reports NOT_AN_INSTALL with
     the hint, and can_continue stays False.
     """
-    sdk = install[1]
-    panel = _panel(RecordingPicker([str(sdk / "Build")]))
-    panel.dispatch_event("browse:sdk")
+    panel = _panel(RecordingPicker([str(install / "data")]))
+    panel.dispatch_event("browse:game")
     payload = _payload(panel)
-    row = payload["rows"][1]
+    row = payload["rows"][0]
     assert row["ok"] is False
     assert row["status"] == "Not a Bridge Commander install"
     assert row["path"] == ""
@@ -244,39 +293,32 @@ def test_a_bad_browse_on_an_unsatisfied_row_still_reports_not_an_install(install
 def test_row_state_pins_ok_bad_and_unset(install):
     """`state` is the page's ONLY signal for the status colour, because
     `path` is "" for both an untouched row and a rejected one and so can't
-    tell them apart on its own. Pin all three values across one row's
-    lifecycle plus the sibling row staying untouched throughout.
+    tell them apart on its own. Pin all three values across the row's
+    lifecycle.
     """
-    game, sdk = install
-    panel = _panel(RecordingPicker([str(sdk / "Build"), str(game)]))
+    panel = _panel(RecordingPicker([str(install / "data"), str(install)]))
 
-    payload = _payload(panel)
-    assert payload["rows"][0]["state"] == "unset"   # never touched
-    assert payload["rows"][1]["state"] == "unset"
+    assert _payload(panel)["rows"][0]["state"] == "unset"   # never touched
 
-    panel.dispatch_event("browse:sdk")              # invalid pick
-    payload = _payload(panel)
-    assert payload["rows"][1]["state"] == "bad"     # rejected, never valid
-    assert payload["rows"][0]["state"] == "unset"   # still untouched
+    panel.dispatch_event("browse:game")             # invalid pick
+    assert _payload(panel)["rows"][0]["state"] == "bad"     # rejected, never valid
 
     panel.dispatch_event("browse:game")             # valid pick
-    payload = _payload(panel)
-    assert payload["rows"][0]["state"] == "ok"      # satisfied
+    assert _payload(panel)["rows"][0]["state"] == "ok"      # satisfied
 
 
 def test_a_cancelled_browse_after_a_rejection_leaves_the_rejection_in_place(install):
     """A cancel does not clear a PRIOR rejection -- the row stays exactly as
     it was, hint included, same as the plain cancelled-browse case above.
     """
-    sdk = install[1]
-    panel = _panel(RecordingPicker([str(sdk / "Build"), None]))
-    panel.dispatch_event("browse:sdk")
+    panel = _panel(RecordingPicker([str(install / "data"), None]))
+    panel.dispatch_event("browse:game")
     before = _payload(panel)
-    panel.dispatch_event("browse:sdk")    # picker returns None this time
+    panel.dispatch_event("browse:game")    # picker returns None this time
     after = panel.render_payload()
     assert after is None, "a cancelled browse changes nothing, so nothing re-renders"
-    assert before["rows"][1]["status"] == "Not a Bridge Commander install"
-    assert before["rows"][1]["hint"]
+    assert before["rows"][0]["status"] == "Not a Bridge Commander install"
+    assert before["rows"][0]["hint"]
 
 
 def test_a_raising_binding_is_treated_as_no_picker(monkeypatch):

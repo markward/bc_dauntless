@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 
 # Resolved once per pytest session. conftest is exempt from the
 # resolve-at-use rule in engine/paths.py: the test suite never runs under the
-# first-run picker, so nothing can change these roots mid-session.
+# first-run picker, so nothing can change the root mid-session.
 #
 # This FAILS FAST rather than skipping. Skipping would turn a missing install
 # into ~800 silent skips, and scripts/check_tests.sh diffs FAILURES against
@@ -30,10 +30,9 @@ _paths.configure(_RESOLUTION)
 if not _RESOLUTION.ok:
     raise RuntimeError(
         _paths.describe_failure(_RESOLUTION)
-        + "\nThe test suite needs both roots. Set them with:\n"
+        + "\nThe test suite needs the game root. Set it with:\n"
         '  uv run python -c "from engine.settings_store import SettingsStore; '
-        "s=SettingsStore(); s.load(); s.set('paths','game','/path/to/game'); "
-        "s.set('paths','sdk','/path/to/sdk')\"\n"
+        "s=SettingsStore(); s.load(); s.set('paths','game','/path/to/game')\"\n"
     )
 
 # The BC SDK is a development requirement (spec
@@ -56,9 +55,10 @@ except _dev_sdk.DevSdkMissing as _exc:
 os.environ.setdefault(_dev_sdk.ENV_VAR, str(_DEV_SDK_ROOT))
 
 # Hermetic user data: every write site resolves under a throwaway data dir
-# (removed at interpreter exit), and the content roots are pinned in the
-# environment so a later paths.resolve() finds them without the developer's
-# real settings.json. setdefault, so a developer's own env still wins.
+# (removed at interpreter exit), and the game root is pinned in the
+# environment so a later paths.resolve() finds it without the developer's
+# real settings.json (the dev SDK is pinned above). setdefault, so a
+# developer's own env still wins.
 import atexit
 import shutil
 import tempfile
@@ -69,8 +69,7 @@ if _paths.DATA_DIR_ENV not in os.environ:
     _TEST_DATA_DIR = tempfile.mkdtemp(prefix="dauntless-test-data-")
     os.environ[_paths.DATA_DIR_ENV] = _TEST_DATA_DIR
     atexit.register(shutil.rmtree, _TEST_DATA_DIR, ignore_errors=True)
-for _kind, _root in (("game", _RESOLUTION.game), ("sdk", _RESOLUTION.sdk)):  # paths-guard: ENV_VARS kind labels
-    os.environ.setdefault(_paths.ENV_VARS[_kind], str(_root))
+os.environ.setdefault(_paths.ENV_VARS["game"], str(_RESOLUTION.game))  # paths-guard: ENV_VARS kind label
 os.environ.setdefault(_mods.ENV_VAR, str(PROJECT_ROOT / "mods"))
 
 # The install's stock scripts root: stock modules are its retail .pyc,
@@ -2239,20 +2238,19 @@ def _silence_undefined_event_summary_atexit():
 
 @pytest.fixture
 def fake_bc_install(tmp_path):
-    """A minimal BC install: only the markers engine.paths validates.
+    """A minimal BC game install: only the markers engine.paths validates
+    (the data folders and the scripts folder's MissionLib.pyc, empty).
 
-    Deliberately omits stbc.exe and scripts/ -- neither is loaded at runtime,
-    so requiring them would reject a usable content-only copy.
+    Deliberately omits stbc.exe, which is never loaded. It does NOT pass
+    the stock-scripts install check (engine.stock_scripts.check_install):
+    paths validation is markers only.
 
-    Returns (game_root, sdk_root), siblings under tmp_path/"install" so a test
-    can pass their shared parent to reproduce the commonest mistake.
+    Returns the game root, under tmp_path/"install" so a test can pass its
+    parent to reproduce the commonest mistake.
     """
     install = tmp_path / "install"
     game = install / "game"   # paths-guard: fixture builds a fake install tree
-    sdk = install / "sdk"     # paths-guard: fixture builds a fake install tree
-    for rel in ("data", "data/Models", "data/Textures", "data/Icons"):
+    for rel in ("data", "data/Models", "data/Textures", "data/Icons", "scripts"):
         (game / rel).mkdir(parents=True, exist_ok=True)
-    (sdk / "Build" / "scripts").mkdir(parents=True, exist_ok=True)
-    (sdk / "Build" / "scripts" / "App.py").write_text("# fake App shim\n")
-    (sdk / "Build" / "Data" / "TGL").mkdir(parents=True, exist_ok=True)
-    return game, sdk
+    (game / "scripts" / "MissionLib.pyc").write_bytes(b"")
+    return game
