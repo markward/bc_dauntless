@@ -1,9 +1,14 @@
-"""engine.py15 lifts straight-line Python 1.5 bytecode to a Python 3 AST.
+"""engine.py15 lifts Python 1.5 bytecode to a Python 3 AST.
 
 Every fixture is hand-assembled 1.5 bytecode (tests/helpers/py15_assembler),
 so this file needs no BC install and contains no BC or mod content. The
 expected output is always the AST the SDK loader would parse from the same
 module's source -- that is the lifter's whole contract.
+
+Control-flow fixtures follow CPython 1.5.2's Python/compile.c instruction for
+instruction (com_if_stmt, com_while_stmt, com_for_stmt, com_try_except, ...);
+tests/unit/test_py15_stock_oracle.py proves the same shapes on every retail
+BC module.
 """
 import ast
 import random
@@ -104,11 +109,17 @@ CASES = {
            ("STORE_NAME", 4)] + RET,
           consts=(None, 5, 0, 2.0, (1, 2)), names=("v", "o", "attr", "y", "z")),
         "o.attr = v\no[0] = 5\ny = -(o[0] / 2.0)\nz = y not in (1, 2)"),
-    # The SDK loader reads source as utf-8 with errors="replace".
-    "non-utf8-string-matches-the-source-path": (
+    # A byte means what it meant to BC on Windows: cp1252.
+    "cp1252-string": (
+        M([("LOAD_CONST", 1), ("STORE_NAME", 0),
+           ("LOAD_CONST", 2), ("STORE_NAME", 1)] + RET,
+          consts=(None, b"caf\xe9", b"\x84"), names=("s", "t")),
+        "s = 'caf\\u00e9'\nt = '\\u201e'"),
+    # A plain hex literal past 2**31 is a negative C long in 1.5.
+    "32-bit-hex-literal": (
         M([("LOAD_CONST", 1), ("STORE_NAME", 0)] + RET,
-          consts=(None, b"caf\xe9"), names=("s",)),
-        "s = 'caf�'"),
+          consts=(None, -1), names=("x",)),
+        "x = -1"),
     "list-in-tuple": (
         M([("LOAD_CONST", 1), ("LOAD_CONST", 2), ("BUILD_LIST", 2),
            ("BUILD_TUPLE", 1), ("STORE_NAME", 0)] + RET,
@@ -123,12 +134,12 @@ def test_a_supported_construct_lifts_to_its_source(case):
     _same(code, source)
 
 
+# Control flow, classes, unpacking, slices and the rest are lifted now
+# (tests/unit/test_py15_lift_control_flow.py); these never occur in the
+# stock or mod corpus and stay refused by name.
 @pytest.mark.parametrize("opname", [
-    "JUMP_IF_FALSE", "JUMP_IF_TRUE", "JUMP_FORWARD", "JUMP_ABSOLUTE",
-    "FOR_LOOP", "SETUP_LOOP", "SETUP_EXCEPT", "SETUP_FINALLY", "BUILD_CLASS",
-    "IMPORT_FROM", "UNPACK_TUPLE", "UNPACK_LIST", "EXEC_STMT", "UNARY_CONVERT",
-    "RAISE_VARARGS", "DELETE_NAME", "SLICE_0", "LOAD_LOCALS", "PRINT_EXPR",
-    "BUILD_SLICE",
+    "EXEC_STMT", "PRINT_EXPR", "BUILD_SLICE", "ROT_THREE", "JUMP_FORWARD",
+    "STOP_CODE",
 ])
 def test_an_opcode_outside_the_subset_is_refused_by_name(opname):
     ins = (opname, 0) if A.OPCODES[opname] >= 90 else (opname,)
@@ -145,20 +156,10 @@ def _def(code_obj):
 
 
 SHAPES = {
-    "*args": _def(F("f", RET, flags=A.FUNCTION_FLAGS | 0x4, varnames=("a",))),
-    "lambda": _def(F("<lambda>", RET)),
-    "nested function": _def(F(
-        "f", [("LOAD_CONST", 1), ("MAKE_FUNCTION", 0), ("STORE_FAST", 0)] + RET,
-        consts=(None, F("g", RET)), varnames=("g",))),
     "import alias": M([("IMPORT_NAME", 0), ("STORE_NAME", 1)] + RET,
                       names=("a.b", "x")),
-    "DUP_TOP outside a dict literal": M(
-        [("LOAD_CONST", 1), ("DUP_TOP",), ("STORE_NAME", 0),
-         ("STORE_NAME", 1)] + RET, consts=(None, 1), names=("a", "b")),
     "module-level return": M([("LOAD_CONST", 1), ("RETURN_VALUE",)] + RET,
                              consts=(None, 1)),
-    "trailing comma": M([("LOAD_CONST", 1), ("PRINT_ITEM",)] + RET,
-                        consts=(None, 1)),
     "malformed bytecode": M([("LOAD_CONST", 7)] + RET),
 }
 
@@ -248,36 +249,6 @@ def test_load_tree_names_an_unloadable_file_exactly_once(tmp_path, _fresh_report
     assert len(lines) == 1
     assert "Tactical.Projectiles.Jumpy" in lines[0]
     assert "JUMP_FORWARD" in lines[0]
-
-
-def test_a_global_import_is_refused_not_lifted_as_a_local():
-    """`global X; import X` in a def: STORE_GLOBAL of an import must not
-    drop the global declaration (that would bind X as a local)."""
-    body = [("IMPORT_NAME", 0), ("STORE_GLOBAL", 1)] + RET
-    code = _def(F("f", body, consts=(None,), names=("X", "X")))
-    with pytest.raises(Py15Unsupported, match="global import or def"):
-        lift(A.pyc(code))
-
-
-def test_a_print_item_evaluated_after_output_began_is_refused():
-    """1.5 prints 'a' before f() runs; a flushed print(*items) would not."""
-    code = M([("LOAD_CONST", 1), ("PRINT_ITEM",), ("LOAD_NAME", 0),
-              ("CALL_FUNCTION", 0), ("PRINT_ITEM",), ("PRINT_NEWLINE",)] + RET,
-             consts=(None, "a"), names=("f",))
-    with pytest.raises(Py15Unsupported,
-                       match="print item evaluated after output began"):
-        lift(A.pyc(code))
-
-
-def test_a_statement_inside_a_print_statement_is_refused():
-    """A trailing-comma print must not carry its pending items past foo()."""
-    code = M([("LOAD_CONST", 1), ("PRINT_ITEM",), ("LOAD_NAME", 0),
-              ("CALL_FUNCTION", 0), ("POP_TOP",), ("LOAD_CONST", 2),
-              ("PRINT_ITEM",), ("PRINT_NEWLINE",)] + RET,
-             consts=(None, "a", "b"), names=("foo",))
-    with pytest.raises(Py15Unsupported,
-                       match="statement inside a print statement"):
-        lift(A.pyc(code))
 
 
 def test_a_call_as_the_first_print_item_still_lifts():

@@ -2,7 +2,6 @@ import ast
 import importlib.abc
 import importlib.machinery
 import os
-import re
 import sys
 import types
 import warnings
@@ -82,28 +81,12 @@ if sys.platform == "win32":
     if _BUILD_DIR.is_dir():
         _DLL_DIR_HANDLE = os.add_dll_directory(str(_BUILD_DIR))
 
-# Not after a float exponent's sign (`7.7e-05`): that `05` is the exponent,
-# not a Python 2 octal literal. (`1e05` is already excluded by \w.)
-_PY2_OCTAL = re.compile(r'(?<![\w.])(?<![0-9.][eE][+-])0([0-7]+)\b')
-_PY2_RAISE = re.compile(r'^(\s*raise\s+\w[\w.]*)\s*,\s*(.*)', re.MULTILINE)
-_PY2_PRINT_FILE = re.compile(r'^(\s*)print\s*>>\s*(\S+)\s*,\s*(.*?)\s*$', re.MULTILINE)
-_PY2_PRINT_STMT = re.compile(r'^(\s*)print\s+(?!\()(.+?)\s*$', re.MULTILINE)
-_PY2_PRINT_BARE = re.compile(r'^(\s*)print\s*$', re.MULTILINE)
-
-
-def _fix_py2_syntax(source: str) -> str:
-    """Rewrite Python 2-only syntax that ast.parse rejects."""
-    source = source.replace('<>', '!=')
-    source = re.sub(r'\.has_key\s*\(', '.__contains__(', source)
-    source = _PY2_RAISE.sub(lambda m: m.group(1) + '(' + m.group(2).rstrip() + ')', source)
-    source = _PY2_OCTAL.sub(
-        lambda m: '0o' + m.group(1) if any(c != '0' for c in m.group(1)) else m.group(0),
-        source,
-    )
-    source = _PY2_PRINT_FILE.sub(r'\1print(\3, file=\2)', source)
-    source = _PY2_PRINT_STMT.sub(r'\1print(\2)', source)
-    source = _PY2_PRINT_BARE.sub(r'\1print()', source)
-    return source
+# Python 1.5 source -> Python 3 source: ONE implementation shared by both
+# SDK loaders (this file and its twin) and the lifter's stock oracle.
+# Spec: docs/superpowers/specs/2026-11-11-legacy-script-parsing-design.md
+from engine.py15.source import fix_source as _fix_source  # noqa: E402
+from engine.py15.source import read_source as _read_source  # noqa: E402
+from engine.py15.source import fix_syntax as _fix_py2_syntax  # noqa: E402,F401
 
 
 class _MoveGlobalsToTop(ast.NodeTransformer):
@@ -491,9 +474,7 @@ def _module_tree(path, fullname):
     if str(path).lower().endswith(".pyc"):
         from engine import py15
         return py15.load_tree(path, fullname)
-    with open(path, encoding="utf-8", errors="replace") as f:
-        source = f.read()
-    source = _fix_py2_syntax(source.expandtabs(4))
+    source = _fix_source(_read_source(path))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         return ast.parse(source, filename=path)
