@@ -111,8 +111,8 @@ module path (relative, canonical spelling) with the **set of known content
 hashes** for it. Today that set holds one hash per path, from Mark's GOG
 install; a second verified retail build is added by appending its hashes, not
 by replacing the list. It holds names and hashes only, never BC content.
-Modules the project root shadows (`App`, `LoadBridge`, and any later root
-shim) are left out: they never load from the install, and leaving them out
+Modules the project root shadows (today only `App`; any later root shim
+too) are left out: they never load from the install, and leaving them out
 keeps an instrumented install (`tools/setup.py` replaces `scripts/App.pyc`)
 from looking modded. A tool generates the manifest from a configured clean
 install; never hand-edit. Hash algorithm, file format and location: builder's
