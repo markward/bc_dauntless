@@ -123,6 +123,15 @@ class ShipDefinition:
             self.unknown_attributes[key] = value
         object.__setattr__(self, key, value)
 
+    # The AI module QuickBattle names in this ship's friendly / enemy table
+    # row (QuickBattle.py's g_d*ShipTypeToDetails[type][3]). Foundation's
+    # names; a station definition returns BC's starbase AI instead.
+    def StrFriendlyAI(self):
+        return "QuickBattleFriendlyAI"
+
+    def StrEnemyAI(self):
+        return "QuickBattleAI"
+
     def RegisterQBShipMenu(self, group=None, **kw):
         # **kw so an omitted qb stays omitted and reaches register()'s own
         # _UNSET default; passing qb=None explicitly must mean "no module".
@@ -136,8 +145,75 @@ class ShipDefinition:
         return quickbattle.register(self, group, player=True, **kw)
 
 
-class _ShipDefNamespace:
-    """`Foundation.ShipDef` -- mods assign onto it and read __dict__ back."""
+class _ShipDefNamespace(type):
+    """Metaclass of `Foundation.ShipDef` and every class derived from it.
+
+    Mods use Foundation.ShipDef two ways at once. It is the namespace ships
+    are registered on: `Foundation.ShipDef.X = d`, and Bridge Commander
+    Universal Tool scripts write `Foundation.ShipDef.__dict__[longName] = d`
+    and read it back -- writable in Python 1.5, a read-only mappingproxy on a
+    Python 3 class. It is also Foundation's base class: real mods derive new
+    kinds of definition from it (`class RomulanStarBaseDef(
+    Foundation.ShipDef)`). So it is a real class whose `__dict__` -- and so
+    `vars()` -- is a plain dict of the names assigned onto it. Methods and
+    class-body attributes are not in it."""
+
+    _classes: list = []
+
+    def __init__(cls, name, bases, body):
+        super().__init__(name, bases, body)
+        type.__setattr__(cls, "_registry", {})
+        _ShipDefNamespace._classes.append(cls)
+
+    @property
+    def __dict__(cls):
+        return cls._registry
+
+    def __setattr__(cls, key, value):
+        type.__setattr__(cls, key, value)
+        if not key.startswith("_"):
+            cls._registry[key] = value
+
+    def __delattr__(cls, key):
+        found = cls._registry.pop(key, None) is not None
+        try:
+            type.__delattr__(cls, key)
+        except AttributeError:
+            if not found:
+                raise
+
+    def __getattr__(cls, key):
+        # Only reached when normal lookup fails: a name written straight
+        # into `__dict__[...]` rather than assigned.
+        if key == "_registry":
+            raise AttributeError(key)
+        try:
+            return cls._registry[key]
+        except KeyError:
+            raise AttributeError(key) from None
+
+    def clear_registered(cls):
+        for key in list(cls._registry):
+            delattr(cls, key)
+
+
+class ShipDef(ShipDefinition, metaclass=_ShipDefNamespace):
+    """Foundation's `ShipDef(abbrev, species, dict)`: the definition class
+    mods derive from. The race comes from `dict['race']`, which a derived
+    class sets before calling up (Foundation's own idiom)."""
+
+    def __init__(self, abbrev, species, dict=None):
+        dict = {} if dict is None else dict
+        ShipDefinition.__init__(self, dict.get("race"), abbrev, species,
+                                dict, dict)
+
+    @classmethod
+    def _from_factory(cls, race, abbrev, species, details=None, dict=None):
+        """A `<Race>ShipDef(...)` factory's definition: our factory takes the
+        race from its name and keeps Foundation's details / dict split."""
+        self = cls.__new__(cls)
+        ShipDefinition.__init__(self, race, abbrev, species, details, dict)
+        return self
 
 
 class ShipList:

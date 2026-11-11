@@ -381,14 +381,18 @@ def register(ship_def, group, player: bool = False, qb=_UNSET) -> int:
     module.g_dShipNameToIconNumber[name] = icon
     module.g_dShipTypeToIconNumber[sid] = icon
 
+    # The AI each row names comes from the definition: Foundation's
+    # StrFriendlyAI / StrEnemyAI, "QuickBattleFriendlyAI" / "QuickBattleAI"
+    # for a ship and BC's starbase AI for a StarBaseDef. Both ship names are
+    # verbatim from the stock tables (sdk/.../QuickBattle/QuickBattle.py:
+    # 580-585): every enemy row names "QuickBattleAI", and there is NO
+    # QuickBattleEnemyAI module -- we once invented that name, and
+    # StartSimulation2's `__import__(row[3])` died on it.
+    friendly_ai = getattr(ship_def, "StrFriendlyAI", lambda: "QuickBattleFriendlyAI")()
+    enemy_ai = getattr(ship_def, "StrEnemyAI", lambda: "QuickBattleAI")()
     for table_name, side, ai in (
-            # Both names are verbatim from the stock tables
-            # (sdk/.../QuickBattle/QuickBattle.py:580-585): every enemy row
-            # names "QuickBattleAI", and there is NO QuickBattleEnemyAI
-            # module -- we invented that name, and StartSimulation2's
-            # `__import__(row[3])` died on it, taking battle start with it.
-            ("g_dFriendlyShipTypeToDetails", "Friendly", "QuickBattleFriendlyAI"),
-            ("g_dEnemyShipTypeToDetails", "Enemy", "QuickBattleAI")):
+            ("g_dFriendlyShipTypeToDetails", "Friendly", friendly_ai),
+            ("g_dEnemyShipTypeToDetails", "Enemy", enemy_ai)):
         table = getattr(module, table_name)
         table[sid] = [
             ship_def.shipFile,

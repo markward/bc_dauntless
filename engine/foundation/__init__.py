@@ -12,11 +12,49 @@ from __future__ import annotations
 
 import re
 
-from engine.foundation.shipdef import ShipDefinition, ShipList, _ShipDefNamespace
+from engine.foundation.shipdef import (  # noqa: F401
+    ShipDef, ShipDefinition, ShipList, _ShipDefNamespace)
 from engine.foundation.mutator import MutatorDef  # noqa: F401  (spec 2026-10-16 §6.1)
+from engine.foundation.race import RACES as _RACES
 
-ShipDef = _ShipDefNamespace()
 shipList = ShipList()
+
+# Foundation's race objects: Foundation.Federation, Foundation.Romulan, ...
+Federation = _RACES["Federation"]
+Cardassian = _RACES["Cardassian"]
+Klingon = _RACES["Klingon"]
+Romulan = _RACES["Romulan"]
+Ferengi = _RACES["Ferengi"]
+Kessok = _RACES["Kessok"]
+Dominion = _RACES["Dominion"]
+Breen = _RACES["Breen"]
+Borg = _RACES["Borg"]
+
+
+class StarBaseDef(ShipDef):
+    """Foundation's station definition: a Federation ship whose Quick Battle
+    rows name BC's starbase AI, as the stock station rows do
+    (QuickBattle.py's g_d*ShipTypeToDetails, StarbaseAI / StarbaseFriendly
+    AI). Sets `dict['race']` on the caller's dict, as Foundation does."""
+
+    _RACE = Federation
+
+    def __init__(self, abbrev, species, dict=None):
+        dict = {} if dict is None else dict
+        dict["race"] = self._RACE
+        ShipDef.__init__(self, abbrev, species, dict)
+
+    def StrFriendlyAI(self):
+        return "StarbaseFriendlyAI"
+
+    def StrEnemyAI(self):
+        return "StarbaseAI"
+
+
+class CardStarBaseDef(StarBaseDef):
+    """Foundation's Cardassian station definition."""
+
+    _RACE = Cardassian
 
 _RACE_FACTORY = re.compile(r"^([A-Z][A-Za-z0-9]*)ShipDef$")
 _synthesised: set = set()
@@ -47,7 +85,7 @@ def __getattr__(attr):
     _synthesised.add(attr)
 
     def factory(abbrev, species, details=None, dict=None):
-        return ShipDefinition(race, abbrev, species, details, dict)
+        return ShipDef._from_factory(race, abbrev, species, details, dict)
 
     factory.__name__ = attr
     return factory
@@ -149,8 +187,10 @@ def SoundDef(file, name, volume=1.0, dict=None):
 
 def reset():
     """Drop all registered state. Tests only."""
-    for k in [k for k in ShipDef.__dict__ if not k.startswith("_")]:
-        delattr(ShipDef, k)
+    # Ships registered on Foundation.ShipDef -- and on any class derived
+    # from it -- not the classes themselves.
+    for cls in _ShipDefNamespace._classes:
+        cls.clear_registered()
     shipList._items.clear()
     _synthesised.clear()
     _sound_failures.clear()
