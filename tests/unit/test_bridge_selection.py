@@ -24,9 +24,6 @@ def test_bridge_label_for_an_unknown_bridge_strips_one_trailing_bridge(fake_inst
     assert bs.bridge_label("GalaxyBridge") == "Galaxy"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="mod bridge scan is the follow-up feature; contract "
-                          "fixed by the 2026-09-16 ship-bridge-matrix spec §1")
 def test_mod_bridge_scan_keeps_only_modules_defining_CreateBridgeModel(
         fake_install, tmp_path):
     install_mod(tmp_path, "VoyBridge", {
@@ -39,6 +36,71 @@ def test_mod_bridge_scan_keeps_only_modules_defining_CreateBridgeModel(
     })
     assert bs.available_bridges()[2:] == [bs.BridgeInfo("VoyagerBridge", "Voyager")]
     assert bs.is_available("VoyagerBridge")
+
+
+_BRIDGE_SCRIPT = "import App\ndef CreateBridgeModel(pBridgeSet):\n    pass\n"
+
+
+def test_a_mod_bridge_is_named_by_its_bridgedef(fake_install, tmp_path):
+    """A bridge pack names its bridge in Foundation.BridgeDef; the script
+    stem ('defiantbridge') is no name to show. Registration happens when
+    the plugins run, which can be after the list was first read."""
+    install_mod(tmp_path, "Pack", {"scripts/Bridge/xenobridge.py": _BRIDGE_SCRIPT})
+    assert bs.bridge_label("xenobridge") == "xeno"
+    import Foundation
+    Foundation.BridgeDef("Xeno Class", "xenobridge")
+    assert bs.available_bridges()[2:] == [bs.BridgeInfo("xenobridge", "Xeno Class")]
+    assert bs.bridge_label("xenobridge") == "Xeno Class"
+
+
+def test_a_mod_bridge_keeps_its_authors_spelling(fake_install, tmp_path):
+    # LoadBridge.Load imports "Bridge." + the name: it must be the file's.
+    install_mod(tmp_path, "Pack", {"scripts/Bridge/DefiantBridge.py": _BRIDGE_SCRIPT})
+    assert [b.script_name for b in bs.available_bridges()[2:]] == ["DefiantBridge"]
+
+
+def test_a_mod_copy_of_a_stock_bridge_is_not_listed_twice(fake_install, tmp_path, capsys):
+    install_mod(tmp_path, "Pack", {"scripts/Bridge/GalaxyBridge.py": _BRIDGE_SCRIPT})
+    assert bs.available_bridges() == list(bs.STOCK_BRIDGES)
+    bs.available_bridges()
+    assert capsys.readouterr().err.count("GalaxyBridge") == 1
+
+
+def test_mod_bridges_are_sorted_by_label(fake_install, tmp_path):
+    install_mod(tmp_path, "Pack", {
+        "scripts/Bridge/zbridge.py": _BRIDGE_SCRIPT,
+        "scripts/Bridge/abridge.py": _BRIDGE_SCRIPT,
+    })
+    import Foundation
+    Foundation.BridgeDef("Alpha", "zbridge")
+    Foundation.BridgeDef("Omega", "abridge")
+    assert [b.label for b in bs.available_bridges()[2:]] == ["Alpha", "Omega"]
+
+
+def test_a_bytecode_only_mod_bridge_is_listed(fake_install, tmp_path):
+    """A bridge script shipped only as Python 1.5 .pyc counts when its module
+    defines CreateBridgeModel; read from the bytecode, never run."""
+    from engine.py15.marshal15 import Code15
+    from tests.helpers import py15_assembler as a15
+    create = a15.function("CreateBridgeModel", [("LOAD_CONST", 0), ("RETURN_VALUE",)],
+                          varnames=("pBridgeSet",), argcount=1)
+    other = a15.function("Helper", [("LOAD_CONST", 0), ("RETURN_VALUE",)])
+
+    def module_defining(fn, fname):
+        return a15.pyc(a15.module(
+            [("LOAD_CONST", 0), ("MAKE_FUNCTION", 0), ("STORE_NAME", 0),
+             ("LOAD_CONST", 1), ("RETURN_VALUE",)],
+            consts=(fn, None), names=(fname,)))
+
+    root = tmp_path / "mods" / "Pack" / "scripts" / "Bridge"
+    root.mkdir(parents=True)
+    (root / "PycBridge.pyc").write_bytes(module_defining(create, "CreateBridgeModel"))
+    (root / "PycHelpers.pyc").write_bytes(module_defining(other, "Helper"))
+    (root / "Broken.pyc").write_bytes(b"not bytecode")
+    assert isinstance(create, Code15)
+    mods.configure(mods.build_index(tmp_path / "mods"))
+    bs.clear_caches()
+    assert [b.script_name for b in bs.available_bridges()[2:]] == ["PycBridge"]
 
 
 # ---- ship universe ------------------------------------------------------------
