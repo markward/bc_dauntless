@@ -1,6 +1,6 @@
 # Beams stop on the first thing in their path — design
 
-Status: design, not built. 2026-11-11.
+Status: built on feat/beam-blocking (2026-11-11), not live-verified.
 
 ## 1. Intent
 
@@ -301,3 +301,40 @@ says "not live-verified".
 - Whether the broadphase reuses `sweep_candidates` or a sibling.
 - Test file layout, and the CLAUDE.md row (add one; this is a fidelity
   behaviour a future reader will look for).
+
+## 10. Decisions made while planning and building
+
+- **Planet surface** is a mesh trace on the planet's renderer instance, so the
+  beam ends on the drawn surface. With no instance (headless) it is a
+  ray-sphere entry about `GetWorldLocation()` with `world_radius`, which can
+  sit a few GU off the drawn surface; never seen in a rendered game. Planet
+  broadphase bound is `world_radius * 1.02` (`PLANET_BOUND_SLACK`).
+- **A planet-blocked pulse is lost**: the dwell was consumed by the bank and
+  nothing receives it. Planets stop silently (no hit event).
+- **A shielded blocker's hull point** is the mesh tier along the same ray if it
+  hits, else the bubble point itself (normal None). The torpedo pattern's
+  inflated-sphere tier is skipped. The tier is reported as "mesh", "sphere" or
+  "bubble".
+- **Candidate order** is deterministic (`ships_list` order, then planets in
+  `planet_instances` order); a candidate wins only when strictly nearer, so the
+  target wins ties.
+- **Cross-set pairs are never blocked**: candidates are same-set only.
+  Hidden and dead objects never block (`IsDead`/`_dead` read live per
+  candidate). Tractors are unchanged: only phaser banks block.
+- **Row-less ship**: a session ship with no mirror row sends the bank to Python
+  (`stale_row`). Class overrides of `IsDead`/`IsHidden` are decided in Python,
+  not natively.
+- **NeedPython**: in damage it becomes the `blocker` ASK; in the drawn feed the
+  pair is drawn with today's unblocked endpoint and counted as BeamSkip
+  "blocker". Known cost: one row-less or class-flagged ship anywhere in the
+  ship list makes every phaser pair draw unblocked that frame, while damage
+  asks Python, so the two can disagree for that frame. Whether production ever
+  has such ships is unchecked.
+- **Tests**: the spec's asset-backed tests 3 and 11 became fake-trace tests
+  (`install_trace_hooks` in gtest, a monkeypatched `host_io.ray_trace_mesh` in
+  Python); real meshes are covered by the live check.
+- **Golden**: Mark re-recorded the `beam_scene` render golden on 2026-11-11;
+  drawn beams now end on blockers from frame 19.
+- **Owed**: live check (fly through a beam between two AI ships, fire past an
+  ally, fire at a ship behind a planet) and a before/after profiler capture on
+  `combat_stress` (`cb.phasers`, beam feed, `cb.render_data`).
