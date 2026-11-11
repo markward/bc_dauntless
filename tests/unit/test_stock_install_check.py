@@ -160,8 +160,9 @@ def test_verdict_cache_skips_the_second_lift(tmp_path, monkeypatch):
     assert stock_scripts.check_install(root).ok
 
     saved = _verdicts(tmp_path)
-    assert set(saved) == {"format", "lifts"}
-    assert saved["format"] == 1
+    assert set(saved) == {"format", "lifter", "lifts"}
+    assert saved["format"] == 2
+    assert saved["lifter"] == stock_scripts._lifter_identity()
     assert saved["lifts"] == [_hash(data)]
     assert all(re.fullmatch(r"[0-9a-f]{32}", h) for h in saved["lifts"])
 
@@ -174,17 +175,55 @@ def test_verdict_cache_skips_the_second_lift(tmp_path, monkeypatch):
     assert lifts == []
 
 
+def test_a_verdict_from_another_lifter_is_ignored(tmp_path, monkeypatch):
+    """A "this hash lifts" verdict is a verdict on ONE lifter. After a
+    Dauntless update the new lifter must prove the file again at boot, or a
+    file it can no longer lift passes the check and fails mid-game."""
+    root = _install(tmp_path, {"New.pyc": b"new"})
+    stock_scripts.configure({"New.pyc": ["f" * 32]}, None)
+    lifts = []
+    monkeypatch.setattr(py15, "lift_file",
+                        lambda p: lifts.append(p) or ast.Module(body=[], type_ignores=[]))
+
+    monkeypatch.setattr(stock_scripts, "_lifter_identity", lambda: "a" * 32)
+    assert stock_scripts.check_install(root).ok
+    assert len(lifts) == 1
+    assert stock_scripts.check_install(root).ok
+    assert len(lifts) == 1                      # same lifter: cached
+
+    monkeypatch.setattr(stock_scripts, "_lifter_identity", lambda: "b" * 32)
+    assert stock_scripts.check_install(root).ok
+    assert len(lifts) == 2                      # new lifter: lifted again
+    assert _verdicts(tmp_path)["lifter"] == "b" * 32
+
+    def _unliftable(_p):
+        raise py15.Py15Unsupported("opcode 999")
+    monkeypatch.setattr(py15, "lift_file", _unliftable)
+    monkeypatch.setattr(stock_scripts, "_lifter_identity", lambda: "c" * 32)
+    check = stock_scripts.check_install(root)
+    assert not check.ok and check.unliftable == ("scripts/New.pyc",)
+
+
+def test_the_lifter_identity_is_the_lifter_source(monkeypatch):
+    first = stock_scripts._lifter_identity()
+    assert re.fullmatch(r"[0-9a-f]{32}", first)
+    assert stock_scripts._lifter_identity() == first
+
+
 def test_malformed_verdict_cache_is_ignored(tmp_path, monkeypatch):
     root = _install(tmp_path, {"New.pyc": b"new"})
     stock_scripts.configure({"New.pyc": ["f" * 32]}, None)
     _put(tmp_path / "cache", VERDICTS,
-         json.dumps({"format": 1, "lifts": [_hash(b"new").upper(), 7]}).encode())
+         json.dumps({"format": 2, "lifter": stock_scripts._lifter_identity(),
+                     "lifts": [_hash(b"new").upper(), 7]}).encode())
     lifts = []
     monkeypatch.setattr(py15, "lift_file",
                         lambda p: lifts.append(p) or ast.Module(body=[], type_ignores=[]))
     assert stock_scripts.check_install(root).ok
     assert len(lifts) == 1
-    assert _verdicts(tmp_path) == {"format": 1, "lifts": [_hash(b"new")]}
+    assert _verdicts(tmp_path) == {"format": 2,
+                                   "lifter": stock_scripts._lifter_identity(),
+                                   "lifts": [_hash(b"new")]}
 
 
 def test_verdict_cache_write_failure_is_reported_not_raised(tmp_path, monkeypatch):

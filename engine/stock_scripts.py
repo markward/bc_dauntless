@@ -18,7 +18,8 @@ docs/superpowers/specs/2026-11-11-no-sdk-runtime-design.md, §2 decisions
 * ``check_install`` proves an install at boot (spec §4.1a): every listed
   file is hashed; a missing one, or an unknown hash that does not lift and
   compile, fails naming the file. A positive "this hash lifts" verdict is
-  cached by hash in ``paths.cache_dir()``. ``validate_install``/``checked``
+  cached by hash in ``paths.cache_dir()``, keyed to the lifter that reached
+  it (a cache from another lifter reads as empty). ``validate_install``/``checked``
   feed the first-run screen; ``require_install`` raises for headless use.
 * ``SYNTHETIC_PACKAGES``: package names the SDK shipped as an empty
   ``__init__.py`` and retail lacks; the loaders create them empty.
@@ -40,6 +41,7 @@ import importlib.resources
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -440,7 +442,8 @@ def load_tree(path: str, fullname: str) -> ast.Module:
 # --- boot install check (spec §4.1a, decision 7) ---------------------------
 
 _VERDICTS = "stock_lift_verdicts.json"
-_VERDICT_FORMAT = 1
+_VERDICT_FORMAT = 2
+_lifter_id: Optional[str] = None
 _HEX_HASH = re.compile(r"[0-9a-f]{32}")
 _MAX_NAMED = 3
 
@@ -465,6 +468,25 @@ def _verdicts_path() -> Path:
     return paths.cache_dir() / _VERDICTS
 
 
+def _lifter_identity() -> str:
+    """Which lifter a verdict was reached by: a hash of the ``engine.py15``
+    sources (read as package data, never from a path built on this file's
+    location) and of the compiling Python. A verdict cached under another
+    identity is no verdict: a Dauntless update re-proves each changed file
+    at boot (spec §4.1a). Computed once per process."""
+    global _lifter_id
+    if _lifter_id is None:
+        h = hashlib.blake2b(digest_size=16)
+        h.update(sys.implementation.cache_tag.encode())
+        package = importlib.resources.files("engine.py15")
+        for item in sorted(package.iterdir(), key=lambda i: i.name):
+            if item.name.endswith(".py"):
+                h.update(b"\0" + item.name.encode() + b"\0")
+                h.update(item.read_bytes())
+        _lifter_id = h.hexdigest()
+    return _lifter_id
+
+
 def _load_verdicts() -> set:
     """The cached hashes known to lift; anything malformed reads as none."""
     try:
@@ -472,6 +494,8 @@ def _load_verdicts() -> set:
     except (OSError, ValueError):
         return set()
     if not isinstance(data, dict) or data.get("format") != _VERDICT_FORMAT:
+        return set()
+    if data.get("lifter") != _lifter_identity():
         return set()
     lifts = data.get("lifts")
     if not isinstance(lifts, list):
@@ -484,8 +508,9 @@ def _save_verdicts(lifts: set) -> None:
     A failure is reported once, never raised: the cache is an optimisation."""
     target = _verdicts_path()
     tmp = target.with_name("%s.%d.tmp" % (target.name, os.getpid()))
-    text = json.dumps({"format": _VERDICT_FORMAT, "lifts": sorted(lifts)},
-                      indent=1) + "\n"
+    text = json.dumps({"format": _VERDICT_FORMAT,
+                       "lifter": _lifter_identity(),
+                       "lifts": sorted(lifts)}, indent=1) + "\n"
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(text, "utf-8")
