@@ -92,3 +92,69 @@ def test_a_ship_script_can_register_through_the_real_surface(tmp_path):
 
     assert report.failures == []
     assert ("X", 1000) in quickbattle.registered()
+
+
+# -- plugins load the way the SDK loader loads every other script ------------
+
+def test_a_plugin_written_in_python_1_5_runs(tmp_path):
+    """Foundation imported these scripts inside BC's Python 1.5, so they are
+    1.5 source: `has_key`, `print` statements, 8-column tabs. They must get
+    the same fixes as every other SDK script, not plain Python 3 parsing."""
+    out = tmp_path / "out.txt"
+    _touch(_mod(tmp_path) / "Autoload" / "old.py",
+           "d = {'k': 1}\n"
+           "if d.has_key('k'):\n"
+           "\tx = 1\n"
+           "        y = 2\n"
+           "print 'loaded'\n"
+           "open(%r, 'w').write(str(x + y))\n" % str(out))
+
+    mods.configure(mods.build_index(tmp_path))
+    report = loader.load_plugins()
+
+    assert report.failures == []
+    assert out.read_text(encoding="utf-8") == "3"
+
+
+def test_a_bytecode_only_plugin_runs(tmp_path):
+    """A plugin shipped only as Python 1.5 .pyc runs through the lifter,
+    like a bytecode-only mod module:
+
+        import Foundation
+        Foundation.ShipDef.BC = Foundation.FedShipDef('BC', 1, {'name': 'BC'})
+    """
+    from tests.helpers import py15_assembler as a15
+    pyc = _mod(tmp_path) / "Ships" / "bc.pyc"
+    pyc.parent.mkdir(parents=True, exist_ok=True)
+    pyc.write_bytes(a15.pyc(a15.module(
+        [("SET_LINENO", 1), ("IMPORT_NAME", 0), ("STORE_NAME", 0),
+         ("SET_LINENO", 2), ("LOAD_NAME", 0), ("LOAD_ATTR", 1),
+         ("LOAD_CONST", 0), ("LOAD_CONST", 1),
+         ("BUILD_MAP", 0), ("DUP_TOP",), ("LOAD_CONST", 0),
+         ("ROT_TWO",), ("LOAD_CONST", 2), ("STORE_SUBSCR",),
+         ("CALL_FUNCTION", 3), ("LOAD_NAME", 0), ("LOAD_ATTR", 2),
+         ("STORE_ATTR", 3),
+         ("LOAD_CONST", 3), ("RETURN_VALUE",)],
+        consts=("BC", 1, "name", None),
+        names=("Foundation", "FedShipDef", "ShipDef", "BC"))))
+
+    mods.configure(mods.build_index(tmp_path))
+    report = loader.load_plugins()
+
+    assert report.failures == []
+    assert report.ships == ["custom/ships/bc.pyc"]
+    assert foundation.ShipDef.BC.abbrev == "BC"
+
+
+def test_a_py_plugin_beats_its_own_pyc(tmp_path):
+    out = tmp_path / "out.txt"
+    _touch(_mod(tmp_path) / "Autoload" / "p.py",
+           "open(%r, 'w').write('py')\n" % str(out))
+    (_mod(tmp_path) / "Autoload" / "p.pyc").write_bytes(b"not bytecode")
+
+    mods.configure(mods.build_index(tmp_path))
+    report = loader.load_plugins()
+
+    assert report.failures == []
+    assert report.autoload == ["custom/autoload/p.py"]
+    assert out.read_text(encoding="utf-8") == "py"
