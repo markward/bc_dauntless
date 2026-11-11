@@ -152,5 +152,10 @@ The Phase 2 NIF parser draws on two open-source projects:
   schema is the authoritative documentation for NIF block layouts and
   explicitly includes Bridge Commander in its compatibility list. Thanks
   to the NifTools / NifSkope team for keeping the format documented.
+- **AnimateTest cube** by [Cordy](https://github.com/Cordanilus) — a NIF
+  test model with a flip-book glow animation, in
+  `native/tests/assets/fixtures/animate_test_cube/`. It is included under
+  GPL-3.0 with the author's permission, and the native test suite uses it to
+  check `NiFlipController` loading. Thank you, Cordy.
 
 See `THIRD_PARTY_NOTICES.md` for the formal attribution.

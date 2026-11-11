@@ -27,6 +27,11 @@ def _note(op: str) -> None:
 class MutatorDef:
     def __init__(self, name=None, dict=None):   # `dict` is Foundation's keyword
         self.name = name
+        # What Foundation's definitions add themselves to (MutatorElementDef,
+        # BridgeDef.AddToMutator). Recorded only: nothing switches modes.
+        from engine.foundation.bridge import Registry
+        self.elements = []
+        self.bridgeList = Registry()
 
     def IsEnabled(self):
         return 1

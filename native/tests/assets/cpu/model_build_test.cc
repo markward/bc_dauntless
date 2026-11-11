@@ -1214,29 +1214,35 @@ TEST_F(ModelBuildTest, FlipControllerWithoutOwnImageStillAnimates) {
         << "Base stage must be assigned from the controller's source 0";
 }
 
-// The real thing: CGSovereign's Sovereign.nif (a mod overlay, present only
-// where it is installed) authors its bussard-collector flip with the
-// property's own image_link set AND a 16-frame controller. Every frame must
-// be wired and the material must point at the animation.
-TEST(ModelBuildRealAssets, CGSovereignBussardFlipIsWiredWithAllSixteenFrames) {
-    const fs::path root = test_support::mods_root();
-    const fs::path nif  = root / "CGSovereign/data/Models/Ships/Sovereign/Sovereign.nif";
-    const fs::path tex  = root / "CGSovereign/data/Models/Ships/Sovereign/High";
-    if (!fs::is_regular_file(nif)) GTEST_SKIP() << "asset missing: " << nif;
+// A real exported file: the AnimateTest cube by Cordy
+// (https://github.com/Cordanilus), committed under GPL-3.0 with the author's
+// permission (see README.md). One box whose NiTextureProperty carries its own
+// image_link (001_glow.tga) AND a 4-frame NiFlipController (001..004_glow,
+// delta 0.1111) -- the same 3ds Max authoring as CGSovereign's bussards, which
+// this replaced as the real-asset check so it runs on every machine.
+TEST(ModelBuildRealAssets, AnimateTestCubeFlipIsWiredWithAllFourFrames) {
+    const fs::path dir = test_support::project_root() / "native" / "tests" /
+                         "assets" / "fixtures" / "animate_test_cube";
+    const fs::path nif = dir / "AnimateTest.nif";
+    ASSERT_TRUE(fs::is_regular_file(nif)) << "committed fixture missing: " << nif;
 
     nif::File f = nif::load(nif);
     assets::PathResolver resolver;
     assets::detail::ModelBuildContext ctx;
     ctx.resolver = &resolver;
-    ctx.texture_search_paths = {tex};
+    ctx.texture_search_paths = {dir};
     ctx.texture_uploader = stub_texture;
     ctx.mesh_uploader = stub_mesh;
     auto model = assets::detail::build_model(f, ctx);
 
     ASSERT_EQ(model.texture_animations.size(), 1u);
     const auto& anim = model.texture_animations[0];
-    EXPECT_EQ(anim.texture_indices.size(), 16u);
-    EXPECT_NEAR(anim.delta, 0.1111, 1e-3);
+    ASSERT_EQ(anim.texture_indices.size(), 4u);
+    EXPECT_NEAR(anim.delta, 0.1111, 1e-4);
+    for (std::size_t i = 1; i < anim.texture_indices.size(); ++i) {
+        EXPECT_NE(anim.texture_indices[i - 1], anim.texture_indices[i])
+            << "frames " << i - 1 << " and " << i << " share a texture";
+    }
     int animated_materials = 0;
     for (const auto& m : model.materials) {
         if (m.animation_index == 0) {
@@ -1247,7 +1253,7 @@ TEST(ModelBuildRealAssets, CGSovereignBussardFlipIsWiredWithAllSixteenFrames) {
                 << "static Base must be the controller's source 0";
         }
     }
-    EXPECT_GE(animated_materials, 1) << "no material references the bussard flip";
+    EXPECT_EQ(animated_materials, 1) << "the cube's one material must animate";
 }
 
 // A registry replacement that matches nothing (stock Fed hulls once the ID

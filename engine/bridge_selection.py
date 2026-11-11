@@ -14,6 +14,7 @@ bridges.json. Every path is resolved at call time (engine/paths.py rule).
 from __future__ import annotations
 
 import re
+import sys
 from collections import namedtuple
 from pathlib import Path
 from typing import Optional
@@ -30,7 +31,9 @@ STOCK_BRIDGES: tuple = (
     BridgeInfo("SovereignBridge", "Sovereign"),
 )
 
-_SHIP_KEY_RE = re.compile(r"^ships/([^/]+)\.py$")
+# .pyc too: a mod ship shipped only as Python 1.5 bytecode is lifted by the
+# loader (engine/py15/lift.py), so it is as installed as a .py.
+_SHIP_KEY_RE = re.compile(r"^ships/([^/]+)\.pyc?$")
 
 # BC's own "Player and Region" picker: the hulls GeneratePlayerShipMenu
 # offers (sdk QuickBattle.py:1622-1703), by the script stem SelectPlayerShip
@@ -76,25 +79,90 @@ def _cache_for_current_index() -> dict:
 
 # ── Bridge registry ────────────────────────────────────────────────────────
 
+_MOD_BRIDGE_KEY = re.compile(r"^bridge/([^/]+)\.(py|pyc)$")
+_CREATE_BRIDGE_MODEL = "def CreateBridgeModel("
+
+
+def _defines_create_bridge_model(mf, ext) -> bool:
+    """True when the bridge config script defines CreateBridgeModel -- read
+    from the file, never imported. A `.py` by its source text (spec §1); a
+    Python 1.5 `.pyc` by its module code storing a function of that name."""
+    try:
+        data = Path(mf.abs_path).read_bytes()
+    except OSError:
+        return False
+    if ext == "py":
+        from engine.py15.source import decode_text
+        return _CREATE_BRIDGE_MODEL in decode_text(data)
+    from engine.py15.marshal15 import Code15, load_pyc
+    try:
+        code = load_pyc(data)
+    except Exception:
+        return False
+    return any(isinstance(c, Code15) and c.name == "CreateBridgeModel"
+               for c in code.consts)
+
+
 def _scan_mod_bridges() -> list:
-    """Mod-provided bridge config scripts. STUB: the follow-up feature fills
-    this in. Contract (spec §1): walk mods.current().files for keys matching
-    ^bridge/[^/]+\\.py$ with target == "sdk"; keep a module only if its source
-    TEXT contains "def CreateBridgeModel(" (never import it); label via
-    bridge_label(); stock script names are dropped (stock wins), logged once.
-    """
-    return []
+    """Mod-provided bridge config scripts, as script names in the author's
+    spelling (what LoadBridge.Load imports as "Bridge." + name).
+
+    Contract (2026-09-16 ship-bridge-matrix spec §1): keys matching
+    ^bridge/[^/]+\\.py$ with target "sdk", kept only if the script defines
+    CreateBridgeModel (never imported). A bytecode-only `.pyc` counts too,
+    read from its code (a `.py` beats its own `.pyc`). Stock script names
+    are dropped by the caller: stock wins."""
+    found = {}
+    for key, mf in mods.current().files.items():
+        if mf.target != "sdk":          # paths-guard: kind label
+            continue
+        m = _MOD_BRIDGE_KEY.match(key)
+        if m is None:
+            continue
+        stem, ext = m.group(1), m.group(2)
+        if ext == "pyc" and stem in found:
+            continue
+        if not _defines_create_bridge_model(mf, ext):
+            continue
+        name = Path(mf.raw_rel or key).name.rsplit(".", 1)[0]
+        if ext == "py" or stem not in found:
+            found[stem] = name
+    return list(found.values())
+
+
+def _mod_bridge_label(script_name: str) -> str:
+    """A mod bridge's name: its Foundation.BridgeDef's, when a pack
+    registered one, else the script name less one trailing "bridge"."""
+    from engine.foundation import bridge as _fbridge
+    d = _fbridge.by_config_script(script_name)
+    if d is not None and d.name:
+        return str(d.name)
+    if script_name.lower().endswith("bridge") and len(script_name) > len("bridge"):
+        return script_name[:-len("bridge")]
+    return script_name
 
 
 def available_bridges() -> list:
+    """Stock bridges, then mod bridges sorted by label. Script names are
+    memoised per mod index; labels are not, because a pack's BridgeDef
+    registers when the plugins run, which can be after the first read."""
     cache = _cache_for_current_index()
-    got = cache.get("bridges")
-    if got is None:
-        stock_names = {b.script_name for b in STOCK_BRIDGES}
-        got = list(STOCK_BRIDGES) + [b for b in _scan_mod_bridges()
-                                     if b.script_name not in stock_names]
-        cache["bridges"] = got
-    return list(got)
+    scripts = cache.get("mod_bridge_scripts")
+    if scripts is None:
+        stock_names = {b.script_name.lower() for b in STOCK_BRIDGES}
+        scripts = []
+        for n in _scan_mod_bridges():
+            if n.lower() not in stock_names:
+                scripts.append(n)
+            else:
+                # The mod's copy still loads (it overrides the stock module);
+                # it is just not a second entry in the list.
+                print("[bridges] %s: a mod copy of a stock bridge; listed once,"
+                      " as the stock bridge" % n, file=sys.stderr)
+        cache["mod_bridge_scripts"] = scripts
+    mod = sorted((BridgeInfo(n, _mod_bridge_label(n)) for n in scripts),
+                 key=lambda b: (b.label.lower(), b.script_name))
+    return list(STOCK_BRIDGES) + mod
 
 
 def is_available(script_name: str) -> bool:
@@ -127,9 +195,10 @@ def _stock_ship_stems() -> dict:
 
 
 def _mod_ship_stems() -> dict:
-    """{folded stem: author's stem} for every top-level ships/*.py a mod
-    provides. Index keys are folded and scripts/-stripped; raw_rel keeps the
-    author's spelling, which is what g_sPlayerType / CreatePlayerShip see."""
+    """{folded stem: author's stem} for every top-level ships/*.py (or
+    bytecode-only ships/*.pyc) a mod provides. Index keys are folded and
+    scripts/-stripped; raw_rel keeps the author's spelling, which is what
+    g_sPlayerType / CreatePlayerShip see."""
     out: dict = {}
     for key, mf in mods.current().files.items():
         if mf.target != "sdk":  # paths-guard: kind label

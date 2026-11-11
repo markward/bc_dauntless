@@ -143,13 +143,14 @@ def first_offered_course(exclude_set=None):
 
 @pytest.fixture
 def no_logged_failures(capfd):
-    """A handler that raises inside a broadcast is logged and swallowed
-    (events.py), and a failed change is printed and returns False -- read
-    both logs so neither can pass silently."""
+    """A handler that raises inside a broadcast, or a script action that
+    raises, is logged and swallowed (events.py, actions.py), and a failed
+    change is printed and returns False -- read the logs so none can pass
+    silently."""
     yield
     out, err = capfd.readouterr()
-    for marker in ("[events] broadcast handler", "[mission_change]",
-                   "Traceback"):
+    for marker in ("[events] broadcast handler", "[actions] script action",
+                   "[mission_change]", "Traceback"):
         assert marker not in out + err, (out + err)[-4000:]
 
 

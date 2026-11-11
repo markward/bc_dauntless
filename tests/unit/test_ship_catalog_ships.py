@@ -48,3 +48,12 @@ def test_ships_with_no_filter_lists_both(stock, tmp_path):
     install_mod(tmp_path, "M", {"scripts/ships/X.py": "# s\n"})
     _mod_def("X")
     assert {r.ship_id for r in ship_catalog.ships()} == {"Galaxy", "X"}
+
+
+def test_a_bytecode_only_mod_ship_is_installed(stock, tmp_path):
+    # KM's Starbase 220 ships ships/Starbase220.pyc with no .py beside it;
+    # the loader lifts it, so the catalog must count it as installed.
+    install_mod(tmp_path, "KM", {"scripts/ships/Starbase220.pyc": "not read\n"})
+    _mod_def("Starbase220", mod="KM")
+    assert "Starbase220" in {r.ship_id for r in ship_catalog.ships("mod")}
+    assert catalog._build().unresolved == []

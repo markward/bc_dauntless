@@ -437,17 +437,20 @@ def test_realize_set_comm_texture_path_is_model_dir_high():
     """env_for is None for comm sets (SetupBridgeSet uses SetBackgroundModel, not
     LoadModel) — the texture search path must be <model_dir>/High, not the
     DBridge fallback (which holds only DBridge's textures). Now a mod-aware
-    list of search dirs (paths.game_asset_dirs); with no mods configured it
-    is the stock directory alone, per that function's modless invariant."""
+    list of search dirs (paths.game_asset_dirs). With no mods configured it
+    is the stock NIF folder (packs ship textures flat beside the NIF; no stock
+    set has any there) then the stock <model_dir>/High, which stays LAST for
+    the interior sibling policy (host_loop._set_texture_dirs)."""
     s = _comm_set_with_geometry()
     c = _CommCtl(); c.comm_instances_by_set = {}; c.nif_to_handle = {}
     r = _comm_renderer()
     hl.realize_set(c, r, s, is_bridge=False, comm_set_id=1)
     _nif_abs, tex_abs = r.loaded[0]
     assert isinstance(tex_abs, list)
-    assert len(tex_abs) == 1
-    assert tex_abs[-1].replace("\\", "/").endswith(
-        "data/Models/Sets/StarbaseControl/High")
+    dirs = [d.replace("\\", "/") for d in tex_abs]
+    assert len(dirs) == 2
+    assert dirs[0].endswith("data/Models/Sets/StarbaseControl")
+    assert dirs[-1].endswith("data/Models/Sets/StarbaseControl/High")
 
 
 def test_realize_set_bridge_texture_dir_searches_mod_override(monkeypatch, tmp_path):

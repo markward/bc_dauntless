@@ -13,6 +13,7 @@ docs/superpowers/specs/2026-06-11-action-sequence-timing-design.md.
 """
 import re
 import sys
+import traceback
 import weakref
 from engine.appc.events import TGEventHandlerObject, TGEvent
 from engine.core.ids import get_object_by_id, register, unregister
@@ -256,7 +257,19 @@ class TGScriptAction(TGAction):
                 # ("Return: 0 - Action completed") => auto-complete; truthy
                 # (e.g. ViewscreenOn/PlayDialog return 1) => the function wired
                 # a deferred completion, so we must NOT auto-complete here.
-                ret = fn(self, *self._args)
+                #
+                # A raising script is reported and the action counts as
+                # finished, so its sequence carries on: BC's embedded Python
+                # printed the traceback and the engine kept ticking (the
+                # same rule as broadcast handlers, events.py AddEvent). One
+                # broken SDK or mod script must not end the game.
+                try:
+                    ret = fn(self, *self._args)
+                except Exception:
+                    print("[actions] script action %s.%s raised -- continuing"
+                          % (self._module_name, self._func_name), file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
+                    return
                 if ret:
                     self._deferred = True
         finally:
